@@ -1,0 +1,32 @@
+{
+  "name": "@pa/macos-imessage-worker",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "postinstall": "patch-package",
+    "dev": "tsx src/index.ts",
+    "start": "tsx src/index.ts",
+    "send": "tsx src/send-once.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@pa/agent-registry": "0.0.1",
+    "@pa/agent-runtime": "0.0.1",
+    "@pa/core-types": "0.0.1",
+    "@pa/firebase-admin": "0.0.1",
+    "@pa/memory": "0.0.1",
+    "@photon-ai/imessage-kit": "^3.0.0",
+    "better-sqlite3": "^12.9.0",
+    "dotenv": "^16.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "patch-package": "^8.0.1",
+    "tsx": "^4.19.0",
+    "typescript": "^5.3.0"
+  }
+}

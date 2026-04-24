@@ -1,0 +1,41 @@
+rules_version = '2';
+// Personal assistant platform collections — namespaced (pa_*) in shared project wekruit-5f89b.
+// macOS worker uses Admin SDK and bypasses these rules.
+// Dashboard: allow any signed-in user whose email is @wekruit.com, or the allowlisted address below.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    // Normalized: Google token email, compared case-insensitively
+    function isPaOperator() {
+      return isSignedIn()
+        && request.auth.token.email is string
+        && (
+          request.auth.token.email.lower().matches(".*@wekruit\\.com$")
+          || request.auth.token.email.lower() == "indolencorlol@gmail.com"
+        );
+    }
+    match /pa_users/{id} {
+      allow read, write: if isPaOperator();
+    }
+    match /pa_agents/{id} {
+      allow read, write: if isPaOperator();
+    }
+    match /pa_sessions/{id} {
+      allow read, write: if isPaOperator();
+    }
+    match /pa_messages/{id} {
+      allow read, write: if isPaOperator();
+    }
+    match /pa_remote_config/{id} {
+      allow read, write: if isPaOperator();
+    }
+    match /pa_outbound/{id} {
+      allow read, write: if isPaOperator();
+    }
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "name": "personal-assistant-platform",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "devDependencies": {
+    "firebase-tools": "15.3.1"
+  },
+  "scripts": {
+    "build": "npm run build --workspace=@pa/core-types --workspace=@pa/firebase-admin --workspace=@pa/agent-runtime --workspace=@pa/memory --workspace=@pa/agent-registry",
+    "build:all": "npm run build && npm run build --workspace=@pa/dashboard-web",
+    "build:dashboard:with-injected-env": "node scripts/inject-pa-dashboard-vite-env.mjs && npm run build --workspace=@pa/dashboard-web",
+    "build:all:prod": "npm run build && npm run build:dashboard:with-injected-env",
+    "typecheck": "npm run typecheck -ws --if-present",
+    "sync-pa-vite:firebase": "node scripts/fetch-pa-dashboard-vite-from-firebase.mjs",
+    "deploy:hosting:from-firebase": "node scripts/deploy-pa-hosting-from-firebase.mjs",
+    "deploy:hosting": "firebase deploy --only hosting:pa-dashboard --project wekruit-5f89b --non-interactive",
+    "deploy:hosting:infisical": "bash scripts/deploy-pa-hosting-with-infisical.sh",
+    "deploy:hosting:firestore": "firebase deploy --only hosting:pa-dashboard,firestore:rules,firestore:indexes --project wekruit-5f89b --non-interactive"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "projects": {
+    "default": "wekruit-5f89b"
+  },
+  "targets": {
+    "wekruit-5f89b": {
+      "hosting": {
+        "pa-dashboard": [
+          "wekruit-pa"
+        ]
+      }
+    }
+  }
+}

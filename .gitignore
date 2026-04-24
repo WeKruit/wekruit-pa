@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.worktrees/
+.env
+.env.local
+apps/dashboard-web/.env.production.local
+apps/dashboard-web/.env.pa-firebase-generated
+*.log
+*.tsbuildinfo
+.DS_Store
+.google/
+*-debug.log
