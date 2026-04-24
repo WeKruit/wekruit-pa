@@ -208,6 +208,33 @@ Modes:
 
 Memory must not be the only copy of conversation history. If Mem0 is unavailable, the assistant should degrade to Firestore transcript context and log the reason.
 
+### Per-user Memory And Session Requirements
+
+Each user needs an isolated memory namespace.
+
+Required identity keys:
+
+- `userId`: durable WeKruit PA user id
+- `sessionId`: channel/session/thread id
+- `channel`: `imessage`, future `sms`, `email`, `web`
+- `participantHandle`: phone number or iMessage email handle
+- `mem0UserId`: explicit memory namespace, defaulting to `userId`
+
+Required behavior:
+
+- Firestore transcript is always keyed by `userId` and `sessionId`.
+- Mem0 search/add must use `mem0UserId`, not raw phone/email.
+- Session merge must be explicit when phone and email belong to the same person.
+- Memory writes must pass a memory safety filter before Mem0 writeback.
+- Dashboard must support memory inspect, delete, export, and disable per user.
+- Session state must include open/closed/blocked, last inbound, last outbound, and active agent.
+
+Target collections:
+
+- `pa_user_memories`: optional Firestore memory index and operator metadata
+- `pa_memory_events`: memory write, delete, degrade, and export audit events
+- `pa_session_links`: explicit links between multiple channel sessions for one user
+
 ## Connector Layer
 
 Connectors are not direct arbitrary tools exposed to the model. They should be registered capabilities with schemas, policies, and audit logs.
@@ -229,6 +256,26 @@ Initial connectors:
 - `scoring`: rank, score, or classify a candidate
 - `automation`: schedule or run approved workflows
 - `dashboard-actions`: operator-approved state changes
+
+## Open-source Runtime And Safety Options
+
+Use open source frameworks for mechanics, but keep WeKruit state in Firebase.
+
+Recommended default:
+
+- Agent/tool runtime: OpenAI Agents SDK TypeScript for tools, handoffs, MCP integration, tracing, and guardrail hooks.
+- Durable execution: Firebase broker first; consider Cloud Tasks or Inngest for retryable async execution if Firestore leases become too much custom code.
+- Tool schemas: Zod schemas in this repo, exposed to runtime tools.
+- Safety runtime: OpenAI Agents SDK guardrails for tool input/output checks, plus a separate policy service for rate limits and connector authorization.
+- Safety testing: Promptfoo red-team tests for prompt injection, jailbreak, cross-session leak, and tool abuse regression tests.
+- Optional heavier guardrails: NeMo Guardrails or Guardrails AI when we need model-based input/output validation beyond simple rules.
+
+Rejected for now:
+
+- Raw model-selected HTTP tools without a connector registry.
+- Storing memory only in Mem0 without Firestore transcript.
+- Using an agent framework's internal memory as the source of truth.
+- Letting dashboard write directly to downstream systems without connector audit.
 
 ## Abuse And Safety Controls
 
@@ -280,3 +327,13 @@ Current gaps:
 - dashboard does not yet expose queue, turn, connector, and abuse operations as a complete control plane
 - iMessage worker still carries too much orchestration logic
 
+## Reference Docs For Framework Evaluation
+
+- OpenAI Agents SDK TypeScript: https://openai.github.io/openai-agents-js/
+- OpenAI Agents SDK tools: https://openai.github.io/openai-agents-js/guides/tools/
+- OpenAI Agents SDK guardrails: https://openai.github.io/openai-agents-js/guides/guardrails/
+- Firebase Cloud Tasks task queue functions: https://firebase.google.com/docs/functions/task-functions
+- Inngest durable workflows: https://www.inngest.com/uses/durable-workflows
+- Promptfoo red-team configuration: https://www.promptfoo.dev/docs/red-team/configuration/
+- Guardrails AI validators: https://guardrailsai.com/guardrails/docs/concepts/validators
+- NVIDIA NeMo Guardrails concepts: https://docs.nvidia.com/nemo/microservices/latest/about/core-concepts/guardrails.html

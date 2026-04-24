@@ -18,10 +18,11 @@ Important docs:
 - [ARCHITECTURE.md](ARCHITECTURE.md)
 - [PLAN.md](PLAN.md)
 - [SEQUENCE.md](SEQUENCE.md)
+- [CURRENT_VS_TARGET.md](CURRENT_VS_TARGET.md)
+- [LEADER_HANDOFF.md](LEADER_HANDOFF.md)
 - [config/E2E-MAC-FIREBASE-DASHBOARD.md](config/E2E-MAC-FIREBASE-DASHBOARD.md)
 - [config/MEM0-SELF-HOST.md](config/MEM0-SELF-HOST.md)
 
 Current production Firebase project: `wekruit-5f89b`.
 
 Dashboard hosting target: `wekruit-pa`.
-

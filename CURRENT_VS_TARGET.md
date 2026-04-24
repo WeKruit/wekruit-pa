@@ -13,6 +13,15 @@
 | Health | Worker exposes local health endpoint. |
 | E2E evidence | Phone and email iMessage inbound paths have been exercised manually. |
 
+## Partial But Not Product-Ready
+
+| Area | Current behavior | Product gap |
+| --- | --- | --- |
+| Per-user memory | Mem0 calls use `userId`, and Firestore transcript is keyed by `userId` + `sessionId`. | No explicit memory namespace policy, retention, inspection UI, memory delete/export, or memory write safety filter. |
+| Session management | `pa_sessions` exists and the worker can create one session per channel handle. | No session lifecycle, multi-device/channel merge policy, turn state, resumed turn handling, or session-level rate policy. |
+| Agent runtime | Single turn wrapper can call OpenAI-compatible providers. | No orchestrator, tool loop, handoffs, turn state machine, connector routing, or guardrail pipeline. |
+| Outbound queue | `pa_outbound` supports pending -> sending -> sent/failed. | No inbound queue equivalent, no lease expiry, no dead-letter flow, no operator retry surface. |
+
 ## Missing For Target Product
 
 | Area | Missing |
@@ -35,4 +44,3 @@
 5. Connector platform.
 6. Mem0 production deployment.
 7. Launch runbook and monitoring.
-
