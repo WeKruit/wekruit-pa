@@ -27,7 +27,7 @@ Mac iMessage chat.db
 
 Memory model is two-layer: Firestore canonical (transcript + confirmed facts) + Mem0/Qdrant semantic (implicit, no `记住` prefix needed). The `记住 / 我的记忆 / forget` commands still work as explicit entry points (see `packages/memory/src/commands.ts`).
 
-## What just landed (commit `398a9b7`)
+## What just landed (prior commit `398a9b7`)
 
 1. Ported entire Jobless delta into wekruit-pa: new `@pa/pa-orchestrator` package, `apps/functions` CF wrapper, mem0-OSS integration in `@pa/memory`, all macos-imessage-worker modules, smoke scripts.
 2. Outbox hard-allowlist in `apps/macos-imessage-worker/src/outbox.ts`:
@@ -48,30 +48,38 @@ Memory model is two-layer: Firestore canonical (transcript + confirmed facts) + 
 - E2E inbound → CF → outbound: insert `pa_inbound_events` doc with real handle, CF processes within ~30s, `pa_outbound` row appears with status=sent.
 - Outbound allowlist hard-blocks fake numbers — see logs from previous CF revisions.
 
-## Known broken (next agent's job)
+## Fixed: BUG-1 `400 invalid model ID` (Mem0 embedder host)
 
-### 1. LLM `400 invalid model ID` — Mem0 collections empty
+**Root cause:** `mem0ai` merges embedder `baseURL` from user config only. Blank `MEM0_LLM_BASE_URL` / `MEM0_EMBED_*` env values became `""`, which bypassed `??` defaults and left the OpenAI SDK on **api.openai.com** while `model` was still **`BAAI/bge-m3`** → OpenAI returned `400 invalid model ID`. Chat LLM could still work when `OPENAI_BASE_URL` was set, hiding the bug.
 
-**Symptom:** Recent inbound events come back with `error: "400 invalid model ID"` even though `status: "succeeded"`. The orchestrator catches this and produces a fallback assistant message, so the pipeline doesn't break, but the LLM call fails. Qdrant has zero collections — Mem0 writeback is silently failing.
+**Code changes (this worktree):**
+- `packages/memory/src/mem0.ts` — `normalizeOpenAiCompatBaseUrl` + `normalizeMem0RuntimeConfig` so empty strings never reach Mem0; embedder + LLM always share a non-empty SiliconFlow-compatible base.
+- `packages/memory/src/stacked.ts` — `envTrim` for all Mem0 env keys; `MEM0_LLM_BASE_URL` falls back to `OPENAI_BASE_URL` when unset so CF and local orchestrator stay aligned.
+- `apps/functions/src/index.ts` — after secrets bind, force non-empty `OPENAI_BASE_URL`, `MEM0_LLM_BASE_URL`, `MEM0_LLM_MODEL`, `MEM0_EMBED_MODEL`, `MEM0_EMBED_DIMS` defaults matching SiliconFlow.
+- `packages/agent-runtime/src/openai-provider.ts` — trim `OPENAI_BASE_URL` / strip trailing `/`; ignore empty string.
+- `packages/agent-registry/src/seed.json` — default `model` aligned to `Qwen/Qwen2.5-72B-Instruct` (still `provider: "openai"`).
+- `config/firebase/firestore.indexes.json` — composite `pa_outbound`: `userId` ASC + `createdAt` DESC for operator queries.
 
-**Why it matters:** No semantic memory. Every conversation starts cold.
+**Verify after deploy:**
+1. `curl` chat + embeddings against SiliconFlow with the same model strings (use `firebase functions:secrets:access SILICONFLOW_API_KEY`, do not paste keys into chat).
+2. `firebase deploy --only functions:pa-orchestrator --project wekruit-5f89b` then trigger inbound; CF logs must **not** contain `invalid model`.
+3. `curl -s -H "api-key: $QDRANT_API_KEY" https://qdrant-wekruit.fly.dev/collections` — expect `pa_memory` (or your `MEM0_QDRANT_COLLECTION`) after first successful `mem0` / `both` writeback.
+4. Firestore `pa_agents/default` must use `memoryMode: "mem0"` or `"both"` for semantic writeback; `firestore_only` skips Mem0 by design.
 
-**Where to look:**
-- `packages/agent-registry/src/seed.json` — `default` agent has `model: "gpt-4o-mini"`. But Firestore `pa_agents/default` has `model: "Qwen/Qwen2.5-72B-Instruct"`. Need to confirm which one the runtime sees and whether SiliconFlow accepts that exact spelling.
-- `apps/functions/src/index.ts` — re-exports secrets to env (`OPENAI_API_KEY=$SILICONFLOW_API_KEY`, `OPENAI_BASE_URL=https://api.siliconflow.cn/v1`). Verify OpenAI client actually uses base URL override.
-- `packages/memory/src/mem0.ts` — Mem0 LLM/embedder config. Confirm SILICONFLOW model name for chat (`Qwen/Qwen2.5-72B-Instruct`) and embeddings (`BAAI/bge-m3`) are the strings SiliconFlow expects.
-- Quick test: `curl https://api.siliconflow.cn/v1/chat/completions -H "Authorization: Bearer $SILICONFLOW_API_KEY" -d '{"model":"Qwen/Qwen2.5-72B-Instruct","messages":[{"role":"user","content":"hi"}]}'`.
+## Known follow-ups
 
-### 2. Mac worker not running on user's machine (probably)
+### 1. Mac worker not running on user's machine (probably)
 
 The CF writes `pa_outbound` rows correctly. The Mac worker (`apps/macos-imessage-worker`) is what reads those rows and triggers the actual iMessage send. If user reports "PA isn't replying," check whether the worker is running locally and connected to Firestore.
 
 - Start: `npm --prefix apps/macos-imessage-worker run dev` (needs `FIREBASE_SERVICE_ACCOUNT_JSON` and iMessage permissions).
 - The screenshot of "+1 (999) 000-0000" delivery failures was the worker dutifully trying to deliver the smoke-test fake numbers. That class of bug is now hard-blocked at the outbox layer, but you should still verify the user's Mac worker is up before claiming "it works."
 
-### 3. Composite index for `pa_outbound (userId asc, createdAt desc)`
+### 2. Deploy Firestore indexes
 
-When writing diagnostic queries, `pa_outbound.where("userId","==",x).orderBy("createdAt","desc")` requires a composite index that doesn't exist. Either deploy `firestore.indexes.json` or use simpler queries.
+`config/firebase/firestore.indexes.json` now includes `pa_outbound` + `userId` + `createdAt` DESC. Deploy when convenient:
+
+`firebase deploy --only firestore:indexes --project wekruit-5f89b`
 
 ## How to check things
 

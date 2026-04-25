@@ -17,7 +17,9 @@ function openAICompatBaseURL(): string | undefined {
     process.env.OPENAI_BASE_URL ||
     process.env.LITELLM_BASE_URL ||
     process.env.OPENROUTER_BASE_URL
-  return b && b.length > 0 ? b : undefined
+  const t = b?.trim()
+  // Empty string must not reach the OpenAI client — it cancels SiliconFlow routing and yields wrong-host 400s.
+  return t && t.length > 0 ? t.replace(/\/+$/, "") : undefined
 }
 
 const defaultClient = () =>

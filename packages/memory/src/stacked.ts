@@ -11,22 +11,35 @@ export type MemoryStackDeps = {
   mem0Add: typeof mem0Add
 }
 
+function envTrim(key: string): string | undefined {
+  const v = process.env[key]?.trim()
+  return v && v.length > 0 ? v : undefined
+}
+
 function mem0ConfigFromEnv(): Mem0Config | null {
   // OSS stack requires SiliconFlow LLM/embedder + Qdrant. Legacy MEM0_API_KEY
   // path is dropped — fail closed to "no_api_key" if any required input is missing.
-  const apiKey = process.env.SILICONFLOW_API_KEY || process.env.MEM0_LLM_API_KEY
-  const qdrantUrl = process.env.QDRANT_URL
-  const qdrantApiKey = process.env.QDRANT_API_KEY
+  const apiKey = envTrim("SILICONFLOW_API_KEY") || envTrim("MEM0_LLM_API_KEY")
+  const qdrantUrl = envTrim("QDRANT_URL")
+  const qdrantApiKey = envTrim("QDRANT_API_KEY")
   if (!apiKey || !qdrantUrl || !qdrantApiKey) return null
+  // Keep Mem0 on the same OpenAI-compatible host as the chat client (CF sets OPENAI_BASE_URL).
+  const baseFromMem0 = envTrim("MEM0_LLM_BASE_URL")
+  const baseFromOpenAI = envTrim("OPENAI_BASE_URL")
   return {
     apiKey,
-    baseUrl: process.env.MEM0_LLM_BASE_URL,
-    llmModel: process.env.MEM0_LLM_MODEL,
-    embedModel: process.env.MEM0_EMBED_MODEL,
-    embeddingDims: process.env.MEM0_EMBED_DIMS ? Number(process.env.MEM0_EMBED_DIMS) : undefined,
+    baseUrl: baseFromMem0 ?? baseFromOpenAI,
+    llmModel: envTrim("MEM0_LLM_MODEL"),
+    embedModel: envTrim("MEM0_EMBED_MODEL"),
+    embeddingDims: (() => {
+      const d = envTrim("MEM0_EMBED_DIMS")
+      if (!d) return undefined
+      const n = Number(d)
+      return Number.isFinite(n) ? n : undefined
+    })(),
     qdrantUrl,
     qdrantApiKey,
-    qdrantCollection: process.env.MEM0_QDRANT_COLLECTION,
+    qdrantCollection: envTrim("MEM0_QDRANT_COLLECTION"),
   }
 }
 

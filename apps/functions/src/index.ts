@@ -69,9 +69,17 @@ export const onPaInbound = onDocumentCreated(
       // agent-runtime's OpenAI-compatible client points at SiliconFlow.
       process.env.OPENAI_API_KEY = SILICONFLOW_API_KEY.value()
     }
-    if (!process.env.OPENAI_BASE_URL) {
-      process.env.OPENAI_BASE_URL = "https://api.siliconflow.cn/v1"
+    const siliconflowBase = "https://api.siliconflow.cn/v1"
+    const trimOr = (v: string | undefined, fallback: string) => {
+      const t = v?.trim()
+      return t && t.length > 0 ? t.replace(/\/+$/, "") : fallback
     }
+    process.env.OPENAI_BASE_URL = trimOr(process.env.OPENAI_BASE_URL, siliconflowBase)
+    // mem0ai embedder merge does not fall back to a remote baseURL when unset — empty strings route to OpenAI.com with bge-m3 → 400 invalid model.
+    process.env.MEM0_LLM_BASE_URL = trimOr(process.env.MEM0_LLM_BASE_URL, process.env.OPENAI_BASE_URL)
+    process.env.MEM0_LLM_MODEL = trimOr(process.env.MEM0_LLM_MODEL, "Qwen/Qwen2.5-72B-Instruct")
+    process.env.MEM0_EMBED_MODEL = trimOr(process.env.MEM0_EMBED_MODEL, "BAAI/bge-m3")
+    process.env.MEM0_EMBED_DIMS = trimOr(process.env.MEM0_EMBED_DIMS, "1024")
 
     const db = getFirestore()
     const store = createFirestoreOrchestratorStore(db)

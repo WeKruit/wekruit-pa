@@ -41,6 +41,31 @@ const DEFAULT_EMBED_MODEL = "BAAI/bge-m3"
 const DEFAULT_EMBED_DIMS = 1024
 const DEFAULT_COLLECTION = "pa_memory"
 
+/** Strip trailing slashes; treat blank as missing so callers never pass `""` into OpenAI clients. */
+export function normalizeOpenAiCompatBaseUrl(url: string | undefined, fallback = DEFAULT_LLM_BASE): string {
+  const raw = (url ?? "").trim()
+  const u = raw.length > 0 ? raw : fallback
+  return u.replace(/\/+$/, "")
+}
+
+/** Empty env vars often become `""` which bypasses `??` defaults and breaks SiliconFlow. */
+export function normalizeMem0RuntimeConfig(cfg: Mem0Config): Mem0Config {
+  const baseUrl = normalizeOpenAiCompatBaseUrl(cfg.baseUrl, DEFAULT_LLM_BASE)
+  const llmTrim = (cfg.llmModel ?? "").trim()
+  const llmModel = llmTrim.length > 0 ? llmTrim : DEFAULT_LLM_MODEL
+  const embedTrim = (cfg.embedModel ?? "").trim()
+  const embedModel = embedTrim.length > 0 ? embedTrim : DEFAULT_EMBED_MODEL
+  const embeddingDims =
+    cfg.embeddingDims !== undefined && Number.isFinite(cfg.embeddingDims) ? cfg.embeddingDims : DEFAULT_EMBED_DIMS
+  return {
+    ...cfg,
+    baseUrl,
+    llmModel,
+    embedModel,
+    embeddingDims,
+  }
+}
+
 type MemoryCtor = new (cfg: Record<string, unknown>) => MemoryType
 
 let cachedClient: { key: string; client: MemoryType } | null = null
@@ -54,45 +79,47 @@ async function loadMemoryCtor(): Promise<MemoryCtor> {
 }
 
 function configCacheKey(cfg: Mem0Config): string {
+  const n = normalizeMem0RuntimeConfig(cfg)
   return [
-    cfg.baseUrl ?? DEFAULT_LLM_BASE,
-    cfg.llmModel ?? DEFAULT_LLM_MODEL,
-    cfg.embedModel ?? DEFAULT_EMBED_MODEL,
-    cfg.embeddingDims ?? DEFAULT_EMBED_DIMS,
-    cfg.qdrantUrl,
-    cfg.qdrantCollection ?? DEFAULT_COLLECTION,
+    n.baseUrl ?? DEFAULT_LLM_BASE,
+    n.llmModel ?? DEFAULT_LLM_MODEL,
+    n.embedModel ?? DEFAULT_EMBED_MODEL,
+    n.embeddingDims ?? DEFAULT_EMBED_DIMS,
+    n.qdrantUrl,
+    n.qdrantCollection ?? DEFAULT_COLLECTION,
   ].join("|")
 }
 
 async function getClient(cfg: Mem0Config): Promise<MemoryType> {
-  const key = configCacheKey(cfg)
+  const n = normalizeMem0RuntimeConfig(cfg)
+  const key = configCacheKey(n)
   if (cachedClient && cachedClient.key === key) return cachedClient.client
   const Ctor = await loadMemoryCtor()
   const client = new Ctor({
     llm: {
       provider: "openai",
       config: {
-        apiKey: cfg.apiKey,
-        baseURL: cfg.baseUrl ?? DEFAULT_LLM_BASE,
-        model: cfg.llmModel ?? DEFAULT_LLM_MODEL,
+        apiKey: n.apiKey,
+        baseURL: n.baseUrl ?? DEFAULT_LLM_BASE,
+        model: n.llmModel ?? DEFAULT_LLM_MODEL,
       },
     },
     embedder: {
       provider: "openai",
       config: {
-        apiKey: cfg.apiKey,
-        baseURL: cfg.baseUrl ?? DEFAULT_LLM_BASE,
-        model: cfg.embedModel ?? DEFAULT_EMBED_MODEL,
-        embeddingDims: cfg.embeddingDims ?? DEFAULT_EMBED_DIMS,
+        apiKey: n.apiKey,
+        baseURL: n.baseUrl ?? DEFAULT_LLM_BASE,
+        model: n.embedModel ?? DEFAULT_EMBED_MODEL,
+        embeddingDims: n.embeddingDims ?? DEFAULT_EMBED_DIMS,
       },
     },
     vectorStore: {
       provider: "qdrant",
       config: {
-        url: cfg.qdrantUrl,
-        apiKey: cfg.qdrantApiKey,
-        collectionName: cfg.qdrantCollection ?? DEFAULT_COLLECTION,
-        embeddingModelDims: cfg.embeddingDims ?? DEFAULT_EMBED_DIMS,
+        url: n.qdrantUrl,
+        apiKey: n.qdrantApiKey,
+        collectionName: n.qdrantCollection ?? DEFAULT_COLLECTION,
+        embeddingModelDims: n.embeddingDims ?? DEFAULT_EMBED_DIMS,
       },
     },
     historyDbPath: ":memory:",

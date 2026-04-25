@@ -6,7 +6,14 @@
  */
 import assert from "node:assert/strict"
 import test from "node:test"
-import { mem0Add, mem0Search, _resetMem0Client, type Mem0Config } from "./mem0.js"
+import {
+  mem0Add,
+  mem0Search,
+  _resetMem0Client,
+  normalizeMem0RuntimeConfig,
+  normalizeOpenAiCompatBaseUrl,
+  type Mem0Config,
+} from "./mem0.js"
 
 const baseConfig: Mem0Config = {
   apiKey: "sk-test",
@@ -24,4 +31,24 @@ test("mem0Search/mem0Add types compile and accept the new Mem0Config shape", () 
   assert.equal(typeof mem0Add, "function")
   assert.equal(typeof baseConfig.apiKey, "string")
   _resetMem0Client()
+})
+
+test("normalizeOpenAiCompatBaseUrl strips trailing slashes and fills blank", () => {
+  assert.equal(normalizeOpenAiCompatBaseUrl("https://api.siliconflow.cn/v1/"), "https://api.siliconflow.cn/v1")
+  assert.equal(normalizeOpenAiCompatBaseUrl("   ", "https://api.siliconflow.cn/v1"), "https://api.siliconflow.cn/v1")
+})
+
+test("normalizeMem0RuntimeConfig replaces empty model strings with SiliconFlow defaults", () => {
+  const n = normalizeMem0RuntimeConfig({
+    apiKey: "k",
+    baseUrl: "  ",
+    llmModel: "",
+    embedModel: "  ",
+    qdrantUrl: "https://q.example",
+    qdrantApiKey: "q",
+  })
+  assert.equal(n.baseUrl, "https://api.siliconflow.cn/v1")
+  assert.equal(n.llmModel, "Qwen/Qwen2.5-72B-Instruct")
+  assert.equal(n.embedModel, "BAAI/bge-m3")
+  assert.equal(n.embeddingDims, 1024)
 })
