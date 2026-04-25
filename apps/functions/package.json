@@ -1,0 +1,30 @@
+{
+  "name": "@pa/functions",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "lib/index.js",
+  "engines": {
+    "node": "20"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc --noEmit",
+    "deploy": "firebase deploy --only functions --project wekruit-5f89b"
+  },
+  "dependencies": {
+    "@pa/agent-registry": "0.0.1",
+    "@pa/agent-runtime": "0.0.1",
+    "@pa/core-types": "0.0.1",
+    "@pa/firebase-admin": "0.0.1",
+    "@pa/memory": "0.0.1",
+    "@pa/pa-orchestrator": "0.0.1",
+    "firebase-admin": "^13.0.0",
+    "firebase-functions": "^6.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "esbuild": "^0.27.7",
+    "typescript": "^5.3.0"
+  }
+}

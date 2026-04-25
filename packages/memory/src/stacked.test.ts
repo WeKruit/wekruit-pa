@@ -3,8 +3,16 @@ import test from "node:test"
 import type { Firestore } from "firebase-admin/firestore"
 import type { AgentDef } from "@pa/core-types"
 import { afterAssistantTurn, loadPersonalizationContext, type MemoryStackDeps } from "./stacked.js"
+import type { Mem0Config } from "./mem0.js"
 
 const fakeDb = null as unknown as Firestore
+
+const fakeMem0Config = (overrides: Partial<Mem0Config> = {}): Mem0Config => ({
+  apiKey: "k",
+  qdrantUrl: "http://qdrant.local",
+  qdrantApiKey: "q",
+  ...overrides,
+})
 
 const minimalAgent: AgentDef = {
   id: "ag1",
@@ -22,7 +30,7 @@ test("firestore_only does not call Mem0 search or add", async () => {
   let searchCalls = 0
   let addCalls = 0
   const deps: MemoryStackDeps = {
-    getMem0Config: () => ({ apiKey: "should-not-matter" }),
+    getMem0Config: () => fakeMem0Config({ apiKey: "should-not-matter" }),
     mem0Search: async () => {
       searchCalls++
       return []
@@ -46,7 +54,7 @@ test("mem0 with config runs search; writeback calls add", async () => {
   let searchCalls = 0
   let addCalls = 0
   const deps: MemoryStackDeps = {
-    getMem0Config: () => ({ apiKey: "k" }),
+    getMem0Config: () => fakeMem0Config(),
     mem0Search: async () => {
       searchCalls++
       return ["line1"]
@@ -102,7 +110,7 @@ test("mem0 without config returns degraded and does not throw on load", async ()
 
 test("search failure sets degraded and does not throw", async () => {
   const deps: MemoryStackDeps = {
-    getMem0Config: () => ({ apiKey: "k" }),
+    getMem0Config: () => fakeMem0Config(),
     mem0Search: async () => {
       throw new Error("network")
     },
@@ -120,7 +128,7 @@ test("search failure sets degraded and does not throw", async () => {
 
 test("add failure returns add_failed", async () => {
   const deps: MemoryStackDeps = {
-    getMem0Config: () => ({ apiKey: "k" }),
+    getMem0Config: () => fakeMem0Config(),
     mem0Search: async () => [],
     mem0Add: async () => {
       throw new Error("add")

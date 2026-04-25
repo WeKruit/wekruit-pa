@@ -12,9 +12,22 @@ export type MemoryStackDeps = {
 }
 
 function mem0ConfigFromEnv(): Mem0Config | null {
-  const k = process.env.MEM0_API_KEY
-  if (!k) return null
-  return { apiKey: k, baseUrl: process.env.MEM0_BASE_URL }
+  // OSS stack requires SiliconFlow LLM/embedder + Qdrant. Legacy MEM0_API_KEY
+  // path is dropped — fail closed to "no_api_key" if any required input is missing.
+  const apiKey = process.env.SILICONFLOW_API_KEY || process.env.MEM0_LLM_API_KEY
+  const qdrantUrl = process.env.QDRANT_URL
+  const qdrantApiKey = process.env.QDRANT_API_KEY
+  if (!apiKey || !qdrantUrl || !qdrantApiKey) return null
+  return {
+    apiKey,
+    baseUrl: process.env.MEM0_LLM_BASE_URL,
+    llmModel: process.env.MEM0_LLM_MODEL,
+    embedModel: process.env.MEM0_EMBED_MODEL,
+    embeddingDims: process.env.MEM0_EMBED_DIMS ? Number(process.env.MEM0_EMBED_DIMS) : undefined,
+    qdrantUrl,
+    qdrantApiKey,
+    qdrantCollection: process.env.MEM0_QDRANT_COLLECTION,
+  }
 }
 
 function defaultStackDeps(): MemoryStackDeps {

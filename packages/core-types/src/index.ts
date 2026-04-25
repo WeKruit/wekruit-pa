@@ -98,6 +98,130 @@ export const MemoryEntrySchema = z.object({
 })
 export type MemoryEntry = z.infer<typeof MemoryEntrySchema>
 
+export const ProcessingStatusSchema = z.enum(["pending", "running", "succeeded", "failed"])
+export type ProcessingStatus = z.infer<typeof ProcessingStatusSchema>
+
+export const InboundEventSchema = z.object({
+  id: z.string(),
+  userId: z.string(),
+  sessionId: z.string(),
+  channel: ChannelSchema,
+  externalChatId: z.string(),
+  from: z.string(),
+  body: z.string(),
+  status: ProcessingStatusSchema,
+  createdAt: z.string(),
+  updatedAt: z.string().optional(),
+  startedAt: z.string().optional(),
+  completedAt: z.string().optional(),
+  attempts: z.number().int().nonnegative().optional(),
+  leaseUntil: z.string().optional(),
+  claimedAt: z.string().optional(),
+  idempotencyKey: z.string(),
+  errorCode: z.string().optional(),
+  error: z.string().optional(),
+  rawMeta: z.record(z.unknown()).optional(),
+})
+export type InboundEvent = z.infer<typeof InboundEventSchema>
+
+export const TurnStageSchema = z.enum([
+  "received",
+  "memory_command",
+  "memory_load",
+  "llm",
+  "outbound",
+  "succeeded",
+  "failed",
+])
+export type TurnStage = z.infer<typeof TurnStageSchema>
+
+export const TurnSchema = z.object({
+  id: z.string(),
+  eventId: z.string(),
+  userId: z.string(),
+  sessionId: z.string(),
+  agentId: z.string().optional(),
+  status: ProcessingStatusSchema,
+  stage: TurnStageSchema,
+  createdAt: z.string(),
+  updatedAt: z.string().optional(),
+  completedAt: z.string().optional(),
+  memoryMode: MemoryModeSchema.optional(),
+  mem0Degraded: z.boolean().optional(),
+  mem0DegradedReason: z.string().optional(),
+  mem0SearchResultCount: z.number().int().nonnegative().optional(),
+  errorCode: z.string().optional(),
+  error: z.string().optional(),
+})
+export type Turn = z.infer<typeof TurnSchema>
+
+export const MemoryFactStatusSchema = z.enum(["confirmed", "deleted"])
+export type MemoryFactStatus = z.infer<typeof MemoryFactStatusSchema>
+
+export const MemoryFactSchema = z.object({
+  id: z.string(),
+  userId: z.string(),
+  content: z.string(),
+  status: MemoryFactStatusSchema,
+  source: z.enum(["explicit_user", "operator", "proposal"]).default("explicit_user"),
+  createdAt: z.string(),
+  updatedAt: z.string().optional(),
+  deletedAt: z.string().optional(),
+  deletedByEventId: z.string().optional(),
+})
+export type MemoryFact = z.infer<typeof MemoryFactSchema>
+
+export const MemoryActionTypeSchema = z.enum([
+  "remember",
+  "reject_sensitive",
+  "list",
+  "forget",
+  "clear_request",
+  "clear_confirm",
+])
+export type MemoryActionType = z.infer<typeof MemoryActionTypeSchema>
+
+export const MemoryActionSchema = z.object({
+  id: z.string(),
+  userId: z.string(),
+  eventId: z.string().optional(),
+  action: MemoryActionTypeSchema,
+  status: ProcessingStatusSchema,
+  content: z.string().optional(),
+  factIds: z.array(z.string()).optional(),
+  reason: z.string().optional(),
+  createdAt: z.string(),
+})
+export type MemoryAction = z.infer<typeof MemoryActionSchema>
+
+export const ConversationSummarySchema = z.object({
+  id: z.string(),
+  userId: z.string(),
+  sessionId: z.string(),
+  fromMessageCreatedAt: z.string(),
+  toMessageCreatedAt: z.string(),
+  summary: z.string(),
+  source: z.enum(["manual", "scheduled", "archive"]).default("scheduled"),
+  createdAt: z.string(),
+  updatedAt: z.string().optional(),
+})
+export type ConversationSummary = z.infer<typeof ConversationSummarySchema>
+
+export const MessageArchivePointerSchema = z.object({
+  id: z.string(),
+  userId: z.string(),
+  sessionId: z.string().optional(),
+  archivePath: z.string(),
+  month: z.string(),
+  messageCount: z.number().int().nonnegative(),
+  firstCreatedAt: z.string().optional(),
+  lastCreatedAt: z.string().optional(),
+  sha256: z.string().optional(),
+  createdAt: z.string(),
+  updatedAt: z.string().optional(),
+})
+export type MessageArchivePointer = z.infer<typeof MessageArchivePointerSchema>
+
 export const OutboundStatusSchema = z.enum(["pending", "sending", "sent", "failed"])
 export type OutboundStatus = z.infer<typeof OutboundStatusSchema>
 
@@ -110,7 +234,13 @@ export const OutboundMessageSchema = z.object({
   createdAt: z.string(),
   createdBy: z.string().optional(),
   idempotencyKey: z.string().optional(),
+  sessionId: z.string().optional(),
+  role: MessageRoleSchema.optional(),
   error: z.string().optional(),
+  errorCode: z.string().optional(),
+  attempts: z.number().int().nonnegative().optional(),
+  leaseUntil: z.string().optional(),
+  claimedAt: z.string().optional(),
   sentAt: z.string().optional(),
   updatedAt: z.string().optional(),
 })

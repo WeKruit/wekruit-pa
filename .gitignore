@@ -10,3 +10,5 @@ apps/dashboard-web/.env.pa-firebase-generated
 .DS_Store
 .google/
 *-debug.log
+apps/functions/lib/index.js
+apps/functions/lib/index.js.map

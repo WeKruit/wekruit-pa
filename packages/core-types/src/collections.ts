@@ -7,6 +7,12 @@ export const PA_COLLECTIONS = {
   sessions: "pa_sessions",
   messages: "pa_messages",
   agents: "pa_agents",
+  inboundEvents: "pa_inbound_events",
+  turns: "pa_turns",
+  memoryFacts: "pa_memory_facts",
+  memoryActions: "pa_memory_actions",
+  conversationSummaries: "pa_conversation_summaries",
+  messageArchives: "pa_message_archives",
   /** Feature flags / dynamic config (Remote Config pattern on Firestore) */
   remoteConfig: "pa_remote_config",
   /** Operator-queued iMessage send (consumed by macOS worker) */

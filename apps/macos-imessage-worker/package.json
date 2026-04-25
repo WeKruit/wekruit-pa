@@ -11,6 +11,7 @@
     "dev": "tsx src/index.ts",
     "start": "tsx src/index.ts",
     "send": "tsx src/send-once.ts",
+    "test": "node --import tsx --test src/inbound.test.ts src/outbox.test.ts src/local-queue.test.ts src/chat-db.test.ts src/inbox-sync.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
