@@ -1,38 +1,44 @@
 import "dotenv/config"
-import { randomUUID } from "node:crypto"
 import { hydrateOpenAiFromAtm } from "@pa/agent-runtime"
 import { getFirebaseApp, getFirestore } from "@pa/firebase-admin"
-import { processAvailableInboundEvents } from "./index.js"
+import { processPendingInboundEvents, startInboundEventListener } from "./index.js"
+
+// Sprint-1 prod: the orchestrator runs as a Cloud Functions Gen 2 Firestore
+// trigger (`apps/functions` -> `onPaInbound`). The long-running CLI listener
+// is now opt-in via PA_ORCHESTRATOR_LOCAL=1 to avoid double-processing
+// inbound events when both run.
+if (process.env.PA_ORCHESTRATOR_LOCAL !== "1") {
+  console.log(
+    new Date().toISOString(),
+    "[orchestrator] local listener disabled (set PA_ORCHESTRATOR_LOCAL=1 to enable). Cloud Functions handles inbound events.",
+  )
+  process.exit(0)
+}
 
 const atm = await hydrateOpenAiFromAtm()
-if (atm.ok) {
-  console.log(new Date().toISOString(), "[atm] OpenAI runtime:", atm.reason || "hydrated")
-} else if (atm.reason && atm.reason !== "no ATM url or token" && atm.reason !== "disabled") {
+if (atm.ok) console.log(new Date().toISOString(), "[atm] OpenAI runtime:", atm.reason || "hydrated")
+else if (atm.reason && atm.reason !== "no ATM url or token" && atm.reason !== "disabled") {
   console.log(new Date().toISOString(), "[atm] skipped or failed:", atm.reason)
 }
 
 const db = getFirestore(getFirebaseApp())
-const claimerId = process.env.PA_ORCHESTRATOR_ID || `pa-orchestrator-${randomUUID()}`
-const pollMs = Number(process.env.PA_ORCHESTRATOR_POLL_MS || "2000")
-const once = process.env.PA_ORCHESTRATOR_ONCE === "1"
 
-async function tick() {
-  const result = await processAvailableInboundEvents(db, { claimerId })
-  if (result.claimed > 0) {
-    console.log(new Date().toISOString(), "[orchestrator]", JSON.stringify(result))
-  }
+console.log(new Date().toISOString(), "[orchestrator] listening for pending inbound events")
+const stop = startInboundEventListener(db)
+
+const repairLimit = Number(process.env.PA_ORCHESTRATOR_STARTUP_REPAIR_LIMIT || "20")
+try {
+  const count = await processPendingInboundEvents(db, repairLimit)
+  if (count > 0) console.log(new Date().toISOString(), "[orchestrator] startup repair processed", count)
+} catch (e) {
+  console.error(new Date().toISOString(), "[orchestrator] startup repair error", e)
 }
 
-if (once) {
-  await tick()
-} else {
-  console.log(new Date().toISOString(), "[orchestrator] running", claimerId)
-  for (;;) {
-    try {
-      await tick()
-    } catch (e) {
-      console.error(new Date().toISOString(), "[orchestrator] tick error", e)
-    }
-    await new Promise((resolve) => setTimeout(resolve, pollMs))
-  }
-}
+process.once("SIGINT", () => {
+  stop()
+  process.exit(0)
+})
+process.once("SIGTERM", () => {
+  stop()
+  process.exit(0)
+})

@@ -13,8 +13,16 @@ export const PA_COLLECTIONS = {
   outbound: "pa_outbound",
   /** Durable inbound queue from channel adapters */
   inboundEvents: "pa_inbound_events",
-  /** Per-turn orchestration state machine */
+  /** Per-turn orchestration state machine (broker arch) */
   agentTurns: "pa_agent_turns",
+  /** Per-turn state machine consumed by pa-orchestrator (Phase 1 Mem0 path) */
+  turns: "pa_turns",
+  /** Memory action audit (remember/forget/list/clear) */
+  memoryActions: "pa_memory_actions",
+  /** Rolled-up conversation summaries */
+  conversationSummaries: "pa_conversation_summaries",
+  /** GCS pointer rows for archived month-bucketed messages */
+  messageArchives: "pa_message_archives",
   /** Connector / tool invocation ledger */
   toolCalls: "pa_tool_calls",
   /** Append-only audit log */

@@ -1,7 +1,6 @@
 import type { Firestore } from "firebase-admin/firestore"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import type { AgentDef, ChatMessage } from "@pa/core-types"
-import { loadFirestorePersonaCard } from "./firestore-persona.js"
 import { mem0Add, mem0Search, type Mem0Config } from "./mem0.js"
 import type { AfterTurnInput, AfterTurnResult, LoadContextInput, LoadContextResult } from "./types.js"
 
@@ -12,36 +11,40 @@ export type MemoryStackDeps = {
   mem0Add: typeof mem0Add
 }
 
+function envTrim(key: string): string | undefined {
+  const v = process.env[key]?.trim()
+  return v && v.length > 0 ? v : undefined
+}
+
 function mem0ConfigFromEnv(): Mem0Config | null {
-  const k = process.env.MEM0_API_KEY
-  if (!k) return null
-  const apiMode = process.env.MEM0_API_MODE === "oss" ? "oss" : "cloud"
-  return { apiKey: k, baseUrl: process.env.MEM0_BASE_URL, apiMode }
+  // OSS stack requires SiliconFlow LLM/embedder + Qdrant. Legacy MEM0_API_KEY
+  // path is dropped — fail closed to "no_api_key" if any required input is missing.
+  const apiKey = envTrim("SILICONFLOW_API_KEY") || envTrim("MEM0_LLM_API_KEY")
+  const qdrantUrl = envTrim("QDRANT_URL")
+  const qdrantApiKey = envTrim("QDRANT_API_KEY")
+  if (!apiKey || !qdrantUrl || !qdrantApiKey) return null
+  // Keep Mem0 on the same OpenAI-compatible host as the chat client (CF sets OPENAI_BASE_URL).
+  const baseFromMem0 = envTrim("MEM0_LLM_BASE_URL")
+  const baseFromOpenAI = envTrim("OPENAI_BASE_URL")
+  return {
+    apiKey,
+    baseUrl: baseFromMem0 ?? baseFromOpenAI,
+    llmModel: envTrim("MEM0_LLM_MODEL"),
+    embedModel: envTrim("MEM0_EMBED_MODEL"),
+    embeddingDims: (() => {
+      const d = envTrim("MEM0_EMBED_DIMS")
+      if (!d) return undefined
+      const n = Number(d)
+      return Number.isFinite(n) ? n : undefined
+    })(),
+    qdrantUrl,
+    qdrantApiKey,
+    qdrantCollection: envTrim("MEM0_QDRANT_COLLECTION"),
+  }
 }
 
 function defaultStackDeps(): MemoryStackDeps {
   return { getMem0Config: mem0ConfigFromEnv, mem0Search, mem0Add }
-}
-
-const unsafeMemoryPatterns = [
-  /ignore (all )?(previous|prior|above) instructions/i,
-  /reveal (your )?(system|developer) prompt/i,
-  /password|api[_\s-]?key|secret|token/i,
-  /call .*connector/i,
-  /always approve/i,
-]
-
-function unsafeMemoryReason(input: AfterTurnInput): string | null {
-  const text = `${input.userText}\n${input.assistantText}`
-  return unsafeMemoryPatterns.find((pattern) => pattern.test(text))?.source ?? null
-}
-
-async function appendMemoryEvent(db: Firestore, event: Record<string, unknown>) {
-  try {
-    await db.collection(PA_COLLECTIONS.memoryEvents).add(event)
-  } catch {
-    // Memory audit visibility is best-effort; Mem0 availability must not block replies.
-  }
 }
 
 /** True when `MEM0_API_KEY` is set (Mem0 can be used for search/writeback when mode allows). */
@@ -71,7 +74,7 @@ export async function loadRecentMessages(
  * `both` both add this block when Mem0 is configured. `input.memoryMode` is the only mode switch.
  */
 export async function loadPersonalizationContext(
-  db: Firestore,
+  _db: Firestore,
   input: LoadContextInput,
   _recentMessages: ChatMessage[],
   depsArg?: MemoryStackDeps
@@ -84,14 +87,8 @@ export async function loadPersonalizationContext(
     mem0SearchResultCount: 0,
     mem0DegradedReason: null,
   }
-  let personaCard: string | null = null
-  try {
-    personaCard = await loadFirestorePersonaCard(db, input.userId)
-  } catch {
-    personaCard = null
-  }
   if (mode === "firestore_only") {
-    return { ...base, memoryBlock: personaCard }
+    return base
   }
   const mem = d.getMem0Config()
   if (!mem) {
@@ -106,19 +103,18 @@ export async function loadPersonalizationContext(
   let mem0DegradedReason: LoadContextResult["mem0DegradedReason"] = null
   let mem0SearchResultCount = 0
   try {
-    const lines = await d.mem0Search(mem, input.userMessage, input.mem0UserId ?? input.userId)
+    const lines = await d.mem0Search(mem, input.userMessage, input.userId)
     mem0SearchResultCount = lines.length
     if (lines.length) memoryBlock = lines.map((l) => `- ${l}`).join("\n")
   } catch {
     mem0Degraded = true
     mem0DegradedReason = "search_failed"
   }
-  if (personaCard) memoryBlock = memoryBlock ? `${personaCard}\n\n${memoryBlock}` : personaCard
   return { memoryBlock, mem0Degraded, mem0SearchResultCount, mem0DegradedReason }
 }
 
 export async function afterAssistantTurn(
-  db: Firestore,
+  _db: Firestore,
   _agent: AgentDef,
   input: AfterTurnInput,
   depsArg?: MemoryStackDeps
@@ -132,18 +128,6 @@ export async function afterAssistantTurn(
   if (!mem) {
     return { writebackRan: false, writebackSkipReason: "no_mem0_config" }
   }
-  const unsafe = unsafeMemoryReason(input)
-  if (unsafe) {
-    await appendMemoryEvent(db, {
-      kind: "filter_block",
-      createdAt: new Date().toISOString(),
-      userId: input.userId,
-      mem0UserId: input.mem0UserId ?? input.userId,
-      message: "Blocked unsafe Mem0 writeback",
-      meta: { pattern: unsafe },
-    })
-    return { writebackRan: false, writebackSkipReason: "unsafe_memory" }
-  }
   try {
     await d.mem0Add(
       mem,
@@ -151,27 +135,12 @@ export async function afterAssistantTurn(
         { role: "user", content: input.userText },
         { role: "assistant", content: input.assistantText },
       ],
-      input.mem0UserId ?? input.userId
+      input.userId
     )
-    await appendMemoryEvent(db, {
-      kind: "write",
-      createdAt: new Date().toISOString(),
-      userId: input.userId,
-      mem0UserId: input.mem0UserId ?? input.userId,
-      message: "Mem0 writeback completed",
-    })
     return { writebackRan: true, writebackSkipReason: null }
   } catch {
     return { writebackRan: false, writebackSkipReason: "add_failed" }
   }
 }
 
-export {
-  buildPersonaCard,
-  isSurpriseEligible,
-  listConfirmedMemoryFacts,
-  loadFirestorePersonaCard,
-  recordMemoryEvolutionEvent,
-  recordSurpriseEvent,
-} from "./firestore-persona.js"
 export { type LoadContextInput, type LoadContextResult, type AfterTurnInput, type AfterTurnResult } from "./types.js"

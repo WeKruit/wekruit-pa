@@ -4,7 +4,14 @@ export type Mem0DegradedReason = "no_api_key" | "search_failed"
 
 export type LoadContextInput = {
   userId: string
-  /** Explicit Mem0 namespace. Defaults to userId. */
+  /**
+   * Optional explicit Mem0 partition key. When unset, `userId` is used as the
+   * partition (current production behavior). Set by the broker worker to
+   * `user.mem0UserId ?? user.id` so future migrations can decouple Mem0
+   * partitioning from Firestore user ids without a worker change.
+   * NOTE (Phase 1 merge): currently ignored by `stacked.ts` — see Phase 4
+   * (Agent / Memory Management) for full enablement.
+   */
   mem0UserId?: string
   sessionId: string
   userMessage: string
@@ -34,7 +41,7 @@ export type LoadContextResult = {
 
 export type AfterTurnInput = {
   userId: string
-  /** Explicit Mem0 namespace. Defaults to userId. */
+  /** See `LoadContextInput.mem0UserId` — currently advisory, ignored by stacked.ts. */
   mem0UserId?: string
   sessionId: string
   userText: string
@@ -45,5 +52,5 @@ export type AfterTurnInput = {
 export type AfterTurnResult = {
   writebackRan: boolean
   /** When writeback did not persist to Mem0 */
-  writebackSkipReason: "memory_mode" | "no_mem0_config" | "unsafe_memory" | "add_failed" | null
+  writebackSkipReason: "memory_mode" | "no_mem0_config" | "add_failed" | null
 }
