@@ -34,6 +34,30 @@ service cloud.firestore {
     match /pa_outbound/{id} {
       allow read, write: if isPaOperator();
     }
+    match /pa_inbound_events/{id} {
+      allow read, write: if isPaOperator();
+    }
+    match /pa_agent_turns/{id} {
+      allow read, write: if isPaOperator();
+    }
+    match /pa_tool_calls/{id} {
+      allow read, write: if isPaOperator();
+    }
+    match /pa_audit_events/{id} {
+      allow read, write: if isPaOperator();
+    }
+    match /pa_rate_limits/{id} {
+      allow read, write: if isPaOperator();
+    }
+    match /pa_abuse_events/{id} {
+      allow read, write: if isPaOperator();
+    }
+    match /pa_session_links/{id} {
+      allow read, write: if isPaOperator();
+    }
+    match /pa_memory_events/{id} {
+      allow read, write: if isPaOperator();
+    }
     match /{document=**} {
       allow read, write: if false;
     }

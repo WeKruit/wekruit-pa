@@ -1,8 +1,12 @@
 import { createHash, randomUUID } from "node:crypto"
 import type { Firestore } from "firebase-admin/firestore"
-import { PA_COLLECTIONS } from "@pa/core-types"
-import type { Channel, OnboardingStatus, User } from "@pa/core-types"
-import type { ChatMessage } from "@pa/core-types"
+import {
+  PA_COLLECTIONS,
+  type Channel,
+  type ChatMessage,
+  type OnboardingStatus,
+  type User,
+} from "@pa/core-types"
 
 const USERS = PA_COLLECTIONS.users
 const SESSIONS = PA_COLLECTIONS.sessions
@@ -25,14 +29,6 @@ export function normalizeImessageParticipant(participant: string): string {
   return normalizeE164(value)
 }
 
-/** 1:1 iMessage session key. Default: normalized E.164 (aligned with web outbound). Set `PA_IMESSAGE_SESSION_KEY=chatid` to restore `chat.db` id (legacy). */
-export function getImessageSessionExternalId(participantE164: string, chatId: string): string {
-  if (process.env.PA_IMESSAGE_SESSION_KEY === "chatid") {
-    return chatId
-  }
-  return normalizeE164(participantE164)
-}
-
 export async function findUserByParticipant(
   db: Firestore,
   participant: string
@@ -48,17 +44,14 @@ export async function findUserByParticipant(
   return { id: d.id, ...d.data() } as User
 }
 
-export async function createProvisionalUser(
-  db: Firestore,
-  participant: string
-): Promise<User> {
+export async function createProvisionalUser(db: Firestore, participant: string): Promise<User> {
   const id = randomUUID()
   const n = normalizeImessageParticipant(participant)
   const u: User = {
     id,
     phoneE164: n,
     createdAt: nowIso(),
-    onboardingStatus: "provisional" as OnboardingStatus,
+    onboardingStatus: "provisional",
     channels: { imessageHandle: n },
   }
   await db.collection(USERS).doc(id).set(u)
@@ -97,6 +90,7 @@ export async function getOrCreateSession(
     externalChatId,
     createdAt: nowIso(),
     lastMessageAt: nowIso(),
+    lifecycle: "open",
   })
   return { id, userId, externalChatId, channel }
 }
@@ -129,10 +123,10 @@ export async function appendMessage(
     ...(m.rawMeta ? { rawMeta: m.rawMeta } : {}),
   } satisfies ChatMessage
   await db.collection(MESSAGES).doc(id).set(doc)
-  await db
-    .collection(SESSIONS)
-    .doc(m.sessionId)
-    .set({ lastMessageAt: doc.createdAt }, { merge: true })
+  const sessionPatch: Record<string, string> = { lastMessageAt: doc.createdAt }
+  if (m.role === "user") sessionPatch.lastInboundAt = doc.createdAt
+  if (m.role === "assistant") sessionPatch.lastOutboundAt = doc.createdAt
+  await db.collection(SESSIONS).doc(m.sessionId).set(sessionPatch, { merge: true })
   return doc
 }
 
@@ -150,7 +144,10 @@ export async function findMessageByIdempotencyKey(
 }
 
 export async function setUserActiveAgent(db: Firestore, userId: string, agentId: string) {
-  await db.collection(USERS).doc(userId).set({ activeAgentId: agentId, updatedAt: nowIso() }, { merge: true })
+  await db
+    .collection(USERS)
+    .doc(userId)
+    .set({ activeAgentId: agentId, updatedAt: nowIso() }, { merge: true })
 }
 
 export async function setOnboardingStatus(
@@ -158,7 +155,10 @@ export async function setOnboardingStatus(
   userId: string,
   status: OnboardingStatus
 ) {
-  await db.collection(USERS).doc(userId).set({ onboardingStatus: status, updatedAt: nowIso() }, { merge: true })
+  await db
+    .collection(USERS)
+    .doc(userId)
+    .set({ onboardingStatus: status, updatedAt: nowIso() }, { merge: true })
 }
 
 export async function getUser(db: Firestore, userId: string): Promise<User | null> {

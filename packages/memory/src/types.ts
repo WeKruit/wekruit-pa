@@ -4,6 +4,8 @@ export type Mem0DegradedReason = "no_api_key" | "search_failed"
 
 export type LoadContextInput = {
   userId: string
+  /** Explicit Mem0 namespace. Defaults to userId. */
+  mem0UserId?: string
   sessionId: string
   userMessage: string
   /**
@@ -32,6 +34,8 @@ export type LoadContextResult = {
 
 export type AfterTurnInput = {
   userId: string
+  /** Explicit Mem0 namespace. Defaults to userId. */
+  mem0UserId?: string
   sessionId: string
   userText: string
   assistantText: string
@@ -41,5 +45,5 @@ export type AfterTurnInput = {
 export type AfterTurnResult = {
   writebackRan: boolean
   /** When writeback did not persist to Mem0 */
-  writebackSkipReason: "memory_mode" | "no_mem0_config" | "add_failed" | null
+  writebackSkipReason: "memory_mode" | "no_mem0_config" | "unsafe_memory" | "add_failed" | null
 }

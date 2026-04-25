@@ -11,6 +11,29 @@ export const PA_COLLECTIONS = {
   remoteConfig: "pa_remote_config",
   /** Operator-queued iMessage send (consumed by macOS worker) */
   outbound: "pa_outbound",
+  /** Durable inbound queue from channel adapters */
+  inboundEvents: "pa_inbound_events",
+  /** Per-turn orchestration state machine */
+  agentTurns: "pa_agent_turns",
+  /** Connector / tool invocation ledger */
+  toolCalls: "pa_tool_calls",
+  /** Append-only audit log */
+  auditEvents: "pa_audit_events",
+  /** Rate limit counters (sliding or fixed windows) */
+  rateLimits: "pa_rate_limits",
+  /** Abuse / safety signals */
+  abuseEvents: "pa_abuse_events",
+  /** Explicit links between channel sessions for one logical user */
+  sessionLinks: "pa_session_links",
+  /** Memory operator metadata and write/delete/export audit */
+  memoryEvents: "pa_memory_events",
+  agentVersions: "pa_agent_versions",
+  memoryProfiles: "pa_memory_profiles",
+  memoryFacts: "pa_memory_facts",
+  memoryEvolutionEvents: "pa_memory_evolution_events",
+  surpriseEvents: "pa_surprise_events",
+  scheduledJobs: "pa_scheduled_jobs",
+  runtimeHeartbeats: "pa_runtime_heartbeats",
 } as const
 
 export const PA_REMOTE_CONFIG_DOC = "platform"

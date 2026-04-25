@@ -30,6 +30,7 @@ npm run build
 | 使用 Firestore | 不要设 `USE_PLATFORM_FIREBASE=0`（不设或 `1`） |
 | LLM | `OPENAI_API_KEY` 或由 **ATM** 注入：`ATM_BASE_URL` + `VALET_ATM_TOKEN` / `PA_ATM_TOKEN`（见 [ATM.md](ATM.md)） |
 | 仅处理某号码 DM（可选） | `IMESSAGE_DM_ALLOWLIST=1` + `IMESSAGE_PEER=+1...` |
+| Brokered runtime | `PA_BROKER_MODE=primary`（worker 只入队；另开 orchestrator）或 `shadow`（迁移观测） |
 
 启动：
 
@@ -39,6 +40,12 @@ npm run start
 ```
 
 日志里应看到 `[firebase] connected`、`[outbox] Firestore listener started`（若 Firestore 正常），以及 `[health] http://127.0.0.1:8787/health`（除非 `PA_HEALTH_PORT=0`）。详见 [MAC-WORKER.md](MAC-WORKER.md)。
+
+Brokered 入站还需要另开 runtime：
+
+```bash
+npm run orchestrator
+```
 
 可选 Mem0 自托管见 [MEM0-SELF-HOST.md](MEM0-SELF-HOST.md)。
 
