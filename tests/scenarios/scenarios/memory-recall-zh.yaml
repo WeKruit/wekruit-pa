@@ -1,0 +1,29 @@
+id: memory_recall_zh_roast_goose
+description: |
+  Mirrors the screenshot-validated production flow:
+  user mentions roast goose, then golf, then asks what they ate.
+  Verifies that semantic memory persists and is recalled across turns.
+locale: zh-CN
+agentId: default
+# Broker identity. The runner writes a synthetic broker iMessage event to
+# pa_inbound_events; CF picks it up exactly as if the macOS worker had
+# written it. participant must match a known test handle.
+participant: "+19999990001"
+chatId: "iMessage;+19999990001"
+# Time budget per turn (ms) — orchestrator typically completes in 5-15s
+turnTimeoutMs: 30000
+turns:
+  - user: "我刚吃了烧鹅"
+    assert:
+      reply_min_length: 1
+      reply_not_contains_any: ["error", "failed", "undefined"]
+  - user: "我准备去打高尔夫"
+    assert:
+      reply_min_length: 1
+      reply_not_contains_any: ["error", "failed", "undefined"]
+  - user: "你记得我刚吃了什么吗"
+    assert:
+      # Recall must surface 烧鹅 (or close synonym 烤鹅).
+      # If this fails, semantic memory is not flowing.
+      reply_contains_any: ["烧鹅", "烤鹅", "鹅"]
+      reply_min_length: 1
