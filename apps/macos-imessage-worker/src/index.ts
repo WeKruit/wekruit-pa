@@ -17,16 +17,21 @@ import {
   loadPersonalizationContext,
   loadRecentMessages,
 } from "@pa/memory"
-import { useDmAllowlist, getPeerDisplay, getPeerAllowlist, isSamePeer } from "./config.js"
+import {
+  completeInboundEvent,
+  createInboundEvent,
+  failInboundEvent,
+} from "@pa/pa-broker"
 import {
   appendMessage,
   createProvisionalUser,
   findUserByParticipant,
   findMessageByIdempotencyKey,
-  getImessageSessionExternalId,
   getOrCreateSession,
   setOnboardingStatus,
-} from "./persistence.js"
+} from "@pa/pa-persistence"
+import { useDmAllowlist, getPeerDisplay, getPeerAllowlist, isSamePeer } from "./config.js"
+import { getImessageSessionExternalId } from "./imessage-session.js"
 import { getPlatformFlags } from "./platform-flags.js"
 import { startOutboundListener } from "./outbox.js"
 import {
@@ -107,12 +112,19 @@ if (health.port > 0) {
 }
 const RECENT = Number(process.env.PA_MESSAGE_HISTORY || "40")
 const POLL_MS = Number(process.env.PA_IMESSAGE_POLL_MS || "2000")
+const WATCH_MODE = (process.env.PA_IMESSAGE_WATCH_MODE || "poll").trim().toLowerCase()
 const SEND_ERROR_REPLIES = process.env.PA_SEND_ERROR_REPLIES === "1"
 const SEND_WELCOME_ON_START = process.env.PA_SEND_WELCOME_ON_START === "1"
 const WELCOME =
   process.env.PA_WELCOME_TEXT || "[pa] Assistant online. Send any message to continue."
 const handledMessageRows = new Set<number>()
 const handlingMessageRows = new Set<number>()
+
+function brokerMode(): "legacy" | "shadow" | "primary" {
+  const v = (process.env.PA_BROKER_MODE || "legacy").trim().toLowerCase()
+  if (v === "shadow" || v === "primary") return v
+  return "legacy"
+}
 
 async function handleDirectMessage(msg: Message) {
   if (msg.isFromMe) return
@@ -150,6 +162,27 @@ async function handleDirectMessage(msg: Message) {
     if (existingReply) {
       log("[skip] already completed inbound", idempotencyKey)
       return
+    }
+
+    const bm = brokerMode()
+    let inboundEventId: string | undefined
+    if (bm === "shadow" || bm === "primary") {
+      const created = await createInboundEvent(db, {
+        channel: "imessage",
+        idempotencyKey,
+        rawPayload: {
+          kind: "imessage",
+          participant: from,
+          chatId: msg.chatId,
+          messageRowId: msg.rowId,
+          text,
+        },
+      })
+      inboundEventId = created.id
+      log(`[broker] inbound ${created.id} created=${created.created} mode=${bm}`)
+      if (bm === "primary") {
+        return
+      }
     }
 
     try {
@@ -192,6 +225,12 @@ async function handleDirectMessage(msg: Message) {
           to: msg.chatId,
           text: "Service misconfigured: no agent. Check Firestore collection pa_agents.",
         })
+        if (bm === "shadow" && inboundEventId) {
+          await completeInboundEvent(db, inboundEventId, {
+            userId: user.id,
+            sessionId: session.id,
+          })
+        }
         return
       }
 
@@ -211,6 +250,12 @@ async function handleDirectMessage(msg: Message) {
         })
         await sdk.send({ to: msg.chatId, text: sorry })
         log("[flags] LLM kill switch active")
+        if (bm === "shadow" && inboundEventId) {
+          await completeInboundEvent(db, inboundEventId, {
+            userId: user.id,
+            sessionId: session.id,
+          })
+        }
         return
       }
 
@@ -229,6 +274,7 @@ async function handleDirectMessage(msg: Message) {
         db,
         {
           userId: user.id,
+          mem0UserId: user.mem0UserId ?? user.id,
           sessionId: session.id,
           userMessage: text,
           memoryMode: memMode,
@@ -255,6 +301,12 @@ async function handleDirectMessage(msg: Message) {
           idempotencyKey: outId,
         })
         await sdk.send({ to: msg.chatId, text: fallback })
+        if (bm === "shadow" && inboundEventId) {
+          await completeInboundEvent(db, inboundEventId, {
+            userId: user.id,
+            sessionId: session.id,
+          })
+        }
         return
       }
 
@@ -280,6 +332,7 @@ async function handleDirectMessage(msg: Message) {
 
       const afterMem = await afterAssistantTurn(db, effectiveAgent, {
         userId: user.id,
+        mem0UserId: user.mem0UserId ?? user.id,
         sessionId: session.id,
         userText: text,
         assistantText: reply,
@@ -314,8 +367,21 @@ async function handleDirectMessage(msg: Message) {
         " agent=",
         effectiveAgent.id
       )
+      if (bm === "shadow" && inboundEventId) {
+        await completeInboundEvent(db, inboundEventId, {
+          userId: user.id,
+          sessionId: session.id,
+        })
+      }
     } catch (e) {
       log("[turn error]", e)
+      if (bm === "shadow" && inboundEventId) {
+        await failInboundEvent(
+          db,
+          inboundEventId,
+          e instanceof Error ? e.message : String(e)
+        )
+      }
       if (SEND_ERROR_REPLIES) {
         try {
           await sdk.send({ to: msg.chatId, text: "Sorry — something went wrong. Try again shortly." })
@@ -330,14 +396,17 @@ async function handleDirectMessage(msg: Message) {
   }
 }
 
-await sdk.startWatching({
-  onDirectMessage: handleDirectMessage,
-  onError: (err) => {
-    log("[watcher error]", err)
-  },
-})
-
-log(`Watcher running. Allowlist: ${useDmAllowlist() ? getPeerDisplay() : "all DMs"}`)
+if (WATCH_MODE === "watch" || WATCH_MODE === "watch-and-poll") {
+  await sdk.startWatching({
+    onDirectMessage: handleDirectMessage,
+    onError: (err) => {
+      log("[watcher error]", err)
+    },
+  })
+  log(`Watcher running. Allowlist: ${useDmAllowlist() ? getPeerDisplay() : "all DMs"}`)
+} else {
+  log(`Watcher disabled (PA_IMESSAGE_WATCH_MODE=${WATCH_MODE}); using polling fallback`)
+}
 
 type PollQuery = Parameters<IMessageSDK["getMessages"]>[0] & {
   sinceRowId?: number

@@ -20,6 +20,8 @@
 ```bash
 cd apps/macos-imessage-worker
 # .env: 同上 Firebase；可选 PA_HEALTH_PORT=8787
+# production broker mode:
+export PA_BROKER_MODE=primary
 npm run start
 ```
 
@@ -48,8 +50,10 @@ npm run start
 
 用手机给 **该 Mac 上登录的 iMessage 号码** 发 DM。允许 list / 配置见 worker 的 `config`（如 `useDmAllowlist`）。
 
+- 另开 orchestrator：`npm run orchestrator`（或 `PA_ORCHESTRATOR_ONCE=1 npm run orchestrator` 做单批次测试）。
+- **Operations** 里应出现 `pa_inbound_events` → `pa_agent_turns` → `pa_outbound` 生命周期。
 - **Users** 里应出现/更新该用户；**User detail** 或 **Playground** 的 Messages 中应出现新行。
-- 若已 assign agent 且关 kill switch 且有 **OpenAI key**，会对 DM 做 LLM 回复；否则会有代码里的短回复/占位逻辑（见 `index.ts`）。
+- 若已 assign agent 且关 kill switch 且有 **OpenAI key**，orchestrator 会对 DM 做 LLM 回复；否则会降级为短回复/占位逻辑。
 
 ## 5. 远端 Dashboard 看本机健康（可选）
 

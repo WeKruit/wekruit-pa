@@ -7,6 +7,10 @@ This repository contains:
 - `apps/macos-imessage-worker`: Mac iMessage channel worker
 - `apps/dashboard-web`: operator dashboard
 - `packages/agent-runtime`: current LLM provider wrapper, target home for turn orchestration
+- `packages/pa-orchestrator`: independent broker consumer / turn runtime
+- `packages/pa-broker`: Firestore queue, turn, audit, and outbound helpers
+- `packages/pa-connectors`: connector registry, schemas, policy-aware router
+- `packages/pa-safety`: rate limits, prompt-injection checks, memory filters
 - `packages/memory`: Firestore transcript context and optional Mem0
 - `packages/core-types`: shared Firestore schemas
 - `packages/firebase-admin`: Admin SDK helper
@@ -20,6 +24,8 @@ Important docs:
 - [SEQUENCE.md](SEQUENCE.md)
 - [CURRENT_VS_TARGET.md](CURRENT_VS_TARGET.md)
 - [LEADER_HANDOFF.md](LEADER_HANDOFF.md)
+- [SCHEMAS.md](SCHEMAS.md)
+- [docs/PA-OPS-RUNBOOK.md](docs/PA-OPS-RUNBOOK.md)
 - [config/E2E-MAC-FIREBASE-DASHBOARD.md](config/E2E-MAC-FIREBASE-DASHBOARD.md)
 - [config/MEM0-SELF-HOST.md](config/MEM0-SELF-HOST.md)
 

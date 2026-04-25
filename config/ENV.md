@@ -13,10 +13,66 @@
 | `MEM0_API_KEY` / `MEM0_BASE_URL` | Optional Mem0 (hosted or self-hosted). |
 | `IMESSAGE_PEER` | Optional E.164 allowlist when `IMESSAGE_DM_ALLOWLIST=1`. |
 | `USE_PLATFORM_FIREBASE=0` | Local echo mode without Firestore. |
+| `PA_BROKER_MODE` | `legacy` (default), `shadow` (write `pa_inbound_events` and keep old direct path), or `primary` (adapter only; orchestrator owns turns). |
 | `PA_IMESSAGE_SESSION_KEY` | Default: **unset** — 1:1 iMessage sessions use **normalized E.164** as `externalChatId` (aligned with console outbound). Set to `chatid` to use Apple’s `chat.db` id per message (legacy; can split history vs `pa_outbound`). |
 | `FIREBASE_SERVICE_ACCOUNT_JSON` | Alternative to a file path: inline JSON string for the service account (useful with Infisical). |
 
+## `packages/pa-orchestrator`
+
+Run with `npm run orchestrator` from the repo root after `npm run build`, or `npm run start --workspace=@pa/pa-orchestrator` while developing.
+
+| Variable | Description |
+|----------|-------------|
+| `FIREBASE_SERVICE_ACCOUNT_JSON` / `GOOGLE_APPLICATION_CREDENTIALS` | Same Admin SDK credentials as worker. |
+| `PA_ORCHESTRATOR_ID` | Optional stable claimer id for leases. |
+| `PA_ORCHESTRATOR_POLL_MS` | Poll interval for `pa_inbound_events` (default `2000`). |
+| `PA_ORCHESTRATOR_ONCE=1` | Process one batch and exit, useful for manual tests. |
+| `PA_RATE_LIMIT_PER_WINDOW` / `PA_RATE_LIMIT_WINDOW_MS` | Rate limit controls (defaults `20` / `60000`). |
+| `PA_MATCHING_URL` / `PA_MATCHING_TOKEN` | First real downstream connector endpoint/token. |
+| `PA_AGENT_RUNTIME` | `chat`/unset keeps the current OpenAI-compatible Chat Completions path. `openai_agents` routes the LLM turn through the OpenAI Agents SDK while preserving the existing Firestore broker/orchestrator state machine. |
+| `OPENAI_BASE_URL` / `LITELLM_BASE_URL` | Optional OpenAI-compatible gateway base URL. For local LiteLLM use `http://127.0.0.1:4000/v1`. |
+| `LITELLM_API_KEY` / `LITELLM_MASTER_KEY` | LiteLLM proxy credential. The runtime uses `LITELLM_API_KEY` if `OPENAI_API_KEY` is unset; the proxy config reads `LITELLM_MASTER_KEY`. |
+| `DEEPSEEK_API_KEY` / `DEEPSEEK_BASE_URL` | Direct DeepSeek OpenAI-compatible runtime. Set agent `provider=deepseek` and model such as `deepseek-chat`. |
+| `SILICONFLOW_API_KEY` / `SILICONFLOW_BASE_URL` | Direct SiliconFlow OpenAI-compatible runtime. Set agent `provider=siliconflow` and a native SiliconFlow model id. |
+
 **ATM (on-site LLM runtime, same as other WeKruit vCode/VALET-style apps):** `ATM_BASE_URL` + `VALET_ATM_TOKEN` (or `PA_ATM_TOKEN` / `ATM_SERVICE_TOKEN`) to hydrate OpenAI key/base URL. See [ATM.md](ATM.md).
+
+## LiteLLM + OpenAI Agents SDK local harness
+
+LiteLLM is the gateway layer for aliases, budgets, retries, and rate limits. The local config lives at [`litellm/pa-litellm.yaml`](litellm/pa-litellm.yaml) and defines:
+
+| Alias | Target |
+|-------|--------|
+| `pa-fast` | `openai/gpt-5.4-nano` |
+| `pa-stable` | `openai/gpt-4o-mini` |
+| `pa-deepseek` | DeepSeek `deepseek-chat` through the OpenAI-compatible API |
+| `pa-siliconflow` | SiliconFlow `Qwen/Qwen2.5-7B-Instruct` through the OpenAI-compatible API |
+
+Run LiteLLM locally, then point the orchestrator at it:
+
+```bash
+export OPENAI_API_KEY=sk-...
+export DEEPSEEK_API_KEY=...
+export SILICONFLOW_API_KEY=...
+export LITELLM_MASTER_KEY=sk-pa-local
+litellm --config config/litellm/pa-litellm.yaml --port 4000
+
+export LITELLM_API_KEY=sk-pa-local
+export LITELLM_BASE_URL=http://127.0.0.1:4000/v1
+export PA_AGENT_RUNTIME=openai_agents
+npm run orchestrator
+```
+
+Probe exact chat-completions access before making an agent default:
+
+```bash
+npm run probe:model -- gpt-5.4-nano
+OPENAI_BASE_URL=http://127.0.0.1:4000/v1 LITELLM_API_KEY=sk-pa-local npm run probe:model -- pa-fast
+npm run probe:model -- deepseek-chat deepseek
+npm run probe:model -- Qwen/Qwen2.5-7B-Instruct siliconflow
+# Optional raw model endpoint probe, only for providers that support /models/{id}
+npm run probe:model -- gpt-5.4-nano openai model
+```
 
 ## WeKruit alignment (secrets & siblings)
 

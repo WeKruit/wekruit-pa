@@ -11,6 +11,8 @@
     "isDefault": true,
     "version": "1",
     "memoryMode": "firestore_only",
-    "toolPolicy": "none"
+    "toolPolicy": "allowlist",
+    "allowedConnectors": ["fake-echo"],
+    "toolBudgetPerTurn": 1
   }
 ]

@@ -9,11 +9,14 @@
     "firebase-tools": "15.3.1"
   },
   "scripts": {
-    "build": "npm run build --workspace=@pa/core-types --workspace=@pa/firebase-admin --workspace=@pa/agent-runtime --workspace=@pa/memory --workspace=@pa/agent-registry",
+    "build": "npm run build --workspace=@pa/core-types --workspace=@pa/firebase-admin --workspace=@pa/pa-persistence --workspace=@pa/pa-broker --workspace=@pa/pa-safety --workspace=@pa/pa-connectors --workspace=@pa/agent-runtime --workspace=@pa/memory --workspace=@pa/agent-registry --workspace=@pa/pa-orchestrator",
+    "orchestrator": "npm run start --workspace=@pa/pa-orchestrator",
     "build:all": "npm run build && npm run build --workspace=@pa/dashboard-web",
     "build:dashboard:with-injected-env": "node scripts/inject-pa-dashboard-vite-env.mjs && npm run build --workspace=@pa/dashboard-web",
     "build:all:prod": "npm run build && npm run build:dashboard:with-injected-env",
     "typecheck": "npm run typecheck -ws --if-present",
+    "test": "npm run test -ws --if-present",
+    "probe:model": "node scripts/probe-pa-model.mjs",
     "sync-pa-vite:firebase": "node scripts/fetch-pa-dashboard-vite-from-firebase.mjs",
     "deploy:hosting:from-firebase": "node scripts/deploy-pa-hosting-from-firebase.mjs",
     "deploy:hosting": "firebase deploy --only hosting:pa-dashboard --project wekruit-5f89b --non-interactive",

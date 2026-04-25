@@ -3,33 +3,58 @@ import OpenAI from "openai"
 import { toOpenAIMessages } from "./messages.js"
 import type { AgentTurnContext, RunAgentTurnResult } from "./types.js"
 
-function openAICompatKey(): string {
-  return (
-    process.env.OPENAI_API_KEY ||
-    process.env.LITELLM_API_KEY ||
-    process.env.OPENROUTER_API_KEY ||
-    ""
-  )
+export type OpenAICompatConfig = {
+  apiKey: string
+  baseURL?: string
 }
 
-function openAICompatBaseURL(): string | undefined {
-  const b =
-    process.env.OPENAI_BASE_URL ||
-    process.env.LITELLM_BASE_URL ||
-    process.env.OPENROUTER_BASE_URL
-  return b && b.length > 0 ? b : undefined
+function nonEmpty(value: string | undefined): string | undefined {
+  return value && value.length > 0 ? value : undefined
 }
 
-const defaultClient = () =>
-  new OpenAI({
-    apiKey: openAICompatKey(),
-    baseURL: openAICompatBaseURL(),
+export function resolveOpenAICompatConfig(agent: Pick<AgentDef, "provider">): OpenAICompatConfig {
+  if (agent.provider === "deepseek") {
+    return {
+      apiKey: process.env.DEEPSEEK_API_KEY || "",
+      baseURL: process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com/v1",
+    }
+  }
+  if (agent.provider === "siliconflow") {
+    return {
+      apiKey: process.env.SILICONFLOW_API_KEY || "",
+      baseURL: process.env.SILICONFLOW_BASE_URL || "https://api.siliconflow.cn/v1",
+    }
+  }
+  if (process.env.LITELLM_BASE_URL) {
+    return {
+      apiKey: process.env.LITELLM_API_KEY || process.env.OPENAI_API_KEY || "",
+      baseURL: process.env.LITELLM_BASE_URL,
+    }
+  }
+  if (process.env.OPENROUTER_BASE_URL) {
+    return {
+      apiKey: process.env.OPENROUTER_API_KEY || "",
+      baseURL: process.env.OPENROUTER_BASE_URL,
+    }
+  }
+  return {
+    apiKey: process.env.OPENAI_API_KEY || "",
+    baseURL: nonEmpty(process.env.OPENAI_BASE_URL),
+  }
+}
+
+const defaultClient = (agent: Pick<AgentDef, "provider">) => {
+  const config = resolveOpenAICompatConfig(agent)
+  return new OpenAI({
+    apiKey: config.apiKey,
+    baseURL: config.baseURL,
   })
+}
 
 export async function runWithOpenAI(
   agent: AgentDef,
   params: { messages: OpenAI.Chat.ChatCompletionMessageParam[]; signal?: AbortSignal },
-  client: OpenAI = defaultClient()
+  client: OpenAI = defaultClient(agent)
 ): Promise<RunAgentTurnResult> {
   const r = await client.chat.completions.create(
     {
@@ -53,7 +78,7 @@ export async function runWithOpenAI(
 export async function runOpenAITurn(ctx: AgentTurnContext, client?: OpenAI): Promise<RunAgentTurnResult> {
   const history = ctx.history
     .filter((m) => m.role === "user" || m.role === "assistant")
-    .map((m) => ({ role: m.role, body: m.body }))
+    .map((m) => ({ role: m.role, body: m.body, createdAt: m.createdAt }))
   const messages = toOpenAIMessages(ctx.systemPrompt, ctx.memoryBlock, [
     ...history,
     { role: "user" as const, body: ctx.userMessage },

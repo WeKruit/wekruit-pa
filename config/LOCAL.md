@@ -29,7 +29,9 @@ npm run build
 | Firebase Admin | `FIREBASE_SERVICE_ACCOUNT_JSON`（整段 JSON 字符串）或 `GOOGLE_APPLICATION_CREDENTIALS`（JSON 文件路径） |
 | 使用 Firestore | 不要设 `USE_PLATFORM_FIREBASE=0`（不设或 `1`） |
 | LLM | `OPENAI_API_KEY` 或由 **ATM** 注入：`ATM_BASE_URL` + `VALET_ATM_TOKEN` / `PA_ATM_TOKEN`（见 [ATM.md](ATM.md)） |
+| Agent harness | 默认不设 `PA_AGENT_RUNTIME`（现有 chat completions）；要试 OpenAI Agents SDK 设 `PA_AGENT_RUNTIME=openai_agents` |
 | 仅处理某号码 DM（可选） | `IMESSAGE_DM_ALLOWLIST=1` + `IMESSAGE_PEER=+1...` |
+| Brokered runtime | `PA_BROKER_MODE=primary`（worker 只入队；另开 orchestrator）或 `shadow`（迁移观测） |
 
 启动：
 
@@ -40,7 +42,42 @@ npm run start
 
 日志里应看到 `[firebase] connected`、`[outbox] Firestore listener started`（若 Firestore 正常），以及 `[health] http://127.0.0.1:8787/health`（除非 `PA_HEALTH_PORT=0`）。详见 [MAC-WORKER.md](MAC-WORKER.md)。
 
+Brokered 入站还需要另开 runtime：
+
+```bash
+npm run orchestrator
+```
+
 可选 Mem0 自托管见 [MEM0-SELF-HOST.md](MEM0-SELF-HOST.md)。
+
+### 可选：LiteLLM 本地网关
+
+如果要把 rate limit / budget / model alias 放到代理层：
+
+```bash
+export OPENAI_API_KEY=sk-...
+export DEEPSEEK_API_KEY=...
+export SILICONFLOW_API_KEY=...
+export LITELLM_MASTER_KEY=sk-pa-local
+litellm --config config/litellm/pa-litellm.yaml --port 4000
+```
+
+然后在 orchestrator 的 shell 里：
+
+```bash
+export LITELLM_API_KEY=sk-pa-local
+export LITELLM_BASE_URL=http://127.0.0.1:4000/v1
+export PA_AGENT_RUNTIME=openai_agents
+npm run probe:model -- pa-fast
+npm run orchestrator
+```
+
+也可以不跑 LiteLLM，直接在 Agent Registry 里设：
+
+| Provider | Model 示例 | 需要 env |
+|----------|------------|----------|
+| `deepseek` | `deepseek-chat` | `DEEPSEEK_API_KEY` |
+| `siliconflow` | `Qwen/Qwen2.5-7B-Instruct` | `SILICONFLOW_API_KEY` |
 
 ## 3. Dashboard：`apps/dashboard-web/.env.local`
 

@@ -13,11 +13,14 @@
   },
   "scripts": {
     "build": "tsc",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test src/*.test.ts"
   },
   "dependencies": {
+    "@openai/agents": "^0.8.5",
     "@pa/core-types": "0.0.1",
-    "openai": "^4.80.0"
+    "openai": "^4.80.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

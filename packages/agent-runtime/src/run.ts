@@ -1,5 +1,6 @@
 import OpenAI from "openai"
 import { runOpenAITurn, runWithOpenAI } from "./openai-provider.js"
+import { runOpenAIAgentsTurn } from "./openai-agents-adapter.js"
 import { assertProviderKey } from "./env.js"
 import type { AgentTurnContext, RunAgentTurnResult } from "./types.js"
 
@@ -9,7 +10,15 @@ import type { AgentTurnContext, RunAgentTurnResult } from "./types.js"
 export async function runAgentTurn(ctx: AgentTurnContext, openAIClient?: OpenAI): Promise<RunAgentTurnResult> {
   const { agent } = ctx
   assertProviderKey(agent.provider)
-  if (agent.provider === "openai" || agent.provider === "other") {
+  if (!openAIClient && process.env.PA_AGENT_RUNTIME === "openai_agents") {
+    return runOpenAIAgentsTurn(ctx)
+  }
+  if (
+    agent.provider === "openai" ||
+    agent.provider === "other" ||
+    agent.provider === "deepseek" ||
+    agent.provider === "siliconflow"
+  ) {
     return runOpenAITurn(ctx, openAIClient)
   }
   if (agent.provider === "azure_openai") {

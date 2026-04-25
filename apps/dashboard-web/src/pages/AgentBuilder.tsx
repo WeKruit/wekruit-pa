@@ -12,11 +12,20 @@ type AgentRow = {
   model: string
   temperature: number
   memoryMode: string
+  toolPolicy: string
+  allowedConnectors: string
+  toolBudgetPerTurn: number
   isDefault?: boolean
+  status?: string
+  personaTone?: string
+  personaStyle?: string
+  personaBoundaries?: string
+  personaGoals?: string
 }
 
-const PROVIDERS = ["openai", "azure_openai", "anthropic", "other"] as const
+const PROVIDERS = ["openai", "deepseek", "siliconflow", "azure_openai", "anthropic", "other"] as const
 const MODES = ["firestore_only", "mem0", "both"] as const
+const TOOL_POLICIES = ["none", "allowlist", "restricted"] as const
 
 export function AgentBuilder() {
   const [rows, setRows] = useState<AgentRow[]>([])
@@ -60,7 +69,23 @@ export function AgentBuilder() {
           model: String(x.model || "gpt-4o-mini"),
           temperature: typeof x.temperature === "number" ? x.temperature : 0.7,
           memoryMode: String(x.memoryMode || "firestore_only"),
+          toolPolicy: String(x.toolPolicy || "none"),
+          allowedConnectors: Array.isArray(x.allowedConnectors)
+            ? x.allowedConnectors.join(", ")
+            : "",
+          toolBudgetPerTurn: typeof x.toolBudgetPerTurn === "number" ? x.toolBudgetPerTurn : 1,
           isDefault: Boolean(x.isDefault),
+          status: String(x.status || "published"),
+          personaTone: String((x.persona as { tone?: string } | undefined)?.tone || ""),
+          personaStyle: Array.isArray((x.persona as { style?: unknown[] } | undefined)?.style)
+            ? ((x.persona as { style: string[] }).style).join(", ")
+            : "",
+          personaBoundaries: Array.isArray((x.persona as { boundaries?: unknown[] } | undefined)?.boundaries)
+            ? ((x.persona as { boundaries: string[] }).boundaries).join("\n")
+            : "",
+          personaGoals: Array.isArray((x.persona as { goals?: unknown[] } | undefined)?.goals)
+            ? ((x.persona as { goals: string[] }).goals).join("\n")
+            : "",
         }
       })
     )
@@ -80,7 +105,20 @@ export function AgentBuilder() {
         model: r.model,
         temperature: r.temperature,
         memoryMode: r.memoryMode,
+        toolPolicy: r.toolPolicy,
+        allowedConnectors: r.allowedConnectors
+          .split(",")
+          .map((x) => x.trim())
+          .filter(Boolean),
+        toolBudgetPerTurn: r.toolBudgetPerTurn,
         isDefault: r.isDefault === true,
+        status: r.status || "draft",
+        persona: {
+          tone: r.personaTone?.trim() || undefined,
+          style: r.personaStyle?.split(",").map((x) => x.trim()).filter(Boolean) || [],
+          boundaries: r.personaBoundaries?.split("\n").map((x) => x.trim()).filter(Boolean) || [],
+          goals: r.personaGoals?.split("\n").map((x) => x.trim()).filter(Boolean) || [],
+        },
         updatedAt: new Date().toISOString(),
       })
       await load()
@@ -102,9 +140,12 @@ export function AgentBuilder() {
         model: "gpt-4o-mini",
         temperature: 0.7,
         memoryMode: "firestore_only",
+        status: "draft",
         isDefault: false,
         version: "1",
         toolPolicy: "none",
+        allowedConnectors: [],
+        toolBudgetPerTurn: 1,
         updatedAt: new Date().toISOString(),
       })
       await load()
@@ -253,6 +294,63 @@ export function AgentBuilder() {
                 ))}
               </select>
             </label>
+            <label>
+              Tool policy
+              <br />
+              <select
+                value={r.toolPolicy}
+                onChange={(e) =>
+                  setRows((x) => x.map((y) => (y.id === r.id ? { ...y, toolPolicy: e.target.value } : y)))
+                }
+              >
+                {TOOL_POLICIES.map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Tool budget
+              <br />
+              <input
+                type="number"
+                min={0}
+                value={r.toolBudgetPerTurn}
+                onChange={(e) =>
+                  setRows((x) =>
+                    x.map((y) => (y.id === r.id ? { ...y, toolBudgetPerTurn: Number(e.target.value) } : y))
+                  )
+                }
+              />
+            </label>
+            <label>
+              Status
+              <br />
+              <select
+                value={r.status || "draft"}
+                onChange={(e) =>
+                  setRows((x) => x.map((y) => (y.id === r.id ? { ...y, status: e.target.value } : y)))
+                }
+              >
+                <option value="draft">draft</option>
+                <option value="published">published</option>
+                <option value="archived">archived</option>
+              </select>
+            </label>
+            <label>
+              Allowed connectors
+              <br />
+              <input
+                placeholder="fake-echo, wekruit-matching"
+                value={r.allowedConnectors}
+                onChange={(e) =>
+                  setRows((x) =>
+                    x.map((y) => (y.id === r.id ? { ...y, allowedConnectors: e.target.value } : y))
+                  )
+                }
+              />
+            </label>
             <label style={{ display: "flex", alignItems: "end", gap: 6 }}>
               <input
                 type="checkbox"
@@ -266,6 +364,57 @@ export function AgentBuilder() {
               default
             </label>
           </div>
+          <div className="persona-grid">
+            <label>
+              Persona tone
+              <br />
+              <input
+                placeholder="warm, concise, direct"
+                value={r.personaTone || ""}
+                onChange={(e) =>
+                  setRows((x) => x.map((y) => (y.id === r.id ? { ...y, personaTone: e.target.value } : y)))
+                }
+              />
+            </label>
+            <label>
+              Persona style
+              <br />
+              <input
+                placeholder="comma-separated: concise, operator-safe"
+                value={r.personaStyle || ""}
+                onChange={(e) =>
+                  setRows((x) => x.map((y) => (y.id === r.id ? { ...y, personaStyle: e.target.value } : y)))
+                }
+              />
+            </label>
+            <label>
+              Boundaries
+              <br />
+              <textarea
+                placeholder="One boundary per line"
+                value={r.personaBoundaries || ""}
+                onChange={(e) =>
+                  setRows((x) => x.map((y) => (y.id === r.id ? { ...y, personaBoundaries: e.target.value } : y)))
+                }
+              />
+            </label>
+            <label>
+              Goals
+              <br />
+              <textarea
+                placeholder="One goal per line"
+                value={r.personaGoals || ""}
+                onChange={(e) =>
+                  setRows((x) => x.map((y) => (y.id === r.id ? { ...y, personaGoals: e.target.value } : y)))
+                }
+              />
+            </label>
+          </div>
+          {r.model.includes("gpt-5.4-nano") ? (
+            <p className="warning-text">
+              Do not make this the live default until model probe status is passed; current direct OpenAI access returned 404.
+            </p>
+          ) : null}
           {workerHealth &&
             (r.memoryMode === "mem0" || r.memoryMode === "both") &&
             workerHealth.mem0ApiKeyPresent === false && (

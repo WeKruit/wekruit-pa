@@ -10,6 +10,7 @@ export { toOpenAIMessages } from "./messages.js"
 export { assertProviderKey, hasOpenAICompatKey } from "./env.js"
 export type { AgentTurnContext, RunAgentTurnResult } from "./types.js"
 export { runAgentTurn } from "./run.js"
+export { buildAgentsInput, runOpenAIAgentsTurn } from "./openai-agents-adapter.js"
 export { hydrateOpenAiFromAtm, getAtmBearerToken } from "./atm-llm-runtime.js"
 
 export function toOpenAIMessageList(

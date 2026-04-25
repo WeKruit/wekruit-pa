@@ -10,15 +10,19 @@ import type { ChatMessage } from "@pa/core-types"
 export function toOpenAIMessages(
   systemPrompt: string,
   memoryBlock: string | null,
-  history: Pick<ChatMessage, "role" | "body">[]
+  history: Pick<ChatMessage, "role" | "body">[] | Pick<ChatMessage, "role" | "body" | "createdAt">[]
 ): OpenAI.Chat.ChatCompletionMessageParam[] {
+  const memoryGuidance =
+    "You may use the visible recent transcript and relevant memory below as your conversation memory. Do not claim you lack conversation history when the needed answer is present there."
   const system = memoryBlock
-    ? `${systemPrompt}\n\n---\nRelevant memory:\n${memoryBlock}`
-    : systemPrompt
+    ? `${systemPrompt}\n\n${memoryGuidance}\n\n---\nRelevant memory:\n${memoryBlock}`
+    : `${systemPrompt}\n\n${memoryGuidance}`
   const out: OpenAI.Chat.ChatCompletionMessageParam[] = [{ role: "system", content: system }]
   for (const m of history) {
-    if (m.role === "user") out.push({ role: "user", content: m.body })
-    else if (m.role === "assistant") out.push({ role: "assistant", content: m.body })
+    const createdAt = "createdAt" in m ? m.createdAt : undefined
+    const content = createdAt ? `[${createdAt}] ${m.body}` : m.body
+    if (m.role === "user") out.push({ role: "user", content })
+    else if (m.role === "assistant") out.push({ role: "assistant", content })
   }
   return out
 }
