@@ -12,6 +12,7 @@ import {
   _resetMem0Client,
   normalizeMem0RuntimeConfig,
   normalizeOpenAiCompatBaseUrl,
+  normalizeQdrantUrl,
   type Mem0Config,
 } from "./mem0.js"
 
@@ -51,4 +52,10 @@ test("normalizeMem0RuntimeConfig replaces empty model strings with SiliconFlow d
   assert.equal(n.llmModel, "Qwen/Qwen2.5-72B-Instruct")
   assert.equal(n.embedModel, "BAAI/bge-m3")
   assert.equal(n.embeddingDims, 1024)
+})
+
+test("normalizeQdrantUrl makes default ports explicit for mem0 Qdrant config", () => {
+  assert.equal(normalizeQdrantUrl("https://qdrant.example/"), "https://qdrant.example:443")
+  assert.equal(normalizeQdrantUrl("http://qdrant.example/path/"), "http://qdrant.example:80/path")
+  assert.equal(normalizeQdrantUrl("https://qdrant.example:6333"), "https://qdrant.example:6333")
 })

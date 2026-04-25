@@ -17,8 +17,7 @@ import { setGlobalOptions, logger } from "firebase-functions/v2"
 import { initializeApp, getApps } from "firebase-admin/app"
 import { getFirestore } from "firebase-admin/firestore"
 import {
-  processInboundEvent,
-  createFirestoreOrchestratorStore,
+  claimAndProcessInboundEvent,
 } from "@pa/pa-orchestrator"
 import type { InboundEvent } from "@pa/core-types"
 
@@ -82,10 +81,9 @@ export const onPaInbound = onDocumentCreated(
     process.env.MEM0_EMBED_DIMS = trimOr(process.env.MEM0_EMBED_DIMS, "1024")
 
     const db = getFirestore()
-    const store = createFirestoreOrchestratorStore(db)
     try {
-      await processInboundEvent(data, store)
-      logger.info("onPaInbound processed", { eventId: data.id, userId: data.userId })
+      const processed = await claimAndProcessInboundEvent(db, data.id)
+      logger.info("onPaInbound processed", { eventId: data.id, userId: data.userId, processed })
     } catch (err) {
       logger.error("onPaInbound failed", {
         eventId: data.id,

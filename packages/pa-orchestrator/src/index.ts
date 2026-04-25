@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto"
-import type { Firestore } from "firebase-admin/firestore"
+import { FieldValue, type Firestore } from "firebase-admin/firestore"
 import { getAgentById, getDefaultAgent } from "@pa/agent-registry"
 import { runAgentTurn as defaultRunAgentTurn } from "@pa/agent-runtime"
 import {
@@ -259,7 +259,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     )
     await store.updateTurn(turnId, {
       mem0Degraded: mem.mem0Degraded,
-      mem0DegradedReason: mem.mem0DegradedReason ?? undefined,
+      mem0DegradedReason: mem.mem0DegradedReason ?? null,
       mem0SearchResultCount: mem.mem0SearchResultCount,
       stage: "llm" satisfies TurnStage,
       updatedAt: store.nowIso(),
@@ -341,7 +341,13 @@ export function createFirestoreOrchestratorStore(db: Firestore): OrchestratorSto
     },
     async markEventSucceeded(eventId) {
       await db.collection(PA_COLLECTIONS.inboundEvents).doc(eventId).set(
-        { status: "succeeded", completedAt: nowIso(), updatedAt: nowIso() },
+        {
+          status: "succeeded",
+          completedAt: nowIso(),
+          updatedAt: nowIso(),
+          errorCode: FieldValue.delete(),
+          error: FieldValue.delete(),
+        },
         { merge: true }
       )
     },
