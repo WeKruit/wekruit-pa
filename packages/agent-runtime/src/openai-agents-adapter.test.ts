@@ -113,3 +113,48 @@ test("buildAgentsInputItems drops blank systemInputs entries", async () => {
   assert.equal(sys.role, "system")
   assert.equal(sys.content, "real")
 })
+
+// -------- Phase 10.5 T9: extractUsage tests --------
+
+
+import { __forTesting as t9ForTesting } from "./openai-agents-adapter.js"
+
+test("extractUsage sums tokens across rawResponses[].usage and counts web_search calls", () => {
+  const fakeResult = {
+    rawResponses: [
+      {
+        usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+        output: [
+          { type: "web_search_call" },
+          { type: "message" },
+        ],
+      },
+      {
+        usage: { inputTokens: 20, outputTokens: 7, totalTokens: 27 },
+        output: [{ type: "web_search_call" }],
+      },
+    ],
+  }
+  const usage = t9ForTesting.extractUsage(fakeResult, "openai", "gpt-5.4-nano")
+  assert.equal(usage.provider, "openai")
+  assert.equal(usage.model, "gpt-5.4-nano")
+  assert.equal(usage.inputTokens, 30)
+  assert.equal(usage.outputTokens, 12)
+  assert.equal(usage.totalTokens, 42)
+  assert.deepEqual(usage.hostedToolCalls, [{ name: "web_search", count: 2 }])
+})
+
+test("extractUsage returns provider+model only when SDK omits usage and tools", () => {
+  const usage = t9ForTesting.extractUsage({ rawResponses: [] }, "siliconflow", "deepseek-chat")
+  assert.equal(usage.provider, "siliconflow")
+  assert.equal(usage.model, "deepseek-chat")
+  assert.equal(usage.inputTokens, undefined)
+  assert.equal(usage.hostedToolCalls, undefined)
+})
+
+test("extractUsage tolerates missing rawResponses field entirely (defensive)", () => {
+  const usage = t9ForTesting.extractUsage({}, "openai", "gpt-5.4-nano")
+  assert.equal(usage.provider, "openai")
+  assert.equal(usage.inputTokens, undefined)
+  assert.equal(usage.hostedToolCalls, undefined)
+})

@@ -642,3 +642,81 @@ test("buildTurnTools parallel calls each see unique snapshots (no double-spend)"
   assert.equal(fulfilled, 2)
   assert.equal(rejected, 1)
 })
+
+// -------- Phase 10.5 T9: per-turn usage persistence tests --------
+
+test("processInboundEvent writes pa_turns.usage when runAgentTurn returns usage", async () => {
+  const updates: Record<string, unknown>[] = []
+  const store = makeStore({
+    runAgentTurn: async () => ({
+      text: "ok",
+      usage: {
+        provider: "openai",
+        model: "gpt-5.4-nano",
+        inputTokens: 50,
+        outputTokens: 12,
+        totalTokens: 62,
+      },
+    }),
+    updateTurn: async (_turnId, patch) => {
+      updates.push(patch)
+    },
+  })
+  await processInboundEvent({ ...baseEvent, body: "hello there" }, store)
+  // One of the updateTurn calls carries the usage subfield.
+  const usagePatch = updates.find((p) => "usage" in p)
+  assert.ok(usagePatch, "usage patch was set")
+  const usage = (usagePatch as { usage: Record<string, unknown> }).usage
+  assert.equal(usage.provider, "openai")
+  assert.equal(usage.model, "gpt-5.4-nano")
+  assert.equal(usage.inputTokens, 50)
+  assert.equal(usage.outputTokens, 12)
+  assert.equal(usage.totalTokens, 62)
+})
+
+test("processInboundEvent emits hosted tool call rows via recordHostedToolCalls", async () => {
+  const recorded: { calls: { name: string; count: number }[] }[] = []
+  const store = makeStore({
+    runAgentTurn: async () => ({
+      text: "ok",
+      usage: {
+        provider: "openai",
+        model: "gpt-5.4-nano",
+        hostedToolCalls: [{ name: "web_search", count: 2 }],
+      },
+    }),
+    recordHostedToolCalls: async (input) => {
+      recorded.push(input)
+    },
+  })
+  await processInboundEvent({ ...baseEvent, body: "hello there" }, store)
+  // boundary-reply pre-router still intercepts current-info-shaped queries; use a benign body.
+  // For non-current-info queries, hosted tool call recording fires when LLM used tools.
+  assert.equal(recorded.length, 1)
+  assert.deepEqual(recorded[0]!.calls, [{ name: "web_search", count: 2 }])
+})
+
+test("processInboundEvent filters undefined fields out of pa_turns.usage payload", async () => {
+  const updates: Record<string, unknown>[] = []
+  const store = makeStore({
+    runAgentTurn: async () => ({
+      text: "ok",
+      usage: {
+        provider: "openai",
+        model: "gpt-5.4-nano",
+        inputTokens: undefined,
+        outputTokens: undefined,
+      },
+    }),
+    updateTurn: async (_turnId, patch) => {
+      updates.push(patch)
+    },
+  })
+  await processInboundEvent({ ...baseEvent, body: "hi" }, store)
+  const usagePatch = updates.find((p) => "usage" in p) as { usage: Record<string, unknown> } | undefined
+  assert.ok(usagePatch)
+  // Phase 10 bug #2 pattern: undefined fields filtered out, not persisted as undefined.
+  assert.equal("inputTokens" in usagePatch.usage, false)
+  assert.equal("outputTokens" in usagePatch.usage, false)
+  assert.equal(usagePatch.usage.provider, "openai")
+})
