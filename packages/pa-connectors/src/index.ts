@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto"
 import type { Firestore } from "firebase-admin/firestore"
 import { z } from "zod"
+import { runOpenAIAgentsCurrentInfo } from "@pa/agent-runtime"
 import { PA_COLLECTIONS, type AgentDef, type PaToolCall } from "@pa/core-types"
 import { appendAuditEvent } from "@pa/pa-broker"
 import { canUseConnector } from "@pa/pa-safety"
@@ -77,73 +78,6 @@ const CurrentInfoOutputSchema = z.object({
 
 export type CurrentInfoConnectorInput = z.infer<typeof CurrentInfoInputSchema>
 export type CurrentInfoConnectorOutput = z.infer<typeof CurrentInfoOutputSchema>
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === "object" && !Array.isArray(value))
-}
-
-function extractOpenAiOutputText(value: unknown): string {
-  if (!isRecord(value)) return ""
-  if (typeof value.output_text === "string") return value.output_text
-  const output = Array.isArray(value.output) ? value.output : []
-  const parts: string[] = []
-  for (const item of output) {
-    if (!isRecord(item)) continue
-    const content = Array.isArray(item.content) ? item.content : []
-    for (const block of content) {
-      if (isRecord(block) && typeof block.text === "string") parts.push(block.text)
-    }
-  }
-  return parts.join("\n").trim()
-}
-
-function collectOpenAiCitations(value: unknown): { title?: string; url: string }[] {
-  const out: { title?: string; url: string }[] = []
-  const seen = new Set<string>()
-  const add = (candidate: unknown) => {
-    if (!isRecord(candidate) || typeof candidate.url !== "string" || candidate.url.trim() === "") return
-    const url = candidate.url.trim()
-    if (seen.has(url)) return
-    seen.add(url)
-    out.push({
-      ...(typeof candidate.title === "string" && candidate.title.trim()
-        ? { title: candidate.title.trim() }
-        : {}),
-      url,
-    })
-  }
-
-  const visit = (node: unknown) => {
-    if (Array.isArray(node)) {
-      for (const item of node) visit(item)
-      return
-    }
-    if (!isRecord(node)) return
-    if (node.type === "url_citation") add(node)
-    if (isRecord(node.url_citation)) add(node.url_citation)
-    if (Array.isArray(node.sources)) {
-      for (const source of node.sources) add(source)
-    }
-    for (const value of Object.values(node)) {
-      if (Array.isArray(value) || isRecord(value)) visit(value)
-    }
-  }
-
-  visit(value)
-  return out.slice(0, 5)
-}
-
-function currentInfoPrompt(input: CurrentInfoConnectorInput) {
-  return [
-    `Current time: ${input.nowIso}`,
-    input.locale ? `Locale: ${input.locale}` : null,
-    input.location ? `Location: ${input.location}` : null,
-    "Answer with current information from web search only. Keep it concise for iMessage. Include citations.",
-    `User question: ${input.query}`,
-  ]
-    .filter(Boolean)
-    .join("\n")
-}
 
 export const connectorRegistry = {
   "fake-echo": {
@@ -228,56 +162,31 @@ export const connectorRegistry = {
   "current-info": {
     name: "current-info",
     version: "1",
-    description: "Current information lookup via OpenAI Responses API web search.",
+    description: "Current information lookup via OpenAI Agents SDK hosted web search.",
     inputSchema: CurrentInfoInputSchema,
     outputSchema: CurrentInfoOutputSchema,
     execute: async (input: CurrentInfoConnectorInput) => {
-      const apiKey = process.env.PA_CURRENT_INFO_OPENAI_API_KEY?.trim()
+      const apiKey = process.env.PA_OPENAI_AGENT_API_KEY?.trim()
       if (!apiKey) {
         return {
           ok: false,
           source: "openai-web-search",
-          summary: "PA_CURRENT_INFO_OPENAI_API_KEY is not configured; current-info connector unavailable.",
+          summary: "PA_OPENAI_AGENT_API_KEY is not configured; OpenAI Agents hosted web search unavailable.",
           asOf: input.nowIso,
           sources: [],
         }
       }
 
       try {
-        const res = await fetch("https://api.openai.com/v1/responses", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify({
-            model: process.env.PA_CURRENT_INFO_MODEL || "gpt-4.1-mini",
-            tools: [{ type: "web_search" }],
-            include: ["web_search_call.action.sources"],
-            input: currentInfoPrompt(input),
-            max_tool_calls: 1,
-            max_output_tokens: 700,
-          }),
-        })
-        if (!res.ok) {
-          return {
-            ok: false,
-            source: "openai-web-search",
-            summary: `OpenAI web search failed with HTTP ${res.status}.`,
-            asOf: input.nowIso,
-            sources: [],
-          }
-        }
-
-        const payload = await res.json() as unknown
-        const summary = extractOpenAiOutputText(payload).trim()
+        const result = await runOpenAIAgentsCurrentInfo(input)
+        const summary = result.summary.trim()
         if (!summary) {
           return {
             ok: false,
             source: "openai-web-search",
-            summary: "OpenAI web search returned no answer text.",
+            summary: "OpenAI Agents hosted web search returned no answer text.",
             asOf: input.nowIso,
-            sources: collectOpenAiCitations(payload),
+            sources: result.sources,
           }
         }
         return {
@@ -285,14 +194,14 @@ export const connectorRegistry = {
           source: "openai-web-search",
           summary: summary.slice(0, 1400),
           asOf: input.nowIso,
-          sources: collectOpenAiCitations(payload),
+          sources: result.sources,
         }
       } catch (e) {
         const err = e instanceof Error ? e.message : String(e)
         return {
           ok: false,
           source: "openai-web-search",
-          summary: `OpenAI web search unavailable: ${err.slice(0, 160)}`,
+          summary: `OpenAI Agents hosted web search unavailable: ${err.slice(0, 160)}`,
           asOf: input.nowIso,
           sources: [],
         }

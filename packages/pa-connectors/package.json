@@ -17,6 +17,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@pa/agent-runtime": "0.0.1",
     "@pa/core-types": "0.0.1",
     "@pa/pa-broker": "0.0.1",
     "@pa/pa-safety": "0.0.1",

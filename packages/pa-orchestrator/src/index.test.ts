@@ -69,7 +69,7 @@ function makeStore(overrides: Partial<OrchestratorStore> = {}): OrchestratorStor
     runCurrentInfoConnector: async (_agent, input) => ({
       ok: false,
       source: "openai-web-search",
-      summary: "OPENAI_API_KEY is not configured; current-info connector unavailable.",
+      summary: "PA_OPENAI_AGENT_API_KEY is not configured; OpenAI Agents hosted web search unavailable.",
       asOf: input.nowIso,
       sources: [],
     }),
@@ -215,7 +215,7 @@ test("processInboundEvent falls back to boundary reply when current-info connect
       return {
         ok: false,
         source: "openai-web-search",
-        summary: "OPENAI_API_KEY is not configured; current-info connector unavailable.",
+        summary: "PA_OPENAI_AGENT_API_KEY is not configured; OpenAI Agents hosted web search unavailable.",
         asOf: input.nowIso,
         sources: [],
       }

@@ -1,4 +1,4 @@
-# Roadmap: PA Control Plane + Personality Memory
+# Roadmap: Agent SDK Runtime + Job Companion
 
 This roadmap is intentionally numeric so GSD phase tooling can discover and execute it.
 
@@ -13,9 +13,12 @@ This roadmap is intentionally numeric so GSD phase tooling can discover and exec
 | 7 | Scheduler and platform runtime | Add durable scheduled jobs, stuck job recovery, retry/backoff, and runtime heartbeats. | P0.1, P1 | Complete |
 | 8 | Reviews, polish, and ship readiness | Run engineering/design reviews, close gaps, and produce final verification evidence. | P1 | Complete |
 | 9 | Phase 2/3 production hardening | Make production verification repeatable and expose semantic memory safely in dashboard. | P0.1, P0.2, P0.4, P0.5 | Mostly complete |
-| 10 | Current-info realtime connector | Answer recent/latest questions from live search without stale model guesses. | P0.6 | Code complete; production secret/deploy pending |
-| 11 | Persona + human-feel loop | Restore persona facts into runtime prompt and tune human feel from harness/eval data. | P0.3, P0.5 | Not started |
-| 12 | Typing indicator / delivery feel | Improve iMessage delivery feel using Photon typing if available or chunk/delay simulation. | P1 | Not started |
+| 10 | Agents SDK current-info connector | Answer recent/latest questions through Agents SDK hosted web search without stale model guesses. | P0.6, P0.7 | In progress |
+| 11 | Persona + identity/memory injection | Restore persona facts, resolve memory identity semantics, and inject PA-owned context into agent turns. | P0.3, P0.5, P0.7, P0.9 | Not started |
+| 12 | Job companion scheduled outreach | Add permissioned recruiter-style follow-up: project/status nudges, cooldowns, audit, and outbound policy. | P0.1, P0.8 | Not started |
+| 13 | Job matching connector path | Add an auditable platform-managed path for matched-role notifications. | P0.4, P0.8 | Not started |
+| 14 | Companion eval + harness expansion | Add scenario/eval coverage for current-info live search, persona, proactive outreach, and match rationale. | P0.6, P0.7, P0.8, P1 | Not started |
+| 15 | Typing indicator / delivery feel | Improve iMessage delivery feel using Photon typing if available or chunk/delay simulation. | P1 | Not started |
 
 ## Phase 1: Broker correctness + echo suppression
 
@@ -109,29 +112,60 @@ Requirements: P0.1, P0.2, P0.4, P0.5
 4. Memory Admin dashboard can list/search/delete Qdrant semantic memory and clear a user only after explicit operator action.
 5. Overview separates pending/running from historical failures to avoid false “waiting” alarms.
 
-## Phase 10: Current-info realtime connector
+## Phase 10: Agents SDK current-info connector
 
-**Goal:** Let PA answer “recent/latest/today” external information questions from live data while retaining fail-closed behavior.
-Requirements: P0.6
-**Status:** Code complete on `main` at `8e9d0e9`; production secret/deploy pending.
+**Goal:** Let PA answer “recent/latest/today” external information questions through OpenAI Agents SDK hosted `web_search` while retaining fail-closed behavior.
+Requirements: P0.6, P0.7
+**Status:** In progress.
 **Success Criteria**:
-1. `current-info` connector uses OpenAI Responses API web search via dedicated `PA_CURRENT_INFO_OPENAI_API_KEY`.
+1. `current-info` connector uses `@openai/agents` hosted `web_search`, not a hand-written Responses fetch wrapper.
 2. Orchestrator invokes current-info before LLM stale-answer path.
 3. Connector attempts are visible in `pa_tool_calls` and audit events.
 4. Missing or failing connector falls back to boundary reply.
-5. Production functions bind `PA_CURRENT_INFO_OPENAI_API_KEY`, deploy on Node 22, and pass current-info production harness with `pa_outbound=0`.
+5. Production functions bind `PA_OPENAI_AGENT_API_KEY`, deploy on Node 22, and pass current-info production harness with `pa_outbound=0`.
 
-## Phase 11: Persona + human-feel loop
+## Phase 11: Persona + identity/memory injection
 
-**Goal:** Restore persona facts and tune response feel from measured harness/eval evidence.
-Requirements: P0.3, P0.5
+**Goal:** Restore persona facts, resolve memory identity semantics, and inject PA-owned identity/memory context into agent turns.
+Requirements: P0.3, P0.5, P0.7, P0.9
 **Status:** Not started.
 **Success Criteria**:
 1. Firestore persona facts are injected into runtime prompt again.
 2. `mem0UserId` advisory regression is resolved or explicitly removed.
-3. Persona/human-feel changes are evaluated through scenarios rather than prompt guessing.
+3. Agent turns receive identity and memory context from WeKruit stores, not opaque ChatGPT product memory.
+4. Persona/human-feel changes are evaluated through scenarios rather than prompt guessing.
 
-## Phase 12: Typing indicator / delivery feel
+## Phase 12: Job companion scheduled outreach
+
+**Goal:** Add permissioned recruiter-style follow-up for recent projects and job-search status.
+Requirements: P0.1, P0.8
+**Status:** Not started.
+**Success Criteria**:
+1. Scheduled outreach jobs can ask about recent projects/job-search status with cooldowns and max attempts.
+2. Outbound policy blocks proactive messages without required user/session consent state.
+3. Every proactive outreach has audit context visible in dashboard.
+
+## Phase 13: Job matching connector path
+
+**Goal:** Add a platform-managed path for matched-role notifications.
+Requirements: P0.4, P0.8
+**Status:** Not started.
+**Success Criteria**:
+1. Matching connector input/output schemas include role source, match rationale, and user fit facts.
+2. Matched-role notifications require auditable connector results before outbound enqueue.
+3. Dashboard exposes why a match notification was sent or suppressed.
+
+## Phase 14: Companion eval + harness expansion
+
+**Goal:** Make current-info, persona, proactive outreach, and match rationale testable before broad dogfood.
+Requirements: P0.6, P0.7, P0.8, P1
+**Status:** Not started.
+**Success Criteria**:
+1. Live current-info scenario verifies sourced answers when `PA_OPENAI_AGENT_API_KEY` is configured.
+2. Boundary scenario still verifies fail-closed behavior when the hosted tool is unavailable.
+3. Persona and proactive outreach scenarios verify no accidental outbound in harness mode.
+
+## Phase 15: Typing indicator / delivery feel
 
 **Goal:** Improve iMessage perceived responsiveness.
 Requirements: P1

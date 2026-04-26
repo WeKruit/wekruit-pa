@@ -1,4 +1,4 @@
-# Milestone requirements (PA Control Plane + Personality Memory)
+# Milestone requirements (Agent SDK Runtime + Job Companion)
 
 ## P0 — Must have
 
@@ -31,10 +31,27 @@
 
 6. **Current-info correctness**
    - Questions about recent/latest/today/news/movies/weather/prices must not be answered from stale model knowledge.
-   - The orchestrator must route current-info intents through a platform-managed connector, not an arbitrary LLM tool loop.
+   - The orchestrator must route current-info intents through a platform-managed connector backed by OpenAI Agents SDK hosted `web_search`, not an arbitrary unrestricted LLM tool loop.
    - The connector must record `pa_tool_calls` / audit data and preserve `suppressOutbound` in scenario harness runs.
-   - OpenAI web search credentials must be isolated in `PA_CURRENT_INFO_OPENAI_API_KEY`; do not reuse the SiliconFlow/OpenAI-compatible runtime key.
+   - OpenAI hosted tool credentials must use the general `PA_OPENAI_AGENT_API_KEY`; do not keep a current-info-specific key name and do not reuse the SiliconFlow/OpenAI-compatible runtime key.
    - If the realtime connector is unavailable, missing credentials, denied, or returns no usable text, the response must fall back to the existing boundary message.
+
+7. **Agents SDK runtime spine**
+   - OpenAI-native hosted tools should be called through `@openai/agents` wherever the SDK exposes the capability directly.
+   - The PA runtime must keep WeKruit-owned identity, memory, audit, outbound, and scheduling boundaries around Agents SDK calls.
+   - Agent turns should receive identity and memory context by injection from PA-controlled stores, not by delegating user identity/memory management to opaque ChatGPT product memory.
+   - The runtime must preserve existing harness controls, including `suppressOutbound`, deterministic test users, and `pa_outbound=0` validation.
+
+8. **Job-search companion direction**
+   - PA can periodically ask users about recent projects, job-search status, preferences, and availability only through scheduled jobs with cooldowns and audit.
+   - PA can proactively notify users about matched roles only when the match source, rationale, and outbound policy are recorded.
+   - Matching/job-market connectors must be platform-managed and auditable before they can trigger outbound messages.
+   - Dashboard must expose enough context for an operator to inspect why a proactive message was sent or suppressed.
+
+9. **Memory provider strategy**
+   - Keep Firestore facts and Mem0/Qdrant semantic memory as the production memory foundation.
+   - Keep Memory Admin list/search/delete/clear controls.
+   - OpenAI vectorStores/file_search may be evaluated as an additional MemoryProvider later, but not as a direct replacement for Mem0/Qdrant in this milestone.
 
 ## P1 — Should have
 
@@ -42,7 +59,7 @@
 - Manual Mac/iMessage runbook remains the source of truth for real channel verification.
 - Operations should expose queue depth, stuck leases, recent failures, and health summary.
 - UI should pass an explicit design review and avoid generic raw-table/admin-console feel.
-- Current-info production enablement should include Firebase secret binding, functions deploy, REST/CLI metadata verification, production harness, and `pa_outbound=0` check.
+- Current-info production enablement should include `PA_OPENAI_AGENT_API_KEY` Firebase secret binding, functions deploy, REST/CLI metadata verification, production harness, and `pa_outbound=0` check.
 
 ## Out of scope (this milestone)
 
@@ -50,3 +67,5 @@
 - HA fleet of Mac workers.
 - Full autonomous tool loop with arbitrary connectors.
 - Surprise/personality behavior enabled broadly before dogfood safety.
+- Replacing Mem0/Qdrant with ChatGPT product memory.
+- Moving the PA Console into ChatGPT Apps SDK before the iMessage/job-companion runtime is stable.

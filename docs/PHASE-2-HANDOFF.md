@@ -1,6 +1,6 @@
 # P10 Handoff — Phase 2 harness + Phase 3 Memory Admin baseline complete
 
-> Reconciled **2026-04-26** against `main` @ **`15d68b1`** (*fix(dashboard): split inbound pending vs failed on Overview*) and harness follow-ups in-tree.
+> Reconciled **2026-04-26** against `main` after the Phase 10 Agents SDK current-info migration work.
 > This file is the **source of truth** for what is done and what comes next. Ignore older snapshots (e.g. 2026-04-25) that still say “first task = run runner” or “Memory Admin not started.”
 
 ## 1. Current facts (verified in repo + deployment posture)
@@ -13,11 +13,12 @@
 - **`npm test` + scenarios** — Root `npm test` runs `scripts/run-scenarios-if-env.mjs` first. Production scenario runs are **opt-in**: set `PA_RUN_SCENARIOS=1` and valid GCP credentials; otherwise scenarios **skip** and workspace tests run as usual.
 - **Scenario coverage in-tree** — Multilingual **recall** (`memory-recall-zh.yaml`, `memory-recall-en.yaml`, `memory-recall-ja.yaml`, `memory-recall-mixed.yaml`), **`__PA_RESET__` integration** (`reset-integration-zh.yaml`), and **current-info boundary** (`current-info-boundary-zh.yaml`) are present and maintained with the runner.
 - **Phase 3 Memory Admin dashboard** — **Shipped** on hosting (`UserDetail` + memory admin flows, wrapping `packages/memory` admin helpers). Memory views **auto-load** when appropriate (no “dashboard is Phase-1-only shell” state).
-- **Current-info tourniquet** — Without a live search connector, the orchestrator **does not** fill “recent movies / news” from stale model knowledge. Users get an explicit **boundary reply** (CN/EN paths in `buildCurrentInfoBoundaryReply` in `packages/pa-orchestrator/src/index.ts`). **P0** is to add a **real** realtime search connector—not to loosen this guard.
+- **Current-info tourniquet** — Without a live search connector, the orchestrator **does not** fill “recent movies / news” from stale model knowledge. Users get an explicit **boundary reply** (CN/EN paths in `buildCurrentInfoBoundaryReply` in `packages/pa-orchestrator/src/index.ts`).
+- **Current-info connector direction** — Phase 10 now uses **OpenAI Agents SDK hosted `web_search`** through `@pa/agent-runtime`, not a long-lived hand-written Responses fetch wrapper. Production enablement uses the general `PA_OPENAI_AGENT_API_KEY` Firebase secret, then functions deploy + live harness verification.
 
 ### 1.2 What remains intentionally deferred
 
-- **Live current-info / search** — Not wired; boundary behavior is intentional until P0.
+- **Live current-info / search production enablement** — Code path is in-tree, but deployed `onPaInbound` still needs `PA_OPENAI_AGENT_API_KEY` binding, functions deploy, safe metadata verification, and a live current-info harness run.
 - **Persona / Firestore facts / `mem0UserId` parity** — Still Phase 4 playbook work (see §4).
 - **B2 typing indicator** — Research + implementation (P2).
 - **B3 “human feel”** — After harness/eval signals are stable (P4).
@@ -25,6 +26,8 @@
 ### 1.3 Recent anchor commits
 
 ```text
+cf8020c  Reconcile PA planning and harness docs
+8e9d0e9  Add current-info web search connector
 15d68b1  fix(dashboard): split inbound pending vs failed on Overview
 e5b7c26  Block stale current-info answers
 9626410  Autoload dashboard semantic memory
@@ -52,7 +55,7 @@ Use `git log` for full history; do not treat the 2026-04-25 handoff snapshot as 
 | B1 | `[ISO]` timestamp leak | Fixed (historical); keep regression coverage |
 | B2 | No typing indicator / “instant LLM dump” | P2 — research + implement |
 | B3 | Robotic / canned tone | P4 — after eval stable |
-| Current-info | Stale “latest news/movies” without live data | **Guarded** — P0 is real connector |
+| Current-info | Stale “latest news/movies” without live data | **Guarded**; connector code now targets Agents SDK hosted `web_search`; production secret/deploy/harness still pending |
 
 ## 5. Red lines (ops + safety)
 
@@ -68,16 +71,16 @@ Use `git log` for full history; do not treat the 2026-04-25 handoff snapshot as 
 
 | Priority | Item | Notes |
 |----------|------|--------|
-| **P0** | **Realtime current-info / search connector** | So “recent movies / news / weather / …” can be answered from live data instead of only refusing stale hallucinations. |
-| **P1** | **Phase 3 dashboard polish** | Especially **Overview** stats where **waiting / failed** can mislead operators. |
-| **P2** | **B2 typing indicator** | Research (Photon / iMessage) + implementation. |
-| **P3** | **Phase 4 Persona Playbook** | Re-wire Firestore persona facts into system prompt; fix **`mem0UserId`** advisory / consistency; related regressions. |
-| **P4** | **B3 human-feel** | Only after harness / eval data is stable enough to judge tone changes. |
+| **P0** | **Production-enable Agents SDK current-info** | Bind `PA_OPENAI_AGENT_API_KEY`, deploy functions, verify deployed metadata, then run live current-info harness with `pa_outbound=0`. |
+| **P1** | **Persona + identity/memory injection** | Re-wire Firestore persona facts into runtime prompt; fix **`mem0UserId`** advisory / consistency; keep Mem0/Admin. |
+| **P2** | **Job companion scheduled outreach** | Permissioned project/status check-ins, cooldowns, audit, and outbound policy. |
+| **P3** | **Job matching connector path** | Auditable matched-role notifications with source and rationale. |
+| **P4** | **B2 typing indicator / delivery feel** | Research (Photon / iMessage) + implementation. |
 
 ## 7. Recommended first task for the **next** session
 
-**Start at P0 (current-info / search connector)** — Phase 2 harness and Phase 3 Memory Admin are **not** the next “first task.”
-If P0 is blocked on vendor or API keys, **P1 dashboard polish** is the highest leverage internal work; do **not** skip back to “run runner for the first time.”
+**Start at P0 production enablement** — Phase 2 harness and Phase 3 Memory Admin are **not** the next “first task.” The code path now expects `PA_OPENAI_AGENT_API_KEY`; do not revive the old `PA_CURRENT_INFO_OPENAI_API_KEY` name.
+If P0 is blocked on vendor/API keys, proceed to **P1 persona + identity/memory injection**; do **not** skip back to “run runner for the first time.”
 
 **Harness usage** (when adding scenarios or validating regressions):
 

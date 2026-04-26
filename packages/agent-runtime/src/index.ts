@@ -11,6 +11,8 @@ export { assertProviderKey, hasOpenAICompatKey } from "./env.js"
 export type { AgentTurnContext, RunAgentTurnResult } from "./types.js"
 export { runAgentTurn } from "./run.js"
 export { buildAgentsInput, runOpenAIAgentsTurn } from "./openai-agents-adapter.js"
+export { runOpenAIAgentsCurrentInfo } from "./current-info.js"
+export type { CurrentInfoCitation, CurrentInfoSearchInput, CurrentInfoSearchResult } from "./current-info.js"
 export { hydrateOpenAiFromAtm, getAtmBearerToken } from "./atm-llm-runtime.js"
 
 export function toOpenAIMessageList(
