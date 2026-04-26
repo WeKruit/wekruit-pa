@@ -81,7 +81,13 @@ export async function runOpenAIAgentsCurrentInfo(input: CurrentInfoSearchInput):
   // the orchestrator. Construct our own OpenAI client pinned to the official
   // endpoint so hosted tools (web_search, etc.) work.
   const baseURL = process.env.PA_OPENAI_AGENT_BASE_URL?.trim() || "https://api.openai.com/v1"
-  const openAIClient = new OpenAI({ apiKey, baseURL })
+  // The top-level `openai` dep is v4 while @openai/agents-openai bundles v6
+  // internally, so the structural types diverge even though the runtime shape
+  // is compatible. Cast to the SDK's expected client type to avoid a v6 bump
+  // that would ripple through the rest of the runtime.
+  const openAIClient = new OpenAI({ apiKey, baseURL }) as unknown as NonNullable<
+    ConstructorParameters<typeof OpenAIProvider>[0]
+  >["openAIClient"]
   const provider = new OpenAIProvider({
     useResponses: true,
     openAIClient,

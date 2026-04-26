@@ -13,10 +13,6 @@ type HealthJson = {
   uptimeSec?: number
 }
 
-function statusCount(rows: Row[], status: string): number {
-  return rows.filter((r) => r.status === status).length
-}
-
 function formatAge(iso?: unknown): string {
   if (typeof iso !== "string" || !iso) return "unknown"
   const t = Date.parse(iso)
@@ -132,6 +128,38 @@ export function Overview() {
       deadLetter > 0 || failed > 0 ? "bad" : pending + processing > 0 ? "warn" : "good"
     return { pending, processing, failed, deadLetter, tone }
   }, [inbound])
+  const outboundStats = useMemo(() => {
+    let pending = 0
+    let sending = 0
+    let failed = 0
+    let deadLetter = 0
+    for (const r of outbound) {
+      const s = r.status
+      if (s === "pending") pending++
+      else if (s === "sending") sending++
+      else if (s === "failed") failed++
+      else if (s === "dead_letter") deadLetter++
+    }
+    const tone =
+      deadLetter > 0 || failed > 0 ? "bad" : pending + sending > 0 ? "warn" : "good"
+    return { pending, sending, failed, deadLetter, tone }
+  }, [outbound])
+  const jobsStats = useMemo(() => {
+    let pending = 0
+    let processing = 0
+    let failed = 0
+    let deadLetter = 0
+    for (const r of jobs) {
+      const s = r.status
+      if (s === "pending") pending++
+      else if (s === "processing") processing++
+      else if (s === "failed") failed++
+      else if (s === "dead_letter") deadLetter++
+    }
+    const tone =
+      deadLetter > 0 || failed > 0 ? "bad" : pending + processing > 0 ? "warn" : "good"
+    return { pending, processing, failed, deadLetter, tone }
+  }, [jobs])
   const healthStatus = healthLabel(health)
 
   return (
@@ -168,10 +196,13 @@ export function Overview() {
           </small>
         </article>
         <article className="metric-card">
-          <span className="status-dot warn" />
-          <p>Outbound waiting</p>
-          <strong>{statusCount(outbound, "pending") + statusCount(outbound, "sending")}</strong>
-          <small>{statusCount(outbound, "failed")} failed</small>
+          <span className={`status-dot ${outboundStats.tone}`} />
+          <p>Outbound queue</p>
+          <strong>{outboundStats.pending}</strong>
+          <small>
+            {outboundStats.sending} sending · {outboundStats.failed} failed
+            {outboundStats.deadLetter > 0 ? ` · ${outboundStats.deadLetter} dead letter` : ""}
+          </small>
         </article>
         <article className="metric-card">
           <span className="status-dot good" />
@@ -180,10 +211,13 @@ export function Overview() {
           <small>latest {formatAge(users[0]?.createdAt)}</small>
         </article>
         <article className="metric-card">
-          <span className="status-dot warn" />
+          <span className={`status-dot ${jobsStats.tone}`} />
           <p>Scheduled jobs</p>
-          <strong>{statusCount(jobs, "pending") + statusCount(jobs, "processing")}</strong>
-          <small>{statusCount(jobs, "dead_letter")} dead-lettered</small>
+          <strong>{jobsStats.pending}</strong>
+          <small>
+            {jobsStats.processing} processing · {jobsStats.failed} failed
+            {jobsStats.deadLetter > 0 ? ` · ${jobsStats.deadLetter} dead letter` : ""}
+          </small>
         </article>
         <article className="metric-card">
           <span className="status-dot good" />

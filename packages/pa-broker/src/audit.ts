@@ -15,12 +15,12 @@ export async function appendAuditEvent(
     createdAt,
     kind: input.kind,
     actor: input.actor ?? "system",
+    message: input.message,
     ...(input.userId !== undefined ? { userId: input.userId } : {}),
     ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
     ...(input.turnId !== undefined ? { turnId: input.turnId } : {}),
     ...(input.inboundEventId !== undefined ? { inboundEventId: input.inboundEventId } : {}),
     ...(input.toolCallId !== undefined ? { toolCallId: input.toolCallId } : {}),
-    ...(input.message !== undefined ? { message: input.message } : {}),
     ...(input.meta !== undefined ? { meta: input.meta } : {}),
   }
   await db.collection(AUDIT).doc(id).set(row)
