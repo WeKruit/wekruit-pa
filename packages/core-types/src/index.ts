@@ -38,6 +38,13 @@ export const UserSchema = z.object({
   onboardingStatus: OnboardingStatusSchema,
   activeAgentId: z.string().optional(),
   mem0UserId: z.string().optional(),
+  /**
+   * Gate for in-band test admin commands (e.g. `__PA_RESET__` magic string
+   * triggers `clearUserMemory`). MUST be `false` / unset for any user that
+   * could plausibly belong to a real customer. Operator must flip this
+   * explicitly via dashboard or `scripts/pa-set-test-mode.mjs`.
+   */
+  testMode: z.boolean().optional(),
   channels: z
     .object({
       imessageHandle: z.string().optional(),

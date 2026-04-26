@@ -55,6 +55,7 @@ function makeStore(overrides: Partial<OrchestratorStore> = {}): OrchestratorStor
     }),
     runAgentTurn: async () => ({ text: "assistant reply" }),
     afterAssistantTurn: async () => ({ writebackRan: false, writebackSkipReason: "memory_mode" }),
+    maybeHandleResetCommand: async () => ({ handled: false }),
     nowIso: () => "2026-04-25T12:00:00.000Z",
     log: () => undefined,
     ...overrides,
@@ -131,6 +132,45 @@ test("processInboundEvent runs agent for non-memory messages", async () => {
   await processInboundEvent(baseEvent, store)
   assert.equal(llmCalls, 1)
   assert.equal(outbound, "assistant reply")
+})
+
+test("processInboundEvent short-circuits to maybeHandleResetCommand when handled", async () => {
+  let llmCalls = 0
+  let outbound = ""
+  let resetCalls = 0
+  const store = makeStore({
+    runAgentTurn: async () => {
+      llmCalls++
+      return { text: "should not be called" }
+    },
+    enqueueOutbound: async (_userId, _to, body) => {
+      outbound = body
+    },
+    maybeHandleResetCommand: async (event) => {
+      resetCalls++
+      assert.equal(event.body, "__PA_RESET__")
+      return { handled: true, summary: "✓ 测试记忆已清空 — qdrant pa_memory=3; firestore pa_memory_facts=2" }
+    },
+  })
+  await processInboundEvent({ ...baseEvent, body: "__PA_RESET__" }, store)
+  assert.equal(resetCalls, 1)
+  assert.equal(llmCalls, 0)
+  assert.match(outbound, /测试记忆已清空/)
+})
+
+test("processInboundEvent ignores reset command for non-test users (handled=false)", async () => {
+  let llmCalls = 0
+  const store = makeStore({
+    runAgentTurn: async () => {
+      llmCalls++
+      return { text: "normal reply" }
+    },
+    maybeHandleResetCommand: async () => ({ handled: false }),
+  })
+  // body matches RESET_PATTERNS but maybeHandleResetCommand returns handled=false
+  // (e.g. testMode unset on the user) — orchestrator must fall through to LLM.
+  await processInboundEvent({ ...baseEvent, body: "__PA_RESET__" }, store)
+  assert.equal(llmCalls, 1)
 })
 
 test("isInboundLeaseExpired treats missing or stale leases as reclaimable", () => {

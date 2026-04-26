@@ -21,6 +21,15 @@ export {
   recordMemoryAction,
 } from "./facts.js"
 export { archiveMonth, buildArchivePath, toArchiveJsonLine, type ArchivedMessageJson } from "./archive.js"
+export {
+  clearUserMemory,
+  isResetCommand,
+  summarizeClearResult,
+  RESET_PATTERNS,
+  type ClearUserMemoryDeps,
+  type ClearUserMemoryOptions,
+  type ClearUserMemoryResult,
+} from "./admin.js"
 export type {
   LoadContextInput,
   LoadContextResult,

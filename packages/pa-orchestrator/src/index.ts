@@ -15,7 +15,10 @@ import {
 } from "@pa/core-types"
 import {
   afterAssistantTurn as defaultAfterAssistantTurn,
+  clearUserMemory,
   createConfirmedMemoryFact,
+  isResetCommand,
+  summarizeClearResult,
   findMatchingFacts,
   listConfirmedMemoryFacts,
   loadPersonalizationContext as defaultLoadPersonalizationContext,
@@ -67,6 +70,17 @@ export type OrchestratorStore = {
     assistantText: string
     memoryMode: AgentDef["memoryMode"]
   }): Promise<AfterTurnResult>
+  /**
+   * In-band test-admin reset trigger. When `user.testMode === true` AND the
+   * inbound `event.body` matches one of `RESET_PATTERNS`, the store runs
+   * `clearUserMemory(userId, ...)` and returns `{ handled: true, summary }`.
+   * Otherwise returns `{ handled: false }` and the orchestrator falls through
+   * to normal memory-command + LLM routing.
+   *
+   * Production users (testMode unset/false) ALWAYS get `handled: false`,
+   * even if they happen to type the magic string.
+   */
+  maybeHandleResetCommand(event: InboundEvent): Promise<{ handled: boolean; summary?: string }>
   nowIso(): string
   log(...args: unknown[]): void
 }
@@ -233,6 +247,16 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       idempotencyKey: event.idempotencyKey,
       rawMeta: { ...event.rawMeta, source: "pa_inbound_event", eventId: event.id, turnId },
     })
+
+    // Test-admin magic string. Must run BEFORE parseMemoryCommand so it
+    // doesn't get swallowed by an unrelated memory grammar rule.
+    const reset = await store.maybeHandleResetCommand(event)
+    if (reset.handled) {
+      await sendMemoryReply(store, event, turnId, reset.summary ?? "✓ 测试记忆已清空。")
+      await store.updateTurn(turnId, { status: "succeeded", stage: "succeeded", completedAt: store.nowIso() })
+      await store.markEventSucceeded(event.id)
+      return
+    }
 
     const command = parseMemoryCommand(event.body)
     if (command && await handleMemoryCommand(event, store, turnId, command)) {
@@ -433,6 +457,28 @@ export function createFirestoreOrchestratorStore(db: Firestore): OrchestratorSto
     runAgentTurn: defaultRunAgentTurn,
     async afterAssistantTurn(agent, input) {
       return defaultAfterAssistantTurn(db, agent, input)
+    },
+    async maybeHandleResetCommand(event) {
+      if (!isResetCommand(event.body)) return { handled: false }
+      const userSnap = await db.collection(PA_COLLECTIONS.users).doc(event.userId).get()
+      const user = userSnap.exists ? (userSnap.data() as { testMode?: boolean }) : null
+      if (!user?.testMode) return { handled: false }
+      const qdrantUrl = process.env.QDRANT_URL
+      const qdrantApiKey = process.env.QDRANT_API_KEY
+      if (!qdrantUrl || !qdrantApiKey) {
+        return { handled: true, summary: "✗ 测试记忆清空失败：QDRANT_URL/QDRANT_API_KEY 未配置" }
+      }
+      try {
+        const result = await clearUserMemory(
+          event.userId,
+          { db, qdrantUrl, qdrantApiKey, qdrantCollection: process.env.QDRANT_COLLECTION },
+          { keepMessages: false, dryRun: false }
+        )
+        return { handled: true, summary: summarizeClearResult(result) }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        return { handled: true, summary: `✗ 测试记忆清空失败：${msg}` }
+      }
     },
     nowIso,
     log: (...args) => console.log(new Date().toISOString(), ...args),
