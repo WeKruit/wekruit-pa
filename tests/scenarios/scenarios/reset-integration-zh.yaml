@@ -1,0 +1,25 @@
+id: reset_integration_zh
+description: |
+  Verifies the in-band __PA_RESET__ path through production CF and confirms
+  semantic memory is unavailable after reset.
+locale: zh-CN
+agentId: default
+participant: "+19999990005"
+chatId: "iMessage;+19999990005"
+testMode: true
+turnTimeoutMs: 30000
+turns:
+  - user: "我刚买了一盒彩虹糖"
+    assert:
+      reply_min_length: 1
+      reply_not_contains_any: ["error", "failed", "undefined", "[20"]
+  - user: "__PA_RESET__"
+    assert:
+      reply_contains_any: ["测试记忆已清空", "qdrant"]
+      reply_min_length: 1
+      reply_not_contains_any: ["error", "failed", "undefined", "[20"]
+  - user: "你还记得我刚买了什么吗？如果没有明确记忆，只说“不记得”。"
+    assert:
+      reply_min_length: 1
+      reply_matches_any: ["不记得|没有.*(记忆|记录)|不确定|不知道"]
+      reply_not_contains_any: ["彩虹糖", "Skittles", "skittles", "白鹿原", "error", "failed", "undefined", "[20"]

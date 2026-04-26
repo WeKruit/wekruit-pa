@@ -134,6 +134,37 @@ test("processInboundEvent runs agent for non-memory messages", async () => {
   assert.equal(outbound, "assistant reply")
 })
 
+test("processInboundEvent suppresses outbound for harness broker events", async () => {
+  let llmCalls = 0
+  let outboundCalls = 0
+  const messages: string[] = []
+  const store = makeStore({
+    runAgentTurn: async () => {
+      llmCalls++
+      return { text: "assistant reply" }
+    },
+    appendMessage: async (message) => {
+      messages.push(message.body)
+    },
+    enqueueOutbound: async () => {
+      outboundCalls++
+    },
+  })
+  await processInboundEvent(
+    {
+      ...baseEvent,
+      rawMeta: {
+        source: "imessage_broker",
+        harness: { runner: "tests/scenarios/runner.mjs", suppressOutbound: true },
+      },
+    },
+    store
+  )
+  assert.equal(llmCalls, 1)
+  assert.equal(outboundCalls, 0)
+  assert.deepEqual(messages, ["hi", "assistant reply"])
+})
+
 test("processInboundEvent short-circuits to maybeHandleResetCommand when handled", async () => {
   let llmCalls = 0
   let outbound = ""

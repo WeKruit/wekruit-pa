@@ -288,6 +288,32 @@ button {
   background: #fff1ef;
   border: 1px solid #f3b6ae;
 }
+.notice-good {
+  color: #16643b;
+  background: #eef8f0;
+  border: 1px solid #b8e3c4;
+}
+.danger-button {
+  border-color: #d99b92;
+  background: #fff1ef;
+  color: #8f1f1a;
+  font-weight: 800;
+}
+.memory-toolbar {
+  margin-bottom: 0.85rem;
+}
+.memory-payload {
+  display: grid;
+  gap: 0.25rem;
+  min-width: min(34rem, 70vw);
+}
+.memory-payload strong {
+  font-weight: 700;
+}
+.memory-payload small {
+  color: #687263;
+  overflow-wrap: anywhere;
+}
 .status-badge {
   display: inline-flex;
   align-items: center;

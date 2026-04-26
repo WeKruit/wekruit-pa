@@ -123,6 +123,16 @@ function uniqueFactsByContent<T extends { content: string }>(facts: T[]): T[] {
   return out
 }
 
+function shouldSuppressOutbound(event: InboundEvent): boolean {
+  const harness = event.rawMeta?.harness
+  return Boolean(
+    harness &&
+      typeof harness === "object" &&
+      "suppressOutbound" in harness &&
+      (harness as { suppressOutbound?: unknown }).suppressOutbound === true
+  )
+}
+
 async function sendMemoryReply(store: OrchestratorStore, event: InboundEvent, turnId: string, body: string) {
   const at = store.nowIso()
   await store.appendMessage({
@@ -135,6 +145,7 @@ async function sendMemoryReply(store: OrchestratorStore, event: InboundEvent, tu
     idempotencyKey: `out-${event.id}`,
     rawMeta: { source: "pa_orchestrator", turnId: turnId, eventId: event.id },
   })
+  if (shouldSuppressOutbound(event)) return
   await store.enqueueOutbound(event.userId, event.from, body, {
     sessionId: event.sessionId,
     role: "assistant",
@@ -321,11 +332,13 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       assistantText: reply,
       memoryMode: agent.memoryMode,
     })
-    await store.enqueueOutbound(event.userId, event.from, visibleReply, {
-      sessionId: event.sessionId,
-      role: "assistant",
-      idempotencyKey: `outbound-${event.id}`,
-    })
+    if (!shouldSuppressOutbound(event)) {
+      await store.enqueueOutbound(event.userId, event.from, visibleReply, {
+        sessionId: event.sessionId,
+        role: "assistant",
+        idempotencyKey: `outbound-${event.id}`,
+      })
+    }
     await store.updateTurn(turnId, {
       status: "succeeded",
       stage: "succeeded",

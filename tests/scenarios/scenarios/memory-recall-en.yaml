@@ -1,0 +1,22 @@
+id: memory_recall_en_coffee_run
+description: |
+  Verifies English semantic recall through the production Firestore broker path.
+locale: en-US
+agentId: default
+participant: "+19999990002"
+chatId: "iMessage;+19999990002"
+turnTimeoutMs: 30000
+turns:
+  - user: "I just had a cortado"
+    assert:
+      reply_min_length: 1
+      reply_not_contains_any: ["error", "failed", "undefined", "[20"]
+  - user: "I'm heading to a morning run"
+    assert:
+      reply_min_length: 1
+      reply_not_contains_any: ["error", "failed", "undefined", "[20"]
+  - user: "Do you remember what coffee I had?"
+    assert:
+      reply_contains_any: ["cortado", "coffee"]
+      reply_min_length: 1
+      reply_not_contains_any: ["error", "failed", "undefined", "[20"]

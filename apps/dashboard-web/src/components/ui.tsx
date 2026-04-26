@@ -95,7 +95,7 @@ export type DataTableColumn<T> = {
   render: (row: T) => ReactNode
 }
 
-export function DataTable<T extends { id: string }>({
+export function DataTable<T extends { id: string | number }>({
   rows,
   columns,
   empty,
@@ -117,7 +117,7 @@ export function DataTable<T extends { id: string }>({
         </thead>
         <tbody>
           {rows.map((row) => (
-            <tr key={row.id}>
+            <tr key={String(row.id)}>
               {columns.map((column) => (
                 <td key={column.key}>{column.render(row)}</td>
               ))}

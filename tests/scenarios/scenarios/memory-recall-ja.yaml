@@ -1,0 +1,22 @@
+id: memory_recall_ja_ramen_tennis
+description: |
+  Verifies Japanese semantic recall through the production Firestore broker path.
+locale: ja-JP
+agentId: default
+participant: "+19999990004"
+chatId: "iMessage;+19999990004"
+turnTimeoutMs: 30000
+turns:
+  - user: "さっきラーメンを食べました"
+    assert:
+      reply_min_length: 1
+      reply_not_contains_any: ["error", "failed", "undefined", "[20"]
+  - user: "これからテニスに行きます"
+    assert:
+      reply_min_length: 1
+      reply_not_contains_any: ["error", "failed", "undefined", "[20"]
+  - user: "さっき何を食べたか覚えていますか？"
+    assert:
+      reply_contains_any: ["ラーメン", "らーめん", "ramen", "Ramen"]
+      reply_min_length: 1
+      reply_not_contains_any: ["error", "failed", "undefined", "[20"]

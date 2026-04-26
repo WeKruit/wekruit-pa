@@ -12,9 +12,11 @@
  * `pending` status, and message writes are guarded by `idempotencyKey`.
  */
 import { onDocumentCreated } from "firebase-functions/v2/firestore"
+import { onRequest } from "firebase-functions/v2/https"
 import { defineSecret } from "firebase-functions/params"
 import { setGlobalOptions, logger } from "firebase-functions/v2"
 import { initializeApp, getApps } from "firebase-admin/app"
+import { getAuth } from "firebase-admin/auth"
 import { getFirestore, type Firestore } from "firebase-admin/firestore"
 import {
   claimAndProcessInboundEvent,
@@ -23,6 +25,7 @@ import {
   processInboundEvent,
 } from "@pa/pa-orchestrator"
 import { PA_COLLECTIONS, type Channel, type InboundEvent, type OnboardingStatus, type User } from "@pa/core-types"
+import { clearUserMemory, summarizeClearResult } from "@pa/memory"
 import { createHash, randomUUID } from "node:crypto"
 
 if (!getApps().length) initializeApp()
@@ -32,6 +35,7 @@ setGlobalOptions({ region: "us-central1" })
 const SILICONFLOW_API_KEY = defineSecret("SILICONFLOW_API_KEY")
 const QDRANT_URL = defineSecret("QDRANT_URL")
 const QDRANT_API_KEY = defineSecret("QDRANT_API_KEY")
+const QDRANT_COLLECTION = "pa_memory"
 
 type BrokerImessageEvent = {
   id: string
@@ -45,7 +49,120 @@ type BrokerImessageEvent = {
     chatId?: string
     messageRowId?: number
     text?: string
+    harness?: {
+      runner?: string
+      suppressOutbound?: boolean
+    }
   }
+}
+
+type QdrantPoint = {
+  id: string | number
+  payload?: Record<string, unknown>
+  vector?: unknown
+}
+
+type QdrantScrollResponse = {
+  result?: {
+    points?: QdrantPoint[]
+    next_page_offset?: string | number | null
+  }
+}
+
+function setCors(res: { set: (field: string, value: string) => unknown }) {
+  res.set("Access-Control-Allow-Origin", "*")
+  res.set("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS")
+  res.set("Access-Control-Allow-Headers", "Authorization,Content-Type")
+  res.set("Access-Control-Max-Age", "3600")
+}
+
+function normalizeAdminEmail(email: string | undefined) {
+  return email?.trim().toLowerCase() ?? ""
+}
+
+function isDashboardAdminEmail(email: string | undefined): boolean {
+  const normalized = normalizeAdminEmail(email)
+  if (!normalized) return false
+  const envAllowlist = (process.env.PA_DASHBOARD_ADMIN_EMAILS ?? "")
+    .split(",")
+    .map((s) => normalizeAdminEmail(s))
+    .filter(Boolean)
+  return normalized.endsWith("@wekruit.com") || normalized === "indolencorlol@gmail.com" || envAllowlist.includes(normalized)
+}
+
+async function requireDashboardAdmin(req: { header: (name: string) => string | undefined }) {
+  const authz = req.header("authorization") ?? req.header("Authorization") ?? ""
+  const match = authz.match(/^Bearer\s+(.+)$/i)
+  if (!match) throw Object.assign(new Error("Missing bearer token"), { status: 401 })
+  const decoded = await getAuth().verifyIdToken(match[1]!)
+  if (!isDashboardAdminEmail(decoded.email)) {
+    throw Object.assign(new Error("Forbidden"), { status: 403 })
+  }
+  return decoded
+}
+
+function qdrantHeaders() {
+  return { "api-key": QDRANT_API_KEY.value(), "content-type": "application/json" }
+}
+
+function qdrantBaseUrl() {
+  return QDRANT_URL.value().replace(/\/+$/, "")
+}
+
+async function qdrantJson(path: string, init: RequestInit) {
+  const resp = await fetch(`${qdrantBaseUrl()}${path}`, {
+    ...init,
+    headers: { ...qdrantHeaders(), ...(init.headers ?? {}) },
+  })
+  if (!resp.ok) {
+    throw new Error(`Qdrant ${path} failed: ${resp.status} ${await resp.text()}`)
+  }
+  return resp.json() as Promise<unknown>
+}
+
+function qdrantUserFilter(userId: string) {
+  return { must: [{ key: "user_id", match: { value: userId } }] }
+}
+
+function pointMatchesQuery(point: QdrantPoint, q: string) {
+  if (!q) return true
+  return JSON.stringify(point.payload ?? {}).toLowerCase().includes(q.toLowerCase())
+}
+
+async function listQdrantMemories(userId: string, search: string, limit = 100) {
+  const body = {
+    filter: qdrantUserFilter(userId),
+    limit: Math.min(Math.max(limit, 1), 200),
+    with_payload: true,
+    with_vector: false,
+  }
+  const json = await qdrantJson(`/collections/${QDRANT_COLLECTION}/points/scroll`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  }) as QdrantScrollResponse
+  return (json.result?.points ?? []).filter((p) => pointMatchesQuery(p, search))
+}
+
+async function retrieveQdrantPoint(pointId: string) {
+  const json = await qdrantJson(`/collections/${QDRANT_COLLECTION}/points`, {
+    method: "POST",
+    body: JSON.stringify({ ids: [pointId], with_payload: true, with_vector: false }),
+  }) as { result?: QdrantPoint[] }
+  return json.result?.[0] ?? null
+}
+
+async function deleteQdrantPointForUser(userId: string, pointId: string) {
+  const point = await retrieveQdrantPoint(pointId)
+  if (!point) throw Object.assign(new Error("Memory point not found"), { status: 404 })
+  if (point.payload?.user_id !== userId) throw Object.assign(new Error("Memory point does not belong to user"), { status: 403 })
+  await qdrantJson(`/collections/${QDRANT_COLLECTION}/points/delete?wait=true`, {
+    method: "POST",
+    body: JSON.stringify({ points: [point.id] }),
+  })
+}
+
+function sendJson(res: { status: (code: number) => { json: (body: unknown) => unknown } }, status: number, body: unknown) {
+  res.status(status).json(body)
 }
 
 function nowIso() {
@@ -178,6 +295,7 @@ async function processBrokerImessageEvent(db: Firestore, data: BrokerImessageEve
       messageRowId: payload.messageRowId,
       chatId: payload.chatId,
       brokerEventId: claimed.id,
+      ...(payload.harness ? { harness: payload.harness } : {}),
     },
   }
   await db.collection(PA_COLLECTIONS.inboundEvents).doc(claimed.id).set(
@@ -244,14 +362,86 @@ export const onPaInbound = onDocumentCreated(
       const processed = isBrokerImessageEvent(data)
         ? await processBrokerImessageEvent(db, data)
         : await claimAndProcessInboundEvent(db, data.id)
-      logger.info("onPaInbound processed", { eventId: data.id, userId: data.userId, processed })
+      logger.info("onPaInbound processed", { eventId: data.id, userId: "userId" in data ? data.userId : undefined, processed })
     } catch (err) {
       logger.error("onPaInbound failed", {
         eventId: data.id,
-        userId: data.userId,
+        userId: "userId" in data ? data.userId : undefined,
         err: err instanceof Error ? err.message : String(err),
       })
       throw err
     }
   },
+)
+
+export const memoryAdmin = onRequest(
+  {
+    region: "us-central1",
+    secrets: [QDRANT_URL, QDRANT_API_KEY],
+    memory: "512MiB",
+    timeoutSeconds: 120,
+    cors: false,
+  },
+  async (req, res) => {
+    setCors(res)
+    if (req.method === "OPTIONS") {
+      res.status(204).send("")
+      return
+    }
+
+    try {
+      await requireDashboardAdmin(req)
+      const userId = String(req.query.userId ?? req.body?.userId ?? "").trim()
+      if (!userId) {
+        sendJson(res, 400, { error: "userId is required" })
+        return
+      }
+
+      if (req.method === "GET") {
+        const search = String(req.query.q ?? "").trim()
+        const limit = Number(req.query.limit ?? "100")
+        const points = await listQdrantMemories(userId, search, Number.isFinite(limit) ? limit : 100)
+        sendJson(res, 200, { userId, collection: QDRANT_COLLECTION, points })
+        return
+      }
+
+      if (req.method === "DELETE") {
+        const pointId = String(req.query.pointId ?? req.body?.pointId ?? "").trim()
+        if (!pointId) {
+          sendJson(res, 400, { error: "pointId is required" })
+          return
+        }
+        await deleteQdrantPointForUser(userId, pointId)
+        sendJson(res, 200, { userId, pointId, deleted: true })
+        return
+      }
+
+      if (req.method === "POST") {
+        const action = String(req.body?.action ?? "").trim()
+        if (action !== "clear") {
+          sendJson(res, 400, { error: "Unsupported action" })
+          return
+        }
+        const result = await clearUserMemory(
+          userId,
+          {
+            db: getFirestore(),
+            qdrantUrl: QDRANT_URL.value(),
+            qdrantApiKey: QDRANT_API_KEY.value(),
+            qdrantCollection: QDRANT_COLLECTION,
+          },
+          { keepMessages: req.body?.keepMessages === true, dryRun: req.body?.dryRun === true }
+        )
+        sendJson(res, 200, { result, summary: summarizeClearResult(result) })
+        return
+      }
+
+      sendJson(res, 405, { error: "Method not allowed" })
+    } catch (err) {
+      const rawStatus = typeof err === "object" && err && "status" in err ? Number((err as { status: unknown }).status) : 500
+      const status = Number.isFinite(rawStatus) ? rawStatus : 500
+      logger.warn("memoryAdmin failed", { status, error: err instanceof Error ? err.message : String(err) })
+      sendJson(res, status, { error: err instanceof Error ? err.message : String(err) })
+    }
+  }
 )

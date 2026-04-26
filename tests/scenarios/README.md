@@ -8,14 +8,16 @@ Mem0 OSS / Qdrant / SiliconFlow → outbound) without writing to
 ## Why broker injection (not chat.db)
 
 The harness writes a synthetic broker iMessage event directly to
-`pa_inbound_events` with `rawPayload.kind = "imessage"`. This is exactly
-what the macOS worker produces, so the CF cannot tell the difference. We
-get end-to-end coverage of the orchestrator, Mem0, and SiliconFlow path
+`pa_inbound_events` with `rawPayload.kind = "imessage"` plus harness metadata
+that suppresses real outbound delivery. We get end-to-end coverage of the
+Cloud Function, orchestrator, Mem0, Qdrant, SiliconFlow, and transcript path
 without:
 
 - Touching the read-only `chat.db` (worker permission territory).
 - Mocking the LLM (Mem0 fact extraction depends on real model behavior).
 - Simulating Qdrant (production semantic memory must be exercised).
+- Enqueueing a `pa_outbound` job that the Mac worker would send through
+  iMessage.
 
 ## Scenario format
 
@@ -26,6 +28,7 @@ locale: zh-CN | en-US | ja-JP | mixed
 agentId: <pa_agents/{id}> | default
 participant: "+1XXXXXXXXXX"          # broker key — match a test handle
 chatId: "iMessage;+1XXXXXXXXXX"
+testMode: true | false               # optional; enables reset scenarios
 turnTimeoutMs: 30000
 turns:
   - user: <message body>
@@ -33,6 +36,8 @@ turns:
       reply_min_length: <int>
       reply_contains_any: [string, ...]    # at least one must match
       reply_not_contains_any: [string, ...]  # none may match
+      reply_matches_any: [regex, ...]       # at least one regex must match
+      reply_not_matches_any: [regex, ...]   # no regex may match
 ```
 
 Future assertion types (Phase 3+):
@@ -53,7 +58,19 @@ GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa.json \
 # Whole directory
 GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa.json \
   node tests/scenarios/runner.mjs tests/scenarios/scenarios/
+
+# Env-gated npm test integration. This intentionally requires an explicit
+# production-harness opt-in because it writes broker events to Firestore.
+PA_RUN_SCENARIOS=1 GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa.json \
+  npm test
 ```
+
+Scenarios should use the reserved `+1999999xxxx` test range. The runner maps
+reserved numbers to a fresh test participant on each run so rate limits and
+semantic memory do not leak between reruns. Set `PA_SCENARIO_KEEP_PARTICIPANTS=1`
+only when you intentionally need the exact number in the YAML. To run against a
+real test handle, set `PA_SCENARIO_ALLOWED_PARTICIPANTS` to that exact
+comma-separated participant list.
 
 Output is a single JSON document on stdout (suitable for CI
 consumption). Per-scenario progress goes to stderr.
@@ -62,8 +79,8 @@ Exit codes: `0` all pass, `1` any failure, `2` invalid invocation.
 
 ## What's not here yet
 
-- Multi-language scenarios (zh / en / ja / es / mixed) — Phase 2
-  follow-up; the runner is locale-agnostic.
+- Additional locale scenarios beyond zh / en / ja / mixed — the runner is
+  locale-agnostic.
 - Adversarial / safety scenarios (prompt injection, memory poisoning,
   tool escalation) — overlaps with `tests/promptfoo/`. Decision is to
   drive them through the same runner once Qdrant/safety assertions land.
@@ -82,6 +99,9 @@ Exit codes: `0` all pass, `1` any failure, `2` invalid invocation.
   within a scenario). Different scenarios can run in parallel only if
   they use different `participant` values, otherwise Mem0 partitions
   collide.
+- `testMode: true` scenarios create or update the scenario participant's
+  `pa_users` record with `testMode = true` so `__PA_RESET__` can be tested
+  without a manual CLI bootstrap.
 - Cleanup is intentionally NOT performed by the runner — we want the
   Firestore docs and Qdrant memories to remain for forensic inspection
   after a failure. Operator script (TBD Phase 3) will sweep

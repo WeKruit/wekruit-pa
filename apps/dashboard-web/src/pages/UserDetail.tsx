@@ -4,6 +4,12 @@ import { useEffect, useState } from "react"
 import { Link, useParams } from "react-router-dom"
 import { DataTable, EmptyState, ErrorState, PageHeader, Panel, StatusBadge } from "../components/ui.js"
 import { db } from "../lib/firebase.js"
+import {
+  clearUserMemory,
+  deleteMemoryPoint,
+  listMemoryPoints,
+  type MemoryPoint,
+} from "../lib/memoryAdmin.js"
 import { fetchWorkerHealth, getWorkerHealthBaseUrl, type WorkerHealth } from "../lib/workerHealth.js"
 
 type U = { id: string; phoneE164?: string; activeAgentId?: string; onboardingStatus?: string }
@@ -22,6 +28,11 @@ export function UserDetail() {
   const [auditEvents, setAuditEvents] = useState<AnyRow[]>([])
   const [abuseEvents, setAbuseEvents] = useState<AnyRow[]>([])
   const [agents, setAgents] = useState<{ id: string; name: string; memoryMode?: string }[]>([])
+  const [memoryPoints, setMemoryPoints] = useState<MemoryPoint[]>([])
+  const [memorySearch, setMemorySearch] = useState("")
+  const [memoryLoading, setMemoryLoading] = useState(false)
+  const [memoryAction, setMemoryAction] = useState<string | null>(null)
+  const [memoryNotice, setMemoryNotice] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [workerHealth, setWorkerHealth] = useState<WorkerHealth | null>(null)
   const [workerHealthErr, setWorkerHealthErr] = useState<string | null>(null)
@@ -137,6 +148,50 @@ export function UserDetail() {
     setUser((u) => (u ? { ...u, activeAgentId: aid } : u))
   }
 
+  async function refreshSemanticMemory(q = memorySearch) {
+    if (!id) return
+    setMemoryLoading(true)
+    setMemoryNotice(null)
+    try {
+      const data = await listMemoryPoints(id, q)
+      setMemoryPoints(data.points)
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setMemoryLoading(false)
+    }
+  }
+
+  async function onDeleteMemoryPoint(pointId: string | number) {
+    if (!id) return
+    if (!window.confirm(`Delete Qdrant memory point ${pointId}?`)) return
+    setMemoryAction(String(pointId))
+    try {
+      await deleteMemoryPoint(id, pointId)
+      setMemoryPoints((points) => points.filter((p) => String(p.id) !== String(pointId)))
+      setMemoryNotice(`Deleted memory point ${pointId}`)
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setMemoryAction(null)
+    }
+  }
+
+  async function onClearMemory() {
+    if (!id) return
+    if (!window.confirm("Clear all semantic memory and Firestore memory/transcript rows for this user?")) return
+    setMemoryAction("clear")
+    try {
+      const data = await clearUserMemory(id)
+      setMemoryPoints([])
+      setMemoryNotice(data.summary)
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setMemoryAction(null)
+    }
+  }
+
   if (err) return <ErrorState message={err} />
   if (!user) return <div className="panel">Loading…</div>
 
@@ -158,7 +213,8 @@ export function UserDetail() {
         <a href="#outbound">Outbound</a>
         <a href="#connectors">Connectors</a>
         <a href="#audit">Audit/Safety</a>
-        <a href="#memory">Memory</a>
+        <a href="#memory-admin">Memory Admin</a>
+        <a href="#memory-events">Memory Events</a>
       </div>
       <Panel title="Runtime assignment" eyebrow="Agent">
         <select
@@ -206,7 +262,68 @@ export function UserDetail() {
       <Section id="outbound" title="Outbound" rows={outbound} columns={["createdAt", "status", "toE164", "body", "error"]} />
       <Section id="connectors" title="Connector calls" rows={toolCalls} columns={["startedAt", "status", "connectorName", "policyDecision", "resultSummary", "error"]} />
       <Section id="audit" title="Audit and safety" rows={[...auditEvents, ...abuseEvents]} columns={["createdAt", "kind", "message"]} />
-      <Section id="memory" title="Memory events" rows={memoryEvents as AnyRow[]} columns={["createdAt", "kind", "mem0UserId", "message"]} />
+      <Panel
+        title="Semantic memory"
+        eyebrow="Memory Admin"
+        actions={
+          <button type="button" className="danger-button" disabled={memoryAction === "clear"} onClick={onClearMemory}>
+            {memoryAction === "clear" ? "Clearing..." : "Clear user memory"}
+          </button>
+        }
+      >
+        <div id="memory-admin" />
+        <div className="toolbar memory-toolbar">
+          <input
+            aria-label="Search semantic memory"
+            placeholder="Search Qdrant payload"
+            value={memorySearch}
+            onChange={(e) => setMemorySearch(e.target.value)}
+          />
+          <button type="button" onClick={() => refreshSemanticMemory()} disabled={memoryLoading}>
+            {memoryLoading ? "Loading..." : "Search"}
+          </button>
+          <button type="button" onClick={() => refreshSemanticMemory("")} disabled={memoryLoading}>
+            Refresh
+          </button>
+        </div>
+        {memoryNotice ? <div className="notice notice-good">{memoryNotice}</div> : null}
+        <DataTable<MemoryPoint & { id: string | number }>
+          rows={memoryPoints}
+          empty={
+            <EmptyState
+              title="No semantic memories loaded"
+              body="Search or refresh to inspect Qdrant pa_memory payloads for this user."
+            />
+          }
+          columns={[
+            {
+              key: "id",
+              header: "Point",
+              render: (row) => <code>{String(row.id)}</code>,
+            },
+            {
+              key: "payload",
+              header: "Payload",
+              render: (row) => <MemoryPayload payload={row.payload} />,
+            },
+            {
+              key: "actions",
+              header: "",
+              render: (row) => (
+                <button
+                  type="button"
+                  className="danger-button"
+                  disabled={memoryAction === String(row.id)}
+                  onClick={() => onDeleteMemoryPoint(row.id)}
+                >
+                  {memoryAction === String(row.id) ? "Deleting..." : "Delete"}
+                </button>
+              ),
+            },
+          ]}
+        />
+      </Panel>
+      <Section id="memory-events" title="Memory events" rows={memoryEvents as AnyRow[]} columns={["createdAt", "kind", "mem0UserId", "message"]} />
     </div>
   )
 }
@@ -214,6 +331,25 @@ export function UserDetail() {
 function text(v: unknown, max = 240) {
   const value = v == null || v === "" ? "—" : String(v)
   return value.length > max ? `${value.slice(0, max)}…` : value
+}
+
+function payloadSummary(payload: Record<string, unknown> | undefined) {
+  if (!payload) return "—"
+  for (const key of ["memory", "text", "content", "data"]) {
+    const value = payload[key]
+    if (typeof value === "string" && value.trim()) return value
+  }
+  return JSON.stringify(payload)
+}
+
+function MemoryPayload({ payload }: { payload?: Record<string, unknown> }) {
+  const summary = payloadSummary(payload)
+  return (
+    <div className="memory-payload">
+      <strong>{text(summary, 320)}</strong>
+      <small>{text(JSON.stringify(payload ?? {}), 520)}</small>
+    </div>
+  )
 }
 
 function Section({ id, title, rows, columns }: { id: string; title: string; rows: AnyRow[]; columns: string[] }) {

@@ -1,0 +1,22 @@
+id: memory_recall_mixed_sushi_gym
+description: |
+  Verifies mixed Chinese/English recall without relying on exact wording.
+locale: mixed
+agentId: default
+participant: "+19999990003"
+chatId: "iMessage;+19999990003"
+turnTimeoutMs: 30000
+turns:
+  - user: "Tonight I want to eat 寿司"
+    assert:
+      reply_min_length: 1
+      reply_not_contains_any: ["error", "failed", "undefined", "[20"]
+  - user: "然后我想去 gym"
+    assert:
+      reply_min_length: 1
+      reply_not_contains_any: ["error", "failed", "undefined", "[20"]
+  - user: "你记得 I wanted to eat what 吗?"
+    assert:
+      reply_contains_any: ["寿司", "sushi", "Sushi"]
+      reply_min_length: 1
+      reply_not_contains_any: ["error", "failed", "undefined", "[20"]

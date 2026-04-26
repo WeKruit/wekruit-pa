@@ -17,24 +17,141 @@
  *   GOOGLE_APPLICATION_CREDENTIALS=... \
  *   node tests/scenarios/runner.mjs tests/scenarios/scenarios/   # whole dir
  */
+import { readFileSync } from "node:fs"
 import { readFile, readdir, stat } from "node:fs/promises"
 import { resolve, join, basename } from "node:path"
 import { randomUUID } from "node:crypto"
 import { parse as parseYaml } from "yaml"
-import { initializeApp, getApps, applicationDefault } from "firebase-admin/app"
-import { getFirestore, FieldValue } from "firebase-admin/firestore"
+import { initializeApp, getApps, applicationDefault, cert } from "firebase-admin/app"
+import { getFirestore } from "firebase-admin/firestore"
 
 const PA_INBOUND = "pa_inbound_events"
 const PA_OUTBOUND = "pa_outbound"
 const PA_MESSAGES = "pa_messages"
+const generatedParticipants = new Set()
 
 function nowIso() {
   return new Date().toISOString()
 }
 
+function normalizeE164(phone) {
+  const d = phone.replace(/\D/g, "")
+  if (phone.trim().startsWith("+")) return `+${d}`
+  return d.length === 10 ? `+1${d}` : `+${d}`
+}
+
+function normalizeImessageParticipant(participant) {
+  const value = participant.trim()
+  if (!value) return ""
+  if (value.includes("@")) return value.toLowerCase()
+  return normalizeE164(value)
+}
+
 function getDb() {
-  if (!getApps().length) initializeApp({ credential: applicationDefault() })
+  if (!getApps().length) {
+    const jsonEnv = process.env.FIREBASE_SERVICE_ACCOUNT_JSON
+    const path = process.env.FIREBASE_SERVICE_ACCOUNT_PATH || process.env.GOOGLE_APPLICATION_CREDENTIALS
+    if (jsonEnv && jsonEnv.trim().length > 0) {
+      const serviceAccount = JSON.parse(jsonEnv)
+      initializeApp({
+        credential: cert(serviceAccount),
+        projectId: serviceAccount.project_id,
+      })
+    } else if (path) {
+      const serviceAccount = JSON.parse(readFileSync(path, "utf8"))
+      initializeApp({
+        credential: cert(serviceAccount),
+        projectId: serviceAccount.project_id,
+      })
+    } else {
+      initializeApp({
+        credential: applicationDefault(),
+        projectId: process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT,
+      })
+    }
+  }
   return getFirestore()
+}
+
+async function findScenarioUser(db, participant) {
+  const normalized = normalizeImessageParticipant(participant)
+  if (!normalized) return null
+  const query = normalized.includes("@")
+    ? db.collection("pa_users").where("channels.imessageHandle", "==", normalized)
+    : db.collection("pa_users").where("phoneE164", "==", normalized)
+  const snap = await query.limit(1).get()
+  if (snap.empty) return null
+  return { id: snap.docs[0].id, data: snap.docs[0].data() }
+}
+
+async function ensureScenarioTestUser(db, scenario) {
+  if (scenario.testMode !== true) return null
+  const normalized = normalizeImessageParticipant(scenario.participant)
+  if (!normalized) throw new Error(`Invalid participant for testMode scenario: ${scenario.participant}`)
+
+  const existing = await findScenarioUser(db, scenario.participant)
+  if (existing) {
+    await db.collection("pa_users").doc(existing.id).set(
+      { testMode: true, updatedAt: nowIso() },
+      { merge: true }
+    )
+    return existing.id
+  }
+
+  const id = randomUUID()
+  const doc = {
+    id,
+    createdAt: nowIso(),
+    updatedAt: nowIso(),
+    onboardingStatus: "provisional",
+    channels: { imessageHandle: normalized },
+    testMode: true,
+  }
+  if (!normalized.includes("@")) doc.phoneE164 = normalized
+  await db.collection("pa_users").doc(id).set(doc)
+  return id
+}
+
+function assertScenarioParticipant(scenario) {
+  const allowed = (process.env.PA_SCENARIO_ALLOWED_PARTICIPANTS ?? "")
+    .split(",")
+    .map((s) => normalizeImessageParticipant(s))
+    .filter(Boolean)
+  const participant = normalizeImessageParticipant(scenario.participant ?? "")
+  if (!participant) throw new Error(`Scenario ${scenario.id ?? "<unknown>"} is missing participant`)
+  const isReservedHarnessNumber = /^\+1999999\d{4}$/.test(participant)
+  if (!isReservedHarnessNumber && !allowed.includes(participant)) {
+    throw new Error(
+      [
+        `Refusing to run scenario ${scenario.id ?? "<unknown>"} for non-harness participant ${participant}.`,
+        "Use the reserved +1999999xxxx test range, or set PA_SCENARIO_ALLOWED_PARTICIPANTS for an intentional real test handle.",
+      ].join(" ")
+    )
+  }
+}
+
+function generateReservedHarnessParticipant() {
+  for (let i = 0; i < 20; i++) {
+    const suffix = String(Math.floor(Math.random() * 10000)).padStart(4, "0")
+    const participant = `+1999999${suffix}`
+    if (!generatedParticipants.has(participant)) {
+      generatedParticipants.add(participant)
+      return participant
+    }
+  }
+  throw new Error("Unable to allocate a fresh reserved harness participant")
+}
+
+function materializeScenario(rawScenario) {
+  const scenario = structuredClone(rawScenario)
+  const participant = normalizeImessageParticipant(scenario.participant ?? "")
+  const isReservedHarnessNumber = /^\+1999999\d{4}$/.test(participant)
+  if (isReservedHarnessNumber && process.env.PA_SCENARIO_KEEP_PARTICIPANTS !== "1") {
+    const fresh = generateReservedHarnessParticipant()
+    scenario.participant = fresh
+    scenario.chatId = `iMessage;${fresh}`
+  }
+  return scenario
 }
 
 /** Build a broker-shaped iMessage inbound event. CF detects via rawPayload.kind. */
@@ -57,6 +174,10 @@ function brokerEvent({ participant, chatId, text }) {
         chatId,
         messageRowId: Date.now(),
         text,
+        harness: {
+          runner: "tests/scenarios/runner.mjs",
+          suppressOutbound: true,
+        },
       },
     },
   }
@@ -120,6 +241,30 @@ async function runTurn(db, scenario, turnIdx) {
   return { event, reply }
 }
 
+function isRetryableRunnerError(err) {
+  const message = err instanceof Error ? err.message : String(err)
+  return /\b429\b|rate.?limit|resource exhausted/i.test(message)
+}
+
+async function runTurnWithRetry(db, scenario, turnIdx) {
+  const retries = Number(scenario.turnRetries ?? 2)
+  const baseBackoffMs = Number(scenario.retryBackoffMs ?? 30000)
+  let lastErr = null
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await runTurn(db, scenario, turnIdx)
+    } catch (err) {
+      lastErr = err
+      if (attempt >= retries || !isRetryableRunnerError(err)) throw err
+      const delay = baseBackoffMs * (attempt + 1)
+      const message = err instanceof Error ? err.message : String(err)
+      console.error(`  retrying turn ${turnIdx + 1} after transient error in ${delay}ms: ${message}`)
+      await new Promise((r) => setTimeout(r, delay))
+    }
+  }
+  throw lastErr
+}
+
 function applyAssertions(turn, reply) {
   const a = turn.assert ?? {}
   const failures = []
@@ -135,10 +280,22 @@ function applyAssertions(turn, reply) {
       failures.push(`reply does not contain any of [${a.reply_contains_any.join(", ")}]`)
     }
   }
+  if (Array.isArray(a.reply_matches_any) && a.reply_matches_any.length > 0) {
+    if (!a.reply_matches_any.some((pattern) => new RegExp(pattern, "iu").test(reply))) {
+      failures.push(`reply does not match any of [${a.reply_matches_any.join(", ")}]`)
+    }
+  }
   if (Array.isArray(a.reply_not_contains_any)) {
     for (const needle of a.reply_not_contains_any) {
       if (reply.toLowerCase().includes(needle.toLowerCase())) {
         failures.push(`reply contains forbidden token "${needle}"`)
+      }
+    }
+  }
+  if (Array.isArray(a.reply_not_matches_any)) {
+    for (const pattern of a.reply_not_matches_any) {
+      if (new RegExp(pattern, "iu").test(reply)) {
+        failures.push(`reply matches forbidden pattern "${pattern}"`)
       }
     }
   }
@@ -147,17 +304,19 @@ function applyAssertions(turn, reply) {
 
 async function runScenario(db, scenarioPath) {
   const raw = await readFile(scenarioPath, "utf8")
-  const scenario = parseYaml(raw)
+  const scenario = materializeScenario(parseYaml(raw))
   const result = {
     id: scenario.id,
     file: basename(scenarioPath),
     turns: [],
     pass: true,
   }
+  assertScenarioParticipant(scenario)
+  await ensureScenarioTestUser(db, scenario)
   for (let i = 0; i < scenario.turns.length; i++) {
     const turn = scenario.turns[i]
     try {
-      const { event, reply } = await runTurn(db, scenario, i)
+      const { event, reply } = await runTurnWithRetry(db, scenario, i)
       const failures = applyAssertions(turn, reply)
       result.turns.push({
         idx: i,
