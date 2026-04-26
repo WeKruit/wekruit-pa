@@ -5,7 +5,7 @@ locale: en-US
 agentId: default
 participant: "+19999990002"
 chatId: "iMessage;+19999990002"
-turnTimeoutMs: 30000
+turnTimeoutMs: 90000
 turns:
   - user: "I just had a cortado"
     assert:

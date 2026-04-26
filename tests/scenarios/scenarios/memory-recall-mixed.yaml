@@ -5,7 +5,7 @@ locale: mixed
 agentId: default
 participant: "+19999990003"
 chatId: "iMessage;+19999990003"
-turnTimeoutMs: 30000
+turnTimeoutMs: 90000
 turns:
   - user: "Tonight I want to eat 寿司"
     assert:

@@ -716,7 +716,21 @@ export function createFirestoreOrchestratorStore(db: Firestore): OrchestratorSto
           .where("idempotencyKey", "==", idempotencyKey)
           .limit(1)
           .get()
-        if (!existing.empty) return
+        if (!existing.empty) {
+          // Phase 10.5: SDK FirestoreSession.addItems may have already
+          // written this row before the orchestrator's appendMessage call
+          // (same hash idempotencyKey). Merge orchestrator-owned metadata
+          // (rawMeta, idempotencyKey) into the existing row so dashboard /
+          // harness consumers can still find it via rawMeta.eventId.
+          const docRef = existing.docs[0]!.ref
+          const patch: Record<string, unknown> = {}
+          if (message.rawMeta !== undefined) patch.rawMeta = message.rawMeta
+          if (message.idempotencyKey !== undefined) patch.idempotencyKey = message.idempotencyKey
+          if (Object.keys(patch).length > 0) {
+            await docRef.set(patch, { merge: true })
+          }
+          return
+        }
       }
       await db.collection(PA_COLLECTIONS.messages).doc(id).set({ id, ...message })
       await db.collection(PA_COLLECTIONS.sessions).doc(message.sessionId).set(

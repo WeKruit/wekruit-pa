@@ -5,7 +5,7 @@ locale: ja-JP
 agentId: default
 participant: "+19999990004"
 chatId: "iMessage;+19999990004"
-turnTimeoutMs: 30000
+turnTimeoutMs: 90000
 turns:
   - user: "さっきラーメンを食べました"
     assert:

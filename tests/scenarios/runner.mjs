@@ -231,19 +231,34 @@ async function runTurn(db, scenario, turnIdx) {
     { timeoutMs: scenario.turnTimeoutMs ?? 30000, label: `inbound ${event.id} completed` }
   )
 
-  // Find the assistant reply. Search recent pa_messages OR pa_outbound for
-  // anything written after this event id.
+  // Find the assistant reply. Phase 10.5 changed idempotencyKey from the
+  // legacy "out-${eventId}" string to a hash of (sessionId, role, body) so
+  // that SDK FirestoreSession.addItems and orchestrator.appendMessage
+  // converge on the same row. Look up by rawMeta.eventId, which the
+  // orchestrator merges into the row even on idempotency-collision.
   const replyTimeoutMs = Number(scenario.replyTimeoutMs ?? 120_000)
   const reply = await pollUntil(
     async () => {
       // pa_messages is the canonical transcript per pa-orchestrator.
-      const msgs = await db
+      const byMeta = await db
+        .collection(PA_MESSAGES)
+        .where("rawMeta.eventId", "==", event.id)
+        .limit(5)
+        .get()
+      if (!byMeta.empty) {
+        const assistant = byMeta.docs
+          .map((d) => d.data())
+          .find((d) => d.role === "assistant" && typeof d.body === "string" && d.body.length > 0)
+        if (assistant) return assistant.body
+      }
+      // Fallback: pre-Phase-10.5 idempotency-key shape.
+      const legacy = await db
         .collection(PA_MESSAGES)
         .where("idempotencyKey", "==", `out-${event.id}`)
         .limit(1)
         .get()
-      if (!msgs.empty) {
-        const d = msgs.docs[0].data()
+      if (!legacy.empty) {
+        const d = legacy.docs[0].data()
         return d.body
       }
       return false

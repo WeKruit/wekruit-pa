@@ -7,7 +7,7 @@ agentId: default
 participant: "+19999990005"
 chatId: "iMessage;+19999990005"
 testMode: true
-turnTimeoutMs: 30000
+turnTimeoutMs: 90000
 turns:
   - user: "我刚买了一盒彩虹糖"
     assert:

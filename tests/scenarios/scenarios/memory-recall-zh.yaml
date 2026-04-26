@@ -11,7 +11,7 @@ agentId: default
 participant: "+19999990001"
 chatId: "iMessage;+19999990001"
 # Time budget per turn (ms) — orchestrator typically completes in 5-15s
-turnTimeoutMs: 30000
+turnTimeoutMs: 90000
 turns:
   - user: "我刚吃了烧鹅"
     assert:

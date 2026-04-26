@@ -72,9 +72,13 @@ function dropUndefined<T extends Record<string, unknown>>(obj: T): Partial<T> {
 
 function chatMessageToInputItem(message: ChatMessage): AgentInputItem | null {
   const text = stripLeadingIsoTimestamp(message.body ?? "")
+  // Note: do NOT pass through message.id. The OpenAI Responses API rejects
+  // any item whose `id` does not start with the server-assigned `msg_`
+  // prefix. Our Firestore IDs are UUIDs and would 400. Letting the SDK
+  // omit `id` is fine for replayed history because Responses API treats
+  // such items as plain input messages without prior server identity.
   if (message.role === "user") {
     return {
-      ...(message.id ? { id: message.id } : {}),
       type: "message",
       role: "user",
       content: text,
@@ -82,7 +86,6 @@ function chatMessageToInputItem(message: ChatMessage): AgentInputItem | null {
   }
   if (message.role === "assistant") {
     return {
-      ...(message.id ? { id: message.id } : {}),
       type: "message",
       role: "assistant",
       status: "completed",
