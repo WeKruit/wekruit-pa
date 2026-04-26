@@ -1,9 +1,14 @@
 # Phase 11 Context — Persona + Identity/Memory Injection
 
-> **STATUS: BLOCKED on Phase 10.5 (Agents SDK runtime cutover).**
-> Phase 11 will not start until 10.5 closes. Some 11-PLAN tasks may
-> collapse into the Agents SDK system-message path naturally once the
-> runtime is unified. P10 will re-confirm 11 scope after 10.5 ships.
+> **STATUS: UNBLOCKED (2026-04-26).** Phase 10.5 closed: Agents SDK
+> is now the only runtime, FirestoreSession owns history, the
+> per-turn `system` AgentInputItem channel is wired and tested. P11
+> can build directly on those primitives. 11-PLAN.md tasks 11.1
+> (persona-card injection) and 11.2 (mem0UserId authoritative)
+> remain accurate; the original "Mem0 recall block contract" task
+> already collapsed into Phase 10.5 T3 — start with 11.1 (persona
+> card construction from confirmed Firestore facts) and 11.3
+> (mem0UserId authoritative migration; highest-risk task).
 
 ## Why this phase
 

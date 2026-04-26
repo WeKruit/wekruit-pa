@@ -14,8 +14,8 @@ This roadmap is intentionally numeric so GSD phase tooling can discover and exec
 | 8 | Reviews, polish, and ship readiness | Run engineering/design reviews, close gaps, and produce final verification evidence. | P1 | Complete |
 | 9 | Phase 2/3 production hardening | Make production verification repeatable and expose semantic memory safely in dashboard. | P0.1, P0.2, P0.4, P0.5 | Mostly complete |
 | 10 | Agents SDK current-info connector | Answer recent/latest questions through Agents SDK hosted web search without stale model guesses. | P0.6, P0.7 | Complete (connector path only) |
-| 10.5 | Agents SDK runtime cutover | Make Agents SDK the only agent runtime; default agent uses chat_completions on SiliconFlow with allowlisted connectors; delete regex pre-routers (keep `__PA_RESET__`). Mem0 stays as memory empowerment. | P0.6, P0.7 | Not started |
-| 11 | Persona + identity/memory injection | Restore persona facts, resolve memory identity semantics, and inject PA-owned context into agent turns. | P0.3, P0.5, P0.7, P0.9 | Blocked on 10.5 |
+| 10.5 | Agents SDK runtime cutover | Make Agents SDK the only agent runtime; default agent uses Responses API + gpt-5.4-nano (SiliconFlow demoted to env-gated fallback); allowlisted connectors + SDK webSearchTool; FirestoreSession owns history; regex pre-routers deleted (keep `__PA_RESET__`). Mem0 stays as memory empowerment. | P0.6, P0.7 | Complete |
+| 11 | Persona + identity/memory injection | Restore persona facts, resolve memory identity semantics, and inject PA-owned context into agent turns. | P0.3, P0.5, P0.7, P0.9 | Not started |
 | 12 | Job companion scheduled outreach | Add permissioned recruiter-style follow-up: project/status nudges, cooldowns, audit, and outbound policy. | P0.1, P0.8 | Not started |
 | 13 | Job matching connector path | Add an auditable platform-managed path for matched-role notifications. | P0.4, P0.8 | Not started |
 | 14 | Companion eval + harness expansion | Add scenario/eval coverage for current-info live search, persona, proactive outreach, and match rationale. | P0.6, P0.7, P0.8, P1 | Not started |
