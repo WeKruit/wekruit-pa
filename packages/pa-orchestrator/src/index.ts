@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto"
 import { FieldValue, type Firestore } from "firebase-admin/firestore"
 import { getAgentById, getDefaultAgent } from "@pa/agent-registry"
-import { runAgentTurn as defaultRunAgentTurn } from "@pa/agent-runtime"
+import { runAgentTurn as defaultRunAgentTurn, stripLeadingIsoTimestamp } from "@pa/agent-runtime"
 import {
   PA_COLLECTIONS,
   type AgentDef,
@@ -271,7 +271,10 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       history,
       userMessage: event.body,
     })
-    const reply = text.trim() || "我暂时没有生成有效回复，请稍后再试。"
+    // Defense-in-depth: even if the model echoes a [ISO] prefix, strip it
+    // before persisting + sending. Root cause is upstream in
+    // `toOpenAIMessages` (was prefixing history bodies); this catches stragglers.
+    const reply = stripLeadingIsoTimestamp(text.trim()) || "我暂时没有生成有效回复，请稍后再试。"
     const visibleReply =
       mem.mem0Degraded && agent.memoryMode !== "firestore_only"
         ? `${reply}\n\n（长期语义记忆暂时不可用；我仍使用已确认事实和最近对话。）`

@@ -6,7 +6,7 @@ import { assertProviderKey } from "./env.js"
 import type { ChatMessage } from "@pa/core-types"
 
 export { runWithOpenAI, runOpenAITurn } from "./openai-provider.js"
-export { toOpenAIMessages } from "./messages.js"
+export { toOpenAIMessages, stripLeadingIsoTimestamp } from "./messages.js"
 export { assertProviderKey, hasOpenAICompatKey } from "./env.js"
 export type { AgentTurnContext, RunAgentTurnResult } from "./types.js"
 export { runAgentTurn } from "./run.js"
