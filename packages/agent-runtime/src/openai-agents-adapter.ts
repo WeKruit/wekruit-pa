@@ -5,6 +5,7 @@ import {
   setDefaultOpenAIKey,
   setOpenAIAPI,
   tool,
+  webSearchTool,
 } from "@openai/agents"
 import type { AgentInputItem } from "@openai/agents"
 import OpenAI from "openai"
@@ -208,11 +209,48 @@ function extractUsage(
   return usage
 }
 
+
+/**
+ * Phase 10.5 T4 — attach SDK hosted `webSearchTool` to the default Agent.
+ *
+ * Three-way gate (all must be true to attach):
+ *   1. provider === "openai" — the SDK-hosted `web_search` tool only works
+ *      against `api.openai.com` Responses API. Under the SiliconFlow
+ *      fallback path the SDK is in `chat_completions` mode against a
+ *      non-OpenAI base URL; attaching `webSearchTool` there yields a 404
+ *      or unsupported-tool error. Defense in depth — the env-isolated
+ *      `current-info` connector still serves the boundary on fallback.
+ *   2. agent.toolPolicy === "allowlist" — pa-safety + the agent record
+ *      jointly govern tool access. `none` means "no tools, period".
+ *   3. agent.allowedConnectors includes "current-info" — the WeKruit-side
+ *      identity for live-web access. The SDK tool name is `web_search`
+ *      (mandated by the SDK). The bridge in T7/T9 logs hosted invocations
+ *      against `connectorName: "current-info"` to preserve audit
+ *      continuity.
+ *
+ * Returns an empty array when any gate fails; the caller treats that as
+ * "no hosted tools this turn".
+ */
+function buildHostedToolsForDefault(
+  ctx: AgentTurnContext,
+  provider: "openai" | "siliconflow"
+): ReturnType<typeof webSearchTool>[] {
+  if (provider !== "openai") return []
+  if (ctx.agent.toolPolicy !== "allowlist") return []
+  const connectors = ctx.agent.allowedConnectors ?? []
+  if (!connectors.includes("current-info")) return []
+  return [webSearchTool({})]
+}
+
 async function runDefaultAgent(
   ctx: AgentTurnContext,
   provider: "openai" | "siliconflow"
 ): Promise<RunAgentTurnResult> {
-  const sdkTools = buildSdkTools(ctx)
+  const hostedTools = buildHostedToolsForDefault(ctx, provider)
+  const customSdkTools = buildSdkTools(ctx)
+  // Hosted tools (e.g. webSearchTool) come first — the SDK accepts the
+  // mixed array as `tools`. Custom (T7-bridged) tools follow.
+  const sdkTools = [...hostedTools, ...customSdkTools]
   const hasTools = sdkTools.length > 0
   const model = resolveModel(ctx)
   const agent = new Agent({
@@ -268,4 +306,5 @@ export const __forTesting = {
   configureDefaultOpenAIClient,
   withSiliconFlowFallback,
   extractUsage,
+  buildHostedToolsForDefault,
 }

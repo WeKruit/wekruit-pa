@@ -158,3 +158,88 @@ test("extractUsage tolerates missing rawResponses field entirely (defensive)", (
   assert.equal(usage.inputTokens, undefined)
   assert.equal(usage.hostedToolCalls, undefined)
 })
+
+
+// -------- Phase 10.5 T4: webSearchTool attachment gate --------
+
+const allowlistAgent: AgentDef = {
+  ...agent,
+  toolPolicy: "allowlist",
+  allowedConnectors: ["current-info"],
+}
+
+test("buildHostedToolsForDefault attaches webSearchTool when openai + allowlist + current-info", () => {
+  const tools = t9ForTesting.buildHostedToolsForDefault(
+    {
+      agent: allowlistAgent,
+      systemPrompt: allowlistAgent.systemPrompt,
+      userMessage: "what is the latest news?",
+    },
+    "openai"
+  )
+  assert.equal(tools.length, 1, "exactly one hosted tool attached")
+  // The SDK wraps WebSearchTool config under `type: "hosted_tool"` with
+  // `name: "web_search"` and the original web_search payload moved to
+  // `providerData.type === "web_search"` (see
+  // @openai/agents-openai/dist/tools.js `webSearchTool`).
+  const t = tools[0] as {
+    type?: string
+    name?: string
+    providerData?: { type?: string }
+  }
+  assert.equal(t.type, "hosted_tool", "outer SDK tool kind")
+  assert.equal(t.name, "web_search", "SDK-mandated tool name")
+  assert.equal(t.providerData?.type, "web_search", "providerData carries the API tool type")
+})
+
+test("buildHostedToolsForDefault returns [] when toolPolicy is 'none' (T8 not yet flipped)", () => {
+  const tools = t9ForTesting.buildHostedToolsForDefault(
+    {
+      agent: { ...allowlistAgent, toolPolicy: "none" },
+      systemPrompt: allowlistAgent.systemPrompt,
+      userMessage: "anything",
+    },
+    "openai"
+  )
+  assert.deepEqual(tools, [])
+})
+
+test("buildHostedToolsForDefault returns [] when allowedConnectors omits current-info", () => {
+  const tools = t9ForTesting.buildHostedToolsForDefault(
+    {
+      agent: { ...allowlistAgent, allowedConnectors: ["remember-fact"] },
+      systemPrompt: allowlistAgent.systemPrompt,
+      userMessage: "anything",
+    },
+    "openai"
+  )
+  assert.deepEqual(tools, [])
+})
+
+test("buildHostedToolsForDefault returns [] under siliconflow fallback even with allowlist + current-info", () => {
+  // RED LINE — webSearchTool only works on api.openai.com Responses API.
+  // Under the SF fallback path the SDK is in chat_completions mode against
+  // a non-OpenAI baseURL; attaching the hosted tool produces 404 or
+  // unsupported-tool errors.
+  const tools = t9ForTesting.buildHostedToolsForDefault(
+    {
+      agent: allowlistAgent,
+      systemPrompt: allowlistAgent.systemPrompt,
+      userMessage: "anything",
+    },
+    "siliconflow"
+  )
+  assert.deepEqual(tools, [])
+})
+
+test("buildHostedToolsForDefault returns [] when allowedConnectors is undefined", () => {
+  const tools = t9ForTesting.buildHostedToolsForDefault(
+    {
+      agent: { ...allowlistAgent, allowedConnectors: undefined },
+      systemPrompt: allowlistAgent.systemPrompt,
+      userMessage: "anything",
+    },
+    "openai"
+  )
+  assert.deepEqual(tools, [])
+})
