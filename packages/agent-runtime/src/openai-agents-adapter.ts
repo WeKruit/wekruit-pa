@@ -4,12 +4,18 @@ import {
   setDefaultOpenAIClient,
   setDefaultOpenAIKey,
   setOpenAIAPI,
+  tool,
 } from "@openai/agents"
 import type { AgentInputItem } from "@openai/agents"
 import OpenAI from "openai"
 import type { ChatMessage } from "@pa/core-types"
 import { resolveOpenAICompatConfig } from "./openai-provider.js"
-import type { AgentTurnContext, RunAgentTurnResult } from "./types.js"
+import type {
+  AgentTurnContext,
+  AgentTurnTool,
+  RunAgentTurnResult,
+  RunAgentTurnUsage,
+} from "./types.js"
 
 /**
  * Phase 10.5 T1 — Default runtime: OpenAI Responses API + gpt-5.4-nano.
@@ -22,6 +28,9 @@ import type { AgentTurnContext, RunAgentTurnResult } from "./types.js"
  * bug #3 was caused by env-level baseURL pollution leaking across calls
  * (SiliconFlow set `OPENAI_BASE_URL`, the Agents SDK then POSTed `/responses`
  * to SiliconFlow → 404). The default path is now env-pollution-free.
+ *
+ * Exported under `__forTesting` ONLY for the T10 regression test; production
+ * callers should use `runOpenAIAgentsTurn`.
  */
 function configureDefaultOpenAIClient(): void {
   const apiKey =
@@ -119,26 +128,118 @@ export function buildAgentsInputItems(ctx: AgentTurnContext): AgentInputItem[] {
   return items
 }
 
-async function runDefaultAgent(ctx: AgentTurnContext): Promise<RunAgentTurnResult> {
+/**
+ * Phase 10.5 T7 — bridge `AgentTurnTool[]` → SDK `Tool[]`.
+ *
+ * The orchestrator constructs `AgentTurnTool` descriptors that already
+ * route through `runConnector` (audit + safety policy live there). The
+ * adapter's job is the SDK side only: wrap each descriptor in `tool()`
+ * with a forced-string return shape so the LLM gets a stable JSON-stringified
+ * payload back.
+ */
+function buildSdkTools(ctx: AgentTurnContext): ReturnType<typeof tool>[] {
+  const turnTools = ctx.tools ?? []
+  return turnTools.map((t: AgentTurnTool) =>
+    tool({
+      name: t.name,
+      description: t.description,
+      // The SDK accepts a Zod object schema directly under the strict
+      // tool path. Cast through `any` to avoid the SDK's deeply
+      // generic `ToolInputParametersStrict` discrimination — runtime
+      // shape is what matters here.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      parameters: t.parameters as any,
+      execute: async (args: unknown) => {
+        const result = await t.execute(args)
+        return result
+      },
+    })
+  )
+}
+
+/**
+ * Phase 10.5 T9 — extract per-turn token usage and SDK-hosted tool counts
+ * from a completed `RunResult`. Best-effort: if the SDK shape changes or a
+ * field is missing we return zero/empty rather than throwing.
+ */
+function extractUsage(
+  result: { rawResponses?: ReadonlyArray<unknown> },
+  provider: "openai" | "siliconflow",
+  model: string
+): RunAgentTurnUsage {
+  let inputTokens = 0
+  let outputTokens = 0
+  let totalTokens = 0
+  const hostedCounts = new Map<string, number>()
+
+  for (const raw of result.rawResponses ?? []) {
+    const r = raw as
+      | {
+          usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number }
+          output?: ReadonlyArray<{ type?: string }>
+        }
+      | undefined
+    if (!r) continue
+    const u = r.usage
+    if (u) {
+      if (typeof u.inputTokens === "number") inputTokens += u.inputTokens
+      if (typeof u.outputTokens === "number") outputTokens += u.outputTokens
+      if (typeof u.totalTokens === "number") totalTokens += u.totalTokens
+    }
+    for (const item of r.output ?? []) {
+      const t = item?.type
+      if (typeof t !== "string") continue
+      if (t === "web_search_call" || t === "web_search") {
+        hostedCounts.set("web_search", (hostedCounts.get("web_search") ?? 0) + 1)
+      }
+    }
+  }
+
+  const usage: RunAgentTurnUsage = {
+    provider,
+    model,
+  }
+  if (inputTokens > 0) usage.inputTokens = inputTokens
+  if (outputTokens > 0) usage.outputTokens = outputTokens
+  if (totalTokens > 0) usage.totalTokens = totalTokens
+  if (hostedCounts.size > 0) {
+    usage.hostedToolCalls = [...hostedCounts.entries()].map(([name, count]) => ({ name, count }))
+  }
+  return usage
+}
+
+async function runDefaultAgent(
+  ctx: AgentTurnContext,
+  provider: "openai" | "siliconflow"
+): Promise<RunAgentTurnResult> {
+  const sdkTools = buildSdkTools(ctx)
+  const hasTools = sdkTools.length > 0
+  const model = resolveModel(ctx)
   const agent = new Agent({
     name: ctx.agent.name || ctx.agent.id,
     instructions: ctx.systemPrompt,
-    model: resolveModel(ctx),
+    model,
     modelSettings: {
       temperature: ctx.agent.temperature,
       maxTokens: ctx.agent.maxTokens,
-      toolChoice: "none",
+      // Default agent's toolPolicy still drives whether tools are wired
+      // here. When no tools are passed in (toolPolicy === "none"), force
+      // the model away from tool-choice. When tools are present, let the
+      // model decide ("auto" is the SDK default).
+      toolChoice: hasTools ? "auto" : "none",
     },
+    tools: sdkTools,
   })
-  if (ctx.session) {
-    const input = buildAgentsInputItems(ctx)
-    const result = await run(agent, input, { session: ctx.session })
-    return { text: String(result.finalOutput ?? "").trim() }
-  }
-  // Transitional safety net: callers without a Session (legacy unit tests,
-  // or future code paths) still work via the single-string input shape.
-  const result = await run(agent, buildAgentsInput(ctx))
-  return { text: String(result.finalOutput ?? "").trim() }
+  const sdkResult = ctx.session
+    ? await run(agent, buildAgentsInputItems(ctx), { session: ctx.session })
+    : await run(agent, buildAgentsInput(ctx))
+  const text = String((sdkResult as { finalOutput?: unknown }).finalOutput ?? "").trim()
+  const usage = extractUsage(
+    sdkResult as { rawResponses?: ReadonlyArray<unknown> },
+    provider,
+    model
+  )
+  return { text, usage }
 }
 
 /**
@@ -151,8 +252,20 @@ async function runDefaultAgent(ctx: AgentTurnContext): Promise<RunAgentTurnResul
 export async function runOpenAIAgentsTurn(ctx: AgentTurnContext): Promise<RunAgentTurnResult> {
   const fallbackEnv = process.env.PA_AGENT_LLM_PROVIDER?.trim().toLowerCase() === "siliconflow"
   if (fallbackEnv || ctx.agent.provider === "siliconflow") {
-    return withSiliconFlowFallback(ctx, () => runDefaultAgent(ctx))
+    return withSiliconFlowFallback(ctx, () => runDefaultAgent(ctx, "siliconflow"))
   }
   configureDefaultOpenAIClient()
-  return runDefaultAgent(ctx)
+  return runDefaultAgent(ctx, "openai")
+}
+
+/**
+ * Phase 10.5 T10 test-only seam. Exported so the baseURL pollution
+ * regression test can directly observe the default-client and fallback
+ * behaviours without needing a live `run()` invocation. NOT for
+ * production callers.
+ */
+export const __forTesting = {
+  configureDefaultOpenAIClient,
+  withSiliconFlowFallback,
+  extractUsage,
 }

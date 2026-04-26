@@ -93,6 +93,8 @@ function makeStore(overrides: Partial<OrchestratorStore> = {}): OrchestratorStor
     runAgentTurn: async () => ({ text: "assistant reply" }),
     afterAssistantTurn: async () => ({ writebackRan: false, writebackSkipReason: "memory_mode" }),
     maybeHandleResetCommand: async () => ({ handled: false }),
+    buildTurnTools: async () => [],
+    recordHostedToolCalls: async () => undefined,
     nowIso: () => "2026-04-25T12:00:00.000Z",
     log: () => undefined,
     ...overrides,
@@ -500,4 +502,143 @@ test("buildCurrentInfoBoundaryReply catches current external facts without block
     /live data source/
   )
   assert.equal(buildCurrentInfoBoundaryReply("你还记得我最近想干嘛吗？", "2026-04-26T05:00:00.000Z"), null)
+})
+
+// -------- Phase 10.5 T7: buildTurnTools tests --------
+
+import { buildTurnTools } from "./index.js"
+
+type T7Doc = Record<string, unknown>
+
+function fakeFirestoreT7() {
+  const store = new Map<string, T7Doc>()
+  const db = {
+    collection(name: string) {
+      return {
+        doc(id: string) {
+          return {
+            async set(data: T7Doc, opts?: { merge?: boolean }) {
+              const path = `${name}/${id}`
+              const cur = store.get(path) ?? {}
+              store.set(path, opts?.merge ? { ...cur, ...data } : data)
+            },
+          }
+        },
+        where() {
+          return {
+            where() {
+              return this
+            },
+            limit() {
+              return this
+            },
+            async get() {
+              return { docs: [] as { data(): T7Doc }[] }
+            },
+          }
+        },
+      }
+    },
+  }
+  return { db: db as unknown as Parameters<typeof buildTurnTools>[0], store }
+}
+
+const t7AgentBase: AgentDef = {
+  id: "default",
+  name: "Default",
+  systemPrompt: "Be useful.",
+  provider: "openai",
+  model: "gpt-5.4-nano",
+  temperature: 0.7,
+  memoryMode: "firestore_only",
+  toolPolicy: "none",
+  version: "1",
+  isDefault: true,
+}
+
+test("buildTurnTools returns [] when toolPolicy is 'none'", () => {
+  const { db } = fakeFirestoreT7()
+  const tools = buildTurnTools(db, t7AgentBase, { turnId: "t1", userId: "u1", sessionId: "s1" })
+  assert.deepEqual(tools, [])
+})
+
+test("buildTurnTools skips current-info (hosted by SDK) and includes remember-fact", () => {
+  const { db } = fakeFirestoreT7()
+  const agent: AgentDef = {
+    ...t7AgentBase,
+    toolPolicy: "allowlist",
+    allowedConnectors: ["current-info", "remember-fact"],
+    toolBudgetPerTurn: 3,
+  }
+  const tools = buildTurnTools(db, agent, { turnId: "t1", userId: "u1", sessionId: "s1" })
+  assert.equal(tools.length, 1)
+  assert.equal(tools[0]!.name, "remember-fact")
+})
+
+test("buildTurnTools.execute calls runConnector and returns stringified result", async () => {
+  const { db, store } = fakeFirestoreT7()
+  const agent: AgentDef = {
+    ...t7AgentBase,
+    toolPolicy: "allowlist",
+    allowedConnectors: ["remember-fact"],
+    toolBudgetPerTurn: 3,
+  }
+  const tools = buildTurnTools(db, agent, { turnId: "T7-turn", userId: "u1", sessionId: "s1" })
+  const out = await tools[0]!.execute({ content: "我喜欢冰美式" })
+  assert.equal(typeof out, "string")
+  const parsed = JSON.parse(out) as { ok: boolean; factId: string }
+  assert.equal(parsed.ok, true)
+  assert.ok(parsed.factId, "factId returned")
+  // pa_tool_calls row exists with completed status (proof runConnector ran)
+  const toolCallEntries = [...store.entries()].filter(([k]) => k.startsWith("pa_tool_calls/"))
+  assert.equal(toolCallEntries.length, 1)
+  const row = toolCallEntries[0]![1] as Record<string, unknown>
+  assert.equal(row.connectorName, "remember-fact")
+  assert.equal(row.policyDecision, "allow")
+  assert.equal(row.status, "completed")
+})
+
+test("buildTurnTools enforces toolBudgetPerTurn via shared monotonic counter", async () => {
+  const { db } = fakeFirestoreT7()
+  const agent: AgentDef = {
+    ...t7AgentBase,
+    toolPolicy: "allowlist",
+    allowedConnectors: ["remember-fact"],
+    toolBudgetPerTurn: 3,
+  }
+  const tools = buildTurnTools(db, agent, { turnId: "T7-budget", userId: "u-budget", sessionId: "s1" })
+  const exec = tools[0]!.execute
+  // Calls 1,2,3 below budget. 4th call should hit canUseConnector deny path,
+  // which throws inside runConnector with message containing the policy reason.
+  const r1 = await exec({ content: "fact 1" })
+  const r2 = await exec({ content: "fact 2" })
+  const r3 = await exec({ content: "fact 3" })
+  assert.ok(r1 && r2 && r3, "first three succeed")
+  // 4th must throw the budget-exhausted policy reason.
+  await assert.rejects(
+    async () => exec({ content: "fact 4" }),
+    /tool_budget_exhausted/
+  )
+})
+
+test("buildTurnTools parallel calls each see unique snapshots (no double-spend)", async () => {
+  const { db } = fakeFirestoreT7()
+  const agent: AgentDef = {
+    ...t7AgentBase,
+    toolPolicy: "allowlist",
+    allowedConnectors: ["remember-fact"],
+    toolBudgetPerTurn: 2,
+  }
+  const tools = buildTurnTools(db, agent, { turnId: "T7-parallel", userId: "u-par", sessionId: "s1" })
+  const exec = tools[0]!.execute
+  // Fire 3 in parallel under budget=2: exactly two must resolve, one must throw.
+  const settled = await Promise.allSettled([
+    exec({ content: "p1" }),
+    exec({ content: "p2" }),
+    exec({ content: "p3" }),
+  ])
+  const fulfilled = settled.filter((s) => s.status === "fulfilled").length
+  const rejected = settled.filter((s) => s.status === "rejected").length
+  assert.equal(fulfilled, 2)
+  assert.equal(rejected, 1)
 })

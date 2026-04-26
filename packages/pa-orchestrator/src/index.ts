@@ -7,9 +7,12 @@ import {
   FirestoreSession,
   deriveSessionMessageIdempotencyKey,
   type AgentsSdkSession as Session,
+  type AgentTurnTool,
 } from "@pa/agent-runtime"
 import {
+  connectorRegistry,
   runConnector,
+  type ConnectorName,
   type CurrentInfoConnectorInput,
   type CurrentInfoConnectorOutput,
 } from "@pa/pa-connectors"
@@ -78,6 +81,29 @@ export type OrchestratorStore = {
     input: CurrentInfoConnectorInput,
     turn: { turnId: string; userId: string; sessionId: string }
   ): Promise<CurrentInfoConnectorOutput>
+  /**
+   * Phase 10.5 T7 — build the per-turn AgentTurnTool[] for the SDK.
+   * Default Firestore impl wraps `buildTurnTools` (free function) bound to
+   * a Firestore handle. Tests can return [] or fake tools without touching
+   * a connector registry.
+   */
+  buildTurnTools(
+    agent: AgentDef,
+    turn: { turnId: string; userId: string; sessionId: string }
+  ): Promise<AgentTurnTool[]>
+  /**
+   * Phase 10.5 T9 — emit deferred-audit pa_tool_calls rows for hosted SDK
+   * tools (e.g. web_search) that the SDK invoked internally. The synthetic
+   * row preserves Phase 10's pa_tool_calls shape so the dashboard's
+   * connector tab continues to render web_search hits even though the
+   * runtime call did not pass through `runConnector`.
+   */
+  recordHostedToolCalls(input: {
+    turnId: string
+    userId: string
+    sessionId: string
+    calls: { name: string; count: number }[]
+  }): Promise<void>
   /**
    * Phase 10.5 T3 — factory for the SDK Session backing this turn.
    * Default Firestore impl returns FirestoreSession bound to pa_messages.
@@ -313,6 +339,85 @@ async function handleMemoryCommand(
   return false
 }
 
+
+/**
+ * Phase 10.5 T7 — bridge `agent.allowedConnectors` → SDK `tool()` instances.
+ *
+ * Each entry in the returned array goes through `runConnector` so audit +
+ * safety policy fire identically to the legacy regex paths. The shared
+ * `counter` closure carries the per-turn `usedThisTurn` count so the
+ * connector policy budget is enforced even when the SDK invokes multiple
+ * tools concurrently.
+ *
+ * **Counter under SDK parallel tool execution.** The SDK's
+ * `runner/toolExecution` uses `Promise.all` to dispatch function tool
+ * calls within a turn, so two tool execute closures CAN start before
+ * either resolves. JS is single-threaded, so the read+increment of a
+ * primitive `counter.value` within a synchronous block is atomic — there
+ * is no preemption mid-statement. The bridge captures the snapshot
+ * BEFORE incrementing and BEFORE awaiting `runConnector`, so:
+ *
+ *   - n parallel calls each see a unique snapshot in [0..n-1].
+ *   - canUseConnector denies once snapshot >= toolBudgetPerTurn.
+ *
+ * Mutex is unnecessary; if the SDK ever introduces a non-Node async
+ * scheduler (workers), this comment is the canary — revisit and add a
+ * proper atomic.
+ *
+ * `current-info` is intentionally skipped here because T4 attaches it as
+ * the SDK's hosted `webSearchTool`, not a custom function tool. The
+ * deferred audit row for hosted web_search is emitted by T9 after the
+ * turn completes.
+ */
+export function buildTurnTools(
+  db: Firestore,
+  agent: AgentDef,
+  turn: { turnId: string; userId: string; sessionId: string }
+): AgentTurnTool[] {
+  if (agent.toolPolicy === "none") return []
+  const allowed = agent.allowedConnectors ?? []
+  if (allowed.length === 0) return []
+  const counter = { value: 0 }
+  const tools: AgentTurnTool[] = []
+  for (const name of allowed) {
+    if (name === "current-info") continue
+    if (!(name in connectorRegistry)) continue
+    const def = connectorRegistry[name as ConnectorName]
+    tools.push({
+      name,
+      description: def.description,
+      // Each connector's zod input schema reaches the SDK directly.
+      // pa-connectors uses zod ^3.24, agent-runtime types use zod^4 —
+      // runtime shape is identical for object schemas. Cast through
+      // unknown so the @pa boundary stays clean.
+      parameters: def.inputSchema as unknown as AgentTurnTool["parameters"],
+      execute: async (args: unknown) => {
+        // Pre-increment: snapshot the current count, then bump. Both
+        // operations are synchronous (no await between read and write),
+        // so under JS's single-threaded model this gives each parallel
+        // tool call a unique monotonically-increasing snapshot.
+        const snapshot = counter.value
+        counter.value = snapshot + 1
+        try {
+          const result = await runConnector(name as ConnectorName, args, {
+            db,
+            agent,
+            turnId: turn.turnId,
+            userId: turn.userId,
+            sessionId: turn.sessionId,
+            usedThisTurn: snapshot,
+          })
+          return JSON.stringify(result).slice(0, 1024)
+        } catch (e) {
+          // Surface to the SDK so the LLM can apologize. Do NOT swallow.
+          throw e
+        }
+      },
+    })
+  }
+  return tools
+}
+
 export async function processInboundEvent(event: InboundEvent, store: OrchestratorStore): Promise<void> {
   await store.markEventRunning(event.id)
   const turnId = await store.createTurn(event)
@@ -445,18 +550,24 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     const memoryBlock = memoryBlockWithFacts(mem.memoryBlock, facts)
     const session = store.createSession({ sessionId: event.sessionId, userId: event.userId })
     const systemInputs = memoryBlock ? [`Memory context:\n${memoryBlock}`] : []
-    const { text } = await store.runAgentTurn({
+    // Phase 10.5 T7 — bridge agent.allowedConnectors → SDK tools. When the
+    // default agent's toolPolicy is still "none" (pre-T8), this returns []
+    // and the SDK gets no custom tools, matching legacy behavior.
+    const turnTools = await store.buildTurnTools(agent, { turnId, userId: event.userId, sessionId: event.sessionId })
+    const { text, usage } = await store.runAgentTurn({
       agent,
       systemPrompt: agent.systemPrompt,
-      // Default Agents SDK path consumes \`session\` + \`systemInputs\`. The
-      // legacy \`history\` + \`memoryBlock\` fields are only consumed by the
-      // chat.completions emergency rollback (PA_AGENT_RUNTIME=
-      // chat_completions); pass them through so that path keeps working.
+      // Default Agents SDK path consumes \`session\` + \`systemInputs\` +
+      // \`tools\`. The legacy \`history\` + \`memoryBlock\` fields are only
+      // consumed by the chat.completions emergency rollback
+      // (PA_AGENT_RUNTIME=chat_completions); pass them through so that path
+      // keeps working.
       memoryBlock,
       history,
       userMessage: event.body,
       session,
       systemInputs,
+      tools: turnTools,
     })
     // Defense-in-depth: even if the model echoes a [ISO] prefix, strip it
     // before persisting + sending. Root cause is upstream in
@@ -499,6 +610,28 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
         role: "assistant",
         idempotencyKey: `outbound-${event.id}`,
       })
+    }
+    // Phase 10.5 T9 — persist token usage on the turn doc. Filter undefined
+    // fields (Phase 10 bug #2 pattern) so Firestore never sees a literal
+    // undefined value. Synthetic pa_tool_calls rows for hosted web_search
+    // calls (deferred audit owed by T7) are emitted via store.recordHostedToolCalls
+    // when usage.hostedToolCalls is populated.
+    if (usage) {
+      const usagePatch: Record<string, unknown> = {}
+      for (const [k, v] of Object.entries(usage)) {
+        if (v !== undefined) usagePatch[k] = v
+      }
+      if (Object.keys(usagePatch).length > 0) {
+        await store.updateTurn(turnId, { usage: usagePatch, updatedAt: store.nowIso() })
+      }
+      if (usage.hostedToolCalls && usage.hostedToolCalls.length > 0) {
+        await store.recordHostedToolCalls({
+          turnId,
+          userId: event.userId,
+          sessionId: event.sessionId,
+          calls: usage.hostedToolCalls,
+        })
+      }
     }
     await store.updateTurn(turnId, {
       status: "succeeded",
@@ -644,6 +777,41 @@ export function createFirestoreOrchestratorStore(db: Firestore): OrchestratorSto
         sessionId: turn.sessionId,
         usedThisTurn: 0,
       }) as CurrentInfoConnectorOutput
+    },
+    async buildTurnTools(agent, turn) {
+      return buildTurnTools(db, agent, turn)
+    },
+    async recordHostedToolCalls({ turnId, userId, sessionId, calls }) {
+      // One synthetic pa_tool_calls row per hosted invocation, mirroring
+      // Phase 10's shape: connectorName: "current-info" (the policy
+      // identity), connectorVersion: "sdk-hosted" (so the dashboard can
+      // distinguish runtime origin), policyDecision: "allow",
+      // status: "completed". We filter undefined fields before .set()
+      // (Phase 10 bug #2). userId/sessionId are kept on argsRedacted only
+      // — pa_tool_calls today does not carry them top-level.
+      const at = nowIso()
+      for (const call of calls) {
+        for (let i = 0; i < call.count; i += 1) {
+          const id = randomUUID()
+          const row: Record<string, unknown> = {
+            id,
+            turnId,
+            connectorName: call.name === "web_search" ? "current-info" : call.name,
+            connectorVersion: "sdk-hosted",
+            status: "completed",
+            argsDigest: "sdk-hosted",
+            argsRedacted: { source: "agents_sdk_web_search", userId, sessionId, hostedTool: call.name },
+            policyDecision: "allow",
+            startedAt: at,
+            completedAt: at,
+          }
+          // Defensive: filter undefined.
+          for (const [k, v] of Object.entries(row)) {
+            if (v === undefined) delete row[k]
+          }
+          await db.collection(PA_COLLECTIONS.toolCalls).doc(id).set(row)
+        }
+      }
     },
     createSession({ sessionId, userId }) {
       return new FirestoreSession({ db, sessionId, userId })

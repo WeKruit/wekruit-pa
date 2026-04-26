@@ -1,16 +1,41 @@
 import type { AgentDef, ChatMessage } from "@pa/core-types"
 import type { Session } from "@openai/agents"
+import type { z } from "zod"
+
+/**
+ * Phase 10.5 T7 — connector→SDK tool bridge contract.
+ *
+ * The orchestrator owns the binding between WeKruit-side connectors (which
+ * go through `runConnector` for audit + safety policy) and the SDK's
+ * `tool()` factory. The runtime adapter receives a list of `AgentTurnTool`
+ * descriptors and constructs SDK `Tool` instances, keeping firebase-admin
+ * out of @pa/agent-runtime.
+ *
+ * `execute(args)` is invoked by the SDK with parsed JSON args. The bridge
+ * implementation MUST go through `runConnector` so audit + policy still
+ * fire; this type does not enforce that — the orchestrator helper does.
+ *
+ * Returned strings are forwarded to the LLM as tool output. Keep them
+ * compact (≤ 1 KB).
+ */
+export type AgentTurnTool = {
+  name: string
+  description: string
+  parameters: z.ZodTypeAny
+  execute: (args: unknown) => Promise<string>
+}
 
 /**
  * Per-turn context handed to `runAgentTurn`.
  *
  * Phase 10.5:
- *  - Default path: orchestrator passes `session` (FirestoreSession) and
- *    `systemInputs` (Mem0 recall + confirmed facts). `history`/`memoryBlock`
- *    are unused and may be undefined.
- *  - SiliconFlow fallback path: still uses the legacy `history` + `memoryBlock`
- *    splice via `runOpenAITurn` (chat.completions). Keep both fields defined
- *    on the context until SF is retired.
+ *  - Default path: orchestrator passes `session` (FirestoreSession),
+ *    `systemInputs` (Mem0 recall + confirmed facts), and `tools` (T7
+ *    bridged custom tools). `history`/`memoryBlock` are unused and may
+ *    be undefined.
+ *  - SiliconFlow fallback path: still uses the legacy `history` +
+ *    `memoryBlock` splice via `runOpenAITurn` (chat.completions). Keep
+ *    both fields defined on the context until SF is retired.
  *  - Test injection door: when `openAIClient` is passed to `runAgentTurn`,
  *    the chat.completions path runs and consumes `history` + `memoryBlock`.
  */
@@ -27,9 +52,33 @@ export type AgentTurnContext = {
   session?: Session
   /** Phase 10.5 T3 — pre-built `system` AgentInputItem strings prepended each turn. */
   systemInputs?: string[]
+  /** Phase 10.5 T7 — custom (non-hosted) tools bridged from runConnector. */
+  tools?: AgentTurnTool[]
+}
+
+/**
+ * Phase 10.5 T9 — extended `usage` shape so per-turn token + cost logs
+ * make it back to `pa_turns.usage`. `provider` and `model` are required
+ * on every successful default path; tokens are best-effort (the SDK may
+ * not surface them on streaming or partial errors). `hostedToolCalls`
+ * is the per-turn breakdown of SDK-hosted tool invocations (e.g.
+ * `web_search`) so we can emit the deferred audit row T7 promised.
+ *
+ * `promptTokens` / `completionTokens` are kept for chat.completions
+ * (legacy) callers; the new fields are additive.
+ */
+export type RunAgentTurnUsage = {
+  promptTokens?: number
+  completionTokens?: number
+  inputTokens?: number
+  outputTokens?: number
+  totalTokens?: number
+  provider?: "openai" | "siliconflow"
+  model?: string
+  hostedToolCalls?: { name: string; count: number }[]
 }
 
 export type RunAgentTurnResult = {
   text: string
-  usage?: { promptTokens?: number; completionTokens?: number }
+  usage?: RunAgentTurnUsage
 }
