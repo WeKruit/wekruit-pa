@@ -5,6 +5,7 @@ import {
   setDefaultOpenAIKey,
   setOpenAIAPI,
 } from "@openai/agents"
+import type { AgentInputItem } from "@openai/agents"
 import OpenAI from "openai"
 import type { ChatMessage } from "@pa/core-types"
 import { resolveOpenAICompatConfig } from "./openai-provider.js"
@@ -97,6 +98,27 @@ function resolveModel(ctx: AgentTurnContext): string {
   )
 }
 
+/**
+ * Phase 10.5 T3 — build the per-turn AgentInputItem[] that the SDK sees on
+ * the default path:
+ *
+ *   [ ...systemInputs as SystemMessageItem, { role: "user", content: ... } ]
+ *
+ * Prior conversation history is injected by the Session adapter, NOT by us.
+ * Mem0 recall + confirmed Firestore facts ride `systemInputs` so they’re
+ * fresh every turn (Mem0 is recall, not transcript — A5/A7 separation).
+ */
+export function buildAgentsInputItems(ctx: AgentTurnContext): AgentInputItem[] {
+  const items: AgentInputItem[] = []
+  for (const raw of ctx.systemInputs ?? []) {
+    const text = (raw ?? "").trim()
+    if (!text) continue
+    items.push({ type: "message", role: "system", content: text } as AgentInputItem)
+  }
+  items.push({ type: "message", role: "user", content: ctx.userMessage } as AgentInputItem)
+  return items
+}
+
 async function runDefaultAgent(ctx: AgentTurnContext): Promise<RunAgentTurnResult> {
   const agent = new Agent({
     name: ctx.agent.name || ctx.agent.id,
@@ -108,6 +130,13 @@ async function runDefaultAgent(ctx: AgentTurnContext): Promise<RunAgentTurnResul
       toolChoice: "none",
     },
   })
+  if (ctx.session) {
+    const input = buildAgentsInputItems(ctx)
+    const result = await run(agent, input, { session: ctx.session })
+    return { text: String(result.finalOutput ?? "").trim() }
+  }
+  // Transitional safety net: callers without a Session (legacy unit tests,
+  // or future code paths) still work via the single-string input shape.
   const result = await run(agent, buildAgentsInput(ctx))
   return { text: String(result.finalOutput ?? "").trim() }
 }

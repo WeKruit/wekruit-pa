@@ -73,6 +73,23 @@ function makeStore(overrides: Partial<OrchestratorStore> = {}): OrchestratorStor
       asOf: input.nowIso,
       sources: [],
     }),
+    createSession: () => ({
+      async getSessionId() {
+        return "fake-session"
+      },
+      async getItems() {
+        return []
+      },
+      async addItems() {
+        /* no-op */
+      },
+      async popItem() {
+        return undefined
+      },
+      async clearSession() {
+        /* no-op */
+      },
+    }),
     runAgentTurn: async () => ({ text: "assistant reply" }),
     afterAssistantTurn: async () => ({ writebackRan: false, writebackSkipReason: "memory_mode" }),
     maybeHandleResetCommand: async () => ({ handled: false }),
@@ -152,6 +169,71 @@ test("processInboundEvent runs agent for non-memory messages", async () => {
   await processInboundEvent(baseEvent, store)
   assert.equal(llmCalls, 1)
   assert.equal(outbound, "assistant reply")
+})
+
+test("processInboundEvent passes a Session and systemInputs into the default agent turn", async () => {
+  type Captured = {
+    session?: unknown
+    systemInputs?: string[]
+    history?: unknown
+    memoryBlock?: unknown
+  }
+  let captured: Captured | null = null
+  let createSessionCalls = 0
+  const fakeSession = {
+    async getSessionId() {
+      return "s1"
+    },
+    async getItems() {
+      return []
+    },
+    async addItems() {
+      /* no-op */
+    },
+    async popItem() {
+      return undefined
+    },
+    async clearSession() {
+      /* no-op */
+    },
+  }
+  const store = makeStore({
+    createSession: ({ sessionId, userId }) => {
+      createSessionCalls++
+      assert.equal(sessionId, "s1")
+      assert.equal(userId, "u1")
+      return fakeSession
+    },
+    loadPersonalizationContext: async () => ({
+      memoryBlock: "User likes concise answers.",
+      mem0Degraded: false,
+      mem0SearchResultCount: 1,
+      mem0DegradedReason: null,
+    }),
+    runAgentTurn: async (input) => {
+      captured = {
+        session: input.session,
+        systemInputs: input.systemInputs,
+        history: input.history,
+        memoryBlock: input.memoryBlock,
+      }
+      return { text: "ok" }
+    },
+  })
+
+  await processInboundEvent(baseEvent, store)
+
+  assert.equal(createSessionCalls, 1)
+  if (!captured) throw new Error("runAgentTurn was not called")
+  const seen: Captured = captured
+  assert.strictEqual(seen.session, fakeSession)
+  assert.ok(Array.isArray(seen.systemInputs))
+  assert.equal(seen.systemInputs!.length, 1)
+  assert.match(seen.systemInputs![0]!, /Memory context:/)
+  assert.match(seen.systemInputs![0]!, /User likes concise answers\./)
+  // Legacy fields still passed for chat.completions emergency rollback.
+  assert.ok(Array.isArray(seen.history))
+  assert.match(String(seen.memoryBlock), /User likes concise answers\./)
 })
 
 test("processInboundEvent answers current-info with connector result before LLM", async () => {

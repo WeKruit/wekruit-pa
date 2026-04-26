@@ -1,7 +1,13 @@
 import { randomUUID } from "node:crypto"
 import { FieldValue, type Firestore } from "firebase-admin/firestore"
 import { getAgentById, getDefaultAgent } from "@pa/agent-registry"
-import { runAgentTurn as defaultRunAgentTurn, stripLeadingIsoTimestamp } from "@pa/agent-runtime"
+import {
+  runAgentTurn as defaultRunAgentTurn,
+  stripLeadingIsoTimestamp,
+  FirestoreSession,
+  deriveSessionMessageIdempotencyKey,
+  type AgentsSdkSession as Session,
+} from "@pa/agent-runtime"
 import {
   runConnector,
   type CurrentInfoConnectorInput,
@@ -72,6 +78,14 @@ export type OrchestratorStore = {
     input: CurrentInfoConnectorInput,
     turn: { turnId: string; userId: string; sessionId: string }
   ): Promise<CurrentInfoConnectorOutput>
+  /**
+   * Phase 10.5 T3 — factory for the SDK Session backing this turn.
+   * Default Firestore impl returns FirestoreSession bound to pa_messages.
+   * Tests can return a fake. The orchestrator never sees Firestore directly
+   * here, preserving the @pa/agent-runtime ↔ firebase-admin boundary at the
+   * adapter level.
+   */
+  createSession(input: { sessionId: string; userId: string }): Session
   runAgentTurn: RunAgentTurn
   afterAssistantTurn(agent: AgentDef, input: {
     userId: string
@@ -310,8 +324,17 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       role: "user",
       body: event.body,
       createdAt: event.createdAt,
-      idempotencyKey: event.idempotencyKey,
-      rawMeta: { ...event.rawMeta, source: "pa_inbound_event", eventId: event.id, turnId },
+      // Use the same hash FirestoreSession derives so the SDK\u2019s addItems()
+      // short-circuits on this row instead of double-writing the user turn.
+      // Original inbound idempotencyKey is preserved in rawMeta for audit.
+      idempotencyKey: deriveSessionMessageIdempotencyKey(event.sessionId, "user", event.body),
+      rawMeta: {
+        ...event.rawMeta,
+        source: "pa_inbound_event",
+        eventId: event.id,
+        turnId,
+        inboundIdempotencyKey: event.idempotencyKey,
+      },
     })
 
     // Test-admin magic string. Must run BEFORE parseMemoryCommand so it
@@ -419,12 +442,21 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       return
     }
 
+    const memoryBlock = memoryBlockWithFacts(mem.memoryBlock, facts)
+    const session = store.createSession({ sessionId: event.sessionId, userId: event.userId })
+    const systemInputs = memoryBlock ? [`Memory context:\n${memoryBlock}`] : []
     const { text } = await store.runAgentTurn({
       agent,
       systemPrompt: agent.systemPrompt,
-      memoryBlock: memoryBlockWithFacts(mem.memoryBlock, facts),
+      // Default Agents SDK path consumes \`session\` + \`systemInputs\`. The
+      // legacy \`history\` + \`memoryBlock\` fields are only consumed by the
+      // chat.completions emergency rollback (PA_AGENT_RUNTIME=
+      // chat_completions); pass them through so that path keeps working.
+      memoryBlock,
       history,
       userMessage: event.body,
+      session,
+      systemInputs,
     })
     // Defense-in-depth: even if the model echoes a [ISO] prefix, strip it
     // before persisting + sending. Root cause is upstream in
@@ -442,8 +474,17 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       role: "assistant",
       body: visibleReply,
       createdAt: store.nowIso(),
-      idempotencyKey: `out-${event.id}`,
-      rawMeta: { source: "pa_orchestrator", turnId, eventId: event.id },
+      // Use the SDK-compatible hash on the raw model reply so
+      // FirestoreSession.addItems() short-circuits this assistant row on
+      // the default path (no double-write). Doc id stays \`out-${event.id}\`
+      // for dashboard transcript continuity.
+      idempotencyKey: deriveSessionMessageIdempotencyKey(event.sessionId, "assistant", reply),
+      rawMeta: {
+        source: "pa_orchestrator",
+        turnId,
+        eventId: event.id,
+        outboundIdempotencyKey: `out-${event.id}`,
+      },
     })
     const after = await store.afterAssistantTurn(agent, {
       userId: event.userId,
@@ -603,6 +644,9 @@ export function createFirestoreOrchestratorStore(db: Firestore): OrchestratorSto
         sessionId: turn.sessionId,
         usedThisTurn: 0,
       }) as CurrentInfoConnectorOutput
+    },
+    createSession({ sessionId, userId }) {
+      return new FirestoreSession({ db, sessionId, userId })
     },
     runAgentTurn: defaultRunAgentTurn,
     async afterAssistantTurn(agent, input) {

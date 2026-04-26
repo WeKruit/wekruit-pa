@@ -75,3 +75,41 @@ test("buildAgentsInput drops empty systemInputs entries", () => {
   })
   assert.match(input, /^real entry\n\nLatest user message:\nhi$/)
 })
+
+
+test("buildAgentsInputItems returns SystemMessageItems followed by a UserMessageItem (default Session path)", async () => {
+  const { buildAgentsInputItems } = await import("./openai-agents-adapter.js")
+  const items = buildAgentsInputItems({
+    agent,
+    systemPrompt: agent.systemPrompt,
+    userMessage: "what is next?",
+    systemInputs: ["Memory context:\n- prefers tea", "  ", "Confirmed user facts:\n- has a dog"],
+  })
+  assert.equal(items.length, 3)
+  // Order: confirmed facts first... wait, we just preserve caller order.
+  // The orchestrator ALWAYS supplies a single combined block today, but the
+  // adapter must preserve whatever order the caller picks.
+  const first = items[0] as { role: string; content: unknown }
+  const second = items[1] as { role: string; content: unknown }
+  const third = items[2] as { role: string; content: unknown }
+  assert.equal(first.role, "system")
+  assert.match(String(first.content), /Memory context:/)
+  assert.equal(second.role, "system")
+  assert.match(String(second.content), /Confirmed user facts:/)
+  assert.equal(third.role, "user")
+  assert.equal(third.content, "what is next?")
+})
+
+test("buildAgentsInputItems drops blank systemInputs entries", async () => {
+  const { buildAgentsInputItems } = await import("./openai-agents-adapter.js")
+  const items = buildAgentsInputItems({
+    agent,
+    systemPrompt: agent.systemPrompt,
+    userMessage: "hi",
+    systemInputs: ["", "   ", "real"],
+  })
+  assert.equal(items.length, 2)
+  const sys = items[0] as { role: string; content: unknown }
+  assert.equal(sys.role, "system")
+  assert.equal(sys.content, "real")
+})

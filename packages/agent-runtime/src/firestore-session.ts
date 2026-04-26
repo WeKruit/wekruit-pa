@@ -44,8 +44,22 @@ function defaultLog(..._args: unknown[]): void {
   /* swallow by default */
 }
 
-function deriveIdempotencyKey(sessionId: string, role: string, body: string): string {
+/**
+ * Public helper so callers (orchestrator, tests) can produce the same
+ * idempotency key the Session uses internally. Set this as the
+ * `idempotencyKey` on rows you write directly so the SDK's
+ * `addItems` short-circuit recognises them.
+ */
+export function deriveSessionMessageIdempotencyKey(
+  sessionId: string,
+  role: string,
+  body: string
+): string {
   return createHash("sha1").update(`${sessionId} ${role} ${body}`).digest("hex")
+}
+
+function deriveIdempotencyKey(sessionId: string, role: string, body: string): string {
+  return deriveSessionMessageIdempotencyKey(sessionId, role, body)
 }
 
 function dropUndefined<T extends Record<string, unknown>>(obj: T): Partial<T> {
