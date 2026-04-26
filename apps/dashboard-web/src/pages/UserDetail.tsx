@@ -30,6 +30,7 @@ export function UserDetail() {
   const [agents, setAgents] = useState<{ id: string; name: string; memoryMode?: string }[]>([])
   const [memoryPoints, setMemoryPoints] = useState<MemoryPoint[]>([])
   const [memorySearch, setMemorySearch] = useState("")
+  const [memoryLoaded, setMemoryLoaded] = useState(false)
   const [memoryLoading, setMemoryLoading] = useState(false)
   const [memoryAction, setMemoryAction] = useState<string | null>(null)
   const [memoryNotice, setMemoryNotice] = useState<string | null>(null)
@@ -142,6 +143,30 @@ export function UserDetail() {
     )
   }, [id])
 
+  useEffect(() => {
+    if (!id) return
+    let cancelled = false
+    setMemoryPoints([])
+    setMemoryLoaded(false)
+    setMemoryNotice(null)
+    setMemoryLoading(true)
+    ;(async () => {
+      try {
+        const data = await listMemoryPoints(id, "")
+        if (cancelled) return
+        setMemoryPoints(data.points)
+        setMemoryLoaded(true)
+      } catch (e: unknown) {
+        if (!cancelled) setErr(e instanceof Error ? e.message : String(e))
+      } finally {
+        if (!cancelled) setMemoryLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [id])
+
   async function onAssign(aid: string) {
     if (!id) return
     await updateDoc(doc(db(), PA_COLLECTIONS.users, id), { activeAgentId: aid })
@@ -155,6 +180,7 @@ export function UserDetail() {
     try {
       const data = await listMemoryPoints(id, q)
       setMemoryPoints(data.points)
+      setMemoryLoaded(true)
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : String(e))
     } finally {
@@ -291,8 +317,18 @@ export function UserDetail() {
           rows={memoryPoints}
           empty={
             <EmptyState
-              title="No semantic memories loaded"
-              body="Search or refresh to inspect Qdrant pa_memory payloads for this user."
+              title={
+                memoryLoading
+                  ? "Loading semantic memories"
+                  : memoryLoaded
+                    ? "No semantic memories found"
+                    : "Semantic memories not loaded"
+              }
+              body={
+                memoryLoaded
+                  ? "Qdrant pa_memory has no matching payloads for this user."
+                  : "Semantic memories load automatically when this page opens. Use Refresh to try again."
+              }
             />
           }
           columns={[
