@@ -1,0 +1,22 @@
+id: current_info_live_zh_movies
+description: |
+  Verifies that with PA_OPENAI_AGENT_API_KEY bound on deployed onPaInbound,
+  current-info questions return live web-search summaries instead of the
+  unavailable-boundary fallback. Harness suppresses outbound, so no real
+  iMessage is sent to the reserved test participant.
+locale: zh-CN
+agentId: default
+participant: "+19999990007"
+chatId: "iMessage;+19999990007"
+turnTimeoutMs: 60000
+turns:
+  - user: "最近有什么新闻？"
+    assert:
+      reply_min_length: 16
+      reply_not_contains_any:
+        - "实时检索"
+        - "实时数据源"
+        - "PA_OPENAI_AGENT_API_KEY"
+        - "unavailable"
+        - "undefined"
+        - "[20"

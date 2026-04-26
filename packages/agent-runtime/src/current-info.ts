@@ -1,4 +1,5 @@
 import { Agent, OpenAIProvider, Runner, webSearchTool } from "@openai/agents"
+import OpenAI from "openai"
 
 export type CurrentInfoSearchInput = {
   query: string
@@ -75,9 +76,15 @@ export async function runOpenAIAgentsCurrentInfo(input: CurrentInfoSearchInput):
     throw new Error("PA_OPENAI_AGENT_API_KEY is not configured")
   }
 
+  // The Agents SDK's OpenAIProvider falls through to env OPENAI_BASE_URL when
+  // no openAIClient is passed, which is poisoned by SiliconFlow elsewhere in
+  // the orchestrator. Construct our own OpenAI client pinned to the official
+  // endpoint so hosted tools (web_search, etc.) work.
+  const baseURL = process.env.PA_OPENAI_AGENT_BASE_URL?.trim() || "https://api.openai.com/v1"
+  const openAIClient = new OpenAI({ apiKey, baseURL })
   const provider = new OpenAIProvider({
-    apiKey,
     useResponses: true,
+    openAIClient,
   })
   try {
     const agent = new Agent({

@@ -243,7 +243,7 @@ export async function runConnector(
     argsDigest: digest(args),
     argsRedacted: redact(args),
     policyDecision: policy.allow ? "allow" : "deny",
-    policyReason: policy.reason,
+    ...(policy.reason ? { policyReason: policy.reason } : {}),
     startedAt,
   }
   await ctx.db.collection(PA_COLLECTIONS.toolCalls).doc(toolCallId).set(base)

@@ -1,7 +1,10 @@
 id: current_info_boundary_zh_movies
 description: |
-  Verifies that time-sensitive external questions do not get stale model
-  knowledge when no live search connector is wired into the runtime.
+  DISABLED: asserts boundary fallback that only fires when
+  PA_OPENAI_AGENT_API_KEY is NOT bound. Production has the secret bound, so
+  this assertion would always fail. Boundary path stays covered by unit
+  tests in @pa/pa-orchestrator. To re-enable for offline runs, unset the
+  secret and rename to .yaml.
 locale: zh-CN
 agentId: default
 participant: "+19999990006"
