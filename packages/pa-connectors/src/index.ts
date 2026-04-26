@@ -57,6 +57,94 @@ const ScoringOutputSchema = z.object({
   summary: z.string(),
 })
 
+const CurrentInfoInputSchema = z.object({
+  query: z.string().min(1),
+  nowIso: z.string().min(1),
+  locale: z.string().min(1).optional(),
+  location: z.string().min(1).optional(),
+})
+const CurrentInfoCitationSchema = z.object({
+  title: z.string().optional(),
+  url: z.string().min(1),
+})
+const CurrentInfoOutputSchema = z.object({
+  ok: z.boolean(),
+  source: z.literal("openai-web-search"),
+  summary: z.string(),
+  asOf: z.string(),
+  sources: z.array(CurrentInfoCitationSchema),
+})
+
+export type CurrentInfoConnectorInput = z.infer<typeof CurrentInfoInputSchema>
+export type CurrentInfoConnectorOutput = z.infer<typeof CurrentInfoOutputSchema>
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value))
+}
+
+function extractOpenAiOutputText(value: unknown): string {
+  if (!isRecord(value)) return ""
+  if (typeof value.output_text === "string") return value.output_text
+  const output = Array.isArray(value.output) ? value.output : []
+  const parts: string[] = []
+  for (const item of output) {
+    if (!isRecord(item)) continue
+    const content = Array.isArray(item.content) ? item.content : []
+    for (const block of content) {
+      if (isRecord(block) && typeof block.text === "string") parts.push(block.text)
+    }
+  }
+  return parts.join("\n").trim()
+}
+
+function collectOpenAiCitations(value: unknown): { title?: string; url: string }[] {
+  const out: { title?: string; url: string }[] = []
+  const seen = new Set<string>()
+  const add = (candidate: unknown) => {
+    if (!isRecord(candidate) || typeof candidate.url !== "string" || candidate.url.trim() === "") return
+    const url = candidate.url.trim()
+    if (seen.has(url)) return
+    seen.add(url)
+    out.push({
+      ...(typeof candidate.title === "string" && candidate.title.trim()
+        ? { title: candidate.title.trim() }
+        : {}),
+      url,
+    })
+  }
+
+  const visit = (node: unknown) => {
+    if (Array.isArray(node)) {
+      for (const item of node) visit(item)
+      return
+    }
+    if (!isRecord(node)) return
+    if (node.type === "url_citation") add(node)
+    if (isRecord(node.url_citation)) add(node.url_citation)
+    if (Array.isArray(node.sources)) {
+      for (const source of node.sources) add(source)
+    }
+    for (const value of Object.values(node)) {
+      if (Array.isArray(value) || isRecord(value)) visit(value)
+    }
+  }
+
+  visit(value)
+  return out.slice(0, 5)
+}
+
+function currentInfoPrompt(input: CurrentInfoConnectorInput) {
+  return [
+    `Current time: ${input.nowIso}`,
+    input.locale ? `Locale: ${input.locale}` : null,
+    input.location ? `Location: ${input.location}` : null,
+    "Answer with current information from web search only. Keep it concise for iMessage. Include citations.",
+    `User question: ${input.query}`,
+  ]
+    .filter(Boolean)
+    .join("\n")
+}
+
 export const connectorRegistry = {
   "fake-echo": {
     name: "fake-echo",
@@ -137,6 +225,80 @@ export const connectorRegistry = {
       summary: "Length-based placeholder score until real scoring service is wired.",
     }),
   } satisfies ConnectorDef<z.infer<typeof ScoringInputSchema>, z.infer<typeof ScoringOutputSchema>>,
+  "current-info": {
+    name: "current-info",
+    version: "1",
+    description: "Current information lookup via OpenAI Responses API web search.",
+    inputSchema: CurrentInfoInputSchema,
+    outputSchema: CurrentInfoOutputSchema,
+    execute: async (input: CurrentInfoConnectorInput) => {
+      const apiKey = process.env.PA_CURRENT_INFO_OPENAI_API_KEY?.trim()
+      if (!apiKey) {
+        return {
+          ok: false,
+          source: "openai-web-search",
+          summary: "PA_CURRENT_INFO_OPENAI_API_KEY is not configured; current-info connector unavailable.",
+          asOf: input.nowIso,
+          sources: [],
+        }
+      }
+
+      try {
+        const res = await fetch("https://api.openai.com/v1/responses", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model: process.env.PA_CURRENT_INFO_MODEL || "gpt-4.1-mini",
+            tools: [{ type: "web_search" }],
+            include: ["web_search_call.action.sources"],
+            input: currentInfoPrompt(input),
+            max_tool_calls: 1,
+            max_output_tokens: 700,
+          }),
+        })
+        if (!res.ok) {
+          return {
+            ok: false,
+            source: "openai-web-search",
+            summary: `OpenAI web search failed with HTTP ${res.status}.`,
+            asOf: input.nowIso,
+            sources: [],
+          }
+        }
+
+        const payload = await res.json() as unknown
+        const summary = extractOpenAiOutputText(payload).trim()
+        if (!summary) {
+          return {
+            ok: false,
+            source: "openai-web-search",
+            summary: "OpenAI web search returned no answer text.",
+            asOf: input.nowIso,
+            sources: collectOpenAiCitations(payload),
+          }
+        }
+        return {
+          ok: true,
+          source: "openai-web-search",
+          summary: summary.slice(0, 1400),
+          asOf: input.nowIso,
+          sources: collectOpenAiCitations(payload),
+        }
+      } catch (e) {
+        const err = e instanceof Error ? e.message : String(e)
+        return {
+          ok: false,
+          source: "openai-web-search",
+          summary: `OpenAI web search unavailable: ${err.slice(0, 160)}`,
+          asOf: input.nowIso,
+          sources: [],
+        }
+      }
+    },
+  } satisfies ConnectorDef<CurrentInfoConnectorInput, CurrentInfoConnectorOutput>,
 }
 
 export type ConnectorName = keyof typeof connectorRegistry

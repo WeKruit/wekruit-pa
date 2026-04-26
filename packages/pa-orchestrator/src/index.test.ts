@@ -8,6 +8,14 @@ import {
   type OrchestratorStore,
 } from "./index.js"
 
+type TestCurrentInfoResult = {
+  ok: boolean
+  source: "openai-web-search"
+  summary: string
+  asOf: string
+  sources: { title?: string; url: string }[]
+}
+
 const agent: AgentDef = {
   id: "default",
   name: "Default",
@@ -57,6 +65,13 @@ function makeStore(overrides: Partial<OrchestratorStore> = {}): OrchestratorStor
       mem0Degraded: false,
       mem0SearchResultCount: 0,
       mem0DegradedReason: null,
+    }),
+    runCurrentInfoConnector: async (_agent, input) => ({
+      ok: false,
+      source: "openai-web-search",
+      summary: "OPENAI_API_KEY is not configured; current-info connector unavailable.",
+      asOf: input.nowIso,
+      sources: [],
     }),
     runAgentTurn: async () => ({ text: "assistant reply" }),
     afterAssistantTurn: async () => ({ writebackRan: false, writebackSkipReason: "memory_mode" }),
@@ -139,12 +154,72 @@ test("processInboundEvent runs agent for non-memory messages", async () => {
   assert.equal(outbound, "assistant reply")
 })
 
-test("processInboundEvent refuses stale current-info answers before LLM but still runs memory writeback", async () => {
+test("processInboundEvent answers current-info with connector result before LLM", async () => {
+  let connectorCalls = 0
   let llmCalls = 0
   let afterCalls = 0
   let outbound = ""
   const appended: string[] = []
   const store = makeStore({
+    runCurrentInfoConnector: async (_agent, input): Promise<TestCurrentInfoResult> => {
+      connectorCalls++
+      assert.equal(input.query, "不需要，我还想去看看电影，最近有啥电影")
+      assert.equal(input.nowIso, "2026-04-25T12:00:00.000Z")
+      return {
+        ok: true,
+        source: "openai-web-search",
+        summary: "最近院线片包括 A、B、C；以本地影院排片为准。",
+        asOf: "2026-04-25T12:00:00.000Z",
+        sources: [{ title: "Movie source", url: "https://example.com/movies" }],
+      }
+    },
+    runAgentTurn: async () => {
+      llmCalls++
+      return { text: "最近有《速度与激情10》和《银河护卫队3》" }
+    },
+    appendMessage: async (message) => {
+      appended.push(message.body)
+    },
+    enqueueOutbound: async (_userId, _to, body) => {
+      outbound = body
+    },
+    afterAssistantTurn: async (_agent, input) => {
+      afterCalls++
+      assert.match(input.userText, /最近有啥电影/)
+      assert.match(input.assistantText, /最近院线片/)
+      return { writebackRan: true, writebackSkipReason: null }
+    },
+  })
+
+  await processInboundEvent({ ...baseEvent, body: "不需要，我还想去看看电影，最近有啥电影" }, store)
+
+  assert.equal(connectorCalls, 1)
+  assert.equal(llmCalls, 0)
+  assert.equal(afterCalls, 1)
+  assert.match(outbound, /最近院线片/)
+  assert.match(outbound, /来源/)
+  assert.match(outbound, /https:\/\/example\.com\/movies/)
+  assert.doesNotMatch(outbound, /速度与激情10|银河护卫队3/)
+  assert.deepEqual(appended, ["不需要，我还想去看看电影，最近有啥电影", outbound])
+})
+
+test("processInboundEvent falls back to boundary reply when current-info connector is unavailable", async () => {
+  let llmCalls = 0
+  let connectorCalls = 0
+  let afterCalls = 0
+  let outbound = ""
+  const appended: string[] = []
+  const store = makeStore({
+    runCurrentInfoConnector: async (_agent, input): Promise<TestCurrentInfoResult> => {
+      connectorCalls++
+      return {
+        ok: false,
+        source: "openai-web-search",
+        summary: "OPENAI_API_KEY is not configured; current-info connector unavailable.",
+        asOf: input.nowIso,
+        sources: [],
+      }
+    },
     runAgentTurn: async () => {
       llmCalls++
       return { text: "最近有《速度与激情10》和《银河护卫队3》" }
@@ -165,12 +240,29 @@ test("processInboundEvent refuses stale current-info answers before LLM but stil
 
   await processInboundEvent({ ...baseEvent, body: "不需要，我还想去看看电影，最近有啥电影" }, store)
 
+  assert.equal(connectorCalls, 1)
   assert.equal(llmCalls, 0)
   assert.equal(afterCalls, 1)
   assert.match(outbound, /今天是 2026-04-25/)
   assert.match(outbound, /不能可靠回答/)
   assert.doesNotMatch(outbound, /速度与激情10|银河护卫队3/)
   assert.deepEqual(appended, ["不需要，我还想去看看电影，最近有啥电影", outbound])
+})
+
+test("processInboundEvent falls back to boundary reply when current-info connector throws", async () => {
+  let outbound = ""
+  const store = makeStore({
+    runCurrentInfoConnector: async () => {
+      throw new Error("Connector current-info denied: connector_not_allowlisted")
+    },
+    enqueueOutbound: async (_userId, _to, body) => {
+      outbound = body
+    },
+  })
+
+  await processInboundEvent({ ...baseEvent, body: "latest AI news today" }, store)
+
+  assert.match(outbound, /live data source/)
 })
 
 test("processInboundEvent suppresses outbound for harness broker events", async () => {
@@ -202,6 +294,72 @@ test("processInboundEvent suppresses outbound for harness broker events", async 
   assert.equal(llmCalls, 1)
   assert.equal(outboundCalls, 0)
   assert.deepEqual(messages, ["hi", "assistant reply"])
+})
+
+test("processInboundEvent suppresses outbound for current-info connector replies", async () => {
+  let outboundCalls = 0
+  const messages: string[] = []
+  const store = makeStore({
+    runCurrentInfoConnector: async (_agent, input): Promise<TestCurrentInfoResult> => ({
+      ok: true,
+      source: "openai-web-search",
+      summary: "Today has current movie results.",
+      asOf: input.nowIso,
+      sources: [{ title: "Movies", url: "https://example.com/current" }],
+    }),
+    appendMessage: async (message) => {
+      messages.push(message.body)
+    },
+    enqueueOutbound: async () => {
+      outboundCalls++
+    },
+  })
+  await processInboundEvent(
+    {
+      ...baseEvent,
+      body: "what movies are playing today?",
+      rawMeta: {
+        source: "imessage_broker",
+        harness: { runner: "tests/scenarios/runner.mjs", suppressOutbound: true },
+      },
+    },
+    store
+  )
+
+  assert.equal(outboundCalls, 0)
+  assert.equal(messages.length, 2)
+  assert.match(messages[1] ?? "", /Today has current movie results/)
+})
+
+test("processInboundEvent does not intercept pure memory recall as current-info", async () => {
+  let connectorCalls = 0
+  let llmCalls = 0
+  let outbound = ""
+  const store = makeStore({
+    runCurrentInfoConnector: async (_agent, input): Promise<TestCurrentInfoResult> => {
+      connectorCalls++
+      return {
+        ok: true,
+        source: "openai-web-search",
+        summary: input.query,
+        asOf: input.nowIso,
+        sources: [],
+      }
+    },
+    runAgentTurn: async () => {
+      llmCalls++
+      return { text: "你最近想去看电影。" }
+    },
+    enqueueOutbound: async (_userId, _to, body) => {
+      outbound = body
+    },
+  })
+
+  await processInboundEvent({ ...baseEvent, body: "你还记得我最近想干嘛吗？" }, store)
+
+  assert.equal(connectorCalls, 0)
+  assert.equal(llmCalls, 1)
+  assert.equal(outbound, "你最近想去看电影。")
 })
 
 test("processInboundEvent short-circuits to maybeHandleResetCommand when handled", async () => {

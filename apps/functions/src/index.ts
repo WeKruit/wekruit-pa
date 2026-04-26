@@ -33,6 +33,7 @@ if (!getApps().length) initializeApp()
 setGlobalOptions({ region: "us-central1" })
 
 const SILICONFLOW_API_KEY = defineSecret("SILICONFLOW_API_KEY")
+const PA_CURRENT_INFO_OPENAI_API_KEY = defineSecret("PA_CURRENT_INFO_OPENAI_API_KEY")
 const QDRANT_URL = defineSecret("QDRANT_URL")
 const QDRANT_API_KEY = defineSecret("QDRANT_API_KEY")
 const QDRANT_COLLECTION = "pa_memory"
@@ -310,7 +311,7 @@ export const onPaInbound = onDocumentCreated(
   {
     document: "pa_inbound_events/{eventId}",
     region: "us-central1",
-    secrets: [SILICONFLOW_API_KEY, QDRANT_URL, QDRANT_API_KEY],
+    secrets: [SILICONFLOW_API_KEY, PA_CURRENT_INFO_OPENAI_API_KEY, QDRANT_URL, QDRANT_API_KEY],
     memory: "1GiB",
     timeoutSeconds: 300,
     concurrency: 1,
@@ -341,6 +342,16 @@ export const onPaInbound = onDocumentCreated(
     process.env.SILICONFLOW_API_KEY = SILICONFLOW_API_KEY.value()
     process.env.QDRANT_URL = QDRANT_URL.value()
     process.env.QDRANT_API_KEY = QDRANT_API_KEY.value()
+    try {
+      const currentInfoOpenAiKey = PA_CURRENT_INFO_OPENAI_API_KEY.value().trim()
+      if (currentInfoOpenAiKey) {
+        process.env.PA_CURRENT_INFO_OPENAI_API_KEY = currentInfoOpenAiKey
+      } else {
+        delete process.env.PA_CURRENT_INFO_OPENAI_API_KEY
+      }
+    } catch {
+      delete process.env.PA_CURRENT_INFO_OPENAI_API_KEY
+    }
     if (!process.env.OPENAI_API_KEY) {
       // agent-runtime's OpenAI-compatible client points at SiliconFlow.
       process.env.OPENAI_API_KEY = SILICONFLOW_API_KEY.value()

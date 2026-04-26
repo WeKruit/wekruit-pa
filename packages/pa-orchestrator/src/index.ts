@@ -3,6 +3,11 @@ import { FieldValue, type Firestore } from "firebase-admin/firestore"
 import { getAgentById, getDefaultAgent } from "@pa/agent-registry"
 import { runAgentTurn as defaultRunAgentTurn, stripLeadingIsoTimestamp } from "@pa/agent-runtime"
 import {
+  runConnector,
+  type CurrentInfoConnectorInput,
+  type CurrentInfoConnectorOutput,
+} from "@pa/pa-connectors"
+import {
   PA_COLLECTIONS,
   type AgentDef,
   type ChatMessage,
@@ -62,6 +67,11 @@ export type OrchestratorStore = {
     input: { userId: string; sessionId: string; userMessage: string; memoryMode: AgentDef["memoryMode"] },
     history: ChatMessage[]
   ): Promise<LoadContextResult>
+  runCurrentInfoConnector(
+    agent: AgentDef,
+    input: CurrentInfoConnectorInput,
+    turn: { turnId: string; userId: string; sessionId: string }
+  ): Promise<CurrentInfoConnectorOutput>
   runAgentTurn: RunAgentTurn
   afterAssistantTurn(agent: AgentDef, input: {
     userId: string
@@ -160,6 +170,22 @@ export function buildCurrentInfoBoundaryReply(userMessage: string, nowIso: strin
     return `今天是 ${date}。这类“最近/最新”的电影、新闻、天气、价格等问题需要实时数据源；我现在这个 PA runtime 还没有接实时检索，所以不能可靠回答，也不会用旧片单或旧新闻代替实时结果。你想看电影这点我会作为对话意图处理，但最新上映/排片需要接入实时检索后再查。`
   }
   return `Today is ${date}. Questions about recent or latest movies, news, weather, prices, or other time-sensitive facts require a live data source. This PA runtime does not have live search wired in yet, so I should not guess from stale model knowledge. I can keep the movie-watching intent in context, but current releases or showtimes need live search first.`
+}
+
+function formatCurrentInfoReply(result: CurrentInfoConnectorOutput, userMessage: string): string {
+  const summary = result.summary.trim()
+  const date = messageDate(result.asOf)
+  const sources = result.sources
+    .filter((source) => source.url.trim())
+    .slice(0, 3)
+    .map((source, i) => {
+      const title = source.title?.trim()
+      return title ? `${i + 1}. ${title}: ${source.url}` : `${i + 1}. ${source.url}`
+    })
+  const suffix = hasCjk(userMessage)
+    ? `截至 ${date}${sources.length ? `\n来源：\n${sources.join("\n")}` : ""}`
+    : `As of ${date}${sources.length ? `\nSources:\n${sources.join("\n")}` : ""}`
+  return `${summary}\n\n${suffix}`.slice(0, 1600)
 }
 
 async function sendMemoryReply(store: OrchestratorStore, event: InboundEvent, turnId: string, body: string) {
@@ -331,25 +357,50 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
 
     const currentInfoBoundaryReply = buildCurrentInfoBoundaryReply(event.body, store.nowIso())
     if (currentInfoBoundaryReply) {
+      let reply = currentInfoBoundaryReply
+      let currentInfoConnectorOk = false
+      try {
+        const result = await store.runCurrentInfoConnector(
+          agent,
+          { query: event.body, nowIso: store.nowIso() },
+          { turnId, userId: event.userId, sessionId: event.sessionId }
+        )
+        if (result.ok) {
+          reply = formatCurrentInfoReply(result, event.body)
+          currentInfoConnectorOk = true
+        }
+      } catch (e) {
+        store.log("[orchestrator] current-info connector unavailable", {
+          turnId,
+          eventId: event.id,
+          error: e instanceof Error ? e.message : String(e),
+        })
+      }
       await store.appendMessage({
         id: `out-${event.id}`,
         sessionId: event.sessionId,
         userId: event.userId,
         role: "assistant",
-        body: currentInfoBoundaryReply,
+        body: reply,
         createdAt: store.nowIso(),
         idempotencyKey: `out-${event.id}`,
-        rawMeta: { source: "pa_orchestrator", turnId, eventId: event.id, currentInfoBoundary: true },
+        rawMeta: {
+          source: "pa_orchestrator",
+          turnId,
+          eventId: event.id,
+          currentInfoBoundary: !currentInfoConnectorOk,
+          currentInfoConnectorOk,
+        },
       })
       const after = await store.afterAssistantTurn(agent, {
         userId: event.userId,
         sessionId: event.sessionId,
         userText: event.body,
-        assistantText: currentInfoBoundaryReply,
+        assistantText: reply,
         memoryMode: agent.memoryMode,
       })
       if (!shouldSuppressOutbound(event)) {
-        await store.enqueueOutbound(event.userId, event.from, currentInfoBoundaryReply, {
+        await store.enqueueOutbound(event.userId, event.from, reply, {
           sessionId: event.sessionId,
           role: "assistant",
           idempotencyKey: `outbound-${event.id}`,
@@ -359,7 +410,8 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
         status: "succeeded",
         stage: "succeeded",
         completedAt: store.nowIso(),
-        currentInfoBoundary: true,
+        currentInfoBoundary: !currentInfoConnectorOk,
+        currentInfoConnectorOk,
         mem0WritebackRan: after.writebackRan,
         mem0WritebackSkipReason: after.writebackSkipReason,
       })
@@ -534,6 +586,23 @@ export function createFirestoreOrchestratorStore(db: Firestore): OrchestratorSto
     },
     async loadPersonalizationContext(_agent, input, history) {
       return defaultLoadPersonalizationContext(db, input, history)
+    },
+    async runCurrentInfoConnector(agent, input, turn) {
+      const allowed = new Set([...(agent.allowedConnectors ?? []), "current-info"])
+      const currentInfoAgent: AgentDef = {
+        ...agent,
+        toolPolicy: "allowlist",
+        allowedConnectors: [...allowed],
+        toolBudgetPerTurn: Math.max(1, agent.toolBudgetPerTurn ?? 1),
+      }
+      return await runConnector("current-info", input, {
+        db,
+        agent: currentInfoAgent,
+        turnId: turn.turnId,
+        userId: turn.userId,
+        sessionId: turn.sessionId,
+        usedThisTurn: 0,
+      }) as CurrentInfoConnectorOutput
     },
     runAgentTurn: defaultRunAgentTurn,
     async afterAssistantTurn(agent, input) {
