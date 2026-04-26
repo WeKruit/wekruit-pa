@@ -1,5 +1,10 @@
 # Phase 11 Context — Persona + Identity/Memory Injection
 
+> **STATUS: BLOCKED on Phase 10.5 (Agents SDK runtime cutover).**
+> Phase 11 will not start until 10.5 closes. Some 11-PLAN tasks may
+> collapse into the Agents SDK system-message path naturally once the
+> runtime is unified. P10 will re-confirm 11 scope after 10.5 ships.
+
 ## Why this phase
 
 Phase 10 closed the current-info channel through Agents SDK. Before any
