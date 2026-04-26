@@ -116,6 +116,22 @@ export function Overview() {
         .slice(0, 6),
     [inbound, outbound, turns]
   )
+  const inboundStats = useMemo(() => {
+    let pending = 0
+    let processing = 0
+    let failed = 0
+    let deadLetter = 0
+    for (const r of inbound) {
+      const s = r.status
+      if (s === "pending") pending++
+      else if (s === "processing") processing++
+      else if (s === "failed") failed++
+      else if (s === "dead_letter") deadLetter++
+    }
+    const tone =
+      deadLetter > 0 || failed > 0 ? "bad" : pending + processing > 0 ? "warn" : "good"
+    return { pending, processing, failed, deadLetter, tone }
+  }, [inbound])
   const healthStatus = healthLabel(health)
 
   return (
@@ -143,10 +159,13 @@ export function Overview() {
           <small>{health && !("error" in health) ? `${health.uptimeSec ?? 0}s uptime` : "Set VITE_WORKER_HEALTH_URL for live health"}</small>
         </article>
         <article className="metric-card">
-          <span className="status-dot warn" />
-          <p>Inbound waiting</p>
-          <strong>{statusCount(inbound, "pending") + statusCount(inbound, "failed")}</strong>
-          <small>{statusCount(inbound, "processing")} processing</small>
+          <span className={`status-dot ${inboundStats.tone}`} />
+          <p>Inbound queue</p>
+          <strong>{inboundStats.pending}</strong>
+          <small>
+            {inboundStats.processing} processing · {inboundStats.failed} failed
+            {inboundStats.deadLetter > 0 ? ` · ${inboundStats.deadLetter} dead letter` : ""}
+          </small>
         </article>
         <article className="metric-card">
           <span className="status-dot warn" />
