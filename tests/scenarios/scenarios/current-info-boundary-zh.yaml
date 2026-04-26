@@ -1,0 +1,15 @@
+id: current_info_boundary_zh_movies
+description: |
+  Verifies that time-sensitive external questions do not get stale model
+  knowledge when no live search connector is wired into the runtime.
+locale: zh-CN
+agentId: default
+participant: "+19999990006"
+chatId: "iMessage;+19999990006"
+turnTimeoutMs: 30000
+turns:
+  - user: "不需要，我还想去看看电影，最近有啥电影"
+    assert:
+      reply_min_length: 1
+      reply_contains_any: ["实时检索", "实时数据源"]
+      reply_not_contains_any: ["速度与激情10", "银河护卫队3", "小美人鱼", "error", "failed", "undefined", "[20"]

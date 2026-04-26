@@ -1,7 +1,12 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import type { AgentDef, InboundEvent } from "@pa/core-types"
-import { isInboundLeaseExpired, processInboundEvent, type OrchestratorStore } from "./index.js"
+import {
+  buildCurrentInfoBoundaryReply,
+  isInboundLeaseExpired,
+  processInboundEvent,
+  type OrchestratorStore,
+} from "./index.js"
 
 const agent: AgentDef = {
   id: "default",
@@ -134,6 +139,40 @@ test("processInboundEvent runs agent for non-memory messages", async () => {
   assert.equal(outbound, "assistant reply")
 })
 
+test("processInboundEvent refuses stale current-info answers before LLM but still runs memory writeback", async () => {
+  let llmCalls = 0
+  let afterCalls = 0
+  let outbound = ""
+  const appended: string[] = []
+  const store = makeStore({
+    runAgentTurn: async () => {
+      llmCalls++
+      return { text: "最近有《速度与激情10》和《银河护卫队3》" }
+    },
+    appendMessage: async (message) => {
+      appended.push(message.body)
+    },
+    enqueueOutbound: async (_userId, _to, body) => {
+      outbound = body
+    },
+    afterAssistantTurn: async (_agent, input) => {
+      afterCalls++
+      assert.match(input.userText, /最近有啥电影/)
+      assert.match(input.assistantText, /实时检索/)
+      return { writebackRan: true, writebackSkipReason: null }
+    },
+  })
+
+  await processInboundEvent({ ...baseEvent, body: "不需要，我还想去看看电影，最近有啥电影" }, store)
+
+  assert.equal(llmCalls, 0)
+  assert.equal(afterCalls, 1)
+  assert.match(outbound, /今天是 2026-04-25/)
+  assert.match(outbound, /不能可靠回答/)
+  assert.doesNotMatch(outbound, /速度与激情10|银河护卫队3/)
+  assert.deepEqual(appended, ["不需要，我还想去看看电影，最近有啥电影", outbound])
+})
+
 test("processInboundEvent suppresses outbound for harness broker events", async () => {
   let llmCalls = 0
   let outboundCalls = 0
@@ -209,4 +248,16 @@ test("isInboundLeaseExpired treats missing or stale leases as reclaimable", () =
   assert.equal(isInboundLeaseExpired(undefined, now), true)
   assert.equal(isInboundLeaseExpired("2026-04-25T11:59:59.000Z", now), true)
   assert.equal(isInboundLeaseExpired("2026-04-25T12:00:30.000Z", now), false)
+})
+
+test("buildCurrentInfoBoundaryReply catches current external facts without blocking memory recall", () => {
+  assert.match(
+    buildCurrentInfoBoundaryReply("最近有什么电影可以看", "2026-04-26T05:00:00.000Z") ?? "",
+    /今天是 2026-04-26/
+  )
+  assert.match(
+    buildCurrentInfoBoundaryReply("what is the latest AI news?", "2026-04-26T05:00:00.000Z") ?? "",
+    /live data source/
+  )
+  assert.equal(buildCurrentInfoBoundaryReply("你还记得我最近想干嘛吗？", "2026-04-26T05:00:00.000Z"), null)
 })

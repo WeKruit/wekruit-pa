@@ -133,6 +133,35 @@ function shouldSuppressOutbound(event: InboundEvent): boolean {
   )
 }
 
+function hasCjk(text: string): boolean {
+  return /[\u3040-\u30ff\u3400-\u9fff]/u.test(text)
+}
+
+function messageDate(iso: string): string {
+  const date = iso.slice(0, 10)
+  return /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : new Date().toISOString().slice(0, 10)
+}
+
+export function buildCurrentInfoBoundaryReply(userMessage: string, nowIso: string): string | null {
+  const text = userMessage.trim()
+  if (!text) return null
+
+  const asksForExternalCurrentInfo =
+    /(最近|最新|今天|今日|本周|这周|现在|刚刚|新闻|上映|票房|电影|天气|价格|股价|汇率|recent|latest|today|this week|news|weather|stock|price|exchange rate|movies?|showtimes?|now playing|released|ニュース|映画|上映|天気)/iu.test(text)
+  if (!asksForExternalCurrentInfo) return null
+
+  const isOnlyMemoryQuestion =
+    /(你还?记得|还记得|我.*(说过|告诉过|提过|想过|想干嘛|喜欢)|remember what i|what did i (say|tell|want)|覚えて|私.*(言った|話した))/iu.test(text) &&
+    !/(电影|上映|票房|新闻|天气|价格|股价|汇率|movies?|showtimes?|now playing|news|weather|stock|price|exchange rate|ニュース|映画|天気)/iu.test(text)
+  if (isOnlyMemoryQuestion) return null
+
+  const date = messageDate(nowIso)
+  if (hasCjk(text)) {
+    return `今天是 ${date}。这类“最近/最新”的电影、新闻、天气、价格等问题需要实时数据源；我现在这个 PA runtime 还没有接实时检索，所以不能可靠回答，也不会用旧片单或旧新闻代替实时结果。你想看电影这点我会作为对话意图处理，但最新上映/排片需要接入实时检索后再查。`
+  }
+  return `Today is ${date}. Questions about recent or latest movies, news, weather, prices, or other time-sensitive facts require a live data source. This PA runtime does not have live search wired in yet, so I should not guess from stale model knowledge. I can keep the movie-watching intent in context, but current releases or showtimes need live search first.`
+}
+
 async function sendMemoryReply(store: OrchestratorStore, event: InboundEvent, turnId: string, body: string) {
   const at = store.nowIso()
   await store.appendMessage({
@@ -299,6 +328,45 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       stage: "llm" satisfies TurnStage,
       updatedAt: store.nowIso(),
     })
+
+    const currentInfoBoundaryReply = buildCurrentInfoBoundaryReply(event.body, store.nowIso())
+    if (currentInfoBoundaryReply) {
+      await store.appendMessage({
+        id: `out-${event.id}`,
+        sessionId: event.sessionId,
+        userId: event.userId,
+        role: "assistant",
+        body: currentInfoBoundaryReply,
+        createdAt: store.nowIso(),
+        idempotencyKey: `out-${event.id}`,
+        rawMeta: { source: "pa_orchestrator", turnId, eventId: event.id, currentInfoBoundary: true },
+      })
+      const after = await store.afterAssistantTurn(agent, {
+        userId: event.userId,
+        sessionId: event.sessionId,
+        userText: event.body,
+        assistantText: currentInfoBoundaryReply,
+        memoryMode: agent.memoryMode,
+      })
+      if (!shouldSuppressOutbound(event)) {
+        await store.enqueueOutbound(event.userId, event.from, currentInfoBoundaryReply, {
+          sessionId: event.sessionId,
+          role: "assistant",
+          idempotencyKey: `outbound-${event.id}`,
+        })
+      }
+      await store.updateTurn(turnId, {
+        status: "succeeded",
+        stage: "succeeded",
+        completedAt: store.nowIso(),
+        currentInfoBoundary: true,
+        mem0WritebackRan: after.writebackRan,
+        mem0WritebackSkipReason: after.writebackSkipReason,
+      })
+      await store.markEventSucceeded(event.id)
+      return
+    }
+
     const { text } = await store.runAgentTurn({
       agent,
       systemPrompt: agent.systemPrompt,
