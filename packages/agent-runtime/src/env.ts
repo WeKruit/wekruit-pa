@@ -3,7 +3,8 @@ import type { LlmProvider } from "@pa/core-types"
 /** OpenAI-compatible API key: OpenAI, LiteLLM proxy, OpenRouter, etc. */
 export function hasOpenAICompatKey(): boolean {
   return Boolean(
-    process.env.OPENAI_API_KEY ||
+    process.env.PA_OPENAI_AGENT_API_KEY ||
+      process.env.OPENAI_API_KEY ||
       process.env.LITELLM_API_KEY ||
       process.env.OPENROUTER_API_KEY ||
       process.env.DEEPSEEK_API_KEY ||
@@ -11,11 +12,21 @@ export function hasOpenAICompatKey(): boolean {
   )
 }
 
+/**
+ * Phase 10.5 T1 — provider-key assertion.
+ *
+ * The default OpenAI path uses `PA_OPENAI_AGENT_API_KEY` (Phase 10 secret).
+ * We accept either that key OR a legacy gateway key (LITELLM/OPENROUTER) so
+ * test/dev environments don't have to bind the new secret. The SiliconFlow
+ * fallback still asserts `SILICONFLOW_API_KEY` independently.
+ */
 export function assertProviderKey(provider: LlmProvider): void {
   if (provider === "openai" || provider === "other") {
+    // Default path now expects PA_OPENAI_AGENT_API_KEY. Accept any compatible
+    // key so tests / fallbacks still pass.
     if (!hasOpenAICompatKey()) {
       throw new Error(
-        "Set OPENAI_API_KEY, or LITELLM_API_KEY / OPENROUTER_API_KEY when using a gateway (with OPENAI_BASE_URL / LITELLM_BASE_URL)"
+        "Set PA_OPENAI_AGENT_API_KEY for the default Agents SDK path, or OPENAI_API_KEY / LITELLM_API_KEY / OPENROUTER_API_KEY for compatible gateways"
       )
     }
   } else if (provider === "deepseek") {

@@ -19,7 +19,7 @@ const agent: AgentDef = {
   updatedAt: "2026-01-01T00:00:00.000Z",
 }
 
-test("buildAgentsInput includes memory, transcript, and latest message", () => {
+test("buildAgentsInput includes memory, transcript, and latest message (legacy fallback)", () => {
   const history: ChatMessage[] = [
     {
       id: "m1",
@@ -47,6 +47,31 @@ test("buildAgentsInput includes memory, transcript, and latest message", () => {
   })
 
   assert.match(input, /Memory context:\nUser likes concise answers\./)
-  assert.match(input, /Recent transcript:\n\[2026-01-01T00:00:00.000Z\] user: old request\n\[2026-01-01T00:00:01.000Z\] assistant: old answer/)
+  assert.match(
+    input,
+    /Recent transcript:\n\[2026-01-01T00:00:00.000Z\] user: old request\n\[2026-01-01T00:00:01.000Z\] assistant: old answer/
+  )
   assert.match(input, /Latest user message:\nwhat is next\?/)
+})
+
+test("buildAgentsInput accepts undefined history/memoryBlock and renders systemInputs first", () => {
+  const input = buildAgentsInput({
+    agent,
+    systemPrompt: agent.systemPrompt,
+    userMessage: "hello",
+    systemInputs: ["Confirmed user facts:\n- prefers tea"],
+  })
+
+  // systemInputs come before the latest message; no transcript or memory block.
+  assert.match(input, /^Confirmed user facts:\n- prefers tea\n\nLatest user message:\nhello$/)
+})
+
+test("buildAgentsInput drops empty systemInputs entries", () => {
+  const input = buildAgentsInput({
+    agent,
+    systemPrompt: agent.systemPrompt,
+    userMessage: "hi",
+    systemInputs: ["", "   ", "real entry"],
+  })
+  assert.match(input, /^real entry\n\nLatest user message:\nhi$/)
 })

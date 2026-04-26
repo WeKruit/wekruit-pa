@@ -76,10 +76,10 @@ export async function runWithOpenAI(
 }
 
 export async function runOpenAITurn(ctx: AgentTurnContext, client?: OpenAI): Promise<RunAgentTurnResult> {
-  const history = ctx.history
+  const history = (ctx.history ?? [])
     .filter((m) => m.role === "user" || m.role === "assistant")
     .map((m) => ({ role: m.role, body: m.body, createdAt: m.createdAt }))
-  const messages = toOpenAIMessages(ctx.systemPrompt, ctx.memoryBlock, [
+  const messages = toOpenAIMessages(ctx.systemPrompt, ctx.memoryBlock ?? null, [
     ...history,
     { role: "user" as const, body: ctx.userMessage },
   ])
