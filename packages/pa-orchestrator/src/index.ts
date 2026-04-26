@@ -40,7 +40,6 @@ import {
   markMemoryFactsDeleted,
   parseMemoryCommand,
   recordMemoryAction as defaultRecordMemoryAction,
-  shouldRejectMemoryFact,
   type AfterTurnResult,
   type LoadContextResult,
 } from "@pa/memory"
@@ -183,51 +182,6 @@ function shouldSuppressOutbound(event: InboundEvent): boolean {
   )
 }
 
-function hasCjk(text: string): boolean {
-  return /[\u3040-\u30ff\u3400-\u9fff]/u.test(text)
-}
-
-function messageDate(iso: string): string {
-  const date = iso.slice(0, 10)
-  return /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : new Date().toISOString().slice(0, 10)
-}
-
-export function buildCurrentInfoBoundaryReply(userMessage: string, nowIso: string): string | null {
-  const text = userMessage.trim()
-  if (!text) return null
-
-  const asksForExternalCurrentInfo =
-    /(最近|最新|今天|今日|本周|这周|现在|刚刚|新闻|上映|票房|电影|天气|价格|股价|汇率|recent|latest|today|this week|news|weather|stock|price|exchange rate|movies?|showtimes?|now playing|released|ニュース|映画|上映|天気)/iu.test(text)
-  if (!asksForExternalCurrentInfo) return null
-
-  const isOnlyMemoryQuestion =
-    /(你还?记得|还记得|我.*(说过|告诉过|提过|想过|想干嘛|喜欢)|remember what i|what did i (say|tell|want)|覚えて|私.*(言った|話した))/iu.test(text) &&
-    !/(电影|上映|票房|新闻|天气|价格|股价|汇率|movies?|showtimes?|now playing|news|weather|stock|price|exchange rate|ニュース|映画|天気)/iu.test(text)
-  if (isOnlyMemoryQuestion) return null
-
-  const date = messageDate(nowIso)
-  if (hasCjk(text)) {
-    return `今天是 ${date}。这类“最近/最新”的电影、新闻、天气、价格等问题需要实时数据源；我现在这个 PA runtime 还没有接实时检索，所以不能可靠回答，也不会用旧片单或旧新闻代替实时结果。你想看电影这点我会作为对话意图处理，但最新上映/排片需要接入实时检索后再查。`
-  }
-  return `Today is ${date}. Questions about recent or latest movies, news, weather, prices, or other time-sensitive facts require a live data source. This PA runtime does not have live search wired in yet, so I should not guess from stale model knowledge. I can keep the movie-watching intent in context, but current releases or showtimes need live search first.`
-}
-
-function formatCurrentInfoReply(result: CurrentInfoConnectorOutput, userMessage: string): string {
-  const summary = result.summary.trim()
-  const date = messageDate(result.asOf)
-  const sources = result.sources
-    .filter((source) => source.url.trim())
-    .slice(0, 3)
-    .map((source, i) => {
-      const title = source.title?.trim()
-      return title ? `${i + 1}. ${title}: ${source.url}` : `${i + 1}. ${source.url}`
-    })
-  const suffix = hasCjk(userMessage)
-    ? `截至 ${date}${sources.length ? `\n来源：\n${sources.join("\n")}` : ""}`
-    : `As of ${date}${sources.length ? `\nSources:\n${sources.join("\n")}` : ""}`
-  return `${summary}\n\n${suffix}`.slice(0, 1600)
-}
-
 async function sendMemoryReply(store: OrchestratorStore, event: InboundEvent, turnId: string, body: string) {
   const at = store.nowIso()
   await store.appendMessage({
@@ -255,36 +209,6 @@ async function handleMemoryCommand(
   command: NonNullable<ReturnType<typeof parseMemoryCommand>>
 ): Promise<boolean> {
   await store.updateTurn(turnId, { stage: "memory_command", updatedAt: store.nowIso() })
-  if (command.kind === "remember") {
-    const verdict = shouldRejectMemoryFact(command.content)
-    if (verdict.reject) {
-      await store.recordMemoryAction({
-        userId: event.userId,
-        eventId: event.id,
-        action: "reject_sensitive",
-        status: "succeeded",
-        content: command.content,
-        reason: verdict.reason,
-      })
-      await sendMemoryReply(store, event, turnId, "这类敏感信息我不能保存为长期记忆。")
-      return true
-    }
-    const existing = (await store.listMemoryFacts(event.userId)).find(
-      (fact) => normalizedFactContent(fact.content) === normalizedFactContent(command.content)
-    )
-    const factId = existing?.id ?? await store.createMemoryFact(event.userId, command.content)
-    await store.recordMemoryAction({
-      userId: event.userId,
-      eventId: event.id,
-      action: "remember",
-      status: "succeeded",
-      content: command.content,
-      factIds: [factId],
-    })
-    await sendMemoryReply(store, event, turnId, `${existing ? "已经记住了" : "记住了"}：${command.content}`)
-    return true
-  }
-
   if (command.kind === "list") {
     const facts = await store.listMemoryFacts(event.userId)
     await store.recordMemoryAction({ userId: event.userId, eventId: event.id, action: "list", status: "succeeded" })
@@ -452,8 +376,12 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       return
     }
 
+    // Phase 10.5 T5: regex pre-routers for "remember" writes are gone — the
+    // LLM owns memory writes via the `remember-fact` connector tool. We still
+    // handle list/forget/clear at the orchestrator (those are admin commands,
+    // not tools the LLM should own).
     const command = parseMemoryCommand(event.body)
-    if (command && await handleMemoryCommand(event, store, turnId, command)) {
+    if (command && command.kind !== "remember" && await handleMemoryCommand(event, store, turnId, command)) {
       await store.updateTurn(turnId, { status: "succeeded", stage: "succeeded", completedAt: store.nowIso() })
       await store.markEventSucceeded(event.id)
       return
@@ -482,70 +410,6 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       stage: "llm" satisfies TurnStage,
       updatedAt: store.nowIso(),
     })
-
-    const currentInfoBoundaryReply = buildCurrentInfoBoundaryReply(event.body, store.nowIso())
-    if (currentInfoBoundaryReply) {
-      let reply = currentInfoBoundaryReply
-      let currentInfoConnectorOk = false
-      try {
-        const result = await store.runCurrentInfoConnector(
-          agent,
-          { query: event.body, nowIso: store.nowIso() },
-          { turnId, userId: event.userId, sessionId: event.sessionId }
-        )
-        if (result.ok) {
-          reply = formatCurrentInfoReply(result, event.body)
-          currentInfoConnectorOk = true
-        }
-      } catch (e) {
-        store.log("[orchestrator] current-info connector unavailable", {
-          turnId,
-          eventId: event.id,
-          error: e instanceof Error ? e.message : String(e),
-        })
-      }
-      await store.appendMessage({
-        id: `out-${event.id}`,
-        sessionId: event.sessionId,
-        userId: event.userId,
-        role: "assistant",
-        body: reply,
-        createdAt: store.nowIso(),
-        idempotencyKey: `out-${event.id}`,
-        rawMeta: {
-          source: "pa_orchestrator",
-          turnId,
-          eventId: event.id,
-          currentInfoBoundary: !currentInfoConnectorOk,
-          currentInfoConnectorOk,
-        },
-      })
-      const after = await store.afterAssistantTurn(agent, {
-        userId: event.userId,
-        sessionId: event.sessionId,
-        userText: event.body,
-        assistantText: reply,
-        memoryMode: agent.memoryMode,
-      })
-      if (!shouldSuppressOutbound(event)) {
-        await store.enqueueOutbound(event.userId, event.from, reply, {
-          sessionId: event.sessionId,
-          role: "assistant",
-          idempotencyKey: `outbound-${event.id}`,
-        })
-      }
-      await store.updateTurn(turnId, {
-        status: "succeeded",
-        stage: "succeeded",
-        completedAt: store.nowIso(),
-        currentInfoBoundary: !currentInfoConnectorOk,
-        currentInfoConnectorOk,
-        mem0WritebackRan: after.writebackRan,
-        mem0WritebackSkipReason: after.writebackSkipReason,
-      })
-      await store.markEventSucceeded(event.id)
-      return
-    }
 
     const memoryBlock = memoryBlockWithFacts(mem.memoryBlock, facts)
     const session = store.createSession({ sessionId: event.sessionId, userId: event.userId })

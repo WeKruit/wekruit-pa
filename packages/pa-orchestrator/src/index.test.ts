@@ -2,7 +2,6 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import type { AgentDef, InboundEvent } from "@pa/core-types"
 import {
-  buildCurrentInfoBoundaryReply,
   isInboundLeaseExpired,
   processInboundEvent,
   type OrchestratorStore,
@@ -114,48 +113,6 @@ const baseEvent: InboundEvent = {
   idempotencyKey: "imessage-in-1",
 }
 
-test("processInboundEvent handles remember command without calling LLM", async () => {
-  let llmCalls = 0
-  const store = makeStore({
-    runAgentTurn: async () => {
-      llmCalls++
-      return { text: "bad" }
-    },
-  })
-  await processInboundEvent({ ...baseEvent, body: "记住 我喜欢冰美式" }, store)
-
-  const facts = await store.listMemoryFacts("u1")
-  assert.equal(llmCalls, 0)
-  assert.deepEqual(facts.map((f) => f.content), ["我喜欢冰美式"])
-})
-
-test("processInboundEvent does not duplicate an existing confirmed fact", async () => {
-  const outbound: string[] = []
-  const store = makeStore({
-    enqueueOutbound: async (_userId, _to, body) => {
-      outbound.push(body)
-    },
-  })
-  await processInboundEvent({ ...baseEvent, id: "evt1", body: "记住 我喜欢冰美式" }, store)
-  await processInboundEvent({ ...baseEvent, id: "evt2", idempotencyKey: "imessage-in-2", body: "记住  我喜欢冰美式 " }, store)
-
-  const facts = await store.listMemoryFacts("u1")
-  assert.deepEqual(facts.map((f) => f.content), ["我喜欢冰美式"])
-  assert.equal(outbound[1], "已经记住了：我喜欢冰美式")
-})
-
-test("processInboundEvent rejects sensitive remember commands", async () => {
-  const outbound: string[] = []
-  const store = makeStore({
-    enqueueOutbound: async (_userId, _to, body) => {
-      outbound.push(body)
-    },
-  })
-  await processInboundEvent({ ...baseEvent, body: "记住 我的 SSN 是 123-45-6789" }, store)
-  assert.equal((await store.listMemoryFacts("u1")).length, 0)
-  assert.match(outbound[0] ?? "", /不能保存/)
-})
-
 test("processInboundEvent runs agent for non-memory messages", async () => {
   let llmCalls = 0
   let outbound = ""
@@ -238,117 +195,6 @@ test("processInboundEvent passes a Session and systemInputs into the default age
   assert.match(String(seen.memoryBlock), /User likes concise answers\./)
 })
 
-test("processInboundEvent answers current-info with connector result before LLM", async () => {
-  let connectorCalls = 0
-  let llmCalls = 0
-  let afterCalls = 0
-  let outbound = ""
-  const appended: string[] = []
-  const store = makeStore({
-    runCurrentInfoConnector: async (_agent, input): Promise<TestCurrentInfoResult> => {
-      connectorCalls++
-      assert.equal(input.query, "不需要，我还想去看看电影，最近有啥电影")
-      assert.equal(input.nowIso, "2026-04-25T12:00:00.000Z")
-      return {
-        ok: true,
-        source: "openai-web-search",
-        summary: "最近院线片包括 A、B、C；以本地影院排片为准。",
-        asOf: "2026-04-25T12:00:00.000Z",
-        sources: [{ title: "Movie source", url: "https://example.com/movies" }],
-      }
-    },
-    runAgentTurn: async () => {
-      llmCalls++
-      return { text: "最近有《速度与激情10》和《银河护卫队3》" }
-    },
-    appendMessage: async (message) => {
-      appended.push(message.body)
-    },
-    enqueueOutbound: async (_userId, _to, body) => {
-      outbound = body
-    },
-    afterAssistantTurn: async (_agent, input) => {
-      afterCalls++
-      assert.match(input.userText, /最近有啥电影/)
-      assert.match(input.assistantText, /最近院线片/)
-      return { writebackRan: true, writebackSkipReason: null }
-    },
-  })
-
-  await processInboundEvent({ ...baseEvent, body: "不需要，我还想去看看电影，最近有啥电影" }, store)
-
-  assert.equal(connectorCalls, 1)
-  assert.equal(llmCalls, 0)
-  assert.equal(afterCalls, 1)
-  assert.match(outbound, /最近院线片/)
-  assert.match(outbound, /来源/)
-  assert.match(outbound, /https:\/\/example\.com\/movies/)
-  assert.doesNotMatch(outbound, /速度与激情10|银河护卫队3/)
-  assert.deepEqual(appended, ["不需要，我还想去看看电影，最近有啥电影", outbound])
-})
-
-test("processInboundEvent falls back to boundary reply when current-info connector is unavailable", async () => {
-  let llmCalls = 0
-  let connectorCalls = 0
-  let afterCalls = 0
-  let outbound = ""
-  const appended: string[] = []
-  const store = makeStore({
-    runCurrentInfoConnector: async (_agent, input): Promise<TestCurrentInfoResult> => {
-      connectorCalls++
-      return {
-        ok: false,
-        source: "openai-web-search",
-        summary: "PA_OPENAI_AGENT_API_KEY is not configured; OpenAI Agents hosted web search unavailable.",
-        asOf: input.nowIso,
-        sources: [],
-      }
-    },
-    runAgentTurn: async () => {
-      llmCalls++
-      return { text: "最近有《速度与激情10》和《银河护卫队3》" }
-    },
-    appendMessage: async (message) => {
-      appended.push(message.body)
-    },
-    enqueueOutbound: async (_userId, _to, body) => {
-      outbound = body
-    },
-    afterAssistantTurn: async (_agent, input) => {
-      afterCalls++
-      assert.match(input.userText, /最近有啥电影/)
-      assert.match(input.assistantText, /实时检索/)
-      return { writebackRan: true, writebackSkipReason: null }
-    },
-  })
-
-  await processInboundEvent({ ...baseEvent, body: "不需要，我还想去看看电影，最近有啥电影" }, store)
-
-  assert.equal(connectorCalls, 1)
-  assert.equal(llmCalls, 0)
-  assert.equal(afterCalls, 1)
-  assert.match(outbound, /今天是 2026-04-25/)
-  assert.match(outbound, /不能可靠回答/)
-  assert.doesNotMatch(outbound, /速度与激情10|银河护卫队3/)
-  assert.deepEqual(appended, ["不需要，我还想去看看电影，最近有啥电影", outbound])
-})
-
-test("processInboundEvent falls back to boundary reply when current-info connector throws", async () => {
-  let outbound = ""
-  const store = makeStore({
-    runCurrentInfoConnector: async () => {
-      throw new Error("Connector current-info denied: connector_not_allowlisted")
-    },
-    enqueueOutbound: async (_userId, _to, body) => {
-      outbound = body
-    },
-  })
-
-  await processInboundEvent({ ...baseEvent, body: "latest AI news today" }, store)
-
-  assert.match(outbound, /live data source/)
-})
-
 test("processInboundEvent suppresses outbound for harness broker events", async () => {
   let llmCalls = 0
   let outboundCalls = 0
@@ -378,72 +224,6 @@ test("processInboundEvent suppresses outbound for harness broker events", async 
   assert.equal(llmCalls, 1)
   assert.equal(outboundCalls, 0)
   assert.deepEqual(messages, ["hi", "assistant reply"])
-})
-
-test("processInboundEvent suppresses outbound for current-info connector replies", async () => {
-  let outboundCalls = 0
-  const messages: string[] = []
-  const store = makeStore({
-    runCurrentInfoConnector: async (_agent, input): Promise<TestCurrentInfoResult> => ({
-      ok: true,
-      source: "openai-web-search",
-      summary: "Today has current movie results.",
-      asOf: input.nowIso,
-      sources: [{ title: "Movies", url: "https://example.com/current" }],
-    }),
-    appendMessage: async (message) => {
-      messages.push(message.body)
-    },
-    enqueueOutbound: async () => {
-      outboundCalls++
-    },
-  })
-  await processInboundEvent(
-    {
-      ...baseEvent,
-      body: "what movies are playing today?",
-      rawMeta: {
-        source: "imessage_broker",
-        harness: { runner: "tests/scenarios/runner.mjs", suppressOutbound: true },
-      },
-    },
-    store
-  )
-
-  assert.equal(outboundCalls, 0)
-  assert.equal(messages.length, 2)
-  assert.match(messages[1] ?? "", /Today has current movie results/)
-})
-
-test("processInboundEvent does not intercept pure memory recall as current-info", async () => {
-  let connectorCalls = 0
-  let llmCalls = 0
-  let outbound = ""
-  const store = makeStore({
-    runCurrentInfoConnector: async (_agent, input): Promise<TestCurrentInfoResult> => {
-      connectorCalls++
-      return {
-        ok: true,
-        source: "openai-web-search",
-        summary: input.query,
-        asOf: input.nowIso,
-        sources: [],
-      }
-    },
-    runAgentTurn: async () => {
-      llmCalls++
-      return { text: "你最近想去看电影。" }
-    },
-    enqueueOutbound: async (_userId, _to, body) => {
-      outbound = body
-    },
-  })
-
-  await processInboundEvent({ ...baseEvent, body: "你还记得我最近想干嘛吗？" }, store)
-
-  assert.equal(connectorCalls, 0)
-  assert.equal(llmCalls, 1)
-  assert.equal(outbound, "你最近想去看电影。")
 })
 
 test("processInboundEvent short-circuits to maybeHandleResetCommand when handled", async () => {
@@ -485,23 +265,208 @@ test("processInboundEvent ignores reset command for non-test users (handled=fals
   assert.equal(llmCalls, 1)
 })
 
+// -------- Phase 10.5 T5: regex pre-router removal --------
+
+test("processInboundEvent T5: 'remember' command falls through to LLM (no short-circuit)", async () => {
+  let llmCalls = 0
+  let createCalls = 0
+  let outbound = ""
+  const store = makeStore({
+    runAgentTurn: async (input) => {
+      llmCalls++
+      // The LLM sees the raw user message — no orchestrator-level rewriting.
+      assert.equal(input.userMessage, "记住 我喜欢冰美式")
+      return { text: "好的，我会记住的。" }
+    },
+    createMemoryFact: async () => {
+      createCalls++
+      return "should-not-be-called"
+    },
+    enqueueOutbound: async (_u, _t, body) => {
+      outbound = body
+    },
+  })
+  await processInboundEvent({ ...baseEvent, body: "记住 我喜欢冰美式" }, store)
+  // The LLM is invoked; the regex pre-router did NOT write a fact directly.
+  assert.equal(llmCalls, 1)
+  assert.equal(createCalls, 0)
+  assert.equal(outbound, "好的，我会记住的。")
+})
+
+test("processInboundEvent T5: current-info-shaped query falls through to LLM", async () => {
+  let llmCalls = 0
+  let connectorCalls = 0
+  let outbound = ""
+  const store = makeStore({
+    runCurrentInfoConnector: async (_agent, input): Promise<TestCurrentInfoResult> => {
+      connectorCalls++
+      return {
+        ok: true,
+        source: "openai-web-search",
+        summary: "should-not-be-called",
+        asOf: input.nowIso,
+        sources: [],
+      }
+    },
+    runAgentTurn: async (input) => {
+      llmCalls++
+      assert.match(input.userMessage, /最近有啥电影/)
+      return { text: "最近院线有几部新片，我用 web_search 给你查到了 X、Y、Z。" }
+    },
+    enqueueOutbound: async (_u, _t, body) => {
+      outbound = body
+    },
+  })
+  await processInboundEvent({ ...baseEvent, body: "最近有啥电影" }, store)
+  // T5 invariant: orchestrator-level current-info pre-router is gone. The
+  // LLM owns this query via the SDK webSearchTool; the legacy
+  // runCurrentInfoConnector store hook MUST NOT fire on the default path.
+  assert.equal(connectorCalls, 0)
+  assert.equal(llmCalls, 1)
+  assert.match(outbound, /最近院线/)
+})
+
+test("processInboundEvent T5: parseMemoryCommand 'list' still routes through orchestrator (admin command)", async () => {
+  let llmCalls = 0
+  let outbound = ""
+  const store = makeStore({
+    listMemoryFacts: async () => [
+      { id: "f1", content: "我喜欢冰美式" },
+      { id: "f2", content: "我住在上海" },
+    ],
+    runAgentTurn: async () => {
+      llmCalls++
+      return { text: "should-not-be-called" }
+    },
+    enqueueOutbound: async (_u, _t, body) => {
+      outbound = body
+    },
+  })
+  await processInboundEvent({ ...baseEvent, body: "我的记忆" }, store)
+  assert.equal(llmCalls, 0, "list command must not reach the LLM")
+  assert.match(outbound, /我喜欢冰美式/)
+  assert.match(outbound, /我住在上海/)
+})
+
+test("processInboundEvent T5: parseMemoryCommand 'forget' still routes through orchestrator (admin command)", async () => {
+  let llmCalls = 0
+  let outbound = ""
+  const facts: { id: string; content: string }[] = [{ id: "f1", content: "我喜欢冰美式" }]
+  const deletes: string[][] = []
+  const store = makeStore({
+    listMemoryFacts: async () => facts,
+    deleteMemoryFacts: async (_u, ids) => {
+      deletes.push(ids)
+    },
+    runAgentTurn: async () => {
+      llmCalls++
+      return { text: "should-not-be-called" }
+    },
+    enqueueOutbound: async (_u, _t, body) => {
+      outbound = body
+    },
+  })
+  await processInboundEvent({ ...baseEvent, body: "忘记 冰美式" }, store)
+  assert.equal(llmCalls, 0, "forget command must not reach the LLM")
+  assert.deepEqual(deletes, [["f1"]])
+  assert.match(outbound, /已忘记：我喜欢冰美式/)
+})
+
+test("processInboundEvent T5: parseMemoryCommand 'clear_request' still routes through orchestrator (admin command)", async () => {
+  let llmCalls = 0
+  let outbound = ""
+  const store = makeStore({
+    runAgentTurn: async () => {
+      llmCalls++
+      return { text: "should-not-be-called" }
+    },
+    enqueueOutbound: async (_u, _t, body) => {
+      outbound = body
+    },
+  })
+  await processInboundEvent({ ...baseEvent, body: "清空记忆" }, store)
+  assert.equal(llmCalls, 0, "clear_request must not reach the LLM")
+  assert.match(outbound, /确认清空记忆/)
+})
+
+test("processInboundEvent T5: parseMemoryCommand 'clear_confirm' still routes through orchestrator (admin command)", async () => {
+  let llmCalls = 0
+  let outbound = ""
+  const facts: { id: string; content: string }[] = [
+    { id: "f1", content: "fact one" },
+    { id: "f2", content: "fact two" },
+  ]
+  const deletes: string[][] = []
+  const store = makeStore({
+    listMemoryFacts: async () => facts,
+    deleteMemoryFacts: async (_u, ids) => {
+      deletes.push(ids)
+    },
+    runAgentTurn: async () => {
+      llmCalls++
+      return { text: "should-not-be-called" }
+    },
+    enqueueOutbound: async (_u, _t, body) => {
+      outbound = body
+    },
+  })
+  await processInboundEvent({ ...baseEvent, body: "确认清空记忆" }, store)
+  assert.equal(llmCalls, 0, "clear_confirm must not reach the LLM")
+  assert.deepEqual(deletes, [["f1", "f2"]])
+  assert.match(outbound, /已清空 2 条/)
+})
+
+test("processInboundEvent T5: __PA_RESET__ still short-circuits BEFORE the LLM (A6 lock)", async () => {
+  let llmCalls = 0
+  let resetCalls = 0
+  const store = makeStore({
+    runAgentTurn: async () => {
+      llmCalls++
+      return { text: "should-not-be-called" }
+    },
+    maybeHandleResetCommand: async (event) => {
+      resetCalls++
+      assert.equal(event.body, "__PA_RESET__")
+      return { handled: true, summary: "✓ 测试记忆已清空" }
+    },
+  })
+  await processInboundEvent({ ...baseEvent, body: "__PA_RESET__" }, store)
+  assert.equal(resetCalls, 1)
+  assert.equal(llmCalls, 0)
+})
+
+test("processInboundEvent T5: suppressOutbound flag still suppresses pa_outbound writes for harness events", async () => {
+  let llmCalls = 0
+  let outboundCalls = 0
+  const store = makeStore({
+    runAgentTurn: async () => {
+      llmCalls++
+      return { text: "assistant reply" }
+    },
+    enqueueOutbound: async () => {
+      outboundCalls++
+    },
+  })
+  await processInboundEvent(
+    {
+      ...baseEvent,
+      body: "最近有啥电影",
+      rawMeta: {
+        source: "imessage_broker",
+        harness: { runner: "tests/scenarios/runner.mjs", suppressOutbound: true },
+      },
+    },
+    store
+  )
+  assert.equal(llmCalls, 1)
+  assert.equal(outboundCalls, 0)
+})
+
 test("isInboundLeaseExpired treats missing or stale leases as reclaimable", () => {
   const now = new Date("2026-04-25T12:00:00.000Z")
   assert.equal(isInboundLeaseExpired(undefined, now), true)
   assert.equal(isInboundLeaseExpired("2026-04-25T11:59:59.000Z", now), true)
   assert.equal(isInboundLeaseExpired("2026-04-25T12:00:30.000Z", now), false)
-})
-
-test("buildCurrentInfoBoundaryReply catches current external facts without blocking memory recall", () => {
-  assert.match(
-    buildCurrentInfoBoundaryReply("最近有什么电影可以看", "2026-04-26T05:00:00.000Z") ?? "",
-    /今天是 2026-04-26/
-  )
-  assert.match(
-    buildCurrentInfoBoundaryReply("what is the latest AI news?", "2026-04-26T05:00:00.000Z") ?? "",
-    /live data source/
-  )
-  assert.equal(buildCurrentInfoBoundaryReply("你还记得我最近想干嘛吗？", "2026-04-26T05:00:00.000Z"), null)
 })
 
 // -------- Phase 10.5 T7: buildTurnTools tests --------
@@ -689,9 +654,10 @@ test("processInboundEvent emits hosted tool call rows via recordHostedToolCalls"
       recorded.push(input)
     },
   })
-  await processInboundEvent({ ...baseEvent, body: "hello there" }, store)
-  // boundary-reply pre-router still intercepts current-info-shaped queries; use a benign body.
-  // For non-current-info queries, hosted tool call recording fires when LLM used tools.
+  // Phase 10.5 T5: current-info-shaped queries no longer short-circuit; the
+  // LLM owns web_search via the SDK hosted tool. Use one such query here so
+  // the trace exercises the post-T5 path end-to-end.
+  await processInboundEvent({ ...baseEvent, body: "最近有啥电影" }, store)
   assert.equal(recorded.length, 1)
   assert.deepEqual(recorded[0]!.calls, [{ name: "web_search", count: 2 }])
 })
