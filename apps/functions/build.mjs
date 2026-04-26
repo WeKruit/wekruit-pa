@@ -78,4 +78,16 @@ writeFileSync(
 const seedSrc = resolve(__dirname, "../../packages/agent-registry/src/seed.json")
 copyFileSync(seedSrc, resolve(outDir, "seed.json"))
 
+// Copy `.env` into the deploy bundle so Firebase Gen2 picks up
+// non-secret runtime env vars (PA_ADMIN_USER_IDS, etc). `.env` lives in
+// `apps/functions/.env` (gitignored). Copying into `lib/` ensures
+// firebase-tools (which uses `source: apps/functions/lib`) loads it.
+const envSrc = resolve(__dirname, ".env")
+if (existsSync(envSrc)) {
+  copyFileSync(envSrc, resolve(outDir, ".env"))
+  console.log("[functions] copied .env into deploy bundle")
+} else {
+  console.log("[functions] no .env file found at", envSrc, "(skipping admin allowlist)")
+}
+
 console.log("[functions] bundled to", outDir)

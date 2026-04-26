@@ -460,15 +460,39 @@ export function createFirestoreOrchestratorStore(db: Firestore): OrchestratorSto
     },
     async maybeHandleResetCommand(event) {
       if (!isResetCommand(event.body)) return { handled: false }
-      const userSnap = await db.collection(PA_COLLECTIONS.users).doc(event.userId).get()
-      const user = userSnap.exists ? (userSnap.data() as { testMode?: boolean }) : null
-      if (!user?.testMode) return { handled: false }
+      // Two-gate authorization, EITHER passes:
+      //   (a) per-user opt-in: pa_users/{id}.testMode === true
+      //   (b) deploy-time admin allowlist: PA_ADMIN_USER_IDS env (CSV of UUIDs)
+      // Production users never get the magic string — testMode is unset and
+      // their UUID is not in the env allowlist.
+      const adminUserIds = (process.env.PA_ADMIN_USER_IDS ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+      const isAdminAllowlisted = adminUserIds.includes(event.userId)
+      let isTestUser = false
+      if (!isAdminAllowlisted) {
+        const userSnap = await db.collection(PA_COLLECTIONS.users).doc(event.userId).get()
+        const user = userSnap.exists ? (userSnap.data() as { testMode?: boolean }) : null
+        isTestUser = user?.testMode === true
+      }
+      if (!isAdminAllowlisted && !isTestUser) return { handled: false }
+
       const qdrantUrl = process.env.QDRANT_URL
       const qdrantApiKey = process.env.QDRANT_API_KEY
       if (!qdrantUrl || !qdrantApiKey) {
         return { handled: true, summary: "✗ 测试记忆清空失败：QDRANT_URL/QDRANT_API_KEY 未配置" }
       }
       try {
+        // Auto-promote allowlisted admin to testMode so subsequent runs go
+        // through the cheaper testMode branch (skips the env var lookup
+        // dependency for ops who later remove the allowlist).
+        if (isAdminAllowlisted) {
+          await db.collection(PA_COLLECTIONS.users).doc(event.userId).set(
+            { testMode: true, updatedAt: nowIso() },
+            { merge: true }
+          )
+        }
         const result = await clearUserMemory(
           event.userId,
           { db, qdrantUrl, qdrantApiKey, qdrantCollection: process.env.QDRANT_COLLECTION },
