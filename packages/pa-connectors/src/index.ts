@@ -86,9 +86,13 @@ export type CurrentInfoConnectorInput = z.infer<typeof CurrentInfoInputSchema>
 export type CurrentInfoConnectorOutput = z.infer<typeof CurrentInfoOutputSchema>
 
 
+// OpenAI Responses API rejects tool schemas where `required` does not
+// list every property. Keep this schema flat (single required field) so
+// the SDK's zod→JSON-schema conversion produces a strict-mode-compatible
+// shape. Sensitivity is enforced at runtime via pa-safety
+// `isUnsafeMemoryContent`, not via tool input.
 const RememberFactInputSchema = z.object({
   content: z.string().min(1).max(500),
-  sensitivity: z.enum(["normal", "sensitive"]).optional(),
 })
 const RememberFactOutputSchema = z.object({
   ok: z.boolean(),
