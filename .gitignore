@@ -9,5 +9,7 @@ apps/dashboard-web/.env.pa-firebase-generated
 *.tsbuildinfo
 .DS_Store
 .google/
+.claude/
+.firebase/
 *-debug.log
 apps/functions/lib/

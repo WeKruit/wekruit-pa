@@ -154,6 +154,18 @@ function materializeScenario(rawScenario) {
   return scenario
 }
 
+/** After a suppressed harness turn, pa_outbound must not enqueue worker-visible jobs. */
+async function assertNoOutboundWhenSuppressed(db, eventId, suppressOutbound) {
+  if (!suppressOutbound) return
+  const key = `outbound-${eventId}`
+  const snap = await db.collection(PA_OUTBOUND).where("idempotencyKey", "==", key).limit(1).get()
+  if (!snap.empty) {
+    throw new Error(
+      `Harness safety: suppressOutbound was true but pa_outbound has idempotencyKey ${key} (doc ${snap.docs[0].id})`
+    )
+  }
+}
+
 /** Build a broker-shaped iMessage inbound event. CF detects via rawPayload.kind. */
 function brokerEvent({ participant, chatId, text }) {
   const id = `harness_${randomUUID()}`
@@ -221,6 +233,7 @@ async function runTurn(db, scenario, turnIdx) {
 
   // Find the assistant reply. Search recent pa_messages OR pa_outbound for
   // anything written after this event id.
+  const replyTimeoutMs = Number(scenario.replyTimeoutMs ?? 120_000)
   const reply = await pollUntil(
     async () => {
       // pa_messages is the canonical transcript per pa-orchestrator.
@@ -235,8 +248,19 @@ async function runTurn(db, scenario, turnIdx) {
       }
       return false
     },
-    { timeoutMs: 5000, intervalMs: 500, label: `reply for event ${event.id}` }
+    {
+      timeoutMs: Number.isFinite(replyTimeoutMs) && replyTimeoutMs > 0 ? replyTimeoutMs : 120_000,
+      intervalMs: 500,
+      label: `reply for event ${event.id}`,
+    }
   ).catch(() => null)
+
+  const harness = event.docData?.rawPayload?.harness
+  const suppressOutbound = Boolean(harness && harness.suppressOutbound === true)
+  const verifyOutbound = scenario.verifySuppressOutbound !== false
+  if (verifyOutbound) {
+    await assertNoOutboundWhenSuppressed(db, event.id, suppressOutbound)
+  }
 
   return { event, reply }
 }
@@ -328,11 +352,12 @@ async function runScenario(db, scenarioPath) {
       })
       if (failures.length > 0) result.pass = false
     } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
       result.turns.push({
         idx: i,
         user: turn.user,
         pass: false,
-        failures: [`runner error: ${err.message}`],
+        failures: [`runner error: ${msg}`],
       })
       result.pass = false
       break
@@ -358,12 +383,19 @@ async function main() {
     console.error("usage: node tests/scenarios/runner.mjs <scenario.yaml | scenarios-dir>")
     process.exit(2)
   }
-  const files = await expandTargets(target)
+  const files = (await expandTargets(target)).sort((a, b) => basename(a).localeCompare(basename(b)))
   if (files.length === 0) {
     console.error(`No scenarios found at ${target}`)
     process.exit(2)
   }
   const db = getDb()
+  try {
+    await db.collection(PA_INBOUND).limit(1).get()
+  } catch (e) {
+    const hint = e instanceof Error ? e.message : String(e)
+    console.error(`[runner] Firestore unreachable (${hint}). Set GOOGLE_APPLICATION_CREDENTIALS or FIREBASE_SERVICE_ACCOUNT_JSON.`)
+    process.exit(2)
+  }
   const results = []
   for (const f of files) {
     console.error(`▶ running ${basename(f)}`)

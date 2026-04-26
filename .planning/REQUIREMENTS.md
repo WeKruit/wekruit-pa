@@ -29,12 +29,20 @@
    - Mem0 self-host on Fly.io + Supabase can be supported behind `MEM0_BASE_URL` and `MEM0_API_KEY`, with OSS/cloud API compatibility handled explicitly.
    - Surprise/personality behavior must be opt-in, rate-limited/cooldown-based, and logged.
 
+6. **Current-info correctness**
+   - Questions about recent/latest/today/news/movies/weather/prices must not be answered from stale model knowledge.
+   - The orchestrator must route current-info intents through a platform-managed connector, not an arbitrary LLM tool loop.
+   - The connector must record `pa_tool_calls` / audit data and preserve `suppressOutbound` in scenario harness runs.
+   - OpenAI web search credentials must be isolated in `PA_CURRENT_INFO_OPENAI_API_KEY`; do not reuse the SiliconFlow/OpenAI-compatible runtime key.
+   - If the realtime connector is unavailable, missing credentials, denied, or returns no usable text, the response must fall back to the existing boundary message.
+
 ## P1 — Should have
 
 - CI-safe tests for broker lifecycle, rate limits, orchestrator happy/error paths, worker echo suppression, and dashboard smoke.
 - Manual Mac/iMessage runbook remains the source of truth for real channel verification.
 - Operations should expose queue depth, stuck leases, recent failures, and health summary.
 - UI should pass an explicit design review and avoid generic raw-table/admin-console feel.
+- Current-info production enablement should include Firebase secret binding, functions deploy, REST/CLI metadata verification, production harness, and `pa_outbound=0` check.
 
 ## Out of scope (this milestone)
 

@@ -12,6 +12,10 @@ This roadmap is intentionally numeric so GSD phase tooling can discover and exec
 | 6 | Memory evol map + Mem0 compatibility | Add Firestore persona/evolution memory and support Mem0 self-host compatibility as optional recall. | P0.5 | Complete |
 | 7 | Scheduler and platform runtime | Add durable scheduled jobs, stuck job recovery, retry/backoff, and runtime heartbeats. | P0.1, P1 | Complete |
 | 8 | Reviews, polish, and ship readiness | Run engineering/design reviews, close gaps, and produce final verification evidence. | P1 | Complete |
+| 9 | Phase 2/3 production hardening | Make production verification repeatable and expose semantic memory safely in dashboard. | P0.1, P0.2, P0.4, P0.5 | Mostly complete |
+| 10 | Current-info realtime connector | Answer recent/latest questions from live search without stale model guesses. | P0.6 | Code complete; production secret/deploy pending |
+| 11 | Persona + human-feel loop | Restore persona facts into runtime prompt and tune human feel from harness/eval data. | P0.3, P0.5 | Not started |
+| 12 | Typing indicator / delivery feel | Improve iMessage delivery feel using Photon typing if available or chunk/delay simulation. | P1 | Not started |
 
 ## Phase 1: Broker correctness + echo suppression
 
@@ -92,3 +96,46 @@ Requirements: P1
 2. `gstack-design-review` or equivalent visual review is run against the live dashboard.
 3. `gsd-review` or external review is run for high-risk phase plans.
 4. Final build/typecheck/test/manual E2E evidence is captured, and remaining gaps are documented.
+
+## Phase 9: Phase 2/3 production hardening
+
+**Goal:** Make the PA production path verifiable without manual iMessage spam and expose semantic memory safely.
+Requirements: P0.1, P0.2, P0.4, P0.5
+**Status:** Mostly complete.
+**Success Criteria**:
+1. Scenario harness injects broker events and defaults to `suppressOutbound`.
+2. Runner verifies no accidental `pa_outbound` rows for harness events.
+3. Recall, reset, multilingual, and current-info boundary scenarios exist.
+4. Memory Admin dashboard can list/search/delete Qdrant semantic memory and clear a user only after explicit operator action.
+5. Overview separates pending/running from historical failures to avoid false “waiting” alarms.
+
+## Phase 10: Current-info realtime connector
+
+**Goal:** Let PA answer “recent/latest/today” external information questions from live data while retaining fail-closed behavior.
+Requirements: P0.6
+**Status:** Code complete on `main` at `8e9d0e9`; production secret/deploy pending.
+**Success Criteria**:
+1. `current-info` connector uses OpenAI Responses API web search via dedicated `PA_CURRENT_INFO_OPENAI_API_KEY`.
+2. Orchestrator invokes current-info before LLM stale-answer path.
+3. Connector attempts are visible in `pa_tool_calls` and audit events.
+4. Missing or failing connector falls back to boundary reply.
+5. Production functions bind `PA_CURRENT_INFO_OPENAI_API_KEY`, deploy on Node 22, and pass current-info production harness with `pa_outbound=0`.
+
+## Phase 11: Persona + human-feel loop
+
+**Goal:** Restore persona facts and tune response feel from measured harness/eval evidence.
+Requirements: P0.3, P0.5
+**Status:** Not started.
+**Success Criteria**:
+1. Firestore persona facts are injected into runtime prompt again.
+2. `mem0UserId` advisory regression is resolved or explicitly removed.
+3. Persona/human-feel changes are evaluated through scenarios rather than prompt guessing.
+
+## Phase 12: Typing indicator / delivery feel
+
+**Goal:** Improve iMessage perceived responsiveness.
+Requirements: P1
+**Status:** Not started.
+**Success Criteria**:
+1. Photon typing support is researched.
+2. If true typing is unavailable, chunked message + delay behavior is implemented without duplicate outbound or harness leakage.

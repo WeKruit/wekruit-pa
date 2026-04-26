@@ -1,16 +1,23 @@
 # Milestone state
 
 - **Previous E2E gap closure:** complete locally. Worker health passes, Firestore Admin smoke passes, iMessage inbound/outbound E2E completed, OpenAI direct runtime works.
-- **Current phase:** Complete — PA Control Plane + Personality Memory milestone implementation pass.
+- **Current phase:** Phase 10 current-info production enablement pending. Code for realtime search connector is merged to `main`, but production secret binding and functions deploy are not yet complete.
 - **Completed code fix:** broker-managed outbound (`out-imessage-in-*`) is no longer appended by the outbox as `role=user`.
 - **Completed reliability fix:** expired `processing` inbound leases are now listed by the scanner so the orchestrator can reclaim stuck work.
-- **Current test baseline:** root `npm test` runs all package tests; current total is 33 passing tests across worker, agent registry, memory, broker, orchestrator, and safety.
+- **Current test baseline:** root `npm test` runs all package tests and currently passes across worker, agent registry, memory, broker, connectors, orchestrator, and safety. `npm run build:all` also passes; dashboard build still emits a non-fatal large chunk warning.
 - **Completed UI step:** `/` now renders an operator Overview; prior Users list moved to `/conversations`; side nav has active state and responsive shell styling.
 - **Completed workbench step:** Conversations support search/filter/latest/error columns; detail links transcript, turns, outbound, connectors, audit/safety, and memory; Operations has tabs, filters, reasoned retry/dead-letter, scheduled jobs, and heartbeats.
 - **Completed agent/persona step:** Agent schema supports status, persona controls, model probe state, lifecycle timestamps, publish/rollback snapshots, and guarded default switching.
 - **Completed memory step:** Firestore persona facts feed deterministic persona cards; Mem0 supports cloud/OSS modes; surprise protocol has opt-in/cooldown/sensitivity guardrails.
 - **Completed runtime step:** Firestore scheduled jobs and runtime heartbeats have broker helpers, tests, and dashboard visibility.
+- **Completed Phase 2 hardening:** production scenario harness uses broker injection with default `suppressOutbound`; reserved test participants are randomized; assertion helpers include regex match / not-match paths; runner can verify no accidental `pa_outbound` rows.
+- **Completed Phase 3 Memory Admin:** PA Console user detail can automatically load, search, delete, and clear Qdrant semantic memory through the `memoryAdmin` function. Destructive delete/clear still requires explicit operator/user confirmation before testing on production data.
+- **Completed current-info guard:** current/latest external facts no longer fall through to stale model answers when live search is unavailable.
+- **Current-info connector status:** `8e9d0e9` adds `current-info` via OpenAI Responses API web search and orchestrator wiring. It uses dedicated `PA_CURRENT_INFO_OPENAI_API_KEY`; this secret is not yet bound on deployed `onPaInbound`, so production still falls back to boundary behavior until secret + deploy + harness verification are done.
+- **Deployed secret baseline:** deployed `onPaInbound` currently reports `SILICONFLOW_API_KEY`, `QDRANT_URL`, and `QDRANT_API_KEY`; deployed `memoryAdmin` reports `QDRANT_URL` and `QDRANT_API_KEY`.
 - **Known model gap:** official model slug is `gpt-5.4-nano`; the earlier failed probe used the wrong `gpt5.4nano` string. Keep current live default stable until a probe for the official slug passes in the configured provider/ATM path.
 - **Known ATM gap:** `ATM_BASE_URL` and `VALET_ATM_TOKEN` are set, but default PA profile path returns `Unsupported runtime profile "personal-assistant-default"`.
 - **Review constraint:** Full `gstack-design-review` atomic screenshot/fix loop still requires a clean working tree and explicit commit permission. Equivalent code-level review notes are captured in Phase 8.
 - **Known bundle gap:** dashboard production build passes but Vite warns the main chunk is larger than 500 kB.
+- **Known persona gap:** Firestore persona facts / persona card injection and `mem0UserId` semantics need a Phase 11 pass before B3 human-feel work.
+- **Known delivery gap:** B2 typing indicator / chunked delivery simulation is not started.
