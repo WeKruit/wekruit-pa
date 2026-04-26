@@ -19,6 +19,7 @@
   "dependencies": {
     "@pa/agent-runtime": "0.0.1",
     "@pa/core-types": "0.0.1",
+    "@pa/memory": "0.0.1",
     "@pa/pa-broker": "0.0.1",
     "@pa/pa-safety": "0.0.1",
     "firebase-admin": "^13.0.0",

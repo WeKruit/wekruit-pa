@@ -3,8 +3,14 @@ import type { Firestore } from "firebase-admin/firestore"
 import { z } from "zod"
 import { runOpenAIAgentsCurrentInfo } from "@pa/agent-runtime"
 import { PA_COLLECTIONS, type AgentDef, type PaToolCall } from "@pa/core-types"
+import {
+  createConfirmedMemoryFact,
+  listConfirmedMemoryFacts,
+  recordMemoryAction,
+  shouldRejectMemoryFact,
+} from "@pa/memory"
 import { appendAuditEvent } from "@pa/pa-broker"
-import { canUseConnector } from "@pa/pa-safety"
+import { canUseConnector, isUnsafeMemoryContent } from "@pa/pa-safety"
 
 export type ConnectorContext = {
   db: Firestore
@@ -78,6 +84,25 @@ const CurrentInfoOutputSchema = z.object({
 
 export type CurrentInfoConnectorInput = z.infer<typeof CurrentInfoInputSchema>
 export type CurrentInfoConnectorOutput = z.infer<typeof CurrentInfoOutputSchema>
+
+
+const RememberFactInputSchema = z.object({
+  content: z.string().min(1).max(500),
+  sensitivity: z.enum(["normal", "sensitive"]).optional(),
+})
+const RememberFactOutputSchema = z.object({
+  ok: z.boolean(),
+  factId: z.string().optional(),
+  conflict: z.boolean().optional(),
+  reason: z.string().optional(),
+})
+
+export type RememberFactConnectorInput = z.infer<typeof RememberFactInputSchema>
+export type RememberFactConnectorOutput = z.infer<typeof RememberFactOutputSchema>
+
+function normalizeFactContent(text: string): string {
+  return text.trim().replace(/\s+/g, " ").toLocaleLowerCase()
+}
 
 export const connectorRegistry = {
   "fake-echo": {
@@ -208,6 +233,55 @@ export const connectorRegistry = {
       }
     },
   } satisfies ConnectorDef<CurrentInfoConnectorInput, CurrentInfoConnectorOutput>,
+  "remember-fact": {
+    name: "remember-fact",
+    version: "1",
+    description:
+      "Persist a single confirmed user fact to long-term memory. Use when the user explicitly asks PA to remember something (e.g., '记得我...', 'remember that ...'). Sensitive content (PII, credentials, financial) will be rejected; PA must not retry.",
+    inputSchema: RememberFactInputSchema,
+    outputSchema: RememberFactOutputSchema,
+    execute: async (input: RememberFactConnectorInput, ctx: ConnectorContext) => {
+      // Ground-truth safety gate is owned by pa-safety, not the connector.
+      // The optional `sensitivity` hint from the LLM is advisory only.
+      const reject = shouldRejectMemoryFact(input.content)
+      if (isUnsafeMemoryContent(input.content) || reject.reject) {
+        // Do NOT throw — the LLM must be able to apologize to the user.
+        return {
+          ok: false,
+          reason: reject.reason ?? "sensitive_content",
+        }
+      }
+
+      // Duplicate detection: if a confirmed fact with normalized identical
+      // content already exists, return its id with conflict=true and skip
+      // the write. Prevents repeated "remember X" turns from spamming
+      // pa_memory_facts.
+      const facts = await listConfirmedMemoryFacts(ctx.db, ctx.userId)
+      const target = normalizeFactContent(input.content)
+      const existing = facts.find((f) => normalizeFactContent(f.content) === target)
+      if (existing) {
+        return { ok: true, factId: existing.id, conflict: true }
+      }
+
+      const factId = await createConfirmedMemoryFact(
+        ctx.db,
+        ctx.userId,
+        input.content,
+        "explicit_user"
+      )
+      // Mirror the legacy regex path so the dashboard memory_actions tab
+      // continues to render the same shape. recordMemoryAction is the
+      // canonical helper; do not write directly to pa_memory_actions.
+      await recordMemoryAction(ctx.db, {
+        userId: ctx.userId,
+        action: "remember",
+        status: "succeeded",
+        content: input.content,
+        factIds: [factId],
+      })
+      return { ok: true, factId, conflict: false }
+    },
+  } satisfies ConnectorDef<RememberFactConnectorInput, RememberFactConnectorOutput>,
 }
 
 export type ConnectorName = keyof typeof connectorRegistry

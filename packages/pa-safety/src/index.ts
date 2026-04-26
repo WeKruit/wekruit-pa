@@ -122,3 +122,13 @@ export function filterMemoryWrite(input: {
   if (signals.length === 0) return { allow: true, signals: [] }
   return { allow: false, reason: "unsafe_memory_write", signals }
 }
+
+/**
+ * Phase 10.5 T6 — single-line wrapper used by the `remember-fact` connector
+ * before persisting a fact. Returns true if `text` matches any of the
+ * shared `UNSAFE_MEMORY_PATTERNS`. The pattern list itself stays private to
+ * pa-safety so the connector cannot drift from the canonical safety set.
+ */
+export function isUnsafeMemoryContent(text: string): boolean {
+  return UNSAFE_MEMORY_PATTERNS.some((p) => p.test(text))
+}
