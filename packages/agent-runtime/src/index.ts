@@ -14,6 +14,8 @@ export { buildAgentsInput, runOpenAIAgentsTurn } from "./openai-agents-adapter.j
 export { runOpenAIAgentsCurrentInfo } from "./current-info.js"
 export type { CurrentInfoCitation, CurrentInfoSearchInput, CurrentInfoSearchResult } from "./current-info.js"
 export { hydrateOpenAiFromAtm, getAtmBearerToken } from "./atm-llm-runtime.js"
+export { FirestoreSession } from "./firestore-session.js"
+export type { FirestoreSessionDeps } from "./firestore-session.js"
 
 export function toOpenAIMessageList(
   systemPrompt: string,
