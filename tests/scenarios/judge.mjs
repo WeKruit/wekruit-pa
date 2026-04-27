@@ -19,7 +19,12 @@
 import OpenAI from "openai"
 import { mkdir, appendFile } from "node:fs/promises"
 import { dirname } from "node:path"
-import { checkFillerBlacklist, checkIMessageRenderUnsafe } from "./lib/voice-axes.mjs"
+import {
+  checkFillerBlacklist,
+  checkIMessageRenderUnsafe,
+  VOICE_AXES,
+  passThreshold as VOICE_PASS_THRESHOLD,
+} from "./lib/voice-axes.mjs"
 
 // gpt-5.4-nano illustrative pricing per 14-CONTEXT.md §"Per-eval-run cost
 // estimate". Kept as a constant here so a single price update touches one
@@ -293,4 +298,262 @@ export async function runJudge({
 export function judgeVerdictPasses({ verdict, confidence }, threshold) {
   if (verdict !== "pass") return false
   return confidence >= threshold
+}
+
+// ---------------------------------------------------------------------------
+// Phase 18 — voice-axis judge (4 axes, scored 0-3 each, ≥2.4 average passes).
+//
+// Used by scenarios that opt in via `assert.voice_axes: true`. Additive to
+// the existing single-verdict judge — does NOT replace it. Filler-blacklist
+// + iMessage-render auto-fail short-circuits BEFORE issuing a judge call.
+// ---------------------------------------------------------------------------
+
+const VOICE_JUDGE_TOOL = {
+  type: "function",
+  name: "submit_voice_axes",
+  description:
+    "Score the assistant reply on 4 voice axes (each 0-3). Call exactly once.",
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    properties: Object.fromEntries(
+      VOICE_AXES.map((a) => [
+        a.id,
+        {
+          type: "integer",
+          minimum: 0,
+          maximum: 3,
+          description: `${a.name}. Rubric: 0=${a.rubric[0]}; 1=${a.rubric[1]}; 2=${a.rubric[2]}; 3=${a.rubric[3]}.`,
+        },
+      ])
+    ),
+    required: VOICE_AXES.map((a) => a.id),
+  },
+}
+
+const VOICE_JUDGE_SYSTEM_PROMPT = [
+  "You are a voice-evaluation judge for an iMessage personal assistant whose persona is Claire (柯莱儿 / 小柯) — a Bay Area engineering manager texting a friend.",
+  "Score the assistant reply on the 4 axes below. Each axis is integer 0-3.",
+  "Be strict: if it reads as a generic LLM helper rather than Claire, mark in_character_voice ≤1.",
+  "Code-switching zh/en is in-character; English-only or Chinese-only is fine if the user wrote that way.",
+  "Output ONLY by calling the `submit_voice_axes` tool exactly once.",
+].join(" ")
+
+function extractVoiceAxes(response) {
+  const items = Array.isArray(response.output) ? response.output : []
+  for (const item of items) {
+    if (item.type === "function_call" && item.name === "submit_voice_axes") {
+      try {
+        return JSON.parse(item.arguments)
+      } catch {
+        return null
+      }
+    }
+  }
+  return null
+}
+
+/**
+ * Run a 4-axis voice judge call.
+ *
+ * @returns {Promise<{ axes: Record<string,number>, average: number, pass: boolean, costUsd: number, autoFail?: string, rationale?: string }>}
+ */
+export async function runVoiceJudge({
+  reply,
+  transcript,
+  threshold = VOICE_PASS_THRESHOLD,
+  logPath,
+  metadata,
+  skipAutofail = false,
+}) {
+  if (!reply || typeof reply !== "string") {
+    throw new Error("runVoiceJudge: reply is required")
+  }
+  if (!skipAutofail) {
+    const fb = checkFillerBlacklist(reply)
+    if (fb.hit) {
+      const result = {
+        axes: { no_robot_filler: 0 },
+        average: 0,
+        pass: false,
+        costUsd: 0,
+        autoFail: `filler_blacklist:${fb.lang}:${fb.phrase}`,
+      }
+      await appendJudgeLog(logPath, {
+        ts: new Date().toISOString(),
+        ok: true,
+        kind: "voice_axes",
+        autoFail: result.autoFail,
+        reply,
+        ...(metadata ?? {}),
+      })
+      return result
+    }
+    const ir = checkIMessageRenderUnsafe(reply)
+    if (ir.hit) {
+      const result = {
+        axes: { no_robot_filler: 0 },
+        average: 0,
+        pass: false,
+        costUsd: 0,
+        autoFail: `imessage_render:${ir.reason}`,
+      }
+      await appendJudgeLog(logPath, {
+        ts: new Date().toISOString(),
+        ok: true,
+        kind: "voice_axes",
+        autoFail: result.autoFail,
+        reply,
+        ...(metadata ?? {}),
+      })
+      return result
+    }
+  }
+
+  const client = getClient()
+  const transcriptLines = Array.isArray(transcript)
+    ? transcript
+        .map((t) => `${t.role === "assistant" ? "ASSISTANT" : "USER"}: ${t.content}`)
+        .join("\n")
+    : "(no transcript)"
+  const userMessage = [
+    `TRANSCRIPT (most recent last):\n${transcriptLines}`,
+    `ASSISTANT REPLY:\n${reply}`,
+  ].join("\n\n")
+
+  const response = await client.responses.create({
+    model: JUDGE_MODEL,
+    input: [
+      { role: "system", content: VOICE_JUDGE_SYSTEM_PROMPT },
+      { role: "user", content: userMessage },
+    ],
+    tools: [VOICE_JUDGE_TOOL],
+    tool_choice: { type: "function", name: "submit_voice_axes" },
+  })
+  const axes = extractVoiceAxes(response)
+  const costUsd = estimateJudgeCostUsd(response.usage)
+  if (!axes) {
+    throw new Error("Voice judge did not emit structured axes")
+  }
+  const values = VOICE_AXES.map((a) => Number(axes[a.id]) || 0)
+  const average = values.reduce((s, v) => s + v, 0) / values.length
+  const pass = average >= threshold
+  await appendJudgeLog(logPath, {
+    ts: new Date().toISOString(),
+    ok: true,
+    kind: "voice_axes",
+    axes,
+    average,
+    pass,
+    threshold,
+    reply,
+    costUsd,
+    ...(metadata ?? {}),
+  })
+  return { axes, average, pass, costUsd }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 18 — pairwise voice judge (baseline vs candidate, anonymized A/B).
+// Used by `runPairwise()` in lib/pairwise.mjs.
+// ---------------------------------------------------------------------------
+
+const PAIRWISE_TOOL = {
+  type: "function",
+  name: "submit_pairwise_winner",
+  description: "Pick which reply is more in-character per Voice v1 axes. Call exactly once.",
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      winner: {
+        type: "string",
+        enum: ["A", "B", "tie"],
+        description: "Which reply is more in-character (Claire / 小柯, Voice v1).",
+      },
+      rationale: {
+        type: "string",
+        description: "1-2 sentence justification.",
+      },
+    },
+    required: ["winner", "rationale"],
+  },
+}
+
+const PAIRWISE_SYSTEM_PROMPT = [
+  "You are a voice-comparison judge for an iMessage personal assistant.",
+  "The target persona is Claire (柯莱儿 / 小柯) — a Bay Area engineering manager texting a friend.",
+  "You will see one user transcript and TWO candidate replies (A and B).",
+  "Pick the one that is more in-character on these axes: warmth without sycophancy, in-character voice (Claire register, code-switch, sparse signature emoji 🍋/☕), no robot filler (no 我记住了/收到/As an AI/It's important to/Got it), and length appropriateness for iMessage (default 1-2 sentences).",
+  "Code-switching zh/en is in-character; clinical multiple-choice 'X 还是 Y' default questions are NOT in-character.",
+  "Output ONLY by calling the `submit_pairwise_winner` tool exactly once. Use 'tie' only when the two replies are genuinely indistinguishable on voice.",
+].join(" ")
+
+function extractPairwise(response) {
+  const items = Array.isArray(response.output) ? response.output : []
+  for (const item of items) {
+    if (item.type === "function_call" && item.name === "submit_pairwise_winner") {
+      try {
+        return JSON.parse(item.arguments)
+      } catch {
+        return null
+      }
+    }
+  }
+  return null
+}
+
+/**
+ * Run a single pairwise judge call. Caller is responsible for label-swap
+ * (call once with A=baseline,B=candidate, once with A=candidate,B=baseline)
+ * to neutralize position bias.
+ *
+ * @returns {Promise<{ winner: 'A'|'B'|'tie', rationale: string, costUsd: number }>}
+ */
+export async function judgePairwise({
+  promptA,
+  promptB,
+  transcript,
+  logPath,
+  metadata,
+}) {
+  if (typeof promptA !== "string" || typeof promptB !== "string") {
+    throw new Error("judgePairwise: promptA + promptB required")
+  }
+  const client = getClient()
+  const transcriptLines = Array.isArray(transcript)
+    ? transcript
+        .map((t) => `${t.role === "assistant" ? "ASSISTANT" : "USER"}: ${t.content}`)
+        .join("\n")
+    : "(no transcript)"
+  const userMessage = [
+    `USER TRANSCRIPT:\n${transcriptLines}`,
+    `REPLY A:\n${promptA}`,
+    `REPLY B:\n${promptB}`,
+  ].join("\n\n")
+
+  const response = await client.responses.create({
+    model: JUDGE_MODEL,
+    input: [
+      { role: "system", content: PAIRWISE_SYSTEM_PROMPT },
+      { role: "user", content: userMessage },
+    ],
+    tools: [PAIRWISE_TOOL],
+    tool_choice: { type: "function", name: "submit_pairwise_winner" },
+  })
+  const out = extractPairwise(response)
+  const costUsd = estimateJudgeCostUsd(response.usage)
+  if (!out) throw new Error("Pairwise judge did not emit structured winner")
+  const winner = out.winner === "A" || out.winner === "B" ? out.winner : "tie"
+  const rationale = typeof out.rationale === "string" ? out.rationale : ""
+  await appendJudgeLog(logPath, {
+    ts: new Date().toISOString(),
+    ok: true,
+    kind: "pairwise",
+    winner,
+    rationale,
+    costUsd,
+    ...(metadata ?? {}),
+  })
+  return { winner, rationale, costUsd }
 }
