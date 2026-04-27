@@ -2,7 +2,7 @@ import { IMessageError, IMessageSDK } from "@photon-ai/imessage-kit"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import type { Firestore } from "firebase-admin/firestore"
 import { appendMessage, getOrCreateSession, getUser, normalizeE164 } from "@pa/pa-persistence"
-import { getPeerAllowlist, isSamePeer, useDmAllowlist } from "./config.js"
+import { getPeerAllowlist, isLegacyChannelEnabled, isSamePeer, useDmAllowlist } from "./config.js"
 import {
   deliverChunks,
   isTypingIndicatorEnabled,
@@ -104,6 +104,16 @@ export async function processOutboundJob(
   raw: Record<string, unknown>
 ) {
   const ref = db.collection(OUT).doc(docId)
+
+  // Phase 21 — D-08 / D-11. When channel is non-legacy (Sendblue canonical)
+  // we must NOT process from the macOS worker. If the worker is mid-running
+  // during cutover and picks up a row, release the claim back to pending so
+  // paSendblueOutbox CF can take it.
+  if (!isLegacyChannelEnabled()) {
+    log("[legacy] PA_CHANNEL_LEGACY!=1 — releasing claim, Sendblue path canonical", docId)
+    return
+  }
+
   const claimed = await db.runTransaction(async (t) => {
     const s = await t.get(ref)
     if (!s.exists) return false

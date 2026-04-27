@@ -31,7 +31,7 @@ import {
   getOrCreateSession,
   setOnboardingStatus,
 } from "@pa/pa-persistence"
-import { useDmAllowlist, getPeerDisplay, getPeerAllowlist, isSamePeer } from "./config.js"
+import { useDmAllowlist, getPeerDisplay, getPeerAllowlist, isSamePeer, isLegacyChannelEnabled } from "./config.js"
 import { getImessageSessionExternalId } from "./imessage-session.js"
 import { getPlatformFlags } from "./platform-flags.js"
 import { deliverOutboundBody, startOutboundListener } from "./outbox.js"
@@ -59,6 +59,18 @@ const Database = require("better-sqlite3") as new (
     all(...params: unknown[]): unknown[]
   }
   close(): void
+}
+
+// Phase 21 — channel-cutover guard (D-08, D-11).
+// When PA_CHANNEL_LEGACY != "1", Sendblue (apps/functions/src/sendblue/) is
+// canonical. Worker exits cleanly so `npm start` doesn't compete with the
+// CF outbox processor.
+if (!isLegacyChannelEnabled()) {
+  console.log(
+    new Date().toISOString(),
+    "[legacy] PA_CHANNEL_LEGACY!=1 — worker exiting (Sendblue path active)"
+  )
+  process.exit(0)
 }
 
 initHealthConfigFromEnv()

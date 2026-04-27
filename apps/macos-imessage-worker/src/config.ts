@@ -44,6 +44,21 @@ export function isSamePeer(a: string | null, b: string): boolean {
 }
 
 /**
+ * Phase 21 — channel-cutover flag (D-08).
+ *
+ * `PA_CHANNEL_LEGACY=1` keeps the macOS worker active (legacy iMessage path).
+ * Anything else → worker is dormant and Sendblue (apps/functions/src/sendblue/)
+ * is the canonical channel. Default OFF (post-cutover Sendblue-only state).
+ *
+ * Operator opts in via `PA_CHANNEL_LEGACY=1` for closed-beta parallel-run or
+ * D-11 rollback. Outbox processor releases its claim under non-legacy mode so
+ * paSendblueOutbox CF can take it.
+ */
+export function isLegacyChannelEnabled(): boolean {
+  return process.env.PA_CHANNEL_LEGACY === "1"
+}
+
+/**
  * Fail-closed by default.
  *
  * Truth table:

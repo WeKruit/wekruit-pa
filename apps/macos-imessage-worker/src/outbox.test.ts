@@ -2,6 +2,11 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import type { Firestore } from "firebase-admin/firestore"
 import { PA_COLLECTIONS } from "@pa/core-types"
+
+// Phase 21 — outbox tests exercise the legacy worker path; force LEGACY=1
+// so the D-08/D-11 early-release guard does not short-circuit them.
+process.env.PA_CHANNEL_LEGACY = "1"
+
 import {
   normalizeOutboundPeer,
   processOutboundJob,
