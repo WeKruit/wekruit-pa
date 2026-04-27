@@ -254,6 +254,11 @@ Requirements: CHANNEL-01, CHANNEL-02, CHANNEL-03, CHANNEL-04, CHANNEL-05, CHANNE
 6. `apps/macos-imessage-worker/` behind `PA_CHANNEL_LEGACY=1` flag for one milestone, then removed.
 7. Real Sendblue sandbox round-trip smoke <30s p95 (webhook → orchestrator → REST send → iMessage delivery).
 
+**Plans:** 1 plan
+
+Plans:
+- [ ] 21-01-PLAN.md — paSendblueWebhook + paSendblueOutbox CF + allowlist port + secret manager + chunker dormancy + cutover runbook
+
 ## Phase 22: Proactive Check-in (revived from skipped Phase 12)
 
 **Goal:** PA reaches out proactively based on user-defined triggers (time anchor / silence anchor / application follow-up). Trigger-based, opt-in, NOT cron-based broadcast.
