@@ -1,0 +1,41 @@
+id: eval_tool_budget_extended_zh
+description: |
+  Phase 14.3 — tool budget overflow. AXIS: user asks for MORE tool calls
+  than `agent.toolBudgetPerTurn` allows in a single message. Expected
+  behavior is a graceful partial reply or a polite "I'll handle these in
+  parts" refusal — NOT an internal-error leak ("budget exceeded",
+  "tool_budget_exhausted") to the user.
+
+  Operator caveat (mirrors tool-budget-stress-zh): an LLM that simply
+  decides not to call all the tools will silently pass without
+  exercising the over-budget path. This scenario is a regression
+  guardrail, not a positive proof of the over-budget code path.
+locale: zh-CN
+agentId: default
+participant: "+19999990027"
+chatId: "iMessage;+19999990027"
+testMode: true
+turnTimeoutMs: 120000
+replyTimeoutMs: 180000
+turns:
+  - user: "__PA_RESET__"
+    assert:
+      reply_contains_any: ["测试记忆已清空", "qdrant"]
+      reply_min_length: 1
+      reply_not_contains_any: ["error", "failed", "undefined", "[20"]
+
+  - user: "请同时记住四件事：我喜欢冰美式，我住在杭州，我有只猫叫小白，我每周三打高尔夫；并告诉我今天的科技新闻、天气、汇率"
+    assert:
+      reply_min_length: 1
+      # User must not see the internal error names.
+      reply_not_contains_any:
+        - "tool_budget_exhausted"
+        - "budget exceeded"
+        - "PA_OPENAI_AGENT_API_KEY"
+        - "error"
+        - "failed"
+        - "undefined"
+        - "[20"
+      # Cap: even worst-case web_search amplification should not exceed
+      # 14k input tokens. If we cross this, prompt bloat regression.
+      usage_max_input_tokens: 14000

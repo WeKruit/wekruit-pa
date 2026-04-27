@@ -1,0 +1,32 @@
+id: eval_tone_judge_zh
+description: |
+  Phase 14.3 — single-turn tone audit via LLM-as-judge. AXIS: persona
+  voice and conciseness, axes which substring matches cannot capture.
+  Threshold 0.7 per Phase 14 plan §"Risk register / judge-model bias".
+
+  Per-plan rule: every eval scenario MUST include at least one
+  rule-based assertion as a deterministic floor — `reply_min_length`
+  here serves that purpose, so a judge outage cannot silently ship a
+  zero-length regression.
+
+  Judge runs only when `PA_RUN_EVAL=1` (and `PA_OPENAI_AGENT_API_KEY`
+  is set). Under plain `PA_RUN_SCENARIOS=1 npm test`, the judge
+  assertion is SKIPPED — by design — so unit-test runs do not bill
+  OpenAI.
+locale: zh-CN
+agentId: default
+participant: "+19999990028"
+chatId: "iMessage;+19999990028"
+turnTimeoutMs: 90000
+turns:
+  - user: "你好，简单介绍一下你自己。"
+    assert:
+      reply_min_length: 8
+      reply_not_contains_any: ["error", "failed", "undefined", "[20"]
+      judge:
+        criterion: |
+          The reply is in Mandarin Chinese, friendly, and concise (under
+          ~120 characters). It does not sound stiff, robotic, or
+          legalistic. It does not list capabilities exhaustively or
+          mention API keys, model names, or system prompts.
+        threshold: 0.7

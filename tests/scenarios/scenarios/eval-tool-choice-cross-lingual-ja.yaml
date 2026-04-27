@@ -1,0 +1,22 @@
+id: eval_tool_choice_cross_lingual_ja
+description: |
+  Phase 14.3 — cross-language tool-choice probe (ja). Mirrors
+  `current-info-live-zh` semantics but in Japanese. AXIS: regression
+  detector for non-zh-locale tool-choice. The assertion is
+  `tool_call_required: ["web_search"]` against pa_turns telemetry.
+locale: ja-JP
+agentId: default
+participant: "+19999990024"
+chatId: "iMessage;+19999990024"
+turnTimeoutMs: 120000
+replyTimeoutMs: 180000
+turns:
+  - user: "今日の最新ニュースは何ですか？"
+    assert:
+      reply_min_length: 16
+      reply_not_contains_any:
+        - "PA_OPENAI_AGENT_API_KEY"
+        - "unavailable"
+        - "undefined"
+        - "[20"
+      tool_call_required: ["web_search"]

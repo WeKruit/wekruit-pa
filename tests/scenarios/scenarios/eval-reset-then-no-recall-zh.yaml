@@ -1,0 +1,36 @@
+id: eval_reset_then_no_recall_zh
+description: |
+  Phase 14.3 — reset regression. AXIS: confirm `__PA_RESET__` actually
+  drains the persona-card source. Sequence: seed an explicit fact → reset
+  → ask. The recall reply must NOT contain the original fact, and the
+  Firestore confirmed-facts query must return empty
+  (`persona_facts_present: false`) AFTER the reset has run. Without the
+  Firestore probe, the assertion would only catch reply-level leakage,
+  missing a "facts still in Firestore but LLM happened not to mention
+  them this turn" silent-pass.
+locale: zh-CN
+agentId: default
+participant: "+19999990025"
+chatId: "iMessage;+19999990025"
+testMode: true
+turnTimeoutMs: 90000
+turns:
+  - user: "请记住 我喜欢喝抹茶拿铁"
+    assert:
+      reply_min_length: 1
+      reply_contains_any: ["记住", "记下", "好的", "知道", "OK", "ok"]
+
+  - user: "__PA_RESET__"
+    assert:
+      reply_contains_any: ["测试记忆已清空", "qdrant"]
+      reply_min_length: 1
+      reply_not_contains_any: ["error", "failed", "undefined", "[20"]
+
+  - user: "你还记得我喜欢喝什么吗？"
+    assert:
+      reply_min_length: 1
+      # Must NOT leak the seeded fact.
+      reply_not_contains_any: ["抹茶拿铁", "matcha", "Matcha", "error", "failed", "undefined", "[20"]
+      # Firestore-side proof: confirmed facts collection is empty for
+      # this user after reset.
+      persona_facts_present: false

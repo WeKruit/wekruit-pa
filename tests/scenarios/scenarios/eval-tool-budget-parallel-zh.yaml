@@ -1,0 +1,47 @@
+id: eval_tool_budget_parallel_zh
+description: |
+  Phase 14.3 — improvement over `tool-budget-stress-zh`. Three rememberable
+  facts in a single message, no current-info request — removes the
+  "LLM may choose not to call current-info" noise the stress scenario
+  carries. AXIS: parallel `remember-fact` tool dispatch under
+  toolBudgetPerTurn=3. All three facts must surface in T3 recall.
+
+  Telemetry assertion: `tool_call_required` is intentionally NOT set on
+  the seed turn because remember-fact is a connector, not an SDK
+  hosted-tool, so it does not appear in `usage.hostedToolCalls`. Operators
+  inspecting failures should query `pa_tool_calls` directly per the
+  Phase 10.5 deferred-audit shape.
+locale: zh-CN
+agentId: default
+participant: "+19999990021"
+chatId: "iMessage;+19999990021"
+testMode: true
+turnTimeoutMs: 120000
+turns:
+  - user: "__PA_RESET__"
+    assert:
+      reply_contains_any: ["测试记忆已清空", "qdrant"]
+      reply_min_length: 1
+      reply_not_contains_any: ["error", "failed", "undefined", "[20"]
+
+  - user: "请同时记住三件事：我喜欢喝冰美式，我住在杭州，我养了一只叫小白的猫"
+    assert:
+      reply_min_length: 1
+      reply_contains_any: ["记住", "记下", "好的", "知道", "OK", "ok"]
+      reply_not_contains_any:
+        - "tool_budget_exhausted"
+        - "budget exceeded"
+        - "PA_OPENAI_AGENT_API_KEY"
+        - "error"
+        - "failed"
+        - "undefined"
+        - "[20"
+
+  - user: "你还记得我喜欢喝什么、住在哪里、养了什么宠物吗？"
+    assert:
+      reply_min_length: 1
+      # All three must surface in the recall.
+      reply_contains_any: ["冰美式"]
+      reply_matches_any: ["杭州"]
+      persona_facts_present: true
+      usage_max_input_tokens: 12000

@@ -1,0 +1,24 @@
+id: eval_tool_choice_cross_lingual_en
+description: |
+  Phase 14.3 — cross-language tool-choice probe (en). Mirrors
+  `current-info-live-zh` semantics but in English. AXIS: regression
+  detector for "LLM picks web_search in zh but not en/ja". On a
+  current-info question in English, the agent SHOULD invoke
+  `web_search`; the assertion uses `tool_call_required` against the
+  pa_turns.usage.hostedToolCalls telemetry to make this deterministic.
+locale: en-US
+agentId: default
+participant: "+19999990023"
+chatId: "iMessage;+19999990023"
+turnTimeoutMs: 120000
+replyTimeoutMs: 180000
+turns:
+  - user: "What's the latest news today?"
+    assert:
+      reply_min_length: 16
+      reply_not_contains_any:
+        - "PA_OPENAI_AGENT_API_KEY"
+        - "unavailable"
+        - "undefined"
+        - "[20"
+      tool_call_required: ["web_search"]

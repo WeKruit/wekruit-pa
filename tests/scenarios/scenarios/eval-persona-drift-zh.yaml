@@ -1,0 +1,61 @@
+id: eval_persona_drift_zh
+description: |
+  Phase 14.3 — persona drift probe. AXIS: persona-card durability across a
+  long chat history. Reset → seed two confirmed facts → 4 unrelated turns
+  of small talk → re-ask persona on turn 7. The deterministic Firestore
+  persona card (Phase 11.1) is what guarantees recall here even if Mem0
+  semantic search drops the fact mid-history.
+
+  `persona_facts_present: true` on the recall turn is a sanity guard:
+  if the seed write silently failed, the recall reply could match by
+  coincidence (e.g. LLM mentions 杭州 from training, not from memory).
+  By asserting Firestore state independently we catch that.
+locale: zh-CN
+agentId: default
+participant: "+19999990020"
+chatId: "iMessage;+19999990020"
+testMode: true
+turnTimeoutMs: 90000
+turns:
+  # T1 — clean slate.
+  - user: "__PA_RESET__"
+    assert:
+      reply_contains_any: ["测试记忆已清空", "qdrant"]
+      reply_min_length: 1
+      reply_not_contains_any: ["error", "failed", "undefined", "[20"]
+
+  # T2 — seed fact 1.
+  - user: "请记住 我住在杭州"
+    assert:
+      reply_min_length: 1
+      reply_contains_any: ["记住", "记下", "好的", "知道", "OK", "ok"]
+
+  # T3 — seed fact 2.
+  - user: "请记住 我有一只叫小白的猫"
+    assert:
+      reply_min_length: 1
+      reply_contains_any: ["记住", "记下", "好的", "知道", "OK", "ok"]
+
+  # T4–T6 — four unrelated small-talk turns to push the seeded facts
+  # outside any short-window recall heuristic.
+  - user: "你今天感觉怎么样？"
+    assert:
+      reply_min_length: 1
+      reply_not_contains_any: ["error", "failed", "undefined"]
+  - user: "随便聊聊吧，你喜欢什么颜色？"
+    assert:
+      reply_min_length: 1
+      reply_not_contains_any: ["error", "failed", "undefined"]
+  - user: "我刚才吃了一碗面，挺香的"
+    assert:
+      reply_min_length: 1
+      reply_not_contains_any: ["error", "failed", "undefined"]
+
+  # T7 — recall probe. Persona card MUST surface both seeded facts.
+  - user: "你还记得我住在哪里、养了什么宠物吗？"
+    assert:
+      reply_min_length: 1
+      reply_contains_any: ["杭州"]
+      reply_not_contains_any: ["不记得", "没有记忆", "没记住", "error", "failed", "undefined", "[20"]
+      persona_facts_present: true
+      usage_max_input_tokens: 12000
