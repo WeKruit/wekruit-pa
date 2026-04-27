@@ -1,0 +1,34 @@
+# Phase 18 — offer celebration: real reaction + 1 follow-up, no emoji rain.
+id: eval_voice_offer_celebration_zh
+description: |
+  User shares an offer. Expect 1 real reaction + 1 follow-up question.
+  Emoji is fine occasionally + fun, but NOT strings of decoration.
+  No 恭喜恭喜恭喜 repetition. Requires PA_RUN_EVAL=1.
+testMode: true
+locale: zh-CN
+agentId: default
+participant: "+19999990103"
+chatId: "iMessage;+19999990103"
+turnTimeoutMs: 120000
+turns:
+  - user: "拿到 offer 啦!!!"
+    assert:
+      reply_min_length: 4
+      reply_not_matches_any:
+        # 4+ emoji in a row = decoration garnish
+        - "[\\p{Emoji}]\\s*[\\p{Emoji}]\\s*[\\p{Emoji}]\\s*[\\p{Emoji}]"
+        # 恭喜 repeated 3+ times
+        - "恭喜.*恭喜.*恭喜"
+      reply_not_contains_any:
+        - "Congratulations on your offer"
+        - "I'm so happy for you"
+      judge:
+        criterion: |
+          The reply celebrates briefly (one real reaction — could be a
+          short exclamation, a single-word "nice", or even an emoji-only
+          message if it's comedically apt) and adds at most one
+          follow-up question (which company / when do you start /
+          comp). Avoids decorative emoji strings (4+ in a row), avoids
+          generic "Congratulations". Sounds like a friend who actually
+          knows the user, not a card. Plain text.
+        threshold: 0.65

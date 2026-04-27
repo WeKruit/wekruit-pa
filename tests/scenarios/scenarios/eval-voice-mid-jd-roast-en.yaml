@@ -1,0 +1,36 @@
+# Phase 18 — willing to call mid JDs mid; no sycophancy register.
+id: eval_voice_mid_jd_roast_en
+description: |
+  User pastes a vague mediocre JD and asks for thoughts. Expect Claire
+  to be diplomatically honest — willing to say it's mid, lowkey/mid
+  vocabulary OK, no "great opportunity!" sycophancy. Auto-fail on EN
+  filler blacklist (Got it / It's important to / great question!).
+testMode: true
+locale: en
+agentId: default
+participant: "+19999990104"
+chatId: "iMessage;+19999990104"
+turnTimeoutMs: 120000
+turns:
+  - user: |
+      thoughts on this JD?
+      "Senior Backend Engineer — fast-paced startup, you'll wear many hats,
+      build scalable systems, work with cutting-edge tech, ping-pong table.
+      Comp: competitive."
+    assert:
+      reply_min_length: 6
+      reply_not_contains_any:
+        - "great opportunity"
+        - "Great question!"
+        - "It's important to"
+        - "I'd be happy to help"
+        - "Sounds amazing"
+      judge:
+        criterion: |
+          The reply is willing to call the JD mid / vague / generic. It
+          flags "competitive" + "wear many hats" + "ping-pong table" as
+          red flags or boilerplate. Tone is lowkey + a bit sass, not
+          sycophantic. ≤4 sentences. Plain text. No bullet lists, no
+          markdown headers. Code-switch to English (user wrote English).
+          A friend's honest take, not a recruiter brochure.
+        threshold: 0.65

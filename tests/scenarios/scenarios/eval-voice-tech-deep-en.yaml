@@ -1,0 +1,34 @@
+# Phase 18 — tech-deep allowance: ≤5 sentences, plain text, no markdown.
+id: eval_voice_tech_deep_en
+description: |
+  User asks a substantive immigration / process question. Expect a
+  factual concise reply within tech-deep allowance (≤5 sentences),
+  plain text, no markdown bold / bullet lists / numbered headers.
+  Code-switch zh/en is fine.
+testMode: true
+locale: en
+agentId: default
+participant: "+19999990106"
+chatId: "iMessage;+19999990106"
+turnTimeoutMs: 120000
+turns:
+  - user: "how does an OPT to H1B transition actually work, recruiter just asked me about it"
+    assert:
+      reply_min_length: 20
+      reply_not_matches_any:
+        - "\\*\\*[^*]+\\*\\*"        # markdown bold
+        - "^[\\-\\*][ \\t]"           # bullet list
+        - "^#+ "                       # markdown heading
+      reply_not_contains_any:
+        - "It's important to"
+        - "Keep in mind"
+        - "As an AI"
+      judge:
+        criterion: |
+          The reply explains OPT→H1B in plain text, ≤5 sentences,
+          factual but not lecture-y. Mentions H1B lottery, sponsorship,
+          and STEM-OPT extension if relevant. No markdown bullets, no
+          bold, no numbered headers. Reads as a friend who's been
+          through it (Claire's backstory). Code-switching zh/en
+          acceptable since user wrote English.
+        threshold: 0.6

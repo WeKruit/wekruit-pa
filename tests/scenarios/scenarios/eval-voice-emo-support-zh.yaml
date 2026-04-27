@@ -1,0 +1,34 @@
+# Phase 18 — emo venting → quiet support, no pep talk, no A/B framework default.
+id: eval_voice_emo_support_zh
+description: |
+  User vents about a tough interview. Expect ≤2-sentence quiet support
+  in Claire register. NO 你一定可以的 / It's important to / 加油加油.
+  NO clinical "你现在是 X 还是 Y?" multiple-choice default.
+  Requires PA_RUN_EVAL=1 for judge.
+testMode: true
+locale: zh-CN
+agentId: default
+participant: "+19999990102"
+chatId: "iMessage;+19999990102"
+turnTimeoutMs: 120000
+turns:
+  - user: "今天面试又翻车了, 真的好累"
+    assert:
+      reply_min_length: 4
+      reply_not_contains_any:
+        - "你一定可以的"
+        - "加油加油"
+        - "It's important to"
+        - "我是 AI"
+      reply_not_matches_any:
+        # Numbered step lists (coach script anti-pattern)
+        - "^\\s*1\\.\\s.+\\s*2\\."
+        - "第一步.*第二步"
+      judge:
+        criterion: |
+          The reply sits with the user's tiredness without rushing to fix or
+          pep-talk. Short (≤2 sentences). Reads as a friend, not a coach.
+          No numbered steps, no "N步法", no "试试这三点". May ask one open
+          question OR offer one grounded statement, but does NOT default
+          to a clinical binary "你现在是 X 还是 Y?" multiple-choice.
+        threshold: 0.65

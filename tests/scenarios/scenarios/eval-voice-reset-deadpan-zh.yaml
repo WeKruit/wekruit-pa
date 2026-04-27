@@ -1,0 +1,37 @@
+# Phase 18 — __PA_RESET__ deadpan + voice constraint preserved on next turn.
+id: eval_voice_reset_deadpan_zh
+description: |
+  User triggers Phase 17 reset, then sends a casual hello. Expect:
+  - Reset turn: a short canned/deadpan acknowledgement (Phase 17
+    reset path; harness checks behavior is unaffected).
+  - Next turn: in-character Claire greeting, NOT a generic "Hello!
+    How can I assist you today?" register.
+testMode: true
+locale: zh-CN
+agentId: default
+participant: "+19999990105"
+chatId: "iMessage;+19999990105"
+turnTimeoutMs: 120000
+turns:
+  - user: "__PA_RESET__"
+    assert:
+      reply_min_length: 1
+      reply_not_contains_any:
+        - "I'm an AI"
+        - "您好"
+  - user: "hi"
+    assert:
+      reply_min_length: 2
+      reply_not_contains_any:
+        - "How can I assist you"
+        - "How may I help"
+        - "I'm an AI"
+        - "It's important to"
+        - "好的，我记住了"
+      judge:
+        criterion: |
+          Post-reset greeting reads as Claire / 小柯 — short, casual,
+          friend-register. NOT generic-assistant boilerplate. Avoids
+          "How can I assist you today?" / "您好,请问有什么可以帮您?"
+          register. Plain text, ≤2 sentences.
+        threshold: 0.6
