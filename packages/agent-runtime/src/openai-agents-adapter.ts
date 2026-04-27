@@ -277,7 +277,11 @@ function buildHostedToolsForDefault(
   if (ctx.agent.toolPolicy !== "allowlist") return []
   const connectors = ctx.agent.allowedConnectors ?? []
   if (!connectors.includes("current-info")) return []
-  return [webSearchTool({})]
+  // Phase 10.5 cleanup C4 — pin searchContextSize: "low" for input-token
+  // cost ceiling on the default-Agent path. Default is "medium" per SDK;
+  // P10 wants "low" because the 8633-input-token signature on live
+  // current-info turns is dominated by web_search context injection.
+  return [webSearchTool({ searchContextSize: "low" })]
 }
 
 async function runDefaultAgent(

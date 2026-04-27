@@ -250,11 +250,18 @@ test("buildHostedToolsForDefault attaches webSearchTool when openai + allowlist 
   const t = tools[0] as {
     type?: string
     name?: string
-    providerData?: { type?: string }
+    providerData?: { type?: string; search_context_size?: string }
   }
   assert.equal(t.type, "hosted_tool", "outer SDK tool kind")
   assert.equal(t.name, "web_search", "SDK-mandated tool name")
   assert.equal(t.providerData?.type, "web_search", "providerData carries the API tool type")
+  // Phase 10.5 cleanup C4 — input-token cost ceiling. SDK default is
+  // "medium"; we force "low" on the default-Agent path.
+  assert.equal(
+    t.providerData?.search_context_size,
+    "low",
+    "buildHostedToolsForDefault pins searchContextSize to low (C4)"
+  )
 })
 
 test("buildHostedToolsForDefault returns [] when toolPolicy is 'none' (T8 not yet flipped)", () => {
