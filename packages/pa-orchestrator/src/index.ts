@@ -39,6 +39,7 @@ import {
   markMemoryFactsDeleted,
   parseMemoryCommand,
   recordMemoryAction as defaultRecordMemoryAction,
+  resolveMem0PartitionKey,
   type AfterTurnResult,
   type LoadContextResult,
 } from "@pa/memory"
@@ -484,11 +485,16 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // (worker path already does this), and means flipping the kill switch
     // is a pure env-var change with no orchestrator redeploy.
     const mem0UserIdForTurn = await store.getMem0UserId(event.userId)
+    // Phase 11.3 / memory-opt — canonical resolver, never raw read.
+    const mem0PartitionKey = resolveMem0PartitionKey({
+      id: event.userId,
+      mem0UserId: mem0UserIdForTurn,
+    })
     const mem = await store.loadPersonalizationContext(
       agent,
       {
         userId: event.userId,
-        mem0UserId: mem0UserIdForTurn ?? event.userId,
+        mem0UserId: mem0PartitionKey,
         sessionId: event.sessionId,
         userMessage: event.body,
         memoryMode: agent.memoryMode,
@@ -582,7 +588,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     })
     const after = await store.afterAssistantTurn(agent, {
       userId: event.userId,
-      mem0UserId: mem0UserIdForTurn ?? event.userId,
+      mem0UserId: mem0PartitionKey,
       sessionId: event.sessionId,
       userText: event.body,
       assistantText: reply,

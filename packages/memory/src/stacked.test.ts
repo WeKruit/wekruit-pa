@@ -164,7 +164,7 @@ function withEnv<T>(key: string, value: string | undefined, fn: () => Promise<T>
   })
 }
 
-test("11.3 kill switch DEFAULT (unset): mem0Search/mem0Add use userId, not mem0UserId", async () => {
+test("11.3 kill switch DEFAULT (unset): mem0Search/mem0Add use resolved partition (now default-true)", async () => {
   await withEnv("PA_MEM0_USE_PARTITION_KEY", undefined, async () => {
     let searchedWith: string | null = null
     let addedWith: string | null = null
@@ -203,21 +203,24 @@ test("11.3 kill switch DEFAULT (unset): mem0Search/mem0Add use userId, not mem0U
       },
       deps
     )
-    assert.equal(searchedWith, "u1", "kill switch off → search keys on userId")
-    assert.equal(addedWith, "u1", "kill switch off → add keys on userId")
+    assert.equal(searchedWith, "alt_partition", "default-true → search keys on resolved partition")
+    assert.equal(addedWith, "alt_partition", "default-true → add keys on resolved partition")
   })
 })
 
-test("11.3 kill switch =false explicit: still legacy userId path", async () => {
+test("11.3 kill switch =false explicit: identity-mode regression forces userId", async () => {
   await withEnv("PA_MEM0_USE_PARTITION_KEY", "false", async () => {
     let searchedWith: string | null = null
+    let addedWith: string | null = null
     const deps: MemoryStackDeps = {
       getMem0Config: () => fakeMem0Config(),
       mem0Search: async (_c, _q, uid) => {
         searchedWith = uid
         return []
       },
-      mem0Add: async () => {},
+      mem0Add: async (_c, _msgs, uid) => {
+        addedWith = uid
+      },
     }
     await loadPersonalizationContext(
       fakeDb,
@@ -231,7 +234,21 @@ test("11.3 kill switch =false explicit: still legacy userId path", async () => {
       [],
       deps
     )
-    assert.equal(searchedWith, "u1")
+    await afterAssistantTurn(
+      fakeDb,
+      minimalAgent,
+      {
+        userId: "u1",
+        mem0UserId: "alt_partition",
+        sessionId: "s1",
+        userText: "u",
+        assistantText: "a",
+        memoryMode: "mem0",
+      },
+      deps
+    )
+    assert.equal(searchedWith, "u1", "kill switch =false → search keys on userId")
+    assert.equal(addedWith, "u1", "kill switch =false → add keys on userId")
   })
 })
 

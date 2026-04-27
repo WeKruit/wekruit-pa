@@ -16,6 +16,7 @@ import {
   isMem0EnvConfigured,
   loadPersonalizationContext,
   loadRecentMessages,
+  resolveMem0PartitionKey,
 } from "@pa/memory"
 import {
   completeInboundEvent,
@@ -290,7 +291,7 @@ async function handleDirectMessage(msg: Message) {
         db,
         {
           userId: user.id,
-          mem0UserId: user.mem0UserId ?? user.id,
+          mem0UserId: resolveMem0PartitionKey(user),
           sessionId: session.id,
           userMessage: text,
           memoryMode: memMode,
@@ -348,7 +349,7 @@ async function handleDirectMessage(msg: Message) {
 
       const afterMem = await afterAssistantTurn(db, effectiveAgent, {
         userId: user.id,
-        mem0UserId: user.mem0UserId ?? user.id,
+        mem0UserId: resolveMem0PartitionKey(user),
         sessionId: session.id,
         userText: text,
         assistantText: reply,

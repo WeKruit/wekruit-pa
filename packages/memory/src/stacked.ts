@@ -2,23 +2,24 @@ import type { Firestore } from "firebase-admin/firestore"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import type { AgentDef, ChatMessage } from "@pa/core-types"
 import { mem0Add, mem0Search, type Mem0Config } from "./mem0.js"
-import { recordDriftIfAny } from "./identity.js"
+import { recordDriftIfAny, resolveMem0PartitionKey } from "./identity.js"
 import type { AfterTurnInput, AfterTurnResult, LoadContextInput, LoadContextResult } from "./types.js"
 
 /**
  * Phase 11.3 kill switch. The partition-key swap is gated for the
- * three-deploy rollout (see 11.3-PLAN.md §2): code defaults to legacy
- * `userId` so Deploy 1 (this PR) is a behavioral no-op. P10 sets
- * `PA_MEM0_USE_PARTITION_KEY=true` for Deploy 2 to flip the read/write
- * paths over to the resolved partition. Setting it back to `false`
- * (or unsetting) is the single-flag rollback during incidents — no
- * redeploy required because the env read happens per call below
- * (Cloud Functions env var change propagates in ~30s).
+ * three-deploy rollout (see 11.3-PLAN.md §2). Memory-optimization track
+ * promoted the default to `true` (post Deploy 2 / 11.3 GA). Setting
+ * `PA_MEM0_USE_PARTITION_KEY=false` is the single-flag identity-mode
+ * regression rollback during incidents — no redeploy required because
+ * the env read happens per call below (Cloud Functions env var change
+ * propagates in ~30s). Only the literal string "false" disables.
  */
 function partitionSwitchEnabled(): boolean {
   const raw = process.env.PA_MEM0_USE_PARTITION_KEY
-  if (typeof raw !== "string") return false
-  return raw.trim().toLowerCase() === "true"
+  if (typeof raw !== "string") return true
+  const v = raw.trim().toLowerCase()
+  if (v === "false" || v === "0" || v === "off") return false
+  return true
 }
 
 /** Test overrides only. Defaults to env + real Mem0 HTTP. */
@@ -119,12 +120,12 @@ export async function loadPersonalizationContext(
   let mem0Degraded = false
   let mem0DegradedReason: LoadContextResult["mem0DegradedReason"] = null
   let mem0SearchResultCount = 0
-  // Phase 11.3: when the kill switch is on, route Mem0 through the
-  // resolved partition key. Legacy default = `userId` (no behavior change).
-  const partitionKey =
-    partitionSwitchEnabled() && typeof input.mem0UserId === "string" && input.mem0UserId.trim().length > 0
-      ? input.mem0UserId.trim()
-      : input.userId
+  // Phase 11.3 / memory-opt: route Mem0 through the canonical resolver
+  // when the partition switch is on (now default-true). Identity-mode
+  // regression (PA_MEM0_USE_PARTITION_KEY=false) forces userId.
+  const partitionKey = partitionSwitchEnabled()
+    ? resolveMem0PartitionKey({ id: input.userId, mem0UserId: input.mem0UserId })
+    : input.userId
   // Best-effort drift telemetry. NEVER throws; never blocks the turn.
   // Fire only when the resolved partition diverges from the canonical
   // userId — see `recordDriftIfAny` for the per-process LRU throttle.
@@ -163,10 +164,9 @@ export async function afterAssistantTurn(
   // Phase 11.3 — same kill-switch rule as the search path. Writeback
   // partition MUST match the read partition or recall on the next turn
   // would miss the just-saved memory.
-  const partitionKey =
-    partitionSwitchEnabled() && typeof input.mem0UserId === "string" && input.mem0UserId.trim().length > 0
-      ? input.mem0UserId.trim()
-      : input.userId
+  const partitionKey = partitionSwitchEnabled()
+    ? resolveMem0PartitionKey({ id: input.userId, mem0UserId: input.mem0UserId })
+    : input.userId
   if (partitionKey !== input.userId) {
     void recordDriftIfAny(
       { userId: input.userId, mem0UserId: partitionKey, surface: "after_turn" },
