@@ -224,8 +224,15 @@ function extractUsage(
       //     responses surfacing through providerData passthrough)
       //   - the bare "web_search" literal (defensive — observed in some
       //     non-Responses transports)
+      // SDK inverse-transform sets `name = item.type` from the API output
+      // (see @openai/agents-openai/dist/openaiResponsesModel `type:
+      // 'hosted_tool_call'` branches). For web_search the wire `item.type`
+      // is `web_search_call`, so the normalized SDK item carries
+      // `name: "web_search_call"` — NOT `"web_search"`. Earlier C1 attempt
+      // matched the registration name, never the call-time name.
       if (
-        (t === "hosted_tool_call" && item?.name === "web_search") ||
+        (t === "hosted_tool_call" &&
+          (item?.name === "web_search_call" || item?.name === "web_search")) ||
         t === "web_search_call" ||
         t === "web_search"
       ) {
