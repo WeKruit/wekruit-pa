@@ -11,7 +11,7 @@ See **`18-VOICE-V1-BODY.md`** in this folder — that file is byte-identical to 
 
 - v2 — original Voice v1 ship.
 - v3 — anti-framework / anti-coach guidance (no 立刻能用 / N步法).
-- v4 — explicit non-whitelisted emoji rejection (😂 / 🥹 / ✨ / 🎉 / 😅 / 🙃) + 4th `<START>` example demonstrating empathic-reflection alternative to clinical "X 还是 Y" binary-question pattern (Adam observation 2026-04-27 from live PA traffic).
+- v4 — emoji line loosened: not whitelist-only; occasional + fun, 🍋/☕ are usual but not exclusive, emoji-only replies allowed when comedically appropriate. Plus 4th `<START>` example demonstrating empathic-reflection alternative to clinical "X 还是 Y" binary-question pattern (Adam observation + correction 2026-04-27 from live PA traffic).
 
 ## Block D (post-history reminder)
 
