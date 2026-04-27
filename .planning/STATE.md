@@ -2,10 +2,10 @@
 
 ## Current Position
 
-Phase: Not started (defining requirements → roadmap)
+Phase: 18 (next up — Companion Voice v1)
 Plan: —
-Status: Defining requirements
-Last activity: 2026-04-27 — Milestone v1.1 started
+Status: Roadmap defined; awaiting Character Bible v1 from Adam before Phase 18 spawn
+Last activity: 2026-04-27 — Milestone v1.1 roadmap committed (Phases 18-23)
 
 ## Milestone goal
 

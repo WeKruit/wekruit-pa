@@ -1,6 +1,8 @@
-# Roadmap: Agent SDK Runtime + Job Companion
+# Roadmap
 
 This roadmap is intentionally numeric so GSD phase tooling can discover and execute it.
+
+## Milestone v1.0 — Agent SDK Runtime + Job Companion (foundational)
 
 | # | Phase | Goal | Requirements | Status |
 |---|-------|------|--------------|--------|
@@ -14,12 +16,27 @@ This roadmap is intentionally numeric so GSD phase tooling can discover and exec
 | 8 | Reviews, polish, and ship readiness | Run engineering/design reviews, close gaps, and produce final verification evidence. | P1 | Complete |
 | 9 | Phase 2/3 production hardening | Make production verification repeatable and expose semantic memory safely in dashboard. | P0.1, P0.2, P0.4, P0.5 | Mostly complete |
 | 10 | Agents SDK current-info connector | Answer recent/latest questions through Agents SDK hosted web search without stale model guesses. | P0.6, P0.7 | Complete (connector path only) |
-| 10.5 | Agents SDK runtime cutover | Make Agents SDK the only agent runtime; default agent uses Responses API + gpt-5.4-nano (SiliconFlow demoted to env-gated fallback); allowlisted connectors + SDK webSearchTool; FirestoreSession owns history; regex pre-routers deleted (keep `__PA_RESET__`). Mem0 stays as memory empowerment. | P0.6, P0.7 | Complete |
+| 10.5 | Agents SDK runtime cutover | Make Agents SDK the only agent runtime; default agent uses Responses API + gpt-5.4-nano. | P0.6, P0.7 | Complete |
 | 11 | Persona + identity/memory injection | Restore persona facts, resolve memory identity semantics, and inject PA-owned context into agent turns. | P0.3, P0.5, P0.7, P0.9 | 11.1 complete; 11.3 not started |
-| 12 | Job companion scheduled outreach | Add permissioned recruiter-style follow-up: project/status nudges, cooldowns, audit, and outbound policy. | P0.1, P0.8 | Not started |
-| 13 | Job matching connector path | Add an auditable platform-managed path for matched-role notifications. | P0.4, P0.8 | Not started |
-| 14 | Companion eval + harness expansion | Add scenario/eval coverage for current-info live search, persona, proactive outreach, and match rationale. | P0.6, P0.7, P0.8, P1 | Not started |
-| 15 | Typing indicator / delivery feel | Improve iMessage delivery feel using Photon typing if available or chunk/delay simulation. | P1 | Not started |
+| 12 | Job companion scheduled outreach | (Skipped — revived as Phase 22 in v1.1 with companion-voice integration.) | P0.1, P0.8 | Skipped → Phase 22 |
+| 13 | Job matching connector path | Add an auditable platform-managed path for matched-role notifications. | P0.4, P0.8 | Complete (degraded mode) |
+| 14 | Companion eval + harness expansion | Add scenario/eval coverage for current-info live search, persona, proactive outreach, and match rationale. | P0.6, P0.7, P0.8, P1 | Complete |
+| 15 | Typing indicator / delivery feel | Improve iMessage delivery feel using Photon typing if available or chunk/delay simulation. | P1 | Complete (kill-switch armed) |
+| 16 | Worker durable cursor + auto-catchup | Persist last-processed iMessage rowId in Firestore; offline → online recovery. | (v1.0 hardening) | Complete 2026-04-27 |
+| 17 | Allowlist fail-closed (inbound + outbound) | Default-deny when `IMESSAGE_DM_ALLOWLIST` unset; gate inbound + outbound; audit log. | (v1.0 hardening) | Complete 2026-04-27 |
+
+## Milestone v1.1 — Pre-Launch Hardening + Companion Brain
+
+**Goal:** Closed-beta launchable (≤20 hand-picked users) within 3 weeks.
+
+| # | Phase | Goal | Requirements | Status |
+|---|-------|------|--------------|--------|
+| 18 | Companion Voice v1 (static base) | Rewrite system prompt using Snapchat MyAI skeleton + Tendera "facts as voice" + first_mes/mes_example anchors; stays on gpt-5.4-nano. Eval rubric extended with 4 voice axes. | VOICE-01..VOICE-10 | Not started |
+| 19 | Adaptive Mirror Layer | Per-turn user-style analyzer + dynamic mirror snippet injection + long-term mem0 preference learning. | ADAPT-01..ADAPT-05 | Not started |
+| 20 | Output Normalizer | Channel-agnostic post-LLM normalization (strip markdown, UTM, length cap) at orchestrator exit. Eval gains 5th axis `iMessage_render_safe`. | NORM-01..NORM-08 | Not started |
+| 21 | Sendblue Channel Migration | CF webhook handler + REST send + allowlist moves to webhook handler; deprecate macos-imessage-worker. Eliminates single-host risk + Apple-ID exposure. | CHANNEL-01..CHANNEL-09 | Not started |
+| 22 | Proactive Check-in (revived from skipped Phase 12) | Dashboard `/triggers` UI + `pa_scheduled_jobs` cron + orchestrator proactive-turn path using Voice v1. **Hard dependency on Phase 18 ship.** | PROACTIVE-01..PROACTIVE-07 | Not started |
+| 23 | Closed Beta Onboarding + Safety | Onboarding flow for 20 hand-picked users; abuse signal producers wired (rate-limit / injection / allowlist-deny → `pa_abuse_events`); allowlist UI in dashboard. | BETA-01..BETA-05 | Not started |
 
 ## Phase 1: Broker correctness + echo suppression
 
@@ -170,7 +187,112 @@ Requirements: P0.6, P0.7, P0.8, P1
 
 **Goal:** Improve iMessage perceived responsiveness.
 Requirements: P1
-**Status:** Not started.
+**Status:** Complete (kill-switch armed, default disabled — to be deprecated in Phase 21 in favor of Sendblue native typing API).
 **Success Criteria**:
 1. Photon typing support is researched.
 2. If true typing is unavailable, chunked message + delay behavior is implemented without duplicate outbound or harness leakage.
+
+---
+
+# Milestone v1.1 — Pre-Launch Hardening + Companion Brain
+
+## Phase 18: Companion Voice v1 (static base)
+
+**Goal:** Rewrite the PA system prompt so iMessage replies sound like a real friend, not a database citation. Stay on gpt-5.4-nano (no model escalation). Foundation for all later voice work.
+Requirements: VOICE-01, VOICE-02, VOICE-03, VOICE-04, VOICE-05, VOICE-06, VOICE-07, VOICE-08, VOICE-09, VOICE-10
+**Pre-req (Adam owner):** Character Bible v1 must exist before P9-Voice spawn (PA name + backstory + 3 verbal tics + reaction templates + signature emoji + code-switch policy + length cap).
+**Status:** Not started.
+**Success Criteria**:
+1. System prompt structurally follows Snapchat MyAI skeleton (verbatim research artifact saved in `.planning/phases/17-pre-launch-hardening/17-RESEARCH-raw-artifacts.md`); no monologue, ≤2 sentences default, sparse emoji, no AI-self-identification.
+2. `first_mes` voice anchor + 3 `mes_example` few-shot turns shipped, demonstrating implicit memory ack ("柠檬茶女孩 🍋" pattern) per Tendera "facts as voice" rule.
+3. Post-history voice reminder (50-100 tokens) injected before user's latest turn so voice survives long context.
+4. Eval LLM-judge auto-fail criteria include zh + en filler blacklist (NOT in system prompt — token activation risk).
+5. Eval rubric measures 4 axes (warmth_no_sycophancy, in_character_voice, no_robot_filler, length_appropriateness); ≥2.4/3 average across 5+ companion-voice golden scenarios.
+6. Pairwise judge confirms new voice beats current-prompt baseline ≥70% on golden scenarios.
+
+## Phase 19: Adaptive Mirror Layer
+
+**Goal:** PA adapts register / language ratio / emoji frequency / length to mirror the user per Meta AI WhatsApp pattern. Layered on top of Phase 18 static base (Phase 18 ships first).
+Requirements: ADAPT-01, ADAPT-02, ADAPT-03, ADAPT-04, ADAPT-05
+**Status:** Not started.
+**Success Criteria**:
+1. Per-turn analyzer extracts user style features (register score 0-1, zh/en char ratio, emoji freq, avg sentence length) from last 3-5 turns.
+2. Dynamic mirror snippet injected post-history each turn ("user is currently using slangy zh-en mix; match that").
+3. Long-term style preferences accumulate in mem0; persona card extension re-injects them next session.
+4. `PA_VOICE_MIRROR_DISABLED=true` rollback flag honored (system falls back to Phase 18 static voice).
+5. E2E scenario: turn 1 formal user → PA formal; turn 3 slangy user → PA slangy; mem0 records preference shift.
+
+## Phase 20: Output Normalizer
+
+**Goal:** Strip markdown, UTM tracking, and over-length output at orchestrator exit so iMessage doesn't render `**bold**` as literal asterisks. Channel-agnostic.
+Requirements: NORM-01, NORM-02, NORM-03, NORM-04, NORM-05, NORM-06, NORM-07, NORM-08
+**Status:** Not started.
+**Success Criteria**:
+1. New module `packages/pa-orchestrator/src/output-normalizer.ts` runs on every outbound at orchestrator exit (before outbox enqueue).
+2. Strips markdown emphasis, converts links to plain text, strips `?utm_*` params, normalizes list markers to `· `.
+3. Length cap (>600 chars) triggers chunk-split (reuse Phase 15 chunker logic) or graceful truncate.
+4. Eval rubric gains 5th axis `iMessage_render_safe`; auto-fails on regex match `\*\*.+?\*\*` or `\[.+?\]\(.+?\)`.
+5. Unit tests cover 8+ edge cases: mixed markdown, UTM params, code blocks, links, nested emphasis, very long input, empty input, all-Chinese input.
+
+## Phase 21: Sendblue Channel Migration
+
+**Goal:** Replace `apps/macos-imessage-worker/` with Sendblue hosted iMessage transport. Eliminates single-host availability risk + Apple-ID ToS exposure. ≈$100/mo per dedicated line.
+Requirements: CHANNEL-01, CHANNEL-02, CHANNEL-03, CHANNEL-04, CHANNEL-05, CHANNEL-06, CHANNEL-07, CHANNEL-08, CHANNEL-09
+**Pre-req (Adam owner):** Sendblue contract questions answered (Apple ID ownership, SLA on number re-provisioning, outbound rate limit, GDPR/data residency).
+**Status:** Not started.
+**Success Criteria**:
+1. New CF endpoint `paSendblueWebhook` receives 4 webhook events (`receive`, `outbound`, `typing_indicator`, `line_blocked`); HMAC verified.
+2. Webhook creates `pa_inbound_events` keyed by Sendblue `message_handle` (replaces `imessage-in-${rowId}`).
+3. Allowlist gate enforced in webhook handler; non-allowlisted `from_number` returns 200 OK silently with audit log.
+4. Outbox listener replaced with CF that POSTs to Sendblue REST `api.sendblue.co/api/send-message`.
+5. Phase 15 chunked typing simulation deprecated; Sendblue native `typing_indicator` API used instead.
+6. `apps/macos-imessage-worker/` behind `PA_CHANNEL_LEGACY=1` flag for one milestone, then removed.
+7. Real Sendblue sandbox round-trip smoke <30s p95 (webhook → orchestrator → REST send → iMessage delivery).
+
+## Phase 22: Proactive Check-in (revived from skipped Phase 12)
+
+**Goal:** PA reaches out proactively based on user-defined triggers (time anchor / silence anchor / application follow-up). Trigger-based, opt-in, NOT cron-based broadcast.
+Requirements: PROACTIVE-01, PROACTIVE-02, PROACTIVE-03, PROACTIVE-04, PROACTIVE-05, PROACTIVE-06, PROACTIVE-07
+**Hard dependency:** Phase 18 must ship before Phase 22 — proactive turn must use Voice v1, not utility-tool voice.
+**Status:** Not started.
+**Success Criteria**:
+1. Dashboard `/triggers` page supports CRUD for user-owned triggers with 3 types.
+2. `pa_scheduled_jobs` schema has `userId`, `triggerType`, `nextFireAt`, `recurrence`, `context`, `status` fields.
+3. New CF `paProactiveSweep` (Cloud Scheduler 1-min cron) dispatches due triggers to orchestrator.
+4. Orchestrator proactive-turn path injects synthetic system input ("trigger fired: X"); uses Voice v1 prompt; output normalized.
+5. Idempotency: same trigger × fireWindow doesn't double-send.
+6. User can cancel triggers via iMessage NLU ("停止提醒" / "stop reminders"); orchestrator detects + updates trigger status.
+7. E2E scenario test for each of 3 trigger types.
+
+## Phase 23: Closed Beta Onboarding + Safety
+
+**Goal:** First-class onboarding for ≤20 hand-picked closed-beta users. Wire the abuse signal producers that have been schema-only since v1.0.
+Requirements: BETA-01, BETA-02, BETA-03, BETA-04, BETA-05
+**Status:** Not started.
+**Success Criteria**:
+1. First-contact PA flow uses Voice v1 first_mes; asks 1-2 grounding questions; sets up mem0 partition.
+2. `pa_abuse_events` producers wired at 3 points: rate-limit-trip, prompt-injection-detect, allowlist-deny.
+3. Dashboard abuse panel surfaces last 50 abuse events with filter by type.
+4. Allowlist UI in dashboard — operator adds/removes beta participants without editing `.env`.
+5. Beta runbook (one-page) covers onboarding script + escalation contact + kill switch instructions.
+
+---
+
+## v1.1 Launch Gate
+
+Closed-beta GO when:
+- [x] Phase 16 + 17 baseline (cursor + allowlist) — landed 2026-04-27
+- [ ] Phase 18 Voice v1 — eval ≥2.4/3, pairwise win ≥70%
+- [ ] Phase 20 Normalizer — 0 markdown leakage, 0 UTM leakage in 50-turn audit
+- [ ] Phase 21 Sendblue migration — round-trip smoke pass (OR explicit Adam decision to defer to public launch and stay on macOS for beta)
+- [ ] Phase 23 Onboarding — 20-user runbook + abuse panel live
+- [ ] Character Bible v1 — Adam owner, written
+
+Phase 19 (Adaptive Mirror) and Phase 22 (Proactive Check-in) are **post-beta P1** unless Adam pulls them forward; they make the product feel alive but aren't strict launch gates.
+
+## v1.1 Public Launch Gate (post closed-beta, separate cycle)
+
+- B4 Secrets to GCP Secret Manager
+- B1 Apple ID risk fully resolved (Sendblue or Business Chat)
+- GDPR/CCPA delete API + abuse events full producers
+- Phase 19 + Phase 22 completed

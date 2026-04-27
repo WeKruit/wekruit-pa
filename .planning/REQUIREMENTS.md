@@ -98,4 +98,13 @@
 
 ## Traceability
 
-(Filled by roadmap — each REQ-ID maps to exactly one phase.)
+| REQ-ID | Phase |
+|---|---|
+| VOICE-01 .. VOICE-10 | Phase 18 |
+| ADAPT-01 .. ADAPT-05 | Phase 19 |
+| NORM-01 .. NORM-08 | Phase 20 |
+| CHANNEL-01 .. CHANNEL-09 | Phase 21 |
+| PROACTIVE-01 .. PROACTIVE-07 | Phase 22 |
+| BETA-01 .. BETA-05 | Phase 23 |
+
+100% coverage: every REQ-ID maps to exactly one phase.
