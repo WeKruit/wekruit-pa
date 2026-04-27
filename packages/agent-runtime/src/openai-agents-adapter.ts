@@ -58,6 +58,19 @@ function configureDefaultOpenAIClient(): void {
  * `finally`, plus the SDK's API mode and default key are restored to the
  * default-OpenAI shape so a subsequent default turn behaves as if the
  * fallback never ran.
+ *
+ * KNOWN GAP — SF fallback is current-info-degraded by design.
+ * `webSearchTool` is a Responses-API-only hosted tool; it CANNOT be
+ * attached on this chat_completions path against a non-OpenAI baseURL
+ * (defense-in-depth in `buildHostedToolsForDefault`). Pre-T5 the
+ * orchestrator routed current-info-shaped queries through a regex
+ * pre-router into `runCurrentInfoConnector`; T5 deleted that path AND
+ * the Phase 10.5 cleanup pass removed `runCurrentInfoConnector` +
+ * `current-info` connector entirely. As a result, SF fallback users
+ * asking "最近 X" receive raw model-knowledge replies — accepted by
+ * P10 as reduced functionality on the kill-switch path. See
+ * `.planning/phases/10.5-agents-sdk-runtime-cutover/10.5-VERIFICATION.md`
+ * carry-over #2 ("accepted; SF fallback is degraded by design").
  */
 async function withSiliconFlowFallback<T>(ctx: AgentTurnContext, fn: () => Promise<T>): Promise<T> {
   const config = resolveOpenAICompatConfig({ ...ctx.agent, provider: "siliconflow" })
