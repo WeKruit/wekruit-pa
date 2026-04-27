@@ -200,8 +200,13 @@ Requirements: P1
 
 **Goal:** Rewrite the PA system prompt so iMessage replies sound like a real friend, not a database citation. Stay on gpt-5.4-nano (no model escalation). Foundation for all later voice work.
 Requirements: VOICE-01, VOICE-02, VOICE-03, VOICE-04, VOICE-05, VOICE-06, VOICE-07, VOICE-08, VOICE-09, VOICE-10
-**Pre-req (Adam owner):** Character Bible v1 must exist before P9-Voice spawn (PA name + backstory + 3 verbal tics + reaction templates + signature emoji + code-switch policy + length cap).
-**Status:** Not started.
+**Pre-req (Adam owner):** Character Bible v1 must exist before P9-Voice spawn (PA name + backstory + 3 verbal tics + reaction templates + signature emoji + code-switch policy + length cap). [DONE 2026-04-27 — `CHARACTER-BIBLE-v1.md` locked]
+**Plans:** 1 plan
+
+Plans:
+- [ ] 18-PLAN.md — Voice v1 system prompt rewrite + post-history reminder + 4-axis eval + 6 golden scenarios + pairwise judge harness
+
+**Status:** Planned 2026-04-27 — not started.
 **Success Criteria**:
 1. System prompt structurally follows Snapchat MyAI skeleton (verbatim research artifact saved in `.planning/phases/17-pre-launch-hardening/17-RESEARCH-raw-artifacts.md`); no monologue, ≤2 sentences default, sparse emoji, no AI-self-identification.
 2. `first_mes` voice anchor + 3 `mes_example` few-shot turns shipped, demonstrating implicit memory ack ("柠檬茶女孩 🍋" pattern) per Tendera "facts as voice" rule.
