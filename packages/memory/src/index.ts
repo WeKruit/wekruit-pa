@@ -38,3 +38,4 @@ export type {
   Mem0DegradedReason,
 } from "./types.js"
 export type { FactLike, MemoryCommand } from "./commands.js"
+export { buildPersonaCard } from "./persona-card.js"
