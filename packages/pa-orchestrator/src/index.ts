@@ -42,6 +42,9 @@ import {
   type AfterTurnResult,
   type LoadContextResult,
 } from "@pa/memory"
+import { LEGACY_V0_SYSTEM_PROMPT } from "./legacy-voice-prompt.js"
+import { buildVoiceReminder, isVoiceV1Disabled } from "./voice-reminder.js"
+import { normalizeForIMessage } from "./output-normalizer.js"
 
 type RunAgentTurn = typeof defaultRunAgentTurn
 
@@ -226,19 +229,20 @@ function shouldSuppressOutbound(event: InboundEvent): boolean {
 }
 
 async function sendMemoryReply(store: OrchestratorStore, event: InboundEvent, turnId: string, body: string) {
+  const { text: safe } = normalizeForIMessage(body, { maxLength: 600 })
   const at = store.nowIso()
   await store.appendMessage({
     id: `out-${event.id}`,
     sessionId: event.sessionId,
     userId: event.userId,
     role: "assistant",
-    body,
+    body: safe,
     createdAt: at,
     idempotencyKey: `out-${event.id}`,
     rawMeta: { source: "pa_orchestrator", turnId: turnId, eventId: event.id },
   })
   if (shouldSuppressOutbound(event)) return
-  await store.enqueueOutbound(event.userId, event.from, body, {
+  await store.enqueueOutbound(event.userId, event.from, safe, {
     sessionId: event.sessionId,
     role: "assistant",
     idempotencyKey: `outbound-${event.id}`,
@@ -493,16 +497,18 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // already surfaced via persona card; do NOT double-write them into
     // the recall channel.
     const recallEntry = buildRecallSystemInput(mem.memoryBlock)
-    const systemInputs: string[] = [personaCard, recallEntry].filter(
+    const voiceReminder = buildVoiceReminder()
+    const systemInputs: string[] = [personaCard, recallEntry, voiceReminder].filter(
       (entry): entry is string => typeof entry === "string" && entry.length > 0
     )
     // Phase 10.5 T7 — bridge agent.allowedConnectors → SDK tools. When the
     // default agent's toolPolicy is still "none" (pre-T8), this returns []
     // and the SDK gets no custom tools, matching legacy behavior.
     const turnTools = await store.buildTurnTools(agent, { turnId, userId: event.userId, sessionId: event.sessionId })
+    const systemPrompt = isVoiceV1Disabled() ? LEGACY_V0_SYSTEM_PROMPT : agent.systemPrompt
     const { text, usage } = await store.runAgentTurn({
       agent,
-      systemPrompt: agent.systemPrompt,
+      systemPrompt,
       // Default Agents SDK path consumes \`session\` + \`systemInputs\` +
       // \`tools\`. The legacy \`history\` + \`memoryBlock\` fields are only
       // consumed by the chat.completions emergency rollback
@@ -519,10 +525,11 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // before persisting + sending. Root cause is upstream in
     // `toOpenAIMessages` (was prefixing history bodies); this catches stragglers.
     const reply = stripLeadingIsoTimestamp(text.trim()) || "我暂时没有生成有效回复，请稍后再试。"
-    const visibleReply =
+    const rawVisible =
       mem.mem0Degraded && agent.memoryMode !== "firestore_only"
         ? `${reply}\n\n（长期语义记忆暂时不可用；我仍使用已确认事实和最近对话。）`
         : reply
+    const { text: visibleReply } = normalizeForIMessage(rawVisible, { maxLength: 600 })
 
     await store.appendMessage({
       id: `out-${event.id}`,

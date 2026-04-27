@@ -19,6 +19,7 @@
 import OpenAI from "openai"
 import { mkdir, appendFile } from "node:fs/promises"
 import { dirname } from "node:path"
+import { checkFillerBlacklist, checkIMessageRenderUnsafe } from "./lib/voice-axes.mjs"
 
 // gpt-5.4-nano illustrative pricing per 14-CONTEXT.md §"Per-eval-run cost
 // estimate". Kept as a constant here so a single price update touches one
@@ -175,12 +176,40 @@ export async function runJudge({
   transcript,
   logPath,
   metadata,
+  skipFillerAutofail = false,
+  skipImessageAutofail = false,
 }) {
   if (!criterion || typeof criterion !== "string") {
     throw new Error("runJudge: criterion is required")
   }
   if (!reply || typeof reply !== "string") {
     throw new Error("runJudge: reply is required")
+  }
+  if (!skipFillerAutofail) {
+    const fb = checkFillerBlacklist(reply)
+    if (fb.hit) {
+      return {
+        verdict: "fail",
+        confidence: 0,
+        rationale: `Auto-fail: disallowed helper phrase “${fb.phrase}” (Phase 18 filler blacklist)`,
+        costUsd: 0,
+        retryCount: 0,
+        autoFail: "filler_blacklist",
+      }
+    }
+  }
+  if (!skipImessageAutofail) {
+    const ir = checkIMessageRenderUnsafe(reply)
+    if (ir.hit) {
+      return {
+        verdict: "fail",
+        confidence: 0,
+        rationale: `Auto-fail: iMessage-unsafe text (${ir.reason})`,
+        costUsd: 0,
+        retryCount: 0,
+        autoFail: "imessage_render",
+      }
+    }
   }
   const client = getClient()
   const userMessage = buildUserMessage({ criterion, reply, transcript })

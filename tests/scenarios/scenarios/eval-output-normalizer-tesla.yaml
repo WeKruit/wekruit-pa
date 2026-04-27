@@ -1,0 +1,19 @@
+# Phase 20 — markdown/UTM must not reach pa_messages (orchestrator normalizer).
+# Model may still emit ** in raw output; harness sees normalized body.
+id: eval_output_normalizer_tesla
+description: |
+  Smoke that outbound assistant text is plain. Rule assertions only; no LLM judge.
+testMode: true
+locale: zh-CN
+agentId: default
+participant: "+19999990102"
+chatId: "iMessage;+19999990102"
+turnTimeoutMs: 120000
+turns:
+  - user: "一句话说说特斯拉最近业绩，顺便给个链接，语气随意"
+    assert:
+      reply_min_length: 8
+      reply_not_matches_any:
+        - "\\*\\*"
+        - "utm_source"
+        - "\\]\\("

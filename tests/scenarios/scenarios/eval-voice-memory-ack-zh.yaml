@@ -1,0 +1,24 @@
+# Phase 18 — implicit memory ack (柠檬茶), not catalog copy.
+id: eval_voice_memory_ack_zh
+description: |
+  User states a food preference. Expect a woven, in-character callback — not
+  好的我记住了/收到. Requires PA_RUN_EVAL=1 for judge. Costs OpenAI.
+testMode: true
+locale: zh-CN
+agentId: default
+participant: "+19999990101"
+chatId: "iMessage;+19999990101"
+turnTimeoutMs: 120000
+turns:
+  - user: "我喜欢喝柠檬茶"
+    assert:
+      reply_min_length: 4
+      reply_not_contains_any:
+        - "好的，我记住"
+        - "已记录"
+        - "我是 AI"
+      judge:
+        criterion: |
+          The reply acknowledges 柠檬茶 in a woven, friend-like way (e.g. 柠檬茶女孩 or a playful tease). It must NOT use catalog-style memory phrases
+          (我记住了, 好的我记住了, 收到, 已记录) or assistant-register boilerplate. Plain text, 1-3 short sentences, Claire/小柯 vibe.
+        threshold: 0.65

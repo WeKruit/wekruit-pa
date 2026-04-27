@@ -2,10 +2,10 @@
 
 ## Current Position
 
-Phase: 18-23 all PLANNED, 0 EXECUTED
+Phase: 18 (Voice v1) + 20 (Output normalizer) code landed in-repo; 19,21,22,23 not executed
 Plan: 6 plans + Bible v1 + 6 CONTEXT.md committed across `.planning/phases/18-23/`
-Status: Ready for execution; awaiting Adam's Sendblue contract Q answers + /clear + `/gsd:execute-phase 18`
-Last activity: 2026-04-27 — All 6 v1.1 plans landed via parallel gsd-planner sub-agents
+Status: Core path shipped — `seed.json` v2 (Claire), `voice-reminder` post-history inject, `normalizeForIMessage` at orchestrator exit, eval helpers + sample YAMLs. Pairwise harness + 6/6 goldens + full judge axis scores = remaining. Sendblue (21) still awaits contract + secrets for prod cutover.
+Last activity: 2026-04-27 — Autonomous P10 tranche: Phase 18+20 implementation commit
 
 ## v1.1 Plan Commits (autonomous batch)
 
@@ -87,7 +87,7 @@ Closed-beta launchable (≤20 hand-picked users) within 3 weeks. Fix robotic com
 - Closed-beta tolerates iMessage Apple-ID gray zone for ≤20 users; Sendblue migration before public launch
 
 ### Open Adam decisions (pre-Phase-18 spawn)
-- **Character Bible v1** — one-page anchor: PA name + backstory + 3 verbal tics + reaction templates + 1-2 signature emoji + code-switch policy + length cap. P9-Voice spawn blocked until Adam writes this.
+- **Character Bible v1** — **locked** in `CHARACTER-BIBLE-v1.md` (Claire/小柯). Edits need Adam sign-off.
 - **Sendblue contract** — confirm 4 contract questions before signing: Apple ID ownership, SLA on number re-provisioning, outbound rate limit, GDPR posture.
 
 ### Known gaps carried forward

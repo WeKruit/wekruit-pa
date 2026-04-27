@@ -1,5 +1,11 @@
 import type { Firestore } from "firebase-admin/firestore"
 import { PA_COLLECTIONS, PA_REMOTE_CONFIG_DOC } from "@pa/core-types"
+import { isVoiceV1Disabled as isVoiceV1DisabledEnv } from "./voice-reminder.js"
+
+/** Env rollback for Phase 18 Voice v1 — same as `isVoiceV1Disabled` in `voice-reminder.ts`. */
+export function isVoiceV1Disabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return isVoiceV1DisabledEnv(env)
+}
 
 export type PlatformFlags = {
   llmKillSwitch: boolean

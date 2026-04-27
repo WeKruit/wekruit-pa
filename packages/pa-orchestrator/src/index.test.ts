@@ -189,9 +189,10 @@ test("processInboundEvent passes a Session and systemInputs into the default age
   const seen: Captured = captured
   assert.strictEqual(seen.session, fakeSession)
   assert.ok(Array.isArray(seen.systemInputs))
-  assert.equal(seen.systemInputs!.length, 1)
+  assert.equal(seen.systemInputs!.length, 2)
   assert.match(seen.systemInputs![0]!, /Memory context:/)
   assert.match(seen.systemInputs![0]!, /User likes concise answers\./)
+  assert.match(seen.systemInputs![1]!, /Reminder: you're Claire/)
   // Legacy fields still passed for chat.completions emergency rollback.
   assert.ok(Array.isArray(seen.history))
   assert.match(String(seen.memoryBlock), /User likes concise answers\./)
@@ -710,7 +711,7 @@ test("Phase 11.1.2: persona + Mem0 → systemInputs[0]=persona, [1]=recall", asy
   }
 
   if (!captured) throw new Error("runAgentTurn was not called")
-  assert.equal(captured.length, 2, "persona + recall present")
+  assert.equal(captured.length, 3, "persona + recall + voice reminder")
   assert.match(captured[0]!, /^Persona facts \(confirmed\):/)
   assert.match(captured[0]!, /我喜欢冰美式/)
   assert.match(captured[0]!, /我住在上海/)
@@ -718,6 +719,7 @@ test("Phase 11.1.2: persona + Mem0 → systemInputs[0]=persona, [1]=recall", asy
   // path; facts no longer double-write into "Confirmed user facts:" here.
   assert.equal(captured[1]!, "Memory context:\nUser likes brevity.")
   assert.equal(captured[1]!.startsWith("Memory context:\nConfirmed user facts:"), false)
+  assert.match(captured[2]!, /Reminder: you're Claire/)
 })
 
 test("Phase 11.1.2: zero facts + non-null Mem0 → systemInputs has only recall", async () => {
@@ -745,9 +747,10 @@ test("Phase 11.1.2: zero facts + non-null Mem0 → systemInputs has only recall"
   }
 
   if (!captured) throw new Error("runAgentTurn was not called")
-  assert.equal(captured.length, 1)
+  assert.equal(captured.length, 2, "recall + voice reminder")
   assert.match(captured[0]!, /^Memory context:/)
   assert.match(captured[0]!, /User prefers terse answers\./)
+  assert.match(captured[1]!, /Reminder: you're Claire/)
 })
 
 test("Phase 11.1.2: persona present + null Mem0 → systemInputs has only persona", async () => {
@@ -780,10 +783,11 @@ test("Phase 11.1.2: persona present + null Mem0 → systemInputs has only person
   if (!captured) throw new Error("runAgentTurn was not called")
   // Phase 11.1 cleanup D2 — facts no longer double-write into the recall
   // channel; when mem.memoryBlock is null, recall is null and systemInputs
-  // contains only the persona card.
-  assert.equal(captured.length, 1)
+  // contains only the persona card plus post-history voice reminder.
+  assert.equal(captured.length, 2)
   assert.match(captured[0]!, /^Persona facts \(confirmed\):/)
-  for (const entry of captured) {
+  assert.match(captured[1]!, /Reminder: you're Claire/)
+  for (const entry of captured.slice(0, 1)) {
     assert.equal(entry.includes("Confirmed user facts:"), false, "facts must not leak into recall")
   }
 })
@@ -813,7 +817,9 @@ test("Phase 11.1.2: zero facts + null Mem0 → systemInputs is empty", async () 
   }
 
   if (!captured) throw new Error("runAgentTurn was not called")
-  assert.deepEqual(captured, [])
+  // No persona / no recall — only the post-history voice reminder (Phase 18).
+  assert.equal(captured.length, 1)
+  assert.match(captured[0]!, /Reminder: you're Claire/)
 })
 
 test("Phase 11.1.2: PA_PERSONA_CARD_DISABLED=true → persona absent even when facts exist", async () => {
@@ -844,10 +850,11 @@ test("Phase 11.1.2: PA_PERSONA_CARD_DISABLED=true → persona absent even when f
   }
 
   if (!captured) throw new Error("runAgentTurn was not called")
-  // Persona suppressed; recall remains.
-  assert.equal(captured.length, 1)
+  // Persona suppressed; recall remains; voice reminder last.
+  assert.equal(captured.length, 2)
   assert.match(captured[0]!, /^Memory context:/)
   assert.equal(captured[0]!.startsWith("Persona facts"), false)
+  assert.match(captured[1]!, /Reminder: you're Claire/)
 })
 
 // -------- Phase 11.1 cleanup D2: buildRecallSystemInput unit tests --------
