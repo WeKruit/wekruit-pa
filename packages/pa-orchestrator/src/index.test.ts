@@ -661,3 +661,171 @@ test("processInboundEvent filters undefined fields out of pa_turns.usage payload
   assert.equal("outputTokens" in usagePatch.usage, false)
   assert.equal(usagePatch.usage.provider, "openai")
 })
+
+// -------- Phase 11.1.2: persona card wiring into systemInputs --------
+
+test("Phase 11.1.2: persona + Mem0 → systemInputs[0]=persona, [1]=recall", async () => {
+  const facts = [
+    { id: "f1", userId: "u1", content: "我喜欢冰美式", status: "confirmed", source: "explicit_user", createdAt: "2026-01-01T00:00:00Z" },
+    { id: "f2", userId: "u1", content: "我住在上海", status: "confirmed", source: "explicit_user", createdAt: "2026-01-02T00:00:00Z" },
+  ]
+  let captured: string[] | undefined
+  const store = makeStore({
+    listMemoryFacts: async () => facts as never,
+    loadPersonalizationContext: async () => ({
+      memoryBlock: "User likes brevity.",
+      mem0Degraded: false,
+      mem0SearchResultCount: 1,
+      mem0DegradedReason: null,
+    }),
+    runAgentTurn: async (input) => {
+      captured = input.systemInputs
+      return { text: "ok" }
+    },
+  })
+  const prev = process.env.PA_PERSONA_CARD_DISABLED
+  delete process.env.PA_PERSONA_CARD_DISABLED
+  try {
+    await processInboundEvent(baseEvent, store)
+  } finally {
+    if (prev === undefined) delete process.env.PA_PERSONA_CARD_DISABLED
+    else process.env.PA_PERSONA_CARD_DISABLED = prev
+  }
+
+  if (!captured) throw new Error("runAgentTurn was not called")
+  assert.equal(captured.length, 2, "persona + recall present")
+  assert.match(captured[0]!, /^Persona facts \(confirmed\):/)
+  assert.match(captured[0]!, /我喜欢冰美式/)
+  assert.match(captured[0]!, /我住在上海/)
+  assert.match(captured[1]!, /^Memory context:\nConfirmed user facts:/)
+  assert.match(captured[1]!, /Relevant memory:\nUser likes brevity\./)
+})
+
+test("Phase 11.1.2: zero facts + non-null Mem0 → systemInputs has only recall", async () => {
+  let captured: string[] | undefined
+  const store = makeStore({
+    listMemoryFacts: async () => [],
+    loadPersonalizationContext: async () => ({
+      memoryBlock: "User prefers terse answers.",
+      mem0Degraded: false,
+      mem0SearchResultCount: 1,
+      mem0DegradedReason: null,
+    }),
+    runAgentTurn: async (input) => {
+      captured = input.systemInputs
+      return { text: "ok" }
+    },
+  })
+  const prev = process.env.PA_PERSONA_CARD_DISABLED
+  delete process.env.PA_PERSONA_CARD_DISABLED
+  try {
+    await processInboundEvent(baseEvent, store)
+  } finally {
+    if (prev === undefined) delete process.env.PA_PERSONA_CARD_DISABLED
+    else process.env.PA_PERSONA_CARD_DISABLED = prev
+  }
+
+  if (!captured) throw new Error("runAgentTurn was not called")
+  assert.equal(captured.length, 1)
+  assert.match(captured[0]!, /^Memory context:/)
+  assert.match(captured[0]!, /User prefers terse answers\./)
+})
+
+test("Phase 11.1.2: persona present + null Mem0 → systemInputs has only persona", async () => {
+  const facts = [
+    { id: "f1", userId: "u1", content: "我喜欢冰美式", status: "confirmed", source: "explicit_user", createdAt: "2026-01-01T00:00:00Z" },
+  ]
+  let captured: string[] | undefined
+  const store = makeStore({
+    listMemoryFacts: async () => facts as never,
+    loadPersonalizationContext: async () => ({
+      memoryBlock: null,
+      mem0Degraded: false,
+      mem0SearchResultCount: 0,
+      mem0DegradedReason: null,
+    }),
+    runAgentTurn: async (input) => {
+      captured = input.systemInputs
+      return { text: "ok" }
+    },
+  })
+  const prev = process.env.PA_PERSONA_CARD_DISABLED
+  delete process.env.PA_PERSONA_CARD_DISABLED
+  try {
+    await processInboundEvent(baseEvent, store)
+  } finally {
+    if (prev === undefined) delete process.env.PA_PERSONA_CARD_DISABLED
+    else process.env.PA_PERSONA_CARD_DISABLED = prev
+  }
+
+  if (!captured) throw new Error("runAgentTurn was not called")
+  // memoryBlockWithFacts still surfaces "Confirmed user facts:" via the
+  // legacy concat path (option a from PLAN §2). When mem.memoryBlock is
+  // null AND facts is non-empty, recall is the legacy "Confirmed user
+  // facts:" block. Persona is FIRST.
+  assert.equal(captured.length, 2)
+  assert.match(captured[0]!, /^Persona facts \(confirmed\):/)
+  assert.match(captured[1]!, /^Memory context:\nConfirmed user facts:/)
+})
+
+test("Phase 11.1.2: zero facts + null Mem0 → systemInputs is empty", async () => {
+  let captured: string[] | undefined
+  const store = makeStore({
+    listMemoryFacts: async () => [],
+    loadPersonalizationContext: async () => ({
+      memoryBlock: null,
+      mem0Degraded: false,
+      mem0SearchResultCount: 0,
+      mem0DegradedReason: null,
+    }),
+    runAgentTurn: async (input) => {
+      captured = input.systemInputs
+      return { text: "ok" }
+    },
+  })
+  const prev = process.env.PA_PERSONA_CARD_DISABLED
+  delete process.env.PA_PERSONA_CARD_DISABLED
+  try {
+    await processInboundEvent(baseEvent, store)
+  } finally {
+    if (prev === undefined) delete process.env.PA_PERSONA_CARD_DISABLED
+    else process.env.PA_PERSONA_CARD_DISABLED = prev
+  }
+
+  if (!captured) throw new Error("runAgentTurn was not called")
+  assert.deepEqual(captured, [])
+})
+
+test("Phase 11.1.2: PA_PERSONA_CARD_DISABLED=true → persona absent even when facts exist", async () => {
+  const facts = [
+    { id: "f1", userId: "u1", content: "我喜欢冰美式", status: "confirmed", source: "explicit_user", createdAt: "2026-01-01T00:00:00Z" },
+  ]
+  let captured: string[] | undefined
+  const store = makeStore({
+    listMemoryFacts: async () => facts as never,
+    loadPersonalizationContext: async () => ({
+      memoryBlock: "Mem0 says hi.",
+      mem0Degraded: false,
+      mem0SearchResultCount: 1,
+      mem0DegradedReason: null,
+    }),
+    runAgentTurn: async (input) => {
+      captured = input.systemInputs
+      return { text: "ok" }
+    },
+  })
+  const prev = process.env.PA_PERSONA_CARD_DISABLED
+  process.env.PA_PERSONA_CARD_DISABLED = "true"
+  try {
+    await processInboundEvent(baseEvent, store)
+  } finally {
+    if (prev === undefined) delete process.env.PA_PERSONA_CARD_DISABLED
+    else process.env.PA_PERSONA_CARD_DISABLED = prev
+  }
+
+  if (!captured) throw new Error("runAgentTurn was not called")
+  // Persona suppressed; recall remains.
+  assert.equal(captured.length, 1)
+  assert.match(captured[0]!, /^Memory context:/)
+  assert.equal(captured[0]!.startsWith("Persona facts"), false)
+})

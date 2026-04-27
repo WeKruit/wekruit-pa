@@ -27,6 +27,7 @@ import {
 } from "@pa/core-types"
 import {
   afterAssistantTurn as defaultAfterAssistantTurn,
+  buildPersonaCard,
   clearUserMemory,
   createConfirmedMemoryFact,
   isResetCommand,
@@ -141,6 +142,23 @@ function memoryReplyForList(facts: { content: string }[]) {
   return `我记得这些：\n${unique.map((f, i) => `${i + 1}. ${f.content}`).join("\n")}`
 }
 
+/**
+ * Phase 11.1.3 — legacy concatenated memory block.
+ *
+ * Surface contract:
+ *  - Consumed by the chat.completions emergency-rollback path
+ *    (`PA_AGENT_RUNTIME=chat_completions`) via `runAgentTurn`'s legacy
+ *    `memoryBlock` field.
+ *  - The default Agents SDK path also reads this string for the *recall*
+ *    half of systemInputs (still keyed "Memory context:\n…") so Mem0
+ *    semantic recall continues to ride the SDK system channel.
+ *  - Persona card does NOT flow through this helper; persona is its own
+ *    discrete `systemInputs[0]` entry built by `buildPersonaCard`
+ *    (see Phase 11.1.2 wiring below). This is option (a) from
+ *    .planning/phases/11.../11.1-PLAN.md §2: keep this helper intact so
+ *    the chat.completions fallback's contract is unchanged, and add the
+ *    persona card as a separate orchestrator-side system input.
+ */
 function memoryBlockWithFacts(memoryBlock: string | null, facts: { content: string }[]) {
   const unique = uniqueFactsByContent(facts)
   const factBlock = unique.length ? unique.map((f) => `- ${f.content}`).join("\n") : null
@@ -414,7 +432,19 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
 
     const memoryBlock = memoryBlockWithFacts(mem.memoryBlock, facts)
     const session = store.createSession({ sessionId: event.sessionId, userId: event.userId })
-    const systemInputs = memoryBlock ? [`Memory context:\n${memoryBlock}`] : []
+    // Phase 11.1.2 — persona card is a deterministic system input prepended
+    // BEFORE the Mem0 recall block. Source is Firestore confirmed facts
+    // only (never Mem0/Qdrant). `PA_PERSONA_CARD_DISABLED=true` is the
+    // 1-line rollback flag (Phase 11.1 PLAN §5). Empty card → null →
+    // omitted; no bare heading is ever injected.
+    const personaCard =
+      process.env.PA_PERSONA_CARD_DISABLED === "true"
+        ? null
+        : buildPersonaCard(facts as MemoryFact[])
+    const recallEntry = memoryBlock ? `Memory context:\n${memoryBlock}` : null
+    const systemInputs: string[] = [personaCard, recallEntry].filter(
+      (entry): entry is string => typeof entry === "string" && entry.length > 0
+    )
     // Phase 10.5 T7 — bridge agent.allowedConnectors → SDK tools. When the
     // default agent's toolPolicy is still "none" (pre-T8), this returns []
     // and the SDK gets no custom tools, matching legacy behavior.
