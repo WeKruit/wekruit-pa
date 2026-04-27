@@ -175,3 +175,365 @@ t6test("remember-fact via runConnector writes audit pa_tool_calls with allow + c
   ).length
   assert.equal(auditCount, 2)
 })
+
+// -------- Phase 13 T13.1: wekruit-matching connector tests --------
+//
+// Exhaustive coverage of:
+//   1. degraded mode when PA_MATCHING_URL unset
+//   2. PA_MATCHING_DISABLED override even when URL set
+//   3. happy path with roles, summary mentions count
+//   4. backend 500 retries once then surfaces backend_5xx
+//   5. backend 400 does NOT retry; surfaces backend_4xx
+//   6. backend timeout (AbortError) retries once then surfaces backend_timeout
+//   7. malformed JSON payload → backend_payload_invalid
+//   8. POST body shape: {userId, query, filters} (no mem0UserId)
+//
+// Per Phase 13 plan §3 13.1. Uses the global `fetch` mock pattern for
+// determinism. Ground rule: connector NEVER throws inside execute.
+
+
+const matchingDef = registryForT6["wekruit-matching"]
+
+const matchingCtxBase = {
+  // db is unused by the matching connector but ConnectorContext requires it.
+  db: {} as unknown as import("firebase-admin/firestore").Firestore,
+  agent: t6Agent,
+  turnId: "turn-13",
+  userId: "u-13",
+  sessionId: "s-13",
+}
+
+function withEnv<T>(overrides: Record<string, string | undefined>, fn: () => Promise<T>): Promise<T> {
+  const prev: Record<string, string | undefined> = {}
+  for (const [k, v] of Object.entries(overrides)) {
+    prev[k] = process.env[k]
+    if (v === undefined) delete process.env[k]
+    else process.env[k] = v
+  }
+  return Promise.resolve(fn()).finally(() => {
+    for (const [k, v] of Object.entries(prev)) {
+      if (v === undefined) delete process.env[k]
+      else process.env[k] = v
+    }
+  })
+}
+
+function withFetch<T>(impl: typeof fetch, fn: () => Promise<T>): Promise<T> {
+  const prev = globalThis.fetch
+  globalThis.fetch = impl
+  return Promise.resolve(fn()).finally(() => {
+    globalThis.fetch = prev
+  })
+}
+
+test("wekruit-matching: degraded mode when PA_MATCHING_URL unset (no fetch issued)", async () => {
+  let calls = 0
+  await withFetch(
+    (async () => {
+      calls++
+      throw new Error("fetch should not be called")
+    }) as unknown as typeof fetch,
+    () =>
+      withEnv({ PA_MATCHING_URL: undefined, PA_MATCHING_DISABLED: undefined }, async () => {
+        const out = await matchingDef.execute(
+          { query: "找前端", filters: null },
+          matchingCtxBase
+        )
+        assert.equal(out.ok, false)
+        assert.equal(out.source, "wekruit-matching")
+        assert.equal(out.reason, "matching_service_not_configured")
+        assert.match(out.summary, /暂时|稍后/)
+        assert.equal(out.roles, null)
+      })
+  )
+  assert.equal(calls, 0, "no fetch issued in degraded mode")
+})
+
+test("wekruit-matching: PA_MATCHING_DISABLED=true overrides PA_MATCHING_URL", async () => {
+  let calls = 0
+  await withFetch(
+    (async () => {
+      calls++
+      throw new Error("fetch should not be called")
+    }) as unknown as typeof fetch,
+    () =>
+      withEnv(
+        { PA_MATCHING_URL: "https://example.test/match", PA_MATCHING_DISABLED: "true" },
+        async () => {
+          const out = await matchingDef.execute(
+            { query: "找前端", filters: null },
+            matchingCtxBase
+          )
+          assert.equal(out.ok, false)
+          assert.equal(out.reason, "matching_service_disabled")
+          assert.equal(out.roles, null)
+        }
+      )
+  )
+  assert.equal(calls, 0)
+})
+
+test("wekruit-matching: happy path returns ok=true with roles and summary mentions count", async () => {
+  const fakeRoles = [
+    {
+      roleId: "r1",
+      title: "前端工程师",
+      company: "WeKruit",
+      fitScore: 0.92,
+      applyUrl: "https://example.test/apply/r1",
+      summary: "Hangzhou frontend role",
+    },
+    {
+      roleId: "r2",
+      title: "全栈工程师",
+      company: "Acme",
+      fitScore: 0.81,
+      applyUrl: null,
+      summary: "Remote ok",
+    },
+  ]
+  const mockFetch = (async (_input: unknown, _init: unknown) => {
+    return {
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ roles: fakeRoles }),
+    } as unknown as Response
+  }) as unknown as typeof fetch
+  await withFetch(mockFetch, () =>
+    withEnv({ PA_MATCHING_URL: "https://example.test/match", PA_MATCHING_DISABLED: undefined }, async () => {
+      const out = await matchingDef.execute(
+        { query: "杭州前端2年", filters: { location: "Hangzhou", roleType: "frontend", seniority: null } },
+        matchingCtxBase
+      )
+      assert.equal(out.ok, true)
+      assert.equal(out.reason, null)
+      assert.match(out.summary, /匹配到 2 个岗位/)
+      assert.match(out.summary, /前端工程师/)
+      assert.ok(Array.isArray(out.roles))
+      assert.equal(out.roles!.length, 2)
+      assert.equal(out.roles![0]!.fitScore, 0.92)
+      assert.equal(out.roles![1]!.applyUrl, null)
+    })
+  )
+})
+
+test("wekruit-matching: clamps roles to max 5", async () => {
+  const fakeRoles = Array.from({ length: 8 }, (_, i) => ({
+    roleId: `r${i}`,
+    title: `Role ${i}`,
+    company: "Co",
+    fitScore: 0.5,
+    applyUrl: null,
+    summary: "x",
+  }))
+  await withFetch(
+    (async () =>
+      ({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ roles: fakeRoles }),
+      } as unknown as Response)) as unknown as typeof fetch,
+    () =>
+      withEnv({ PA_MATCHING_URL: "https://example.test/match", PA_MATCHING_DISABLED: undefined }, async () => {
+        const out = await matchingDef.execute(
+          { query: "anything", filters: null },
+          matchingCtxBase
+        )
+        assert.equal(out.ok, true)
+        assert.equal(out.roles!.length, 5, "clamped to 5")
+      })
+  )
+})
+
+test("wekruit-matching: backend 500 retries ONCE then surfaces backend_5xx", async () => {
+  let calls = 0
+  await withFetch(
+    (async () => {
+      calls++
+      return {
+        ok: false,
+        status: 500,
+        text: async () => "internal server error",
+      } as unknown as Response
+    }) as unknown as typeof fetch,
+    () =>
+      withEnv({ PA_MATCHING_URL: "https://example.test/match", PA_MATCHING_DISABLED: undefined }, async () => {
+        const out = await matchingDef.execute(
+          { query: "x", filters: null },
+          matchingCtxBase
+        )
+        assert.equal(out.ok, false)
+        assert.equal(out.reason, "backend_5xx")
+        assert.equal(out.roles, null)
+      })
+  )
+  assert.equal(calls, 2, "fetch invoked twice (initial + 1 retry)")
+})
+
+test("wekruit-matching: backend 400 does NOT retry; surfaces backend_4xx", async () => {
+  let calls = 0
+  await withFetch(
+    (async () => {
+      calls++
+      return {
+        ok: false,
+        status: 400,
+        text: async () => "bad request",
+      } as unknown as Response
+    }) as unknown as typeof fetch,
+    () =>
+      withEnv({ PA_MATCHING_URL: "https://example.test/match", PA_MATCHING_DISABLED: undefined }, async () => {
+        const out = await matchingDef.execute(
+          { query: "x", filters: null },
+          matchingCtxBase
+        )
+        assert.equal(out.ok, false)
+        assert.equal(out.reason, "backend_4xx")
+      })
+  )
+  assert.equal(calls, 1, "no retry on 4xx")
+})
+
+test("wekruit-matching: AbortError retries once then surfaces backend_timeout", async () => {
+  let calls = 0
+  await withFetch(
+    (async (_url: unknown, init: { signal?: AbortSignal } | undefined) => {
+      calls++
+      // Synthesize an AbortError as if the timer fired.
+      const err = new Error("aborted") as Error & { name: string }
+      err.name = "AbortError"
+      // Honor abort signal if it's already aborted (defensive); we just throw.
+      void init?.signal
+      throw err
+    }) as unknown as typeof fetch,
+    () =>
+      withEnv({ PA_MATCHING_URL: "https://example.test/match", PA_MATCHING_DISABLED: undefined }, async () => {
+        const out = await matchingDef.execute(
+          { query: "x", filters: null },
+          matchingCtxBase
+        )
+        assert.equal(out.ok, false)
+        assert.equal(out.reason, "backend_timeout")
+      })
+  )
+  assert.equal(calls, 2)
+})
+
+test("wekruit-matching: malformed JSON payload → backend_payload_invalid", async () => {
+  await withFetch(
+    (async () =>
+      ({
+        ok: true,
+        status: 200,
+        text: async () => "<html>not json</html>",
+      } as unknown as Response)) as unknown as typeof fetch,
+    () =>
+      withEnv({ PA_MATCHING_URL: "https://example.test/match", PA_MATCHING_DISABLED: undefined }, async () => {
+        const out = await matchingDef.execute(
+          { query: "x", filters: null },
+          matchingCtxBase
+        )
+        assert.equal(out.ok, false)
+        assert.equal(out.reason, "backend_payload_invalid")
+      })
+  )
+})
+
+test("wekruit-matching: POST body includes {userId, query, filters} and never mem0UserId", async () => {
+  type Captured = { url: unknown; init: RequestInit | undefined }
+  let captured: Captured | null = null
+  await withFetch(
+    (async (url: unknown, init: RequestInit | undefined) => {
+      captured = { url, init }
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ roles: [] }),
+      } as unknown as Response
+    }) as unknown as typeof fetch,
+    () =>
+      withEnv(
+        {
+          PA_MATCHING_URL: "https://example.test/match",
+          PA_MATCHING_DISABLED: undefined,
+          PA_MATCHING_TOKEN: "tok-secret",
+        },
+        async () => {
+          await matchingDef.execute(
+            {
+              query: "找前端",
+              filters: { location: "Hangzhou", roleType: "frontend", seniority: "junior" },
+            },
+            { ...matchingCtxBase, userId: "u-canonical" }
+          )
+        }
+      )
+  )
+  assert.ok(captured, "fetch invoked")
+  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+  const cap = captured as Captured
+  assert.equal(cap.url, "https://example.test/match")
+  const body = JSON.parse(String(cap.init?.body))
+  assert.equal(body.userId, "u-canonical")
+  assert.equal(body.query, "找前端")
+  assert.equal(body.filters.location, "Hangzhou")
+  assert.equal(body.filters.roleType, "frontend")
+  assert.equal(body.filters.seniority, "junior")
+  // Identity contract red line: no mem0UserId in payload.
+  assert.equal("mem0UserId" in body, false)
+  // Auth header carries the token but body does not.
+  const headers = cap.init?.headers as Record<string, string> | undefined
+  assert.equal(headers?.["Authorization"], "Bearer tok-secret")
+  assert.equal(String(cap.init?.body).includes("tok-secret"), false)
+})
+
+test("wekruit-matching: input schema rejects empty query and over-length query", () => {
+  assert.throws(() => matchingDef.inputSchema.parse({ query: "", filters: null }))
+  assert.throws(() => matchingDef.inputSchema.parse({ query: "x".repeat(600), filters: null }))
+  // Sane shape passes.
+  matchingDef.inputSchema.parse({
+    query: "ok",
+    filters: { location: null, roleType: null, seniority: null },
+  })
+  matchingDef.inputSchema.parse({ query: "ok", filters: null })
+})
+
+test("wekruit-matching: input schema requires every key in filters when filters is provided", () => {
+  // Per Phase 10.5 hot-fix #4: every property in `required`. Missing
+  // a nested key is a validation error (NOT silently filled with null).
+  assert.throws(() =>
+    matchingDef.inputSchema.parse({
+      query: "x",
+      // location and roleType present, seniority missing — must throw
+      filters: { location: null, roleType: null } as unknown as {
+        location: string | null
+        roleType: string | null
+        seniority: string | null
+      },
+    })
+  )
+})
+
+test("wekruit-matching: input schema requires `filters` key (not optional)", () => {
+  assert.throws(() =>
+    matchingDef.inputSchema.parse({ query: "x" } as unknown as { query: string })
+  )
+})
+
+test("wekruit-matching: connector NEVER throws inside execute (every path resolves)", async () => {
+  // Network error path
+  await withFetch(
+    (async () => {
+      throw new TypeError("connect ECONNREFUSED")
+    }) as unknown as typeof fetch,
+    () =>
+      withEnv({ PA_MATCHING_URL: "https://example.test/match", PA_MATCHING_DISABLED: undefined }, async () => {
+        const out = await matchingDef.execute(
+          { query: "x", filters: null },
+          matchingCtxBase
+        )
+        assert.equal(out.ok, false)
+        assert.equal(out.reason, "backend_network_error")
+      })
+  )
+})

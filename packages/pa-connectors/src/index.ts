@@ -37,12 +37,41 @@ const FakeOutputSchema = z.object({
 })
 
 const MatchingInputSchema = z.object({
-  query: z.string().min(1),
+  query: z.string().min(1).max(500),
+  // Phase 13 — strict-mode-compatible filters. Every nested key is in
+  // `required`; optional values are encoded as `T | null` per Phase 10.5
+  // hot-fix #4 (NOT Zod `.optional()`). `filters` itself may be null when
+  // the LLM has no structured signal; the orchestrator's runConnector
+  // schema-validates inputs so callers must pass the key explicitly.
+  filters: z
+    .object({
+      location: z.string().nullable(),
+      roleType: z.string().nullable(),
+      seniority: z.string().nullable(),
+    })
+    .nullable(),
+})
+const MatchingRoleSchema = z.object({
+  roleId: z.string(),
+  title: z.string(),
+  company: z.string(),
+  fitScore: z.number().min(0).max(1),
+  applyUrl: z.string().nullable(),
+  summary: z.string(),
 })
 const MatchingOutputSchema = z.object({
   ok: z.boolean(),
   source: z.literal("wekruit-matching"),
+  // `reason` carries the degraded-mode tag (e.g.
+  // "matching_service_not_configured", "backend_5xx", "backend_timeout").
+  // Null on success. The dashboard reads this to render the empty state cleanly.
+  reason: z.string().nullable(),
+  // Human-readable top-line surfaced to the LLM; ≤1000 chars to fit
+  // runConnector's `resultSummary.slice(0,1000)` audit truncation.
   summary: z.string(),
+  // Structured ranked list. Null when no roles (degraded mode or empty
+  // backend response); the dashboard renders an empty state from this.
+  roles: z.array(MatchingRoleSchema).nullable(),
 })
 
 const FindxInputSchema = z.object({
@@ -100,33 +129,173 @@ export const connectorRegistry = {
   "wekruit-matching": {
     name: "wekruit-matching",
     version: "1",
-    description: "First real downstream connector; calls PA_MATCHING_URL when configured.",
+    description:
+      "Find ranked job-role matches for the user from the WeKruit catalog. " +
+      "Use this ONLY when the user explicitly asks for job recommendations / matches " +
+      "(e.g. \"看看有什么岗位匹配\", \"find me jobs\", \"最近有没有推荐机会\"). " +
+      "Do not call this for casual chit-chat or for non-discovery turns.",
     inputSchema: MatchingInputSchema,
     outputSchema: MatchingOutputSchema,
-    execute: async (input: z.infer<typeof MatchingInputSchema>) => {
+    execute: async (
+      input: z.infer<typeof MatchingInputSchema>,
+      ctx: ConnectorContext
+    ) => {
+      // Phase 13 degraded-mode contract: connector NEVER throws inside
+      // execute. Every failure mode resolves to a structured `ok:false`
+      // payload so the LLM can apologize and the dashboard can render an
+      // empty state.
+      const disabled = process.env.PA_MATCHING_DISABLED === "true"
       const url = process.env.PA_MATCHING_URL
-      if (!url) {
+      if (disabled || !url) {
         return {
           ok: false,
-          source: "wekruit-matching",
-          summary: "PA_MATCHING_URL is not configured; connector policy/audit path executed only.",
+          source: "wekruit-matching" as const,
+          reason: disabled ? "matching_service_disabled" : "matching_service_not_configured",
+          summary: "暂时无法获取匹配结果，请稍后再试。",
+          roles: null,
         }
       }
-      const res = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(process.env.PA_MATCHING_TOKEN
-            ? { Authorization: `Bearer ${process.env.PA_MATCHING_TOKEN}` }
-            : {}),
-        },
-        body: JSON.stringify({ query: input.query }),
+      // Phase 13 — single-retry contract on transient failure (network
+      // or 5xx). 4xx never retries (it's our caller bug, not the
+      // backend's). Total ceiling = 8s timeout × 2 attempts + 250ms
+      // backoff ≈ 16.25s — safely under runConnector's 90s scenario
+      // timeout but above the typical 1-2s p95 of a healthy backend.
+      const TIMEOUT_MS = 8000
+      const RETRY_BACKOFF_MS = 250
+      const body = JSON.stringify({
+        userId: ctx.userId,
+        query: input.query,
+        filters: input.filters,
       })
-      const text = await res.text()
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      }
+      const token = process.env.PA_MATCHING_TOKEN
+      if (token) headers.Authorization = `Bearer ${token}`
+
+      type Attempt = {
+        ok: boolean
+        status: number
+        text: string
+      } | { aborted: true } | { networkError: string }
+      const attempt = async (): Promise<Attempt> => {
+        const ctrl = new AbortController()
+        const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS)
+        try {
+          const res = await fetch(url, {
+            method: "POST",
+            headers,
+            body,
+            signal: ctrl.signal,
+          })
+          const text = await res.text()
+          return { ok: res.ok, status: res.status, text }
+        } catch (e: unknown) {
+          if (e instanceof Error && (e.name === "AbortError" || ctrl.signal.aborted)) {
+            return { aborted: true }
+          }
+          return { networkError: e instanceof Error ? e.message : String(e) }
+        } finally {
+          clearTimeout(timer)
+        }
+      }
+
+      const isRetryable = (a: Attempt): boolean => {
+        if ("aborted" in a) return true
+        if ("networkError" in a) return true
+        return a.status >= 500
+      }
+
+      let res = await attempt()
+      if (isRetryable(res)) {
+        await new Promise((r) => setTimeout(r, RETRY_BACKOFF_MS))
+        res = await attempt()
+      }
+
+      if ("aborted" in res) {
+        return {
+          ok: false,
+          source: "wekruit-matching" as const,
+          reason: "backend_timeout",
+          summary: "匹配服务超时，请稍后再试。",
+          roles: null,
+        }
+      }
+      if ("networkError" in res) {
+        return {
+          ok: false,
+          source: "wekruit-matching" as const,
+          reason: "backend_network_error",
+          summary: "匹配服务暂时不可达，请稍后再试。",
+          roles: null,
+        }
+      }
+      if (res.status >= 500) {
+        return {
+          ok: false,
+          source: "wekruit-matching" as const,
+          reason: "backend_5xx",
+          summary: "匹配服务返回异常，已记录。",
+          roles: null,
+        }
+      }
+      if (!res.ok) {
+        // 4xx — caller-side problem; surface but do NOT retry.
+        return {
+          ok: false,
+          source: "wekruit-matching" as const,
+          reason: "backend_4xx",
+          summary: "匹配服务拒绝请求，已记录。",
+          roles: null,
+        }
+      }
+
+      // Parse backend payload: { roles: Role[] }. Defensive — anything
+      // off-shape collapses to ok:false with reason backend_payload_invalid.
+      let payload: unknown
+      try {
+        payload = JSON.parse(res.text)
+      } catch {
+        return {
+          ok: false,
+          source: "wekruit-matching" as const,
+          reason: "backend_payload_invalid",
+          summary: "匹配服务返回异常，已记录。",
+          roles: null,
+        }
+      }
+      const rawRoles =
+        payload && typeof payload === "object" && Array.isArray((payload as { roles?: unknown }).roles)
+          ? (payload as { roles: unknown[] }).roles
+          : null
+      if (!rawRoles) {
+        return {
+          ok: false,
+          source: "wekruit-matching" as const,
+          reason: "backend_payload_invalid",
+          summary: "匹配服务返回异常，已记录。",
+          roles: null,
+        }
+      }
+      // Schema-validate each role; drop rows that don't fit. This shields
+      // the LLM from a backend regression that adds a partially-malformed
+      // entry.
+      const sanitized = rawRoles
+        .map((r) => MatchingRoleSchema.safeParse(r))
+        .filter((p): p is { success: true; data: z.infer<typeof MatchingRoleSchema> } => p.success)
+        .map((p) => p.data)
+        .slice(0, 5)
+      const titleList = sanitized.map((r) => r.title).join(", ")
+      const summary =
+        sanitized.length > 0
+          ? `匹配到 ${sanitized.length} 个岗位：${titleList}`.slice(0, 200)
+          : "暂时没有合适的岗位推荐。"
       return {
-        ok: res.ok,
-        source: "wekruit-matching",
-        summary: text.slice(0, 1000),
+        ok: true,
+        source: "wekruit-matching" as const,
+        reason: null,
+        summary,
+        roles: sanitized.length > 0 ? sanitized : null,
       }
     },
   } satisfies ConnectorDef<z.infer<typeof MatchingInputSchema>, z.infer<typeof MatchingOutputSchema>>,
