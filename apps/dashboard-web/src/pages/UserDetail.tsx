@@ -11,6 +11,7 @@ import {
   type MemoryPoint,
 } from "../lib/memoryAdmin.js"
 import { fetchWorkerHealth, getWorkerHealthBaseUrl, type WorkerHealth } from "../lib/workerHealth.js"
+import { renderToolCallSummary } from "./toolCallSummary.js"
 
 type U = { id: string; phoneE164?: string; activeAgentId?: string; onboardingStatus?: string }
 type M = { id: string; role?: string; body?: string; createdAt?: string; sessionId?: string }
@@ -401,8 +402,10 @@ function Section({ id, title, rows, columns }: { id: string; title: string; rows
           render: (row) =>
             column === "status" || column === "role" || column === "kind" ? (
               <StatusBadge value={String(row[column] ?? "")} />
+            ) : column === "resultSummary" ? (
+              text(renderToolCallSummary(row), 420)
             ) : (
-              text(row[column], column === "body" || column === "message" || column === "resultSummary" ? 420 : 160)
+              text(row[column], column === "body" || column === "message" ? 420 : 160)
             ),
         }))}
       />

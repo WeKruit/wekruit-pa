@@ -12,6 +12,7 @@ import {
 import { useMemo, useState, useEffect, type ReactNode } from "react"
 import { ErrorState, PageHeader, StatusBadge } from "../components/ui.js"
 import { db } from "../lib/firebase.js"
+import { renderToolCallSummary } from "./toolCallSummary.js"
 
 type Row = Record<string, unknown> & { id: string }
 
@@ -25,6 +26,7 @@ function cell(v: unknown, max = 180) {
   const text = asText(v)
   return text.length > max ? `${text.slice(0, max)}…` : text
 }
+
 
 async function loadRows(collectionName: string, max = 50, orderField = "createdAt"): Promise<Row[]> {
   const snap = await getDocs(
@@ -254,7 +256,7 @@ function Section({ title, rows, columns, actions }: { title: string; rows: Row[]
             <tr key={r.id}>
               {columns.map((c) => (
                 <td key={c}>
-                  {c === "actions" ? actions?.(r) : c === "status" || c === "kind" ? <StatusBadge value={String(r[c] ?? "")} /> : cell(r[c], c === "message" || c === "resultSummary" || c === "rawPayload" ? 360 : 120)}
+                  {c === "actions" ? actions?.(r) : c === "status" || c === "kind" ? <StatusBadge value={String(r[c] ?? "")} /> : c === "resultSummary" ? cell(renderToolCallSummary(r), 360) : cell(r[c], c === "message" || c === "rawPayload" ? 360 : 120)}
                 </td>
               ))}
             </tr>
