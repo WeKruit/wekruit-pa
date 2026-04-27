@@ -67,7 +67,10 @@ describe("normalizeSendblueInbound", () => {
   })
 
   it("returns null for outbound mirror events", () => {
-    const out = normalizeSendblueInbound({ ...basePayload(), is_outbound: true })
+    const out = normalizeSendblueInbound({
+      ...basePayload(),
+      is_outbound: true as unknown as false,
+    })
     assert.equal(out, null)
   })
 

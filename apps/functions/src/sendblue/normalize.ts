@@ -50,7 +50,9 @@ export function normalizeSendblueInbound(
   payload: SendblueInboundPayload
 ): NormalizedInbound | null {
   if (!payload || typeof payload !== "object") return null
-  if (payload.is_outbound === true) return null
+  // is_outbound is typed as `false` on inbound but Sendblue could send other
+  // values at runtime; coerce-check.
+  if ((payload as Record<string, unknown>).is_outbound === true) return null
 
   const messageHandle =
     typeof payload.message_handle === "string" ? payload.message_handle.trim() : ""
