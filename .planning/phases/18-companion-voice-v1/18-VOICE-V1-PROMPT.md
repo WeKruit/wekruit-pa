@@ -5,7 +5,13 @@
 
 ## Block A–C (default agent `systemPrompt`)
 
-See **`18-VOICE-V1-BODY.md`** in this folder — that file is byte-identical to `packages/agent-registry/src/seed.json` → `default.systemPrompt` (version `2`). Edit BODY first, then re-sync seed (or paste JSON-escaped string).
+See **`18-VOICE-V1-BODY.md`** in this folder — that file is byte-identical to `packages/agent-registry/src/seed.json` → `default.systemPrompt` (version `4`). Edit BODY first, then re-sync seed (or paste JSON-escaped string).
+
+### Version history
+
+- v2 — original Voice v1 ship.
+- v3 — anti-framework / anti-coach guidance (no 立刻能用 / N步法).
+- v4 — explicit non-whitelisted emoji rejection (😂 / 🥹 / ✨ / 🎉 / 😅 / 🙃) + 4th `<START>` example demonstrating empathic-reflection alternative to clinical "X 还是 Y" binary-question pattern (Adam observation 2026-04-27 from live PA traffic).
 
 ## Block D (post-history reminder)
 
