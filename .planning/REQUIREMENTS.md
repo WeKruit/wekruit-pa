@@ -42,14 +42,14 @@
 
 ### CHANNEL — Sendblue Channel Migration
 
-- [ ] **CHANNEL-01**: New CF endpoint `paSendblueWebhook` receives Sendblue webhook events (`receive`, `outbound`, `typing_indicator`, `line_blocked`).
-- [ ] **CHANNEL-02**: HMAC signature verification on every webhook; rejects on mismatch.
-- [ ] **CHANNEL-03**: Webhook handler creates `pa_inbound_events` keyed by Sendblue `message_handle` (replaces `imessage-in-${rowId}`).
-- [ ] **CHANNEL-04**: Allowlist gate moves from worker to webhook handler; non-allowlisted `from_number` returns 200 OK silently (no PA reply, audit logged).
-- [ ] **CHANNEL-05**: Outbox listener replaced with CF that POSTs to Sendblue REST `api.sendblue.co/api/send-message` instead of Photon SDK.
-- [ ] **CHANNEL-06**: `apps/macos-imessage-worker/` deprecated (kept in repo behind `PA_CHANNEL_LEGACY=1` flag for one milestone, then removed).
-- [ ] **CHANNEL-07**: Chunked typing simulation (Phase 15) deprecated; use Sendblue native `typing_indicator` API.
-- [ ] **CHANNEL-08**: Sendblue contract questions answered before signing (Apple ID ownership, SLA on number re-provisioning, outbound rate limit, GDPR/data residency).
+- [x] **CHANNEL-01**: New CF endpoint `paSendblueWebhook` receives Sendblue webhook events (`receive`, `outbound`, `typing_indicator`, `line_blocked`).
+- [x] **CHANNEL-02**: HMAC signature verification on every webhook; rejects on mismatch.
+- [x] **CHANNEL-03**: Webhook handler creates `pa_inbound_events` keyed by Sendblue `message_handle` (replaces `imessage-in-${rowId}`).
+- [x] **CHANNEL-04**: Allowlist gate moves from worker to webhook handler; non-allowlisted `from_number` returns 200 OK silently (no PA reply, audit logged).
+- [x] **CHANNEL-05**: Outbox listener replaced with CF that POSTs to Sendblue REST `api.sendblue.co/api/send-message` instead of Photon SDK.
+- [x] **CHANNEL-06**: `apps/macos-imessage-worker/` deprecated (kept in repo behind `PA_CHANNEL_LEGACY=1` flag for one milestone, then removed).
+- [x] **CHANNEL-07**: Chunked typing simulation (Phase 15) deprecated; use Sendblue native `typing_indicator` API.
+- [x] **CHANNEL-08**: Sendblue contract questions answered before signing (Apple ID ownership, SLA on number re-provisioning, outbound rate limit, GDPR/data residency).
 - [ ] **CHANNEL-09**: Smoke test: real Sendblue sandbox → CF webhook → orchestrator → Sendblue REST send → real iMessage delivery; full round-trip <30s p95.
 
 ### PROACTIVE — Proactive Check-in (revived from skipped Phase 12)
