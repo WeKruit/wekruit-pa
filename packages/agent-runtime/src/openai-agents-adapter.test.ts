@@ -160,6 +160,71 @@ test("extractUsage tolerates missing rawResponses field entirely (defensive)", (
 })
 
 
+
+// Phase 10.5 cleanup C1 — extractUsage MUST detect the live SDK’s
+// normalized `hosted_tool_call` shape, not just the wire-level
+// `web_search_call` literal. Carry-over #3 in 10.5-VERIFICATION traced
+// the missing pa_tool_calls audit row to this gap: webSearchTool fired
+// (8633 input-token signature) but recordHostedToolCalls never fired
+// because hostedToolCalls was always empty.
+
+test("extractUsage counts the live SDK hosted_tool_call(name=web_search) normalized shape (C1 fix)", () => {
+  const fakeResult = {
+    rawResponses: [
+      {
+        usage: { inputTokens: 8633, outputTokens: 449, totalTokens: 9082 },
+        output: [
+          // Live SDK shape after the OpenAI Responses adapter normalizes
+          // the wire-level web_search_call into a hosted_tool_call:
+          {
+            type: "hosted_tool_call",
+            name: "web_search",
+            providerData: { type: "web_search_call" },
+          },
+          { type: "message" },
+        ],
+      },
+    ],
+  }
+  const usage = t9ForTesting.extractUsage(fakeResult, "openai", "gpt-5.4-nano")
+  assert.equal(usage.inputTokens, 8633)
+  assert.equal(usage.outputTokens, 449)
+  assert.deepEqual(
+    usage.hostedToolCalls,
+    [{ name: "web_search", count: 1 }],
+    "hosted_tool_call shape is counted into hostedToolCalls"
+  )
+})
+
+test("extractUsage counts hosted_tool_call only when name === \"web_search\" (other hosted tools ignored)", () => {
+  const fakeResult = {
+    rawResponses: [
+      {
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        output: [
+          { type: "hosted_tool_call", name: "code_interpreter" }, // unrelated hosted tool
+          { type: "hosted_tool_call", name: "web_search" },
+        ],
+      },
+    ],
+  }
+  const usage = t9ForTesting.extractUsage(fakeResult, "openai", "gpt-5.4-nano")
+  assert.deepEqual(usage.hostedToolCalls, [{ name: "web_search", count: 1 }])
+})
+
+test("extractUsage still counts legacy wire-level web_search_call shape (back-compat)", () => {
+  const fakeResult = {
+    rawResponses: [
+      {
+        usage: { inputTokens: 5, outputTokens: 3, totalTokens: 8 },
+        output: [{ type: "web_search_call" }, { type: "web_search_call" }],
+      },
+    ],
+  }
+  const usage = t9ForTesting.extractUsage(fakeResult, "openai", "gpt-5.4-nano")
+  assert.deepEqual(usage.hostedToolCalls, [{ name: "web_search", count: 2 }])
+})
+
 // -------- Phase 10.5 T4: webSearchTool attachment gate --------
 
 const allowlistAgent: AgentDef = {

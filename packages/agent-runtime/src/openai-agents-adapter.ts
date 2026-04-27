@@ -190,7 +190,11 @@ function extractUsage(
     const r = raw as
       | {
           usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number }
-          output?: ReadonlyArray<{ type?: string }>
+          output?: ReadonlyArray<{
+            type?: string
+            name?: string
+            providerData?: { type?: string }
+          }>
         }
       | undefined
     if (!r) continue
@@ -203,7 +207,28 @@ function extractUsage(
     for (const item of r.output ?? []) {
       const t = item?.type
       if (typeof t !== "string") continue
-      if (t === "web_search_call" || t === "web_search") {
+      // Phase 10.5 cleanup C1 — the live SDK shape is the normalized
+      // `hosted_tool_call` with `name: "web_search"`. The OpenAI Responses
+      // adapter converts the wire-level `web_search_call` items into
+      // `{ type: "hosted_tool_call", name: "web_search", providerData: {
+      // type: "web_search_call", ... } }` (see
+      // @openai/agents-openai/dist/openaiResponsesModel `web_search_call`
+      // → `hosted_tool_call` translation). The previous code only matched
+      // the wire-level `web_search_call` literal; production rawResponses
+      // never carry that, so `hostedToolCalls` was never populated and
+      // `recordHostedToolCalls` never fired (10.5-VERIFICATION carry-over #3).
+      //
+      // Match all three observable shapes to be defensive:
+      //   - normalized hosted_tool_call with name === "web_search"
+      //   - the wire-level web_search_call literal (older SDK or stripped
+      //     responses surfacing through providerData passthrough)
+      //   - the bare "web_search" literal (defensive — observed in some
+      //     non-Responses transports)
+      if (
+        (t === "hosted_tool_call" && item?.name === "web_search") ||
+        t === "web_search_call" ||
+        t === "web_search"
+      ) {
         hostedCounts.set("web_search", (hostedCounts.get("web_search") ?? 0) + 1)
       }
     }
