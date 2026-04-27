@@ -1,0 +1,49 @@
+id: persona_card_zh_iced_americano
+description: |
+  Phase 11.1.4 — production probe of the Phase 11.1 persona-card
+  injection path. Differs from `remember-fact-zh` in turn 3 timing:
+  remember-fact-zh asks the recall question on the immediately following
+  turn (in-session Mem0 semantic recall would alone suffice). This
+  scenario asks the recall question after a longer pause-style prompt
+  AND specifically asserts that the deterministic Firestore-backed
+  persona card surfaces the fact — not just Mem0 semantic search.
+
+  The persona card is built from `pa_memory_facts` rows with
+  `status = "confirmed"` and is injected as a discrete system
+  AgentInputItem on EVERY turn (Phase 11.1.2 wiring), which is what
+  guarantees recall here.
+locale: zh-CN
+agentId: default
+# Reserved test handle (Phase 9 harness convention). The runner writes a
+# synthetic broker iMessage event to pa_inbound_events; CF picks it up
+# exactly as if the macOS worker had written it.
+participant: "+19999990011"
+chatId: "iMessage;+19999990011"
+testMode: true
+turnTimeoutMs: 90000
+turns:
+  # Turn 1 — clean slate.
+  - user: "__PA_RESET__"
+    assert:
+      reply_contains_any: ["测试记忆已清空", "qdrant"]
+      reply_min_length: 1
+      reply_not_contains_any: ["error", "failed", "undefined", "[20"]
+
+  # Turn 2 — explicit remember command. Persists a confirmed fact via
+  # the LLM-driven `remember-fact` tool path (Phase 10.5 T5 removed the
+  # regex pre-router; the LLM owns this transition).
+  - user: "请记住 我喜欢喝冰美式"
+    assert:
+      reply_min_length: 1
+      reply_contains_any: ["记住", "记下", "好的", "知道", "OK", "ok"]
+      reply_not_contains_any: ["error", "failed", "undefined", "[20"]
+
+  # Turn 3 — recall probe. The persona card MUST be the reason this
+  # works on a cold session: the deterministic builder reads
+  # confirmed Firestore facts and prepends a `Persona facts (confirmed):`
+  # system input BEFORE Mem0 recall.
+  - user: "你知道我喜欢喝什么吗？"
+    assert:
+      reply_min_length: 1
+      reply_contains_any: ["冰美式"]
+      reply_not_contains_any: ["不记得", "没有记忆", "没记住", "error", "failed", "undefined", "[20"]
