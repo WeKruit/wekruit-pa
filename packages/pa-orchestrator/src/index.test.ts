@@ -98,6 +98,7 @@ function makeStore(overrides: Partial<OrchestratorStore> = {}): OrchestratorStor
     recordHostedToolCalls: async () => undefined,
     nowIso: () => "2026-04-25T12:00:00.000Z",
     log: () => undefined,
+    checkInboundSafety: async () => ({ allow: true }),
     ...overrides,
   }
 }
@@ -114,6 +115,20 @@ const baseEvent: InboundEvent = {
   createdAt: "2026-04-25T12:00:00.000Z",
   idempotencyKey: "imessage-in-1",
 }
+
+test("processInboundEvent blocks when checkInboundSafety denies", async () => {
+  let llmCalls = 0
+  const store = makeStore({
+    checkInboundSafety: async () => ({ allow: false, reason: "prompt_injection_signal" }),
+    runAgentTurn: async () => {
+      llmCalls++
+      return { text: "nope" }
+    },
+    enqueueOutbound: async () => undefined,
+  })
+  await processInboundEvent(baseEvent, store)
+  assert.equal(llmCalls, 0)
+})
 
 test("processInboundEvent runs agent for non-memory messages", async () => {
   let llmCalls = 0

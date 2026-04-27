@@ -1,5 +1,7 @@
 # Milestone state — v1.1 Pre-Launch Hardening + Companion Brain
 
+**Canonical build plan (开干入口):** [`.planning/v1.1-EXECUTION-PLAN.md`](./v1.1-EXECUTION-PLAN.md) — 含依赖顺序、QA/LLM 多轮、入站安全接线、通道统一架构、Report 结构。P10 补充： [`.planning/v1.1-p10-northstar-security-channel.md`](./v1.1-p10-northstar-security-channel.md).
+
 ## Current Position
 
 Phase: 18 (Voice v1) + 20 (Output normalizer) code landed in-repo; 19,21,22,23 not executed

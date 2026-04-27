@@ -4,6 +4,8 @@ Monorepo: Mac **Photon iMessage worker** (deprecating to Sendblue) + Firestore *
 
 ## Current Milestone: v1.1 Pre-Launch Hardening + Companion Brain
 
+**Execution plan (build order, QA, security wiring, channel architecture, report):** [`.planning/v1.1-EXECUTION-PLAN.md`](./v1.1-EXECUTION-PLAN.md).
+
 **Goal:** Take WeKruit PA from alpha-grade demo to closed-beta launchable (≤20 hand-picked users) within 3 weeks. Fix the "robotic" companion voice via prompt structure (no model escalation), replace single-host iMessage worker with hosted transport (Sendblue), close safety/normalization gaps, and revive proactive check-in.
 
 **Target features:**

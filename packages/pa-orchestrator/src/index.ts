@@ -42,6 +42,8 @@ import {
   type AfterTurnResult,
   type LoadContextResult,
 } from "@pa/memory"
+import { appendAuditEvent } from "@pa/pa-broker"
+import { checkPromptInjection, enforceRateLimit } from "@pa/pa-safety"
 import { LEGACY_V0_SYSTEM_PROMPT } from "./legacy-voice-prompt.js"
 import { buildVoiceReminder, isVoiceV1Disabled } from "./voice-reminder.js"
 import { normalizeForIMessage } from "./output-normalizer.js"
@@ -149,6 +151,11 @@ export type OrchestratorStore = {
   maybeHandleResetCommand(event: InboundEvent): Promise<{ handled: boolean; summary?: string }>
   nowIso(): string
   log(...args: unknown[]): void
+  /**
+   * v1.1 P0 — rate limit + regex injection gate before model turn.
+   * Default Firestore impl uses @pa/pa-safety; tests return allow: true.
+   */
+  checkInboundSafety(event: InboundEvent): Promise<{ allow: boolean; reason?: string }>
 }
 
 const HISTORY_LIMIT = Number(process.env.PA_MESSAGE_HISTORY || "40")
@@ -431,6 +438,24 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       return
     }
 
+    const safety = await store.checkInboundSafety(event)
+    if (!safety.allow) {
+      const msg =
+        safety.reason === "rate_limited"
+          ? "You’re sending a bit too fast. Give it a few seconds and try again."
+          : "I can’t work with that message. Try rephrasing."
+      await sendMemoryReply(store, event, turnId, msg)
+      await store.updateTurn(turnId, {
+        status: "succeeded",
+        stage: "succeeded",
+        completedAt: store.nowIso(),
+        errorCode: safety.reason,
+        error: "inbound_safety_block",
+      })
+      await store.markEventSucceeded(event.id)
+      return
+    }
+
     // Phase 10.5 T5: regex pre-routers for "remember" writes are gone — the
     // LLM owns memory writes via the `remember-fact` connector tool. We still
     // handle list/forget/clear at the orchestrator (those are admin commands,
@@ -529,7 +554,10 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       mem.mem0Degraded && agent.memoryMode !== "firestore_only"
         ? `${reply}\n\n（长期语义记忆暂时不可用；我仍使用已确认事实和最近对话。）`
         : reply
-    const { text: visibleReply } = normalizeForIMessage(rawVisible, { maxLength: 600 })
+    const norm = normalizeForIMessage(rawVisible, { maxLength: 600 })
+    const visibleReply = norm.text
+    const outboundParts =
+      norm.chunks && norm.chunks.length > 1 ? norm.chunks : [visibleReply]
 
     await store.appendMessage({
       id: `out-${event.id}`,
@@ -548,6 +576,8 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
         turnId,
         eventId: event.id,
         outboundIdempotencyKey: `out-${event.id}`,
+        ...(outboundParts.length > 1 ? { outputChunks: outboundParts } : {}),
+        ...(norm.droppedTracking.length > 0 ? { droppedUrlParams: norm.droppedTracking } : {}),
       },
     })
     const after = await store.afterAssistantTurn(agent, {
@@ -559,11 +589,15 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       memoryMode: agent.memoryMode,
     })
     if (!shouldSuppressOutbound(event)) {
-      await store.enqueueOutbound(event.userId, event.from, visibleReply, {
-        sessionId: event.sessionId,
-        role: "assistant",
-        idempotencyKey: `outbound-${event.id}`,
-      })
+      for (let i = 0; i < outboundParts.length; i++) {
+        const part = outboundParts[i]!
+        const idk = outboundParts.length > 1 ? `outbound-${event.id}-c${i}` : `outbound-${event.id}`
+        await store.enqueueOutbound(event.userId, event.from, part, {
+          sessionId: event.sessionId,
+          role: "assistant",
+          idempotencyKey: idk,
+        })
+      }
     }
     // Phase 10.5 T9 — persist token usage on the turn doc. Filter undefined
     // fields (Phase 10 bug #2 pattern) so Firestore never sees a literal
@@ -822,6 +856,34 @@ export function createFirestoreOrchestratorStore(db: Firestore): OrchestratorSto
         const msg = err instanceof Error ? err.message : String(err)
         return { handled: true, summary: `✗ 测试记忆清空失败：${msg}` }
       }
+    },
+    async checkInboundSafety(event) {
+      const rl = await enforceRateLimit(db, { userId: event.userId, channel: event.channel })
+      if (!rl.allow) {
+        await appendAuditEvent(db, {
+          kind: "rate_limit",
+          message: "Inbound blocked: rate limit",
+          userId: event.userId,
+          sessionId: event.sessionId,
+          inboundEventId: event.id,
+          actor: "orchestrator",
+        })
+        return { allow: false, reason: rl.reason }
+      }
+      const inj = checkPromptInjection(event.body)
+      if (!inj.allow) {
+        await appendAuditEvent(db, {
+          kind: "safety_block",
+          message: "Inbound blocked: prompt injection signal",
+          userId: event.userId,
+          sessionId: event.sessionId,
+          inboundEventId: event.id,
+          meta: { signals: inj.signals },
+          actor: "orchestrator",
+        })
+        return { allow: false, reason: inj.reason }
+      }
+      return { allow: true }
     },
     nowIso,
     log: (...args) => console.log(new Date().toISOString(), ...args),

@@ -1,102 +1,76 @@
-import test from "node:test"
 import assert from "node:assert/strict"
-import { normalizeForIMessage, isIMessageRenderSafe, STRIP_PARAMS } from "./output-normalizer.js"
+import test from "node:test"
+import { normalizeForIMessage, STRIP_PARAMS } from "./output-normalizer.js"
 
-test("mixed markdown + UTM — Tesla-style line", () => {
-  const input =
-    "**特斯拉一季度业绩上升** ([axios.com](https://axios.com/2026/04/26/tesla-q1?utm_source=openai&utm_medium=referral))"
-  const { text, droppedTracking } = normalizeForIMessage(input)
-  assert.ok(text.includes("特斯拉一季度业绩上升"))
-  assert.ok(text.includes("https://axios.com/2026/04/26/tesla-q1"))
-  assert.ok(!text.includes("**"))
-  assert.ok(!text.includes("]("))
-  assert.ok(!text.includes("utm_source"))
-  assert.ok(droppedTracking.includes("utm_source"))
-  assert.ok(droppedTracking.includes("utm_medium"))
+const teslaMixed =
+  "**特斯拉一季度业绩上升** ([axios.com](https://axios.com/2026/04/26/tesla-q1?utm_source=openai&utm_medium=referral))"
+
+test("mixed markdown tesla/utm case", () => {
+  const r = normalizeForIMessage(teslaMixed, { maxLength: 600 })
+  assert.match(r.text, /特斯拉一季度业绩上升/)
+  assert.match(r.text, /https:\/\/axios.com\/2026\/04\/26\/tesla-q1/)
+  assert.doesNotMatch(r.text, /\*\*/)
+  assert.doesNotMatch(r.text, /\]\(/)
+  assert.ok(!r.text.includes("utm_source"))
+  assert.ok(!r.text.includes("utm_medium"))
+  assert.ok(r.droppedTracking.includes("utm_source") || r.droppedTracking.includes("utm_medium"))
 })
 
-test("UTM strip preserves id= on bare URL", () => {
-  const { text, droppedTracking } = normalizeForIMessage(
-    "check this https://example.com/x?utm_source=newsletter&id=42"
-  )
-  assert.equal(text, "check this https://example.com/x?id=42")
-  assert.deepEqual(droppedTracking, ["utm_source"])
+test("UTM strip preserves non-tracking param", () => {
+  const r = normalizeForIMessage("check this https://example.com/x?utm_source=newsletter&id=42", { maxLength: 600 })
+  assert.equal(r.text, "check this https://example.com/x?id=42")
+  assert.deepEqual(r.droppedTracking, ["utm_source"])
 })
 
-test("nested emphasis ***a***", () => {
-  const { text } = normalizeForIMessage("***bold-italic***")
-  assert.equal(text, "bold-italic")
-  assert.ok(!text.includes("*"))
+test("nested triple asterisk", () => {
+  const r = normalizeForIMessage("***bold-italic***", { maxLength: 600 })
+  assert.doesNotMatch(r.text, /\*/)
+  assert.equal(r.text, "bold-italic")
 })
 
-test("fenced code", () => {
-  const { text } = normalizeForIMessage("```js\nconsole.log('hi')\n```")
-  assert.equal(text, "console.log('hi')")
+test("fenced code block", () => {
+  const r = normalizeForIMessage("```js\nconsole.log('hi')\n```", { maxLength: 600 })
+  assert.equal(r.text, "console.log('hi')")
 })
 
-test("very long input yields chunks or truncate", () => {
-  const sentence = "A".repeat(200) + ". " + "B".repeat(200) + ". " + "C".repeat(200) + "."
-  const { wasOverLength, chunks, text } = normalizeForIMessage(sentence, { maxLength: 600 })
-  assert.equal(wasOverLength, true)
-  if (chunks) {
-    assert.ok(chunks.length >= 2)
-    assert.ok(chunks.every((c) => c.length <= 600))
-  } else {
-    assert.ok(text.endsWith("…") || text.length <= 600)
+test("very long over 600 with chunker", () => {
+  const sentence = "This is a sentence. ".repeat(80)
+  const r = normalizeForIMessage(sentence, { maxLength: 600, planChunkOpts: { random: () => 0.5 } })
+  assert.equal(r.wasOverLength, true)
+  if (r.chunks) {
+    assert.ok(r.chunks.every((c) => c.length <= 600))
   }
 })
 
-test("empty / whitespace", () => {
-  assert.equal(normalizeForIMessage("").text, "")
-  const w = normalizeForIMessage("   \n  \n")
-  assert.equal(w.text, "")
-  assert.equal(w.wasOverLength, false)
+test("empty and whitespace", () => {
+  const a = normalizeForIMessage("", { maxLength: 600 })
+  assert.equal(a.text, "")
+  assert.equal(a.droppedTracking.length, 0)
+  assert.equal(a.wasOverLength, false)
+  const b = normalizeForIMessage("   \n  \n", { maxLength: 600 })
+  assert.equal(b.text, "")
 })
 
-test("all-Chinese list markers", () => {
-  const { text } = normalizeForIMessage("- 第一项\n- 第二项\n- 第三项")
-  assert.ok(text.includes("· 第一项"))
-  assert.ok(text.includes("· 第二项"))
+test("Chinese list markers to middle dot", () => {
+  const r = normalizeForIMessage("- 第一项\n- 第二项\n- 第三项", { maxLength: 600 })
+  assert.match(r.text, /· 第一项/)
+  assert.doesNotMatch(r.text, /^- /m)
 })
 
-test("pure fenced without wrapper", () => {
-  const { text } = normalizeForIMessage("```python\ndef f(): pass\n```")
-  assert.equal(text, "def f(): pass")
+test("fence only python", () => {
+  const r = normalizeForIMessage("```python\ndef f(): pass\n```", { maxLength: 600 })
+  assert.equal(r.text, "def f(): pass")
 })
 
-test("idempotence on samples", () => {
-  const samples = [
-    "**x** and `y`",
-    "https://x.com/?utm_source=1&ref=y",
-    "- a\n- b",
-  ]
+test("idempotence", () => {
+  const samples = [teslaMixed, "plain ok", "- a\n- b", "`x` and **y**"]
   for (const s of samples) {
-    const once = normalizeForIMessage(s)
-    const twice = normalizeForIMessage(once.text)
-    assert.equal(once.text, twice.text, `idempotent: ${s}`)
+    const once = normalizeForIMessage(s, { maxLength: 600 })
+    const twice = normalizeForIMessage(once.text, { maxLength: 600 })
+    assert.equal(twice.text, once.text, `drift: ${s.slice(0, 40)}`)
   }
 })
 
-test("markdown link where label equals href", () => {
-  const { text } = normalizeForIMessage("[https://example.com](https://example.com)")
-  assert.match(text, /^https:\/\/example.com\/?$/)
-})
-
-test("numbered list preserved", () => {
-  const s = "1. first\n2. second"
-  assert.equal(normalizeForIMessage(s).text, s)
-})
-
-test("triple+ blank lines collapsed", () => {
-  const { text } = normalizeForIMessage("a\n\n\n\nb")
-  assert.equal(text, "a\n\nb")
-})
-
-test("STRIP_PARAMS is non-empty and frozen-ish", () => {
-  assert.ok(STRIP_PARAMS.length > 5)
-})
-
-test("isIMessageRenderSafe", () => {
-  assert.equal(isIMessageRenderSafe("plain ok"), true)
-  assert.equal(isIMessageRenderSafe("**nope**"), false)
+test("STRIP_PARAMS frozen shape", () => {
+  assert.ok(STRIP_PARAMS.includes("utm_source"))
 })

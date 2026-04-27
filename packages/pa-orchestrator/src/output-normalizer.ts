@@ -1,6 +1,10 @@
-import { planChunks, type ChunkPlan } from "./chunker.js"
+import { planChunks, type PlanChunksOptions } from "./chunker.js"
 
-export const STRIP_PARAMS = [
+/**
+ * UTM/tracking/s — exhaustive list (Phase 20 D-04).
+ * Applied case-insensitively to `URL#searchParams`.
+ */
+export const STRIP_PARAMS: ReadonlyArray<string> = [
   "utm_source",
   "utm_medium",
   "utm_campaign",
@@ -27,6 +31,7 @@ export type NormalizeOpts = {
   maxLength?: number
   stripParams?: ReadonlyArray<string>
   forceSingleMessage?: boolean
+  /** @internal */ planChunkOpts?: PlanChunksOptions
 }
 
 export type NormalizeResult = {
@@ -36,156 +41,123 @@ export type NormalizeResult = {
   wasOverLength: boolean
 }
 
-const DEFAULT_MAX = 600
-
-function collectStripParams(
-  target: Set<string>,
-  list: ReadonlyArray<string> = STRIP_PARAMS as unknown as string[]
-) {
-  for (const p of list) target.add(p.toLowerCase())
+function mergeDropped(acc: string[], names: string[]) {
+  for (const n of names) {
+    if (!acc.includes(n)) acc.push(n)
+  }
+  return acc
 }
 
-function stripUrlSearchParams(
-  rawUrl: string,
-  extraParams: Set<string>
-): { href: string; dropped: string[] } {
-  const dropped: string[] = []
+function stripUrlQueryParams(href: string, paramNames: ReadonlyArray<string>, dropped: string[]): string {
   try {
-    const u = new URL(rawUrl)
-    const keys = [...u.searchParams.keys()]
-    for (const k of keys) {
-      if (extraParams.has(k.toLowerCase())) {
-        u.searchParams.delete(k)
-        dropped.push(k)
+    const u = new URL(href)
+    for (const p of paramNames) {
+      for (const key of [...u.searchParams.keys()]) {
+        if (key.toLowerCase() === p.toLowerCase()) {
+          u.searchParams.delete(key)
+          mergeDropped(dropped, [p])
+        }
       }
     }
-    // Normalize if search became empty
-    let href = u.toString()
-    if (u.search === "" && href.endsWith("?")) {
-      href = href.slice(0, -1)
+    let out = u.toString()
+    if (u.protocol === "http:" || u.protocol === "https:") {
+      if (out.endsWith("?") || out.endsWith("#")) {
+        return out.replace(/\?$/, "").replace(/#$/, "")
+      }
     }
-    return { href, dropped }
+    return out
   } catch {
-    return { href: rawUrl, dropped: [] }
+    return href
   }
+}
+
+function stripCodeFences(input: string): string {
+  return input.replace(/```[\w]*\r?\n([\s\S]*?)```/g, (_m, inner: string) => inner)
+}
+
+function stripInlineCode(input: string): string {
+  return input.replace(/`([^`]+)`/g, "$1")
+}
+
+function replaceMarkdownLinks(input: string, paramNames: ReadonlyArray<string>, dropped: string[]): string {
+  return input.replace(/\[([^\]]*)\]\(([^)]+)\)/g, (full, text: string, urlRaw: string) => {
+    const href = urlRaw.trim()
+    const u = stripUrlQueryParams(href, paramNames, dropped)
+    const t = (text as string).trim()
+    if (t.length === 0) return u
+    if (t === href || t === u) return u
+    if (u.length <= 30) return `${t} ${u}`
+    return `${t} (${u})`
+  })
+}
+
+const BARE_URL_RE = /(https?:\/\/[^\s\]]+)/gi
+
+function stripBareUrlsInText(input: string, paramNames: ReadonlyArray<string>, dropped: string[]): string {
+  return input.replace(BARE_URL_RE, (m) => stripUrlQueryParams(m, paramNames, dropped))
+}
+
+function stripEmphasis(input: string): string {
+  let s = input
+  s = s.replace(/\*\*([^*]+)\*\*/g, "$1")
+  s = s.replace(/__([^_]+)__/g, "$1")
+  s = s.replace(/(?<![*\w])\*([^*\n]+)\*(?![*\w])/g, "$1")
+  s = s.replace(/(?<![_\w])_([^_\n]+)_(?![_\w])/g, "$1")
+  return s
+}
+
+function replaceListMarkers(input: string): string {
+  return input
+    .split("\n")
+    .map((line) => line.replace(/^(\s*)([-*])\s+/, "$1· "))
+    .join("\n")
+}
+
+function normalizeWhitespace(input: string): string {
+  let s = input.replace(/[ \t]+$/gm, "")
+  s = s.replace(/(?:\n[ \t]*){3,}/g, "\n\n")
+  s = s.trim()
+  return s
 }
 
 /**
- * iMessage / SMS-safe text: no markdown, no tracking query params in URLs.
+ * iMessage-safe plain text at orchestrator exit. Idempotent for stable inputs
+ * (see unit tests). Rule order per Phase 20 PLAN.
  */
-export function normalizeForIMessage(input: string, opts: NormalizeOpts = {}): NormalizeResult {
-  const maxLength = opts.maxLength ?? DEFAULT_MAX
-  const paramSet = new Set<string>()
-  collectStripParams(paramSet, opts.stripParams)
-  for (const p of STRIP_PARAMS) {
-    paramSet.add(p.toLowerCase())
+export function normalizeForIMessage(input: string, opts?: NormalizeOpts): NormalizeResult {
+  const maxLength = opts?.maxLength ?? 600
+  const paramNames = opts?.stripParams ?? STRIP_PARAMS
+  const dropped: string[] = []
+  if (!input || !input.trim()) {
+    return { text: "", droppedTracking: [], wasOverLength: false }
   }
 
-  const allDropped: string[] = []
-  const recordDropped = (d: string[]) => {
-    for (const x of d) {
-      if (!allDropped.includes(x)) allDropped.push(x)
+  let s = stripCodeFences(input)
+  s = stripInlineCode(s)
+  s = replaceMarkdownLinks(s, paramNames, dropped)
+  s = stripBareUrlsInText(s, paramNames, dropped)
+  s = stripEmphasis(s)
+  s = replaceListMarkers(s)
+  s = normalizeWhitespace(s)
+
+  const strippedLen = s.length
+  const wasOverLength = strippedLen > maxLength
+  if (opts?.forceSingleMessage) {
+    if (s.length > maxLength) {
+      s = s.slice(0, Math.max(0, maxLength - 1)) + "…"
     }
+    return { text: s, droppedTracking: dropped, wasOverLength }
   }
-
-  let s = input
-
-  // 1) Fenced code blocks
-  s = s.replace(/```[a-zA-Z0-9]*\n?([\s\S]*?)\n?```/g, "$1")
-
-  // 2) Inline backticks
-  s = s.replace(/`([^`]+)`/g, "$1")
-
-  // 3) Markdown links
-  s = s.replace(/\[([^\]\n]*)\]\(([^)\n]+)\)/g, (full, label, url) => {
-    const { href, dropped } = stripUrlSearchParams(String(url), paramSet)
-    recordDropped(dropped)
-    const text = String(label).trim()
-    const h = href.trim()
-    const sameAsUrl = (a: string, b: string) => {
-      if (a === b) return true
-      try {
-        return new URL(a).href === new URL(b).href
-      } catch {
-        return false
-      }
-    }
-    if (text === h || text === h.replace(/^https?:\/\//, "") || sameAsUrl(text, h)) {
-      return h
-    }
-    if (h.length <= 30) {
-      return text ? `${text} ${h}` : h
-    }
-    return text ? `${text} (${h})` : h
-  })
-
-  // 4) Bare URLs
-  s = s.replace(/https?:\/\/[^\s)\]]+/g, (m) => {
-    const { href, dropped } = stripUrlSearchParams(m, paramSet)
-    recordDropped(dropped)
-    return href
-  })
-
-  // 5) Emphasis: **…** and __…__ (loop for nested, e.g. ***a***), then *…* / _…_
-  let prev = ""
-  while (prev !== s) {
-    prev = s
-    s = s.replace(/\*\*([^*]+?)\*\*/g, "$1")
-    s = s.replace(/__([^_]+?)__/g, "$1")
+  if (s.length <= maxLength) {
+    return { text: s, droppedTracking: dropped, wasOverLength: false }
   }
-  prev = ""
-  while (prev !== s) {
-    prev = s
-    s = s.replace(/\*([^*]+?)\*/g, "$1")
-    s = s.replace(/_([^_]+?)_/g, "$1")
+  const plan = planChunks(s, { maxChunks: 3, minChunkableLen: 60, ...opts?.planChunkOpts })
+  if (plan.chunks.length === 0) {
+    return { text: s.slice(0, maxLength - 1) + "…", droppedTracking: dropped, wasOverLength: true }
   }
-
-  // 6) List markers: hyphen / asterisk bullets (not numbered)
-  s = s.replace(/^[\u002d*][ \t]+/gm, "· ")
-
-  // 7) Whitespace
-  s = s.replace(/\n{3,}/g, "\n\n")
-  s = s
-    .split("\n")
-    .map((line) => line.replace(/[ \t]+$/g, ""))
-    .join("\n")
-  s = s.trim()
-
-  if (s.length === 0) {
-    return { text: "", droppedTracking: allDropped, wasOverLength: false }
+  if (plan.chunks.length === 1) {
+    return { text: plan.chunks[0]!, droppedTracking: dropped, wasOverLength: true }
   }
-
-  if (s.length <= maxLength || opts.forceSingleMessage) {
-    if (s.length > maxLength && opts.forceSingleMessage) {
-      const cut = s.slice(0, Math.max(0, maxLength - 1)) + "…"
-      return { text: cut, droppedTracking: allDropped, wasOverLength: true }
-    }
-    return { text: s, droppedTracking: allDropped, wasOverLength: false }
-  }
-
-  // 8) Length: chunk or truncate
-  const wasOverLength = s.length > maxLength
-  const plan: ChunkPlan = planChunks(s, { maxChunks: 3, minChunkableLen: 60 })
-  if (plan.chunks.length >= 2) {
-    const allUnder = plan.chunks.every((c) => c.length <= maxLength)
-    if (allUnder) {
-      return {
-        text: plan.chunks.join("\n\n"),
-        chunks: plan.chunks,
-        droppedTracking: allDropped,
-        wasOverLength,
-      }
-    }
-  }
-  const cut = s.slice(0, Math.max(0, maxLength - 1)) + "…"
-  return { text: cut, droppedTracking: allDropped, wasOverLength: true }
-}
-
-/** Regex gate for eval harness: markdown leaking into user-visible text. */
-export function isIMessageRenderSafe(text: string): boolean {
-  if (/\*\*.+?\*\*/.test(text)) return false
-  if (/\[.+?\]\(.+?\)/.test(text)) return false
-  if (/^[\-\*][ \t]/m.test(text)) return false
-  if (/`{1,3}/.test(text)) return false
-  return true
+  const text = plan.chunks.join("\n\n")
+  return { text, chunks: plan.chunks, droppedTracking: dropped, wasOverLength: true }
 }
