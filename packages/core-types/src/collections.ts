@@ -42,6 +42,8 @@ export const PA_COLLECTIONS = {
   surpriseEvents: "pa_surprise_events",
   scheduledJobs: "pa_scheduled_jobs",
   runtimeHeartbeats: "pa_runtime_heartbeats",
+  /** Per-worker durable cursors (e.g. last processed iMessage ROWID) */
+  workerCursors: "pa_worker_cursors",
 } as const
 
 export const PA_REMOTE_CONFIG_DOC = "platform"

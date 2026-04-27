@@ -2,7 +2,7 @@ import { IMessageError, IMessageSDK } from "@photon-ai/imessage-kit"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import type { Firestore } from "firebase-admin/firestore"
 import { appendMessage, getOrCreateSession, getUser, normalizeE164 } from "@pa/pa-persistence"
-import { isSamePeer } from "./config.js"
+import { getPeerAllowlist, isSamePeer, useDmAllowlist } from "./config.js"
 import {
   deliverChunks,
   isTypingIndicatorEnabled,
@@ -118,6 +118,24 @@ export async function processOutboundJob(
   const toPeer = normalizeOutboundPeer(String(raw.toE164 ?? ""))
   const imessageChatId = String(raw.imessageChatId ?? "").trim()
   const body = String(raw.body ?? "").trim()
+  // Layer 1 — unified DM allowlist (same gate as inbound). Fail-closed:
+  // when enforcement is on (default) and peer not in list, refuse outbound.
+  if (useDmAllowlist()) {
+    const peers = getPeerAllowlist()
+    if (peers.length === 0 || !peers.some((p) => isSamePeer(toPeer, p))) {
+      log("[outbox] blocked by IMESSAGE allowlist", docId, toPeer, `peers=${peers.length}`)
+      await ref.set(
+        {
+          status: "failed",
+          error: "blocked by IMESSAGE_DM_ALLOWLIST",
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true }
+      )
+      return
+    }
+  }
+  // Layer 2 — legacy single-peer env, kept for backward compat (extra guard).
   const allowedTo = process.env.PA_OUTBOUND_ALLOWLIST_E164?.trim()
   if (allowedTo && !isSamePeer(toPeer, allowedTo)) {
     log("[outbox] blocked by PA_OUTBOUND_ALLOWLIST_E164", docId, toPeer)

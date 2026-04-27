@@ -43,6 +43,18 @@ export function isSamePeer(a: string | null, b: string): boolean {
   return false
 }
 
+/**
+ * Fail-closed by default.
+ *
+ * Truth table:
+ *   IMESSAGE_DM_ALLOWLIST="0"  → allowlist DISABLED (dev / echo-only). All DMs accepted.
+ *   IMESSAGE_DM_ALLOWLIST="1"  → enforce allowlist (peers must match).
+ *   <unset>                    → enforce allowlist (DEFAULT — production safe).
+ *
+ * Returns true when the allowlist is in force. Combined with
+ * `getPeerAllowlist()` in the worker: empty list under enforcement = deny ALL,
+ * which is the safe default for an unconfigured production worker.
+ */
 export function useDmAllowlist(): boolean {
-  return process.env.IMESSAGE_DM_ALLOWLIST === "1" && getPeerAllowlist().length > 0
+  return process.env.IMESSAGE_DM_ALLOWLIST !== "0"
 }

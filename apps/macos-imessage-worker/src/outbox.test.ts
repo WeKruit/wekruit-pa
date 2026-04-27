@@ -102,9 +102,11 @@ function fakeFirestore(docs: Record<string, Record<string, unknown>>) {
   return { db: db as unknown as Firestore, store }
 }
 
-test("allowlist mismatch marks outbound failed instead of leaving it stuck in sending", async () => {
-  const previous = process.env.PA_OUTBOUND_ALLOWLIST_E164
+test("legacy PA_OUTBOUND_ALLOWLIST_E164 mismatch marks outbound failed", async () => {
+  const prevLegacy = process.env.PA_OUTBOUND_ALLOWLIST_E164
+  const prevDm = process.env.IMESSAGE_DM_ALLOWLIST
   process.env.PA_OUTBOUND_ALLOWLIST_E164 = "+12154034668"
+  process.env.IMESSAGE_DM_ALLOWLIST = "0" // disable layer 1 to isolate legacy gate
   try {
     const { db, store } = fakeFirestore({
       out1: {
@@ -121,8 +123,84 @@ test("allowlist mismatch marks outbound failed instead of leaving it stuck in se
     assert.equal(store.get("out1")?.status, "failed")
     assert.equal(store.get("out1")?.error, "blocked by PA_OUTBOUND_ALLOWLIST_E164")
   } finally {
-    if (previous == null) delete process.env.PA_OUTBOUND_ALLOWLIST_E164
-    else process.env.PA_OUTBOUND_ALLOWLIST_E164 = previous
+    if (prevLegacy == null) delete process.env.PA_OUTBOUND_ALLOWLIST_E164
+    else process.env.PA_OUTBOUND_ALLOWLIST_E164 = prevLegacy
+    if (prevDm == null) delete process.env.IMESSAGE_DM_ALLOWLIST
+    else process.env.IMESSAGE_DM_ALLOWLIST = prevDm
+  }
+})
+
+test("IMESSAGE_DM_ALLOWLIST fail-closed: empty list blocks outbound by default", async () => {
+  const prevDm = process.env.IMESSAGE_DM_ALLOWLIST
+  const prevPeer = process.env.IMESSAGE_PEER
+  const prevPeers = process.env.IMESSAGE_PEERS
+  delete process.env.IMESSAGE_DM_ALLOWLIST // default = enforce
+  delete process.env.IMESSAGE_PEER
+  delete process.env.IMESSAGE_PEERS
+  try {
+    const { db, store } = fakeFirestore({
+      out1: {
+        status: "pending",
+        userId: "u1",
+        toE164: "+19999999999",
+        body: "blocked",
+        createdAt: "2026-04-24T00:00:00.000Z",
+      },
+    })
+
+    await processOutboundJob(db, { send: async () => undefined } as never, () => undefined, "out1", store.get("out1")!)
+
+    assert.equal(store.get("out1")?.status, "failed")
+    assert.equal(store.get("out1")?.error, "blocked by IMESSAGE_DM_ALLOWLIST")
+  } finally {
+    if (prevDm == null) delete process.env.IMESSAGE_DM_ALLOWLIST
+    else process.env.IMESSAGE_DM_ALLOWLIST = prevDm
+    if (prevPeer == null) delete process.env.IMESSAGE_PEER
+    else process.env.IMESSAGE_PEER = prevPeer
+    if (prevPeers == null) delete process.env.IMESSAGE_PEERS
+    else process.env.IMESSAGE_PEERS = prevPeers
+  }
+})
+
+test("IMESSAGE_DM_ALLOWLIST allows outbound when peer in list", async () => {
+  const prevDm = process.env.IMESSAGE_DM_ALLOWLIST
+  const prevPeer = process.env.IMESSAGE_PEER
+  process.env.IMESSAGE_DM_ALLOWLIST = "1"
+  process.env.IMESSAGE_PEER = "+12154034668"
+  try {
+    const sends: Array<{ to: string; text: string }> = []
+    const sdk = { async send(arg: { to: string; text: string }) { sends.push(arg) } }
+    const { db, store } = fakeFirestore({
+      out1: {
+        status: "pending",
+        userId: "u1",
+        toE164: "+12154034668",
+        body: "ok",
+        imessageChatId: "+12154034668",
+        createdAt: "2026-04-24T00:00:00.000Z",
+        idempotencyKey: "out-imessage-in-1", // skip transcript append (no real db ops)
+      },
+    })
+
+    // The fake Firestore only knows about pa_outbound; getUser will throw
+    // on the pa_users assertion. That's fine — we only care that the run
+    // got PAST the allowlist gate (i.e. no early `failed: blocked by ...`).
+    await processOutboundJob(db, sdk as never, () => undefined, "out1", store.get("out1")!).catch(
+      () => undefined
+    )
+
+    const status = String(store.get("out1")?.status ?? "")
+    const err = String(store.get("out1")?.error ?? "")
+    assert.notEqual(status, "failed", `expected past-gate status, got failed err=${err}`)
+    assert.ok(
+      !err.includes("ALLOWLIST"),
+      `allowlist should NOT have blocked, got: ${err}`
+    )
+  } finally {
+    if (prevDm == null) delete process.env.IMESSAGE_DM_ALLOWLIST
+    else process.env.IMESSAGE_DM_ALLOWLIST = prevDm
+    if (prevPeer == null) delete process.env.IMESSAGE_PEER
+    else process.env.IMESSAGE_PEER = prevPeer
   }
 })
 

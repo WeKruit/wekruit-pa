@@ -35,6 +35,12 @@ import { getImessageSessionExternalId } from "./imessage-session.js"
 import { getPlatformFlags } from "./platform-flags.js"
 import { deliverOutboundBody, startOutboundListener } from "./outbox.js"
 import {
+  getWorkerId,
+  isCursorDisabled,
+  loadWorkerCursor,
+  saveWorkerCursor,
+} from "./cursor.js"
+import {
   getHealthState,
   initHealthConfigFromEnv,
   setHealthFlags,
@@ -134,7 +140,17 @@ async function handleDirectMessage(msg: Message) {
   try {
     const from = msg.participant
     if (!from) return
-    if (useDmAllowlist() && !getPeerAllowlist().some((peer) => isSamePeer(from, peer))) return
+    if (useDmAllowlist()) {
+      const peers = getPeerAllowlist()
+      if (peers.length === 0) {
+        log(`[allowlist] DENY (empty list, enforcement on) from=${from} rowId=${msg.rowId}`)
+        return
+      }
+      if (!peers.some((peer) => isSamePeer(from, peer))) {
+        log(`[allowlist] DENY (not in list) from=${from} rowId=${msg.rowId}`)
+        return
+      }
+    }
     if (!msg.chatId) {
       log("[skip] no chatId")
       return
@@ -406,6 +422,21 @@ async function handleDirectMessage(msg: Message) {
   }
 }
 
+// Always log allowlist state regardless of watch/poll mode — operator must
+// see at-a-glance whether the gate is fail-closed (peers listed) or
+// explicitly disabled (IMESSAGE_DM_ALLOWLIST=0).
+const allowlistOn = useDmAllowlist()
+const peerList = getPeerAllowlist()
+if (allowlistOn) {
+  if (peerList.length === 0) {
+    log("[allowlist] ENFORCED but EMPTY — denying ALL inbound + outbound. Set IMESSAGE_PEERS to enable.")
+  } else {
+    log(`[allowlist] ENFORCED peers=${peerList.length} (${getPeerDisplay()})`)
+  }
+} else {
+  log("[allowlist] DISABLED (IMESSAGE_DM_ALLOWLIST=0) — accepting ALL DMs")
+}
+
 if (WATCH_MODE === "watch" || WATCH_MODE === "watch-and-poll") {
   await sdk.startWatching({
     onDirectMessage: handleDirectMessage,
@@ -413,7 +444,7 @@ if (WATCH_MODE === "watch" || WATCH_MODE === "watch-and-poll") {
       log("[watcher error]", err)
     },
   })
-  log(`Watcher running. Allowlist: ${useDmAllowlist() ? getPeerDisplay() : "all DMs"}`)
+  log(`Watcher running.`)
 } else {
   log(`Watcher disabled (PA_IMESSAGE_WATCH_MODE=${WATCH_MODE}); using polling fallback`)
 }
@@ -427,28 +458,60 @@ async function startPollingFallback() {
   if (POLL_MS <= 0) return
   const configuredFromRowRaw = process.env.PA_IMESSAGE_POLL_FROM_ROW?.trim()
   const configuredFromRow = configuredFromRowRaw ? Number(configuredFromRowRaw) : NaN
-  let lastRowId = Number.isFinite(configuredFromRow) && configuredFromRow >= 0
-    ? configuredFromRow
-    : await getLatestMessageRowId()
-  log(`[poll] inbound fallback every ${POLL_MS}ms from row ${lastRowId}`)
+  const envOverride = Number.isFinite(configuredFromRow) && configuredFromRow >= 0
+  const cursorEnabled = !isCursorDisabled() && db !== null
+  const workerId = getWorkerId()
+
+  let lastRowId: number
+  let cursorSource: "env-override" | "firestore" | "latest" = "latest"
+  if (envOverride) {
+    lastRowId = configuredFromRow
+    cursorSource = "env-override"
+  } else if (cursorEnabled) {
+    const stored = db ? await loadWorkerCursor(db, workerId) : null
+    if (stored) {
+      lastRowId = stored.lastRowId
+      cursorSource = "firestore"
+    } else {
+      lastRowId = await getLatestMessageRowId()
+    }
+  } else {
+    lastRowId = await getLatestMessageRowId()
+  }
+  log(
+    `[poll] inbound fallback every ${POLL_MS}ms from row ${lastRowId} ` +
+      `source=${cursorSource} worker=${workerId} cursor=${cursorEnabled ? "on" : "off"}`
+  )
 
   let polling = false
   const poll = async () => {
     if (polling) return
     polling = true
+    let advanced = false
     try {
       const messages = getDirectMessagesAfterRowId(lastRowId)
       if (messages.length > 0) {
         log("[poll] messages", messages.map((m) => m.rowId).join(","))
       }
       for (const msg of messages) {
-        lastRowId = Math.max(lastRowId, msg.rowId)
+        if (msg.rowId > lastRowId) {
+          lastRowId = msg.rowId
+          advanced = true
+        }
         await handleDirectMessage(msg)
       }
     } catch (e) {
       log("[poll] error", e)
     } finally {
       polling = false
+    }
+    if (advanced && cursorEnabled && db) {
+      try {
+        await saveWorkerCursor(db, workerId, lastRowId)
+        log(`[cursor] saved row=${lastRowId} worker=${workerId}`)
+      } catch (e) {
+        log("[cursor] save failed", e)
+      }
     }
   }
 
