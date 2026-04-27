@@ -31,6 +31,19 @@ export type ClearUserMemoryOptions = {
   keepMessages?: boolean
   /** When true, count what would be deleted but write nothing. */
   dryRun?: boolean
+  /**
+   * Phase 11.3 — Mem0/Qdrant partition key. When supplied, the Qdrant
+   * filter `user_id` uses this value instead of `userId`. Firestore
+   * deletes ALWAYS scope on `userId` (Firestore is the canonical
+   * `userId`-keyed surface; see 11-IDENTITY-CONTRACT.md §3.1).
+   *
+   * Pass `resolveMem0PartitionKey(user)` from `@pa/memory` — never read
+   * `User.mem0UserId` directly.
+   *
+   * When omitted, behavior is byte-identical to pre-11.3
+   * (`user_id == userId`), which is correct for backfilled users.
+   */
+  mem0PartitionKey?: string
 }
 
 export type ClearUserMemoryResult = {
@@ -47,12 +60,19 @@ function noop() {}
 async function clearQdrantForUser(
   userId: string,
   deps: ClearUserMemoryDeps,
-  dryRun: boolean
+  dryRun: boolean,
+  partitionKey?: string
 ): Promise<{ collection: string; matched: number; deleted: boolean }> {
   const collection = deps.qdrantCollection ?? DEFAULT_QDRANT_COLLECTION
   const url = deps.qdrantUrl.replace(/\/+$/, "")
   const fetchFn = deps.fetch ?? fetch
-  const filter = { must: [{ key: "user_id", match: { value: userId } }] }
+  // Phase 11.3: when caller supplies a non-empty partition key, use it for
+  // the Qdrant filter. Otherwise fall back to userId (legacy / byte-identical).
+  const qdrantKey =
+    typeof partitionKey === "string" && partitionKey.trim().length > 0
+      ? partitionKey.trim()
+      : userId
+  const filter = { must: [{ key: "user_id", match: { value: qdrantKey } }] }
   const headers = { "api-key": deps.qdrantApiKey, "content-type": "application/json" }
 
   const countResp = await fetchFn(`${url}/collections/${collection}/points/count`, {
@@ -104,7 +124,7 @@ export async function clearUserMemory(
   const keepMessages = options.keepMessages === true
   log(`[clear-user] userId=${userId} dryRun=${dryRun} keepMessages=${keepMessages}`)
 
-  const qdrant = await clearQdrantForUser(userId, deps, dryRun)
+  const qdrant = await clearQdrantForUser(userId, deps, dryRun, options.mem0PartitionKey)
   log(`[clear-user] qdrant matched=${qdrant.matched} deleted=${qdrant.deleted}`)
 
   const firestore: Record<string, number> = {}

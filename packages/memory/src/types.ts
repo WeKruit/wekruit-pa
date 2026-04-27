@@ -5,12 +5,15 @@ export type Mem0DegradedReason = "no_api_key" | "search_failed"
 export type LoadContextInput = {
   userId: string
   /**
-   * Optional explicit Mem0 partition key. When unset, `userId` is used as the
-   * partition (current production behavior). Set by the broker worker to
-   * `user.mem0UserId ?? user.id` so future migrations can decouple Mem0
-   * partitioning from Firestore user ids without a worker change.
-   * NOTE (Phase 1 merge): currently ignored by `stacked.ts` — see Phase 4
-   * (Agent / Memory Management) for full enablement.
+   * Mem0/Qdrant partition key. Caller MUST resolve via
+   * `resolveMem0PartitionKey(user)` from `@pa/memory` before passing — never
+   * read `User.mem0UserId` directly (the resolver normalizes empty/undefined).
+   *
+   * Phase 11.3 read-path: when env `PA_MEM0_USE_PARTITION_KEY=true`, this
+   * value is used as the Mem0/Qdrant partition. When unset / `false` /
+   * `mem0UserId` is missing, falls back to `userId` (legacy behavior).
+   * Drift (resolved key !== userId) emits `pa_audit_events` row
+   * `kind="memory.identity_drift", surface="orchestrator_turn"`.
    */
   mem0UserId?: string
   sessionId: string
@@ -41,7 +44,11 @@ export type LoadContextResult = {
 
 export type AfterTurnInput = {
   userId: string
-  /** See `LoadContextInput.mem0UserId` — currently advisory, ignored by stacked.ts. */
+  /**
+   * Mem0/Qdrant writeback partition. See `LoadContextInput.mem0UserId`.
+   * MUST match the read-path partition or recall misses on the next turn.
+   * Drift emits `surface="after_turn"`.
+   */
   mem0UserId?: string
   sessionId: string
   userText: string

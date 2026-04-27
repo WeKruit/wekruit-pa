@@ -149,3 +149,223 @@ test("add failure returns add_failed", async () => {
   assert.equal(after.writebackRan, false)
   assert.equal(after.writebackSkipReason, "add_failed")
 })
+
+// ----------------------------------------------------------------------------
+// Phase 11.3 — partition-key kill switch (PA_MEM0_USE_PARTITION_KEY)
+// ----------------------------------------------------------------------------
+
+function withEnv<T>(key: string, value: string | undefined, fn: () => Promise<T>): Promise<T> {
+  const prev = process.env[key]
+  if (value === undefined) delete process.env[key]
+  else process.env[key] = value
+  return fn().finally(() => {
+    if (prev === undefined) delete process.env[key]
+    else process.env[key] = prev
+  })
+}
+
+test("11.3 kill switch DEFAULT (unset): mem0Search/mem0Add use userId, not mem0UserId", async () => {
+  await withEnv("PA_MEM0_USE_PARTITION_KEY", undefined, async () => {
+    let searchedWith: string | null = null
+    let addedWith: string | null = null
+    const deps: MemoryStackDeps = {
+      getMem0Config: () => fakeMem0Config(),
+      mem0Search: async (_c, _q, uid) => {
+        searchedWith = uid
+        return []
+      },
+      mem0Add: async (_c, _msgs, uid) => {
+        addedWith = uid
+      },
+    }
+    await loadPersonalizationContext(
+      fakeDb,
+      {
+        userId: "u1",
+        mem0UserId: "alt_partition",
+        sessionId: "s1",
+        userMessage: "hi",
+        memoryMode: "mem0",
+      },
+      [],
+      deps
+    )
+    await afterAssistantTurn(
+      fakeDb,
+      minimalAgent,
+      {
+        userId: "u1",
+        mem0UserId: "alt_partition",
+        sessionId: "s1",
+        userText: "u",
+        assistantText: "a",
+        memoryMode: "mem0",
+      },
+      deps
+    )
+    assert.equal(searchedWith, "u1", "kill switch off → search keys on userId")
+    assert.equal(addedWith, "u1", "kill switch off → add keys on userId")
+  })
+})
+
+test("11.3 kill switch =false explicit: still legacy userId path", async () => {
+  await withEnv("PA_MEM0_USE_PARTITION_KEY", "false", async () => {
+    let searchedWith: string | null = null
+    const deps: MemoryStackDeps = {
+      getMem0Config: () => fakeMem0Config(),
+      mem0Search: async (_c, _q, uid) => {
+        searchedWith = uid
+        return []
+      },
+      mem0Add: async () => {},
+    }
+    await loadPersonalizationContext(
+      fakeDb,
+      {
+        userId: "u1",
+        mem0UserId: "alt_partition",
+        sessionId: "s1",
+        userMessage: "hi",
+        memoryMode: "mem0",
+      },
+      [],
+      deps
+    )
+    assert.equal(searchedWith, "u1")
+  })
+})
+
+test("11.3 kill switch =true: mem0Search uses resolved partition", async () => {
+  await withEnv("PA_MEM0_USE_PARTITION_KEY", "true", async () => {
+    let searchedWith: string | null = null
+    const deps: MemoryStackDeps = {
+      getMem0Config: () => fakeMem0Config(),
+      mem0Search: async (_c, _q, uid) => {
+        searchedWith = uid
+        return []
+      },
+      mem0Add: async () => {},
+    }
+    await loadPersonalizationContext(
+      fakeDb,
+      {
+        userId: "u1",
+        mem0UserId: "alt_partition",
+        sessionId: "s1",
+        userMessage: "hi",
+        memoryMode: "mem0",
+      },
+      [],
+      deps
+    )
+    assert.equal(searchedWith, "alt_partition", "kill switch on → search keys on resolved partition")
+  })
+})
+
+test("11.3 kill switch =true: mem0Add uses resolved partition", async () => {
+  await withEnv("PA_MEM0_USE_PARTITION_KEY", "true", async () => {
+    let addedWith: string | null = null
+    const deps: MemoryStackDeps = {
+      getMem0Config: () => fakeMem0Config(),
+      mem0Search: async () => [],
+      mem0Add: async (_c, _msgs, uid) => {
+        addedWith = uid
+      },
+    }
+    await afterAssistantTurn(
+      fakeDb,
+      minimalAgent,
+      {
+        userId: "u1",
+        mem0UserId: "alt_partition",
+        sessionId: "s1",
+        userText: "u",
+        assistantText: "a",
+        memoryMode: "mem0",
+      },
+      deps
+    )
+    assert.equal(addedWith, "alt_partition")
+  })
+})
+
+test("11.3 kill switch =true but mem0UserId missing: still falls back to userId", async () => {
+  await withEnv("PA_MEM0_USE_PARTITION_KEY", "true", async () => {
+    let searchedWith: string | null = null
+    const deps: MemoryStackDeps = {
+      getMem0Config: () => fakeMem0Config(),
+      mem0Search: async (_c, _q, uid) => {
+        searchedWith = uid
+        return []
+      },
+      mem0Add: async () => {},
+    }
+    await loadPersonalizationContext(
+      fakeDb,
+      {
+        userId: "u1",
+        // mem0UserId intentionally omitted
+        sessionId: "s1",
+        userMessage: "hi",
+        memoryMode: "mem0",
+      },
+      [],
+      deps
+    )
+    assert.equal(searchedWith, "u1")
+  })
+})
+
+test("11.3 kill switch =true but mem0UserId is empty/whitespace: falls back to userId", async () => {
+  await withEnv("PA_MEM0_USE_PARTITION_KEY", "true", async () => {
+    let searchedWith: string | null = null
+    const deps: MemoryStackDeps = {
+      getMem0Config: () => fakeMem0Config(),
+      mem0Search: async (_c, _q, uid) => {
+        searchedWith = uid
+        return []
+      },
+      mem0Add: async () => {},
+    }
+    await loadPersonalizationContext(
+      fakeDb,
+      {
+        userId: "u1",
+        mem0UserId: "   ",
+        sessionId: "s1",
+        userMessage: "hi",
+        memoryMode: "mem0",
+      },
+      [],
+      deps
+    )
+    assert.equal(searchedWith, "u1")
+  })
+})
+
+test("11.3 kill switch =true with mem0UserId === userId: no drift, no extra writes", async () => {
+  await withEnv("PA_MEM0_USE_PARTITION_KEY", "true", async () => {
+    let searchedWith: string | null = null
+    const deps: MemoryStackDeps = {
+      getMem0Config: () => fakeMem0Config(),
+      mem0Search: async (_c, _q, uid) => {
+        searchedWith = uid
+        return []
+      },
+      mem0Add: async () => {},
+    }
+    await loadPersonalizationContext(
+      fakeDb,
+      {
+        userId: "u1",
+        mem0UserId: "u1",
+        sessionId: "s1",
+        userMessage: "hi",
+        memoryMode: "mem0",
+      },
+      [],
+      deps
+    )
+    assert.equal(searchedWith, "u1")
+  })
+})
