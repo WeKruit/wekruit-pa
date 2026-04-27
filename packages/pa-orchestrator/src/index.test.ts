@@ -53,6 +53,7 @@ function makeStore(overrides: Partial<OrchestratorStore> = {}): OrchestratorStor
     updateTurn: async () => undefined,
     appendMessage: async () => undefined,
     getAgentForUser: async () => agent,
+    getMem0UserId: async () => undefined,
     loadHistory: async () => [],
     enqueueOutbound: async () => undefined,
     listMemoryFacts: async () => facts,

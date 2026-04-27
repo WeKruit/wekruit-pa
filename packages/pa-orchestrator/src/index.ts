@@ -55,6 +55,14 @@ export type OrchestratorStore = {
   updateTurn(turnId: string, patch: Record<string, unknown>): Promise<void>
   appendMessage(message: Omit<ChatMessage, "id"> & { id?: string }): Promise<void>
   getAgentForUser(userId: string): Promise<AgentDef | null>
+  /**
+   * Phase 11.3 — return the operator-set Mem0/Qdrant partition key for
+   * this user, or `undefined` when unset. Callers MUST run the result
+   * through `resolveMem0PartitionKey` (or use the resolver helper) — never
+   * pass the raw value directly to mem0Search/mem0Add. Returning
+   * `undefined` is the legacy path; the resolver falls back to `userId`.
+   */
+  getMem0UserId(userId: string): Promise<string | undefined>
   loadHistory(sessionId: string, limit: number): Promise<ChatMessage[]>
   enqueueOutbound(userId: string, toE164: string, body: string, input?: Partial<OutboundMessage>): Promise<void>
   listMemoryFacts(userId: string): Promise<MemoryFact[]>
@@ -71,7 +79,17 @@ export type OrchestratorStore = {
   }): Promise<void>
   loadPersonalizationContext(
     agent: AgentDef,
-    input: { userId: string; sessionId: string; userMessage: string; memoryMode: AgentDef["memoryMode"] },
+    input: {
+      userId: string
+      /**
+       * Phase 11.3 — resolved Mem0/Qdrant partition key. Caller (this
+       * orchestrator) populates from `getMem0UserId` below.
+       */
+      mem0UserId?: string
+      sessionId: string
+      userMessage: string
+      memoryMode: AgentDef["memoryMode"]
+    },
     history: ChatMessage[]
   ): Promise<LoadContextResult>
   /**
@@ -108,6 +126,8 @@ export type OrchestratorStore = {
   runAgentTurn: RunAgentTurn
   afterAssistantTurn(agent: AgentDef, input: {
     userId: string
+    /** Phase 11.3 — resolved Mem0/Qdrant partition key. */
+    mem0UserId?: string
     sessionId: string
     userText: string
     assistantText: string
@@ -429,9 +449,21 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     })
     const history = await store.loadHistory(event.sessionId, HISTORY_LIMIT)
     const facts = await store.listMemoryFacts(event.userId)
+    // Phase 11.3 — load the Mem0 partition key once per turn and thread it
+    // through both memory call sites. `stacked.ts` only honors this when
+    // `PA_MEM0_USE_PARTITION_KEY=true`; passing it always is forward-safe
+    // (worker path already does this), and means flipping the kill switch
+    // is a pure env-var change with no orchestrator redeploy.
+    const mem0UserIdForTurn = await store.getMem0UserId(event.userId)
     const mem = await store.loadPersonalizationContext(
       agent,
-      { userId: event.userId, sessionId: event.sessionId, userMessage: event.body, memoryMode: agent.memoryMode },
+      {
+        userId: event.userId,
+        mem0UserId: mem0UserIdForTurn ?? event.userId,
+        sessionId: event.sessionId,
+        userMessage: event.body,
+        memoryMode: agent.memoryMode,
+      },
       history
     )
     await store.updateTurn(turnId, {
@@ -513,6 +545,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     })
     const after = await store.afterAssistantTurn(agent, {
       userId: event.userId,
+      mem0UserId: mem0UserIdForTurn ?? event.userId,
       sessionId: event.sessionId,
       userText: event.body,
       assistantText: reply,
@@ -656,6 +689,12 @@ export function createFirestoreOrchestratorStore(db: Firestore): OrchestratorSto
       const u = await db.collection(PA_COLLECTIONS.users).doc(userId).get()
       const activeAgentId = (u.data() as { activeAgentId?: string } | undefined)?.activeAgentId
       return (activeAgentId && (await getAgentById(db, activeAgentId))) || (await getDefaultAgent(db))
+    },
+    async getMem0UserId(userId) {
+      const u = await db.collection(PA_COLLECTIONS.users).doc(userId).get()
+      const raw = (u.data() as { mem0UserId?: string | null } | undefined)?.mem0UserId
+      if (typeof raw === "string" && raw.trim().length > 0) return raw.trim()
+      return undefined
     },
     async loadHistory(sessionId, limit) {
       return loadRecentMessages(db, sessionId, limit)
