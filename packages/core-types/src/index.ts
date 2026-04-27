@@ -165,6 +165,18 @@ export const OutboundMessageSchema = z.object({
   claimedAt: z.string().optional(),
   sentAt: z.string().optional(),
   updatedAt: z.string().optional(),
+  /**
+   * Phase 15 — chunked delivery plan, if the worker delivered the
+   * outbound body as 2+ chunks (typing-indicator simulation). Optional
+   * + additive: workers and consumers that pre-date Phase 15 simply
+   * ignore this field. Operator dashboards may surface a badge.
+   */
+  chunkPlan: z
+    .object({
+      count: z.number().int().min(1),
+      delaysMs: z.array(z.number().int().nonnegative()),
+    })
+    .optional(),
 })
 export type OutboundMessage = z.infer<typeof OutboundMessageSchema>
 

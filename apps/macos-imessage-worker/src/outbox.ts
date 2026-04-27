@@ -3,6 +3,12 @@ import { PA_COLLECTIONS } from "@pa/core-types"
 import type { Firestore } from "firebase-admin/firestore"
 import { appendMessage, getOrCreateSession, getUser, normalizeE164 } from "@pa/pa-persistence"
 import { isSamePeer } from "./config.js"
+import {
+  deliverChunks,
+  isTypingIndicatorEnabled,
+  planChunks,
+  type ChunkPlan,
+} from "./chunker.js"
 
 const OUT = PA_COLLECTIONS.outbound
 
@@ -16,6 +22,56 @@ export function normalizeOutboundPeer(raw: string): string {
   if (!value) return ""
   if (value.includes("@")) return value.toLowerCase()
   return normalizeE164(value)
+}
+
+/**
+ * Deliver a reply through the SDK, optionally chunked when Phase 15
+ * typing-indicator simulation is enabled. Throws on first chunk error;
+ * caller decides how to surface partial-send failures.
+ */
+export async function deliverOutboundBody(
+  sdk: Pick<IMessageSDK, "send">,
+  recipient: string,
+  body: string,
+  opts: {
+    /** Test seam — defaults to env-based gate. */
+    chunkingEnabled?: boolean
+    /** Test seam — defaults to setTimeout-based sleep. */
+    sleep?: (ms: number) => Promise<void>
+    /** Test seam — pass through to planChunks for deterministic delays. */
+    random?: () => number
+  } = {}
+): Promise<{ chunkPlan?: ChunkPlan; chunkErrorIndex?: number; chunkErrorCause?: unknown }> {
+  const enabled =
+    opts.chunkingEnabled === undefined ? isTypingIndicatorEnabled() : opts.chunkingEnabled
+
+  if (!enabled) {
+    await sdk.send({ to: recipient, text: body })
+    return {}
+  }
+
+  const plan = planChunks(body, { random: opts.random })
+  if (plan.chunks.length === 1) {
+    await sdk.send({ to: recipient, text: body })
+    return {}
+  }
+
+  const result = await deliverChunks(
+    plan,
+    async (chunk) => {
+      await sdk.send({ to: recipient, text: chunk })
+    },
+    opts.sleep
+  )
+
+  if (result.error) {
+    return {
+      chunkPlan: plan,
+      chunkErrorIndex: result.error.index,
+      chunkErrorCause: result.error.cause,
+    }
+  }
+  return { chunkPlan: plan }
 }
 
 export function startOutboundListener(
@@ -107,8 +163,9 @@ export async function processOutboundJob(
         rawMeta: { source: "pa_console_outbound", outboundDocId: docId },
       })
     }
+    let deliveryResult: Awaited<ReturnType<typeof deliverOutboundBody>>
     try {
-      await sdk.send({ to: imessageChatId || toPeer, text: body })
+      deliveryResult = await deliverOutboundBody(sdk, imessageChatId || toPeer, body)
     } catch (e) {
       if (e instanceof IMessageError) {
         log("[outbox] send IMessageError", e.code, e.message)
@@ -124,11 +181,52 @@ export async function processOutboundJob(
       }
       throw e
     }
+    if (deliveryResult.chunkErrorIndex !== undefined) {
+      const cause = deliveryResult.chunkErrorCause
+      const causeMsg =
+        cause instanceof IMessageError
+          ? `${cause.code}: ${cause.message}`
+          : cause instanceof Error
+            ? cause.message
+            : String(cause)
+      log(
+        "[outbox] chunk send failed at index",
+        deliveryResult.chunkErrorIndex,
+        causeMsg
+      )
+      await ref.set(
+        {
+          status: "failed",
+          error: `chunk ${deliveryResult.chunkErrorIndex}/${deliveryResult.chunkPlan?.chunks.length}: ${causeMsg}`,
+          chunkPlan: deliveryResult.chunkPlan
+            ? {
+                count: deliveryResult.chunkPlan.chunks.length,
+                delaysMs: deliveryResult.chunkPlan.delaysMs,
+              }
+            : undefined,
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true }
+      )
+      return
+    }
     await ref.set(
-      { status: "sent", sentAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+      {
+        status: "sent",
+        sentAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        ...(deliveryResult.chunkPlan
+          ? {
+              chunkPlan: {
+                count: deliveryResult.chunkPlan.chunks.length,
+                delaysMs: deliveryResult.chunkPlan.delaysMs,
+              },
+            }
+          : {}),
+      },
       { merge: true }
     )
-    log("[outbox] sent", docId, toPeer)
+    log("[outbox] sent", docId, toPeer, deliveryResult.chunkPlan ? `chunks=${deliveryResult.chunkPlan.chunks.length}` : "single")
   } catch (e) {
     log("[outbox] process error", e)
     await ref.set(

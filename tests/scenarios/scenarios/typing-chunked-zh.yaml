@@ -1,0 +1,36 @@
+id: typing_chunked_zh_long_reply
+description: |
+  Phase 15 — chunked-message simulation production scenario.
+
+  Goal: prove that even with a long assistant reply (multi-paragraph
+  Chinese text), the runner sees exactly one reconstructed reply
+  through the broker pipeline. Suppression is enforced by the harness
+  layer (`rawMeta.harness.suppressOutbound: true`), so no real
+  AppleScript send fires from the macOS worker — this scenario only
+  validates that the orchestrator produces a long reply and that
+  Phase 15 schema/dispatch changes have not regressed the suppressed
+  path.
+
+  Flag state under test: `PA_TYPING_INDICATOR_DISABLED=true` (default).
+  In suppressed mode there is no outbound row written, therefore no
+  chunking takes place and the worker is never invoked. Asserting
+  reply integrity through `pa_messages` covers the orchestrator side.
+locale: zh-CN
+agentId: default
+participant: "+19999990015"
+chatId: "iMessage;+19999990015"
+testMode: true
+turnTimeoutMs: 90000
+turns:
+  - user: "__PA_RESET__"
+    assert:
+      reply_contains_any: ["测试记忆已清空", "qdrant"]
+      reply_min_length: 1
+      reply_not_contains_any: ["error", "failed", "undefined", "[20"]
+
+  - user: "请用至少三段话向我介绍一下自己，每段不少于两句，分段之间空一行。"
+    assert:
+      # Long multi-paragraph reply is the input the chunker would split
+      # if the kill switch were off. Here we only assert reply integrity.
+      reply_min_length: 80
+      reply_not_contains_any: ["error", "failed", "undefined", "[20"]

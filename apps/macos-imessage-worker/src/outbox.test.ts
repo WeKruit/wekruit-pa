@@ -142,3 +142,123 @@ test("stuck sending outbound rows can be reclaimed to pending", async () => {
   assert.equal(store.get("old")?.error, "reclaimed from stuck sending")
   assert.equal(store.get("fresh")?.status, "sending")
 })
+
+import { deliverOutboundBody } from "./outbox.js"
+
+test("deliverOutboundBody: chunkingEnabled=false sends body as single sdk.send", async () => {
+  const sends: Array<{ to: string; text: string }> = []
+  const sleeps: number[] = []
+  const sdk = {
+    async send(arg: { to: string; text: string }) {
+      sends.push(arg)
+    },
+  }
+  const body =
+    "First paragraph that is long enough to maybe split.\n\n" +
+    "Second paragraph also long enough to split if chunking were on."
+  const result = await deliverOutboundBody(sdk, "+15555550100", body, {
+    chunkingEnabled: false,
+    sleep: async (ms: number) => {
+      sleeps.push(ms)
+    },
+  })
+  assert.equal(sends.length, 1)
+  assert.equal(sends[0].text, body)
+  assert.equal(sleeps.length, 0)
+  assert.equal(result.chunkPlan, undefined)
+  assert.equal(result.chunkErrorIndex, undefined)
+})
+
+test("deliverOutboundBody: chunkingEnabled=true splits long paragraph reply into 2-3 chunks with sleeps", async () => {
+  const sends: Array<{ to: string; text: string }> = []
+  const sleeps: number[] = []
+  const sdk = {
+    async send(arg: { to: string; text: string }) {
+      sends.push(arg)
+    },
+  }
+  const body =
+    "首先，我会查询最新的天气信息以确保你出门时不会被淋湿，这一点非常重要。\n\n" +
+    "其次，我会基于你过去几次出行的偏好，把咖啡馆和公共交通的选项一并列出。\n\n" +
+    "最后，我建议你提前30分钟出发，避开高峰，到达后再决定是否继续散步。"
+  const result = await deliverOutboundBody(sdk, "+15555550100", body, {
+    chunkingEnabled: true,
+    sleep: async (ms: number) => {
+      sleeps.push(ms)
+    },
+    random: () => 0.5,
+  })
+  assert.ok(sends.length >= 2 && sends.length <= 3, `got ${sends.length} chunks`)
+  assert.equal(sleeps.length, sends.length - 1)
+  for (const d of sleeps) {
+    assert.ok(d >= 800 && d <= 1500, `delay out of range: ${d}`)
+  }
+  assert.equal(result.chunkPlan?.chunks.length, sends.length)
+  assert.equal(result.chunkErrorIndex, undefined)
+})
+
+test("deliverOutboundBody: short reply stays a single chunk even with chunkingEnabled=true", async () => {
+  const sends: Array<{ to: string; text: string }> = []
+  const sdk = {
+    async send(arg: { to: string; text: string }) {
+      sends.push(arg)
+    },
+  }
+  const body = "好的，我记下了。"
+  const result = await deliverOutboundBody(sdk, "+15555550100", body, {
+    chunkingEnabled: true,
+    sleep: async () => undefined,
+  })
+  assert.equal(sends.length, 1)
+  assert.equal(sends[0].text, body)
+  assert.equal(result.chunkPlan, undefined)
+})
+
+test("deliverOutboundBody: mid-chunk error returns chunkErrorIndex without throwing", async () => {
+  const sends: Array<{ to: string; text: string }> = []
+  let attempt = 0
+  const sdk = {
+    async send(arg: { to: string; text: string }) {
+      attempt += 1
+      sends.push(arg)
+      if (attempt === 2) throw new Error("fake send failure on chunk index 1")
+    },
+  }
+  const body =
+    "Paragraph one is long enough to clear the floor on its own here, see.\n\n" +
+    "Paragraph two also clears the floor with margin so we get >= 2 chunks.\n\n" +
+    "Paragraph three rounds it out so the splitter aims for three chunks."
+  const result = await deliverOutboundBody(sdk, "+15555550100", body, {
+    chunkingEnabled: true,
+    sleep: async () => undefined,
+    random: () => 0.5,
+  })
+  assert.equal(sends.length, 2, "loop must halt on error")
+  assert.equal(result.chunkErrorIndex, 1)
+  assert.ok(result.chunkErrorCause instanceof Error)
+})
+
+test("processOutboundJob with PA_TYPING_INDICATOR_DISABLED unset (default kill-switch armed) sends single message", async () => {
+  const previousFlag = process.env.PA_TYPING_INDICATOR_DISABLED
+  delete process.env.PA_TYPING_INDICATOR_DISABLED
+  // We can't run the full processOutboundJob here without faking
+  // pa-persistence; instead exercise the gate directly via deliverOutboundBody.
+  try {
+    const sends: Array<{ to: string; text: string }> = []
+    const sdk = {
+      async send(arg: { to: string; text: string }) {
+        sends.push(arg)
+      },
+    }
+    const body =
+      "Long paragraph one to clear the floor on its own without trouble.\n\n" +
+      "Long paragraph two would make this a chunked reply if the flag were off."
+    await deliverOutboundBody(sdk, "+15555550100", body, {
+      sleep: async () => undefined,
+    })
+    assert.equal(sends.length, 1, "default state must NOT chunk (kill switch armed)")
+  } finally {
+    if (previousFlag == null) delete process.env.PA_TYPING_INDICATOR_DISABLED
+    else process.env.PA_TYPING_INDICATOR_DISABLED = previousFlag
+  }
+})

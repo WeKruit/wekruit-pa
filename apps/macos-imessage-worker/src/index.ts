@@ -33,7 +33,7 @@ import {
 import { useDmAllowlist, getPeerDisplay, getPeerAllowlist, isSamePeer } from "./config.js"
 import { getImessageSessionExternalId } from "./imessage-session.js"
 import { getPlatformFlags } from "./platform-flags.js"
-import { startOutboundListener } from "./outbox.js"
+import { deliverOutboundBody, startOutboundListener } from "./outbox.js"
 import {
   getHealthState,
   initHealthConfigFromEnv,
@@ -358,10 +358,20 @@ async function handleDirectMessage(msg: Message) {
           })
       )
 
-      await sdk.send({ to: msg.chatId, text: reply })
+      const deliveryResult = await deliverOutboundBody(sdk, msg.chatId, reply)
+      if (deliveryResult.chunkErrorIndex !== undefined) {
+        log(
+          "[send err] chunk",
+          deliveryResult.chunkErrorIndex,
+          "failed:",
+          deliveryResult.chunkErrorCause
+        )
+      }
       log(
         "[send] ok assistant len=",
         reply.length,
+        " chunks=",
+        deliveryResult.chunkPlan?.chunks.length ?? 1,
         " mem0 turn complete user=",
         user.id,
         " agent=",
