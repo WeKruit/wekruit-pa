@@ -55,7 +55,12 @@ import { getFirestore } from "firebase-admin/firestore"
  */
 export const FORWARD_TARGET = Object.freeze({
   toolPolicy: "allowlist",
-  allowedConnectors: Object.freeze(["current-info", "remember-fact"]),
+  // Phase 13 — extend allowlist to include `wekruit-matching`. The
+  // connector ships in degraded mode by default (PA_MATCHING_URL unset),
+  // so this migration is safe to apply ahead of the backend wire-up.
+  // Order is insignificant (canUseConnector uses Array.includes; this
+  // script's set-equality check makes it idempotent on any permutation).
+  allowedConnectors: Object.freeze(["current-info", "remember-fact", "wekruit-matching"]),
   toolBudgetPerTurn: 3,
 })
 

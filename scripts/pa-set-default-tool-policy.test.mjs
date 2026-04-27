@@ -31,7 +31,7 @@ test("computePlan: forward write when current is the pre-Deploy-2 'none' shape",
   )
   assert.equal(plan.action, "update")
   assert.equal(plan.patch.toolPolicy, "allowlist")
-  assert.deepEqual(plan.patch.allowedConnectors, ["current-info", "remember-fact"])
+  assert.deepEqual(plan.patch.allowedConnectors, ["current-info", "remember-fact", "wekruit-matching"])
   assert.equal(plan.patch.toolBudgetPerTurn, 3)
   assert.equal(typeof plan.patch.updatedAt, "string")
   // The patch MUST NOT contain any field this script does not own.
@@ -46,7 +46,7 @@ test("computePlan: forward is idempotent — already-migrated state returns noop
     {
       ...baseAgent,
       toolPolicy: "allowlist",
-      allowedConnectors: ["current-info", "remember-fact"],
+      allowedConnectors: ["current-info", "remember-fact", "wekruit-matching"],
       toolBudgetPerTurn: 3,
     },
     "forward"
@@ -62,7 +62,7 @@ test("computePlan: forward treats allowedConnectors order as insignificant (set-
     {
       ...baseAgent,
       toolPolicy: "allowlist",
-      allowedConnectors: ["remember-fact", "current-info"],
+      allowedConnectors: ["wekruit-matching", "remember-fact", "current-info"],
       toolBudgetPerTurn: 3,
     },
     "forward"
@@ -75,7 +75,7 @@ test("computePlan: forward writes when toolBudgetPerTurn drifted (e.g. 1 instead
     {
       ...baseAgent,
       toolPolicy: "allowlist",
-      allowedConnectors: ["current-info", "remember-fact"],
+      allowedConnectors: ["current-info", "remember-fact", "wekruit-matching"],
       toolBudgetPerTurn: 1,
     },
     "forward"
@@ -89,7 +89,7 @@ test("computePlan: rollback writes when current is allowlist", () => {
     {
       ...baseAgent,
       toolPolicy: "allowlist",
-      allowedConnectors: ["current-info", "remember-fact"],
+      allowedConnectors: ["current-info", "remember-fact", "wekruit-matching"],
       toolBudgetPerTurn: 3,
     },
     "rollback"
@@ -158,4 +158,59 @@ test("computePlan: simulated rollback after apply is a clean revert", () => {
   // Re-rolling back is a no-op.
   const rollbackAgain = computePlan(doc, "rollback")
   assert.equal(rollbackAgain.action, "noop")
+})
+
+// ---------- Phase 13 T13.2: wekruit-matching allowlist extension ----------
+
+test("computePlan(13.2): forward applies to a Phase-10.5 baseline doc — adds wekruit-matching", () => {
+  const plan = computePlan(
+    {
+      ...baseAgent,
+      toolPolicy: "allowlist",
+      allowedConnectors: ["current-info", "remember-fact"],
+      toolBudgetPerTurn: 3,
+    },
+    "forward"
+  )
+  assert.equal(plan.action, "update")
+  // Patch must add the new connector while keeping the old two.
+  assert.deepEqual(
+    [...plan.patch.allowedConnectors].sort(),
+    ["current-info", "remember-fact", "wekruit-matching"].sort()
+  )
+  // toolPolicy/budget unchanged-but-rewritten; updatedAt stamped.
+  assert.equal(plan.patch.toolPolicy, "allowlist")
+  assert.equal(plan.patch.toolBudgetPerTurn, 3)
+})
+
+test("computePlan(13.2): forward is noop when doc already contains all three (any order)", () => {
+  const plan = computePlan(
+    {
+      ...baseAgent,
+      toolPolicy: "allowlist",
+      // Order shuffled to verify set-equality.
+      allowedConnectors: ["wekruit-matching", "current-info", "remember-fact"],
+      toolBudgetPerTurn: 3,
+    },
+    "forward"
+  )
+  assert.equal(plan.action, "noop")
+})
+
+test("computePlan(13.2): forward overwrites a doc with budget=1 — set to 3 AND adds matching", () => {
+  const plan = computePlan(
+    {
+      ...baseAgent,
+      toolPolicy: "allowlist",
+      allowedConnectors: ["current-info", "remember-fact"],
+      toolBudgetPerTurn: 1,
+    },
+    "forward"
+  )
+  assert.equal(plan.action, "update")
+  assert.equal(plan.patch.toolBudgetPerTurn, 3)
+  assert.deepEqual(
+    [...plan.patch.allowedConnectors].sort(),
+    ["current-info", "remember-fact", "wekruit-matching"].sort()
+  )
 })

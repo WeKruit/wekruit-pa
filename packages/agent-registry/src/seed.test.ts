@@ -23,7 +23,7 @@ test("default seed agent matches Phase 10.5 production target (provider/model/to
   assert.equal(agent.provider, "openai")
   assert.equal(agent.model, "gpt-5.4-nano")
   assert.equal(agent.toolPolicy, "allowlist")
-  assert.deepEqual(agent.allowedConnectors, ["current-info", "remember-fact"])
+  assert.deepEqual(agent.allowedConnectors, ["current-info", "remember-fact", "wekruit-matching"])
   assert.equal(agent.toolBudgetPerTurn, 3)
   assert.equal(agent.isDefault, true)
   assert.equal(agent.memoryMode, "firestore_only")

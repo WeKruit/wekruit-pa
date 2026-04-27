@@ -12,7 +12,11 @@
     "version": "1",
     "memoryMode": "firestore_only",
     "toolPolicy": "allowlist",
-    "allowedConnectors": ["current-info", "remember-fact"],
+    "allowedConnectors": [
+      "current-info",
+      "remember-fact",
+      "wekruit-matching"
+    ],
     "toolBudgetPerTurn": 3
   }
 ]
