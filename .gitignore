@@ -13,3 +13,4 @@ apps/dashboard-web/.env.pa-firebase-generated
 .firebase/
 *-debug.log
 apps/functions/lib/
+eval-runs/

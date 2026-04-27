@@ -60,11 +60,24 @@ verifySuppressOutbound: true         # optional; after each turn, assert no pa_o
 turns:
   - user: <message body>
     assert:
+      # Reply-content axes (rule-based, free)
       reply_min_length: <int>
       reply_contains_any: [string, ...]    # at least one substring must match
       reply_not_contains_any: [string, ...]  # none may match (case-insensitive)
       reply_matches_any: [regex, ...]       # at least one regex must match (flags iu)
       reply_not_matches_any: [regex, ...]   # no regex may match (flags iu)
+
+      # Phase 14.1 — telemetry-backed axes (rule-based, free)
+      tool_call_required: ["web_search"]   # all named tools must appear in pa_turns.usage.hostedToolCalls
+      tool_call_forbidden: ["web_search"]  # named tools must NOT appear
+      usage_max_input_tokens: 5000          # fail if pa_turns.usage.inputTokens > N
+      usage_max_total_tokens: 10000         # fail if pa_turns.usage.totalTokens > N
+      persona_facts_present: true | false   # checked BEFORE the turn fires; pa_memory_facts where status=confirmed
+
+      # Phase 14.2 — judge axis (LLM-as-judge, costs money, gated by PA_RUN_EVAL=1)
+      judge:
+        criterion: "reply is concise and friendly"
+        threshold: 0.7                       # confidence floor; verdict=fail always fails
 ```
 
 ### Regex assertions
@@ -76,7 +89,68 @@ turns:
 
 `runTurnWithRetry` catches errors whose message matches **429**, **rate limit**, or **resource exhausted** (case-insensitive). It retries up to **`turnRetries`** times (default **2** extra attempts after the first), with delay **`retryBackoffMs * (attempt + 1)`** between tries (default base **30000** ms).
 
+### Phase 14.1 — telemetry assertions
+
+| Key | Reads | Pass condition |
+|-----|-------|----------------|
+| `tool_call_required: string[]` | `pa_turns` row matched by `eventId == event.id`, then `usage.hostedToolCalls[*].name` | every named tool appears at least once |
+| `tool_call_forbidden: string[]` | same | no named tool appears |
+| `usage_max_input_tokens: number` | `usage.inputTokens` | `inputTokens <= cap` |
+| `usage_max_total_tokens: number` | `usage.totalTokens` | `totalTokens <= cap` |
+| `persona_facts_present: boolean` | `pa_users` by participant → `pa_memory_facts` where `userId` matches and `status == "confirmed"` | presence matches the boolean |
+
+`persona_facts_present` runs **before** the turn fires (it's testing seed
+state, not what the turn produced). The other three run **after** the
+turn completes and the `pa_turns` row has been updated by the
+orchestrator (Phase 10.5 T9). If the row hasn't been written yet, the
+runner polls briefly (~8s) before failing the assertion.
+
+`tool_call_required` reads `usage.hostedToolCalls`, which is the
+authoritative source for SDK-hosted tools (e.g. `web_search`).
+**Connector-style tools** like `remember-fact` are NOT SDK-hosted and
+will not appear there — for those, query `pa_tool_calls` directly per
+the Phase 10.5 deferred-audit shape.
+
+All telemetry keys are optional; existing scenarios without them are
+unaffected.
+
+### Phase 14.2 — LLM-as-judge
+
+`judge: { criterion, threshold }` invokes a single `gpt-5.4-nano` call
+through the OpenAI Responses API with a forced tool-output schema:
+
+```json
+{ "verdict": "pass" | "fail", "confidence": 0.0-1.0, "rationale": "..." }
+```
+
+Pass condition: `verdict === "pass"` AND `confidence >= threshold`. A
+`verdict === "fail"` is always a turn failure regardless of confidence.
+
+**Gating**: judge calls run **only** when `PA_RUN_EVAL=1`. Under
+`PA_RUN_SCENARIOS=1 npm test` (or any non-eval invocation), judge
+assertions are SKIPPED with a warning so unit-test runs never bill
+OpenAI. Use **`npm run eval`** to exercise judge axes.
+
+**Auditability**: every judge call (input criterion, reply, full
+response, usage, cost) is appended to
+`eval-runs/<runStamp>/judge.jsonl`. A failed verdict shows the
+rationale in the runner's per-turn `failures` array so the operator
+can sanity-check the model's reasoning before merge-blocking on it.
+
+**Retries**: at most one retry on transient error per call. No
+exponential backoff (matches P9 `DON'T` for 14.2).
+
+**Cost ceiling**: `PA_EVAL_MAX_RUN_USD` (default `5`) caps total
+estimated spend per run. The runner pre-flights every judge call —
+if the next call's projected cost would push the cumulative spend
+past the ceiling, the run aborts with a clear message **before** the
+call is made. Estimate uses gpt-5.4-nano's illustrative pricing
+(`$0.05/M input`, `$0.40/M output`) — see `tests/scenarios/judge.mjs`
+constants.
+
 ## Packaged scenarios
+
+Production smoke (run on `npm test` when `PA_RUN_SCENARIOS=1`):
 
 | File | Intent |
 |------|--------|
@@ -85,7 +159,26 @@ turns:
 | `memory-recall-ja.yaml` | JA recall |
 | `memory-recall-mixed.yaml` | Mixed-locale recall |
 | `reset-integration-zh.yaml` | `__PA_RESET__` / memory clear path |
-| `current-info-boundary-zh.yaml` | **Current-info guardrail** — user asks for recent movies without live search; reply must acknowledge need for **实时检索 / 实时数据源** and must **not** invent stale blockbuster titles |
+| `current-info-live-zh.yaml` | Live web-search ZH |
+| `current-info-live-en.yaml` | Live web-search EN |
+| `current-info-live-ja.yaml` | Live web-search JA |
+| `persona-card-zh.yaml` | Phase 11.1 persona-card injection |
+| `remember-fact-zh.yaml` | Phase 10.5 T5 LLM-driven `remember-fact` |
+| `tool-budget-stress-zh.yaml` | Multi-tool budget probe |
+
+Phase 14 eval-grade (run on `npm run eval`, prefix `eval-`):
+
+| File | Axis |
+|------|------|
+| `eval-persona-drift-zh.yaml` | Persona durability across 7 turns |
+| `eval-tool-budget-parallel-zh.yaml` | Three parallel `remember-fact` writes in one turn |
+| `eval-hallucination-1900-zh.yaml` | Hallucination guard on unanswerable historical question |
+| `eval-tool-choice-cross-lingual-en.yaml` | `web_search` selected on en current-info |
+| `eval-tool-choice-cross-lingual-ja.yaml` | `web_search` selected on ja current-info |
+| `eval-reset-then-no-recall-zh.yaml` | Reset truly drains persona-card source |
+| `eval-prompt-injection-in-fact-zh.yaml` | `remember-fact` does not become a prompt-injection vector |
+| `eval-tool-budget-extended-zh.yaml` | Graceful refusal when intent exceeds toolBudgetPerTurn |
+| `eval-tone-judge-zh.yaml` | LLM-judge tone audit |
 
 ## Running
 
@@ -96,14 +189,35 @@ Slow stacks (large models, cold start): raise **`turnTimeoutMs`** (waits for inb
 GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa.json \
   node tests/scenarios/runner.mjs tests/scenarios/scenarios/memory-recall-zh.yaml
 
-# Whole directory
+# Whole directory (production smoke + eval, but judge SKIPPED without PA_RUN_EVAL)
 GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa.json \
   node tests/scenarios/runner.mjs tests/scenarios/scenarios/
 
 # Env-gated npm test integration. Requires explicit opt-in (writes broker events).
 PA_RUN_SCENARIOS=1 GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa.json \
   npm test
+
+# Phase 14.4 — full eval, judge enabled, artifacts to eval-runs/<stamp>/
+PA_OPENAI_AGENT_API_KEY=... \
+  GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa.json \
+  npm run eval
+
+# Dry-run plan: lists scenarios, projected judge calls, cost estimate.
+# Does NOT touch Firestore or OpenAI.
+npm run eval -- --dry-run
 ```
+
+### Cost ceiling abort smoke test
+
+```bash
+PA_EVAL_MAX_RUN_USD=0.001 PA_OPENAI_AGENT_API_KEY=... \
+  GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa.json \
+  npm run eval
+```
+
+The runner aborts on the first judge call whose projected cost would
+push cumulative spend past `0.001` USD; summary reports
+`aborted: "cost_ceiling_exceeded"`.
 
 ### Deterministic run order
 
@@ -129,7 +243,7 @@ if suppression were ever off).
 Output is a single JSON document on stdout (suitable for CI consumption).
 Per-scenario progress goes to stderr.
 
-Exit codes: `0` all pass, `1` any failure, `2` invalid invocation.
+Exit codes: `0` all pass, `1` any failure or cost-ceiling abort, `2` invalid invocation.
 
 ## What's not here yet
 
@@ -141,5 +255,6 @@ Exit codes: `0` all pass, `1` any failure, `2` invalid invocation.
 
 - Prefer **`reply_contains_any`** when wording may drift; use **`reply_matches_any` / `reply_not_matches_any`** when you need precise boundaries.
 - Memory-recall scenarios: sequential turns within one scenario; parallel **different** scenarios need **different** `participant` values if they share Mem0 user partitions.
-- `testMode: true` ensures the scenario participant’s `pa_users` doc allows `__PA_RESET__` without manual CLI bootstrap.
+- `testMode: true` ensures the scenario participant's `pa_users` doc allows `__PA_RESET__` without manual CLI bootstrap.
 - Cleanup is **not** automatic — failed runs leave Firestore/Qdrant state for inspection. Ops can sweep `harness_*` ids when needed.
+- Eval-grade scenarios MUST keep at least one rule-based assertion alongside any `judge` axis — never make a turn pass/fail solely on the judge verdict.
