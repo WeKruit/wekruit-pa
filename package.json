@@ -18,6 +18,8 @@
     "test": "node --test tests/scenarios/runner.test.mjs && node scripts/run-scenarios-if-env.mjs && npm run test -ws --if-present",
     "eval": "PA_RUN_EVAL=1 node tests/scenarios/runner.mjs tests/scenarios/scenarios/",
     "probe:model": "node scripts/probe-pa-model.mjs",
+    "seed:agents": "npm run build --workspace=@pa/agent-registry && node scripts/pa-push-seed-agents.mjs",
+    "seed:agents:apply": "npm run build --workspace=@pa/agent-registry && node scripts/pa-push-seed-agents.mjs --apply",
     "sync-pa-vite:firebase": "node scripts/fetch-pa-dashboard-vite-from-firebase.mjs",
     "deploy:hosting:from-firebase": "node scripts/deploy-pa-hosting-from-firebase.mjs",
     "deploy:hosting": "firebase deploy --only hosting:pa-dashboard --project wekruit-5f89b --non-interactive",

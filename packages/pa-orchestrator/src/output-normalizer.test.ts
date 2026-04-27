@@ -57,6 +57,18 @@ test("Chinese list markers to middle dot", () => {
   assert.doesNotMatch(r.text, /^- /m)
 })
 
+test("fullwidth bold markers stripped", () => {
+  const r = normalizeForIMessage("＊＊粗体＊＊ normal", { maxLength: 600 })
+  assert.equal(r.text, "粗体 normal")
+  assert.doesNotMatch(r.text, /＊/)
+})
+
+test("numbered list lines lose digit prefix", () => {
+  const r = normalizeForIMessage("1. 第一步\n2. 第二步", { maxLength: 600 })
+  assert.match(r.text, /· 第一步/)
+  assert.doesNotMatch(r.text, /^1\./m)
+})
+
 test("fence only python", () => {
   const r = normalizeForIMessage("```python\ndef f(): pass\n```", { maxLength: 600 })
   assert.equal(r.text, "def f(): pass")

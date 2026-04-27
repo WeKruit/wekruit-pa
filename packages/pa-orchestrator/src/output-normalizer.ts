@@ -99,6 +99,8 @@ function stripBareUrlsInText(input: string, paramNames: ReadonlyArray<string>, d
 
 function stripEmphasis(input: string): string {
   let s = input
+  s = s.replace(/＊＊([^＊]+)＊＊/g, "$1")
+  s = s.replace(/(?<![＊\w])＊([^＊\n]+)＊(?![＊\w])/g, "$1")
   s = s.replace(/\*\*([^*]+)\*\*/g, "$1")
   s = s.replace(/__([^_]+)__/g, "$1")
   s = s.replace(/(?<![*\w])\*([^*\n]+)\*(?![*\w])/g, "$1")
@@ -109,7 +111,11 @@ function stripEmphasis(input: string): string {
 function replaceListMarkers(input: string): string {
   return input
     .split("\n")
-    .map((line) => line.replace(/^(\s*)([-*])\s+/, "$1· "))
+    .map((line) =>
+      line
+        .replace(/^\s*\d+[\.\)、]\s+/, "· ")
+        .replace(/^(\s*)([-*])\s+/, "$1· ")
+    )
     .join("\n")
 }
 
