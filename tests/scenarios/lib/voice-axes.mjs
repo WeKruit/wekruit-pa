@@ -21,6 +21,20 @@ export const FILLER_BLACKLIST_ZH = [
   "作为 AI",
   "我是 AI",
   "我是您的 AI",
+  // Phase 21 — pop-therapy + invented-category leakage from prod screenshot
+  // 2026-04-27. nano keeps emitting "接住你 / 硬撑着 / 喘不过气那种" etc.
+  // despite Bible v5; auto-fail in eval so regressions are caught.
+  "接住你",
+  "找个人接住",
+  "硬撑着",
+  "硬扛",
+  "喘不过气那种",
+  "那种吧",
+  "这条路我懂",
+  "这种路我懂",
+  "续命型",
+  "腻型",
+  "扛着型",
 ]
 
 export const FILLER_BLACKLIST_EN = [
@@ -40,6 +54,11 @@ export const FILLER_BLACKLIST_EN = [
   "Is there anything else",
   "As an AI",
   "I'm an AI",
+  // Phase 21 — en-side pop-therapy register
+  "I see you",
+  "you got this fr",
+  "hold space",
+  "make space for",
 ]
 
 export const VOICE_AXES = [
@@ -90,7 +109,31 @@ export const VOICE_AXES = [
 ]
 
 /**
- * @returns {{ hit: boolean, phrase?: string, lang?: 'zh'|'en' }}
+ * Phase 21 — clinical "X 还是 Y" multiple-choice detector.
+ *
+ * Real friends ask one open question. nano keeps defaulting to A/B framework
+ * questions ("躺一会儿还是接着扛？", "工作这边还是生活那边?") despite Bible
+ * v5. Catch the structural pattern, not just the phrase.
+ *
+ * Heuristic: a line ending in `?` or `？` that contains `还是` (zh) or
+ * ` or ` (en) close to the question mark, AND is at least 4 chars before
+ * the connector. We scope to question-bearing lines so we don't false-fire
+ * on declarative "A 还是 B 都行".
+ */
+const AB_FRAMEWORK_RE_ZH = /[^?？\n]{2,}还是[^?？\n]{1,}[?？]/
+const AB_FRAMEWORK_RE_EN = /\b\w+[\w ]{1,}\bor\b[\w ]{1,}\?/i
+export function checkABFramework(text) {
+  if (AB_FRAMEWORK_RE_ZH.test(text)) {
+    return { hit: true, pattern: "zh_X_还是_Y_question" }
+  }
+  if (AB_FRAMEWORK_RE_EN.test(text)) {
+    return { hit: true, pattern: "en_X_or_Y_question" }
+  }
+  return { hit: false }
+}
+
+/**
+ * @returns {{ hit: boolean, phrase?: string, lang?: 'zh'|'en'|'structural' }}
  */
 export function checkFillerBlacklist(text) {
   const lower = text.toLowerCase()
@@ -100,6 +143,8 @@ export function checkFillerBlacklist(text) {
   for (const phrase of FILLER_BLACKLIST_EN) {
     if (lower.includes(phrase.toLowerCase())) return { hit: true, phrase, lang: "en" }
   }
+  const ab = checkABFramework(text)
+  if (ab.hit) return { hit: true, phrase: ab.pattern, lang: "structural" }
   return { hit: false }
 }
 

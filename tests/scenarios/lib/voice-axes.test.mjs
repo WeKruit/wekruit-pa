@@ -98,3 +98,44 @@ test("checkIMessageRenderUnsafe: clean prose passes", () => {
   const r = checkIMessageRenderUnsafe("听着就累. 是 deadline 堆着, 还是别人卡你?")
   assert.equal(r.hit, false)
 })
+
+// Phase 21 — pop-therapy + A/B framework auto-fail (prod regression
+// 2026-04-27).
+test("checkFillerBlacklist: 接住你 (pop-therapy) hits", () => {
+  const r = checkFillerBlacklist("听起来你想找个人接住你一下 😌")
+  assert.equal(r.hit, true)
+  assert.equal(r.lang, "zh")
+})
+
+test("checkFillerBlacklist: 硬撑着 hits", () => {
+  const r = checkFillerBlacklist("你硬撑着把事做完")
+  assert.equal(r.hit, true)
+})
+
+test("checkFillerBlacklist: en pop-therapy 'I see you' hits", () => {
+  const r = checkFillerBlacklist("I see you, that's hard")
+  assert.equal(r.hit, true)
+  assert.equal(r.lang, "en")
+})
+
+test("checkFillerBlacklist: A/B framework 'X 还是 Y?' structurally hits", () => {
+  const r = checkFillerBlacklist("你现在更像是工作太多想关机, 还是生活也乱但还能撑?")
+  assert.equal(r.hit, true)
+  assert.equal(r.lang, "structural")
+})
+
+test("checkFillerBlacklist: declarative 还是 (no question mark) does NOT hit", () => {
+  const r = checkFillerBlacklist("咖啡还是不错的")
+  assert.equal(r.hit, false)
+})
+
+test("checkFillerBlacklist: en 'X or Y?' structural hits", () => {
+  const r = checkFillerBlacklist("Are you more burnt or just tired?")
+  assert.equal(r.hit, true)
+  assert.equal(r.lang, "structural")
+})
+
+test("checkFillerBlacklist: clean single-question passes", () => {
+  const r = checkFillerBlacklist("你怎么扛过来的?")
+  assert.equal(r.hit, false)
+})
