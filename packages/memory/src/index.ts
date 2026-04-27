@@ -39,3 +39,11 @@ export type {
 } from "./types.js"
 export type { FactLike, MemoryCommand } from "./commands.js"
 export { buildPersonaCard } from "./persona-card.js"
+export {
+  resolveMem0PartitionKey,
+  recordDriftIfAny,
+  type ResolverUser,
+  type DriftSurface,
+  type RecordDriftDeps,
+  type RecordDriftInput,
+} from "./identity.js"
