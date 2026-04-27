@@ -263,6 +263,22 @@ export const MemoryFactSchema = z.object({
   updatedAt: z.string().optional(),
   deletedAt: z.string().optional(),
   deletedByEventId: z.string().optional(),
+  /**
+   * Memory-opt P0-2 — persona-card importance-weighted ranker inputs.
+   * Both fields are OPTIONAL and BACKWARD-COMPATIBLE: legacy rows that
+   * predate the ranker default to 0, in which case the ranker collapses
+   * to recency-only ordering (which matches the prior FIFO behavior for
+   * same-creation-time facts).
+   *
+   *  - `accessCount`: monotonic counter incremented when the fact is
+   *    surfaced/used. Currently advisory; a future writeback path may
+   *    update it from `pa_memory_actions`.
+   *  - `salience`: 0..1 importance hint. Auto-bumped to 1 by the ranker
+   *    for identity-bearing or long-term-goal facts (regex-detected at
+   *    rank time so legacy rows benefit without backfill).
+   */
+  accessCount: z.number().nonnegative().optional(),
+  salience: z.number().min(0).max(1).optional(),
 })
 export type MemoryFact = z.infer<typeof MemoryFactSchema>
 
