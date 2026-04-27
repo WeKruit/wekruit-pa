@@ -1,5 +1,9 @@
 import type { MemoryFact } from "@pa/core-types"
 import { rankFactsByImportance } from "./persona-card-ranker.js"
+import {
+  readStylePreference,
+  renderStylePreferenceLine,
+} from "./voice-style-preference.js"
 
 /**
  * Phase 11.1.1 — deterministic, Unicode-safe persona-card builder.
@@ -139,4 +143,44 @@ export function buildPersonaCard(
   }
 
   return card
+}
+
+/**
+ * Phase 19 ADAPT-03 — persona card with long-term voice style preference
+ * extension. Reads `readStylePreference(userId)` and, if a preference
+ * exists, appends a single Tendera-style "facts as voice" line after the
+ * deterministic facts list.
+ *
+ * Regression safety:
+ *  - When no preference is stored, output is byte-identical to
+ *    `buildPersonaCard(facts)`.
+ *  - When facts is empty AND no preference, returns null (no bare heading).
+ *  - When facts is empty BUT preference exists, returns just the heading
+ *    plus the voice line (we still want the voice context to flow even
+ *    if the user has zero confirmed facts).
+ *
+ * Note: callers wanting the pre-Phase-19 sync behavior can keep using
+ * `buildPersonaCard(facts)` directly — this async wrapper is opt-in.
+ */
+export async function buildPersonaCardWithVoice(
+  facts: MemoryFact[],
+  userId: string,
+  opts?: { now?: () => number }
+): Promise<string | null> {
+  const baseCard = buildPersonaCard(facts, opts)
+  let pref = null
+  try {
+    pref = await readStylePreference(userId)
+  } catch {
+    // Store unavailable — fall back to baseCard exactly. Preserves
+    // regression safety.
+    return baseCard
+  }
+  const voiceLine = renderStylePreferenceLine(pref)
+  if (!voiceLine) return baseCard
+  if (!baseCard) {
+    // Empty facts but preference exists — emit the heading + voice line.
+    return [HEADING, voiceLine].join("\n")
+  }
+  return `${baseCard}\n${voiceLine}`
 }

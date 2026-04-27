@@ -14,7 +14,7 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test src/stacked.test.ts src/commands.test.ts src/providers.test.ts src/archive.test.ts src/mem0.test.ts src/admin.test.ts src/persona-card.test.ts src/persona-card-ranker.test.ts src/mem0-rerank.test.ts src/identity.test.ts"
+    "test": "node --import tsx --test src/stacked.test.ts src/commands.test.ts src/providers.test.ts src/archive.test.ts src/mem0.test.ts src/admin.test.ts src/persona-card.test.ts src/persona-card-ranker.test.ts src/mem0-rerank.test.ts src/identity.test.ts src/voice-style-preference.test.ts"
   },
   "dependencies": {
     "@pa/core-types": "0.0.1",

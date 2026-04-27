@@ -39,7 +39,18 @@ export type {
   Mem0DegradedReason,
 } from "./types.js"
 export type { FactLike, MemoryCommand } from "./commands.js"
-export { buildPersonaCard } from "./persona-card.js"
+export { buildPersonaCard, buildPersonaCardWithVoice } from "./persona-card.js"
+export {
+  readStylePreference,
+  writeStylePreference,
+  setVoiceStyleStore,
+  createInMemoryVoiceStyleStore,
+  createFirestoreVoiceStyleStore,
+  snapshotToPreference,
+  renderStylePreferenceLine,
+  type VoiceStylePreference,
+  type VoiceStyleStore,
+} from "./voice-style-preference.js"
 export {
   resolveMem0PartitionKey,
   recordDriftIfAny,

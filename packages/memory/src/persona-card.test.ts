@@ -141,3 +141,94 @@ test("buildPersonaCard skips facts with empty/whitespace-only content but keeps 
   const card = buildPersonaCard(facts)
   assert.equal(card, ["Persona facts (confirmed):", "- real content"].join("\n"))
 })
+
+// -------- Phase 19 ADAPT-03: persona card voice-style extension --------
+
+import { buildPersonaCardWithVoice } from "./persona-card.js"
+import {
+  createInMemoryVoiceStyleStore,
+  setVoiceStyleStore,
+  writeStylePreference,
+} from "./voice-style-preference.js"
+
+test("Phase 19: buildPersonaCardWithVoice byte-identical to buildPersonaCard when no preference", async () => {
+  setVoiceStyleStore(createInMemoryVoiceStyleStore())
+  try {
+    const facts: MemoryFact[] = [
+      fact({ id: "1", content: "我喜欢冰美式", createdAt: "2026-01-01T00:00:00Z" }),
+      fact({ id: "2", content: "我住在上海", createdAt: "2026-01-02T00:00:00Z" }),
+    ]
+    const sync = buildPersonaCard(facts)
+    const async_ = await buildPersonaCardWithVoice(facts, "u1")
+    assert.equal(async_, sync, "no preference → byte-identical")
+  } finally {
+    setVoiceStyleStore(null)
+  }
+})
+
+test("Phase 19: buildPersonaCardWithVoice appends Tendera-style voice line when preference exists", async () => {
+  setVoiceStyleStore(createInMemoryVoiceStyleStore())
+  try {
+    await writeStylePreference(
+      "u1",
+      {
+        register_score: 0.2,
+        zh_char_ratio: 0.5,
+        emoji_freq: 3,
+        avg_sentence_len: 6,
+        slang_hits: 3,
+        sample_size: 5,
+      },
+      "2026-04-27T00:00:00.000Z"
+    )
+    const facts: MemoryFact[] = [
+      fact({ id: "1", content: "我喜欢冰美式", createdAt: "2026-01-01T00:00:00Z" }),
+    ]
+    const card = (await buildPersonaCardWithVoice(facts, "u1"))!
+    // Original facts list intact at the head.
+    assert.match(card, /^Persona facts \(confirmed\):/)
+    assert.match(card, /我喜欢冰美式/)
+    // Voice line at the tail (NOT a bullet).
+    const lines = card.split("\n")
+    const last = lines[lines.length - 1]!
+    assert.equal(last.startsWith("- "), false)
+    assert.match(last, /用户跟 Claire 聊天/)
+    assert.match(last, /slangy/)
+  } finally {
+    setVoiceStyleStore(null)
+  }
+})
+
+test("Phase 19: buildPersonaCardWithVoice with empty facts + preference returns heading + voice line", async () => {
+  setVoiceStyleStore(createInMemoryVoiceStyleStore())
+  try {
+    await writeStylePreference(
+      "u1",
+      {
+        register_score: 0.85,
+        zh_char_ratio: 0.9,
+        emoji_freq: 0,
+        avg_sentence_len: 30,
+        slang_hits: 0,
+        sample_size: 5,
+      },
+      "2026-04-27T00:00:00.000Z"
+    )
+    const card = (await buildPersonaCardWithVoice([], "u1"))!
+    assert.match(card, /^Persona facts \(confirmed\):/)
+    assert.match(card, /用户跟 Claire 聊天/)
+    assert.match(card, /formal/)
+  } finally {
+    setVoiceStyleStore(null)
+  }
+})
+
+test("Phase 19: buildPersonaCardWithVoice falls back to base card when store unavailable", async () => {
+  setVoiceStyleStore(null) // no store → readStylePreference would throw
+  const facts: MemoryFact[] = [
+    fact({ id: "1", content: "x", createdAt: "2026-01-01T00:00:00Z" }),
+  ]
+  const card = await buildPersonaCardWithVoice(facts, "u1")
+  // Same as buildPersonaCard(facts) — no voice line, no crash.
+  assert.equal(card, buildPersonaCard(facts))
+})
