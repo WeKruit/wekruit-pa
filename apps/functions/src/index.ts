@@ -28,9 +28,19 @@ import { PA_COLLECTIONS, type Channel, type InboundEvent, type OnboardingStatus,
 import { clearUserMemory, recordDriftIfAny, resolveMem0PartitionKey, summarizeClearResult } from "@pa/memory"
 import { createHash, randomUUID } from "node:crypto"
 
+// Phase 21 Sendblue migration
+import { handleSendblueWebhook } from "./sendblue/webhook.js"
+import { paSendblueOutboxHandler } from "./sendblue/outbox.js"
+
 if (!getApps().length) initializeApp()
 
 setGlobalOptions({ region: "us-central1" })
+
+// Phase 21 Sendblue secrets — populated via `firebase functions:secrets:set` (D-07)
+const SENDBLUE_API_KEY_ID = defineSecret("SENDBLUE_API_KEY_ID")
+const SENDBLUE_API_SECRET_KEY = defineSecret("SENDBLUE_API_SECRET_KEY")
+const SENDBLUE_WEBHOOK_SIGNING_SECRET = defineSecret("SENDBLUE_WEBHOOK_SIGNING_SECRET")
+const SENDBLUE_FROM_NUMBER = defineSecret("SENDBLUE_FROM_NUMBER")
 
 const SILICONFLOW_API_KEY = defineSecret("SILICONFLOW_API_KEY")
 const PA_OPENAI_AGENT_API_KEY = defineSecret("PA_OPENAI_AGENT_API_KEY")
@@ -500,5 +510,120 @@ export const memoryAdmin = onRequest(
       logger.warn("memoryAdmin failed", { status, error: err instanceof Error ? err.message : String(err) })
       sendJson(res, status, { error: err instanceof Error ? err.message : String(err) })
     }
+  }
+)
+
+// =============================================================================
+// Phase 21 — Sendblue channel migration (CHANNEL-01, CHANNEL-05)
+// =============================================================================
+
+/**
+ * paSendblueWebhook — receives Sendblue inbound webhooks (HMAC-verified).
+ * Per 21-CONTRACT-NOTES §2 + §3:
+ *   - HMAC-SHA256(rawBody) hex; header Sendblue-Signature (+ aliases)
+ *   - Subscribes in dashboard to: receive, outbound, typing_indicator, line_blocked
+ *   - Idempotent on `sendblue-${message_handle}` (D-02)
+ */
+export const paSendblueWebhook = onRequest(
+  {
+    region: "us-central1",
+    secrets: [SENDBLUE_WEBHOOK_SIGNING_SECRET],
+    memory: "256MiB",
+    timeoutSeconds: 60,
+    cors: false,
+    // R-05 mitigation: keep at least one warm to stay <30s p95 (CHANNEL-09).
+    // Dial up post-cutover if smoke shows cold-start issues.
+    minInstances: 1,
+  },
+  async (req, res) => {
+    try {
+      await handleSendblueWebhook(
+        {
+          rawBody: req.rawBody,
+          body: req.body,
+          headers: req.headers as Record<string, string | string[] | undefined>,
+          method: req.method,
+          header: (n: string) => req.header(n) ?? undefined,
+        },
+        {
+          status(code: number) {
+            res.status(code)
+            return this
+          },
+          json(body: unknown) {
+            res.json(body)
+            return this
+          },
+          send(body?: unknown) {
+            res.send(body)
+            return this
+          },
+          set(field: string, value: string) {
+            return res.set(field, value)
+          },
+        },
+        {
+          db: getFirestore(),
+          secret: SENDBLUE_WEBHOOK_SIGNING_SECRET.value(),
+          log: (...args: unknown[]) => logger.info("[sendblue][webhook]", ...args),
+        }
+      )
+    } catch (err) {
+      logger.error("paSendblueWebhook fatal", { error: err instanceof Error ? err.message : String(err) })
+      // Sendblue retry policy will redeliver on 5xx — appropriate for unexpected errors.
+      if (!res.headersSent) res.status(500).json({ ok: false, error: "internal" })
+    }
+  }
+)
+
+/**
+ * paSendblueOutbox — Firestore trigger on pa_outbound writes; POSTs to
+ * Sendblue REST. Honors PA_CHANNEL_LEGACY=1 early-return (D-08) for
+ * parallel-run rollback safety.
+ */
+export const paSendblueOutbox = onDocumentCreated(
+  {
+    document: "pa_outbound/{docId}",
+    region: "us-central1",
+    secrets: [SENDBLUE_API_KEY_ID, SENDBLUE_API_SECRET_KEY, SENDBLUE_FROM_NUMBER],
+    memory: "256MiB",
+    timeoutSeconds: 60,
+    concurrency: 1,
+  },
+  async (event) => {
+    // Bind secrets into env so sendblue-client reads them without prop-drilling.
+    process.env.SENDBLUE_API_KEY_ID = SENDBLUE_API_KEY_ID.value()
+    process.env.SENDBLUE_API_SECRET_KEY = SENDBLUE_API_SECRET_KEY.value()
+    try {
+      const fromNumber = SENDBLUE_FROM_NUMBER.value().trim()
+      if (fromNumber) process.env.SENDBLUE_FROM_NUMBER = fromNumber
+    } catch {
+      // SENDBLUE_FROM_NUMBER is optional on paid lines.
+    }
+
+    const { sendImessage } = await import("./sendblue/sendblue-client.js")
+    const { sendTypingIndicator } = await import("./sendblue/typing-indicator.js")
+    const { appendMessage, getOrCreateSession, getUser } = await import("@pa/pa-persistence")
+
+    const data = event.data?.data() as Record<string, unknown> | undefined
+    if (!data) {
+      logger.warn("paSendblueOutbox fired without data", { docId: event.params.docId })
+      return
+    }
+
+    await paSendblueOutboxHandler(
+      {
+        params: { docId: event.params.docId },
+        data: { data: () => data, id: event.params.docId },
+      },
+      {
+        db: getFirestore(),
+        sendblueClient: { sendImessage, sendTypingIndicator },
+        log: (...args: unknown[]) => logger.info("[sendblue][outbox]", ...args),
+        appendMessage,
+        getOrCreateSession,
+        getUser,
+      }
+    )
   }
 )

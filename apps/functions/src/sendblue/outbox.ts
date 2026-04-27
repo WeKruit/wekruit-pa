@@ -64,12 +64,14 @@ export type OutboxDeps = {
   sendblueClient: SendblueClientLike
   now?: () => Date
   log?: (...args: unknown[]) => void
-  appendMessage?: (db: Firestore, input: Record<string, unknown>) => Promise<unknown>
+  // Loose signatures so production injects from @pa/pa-persistence without
+  // type-narrowing friction. Internal call sites cast at use.
+  appendMessage?: (db: Firestore, input: never) => Promise<unknown>
   getUser?: (db: Firestore, userId: string) => Promise<{ id: string } | null>
   getOrCreateSession?: (
     db: Firestore,
     userId: string,
-    channel: string,
+    channel: never,
     externalChatId: string
   ) => Promise<{ id: string }>
 }
@@ -162,7 +164,12 @@ export async function paSendblueOutboxHandler(
     deps.appendMessage
   ) {
     try {
-      const session = await deps.getOrCreateSession(deps.db, userId, "imessage", toPeer)
+      const session = await deps.getOrCreateSession(
+        deps.db,
+        userId,
+        "imessage" as never,
+        toPeer
+      )
       await deps.appendMessage(deps.db, {
         sessionId: session.id,
         userId,
@@ -171,7 +178,7 @@ export async function paSendblueOutboxHandler(
         createdAt: now().toISOString(),
         idempotencyKey: `outbox-msg-${docId}`,
         rawMeta: { source: "pa_console_outbound", outboundDocId: docId },
-      })
+      } as never)
     } catch (err) {
       log(
         "[sendblue][outbox] transcript append failed (non-fatal)",

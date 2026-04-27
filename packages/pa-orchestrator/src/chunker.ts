@@ -1,4 +1,18 @@
 /**
+ * @deprecated Phase 21 — Sendblue native typing_indicator API replaces chunked
+ * simulation on the Sendblue path (CHANNEL-07, D-06). This file remains in the
+ * tree until milestone v1.2 macOS worker DELETION because:
+ *   - Output-normalizer still uses planChunks for >600 char splits (Phase 20)
+ *   - PA_CHANNEL_LEGACY=1 rollback path runs the macOS worker which calls
+ *     deliverChunks via apps/macos-imessage-worker/src/outbox.ts
+ *
+ * On the Sendblue path (PA_CHANNEL_LEGACY=0), set PA_TYPING_INDICATOR=1 to
+ * call apps/functions/src/sendblue/typing-indicator.ts instead. The chunker is
+ * dormant on Sendblue — outbound bodies are sent atomically via
+ * sendImessage(); chunked simulation is not invoked.
+ *
+ * Removal target: milestone v1.2 (alongside macOS worker deletion).
+ *
  * Copy of `apps/macos-imessage-worker/src/chunker.ts` (Phase 20) — used by
  * `output-normalizer` for >600 char splits. Coexists with worker copy until
  * Phase 21 Sendblue migration.
