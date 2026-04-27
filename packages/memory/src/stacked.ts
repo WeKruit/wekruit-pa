@@ -3,6 +3,7 @@ import { PA_COLLECTIONS } from "@pa/core-types"
 import type { AgentDef, ChatMessage } from "@pa/core-types"
 import { mem0Add, mem0Search, type Mem0Config } from "./mem0.js"
 import { recordDriftIfAny, resolveMem0PartitionKey } from "./identity.js"
+import { rerankAndTrim } from "./mem0-rerank.js"
 import type { AfterTurnInput, AfterTurnResult, LoadContextInput, LoadContextResult } from "./types.js"
 
 /**
@@ -138,7 +139,16 @@ export async function loadPersonalizationContext(
   try {
     const lines = await d.mem0Search(mem, input.userMessage, partitionKey)
     mem0SearchResultCount = lines.length
-    if (lines.length) memoryBlock = lines.map((l) => `- ${l}`).join("\n")
+    if (lines.length) {
+      // Memory-opt P0-3: small-LLM rerank step. Top-K cosine → top-3
+      // re-ranked. Fail-open: any error / timeout / disabled flag
+      // returns the first 3 lines unchanged (still better than the
+      // pre-rerank "all 8 lines, no trim" behavior). Recall result-
+      // count metric reflects the PRE-rerank cosine count (unchanged
+      // semantics for dashboard).
+      const trimmed = await rerankAndTrim(input.userMessage, lines)
+      if (trimmed.length) memoryBlock = trimmed.map((l) => `- ${l}`).join("\n")
+    }
   } catch {
     mem0Degraded = true
     mem0DegradedReason = "search_failed"

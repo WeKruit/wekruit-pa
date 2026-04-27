@@ -6,6 +6,7 @@ export {
   type MemoryStackDeps,
 } from "./stacked.js"
 export { mem0Add, mem0Search } from "./mem0.js"
+export { rerankAndTrim, defaultLlmRerank } from "./mem0-rerank.js"
 export {
   FirestoreCanonicalMemoryStore,
   Mem0SemanticMemoryProvider,
