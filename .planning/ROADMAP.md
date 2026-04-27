@@ -269,6 +269,9 @@ Requirements: PROACTIVE-01, PROACTIVE-02, PROACTIVE-03, PROACTIVE-04, PROACTIVE-
 6. User can cancel triggers via iMessage NLU ("停止提醒" / "stop reminders"); orchestrator detects + updates trigger status.
 7. E2E scenario test for each of 3 trigger types.
 
+**Plans:** 1 plan
+- [ ] 22-PLAN.md — pa_scheduled_jobs schema + paProactiveSweep CF + /triggers dashboard + orchestrator proactive turn (Voice v1 reuse) + cancellation NLU + 3 E2E trigger scenarios
+
 ## Phase 23: Closed Beta Onboarding + Safety
 
 **Goal:** First-class onboarding for ≤20 hand-picked closed-beta users. Wire the abuse signal producers that have been schema-only since v1.0.
