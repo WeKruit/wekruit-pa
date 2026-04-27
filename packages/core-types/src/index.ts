@@ -37,6 +37,19 @@ export const UserSchema = z.object({
   updatedAt: z.string().optional(),
   onboardingStatus: OnboardingStatusSchema,
   activeAgentId: z.string().optional(),
+  /**
+   * Phase 11.3 — authoritative for the Mem0/Qdrant payload `user_id`
+   * partition on collection `pa_memory` (semantic memory only). Defaults
+   * to `user.id` when unset. ALL Mem0/Qdrant call sites MUST resolve via
+   * `resolveMem0PartitionKey(user)` from `@pa/memory` — never read this
+   * field directly. Backfilled to `= id` for legacy users by
+   * `scripts/pa-backfill-mem0-user-id.mjs` so dashboard behavior is
+   * byte-identical pre/post 11.3.
+   *
+   * NEVER use this field for Firestore scoping (pa_messages, pa_users,
+   * pa_audit_events, persona card etc. are all `userId`-keyed; see
+   * .planning/phases/11-persona-identity-injection/11-IDENTITY-CONTRACT.md).
+   */
   mem0UserId: z.string().optional(),
   /**
    * Gate for in-band test admin commands (e.g. `__PA_RESET__` magic string

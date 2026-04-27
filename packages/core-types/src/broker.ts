@@ -127,6 +127,9 @@ export const AuditEventKindSchema = z.enum([
   "agent_rollback",
   "agent_default_changed",
   "agent_model_probe",
+  // Phase 11.3 — emitted by recordDriftIfAny() when resolveMem0PartitionKey(user) !== user.id.
+  // One row per (userId, mem0UserId, surface) tuple per CF cold start (LRU-throttled).
+  "memory.identity_drift",
 ])
 export type AuditEventKind = z.infer<typeof AuditEventKindSchema>
 
