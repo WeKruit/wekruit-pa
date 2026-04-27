@@ -1,0 +1,61 @@
+id: mem0_userid_rebound_zh_iron_buddha
+description: |
+  Phase 11.3 production scenario — verifies the partition-key rebind works
+  end-to-end when a user's `mem0UserId` differs from their Firestore
+  `userId`. The scenario:
+
+    1. Resets the harness user's memory (clean slate).
+    2. setup.userPatch sets `pa_users.{id}.mem0UserId = "drift_alt_partition_zh"`
+       BEFORE the first content turn. From this point onward all Mem0
+       reads/writes for this user MUST land on the alt partition.
+    3. Asks the agent to remember "我喜欢喝铁观音" (proves writeback uses
+       the alt partition — there are no points there pre-test).
+    4. Asks "你还记得我喜欢喝什么茶吗？" — the assistant must surface
+       「铁观音」 (proves recall uses the alt partition).
+    5. cleanup.userPatch restores `mem0UserId = ""` so the resolver returns
+       the canonical `userId` again on subsequent runs.
+
+  Hard requirements (Phase 11.3 PLAN §3 11.3.8):
+    - Persona card MUST stay userId-keyed (untouched by this scenario; we
+      only flip the Mem0/Qdrant partition).
+    - pa_outbound = 0 — all turns are suppressed (testMode + reserved
+      +1999999xxxx range, harness.suppressOutbound = true).
+    - Drift telemetry: orchestrator emits ONE
+      `pa_audit_events.kind="memory.identity_drift", surface="orchestrator_turn"`
+      row at first encounter; throttled thereafter.
+
+  Hard contract:
+    - This scenario is gated on `PA_MEM0_USE_PARTITION_KEY=true` in the
+      target environment (Deploy 2+). Pre-Deploy-2 runs will see Mem0
+      writes/reads keyed on `userId` and the recall step will FAIL
+      (recall returns nothing because the writes landed on `userId` but
+      the legacy reads are also on `userId` — which is fine for legacy,
+      but does NOT exercise the rebind we are validating).
+locale: zh-CN
+agentId: default
+participant: "+19999990113"
+chatId: "iMessage;+19999990113"
+testMode: true
+turnTimeoutMs: 90000
+setup:
+  userPatch:
+    mem0UserId: "drift_alt_partition_zh"
+cleanup:
+  userPatch:
+    mem0UserId: null
+turns:
+  - user: "__PA_RESET__"
+    assert:
+      reply_contains_any: ["测试记忆已清空", "qdrant"]
+      reply_min_length: 1
+      reply_not_contains_any: ["error", "failed", "undefined", "[20"]
+  - user: "请记住 我喜欢喝铁观音"
+    assert:
+      reply_min_length: 1
+      reply_contains_any: ["记住", "记下", "好的", "知道", "OK", "ok"]
+      reply_not_contains_any: ["error", "failed", "undefined", "[20"]
+  - user: "你还记得我喜欢喝什么茶吗？"
+    assert:
+      reply_min_length: 1
+      reply_contains_any: ["铁观音"]
+      reply_not_contains_any: ["不记得", "没有记忆", "没记住", "error", "failed", "undefined", "[20"]
