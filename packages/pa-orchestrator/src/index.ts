@@ -13,8 +13,6 @@ import {
   connectorRegistry,
   runConnector,
   type ConnectorName,
-  type CurrentInfoConnectorInput,
-  type CurrentInfoConnectorOutput,
 } from "@pa/pa-connectors"
 import {
   PA_COLLECTIONS,
@@ -75,11 +73,6 @@ export type OrchestratorStore = {
     input: { userId: string; sessionId: string; userMessage: string; memoryMode: AgentDef["memoryMode"] },
     history: ChatMessage[]
   ): Promise<LoadContextResult>
-  runCurrentInfoConnector(
-    agent: AgentDef,
-    input: CurrentInfoConnectorInput,
-    turn: { turnId: string; userId: string; sessionId: string }
-  ): Promise<CurrentInfoConnectorOutput>
   /**
    * Phase 10.5 T7 — build the per-turn AgentTurnTool[] for the SDK.
    * Default Firestore impl wraps `buildTurnTools` (free function) bound to
@@ -288,10 +281,13 @@ async function handleMemoryCommand(
  * scheduler (workers), this comment is the canary — revisit and add a
  * proper atomic.
  *
- * `current-info` is intentionally skipped here because T4 attaches it as
- * the SDK's hosted `webSearchTool`, not a custom function tool. The
- * deferred audit row for hosted web_search is emitted by T9 after the
- * turn completes.
+ * `current-info` is intentionally hosted by T4 as the SDK's
+ * `webSearchTool` (not a custom function tool). After Phase 10.5 cleanup
+ * C6, no `current-info` registry entry exists; the allowlist string
+ * "current-info" is still meaningful as the gate name read by
+ * `buildHostedToolsForDefault`. The deferred audit row for hosted
+ * web_search is emitted by T9 after the turn completes via
+ * `recordHostedToolCalls`.
  */
 export function buildTurnTools(
   db: Firestore,
@@ -304,7 +300,12 @@ export function buildTurnTools(
   const counter = { value: 0 }
   const tools: AgentTurnTool[] = []
   for (const name of allowed) {
-    if (name === "current-info") continue
+    // Phase 10.5 cleanup C6: the `current-info` connector registry entry
+    // was removed; the SDK-hosted webSearchTool replaces it on the default
+    // path. The string `"current-info"` remains valid in
+    // `agent.allowedConnectors` as the gate name for buildHostedToolsForDefault,
+    // but it is no longer a custom function tool — `name in connectorRegistry`
+    // returns false and we skip below.
     if (!(name in connectorRegistry)) continue
     const def = connectorRegistry[name as ConnectorName]
     tools.push({
@@ -638,23 +639,6 @@ export function createFirestoreOrchestratorStore(db: Firestore): OrchestratorSto
     },
     async loadPersonalizationContext(_agent, input, history) {
       return defaultLoadPersonalizationContext(db, input, history)
-    },
-    async runCurrentInfoConnector(agent, input, turn) {
-      const allowed = new Set([...(agent.allowedConnectors ?? []), "current-info"])
-      const currentInfoAgent: AgentDef = {
-        ...agent,
-        toolPolicy: "allowlist",
-        allowedConnectors: [...allowed],
-        toolBudgetPerTurn: Math.max(1, agent.toolBudgetPerTurn ?? 1),
-      }
-      return await runConnector("current-info", input, {
-        db,
-        agent: currentInfoAgent,
-        turnId: turn.turnId,
-        userId: turn.userId,
-        sessionId: turn.sessionId,
-        usedThisTurn: 0,
-      }) as CurrentInfoConnectorOutput
     },
     async buildTurnTools(agent, turn) {
       return buildTurnTools(db, agent, turn)

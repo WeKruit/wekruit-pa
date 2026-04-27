@@ -7,14 +7,6 @@ import {
   type OrchestratorStore,
 } from "./index.js"
 
-type TestCurrentInfoResult = {
-  ok: boolean
-  source: "openai-web-search"
-  summary: string
-  asOf: string
-  sources: { title?: string; url: string }[]
-}
-
 const agent: AgentDef = {
   id: "default",
   name: "Default",
@@ -64,13 +56,6 @@ function makeStore(overrides: Partial<OrchestratorStore> = {}): OrchestratorStor
       mem0Degraded: false,
       mem0SearchResultCount: 0,
       mem0DegradedReason: null,
-    }),
-    runCurrentInfoConnector: async (_agent, input) => ({
-      ok: false,
-      source: "openai-web-search",
-      summary: "PA_OPENAI_AGENT_API_KEY is not configured; OpenAI Agents hosted web search unavailable.",
-      asOf: input.nowIso,
-      sources: [],
     }),
     createSession: () => ({
       async getSessionId() {
@@ -294,20 +279,14 @@ test("processInboundEvent T5: 'remember' command falls through to LLM (no short-
 })
 
 test("processInboundEvent T5: current-info-shaped query falls through to LLM", async () => {
+  // Phase 10.5 cleanup C6 — runCurrentInfoConnector store hook was removed;
+  // the LLM owns current-info via the SDK webSearchTool on the default path.
+  // The invariant that the LLM is invoked for "最近 X" turns (instead of an
+  // orchestrator-level pre-router) is preserved by the absence of any
+  // shortcut in processInboundEvent.
   let llmCalls = 0
-  let connectorCalls = 0
   let outbound = ""
   const store = makeStore({
-    runCurrentInfoConnector: async (_agent, input): Promise<TestCurrentInfoResult> => {
-      connectorCalls++
-      return {
-        ok: true,
-        source: "openai-web-search",
-        summary: "should-not-be-called",
-        asOf: input.nowIso,
-        sources: [],
-      }
-    },
     runAgentTurn: async (input) => {
       llmCalls++
       assert.match(input.userMessage, /最近有啥电影/)
@@ -318,10 +297,6 @@ test("processInboundEvent T5: current-info-shaped query falls through to LLM", a
     },
   })
   await processInboundEvent({ ...baseEvent, body: "最近有啥电影" }, store)
-  // T5 invariant: orchestrator-level current-info pre-router is gone. The
-  // LLM owns this query via the SDK webSearchTool; the legacy
-  // runCurrentInfoConnector store hook MUST NOT fire on the default path.
-  assert.equal(connectorCalls, 0)
   assert.equal(llmCalls, 1)
   assert.match(outbound, /最近院线/)
 })

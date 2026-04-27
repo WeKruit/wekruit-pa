@@ -1,7 +1,6 @@
 import { createHash, randomUUID } from "node:crypto"
 import type { Firestore } from "firebase-admin/firestore"
 import { z } from "zod"
-import { runOpenAIAgentsCurrentInfo } from "@pa/agent-runtime"
 import { PA_COLLECTIONS, type AgentDef, type PaToolCall } from "@pa/core-types"
 import {
   createConfirmedMemoryFact,
@@ -63,28 +62,6 @@ const ScoringOutputSchema = z.object({
   score: z.number().min(0).max(1),
   summary: z.string(),
 })
-
-const CurrentInfoInputSchema = z.object({
-  query: z.string().min(1),
-  nowIso: z.string().min(1),
-  locale: z.string().min(1).optional(),
-  location: z.string().min(1).optional(),
-})
-const CurrentInfoCitationSchema = z.object({
-  title: z.string().optional(),
-  url: z.string().min(1),
-})
-const CurrentInfoOutputSchema = z.object({
-  ok: z.boolean(),
-  source: z.literal("openai-web-search"),
-  summary: z.string(),
-  asOf: z.string(),
-  sources: z.array(CurrentInfoCitationSchema),
-})
-
-export type CurrentInfoConnectorInput = z.infer<typeof CurrentInfoInputSchema>
-export type CurrentInfoConnectorOutput = z.infer<typeof CurrentInfoOutputSchema>
-
 
 // OpenAI Responses API rejects tool schemas where `required` does not
 // list every property. Keep this schema flat (single required field) so
@@ -188,55 +165,6 @@ export const connectorRegistry = {
       summary: "Length-based placeholder score until real scoring service is wired.",
     }),
   } satisfies ConnectorDef<z.infer<typeof ScoringInputSchema>, z.infer<typeof ScoringOutputSchema>>,
-  "current-info": {
-    name: "current-info",
-    version: "1",
-    description: "Current information lookup via OpenAI Agents SDK hosted web search.",
-    inputSchema: CurrentInfoInputSchema,
-    outputSchema: CurrentInfoOutputSchema,
-    execute: async (input: CurrentInfoConnectorInput) => {
-      const apiKey = process.env.PA_OPENAI_AGENT_API_KEY?.trim()
-      if (!apiKey) {
-        return {
-          ok: false,
-          source: "openai-web-search",
-          summary: "PA_OPENAI_AGENT_API_KEY is not configured; OpenAI Agents hosted web search unavailable.",
-          asOf: input.nowIso,
-          sources: [],
-        }
-      }
-
-      try {
-        const result = await runOpenAIAgentsCurrentInfo(input)
-        const summary = result.summary.trim()
-        if (!summary) {
-          return {
-            ok: false,
-            source: "openai-web-search",
-            summary: "OpenAI Agents hosted web search returned no answer text.",
-            asOf: input.nowIso,
-            sources: result.sources,
-          }
-        }
-        return {
-          ok: true,
-          source: "openai-web-search",
-          summary: summary.slice(0, 1400),
-          asOf: input.nowIso,
-          sources: result.sources,
-        }
-      } catch (e) {
-        const err = e instanceof Error ? e.message : String(e)
-        return {
-          ok: false,
-          source: "openai-web-search",
-          summary: `OpenAI Agents hosted web search unavailable: ${err.slice(0, 160)}`,
-          asOf: input.nowIso,
-          sources: [],
-        }
-      }
-    },
-  } satisfies ConnectorDef<CurrentInfoConnectorInput, CurrentInfoConnectorOutput>,
   "remember-fact": {
     name: "remember-fact",
     version: "1",
