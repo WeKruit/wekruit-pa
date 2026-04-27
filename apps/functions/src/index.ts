@@ -25,7 +25,7 @@ import {
   processInboundEvent,
 } from "@pa/pa-orchestrator"
 import { PA_COLLECTIONS, type Channel, type InboundEvent, type OnboardingStatus, type User } from "@pa/core-types"
-import { clearUserMemory, summarizeClearResult } from "@pa/memory"
+import { clearUserMemory, recordDriftIfAny, resolveMem0PartitionKey, summarizeClearResult } from "@pa/memory"
 import { createHash, randomUUID } from "node:crypto"
 
 if (!getApps().length) initializeApp()
@@ -119,6 +119,18 @@ async function qdrantJson(path: string, init: RequestInit) {
     throw new Error(`Qdrant ${path} failed: ${resp.status} ${await resp.text()}`)
   }
   return resp.json() as Promise<unknown>
+}
+
+/**
+ * Phase 11.3 kill switch — same semantics as stacked.ts. Default OFF
+ * (legacy `userId`-keyed Qdrant) so Deploy 1 is a no-op. Set
+ * `PA_MEM0_USE_PARTITION_KEY=true` in Deploy 2 to flip dashboard ops
+ * onto the resolved partition.
+ */
+function partitionSwitchEnabled(): boolean {
+  const raw = process.env.PA_MEM0_USE_PARTITION_KEY
+  if (typeof raw !== "string") return false
+  return raw.trim().toLowerCase() === "true"
 }
 
 function qdrantUserFilter(userId: string) {
@@ -408,11 +420,36 @@ export const memoryAdmin = onRequest(
         return
       }
 
+      // Phase 11.3 — resolve the Mem0/Qdrant partition key. Behind the
+      // kill switch (default OFF) all paths still scope on `userId` so
+      // dashboard behavior is byte-identical to pre-11.3.
+      const db = getFirestore()
+      let mem0PartitionKey = userId
+      if (partitionSwitchEnabled()) {
+        const userSnap = await db.collection(PA_COLLECTIONS.users).doc(userId).get()
+        if (!userSnap.exists) {
+          sendJson(res, 404, { error: "user_not_found", userId })
+          return
+        }
+        const userData = userSnap.data() as Pick<User, "id" | "mem0UserId"> | undefined
+        mem0PartitionKey = resolveMem0PartitionKey({
+          id: userId,
+          mem0UserId: userData?.mem0UserId,
+        })
+        // Best-effort drift telemetry — never throws.
+        if (mem0PartitionKey !== userId) {
+          void recordDriftIfAny(
+            { userId, mem0UserId: mem0PartitionKey, surface: "memory_admin" },
+            { db }
+          )
+        }
+      }
+
       if (req.method === "GET") {
         const search = String(req.query.q ?? "").trim()
         const limit = Number(req.query.limit ?? "100")
-        const points = await listQdrantMemories(userId, search, Number.isFinite(limit) ? limit : 100)
-        sendJson(res, 200, { userId, collection: QDRANT_COLLECTION, points })
+        const points = await listQdrantMemories(mem0PartitionKey, search, Number.isFinite(limit) ? limit : 100)
+        sendJson(res, 200, { userId, mem0PartitionKey, collection: QDRANT_COLLECTION, points })
         return
       }
 
@@ -422,8 +459,8 @@ export const memoryAdmin = onRequest(
           sendJson(res, 400, { error: "pointId is required" })
           return
         }
-        await deleteQdrantPointForUser(userId, pointId)
-        sendJson(res, 200, { userId, pointId, deleted: true })
+        await deleteQdrantPointForUser(mem0PartitionKey, pointId)
+        sendJson(res, 200, { userId, mem0PartitionKey, pointId, deleted: true })
         return
       }
 
@@ -436,14 +473,23 @@ export const memoryAdmin = onRequest(
         const result = await clearUserMemory(
           userId,
           {
-            db: getFirestore(),
+            db,
             qdrantUrl: QDRANT_URL.value(),
             qdrantApiKey: QDRANT_API_KEY.value(),
             qdrantCollection: QDRANT_COLLECTION,
           },
-          { keepMessages: req.body?.keepMessages === true, dryRun: req.body?.dryRun === true }
+          {
+            keepMessages: req.body?.keepMessages === true,
+            dryRun: req.body?.dryRun === true,
+            // Only set when the kill switch is on AND the resolved partition
+            // diverges from `userId`. When equal, we omit so downstream stays
+            // byte-identical to the pre-11.3 path.
+            ...(partitionSwitchEnabled() && mem0PartitionKey !== userId
+              ? { mem0PartitionKey }
+              : {}),
+          }
         )
-        sendJson(res, 200, { result, summary: summarizeClearResult(result) })
+        sendJson(res, 200, { userId, mem0PartitionKey, result, summary: summarizeClearResult(result) })
         return
       }
 
