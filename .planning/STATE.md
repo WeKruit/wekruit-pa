@@ -1,28 +1,61 @@
-# Milestone state
+# Milestone state — v1.1 Pre-Launch Hardening + Companion Brain
 
-- **Previous E2E gap closure:** complete locally. Worker health passes, Firestore Admin smoke passes, iMessage inbound/outbound E2E completed, OpenAI direct runtime works.
-- **Current phase:** Phase 10 Agents SDK current-info connector. Direction changed from hand-written Responses fetch to OpenAI Agents SDK hosted tools wherever the SDK exposes the capability directly.
-- **Completed code fix:** broker-managed outbound (`out-imessage-in-*`) is no longer appended by the outbox as `role=user`.
-- **Completed reliability fix:** expired `processing` inbound leases are now listed by the scanner so the orchestrator can reclaim stuck work.
-- **Current test baseline:** root `npm test` runs all package tests and currently passes across worker, agent registry, memory, broker, connectors, orchestrator, and safety. `npm run build:all` also passes; dashboard build still emits a non-fatal large chunk warning.
-- **Completed UI step:** `/` now renders an operator Overview; prior Users list moved to `/conversations`; side nav has active state and responsive shell styling.
-- **Completed workbench step:** Conversations support search/filter/latest/error columns; detail links transcript, turns, outbound, connectors, audit/safety, and memory; Operations has tabs, filters, reasoned retry/dead-letter, scheduled jobs, and heartbeats.
-- **Completed agent/persona step:** Agent schema supports status, persona controls, model probe state, lifecycle timestamps, publish/rollback snapshots, and guarded default switching.
-- **Completed memory step:** Firestore persona facts feed deterministic persona cards; Mem0 supports cloud/OSS modes; surprise protocol has opt-in/cooldown/sensitivity guardrails.
-- **Completed runtime step:** Firestore scheduled jobs and runtime heartbeats have broker helpers, tests, and dashboard visibility.
-- **Completed Phase 2 hardening:** production scenario harness uses broker injection with default `suppressOutbound`; reserved test participants are randomized; assertion helpers include regex match / not-match paths; runner can verify no accidental `pa_outbound` rows.
-- **Completed Phase 3 Memory Admin:** PA Console user detail can automatically load, search, delete, and clear Qdrant semantic memory through the `memoryAdmin` function. Destructive delete/clear still requires explicit operator/user confirmation before testing on production data.
-- **Completed current-info guard:** current/latest external facts no longer fall through to stale model answers when live search is unavailable.
-- **Current-info connector status:** Production-closed 2026-04-26. `PA_OPENAI_AGENT_API_KEY` bound, `onPaInbound` redeployed, live `current-info-live-zh.yaml` returns sourced 2026-04-26 web results, harness `pa_outbound` count remains `0`. Three latent bugs surfaced and fixed during closure: (a) `policyReason: undefined` Firestore rejection in `runConnector`, (b) `appendAuditEvent` writing undefined optional fields to Firestore, (c) `OpenAIProvider` baseURL falling through to SiliconFlow because of the shared `OPENAI_BASE_URL` env — fixed via explicit `openAIClient` pinned to the official OpenAI endpoint.
-- **Deployed secret baseline:** deployed `onPaInbound` includes `SILICONFLOW_API_KEY`, `QDRANT_URL`, `QDRANT_API_KEY`, and `PA_OPENAI_AGENT_API_KEY`; deployed `memoryAdmin` includes `QDRANT_URL` and `QDRANT_API_KEY`.
-- **Known model gap:** official model slug is `gpt-5.4-nano`; the earlier failed probe used the wrong `gpt5.4nano` string. Keep current live default stable until a probe for the official slug passes in the configured provider/ATM path.
-- **Known ATM gap:** `ATM_BASE_URL` and `VALET_ATM_TOKEN` are set, but default PA profile path returns `Unsupported runtime profile "personal-assistant-default"`.
-- **Review constraint:** Full `gstack-design-review` atomic screenshot/fix loop still requires a clean working tree and explicit commit permission. Equivalent code-level review notes are captured in Phase 8.
-- **Known bundle gap:** dashboard production build passes but Vite warns the main chunk is larger than 500 kB.
-- **Known persona gap:** Firestore persona facts / persona card injection and `mem0UserId` semantics need a Phase 11 pass before B3 human-feel work.
-- **Current product direction:** PA should become a personal job-search companion/recruiter presence: permissioned periodic project/status check-ins, auditable role-match notifications, and PA-owned identity/memory/audit controls around Agents SDK reasoning/tools.
-- **Architecture honesty correction (2026-04-26):** Phase 10 closed the connector path of the Agents SDK migration but NOT the runtime migration. Production main turns still go through `runOpenAITurn` (chat.completions on SiliconFlow). Agents SDK only fires inside the `current-info` connector. Regex pre-routers (`buildCurrentInfoBoundaryReply`, `handleRememberCommand`) currently substitute for LLM tool-choice. Phase 10.5 (Agents SDK runtime cutover) was opened to close this gap before Phase 11 lands.
-- **Phase 11.1 Complete (2026-04-27):** Persona card injection live in production. `buildPersonaCard` (in `@pa/memory`) renders deterministic Firestore-confirmed-fact card with ≤20 facts / ≤1500 chars cap and oldest-first eviction; orchestrator injects it as `systemInputs[0]` ahead of Mem0 recall block. Rollback flag `PA_PERSONA_CARD_DISABLED=true`. Production scenario suite expanded to 11/11 PASS (added persona-card-zh, remember-fact-zh, current-info-live-en/ja, tool-budget-stress-zh). `pa_outbound` for harness events still 0. Phase 11.3 (mem0UserId authoritative migration) remains not started; sequenced strictly after 11.1 per file-domain + rollback-surface lock.
-- **Phase 10.5 Complete (2026-04-26):** Agents SDK runtime cutover shipped to production via three sequential deploys. Default agent runs OpenAI `gpt-5.4-nano` via Responses API; FirestoreSession owns transcript history; webSearchTool attached under allowlist; `remember-fact` connector replaces `handleRememberCommand` regex; all current-info regex pre-routers deleted; `__PA_RESET__` orchestrator guard preserved. `runOpenAITurn` retained as env-gated SiliconFlow fallback (`PA_AGENT_LLM_PROVIDER=siliconflow`). Mem0/Qdrant + Memory Admin unchanged (Mem0 LLM/embedder still SiliconFlow Qwen + bge-m3). Production scenarios 6/6 pass (memory recall zh/en/ja/mixed, reset-integration-zh, current-info-live-zh) with `pa_outbound = 0` for all harness events. Per-turn token usage logged to `pa_turns.usage`. See `.planning/phases/10.5-agents-sdk-runtime-cutover/10.5-VERIFICATION.md` for full bug list and known follow-ups.
-- **Locked architecture (P10, 2026-04-26):** ONE agent runtime = OpenAI Agents SDK; default LLM = OpenAI `gpt-5.4-nano` via Responses API; SiliconFlow demoted to env-gated fallback (`PA_AGENT_LLM_PROVIDER=siliconflow`); Mem0/Qdrant remains the memory empowerment layer (LLM/embedder still SiliconFlow Qwen + bge-m3); hosted tools (web_search, etc.) attach via SDK `webSearchTool` when `agent.toolPolicy === "allowlist"`; legacy isolated-baseURL connector kept only for SF fallback path; `__PA_RESET__` stays as orchestrator-level guard, not a tool.
-- **Known delivery gap:** B2 typing indicator / chunked delivery simulation is not started.
+## Current Position
+
+Phase: Not started (defining requirements → roadmap)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-04-27 — Milestone v1.1 started
+
+## Milestone goal
+
+Closed-beta launchable (≤20 hand-picked users) within 3 weeks. Fix robotic companion voice via prompt structure on gpt-5.4-nano (no Sonnet escalation), migrate channel layer to Sendblue, close output-normalization + safety gaps, and revive proactive check-in.
+
+## Accumulated Context (carried from v1.0)
+
+### v1.0 baseline shipped
+- Phase 1-9: Broker correctness + Dashboard shell + Memory evol + Scheduler + Phase 2/3 production hardening
+- Phase 10: Agents SDK current-info connector (closed 2026-04-26)
+- Phase 10.5: Agents SDK runtime cutover — default agent runs OpenAI gpt-5.4-nano via Responses API; webSearchTool attached; SiliconFlow demoted to env-gated fallback (closed 2026-04-26)
+- Phase 11.1: Persona card injection (closed 2026-04-27); Phase 11.3 mem0UserId migration not started
+- Phase 13: WeKruit matching connector (degraded mode contract; `PA_MATCHING_URL` not yet wired)
+- Phase 14: Companion eval harness (LLM-as-judge + cost ceiling, 23 scenarios pass)
+- Phase 15: Chunked typing simulation (kill switch armed, default disabled)
+- Phase 16/17 baseline: worker durable cursor + auto-catchup + allowlist fail-closed (inbound + outbound) — landed 2026-04-27
+
+### v1.1 research already in-bank
+- `.planning/phases/17-pre-launch-hardening/17-CONTEXT.md` — milestone scope + Sendblue migration design + Output Normalizer design + Proactive Check-in plumbing
+- `.planning/phases/17-pre-launch-hardening/17-RESEARCH-companion-voice.md` — Round 1 frameworks (SillyTavern V2, Ali:Chat, EmotionPrompt caveats on small models)
+- `.planning/phases/17-pre-launch-hardening/17-RESEARCH-raw-artifacts.md` — Round 2 raw artifacts (Snapchat MyAI prompt verbatim, Tendera "facts as voice" diff, Meta filler-ban list, Anthropic Claude Soul, Discord Clyde sass, zh+en slang lexicons, Anthropic anti-overcaution checklist)
+
+### Locked architecture decisions
+- ONE agent runtime = OpenAI Agents SDK; default LLM = gpt-5.4-nano via Responses API
+- SiliconFlow demoted to env-gated fallback (`PA_AGENT_LLM_PROVIDER=siliconflow`)
+- Mem0/Qdrant remains memory empowerment layer (Mem0 LLM/embedder still SiliconFlow Qwen + bge-m3)
+- Hosted tools attach via SDK `webSearchTool` when `agent.toolPolicy === "allowlist"`
+- `__PA_RESET__` stays as orchestrator-level guard, not a tool
+- Sendblue is pure transport (triple-verified) — agent runtime, memory, persona stay with us
+
+### Adam-locked v1.1 constraints
+- No model escalation (no Sonnet); voice fix at prompt + persona + eval layer only
+- No fine-tuning (no anchor data yet)
+- No negative-instruction blacklists in system prompt — go in eval LLM-judge auto-fail criteria only
+- Keep Mem0/Qdrant + Memory Admin
+- Closed-beta tolerates iMessage Apple-ID gray zone for ≤20 users; Sendblue migration before public launch
+
+### Open Adam decisions (pre-Phase-18 spawn)
+- **Character Bible v1** — one-page anchor: PA name + backstory + 3 verbal tics + reaction templates + 1-2 signature emoji + code-switch policy + length cap. P9-Voice spawn blocked until Adam writes this.
+- **Sendblue contract** — confirm 4 contract questions before signing: Apple ID ownership, SLA on number re-provisioning, outbound rate limit, GDPR posture.
+
+### Known gaps carried forward
+- `PA_MATCHING_URL` unset → wekruit-matching connector in degraded mode (Phase 13 follow-up)
+- Phase 11.3 mem0UserId authoritative migration not started
+- Dashboard production build emits non-fatal large chunk warning
+- Default PA profile path returns `Unsupported runtime profile "personal-assistant-default"` in ATM
+- `gpt5.4nano` slug bug still latent (correct slug `gpt-5.4-nano`)
+
+### Public launch gate (post-v1.1, separate cycle)
+- B4 secrets to GCP Secret Manager
+- B1 Apple ID risk fully resolved (Sendblue or Business Chat)
+- GDPR/CCPA delete API + abuse events full producers
+- Always-on Mac mini (or remove via Sendblue migration)
