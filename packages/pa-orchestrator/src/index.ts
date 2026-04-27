@@ -57,7 +57,7 @@ export type OrchestratorStore = {
   getAgentForUser(userId: string): Promise<AgentDef | null>
   loadHistory(sessionId: string, limit: number): Promise<ChatMessage[]>
   enqueueOutbound(userId: string, toE164: string, body: string, input?: Partial<OutboundMessage>): Promise<void>
-  listMemoryFacts(userId: string): Promise<MemoryFact[] | { id: string; content: string }[]>
+  listMemoryFacts(userId: string): Promise<MemoryFact[]>
   createMemoryFact(userId: string, content: string): Promise<string>
   deleteMemoryFacts(userId: string, factIds: string[], eventId?: string): Promise<void>
   recordMemoryAction(input: {
@@ -146,25 +146,37 @@ function memoryReplyForList(facts: { content: string }[]) {
  * Phase 11.1.3 — legacy concatenated memory block.
  *
  * Surface contract:
- *  - Consumed by the chat.completions emergency-rollback path
- *    (`PA_AGENT_RUNTIME=chat_completions`) via `runAgentTurn`'s legacy
- *    `memoryBlock` field.
- *  - The default Agents SDK path also reads this string for the *recall*
- *    half of systemInputs (still keyed "Memory context:\n…") so Mem0
- *    semantic recall continues to ride the SDK system channel.
+ *  - LEGACY-FALLBACK ONLY. Consumed by the chat.completions emergency-
+ *    rollback path (`PA_AGENT_RUNTIME=chat_completions`) via
+ *    `runAgentTurn`'s legacy `memoryBlock` field. Keeping this helper
+ *    intact keeps the kill-switch contract unchanged.
+ *  - The default Agents SDK path NO LONGER calls this helper for the
+ *    recall half of systemInputs. Use `buildRecallSystemInput` instead;
+ *    facts now ride exclusively in the persona card (Phase 11.1.2)
+ *    so the recall channel reflects only Mem0 semantic recall.
  *  - Persona card does NOT flow through this helper; persona is its own
- *    discrete `systemInputs[0]` entry built by `buildPersonaCard`
- *    (see Phase 11.1.2 wiring below). This is option (a) from
- *    .planning/phases/11.../11.1-PLAN.md §2: keep this helper intact so
- *    the chat.completions fallback's contract is unchanged, and add the
- *    persona card as a separate orchestrator-side system input.
+ *    discrete `systemInputs[0]` entry built by `buildPersonaCard`.
  */
-function memoryBlockWithFacts(memoryBlock: string | null, facts: { content: string }[]) {
+export function memoryBlockWithFacts(memoryBlock: string | null, facts: { content: string }[]) {
   const unique = uniqueFactsByContent(facts)
   const factBlock = unique.length ? unique.map((f) => `- ${f.content}`).join("\n") : null
   if (memoryBlock && factBlock) return `Confirmed user facts:\n${factBlock}\n\nRelevant memory:\n${memoryBlock}`
   if (factBlock) return `Confirmed user facts:\n${factBlock}`
   return memoryBlock
+}
+
+/**
+ * Phase 11.1 cleanup D2 — recall-only system input for the default Agents
+ * SDK path. Decoupled from `memoryBlockWithFacts` (which is now
+ * legacy-fallback only). Persona/facts are NOT prepended here — the
+ * persona card is its own discrete `systemInputs[0]` entry from 11.1.2.
+ *
+ * @returns The `Memory context:\n…` block alone, or `null` when there is
+ *          no Mem0 recall to surface (no bare heading is ever injected).
+ */
+export function buildRecallSystemInput(memoryBlock: string | null): string | null {
+  if (!memoryBlock) return null
+  return `Memory context:\n${memoryBlock}`
 }
 
 function normalizedFactContent(content: string) {
@@ -430,6 +442,10 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       updatedAt: store.nowIso(),
     })
 
+    // Legacy `memoryBlock` field — consumed ONLY by the chat.completions
+    // emergency-rollback path (PA_AGENT_RUNTIME=chat_completions). Shape
+    // unchanged from pre-D2: `Confirmed user facts:\n…\n\nRelevant memory:\n…`
+    // (facts + Mem0 concatenated). Kill-switch contract preserved.
     const memoryBlock = memoryBlockWithFacts(mem.memoryBlock, facts)
     const session = store.createSession({ sessionId: event.sessionId, userId: event.userId })
     // Phase 11.1.2 — persona card is a deterministic system input prepended
@@ -440,8 +456,11 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     const personaCard =
       process.env.PA_PERSONA_CARD_DISABLED === "true"
         ? null
-        : buildPersonaCard(facts as MemoryFact[])
-    const recallEntry = memoryBlock ? `Memory context:\n${memoryBlock}` : null
+        : buildPersonaCard(facts)
+    // Phase 11.1 cleanup D2 — default-path recall is Mem0-only. Facts are
+    // already surfaced via persona card; do NOT double-write them into
+    // the recall channel.
+    const recallEntry = buildRecallSystemInput(mem.memoryBlock)
     const systemInputs: string[] = [personaCard, recallEntry].filter(
       (entry): entry is string => typeof entry === "string" && entry.length > 0
     )

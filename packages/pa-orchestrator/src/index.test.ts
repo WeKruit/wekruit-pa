@@ -1,8 +1,10 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import type { AgentDef, InboundEvent } from "@pa/core-types"
+import type { AgentDef, InboundEvent, MemoryFact } from "@pa/core-types"
 import {
+  buildRecallSystemInput,
   isInboundLeaseExpired,
+  memoryBlockWithFacts,
   processInboundEvent,
   type OrchestratorStore,
 } from "./index.js"
@@ -20,8 +22,22 @@ const agent: AgentDef = {
   isDefault: true,
 }
 
+// Phase 11.1 cleanup D1 — listMemoryFacts now returns MemoryFact[] (no
+// lite-shape union). Tests construct full MemoryFact rows via this helper
+// so mock shapes match the production contract.
+function mf(input: { id: string; content: string; userId?: string; createdAt?: string; status?: "confirmed" | "deleted"; source?: "explicit_user" | "operator" | "proposal" }): MemoryFact {
+  return {
+    id: input.id,
+    userId: input.userId ?? "u1",
+    content: input.content,
+    status: input.status ?? "confirmed",
+    source: input.source ?? "explicit_user",
+    createdAt: input.createdAt ?? "2026-04-25T12:00:00.000Z",
+  }
+}
+
 function makeStore(overrides: Partial<OrchestratorStore> = {}): OrchestratorStore {
-  const facts: { id: string; content: string }[] = []
+  const facts: MemoryFact[] = []
   const calls: string[] = []
   return {
     markEventRunning: async () => {
@@ -41,7 +57,7 @@ function makeStore(overrides: Partial<OrchestratorStore> = {}): OrchestratorStor
     enqueueOutbound: async () => undefined,
     listMemoryFacts: async () => facts,
     createMemoryFact: async (_userId, content) => {
-      facts.push({ id: `f${facts.length + 1}`, content })
+      facts.push(mf({ id: `f${facts.length + 1}`, content }))
       return facts[facts.length - 1]!.id
     },
     deleteMemoryFacts: async (_userId, ids) => {
@@ -306,8 +322,8 @@ test("processInboundEvent T5: parseMemoryCommand 'list' still routes through orc
   let outbound = ""
   const store = makeStore({
     listMemoryFacts: async () => [
-      { id: "f1", content: "我喜欢冰美式" },
-      { id: "f2", content: "我住在上海" },
+      mf({ id: "f1", content: "我喜欢冰美式" }),
+      mf({ id: "f2", content: "我住在上海" }),
     ],
     runAgentTurn: async () => {
       llmCalls++
@@ -326,7 +342,7 @@ test("processInboundEvent T5: parseMemoryCommand 'list' still routes through orc
 test("processInboundEvent T5: parseMemoryCommand 'forget' still routes through orchestrator (admin command)", async () => {
   let llmCalls = 0
   let outbound = ""
-  const facts: { id: string; content: string }[] = [{ id: "f1", content: "我喜欢冰美式" }]
+  const facts: MemoryFact[] = [mf({ id: "f1", content: "我喜欢冰美式" })]
   const deletes: string[][] = []
   const store = makeStore({
     listMemoryFacts: async () => facts,
@@ -367,9 +383,9 @@ test("processInboundEvent T5: parseMemoryCommand 'clear_request' still routes th
 test("processInboundEvent T5: parseMemoryCommand 'clear_confirm' still routes through orchestrator (admin command)", async () => {
   let llmCalls = 0
   let outbound = ""
-  const facts: { id: string; content: string }[] = [
-    { id: "f1", content: "fact one" },
-    { id: "f2", content: "fact two" },
+  const facts: MemoryFact[] = [
+    mf({ id: "f1", content: "fact one" }),
+    mf({ id: "f2", content: "fact two" }),
   ]
   const deletes: string[][] = []
   const store = makeStore({
@@ -665,13 +681,13 @@ test("processInboundEvent filters undefined fields out of pa_turns.usage payload
 // -------- Phase 11.1.2: persona card wiring into systemInputs --------
 
 test("Phase 11.1.2: persona + Mem0 → systemInputs[0]=persona, [1]=recall", async () => {
-  const facts = [
-    { id: "f1", userId: "u1", content: "我喜欢冰美式", status: "confirmed", source: "explicit_user", createdAt: "2026-01-01T00:00:00Z" },
-    { id: "f2", userId: "u1", content: "我住在上海", status: "confirmed", source: "explicit_user", createdAt: "2026-01-02T00:00:00Z" },
+  const facts: MemoryFact[] = [
+    mf({ id: "f1", userId: "u1", content: "我喜欢冰美式", createdAt: "2026-01-01T00:00:00Z" }),
+    mf({ id: "f2", userId: "u1", content: "我住在上海", createdAt: "2026-01-02T00:00:00Z" }),
   ]
   let captured: string[] | undefined
   const store = makeStore({
-    listMemoryFacts: async () => facts as never,
+    listMemoryFacts: async () => facts,
     loadPersonalizationContext: async () => ({
       memoryBlock: "User likes brevity.",
       mem0Degraded: false,
@@ -697,8 +713,10 @@ test("Phase 11.1.2: persona + Mem0 → systemInputs[0]=persona, [1]=recall", asy
   assert.match(captured[0]!, /^Persona facts \(confirmed\):/)
   assert.match(captured[0]!, /我喜欢冰美式/)
   assert.match(captured[0]!, /我住在上海/)
-  assert.match(captured[1]!, /^Memory context:\nConfirmed user facts:/)
-  assert.match(captured[1]!, /Relevant memory:\nUser likes brevity\./)
+  // Phase 11.1 cleanup D2 — recall channel is Mem0-only on the default
+  // path; facts no longer double-write into "Confirmed user facts:" here.
+  assert.equal(captured[1]!, "Memory context:\nUser likes brevity.")
+  assert.equal(captured[1]!.startsWith("Memory context:\nConfirmed user facts:"), false)
 })
 
 test("Phase 11.1.2: zero facts + non-null Mem0 → systemInputs has only recall", async () => {
@@ -732,12 +750,12 @@ test("Phase 11.1.2: zero facts + non-null Mem0 → systemInputs has only recall"
 })
 
 test("Phase 11.1.2: persona present + null Mem0 → systemInputs has only persona", async () => {
-  const facts = [
-    { id: "f1", userId: "u1", content: "我喜欢冰美式", status: "confirmed", source: "explicit_user", createdAt: "2026-01-01T00:00:00Z" },
+  const facts: MemoryFact[] = [
+    mf({ id: "f1", userId: "u1", content: "我喜欢冰美式", createdAt: "2026-01-01T00:00:00Z" }),
   ]
   let captured: string[] | undefined
   const store = makeStore({
-    listMemoryFacts: async () => facts as never,
+    listMemoryFacts: async () => facts,
     loadPersonalizationContext: async () => ({
       memoryBlock: null,
       mem0Degraded: false,
@@ -759,13 +777,14 @@ test("Phase 11.1.2: persona present + null Mem0 → systemInputs has only person
   }
 
   if (!captured) throw new Error("runAgentTurn was not called")
-  // memoryBlockWithFacts still surfaces "Confirmed user facts:" via the
-  // legacy concat path (option a from PLAN §2). When mem.memoryBlock is
-  // null AND facts is non-empty, recall is the legacy "Confirmed user
-  // facts:" block. Persona is FIRST.
-  assert.equal(captured.length, 2)
+  // Phase 11.1 cleanup D2 — facts no longer double-write into the recall
+  // channel; when mem.memoryBlock is null, recall is null and systemInputs
+  // contains only the persona card.
+  assert.equal(captured.length, 1)
   assert.match(captured[0]!, /^Persona facts \(confirmed\):/)
-  assert.match(captured[1]!, /^Memory context:\nConfirmed user facts:/)
+  for (const entry of captured) {
+    assert.equal(entry.includes("Confirmed user facts:"), false, "facts must not leak into recall")
+  }
 })
 
 test("Phase 11.1.2: zero facts + null Mem0 → systemInputs is empty", async () => {
@@ -797,12 +816,12 @@ test("Phase 11.1.2: zero facts + null Mem0 → systemInputs is empty", async () 
 })
 
 test("Phase 11.1.2: PA_PERSONA_CARD_DISABLED=true → persona absent even when facts exist", async () => {
-  const facts = [
-    { id: "f1", userId: "u1", content: "我喜欢冰美式", status: "confirmed", source: "explicit_user", createdAt: "2026-01-01T00:00:00Z" },
+  const facts: MemoryFact[] = [
+    mf({ id: "f1", userId: "u1", content: "我喜欢冰美式", createdAt: "2026-01-01T00:00:00Z" }),
   ]
   let captured: string[] | undefined
   const store = makeStore({
-    listMemoryFacts: async () => facts as never,
+    listMemoryFacts: async () => facts,
     loadPersonalizationContext: async () => ({
       memoryBlock: "Mem0 says hi.",
       mem0Degraded: false,
@@ -828,4 +847,38 @@ test("Phase 11.1.2: PA_PERSONA_CARD_DISABLED=true → persona absent even when f
   assert.equal(captured.length, 1)
   assert.match(captured[0]!, /^Memory context:/)
   assert.equal(captured[0]!.startsWith("Persona facts"), false)
+})
+
+// -------- Phase 11.1 cleanup D2: buildRecallSystemInput unit tests --------
+
+test("D2 buildRecallSystemInput: null memoryBlock → null (no bare heading injected)", () => {
+  assert.equal(buildRecallSystemInput(null), null)
+})
+
+test("D2 buildRecallSystemInput: empty-string memoryBlock → null (treated as no recall)", () => {
+  assert.equal(buildRecallSystemInput(""), null)
+})
+
+test("D2 buildRecallSystemInput: non-empty memoryBlock → wraps with 'Memory context:' header", () => {
+  const out = buildRecallSystemInput("User prefers terse answers.")
+  assert.equal(out, "Memory context:\nUser prefers terse answers.")
+})
+
+test("D2 buildRecallSystemInput: does NOT prepend facts/persona (decoupled from memoryBlockWithFacts)", () => {
+  const out = buildRecallSystemInput("Mem0 says hi.")
+  // No facts heading should ever appear via this helper.
+  assert.equal(out!.includes("Confirmed user facts:"), false)
+  assert.equal(out!.includes("Persona facts"), false)
+})
+
+test("D2 memoryBlockWithFacts (legacy fallback) shape unchanged for chat.completions kill-switch", () => {
+  // Both halves present → keep "Confirmed user facts:" + "Relevant memory:" wire shape.
+  const both = memoryBlockWithFacts("Mem0 says hi.", [{ content: "我喜欢冰美式" }])
+  assert.equal(both, "Confirmed user facts:\n- 我喜欢冰美式\n\nRelevant memory:\nMem0 says hi.")
+  // Facts only → "Confirmed user facts:" alone.
+  assert.equal(memoryBlockWithFacts(null, [{ content: "fact one" }]), "Confirmed user facts:\n- fact one")
+  // Mem0 only → bare memoryBlock string.
+  assert.equal(memoryBlockWithFacts("Mem0 alone", []), "Mem0 alone")
+  // Neither → null.
+  assert.equal(memoryBlockWithFacts(null, []), null)
 })
