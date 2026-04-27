@@ -1,0 +1,400 @@
+import { describe, it, beforeEach, afterEach } from "node:test"
+import assert from "node:assert/strict"
+
+import { paSendblueOutboxHandler, shouldAppendOutboundTranscript } from "../outbox.js"
+import { SendblueClientError, SendblueServerError } from "../sendblue-client.js"
+
+// ---------- Fake Firestore + sendblue client ----------
+
+type DocData = Record<string, unknown>
+
+function makeFakeDb(initialOutbound: Record<string, DocData> = {}, users: Record<string, DocData> = {}) {
+  const outbound = new Map<string, DocData>(Object.entries(initialOutbound))
+  const sessions = new Map<string, DocData>()
+  const messages = new Map<string, DocData>()
+  const usersMap = new Map<string, DocData>(Object.entries(users))
+
+  function makeDocRef(coll: string, id: string) {
+    const store = coll === "pa_outbound" ? outbound : coll === "pa_sessions" ? sessions : coll === "pa_messages" ? messages : usersMap
+    return {
+      async get() {
+        const data = store.get(id)
+        return { exists: data !== undefined, data: () => data, id }
+      },
+      async set(data: DocData, opts?: { merge?: boolean }) {
+        if (opts?.merge) {
+          store.set(id, { ...(store.get(id) ?? {}), ...data })
+        } else {
+          store.set(id, { ...data })
+        }
+      },
+      async update(data: DocData) {
+        store.set(id, { ...(store.get(id) ?? {}), ...data })
+      },
+    }
+  }
+
+  const db = {
+    collection(name: string) {
+      return {
+        doc(id: string) {
+          return makeDocRef(name, id)
+        },
+        where() {
+          return this
+        },
+        limit() {
+          return this
+        },
+        async get() {
+          return { empty: true, docs: [] }
+        },
+      }
+    },
+    async runTransaction<T>(fn: (t: unknown) => Promise<T>): Promise<T> {
+      const t = {
+        async get(ref: { get(): Promise<{ exists: boolean; data: () => DocData | undefined; id: string }> }) {
+          return ref.get()
+        },
+        update(ref: { update(d: DocData): Promise<void> }, data: DocData) {
+          // sync wrapper of async update
+          void ref.update(data)
+          return undefined
+        },
+      }
+      return fn(t)
+    },
+  }
+  return { db, outbound, messages, sessions }
+}
+
+// Sendblue client mock
+function makeSendblueMock(opts: { throwError?: Error; uuid?: string } = {}) {
+  let calls = 0
+  const sendImessage = async () => {
+    calls++
+    if (opts.throwError) throw opts.throwError
+    return {
+      type: "message" as const,
+      uuid: opts.uuid ?? "uuid-mock-1",
+      message_handle: opts.uuid ?? "uuid-mock-1",
+      status: "QUEUED",
+      from_number: "+15557654321",
+      number: "+15551234567",
+      content: "test",
+      service: "iMessage" as const,
+      is_outbound: true as const,
+    }
+  }
+  const sendTypingIndicator = async () => {
+    calls++
+  }
+  return { sendImessage, sendTypingIndicator, get calls() { return calls } }
+}
+
+const ENV_KEYS = [
+  "IMESSAGE_DM_ALLOWLIST",
+  "IMESSAGE_PEERS",
+  "IMESSAGE_PEER",
+  "PA_CHANNEL_LEGACY",
+  "PA_TYPING_INDICATOR",
+] as const
+
+let savedEnv: Record<string, string | undefined>
+
+function makeEvent(docId: string, data: DocData) {
+  return {
+    params: { docId },
+    data: {
+      data: () => data,
+      id: docId,
+    },
+  }
+}
+
+const ALLOWED_PEER = "+15551234567"
+const USER = { id: "u-1", phoneE164: ALLOWED_PEER }
+
+beforeEach(() => {
+  savedEnv = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]))
+  for (const k of ENV_KEYS) delete process.env[k]
+  process.env.IMESSAGE_DM_ALLOWLIST = "1"
+  process.env.IMESSAGE_PEERS = ALLOWED_PEER
+})
+afterEach(() => {
+  for (const k of ENV_KEYS) delete process.env[k]
+  for (const [k, v] of Object.entries(savedEnv)) {
+    if (v !== undefined) process.env[k] = v
+  }
+})
+
+describe("paSendblueOutboxHandler", () => {
+  it("Test 1: pending row + allowlisted toE164 → fetch called once → status=sent", async () => {
+    const baseRow: DocData = {
+      status: "pending",
+      userId: USER.id,
+      toE164: ALLOWED_PEER,
+      body: "hello",
+      idempotencyKey: "out-test-1",
+      createdAt: new Date().toISOString(),
+    }
+    const { db, outbound } = makeFakeDb({ "doc-1": baseRow }, { [USER.id]: USER })
+    const sb = makeSendblueMock()
+    const event = makeEvent("doc-1", baseRow)
+
+    await paSendblueOutboxHandler(event as never, {
+      db: db as never,
+      sendblueClient: sb,
+      now: () => new Date("2026-04-27T20:00:00Z"),
+      log: () => {},
+      appendMessage: async () => {},
+      getUser: async () => USER as never,
+      getOrCreateSession: async () => ({ id: "s-1", userId: USER.id, externalChatId: "x", channel: "imessage" } as never),
+    })
+
+    assert.equal(sb.calls, 1)
+    const finalDoc = outbound.get("doc-1")!
+    assert.equal(finalDoc.status, "sent")
+    assert.equal(finalDoc.messageHandle, "uuid-mock-1")
+  })
+
+  it("Test 2: non-allowlisted toE164 → status=failed with allowlist error (mirror macOS worker)", async () => {
+    const baseRow: DocData = {
+      status: "pending",
+      userId: USER.id,
+      toE164: "+15559999999", // not allowlisted
+      body: "hello",
+      idempotencyKey: "out-test-2",
+      createdAt: new Date().toISOString(),
+    }
+    const { db, outbound } = makeFakeDb({ "doc-2": baseRow })
+    const sb = makeSendblueMock()
+    const event = makeEvent("doc-2", baseRow)
+
+    await paSendblueOutboxHandler(event as never, {
+      db: db as never,
+      sendblueClient: sb,
+      now: () => new Date(),
+      log: () => {},
+      appendMessage: async () => {},
+      getUser: async () => USER as never,
+      getOrCreateSession: async () => ({ id: "s-1" } as never),
+    })
+
+    assert.equal(sb.calls, 0)
+    const finalDoc = outbound.get("doc-2")!
+    assert.equal(finalDoc.status, "failed")
+    assert.match(String(finalDoc.error), /IMESSAGE_DM_ALLOWLIST/)
+  })
+
+  it("Test 3: SendblueClientError (4xx) → status=failed with parsed Sendblue error", async () => {
+    const baseRow: DocData = {
+      status: "pending",
+      userId: USER.id,
+      toE164: ALLOWED_PEER,
+      body: "hello",
+      idempotencyKey: "out-test-3",
+      createdAt: new Date().toISOString(),
+    }
+    const { db, outbound } = makeFakeDb({ "doc-3": baseRow })
+    const sb = makeSendblueMock({
+      throwError: new SendblueClientError(400, "bad number", { error_message: "bad" }),
+    })
+    const event = makeEvent("doc-3", baseRow)
+
+    await paSendblueOutboxHandler(event as never, {
+      db: db as never,
+      sendblueClient: sb,
+      now: () => new Date(),
+      log: () => {},
+      appendMessage: async () => {},
+      getUser: async () => USER as never,
+      getOrCreateSession: async () => ({ id: "s-1" } as never),
+    })
+
+    const finalDoc = outbound.get("doc-3")!
+    assert.equal(finalDoc.status, "failed")
+    assert.match(String(finalDoc.error), /bad/)
+  })
+
+  it("Test 4: SendblueServerError (5xx) → status=pending + attempt incremented", async () => {
+    const baseRow: DocData = {
+      status: "pending",
+      userId: USER.id,
+      toE164: ALLOWED_PEER,
+      body: "hello",
+      idempotencyKey: "out-test-4",
+      createdAt: new Date().toISOString(),
+    }
+    const { db, outbound } = makeFakeDb({ "doc-4": baseRow })
+    const sb = makeSendblueMock({
+      throwError: new SendblueServerError(503, "service unavailable", null),
+    })
+    const event = makeEvent("doc-4", baseRow)
+
+    await paSendblueOutboxHandler(event as never, {
+      db: db as never,
+      sendblueClient: sb,
+      now: () => new Date(),
+      log: () => {},
+      appendMessage: async () => {},
+      getUser: async () => USER as never,
+      getOrCreateSession: async () => ({ id: "s-1" } as never),
+    })
+
+    const finalDoc = outbound.get("doc-4")!
+    // status reverts to pending (from sending) so reclaim picks up; attemptCount bumped
+    assert.equal(finalDoc.status, "pending")
+    assert.equal(finalDoc.attemptCount, 1)
+  })
+
+  it("Test 5: claim transaction prevents double-send (status != pending)", async () => {
+    const baseRow: DocData = {
+      status: "sent", // already sent
+      userId: USER.id,
+      toE164: ALLOWED_PEER,
+      body: "hello",
+      idempotencyKey: "out-test-5",
+      createdAt: new Date().toISOString(),
+    }
+    const { db, outbound } = makeFakeDb({ "doc-5": baseRow })
+    const sb = makeSendblueMock()
+    const event = makeEvent("doc-5", baseRow)
+
+    await paSendblueOutboxHandler(event as never, {
+      db: db as never,
+      sendblueClient: sb,
+      now: () => new Date(),
+      log: () => {},
+      appendMessage: async () => {},
+      getUser: async () => USER as never,
+      getOrCreateSession: async () => ({ id: "s-1" } as never),
+    })
+
+    assert.equal(sb.calls, 0)
+    assert.equal(outbound.get("doc-5")!.status, "sent")
+  })
+
+  it("Test 6: PA_TYPING_INDICATOR=1 → typing called BEFORE send; =0 → skipped (D-06)", async () => {
+    const baseRow: DocData = {
+      status: "pending",
+      userId: USER.id,
+      toE164: ALLOWED_PEER,
+      body: "hello",
+      idempotencyKey: "out-test-6",
+      createdAt: new Date().toISOString(),
+    }
+
+    // Case A: enabled
+    process.env.PA_TYPING_INDICATOR = "1"
+    const callOrder: string[] = []
+    const sbA = {
+      sendImessage: async () => {
+        callOrder.push("send")
+        return { uuid: "u-A", status: "QUEUED", from_number: null, number: ALLOWED_PEER, content: "x", service: "iMessage" as const, is_outbound: true as const }
+      },
+      sendTypingIndicator: async () => {
+        callOrder.push("typing")
+      },
+    }
+    const { db: dbA } = makeFakeDb({ "doc-6a": { ...baseRow } })
+    await paSendblueOutboxHandler(makeEvent("doc-6a", { ...baseRow }) as never, {
+      db: dbA as never,
+      sendblueClient: sbA,
+      now: () => new Date(),
+      log: () => {},
+      appendMessage: async () => {},
+      getUser: async () => USER as never,
+      getOrCreateSession: async () => ({ id: "s-1" } as never),
+    })
+    assert.deepEqual(callOrder, ["typing", "send"])
+
+    // Case B: disabled
+    process.env.PA_TYPING_INDICATOR = "0"
+    const callOrderB: string[] = []
+    const sbB = {
+      sendImessage: async () => {
+        callOrderB.push("send")
+        return { uuid: "u-B", status: "QUEUED", from_number: null, number: ALLOWED_PEER, content: "x", service: "iMessage" as const, is_outbound: true as const }
+      },
+      sendTypingIndicator: async () => {
+        callOrderB.push("typing")
+      },
+    }
+    const { db: dbB } = makeFakeDb({ "doc-6b": { ...baseRow } })
+    await paSendblueOutboxHandler(makeEvent("doc-6b", { ...baseRow }) as never, {
+      db: dbB as never,
+      sendblueClient: sbB,
+      now: () => new Date(),
+      log: () => {},
+      appendMessage: async () => {},
+      getUser: async () => USER as never,
+      getOrCreateSession: async () => ({ id: "s-1" } as never),
+    })
+    assert.deepEqual(callOrderB, ["send"])
+  })
+
+  it("Test 7: PA_CHANNEL_LEGACY=1 → CF returns early, NO send (D-08)", async () => {
+    process.env.PA_CHANNEL_LEGACY = "1"
+    const baseRow: DocData = {
+      status: "pending",
+      userId: USER.id,
+      toE164: ALLOWED_PEER,
+      body: "hello",
+      idempotencyKey: "out-test-7",
+      createdAt: new Date().toISOString(),
+    }
+    const { db, outbound } = makeFakeDb({ "doc-7": baseRow })
+    const sb = makeSendblueMock()
+
+    await paSendblueOutboxHandler(makeEvent("doc-7", baseRow) as never, {
+      db: db as never,
+      sendblueClient: sb,
+      now: () => new Date(),
+      log: () => {},
+      appendMessage: async () => {},
+      getUser: async () => USER as never,
+      getOrCreateSession: async () => ({ id: "s-1" } as never),
+    })
+
+    assert.equal(sb.calls, 0)
+    // Row remains pending — macOS worker is canonical authority
+    assert.equal(outbound.get("doc-7")!.status, "pending")
+  })
+
+  it("Test 8: idempotency — same docId triggered twice → only ONE Sendblue POST", async () => {
+    const baseRow: DocData = {
+      status: "pending",
+      userId: USER.id,
+      toE164: ALLOWED_PEER,
+      body: "hello",
+      idempotencyKey: "out-test-8",
+      createdAt: new Date().toISOString(),
+    }
+    const { db, outbound } = makeFakeDb({ "doc-8": baseRow })
+    const sb = makeSendblueMock()
+    const deps = {
+      db: db as never,
+      sendblueClient: sb,
+      now: () => new Date(),
+      log: () => {},
+      appendMessage: async () => {},
+      getUser: async () => USER as never,
+      getOrCreateSession: async () => ({ id: "s-1" } as never),
+    }
+
+    await paSendblueOutboxHandler(makeEvent("doc-8", baseRow) as never, deps)
+    // Second invocation sees status=sent → claim fails → no send
+    const after = outbound.get("doc-8") as DocData
+    await paSendblueOutboxHandler(makeEvent("doc-8", after) as never, deps)
+
+    assert.equal(sb.calls, 1)
+  })
+
+  it("Test 9: shouldAppendOutboundTranscript skips out-imessage-in- AND out-sendblue- prefixes", () => {
+    assert.equal(shouldAppendOutboundTranscript({ idempotencyKey: "out-imessage-in-123" }), false)
+    assert.equal(shouldAppendOutboundTranscript({ idempotencyKey: "out-sendblue-abc" }), false)
+    assert.equal(shouldAppendOutboundTranscript({ idempotencyKey: "outbox-msg-doc-1" }), true)
+    assert.equal(shouldAppendOutboundTranscript({ idempotencyKey: "any-other" }), true)
+  })
+})
