@@ -2,10 +2,53 @@
 
 ## Current Position
 
-Phase: 18 (next up — Companion Voice v1)
-Plan: —
-Status: Roadmap defined; awaiting Character Bible v1 from Adam before Phase 18 spawn
-Last activity: 2026-04-27 — Milestone v1.1 roadmap committed (Phases 18-23)
+Phase: 18-23 all PLANNED, 0 EXECUTED
+Plan: 6 plans + Bible v1 + 6 CONTEXT.md committed across `.planning/phases/18-23/`
+Status: Ready for execution; awaiting Adam's Sendblue contract Q answers + /clear + `/gsd:execute-phase 18`
+Last activity: 2026-04-27 — All 6 v1.1 plans landed via parallel gsd-planner sub-agents
+
+## v1.1 Plan Commits (autonomous batch)
+
+| Phase | Commit | Tasks |
+|---|---|---|
+| 18 Companion Voice v1 | `3820689` | 5 (1 wave) |
+| 19 Adaptive Mirror | `2e1683a` | 6 (1 wave) |
+| 20 Output Normalizer | `29c8bfb` | 2 (TDD) |
+| 21 Sendblue Migration | `d4c1c8e` | 12 (3 checkpoints) |
+| 22 Proactive Check-in | `f70ec2f` | 6 (1 wave) |
+| 23 Closed Beta Onboarding | `72e2f33` | 5 (1 wave) |
+| Bible v1 | `7cc1bfb` | locked |
+
+## Execution dependency graph
+
+```
+Phase 18 (Voice v1)  ──┬─→ Phase 19 (Mirror)
+                       ├─→ Phase 22 (Proactive) ←─ Phase 20 (Normalizer)
+                       └─→ Phase 23 (Beta Onboarding)
+
+Phase 20 (Normalizer)  — independent, parallelable with 18
+
+Phase 21 (Sendblue)    — independent of voice; blocked on Adam contract Qs
+                         (CHANNEL-08 gates production cutover, not code-landing)
+```
+
+## Adam's blocking decisions
+
+1. **Sendblue contract Qs (4)** — block Phase 21 production cutover (NOT code landing — code can ship behind `PA_CHANNEL_LEGACY=1` flag):
+   - Apple ID ownership (Sendblue's vs operator's)
+   - SLA on number re-provisioning if Apple flags a line
+   - Outbound rate limit numbers
+   - GDPR / data residency posture
+2. **GCP Cloud Scheduler one-time creation** — Phase 22 user_setup human step.
+3. **Webhook signing secret provisioning** — Phase 21 Task 10 checkpoint (Adam provides via `firebase functions:secrets:set`).
+
+## Recommended execution order
+
+1. `/clear` then `/gsd:execute-phase 18` (Bible locked, plan ready, no Adam blocker)
+2. After 18 ships → parallel: `/gsd:execute-phase 20` (independent, ≤1 day) and `/gsd:execute-phase 23` (depends on 18 voice)
+3. After 18 + 20 ship → `/gsd:execute-phase 22` (proactive needs voice + normalizer)
+4. After 18 ships → `/gsd:execute-phase 19` (adaptive mirror layered on static base)
+5. Whenever Adam answers Sendblue Qs + provisions sandbox → `/gsd:execute-phase 21`
 
 ## Milestone goal
 
