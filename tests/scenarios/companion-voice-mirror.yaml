@@ -1,0 +1,77 @@
+id: companion_voice_mirror_zh
+description: |
+  Phase 19 ADAPT-05 — adaptive mirror E2E.
+
+  Validates per-turn mirroring of register / language ratio / emoji freq
+  and long-term style preference accumulation in mem0 (surfaced by the
+  Phase 19 persona-card extension on next session).
+
+  Standard run (mirror enabled, default):
+    PA_RUN_EVAL=1 PA_OPENAI_AGENT_API_KEY=... \
+      GOOGLE_APPLICATION_CREDENTIALS=... \
+      node tests/scenarios/runner.mjs tests/scenarios/companion-voice-mirror.yaml
+
+  Kill-switch variant (Phase 19 D-07):
+    PA_VOICE_MIRROR_DISABLED=true \
+      PA_RUN_EVAL=1 PA_OPENAI_AGENT_API_KEY=... \
+      GOOGLE_APPLICATION_CREDENTIALS=... \
+      node tests/scenarios/runner.mjs tests/scenarios/companion-voice-mirror.yaml
+    Expected: Turn 3 PA reply skews toward Phase 18 default voice
+    (no slang escalation), pa_users.{id}.voiceStylePreference is absent
+    after the run.
+
+  Per-plan rule: every eval scenario MUST include at least one rule-based
+  assertion as a deterministic floor.
+testMode: true
+locale: zh-CN
+agentId: default
+participant: "+19999990119"
+chatId: "iMessage;+19999990119"
+turnTimeoutMs: 120000
+turns:
+  # ---- Turn 1: user formal zh → PA formal mirror ----
+  - user: "您好，请问我应该如何准备下周的技术面试？"
+    assert:
+      reply_min_length: 8
+      reply_not_contains_any:
+        - "lowkey"
+        - "fr fr"
+        - "emo了"
+        - "🍋"
+      judge:
+        criterion: |
+          The reply is in formal-leaning Mandarin Chinese, friendly but
+          measured. It does NOT use Gen-Z slang (lowkey, fr, emo了, 卷,
+          躺平, 芭比Q), does NOT include emoji, and stays in 1-3
+          complete sentences. The reply mirrors the user's formal register
+          rather than defaulting to slangy banter.
+        threshold: 0.6
+
+  # ---- Turn 2: bridge ----
+  - user: "好的，谢谢。我准备得有点紧张。"
+    assert:
+      reply_min_length: 4
+
+  # ---- Turn 3: user shifts to slangy zh-en mix → PA mirrors slang ----
+  - user: "lowkey emo了 fr，今天 OA 我直接 emo 了 🍋"
+    assert:
+      reply_min_length: 4
+      reply_not_contains_any:
+        - "好的，我记住"
+        - "已记录"
+      judge:
+        criterion: |
+          The reply mirrors the user's slangy zh-en register. It SHOULD
+          include at least one item from the Phase 18 VOICE-07 lexicon
+          (lowkey, fr, mid, deadass, emo了, 卷, 躺平, 显眼包, yyds, 芭比Q,
+          破防, 听劝, 测评) used naturally — not catalog-stuffed. At most
+          1 emoji (🍋 / ☕). Short, casual, not formal. The reply should
+          feel like Claire matched the vibe shift.
+        threshold: 0.55
+
+# Post-session assertion (manual; runner doesn't yet support a generic
+# Firestore field assertion stage):
+#   gcloud firestore documents describe \
+#     pa_users/<resolved-userId> --field=voiceStylePreference
+# Expected (standard run): preferred_register = slangy, observed_turns >= 3.
+# Expected (kill-switch run): field is absent or unchanged from prior state.

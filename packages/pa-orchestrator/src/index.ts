@@ -28,6 +28,9 @@ import {
 import {
   afterAssistantTurn as defaultAfterAssistantTurn,
   buildPersonaCard,
+  writeStylePreference,
+  setVoiceStyleStore,
+  createFirestoreVoiceStyleStore,
   clearUserMemory,
   createConfirmedMemoryFact,
   isResetCommand,
@@ -612,6 +615,30 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       assistantText: reply,
       memoryMode: agent.memoryMode,
     })
+    // Phase 19 ADAPT-03 — long-term style preference write. Per D-07 the
+    // kill switch must ALSO disable mem0/style writes (otherwise rollback
+    // bleeds state across sessions). We piggyback on mirror.snapshot:
+    // when the kill switch is on, computeMirrorForTurn returns nulls so
+    // this block is a no-op. Per-turn drift gate (in writeStylePreference)
+    // collapses churn — chosen over a true session-end hook because
+    // iMessage has no explicit session boundary, and drift-gating gives
+    // the same end-state with simpler wiring (CONTEXT.md "Claude's
+    // Discretion" §debounce).
+    if (mirror.snapshot) {
+      try {
+        await writeStylePreference(
+          mem0PartitionKey,
+          mirror.snapshot,
+          store.nowIso()
+        )
+      } catch (e) {
+        store.log("[orchestrator] writeStylePreference failed", {
+          turnId,
+          userId: event.userId,
+          error: e instanceof Error ? e.message : String(e),
+        })
+      }
+    }
     if (!shouldSuppressOutbound(event)) {
       for (let i = 0; i < outboundParts.length; i++) {
         const part = outboundParts[i]!
@@ -670,6 +697,11 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
 }
 
 export function createFirestoreOrchestratorStore(db: Firestore): OrchestratorStore {
+  // Phase 19 ADAPT-03 — provision the Firestore-backed voice style store
+  // at orchestrator boot. Tests that build their own store should call
+  // setVoiceStyleStore(createInMemoryVoiceStyleStore()) BEFORE invoking
+  // processInboundEvent (or skip mirror-write entirely via the kill switch).
+  setVoiceStyleStore(createFirestoreVoiceStyleStore(db))
   const nowIso = () => new Date().toISOString()
   return {
     async markEventRunning(eventId) {

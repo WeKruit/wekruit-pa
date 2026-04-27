@@ -244,6 +244,48 @@ test("processInboundEvent omits mirror snippet when PA_VOICE_MIRROR_DISABLED=tru
   }
 })
 
+test("processInboundEvent writes long-term style preference via mirror.snapshot (Phase 19 ADAPT-03)", async () => {
+  const { setVoiceStyleStore, createInMemoryVoiceStyleStore, readStylePreference } = await import(
+    "@pa/memory"
+  )
+  const fakeStore = createInMemoryVoiceStyleStore()
+  setVoiceStyleStore(fakeStore)
+  try {
+    const store = makeStore({})
+    await processInboundEvent(
+      { ...baseEvent, body: "lowkey emo了 fr fr 🍋☕" },
+      store
+    )
+    const pref = await readStylePreference("u1")
+    assert.ok(pref, "expected preference to be written after turn")
+    assert.equal(pref!.preferred_register, "slangy")
+  } finally {
+    setVoiceStyleStore(null)
+  }
+})
+
+test("processInboundEvent does NOT write style preference when PA_VOICE_MIRROR_DISABLED=true (Phase 19 D-07)", async () => {
+  const { setVoiceStyleStore, createInMemoryVoiceStyleStore, readStylePreference } = await import(
+    "@pa/memory"
+  )
+  const fakeStore = createInMemoryVoiceStyleStore()
+  setVoiceStyleStore(fakeStore)
+  const prev = process.env.PA_VOICE_MIRROR_DISABLED
+  process.env.PA_VOICE_MIRROR_DISABLED = "true"
+  try {
+    const store = makeStore({})
+    await processInboundEvent(
+      { ...baseEvent, body: "lowkey emo了 fr fr 🍋" },
+      store
+    )
+    assert.equal(await readStylePreference("u1"), null, "kill switch must skip mem0 write")
+  } finally {
+    if (prev === undefined) delete process.env.PA_VOICE_MIRROR_DISABLED
+    else process.env.PA_VOICE_MIRROR_DISABLED = prev
+    setVoiceStyleStore(null)
+  }
+})
+
 test("processInboundEvent injects mirror snippet AFTER Phase 18 voice reminder (Phase 19 D-04 ordering)", async () => {
   let captured: { systemInputs?: string[] } | null = null
   const store = makeStore({
