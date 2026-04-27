@@ -204,13 +204,74 @@ test("processInboundEvent passes a Session and systemInputs into the default age
   const seen: Captured = captured
   assert.strictEqual(seen.session, fakeSession)
   assert.ok(Array.isArray(seen.systemInputs))
-  assert.equal(seen.systemInputs!.length, 2)
+  // Phase 19 ADAPT-02: systemInputs grew from 2 to 3 on the default path
+  // (recall + Phase 18 voice reminder + Phase 19 mirror snippet).
+  assert.equal(seen.systemInputs!.length, 3)
   assert.match(seen.systemInputs![0]!, /Memory context:/)
   assert.match(seen.systemInputs![0]!, /User likes concise answers\./)
   assert.match(seen.systemInputs![1]!, /Reminder: you're Claire/)
+  // D-04 ordering: mirror snippet sits AFTER the voice reminder.
+  assert.match(seen.systemInputs![2]!, /^User is currently/)
   // Legacy fields still passed for chat.completions emergency rollback.
   assert.ok(Array.isArray(seen.history))
   assert.match(String(seen.memoryBlock), /User likes concise answers\./)
+})
+
+test("processInboundEvent omits mirror snippet when PA_VOICE_MIRROR_DISABLED=true (Phase 19 D-07)", async () => {
+  const prev = process.env.PA_VOICE_MIRROR_DISABLED
+  process.env.PA_VOICE_MIRROR_DISABLED = "true"
+  try {
+    let captured: { systemInputs?: string[] } | null = null
+    const store = makeStore({
+      runAgentTurn: async (input) => {
+        captured = { systemInputs: input.systemInputs }
+        return { text: "ok" }
+      },
+    })
+    await processInboundEvent(baseEvent, store)
+    if (!captured) throw new Error("runAgentTurn was not called")
+    const seen = captured as { systemInputs?: string[] }
+    assert.ok(Array.isArray(seen.systemInputs))
+    // Only the Phase 18 voice reminder (no recall block in this fake, no mirror).
+    assert.equal(seen.systemInputs!.length, 1)
+    assert.match(seen.systemInputs![0]!, /Reminder: you're Claire/)
+    for (const entry of seen.systemInputs!) {
+      assert.doesNotMatch(entry, /^User is currently/, "mirror snippet must NOT appear under kill switch")
+    }
+  } finally {
+    if (prev === undefined) delete process.env.PA_VOICE_MIRROR_DISABLED
+    else process.env.PA_VOICE_MIRROR_DISABLED = prev
+  }
+})
+
+test("processInboundEvent injects mirror snippet AFTER Phase 18 voice reminder (Phase 19 D-04 ordering)", async () => {
+  let captured: { systemInputs?: string[] } | null = null
+  const store = makeStore({
+    loadHistory: async () => [
+      {
+        id: "h1",
+        sessionId: "s1",
+        userId: "u1",
+        role: "user" as const,
+        body: "lowkey emo了 fr 🍋",
+        createdAt: "2026-04-25T11:59:00.000Z",
+      },
+    ],
+    runAgentTurn: async (input) => {
+      captured = { systemInputs: input.systemInputs }
+      return { text: "ok" }
+    },
+  })
+  await processInboundEvent(baseEvent, store)
+  if (!captured) throw new Error("runAgentTurn was not called")
+  const seen = captured as { systemInputs?: string[] }
+  assert.ok(Array.isArray(seen.systemInputs))
+  // Voice reminder is first; mirror snippet is last.
+  const mirrorIdx = seen.systemInputs!.findIndex((s) => s.startsWith("User is currently"))
+  const reminderIdx = seen.systemInputs!.findIndex((s) => /Reminder: you're Claire/.test(s))
+  assert.notEqual(mirrorIdx, -1, "mirror snippet should be present")
+  assert.notEqual(reminderIdx, -1, "voice reminder should be present")
+  assert.ok(mirrorIdx > reminderIdx, "mirror must come after voice reminder (D-04)")
 })
 
 test("processInboundEvent suppresses outbound for harness broker events", async () => {
@@ -726,7 +787,8 @@ test("Phase 11.1.2: persona + Mem0 → systemInputs[0]=persona, [1]=recall", asy
   }
 
   if (!captured) throw new Error("runAgentTurn was not called")
-  assert.equal(captured.length, 3, "persona + recall + voice reminder")
+  // Phase 19 ADAPT-02: appended adaptive-mirror snippet last (D-04 ordering).
+  assert.equal(captured.length, 4, "persona + recall + voice reminder + mirror")
   assert.match(captured[0]!, /^Persona facts \(confirmed\):/)
   assert.match(captured[0]!, /我喜欢冰美式/)
   assert.match(captured[0]!, /我住在上海/)
@@ -735,6 +797,7 @@ test("Phase 11.1.2: persona + Mem0 → systemInputs[0]=persona, [1]=recall", asy
   assert.equal(captured[1]!, "Memory context:\nUser likes brevity.")
   assert.equal(captured[1]!.startsWith("Memory context:\nConfirmed user facts:"), false)
   assert.match(captured[2]!, /Reminder: you're Claire/)
+  assert.match(captured[3]!, /^User is currently/)
 })
 
 test("Phase 11.1.2: zero facts + non-null Mem0 → systemInputs has only recall", async () => {
@@ -762,10 +825,12 @@ test("Phase 11.1.2: zero facts + non-null Mem0 → systemInputs has only recall"
   }
 
   if (!captured) throw new Error("runAgentTurn was not called")
-  assert.equal(captured.length, 2, "recall + voice reminder")
+  // Phase 19: + mirror snippet at tail.
+  assert.equal(captured.length, 3, "recall + voice reminder + mirror")
   assert.match(captured[0]!, /^Memory context:/)
   assert.match(captured[0]!, /User prefers terse answers\./)
   assert.match(captured[1]!, /Reminder: you're Claire/)
+  assert.match(captured[2]!, /^User is currently/)
 })
 
 test("Phase 11.1.2: persona present + null Mem0 → systemInputs has only persona", async () => {
@@ -798,10 +863,12 @@ test("Phase 11.1.2: persona present + null Mem0 → systemInputs has only person
   if (!captured) throw new Error("runAgentTurn was not called")
   // Phase 11.1 cleanup D2 — facts no longer double-write into the recall
   // channel; when mem.memoryBlock is null, recall is null and systemInputs
-  // contains only the persona card plus post-history voice reminder.
-  assert.equal(captured.length, 2)
+  // contains the persona card, post-history voice reminder, and Phase 19
+  // adaptive-mirror snippet.
+  assert.equal(captured.length, 3)
   assert.match(captured[0]!, /^Persona facts \(confirmed\):/)
   assert.match(captured[1]!, /Reminder: you're Claire/)
+  assert.match(captured[2]!, /^User is currently/)
   for (const entry of captured.slice(0, 1)) {
     assert.equal(entry.includes("Confirmed user facts:"), false, "facts must not leak into recall")
   }
@@ -832,9 +899,10 @@ test("Phase 11.1.2: zero facts + null Mem0 → systemInputs is empty", async () 
   }
 
   if (!captured) throw new Error("runAgentTurn was not called")
-  // No persona / no recall — only the post-history voice reminder (Phase 18).
-  assert.equal(captured.length, 1)
+  // No persona / no recall — voice reminder (Phase 18) + adaptive mirror (Phase 19).
+  assert.equal(captured.length, 2)
   assert.match(captured[0]!, /Reminder: you're Claire/)
+  assert.match(captured[1]!, /^User is currently/)
 })
 
 test("Phase 11.1.2: PA_PERSONA_CARD_DISABLED=true → persona absent even when facts exist", async () => {
@@ -865,11 +933,12 @@ test("Phase 11.1.2: PA_PERSONA_CARD_DISABLED=true → persona absent even when f
   }
 
   if (!captured) throw new Error("runAgentTurn was not called")
-  // Persona suppressed; recall remains; voice reminder last.
-  assert.equal(captured.length, 2)
+  // Persona suppressed; recall remains; voice reminder + Phase 19 mirror trail.
+  assert.equal(captured.length, 3)
   assert.match(captured[0]!, /^Memory context:/)
   assert.equal(captured[0]!.startsWith("Persona facts"), false)
   assert.match(captured[1]!, /Reminder: you're Claire/)
+  assert.match(captured[2]!, /^User is currently/)
 })
 
 // -------- Phase 11.1 cleanup D2: buildRecallSystemInput unit tests --------

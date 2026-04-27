@@ -47,6 +47,7 @@ import { appendAuditEvent } from "@pa/pa-broker"
 import { checkPromptInjection, enforceRateLimit } from "@pa/pa-safety"
 import { LEGACY_V0_SYSTEM_PROMPT } from "./legacy-voice-prompt.js"
 import { buildVoiceReminder, isVoiceV1Disabled } from "./voice-reminder.js"
+import { computeMirrorForTurn } from "./voice/mirror-injection.js"
 import { normalizeForIMessage } from "./output-normalizer.js"
 
 type RunAgentTurn = typeof defaultRunAgentTurn
@@ -529,9 +530,26 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // the recall channel.
     const recallEntry = buildRecallSystemInput(mem.memoryBlock)
     const voiceReminder = buildVoiceReminder()
-    const systemInputs: string[] = [personaCard, recallEntry, voiceReminder].filter(
-      (entry): entry is string => typeof entry === "string" && entry.length > 0
-    )
+    // Phase 19 ADAPT-02 — adaptive mirror snippet. Per D-04 the snippet is
+    // appended AFTER the Phase 18 voice reminder so it sits immediately
+    // before the user turn. Per D-07 setting PA_VOICE_MIRROR_DISABLED=true
+    // returns nulls (skips analyzer + injection) — `mirror.snippet` is
+    // null and the filter below drops it. Same env flag also gates the
+    // mem0 style-preference write in afterAssistantTurn (D-07: rollback
+    // bleeds nothing).
+    const mirror = computeMirrorForTurn(history, event.body)
+    if (mirror.audit) {
+      store.log("pa.voice.mirror.injected", {
+        userId: event.userId,
+        ...mirror.audit,
+      })
+    }
+    const systemInputs: string[] = [
+      personaCard,
+      recallEntry,
+      voiceReminder,
+      mirror.snippet,
+    ].filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
     // Phase 10.5 T7 — bridge agent.allowedConnectors → SDK tools. When the
     // default agent's toolPolicy is still "none" (pre-T8), this returns []
     // and the SDK gets no custom tools, matching legacy behavior.
