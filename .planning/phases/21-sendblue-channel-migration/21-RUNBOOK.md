@@ -62,12 +62,34 @@ Expected: both functions deployed to `us-central1`. Note the URL of `paSendblueW
 
 ### Step 3 — Configure Sendblue dashboard webhook
 
-In **Sendblue Dashboard → Webhooks → Add endpoint**:
+Go to **Sendblue Dashboard → Settings → API Settings → Webhook Configuration**.
+
+**Tip — set Global Secret first** (one secret for all 3 webhooks):
+- Fill **Global Secret (Optional)** with the same value used for `SENDBLUE_WEBHOOK_SIGNING_SECRET` in Step 1.
+
+Then click `+ Add` on each of these **three** sections (others are not needed):
+
+| Sendblue UI label | API event name | Why |
+|---|---|---|
+| **Inbound Messages** | `receive` | Core entry — user-sent messages PA must respond to |
+| **Outbound Messages** | `outbound` | Delivery telemetry (sent/failed/read) for `pa_outbound` reconciliation |
+| **Line Blocked** | `line_blocked` | Apple-flag alarm; surfaces in `pa_abuse_events` |
+
+For each, configure:
 
 - **URL:** `https://us-central1-wekruit-5f89b.cloudfunctions.net/paSendblueWebhook`
-- **Events:** subscribe to `receive`, `outbound`, `typing_indicator`, `line_blocked`
-- **Signing secret:** the one set in Step 1 as `SENDBLUE_WEBHOOK_SIGNING_SECRET`
-- **Save** → confirm dashboard shows "active"
+- **Method:** POST
+- **Secret:** leave blank if Global Secret is set; otherwise paste `SENDBLUE_WEBHOOK_SIGNING_SECRET` value here
+- **Save**
+
+**Skip** these UI sections (not subscribed):
+
+- **Call Logs** — Voice/FaceTime not in scope this milestone
+- **Line Assigned** — internal operational event, no PA impact
+
+**Note on `typing_indicator`:** This is an **outbound API call** PA initiates (`POST /api/typing-indicator`) when the orchestrator wants the user's iMessage to show "…", NOT a webhook event we receive. No subscription needed. Native typing already wired in `apps/functions/src/sendblue/typing-indicator.ts`.
+
+After saving all 3, confirm the dashboard shows each as "active". Send 1 test iMessage from your personal Apple ID to the Sendblue line — within ~5s the CF logs (`firebase functions:log`) should show `[sendblue-webhook] event=receive ...`.
 
 ### Step 4 — Drain check (D-09)
 
