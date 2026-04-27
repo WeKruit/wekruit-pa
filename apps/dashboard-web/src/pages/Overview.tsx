@@ -1,5 +1,5 @@
 import { PA_COLLECTIONS } from "@pa/core-types"
-import { collection, getDocs, limit, orderBy, query } from "firebase/firestore"
+import { collection, getDocs, limit, orderBy, query, where } from "firebase/firestore"
 import { useEffect, useMemo, useState } from "react"
 import { Link } from "react-router-dom"
 import { db } from "../lib/firebase.js"
@@ -32,6 +32,64 @@ function healthLabel(health: HealthJson | { error: string } | null): { label: st
   return { label: "degraded", tone: "warn" }
 }
 
+
+// Phase 10.5 cleanup D3 — type for the pa_turns.usage subdoc the
+// orchestrator writes (provider/model + token counters + hostedToolCalls).
+type TurnUsage = {
+  provider?: string
+  model?: string
+  inputTokens?: number
+  outputTokens?: number
+  totalTokens?: number
+  hostedToolCalls?: { name: string; count: number }[]
+}
+type TurnRow = Row & { usage?: TurnUsage; createdAt?: string }
+
+function p95(values: number[]): number {
+  if (values.length === 0) return 0
+  const sorted = [...values].sort((a, b) => a - b)
+  // Nearest-rank p95 — tiny sample size friendly. 0-indexed.
+  const idx = Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))
+  return sorted[idx] ?? 0
+}
+
+function aggregateUsage(turns: TurnRow[]): {
+  byModel: { model: string; provider: string; turns: number; inputTokens: number; outputTokens: number; totalTokens: number }[]
+  toolCalls: { name: string; count: number }[]
+  p95Input: number
+  totalTurns: number
+} {
+  type Bucket = { model: string; provider: string; turns: number; inputTokens: number; outputTokens: number; totalTokens: number }
+  const byKey = new Map<string, Bucket>()
+  const toolCounts = new Map<string, number>()
+  const inputs: number[] = []
+  let totalTurns = 0
+  for (const t of turns) {
+    const u = t.usage
+    if (!u) continue
+    totalTurns++
+    const provider = u.provider ?? "unknown"
+    const model = u.model ?? "unknown"
+    const key = `${provider}/${model}`
+    const bucket: Bucket = byKey.get(key) ?? { model, provider, turns: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0 }
+    bucket.turns++
+    if (typeof u.inputTokens === "number") {
+      bucket.inputTokens += u.inputTokens
+      inputs.push(u.inputTokens)
+    }
+    if (typeof u.outputTokens === "number") bucket.outputTokens += u.outputTokens
+    if (typeof u.totalTokens === "number") bucket.totalTokens += u.totalTokens
+    byKey.set(key, bucket)
+    for (const call of u.hostedToolCalls ?? []) {
+      if (typeof call?.name !== "string" || typeof call.count !== "number") continue
+      toolCounts.set(call.name, (toolCounts.get(call.name) ?? 0) + call.count)
+    }
+  }
+  const byModel = [...byKey.values()].sort((a, b) => b.totalTokens - a.totalTokens)
+  const toolCalls = [...toolCounts.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count)
+  return { byModel, toolCalls, p95Input: p95(inputs), totalTurns }
+}
+
 async function loadRows(collectionName: string, max = 80, orderField = "createdAt"): Promise<Row[]> {
   const snap = await getDocs(
     query(collection(db(), collectionName), orderBy(orderField, "desc"), limit(max))
@@ -46,6 +104,13 @@ export function Overview() {
   const [users, setUsers] = useState<Row[]>([])
   const [jobs, setJobs] = useState<Row[]>([])
   const [heartbeats, setHeartbeats] = useState<Row[]>([])
+  // Phase 10.5 cleanup D3 — last-24h usage rows from pa_turns. NOTE: this
+  // reads PA_COLLECTIONS.turns (`pa_turns` — where the orchestrator's T9
+  // usage writes land), NOT PA_COLLECTIONS.agentTurns (`pa_agent_turns`,
+  // a separate broker-arch collection). The "Conversations" / "Recent
+  // failures" panels above still read agentTurns; reconciling those is
+  // a separate dashboard cleanup.
+  const [usageTurns, setUsageTurns] = useState<TurnRow[]>([])
   const [health, setHealth] = useState<HealthJson | { error: string } | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -56,13 +121,23 @@ export function Overview() {
     setBusy(true)
     setErr(null)
     try {
-      const [i, o, t, u, j, h] = await Promise.all([
+      const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+      const turnsUsageSnap = getDocs(
+        query(
+          collection(db(), PA_COLLECTIONS.turns),
+          where("createdAt", ">=", since),
+          orderBy("createdAt", "desc"),
+          limit(500)
+        )
+      )
+      const [i, o, t, u, j, h, paTurnsSnap] = await Promise.all([
         loadRows(PA_COLLECTIONS.inboundEvents),
         loadRows(PA_COLLECTIONS.outbound),
         loadRows(PA_COLLECTIONS.agentTurns),
         loadRows(PA_COLLECTIONS.users, 200),
         loadRows(PA_COLLECTIONS.scheduledJobs, 80, "dueAt"),
         loadRows(PA_COLLECTIONS.runtimeHeartbeats, 80, "lastSeenAt"),
+        turnsUsageSnap,
       ])
       setInbound(i)
       setOutbound(o)
@@ -70,6 +145,12 @@ export function Overview() {
       setUsers(u)
       setJobs(j)
       setHeartbeats(h)
+      setUsageTurns(
+        paTurnsSnap.docs.map((d) => {
+          const data = d.data() as Record<string, unknown>
+          return { id: d.id, ...data } as TurnRow
+        })
+      )
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : String(e))
     } finally {
@@ -160,6 +241,7 @@ export function Overview() {
       deadLetter > 0 || failed > 0 ? "bad" : pending + processing > 0 ? "warn" : "good"
     return { pending, processing, failed, deadLetter, tone }
   }, [jobs])
+  const usageStats = useMemo(() => aggregateUsage(usageTurns), [usageTurns])
   const healthStatus = healthLabel(health)
 
   return (
@@ -267,6 +349,49 @@ export function Overview() {
             <Link to="/playground">Run E2E lab</Link>
           </div>
         </article>
+      </section>
+
+      <section className="panel">
+        <div className="section-title">
+          <div>
+            <p className="eyebrow">Last 24h · pa_turns.usage</p>
+            <h2>Token + tool-call cost</h2>
+          </div>
+          <small>{usageStats.totalTurns} turns · p95 input {usageStats.p95Input.toLocaleString()} tokens</small>
+        </div>
+        {usageStats.totalTurns === 0 ? (
+          <p className="empty-copy">No pa_turns rows with usage in the last 24h. Check back after the next inbound turn.</p>
+        ) : (
+          <div className="metric-grid">
+            {usageStats.byModel.map((m) => (
+              <article className="metric-card" key={`${m.provider}-${m.model}`}>
+                <span className="status-dot good" />
+                <p>{m.model}</p>
+                <strong>{m.totalTokens.toLocaleString()}</strong>
+                <small>
+                  {m.provider} · {m.turns} turn{m.turns === 1 ? "" : "s"} · {m.inputTokens.toLocaleString()} in / {m.outputTokens.toLocaleString()} out
+                </small>
+              </article>
+            ))}
+            {usageStats.toolCalls.length === 0 ? (
+              <article className="metric-card">
+                <span className="status-dot muted" />
+                <p>Hosted tool calls</p>
+                <strong>0</strong>
+                <small>no web_search / hosted tools fired</small>
+              </article>
+            ) : (
+              usageStats.toolCalls.map((tc) => (
+                <article className="metric-card" key={`tool-${tc.name}`}>
+                  <span className="status-dot good" />
+                  <p>tool: {tc.name}</p>
+                  <strong>{tc.count.toLocaleString()}</strong>
+                  <small>invocations (last 24h)</small>
+                </article>
+              ))
+            )}
+          </div>
+        )}
       </section>
     </div>
   )
