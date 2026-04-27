@@ -51,6 +51,7 @@ import { checkPromptInjection, enforceRateLimit } from "@pa/pa-safety"
 import { LEGACY_V0_SYSTEM_PROMPT } from "./legacy-voice-prompt.js"
 import { buildVoiceReminder, isVoiceV1Disabled } from "./voice-reminder.js"
 import { computeMirrorForTurn } from "./voice/mirror-injection.js"
+import { rewriteIfOff } from "./voice/llm-rewriter.js"
 import { normalizeForIMessage } from "./output-normalizer.js"
 
 type RunAgentTurn = typeof defaultRunAgentTurn
@@ -577,10 +578,26 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // before persisting + sending. Root cause is upstream in
     // `toOpenAIMessages` (was prefixing history bodies); this catches stragglers.
     const reply = stripLeadingIsoTimestamp(text.trim()) || "我暂时没有生成有效回复，请稍后再试。"
+    // Phase 21 Track 4 — small-LLM normalizer. Catches off-voice patterns
+    // (A/B framework, pop-therapy, invented categories, productivity probes)
+    // that slipped past Bible v5 + few-shot. Fail-open; rollback via
+    // PA_LLM_REWRITE_DISABLED=true. Telemetry sinks into pa_turns.usage
+    // alongside token counts (rewriteApplied + rewriteReason).
+    const rewritten = await rewriteIfOff(reply)
+    const replyAfterRewrite = rewritten.text
+    if (rewritten.rewriteApplied) {
+      store.log("pa.voice.llm_rewriter.applied", {
+        userId: event.userId,
+        turnId,
+        reason: rewritten.reason,
+        beforeLen: reply.length,
+        afterLen: replyAfterRewrite.length,
+      })
+    }
     const rawVisible =
       mem.mem0Degraded && agent.memoryMode !== "firestore_only"
-        ? `${reply}\n\n（长期语义记忆暂时不可用；我仍使用已确认事实和最近对话。）`
-        : reply
+        ? `${replyAfterRewrite}\n\n（长期语义记忆暂时不可用；我仍使用已确认事实和最近对话。）`
+        : replyAfterRewrite
     const norm = normalizeForIMessage(rawVisible, { maxLength: 600 })
     const visibleReply = norm.text
     const outboundParts =
@@ -660,6 +677,12 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       for (const [k, v] of Object.entries(usage)) {
         if (v !== undefined) usagePatch[k] = v
       }
+      // Phase 21 Track 4 — telemetry for the LLM rewriter pass. Always
+      // logged (even when not applied) so we can compute rewrite-rate
+      // offline. `rewriteReason` distinguishes timeout/error/no-change/
+      // rewritten/disabled — see voice/llm-rewriter.ts RewriteReason.
+      usagePatch.rewriteApplied = rewritten.rewriteApplied
+      usagePatch.rewriteReason = rewritten.reason
       if (Object.keys(usagePatch).length > 0) {
         await store.updateTurn(turnId, { usage: usagePatch, updatedAt: store.nowIso() })
       }
