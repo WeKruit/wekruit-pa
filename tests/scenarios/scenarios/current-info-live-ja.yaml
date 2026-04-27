@@ -1,0 +1,25 @@
+id: current_info_live_ja_news
+description: |
+  Verifies SDK-attached webSearchTool fires for Japanese current-info
+  questions. Failure mode caught: model declines to call the tool and
+  falls back to model knowledge ("リアルタイムでは...") or generic
+  refusal in Japanese.
+locale: ja-JP
+agentId: default
+participant: "+19999990012"
+chatId: "iMessage;+19999990012"
+turnTimeoutMs: 90000
+turns:
+  - user: "最近のニュースは何ですか"
+    assert:
+      reply_min_length: 16
+      reply_not_contains_any:
+        - "リアルタイム"
+        - "アクセスできません"
+        - "アクセスはありません"
+        - "情報を取得できません"
+        - "as an AI"
+        - "PA_OPENAI_AGENT_API_KEY"
+        - "unavailable"
+        - "undefined"
+        - "[20"

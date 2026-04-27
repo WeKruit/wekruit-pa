@@ -1,0 +1,30 @@
+id: remember_fact_zh_iced_americano
+description: |
+  End-to-end probe of the post-Phase-10.5 remember-fact tool path. After
+  Phase 10.5 T5 the regex `handleRememberCommand remember` branch is gone;
+  the LLM must autonomously call the `remember-fact` tool to persist a
+  user fact, AND on a later turn either Mem0 recall or Firestore confirmed
+  facts must surface that fact for recall. Either path satisfies the
+  assertion; both are exercised by the SDK system input channel.
+locale: zh-CN
+agentId: default
+participant: "+19999990010"
+chatId: "iMessage;+19999990010"
+testMode: true
+turnTimeoutMs: 90000
+turns:
+  - user: "__PA_RESET__"
+    assert:
+      reply_contains_any: ["测试记忆已清空", "qdrant"]
+      reply_min_length: 1
+      reply_not_contains_any: ["error", "failed", "undefined", "[20"]
+  - user: "请记住 我喜欢喝冰美式"
+    assert:
+      reply_min_length: 1
+      reply_contains_any: ["记住", "记下", "好的", "知道", "OK", "ok"]
+      reply_not_contains_any: ["error", "failed", "undefined", "[20"]
+  - user: "你还记得我喜欢喝什么吗？"
+    assert:
+      reply_min_length: 1
+      reply_contains_any: ["冰美式"]
+      reply_not_contains_any: ["不记得", "没有记忆", "没记住", "error", "failed", "undefined", "[20"]

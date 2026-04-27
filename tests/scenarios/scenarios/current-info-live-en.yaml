@@ -1,0 +1,25 @@
+id: current_info_live_en_news
+description: |
+  Verifies SDK-attached webSearchTool fires for English current-info
+  questions, not only zh. Failure mode caught: model declines to call
+  the tool and falls back to model knowledge ("I don't have real-time
+  access...") OR returns a generic refusal.
+locale: en-US
+agentId: default
+participant: "+19999990011"
+chatId: "iMessage;+19999990011"
+turnTimeoutMs: 90000
+turns:
+  - user: "What is the latest tech news today?"
+    assert:
+      reply_min_length: 16
+      reply_not_contains_any:
+        - "I don't have real-time"
+        - "I cannot access"
+        - "I don't have access to"
+        - "as an AI"
+        - "real-time information"
+        - "PA_OPENAI_AGENT_API_KEY"
+        - "unavailable"
+        - "undefined"
+        - "[20"

@@ -1,0 +1,41 @@
+id: tool_budget_stress_zh_three_tools
+description: |
+  Probes the per-turn tool budget under simulated multi-tool intent.
+  Single user message bundles 2 remember-fact intents + 1 current-info
+  intent. With agent.toolBudgetPerTurn=3 (post-T8), all three should
+  fit. Asserts: reply mentions both 冰美式 and 杭州 (writes happened) AND
+  shows current-info content (read happened). Indirectly probes whether
+  `usedThisTurn` counter is correctly shared across SDK parallel tool
+  execution — if the budget under-counts and over-spends, the LLM hits
+  budget exhaustion before all three tools complete.
+
+  Caveat: an LLM that simply chooses NOT to call all three tools will
+  produce a partial reply. Assertion failure does not by itself prove a
+  concurrency bug, but a clean pass DOES prove correctness on this
+  message shape. Operator should follow up by inspecting
+  pa_turns.usage.hostedToolCalls and pa_tool_calls audit rows for the
+  failing event when this scenario reports a partial reply.
+locale: zh-CN
+agentId: default
+participant: "+19999990013"
+chatId: "iMessage;+19999990013"
+testMode: true
+turnTimeoutMs: 120000
+turns:
+  - user: "__PA_RESET__"
+    assert:
+      reply_contains_any: ["测试记忆已清空", "qdrant"]
+      reply_min_length: 1
+      reply_not_contains_any: ["error", "failed", "undefined", "[20"]
+  - user: "请记住 我喜欢喝冰美式，也请记住 我住在杭州，然后告诉我今天最新的科技新闻是什么？"
+    assert:
+      reply_min_length: 32
+      reply_contains_any: ["冰美式"]
+      reply_not_contains_any:
+        - "tool_budget_exhausted"
+        - "budget exceeded"
+        - "PA_OPENAI_AGENT_API_KEY"
+        - "error"
+        - "failed"
+        - "undefined"
+        - "[20"
