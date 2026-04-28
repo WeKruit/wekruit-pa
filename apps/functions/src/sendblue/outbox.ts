@@ -26,6 +26,7 @@ import { useDmAllowlist, getPeerAllowlist, isSamePeer, normalizePeer } from "./a
 import { SendblueClientError, SendblueServerError, sendImessage as defaultSendImessage } from "./sendblue-client.js"
 import { sendTypingIndicator as defaultSendTypingIndicator, computeTypingDwellMs } from "./typing-indicator.js"
 import type { SendblueSendResponse } from "./types.js"
+import { getFlag } from "@pa/pa-persistence"
 
 const OUT = PA_COLLECTIONS.outbound
 
@@ -36,8 +37,19 @@ export function shouldAppendOutboundTranscript(raw: { idempotencyKey?: unknown }
   return true
 }
 
-export function isLegacyChannelEnabled(): boolean {
-  return process.env.PA_CHANNEL_LEGACY === "1"
+/**
+ * Phase 24.5 — flag-backed legacy-channel guard. Reads `PA_CHANNEL_LEGACY` from
+ * `pa_feature_flags` via `getFlag()` with the caller's `process.env` injected
+ * for emergency-override (env=`1` short-circuits without Firestore read).
+ * defaultValue=false matches pre-flag env-var semantics: absent flag +
+ * absent env = proceed. Production seed writes value=true (CONTEXT.md
+ * initial seeds table); env=1 still short-circuits as emergency override.
+ */
+export async function isLegacyChannelEnabledFlag(
+  db: import("firebase-admin/firestore").Firestore
+): Promise<boolean> {
+  const v = await getFlag(db, "PA_CHANNEL_LEGACY", { env: process.env }, false)
+  return Boolean(v)
 }
 
 export function isTypingIndicatorEnabled(): boolean {
@@ -89,9 +101,10 @@ export async function paSendblueOutboxHandler(
     return
   }
 
-  // ---- 1. Legacy guard (D-08) -------------------------------------------
-  if (isLegacyChannelEnabled()) {
-    log("[sendblue][outbox] PA_CHANNEL_LEGACY=1 — releasing to macOS worker", { docId })
+  // ---- 1. Legacy guard (D-08; Phase 24.5 flag-backed) ------------------
+  // env-var emergency override is honored inside getFlag (T1 SDK).
+  if (await isLegacyChannelEnabledFlag(deps.db)) {
+    log("[sendblue][outbox] PA_CHANNEL_LEGACY flag=true — releasing to macOS worker", { docId })
     return
   }
 

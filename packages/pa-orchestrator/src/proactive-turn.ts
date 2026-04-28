@@ -16,6 +16,26 @@
  */
 import { fireWindowHash } from "@pa/core-types"
 import type { ProactiveScheduledJob, SilenceAnchorContext } from "@pa/core-types"
+import { getFlag } from "@pa/pa-persistence"
+import type { Firestore } from "firebase-admin/firestore"
+
+/**
+ * Phase 24.5 — Firestore-shaped no-op stub used when the caller did not
+ * provide a real DB. `getFlag()` reads `{exists:false}` and falls through to
+ * its `defaultValue`; the SDK's env-emergency override fires BEFORE any read.
+ */
+function makeNoopFirestoreForFlag(): Firestore {
+  const stub = {
+    collection: () => ({
+      doc: () => ({
+        async get() {
+          return { exists: false, data: () => undefined }
+        },
+      }),
+    }),
+  }
+  return stub as unknown as Firestore
+}
 
 export type ProactiveTurnResult =
   | { skipped: true; reason: "disabled" }
@@ -64,6 +84,14 @@ export type ProactiveTurnStore = {
   getUserPhoneE164(userId: string): Promise<string>
 
   log(...args: unknown[]): void
+
+  /**
+   * Phase 24.5 — optional Firestore handle for `getFlag()` reads. Tests omit
+   * `db`; production wires the live Firestore so the flag in
+   * `pa_feature_flags/PA_PROACTIVE_DISABLED` is honored. env=1 still
+   * short-circuits inside the SDK as the emergency override.
+   */
+  db?: Firestore
 }
 
 /**
@@ -100,9 +128,18 @@ export async function runProactiveTurn(
   job: ProactiveScheduledJob,
   store: ProactiveTurnStore
 ): Promise<ProactiveTurnResult> {
-  // D-10: kill switch check — return immediately, no reads, no writes
-  if (process.env.PA_PROACTIVE_DISABLED === "1" || process.env.PA_PROACTIVE_DISABLED === "true") {
-    store.log("[proactive-turn] skipped: PA_PROACTIVE_DISABLED is set", { jobId: job.jobId })
+  // D-10: kill switch check — return immediately, no reads, no writes.
+  // Phase 24.5: flag-backed via getFlag(). env=1 short-circuits inside the
+  // SDK as the emergency override BEFORE any Firestore read; when store.db
+  // is absent (unit-test path) a no-op Firestore stub is used so the env
+  // override path is preserved without re-introducing a bare
+  // `process.env.PA_PROACTIVE_DISABLED` check in this file.
+  const dbForFlag = store.db ?? makeNoopFirestoreForFlag()
+  const disabled = Boolean(
+    await getFlag(dbForFlag, "PA_PROACTIVE_DISABLED", { env: process.env }, false)
+  )
+  if (disabled) {
+    store.log("[proactive-turn] skipped: PA_PROACTIVE_DISABLED flag is set", { jobId: job.jobId })
     return { skipped: true, reason: "disabled" }
   }
 

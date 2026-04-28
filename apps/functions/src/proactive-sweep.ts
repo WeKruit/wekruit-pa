@@ -22,14 +22,36 @@
  */
 import { onRequest } from "firebase-functions/v2/https"
 import { setGlobalOptions, logger } from "firebase-functions/v2"
-import { getFirestore, Timestamp } from "firebase-admin/firestore"
+import { getFirestore, Timestamp, type Firestore } from "firebase-admin/firestore"
 import { PA_COLLECTIONS, fireWindowHash } from "@pa/core-types"
 import type { ProactiveScheduledJob, ProactiveJobStatus } from "@pa/core-types"
 import { runProactiveTurn as defaultRunProactiveTurn } from "@pa/pa-orchestrator"
 import type { ProactiveTurnResult } from "@pa/pa-orchestrator"
+import { getFlag } from "@pa/pa-persistence"
 
 // Max jobs dispatched per sweep invocation — prevents CF timeout (D-05 latency budget).
 const SWEEP_JOB_CAP = 50
+
+/**
+ * Phase 24.5 — produces a tiny Firestore-shaped stub used only when the
+ * caller did not supply a real DB handle. The stub returns `{exists:false}`
+ * for any doc read so `getFlag()` falls through to its `defaultValue`. The
+ * SDK's env-emergency override fires BEFORE any read, so kill-switch
+ * semantics are unchanged. Exported for tests that want to assert no env-only
+ * branch survived in source.
+ */
+function makeNoopFirestoreForFlag(): Firestore {
+  const stub = {
+    collection: () => ({
+      doc: () => ({
+        async get() {
+          return { exists: false, data: () => undefined }
+        },
+      }),
+    }),
+  }
+  return stub as unknown as Firestore
+}
 
 // ---------------------------------------------------------------------------
 // SweepStore — injectable for testing
@@ -68,6 +90,14 @@ export type SweepStore = {
   ): Promise<void>
 
   log(...args: unknown[]): void
+
+  /**
+   * Phase 24.5 — optional Firestore handle for `getFlag()` reads. Tests can
+   * omit `db`; in that case the kill-switch falls back to env-only
+   * (`PA_PROACTIVE_DISABLED=1`). Production wires the live Firestore handle so
+   * the flag in `pa_feature_flags/PA_PROACTIVE_DISABLED` is consulted.
+   */
+  db?: Firestore
 }
 
 // ---------------------------------------------------------------------------
@@ -79,9 +109,17 @@ export type SweepResult =
   | { dispatched: number; skippedIdempotent: number; failed: number }
 
 export async function runSweep(store: SweepStore): Promise<SweepResult> {
-  // D-10: kill switch
-  if (process.env.PA_PROACTIVE_DISABLED === "1" || process.env.PA_PROACTIVE_DISABLED === "true") {
-    store.log("[proactive-sweep] skipped: PA_PROACTIVE_DISABLED is set")
+  // D-10: kill switch (Phase 24.5 flag-backed). env=1 short-circuits inside
+  // the SDK as the emergency override BEFORE any Firestore read; when
+  // `store.db` is absent (unit-test path) we use a no-op Firestore stub so
+  // the env-override path is preserved without re-introducing a bare
+  // `process.env.PA_PROACTIVE_DISABLED` read in this file.
+  const dbForFlag = store.db ?? makeNoopFirestoreForFlag()
+  const disabled = Boolean(
+    await getFlag(dbForFlag, "PA_PROACTIVE_DISABLED", { env: process.env }, false)
+  )
+  if (disabled) {
+    store.log("[proactive-sweep] skipped: PA_PROACTIVE_DISABLED flag is set")
     return { skipped: true, reason: "disabled" }
   }
 
@@ -207,6 +245,7 @@ export function createFirestoreSweepStore(): SweepStore {
     },
 
     log: (...args) => logger.info("[proactive-sweep]", ...args),
+    db,
   }
 }
 

@@ -51,7 +51,7 @@ import { checkPromptInjection, checkPromptInjectionAndRecord, enforceRateLimit }
 import { resolveOnboardingStep, applyOnboardingStep, composeOnboardingInput } from "./onboarding.js"
 import { LEGACY_V0_SYSTEM_PROMPT } from "./legacy-voice-prompt.js"
 import { buildVoiceReminder, isVoiceV1Disabled } from "./voice-reminder.js"
-import { computeMirrorForTurn } from "./voice/mirror-injection.js"
+import { computeMirrorForTurn, isVoiceMirrorDisabledFlag } from "./voice/mirror-injection.js"
 import { rewriteIfOff } from "./voice/llm-rewriter.js"
 import { tapCoachTokens } from "./voice/coach-token-monitor.js"
 import { buildFewShotTurns, prefixFewShotToHistory } from "./voice/few-shot.js"
@@ -203,6 +203,14 @@ export type OrchestratorStore = {
    * Phase 23 — apply onboarding step to advance user state + promote beta participant.
    */
   applyOnboarding(userId: string, phoneE164: string, step: "send_first_mes" | "ask_grounding_q" | "complete"): Promise<void>
+
+  /**
+   * Phase 24.5 — optional Firestore handle for `getFlag()` reads. Tests omit
+   * `db`; production wires the live Firestore so flag-backed kill-switches
+   * (e.g. `PA_VOICE_MIRROR_DISABLED`) consult `pa_feature_flags`. env vars
+   * still short-circuit inside the SDK as the emergency override.
+   */
+  db?: Firestore
 }
 
 const HISTORY_LIMIT = Number(process.env.PA_MESSAGE_HISTORY || "40")
@@ -659,7 +667,18 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // null and the filter below drops it. Same env flag also gates the
     // mem0 style-preference write in afterAssistantTurn (D-07: rollback
     // bleeds nothing).
-    const mirror = computeMirrorForTurn(history, event.body)
+    // Phase 24.5 — flag-backed kill switch. When store.db is present we
+    // consult pa_feature_flags (env=true still short-circuits inside SDK).
+    // Test path with no db falls through to the existing env-only check
+    // inside computeMirrorForTurn. Pure wrapper — no logic change to the
+    // existing snippet computation.
+    const mirrorDisabledByFlag =
+      store.db != null
+        ? await isVoiceMirrorDisabledFlag(store.db, process.env)
+        : false
+    const mirror = mirrorDisabledByFlag
+      ? { snapshot: null, snippet: null, audit: null }
+      : computeMirrorForTurn(history, event.body)
     if (mirror.audit) {
       store.log("pa.voice.mirror.injected", {
         userId: event.userId,
@@ -1108,6 +1127,9 @@ export function createFirestoreOrchestratorStore(db: Firestore): OrchestratorSto
     },
     nowIso,
     log: (...args) => console.log(new Date().toISOString(), ...args),
+    // Phase 24.5 — Firestore handle threaded into store so flag-backed
+    // kill-switches (e.g. PA_VOICE_MIRROR_DISABLED) consult pa_feature_flags.
+    db,
     // Phase 22 — proactive cancellation (D-07, PROACTIVE-06)
     async cancelAllPendingProactiveJobs(userId) {
       const snap = await db

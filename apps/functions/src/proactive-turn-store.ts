@@ -138,5 +138,7 @@ export function createFirestoreProactiveTurnStore(db: Firestore): ProactiveTurnS
     },
 
     log: (...args) => console.log(nowIso(), "[proactive-turn-store]", ...args),
+    // Phase 24.5 — Firestore handle for flag-backed PA_PROACTIVE_DISABLED check.
+    db,
   }
 }

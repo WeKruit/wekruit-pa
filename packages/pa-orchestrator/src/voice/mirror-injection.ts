@@ -11,6 +11,8 @@
 import type { ChatMessage } from "@pa/core-types"
 import { analyzeUserStyle, type StyleSnapshot } from "./style-analyzer.js"
 import { buildMirrorSnippet } from "./mirror-snippet.js"
+import { getFlag } from "@pa/pa-persistence"
+import type { Firestore } from "firebase-admin/firestore"
 
 const WINDOW_USER_TURNS = 5
 
@@ -21,6 +23,21 @@ function truthyDisabled(v: string | undefined): boolean {
 /** True when Phase 19 mirror is disabled by env (D-07 kill switch). */
 export function isVoiceMirrorDisabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return truthyDisabled(env.PA_VOICE_MIRROR_DISABLED)
+}
+
+/**
+ * Phase 24.5 — flag-backed mirror-disabled check. Wraps `getFlag()` so the
+ * `pa_feature_flags/PA_VOICE_MIRROR_DISABLED` doc is consulted (with the env
+ * var honored as emergency override inside the SDK). Pure wrapper — does not
+ * change any pre-existing snippet computation logic; callers that have a
+ * Firestore handle should prefer this over the sync `isVoiceMirrorDisabled`.
+ */
+export async function isVoiceMirrorDisabledFlag(
+  db: Firestore,
+  env: NodeJS.ProcessEnv = process.env
+): Promise<boolean> {
+  const v = await getFlag(db, "PA_VOICE_MIRROR_DISABLED", { env }, false)
+  return Boolean(v)
 }
 
 /**

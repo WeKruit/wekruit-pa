@@ -394,6 +394,28 @@ export const onPaInbound = onDocumentCreated(
     process.env.MEM0_EMBED_DIMS = trimOr(process.env.MEM0_EMBED_DIMS, "1024")
 
     const db = getFirestore()
+    // Phase 24.5 — read paRateLimitPerUserEnabled (perUser scope) for the
+    // event's user. Reading site only — actual enforcement is Phase 26.
+    // Telemetry-friendly: logs the resolved value so the rate-limit
+    // policy is observable BEFORE we wire enforcement.
+    try {
+      const { getFlag } = await import("@pa/pa-persistence")
+      const userId = "userId" in data ? (data as { userId?: string }).userId : undefined
+      const rateLimitEnabled = await getFlag(
+        db,
+        "paRateLimitPerUserEnabled",
+        { userId, env: process.env },
+        true
+      )
+      logger.debug("onPaInbound rate-limit flag", { userId, rateLimitEnabled })
+    } catch (flagErr) {
+      // Never let a flag read break the inbound path — Phase 26 will
+      // enforce; for now flag failures degrade silently.
+      logger.warn("onPaInbound flag read failed", {
+        eventId: data.id,
+        err: flagErr instanceof Error ? flagErr.message : String(flagErr),
+      })
+    }
     try {
       const processed = isBrokerImessageEvent(data)
         ? await processBrokerImessageEvent(db, data)
