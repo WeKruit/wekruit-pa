@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: — Agent SDK Runtime + Job Companion
 status: executing
-last_updated: "2026-04-28T06:30:03.427Z"
+last_updated: "2026-04-28T18:00:00.000Z"
 last_activity: 2026-04-28
 progress:
   total_phases: 23
@@ -21,6 +21,14 @@ See [`MILESTONE-v1.2.md`](./MILESTONE-v1.2.md) and [`phases/24-voice-quality-bas
 **Status:** Ready to execute
 
 **v1.1 carryover:** Phases 19, 22, 23 not started; deprioritized behind voice quality. Revive after v1.2 ships. Phase 21 (Sendblue) shipped 2026-04-27.
+
+## Next milestone: v1.3 — Productionize (planned, P10-cut 2026-04-28)
+
+See [`v1.2-p10-strategic-cut.md`](./v1.2-p10-strategic-cut.md).
+
+**Phases:** 24.5 (Feature Flag Infra, cross-cutting) → 25 (Voice Review Dashboard) ‖ 26 (Prod-P0) → 27 (Prod-P1 + Self-Evolve cron, gated).
+
+**Trigger:** spawn after Phase 24-02 + 24-07 ship (Adam HITL labeling + final verify). 24.5 can start in parallel with Phase 24 wrap-up since 24-02 is Adam-blocked.
 
 ---
 

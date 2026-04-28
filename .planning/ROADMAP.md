@@ -48,13 +48,41 @@ This roadmap is intentionally numeric so GSD phase tooling can discover and exec
 
 | # | Phase | Goal | Status |
 |---|-------|------|--------|
-| 24 | 5/7 | In Progress|  |
-| 25 | Voice Self-Evolve (deferred to v1.3) | Global slang central evolution (weekly cron) + per-user STYLE.delta + 口头禅 (daily cron) + aeon-style autoresearch 4-variation + DeepEval gate + HITL PR review + Hermes-style prompt-injection scan. **Hard dependency on Phase 24 ship.** | Backlog |
+| 24 | Voice Quality Baseline | Bible v6/v7 + few-shot relocate + Qwen rewriter v2 + DeepEval foundation. 5/7 plans shipped (Bible v7.0 caveman architecture, headhunter playbook, sweep admin token). | 5/7 In Progress |
+| 24.5 | Feature Flag Infra (cross-cutting) | Firestore `pa_feature_flags` + 30s TTL cache + dashboard CRUD + audit + perUser scope. Replaces env-var 散点. P10 cut 2026-04-28. | Planned |
+| 25 | Voice Review Dashboard | `/voice` page + `pa_voice_reviews` collection + 1-5⭐ + tags + comment + 一键 eval rerun + diff vs baseline. **Data producer for v1.3 self-evolve.** | Planned |
 
 **Documents:**
 - `MILESTONE-v1.2.md` — milestone-level decisions, web-verified corpus, success criteria
+- `v1.2-p10-strategic-cut.md` — P10 strategic cut (2026-04-28) for Productionize milestone
 - `phases/24-voice-quality-baseline/24-CONTEXT.md` — full Phase 24 spec
-- `phases/25-voice-self-evolve/25-CONTEXT.md` — Phase 25 frozen spec (deferred)
+- `phases/24.5-feature-flag-infra/` — to be created by /gsd:autonomous plan-phase
+- `phases/25-voice-review-dashboard/` — to be created
+
+## Milestone v1.3 — Productionize (公测 gate + Self-Evolve Loop 闭环)
+
+**Goal:** 把 v1.2 voice baseline + review dashboard 推到公测稳态. 闭环 self-evolve loop. 关掉所有 P0/P1/P2 ops debt.
+
+**Spawned:** 2026-04-28 by P10 strategic cut.
+
+**Estimate:** 10 dev-day execution + 2 weeks soak before self-evolve cron 开闸.
+
+| # | Phase | Goal | Status |
+|---|-------|------|--------|
+| 26 | Productionize P0 (公测 hard gate) | per-user rate-limit (flag-gated via 24.5) + Sendblue Free 配额监控 + Cloud Logging dashboard + cost alert + agent-registry version pin + 一键 rollback | Planned |
+| 27 | Productionize P1+P2 + Self-Evolve Cron | Qwen circuit breaker + Qdrant↔Firestore drift cron + 5×CF /health + SLO+error budget + self-evolve cron (daily transcript→judge→cluster→Bible patch PR→eval gate). Absorbs old Phase 25 Voice Self-Evolve spec. | Planned (gated) |
+
+**v1.3 Public Launch Gate:**
+- [ ] Phase 24.5 Feature Flag — 4 env-var 收编完成
+- [ ] Phase 25 Voice Review Dashboard — Adam 评分 ≥50 turn 跑通
+- [ ] Phase 26 P0 — 4 项全绿, 公测 gate PASS
+- [ ] Phase 27 P1+P2 — SLO 仪表盘上线, error budget 定义
+- [ ] Self-evolve cron — 仅在 P26 stable 2 周 + ≥200 reviews 后 `selfEvolveEnabled` flag 开闸
+
+**Documents:**
+- `v1.2-p10-strategic-cut.md` — strategic cut + P9 编制 + 风险 + 不做清单
+- `phases/26-productionize-p0/` — to be created
+- `phases/27-productionize-p1-selfevolve/` — to be created (absorbs old `phases/25-voice-self-evolve/25-CONTEXT.md`)
 
 ## Phase 1: Broker correctness + echo suppression
 
