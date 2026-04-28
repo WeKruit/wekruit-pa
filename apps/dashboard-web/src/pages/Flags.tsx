@@ -26,6 +26,7 @@ import {
   type FlagScope,
   type FlagType,
   type FlagValue,
+  type SaveFlagInput,
 } from "../lib/flags-api.js"
 
 // ---------------------------------------------------------------------------
@@ -384,6 +385,73 @@ function AuditDrawer({ flagKey }: { flagKey: string }) {
 // Page
 // ---------------------------------------------------------------------------
 
+const SEED_DEFAULTS: SaveFlagInput[] = [
+  { key: "PA_CHANNEL_LEGACY", value: false, type: "bool", scope: "global", allowlist: [], blocklist: [], reason: "Legacy macOS worker channel — true = use macOS worker; false = Sendblue (default)." },
+  { key: "PA_PROACTIVE_DISABLED", value: false, type: "bool", scope: "global", allowlist: [], blocklist: [], reason: "Kill-switch for paProactiveSweep CF; true = sweep returns immediately." },
+  { key: "PA_VOICE_MIRROR_DISABLED", value: false, type: "bool", scope: "global", allowlist: [], blocklist: [], reason: "Disable Phase 19 adaptive mirror snippet injection in orchestrator." },
+  { key: "paRateLimitPerUserEnabled", value: true, type: "bool", scope: "perUser", allowlist: [], blocklist: [], reason: "Per-user rate-limit (≤20 msg/min) at Sendblue webhook. Add Adam test E.164 to blocklist to bypass." },
+  { key: "selfEvolveEnabled", value: false, type: "bool", scope: "global", allowlist: [], blocklist: [], reason: "Phase 27 self-evolve cron master switch — keep false until P26 stable 2 weeks + ≥200 voice reviews." },
+  { key: "voiceEvalAutoRerun", value: false, type: "bool", scope: "global", allowlist: [], blocklist: [], reason: "Auto-trigger DeepEval golden-50 on Voice page save. Manual button always live." },
+  { key: "sendblueDailyQuota", value: 1000, type: "number", scope: "global", allowlist: [], blocklist: [], reason: "Sendblue Free tier daily outbound cap. 80% soft alert, 100% hard block. Confirm with Sendblue support." },
+]
+
+function CreateFlagForm({ onCreated }: { onCreated: () => void }) {
+  const [key, setKey] = useState("")
+  const [type, setType] = useState<FlagType>("bool")
+  const [scope, setScope] = useState<FlagScope>("global")
+  const [valueStr, setValueStr] = useState("false")
+  const [reason, setReason] = useState("")
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  async function handleCreate() {
+    setErr(null)
+    if (!key.trim()) { setErr("Key required"); return }
+    if (!reason.trim()) { setErr("Reason required (audit log)"); return }
+    let value: FlagValue
+    try {
+      if (type === "bool") value = valueStr === "true"
+      else if (type === "number") value = Number(valueStr)
+      else if (type === "json") value = JSON.parse(valueStr)
+      else value = valueStr
+    } catch (e) {
+      setErr(`Invalid ${type} value: ${e instanceof Error ? e.message : String(e)}`)
+      return
+    }
+    setBusy(true)
+    try {
+      await saveFlag({ key: key.trim(), value, type, scope, allowlist: [], blocklist: [], reason: reason.trim() })
+      setKey(""); setReason(""); setValueStr("false")
+      onCreated()
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    } finally { setBusy(false) }
+  }
+
+  return (
+    <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))" }}>
+      <input placeholder="key (e.g. myFlag)" value={key} onChange={(e) => setKey(e.target.value)} />
+      <select value={type} onChange={(e) => setType(e.target.value as FlagType)}>
+        <option value="bool">bool</option>
+        <option value="number">number</option>
+        <option value="string">string</option>
+        <option value="json">json</option>
+      </select>
+      <select value={scope} onChange={(e) => setScope(e.target.value as FlagScope)}>
+        <option value="global">global</option>
+        <option value="perEnv">perEnv</option>
+        <option value="perUser">perUser</option>
+      </select>
+      <input placeholder={type === "json" ? '{"k":"v"}' : "value"} value={valueStr} onChange={(e) => setValueStr(e.target.value)} />
+      <input placeholder="reason (audited)" value={reason} onChange={(e) => setReason(e.target.value)} style={{ gridColumn: "1 / -1" }} />
+      <button type="button" disabled={busy} onClick={() => void handleCreate()} style={{ gridColumn: "1 / -1" }}>
+        {busy ? "Creating…" : "Create flag"}
+      </button>
+      {err ? <div style={{ color: "#dc2626", fontSize: "0.85em", gridColumn: "1 / -1" }}>{err}</div> : null}
+    </div>
+  )
+}
+
 export function Flags() {
   const [flags, setFlags] = useState<FeatureFlag[]>([])
   const [loading, setLoading] = useState(true)
@@ -391,6 +459,23 @@ export function Flags() {
   const [editing, setEditing] = useState<string | null>(null)
   const [drawerKey, setDrawerKey] = useState<string | null>(null)
   const [reverting, setReverting] = useState<string | null>(null)
+  const [seeding, setSeeding] = useState(false)
+  const [showCreate, setShowCreate] = useState(false)
+
+  async function seedDefaults() {
+    setSeeding(true)
+    try {
+      const existingKeys = new Set(flags.map((f) => f.key))
+      const todo = SEED_DEFAULTS.filter((d) => !existingKeys.has(d.key))
+      for (const d of todo) {
+        await saveFlag(d)
+      }
+      await load()
+      alert(`Seeded ${todo.length} flag(s). ${SEED_DEFAULTS.length - todo.length} already existed.`)
+    } catch (e) {
+      alert(`Seed failed: ${e instanceof Error ? e.message : String(e)}`)
+    } finally { setSeeding(false) }
+  }
 
   async function load() {
     setLoading(true)
@@ -528,11 +613,25 @@ export function Flags() {
         title="Feature Flags"
         description="pa_feature_flags — type-aware editor with audit trail. Reverts read the most recent non-revert audit row and write its oldValue back. ≤30s propagation via 30s TTL cache."
         actions={
-          <button type="button" onClick={() => void load()}>
-            Refresh
-          </button>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button type="button" onClick={() => setShowCreate(!showCreate)}>
+              {showCreate ? "Cancel" : "+ New flag"}
+            </button>
+            <button type="button" disabled={seeding} onClick={() => void seedDefaults()}>
+              {seeding ? "Seeding…" : "Seed defaults (7)"}
+            </button>
+            <button type="button" onClick={() => void load()}>
+              Refresh
+            </button>
+          </div>
         }
       />
+
+      {showCreate ? (
+        <Panel title="Create new flag">
+          <CreateFlagForm onCreated={() => { setShowCreate(false); void load() }} />
+        </Panel>
+      ) : null}
 
       <Panel title={`${flags.length} flag${flags.length === 1 ? "" : "s"}`}>
         <DataTable
@@ -541,7 +640,7 @@ export function Flags() {
           empty={
             <EmptyState
               title="No flags"
-              body="pa_feature_flags is empty. Run the seed script (24.5/T4) to populate the initial set."
+              body="pa_feature_flags is empty. Click 'Seed defaults' above to populate the 7 standard flags, or '+ New flag' for custom."
             />
           }
         />
