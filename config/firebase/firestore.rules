@@ -58,6 +58,9 @@ service cloud.firestore {
     match /pa_memory_events/{id} {
       allow read, write: if isPaOperator();
     }
+    match /pa_beta_participants/{id} {
+      allow read, write: if isPaOperator();
+    }
     match /{document=**} {
       allow read, write: if false;
     }

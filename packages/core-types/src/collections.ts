@@ -44,6 +44,8 @@ export const PA_COLLECTIONS = {
   runtimeHeartbeats: "pa_runtime_heartbeats",
   /** Per-worker durable cursors (e.g. last processed iMessage ROWID) */
   workerCursors: "pa_worker_cursors",
+  /** Closed-beta participants — source of truth for allowlist + onboarding */
+  betaParticipants: "pa_beta_participants",
 } as const
 
 export const PA_REMOTE_CONFIG_DOC = "platform"

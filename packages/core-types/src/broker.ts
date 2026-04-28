@@ -161,7 +161,9 @@ export type PaRateLimitBucket = z.infer<typeof PaRateLimitBucketSchema>
 
 export const AbuseEventKindSchema = z.enum([
   "rate_limited",
+  "prompt_injection",
   "prompt_injection_signal",
+  "allowlist_deny",
   "tool_abuse",
   "cross_session_attempt",
   "blocked_connector",
