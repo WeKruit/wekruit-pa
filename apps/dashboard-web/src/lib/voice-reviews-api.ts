@@ -55,13 +55,25 @@ export type VoiceReview = {
   createdAt: string | null
 }
 
+export type PriorTurn = {
+  role: "user" | "assistant"
+  body: string
+  createdAt: string | null
+  messageId: string
+}
+
 export type AssistantTurn = {
   messageId: string
   sessionId: string
   userId: string
   body: string
   createdAt: string | null
-  priorUserBody: string | null
+  /**
+   * Conversation thread leading up to this assistant turn.
+   * Up to 6 prior messages (any role) in the same session, ordered
+   * oldest → newest so render flows top-to-bottom like a chat UI.
+   */
+  priorTurns: PriorTurn[]
   reviewed: boolean
   review: VoiceReview | null
 }
@@ -156,22 +168,32 @@ export async function listAssistantTurns(opts: {
         ? reviewFromSnap(reviewSnap.id, reviewSnap.data() as Record<string, unknown>)
         : null
 
-      let priorUserBody: string | null = null
+      let priorTurns: PriorTurn[] = []
       if (t.sessionId && t.createdAt) {
+        // Fetch last 6 messages (any role) in this session before the rated
+        // turn. Order desc (newest first) for the query, then reverse so the
+        // caller renders oldest → newest like a chat thread.
         const priorSnap = await getDocs(
           query(
             collection(db(), MESSAGES_COLLECTION),
             where("sessionId", "==", t.sessionId),
-            where("role", "==", "user"),
             where("createdAt", "<", t.createdAt),
             orderBy("createdAt", "desc"),
-            limit(1)
+            limit(6)
           )
         )
-        if (priorSnap.docs.length > 0) {
-          const raw = priorSnap.docs[0]!.data() as Record<string, unknown>
-          priorUserBody = (raw.body as string) ?? null
-        }
+        priorTurns = priorSnap.docs
+          .map((d) => {
+            const raw = d.data() as Record<string, unknown>
+            const role = raw.role === "assistant" ? "assistant" : "user"
+            return {
+              role: role as "user" | "assistant",
+              body: (raw.body as string) ?? "",
+              createdAt: (raw.createdAt as string) ?? null,
+              messageId: (raw.id as string) ?? d.id,
+            }
+          })
+          .reverse()
       }
 
       return {
@@ -180,7 +202,7 @@ export async function listAssistantTurns(opts: {
         userId: t.userId,
         body: t.body,
         createdAt: t.createdAt,
-        priorUserBody,
+        priorTurns,
         reviewed: review !== null,
         review,
       }

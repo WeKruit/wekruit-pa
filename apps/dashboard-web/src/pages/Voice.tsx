@@ -747,28 +747,97 @@ function ReviewRow({
         <span>session {turn.sessionId.slice(0, 8)}</span>
       </div>
 
-      {/* User context */}
-      {turn.priorUserBody ? (
-        <div
-          style={{
-            fontSize: "0.85em",
-            color: "#475569",
-            background: "#f8fafc",
-            padding: "0.5rem 0.6rem",
-            borderRadius: 4,
-            marginBottom: 6,
-            borderLeft: "3px solid #cbd5e1",
-          }}
-        >
-          <span style={{ fontWeight: 600, color: "#64748b" }}>user · </span>
-          {turn.priorUserBody}
-        </div>
-      ) : null}
+      {/* Conversation thread leading up to the rated assistant turn.
+          Chat-style: user = right-aligned light gray, assistant = left-aligned
+          light blue. Rated assistant turn (current) is the highlighted bubble
+          at the bottom. */}
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 4,
+          marginBottom: 8,
+        }}
+      >
+        {turn.priorTurns.length === 0 ? (
+          <div
+            style={{
+              fontSize: "0.75em",
+              color: "#94a3b8",
+              fontStyle: "italic",
+              textAlign: "center",
+              padding: "0.25rem 0",
+            }}
+          >
+            (start of session)
+          </div>
+        ) : (
+          turn.priorTurns.map((p) => (
+            <div
+              key={p.messageId}
+              style={{
+                display: "flex",
+                justifyContent: p.role === "user" ? "flex-end" : "flex-start",
+              }}
+            >
+              <div
+                style={{
+                  maxWidth: "82%",
+                  fontSize: "0.85em",
+                  padding: "0.4rem 0.6rem",
+                  borderRadius: 6,
+                  background: p.role === "user" ? "#f1f5f9" : "#eff6ff",
+                  color: "#1e293b",
+                  whiteSpace: "pre-wrap",
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: "0.7em",
+                    fontWeight: 600,
+                    color: "#64748b",
+                    marginBottom: 2,
+                    textTransform: "uppercase",
+                    letterSpacing: "0.03em",
+                  }}
+                >
+                  {p.role}
+                </div>
+                {p.body}
+              </div>
+            </div>
+          ))
+        )}
 
-      {/* Assistant turn body */}
-      <div style={{ fontSize: "0.95em", marginBottom: 8, whiteSpace: "pre-wrap" }}>
-        <span style={{ fontWeight: 600, color: "#0f172a" }}>assistant · </span>
-        {turn.body}
+        {/* Rated assistant turn — focused/highlighted bubble at bottom */}
+        <div style={{ display: "flex", justifyContent: "flex-start" }}>
+          <div
+            style={{
+              maxWidth: "82%",
+              fontSize: "0.95em",
+              padding: "0.55rem 0.7rem",
+              borderRadius: 6,
+              background: "#dbeafe",
+              border: "2px solid #3b82f6",
+              color: "#0f172a",
+              whiteSpace: "pre-wrap",
+            }}
+          >
+            <div
+              style={{
+                fontSize: "0.7em",
+                fontWeight: 700,
+                color: "#1d4ed8",
+                marginBottom: 2,
+                textTransform: "uppercase",
+                letterSpacing: "0.03em",
+              }}
+            >
+              assistant (rated)
+            </div>
+            {turn.body}
+          </div>
+        </div>
       </div>
 
       {/* Rating stars */}
