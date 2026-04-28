@@ -393,6 +393,65 @@ async function deleteOldIndexes(opts: { dryRun?: boolean }): Promise<{
   }
 }
 
+/**
+ * Configure a Firestore TTL policy on `{collectionGroup}.{field}`.
+ *
+ * Uses Firestore Admin v1 REST: PATCH on the field resource with
+ * `ttlConfig: {}` enables TTL on that timestamp field. Removing the
+ * config (PATCH with `ttlConfig: null`) disables.
+ *
+ * Field path format: collection group + field, e.g.
+ *   /projects/{p}/databases/(default)/collectionGroups/pa-rate-limits/fields/expiresAt
+ *
+ * Field VALUE in docs MUST be a Firestore Timestamp (not ISO string).
+ * Docs whose `expiresAt` is in the past get GC'd within ~24h.
+ */
+async function setFirestoreTTL(input: {
+  collectionGroup: string
+  field: string
+  enable: boolean
+}): Promise<{ collectionGroup: string; field: string; enable: boolean; operation: string; status: string }> {
+  if (!getApps().length) initializeApp()
+  const app = getApps()[0]!
+  const credential = (app.options as { credential?: { getAccessToken: () => Promise<{ access_token: string }> } }).credential
+  if (!credential) throw new Error("no_admin_credential")
+  const tokenObj = await credential.getAccessToken()
+  const token = tokenObj.access_token
+  const project = process.env.GCLOUD_PROJECT || process.env.GOOGLE_CLOUD_PROJECT || "wekruit-5f89b"
+
+  const fieldName = `projects/${project}/databases/(default)/collectionGroups/${input.collectionGroup}/fields/${input.field}`
+  const url = `https://firestore.googleapis.com/v1/${fieldName}?updateMask=ttlConfig`
+
+  const body: Record<string, unknown> = { name: fieldName }
+  if (input.enable) {
+    body.ttlConfig = {}
+  } else {
+    body.ttlConfig = null
+  }
+
+  const resp = await fetch(url, {
+    method: "PATCH",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(body),
+  })
+
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => "")
+    throw new Error(`set_ttl_${resp.status}: ${text.slice(0, 400)}`)
+  }
+  const data = (await resp.json()) as { name?: string; done?: boolean; metadata?: Record<string, unknown> }
+  return {
+    collectionGroup: input.collectionGroup,
+    field: input.field,
+    enable: input.enable,
+    operation: data.name ?? "",
+    status: data.done ? "done" : "pending",
+  }
+}
+
 async function reseedDefaultAgent(): Promise<{ ok: boolean; version: string; written: string[] }> {
   if (!getApps().length) initializeApp()
   const db = getFirestore()
@@ -972,6 +1031,18 @@ export const paAdminBootstrap = onRequest(
         const dryRun = Boolean((body as { dryRun?: boolean }).dryRun ?? false)
         const result = await deleteOldIndexes({ dryRun })
         res.json({ action, dryRun, ...result })
+        return
+      }
+      if (action === "setFirestoreTTL") {
+        const cg = String((body as { collectionGroup?: unknown }).collectionGroup ?? "")
+        const field = String((body as { field?: unknown }).field ?? "")
+        const enable = Boolean((body as { enable?: unknown }).enable ?? true)
+        if (!cg || !field) {
+          res.status(400).json({ error: "missing collectionGroup or field" })
+          return
+        }
+        const result = await setFirestoreTTL({ collectionGroup: cg, field, enable })
+        res.json({ action, ...result })
         return
       }
       if (action === "replayFixtures") {
