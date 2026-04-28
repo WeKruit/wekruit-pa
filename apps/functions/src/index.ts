@@ -32,6 +32,9 @@ import { createHash, randomUUID } from "node:crypto"
 import { handleSendblueWebhook } from "./sendblue/webhook.js"
 import { paSendblueOutboxHandler } from "./sendblue/outbox.js"
 
+// Phase 22 — proactive check-in sweep
+export { paProactiveSweep } from "./proactive-sweep.js"
+
 if (!getApps().length) initializeApp()
 
 setGlobalOptions({ region: "us-central1" })
@@ -315,8 +318,8 @@ async function processBrokerImessageEvent(db: Firestore, data: BrokerImessageEve
     idempotencyKey: claimed.idempotencyKey,
     rawMeta: {
       source: "imessage_broker",
-      messageRowId: payload.messageRowId,
-      chatId: payload.chatId,
+      ...(payload.messageRowId !== undefined ? { messageRowId: payload.messageRowId } : {}),
+      ...(payload.chatId !== undefined ? { chatId: payload.chatId } : {}),
       brokerEventId: claimed.id,
       ...(payload.harness ? { harness: payload.harness } : {}),
     },

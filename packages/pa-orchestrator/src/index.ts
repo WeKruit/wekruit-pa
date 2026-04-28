@@ -58,6 +58,10 @@ import { buildFewShotTurns, prefixFewShotToHistory } from "./voice/few-shot.js"
 import { normalizeForIMessage } from "./output-normalizer.js"
 // Phase 22 — proactive cancellation NLU (D-07, PROACTIVE-06)
 import { detectProactiveCancellation } from "./cancellation-nlu.js"
+// Re-export Phase 22 proactive modules for consumers (e.g. apps/functions)
+export { detectProactiveCancellation, CANCELLATION_PATTERNS } from "./cancellation-nlu.js"
+export { runProactiveTurn, type ProactiveTurnStore, type ProactiveTurnResult } from "./proactive-turn.js"
+export { normalizeForIMessage } from "./output-normalizer.js"
 
 type RunAgentTurn = typeof defaultRunAgentTurn
 
