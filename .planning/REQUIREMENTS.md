@@ -10,7 +10,7 @@
 
 ### VOICE — Companion Voice v1 (static base)
 
-- [ ] **VOICE-01**: System prompt rewritten using Snapchat MyAI skeleton (concise, friend register, no monologue, sparse emoji, never self-identifies as AI).
+- [x] **VOICE-01**: System prompt rewritten using Snapchat MyAI skeleton (concise, friend register, no monologue, sparse emoji, never self-identifies as AI).
 - [ ] **VOICE-02**: PA persona is encoded as PA self-backstory (not a user-attribute table) per Tendera "facts as voice" pattern; per-user facts stay in mem0 layer, never injected as bullet specs.
 - [ ] **VOICE-03**: System prompt ships with 3 in-character `mes_example` few-shot dialogue turns demonstrating implicit ack ("柠檬茶女孩 🍋" pattern) instead of explicit catalog ("好的，我记住了").
 - [ ] **VOICE-04**: System prompt includes `first_mes` voice anchor (research-validated highest-ROI lever for small-model voice).
