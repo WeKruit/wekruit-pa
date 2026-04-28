@@ -31,7 +31,7 @@ import {
   getOrCreateSession,
   setOnboardingStatus,
 } from "@pa/pa-persistence"
-import { useDmAllowlist, getPeerDisplay, getPeerAllowlist, isSamePeer, isLegacyChannelEnabled } from "./config.js"
+import { useDmAllowlist, getPeerDisplay, getPeerAllowlist, isSamePeer, isLegacyChannelEnabled, resolveWorkerAllowlist, recordWorkerAllowlistDeny } from "./config.js"
 import { getImessageSessionExternalId } from "./imessage-session.js"
 import { getPlatformFlags } from "./platform-flags.js"
 import { deliverOutboundBody, startOutboundListener } from "./outbox.js"
@@ -154,13 +154,25 @@ async function handleDirectMessage(msg: Message) {
     const from = msg.participant
     if (!from) return
     if (useDmAllowlist()) {
-      const peers = getPeerAllowlist()
+      // Phase 23 D-01: resolve from Firestore (default prod) or env (dev)
+      const peers = db ? await resolveWorkerAllowlist(db) : getPeerAllowlist()
       if (peers.length === 0) {
         log(`[allowlist] DENY (empty list, enforcement on) from=${from} rowId=${msg.rowId}`)
+        if (db) {
+          void recordWorkerAllowlistDeny(db, { contactHandle: from }).catch((e) =>
+            log("[allowlist] recordAllowlistDeny error:", e)
+          )
+        }
         return
       }
       if (!peers.some((peer) => isSamePeer(from, peer))) {
         log(`[allowlist] DENY (not in list) from=${from} rowId=${msg.rowId}`)
+        // Phase 23 BETA-02 — write pa_abuse_events row for allowlist-deny
+        if (db) {
+          void recordWorkerAllowlistDeny(db, { contactHandle: from }).catch((e) =>
+            log("[allowlist] recordAllowlistDeny error:", e)
+          )
+        }
         return
       }
     }
