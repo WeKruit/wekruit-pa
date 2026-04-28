@@ -68,10 +68,21 @@ const HEADHUNTER_PLAYBOOK_ID = "headhunter"
 const HEADHUNTER_TRIGGER_RE = /帮我|想换|在看工作|在面|简历|offer/i
 // Phase 22 — proactive cancellation NLU (D-07, PROACTIVE-06)
 import { detectProactiveCancellation } from "./cancellation-nlu.js"
+// Phase 30 T2 — Downstream Eval Connector hook (P9-Connectors).
+import { runDownstreamConnector, withSoftBudget } from "./downstream.js"
 // Re-export Phase 22 proactive modules for consumers (e.g. apps/functions)
 export { detectProactiveCancellation, CANCELLATION_PATTERNS } from "./cancellation-nlu.js"
 export { runProactiveTurn, type ProactiveTurnStore, type ProactiveTurnResult } from "./proactive-turn.js"
 export { normalizeForIMessage } from "./output-normalizer.js"
+// Phase 30 T2 — re-export downstream connector helpers for admin CF wiring.
+export {
+  runDownstreamConnector,
+  withSoftBudget,
+  type RunDownstreamConnectorInput,
+  type RunDownstreamConnectorOptions,
+  type RunDownstreamConnectorResult,
+  type DownstreamFireRecord,
+} from "./downstream.js"
 
 type RunAgentTurn = typeof defaultRunAgentTurn
 
@@ -859,6 +870,31 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
           idempotencyKey: idk,
         })
       }
+    }
+    // Phase 30 T2 — Downstream Eval Connector hook (P9-Connectors).
+    // Fire-and-forget: we await with a soft 2s budget so the chat path is
+    // never blocked, but the underlying work continues in background. Any
+    // failure inside the connector is swallowed (logged in `downstream.ts`).
+    // Test paths that omit `store.db` skip the connector entirely.
+    if (store.db != null) {
+      const work = runDownstreamConnector(
+        store.db,
+        {
+          userId: event.userId,
+          conversationId: event.sessionId,
+          lastUserTurn: event.body,
+          lastAssistantTurn: visibleReply,
+        },
+        {
+          log: (msg, fields) => store.log(`[downstream] ${msg}`, { turnId, ...(fields ?? {}) }),
+        }
+      ).catch((e) => {
+        store.log("[downstream] runDownstreamConnector threw (should never happen)", {
+          turnId,
+          error: e instanceof Error ? e.message : String(e),
+        })
+      })
+      await withSoftBudget(work, 2000, undefined)
     }
     // Phase 26 T3 — emit structured cost log (P9-Prod-Ops). Cloud Logging
     // aggregates this via the user-defined metric `pa.spend.daily`

@@ -112,14 +112,6 @@ function makeFakeFirestore(store: FakeStore = makeStore()): { db: Firestore; sto
         const finalId = id ?? `${name}_auto_${++auditCounter}`
         return makeDocRef(name, finalId)
       },
-      async get() {
-        const map = getMap(name)
-        const rows = Array.from(map.values())
-        return {
-          empty: rows.length === 0,
-          docs: rows.map((r) => ({ id: r.id, data: () => r.data })),
-        }
-      },
       ...makeQuery(name),
     }
   }

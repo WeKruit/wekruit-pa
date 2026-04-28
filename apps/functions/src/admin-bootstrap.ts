@@ -1309,7 +1309,31 @@ export const paAdminBootstrap = onRequest(
         res.json({ action, ...result })
         return
       }
-      res.status(400).json({ error: "unknown_action", supported: ["ping", "seedFlags", "replayFixtures", "simulateConversation", "migrateCollections", "reseedDefaultAgent", "driftCheck", "migrateHandbookFromBible"] })
+      // Phase 30 T2 — manual run of the Downstream Eval Connector pipeline.
+      // Useful for debugging triggers without sending a real iMessage. Body:
+      //   { action, userId, lastUserTurn, lastAssistantTurn?, conversationId? }
+      // Returns matched trigger records (kind, fired, status, errorMsg).
+      if (action === "evalDownstreamTriggers") {
+        if (!getApps().length) initializeApp()
+        const db = getFirestore()
+        const userId = typeof body.userId === "string" ? body.userId : ""
+        const lastUserTurn = typeof body.lastUserTurn === "string" ? body.lastUserTurn : ""
+        const lastAssistantTurn = typeof body.lastAssistantTurn === "string" ? body.lastAssistantTurn : ""
+        const conversationId = typeof body.conversationId === "string" ? body.conversationId : undefined
+        if (!userId || !lastUserTurn) {
+          res.status(400).json({ error: "missing userId or lastUserTurn" })
+          return
+        }
+        const { runDownstreamConnector } = await import("@pa/pa-orchestrator")
+        const result = await runDownstreamConnector(
+          db,
+          { userId, lastUserTurn, lastAssistantTurn, conversationId },
+          { log: (...args) => console.log(new Date().toISOString(), "[evalDownstreamTriggers]", ...args) }
+        )
+        res.json({ action, ...result })
+        return
+      }
+      res.status(400).json({ error: "unknown_action", supported: ["ping", "seedFlags", "replayFixtures", "simulateConversation", "migrateCollections", "reseedDefaultAgent", "driftCheck", "migrateHandbookFromBible", "evalDownstreamTriggers"] })
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       res.status(500).json({ error: "internal", message: msg })
