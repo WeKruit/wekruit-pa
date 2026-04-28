@@ -98,9 +98,9 @@ export function AgentBuilder() {
   async function saveRow(r: AgentRow) {
     setSaving(true)
     try {
-      // Build persona object: include only fields with values; for emptied
-      // fields use deleteField() so re-saving an emptied input clears the
-      // doc field instead of leaving stale data. Firestore rejects undefined.
+      // Firestore rejects undefined AND deleteField() inside nested objects.
+      // Build persona with only present fields; emptied fields cleared via
+      // top-level dot-path deleteField() in the same updateDoc call.
       const tone = r.personaTone?.trim() || ""
       const style = (r.personaStyle ?? "")
         .split(",")
@@ -114,14 +114,8 @@ export function AgentBuilder() {
         .split("\n")
         .map((x) => x.trim())
         .filter(Boolean)
-      const persona: Record<string, unknown> = {
-        tone: tone ? tone : deleteField(),
-        style: style.length > 0 ? style : deleteField(),
-        boundaries: boundaries.length > 0 ? boundaries : deleteField(),
-        goals: goals.length > 0 ? goals : deleteField(),
-      }
 
-      await updateDoc(doc(fire, PA_COLLECTIONS.agents, r.id), {
+      const update: Record<string, unknown> = {
         name: r.name,
         systemPrompt: r.systemPrompt,
         provider: r.provider,
@@ -136,9 +130,20 @@ export function AgentBuilder() {
         toolBudgetPerTurn: r.toolBudgetPerTurn,
         isDefault: r.isDefault === true,
         status: r.status || "draft",
-        persona,
         updatedAt: new Date().toISOString(),
-      })
+      }
+
+      // Set or clear persona sub-fields via dot-path (top-level only).
+      if (tone) update["persona.tone"] = tone
+      else update["persona.tone"] = deleteField()
+      if (style.length > 0) update["persona.style"] = style
+      else update["persona.style"] = deleteField()
+      if (boundaries.length > 0) update["persona.boundaries"] = boundaries
+      else update["persona.boundaries"] = deleteField()
+      if (goals.length > 0) update["persona.goals"] = goals
+      else update["persona.goals"] = deleteField()
+
+      await updateDoc(doc(fire, PA_COLLECTIONS.agents, r.id), update)
       await load()
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : String(e))
