@@ -48,7 +48,7 @@ This roadmap is intentionally numeric so GSD phase tooling can discover and exec
 
 | # | Phase | Goal | Status |
 |---|-------|------|--------|
-| 24 | 2/7 | In Progress|  |
+| 24 | 3/7 | In Progress|  |
 | 25 | Voice Self-Evolve (deferred to v1.3) | Global slang central evolution (weekly cron) + per-user STYLE.delta + 口头禅 (daily cron) + aeon-style autoresearch 4-variation + DeepEval gate + HITL PR review + Hermes-style prompt-injection scan. **Hard dependency on Phase 24 ship.** | Backlog |
 
 **Documents:**
@@ -327,14 +327,14 @@ Requirements: VOICE-01, VOICE-02, VOICE-03, VOICE-04, VOICE-05, VOICE-06, VOICE-
 7. 3 anchor regression cases PASS (wekruit投递 + vent + celebrate) on baseline rerun.
 8. Cringe-warn (not hard-ban) for soft items; hard-ban only confirmed-dead items via web verify.
 
-**Plans:** 2/7 plans executed
+**Plans:** 3/7 plans executed
 
 Plans:
 - [x] 24-01-eval-foundation-PLAN.md — DeepEval workspace + claude-opus-4-5 judge + rubrics + promptfoo A/B + voice-eval.yml CI gate (Wave 1)
 - [ ] 24-02-golden-dataset-PLAN.md — Firestore extract + LLM-gen synthetic/adversarial fixtures + Adam HITL 50-case labeling + 3 anchor regressions (Wave 2)
 - [ ] 24-03-bible-v6-fewshot-PLAN.md — Bible v6 IDENTITY/STYLE/REACTIONS split + 12 mes_examples relocated to fewShotMessages + orchestrator wiring + persistence fs_* filter (Wave 3, parallel)
 - [ ] 24-04-rewriter-v2-PLAN.md — Qwen/Qwen3-8B default + positive-replacement v2 prompt + <think> strip + diff guard >1.6×|<0.4× + temp 0.4 (Wave 3, parallel)
-- [ ] 24-05-coach-token-telemetry-PLAN.md — coach-token-monitor.ts telemetry tap (zh/en coach verbs, bullets, numbered, 4+ subordinate chain), no transform (Wave 3, parallel)
+- [x] 24-05-coach-token-telemetry-PLAN.md — coach-token-monitor.ts telemetry tap (zh/en coach verbs, bullets, numbered, 4+ subordinate chain), no transform (Wave 3, parallel)
 - [x] 24-06-typing-dwell-PLAN.md — computeTypingDwellMs(replyLength) 1-4s bands + outbox.ts step 5 dynamic + env override (Wave 3, parallel)
 - [ ] 24-07-verification-PLAN.md — Adam infra prep + full DeepEval suite + 3 anchor regression PASS + Adam smoke + STATE/RETROSPECTIVE updates (Wave 4)
 

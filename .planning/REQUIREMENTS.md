@@ -13,8 +13,8 @@
 - [x] **VOICE-01**: System prompt rewritten using Snapchat MyAI skeleton (concise, friend register, no monologue, sparse emoji, never self-identifies as AI).
 - [ ] **VOICE-02**: PA persona is encoded as PA self-backstory (not a user-attribute table) per Tendera "facts as voice" pattern; per-user facts stay in mem0 layer, never injected as bullet specs.
 - [ ] **VOICE-03**: System prompt ships with 3 in-character `mes_example` few-shot dialogue turns demonstrating implicit ack ("柠檬茶女孩 🍋" pattern) instead of explicit catalog ("好的，我记住了").
-- [ ] **VOICE-04**: System prompt includes `first_mes` voice anchor (research-validated highest-ROI lever for small-model voice).
-- [ ] **VOICE-05**: Post-history voice reminder (50-100 tokens) injected before user's latest turn so voice constraints survive long context.
+- [x] **VOICE-04**: System prompt includes `first_mes` voice anchor (research-validated highest-ROI lever for small-model voice).
+- [x] **VOICE-05**: Post-history voice reminder (50-100 tokens) injected before user's latest turn so voice constraints survive long context.
 - [ ] **VOICE-06**: Character Bible v1 written (Adam owner) — PA name, backstory, 3 verbal tics, reaction templates, signature emoji, code-switch policy, length cap.
 - [ ] **VOICE-07**: zh + en slang lexicon curated (≤10 zh + ≤7 en signature terms with usage notes); used at most 1-2 per turn, not stacked.
 - [ ] **VOICE-08**: Eval rubric extended with 4 voice axes — `warmth_no_sycophancy`, `in_character_voice`, `no_robot_filler`, `length_appropriateness` — pairwise judge against current-prompt baseline.
