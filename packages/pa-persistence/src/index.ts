@@ -176,3 +176,21 @@ export async function getUser(db: Firestore, userId: string): Promise<User | nul
   if (!d.exists) return null
   return { id: d.id, ...d.data() } as User
 }
+
+// Phase 24.5 — feature-flag SDK (P9-Infra). Re-exported here so consumers
+// import via the package root: `import { getFlag } from "@pa/pa-persistence"`.
+export {
+  DEFAULT_TTL_MS as FEATURE_FLAG_TTL_MS,
+  getFlag,
+  setFlag,
+  revertFlag,
+  _clearFeatureFlagCache,
+  _getFeatureFlagCacheStats,
+} from "./feature-flags.js"
+export type {
+  FlagValue,
+  FlagType,
+  FlagScope,
+  FlagDoc,
+  FlagContext,
+} from "./feature-flags.js"
