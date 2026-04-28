@@ -12,6 +12,8 @@ import {
   checkAdminToken,
   extractUserMessageFromLine,
   replayFixtures,
+  migrateCollections,
+  COLLECTION_MIGRATION_PAIRS,
   type ReplayDeps,
   type FixtureName,
 } from "./admin-bootstrap.js"
@@ -252,5 +254,121 @@ describe("replayFixtures — real replay with mocked orchestrator", () => {
       }
     )
     assert.equal(result.processed, 200)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Phase 24.5 / P8 — migrateCollections (collection rename pa_* -> pa-*)
+// ---------------------------------------------------------------------------
+
+type MigrateStore = Map<string, Map<string, Record<string, unknown>>>
+
+function makeMigrateDb(initialDocs: Record<string, Record<string, Record<string, unknown>>>) {
+  const store: MigrateStore = new Map()
+  for (const [coll, docs] of Object.entries(initialDocs)) {
+    const m = new Map<string, Record<string, unknown>>()
+    for (const [id, data] of Object.entries(docs)) m.set(id, data)
+    store.set(coll, m)
+  }
+
+  function makeCollection(name: string) {
+    const docsForColl = () => store.get(name) ?? new Map<string, Record<string, unknown>>()
+    return {
+      doc(id: string) {
+        return {
+          set: async (data: Record<string, unknown>) => {
+            let m = store.get(name)
+            if (!m) {
+              m = new Map()
+              store.set(name, m)
+            }
+            m.set(id, { ...data })
+          },
+          ref: {
+            async listCollections() {
+              return [] as never[]
+            },
+          },
+        }
+      },
+      limit(_n: number) {
+        return {
+          async get() {
+            const docs = [...docsForColl().entries()].map(([id, data]) => ({
+              id,
+              data: () => ({ ...data }),
+              ref: {
+                async listCollections() {
+                  return [] as never[]
+                },
+              },
+            }))
+            return { size: docs.length, docs }
+          },
+        }
+      },
+    }
+  }
+
+  const db = {
+    collection: (name: string) => makeCollection(name),
+  }
+  return { db: db as unknown as Parameters<typeof migrateCollections>[1]["db"], store }
+}
+
+describe("migrateCollections — pair list", () => {
+  it("includes a representative subset of expected pairs", () => {
+    const fromSet = new Set(COLLECTION_MIGRATION_PAIRS.map((p) => p.from))
+    for (const expected of [
+      "pa_users",
+      "pa_messages",
+      "pa_agents",
+      "pa_voice_reviews",
+      "pa_inbound_events",
+      "pa_feature_flags",
+      "pa_outbound_daily",
+      "pa_memory",
+    ]) {
+      assert.ok(fromSet.has(expected), `missing pair for ${expected}`)
+    }
+    // every from -> kebab(from) maps to a unique to.
+    const tos = new Set(COLLECTION_MIGRATION_PAIRS.map((p) => p.to))
+    assert.equal(tos.size, COLLECTION_MIGRATION_PAIRS.length)
+  })
+})
+
+describe("migrateCollections — dry run", () => {
+  it("counts source rows but writes NO destination docs", async () => {
+    const { db, store } = makeMigrateDb({
+      pa_users: { u1: { id: "u1", name: "alice" }, u2: { id: "u2", name: "bob" } },
+      pa_messages: { m1: { body: "hi" } },
+    })
+    const result = await migrateCollections({ dryRun: true }, { db })
+    assert.equal(result.dryRun, true)
+    const usersCopy = result.copied.find((c) => c.from === "pa_users")
+    const msgsCopy = result.copied.find((c) => c.from === "pa_messages")
+    assert.equal(usersCopy?.count, 2)
+    assert.equal(msgsCopy?.count, 1)
+    // Destinations must be empty.
+    assert.equal(store.get("pa-users"), undefined)
+    assert.equal(store.get("pa-messages"), undefined)
+  })
+})
+
+describe("migrateCollections — live run", () => {
+  it("upserts each source doc to pa-<name> with same id and data", async () => {
+    const { db, store } = makeMigrateDb({
+      pa_users: { u1: { id: "u1", name: "alice" }, u2: { id: "u2", name: "bob" } },
+      pa_voice_reviews: { msg_001: { rating: 5, tags: ["accuracy"] } },
+    })
+    const result = await migrateCollections({ dryRun: false }, { db })
+    assert.equal(result.dryRun, false)
+    assert.equal(result.errors.length, 0)
+    const dstUsers = store.get("pa-users")!
+    assert.ok(dstUsers, "pa-users created")
+    assert.deepEqual(dstUsers.get("u1"), { id: "u1", name: "alice" })
+    assert.deepEqual(dstUsers.get("u2"), { id: "u2", name: "bob" })
+    const dstReviews = store.get("pa-voice-reviews")!
+    assert.deepEqual(dstReviews.get("msg_001"), { rating: 5, tags: ["accuracy"] })
   })
 })

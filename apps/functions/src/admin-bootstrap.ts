@@ -718,6 +718,132 @@ export async function replayFixtures(input: ReplayInput, deps: ReplayDeps): Prom
   return result
 }
 
+// ---------------------------------------------------------------------------
+// Phase 24.5 — migrateCollections action (P8 collection rename pa_* -> pa-*)
+// ---------------------------------------------------------------------------
+
+/**
+ * Source -> destination collection pairs for the snake_case -> kebab-case
+ * migration. Mirrors the 35 unique names listed in P8 task spec.
+ */
+export const COLLECTION_MIGRATION_PAIRS: ReadonlyArray<{ from: string; to: string }> = [
+  { from: "pa_abuse_events", to: "pa-abuse-events" },
+  { from: "pa_agent_turns", to: "pa-agent-turns" },
+  { from: "pa_agent_versions", to: "pa-agent-versions" },
+  { from: "pa_agents", to: "pa-agents" },
+  { from: "pa_audit_events", to: "pa-audit-events" },
+  { from: "pa_beta_participants", to: "pa-beta-participants" },
+  { from: "pa_console_outbound", to: "pa-console-outbound" },
+  { from: "pa_conversation_summaries", to: "pa-conversation-summaries" },
+  { from: "pa_feature_flags", to: "pa-feature-flags" },
+  { from: "pa_inbound_event", to: "pa-inbound-event" },
+  { from: "pa_inbound_events", to: "pa-inbound-events" },
+  { from: "pa_memory", to: "pa-memory" },
+  { from: "pa_memory_actions", to: "pa-memory-actions" },
+  { from: "pa_memory_events", to: "pa-memory-events" },
+  { from: "pa_memory_evolution_events", to: "pa-memory-evolution-events" },
+  { from: "pa_memory_facts", to: "pa-memory-facts" },
+  { from: "pa_memory_profiles", to: "pa-memory-profiles" },
+  { from: "pa_message_archives", to: "pa-message-archives" },
+  { from: "pa_messages", to: "pa-messages" },
+  { from: "pa_outbound", to: "pa-outbound" },
+  { from: "pa_outbound_daily", to: "pa-outbound-daily" },
+  { from: "pa_rate_limit", to: "pa-rate-limit" },
+  { from: "pa_rate_limits", to: "pa-rate-limits" },
+  { from: "pa_remote_config", to: "pa-remote-config" },
+  { from: "pa_runtime_heartbeats", to: "pa-runtime-heartbeats" },
+  { from: "pa_scheduled_jobs", to: "pa-scheduled-jobs" },
+  { from: "pa_session_links", to: "pa-session-links" },
+  { from: "pa_sessions", to: "pa-sessions" },
+  { from: "pa_surprise_events", to: "pa-surprise-events" },
+  { from: "pa_tool_calls", to: "pa-tool-calls" },
+  { from: "pa_turns", to: "pa-turns" },
+  { from: "pa_users", to: "pa-users" },
+  { from: "pa_voice_eval_runs", to: "pa-voice-eval-runs" },
+  { from: "pa_voice_reviews", to: "pa-voice-reviews" },
+  { from: "pa_worker_cursors", to: "pa-worker-cursors" },
+] as const
+
+const MIGRATE_HARD_CAP = 5000
+const MIGRATE_PER_DOC_TIMEOUT_MS = 10_000
+
+export interface MigrateCollectionsResult {
+  copied: { from: string; to: string; count: number }[]
+  errors: { from: string; to: string; error: string }[]
+  warnings: string[]
+  dryRun: boolean
+}
+
+export interface MigrateCollectionsDeps {
+  db: Firestore
+  log?: (...args: unknown[]) => void
+}
+
+/**
+ * Copy every doc from `pa_<name>` to `pa-<name>` (top-level only).
+ *
+ * - Same document id, same data, server-side write.
+ * - Old collection NOT deleted (Adam decides cleanup later).
+ * - 5000-doc hard cap per collection (skip with warning if exceeded).
+ * - dryRun=true: no writes, just count source rows.
+ * - Subcollections: top-level docs only; surface presence as warning.
+ */
+export async function migrateCollections(
+  input: { dryRun?: boolean },
+  deps: MigrateCollectionsDeps
+): Promise<MigrateCollectionsResult> {
+  const dryRun = input.dryRun === true
+  const log = deps.log ?? (() => {})
+  const result: MigrateCollectionsResult = { copied: [], errors: [], warnings: [], dryRun }
+
+  for (const pair of COLLECTION_MIGRATION_PAIRS) {
+    try {
+      const srcCol = deps.db.collection(pair.from)
+      const snap = await srcCol.limit(MIGRATE_HARD_CAP + 1).get()
+      if (snap.size > MIGRATE_HARD_CAP) {
+        const warn = `${pair.from}: >${MIGRATE_HARD_CAP} docs — skipped (raise cap to migrate)`
+        log("[migrate] WARN", warn)
+        result.warnings.push(warn)
+        continue
+      }
+      let count = 0
+      for (const doc of snap.docs) {
+        if (dryRun) {
+          count++
+          continue
+        }
+        const data = doc.data()
+        const dstRef = deps.db.collection(pair.to).doc(doc.id)
+        const writeP = dstRef.set(data)
+        const timeoutP = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`per-doc timeout ${MIGRATE_PER_DOC_TIMEOUT_MS}ms on ${pair.to}/${doc.id}`)), MIGRATE_PER_DOC_TIMEOUT_MS)
+        )
+        await Promise.race([writeP, timeoutP])
+        count++
+
+        // Subcollection presence warning (top-level only migration)
+        try {
+          const subs = await doc.ref.listCollections()
+          if (subs.length > 0) {
+            const warn = `${pair.from}/${doc.id} has ${subs.length} subcollection(s); not migrated (top-level only)`
+            log("[migrate] WARN", warn)
+            result.warnings.push(warn)
+          }
+        } catch {
+          /* listCollections may not be available in all envs; non-fatal */
+        }
+      }
+      result.copied.push({ from: pair.from, to: pair.to, count })
+      log("[migrate]", dryRun ? "would copy" : "copied", count, pair.from, "->", pair.to)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      log("[migrate] ERROR", pair.from, "->", pair.to, msg)
+      result.errors.push({ from: pair.from, to: pair.to, error: msg })
+    }
+  }
+  return result
+}
+
 export const paAdminBootstrap = onRequest(
   {
     region: "us-central1",
@@ -819,7 +945,18 @@ export const paAdminBootstrap = onRequest(
         res.json(result)
         return
       }
-      res.status(400).json({ error: "unknown_action", supported: ["ping", "seedFlags", "replayFixtures", "simulateConversation"] })
+      if (action === "migrateCollections") {
+        if (!getApps().length) initializeApp()
+        const db = getFirestore()
+        const dryRun = body.dryRun === true
+        const result = await migrateCollections(
+          { dryRun },
+          { db, log: (...args) => console.log(new Date().toISOString(), "[migrateCollections]", ...args) }
+        )
+        res.json({ action, ...result })
+        return
+      }
+      res.status(400).json({ error: "unknown_action", supported: ["ping", "seedFlags", "replayFixtures", "simulateConversation", "migrateCollections", "reseedDefaultAgent"] })
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       res.status(500).json({ error: "internal", message: msg })
