@@ -469,13 +469,44 @@ async function reseedDefaultAgent(): Promise<{ ok: boolean; version: string; wri
     if (!id) continue
     if (!firstVersion) firstVersion = String((agent as { version?: unknown }).version ?? "?")
     const ref = db.collection("pa-agents").doc(id)
-    await ref.set(
-      { ...(agent as Record<string, unknown>), updatedAt: new Date().toISOString() },
-      { merge: true }
-    )
+    // Phase 29 — flip `handbookEnabled: true` on the default agent so the
+    // orchestrator reads the composed handbook at runtime. Inline
+    // `systemPrompt` is kept as failsafe during cutover.
+    const payload: Record<string, unknown> = {
+      ...(agent as Record<string, unknown>),
+      updatedAt: new Date().toISOString(),
+    }
+    if (id === "default") {
+      payload.handbookEnabled = true
+    }
+    await ref.set(payload, { merge: true })
     written.push(id)
   }
   return { ok: true, version: firstVersion, written }
+}
+
+/**
+ * Phase 29 — admin action. Reads `pa-agents/default.systemPrompt`, parses
+ * Bible v7.0 headers (`# IDENTITY`, `# THE ONE RULE`, …), and writes one
+ * Firestore doc per section into `pa-handbook-sections/{sectionKey}`.
+ * Idempotent (re-running just bumps version on each section).
+ *
+ * Returns the count + list of section keys written.
+ */
+async function migrateHandbookFromBible(): Promise<{
+  ok: boolean
+  written: number
+  sectionKeys: string[]
+}> {
+  if (!getApps().length) initializeApp()
+  const db = getFirestore()
+  const { migrateBibleV7 } = await import("@pa/agent-registry")
+  const result = await migrateBibleV7(db, {
+    agentId: "default",
+    actor: "p9-handbook-migrate@wekruit.com",
+    reason: "Phase 29 migrateHandbookFromBible — Bible v7.0 → handbook sections",
+  })
+  return { ok: true, ...result }
 }
 
 async function seedFlags(): Promise<{ created: string[]; skipped: string[] }> {
@@ -1164,6 +1195,11 @@ export const paAdminBootstrap = onRequest(
         res.json({ action, ...result })
         return
       }
+      if (action === "migrateHandbookFromBible") {
+        const result = await migrateHandbookFromBible()
+        res.json({ action, ...result })
+        return
+      }
       if (action === "deleteOldIndexes") {
         const dryRun = Boolean((body as { dryRun?: boolean }).dryRun ?? false)
         const result = await deleteOldIndexes({ dryRun })
@@ -1273,7 +1309,7 @@ export const paAdminBootstrap = onRequest(
         res.json({ action, ...result })
         return
       }
-      res.status(400).json({ error: "unknown_action", supported: ["ping", "seedFlags", "replayFixtures", "simulateConversation", "migrateCollections", "reseedDefaultAgent", "driftCheck"] })
+      res.status(400).json({ error: "unknown_action", supported: ["ping", "seedFlags", "replayFixtures", "simulateConversation", "migrateCollections", "reseedDefaultAgent", "driftCheck", "migrateHandbookFromBible"] })
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       res.status(500).json({ error: "internal", message: msg })

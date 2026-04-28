@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto"
 import { FieldValue, type Firestore } from "firebase-admin/firestore"
-import { getAgentById, getDefaultAgent } from "@pa/agent-registry"
+import {
+  getAgentById,
+  getDefaultAgent,
+  composeSystemPrompt as composeHandbookSystemPrompt,
+  loadHandbook,
+} from "@pa/agent-registry"
 import {
   runAgentTurn as defaultRunAgentTurn,
   stripLeadingIsoTimestamp,
@@ -704,7 +709,32 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // default agent's toolPolicy is still "none" (pre-T8), this returns []
     // and the SDK gets no custom tools, matching legacy behavior.
     const turnTools = await store.buildTurnTools(agent, { turnId, userId: event.userId, sessionId: event.sessionId })
-    const systemPrompt = isVoiceV1Disabled() ? LEGACY_V0_SYSTEM_PROMPT : agent.systemPrompt
+    // Phase 29 — Bible-as-data. When the agent has `handbookEnabled === true`
+    // AND the orchestrator was wired with a Firestore handle, load the
+    // section docs from `pa-handbook-sections` and compose the runtime
+    // systemPrompt. Falls back gracefully to the inline `systemPrompt` field
+    // when sections are missing/empty or the load fails — keeps the inline
+    // value as a failsafe during cutover (per Phase 29 PLAN T4 DON'T).
+    let composedSystemPrompt: string | null = null
+    if ((agent as { handbookEnabled?: boolean }).handbookEnabled === true && store.db != null) {
+      try {
+        const sections = await loadHandbook(store.db)
+        const composed = composeHandbookSystemPrompt(sections).trim()
+        if (composed.length > 0) {
+          composedSystemPrompt = composed
+        } else {
+          store.log("pa.handbook.empty_fallback_inline", { agentId: agent.id })
+        }
+      } catch (e) {
+        store.log("pa.handbook.load_failed_fallback_inline", {
+          agentId: agent.id,
+          error: e instanceof Error ? e.message : String(e),
+        })
+      }
+    }
+    const systemPrompt = isVoiceV1Disabled()
+      ? LEGACY_V0_SYSTEM_PROMPT
+      : composedSystemPrompt ?? agent.systemPrompt
     // Phase 24 T1B — few-shot relocation. Prepend 12 mes_examples as
     // messages-array alternating turns (~3x style transfer vs system-block).
     // Synthetic fs_* ids MUST be filtered before any Firestore write

@@ -189,6 +189,14 @@ export const AgentDefSchema = z.object({
       })
     )
     .optional(),
+  /**
+   * Phase 29 — opt-in flag for the handbook composer. When `true`, the
+   * orchestrator loads `pa-handbook-sections` and composes the systemPrompt
+   * at runtime instead of reading the inline `systemPrompt` field. When
+   * `false` / undefined, the legacy inline path is used (failsafe during
+   * cutover; the inline systemPrompt field is kept until cleanup).
+   */
+  handbookEnabled: z.boolean().optional(),
 })
 export type AgentDef = z.infer<typeof AgentDefSchema>
 
