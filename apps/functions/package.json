@@ -10,7 +10,7 @@
   "scripts": {
     "build": "node build.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test src/sendblue/__tests__/*.test.ts",
+    "test": "node --import tsx --test src/sendblue/__tests__/*.test.ts src/proactive-sweep.test.ts",
     "deploy": "firebase deploy --only functions --project wekruit-5f89b"
   },
   "dependencies": {

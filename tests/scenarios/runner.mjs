@@ -46,6 +46,8 @@ const PA_MESSAGES = "pa_messages"
 const PA_TURNS = "pa_turns"
 const PA_USERS = "pa_users"
 const PA_MEMORY_FACTS = "pa_memory_facts"
+const PA_SCHEDULED_JOBS = "pa_scheduled_jobs"
+const PA_AUDIT_EVENTS = "pa_audit_events"
 const generatedParticipants = new Set()
 
 // Phase 14.4 — cost ceiling. Defaults to $5 per run unless the operator
@@ -596,6 +598,275 @@ async function applyJudgeAssertion({ scenario, turn, reply, runStamp, ledger, ev
   }
 }
 
+// ---------------------------------------------------------------------------
+// Phase 22 — proactive scenario extensions
+//
+// Supports three new YAML keys:
+//   proactiveSeed       : array of pa_scheduled_jobs seed rows
+//   proactiveSweepHook  : boolean — run runSweep in-process after seeding
+//   proactiveAssertions : array of post-sweep assertions
+// ---------------------------------------------------------------------------
+
+/**
+ * Substitute timestamp tokens in a value (string or nested object/array).
+ *
+ * Supported tokens:
+ *   __now_minus_5s__          → ISO string for Date.now() - 5000 ms
+ *   __now_minus_<N>s__        → now - N seconds
+ *   __now_plus_<N>s__         → now + N seconds
+ *   __now_plus_<N>h__         → now + N hours
+ *   __now_plus_<N>d__         → now + N days
+ *   __resolve_from_participant__ → placeholder resolved after user lookup
+ */
+function substituteTimestamps(val, nowMs) {
+  if (typeof val === "string") {
+    return val.replace(/__now_(minus|plus)_(\d+)(s|h|d)__/g, (_m, dir, num, unit) => {
+      const ms = Number(num) * (unit === "s" ? 1000 : unit === "h" ? 3600000 : 86400000)
+      const t = dir === "minus" ? nowMs - ms : nowMs + ms
+      return new Date(t).toISOString()
+    })
+  }
+  if (Array.isArray(val)) return val.map((v) => substituteTimestamps(v, nowMs))
+  if (val && typeof val === "object") {
+    const out = {}
+    for (const [k, v] of Object.entries(val)) out[k] = substituteTimestamps(v, nowMs)
+    return out
+  }
+  return val
+}
+
+/**
+ * Seed pa_scheduled_jobs rows for a proactive scenario.
+ * Returns a map of jobId → seeded doc id for assertion lookups.
+ */
+async function seedProactiveJobs(db, seedRows, userId) {
+  const nowMs = Date.now()
+  const seeded = []
+  for (const rawRow of seedRows) {
+    let row = substituteTimestamps(rawRow, nowMs)
+    if (row.userId === "__resolve_from_participant__") row = { ...row, userId }
+    // Ensure dueAt mirrors nextFireAt for Phase 7 compat
+    if (row.nextFireAt && !row.dueAt) row = { ...row, dueAt: row.nextFireAt }
+    // Use jobId as the doc id (deterministic for assertion lookup)
+    const jobId = row.jobId ?? randomUUID()
+    await db.collection(PA_SCHEDULED_JOBS).doc(jobId).set({ ...row, jobId, createdAt: nowIso() })
+    seeded.push(jobId)
+  }
+  return seeded
+}
+
+/**
+ * Clean up seeded pa_scheduled_jobs rows after a proactive scenario.
+ * Best-effort — does not throw on failure.
+ */
+async function cleanupSeededJobs(db, jobIds) {
+  const batch = db.batch()
+  for (const jobId of jobIds) {
+    batch.delete(db.collection(PA_SCHEDULED_JOBS).doc(jobId))
+  }
+  try {
+    await batch.commit()
+  } catch {
+    // best-effort
+  }
+}
+
+/**
+ * Run the proactive sweep in-process using the Firestore-backed SweepStore.
+ *
+ * Dynamically imports the built dist output of apps/functions. If the build
+ * isn't available (CI scenario without a prior build step), it falls back to
+ * tsx-compiled source via dynamic import of the TS source.
+ */
+async function runProactiveSweepInProcess(db) {
+  // Try built dist first (production-faithful path)
+  let runSweepFn, createFirestoreSweepStoreFn
+  try {
+    const distPath = new URL("../../apps/functions/lib/index.js", import.meta.url).href
+    const mod = await import(distPath)
+    // The dist bundle re-exports runSweep and createFirestoreSweepStore via
+    // tree-shaking — if not present, fall through to source path.
+    if (typeof mod.runSweep === "function") {
+      runSweepFn = mod.runSweep
+      createFirestoreSweepStoreFn = mod.createFirestoreSweepStore
+    }
+  } catch {
+    // Built dist not available; fall back
+  }
+
+  if (!runSweepFn) {
+    // Source path via tsx dynamic import
+    try {
+      const srcPath = new URL("../../apps/functions/src/proactive-sweep.ts", import.meta.url).href
+      const mod = await import(srcPath)
+      runSweepFn = mod.runSweep
+      createFirestoreSweepStoreFn = mod.createFirestoreSweepStore
+    } catch (err) {
+      throw new Error(`[proactive-sweep-hook] Could not import sweep module: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+
+  if (!runSweepFn) {
+    throw new Error("[proactive-sweep-hook] runSweep function not found in sweep module")
+  }
+
+  const store = createFirestoreSweepStoreFn
+    ? createFirestoreSweepStoreFn()
+    : (() => { throw new Error("[proactive-sweep-hook] createFirestoreSweepStore not found") })()
+
+  return runSweepFn(store)
+}
+
+/**
+ * Run proactive assertions against Firestore state after sweep.
+ *
+ * Assertion kinds:
+ *   outbound_created      — pa_outbound row created for jobId with expected fields
+ *   audit_event_written   — pa_audit_events row written with kind + fields
+ *   job_status            — pa_scheduled_jobs[jobId].status matches expected
+ *   idempotency_check     — run sweep again, verify counts didn't increase
+ *   jobs_cancelled        — all user's pending jobs flipped to cancelled_by_user
+ */
+async function runProactiveAssertions(db, assertions, userId, scenarioSweepHook) {
+  const failures = []
+  for (const assertion of assertions) {
+    try {
+      switch (assertion.kind) {
+        case "outbound_created": {
+          const { jobId, assert: a } = assertion
+          const snap = await db.collection(PA_OUTBOUND)
+            .where("proactiveJobId", "==", jobId)
+            .limit(5)
+            .get()
+          if (snap.empty) {
+            failures.push(`outbound_created: no pa_outbound row found for proactiveJobId=${jobId}`)
+            break
+          }
+          const doc = snap.docs[0].data()
+          if (a.source && doc.source !== a.source) {
+            failures.push(`outbound_created[${jobId}]: source=${doc.source}, expected ${a.source}`)
+          }
+          if (a.proactiveJobId && doc.proactiveJobId !== a.proactiveJobId) {
+            failures.push(`outbound_created[${jobId}]: proactiveJobId mismatch`)
+          }
+          if (a.reply_max_length && typeof doc.body === "string" && doc.body.length > a.reply_max_length) {
+            failures.push(`outbound_created[${jobId}]: body length ${doc.body.length} > max ${a.reply_max_length}`)
+          }
+          if (Array.isArray(a.reply_not_matches_any)) {
+            for (const pattern of a.reply_not_matches_any) {
+              if (typeof doc.body === "string" && new RegExp(pattern, "i").test(doc.body)) {
+                failures.push(`outbound_created[${jobId}]: body matches forbidden pattern "${pattern}"`)
+              }
+            }
+          }
+          break
+        }
+
+        case "audit_event_written": {
+          const { jobId, userId: auditUserId, assert: a } = assertion
+          let query = db.collection(PA_AUDIT_EVENTS).where("kind", "==", a.audit_kind)
+          if (jobId) query = query.where("jobId", "==", jobId)
+          if (auditUserId && auditUserId !== "__resolve_from_participant__") {
+            query = query.where("userId", "==", auditUserId)
+          } else if (auditUserId === "__resolve_from_participant__" && userId) {
+            query = query.where("userId", "==", userId)
+          }
+          const snap = await query.limit(5).get()
+          if (snap.empty) {
+            failures.push(`audit_event_written[${jobId ?? auditUserId}]: no pa_audit_events row found for kind=${a.audit_kind}`)
+            break
+          }
+          if (Array.isArray(a.has_fields)) {
+            const doc = snap.docs[0].data()
+            // Check both top-level and meta sub-fields
+            const meta = doc.meta ?? {}
+            for (const field of a.has_fields) {
+              const present = field in doc || field in meta
+              if (!present) {
+                failures.push(`audit_event_written[${jobId ?? auditUserId}]: missing field "${field}" in audit row`)
+              }
+            }
+          }
+          break
+        }
+
+        case "job_status": {
+          const { jobId, assert: a } = assertion
+          const snap = await db.collection(PA_SCHEDULED_JOBS).doc(jobId).get()
+          if (!snap.exists) {
+            failures.push(`job_status[${jobId}]: job doc not found`)
+            break
+          }
+          const job = snap.data()
+          if (a.status && job.status !== a.status) {
+            failures.push(`job_status[${jobId}]: status=${job.status}, expected ${a.status}`)
+          }
+          if (a.nextFireAt_after_now) {
+            const nextMs = new Date(job.nextFireAt).getTime()
+            if (!Number.isFinite(nextMs) || nextMs <= Date.now()) {
+              failures.push(`job_status[${jobId}]: nextFireAt=${job.nextFireAt} is not in the future after re-arm`)
+            }
+          }
+          break
+        }
+
+        case "idempotency_check": {
+          // Run sweep a second time, count outbound + audit rows; they must not exceed max
+          if (scenarioSweepHook) {
+            try {
+              await runProactiveSweepInProcess(db)
+            } catch {
+              // best-effort second sweep
+            }
+          }
+          const { jobId, assert: a } = assertion
+          if (typeof a.max_outbound_count === "number") {
+            const snap = await db.collection(PA_OUTBOUND)
+              .where("proactiveJobId", "==", jobId)
+              .get()
+            if (snap.size > a.max_outbound_count) {
+              failures.push(`idempotency_check[${jobId}]: outbound count ${snap.size} > max ${a.max_outbound_count}`)
+            }
+          }
+          if (typeof a.max_audit_proactive_send_count === "number") {
+            const snap = await db.collection(PA_AUDIT_EVENTS)
+              .where("kind", "==", "proactive_send")
+              .where("jobId", "==", jobId)
+              .get()
+            if (snap.size > a.max_audit_proactive_send_count) {
+              failures.push(`idempotency_check[${jobId}]: proactive_send audit count ${snap.size} > max ${a.max_audit_proactive_send_count}`)
+            }
+          }
+          break
+        }
+
+        case "jobs_cancelled": {
+          const { assert: a } = assertion
+          const resolvedUserId = (assertion.userId === "__resolve_from_participant__") ? userId : assertion.userId
+          if (!resolvedUserId) {
+            failures.push("jobs_cancelled: could not resolve userId")
+            break
+          }
+          const snap = await db.collection(PA_SCHEDULED_JOBS)
+            .where("userId", "==", resolvedUserId)
+            .where("status", "==", "cancelled_by_user")
+            .get()
+          if (typeof a.min_cancelled_count === "number" && snap.size < a.min_cancelled_count) {
+            failures.push(`jobs_cancelled: found ${snap.size} cancelled jobs, expected >= ${a.min_cancelled_count}`)
+          }
+          break
+        }
+
+        default:
+          failures.push(`proactiveAssertion: unknown kind "${assertion.kind}"`)
+      }
+    } catch (err) {
+      failures.push(`proactiveAssertion[${assertion.kind}]: exception — ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+  return failures
+}
+
 async function runScenario(db, scenarioPath, ctx) {
   const raw = await readFile(scenarioPath, "utf8")
   const parsed = parseYaml(raw)
@@ -618,8 +889,39 @@ async function runScenario(db, scenarioPath, ctx) {
     }
     await applyUserPatch(db, userId, scenario.setup.userPatch, "setup")
   }
-  for (let i = 0; i < scenario.turns.length; i++) {
-    const turn = scenario.turns[i]
+
+  // Phase 22 — proactive scenario seed + sweep hook
+  let seededJobIds = []
+  if (Array.isArray(scenario.proactiveSeed) && scenario.proactiveSeed.length > 0) {
+    if (!userId) throw new Error(`[runner] proactiveSeed requires testMode: true and a resolved test user`)
+    seededJobIds = await seedProactiveJobs(db, scenario.proactiveSeed, userId)
+  }
+  if (scenario.proactiveSweepHook === true) {
+    try {
+      const sweepResult = await runProactiveSweepInProcess(db)
+      result.proactiveSweepResult = sweepResult
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      result.pass = false
+      result.proactiveSweepError = msg
+      // Don't hard-stop — still run assertions to collect all failures
+    }
+  }
+
+  // Phase 22 — scenario-level proactive assertions (post-sweep, pre-turns)
+  if (Array.isArray(scenario.proactiveAssertions) && scenario.proactiveAssertions.length > 0) {
+    const proactiveFailures = await runProactiveAssertions(
+      db, scenario.proactiveAssertions, userId, scenario.proactiveSweepHook
+    )
+    if (proactiveFailures.length > 0) {
+      result.pass = false
+      result.proactiveFailures = proactiveFailures
+    }
+  }
+
+  const turns = Array.isArray(scenario.turns) ? scenario.turns : []
+  for (let i = 0; i < turns.length; i++) {
+    const turn = turns[i]
     try {
       // Phase 14.1 — pre-turn persona-fact probe (seeded state).
       const personaFailures = await applyPersonaFactsPresent(db, scenario, turn)
@@ -646,11 +948,20 @@ async function runScenario(db, scenarioPath, ctx) {
         evalEnabled: ctx.evalEnabled,
       })
 
+      // Phase 22 — per-turn proactive assertions (e.g. cancellation post-turn)
+      let turnProactiveFailures = []
+      if (Array.isArray(turn.proactiveAssertions) && turn.proactiveAssertions.length > 0) {
+        turnProactiveFailures = await runProactiveAssertions(
+          db, turn.proactiveAssertions, userId, false
+        )
+      }
+
       const failures = [
         ...personaFailures,
         ...replyFailures,
         ...telemetryFailures,
         ...judgeOutcome.failures,
+        ...turnProactiveFailures,
       ]
       result.turns.push({
         idx: i,
@@ -698,6 +1009,10 @@ async function runScenario(db, scenarioPath, ctx) {
       const msg = err instanceof Error ? err.message : String(err)
       result.cleanupError = msg
     }
+  }
+  // Phase 22 — clean up seeded pa_scheduled_jobs. Best-effort.
+  if (seededJobIds.length > 0) {
+    await cleanupSeededJobs(db, seededJobIds)
   }
   return result
 }

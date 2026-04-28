@@ -91,17 +91,23 @@ export function createFirestoreProactiveTurnStore(db: Firestore): ProactiveTurnS
     },
 
     async writeAuditEvent(row) {
-      await appendAuditEvent(db, {
+      // Phase 22 D-09: write proactive_send audit with fireWindowHash as a top-level field
+      // so the idempotency query in checkFireWindowExists can match it directly.
+      // appendAuditEvent only persists known fields (id, kind, message, meta, etc.) —
+      // we write the doc directly to include jobId, triggerType, fireWindowHash, outboundId
+      // at the top level for Firestore queries.
+      const id = randomUUID()
+      await db.collection(PA_COLLECTIONS.auditEvents).doc(id).set({
+        id,
+        createdAt: nowIso(),
         kind: row["kind"] as "proactive_send",
         message: `proactive_send: job ${row["jobId"]} type ${row["triggerType"]}`,
         userId: row["userId"] as string,
         actor: "orchestrator",
-        meta: {
-          jobId: row["jobId"],
-          triggerType: row["triggerType"],
-          fireWindowHash: row["fireWindowHash"],
-          outboundId: row["outboundId"],
-        },
+        jobId: row["jobId"],
+        triggerType: row["triggerType"],
+        fireWindowHash: row["fireWindowHash"],
+        outboundId: row["outboundId"],
       })
     },
 

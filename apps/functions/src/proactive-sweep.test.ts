@@ -32,10 +32,16 @@ function makeJob(overrides?: Partial<ProactiveScheduledJob>): ProactiveScheduled
   }
 }
 
+type TestSweepStore = SweepStore & {
+  getRunTurnCallCount(): number
+  getAuditEvents(): Record<string, unknown>[]
+  getJobState(jobId: string): ProactiveScheduledJob | undefined
+}
+
 function makeStore(
   jobs: ProactiveScheduledJob[],
   overrides?: Partial<SweepStore>
-): SweepStore {
+): TestSweepStore {
   const jobMap = new Map(jobs.map((j) => [j.jobId, { ...j }]))
   const auditEvents: Record<string, unknown>[] = []
   let runTurnCallCount = 0
@@ -75,7 +81,7 @@ function makeStore(
     log: () => {},
     getRunTurnCallCount: () => runTurnCallCount,
     getAuditEvents: () => auditEvents,
-    getJobState: (jobId) => jobMap.get(jobId),
+    getJobState: (jobId: string) => jobMap.get(jobId),
     ...overrides,
   }
 }

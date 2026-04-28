@@ -1,0 +1,125 @@
+id: proactive_application_followup
+description: |
+  Phase 22 PROACTIVE-07 — application_followup trigger fires at T+followupAfterSec.
+
+  Validates:
+  - application_followup trigger fires correctly
+  - pa_outbound body references company/role contextually (NOT literal substring match —
+    LLM-grade soft assert via judge: in-character voice mentioning job context)
+  - Voice v1 register: concise, no markdown, ≤600 chars
+  - pa_audit_events kind=proactive_send with full metadata
+  - Job status flipped to "fired" (NOT re-armed — recurrence=once)
+
+  Scenario 5 (cancellation) also tests in this file via a separate inbound turn:
+  - Send "停止提醒" as inbound message
+  - All user's pending pa_scheduled_jobs flip to cancelled_by_user
+  - pa_audit_events kind=proactive_cancel written
+  - PA replies with Voice v1-toned confirmation (不 robot-speak)
+
+  Execution notes:
+  - appliedAt seeded as now−260000s (> 3-day followup window of 259200s)
+  - suppressOutbound: false for proactive part
+
+  Run:
+    GOOGLE_APPLICATION_CREDENTIALS=... PA_RUN_EVAL=1 PA_OPENAI_AGENT_API_KEY=... \
+      node tests/scenarios/runner.mjs tests/scenarios/proactive-application-followup.yaml
+
+testMode: true
+locale: zh-CN
+agentId: default
+participant: "+19999990232"
+chatId: "iMessage;+19999990232"
+turnTimeoutMs: 90000
+suppressOutbound: false
+
+proactiveSeed:
+  - jobId: "test-proactive-appfollowup-001"
+    userId: "__resolve_from_participant__"
+    triggerType: application_followup
+    nextFireAt: "__now_minus_5s__"
+    dueAt: "__now_minus_5s__"
+    recurrence: once
+    status: pending
+    attempts: 0
+    maxAttempts: 3
+    backoffSec: 60
+    context:
+      triggerType: application_followup
+      companyName: "Globex"
+      jobTitle: "SWE"
+      appliedAt: "__now_minus_260000s__"
+      followupAfterSec: 259200
+
+  # Additional pending trigger for cancellation test (Scenario 5)
+  - jobId: "test-proactive-appfollowup-002"
+    userId: "__resolve_from_participant__"
+    triggerType: time_anchor
+    nextFireAt: "__now_plus_1h__"
+    dueAt: "__now_plus_1h__"
+    recurrence: once
+    status: pending
+    attempts: 0
+    maxAttempts: 3
+    backoffSec: 60
+    context:
+      triggerType: time_anchor
+      eventLabel: "Test event (cancellation target)"
+      eventAt: "__now_plus_2h__"
+      leadTimeSec: 3600
+
+proactiveSweepHook: true
+
+proactiveAssertions:
+  - kind: outbound_created
+    jobId: "test-proactive-appfollowup-001"
+    assert:
+      source: proactive
+      proactiveJobId: "test-proactive-appfollowup-001"
+      reply_max_length: 600
+      reply_not_matches_any:
+        - "\\*\\*"
+        - "utm_source"
+
+  - kind: audit_event_written
+    jobId: "test-proactive-appfollowup-001"
+    assert:
+      audit_kind: proactive_send
+      has_fields: [jobId, triggerType, fireWindowHash, outboundId, userId]
+
+  - kind: job_status
+    jobId: "test-proactive-appfollowup-001"
+    assert:
+      status: fired  # once — NOT re-armed
+
+# Scenario 5: cancellation via iMessage NLU
+turns:
+  - user: "停止提醒"
+    suppressOutbound: true  # cancellation reply uses normal outbound path
+    assert:
+      reply_min_length: 2
+      reply_not_contains_any: ["error", "failed", "undefined"]
+    proactiveAssertions:
+      - kind: jobs_cancelled
+        userId: "__resolve_from_participant__"
+        assert:
+          # test-proactive-appfollowup-002 should be cancelled (was still pending)
+          min_cancelled_count: 1
+      - kind: audit_event_written
+        userId: "__resolve_from_participant__"
+        assert:
+          audit_kind: proactive_cancel
+          has_fields: [userId, cancelledCount]
+
+judge:
+  criterion: |
+    Phase 22 turn judge — checks TWO outputs:
+
+    1. Proactive message (proactive_send): References "Globex" or "SWE" or job
+       application context naturally. Voice v1: sounds like a friend following up,
+       NOT a notification system. No markdown. Under 600 chars. Mandarin Chinese
+       or bilingual zh-en preferred.
+
+    2. Cancellation reply (if turn present): Confirms cancellation in a natural,
+       brief way. No robotic "已为您取消所有提醒". Under 20 characters preferred.
+       "好的，全停了 ✋" or equivalent tone.
+  threshold: 0.67

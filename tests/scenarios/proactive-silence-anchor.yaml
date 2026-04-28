@@ -1,0 +1,78 @@
+id: proactive_silence_anchor
+description: |
+  Phase 22 PROACTIVE-07 — silence_anchor trigger fires after configured window.
+
+  Validates:
+  - silence_rearm trigger fires when (now − lastUserMsgAt) > windowSec
+  - pa_outbound created with source=proactive, body in Voice v1 register
+  - pa_audit_events kind=proactive_send written
+  - Job re-arms after firing: status flipped back to "pending" with
+    nextFireAt = fired_time + windowSec (recurrence=silence_rearm behavior)
+  - New nextFireAt is in the future
+
+  Execution notes:
+  - lastUserMsgAt is seeded as now−260000s (> 3-day window of 259200s)
+  - suppressOutbound: false — verifies pa_outbound written without real send
+
+  Run:
+    GOOGLE_APPLICATION_CREDENTIALS=... PA_RUN_EVAL=1 PA_OPENAI_AGENT_API_KEY=... \
+      node tests/scenarios/runner.mjs tests/scenarios/proactive-silence-anchor.yaml
+
+testMode: true
+locale: zh-CN
+agentId: default
+participant: "+19999990231"
+chatId: "iMessage;+19999990231"
+turnTimeoutMs: 60000
+suppressOutbound: false
+
+proactiveSeed:
+  - jobId: "test-proactive-silence-anchor-001"
+    userId: "__resolve_from_participant__"
+    triggerType: silence_anchor
+    nextFireAt: "__now_minus_5s__"
+    dueAt: "__now_minus_5s__"
+    recurrence: silence_rearm
+    status: pending
+    attempts: 0
+    maxAttempts: 3
+    backoffSec: 60
+    context:
+      triggerType: silence_anchor
+      windowSec: 259200          # 3 days
+      lastUserMsgAt: "__now_minus_260000s__"  # slightly over 3 days
+
+proactiveSweepHook: true
+
+proactiveAssertions:
+  - kind: outbound_created
+    jobId: "test-proactive-silence-anchor-001"
+    assert:
+      source: proactive
+      proactiveJobId: "test-proactive-silence-anchor-001"
+      reply_max_length: 600
+      reply_not_matches_any:
+        - "\\*\\*"
+        - "utm_source"
+
+  - kind: audit_event_written
+    jobId: "test-proactive-silence-anchor-001"
+    assert:
+      audit_kind: proactive_send
+      has_fields: [jobId, triggerType, fireWindowHash, outboundId, userId]
+
+  - kind: job_status
+    jobId: "test-proactive-silence-anchor-001"
+    assert:
+      # After firing, silence_rearm re-arms to pending
+      status: pending
+      # Re-armed nextFireAt must be in the future
+      nextFireAt_after_now: true
+
+judge:
+  criterion: |
+    The proactive message is a natural, friendly check-in. It does NOT mention
+    "silence" or "timeout" in a robotic way. It sounds like a friend who noticed
+    you've been quiet and wants to see how you're doing. Mandarin Chinese or
+    bilingual zh-en. No markdown. Under 600 characters.
+  threshold: 0.7

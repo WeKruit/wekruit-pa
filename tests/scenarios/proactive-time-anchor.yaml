@@ -1,0 +1,90 @@
+id: proactive_time_anchor
+description: |
+  Phase 22 PROACTIVE-07 — time_anchor trigger fires at T−leadTimeSec.
+
+  Validates:
+  - paProactiveSweep picks up a due job (nextFireAt <= now)
+  - pa_outbound row created with source=proactive, proactiveJobId set
+  - Body is Voice v1 register: concise, no markdown, ≤600 chars (iMessage_render_safe)
+  - pa_audit_events kind=proactive_send written with jobId + triggerType + fireWindowHash
+  - pa_scheduled_jobs row status flipped to "fired"
+  - Scenario 4 (idempotency): second sweep invocation → exactly 1 pa_outbound row
+
+  Execution notes:
+  - Requires GOOGLE_APPLICATION_CREDENTIALS (Firestore) + PA_OPENAI_AGENT_API_KEY (judge)
+  - Uses suppressOutbound: false — verifies pa_outbound is actually written
+  - Uses a dedicated test participant number that does NOT send real iMessages
+
+  Run:
+    GOOGLE_APPLICATION_CREDENTIALS=... PA_RUN_EVAL=1 PA_OPENAI_AGENT_API_KEY=... \
+      node tests/scenarios/runner.mjs tests/scenarios/proactive-time-anchor.yaml
+
+testMode: true
+locale: zh-CN
+agentId: default
+participant: "+19999990230"
+chatId: "iMessage;+19999990230"
+turnTimeoutMs: 60000
+suppressOutbound: false
+
+# Phase 22 proactive extension: seed pa_scheduled_jobs before invoking sweep
+proactiveSeed:
+  - jobId: "test-proactive-time-anchor-001"
+    userId: "__resolve_from_participant__"  # runner resolves from participant lookup
+    triggerType: time_anchor
+    nextFireAt: "__now_minus_5s__"          # runner substitutes current time - 5s
+    dueAt: "__now_minus_5s__"
+    recurrence: once
+    status: pending
+    attempts: 0
+    maxAttempts: 3
+    backoffSec: 60
+    context:
+      triggerType: time_anchor
+      eventLabel: "面试 Acme"
+      eventAt: "__now_plus_24h__"           # event is tomorrow
+      leadTimeSec: 86400
+
+# Invoke the sweep in-process after seeding
+proactiveSweepHook: true
+
+# Post-sweep assertions (checked against Firestore state)
+proactiveAssertions:
+  - kind: outbound_created
+    jobId: "test-proactive-time-anchor-001"
+    assert:
+      source: proactive
+      proactiveJobId: "test-proactive-time-anchor-001"
+      reply_max_length: 600
+      reply_not_matches_any:
+        - "\\*\\*"        # no markdown bold
+        - "utm_source"    # no tracking params
+        - "\\]\\("        # no markdown links
+
+  - kind: audit_event_written
+    jobId: "test-proactive-time-anchor-001"
+    assert:
+      audit_kind: proactive_send
+      has_fields: [jobId, triggerType, fireWindowHash, outboundId, userId]
+
+  - kind: job_status
+    jobId: "test-proactive-time-anchor-001"
+    assert:
+      status: fired
+
+  # Scenario 4: idempotency — second sweep should NOT create another outbound row
+  - kind: idempotency_check
+    jobId: "test-proactive-time-anchor-001"
+    assert:
+      max_outbound_count: 1
+      max_audit_proactive_send_count: 1
+
+judge:
+  criterion: |
+    The proactive message is in Mandarin Chinese (or bilingual zh-en),
+    friendly and concise (≤120 characters preferred, ≤600 hard max).
+    It references the event label "面试 Acme" or upcoming interview context naturally.
+    It does NOT use markdown formatting (* # [] etc.).
+    It does NOT sound robotic ("我已为您设置提醒") or use 好的-filler openers.
+    It sounds like a friend nudging you before an important event.
+  threshold: 0.7
