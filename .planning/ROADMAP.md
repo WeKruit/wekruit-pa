@@ -72,6 +72,9 @@ This roadmap is intentionally numeric so GSD phase tooling can discover and exec
 | 26 | Productionize P0 (公测 hard gate) | per-user rate-limit (flag-gated via 24.5) + Sendblue Free 配额监控 + Cloud Logging dashboard + cost alert + agent-registry version pin + 一键 rollback | Planned |
 | 27 | Productionize P1+P2 + Self-Evolve Cron | Qwen circuit breaker + Qdrant↔Firestore drift cron + 5×CF /health + SLO+error budget + self-evolve cron (daily transcript→judge→cluster→Bible patch PR→eval gate). Absorbs old Phase 25 Voice Self-Evolve spec. | Planned (gated) |
 | 28 | Multi-Turn LLM-vs-LLM Dialog Sim Eval | 5 user personas × N-round simulator × ConversationalGEval (voice consistency / mode switch / no probe regression / 油腻 absence / first-person opener density / memory scaffolding) + dashboard tab + label-gated CI. Orthogonal to Phase 27. | Planned (no gate) |
+| 29 | Agent Handbook | Bible-as-data — section-structured handbook with versioning, dashboard editor, audit, rollback. Replaces inline systemPrompt. | Planned |
+| 30 | Downstream Eval Connector | Per-turn eval LLM triggers external service (mock interview push, levels.fyi link). Trigger CRUD + cooldown + HMAC payload. | Planned |
+| 31 | Upstream Event Connector | External event → proactive Claire message. HMAC inbound, template lookup, rate-limit, outbound enqueue. | Planned |
 
 **v1.3 Public Launch Gate:**
 - [ ] Phase 24.5 Feature Flag — 4 env-var 收编完成
