@@ -300,6 +300,35 @@ export function checkAdminToken(provided: string | undefined): { ok: boolean; st
   return { ok: true, status: 200 }
 }
 
+/**
+ * Force-overwrite Firestore pa_agents/{id} with seed.json content.
+ *
+ * `ensureSeedAgents` only writes if doc is missing — once v6.x doc exists,
+ * subsequent Bible bumps in seed.json never propagate. This action force-
+ * upserts the seed agent into Firestore so Bible v7.0 actually reaches
+ * runtime.
+ */
+async function reseedDefaultAgent(): Promise<{ ok: boolean; version: string; written: string[] }> {
+  if (!getApps().length) initializeApp()
+  const db = getFirestore()
+  const { loadSeedAgents } = await import("@pa/agent-registry")
+  const seed = loadSeedAgents()
+  const written: string[] = []
+  let firstVersion = ""
+  for (const agent of seed) {
+    const id = agent.id
+    if (!id) continue
+    if (!firstVersion) firstVersion = String((agent as { version?: unknown }).version ?? "?")
+    const ref = db.collection("pa_agents").doc(id)
+    await ref.set(
+      { ...(agent as Record<string, unknown>), updatedAt: new Date().toISOString() },
+      { merge: true }
+    )
+    written.push(id)
+  }
+  return { ok: true, version: firstVersion, written }
+}
+
 async function seedFlags(): Promise<{ created: string[]; skipped: string[] }> {
   if (!getApps().length) initializeApp()
   const db = getFirestore()
@@ -721,6 +750,11 @@ export const paAdminBootstrap = onRequest(
       if (action === "seedFlags") {
         const result = await seedFlags()
         res.json({ ok: true, action, ...result })
+        return
+      }
+      if (action === "reseedDefaultAgent") {
+        const result = await reseedDefaultAgent()
+        res.json({ action, ...result })
         return
       }
       if (action === "replayFixtures") {
