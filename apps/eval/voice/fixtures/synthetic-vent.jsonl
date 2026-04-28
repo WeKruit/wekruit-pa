@@ -1,0 +1,3 @@
+// Placeholder — run: pnpm tsx apps/eval/voice/scripts/generate-synthetic.ts --mode vent > apps/eval/voice/fixtures/synthetic-vent.jsonl
+// Requires SILICONFLOW_API_KEY. Uses Qwen/Qwen3-8B (free tier, SiliconFlow confirmed 2026-04-27).
+// This file is populated in plan 02 Task 3 after calibration checkpoint passes.
