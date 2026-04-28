@@ -1,0 +1,51 @@
+# Phase 24 — Rewriter model A/B comparison
+# Qwen3-8B (free, confirmed SF catalog) vs Qwen3.5-4B (future, 404 expected)
+#
+# IMPORTANT: Qwen3.5-4B will 404 until SiliconFlow adds it to their API catalog.
+# As of 2026-04-27, SiliconFlow only lists Qwen3 and Qwen2.5 series.
+# See 24-RESEARCH.md critical finding 1 (Pitfall 1).
+# Default rewriter (plan 04) uses Qwen3-8B as the free-tier stand-in.
+#
+# Run: cd apps/eval/voice/promptfoo && npx promptfoo eval -c rewriter-ab.yaml
+
+description: "Rewriter model A/B: Qwen3-8B (free) vs Qwen3.5-4B (when available)"
+
+prompts:
+  - "{{draft_reply}}"
+
+providers:
+  - id: "openai:chat:Qwen/Qwen3-8B"
+    label: "qwen3-8b-free-sf"
+    config:
+      apiBaseUrl: "https://api.siliconflow.cn/v1"
+      apiKey: "${SILICONFLOW_API_KEY}"
+      temperature: 0.4
+      max_tokens: 200
+  - id: "openai:chat:Qwen/Qwen3.5-4B"
+    label: "qwen3.5-4b-free-sf"
+    config:
+      apiBaseUrl: "https://api.siliconflow.cn/v1"
+      apiKey: "${SILICONFLOW_API_KEY}"
+      temperature: 0.4
+      max_tokens: 200
+
+defaultTest:
+  options:
+    provider:
+      id: "anthropic:claude-opus-4-5"
+      config:
+        temperature: 0
+
+tests:
+  - vars:
+      draft_reply: "听起来有点闷，前两天投了还没回也很正常，Wekruit 这类有时候就是慢或者直接默拒。你先别自己脑补太多，我建议你把投递时间记一下，然后等到下一周中后段再看要不要 follow up。"
+    assert:
+      - type: llm-rubric
+        value: |
+          Reply is <=2 sentences. No coach-mode verbs (我建议你, 你应该).
+          No numbered/bulleted steps. Natural zh/en code-switch. Score 1.0 if clean.
+        threshold: 0.8
+      - type: not-contains
+        value: "我建议你"
+      - type: not-contains
+        value: "首先"

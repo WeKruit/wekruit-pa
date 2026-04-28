@@ -1,0 +1,8 @@
+# Judge model lock for Phase 24 / v1.2. Do not change without milestone bump.
+# Changing the judge model shifts the score distribution; all historical scores
+# become non-comparable. See 24-RESEARCH.md Pitfall 3.
+judge:
+  provider: anthropic
+  model: claude-opus-4-5
+  temperature: 0
+  verified_at: 2026-04-27
