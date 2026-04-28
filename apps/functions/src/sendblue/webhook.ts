@@ -27,6 +27,7 @@
 import type { Firestore } from "firebase-admin/firestore"
 import { createInboundEvent } from "@pa/pa-broker"
 
+import { getFlag, checkAndIncrementRateLimit } from "@pa/pa-persistence"
 import { verifySendblueSignature, extractSendblueSignatureHeader } from "./hmac.js"
 import {
   isInboundReceiveEvent,
@@ -94,9 +95,14 @@ export async function handleSendblueWebhook(
   const sigHeader = extractSendblueSignatureHeader(req.headers ?? {})
   const isValid = verifySendblueSignature(rawBody, sigHeader, deps.secret)
   if (!isValid) {
+    const headerNames = Object.keys(req.headers ?? {}).filter(
+      (h) => /sig|hmac|sb|sendblue|x-sb|webhook/i.test(h),
+    )
     log("[sendblue][webhook] HMAC verify failed", {
       hasHeader: !!sigHeader,
       bodyLen: typeof rawBody === "string" ? rawBody.length : rawBody.byteLength,
+      candidateHeaders: headerNames,
+      allHeaderNames: Object.keys(req.headers ?? {}),
     })
     reply(res, 401, { ok: false, error: "invalid_signature" })
     return
@@ -187,6 +193,12 @@ export async function handleSendblueWebhook(
     // Empty content — match macOS worker '[dm] empty; skip'
     reply(res, 200, { ok: true, ignored: "empty_content" })
     return
+  }
+
+  // ---- 3c2. Rate-limit (Phase 26 T1, flag-gated) ------------------------
+  if (await getFlag(deps.db, "paRateLimitPerUserEnabled", { userId: normalized.fromNumber, env: process.env }, false)) {
+    const rl = await checkAndIncrementRateLimit(deps.db, normalized.fromNumber, { limit: 20, windowSec: 60 })
+    if (!rl.allowed) { await safeAudit(deps, { type: "rate_limit_exceeded", channel: "imessage_sendblue", fromNumber: normalized.fromNumber, correlationId: normalized.messageHandle }, log); reply(res, 429, { ok: false, error: "rate_limited" }); return }
   }
 
   // ---- 3d. Group chat reject (Q-03 lock) --------------------------------

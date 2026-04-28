@@ -4,6 +4,7 @@ import { createHmac } from "node:crypto"
 
 import { handleSendblueWebhook } from "../webhook.js"
 import type { SendblueInboundPayload } from "../types.js"
+import { _clearFeatureFlagCache } from "@pa/pa-persistence"
 
 const SECRET = "test-webhook-secret"
 
@@ -11,9 +12,39 @@ const SECRET = "test-webhook-secret"
 
 type DocData = Record<string, unknown>
 
-function makeFakeDb() {
+function makeFakeDb(opts: { rateLimitFlag?: boolean } = {}) {
   const inbound = new Map<string, DocData>()
   const audit: DocData[] = []
+  const flags = new Map<string, DocData>()
+  const rateLimit = new Map<string, DocData>()
+
+  if (opts.rateLimitFlag) {
+    flags.set("paRateLimitPerUserEnabled", {
+      key: "paRateLimitPerUserEnabled",
+      value: true,
+      type: "bool",
+      scope: "perUser",
+      allowlist: [],
+      blocklist: [],
+    })
+  }
+
+  function genericDocRef(store: Map<string, DocData>, id: string) {
+    return {
+      _key: id,
+      async get() {
+        const data = store.get(id)
+        return { exists: data !== undefined, data: () => data, id }
+      },
+      async set(data: DocData, options?: { merge?: boolean }) {
+        if (options?.merge) store.set(id, { ...(store.get(id) ?? {}), ...data })
+        else store.set(id, { ...data })
+      },
+      async update(data: DocData) {
+        store.set(id, { ...(store.get(id) ?? {}), ...data })
+      },
+    }
+  }
 
   const collections: Record<string, unknown> = {
     pa_inbound_events: {
@@ -39,6 +70,19 @@ function makeFakeDb() {
         audit.push({ ...data })
         return Promise.resolve({ id: `audit_${audit.length}` })
       },
+      doc(id: string) {
+        return genericDocRef(new Map(), id)
+      },
+    },
+    pa_feature_flags: {
+      doc(id: string) {
+        return genericDocRef(flags, id)
+      },
+    },
+    pa_rate_limit: {
+      doc(id: string) {
+        return genericDocRef(rateLimit, id)
+      },
     },
   }
 
@@ -48,9 +92,23 @@ function makeFakeDb() {
       if (!c) throw new Error(`unexpected collection: ${name}`)
       return c
     },
+    async runTransaction<T>(fn: (t: unknown) => Promise<T>): Promise<T> {
+      const t = {
+        async get(ref: { get(): Promise<unknown> }) {
+          return ref.get()
+        },
+        update(ref: { _key: string }, data: DocData) {
+          rateLimit.set(ref._key, { ...(rateLimit.get(ref._key) ?? {}), ...data })
+        },
+        set(ref: { _key: string }, data: DocData) {
+          rateLimit.set(ref._key, { ...data })
+        },
+      }
+      return fn(t)
+    },
   } as unknown as Parameters<typeof handleSendblueWebhook>[2]["db"]
 
-  return { db, inbound, audit }
+  return { db, inbound, audit, flags, rateLimit }
 }
 
 function sign(body: string, secret = SECRET): string {
@@ -141,6 +199,7 @@ describe("handleSendblueWebhook", () => {
     savedEnv = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]))
     for (const k of ENV_KEYS) delete process.env[k]
     setEnvAllowlist(["+15551234567"])
+    _clearFeatureFlagCache()
   })
   afterEach(() => {
     for (const k of ENV_KEYS) delete process.env[k]
@@ -275,6 +334,22 @@ describe("handleSendblueWebhook", () => {
 
     assert.equal(res.statusCode, 400)
     assert.equal(inbound.size, 0)
+  })
+
+  it("Test 11 (Phase 26 T1): rate-limit flag enabled → 21st message in window returns 429", async () => {
+    const { db, inbound, audit } = makeFakeDb({ rateLimitFlag: true })
+    let lastStatus = 200
+    for (let i = 0; i < 21; i++) {
+      const body = JSON.stringify(basePayload({ message_handle: `msg-rl-${i}` }))
+      const req = makeReq({ body, signature: SECRET })
+      const res = makeRes()
+      await handleSendblueWebhook(req, res, { db, secret: SECRET })
+      lastStatus = res.statusCode
+    }
+    assert.equal(lastStatus, 429)
+    // First 20 enqueued; 21st rejected → exactly 20 inbound rows.
+    assert.equal(inbound.size, 20)
+    assert.ok(audit.some((a) => a.type === "rate_limit_exceeded"))
   })
 
   it("Test 10: signature header alias sb-signature also accepted", async () => {

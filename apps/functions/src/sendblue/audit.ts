@@ -19,6 +19,9 @@ export type AuditEventType =
   | "signature_failure"
   | "malformed_body"
   | "outbound_event_logged"
+  | "rate_limit_exceeded"
+  | "quota_soft"
+  | "quota_hardblock"
 
 export type AuditChannel =
   | "imessage_sendblue"
