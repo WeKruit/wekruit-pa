@@ -34,6 +34,30 @@ export type FlagValue = boolean | string | number | Record<string, unknown>
 export type FlagType = "bool" | "string" | "number" | "json"
 export type FlagScope = "global" | "perEnv" | "perUser"
 
+/**
+ * A/B bucket strategy (P8 24.5/AB extension — additive, optional).
+ *
+ * When `bucketStrategy` is present on a flag doc and the caller is neither
+ * blocklisted nor allowlisted, `getFlag()` chooses a variant by either:
+ *   - "userIdHash": deterministic djb2 hash of `userId + "::" + key` modulo 100
+ *   - "random": `Math.random() * 100`
+ *
+ * Variant weights MUST sum to 100 at write time (validated in `setFlag`).
+ * Readers tolerate weight drift via cumulative-weight clamping (last variant
+ * absorbs any rounding gap). If `userIdHash` is selected but no `userId` is
+ * supplied in `ctx`, the SDK falls through to the flag's `value` default.
+ */
+export interface BucketVariant {
+  name: string
+  weight: number // 0..100
+  value: FlagValue
+}
+
+export interface BucketStrategy {
+  method: "userIdHash" | "random"
+  variants: BucketVariant[]
+}
+
 export interface FlagDoc {
   key: string
   value: FlagValue
@@ -41,6 +65,7 @@ export interface FlagDoc {
   scope: FlagScope
   allowlist?: string[]
   blocklist?: string[]
+  bucketStrategy?: BucketStrategy | null
   updatedAt?: string
   updatedBy?: string
   reason?: string
@@ -82,15 +107,72 @@ function isEnvOverride(env: FlagContext["env"], key: string): boolean {
   return v === "1" || v === "true"
 }
 
-function resolvePerUser(doc: FlagDoc, userId: string | undefined): FlagValue {
+function resolvePerUser(doc: FlagDoc, userId: string | undefined): { hit: boolean; value: FlagValue } {
   // blocklist > allowlist > default. Only meaningful for bool perUser flags
   // in v1; for non-bool we fall through to doc.value (lists ignored).
-  if (doc.scope !== "perUser" || !userId || doc.type !== "bool") return doc.value
+  if (doc.scope !== "perUser" || !userId || doc.type !== "bool") {
+    return { hit: false, value: doc.value }
+  }
   const block = doc.blocklist ?? []
   const allow = doc.allowlist ?? []
-  if (block.includes(userId)) return false
-  if (allow.includes(userId)) return true
-  return doc.value
+  if (block.includes(userId)) return { hit: true, value: false }
+  if (allow.includes(userId)) return { hit: true, value: true }
+  return { hit: false, value: doc.value }
+}
+
+/**
+ * djb2 string hash — deterministic, no crypto dep, 32-bit positive int.
+ * Same (userId, flagKey) pair always returns the same number → same variant.
+ */
+export function djb2Hash(input: string): number {
+  let h = 5381
+  for (let i = 0; i < input.length; i++) {
+    // (h << 5) + h === h * 33; XOR with charCode is djb2-xor variant
+    h = (Math.imul(h, 33) ^ input.charCodeAt(i)) | 0
+  }
+  // Force positive 32-bit unsigned
+  return h >>> 0
+}
+
+/**
+ * Pick a bucket variant by cumulative weight. Tolerates sum != 100 by
+ * clamping pick to last variant (defensive — saveFlag enforces sum=100).
+ * Returns `null` if variants array is empty.
+ */
+export function pickBucketVariant(
+  strategy: BucketStrategy,
+  pick: number // 0..100 (or 0..99.999 for hash)
+): BucketVariant | null {
+  if (!strategy.variants || strategy.variants.length === 0) return null
+  let cumulative = 0
+  for (const v of strategy.variants) {
+    cumulative += Math.max(0, v.weight)
+    if (pick < cumulative) return v
+  }
+  // pick fell past total weight (sum < 100): last variant absorbs.
+  return strategy.variants[strategy.variants.length - 1] ?? null
+}
+
+function resolveBucket(
+  doc: FlagDoc,
+  key: string,
+  userId: string | undefined
+): { hit: boolean; value: FlagValue } {
+  const strat = doc.bucketStrategy
+  if (!strat || !strat.variants || strat.variants.length === 0) {
+    return { hit: false, value: doc.value }
+  }
+  let pick: number
+  if (strat.method === "userIdHash") {
+    if (!userId) return { hit: false, value: doc.value }
+    pick = djb2Hash(`${userId}::${key}`) % 100
+  } else {
+    // "random"
+    pick = Math.random() * 100
+  }
+  const variant = pickBucketVariant(strat, pick)
+  if (!variant) return { hit: false, value: doc.value }
+  return { hit: true, value: variant.value }
 }
 
 /**
@@ -118,13 +200,31 @@ export async function getFlag(
 
   const snap = await db.collection(COLLECTION).doc(key).get()
   let value: FlagValue
+  let cacheable = true
   if (!snap.exists) {
     value = defaultValue
   } else {
     const doc = snap.data() as FlagDoc
-    value = resolvePerUser(doc, ctx.userId)
+    // 1. perUser blocklist/allowlist (definitive — short-circuits bucket).
+    const perUser = resolvePerUser(doc, ctx.userId)
+    if (perUser.hit) {
+      value = perUser.value
+    } else {
+      // 2. A/B bucket strategy (if configured).
+      const bucket = resolveBucket(doc, key, ctx.userId)
+      if (bucket.hit) {
+        value = bucket.value
+        // "random" is non-deterministic — never cache it (would freeze the
+        // first roll for the whole TTL window). userIdHash IS deterministic
+        // and ctx-keyed, so caching is safe and desirable.
+        if (doc.bucketStrategy?.method === "random") cacheable = false
+      } else {
+        // 3. Default doc.value
+        value = doc.value
+      }
+    }
   }
-  cache.set(ck, { value, expiresAt: now + ttlMs })
+  if (cacheable) cache.set(ck, { value, expiresAt: now + ttlMs })
   return value
 }
 
@@ -132,12 +232,46 @@ export async function getFlag(
  * Write a flag + audit row in a single transaction. Caller supplies actor
  * (dashboard email) and reason (free text). Bumps `version` monotonically.
  */
+export function validateBucketStrategy(strategy: BucketStrategy | null | undefined): void {
+  if (!strategy) return
+  if (strategy.method !== "userIdHash" && strategy.method !== "random") {
+    throw new Error(`bucketStrategy.method must be "userIdHash" or "random", got "${String(strategy.method)}"`)
+  }
+  if (!Array.isArray(strategy.variants) || strategy.variants.length === 0) {
+    throw new Error("bucketStrategy.variants must be a non-empty array")
+  }
+  let sum = 0
+  for (const v of strategy.variants) {
+    if (typeof v.name !== "string" || v.name.length === 0) {
+      throw new Error("bucketStrategy.variants[].name must be a non-empty string")
+    }
+    if (typeof v.weight !== "number" || !Number.isFinite(v.weight) || v.weight < 0 || v.weight > 100) {
+      throw new Error(`bucketStrategy.variants[${v.name}].weight must be a finite number in [0,100]`)
+    }
+    sum += v.weight
+  }
+  // Allow tiny floating-point drift (±0.01) — UI uses integer sliders but JSON
+  // round-trips can introduce 99.99999 noise.
+  if (Math.abs(sum - 100) > 0.01) {
+    throw new Error(`bucketStrategy variant weights must sum to 100, got ${sum}`)
+  }
+}
+
 export async function setFlag(
   db: Firestore,
   key: string,
-  next: { value: FlagValue; type: FlagType; scope: FlagScope; allowlist?: string[]; blocklist?: string[] },
+  next: {
+    value: FlagValue
+    type: FlagType
+    scope: FlagScope
+    allowlist?: string[]
+    blocklist?: string[]
+    bucketStrategy?: BucketStrategy | null
+  },
   opts: { actor: string; reason: string }
 ): Promise<void> {
+  // Validation runs OUTSIDE the transaction so callers see a clean throw.
+  if (next.bucketStrategy !== undefined) validateBucketStrategy(next.bucketStrategy)
   const flagRef = db.collection(COLLECTION).doc(key)
   const auditRef = db.collection(AUDIT_COLLECTION).doc()
   const nowIso = new Date().toISOString()
@@ -153,6 +287,8 @@ export async function setFlag(
       scope: next.scope,
       allowlist: next.allowlist ?? prev?.allowlist ?? [],
       blocklist: next.blocklist ?? prev?.blocklist ?? [],
+      bucketStrategy:
+        next.bucketStrategy !== undefined ? next.bucketStrategy : prev?.bucketStrategy ?? null,
       updatedAt: nowIso,
       updatedBy: opts.actor,
       reason: opts.reason,
