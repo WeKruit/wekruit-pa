@@ -11,6 +11,7 @@ import { Playground } from "./pages/Playground.js"
 import { Users } from "./pages/Users.js"
 import { Abuse } from "./pages/Abuse.js"
 import { Beta } from "./pages/Beta.js"
+import { Triggers } from "./pages/Triggers.js"
 import { auth } from "./lib/firebase.js"
 
 export default function App() {
@@ -58,6 +59,7 @@ export default function App() {
         <NavLink to="/platform">Platform</NavLink>
         <NavLink to="/beta">Beta</NavLink>
         <NavLink to="/abuse">Abuse</NavLink>
+        <NavLink to="/triggers">Triggers</NavLink>
         <NavLink to="/playground">E2E Lab</NavLink>
         <button
           type="button"
@@ -77,6 +79,7 @@ export default function App() {
           <Route path="/platform" element={<Platform />} />
           <Route path="/beta" element={<Beta />} />
           <Route path="/abuse" element={<Abuse />} />
+          <Route path="/triggers" element={<Triggers />} />
           <Route path="/playground" element={<Playground />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

@@ -6,8 +6,10 @@
  *
  * Storage: existing `pa_scheduled_jobs` collection (PA_COLLECTIONS.scheduledJobs).
  * No new collection.
+ *
+ * NOTE: fireWindowHash uses a pure-JS SHA-1 implementation for browser compatibility
+ * (the dashboard imports types from core-types). No node:crypto dependency.
  */
-import { createHash } from "node:crypto"
 
 // ---------------------------------------------------------------------------
 // Trigger types (D-03: exactly 3 in v1)
@@ -126,17 +128,84 @@ export interface ScheduledJob {
 
 // ---------------------------------------------------------------------------
 // fireWindowHash — idempotency key per (jobId × 1-minute bucket) (D-06)
+// Pure-JS SHA-1 for browser + Node compatibility (no node:crypto).
 // ---------------------------------------------------------------------------
+
+/**
+ * Left-rotate for SHA-1.
+ */
+function rotl32(n: number, s: number): number {
+  return ((n << s) | (n >>> (32 - s))) >>> 0
+}
+
+/**
+ * Minimal pure-JS SHA-1. Produces a 40-char hex string.
+ * Only used for fireWindowHash — not cryptographically sensitive
+ * (the output is a dedup key, not a security primitive).
+ */
+function sha1Hex(message: string): string {
+  // Convert string to UTF-8 bytes (ASCII subset only needed for jobId strings)
+  const bytes: number[] = []
+  for (let i = 0; i < message.length; i++) {
+    const c = message.charCodeAt(i)
+    if (c < 0x80) {
+      bytes.push(c)
+    } else if (c < 0x800) {
+      bytes.push(0xc0 | (c >> 6), 0x80 | (c & 0x3f))
+    } else {
+      bytes.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 0x3f), 0x80 | (c & 0x3f))
+    }
+  }
+
+  const msgLen = bytes.length
+  bytes.push(0x80)
+  while (bytes.length % 64 !== 56) bytes.push(0)
+  const bitLen = msgLen * 8
+  // Append 64-bit big-endian bit length (JS number safe up to 2^53)
+  bytes.push(0, 0, 0, 0)
+  bytes.push((bitLen >>> 24) & 0xff, (bitLen >>> 16) & 0xff, (bitLen >>> 8) & 0xff, bitLen & 0xff)
+
+  let h0 = 0x67452301, h1 = 0xefcdab89, h2 = 0x98badcfe, h3 = 0x10325476, h4 = 0xc3d2e1f0
+
+  for (let i = 0; i < bytes.length; i += 64) {
+    const w = new Uint32Array(80)
+    for (let j = 0; j < 16; j++) {
+      w[j] = ((bytes[i + j * 4]! << 24) | (bytes[i + j * 4 + 1]! << 16) |
+        (bytes[i + j * 4 + 2]! << 8) | bytes[i + j * 4 + 3]!) >>> 0
+    }
+    for (let j = 16; j < 80; j++) {
+      w[j] = rotl32(w[j - 3]! ^ w[j - 8]! ^ w[j - 14]! ^ w[j - 16]!, 1)
+    }
+    let [a, b, c, d, e] = [h0, h1, h2, h3, h4]
+    for (let j = 0; j < 80; j++) {
+      let f: number, k: number
+      if (j < 20) { f = (b & c) | (~b & d); k = 0x5a827999 }
+      else if (j < 40) { f = b ^ c ^ d; k = 0x6ed9eba1 }
+      else if (j < 60) { f = (b & c) | (b & d) | (c & d); k = 0x8f1bbcdc }
+      else { f = b ^ c ^ d; k = 0xca62c1d6 }
+      const temp = (rotl32(a, 5) + f + e + k + w[j]!) >>> 0
+      e = d; d = c; c = rotl32(b, 30); b = a; a = temp
+    }
+    h0 = (h0 + a) >>> 0; h1 = (h1 + b) >>> 0; h2 = (h2 + c) >>> 0
+    h3 = (h3 + d) >>> 0; h4 = (h4 + e) >>> 0
+  }
+
+  return [h0, h1, h2, h3, h4]
+    .map((h) => h.toString(16).padStart(8, "0"))
+    .join("")
+}
 
 /**
  * Returns a hex SHA-1 of `${jobId}:${Math.floor(nextFireAtMs / 60000)}`.
  * Same trigger fired within the same 60-second window always produces the
- * same hash — used as the deduplication key in pa_audit_events.
+ * same hash — used as the deduplication key in pa_audit_events (D-06, PROACTIVE-05).
  *
- * @param jobId      - Firestore document id of the pa_scheduled_jobs row
+ * Pure-JS implementation, no node:crypto — safe for browser bundles.
+ *
+ * @param jobId        - Firestore document id of the pa_scheduled_jobs row
  * @param nextFireAtMs - nextFireAt as Unix epoch milliseconds
  */
 export function fireWindowHash(jobId: string, nextFireAtMs: number): string {
   const bucket = Math.floor(nextFireAtMs / 60000)
-  return createHash("sha1").update(`${jobId}:${bucket}`).digest("hex")
+  return sha1Hex(`${jobId}:${bucket}`)
 }
