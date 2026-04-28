@@ -408,6 +408,13 @@ export const onPaInbound = onDocumentCreated(
         true
       )
       logger.debug("onPaInbound rate-limit flag", { userId, rateLimitEnabled })
+      // Phase 26 T4 — log resolved agent-registry version per inbound for
+      // forensic traceability (which prompt/version handled which turn).
+      try {
+        const { resolveAgentVersion } = await import("@pa/agent-registry")
+        const r = await resolveAgentVersion(db, { getFlag: async (k) => String(await getFlag(db, k, { env: process.env }, "")), env: process.env as Record<string, string | undefined> })
+        logger.info("onPaInbound agent-version resolved", { source: r.source, version: r.raw, agentId: r.agent?.id })
+      } catch (avErr) { logger.warn("onPaInbound agent-version resolve failed", { err: avErr instanceof Error ? avErr.message : String(avErr) }) }
     } catch (flagErr) {
       // Never let a flag read break the inbound path — Phase 26 will
       // enforce; for now flag failures degrade silently.

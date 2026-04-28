@@ -1,3 +1,5 @@
 export { getAgentById, getDefaultAgent, listAgents, ensureSeedAgents, loadSeedAgents } from "./firestore.js"
 export { buildAgentSystemPrompt, publishAgentVersion, rollbackAgentVersion, setDefaultAgent } from "./lifecycle.js"
 export { parseAgentDef } from "./parse.js"
+export { resolveAgentVersion } from "./version-resolver.js"
+export type { ResolveOpts, ResolvedVersion } from "./version-resolver.js"
