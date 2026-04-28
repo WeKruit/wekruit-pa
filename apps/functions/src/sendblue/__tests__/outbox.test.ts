@@ -42,11 +42,11 @@ function makeFakeDb(
 
   function pickStore(coll: string): Map<string, DocData> {
     switch (coll) {
-      case "pa_outbound": return outbound
-      case "pa_sessions": return sessions
-      case "pa_messages": return messages
-      case "pa_feature_flags": return flags
-      case "pa_outbound_daily": return outboundDaily
+      case "pa-outbound": return outbound
+      case "pa-sessions": return sessions
+      case "pa-messages": return messages
+      case "pa-feature-flags": return flags
+      case "pa-outbound-daily": return outboundDaily
       default: return usersMap
     }
   }
@@ -80,7 +80,7 @@ function makeFakeDb(
           return makeDocRef(name, id)
         },
         add(data: DocData) {
-          if (name === "pa_audit_events") {
+          if (name === "pa-audit-events") {
             audit.push({ ...data })
             return Promise.resolve({ id: `audit_${audit.length}` })
           }

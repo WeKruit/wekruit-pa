@@ -28,7 +28,7 @@ if (fromE164 === "+19990000000" || fromE164 === "+10000000000") {
 }
 
 // 1. Ensure a pa_user exists with a known agent (use default agent flow).
-await db.collection("pa_users").doc(userId).set(
+await db.collection("pa-users").doc(userId).set(
   {
     id: userId,
     e164: fromE164,
@@ -41,7 +41,7 @@ await db.collection("pa_users").doc(userId).set(
 )
 
 // 2. Pre-create the session (orchestrator will append messages and set lastMessageAt).
-await db.collection("pa_sessions").doc(sessionId).set(
+await db.collection("pa-sessions").doc(sessionId).set(
   {
     id: sessionId,
     userId,
@@ -54,7 +54,7 @@ await db.collection("pa_sessions").doc(sessionId).set(
 )
 
 // 3. Insert a pending pa_inbound_event — this fires the Cloud Function.
-await db.collection("pa_inbound_events").doc(eventId).set({
+await db.collection("pa-inbound-events").doc(eventId).set({
   id: eventId,
   userId,
   sessionId,

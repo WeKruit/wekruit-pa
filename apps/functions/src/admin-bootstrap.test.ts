@@ -125,7 +125,7 @@ describe("replayFixtures — dry run", () => {
     assert.equal(result.processed, 3)
     assert.equal(result.fixturesByName["synthetic-vent"], 3)
     assert.equal(orchCalls.length, 0, "orchestrator MUST NOT be called on dry-run")
-    const messagesCol = getOrMake("pa_messages")
+    const messagesCol = getOrMake("pa-messages")
     assert.equal(messagesCol.docs.length, 0, "no Firestore writes on dry-run")
   })
 })
@@ -157,7 +157,7 @@ describe("replayFixtures — real replay with mocked orchestrator", () => {
     assert.equal(orchCalls[0]!.userId, "SYNTHETIC_REPLAY")
     assert.equal(orchCalls[0]!.sessionId, "sim-synthetic-cele-0")
     assert.equal(orchCalls[1]!.sessionId, "sim-synthetic-cele-1")
-    const messagesCol = getOrMake("pa_messages")
+    const messagesCol = getOrMake("pa-messages")
     // 2 replays × 2 docs each (user + assistant) = 4
     assert.equal(messagesCol.docs.length, 4)
     const docIds = messagesCol.docs.map((d) => d.ref.id).sort()

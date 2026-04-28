@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * One-shot iMessage cursor recovery — find the highest already-processed
- * inbound ROWID in `pa_messages` and seed `pa_worker_cursors/{workerId}`
+ * inbound ROWID in `pa-messages` and seed `pa-worker-cursors/{workerId}`
  * with it. After this runs, the worker's next boot will pick `source=firestore`
  * and catchup any messages that arrived after that ROWID but before its boot.
  *
@@ -52,7 +52,7 @@ function parseRowIdFromKey(key) {
 async function discoverMaxRowId(db) {
   // Range-scan idempotencyKey range covers `imessage-in-*` cleanly.
   const snap = await db
-    .collection("pa_messages")
+    .collection("pa-messages")
     .where("idempotencyKey", ">=", "imessage-in-")
     .where("idempotencyKey", "<", "imessage-in.") // ASCII '.' > '-'
     .select("idempotencyKey")
@@ -92,7 +92,7 @@ async function main() {
     return
   }
 
-  const ref = db.collection("pa_worker_cursors").doc(WORKER_ID)
+  const ref = db.collection("pa-worker-cursors").doc(WORKER_ID)
   await ref.set(
     {
       workerId: WORKER_ID,

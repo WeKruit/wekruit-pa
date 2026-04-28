@@ -98,7 +98,7 @@ export type SweepStore = {
    * Phase 24.5 — optional Firestore handle for `getFlag()` reads. Tests can
    * omit `db`; in that case the kill-switch falls back to env-only
    * (`PA_PROACTIVE_DISABLED=1`). Production wires the live Firestore handle so
-   * the flag in `pa_feature_flags/PA_PROACTIVE_DISABLED` is consulted.
+   * the flag in `pa-feature-flags/PA_PROACTIVE_DISABLED` is consulted.
    */
   db?: Firestore
 }

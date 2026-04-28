@@ -1,7 +1,7 @@
 /**
  * paSendblueOutbox CF — pa_outbound → Sendblue REST POST (D-05).
  *
- * Trigger: onDocumentCreated("pa_outbound/{docId}", handler) AND on
+ * Trigger: onDocumentCreated("pa-outbound/{docId}", handler) AND on
  * status-pending update (reclaim case). Pure handler `paSendblueOutboxHandler`
  * accepts deps for testability; the CF wrapper in apps/functions/src/index.ts
  * binds the live Firestore + Sendblue client.
@@ -40,7 +40,7 @@ export function shouldAppendOutboundTranscript(raw: { idempotencyKey?: unknown }
 
 /**
  * Phase 24.5 — flag-backed legacy-channel guard. Reads `PA_CHANNEL_LEGACY` from
- * `pa_feature_flags` via `getFlag()` with the caller's `process.env` injected
+ * `pa-feature-flags` via `getFlag()` with the caller's `process.env` injected
  * for emergency-override (env=`1` short-circuits without Firestore read).
  * defaultValue=false matches pre-flag env-var semantics: absent flag +
  * absent env = proceed. Production seed writes value=true (CONTEXT.md
@@ -191,7 +191,7 @@ export async function paSendblueOutboxHandler(
         body,
         createdAt: now().toISOString(),
         idempotencyKey: `outbox-msg-${docId}`,
-        rawMeta: { source: "pa_console_outbound", outboundDocId: docId },
+        rawMeta: { source: "pa-console-outbound", outboundDocId: docId },
       } as never)
     } catch (err) {
       log(

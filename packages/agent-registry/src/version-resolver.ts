@@ -10,7 +10,7 @@
  *   - bare string ("7.0", "rc-2026-04-28") → matched against
  *     `seed.json[].version` then `seed.json[].id`.
  *   - `firestore:agents/{slug}/versions/{v}` → fetched from Firestore at
- *     `pa_agents/{slug}` (the registry's own agents collection) with the
+ *     `pa-agents/{slug}` (the registry's own agents collection) with the
  *     `version` field as discriminator.
  *
  * Returns the resolved spec ready to feed into runAgentTurn (`AgentDef`)
@@ -61,7 +61,7 @@ async function resolveFromFirestore(
   const slug = parts[1]
   const targetVersion = parts[2] === "versions" ? parts[3] : null
 
-  const snap = await db.collection("pa_agents").doc(slug).get()
+  const snap = await db.collection("pa-agents").doc(slug).get()
   if (!snap.exists) return null
   const data = snap.data() as Record<string, unknown>
   if (targetVersion && data.version !== targetVersion) return null

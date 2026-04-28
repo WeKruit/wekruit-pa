@@ -10,7 +10,7 @@ const message: ChatMessage = {
   role: "user",
   body: "hello",
   createdAt: "2026-04-25T12:00:00.000Z",
-  rawMeta: { eventId: "evt1", source: "pa_inbound_event" },
+  rawMeta: { eventId: "evt1", source: "pa-inbound-event" },
 }
 
 test("archive path uses user and yyyy-mm", () => {

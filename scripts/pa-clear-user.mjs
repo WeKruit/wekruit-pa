@@ -50,7 +50,7 @@ async function main() {
   const db = getFirestore()
 
   if (SET_TEST_MODE) {
-    await db.collection("pa_users").doc(userId).set(
+    await db.collection("pa-users").doc(userId).set(
       { testMode: true, updatedAt: new Date().toISOString() },
       { merge: true }
     )

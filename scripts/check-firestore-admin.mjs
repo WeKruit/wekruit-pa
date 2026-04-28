@@ -37,7 +37,7 @@ if (!getApps().length) {
 
 const db = getFirestore()
 const docId = `local_smoke_${Date.now()}`
-const ref = db.collection("pa_audit_events").doc(docId)
+const ref = db.collection("pa-audit-events").doc(docId)
 
 try {
   await ref.set({

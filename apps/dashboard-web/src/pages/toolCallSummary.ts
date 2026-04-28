@@ -14,7 +14,7 @@
  *     operators can debug without opening the audit row.
  *   - For legacy rows (pre-Phase-13 schema, malformed JSON, non-matching
  *     connector, or missing summary), gracefully pass through the raw
- *     truncated text. No `pa_tool_calls` write shape is mutated by the
+ *     truncated text. No `pa-tool-calls` write shape is mutated by the
  *     dashboard.
  */
 export function renderToolCallSummary(row: Record<string, unknown>): string {

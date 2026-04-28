@@ -1,7 +1,7 @@
 /**
  * Phase 26 T2 — Sendblue daily-outbound counter (P9-Prod-Ops).
  *
- * Doc shape: `pa_outbound_daily/{YYYYMMDD}` → `{ count, lastUpdatedAt }`.
+ * Doc shape: `pa-outbound-daily/{YYYYMMDD}` → `{ count, lastUpdatedAt }`.
  * Operator runs Firestore TTL on `expiresAt` (set to date+30d) so historic
  * counters self-collect after a month.
  *
@@ -13,7 +13,7 @@
 
 import type { Firestore } from "firebase-admin/firestore"
 
-export const OUTBOUND_QUOTA_COLLECTION = "pa_outbound_daily"
+export const OUTBOUND_QUOTA_COLLECTION = "pa-outbound-daily"
 
 /** Format `YYYYMMDD` UTC bucket id from a Date. */
 export function formatDailyBucket(date: Date = new Date()): string {

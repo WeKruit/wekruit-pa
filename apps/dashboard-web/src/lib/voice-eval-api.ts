@@ -10,7 +10,7 @@
  *      The harness writes apps/eval/voice/eval-results/{ISO}.json (and may
  *      optionally upload to a Firestore doc — out of T3 scope).
  *   2. The dashboard fetches result JSONs from `/eval-results/<file>` (Vite
- *      static path) for dev, OR `pa_voice_eval_runs/{id}` Firestore doc once
+ *      static path) for dev, OR `pa-voice-eval-runs/{id}` Firestore doc once
  *      Adam wires the upload (post-Phase 25).
  *
  * Auto-rerun on save is gated by feature flag `voiceEvalAutoRerun` (default
@@ -20,7 +20,7 @@
 import { Timestamp, collection, getDocs, limit, orderBy, query } from "firebase/firestore"
 import { db } from "./firebase.js"
 
-export const EVAL_RUNS_COLLECTION = "pa_voice_eval_runs"
+export const EVAL_RUNS_COLLECTION = "pa-voice-eval-runs"
 
 export type EvalTurnResult = {
   messageId: string
@@ -77,7 +77,7 @@ function normalizeRun(id: string, raw: Record<string, unknown>, label: string): 
 }
 
 /**
- * List recent eval runs from Firestore (`pa_voice_eval_runs`). Empty array if
+ * List recent eval runs from Firestore (`pa-voice-eval-runs`). Empty array if
  * the collection has no docs (expected in dev — Adam runs locally and the
  * harness has not yet been wired to upload).
  */

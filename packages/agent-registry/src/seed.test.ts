@@ -4,7 +4,7 @@ import { loadSeedAgents } from "./seed.js"
 
 // Phase 10.5 cleanup C3 — seed.json must match the post-Phase-10.5
 // production target so fresh installs do not diverge from the running
-// `pa_agents/default` document. Carry-over #6 in 10.5-VERIFICATION.md.
+// `pa-agents/default` document. Carry-over #6 in 10.5-VERIFICATION.md.
 //
 // The fields below are the contract that ensureSeedAgents writes into
 // pa_agents on first boot. T8's idempotent migration keeps live docs in

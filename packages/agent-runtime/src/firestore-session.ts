@@ -8,7 +8,7 @@ import { stripLeadingIsoTimestamp } from "./messages.js"
  * Phase 10.5 T2 — Firestore-backed `Session` for the OpenAI Agents SDK.
  *
  * Acts as a thin adapter between the SDK's per-turn `AgentInputItem[]`
- * shape and our durable `pa_messages` Firestore collection. The SDK never
+ * shape and our durable `pa-messages` Firestore collection. The SDK never
  * imports `firebase-admin`; it only sees the `Session` interface (A2/A7).
  *
  * Important boundaries:

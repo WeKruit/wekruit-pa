@@ -2,7 +2,7 @@
 /**
  * Phase 10.5 T8 — Default agent tool-policy migration.
  *
- * Flips `pa_agents` default doc from `toolPolicy: "none"` to
+ * Flips `pa-agents` default doc from `toolPolicy: "none"` to
  * `toolPolicy: "allowlist"` with `allowedConnectors: ["current-info",
  * "remember-fact"]` and `toolBudgetPerTurn: 3`. Idempotent — re-running on
  * the migrated state is a no-op (the script detects equality on the three
@@ -218,7 +218,7 @@ function getDb() {
 
 function formatDiff(plan, docId) {
   const lines = []
-  lines.push(`pa_agents/${docId}`)
+  lines.push(`pa-agents/${docId}`)
   lines.push("  managed fields (current → target):")
   lines.push(`    toolPolicy:        ${JSON.stringify(plan.currentManaged.toolPolicy)} → ${JSON.stringify(plan.target.toolPolicy)}`)
   lines.push(`    allowedConnectors: ${JSON.stringify(plan.currentManaged.allowedConnectors)} → ${JSON.stringify(plan.target.allowedConnectors)}`)
@@ -238,7 +238,7 @@ async function main() {
     return 0
   }
   const db = getDb()
-  const snap = await db.collection("pa_agents").where("isDefault", "==", true).get()
+  const snap = await db.collection("pa-agents").where("isDefault", "==", true).get()
   if (snap.empty) {
     process.stderr.write(
       "[t8-migration] FAIL: no pa_agents doc with isDefault==true. " +

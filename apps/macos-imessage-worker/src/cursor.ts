@@ -1,7 +1,7 @@
 /**
  * Durable poll cursor for the iMessage worker.
  *
- * Stored at `pa_worker_cursors/{workerId}` so an offline → online restart
+ * Stored at `pa-worker-cursors/{workerId}` so an offline → online restart
  * resumes from the last persisted ROWID instead of jumping to the latest
  * row (which would silently drop messages received while offline).
  *

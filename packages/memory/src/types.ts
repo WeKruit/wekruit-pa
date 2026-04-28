@@ -12,14 +12,14 @@ export type LoadContextInput = {
    * Phase 11.3 read-path: when env `PA_MEM0_USE_PARTITION_KEY=true`, this
    * value is used as the Mem0/Qdrant partition. When unset / `false` /
    * `mem0UserId` is missing, falls back to `userId` (legacy behavior).
-   * Drift (resolved key !== userId) emits `pa_audit_events` row
+   * Drift (resolved key !== userId) emits `pa-audit-events` row
    * `kind="memory.identity_drift", surface="orchestrator_turn"`.
    */
   mem0UserId?: string
   sessionId: string
   userMessage: string
   /**
-   * From `pa_agents` / `AgentDef.memoryMode` — only mode switch.
+   * From `pa-agents` / `AgentDef.memoryMode` — only mode switch.
    * `firestore_only`: no Mem0. `mem0` / `both`: Mem0 search + (after response) add when env is configured.
    * Durable messages live in Firestore; Mem0 is optional runtime long-term memory.
    */
@@ -29,7 +29,7 @@ export type LoadContextInput = {
 
 export type LoadContextResult = {
   /**
-   * Mem0-derived block for the LLM system prompt. Transcript (recent `pa_messages`)
+   * Mem0-derived block for the LLM system prompt. Transcript (recent `pa-messages`)
    * is always supplied separately by the runtime from Firestore, including when
    * `memoryMode` is `both`.
    */

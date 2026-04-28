@@ -26,7 +26,7 @@ import {
 } from "firebase/firestore"
 import { auth, db } from "./firebase.js"
 
-export const FEATURE_FLAGS_COLLECTION = "pa_feature_flags"
+export const FEATURE_FLAGS_COLLECTION = "pa-feature-flags"
 
 export type FlagType = "bool" | "string" | "number" | "json"
 export type FlagScope = "global" | "perEnv" | "perUser"

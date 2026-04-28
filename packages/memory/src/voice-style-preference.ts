@@ -3,7 +3,7 @@
  *
  * D-06 says "Long-term preferences live in mem0, surfaced via persona
  * card extension. Not a new collection." Phase 19 deviation note: this
- * impl persists the structured preference on the EXISTING `pa_users`
+ * impl persists the structured preference on the EXISTING `pa-users`
  * Firestore doc under a `voiceStylePreference` field — i.e. it extends
  * an existing doc, NOT a new collection. mem0's free-text + semantic
  * search surface is unreliable for round-tripping a 4-field structured

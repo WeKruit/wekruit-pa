@@ -26,8 +26,8 @@
 
 import type { Firestore } from "firebase-admin/firestore"
 
-const COLLECTION = "pa_feature_flags"
-const AUDIT_COLLECTION = "pa_audit_events"
+const COLLECTION = "pa-feature-flags"
+const AUDIT_COLLECTION = "pa-audit-events"
 const SEED_ACTOR = "p9-infra-seed@wekruit.com"
 const SEED_REASON = "Phase 24.5 initial seed (P9-Infra autonomous)"
 
@@ -97,7 +97,7 @@ const SEED_FLAGS: FlagSpec[] = [
     blocklist: [],
   },
   // Phase 26 T2 — Sendblue daily-outbound quota (P9-Prod-Ops). Number-typed
-  // flag: outbox compares `pa_outbound_daily/{YYYYMMDD}` count to this value
+  // flag: outbox compares `pa-outbound-daily/{YYYYMMDD}` count to this value
   // and blocks at 100%, soft-warns at 80%. Default 1000 = Sendblue Free
   // tier assumption (confirm with Sendblue support before public launch).
   {

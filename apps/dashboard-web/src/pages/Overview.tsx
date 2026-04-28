@@ -105,8 +105,8 @@ export function Overview() {
   const [jobs, setJobs] = useState<Row[]>([])
   const [heartbeats, setHeartbeats] = useState<Row[]>([])
   // Phase 10.5 cleanup D3 — last-24h usage rows from pa_turns. NOTE: this
-  // reads PA_COLLECTIONS.turns (`pa_turns` — where the orchestrator's T9
-  // usage writes land), NOT PA_COLLECTIONS.agentTurns (`pa_agent_turns`,
+  // reads PA_COLLECTIONS.turns (`pa-turns` — where the orchestrator's T9
+  // usage writes land), NOT PA_COLLECTIONS.agentTurns (`pa-agent-turns`,
   // a separate broker-arch collection). The "Conversations" / "Recent
   // failures" panels above still read agentTurns; reconciling those is
   // a separate dashboard cleanup.

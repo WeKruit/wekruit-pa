@@ -32,7 +32,7 @@ export type Mem0Config = {
   qdrantUrl: string
   /** Qdrant API key. */
   qdrantApiKey: string
-  /** Qdrant collection name; defaults to `pa_memory`. */
+  /** Qdrant collection name; defaults to `pa-memory`. */
   qdrantCollection?: string
 }
 
@@ -40,7 +40,7 @@ const DEFAULT_LLM_BASE = "https://api.siliconflow.cn/v1"
 const DEFAULT_LLM_MODEL = "Qwen/Qwen2.5-72B-Instruct"
 const DEFAULT_EMBED_MODEL = "BAAI/bge-m3"
 const DEFAULT_EMBED_DIMS = 1024
-const DEFAULT_COLLECTION = "pa_memory"
+const DEFAULT_COLLECTION = "pa-memory"
 
 /** Strip trailing slashes; treat blank as missing so callers never pass `""` into OpenAI clients. */
 export function normalizeOpenAiCompatBaseUrl(url: string | undefined, fallback = DEFAULT_LLM_BASE): string {

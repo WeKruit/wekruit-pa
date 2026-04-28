@@ -88,7 +88,7 @@ export type ProactiveTurnStore = {
   /**
    * Phase 24.5 — optional Firestore handle for `getFlag()` reads. Tests omit
    * `db`; production wires the live Firestore so the flag in
-   * `pa_feature_flags/PA_PROACTIVE_DISABLED` is honored. env=1 still
+   * `pa-feature-flags/PA_PROACTIVE_DISABLED` is honored. env=1 still
    * short-circuits inside the SDK as the emergency override.
    */
   db?: Firestore

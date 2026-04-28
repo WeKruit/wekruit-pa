@@ -27,7 +27,7 @@ export function isVoiceMirrorDisabled(env: NodeJS.ProcessEnv = process.env): boo
 
 /**
  * Phase 24.5 — flag-backed mirror-disabled check. Wraps `getFlag()` so the
- * `pa_feature_flags/PA_VOICE_MIRROR_DISABLED` doc is consulted (with the env
+ * `pa-feature-flags/PA_VOICE_MIRROR_DISABLED` doc is consulted (with the env
  * var honored as emergency override inside the SDK). Pure wrapper — does not
  * change any pre-existing snippet computation logic; callers that have a
  * Firestore handle should prefer this over the sync `isVoiceMirrorDisabled`.

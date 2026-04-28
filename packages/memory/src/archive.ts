@@ -24,7 +24,7 @@ export function buildArchivePath(input: { userId: string; createdAt: string }) {
 
 export function toArchiveJsonLine(message: ChatMessage, archivedAt = new Date().toISOString()) {
   const eventId = typeof message.rawMeta?.eventId === "string" ? message.rawMeta.eventId : undefined
-  const source = typeof message.rawMeta?.source === "string" ? message.rawMeta.source : "pa_messages"
+  const source = typeof message.rawMeta?.source === "string" ? message.rawMeta.source : "pa-messages"
   const sha256 = createHash("sha256")
     .update(`${message.sessionId}|${message.role}|${message.body}|${message.createdAt}`)
     .digest("hex")

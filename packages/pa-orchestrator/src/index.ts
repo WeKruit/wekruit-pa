@@ -207,7 +207,7 @@ export type OrchestratorStore = {
   /**
    * Phase 24.5 — optional Firestore handle for `getFlag()` reads. Tests omit
    * `db`; production wires the live Firestore so flag-backed kill-switches
-   * (e.g. `PA_VOICE_MIRROR_DISABLED`) consult `pa_feature_flags`. env vars
+   * (e.g. `PA_VOICE_MIRROR_DISABLED`) consult `pa-feature-flags`. env vars
    * still short-circuit inside the SDK as the emergency override.
    */
   db?: Firestore
@@ -476,7 +476,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       idempotencyKey: deriveSessionMessageIdempotencyKey(event.sessionId, "user", event.body),
       rawMeta: {
         ...event.rawMeta,
-        source: "pa_inbound_event",
+        source: "pa-inbound-event",
         eventId: event.id,
         turnId,
         inboundIdempotencyKey: event.idempotencyKey,

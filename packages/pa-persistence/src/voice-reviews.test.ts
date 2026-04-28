@@ -47,7 +47,7 @@ function makeFakeFirestore(initial?: Partial<Stored>) {
       },
       async get() {
         const source =
-          collectionName === "pa_voice_reviews" ? store.voiceReviews : store.messages
+          collectionName === "pa-voice-reviews" ? store.voiceReviews : store.messages
         let rows = Array.from(source.entries()).map(([id, data]) => ({ id, data }))
         for (const f of filters) {
           rows = rows.filter((r) => {
@@ -95,7 +95,7 @@ function makeFakeFirestore(initial?: Partial<Stored>) {
 
   function docRef(collectionName: string, id: string) {
     const source =
-      collectionName === "pa_voice_reviews" ? store.voiceReviews : store.messages
+      collectionName === "pa-voice-reviews" ? store.voiceReviews : store.messages
     return {
       async get() {
         const data = source.get(id)
@@ -141,7 +141,7 @@ function makeFakeFirestore(initial?: Partial<Stored>) {
 // Tests
 // -----------------------------------------------------------------------------
 
-test("writeVoiceReview: writes all 6 fields + createdAt to pa_voice_reviews/{messageId}", async () => {
+test("writeVoiceReview: writes all 6 fields + createdAt to pa-voice-reviews/{messageId}", async () => {
   const { db, store } = makeFakeFirestore()
   await writeVoiceReview(db, {
     messageId: "msg_001",

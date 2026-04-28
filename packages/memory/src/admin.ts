@@ -8,12 +8,12 @@ import { PA_COLLECTIONS } from "@pa/core-types"
  *   - `pa-orchestrator` (in-band magic-string trigger for test users)
  *   - Phase 3 Memory Admin dashboard (HTTP wrapper)
  *
- * Always clears: Qdrant `pa_memory` (semantic memory), `pa_memory_facts`,
- * `pa_memory_actions`, `pa_memory_events`. With `keepMessages: false`
- * (default) also clears `pa_messages`, `pa_agent_turns`, `pa_turns`.
+ * Always clears: Qdrant `pa-memory` (semantic memory), `pa-memory-facts`,
+ * `pa-memory-actions`, `pa-memory-events`. With `keepMessages: false`
+ * (default) also clears `pa-messages`, `pa-agent-turns`, `pa-turns`.
  *
- * Never touches: `pa_users`, `pa_sessions`, `pa_inbound_events`,
- * `pa_outbound`. The user record + session id are preserved so the next
+ * Never touches: `pa-users`, `pa-sessions`, `pa-inbound-events`,
+ * `pa-outbound`. The user record + session id are preserved so the next
  * iMessage from the same handle reuses the same Firestore identity.
  */
 export type ClearUserMemoryDeps = {
@@ -53,7 +53,7 @@ export type ClearUserMemoryResult = {
   firestore: Record<string, number>
 }
 
-const DEFAULT_QDRANT_COLLECTION = "pa_memory"
+const DEFAULT_QDRANT_COLLECTION = "pa-memory"
 
 function noop() {}
 

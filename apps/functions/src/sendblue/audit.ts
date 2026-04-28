@@ -1,7 +1,7 @@
 /**
  * Audit producer for Sendblue webhook surface.
  *
- * Writes to `pa_audit_events` (PA_COLLECTIONS.auditEvents). Every deny / drop
+ * Writes to `pa-audit-events` (PA_COLLECTIONS.auditEvents). Every deny / drop
  * path through the webhook produces a record so the dashboard abuse panel
  * (BETA-03 dependency) can surface them.
  */

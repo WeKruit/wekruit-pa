@@ -172,7 +172,7 @@ function fakeDbForFacts({ users = [], facts = [] }) {
   }
   return {
     collection(name) {
-      const docs = name === "pa_users" ? users : name === "pa_memory_facts" ? facts : []
+      const docs = name === "pa-users" ? users : name === "pa-memory-facts" ? facts : []
       return makeQuery(docs)
     },
   }

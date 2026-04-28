@@ -94,7 +94,7 @@ export type SendblueSendRequest = {
  * REST send response. Confirmed shape from probe error envelope:
  * Sendblue uses `uuid` as the message identifier on REST responses;
  * the parallel `message_handle` field is what shows up on webhook
- * payloads. Both are recorded onto `pa_outbound` for delivery audit.
+ * payloads. Both are recorded onto `pa-outbound` for delivery audit.
  */
 export type SendblueSendResponse = {
   type?: "message"

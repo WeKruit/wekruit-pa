@@ -2,11 +2,11 @@
  * Cloud Functions Gen 2 wrapper for the PA orchestrator.
  *
  * Topology (Sprint-1 prod):
- *   Mac iMessage worker -> Firestore `pa_inbound_events`
+ *   Mac iMessage worker -> Firestore `pa-inbound-events`
  *   onPaInbound (this file) -> processInboundEvent (`@pa/pa-orchestrator`)
  *     -> SiliconFlow LLM + Qdrant via `@pa/memory` mem0 OSS wrapper
- *     -> Firestore `pa_messages` + `pa_outbound`
- *   Mac iMessage worker -> sends from `pa_outbound`
+ *     -> Firestore `pa-messages` + `pa-outbound`
+ *   Mac iMessage worker -> sends from `pa-outbound`
  *
  * The function is idempotent: pa-orchestrator skips events already in a non-
  * `pending` status, and message writes are guarded by `idempotencyKey`.
@@ -52,7 +52,7 @@ const SILICONFLOW_API_KEY = defineSecret("SILICONFLOW_API_KEY")
 const PA_OPENAI_AGENT_API_KEY = defineSecret("PA_OPENAI_AGENT_API_KEY")
 const QDRANT_URL = defineSecret("QDRANT_URL")
 const QDRANT_API_KEY = defineSecret("QDRANT_API_KEY")
-const QDRANT_COLLECTION = "pa_memory"
+const QDRANT_COLLECTION = "pa-memory"
 
 type BrokerImessageEvent = {
   id: string
@@ -337,7 +337,7 @@ async function processBrokerImessageEvent(db: Firestore, data: BrokerImessageEve
 
 export const onPaInbound = onDocumentCreated(
   {
-    document: "pa_inbound_events/{eventId}",
+    document: "pa-inbound-events/{eventId}",
     region: "us-central1",
     secrets: [SILICONFLOW_API_KEY, PA_OPENAI_AGENT_API_KEY, QDRANT_URL, QDRANT_API_KEY],
     memory: "1GiB",
@@ -618,7 +618,7 @@ export const paSendblueWebhook = onRequest(
  */
 export const paSendblueOutbox = onDocumentCreated(
   {
-    document: "pa_outbound/{docId}",
+    document: "pa-outbound/{docId}",
     region: "us-central1",
     secrets: [SENDBLUE_API_KEY_ID, SENDBLUE_API_SECRET_KEY, SENDBLUE_FROM_NUMBER],
     memory: "256MiB",

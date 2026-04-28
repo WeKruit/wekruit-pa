@@ -1,7 +1,7 @@
 /**
  * Phase 26 T1 — per-user rate-limit (token bucket via Firestore docs).
  *
- * Doc shape: `pa_rate_limit/{userId}_{minuteBucket}` → `{ count, expiresAt }`.
+ * Doc shape: `pa-rate-limit/{userId}_{minuteBucket}` → `{ count, expiresAt }`.
  * `expiresAt` is a Firestore-TTL-eligible field; operator configures a TTL
  * policy on the collection so stale buckets self-collect (no manual sweeper).
  *
@@ -18,7 +18,7 @@
 
 import type { Firestore } from "firebase-admin/firestore"
 
-export const RATE_LIMIT_COLLECTION = "pa_rate_limit"
+export const RATE_LIMIT_COLLECTION = "pa-rate-limit"
 
 export interface RateLimitOptions {
   limit?: number

@@ -6,7 +6,7 @@
  *   - `userId`     — Firestore canonical (pa_users.id), authoritative for
  *                    all `pa_*` collections + persona card scope.
  *   - `mem0UserId` — authoritative for the Qdrant payload `user_id`
- *                    partition on collection `pa_memory` (semantic memory
+ *                    partition on collection `pa-memory` (semantic memory
  *                    only). MAY differ from `userId` after an operator
  *                    rebind. When unset, falls back to `userId` and the
  *                    two surfaces are identical.
@@ -92,7 +92,7 @@ export type RecordDriftInput = {
  * Per-process throttle. Each unique (userId, mem0UserId, surface) tuple
  * fires at most once per cold start. Drift is rare enough that this
  * collapses to one row per (rebound user, surface) per CF instance —
- * far below `pa_audit_events` write budget. Capped at 1024 entries to
+ * far below `pa-audit-events` write budget. Capped at 1024 entries to
  * bound memory; oldest entry is dropped when exceeded.
  */
 const SEEN_CAP = 1024
@@ -112,7 +112,7 @@ function rememberSeen(cache: Set<string>, key: string): boolean {
 /**
  * Best-effort drift telemetry. NEVER throws. NEVER blocks the caller.
  *
- * Emits one `pa_audit_events` row + one structured `console.log` line
+ * Emits one `pa-audit-events` row + one structured `console.log` line
  * the first time a given (userId, mem0UserId, surface) tuple is seen
  * within this process. Subsequent sightings are silently skipped.
  *

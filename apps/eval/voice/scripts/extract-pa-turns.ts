@@ -1,8 +1,8 @@
 /**
  * extract-pa-turns.ts — Phase 24 / Plan 02
  *
- * Exports the last N user→assistant turn pairs from Firestore `pa_messages`
- * (falling back to `pa_turns` if messages are sparse) and emits JSONL on stdout
+ * Exports the last N user→assistant turn pairs from Firestore `pa-messages`
+ * (falling back to `pa-turns` if messages are sparse) and emits JSONL on stdout
  * matching the golden-50 schema. Labels are "UNLABELED" — Adam picks 50 from
  * the output and hand-labels them per HITL-LABELING-GUIDE.md.
  *
@@ -26,12 +26,12 @@ const { values } = parseArgs({
   args: process.argv.slice(2),
   options: {
     limit: { type: "string", default: "200" },
-    collection: { type: "string", default: "pa_messages" },
+    collection: { type: "string", default: "pa-messages" },
   },
 })
 
 const LIMIT = parseInt(values.limit ?? "200", 10)
-const COLLECTION = values.collection ?? "pa_messages"
+const COLLECTION = values.collection ?? "pa-messages"
 
 // ---------------------------------------------------------------------------
 // Simple tag heuristics
@@ -164,9 +164,9 @@ async function main() {
   let pairs = await fetchPairs(COLLECTION, LIMIT)
 
   // Fallback to pa_turns if pa_messages returned nothing
-  if (pairs.length === 0 && COLLECTION === "pa_messages") {
+  if (pairs.length === 0 && COLLECTION === "pa-messages") {
     process.stderr.write("[extract-pa-turns] Falling back to pa_turns collection\n")
-    pairs = await fetchPairs("pa_turns", LIMIT)
+    pairs = await fetchPairs("pa-turns", LIMIT)
   }
 
   process.stderr.write(`[extract-pa-turns] Extracted ${pairs.length} pairs\n`)

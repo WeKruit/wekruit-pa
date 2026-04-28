@@ -22,9 +22,9 @@ const PA_ADMIN_TOKEN = defineSecret("PA_ADMIN_TOKEN")
 const SILICONFLOW_API_KEY = defineSecret("SILICONFLOW_API_KEY")
 const PA_OPENAI_AGENT_API_KEY = defineSecret("PA_OPENAI_AGENT_API_KEY")
 
-const FLAGS_COLLECTION = "pa_feature_flags"
-const AUDIT_COLLECTION = "pa_audit_events"
-const MESSAGES_COLLECTION = "pa_messages"
+const FLAGS_COLLECTION = "pa-feature-flags"
+const AUDIT_COLLECTION = "pa-audit-events"
+const MESSAGES_COLLECTION = "pa-messages"
 const SEED_ACTOR = "p9-infra-seed@wekruit.com"
 const SEED_REASON = "Phase 24.5 initial seed via paAdminBootstrap CF"
 const SYNTHETIC_USER_ID = "SYNTHETIC_REPLAY"
@@ -319,7 +319,7 @@ async function reseedDefaultAgent(): Promise<{ ok: boolean; version: string; wri
     const id = agent.id
     if (!id) continue
     if (!firstVersion) firstVersion = String((agent as { version?: unknown }).version ?? "?")
-    const ref = db.collection("pa_agents").doc(id)
+    const ref = db.collection("pa-agents").doc(id)
     await ref.set(
       { ...(agent as Record<string, unknown>), updatedAt: new Date().toISOString() },
       { merge: true }

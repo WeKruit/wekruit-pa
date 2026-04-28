@@ -188,7 +188,7 @@ export async function processOutboundJob(
         body,
         createdAt,
         idempotencyKey: `outbox-msg-${docId}`,
-        rawMeta: { source: "pa_console_outbound", outboundDocId: docId },
+        rawMeta: { source: "pa-console-outbound", outboundDocId: docId },
       })
     }
     let deliveryResult: Awaited<ReturnType<typeof deliverOutboundBody>>

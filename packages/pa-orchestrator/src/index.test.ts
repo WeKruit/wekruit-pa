@@ -406,7 +406,7 @@ test("processInboundEvent short-circuits to maybeHandleResetCommand when handled
     maybeHandleResetCommand: async (event) => {
       resetCalls++
       assert.equal(event.body, "__PA_RESET__")
-      return { handled: true, summary: "✓ 测试记忆已清空 — qdrant pa_memory=3; firestore pa_memory_facts=2" }
+      return { handled: true, summary: "✓ 测试记忆已清空 — qdrant pa-memory=3; firestore pa-memory-facts=2" }
     },
   })
   await processInboundEvent({ ...baseEvent, body: "__PA_RESET__" }, store)
@@ -710,7 +710,7 @@ test("buildTurnTools.execute calls runConnector and returns stringified result",
   assert.equal(parsed.ok, true)
   assert.ok(parsed.factId, "factId returned")
   // pa_tool_calls row exists with completed status (proof runConnector ran)
-  const toolCallEntries = [...store.entries()].filter(([k]) => k.startsWith("pa_tool_calls/"))
+  const toolCallEntries = [...store.entries()].filter(([k]) => k.startsWith("pa-tool-calls/"))
   assert.equal(toolCallEntries.length, 1)
   const row = toolCallEntries[0]![1] as Record<string, unknown>
   assert.equal(row.connectorName, "remember-fact")

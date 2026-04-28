@@ -30,21 +30,21 @@ test("summarizeClearResult produces a tester-readable line for live runs", () =>
   const out = summarizeClearResult({
     userId: "u1",
     dryRun: false,
-    qdrant: { collection: "pa_memory", matched: 7, deleted: true },
-    firestore: { pa_memory_facts: 2, pa_messages: 18, pa_memory_actions: 0 },
+    qdrant: { collection: "pa-memory", matched: 7, deleted: true },
+    firestore: { "pa-memory-facts": 2, "pa-messages": 18, "pa-memory-actions": 0 },
   })
   assert.match(out, /✓ 测试记忆已清空/)
-  assert.match(out, /pa_memory=7/)
-  assert.match(out, /pa_memory_facts=2/)
-  assert.match(out, /pa_messages=18/)
-  assert.doesNotMatch(out, /pa_memory_actions=0/)
+  assert.match(out, /pa-memory=7/)
+  assert.match(out, /pa-memory-facts=2/)
+  assert.match(out, /pa-messages=18/)
+  assert.doesNotMatch(out, /pa-memory-actions=0/)
 })
 
 test("summarizeClearResult flags dry-run results distinctly", () => {
   const out = summarizeClearResult({
     userId: "u1",
     dryRun: true,
-    qdrant: { collection: "pa_memory", matched: 0, deleted: false },
+    qdrant: { collection: "pa-memory", matched: 0, deleted: false },
     firestore: {},
   })
   assert.match(out, /\[DRY-RUN\]/)

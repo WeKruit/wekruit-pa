@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Merges `packages/agent-registry` seed agents into Firestore `pa_agents`
+ * Merges `packages/agent-registry` seed agents into Firestore `pa-agents`
  * (same as `ensureSeedAgents`, batch set with merge: true). Use this after
  * editing `src/seed.json` so production picks up a new `systemPrompt` / version —
  * a cold project only auto-seeds when no default doc exists, so existing

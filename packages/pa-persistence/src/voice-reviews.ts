@@ -1,8 +1,8 @@
 /**
- * Phase 25 — `pa_voice_reviews` SDK (P9-Voice).
+ * Phase 25 — `pa-voice-reviews` SDK (P9-Voice).
  *
  * LOCKED schema (see .planning/phases/25-voice-review-dashboard/CONTEXT.md):
- * `pa_voice_reviews/{messageId}`:
+ * `pa-voice-reviews/{messageId}`:
  *   {
  *     messageId:      string,
  *     rating:         1 | 2 | 3 | 4 | 5,
@@ -23,8 +23,8 @@
 import type { Firestore, Timestamp } from "firebase-admin/firestore"
 import { FieldValue } from "firebase-admin/firestore"
 
-const VOICE_REVIEWS = "pa_voice_reviews"
-const MESSAGES = "pa_messages"
+const VOICE_REVIEWS = "pa-voice-reviews"
+const MESSAGES = "pa-messages"
 
 export const VOICE_REVIEW_TAGS = [
   "probe",
@@ -99,7 +99,7 @@ function assertValid(input: WriteVoiceReviewInput): void {
 }
 
 /**
- * Write `pa_voice_reviews/{messageId}` with serverTimestamp createdAt.
+ * Write `pa-voice-reviews/{messageId}` with serverTimestamp createdAt.
  * Idempotent: re-rating the same messageId overwrites in place (latest wins).
  */
 export async function writeVoiceReview(
@@ -210,7 +210,7 @@ export interface AssistantTurnWithReview {
   createdAt: string | null
   /** Prior user-turn body (context for reviewer). null if turn is first. */
   priorUserBody: string | null
-  /** Whether a `pa_voice_reviews/{messageId}` doc already exists. */
+  /** Whether a `pa-voice-reviews/{messageId}` doc already exists. */
   reviewed: boolean
   /** Existing review (if reviewed === true) for "edit in place" UX. */
   review: VoiceReviewRow | null
@@ -219,8 +219,8 @@ export interface AssistantTurnWithReview {
 }
 
 /**
- * Lists assistant turns from `pa_messages` (newest first) and LEFT-joins
- * `pa_voice_reviews` so the UI can show reviewed/unreviewed badges per row.
+ * Lists assistant turns from `pa-messages` (newest first) and LEFT-joins
+ * `pa-voice-reviews` so the UI can show reviewed/unreviewed badges per row.
  *
  * Each row also includes `priorUserBody` — the immediately preceding user turn
  * in the same session — so reviewers see what the assistant was responding to.

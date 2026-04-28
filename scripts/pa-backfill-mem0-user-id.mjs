@@ -78,7 +78,7 @@ export function planUserUpdate(doc) {
 }
 
 async function processPage(db, lastSnapshot) {
-  let q = db.collection("pa_users").orderBy("__name__").limit(PAGE_SIZE)
+  let q = db.collection("pa-users").orderBy("__name__").limit(PAGE_SIZE)
   if (lastSnapshot) q = q.startAfter(lastSnapshot)
   const snap = await q.get()
   return snap

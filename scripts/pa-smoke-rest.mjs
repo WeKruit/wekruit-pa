@@ -44,7 +44,7 @@ const eventId = randomUUID()
 const now = new Date().toISOString()
 const fromE164 = "+19990000000"
 
-await setDoc(`pa_users/${userId}`, {
+await setDoc(`pa-users/${userId}`, {
   id: s(userId),
   e164: s(fromE164),
   email: s("smoke@local"),
@@ -52,7 +52,7 @@ await setDoc(`pa_users/${userId}`, {
   updatedAt: s(now),
 })
 
-await setDoc(`pa_sessions/${sessionId}`, {
+await setDoc(`pa-sessions/${sessionId}`, {
   id: s(sessionId),
   userId: s(userId),
   externalChatId: s(fromE164),
@@ -61,7 +61,7 @@ await setDoc(`pa_sessions/${sessionId}`, {
   updatedAt: s(now),
 })
 
-await setDoc(`pa_inbound_events/${eventId}`, {
+await setDoc(`pa-inbound-events/${eventId}`, {
   id: s(eventId),
   userId: s(userId),
   sessionId: s(sessionId),

@@ -89,7 +89,7 @@ export async function loadRecentMessages(
 
 /**
  * Injects a Mem0 memory block for `mem0` and `both` (when credentials and API succeed).
- * Transcript (recent `pa_messages`) is always loaded by the worker separately; `mem0` and
+ * Transcript (recent `pa-messages`) is always loaded by the worker separately; `mem0` and
  * `both` both add this block when Mem0 is configured. `input.memoryMode` is the only mode switch.
  */
 export async function loadPersonalizationContext(

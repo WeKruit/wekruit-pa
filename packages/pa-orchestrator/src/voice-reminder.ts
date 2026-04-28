@@ -4,7 +4,7 @@
  * turn (Phase 18 / Round-1 “late inject” finding).
  *
  * Rollback: set `PA_VOICE_V1_DISABLED=true` to drop the reminder. For a full
- * rollback, also republish `pa_agents` default to version 1 via dashboard if
+ * rollback, also republish `pa-agents` default to version 1 via dashboard if
  * Firestore was upgraded independently of this repo’s seed.
  */
 

@@ -25,8 +25,8 @@ import {
 } from "firebase/firestore"
 import { auth, db } from "./firebase.js"
 
-export const VOICE_REVIEWS_COLLECTION = "pa_voice_reviews"
-export const MESSAGES_COLLECTION = "pa_messages"
+export const VOICE_REVIEWS_COLLECTION = "pa-voice-reviews"
+export const MESSAGES_COLLECTION = "pa-messages"
 
 export const VOICE_REVIEW_TAGS = [
   "probe",

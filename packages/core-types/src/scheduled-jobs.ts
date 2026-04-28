@@ -4,7 +4,7 @@
  * Layered on top of Phase 7 scheduler conventions (status/attempts/maxAttempts/backoffSec).
  * DO NOT remove dueAt — Phase 7 callers depend on it. nextFireAt is the proactive-domain alias.
  *
- * Storage: existing `pa_scheduled_jobs` collection (PA_COLLECTIONS.scheduledJobs).
+ * Storage: existing `pa-scheduled-jobs` collection (PA_COLLECTIONS.scheduledJobs).
  * No new collection.
  *
  * NOTE: fireWindowHash uses a pure-JS SHA-1 implementation for browser compatibility

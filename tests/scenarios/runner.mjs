@@ -40,14 +40,14 @@ import {
   JUDGE_MODEL,
 } from "./judge.mjs"
 
-const PA_INBOUND = "pa_inbound_events"
-const PA_OUTBOUND = "pa_outbound"
-const PA_MESSAGES = "pa_messages"
-const PA_TURNS = "pa_turns"
-const PA_USERS = "pa_users"
-const PA_MEMORY_FACTS = "pa_memory_facts"
-const PA_SCHEDULED_JOBS = "pa_scheduled_jobs"
-const PA_AUDIT_EVENTS = "pa_audit_events"
+const PA_INBOUND = "pa-inbound-events"
+const PA_OUTBOUND = "pa-outbound"
+const PA_MESSAGES = "pa-messages"
+const PA_TURNS = "pa-turns"
+const PA_USERS = "pa-users"
+const PA_MEMORY_FACTS = "pa-memory-facts"
+const PA_SCHEDULED_JOBS = "pa-scheduled-jobs"
+const PA_AUDIT_EVENTS = "pa-audit-events"
 const generatedParticipants = new Set()
 
 // Phase 14.4 — cost ceiling. Defaults to $5 per run unless the operator
@@ -365,10 +365,10 @@ async function runTurnWithRetry(db, scenario, turnIdx) {
 // ---------------------------------------------------------------------------
 // Phase 14.1 — telemetry-backed assertions.
 //
-// `pa_turns` rows are written by pa-orchestrator (`createTurn` →
+// `pa-turns` rows are written by pa-orchestrator (`createTurn` →
 // `updateTurn { usage }` after `runAgentTurn` resolves). We fetch by
 // `eventId == event.id` and surface the usage block to the assertion
-// helpers below. The 10.5 carry-over about deferred `pa_tool_calls`
+// helpers below. The 10.5 carry-over about deferred `pa-tool-calls`
 // audits does NOT block this — `usage.hostedToolCalls` is the
 // authoritative source per Phase 10.5 T9 in
 // packages/agent-runtime/src/types.ts.
@@ -447,7 +447,7 @@ export function applyTelemetryAssertions(turn, turnDoc) {
 }
 
 /** Phase 14.1 — pre-turn `persona_facts_present` probe. Looks up the
- *  user by participant, then queries `pa_memory_facts` for confirmed
+ *  user by participant, then queries `pa-memory-facts` for confirmed
  *  rows. This intentionally runs BEFORE the turn fires so it tests
  *  seeded state, not what the turn just produced. */
 export async function applyPersonaFactsPresent(db, scenario, turn) {

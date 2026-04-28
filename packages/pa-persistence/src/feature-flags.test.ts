@@ -84,12 +84,12 @@ function makeFakeFirestore(initial: FakeStore = { flags: new Map(), audit: [] })
 
   const db = {
     collection(name: string) {
-      if (name === "pa_feature_flags") {
+      if (name === "pa-feature-flags") {
         return {
           doc: (id: string) => flagDocRef(id),
         }
       }
-      if (name === "pa_audit_events") {
+      if (name === "pa-audit-events") {
         return {
           doc: (id?: string) => auditDocRef(id),
           ...makeAuditQuery({}),

@@ -1,8 +1,8 @@
 /**
- * Phase 24.5 — `pa_feature_flags` SDK (P9-Infra)
+ * Phase 24.5 — `pa-feature-flags` SDK (P9-Infra)
  *
  * Single entry point: `getFlag(key, ctx)`. Backed by Firestore at
- * `pa_feature_flags/{key}`, fronted by a 30s TTL in-process Map cache.
+ * `pa-feature-flags/{key}`, fronted by a 30s TTL in-process Map cache.
  *
  * Emergency override: `process.env[key] === "1"` (or `"true"`) short-circuits
  * to legacy `true` BEFORE Firestore read — gives Adam a hot kill switch that
@@ -12,7 +12,7 @@
  * perUser resolution (when scope === "perUser"):
  *   blocklist beats allowlist beats default value (CONTEXT.md success #6).
  *
- * Audit: `setFlag` / `revertFlag` write a `pa_audit_events` row in the same
+ * Audit: `setFlag` / `revertFlag` write a `pa-audit-events` row in the same
  * transaction as the flag write. `getFlag` does NOT audit reads.
  *
  * Cache contract (CONTEXT.md ADR):
@@ -25,8 +25,8 @@
 import { createHash } from "node:crypto"
 import type { Firestore } from "firebase-admin/firestore"
 
-const COLLECTION = "pa_feature_flags"
-const AUDIT_COLLECTION = "pa_audit_events"
+const COLLECTION = "pa-feature-flags"
+const AUDIT_COLLECTION = "pa-audit-events"
 
 export const DEFAULT_TTL_MS = 30_000
 

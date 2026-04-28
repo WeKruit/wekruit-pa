@@ -3,14 +3,14 @@ import type { ChatMessage } from "@pa/core-types"
 
 /**
  * Build chat completion messages.
- * - **Transcript** = recent `pa_messages` as `history` (Firestore is durable storage; the worker passes them in).
+ * - **Transcript** = recent `pa-messages` as `history` (Firestore is durable storage; the worker passes them in).
  * - **memoryBlock** = Mem0-derived “Relevant memory” (only when the agent’s `memoryMode` is `mem0` or `both` and Mem0 succeeds).
  * - Mode `firestore_only` never supplies a `memoryBlock`.
  */
 /**
  * Strip a leading `[YYYY-MM-DDTHH:MM:SS(.sss)?Z]` timestamp marker that the
  * model may have echoed from prior history formatting. Defensive: cleans up
- * any past contamination already persisted in `pa_messages`.
+ * any past contamination already persisted in `pa-messages`.
  */
 export function stripLeadingIsoTimestamp(text: string): string {
   return text.replace(/^\s*\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\]\s*/, "")

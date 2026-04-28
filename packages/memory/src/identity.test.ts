@@ -101,7 +101,7 @@ test("recordDriftIfAny: writes an audit row when keys differ", async () => {
     }
   )
   assert.equal(fake.writes.length, 1)
-  assert.equal(fake.writes[0]!.collection, "pa_audit_events")
+  assert.equal(fake.writes[0]!.collection, "pa-audit-events")
   const row = fake.writes[0]!.data as {
     kind: string
     userId: string

@@ -76,7 +76,7 @@ export const UserSchema = z.object({
   activeAgentId: z.string().optional(),
   /**
    * Phase 11.3 — authoritative for the Mem0/Qdrant payload `user_id`
-   * partition on collection `pa_memory` (semantic memory only). Defaults
+   * partition on collection `pa-memory` (semantic memory only). Defaults
    * to `user.id` when unset. ALL Mem0/Qdrant call sites MUST resolve via
    * `resolveMem0PartitionKey(user)` from `@pa/memory` — never read this
    * field directly. Backfilled to `= id` for legacy users by
@@ -324,7 +324,7 @@ export const MemoryFactSchema = z.object({
    *
    *  - `accessCount`: monotonic counter incremented when the fact is
    *    surfaced/used. Currently advisory; a future writeback path may
-   *    update it from `pa_memory_actions`.
+   *    update it from `pa-memory-actions`.
    *  - `salience`: 0..1 importance hint. Auto-bumped to 1 by the ranker
    *    for identity-bearing or long-term-goal facts (regex-detected at
    *    rank time so legacy rows benefit without backfill).
