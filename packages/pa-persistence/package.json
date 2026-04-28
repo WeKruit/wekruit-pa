@@ -14,7 +14,7 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test src/feature-flags.test.ts src/rate-limit.test.ts src/outbound-quota.test.ts src/voice-reviews.test.ts"
+    "test": "node --import tsx --test src/feature-flags.test.ts src/rate-limit.test.ts src/outbound-quota.test.ts src/voice-reviews.test.ts src/triggers.test.ts src/upstream-events.test.ts"
   },
   "dependencies": {
     "@pa/core-types": "0.0.1",

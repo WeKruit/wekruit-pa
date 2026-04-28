@@ -226,3 +226,51 @@ export {
   formatDailyBucket,
   OUTBOUND_QUOTA_COLLECTION,
 } from "./outbound-quota.js"
+
+// Phase 30 T1 — Downstream Eval Connectors (P9-Connectors).
+export {
+  TRIGGERS_COLLECTION,
+  TRIGGER_FIRES_COLLECTION,
+  listTriggers,
+  getTrigger,
+  saveTrigger,
+  deleteTrigger,
+  evaluateTriggers,
+  checkCooldown,
+  recordFire,
+  listFiresForTrigger,
+  renderPayload,
+  hmacSign,
+  firePostHook,
+  newTriggerId,
+} from "./triggers.js"
+export type {
+  Trigger,
+  TriggerCondition,
+  TriggerConditionKind,
+  TriggerEndpoint,
+  TriggerFireRow,
+  KeywordConditionConfig,
+  LlmJudgeConditionConfig,
+  EvalCtx,
+  MatchedTrigger,
+  FirePostHookOptions,
+  FirePostHookResult,
+  SaveTriggerOpts,
+} from "./triggers.js"
+
+// Phase 31 T1 — Upstream Event Connector schema + helpers (P9-Connectors).
+export {
+  UPSTREAM_TEMPLATES_COLLECTION,
+  UPSTREAM_FIRES_COLLECTION,
+  listTemplates as listUpstreamTemplates,
+  getTemplate as getUpstreamTemplate,
+  getTemplateByEventKind as getUpstreamTemplateByEventKind,
+  saveTemplate as saveUpstreamTemplate,
+  renderTemplate as renderUpstreamTemplate,
+  checkRateLimit as checkUpstreamRateLimit,
+} from "./upstream-events.js"
+export type {
+  UpstreamTemplate,
+  SaveUpstreamTemplateInput,
+} from "./upstream-events.js"
