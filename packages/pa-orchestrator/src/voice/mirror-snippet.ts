@@ -28,8 +28,12 @@ function registerBucket(s: StyleSnapshot): RegisterBucket {
 }
 
 function langBucket(s: StyleSnapshot): LangBucket {
-  if (s.zh_char_ratio >= 0.8) return "zh"
-  if (s.zh_char_ratio <= 0.2) return "en"
+  // Thresholds tuned for code-switch users: any non-trivial zh presence
+  // (>5%) should bias toward mix, not en. Pre-tune was ≥0.8 / ≤0.2 which
+  // mis-classified mixed-language users as English-only when the rolling
+  // window included ASCII admin commands like __PA_RESET__.
+  if (s.zh_char_ratio >= 0.5) return "zh"
+  if (s.zh_char_ratio <= 0.05) return "en"
   return "mix"
 }
 
