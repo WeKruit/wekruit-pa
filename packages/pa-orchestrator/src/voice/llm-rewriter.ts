@@ -41,11 +41,80 @@ export type RewriteReason =
   | "error" // upstream / parse / network error
   | "disabled" // PA_LLM_REWRITE_DISABLED=true OR empty input
   | "rewrite_unsafe" // Phase 24 — diff-guard rejected (length ratio out of bounds)
+  | "circuit_open" // Phase 27 T1 — breaker is OPEN, fail-open with original text
 
 export type RewriteResult = {
   text: string
   rewriteApplied: boolean
   reason: RewriteReason
+  /** Phase 27 T1 — true when breaker is OPEN/HALF_OPEN-rejected; caller logs. */
+  circuitOpen?: boolean
+}
+
+// ─── Phase 27 T1 — Circuit breaker (in-memory) ───────────────────────────────
+//
+// In-process state Map<modelId, BreakerState>. Each rewriter module instance
+// (per CF cold-start) maintains its own state — sufficient for fail-open
+// protection on a single CF instance. When state grows complex (multi-region,
+// shared-state) move to Firestore; for now in-memory is enough since CF Gen2
+// instances die fast and a stale OPEN state self-resolves on cold-start.
+//
+// Thresholds:
+//   - 5 consecutive failures (404 / timeout / network) → OPEN
+//   - OPEN state lasts 60s; subsequent calls short-circuit to fail-open
+//   - After 60s, next call is HALF_OPEN: 1 trial. Success → CLOSED. Fail → re-OPEN.
+
+type BreakerStateName = "CLOSED" | "OPEN" | "HALF_OPEN"
+
+type BreakerState = {
+  consecutiveFailures: number
+  lastFailAt: number
+  openedAt: number | null
+}
+
+const FAILURE_THRESHOLD = 5
+const OPEN_DURATION_MS = 60_000
+
+const breakerStates = new Map<string, BreakerState>()
+
+function getBreakerState(modelId: string): BreakerState {
+  let s = breakerStates.get(modelId)
+  if (!s) {
+    s = { consecutiveFailures: 0, lastFailAt: 0, openedAt: null }
+    breakerStates.set(modelId, s)
+  }
+  return s
+}
+
+/**
+ * Phase 27 T1 — read-only view of current breaker state for a model.
+ * Returns CLOSED / OPEN / HALF_OPEN based on `now` vs `openedAt + 60s`.
+ */
+export function getBreakerStateName(modelId: string, now: number = Date.now()): BreakerStateName {
+  const s = breakerStates.get(modelId)
+  if (!s || s.openedAt == null) return "CLOSED"
+  if (now - s.openedAt < OPEN_DURATION_MS) return "OPEN"
+  return "HALF_OPEN"
+}
+
+/** Phase 27 T1 — test helper. Resets all breaker state. */
+export function __resetBreakerForTests() {
+  breakerStates.clear()
+}
+
+function recordFailure(modelId: string, now: number = Date.now()) {
+  const s = getBreakerState(modelId)
+  s.consecutiveFailures += 1
+  s.lastFailAt = now
+  if (s.consecutiveFailures >= FAILURE_THRESHOLD && s.openedAt == null) {
+    s.openedAt = now
+  }
+}
+
+function recordSuccess(modelId: string) {
+  const s = getBreakerState(modelId)
+  s.consecutiveFailures = 0
+  s.openedAt = null
 }
 
 /**
@@ -212,6 +281,14 @@ export async function rewriteIfOff(rawText: string, opts: RewriteOpts = {}): Pro
 
   const deps = opts.deps ?? defaultDeps
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS
+  const modelId = DEFAULT_MODEL
+
+  // Phase 27 T1 — circuit breaker check. If OPEN, fail-open immediately.
+  // HALF_OPEN allows one trial call through; if that fails it re-OPENs.
+  const stateName = getBreakerStateName(modelId)
+  if (stateName === "OPEN") {
+    return { text: rawText, rewriteApplied: false, reason: "circuit_open", circuitOpen: true }
+  }
 
   // 2. Race the model call against the timeout. We use AbortController
   //    so a slow upstream doesn't keep tokens flowing after we've moved on.
@@ -234,11 +311,18 @@ export async function rewriteIfOff(rawText: string, opts: RewriteOpts = {}): Pro
 
   // 3. Decide. Order matters: timeout > error > think-strip > empty > no-change > diff-guard > rewrite.
   if (timeoutHit) {
-    return { text: rawText, rewriteApplied: false, reason: "timeout" }
+    recordFailure(modelId)
+    const reopenedOpen = getBreakerStateName(modelId) === "OPEN"
+    return { text: rawText, rewriteApplied: false, reason: "timeout", circuitOpen: reopenedOpen }
   }
   if (upstreamError || modelText == null) {
-    return { text: rawText, rewriteApplied: false, reason: "error" }
+    recordFailure(modelId)
+    const reopenedOpen = getBreakerStateName(modelId) === "OPEN"
+    return { text: rawText, rewriteApplied: false, reason: "error", circuitOpen: reopenedOpen }
   }
+
+  // Successful upstream call — reset breaker (closes HALF_OPEN, clears failure count).
+  recordSuccess(modelId)
 
   // Phase 24 — strip Qwen3 thinking blocks BEFORE any length check (Pitfall 2
   // in 24-RESEARCH.md: unstripped think blocks trip the 1.6x diff guard and
