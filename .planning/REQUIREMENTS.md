@@ -23,11 +23,11 @@
 
 ### ADAPT — Adaptive Mirror Layer
 
-- [ ] **ADAPT-01**: Per-turn user-style analyzer extracts register / language ratio / emoji frequency / length from user's last 3-5 turns.
-- [ ] **ADAPT-02**: Dynamic mirror snippet (Meta AI WhatsApp pattern: *"match user style; if formal, formal; if slangy, slangy"*) injected post-history per turn.
-- [ ] **ADAPT-03**: Long-term style preferences (e.g. "user uses zh-en code-switch", "user emo-coded vocab") accumulated in mem0 and re-injected via persona card extension.
-- [ ] **ADAPT-04**: Mirror layer kill switch (`PA_VOICE_MIRROR_DISABLED=true`) for rollback.
-- [ ] **ADAPT-05**: Eval scenario for mirror — turn 1 user formal → PA formal; turn 2 user slangy → PA slangy.
+- [x] **ADAPT-01**: Per-turn user-style analyzer extracts register / language ratio / emoji frequency / length from user's last 3-5 turns.
+- [x] **ADAPT-02**: Dynamic mirror snippet (Meta AI WhatsApp pattern: *"match user style; if formal, formal; if slangy, slangy"*) injected post-history per turn.
+- [x] **ADAPT-03**: Long-term style preferences (e.g. "user uses zh-en code-switch", "user emo-coded vocab") accumulated in mem0 and re-injected via persona card extension.
+- [x] **ADAPT-04**: Mirror layer kill switch (`PA_VOICE_MIRROR_DISABLED=true`) for rollback.
+- [x] **ADAPT-05**: Eval scenario for mirror — turn 1 user formal → PA formal; turn 2 user slangy → PA slangy.
 
 ### NORM — Output Normalization
 

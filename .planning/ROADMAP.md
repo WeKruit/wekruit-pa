@@ -32,7 +32,7 @@ This roadmap is intentionally numeric so GSD phase tooling can discover and exec
 | # | Phase | Goal | Requirements | Status |
 |---|-------|------|--------------|--------|
 | 18 | Companion Voice v1 (static base) | Rewrite system prompt using Snapchat MyAI skeleton + Tendera "facts as voice" + first_mes/mes_example anchors; stays on gpt-5.4-nano. Eval rubric extended with 4 voice axes. | VOICE-01..VOICE-10 | Not started |
-| 19 | Adaptive Mirror Layer | Per-turn user-style analyzer + dynamic mirror snippet injection + long-term mem0 preference learning. | ADAPT-01..ADAPT-05 | Not started |
+| 19 | Adaptive Mirror Layer | 1/1 | Complete   | 2026-04-28 |
 | 20 | Output Normalizer | Channel-agnostic post-LLM normalization (strip markdown, UTM, length cap) at orchestrator exit. Eval gains 5th axis `iMessage_render_safe`. | NORM-01..NORM-08 | Not started |
 | 21 | Sendblue Channel Migration | CF webhook handler + REST send + allowlist moves to webhook handler; deprecate macos-imessage-worker. Eliminates single-host risk + Apple-ID exposure. | CHANNEL-01..CHANNEL-09 | Not started |
 | 22 | Proactive Check-in (revived from skipped Phase 12) | Dashboard `/triggers` UI + `pa_scheduled_jobs` cron + orchestrator proactive-turn path using Voice v1. **Hard dependency on Phase 18 ship.** | PROACTIVE-01..PROACTIVE-07 | Not started |
@@ -272,7 +272,7 @@ Requirements: CHANNEL-01, CHANNEL-02, CHANNEL-03, CHANNEL-04, CHANNEL-05, CHANNE
 6. `apps/macos-imessage-worker/` behind `PA_CHANNEL_LEGACY=1` flag for one milestone, then removed.
 7. Real Sendblue sandbox round-trip smoke <30s p95 (webhook → orchestrator → REST send → iMessage delivery).
 
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 
 Plans:
 - [ ] 21-01-PLAN.md — paSendblueWebhook + paSendblueOutbox CF + allowlist port + secret manager + chunker dormancy + cutover runbook

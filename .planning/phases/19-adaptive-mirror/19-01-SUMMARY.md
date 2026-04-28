@@ -205,3 +205,4 @@ Commits verified on main:
 - a52a5b9 — Task 3 (orchestrator wiring + kill switch, ADAPT-02 + ADAPT-04)
 - e56bceb — Task 4 (mem0 + persona-card extension, ADAPT-03)
 - 4b004c6 — Task 5 (orchestrator write + E2E scenario, ADAPT-04 + ADAPT-05)
+- caf8e94 — Post-task fix: langBucket threshold commit (mirror-snippet.ts source; test was already fixed in 1ae0de4)
