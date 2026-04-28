@@ -53,7 +53,10 @@ export type ClearUserMemoryResult = {
   firestore: Record<string, number>
 }
 
-const DEFAULT_QDRANT_COLLECTION = "pa-memory"
+// mem0/Qdrant convention — snake_case. Live Qdrant collection is
+// `pa_memory`; Firestore (separate system) uses kebab. Do NOT change
+// without migrating Qdrant points.
+const DEFAULT_QDRANT_COLLECTION = "pa_memory"
 
 function noop() {}
 

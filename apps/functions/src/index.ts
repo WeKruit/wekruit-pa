@@ -82,7 +82,8 @@ const SILICONFLOW_API_KEY = defineSecret("SILICONFLOW_API_KEY")
 const PA_OPENAI_AGENT_API_KEY = defineSecret("PA_OPENAI_AGENT_API_KEY")
 const QDRANT_URL = defineSecret("QDRANT_URL")
 const QDRANT_API_KEY = defineSecret("QDRANT_API_KEY")
-const QDRANT_COLLECTION = "pa-memory"
+// mem0/Qdrant convention — snake_case (NOT kebab).
+const QDRANT_COLLECTION = "pa_memory"
 
 type BrokerImessageEvent = {
   id: string

@@ -1011,7 +1011,9 @@ export async function migrateCollections(
 // counts on both stores, returns JSON, no writes.
 
 const DRIFT_FS_COLLECTION = "pa-memory-facts"
-const DRIFT_QDRANT_COLLECTION = "pa-memory"
+// mem0/Qdrant convention — snake_case (NOT kebab). Live Qdrant collection
+// is `pa_memory`; Firestore source-of-truth is `pa-memory-facts`.
+const DRIFT_QDRANT_COLLECTION = "pa_memory"
 const DRIFT_OK_THRESHOLD = 0.005
 const DRIFT_WARN_THRESHOLD = 0.01
 
