@@ -32,6 +32,9 @@ import { createHash, randomUUID } from "node:crypto"
 import { handleSendblueWebhook } from "./sendblue/webhook.js"
 import { paSendblueOutboxHandler } from "./sendblue/outbox.js"
 
+// Phase 31 — Upstream Event Connector
+import { handleUpstreamEventWebhook } from "./upstream-event-webhook.js"
+
 // Phase 22 — proactive check-in sweep
 export { paProactiveSweep } from "./proactive-sweep.js"
 
@@ -77,6 +80,12 @@ const SENDBLUE_API_KEY_ID = defineSecret("SENDBLUE_API_KEY_ID")
 const SENDBLUE_API_SECRET_KEY = defineSecret("SENDBLUE_API_SECRET_KEY")
 const SENDBLUE_WEBHOOK_SIGNING_SECRET = defineSecret("SENDBLUE_WEBHOOK_SIGNING_SECRET")
 const SENDBLUE_FROM_NUMBER = defineSecret("SENDBLUE_FROM_NUMBER")
+
+// Phase 31 — Upstream Event Connector HMAC shared secret. Distinct from
+// Sendblue secrets so a compromised upstream partner cannot forge inbound
+// Sendblue traffic (and vice versa). Set via:
+//   echo "$TOKEN" | firebase functions:secrets:set PA_UPSTREAM_HMAC_SECRET --data-file=-
+const PA_UPSTREAM_HMAC_SECRET = defineSecret("PA_UPSTREAM_HMAC_SECRET")
 
 const SILICONFLOW_API_KEY = defineSecret("SILICONFLOW_API_KEY")
 const PA_OPENAI_AGENT_API_KEY = defineSecret("PA_OPENAI_AGENT_API_KEY")
@@ -693,3 +702,61 @@ export const paSendblueOutbox = onDocumentCreated(
     )
   }
 )
+
+// =============================================================================
+// Phase 31 — Upstream Event Connector
+// =============================================================================
+//
+// External partners POST signed events to /paUpstreamEventWebhook. The
+// handler verifies HMAC, looks up a matching template, gates on the
+// `upstreamConnectorEnabled` flag, applies a per-(template,user) hourly
+// rate limit, renders the template, and enqueues `pa-outbound`. The
+// existing paSendblueOutbox CF then sends the message via Sendblue.
+
+export const paUpstreamEventWebhook = onRequest(
+  {
+    region: "us-central1",
+    secrets: [PA_UPSTREAM_HMAC_SECRET],
+    memory: "256MiB",
+    timeoutSeconds: 60,
+    cors: false,
+  },
+  async (req, res) => {
+    try {
+      await handleUpstreamEventWebhook(
+        {
+          rawBody: req.rawBody,
+          body: req.body,
+          headers: req.headers as Record<string, string | string[] | undefined>,
+          method: req.method,
+          header: (n: string) => req.header(n) ?? undefined,
+        },
+        {
+          status(code: number) {
+            res.status(code)
+            return this
+          },
+          json(body: unknown) {
+            res.json(body)
+            return this
+          },
+        },
+        {
+          db: getFirestore(),
+          secret: PA_UPSTREAM_HMAC_SECRET.value(),
+          log: (...args: unknown[]) => logger.info("[upstream-webhook]", ...args),
+        }
+      )
+    } catch (err) {
+      logger.error("paUpstreamEventWebhook fatal", {
+        error: err instanceof Error ? err.message : String(err),
+      })
+      if (!res.headersSent) res.status(500).json({ ok: false, error: "internal" })
+    }
+  }
+)
+
+export const paHealthUpstreamEventWebhook = makeHealthHandler({
+  name: "paUpstreamEventWebhook",
+  requiredSecrets: ["PA_UPSTREAM_HMAC_SECRET"],
+})
