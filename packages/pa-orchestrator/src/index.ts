@@ -830,6 +830,15 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
         })
       }
     }
+    // Phase 26 T3 — emit structured cost log (P9-Prod-Ops). Cloud Logging
+    // aggregates this via the user-defined metric `pa.spend.daily`
+    // (definition: infra/cloud-logging/README.md). The matching emitter
+    // helper for non-orchestrator call sites is
+    // `apps/functions/src/instrumentation/cost-logger.ts`.
+    if (usage) {
+      const u = usage as Record<string, unknown>
+      store.log("pa.spend.daily", { "pa.metric": "pa.spend.daily", model: String((agent as { modelId?: string }).modelId ?? "unknown"), inputTokens: Number(u.inputTokens ?? 0), outputTokens: Number(u.outputTokens ?? 0), turnId, userId: event.userId })
+    }
     // Phase 10.5 T9 — persist token usage on the turn doc. Filter undefined
     // fields (Phase 10 bug #2 pattern) so Firestore never sees a literal
     // undefined value. Synthetic pa_tool_calls rows for hosted web_search

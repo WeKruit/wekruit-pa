@@ -1,0 +1,36 @@
+# Phase 26 T3 — Cloud Monitoring alert policy (P9-Prod-Ops).
+#
+# Triggers when daily LLM spend exceeds $10. Spend is fed by structured
+# logs emitted from `apps/functions/src/instrumentation/cost-logger.ts`
+# (label `pa.metric=pa.spend.daily`). Operator must materialize the
+# log-based metric BEFORE applying this policy — see README.md.
+
+displayName: "PA daily LLM spend > $10"
+documentation:
+  content: |
+    Daily aggregate `pa.spend.daily` log-based metric exceeded $10/day.
+    Investigate via Cloud Logging filter:
+      jsonPayload."pa.metric"="pa.spend.daily"
+    Common causes: runaway prompt loop, voice eval auto-rerun stuck on,
+    or a misconfigured token-cost mapping in cost-logger.ts.
+  mimeType: "text/markdown"
+combiner: OR
+conditions:
+  - displayName: "Daily LLM spend exceeds $10"
+    conditionThreshold:
+      filter: |
+        metric.type = "logging.googleapis.com/user/pa.spend.daily"
+        AND resource.type = "cloud_function"
+      comparison: COMPARISON_GT
+      thresholdValue: 10
+      duration: 300s
+      aggregations:
+        - alignmentPeriod: 86400s
+          perSeriesAligner: ALIGN_SUM
+          crossSeriesReducer: REDUCE_SUM
+      trigger:
+        count: 1
+alertStrategy:
+  autoClose: 604800s  # 7 days
+notificationChannels: []  # operator wires `gcloud alpha monitoring channels list` IDs post-create
+enabled: true

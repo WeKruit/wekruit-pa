@@ -1,0 +1,144 @@
+{
+  "displayName": "PA — Productionization (Phase 26)",
+  "mosaicLayout": {
+    "columns": 12,
+    "tiles": [
+      {
+        "yPos": 0,
+        "xPos": 0,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "onPaInbound — latency p50/p95",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "metric.type=\"cloudfunctions.googleapis.com/function/execution_times\" AND resource.type=\"cloud_function\" AND resource.label.\"function_name\"=\"onPaInbound\"",
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "perSeriesAligner": "ALIGN_PERCENTILE_50",
+                      "crossSeriesReducer": "REDUCE_MEAN"
+                    }
+                  },
+                  "unitOverride": "ms"
+                },
+                "plotType": "LINE"
+              },
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "metric.type=\"cloudfunctions.googleapis.com/function/execution_times\" AND resource.type=\"cloud_function\" AND resource.label.\"function_name\"=\"onPaInbound\"",
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "perSeriesAligner": "ALIGN_PERCENTILE_95",
+                      "crossSeriesReducer": "REDUCE_MEAN"
+                    }
+                  },
+                  "unitOverride": "ms"
+                },
+                "plotType": "LINE"
+              }
+            ],
+            "timeshiftDuration": "0s",
+            "yAxis": { "label": "ms", "scale": "LINEAR" }
+          }
+        }
+      },
+      {
+        "yPos": 0,
+        "xPos": 6,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "paSendblueWebhook — latency p50/p95",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "metric.type=\"cloudfunctions.googleapis.com/function/execution_times\" AND resource.type=\"cloud_function\" AND resource.label.\"function_name\"=\"paSendblueWebhook\"",
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "perSeriesAligner": "ALIGN_PERCENTILE_50",
+                      "crossSeriesReducer": "REDUCE_MEAN"
+                    }
+                  }
+                },
+                "plotType": "LINE"
+              },
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "metric.type=\"cloudfunctions.googleapis.com/function/execution_times\" AND resource.type=\"cloud_function\" AND resource.label.\"function_name\"=\"paSendblueWebhook\"",
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "perSeriesAligner": "ALIGN_PERCENTILE_95",
+                      "crossSeriesReducer": "REDUCE_MEAN"
+                    }
+                  }
+                },
+                "plotType": "LINE"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "yPos": 4,
+        "xPos": 0,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "Cloud Functions — error rate (5xx + crashes)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "metric.type=\"cloudfunctions.googleapis.com/function/execution_count\" AND resource.type=\"cloud_function\" AND metric.label.\"status\"!=\"ok\"",
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "perSeriesAligner": "ALIGN_RATE",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "groupByFields": ["resource.label.\"function_name\""]
+                    }
+                  }
+                },
+                "plotType": "STACKED_AREA"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "yPos": 4,
+        "xPos": 6,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "LLM spend — daily USD (pa.spend.daily)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "metric.type=\"logging.googleapis.com/user/pa.spend.daily\"",
+                    "aggregation": {
+                      "alignmentPeriod": "3600s",
+                      "perSeriesAligner": "ALIGN_SUM",
+                      "crossSeriesReducer": "REDUCE_SUM"
+                    }
+                  },
+                  "unitOverride": "USD"
+                },
+                "plotType": "LINE"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}
