@@ -54,13 +54,13 @@
 
 ### PROACTIVE — Proactive Check-in (revived from skipped Phase 12)
 
-- [ ] **PROACTIVE-01**: Dashboard `/triggers` page — CRUD for user's proactive triggers (time anchor, silence anchor, application follow-up).
-- [ ] **PROACTIVE-02**: `pa_scheduled_jobs` schema fields: `userId`, `triggerType`, `nextFireAt`, `recurrence`, `context`, `status`.
-- [ ] **PROACTIVE-03**: New CF `paProactiveSweep` (Cloud Scheduler 1-min cron) — query `status=pending && nextFireAt<=now`, dispatch.
-- [ ] **PROACTIVE-04**: Orchestrator gains "proactive turn" path — synthetic system input ("trigger fired: <context>") routes through Voice v1 prompt, NOT a separate utility prompt.
-- [ ] **PROACTIVE-05**: Idempotency — same trigger × fireWindow doesn't double-send.
-- [ ] **PROACTIVE-06**: User can cancel triggers via iMessage NLU ("停止提醒" / "stop reminders") — orchestrator detects and updates trigger status.
-- [ ] **PROACTIVE-07**: E2E scenario test for each trigger type.
+- [x] **PROACTIVE-01**: Dashboard `/triggers` page — CRUD for user's proactive triggers (time anchor, silence anchor, application follow-up).
+- [x] **PROACTIVE-02**: `pa_scheduled_jobs` schema fields: `userId`, `triggerType`, `nextFireAt`, `recurrence`, `context`, `status`.
+- [x] **PROACTIVE-03**: New CF `paProactiveSweep` (Cloud Scheduler 1-min cron) — query `status=pending && nextFireAt<=now`, dispatch.
+- [x] **PROACTIVE-04**: Orchestrator gains "proactive turn" path — synthetic system input ("trigger fired: <context>") routes through Voice v1 prompt, NOT a separate utility prompt.
+- [x] **PROACTIVE-05**: Idempotency — same trigger × fireWindow doesn't double-send.
+- [x] **PROACTIVE-06**: User can cancel triggers via iMessage NLU ("停止提醒" / "stop reminders") — orchestrator detects and updates trigger status.
+- [x] **PROACTIVE-07**: E2E scenario test for each trigger type.
 
 ### BETA — Closed Beta Onboarding + Safety
 

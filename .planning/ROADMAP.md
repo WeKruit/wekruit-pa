@@ -35,7 +35,7 @@ This roadmap is intentionally numeric so GSD phase tooling can discover and exec
 | 19 | Adaptive Mirror Layer | 1/1 | Complete   | 2026-04-28 |
 | 20 | Output Normalizer | Channel-agnostic post-LLM normalization (strip markdown, UTM, length cap) at orchestrator exit. Eval gains 5th axis `iMessage_render_safe`. | NORM-01..NORM-08 | Not started |
 | 21 | Sendblue Channel Migration | CF webhook handler + REST send + allowlist moves to webhook handler; deprecate macos-imessage-worker. Eliminates single-host risk + Apple-ID exposure. | CHANNEL-01..CHANNEL-09 | Not started |
-| 22 | Proactive Check-in (revived from skipped Phase 12) | Dashboard `/triggers` UI + `pa_scheduled_jobs` cron + orchestrator proactive-turn path using Voice v1. **Hard dependency on Phase 18 ship.** | PROACTIVE-01..PROACTIVE-07 | Not started |
+| 22 | Proactive Check-in (revived from skipped Phase 12) | 1/1 | Complete   | 2026-04-28 |
 | 23 | Closed Beta Onboarding + Safety | Onboarding flow for 20 hand-picked users; abuse signal producers wired (rate-limit / injection / allowlist-deny → `pa_abuse_events`); allowlist UI in dashboard. | BETA-01..BETA-05 | Not started |
 
 ## Milestone v1.2 — Voice 拟人化 (Anti-油腻) + Eval Foundation
@@ -292,8 +292,8 @@ Requirements: PROACTIVE-01, PROACTIVE-02, PROACTIVE-03, PROACTIVE-04, PROACTIVE-
 6. User can cancel triggers via iMessage NLU ("停止提醒" / "stop reminders"); orchestrator detects + updates trigger status.
 7. E2E scenario test for each of 3 trigger types.
 
-**Plans:** 1 plan
-- [ ] 22-PLAN.md — pa_scheduled_jobs schema + paProactiveSweep CF + /triggers dashboard + orchestrator proactive turn (Voice v1 reuse) + cancellation NLU + 3 E2E trigger scenarios
+**Plans:** 1/1 plans complete
+- [x] 22-PLAN.md — pa_scheduled_jobs schema + paProactiveSweep CF + /triggers dashboard + orchestrator proactive turn (Voice v1 reuse) + cancellation NLU + 3 E2E trigger scenarios
 
 ## Phase 23: Closed Beta Onboarding + Safety
 
