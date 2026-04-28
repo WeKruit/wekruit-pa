@@ -35,6 +35,9 @@ import { paSendblueOutboxHandler } from "./sendblue/outbox.js"
 // Phase 22 — proactive check-in sweep
 export { paProactiveSweep } from "./proactive-sweep.js"
 
+// Phase 24.5 — admin bootstrap (seed flags via PA_ADMIN_TOKEN, bypass local gcloud ADC)
+export { paAdminBootstrap } from "./admin-bootstrap.js"
+
 if (!getApps().length) initializeApp()
 
 setGlobalOptions({ region: "us-central1" })

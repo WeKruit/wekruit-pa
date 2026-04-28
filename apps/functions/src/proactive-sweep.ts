@@ -262,9 +262,12 @@ export type AdminAuthResult =
 
 /** Validate `x-admin-token` header against PA_ADMIN_TOKEN env. Pure & testable. */
 export function checkAdminToken(headerToken: string | undefined): AdminAuthResult {
-  const expected = process.env.PA_ADMIN_TOKEN
+  // Firebase Secret Manager preserves trailing newlines — trim both sides.
+  const expectedRaw = process.env.PA_ADMIN_TOKEN
+  const expected = expectedRaw ? expectedRaw.trim() : ""
   if (!expected) return { ok: false, status: 503, error: "admin token not configured" }
-  if (!headerToken || headerToken !== expected) return { ok: false, status: 401, error: "unauthorized" }
+  const provTrim = (headerToken ?? "").trim()
+  if (!provTrim || provTrim !== expected) return { ok: false, status: 401, error: "unauthorized" }
   return { ok: true }
 }
 
