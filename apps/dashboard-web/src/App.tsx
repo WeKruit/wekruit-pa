@@ -13,6 +13,7 @@ import { Abuse } from "./pages/Abuse.js"
 import { Beta } from "./pages/Beta.js"
 import { Flags } from "./pages/Flags.js"
 import { Triggers } from "./pages/Triggers.js"
+import { Voice } from "./pages/Voice.js"
 import { auth } from "./lib/firebase.js"
 
 export default function App() {
@@ -62,6 +63,7 @@ export default function App() {
         <NavLink to="/abuse">Abuse</NavLink>
         <NavLink to="/triggers">Triggers</NavLink>
         <NavLink to="/admin/flags">Flags</NavLink>
+        <NavLink to="/voice">Voice</NavLink>
         <NavLink to="/playground">E2E Lab</NavLink>
         <button
           type="button"
@@ -83,6 +85,7 @@ export default function App() {
           <Route path="/abuse" element={<Abuse />} />
           <Route path="/triggers" element={<Triggers />} />
           <Route path="/admin/flags" element={<Flags />} />
+          <Route path="/voice" element={<Voice />} />
           <Route path="/playground" element={<Playground />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

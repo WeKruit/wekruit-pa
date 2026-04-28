@@ -26,7 +26,8 @@ import { useDmAllowlist, getPeerAllowlist, isSamePeer, normalizePeer } from "./a
 import { SendblueClientError, SendblueServerError, sendImessage as defaultSendImessage } from "./sendblue-client.js"
 import { sendTypingIndicator as defaultSendTypingIndicator, computeTypingDwellMs } from "./typing-indicator.js"
 import type { SendblueSendResponse } from "./types.js"
-import { getFlag } from "@pa/pa-persistence"
+import { getFlag, getDailyOutboundCount, incrementDailyOutbound } from "@pa/pa-persistence"
+import { recordAuditEvent } from "./audit.js"
 
 const OUT = PA_COLLECTIONS.outbound
 
@@ -223,6 +224,18 @@ export async function paSendblueOutboxHandler(
     }
   }
 
+  // ---- 5b. Daily-quota gate (Phase 26 T2, flag-driven limit) -----------
+  const quotaLimit = Number(await getFlag(deps.db, "sendblueDailyQuota", { env: process.env }, 1000))
+  const currentCount = await getDailyOutboundCount(deps.db, now())
+  if (currentCount >= quotaLimit) {
+    try { await recordAuditEvent(deps.db, { type: "quota_hardblock", channel: "imessage_sendblue", toNumber: toPeer, reason: `count=${currentCount} limit=${quotaLimit}` }) } catch {}
+    await ref.set({ status: "failed", error: `sendblue daily quota reached (${currentCount}/${quotaLimit})`, updatedAt: now().toISOString() }, { merge: true })
+    return
+  }
+  if (currentCount >= Math.floor(quotaLimit * 0.8)) {
+    try { await recordAuditEvent(deps.db, { type: "quota_soft", channel: "imessage_sendblue", toNumber: toPeer, reason: `count=${currentCount} limit=${quotaLimit}` }) } catch {}
+  }
+
   // ---- 6. POST Sendblue REST -------------------------------------------
   try {
     const response: SendblueSendResponse = await deps.sendblueClient.sendImessage({
@@ -240,6 +253,7 @@ export async function paSendblueOutboxHandler(
       },
       { merge: true }
     )
+    try { await incrementDailyOutbound(deps.db, now()) } catch {}
     log("[sendblue][outbox] sent", { docId, toPeer, messageHandle })
     return
   } catch (err) {

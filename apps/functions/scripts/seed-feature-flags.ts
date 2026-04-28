@@ -39,8 +39,8 @@ const ADAM_TEST_USER_ID = process.env.PA_ADMIN_USER_ID ?? "ADAM_TEST_USER_ID_TBD
 
 interface FlagSpec {
   key: string
-  value: boolean
-  type: "bool"
+  value: boolean | number
+  type: "bool" | "number"
   scope: "global" | "perUser"
   allowlist: string[]
   blocklist: string[]
@@ -92,6 +92,18 @@ const SEED_FLAGS: FlagSpec[] = [
     key: "voiceEvalAutoRerun",
     value: false,
     type: "bool",
+    scope: "global",
+    allowlist: [],
+    blocklist: [],
+  },
+  // Phase 26 T2 — Sendblue daily-outbound quota (P9-Prod-Ops). Number-typed
+  // flag: outbox compares `pa_outbound_daily/{YYYYMMDD}` count to this value
+  // and blocks at 100%, soft-warns at 80%. Default 1000 = Sendblue Free
+  // tier assumption (confirm with Sendblue support before public launch).
+  {
+    key: "sendblueDailyQuota",
+    value: 1000,
+    type: "number",
     scope: "global",
     allowlist: [],
     blocklist: [],

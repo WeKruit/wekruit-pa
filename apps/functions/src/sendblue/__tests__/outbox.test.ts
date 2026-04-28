@@ -8,15 +8,54 @@ import { SendblueClientError, SendblueServerError } from "../sendblue-client.js"
 
 type DocData = Record<string, unknown>
 
-function makeFakeDb(initialOutbound: Record<string, DocData> = {}, users: Record<string, DocData> = {}) {
+function makeFakeDb(
+  initialOutbound: Record<string, DocData> = {},
+  users: Record<string, DocData> = {},
+  opts: { quotaLimit?: number; existingDailyCount?: number } = {}
+) {
   const outbound = new Map<string, DocData>(Object.entries(initialOutbound))
   const sessions = new Map<string, DocData>()
   const messages = new Map<string, DocData>()
   const usersMap = new Map<string, DocData>(Object.entries(users))
+  const flags = new Map<string, DocData>()
+  const audit: DocData[] = []
+  const outboundDaily = new Map<string, DocData>()
+
+  if (opts.quotaLimit != null) {
+    flags.set("sendblueDailyQuota", {
+      key: "sendblueDailyQuota",
+      value: opts.quotaLimit,
+      type: "number",
+      scope: "global",
+      allowlist: [],
+      blocklist: [],
+    })
+  }
+  if (opts.existingDailyCount != null) {
+    // Today's bucket. Test pin via now() in handler.
+    const today = new Date()
+    const y = today.getUTCFullYear().toString().padStart(4, "0")
+    const m = (today.getUTCMonth() + 1).toString().padStart(2, "0")
+    const d = today.getUTCDate().toString().padStart(2, "0")
+    outboundDaily.set(`${y}${m}${d}`, { count: opts.existingDailyCount })
+  }
+
+  function pickStore(coll: string): Map<string, DocData> {
+    switch (coll) {
+      case "pa_outbound": return outbound
+      case "pa_sessions": return sessions
+      case "pa_messages": return messages
+      case "pa_feature_flags": return flags
+      case "pa_outbound_daily": return outboundDaily
+      default: return usersMap
+    }
+  }
 
   function makeDocRef(coll: string, id: string) {
-    const store = coll === "pa_outbound" ? outbound : coll === "pa_sessions" ? sessions : coll === "pa_messages" ? messages : usersMap
+    const store = pickStore(coll)
     return {
+      _store: store,
+      _id: id,
       async get() {
         const data = store.get(id)
         return { exists: data !== undefined, data: () => data, id }
@@ -40,6 +79,13 @@ function makeFakeDb(initialOutbound: Record<string, DocData> = {}, users: Record
         doc(id: string) {
           return makeDocRef(name, id)
         },
+        add(data: DocData) {
+          if (name === "pa_audit_events") {
+            audit.push({ ...data })
+            return Promise.resolve({ id: `audit_${audit.length}` })
+          }
+          return Promise.resolve({ id: "x" })
+        },
         where() {
           return this
         },
@@ -56,16 +102,23 @@ function makeFakeDb(initialOutbound: Record<string, DocData> = {}, users: Record
         async get(ref: { get(): Promise<{ exists: boolean; data: () => DocData | undefined; id: string }> }) {
           return ref.get()
         },
-        update(ref: { update(d: DocData): Promise<void> }, data: DocData) {
-          // sync wrapper of async update
-          void ref.update(data)
+        update(ref: { _store?: Map<string, DocData>; _id?: string; update?: (d: DocData) => Promise<void> }, data: DocData) {
+          if (ref._store && ref._id) {
+            ref._store.set(ref._id, { ...(ref._store.get(ref._id) ?? {}), ...data })
+          } else if (ref.update) {
+            void ref.update(data)
+          }
+          return undefined
+        },
+        set(ref: { _store?: Map<string, DocData>; _id?: string }, data: DocData) {
+          if (ref._store && ref._id) ref._store.set(ref._id, { ...data })
           return undefined
         },
       }
       return fn(t)
     },
   }
-  return { db, outbound, messages, sessions }
+  return { db, outbound, messages, sessions, audit, outboundDaily }
 }
 
 // Sendblue client mock
@@ -396,5 +449,69 @@ describe("paSendblueOutboxHandler", () => {
     assert.equal(shouldAppendOutboundTranscript({ idempotencyKey: "out-sendblue-abc" }), false)
     assert.equal(shouldAppendOutboundTranscript({ idempotencyKey: "outbox-msg-doc-1" }), true)
     assert.equal(shouldAppendOutboundTranscript({ idempotencyKey: "any-other" }), true)
+  })
+
+  it("Test 10 (Phase 26 T2): existing count at 80% → soft-warn audit, send still proceeds", async () => {
+    // Reset feature-flag cache so the per-test flags map is consulted.
+    const { _clearFeatureFlagCache } = await import("@pa/pa-persistence")
+    _clearFeatureFlagCache()
+    const baseRow: DocData = {
+      status: "pending",
+      userId: USER.id,
+      toE164: ALLOWED_PEER,
+      body: "hello",
+      idempotencyKey: "out-quota-soft",
+      createdAt: new Date().toISOString(),
+    }
+    const { db, outbound, audit } = makeFakeDb(
+      { "doc-soft": baseRow },
+      {},
+      { quotaLimit: 1000, existingDailyCount: 800 }
+    )
+    const sb = makeSendblueMock()
+    await paSendblueOutboxHandler(makeEvent("doc-soft", baseRow) as never, {
+      db: db as never,
+      sendblueClient: sb,
+      now: () => new Date(),
+      log: () => {},
+      appendMessage: async () => {},
+      getUser: async () => USER as never,
+      getOrCreateSession: async () => ({ id: "s-1" } as never),
+    })
+    assert.equal(sb.calls, 1)
+    assert.equal(outbound.get("doc-soft")!.status, "sent")
+    assert.ok(audit.some((a) => a.type === "quota_soft"), "expected quota_soft audit row")
+  })
+
+  it("Test 11 (Phase 26 T2): existing count at 100% → hard-block, NO send, audit emitted", async () => {
+    const { _clearFeatureFlagCache } = await import("@pa/pa-persistence")
+    _clearFeatureFlagCache()
+    const baseRow: DocData = {
+      status: "pending",
+      userId: USER.id,
+      toE164: ALLOWED_PEER,
+      body: "hello",
+      idempotencyKey: "out-quota-hard",
+      createdAt: new Date().toISOString(),
+    }
+    const { db, outbound, audit } = makeFakeDb(
+      { "doc-hard": baseRow },
+      {},
+      { quotaLimit: 1000, existingDailyCount: 1000 }
+    )
+    const sb = makeSendblueMock()
+    await paSendblueOutboxHandler(makeEvent("doc-hard", baseRow) as never, {
+      db: db as never,
+      sendblueClient: sb,
+      now: () => new Date(),
+      log: () => {},
+      appendMessage: async () => {},
+      getUser: async () => USER as never,
+      getOrCreateSession: async () => ({ id: "s-1" } as never),
+    })
+    assert.equal(sb.calls, 0)
+    assert.equal(outbound.get("doc-hard")!.status, "failed")
+    assert.match(String(outbound.get("doc-hard")!.error), /quota/)
+    assert.ok(audit.some((a) => a.type === "quota_hardblock"), "expected quota_hardblock audit row")
   })
 })
