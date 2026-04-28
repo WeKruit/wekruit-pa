@@ -52,6 +52,22 @@ import { listFlags, type FeatureFlag } from "../lib/flags-api.js"
 
 const PAGE_SIZE = 50
 
+type LangFilter = "all" | "zh" | "en" | "mix"
+
+function detectLang(text: string): "zh" | "en" | "mix" {
+  if (!text) return "en"
+  const total = text.length
+  let zhChars = 0
+  for (const ch of text) {
+    const code = ch.codePointAt(0) ?? 0
+    if (code >= 0x4e00 && code <= 0x9fff) zhChars++
+  }
+  const ratio = zhChars / total
+  if (ratio >= 0.5) return "zh"
+  if (ratio <= 0.05) return "en"
+  return "mix"
+}
+
 type RowState = {
   rating: VoiceRating | null
   tags: VoiceReviewTag[]
@@ -94,6 +110,7 @@ export function Voice() {
   const [pageIndex, setPageIndex] = useState(0)
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [focusIdx, setFocusIdx] = useState(0)
+  const [langFilter, setLangFilter] = useState<LangFilter>("all")
 
   const rowRefs = useRef<Array<HTMLDivElement | null>>([])
   const commentRefs = useRef<Array<HTMLTextAreaElement | null>>([])
@@ -228,14 +245,15 @@ export function Voice() {
           ...p,
           [turn.messageId]: { ...st, saveState: "saved", saveError: null },
         }))
-        // Jump to next unreviewed row.
-        const nextIdx = rows.findIndex(
+        // Jump to next unreviewed row in current filtered view.
+        const visible = filteredRows
+        const nextIdx = visible.findIndex(
           (r, i) => i > idx && !r.reviewed && r.messageId !== turn.messageId
         )
         if (nextIdx >= 0) {
           setFocusIdx(nextIdx)
         } else {
-          setFocusIdx(Math.min(idx + 1, rows.length - 1))
+          setFocusIdx(Math.min(idx + 1, Math.max(0, visible.length - 1)))
         }
       } catch (e) {
         setRowState((p) => ({
@@ -271,7 +289,7 @@ export function Voice() {
 
       if (e.key === "j" || e.key === "ArrowDown") {
         e.preventDefault()
-        setFocusIdx((i) => Math.min(i + 1, Math.max(0, rows.length - 1)))
+        setFocusIdx((i) => Math.min(i + 1, Math.max(0, filteredRows.length - 1)))
         return
       }
       if (e.key === "k" || e.key === "ArrowUp") {
@@ -281,7 +299,7 @@ export function Voice() {
       }
       if (/^[1-5]$/.test(e.key)) {
         e.preventDefault()
-        const turn = rows[focusIdx]
+        const turn = filteredRows[focusIdx]
         if (turn) setRating(turn.messageId, Number(e.key) as VoiceRating)
         return
       }
@@ -305,10 +323,20 @@ export function Voice() {
     return () => window.removeEventListener("keydown", onKey)
   }, [focusIdx, rows, setRating, handleSave])
 
+  const filteredRows = useMemo(() => {
+    if (langFilter === "all") return rows
+    return rows.filter((r) => detectLang(r.body ?? "") === langFilter)
+  }, [rows, langFilter])
+
   const stats = useMemo(() => {
-    const reviewed = rows.filter((r) => r.reviewed).length
-    return { total: rows.length, reviewed, unreviewed: rows.length - reviewed }
-  }, [rows])
+    const reviewed = filteredRows.filter((r) => r.reviewed).length
+    return {
+      total: filteredRows.length,
+      reviewed,
+      unreviewed: filteredRows.length - reviewed,
+      filteredOut: rows.length - filteredRows.length,
+    }
+  }, [rows, filteredRows])
 
   return (
     <div className="page-stack">
@@ -319,14 +347,34 @@ export function Voice() {
           "Rate assistant turns 1-5⭐. Keyboard: j/k navigate, 1-5 rate, t tags, c comment, Enter save+next. Drafts auto-save per turn."
         }
         actions={
-          <button type="button" onClick={() => void load(pageCursors[pageIndex] ?? null)}>
-            Refresh
-          </button>
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            {(["all", "zh", "en", "mix"] as LangFilter[]).map((lf) => (
+              <button
+                key={lf}
+                type="button"
+                onClick={() => setLangFilter(lf)}
+                style={{
+                  fontSize: "0.85em",
+                  fontWeight: langFilter === lf ? 700 : 400,
+                  background: langFilter === lf ? "#0f172a" : "transparent",
+                  color: langFilter === lf ? "#fff" : "inherit",
+                  borderRadius: 999,
+                  padding: "4px 10px",
+                  border: "1px solid #cbd5e1",
+                }}
+              >
+                {lf}
+              </button>
+            ))}
+            <button type="button" onClick={() => void load(pageCursors[pageIndex] ?? null)}>
+              Refresh
+            </button>
+          </div>
         }
       />
 
       <Panel
-        title={`Page ${pageIndex + 1} — ${stats.reviewed}/${stats.total} reviewed`}
+        title={`Page ${pageIndex + 1} — ${stats.reviewed}/${stats.total} reviewed${stats.filteredOut > 0 ? ` (${stats.filteredOut} filtered)` : ""}`}
         actions={
           <div style={{ display: "flex", gap: 6 }}>
             <button
@@ -358,14 +406,16 @@ export function Voice() {
           <LoadingState label="Loading assistant turns…" />
         ) : err ? (
           <ErrorState message={err} />
-        ) : rows.length === 0 ? (
+        ) : filteredRows.length === 0 ? (
           <EmptyState
             title="No assistant turns"
-            body="pa_messages has no assistant role docs in this range."
+            body={rows.length === 0
+              ? "pa_messages has no assistant role docs in this range."
+              : `No turns match filter '${langFilter}' on this page. Try a different filter or load more pages.`}
           />
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            {rows.map((turn, idx) => (
+            {filteredRows.map((turn, idx) => (
               <ReviewRow
                 key={turn.messageId}
                 turn={turn}
