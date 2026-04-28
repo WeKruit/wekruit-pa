@@ -308,6 +308,91 @@ export function checkAdminToken(provided: string | undefined): { ok: boolean; st
  * upserts the seed agent into Firestore so Bible v7.0 actually reaches
  * runtime.
  */
+/**
+ * Delete only `pa_*` (snake_case) Firestore composite indexes via the
+ * Firestore Admin REST API. Uses firebase-admin's resolved access token.
+ *
+ * Safety: filters strictly on collectionGroup prefix `pa_` (NOT `pa-` and
+ * NOT any other namespace). Deleting an index does NOT delete data — it
+ * only removes the lookup structure, harmless for queries that don't use
+ * it.
+ */
+async function deleteOldIndexes(opts: { dryRun?: boolean }): Promise<{
+  scanned: number
+  pa_snake: number
+  deleted: string[]
+  errors: { name: string; error: string }[]
+}> {
+  if (!getApps().length) initializeApp()
+  const app = getApps()[0]!
+  const credential = (app.options as { credential?: { getAccessToken: () => Promise<{ access_token: string }> } }).credential
+  if (!credential) throw new Error("no_admin_credential")
+  const tokenObj = await credential.getAccessToken()
+  const token = tokenObj.access_token
+  const project = process.env.GCLOUD_PROJECT || process.env.GOOGLE_CLOUD_PROJECT || "wekruit-5f89b"
+
+  // Step 1: list all collection-group indexes via the listIndexes endpoint.
+  // The Admin v1 API requires per-collectionGroup listing — but using "-" as
+  // the wildcard collection-group is supported as of v1 (parent
+  // pattern /collectionGroups/-/).
+  const baseUrl = `https://firestore.googleapis.com/v1/projects/${project}/databases/(default)/collectionGroups`
+  const allIndexes: { name: string; collectionGroup: string }[] = []
+  // Wildcard works on Firestore admin v1.
+  let nextPage: string | null = null
+  do {
+    const url = new URL(`${baseUrl}/-/indexes`)
+    if (nextPage) url.searchParams.set("pageToken", nextPage)
+    const resp = await fetch(url.toString(), {
+      headers: { authorization: `Bearer ${token}` },
+    })
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "")
+      throw new Error(`list_indexes_${resp.status}: ${text.slice(0, 400)}`)
+    }
+    const json = (await resp.json()) as {
+      indexes?: { name: string }[]
+      nextPageToken?: string
+    }
+    for (const idx of json.indexes ?? []) {
+      // name format: projects/{p}/databases/(default)/collectionGroups/{cg}/indexes/{id}
+      const m = /\/collectionGroups\/([^/]+)\/indexes\//.exec(idx.name)
+      if (m) allIndexes.push({ name: idx.name, collectionGroup: m[1]! })
+    }
+    nextPage = json.nextPageToken ?? null
+  } while (nextPage)
+
+  const oldOnes = allIndexes.filter((x) => x.collectionGroup.startsWith("pa_"))
+  if (opts.dryRun) {
+    return {
+      scanned: allIndexes.length,
+      pa_snake: oldOnes.length,
+      deleted: oldOnes.map((x) => x.collectionGroup),
+      errors: [],
+    }
+  }
+
+  const deleted: string[] = []
+  const errors: { name: string; error: string }[] = []
+  for (const idx of oldOnes) {
+    const resp = await fetch(`https://firestore.googleapis.com/v1/${idx.name}`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${token}` },
+    })
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "")
+      errors.push({ name: idx.name, error: `${resp.status}: ${text.slice(0, 200)}` })
+      continue
+    }
+    deleted.push(idx.collectionGroup)
+  }
+  return {
+    scanned: allIndexes.length,
+    pa_snake: oldOnes.length,
+    deleted,
+    errors,
+  }
+}
+
 async function reseedDefaultAgent(): Promise<{ ok: boolean; version: string; written: string[] }> {
   if (!getApps().length) initializeApp()
   const db = getFirestore()
@@ -881,6 +966,12 @@ export const paAdminBootstrap = onRequest(
       if (action === "reseedDefaultAgent") {
         const result = await reseedDefaultAgent()
         res.json({ action, ...result })
+        return
+      }
+      if (action === "deleteOldIndexes") {
+        const dryRun = Boolean((body as { dryRun?: boolean }).dryRun ?? false)
+        const result = await deleteOldIndexes({ dryRun })
+        res.json({ action, dryRun, ...result })
         return
       }
       if (action === "replayFixtures") {
