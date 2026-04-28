@@ -5,7 +5,7 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 
-import { runSweep, type SweepStore } from "./proactive-sweep.js"
+import { runSweep, checkAdminToken, type SweepStore } from "./proactive-sweep.js"
 import type { ProactiveScheduledJob } from "@pa/core-types"
 
 function makeJob(overrides?: Partial<ProactiveScheduledJob>): ProactiveScheduledJob {
@@ -155,6 +155,46 @@ describe("runSweep — failure handling", () => {
     assert.ok(updateJobFailedCalled, "updateJobFailed must be called on dispatch failure")
     assert.equal(failedAttempts, 2)  // current attempts value passed
     assert.equal(failedMax, 3)       // maxAttempts passed
+  })
+})
+
+describe("checkAdminToken — admin gate (Phase 22 trigger plan)", () => {
+  function withEnv(value: string | undefined, fn: () => void) {
+    const original = process.env.PA_ADMIN_TOKEN
+    if (value === undefined) delete process.env.PA_ADMIN_TOKEN
+    else process.env.PA_ADMIN_TOKEN = value
+    try { fn() } finally {
+      if (original === undefined) delete process.env.PA_ADMIN_TOKEN
+      else process.env.PA_ADMIN_TOKEN = original
+    }
+  }
+
+  it("returns 503 when PA_ADMIN_TOKEN env is unset (no accidental open access)", () => {
+    withEnv(undefined, () => {
+      const result = checkAdminToken("anything")
+      assert.deepEqual(result, { ok: false, status: 503, error: "admin token not configured" })
+    })
+  })
+
+  it("returns 401 when x-admin-token header is missing", () => {
+    withEnv("secret-token-abc", () => {
+      const result = checkAdminToken(undefined)
+      assert.deepEqual(result, { ok: false, status: 401, error: "unauthorized" })
+    })
+  })
+
+  it("returns 401 when x-admin-token header is wrong", () => {
+    withEnv("secret-token-abc", () => {
+      const result = checkAdminToken("wrong-token")
+      assert.deepEqual(result, { ok: false, status: 401, error: "unauthorized" })
+    })
+  })
+
+  it("returns ok when x-admin-token header matches", () => {
+    withEnv("secret-token-abc", () => {
+      const result = checkAdminToken("secret-token-abc")
+      assert.deepEqual(result, { ok: true })
+    })
   })
 })
 

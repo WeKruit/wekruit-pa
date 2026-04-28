@@ -195,3 +195,15 @@ Exact endpoint URL: verify via `firebase deploy --only functions` output.
 ---
 *Phase: 22-proactive-checkin*
 *Completed: 2026-04-28 (T6 pending Adam verification)*
+
+---
+
+## Trigger Plan (deferred — 2026-04-28)
+
+Cron Cloud Scheduler intentionally NOT wired. Three trigger paths planned:
+
+1. **Admin** (now): POST `paProactiveSweep` with header `x-admin-token: $PA_ADMIN_TOKEN`. Used for manual sweeps and future dashboard "Run sweep" button.
+2. **Event-driven** (next): trigger sweep on Firestore event (e.g. user inactivity threshold crossed) — phase TBD.
+3. **Weekly** (later): Cloud Scheduler cron, low-frequency safety net — defer until usage validated.
+
+Dashboard UI to expose trigger 1 lands in a later phase.

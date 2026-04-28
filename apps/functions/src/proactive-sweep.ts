@@ -211,6 +211,22 @@ export function createFirestoreSweepStore(): SweepStore {
 }
 
 // ---------------------------------------------------------------------------
+// Admin token gate (Phase 22 deferred-cron trigger plan)
+// ---------------------------------------------------------------------------
+
+export type AdminAuthResult =
+  | { ok: true }
+  | { ok: false; status: 401 | 503; error: string }
+
+/** Validate `x-admin-token` header against PA_ADMIN_TOKEN env. Pure & testable. */
+export function checkAdminToken(headerToken: string | undefined): AdminAuthResult {
+  const expected = process.env.PA_ADMIN_TOKEN
+  if (!expected) return { ok: false, status: 503, error: "admin token not configured" }
+  if (!headerToken || headerToken !== expected) return { ok: false, status: 401, error: "unauthorized" }
+  return { ok: true }
+}
+
+// ---------------------------------------------------------------------------
 // Cloud Function export
 // ---------------------------------------------------------------------------
 
@@ -225,6 +241,14 @@ export const paProactiveSweep = onRequest(
     // (if needed) can be added here after prod validation.
   },
   async (req, res) => {
+    // Admin token gate (Phase 22 deferred-cron: trigger via admin/dashboard).
+    // Cron path is intentionally not wired; see 22-SUMMARY.md "Trigger Plan".
+    const auth = checkAdminToken(req.header("x-admin-token"))
+    if (!auth.ok) {
+      res.status(auth.status).json({ error: auth.error })
+      return
+    }
+
     // Only allow POST from Cloud Scheduler (OIDC token validated by CF platform)
     if (req.method !== "POST" && req.method !== "GET") {
       res.status(405).json({ ok: false, error: "method_not_allowed" })
