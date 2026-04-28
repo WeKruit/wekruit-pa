@@ -366,15 +366,71 @@ Plans:
 - [x] 24-06-typing-dwell-PLAN.md — computeTypingDwellMs(replyLength) 1-4s bands + outbox.ts step 5 dynamic + env override (Wave 3, parallel)
 - [ ] 24-07-verification-PLAN.md — Adam infra prep + full DeepEval suite + 3 anchor regression PASS + Adam smoke + STATE/RETROSPECTIVE updates (Wave 4)
 
-## Phase 25: Voice Self-Evolve (DEFERRED to v1.3)
+## Phase 24.5: Feature Flag Infrastructure (cross-cutting)
 
-**Goal:** Global slang central evolution (weekly cron) + per-user STYLE.delta + 口头禅 (daily cron) + aeon-style autoresearch 4-variation generator + DeepEval gate + HITL PR review + Hermes-style prompt-injection scan.
-Requirements: TBD (defer to v1.3 milestone scope)
-**Status:** Backlog (deferred to v1.3 — do NOT execute this cycle).
-**Hard dependency:** Phase 24 must close with all success criteria met (DeepEval CI green ≥75% on golden-50 for 2 consecutive weeks, Bible v6 + Qwen3.5-4B rewriter stable, telemetry stream emitting, Adam smoke test passes).
-**Success Criteria**: See `phases/25-voice-self-evolve/25-CONTEXT.md` (frozen spec).
+**Goal:** Replace scattered `PA_*` env-var flags with a unified Firestore-backed feature flag system. 30s TTL in-process cache, dashboard CRUD UI, audit log, perUser scope (test number bypass).
+Requirements: P10 strategic cut 2026-04-28 (`v1.2-p10-strategic-cut.md`)
+**Status:** Planned — ready to execute.
+**Success Criteria**:
+1. `getFlag(key, ctx)` SDK callable from CF + dashboard-web.
+2. `pa_feature_flags/{key}` Firestore collection with schema `{key, value, type, scope, allowlist[], blocklist[], updatedAt, updatedBy, reason, version}`.
+3. Dashboard `/admin/flags` page: list / edit / revert / audit history (uses existing dashboard-web shell).
+4. 30s TTL in-memory cache with ≥95% hit rate (unit tested).
+5. Migrate 4 env-vars (`PA_CHANNEL_LEGACY` / `PA_PROACTIVE_DISABLED` / `PA_VOICE_MIRROR_DISABLED` / `paRateLimitPerUserEnabled`) to flags. Env retained as emergency override.
+6. Per-user bypass tested with Adam's test number.
+7. CRUD writes audit row to `pa_audit_events`.
 
-**Plans:** 0 plans (NOT planning this cycle — backlog)
+**Plans:** TBD by gsd-planner (single phase, ~4-6 plans expected).
+
+## Phase 25: Voice Review Dashboard
+
+**Goal:** Build the data producer for v1.3 self-evolve loop. Dashboard page lets Adam (and later HITL reviewers) score assistant turns 1-5⭐ with violation tags + comment, persisted to Firestore. Includes one-click eval rerun + diff vs baseline.
+Requirements: P10 strategic cut 2026-04-28
+**Status:** Planned — ready to execute (parallelable with Phase 26).
+**Success Criteria**:
+1. New `apps/dashboard-web/src/pages/Voice.tsx` page lists `pa_messages` assistant turns, paginated, newest first.
+2. Each turn UI: 1-5⭐ rating, multi-select violation tags (`probe`/`diagnose`/`too_long`/`tone`/`ai_speak`/`ok`), comment field, save button.
+3. `pa_voice_reviews/{messageId}` Firestore collection with schema `{messageId, rating, tags[], comment, reviewerId, agentSnapshot: {bibleVersion, modelId}, createdAt}`.
+4. Keyboard-driven UX: 1-5 number keys for rating, Tab to comment, Enter to save (R1 mitigation — Adam alone could review 50 turns in <30 min).
+5. One-click "Run eval against golden-50" button → triggers `PA_RUN_EVAL=1 deepeval test run` via CF or local script → writes `eval-results/{timestamp}.json` → renders score + diff vs latest baseline in page.
+6. High-rated turn (≥4⭐) flagged as fewShot candidate (highlight in UI; export tool later).
+7. Low-rated turn (≤2⭐) tagged for Phase 27 self-evolve cron consumption (read-only contract).
+
+**Plans:** TBD by gsd-planner (~3-5 plans).
+
+## Phase 26: Productionize P0 (公测 hard gate)
+
+**Goal:** Close 4 P0 ops debts that block public closed-beta launch.
+Requirements: P10 strategic cut 2026-04-28
+**Status:** Planned — ready to execute (parallelable with Phase 25).
+**Hard dependency:** Phase 24.5 Feature Flag Infra ships first (rate-limit gate uses `getFlag()`).
+**Success Criteria**:
+1. Per-user rate limit (≤ N msg/min, default N=20) enforced at `paSendblueWebhook` entry. Gated by `paRateLimitPerUserEnabled` flag (Adam test number → `false` via perUser blocklist; prod users → `true`).
+2. Sendblue Free tier daily quota monitor: CF reads daily outbound count from `pa_outbound`, soft alert at 80% of quota, hard block at 100% with audit event.
+3. Cloud Logging dashboard exposing: per-CF latency p50/p95, error rate, gpt-5.4-nano spend (tokens × price). Cost alert email when spend > $10/day.
+4. agent-registry version pinning: env override `PA_AGENT_REGISTRY_VERSION` reads desired Bible version from seed.json's versioned entries (or pin to a Firestore `agents/{slug}/versions/{v}` doc); 一键 rollback by changing flag.
+
+**Plans:** TBD by gsd-planner (~4 plans).
+
+## Phase 27: Productionize P1+P2 + Self-Evolve Cron
+
+**Goal:** Close P1+P2 ops debts and ship the self-evolve loop closure (gated). Absorbs old Phase 25 Voice Self-Evolve frozen spec.
+Requirements: P10 strategic cut 2026-04-28; old `phases/25-voice-self-evolve/25-CONTEXT.md` frozen spec.
+**Status:** Planned — gated.
+**Hard gate (all required):**
+- Phase 26 P0 ships and runs stable for 2 calendar weeks (cost alerts and rate-limit don't fire spuriously).
+- ≥200 voice reviews collected via Phase 25 dashboard.
+- `selfEvolveEnabled` flag explicitly set to `true` by Adam.
+
+**Success Criteria**:
+1. Qwen rewriter circuit breaker: 5 consecutive 404/timeout → flip flag `paVoiceRewriterEnabled` to false, alert Adam, fall back to nano-only output.
+2. Qdrant ↔ Firestore memory drift cron (daily): emit drift count metric, alert if drift > 1% of total memories.
+3. CF /health endpoint × 5 (paSendblueWebhook / paSendblueOutbox / onPaInbound / paProactiveSweep / memoryAdmin), each returns `{ok, version, deps: {...}}`.
+4. SLO definitions + error budget tracking (latency, availability, voice quality).
+5. Self-evolve cron (daily): read `pa_voice_reviews` low-rated turns from past 24h, cluster by violation tag, generate Bible patch suggestion, open PR (never push), block merge unless eval gate ≥ baseline. HITL review required.
+6. Hermes-style prompt-injection scanner runs on user inputs before agent turn, low-confidence prompt-injection events written to `pa_abuse_events`.
+
+**Plans:** TBD by gsd-planner (~6-8 plans).
 
 ---
 

@@ -1,15 +1,15 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: — Agent SDK Runtime + Job Companion
+milestone: v1.3
+milestone_name: Productionize (公测 gate + Self-Evolve Loop 闭环)
 status: executing
 last_updated: "2026-04-28T18:00:00.000Z"
 last_activity: 2026-04-28
 progress:
-  total_phases: 23
-  completed_phases: 14
-  total_plans: 29
-  completed_plans: 19
+  total_phases: 4
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
 ---
 
 # Milestone state
