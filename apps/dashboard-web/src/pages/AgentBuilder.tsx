@@ -1,5 +1,5 @@
 import { PA_COLLECTIONS } from "@pa/core-types"
-import { addDoc, collection, getDocs, updateDoc, doc, type Firestore } from "firebase/firestore"
+import { addDoc, collection, deleteField, getDocs, updateDoc, doc, type Firestore } from "firebase/firestore"
 import { FormEvent, useEffect, useState } from "react"
 import { db } from "../lib/firebase.js"
 import { fetchWorkerHealth, getWorkerHealthBaseUrl, type WorkerHealth } from "../lib/workerHealth.js"
@@ -98,6 +98,29 @@ export function AgentBuilder() {
   async function saveRow(r: AgentRow) {
     setSaving(true)
     try {
+      // Build persona object: include only fields with values; for emptied
+      // fields use deleteField() so re-saving an emptied input clears the
+      // doc field instead of leaving stale data. Firestore rejects undefined.
+      const tone = r.personaTone?.trim() || ""
+      const style = (r.personaStyle ?? "")
+        .split(",")
+        .map((x) => x.trim())
+        .filter(Boolean)
+      const boundaries = (r.personaBoundaries ?? "")
+        .split("\n")
+        .map((x) => x.trim())
+        .filter(Boolean)
+      const goals = (r.personaGoals ?? "")
+        .split("\n")
+        .map((x) => x.trim())
+        .filter(Boolean)
+      const persona: Record<string, unknown> = {
+        tone: tone ? tone : deleteField(),
+        style: style.length > 0 ? style : deleteField(),
+        boundaries: boundaries.length > 0 ? boundaries : deleteField(),
+        goals: goals.length > 0 ? goals : deleteField(),
+      }
+
       await updateDoc(doc(fire, PA_COLLECTIONS.agents, r.id), {
         name: r.name,
         systemPrompt: r.systemPrompt,
@@ -113,12 +136,7 @@ export function AgentBuilder() {
         toolBudgetPerTurn: r.toolBudgetPerTurn,
         isDefault: r.isDefault === true,
         status: r.status || "draft",
-        persona: {
-          tone: r.personaTone?.trim() || undefined,
-          style: r.personaStyle?.split(",").map((x) => x.trim()).filter(Boolean) || [],
-          boundaries: r.personaBoundaries?.split("\n").map((x) => x.trim()).filter(Boolean) || [],
-          goals: r.personaGoals?.split("\n").map((x) => x.trim()).filter(Boolean) || [],
-        },
+        persona,
         updatedAt: new Date().toISOString(),
       })
       await load()
