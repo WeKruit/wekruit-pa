@@ -1,13 +1,39 @@
-# Milestone state — v1.1 Pre-Launch Hardening + Companion Brain
+---
+gsd_state_version: 1.0
+milestone: v1.0
+milestone_name: — Agent SDK Runtime + Job Companion
+status: executing
+last_updated: "2026-04-28T03:30:00.000Z"
+last_activity: 2026-04-28 -- Phase 24 plan 01 tasks 1-3 complete; at Task 4 checkpoint
+progress:
+  total_phases: 23
+  completed_phases: 12
+  total_plans: 28
+  completed_plans: 12
+---
+
+# Milestone state
+
+## Active milestone: v1.2 — Voice 拟人化 + Eval Foundation (spawned 2026-04-27)
+
+See [`MILESTONE-v1.2.md`](./MILESTONE-v1.2.md) and [`phases/24-voice-quality-baseline/24-CONTEXT.md`](./phases/24-voice-quality-baseline/24-CONTEXT.md).
+
+**Status:** Executing Phase 24
+
+**v1.1 carryover:** Phases 19, 22, 23 not started; deprioritized behind voice quality. Revive after v1.2 ships. Phase 21 (Sendblue) shipped 2026-04-27.
+
+---
+
+# Milestone state — v1.1 Pre-Launch Hardening + Companion Brain (carryover, partial ship)
 
 **Canonical build plan (开干入口):** [`.planning/v1.1-EXECUTION-PLAN.md`](./v1.1-EXECUTION-PLAN.md) — 含依赖顺序、QA/LLM 多轮、入站安全接线、通道统一架构、Report 结构。P10 补充： [`.planning/v1.1-p10-northstar-security-channel.md`](./v1.1-p10-northstar-security-channel.md).
 
 ## Current Position
 
-Phase: 18 (Voice v1) + 20 (Output normalizer) code landed in-repo; 19,21,22,23 not executed
-Plan: 6 plans + Bible v1 + 6 CONTEXT.md committed across `.planning/phases/18-23/`
-Status: Core path shipped — `seed.json` v2 (Claire), `voice-reminder` post-history inject, `normalizeForIMessage` at orchestrator exit, eval helpers + sample YAMLs. Pairwise harness + 6/6 goldens + full judge axis scores = remaining. Sendblue (21) still awaits contract + secrets for prod cutover.
-Last activity: 2026-04-27 — Autonomous P10 tranche: Phase 18+20 implementation commit
+Phase: 24 (Voice Quality Baseline) — EXECUTING
+Plan: 1 of 7
+Status: At checkpoint — Task 4 of 4 (human-verify scaffold before plan 02 HITL labeling)
+Last activity: 2026-04-28 -- Phase 24 plan 01 tasks 1-3 complete; at Task 4 checkpoint
 
 ## v1.1 Plan Commits (autonomous batch)
 
@@ -59,6 +85,7 @@ Closed-beta launchable (≤20 hand-picked users) within 3 weeks. Fix robotic com
 ## Accumulated Context (carried from v1.0)
 
 ### v1.0 baseline shipped
+
 - Phase 1-9: Broker correctness + Dashboard shell + Memory evol + Scheduler + Phase 2/3 production hardening
 - Phase 10: Agents SDK current-info connector (closed 2026-04-26)
 - Phase 10.5: Agents SDK runtime cutover — default agent runs OpenAI gpt-5.4-nano via Responses API; webSearchTool attached; SiliconFlow demoted to env-gated fallback (closed 2026-04-26)
@@ -69,11 +96,13 @@ Closed-beta launchable (≤20 hand-picked users) within 3 weeks. Fix robotic com
 - Phase 16/17 baseline: worker durable cursor + auto-catchup + allowlist fail-closed (inbound + outbound) — landed 2026-04-27
 
 ### v1.1 research already in-bank
+
 - `.planning/phases/17-pre-launch-hardening/17-CONTEXT.md` — milestone scope + Sendblue migration design + Output Normalizer design + Proactive Check-in plumbing
 - `.planning/phases/17-pre-launch-hardening/17-RESEARCH-companion-voice.md` — Round 1 frameworks (SillyTavern V2, Ali:Chat, EmotionPrompt caveats on small models)
 - `.planning/phases/17-pre-launch-hardening/17-RESEARCH-raw-artifacts.md` — Round 2 raw artifacts (Snapchat MyAI prompt verbatim, Tendera "facts as voice" diff, Meta filler-ban list, Anthropic Claude Soul, Discord Clyde sass, zh+en slang lexicons, Anthropic anti-overcaution checklist)
 
 ### Locked architecture decisions
+
 - ONE agent runtime = OpenAI Agents SDK; default LLM = gpt-5.4-nano via Responses API
 - SiliconFlow demoted to env-gated fallback (`PA_AGENT_LLM_PROVIDER=siliconflow`)
 - Mem0/Qdrant remains memory empowerment layer (Mem0 LLM/embedder still SiliconFlow Qwen + bge-m3)
@@ -82,6 +111,7 @@ Closed-beta launchable (≤20 hand-picked users) within 3 weeks. Fix robotic com
 - Sendblue is pure transport (triple-verified) — agent runtime, memory, persona stay with us
 
 ### Adam-locked v1.1 constraints
+
 - No model escalation (no Sonnet); voice fix at prompt + persona + eval layer only
 - No fine-tuning (no anchor data yet)
 - No negative-instruction blacklists in system prompt — go in eval LLM-judge auto-fail criteria only
@@ -89,10 +119,12 @@ Closed-beta launchable (≤20 hand-picked users) within 3 weeks. Fix robotic com
 - Closed-beta tolerates iMessage Apple-ID gray zone for ≤20 users; Sendblue migration before public launch
 
 ### Open Adam decisions (pre-Phase-18 spawn)
+
 - **Character Bible v1** — **locked** in `CHARACTER-BIBLE-v1.md` (Claire/小柯). Edits need Adam sign-off.
 - **Sendblue contract** — confirm 4 contract questions before signing: Apple ID ownership, SLA on number re-provisioning, outbound rate limit, GDPR posture.
 
 ### Known gaps carried forward
+
 - `PA_MATCHING_URL` unset → wekruit-matching connector in degraded mode (Phase 13 follow-up)
 - Phase 11.3 mem0UserId authoritative migration not started
 - Dashboard production build emits non-fatal large chunk warning
@@ -100,6 +132,7 @@ Closed-beta launchable (≤20 hand-picked users) within 3 weeks. Fix robotic com
 - `gpt5.4nano` slug bug still latent (correct slug `gpt-5.4-nano`)
 
 ### Public launch gate (post-v1.1, separate cycle)
+
 - B4 secrets to GCP Secret Manager
 - B1 Apple ID risk fully resolved (Sendblue or Business Chat)
 - GDPR/CCPA delete API + abuse events full producers
