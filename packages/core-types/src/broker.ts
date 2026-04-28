@@ -130,6 +130,9 @@ export const AuditEventKindSchema = z.enum([
   // Phase 11.3 — emitted by recordDriftIfAny() when resolveMem0PartitionKey(user) !== user.id.
   // One row per (userId, mem0UserId, surface) tuple per CF cold start (LRU-throttled).
   "memory.identity_drift",
+  // Phase 22 — proactive check-in audit events (D-09)
+  "proactive_send",
+  "proactive_cancel",
 ])
 export type AuditEventKind = z.infer<typeof AuditEventKindSchema>
 

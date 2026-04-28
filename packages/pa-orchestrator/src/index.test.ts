@@ -99,6 +99,9 @@ function makeStore(overrides: Partial<OrchestratorStore> = {}): OrchestratorStor
     nowIso: () => "2026-04-25T12:00:00.000Z",
     log: () => undefined,
     checkInboundSafety: async () => ({ allow: true }),
+    // Phase 22 — proactive cancellation stubs (non-cancellation tests never trigger these)
+    cancelAllPendingProactiveJobs: async () => 0,
+    writeProactiveCancelAudit: async () => undefined,
     ...overrides,
   }
 }

@@ -55,6 +55,8 @@ import { rewriteIfOff } from "./voice/llm-rewriter.js"
 import { tapCoachTokens } from "./voice/coach-token-monitor.js"
 import { buildFewShotTurns, prefixFewShotToHistory } from "./voice/few-shot.js"
 import { normalizeForIMessage } from "./output-normalizer.js"
+// Phase 22 — proactive cancellation NLU (D-07, PROACTIVE-06)
+import { detectProactiveCancellation } from "./cancellation-nlu.js"
 
 type RunAgentTurn = typeof defaultRunAgentTurn
 
@@ -164,6 +166,20 @@ export type OrchestratorStore = {
    * Default Firestore impl uses @pa/pa-safety; tests return allow: true.
    */
   checkInboundSafety(event: InboundEvent): Promise<{ allow: boolean; reason?: string }>
+  /**
+   * Phase 22 — cancel all pending proactive jobs for a user (D-07, PROACTIVE-06).
+   * Returns the count of jobs cancelled.
+   */
+  cancelAllPendingProactiveJobs(userId: string): Promise<number>
+  /**
+   * Phase 22 — write proactive_cancel audit event (D-09).
+   */
+  writeProactiveCancelAudit(input: {
+    userId: string
+    sessionId: string
+    inboundEventId: string
+    cancelledCount: number
+  }): Promise<void>
 }
 
 const HISTORY_LIMIT = Number(process.env.PA_MESSAGE_HISTORY || "40")
@@ -460,6 +476,24 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
         errorCode: safety.reason,
         error: "inbound_safety_block",
       })
+      await store.markEventSucceeded(event.id)
+      return
+    }
+
+    // Phase 22 — proactive cancellation NLU pre-LLM hook (D-07, PROACTIVE-06).
+    // Must run before memory commands so "停止提醒" short-circuits cleanly.
+    if (detectProactiveCancellation(event.body)) {
+      const cancelledCount = await store.cancelAllPendingProactiveJobs(event.userId)
+      await store.writeProactiveCancelAudit({
+        userId: event.userId,
+        sessionId: event.sessionId,
+        inboundEventId: event.id,
+        cancelledCount,
+      })
+      // Voice v1-toned confirmation reply — concise, natural (D-07)
+      const cancelReply = cancelledCount > 0 ? "好的，全停了 ✋" : "没有待发送的提醒了哦。"
+      await sendMemoryReply(store, event, turnId, cancelReply)
+      await store.updateTurn(turnId, { status: "succeeded", stage: "succeeded", completedAt: store.nowIso() })
       await store.markEventSucceeded(event.id)
       return
     }
@@ -985,6 +1019,35 @@ export function createFirestoreOrchestratorStore(db: Firestore): OrchestratorSto
     },
     nowIso,
     log: (...args) => console.log(new Date().toISOString(), ...args),
+    // Phase 22 — proactive cancellation (D-07, PROACTIVE-06)
+    async cancelAllPendingProactiveJobs(userId) {
+      const snap = await db
+        .collection(PA_COLLECTIONS.scheduledJobs)
+        .where("userId", "==", userId)
+        .where("status", "==", "pending")
+        .get()
+      if (snap.empty) return 0
+      const batch = db.batch()
+      for (const doc of snap.docs) {
+        batch.update(doc.ref, {
+          status: "cancelled_by_user",
+          updatedAt: nowIso(),
+        })
+      }
+      await batch.commit()
+      return snap.size
+    },
+    async writeProactiveCancelAudit({ userId, sessionId, inboundEventId, cancelledCount }) {
+      await appendAuditEvent(db, {
+        kind: "proactive_cancel",
+        message: `Cancelled ${cancelledCount} pending proactive job(s) via NLU`,
+        userId,
+        sessionId,
+        inboundEventId,
+        actor: "orchestrator",
+        meta: { cancelledCount },
+      })
+    },
   }
 }
 
