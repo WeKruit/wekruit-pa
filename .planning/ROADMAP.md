@@ -71,6 +71,7 @@ This roadmap is intentionally numeric so GSD phase tooling can discover and exec
 |---|-------|------|--------|
 | 26 | Productionize P0 (公测 hard gate) | per-user rate-limit (flag-gated via 24.5) + Sendblue Free 配额监控 + Cloud Logging dashboard + cost alert + agent-registry version pin + 一键 rollback | Planned |
 | 27 | Productionize P1+P2 + Self-Evolve Cron | Qwen circuit breaker + Qdrant↔Firestore drift cron + 5×CF /health + SLO+error budget + self-evolve cron (daily transcript→judge→cluster→Bible patch PR→eval gate). Absorbs old Phase 25 Voice Self-Evolve spec. | Planned (gated) |
+| 28 | Multi-Turn LLM-vs-LLM Dialog Sim Eval | 5 user personas × N-round simulator × ConversationalGEval (voice consistency / mode switch / no probe regression / 油腻 absence / first-person opener density / memory scaffolding) + dashboard tab + label-gated CI. Orthogonal to Phase 27. | Planned (no gate) |
 
 **v1.3 Public Launch Gate:**
 - [ ] Phase 24.5 Feature Flag — 4 env-var 收编完成
@@ -83,6 +84,7 @@ This roadmap is intentionally numeric so GSD phase tooling can discover and exec
 - `v1.2-p10-strategic-cut.md` — strategic cut + P9 编制 + 风险 + 不做清单
 - `phases/26-productionize-p0/` — to be created
 - `phases/27-productionize-p1-selfevolve/` — to be created (absorbs old `phases/25-voice-self-evolve/25-CONTEXT.md`)
+- `phases/28-multi-turn-sim-eval/` — Phase 28 spawn (orthogonal to 27, no hard gate)
 
 ## Phase 1: Broker correctness + echo suppression
 
@@ -431,6 +433,26 @@ Requirements: P10 strategic cut 2026-04-28; old `phases/25-voice-self-evolve/25-
 6. Hermes-style prompt-injection scanner runs on user inputs before agent turn, low-confidence prompt-injection events written to `pa_abuse_events`.
 
 **Plans:** TBD by gsd-planner (~6-8 plans).
+
+## Phase 28: Multi-Turn LLM-vs-LLM Dialog Sim Eval
+
+**Goal:** Add orthogonal regression coverage on top of Phase 24's single-turn golden-50 baseline. Simulate 5 user personas chatting with Claire for K=8 rounds; ConversationalGEval judges full transcripts on voice consistency / mode-switch fluidity / no-probe-regression / 油腻-absence / first-person opener density / memory scaffolding.
+Requirements: P10 strategic addition 2026-04-28
+**Status:** Planned — no hard gate (independent of Phase 27 self-evolve).
+**Hard dependency:** Phase 24 judges + thresholds (already shipped — `apps/eval/voice/judges/claude_judge.py`).
+
+**Success Criteria**:
+1. 5 personas (`anxious_grad` / `formal_em` / `chatty_curious` / `vent_seeker` / `hype_announcer`) defined under `packages/pa-orchestrator/src/eval/sim-personas/` with system prompt + opening message + behavior rules.
+2. Simulation runner orchestrates persona-LLM × Claire alternately for K=8 turns; captures full transcript with timing + token counts.
+3. DeepEval `ConversationalGEval` extended with 6 multi-turn metrics judged on the full transcript.
+4. Per-(persona × metric) cell scored; aggregate ≥3.5/5 (0.7 normalized) target.
+5. Results persisted to `pa_voice_sim_runs/{runId}` Firestore collection.
+6. Dashboard `/voice` page gets new "N-round Sim Eval" tab with run list + transcript drill-in + per-turn judge scores.
+7. CI workflow `.github/workflows/voice-sim.yml` runs sim-eval on PRs labeled `run-voice-sim` (label-gated, not always-on — cost control).
+
+**Plans:** 5 sub-tasks (T1-T5 detailed in `phases/28-multi-turn-sim-eval/PLAN.md`). Single P8 sequential, ~3.5 dev-day total.
+
+**Why land before Phase 27 self-evolve unlocks:** Useful as pre-launch voice baseline coverage. Useful as a pre-merge gate for any future Bible patch (manual or self-evolve cron). Catches mode-switch / probe-regression failures that single-turn golden-50 cannot detect.
 
 ---
 

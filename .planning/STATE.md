@@ -6,7 +6,7 @@ status: executing
 last_updated: "2026-04-28T18:00:00.000Z"
 last_activity: 2026-04-28
 progress:
-  total_phases: 4
+  total_phases: 5
   completed_phases: 3
   total_plans: 11
   completed_plans: 11
@@ -26,9 +26,11 @@ See [`MILESTONE-v1.2.md`](./MILESTONE-v1.2.md) and [`phases/24-voice-quality-bas
 
 See [`v1.2-p10-strategic-cut.md`](./v1.2-p10-strategic-cut.md).
 
-**Phases:** 24.5 (Feature Flag Infra, cross-cutting) → 25 (Voice Review Dashboard) ‖ 26 (Prod-P0) → 27 (Prod-P1 + Self-Evolve cron, gated).
+**Phases:** 24.5 (Feature Flag Infra, cross-cutting) → 25 (Voice Review Dashboard) ‖ 26 (Prod-P0) → 27 (Prod-P1 + Self-Evolve cron, gated) + 28 (Multi-Turn Sim Eval, no gate, orthogonal).
 
-**Trigger:** spawn after Phase 24-02 + 24-07 ship (Adam HITL labeling + final verify). 24.5 can start in parallel with Phase 24 wrap-up since 24-02 is Adam-blocked.
+**Trigger:** spawn after Phase 24-02 + 24-07 ship (Adam HITL labeling + final verify). 24.5 can start in parallel with Phase 24 wrap-up since 24-02 is Adam-blocked. Phase 28 can land any time after Phase 24 ships its judges (already done) — independent of 27 hard gate.
+
+**Phase 28 spawn (2026-04-28):** P10 added Multi-Turn LLM-vs-LLM Dialog Sim Eval as orthogonal regression coverage. 5 personas × 8-turn sim × 6 ConversationalGEval metrics. Spec: `phases/28-multi-turn-sim-eval/{CONTEXT,PLAN}.md`. ~3.5 dev-day, single P8 sequential.
 
 ---
 
