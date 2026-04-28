@@ -38,6 +38,24 @@ This roadmap is intentionally numeric so GSD phase tooling can discover and exec
 | 22 | Proactive Check-in (revived from skipped Phase 12) | Dashboard `/triggers` UI + `pa_scheduled_jobs` cron + orchestrator proactive-turn path using Voice v1. **Hard dependency on Phase 18 ship.** | PROACTIVE-01..PROACTIVE-07 | Not started |
 | 23 | Closed Beta Onboarding + Safety | Onboarding flow for 20 hand-picked users; abuse signal producers wired (rate-limit / injection / allowlist-deny → `pa_abuse_events`); allowlist UI in dashboard. | BETA-01..BETA-05 | Not started |
 
+## Milestone v1.2 — Voice 拟人化 (Anti-油腻) + Eval Foundation
+
+**Goal:** Eliminate coach-mode / 油腻 voice. Establish reusable eval framework. Day-1 internet 网感 corpus. Defer per-user self-evolution to v1.3.
+
+**Spawned:** 2026-04-27 after Phase 21 Sendblue cutover proved channel works; voice quality became sole blocker to opening closed beta beyond internal testers.
+
+**Estimate:** 3 dev days + ~3 hours Adam HITL.
+
+| # | Phase | Goal | Status |
+|---|-------|------|--------|
+| 24 | Voice Quality Baseline | DeepEval foundation (4-layer reusable: dataset × rubric × target × runner) + HITL golden-50 + Bible v6 (IDENTITY/STYLE/REACTIONS split + web-verified 2026 网感 corpus) + 12 mes_examples relocation to messages-array alternating turns + Qwen3.5-4B SF-free rewriter v2 (positive-framed prompt, diff guard) + telemetry-only regex (Claude-Code-cursing-log style, no transform) + dynamic typing dwell (1-4s by reply length, fires on reasoning start). | Plan |
+| 25 | Voice Self-Evolve (deferred to v1.3) | Global slang central evolution (weekly cron) + per-user STYLE.delta + 口头禅 (daily cron) + aeon-style autoresearch 4-variation + DeepEval gate + HITL PR review + Hermes-style prompt-injection scan. **Hard dependency on Phase 24 ship.** | Backlog |
+
+**Documents:**
+- `MILESTONE-v1.2.md` — milestone-level decisions, web-verified corpus, success criteria
+- `phases/24-voice-quality-baseline/24-CONTEXT.md` — full Phase 24 spec
+- `phases/25-voice-self-evolve/25-CONTEXT.md` — Phase 25 frozen spec (deferred)
+
 ## Phase 1: Broker correctness + echo suppression
 
 **Goal:** Make the green iMessage E2E path reliable and non-polluting.
@@ -288,6 +306,47 @@ Requirements: BETA-01, BETA-02, BETA-03, BETA-04, BETA-05
 3. Dashboard abuse panel surfaces last 50 abuse events with filter by type.
 4. Allowlist UI in dashboard — operator adds/removes beta participants without editing `.env`.
 5. Beta runbook (one-page) covers onboarding script + escalation contact + kill switch instructions.
+
+---
+
+# Milestone v1.2 — Voice 拟人化 (Anti-油腻) + Eval Foundation
+
+## Phase 24: Voice Quality Baseline
+
+**Goal:** Eliminate coach-mode / 油腻 voice via prompt structure + few-shot relocation + chat-tuned rewriter base + OSS eval framework. No model escalation. Foundation for v1.3 self-evolve.
+Requirements: VOICE-01, VOICE-02, VOICE-03, VOICE-04, VOICE-05, VOICE-06, VOICE-07, VOICE-08
+**Status:** Plan
+**Hard dependency:** Phase 21 Sendblue cutover (shipped 2026-04-27).
+**Success Criteria**:
+1. DeepEval `pnpm test:voice` runs locally + CI; PR blocks when ClaireVoice rubric通过率 < 75%.
+2. Bible v6 shipped with IDENTITY/STYLE/REACTIONS split + Quick Reactions bank + 30+ web-verified 2025-26 网感 phrases.
+3. 12 mes_examples relocated from system_prompt block to messages-array alternating user/assistant turns; persistence layer ignores `fs_*` synthetic ids.
+4. Rewriter v2 default = SF free Qwen3.5-4B with diff guard (>1.6× len OR >60% drop → reject), p95 ≤ 1.5s, fail-open.
+5. Telemetry-only regex log emitting hits to `pa.voice.coach_token.observed` (no transform); feeds v1.3 self-evolve.
+6. Dynamic typing dwell 1-4s scaled by reply length, fires on agent reasoning start, stops on send.
+7. 3 anchor regression cases PASS (wekruit投递 + vent + celebrate) on baseline rerun.
+8. Cringe-warn (not hard-ban) for soft items; hard-ban only confirmed-dead items via web verify.
+
+**Plans:** 7 plans
+
+Plans:
+- [ ] 24-01-eval-foundation-PLAN.md — DeepEval workspace + claude-opus-4-5 judge + rubrics + promptfoo A/B + voice-eval.yml CI gate (Wave 1)
+- [ ] 24-02-golden-dataset-PLAN.md — Firestore extract + LLM-gen synthetic/adversarial fixtures + Adam HITL 50-case labeling + 3 anchor regressions (Wave 2)
+- [ ] 24-03-bible-v6-fewshot-PLAN.md — Bible v6 IDENTITY/STYLE/REACTIONS split + 12 mes_examples relocated to fewShotMessages + orchestrator wiring + persistence fs_* filter (Wave 3, parallel)
+- [ ] 24-04-rewriter-v2-PLAN.md — Qwen/Qwen3-8B default + positive-replacement v2 prompt + <think> strip + diff guard >1.6×|<0.4× + temp 0.4 (Wave 3, parallel)
+- [ ] 24-05-coach-token-telemetry-PLAN.md — coach-token-monitor.ts telemetry tap (zh/en coach verbs, bullets, numbered, 4+ subordinate chain), no transform (Wave 3, parallel)
+- [ ] 24-06-typing-dwell-PLAN.md — computeTypingDwellMs(replyLength) 1-4s bands + outbox.ts step 5 dynamic + env override (Wave 3, parallel)
+- [ ] 24-07-verification-PLAN.md — Adam infra prep + full DeepEval suite + 3 anchor regression PASS + Adam smoke + STATE/RETROSPECTIVE updates (Wave 4)
+
+## Phase 25: Voice Self-Evolve (DEFERRED to v1.3)
+
+**Goal:** Global slang central evolution (weekly cron) + per-user STYLE.delta + 口头禅 (daily cron) + aeon-style autoresearch 4-variation generator + DeepEval gate + HITL PR review + Hermes-style prompt-injection scan.
+Requirements: TBD (defer to v1.3 milestone scope)
+**Status:** Backlog (deferred to v1.3 — do NOT execute this cycle).
+**Hard dependency:** Phase 24 must close with all success criteria met (DeepEval CI green ≥75% on golden-50 for 2 consecutive weeks, Bible v6 + Qwen3.5-4B rewriter stable, telemetry stream emitting, Adam smoke test passes).
+**Success Criteria**: See `phases/25-voice-self-evolve/25-CONTEXT.md` (frozen spec).
+
+**Plans:** 0 plans (NOT planning this cycle — backlog)
 
 ---
 
