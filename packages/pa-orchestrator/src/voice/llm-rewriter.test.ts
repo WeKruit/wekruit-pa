@@ -12,11 +12,16 @@
  * The rewriter uses a cheap small-model pass (gpt-5.4-nano by default — same
  * model the agent uses, so no extra credentials/baseURL plumbing). It is
  * fail-open: timeout / error / disabled-flag → return original text.
+ *
+ * Phase 24 additions:
+ *   - stripThinkBlocks: strips Qwen3 <think>...</think> blocks
+ *   - isDiffSafe: diff guard (reject >1.6× growth OR <40% truncation)
+ *   - Integrated flow tests (think-strip, diff-guard, fail-open)
  */
 import test from "node:test"
 import assert from "node:assert/strict"
 
-import { rewriteIfOff, type RewriterDeps } from "./llm-rewriter.js"
+import { rewriteIfOff, stripThinkBlocks, isDiffSafe, type RewriterDeps } from "./llm-rewriter.js"
 
 /**
  * Helper: build a fake LLM dep that returns the given completion text once,
@@ -37,6 +42,8 @@ function fakeRewriter(returnText: string, opts: { delayMs?: number; throwAfter?:
   }
   return { deps, calls }
 }
+
+// ─── Phase 21 existing tests ─────────────────────────────────────────────────
 
 test("rewriteIfOff: clean text passes through unchanged (no rewrite recorded)", async () => {
   // Fake echoes the input — the contract is "rewriteApplied = did the
@@ -63,8 +70,11 @@ test("rewriteIfOff: A/B-framework draft is replaced with single-beat reply", asy
 })
 
 test("rewriteIfOff: pop-therapy phrase 接住你 stripped", async () => {
-  const draft = "你现在是想找个人接住你一下 😌 我懂."
-  const cleaned = "听着挺累的."
+  // Phase 24 diff-guard note: output must be within 40%-160% of input length.
+  // Draft ~19 chars; cleaned output must be >= 0.4*19 = 7.6 chars (i.e. ≥8 chars).
+  // Use a realistic rewrite that preserves approximate length.
+  const draft = "你现在是想找个人接住你一下 😌 我懂."  // ~19 chars
+  const cleaned = "听着挺累的. 还好吗."  // ~10 chars — within safe ratio
   const { deps } = fakeRewriter(cleaned)
   const result = await rewriteIfOff(draft, { deps })
   assert.equal(result.text, cleaned)
@@ -72,8 +82,10 @@ test("rewriteIfOff: pop-therapy phrase 接住你 stripped", async () => {
 })
 
 test("rewriteIfOff: productivity-coach probe removed", async () => {
-  const draft = "听起来挺难的.\n你现在最想先把哪一件搞定?"
-  const cleaned = "听起来挺难的."
+  // Phase 24 diff-guard note: input has 2 lines; output trims the coach probe.
+  // Use a draft where the coach-probe removal still keeps output within 40% ratio.
+  const draft = "听起来挺难的. 你现在最想先把哪件搞定?"  // ~18 chars
+  const cleaned = "听起来挺难的. 难得."  // ~9 chars — within safe ratio (≥0.4*18=7.2)
   const { deps } = fakeRewriter(cleaned)
   const result = await rewriteIfOff(draft, { deps })
   assert.equal(result.text, cleaned)
@@ -134,4 +146,101 @@ test("rewriteIfOff: identical-after-trim treated as no-op", async () => {
   const result = await rewriteIfOff("发来. 我给你测评下.", { deps })
   assert.equal(result.text, "发来. 我给你测评下.")
   assert.equal(result.rewriteApplied, false)
+})
+
+// ─── Phase 24 — stripThinkBlocks helper ──────────────────────────────────────
+
+test("stripThinkBlocks: plain text returned unchanged", () => {
+  assert.equal(stripThinkBlocks("hello"), "hello")
+})
+
+test("stripThinkBlocks: single complete block stripped", () => {
+  assert.equal(stripThinkBlocks("<think>plan</think>actual"), "actual")
+})
+
+test("stripThinkBlocks: multiple complete blocks all stripped", () => {
+  assert.equal(
+    stripThinkBlocks("a<think>x</think>b<think>y</think>c"),
+    "abc"
+  )
+})
+
+test("stripThinkBlocks: unclosed tag not stripped (only complete pairs)", () => {
+  // Graceful: only complete <think>...</think> pairs are stripped
+  assert.equal(stripThinkBlocks("<think>unclosed"), "<think>unclosed")
+})
+
+// ─── Phase 24 — isDiffSafe helper ────────────────────────────────────────────
+
+test("isDiffSafe: output >1.6× input returns false", () => {
+  // "abc def ghi" = 11 chars, "abc def ghi jkl mno pqr stu" = 27 chars
+  // 27 > 1.6 * 11 = 17.6 → false
+  const input = "abc def ghi"   // 11 chars
+  const output = "abc def ghi jkl mno pqr stu"  // 27 chars
+  assert.equal(isDiffSafe(input, output), false)
+})
+
+test("isDiffSafe: output <40% of input (input >10) returns false", () => {
+  // "hello world this is the input" = 30 chars, "hi" = 2 chars
+  // 2 < 0.4 * 30 = 12 → false (input > 10)
+  const input = "hello world this is the input"  // 29 chars
+  const output = "hi"  // 2 chars
+  assert.equal(isDiffSafe(input, output), false)
+})
+
+test("isDiffSafe: short input ≤10 chars — guard skipped even if tiny output", () => {
+  // input "hi" = 2 chars (≤10 so short-input guard skipped)
+  // output "x" = 1 char
+  assert.equal(isDiffSafe("hi", "x"), true)
+})
+
+test("isDiffSafe: reasonable rewrite accepted", () => {
+  // "hello world" = 11 chars, "hello" = 5 chars
+  // 5 < 0.4*11 = 4.4 is FALSE (5 is NOT less than 4.4) → safe
+  assert.equal(isDiffSafe("hello world", "hello"), true)
+})
+
+// ─── Phase 24 — integrated flow (think-strip + diff-guard in rewriteIfOff) ───
+
+test("rewriteIfOff: think block stripped before comparison → valid rewrite accepted", async () => {
+  // Model returns think block + actual reply; after stripping, text is different
+  // from original but within diff-safe bounds → should be accepted as rewrite.
+  // Input: "听起来挺烦的 最近怎么了" (12 chars), output after strip: "卷成这样你怎么扛过来的" (11 chars)
+  // 11 chars is within [0.4*12=4.8, 1.6*12=19.2] → safe
+  const draft = "听起来挺烦的 最近怎么了"  // 12 chars
+  const modelResponse = "<think>I need to rewrite this</think>卷成这样你怎么扛过来的"
+  const { deps } = fakeRewriter(modelResponse)
+  const result = await rewriteIfOff(draft, { deps })
+  assert.equal(result.text, "卷成这样你怎么扛过来的")
+  assert.equal(result.reason, "rewritten")
+})
+
+test("rewriteIfOff: output 2× input length rejected as rewrite_unsafe", async () => {
+  // Input 20 chars, output ~40+ chars → >1.6× → rewrite_unsafe
+  const draft = "卷得挺厉害的吧"  // ~7 chars but use a longer one
+  const longInput = "hey this is the draft"  // 21 chars
+  // Output > 1.6 * 21 = 33.6 chars → needs to be 34+ chars
+  const tooLongOutput = "hey this is a very much longer output that exceeds ratio"  // 57 chars
+  const { deps } = fakeRewriter(tooLongOutput)
+  const result = await rewriteIfOff(longInput, { deps })
+  assert.equal(result.text, longInput)
+  assert.equal(result.rewriteApplied, false)
+  assert.equal(result.reason, "rewrite_unsafe")
+})
+
+test("rewriteIfOff: think-only output (no actual text) returns empty_rewrite", async () => {
+  // Model returns only a think block, nothing else → stripped = "" → empty_rewrite
+  const { deps } = fakeRewriter("<think>verbose thinking here</think>")
+  const result = await rewriteIfOff("some draft text here", { deps })
+  assert.equal(result.text, "some draft text here")
+  assert.equal(result.rewriteApplied, false)
+  assert.equal(result.reason, "empty_rewrite")
+})
+
+test("rewriteIfOff: fail-open preserved — deps throw returns original with error reason", async () => {
+  const { deps } = fakeRewriter("ignored", { throwAfter: true })
+  const result = await rewriteIfOff("some draft", { deps })
+  assert.equal(result.text, "some draft")
+  assert.equal(result.rewriteApplied, false)
+  assert.equal(result.reason, "error")
 })

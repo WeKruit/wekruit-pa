@@ -15,18 +15,12 @@
  *     → normalizeForIMessage (output-normalizer.ts — markdown/UTM strip)
  *     → outbox
  *
- * MODEL CHOICE: gpt-5.4-nano. Reusing the agent's own model means no new
- * env vars / baseURL plumbing, and the existing OPENAI_API_KEY works.
- * SiliconFlow Qwen2.5-7B is cheaper (~5x) but adds infra surface; if
- * cost is the binding constraint we can flip via `PA_LLM_REWRITE_MODEL`
- * later. Current per-turn cost is bounded by the timeout + token caps
- * below.
+ * MODEL CHOICE (Phase 24 update):
+ *   Default: Qwen/Qwen3-8B on SiliconFlow free tier.
+ *   See DEFAULT_MODEL comment block below.
  *
- * COST BUDGET (gpt-5.4-nano per Phase 14 illustrative pricing):
- *   input  $0.05 / 1M tokens — typical 250 tok prompt = $0.0000125
- *   output $0.40 / 1M tokens — capped 200 tok          = $0.00008
- *   ≈ $0.0001 / turn at p99 (well under the $0.0002 estimate quoted in
- *   the planning doc). 1.5s timeout caps tail latency.
+ * COST BUDGET (Qwen3-8B SiliconFlow free tier):
+ *   Free tier — no per-token cost. 1.5s timeout caps tail latency.
  *
  * ROLLBACK: `PA_LLM_REWRITE_DISABLED=true` short-circuits before any
  * model call. Module is also fail-open on every error path.
@@ -46,6 +40,7 @@ export type RewriteReason =
   | "timeout" // race lost vs timeoutMs
   | "error" // upstream / parse / network error
   | "disabled" // PA_LLM_REWRITE_DISABLED=true OR empty input
+  | "rewrite_unsafe" // Phase 24 — diff-guard rejected (length ratio out of bounds)
 
 export type RewriteResult = {
   text: string
@@ -69,28 +64,85 @@ export type RewriteOpts = {
 }
 
 const DEFAULT_TIMEOUT_MS = 1500
-const DEFAULT_MODEL = process.env.PA_LLM_REWRITE_MODEL?.trim() || "gpt-5.4-nano"
+
+// Phase 24 default — SiliconFlow free tier. Qwen3.5-4B is the documented
+// target but NOT in SF catalog as of 2026-04-27 (24-RESEARCH.md critical
+// finding 1). Swap to Qwen/Qwen3.5-4B via PA_LLM_REWRITE_MODEL env when
+// SF adds it. Fallback chain via PA_LLM_REWRITE_FALLBACK_MODEL.
+const DEFAULT_MODEL = process.env.PA_LLM_REWRITE_MODEL?.trim() || "Qwen/Qwen3-8B"
+
+// Phase 24 fallback model — used at deploy-time by swapping PA_LLM_REWRITE_MODEL.
+// Code-level retry is deferred; env-level fallback is simpler and sufficient
+// for the current scale (single active user in closed beta).
+const FALLBACK_MODEL = process.env.PA_LLM_REWRITE_FALLBACK_MODEL?.trim() || "Qwen/Qwen2.5-7B-Instruct"
+
+// Suppress unused variable warning — FALLBACK_MODEL is intentionally exported
+// as documentation and for future use in PA_LLM_REWRITE_FALLBACK_MODEL chain.
+void FALLBACK_MODEL
 
 /**
- * The rewriter prompt. Positive framing per Adam constraint — we tell the
- * model what Claire's voice IS, not just a list of don'ts. Don't-list is
- * concrete enough that nano can execute it.
- *
- * Critical: "If text is clean, return it UNCHANGED." This makes the
- * common case a near-no-op and protects voice on already-good drafts.
+ * Phase 24 — strip Qwen3 thinking-mode blocks. Qwen3 / Qwen3.5 emit
+ * <think>...</think> blocks by default. We tell the model not to in the
+ * v2 system prompt, but defense-in-depth strips them here too — otherwise
+ * the diff-guard sees abnormally long output and rejects valid rewrites
+ * (Pitfall 2 in 24-RESEARCH.md).
  */
-const REWRITER_SYSTEM_PROMPT = [
-  "You are a style normalizer for Claire (柯莱儿 / 小柯), a Bay Area engineering manager texting a friend over iMessage.",
-  "Claire's voice: short (1-2 sentences default), plain text, often single sentence with NO follow-up question. Code-switches zh/en the way bilingual friends do. Uses light slang when it fits (卷 / mid / emo / 测评 / lowkey / fr) — one term, never stacked. Sparse signature emoji 🍋 ☕ ok.",
-  "You are given a DRAFT reply. Rewrite ONLY if it contains any of:",
-  "- Multiple-choice question framework: 'X 还是 Y?' or 'X or Y?' as the question — rewrite to ONE open question, OR drop the question entirely.",
-  "- Pop-therapy phrases: 接住你 / 找个人接住 / 硬撑着 / 喘不过气那种 / 这条路我懂 / I see you / hold space — delete or rewrite to plain language.",
-  "- Invented categories the user did not say (e.g. '续命型 / 腻型', '工作这边 / 生活那边') — delete.",
-  "- Productivity-coach probe at the end ('你现在最想先把哪一件搞定?' or similar) — delete UNLESS the user explicitly asked for a plan or list.",
-  "- Markdown / bullet lists / numbered steps in a chit-chat reply.",
-  "If the draft is already clean, return it UNCHANGED, byte-for-byte.",
-  "Constraints: keep meaning. Keep Claire's voice (short, plain). Keep zh/en code-switch like the user does. Do NOT add new content the user didn't prompt for. Do NOT pad to look polite.",
-  "Output ONLY the rewritten (or unchanged) reply text. No preface, no explanation, no quotes around it.",
+export function stripThinkBlocks(s: string): string {
+  // Greedy match across lines — Qwen typically emits one block but defend
+  // against multiple. Only complete <think>...</think> pairs stripped.
+  return s.replace(/<think>[\s\S]*?<\/think>/g, "")
+}
+
+/**
+ * Phase 24 diff guard — reject implausible rewrites:
+ * - >1.6× length growth = model padded / hallucinated
+ * - <40% length when input > 10 chars = model truncated
+ * Returns true if the rewrite is plausibly safe to ship.
+ */
+export function isDiffSafe(inputText: string, outputText: string): boolean {
+  const inLen = inputText.trim().length
+  const outLen = outputText.trim().length
+  if (outLen > 1.6 * inLen) return false
+  if (inLen > 10 && outLen < 0.4 * inLen) return false
+  return true
+}
+
+/**
+ * Rewriter v2 system prompt (Phase 24).
+ *
+ * Key changes from v1:
+ * - Opening "Do not think out loud" suppresses Qwen3 thinking mode at prompt level
+ * - Positive replacement table (not a blacklist)
+ * - In-prompt failure exemplar (wekruit投递 case → Claire-voice rewrite)
+ * - Pass-through exemplar (clean reply → return unchanged)
+ * - Tone modes: [reactive] / [casual] / [planning]
+ *
+ * Note: negative-instruction blacklists belong in eval rubric or here in the
+ * REWRITER prompt only — NOT in the agent system_prompt (token-activation hazard
+ * on nano per 24-CONTEXT.md constraint).
+ */
+const REWRITER_V2_SYSTEM_PROMPT = [
+  "You are a style normalizer for Claire (柯莱儿 / 小柯). Do not think out loud. Output ONLY the rewritten reply text.",
+  "Tone modes — detect and apply:",
+  "  [reactive]: user vented/complained → 1 short empathy sentence + optional question",
+  "  [casual]: small talk → 1-2 short sentences, slang ok",
+  "  [planning]: user explicitly asked for plan/list → may use structured format",
+  "",
+  "POSITIVE REPLACEMENTS (apply these, do not just delete):",
+  "  '我建议你 X' → '你试试 X' / '要不要 X'",
+  "  '你应该 X' → '感觉 X 可能会好一点' / drop entirely",
+  "  'X 还是 Y?' (binary choice) → single open question, or drop",
+  "  Pop-therapy (接住你/硬撑着/hold space) → plain empathy ('听起来挺烦的')",
+  "",
+  "FAILURE EXAMPLE → CLAIRE REWRITE:",
+  "  DRAFT: 听起来有点闷，前两天投了还没回也很正常，Wekruit 这类有时候就是慢或者直接默拒。你先别自己脑补太多，我建议你把投递时间记一下，然后等到下一周中后段再看要不要 follow up。",
+  "  CLAIRE: 可能下周回. 也可能默拒. 别先 emo.",
+  "",
+  "PASS-THROUGH EXAMPLE (return unchanged):",
+  "  DRAFT: 拒得快说明他们没准备好你. next.",
+  "  CLAIRE: 拒得快说明他们没准备好你. next.",
+  "",
+  "Output ONLY the reply. No preface, no explanation.",
 ].join("\n")
 
 let cachedClient: OpenAI | null = null
@@ -125,15 +177,14 @@ const defaultDeps: RewriterDeps = {
     const response = await client.chat.completions.create(
       {
         model: DEFAULT_MODEL,
-        // Low temperature: this is a normalizer, not a generator. We want
-        // the model to either echo or apply the deletion rules
-        // deterministically.
-        temperature: 0.2,
+        // Phase 24 — temp 0.4 (was 0.2). More natural rewrites, less mechanical
+        // echo. Diff guard catches over-creative outputs (rewrite_unsafe).
+        temperature: 0.4,
         // Cap output to keep latency + cost bounded. Real Claire replies
         // are ≤ ~120 chars; 200 tokens is plenty of headroom.
         max_tokens: 200,
         messages: [
-          { role: "system", content: REWRITER_SYSTEM_PROMPT },
+          { role: "system", content: REWRITER_V2_SYSTEM_PROMPT },
           { role: "user", content: `DRAFT:\n${rawText}\n\nREWRITTEN OR UNCHANGED:` },
         ],
       },
@@ -181,20 +232,31 @@ export async function rewriteIfOff(rawText: string, opts: RewriteOpts = {}): Pro
     clearTimeout(timer)
   }
 
-  // 3. Decide. Order matters: timeout > error > empty > no-change > rewrite.
+  // 3. Decide. Order matters: timeout > error > think-strip > empty > no-change > diff-guard > rewrite.
   if (timeoutHit) {
     return { text: rawText, rewriteApplied: false, reason: "timeout" }
   }
   if (upstreamError || modelText == null) {
     return { text: rawText, rewriteApplied: false, reason: "error" }
   }
-  if (modelText.trim().length === 0) {
+
+  // Phase 24 — strip Qwen3 thinking blocks BEFORE any length check (Pitfall 2
+  // in 24-RESEARCH.md: unstripped think blocks trip the 1.6x diff guard and
+  // reject valid rewrites).
+  const cleaned = stripThinkBlocks(modelText).trim()
+
+  if (cleaned.length === 0) {
     // Defense-in-depth: never ship empty.
     return { text: rawText, rewriteApplied: false, reason: "empty_rewrite" }
   }
-  if (modelText.trim() === rawText.trim()) {
+  if (cleaned === rawText.trim()) {
     return { text: rawText, rewriteApplied: false, reason: "no_change" }
   }
 
-  return { text: modelText.trim(), rewriteApplied: true, reason: "rewritten" }
+  // Phase 24 diff guard — reject implausible rewrites (padded or truncated).
+  if (!isDiffSafe(rawText, cleaned)) {
+    return { text: rawText, rewriteApplied: false, reason: "rewrite_unsafe" }
+  }
+
+  return { text: cleaned, rewriteApplied: true, reason: "rewritten" }
 }
