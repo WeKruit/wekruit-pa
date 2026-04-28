@@ -1,7 +1,7 @@
 {
   "indexes": [
     {
-      "collectionGroup": "pa_outbound",
+      "collectionGroup": "pa-outbound",
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "status", "order": "ASCENDING" },
@@ -9,7 +9,7 @@
       ]
     },
     {
-      "collectionGroup": "pa_inbound_events",
+      "collectionGroup": "pa-inbound-events",
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "status", "order": "ASCENDING" },
@@ -17,7 +17,7 @@
       ]
     },
     {
-      "collectionGroup": "pa_inbound_events",
+      "collectionGroup": "pa-inbound-events",
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "status", "order": "ASCENDING" },
@@ -25,7 +25,7 @@
       ]
     },
     {
-      "collectionGroup": "pa_agent_turns",
+      "collectionGroup": "pa-agent-turns",
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "sessionId", "order": "ASCENDING" },
@@ -33,7 +33,7 @@
       ]
     },
     {
-      "collectionGroup": "pa_tool_calls",
+      "collectionGroup": "pa-tool-calls",
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "turnId", "order": "ASCENDING" },
@@ -41,7 +41,7 @@
       ]
     },
     {
-      "collectionGroup": "pa_audit_events",
+      "collectionGroup": "pa-audit-events",
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "userId", "order": "ASCENDING" },
@@ -49,7 +49,7 @@
       ]
     },
     {
-      "collectionGroup": "pa_abuse_events",
+      "collectionGroup": "pa-abuse-events",
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "userId", "order": "ASCENDING" },

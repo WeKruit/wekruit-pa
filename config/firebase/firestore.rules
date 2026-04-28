@@ -1,5 +1,5 @@
 rules_version = '2';
-// Personal assistant platform collections — namespaced (pa_*) in shared project wekruit-5f89b.
+// Personal assistant platform collections — namespaced (pa-*) in shared project wekruit-5f89b.
 // macOS worker uses Admin SDK and bypasses these rules.
 // Dashboard: allow any signed-in user whose email is @wekruit.com, or the allowlisted address below.
 service cloud.firestore {
@@ -16,49 +16,49 @@ service cloud.firestore {
           || request.auth.token.email.lower() == "indolencorlol@gmail.com"
         );
     }
-    match /pa_users/{id} {
+    match /pa-users/{id} {
       allow read, write: if isPaOperator();
     }
-    match /pa_agents/{id} {
+    match /pa-agents/{id} {
       allow read, write: if isPaOperator();
     }
-    match /pa_sessions/{id} {
+    match /pa-sessions/{id} {
       allow read, write: if isPaOperator();
     }
-    match /pa_messages/{id} {
+    match /pa-messages/{id} {
       allow read, write: if isPaOperator();
     }
-    match /pa_remote_config/{id} {
+    match /pa-remote-config/{id} {
       allow read, write: if isPaOperator();
     }
-    match /pa_outbound/{id} {
+    match /pa-outbound/{id} {
       allow read, write: if isPaOperator();
     }
-    match /pa_inbound_events/{id} {
+    match /pa-inbound-events/{id} {
       allow read, write: if isPaOperator();
     }
-    match /pa_agent_turns/{id} {
+    match /pa-agent-turns/{id} {
       allow read, write: if isPaOperator();
     }
-    match /pa_tool_calls/{id} {
+    match /pa-tool-calls/{id} {
       allow read, write: if isPaOperator();
     }
-    match /pa_audit_events/{id} {
+    match /pa-audit-events/{id} {
       allow read, write: if isPaOperator();
     }
-    match /pa_rate_limits/{id} {
+    match /pa-rate-limits/{id} {
       allow read, write: if isPaOperator();
     }
-    match /pa_abuse_events/{id} {
+    match /pa-abuse-events/{id} {
       allow read, write: if isPaOperator();
     }
-    match /pa_session_links/{id} {
+    match /pa-session-links/{id} {
       allow read, write: if isPaOperator();
     }
-    match /pa_memory_events/{id} {
+    match /pa-memory-events/{id} {
       allow read, write: if isPaOperator();
     }
-    match /pa_beta_participants/{id} {
+    match /pa-beta-participants/{id} {
       allow read, write: if isPaOperator();
     }
     match /{document=**} {
