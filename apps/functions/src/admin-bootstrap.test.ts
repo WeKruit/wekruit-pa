@@ -14,6 +14,8 @@ import {
   replayFixtures,
   migrateCollections,
   COLLECTION_MIGRATION_PAIRS,
+  driftCheck,
+  classifyDrift,
   type ReplayDeps,
   type FixtureName,
 } from "./admin-bootstrap.js"
@@ -370,5 +372,98 @@ describe("migrateCollections — live run", () => {
     assert.deepEqual(dstUsers.get("u2"), { id: "u2", name: "bob" })
     const dstReviews = store.get("pa-voice-reviews")!
     assert.deepEqual(dstReviews.get("msg_001"), { rating: 5, tags: ["accuracy"] })
+  })
+})
+
+// ─── Phase 27 T3 — driftCheck ────────────────────────────────────────────────
+
+describe("classifyDrift", () => {
+  it("≤ 0.5% → ok", () => {
+    assert.equal(classifyDrift(0), "ok")
+    assert.equal(classifyDrift(0.001), "ok")
+    assert.equal(classifyDrift(0.005), "ok")
+  })
+  it("0.5% < x ≤ 1% → warn", () => {
+    assert.equal(classifyDrift(0.006), "warn")
+    assert.equal(classifyDrift(0.01), "warn")
+  })
+  it("> 1% → alert", () => {
+    assert.equal(classifyDrift(0.0101), "alert")
+    assert.equal(classifyDrift(0.05), "alert")
+    assert.equal(classifyDrift(1.0), "alert")
+  })
+})
+
+describe("driftCheck", () => {
+  function fakeDb(fsCount: number): { db: ReplayDeps["db"]; firestoreCount: () => Promise<number> } {
+    return {
+      db: {} as ReplayDeps["db"],
+      firestoreCount: async () => fsCount,
+    }
+  }
+
+  it("zero-zero counts → ok status, 0 drift", async () => {
+    const { db, firestoreCount } = fakeDb(0)
+    const r = await driftCheck({ db, firestoreCount, qdrantCount: async () => 0 })
+    assert.equal(r.firestoreCount, 0)
+    assert.equal(r.qdrantCount, 0)
+    assert.equal(r.drift, 0)
+    assert.equal(r.driftPercent, 0)
+    assert.equal(r.status, "ok")
+    assert.equal(r.ok, true)
+  })
+
+  it("perfectly aligned → ok", async () => {
+    const { db, firestoreCount } = fakeDb(1000)
+    const r = await driftCheck({ db, firestoreCount, qdrantCount: async () => 1000 })
+    assert.equal(r.drift, 0)
+    assert.equal(r.driftPercent, 0)
+    assert.equal(r.status, "ok")
+  })
+
+  it("0.4% drift → ok", async () => {
+    const { db, firestoreCount } = fakeDb(1000)
+    const r = await driftCheck({ db, firestoreCount, qdrantCount: async () => 996 })
+    assert.equal(r.drift, 4)
+    assert.equal(r.driftPercent, 0.004)
+    assert.equal(r.status, "ok")
+  })
+
+  it("0.7% drift → warn", async () => {
+    const { db, firestoreCount } = fakeDb(1000)
+    const r = await driftCheck({ db, firestoreCount, qdrantCount: async () => 993 })
+    assert.equal(r.drift, 7)
+    assert.equal(r.status, "warn")
+  })
+
+  it("2% drift → alert", async () => {
+    const { db, firestoreCount } = fakeDb(1000)
+    const r = await driftCheck({ db, firestoreCount, qdrantCount: async () => 980 })
+    assert.equal(r.drift, 20)
+    assert.equal(r.status, "alert")
+  })
+
+  it("Qdrant fails → records warning, falls through to status=alert if drift big", async () => {
+    const { db, firestoreCount } = fakeDb(500)
+    const r = await driftCheck({
+      db,
+      firestoreCount,
+      qdrantCount: async () => {
+        throw new Error("qdrant_unreachable")
+      },
+    })
+    assert.equal(r.firestoreCount, 500)
+    assert.equal(r.qdrantCount, 0)
+    assert.ok(r.warnings && r.warnings.some((w) => w.includes("qdrant_count_failed")))
+    assert.equal(r.ok, false)
+    assert.equal(r.status, "alert") // 500/500 = 100% drift
+  })
+
+  it("returns expected metadata fields", async () => {
+    const { db, firestoreCount } = fakeDb(100)
+    const r = await driftCheck({ db, firestoreCount, qdrantCount: async () => 100 })
+    assert.equal(r.action, "driftCheck")
+    assert.equal(r.collections.firestore, "pa-memory-facts")
+    assert.equal(r.collections.qdrant, "pa-memory")
   })
 })

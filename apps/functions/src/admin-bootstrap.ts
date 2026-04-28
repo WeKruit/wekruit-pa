@@ -21,6 +21,11 @@ import { getApps, initializeApp } from "firebase-admin/app"
 const PA_ADMIN_TOKEN = defineSecret("PA_ADMIN_TOKEN")
 const SILICONFLOW_API_KEY = defineSecret("SILICONFLOW_API_KEY")
 const PA_OPENAI_AGENT_API_KEY = defineSecret("PA_OPENAI_AGENT_API_KEY")
+// Phase 27 T3 — Qdrant credentials needed by driftCheck. Same secrets that
+// onPaInbound + memoryAdmin already use; we bind them here so the admin CF
+// can probe Qdrant collection point counts without redeploying.
+const QDRANT_URL = defineSecret("QDRANT_URL")
+const QDRANT_API_KEY = defineSecret("QDRANT_API_KEY")
 
 const FLAGS_COLLECTION = "pa-feature-flags"
 const AUDIT_COLLECTION = "pa-audit-events"
@@ -988,6 +993,136 @@ export async function migrateCollections(
   return result
 }
 
+// ---------------------------------------------------------------------------
+// Phase 27 T3 — driftCheck admin action (Qdrant <-> Firestore consistency probe)
+// ---------------------------------------------------------------------------
+//
+// Reports point-count divergence between Firestore source-of-truth
+// (`pa-memory-facts`) and the Qdrant recall layer (`pa-memory` collection).
+// driftPercent is computed as |fsCount - qdrantCount| / max(fsCount, 1).
+//
+// Status thresholds:
+//   ≤ 0.5%   → "ok"
+//   0.5–1.0% → "warn"
+//   > 1.0%   → "alert"
+//
+// The action is admin-token gated (no scheduler binding). Adam triggers via
+// curl; later phase wires Cloud Scheduler. Kept side-effect-free: read-only
+// counts on both stores, returns JSON, no writes.
+
+const DRIFT_FS_COLLECTION = "pa-memory-facts"
+const DRIFT_QDRANT_COLLECTION = "pa-memory"
+const DRIFT_OK_THRESHOLD = 0.005
+const DRIFT_WARN_THRESHOLD = 0.01
+
+export type DriftCheckStatus = "ok" | "warn" | "alert"
+
+export interface DriftCheckResult {
+  ok: boolean
+  action: "driftCheck"
+  firestoreCount: number
+  qdrantCount: number
+  drift: number
+  driftPercent: number
+  status: DriftCheckStatus
+  collections: { firestore: string; qdrant: string }
+  /** Optional warnings (e.g. Qdrant unreachable but Firestore count succeeded). */
+  warnings?: string[]
+}
+
+export interface DriftCheckDeps {
+  db: Firestore
+  /** Returns count of points in the Qdrant collection. */
+  qdrantCount: () => Promise<number>
+  /** Returns count of docs in the Firestore source-of-truth. */
+  firestoreCount?: () => Promise<number>
+  log?: (...args: unknown[]) => void
+}
+
+export function classifyDrift(driftPercent: number): DriftCheckStatus {
+  if (driftPercent <= DRIFT_OK_THRESHOLD) return "ok"
+  if (driftPercent <= DRIFT_WARN_THRESHOLD) return "warn"
+  return "alert"
+}
+
+/**
+ * Default Firestore counter — uses `count()` aggregation. Returns 0 on error
+ * so the drift report still surfaces the Qdrant side; callers see the warning.
+ */
+async function defaultFirestoreCount(db: Firestore): Promise<number> {
+  const snap = await db.collection(DRIFT_FS_COLLECTION).count().get()
+  return snap.data().count
+}
+
+/**
+ * Default Qdrant counter — POST /collections/{collection}/points/count
+ * (Qdrant exact count endpoint). Returns 0 on error and the caller surfaces
+ * a warning.
+ */
+async function defaultQdrantCount(): Promise<number> {
+  const url = (process.env.QDRANT_URL ?? "").replace(/\/+$/, "")
+  const apiKey = process.env.QDRANT_API_KEY ?? ""
+  if (!url || !apiKey) {
+    throw new Error("qdrant_credentials_missing")
+  }
+  const resp = await fetch(`${url}/collections/${DRIFT_QDRANT_COLLECTION}/points/count`, {
+    method: "POST",
+    headers: {
+      "api-key": apiKey,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ exact: true }),
+  })
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => "")
+    throw new Error(`qdrant_count_${resp.status}: ${text.slice(0, 200)}`)
+  }
+  const json = (await resp.json()) as { result?: { count?: number } }
+  return Number(json.result?.count ?? 0)
+}
+
+export async function driftCheck(deps: DriftCheckDeps): Promise<DriftCheckResult> {
+  const log = deps.log ?? (() => {})
+  const fsCounter = deps.firestoreCount ?? (() => defaultFirestoreCount(deps.db))
+  const warnings: string[] = []
+
+  let firestoreCount = 0
+  try {
+    firestoreCount = await fsCounter()
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    warnings.push(`firestore_count_failed: ${msg}`)
+    log("[driftCheck] firestore count failed", msg)
+  }
+
+  let qdrantCount = 0
+  try {
+    qdrantCount = await deps.qdrantCount()
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    warnings.push(`qdrant_count_failed: ${msg}`)
+    log("[driftCheck] qdrant count failed", msg)
+  }
+
+  const drift = Math.abs(firestoreCount - qdrantCount)
+  const denom = Math.max(firestoreCount, 1)
+  const driftPercent = drift / denom
+  const status = classifyDrift(driftPercent)
+
+  const result: DriftCheckResult = {
+    ok: warnings.length === 0,
+    action: "driftCheck",
+    firestoreCount,
+    qdrantCount,
+    drift,
+    driftPercent,
+    status,
+    collections: { firestore: DRIFT_FS_COLLECTION, qdrant: DRIFT_QDRANT_COLLECTION },
+  }
+  if (warnings.length > 0) result.warnings = warnings
+  return result
+}
+
 export const paAdminBootstrap = onRequest(
   {
     region: "us-central1",
@@ -996,7 +1131,7 @@ export const paAdminBootstrap = onRequest(
     // replay batch with slow LLM calls still fits in CF runtime budget.
     timeoutSeconds: 540,
     cors: false,
-    secrets: [PA_ADMIN_TOKEN, SILICONFLOW_API_KEY, PA_OPENAI_AGENT_API_KEY],
+    secrets: [PA_ADMIN_TOKEN, SILICONFLOW_API_KEY, PA_OPENAI_AGENT_API_KEY, QDRANT_URL, QDRANT_API_KEY],
   },
   async (req, res) => {
     const auth = checkAdminToken(req.header("x-admin-token") ?? undefined)
@@ -1107,6 +1242,24 @@ export const paAdminBootstrap = onRequest(
         res.json(result)
         return
       }
+      if (action === "driftCheck") {
+        if (!getApps().length) initializeApp()
+        const db = getFirestore()
+        // Bind Qdrant credentials into env so defaultQdrantCount() reads them.
+        try {
+          process.env.QDRANT_URL = QDRANT_URL.value()
+        } catch { /* unbound — driftCheck will surface warning */ }
+        try {
+          process.env.QDRANT_API_KEY = QDRANT_API_KEY.value()
+        } catch { /* unbound */ }
+        const result = await driftCheck({
+          db,
+          qdrantCount: defaultQdrantCount,
+          log: (...args) => console.log(new Date().toISOString(), "[driftCheck]", ...args),
+        })
+        res.json(result)
+        return
+      }
       if (action === "migrateCollections") {
         if (!getApps().length) initializeApp()
         const db = getFirestore()
@@ -1118,7 +1271,7 @@ export const paAdminBootstrap = onRequest(
         res.json({ action, ...result })
         return
       }
-      res.status(400).json({ error: "unknown_action", supported: ["ping", "seedFlags", "replayFixtures", "simulateConversation", "migrateCollections", "reseedDefaultAgent"] })
+      res.status(400).json({ error: "unknown_action", supported: ["ping", "seedFlags", "replayFixtures", "simulateConversation", "migrateCollections", "reseedDefaultAgent", "driftCheck"] })
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       res.status(500).json({ error: "internal", message: msg })
