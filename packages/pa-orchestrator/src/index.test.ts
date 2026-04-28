@@ -102,6 +102,9 @@ function makeStore(overrides: Partial<OrchestratorStore> = {}): OrchestratorStor
     // Phase 22 — proactive cancellation stubs (non-cancellation tests never trigger these)
     cancelAllPendingProactiveJobs: async () => 0,
     writeProactiveCancelAudit: async () => undefined,
+    // Phase 23 — onboarding stubs: return null = already complete, no onboarding intercept
+    getOnboardingUser: async () => null,
+    applyOnboarding: async () => undefined,
     ...overrides,
   }
 }

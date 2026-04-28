@@ -29,6 +29,64 @@ export function checkPromptInjection(text: string): SafetyDecision {
   }
 }
 
+/**
+ * Phase 23 — async variant that writes a pa_abuse_events row when blocked.
+ * Pure `checkPromptInjection` retains its sync signature for non-DB callsites.
+ * Export both so existing usage continues to compile unchanged.
+ */
+export async function checkPromptInjectionAndRecord(
+  db: Firestore,
+  input: {
+    userId: string
+    channel: Channel
+    text: string
+  }
+): Promise<SafetyDecision> {
+  const decision = checkPromptInjection(input.text)
+  if (decision.allow) return decision
+  await recordPromptInjection(db, {
+    userId: input.userId,
+    channel: input.channel,
+    text: input.text,
+    signals: decision.signals ?? [],
+  })
+  return decision
+}
+
+/**
+ * Write a pa_abuse_events row with kind="prompt_injection" and an accompanying
+ * audit event. Called by checkPromptInjectionAndRecord and can be called
+ * directly by the orchestrator's checkInboundSafety.
+ */
+export async function recordPromptInjection(
+  db: Firestore,
+  input: {
+    userId: string
+    channel: Channel
+    text: string
+    signals: string[]
+  }
+): Promise<void> {
+  const now = new Date().toISOString()
+  const abuseId = randomUUID()
+  await db.collection(PA_COLLECTIONS.abuseEvents).doc(abuseId).set({
+    id: abuseId,
+    kind: "prompt_injection",
+    createdAt: now,
+    userId: input.userId,
+    channel: input.channel,
+    signals: input.signals,
+    message: `Prompt injection blocked: ${input.signals.slice(0, 3).join(", ")}`,
+  })
+  await appendAuditEvent(db, {
+    actor: "orchestrator",
+    kind: "safety_block",
+    userId: input.userId,
+    message: "Inbound blocked: prompt injection signal",
+    meta: { channel: input.channel, signals: input.signals },
+  })
+}
+
 export async function enforceRateLimit(
   db: Firestore,
   input: {

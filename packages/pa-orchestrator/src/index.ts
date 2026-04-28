@@ -47,7 +47,8 @@ import {
   type LoadContextResult,
 } from "@pa/memory"
 import { appendAuditEvent } from "@pa/pa-broker"
-import { checkPromptInjection, enforceRateLimit } from "@pa/pa-safety"
+import { checkPromptInjection, checkPromptInjectionAndRecord, enforceRateLimit } from "@pa/pa-safety"
+import { resolveOnboardingStep, applyOnboardingStep, composeOnboardingInput } from "./onboarding.js"
 import { LEGACY_V0_SYSTEM_PROMPT } from "./legacy-voice-prompt.js"
 import { buildVoiceReminder, isVoiceV1Disabled } from "./voice-reminder.js"
 import { computeMirrorForTurn } from "./voice/mirror-injection.js"
@@ -180,6 +181,19 @@ export type OrchestratorStore = {
     inboundEventId: string
     cancelledCount: number
   }): Promise<void>
+  /**
+   * Phase 23 — fetch minimal user fields needed for onboarding state machine.
+   * Returns null when the user doc doesn't exist yet (edge case for new users).
+   */
+  getOnboardingUser(userId: string): Promise<{
+    id: string
+    phoneE164: string
+    onboardingState?: "pending" | "first_mes_sent" | "grounding_q1_asked" | "complete"
+  } | null>
+  /**
+   * Phase 23 — apply onboarding step to advance user state + promote beta participant.
+   */
+  applyOnboarding(userId: string, phoneE164: string, step: "send_first_mes" | "ask_grounding_q" | "complete"): Promise<void>
 }
 
 const HISTORY_LIMIT = Number(process.env.PA_MESSAGE_HISTORY || "40")
@@ -511,6 +525,65 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
 
     const agent = await store.getAgentForUser(event.userId)
     if (!agent) throw Object.assign(new Error("No agent configured"), { code: "NO_AGENT" })
+
+    // Phase 23 — Onboarding state machine (D-03, D-04, D-08).
+    // Run before normal LLM dispatch. For invited/new users, route through
+    // onboarding steps using Voice v1 system prompt (D-04: no separate utility
+    // prompt). On "complete", auto-promotes beta participant status.
+    const onboardingUser = await store.getOnboardingUser(event.userId)
+    if (onboardingUser) {
+      const onboardingStep = resolveOnboardingStep(onboardingUser)
+      if (onboardingStep !== "skip") {
+        const syntheticInput = composeOnboardingInput(onboardingStep, agent)
+        if (syntheticInput) {
+          // Build system inputs for onboarding reply using the normal Voice v1 path
+          const onboardingSystemInputs = [syntheticInput]
+          const onboardingHistory = await store.loadHistory(event.sessionId, 5)
+          const onboardingSession = store.createSession({ sessionId: event.sessionId, userId: event.userId })
+          const { text: onboardingText } = await store.runAgentTurn({
+            agent,
+            systemPrompt: agent.systemPrompt,
+            memoryBlock: null,
+            history: onboardingHistory,
+            userMessage: event.body,
+            session: onboardingSession,
+            systemInputs: onboardingSystemInputs,
+            tools: [],
+          })
+          const onboardingReply = stripLeadingIsoTimestamp(onboardingText.trim()) || "在呢. 今天找你聊点啥? 🍋"
+          const { text: normalizedOnboardingReply } = normalizeForIMessage(onboardingReply, { maxLength: 600 })
+          await store.appendMessage({
+            id: `out-${event.id}`,
+            sessionId: event.sessionId,
+            userId: event.userId,
+            role: "assistant",
+            body: normalizedOnboardingReply,
+            createdAt: store.nowIso(),
+            idempotencyKey: deriveSessionMessageIdempotencyKey(event.sessionId, "assistant", onboardingReply),
+            rawMeta: { source: "pa_orchestrator", turnId, eventId: event.id, onboardingStep },
+          })
+          if (!shouldSuppressOutbound(event)) {
+            await store.enqueueOutbound(event.userId, event.from, normalizedOnboardingReply, {
+              sessionId: event.sessionId,
+              role: "assistant",
+              idempotencyKey: `outbound-onboarding-${event.id}`,
+            })
+          }
+          // Advance onboarding state
+          await store.applyOnboarding(event.userId, onboardingUser.phoneE164, onboardingStep)
+          await store.updateTurn(turnId, {
+            status: "succeeded",
+            stage: "succeeded",
+            completedAt: store.nowIso(),
+            onboardingStep,
+          })
+          await store.markEventSucceeded(event.id)
+          return
+        }
+        // complete step with no synthetic input — just advance state, fall through to normal turn
+        await store.applyOnboarding(event.userId, onboardingUser.phoneE164, onboardingStep)
+      }
+    }
 
     await store.updateTurn(turnId, {
       agentId: agent.id,
@@ -1002,17 +1075,15 @@ export function createFirestoreOrchestratorStore(db: Firestore): OrchestratorSto
         })
         return { allow: false, reason: rl.reason }
       }
-      const inj = checkPromptInjection(event.body)
+      // Phase 23 — checkPromptInjectionAndRecord writes the pa_abuse_events row
+      // (kind=prompt_injection) in addition to the audit event. The sync
+      // checkPromptInjection is still imported for tests that don't need DB.
+      const inj = await checkPromptInjectionAndRecord(db, {
+        userId: event.userId,
+        channel: event.channel,
+        text: event.body,
+      })
       if (!inj.allow) {
-        await appendAuditEvent(db, {
-          kind: "safety_block",
-          message: "Inbound blocked: prompt injection signal",
-          userId: event.userId,
-          sessionId: event.sessionId,
-          inboundEventId: event.id,
-          meta: { signals: inj.signals },
-          actor: "orchestrator",
-        })
         return { allow: false, reason: inj.reason }
       }
       return { allow: true }
@@ -1047,6 +1118,24 @@ export function createFirestoreOrchestratorStore(db: Firestore): OrchestratorSto
         actor: "orchestrator",
         meta: { cancelledCount },
       })
+    },
+    // Phase 23 — onboarding state machine
+    async getOnboardingUser(userId) {
+      const snap = await db.collection(PA_COLLECTIONS.users).doc(userId).get()
+      if (!snap.exists) return null
+      const data = snap.data() as {
+        id?: string
+        phoneE164?: string
+        onboardingState?: "pending" | "first_mes_sent" | "grounding_q1_asked" | "complete"
+      }
+      return {
+        id: data.id ?? userId,
+        phoneE164: data.phoneE164 ?? "",
+        onboardingState: data.onboardingState,
+      }
+    },
+    async applyOnboarding(userId, phoneE164, step) {
+      await applyOnboardingStep(db, { id: userId, phoneE164, onboardingState: undefined }, step)
     },
   }
 }
