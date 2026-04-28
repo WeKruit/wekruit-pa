@@ -29,6 +29,43 @@ export type MemoryMode = z.infer<typeof MemoryModeSchema>
 export const MessageRoleSchema = z.enum(["user", "assistant", "system"])
 export type MessageRole = z.infer<typeof MessageRoleSchema>
 
+/** Phase 23 — onboarding state machine step */
+export const OnboardingStateSchema = z.enum([
+  "pending",
+  "first_mes_sent",
+  "grounding_q1_asked",
+  "complete",
+])
+export type OnboardingState = z.infer<typeof OnboardingStateSchema>
+
+/** Phase 23 — closed-beta participant lifecycle */
+export const BetaParticipantStatusSchema = z.enum([
+  "invited",
+  "active",
+  "suspended",
+  "removed",
+])
+export type BetaParticipantStatus = z.infer<typeof BetaParticipantStatusSchema>
+
+export const BetaParticipantSchema = z.object({
+  id: z.string(),
+  /** Normalized: +E164 phone OR lowercased email */
+  contactHandle: z.string(),
+  contactType: z.enum(["phone", "email"]),
+  /** null until first contact resolves to a pa_users row */
+  userId: z.string().nullable(),
+  status: BetaParticipantStatusSchema,
+  addedAt: z.string(),
+  addedBy: z.string(),
+  removedAt: z.string().nullable(),
+  notes: z.string().nullable(),
+  metadata: z.object({
+    source: z.string().optional(),
+    cohort: z.string().optional(),
+  }).default({}),
+})
+export type BetaParticipant = z.infer<typeof BetaParticipantSchema>
+
 export const UserSchema = z.object({
   id: z.string(),
   phoneE164: z.string(),
@@ -63,6 +100,12 @@ export const UserSchema = z.object({
       imessageHandle: z.string().optional(),
     })
     .optional(),
+  /** Phase 23 — onboarding state machine for closed-beta first-contact flow */
+  onboardingState: OnboardingStateSchema.optional(),
+  onboardedAt: z.string().nullable().optional(),
+  metadata: z.object({
+    cohort: z.string().optional(),
+  }).optional(),
 })
 export type User = z.infer<typeof UserSchema>
 
@@ -376,6 +419,21 @@ export {
   PA_COLLECTIONS,
   PA_REMOTE_CONFIG_DOC,
 } from "./collections.js"
+
+// Phase 22 — Proactive check-in schema + idempotency helper
+// Export as ProactiveScheduledJob to avoid shadowing the Phase 7 ScheduledJob above.
+export {
+  PROACTIVE_JOB_STATUS,
+  fireWindowHash,
+  type ProactiveTriggerType,
+  type ProactiveRecurrence,
+  type ProactiveJobContext,
+  type TimeAnchorContext,
+  type SilenceAnchorContext,
+  type ApplicationFollowupContext,
+  type ProactiveJobStatus,
+  type ScheduledJob as ProactiveScheduledJob,
+} from "./scheduled-jobs.js"
 
 export {
   InboundEventStatusSchema,
