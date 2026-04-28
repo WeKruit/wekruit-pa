@@ -52,6 +52,7 @@ import { LEGACY_V0_SYSTEM_PROMPT } from "./legacy-voice-prompt.js"
 import { buildVoiceReminder, isVoiceV1Disabled } from "./voice-reminder.js"
 import { computeMirrorForTurn } from "./voice/mirror-injection.js"
 import { rewriteIfOff } from "./voice/llm-rewriter.js"
+import { tapCoachTokens } from "./voice/coach-token-monitor.js"
 import { normalizeForIMessage } from "./output-normalizer.js"
 
 type RunAgentTurn = typeof defaultRunAgentTurn
@@ -578,6 +579,13 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // before persisting + sending. Root cause is upstream in
     // `toOpenAIMessages` (was prefixing history bodies); this catches stragglers.
     const reply = stripLeadingIsoTimestamp(text.trim()) || "我暂时没有生成有效回复，请稍后再试。"
+    // Phase 24 T1D — telemetry-only coach-token monitor. Pure observation.
+    // Hits feed Phase 25 self-evolve dataset. NO transform on `reply`.
+    tapCoachTokens(
+      reply,
+      { turnId, userId: event.userId, replyLength: reply.length },
+      (evt, payload) => store.log(evt as string, payload as Record<string, unknown>)
+    )
     // Phase 21 Track 4 — small-LLM normalizer. Catches off-voice patterns
     // (A/B framework, pop-therapy, invented categories, productivity probes)
     // that slipped past Bible v5 + few-shot. Fail-open; rollback via
