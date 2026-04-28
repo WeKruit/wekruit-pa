@@ -32,6 +32,19 @@ export type FlagType = "bool" | "string" | "number" | "json"
 export type FlagScope = "global" | "perEnv" | "perUser"
 export type FlagValue = boolean | string | number | Record<string, unknown> | unknown[]
 
+export type BucketMethod = "userIdHash" | "random"
+
+export type BucketVariant = {
+  name: string
+  weight: number // 0..100
+  value: FlagValue
+}
+
+export type BucketStrategy = {
+  method: BucketMethod
+  variants: BucketVariant[]
+}
+
 export type FeatureFlag = {
   key: string
   value: FlagValue
@@ -39,6 +52,7 @@ export type FeatureFlag = {
   scope: FlagScope
   allowlist: string[]
   blocklist: string[]
+  bucketStrategy: BucketStrategy | null
   updatedAt: string | null
   updatedBy: string
   reason: string
@@ -82,6 +96,28 @@ function currentActor(): string {
   return u?.email ?? u?.uid ?? "unknown"
 }
 
+function bucketStrategyFromRaw(raw: unknown): BucketStrategy | null {
+  if (!raw || typeof raw !== "object") return null
+  const r = raw as Record<string, unknown>
+  const method = r.method
+  if (method !== "userIdHash" && method !== "random") return null
+  if (!Array.isArray(r.variants)) return null
+  const variants: BucketVariant[] = []
+  for (const v of r.variants) {
+    if (!v || typeof v !== "object") continue
+    const vv = v as Record<string, unknown>
+    if (typeof vv.name !== "string") continue
+    if (typeof vv.weight !== "number") continue
+    variants.push({
+      name: vv.name,
+      weight: vv.weight,
+      value: vv.value as FlagValue,
+    })
+  }
+  if (variants.length === 0) return null
+  return { method, variants }
+}
+
 function flagFromSnap(id: string, raw: Record<string, unknown>): FeatureFlag {
   return {
     key: (raw.key as string) ?? id,
@@ -90,6 +126,7 @@ function flagFromSnap(id: string, raw: Record<string, unknown>): FeatureFlag {
     scope: ((raw.scope as FlagScope) ?? "global"),
     allowlist: Array.isArray(raw.allowlist) ? (raw.allowlist as string[]) : [],
     blocklist: Array.isArray(raw.blocklist) ? (raw.blocklist as string[]) : [],
+    bucketStrategy: bucketStrategyFromRaw(raw.bucketStrategy),
     updatedAt: tsToIso(raw.updatedAt),
     updatedBy: (raw.updatedBy as string) ?? "",
     reason: (raw.reason as string) ?? "",
@@ -142,6 +179,11 @@ export type SaveFlagInput = {
   allowlist: string[]
   blocklist: string[]
   reason: string
+  /**
+   * Optional A/B bucket strategy. Pass `null` to explicitly clear an existing
+   * strategy; omit (undefined) to leave any prior value untouched.
+   */
+  bucketStrategy?: BucketStrategy | null
 }
 
 export async function saveFlag(input: SaveFlagInput): Promise<void> {
@@ -155,6 +197,24 @@ export async function saveFlag(input: SaveFlagInput): Promise<void> {
   const batch = writeBatch(db())
   const nextVersion = (prev?.version ?? 0) + 1
 
+  // Validation parity with @pa/pa-persistence setFlag — keep dashboard
+  // writes consistent with what the SDK would accept.
+  if (input.bucketStrategy) {
+    const sum = input.bucketStrategy.variants.reduce((s, v) => s + (Number(v.weight) || 0), 0)
+    if (Math.abs(sum - 100) > 0.01) {
+      throw new Error(`bucketStrategy variant weights must sum to 100, got ${sum}`)
+    }
+    if (input.bucketStrategy.variants.length === 0) {
+      throw new Error("bucketStrategy.variants must be non-empty")
+    }
+  }
+
+  // Resolve bucketStrategy persistence: explicit value wins, undefined keeps prev.
+  const nextBucket: BucketStrategy | null =
+    input.bucketStrategy !== undefined
+      ? input.bucketStrategy
+      : prev?.bucketStrategy ?? null
+
   batch.set(
     flagRef,
     {
@@ -164,6 +224,7 @@ export async function saveFlag(input: SaveFlagInput): Promise<void> {
       scope: input.scope,
       allowlist: input.allowlist,
       blocklist: input.blocklist,
+      bucketStrategy: nextBucket,
       updatedAt: serverTimestamp(),
       updatedBy: actor,
       reason: input.reason,

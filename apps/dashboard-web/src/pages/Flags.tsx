@@ -22,6 +22,9 @@ import {
   revertFlag,
   saveFlag,
   type AuditEvent,
+  type BucketMethod,
+  type BucketStrategy,
+  type BucketVariant,
   type FeatureFlag,
   type FlagScope,
   type FlagType,
@@ -143,6 +146,19 @@ function ChipInput({
 // Flag editor row (expand-on-edit)
 // ---------------------------------------------------------------------------
 
+type BucketDraftVariant = {
+  name: string
+  weight: number
+  // Stored as text for type-aware parsing on save (mirrors main `text` field).
+  valueText: string
+}
+
+type BucketDraft = {
+  enabled: boolean
+  method: BucketMethod
+  variants: BucketDraftVariant[]
+}
+
 type DraftState = {
   type: FlagType
   scope: FlagScope
@@ -151,6 +167,29 @@ type DraftState = {
   blocklist: string[]
   reason: string
   parseError: string | null
+  bucket: BucketDraft
+}
+
+function makeBucketDraft(flag: FeatureFlag): BucketDraft {
+  if (!flag.bucketStrategy) {
+    return {
+      enabled: false,
+      method: "userIdHash",
+      variants: [
+        { name: "control", weight: 50, valueText: stringifyValue(flag.value, flag.type) },
+        { name: "treatment", weight: 50, valueText: stringifyValue(flag.value, flag.type) },
+      ],
+    }
+  }
+  return {
+    enabled: true,
+    method: flag.bucketStrategy.method,
+    variants: flag.bucketStrategy.variants.map((v) => ({
+      name: v.name,
+      weight: v.weight,
+      valueText: stringifyValue(v.value as FlagValue, flag.type),
+    })),
+  }
 }
 
 function makeDraft(flag: FeatureFlag): DraftState {
@@ -162,7 +201,243 @@ function makeDraft(flag: FeatureFlag): DraftState {
     blocklist: [...flag.blocklist],
     reason: "",
     parseError: null,
+    bucket: makeBucketDraft(flag),
   }
+}
+
+// ---------------------------------------------------------------------------
+// Bucket editor
+// ---------------------------------------------------------------------------
+
+function BucketEditor({
+  draft,
+  flagType,
+  disabled,
+  onChange,
+}: {
+  draft: BucketDraft
+  flagType: FlagType
+  disabled: boolean
+  onChange: (next: BucketDraft) => void
+}) {
+  const [expanded, setExpanded] = useState(draft.enabled)
+
+  const totalWeight = useMemo(
+    () => draft.variants.reduce((s, v) => s + (Number.isFinite(v.weight) ? v.weight : 0), 0),
+    [draft.variants]
+  )
+  const weightOk = Math.abs(totalWeight - 100) < 0.01
+
+  function updateVariant(idx: number, patch: Partial<BucketDraftVariant>) {
+    const next = draft.variants.map((v, i) => (i === idx ? { ...v, ...patch } : v))
+    onChange({ ...draft, variants: next })
+  }
+  function addVariant() {
+    onChange({
+      ...draft,
+      variants: [
+        ...draft.variants,
+        { name: `variant_${draft.variants.length}`, weight: 0, valueText: "" },
+      ],
+    })
+  }
+  function removeVariant(idx: number) {
+    onChange({ ...draft, variants: draft.variants.filter((_, i) => i !== idx) })
+  }
+
+  return (
+    <div style={{ marginTop: "0.75rem", border: "1px solid #e2e8f0", borderRadius: 6 }}>
+      <button
+        type="button"
+        onClick={() => setExpanded(!expanded)}
+        style={{
+          width: "100%",
+          textAlign: "left",
+          background: "transparent",
+          border: "none",
+          padding: "0.6rem 0.75rem",
+          cursor: "pointer",
+          fontSize: "0.85em",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+        }}
+      >
+        <span>
+          <strong>A/B Bucket</strong>{" "}
+          <span style={{ color: "#64748b" }}>
+            {draft.enabled
+              ? `(${draft.method}, ${draft.variants.length} variant${
+                  draft.variants.length === 1 ? "" : "s"
+                })`
+              : "(disabled — defaults to flag value)"}
+          </span>
+        </span>
+        <span style={{ color: "#64748b" }}>{expanded ? "▾" : "▸"}</span>
+      </button>
+      {expanded ? (
+        <div style={{ padding: "0 0.75rem 0.75rem 0.75rem" }}>
+          <label
+            style={{
+              display: "inline-flex",
+              gap: 6,
+              alignItems: "center",
+              fontSize: "0.85em",
+              marginBottom: "0.5rem",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={draft.enabled}
+              disabled={disabled}
+              onChange={(e) => onChange({ ...draft, enabled: e.target.checked })}
+            />
+            Enable bucket strategy
+          </label>
+          {draft.enabled ? (
+            <>
+              <label style={{ display: "block", fontSize: "0.85em", marginBottom: "0.5rem" }}>
+                Method
+                <select
+                  value={draft.method}
+                  disabled={disabled}
+                  onChange={(e) => onChange({ ...draft, method: e.target.value as BucketMethod })}
+                  style={{ display: "block", width: "100%", marginTop: 4 }}
+                >
+                  <option value="userIdHash">userIdHash (deterministic per user)</option>
+                  <option value="random">random (per call)</option>
+                </select>
+              </label>
+
+              <div style={{ fontSize: "0.8em", color: "#64748b", marginBottom: 4 }}>
+                Variants (weights must sum to 100)
+              </div>
+              {draft.variants.map((v, i) => (
+                <div
+                  key={i}
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 80px 2fr 28px",
+                    gap: 6,
+                    marginBottom: 6,
+                    alignItems: "center",
+                  }}
+                >
+                  <input
+                    type="text"
+                    value={v.name}
+                    disabled={disabled}
+                    placeholder="variant name"
+                    onChange={(e) => updateVariant(i, { name: e.target.value })}
+                    style={{ fontSize: "0.85em", padding: "4px 6px" }}
+                  />
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    step={1}
+                    value={v.weight}
+                    disabled={disabled}
+                    onChange={(e) => updateVariant(i, { weight: Number(e.target.value) })}
+                    style={{ fontSize: "0.85em", padding: "4px 6px" }}
+                  />
+                  {flagType === "bool" ? (
+                    <select
+                      value={v.valueText === "true" ? "true" : "false"}
+                      disabled={disabled}
+                      onChange={(e) => updateVariant(i, { valueText: e.target.value })}
+                      style={{ fontSize: "0.85em" }}
+                    >
+                      <option value="true">true</option>
+                      <option value="false">false</option>
+                    </select>
+                  ) : (
+                    <input
+                      type={flagType === "number" ? "number" : "text"}
+                      value={v.valueText}
+                      disabled={disabled}
+                      placeholder={flagType === "json" ? '{"k":"v"}' : "value"}
+                      onChange={(e) => updateVariant(i, { valueText: e.target.value })}
+                      style={{
+                        fontSize: "0.85em",
+                        padding: "4px 6px",
+                        fontFamily: flagType === "json" ? "monospace" : undefined,
+                      }}
+                    />
+                  )}
+                  <button
+                    type="button"
+                    disabled={disabled || draft.variants.length <= 1}
+                    onClick={() => removeVariant(i)}
+                    aria-label={`Remove variant ${v.name}`}
+                    title="Remove variant"
+                    style={{ fontSize: "0.85em" }}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  marginTop: 4,
+                }}
+              >
+                <button
+                  type="button"
+                  disabled={disabled}
+                  onClick={addVariant}
+                  style={{ fontSize: "0.8em" }}
+                >
+                  + Add variant
+                </button>
+                <span
+                  style={{
+                    fontSize: "0.8em",
+                    color: weightOk ? "#16a34a" : "#dc2626",
+                  }}
+                >
+                  Total: {totalWeight}
+                  {weightOk ? " ✓" : " (must equal 100)"}
+                </span>
+              </div>
+            </>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function buildBucketStrategy(
+  draft: BucketDraft,
+  flagType: FlagType
+): { result: BucketStrategy | null } | { error: string } {
+  if (!draft.enabled) return { result: null }
+  if (draft.variants.length === 0) return { error: "Bucket: at least one variant required" }
+  const variants: BucketVariant[] = []
+  for (const v of draft.variants) {
+    if (!v.name.trim()) return { error: `Bucket: variant name cannot be empty` }
+    if (!Number.isFinite(v.weight) || v.weight < 0 || v.weight > 100) {
+      return { error: `Bucket: variant "${v.name}" weight must be 0..100` }
+    }
+    let parsed: FlagValue
+    try {
+      parsed = parseValue(v.valueText, flagType)
+    } catch (e) {
+      return {
+        error: `Bucket: variant "${v.name}" value invalid (${
+          e instanceof Error ? e.message : String(e)
+        })`,
+      }
+    }
+    variants.push({ name: v.name.trim(), weight: v.weight, value: parsed })
+  }
+  const sum = variants.reduce((s, v) => s + v.weight, 0)
+  if (Math.abs(sum - 100) > 0.01) return { error: `Bucket: weights must sum to 100, got ${sum}` }
+  return { result: { method: draft.method, variants } }
 }
 
 function FlagEditor({
@@ -191,6 +466,11 @@ function FlagEditor({
       setErr("Reason is required (audit log).")
       return
     }
+    const bucketBuild = buildBucketStrategy(draft.bucket, draft.type)
+    if ("error" in bucketBuild) {
+      setErr(bucketBuild.error)
+      return
+    }
     setBusy(true)
     try {
       await saveFlag({
@@ -201,6 +481,7 @@ function FlagEditor({
         allowlist: draft.allowlist,
         blocklist: draft.blocklist,
         reason: draft.reason.trim(),
+        bucketStrategy: bucketBuild.result,
       })
       onSaved()
     } catch (e) {
@@ -298,6 +579,13 @@ function FlagEditor({
           />
         </div>
       ) : null}
+
+      <BucketEditor
+        draft={draft.bucket}
+        flagType={draft.type}
+        disabled={busy}
+        onChange={(next) => setDraft({ ...draft, bucket: next })}
+      />
 
       <div style={{ marginTop: "0.75rem" }}>
         <label style={{ fontSize: "0.85em" }}>
