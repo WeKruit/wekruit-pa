@@ -1,0 +1,18 @@
+{
+  "plan": "24-03",
+  "deferred": true,
+  "reason": "ANTHROPIC_API_KEY not provisioned in this environment. Bible v6 code changes are complete and committed. Run anchor regression via: cd apps/eval/voice && ANTHROPIC_API_KEY=<key> deepeval test run test_voice_baseline.py -k regression-anchor. Expected delta vs baseline: +5-10pp on ClaireVoice from Bible v6 alone; rewriter v2 (plan 04) closes remaining gap.",
+  "claire_voice_pass_rate": null,
+  "no_coach_pass_rate": null,
+  "baseline": null,
+  "delta": null,
+  "deferred_to": "plan 07 (verification) or run manually after ANTHROPIC_API_KEY provisioned",
+  "bible_v6_changes": {
+    "systemPrompt_size_v5": 4997,
+    "systemPrompt_size_v6": 1392,
+    "reduction_pct": 72,
+    "fewShotMessages_count": 24,
+    "sections_added": ["IDENTITY", "STYLE", "TONE MODES", "VOCABULARY", "QUICK REACTIONS", "WHEN A FRIEND VENTS", "ANTI-PATTERNS"],
+    "corpus_markers_added": ["老登", "活人感", "邪修", "主理人", "班味", "去班味", "赛博对账", "发疯工牌", "delulu", "cooked", "brainrot", "lock in", "aura", "mother is mothering", "demure", "crash out", "canon event", "iykyk"]
+  }
+}
