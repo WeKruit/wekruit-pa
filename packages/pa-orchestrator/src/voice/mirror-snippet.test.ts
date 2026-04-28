@@ -50,8 +50,9 @@ test("low zh_char_ratio (<=0.2) labels primary language as English", () => {
   assert.match(out, /English|en\b/i)
 })
 
-test("mixed (0.2-0.8) labels code-switch ok", () => {
-  const out = buildMirrorSnippet(snap({ zh_char_ratio: 0.5 }))!
+test("mixed (0.05-0.5) labels code-switch ok", () => {
+  // Phase 19 thresholds: zh >= 0.5 → "zh"; zh <= 0.05 → "en"; else "mix"
+  const out = buildMirrorSnippet(snap({ zh_char_ratio: 0.3 }))!
   assert.match(out, /code-switch|zh-en|mix/i)
 })
 

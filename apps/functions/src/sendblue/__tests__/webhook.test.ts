@@ -166,7 +166,7 @@ describe("handleSendblueWebhook", () => {
     setEnvAllowlist(["+15559999999"]) // Adam allowed; sender NOT
     const { db, inbound, audit } = makeFakeDb()
     const body = JSON.stringify(basePayload())
-    const req = makeReq({ body, signature: sign(body) })
+    const req = makeReq({ body, signature: SECRET })
     const res = makeRes()
 
     await handleSendblueWebhook(req, res, { db, secret: SECRET })
@@ -182,7 +182,7 @@ describe("handleSendblueWebhook", () => {
   it("Test 3: valid HMAC + allowlisted + receive → 200, ONE inbound row keyed sendblue-${message_handle}", async () => {
     const { db, inbound } = makeFakeDb()
     const body = JSON.stringify(basePayload())
-    const req = makeReq({ body, signature: sign(body) })
+    const req = makeReq({ body, signature: SECRET })
     const res = makeRes()
 
     await handleSendblueWebhook(req, res, { db, secret: SECRET })
@@ -199,11 +199,11 @@ describe("handleSendblueWebhook", () => {
   it("Test 4: same message_handle posted twice → exactly ONE inbound row (broker idempotency)", async () => {
     const { db, inbound } = makeFakeDb()
     const body = JSON.stringify(basePayload())
-    const req1 = makeReq({ body, signature: sign(body) })
+    const req1 = makeReq({ body, signature: SECRET })
     const res1 = makeRes()
     await handleSendblueWebhook(req1, res1, { db, secret: SECRET })
 
-    const req2 = makeReq({ body, signature: sign(body) })
+    const req2 = makeReq({ body, signature: SECRET })
     const res2 = makeRes()
     await handleSendblueWebhook(req2, res2, { db, secret: SECRET })
 
@@ -216,7 +216,7 @@ describe("handleSendblueWebhook", () => {
     const { db, inbound, audit } = makeFakeDb()
     const payload = { ...basePayload(), is_outbound: true }
     const body = JSON.stringify(payload)
-    const req = makeReq({ body, signature: sign(body) })
+    const req = makeReq({ body, signature: SECRET })
     const res = makeRes()
 
     await handleSendblueWebhook(req, res, { db, secret: SECRET })
@@ -230,7 +230,7 @@ describe("handleSendblueWebhook", () => {
     const { db, inbound, audit } = makeFakeDb()
     // Synthetic typing payload (no message_handle, no content)
     const body = JSON.stringify({ type: "typing_indicator", number: "+15551234567" })
-    const req = makeReq({ body, signature: sign(body) })
+    const req = makeReq({ body, signature: SECRET })
     const res = makeRes()
 
     await handleSendblueWebhook(req, res, { db, secret: SECRET })
@@ -243,7 +243,7 @@ describe("handleSendblueWebhook", () => {
   it("Test 7: group_id non-empty → 200, NO inbound, audit group_chat_rejected (Q-03 lock)", async () => {
     const { db, inbound, audit } = makeFakeDb()
     const body = JSON.stringify({ ...basePayload(), group_id: "g-abc" })
-    const req = makeReq({ body, signature: sign(body) })
+    const req = makeReq({ body, signature: SECRET })
     const res = makeRes()
 
     await handleSendblueWebhook(req, res, { db, secret: SECRET })
@@ -256,7 +256,7 @@ describe("handleSendblueWebhook", () => {
   it("Test 8: empty content → 200, NO inbound (matches macOS worker [dm] empty; skip)", async () => {
     const { db, inbound } = makeFakeDb()
     const body = JSON.stringify({ ...basePayload(), content: "" })
-    const req = makeReq({ body, signature: sign(body) })
+    const req = makeReq({ body, signature: SECRET })
     const res = makeRes()
 
     await handleSendblueWebhook(req, res, { db, secret: SECRET })
@@ -268,7 +268,7 @@ describe("handleSendblueWebhook", () => {
   it("Test 9: malformed JSON body (with valid HMAC) → 400 Bad Request", async () => {
     const { db, inbound } = makeFakeDb()
     const body = "{not-json"
-    const req = makeReq({ body, signature: sign(body) })
+    const req = makeReq({ body, signature: SECRET })
     const res = makeRes()
 
     await handleSendblueWebhook(req, res, { db, secret: SECRET })
@@ -278,9 +278,12 @@ describe("handleSendblueWebhook", () => {
   })
 
   it("Test 10: signature header alias sb-signature also accepted", async () => {
+    // Sendblue auth is plaintext shared-secret compare (not HMAC-over-body)
+    // per hmac.ts line 5-6 + verifier rewrite 2026-04-27. The signature
+    // header carries the SECRET itself, not a hash of the body.
     const { db, inbound } = makeFakeDb()
     const body = JSON.stringify(basePayload())
-    const req = makeReq({ body, signature: sign(body), signatureHeader: "sb-signature" })
+    const req = makeReq({ body, signature: SECRET, signatureHeader: "sb-signature" })
     const res = makeRes()
 
     await handleSendblueWebhook(req, res, { db, secret: SECRET })
