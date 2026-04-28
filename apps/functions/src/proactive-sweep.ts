@@ -21,6 +21,9 @@
  * Phase 7 conventions: retry up to maxAttempts, then dead_letter (PROACTIVE-03).
  */
 import { onRequest } from "firebase-functions/v2/https"
+import { defineSecret } from "firebase-functions/params"
+
+const PA_ADMIN_TOKEN = defineSecret("PA_ADMIN_TOKEN")
 import { setGlobalOptions, logger } from "firebase-functions/v2"
 import { getFirestore, Timestamp, type Firestore } from "firebase-admin/firestore"
 import { PA_COLLECTIONS, fireWindowHash } from "@pa/core-types"
@@ -275,9 +278,7 @@ export const paProactiveSweep = onRequest(
     memory: "512MiB",
     timeoutSeconds: 60,
     cors: false,
-    // No secrets needed directly — runProactiveTurn reads from process.env
-    // which is set by onPaInbound's secret injection pattern. Sweep secrets
-    // (if needed) can be added here after prod validation.
+    secrets: [PA_ADMIN_TOKEN],
   },
   async (req, res) => {
     // Admin token gate (Phase 22 deferred-cron: trigger via admin/dashboard).
