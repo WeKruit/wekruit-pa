@@ -39,6 +39,16 @@ import {
   type VoiceRating,
   type VoiceReviewTag,
 } from "../lib/voice-reviews-api.js"
+import {
+  LOCAL_RUN_INSTRUCTIONS,
+  diffRuns,
+  fetchStaticEvalRun,
+  listEvalRuns,
+  makeDownloadUrl,
+  type EvalRun,
+  type RunDiff,
+} from "../lib/voice-eval-api.js"
+import { listFlags, type FeatureFlag } from "../lib/flags-api.js"
 
 const PAGE_SIZE = 50
 
@@ -380,6 +390,236 @@ export function Voice() {
           </div>
         )}
       </Panel>
+
+      <EvalPanel />
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Eval panel — Phase 25 T3
+// ---------------------------------------------------------------------------
+
+function EvalPanel() {
+  const [autoRerun, setAutoRerun] = useState<boolean>(false)
+  const [latest, setLatest] = useState<EvalRun | null>(null)
+  const [baseline, setBaseline] = useState<EvalRun | null>(null)
+  const [runs, setRuns] = useState<EvalRun[]>([])
+  const [running, setRunning] = useState(false)
+  const [showInstructions, setShowInstructions] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  const loadAll = useCallback(async () => {
+    setErr(null)
+    try {
+      // Read flag from pa_feature_flags directly (mirrors flags-api pattern).
+      try {
+        const flags = (await listFlags()) as FeatureFlag[]
+        const f = flags.find((x) => x.key === "voiceEvalAutoRerun")
+        setAutoRerun(typeof f?.value === "boolean" ? f.value : false)
+      } catch {
+        // Flag absent — default false.
+        setAutoRerun(false)
+      }
+      // Fetch baseline + latest static fixtures (dev path).
+      const [b, l, fs] = await Promise.all([
+        fetchStaticEvalRun("baseline.json"),
+        fetchStaticEvalRun("latest.json"),
+        listEvalRuns(20),
+      ])
+      setBaseline(b)
+      setLatest(l ?? fs[0] ?? null)
+      setRuns(fs)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    }
+  }, [])
+
+  useEffect(() => {
+    void loadAll()
+  }, [loadAll])
+
+  function handleManualRun() {
+    setRunning(true)
+    setShowInstructions(true)
+    // No CF callable wired yet — we surface local-run instructions and let
+    // Adam paste the result JSON path. After a refresh the static fixture
+    // path will pick up the new file.
+    setRunning(false)
+  }
+
+  const diff: RunDiff | null = useMemo(() => {
+    if (!baseline || !latest) return null
+    return diffRuns(baseline, latest)
+  }, [baseline, latest])
+
+  return (
+    <Panel
+      title="Eval — golden-50 vs baseline"
+      eyebrow="Phase 25 T3"
+      actions={
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <span style={{ fontSize: "0.75em", color: "#64748b" }}>
+            auto-rerun: {autoRerun ? "on" : "off"} (flag voiceEvalAutoRerun)
+          </span>
+          <button type="button" onClick={() => void loadAll()}>
+            Refresh
+          </button>
+          <button type="button" disabled={running} onClick={handleManualRun}>
+            {running ? "Running…" : "Run eval golden-50"}
+          </button>
+        </div>
+      }
+    >
+      {err ? <ErrorState message={err} /> : null}
+
+      {showInstructions ? (
+        <div
+          style={{
+            background: "#fefce8",
+            border: "1px solid #fde047",
+            padding: "0.75rem 1rem",
+            borderRadius: 6,
+            marginBottom: 12,
+          }}
+        >
+          <strong>Run the eval locally:</strong>
+          <pre
+            style={{
+              fontFamily: "monospace",
+              fontSize: "0.85em",
+              background: "#fffef0",
+              padding: "0.5rem",
+              borderRadius: 4,
+              overflow: "auto",
+              margin: "0.5rem 0",
+            }}
+          >
+            {LOCAL_RUN_INSTRUCTIONS}
+          </pre>
+          <button type="button" onClick={() => setShowInstructions(false)}>
+            Dismiss
+          </button>
+        </div>
+      ) : null}
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: 12,
+          marginBottom: 12,
+        }}
+      >
+        <ScoreCard label="Baseline" run={baseline} />
+        <ScoreCard label="Latest" run={latest} />
+      </div>
+
+      {diff ? (
+        <DiffTable diff={diff} latest={latest!} />
+      ) : (
+        <EmptyState
+          title="No diff available"
+          body="Drop apps/dashboard-web/public/eval-results/baseline.json + latest.json (or upload to pa_voice_eval_runs) to render a diff."
+        />
+      )}
+
+      {runs.length > 0 ? (
+        <div style={{ marginTop: 12, fontSize: "0.85em", color: "#64748b" }}>
+          {runs.length} run{runs.length === 1 ? "" : "s"} in pa_voice_eval_runs.
+        </div>
+      ) : null}
+    </Panel>
+  )
+}
+
+function ScoreCard({ label, run }: { label: string; run: EvalRun | null }) {
+  return (
+    <div
+      style={{
+        border: "1px solid #e2e8f0",
+        borderRadius: 6,
+        padding: "0.75rem 1rem",
+        background: "#ffffff",
+      }}
+    >
+      <div style={{ fontSize: "0.75em", color: "#64748b", marginBottom: 4 }}>{label}</div>
+      {run ? (
+        <>
+          <div style={{ fontSize: "1.5em", fontWeight: 600 }}>
+            {(run.score * 100).toFixed(1)}%
+          </div>
+          <div style={{ fontSize: "0.8em", color: "#64748b" }}>
+            {run.turns.length} turns · {run.ts ? run.ts.slice(0, 19).replace("T", " ") : "—"}
+          </div>
+          <div style={{ marginTop: 6 }}>
+            <a href={makeDownloadUrl(run)} download={`${run.label}.json`} style={{ fontSize: "0.8em" }}>
+              Download JSON
+            </a>
+          </div>
+        </>
+      ) : (
+        <div style={{ fontSize: "0.85em", color: "#94a3b8" }}>(none)</div>
+      )}
+    </div>
+  )
+}
+
+function DiffTable({ diff, latest }: { diff: RunDiff; latest: EvalRun }) {
+  const sign = diff.scoreDelta >= 0 ? "+" : ""
+  const color = diff.scoreDelta >= 0 ? "#16a34a" : "#dc2626"
+  return (
+    <div>
+      <div style={{ marginBottom: 8 }}>
+        <strong>Score delta:</strong>{" "}
+        <span style={{ color, fontWeight: 600 }}>
+          {sign}
+          {(diff.scoreDelta * 100).toFixed(1)}%
+        </span>{" "}
+        <span style={{ color: "#64748b", fontSize: "0.85em" }}>
+          (top {diff.changed.length} changed turns shown){" "}
+          <a href={makeDownloadUrl(latest)} download="latest-eval.json">
+            full JSON
+          </a>
+        </span>
+      </div>
+      <table
+        style={{
+          width: "100%",
+          fontSize: "0.85em",
+          borderCollapse: "collapse",
+        }}
+      >
+        <thead>
+          <tr style={{ background: "#f8fafc", textAlign: "left" }}>
+            <th style={{ padding: "4px 8px" }}>messageId</th>
+            <th style={{ padding: "4px 8px" }}>baseline</th>
+            <th style={{ padding: "4px 8px" }}>latest</th>
+            <th style={{ padding: "4px 8px" }}>Δ</th>
+          </tr>
+        </thead>
+        <tbody>
+          {diff.changed.map((c) => (
+            <tr key={c.messageId} style={{ borderTop: "1px solid #e2e8f0" }}>
+              <td style={{ padding: "4px 8px", fontFamily: "monospace" }}>
+                {c.messageId.slice(0, 16)}
+              </td>
+              <td style={{ padding: "4px 8px" }}>{c.baselineRating ?? "—"}</td>
+              <td style={{ padding: "4px 8px" }}>{c.currentRating ?? "—"}</td>
+              <td
+                style={{
+                  padding: "4px 8px",
+                  color: c.delta >= 0 ? "#16a34a" : "#dc2626",
+                  fontWeight: 600,
+                }}
+              >
+                {c.delta >= 0 ? "+" : ""}
+                {c.delta}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   )
 }
