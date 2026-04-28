@@ -137,6 +137,15 @@ export const AgentDefSchema = z.object({
   toolPolicy: ToolPolicySchema.default("none"),
   allowedConnectors: z.array(z.string()).optional(),
   toolBudgetPerTurn: z.number().int().nonnegative().optional(),
+  /** Phase 24 T1B: 12 mes_examples relocated from systemPrompt to messages-array alternating turns. */
+  fewShotMessages: z
+    .array(
+      z.object({
+        role: z.enum(["user", "assistant"]),
+        content: z.string(),
+      })
+    )
+    .optional(),
 })
 export type AgentDef = z.infer<typeof AgentDefSchema>
 
