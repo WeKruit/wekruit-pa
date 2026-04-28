@@ -56,6 +56,11 @@ import { rewriteIfOff } from "./voice/llm-rewriter.js"
 import { tapCoachTokens } from "./voice/coach-token-monitor.js"
 import { buildFewShotTurns, prefixFewShotToHistory } from "./voice/few-shot.js"
 import { normalizeForIMessage } from "./output-normalizer.js"
+// Phase 21 Track 5 — Headhunter playbook addendum (job-search probe rotation).
+import { headhunterAddendum } from "./playbooks/headhunter.js"
+
+const HEADHUNTER_PLAYBOOK_ID = "headhunter"
+const HEADHUNTER_TRIGGER_RE = /帮我|想换|在看工作|在面|简历|offer/i
 // Phase 22 — proactive cancellation NLU (D-07, PROACTIVE-06)
 import { detectProactiveCancellation } from "./cancellation-nlu.js"
 // Re-export Phase 22 proactive modules for consumers (e.g. apps/functions)
@@ -661,10 +666,19 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
         ...mirror.audit,
       })
     }
+    // Phase 21 Track 5 — headhunter playbook activation. Triggered by either
+    // an explicit ctx.playbook hint (future agent-config wiring) or by
+    // job-search regex on the inbound body. Sits AFTER the Phase 18 voice
+    // reminder and BEFORE the Phase 19 mirror snippet (D-04 ordering intact).
+    const headhunterActive =
+      (event as { playbook?: string }).playbook === HEADHUNTER_PLAYBOOK_ID ||
+      HEADHUNTER_TRIGGER_RE.test(event.body)
+    const headhunterEntry = headhunterAddendum({ active: headhunterActive })
     const systemInputs: string[] = [
       personaCard,
       recallEntry,
       voiceReminder,
+      headhunterEntry,
       mirror.snippet,
     ].filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
     // Phase 10.5 T7 — bridge agent.allowedConnectors → SDK tools. When the

@@ -322,6 +322,44 @@ test("processInboundEvent injects mirror snippet AFTER Phase 18 voice reminder (
   assert.ok(mirrorIdx > reminderIdx, "mirror must come after voice reminder (D-04)")
 })
 
+// Phase 21 Track 5 — Headhunter playbook activation by inbound regex.
+test("processInboundEvent injects headhunter addendum after voice reminder, before mirror, when user signals job search", async () => {
+  let captured: { systemInputs?: string[] } | null = null
+  const store = makeStore({
+    runAgentTurn: async (input) => {
+      captured = { systemInputs: input.systemInputs }
+      return { text: "ok" }
+    },
+  })
+  await processInboundEvent({ ...baseEvent, body: "我想换工作" }, store)
+  if (!captured) throw new Error("runAgentTurn was not called")
+  const seen = captured as { systemInputs?: string[] }
+  const inputs = seen.systemInputs!
+  const reminderIdx = inputs.findIndex((s) => /Reminder: you're Claire/.test(s))
+  const headhunterIdx = inputs.findIndex((s) => s.includes("PLAYBOOK MODE: HEADHUNTER"))
+  const mirrorIdx = inputs.findIndex((s) => s.startsWith("User is currently"))
+  assert.notEqual(headhunterIdx, -1, "headhunter addendum must be present")
+  assert.ok(headhunterIdx > reminderIdx, "headhunter addendum must come after voice reminder")
+  if (mirrorIdx !== -1) {
+    assert.ok(mirrorIdx > headhunterIdx, "mirror must come after headhunter addendum")
+  }
+
+  // Negative case: a benign message must NOT activate the playbook.
+  let captured2: { systemInputs?: string[] } | null = null
+  const store2 = makeStore({
+    runAgentTurn: async (input) => {
+      captured2 = { systemInputs: input.systemInputs }
+      return { text: "ok" }
+    },
+  })
+  await processInboundEvent({ ...baseEvent, body: "今天天气不错" }, store2)
+  if (!captured2) throw new Error("runAgentTurn was not called")
+  const seen2 = captured2 as { systemInputs?: string[] }
+  for (const entry of seen2.systemInputs!) {
+    assert.doesNotMatch(entry, /PLAYBOOK MODE: HEADHUNTER/, "addendum must NOT activate on benign messages")
+  }
+})
+
 test("processInboundEvent suppresses outbound for harness broker events", async () => {
   let llmCalls = 0
   let outboundCalls = 0
