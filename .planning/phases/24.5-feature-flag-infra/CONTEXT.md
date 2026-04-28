@@ -19,12 +19,44 @@
   scope: "global" | "perEnv" | "perUser",
   allowlist: string[],                            // userId[] (perUser)
   blocklist: string[],                            // userId[] (perUser)
+  bucketStrategy: BucketStrategy | null,          // optional A/B (24.5/AB)
   updatedAt: Timestamp,
   updatedBy: string,                              // dashboard user email
   reason: string,                                 // free text
   version: number                                 // monotonic, ++ on each write
 }
 ```
+
+`BucketStrategy` (additive, optional — added in P8 24.5/AB, commits
+`046eb0e` SDK + `de20938` UI + `<this>` docs):
+```
+{
+  method: "userIdHash" | "random",
+  variants: [
+    { name: string, weight: number /* 0..100 */, value: FlagValue }
+  ]                                               // weights MUST sum to 100
+}
+```
+
+Resolution order in `getFlag(key, ctx)`:
+1. Env emergency override (`process.env[key] === "1" | "true"`)
+2. perUser blocklist (returns false)
+3. perUser allowlist (returns true)
+4. **bucketStrategy** (if present + variants non-empty):
+   - `userIdHash`: `djb2(userId + "::" + key) mod 100` → cumulative-weight bucket
+     (deterministic — same user always sees same variant; cacheable)
+   - `random`: `Math.random() * 100` → bucket (NOT cached — would freeze the
+     first roll for the 30s TTL window)
+5. Default `doc.value`
+
+Reader tolerates weight drift (sum != 100): the last variant absorbs any gap.
+`setFlag` validates `Math.abs(sum - 100) <= 0.01` at write time and throws
+otherwise. Existing flag docs without `bucketStrategy` continue to behave
+identically — schema is purely additive.
+
+Note (CF propagation): pa-persistence is bundled into Cloud Functions only
+when CF is re-deployed. SDK changes (T1) take effect on next CF redeploy;
+hosting deploys (T2) deliver the dashboard editor immediately.
 
 `pa_audit_events` (write-only on flag CRUD; reads do NOT audit):
 ```
