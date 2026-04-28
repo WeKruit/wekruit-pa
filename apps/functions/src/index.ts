@@ -38,6 +38,36 @@ export { paProactiveSweep } from "./proactive-sweep.js"
 // Phase 24.5 — admin bootstrap (seed flags via PA_ADMIN_TOKEN, bypass local gcloud ADC)
 export { paAdminBootstrap } from "./admin-bootstrap.js"
 
+// Phase 27 T2 — public /health endpoints (one per existing CF). Returns
+// {ok, name, version, ts, deps:{firestore, secrets}}. No auth (probes
+// must be reachable). All endpoints HTTP 200 always; failure surfaces in body.
+import { makeHealthHandler } from "./health.js"
+
+export const paHealthSendblueWebhook = makeHealthHandler({
+  name: "paSendblueWebhook",
+  requiredSecrets: ["SENDBLUE_WEBHOOK_SIGNING_SECRET"],
+})
+export const paHealthSendblueOutbox = makeHealthHandler({
+  name: "paSendblueOutbox",
+  requiredSecrets: ["SENDBLUE_API_KEY_ID", "SENDBLUE_API_SECRET_KEY"],
+})
+export const paHealthOnPaInbound = makeHealthHandler({
+  name: "onPaInbound",
+  requiredSecrets: ["SILICONFLOW_API_KEY", "QDRANT_URL", "QDRANT_API_KEY"],
+})
+export const paHealthProactiveSweep = makeHealthHandler({
+  name: "paProactiveSweep",
+  requiredSecrets: ["PA_ADMIN_TOKEN"],
+})
+export const paHealthMemoryAdmin = makeHealthHandler({
+  name: "memoryAdmin",
+  requiredSecrets: ["QDRANT_URL", "QDRANT_API_KEY"],
+})
+export const paHealthAdminBootstrap = makeHealthHandler({
+  name: "paAdminBootstrap",
+  requiredSecrets: ["PA_ADMIN_TOKEN"],
+})
+
 if (!getApps().length) initializeApp()
 
 setGlobalOptions({ region: "us-central1" })
