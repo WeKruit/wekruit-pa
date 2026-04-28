@@ -1,8 +1,20 @@
-# Judge model lock for Phase 24 / v1.2. Do not change without milestone bump.
-# Changing the judge model shifts the score distribution; all historical scores
-# become non-comparable. See 24-RESEARCH.md Pitfall 3.
+# Judge model lock for Phase 24 / v1.2.
+# Default judge changed 2026-04-27 from claude-opus-4-5 → gpt-5.4-nano per Adam
+# decision (cost gating; ANTHROPIC_API_KEY not yet provisioned).
+# Override via PA_VOICE_JUDGE=claude (requires ANTHROPIC_API_KEY).
+# Score distributions are non-comparable across judges; mark milestone bump
+# in CI history when swapping.
 judge:
-  provider: anthropic
-  model: claude-opus-4-5
-  temperature: 0
-  verified_at: 2026-04-27
+  default:
+    provider: openai
+    model: gpt-5.4-nano
+    temperature: 0
+    base_url: ${OPENAI_BASE_URL}
+    selected_via: PA_VOICE_JUDGE=nano
+    verified_at: 2026-04-27
+  alt_claude:
+    provider: anthropic
+    model: claude-opus-4-5
+    temperature: 0
+    selected_via: PA_VOICE_JUDGE=claude
+    verified_at: 2026-04-27

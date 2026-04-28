@@ -52,10 +52,13 @@ else:
 # ---------------------------------------------------------------------------
 # Judge singleton + fixture
 # ---------------------------------------------------------------------------
-from judges.claude_judge import ClaudeOpus45Judge  # noqa: E402 — after guard
-
-# Module-level singleton (expensive to construct; reuse across all tests).
-JUDGE = ClaudeOpus45Judge()
+_PA_VOICE_JUDGE = os.getenv("PA_VOICE_JUDGE", "nano").strip().lower()
+if _PA_VOICE_JUDGE == "claude":
+    from judges.claude_judge import ClaudeOpus45Judge  # noqa: E402 — after guard
+    JUDGE = ClaudeOpus45Judge()
+else:
+    from judges.openai_nano_judge import OpenAINanoJudge  # noqa: E402 — after guard
+    JUDGE = OpenAINanoJudge()
 
 
 @pytest.fixture(scope="session")

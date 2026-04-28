@@ -3,3 +3,4 @@ anthropic>=0.52
 instructor>=1.0
 pydantic>=2.0
 python-dotenv>=1.0
+openai>=1.50.0

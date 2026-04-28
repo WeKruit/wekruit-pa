@@ -5,8 +5,11 @@ Voice eval foundation for Phase 24 / Milestone v1.2 (Anti-油腻, Voice 拟人�
 ## What This Is
 
 A reusable 4-layer eval workspace (dataset × rubric × target × runner) using
-[DeepEval](https://deepeval.com) ConversationalGEval with `claude-opus-4-5` as
-the LLM judge. Measures ClaireVoice pass-rate across golden-50 labeled cases.
+[DeepEval](https://deepeval.com) ConversationalGEval. Default judge is
+`gpt-5.4-nano` (same model as agent base — cost-gated default per Adam
+2026-04-27). Override to `claude-opus-4-5` via `PA_VOICE_JUDGE=claude` when
+ANTHROPIC_API_KEY is provisioned. Measures ClaireVoice pass-rate across
+golden-50 labeled cases.
 
 ## Directory Structure
 
@@ -36,8 +39,13 @@ apps/eval/voice/
 cd apps/eval/voice
 pip install -r requirements.txt
 
-# 2. Set required env vars
-export ANTHROPIC_API_KEY=sk-ant-...   # claude-opus-4-5 judge
+# 2. Set required env vars (default judge = gpt-5.4-nano)
+export OPENAI_API_KEY=sk-...
+# (optional) export OPENAI_BASE_URL=https://your-gateway.example/v1
+
+# 2b. To use claude-opus-4-5 judge instead:
+# export PA_VOICE_JUDGE=claude
+# export ANTHROPIC_API_KEY=sk-ant-...
 
 # 3. Run full suite
 PA_RUN_EVAL=1 deepeval test run test_voice_baseline.py -n 4
@@ -66,14 +74,20 @@ See `.github/workflows/voice-eval.yml`.
 depending on reply length). NEVER run on every PR. Use the `run-voice-eval` label
 (opt-in) or the daily cron for drift tracking.
 
-## Judge Model Lock
+## Judge Model — Switchable
 
-`claude-opus-4-5` is locked in `judges/claude_judge.py` and `rubrics/_judge.yaml`.
-Do NOT change the model ID without:
-1. Running the full golden-50 suite on the new model to record a new baseline.
-2. Bumping the milestone version (scores are non-comparable across judge models).
+Default: `gpt-5.4-nano` via `judges/openai_nano_judge.py` (selected when
+`PA_VOICE_JUDGE` is unset or `nano`). Alt: `claude-opus-4-5` via
+`judges/claude_judge.py` (selected when `PA_VOICE_JUDGE=claude`). Both model
+IDs are HARDCODED — never use `latest` aliases.
 
-See `24-RESEARCH.md Pitfall 3` for why model ID drift breaks eval comparability.
+Score distributions are NOT comparable across judges. When swapping the
+default judge in CI, mark a milestone bump in eval history. See
+`24-RESEARCH.md Pitfall 3` for model-ID drift risk.
+
+Why nano default: cost-gated decision 2026-04-27. Trade-off: judge has
+identical blind spots as agent base (both gpt-5.4-nano). Acceptable for v1.2
+to prove eval loop works; revisit when ANTHROPIC_API_KEY is provisioned.
 
 ## Rewriter A/B
 
