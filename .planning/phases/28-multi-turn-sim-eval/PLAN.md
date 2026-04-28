@@ -1,5 +1,14 @@
 # Phase 28 — PLAN (5-task spec)
 
+**MVP shipped 2026-04-28:** 3-persona inline simulator (`anxious_grad`,
+`formal_em`, `vent_seeker`) lives as a `simulateConversation` action on
+`paAdminBootstrap` (apps/functions/src/admin-bootstrap.ts). Curl-driven,
+writes transcripts to `pa_messages` with `source: "sim-eval"` so the Voice
+review page picks them up automatically. K=8 turns default, max 12. Full
+Phase 28 scope (5 personas + ConversationalGEval judge + dashboard tab)
+deferred but unblocked — T1 below will replace the inline 3 with the full
+5-persona library and migrate the simulator to consume it.
+
 **Status:** Ready to spawn (no hard gate; orthogonal to Phase 27).
 **Strategy doc:** `CONTEXT.md` (this dir).
 

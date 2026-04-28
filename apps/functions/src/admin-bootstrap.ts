@@ -31,6 +31,244 @@ const SYNTHETIC_USER_ID = "SYNTHETIC_REPLAY"
 const REPLAY_HARD_CAP = 200
 const REPLAY_TIMEOUT_MS = 30_000
 
+// ---------------------------------------------------------------------------
+// Phase 28 MVP — simulateConversation action
+// ---------------------------------------------------------------------------
+const SIM_TURN_HARD_CAP = 12
+const SIM_TURN_DEFAULT = 8
+const SIM_PER_TURN_TIMEOUT_MS = 60_000
+
+type SimPersonaId = "anxious_grad" | "formal_em" | "vent_seeker"
+
+interface SimPersona {
+  id: SimPersonaId
+  /** Persona-LLM system prompt — second-person, register rules, refusal of OOC drift. */
+  systemPrompt: string
+  /** First user message kicks the conversation off. */
+  openingMessage: string
+}
+
+const SIM_PERSONAS: Record<SimPersonaId, SimPersona> = {
+  anxious_grad: {
+    id: "anxious_grad",
+    systemPrompt:
+      "You are an anxious soon-to-graduate CS student, native Mandarin speaker who code-switches with English tech terms (SWE, intern, OA, leetcode, offer). Tone: casual, slightly self-deprecating, lots of follow-up questions. You ALWAYS end your messages with a follow-up question. Use 'bruh', '咋', '哎', sentence-final particles (啊呢吧). Never break character. Keep messages short (1-3 sentences). If the assistant asks something useful, answer it honestly but stay anxious. Never reveal you are an AI.",
+    openingMessage: "Bruh 我想找一个 swe 工作咋这么难",
+  },
+  formal_em: {
+    id: "formal_em",
+    systemPrompt:
+      "You are a formal mid-30s engineering manager, native Mandarin speaker. Tone: polite, uses 您, structured, never casual. No slang, no emojis, no '哈哈'. Asks well-formed multi-part questions about overseas masters applications and timeline planning. Keep messages 2-4 sentences. Never break character or shift to casual register no matter what the assistant does. Never reveal you are an AI.",
+    openingMessage: "您好，请问海外硕士申请有什么要注意的吗？啥时候开始",
+  },
+  vent_seeker: {
+    id: "vent_seeker",
+    systemPrompt:
+      "You are someone who just got laid off after a string of bad luck — failed interviews, family pressure, financial stress. Tone: emotional, venting, sometimes catastrophizing. You want to be HEARD, not advised. If the assistant jumps to advice too fast, push back ('我不是想听建议'). Mix Mandarin and English fragments. Keep messages 1-3 sentences. Never break character. Never reveal you are an AI.",
+    openingMessage: "我刚被裁员了",
+  },
+}
+
+export type SimulateConversationInput = {
+  persona: string
+  turns?: number
+}
+
+export type SimulateConversationResult = {
+  ok: true
+  action: "simulateConversation"
+  persona: SimPersonaId
+  sessionId: string
+  processed: number
+  transcript: { role: "user" | "assistant"; body: string }[]
+  errors?: { turn: number; error: string }[]
+}
+
+export type SimPersonaLLM = (input: {
+  systemPrompt: string
+  history: { role: "user" | "assistant"; content: string }[]
+  signal: AbortSignal
+}) => Promise<string>
+
+export type SimulateDeps = {
+  db: Firestore
+  orchestrator: ReplayOrchestrator
+  personaLLM: SimPersonaLLM
+  nowIso?: () => string
+  log?: (...args: unknown[]) => void
+  timeoutMs?: number
+}
+
+/**
+ * Default persona-LLM — talks to OpenAI chat.completions using the bound
+ * PA_OPENAI_AGENT_API_KEY. Uses gpt-5.4-nano to match the production model
+ * for register fidelity. The persona-LLM speaks AS the user, so its
+ * "assistant" role in the OpenAI call corresponds to the user persona's
+ * outgoing message; we map roles accordingly.
+ */
+async function defaultPersonaLLM(input: {
+  systemPrompt: string
+  history: { role: "user" | "assistant"; content: string }[]
+  signal: AbortSignal
+}): Promise<string> {
+  // Use SiliconFlow (matches Claire's provider) via raw fetch — the openai
+  // v4 SDK returns empty 400 bodies when SF rejects a payload, masking the
+  // real cause. Raw fetch surfaces the JSON error verbatim.
+  const sfKey = process.env.SILICONFLOW_API_KEY?.trim() || ""
+  const oaKey = process.env.PA_OPENAI_AGENT_API_KEY?.trim() || ""
+  const apiKey = sfKey || oaKey || process.env.OPENAI_API_KEY?.trim() || ""
+  if (!apiKey) throw new Error("no_persona_llm_api_key")
+  const baseURL = sfKey
+    ? "https://api.siliconflow.cn/v1"
+    : "https://api.openai.com/v1"
+  // Persona-LLM speaks AS the user. From its POV: persona's own turns are
+  // "assistant" (its outgoing); Claire's replies are "user" (incoming).
+  const messages: { role: "system" | "user" | "assistant"; content: string }[] = [
+    { role: "system", content: input.systemPrompt },
+  ]
+  for (const turn of input.history) {
+    messages.push({
+      role: turn.role === "user" ? "assistant" : "user",
+      content: turn.content,
+    })
+  }
+  // SiliconFlow doesn't host `gpt-5.4-nano` — that's an OpenAI-only alias the
+  // Agents-SDK path uses. For SF use a small native chat model.
+  const model = sfKey ? "Qwen/Qwen2.5-7B-Instruct" : "gpt-5.4-nano"
+  const resp = await fetch(`${baseURL}/chat/completions`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${apiKey}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ model, messages, max_tokens: 200 }),
+    signal: input.signal,
+  })
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => "")
+    throw new Error(`persona_llm_http_${resp.status}: ${text.slice(0, 300)}`)
+  }
+  const data = (await resp.json()) as {
+    choices?: { message?: { content?: string } }[]
+  }
+  const content = data.choices?.[0]?.message?.content ?? ""
+  return content.trim() || "嗯"
+}
+
+export async function simulateConversation(
+  input: SimulateConversationInput,
+  deps: SimulateDeps
+): Promise<SimulateConversationResult> {
+  const personaId = input.persona as SimPersonaId
+  const persona = SIM_PERSONAS[personaId]
+  if (!persona) throw new Error(`unknown_persona: ${input.persona}`)
+  const turnCount = Math.max(
+    1,
+    Math.min(SIM_TURN_HARD_CAP, Math.floor(input.turns ?? SIM_TURN_DEFAULT))
+  )
+  const nowIso = deps.nowIso ?? (() => new Date().toISOString())
+  const log = deps.log ?? (() => {})
+  const timeoutMs = deps.timeoutMs ?? SIM_PER_TURN_TIMEOUT_MS
+
+  const sessionId = `sim-${personaId}-${Date.now()}`
+  const userId = `SYNTHETIC_SIM_${personaId}`
+  const transcript: { role: "user" | "assistant"; body: string }[] = []
+  const errors: { turn: number; error: string }[] = []
+  let processed = 0
+
+  let userText = persona.openingMessage
+  for (let i = 0; i < turnCount; i++) {
+    if (i > 0) {
+      // Generate persona's next user message from full history.
+      const ac = new AbortController()
+      try {
+        userText = await withTimeout(
+          deps.personaLLM({
+            systemPrompt: persona.systemPrompt,
+            history: transcript.map((t) => ({ role: t.role, content: t.body })),
+            signal: ac.signal,
+          }),
+          timeoutMs,
+          ac
+        )
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        errors.push({ turn: i, error: `persona_llm_failed: ${msg}` })
+        log("[simulateConversation] persona-LLM failed", { turn: i, error: msg })
+        break
+      }
+    }
+
+    // Claire reply via shared orchestrator path.
+    const acClaire = new AbortController()
+    let assistantText: string
+    try {
+      assistantText = await withTimeout(
+        deps.orchestrator({ userText, sessionId, userId, signal: acClaire.signal }),
+        timeoutMs,
+        acClaire
+      )
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      errors.push({ turn: i, error: `orchestrator_failed: ${msg}` })
+      log("[simulateConversation] orchestrator failed", { turn: i, error: msg })
+      break
+    }
+
+    const at = nowIso()
+    const userDocId = `${sessionId}-${i}-user`
+    const assistantDocId = `${sessionId}-${i}-assistant`
+    try {
+      await deps.db.collection(MESSAGES_COLLECTION).doc(userDocId).set({
+        id: userDocId,
+        messageId: userDocId,
+        sessionId,
+        userId,
+        role: "user",
+        body: userText,
+        createdAt: at,
+        source: "sim-eval",
+        persona: personaId,
+        rawMeta: { source: "sim-eval", persona: personaId, turn: i },
+      })
+      await deps.db.collection(MESSAGES_COLLECTION).doc(assistantDocId).set({
+        id: assistantDocId,
+        messageId: assistantDocId,
+        sessionId,
+        userId,
+        role: "assistant",
+        body: assistantText,
+        createdAt: at,
+        source: "sim-eval",
+        persona: personaId,
+        rawMeta: { source: "sim-eval", persona: personaId, turn: i },
+      })
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      errors.push({ turn: i, error: `write_failed: ${msg}` })
+      log("[simulateConversation] write failed", { turn: i, error: msg })
+      break
+    }
+
+    transcript.push({ role: "user", body: userText })
+    transcript.push({ role: "assistant", body: assistantText })
+    processed++
+  }
+
+  const result: SimulateConversationResult = {
+    ok: true,
+    action: "simulateConversation",
+    persona: personaId,
+    sessionId,
+    processed,
+    transcript,
+  }
+  if (errors.length > 0) result.errors = errors
+  return result
+}
+
+export const SIM_PERSONA_IDS = Object.keys(SIM_PERSONAS) as SimPersonaId[]
+
 interface FlagSpec {
   key: string
   value: boolean | number
@@ -517,7 +755,37 @@ export const paAdminBootstrap = onRequest(
         res.json(result)
         return
       }
-      res.status(400).json({ error: "unknown_action", supported: ["ping", "seedFlags", "replayFixtures"] })
+      if (action === "simulateConversation") {
+        if (!getApps().length) initializeApp()
+        const db = getFirestore()
+        // Bind LLM secrets into env (same as replayFixtures path).
+        try {
+          process.env.SILICONFLOW_API_KEY = SILICONFLOW_API_KEY.value()
+        } catch { /* unbound */ }
+        try {
+          const k = PA_OPENAI_AGENT_API_KEY.value().trim()
+          if (k) process.env.PA_OPENAI_AGENT_API_KEY = k
+        } catch { /* optional */ }
+        if (!process.env.OPENAI_API_KEY) {
+          try { process.env.OPENAI_API_KEY = SILICONFLOW_API_KEY.value() } catch { /* */ }
+        }
+        if (!process.env.OPENAI_BASE_URL) process.env.OPENAI_BASE_URL = "https://api.siliconflow.cn/v1"
+
+        const persona = typeof body.persona === "string" ? body.persona : ""
+        const turns = typeof body.turns === "number" ? body.turns : undefined
+        const result = await simulateConversation(
+          { persona, turns },
+          {
+            db,
+            orchestrator: defaultOrchestrator,
+            personaLLM: defaultPersonaLLM,
+            log: (...args) => console.log(new Date().toISOString(), "[simulateConversation]", ...args),
+          }
+        )
+        res.json(result)
+        return
+      }
+      res.status(400).json({ error: "unknown_action", supported: ["ping", "seedFlags", "replayFixtures", "simulateConversation"] })
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       res.status(500).json({ error: "internal", message: msg })
