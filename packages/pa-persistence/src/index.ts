@@ -194,3 +194,35 @@ export type {
   FlagDoc,
   FlagContext,
 } from "./feature-flags.js"
+
+// Phase 25 — pa_voice_reviews helpers (P9-Voice). LOCKED schema; see
+// .planning/phases/25-voice-review-dashboard/CONTEXT.md.
+export {
+  VOICE_REVIEW_TAGS,
+  writeVoiceReview,
+  listVoiceReviews,
+  listAssistantTurnsForReview,
+} from "./voice-reviews.js"
+export type {
+  VoiceRating,
+  VoiceReviewTag,
+  AgentSnapshot,
+  VoiceReviewDoc,
+  VoiceReviewRow,
+  WriteVoiceReviewInput,
+  ListVoiceReviewsInput,
+  ListAssistantTurnsInput,
+  AssistantTurnWithReview,
+} from "./voice-reviews.js"
+
+// Phase 26 T1 — per-user rate limit (P9-Prod-Ops).
+export { checkAndIncrementRateLimit, RATE_LIMIT_COLLECTION } from "./rate-limit.js"
+export type { RateLimitOptions, RateLimitResult } from "./rate-limit.js"
+
+// Phase 26 T2 — Sendblue daily-quota counter (P9-Prod-Ops).
+export {
+  incrementDailyOutbound,
+  getDailyOutboundCount,
+  formatDailyBucket,
+  OUTBOUND_QUOTA_COLLECTION,
+} from "./outbound-quota.js"
