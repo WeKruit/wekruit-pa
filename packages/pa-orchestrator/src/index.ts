@@ -53,6 +53,7 @@ import { buildVoiceReminder, isVoiceV1Disabled } from "./voice-reminder.js"
 import { computeMirrorForTurn } from "./voice/mirror-injection.js"
 import { rewriteIfOff } from "./voice/llm-rewriter.js"
 import { tapCoachTokens } from "./voice/coach-token-monitor.js"
+import { buildFewShotTurns, prefixFewShotToHistory } from "./voice/few-shot.js"
 import { normalizeForIMessage } from "./output-normalizer.js"
 
 type RunAgentTurn = typeof defaultRunAgentTurn
@@ -560,6 +561,16 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // and the SDK gets no custom tools, matching legacy behavior.
     const turnTools = await store.buildTurnTools(agent, { turnId, userId: event.userId, sessionId: event.sessionId })
     const systemPrompt = isVoiceV1Disabled() ? LEGACY_V0_SYSTEM_PROMPT : agent.systemPrompt
+    // Phase 24 T1B — few-shot relocation. Prepend 12 mes_examples as
+    // messages-array alternating turns (~3x style transfer vs system-block).
+    // Synthetic fs_* ids MUST be filtered before any Firestore write
+    // (see persistence-layer filter; Pitfall 4 in 24-RESEARCH.md).
+    // historyForModel is MODEL INPUT ONLY — `history` remains the
+    // source-of-truth for persistence paths (no fs_* rows in pa_messages).
+    const fewShotTurns = buildFewShotTurns(agent)
+    const historyForModel = fewShotTurns.length > 0
+      ? prefixFewShotToHistory(fewShotTurns, history)
+      : history
     const { text, usage } = await store.runAgentTurn({
       agent,
       systemPrompt,
@@ -569,7 +580,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       // (PA_AGENT_RUNTIME=chat_completions); pass them through so that path
       // keeps working.
       memoryBlock,
-      history,
+      history: historyForModel,
       userMessage: event.body,
       session,
       systemInputs,

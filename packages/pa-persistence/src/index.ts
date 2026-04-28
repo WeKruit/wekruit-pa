@@ -99,6 +99,16 @@ export async function appendMessage(
   db: Firestore,
   m: Omit<ChatMessage, "id"> & { id?: string; idempotencyKey?: string }
 ): Promise<ChatMessage> {
+  // Phase 24 — never persist few-shot synthetic turns. Their ids are
+  // prefixed "fs_" per packages/pa-orchestrator/src/voice/few-shot.ts.
+  // Defense-in-depth: orchestrator only passes `history` (not
+  // `historyForModel`) to appendMessage, so fs_* turns should not reach
+  // here anyway — but guard added for belt-and-suspenders correctness.
+  if (typeof m.id === "string" && m.id.startsWith("fs_")) {
+    // Synthetic few-shot turn — return a no-op stub that satisfies the
+    // return type without writing to Firestore.
+    return { id: m.id, sessionId: m.sessionId, userId: m.userId, role: m.role, body: m.body, createdAt: m.createdAt } as ChatMessage
+  }
   const id = m.id ?? randomUUID()
   const idempotencyKey = m.idempotencyKey
   if (idempotencyKey) {

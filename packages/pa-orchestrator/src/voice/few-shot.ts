@@ -34,15 +34,22 @@ export function buildFewShotTurns(
  * The returned array is MODEL INPUT ONLY. The original `history`
  * variable (without fs_* prefix) must remain the source-of-truth for
  * all persistence paths.
+ *
+ * The synthetic stubs carry the minimum fields required by ChatMessage:
+ * sessionId/userId/createdAt are empty sentinels — these rows never
+ * reach Firestore (fs_* filter in pa-persistence defends against that).
  */
-export function prefixFewShotToHistory(
+export function prefixFewShotToHistory<T extends { id: string; role: string; body: string; sessionId: string; userId: string; createdAt: string }>(
   fewShotTurns: FewShotTurn[],
-  history: Array<{ role: string; content: string; id?: string }>
-): Array<{ role: string; content: string; id?: string }> {
+  history: T[]
+): T[] {
   const synthetic = fewShotTurns.map((t, i) => ({
-    role: t.role,
-    content: t.content,
     id: `fs_${i}`,
-  }))
+    role: t.role,
+    body: t.content,
+    sessionId: "",
+    userId: "",
+    createdAt: "",
+  })) as unknown as T[]
   return [...synthetic, ...history]
 }

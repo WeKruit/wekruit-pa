@@ -28,7 +28,7 @@ test("buildFewShotTurns returns the array unchanged when fewShotMessages present
 })
 
 test("prefixFewShotToHistory with 2 fewshot turns + 1 real turn returns length 3 with fs_0 fs_1 ids", () => {
-  const history = [{ role: "user", content: "hello", id: "real_001" }]
+  const history = [{ id: "real_001", role: "user", body: "hello", sessionId: "s1", userId: "u1", createdAt: "" }]
   const result = prefixFewShotToHistory(SAMPLE_TURNS, history)
   assert.equal(result.length, 3)
   assert.equal(result[0]!.id, "fs_0")
@@ -38,8 +38,8 @@ test("prefixFewShotToHistory with 2 fewshot turns + 1 real turn returns length 3
 
 test("prefixFewShotToHistory with empty fewshot array returns history unchanged in length", () => {
   const history = [
-    { role: "user", content: "msg1", id: "real_001" },
-    { role: "assistant", content: "msg2", id: "real_002" },
+    { id: "real_001", role: "user", body: "msg1", sessionId: "s1", userId: "u1", createdAt: "" },
+    { id: "real_002", role: "assistant", body: "msg2", sessionId: "s1", userId: "u1", createdAt: "" },
   ]
   const result = prefixFewShotToHistory([], history)
   assert.equal(result.length, history.length)
