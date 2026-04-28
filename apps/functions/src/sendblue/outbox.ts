@@ -24,7 +24,7 @@ import type { Firestore } from "firebase-admin/firestore"
 
 import { useDmAllowlist, getPeerAllowlist, isSamePeer, normalizePeer } from "./allowlist.js"
 import { SendblueClientError, SendblueServerError, sendImessage as defaultSendImessage } from "./sendblue-client.js"
-import { sendTypingIndicator as defaultSendTypingIndicator } from "./typing-indicator.js"
+import { sendTypingIndicator as defaultSendTypingIndicator, computeTypingDwellMs } from "./typing-indicator.js"
 import type { SendblueSendResponse } from "./types.js"
 
 const OUT = PA_COLLECTIONS.outbound
@@ -188,9 +188,23 @@ export async function paSendblueOutboxHandler(
   }
 
   // ---- 5. Optional typing indicator (D-06) -----------------------------
+  // Phase 24 T1E — dynamic dwell scaled by reply length (1-4s by body.length).
+  // PA_TYPING_DWELL_MS env override still honored if set (operator escape hatch).
+  //
+  // KNOWN LIMITATION (24-RESEARCH.md Open Question 4): typing fires here,
+  // immediately before the REST POST — NOT at orchestrator reasoning start.
+  // True "fire on reasoning start" requires an orchestrator→outbox event
+  // (architectural change), deferred from Phase 24. Phase 25 may revisit.
   if (isTypingIndicatorEnabled()) {
     try {
       await deps.sendblueClient.sendTypingIndicator({ to: toPeer })
+      const overrideRaw = process.env.PA_TYPING_DWELL_MS
+      const overrideMs = overrideRaw != null && overrideRaw !== "" ? Number(overrideRaw) : NaN
+      const dwellMs = Number.isFinite(overrideMs) && overrideMs > 0
+        ? overrideMs
+        : computeTypingDwellMs(body.length)
+      // 8000ms safeguard preserved (defensive cap on extreme env values)
+      await new Promise((r) => setTimeout(r, Math.min(dwellMs, 8000)))
     } catch {
       // Already best-effort inside the helper; defensive double-swallow.
     }
@@ -217,7 +231,12 @@ export async function paSendblueOutboxHandler(
     return
   } catch (err) {
     if (err instanceof SendblueClientError) {
-      log("[sendblue][outbox] 4xx — failed", { docId, status: err.status, message: err.message })
+      log("[sendblue][outbox] 4xx — failed", {
+        docId,
+        status: err.status,
+        message: err.message,
+        body: typeof err.body === "string" ? err.body : JSON.stringify(err.body)?.slice(0, 500),
+      })
       await ref.set(
         {
           status: "failed",
