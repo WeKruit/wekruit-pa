@@ -19,3 +19,43 @@ export type {
   SaveSectionInput,
   SaveSectionOpts,
 } from "./handbook.js"
+// Phase 32 W3 — Playbooks Firestore CRUD (replaces inline HEADHUNTER_TRIGGER_RE).
+export {
+  PLAYBOOKS_COLLECTION,
+  PLAYBOOK_AUDIT_PREFIX,
+  PlaybookSchema,
+  HEADHUNTER_DEFAULT_TRIGGERS,
+  HEADHUNTER_DEFAULT_ADDENDUM,
+  compileTriggers,
+  composePlaybooks,
+  getPlaybook,
+  listPlaybooks,
+  matchPlaybooks,
+  revertPlaybook,
+  seedDefaultPlaybooks,
+  upsertPlaybook,
+} from "./playbooks.js"
+export type {
+  Playbook,
+  SavePlaybookInput,
+  SavePlaybookOpts,
+} from "./playbooks.js"
+// Phase 32 W3 — Personas Firestore CRUD (soul.md three-file pattern).
+export {
+  PERSONAS_COLLECTION,
+  PERSONA_AUDIT_PREFIX,
+  PersonaSchema,
+  DEFAULT_PERSONAS,
+  composePersonaPrompt,
+  composePersonaPromptFromDoc,
+  getPersona,
+  listPersonas,
+  revertPersona,
+  seedDefaultPersonas,
+  upsertPersona,
+} from "./personas.js"
+export type {
+  Persona,
+  SavePersonaInput,
+  SavePersonaOpts,
+} from "./personas.js"

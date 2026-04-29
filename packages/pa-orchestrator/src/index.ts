@@ -63,8 +63,17 @@ import { buildFewShotTurns, prefixFewShotToHistory } from "./voice/few-shot.js"
 import { normalizeForIMessage } from "./output-normalizer.js"
 // Phase 21 Track 5 — Headhunter playbook addendum (job-search probe rotation).
 import { headhunterAddendum } from "./playbooks/headhunter.js"
+// Phase 32 W3 — Firestore-backed playbook cache (30s TTL). Replaces the
+// inline HEADHUNTER_TRIGGER_RE constant; the regex below is kept as a
+// failsafe when Firestore is empty (zero-downtime cutover).
+import { matchCachedPlaybooks } from "./playbook-cache.js"
 
 const HEADHUNTER_PLAYBOOK_ID = "headhunter"
+/**
+ * Failsafe regex — only consulted when Firestore lookup returns 0 matches.
+ * Once `seedDefaultPlaybooks` has run the regex set comes from the
+ * dashboard-editable `pa-playbooks/headhunter.regexTriggers` array.
+ */
 const HEADHUNTER_TRIGGER_RE = /帮我|想换|在看工作|在面|简历|offer/i
 // Phase 22 — proactive cancellation NLU (D-07, PROACTIVE-06)
 import { detectProactiveCancellation } from "./cancellation-nlu.js"
@@ -701,19 +710,50 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
         ...mirror.audit,
       })
     }
-    // Phase 21 Track 5 — headhunter playbook activation. Triggered by either
-    // an explicit ctx.playbook hint (future agent-config wiring) or by
-    // job-search regex on the inbound body. Sits AFTER the Phase 18 voice
-    // reminder and BEFORE the Phase 19 mirror snippet (D-04 ordering intact).
-    const headhunterActive =
-      (event as { playbook?: string }).playbook === HEADHUNTER_PLAYBOOK_ID ||
-      HEADHUNTER_TRIGGER_RE.test(event.body)
-    const headhunterEntry = headhunterAddendum({ active: headhunterActive })
+    // Phase 21 Track 5 → Phase 32 W3 — playbook activation now sources its
+    // regex triggers + addendum bodies from `pa-playbooks/{playbookKey}` via
+    // a 30s in-memory cache. Backward-compat: if Firestore returns no
+    // matches (or the load fails), we fall back to the inline
+    // HEADHUNTER_TRIGGER_RE + addendum so a first-deploy race or empty
+    // collection never breaks the running playbook. Sits AFTER the
+    // Phase 18 voice reminder and BEFORE the Phase 19 mirror snippet
+    // (D-04 ordering intact).
+    let playbookAddendum: string | null = null
+    let headhunterActive = false
+    if (store.db != null) {
+      const { matched, addendum } = await matchCachedPlaybooks(store.db, event.body)
+      if (matched.length > 0 && addendum.trim().length > 0) {
+        playbookAddendum = addendum
+        headhunterActive = matched.some((p) => p.playbookKey === HEADHUNTER_PLAYBOOK_ID)
+      }
+    }
+    if (!playbookAddendum) {
+      // Failsafe path — Firestore empty or load failed. Mirrors the
+      // pre-Wave-3 behavior so the headhunter playbook still activates.
+      const fallbackActive =
+        (event as { playbook?: string }).playbook === HEADHUNTER_PLAYBOOK_ID ||
+        HEADHUNTER_TRIGGER_RE.test(event.body)
+      if (fallbackActive) {
+        const fallbackEntry = headhunterAddendum({ active: true })
+        if (fallbackEntry) {
+          playbookAddendum = fallbackEntry
+          headhunterActive = true
+        }
+      }
+    } else if (
+      // If Firestore matched but headhunter is hinted via ctx, ensure ctx
+      // tag stays sticky for downstream consumers (probe rotation hint).
+      (event as { playbook?: string }).playbook === HEADHUNTER_PLAYBOOK_ID
+    ) {
+      headhunterActive = true
+    }
+    // Suppress unused-warning when the failsafe path is dead (env-disabled).
+    void headhunterActive
     const systemInputs: string[] = [
       personaCard,
       recallEntry,
       voiceReminder,
-      headhunterEntry,
+      playbookAddendum,
       mirror.snippet,
     ].filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
     // Phase 10.5 T7 — bridge agent.allowedConnectors → SDK tools. When the
