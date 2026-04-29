@@ -509,6 +509,57 @@ async function migrateHandbookFromBible(): Promise<{
   return { ok: true, ...result }
 }
 
+// ---------------------------------------------------------------------------
+// Phase 31 T3 — seedUpstreamTemplates
+// ---------------------------------------------------------------------------
+//
+// Bootstraps a single example doc in `pa-upstream-templates`. Idempotent:
+// returns `skipped` for any doc that already exists. Templates ship
+// disabled by default; operator flips `enabled` via the dashboard.
+
+const SEED_UPSTREAM_TEMPLATES = [
+  {
+    templateId: "interview_scheduled",
+    name: "Interview scheduled",
+    description:
+      "Sent when a partner ATS notifies us that an interview was booked. Confirms time + offers Claire's nudges.",
+    eventKind: "interview_scheduled",
+    messageTemplate:
+      "Hey {{userName}} — heads up your interview at {{company}} is on {{when}}. Want me to ping you the morning of?",
+    channel: "imessage",
+    rateLimitPerHour: 1,
+    enabled: false,
+  },
+] as const
+
+async function seedUpstreamTemplates(db: Firestore): Promise<{ created: string[]; skipped: string[] }> {
+  const created: string[] = []
+  const skipped: string[] = []
+  const nowIso = new Date().toISOString()
+  for (const t of SEED_UPSTREAM_TEMPLATES) {
+    const ref = db.collection("pa-upstream-templates").doc(t.templateId)
+    const snap = await ref.get()
+    if (snap.exists) {
+      skipped.push(t.templateId)
+      continue
+    }
+    await ref.set({
+      name: t.name,
+      description: t.description,
+      eventKind: t.eventKind,
+      messageTemplate: t.messageTemplate,
+      channel: t.channel,
+      rateLimitPerHour: t.rateLimitPerHour,
+      enabled: t.enabled,
+      updatedAt: nowIso,
+      updatedBy: SEED_ACTOR,
+      version: 1,
+    })
+    created.push(t.templateId)
+  }
+  return { created, skipped }
+}
+
 async function seedFlags(): Promise<{ created: string[]; skipped: string[] }> {
   if (!getApps().length) initializeApp()
   const db = getFirestore()
@@ -1333,7 +1384,17 @@ export const paAdminBootstrap = onRequest(
         res.json({ action, ...result })
         return
       }
-      res.status(400).json({ error: "unknown_action", supported: ["ping", "seedFlags", "replayFixtures", "simulateConversation", "migrateCollections", "reseedDefaultAgent", "driftCheck", "migrateHandbookFromBible", "evalDownstreamTriggers"] })
+      // Phase 31 T3 — seed one example pa-upstream-templates doc
+      // (interview_scheduled, disabled by default). Idempotent: skips if
+      // doc already exists.
+      if (action === "seedUpstreamTemplates") {
+        if (!getApps().length) initializeApp()
+        const db = getFirestore()
+        const result = await seedUpstreamTemplates(db)
+        res.json({ action, ...result })
+        return
+      }
+      res.status(400).json({ error: "unknown_action", supported: ["ping", "seedFlags", "replayFixtures", "simulateConversation", "migrateCollections", "reseedDefaultAgent", "driftCheck", "migrateHandbookFromBible", "evalDownstreamTriggers", "seedUpstreamTemplates"] })
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       res.status(500).json({ error: "internal", message: msg })

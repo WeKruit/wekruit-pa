@@ -14,6 +14,8 @@ import { Beta } from "./pages/Beta.js"
 import { Flags } from "./pages/Flags.js"
 import { Handbook } from "./pages/Handbook.js"
 import { Triggers } from "./pages/Triggers.js"
+import { UpstreamTemplates } from "./pages/UpstreamTemplates.js"
+import { DownstreamTriggers } from "./pages/DownstreamTriggers.js"
 import { Voice } from "./pages/Voice.js"
 import { auth } from "./lib/firebase.js"
 
@@ -65,6 +67,8 @@ export default function App() {
         <NavLink to="/triggers">Triggers</NavLink>
         <NavLink to="/admin/flags">Flags</NavLink>
         <NavLink to="/admin/handbook">Handbook</NavLink>
+        <NavLink to="/admin/upstream-templates">Upstream</NavLink>
+        <NavLink to="/admin/downstream-triggers">Downstream</NavLink>
         <NavLink to="/voice">Voice</NavLink>
         <NavLink to="/playground">E2E Lab</NavLink>
         <button
@@ -88,6 +92,8 @@ export default function App() {
           <Route path="/triggers" element={<Triggers />} />
           <Route path="/admin/flags" element={<Flags />} />
           <Route path="/admin/handbook" element={<Handbook />} />
+          <Route path="/admin/upstream-templates" element={<UpstreamTemplates />} />
+          <Route path="/admin/downstream-triggers" element={<DownstreamTriggers />} />
           <Route path="/voice" element={<Voice />} />
           <Route path="/playground" element={<Playground />} />
           <Route path="*" element={<Navigate to="/" replace />} />
