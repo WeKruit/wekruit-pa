@@ -9,16 +9,18 @@
  *
  * Wave 3 will swap the hardcoded persona list for `pa-personas` lookups.
  */
-import { collection, getDocs, limit, orderBy, query } from "firebase/firestore"
+import { collection, getDocs, limit, orderBy, query, where } from "firebase/firestore"
 import { useEffect, useState } from "react"
 import { EmptyState, ErrorState, PageHeader, Panel } from "../components/ui.js"
 import { db } from "../lib/firebase.js"
 
 // Wave 3 will replace this with a dynamic load from `pa-personas`.
 const FALLBACK_PERSONAS = [
-  { key: "anxious_grad", label: "anxious grad (vent / spiral)" },
-  { key: "formal_em", label: "formal EM (career update)" },
-  { key: "vent_seeker", label: "vent seeker (ride-or-die)" },
+  { key: "anxious_grad", label: "anxious grad (zh / vent / spiral)" },
+  { key: "formal_em", label: "formal EM (zh / career update)" },
+  { key: "vent_seeker", label: "vent seeker (zh / ride-or-die)" },
+  { key: "mixed_pm", label: "mixed PM (zh+en code-switch)" },
+  { key: "en_grad", label: "en grad (pure English / Gen-Z)" },
 ] as const
 
 type PersonaKey = string
@@ -78,6 +80,52 @@ export function NRoundSim() {
     setErr(null)
     setTranscript([])
     setProgress({ current: 0, total: turns })
+
+    // Phase 33 — live polling. simulateConversation runs server-side for the
+    // full 8 turns before returning. Without polling, the user sees a frozen
+    // empty panel. Poll pa-messages every 1.2s for the new sessionId and
+    // surface incremental progress.
+    const pollStartedAt = Date.now()
+    const pollIntervalMs = 1200
+    let stopPoll = false
+    const pollLoop = async () => {
+      while (!stopPoll) {
+        try {
+          // sim sessionId pattern: `sim-${personaId}-${Date.now()}`
+          // We don't know the exact ts the server picked, so query by the
+          // persona-prefix and pick the newest session whose first doc was
+          // created after we hit Run. Limit 50 messages for headroom.
+          const snap = await getDocs(
+            query(
+              collection(db(), "pa-messages"),
+              where("source", "==", "sim-eval"),
+              where("persona", "==", persona),
+              orderBy("createdAt", "desc"),
+              limit(turns * 2)
+            )
+          )
+          const rows = snap.docs.map((d) => d.data() as { role: string; body: string; createdAt: string; sessionId: string })
+          // Pick rows from the latest sessionId only (rows from prior runs
+          // would be older). A row is "this run" if createdAt >= pollStart.
+          const fresh = rows.filter((r) => {
+            const t = new Date(r.createdAt).getTime()
+            return Number.isFinite(t) && t >= pollStartedAt - 1000
+          })
+          if (fresh.length > 0) {
+            // Sort ascending for chat display.
+            fresh.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+            setTranscript(fresh.map((r) => ({ role: r.role, body: r.body })))
+            // Each turn = 1 user + 1 assistant pair. Round down.
+            setProgress({ current: Math.min(turns, Math.floor(fresh.length / 2)), total: turns })
+          }
+        } catch {
+          // Index may be missing; degrade silently.
+        }
+        await new Promise((r) => setTimeout(r, pollIntervalMs))
+      }
+    }
+    void pollLoop()
+
     try {
       const resp = await fetch(
         "https://paadminbootstrap-evm6xq7jyq-uc.a.run.app",
@@ -96,6 +144,7 @@ export function NRoundSim() {
         error?: string
         transcript?: { role: string; body: string }[]
       }
+      stopPoll = true
       if (!resp.ok || !json.ok) {
         setErr(json.error ?? `HTTP ${resp.status}`)
         setRunning(false)
@@ -116,8 +165,10 @@ export function NRoundSim() {
         // Best-effort.
       }
     } catch (e) {
+      stopPoll = true
       setErr(e instanceof Error ? e.message : String(e))
     } finally {
+      stopPoll = true
       setRunning(false)
       // Leave progress at completed state for visibility.
     }

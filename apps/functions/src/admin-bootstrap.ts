@@ -43,7 +43,7 @@ const SIM_TURN_HARD_CAP = 12
 const SIM_TURN_DEFAULT = 8
 const SIM_PER_TURN_TIMEOUT_MS = 60_000
 
-type SimPersonaId = "anxious_grad" | "formal_em" | "vent_seeker"
+type SimPersonaId = "anxious_grad" | "formal_em" | "vent_seeker" | "mixed_pm" | "en_grad"
 
 interface SimPersona {
   id: SimPersonaId
@@ -71,6 +71,18 @@ const SIM_PERSONAS: Record<SimPersonaId, SimPersona> = {
     systemPrompt:
       "You are someone who just got laid off after a string of bad luck — failed interviews, family pressure, financial stress. Tone: emotional, venting, sometimes catastrophizing. You want to be HEARD, not advised. If the assistant jumps to advice too fast, push back ('我不是想听建议'). Mix Mandarin and English fragments. Keep messages 1-3 sentences. Never break character. Never reveal you are an AI.",
     openingMessage: "我刚被裁员了",
+  },
+  mixed_pm: {
+    id: "mixed_pm",
+    systemPrompt:
+      "You are a 28-year-old PM at a Bay Area startup, fluent bilingual ABC/1.5gen Chinese-American. Tone: heavy code-switching every sentence (e.g. 'i feel kinda 累 today, my standup 完全 derailed'). You drop English fillers like 'literally', 'honestly', 'kinda', 'low-key', 'lowkey', 'tbh', 'ngl'. Talk about work stress, dating, side projects, weekend plans. Keep messages 1-3 sentences. NEVER speak pure Mandarin or pure English in a single message — always mix. Never break character. Never reveal you are an AI.",
+    openingMessage: "ngl my PM job is 真的 cooked rn... my eng team 完全 ghosted my spec 😭",
+  },
+  en_grad: {
+    id: "en_grad",
+    systemPrompt:
+      "You are a US-born CS senior, monolingual English. Tone: casual American Gen-Z, light slang ('bruh', 'fr', 'lowkey', 'no cap', 'rizz', 'cooked', 'lit'). Topics: job hunt anxiety, OAs, lab grind, family pressure to pick big tech, small money worries. Keep messages 1-3 sentences. NEVER use any Mandarin or Chinese characters. Never break character. Never reveal you are an AI.",
+    openingMessage: "bruh i've been grinding leetcode for 2 months and still bombing OAs lowkey want to scream",
   },
 }
 
@@ -836,6 +848,7 @@ async function defaultOrchestrator(input: {
   const db = getFirestore()
   const { getDefaultAgent } = await import("@pa/agent-registry")
   const { runAgentTurn } = await import("@pa/agent-runtime")
+  const { normalizeForIMessage } = await import("@pa/pa-orchestrator")
   const agent = await getDefaultAgent(db)
   if (!agent) throw new Error("no_default_agent")
   const { text } = await runAgentTurn({
@@ -846,7 +859,13 @@ async function defaultOrchestrator(input: {
     memoryBlock: null,
     signal: input.signal,
   })
-  return text.trim() || "(empty reply)"
+  // Phase 33 fix — sim path was bypassing the iMessage output normalizer
+  // (markdown strip + length cap + UTM strip). Result: sim transcripts
+  // showed wall-of-bullets while real iMessage saw the normalized form.
+  // Apply same normalizer the production path uses (orchestrator/index.ts:845).
+  const raw = text.trim() || "(empty reply)"
+  const norm = normalizeForIMessage(raw, { maxLength: 600 })
+  return norm.text || raw
 }
 
 export type ReplayDeps = {
