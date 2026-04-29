@@ -827,7 +827,25 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // that slipped past Bible v5 + few-shot. Fail-open; rollback via
     // PA_LLM_REWRITE_DISABLED=true. Telemetry sinks into pa_turns.usage
     // alongside token counts (rewriteApplied + rewriteReason).
-    const rewritten = await rewriteIfOff(reply)
+    // Phase 33 — pass last 2 assistant replies as context so rewriter can
+    // detect + fix opener repetition (嗯/哎/草) across turns.
+    const priorAssistantReplies = (history ?? [])
+      .filter((m) => m.role === "assistant")
+      .slice(-2)
+      .reverse()
+      .map((m) => m.body)
+    const rewritten = await rewriteIfOff(reply, {}, { priorAssistantReplies })
+    // Phase 33 — unconditional telemetry. Without this we can't tell if the
+    // rewriter is firing as no_change, timing out, or blocked by diff-guard.
+    store.log("pa.voice.llm_rewriter.result", {
+      userId: event.userId,
+      turnId,
+      applied: rewritten.rewriteApplied,
+      reason: rewritten.reason,
+      circuitOpen: rewritten.circuitOpen ?? false,
+      beforeLen: reply.length,
+      afterLen: rewritten.text.length,
+    })
     const replyAfterRewrite = rewritten.text
     if (rewritten.rewriteApplied) {
       store.log("pa.voice.llm_rewriter.applied", {

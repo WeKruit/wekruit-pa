@@ -123,7 +123,13 @@ function recordSuccess(modelId: string) {
  * the agent uses (resolveOpenAICompatConfig pattern).
  */
 export type RewriterDeps = {
-  callRewriter: (rawText: string, signal: AbortSignal) => Promise<string>
+  callRewriter: (
+    rawText: string,
+    signal: AbortSignal,
+    /** Phase 33 — pass last 1-2 assistant replies so rewriter can rotate
+     *  openers / detect repeat tics across turns. Optional for back-compat. */
+    priorAssistantReplies?: string[]
+  ) => Promise<string>
 }
 
 export type RewriteOpts = {
@@ -132,7 +138,11 @@ export type RewriteOpts = {
   timeoutMs?: number
 }
 
-const DEFAULT_TIMEOUT_MS = 1500
+// Phase 33 — bumped 1500→4000ms. Production logs 2026-04-29 showed 6/8
+// rewrites hitting timeout on SiliconFlow Qwen2.5-7B free tier; anti-tic
+// rewrite is the whole point of this layer, so we accept the latency
+// budget. Override via PA_LLM_REWRITE_TIMEOUT_MS.
+const DEFAULT_TIMEOUT_MS = Number(process.env.PA_LLM_REWRITE_TIMEOUT_MS ?? 4000)
 
 // Phase 24 default — SiliconFlow free tier. Qwen3.5-4B is the documented
 // target but NOT in SF catalog as of 2026-04-27 (24-RESEARCH.md critical
@@ -171,8 +181,14 @@ export function stripThinkBlocks(s: string): string {
 export function isDiffSafe(inputText: string, outputText: string): boolean {
   const inLen = inputText.trim().length
   const outLen = outputText.trim().length
+  // Phase 33 — padding guard unchanged.
   if (outLen > 1.6 * inLen) return false
-  if (inLen > 10 && outLen < 0.4 * inLen) return false
+  // Phase 33 — shrink threshold relaxed 0.4→0.2. Anti-tic rewrites often
+  // strip "嗯，我懂那种 X，因为..." (40 chars) → "X." (10 chars) which is
+  // exactly what we want; the old 0.4 floor was rejecting them.
+  // Also exempt very-short outputs (< 8 chars) like "嗯." / "next." which
+  // are valid 1-word reactions even when input was a paragraph.
+  if (inLen > 10 && outLen < 0.2 * inLen && outLen >= 8) return false
   return true
 }
 
@@ -191,44 +207,73 @@ export function isDiffSafe(inputText: string, outputText: string): boolean {
  * on nano per 24-CONTEXT.md constraint).
  */
 const REWRITER_V2_SYSTEM_PROMPT = [
-  "You are a style normalizer for Claire (柯莱儿 / 小柯). Do not think out loud. Output ONLY the rewritten reply text.",
+  "You are a style normalizer for Claire (柯莱儿 / 小柯). Do not think out loud. Output ONLY the rewritten reply text. NO preface like 'CLAIRE:' or 'REWRITTEN:'.",
+  "",
   "Tone modes — detect and apply:",
-  "  [reactive]: user vented/complained → 1 short empathy sentence + optional question",
+  "  [reactive]: user vented/complained → 1 short empathy sentence, no follow-up question",
   "  [casual]: small talk → 1-2 short sentences, slang ok",
   "  [planning]: user explicitly asked for plan/list → may use structured format",
   "",
   "POSITIVE REPLACEMENTS (apply these, do not just delete):",
   "  '我建议你 X' → '你试试 X' / '要不要 X'",
   "  '你应该 X' → '感觉 X 可能会好一点' / drop entirely",
-  "  'X 还是 Y?' (binary choice) → single open question, or drop",
+  "  'X 还是 Y?' (binary choice) → drop the question entirely",
+  "  '你最近怎么 X' / probing question → drop it",
   "  Pop-therapy (接住你/硬撑着/hold space) → plain empathy ('听起来挺烦的')",
+  "  '我懂' / '我懂那种 X' / '我懂你那 X' (validation tic) → DROP. Replace with reaction ('草 / 是 / 哎 / 是真的' + content)",
+  "  '我陪你 X' / '我们一起 X' / '让我帮你 X' (coach-opener) → DROP entirely or replace with peer reaction",
+  "  '我那时候也 X' → keep ONLY if not used in last 2 turns; else DROP",
+  "",
+  "OPENER ROTATION (CRITICAL — Phase 33):",
+  "  If PREVIOUS REPLIES section is provided, scan the FIRST WORD/INTERJECTION of each.",
+  "  Forbidden current-reply openers if used in any of the last 2 prior replies:",
+  "    嗯 / 嗯嗯 / 哎 / 哎呀 / 草 / 操 / 卧 / shit / 是 / 对",
+  "  Rotation strategy: if your draft starts with one of these AND it appears in prior replies,",
+  "  REWRITE the opener: drop it, OR pick a different word, OR start with content directly.",
+  "  Goal: NO opener-word should appear in 3 consecutive replies. Texting humans don't repeat.",
+  "",
+  "LENGTH CAP:",
+  "  Max ~80 Chinese chars or ~140 English chars. If draft is longer, cut to the strongest 1-2 sentences.",
+  "  No bullets, no markdown, no numbered lists.",
   "",
   "FAILURE EXAMPLE → CLAIRE REWRITE:",
   "  DRAFT: 听起来有点闷，前两天投了还没回也很正常，Wekruit 这类有时候就是慢或者直接默拒。你先别自己脑补太多，我建议你把投递时间记一下，然后等到下一周中后段再看要不要 follow up。",
   "  CLAIRE: 可能下周回. 也可能默拒. 别先 emo.",
   "",
+  "FAILURE EXAMPLE 2 (validation tic + escalation):",
+  "  PREVIOUS REPLIES (most recent first): ['嗯，面试卡壳那种不确定感最磨人了...']",
+  "  DRAFT: 嗯，我懂那种'讲经历一紧张就断片'的落差，听起来你其实技术题反而更稳。你要是想更自信一点，我觉得就先把自我介绍那段练到不靠临场组织也能顺出来。",
+  "  CLAIRE: 自我介绍其实最该练熟到能脑子放空也说出来.",
+  "",
+  "FAILURE EXAMPLE 3 (repeat opener):",
+  "  PREVIOUS REPLIES: ['嗯…投这么久没回音确实磨人']",
+  "  DRAFT: 嗯，middle 那段最容易卡，因为它既要承上启下又要把重点抛出来；你先把自我介绍拆成三句话",
+  "  CLAIRE: middle 段最容易卡 — 拆成 3 句, 不要现场扩写.",
+  "",
   "PASS-THROUGH EXAMPLE (return unchanged):",
   "  DRAFT: 拒得快说明他们没准备好你. next.",
   "  CLAIRE: 拒得快说明他们没准备好你. next.",
   "",
-  "Output ONLY the reply. No preface, no explanation.",
+  "Output ONLY the reply. No preface, no explanation, no quotes around it.",
 ].join("\n")
 
 let cachedClient: OpenAI | null = null
 function getClient(): OpenAI {
   if (cachedClient) return cachedClient
-  // Reuse the agent's OpenAI credentials. We do NOT import
-  // resolveOpenAICompatConfig from agent-runtime to keep this module's
-  // dep graph small (orchestrator already pulls agent-runtime, but the
-  // rewriter conceptually targets a single small-model endpoint —
-  // future work: switch to SiliconFlow Qwen2.5-7B for cheaper).
+  // Phase 33 fix — when DEFAULT_MODEL is a Qwen* identifier, the rewriter
+  // MUST hit SiliconFlow (Qwen home), not OpenAI. The previous resolver
+  // fell back to PA_OPENAI_AGENT_API_KEY + the OpenAI default baseURL,
+  // which produced a 401 on every call (verified in prod logs 2026-04-29).
+  const isQwenModel = DEFAULT_MODEL.toLowerCase().startsWith("qwen")
   const apiKey =
     process.env.PA_LLM_REWRITE_API_KEY?.trim() ||
+    (isQwenModel ? process.env.SILICONFLOW_API_KEY?.trim() || "" : "") ||
     process.env.PA_OPENAI_AGENT_API_KEY?.trim() ||
     process.env.OPENAI_API_KEY?.trim() ||
     ""
   const baseURL =
     process.env.PA_LLM_REWRITE_BASE_URL?.trim() ||
+    (isQwenModel ? "https://api.siliconflow.cn/v1" : "") ||
     process.env.PA_OPENAI_AGENT_BASE_URL?.trim() ||
     process.env.OPENAI_BASE_URL?.trim() ||
     undefined
@@ -241,20 +286,29 @@ function getClient(): OpenAI {
  * tiny output budget, hard token cap.
  */
 const defaultDeps: RewriterDeps = {
-  callRewriter: async (rawText, signal) => {
+  callRewriter: async (rawText, signal, priorAssistantReplies) => {
     const client = getClient()
+    // Phase 33 — fold prior assistant replies into the user message so
+    // the rewriter can rotate openers / detect repeat tics. Limit to last
+    // 2 to keep prompt small.
+    const priorBlock =
+      priorAssistantReplies && priorAssistantReplies.length > 0
+        ? `PREVIOUS REPLIES (most recent first):\n${priorAssistantReplies
+            .slice(0, 2)
+            .map((r, i) => `  [${i + 1}] ${r}`)
+            .join("\n")}\n\n`
+        : ""
     const response = await client.chat.completions.create(
       {
         model: DEFAULT_MODEL,
-        // Phase 24 — temp 0.4 (was 0.2). More natural rewrites, less mechanical
-        // echo. Diff guard catches over-creative outputs (rewrite_unsafe).
         temperature: 0.4,
-        // Cap output to keep latency + cost bounded. Real Claire replies
-        // are ≤ ~120 chars; 200 tokens is plenty of headroom.
         max_tokens: 200,
         messages: [
           { role: "system", content: REWRITER_V2_SYSTEM_PROMPT },
-          { role: "user", content: `DRAFT:\n${rawText}\n\nREWRITTEN OR UNCHANGED:` },
+          {
+            role: "user",
+            content: `${priorBlock}DRAFT:\n${rawText}\n\nREWRITTEN OR UNCHANGED:`,
+          },
         ],
       },
       { signal }
@@ -270,7 +324,16 @@ const defaultDeps: RewriterDeps = {
  * @returns `{ text, rewriteApplied, reason }`. Telemetry consumers should
  *   log `rewriteApplied` + `reason` on the turn doc.
  */
-export async function rewriteIfOff(rawText: string, opts: RewriteOpts = {}): Promise<RewriteResult> {
+export type RewriteContext = {
+  /** Last 1-2 assistant replies in this session (most recent first). */
+  priorAssistantReplies?: string[]
+}
+
+export async function rewriteIfOff(
+  rawText: string,
+  opts: RewriteOpts = {},
+  ctx: RewriteContext = {}
+): Promise<RewriteResult> {
   // 1. Kill switches & cheap exits.
   if (process.env.PA_LLM_REWRITE_DISABLED === "true") {
     return { text: rawText, rewriteApplied: false, reason: "disabled" }
@@ -301,10 +364,15 @@ export async function rewriteIfOff(rawText: string, opts: RewriteOpts = {}): Pro
 
   let modelText: string | null = null
   let upstreamError = false
+  let upstreamErrorMsg: string | undefined
   try {
-    modelText = await deps.callRewriter(rawText, controller.signal)
-  } catch {
+    modelText = await deps.callRewriter(rawText, controller.signal, ctx.priorAssistantReplies)
+  } catch (err) {
     upstreamError = true
+    upstreamErrorMsg = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
+    // Phase 33 — surface upstream error so we can diagnose. Always-on,
+    // not a console.error (CFs forward console.log).
+    console.log("[llm-rewriter] upstream error", { msg: upstreamErrorMsg, model: modelId })
   } finally {
     clearTimeout(timer)
   }
