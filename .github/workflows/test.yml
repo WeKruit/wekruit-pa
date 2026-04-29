@@ -1,0 +1,58 @@
+# Unit test + typecheck CI gate.
+#
+# Runs on every push to main + every PR. Blocks merge if typecheck red or
+# any package's test suite red. Catches the class of failure that hit on
+# 2026-04-28 (commit 1ae0de4 changed test fixtures but not verifier code,
+# 8 webhook tests went red on main; nobody noticed for 22h until Phase 32
+# deploy rolled the broken main into prod).
+#
+# Cost: ~3 min per run on GitHub-hosted Ubuntu. Free for public repos and
+# included in the team plan for private.
+
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck-and-test:
+    name: typecheck + unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck (all 15 packages)
+        run: pnpm -r typecheck
+
+      - name: Unit tests (all packages)
+        run: pnpm -r test
+        env:
+          # Tests must not hit external services — pin to dummy values to
+          # surface accidental network calls as immediate failures.
+          NODE_ENV: test
+          # Required by feature-flag tests that read env override.
+          PA_DASHBOARD_ENV: test

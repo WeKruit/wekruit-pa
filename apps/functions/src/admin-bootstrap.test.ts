@@ -549,6 +549,9 @@ describe("driftCheck", () => {
     const r = await driftCheck({ db, firestoreCount, qdrantCount: async () => 100 })
     assert.equal(r.action, "driftCheck")
     assert.equal(r.collections.firestore, "pa-memory-facts")
-    assert.equal(r.collections.qdrant, "pa-memory")
+    // Qdrant collection intentionally retains snake_case `pa_memory` per
+    // mem0 self-host convention (NOT migrated to kebab during the 23+
+    // rename; see Adam directive 2026-04-28 "memory这里肯定要按照mem0推荐的").
+    assert.equal(r.collections.qdrant, "pa_memory")
   })
 })

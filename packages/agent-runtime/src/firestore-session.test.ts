@@ -11,8 +11,12 @@ import type { ChatMessage } from "@pa/core-types"
 type Row = ChatMessage & Record<string, unknown>
 
 function makeFakeDb(initialRows: Row[] = []) {
+  // Phase 23+ kebab-case migration. Old snake-case key kept as alias for
+  // any stale code path during transition.
+  const rows = [...initialRows]
   const rowsByCollection: Record<string, Row[]> = {
-    pa_messages: [...initialRows],
+    "pa-messages": rows,
+    pa_messages: rows,
   }
   let lastWrite: { collection: string; id: string; data: unknown; merge: boolean } | null = null
 
@@ -76,7 +80,7 @@ function makeFakeDb(initialRows: Row[] = []) {
 
   return {
     db: db as unknown as Parameters<typeof makeSession>[0]["db"],
-    rows: () => rowsByCollection.pa_messages ?? [],
+    rows: () => rowsByCollection["pa-messages"] ?? [],
     lastWrite: () => lastWrite,
   }
 }
