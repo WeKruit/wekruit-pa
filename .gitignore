@@ -14,3 +14,4 @@ apps/dashboard-web/.env.pa-firebase-generated
 *-debug.log
 apps/functions/lib/
 eval-runs/
+apps/eval/voice/judges/__pycache__/
