@@ -3,8 +3,19 @@
 **Phase 32 Wave 4** — investigation + repair plan for the "1 of 10 CFs failed
 update" symptom on the most recent `firebase deploy --only functions` run.
 
-> Runbook only. **Do not execute** the redeploy from this file — Adam
-> executes; this document captures the diagnosis path and the exact commands.
+> **STATUS: RESOLVED 2026-04-28** — confirmed root cause was env-var/secret
+> overlap (hypothesis #4 in §3 below, not the more likely #1/#2/#3). Fix:
+> remove `SENDBLUE_API_KEY_ID` + `SENDBLUE_API_SECRET_KEY` from
+> `apps/functions/.env` (they remain canonical in Secret Manager). Redeploy
+> via `firebase deploy --only functions:pa-orchestrator:paSendblueOutbox`
+> succeeded. The exact Cloud Run error was:
+>
+> ```
+> spec.template.spec.containers[0].env: Secret environment variable
+> overlaps non secret environment variable: SENDBLUE_API_KEY_ID
+> ```
+>
+> The runbook below is preserved for reference.
 
 ---
 
