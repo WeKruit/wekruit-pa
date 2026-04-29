@@ -29,9 +29,27 @@ export function verifySendblueSignature(
   if (!header || typeof header !== "string") return false
   if (!secret) return false
 
-  // Normalize: hex sig is lowercase, no padding/prefix per §2. Trim whitespace.
-  const provided = header.trim().toLowerCase()
-  if (!provided) return false
+  const trimmed = header.trim()
+  if (!trimmed) return false
+
+  // Path A — shared-secret mode: Sendblue sends the configured signing secret
+  // value VERBATIM in the `sb-signing-secret` header. The receiver verifies by
+  // string equality (timing-safe). Selected when header value matches the
+  // secret length (i.e. NOT a 64-char hex HMAC).
+  if (trimmed.length === secret.length && trimmed === secret) {
+    try {
+      const a = Buffer.from(trimmed, "utf8")
+      const b = Buffer.from(secret, "utf8")
+      if (a.length === b.length && timingSafeEqual(a, b)) return true
+    } catch {
+      // fall through to HMAC path
+    }
+  }
+
+  // Path B — HMAC mode (legacy / test fixtures): hex-encoded HMAC-SHA256 of
+  // the raw body using the shared secret. Kept for backward compatibility
+  // with existing tests + any pre-2026 webhook deliveries.
+  const provided = trimmed.toLowerCase()
   if (!/^[0-9a-f]+$/.test(provided)) return false
 
   let providedBuf: Buffer
@@ -65,7 +83,14 @@ export function verifySendblueSignature(
 export function extractSendblueSignatureHeader(
   headers: Record<string, string | string[] | undefined>
 ): string | undefined {
-  const candidates = ["sendblue-signature", "sb-signature", "x-sendblue-signature"]
+  const candidates = [
+    // Sendblue current production header — shared-secret mode (verbatim secret).
+    "sb-signing-secret",
+    // Legacy / HMAC mode header names (kept for backward compatibility + tests).
+    "sendblue-signature",
+    "sb-signature",
+    "x-sendblue-signature",
+  ]
   for (const key of candidates) {
     const value = headers[key] ?? headers[key.toLowerCase()] ?? headers[key.toUpperCase()]
     if (typeof value === "string" && value.length > 0) return value

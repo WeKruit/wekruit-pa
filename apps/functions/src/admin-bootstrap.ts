@@ -1274,7 +1274,10 @@ export const paAdminBootstrap = onRequest(
     // 9-minute ceiling (per-replay timeout enforced internally) so a 200-row
     // replay batch with slow LLM calls still fits in CF runtime budget.
     timeoutSeconds: 540,
-    cors: false,
+    // Allow dashboard browser fetch from wekruit-pa.web.app (Phase 32 NRoundSim
+    // page calls simulateConversation directly with x-admin-token in header).
+    // Token-gated, so cross-origin is acceptable.
+    cors: ["https://wekruit-pa.web.app", "https://wekruit-pa.firebaseapp.com", "http://localhost:5173"],
     secrets: [PA_ADMIN_TOKEN, SILICONFLOW_API_KEY, PA_OPENAI_AGENT_API_KEY, QDRANT_URL, QDRANT_API_KEY],
   },
   async (req, res) => {
