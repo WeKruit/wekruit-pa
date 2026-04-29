@@ -622,25 +622,117 @@ function FlagEditor({
 // Audit drawer
 // ---------------------------------------------------------------------------
 
-function AuditDrawer({ flagKey }: { flagKey: string }) {
+// Phase 32 Wave 2d — detect Firestore missing-composite-index errors and
+// surface a product-grade message to operators (no raw firebaseapp.com URL).
+// Heuristic: Firestore SDK throws `failed-precondition` with a message that
+// includes "requires an index" + a `console.firebase.google.com` URL.
+function isMissingIndexError(message: string): boolean {
+  if (!message) return false
+  const lower = message.toLowerCase()
+  return (
+    lower.includes("requires an index") ||
+    lower.includes("requires a composite index") ||
+    lower.includes("failed-precondition")
+  )
+}
+
+async function callCreateFlagAuditIndex(): Promise<{ ok: boolean; note: string }> {
+  const token = window.prompt(
+    "Run admin action `createFlagAuditIndex`?\n\nPaste PA_ADMIN_TOKEN (one-time, not stored):"
+  )
+  if (!token || !token.trim()) return { ok: false, note: "cancelled" }
+  try {
+    const resp = await fetch(
+      "https://paadminbootstrap-evm6xq7jyq-uc.a.run.app",
+      {
+        method: "POST",
+        headers: {
+          "x-admin-token": token.trim(),
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ action: "createFlagAuditIndex" }),
+      }
+    )
+    const json = (await resp.json()) as { ok?: boolean; note?: string; error?: string }
+    if (!resp.ok || json.ok === false) {
+      return { ok: false, note: json.error ?? json.note ?? `HTTP ${resp.status}` }
+    }
+    return { ok: true, note: json.note ?? "Index creation requested." }
+  } catch (e) {
+    return { ok: false, note: e instanceof Error ? e.message : String(e) }
+  }
+}
+
+function AuditDrawerBody({ flagKey }: { flagKey: string }) {
   const [events, setEvents] = useState<AuditEvent[] | null>(null)
   const [err, setErr] = useState<string | null>(null)
+  const [missingIndex, setMissingIndex] = useState(false)
+  const [actionBusy, setActionBusy] = useState(false)
+  const [actionResult, setActionResult] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
     setEvents(null)
     setErr(null)
+    setMissingIndex(false)
+    setActionResult(null)
     listAuditForKey(flagKey, 20)
       .then((rows) => {
         if (!cancelled) setEvents(rows)
       })
       .catch((e) => {
-        if (!cancelled) setErr(e instanceof Error ? e.message : String(e))
+        if (cancelled) return
+        const msg = e instanceof Error ? e.message : String(e)
+        if (isMissingIndexError(msg)) {
+          setMissingIndex(true)
+        } else {
+          setErr(msg)
+        }
       })
     return () => {
       cancelled = true
     }
   }, [flagKey])
+
+  async function onCreateIndex() {
+    setActionBusy(true)
+    setActionResult(null)
+    const r = await callCreateFlagAuditIndex()
+    setActionResult(r.note)
+    setActionBusy(false)
+  }
+
+  if (missingIndex) {
+    return (
+      <div style={{ padding: "0.5rem 0" }}>
+        <div
+          style={{
+            background: "#fef3c7",
+            border: "1px solid #fcd34d",
+            borderRadius: 8,
+            padding: "0.85rem 1rem",
+            marginBottom: 12,
+          }}
+        >
+          <strong style={{ display: "block", marginBottom: 6 }}>
+            无法加载历史 — 缺少审计索引
+          </strong>
+          <p style={{ margin: 0, fontSize: "0.9em", color: "#475569" }}>
+            This requires a Firestore composite index on <code>pa-flag-audit</code> (auditAt DESC).
+            An admin can request the index via the action below.
+          </p>
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button type="button" disabled={actionBusy} onClick={() => void onCreateIndex()}>
+            {actionBusy ? "Requesting…" : "Run admin action: createFlagAuditIndex"}
+          </button>
+        </div>
+        {actionResult ? (
+          <p style={{ marginTop: 10, fontSize: "0.85em", color: "#475569" }}>{actionResult}</p>
+        ) : null}
+      </div>
+    )
+  }
 
   if (err) return <ErrorState message={err} />
   if (events === null) return <LoadingState label="Loading audit history…" />
@@ -663,12 +755,77 @@ function AuditDrawer({ flagKey }: { flagKey: string }) {
               {JSON.stringify(e.oldValue)} → {JSON.stringify(e.newValue)}
             </div>
             {e.reason ? (
-              <div style={{ color: "#475569", fontStyle: "italic" }}>“{e.reason}”</div>
+              <div style={{ color: "#475569", fontStyle: "italic" }}>"{e.reason}"</div>
             ) : null}
           </li>
         ))}
       </ol>
     </div>
+  )
+}
+
+// Side drawer wrapper — fixed-position panel anchored to the right edge.
+// Click backdrop or the close button to dismiss. Inline-styled so we don't
+// have to grow styles.css for one-off use.
+function HistorySideDrawer({
+  flagKey,
+  onClose,
+}: {
+  flagKey: string
+  onClose: () => void
+}) {
+  // Close on Escape for keyboard parity with native dialogs.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose()
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [onClose])
+
+  return (
+    <>
+      <div
+        onClick={onClose}
+        style={{
+          position: "fixed",
+          inset: 0,
+          background: "rgba(15, 23, 42, 0.35)",
+          zIndex: 40,
+        }}
+        aria-hidden
+      />
+      <aside
+        role="dialog"
+        aria-label={`Audit history for ${flagKey}`}
+        style={{
+          position: "fixed",
+          top: 0,
+          right: 0,
+          height: "100vh",
+          width: "min(480px, 90vw)",
+          background: "#ffffff",
+          boxShadow: "-12px 0 32px rgba(15, 23, 42, 0.18)",
+          padding: "1.25rem 1.25rem 1.5rem 1.25rem",
+          overflowY: "auto",
+          zIndex: 50,
+          display: "flex",
+          flexDirection: "column",
+          gap: 12,
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <p className="eyebrow" style={{ margin: 0 }}>Audit history</p>
+            <h2 style={{ margin: "2px 0 0 0", fontSize: "1.1em" }}>{flagKey}</h2>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close drawer" style={{ fontSize: "1.1em" }}>
+            ×
+          </button>
+        </div>
+        <AuditDrawerBody flagKey={flagKey} />
+      </aside>
+    </>
   )
 }
 
@@ -1061,9 +1218,7 @@ export function Flags() {
       ) : null}
 
       {drawerKey ? (
-        <Panel title={`Audit history: ${drawerKey}`}>
-          <AuditDrawer flagKey={drawerKey} />
-        </Panel>
+        <HistorySideDrawer flagKey={drawerKey} onClose={() => setDrawerKey(null)} />
       ) : null}
     </div>
   )

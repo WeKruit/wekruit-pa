@@ -165,8 +165,35 @@ export async function simulateConversation(
   deps: SimulateDeps
 ): Promise<SimulateConversationResult> {
   const personaId = input.persona as SimPersonaId
-  const persona = SIM_PERSONAS[personaId]
+  const inlinePersona = SIM_PERSONAS[personaId]
+  // Phase 32 W3 — Firestore-backed personas (soul.md three-file pattern).
+  // Look up the persona doc first; fall back to inline strings when the
+  // doc is missing OR the SDK throws (zero-downtime cutover before
+  // `seedPersonas` has run in production).
+  let firestoreSystemPrompt: string | null = null
+  try {
+    const { composePersonaPrompt } = await import("@pa/agent-registry")
+    firestoreSystemPrompt = await composePersonaPrompt(deps.db, personaId)
+  } catch {
+    firestoreSystemPrompt = null
+  }
+  const persona =
+    inlinePersona ??
+    (firestoreSystemPrompt
+      ? {
+          id: personaId,
+          // Opening message has no Firestore equivalent in W3 — callers that
+          // seed brand-new personas must provide an opening message via the
+          // future `examples` field's first line. For now require an inline
+          // entry to define openingMessage.
+          systemPrompt: firestoreSystemPrompt,
+          openingMessage: "嗨",
+        }
+      : undefined)
   if (!persona) throw new Error(`unknown_persona: ${input.persona}`)
+  // Prefer Firestore systemPrompt when present (allows live edits without
+  // redeploy); inline string remains the failsafe.
+  const personaSystemPrompt = firestoreSystemPrompt ?? persona.systemPrompt
   const turnCount = Math.max(
     1,
     Math.min(SIM_TURN_HARD_CAP, Math.floor(input.turns ?? SIM_TURN_DEFAULT))
@@ -189,7 +216,7 @@ export async function simulateConversation(
       try {
         userText = await withTimeout(
           deps.personaLLM({
-            systemPrompt: persona.systemPrompt,
+            systemPrompt: personaSystemPrompt,
             history: transcript.map((t) => ({ role: t.role, content: t.body })),
             signal: ac.signal,
           }),
@@ -531,6 +558,39 @@ const SEED_UPSTREAM_TEMPLATES = [
     enabled: false,
   },
 ] as const
+
+// ---------------------------------------------------------------------------
+// Phase 32 W3 — seedPlaybooks + seedPersonas admin actions
+// ---------------------------------------------------------------------------
+//
+// Idempotent seed of `pa-playbooks/{playbookKey}` (default: `headhunter`)
+// and `pa-personas/{personaKey}` (defaults: `anxious_grad`, `formal_em`,
+// `vent_seeker`). Both source bodies live in @pa/agent-registry so the
+// seed is the single source of truth.
+//
+// MUST be callable BEFORE the orchestrator switches to Firestore lookup
+// (zero-downtime constraint — see 32-CONTEXT.md). Once each doc is
+// present, the runtime path consumes it via the 30s playbook cache
+// (orchestrator) or `composePersonaPrompt` (simulateConversation).
+async function seedPlaybooksAction(
+  db: Firestore
+): Promise<{ created: string[]; skipped: string[] }> {
+  const { seedDefaultPlaybooks } = await import("@pa/agent-registry")
+  return await seedDefaultPlaybooks(db, {
+    actor: "p9-playbooks-seed@wekruit.com",
+    reason: "Phase 32 W3 seedPlaybooks via paAdminBootstrap CF",
+  })
+}
+
+async function seedPersonasAction(
+  db: Firestore
+): Promise<{ created: string[]; skipped: string[] }> {
+  const { seedDefaultPersonas } = await import("@pa/agent-registry")
+  return await seedDefaultPersonas(db, {
+    actor: "p9-personas-seed@wekruit.com",
+    reason: "Phase 32 W3 seedPersonas via paAdminBootstrap CF",
+  })
+}
 
 async function seedUpstreamTemplates(db: Firestore): Promise<{ created: string[]; skipped: string[] }> {
   const created: string[] = []
@@ -1394,7 +1454,38 @@ export const paAdminBootstrap = onRequest(
         res.json({ action, ...result })
         return
       }
-      res.status(400).json({ error: "unknown_action", supported: ["ping", "seedFlags", "replayFixtures", "simulateConversation", "migrateCollections", "reseedDefaultAgent", "driftCheck", "migrateHandbookFromBible", "evalDownstreamTriggers", "seedUpstreamTemplates"] })
+      // Phase 32 W3 — seed default playbooks (headhunter) into pa-playbooks
+      // and 3 default personas into pa-personas. Both idempotent.
+      if (action === "seedPlaybooks") {
+        if (!getApps().length) initializeApp()
+        const db = getFirestore()
+        const result = await seedPlaybooksAction(db)
+        res.json({ ok: true, action, ...result })
+        return
+      }
+      if (action === "seedPersonas") {
+        if (!getApps().length) initializeApp()
+        const db = getFirestore()
+        const result = await seedPersonasAction(db)
+        res.json({ ok: true, action, ...result })
+        return
+      }
+      // Phase 32 W2d — placeholder action invoked from /admin/flags History
+      // drawer when Firestore returns "missing composite index" on
+      // pa-flag-audit. The actual index creation is a manual gcloud step
+      // (or firebase.indexes.json deploy); this endpoint just acknowledges
+      // the request so operators get product-grade feedback instead of a
+      // raw firebaseapp.com URL. Replace with a real `firebase firestore:
+      // indexes` invocation when the team standardises index management.
+      if (action === "createFlagAuditIndex") {
+        res.json({
+          ok: true,
+          action,
+          note: "ask Firebase admin to create composite index (pa-flag-audit, auditAt DESC)",
+        })
+        return
+      }
+      res.status(400).json({ error: "unknown_action", supported: ["ping", "seedFlags", "replayFixtures", "simulateConversation", "migrateCollections", "reseedDefaultAgent", "driftCheck", "migrateHandbookFromBible", "evalDownstreamTriggers", "seedUpstreamTemplates", "seedPlaybooks", "seedPersonas", "createFlagAuditIndex"] })
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       res.status(500).json({ error: "internal", message: msg })
