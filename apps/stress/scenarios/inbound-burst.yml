@@ -1,0 +1,71 @@
+# Inbound Sendblue webhook burst — 10 users x 100 messages x 10 minutes.
+#
+# Goal: validate rate-limit (20/min/user) AND staging Firestore tx
+# serialization under sustained concurrent inbound. Each VU sends 1
+# message every 6 seconds; the 21st message in any rolling 60s window
+# should yield 429 from the inbound CF, and the orchestrator must not
+# wedge under the load.
+#
+# Run:
+#   STAGING_SENDBLUE_WEBHOOK_URL=... \
+#   STAGING_SENDBLUE_HMAC_SECRET=... \
+#   STAGING_TEST_PHONE_NUMBER=+15555550100 \
+#   pnpm test:inbound
+#
+# Expected baseline (10x100x10min, ~1000 inbound):
+#   - p50 < 400ms, p95 < 1200ms, p99 < 3000ms
+#   - 200/202 mostly; 429 expected on bursts (>20/min/user)
+#   - 5xx < 1% (anything else = bug)
+
+config:
+  target: "{{ $processEnvironment.STAGING_SENDBLUE_WEBHOOK_URL }}"
+  processor: "./lib/hmac.js"
+  phases:
+    - name: "ramp"
+      duration: 60
+      arrivalRate: 1
+      rampTo: 10
+    - name: "sustain"
+      duration: 540 # 9 min
+      arrivalRate: 10
+  variables:
+    testPhone:
+      - "{{ $processEnvironment.STAGING_TEST_PHONE_NUMBER }}"
+  ensure:
+    thresholds:
+      - "http.response_time.p95": 1200
+      - "http.response_time.p99": 3000
+  http:
+    timeout: 10
+  plugins:
+    metrics-by-endpoint: {}
+
+before:
+  flow:
+    - log: "Starting inbound burst — 10 VU x 100 msg x 10 min against {{ target }}"
+
+scenarios:
+  - name: "inbound message storm"
+    weight: 1
+    flow:
+      - loop:
+          - post:
+              url: "/"
+              beforeRequest: "attachSendblueSignature"
+              json:
+                accountEmail: "stress@wekruit.com"
+                content: "stress test message {{ $loopCount }} {{ $randomString() }}"
+                date_sent: "{{ $isoTimestamp() }}"
+                from_number: "{{ testPhone }}"
+                to_number: "{{ testPhone }}"
+                is_outbound: false
+                message_handle: "stress-{{ $uuid }}"
+                status: "RECEIVED"
+                uuid: "{{ $uuid }}"
+              capture:
+                - json: "$.ok"
+                  as: "okFlag"
+              expect:
+                - statusCode: [200, 202, 429]
+          - think: 6
+        count: 100

@@ -1,0 +1,63 @@
+# Downstream fire — sustained 1 turn/sec for 5 min targeting an admin
+# endpoint that drives the per-turn evaluation downstream HMAC POST.
+#
+# Goal: validate the orchestrator's post-turn hook (Phase 30 T2 —
+# evalDownstreamTriggers) signs and enqueues without blocking the
+# orchestrator response. The downstream POST must remain async; if turn
+# latency p95 exceeds 800ms during this scenario, downstream coupling is
+# leaking back into the hot path and that is a bug.
+#
+# Run:
+#   STAGING_DOWNSTREAM_TRIGGER_URL=... \
+#   ADMIN_TOKEN=... \
+#   STAGING_TEST_PHONE_NUMBER=+15555550100 \
+#   pnpm test:downstream
+#
+# Expected baseline (~300 turns):
+#   - p50 < 350ms, p95 < 800ms
+#   - 200/202 only; 401 = ADMIN_TOKEN missing/wrong; 5xx = bug
+
+config:
+  target: "{{ $processEnvironment.STAGING_DOWNSTREAM_TRIGGER_URL }}"
+  phases:
+    - name: "warmup"
+      duration: 30
+      arrivalRate: 1
+    - name: "sustain"
+      duration: 270 # 4.5 min
+      arrivalRate: 1
+  variables:
+    testPhone:
+      - "{{ $processEnvironment.STAGING_TEST_PHONE_NUMBER }}"
+  defaults:
+    headers:
+      Content-Type: "application/json"
+      Authorization: "Bearer {{ $processEnvironment.ADMIN_TOKEN }}"
+  ensure:
+    thresholds:
+      - "http.response_time.p95": 800
+      - "http.response_time.p99": 2000
+  http:
+    timeout: 10
+  plugins:
+    metrics-by-endpoint: {}
+
+before:
+  flow:
+    - log: "Starting downstream fire — 1 turn/sec x 5 min against {{ target }}"
+
+scenarios:
+  - name: "per-turn downstream trigger"
+    weight: 1
+    flow:
+      - post:
+          url: "/"
+          json:
+            action: "evalDownstreamTriggers"
+            sessionId: "stress-sess-{{ $uuid }}"
+            userId: "stress-user-1"
+            turnIndex: "{{ $loopCount }}"
+            toE164: "{{ testPhone }}"
+            simulate: true
+          expect:
+            - statusCode: [200, 202]

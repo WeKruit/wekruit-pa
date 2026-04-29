@@ -1,0 +1,67 @@
+# Upstream webhook flood — 5 users x 50 events x 5 min.
+#
+# Goal: confirm paUpstreamEventWebhook (P9-Connectors) survives a sustained
+# HMAC-signed burst, enqueues to pa-outbound without dedupe collisions, and
+# does not block the orchestrator turn loop.
+#
+# Run:
+#   STAGING_UPSTREAM_WEBHOOK_URL=... \
+#   STAGING_UPSTREAM_HMAC_SECRET=... \
+#   STAGING_TEST_PHONE_NUMBER=+15555550100 \
+#   pnpm test:upstream
+#
+# Expected baseline (5x50x5min, ~250 events):
+#   - p50 < 250ms, p95 < 800ms
+#   - 200/204 only; 401 = HMAC mismatch (bug); 5xx = bug
+#   - Idempotency: re-sending the same eventId returns 200 with no duplicate
+#     downstream side-effects.
+
+config:
+  target: "{{ $processEnvironment.STAGING_UPSTREAM_WEBHOOK_URL }}"
+  processor: "./lib/hmac.js"
+  phases:
+    - name: "ramp"
+      duration: 30
+      arrivalRate: 1
+      rampTo: 5
+    - name: "sustain"
+      duration: 270 # 4.5 min
+      arrivalRate: 5
+  variables:
+    testPhone:
+      - "{{ $processEnvironment.STAGING_TEST_PHONE_NUMBER }}"
+  ensure:
+    thresholds:
+      - "http.response_time.p95": 800
+      - "http.response_time.p99": 2000
+  http:
+    timeout: 10
+  plugins:
+    metrics-by-endpoint: {}
+
+before:
+  flow:
+    - log: "Starting upstream webhook flood — 5 VU x 50 events x 5 min against {{ target }}"
+
+scenarios:
+  - name: "upstream event flood"
+    weight: 1
+    flow:
+      - loop:
+          - post:
+              url: "/"
+              beforeRequest: "attachUpstreamSignature"
+              json:
+                eventId: "stress-evt-{{ $uuid }}"
+                kind: "candidate.replied"
+                source: "wekruit-core"
+                occurredAt: "{{ $isoTimestamp() }}"
+                payload:
+                  candidateId: "cand-stress-{{ $loopCount }}"
+                  recruiterId: "rec-stress-1"
+                  toE164: "{{ testPhone }}"
+                  body: "stress test upstream event {{ $loopCount }}"
+              expect:
+                - statusCode: [200, 202, 204]
+          - think: 6
+        count: 50

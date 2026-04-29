@@ -1,0 +1,145 @@
+{
+  "displayName": "PA Ops — Sendblue / Rate Limit / Abuse / CF Errors",
+  "mosaicLayout": {
+    "columns": 12,
+    "tiles": [
+      {
+        "xPos": 0,
+        "yPos": 0,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "Sendblue daily quota — sent_today vs sendblueDailyQuota",
+          "scorecard": {
+            "timeSeriesQuery": {
+              "timeSeriesQueryLanguage": "fetch global::logging.googleapis.com/user/pa_outbound_sent_daily | filter resource.type = 'cloud_function' | align rate(1m) | every 1m | group_by [], [val: sum(value.pa_outbound_sent_daily)]"
+            },
+            "thresholds": [
+              {
+                "label": "soft (80%)",
+                "value": 800,
+                "color": "YELLOW",
+                "direction": "ABOVE"
+              },
+              {
+                "label": "hard (100%)",
+                "value": 1000,
+                "color": "RED",
+                "direction": "ABOVE"
+              }
+            ],
+            "gaugeView": {
+              "lowerBound": 0,
+              "upperBound": 1000
+            }
+          }
+        }
+      },
+      {
+        "xPos": 6,
+        "yPos": 0,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "Rate-limit hits — pa_audit_events type=rate_limit_exceeded (24h)",
+          "xyChart": {
+            "chartOptions": {
+              "mode": "COLOR"
+            },
+            "dataSets": [
+              {
+                "plotType": "LINE",
+                "minAlignmentPeriod": "3600s",
+                "timeSeriesQuery": {
+                  "timeSeriesQueryLanguage": "fetch global::logging.googleapis.com/user/pa_audit_events | filter metric.type = 'rate_limit_exceeded' | align rate(1h) | every 1h | group_by [metric.type], [val: sum(value.pa_audit_events)]"
+                },
+                "targetAxis": "Y1"
+              }
+            ],
+            "thresholds": [],
+            "timeshiftDuration": "0s",
+            "yAxis": {
+              "label": "events/hour",
+              "scale": "LINEAR"
+            }
+          }
+        }
+      },
+      {
+        "xPos": 0,
+        "yPos": 4,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "Abuse signals by kind — pa_abuse_events (24h)",
+          "xyChart": {
+            "chartOptions": {
+              "mode": "COLOR"
+            },
+            "dataSets": [
+              {
+                "plotType": "LINE",
+                "minAlignmentPeriod": "3600s",
+                "legendTemplate": "${metric.labels.kind}",
+                "timeSeriesQuery": {
+                  "timeSeriesQueryLanguage": "fetch global::logging.googleapis.com/user/pa_abuse_events | filter metric.labels.kind = one_of('rate_limit', 'injection', 'allowlist_deny') | align rate(1h) | every 1h | group_by [metric.labels.kind], [val: sum(value.pa_abuse_events)]"
+                },
+                "targetAxis": "Y1"
+              }
+            ],
+            "thresholds": [],
+            "timeshiftDuration": "0s",
+            "yAxis": {
+              "label": "events/hour",
+              "scale": "LINEAR"
+            }
+          }
+        }
+      },
+      {
+        "xPos": 6,
+        "yPos": 4,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "CF error rate — 5xx / total per pa* function (1h)",
+          "xyChart": {
+            "chartOptions": {
+              "mode": "COLOR"
+            },
+            "dataSets": [
+              {
+                "plotType": "STACKED_BAR",
+                "minAlignmentPeriod": "60s",
+                "legendTemplate": "${resource.labels.function_name}",
+                "timeSeriesQuery": {
+                  "timeSeriesQueryLanguage": "fetch cloud_function::cloudfunctions.googleapis.com/function/execution_count | filter resource.labels.function_name =~ 'pa.*' && metric.labels.status != 'ok' | align rate(1m) | every 1m | group_by [resource.labels.function_name], [val: sum(value.execution_count)]"
+                },
+                "targetAxis": "Y1"
+              }
+            ],
+            "thresholds": [
+              {
+                "label": "1% error",
+                "value": 0.01,
+                "color": "YELLOW",
+                "direction": "ABOVE"
+              },
+              {
+                "label": "5% error",
+                "value": 0.05,
+                "color": "RED",
+                "direction": "ABOVE"
+              }
+            ],
+            "timeshiftDuration": "0s",
+            "yAxis": {
+              "label": "errors/min",
+              "scale": "LINEAR"
+            }
+          }
+        }
+      }
+    ]
+  }
+}

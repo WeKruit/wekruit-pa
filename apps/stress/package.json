@@ -1,0 +1,19 @@
+{
+  "name": "@pa/stress",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Artillery stress harness for pa-* CF endpoints (staging only).",
+  "scripts": {
+    "test:inbound": "artillery run scenarios/inbound-burst.yml",
+    "test:upstream": "artillery run scenarios/upstream-webhook.yml",
+    "test:downstream": "artillery run scenarios/downstream-fire.yml",
+    "report": "artillery report"
+  },
+  "dependencies": {
+    "artillery": "^2.0.21",
+    "dotenv": "^16.4.5"
+  },
+  "optionalDependencies": {
+    "@anthropic-ai/sdk": "^0.30.0"
+  }
+}
