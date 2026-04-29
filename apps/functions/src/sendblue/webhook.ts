@@ -77,6 +77,47 @@ function safeAudit(
   })
 }
 
+// Phase 33 — recovery safety net. Writes EVERY webhook delivery to
+// pa-sendblue-webhook-raw BEFORE verification, so a future deploy regression
+// (e.g. header-name drift like the 2026-04-28 incident) does not silently
+// destroy inbound traffic. TTL: 7 days via expiresAt field (operator must
+// set TTL policy on the collection — runbook in admin-bootstrap).
+async function logRawWebhook(
+  deps: WebhookDeps,
+  rawBody: Buffer | string,
+  headers: Record<string, string | string[] | undefined>,
+  log: (...args: unknown[]) => void
+): Promise<void> {
+  try {
+    const bodyText = typeof rawBody === "string" ? rawBody : rawBody.toString("utf8")
+    // Mask security-relevant headers but keep the rest for replay context.
+    const safeHeaders: Record<string, string> = {}
+    for (const [k, v] of Object.entries(headers)) {
+      const valStr = Array.isArray(v) ? v[0] : v
+      if (typeof valStr !== "string") continue
+      const lk = k.toLowerCase()
+      // Strip the secret value from log; just record presence + length.
+      if (lk === "sb-signing-secret" || lk.includes("signature") || lk === "authorization") {
+        safeHeaders[lk] = `<redacted ${valStr.length} chars>`
+      } else {
+        safeHeaders[lk] = valStr
+      }
+    }
+    const now = Date.now()
+    const expiresAt = new Date(now + 7 * 24 * 60 * 60 * 1000) // 7-day TTL
+    await deps.db.collection("pa-sendblue-webhook-raw").add({
+      receivedAt: new Date(now).toISOString(),
+      bodyText: bodyText.slice(0, 32 * 1024), // cap at 32 KiB
+      bodyLen: bodyText.length,
+      headers: safeHeaders,
+      expiresAt,
+    })
+  } catch (err) {
+    // Never let raw-log failure break the webhook path.
+    log("[sendblue][webhook][raw-log] failed", err instanceof Error ? err.message : String(err))
+  }
+}
+
 export async function handleSendblueWebhook(
   req: WebhookRequest,
   res: WebhookResponse,
@@ -91,6 +132,11 @@ export async function handleSendblueWebhook(
       : typeof req.body === "string"
         ? req.body
         : JSON.stringify(req.body ?? {})
+
+  // Phase 33 — log every delivery BEFORE verify so a regression in the
+  // verifier does not silently drop inbound traffic. Fire-and-forget;
+  // failure here must never break the path.
+  void logRawWebhook(deps, rawBody, req.headers ?? {}, log)
 
   const sigHeader = extractSendblueSignatureHeader(req.headers ?? {})
   const isValid = verifySendblueSignature(rawBody, sigHeader, deps.secret)
@@ -125,6 +171,21 @@ export async function handleSendblueWebhook(
   }
 
   const payload = parsed as Record<string, unknown>
+
+  // ---- 2.5. Canary short-circuit (Phase 33 Task 3) ----------------------
+  // Synthetic ping from paWebhookCanary. Audit + 200 OK; no inbound enqueue,
+  // no LLM, no Sendblue charge. Distinguished by the sentinel from_number
+  // and the magic content marker.
+  if (
+    payload.from_number === "+10000000000" &&
+    payload.content === "__CANARY_PING__"
+  ) {
+    log("[sendblue][webhook] canary ping ok", {
+      messageHandle: typeof payload.message_handle === "string" ? payload.message_handle : undefined,
+    })
+    reply(res, 200, { ok: true, canary: true })
+    return
+  }
 
   // ---- 3a. Outbound mirror events (is_outbound=true) --------------------
   if (payload.is_outbound === true) {

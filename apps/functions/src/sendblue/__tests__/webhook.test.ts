@@ -46,44 +46,53 @@ function makeFakeDb(opts: { rateLimitFlag?: boolean } = {}) {
     }
   }
 
+  const inboundCollection = {
+    doc(id: string) {
+      return {
+        async create(data: DocData) {
+          if (inbound.has(id)) {
+            const err: Error & { code?: number } = new Error("ALREADY_EXISTS")
+            err.code = 6
+            throw err
+          }
+          inbound.set(id, { ...data })
+        },
+        async get() {
+          const data = inbound.get(id)
+          return { exists: data !== undefined, data: () => data, id }
+        },
+      }
+    },
+  }
+  const auditCollection = {
+    add(data: DocData) {
+      audit.push({ ...data })
+      return Promise.resolve({ id: `audit_${audit.length}` })
+    },
+    doc(id: string) {
+      return genericDocRef(new Map(), id)
+    },
+  }
+  const flagsCollection = { doc(id: string) { return genericDocRef(flags, id) } }
+  const rateLimitCollection = { doc(id: string) { return genericDocRef(rateLimit, id) } }
+  // Phase 33 — accept fire-and-forget writes from logRawWebhook without
+  // shape constraints; tests don't assert on contents.
+  const rawWebhookCollection = {
+    add(_data: DocData) { return Promise.resolve({ id: "raw_1" }) },
+  }
   const collections: Record<string, unknown> = {
-    pa_inbound_events: {
-      doc(id: string) {
-        return {
-          async create(data: DocData) {
-            if (inbound.has(id)) {
-              const err: Error & { code?: number } = new Error("ALREADY_EXISTS")
-              err.code = 6
-              throw err
-            }
-            inbound.set(id, { ...data })
-          },
-          async get() {
-            const data = inbound.get(id)
-            return { exists: data !== undefined, data: () => data, id }
-          },
-        }
-      },
-    },
-    pa_audit_events: {
-      add(data: DocData) {
-        audit.push({ ...data })
-        return Promise.resolve({ id: `audit_${audit.length}` })
-      },
-      doc(id: string) {
-        return genericDocRef(new Map(), id)
-      },
-    },
-    pa_feature_flags: {
-      doc(id: string) {
-        return genericDocRef(flags, id)
-      },
-    },
-    pa_rate_limit: {
-      doc(id: string) {
-        return genericDocRef(rateLimit, id)
-      },
-    },
+    // Phase 23+ kebab-case migration. Old snake-case keys retained as
+    // aliases so any stale code path during transition still resolves.
+    "pa-inbound-events": inboundCollection,
+    "pa-audit-events": auditCollection,
+    "pa-feature-flags": flagsCollection,
+    "pa-rate-limits": rateLimitCollection,
+    "pa-rate-limit": rateLimitCollection,
+    "pa-sendblue-webhook-raw": rawWebhookCollection,
+    pa_inbound_events: inboundCollection,
+    pa_audit_events: auditCollection,
+    pa_feature_flags: flagsCollection,
+    pa_rate_limit: rateLimitCollection,
   }
 
   const db = {
@@ -365,5 +374,51 @@ describe("handleSendblueWebhook", () => {
 
     assert.equal(res.statusCode, 200)
     assert.equal(inbound.size, 1)
+  })
+
+  // Phase 33 — Regression lock for the 2026-04-28 incident: Sendblue's
+  // production webhook header is `sb-signing-secret` carrying the configured
+  // shared secret value verbatim. The verifier MUST accept this format.
+  it("Test 12 (Phase 33 regression lock): real Sendblue sb-signing-secret header → 200 + enqueued", async () => {
+    const { db, inbound } = makeFakeDb()
+    const body = JSON.stringify(basePayload({ message_handle: "msg-real-sendblue" }))
+    const req = makeReq({ body, signature: SECRET, signatureHeader: "sb-signing-secret" })
+    const res = makeRes()
+
+    await handleSendblueWebhook(req, res, { db, secret: SECRET })
+
+    assert.equal(res.statusCode, 200, "real Sendblue header must be accepted post-fix")
+    assert.equal(inbound.size, 1)
+  })
+
+  // Phase 33 — every delivery hits pa-sendblue-webhook-raw BEFORE verify.
+  // Even on 401, the raw payload is preserved for replay.
+  it("Test 13 (Phase 33): raw-payload log written even when HMAC verify fails", async () => {
+    const captured: Array<Record<string, unknown>> = []
+    const { db } = makeFakeDb()
+    // Tap the raw collection by overlaying a custom add() that captures rows.
+    const origCollection = (db as { collection(name: string): unknown }).collection
+    ;(db as { collection(name: string): unknown }).collection = (name: string) => {
+      if (name === "pa-sendblue-webhook-raw") {
+        return {
+          add(row: Record<string, unknown>) {
+            captured.push(row)
+            return Promise.resolve({ id: `raw_${captured.length}` })
+          },
+        }
+      }
+      return origCollection.call(db, name)
+    }
+    const body = JSON.stringify(basePayload())
+    const req = makeReq({ body, signature: "wrong-secret", signatureHeader: "sb-signing-secret" })
+    const res = makeRes()
+
+    await handleSendblueWebhook(req, res, { db, secret: SECRET })
+
+    assert.equal(res.statusCode, 401, "wrong secret must still reject")
+    // Allow ms for the fire-and-forget write to land.
+    await new Promise((r) => setTimeout(r, 20))
+    assert.ok(captured.length >= 1, "raw payload must be logged even on 401")
+    assert.equal(typeof captured[0]?.bodyText, "string")
   })
 })

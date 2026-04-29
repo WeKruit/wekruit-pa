@@ -760,3 +760,8 @@ export const paHealthUpstreamEventWebhook = makeHealthHandler({
   name: "paUpstreamEventWebhook",
   requiredSecrets: ["PA_UPSTREAM_HMAC_SECRET"],
 })
+
+// Phase 33 Task 3 — scheduled canary every 30 min round-trips a synthetic
+// webhook to detect deploy regressions like the 2026-04-28 header drift
+// incident before they cause user-visible outage.
+export { paWebhookCanary } from "./canary.js"
