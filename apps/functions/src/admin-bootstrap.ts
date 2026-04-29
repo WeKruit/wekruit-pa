@@ -248,7 +248,15 @@ export async function simulateConversation(
     let assistantText: string
     try {
       assistantText = await withTimeout(
-        deps.orchestrator({ userText, sessionId, userId, signal: acClaire.signal }),
+        deps.orchestrator({
+          userText,
+          sessionId,
+          userId,
+          signal: acClaire.signal,
+          // Phase 33 — pass full prior transcript so Claire sees own replies
+          // and the REPEAT-OPENER + ESCALATION-FIREWALL rules can fire.
+          history: transcript.map((t) => ({ role: t.role, body: t.body })),
+        }),
         timeoutMs,
         acClaire
       )
@@ -829,6 +837,10 @@ export type ReplayOrchestrator = (input: {
   sessionId: string
   userId: string
   signal: AbortSignal
+  /** Phase 33 — prior turns so Claire sees own replies. Without this,
+   *  REPEAT-OPENER rule (Bible v7.1 NEVER #7) can never fire — the LLM
+   *  has no idea it just said "嗯" last turn. */
+  history?: { role: "user" | "assistant"; body: string }[]
 }) => Promise<string>
 
 /**
@@ -843,6 +855,7 @@ async function defaultOrchestrator(input: {
   sessionId: string
   userId: string
   signal: AbortSignal
+  history?: { role: "user" | "assistant"; body: string }[]
 }): Promise<string> {
   if (!getApps().length) initializeApp()
   const db = getFirestore()
@@ -851,11 +864,22 @@ async function defaultOrchestrator(input: {
   const { normalizeForIMessage } = await import("@pa/pa-orchestrator")
   const agent = await getDefaultAgent(db)
   if (!agent) throw new Error("no_default_agent")
+  // Synthesize ChatMessage shape — runAgentTurn expects full row schema
+  // even though it only consumes role+body for prompt assembly.
+  const nowIso = new Date().toISOString()
+  const fullHistory = (input.history ?? []).map((m, idx) => ({
+    id: `${input.sessionId}-h-${idx}`,
+    createdAt: nowIso,
+    userId: input.userId,
+    sessionId: input.sessionId,
+    role: m.role,
+    body: m.body,
+  }))
   const { text } = await runAgentTurn({
     agent,
     systemPrompt: agent.systemPrompt,
     userMessage: input.userText,
-    history: [],
+    history: fullHistory,
     memoryBlock: null,
     signal: input.signal,
   })
