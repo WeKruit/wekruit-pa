@@ -172,21 +172,6 @@ export async function handleSendblueWebhook(
 
   const payload = parsed as Record<string, unknown>
 
-  // ---- 2.5. Canary short-circuit (Phase 33 Task 3) ----------------------
-  // Synthetic ping from paWebhookCanary. Audit + 200 OK; no inbound enqueue,
-  // no LLM, no Sendblue charge. Distinguished by the sentinel from_number
-  // and the magic content marker.
-  if (
-    payload.from_number === "+10000000000" &&
-    payload.content === "__CANARY_PING__"
-  ) {
-    log("[sendblue][webhook] canary ping ok", {
-      messageHandle: typeof payload.message_handle === "string" ? payload.message_handle : undefined,
-    })
-    reply(res, 200, { ok: true, canary: true })
-    return
-  }
-
   // ---- 3a. Outbound mirror events (is_outbound=true) --------------------
   if (payload.is_outbound === true) {
     await safeAudit(
