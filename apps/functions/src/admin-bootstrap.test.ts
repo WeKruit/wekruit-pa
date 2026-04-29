@@ -16,6 +16,7 @@ import {
   COLLECTION_MIGRATION_PAIRS,
   driftCheck,
   classifyDrift,
+  simulateConversation,
   type ReplayDeps,
   type FixtureName,
 } from "./admin-bootstrap.js"
@@ -256,6 +257,90 @@ describe("replayFixtures — real replay with mocked orchestrator", () => {
       }
     )
     assert.equal(result.processed, 200)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Phase 32 W3 — simulateConversation with Firestore-backed personas
+// ---------------------------------------------------------------------------
+
+describe("simulateConversation — inline persona fallback (Firestore empty)", () => {
+  it("works with built-in anxious_grad when pa-personas is empty", async () => {
+    const { db } = makeFakeDb()
+    const result = await simulateConversation(
+      { persona: "anxious_grad", turns: 2 },
+      {
+        db,
+        orchestrator: async ({ userText }) => `claire-reply-to: ${userText}`,
+        personaLLM: async ({ history }) => `persona-turn-${history.length}`,
+        nowIso: () => "2026-04-28T00:00:00.000Z",
+      }
+    )
+    assert.equal(result.ok, true)
+    assert.equal(result.persona, "anxious_grad")
+    assert.equal(result.processed, 2)
+    // Transcript: 2 turns × (user + assistant) = 4 entries
+    assert.equal(result.transcript.length, 4)
+    assert.equal(result.transcript[0]!.role, "user")
+    assert.match(result.transcript[0]!.body, /swe/i) // opening message preserved
+  })
+})
+
+describe("simulateConversation — Firestore persona path", () => {
+  it("uses composed soul/style/examples prompt when persona doc exists", async () => {
+    // Build a fake DB that returns a persona doc on .doc('anxious_grad').get()
+    const personaDoc = {
+      personaKey: "anxious_grad",
+      name: "Anxious",
+      description: "",
+      soul: "I am anxious about jobs.",
+      style: "Use short sentences.",
+      examples: "EX1\nEX2",
+      enabled: true,
+      version: 1,
+      updatedAt: "2026-04-28T00:00:00.000Z",
+      updatedBy: "test",
+      reason: "test",
+    }
+    const db = {
+      collection(name: string) {
+        return {
+          doc(_id: string) {
+            return {
+              async get() {
+                if (name === "pa-personas") {
+                  return { id: _id, exists: true, data: () => personaDoc }
+                }
+                return { exists: false, data: () => ({}) }
+              },
+              async set() {},
+            }
+          },
+        }
+      },
+    }
+    let captured: string | null = null
+    const result = await simulateConversation(
+      { persona: "anxious_grad", turns: 2 },
+      {
+        db: db as unknown as ReplayDeps["db"],
+        orchestrator: async ({ userText }) => `r:${userText}`,
+        personaLLM: async ({ systemPrompt }) => {
+          captured = systemPrompt
+          return "ok"
+        },
+        nowIso: () => "2026-04-28T00:00:00.000Z",
+      }
+    )
+    assert.equal(result.ok, true)
+    // The persona-LLM systemPrompt should be the composed Firestore prompt,
+    // not the inline anxious_grad string.
+    assert.ok(captured, "persona-LLM should be invoked at least once")
+    assert.match(captured!, /# SOUL/)
+    assert.match(captured!, /I am anxious about jobs/)
+    assert.match(captured!, /# STYLE/)
+    assert.match(captured!, /Use short sentences/)
+    assert.match(captured!, /# EXAMPLES/)
   })
 })
 

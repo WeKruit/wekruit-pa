@@ -1000,6 +1000,92 @@ function PlatformControls() {
   )
 }
 
+// ---------------------------------------------------------------------------
+// Seed Actions — Phase 32 Wave 3
+// ---------------------------------------------------------------------------
+// Calls paAdminBootstrap CF actions seedPlaybooks + seedPersonas. The CF
+// reads its admin token from secrets; the dashboard prompts the operator for
+// the token (one-time, not stored). Pattern lifted from Voice.tsx runSim().
+const PA_ADMIN_BOOTSTRAP_URL = "https://paadminbootstrap-evm6xq7jyq-uc.a.run.app"
+
+function SeedActions() {
+  const [busy, setBusy] = useState<null | "playbooks" | "personas">(null)
+  const [err, setErr] = useState<string | null>(null)
+  const [last, setLast] = useState<string | null>(null)
+
+  async function runSeed(action: "seedPlaybooks" | "seedPersonas") {
+    const token = window.prompt(
+      `Run ${action}?\n\nPaste PA_ADMIN_TOKEN (one-time, not stored):`
+    )
+    if (!token || !token.trim()) return
+    const which = action === "seedPlaybooks" ? "playbooks" : "personas"
+    setBusy(which)
+    setErr(null)
+    setLast(null)
+    try {
+      const resp = await fetch(PA_ADMIN_BOOTSTRAP_URL, {
+        method: "POST",
+        headers: {
+          "x-admin-token": token.trim(),
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ action }),
+      })
+      const json = (await resp.json()) as {
+        ok?: boolean
+        created?: string[]
+        skipped?: string[]
+        error?: string
+      }
+      if (!resp.ok || !json.ok) {
+        setErr(json.error ?? `HTTP ${resp.status}`)
+        return
+      }
+      const created = json.created ?? []
+      const skipped = json.skipped ?? []
+      setLast(
+        `${action}: created ${created.length} (${created.join(", ") || "none"}), skipped ${skipped.length} (${skipped.join(", ") || "none"})`
+      )
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  return (
+    <Panel title="Seed actions" eyebrow="paAdminBootstrap CF">
+      <p style={{ color: "#64748b", marginTop: 0 }}>
+        One-shot Firestore seeds. Idempotent — re-running just skips existing
+        docs. Required <strong>before</strong> the orchestrator + N-round sim
+        switch over to Firestore lookup (zero-downtime cutover).
+      </p>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button
+          type="button"
+          disabled={busy != null}
+          onClick={() => void runSeed("seedPlaybooks")}
+        >
+          {busy === "playbooks" ? "Seeding…" : "Seed default playbooks"}
+        </button>
+        <button
+          type="button"
+          disabled={busy != null}
+          onClick={() => void runSeed("seedPersonas")}
+        >
+          {busy === "personas" ? "Seeding…" : "Seed default personas"}
+        </button>
+      </div>
+      {last ? (
+        <p style={{ color: "#16a34a", fontSize: "0.85em", marginTop: "0.5rem" }}>{last}</p>
+      ) : null}
+      {err ? (
+        <p style={{ color: "#b91c1c", fontSize: "0.85em", marginTop: "0.5rem" }}>{err}</p>
+      ) : null}
+    </Panel>
+  )
+}
+
 export function Flags() {
   const [flags, setFlags] = useState<FeatureFlag[]>([])
   const [loading, setLoading] = useState(true)
@@ -1178,6 +1264,11 @@ export function Flags() {
       {/* Phase 32 Wave 1 — merged from the deleted /platform page. Same flag
           keys, same worker poll, same kill-switch semantics. */}
       <PlatformControls />
+
+      {/* Phase 32 Wave 3 — seed default playbooks + personas via paAdminBootstrap.
+          Lives here (Flags page) rather than a dedicated /admin/seed route so
+          operators see all platform-wide one-shots in one place. */}
+      <SeedActions />
 
       {showCreate ? (
         <Panel title="Create new flag">

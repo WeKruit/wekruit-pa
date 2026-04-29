@@ -11,29 +11,14 @@ import { Abuse } from "./pages/Abuse.js"
 import { Beta } from "./pages/Beta.js"
 import { Flags } from "./pages/Flags.js"
 import { Handbook } from "./pages/Handbook.js"
+import { Playbooks } from "./pages/Playbooks.js"
+import { Personas } from "./pages/Personas.js"
 import { Triggers } from "./pages/Triggers.js"
 import { UpstreamTemplates } from "./pages/UpstreamTemplates.js"
 import { DownstreamTriggers } from "./pages/DownstreamTriggers.js"
 import { VoiceReview } from "./pages/VoiceReview.js"
 import { NRoundSim } from "./pages/NRoundSim.js"
 import { auth } from "./lib/firebase.js"
-
-// Phase 32 Wave 1 — placeholder page for upcoming routes that will be filled
-// in Wave 2/3 (Playbooks/Personas CRUD, Voice review/N-round split). Render
-// instead of 404 to avoid sidebar muscle-memory breakage.
-function ComingSoon({ feature }: { feature: string }) {
-  return (
-    <div className="page-stack">
-      <div className="panel">
-        <h1>{feature}</h1>
-        <p style={{ color: "#64748b" }}>
-          Coming in a later wave of Phase 32. The route is wired so the sidebar slot stays stable; the
-          editor / queue UI will land here once Wave 2/3 ships.
-        </p>
-      </div>
-    </div>
-  )
-}
 
 export default function App() {
   const [user, setUser] = useState<unknown | null>(undefined)
@@ -144,8 +129,9 @@ export default function App() {
           <Route path="/voice" element={<Navigate to="/eval/voice-review" replace />} />
           <Route path="/eval/voice-review" element={<VoiceReview />} />
           <Route path="/eval/n-round-sim" element={<NRoundSim />} />
-          <Route path="/agent/playbooks" element={<ComingSoon feature="Playbooks" />} />
-          <Route path="/agent/personas" element={<ComingSoon feature="Personas" />} />
+          {/* Phase 32 Wave 3 — Playbooks + Personas Firestore CRUD. */}
+          <Route path="/agent/playbooks" element={<Playbooks />} />
+          <Route path="/agent/personas" element={<Personas />} />
           {/* Phase 32 Wave 1 — /playground (E2E Lab) deleted; superseded by
               /eval/n-round-sim (Wave 3). Redirect to keep old links alive. */}
           <Route path="/playground" element={<Navigate to="/eval/n-round-sim" replace />} />
