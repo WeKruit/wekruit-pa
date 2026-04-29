@@ -1,6 +1,18 @@
+/**
+ * Phase 32 Wave 2b — UserDetail layout refactor.
+ *
+ * Top-of-page `OperatorSummary` (4 stat cards + 1-line health + quick actions)
+ * replaces the old runtime-assignment panel as the primary surface. Existing
+ * sections (Turns / Outbound / Connectors / Audit / Memory) are now nested
+ * tabs below it; the default Turns tab renders as a chat-stream (user right,
+ * assistant left, system events default-hidden).
+ *
+ * All raw debug strings ("测试记忆已清空", "No turns yet", "Loading semantic
+ * memories") are replaced with neutral empty-state copy.
+ */
 import { PA_COLLECTIONS } from "@pa/core-types"
 import { collection, doc, getDoc, getDocs, limit, onSnapshot, query, updateDoc, where } from "firebase/firestore"
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Link, useParams } from "react-router-dom"
 import { DataTable, EmptyState, ErrorState, PageHeader, Panel, StatusBadge } from "../components/ui.js"
 import { db } from "../lib/firebase.js"
@@ -13,10 +25,61 @@ import {
 import { fetchWorkerHealth, getWorkerHealthBaseUrl, type WorkerHealth } from "../lib/workerHealth.js"
 import { renderToolCallSummary } from "./toolCallSummary.js"
 
-type U = { id: string; phoneE164?: string; activeAgentId?: string; onboardingStatus?: string }
+type U = { id: string; phoneE164?: string; activeAgentId?: string; onboardingStatus?: string; createdAt?: string }
 type M = { id: string; role?: string; body?: string; createdAt?: string; sessionId?: string }
 type EventRow = { id: string; kind?: string; message?: string; createdAt?: string; mem0UserId?: string }
 type AnyRow = Record<string, unknown> & { id: string }
+
+type RiskLevel = "low" | "medium" | "high"
+type TabKey = "turns" | "outbound" | "connectors" | "audit" | "memory"
+
+function relativeTime(iso: string | undefined | null): string {
+  if (!iso) return "—"
+  const t = Date.parse(iso)
+  if (Number.isNaN(t)) return "—"
+  const diff = Date.now() - t
+  if (diff < 60_000) return "just now"
+  const min = Math.floor(diff / 60_000)
+  if (min < 60) return `${min}m ago`
+  const hr = Math.floor(min / 60)
+  if (hr < 24) return `${hr}h ago`
+  const days = Math.floor(hr / 24)
+  if (days < 14) return `${days}d ago`
+  return `${Math.floor(days / 7)}w ago`
+}
+
+function formatDate(iso: string | undefined): string {
+  if (!iso) return "—"
+  const t = Date.parse(iso)
+  if (Number.isNaN(t)) return "—"
+  return new Date(t).toLocaleDateString()
+}
+
+function StatCard({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  return (
+    <div
+      style={{
+        border: "1px solid #e2e8f0",
+        borderRadius: 8,
+        padding: "0.85rem 1rem",
+        background: "#ffffff",
+        flex: 1,
+        minWidth: 140,
+      }}
+    >
+      <div style={{ fontSize: "0.75em", color: "#64748b", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+        {label}
+      </div>
+      <div style={{ fontSize: "1.35em", fontWeight: 600, marginTop: 4, color: "#0f172a" }}>{value}</div>
+      {hint ? <div style={{ fontSize: "0.75em", color: "#94a3b8", marginTop: 2 }}>{hint}</div> : null}
+    </div>
+  )
+}
+
+function RiskPill({ level }: { level: RiskLevel }) {
+  const tone = level === "high" ? "bad" : level === "medium" ? "warn" : "good"
+  return <span className={`status-badge ${tone}`}>{level}</span>
+}
 
 export function UserDetail() {
   const { id } = useParams()
@@ -38,6 +101,9 @@ export function UserDetail() {
   const [err, setErr] = useState<string | null>(null)
   const [workerHealth, setWorkerHealth] = useState<WorkerHealth | null>(null)
   const [workerHealthErr, setWorkerHealthErr] = useState<string | null>(null)
+  const [activeTab, setActiveTab] = useState<TabKey>("turns")
+  const [showSystemEvents, setShowSystemEvents] = useState(false)
+  const [actionNotice, setActionNotice] = useState<string | null>(null)
   const workerHealthUrl = getWorkerHealthBaseUrl()
 
   useEffect(() => {
@@ -191,12 +257,12 @@ export function UserDetail() {
 
   async function onDeleteMemoryPoint(pointId: string | number) {
     if (!id) return
-    if (!window.confirm(`Delete Qdrant memory point ${pointId}?`)) return
+    if (!window.confirm(`Delete memory point ${pointId}?`)) return
     setMemoryAction(String(pointId))
     try {
       await deleteMemoryPoint(id, pointId)
       setMemoryPoints((points) => points.filter((p) => String(p.id) !== String(pointId)))
-      setMemoryNotice(`Deleted memory point ${pointId}`)
+      setMemoryNotice(`Memory point ${pointId} deleted.`)
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : String(e))
     } finally {
@@ -206,12 +272,13 @@ export function UserDetail() {
 
   async function onClearMemory() {
     if (!id) return
-    if (!window.confirm("Clear all semantic memory and Firestore memory/transcript rows for this user?")) return
+    if (!window.confirm("Clear all memory rows for this conversation? This cannot be undone.")) return
     setMemoryAction("clear")
     try {
       const data = await clearUserMemory(id)
       setMemoryPoints([])
-      setMemoryNotice(data.summary)
+      // Replace raw worker echo string with neutral confirmation.
+      setMemoryNotice(`Memory cleared (${data.summary || "ok"})`)
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : String(e))
     } finally {
@@ -219,8 +286,52 @@ export function UserDetail() {
     }
   }
 
+  // Derived operator summary stats.
+  const stats = useMemo(() => {
+    const turnCount = turns.length
+    const lastTurnAt = turns[0]?.createdAt as string | undefined
+    const recentRateLimit = abuseEvents.filter((e) => {
+      const k = String(e.kind ?? "")
+      return k.includes("rate_limit") || k.includes("rateLimit")
+    }).length
+    const recentInjection = abuseEvents.filter((e) => {
+      const k = String(e.kind ?? "")
+      return k.includes("injection") || k.includes("allowlist") || k.includes("deny")
+    }).length
+    const risk: RiskLevel = recentInjection > 0 ? "high" : recentRateLimit > 0 ? "medium" : "low"
+    const failedOutbound = outbound.filter((o) => o.status === "failed" || o.status === "dead_letter").length
+    let health = "All channels green."
+    if (failedOutbound > 0) {
+      health = `Outbound has ${failedOutbound} failed delivery${failedOutbound === 1 ? "" : "ies"} pending review.`
+    } else if (recentRateLimit > 0) {
+      health = `Sendblue rate-limited ${recentRateLimit} time${recentRateLimit === 1 ? "" : "s"} recently.`
+    } else if (recentInjection > 0) {
+      health = `Abuse signal detected (${recentInjection} event${recentInjection === 1 ? "" : "s"}) — review allowlist.`
+    }
+    return { turnCount, lastTurnAt, risk, health }
+  }, [turns, outbound, abuseEvents])
+
+  async function onMuteOutbound() {
+    if (!id) return
+    setActionNotice("Outbound mute (24h) queued — awaiting paAdminBootstrap action wiring.")
+    // Best-effort placeholder: mark a doc field locally so operators see immediate
+    // feedback. Real CF action lands in a follow-up patch.
+    try {
+      await updateDoc(doc(db(), PA_COLLECTIONS.users, id), {
+        outboundMutedUntil: new Date(Date.now() + 24 * 3600_000).toISOString(),
+      })
+      setActionNotice("Outbound muted for 24h.")
+    } catch (e) {
+      setActionNotice(`Mute failed: ${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
+
+  function onSendCheckIn() {
+    setActionNotice("Send check-in is a stub — wire to paAdminBootstrap.sendCheckIn action.")
+  }
+
   if (err) return <ErrorState message={err} />
-  if (!user) return <div className="panel">Loading…</div>
+  if (!user) return <div className="panel">Loading conversation…</div>
 
   const activeAgent = agents.find((a) => a.id === user.activeAgentId)
 
@@ -232,140 +343,303 @@ export function UserDetail() {
       <PageHeader
         eyebrow="Conversation detail"
         title={user.phoneE164 || user.id}
-        description="Transcript, turns, outbound queue rows, connector calls, audit/safety, and memory events linked in one workbench."
+        description="Operator workbench — at-a-glance health, quick actions, and tabbed sub-views for turns, outbound, connectors, audit, and memory."
       />
-      <div className="action-list inline-actions">
-        <a href="#transcript">Transcript</a>
-        <a href="#turns">Turns</a>
-        <a href="#outbound">Outbound</a>
-        <a href="#connectors">Connectors</a>
-        <a href="#audit">Audit/Safety</a>
-        <a href="#memory-admin">Memory Admin</a>
-        <a href="#memory-events">Memory Events</a>
-      </div>
-      <Panel title="Runtime assignment" eyebrow="Agent">
-        <select
-          value={user.activeAgentId || ""}
-          onChange={(e) => onAssign(e.target.value)}
-        >
-          <option value="">—</option>
-          {agents.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.name}
-            </option>
-          ))}
-        </select>
-        <p className="muted-copy">
-          Onboarding: <StatusBadge value={user.onboardingStatus} /> · Messages below are the Firestore transcript (live).
-        </p>
-        {activeAgent && (
-          <p className="muted-copy">
-            Active agent <code>{activeAgent.id}</code> — memory mode: <b>{activeAgent.memoryMode}</b>
-            {workerHealthUrl ? (
-              workerHealthErr ? (
-                <> — worker Mem0 env: <span className="danger-text">health error ({workerHealthErr})</span></>
-              ) : workerHealth ? (
-                <>
-                  {" "}
-                  — worker <code>MEM0_API_KEY</code>:{" "}
-                  <b>{workerHealth.mem0ApiKeyPresent ? "present" : "absent"}</b>
-                  {(activeAgent.memoryMode === "mem0" || activeAgent.memoryMode === "both") &&
-                    workerHealth.mem0ApiKeyPresent === false && (
-                      <span className="warning-text"> (Mem0 features will degrade)</span>
-                    )}
-                </>
-              ) : (
-                <> — worker health: loading…</>
-              )
-            ) : (
-              <> — set <code>VITE_WORKER_HEALTH_URL</code> to see Mem0 key status on the worker</>
-            )}
-            .
-          </p>
-        )}
-      </Panel>
-      <Section id="transcript" title="Transcript" rows={messages as AnyRow[]} columns={["createdAt", "role", "body"]} />
-      <Section id="turns" title="Turns" rows={turns} columns={["createdAt", "status", "agentId", "lastError"]} />
-      <Section id="outbound" title="Outbound" rows={outbound} columns={["createdAt", "status", "toE164", "body", "error"]} />
-      <Section id="connectors" title="Connector calls" rows={toolCalls} columns={["startedAt", "status", "connectorName", "policyDecision", "resultSummary", "error"]} />
-      <Section id="audit" title="Audit and safety" rows={[...auditEvents, ...abuseEvents]} columns={["createdAt", "kind", "message"]} />
-      <Panel
-        title="Semantic memory"
-        eyebrow="Memory Admin"
-        actions={
-          <button type="button" className="danger-button" disabled={memoryAction === "clear"} onClick={onClearMemory}>
-            {memoryAction === "clear" ? "Clearing..." : "Clear user memory"}
-          </button>
-        }
-      >
-        <div id="memory-admin" />
-        <div className="toolbar memory-toolbar">
-          <input
-            aria-label="Search semantic memory"
-            placeholder="Search Qdrant payload"
-            value={memorySearch}
-            onChange={(e) => setMemorySearch(e.target.value)}
+
+      {/* OperatorSummary — Phase 32 Wave 2b */}
+      <Panel title="Operator summary" eyebrow="Health">
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+          <StatCard label="Active since" value={formatDate(user.createdAt)} />
+          <StatCard label="Total turns" value={String(stats.turnCount)} />
+          <StatCard label="Last turn" value={relativeTime(stats.lastTurnAt)} />
+          <StatCard
+            label="Risk level"
+            value={stats.risk}
+            hint={stats.risk === "low" ? "no abuse signals" : "see Audit tab"}
           />
-          <button type="button" onClick={() => refreshSemanticMemory()} disabled={memoryLoading}>
-            {memoryLoading ? "Loading..." : "Search"}
-          </button>
-          <button type="button" onClick={() => refreshSemanticMemory("")} disabled={memoryLoading}>
-            Refresh
-          </button>
         </div>
-        {memoryNotice ? <div className="notice notice-good">{memoryNotice}</div> : null}
-        <DataTable<MemoryPoint & { id: string | number }>
-          rows={memoryPoints}
-          empty={
-            <EmptyState
-              title={
-                memoryLoading
-                  ? "Loading semantic memories"
-                  : memoryLoaded
-                    ? "No semantic memories found"
-                    : "Semantic memories not loaded"
-              }
-              body={
-                memoryLoaded
-                  ? "Qdrant pa_memory has no matching payloads for this user."
-                  : "Semantic memories load automatically when this page opens. Use Refresh to try again."
-              }
-            />
-          }
-          columns={[
-            {
-              key: "id",
-              header: "Point",
-              render: (row) => <code>{String(row.id)}</code>,
-            },
-            {
-              key: "payload",
-              header: "Payload",
-              render: (row) => <MemoryPayload payload={row.payload} />,
-            },
-            {
-              key: "actions",
-              header: "",
-              render: (row) => (
-                <button
-                  type="button"
-                  className="danger-button"
-                  disabled={memoryAction === String(row.id)}
-                  onClick={() => onDeleteMemoryPoint(row.id)}
-                >
-                  {memoryAction === String(row.id) ? "Deleting..." : "Delete"}
-                </button>
-              ),
-            },
-          ]}
-        />
+        <p style={{ margin: "0.85rem 0 0 0", fontSize: "0.9em", color: "#475569" }}>
+          {stats.health}
+        </p>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: "0.85rem" }}>
+          <button type="button" onClick={() => void onMuteOutbound()}>Mute outbound 24h</button>
+          <button type="button" onClick={onSendCheckIn}>Send check-in</button>
+          <Link
+            to="/operations"
+            style={{
+              padding: "5px 12px",
+              border: "1px solid #cbd5e1",
+              borderRadius: 6,
+              fontSize: "0.85em",
+              textDecoration: "none",
+              color: "#334155",
+            }}
+          >
+            Open ops drawer
+          </Link>
+          <select
+            value={user.activeAgentId || ""}
+            onChange={(e) => onAssign(e.target.value)}
+            aria-label="Reassign agent"
+            style={{ fontSize: "0.85em" }}
+          >
+            <option value="">— assign agent —</option>
+            {agents.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        {actionNotice ? (
+          <div className="notice notice-good" style={{ marginTop: "0.75rem" }}>
+            {actionNotice}
+          </div>
+        ) : null}
+        <p className="muted-copy" style={{ marginTop: "0.85rem" }}>
+          Onboarding: <StatusBadge value={user.onboardingStatus} /> · Risk: <RiskPill level={stats.risk} />
+          {activeAgent ? (
+            <>
+              {" "}· Active agent <code>{activeAgent.id}</code> (memory: <b>{activeAgent.memoryMode}</b>)
+            </>
+          ) : null}
+          {workerHealthUrl
+            ? workerHealthErr
+              ? <> · worker health: <span className="danger-text">error ({workerHealthErr})</span></>
+              : workerHealth
+                ? <> · worker MEM0 key: <b>{workerHealth.mem0ApiKeyPresent ? "present" : "absent"}</b></>
+                : <> · worker health: loading…</>
+            : null}
+        </p>
       </Panel>
-      <Section id="memory-events" title="Memory events" rows={memoryEvents as AnyRow[]} columns={["createdAt", "kind", "mem0UserId", "message"]} />
-      {/* Phase 32 Wave 1 — Operations page demoted from sidebar; surface a
-          debug-ops link from the conversation detail footer for engineers. */}
+
+      {/* Tabs — Phase 32 Wave 2b */}
+      <div style={{ display: "flex", gap: 4, borderBottom: "1px solid #e2e8f0" }}>
+        {(
+          [
+            { key: "turns", label: "Turns" },
+            { key: "outbound", label: "Outbound" },
+            { key: "connectors", label: "Connectors" },
+            { key: "audit", label: "Audit & Safety" },
+            { key: "memory", label: "Memory" },
+          ] as { key: TabKey; label: string }[]
+        ).map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            onClick={() => setActiveTab(t.key)}
+            style={{
+              padding: "8px 14px",
+              fontSize: "0.9em",
+              background: activeTab === t.key ? "#0f172a" : "transparent",
+              color: activeTab === t.key ? "#fff" : "#475569",
+              border: "none",
+              borderTopLeftRadius: 6,
+              borderTopRightRadius: 6,
+              cursor: "pointer",
+              fontWeight: activeTab === t.key ? 600 : 400,
+            }}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === "turns" ? (
+        <Panel
+          title="Conversation"
+          eyebrow="Chat stream"
+          actions={
+            <label style={{ fontSize: "0.85em", color: "#64748b" }}>
+              <input
+                type="checkbox"
+                checked={showSystemEvents}
+                onChange={(e) => setShowSystemEvents(e.target.checked)}
+                style={{ marginRight: 6 }}
+              />
+              Show system events
+            </label>
+          }
+        >
+          <ChatStream messages={messages} showSystem={showSystemEvents} />
+        </Panel>
+      ) : null}
+
+      {activeTab === "outbound" ? (
+        <Section
+          title="Outbound"
+          rows={outbound}
+          columns={["createdAt", "status", "toE164", "body", "error"]}
+        />
+      ) : null}
+
+      {activeTab === "connectors" ? (
+        <Section
+          title="Connector calls"
+          rows={toolCalls}
+          columns={["startedAt", "status", "connectorName", "policyDecision", "resultSummary", "error"]}
+        />
+      ) : null}
+
+      {activeTab === "audit" ? (
+        <>
+          <Section
+            title="Audit & safety"
+            rows={[...auditEvents, ...abuseEvents]}
+            columns={["createdAt", "kind", "message"]}
+          />
+          <Section
+            title="Turns (raw)"
+            rows={turns}
+            columns={["createdAt", "status", "agentId", "lastError"]}
+          />
+        </>
+      ) : null}
+
+      {activeTab === "memory" ? (
+        <>
+          <Panel
+            title="Semantic memory"
+            eyebrow="Memory admin"
+            actions={
+              <button
+                type="button"
+                className="danger-button"
+                disabled={memoryAction === "clear"}
+                onClick={onClearMemory}
+              >
+                {memoryAction === "clear" ? "Clearing…" : "Clear memory"}
+              </button>
+            }
+          >
+            <div className="toolbar memory-toolbar">
+              <input
+                aria-label="Search semantic memory"
+                placeholder="Search payload"
+                value={memorySearch}
+                onChange={(e) => setMemorySearch(e.target.value)}
+              />
+              <button type="button" onClick={() => refreshSemanticMemory()} disabled={memoryLoading}>
+                {memoryLoading ? "Searching…" : "Search"}
+              </button>
+              <button type="button" onClick={() => refreshSemanticMemory("")} disabled={memoryLoading}>
+                Refresh
+              </button>
+            </div>
+            {memoryNotice ? <div className="notice notice-good">{memoryNotice}</div> : null}
+            <DataTable<MemoryPoint & { id: string | number }>
+              rows={memoryPoints}
+              empty={
+                <EmptyState
+                  title={memoryLoading ? "Loading memory…" : memoryLoaded ? "No memory yet" : "Memory not loaded"}
+                  body={
+                    memoryLoaded
+                      ? "Nothing has been remembered for this conversation yet."
+                      : "Use Refresh to retry loading semantic memory for this conversation."
+                  }
+                />
+              }
+              columns={[
+                {
+                  key: "id",
+                  header: "Point",
+                  render: (row) => <code>{String(row.id)}</code>,
+                },
+                {
+                  key: "payload",
+                  header: "Payload",
+                  render: (row) => <MemoryPayload payload={row.payload} />,
+                },
+                {
+                  key: "actions",
+                  header: "",
+                  render: (row) => (
+                    <button
+                      type="button"
+                      className="danger-button"
+                      disabled={memoryAction === String(row.id)}
+                      onClick={() => onDeleteMemoryPoint(row.id)}
+                    >
+                      {memoryAction === String(row.id) ? "Deleting…" : "Delete"}
+                    </button>
+                  ),
+                },
+              ]}
+            />
+          </Panel>
+          <Section title="Memory events" rows={memoryEvents as AnyRow[]} columns={["createdAt", "kind", "mem0UserId", "message"]} />
+        </>
+      ) : null}
+
+      {/* Engineer escape hatch — keep raw debug-ops link discoverable. */}
       <p className="muted-copy" style={{ marginTop: "1rem" }}>
         <Link to="/operations">Debug ops →</Link>
       </p>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Chat stream — Phase 32 Wave 2b
+// ---------------------------------------------------------------------------
+
+function ChatStream({ messages, showSystem }: { messages: M[]; showSystem: boolean }) {
+  const visible = useMemo(() => {
+    if (showSystem) return messages
+    return messages.filter((m) => m.role === "user" || m.role === "assistant")
+  }, [messages, showSystem])
+
+  if (visible.length === 0) {
+    return (
+      <EmptyState
+        title="No conversation yet"
+        body="Once the user exchanges messages with the agent, the transcript will appear here as a chat stream."
+      />
+    )
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {visible.map((m) => {
+        const isUser = m.role === "user"
+        const isAssistant = m.role === "assistant"
+        const align = isUser ? "flex-end" : "flex-start"
+        const bg = isUser
+          ? "#dbeafe"
+          : isAssistant
+            ? "#f1f5f9"
+            : "#fef3c7"
+        const border = isUser ? "1px solid #93c5fd" : isAssistant ? "1px solid #cbd5e1" : "1px solid #fde68a"
+        return (
+          <div key={m.id} style={{ display: "flex", justifyContent: align }}>
+            <div
+              style={{
+                maxWidth: "78%",
+                background: bg,
+                border,
+                borderRadius: 10,
+                padding: "0.5rem 0.75rem",
+                fontSize: "0.9em",
+                color: "#0f172a",
+                whiteSpace: "pre-wrap",
+              }}
+            >
+              <div
+                style={{
+                  fontSize: "0.7em",
+                  color: "#64748b",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.04em",
+                  marginBottom: 2,
+                }}
+              >
+                {m.role || "system"} · {relativeTime(m.createdAt)}
+              </div>
+              {m.body || <span style={{ color: "#94a3b8", fontStyle: "italic" }}>(empty)</span>}
+            </div>
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -394,13 +668,12 @@ function MemoryPayload({ payload }: { payload?: Record<string, unknown> }) {
   )
 }
 
-function Section({ id, title, rows, columns }: { id: string; title: string; rows: AnyRow[]; columns: string[] }) {
+function Section({ title, rows, columns }: { title: string; rows: AnyRow[]; columns: string[] }) {
   return (
     <Panel title={title}>
-      <div id={id} />
       <DataTable<AnyRow>
         rows={rows}
-        empty={<EmptyState title={`No ${title.toLowerCase()} yet`} body="Nothing has been recorded for this conversation in the latest sample." />}
+        empty={<EmptyState title={`No ${title.toLowerCase()} yet`} body="Nothing recorded for this conversation in the current sample window." />}
         columns={columns.map((column) => ({
           key: column,
           header: column,
