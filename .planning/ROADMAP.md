@@ -75,6 +75,7 @@ This roadmap is intentionally numeric so GSD phase tooling can discover and exec
 | 29 | Agent Handbook | Bible-as-data — section-structured handbook with versioning, dashboard editor, audit, rollback. Replaces inline systemPrompt. | Planned |
 | 30 | Downstream Eval Connector | Per-turn eval LLM triggers external service (mock interview push, levels.fyi link). Trigger CRUD + cooldown + HMAC payload. | Planned |
 | 31 | Upstream Event Connector | External event → proactive Claire message. HMAC inbound, template lookup, rate-limit, outbound enqueue. | Planned |
+| 32 | Dashboard IA Reorg + Stress Harness + Playbooks/Personas CRUD | Neighbor-agent UX audit P0/P1 fix-pack: 5-category sidebar, delete Playground+Platform, demote Operations, rebuild Conversations/UserDetail/Voice/Flags-history; Artillery stress harness; soul.md-style Playbooks + Personas CRUD; paSendblueOutbox repair. 4 parallel waves. | Planned |
 
 **v1.3 Public Launch Gate:**
 - [ ] Phase 24.5 Feature Flag — 4 env-var 收编完成
