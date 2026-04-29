@@ -361,6 +361,11 @@ export function UserDetail() {
         />
       </Panel>
       <Section id="memory-events" title="Memory events" rows={memoryEvents as AnyRow[]} columns={["createdAt", "kind", "mem0UserId", "message"]} />
+      {/* Phase 32 Wave 1 — Operations page demoted from sidebar; surface a
+          debug-ops link from the conversation detail footer for engineers. */}
+      <p className="muted-copy" style={{ marginTop: "1rem" }}>
+        <Link to="/operations">Debug ops →</Link>
+      </p>
     </div>
   )
 }

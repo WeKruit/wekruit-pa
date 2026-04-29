@@ -5,6 +5,8 @@
  * allowlist/blocklist chip editing for perUser scope, "Revert to previous" via last
  * audit row, and a per-flag audit drawer (last 20 events from pa_audit_events).
  */
+import { PA_COLLECTIONS, PA_REMOTE_CONFIG_DOC } from "@pa/core-types"
+import { doc, getDoc, setDoc } from "firebase/firestore"
 import { useEffect, useMemo, useState } from "react"
 import {
   DataTable,
@@ -16,6 +18,7 @@ import {
   StatusBadge,
   type DataTableColumn,
 } from "../components/ui.js"
+import { db } from "../lib/firebase.js"
 import {
   listAuditForKey,
   listFlags,
@@ -740,6 +743,106 @@ function CreateFlagForm({ onCreated }: { onCreated: () => void }) {
   )
 }
 
+// ---------------------------------------------------------------------------
+// Platform Controls — Phase 32 Wave 1
+// ---------------------------------------------------------------------------
+// Merged from the deleted /platform standalone page. Edits the same Firestore
+// doc (pa_remote_config/{PA_REMOTE_CONFIG_DOC}); the worker still polls every
+// ~60s and PA_LLM_KILL_SWITCH=1 env still wins on the Mac worker. Behavior is
+// identical to the old page; only the surface moves into Flags so operators
+// see kill-switch + flag controls together.
+function PlatformControls() {
+  const [llmKillSwitch, setLlmKillSwitch] = useState(false)
+  const [defaultModelOverride, setDefaultModelOverride] = useState("")
+  const [err, setErr] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [loaded, setLoaded] = useState(false)
+
+  useEffect(() => {
+    ;(async () => {
+      try {
+        const d = await getDoc(doc(db(), PA_COLLECTIONS.remoteConfig, PA_REMOTE_CONFIG_DOC))
+        if (d.exists()) {
+          const x = d.data() as { llmKillSwitch?: boolean; defaultModelOverride?: string }
+          setLlmKillSwitch(x.llmKillSwitch === true)
+          setDefaultModelOverride(
+            typeof x.defaultModelOverride === "string" ? x.defaultModelOverride : ""
+          )
+        }
+        setLoaded(true)
+      } catch (e: unknown) {
+        setErr(e instanceof Error ? e.message : String(e))
+      }
+    })()
+  }, [])
+
+  async function save() {
+    setSaving(true)
+    setErr(null)
+    try {
+      await setDoc(
+        doc(db(), PA_COLLECTIONS.remoteConfig, PA_REMOTE_CONFIG_DOC),
+        {
+          llmKillSwitch,
+          defaultModelOverride: defaultModelOverride.trim() || null,
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true }
+      )
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (!loaded && !err) {
+    return (
+      <Panel title="Platform Controls">
+        <p style={{ color: "#64748b" }}>Loading…</p>
+      </Panel>
+    )
+  }
+
+  return (
+    <Panel title="Platform Controls" eyebrow="pa_remote_config">
+      <p style={{ color: "#64748b", marginTop: 0 }}>
+        Firestore-backed (same as Firebase Remote Config pattern). Worker reads{" "}
+        <code>
+          pa_remote_config/{PA_REMOTE_CONFIG_DOC}
+        </code>{" "}
+        every ~60s. Emergency: set <code>PA_LLM_KILL_SWITCH=1</code> on the Mac worker.
+      </p>
+      <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <input
+          type="checkbox"
+          checked={llmKillSwitch}
+          onChange={(e) => setLlmKillSwitch(e.target.checked)}
+        />
+        LLM kill switch (block model calls; user sees a short message)
+      </label>
+      <div style={{ marginTop: "1rem" }}>
+        <label>
+          Default model override (optional)
+          <br />
+          <input
+            style={{ width: "100%", maxWidth: 400 }}
+            placeholder="e.g. gpt-4o-mini or openai/gpt-4 via gateway"
+            value={defaultModelOverride}
+            onChange={(e) => setDefaultModelOverride(e.target.value)}
+          />
+        </label>
+      </div>
+      {err ? <p style={{ color: "#b91c1c" }}>{err}</p> : null}
+      <p>
+        <button type="button" disabled={saving} onClick={() => void save()}>
+          {saving ? "Saving…" : "Save"}
+        </button>
+      </p>
+    </Panel>
+  )
+}
+
 export function Flags() {
   const [flags, setFlags] = useState<FeatureFlag[]>([])
   const [loading, setLoading] = useState(true)
@@ -914,6 +1017,10 @@ export function Flags() {
           </div>
         }
       />
+
+      {/* Phase 32 Wave 1 — merged from the deleted /platform page. Same flag
+          keys, same worker poll, same kill-switch semantics. */}
+      <PlatformControls />
 
       {showCreate ? (
         <Panel title="Create new flag">

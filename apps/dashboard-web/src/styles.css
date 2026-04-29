@@ -57,6 +57,26 @@ a {
   padding: 0.65rem 0.75rem;
   border-radius: 999px;
 }
+/* Phase 32 Wave 1 — sidebar grouped into 5 sections (Monitor / Agent / Eval /
+   Integrations / Platform). Section labels are quiet uppercase headers; first
+   section sits flush with the brand lockup. */
+.nav-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 16px;
+}
+.nav-section:first-of-type {
+  margin-top: 0;
+}
+.nav-section-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(233, 226, 208, 0.45);
+  padding: 0 12px;
+  margin-bottom: 4px;
+}
 .side-nav a.active,
 .side-nav a:hover {
   background: rgba(242, 193, 102, 0.14);

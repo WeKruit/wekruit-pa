@@ -344,9 +344,13 @@ export function Overview() {
           </div>
           <div className="action-list">
             <Link to="/conversations">Review conversations</Link>
-            <Link to="/operations">Inspect queues and turns</Link>
+            {/* Phase 32 Wave 1 — Operations demoted from sidebar; reach via
+                this card + UserDetail debug footer. */}
+            <Link to="/operations">View ops queue</Link>
             <Link to="/agents">Check default agent</Link>
-            <Link to="/playground">Run E2E lab</Link>
+            {/* Phase 32 Wave 1 — /playground deleted; N-Round Sim placeholder
+                until Wave 3 fills it. */}
+            <Link to="/eval/n-round-sim">Run N-round sim</Link>
           </div>
         </article>
       </section>

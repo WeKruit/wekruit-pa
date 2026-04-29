@@ -5,9 +5,7 @@ import { AgentBuilder } from "./pages/AgentBuilder.js"
 import { Login } from "./pages/Login.js"
 import { Operations } from "./pages/Operations.js"
 import { Overview } from "./pages/Overview.js"
-import { Platform } from "./pages/Platform.js"
 import { UserDetail } from "./pages/UserDetail.js"
-import { Playground } from "./pages/Playground.js"
 import { Users } from "./pages/Users.js"
 import { Abuse } from "./pages/Abuse.js"
 import { Beta } from "./pages/Beta.js"
@@ -18,6 +16,23 @@ import { UpstreamTemplates } from "./pages/UpstreamTemplates.js"
 import { DownstreamTriggers } from "./pages/DownstreamTriggers.js"
 import { Voice } from "./pages/Voice.js"
 import { auth } from "./lib/firebase.js"
+
+// Phase 32 Wave 1 — placeholder page for upcoming routes that will be filled
+// in Wave 2/3 (Playbooks/Personas CRUD, Voice review/N-round split). Render
+// instead of 404 to avoid sidebar muscle-memory breakage.
+function ComingSoon({ feature }: { feature: string }) {
+  return (
+    <div className="page-stack">
+      <div className="panel">
+        <h1>{feature}</h1>
+        <p style={{ color: "#64748b" }}>
+          Coming in a later wave of Phase 32. The route is wired so the sidebar slot stays stable; the
+          editor / queue UI will land here once Wave 2/3 ships.
+        </p>
+      </div>
+    </div>
+  )
+}
 
 export default function App() {
   const [user, setUser] = useState<unknown | null>(undefined)
@@ -57,20 +72,45 @@ export default function App() {
           <span>WK</span>
           <strong>PA Console</strong>
         </div>
-        <NavLink to="/" end>Overview</NavLink>
-        <NavLink to="/conversations">Conversations</NavLink>
-        <NavLink to="/agents">Agents</NavLink>
-        <NavLink to="/operations">Operations</NavLink>
-        <NavLink to="/platform">Platform</NavLink>
-        <NavLink to="/beta">Beta</NavLink>
-        <NavLink to="/abuse">Abuse</NavLink>
-        <NavLink to="/triggers">Triggers</NavLink>
-        <NavLink to="/admin/flags">Flags</NavLink>
-        <NavLink to="/admin/handbook">Handbook</NavLink>
-        <NavLink to="/admin/upstream-templates">Upstream</NavLink>
-        <NavLink to="/admin/downstream-triggers">Downstream</NavLink>
-        <NavLink to="/voice">Voice</NavLink>
-        <NavLink to="/playground">E2E Lab</NavLink>
+
+        {/* Phase 32 Wave 1 — sidebar reorg into 5 categories. Old flat list
+            replaced with grouped sections; runtime/debug pages (Operations,
+            Playground, standalone Platform) demoted out of sidebar. All old
+            routes still resolve to keep muscle memory + bookmarks alive. */}
+        <div className="nav-section">
+          <div className="nav-section-label">Monitor</div>
+          <NavLink to="/" end>Overview</NavLink>
+          <NavLink to="/conversations">Conversations</NavLink>
+          <NavLink to="/abuse">Abuse</NavLink>
+        </div>
+
+        <div className="nav-section">
+          <div className="nav-section-label">Agent</div>
+          <NavLink to="/agents">Agents</NavLink>
+          <NavLink to="/admin/handbook">Handbook</NavLink>
+          <NavLink to="/agent/playbooks">Playbooks</NavLink>
+          <NavLink to="/agent/personas">Personas</NavLink>
+        </div>
+
+        <div className="nav-section">
+          <div className="nav-section-label">Eval</div>
+          <NavLink to="/eval/voice-review">Voice Review</NavLink>
+          <NavLink to="/eval/n-round-sim">N-Round Sim</NavLink>
+        </div>
+
+        <div className="nav-section">
+          <div className="nav-section-label">Integrations</div>
+          <NavLink to="/admin/upstream-templates">Upstream Templates</NavLink>
+          <NavLink to="/admin/downstream-triggers">Downstream Triggers</NavLink>
+          <NavLink to="/beta">Beta Allowlist</NavLink>
+          <NavLink to="/triggers">Triggers</NavLink>
+        </div>
+
+        <div className="nav-section">
+          <div className="nav-section-label">Platform</div>
+          <NavLink to="/admin/flags">Flags</NavLink>
+        </div>
+
         <button
           type="button"
           onClick={() => signOut(auth())}
@@ -85,8 +125,12 @@ export default function App() {
           <Route path="/conversations" element={<Users />} />
           <Route path="/users/:id" element={<UserDetail />} />
           <Route path="/agents" element={<AgentBuilder />} />
+          {/* Phase 32 Wave 1 — Operations no longer in sidebar; reachable via
+              Overview "View ops queue" link + UserDetail "Debug ops" footer. */}
           <Route path="/operations" element={<Operations />} />
-          <Route path="/platform" element={<Platform />} />
+          {/* Phase 32 Wave 1 — /platform standalone page deleted; kill switch +
+              model override merged into /admin/flags as "Platform Controls". */}
+          <Route path="/platform" element={<Navigate to="/admin/flags" replace />} />
           <Route path="/beta" element={<Beta />} />
           <Route path="/abuse" element={<Abuse />} />
           <Route path="/triggers" element={<Triggers />} />
@@ -95,7 +139,16 @@ export default function App() {
           <Route path="/admin/upstream-templates" element={<UpstreamTemplates />} />
           <Route path="/admin/downstream-triggers" element={<DownstreamTriggers />} />
           <Route path="/voice" element={<Voice />} />
-          <Route path="/playground" element={<Playground />} />
+          {/* Phase 32 Wave 1 — placeholder routes; Wave 2 splits Voice into
+              VoiceReview + NRoundSim, Wave 3 ships Playbooks + Personas CRUD.
+              Voice Review redirects to existing /voice for now. */}
+          <Route path="/eval/voice-review" element={<Navigate to="/voice" replace />} />
+          <Route path="/eval/n-round-sim" element={<ComingSoon feature="N-Round Sim" />} />
+          <Route path="/agent/playbooks" element={<ComingSoon feature="Playbooks" />} />
+          <Route path="/agent/personas" element={<ComingSoon feature="Personas" />} />
+          {/* Phase 32 Wave 1 — /playground (E2E Lab) deleted; superseded by
+              /eval/n-round-sim (Wave 3). Redirect to keep old links alive. */}
+          <Route path="/playground" element={<Navigate to="/eval/n-round-sim" replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
