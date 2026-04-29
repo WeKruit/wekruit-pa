@@ -49,7 +49,6 @@
             "dataSets": [
               {
                 "plotType": "LINE",
-                "minAlignmentPeriod": "3600s",
                 "timeSeriesQuery": {
                   "timeSeriesQueryLanguage": "fetch global::logging.googleapis.com/user/pa_audit_events | filter metric.type = 'rate_limit_exceeded' | align rate(1h) | every 1h | group_by [metric.type], [val: sum(value.pa_audit_events)]"
                 },
@@ -79,7 +78,6 @@
             "dataSets": [
               {
                 "plotType": "LINE",
-                "minAlignmentPeriod": "3600s",
                 "legendTemplate": "${metric.labels.kind}",
                 "timeSeriesQuery": {
                   "timeSeriesQueryLanguage": "fetch global::logging.googleapis.com/user/pa_abuse_events | filter metric.labels.kind = one_of('rate_limit', 'injection', 'allowlist_deny') | align rate(1h) | every 1h | group_by [metric.labels.kind], [val: sum(value.pa_abuse_events)]"
@@ -110,7 +108,6 @@
             "dataSets": [
               {
                 "plotType": "STACKED_BAR",
-                "minAlignmentPeriod": "60s",
                 "legendTemplate": "${resource.labels.function_name}",
                 "timeSeriesQuery": {
                   "timeSeriesQueryLanguage": "fetch cloud_function::cloudfunctions.googleapis.com/function/execution_count | filter resource.labels.function_name =~ 'pa.*' && metric.labels.status != 'ok' | align rate(1m) | every 1m | group_by [resource.labels.function_name], [val: sum(value.execution_count)]"
@@ -121,15 +118,11 @@
             "thresholds": [
               {
                 "label": "1% error",
-                "value": 0.01,
-                "color": "YELLOW",
-                "direction": "ABOVE"
+                "value": 0.01
               },
               {
                 "label": "5% error",
-                "value": 0.05,
-                "color": "RED",
-                "direction": "ABOVE"
+                "value": 0.05
               }
             ],
             "timeshiftDuration": "0s",
