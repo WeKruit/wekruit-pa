@@ -859,37 +859,64 @@ async function defaultOrchestrator(input: {
 }): Promise<string> {
   if (!getApps().length) initializeApp()
   const db = getFirestore()
-  const { getDefaultAgent } = await import("@pa/agent-registry")
-  const { runAgentTurn } = await import("@pa/agent-runtime")
-  const { normalizeForIMessage } = await import("@pa/pa-orchestrator")
-  const agent = await getDefaultAgent(db)
-  if (!agent) throw new Error("no_default_agent")
-  // Synthesize ChatMessage shape — runAgentTurn expects full row schema
-  // even though it only consumes role+body for prompt assembly.
+  // Phase 33 (Adam directive 2026-04-29) — sim must run through the SAME
+  // orchestrator path as the iMessage production flow so mem0, output
+  // normalizer, audit, handbook composition, etc. all behave identically.
+  // Previous design called runAgentTurn directly, hiding production-only
+  // behaviors and producing sim transcripts that diverged from real prod.
+  //
+  // Approach: synthesize an InboundEvent + reuse createFirestoreOrchestratorStore
+  // with one targeted override — `enqueueOutbound` is a no-op so sim does
+  // NOT actually iMessage anyone. Assistant reply is written to pa-messages
+  // by store.appendMessage; we read it back at the end.
+  const { processInboundEvent, createFirestoreOrchestratorStore } = await import("@pa/pa-orchestrator")
+  const eventId = `sim-${input.sessionId}-${Date.now()}`
   const nowIso = new Date().toISOString()
-  const fullHistory = (input.history ?? []).map((m, idx) => ({
-    id: `${input.sessionId}-h-${idx}`,
-    createdAt: nowIso,
+  const event = {
+    id: eventId,
     userId: input.userId,
     sessionId: input.sessionId,
-    role: m.role,
-    body: m.body,
-  }))
-  const { text } = await runAgentTurn({
-    agent,
-    systemPrompt: agent.systemPrompt,
-    userMessage: input.userText,
-    history: fullHistory,
-    memoryBlock: null,
-    signal: input.signal,
-  })
-  // Phase 33 fix — sim path was bypassing the iMessage output normalizer
-  // (markdown strip + length cap + UTM strip). Result: sim transcripts
-  // showed wall-of-bullets while real iMessage saw the normalized form.
-  // Apply same normalizer the production path uses (orchestrator/index.ts:845).
-  const raw = text.trim() || "(empty reply)"
-  const norm = normalizeForIMessage(raw, { maxLength: 600 })
-  return norm.text || raw
+    channel: "imessage" as const,
+    externalChatId: input.sessionId,
+    from: input.userId,
+    body: input.userText,
+    status: "pending" as const,
+    createdAt: nowIso,
+    idempotencyKey: `sim-${eventId}`,
+    rawMeta: {
+      source: "sim-eval" as const,
+      simulationId: input.sessionId,
+    },
+  }
+
+  const baseStore = createFirestoreOrchestratorStore(db)
+  // Wrap: skip outbound enqueue (we don't want sim to iMessage real numbers).
+  // Everything else flows through production code path verbatim.
+  const store = {
+    ...baseStore,
+    async enqueueOutbound() {
+      // Sim no-op: do not push to pa-outbound. Assistant text still lands
+      // in pa-messages via appendMessage so we can read it back.
+    },
+  }
+
+  // Pre-write the user message so loadHistory picks up the multi-turn
+  // context. The orchestrator's normal flow appendMessages user; we let it.
+  await processInboundEvent(event, store)
+
+  // Read back the latest assistant message for THIS session.
+  const snap = await db
+    .collection("pa-messages")
+    .where("sessionId", "==", input.sessionId)
+    .where("role", "==", "assistant")
+    .orderBy("createdAt", "desc")
+    .limit(1)
+    .get()
+  if (snap.empty) {
+    throw new Error("sim_no_assistant_reply")
+  }
+  const body = snap.docs[0].data().body
+  return typeof body === "string" && body.trim().length > 0 ? body : "(empty reply)"
 }
 
 export type ReplayDeps = {
