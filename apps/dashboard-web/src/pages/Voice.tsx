@@ -338,6 +338,43 @@ export function Voice() {
     }
   }, [rows, filteredRows])
 
+  const [showLegend, setShowLegend] = useState(false)
+  const [simBusy, setSimBusy] = useState<null | "anxious_grad" | "formal_em" | "vent_seeker">(null)
+  const [simErr, setSimErr] = useState<string | null>(null)
+
+  async function runSim(persona: "anxious_grad" | "formal_em" | "vent_seeker") {
+    const token = window.prompt(
+      `Run N-round simulation for persona "${persona}"?\n\nPaste PA_ADMIN_TOKEN (one-time, not stored):`
+    )
+    if (!token || !token.trim()) return
+    setSimBusy(persona)
+    setSimErr(null)
+    try {
+      const resp = await fetch(
+        "https://paadminbootstrap-evm6xq7jyq-uc.a.run.app",
+        {
+          method: "POST",
+          headers: {
+            "x-admin-token": token.trim(),
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ action: "simulateConversation", persona, turns: 8 }),
+        }
+      )
+      const json = await resp.json() as { ok?: boolean; processed?: number; error?: string }
+      if (!resp.ok || !json.ok) {
+        setSimErr(json.error ?? `HTTP ${resp.status}`)
+        return
+      }
+      alert(`✓ Simulated ${json.processed} turns for ${persona}. Refreshing…`)
+      await load(pageCursors[pageIndex] ?? null)
+    } catch (e) {
+      setSimErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSimBusy(null)
+    }
+  }
+
   return (
     <div className="page-stack">
       <PageHeader
@@ -372,6 +409,83 @@ export function Voice() {
           </div>
         }
       />
+
+      <Panel
+        title="N-round Simulation"
+        actions={
+          <button type="button" onClick={() => setShowLegend(!showLegend)} style={{ fontSize: "0.85em" }}>
+            {showLegend ? "Hide rating legend" : "How to rate"}
+          </button>
+        }
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <p style={{ margin: 0, fontSize: "0.9em", color: "#475569" }}>
+            Trigger 8-turn LLM-vs-LLM simulation. Persona-LLM plays the user, Claire (live prod Bible v7.0) replies.
+            Transcript writes to <code>pa-messages</code> + appears below for rating.
+          </p>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {(["anxious_grad", "formal_em", "vent_seeker"] as const).map((p) => (
+              <button
+                key={p}
+                type="button"
+                disabled={simBusy !== null}
+                onClick={() => void runSim(p)}
+                style={{
+                  fontSize: "0.85em",
+                  padding: "6px 12px",
+                  border: "1px solid #cbd5e1",
+                  borderRadius: 6,
+                  background: simBusy === p ? "#0f172a" : "transparent",
+                  color: simBusy === p ? "#fff" : "inherit",
+                }}
+              >
+                {simBusy === p ? `Running ${p}…` : `▶ ${p}`}
+              </button>
+            ))}
+          </div>
+          {simErr ? <div style={{ color: "#dc2626", fontSize: "0.85em" }}>{simErr}</div> : null}
+        </div>
+      </Panel>
+
+      {showLegend ? (
+        <Panel title="Rating legend">
+          <div style={{ display: "flex", flexDirection: "column", gap: 12, fontSize: "0.9em" }}>
+            <div>
+              <strong>⭐ Stars (1-5)</strong>
+              <div style={{ marginTop: 4, color: "#475569" }}>
+                <code>1</code> = robotic / breaks Bible rules ·
+                <code> 2</code> = mostly off ·
+                <code> 3</code> = passable but bland ·
+                <code> 4</code> = strong ride-or-die voice ·
+                <code> 5</code> = perfect (fewShot candidate)
+              </div>
+            </div>
+            <div>
+              <strong>Tags (multi-select — what rule was violated)</strong>
+              <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "6px 12px", marginTop: 8, fontSize: "0.85em" }}>
+                <code>probe</code><span>"X 还是 Y" / 诊断式提问 (NEVER PROBE)</span>
+                <code>diagnose</code><span>替用户命名感受 ("整个人被抽空" / "你这种焦虑") (NEVER DIAGNOSE)</span>
+                <code>too_long</code><span>&gt; 2 sentences, bullets, multi-paragraph (THE ONE RULE)</span>
+                <code>tone</code><span>register 错 (vent 不 ride-or-die / celebrate 不 hype)</span>
+                <code>ai_speak</code><span>"作为 AI" / 首先其次 / 框架式 / "我可以分析" (NEVER AI-SPEAK + FRAME + ADVISE)</span>
+                <code>ok</code><span>无违规 (use with rating 4-5)</span>
+              </div>
+            </div>
+            <div>
+              <strong>Keyboard</strong>
+              <div style={{ marginTop: 4, color: "#475569", fontSize: "0.85em" }}>
+                <code>j/k</code> navigate · <code>1-5</code> rate · <code>t</code> tag picker · <code>c</code> comment · <code>Enter</code> save + next
+              </div>
+            </div>
+            <div>
+              <strong>Visual signals</strong>
+              <div style={{ marginTop: 4, color: "#475569", fontSize: "0.85em" }}>
+                Green left border = ≥4⭐ (fewShot candidate) · Orange left border = ≤2⭐ (Phase 27 self-evolve cron input)
+              </div>
+            </div>
+          </div>
+        </Panel>
+      ) : null}
 
       <Panel
         title={`Page ${pageIndex + 1} — ${stats.reviewed}/${stats.total} reviewed${stats.filteredOut > 0 ? ` (${stats.filteredOut} filtered)` : ""}`}
