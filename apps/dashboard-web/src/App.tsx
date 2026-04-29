@@ -14,7 +14,8 @@ import { Handbook } from "./pages/Handbook.js"
 import { Triggers } from "./pages/Triggers.js"
 import { UpstreamTemplates } from "./pages/UpstreamTemplates.js"
 import { DownstreamTriggers } from "./pages/DownstreamTriggers.js"
-import { Voice } from "./pages/Voice.js"
+import { VoiceReview } from "./pages/VoiceReview.js"
+import { NRoundSim } from "./pages/NRoundSim.js"
 import { auth } from "./lib/firebase.js"
 
 // Phase 32 Wave 1 — placeholder page for upcoming routes that will be filled
@@ -138,12 +139,11 @@ export default function App() {
           <Route path="/admin/handbook" element={<Handbook />} />
           <Route path="/admin/upstream-templates" element={<UpstreamTemplates />} />
           <Route path="/admin/downstream-triggers" element={<DownstreamTriggers />} />
-          <Route path="/voice" element={<Voice />} />
-          {/* Phase 32 Wave 1 — placeholder routes; Wave 2 splits Voice into
-              VoiceReview + NRoundSim, Wave 3 ships Playbooks + Personas CRUD.
-              Voice Review redirects to existing /voice for now. */}
-          <Route path="/eval/voice-review" element={<Navigate to="/voice" replace />} />
-          <Route path="/eval/n-round-sim" element={<ComingSoon feature="N-Round Sim" />} />
+          {/* Phase 32 Wave 2c — /voice split into /eval/voice-review +
+              /eval/n-round-sim. Old /voice URL redirects for back-compat. */}
+          <Route path="/voice" element={<Navigate to="/eval/voice-review" replace />} />
+          <Route path="/eval/voice-review" element={<VoiceReview />} />
+          <Route path="/eval/n-round-sim" element={<NRoundSim />} />
           <Route path="/agent/playbooks" element={<ComingSoon feature="Playbooks" />} />
           <Route path="/agent/personas" element={<ComingSoon feature="Personas" />} />
           {/* Phase 32 Wave 1 — /playground (E2E Lab) deleted; superseded by
