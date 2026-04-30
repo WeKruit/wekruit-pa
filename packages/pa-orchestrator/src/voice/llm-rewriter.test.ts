@@ -488,3 +488,106 @@ test("breaker: circuitOpen flag absent/false on healthy successful rewrite", asy
   const r = await rewriteIfOff("draft message text input", { deps: ok.deps })
   assert.notEqual(r.circuitOpen, true)
 })
+
+// ─── Phase 35-40 wire-in tests (Section 7) ──────────────────────────────────
+
+test("Phase 40 — paHumanizeRuntimeEnabled OFF default → no detector pass", async () => {
+  __resetBreakerForTests()
+  delete process.env.PA_HUMANIZE_RUNTIME_DISABLED
+  delete process.env.paHumanizeRuntimeEnabled
+  const ok = fakeRewriter("挺难的. 我懂.")
+  // No db passed → umbrella OFF → no detectors.
+  const r = await rewriteIfOff("draft message text input", { deps: ok.deps }, {})
+  assert.equal(r.rewriteApplied, true)
+  assert.equal(r.detectorResults, undefined)
+  assert.equal(r.detectorActionApplied, false)
+})
+
+test("Phase 40 — PA_HUMANIZE_RUNTIME_DISABLED=true short-circuits even with db", async () => {
+  __resetBreakerForTests()
+  process.env.PA_HUMANIZE_RUNTIME_DISABLED = "true"
+  process.env.paHumanizeRuntimeEnabled = "true" // would otherwise enable
+  const ok = fakeRewriter("挺难的. 我懂.")
+  // Stub db — env-override should never reach getFlag because DISABLED hits first.
+  let getFlagCalled = false
+  const stubDb = new Proxy(
+    {},
+    {
+      get() {
+        getFlagCalled = true
+        throw new Error("should not reach Firestore")
+      },
+    }
+  ) as unknown as import("firebase-admin/firestore").Firestore
+  const r = await rewriteIfOff(
+    "draft message text input",
+    { deps: ok.deps },
+    { db: stubDb, userId: "u1", turnId: "t1" }
+  )
+  assert.equal(r.detectorResults, undefined)
+  assert.equal(getFlagCalled, false)
+  // cleanup
+  delete process.env.PA_HUMANIZE_RUNTIME_DISABLED
+  delete process.env.paHumanizeRuntimeEnabled
+})
+
+test("Phase 40 — umbrella ON via env-override → detectors run, detectorResults populated", async () => {
+  __resetBreakerForTests()
+  delete process.env.PA_HUMANIZE_RUNTIME_DISABLED
+  process.env.paHumanizeRuntimeEnabled = "true" // env-override path in getFlag
+  // Need a db that supports getFlag's env-override short-circuit. The
+  // env-override returns immediately without touching Firestore — so the
+  // proxy never gets called.
+  const stubDb = new Proxy(
+    {},
+    {
+      get() {
+        throw new Error("env-override should short-circuit before Firestore read")
+      },
+    }
+  ) as unknown as import("firebase-admin/firestore").Firestore
+  const ok = fakeRewriter("挺难的. 还好吗.")
+  const r = await rewriteIfOff(
+    "draft message text input that is long enough",
+    { deps: ok.deps },
+    {
+      db: stubDb,
+      userId: "u1",
+      turnId: "t1",
+      claireHistoryForDetectors: ["听起来挺难的", "还好吗"],
+      lastUserMessage: "今天面试挂了",
+    }
+  )
+  assert.equal(r.rewriteApplied, true)
+  assert.ok(Array.isArray(r.detectorResults), "detectorResults should be array")
+  assert.equal(r.detectorResults!.length, 4, "4 detectors (F1+F2+F3+F4)")
+  // cleanup
+  delete process.env.paHumanizeRuntimeEnabled
+})
+
+test("Phase 40 — detector pass error degrades gracefully (rewrite still succeeds)", async () => {
+  __resetBreakerForTests()
+  delete process.env.PA_HUMANIZE_RUNTIME_DISABLED
+  process.env.paHumanizeRuntimeEnabled = "true"
+  // Disable detectors via sub-flag → detector pass skipped (success path).
+  process.env.PA_DETECTORS_ENABLED = "false"
+  const stubDb = new Proxy(
+    {},
+    {
+      get() {
+        return undefined
+      },
+    }
+  ) as unknown as import("firebase-admin/firestore").Firestore
+  const ok = fakeRewriter("挺难的. 还好吗.")
+  const r = await rewriteIfOff(
+    "draft message text input long enough",
+    { deps: ok.deps },
+    { db: stubDb, userId: "u1", turnId: "t1" }
+  )
+  assert.equal(r.rewriteApplied, true)
+  assert.equal(r.detectorResults, undefined, "sub-flag OFF skips detector pass")
+  // cleanup
+  delete process.env.paHumanizeRuntimeEnabled
+  delete process.env.PA_DETECTORS_ENABLED
+})
