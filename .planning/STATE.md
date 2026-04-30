@@ -3,11 +3,11 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: Humanize-Runtime v2 + v1.3 Carryover (Dual Stream)
 status: in_progress
-last_updated: "2026-04-29T23:45:00.000Z"
+last_updated: "2026-04-29T23:55:00.000Z"
 last_activity: 2026-04-29
 progress:
   total_phases: 12
-  completed_phases: 6
+  completed_phases: 7
   total_plans: 0
   completed_plans: 0
 ---
@@ -43,7 +43,7 @@ Canonical doc: [`MILESTONE-v1.4-humanize-runtime-v2.md`](./MILESTONE-v1.4-humani
 |---|-------|--------|------------------|
 | 33 | Eval Harness Extension | COMPLETE 2026-04-29 (5 commits, 140 tests pass) | P9-C |
 | 34 | Baseline Measurement | ✅ COMPLETE 2026-04-29 (deterministic-only baseline, 155 turns; baseline-rev00056.md locked + per-Phase gates 35-40; judge + embed deferred Adam-approval) | P10 main |
-| 35 | 4 Deterministic Detectors | Not started | P9-C |
+| 35 | 4 Deterministic Detectors | ✅ PARTIAL 2026-04-29 (T1-T5, 6 commits; F1/F2/F3/F4 + framework + smoke harness; 67/67 tests pass; F1 recall 100% on Phase 34 known-fails, F1/F2/F3 false-positive 0% on smoke; F4 graceful degrade verified; latency p95 < 250ms total. **Wire-in deferred** — Adam applies `WIRE-IN-PATCH.md` after committing pending llm-rewriter.ts work) | P9-C |
 | 36 | ImperfectionInjector A/B | Not started | P9-C |
 | 37 | FSM (5 UX × ESConv 8) | Not started | P9-C |
 | 38 | Memory Policy | Not started | P9-C |
@@ -60,10 +60,10 @@ Canonical doc: [`MILESTONE-v1.4-humanize-runtime-v2.md`](./MILESTONE-v1.4-humani
 
 ## Current Position
 
-Phase: Stream A v1.3 carryover ✅ COMPLETE (29 + 30 + 31 + 32). Stream C v1.4 in progress — Phase 33 ✅ COMPLETE; 34 next.
-Plan: Stream A done (4/4 phases shipped); Stream C 1/8 (Phase 33 only)
-Status: Stream A wrapped — operator-grade dashboard + connectors + handbook live; Stream C continues with Phase 34 Baseline Measurement
-Last activity: 2026-04-29 — Phase 32 closeout (PLAN.md + STATE update by P9-B); Phase 30/31 status reflected as complete based on P9-A's prior commits
+Phase: Stream A v1.3 carryover ✅ COMPLETE (29 + 30 + 31 + 32). Stream C v1.4 in progress — Phases 33 + 34 ✅ COMPLETE; Phase 35 ✅ PARTIAL (detectors built, wire-in Adam-owed). Phase 36 ImperfectionInjector A/B can begin once detectors are wired in.
+Plan: Stream A done (4/4 phases shipped); Stream C 3/8 (Phases 33 + 34 + 35-partial; 5 remaining)
+Status: Stream A wrapped — operator-grade dashboard + connectors + handbook live; Stream C — F1/F2/F3/F4 detector module shipped behind feature flag `PA_DETECTORS_ENABLED` (default off); Adam-owed P0 task is applying `.planning/phases/35-detectors/WIRE-IN-PATCH.md` after committing pending uncommitted work
+Last activity: 2026-04-29 — Phase 35 T1-T5 complete (P9-C); 67/67 detector tests pass; smoke harness verifies recall + false-positive + latency gates from Phase 34 baseline
 
 ## Adam's blocking decisions (none currently)
 
