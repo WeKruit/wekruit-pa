@@ -41,7 +41,7 @@ Canonical doc: [`MILESTONE-v1.4-humanize-runtime-v2.md`](./MILESTONE-v1.4-humani
 
 | # | Phase | Status | Workstream owner |
 |---|-------|--------|------------------|
-| 33 | Eval Harness Extension | Not started | P9-C |
+| 33 | Eval Harness Extension | COMPLETE 2026-04-29 (5 commits, 140 tests pass) | P9-C |
 | 34 | Baseline Measurement | Not started | P9-C |
 | 35 | 4 Deterministic Detectors | Not started | P9-C |
 | 36 | ImperfectionInjector A/B | Not started | P9-C |
