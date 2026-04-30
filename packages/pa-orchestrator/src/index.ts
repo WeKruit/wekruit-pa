@@ -3,9 +3,14 @@ import { FieldValue, type Firestore } from "firebase-admin/firestore"
 import {
   getAgentById,
   getDefaultAgent,
-  composeSystemPrompt as composeHandbookSystemPrompt,
-  loadHandbook,
+  composeSystemPrompt as composeLegacyHandbookSystemPrompt,
+  loadHandbook as loadLegacyHandbookSections,
 } from "@pa/agent-registry"
+import {
+  composeSystemPrompt as composeHandbookV2SystemPrompt,
+  loadHandbook as loadHandbookV2,
+  DEFAULT_HANDBOOK_SLUG,
+} from "./handbook/loader.js"
 import {
   runAgentTurn as defaultRunAgentTurn,
   stripLeadingIsoTimestamp,
@@ -760,24 +765,64 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // default agent's toolPolicy is still "none" (pre-T8), this returns []
     // and the SDK gets no custom tools, matching legacy behavior.
     const turnTools = await store.buildTurnTools(agent, { turnId, userId: event.userId, sessionId: event.sessionId })
-    // Phase 29 — Bible-as-data. When the agent has `handbookEnabled === true`
-    // AND the orchestrator was wired with a Firestore handle, load the
-    // section docs from `pa-handbook-sections` and compose the runtime
-    // systemPrompt. Falls back gracefully to the inline `systemPrompt` field
-    // when sections are missing/empty or the load fails — keeps the inline
-    // value as a failsafe during cutover (per Phase 29 PLAN T4 DON'T).
+    // Phase 29 T4 — Bible-as-data v2 (pa-handbooks/{slug} + immutable
+    // versions/{v}). When the orchestrator was wired with a Firestore
+    // handle, resolve the handbook slug from agent.handbookSlug (default
+    // "claire") and compose the runtime systemPrompt. Falls back through
+    // a 3-tier chain so live traffic NEVER goes promptless during cutover:
+    //   1. pa-handbooks/{slug} v2 schema (this phase)        ← preferred
+    //   2. legacy pa-handbook-sections (handbookEnabled=true) ← prior iter
+    //   3. agent.systemPrompt inline string                   ← original
+    // Empty composed output OR load error logs once + falls through. The
+    // failsafe inline systemPrompt is retained for one phase per PLAN T4
+    // DON'T; cleanup phase removes it after migration confidence builds.
     let composedSystemPrompt: string | null = null
-    if ((agent as { handbookEnabled?: boolean }).handbookEnabled === true && store.db != null) {
+    if (store.db != null) {
+      const slug = (agent as { handbookSlug?: string }).handbookSlug ?? DEFAULT_HANDBOOK_SLUG
       try {
-        const sections = await loadHandbook(store.db)
-        const composed = composeHandbookSystemPrompt(sections).trim()
+        const handbook = await loadHandbookV2(store.db, slug)
+        if (handbook) {
+          const composed = composeHandbookV2SystemPrompt(handbook).trim()
+          if (composed.length > 0) {
+            composedSystemPrompt = composed
+          } else {
+            store.log("pa.handbook.v2_empty_fallback", {
+              agentId: agent.id,
+              slug,
+              version: handbook.version,
+            })
+          }
+        } else {
+          store.log("pa.handbook.v2_missing_fallback", {
+            agentId: agent.id,
+            slug,
+          })
+        }
+      } catch (e) {
+        store.log("pa.handbook.v2_load_failed_fallback", {
+          agentId: agent.id,
+          slug,
+          error: e instanceof Error ? e.message : String(e),
+        })
+      }
+    }
+    // Tier 2 fallback — legacy flat-section schema (only when v2 didn't
+    // resolve AND legacy is explicitly enabled on the agent doc).
+    if (
+      composedSystemPrompt === null &&
+      (agent as { handbookEnabled?: boolean }).handbookEnabled === true &&
+      store.db != null
+    ) {
+      try {
+        const sections = await loadLegacyHandbookSections(store.db)
+        const composed = composeLegacyHandbookSystemPrompt(sections).trim()
         if (composed.length > 0) {
           composedSystemPrompt = composed
         } else {
-          store.log("pa.handbook.empty_fallback_inline", { agentId: agent.id })
+          store.log("pa.handbook.legacy_empty_fallback_inline", { agentId: agent.id })
         }
       } catch (e) {
-        store.log("pa.handbook.load_failed_fallback_inline", {
+        store.log("pa.handbook.legacy_load_failed_fallback_inline", {
           agentId: agent.id,
           error: e instanceof Error ? e.message : String(e),
         })
