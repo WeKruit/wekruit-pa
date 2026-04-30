@@ -884,7 +884,26 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       .slice(-2)
       .reverse()
       .map((m) => m.body)
-    const rewritten = await rewriteIfOff(reply, {}, { priorAssistantReplies })
+    // Phase 35-40 wire-in — wider Claire history (last 5) for F1/F4 detectors
+    // + Firestore handle + ids for umbrella-flag-gated module activations.
+    // All optional in RewriteContext; modules skip silently when missing.
+    const claireHistoryForDetectors = (history ?? [])
+      .filter((m) => m.role === "assistant")
+      .slice(-5)
+      .reverse()
+      .map((m) => m.body)
+    const rewritten = await rewriteIfOff(
+      reply,
+      {},
+      {
+        priorAssistantReplies,
+        db: store.db,
+        userId: event.userId,
+        turnId,
+        claireHistoryForDetectors,
+        lastUserMessage: event.body,
+      }
+    )
     // Phase 33 — unconditional telemetry. Without this we can't tell if the
     // rewriter is firing as no_change, timing out, or blocked by diff-guard.
     store.log("pa.voice.llm_rewriter.result", {

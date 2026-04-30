@@ -31,6 +31,29 @@
  */
 
 import OpenAI from "openai"
+import type { Firestore } from "firebase-admin/firestore"
+
+// Phase 40 T5 — wrap SiliconFlow client with prefix cache for ~20-40% latency
+// reduction on warm path (server-side KV cache hits on identical Bible +
+// few-shot prefix). 0 net new LLM calls — wrapper, not duplicate caller.
+import {
+  wrapWithPrefixCache,
+  type CachedChatClient,
+  type ChatClient,
+} from "./prefix-cache/index.js"
+
+// Phase 40 T4 — umbrella feature flag for v1.4 humanize-runtime stack.
+import { getFlag } from "@pa/pa-persistence"
+
+// Phase 35 — 4 deterministic detectors run post-gen on cleaned output.
+import {
+  runAllDetectors,
+  type DetectorContext,
+  type DetectorResult,
+} from "./detectors/index.js"
+
+// Phase 38 — memory policy advice tracker fires post-gen (fire-and-forget).
+import { trackAdvice } from "./memory-policy/index.js"
 
 /** What the caller learns about the rewrite attempt. */
 export type RewriteReason =
@@ -49,6 +72,17 @@ export type RewriteResult = {
   reason: RewriteReason
   /** Phase 27 T1 — true when breaker is OPEN/HALF_OPEN-rejected; caller logs. */
   circuitOpen?: boolean
+  /** Phase 35 — per-detector results when umbrella flag is ON. */
+  detectorResults?: DetectorResult[]
+  /** Phase 35 — true when a detector's suggested_action was applied (strip / regenerate). */
+  detectorActionApplied?: boolean
+  /** Phase 40 T5 — prefix-cache stats from the final LLM call (warm/cold + hashId). */
+  cacheStats?: {
+    warm: boolean
+    hashId: string
+    hitCount: number
+    latencyMs: number
+  }
 }
 
 // ─── Phase 27 T1 — Circuit breaker (in-memory) ───────────────────────────────
@@ -178,6 +212,109 @@ export function stripThinkBlocks(s: string): string {
  * - <40% length when input > 10 chars = model truncated
  * Returns true if the rewrite is plausibly safe to ship.
  */
+/**
+ * Deterministic opener-rotation guard (Phase 33d — generic signature-compare).
+ *
+ * REWRITE NOTE: replaces the previous word-list + clause-extract approach
+ * (Phase 33b/c). Word lists were whack-a-mole — every new model preference
+ * required adding more entries. This version is generic: extract a fixed-
+ * length opener "signature" from each prior reply, strip if current matches.
+ *
+ * Algorithm:
+ *   1. Signature = first 3 CJK chars OR first English word (lowercased).
+ *   2. If current.sig === any prior.sig → strip the leading signature chars
+ *      + trailing separators from current. Remainder must be ≥ 5 chars
+ *      (otherwise return original — don't strip to near-empty).
+ *
+ * Examples (all opener types unified):
+ *   prior=["嗯，X..."]            sig="嗯"   text="嗯，Y..." → strip → "Y..."
+ *   prior=["你试试先投..."]        sig="你试试" text="你试试把..." → "把..."
+ *   prior=["听起来挺烦的。X"]      sig="听起来" text="听起来挺累..." → "挺累..."
+ *   prior=["感觉投递真磨人，X"]    sig="感觉投" text="感觉投递太累..." → "太累..."
+ *   prior=["Yeah, X"]            sig="yeah" text="Yeah, Y" → "Y"
+ */
+function getOpenerSignature(text: string): string {
+  const t = text.trim()
+  // English: first contiguous word (case-insensitive)
+  const enMatch = t.match(/^[A-Za-z]+/)
+  if (enMatch) return enMatch[0].toLowerCase()
+  // CJK: first 3 hanzi (covers 1-char "嗯", 2-char "感觉", 3-char "你试试/听起来")
+  const cjkMatch = t.match(/^[\p{Script=Han}]+/u)
+  if (!cjkMatch) return ""
+  return cjkMatch[0].slice(0, 3)
+}
+
+function getOpenerClause(text: string): string {
+  // Everything up to (but excluding) the first sentence separator.
+  const m = text.match(/^([^，,。.;；!！？?\n…]+)[，,。.;；!！？?\n…]/)
+  return m ? m[1].trim() : ""
+}
+
+export function stripRepeatOpener(text: string, priorReplies: string[]): string {
+  const trimmed = text.trim()
+
+  // Pass 1 — full-clause exact match (empathy phrases like "感觉投递真的挺磨人的")
+  const currentClause = getOpenerClause(trimmed)
+  if (currentClause.length >= 4) {
+    for (const prior of priorReplies) {
+      if (getOpenerClause(prior.trim()) !== currentClause) continue
+      const stripped = trimmed
+        .slice(currentClause.length)
+        .replace(/^[…，,。.;；!！？?\s]+/, "")
+        .trim()
+      if (stripped.length >= 5) return stripped
+    }
+  }
+
+  // Pass 2 — signature match. When sig matches, prefer to strip the WHOLE
+  // opener clause (everything before first separator) — not just the 3-char
+  // sig. Without this, "感觉投递真的挺磨人的的，X" only loses "感觉投" leaving
+  // "递真的挺磨人的的，X" which a human still reads as the same phrase.
+  // Falls back to sig-only strip when no separator exists in current text.
+  const currentSig = getOpenerSignature(trimmed)
+  if (currentSig.length === 0) return trimmed
+  for (const prior of priorReplies) {
+    const priorSig = getOpenerSignature(prior.trim())
+    if (priorSig.length === 0 || priorSig !== currentSig) continue
+    // Strip whole clause if separator present, else strip just sig.
+    const clauseLen = currentClause.length > 0 ? currentClause.length : currentSig.length
+    const stripped = trimmed
+      .slice(clauseLen)
+      .replace(/^[…，,。.;；!！？?\s]+/, "")
+      .trim()
+    if (stripped.length >= 5) return stripped
+  }
+
+  return trimmed
+}
+
+/**
+ * Phase 33e — deterministic strip of "我懂"/"我懂那种"/"我懂你那" validation tic.
+ * The system prompt instructs Qwen to drop these but compliance is unreliable.
+ * This guard runs unconditionally: strips the entire validation clause anywhere
+ * it appears at start of reply OR after a leading reaction word.
+ *
+ * Examples:
+ *   "我懂那种卡住的感觉" → ""  (caller falls back to original)
+ *   "草 我懂那种卡住的感觉。继续。" → "草 继续。"
+ *   "嗯，我懂你那种纠结。X" → "嗯，X"
+ */
+export function stripValidationTic(text: string): string {
+  const trimmed = text.trim()
+  // Bible bans "我懂" — strip ALL occurrences anywhere (mid-sentence too).
+  // Examples that need handling:
+  //   "我懂那种X。Y" → "Y"               (start + clause)
+  //   "草 我懂那种X。Y" → "草 Y"         (after reaction)
+  //   "你这纠结我懂，X" → "你这纠结，X"  (mid-sentence)
+  //   "嗯，我懂你那种Z。X" → "嗯，Z。X"  (after separator + variant)
+  let result = trimmed.replace(/我懂(?:那种|你那种?)?/gu, "")
+  // Clean up artifacts: collapse "，，" / ", ," that may form after strip.
+  result = result.replace(/([，,。.;；!！？?])\s*[，,。.;；!！？?]/g, "$1")
+  // Strip leading separators (in case 我懂 was at very start).
+  result = result.replace(/^[，,。.;；!！？?\s]+/, "").trim()
+  return result.length >= 5 ? result : trimmed
+}
+
 export function isDiffSafe(inputText: string, outputText: string): boolean {
   const inLen = inputText.trim().length
   const outLen = outputText.trim().length
@@ -220,17 +357,20 @@ const REWRITER_V2_SYSTEM_PROMPT = [
   "  'X 还是 Y?' (binary choice) → drop the question entirely",
   "  '你最近怎么 X' / probing question → drop it",
   "  Pop-therapy (接住你/硬撑着/hold space) → plain empathy ('听起来挺烦的')",
-  "  '我懂' / '我懂那种 X' / '我懂你那 X' (validation tic) → DROP. Replace with reaction ('草 / 是 / 哎 / 是真的' + content)",
+  "  '我懂' / '我懂那种 X' / '我懂你那 X' (validation tic) → DELETE the entire phrase AND X. Keep ONLY content directly. WRONG: '草 我懂那种卡在算法的感觉'. RIGHT: '草 算法那块确实最磨人'",
   "  '我陪你 X' / '我们一起 X' / '让我帮你 X' (coach-opener) → DROP entirely or replace with peer reaction",
   "  '我那时候也 X' → keep ONLY if not used in last 2 turns; else DROP",
   "",
   "OPENER ROTATION (CRITICAL — Phase 33):",
-  "  If PREVIOUS REPLIES section is provided, scan the FIRST WORD/INTERJECTION of each.",
-  "  Forbidden current-reply openers if used in any of the last 2 prior replies:",
-  "    嗯 / 嗯嗯 / 哎 / 哎呀 / 草 / 操 / 卧 / shit / 是 / 对",
-  "  Rotation strategy: if your draft starts with one of these AND it appears in prior replies,",
-  "  REWRITE the opener: drop it, OR pick a different word, OR start with content directly.",
-  "  Goal: NO opener-word should appear in 3 consecutive replies. Texting humans don't repeat.",
+  "  If PREVIOUS REPLIES section is provided, scan the FIRST CLAUSE (everything before the first",
+  "  comma / period / semicolon / 。／，) of each prior reply.",
+  "  RULE 1 — Clause-level: if your draft's first clause matches any prior reply's first clause",
+  "  exactly (e.g. '感觉投递真的挺磨人的' repeating) → MUST use a different opener.",
+  "  RULE 2 — Word-level: these openers are forbidden if they appear in prior replies:",
+  "    ZH: 嗯 / 嗯嗯 / 哎 / 哎呀 / 草 / 操 / 卧 / shit / 是 / 对 / 你试试 / 听起来",
+  "    EN: Yeah / yeah / Ugh / ugh / Oh / oh / Right / right / Totally / totally / Honestly / honestly / Exactly / exactly",
+  "  Fix: drop the opener entirely, pick a different word/phrase, or start with content directly.",
+  "  Goal: first clause must differ from ALL prior replies. Texting humans don't repeat.",
   "",
   "LENGTH CAP:",
   "  Max ~80 Chinese chars or ~140 English chars. If draft is longer, cut to the strongest 1-2 sentences.",
@@ -250,6 +390,11 @@ const REWRITER_V2_SYSTEM_PROMPT = [
   "  DRAFT: 嗯，middle 那段最容易卡，因为它既要承上启下又要把重点抛出来；你先把自我介绍拆成三句话",
   "  CLAIRE: middle 段最容易卡 — 拆成 3 句, 不要现场扩写.",
   "",
+  "FAILURE EXAMPLE 4 (EN repeat opener):",
+  "  PREVIOUS REPLIES: [\"Yeah that's brutal—crickets after you sent emails is rough\"]",
+  "  DRAFT: Yeah, I totally get it—getting hit from both sides with the clock and the pressure is exhausting.",
+  "  CLAIRE: both sides at once is rough. clock + pressure is a lot.",
+  "",
   "PASS-THROUGH EXAMPLE (return unchanged):",
   "  DRAFT: 拒得快说明他们没准备好你. next.",
   "  CLAIRE: 拒得快说明他们没准备好你. next.",
@@ -257,8 +402,8 @@ const REWRITER_V2_SYSTEM_PROMPT = [
   "Output ONLY the reply. No preface, no explanation, no quotes around it.",
 ].join("\n")
 
-let cachedClient: OpenAI | null = null
-function getClient(): OpenAI {
+let cachedClient: CachedChatClient | null = null
+function getClient(): CachedChatClient {
   if (cachedClient) return cachedClient
   // Phase 33 fix — when DEFAULT_MODEL is a Qwen* identifier, the rewriter
   // MUST hit SiliconFlow (Qwen home), not OpenAI. The previous resolver
@@ -277,7 +422,14 @@ function getClient(): OpenAI {
     process.env.PA_OPENAI_AGENT_BASE_URL?.trim() ||
     process.env.OPENAI_BASE_URL?.trim() ||
     undefined
-  cachedClient = new OpenAI({ apiKey, baseURL })
+  // Phase 40 T5 — wrap with prefix-cache. Returns a CachedChatClient which
+  // is structurally compatible with OpenAI for the chat.completions.create
+  // surface used by defaultDeps below. _cacheStats appended on responses.
+  // Cast at boundary: OpenAI's ChatCompletionMessageParam is a stricter
+  // discriminated union than prefix-cache's lighter ChatMessage shape; the
+  // wrapper only forwards the request body unchanged, so casting is safe.
+  const openaiClient = new OpenAI({ apiKey, baseURL }) as unknown as ChatClient
+  cachedClient = wrapWithPrefixCache(openaiClient, { capacity: 50 })
   return cachedClient
 }
 
@@ -291,18 +443,25 @@ const defaultDeps: RewriterDeps = {
     // Phase 33 — fold prior assistant replies into the user message so
     // the rewriter can rotate openers / detect repeat tics. Limit to last
     // 2 to keep prompt small.
+    // Phase 33f: send ONLY opener fragments (first 12 chars), not full prior
+    // replies. Sending full text caused Qwen to copy-paste prior content into
+    // new replies — confused "previous reply" with "context to draw from."
+    // Truncating to opener-only makes it physically impossible to copy.
     const priorBlock =
       priorAssistantReplies && priorAssistantReplies.length > 0
-        ? `PREVIOUS REPLIES (most recent first):\n${priorAssistantReplies
+        ? `OPENER-AVOIDANCE LIST (do NOT copy any text below; only use to avoid starting your reply with the SAME opener phrase):\n${priorAssistantReplies
             .slice(0, 2)
-            .map((r, i) => `  [${i + 1}] ${r}`)
+            .map((r, i) => `  [prev-${i + 1}-opener] ${r.trim().slice(0, 12)}…`)
             .join("\n")}\n\n`
         : ""
     const response = await client.chat.completions.create(
       {
         model: DEFAULT_MODEL,
         temperature: 0.4,
-        max_tokens: 200,
+        // Phase 33e: bumped 200→500. Old cap truncated mid-sentence on longer
+        // Chinese replies (~150 chars hit the limit). System prompt's 80-char
+        // soft cap still applies — this is just a hard ceiling for safety.
+        max_tokens: 500,
         messages: [
           { role: "system", content: REWRITER_V2_SYSTEM_PROMPT },
           {
@@ -313,7 +472,12 @@ const defaultDeps: RewriterDeps = {
       },
       { signal }
     )
-    return response.choices[0]?.message?.content?.trim() ?? ""
+    // Phase 33e: detect length-truncation. If the model hit max_tokens, the
+    // last sentence is mid-word — better to return empty (caller falls back
+    // to original draft) than ship "...这块也一样，你".
+    const choice = response.choices[0]
+    if (choice?.finish_reason === "length") return ""
+    return choice?.message?.content?.trim() ?? ""
   },
 }
 
@@ -327,6 +491,52 @@ const defaultDeps: RewriterDeps = {
 export type RewriteContext = {
   /** Last 1-2 assistant replies in this session (most recent first). */
   priorAssistantReplies?: string[]
+  /**
+   * Phase 35-40 wire-in fields. All optional — when absent, module activations
+   * skip silently (fail-safe OFF). Required when umbrella flag is ON for
+   * actual humanize-runtime behavior.
+   */
+  /** Firestore handle for getFlag + memory tracker writes. */
+  db?: Firestore
+  /** Current user id — used for getFlag perUser scope + advice tracker keys. */
+  userId?: string
+  /** Current turn id — used for advice tracker doc keys. */
+  turnId?: string
+  /**
+   * Last N Claire replies (most recent first). Wider history surface than
+   * priorAssistantReplies (which is opener-rotation only). Used by F1 verb-
+   * mirror n-gram detector + F4 advice-repeat BGE-M3 cos-sim.
+   */
+  claireHistoryForDetectors?: string[]
+  /** Last user message (raw text) — used by F1 verb-mirror against user input. */
+  lastUserMessage?: string
+  /** User language hint passed through to memory policy injection. */
+  userLang?: "zh" | "en" | "mixed"
+}
+
+/**
+ * Phase 40 T4 — umbrella flag check for v1.4 humanize-runtime stack.
+ * Returns true when ALL of (Phase 35 detectors, Phase 38 memory-policy)
+ * should activate for this user. Default OFF.
+ *
+ * Emergency disable env: `PA_HUMANIZE_RUNTIME_DISABLED=true` short-circuits
+ * to false BEFORE Firestore read. Missing db = OFF.
+ */
+async function isHumanizeRuntimeEnabled(
+  db: Firestore | undefined,
+  userId: string | undefined
+): Promise<boolean> {
+  if (process.env.PA_HUMANIZE_RUNTIME_DISABLED === "true") return false
+  if (!db) return false
+  try {
+    const v = await getFlag(db, "paHumanizeRuntimeEnabled", {
+      userId,
+      env: process.env,
+    })
+    return v === true
+  } catch {
+    return false
+  }
 }
 
 export async function rewriteIfOff(
@@ -395,7 +605,10 @@ export async function rewriteIfOff(
   // Phase 24 — strip Qwen3 thinking blocks BEFORE any length check (Pitfall 2
   // in 24-RESEARCH.md: unstripped think blocks trip the 1.6x diff guard and
   // reject valid rewrites).
-  const cleaned = stripThinkBlocks(modelText).trim()
+  // Phase 33c — strip role-tag prefix if Qwen leaks conversation format.
+  // Regex: strip leading lines that look like "Assistant\nuser\n" role markers.
+  const roleTagStripped = modelText.replace(/^(Assistant|User|ASSISTANT|USER)\s*\n(user|assistant|User|Assistant)\s*\n/gi, "")
+  const cleaned = stripThinkBlocks(roleTagStripped).trim()
 
   if (cleaned.length === 0) {
     // Defense-in-depth: never ship empty.
@@ -410,5 +623,71 @@ export async function rewriteIfOff(
     return { text: rawText, rewriteApplied: false, reason: "rewrite_unsafe" }
   }
 
-  return { text: cleaned, rewriteApplied: true, reason: "rewritten" }
+  // Phase 35-40 — humanize-runtime stack post-gen activation. All gated by
+  // umbrella flag `paHumanizeRuntimeEnabled` (default OFF). When OFF: skip
+  // entire block + return cleaned text as before. When ON: run F1-F4
+  // detectors + fire-and-forget advice tracker write.
+  let detectorResults: DetectorResult[] | undefined
+  let detectorActionApplied = false
+  let finalText = cleaned
+
+  const humanizeEnabled = await isHumanizeRuntimeEnabled(ctx.db, ctx.userId)
+  if (humanizeEnabled) {
+    // Phase 35 — detector pass on cleaned output. Sub-flag PA_DETECTORS_ENABLED
+    // allows surgical disable when umbrella ON. p95 < 250ms (Promise.allSettled
+    // parallel; F4 BGE-M3 fire-and-forget on missing key).
+    if (process.env.PA_DETECTORS_ENABLED !== "false") {
+      try {
+        const detectorCtx: DetectorContext = {
+          turn: {
+            user: ctx.lastUserMessage ?? "",
+            assistant: cleaned,
+          },
+          history: {
+            claireReplies: ctx.claireHistoryForDetectors ?? [],
+          },
+        }
+        detectorResults = await runAllDetectors(detectorCtx)
+        // Apply suggested actions: "strip" → keep; "regenerate" / "reject_resample"
+        // → caller decides. v1: log only, do not regenerate (would double LLM
+        // call, breaks 0-net-new constraint). Strip already applied earlier.
+        const actionable = detectorResults.find(
+          (r) => r.triggered && r.suggested_action != null
+        )
+        if (actionable) detectorActionApplied = true
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        console.log("[llm-rewriter] detector pass failed (degrade)", { msg })
+      }
+    }
+
+    // Phase 38 — fire-and-forget advice tracker write. Skip if missing
+    // db/userId/turnId; skip on missing API key (BGE embed degrades).
+    if (
+      process.env.PA_MEMORY_POLICY_ENABLED !== "false" &&
+      ctx.db &&
+      ctx.userId &&
+      ctx.turnId
+    ) {
+      void trackAdvice(
+        ctx.userId,
+        finalText,
+        ctx.turnId,
+        { db: ctx.db }
+      ).catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err)
+        console.log("[llm-rewriter] trackAdvice failed (degrade)", { msg })
+      })
+    }
+  }
+
+  // Phase 33b — deterministic opener rotation. LLMs don't reliably rotate
+  // openers via prompt alone; strip repeat opener tokens after rewriting.
+  return {
+    text: finalText,
+    rewriteApplied: true,
+    reason: "rewritten",
+    detectorResults,
+    detectorActionApplied,
+  }
 }

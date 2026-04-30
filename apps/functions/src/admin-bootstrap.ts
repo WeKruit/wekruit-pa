@@ -267,41 +267,11 @@ export async function simulateConversation(
       break
     }
 
-    const at = nowIso()
-    const userDocId = `${sessionId}-${i}-user`
-    const assistantDocId = `${sessionId}-${i}-assistant`
-    try {
-      await deps.db.collection(MESSAGES_COLLECTION).doc(userDocId).set({
-        id: userDocId,
-        messageId: userDocId,
-        sessionId,
-        userId,
-        role: "user",
-        body: userText,
-        createdAt: at,
-        source: "sim-eval",
-        persona: personaId,
-        rawMeta: { source: "sim-eval", persona: personaId, turn: i },
-      })
-      await deps.db.collection(MESSAGES_COLLECTION).doc(assistantDocId).set({
-        id: assistantDocId,
-        messageId: assistantDocId,
-        sessionId,
-        userId,
-        role: "assistant",
-        body: assistantText,
-        createdAt: at,
-        source: "sim-eval",
-        persona: personaId,
-        rawMeta: { source: "sim-eval", persona: personaId, turn: i },
-      })
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      errors.push({ turn: i, error: `write_failed: ${msg}` })
-      log("[simulateConversation] write failed", { turn: i, error: msg })
-      break
-    }
-
+    // Phase 33d: orchestrator path (defaultOrchestrator) already writes both
+    // user inbound + assistant rewritten reply via processInboundEvent →
+    // appendMessage. The previous duplicate write here polluted history with
+    // sim-eval source docs that broke loadHistory dedup (different
+    // idempotencyKey). Removed — single source of truth = orchestrator.
     transcript.push({ role: "user", body: userText })
     transcript.push({ role: "assistant", body: assistantText })
     processed++
@@ -343,6 +313,13 @@ const SEED_FLAGS: FlagSpec[] = [
   // secrets are wired in Secret Manager. When OFF the orchestrator's
   // post-turn hook short-circuits before reading pa-downstream-triggers.
   { key: "evalConnectorsEnabled", value: false, type: "bool", scope: "global", allowlist: [], blocklist: [] },
+  // Phase 40 T4 — umbrella feature flag for v1.4 humanize-runtime stack
+  // (Phase 35 detectors + Phase 38 memory-policy + Phase 40 prefix-cache).
+  // Default OFF for all users; Adam ramps via dashboard / setFlag
+  // bucketStrategy 1/10/50/100% per .planning/phases/40-bible-v7.5-ship/
+  // WIRE-IN-PATCH.md Section 9 cookbook. Kill switch:
+  // PA_HUMANIZE_RUNTIME_DISABLED=true env (CF cold-start required).
+  { key: "paHumanizeRuntimeEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
 ]
 
 export function checkAdminToken(provided: string | undefined): { ok: boolean; status: number; error?: string } {
@@ -993,21 +970,22 @@ async function defaultOrchestrator(input: {
   }
 
   const baseStore = createFirestoreOrchestratorStore(db)
-  // Wrap: skip outbound enqueue (we don't want sim to iMessage real numbers).
-  // Everything else flows through production code path verbatim.
+  // Capture the exact text sent to the user (post-rewrite, post-normalize).
+  // Multi-part messages are joined with newline to match what the user reads.
+  const outboundParts: string[] = []
   const store = {
     ...baseStore,
-    async enqueueOutbound() {
-      // Sim no-op: do not push to pa-outbound. Assistant text still lands
-      // in pa-messages via appendMessage so we can read it back.
+    async enqueueOutbound(_userId: string, _toE164: string, body: string) {
+      outboundParts.push(body)
     },
   }
 
-  // Pre-write the user message so loadHistory picks up the multi-turn
-  // context. The orchestrator's normal flow appendMessages user; we let it.
   await processInboundEvent(event, store)
 
-  // Read back the latest assistant message for THIS session.
+  if (outboundParts.length > 0) {
+    return outboundParts.join("\n")
+  }
+  // Fallback: read from Firestore (e.g. onboarding path that skips enqueueOutbound).
   const snap = await db
     .collection("pa-messages")
     .where("sessionId", "==", input.sessionId)

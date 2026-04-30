@@ -25,6 +25,8 @@ import {
   rewriteIfOff,
   stripThinkBlocks,
   isDiffSafe,
+  stripRepeatOpener,
+  stripValidationTic,
   getBreakerStateName,
   __resetBreakerForTests,
   type RewriterDeps,
@@ -187,12 +189,19 @@ test("isDiffSafe: output >1.6× input returns false", () => {
   assert.equal(isDiffSafe(input, output), false)
 })
 
-test("isDiffSafe: output <40% of input (input >10) returns false", () => {
-  // "hello world this is the input" = 30 chars, "hi" = 2 chars
-  // 2 < 0.4 * 30 = 12 → false (input > 10)
+test("isDiffSafe: output <20% of input AND >=8 chars (input >10) returns false", () => {
+  // Guard: inLen>10 && outLen < 0.2*inLen && outLen >= 8 → false
+  // input 60 chars, output "ok thanks" = 9 chars → 9 < 0.2*60=12 && 9 >= 8 → false
+  const input = "hello world this is a longer input that is about sixty chars long"  // >10
+  const output = "ok thanks"  // 9 chars >= 8 and < 20% of input
+  assert.equal(isDiffSafe(input, output), false)
+})
+
+test("isDiffSafe: very short output (<8 chars) from long input allowed — single-word reaction", () => {
+  // outLen=2 < 8 → floor exemption kicks in → true even if < 20%
   const input = "hello world this is the input"  // 29 chars
   const output = "hi"  // 2 chars
-  assert.equal(isDiffSafe(input, output), false)
+  assert.equal(isDiffSafe(input, output), true)
 })
 
 test("isDiffSafe: short input ≤10 chars — guard skipped even if tiny output", () => {
@@ -205,6 +214,122 @@ test("isDiffSafe: reasonable rewrite accepted", () => {
   // "hello world" = 11 chars, "hello" = 5 chars
   // 5 < 0.4*11 = 4.4 is FALSE (5 is NOT less than 4.4) → safe
   assert.equal(isDiffSafe("hello world", "hello"), true)
+})
+
+// ─── Phase 33b — stripRepeatOpener ───────────────────────────────────────────
+
+test("stripRepeatOpener: strips ZH repeat opener 嗯 with fullwidth comma", () => {
+  const prior = ["嗯，投这么久没回音确实磨人"]
+  const text = "嗯，这个思路挺顺的，先补并发底层"
+  assert.equal(stripRepeatOpener(text, prior), "这个思路挺顺的，先补并发底层")
+})
+
+test("stripRepeatOpener: strips ZH repeat opener 嗯 with Unicode ellipsis …", () => {
+  const prior = ["嗯…大厂稳定是稳定，但OA那关确实能把人耗干"]
+  const text = "嗯…我最近主要还是往SWE前台投"
+  assert.equal(stripRepeatOpener(text, prior), "我最近主要还是往SWE前台投")
+})
+
+test("stripRepeatOpener: strips EN repeat opener Yeah", () => {
+  const prior = ["Yeah that's brutal—crickets after you sent emails is rough"]
+  const text = "Yeah, I totally get it—getting hit from both sides is exhausting."
+  assert.equal(stripRepeatOpener(text, prior), "I totally get it—getting hit from both sides is exhausting.")
+})
+
+test("stripRepeatOpener: no-op when opener not in prior replies", () => {
+  const prior = ["草 我之前也撞过类似的事"]
+  const text = "嗯，你这个判断挺对的"
+  assert.equal(stripRepeatOpener(text, prior), "嗯，你这个判断挺对的")
+})
+
+test("stripRepeatOpener: no-op with empty prior", () => {
+  const text = "Yeah, that's rough"
+  assert.equal(stripRepeatOpener(text, []), "Yeah, that's rough")
+})
+
+// ─── Phase 33e — stripValidationTic ──────────────────────────────────────────
+
+test("stripValidationTic: strips leading 我懂那种 + clause", () => {
+  assert.equal(
+    stripValidationTic("我懂那种卡住的感觉。继续往前走就行。"),
+    "卡住的感觉。继续往前走就行。"
+  )
+})
+
+test("stripValidationTic: strips 我懂那种 after leading reaction word", () => {
+  assert.equal(
+    stripValidationTic("草 我懂那种卡在算法那块的感觉。算法那块就是磨人。"),
+    "草 卡在算法那块的感觉。算法那块就是磨人。"
+  )
+})
+
+test("stripValidationTic: strips 我懂你那 variant", () => {
+  assert.equal(
+    stripValidationTic("嗯，我懂你那种纠结。先别急。"),
+    "嗯，纠结。先别急。"
+  )
+})
+
+test("stripValidationTic: bare 我懂 also stripped", () => {
+  assert.equal(
+    stripValidationTic("我懂。这事确实磨人。再坚持一下。"),
+    "这事确实磨人。再坚持一下。"
+  )
+})
+
+test("stripValidationTic: strips mid-sentence 我懂 (no preceding separator)", () => {
+  // The Phase 33f bug: "你这纠结我懂，..." — 我懂 in middle of sentence
+  assert.equal(
+    stripValidationTic("你这纠结我懂，上次面试有觉得行的瞬间吗？"),
+    "你这纠结，上次面试有觉得行的瞬间吗？"
+  )
+})
+
+test("stripValidationTic: no-op when no validation tic present", () => {
+  const text = "听起来挺烦的。先休息一下。"
+  assert.equal(stripValidationTic(text), text)
+})
+
+test("stripValidationTic: returns original when strip would leave < 5 chars", () => {
+  const text = "我懂那种"  // strip → "" → return original
+  assert.equal(stripValidationTic(text), text)
+})
+
+test("stripRepeatOpener: strips repeated empathy clause (感觉投递真的挺磨人的)", () => {
+  const prior = ["感觉投递真的挺磨人的，要不换个方向？"]
+  const text = "感觉投递真的挺磨人的；面试经验少的话先多积累。"
+  assert.equal(stripRepeatOpener(text, prior), "面试经验少的话先多积累。")
+})
+
+test("stripRepeatOpener: no-op when clause length < 8 chars", () => {
+  const prior = ["嗯，好的"]
+  const text = "嗯，好的，下次再说"
+  // "嗯" is in forbidden list but prior = "嗯，好的" — opener "嗯" was in prior
+  // Phrase check: clause "嗯" is < 8 chars so phrase check skipped
+  // Word check catches "嗯" in prior
+  assert.equal(stripRepeatOpener(text, prior), "好的，下次再说")
+})
+
+test("stripRepeatOpener: no-op when empathy clause not repeated", () => {
+  const prior = ["感觉挺烦的，你试试换个方向？"]
+  const text = "听起来挺累的，你先休息一下。"
+  // "听起来挺累的" != "感觉挺烦的" — different clauses, no-op
+  assert.equal(stripRepeatOpener(text, prior), "听起来挺累的，你先休息一下。")
+})
+
+test("stripRepeatOpener: sig match strips whole opener clause (你试试两边一起投)", () => {
+  // Phase 33g: when sig matches, strip whole clause (up to first separator)
+  // — not just the 3-char sig. Avoids residual phrase like "递真的挺磨人..."
+  const prior = ["你试试先投内推看看动静"]
+  const text = "你试试两边一起投，心里会好一点。"
+  assert.equal(stripRepeatOpener(text, prior), "心里会好一点。")
+})
+
+test("stripRepeatOpener: strips full clause 听起来挺烦的 when prior has same clause", () => {
+  // Phase 33d generic algo: full-clause exact match strips entire opening clause
+  const prior = ["听起来挺烦的。草，要不要一起聊聊？"]
+  const text = "听起来挺烦的。草，要不要聊聊？"
+  assert.equal(stripRepeatOpener(text, prior), "草，要不要聊聊？")
 })
 
 // ─── Phase 24 — integrated flow (think-strip + diff-guard in rewriteIfOff) ───
