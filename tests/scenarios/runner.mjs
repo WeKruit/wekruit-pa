@@ -39,6 +39,11 @@ import {
   projectJudgeCostUsd,
   JUDGE_MODEL,
 } from "./judge.mjs"
+import {
+  computeLengthCompliance,
+  computeDriftScore,
+  computeAdviceNovelty,
+} from "./lib/voice-axes.mjs"
 
 const PA_INBOUND = "pa-inbound-events"
 const PA_OUTBOUND = "pa-outbound"
@@ -1000,6 +1005,37 @@ async function runScenario(db, scenarioPath, ctx) {
       break
     }
   }
+  // Phase 33 — compute deterministic voice-axes aggregate for scenarios
+  // that opted into voice_axes_full. Pure helpers + 1 BGE-M3 batch call
+  // (free tier per D14). Tolerates missing API key gracefully (axis
+  // helpers return null with reason).
+  const wantsVoiceAxesFull = (scenario.turns ?? []).some(
+    (t) => t?.assert?.voice_axes_full === true
+  )
+  if (wantsVoiceAxesFull) {
+    try {
+      const completedTurns = result.turns
+        .filter((t) => typeof t.reply === "string" && t.reply.length > 0)
+        .map((t) => ({ user: t.user, assistant: t.reply }))
+      if (completedTurns.length > 0) {
+        const lengthAgg = computeLengthCompliance(completedTurns)
+        const driftAgg = await computeDriftScore(completedTurns)
+        const claireReplies = completedTurns.map((t) => t.assistant)
+        const last = claireReplies[claireReplies.length - 1]
+        const history = claireReplies.slice(-4, -1) // last 3 prior, oldest first
+        const noveltyAgg = await computeAdviceNovelty(last, history)
+        result.voiceAxesAggregate = {
+          length: lengthAgg,
+          drift: driftAgg,
+          novelty: noveltyAgg, // null when env missing
+          turnsAnalyzed: completedTurns.length,
+        }
+      }
+    } catch (err) {
+      result.voiceAxesAggregateError = err instanceof Error ? err.message : String(err)
+    }
+  }
+
   // Phase 11.3 — restore via cleanup.userPatch if requested. Best-effort;
   // never overrides a test failure.
   if (scenario.cleanup?.userPatch && userId && scenario.testMode === true) {
@@ -1047,6 +1083,7 @@ export async function dryRunPlan(files, evalEnabled, maxUsd) {
     }
     const turns = Array.isArray(parsed?.turns) ? parsed.turns : []
     const judgeTurns = turns.filter((t) => t?.assert?.judge).length
+    const voiceAxesV2Turns = turns.filter((t) => t?.assert?.voice_axes_full === true).length
     const telemetryTurns = turns.filter(
       (t) =>
         Array.isArray(t?.assert?.tool_call_required) ||
@@ -1060,10 +1097,12 @@ export async function dryRunPlan(files, evalEnabled, maxUsd) {
       id: parsed?.id ?? null,
       turns: turns.length,
       judgeTurns,
+      voiceAxesV2Turns,
       telemetryTurns,
       participant: parsed?.participant ?? null,
     })
   }
+  plan.voiceAxesV2Scenarios = plan.scenarios.filter((s) => (s.voiceAxesV2Turns ?? 0) > 0).length
   plan.projectedJudgeCalls = projectedJudgeCalls
   plan.projectedJudgeCostUsd = Number(
     (projectedJudgeCalls * projectJudgeCostUsd()).toFixed(6)

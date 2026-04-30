@@ -23,6 +23,7 @@ import {
   checkFillerBlacklist,
   checkIMessageRenderUnsafe,
   VOICE_AXES,
+  VOICE_AXES_V2,
   passThreshold as VOICE_PASS_THRESHOLD,
 } from "./lib/voice-axes.mjs"
 
@@ -308,34 +309,48 @@ export function judgeVerdictPasses({ verdict, confidence }, threshold) {
 // + iMessage-render auto-fail short-circuits BEFORE issuing a judge call.
 // ---------------------------------------------------------------------------
 
-const VOICE_JUDGE_TOOL = {
-  type: "function",
-  name: "submit_voice_axes",
-  description:
-    "Score the assistant reply on 4 voice axes (each 0-3). Call exactly once.",
-  parameters: {
-    type: "object",
-    additionalProperties: false,
-    properties: Object.fromEntries(
-      VOICE_AXES.map((a) => [
-        a.id,
-        {
-          type: "integer",
-          minimum: 0,
-          maximum: 3,
-          description: `${a.name}. Rubric: 0=${a.rubric[0]}; 1=${a.rubric[1]}; 2=${a.rubric[2]}; 3=${a.rubric[3]}.`,
-        },
-      ])
-    ),
-    required: VOICE_AXES.map((a) => a.id),
-  },
+function buildVoiceJudgeTool(axesList) {
+  return {
+    type: "function",
+    name: "submit_voice_axes",
+    description: `Score the assistant reply on ${axesList.length} voice axes (each 0-3). Call exactly once.`,
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: Object.fromEntries(
+        axesList.map((a) => [
+          a.id,
+          {
+            type: "integer",
+            minimum: 0,
+            maximum: 3,
+            description: `${a.name}. Rubric: 0=${a.rubric[0]}; 1=${a.rubric[1]}; 2=${a.rubric[2]}; 3=${a.rubric[3]}.`,
+          },
+        ])
+      ),
+      required: axesList.map((a) => a.id),
+    },
+  }
 }
+
+const VOICE_JUDGE_TOOL = buildVoiceJudgeTool(VOICE_AXES)
+const VOICE_JUDGE_TOOL_V2 = buildVoiceJudgeTool(VOICE_AXES_V2)
 
 const VOICE_JUDGE_SYSTEM_PROMPT = [
   "You are a voice-evaluation judge for an iMessage personal assistant whose persona is Claire (柯莱儿 / 小柯) — a Bay Area engineering manager texting a friend.",
   "Score the assistant reply on the 4 axes below. Each axis is integer 0-3.",
   "Be strict: if it reads as a generic LLM helper rather than Claire, mark in_character_voice ≤1.",
   "Code-switching zh/en is in-character; English-only or Chinese-only is fine if the user wrote that way.",
+  "Output ONLY by calling the `submit_voice_axes` tool exactly once.",
+].join(" ")
+
+const VOICE_JUDGE_SYSTEM_PROMPT_V2 = [
+  "You are a voice-evaluation judge for an iMessage personal assistant whose persona is Claire (柯莱儿 / 小柯) — a Bay Area engineering manager texting a friend.",
+  "Score the assistant reply on the 8 axes below. Each axis is integer 0-3.",
+  "Be strict: if it reads as a generic LLM helper rather than Claire, mark in_character_voice ≤1.",
+  "Code-switching zh/en is in-character; English-only or Chinese-only is fine if the user wrote that way.",
+  "For drift_resistance and advice_novelty, judge against the supplied transcript history (most recent last); if history is too short to assess, default the score to 2.",
+  "For strategy_fit, identify the ESConv strategy (Question/Restatement/Reflection/SelfDisclosure/Affirmation/Suggestion/Information/Other) and judge fit to the conversational stage implied by turn count.",
   "Output ONLY by calling the `submit_voice_axes` tool exactly once.",
 ].join(" ")
 
@@ -354,9 +369,12 @@ function extractVoiceAxes(response) {
 }
 
 /**
- * Run a 4-axis voice judge call.
+ * Run a voice judge call.
  *
- * @returns {Promise<{ axes: Record<string,number>, average: number, pass: boolean, costUsd: number, autoFail?: string, rationale?: string }>}
+ * Phase 18 (legacy): 4 axes via VOICE_AXES.
+ * Phase 33 (v1.4): 8 axes via VOICE_AXES_V2 when `useV2Axes: true`.
+ *
+ * @returns {Promise<{ axes: Record<string,number>, average: number, pass: boolean, costUsd: number, autoFail?: string, rationale?: string, axesVersion: 1|2 }>}
  */
 export async function runVoiceJudge({
   reply,
@@ -365,24 +383,46 @@ export async function runVoiceJudge({
   logPath,
   metadata,
   skipAutofail = false,
+  useV2Axes = false,
 }) {
   if (!reply || typeof reply !== "string") {
     throw new Error("runVoiceJudge: reply is required")
   }
   if (!skipAutofail) {
-    const fb = checkFillerBlacklist(reply)
-    if (fb.hit) {
-      const result = {
-        axes: { no_robot_filler: 0 },
+    // On auto-fail: legacy 4 axes hard-set to 0 (no_robot_filler is the
+    // canonical 0). Phase 33 v2 new axes (drift/length/novelty/strategy)
+    // are set to `null` (skipped) so downstream aggregation knows they
+    // were short-circuited rather than scored 0.
+    function autoFailResult(reason) {
+      const axes = useV2Axes
+        ? {
+            warmth_no_sycophancy: 0,
+            in_character_voice: 0,
+            no_robot_filler: 0,
+            length_appropriateness: 0,
+            drift_resistance: null,
+            length_compliance: null,
+            advice_novelty: null,
+            strategy_fit: null,
+          }
+        : { no_robot_filler: 0 }
+      return {
+        axes,
         average: 0,
         pass: false,
         costUsd: 0,
-        autoFail: `filler_blacklist:${fb.lang}:${fb.phrase}`,
+        autoFail: reason,
+        axesVersion: useV2Axes ? 2 : 1,
       }
+    }
+    const fb = checkFillerBlacklist(reply)
+    if (fb.hit) {
+      const result = autoFailResult(`filler_blacklist:${fb.lang}:${fb.phrase}`)
       await appendJudgeLog(logPath, {
         ts: new Date().toISOString(),
         ok: true,
         kind: "voice_axes",
+        axesVersion: useV2Axes ? 2 : 1,
         autoFail: result.autoFail,
         reply,
         ...(metadata ?? {}),
@@ -391,17 +431,12 @@ export async function runVoiceJudge({
     }
     const ir = checkIMessageRenderUnsafe(reply)
     if (ir.hit) {
-      const result = {
-        axes: { no_robot_filler: 0 },
-        average: 0,
-        pass: false,
-        costUsd: 0,
-        autoFail: `imessage_render:${ir.reason}`,
-      }
+      const result = autoFailResult(`imessage_render:${ir.reason}`)
       await appendJudgeLog(logPath, {
         ts: new Date().toISOString(),
         ok: true,
         kind: "voice_axes",
+        axesVersion: useV2Axes ? 2 : 1,
         autoFail: result.autoFail,
         reply,
         ...(metadata ?? {}),
@@ -411,6 +446,9 @@ export async function runVoiceJudge({
   }
 
   const client = getClient()
+  const axesList = useV2Axes ? VOICE_AXES_V2 : VOICE_AXES
+  const tool = useV2Axes ? VOICE_JUDGE_TOOL_V2 : VOICE_JUDGE_TOOL
+  const systemPrompt = useV2Axes ? VOICE_JUDGE_SYSTEM_PROMPT_V2 : VOICE_JUDGE_SYSTEM_PROMPT
   const transcriptLines = Array.isArray(transcript)
     ? transcript
         .map((t) => `${t.role === "assistant" ? "ASSISTANT" : "USER"}: ${t.content}`)
@@ -424,10 +462,10 @@ export async function runVoiceJudge({
   const response = await client.responses.create({
     model: JUDGE_MODEL,
     input: [
-      { role: "system", content: VOICE_JUDGE_SYSTEM_PROMPT },
+      { role: "system", content: systemPrompt },
       { role: "user", content: userMessage },
     ],
-    tools: [VOICE_JUDGE_TOOL],
+    tools: [tool],
     tool_choice: { type: "function", name: "submit_voice_axes" },
   })
   const axes = extractVoiceAxes(response)
@@ -435,13 +473,14 @@ export async function runVoiceJudge({
   if (!axes) {
     throw new Error("Voice judge did not emit structured axes")
   }
-  const values = VOICE_AXES.map((a) => Number(axes[a.id]) || 0)
+  const values = axesList.map((a) => Number(axes[a.id]) || 0)
   const average = values.reduce((s, v) => s + v, 0) / values.length
   const pass = average >= threshold
   await appendJudgeLog(logPath, {
     ts: new Date().toISOString(),
     ok: true,
     kind: "voice_axes",
+    axesVersion: useV2Axes ? 2 : 1,
     axes,
     average,
     pass,
@@ -450,7 +489,7 @@ export async function runVoiceJudge({
     costUsd,
     ...(metadata ?? {}),
   })
-  return { axes, average, pass, costUsd }
+  return { axes, average, pass, costUsd, axesVersion: useV2Axes ? 2 : 1 }
 }
 
 // ---------------------------------------------------------------------------

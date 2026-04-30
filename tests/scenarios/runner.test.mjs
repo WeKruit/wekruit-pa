@@ -327,3 +327,26 @@ test("dryRunPlan: evalEnabled=false → judge calls projected as 0", async () =>
   assert.equal(plan.projectedJudgeCalls, 0)
   assert.equal(plan.projectedJudgeCostUsd, 0)
 })
+
+// --------------------------------------------------------------------------
+// Phase 33 — voice_axes_full opt-in surfaced by dryRunPlan
+// --------------------------------------------------------------------------
+
+test("dryRunPlan: counts voice_axes_full opt-in scenarios (Phase 33 V2 axes)", async () => {
+  const dir = "tests/scenarios/scenarios"
+  const plan = await dryRunPlan(
+    [
+      `${dir}/eval-advice-repeat-zh.yaml`,
+      `${dir}/eval-strategy-fit-mixed.yaml`,
+      `${dir}/eval-length-cap-bilingual.yaml`,
+      `${dir}/eval-tone-judge-zh.yaml`,
+    ],
+    false,
+    5
+  )
+  assert.equal(plan.voiceAxesV2Scenarios, 3, "3 of the 4 are voice_axes_full opt-in")
+  const advice = plan.scenarios.find((s) => s.file === "eval-advice-repeat-zh.yaml")
+  assert.ok(advice.voiceAxesV2Turns >= 1, "advice repeat declares voice_axes_full")
+  const tone = plan.scenarios.find((s) => s.file === "eval-tone-judge-zh.yaml")
+  assert.equal(tone.voiceAxesV2Turns, 0, "legacy scenario has 0 v2 turns")
+})
