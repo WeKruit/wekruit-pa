@@ -1,0 +1,59 @@
+# Phase 36 — A/B injector eval scenario (zh).
+# 3-turn emo support venting designed to surface humanness deltas across
+# imperfection arms (off / low / high). voice_axes_full=true so judge
+# scores the 8-axis V2 rubric (4 legacy + 4 humanize-runtime).
+#
+# Different content from eval-voice-emo-support-zh.yaml to avoid
+# contamination of training-set-style fixtures.
+id: eval_imperfection_arm_zh
+description: |
+  3-turn zh emo support venting. Used by ab-injector-harness.mjs to
+  compare imperfection arms (0% / 15% / 30% turn-onset injection).
+  Scenario expects ≤2-sentence quiet support per turn; judge scores
+  warmth + voice + drift + length on the V2 rubric.
+testMode: true
+locale: zh-CN
+agentId: default
+participant: "+19999990201"
+chatId: "iMessage;+19999990201"
+turnTimeoutMs: 120000
+voice_axes_full: true
+turns:
+  - user: "今天 standup 又卡壳了，老板皱眉那种"
+    assert:
+      reply_min_length: 4
+      reply_not_contains_any:
+        - "It's important to"
+        - "我是 AI"
+        - "你一定可以的"
+      judge:
+        criterion: |
+          Sits with the user's anxiety without rushing to fix or
+          pep-talk. Reads as a friend, not a coach. Short (≤2
+          sentences). May ask one open question OR offer one grounded
+          statement.
+        threshold: 0.6
+
+  - user: "明天还要见 PM, 真的不想去"
+    assert:
+      reply_min_length: 4
+      reply_not_contains_any:
+        - "加油加油"
+        - "It's important to"
+      judge:
+        criterion: |
+          Continues the warm-quiet support register. Doesn't switch to
+          coach mode. May acknowledge the dread directly. ≤2 sentences.
+        threshold: 0.6
+
+  - user: "我是不是不适合做 PM 工作"
+    assert:
+      reply_min_length: 4
+      reply_not_contains_any:
+        - "你一定可以的"
+        - "It's important to"
+      judge:
+        criterion: |
+          Validates the doubt without amplifying it; gently reframes
+          OR sits with it. NOT preachy. ≤2 sentences.
+        threshold: 0.6

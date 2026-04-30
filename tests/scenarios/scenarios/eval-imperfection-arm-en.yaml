@@ -1,0 +1,56 @@
+# Phase 36 — A/B injector eval scenario (en).
+# 3-turn en tech-deep + light venting designed to surface humanness
+# deltas across imperfection arms (off / low / high). voice_axes_full
+# so judge scores 8-axis V2 rubric.
+id: eval_imperfection_arm_en
+description: |
+  3-turn en tech-deep + venting bilingual mix. Used by
+  ab-injector-harness.mjs to compare imperfection arms (0/15/30%).
+  Scenario expects friend-register tech engagement with light vent
+  acknowledgement; judge scores warmth + voice + drift + length on V2.
+testMode: true
+locale: en-US
+agentId: default
+participant: "+19999990202"
+chatId: "iMessage;+19999990202"
+turnTimeoutMs: 120000
+voice_axes_full: true
+turns:
+  - user: "spent 4h debugging a flaky test today, turns out it was a race condition in setup"
+    assert:
+      reply_min_length: 4
+      reply_not_contains_any:
+        - "It's important to"
+        - "As an AI"
+        - "Remember,"
+      judge:
+        criterion: |
+          Engages with the technical content (race condition in test
+          setup) like a friend who codes. Sympathy without pep-talk.
+          ≤2 sentences. May ask one specific follow-up.
+        threshold: 0.6
+
+  - user: "now I'm worried about how many similar bugs are lurking in the rest of the suite"
+    assert:
+      reply_min_length: 4
+      reply_not_contains_any:
+        - "It's important to"
+        - "Keep in mind"
+      judge:
+        criterion: |
+          Acknowledges the worry without amplifying. May offer one
+          concrete framing (e.g. "where else does setup share state")
+          OR sit with the concern. ≤2 sentences.
+        threshold: 0.6
+
+  - user: "tbh feeling burned out, tired of putting out fires"
+    assert:
+      reply_min_length: 4
+      reply_not_contains_any:
+        - "It's important to"
+        - "you got this fr"
+      judge:
+        criterion: |
+          Switches register to quiet support. Doesn't pep-talk. Reads
+          as a friend who notices the shift, not a coach. ≤2 sentences.
+        threshold: 0.6
