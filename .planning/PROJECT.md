@@ -2,7 +2,33 @@
 
 Monorepo: Mac **Photon iMessage worker** (deprecating to Sendblue) + Firestore **`pa_*`** + **PA Console** (Vite, `wekruit-pa.web.app`). Auth: Google; Firestore rules: `@wekruit.com` + allowlisted Gmail (see `config/firebase/firestore.rules`).
 
-## Current Milestone: v1.1 Pre-Launch Hardening + Companion Brain
+## Current Milestone: v1.4 — Humanize-Runtime v2 (Bilingual, Eval-First)
+
+**Canonical doc:** [`.planning/MILESTONE-v1.4-humanize-runtime-v2.md`](./MILESTONE-v1.4-humanize-runtime-v2.md).
+
+**Goal:** On Qwen-7B + no-finetune + Bible-driven path, push Claire's bilingual (zh+en) conversational humanness to ~70-80% of Pi-level by attacking 4 production failure modes (verb-mirror / length escalation / code-switch drift / self-repeat advice) with deterministic detectors + ImperfectionInjector + ESConv-FSM + memory policy. Eval-first ordering: no runtime module work until baseline 5-metric report is locked. 0 net new LLM calls in production path.
+
+**Target features:**
+- **Eval Harness Extension** — 4 new axes (drift_resistance, length_compliance, advice_novelty, strategy_fit) wired into existing `tests/scenarios/lib/voice-axes.mjs`
+- **Baseline Measurement** — locked 5-metric report on rev-00056 before any module work
+- **4 Deterministic Detectors** — F1 verb-mirror n-gram (zh char 3-gram + en bigram) / F2 length cap / F3 lang-lock / F4 advice-repeat via BGE-M3 cos-sim
+- **ImperfectionInjector** — 3-arm A/B (0/15/30%), turn-onset position-constrained, bilingual policies (zh + en), self-correct > hesitate > clarify > uncertainty
+- **FSM (5 UX × ESConv 8 strategies)** — state classifier + transition table per TransESC pattern; Phase 3 prompt directive
+- **Memory Policy** — advice-tracker + contradiction detector via existing Mem0 + BGE-M3
+- **Bible v7.5** — bilingual NEVER + zh+en slang bank + crisis safety prompt + 3-sentence cap directive
+- **External Auto Benchmarks** — BotChat (auto Turing-style bilingual) + CharacterEval (ZH) + EmpatheticDialogues (EN) + ESConv (EN) + RoleLLM (EN); Qwen-7B raw vs Qwen-7B + Claire stack
+
+**Key constraints (Adam-locked):**
+- No model escalation (Qwen-7B class only via SiliconFlow OpenAI-compat)
+- No fine-tuning
+- 0 net new LLM calls in production path; < 12s p99 per turn
+- No LangGraph, no DSPy, no Reflexion-lite critic loop
+- No new monorepo package — extend `packages/pa-orchestrator/src/voice/`
+- Embedding stack: `BAAI/bge-m3` via SiliconFlow (already wired)
+
+**Estimate:** ~7.5 dev-days (8 phases, 29-36).
+
+## Previous Milestone (v1.1): Pre-Launch Hardening + Companion Brain
 
 **Execution plan (build order, QA, security wiring, channel architecture, report):** [`.planning/v1.1-EXECUTION-PLAN.md`](./v1.1-EXECUTION-PLAN.md).
 
@@ -75,4 +101,4 @@ This document evolves at phase transitions and milestone boundaries.
 
 ---
 
-*Last updated: 2026-04-27 — Milestone v1.1 started.*
+*Last updated: 2026-04-29 — Milestone v1.4 (humanize-runtime-v2) started; supersedes v1.4 drafts (humanize-runtime.md, NARRATIVE, DIAGRAM-PROMPT, RESEARCH-PROMPT).*

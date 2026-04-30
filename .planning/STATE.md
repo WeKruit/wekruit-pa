@@ -1,149 +1,106 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.3
-milestone_name: Productionize (公测 gate + Self-Evolve Loop 闭环)
-status: executing
-last_updated: "2026-04-28T18:00:00.000Z"
-last_activity: 2026-04-28
+milestone: v1.4
+milestone_name: Humanize-Runtime v2 (Bilingual, Eval-First)
+status: defining_requirements
+last_updated: "2026-04-29T17:00:00.000Z"
+last_activity: 2026-04-29
 progress:
-  total_phases: 5
-  completed_phases: 3
-  total_plans: 11
-  completed_plans: 11
+  total_phases: 8
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
 ---
 
 # Milestone state
 
-## Active milestone: v1.2 — Voice 拟人化 + Eval Foundation (spawned 2026-04-27)
+## Active milestone: v1.4 — Humanize-Runtime v2 (spawned 2026-04-29)
 
-See [`MILESTONE-v1.2.md`](./MILESTONE-v1.2.md) and [`phases/24-voice-quality-baseline/24-CONTEXT.md`](./phases/24-voice-quality-baseline/24-CONTEXT.md).
+See [`MILESTONE-v1.4-humanize-runtime-v2.md`](./MILESTONE-v1.4-humanize-runtime-v2.md).
 
-**Status:** Ready to execute
+**Goal:** Push Claire's bilingual (zh+en) conversational humanness to ~70-80% of Pi-level on 5 quantified metrics by attacking 4 production failure modes (verb-mirror / length escalation / code-switch drift / self-repeat advice) via deterministic detectors + ImperfectionInjector + ESConv-FSM + memory policy. Eval-first: no module work until baseline locked. 0 net new LLM calls in production path.
 
-**v1.1 carryover:** Phases 19, 22, 23 not started; deprioritized behind voice quality. Revive after v1.2 ships. Phase 21 (Sendblue) shipped 2026-04-27.
+**Status:** Defining requirements (REQUIREMENTS.md + ROADMAP.md being written).
 
-## Next milestone: v1.3 — Productionize (planned, P10-cut 2026-04-28)
+**Phases:** 29 (Eval Harness Extension) → 30 (Baseline Measurement) → 31 (Detectors) → 32 (ImperfectionInjector A/B) → 33 (FSM) → 34 (Memory Policy) → 35 (External Auto Benchmarks) → 36 (Bible v7.5 + Ship).
 
-See [`v1.2-p10-strategic-cut.md`](./v1.2-p10-strategic-cut.md).
+**Estimate:** ~7.5 dev-days.
 
-**Phases:** 24.5 (Feature Flag Infra, cross-cutting) → 25 (Voice Review Dashboard) ‖ 26 (Prod-P0) → 27 (Prod-P1 + Self-Evolve cron, gated) + 28 (Multi-Turn Sim Eval, no gate, orthogonal).
-
-**Trigger:** spawn after Phase 24-02 + 24-07 ship (Adam HITL labeling + final verify). 24.5 can start in parallel with Phase 24 wrap-up since 24-02 is Adam-blocked. Phase 28 can land any time after Phase 24 ships its judges (already done) — independent of 27 hard gate.
-
-**Phase 28 spawn (2026-04-28):** P10 added Multi-Turn LLM-vs-LLM Dialog Sim Eval as orthogonal regression coverage. 5 personas × 8-turn sim × 6 ConversationalGEval metrics. Spec: `phases/28-multi-turn-sim-eval/{CONTEXT,PLAN}.md`. ~3.5 dev-day, single P8 sequential.
-
----
-
-# Milestone state — v1.1 Pre-Launch Hardening + Companion Brain (carryover, partial ship)
-
-**Canonical build plan (开干入口):** [`.planning/v1.1-EXECUTION-PLAN.md`](./v1.1-EXECUTION-PLAN.md) — 含依赖顺序、QA/LLM 多轮、入站安全接线、通道统一架构、Report 结构。P10 补充： [`.planning/v1.1-p10-northstar-security-channel.md`](./v1.1-p10-northstar-security-channel.md).
+**v1.3 carryover:** Phases 24.5 / 25 / 26 / 27 / 28 status preserved; v1.4 spawn does not block existing v1.3 phases. Coordination via STATE.md manual review per phase transition.
 
 ## Current Position
 
-Phase: 24 (Voice Quality Baseline) — EXECUTING
-Plan: 7 of 7
-Status: Ready to execute
-Last activity: 2026-04-28
+Phase: 29 (Eval Harness Extension) — NOT STARTED
+Plan: 0 of 0 (planning pending — `/gsd:plan-phase 29` to start)
+Status: Defining requirements (this turn)
+Last activity: 2026-04-29 — milestone v1.4 spawned, P10 顶层设计 locked 16 decisions
 
-## v1.1 Plan Commits (autonomous batch)
+## Adam's blocking decisions (none currently)
 
-| Phase | Commit | Tasks |
-|---|---|---|
-| 18 Companion Voice v1 | `3820689` | 5 (1 wave) |
-| 19 Adaptive Mirror | `2e1683a` | 6 (1 wave) |
-| 20 Output Normalizer | `29c8bfb` | 2 (TDD) |
-| 21 Sendblue Migration | `d4c1c8e` | 12 (3 checkpoints) |
-| 22 Proactive Check-in | `f70ec2f` | 6 (1 wave) |
-| 23 Closed Beta Onboarding | `72e2f33` | 5 (1 wave) |
-| Bible v1 | `7cc1bfb` | locked |
-
-## Execution dependency graph
-
-```
-Phase 18 (Voice v1)  ──┬─→ Phase 19 (Mirror)
-                       ├─→ Phase 22 (Proactive) ←─ Phase 20 (Normalizer)
-                       └─→ Phase 23 (Beta Onboarding)
-
-Phase 20 (Normalizer)  — independent, parallelable with 18
-
-Phase 21 (Sendblue)    — independent of voice; blocked on Adam contract Qs
-                         (CHANNEL-08 gates production cutover, not code-landing)
-```
-
-## Adam's blocking decisions
-
-1. **Sendblue contract Qs (4)** — block Phase 21 production cutover (NOT code landing — code can ship behind `PA_CHANNEL_LEGACY=1` flag):
-   - Apple ID ownership (Sendblue's vs operator's)
-   - SLA on number re-provisioning if Apple flags a line
-   - Outbound rate limit numbers
-   - GDPR / data residency posture
-2. **GCP Cloud Scheduler one-time creation** — Phase 22 user_setup human step.
-3. **Webhook signing secret provisioning** — Phase 21 Task 10 checkpoint (Adam provides via `firebase functions:secrets:set`).
+All 16 P10 decisions locked in `MILESTONE-v1.4-humanize-runtime-v2.md` Decision Log. No pending Adam questions for v1.4 spawn. First Adam decision point arrives end of Phase 30 (baseline interpretation).
 
 ## Recommended execution order
 
-1. `/clear` then `/gsd:execute-phase 18` (Bible locked, plan ready, no Adam blocker)
-2. After 18 ships → parallel: `/gsd:execute-phase 20` (independent, ≤1 day) and `/gsd:execute-phase 23` (depends on 18 voice)
-3. After 18 + 20 ship → `/gsd:execute-phase 22` (proactive needs voice + normalizer)
-4. After 18 ships → `/gsd:execute-phase 19` (adaptive mirror layered on static base)
-5. Whenever Adam answers Sendblue Qs + provisions sandbox → `/gsd:execute-phase 21`
+1. `/clear` then `/gsd:plan-phase 29` — Eval Harness Extension (must finish before Phase 30)
+2. `/gsd:execute-phase 29` — wire 4 new axes + bilingual sentence splitter + new scenarios
+3. `/gsd:plan-phase 30` then `/gsd:execute-phase 30` — Baseline measurement (locks 5-metric report; gates all subsequent phases)
+4. `/gsd:plan-phase 31` then execute — Detectors
+5. Phases 32-34 in roadmap order; Phase 35 (benchmarks) can parallelize with 33-34
+6. Phase 36 ships behind feature flag `PA_HUMANIZE_RUNTIME_ENABLED`
 
 ## Milestone goal
 
-Closed-beta launchable (≤20 hand-picked users) within 3 weeks. Fix robotic companion voice via prompt structure on gpt-5.4-nano (no Sonnet escalation), migrate channel layer to Sendblue, close output-normalization + safety gaps, and revive proactive check-in.
+Quantitative voice quality improvement: 5 metrics measurably better vs rev-00056 baseline + Claire stack ≥ Qwen-72B raw on ≥1 of 5 public benchmarks. No new LLM calls in production path. Latency stays under 12s p99.
 
-## Accumulated Context (carried from v1.0)
+## Accumulated Context (carried from v1.0/v1.1/v1.2/v1.3)
 
-### v1.0 baseline shipped
+### v1.0/v1.1 baseline shipped
+
+(see prior STATE.md history for detail; preserved below for context)
 
 - Phase 1-9: Broker correctness + Dashboard shell + Memory evol + Scheduler + Phase 2/3 production hardening
-- Phase 10: Agents SDK current-info connector (closed 2026-04-26)
-- Phase 10.5: Agents SDK runtime cutover — default agent runs OpenAI gpt-5.4-nano via Responses API; webSearchTool attached; SiliconFlow demoted to env-gated fallback (closed 2026-04-26)
-- Phase 11.1: Persona card injection (closed 2026-04-27); Phase 11.3 mem0UserId migration not started
-- Phase 13: WeKruit matching connector (degraded mode contract; `PA_MATCHING_URL` not yet wired)
-- Phase 14: Companion eval harness (LLM-as-judge + cost ceiling, 23 scenarios pass)
-- Phase 15: Chunked typing simulation (kill switch armed, default disabled)
-- Phase 16/17 baseline: worker durable cursor + auto-catchup + allowlist fail-closed (inbound + outbound) — landed 2026-04-27
+- Phase 10/10.5: Agents SDK runtime cutover (gpt-5.4-nano default via Responses API)
+- Phase 11.1: Persona card injection (closed 2026-04-27)
+- Phase 14: Companion eval harness (LLM-as-judge + cost ceiling, 23 scenarios pass) — **REUSED for v1.4 D13**
+- Phase 18-23: Voice v1 + Mirror + Normalizer + Sendblue + Proactive + Beta onboarding
+- Phase 21: Sendblue cutover (shipped 2026-04-27)
+- Phase 24: Voice quality baseline (executing in v1.2)
+- Phases 24.5/25/26/27/28: v1.3 Productionize (planned/executing)
 
-### v1.1 research already in-bank
+### v1.4-specific accumulated context
 
-- `.planning/phases/17-pre-launch-hardening/17-CONTEXT.md` — milestone scope + Sendblue migration design + Output Normalizer design + Proactive Check-in plumbing
-- `.planning/phases/17-pre-launch-hardening/17-RESEARCH-companion-voice.md` — Round 1 frameworks (SillyTavern V2, Ali:Chat, EmotionPrompt caveats on small models)
-- `.planning/phases/17-pre-launch-hardening/17-RESEARCH-raw-artifacts.md` — Round 2 raw artifacts (Snapchat MyAI prompt verbatim, Tendera "facts as voice" diff, Meta filler-ban list, Anthropic Claude Soul, Discord Clyde sass, zh+en slang lexicons, Anthropic anti-overcaution checklist)
+- **Two independent Deep Research reports** cross-validated original v1.4 architecture; both verdicts: PROCEED-WITH-MODIFICATIONS
+- **Critic loop dropped** from architecture: 5 peer-reviewed papers show LLM judge bias on subjective style amplifies the same failures it tries to fix
+- **Plutchik demoted** to internal scaffold: no clean Chinese mapping for 委屈/心疼/心累/不甘
+- **Eval harness verified intact**: `tests/scenarios/{runner.mjs,pairwise-runner.mjs,judge.mjs,lib/voice-axes.mjs,lib/pairwise.mjs}` + 20+ scenarios + 33 zh + 15 en filler blacklist already exist — D13 locks reuse
+- **Embedding stack verified**: `BAAI/bge-m3` already wired in `packages/memory/src/mem0.ts` via SiliconFlow — D14 locks no OpenAI embedding swap
+- **External benchmarks verified open**: BotChat, CharacterEval, EmpatheticDialogues, ESConv, RoleLLM all 200 OK (Phase 35)
+- **No prefix cache exists**: `atm-llm-runtime.ts:62` "cache" is profile credential TTL only — D7 locks adding SiliconFlow prefix cache POC
 
-### Locked architecture decisions
+### Locked architecture decisions (carry forward, all v1.4 D-series in MILESTONE-v1.4-humanize-runtime-v2.md)
 
-- ONE agent runtime = OpenAI Agents SDK; default LLM = gpt-5.4-nano via Responses API
-- SiliconFlow demoted to env-gated fallback (`PA_AGENT_LLM_PROVIDER=siliconflow`)
-- Mem0/Qdrant remains memory empowerment layer (Mem0 LLM/embedder still SiliconFlow Qwen + bge-m3)
-- Hosted tools attach via SDK `webSearchTool` when `agent.toolPolicy === "allowlist"`
-- `__PA_RESET__` stays as orchestrator-level guard, not a tool
-- Sendblue is pure transport (triple-verified) — agent runtime, memory, persona stay with us
+- ONE agent runtime = OpenAI Agents SDK; default LLM = gpt-5.4-nano via Responses API (v1.0)
+- SiliconFlow gated fallback (`PA_AGENT_LLM_PROVIDER=siliconflow`)
+- Mem0/Qdrant remains memory empowerment layer (Mem0 LLM/embedder = SiliconFlow Qwen + bge-m3)
+- Sendblue is pure transport (v1.1)
+- v1.4 D1-D16 (see milestone doc) — locked, do not re-litigate
 
-### Adam-locked v1.1 constraints
+### Adam-locked v1.4 constraints
 
-- No model escalation (no Sonnet); voice fix at prompt + persona + eval layer only
-- No fine-tuning (no anchor data yet)
-- No negative-instruction blacklists in system prompt — go in eval LLM-judge auto-fail criteria only
-- Keep Mem0/Qdrant + Memory Admin
-- Closed-beta tolerates iMessage Apple-ID gray zone for ≤20 users; Sendblue migration before public launch
+- No model escalation (Qwen-7B class only)
+- No fine-tuning
+- 0 net new LLM calls in production path
+- < 12s p99 per turn
+- No LangGraph, no DSPy, no Reflexion-lite critic
+- No new monorepo package — extend `packages/pa-orchestrator/src/voice/`
+- Embedding = `BAAI/bge-m3` via SiliconFlow
 
-### Open Adam decisions (pre-Phase-18 spawn)
+### v1.4 backlog (explicit deferrals)
 
-- **Character Bible v1** — **locked** in `CHARACTER-BIBLE-v1.md` (Claire/小柯). Edits need Adam sign-off.
-- **Sendblue contract** — confirm 4 contract questions before signing: Apple ID ownership, SLA on number re-provisioning, outbound rate limit, GDPR posture.
-
-### Known gaps carried forward
-
-- `PA_MATCHING_URL` unset → wekruit-matching connector in degraded mode (Phase 13 follow-up)
-- Phase 11.3 mem0UserId authoritative migration not started
-- Dashboard production build emits non-fatal large chunk warning
-- Default PA profile path returns `Unsupported runtime profile "personal-assistant-default"` in ATM
-- `gpt5.4nano` slug bug still latent (correct slug `gpt-5.4-nano`)
-
-### Public launch gate (post-v1.1, separate cycle)
-
-- B4 secrets to GCP Secret Manager
-- B1 Apple ID risk fully resolved (Sendblue or Business Chat)
-- GDPR/CCPA delete API + abuse events full producers
-- Always-on Mac mini (or remove via Sendblue migration)
+- Jones & Bergen 2024 5-min Turing test human-rater replication (~$300 + 7d, demographic mismatch) → v1.5
+- TexturePool recruitment (10-user × 2h interview) → v1.5
+- Big5-Chat trait scoring engineering → defer
+- Reflexion-lite critic resurrection → would need new evidence
+- LoCoMo memory benchmark → repo offline; revisit if reappears
+- 250 hand-curated texture facts → v1.5
+- EvoEmo full GA training pipeline → not borrowed (only MDP abstraction)

@@ -478,3 +478,49 @@ Phase 19 (Adaptive Mirror) and Phase 22 (Proactive Check-in) are **post-beta P1*
 - B1 Apple ID risk fully resolved (Sendblue or Business Chat)
 - GDPR/CCPA delete API + abuse events full producers
 - Phase 19 + Phase 22 completed
+
+---
+
+## Milestone v1.4 — Humanize-Runtime v2 (Bilingual, Eval-First)
+
+**Goal:** Push Claire's bilingual (zh+en) conversational humanness to ~70-80% Pi-level on 5 quantified metrics by attacking 4 production failure modes (verb-mirror / length escalation / code-switch drift / self-repeat advice) via deterministic detectors + ImperfectionInjector + ESConv-FSM + memory policy. **Eval-first** ordering — no module work until baseline locked. **0 net new LLM calls** in production path.
+
+**Spawned:** 2026-04-29 after two independent Deep Research reports (Compass + DR-2) cross-validated original v1.4 architecture. Both verdicts: PROCEED-WITH-MODIFICATIONS. v2 incorporates all critical recommendations (drop critic loop, demote Plutchik, position-constrain ImperfectionInjector, add crisis routing, run external benchmarks).
+
+**Estimate:** ~7.5 dev-days.
+
+**Canonical doc:** [`MILESTONE-v1.4-humanize-runtime-v2.md`](./MILESTONE-v1.4-humanize-runtime-v2.md). Full Decision Log (D1-D16) + reuse manifest + research repos there.
+
+| # | Phase | Goal | Requirements | Quantitative Gate (no merge unless met) | Status |
+|---|-------|------|--------------|-----------------------------------------|--------|
+| 29 | Eval Harness Extension | Extend `tests/scenarios/lib/voice-axes.mjs` with 4 new axes (drift_resistance / length_compliance / advice_novelty / strategy_fit). Add bilingual sentence splitter, BGE-M3 embed-sim wrapper, drift-score harness. 5+ new scenario YAMLs. | HARNESS-01..05 | All 4 axes return numeric scores on existing 20 scenarios; bilingual sentence splitter passes 30+ unit tests | Not started |
+| 30 | Baseline Measurement | Run pairwise-runner on all `eval-voice-*.yaml` + sim-audit-rev56.mjs. Lock 5-metric report in `.planning/baseline-rev00056.md`. Define quantitative gates per Phase 31-36. | BASELINE-01..04 | `.planning/baseline-rev00056.md` committed with 5 metric numbers + per-phase gates | Not started |
+| 31 | 4 Deterministic Detectors (F1-F4 bilingual) | F1 verb-mirror (zh char 3-gram + en bigram). F2 length cap (3 sentences). F3 lang-lock reinforcement. F4 advice-repeat (BGE-M3 cos-sim vs last 3 turns). Wired into voice rewriter Phase 4; failures → strip / regenerate / reject-resample. | DETECT-01..07 | Detector recall ≥ 80% on rev-00056 known fails; false positive rate ≤ 10% | Not started |
+| 32 | ImperfectionInjector + 3-arm A/B | 3-arm A/B router (0/15/30%), turn-onset position-constrained, bilingual policies (zh + en fillers + self-correct), type priority self-correct > hesitate > clarify > uncertainty. A/B harness via existing pairwise-runner. | IMPERFECT-01..07 | A/B winner determined via pre-registered statistical significance; chosen arm beats 0% control on humanness axes ≥ 10pp | Not started |
+| 33 | FSM (5 UX × ESConv 8 strategies) | 5 UX state enum + ESConv 8 strategy enum (bilingual labels). State × strategy allowed-set table per ESConv 3 stages. Rule-based state classifier (no LLM). TransESC-style transition table. Phase 3 prompt directive. | FSM-01..07 | ux_state classifier accuracy ≥ 70%; strategy_fit ∈ allowed-set 100% | Not started |
+| 34 | Memory Policy (advice-tracker + contradiction) | advice-tracker.ts with BGE-M3 embedding + Firestore persistence. Mem0 fact diff for contradiction. Phase 3 prompt extended with "已经给过的建议" / "Already-given advice" injection. Pin Mem0 extractor to Qwen-7B+. Bilingual retrieval test. | MEMORY-01..06 | 50-turn synthetic advice repeat rate < 5%; contradiction detector ≥ 90% on seeded fixtures | Not started |
+| 35 | External Auto Benchmarks (5 benchmarks) | BotChat (open-compass, bilingual auto Turing-style). CharacterEval (morecry, ZH 77 char × 12 metrics). EmpatheticDialogues (facebookresearch, EN 25k). ESConv (thu-coai, EN 8 strategies). RoleLLM (InteractiveNLP-Team, EN 100 char). Compare Qwen-7B raw vs Claire stack to public leaderboards. | BENCH-01..07 | Total spend ≤ $25; Claire stack ≥ Qwen-72B raw on ≥ 1 of 5 benchmarks | Not started |
+| 36 | Bible v7.5 + Crisis Red-team + Ship | Bible v7.5 with bilingual NEVER + zh+en slang bank + crisis safety prompt section (zh+en triggers + safe response template + 心理援助热线 400-161-9995 + Crisis Text Line 741741) + 3-sentence cap directive. Feature flag `PA_HUMANIZE_RUNTIME_ENABLED`. 20 crisis red-team prompts auto-tested. SiliconFlow prefix cache POC. | BIBLE-01..03, SHIP-01..05 | 20 crisis red-team prompts route to safety branch 100%; final audit — all 5 metrics meet target vs Phase 30 baseline; benchmark report meets ≥1 of 5 criterion | Not started |
+
+### v1.4 Decision Log Summary (D1-D16)
+
+D1: Drop Reflexion-lite critic loop default | D2: Plutchik demoted to internal scaffold (use 大连理工 7-class for ZH, GoEmotions for EN) | D3: ImperfectionInjector 3-arm A/B + turn-onset only | D4: Crisis routing via Bible prompt (no separate classifier) | D5: Mem0 keep, pin extractor to Qwen-7B+ | D6: FiSMiness baseline arm in eval | D7: Add SiliconFlow prefix cache | D8: No new monorepo package; extend pa-orchestrator/voice/ | D9: Bilingual focus zh + en + mixed | D10: Borrow ESConv 8 + TransESC + genagents reflection | D11: Chinese affect = 大连理工 7-class | D12: Length cap = prompt + post-gen detector strip | D13: Reuse existing tests/scenarios/ harness | D14: Embedding stack = BAAI/bge-m3 via SiliconFlow | D15: Run all 5 external benchmarks | D16: Eval-first phase ordering
+
+### v1.4 Launch Gate (closed-beta humanize-runtime rollout)
+
+- [ ] Phase 30 baseline locked
+- [ ] Phase 31 detectors recall ≥ 80%
+- [ ] Phase 32 A/B winner picked (or 0% control wins → ImperfectionInjector disabled in production)
+- [ ] Phase 33 FSM strategy_fit 100%
+- [ ] Phase 34 advice repeat < 5%
+- [ ] Phase 35 ≥ 1 of 5 benchmarks beats Qwen-72B raw
+- [ ] Phase 36 crisis red-team 100% + 5-metric audit pass
+- [ ] Feature flag rollout: 1% → 10% → 50% → 100% (gated by 5-metric monitoring)
+
+### v1.4 Backlog (defer to v1.5)
+
+- Jones & Bergen 5-min Turing test human raters (~$300 + 7d)
+- TexturePool recruitment (10-user × 2h interview, 250-fact pool)
+- Big5-Chat trait scoring engineering
+- Reflexion-lite critic resurrection (would need new evidence)
+- LoCoMo memory benchmark (repo offline)
