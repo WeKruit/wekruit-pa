@@ -3,11 +3,11 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: Humanize-Runtime v2 + v1.3 Carryover (Dual Stream)
 status: in_progress
-last_updated: "2026-04-29T19:00:00.000Z"
+last_updated: "2026-04-29T22:00:00.000Z"
 last_activity: 2026-04-29
 progress:
   total_phases: 12
-  completed_phases: 0
+  completed_phases: 2
   total_plans: 0
   completed_plans: 0
 ---
@@ -24,7 +24,7 @@ P10 strategy doc: `phases/P9-AUTONOMOUS-RUN-STATUS.md` (legacy) + `MILESTONE-v1.
 
 | # | Phase | Status | Workstream owner |
 |---|-------|--------|------------------|
-| 29 | Agent Handbook (Bible-as-data) | CONTEXT.md + PLAN.md exist | P9-A |
+| 29 | Agent Handbook (Bible-as-data) | ✅ COMPLETE 2026-04-29 (T1-T4, 4 commits + handbook integration tests 7/7 pass; SDK 18/18 + orch 201/201 pass) | P9-A |
 | 30 | Downstream Eval Connector | CONTEXT.md + PLAN.md exist | P9-A |
 | 31 | Upstream Event Connector | CONTEXT.md + PLAN.md exist | P9-A |
 | 32 | Dashboard IA Reorg + Stress Harness | CONTEXT.md exists, 4-wave swarm-ready | P9-B |
