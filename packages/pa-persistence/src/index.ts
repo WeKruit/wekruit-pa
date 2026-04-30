@@ -274,3 +274,29 @@ export type {
   UpstreamTemplate,
   SaveUpstreamTemplateInput,
 } from "./upstream-events.js"
+
+// Phase 29 T1 — Agent Handbook (Bible-as-data, per-slug + immutable versions).
+export {
+  HANDBOOKS_COLLECTION,
+  HANDBOOK_VERSIONS_SUBCOLLECTION,
+  HANDBOOK_AUDIT_PREFIX as HANDBOOK_V2_AUDIT_PREFIX,
+  HANDBOOK_TTL_MS,
+  HANDBOOK_RENDER_ORDER,
+  DEFAULT_HANDBOOK_SLUG,
+  loadHandbook as loadHandbookV2,
+  saveHandbook as saveHandbookV2,
+  revertHandbook as revertHandbookV2,
+  listVersions as listHandbookVersions,
+  getVersion as getHandbookVersion,
+  composeSystemPrompt as composeHandbookV2SystemPrompt,
+  emptyHandbookSections,
+  normalizeHandbookSections,
+  _clearHandbookCache,
+  _getHandbookCacheStats,
+} from "./handbook.js"
+export type {
+  HandbookDoc,
+  HandbookSections,
+  PlaybookSpec,
+  SaveHandbookOpts,
+} from "./handbook.js"
