@@ -62,7 +62,17 @@ import { resolveOnboardingStep, applyOnboardingStep, composeOnboardingInput } fr
 import { LEGACY_V0_SYSTEM_PROMPT } from "./legacy-voice-prompt.js"
 import { buildVoiceReminder, isVoiceV1Disabled } from "./voice-reminder.js"
 import { computeMirrorForTurn, isVoiceMirrorDisabledFlag } from "./voice/mirror-injection.js"
-import { rewriteIfOff, stripRepeatOpener, stripValidationTic } from "./voice/llm-rewriter.js"
+import {
+  rewriteIfOff,
+  stripRepeatOpener,
+  stripValidationTic,
+  isHumanizeRuntimeEnabled,
+} from "./voice/llm-rewriter.js"
+// Phase 36 — ImperfectionInjector applied post-strip on final visible text.
+import {
+  injectImperfection,
+  resolveArm,
+} from "./voice/imperfection-injector/index.js"
 import { tapCoachTokens } from "./voice/coach-token-monitor.js"
 import { buildFewShotTurns, prefixFewShotToHistory } from "./voice/few-shot.js"
 import { normalizeForIMessage } from "./output-normalizer.js"
@@ -922,7 +932,52 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       priorAssistantReplies.length > 0
         ? stripRepeatOpener(rewritten.text, priorAssistantReplies)
         : rewritten.text
-    const replyAfterRewrite = stripValidationTic(afterOpenerStrip)
+    const stripped = stripValidationTic(afterOpenerStrip)
+    // Phase 36 wire-in — ImperfectionInjector applied to FINAL visible text
+    // post-strip. Gated by paHumanizeRuntimeEnabled umbrella + arm-resolver
+    // (PA_IMPERFECTION_ARM env or userId-hash bucket). Default arm = "off"
+    // → no-op. Sub-flag PA_IMPERFECTION_INJECTOR_ENABLED=false bypasses
+    // entirely. < 5ms p95 latency.
+    let replyAfterRewrite = stripped
+    let injectorAppliedFlag = false
+    let injectorArm: "off" | "low" | "high" = "off"
+    try {
+      const humanizeOn = await isHumanizeRuntimeEnabled(store.db, event.userId)
+      if (humanizeOn && process.env.PA_IMPERFECTION_INJECTOR_ENABLED !== "false") {
+        injectorArm = resolveArm(event.userId ?? "")
+        if (injectorArm !== "off") {
+          const injResult = injectImperfection({
+            text: stripped,
+            arm: injectorArm,
+            userId: event.userId,
+            prevAssistantReply: priorAssistantReplies[0],
+          })
+          replyAfterRewrite = injResult.injected
+          injectorAppliedFlag = injResult.applied
+          if (injResult.applied) {
+            store.log("pa.voice.imperfection_injector.applied", {
+              userId: event.userId,
+              turnId,
+              arm: injResult.arm,
+              type: injResult.injection_type,
+              position: injResult.position,
+              beforeLen: stripped.length,
+              afterLen: injResult.injected.length,
+            })
+          }
+        }
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      store.log("pa.voice.imperfection_injector.error", {
+        userId: event.userId,
+        turnId,
+        error: msg,
+      })
+      replyAfterRewrite = stripped
+    }
+    void injectorAppliedFlag
+    void injectorArm
     if (rewritten.rewriteApplied) {
       store.log("pa.voice.llm_rewriter.applied", {
         userId: event.userId,

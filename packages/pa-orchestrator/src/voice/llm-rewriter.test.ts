@@ -38,12 +38,12 @@ import {
  */
 function fakeRewriter(returnText: string, opts: { delayMs?: number; throwAfter?: boolean } = {}): {
   deps: RewriterDeps
-  calls: { rawText: string }[]
+  calls: { rawText: string; fsmDirective?: string }[]
 } {
-  const calls: { rawText: string }[] = []
+  const calls: { rawText: string; fsmDirective?: string }[] = []
   const deps: RewriterDeps = {
-    callRewriter: async (rawText, _signal) => {
-      calls.push({ rawText })
+    callRewriter: async (rawText, _signal, _priorReplies, fsmDirective) => {
+      calls.push({ rawText, fsmDirective })
       if (opts.delayMs) await new Promise((r) => setTimeout(r, opts.delayMs))
       if (opts.throwAfter) throw new Error("simulated upstream error")
       return returnText
@@ -590,4 +590,83 @@ test("Phase 40 — detector pass error degrades gracefully (rewrite still succee
   // cleanup
   delete process.env.paHumanizeRuntimeEnabled
   delete process.env.PA_DETECTORS_ENABLED
+})
+
+// ─── Phase 37 FSM directive injection tests ─────────────────────────────────
+
+test("Phase 37 — FSM directive NOT passed when umbrella OFF (default)", async () => {
+  __resetBreakerForTests()
+  delete process.env.PA_HUMANIZE_RUNTIME_DISABLED
+  delete process.env.paHumanizeRuntimeEnabled
+  delete process.env.PA_FSM_ENABLED
+  const ok = fakeRewriter("挺难的. 还好吗.")
+  await rewriteIfOff("draft message text input that is long enough", { deps: ok.deps }, {})
+  assert.equal(ok.calls.length, 1)
+  assert.equal(ok.calls[0]!.fsmDirective, undefined)
+})
+
+test("Phase 37 — FSM directive PASSED to callRewriter when umbrella ON", async () => {
+  __resetBreakerForTests()
+  delete process.env.PA_HUMANIZE_RUNTIME_DISABLED
+  process.env.paHumanizeRuntimeEnabled = "true"
+  const stubDb = new Proxy(
+    {},
+    {
+      get() {
+        throw new Error("env-override should short-circuit")
+      },
+    }
+  ) as unknown as import("firebase-admin/firestore").Firestore
+  const ok = fakeRewriter("挺难的. 还好吗.")
+  await rewriteIfOff(
+    "draft message text input long enough",
+    { deps: ok.deps },
+    {
+      db: stubDb,
+      userId: "u1",
+      turnId: "t1",
+      lastUserMessage: "今天面试挂了，整个人懵了",
+      userHistoryForFsm: ["昨天的事我还在想"],
+      claireHistoryForDetectors: ["听起来挺难的"],
+      turnNumber: 3,
+    }
+  )
+  assert.equal(ok.calls.length, 1)
+  assert.ok(
+    ok.calls[0]!.fsmDirective && ok.calls[0]!.fsmDirective.length > 0,
+    "FSM directive should be non-empty string"
+  )
+  // cleanup
+  delete process.env.paHumanizeRuntimeEnabled
+})
+
+test("Phase 37 — sub-flag PA_FSM_ENABLED=false bypasses directive even when umbrella ON", async () => {
+  __resetBreakerForTests()
+  delete process.env.PA_HUMANIZE_RUNTIME_DISABLED
+  process.env.paHumanizeRuntimeEnabled = "true"
+  process.env.PA_FSM_ENABLED = "false"
+  const stubDb = new Proxy(
+    {},
+    {
+      get() {
+        throw new Error("env-override should short-circuit")
+      },
+    }
+  ) as unknown as import("firebase-admin/firestore").Firestore
+  const ok = fakeRewriter("挺难的.")
+  await rewriteIfOff(
+    "draft message text input long enough",
+    { deps: ok.deps },
+    {
+      db: stubDb,
+      userId: "u1",
+      turnId: "t1",
+      lastUserMessage: "今天面试挂了",
+      turnNumber: 1,
+    }
+  )
+  assert.equal(ok.calls[0]!.fsmDirective, undefined, "sub-flag OFF skips FSM")
+  // cleanup
+  delete process.env.paHumanizeRuntimeEnabled
+  delete process.env.PA_FSM_ENABLED
 })

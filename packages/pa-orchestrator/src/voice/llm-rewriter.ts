@@ -55,6 +55,9 @@ import {
 // Phase 38 — memory policy advice tracker fires post-gen (fire-and-forget).
 import { trackAdvice } from "./memory-policy/index.js"
 
+// Phase 37 — FSM directive injection (ux_state + allowed_strategies).
+import { runFsm, type FsmContext } from "./fsm/index.js"
+
 /** What the caller learns about the rewrite attempt. */
 export type RewriteReason =
   | "rewritten" // model returned a different non-empty text
@@ -162,7 +165,10 @@ export type RewriterDeps = {
     signal: AbortSignal,
     /** Phase 33 — pass last 1-2 assistant replies so rewriter can rotate
      *  openers / detect repeat tics across turns. Optional for back-compat. */
-    priorAssistantReplies?: string[]
+    priorAssistantReplies?: string[],
+    /** Phase 37 — FSM directive (ux_state + allowed_strategies) appended
+     *  to system prompt for this turn. Optional for back-compat. */
+    fsmDirective?: string
   ) => Promise<string>
 }
 
@@ -438,7 +444,7 @@ function getClient(): CachedChatClient {
  * tiny output budget, hard token cap.
  */
 const defaultDeps: RewriterDeps = {
-  callRewriter: async (rawText, signal, priorAssistantReplies) => {
+  callRewriter: async (rawText, signal, priorAssistantReplies, fsmDirective) => {
     const client = getClient()
     // Phase 33 — fold prior assistant replies into the user message so
     // the rewriter can rotate openers / detect repeat tics. Limit to last
@@ -454,6 +460,13 @@ const defaultDeps: RewriterDeps = {
             .map((r, i) => `  [prev-${i + 1}-opener] ${r.trim().slice(0, 12)}…`)
             .join("\n")}\n\n`
         : ""
+    // Phase 37 — append FSM directive to system prompt when caller provides
+    // one. Empty / undefined → no change. Directive is short (~80-150 chars
+    // gloss naming ux_state + allowed strategies).
+    const systemPromptWithFsm =
+      fsmDirective && fsmDirective.trim().length > 0
+        ? `${REWRITER_V2_SYSTEM_PROMPT}\n\n${fsmDirective.trim()}`
+        : REWRITER_V2_SYSTEM_PROMPT
     const response = await client.chat.completions.create(
       {
         model: DEFAULT_MODEL,
@@ -463,7 +476,7 @@ const defaultDeps: RewriterDeps = {
         // soft cap still applies — this is just a hard ceiling for safety.
         max_tokens: 500,
         messages: [
-          { role: "system", content: REWRITER_V2_SYSTEM_PROMPT },
+          { role: "system", content: systemPromptWithFsm },
           {
             role: "user",
             content: `${priorBlock}DRAFT:\n${rawText}\n\nREWRITTEN OR UNCHANGED:`,
@@ -512,6 +525,16 @@ export type RewriteContext = {
   lastUserMessage?: string
   /** User language hint passed through to memory policy injection. */
   userLang?: "zh" | "en" | "mixed"
+  /**
+   * Phase 37 FSM — last N user messages (most recent first), for ux_state
+   * gravity computation. Optional; FSM falls back to current turn only.
+   */
+  userHistoryForFsm?: string[]
+  /**
+   * Phase 37 FSM — 1-indexed turn number in current session. Used to map
+   * to one of 3 stages (early/mid/late). Defaults to 1 when absent.
+   */
+  turnNumber?: number
 }
 
 /**
@@ -522,7 +545,7 @@ export type RewriteContext = {
  * Emergency disable env: `PA_HUMANIZE_RUNTIME_DISABLED=true` short-circuits
  * to false BEFORE Firestore read. Missing db = OFF.
  */
-async function isHumanizeRuntimeEnabled(
+export async function isHumanizeRuntimeEnabled(
   db: Firestore | undefined,
   userId: string | undefined
 ): Promise<boolean> {
@@ -572,11 +595,39 @@ export async function rewriteIfOff(
     controller.abort()
   }, timeoutMs)
 
+  // Phase 37 — compute FSM directive PRE-gen when umbrella ON + sub-flag.
+  // Latency budget < 10ms p95 (rule-based, no LLM). 0 net new LLM calls.
+  // Computed before the LLM call so the directive can append to system prompt.
+  let fsmDirective: string | undefined
+  const humanizeEnabledForFsm = await isHumanizeRuntimeEnabled(ctx.db, ctx.userId)
+  if (humanizeEnabledForFsm && process.env.PA_FSM_ENABLED !== "false") {
+    try {
+      const fsmCtx: FsmContext = {
+        turn: { user: ctx.lastUserMessage ?? "" },
+        history: {
+          userTurns: ctx.userHistoryForFsm ?? [],
+          claireReplies: ctx.claireHistoryForDetectors ?? [],
+        },
+        turnNumber: ctx.turnNumber ?? 1,
+      }
+      const fsmResult = runFsm(fsmCtx, { userLang: ctx.userLang })
+      fsmDirective = fsmResult.directive
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.log("[llm-rewriter] runFsm failed (degrade)", { msg })
+    }
+  }
+
   let modelText: string | null = null
   let upstreamError = false
   let upstreamErrorMsg: string | undefined
   try {
-    modelText = await deps.callRewriter(rawText, controller.signal, ctx.priorAssistantReplies)
+    modelText = await deps.callRewriter(
+      rawText,
+      controller.signal,
+      ctx.priorAssistantReplies,
+      fsmDirective
+    )
   } catch (err) {
     upstreamError = true
     upstreamErrorMsg = err instanceof Error ? `${err.name}: ${err.message}` : String(err)

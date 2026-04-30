@@ -1,6 +1,6 @@
 # Final 5-Metric Audit — Phase 40 (Bible v7.5 + Crisis + Ship)
 
-**Generated:** 2026-04-30T23:14:49.158Z
+**Generated:** 2026-04-30T23:49:59.793Z
 **Phase:** v1.4 Phase 40 (FINAL)
 **Methodology:** re-runs Phase 34 baseline corpus + applies Phase 35-38 simulated post-treatment (F1 mirror-strip + F2 sentence-truncate + F4 diversity-nudge proxy).
 **Reproducibility:** `node .planning/phases/40-bible-v7.5-ship/final-audit.mjs`
