@@ -493,14 +493,14 @@ Phase 19 (Adaptive Mirror) and Phase 22 (Proactive Check-in) are **post-beta P1*
 
 | # | Phase | Goal | Requirements | Quantitative Gate (no merge unless met) | Status |
 |---|-------|------|--------------|-----------------------------------------|--------|
-| 29 | Eval Harness Extension | Extend `tests/scenarios/lib/voice-axes.mjs` with 4 new axes (drift_resistance / length_compliance / advice_novelty / strategy_fit). Add bilingual sentence splitter, BGE-M3 embed-sim wrapper, drift-score harness. 5+ new scenario YAMLs. | HARNESS-01..05 | All 4 axes return numeric scores on existing 20 scenarios; bilingual sentence splitter passes 30+ unit tests | Not started |
-| 30 | Baseline Measurement | Run pairwise-runner on all `eval-voice-*.yaml` + sim-audit-rev56.mjs. Lock 5-metric report in `.planning/baseline-rev00056.md`. Define quantitative gates per Phase 31-36. | BASELINE-01..04 | `.planning/baseline-rev00056.md` committed with 5 metric numbers + per-phase gates | Not started |
-| 31 | 4 Deterministic Detectors (F1-F4 bilingual) | F1 verb-mirror (zh char 3-gram + en bigram). F2 length cap (3 sentences). F3 lang-lock reinforcement. F4 advice-repeat (BGE-M3 cos-sim vs last 3 turns). Wired into voice rewriter Phase 4; failures → strip / regenerate / reject-resample. | DETECT-01..07 | Detector recall ≥ 80% on rev-00056 known fails; false positive rate ≤ 10% | Not started |
-| 32 | ImperfectionInjector + 3-arm A/B | 3-arm A/B router (0/15/30%), turn-onset position-constrained, bilingual policies (zh + en fillers + self-correct), type priority self-correct > hesitate > clarify > uncertainty. A/B harness via existing pairwise-runner. | IMPERFECT-01..07 | A/B winner determined via pre-registered statistical significance; chosen arm beats 0% control on humanness axes ≥ 10pp | Not started |
-| 33 | FSM (5 UX × ESConv 8 strategies) | 5 UX state enum + ESConv 8 strategy enum (bilingual labels). State × strategy allowed-set table per ESConv 3 stages. Rule-based state classifier (no LLM). TransESC-style transition table. Phase 3 prompt directive. | FSM-01..07 | ux_state classifier accuracy ≥ 70%; strategy_fit ∈ allowed-set 100% | Not started |
-| 34 | Memory Policy (advice-tracker + contradiction) | advice-tracker.ts with BGE-M3 embedding + Firestore persistence. Mem0 fact diff for contradiction. Phase 3 prompt extended with "已经给过的建议" / "Already-given advice" injection. Pin Mem0 extractor to Qwen-7B+. Bilingual retrieval test. | MEMORY-01..06 | 50-turn synthetic advice repeat rate < 5%; contradiction detector ≥ 90% on seeded fixtures | Not started |
-| 35 | External Auto Benchmarks (5 benchmarks) | BotChat (open-compass, bilingual auto Turing-style). CharacterEval (morecry, ZH 77 char × 12 metrics). EmpatheticDialogues (facebookresearch, EN 25k). ESConv (thu-coai, EN 8 strategies). RoleLLM (InteractiveNLP-Team, EN 100 char). Compare Qwen-7B raw vs Claire stack to public leaderboards. | BENCH-01..07 | Total spend ≤ $25; Claire stack ≥ Qwen-72B raw on ≥ 1 of 5 benchmarks | Not started |
-| 36 | Bible v7.5 + Crisis Red-team + Ship | Bible v7.5 with bilingual NEVER + zh+en slang bank + crisis safety prompt section (zh+en triggers + safe response template + 心理援助热线 400-161-9995 + Crisis Text Line 741741) + 3-sentence cap directive. Feature flag `PA_HUMANIZE_RUNTIME_ENABLED`. 20 crisis red-team prompts auto-tested. SiliconFlow prefix cache POC. | BIBLE-01..03, SHIP-01..05 | 20 crisis red-team prompts route to safety branch 100%; final audit — all 5 metrics meet target vs Phase 30 baseline; benchmark report meets ≥1 of 5 criterion | Not started |
+| 33 | Eval Harness Extension | Extend `tests/scenarios/lib/voice-axes.mjs` with 4 new axes (drift_resistance / length_compliance / advice_novelty / strategy_fit). Add bilingual sentence splitter, BGE-M3 embed-sim wrapper, drift-score harness. 5+ new scenario YAMLs. | HARNESS-01..05 | All 4 axes return numeric scores on existing 20 scenarios; bilingual sentence splitter passes 30+ unit tests | Not started |
+| 34 | Baseline Measurement | Run pairwise-runner on all `eval-voice-*.yaml` + sim-audit-rev56.mjs. Lock 5-metric report in `.planning/baseline-rev00056.md`. Define quantitative gates per Phase 35-40. | BASELINE-01..04 | `.planning/baseline-rev00056.md` committed with 5 metric numbers + per-phase gates | Not started |
+| 35 | 4 Deterministic Detectors (F1-F4 bilingual) | F1 verb-mirror (zh char 3-gram + en bigram). F2 length cap (3 sentences). F3 lang-lock reinforcement. F4 advice-repeat (BGE-M3 cos-sim vs last 3 turns). Wired into voice rewriter Phase 4; failures → strip / regenerate / reject-resample. | DETECT-01..07 | Detector recall ≥ 80% on rev-00056 known fails; false positive rate ≤ 10% | Not started |
+| 36 | ImperfectionInjector + 3-arm A/B | 3-arm A/B router (0/15/30%), turn-onset position-constrained, bilingual policies (zh + en fillers + self-correct), type priority self-correct > hesitate > clarify > uncertainty. A/B harness via existing pairwise-runner. | IMPERFECT-01..07 | A/B winner determined via pre-registered statistical significance; chosen arm beats 0% control on humanness axes ≥ 10pp | Not started |
+| 37 | FSM (5 UX × ESConv 8 strategies) | 5 UX state enum + ESConv 8 strategy enum (bilingual labels). State × strategy allowed-set table per ESConv 3 stages. Rule-based state classifier (no LLM). TransESC-style transition table. Phase 3 prompt directive. | FSM-01..07 | ux_state classifier accuracy ≥ 70%; strategy_fit ∈ allowed-set 100% | Not started |
+| 38 | Memory Policy (advice-tracker + contradiction) | advice-tracker.ts with BGE-M3 embedding + Firestore persistence. Mem0 fact diff for contradiction. Phase 3 prompt extended with "已经给过的建议" / "Already-given advice" injection. Pin Mem0 extractor to Qwen-7B+. Bilingual retrieval test. | MEMORY-01..06 | 50-turn synthetic advice repeat rate < 5%; contradiction detector ≥ 90% on seeded fixtures | Not started |
+| 39 | External Auto Benchmarks (5 benchmarks) | BotChat (open-compass, bilingual auto Turing-style). CharacterEval (morecry, ZH 77 char × 12 metrics). EmpatheticDialogues (facebookresearch, EN 25k). ESConv (thu-coai, EN 8 strategies). RoleLLM (InteractiveNLP-Team, EN 100 char). Compare Qwen-7B raw vs Claire stack to public leaderboards. | BENCH-01..07 | Total spend ≤ $25; Claire stack ≥ Qwen-72B raw on ≥ 1 of 5 benchmarks | Not started |
+| 40 | Bible v7.5 + Crisis Red-team + Ship | Bible v7.5 with bilingual NEVER + zh+en slang bank + crisis safety prompt section (zh+en triggers + safe response template + 心理援助热线 400-161-9995 + Crisis Text Line 741741) + 3-sentence cap directive. Feature flag `PA_HUMANIZE_RUNTIME_ENABLED`. 20 crisis red-team prompts auto-tested. SiliconFlow prefix cache POC. | BIBLE-01..03, SHIP-01..05 | 20 crisis red-team prompts route to safety branch 100%; final audit — all 5 metrics meet target vs Phase 34 baseline; benchmark report meets ≥1 of 5 criterion | Not started |
 
 ### v1.4 Decision Log Summary (D1-D16)
 
@@ -508,13 +508,13 @@ D1: Drop Reflexion-lite critic loop default | D2: Plutchik demoted to internal s
 
 ### v1.4 Launch Gate (closed-beta humanize-runtime rollout)
 
-- [ ] Phase 30 baseline locked
-- [ ] Phase 31 detectors recall ≥ 80%
-- [ ] Phase 32 A/B winner picked (or 0% control wins → ImperfectionInjector disabled in production)
-- [ ] Phase 33 FSM strategy_fit 100%
-- [ ] Phase 34 advice repeat < 5%
-- [ ] Phase 35 ≥ 1 of 5 benchmarks beats Qwen-72B raw
-- [ ] Phase 36 crisis red-team 100% + 5-metric audit pass
+- [ ] Phase 34 baseline locked
+- [ ] Phase 35 detectors recall ≥ 80%
+- [ ] Phase 36 A/B winner picked (or 0% control wins → ImperfectionInjector disabled in production)
+- [ ] Phase 37 FSM strategy_fit 100%
+- [ ] Phase 38 advice repeat < 5%
+- [ ] Phase 39 ≥ 1 of 5 benchmarks beats Qwen-72B raw
+- [ ] Phase 40 crisis red-team 100% + 5-metric audit pass
 - [ ] Feature flag rollout: 1% → 10% → 50% → 100% (gated by 5-metric monitoring)
 
 ### v1.4 Backlog (defer to v1.5)
@@ -524,3 +524,116 @@ D1: Drop Reflexion-lite critic loop default | D2: Plutchik demoted to internal s
 - Big5-Chat trait scoring engineering
 - Reflexion-lite critic resurrection (would need new evidence)
 - LoCoMo memory benchmark (repo offline)
+
+---
+
+## Phase Details (29-40)
+
+> Detail sections so `gsd-tools roadmap analyze` can discover phases 29-40. Summary rows live in their respective milestone tables above.
+
+### Phase 29: Agent Handbook
+
+**Goal:** Bible-as-data. Convert inline `systemPrompt` to versioned, dashboard-editable Firestore `pa-handbooks/{slug}` collection with audit + rollback. Replaces single-source systemPrompt field on agent docs.
+
+**Requirements:** v1.3 P10 expansion 2026-04-28
+**Status:** Planned — CONTEXT.md + PLAN.md exist at `.planning/phases/29-agent-handbook/`
+**Workstream:** Stream A (v1.3 infra)
+
+### Phase 30: Downstream Eval Connector
+
+**Goal:** Post-turn eval pipeline with regex/nl_judge condition + HMAC-signed POST dispatcher to partner endpoints. Fire-and-forget, never blocks chat path. Per-(user × trigger) cooldown via Firestore composite key.
+
+**Requirements:** v1.3 P10 expansion 2026-04-28
+**Status:** Planned — CONTEXT.md + PLAN.md exist at `.planning/phases/30-downstream-eval-connector/`
+**Workstream:** Stream A (v1.3 infra)
+
+### Phase 31: Upstream Event Connector
+
+**Goal:** Inbound webhook `paInboundEvent` HTTPS CF with HMAC verify + template lookup + Mustache-lite renderer + rate-limit + enqueue to existing `pa-outbound`. External partners push events → proactive Claire message.
+
+**Requirements:** v1.3 P10 expansion 2026-04-28
+**Status:** Planned — CONTEXT.md + PLAN.md exist at `.planning/phases/31-upstream-event-connector/`
+**Workstream:** Stream A (v1.3 infra)
+
+### Phase 32: Dashboard IA Reorg + Stress Harness + Playbooks/Personas CRUD
+
+**Goal:** Convert dashboard from engineering console → operator console. 5-category sidebar reorg, delete Playground/Platform, demote Operations. Rebuild Conversations/UserDetail/Voice/Flags-history rows. Add `apps/stress/` Artillery package for concurrent burst testing. Firestore-backed Playbooks + Personas CRUD (soul.md three-file pattern). Investigate + repair `paSendblueOutbox` last-deploy fail.
+
+**Requirements:** v1.3 P10 spawn 2026-04-28
+**Status:** Planned — CONTEXT.md exists at `.planning/phases/32-dashboard-ia-reorg/`. 4 parallel waves designed.
+**Workstream:** Stream B (v1.3 dashboard reorg, parallelizable)
+
+### Phase 33: Eval Harness Extension
+
+**Goal:** Extend `tests/scenarios/lib/voice-axes.mjs` with 4 new axes (drift_resistance / length_compliance / advice_novelty / strategy_fit). Add bilingual sentence splitter, BGE-M3 embed-sim wrapper, drift-score harness. 5+ new scenario YAMLs covering 50-turn drift / advice repeat / FSM strategy fit / bilingual code-switch.
+
+**Requirements:** HARNESS-01..05
+**Status:** Planned — must finish before Phase 34 baseline measurement (D16 eval-first ordering)
+**Workstream:** Stream C (v1.4 humanize-runtime)
+
+### Phase 34: Baseline Measurement
+
+**Goal:** Run pairwise-runner on all `eval-voice-*.yaml` + `sim-audit-rev56.mjs`. Lock 5-metric report in `.planning/baseline-rev00056.md`. Define quantitative gates per Phase 35-40.
+
+**Requirements:** BASELINE-01..04
+**Status:** Planned — gates all subsequent v1.4 phases (D16)
+**Workstream:** Stream C (v1.4 humanize-runtime)
+
+### Phase 35: 4 Deterministic Detectors (F1-F4 bilingual)
+
+**Goal:** F1 verb-mirror (zh char 3-gram + en bigram). F2 length cap (3 sentences). F3 lang-lock reinforcement. F4 advice-repeat (BGE-M3 cos-sim vs last 3 turns). Wired into voice rewriter; failures → strip / regenerate / reject-resample.
+
+**Requirements:** DETECT-01..07
+**Status:** Planned — gated on Phase 34 baseline
+**Workstream:** Stream C (v1.4 humanize-runtime)
+
+### Phase 36: ImperfectionInjector + 3-arm A/B
+
+**Goal:** 3-arm A/B router (0/15/30%), turn-onset position-constrained, bilingual policies (zh + en fillers + self-correct). Type priority: self-correct > hesitate > clarify > uncertainty. A/B harness via existing pairwise-runner.
+
+**Requirements:** IMPERFECT-01..07
+**Status:** Planned — parallelizable with Phase 37 after Phase 35
+**Workstream:** Stream C (v1.4 humanize-runtime)
+
+### Phase 37: FSM (5 UX × ESConv 8 strategies)
+
+**Goal:** 5 UX state enum + ESConv 8 strategy enum (bilingual labels). State × strategy allowed-set table per ESConv 3 stages. Rule-based state classifier (no LLM). TransESC-style transition table. Phase 3 prompt directive.
+
+**Requirements:** FSM-01..07
+**Status:** Planned
+**Workstream:** Stream C (v1.4 humanize-runtime)
+
+### Phase 38: Memory Policy (advice-tracker + contradiction)
+
+**Goal:** `advice-tracker.ts` with BGE-M3 embedding + Firestore persistence. Mem0 fact diff for contradiction. Phase 3 prompt extended with "已经给过的建议" / "Already-given advice" injection. Pin Mem0 extractor to Qwen-7B+. Bilingual retrieval test.
+
+**Requirements:** MEMORY-01..06
+**Status:** Planned
+**Workstream:** Stream C (v1.4 humanize-runtime)
+
+### Phase 39: External Auto Benchmarks (5 benchmarks)
+
+**Goal:** BotChat (open-compass, bilingual auto Turing-style) + CharacterEval (morecry, ZH 77 char × 12 metrics) + EmpatheticDialogues (facebookresearch, EN 25k) + ESConv (thu-coai, EN 8 strategies) + RoleLLM (InteractiveNLP-Team, EN 100 char). Compare Qwen-7B raw vs Claire stack.
+
+**Requirements:** BENCH-01..07
+**Status:** Planned — parallelizable with Phase 37/38
+**Workstream:** Stream C (v1.4 humanize-runtime)
+
+### Phase 40: Bible v7.5 + Crisis Red-team + Ship
+
+**Goal:** Bible v7.5 with bilingual NEVER + zh+en slang bank + crisis safety prompt section (zh+en triggers + safe response template + 心理援助热线 400-161-9995 + Crisis Text Line 741741) + 3-sentence cap directive. Feature flag `PA_HUMANIZE_RUNTIME_ENABLED`. 20 crisis red-team prompts auto-tested. SiliconFlow prefix cache POC.
+
+**Requirements:** BIBLE-01..03, SHIP-01..05
+**Status:** Planned — final v1.4 phase. If Phase 29 Handbook ships first, Bible v7.5 loads via handbook collection; else inline in agent seed.
+**Workstream:** Stream C (v1.4 humanize-runtime)
+
+---
+
+## Cross-stream Sync Points (P10 strategic decisions)
+
+| Sync | Stream A | Stream C | Action |
+|------|----------|----------|--------|
+| S1 | Phase 29 ships handbook | Phase 40 Bible v7.5 | If 29 done, Bible v7.5 → `pa-handbooks/claire` v2; else inline seed |
+| S2 | Phase 30 downstream eval connector | Phase 33 eval harness | Different "eval" namespaces (runtime nl_judge vs offline pairwise judge); zero file collision verified |
+| S3 | Phase 32 dashboard reorg Wave 3 (Personas CRUD) | Phase 38 memory policy | Personas seed contains current Bible voice; Phase 38 must not depend on inline strings |
+

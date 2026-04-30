@@ -4,7 +4,7 @@
 
 **Goal in one sentence:** On Qwen-7B + no-finetune + Bible-driven path, push Claire's bilingual (zh+en) conversational humanness to **70-80% of Pi-level** by attacking 4 production failure modes with deterministic detectors + ImperfectionInjector + ESConv-FSM + memory policy — **eval-first**, 0 net new LLM calls in production path.
 
-**Estimate:** ~7.5 dev-days (8 phases, 29-36).
+**Estimate:** ~7.5 dev-days (8 phases, 33-40).
 
 ---
 
@@ -18,7 +18,7 @@ Two independent Deep Research reports (Compass + DR-2) cross-validated the origi
 - Confirmed: explicit affect/state control beats free-running generation (XiaoIce MDP CPS=23, FiSMiness beats Self-Refine on ESConv)
 - Confirmed: Mem0 within noise vs Letta/Zep on LoCoMo; backend swap not justified
 
-**Eval-first ordering** (user explicit decision 2026-04-29): no runtime module work until baseline 5-metric report is locked. This is the architectural commitment — every module merge is gated by quantitative improvement vs Phase 30 baseline.
+**Eval-first ordering** (user explicit decision 2026-04-29): no runtime module work until baseline 5-metric report is locked. This is the architectural commitment — every module merge is gated by quantitative improvement vs Phase 34 baseline.
 
 ---
 
@@ -26,13 +26,13 @@ Two independent Deep Research reports (Compass + DR-2) cross-validated the origi
 
 | # | Metric | Baseline | Target | Measurement |
 |---|--------|----------|--------|-------------|
-| 1 | AI tell-tale rate (`作为AI` / `as an AI` / template openers) | TBD Phase 30 | < 1% | regex on 1000-turn synthetic + filler-blacklist |
-| 2 | 50-turn drift score (F1 mirror + F4 repeat compounded) | TBD Phase 30 | > 50% reduction | drift-score.mjs over 50-turn synthetic run |
-| 3 | Tone shift hit rate (user emotion shift → Claire tone shift) | TBD Phase 30 | > 70% | strategy_fit axis (LLM judge) on 100-turn labeled |
-| 4 | Length compliance (>3 sentences per turn) | TBD Phase 30 | < 10% | sentence-cap detector on outputs |
-| 5 | Repeat advice rate (BGE-M3 cos-sim > 0.85 vs last 3 Claire turns) | TBD Phase 30 | < 5% | advice-repeat detector |
+| 1 | AI tell-tale rate (`作为AI` / `as an AI` / template openers) | TBD Phase 34 | < 1% | regex on 1000-turn synthetic + filler-blacklist |
+| 2 | 50-turn drift score (F1 mirror + F4 repeat compounded) | TBD Phase 34 | > 50% reduction | drift-score.mjs over 50-turn synthetic run |
+| 3 | Tone shift hit rate (user emotion shift → Claire tone shift) | TBD Phase 34 | > 70% | strategy_fit axis (LLM judge) on 100-turn labeled |
+| 4 | Length compliance (>3 sentences per turn) | TBD Phase 34 | < 10% | sentence-cap detector on outputs |
+| 5 | Repeat advice rate (BGE-M3 cos-sim > 0.85 vs last 3 Claire turns) | TBD Phase 34 | < 5% | advice-repeat detector |
 
-**External validation** (Phase 35): Claire ≥ Qwen-72B raw on at least 1 of 5 public benchmarks (BotChat / CharacterEval / EmpatheticDialogues / ESConv / RoleLLM).
+**External validation** (Phase 39): Claire ≥ Qwen-72B raw on at least 1 of 5 public benchmarks (BotChat / CharacterEval / EmpatheticDialogues / ESConv / RoleLLM).
 
 ---
 
@@ -85,18 +85,18 @@ Two independent Deep Research reports (Compass + DR-2) cross-validated the origi
 
 ---
 
-## Phase Roadmap (8 phases, 29-36)
+## Phase Roadmap (8 phases, 33-40)
 
 | # | Phase | Goal | Quantitative Gate (no merge unless met) | Days |
 |---|-------|------|----------------------------------------|------|
-| 29 | Eval Harness Extension | 4 new axes (drift_resistance, length_compliance, advice_novelty, strategy_fit) wired into existing voice-axes.mjs + 5 new scenario YAMLs | All 4 axes return numeric scores on existing 20 scenarios; bilingual sentence splitter unit-tested | 1.5 |
-| 30 | Baseline Measurement | Run all eval scenarios + sim-audit on rev-00056, lock 5-metric report | `.planning/baseline-rev00056.md` committed with 5 metric numbers + per-phase gates | 0.5 |
-| 31 | 4 Deterministic Detectors (F1-F4 bilingual) | Verb-mirror n-gram + length cap + lang-lock + advice-repeat (BGE-M3 cos-sim) | Detector recall ≥ 80% on rev-00056 known fails; false positive rate ≤ 10% | 1.5 |
-| 32 | ImperfectionInjector + 3-arm A/B | 0/15/30% firing arms, turn-onset only, bilingual policies (zh + en) | A/B winner determined via pairwise-runner statistical significance; chosen arm beats 0% baseline on humanness axes | 1 |
-| 33 | FSM (5 UX × ESConv 8 strategies) | State classifier + transition table + Phase 3 prompt directive | ux_state classifier accuracy ≥ 70%; strategy_fit ∈ allowed-set 100% | 1 |
-| 34 | Memory Policy (advice-tracker + contradiction) | BGE-M3 advice tracker + contradiction detector + Phase 3 context injection | 50-turn synthetic advice repeat rate < 5%; contradiction detector ≥ 90% on seeded fixtures | 1 |
-| 35 | External Auto Benchmarks (5 benchmarks) | BotChat + CharacterEval + EmpatheticDialogues + ESConv + RoleLLM, Qwen-7B raw vs Claire stack | Claire stack ≥ Qwen-72B raw on ≥ 1 of 5; total spend ≤ $25 | 1 |
-| 36 | Bible v7.5 + Crisis Red-team + Ship | Bilingual NEVER + slang bank + crisis prompt + 3-sentence directive + feature flag | 20 crisis red-team prompts → safety branch 100%; final audit — all 5 metrics meet target vs Phase 30 baseline | 1 |
+| 33 | Eval Harness Extension | 4 new axes (drift_resistance, length_compliance, advice_novelty, strategy_fit) wired into existing voice-axes.mjs + 5 new scenario YAMLs | All 4 axes return numeric scores on existing 20 scenarios; bilingual sentence splitter unit-tested | 1.5 |
+| 34 | Baseline Measurement | Run all eval scenarios + sim-audit on rev-00056, lock 5-metric report | `.planning/baseline-rev00056.md` committed with 5 metric numbers + per-phase gates | 0.5 |
+| 35 | 4 Deterministic Detectors (F1-F4 bilingual) | Verb-mirror n-gram + length cap + lang-lock + advice-repeat (BGE-M3 cos-sim) | Detector recall ≥ 80% on rev-00056 known fails; false positive rate ≤ 10% | 1.5 |
+| 36 | ImperfectionInjector + 3-arm A/B | 0/15/30% firing arms, turn-onset only, bilingual policies (zh + en) | A/B winner determined via pairwise-runner statistical significance; chosen arm beats 0% baseline on humanness axes | 1 |
+| 37 | FSM (5 UX × ESConv 8 strategies) | State classifier + transition table + Phase 3 prompt directive | ux_state classifier accuracy ≥ 70%; strategy_fit ∈ allowed-set 100% | 1 |
+| 38 | Memory Policy (advice-tracker + contradiction) | BGE-M3 advice tracker + contradiction detector + Phase 3 context injection | 50-turn synthetic advice repeat rate < 5%; contradiction detector ≥ 90% on seeded fixtures | 1 |
+| 39 | External Auto Benchmarks (5 benchmarks) | BotChat + CharacterEval + EmpatheticDialogues + ESConv + RoleLLM, Qwen-7B raw vs Claire stack | Claire stack ≥ Qwen-72B raw on ≥ 1 of 5; total spend ≤ $25 | 1 |
+| 40 | Bible v7.5 + Crisis Red-team + Ship | Bilingual NEVER + slang bank + crisis prompt + 3-sentence directive + feature flag | 20 crisis red-team prompts → safety branch 100%; final audit — all 5 metrics meet target vs Phase 34 baseline | 1 |
 
 **Total: ~7.5 dev-days.**
 
@@ -124,10 +124,10 @@ Two independent Deep Research reports (Compass + DR-2) cross-validated the origi
 | [thu-coai/Emotional-Support-Conversation](https://github.com/thu-coai/Emotional-Support-Conversation) | ESConv ACL 2021 — 8 strategies + 3 stages | Strategy enum + dataset |
 | [circle-hit/TransESC](https://github.com/circle-hit/TransESC) | ACL 2023 — turn-level emotion transition | Transition graph design |
 | [joonspk-research/genagents](https://github.com/joonspk-research/genagents) | NeurIPS 2024 — 1000-agent simulation | Reflection module pattern |
-| [open-compass/BotChat](https://github.com/open-compass/BotChat) | Bilingual LLM-judged Turing-style auto | Phase 35 baseline |
-| [morecry/CharacterEval](https://github.com/morecry/CharacterEval) | Chinese 77-character role-play, 12 metrics | Phase 35 |
-| [InteractiveNLP-Team/RoleLLM-public](https://github.com/InteractiveNLP-Team/RoleLLM-public) | English 100-character role-play | Phase 35 |
-| [facebookresearch/EmpatheticDialogues](https://github.com/facebookresearch/EmpatheticDialogues) | English 25k empathy convs | Phase 35 |
+| [open-compass/BotChat](https://github.com/open-compass/BotChat) | Bilingual LLM-judged Turing-style auto | Phase 39 baseline |
+| [morecry/CharacterEval](https://github.com/morecry/CharacterEval) | Chinese 77-character role-play, 12 metrics | Phase 39 |
+| [InteractiveNLP-Team/RoleLLM-public](https://github.com/InteractiveNLP-Team/RoleLLM-public) | English 100-character role-play | Phase 39 |
+| [facebookresearch/EmpatheticDialogues](https://github.com/facebookresearch/EmpatheticDialogues) | English 25k empathy convs | Phase 39 |
 
 ---
 

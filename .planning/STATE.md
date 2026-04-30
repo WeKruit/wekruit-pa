@@ -1,12 +1,12 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.4
-milestone_name: Humanize-Runtime v2 (Bilingual, Eval-First)
-status: defining_requirements
-last_updated: "2026-04-29T17:00:00.000Z"
+milestone_name: Humanize-Runtime v2 + v1.3 Carryover (Dual Stream)
+status: in_progress
+last_updated: "2026-04-29T19:00:00.000Z"
 last_activity: 2026-04-29
 progress:
-  total_phases: 8
+  total_phases: 12
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -14,43 +14,86 @@ progress:
 
 # Milestone state
 
-## Active milestone: v1.4 — Humanize-Runtime v2 (spawned 2026-04-29)
+## Active milestones (dual stream, P10 strategic call 2026-04-29)
 
-See [`MILESTONE-v1.4-humanize-runtime-v2.md`](./MILESTONE-v1.4-humanize-runtime-v2.md).
+P10 cut: legacy v1.3 carryover phases 29-32 + new v1.4 humanize-runtime phases 33-40 advance **in parallel** under one execution umbrella. STATE.md `milestone: v1.4` because tooling reads single field; ROADMAP `## Phase Details (29-40)` section bundles both streams under v1.4 milestone heading so `gsd-tools roadmap analyze` discovers all 12.
 
-**Goal:** Push Claire's bilingual (zh+en) conversational humanness to ~70-80% of Pi-level on 5 quantified metrics by attacking 4 production failure modes (verb-mirror / length escalation / code-switch drift / self-repeat advice) via deterministic detectors + ImperfectionInjector + ESConv-FSM + memory policy. Eval-first: no module work until baseline locked. 0 net new LLM calls in production path.
+### Stream A — v1.3 carryover (4 phases, infra)
 
-**Status:** Defining requirements (REQUIREMENTS.md + ROADMAP.md being written).
+P10 strategy doc: `phases/P9-AUTONOMOUS-RUN-STATUS.md` (legacy) + `MILESTONE-v1.3-PRODUCTIONIZE.md`-equivalent in ROADMAP §v1.3 table.
 
-**Phases:** 29 (Eval Harness Extension) → 30 (Baseline Measurement) → 31 (Detectors) → 32 (ImperfectionInjector A/B) → 33 (FSM) → 34 (Memory Policy) → 35 (External Auto Benchmarks) → 36 (Bible v7.5 + Ship).
+| # | Phase | Status | Workstream owner |
+|---|-------|--------|------------------|
+| 29 | Agent Handbook (Bible-as-data) | CONTEXT.md + PLAN.md exist | P9-A |
+| 30 | Downstream Eval Connector | CONTEXT.md + PLAN.md exist | P9-A |
+| 31 | Upstream Event Connector | CONTEXT.md + PLAN.md exist | P9-A |
+| 32 | Dashboard IA Reorg + Stress Harness | CONTEXT.md exists, 4-wave swarm-ready | P9-B |
+
+### Stream C — v1.4 humanize-runtime (8 phases, eval-first)
+
+Canonical doc: [`MILESTONE-v1.4-humanize-runtime-v2.md`](./MILESTONE-v1.4-humanize-runtime-v2.md).
+
+**Goal:** Push Claire's bilingual (zh+en) conversational humanness to ~70-80% Pi-level on 5 quantified metrics by attacking 4 production failure modes via deterministic detectors + ImperfectionInjector + ESConv-FSM + memory policy. Eval-first: no module work until baseline locked. 0 net new LLM calls in production path.
+
+**Phase order:** 33 (Eval Harness Extension) → 34 (Baseline Measurement) → 35 (Detectors) → 36 (ImperfectionInjector A/B) → 37 (FSM) → 38 (Memory Policy) → 39 (External Auto Benchmarks) → 40 (Bible v7.5 + Ship).
 
 **Estimate:** ~7.5 dev-days.
 
-**v1.3 carryover:** Phases 24.5 / 25 / 26 / 27 / 28 status preserved; v1.4 spawn does not block existing v1.3 phases. Coordination via STATE.md manual review per phase transition.
+| # | Phase | Status | Workstream owner |
+|---|-------|--------|------------------|
+| 33 | Eval Harness Extension | Not started | P9-C |
+| 34 | Baseline Measurement | Not started | P9-C |
+| 35 | 4 Deterministic Detectors | Not started | P9-C |
+| 36 | ImperfectionInjector A/B | Not started | P9-C |
+| 37 | FSM (5 UX × ESConv 8) | Not started | P9-C |
+| 38 | Memory Policy | Not started | P9-C |
+| 39 | External Auto Benchmarks | Not started | P9-C |
+| 40 | Bible v7.5 + Crisis + Ship | Not started | P9-C |
+
+### Cross-stream sync points
+
+| Sync | Stream A | Stream C | Action |
+|------|----------|----------|--------|
+| S1 | Phase 29 ships handbook | Phase 40 Bible v7.5 | If 29 done first, Bible v7.5 → `pa-handbooks/claire` v2; else inline seed |
+| S2 | Phase 30 downstream eval connector | Phase 33 eval harness | Different "eval" namespaces (runtime nl_judge vs offline pairwise judge) — zero file collision |
+| S3 | Phase 32 Wave 3 Personas CRUD | Phase 38 memory policy | Personas seed contains current Bible voice; Phase 38 must not depend on inline strings |
 
 ## Current Position
 
-Phase: 29 (Eval Harness Extension) — NOT STARTED
-Plan: 0 of 0 (planning pending — `/gsd:plan-phase 29` to start)
-Status: Defining requirements (this turn)
-Last activity: 2026-04-29 — milestone v1.4 spawned, P10 顶层设计 locked 16 decisions
+Phase: P10 foundation work — ROADMAP renumbering + dual-stream wiring complete (this turn)
+Plan: 0 of 0 (planning pending)
+Status: In progress — spawning P9 agents in waves
+Last activity: 2026-04-29 — milestone v1.4 spawned, P10 dual-stream topology locked, v1.4 phases renumbered 29-36 → 33-40
 
 ## Adam's blocking decisions (none currently)
 
-All 16 P10 decisions locked in `MILESTONE-v1.4-humanize-runtime-v2.md` Decision Log. No pending Adam questions for v1.4 spawn. First Adam decision point arrives end of Phase 30 (baseline interpretation).
+All P10 strategic decisions locked:
+- v1.4 D1-D16 in `MILESTONE-v1.4-humanize-runtime-v2.md`
+- v1.3 carryover scope locked in legacy CONTEXT.md per phase
+- Dual-stream parallel execution approved (Adam 2026-04-29 "可以同步推进吗？")
+
+First Adam decision point: end of Phase 34 (baseline interpretation).
 
 ## Recommended execution order
 
-1. `/clear` then `/gsd:plan-phase 29` — Eval Harness Extension (must finish before Phase 30)
-2. `/gsd:execute-phase 29` — wire 4 new axes + bilingual sentence splitter + new scenarios
-3. `/gsd:plan-phase 30` then `/gsd:execute-phase 30` — Baseline measurement (locks 5-metric report; gates all subsequent phases)
-4. `/gsd:plan-phase 31` then execute — Detectors
-5. Phases 32-34 in roadmap order; Phase 35 (benchmarks) can parallelize with 33-34
-6. Phase 36 ships behind feature flag `PA_HUMANIZE_RUNTIME_ENABLED`
+**Parallel waves** (P10 spawns three P9 in parallel):
+
+- **Wave 1 (P9-A + P9-B + P9-C parallel):**
+  - P9-A: Phase 29 Handbook (Stream A foundation; downstream/upstream depend on it)
+  - P9-B: Phase 32 Dashboard IA (independent, 4-wave already-spec'd)
+  - P9-C: Phase 33 Eval Harness Extension (Stream C foundation; baseline depends on it)
+- **Wave 2:**
+  - P9-A: Phases 30 + 31 (sequential, both depend on 29 handbook + Sendblue HMAC helper)
+  - P9-B: completes Phase 32 (4-wave continued)
+  - P9-C: Phase 34 Baseline Measurement (gates 35-40)
+- **Wave 3+:**
+  - Stream C continues 35 → 36 → 37 → 38 (per quantitative gates per MILESTONE doc)
+  - 39 (External Benchmarks) parallelizable with 37/38
+  - 40 ships behind feature flag `PA_HUMANIZE_RUNTIME_ENABLED` after all gates pass
 
 ## Milestone goal
 
-Quantitative voice quality improvement: 5 metrics measurably better vs rev-00056 baseline + Claire stack ≥ Qwen-72B raw on ≥1 of 5 public benchmarks. No new LLM calls in production path. Latency stays under 12s p99.
+Quantitative voice quality improvement: 5 metrics measurably better vs rev-00056 baseline + Claire stack ≥ Qwen-72B raw on ≥1 of 5 public benchmarks (Stream C) + dashboard / handbook / connectors operator-grade (Stream A). No new LLM calls in production path. Latency stays under 12s p99.
 
 ## Accumulated Context (carried from v1.0/v1.1/v1.2/v1.3)
 
@@ -74,8 +117,16 @@ Quantitative voice quality improvement: 5 metrics measurably better vs rev-00056
 - **Plutchik demoted** to internal scaffold: no clean Chinese mapping for 委屈/心疼/心累/不甘
 - **Eval harness verified intact**: `tests/scenarios/{runner.mjs,pairwise-runner.mjs,judge.mjs,lib/voice-axes.mjs,lib/pairwise.mjs}` + 20+ scenarios + 33 zh + 15 en filler blacklist already exist — D13 locks reuse
 - **Embedding stack verified**: `BAAI/bge-m3` already wired in `packages/memory/src/mem0.ts` via SiliconFlow — D14 locks no OpenAI embedding swap
-- **External benchmarks verified open**: BotChat, CharacterEval, EmpatheticDialogues, ESConv, RoleLLM all 200 OK (Phase 35)
+- **External benchmarks verified open**: BotChat, CharacterEval, EmpatheticDialogues, ESConv, RoleLLM all 200 OK (Phase 39)
 - **No prefix cache exists**: `atm-llm-runtime.ts:62` "cache" is profile credential TTL only — D7 locks adding SiliconFlow prefix cache POC
+
+### v1.3 carryover-specific accumulated context
+
+- **Legacy 29-32 are substantive v1.3 work**, not v1.0 leftovers (CONTEXT.md + PLAN.md already locked by P10 on 2026-04-28)
+- **Phase 29 Handbook**: Firestore `pa-handbooks/{slug}` + `/versions/{v}` immutable history; orchestrator loader 30s TTL cache; dashboard editor with diff + rollback. 6 P10 success criteria locked.
+- **Phase 30 Downstream Eval Connector**: post-turn fire-and-forget pipeline; regex + nl_judge conditions; HMAC-signed POST; per-(user × trigger) cooldown via Firestore composite key; master kill switch via flag `evalConnectorsEnabled`.
+- **Phase 31 Upstream Event Connector**: `paInboundEvent` HTTPS CF; HMAC verify with 5-min timestamp window; Mustache-lite renderer (no loops/partials); per-(eventType × userId) rate-limit (soft 1/hr, hard 24/day); enqueue to existing `pa-outbound`.
+- **Phase 32 Dashboard IA Reorg**: 4-wave parallel (IA reorg + UX P1 fixes + Playbooks/Personas CRUD + backend stress harness); converts dashboard from engineering console → operator console; new `apps/stress/` Artillery package; investigate + repair `paSendblueOutbox` last-deploy fail.
 
 ### Locked architecture decisions (carry forward, all v1.4 D-series in MILESTONE-v1.4-humanize-runtime-v2.md)
 

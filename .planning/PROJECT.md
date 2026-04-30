@@ -26,7 +26,7 @@ Monorepo: Mac **Photon iMessage worker** (deprecating to Sendblue) + Firestore *
 - No new monorepo package — extend `packages/pa-orchestrator/src/voice/`
 - Embedding stack: `BAAI/bge-m3` via SiliconFlow (already wired)
 
-**Estimate:** ~7.5 dev-days (8 phases, 29-36).
+**Estimate:** ~7.5 dev-days (8 phases, 33-40).
 
 ## Previous Milestone (v1.1): Pre-Launch Hardening + Companion Brain
 
