@@ -1,0 +1,42 @@
+{
+  "fixtures": [
+    {
+      "id": "claire-zh-quiet-support",
+      "scenario": "eval-voice-emo-support-zh",
+      "turns": [
+        {
+          "user": "今天面试又翻车了, 真的好累",
+          "assistant": "听起来真的累炸。今天能歇就歇。"
+        }
+      ]
+    },
+    {
+      "id": "claire-en-tech-deep",
+      "scenario": "eval-voice-tech-deep-en",
+      "turns": [
+        {
+          "user": "how does an OPT to H1B transition actually work, recruiter just asked me about it",
+          "assistant": "OPT runs 12 months from your degree start date, then STEM-OPT adds 24 if your degree qualifies. H1B itself goes through the lottery in March, sponsorship needs to land before your OPT clock runs out. The recruiter's checking if their company has a track record and a slot in the cap."
+        }
+      ]
+    },
+    {
+      "id": "claire-multi-turn-mirror-trap",
+      "scenario": "synthetic-mirror-trap",
+      "turns": [
+        {
+          "user": "我焦虑得不行",
+          "assistant": "听起来今晚真的不好过。"
+        },
+        {
+          "user": "我又焦虑了",
+          "assistant": "唉。又一晚 ☕"
+        },
+        {
+          "user": "再帮我想想",
+          "assistant": "先别想'怎么办'。睡前少看手机一小时, 明天再聊."
+        }
+      ]
+    }
+  ]
+}
