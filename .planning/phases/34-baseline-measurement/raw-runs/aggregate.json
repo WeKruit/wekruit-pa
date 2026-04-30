@@ -1,0 +1,54 @@
+{
+  "n_scenarios": 6,
+  "n_turns_total": 155,
+  "metrics": {
+    "ai_telltale_rate": {
+      "mean": 0,
+      "p50": 0,
+      "p95": 0,
+      "min": 0,
+      "max": 0
+    },
+    "drift_score": {
+      "mean": 0.026074104390920245,
+      "p50": 0.02142857142857143,
+      "p95": 0.0972689075630252,
+      "min": 0,
+      "max": 0.0972689075630252
+    },
+    "drift_mirror_max": {
+      "mean": 0.13278388278388278,
+      "p50": 0.15384615384615385,
+      "p95": 0.42857142857142855,
+      "min": 0,
+      "max": 0.42857142857142855
+    },
+    "drift_mirror_avg": {
+      "mean": 0.026074104390920245,
+      "p50": 0.02142857142857143,
+      "p95": 0.0972689075630252,
+      "min": 0,
+      "max": 0.0972689075630252
+    },
+    "length_compliance": {
+      "mean": 1,
+      "p50": 1,
+      "p95": 1,
+      "min": 1,
+      "max": 1
+    },
+    "repeat_advice_rate_proxy": {
+      "mean": 0,
+      "p50": 0,
+      "p95": 0,
+      "min": 0,
+      "max": 0
+    }
+  },
+  "by_source": {
+    "smoke": 3,
+    "scenario_yaml": 0,
+    "synthetic_50turn": 3
+  },
+  "embed_axis_present": false
+}

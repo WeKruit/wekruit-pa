@@ -1,0 +1,891 @@
+[
+  {
+    "id": "claire-zh-quiet-support",
+    "source": "smoke",
+    "turn_count": 1,
+    "ai_telltale_rate": 0,
+    "ai_telltale_hits": 0,
+    "drift_score": 0,
+    "drift_mirror_max": 0,
+    "drift_mirror_avg": 0,
+    "drift_repeat_max": null,
+    "length_compliance": 1,
+    "length_within_cap": 1,
+    "length_total": 1,
+    "length_over_cap_idx": [],
+    "repeat_advice_rate_proxy": 0,
+    "advice_novelty_embed": null,
+    "strategies": [
+      {
+        "strategy": "Reflection",
+        "confidence": 0.7,
+        "matchedKeyword": "听起来"
+      }
+    ]
+  },
+  {
+    "id": "claire-en-tech-deep",
+    "source": "smoke",
+    "turn_count": 1,
+    "ai_telltale_rate": 0,
+    "ai_telltale_hits": 0,
+    "drift_score": 0,
+    "drift_mirror_max": 0,
+    "drift_mirror_avg": 0,
+    "drift_repeat_max": null,
+    "length_compliance": 1,
+    "length_within_cap": 1,
+    "length_total": 1,
+    "length_over_cap_idx": [],
+    "repeat_advice_rate_proxy": 0,
+    "advice_novelty_embed": null,
+    "strategies": [
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      }
+    ]
+  },
+  {
+    "id": "claire-multi-turn-mirror-trap",
+    "source": "smoke",
+    "turn_count": 3,
+    "ai_telltale_rate": 0,
+    "ai_telltale_hits": 0,
+    "drift_score": 0,
+    "drift_mirror_max": 0,
+    "drift_mirror_avg": 0,
+    "drift_repeat_max": null,
+    "length_compliance": 1,
+    "length_within_cap": 3,
+    "length_total": 3,
+    "length_over_cap_idx": [],
+    "repeat_advice_rate_proxy": 0,
+    "advice_novelty_embed": null,
+    "strategies": [
+      {
+        "strategy": "Reflection",
+        "confidence": 0.7,
+        "matchedKeyword": "听起来"
+      },
+      {
+        "strategy": "Other",
+        "confidence": 0.3,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Question",
+        "confidence": 0.7,
+        "matchedKeyword": "怎么"
+      }
+    ]
+  },
+  {
+    "id": "anxious-grad-zh-50turn",
+    "source": "synthetic_50turn",
+    "turn_count": 50,
+    "ai_telltale_rate": 0,
+    "ai_telltale_hits": 0,
+    "drift_score": 0.0972689075630252,
+    "drift_mirror_max": 0.42857142857142855,
+    "drift_mirror_avg": 0.0972689075630252,
+    "drift_repeat_max": null,
+    "length_compliance": 1,
+    "length_within_cap": 50,
+    "length_total": 50,
+    "length_over_cap_idx": [],
+    "repeat_advice_rate_proxy": 0,
+    "advice_novelty_embed": null,
+    "strategies": [
+      {
+        "strategy": "Reflection",
+        "confidence": 0.7,
+        "matchedKeyword": "听起来"
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Reflection",
+        "confidence": 0.7,
+        "matchedKeyword": "听起来"
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Reflection",
+        "confidence": 0.7,
+        "matchedKeyword": "听起来"
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Reflection",
+        "confidence": 0.7,
+        "matchedKeyword": "听起来"
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Reflection",
+        "confidence": 0.7,
+        "matchedKeyword": "听起来"
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      }
+    ]
+  },
+  {
+    "id": "venting-zh-50turn",
+    "source": "synthetic_50turn",
+    "turn_count": 50,
+    "ai_telltale_rate": 0,
+    "ai_telltale_hits": 0,
+    "drift_score": 0.02142857142857143,
+    "drift_mirror_max": 0.21428571428571427,
+    "drift_mirror_avg": 0.02142857142857143,
+    "drift_repeat_max": null,
+    "length_compliance": 1,
+    "length_within_cap": 50,
+    "length_total": 50,
+    "length_over_cap_idx": [],
+    "repeat_advice_rate_proxy": 0,
+    "advice_novelty_embed": null,
+    "strategies": [
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Question",
+        "confidence": 0.6,
+        "matchedKeyword": "?"
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Question",
+        "confidence": 0.6,
+        "matchedKeyword": "?"
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Question",
+        "confidence": 0.6,
+        "matchedKeyword": "?"
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Question",
+        "confidence": 0.6,
+        "matchedKeyword": "?"
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Question",
+        "confidence": 0.6,
+        "matchedKeyword": "?"
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      }
+    ]
+  },
+  {
+    "id": "tech-deep-en-50turn",
+    "source": "synthetic_50turn",
+    "turn_count": 50,
+    "ai_telltale_rate": 0,
+    "ai_telltale_hits": 0,
+    "drift_score": 0.037747147353924856,
+    "drift_mirror_max": 0.15384615384615385,
+    "drift_mirror_avg": 0.037747147353924856,
+    "drift_repeat_max": null,
+    "length_compliance": 1,
+    "length_within_cap": 50,
+    "length_total": 50,
+    "length_over_cap_idx": [],
+    "repeat_advice_rate_proxy": 0,
+    "advice_novelty_embed": null,
+    "strategies": [
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Question",
+        "confidence": 0.6,
+        "matchedKeyword": "?"
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Question",
+        "confidence": 0.6,
+        "matchedKeyword": "?"
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Question",
+        "confidence": 0.6,
+        "matchedKeyword": "?"
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Question",
+        "confidence": 0.6,
+        "matchedKeyword": "?"
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Question",
+        "confidence": 0.6,
+        "matchedKeyword": "?"
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      },
+      {
+        "strategy": "Information",
+        "confidence": 0.4,
+        "matchedKeyword": null
+      }
+    ]
+  }
+]
