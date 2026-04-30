@@ -1,0 +1,80 @@
+# Phase 33 — 50-turn drift stress (zh).
+#
+# Synthetic stress: user repeatedly asks variants of "面试焦虑怎么办?" /
+# "再帮我想想?" / mirror traps across 50 turns. Verifies Claire avoids
+# verb-mirror (F1) + advice-repeat (F4) across the window.
+#
+# Target: voiceAxes.drift_resistance >= 2 (mostly fresh, mild echo OK).
+# Target: voiceAxes.length_compliance == 3 (zero turns over 3-sentence cap).
+#
+# Phase 33 ships YAML; Phase 34 measures baseline numbers. Each turn is
+# kept short and deliberately mirror-baiting so detectors can prove their
+# recall ≥80% in Phase 35.
+id: eval_drift_50turn_zh
+description: |
+  50-turn synthetic drift stress (zh). User vents the same anxiety in
+  paraphrased variants; Claire is expected to (a) not mirror user verbs
+  verbatim and (b) not repeat the same advice. Used by Phase 34 baseline
+  + Phase 35 F1/F4 detector validation.
+testMode: true
+locale: zh-CN
+agentId: default
+participant: "+19999990201"
+chatId: "iMessage;+19999990201"
+turnTimeoutMs: 120000
+turns:
+  - user: "今天面试又翻车了, 真的好累"
+    assert:
+      reply_min_length: 4
+      voice_axes_full: true
+  - user: "我又焦虑了, 睡不着"
+  - user: "感觉自己快撑不住了"
+  - user: "再帮我想想怎么办?"
+  - user: "我这次面试也搞砸了"
+  - user: "我又开始自我怀疑了"
+  - user: "压力大得喘不过气"
+  - user: "再给点建议?"
+  - user: "我又焦虑得不行了"
+  - user: "今天又投了 5 份简历, 都没回"
+  - user: "我开始怀疑自己是不是不行"
+  - user: "再帮我看看吧"
+  - user: "今天面试官又冷场了"
+  - user: "我感觉自己越来越没信心"
+  - user: "再来一轮焦虑"
+  - user: "你能再说点啥吗"
+  - user: "我又翻车了, 第三次"
+  - user: "再帮我想想出路?"
+  - user: "我又陷进去了"
+  - user: "感觉每天都在重复"
+  - user: "你能换个角度说吗"
+  - user: "我又卡住了"
+  - user: "再给我点新的吗"
+  - user: "我又开始焦虑了"
+  - user: "你能再帮帮我吗"
+  - user: "我感觉一切都在循环"
+  - user: "再来一次安慰?"
+  - user: "我今天又面崩了"
+  - user: "再帮我看看?"
+  - user: "我又陷入死循环了"
+  - user: "你能换个方式说吗"
+  - user: "再来一次?"
+  - user: "我又焦虑得睡不着"
+  - user: "你还有别的建议吗"
+  - user: "我又卡在原地了"
+  - user: "再给我点动力?"
+  - user: "我感觉自己在原地踏步"
+  - user: "再说一次?"
+  - user: "我又开始钻牛角尖"
+  - user: "你能给点新的吗"
+  - user: "我又陷在情绪里了"
+  - user: "再帮我看看出路?"
+  - user: "今天又是焦虑的一天"
+  - user: "你还有什么角度吗"
+  - user: "我又开始焦虑了"
+  - user: "再来一次?"
+  - user: "我又翻车了第四次"
+  - user: "再给点新建议吧"
+  - user: "我感觉自己已经麻了"
+  - user: "最后再帮我想想?"
+    assert:
+      voice_axes_full: true

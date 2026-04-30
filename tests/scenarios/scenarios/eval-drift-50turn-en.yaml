@@ -1,0 +1,74 @@
+# Phase 33 — 50-turn drift stress (en).
+#
+# Mirror trap + advice-repeat trap, en register. User says "what should
+# I do?" repeatedly with paraphrased variants.
+#
+# Target: voiceAxes.drift_resistance >= 2.
+# Target: voiceAxes.length_compliance == 3.
+id: eval_drift_50turn_en
+description: |
+  50-turn synthetic drift stress (en). User loops on the same job-search
+  anxiety; Claire must vary her verbs and her advice across the window.
+  Used by Phase 34 baseline + Phase 35 F1/F4 detector validation.
+testMode: true
+locale: en
+agentId: default
+participant: "+19999990202"
+chatId: "iMessage;+19999990202"
+turnTimeoutMs: 120000
+turns:
+  - user: "another interview tanked today, i'm wiped"
+    assert:
+      reply_min_length: 4
+      voice_axes_full: true
+  - user: "what should i do?"
+  - user: "i can't sleep again"
+  - user: "i'm spiraling"
+  - user: "another rejection email"
+  - user: "what now?"
+  - user: "i'm losing it"
+  - user: "got any new advice?"
+  - user: "i'm stuck in this loop"
+  - user: "what am i missing?"
+  - user: "i bombed another phone screen"
+  - user: "what should i try next?"
+  - user: "i feel like a fraud"
+  - user: "any ideas?"
+  - user: "i'm exhausted from this"
+  - user: "what would you do?"
+  - user: "another no after onsite"
+  - user: "talk me through this again?"
+  - user: "i can't catch a break"
+  - user: "what am i doing wrong?"
+  - user: "send 30 more apps today"
+  - user: "anything new to try?"
+  - user: "i feel invisible"
+  - user: "give me a different angle?"
+  - user: "i'm so tired of this"
+  - user: "what should i do tomorrow?"
+  - user: "another ghost"
+  - user: "any fresh take?"
+  - user: "i'm done"
+  - user: "what next?"
+  - user: "another rejection"
+  - user: "what's the move?"
+  - user: "i'm anxious again"
+  - user: "say something different?"
+  - user: "i'm spiraling again"
+  - user: "any new idea?"
+  - user: "i'm stuck"
+  - user: "what should i try?"
+  - user: "i feel hopeless"
+  - user: "give me a new angle?"
+  - user: "i'm worn down"
+  - user: "what now?"
+  - user: "another bad day"
+  - user: "got something new?"
+  - user: "i'm anxious"
+  - user: "what should i do?"
+  - user: "another miss"
+  - user: "any new ideas?"
+  - user: "i'm done for today"
+  - user: "one more?"
+    assert:
+      voice_axes_full: true

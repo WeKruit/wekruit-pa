@@ -1,0 +1,50 @@
+# Phase 33 — strategy fit (ESConv 8-strategy × 3-stage allowed-set, code-switch).
+#
+# 12 turns. User trajectory: vent → ask → share fact → ask advice. Claire's
+# strategy is expected to traverse:
+#   stage 0 Exploration (turns 1-3)  → Question / Restatement / Reflection
+#   stage 1 Comforting   (turns 4-7) → Reflection / Affirmation / SelfDisclosure
+#   stage 2 Action       (turns 8+)  → Suggestion / Information / Affirmation
+#
+# Target: voiceAxes.strategy_fit >= 2 (on-set + stage-appropriate).
+id: eval_strategy_fit_mixed
+description: |
+  Code-switch (zh+en) ESConv FSM traversal. User starts with vent
+  (Exploration), moves to seeking comfort (Comforting), then asks for
+  concrete next step (Action). Claire's strategy choice must match the
+  ESConv allowed-set per stage. Used by Phase 37 FSM validation +
+  Phase 39 ESConv benchmark calibration.
+testMode: true
+locale: mixed
+agentId: default
+participant: "+19999990204"
+chatId: "iMessage;+19999990204"
+turnTimeoutMs: 120000
+turns:
+  - user: "今天 onsite 又挂了, the hiring manager 直接说我不够 senior"
+    assert:
+      reply_min_length: 4
+      voice_axes_full: true
+  - user: "i don't know if this round is even worth pushing"
+  - user: "我已经面了 8 家了"
+    assert:
+      voice_axes_full: true
+  - user: "感觉自己 confidence 越来越低"
+  - user: "和 partner 也开始有摩擦"
+    assert:
+      voice_axes_full: true
+  - user: "我现在 need someone to tell me i'm not crazy"
+  - user: "anyway 谢谢你听我说"
+    assert:
+      voice_axes_full: true
+  - user: "okay 现在认真想下一步, 我应该 push 现在的 offer 还是再等等?"
+    assert:
+      voice_axes_full: true
+  - user: "现在的那个 offer 是 mid-stage startup, base 比上一份低 15k"
+  - user: "如果再等, 大概率要拖 2-3 个月"
+    assert:
+      voice_axes_full: true
+  - user: "和 partner 那边的房贷月供也压着"
+  - user: "你建议我怎么走?"
+    assert:
+      voice_axes_full: true

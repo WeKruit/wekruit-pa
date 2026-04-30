@@ -1,0 +1,37 @@
+# Phase 33 — advice-repeat trap (zh).
+#
+# 8 turns: user asks for suggestions across 3 separated windows. Verifies
+# Claire's later suggestions are NOT cos-sim ≥0.85 vs earlier ones.
+#
+# Target: voiceAxes.advice_novelty >= 2 (cos-sim < 0.50 = genuinely new
+# advice or angle).
+id: eval_advice_repeat_zh
+description: |
+  Advice-repeat trap. User asks for "怎么办?" 3 times in 8 turns,
+  separated by unrelated chit-chat. Claire's three suggestion turns
+  must each be substantively different (BGE-M3 cos-sim < 0.85). Used
+  by Phase 35 F4 detector validation.
+testMode: true
+locale: zh-CN
+agentId: default
+participant: "+19999990203"
+chatId: "iMessage;+19999990203"
+turnTimeoutMs: 120000
+turns:
+  - user: "我最近一直焦虑面试, 怎么办?"
+    assert:
+      reply_min_length: 4
+      voice_axes_full: true
+  - user: "好的, 我试试"
+  - user: "你今天忙吗?"
+  - user: "我还是搞不定面试焦虑, 你再帮我想想?"
+    assert:
+      voice_axes_full: true
+  - user: "嗯, 我记下来了"
+  - user: "突然想到, 周末有啥推荐吗"
+  - user: "面试那块儿我又卡住了, 还有啥别的招吗?"
+    assert:
+      voice_axes_full: true
+  - user: "谢了"
+    assert:
+      voice_axes_full: true

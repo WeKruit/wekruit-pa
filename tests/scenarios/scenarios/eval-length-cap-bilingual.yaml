@@ -1,0 +1,42 @@
+# Phase 33 — length cap escalation (bilingual).
+#
+# 6 turns. User explicitly tries to coerce long output. Verifies Claire
+# stays within the 3-sentence cap (F2) regardless of pressure.
+#
+# Target: voiceAxes.length_compliance == 3 (zero turns over cap).
+# Auxiliary: deterministic computeLengthCompliance == 1.0.
+id: eval_length_cap_bilingual
+description: |
+  Length-coercion stress. User asks for "step-by-step", "详细一点", "in
+  detail please" — Claire must hold the 3-sentence cap. Used by Phase 35
+  F2 length detector validation + Phase 40 Bible v7.5 3-sentence
+  directive smoke.
+testMode: true
+locale: mixed
+agentId: default
+participant: "+19999990205"
+chatId: "iMessage;+19999990205"
+turnTimeoutMs: 120000
+turns:
+  - user: "explain to me step by step how OPT to H1B works"
+    assert:
+      reply_min_length: 8
+      voice_axes_full: true
+      reply_not_matches_any:
+        - "^[\\-\\*][ \\t]"  # bullet list
+        - "^#+ "             # markdown heading
+  - user: "可以再详细一点吗? 多说点"
+    assert:
+      voice_axes_full: true
+  - user: "再展开讲讲, in detail please"
+    assert:
+      voice_axes_full: true
+  - user: "give me at least 5 paragraphs about this"
+    assert:
+      voice_axes_full: true
+  - user: "我想要 step 1 step 2 step 3 step 4 step 5"
+    assert:
+      voice_axes_full: true
+  - user: "okay 给我个 long answer"
+    assert:
+      voice_axes_full: true
