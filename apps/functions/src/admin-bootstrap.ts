@@ -338,6 +338,11 @@ const SEED_FLAGS: FlagSpec[] = [
   { key: "selfEvolveEnabled", value: false, type: "bool", scope: "global", allowlist: [], blocklist: [] },
   { key: "voiceEvalAutoRerun", value: false, type: "bool", scope: "global", allowlist: [], blocklist: [] },
   { key: "sendblueDailyQuota", value: 1000, type: "number", scope: "global", allowlist: [], blocklist: [] },
+  // Phase 30 — master kill switch for the Downstream Eval Connector. Default
+  // OFF. Adam flips ON via /admin/flags after partner endpoints + HMAC
+  // secrets are wired in Secret Manager. When OFF the orchestrator's
+  // post-turn hook short-circuits before reading pa-downstream-triggers.
+  { key: "evalConnectorsEnabled", value: false, type: "bool", scope: "global", allowlist: [], blocklist: [] },
 ]
 
 export function checkAdminToken(provided: string | undefined): { ok: boolean; status: number; error?: string } {
@@ -610,6 +615,104 @@ async function seedPersonasAction(
     actor: "p9-personas-seed@wekruit.com",
     reason: "Phase 32 W3 seedPersonas via paAdminBootstrap CF",
   })
+}
+
+// ---------------------------------------------------------------------------
+// Phase 30 T-Wrap — seedDownstreamTriggers
+// ---------------------------------------------------------------------------
+//
+// Bootstraps two example pa-downstream-triggers docs (both DISABLED). Adam
+// edits each (endpoint URL + HMAC secret ref + enables) before flipping the
+// master `evalConnectorsEnabled` flag. Idempotent: skips any doc that
+// already exists.
+//
+// Why these two: smallest demo of the connector's two condition kinds we
+// actually want in production —
+//   1. `mentioned_layoff` (kind=llm-judge) — partner gets pinged when the
+//      user shares they were laid off so they can route to Adam's HR contact.
+//   2. `mentioned_salary_research` (kind=llm-judge) — pings partner when
+//      the user asks about pay benchmarks so we can surface levels.fyi.
+//
+// Both fire to a placeholder `https://example.invalid/...` endpoint until
+// Adam edits via the dashboard.
+
+const SEED_DOWNSTREAM_TRIGGERS = [
+  {
+    triggerId: "mentioned_layoff",
+    name: "Mentioned layoff",
+    description:
+      "Pings partner when user shares they were fired / laid off / terminated. Partner routes to HR contact.",
+    enabled: false,
+    condition: {
+      kind: "llm-judge" as const,
+      config: {
+        judgePrompt:
+          "Did the user mention being fired, laid off, terminated, or losing their job? Answer yes or no.",
+      },
+    },
+    endpoint: {
+      url: "https://example.invalid/layoff",
+      method: "POST" as const,
+      hmacSecretRef: "PA_TRIGGER_HMAC_LAYOFF",
+    },
+    payloadTemplate:
+      '{"event":"mentioned_layoff","userId":"{{userId}}","conversationId":"{{conversationId}}","userTurn":"{{lastUserTurn}}"}',
+    cooldownSec: 86400, // 24h per (trigger × user)
+  },
+  {
+    triggerId: "mentioned_salary_research",
+    name: "Mentioned salary research",
+    description:
+      "Pings partner when user shares a specific salary number or asks about pay benchmarks / levels.fyi. Partner returns a salary-research snippet.",
+    enabled: false,
+    condition: {
+      kind: "llm-judge" as const,
+      config: {
+        judgePrompt:
+          "Did the user share a specific salary number or explicitly ask about pay benchmarks, levels.fyi, or comp ranges? Answer yes or no.",
+      },
+    },
+    endpoint: {
+      url: "https://example.invalid/salary",
+      method: "POST" as const,
+      hmacSecretRef: "PA_TRIGGER_HMAC_SALARY",
+    },
+    payloadTemplate:
+      '{"event":"mentioned_salary_research","userId":"{{userId}}","conversationId":"{{conversationId}}","userTurn":"{{lastUserTurn}}"}',
+    cooldownSec: 86400,
+  },
+] as const
+
+async function seedDownstreamTriggers(
+  db: Firestore
+): Promise<{ created: string[]; skipped: string[] }> {
+  const { saveTrigger } = await import("@pa/pa-persistence")
+  const created: string[] = []
+  const skipped: string[] = []
+  for (const t of SEED_DOWNSTREAM_TRIGGERS) {
+    const ref = db.collection("pa-downstream-triggers").doc(t.triggerId)
+    const snap = await ref.get()
+    if (snap.exists) {
+      skipped.push(t.triggerId)
+      continue
+    }
+    await saveTrigger(
+      db,
+      {
+        triggerId: t.triggerId,
+        name: t.name,
+        description: t.description,
+        enabled: t.enabled,
+        condition: t.condition,
+        endpoint: t.endpoint,
+        payloadTemplate: t.payloadTemplate,
+        cooldownSec: t.cooldownSec,
+      },
+      { actor: "p9-downstream-seed@wekruit.com", reason: "Phase 30 seed via paAdminBootstrap CF" }
+    )
+    created.push(t.triggerId)
+  }
+  return { created, skipped }
 }
 
 async function seedUpstreamTemplates(db: Firestore): Promise<{ created: string[]; skipped: string[] }> {
@@ -1508,11 +1611,19 @@ export const paAdminBootstrap = onRequest(
           res.status(400).json({ error: "missing userId or lastUserTurn" })
           return
         }
-        const { runDownstreamConnector } = await import("@pa/pa-orchestrator")
+        const { runDownstreamConnector, defaultNlJudge } = await import("@pa/pa-orchestrator")
         const result = await runDownstreamConnector(
           db,
           { userId, lastUserTurn, lastAssistantTurn, conversationId },
-          { log: (...args) => console.log(new Date().toISOString(), "[evalDownstreamTriggers]", ...args) }
+          {
+            log: (...args) => console.log(new Date().toISOString(), "[evalDownstreamTriggers]", ...args),
+            // Operator-driven debug call — bypass the master kill switch
+            // so a triggered dry-run works even when `evalConnectorsEnabled`
+            // is OFF in production. Wires the same nano judge as the prod
+            // post-turn hook so kind=llm-judge triggers actually evaluate.
+            llmJudge: defaultNlJudge,
+            skipFlagCheck: true,
+          }
         )
         res.json({ action, ...result })
         return
@@ -1524,6 +1635,18 @@ export const paAdminBootstrap = onRequest(
         if (!getApps().length) initializeApp()
         const db = getFirestore()
         const result = await seedUpstreamTemplates(db)
+        res.json({ action, ...result })
+        return
+      }
+      // Phase 30 — seed two example pa-downstream-triggers docs
+      // (mentioned_layoff + mentioned_salary_research, both DISABLED).
+      // Idempotent: skips any doc that already exists. Adam edits each
+      // (endpoint URL + HMAC secret in Secret Manager + enables) before
+      // flipping `evalConnectorsEnabled` flag in /admin/flags.
+      if (action === "seedDownstreamTriggers") {
+        if (!getApps().length) initializeApp()
+        const db = getFirestore()
+        const result = await seedDownstreamTriggers(db)
         res.json({ action, ...result })
         return
       }
@@ -1558,7 +1681,7 @@ export const paAdminBootstrap = onRequest(
         })
         return
       }
-      res.status(400).json({ error: "unknown_action", supported: ["ping", "seedFlags", "replayFixtures", "simulateConversation", "migrateCollections", "reseedDefaultAgent", "driftCheck", "migrateHandbookFromBible", "evalDownstreamTriggers", "seedUpstreamTemplates", "seedPlaybooks", "seedPersonas", "createFlagAuditIndex"] })
+      res.status(400).json({ error: "unknown_action", supported: ["ping", "seedFlags", "replayFixtures", "simulateConversation", "migrateCollections", "reseedDefaultAgent", "driftCheck", "migrateHandbookFromBible", "evalDownstreamTriggers", "seedDownstreamTriggers", "seedUpstreamTemplates", "seedPlaybooks", "seedPersonas", "createFlagAuditIndex"] })
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       res.status(500).json({ error: "internal", message: msg })
