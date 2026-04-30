@@ -3,11 +3,11 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: Humanize-Runtime v2 + v1.3 Carryover (Dual Stream)
 status: in_progress
-last_updated: "2026-04-30T00:30:00.000Z"
+last_updated: "2026-04-30T01:30:00.000Z"
 last_activity: 2026-04-30
 progress:
   total_phases: 12
-  completed_phases: 8
+  completed_phases: 9
   total_plans: 0
   completed_plans: 0
 ---
@@ -45,7 +45,7 @@ Canonical doc: [`MILESTONE-v1.4-humanize-runtime-v2.md`](./MILESTONE-v1.4-humani
 | 34 | Baseline Measurement | ✅ COMPLETE 2026-04-29 (deterministic-only baseline, 155 turns; baseline-rev00056.md locked + per-Phase gates 35-40; judge + embed deferred Adam-approval) | P10 main |
 | 35 | 4 Deterministic Detectors | ✅ PARTIAL 2026-04-29 (T1-T5, 6 commits; F1/F2/F3/F4 + framework + smoke harness; 67/67 tests pass; F1 recall 100% on Phase 34 known-fails, F1/F2/F3 false-positive 0% on smoke; F4 graceful degrade verified; latency p95 < 250ms total. **Wire-in deferred** — Adam applies `WIRE-IN-PATCH.md` after committing pending llm-rewriter.ts work) | P9-C |
 | 36 | ImperfectionInjector A/B | ✅ PARTIAL 2026-04-30 (T1-T5, 5 commits + docs commit; injector module + 3-arm router + position constraint + bilingual policies + A/B harness + 2 scenarios; 89/89 tests pass; 0 FILLER_BLACKLIST collisions; arm probability ±3pp; latency p95 < 5ms; A/B harness `--dry-run` plans 18 reply + 12 judge calls. **Wire-in deferred** — Adam applies `WIRE-IN-PATCH.md` after Phase 35 wire-in + needs to approve $0.50-$2 LLM budget for live A/B run) | P9-C |
-| 37 | FSM (5 UX × ESConv 8) | Not started | P9-C |
+| 37 | FSM (5 UX × ESConv 8) | ✅ PARTIAL 2026-04-30 (T1-T4, 5 commits incl docs; FSM module + 5-class rule-based ux classifier + per-uxState transitions + Phase 33 parity audit + 50 hand-labeled bilingual fixtures + accuracy gate; 99/99 tests pass; ux_state classifier accuracy 98% (49/50, gate ≥70%); strategy_fit allowed-set 100% on synthetic-aligned (50/50); inferStrategy match expected 100%; runFsm latency p95 < 10ms. **Wire-in deferred** — Adam applies `WIRE-IN-PATCH.md` after Phase 35 + 36 wire-ins land + own pending llm-rewriter.ts work committed) | P9-C |
 | 38 | Memory Policy | Not started | P9-C |
 | 39 | External Auto Benchmarks | Not started | P9-C |
 | 40 | Bible v7.5 + Crisis + Ship | Not started | P9-C |
@@ -60,10 +60,10 @@ Canonical doc: [`MILESTONE-v1.4-humanize-runtime-v2.md`](./MILESTONE-v1.4-humani
 
 ## Current Position
 
-Phase: Stream A v1.3 carryover ✅ COMPLETE (29 + 30 + 31 + 32). Stream C v1.4 in progress — Phases 33 + 34 ✅ COMPLETE; Phase 35 ✅ PARTIAL (detectors built, wire-in Adam-owed); Phase 36 ✅ PARTIAL (injector + A/B harness built, wire-in Adam-owed). Phase 37 FSM can begin once Phase 35 + 36 are wired in.
-Plan: Stream A done (4/4 phases shipped); Stream C 4/8 (Phases 33 + 34 + 35-partial + 36-partial; 4 remaining)
-Status: Stream A wrapped — operator-grade dashboard + connectors + handbook live; Stream C — F1/F2/F3/F4 detector module + ImperfectionInjector + 3-arm A/B harness shipped behind feature flags `PA_DETECTORS_ENABLED` and `PA_IMPERFECTION_INJECTOR_ENABLED` (default off); Adam-owed P0 tasks are applying `.planning/phases/35-detectors/WIRE-IN-PATCH.md` then `.planning/phases/36-injector/WIRE-IN-PATCH.md` after committing pending uncommitted work + approving $0.50-$2 LLM budget for live A/B run
-Last activity: 2026-04-30 — Phase 36 T1-T5 complete (P9-C); 89/89 injector + harness tests pass; arm probability sanity ±3pp on 1000-sample; type priority verified; anti-stutter; anti-blacklist runtime guard; latency p95 < 5ms; A/B dry-run plans 18 reply + 12 judge calls (~$0.10)
+Phase: Stream A v1.3 carryover ✅ COMPLETE (29 + 30 + 31 + 32). Stream C v1.4 in progress — Phases 33 + 34 ✅ COMPLETE; Phase 35 ✅ PARTIAL (detectors built, wire-in Adam-owed); Phase 36 ✅ PARTIAL (injector + A/B harness built, wire-in Adam-owed); Phase 37 ✅ PARTIAL (FSM built, wire-in Adam-owed).
+Plan: Stream A done (4/4 phases shipped); Stream C 5/8 (Phases 33 + 34 + 35-partial + 36-partial + 37-partial; 3 remaining: 38 Memory Policy + 39 External Benchmarks + 40 Bible v7.5 + Ship)
+Status: Stream A wrapped — operator-grade dashboard + connectors + handbook live; Stream C — F1/F2/F3/F4 detector module + ImperfectionInjector + 3-arm A/B harness + FSM (5 UX × ESConv 8) module shipped behind feature flags `PA_DETECTORS_ENABLED`, `PA_IMPERFECTION_INJECTOR_ENABLED`, and `PA_FSM_ENABLED` (default off); Adam-owed P0 tasks: apply 3 WIRE-IN-PATCH.md files in order (35 → 36 → 37) after committing pending uncommitted work + approving $0.50-$2 LLM budget for live A/B run
+Last activity: 2026-04-30 — Phase 37 T1-T4 complete (P9-C); 99/99 FSM tests pass; ux_state classifier accuracy 98% (49/50, gate ≥70%); strategy_fit allowed-set 100% on 50 synthetic-aligned fixtures; inferStrategy match expected 100%; Phase 33 parity audit clean; runFsm latency p95 < 10ms; bilingual zh+en+mixed coverage (25 zh + 20 en + 5 mixed)
 
 ## Adam's blocking decisions (none currently)
 
