@@ -1,0 +1,137 @@
+[
+  {
+    "id": "pos-zh-dietary-01",
+    "lang": "zh",
+    "user_fact": "我吃素",
+    "claire_reply": "试试这家牛排馆，他们的肋眼牛排超级嫩",
+    "expected_contradiction": true,
+    "expected_type": "dietary",
+    "expected_violated_term_synonyms": ["牛排", "牛肉", "肋眼", "steak"]
+  },
+  {
+    "id": "pos-zh-allergy-01",
+    "lang": "zh",
+    "user_fact": "我对花生过敏",
+    "claire_reply": "花生酱拌面是个好选择，简单又香",
+    "expected_contradiction": true,
+    "expected_type": "allergy",
+    "expected_violated_term_synonyms": ["花生", "花生酱", "peanut"]
+  },
+  {
+    "id": "pos-zh-pet-01",
+    "lang": "zh",
+    "user_fact": "我家养猫",
+    "claire_reply": "你家狗狗一定喜欢这个新玩具",
+    "expected_contradiction": true,
+    "expected_type": "pet",
+    "expected_violated_term_synonyms": ["狗", "狗狗", "犬", "dog"]
+  },
+  {
+    "id": "pos-zh-pref-neg-01",
+    "lang": "zh",
+    "user_fact": "我从不喝咖啡",
+    "claire_reply": "试试这家咖啡店，拿铁特别浓",
+    "expected_contradiction": true,
+    "expected_type": "preference_negation",
+    "expected_violated_term_synonyms": ["咖啡", "拿铁", "coffee"]
+  },
+  {
+    "id": "pos-zh-health-01",
+    "lang": "zh",
+    "user_fact": "我有糖尿病",
+    "claire_reply": "甜点放开吃，蛋糕和糖果都来一份",
+    "expected_contradiction": true,
+    "expected_type": "health",
+    "expected_violated_term_synonyms": ["甜", "甜点", "糖", "蛋糕", "糖果", "sugar", "dessert"]
+  },
+  {
+    "id": "pos-en-dietary-01",
+    "lang": "en",
+    "user_fact": "I'm vegan",
+    "claire_reply": "try this steakhouse, their ribeye steak is super tender",
+    "expected_contradiction": true,
+    "expected_type": "dietary",
+    "expected_violated_term_synonyms": ["steak", "steakhouse", "ribeye", "beef"]
+  },
+  {
+    "id": "pos-en-allergy-01",
+    "lang": "en",
+    "user_fact": "I'm allergic to peanuts",
+    "claire_reply": "peanut butter on toast is a great breakfast option",
+    "expected_contradiction": true,
+    "expected_type": "allergy",
+    "expected_violated_term_synonyms": ["peanut", "peanut butter"]
+  },
+  {
+    "id": "pos-en-pet-01",
+    "lang": "en",
+    "user_fact": "I have a cat at home",
+    "claire_reply": "your dog will love this new chew toy",
+    "expected_contradiction": true,
+    "expected_type": "pet",
+    "expected_violated_term_synonyms": ["dog", "puppy"]
+  },
+  {
+    "id": "pos-en-location-01",
+    "lang": "en",
+    "user_fact": "I'm based in NYC",
+    "claire_reply": "there's a great Seattle coffee shop you should visit",
+    "expected_contradiction": true,
+    "expected_type": "location",
+    "expected_violated_term_synonyms": ["Seattle"]
+  },
+  {
+    "id": "pos-en-profession-01",
+    "lang": "en",
+    "user_fact": "I work as a doctor",
+    "claire_reply": "ask your engineer colleagues for advice on this",
+    "expected_contradiction": true,
+    "expected_type": "profession",
+    "expected_violated_term_synonyms": ["engineer"]
+  },
+  {
+    "id": "neg-zh-dietary-ok",
+    "lang": "zh",
+    "user_fact": "我吃素",
+    "claire_reply": "试试这家素菜馆，豆腐做得超好吃",
+    "expected_contradiction": false,
+    "expected_type": null,
+    "expected_violated_term_synonyms": []
+  },
+  {
+    "id": "neg-zh-pet-ok",
+    "lang": "zh",
+    "user_fact": "我家养猫",
+    "claire_reply": "你家小猫一定喜欢这个新玩具",
+    "expected_contradiction": false,
+    "expected_type": null,
+    "expected_violated_term_synonyms": []
+  },
+  {
+    "id": "neg-en-vegan-salad",
+    "lang": "en",
+    "user_fact": "I'm vegetarian",
+    "claire_reply": "great salad spot near you, they have amazing tofu bowls",
+    "expected_contradiction": false,
+    "expected_type": null,
+    "expected_violated_term_synonyms": []
+  },
+  {
+    "id": "neg-en-cat-ok",
+    "lang": "en",
+    "user_fact": "I have a cat",
+    "claire_reply": "your cat would love this new feather toy",
+    "expected_contradiction": false,
+    "expected_type": null,
+    "expected_violated_term_synonyms": []
+  },
+  {
+    "id": "neg-en-doctor-ok",
+    "lang": "en",
+    "user_fact": "I'm a doctor",
+    "claire_reply": "as a medical professional you'd appreciate this evidence-based approach",
+    "expected_contradiction": false,
+    "expected_type": null,
+    "expected_violated_term_synonyms": []
+  }
+]
