@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: Humanize-Runtime v2 + v1.3 Carryover (Dual Stream)
 status: in_progress
-last_updated: "2026-04-29T23:30:00.000Z"
+last_updated: "2026-04-29T23:45:00.000Z"
 last_activity: 2026-04-29
 progress:
   total_phases: 12
@@ -25,7 +25,7 @@ P10 strategy doc: `phases/P9-AUTONOMOUS-RUN-STATUS.md` (legacy) + `MILESTONE-v1.
 | # | Phase | Status | Workstream owner |
 |---|-------|--------|------------------|
 | 29 | Agent Handbook (Bible-as-data) | ✅ COMPLETE 2026-04-29 (T1-T4, 4 commits + handbook integration tests 7/7 pass; SDK 18/18 + orch 201/201 pass) | P9-A |
-| 30 | Downstream Eval Connector | ✅ COMPLETE 2026-04-29 (T1-T3, 3 commits; SDK + orch hook + dashboard page; pa-downstream-triggers green) | P9-A |
+| 30 | Downstream Eval Connector | ✅ COMPLETE 2026-04-29 (T1-T3 prior + T-Wrap-1/2/3 P9-A Wave 2: master kill switch `evalConnectorsEnabled` + nano default nl-judge + 2 default disabled triggers seeded (mentioned_layoff, mentioned_salary_research) + SEED.md + FIRESTORE-TTL.md; pa-orchestrator 213/213 pass; pa-persistence 91/91 pass; typecheck clean) | P9-A |
 | 31 | Upstream Event Connector | ✅ COMPLETE 2026-04-29 (T1-T3, 3 commits; paUpstreamEventWebhook CF + HMAC + Mustache-lite renderer + dashboard page) | P9-A |
 | 32 | Dashboard IA Reorg + Stress Harness + Playbooks/Personas CRUD | ✅ COMPLETE 2026-04-29 (W1-W4, 8 wave commits + 3 deploy-fix; sidebar 5-cat, Conversations row redesign, UserDetail OperatorSummary, Voice split, Flags drawer, Playbooks+Personas Firestore CRUD, Artillery harness, paSendblueOutbox repaired, cloud-logging dashboard.json; agent-registry 33/33, pa-orchestrator 201/201, typecheck clean) | P9-B |
 
