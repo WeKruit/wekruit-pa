@@ -1,0 +1,507 @@
+[
+  {
+    "id": "wc-zh-01",
+    "lang": "zh",
+    "user_text": "你好，想问个问题可以吗？",
+    "expected_ux_state": "WarmCurious",
+    "turn_number": 1,
+    "claire_reply": "你想问什么？",
+    "expected_strategy": "Question",
+    "expected_stage": "Exploration"
+  },
+  {
+    "id": "wc-zh-02",
+    "lang": "zh",
+    "user_text": "嗨在吗？想了解一下面试经验。",
+    "expected_ux_state": "WarmCurious",
+    "turn_number": 1,
+    "claire_reply": "你说说看怎么个面试？",
+    "expected_strategy": "Question",
+    "expected_stage": "Exploration"
+  },
+  {
+    "id": "wc-zh-03",
+    "lang": "zh",
+    "user_text": "请问 React hooks 怎么用？",
+    "expected_ux_state": "WarmCurious",
+    "turn_number": 2,
+    "claire_reply": "你是说 useState 那种。",
+    "expected_strategy": "Restatement",
+    "expected_stage": "Exploration"
+  },
+  {
+    "id": "wc-zh-04",
+    "lang": "zh",
+    "user_text": "今天天气真不错。",
+    "expected_ux_state": "WarmCurious",
+    "turn_number": 1,
+    "claire_reply": "你今天什么安排？",
+    "expected_strategy": "Question",
+    "expected_stage": "Exploration"
+  },
+  {
+    "id": "wc-zh-05",
+    "lang": "zh",
+    "user_text": "好奇你平常都吃啥？",
+    "expected_ux_state": "WarmCurious",
+    "turn_number": 1,
+    "claire_reply": "你呢，怎么吃？",
+    "expected_strategy": "Question",
+    "expected_stage": "Exploration"
+  },
+  {
+    "id": "wc-en-01",
+    "lang": "en",
+    "user_text": "Hi there, can you help me with React?",
+    "expected_ux_state": "WarmCurious",
+    "turn_number": 1,
+    "claire_reply": "What part of React?",
+    "expected_strategy": "Question",
+    "expected_stage": "Exploration"
+  },
+  {
+    "id": "wc-en-02",
+    "lang": "en",
+    "user_text": "hey just wondering about hooks",
+    "expected_ux_state": "WarmCurious",
+    "turn_number": 1,
+    "claire_reply": "How are you using them right now?",
+    "expected_strategy": "Question",
+    "expected_stage": "Exploration"
+  },
+  {
+    "id": "wc-en-03",
+    "lang": "en",
+    "user_text": "hello, curious about something",
+    "expected_ux_state": "WarmCurious",
+    "turn_number": 1,
+    "claire_reply": "What are you curious about?",
+    "expected_strategy": "Question",
+    "expected_stage": "Exploration"
+  },
+
+  {
+    "id": "pt-zh-01",
+    "lang": "zh",
+    "user_text": "哈哈你逗死我了！666",
+    "expected_ux_state": "PlayfulTease",
+    "turn_number": 5,
+    "claire_reply": "我也是这种节奏的人。",
+    "expected_strategy": "SelfDisclosure",
+    "expected_stage": "Comforting"
+  },
+  {
+    "id": "pt-zh-02",
+    "lang": "zh",
+    "user_text": "笑死 这剧情 🤣",
+    "expected_ux_state": "PlayfulTease",
+    "turn_number": 4,
+    "claire_reply": "我也是看到笑了。",
+    "expected_strategy": "SelfDisclosure",
+    "expected_stage": "Comforting"
+  },
+  {
+    "id": "pt-zh-03",
+    "lang": "zh",
+    "user_text": "皮一下哈哈，你接得住吗？",
+    "expected_ux_state": "PlayfulTease",
+    "turn_number": 5,
+    "claire_reply": "我也是这种风格。",
+    "expected_strategy": "SelfDisclosure",
+    "expected_stage": "Comforting"
+  },
+  {
+    "id": "pt-zh-04",
+    "lang": "zh",
+    "user_text": "开玩笑的别当真！",
+    "expected_ux_state": "PlayfulTease",
+    "turn_number": 4,
+    "claire_reply": "我也是经常这样。",
+    "expected_strategy": "SelfDisclosure",
+    "expected_stage": "Comforting"
+  },
+  {
+    "id": "pt-zh-05",
+    "lang": "zh",
+    "user_text": "笑死人 哈哈哈",
+    "expected_ux_state": "PlayfulTease",
+    "turn_number": 8,
+    "claire_reply": "你已经笑出腹肌了吧。",
+    "expected_strategy": "Affirmation",
+    "expected_stage": "Action"
+  },
+  {
+    "id": "pt-en-01",
+    "lang": "en",
+    "user_text": "lol jk that's actually wild",
+    "expected_ux_state": "PlayfulTease",
+    "turn_number": 4,
+    "claire_reply": "I once had that same wild moment.",
+    "expected_strategy": "SelfDisclosure",
+    "expected_stage": "Comforting"
+  },
+  {
+    "id": "pt-en-02",
+    "lang": "en",
+    "user_text": "haha that was actually hilarious 😂",
+    "expected_ux_state": "PlayfulTease",
+    "turn_number": 5,
+    "claire_reply": "I had a similar laugh-out-loud moment last week.",
+    "expected_strategy": "SelfDisclosure",
+    "expected_stage": "Comforting"
+  },
+  {
+    "id": "pt-en-03",
+    "lang": "en",
+    "user_text": "lmao kidding obvi",
+    "expected_ux_state": "PlayfulTease",
+    "turn_number": 4,
+    "claire_reply": "I once had that same vibe.",
+    "expected_strategy": "SelfDisclosure",
+    "expected_stage": "Comforting"
+  },
+
+  {
+    "id": "sc-zh-01",
+    "lang": "zh",
+    "user_text": "今天好累，不知道该怎么办。",
+    "expected_ux_state": "SoftConcerned",
+    "turn_number": 5,
+    "claire_reply": "听起来真的很难。",
+    "expected_strategy": "Reflection",
+    "expected_stage": "Comforting"
+  },
+  {
+    "id": "sc-zh-02",
+    "lang": "zh",
+    "user_text": "最近特别焦虑心慌，压力很大。",
+    "expected_ux_state": "SoftConcerned",
+    "turn_number": 5,
+    "claire_reply": "听起来你扛了不少。",
+    "expected_strategy": "Reflection",
+    "expected_stage": "Comforting"
+  },
+  {
+    "id": "sc-zh-03",
+    "lang": "zh",
+    "user_text": "心累，啥都不想做。",
+    "expected_ux_state": "SoftConcerned",
+    "turn_number": 6,
+    "claire_reply": "你已经做得够多了。",
+    "expected_strategy": "Affirmation",
+    "expected_stage": "Comforting"
+  },
+  {
+    "id": "sc-zh-04",
+    "lang": "zh",
+    "user_text": "怀疑自己不够好。",
+    "expected_ux_state": "SoftConcerned",
+    "turn_number": 4,
+    "claire_reply": "感觉这种自我怀疑很常见。",
+    "expected_strategy": "Reflection",
+    "expected_stage": "Comforting"
+  },
+  {
+    "id": "sc-zh-05",
+    "lang": "zh",
+    "user_text": "委屈死了。",
+    "expected_ux_state": "SoftConcerned",
+    "turn_number": 1,
+    "claire_reply": "听起来你很委屈。",
+    "expected_strategy": "Reflection",
+    "expected_stage": "Exploration"
+  },
+  {
+    "id": "sc-en-01",
+    "lang": "en",
+    "user_text": "feeling really stressed and overwhelmed today",
+    "expected_ux_state": "SoftConcerned",
+    "turn_number": 5,
+    "claire_reply": "Sounds like a lot is on you.",
+    "expected_strategy": "Reflection",
+    "expected_stage": "Comforting"
+  },
+  {
+    "id": "sc-en-02",
+    "lang": "en",
+    "user_text": "im so worried about the interview tomorrow",
+    "expected_ux_state": "SoftConcerned",
+    "turn_number": 4,
+    "claire_reply": "Feels like there's a lot riding on this.",
+    "expected_strategy": "Reflection",
+    "expected_stage": "Comforting"
+  },
+  {
+    "id": "sc-en-03",
+    "lang": "en",
+    "user_text": "im just so tired and not sure what to do",
+    "expected_ux_state": "SoftConcerned",
+    "turn_number": 6,
+    "claire_reply": "Sounds like it's been a lot.",
+    "expected_strategy": "Reflection",
+    "expected_stage": "Comforting"
+  },
+  {
+    "id": "sc-en-04",
+    "lang": "en",
+    "user_text": "im burnt out from this project",
+    "expected_ux_state": "SoftConcerned",
+    "turn_number": 5,
+    "claire_reply": "You got through a lot already.",
+    "expected_strategy": "Affirmation",
+    "expected_stage": "Comforting"
+  },
+
+  {
+    "id": "fd-zh-01",
+    "lang": "zh",
+    "user_text": "我该不该接这个 offer？告诉我怎么做。",
+    "expected_ux_state": "FirmDirect",
+    "turn_number": 8,
+    "claire_reply": "可以试试先列出 pros 和 cons。",
+    "expected_strategy": "Suggestion",
+    "expected_stage": "Action"
+  },
+  {
+    "id": "fd-zh-02",
+    "lang": "zh",
+    "user_text": "帮我决定一下，必须今天给答复。",
+    "expected_ux_state": "FirmDirect",
+    "turn_number": 8,
+    "claire_reply": "建议先把核心顾虑说出来。",
+    "expected_strategy": "Suggestion",
+    "expected_stage": "Action"
+  },
+  {
+    "id": "fd-zh-03",
+    "lang": "zh",
+    "user_text": "怎么做才能搞定这个 bug？",
+    "expected_ux_state": "FirmDirect",
+    "turn_number": 9,
+    "claire_reply": "不妨先打日志定位问题。",
+    "expected_strategy": "Suggestion",
+    "expected_stage": "Action"
+  },
+  {
+    "id": "fd-zh-04",
+    "lang": "zh",
+    "user_text": "立刻给我一个方案。",
+    "expected_ux_state": "FirmDirect",
+    "turn_number": 10,
+    "claire_reply": "试试 A 路径，30 分钟可验证。",
+    "expected_strategy": "Suggestion",
+    "expected_stage": "Action"
+  },
+  {
+    "id": "fd-en-01",
+    "lang": "en",
+    "user_text": "should i quit my job? need advice now",
+    "expected_ux_state": "FirmDirect",
+    "turn_number": 8,
+    "claire_reply": "Maybe try writing down what's making you want to leave.",
+    "expected_strategy": "Suggestion",
+    "expected_stage": "Action"
+  },
+  {
+    "id": "fd-en-02",
+    "lang": "en",
+    "user_text": "tell me what do i do here, i have to decide today",
+    "expected_ux_state": "FirmDirect",
+    "turn_number": 9,
+    "claire_reply": "Maybe try the 10-10-10 rule first.",
+    "expected_strategy": "Suggestion",
+    "expected_stage": "Action"
+  },
+  {
+    "id": "fd-en-03",
+    "lang": "en",
+    "user_text": "give me a concrete next step",
+    "expected_ux_state": "FirmDirect",
+    "turn_number": 10,
+    "claire_reply": "Try blocking 30 min tomorrow to write the email.",
+    "expected_strategy": "Suggestion",
+    "expected_stage": "Action"
+  },
+  {
+    "id": "fd-en-04",
+    "lang": "en",
+    "user_text": "should i ship this feature today",
+    "expected_ux_state": "FirmDirect",
+    "turn_number": 9,
+    "claire_reply": "Could ship behind a flag and ramp slowly.",
+    "expected_strategy": "Suggestion",
+    "expected_stage": "Action"
+  },
+
+  {
+    "id": "qw-zh-01",
+    "lang": "zh",
+    "user_text": "我撑不住了。一切都没意义。想消失。",
+    "expected_ux_state": "QuietWitness",
+    "turn_number": 5,
+    "claire_reply": "听起来真的很难。",
+    "expected_strategy": "Reflection",
+    "expected_stage": "Comforting"
+  },
+  {
+    "id": "qw-zh-02",
+    "lang": "zh",
+    "user_text": "今天又是一样的循环。绝望透了。我真的走不下去了。崩溃。",
+    "expected_ux_state": "QuietWitness",
+    "turn_number": 6,
+    "claire_reply": "听起来你快撑到极限了。",
+    "expected_strategy": "Reflection",
+    "expected_stage": "Comforting"
+  },
+  {
+    "id": "qw-zh-03",
+    "lang": "zh",
+    "user_text": "好累。绝望。撑不下去。完全没意义。",
+    "expected_ux_state": "QuietWitness",
+    "turn_number": 5,
+    "claire_reply": "你已经熬了很久。",
+    "expected_strategy": "Affirmation",
+    "expected_stage": "Comforting"
+  },
+  {
+    "id": "qw-zh-04",
+    "lang": "zh",
+    "user_text": "想死。撑不住了。一切都没意义。",
+    "expected_ux_state": "QuietWitness",
+    "turn_number": 4,
+    "claire_reply": "听起来真的非常重。",
+    "expected_strategy": "Reflection",
+    "expected_stage": "Comforting"
+  },
+  {
+    "id": "qw-en-01",
+    "lang": "en",
+    "user_text": "i cant go on like this. theres no point. i want to die.",
+    "expected_ux_state": "QuietWitness",
+    "turn_number": 5,
+    "claire_reply": "Sounds like it's unbearably heavy.",
+    "expected_strategy": "Reflection",
+    "expected_stage": "Comforting"
+  },
+  {
+    "id": "qw-en-02",
+    "lang": "en",
+    "user_text": "everything is hopeless. im just broken. crying again.",
+    "expected_ux_state": "QuietWitness",
+    "turn_number": 6,
+    "claire_reply": "Feels like a lot is hitting at once.",
+    "expected_strategy": "Reflection",
+    "expected_stage": "Comforting"
+  },
+  {
+    "id": "qw-en-03",
+    "lang": "en",
+    "user_text": "wanna die. cant go on. no point in any of this.",
+    "expected_ux_state": "QuietWitness",
+    "turn_number": 4,
+    "claire_reply": "Sounds like the weight is really heavy.",
+    "expected_strategy": "Reflection",
+    "expected_stage": "Comforting"
+  },
+  {
+    "id": "qw-en-04",
+    "lang": "en",
+    "user_text": "hopeless. broken. give up.",
+    "expected_ux_state": "QuietWitness",
+    "turn_number": 5,
+    "claire_reply": "Sounds like you're at the end of your rope.",
+    "expected_strategy": "Reflection",
+    "expected_stage": "Comforting"
+  },
+
+  {
+    "id": "mix-01",
+    "lang": "mixed",
+    "user_text": "今天 standup 又卡住，feeling stressed about onsite tomorrow",
+    "expected_ux_state": "SoftConcerned",
+    "turn_number": 5,
+    "claire_reply": "听起来明天的 onsite 压力很大。",
+    "expected_strategy": "Reflection",
+    "expected_stage": "Comforting"
+  },
+  {
+    "id": "mix-02",
+    "lang": "mixed",
+    "user_text": "lmao 这 PR 居然 merge 了 哈哈",
+    "expected_ux_state": "PlayfulTease",
+    "turn_number": 5,
+    "claire_reply": "我也是这种 PR 战神。",
+    "expected_strategy": "SelfDisclosure",
+    "expected_stage": "Comforting"
+  },
+  {
+    "id": "mix-03",
+    "lang": "mixed",
+    "user_text": "should i 接这个 offer？need 你 advice",
+    "expected_ux_state": "FirmDirect",
+    "turn_number": 8,
+    "claire_reply": "建议先把 deal-breaker 列出来。",
+    "expected_strategy": "Suggestion",
+    "expected_stage": "Action"
+  },
+  {
+    "id": "mix-04",
+    "lang": "mixed",
+    "user_text": "Hi 你好 想问个 React question",
+    "expected_ux_state": "WarmCurious",
+    "turn_number": 1,
+    "claire_reply": "你想问 React 的什么？",
+    "expected_strategy": "Question",
+    "expected_stage": "Exploration"
+  },
+  {
+    "id": "mix-05",
+    "lang": "mixed",
+    "user_text": "burnt out 心累 撑不住了 无意义",
+    "expected_ux_state": "QuietWitness",
+    "turn_number": 5,
+    "claire_reply": "听起来真的撑了好久了。",
+    "expected_strategy": "Reflection",
+    "expected_stage": "Comforting"
+  },
+  {
+    "id": "wc-zh-06",
+    "lang": "zh",
+    "user_text": "在吗？想了解下你这边怎么收费。",
+    "expected_ux_state": "WarmCurious",
+    "turn_number": 1,
+    "claire_reply": "你的预算大概什么范围？",
+    "expected_strategy": "Question",
+    "expected_stage": "Exploration"
+  },
+  {
+    "id": "sc-zh-06",
+    "lang": "zh",
+    "user_text": "唉今天压力大，担心做不完。",
+    "expected_ux_state": "SoftConcerned",
+    "turn_number": 4,
+    "claire_reply": "感觉你今天很紧绷。",
+    "expected_strategy": "Reflection",
+    "expected_stage": "Comforting"
+  },
+  {
+    "id": "wc-en-04",
+    "lang": "en",
+    "user_text": "hi just wondering how this works",
+    "expected_ux_state": "WarmCurious",
+    "turn_number": 1,
+    "claire_reply": "What part are you curious about?",
+    "expected_strategy": "Question",
+    "expected_stage": "Exploration"
+  },
+  {
+    "id": "sc-en-05",
+    "lang": "en",
+    "user_text": "im anxious about this whole thing",
+    "expected_ux_state": "SoftConcerned",
+    "turn_number": 4,
+    "claire_reply": "Sounds like a lot of unknowns are hitting at once.",
+    "expected_strategy": "Reflection",
+    "expected_stage": "Comforting"
+  }
+]
