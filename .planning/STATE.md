@@ -7,7 +7,7 @@ last_updated: "2026-04-29T23:30:00.000Z"
 last_activity: 2026-04-29
 progress:
   total_phases: 12
-  completed_phases: 5
+  completed_phases: 6
   total_plans: 0
   completed_plans: 0
 ---
@@ -42,7 +42,7 @@ Canonical doc: [`MILESTONE-v1.4-humanize-runtime-v2.md`](./MILESTONE-v1.4-humani
 | # | Phase | Status | Workstream owner |
 |---|-------|--------|------------------|
 | 33 | Eval Harness Extension | COMPLETE 2026-04-29 (5 commits, 140 tests pass) | P9-C |
-| 34 | Baseline Measurement | Not started | P9-C |
+| 34 | Baseline Measurement | ✅ COMPLETE 2026-04-29 (deterministic-only baseline, 155 turns; baseline-rev00056.md locked + per-Phase gates 35-40; judge + embed deferred Adam-approval) | P10 main |
 | 35 | 4 Deterministic Detectors | Not started | P9-C |
 | 36 | ImperfectionInjector A/B | Not started | P9-C |
 | 37 | FSM (5 UX × ESConv 8) | Not started | P9-C |
