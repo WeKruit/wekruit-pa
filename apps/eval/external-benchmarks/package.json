@@ -1,0 +1,20 @@
+{
+  "name": "@pa/external-benchmarks",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Phase 39 — External auto benchmarks harness (BotChat / CharacterEval / EmpatheticDialogues / ESConv / RoleLLM). BUILD-only; live runs deferred to Adam after $25 budget approval.",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test lib/cost-ledger.test.mjs lib/sf-client.test.mjs lib/qwen-7b-adapter.test.mjs lib/qwen-72b-adapter.test.mjs lib/claire-stack-adapter.test.mjs lib/results-aggregator.test.mjs runners/botchat-dry-run.test.mjs runners/character-eval-dry-run.test.mjs runners/empathetic-dialogues-dry-run.test.mjs runners/esconv-dry-run.test.mjs runners/role-llm-dry-run.test.mjs run-all.test.mjs",
+    "bench:dry-run": "node run-all.mjs --dry-run",
+    "bench:live": "node run-all.mjs --live"
+  },
+  "dependencies": {
+    "@pa/pa-orchestrator": "0.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.3.0"
+  }
+}
