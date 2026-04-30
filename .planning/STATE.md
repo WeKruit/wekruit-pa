@@ -3,11 +3,11 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: Humanize-Runtime v2 + v1.3 Carryover (Dual Stream)
 status: in_progress
-last_updated: "2026-04-29T23:55:00.000Z"
-last_activity: 2026-04-29
+last_updated: "2026-04-30T00:30:00.000Z"
+last_activity: 2026-04-30
 progress:
   total_phases: 12
-  completed_phases: 7
+  completed_phases: 8
   total_plans: 0
   completed_plans: 0
 ---
@@ -44,7 +44,7 @@ Canonical doc: [`MILESTONE-v1.4-humanize-runtime-v2.md`](./MILESTONE-v1.4-humani
 | 33 | Eval Harness Extension | COMPLETE 2026-04-29 (5 commits, 140 tests pass) | P9-C |
 | 34 | Baseline Measurement | ✅ COMPLETE 2026-04-29 (deterministic-only baseline, 155 turns; baseline-rev00056.md locked + per-Phase gates 35-40; judge + embed deferred Adam-approval) | P10 main |
 | 35 | 4 Deterministic Detectors | ✅ PARTIAL 2026-04-29 (T1-T5, 6 commits; F1/F2/F3/F4 + framework + smoke harness; 67/67 tests pass; F1 recall 100% on Phase 34 known-fails, F1/F2/F3 false-positive 0% on smoke; F4 graceful degrade verified; latency p95 < 250ms total. **Wire-in deferred** — Adam applies `WIRE-IN-PATCH.md` after committing pending llm-rewriter.ts work) | P9-C |
-| 36 | ImperfectionInjector A/B | Not started | P9-C |
+| 36 | ImperfectionInjector A/B | ✅ PARTIAL 2026-04-30 (T1-T5, 5 commits + docs commit; injector module + 3-arm router + position constraint + bilingual policies + A/B harness + 2 scenarios; 89/89 tests pass; 0 FILLER_BLACKLIST collisions; arm probability ±3pp; latency p95 < 5ms; A/B harness `--dry-run` plans 18 reply + 12 judge calls. **Wire-in deferred** — Adam applies `WIRE-IN-PATCH.md` after Phase 35 wire-in + needs to approve $0.50-$2 LLM budget for live A/B run) | P9-C |
 | 37 | FSM (5 UX × ESConv 8) | Not started | P9-C |
 | 38 | Memory Policy | Not started | P9-C |
 | 39 | External Auto Benchmarks | Not started | P9-C |
@@ -60,10 +60,10 @@ Canonical doc: [`MILESTONE-v1.4-humanize-runtime-v2.md`](./MILESTONE-v1.4-humani
 
 ## Current Position
 
-Phase: Stream A v1.3 carryover ✅ COMPLETE (29 + 30 + 31 + 32). Stream C v1.4 in progress — Phases 33 + 34 ✅ COMPLETE; Phase 35 ✅ PARTIAL (detectors built, wire-in Adam-owed). Phase 36 ImperfectionInjector A/B can begin once detectors are wired in.
-Plan: Stream A done (4/4 phases shipped); Stream C 3/8 (Phases 33 + 34 + 35-partial; 5 remaining)
-Status: Stream A wrapped — operator-grade dashboard + connectors + handbook live; Stream C — F1/F2/F3/F4 detector module shipped behind feature flag `PA_DETECTORS_ENABLED` (default off); Adam-owed P0 task is applying `.planning/phases/35-detectors/WIRE-IN-PATCH.md` after committing pending uncommitted work
-Last activity: 2026-04-29 — Phase 35 T1-T5 complete (P9-C); 67/67 detector tests pass; smoke harness verifies recall + false-positive + latency gates from Phase 34 baseline
+Phase: Stream A v1.3 carryover ✅ COMPLETE (29 + 30 + 31 + 32). Stream C v1.4 in progress — Phases 33 + 34 ✅ COMPLETE; Phase 35 ✅ PARTIAL (detectors built, wire-in Adam-owed); Phase 36 ✅ PARTIAL (injector + A/B harness built, wire-in Adam-owed). Phase 37 FSM can begin once Phase 35 + 36 are wired in.
+Plan: Stream A done (4/4 phases shipped); Stream C 4/8 (Phases 33 + 34 + 35-partial + 36-partial; 4 remaining)
+Status: Stream A wrapped — operator-grade dashboard + connectors + handbook live; Stream C — F1/F2/F3/F4 detector module + ImperfectionInjector + 3-arm A/B harness shipped behind feature flags `PA_DETECTORS_ENABLED` and `PA_IMPERFECTION_INJECTOR_ENABLED` (default off); Adam-owed P0 tasks are applying `.planning/phases/35-detectors/WIRE-IN-PATCH.md` then `.planning/phases/36-injector/WIRE-IN-PATCH.md` after committing pending uncommitted work + approving $0.50-$2 LLM budget for live A/B run
+Last activity: 2026-04-30 — Phase 36 T1-T5 complete (P9-C); 89/89 injector + harness tests pass; arm probability sanity ±3pp on 1000-sample; type priority verified; anti-stutter; anti-blacklist runtime guard; latency p95 < 5ms; A/B dry-run plans 18 reply + 12 judge calls (~$0.10)
 
 ## Adam's blocking decisions (none currently)
 
