@@ -1,0 +1,63 @@
+{
+  "n_scenarios": 6,
+  "n_turns_total": 155,
+  "metrics": {
+    "ai_telltale_rate": {
+      "mean": 0,
+      "p50": 0,
+      "p95": 0,
+      "min": 0,
+      "max": 0
+    },
+    "drift_score": {
+      "mean": 0.009862619797082714,
+      "p50": 0,
+      "p95": 0.037747147353924856,
+      "min": 0,
+      "max": 0.037747147353924856
+    },
+    "drift_mirror_max": {
+      "mean": 0.06135531135531136,
+      "p50": 0,
+      "p95": 0.21428571428571427,
+      "min": 0,
+      "max": 0.21428571428571427
+    },
+    "drift_mirror_avg": {
+      "mean": 0.009862619797082714,
+      "p50": 0,
+      "p95": 0.037747147353924856,
+      "min": 0,
+      "max": 0.037747147353924856
+    },
+    "length_compliance": {
+      "mean": 1,
+      "p50": 1,
+      "p95": 1,
+      "min": 1,
+      "max": 1
+    },
+    "repeat_advice_rate_proxy": {
+      "mean": 0,
+      "p50": 0,
+      "p95": 0,
+      "min": 0,
+      "max": 0
+    }
+  },
+  "by_source": {
+    "smoke": 3,
+    "synthetic_50turn": 3
+  },
+  "gates": {
+    "metric1": true,
+    "metric2": true,
+    "metric4": true
+  },
+  "target": {
+    "ai_telltale_rate_max": 1,
+    "drift_score_p95_max": 4.9,
+    "length_compliance_min": 0.98,
+    "repeat_advice_rate_max": 5
+  }
+}
