@@ -4,7 +4,9 @@ import type { Firestore } from "firebase-admin/firestore"
 import {
   TRIGGERS_COLLECTION,
   TRIGGER_FIRES_COLLECTION,
+  _clearFeatureFlagCache,
   saveTrigger,
+  setFlag,
   type Trigger,
 } from "@pa/pa-persistence"
 
@@ -12,7 +14,8 @@ import {
 // not re-export it (intentional: the AUDIT_COLLECTION is shared across many
 // helpers and exposing it package-wide would invite drift).
 const AUDIT_COLLECTION = "pa-audit-events"
-import { runDownstreamConnector, withSoftBudget } from "./downstream.js"
+const FLAGS_COLLECTION = "pa-feature-flags"
+import { runDownstreamConnector, withSoftBudget, EVAL_CONNECTORS_FLAG } from "./downstream.js"
 
 // ---------------------------------------------------------------------------
 // In-memory Firestore double — same shape as triggers.test.ts.
@@ -26,15 +29,22 @@ interface FakeStore {
   triggers: Map<string, Row>
   fires: Map<string, Row>
   audit: Map<string, Row>
+  flags: Map<string, Row>
 }
 
 function makeFirestore(): { db: Firestore; store: FakeStore } {
-  const store: FakeStore = { triggers: new Map(), fires: new Map(), audit: new Map() }
+  const store: FakeStore = {
+    triggers: new Map(),
+    fires: new Map(),
+    audit: new Map(),
+    flags: new Map(),
+  }
   let counter = 0
   function getMap(name: string): Map<string, Row> {
     if (name === TRIGGERS_COLLECTION) return store.triggers
     if (name === TRIGGER_FIRES_COLLECTION) return store.fires
     if (name === AUDIT_COLLECTION) return store.audit
+    if (name === FLAGS_COLLECTION) return store.flags
     throw new Error(`unexpected collection ${name}`)
   }
   function makeDocRef(name: string, id: string) {
@@ -124,6 +134,27 @@ function makeFirestore(): { db: Firestore; store: FakeStore } {
   return { db: db as unknown as Firestore, store }
 }
 
+/**
+ * Pre-existing connector tests below were written before the master kill
+ * switch existed; pass `SKIP` in their options so they continue to exercise
+ * the underlying pipeline without depending on flag state. The kill-switch
+ * specific behavior is covered by dedicated tests at the bottom of the file.
+ */
+const SKIP = { skipFlagCheck: true } as const
+
+/**
+ * Enable the master kill switch via setFlag (covers the prod-shape path).
+ */
+async function enableConnector(db: Firestore): Promise<void> {
+  _clearFeatureFlagCache()
+  await setFlag(
+    db,
+    EVAL_CONNECTORS_FLAG,
+    { value: true, type: "bool", scope: "global" },
+    { actor: "test", reason: "enable for unit test" }
+  )
+}
+
 function trig(over: Partial<Trigger> = {}): Trigger {
   return {
     triggerId: over.triggerId ?? "trig_a",
@@ -156,7 +187,7 @@ test("runDownstreamConnector: matched trigger fires HTTP POST + records fire", a
   const res = await runDownstreamConnector(
     db,
     { userId: "u1", lastUserTurn: "I want to leave for ByteDance", lastAssistantTurn: "OK" },
-    { fetchImpl: fakeFetch }
+    { fetchImpl: fakeFetch, ...SKIP }
   )
   assert.equal(res.matched, 1)
   assert.equal(res.fired, 1)
@@ -174,14 +205,14 @@ test("runDownstreamConnector: cooldown blocks repeat within window", async () =>
   const r1 = await runDownstreamConnector(
     db,
     { userId: "u1", lastUserTurn: "ByteDance", lastAssistantTurn: "" },
-    { fetchImpl: fakeFetch }
+    { fetchImpl: fakeFetch, ...SKIP }
   )
   assert.equal(r1.fired, 1)
 
   const r2 = await runDownstreamConnector(
     db,
     { userId: "u1", lastUserTurn: "ByteDance again", lastAssistantTurn: "" },
-    { fetchImpl: fakeFetch }
+    { fetchImpl: fakeFetch, ...SKIP }
   )
   assert.equal(r2.fired, 0)
   assert.equal(r2.records[0]?.reason, "cooldown")
@@ -195,13 +226,13 @@ test("runDownstreamConnector: per-user cooldown — different user fires", async
   const r1 = await runDownstreamConnector(
     db,
     { userId: "u1", lastUserTurn: "ByteDance", lastAssistantTurn: "" },
-    { fetchImpl: fakeFetch }
+    { fetchImpl: fakeFetch, ...SKIP }
   )
   assert.equal(r1.fired, 1)
   const r2 = await runDownstreamConnector(
     db,
     { userId: "u2", lastUserTurn: "ByteDance", lastAssistantTurn: "" },
-    { fetchImpl: fakeFetch }
+    { fetchImpl: fakeFetch, ...SKIP }
   )
   assert.equal(r2.fired, 1)
 })
@@ -222,7 +253,7 @@ test("runDownstreamConnector: HMAC header injected when secret resolved", async 
   const res = await runDownstreamConnector(
     db,
     { userId: "u1", lastUserTurn: "字节跳动", lastAssistantTurn: "" },
-    { fetchImpl: fakeFetch, resolveSecret: async () => "shh" }
+    { fetchImpl: fakeFetch, resolveSecret: async () => "shh", ...SKIP }
   )
   assert.equal(res.fired, 1)
   assert.match(captured.headers?.["x-hmac-sha256"] ?? "", /^[0-9a-f]{64}$/)
@@ -236,7 +267,7 @@ test("runDownstreamConnector: 5xx still records fire (cooldown opens)", async ()
   const res = await runDownstreamConnector(
     db,
     { userId: "u1", lastUserTurn: "ByteDance", lastAssistantTurn: "" },
-    { fetchImpl: fakeFetch }
+    { fetchImpl: fakeFetch, ...SKIP }
   )
   assert.equal(res.fired, 1)
   assert.equal(res.records[0]?.status, 503)
@@ -250,7 +281,7 @@ test("runDownstreamConnector: no match → no fire", async () => {
   const res = await runDownstreamConnector(
     db,
     { userId: "u1", lastUserTurn: "I'm doing fine", lastAssistantTurn: "Glad to hear" },
-    { fetchImpl: fakeFetch }
+    { fetchImpl: fakeFetch, ...SKIP }
   )
   assert.equal(res.matched, 0)
   assert.equal(res.fired, 0)
@@ -265,7 +296,7 @@ test("runDownstreamConnector: never throws; surfaces error in records", async ()
   const res = await runDownstreamConnector(
     db,
     { userId: "u1", lastUserTurn: "ByteDance", lastAssistantTurn: "" },
-    { fetchImpl: fakeFetch }
+    { fetchImpl: fakeFetch, ...SKIP }
   )
   // firePostHook converts thrown errors to {ok:false, errorMsg}; recordFire still runs.
   assert.equal(res.records.length, 1)
@@ -280,7 +311,7 @@ test("runDownstreamConnector: skips disabled triggers; honors enable flag", asyn
   const res = await runDownstreamConnector(
     db,
     { userId: "u1", lastUserTurn: "ByteDance", lastAssistantTurn: "" },
-    { fetchImpl: fakeFetch }
+    { fetchImpl: fakeFetch, ...SKIP }
   )
   assert.equal(res.fired, 0)
 })
@@ -306,9 +337,75 @@ test("runDownstreamConnector: llm-judge invokes provided judge function", async 
         judgeCalled = true
         return "yes"
       },
+      ...SKIP,
     }
   )
   assert.equal(judgeCalled, true)
+  assert.equal(res.fired, 1)
+})
+
+// ---------------------------------------------------------------------------
+// Master kill switch (Phase 30 — `evalConnectorsEnabled` flag)
+// ---------------------------------------------------------------------------
+
+test("kill switch OFF (no flag doc, default): connector exits without firing", async () => {
+  _clearFeatureFlagCache()
+  const { db, store } = makeFirestore()
+  await saveTrigger(db, trig(), { actor: "x" })
+  let fetchCalls = 0
+  const fakeFetch = (async () => {
+    fetchCalls += 1
+    return { ok: true, status: 200 } as Response
+  }) as unknown as typeof fetch
+  const res = await runDownstreamConnector(
+    db,
+    { userId: "u1", lastUserTurn: "ByteDance", lastAssistantTurn: "" },
+    { fetchImpl: fakeFetch }
+  )
+  assert.equal(res.matched, 0)
+  assert.equal(res.fired, 0)
+  assert.equal(fetchCalls, 0)
+  assert.equal(store.fires.size, 0)
+})
+
+test("kill switch ON (flag=true via setFlag): connector fires normally", async () => {
+  const { db, store } = makeFirestore()
+  await enableConnector(db)
+  await saveTrigger(db, trig(), { actor: "x" })
+  const fakeFetch = (async () => ({ ok: true, status: 200 } as Response)) as unknown as typeof fetch
+  const res = await runDownstreamConnector(
+    db,
+    { userId: "u1", lastUserTurn: "ByteDance", lastAssistantTurn: "" },
+    { fetchImpl: fakeFetch }
+  )
+  assert.equal(res.fired, 1)
+  assert.equal(store.fires.size, 1)
+})
+
+test("kill switch env override (evalConnectorsEnabled=1): bypasses Firestore flag", async () => {
+  _clearFeatureFlagCache()
+  const { db } = makeFirestore()
+  await saveTrigger(db, trig(), { actor: "x" })
+  const fakeFetch = (async () => ({ ok: true, status: 200 } as Response)) as unknown as typeof fetch
+  const res = await runDownstreamConnector(
+    db,
+    { userId: "u1", lastUserTurn: "ByteDance", lastAssistantTurn: "" },
+    { fetchImpl: fakeFetch, env: { [EVAL_CONNECTORS_FLAG]: "1" } }
+  )
+  assert.equal(res.fired, 1)
+})
+
+test("skipFlagCheck:true: bypass kill switch (admin debug endpoint)", async () => {
+  _clearFeatureFlagCache()
+  const { db } = makeFirestore()
+  await saveTrigger(db, trig(), { actor: "x" })
+  const fakeFetch = (async () => ({ ok: true, status: 200 } as Response)) as unknown as typeof fetch
+  // No flag doc, no env override — only skipFlagCheck=true should let it run.
+  const res = await runDownstreamConnector(
+    db,
+    { userId: "u1", lastUserTurn: "ByteDance", lastAssistantTurn: "" },
+    { fetchImpl: fakeFetch, skipFlagCheck: true }
+  )
   assert.equal(res.fired, 1)
 })
 

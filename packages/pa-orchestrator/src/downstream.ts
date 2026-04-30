@@ -26,12 +26,22 @@ import {
   checkCooldown,
   evaluateTriggers,
   firePostHook,
+  getFlag,
   recordFire,
   renderPayload,
   type EvalCtx,
   type FirePostHookResult,
   type Trigger,
 } from "@pa/pa-persistence"
+
+/**
+ * Master kill switch flag key (Phase 24.5 feature-flag system). When the
+ * flag is `false` (the default), `runDownstreamConnector` returns an empty
+ * result without touching `pa-downstream-triggers` — used by Adam to keep
+ * the connector dark until partners are wired. Admins flip via
+ * `/admin/flags`.
+ */
+export const EVAL_CONNECTORS_FLAG = "evalConnectorsEnabled"
 
 export interface RunDownstreamConnectorInput {
   userId: string
@@ -57,6 +67,19 @@ export interface RunDownstreamConnectorOptions {
   softTimeoutMs?: number
   /** Optional logger for fire events. Falls back to console.log. */
   log?: (msg: string, fields?: Record<string, unknown>) => void
+  /**
+   * Skip the master kill-switch flag check (`evalConnectorsEnabled`). Used
+   * by the admin debug endpoint (`evalDownstreamTriggers`) so operators can
+   * dry-run a trigger without flipping the production flag. Production
+   * orchestrator path leaves this `false` (the default).
+   */
+  skipFlagCheck?: boolean
+  /**
+   * Test-only env override for the flag SDK; defaults to `process.env`.
+   * Allows `evalConnectorsEnabled=true` env to flip the kill switch on
+   * without a Firestore read (matches feature-flag SDK contract).
+   */
+  env?: NodeJS.ProcessEnv | Record<string, string | undefined>
 }
 
 export interface DownstreamFireRecord {
@@ -86,6 +109,24 @@ export async function runDownstreamConnector(
   const log = opts.log ?? ((m, f) => console.log(`[downstream] ${m}`, f ?? ""))
   const records: DownstreamFireRecord[] = []
   const result: RunDownstreamConnectorResult = { evaluated: 0, matched: 0, fired: 0, records }
+
+  // Phase 30 — master kill switch (Phase 24.5 feature flag). When OFF (the
+  // default), the connector exits before any Firestore read so disabled
+  // triggers consume zero budget. Admin debug endpoint passes
+  // `skipFlagCheck:true` so operators can dry-run a trigger config without
+  // flipping the production flag globally.
+  if (!opts.skipFlagCheck) {
+    let enabled = false
+    try {
+      const v = await getFlag(db, EVAL_CONNECTORS_FLAG, { env: opts.env ?? process.env }, false)
+      enabled = v === true
+    } catch (e) {
+      log("getFlag failed; defaulting OFF", { error: e instanceof Error ? e.message : String(e) })
+      return result
+    }
+    if (!enabled) return result
+  }
+
   let matches: Awaited<ReturnType<typeof evaluateTriggers>> = []
   try {
     matches = await evaluateTriggers(db, {

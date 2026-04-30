@@ -62,7 +62,7 @@ import { resolveOnboardingStep, applyOnboardingStep, composeOnboardingInput } fr
 import { LEGACY_V0_SYSTEM_PROMPT } from "./legacy-voice-prompt.js"
 import { buildVoiceReminder, isVoiceV1Disabled } from "./voice-reminder.js"
 import { computeMirrorForTurn, isVoiceMirrorDisabledFlag } from "./voice/mirror-injection.js"
-import { rewriteIfOff } from "./voice/llm-rewriter.js"
+import { rewriteIfOff, stripRepeatOpener, stripValidationTic } from "./voice/llm-rewriter.js"
 import { tapCoachTokens } from "./voice/coach-token-monitor.js"
 import { buildFewShotTurns, prefixFewShotToHistory } from "./voice/few-shot.js"
 import { normalizeForIMessage } from "./output-normalizer.js"
@@ -84,6 +84,7 @@ const HEADHUNTER_TRIGGER_RE = /帮我|想换|在看工作|在面|简历|offer/i
 import { detectProactiveCancellation } from "./cancellation-nlu.js"
 // Phase 30 T2 — Downstream Eval Connector hook (P9-Connectors).
 import { runDownstreamConnector, withSoftBudget } from "./downstream.js"
+import { defaultNlJudge } from "./eval-nl-judge.js"
 // Re-export Phase 22 proactive modules for consumers (e.g. apps/functions)
 export { detectProactiveCancellation, CANCELLATION_PATTERNS } from "./cancellation-nlu.js"
 export { runProactiveTurn, type ProactiveTurnStore, type ProactiveTurnResult } from "./proactive-turn.js"
@@ -92,11 +93,15 @@ export { normalizeForIMessage } from "./output-normalizer.js"
 export {
   runDownstreamConnector,
   withSoftBudget,
+  EVAL_CONNECTORS_FLAG,
   type RunDownstreamConnectorInput,
   type RunDownstreamConnectorOptions,
   type RunDownstreamConnectorResult,
   type DownstreamFireRecord,
 } from "./downstream.js"
+// Phase 30 T-Wrap — re-export the production NL judge so the admin debug
+// endpoint (paAdminBootstrap → evalDownstreamTriggers) can pass it in.
+export { defaultNlJudge, _resetNlJudgeClient as _resetEvalNlJudgeClient } from "./eval-nl-judge.js"
 
 type RunAgentTurn = typeof defaultRunAgentTurn
 
@@ -891,7 +896,14 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       beforeLen: reply.length,
       afterLen: rewritten.text.length,
     })
-    const replyAfterRewrite = rewritten.text
+    // Phase 33b — deterministic opener strip, applied unconditionally so that
+    // rewrite_unsafe / circuit_open / timeout fallbacks still get de-tic'd.
+    // Phase 33e — also strip 我懂/我懂那种 validation tic (Qwen ignores DROP rule).
+    const afterOpenerStrip =
+      priorAssistantReplies.length > 0
+        ? stripRepeatOpener(rewritten.text, priorAssistantReplies)
+        : rewritten.text
+    const replyAfterRewrite = stripValidationTic(afterOpenerStrip)
     if (rewritten.rewriteApplied) {
       store.log("pa.voice.llm_rewriter.applied", {
         userId: event.userId,
@@ -990,6 +1002,13 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
         },
         {
           log: (msg, fields) => store.log(`[downstream] ${msg}`, { turnId, ...(fields ?? {}) }),
+          // Phase 30 — wire the production nano judge so kind=llm-judge
+          // triggers actually evaluate at runtime. Without this, those
+          // triggers silently no-op (evaluateTriggers returns no match
+          // when llmJudge is undefined). 0 net new LLM calls when
+          // `evalConnectorsEnabled=false` (master kill switch short-circuits
+          // before any judge runs).
+          llmJudge: defaultNlJudge,
         }
       ).catch((e) => {
         store.log("[downstream] runDownstreamConnector threw (should never happen)", {
@@ -1130,10 +1149,15 @@ export function createFirestoreOrchestratorStore(db: Firestore): OrchestratorSto
           // (same hash idempotencyKey). Merge orchestrator-owned metadata
           // (rawMeta, idempotencyKey) into the existing row so dashboard /
           // harness consumers can still find it via rawMeta.eventId.
+          // Phase 33c: also overwrite body — SDK stored the raw model reply,
+          // orchestrator has the Qwen-rewritten body. History reads must see
+          // the rewritten text so opener-rotation detection works correctly.
           const docRef = existing.docs[0]!.ref
+          const existingBody = existing.docs[0]!.data().body
           const patch: Record<string, unknown> = {}
           if (message.rawMeta !== undefined) patch.rawMeta = message.rawMeta
           if (message.idempotencyKey !== undefined) patch.idempotencyKey = message.idempotencyKey
+          if (message.body !== undefined && message.body !== existingBody) patch.body = message.body
           if (Object.keys(patch).length > 0) {
             await docRef.set(patch, { merge: true })
           }
@@ -1158,7 +1182,24 @@ export function createFirestoreOrchestratorStore(db: Firestore): OrchestratorSto
       return undefined
     },
     async loadHistory(sessionId, limit) {
-      return loadRecentMessages(db, sessionId, limit)
+      // Fetch extra to allow dedup — SDK may write a second doc for the same
+      // turn (same idempotencyKey, base model body). Prefer pa_orchestrator
+      // source (rewritten body) so opener-rotation detection sees correct text.
+      const msgs = await loadRecentMessages(db, sessionId, limit * 3)
+      const seen = new Map<string, (typeof msgs)[0]>()
+      for (const msg of msgs) {
+        const key = (msg as Record<string, unknown>).idempotencyKey as string | undefined ?? msg.id
+        const existing = seen.get(key)
+        if (!existing) {
+          seen.set(key, msg)
+        } else {
+          const isOrch = ((msg as Record<string, unknown>).rawMeta as Record<string, unknown> | undefined)?.source === "pa_orchestrator"
+          if (isOrch) seen.set(key, msg)
+        }
+      }
+      return Array.from(seen.values())
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+        .slice(-limit)
     },
     async enqueueOutbound(userId, toE164, body, input) {
       const id = randomUUID()
