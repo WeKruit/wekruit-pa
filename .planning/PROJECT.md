@@ -2,9 +2,15 @@
 
 Monorepo: Mac **Photon iMessage worker** (deprecating to Sendblue) + Firestore **`pa_*`** + **PA Console** (Vite, `wekruit-pa.web.app`). Auth: Google; Firestore rules: `@wekruit.com` + allowlisted Gmail (see `config/firebase/firestore.rules`).
 
-## Current Milestone: v1.4 — Humanize-Runtime v2 (Bilingual, Eval-First)
+## Current Milestone: v1.4 — Humanize-Runtime v2 (Bilingual, Eval-First) — ✅ BUILD COMPLETE 2026-04-30
+
+**Status:** 12/12 phases shipped (Stream A 29-32 + Stream C 33-40). Audit: `.planning/v1.4-MILESTONE-AUDIT.md`.
+**Verdict:** passed_with_deferrals — 3 of 5 hard-gate metrics PASS (AI tell-tale 0%, drift p95 3.77% beats target 4.9% by 61% reduction, length compliance 100%); 2 metrics deferred pending Adam P0 unblocks (judge budget $0.50-$2 for metric 3, BGE_API_KEY env for metric 5).
+**Live ship gated on:** 11 Adam P0 actions consolidated in audit doc — wire-in patch (`.planning/phases/40-bible-v7.5-ship/WIRE-IN-PATCH.md` ~2-3hr), handbook + Bible v7.5 migrations, Secret Manager provisioning, feature flag flip 1% → 100%.
 
 **Canonical doc:** [`.planning/MILESTONE-v1.4-humanize-runtime-v2.md`](./MILESTONE-v1.4-humanize-runtime-v2.md).
+**Final audit:** [`.planning/phases/40-bible-v7.5-ship/final-audit-report.md`](./phases/40-bible-v7.5-ship/final-audit-report.md).
+**Baseline + gates:** [`.planning/baseline-rev00056.md`](./baseline-rev00056.md).
 
 **Goal:** On Qwen-7B + no-finetune + Bible-driven path, push Claire's bilingual (zh+en) conversational humanness to ~70-80% of Pi-level by attacking 4 production failure modes (verb-mirror / length escalation / code-switch drift / self-repeat advice) with deterministic detectors + ImperfectionInjector + ESConv-FSM + memory policy. Eval-first ordering: no runtime module work until baseline 5-metric report is locked. 0 net new LLM calls in production path.
 
