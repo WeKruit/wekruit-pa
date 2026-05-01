@@ -1,0 +1,56 @@
+{
+  "n_total": 6,
+  "n_valid": 6,
+  "strategy_fit_scores": [
+    2,
+    2,
+    2,
+    2,
+    2,
+    1
+  ],
+  "hit_rate_at_2": 0.8333333333333334,
+  "target_70pct": true,
+  "total_cost_usd": 0.0004558,
+  "sample_axes": [
+    {
+      "id": "claire-zh-quiet-support",
+      "axes": {
+        "warmth_no_sycophancy": 2,
+        "in_character_voice": 1,
+        "no_robot_filler": 3,
+        "length_appropriateness": 3,
+        "drift_resistance": 2,
+        "length_compliance": 3,
+        "advice_novelty": 2,
+        "strategy_fit": 2
+      }
+    },
+    {
+      "id": "claire-en-tech-deep",
+      "axes": {
+        "warmth_no_sycophancy": 2,
+        "in_character_voice": 1,
+        "no_robot_filler": 2,
+        "length_appropriateness": 2,
+        "drift_resistance": 2,
+        "length_compliance": 3,
+        "advice_novelty": 2,
+        "strategy_fit": 2
+      }
+    },
+    {
+      "id": "claire-multi-turn-mirror-trap",
+      "axes": {
+        "warmth_no_sycophancy": 2,
+        "in_character_voice": 1,
+        "no_robot_filler": 3,
+        "length_appropriateness": 3,
+        "drift_resistance": 2,
+        "length_compliance": 3,
+        "advice_novelty": 2,
+        "strategy_fit": 2
+      }
+    }
+  ]
+}

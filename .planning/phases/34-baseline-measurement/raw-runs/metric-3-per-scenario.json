@@ -1,0 +1,116 @@
+[
+  {
+    "id": "claire-zh-quiet-support",
+    "source": "smoke",
+    "axes": {
+      "warmth_no_sycophancy": 2,
+      "in_character_voice": 1,
+      "no_robot_filler": 3,
+      "length_appropriateness": 3,
+      "drift_resistance": 2,
+      "length_compliance": 3,
+      "advice_novelty": 2,
+      "strategy_fit": 2
+    },
+    "average": 2.25,
+    "pass": false,
+    "autoFail": null,
+    "costUsd": 0.00007545,
+    "axesVersion": 2
+  },
+  {
+    "id": "claire-en-tech-deep",
+    "source": "smoke",
+    "axes": {
+      "warmth_no_sycophancy": 2,
+      "in_character_voice": 1,
+      "no_robot_filler": 2,
+      "length_appropriateness": 2,
+      "drift_resistance": 2,
+      "length_compliance": 3,
+      "advice_novelty": 2,
+      "strategy_fit": 2
+    },
+    "average": 2,
+    "pass": false,
+    "autoFail": null,
+    "costUsd": 0.0000779,
+    "axesVersion": 2
+  },
+  {
+    "id": "claire-multi-turn-mirror-trap",
+    "source": "smoke",
+    "axes": {
+      "warmth_no_sycophancy": 2,
+      "in_character_voice": 1,
+      "no_robot_filler": 3,
+      "length_appropriateness": 3,
+      "drift_resistance": 2,
+      "length_compliance": 3,
+      "advice_novelty": 2,
+      "strategy_fit": 2
+    },
+    "average": 2.25,
+    "pass": false,
+    "autoFail": null,
+    "costUsd": 0.00007575,
+    "axesVersion": 2
+  },
+  {
+    "id": "anxious-grad-zh-50turn",
+    "source": "synthetic_50turn_lastN",
+    "axes": {
+      "warmth_no_sycophancy": 1,
+      "in_character_voice": 1,
+      "no_robot_filler": 3,
+      "length_appropriateness": 3,
+      "drift_resistance": 2,
+      "length_compliance": 3,
+      "advice_novelty": 2,
+      "strategy_fit": 2
+    },
+    "average": 2.125,
+    "pass": false,
+    "autoFail": null,
+    "costUsd": 0.00007545,
+    "axesVersion": 2
+  },
+  {
+    "id": "venting-zh-50turn",
+    "source": "synthetic_50turn_lastN",
+    "axes": {
+      "warmth_no_sycophancy": 2,
+      "in_character_voice": 1,
+      "no_robot_filler": 3,
+      "length_appropriateness": 3,
+      "drift_resistance": 2,
+      "length_compliance": 3,
+      "advice_novelty": 2,
+      "strategy_fit": 2
+    },
+    "average": 2.25,
+    "pass": false,
+    "autoFail": null,
+    "costUsd": 0.0000754,
+    "axesVersion": 2
+  },
+  {
+    "id": "tech-deep-en-50turn",
+    "source": "synthetic_50turn_lastN",
+    "axes": {
+      "warmth_no_sycophancy": 2,
+      "in_character_voice": 1,
+      "no_robot_filler": 3,
+      "length_appropriateness": 1,
+      "drift_resistance": 2,
+      "length_compliance": 3,
+      "advice_novelty": 2,
+      "strategy_fit": 1
+    },
+    "average": 1.875,
+    "pass": false,
+    "autoFail": null,
+    "costUsd": 0.00007585,
+    "axesVersion": 2
+  }
+]
