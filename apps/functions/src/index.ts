@@ -41,6 +41,10 @@ export { paProactiveSweep } from "./proactive-sweep.js"
 // Phase 24.5 — admin bootstrap (seed flags via PA_ADMIN_TOKEN, bypass local gcloud ADC)
 export { paAdminBootstrap } from "./admin-bootstrap.js"
 
+// Stream B — Job-rec daily cron (Task B4). Reads pa-job-profiles where status=active,
+// queries matching-jobs, formats per Bible v7.5.2, enqueues pa-outbound.
+export { paJobRecDaily } from "./job-rec-daily.js"
+
 // Phase 27 T2 — public /health endpoints (one per existing CF). Returns
 // {ok, name, version, ts, deps:{firestore, secrets}}. No auth (probes
 // must be reachable). All endpoints HTTP 200 always; failure surfaces in body.
@@ -466,18 +470,60 @@ export const onPaInbound = onDocumentCreated(
         err: flagErr instanceof Error ? flagErr.message : String(flagErr),
       })
     }
+    // Stream C — RecruiterAgent dispatcher. When the inbound carries a
+    // CV attachment AND the per-user `paJobRecEnabled` flag is on, route
+    // to the RecruiterAgent path (Stream B) instead of default Claire.
+    // Defensive: any failure in the flag-resolve / dynamic-import phase
+    // falls through to default Claire so iMessage users don't go silent.
+    // Once recruiter-flow has pre-claimed the event, default Claire's
+    // own claim transaction will see status="running" and no-op.
+    let routedToRecruiter = false
     try {
-      const processed = isBrokerImessageEvent(data)
-        ? await processBrokerImessageEvent(db, data)
-        : await claimAndProcessInboundEvent(db, data.id)
-      logger.info("onPaInbound processed", { eventId: data.id, userId: "userId" in data ? data.userId : undefined, processed })
-    } catch (err) {
-      logger.error("onPaInbound failed", {
+      const eventBody = data as InboundEvent
+      const rawPayload = (eventBody as { rawPayload?: Record<string, unknown> }).rawPayload
+      const mediaUrlRaw = rawPayload && typeof rawPayload === "object" ? rawPayload.mediaUrl : undefined
+      const mediaUrl = typeof mediaUrlRaw === "string" && mediaUrlRaw.length > 0 ? mediaUrlRaw : undefined
+      const userId = "userId" in eventBody ? eventBody.userId : undefined
+      if (mediaUrl && userId) {
+        const { getFlag } = await import("@pa/pa-persistence")
+        const jobRecOn = await getFlag(db, "paJobRecEnabled", { userId, env: process.env }, false)
+        if (jobRecOn === true) {
+          const { runRecruiterFlow } = await import("./job-rec/recruiter-flow.js")
+          await runRecruiterFlow(db, eventBody, { mediaUrl, log: (...a: unknown[]) => logger.info("[recruiter-flow]", ...a) })
+          routedToRecruiter = true
+          logger.info("onPaInbound routed-to-recruiter", {
+            eventId: data.id,
+            userId,
+            mediaUrl: mediaUrl.slice(0, 80),
+          })
+        }
+      }
+    } catch (recErr) {
+      // Defensive: if recruiter path errors BEFORE pre-claim succeeds we
+      // FALL THROUGH to default Claire. If the error fired AFTER pre-claim
+      // (i.e. inside runRecruiterFlow), the event row is already in
+      // status="failed" and default Claire's claim will refuse.
+      logger.error("onPaInbound recruiter-flow failed (degrade to default)", {
         eventId: data.id,
-        userId: "userId" in data ? data.userId : undefined,
-        err: err instanceof Error ? err.message : String(err),
+        userId: "userId" in data ? (data as { userId?: string }).userId : undefined,
+        err: recErr instanceof Error ? recErr.message : String(recErr),
       })
-      throw err
+    }
+
+    if (!routedToRecruiter) {
+      try {
+        const processed = isBrokerImessageEvent(data)
+          ? await processBrokerImessageEvent(db, data)
+          : await claimAndProcessInboundEvent(db, data.id)
+        logger.info("onPaInbound processed", { eventId: data.id, userId: "userId" in data ? data.userId : undefined, processed })
+      } catch (err) {
+        logger.error("onPaInbound failed", {
+          eventId: data.id,
+          userId: "userId" in data ? data.userId : undefined,
+          err: err instanceof Error ? err.message : String(err),
+        })
+        throw err
+      }
     }
   },
 )
