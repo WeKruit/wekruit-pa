@@ -15,3 +15,6 @@ apps/dashboard-web/.env.pa-firebase-generated
 apps/functions/lib/
 eval-runs/
 apps/eval/voice/judges/__pycache__/
+
+# Phase 39 benchmark logs
+apps/eval/external-benchmarks/logs/
