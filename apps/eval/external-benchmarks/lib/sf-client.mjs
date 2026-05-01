@@ -92,38 +92,55 @@ export async function chatCompletion({ messages, opts = {} }) {
   if (typeof opts.top_p === "number") body.top_p = opts.top_p
 
   // Per-call hard timeout — bench loops are sequential, so one hung
-  // fetch stalls the whole 1000-conv run (Phase 39 hung 1h58m on
-  // 47.239.184.63 ESTABLISHED before this guard). 90s covers normal
-  // 7B-chat latency p99 with headroom.
+  // fetch stalls the whole 1000-conv run.
+  //
+  // History: Phase 39 hung 1h58m on a single ESTABLISHED TCP connection to
+  // 47.239.184.63 with 0:08 CPU. First fix added AbortController.signal but
+  // this still hung 1h on a fresh run — undici fetch in node 24 has a known
+  // limitation where AbortSignal does NOT always abort sockets stuck in
+  // TLS handshake or HTTP/2 flow control. The reliable fix is an OUTER
+  // Promise.race that forces resolution regardless of socket state.
+  // 90s covers normal 7B-chat latency p99 with headroom.
   const timeoutMs = Number(opts.timeoutMs ?? process.env.PA_BENCH_FETCH_TIMEOUT_MS ?? 90_000)
   const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs)
-  let res
-  try {
-    res = await fetchImpl(`${baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify(body),
-      signal: ctrl.signal,
-    })
-  } catch (err) {
-    clearTimeout(timer)
-    if (err && err.name === "AbortError") {
-      throw new Error(`sf-client/chat: timeout after ${timeoutMs}ms`)
+
+  /** @returns {Promise<never>} */
+  const deadline = () => new Promise((_, rej) => setTimeout(() => {
+    try { ctrl.abort() } catch {}
+    rej(new Error(`sf-client/chat: timeout after ${timeoutMs}ms (outer race)`))
+  }, timeoutMs))
+
+  /** @returns {Promise<{text:string, usage:object, model:string}>} */
+  const work = (async () => {
+    let res
+    try {
+      res = await fetchImpl(`${baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(body),
+        signal: ctrl.signal,
+      })
+    } catch (err) {
+      if (err && err.name === "AbortError") {
+        throw new Error(`sf-client/chat: timeout after ${timeoutMs}ms (signal)`)
+      }
+      throw err
     }
-    throw err
-  }
-  clearTimeout(timer)
 
-  if (!res.ok) {
-    const errText = await res.text().catch(() => "")
-    throw new Error(`sf-client/chat: HTTP ${res.status}: ${errText.slice(0, 200)}`)
-  }
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "")
+      throw new Error(`sf-client/chat: HTTP ${res.status}: ${errText.slice(0, 200)}`)
+    }
 
-  const json = await res.json()
+    const json = await res.json()
+    return { __json: json }
+  })()
+
+  const result = await Promise.race([work, deadline()])
+  const json = result.__json
   const text = json?.choices?.[0]?.message?.content ?? ""
   const usage = json?.usage ?? {}
   return {
