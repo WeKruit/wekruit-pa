@@ -8,6 +8,7 @@ import {
   type IngestCvDeps,
   type StructuredCv,
 } from "../cv-ingest.js"
+import type { IndustryTag } from "../industry-tags.js"
 
 // ---------- Tiny fake Firestore (only .collection().add() / .doc().create() / .doc().get() used) -----------
 
@@ -104,6 +105,7 @@ function happyParsed(): StructuredCv {
         endDate: "2022",
       },
     ],
+    industryTags: ["tech_software"],
   }
 }
 
@@ -484,6 +486,50 @@ describe("ingestCv", () => {
   })
 })
 
+
+  // -------------- Stream F1 — industry tag enrichment --------------
+
+  it("F1 happy path: writes industryTags to parsedCandidateResumes", async () => {
+    const { db, state } = makeFakeDb()
+    const { log } = captureLog()
+    const parsedWithFintech: StructuredCv = {
+      ...happyParsed(),
+      industryTags: ["fintech_finance", "ai_ml"],
+    }
+    const { deps } = makeStubbedDeps({ db, log, parsed: parsedWithFintech })
+    const res = await ingestCv(
+      { userId: "user_x", mediaUrl: "https://example.com/cv.pdf" },
+      deps
+    )
+    assert.equal(res.ok, true)
+    assert.equal(state.resumes.length, 1)
+    const written = state.resumes[0]!.data
+    assert.ok(Array.isArray(written.industryTags))
+    assert.deepEqual(written.industryTags, ["fintech_finance", "ai_ml"])
+  })
+
+  it("F1 unknown industry → falls back to ['other'] (no throw, doc still written)", async () => {
+    const { db, state } = makeFakeDb()
+    const { log } = captureLog()
+    const { deps } = makeStubbedDeps({ db, log })
+    // LLM emits a totally bogus tag — validator must clamp + fall back.
+    deps.llmExtract = async () => ({
+      parsed: {
+        ...happyParsed(),
+        industryTags: ["completely_made_up_industry"] as unknown as IndustryTag[],
+      },
+      usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+    })
+    const res = await ingestCv(
+      { userId: "user_x", mediaUrl: "https://example.com/cv.pdf" },
+      deps
+    )
+    assert.equal(res.ok, true)
+    assert.equal(state.resumes.length, 1)
+    const written = state.resumes[0]!.data
+    assert.deepEqual(written.industryTags, ["other"])
+  })
+
 // ---------- Pure-function unit tests for buildCvFactBody / detectCvLang -----
 
 describe("buildCvFactBody / detectCvLang", () => {
@@ -523,6 +569,7 @@ describe("buildCvFactBody / detectCvLang", () => {
           endDate: "2024",
         },
       ],
+      industryTags: ["fintech_finance"],
     }
     assert.equal(detectCvLang(zh), "zh")
     const body = buildCvFactBody(zh)

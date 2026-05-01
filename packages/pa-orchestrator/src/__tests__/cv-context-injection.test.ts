@@ -146,6 +146,30 @@ describe("appendCvContextToSystemPrompt", () => {
   })
 })
 
+describe("Stream F1 — industryTags rendering", () => {
+  it("Industry tags appear in CV block when present (1..3 tags)", () => {
+    const block = renderCvBlock({
+      candidateProfile: { name: "Tag Test", skills: ["X"] },
+      experiences: [],
+      education: [],
+      industryTags: ["fintech_finance", "ai_ml"],
+    })
+    assert.ok(block)
+    assert.match(block!, /Industry tags \(top guesses from CV\): fintech_finance, ai_ml/)
+  })
+
+  it("Empty / missing industryTags → no Industry tags line", () => {
+    const block = renderCvBlock({
+      candidateProfile: { name: "NoTags", skills: ["X"] },
+      experiences: [],
+      education: [],
+      industryTags: [],
+    })
+    assert.ok(block)
+    assert.doesNotMatch(block!, /Industry tags:/)
+  })
+})
+
 // Quick sanity test on the pure renderer helper.
 describe("renderCvBlock (pure)", () => {
   it("returns null-safe block when only skills + name are present", () => {

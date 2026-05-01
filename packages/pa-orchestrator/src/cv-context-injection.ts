@@ -32,6 +32,8 @@ export type CvProfileDoc = {
     degree?: unknown
     field?: unknown
   }>
+  /** Stream F1 — 1..3 canonical industry tags (cv-ingest extracts). */
+  industryTags?: unknown
 }
 
 const PARSED_RESUMES_COLLECTION = "parsedCandidateResumes"
@@ -113,11 +115,19 @@ export function renderCvBlock(doc: CvProfileDoc): string | null {
     .filter((s): s is string => s !== null)
     .join("; ")
 
+  // Stream F1 — surface industry tags so Claire can ground probe questions.
+  const tags = Array.isArray(doc.industryTags)
+    ? (doc.industryTags.filter((t) => typeof t === "string") as string[])
+    : []
+
   const lines: string[] = ["## User CV Profile (extracted from uploaded resume)"]
   lines.push(`Name: ${name}`)
   lines.push(`Skills: ${skills.length > 0 ? skills.join(", ") : "(none listed)"}`)
   if (recentRole) lines.push(`Recent role: ${recentRole}`)
   if (edu) lines.push(`Education: ${edu}`)
+  if (tags.length > 0) {
+    lines.push(`Industry tags (top guesses from CV): ${tags.join(", ")}`)
+  }
   lines.push("")
   lines.push(
     "Use this profile to ground job recommendations and follow-ups. Reference specific experiences when natural (\"看到你在 X 做 Y...\") instead of generic platitudes."

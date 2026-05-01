@@ -32,6 +32,11 @@
  */
 
 import type { Firestore } from "firebase-admin/firestore"
+import {
+  INDUSTRY_TAGS,
+  mapToCanonicalIndustry,
+  type IndustryTag,
+} from "./industry-tags.js"
 
 export type IngestCvInput = {
   userId: string
@@ -73,6 +78,8 @@ export type StructuredCv = {
   candidateProfile: CandidateProfile
   experiences: Experience[]
   education: Education[]
+  /** Stream F1 — 1-3 industry tags inferred from experiences. Always present (≥ 1, ≤ 3). */
+  industryTags: IndustryTag[]
 }
 
 /** Stream E — minimal user shape needed for follow-up + Mem0 partition. */
@@ -180,7 +187,7 @@ async function defaultParsePdf(bytes: Uint8Array): Promise<{ text: string; numPa
 const CV_JSON_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["candidateProfile", "experiences", "education"],
+  required: ["candidateProfile", "experiences", "education", "industryTags"],
   properties: {
     candidateProfile: {
       type: "object",
@@ -226,11 +233,26 @@ const CV_JSON_SCHEMA = {
         },
       },
     },
+    industryTags: {
+      type: "array",
+      // 1..3 inclusive. The validator clamps + falls back to ["other"] when
+      // the LLM emits anything else, so this is informational for the
+      // structured-output contract.
+      minItems: 1,
+      maxItems: 3,
+      items: {
+        type: "string",
+        enum: [...INDUSTRY_TAGS],
+      },
+    },
   },
 } as const
 
 const SYSTEM_PROMPT =
-  "You are a resume parser. Extract structured data from the CV text. Be accurate; null when unknown."
+  "You are a resume parser. Extract structured data from the CV text. Be accurate; null when unknown. " +
+  "For industryTags, return 1-3 BEST-MATCH industry buckets from this fixed list (in priority order, no duplicates): " +
+  INDUSTRY_TAGS.join(", ") +
+  ". Choose based on the candidate's most recent / most senior experience. Use 'other' only when no other tag fits."
 
 async function defaultLlmExtract(text: string): Promise<{
   parsed: StructuredCv
@@ -320,6 +342,25 @@ function validateStructuredCv(raw: unknown): StructuredCv {
     if (!isStringOrNull(r.startDate)) throw new Error("bad_education.startDate")
     if (!isStringOrNull(r.endDate)) throw new Error("bad_education.endDate")
   }
+  // industryTags: defensive — clamp to enum + max 3, fall back to ["other"]
+  // when the LLM emits unknown / empty / malformed values. Never throw on
+  // industry alone; this field is enrichment, not core CV data.
+  const rawTags = Array.isArray(o.industryTags) ? o.industryTags : []
+  const seen = new Set<IndustryTag>()
+  const tags: IndustryTag[] = []
+  for (const t of rawTags) {
+    if (typeof t !== "string") continue
+    const canonical = mapToCanonicalIndustry(t)
+    // mapToCanonicalIndustry never returns "other" unless the input is
+    // actually unknown — preserve that signal instead of dedupe-skipping it.
+    if (!seen.has(canonical)) {
+      seen.add(canonical)
+      tags.push(canonical)
+      if (tags.length >= 3) break
+    }
+  }
+  if (tags.length === 0) tags.push("other")
+  ;(o as unknown as StructuredCv).industryTags = tags
   return o as unknown as StructuredCv
 }
 
@@ -802,6 +843,8 @@ export async function ingestCv(
       candidateProfile: parsed.candidateProfile,
       experiences: parsed.experiences,
       education: parsed.education,
+      // Stream F1 — 1..3 canonical industry tags inferred from experiences.
+      industryTags: parsed.industryTags,
       originalFileName: deriveOriginalFileName(args.mediaUrl),
       fileType: "application/pdf",
       studentFrom: null,
