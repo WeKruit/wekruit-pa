@@ -79,7 +79,39 @@ function fakeFirestoreT6() {
         },
       }
     },
+    async runTransaction(fn: (tx: {
+      get: (ref: { __collection: string; __id: string }) => Promise<{ exists: boolean; data: () => StoredDoc | undefined }>
+      set: (
+        ref: { __collection: string; __id: string },
+        data: StoredDoc,
+        opts?: { merge?: boolean }
+      ) => void
+    }) => Promise<unknown>) {
+      const tx = {
+        async get(ref: { __collection: string; __id: string }) {
+          const data = store.get(`${ref.__collection}/${ref.__id}`)
+          return { exists: data != null, data: () => data }
+        },
+        set(ref: { __collection: string; __id: string }, data: StoredDoc, opts?: { merge?: boolean }) {
+          const path = `${ref.__collection}/${ref.__id}`
+          const current = store.get(path) ?? {}
+          store.set(path, opts?.merge ? { ...current, ...data } : data)
+        },
+      }
+      return fn(tx)
+    },
   }
+  // Patch doc() to return a ref shape recognizable by runTransaction.
+  const origCollection = db.collection.bind(db)
+  db.collection = ((name: string) => {
+    const col = origCollection(name)
+    const origDoc = col.doc.bind(col)
+    col.doc = ((id: string) => {
+      const baseDoc = origDoc(id)
+      return Object.assign(baseDoc, { __collection: name, __id: id })
+    }) as typeof col.doc
+    return col
+  }) as typeof db.collection
   return { db: db as unknown as import("firebase-admin/firestore").Firestore, store }
 }
 
@@ -536,4 +568,144 @@ test("wekruit-matching: connector NEVER throws inside execute (every path resolv
         assert.equal(out.reason, "backend_network_error")
       })
   )
+})
+
+// -------- Stream F4: save-job-profile connector tests --------
+
+const saveJobAgent: AgentDef = {
+  ...t6Agent,
+  allowedConnectors: ["save-job-profile"],
+}
+
+t6test("save-job-profile happy path: writes pa-job-profiles/{userId} with status=active", async () => {
+  const { db, store } = fakeFirestoreT6()
+  const def = registryForT6["save-job-profile"]
+  const ctx = { db, userId: "user_alice", sessionId: "s1", turnId: "t1", agent: saveJobAgent }
+  const out = await def.execute(
+    {
+      industryTags: ["fintech_finance", "ai_ml"],
+      sponsorshipNeeded: "H1B",
+      locationPreference: "湾区",
+      sizePreference: "startup",
+      salaryMin: null,
+    },
+    ctx
+  )
+  assert.equal(out.ok, true)
+  const row = store.get("pa-job-profiles/user_alice") as Record<string, unknown> | undefined
+  assert.ok(row, "pa-job-profiles row written")
+  assert.equal(row!.userId, "user_alice")
+  assert.equal(row!.status, "active")
+  const profile = row!.profile as Record<string, unknown>
+  assert.deepEqual(profile.industryTags, ["fintech_finance", "ai_ml"])
+  assert.equal(profile.sponsorshipNeeded, "H1B")
+  assert.equal(profile.locationPreference, "湾区")
+  assert.equal(profile.sizePreference, "startup")
+  assert.equal(profile.salaryMin, null)
+  assert.ok(typeof row!.createdAt === "string")
+  assert.ok(typeof row!.updatedAt === "string")
+})
+
+t6test("save-job-profile re-save merges: createdAt preserved, updatedAt bumps, status stays active", async () => {
+  const { db, store } = fakeFirestoreT6()
+  const def = registryForT6["save-job-profile"]
+  const ctx = { db, userId: "user_bob", sessionId: "s1", turnId: "t1", agent: saveJobAgent }
+  const first = await def.execute(
+    {
+      industryTags: ["tech_software"],
+      sponsorshipNeeded: "none",
+      locationPreference: "remote",
+      sizePreference: "any",
+      salaryMin: 150000,
+    },
+    ctx
+  )
+  assert.equal(first.ok, true)
+  const before = store.get("pa-job-profiles/user_bob") as Record<string, unknown>
+  const createdAtBefore = before.createdAt as string
+  // Sleep 5ms to ensure new timestamp is monotonically later.
+  await new Promise((r) => setTimeout(r, 5))
+  const second = await def.execute(
+    {
+      industryTags: ["tech_software", "fintech_finance"],
+      sponsorshipNeeded: "H1B",
+      locationPreference: "NYC",
+      sizePreference: "big",
+      salaryMin: 200000,
+    },
+    ctx
+  )
+  assert.equal(second.ok, true)
+  const after = store.get("pa-job-profiles/user_bob") as Record<string, unknown>
+  assert.equal(after.createdAt, createdAtBefore, "createdAt MUST be preserved across re-saves")
+  assert.notEqual(after.updatedAt, before.updatedAt, "updatedAt MUST advance")
+  assert.equal(after.status, "active")
+  const profile = after.profile as Record<string, unknown>
+  assert.deepEqual(profile.industryTags, ["tech_software", "fintech_finance"])
+  assert.equal(profile.salaryMin, 200000)
+})
+
+t6test("save-job-profile preserves operator-paused status across re-save", async () => {
+  const { db, store } = fakeFirestoreT6()
+  const def = registryForT6["save-job-profile"]
+  const ctx = { db, userId: "user_paused", sessionId: "s1", turnId: "t1", agent: saveJobAgent }
+  // Pre-seed the doc as paused (operator action).
+  store.set("pa-job-profiles/user_paused", {
+    userId: "user_paused",
+    status: "paused",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    profile: {
+      industryTags: ["other"],
+      sponsorshipNeeded: "none",
+      locationPreference: "anywhere",
+      sizePreference: "any",
+      salaryMin: null,
+    },
+  })
+  const out = await def.execute(
+    {
+      industryTags: ["tech_software"],
+      sponsorshipNeeded: "H1B",
+      locationPreference: "湾区",
+      sizePreference: "startup",
+      salaryMin: null,
+    },
+    ctx
+  )
+  assert.equal(out.ok, true)
+  const row = store.get("pa-job-profiles/user_paused") as Record<string, unknown>
+  assert.equal(row.status, "paused", "operator-paused status must be sticky")
+})
+
+t6test("save-job-profile schema rejects empty industryTags + invalid sponsorship", async () => {
+  const def = registryForT6["save-job-profile"]
+  // Empty tags array
+  assert.throws(() =>
+    def.inputSchema.parse({
+      industryTags: [],
+      sponsorshipNeeded: "H1B",
+      locationPreference: "SF",
+      sizePreference: "any",
+      salaryMin: null,
+    })
+  )
+  // Bogus sponsorship enum value
+  assert.throws(() =>
+    def.inputSchema.parse({
+      industryTags: ["tech_software"],
+      sponsorshipNeeded: "TN",
+      locationPreference: "SF",
+      sizePreference: "any",
+      salaryMin: null,
+    })
+  )
+  // Sane shape passes
+  def.inputSchema.parse({
+    industryTags: ["tech_software"],
+    sponsorshipNeeded: "H1B",
+    locationPreference: "SF",
+    sizePreference: "any",
+    salaryMin: null,
+  })
 })

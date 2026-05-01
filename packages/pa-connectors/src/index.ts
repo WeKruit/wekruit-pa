@@ -114,6 +114,64 @@ function normalizeFactContent(text: string): string {
   return text.trim().replace(/\s+/g, " ").toLocaleLowerCase()
 }
 
+
+// ---------------------------------------------------------------------------
+// Stream F4 — saveJobProfile connector
+//
+// Lets Claire (default agent) persist the user's job-search preferences to
+// pa-job-profiles/{userId} in a single tool call. Replaces the deprecated
+// RecruiterAgent path; this is the canonical surface for the probing flow
+// described in Bible v5 hard-rule JOB-PREF PROBE.
+//
+// Schema is flat (single-level required block) so OpenAI Responses API's
+// strict JSON-schema mode doesn't reject it. salaryMin is nullable rather
+// than optional for the same reason.
+//
+// Idempotency: `pa-job-profiles/{userId}` is upserted with a Firestore
+// transaction. createdAt is preserved across re-saves; status is preserved
+// when "paused" (operator pause), otherwise advances to "active". Safe to
+// call multiple times during the 4-question probe.
+// ---------------------------------------------------------------------------
+
+const SAVE_JOB_PROFILE_INDUSTRY_TAGS = [
+  "tech_software",
+  "tech_hardware",
+  "fintech_finance",
+  "ai_ml",
+  "healthcare_biotech",
+  "consumer_retail",
+  "media_entertainment",
+  "manufacturing_industrial",
+  "education",
+  "other",
+] as const
+
+const SaveJobProfileInputSchema = z.object({
+  // 1..3 canonical industry tags. Locked enum lives in
+  // apps/functions/src/cv-ingest/industry-tags.ts; replicated here so
+  // pa-connectors stays free of the apps/* import boundary.
+  industryTags: z
+    .array(z.enum(SAVE_JOB_PROFILE_INDUSTRY_TAGS))
+    .min(1)
+    .max(3),
+  sponsorshipNeeded: z.enum(["H1B", "GC", "none"]),
+  // Free-text — "湾区" / "NYC" / "remote" / "不挑" / "anywhere".
+  locationPreference: z.string().min(1).max(100),
+  sizePreference: z.enum(["big", "startup", "mid", "any"]),
+  // Total-comp floor in USD. Null when the user didn't volunteer one
+  // (which is the default — we never demand salary up front).
+  salaryMin: z.number().int().nonnegative().nullable(),
+})
+const SaveJobProfileOutputSchema = z.object({
+  ok: z.boolean(),
+  reason: z.string().optional(),
+})
+
+export type SaveJobProfileConnectorInput = z.infer<typeof SaveJobProfileInputSchema>
+export type SaveJobProfileConnectorOutput = z.infer<typeof SaveJobProfileOutputSchema>
+
+const JOB_PROFILES_COLLECTION = "pa-job-profiles"
+
 export const connectorRegistry = {
   "fake-echo": {
     name: "fake-echo",
@@ -383,6 +441,65 @@ export const connectorRegistry = {
       return { ok: true, factId, conflict: false }
     },
   } satisfies ConnectorDef<RememberFactConnectorInput, RememberFactConnectorOutput>,
+  "save-job-profile": {
+    name: "save-job-profile",
+    version: "1",
+    description:
+      "Persist the candidate's job-search preferences (industry tags, sponsorship need, location, company size, optional salary floor) so the daily job recommender can deliver personalised matches. Use ONLY when the user has volunteered all four required fields across the probing flow (industryTags, sponsorshipNeeded, locationPreference, sizePreference). Calling this multiple times is safe — later calls merge with earlier ones.",
+    inputSchema: SaveJobProfileInputSchema,
+    outputSchema: SaveJobProfileOutputSchema,
+    execute: async (
+      input: SaveJobProfileConnectorInput,
+      ctx: ConnectorContext
+    ): Promise<SaveJobProfileConnectorOutput> => {
+      try {
+        const ts = new Date().toISOString()
+        const ref = ctx.db.collection(JOB_PROFILES_COLLECTION).doc(ctx.userId)
+        await ctx.db.runTransaction(async (tx) => {
+          const cur = await tx.get(ref)
+          const profilePayload = {
+            industryTags: input.industryTags,
+            sponsorshipNeeded: input.sponsorshipNeeded,
+            locationPreference: input.locationPreference,
+            sizePreference: input.sizePreference,
+            // salaryMin: nullable, NOT undefined (Firestore doesn't store undefined).
+            salaryMin: input.salaryMin,
+          }
+          if (cur.exists) {
+            const prev = cur.data() as { status?: unknown; createdAt?: unknown } | undefined
+            const next = {
+              userId: ctx.userId,
+              profile: profilePayload,
+              // Preserve operator-paused status; otherwise advance to active.
+              status: prev?.status === "paused" ? "paused" : "active",
+              createdAt: typeof prev?.createdAt === "string" ? prev.createdAt : ts,
+              updatedAt: ts,
+            }
+            tx.set(ref, next, { merge: true })
+          } else {
+            const doc = {
+              userId: ctx.userId,
+              profile: profilePayload,
+              status: "active",
+              createdAt: ts,
+              updatedAt: ts,
+              cvParsedAt: ts,
+              lastJobBatchSentAt: null,
+            }
+            tx.set(ref, doc)
+          }
+        })
+        return { ok: true }
+      } catch (err) {
+        // Audit logger upstream (runConnector) records the actual error;
+        // surface a stable reason to the LLM so it can apologize cleanly.
+        return {
+          ok: false,
+          reason: err instanceof Error ? err.message.slice(0, 200) : "save_failed",
+        }
+      }
+    },
+  } satisfies ConnectorDef<SaveJobProfileConnectorInput, SaveJobProfileConnectorOutput>,
 }
 
 export type ConnectorName = keyof typeof connectorRegistry

@@ -15,7 +15,8 @@
     "allowedConnectors": [
       "current-info",
       "remember-fact",
-      "wekruit-matching"
+      "wekruit-matching",
+      "save-job-profile"
     ],
     "toolBudgetPerTurn": 3,
     "fewShotMessages": [
