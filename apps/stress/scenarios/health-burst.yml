@@ -1,0 +1,71 @@
+# Phase 40 productionize — health endpoint burst.
+#
+# Goal: validate cold-start + warm-path latency for the 4 PA orchestrator
+# entry points without polluting prod data. Uses /paHealth* sibling
+# endpoints (200 OK + JSON envelope, no orchestrator activation).
+#
+# Run:
+#   cd apps/stress
+#   ./node_modules/.bin/artillery run scenarios/health-burst.yml
+#
+# Expected baseline:
+#   - cold-start p95 < 5s (memory bumped 256→512Mi 2026-04-30 — single
+#     digit revisions still cold the first hit)
+#   - warm-path p50 < 200ms, p95 < 500ms, p99 < 1500ms
+#   - 200 only; any 4xx/5xx = bug
+#
+# Health endpoints expose:
+#   - paHealthSendblueWebhook: deps.firestore + deps.secrets
+#   - paHealthSendblueOutbox:  deps.firestore + deps.secrets
+#   - paHealthOnPaInbound:     deps.firestore
+#   - paHealthUpstreamEventWebhook: deps.firestore + deps.secrets
+
+config:
+  target: "https://us-central1-wekruit-5f89b.cloudfunctions.net"
+  phases:
+    - name: "cold-warmup"
+      duration: 30
+      arrivalRate: 1
+      rampTo: 5
+    - name: "sustain"
+      duration: 120
+      arrivalRate: 5
+  ensure:
+    thresholds:
+      - "http.response_time.p95": 800
+      - "http.response_time.p99": 2500
+  http:
+    timeout: 10
+  plugins:
+    metrics-by-endpoint: {}
+
+scenarios:
+  - name: "sendblue-webhook health"
+    weight: 4
+    flow:
+      - get:
+          url: "https://pahealthsendbluewebhook-evm6xq7jyq-uc.a.run.app/"
+          expect:
+            - statusCode: 200
+            - hasProperty: "name"
+  - name: "sendblue-outbox health"
+    weight: 3
+    flow:
+      - get:
+          url: "https://pahealthsendblueoutbox-evm6xq7jyq-uc.a.run.app/"
+          expect:
+            - statusCode: 200
+  - name: "on-pa-inbound health"
+    weight: 2
+    flow:
+      - get:
+          url: "https://pahealthonpainbound-evm6xq7jyq-uc.a.run.app/"
+          expect:
+            - statusCode: 200
+  - name: "upstream-event-webhook health"
+    weight: 1
+    flow:
+      - get:
+          url: "https://pahealthupstreameventwebhook-evm6xq7jyq-uc.a.run.app/"
+          expect:
+            - statusCode: 200
