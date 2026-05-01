@@ -24,6 +24,14 @@
  *   node tests/scenarios/runner.mjs tests/scenarios/scenarios/ --dry-run
  *     # Phase 14.4: lists scenarios, judge plan, projected cost. No
  *     # Firestore writes, no judge calls, no OpenAI calls.
+ *
+ * Stream H2 — simulator dispatch:
+ *   Scenarios may set top-level `simulator: cv-driven-sim` to delegate the
+ *   turn-by-turn loop to tests/scenarios/lib/cv-driven-sim.mjs. The runner
+ *   builds a `drive` adapter that wraps `runTurn` (broker inbound + reply
+ *   poll) and the simulator generates user messages via Qwen2.5-7B-Instruct.
+ *   Required scenario keys: `resumeId`, `simTurns`, `simLang` (default zh).
+ *   When `simulator` is unset, the existing YAML turn loop is used.
  */
 import { readFileSync, mkdirSync } from "node:fs"
 import { readFile, readdir, stat, writeFile } from "node:fs/promises"
@@ -872,6 +880,97 @@ async function runProactiveAssertions(db, assertions, userId, scenarioSweepHook)
   return failures
 }
 
+// ---------------------------------------------------------------------------
+// Stream H2 — `simulator: cv-driven-sim` dispatch.
+//
+// Builds a `drive` adapter on top of `runTurn` so a multi-turn external
+// simulator can drive the broker inbound path turn-by-turn. The simulator
+// generates the user's reply between Claire turns; we still hit the LIVE
+// orchestrator on each round so cv-context-injection, mem0 writes, and
+// telemetry behave exactly like production.
+// ---------------------------------------------------------------------------
+
+async function runSimulatorDispatch(db, scenario, result, ctx) {
+  const simName = scenario.simulator
+  if (simName !== "cv-driven-sim") {
+    throw new Error(`[runner] unknown simulator: ${simName}`)
+  }
+  const { simulateCvOnboarding } = await import("./lib/cv-driven-sim.mjs")
+
+  const turns = Math.max(1, Math.min(50, Number(scenario.simTurns ?? 10)))
+  const lang = typeof scenario.simLang === "string" ? scenario.simLang : "zh"
+
+  // Build a drive adapter around runTurn. Each call mutates a per-call
+  // `scenario.turns[i]` placeholder so runTurn's existing brokerEvent
+  // wiring receives the simulator-supplied text without altering its
+  // signature.
+  const driveScenario = { ...scenario, turns: [] }
+  const drive = {
+    async runTurn(text, turnIdx) {
+      driveScenario.turns[turnIdx] = { user: text }
+      const t0 = Date.now()
+      const { event, reply } = await runTurnWithRetry(db, driveScenario, turnIdx)
+      const claireMs = Date.now() - t0
+      // mem0Calls is best-effort: count audit-event rows written for this
+      // event id with kind starting "mem0". Tolerates missing collection.
+      let mem0Calls = 0
+      try {
+        const snap = await db.collection(PA_AUDIT_EVENTS)
+          .where("eventId", "==", event.id)
+          .limit(20)
+          .get()
+        mem0Calls = snap.docs
+          .map((d) => d.data())
+          .filter((d) => typeof d.kind === "string" && d.kind.startsWith("mem0"))
+          .length
+      } catch {
+        mem0Calls = 0
+      }
+      return { reply: reply ?? "", claireMs, mem0Calls, eventId: event.id }
+    },
+  }
+
+  const simResult = await simulateCvOnboarding({
+    resumeId: scenario.resumeId,
+    userId: scenario.simUserId,
+    turns,
+    lang,
+    db,
+    drive,
+    onTurn: ({ turnIdx, user, claire, claireMs, mem0Calls }) => {
+      console.error(
+        `  [sim] turn ${turnIdx + 1}/${turns} user=${(user ?? "").slice(0, 40)}… claire=${(claire ?? "").slice(0, 40)}… (${claireMs}ms, mem0=${mem0Calls})`
+      )
+    },
+  })
+
+  // Roll the simulator transcript into the standard `result.turns` shape so
+  // the existing voice-axes aggregator + summary writer pick it up.
+  for (const t of simResult.turns) {
+    result.turns.push({
+      idx: t.turnIdx,
+      user: t.user,
+      reply: t.claire,
+      eventId: t.eventId ?? null,
+      pass: typeof t.claire === "string" && t.claire.length > 0,
+      failures: typeof t.claire === "string" && t.claire.length > 0 ? [] : ["sim turn produced no reply"],
+      judge: null,
+      usage: null,
+      mem0Calls: t.mem0Calls ?? 0,
+      claireMs: t.claireMs ?? 0,
+    })
+    if (!t.claire || t.claire.length === 0) result.pass = false
+  }
+  result.simulator = {
+    name: simName,
+    resumeId: scenario.resumeId,
+    candidateName: simResult.candidateName,
+    cvFacts: simResult.cvFacts,
+    turnsRequested: turns,
+    turnsCompleted: simResult.turns.length,
+  }
+}
+
 async function runScenario(db, scenarioPath, ctx) {
   const raw = await readFile(scenarioPath, "utf8")
   const parsed = parseYaml(raw)
@@ -924,7 +1023,17 @@ async function runScenario(db, scenarioPath, ctx) {
     }
   }
 
-  const turns = Array.isArray(scenario.turns) ? scenario.turns : []
+  const __runSimulator = typeof scenario.simulator === "string" && scenario.simulator.length > 0
+  if (__runSimulator) {
+    try {
+      await runSimulatorDispatch(db, scenario, result, ctx)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      result.pass = false
+      result.simulatorError = msg
+    }
+  }
+  const turns = __runSimulator ? [] : (Array.isArray(scenario.turns) ? scenario.turns : [])
   for (let i = 0; i < turns.length; i++) {
     const turn = turns[i]
     try {

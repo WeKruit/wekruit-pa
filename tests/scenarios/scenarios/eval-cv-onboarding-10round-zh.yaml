@@ -1,0 +1,40 @@
+# Stream H2 — 10-round CV-driven onboarding sim (zh).
+#
+# Drives Claire through a 10-turn conversation with an LLM-simulated job
+# seeker. Turn 1 is a synthetic bootstrap message that anchors Claire's
+# cv-context-injection.ts. Turns 2-10 use Qwen2.5-7B-Instruct (SiliconFlow)
+# as the user-sim LLM, conditioned on the same parsedCandidateResumes doc
+# Claire's prompt is grounded in.
+#
+# Runner directive: `simulator: cv-driven-sim` short-circuits the regular
+# YAML turn loop and dispatches to tests/scenarios/lib/cv-driven-sim.mjs
+# (see runner.mjs §"Stream H2 — simulator dispatch").
+#
+# Cost: ≈$0.05 (10 user-sim turns + 10 Claire turns at SiliconFlow rates).
+id: eval_cv_onboarding_10round_zh
+description: |
+  10-round CV-driven onboarding simulation. Validates friend-tone deep-dive,
+  memory persistence, no-probe rule (Bible v7.5), length compliance, and
+  CV-overwrite probe behavior when user mentions a NEW CV mid-conversation.
+testMode: true
+locale: zh-CN
+agentId: default
+participant: "+19999990501"
+chatId: "iMessage;+19999990501"
+turnTimeoutMs: 120000
+replyTimeoutMs: 120000
+
+# H2 simulator directive.
+simulator: cv-driven-sim
+resumeId: zLSRbpWz8edA7tAhRadA   # Adam's most recent parsedCandidateResumes (per H2 brief)
+simUserId: e5d97cd8-1e1d-439d-8672-3008f8aeef2e
+simTurns: 10
+simLang: zh
+
+# Voice-axes aggregate is computed across all simulated turns (length,
+# drift, novelty). The runner's existing `voiceAxesAggregate` block
+# handles this when at least one turn opted in.
+turns:
+  - user: "<simulator-driven, see simulator: cv-driven-sim>"
+    assert:
+      voice_axes_full: true

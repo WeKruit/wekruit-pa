@@ -1,0 +1,14 @@
+{
+  "scenarioId": "eval_cv_onboarding_10round_zh",
+  "yamlPath": "/Users/adam/Desktop/WeKruit/wekruit-pa/tests/scenarios/scenarios/eval-cv-onboarding-10round-zh.yaml",
+  "resumeId": "zLSRbpWz8edA7tAhRadA",
+  "simTurns": 10,
+  "simLang": "zh",
+  "participant": "+19999990501",
+  "userId": "6ed951ac-1ede-4f58-9d07-36ef8e78b933",
+  "candidateName": "Qitong(Mike)Liang",
+  "turnsCompleted": 10,
+  "totalMs": 68299,
+  "runStamp": "2026-05-01T21-23-21-385Z",
+  "outDir": "/Users/adam/Desktop/WeKruit/wekruit-pa/eval-runs/cv-sim-2026-05-01T21-23-21-385Z"
+}

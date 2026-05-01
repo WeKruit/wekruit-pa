@@ -1,0 +1,89 @@
+{
+  "resumeId": "zLSRbpWz8edA7tAhRadA",
+  "userId": "e5d97cd8-1e1d-439d-8672-3008f8aeef2e",
+  "turns": [
+    {
+      "turnIdx": 0,
+      "user": "嗨我刚发了简历，你看看？",
+      "claire": "在呢. 你把简历内容/截图直接丢这儿就行 🍋",
+      "claireMs": 9026,
+      "mem0Calls": 0,
+      "eventId": "harness_a2907502-fa4c-4892-9ba7-78df3c54f92a"
+    },
+    {
+      "turnIdx": 1,
+      "user": "好的，马上发过去。别担心，截图就行 📱",
+      "claire": "嗯 我在，你今天是赶ddl还是本来就想投着玩先？",
+      "claireMs": 5483,
+      "mem0Calls": 0,
+      "eventId": "harness_f55a734a-f966-4cfe-99e9-82ec5ae70d9c"
+    },
+    {
+      "turnIdx": 2,
+      "user": "赶ddl有点紧张，但主要是想多投几家稳妥一些。你那边有合适的机会我再投投看。",
+      "claire": "你把简历发我后，我就按岗位方向帮你圈一下更像的机会。",
+      "claireMs": 5527,
+      "mem0Calls": 0,
+      "eventId": "harness_b66ccdd6-9099-44f6-b9f9-4a8dcf23c5d6"
+    },
+    {
+      "turnIdx": 3,
+      "user": "好的，马上发过去。等合适的机会再找你！😊",
+      "claire": "你发过来就行，我看完再给你些建议。☕",
+      "claireMs": 4862,
+      "mem0Calls": 0,
+      "eventId": "harness_8eef5847-f77d-42da-af35-44097691818b"
+    },
+    {
+      "turnIdx": 4,
+      "user": "好的呢，那我马上发过来 👍",
+      "claire": "你 发过来就行 我看下 关键信息就好 👍",
+      "claireMs": 5563,
+      "mem0Calls": 0,
+      "eventId": "harness_96a55274-3a11-4566-943e-33f4e9638f90"
+    },
+    {
+      "turnIdx": 5,
+      "user": "好的，马上发过去。😊 关键信息你主要看哪个部分呢？",
+      "claire": "我看完再给你提些建议。",
+      "claireMs": 5672,
+      "mem0Calls": 0,
+      "eventId": "harness_1fb11f55-9a40-4b0b-9efe-9fcf8bc41f3b"
+    },
+    {
+      "turnIdx": 6,
+      "user": "好的，马上整理一下发给你。🚀",
+      "claire": "你试试截个图发发过来；我帮你看看工作内容匹配不匹配你最能能打的那段经历，其他细节再顺着补。🚀",
+      "claireMs": 5381,
+      "mem0Calls": 0,
+      "eventId": "harness_0c1a504a-293d-4b9e-8d78-44a777b8737f"
+    },
+    {
+      "turnIdx": 7,
+      "user": "好的呢，我现在就截个图发过来。🚀",
+      "claire": "你发过来就行，我看看那几块。🚀",
+      "claireMs": 4939,
+      "mem0Calls": 0,
+      "eventId": "harness_c2939d6d-f81c-45ad-9b51-dff7804df60e"
+    },
+    {
+      "turnIdx": 8,
+      "user": "好的呢，一会儿就发过去！🚀",
+      "claire": "我看看那几段。🚀",
+      "claireMs": 4520,
+      "mem0Calls": 0,
+      "eventId": "harness_3f5871e3-09a9-4bec-8409-f9eed950e8a1"
+    },
+    {
+      "turnIdx": 9,
+      "user": "好的呢，我一下子发过去。🚀",
+      "claire": "收到，你慢慢来，我这边先看看别的。🚀",
+      "claireMs": 4167,
+      "mem0Calls": 0,
+      "eventId": "harness_5c3779eb-d7c8-4b98-a42c-0f0e843db544"
+    }
+  ],
+  "candidateName": "Qitong(Mike)Liang",
+  "cvFacts": "Name: Qitong(Mike)Liang\nSkills: SQL, Python, R, PowerBI, Tableau, Advanced Excel, Git, Machine learning (Random Forest, SVM, Autoencoder)\nRole: Data Analyst Intern @ NEUROVAInc (Aug2025–Oct2025)\nRole: Operating Analyst Intern @ Industrialnext (Oct2023–Feb2024)\nIndustries: tech_software, ai_ml, fintech_finance",
+  "finalMemorySnapshot": {}
+}
