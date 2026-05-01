@@ -1,0 +1,51 @@
+{
+  "name": "@pa/job-rec",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./tools/parse-resume": {
+      "types": "./dist/tools/parse-resume.d.ts",
+      "import": "./dist/tools/parse-resume.js"
+    },
+    "./tools/query-matching-jobs": {
+      "types": "./dist/tools/query-matching-jobs.d.ts",
+      "import": "./dist/tools/query-matching-jobs.js"
+    },
+    "./tools/save-job-profile": {
+      "types": "./dist/tools/save-job-profile.d.ts",
+      "import": "./dist/tools/save-job-profile.js"
+    },
+    "./tools/send-imessage": {
+      "types": "./dist/tools/send-imessage.d.ts",
+      "import": "./dist/tools/send-imessage.js"
+    }
+  },
+  "engines": {
+    "node": "22"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test src/__tests__/*.test.ts src/__tests__/tools/*.test.ts"
+  },
+  "dependencies": {
+    "@openai/agents": "^0.8.5",
+    "@pa/agent-runtime": "0.0.1",
+    "@pa/core-types": "0.0.1",
+    "@pa/pa-persistence": "0.0.1",
+    "firebase-admin": "^13.0.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.3.0"
+  }
+}

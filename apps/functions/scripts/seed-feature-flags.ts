@@ -131,6 +131,15 @@ const SEED_FLAGS: FlagSpec[] = [
     allowlist: [],
     blocklist: [],
   },
+  // Stream B — paJobRecDaily gate. perUser; default OFF; allowlist via dashboard.
+  {
+    key: "paJobRecEnabled",
+    value: false,
+    type: "bool",
+    scope: "perUser",
+    allowlist: [],
+    blocklist: [],
+  },
 ]
 
 interface PlannedWrite {

@@ -320,6 +320,10 @@ const SEED_FLAGS: FlagSpec[] = [
   // WIRE-IN-PATCH.md Section 9 cookbook. Kill switch:
   // PA_HUMANIZE_RUNTIME_DISABLED=true env (CF cold-start required).
   { key: "paHumanizeRuntimeEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
+  // Stream B — paJobRecDaily gate. perUser scope; default OFF for everyone;
+  // Adam adds his id to allowlist via dashboard before live testing. The
+  // daily cron consults this flag per user and silently skips when off.
+  { key: "paJobRecEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
 ]
 
 export function checkAdminToken(provided: string | undefined): { ok: boolean; status: number; error?: string } {
