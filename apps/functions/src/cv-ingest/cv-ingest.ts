@@ -10,6 +10,15 @@
  *   4. Firestore write to `parsedCandidateResumes/{auto-id}` matching the
  *      shape used by the existing 44 docs (candidateProfile / experiences / education)
  *
+ * Stream E (post-write side effects, both fire-and-forget, both kill-switched):
+ *   E1. Findings follow-up — gpt-5.4-nano produces a 2-3 sentence Claire-voice
+ *       message referencing the CV; enqueued onto `pa-outbound/out-cvfindings-{resumeId}`
+ *       (idempotent via Firestore `.create()`). The existing `paSendblueOutbox`
+ *       Firestore trigger picks it up + sends.
+ *   E2. Mem0 long-term memory write — the parsed CV summary is written to the
+ *       same Qdrant `pa-memory` partition the orchestrator uses, so future
+ *       semantic retrieval (e.g. "looking for fintech jobs") surfaces it.
+ *
  * Architectural pivot 2026-04-30: Claire IS the recruiter — there is no
  * separate RecruiterAgent. This pipeline only writes the document; the
  * orchestrator's systemPrompt assembly (packages/pa-orchestrator) joins the
@@ -17,7 +26,9 @@
  *
  * NEVER throws — every error path returns `{ ok: false, reason }`. The
  * webhook caller does fire-and-forget; an unhandled rejection would only
- * pollute the CF logs.
+ * pollute the CF logs. The Stream E side effects use `Promise.allSettled`
+ * + per-branch try/catch so a Mem0 outage CANNOT taint E1, and an LLM
+ * failure CANNOT taint the parsedCandidateResumes write.
  */
 
 import type { Firestore } from "firebase-admin/firestore"
@@ -64,6 +75,12 @@ export type StructuredCv = {
   education: Education[]
 }
 
+/** Stream E — minimal user shape needed for follow-up + Mem0 partition. */
+export type CvFollowupUser = {
+  toE164: string | null
+  mem0UserId: string | null
+}
+
 export type IngestCvDeps = {
   /** Optional in production (resolved via getFirestore()); inject for tests. */
   db?: Firestore
@@ -80,6 +97,38 @@ export type IngestCvDeps = {
   nowIso?: () => string
   /** Logger (no-op default). */
   log?: (event: string, payload?: Record<string, unknown>) => void
+
+  // ---- Stream E injectables (all optional; production paths default-wired) ----
+
+  /**
+   * Inject for tests. Defaults to a one-shot OpenAI Responses API call
+   * (gpt-5.4-nano) producing a 2-3 sentence Claire-voice follow-up.
+   */
+  llmFollowup?: (parsed: StructuredCv) => Promise<string>
+  /**
+   * Inject for tests. Defaults to a Firestore `.doc(id).create()` write
+   * onto the `pa-outbound` collection (idempotent — duplicate ids fail the
+   * `create` and the caller logs + skips).
+   */
+  enqueueOutboundFollowup?: (
+    db: Firestore,
+    docId: string,
+    payload: Record<string, unknown>
+  ) => Promise<void>
+  /**
+   * Inject for tests. Defaults to `mem0Add` from `@pa/memory` with config
+   * read from process env at call time.
+   */
+  mem0Add?: (args: {
+    userId: string
+    partitionKey: string
+    factBody: string
+  }) => Promise<void>
+  /**
+   * Inject for tests. Defaults to a Firestore lookup of `pa-users/{userId}`
+   * returning the fields needed by E1 (toE164) and E2 (mem0UserId).
+   */
+  lookupUserForFollowup?: (db: Firestore, userId: string) => Promise<CvFollowupUser | null>
 }
 
 const PARSED_RESUMES_COLLECTION = "parsedCandidateResumes"
@@ -87,6 +136,11 @@ const FETCH_TIMEOUT_MS = 30_000
 const MAX_PDF_PAGES = 50
 const MAX_TEXT_BYTES = 100_000 // 100 KB cap to bound LLM cost
 const LLM_MODEL = "gpt-5.4-nano"
+
+// Stream E
+const OUTBOUND_COLLECTION = "pa-outbound"
+const FOLLOWUP_DOC_PREFIX = "out-cvfindings-"
+const PA_USERS_COLLECTION = "pa-users"
 
 // --- Default fetch ---------------------------------------------------------
 
@@ -280,7 +334,366 @@ function deriveOriginalFileName(mediaUrl: string): string {
   }
 }
 
-// --- Public entry point ----------------------------------------------------
+// ---------------------------------------------------------------------------
+// Stream E — kill-switch readers
+// ---------------------------------------------------------------------------
+
+function envFlagTrue(name: string): boolean {
+  const raw = process.env[name]
+  if (typeof raw !== "string") return false
+  const v = raw.trim().toLowerCase()
+  return v === "true" || v === "1" || v === "on" || v === "yes"
+}
+
+function followupKillSwitchOn(): boolean {
+  return envFlagTrue("PA_CV_FINDINGS_FOLLOWUP_DISABLED")
+}
+
+function mem0KillSwitchOn(): boolean {
+  return envFlagTrue("PA_CV_MEM0_WRITE_DISABLED")
+}
+
+// ---------------------------------------------------------------------------
+// Stream E — language detection (Chinese vs English vs default)
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns "zh" when the structured CV has more CJK characters than ASCII
+ * letters in the concatenated profile + experience text. Otherwise "en".
+ * Used to bias LLM follow-up + Mem0 fact wording. Cheap; no network.
+ */
+export function detectCvLang(parsed: StructuredCv): "zh" | "en" {
+  const blob = [
+    parsed.candidateProfile.name ?? "",
+    parsed.candidateProfile.location ?? "",
+    parsed.candidateProfile.skills.join(" "),
+    ...parsed.experiences.flatMap((e) => [e.company, e.title, e.location, e.description]),
+    ...parsed.education.flatMap((e) => [e.school, e.degree, e.field ?? ""]),
+  ].join(" ")
+  let cjk = 0
+  let ascii = 0
+  for (const ch of blob) {
+    const code = ch.codePointAt(0) ?? 0
+    if (code >= 0x4e00 && code <= 0x9fff) cjk++
+    else if ((code >= 0x41 && code <= 0x5a) || (code >= 0x61 && code <= 0x7a)) ascii++
+  }
+  return cjk > ascii ? "zh" : "en"
+}
+
+// ---------------------------------------------------------------------------
+// Stream E1 — findings follow-up LLM + outbound enqueue
+// ---------------------------------------------------------------------------
+
+const FOLLOWUP_SYSTEM_PROMPT =
+  "You are Claire (柯莱儿/小柯) — Bay Area EM, ride-or-die roommate. " +
+  "User just uploaded a resume; you've already sent a quick tapback ❤️. " +
+  "Now reply with ONE short follow-up that:\n" +
+  "1. References 2-3 specific things from their CV (last role, company, or signature project — pick what's most distinctive)\n" +
+  "2. Asks ONE forward question about job direction (大厂/startup, industry, sponsorship — pick ONE)\n" +
+  "3. ≤3 sentences total. Roommate-style, NOT formal. No markdown. No emoji unless natural. " +
+  "Use language matching the resume (zh CV → zh reply, en CV → en reply, mixed → user-language).\n\n" +
+  "HARD RULES (Bible v7.5.2 — apply to ALL output):\n" +
+  "- ≤3 sentences. No markdown headers, no bullet lists, no bold/italic.\n" +
+  "- No parens around URLs. No emoji spam. No formal disclaimers.\n" +
+  "- Never break character. Never include meta commentary about the CV parsing."
+
+async function defaultLlmFollowup(parsed: StructuredCv): Promise<string> {
+  const apiKey =
+    process.env.PA_OPENAI_AGENT_API_KEY?.trim() || process.env.OPENAI_API_KEY?.trim() || ""
+  if (!apiKey) throw new Error("missing_api_key")
+  const baseURL =
+    process.env.PA_OPENAI_AGENT_BASE_URL?.trim() || "https://api.openai.com/v1"
+  const { default: OpenAI } = (await import("openai")) as unknown as {
+    default: new (init: { apiKey: string; baseURL?: string }) => {
+      responses: {
+        create: (req: Record<string, unknown>) => Promise<{
+          output_text?: string
+          output?: Array<{ content?: Array<{ text?: string }> }>
+        }>
+      }
+    }
+  }
+  const client = new OpenAI({ apiKey, baseURL })
+  // Trim experiences to top 3 — most LLM cost + most relevance is at the top.
+  const userPayload = JSON.stringify({
+    candidateProfile: parsed.candidateProfile,
+    experiences: parsed.experiences.slice(0, 3),
+    education: parsed.education,
+  })
+  const resp = await client.responses.create({
+    model: LLM_MODEL,
+    input: [
+      { role: "system", content: FOLLOWUP_SYSTEM_PROMPT },
+      { role: "user", content: userPayload },
+    ],
+  })
+  const outputText =
+    typeof resp.output_text === "string" && resp.output_text.length > 0
+      ? resp.output_text
+      : Array.isArray(resp.output) && resp.output[0]?.content?.[0]?.text
+        ? resp.output[0]!.content![0]!.text!
+        : ""
+  if (!outputText) throw new Error("empty_llm_output")
+  return outputText
+}
+
+async function defaultEnqueueOutboundFollowup(
+  db: Firestore,
+  docId: string,
+  payload: Record<string, unknown>
+): Promise<void> {
+  // .create() throws ALREADY_EXISTS on duplicate id — exactly the
+  // idempotency semantics we want. Caller catches + logs + skips.
+  await db.collection(OUTBOUND_COLLECTION).doc(docId).create(payload)
+}
+
+async function defaultLookupUserForFollowup(
+  db: Firestore,
+  userId: string
+): Promise<CvFollowupUser | null> {
+  try {
+    const snap = await db.collection(PA_USERS_COLLECTION).doc(userId).get()
+    if (!snap.exists) return null
+    const d = snap.data() as Record<string, unknown> | undefined
+    if (!d) return null
+    const phone = typeof d.phoneE164 === "string" && d.phoneE164.length > 0 ? d.phoneE164 : null
+    const mem0 =
+      typeof d.mem0UserId === "string" && d.mem0UserId.trim().length > 0
+        ? (d.mem0UserId as string).trim()
+        : null
+    return { toE164: phone, mem0UserId: mem0 }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * E1 runner — fire-and-forget LLM follow-up + outbound enqueue.
+ * NEVER throws. All error paths log + return.
+ */
+async function runFindingsFollowup(args: {
+  db: Firestore
+  userId: string
+  resumeId: string
+  parsed: StructuredCv
+  user: CvFollowupUser
+  llmFollowup: NonNullable<IngestCvDeps["llmFollowup"]>
+  enqueueOutboundFollowup: NonNullable<IngestCvDeps["enqueueOutboundFollowup"]>
+  nowIso: () => string
+  log: (event: string, payload?: Record<string, unknown>) => void
+}): Promise<void> {
+  if (followupKillSwitchOn()) {
+    args.log("pa.cv_followup.skipped", { reason: "kill_switch", userId: args.userId })
+    return
+  }
+  if (!args.user.toE164) {
+    args.log("pa.cv_followup.skipped", { reason: "no_phone", userId: args.userId })
+    return
+  }
+  // 1. LLM call
+  let raw: string
+  try {
+    raw = await args.llmFollowup(args.parsed)
+  } catch (err) {
+    args.log("pa.cv_followup.error", {
+      stage: "llm",
+      error: err instanceof Error ? err.message : String(err),
+      userId: args.userId,
+    })
+    return
+  }
+  // 2. Light normalize via @pa/pa-orchestrator's normalizer (strip markdown,
+  //    UTM, length cap). Lazy import keeps module load cheap.
+  let body: string
+  try {
+    const mod = (await import("@pa/pa-orchestrator")) as {
+      normalizeForIMessage: (
+        input: string,
+        opts?: { maxLength?: number }
+      ) => { text: string }
+    }
+    body = mod.normalizeForIMessage(raw, { maxLength: 600 }).text.trim()
+  } catch (err) {
+    args.log("pa.cv_followup.error", {
+      stage: "normalize",
+      error: err instanceof Error ? err.message : String(err),
+      userId: args.userId,
+    })
+    return
+  }
+  if (!body) {
+    args.log("pa.cv_followup.skipped", { reason: "empty_after_normalize", userId: args.userId })
+    return
+  }
+  // 3. Enqueue (idempotent via .create())
+  const docId = `${FOLLOWUP_DOC_PREFIX}${args.resumeId}`
+  const ts = args.nowIso()
+  const payload: Record<string, unknown> = {
+    id: docId,
+    userId: args.userId,
+    toE164: args.user.toE164,
+    body,
+    status: "pending",
+    createdAt: ts,
+    createdBy: "cv-ingest-followup",
+    idempotencyKey: args.resumeId,
+    attempts: 0,
+  }
+  try {
+    await args.enqueueOutboundFollowup(args.db, docId, payload)
+    args.log("pa.cv_followup.enqueued", { docId, userId: args.userId, resumeId: args.resumeId })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    // Firestore ALREADY_EXISTS → idempotent skip, not a real error.
+    const isDup = /already.?exists|6 ALREADY_EXISTS/i.test(msg)
+    args.log(isDup ? "pa.cv_followup.idempotent_skip" : "pa.cv_followup.error", {
+      stage: "enqueue",
+      error: msg,
+      userId: args.userId,
+      docId,
+    })
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Stream E2 — Mem0 long-term memory write
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a one-line "user CV summary" fact body. Bilingual: zh template when
+ * the CV is mostly Chinese, English otherwise. The body is fed to mem0Add
+ * as a USER message; mem0's own LLM extraction layer condenses + dedupes
+ * against existing Qdrant vectors.
+ */
+export function buildCvFactBody(parsed: StructuredCv): string {
+  const lang = detectCvLang(parsed)
+  const name = parsed.candidateProfile.name ?? "Unknown"
+  const top = parsed.experiences[0]
+  const skills = parsed.candidateProfile.skills.slice(0, 8)
+  const eduList = parsed.education
+    .map((e) => {
+      const s = e.school || ""
+      const d = e.degree || ""
+      return [s, d].filter(Boolean).join(" ")
+    })
+    .filter(Boolean)
+    .join("; ")
+
+  if (lang === "zh") {
+    const role = top
+      ? `${top.title} at ${top.company} (${top.startDate || "?"}–${top.endDate || "present"})`
+      : "(无工作经历)"
+    return (
+      `用户简历摘要: ${name} — currently/last ${role}. ` +
+      `主要技能: ${skills.length ? skills.join(", ") : "(未列出)"}. ` +
+      `教育: ${eduList || "(未列出)"}.`
+    )
+  }
+  const role = top
+    ? `${top.title} at ${top.company} (${top.startDate || "?"}–${top.endDate || "present"})`
+    : "(no listed experience)"
+  return (
+    `User resume summary: ${name} — currently/last ${role}. ` +
+    `Skills: ${skills.length ? skills.join(", ") : "(none listed)"}. ` +
+    `Education: ${eduList || "(none listed)"}.`
+  )
+}
+
+/**
+ * Default Mem0 writer. Resolves env config + partition key, calls mem0Add.
+ * Throws when mem0 is unconfigured or the call fails — caller catches.
+ */
+async function defaultMem0Add(args: {
+  userId: string
+  partitionKey: string
+  factBody: string
+}): Promise<void> {
+  const memMod = (await import("@pa/memory")) as unknown as {
+    mem0Add: (
+      cfg: Record<string, unknown>,
+      messages: { role: "user" | "assistant"; content: string }[],
+      userId: string
+    ) => Promise<void>
+    isMem0EnvConfigured: () => boolean
+  }
+  if (!memMod.isMem0EnvConfigured()) throw new Error("mem0_not_configured")
+  // Read config from env via the same envTrim pattern as stacked.ts. We
+  // rebuild a Mem0Config inline (rather than calling the package's private
+  // helper) — fields match `Mem0Config` in packages/memory/src/mem0.ts.
+  const envTrim = (k: string): string | undefined => {
+    const v = process.env[k]?.trim()
+    return v && v.length > 0 ? v : undefined
+  }
+  const apiKey = envTrim("SILICONFLOW_API_KEY") || envTrim("MEM0_LLM_API_KEY")
+  const qdrantUrl = envTrim("QDRANT_URL")
+  const qdrantApiKey = envTrim("QDRANT_API_KEY")
+  if (!apiKey || !qdrantUrl || !qdrantApiKey) throw new Error("mem0_not_configured")
+  const cfg: Record<string, unknown> = {
+    apiKey,
+    baseUrl: envTrim("MEM0_LLM_BASE_URL") ?? envTrim("OPENAI_BASE_URL"),
+    llmModel: envTrim("MEM0_LLM_MODEL"),
+    embedModel: envTrim("MEM0_EMBED_MODEL"),
+    embeddingDims: (() => {
+      const d = envTrim("MEM0_EMBED_DIMS")
+      if (!d) return undefined
+      const n = Number(d)
+      return Number.isFinite(n) ? n : undefined
+    })(),
+    qdrantUrl,
+    qdrantApiKey,
+    qdrantCollection: envTrim("MEM0_QDRANT_COLLECTION"),
+  }
+  await memMod.mem0Add(
+    cfg as never,
+    [{ role: "user", content: args.factBody }],
+    args.partitionKey
+  )
+}
+
+/**
+ * E2 runner — fire-and-forget Mem0 fact write.
+ * NEVER throws. All error paths log + return.
+ */
+async function runMem0Write(args: {
+  userId: string
+  resumeId: string
+  parsed: StructuredCv
+  user: CvFollowupUser
+  mem0Add: NonNullable<IngestCvDeps["mem0Add"]>
+  log: (event: string, payload?: Record<string, unknown>) => void
+}): Promise<void> {
+  if (mem0KillSwitchOn()) {
+    args.log("pa.cv_mem0.skipped", { reason: "kill_switch", userId: args.userId })
+    return
+  }
+  // Resolve the same partition key the orchestrator uses. Inline impl
+  // mirrors `resolveMem0PartitionKey` from `@pa/memory` — empty / null /
+  // whitespace-only mem0UserId falls back to userId.
+  const trimmed =
+    typeof args.user.mem0UserId === "string" ? args.user.mem0UserId.trim() : ""
+  const partitionKey = trimmed.length > 0 ? trimmed : args.userId
+
+  const factBody = buildCvFactBody(args.parsed)
+  try {
+    await args.mem0Add({ userId: args.userId, partitionKey, factBody })
+    args.log("pa.cv_mem0.ok", {
+      userId: args.userId,
+      partitionKey,
+      resumeId: args.resumeId,
+      factLen: factBody.length,
+    })
+  } catch (err) {
+    args.log("pa.cv_mem0.error", {
+      error: err instanceof Error ? err.message : String(err),
+      userId: args.userId,
+      resumeId: args.resumeId,
+    })
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Public entry point
+// ---------------------------------------------------------------------------
 
 export async function ingestCv(
   args: IngestCvInput,
@@ -311,6 +724,12 @@ export async function ingestCv(
   const fetchPdf = deps?.fetchPdf ?? defaultFetchPdf
   const parsePdf = deps?.parsePdf ?? defaultParsePdf
   const llmExtract = deps?.llmExtract ?? defaultLlmExtract
+  const llmFollowup = deps?.llmFollowup ?? defaultLlmFollowup
+  const enqueueOutboundFollowup =
+    deps?.enqueueOutboundFollowup ?? defaultEnqueueOutboundFollowup
+  const mem0AddFn = deps?.mem0Add ?? defaultMem0Add
+  const lookupUserForFollowup =
+    deps?.lookupUserForFollowup ?? defaultLookupUserForFollowup
 
   if (!args || typeof args !== "object" || !args.userId || !args.mediaUrl) {
     return { ok: false, reason: "invalid_input" }
@@ -375,6 +794,7 @@ export async function ingestCv(
   })
 
   // 4. Firestore write
+  let resumeId: string
   try {
     const ts = nowIso()
     const doc = {
@@ -394,8 +814,8 @@ export async function ingestCv(
       createdAt: new Date(ts),
     }
     const ref = await dbHandle.collection(PARSED_RESUMES_COLLECTION).add(doc)
+    resumeId = ref.id
     log("pa.cv_ingest.ok", { userId: args.userId, resumeId: ref.id })
-    return { ok: true, resumeId: ref.id }
   } catch (err) {
     log("pa.cv_ingest.error", {
       stage: "firestore",
@@ -404,4 +824,44 @@ export async function ingestCv(
     })
     return { ok: false, reason: "firestore_write_failed" }
   }
+
+  // 5. Stream E side effects (E1 + E2 in parallel, both fire-and-forget,
+  //    both NEVER throw). We resolve the user once + share the read.
+  let user: CvFollowupUser | null = null
+  try {
+    user = await lookupUserForFollowup(dbHandle, args.userId)
+  } catch (err) {
+    log("pa.cv_followup.error", {
+      stage: "user_lookup",
+      error: err instanceof Error ? err.message : String(err),
+      userId: args.userId,
+    })
+  }
+  if (user) {
+    await Promise.allSettled([
+      runFindingsFollowup({
+        db: dbHandle,
+        userId: args.userId,
+        resumeId,
+        parsed,
+        user,
+        llmFollowup,
+        enqueueOutboundFollowup,
+        nowIso,
+        log,
+      }),
+      runMem0Write({
+        userId: args.userId,
+        resumeId,
+        parsed,
+        user,
+        mem0Add: mem0AddFn,
+        log,
+      }),
+    ])
+  } else {
+    log("pa.cv_followup.skipped", { reason: "no_user_record", userId: args.userId })
+  }
+
+  return { ok: true, resumeId }
 }
