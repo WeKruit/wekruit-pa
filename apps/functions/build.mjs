@@ -47,6 +47,15 @@ await build({
     "firebase-admin/*",
     "firebase-functions",
     "firebase-functions/*",
+    // Stream D — pdf-parse bundles a ~9 MB minified pdfjs copy + test
+    // fixtures via its lib path; keep external so Cloud Build npm-installs
+    // it at deploy time. Bundle size held under the 16 MB target.
+    "pdf-parse",
+    "pdf-parse/lib/*",
+    // openai v4 generated resources/ tree (~9 MB) — same rationale; use
+    // Cloud Build npm install path for the SDK rather than inline.
+    "openai",
+    "openai/*",
   ],
   legalComments: "none",
   logLevel: "info",
@@ -65,6 +74,14 @@ const runtimePackage = {
   dependencies: {
     "firebase-admin": "^13.0.0",
     "firebase-functions": "^6.0.0",
+    // Stream D — externalized to keep bundle <16 MB; Cloud Build installs
+    // at deploy time, identical version contract to the workspace.
+    "pdf-parse": "^1.1.1",
+    "openai": "^4.74.0",
+    // openai 4.x lazy-loads zod from _vendor/zod-to-json-schema even though
+    // it's listed as an OPTIONAL peer; Cloud Run instance failed to start
+    // 2026-04-30 with ERR_MODULE_NOT_FOUND 'zod'. Pin it explicitly here.
+    "zod": "^3.25.0",
   },
 }
 writeFileSync(

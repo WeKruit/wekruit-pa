@@ -10,7 +10,7 @@
   "scripts": {
     "build": "node build.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test src/sendblue/__tests__/*.test.ts src/job-rec/__tests__/*.test.ts src/__tests__/*.test.ts src/proactive-sweep.test.ts src/admin-bootstrap.test.ts src/health.test.ts",
+    "test": "node --import tsx --test src/sendblue/__tests__/*.test.ts src/cv-ingest/__tests__/*.test.ts src/job-rec/__tests__/*.test.ts src/__tests__/*.test.ts src/proactive-sweep.test.ts src/admin-bootstrap.test.ts src/health.test.ts",
     "deploy": "firebase deploy --only functions --project wekruit-5f89b"
   },
   "dependencies": {
@@ -24,7 +24,9 @@
     "@pa/pa-orchestrator": "0.0.1",
     "@pa/pa-persistence": "0.0.1",
     "firebase-admin": "^13.0.0",
-    "firebase-functions": "^6.0.0"
+    "firebase-functions": "^6.0.0",
+    "pdf-parse": "^1.1.1",
+    "openai": "^4.74.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
