@@ -11,6 +11,8 @@ import {
   loadHandbook as loadHandbookV2,
   DEFAULT_HANDBOOK_SLUG,
 } from "./handbook/loader.js"
+// Stream D — CV context injection (appendCvContextToSystemPrompt).
+import { appendCvContextToSystemPrompt } from "./cv-context-injection.js"
 import {
   runAgentTurn as defaultRunAgentTurn,
   stripLeadingIsoTimestamp,
@@ -852,6 +854,19 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
           error: e instanceof Error ? e.message : String(e),
         })
       }
+    }
+    // Stream D — append User CV Profile block when this user has a parsed
+    // resume on file. Best-effort: errors degrade silently and leave the
+    // composed prompt unchanged. The V0 emergency rollback path
+    // (isVoiceV1Disabled) intentionally bypasses CV injection — it is a
+    // pre-handbook static string and CV grounding belongs to the live voice.
+    if (composedSystemPrompt !== null && store.db != null) {
+      composedSystemPrompt = await appendCvContextToSystemPrompt(
+        store.db,
+        event.userId,
+        composedSystemPrompt,
+        (evt, payload) => store.log(evt, payload as Record<string, unknown>)
+      )
     }
     const systemPrompt = isVoiceV1Disabled()
       ? LEGACY_V0_SYSTEM_PROMPT

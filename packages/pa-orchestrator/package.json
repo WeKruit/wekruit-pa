@@ -16,7 +16,7 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "pretest": "npm run build --workspace=@pa/core-types --workspace=@pa/memory --workspace=@pa/agent-runtime --workspace=@pa/agent-registry --workspace=@pa/firebase-admin",
-    "test": "node --import tsx --test src/index.test.ts src/voice-reminder.test.ts src/output-normalizer.test.ts src/voice/style-analyzer.test.ts src/voice/mirror-snippet.test.ts src/voice/mirror-injection.test.ts src/voice/llm-rewriter.test.ts src/allowlist.test.ts src/onboarding.test.ts src/proactive-turn.test.ts src/cancellation-nlu.test.ts src/playbooks/headhunter.test.ts src/playbook-cache.test.ts src/downstream.test.ts src/eval-nl-judge.test.ts src/__tests__/handbook-integration.test.ts"
+    "test": "node --import tsx --test src/index.test.ts src/voice-reminder.test.ts src/output-normalizer.test.ts src/voice/style-analyzer.test.ts src/voice/mirror-snippet.test.ts src/voice/mirror-injection.test.ts src/voice/llm-rewriter.test.ts src/allowlist.test.ts src/onboarding.test.ts src/proactive-turn.test.ts src/cancellation-nlu.test.ts src/playbooks/headhunter.test.ts src/playbook-cache.test.ts src/downstream.test.ts src/eval-nl-judge.test.ts src/__tests__/handbook-integration.test.ts src/__tests__/cv-context-injection.test.ts"
   },
   "dependencies": {
     "@pa/agent-registry": "0.0.1",
