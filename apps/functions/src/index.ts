@@ -709,6 +709,64 @@ export const paSendblueOutbox = onDocumentCreated(
 )
 
 // =============================================================================
+// Stream A — Tapback → matching-feedback CF (BUG #6 sister-feature)
+// =============================================================================
+//
+// Trigger: onDocumentCreated("pa-tapback-events/{id}"). Reads the tapback
+// row, looks up Claire's recent outbound for that user, extracts mentioned
+// jobIds, writes one matching-feedback row per jobId. See
+// src/job-rec/match-feedback.ts for the matching heuristic.
+
+export const paOnTapbackEvent = onDocumentCreated(
+  {
+    document: "pa-tapback-events/{id}",
+    region: "us-central1",
+    memory: "256MiB",
+    timeoutSeconds: 60,
+    concurrency: 1,
+  },
+  async (event) => {
+    const snap = event.data
+    if (!snap) {
+      logger.warn("paOnTapbackEvent fired without snapshot", { id: event.params.id })
+      return
+    }
+    const data = snap.data() as
+      | {
+          userId?: string
+          fromNumber?: string
+          kind?: "love" | "like" | "dislike" | "laugh" | "emphasize" | "question"
+          quotedText?: string
+        }
+      | undefined
+    if (!data || !data.userId || !data.kind || !data.quotedText) {
+      logger.warn("paOnTapbackEvent skipping malformed row", { id: event.params.id })
+      return
+    }
+    try {
+      const { processTapbackForFeedback } = await import("./job-rec/match-feedback.js")
+      const result = await processTapbackForFeedback(getFirestore(), {
+        userId: data.userId,
+        fromNumber: data.fromNumber,
+        kind: data.kind,
+        quotedText: data.quotedText,
+      })
+      logger.info("paOnTapbackEvent processed", {
+        id: event.params.id,
+        kind: data.kind,
+        written: result.written,
+        jobIds: result.jobIds,
+      })
+    } catch (err) {
+      logger.error("paOnTapbackEvent failed", {
+        id: event.params.id,
+        err: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+)
+
+// =============================================================================
 // Phase 31 — Upstream Event Connector
 // =============================================================================
 //
