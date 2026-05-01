@@ -451,7 +451,13 @@ async function main() {
       agentRef,
       {
         handbookSlug: args.slug,
-        updatedAt: FieldValue.serverTimestamp(),
+        // CRITICAL: write ISO string (not FieldValue.serverTimestamp()) — the
+        // agent-registry zod schema validates updatedAt as a string. A
+        // Timestamp object causes orchestrator turn validation to throw
+        // "Expected string, received object" on path ["updatedAt"], breaking
+        // every inbound turn. Bug found 2026-04-30 during first live Sendblue
+        // test; hotfix backfilled to existing pa-agents/default doc.
+        updatedAt: ts,
       },
       { merge: true }
     )
