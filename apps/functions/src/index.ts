@@ -470,60 +470,22 @@ export const onPaInbound = onDocumentCreated(
         err: flagErr instanceof Error ? flagErr.message : String(flagErr),
       })
     }
-    // Stream C — RecruiterAgent dispatcher. When the inbound carries a
-    // CV attachment AND the per-user `paJobRecEnabled` flag is on, route
-    // to the RecruiterAgent path (Stream B) instead of default Claire.
-    // Defensive: any failure in the flag-resolve / dynamic-import phase
-    // falls through to default Claire so iMessage users don't go silent.
-    // Once recruiter-flow has pre-claimed the event, default Claire's
-    // own claim transaction will see status="running" and no-op.
-    let routedToRecruiter = false
+    // Stream D pivot — Claire-only architecture. CV side-effects
+    // (tapback + parsedCandidateResumes ingest) fire in the webhook
+    // (apps/functions/src/sendblue/webhook.ts); onPaInbound runs the
+    // default Claire orchestrator path UNCONDITIONALLY for every event.
     try {
-      const eventBody = data as InboundEvent
-      const rawPayload = (eventBody as { rawPayload?: Record<string, unknown> }).rawPayload
-      const mediaUrlRaw = rawPayload && typeof rawPayload === "object" ? rawPayload.mediaUrl : undefined
-      const mediaUrl = typeof mediaUrlRaw === "string" && mediaUrlRaw.length > 0 ? mediaUrlRaw : undefined
-      const userId = "userId" in eventBody ? eventBody.userId : undefined
-      if (mediaUrl && userId) {
-        const { getFlag } = await import("@pa/pa-persistence")
-        const jobRecOn = await getFlag(db, "paJobRecEnabled", { userId, env: process.env }, false)
-        if (jobRecOn === true) {
-          const { runRecruiterFlow } = await import("./job-rec/recruiter-flow.js")
-          await runRecruiterFlow(db, eventBody, { mediaUrl, log: (...a: unknown[]) => logger.info("[recruiter-flow]", ...a) })
-          routedToRecruiter = true
-          logger.info("onPaInbound routed-to-recruiter", {
-            eventId: data.id,
-            userId,
-            mediaUrl: mediaUrl.slice(0, 80),
-          })
-        }
-      }
-    } catch (recErr) {
-      // Defensive: if recruiter path errors BEFORE pre-claim succeeds we
-      // FALL THROUGH to default Claire. If the error fired AFTER pre-claim
-      // (i.e. inside runRecruiterFlow), the event row is already in
-      // status="failed" and default Claire's claim will refuse.
-      logger.error("onPaInbound recruiter-flow failed (degrade to default)", {
+      const processed = isBrokerImessageEvent(data)
+        ? await processBrokerImessageEvent(db, data)
+        : await claimAndProcessInboundEvent(db, data.id)
+      logger.info("onPaInbound processed", { eventId: data.id, userId: "userId" in data ? data.userId : undefined, processed })
+    } catch (err) {
+      logger.error("onPaInbound failed", {
         eventId: data.id,
-        userId: "userId" in data ? (data as { userId?: string }).userId : undefined,
-        err: recErr instanceof Error ? recErr.message : String(recErr),
+        userId: "userId" in data ? data.userId : undefined,
+        err: err instanceof Error ? err.message : String(err),
       })
-    }
-
-    if (!routedToRecruiter) {
-      try {
-        const processed = isBrokerImessageEvent(data)
-          ? await processBrokerImessageEvent(db, data)
-          : await claimAndProcessInboundEvent(db, data.id)
-        logger.info("onPaInbound processed", { eventId: data.id, userId: "userId" in data ? data.userId : undefined, processed })
-      } catch (err) {
-        logger.error("onPaInbound failed", {
-          eventId: data.id,
-          userId: "userId" in data ? data.userId : undefined,
-          err: err instanceof Error ? err.message : String(err),
-        })
-        throw err
-      }
+      throw err
     }
   },
 )
@@ -648,9 +610,16 @@ export const memoryAdmin = onRequest(
 export const paSendblueWebhook = onRequest(
   {
     region: "us-central1",
-    secrets: [SENDBLUE_WEBHOOK_SIGNING_SECRET],
-    // 14MB monolithic bundle + node + firebase-admin + zod ~= 250MB floor; 256Mi
-    // OOMed under burst (Phase 40 stress baseline). 512Mi gives safety margin.
+    // Stream D — webhook now also fires-and-forgets sendReaction (needs
+    // Sendblue creds) and ingestCv (needs PA_OPENAI_AGENT_API_KEY for the
+    // CV LLM extraction). All four are required at request time.
+    secrets: [
+      SENDBLUE_WEBHOOK_SIGNING_SECRET,
+      SENDBLUE_API_KEY_ID,
+      SENDBLUE_API_SECRET_KEY,
+      SENDBLUE_FROM_NUMBER,
+      PA_OPENAI_AGENT_API_KEY,
+    ],
     memory: "512MiB",
     timeoutSeconds: 60,
     cors: false,
@@ -659,6 +628,25 @@ export const paSendblueWebhook = onRequest(
     minInstances: 1,
   },
   async (req, res) => {
+    // Stream D — re-export secrets into env so the side-effect modules
+    // (`./sendblue/sendblue-client.js` reads SENDBLUE_API_KEY_ID etc.;
+    // `./cv-ingest/cv-ingest.js` reads PA_OPENAI_AGENT_API_KEY) pick them
+    // up. These setters are no-ops on warm invocations.
+    process.env.SENDBLUE_API_KEY_ID = SENDBLUE_API_KEY_ID.value()
+    process.env.SENDBLUE_API_SECRET_KEY = SENDBLUE_API_SECRET_KEY.value()
+    try {
+      const fromNumber = SENDBLUE_FROM_NUMBER.value().trim()
+      if (fromNumber) process.env.SENDBLUE_FROM_NUMBER = fromNumber
+    } catch {
+      // optional on paid lines
+    }
+    try {
+      const openAiKey = PA_OPENAI_AGENT_API_KEY.value().trim()
+      if (openAiKey) process.env.PA_OPENAI_AGENT_API_KEY = openAiKey
+      else delete process.env.PA_OPENAI_AGENT_API_KEY
+    } catch {
+      delete process.env.PA_OPENAI_AGENT_API_KEY
+    }
     try {
       await handleSendblueWebhook(
         {

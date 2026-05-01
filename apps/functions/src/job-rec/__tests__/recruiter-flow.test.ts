@@ -1,3 +1,7 @@
+// DEPRECATED — Stream D pivot (2026-04-30) reverted to Claire-only architecture.
+// This file is NOT loaded by onPaInbound anymore (dispatcher removed in apps/functions/src/index.ts).
+// Kept for reference: `runRecruiterFlow` may be repurposed for the daily batch CF path later.
+// Do NOT import from production code without re-architecting first.
 /**
  * Stream C — recruiter-flow lifecycle tests.
  *
