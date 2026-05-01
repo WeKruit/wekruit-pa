@@ -17,6 +17,7 @@ function makeFakeDb(opts: { rateLimitFlag?: boolean } = {}) {
   const audit: DocData[] = []
   const flags = new Map<string, DocData>()
   const rateLimit = new Map<string, DocData>()
+  const tapbacks: DocData[] = []
 
   if (opts.rateLimitFlag) {
     flags.set("paRateLimitPerUserEnabled", {
@@ -80,6 +81,12 @@ function makeFakeDb(opts: { rateLimitFlag?: boolean } = {}) {
   const rawWebhookCollection = {
     add(_data: DocData) { return Promise.resolve({ id: "raw_1" }) },
   }
+  const tapbackCollection = {
+    add(data: DocData) {
+      tapbacks.push({ ...data })
+      return Promise.resolve({ id: `tap_${tapbacks.length}` })
+    },
+  }
   const collections: Record<string, unknown> = {
     // Phase 23+ kebab-case migration. Old snake-case keys retained as
     // aliases so any stale code path during transition still resolves.
@@ -89,6 +96,7 @@ function makeFakeDb(opts: { rateLimitFlag?: boolean } = {}) {
     "pa-rate-limits": rateLimitCollection,
     "pa-rate-limit": rateLimitCollection,
     "pa-sendblue-webhook-raw": rawWebhookCollection,
+    "pa-tapback-events": tapbackCollection,
     pa_inbound_events: inboundCollection,
     pa_audit_events: auditCollection,
     pa_feature_flags: flagsCollection,
@@ -117,7 +125,7 @@ function makeFakeDb(opts: { rateLimitFlag?: boolean } = {}) {
     },
   } as unknown as Parameters<typeof handleSendblueWebhook>[2]["db"]
 
-  return { db, inbound, audit, flags, rateLimit }
+  return { db, inbound, audit, flags, rateLimit, tapbacks }
 }
 
 function sign(body: string, secret = SECRET): string {
@@ -321,8 +329,9 @@ describe("handleSendblueWebhook", () => {
     assert.ok(audit.some((a) => a.type === "group_chat_rejected"))
   })
 
-  it("Test 8: empty content → 200, NO inbound (matches macOS worker [dm] empty; skip)", async () => {
+  it("Test 8: empty content AND no media_url → 200, NO inbound (matches macOS worker [dm] empty; skip)", async () => {
     const { db, inbound } = makeFakeDb()
+    // Explicit: no media_url. Skip-empty rule still applies.
     const body = JSON.stringify({ ...basePayload(), content: "" })
     const req = makeReq({ body, signature: SECRET })
     const res = makeRes()
@@ -331,6 +340,47 @@ describe("handleSendblueWebhook", () => {
 
     assert.equal(res.statusCode, 200)
     assert.equal(inbound.size, 0)
+  })
+
+  it("Test 8b (BUG #6): empty content + media_url → 200, ONE inbound row with mediaUrl + attachmentReceived in rawPayload", async () => {
+    const { db, inbound } = makeFakeDb()
+    const mediaUrl = "https://storage.googleapis.com/inbound-file-store/test-resume.pdf"
+    const body = JSON.stringify({ ...basePayload(), content: "", media_url: mediaUrl })
+    const req = makeReq({ body, signature: SECRET })
+    const res = makeRes()
+
+    await handleSendblueWebhook(req, res, { db, secret: SECRET })
+
+    assert.equal(res.statusCode, 200, "empty content with media_url MUST NOT skip — that was BUG #6")
+    assert.equal(inbound.size, 1, "attachment-only message must enqueue a single inbound row")
+    const [doc] = [...inbound.values()]
+    assert.ok(doc)
+    assert.equal(doc!.idempotencyKey, "sendblue-msg-abc-123")
+    assert.equal(doc!.channel, "imessage")
+    const raw = doc!.rawPayload as Record<string, unknown>
+    assert.equal(raw.mediaUrl, mediaUrl)
+    assert.equal(raw.attachmentReceived, true)
+    assert.equal(raw.text, "[attachment]")
+  })
+
+  it("Test 8c (tapback inbound): Loved \"...\" → still enqueues inbound + writes pa-tapback-events row", async () => {
+    const { db, inbound, tapbacks } = makeFakeDb()
+    const body = JSON.stringify({ ...basePayload(), content: "Loved “Career check-in tomorrow?”" })
+    const req = makeReq({ body, signature: SECRET })
+    const res = makeRes()
+
+    await handleSendblueWebhook(req, res, { db, secret: SECRET })
+
+    assert.equal(res.statusCode, 200)
+    // Normal inbound still flows through so Claire can acknowledge in chat.
+    assert.equal(inbound.size, 1)
+    // Plus a tapback-events row for the matching pipeline.
+    assert.equal(tapbacks.length, 1)
+    const tap = tapbacks[0]!
+    assert.equal(tap.kind, "love")
+    assert.equal(tap.quotedText, "Career check-in tomorrow?")
+    assert.equal(tap.sourceMessageHandle, "msg-abc-123")
+    assert.equal(tap.userId, "+15551234567")
   })
 
   it("Test 9: malformed JSON body (with valid HMAC) → 400 Bad Request", async () => {

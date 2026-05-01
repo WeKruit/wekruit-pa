@@ -7,9 +7,11 @@
  *   3. Route by shape:
  *      - is_outbound=true → outbound mirror, audit + 200 OK
  *      - missing message_handle/from_number/content → audit (typing/line/etc.) + 200 OK
- *      - normalize → if null (empty content), 200 OK
+ *      - empty content + media_url → attachment plumb-through (BUG #6 fix)
+ *      - normalize → if null (empty + no media_url), 200 OK
  *      - group_id present → group_chat_rejected audit + 200 OK (Q-03 lock)
  *      - allowlist denied → audit allowlist_deny + 200 OK
+ *      - tapback pattern → write pa-tapback-events row + still enqueue inbound
  *      - else → broker.createInboundEvent (idempotent on sendblue-${handle})
  *   4. 200 OK with { ok, eventId, created }
  *
@@ -35,6 +37,7 @@ import {
 } from "./normalize.js"
 import { useDmAllowlist, getPeerAllowlist, isSamePeer } from "./allowlist.js"
 import { recordAuditEvent, type AuditEventInput } from "./audit.js"
+import { parseInboundTapback } from "./tapback-parser.js"
 import type { SendblueInboundPayload } from "./types.js"
 
 export type WebhookRequest = {
@@ -116,6 +119,21 @@ async function logRawWebhook(
     // Never let raw-log failure break the webhook path.
     log("[sendblue][webhook][raw-log] failed", err instanceof Error ? err.message : String(err))
   }
+}
+
+// BUG #6 fix — Sendblue delivers pure-attachment iMessages (PDF, image, etc.)
+// with `content === ""` AND `media_url` populated. The original webhook
+// inherited the macOS worker's "[dm] empty; skip" rule, which silently
+// dropped these. Adam's CV upload on 2026-04-30 surfaced the gap. We now
+// treat empty+media_url as a first-class inbound: thread the media URL into
+// rawPayload so onPaInbound can fetch and ingest the attachment. Empty +
+// no media_url remains a skip (typing aborts, retries with stale handle).
+function extractMediaUrl(payload: Record<string, unknown>): string | null {
+  const v = payload.media_url
+  if (typeof v !== "string") return null
+  const trimmed = v.trim()
+  if (!trimmed) return null
+  return trimmed
 }
 
 export async function handleSendblueWebhook(
@@ -235,10 +253,45 @@ export async function handleSendblueWebhook(
     reply(res, 200, { ok: true, ignored: "normalize_error" })
     return
   }
+  // BUG #6 — empty content path. If media_url is present, synthesize a
+  // normalized inbound so the rest of the pipeline (rate-limit / allowlist /
+  // broker enqueue) treats this as a real message. Reuses the same
+  // idempotency convention so dedupe still works.
+  const mediaUrl = extractMediaUrl(payload)
   if (!normalized) {
-    // Empty content — match macOS worker '[dm] empty; skip'
-    reply(res, 200, { ok: true, ignored: "empty_content" })
-    return
+    if (mediaUrl) {
+      const messageHandle = typeof payload.message_handle === "string" ? payload.message_handle.trim() : ""
+      const fromNumber = typeof payload.from_number === "string" ? payload.from_number : ""
+      const toNumber = typeof payload.to_number === "string" ? payload.to_number : ""
+      const groupIdRaw = typeof payload.group_id === "string" ? payload.group_id.trim() : ""
+      const isGroup = groupIdRaw.length > 0
+      const chatId = isGroup ? `iMessage;+;${groupIdRaw}` : `iMessage;-;${fromNumber}`
+      const service = payload.service === "SMS" ? "SMS" : "iMessage"
+      if (!messageHandle) {
+        // Defensive — isInboundReceiveEvent already required this. Audit and skip.
+        await safeAudit(
+          deps,
+          { type: "inbound_skipped", channel: "imessage_sendblue", reason: "attachment_no_handle" },
+          log
+        )
+        reply(res, 200, { ok: true, ignored: "attachment_no_handle" })
+        return
+      }
+      normalized = {
+        idempotencyKey: `sendblue-${messageHandle}`,
+        fromNumber,
+        toNumber,
+        text: "[attachment]",
+        chatId,
+        messageHandle,
+        isGroup,
+        service,
+      }
+    } else {
+      // Empty content + no media_url — match macOS worker '[dm] empty; skip'
+      reply(res, 200, { ok: true, ignored: "empty_content" })
+      return
+    }
   }
 
   // ---- 3c2. Rate-limit (Phase 26 T1, flag-gated) ------------------------
@@ -285,6 +338,35 @@ export async function handleSendblueWebhook(
     }
   }
 
+  // ---- 3f. Tapback parser (BUG #6 sister-feature) -----------------------
+  // Inbound iMessage tapback reactions arrive as plaintext content — we
+  // detect them, fan-out a row to pa-tapback-events for the matching
+  // pipeline (paOnTapbackEvent CF), and STILL enqueue the normal inbound
+  // event so Claire gets a chance to acknowledge in chat. Fire-and-forget
+  // write — failure must not break the inbound path.
+  if (normalized.text && normalized.text !== "[attachment]") {
+    const tapback = parseInboundTapback(normalized.text)
+    if (tapback) {
+      try {
+        const ts = new Date().toISOString()
+        await deps.db.collection("pa-tapback-events").add({
+          userId: normalized.fromNumber,
+          jobId: null,
+          kind: tapback.kind,
+          quotedText: tapback.quotedText,
+          sourceMessageHandle: normalized.messageHandle,
+          fromNumber: normalized.fromNumber,
+          toNumber: normalized.toNumber,
+          ts,
+          createdAt: ts,
+        })
+        log("[sendblue][webhook] tapback recorded", { kind: tapback.kind, handle: normalized.messageHandle })
+      } catch (err) {
+        log("[sendblue][webhook] tapback record failed", err instanceof Error ? err.message : String(err))
+      }
+    }
+  }
+
   // ---- 4. Broker enqueue (idempotent on sendblue-${handle}) -------------
   const broker = deps.createInboundEvent ?? createInboundEvent
   try {
@@ -303,6 +385,9 @@ export async function handleSendblueWebhook(
         // Mirror legacy macOS worker keys so onPaInbound's
         // BrokerImessageEvent path keeps working unchanged.
         participant: normalized.fromNumber,
+        // BUG #6 — surface attachment URL into rawPayload so the orchestrator
+        // can fetch + ingest. Absent on text-only messages.
+        ...(mediaUrl ? { mediaUrl, attachmentReceived: true } : {}),
         // text + participant + chatId form the minimum contract; preserve
         // everything else as raw passthrough for forensic logs.
         original: payload,
@@ -312,6 +397,7 @@ export async function handleSendblueWebhook(
       eventId: result.id,
       created: result.created,
       handle: normalized.messageHandle,
+      hasAttachment: !!mediaUrl,
     })
     reply(res, 200, { ok: true, eventId: result.id, created: result.created })
     return
