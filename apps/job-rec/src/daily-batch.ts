@@ -46,6 +46,17 @@ export type DailyBatchDeps = {
   /** Per-user job count. Default 3. */
   jobsPerUser?: number
   log?: (...args: unknown[]) => void
+  /**
+   * Stream F5 — optional embedding rerank. When provided + the user has
+   * an embedding on file, candidates are re-sorted by cosine similarity
+   * before formatting. Falls back to legacy keyword-overlap when absent.
+   */
+  userEmbedFetcher?: UserEmbedFetcher
+  /**
+   * Pre-rank candidate pool size. After Firestore filter + Jaccard rank
+   * trims to this many, we cosine-rerank to jobsPerUser. Default 50.
+   */
+  candidatePoolSize?: number
 }
 
 export type BatchOutcome = {
@@ -58,6 +69,154 @@ export type BatchOutcome = {
 
 const DEFAULT_USER_CAP = 100
 const DEFAULT_JOBS_PER_USER = 3
+
+
+// ---------------------------------------------------------------------------
+// Stream F5 — Dual-shape profile normalizer + embedding-based reranker.
+//
+// Background: prior to Stream F, profiles were written by the deprecated
+// RecruiterAgent in a 6-enum industry shape:
+//
+//   { industry: "tech"|"fintech"|..., sponsorship, location, sizePreference }
+//
+// Stream F's saveJobProfile connector writes a 10-tag shape:
+//
+//   { industryTags: ["tech_software", ...], sponsorshipNeeded: "H1B"|"GC"|"none",
+//     locationPreference: "湾区"|..., sizePreference: "big"|"startup"|"mid"|"any",
+//     salaryMin: number|null }
+//
+// daily-batch must accept BOTH shapes during the cutover. We normalize both
+// to a stable internal type and feed query-matching-jobs the legacy filters
+// it expects (industry: 6-enum, sponsorship, location, sizePreference,
+// salaryMin?). When the new shape is detected, we map industryTags[0] to
+// the 6-enum (best-effort) so the existing query path still hits its
+// composite index, and surface industryTags via the rerank layer.
+// ---------------------------------------------------------------------------
+
+import type { JobIndustry, JobSizePreference, JobSponsorshipNeed } from "./types.js"
+
+type NewShapeProfile = {
+  industryTags: string[]
+  sponsorshipNeeded: "H1B" | "GC" | "none"
+  locationPreference: string
+  sizePreference: "big" | "startup" | "mid" | "any"
+  salaryMin: number | null
+}
+
+type LegacyProfile = {
+  industry: JobIndustry
+  sponsorship: JobSponsorshipNeed
+  location: string
+  sizePreference: JobSizePreference
+  salaryMin?: number
+}
+
+export type NormalizedProfile = {
+  industry: JobIndustry
+  /** Stream F5 — full canonical 10-tag list, kept for embedding rerank + future where-in. */
+  industryTags: string[]
+  sponsorship: JobSponsorshipNeed
+  location: string
+  sizePreference: JobSizePreference
+  salaryMin?: number
+}
+
+/**
+ * Map a 10-tag canonical industry to the 6-enum legacy bucket the existing
+ * query-matching-jobs composite index expects. Best-effort: anything that
+ * doesn't have an obvious legacy bucket maps to "any".
+ */
+function ten10To6(tag: string): JobIndustry {
+  switch (tag) {
+    case "tech_software":
+    case "tech_hardware":
+    case "ai_ml":
+      return "tech"
+    case "fintech_finance":
+      return "fintech"
+    case "healthcare_biotech":
+      return "healthtech"
+    case "consumer_retail":
+    case "media_entertainment":
+      return "consumer"
+    case "manufacturing_industrial":
+    case "education":
+    case "other":
+    default:
+      return "any"
+  }
+}
+
+function map10To6Sponsorship(s: "H1B" | "GC" | "none"): JobSponsorshipNeed {
+  if (s === "H1B") return "h1b"
+  if (s === "GC") return "gc"
+  return "none"
+}
+
+function map10To6Size(s: "big" | "startup" | "mid" | "any"): JobSizePreference {
+  if (s === "big") return "bigtech"
+  if (s === "startup") return "startup"
+  // mid + any both fall into legacy "either" bucket
+  return "either"
+}
+
+/**
+ * Normalize either shape to a stable internal profile. Returns null when
+ * the input is neither shape (corrupt doc).
+ */
+export function normalizeJobProfile(raw: unknown): NormalizedProfile | null {
+  if (!raw || typeof raw !== "object") return null
+  const r = raw as Record<string, unknown>
+  // New shape detection — industryTags array AND sponsorshipNeeded enum.
+  if (Array.isArray(r.industryTags) && typeof r.sponsorshipNeeded === "string") {
+    const p = r as unknown as NewShapeProfile
+    const tags = p.industryTags.filter((t) => typeof t === "string")
+    if (tags.length === 0) return null
+    return {
+      industry: ten10To6(tags[0]!),
+      industryTags: tags,
+      sponsorship: map10To6Sponsorship(p.sponsorshipNeeded),
+      location: typeof p.locationPreference === "string" ? p.locationPreference : "",
+      sizePreference: map10To6Size(p.sizePreference),
+      ...(typeof p.salaryMin === "number" && p.salaryMin > 0 ? { salaryMin: p.salaryMin } : {}),
+    }
+  }
+  // Legacy shape — industry string + sponsorship enum
+  if (typeof r.industry === "string" && typeof r.sponsorship === "string") {
+    const p = r as unknown as LegacyProfile
+    return {
+      industry: p.industry,
+      industryTags: [p.industry],
+      sponsorship: p.sponsorship,
+      location: typeof p.location === "string" ? p.location : "",
+      sizePreference: p.sizePreference,
+      ...(typeof p.salaryMin === "number" && p.salaryMin > 0 ? { salaryMin: p.salaryMin } : {}),
+    }
+  }
+  return null
+}
+
+/**
+ * Compute cosine similarity between two embedding vectors. Returns 0 when
+ * dimensions differ, either is empty, or magnitudes are zero. Pure / no
+ * external state — exposed for unit tests.
+ */
+export function cosineSimilarity(a: readonly number[], b: readonly number[]): number {
+  if (!Array.isArray(a) || !Array.isArray(b)) return 0
+  if (a.length === 0 || b.length === 0 || a.length !== b.length) return 0
+  let dot = 0
+  let na = 0
+  let nb = 0
+  for (let i = 0; i < a.length; i++) {
+    const av = a[i]!
+    const bv = b[i]!
+    dot += av * bv
+    na += av * av
+    nb += bv * bv
+  }
+  if (na === 0 || nb === 0) return 0
+  return dot / (Math.sqrt(na) * Math.sqrt(nb))
+}
 
 function defaultLog(..._args: unknown[]): void {
   /* swallow */
@@ -98,6 +257,85 @@ export function formatBatchMessage(jobs: MatchingJob[]): string {
   return `${lead}:\n\n${blocks}`
 }
 
+
+/**
+ * Stream F5 — Embedding rerank deps. All optional; when omitted the cron
+ * silently falls back to the legacy keyword-overlap ranking from
+ * queryMatchingJobs (no behavioral regression for users without an
+ * embedding on file).
+ *
+ * The userEmbedFetcher reads the most-recent parsedCandidateResumes doc
+ * for `userId`. If it has `embedding` (1536-d, OpenAI text-embedding-3-
+ * small), we use it. If absent and `userEmbedComputer` is provided, we
+ * compute on demand and cache back to the resume doc. If both miss, we
+ * skip rerank for that user and use legacy ranking.
+ */
+export type UserEmbedFetcher = (
+  db: Firestore,
+  userId: string
+) => Promise<{ embedding: number[] | null; resumeId: string | null }>
+
+export type UserEmbedComputer = (
+  db: Firestore,
+  userId: string,
+  resumeId: string,
+  resumeText: string
+) => Promise<number[] | null>
+
+/**
+ * Default fetcher — Firestore lookup, no compute. Returns the most-recent
+ * parsed resume's embedding when present.
+ */
+export async function defaultUserEmbedFetcher(
+  db: Firestore,
+  userId: string
+): Promise<{ embedding: number[] | null; resumeId: string | null }> {
+  try {
+    const snap = await db
+      .collection("parsedCandidateResumes")
+      .where("userId", "==", userId)
+      .orderBy("createdAt", "desc")
+      .limit(1)
+      .get()
+    if (snap.empty) return { embedding: null, resumeId: null }
+    const doc = snap.docs[0]!
+    const data = doc.data() as Record<string, unknown>
+    const emb = Array.isArray(data.embedding) ? (data.embedding as unknown[]) : null
+    if (emb && emb.every((n) => typeof n === "number")) {
+      return { embedding: emb as number[], resumeId: doc.id }
+    }
+    return { embedding: null, resumeId: doc.id }
+  } catch {
+    return { embedding: null, resumeId: null }
+  }
+}
+
+/**
+ * Rerank a candidate set by cosine(user, job) and take the top N.
+ * Pure / deterministic. Jobs without an embedding (or with a wrong-dim
+ * one) are scored 0 — they sink to the back behind anything with a
+ * matching-dim embedding.
+ */
+export function rerankByCosine(
+  jobs: Array<MatchingJob & { embedding?: number[] | null }>,
+  userEmbedding: readonly number[],
+  limit: number
+): MatchingJob[] {
+  if (!Array.isArray(userEmbedding) || userEmbedding.length === 0) {
+    return jobs.slice(0, limit)
+  }
+  const scored = jobs.map((j) => {
+    const e = j.embedding
+    const score =
+      Array.isArray(e) && e.length === userEmbedding.length
+        ? cosineSimilarity(userEmbedding, e)
+        : 0
+    return { j, s: score }
+  })
+  scored.sort((a, b) => b.s - a.s)
+  return scored.slice(0, limit).map((x) => x.j)
+}
+
 /** Run one batch. Caller owns scheduling. */
 export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOutcome> {
   const log = deps.log ?? defaultLog
@@ -119,7 +357,7 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
   let errors = 0
 
   for (const doc of snap.docs) {
-    const profileDoc = doc.data() as JobProfileDoc
+    const profileDoc = doc.data() as JobProfileDoc & { profile?: unknown }
     const userId = profileDoc.userId
     try {
       const flagOn = Boolean(
@@ -135,20 +373,34 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
         continue
       }
 
+      // Stream F5 — normalize legacy + new-shape profiles to one filter set.
+      const normalized = normalizeJobProfile(profileDoc.profile)
+      if (!normalized) {
+        log("[job-rec-daily] skipping_corrupt_profile", { userId })
+        errors += 1
+        continue
+      }
+
+      // Stream F5 — pull a wider candidate pool when rerank is wired.
+      // Capped at 20 to honor QueryMatchingJobsInputSchema's LLM-facing
+      // .max(20) — daily-batch is internal but reuses the same query path.
+      const poolSize = deps.userEmbedFetcher
+        ? Math.min(20, Math.max(jobsPerUser, deps.candidatePoolSize ?? 20))
+        : jobsPerUser
       const queryRes = await queryMatchingJobs(
         {
           filters: {
-            industry: profileDoc.profile.industry,
-            location: profileDoc.profile.location,
-            sponsorship: profileDoc.profile.sponsorship,
-            sizePreference: profileDoc.profile.sizePreference,
-            ...(profileDoc.profile.salaryMin !== undefined
-              ? { salaryMin: profileDoc.profile.salaryMin }
+            industry: normalized.industry,
+            location: normalized.location,
+            sponsorship: normalized.sponsorship,
+            sizePreference: normalized.sizePreference,
+            ...(normalized.salaryMin !== undefined
+              ? { salaryMin: normalized.salaryMin }
               : {}),
           },
-          limit: jobsPerUser,
+          limit: poolSize,
         },
-        { db: deps.db, log }
+        { db: deps.db, log, includeEmbedding: true }
       )
 
       if (queryRes.jobs.length === 0) {
@@ -156,7 +408,34 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
         continue
       }
 
-      const body = formatBatchMessage(queryRes.jobs)
+      // Stream F5 — embedding rerank when configured + user has embedding.
+      let rankedJobs: MatchingJob[] = queryRes.jobs
+      if (deps.userEmbedFetcher) {
+        try {
+          const { embedding } = await deps.userEmbedFetcher(deps.db, userId)
+          if (embedding && embedding.length > 0) {
+            rankedJobs = rerankByCosine(
+              queryRes.jobs as Array<MatchingJob & { embedding?: number[] | null }>,
+              embedding,
+              jobsPerUser
+            )
+            log("[job-rec-daily] rerank_applied", { userId, poolSize: queryRes.jobs.length, took: jobsPerUser })
+          } else {
+            // No embedding on file — slice to the requested count.
+            rankedJobs = queryRes.jobs.slice(0, jobsPerUser)
+          }
+        } catch (err) {
+          log("[job-rec-daily] rerank_failed_fallback", {
+            userId,
+            error: err instanceof Error ? err.message : String(err),
+          })
+          rankedJobs = queryRes.jobs.slice(0, jobsPerUser)
+        }
+      } else {
+        rankedJobs = queryRes.jobs.slice(0, jobsPerUser)
+      }
+
+      const body = formatBatchMessage(rankedJobs)
       const sendRes = await sendImessage(
         {
           userId,

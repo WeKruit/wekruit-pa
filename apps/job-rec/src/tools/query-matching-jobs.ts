@@ -40,6 +40,13 @@ const QUERY_FETCH_CAP = 50 // pre-rank window
 export type QueryMatchingJobsDeps = {
   db: Firestore
   log?: (...args: unknown[]) => void
+  /**
+   * Stream F5 — when true, the projected MatchingJob includes the
+   * `embedding` field (1536-d float[]). Used by the daily-batch
+   * embedding rerank path. Default false to avoid bloating LLM payloads
+   * for the recruiter-agent / LLM tool path.
+   */
+  includeEmbedding?: boolean
 }
 
 function defaultLog(..._args: unknown[]): void {
@@ -193,12 +200,24 @@ export async function queryMatchingJobs(
       .get()
   }
 
-  const projected: MatchingJob[] = []
+  const projected: Array<MatchingJob & { embedding?: number[] | null }> = []
   for (const doc of snap.docs) {
     try {
-      const m = projectMatchingJobRow(doc.id, doc.data() as Record<string, unknown>)
+      const raw = doc.data() as Record<string, unknown>
+      const m = projectMatchingJobRow(doc.id, raw)
       // Validate via Zod so we catch malformed corpus rows loudly in tests.
-      projected.push(MatchingJobSchema.parse(m))
+      const validated = MatchingJobSchema.parse(m) as MatchingJob & {
+        embedding?: number[] | null
+      }
+      if (deps.includeEmbedding === true) {
+        const e = raw.embedding
+        if (Array.isArray(e) && e.every((n) => typeof n === "number")) {
+          validated.embedding = e as number[]
+        } else {
+          validated.embedding = null
+        }
+      }
+      projected.push(validated)
     } catch (err) {
       log("[queryMatchingJobs] dropping_malformed_row", {
         id: doc.id,
