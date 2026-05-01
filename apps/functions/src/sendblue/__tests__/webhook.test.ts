@@ -363,6 +363,77 @@ describe("handleSendblueWebhook", () => {
     assert.equal(raw.text, "[attachment]")
   })
 
+  it("Test 8d (Stream D): media_url → 200 + inbound enqueued + sendReaction(love) called once + ingestCv called once with resolved userId", async () => {
+    const { db, inbound } = makeFakeDb()
+    const mediaUrl = "https://storage.googleapis.com/inbound-file-store/test-cv.pdf"
+    const body = JSON.stringify({ ...basePayload(), content: "", media_url: mediaUrl })
+    const req = makeReq({ body, signature: SECRET })
+    const res = makeRes()
+
+    const reactionCalls: Array<{ to: string; messageHandle: string; reaction: string }> = []
+    const ingestCalls: Array<{ userId: string; mediaUrl: string; sessionId?: string }> = []
+
+    const sendReactionMock = async (input: { to: string; messageHandle: string; reaction: string }) => {
+      reactionCalls.push({ to: input.to, messageHandle: input.messageHandle, reaction: input.reaction })
+      return { status: "ok" }
+    }
+    const ingestCvMock = async (input: { userId: string; mediaUrl: string; sessionId?: string }) => {
+      ingestCalls.push({ userId: input.userId, mediaUrl: input.mediaUrl, sessionId: input.sessionId })
+      return { ok: true as const, resumeId: "rsm_test_1" }
+    }
+    const lookupMock = async (_db: unknown, phone: string) => {
+      return phone === "+15551234567" ? "user_adam_test" : null
+    }
+
+    await handleSendblueWebhook(req, res, {
+      db,
+      secret: SECRET,
+      sendReaction: sendReactionMock,
+      ingestCv: ingestCvMock,
+      lookupUserByPhone: lookupMock,
+    })
+
+    // Reply path is unchanged — 200 + one inbound row.
+    assert.equal(res.statusCode, 200)
+    assert.equal(inbound.size, 1)
+
+    // Both side-effects are fire-and-forget; let the microtask queue settle
+    // before asserting on the mock state.
+    await new Promise((r) => setTimeout(r, 20))
+
+    // D2: tapback ❤️ fired exactly once.
+    assert.equal(reactionCalls.length, 1, "sendReaction must be called exactly once on media_url receipt")
+    assert.equal(reactionCalls[0]!.to, "+15551234567")
+    assert.equal(reactionCalls[0]!.messageHandle, "msg-abc-123")
+    assert.equal(reactionCalls[0]!.reaction, "love")
+
+    // D4: ingestCv fired with resolved userId.
+    assert.equal(ingestCalls.length, 1, "ingestCv must be called exactly once on media_url receipt with a resolvable user")
+    assert.equal(ingestCalls[0]!.userId, "user_adam_test")
+    assert.equal(ingestCalls[0]!.mediaUrl, mediaUrl)
+  })
+
+  it("Test 8e (Stream D): text-only inbound (no media_url) → no sendReaction, no ingestCv", async () => {
+    const { db } = makeFakeDb()
+    const body = JSON.stringify(basePayload())
+    const req = makeReq({ body, signature: SECRET })
+    const res = makeRes()
+
+    let reactionCount = 0
+    let ingestCount = 0
+    await handleSendblueWebhook(req, res, {
+      db,
+      secret: SECRET,
+      sendReaction: async () => { reactionCount++; return {} },
+      ingestCv: async () => { ingestCount++; return { ok: false as const, reason: "test" } },
+      lookupUserByPhone: async () => "user_adam_test",
+    })
+    await new Promise((r) => setTimeout(r, 20))
+    assert.equal(res.statusCode, 200)
+    assert.equal(reactionCount, 0, "no media_url → no reaction")
+    assert.equal(ingestCount, 0, "no media_url → no ingest")
+  })
+
   it("Test 8c (tapback inbound): Loved \"...\" → still enqueues inbound + writes pa-tapback-events row", async () => {
     const { db, inbound, tapbacks } = makeFakeDb()
     const body = JSON.stringify({ ...basePayload(), content: "Loved “Career check-in tomorrow?”" })

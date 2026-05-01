@@ -31,6 +31,9 @@ import { createInboundEvent } from "@pa/pa-broker"
 
 import { getFlag, checkAndIncrementRateLimit } from "@pa/pa-persistence"
 import { verifySendblueSignature, extractSendblueSignatureHeader } from "./hmac.js"
+import { sendReaction as defaultSendReaction, type SendReactionInput } from "./send-reaction.js"
+// Stream D — CV ingestion side-effect (fire-and-forget) on attachment receipt.
+import { ingestCv as defaultIngestCv, type IngestCvInput, type IngestCvResult } from "../cv-ingest/cv-ingest.js"
 import {
   isInboundReceiveEvent,
   normalizeSendblueInbound,
@@ -62,6 +65,12 @@ export type WebhookDeps = {
   createInboundEvent?: typeof createInboundEvent
   /** Inject for tests; defaults to recordAuditEvent. */
   recordAuditEvent?: typeof recordAuditEvent
+  /** Stream D — Sendblue Reactions API wrapper (tapback ❤️ on CV receipt). Inject for tests. */
+  sendReaction?: (input: SendReactionInput) => Promise<unknown>
+  /** Stream D — CV ingest pipeline (fire-and-forget). Inject for tests. */
+  ingestCv?: (input: IngestCvInput) => Promise<IngestCvResult>
+  /** Stream D — phone→userId resolver. Inject for tests. */
+  lookupUserByPhone?: (db: Firestore, phoneE164: string) => Promise<string | null>
   log?: (...args: unknown[]) => void
 }
 
@@ -134,6 +143,21 @@ function extractMediaUrl(payload: Record<string, unknown>): string | null {
   const trimmed = v.trim()
   if (!trimmed) return null
   return trimmed
+}
+
+// Stream D — phone→userId resolver. Reads pa-users where phoneE164 == n
+// (exact match — webhook only knows the from_number, no normalization needed
+// because the upstream macOS worker + Sendblue both deliver E.164). Returns
+// null if no row is found; webhook treats null as "ingest skipped".
+async function defaultLookupUserByPhone(db: Firestore, phoneE164: string): Promise<string | null> {
+  if (!phoneE164) return null
+  try {
+    const snap = await db.collection("pa-users").where("phoneE164", "==", phoneE164).limit(1).get()
+    if (snap.empty) return null
+    return snap.docs[0]!.id
+  } catch {
+    return null
+  }
 }
 
 export async function handleSendblueWebhook(
@@ -399,6 +423,45 @@ export async function handleSendblueWebhook(
       handle: normalized.messageHandle,
       hasAttachment: !!mediaUrl,
     })
+    // Stream D — CV side-effects (fire-and-forget). Both run in parallel:
+    //   1. Tapback ❤️ via Sendblue Reactions API — immediate user ack.
+    //   2. CV ingestion → parsedCandidateResumes — async best-effort.
+    // Either failure is logged but never blocks the 200 OK to Sendblue.
+    if (mediaUrl) {
+      const sendReactionFn = deps.sendReaction ?? defaultSendReaction
+      void Promise.resolve()
+        .then(() =>
+          sendReactionFn({
+            to: normalized.fromNumber,
+            messageHandle: normalized.messageHandle,
+            reaction: "love",
+          })
+        )
+        .then(() => {
+          log("[sendblue][reaction] love sent", { handle: normalized.messageHandle, to: normalized.fromNumber })
+        })
+        .catch((reactErr) => {
+          log("[sendblue][reaction] failed", reactErr instanceof Error ? reactErr.message : String(reactErr))
+        })
+
+      const ingestFn = deps.ingestCv ?? defaultIngestCv
+      const lookupFn = deps.lookupUserByPhone ?? defaultLookupUserByPhone
+      void Promise.resolve()
+        .then(async () => {
+          const userId = await lookupFn(deps.db, normalized.fromNumber)
+          if (!userId) {
+            log("[sendblue][cv-ingest] skipped — no userId for phone", { phone: normalized.fromNumber })
+            return { ok: false, reason: "no_user" } as IngestCvResult
+          }
+          return ingestFn({ userId, mediaUrl, sessionId: undefined })
+        })
+        .then((res) => {
+          log("[sendblue][cv-ingest] done", res)
+        })
+        .catch((ingestErr) => {
+          log("[sendblue][cv-ingest] failed", ingestErr instanceof Error ? ingestErr.message : String(ingestErr))
+        })
+    }
     reply(res, 200, { ok: true, eventId: result.id, created: result.created })
     return
   } catch (err) {
