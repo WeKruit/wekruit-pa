@@ -89,6 +89,115 @@ export type OutboxDeps = {
   ) => Promise<{ id: string }>
 }
 
+const STALE_SENDING_MS = 10 * 60 * 1000 // 10 minutes
+const DEAD_LETTER_ATTEMPTS = 5
+const SWEEP_LIMIT = 20
+
+/**
+ * Stream H4 D2 — top-of-tick stale-row sweep.
+ *
+ * Rescues two failure modes that the onDocumentCreated trigger cannot:
+ *   1) status="sending" rows that crashed mid-flight (>10min) → reset to "pending"
+ *   2) status="pending" rows that exhausted retries (attemptCount >= 5) → "dead_letter"
+ *
+ * Idempotent: each candidate row is flipped via runTransaction that re-reads
+ * status inside the tx, so two concurrent sweepers can't double-flip. The
+ * sweep is bounded (limit=20 per tick) so cost is O(1) per CF invocation.
+ *
+ * Design note: this sweep runs on every paSendblueOutbox tick (each new
+ * pa-outbound CREATE fires the trigger, and that trigger now also performs
+ * housekeeping). This piggyback approach avoids needing a separate scheduled
+ * CF for cleanup.
+ */
+export async function sweepStaleOutbound(
+  db: Firestore,
+  now: () => Date,
+  log: (...args: unknown[]) => void
+): Promise<{ swept: number; deadLettered: number }> {
+  const nowMs = now().getTime()
+  const cutoffIso = new Date(nowMs - STALE_SENDING_MS).toISOString()
+  const nowIso = new Date(nowMs).toISOString()
+
+  let swept = 0
+  let deadLettered = 0
+
+  // ---- Sweep 1: status="sending" stuck > 10min → reset to "pending" ----
+  // Query single-field-indexed only (status); filter staleness client-side
+  // to avoid requiring a (status, updatedAt) composite index that may not
+  // be deployed yet. Result set is tiny (stuck rows are rare).
+  try {
+    const sendingSnap = await db
+      .collection(OUT)
+      .where("status", "==", "sending")
+      .limit(SWEEP_LIMIT)
+      .get()
+    for (const doc of sendingSnap.docs) {
+      const d = doc.data() as { updatedAt?: string }
+      const t = Date.parse(String(d.updatedAt ?? ""))
+      const isStale = Number.isNaN(t) || t < nowMs - STALE_SENDING_MS
+      if (!isStale) continue
+      // eslint-disable-next-line no-await-in-loop
+      const ok = await db.runTransaction(async (tx) => {
+        const cur = await (tx.get as (r: typeof doc.ref) => Promise<{ exists: boolean; data: () => unknown }>)(doc.ref)
+        if (!cur.exists) return false
+        const cd = (cur.data() ?? {}) as { status?: string }
+        if (cd.status !== "sending") return false
+        tx.update(doc.ref as never, {
+          status: "pending",
+          updatedAt: nowIso,
+          staleSweptAt: nowIso,
+        })
+        return true
+      })
+      if (ok) {
+        swept++
+        log("outbound_sending_stale_swept", { docId: doc.id, cutoff: cutoffIso })
+      }
+    }
+  } catch (err) {
+    log("[sendblue][outbox] sweep stale-sending error (non-fatal)",
+      err instanceof Error ? err.message : String(err))
+  }
+
+  // ---- Sweep 2: status="pending" attemptCount >= 5 → "dead_letter" ----
+  try {
+    const pendingSnap = await db
+      .collection(OUT)
+      .where("status", "==", "pending")
+      .limit(SWEEP_LIMIT)
+      .get()
+    for (const doc of pendingSnap.docs) {
+      const d = doc.data() as { attemptCount?: number }
+      const attempts = Number(d.attemptCount ?? 0)
+      if (attempts < DEAD_LETTER_ATTEMPTS) continue
+      // eslint-disable-next-line no-await-in-loop
+      const ok = await db.runTransaction(async (tx) => {
+        const cur = await (tx.get as (r: typeof doc.ref) => Promise<{ exists: boolean; data: () => unknown }>)(doc.ref)
+        if (!cur.exists) return false
+        const cd = (cur.data() ?? {}) as { status?: string; attemptCount?: number }
+        if (cd.status !== "pending") return false
+        if (Number(cd.attemptCount ?? 0) < DEAD_LETTER_ATTEMPTS) return false
+        tx.update(doc.ref as never, {
+          status: "dead_letter",
+          updatedAt: nowIso,
+          deadLetteredAt: nowIso,
+        })
+        return true
+      })
+      if (ok) {
+        deadLettered++
+        log("outbound_dead_lettered", { docId: doc.id, attempts })
+      }
+    }
+  } catch (err) {
+    log("[sendblue][outbox] sweep dead-letter error (non-fatal)",
+      err instanceof Error ? err.message : String(err))
+  }
+
+  return { swept, deadLettered }
+}
+
+
 export async function paSendblueOutboxHandler(
   event: OutboundEvent,
   deps: OutboxDeps
@@ -107,6 +216,16 @@ export async function paSendblueOutboxHandler(
   if (await isLegacyChannelEnabledFlag(deps.db)) {
     log("[sendblue][outbox] PA_CHANNEL_LEGACY flag=true — releasing to macOS worker", { docId })
     return
+  }
+
+  // ---- 1b. Stream H4 D2 — top-of-tick stale-row sweep -------------------
+  // Best-effort piggyback housekeeping. Idempotent under concurrent CF
+  // invocations (each row flip uses runTransaction with status re-check).
+  try {
+    await sweepStaleOutbound(deps.db, now, log)
+  } catch (err) {
+    log("[sendblue][outbox] sweep top-level error (non-fatal)",
+      err instanceof Error ? err.message : String(err))
   }
 
   const ref = deps.db.collection(OUT).doc(docId)
