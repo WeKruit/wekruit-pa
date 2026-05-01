@@ -84,8 +84,16 @@ export async function appendCvContextToSystemPrompt(
 }
 
 /**
- * Pure renderer — exported for unit tests. Returns null if the input is so
- * malformed there is nothing meaningful to inject.
+ * Pure renderer — exported for unit tests. Returns null only when EVERY field
+ * is empty (no name, no skills, no experience, no education, no tags). When
+ * any field is present, render the directive — the CRITICAL block asserts the
+ * CV is uploaded, which still works with sparse data.
+ *
+ * Stream H5 — directive HARDENED. Soft "when natural" phrasing was giving
+ * nano explicit permission to skip CV grounding (10/10 turns came back with
+ * "send me your CV" despite the doc being injected). New directive is bilingual
+ * and unambiguously asserts possession of the CV + names the example good-reply
+ * pattern + lists the forbidden "send me your CV" patterns.
  */
 export function renderCvBlock(doc: CvProfileDoc): string | null {
   const cp = doc.candidateProfile && typeof doc.candidateProfile === "object" ? doc.candidateProfile : {}
@@ -120,7 +128,19 @@ export function renderCvBlock(doc: CvProfileDoc): string | null {
     ? (doc.industryTags.filter((t) => typeof t === "string") as string[])
     : []
 
-  const lines: string[] = ["## User CV Profile (extracted from uploaded resume)"]
+  // Stream H5 — only return null if literally NOTHING is parseable. Sparse
+  // doc (e.g. just name + skills, no experiences) still asserts "CV uploaded".
+  const hasAnyContent =
+    safeStr(cp.name) !== null ||
+    skills.length > 0 ||
+    experiences.length > 0 ||
+    education.length > 0 ||
+    tags.length > 0
+  if (!hasAnyContent) return null
+
+  const lines: string[] = [
+    "## User CV Profile (THE USER HAS ALREADY UPLOADED THEIR CV — content below is authoritative)",
+  ]
   lines.push(`Name: ${name}`)
   lines.push(`Skills: ${skills.length > 0 ? skills.join(", ") : "(none listed)"}`)
   if (recentRole) lines.push(`Recent role: ${recentRole}`)
@@ -129,8 +149,35 @@ export function renderCvBlock(doc: CvProfileDoc): string | null {
     lines.push(`Industry tags (top guesses from CV): ${tags.join(", ")}`)
   }
   lines.push("")
+  lines.push("CRITICAL — read this carefully:")
   lines.push(
-    "Use this profile to ground job recommendations and follow-ups. Reference specific experiences when natural (\"看到你在 X 做 Y...\") instead of generic platitudes."
+    "- The user has already uploaded their resume. The facts above are EXTRACTED from that real resume — they are authoritative."
+  )
+  lines.push(
+    "- When the user mentions resume / CV / 简历 / \"I sent it\" / \"我发了\" / \"刚发\" / \"发过去\", DO NOT ask them to send it again. The resume is in front of you NOW."
+  )
+  lines.push(
+    "- Your FIRST reply after detecting any CV-related user message (\"我发了简历\", \"刚发\", \"看看简历\", \"sent my CV\", etc.) MUST literally include AT LEAST ONE concrete noun from above — the company name (e.g. NEUROVA), the role title (e.g. Data Analyst), or a named skill (e.g. Python, SQL, Tableau). Do not paraphrase. Do not say \"经历那段\" or \"那几段关键内容\" — name the actual thing from the Skills/Recent role list above."
+  )
+  // Stream H5 — build a CONCRETE pre-filled example using THIS user's actual
+  // CV data so nano sees a fully-resolved string rather than a fill-in-the-blank
+  // template. Instruction-following improves dramatically when the example is
+  // literal (we observed nano interpreting "replace NEUROVA with..." as "ask
+  // the user for their company name").
+  const exampleCompany = topCompany ?? (tags[0] ?? "your most recent role")
+  const exampleTitle = topTitle ?? "what you've been working on"
+  const exampleSkill = skills[0] ?? "the tools you've used"
+  lines.push(
+    `- Example good first reply (zh, FULLY PRE-FILLED — use these exact nouns, do not paraphrase): "看到你在 ${exampleCompany} 做 ${exampleTitle} — ${exampleSkill} 这块挺有意思，最有成就感的是哪一段?"`
+  )
+  lines.push(
+    `- Example good first reply (en, FULLY PRE-FILLED — use these exact nouns, do not paraphrase): "Saw your ${exampleCompany} ${exampleTitle} gig — the ${exampleSkill} side jumped out. What part felt most yours?"`
+  )
+  lines.push(
+    "- Bad replies (NEVER do these): \"把简历发我\", \"send me your CV\", \"你截个图发过来\", \"send it over and I'll take a look\", \"你发过来就行\", \"我看完再给你些建议\", \"再贴我一下\", \"再发一遍\", \"贴全\", \"paste again\", \"paste it here\". The CV is ALREADY in your system prompt above — never ask for it to be re-sent or re-pasted."
+  )
+  lines.push(
+    "- If a specific field above is sparse or missing for what the user is asking, ASSERT possession of the resume but acknowledge the specific gap (\"我看到你的简历了，[具体字段] 这块你方便补一下吗?\") — never claim the resume isn\'t uploaded."
   )
   return lines.join("\n")
 }

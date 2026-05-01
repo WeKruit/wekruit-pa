@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { normalizeForIMessage, STRIP_PARAMS } from "./output-normalizer.js"
+import { normalizeForIMessage, STRIP_PARAMS, stripABProbeFromTail } from "./output-normalizer.js"
 
 const teslaMixed =
   "**特斯拉一季度业绩上升** ([axios.com](https://axios.com/2026/04/26/tesla-q1?utm_source=openai&utm_medium=referral))"
@@ -154,3 +154,36 @@ test("Phase 40 — short markdown link → inline bare URL (still previews)", ()
   assert.match(r.text, /https:\/\/x\.com\/p/)
   assert.doesNotMatch(r.text, /\(https/)
 })
+
+
+// ---------- Stream H5 — A/B probe tail stripper ---------------------------
+
+test("Stream H5 — strips trailing zh A/B probe, keeps earlier clauses", () => {
+  const input = "嗯 我在, 你今天是赶ddl还是本来就想投着玩先?"
+  const { stripped, hits } = stripABProbeFromTail(input)
+  // Earlier clause "嗯 我在," (the validation/presence stem) is preserved.
+  assert.match(stripped, /嗯 我在/)
+  // Trailing A/B probe is gone.
+  assert.doesNotMatch(stripped, /还是/)
+  assert.doesNotMatch(stripped, /\?/)
+  // Telemetry hit fired with the zh label.
+  assert.equal(hits.length, 1)
+  assert.equal(hits[0], "zh_X_还是_Y_question")
+})
+
+test("Stream H5 — strips trailing en A/B probe", () => {
+  const input = "Did you finish or are you still working?"
+  const { stripped, hits } = stripABProbeFromTail(input)
+  // Whole sentence was the probe; tail strip removes it entirely.
+  assert.doesNotMatch(stripped, /\?/)
+  assert.equal(hits.length, 1)
+  assert.equal(hits[0], "en_X_or_Y_question")
+})
+
+test("Stream H5 — no strip when no A/B pattern present", () => {
+  const input = "好的，我看到了"
+  const { stripped, hits } = stripABProbeFromTail(input)
+  assert.equal(stripped, input)
+  assert.equal(hits.length, 0)
+})
+

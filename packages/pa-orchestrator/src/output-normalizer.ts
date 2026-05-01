@@ -203,3 +203,80 @@ export function normalizeForIMessage(input: string, opts?: NormalizeOpts): Norma
   const text = plan.chunks.join("\n\n")
   return { text, chunks: plan.chunks, droppedTracking: dropped, wasOverLength: true }
 }
+
+
+/**
+ * Stream H5 — runtime mirror of voice-axes.mjs `checkABFramework()` clinical
+ * A/B-probe detector. The Bible v7.5 NEVER PROBE rule is enforced in eval but
+ * the orchestrator was leaking patterns like `"今天是赶ddl还是本来就想投着玩先?"`
+ * (post-fix run turn 2) at inference. This is a defense-in-depth post-LLM
+ * strip — gated by paHumanizeRuntimeEnabled umbrella so non-allowlist users
+ * see no behavior change until the flag flips.
+ *
+ * Behavior contract:
+ *  - Detect the LAST sentence containing an A/B probe and strip ONLY that
+ *    sentence; preserve all earlier sentences. Never strip the whole reply.
+ *  - zh pattern: `(.{2,30}还是.{2,30}\?)` — both arms ≥2 chars; trailing ? or ？
+ *  - en pattern: a sentence with " or " sandwiched between two non-trivial
+ *    verb-bearing arms ending in ?
+ *  - Idempotent: a stripped string contains no further A/B tail probes.
+ *
+ * Returns { stripped, hits } — hits[] is a small telemetry array (never log
+ * the user-text directly; log only the pattern label and hit count).
+ */
+export type StripABResult = {
+  stripped: string
+  hits: string[]
+}
+
+const AB_PROBE_ZH_RE = /[^?？\n。！!]{2,30}还是[^?？\n。！!]{2,30}[?？]\s*$/
+const AB_PROBE_EN_RE = /[A-Za-z][A-Za-z\s,'’-]{2,40}\bor\b[A-Za-z\s,'’-]{2,40}\?\s*$/i
+
+function splitIntoClauses(text: string): string[] {
+  // Split on clause delimiters: zh/en sentence terminators AND commas, since
+  // clinical A/B probes often appear after a leading validation clause
+  // ("嗯 我在, 你今天是 X 还是 Y?"). We want clause-level granularity so the
+  // tail strip can preserve the validation stem and drop only the probe
+  // clause. Each chunk retains its trailing delimiter so re-joining is
+  // lossless.
+  const out: string[] = []
+  const re = /[^。！？!?\.\n,，]+[。！？!?\.,，]?\n?/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text)) !== null) {
+    if (m[0].length > 0) out.push(m[0])
+  }
+  return out.length > 0 ? out : [text]
+}
+
+export function stripABProbeFromTail(text: string): StripABResult {
+  if (!text || typeof text !== "string") return { stripped: text ?? "", hits: [] }
+  const sentences = splitIntoClauses(text)
+  if (sentences.length === 0) return { stripped: text, hits: [] }
+  // Find the LAST sentence that matches an A/B pattern. We only strip the
+  // tail — earlier sentences are preserved verbatim even if they also match.
+  let lastABIdx = -1
+  let lastLabel = ""
+  for (let i = sentences.length - 1; i >= 0; i--) {
+    const s = sentences[i]!
+    const trimmed = s.trim()
+    if (AB_PROBE_ZH_RE.test(trimmed)) {
+      lastABIdx = i
+      lastLabel = "zh_X_还是_Y_question"
+      break
+    }
+    if (AB_PROBE_EN_RE.test(trimmed)) {
+      lastABIdx = i
+      lastLabel = "en_X_or_Y_question"
+      break
+    }
+  }
+  if (lastABIdx === -1) return { stripped: text, hits: [] }
+  // Reconstruct: keep everything except the matched tail sentence.
+  const kept = sentences.slice(0, lastABIdx).join("")
+  // Trim any dangling whitespace/newline left behind. If kept is empty (the
+  // whole reply was a single A/B probe), preserve it as empty rather than
+  // returning the original to honor the strip contract.
+  const stripped = kept.replace(/\s+$/g, "")
+  return { stripped, hits: [lastLabel] }
+}
+

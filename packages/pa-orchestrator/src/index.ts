@@ -87,7 +87,7 @@ import {
 import { trackAdvice } from "./voice/memory-policy/index.js"
 import { tapCoachTokens } from "./voice/coach-token-monitor.js"
 import { buildFewShotTurns, prefixFewShotToHistory } from "./voice/few-shot.js"
-import { normalizeForIMessage } from "./output-normalizer.js"
+import { normalizeForIMessage, stripABProbeFromTail } from "./output-normalizer.js"
 // Phase 21 Track 5 — Headhunter playbook addendum (job-search probe rotation).
 import { headhunterAddendum } from "./playbooks/headhunter.js"
 // Phase 32 W3 — Firestore-backed playbook cache (30s TTL). Replaces the
@@ -957,7 +957,35 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       priorAssistantReplies.length > 0
         ? stripRepeatOpener(rewritten.text, priorAssistantReplies)
         : rewritten.text
-    const stripped = stripValidationTic(afterOpenerStrip)
+    let stripped = stripValidationTic(afterOpenerStrip)
+    // Stream H5 — runtime A/B probe tail strip (Bible v7.5 NEVER PROBE rule
+    // mirrored from voice-axes.mjs checkABFramework). Gated by the same
+    // paHumanizeRuntimeEnabled umbrella as the imperfection injector below
+    // so non-allowlist users see no behavior change. Strips ONLY the trailing
+    // clause that contains an A/B probe; preserves earlier clauses verbatim.
+    try {
+      const humanizeOnAB = await isHumanizeRuntimeEnabled(store.db, event.userId)
+      if (humanizeOnAB && process.env.PA_AB_PROBE_STRIP_ENABLED !== "false") {
+        const abResult = stripABProbeFromTail(stripped)
+        if (abResult.hits.length > 0) {
+          store.log("pa.voice.ab_probe_strip.applied", {
+            userId: event.userId,
+            turnId,
+            patterns: abResult.hits,
+            beforeLen: stripped.length,
+            afterLen: abResult.stripped.length,
+          })
+          stripped = abResult.stripped
+        }
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      store.log("pa.voice.ab_probe_strip.error", {
+        userId: event.userId,
+        turnId,
+        error: msg,
+      })
+    }
     // Phase 36 wire-in — ImperfectionInjector applied to FINAL visible text
     // post-strip. Gated by paHumanizeRuntimeEnabled umbrella + arm-resolver
     // (PA_IMPERFECTION_ARM env or userId-hash bucket). Default arm = "off"

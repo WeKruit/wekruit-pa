@@ -116,9 +116,11 @@ describe("appendCvContextToSystemPrompt", () => {
     assert.match(out, /NewCo/)
   })
 
-  it("malformed parsedCandidateResume (missing fields) → still composes, falls back to Unknown / skips section", async () => {
+  it("malformed parsedCandidateResume (missing fields, but at least one field present) → still composes with Unknown name", async () => {
+    // Stream H5 contract: render iff ANY field has content; fully-empty → null.
+    // Use a minimal-but-non-empty doc (one skill) to verify Unknown-name fallback.
     const broken: CvProfileDoc = {
-      // candidateProfile missing entirely; experiences not an array.
+      candidateProfile: { skills: ["X"] },
       experiences: undefined as unknown as CvProfileDoc["experiences"],
       education: undefined as unknown as CvProfileDoc["education"],
     }
@@ -126,7 +128,7 @@ describe("appendCvContextToSystemPrompt", () => {
       docs: [{ data: broken, createdAt: "2026-04-30T00:00:00.000Z" }],
     })
     const out = await appendCvContextToSystemPrompt(db, "user_x", BASE_PROMPT)
-    // Block is still emitted, with Unknown name and no recent-role line.
+    // Block is still emitted (skills present), with Unknown name and no recent-role line.
     assert.match(out, /## User CV Profile/)
     assert.match(out, /Name: Unknown/)
     assert.doesNotMatch(out, /Recent role:/)
@@ -185,3 +187,83 @@ describe("renderCvBlock (pure)", () => {
     assert.doesNotMatch(block!, /Education:/)
   })
 })
+
+// ---------- Stream H5 — hard CV-grounding directive ------------------------
+
+describe("Stream H5 — CV grounding hardened directive", () => {
+  it("directive contains literal 'THE USER HAS ALREADY UPLOADED'", () => {
+    const block = renderCvBlock({
+      candidateProfile: { name: "Mike", skills: ["Python"] },
+      experiences: [],
+      education: [],
+    })
+    assert.ok(block)
+    assert.match(
+      block!,
+      /THE USER HAS ALREADY UPLOADED/,
+      "hardened directive must include the literal possession assertion"
+    )
+  })
+
+  it("directive forbids the 'send me your CV' pattern (lists it as bad reply)", () => {
+    const block = renderCvBlock({
+      candidateProfile: { name: "Mike", skills: ["Python"] },
+      experiences: [{ company: "NEUROVA", title: "Data Analyst" }],
+      education: [],
+    })
+    assert.ok(block)
+    // Bad-replies list must explicitly call out the offending pattern.
+    assert.match(block!, /Bad replies \(NEVER do these\)/)
+    assert.match(block!, /send me your CV/i)
+    assert.match(block!, /把简历发我/)
+  })
+
+  it("directive is bilingual — both 简历 and CV substrings present", () => {
+    const block = renderCvBlock({
+      candidateProfile: { name: "Mike", skills: ["Python"] },
+      experiences: [],
+      education: [],
+    })
+    assert.ok(block)
+    assert.match(block!, /简历/, "Chinese 简历 must appear in directive")
+    assert.match(block!, /\bCV\b/, "Latin-script CV must appear in directive")
+  })
+
+  it("directive references the example good-reply pattern '看到你在 ... 做 ...'", () => {
+    const block = renderCvBlock({
+      candidateProfile: { name: "Mike", skills: ["Python"] },
+      experiences: [{ company: "NEUROVA", title: "Data Analyst" }],
+      education: [],
+    })
+    assert.ok(block)
+    // The literal example in the directive uses 看到你在 ... 做 ... shape.
+    assert.match(
+      block!,
+      /看到你在.+?做/,
+      "example zh good-reply pattern '看到你在 X 做 Y' must be present"
+    )
+  })
+
+  it("empty experiences + empty industryTags STILL renders the directive (only returns null when EVERY field is missing)", () => {
+    // Sparse but non-empty: name + skills only.
+    const sparse = renderCvBlock({
+      candidateProfile: { name: "OnlyName", skills: ["Python"] },
+      experiences: [],
+      education: [],
+      industryTags: [],
+    })
+    assert.ok(sparse)
+    assert.match(sparse!, /THE USER HAS ALREADY UPLOADED/)
+    assert.match(sparse!, /Name: OnlyName/)
+
+    // Truly empty doc: no name, no skills, no experience, no education, no tags.
+    const empty = renderCvBlock({
+      candidateProfile: {},
+      experiences: [],
+      education: [],
+      industryTags: [],
+    })
+    assert.equal(empty, null, "fully-empty doc must return null (nothing to inject)")
+  })
+})
+
