@@ -542,4 +542,79 @@ describe("handleSendblueWebhook", () => {
     assert.ok(captured.length >= 1, "raw payload must be logged even on 401")
     assert.equal(typeof captured[0]?.bodyText, "string")
   })
+
+  // Stream G4a — synthetic-webhook marker tests.
+  it("Test 14 (Stream G4a): X-E2E-Test:1 → rawMeta.e2eTest=true on raw row + rawPayload.e2eTest=true on inbound + allowlist bypassed for non-allowlisted from_number", async () => {
+    // Sender NOT in allowlist — proves the test header bypasses the gate.
+    setEnvAllowlist(["+15559999999"])
+    const captured: Array<Record<string, unknown>> = []
+    const { db, inbound } = makeFakeDb()
+    const origCollection = (db as { collection(name: string): unknown }).collection
+    ;(db as { collection(name: string): unknown }).collection = (name: string) => {
+      if (name === "pa-sendblue-webhook-raw") {
+        return {
+          add(row: Record<string, unknown>) {
+            captured.push(row)
+            return Promise.resolve({ id: `raw_${captured.length}` })
+          },
+        }
+      }
+      return origCollection.call(db, name)
+    }
+    const body = JSON.stringify(basePayload({ message_handle: "msg-e2e-1" }))
+    const req = makeReq({ body, signature: SECRET, headers: { "x-e2e-test": "1" } })
+    const res = makeRes()
+
+    await handleSendblueWebhook(req, res, { db, secret: SECRET })
+
+    assert.equal(res.statusCode, 200, "X-E2E-Test:1 must NOT trigger allowlist_deny")
+    assert.equal(inbound.size, 1, "synthetic test must enqueue inbound (allowlist bypassed)")
+
+    // Allow microtask for fire-and-forget raw log.
+    await new Promise((r) => setTimeout(r, 20))
+    assert.ok(captured.length >= 1, "raw payload row must be written")
+    const rawRow = captured[0]!
+    assert.equal((rawRow.rawMeta as { e2eTest?: boolean } | undefined)?.e2eTest, true,
+      "rawMeta.e2eTest=true must be present when X-E2E-Test header is set")
+
+    const inboundDoc = [...inbound.values()][0]!
+    const raw = inboundDoc.rawPayload as Record<string, unknown>
+    assert.equal(raw.e2eTest, true, "inbound rawPayload.e2eTest=true must be present")
+  })
+
+  it("Test 15 (Stream G4a): no X-E2E-Test header → no e2eTest field anywhere (regression lock)", async () => {
+    const captured: Array<Record<string, unknown>> = []
+    const { db, inbound } = makeFakeDb()
+    const origCollection = (db as { collection(name: string): unknown }).collection
+    ;(db as { collection(name: string): unknown }).collection = (name: string) => {
+      if (name === "pa-sendblue-webhook-raw") {
+        return {
+          add(row: Record<string, unknown>) {
+            captured.push(row)
+            return Promise.resolve({ id: `raw_${captured.length}` })
+          },
+        }
+      }
+      return origCollection.call(db, name)
+    }
+    const body = JSON.stringify(basePayload({ message_handle: "msg-organic-1" }))
+    const req = makeReq({ body, signature: SECRET })
+    const res = makeRes()
+
+    await handleSendblueWebhook(req, res, { db, secret: SECRET })
+
+    assert.equal(res.statusCode, 200)
+    assert.equal(inbound.size, 1)
+    await new Promise((r) => setTimeout(r, 20))
+    assert.ok(captured.length >= 1)
+    const rawRow = captured[0]!
+    assert.equal(rawRow.rawMeta, undefined,
+      "organic traffic must NOT have rawMeta field — backward compat with existing analytics")
+
+    const inboundDoc = [...inbound.values()][0]!
+    const raw = inboundDoc.rawPayload as Record<string, unknown>
+    assert.equal(raw.e2eTest, undefined,
+      "organic traffic must NOT have rawPayload.e2eTest field")
+  })
+
 })

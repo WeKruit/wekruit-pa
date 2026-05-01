@@ -94,11 +94,30 @@ function safeAudit(
 // (e.g. header-name drift like the 2026-04-28 incident) does not silently
 // destroy inbound traffic. TTL: 7 days via expiresAt field (operator must
 // set TTL policy on the collection — runbook in admin-bootstrap).
+
+// Stream G4a — synthetic-webhook test marker. When `x-e2e-test: 1` is set on
+// the incoming request, every downstream artifact this handler writes
+// (pa-sendblue-webhook-raw, pa-inbound-events) is tagged with `e2eTest: true`
+// so production analytics + pipelines can filter test traffic. Also bypasses
+// the DM allowlist so synthetic from-numbers don't get rejected. Sendblue
+// HMAC verification is unchanged — the E2E driver still must sign requests
+// with the live signing secret.
+function extractE2eTestFlag(headers: Record<string, string | string[] | undefined>): boolean {
+  const candidates = ["x-e2e-test", "X-E2E-Test", "X-E2E-TEST"]
+  for (const k of candidates) {
+    const v = headers[k] ?? headers[k.toLowerCase()]
+    const s = Array.isArray(v) ? v[0] : v
+    if (typeof s === "string" && s.trim() === "1") return true
+  }
+  return false
+}
+
 async function logRawWebhook(
   deps: WebhookDeps,
   rawBody: Buffer | string,
   headers: Record<string, string | string[] | undefined>,
-  log: (...args: unknown[]) => void
+  log: (...args: unknown[]) => void,
+  e2eTest: boolean = false
 ): Promise<void> {
   try {
     const bodyText = typeof rawBody === "string" ? rawBody : rawBody.toString("utf8")
@@ -123,6 +142,10 @@ async function logRawWebhook(
       bodyLen: bodyText.length,
       headers: safeHeaders,
       expiresAt,
+      // Stream G4a — only present (and only `true`) when the request carried
+      // `X-E2E-Test: 1`. Field is absent on organic traffic so existing
+      // analytics queries (no field === false-ish in Firestore) keep working.
+      ...(e2eTest ? { rawMeta: { e2eTest: true } } : {}),
     })
   } catch (err) {
     // Never let raw-log failure break the webhook path.
@@ -167,6 +190,13 @@ export async function handleSendblueWebhook(
 ): Promise<void> {
   const log = deps.log ?? console.log
 
+  // Stream G4a — extract synthetic-test marker BEFORE any pipeline work so
+  // every downstream write can carry it consistently. Organic Sendblue traffic
+  // never sets this header; it's only used by the apps/functions/test-e2e
+  // driver to drive Adam's CV-onboarding pipeline against the LIVE webhook
+  // without polluting analytics or tripping the DM allowlist.
+  const isE2eTest = extractE2eTestFlag(req.headers ?? {})
+
   // ---- 1. HMAC verify (401 on fail) -------------------------------------
   const rawBody: Buffer | string =
     req.rawBody !== undefined
@@ -178,7 +208,7 @@ export async function handleSendblueWebhook(
   // Phase 33 — log every delivery BEFORE verify so a regression in the
   // verifier does not silently drop inbound traffic. Fire-and-forget;
   // failure here must never break the path.
-  void logRawWebhook(deps, rawBody, req.headers ?? {}, log)
+  void logRawWebhook(deps, rawBody, req.headers ?? {}, log, isE2eTest)
 
   const sigHeader = extractSendblueSignatureHeader(req.headers ?? {})
   const isValid = verifySendblueSignature(rawBody, sigHeader, deps.secret)
@@ -342,7 +372,10 @@ export async function handleSendblueWebhook(
   }
 
   // ---- 3e. Allowlist gate (fail-closed) ---------------------------------
-  if (useDmAllowlist()) {
+  // Stream G4a — when X-E2E-Test:1 is set, bypass the allowlist so the test
+  // driver can synthesize from-numbers that aren't on the production peer
+  // allowlist. Bypass is safe because requests still must pass HMAC verify.
+  if (useDmAllowlist() && !isE2eTest) {
     const peers = getPeerAllowlist()
     const matched = peers.length > 0 && peers.some((p) => isSamePeer(normalized.fromNumber, p))
     if (!matched) {
@@ -415,6 +448,8 @@ export async function handleSendblueWebhook(
         // text + participant + chatId form the minimum contract; preserve
         // everything else as raw passthrough for forensic logs.
         original: payload,
+        // Stream G4a — synthetic-test marker. Absent on organic traffic.
+        ...(isE2eTest ? { e2eTest: true } : {}),
       } as Record<string, unknown>,
     })
     log("[sendblue][webhook] enqueued", {
