@@ -91,14 +91,32 @@ export async function chatCompletion({ messages, opts = {} }) {
   if (typeof opts.max_tokens === "number") body.max_tokens = opts.max_tokens
   if (typeof opts.top_p === "number") body.top_p = opts.top_p
 
-  const res = await fetchImpl(`${baseUrl}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify(body),
-  })
+  // Per-call hard timeout — bench loops are sequential, so one hung
+  // fetch stalls the whole 1000-conv run (Phase 39 hung 1h58m on
+  // 47.239.184.63 ESTABLISHED before this guard). 90s covers normal
+  // 7B-chat latency p99 with headroom.
+  const timeoutMs = Number(opts.timeoutMs ?? process.env.PA_BENCH_FETCH_TIMEOUT_MS ?? 90_000)
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs)
+  let res
+  try {
+    res = await fetchImpl(`${baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    })
+  } catch (err) {
+    clearTimeout(timer)
+    if (err && err.name === "AbortError") {
+      throw new Error(`sf-client/chat: timeout after ${timeoutMs}ms`)
+    }
+    throw err
+  }
+  clearTimeout(timer)
 
   if (!res.ok) {
     const errText = await res.text().catch(() => "")
@@ -133,14 +151,25 @@ export async function embed({ input, opts = {} }) {
   const model = opts.model || "BAAI/bge-m3"
   const fetchImpl = opts.fetchImpl || globalThis.fetch
 
+  const embedTimeoutMs = Number(opts.timeoutMs ?? process.env.PA_BENCH_FETCH_TIMEOUT_MS ?? 60_000)
+  const embedCtrl = new AbortController()
+  const embedTimer = setTimeout(() => embedCtrl.abort(), embedTimeoutMs)
   const res = await fetchImpl(`${baseUrl}/embeddings`, {
     method: "POST",
+    signal: embedCtrl.signal,
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({ model, input: inputs }),
+  }).catch((err) => {
+    clearTimeout(embedTimer)
+    if (err && err.name === "AbortError") {
+      throw new Error(`sf-client/embed: timeout after ${embedTimeoutMs}ms`)
+    }
+    throw err
   })
+  clearTimeout(embedTimer)
 
   if (!res.ok) {
     const errText = await res.text().catch(() => "")

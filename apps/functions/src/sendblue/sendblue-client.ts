@@ -16,6 +16,12 @@
  */
 
 import type { SendblueSendRequest, SendblueSendResponse } from "./types.js"
+import {
+  getSendblueBreakerState,
+  recordSendblueFailure,
+  recordSendblueSuccess,
+  SendblueCircuitOpenError,
+} from "./circuit-breaker.js"
 
 const SEND_MESSAGE_URL = "https://api.sendblue.co/api/send-message"
 const TYPING_INDICATOR_URL = "https://api.sendblue.co/api/send-message/typing-indicator"
@@ -100,6 +106,18 @@ export async function sendImessage(
   input: SendImessageInput,
   creds: SendblueCredentials = getSendblueCreds()
 ): Promise<SendblueSendResponse> {
+  // Phase 40 prod — fail-fast when breaker OPEN. Maps to a transient server
+  // error so the outbox marks status=pending, releasing for retry; by the
+  // time the row re-fires, the 60s window has elapsed and we try HALF_OPEN.
+  const breakerState = getSendblueBreakerState()
+  if (breakerState === "OPEN") {
+    throw new SendblueServerError(
+      503,
+      "Sendblue circuit OPEN — fail-fast (5+ consecutive failures, 60s cooldown)",
+      null
+    )
+  }
+
   const body: SendblueSendRequest = {
     number: input.to,
     content: input.content,
@@ -107,26 +125,35 @@ export async function sendImessage(
     ...(input.statusCallback ? { status_callback: input.statusCallback } : {}),
   }
 
-  const resp = await withTimeout((signal) =>
-    fetch(SEND_MESSAGE_URL, {
-      method: "POST",
-      headers: {
-        "sb-api-key-id": creds.apiKeyId,
-        "sb-api-secret-key": creds.apiSecretKey,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify(body),
-      signal,
-    })
-  ).catch((err) => {
-    // Treat fetch failures (DNS, abort, network) as transient server errors.
-    throw new SendblueServerError(0, `Sendblue send-message network error: ${err instanceof Error ? err.message : String(err)}`, null)
-  })
+  let resp: Response
+  try {
+    resp = await withTimeout((signal) =>
+      fetch(SEND_MESSAGE_URL, {
+        method: "POST",
+        headers: {
+          "sb-api-key-id": creds.apiKeyId,
+          "sb-api-secret-key": creds.apiSecretKey,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(body),
+        signal,
+      })
+    )
+  } catch (err) {
+    // Network / abort — count toward breaker AND surface as transient.
+    recordSendblueFailure()
+    throw new SendblueServerError(
+      0,
+      `Sendblue send-message network error: ${err instanceof Error ? err.message : String(err)}`,
+      null
+    )
+  }
 
   const parsed = (await readJson(resp)) as Partial<SendblueSendResponse> | null
   const retryAfter = resp.headers.get("retry-after") ?? undefined
 
   if (resp.status >= 200 && resp.status < 300) {
+    recordSendblueSuccess()
     return (parsed ?? {}) as SendblueSendResponse
   }
 
@@ -140,7 +167,12 @@ export async function sendImessage(
     `Sendblue send-message HTTP ${resp.status}`
 
   if (resp.status >= 500 || resp.status === 429) {
+    // Transient — record failure (counts toward breaker open) + throw retry-able.
+    recordSendblueFailure()
     throw new SendblueServerError(resp.status, message, parsed, retryAfter ?? undefined)
   }
+  // 4xx — caller marks failed; do NOT count toward breaker (4xx = bad payload,
+  // not a Sendblue outage). e.g. unprovisioned recipient should not trip a
+  // breaker that affects other valid recipients.
   throw new SendblueClientError(resp.status, message, parsed, retryAfter ?? undefined)
 }

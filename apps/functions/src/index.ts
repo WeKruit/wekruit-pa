@@ -603,7 +603,9 @@ export const paSendblueWebhook = onRequest(
   {
     region: "us-central1",
     secrets: [SENDBLUE_WEBHOOK_SIGNING_SECRET],
-    memory: "256MiB",
+    // 14MB monolithic bundle + node + firebase-admin + zod ~= 250MB floor; 256Mi
+    // OOMed under burst (Phase 40 stress baseline). 512Mi gives safety margin.
+    memory: "512MiB",
     timeoutSeconds: 60,
     cors: false,
     // R-05 mitigation: keep at least one warm to stay <30s p95 (CHANNEL-09).
@@ -661,8 +663,11 @@ export const paSendblueOutbox = onDocumentCreated(
     document: "pa-outbound/{docId}",
     region: "us-central1",
     secrets: [SENDBLUE_API_KEY_ID, SENDBLUE_API_SECRET_KEY, SENDBLUE_FROM_NUMBER],
-    memory: "256MiB",
-    timeoutSeconds: 60,
+    // BUG #2 — OOMed at 256Mi when payload contained markdown URLs (Phase 40
+    // observed 2026-04-30 on web_search reply). 512Mi keeps a comfortable
+    // ceiling for the 14MB bundle + Sendblue REST roundtrip.
+    memory: "512MiB",
+    timeoutSeconds: 120,
     concurrency: 1,
   },
   async (event) => {
@@ -717,7 +722,8 @@ export const paUpstreamEventWebhook = onRequest(
   {
     region: "us-central1",
     secrets: [PA_UPSTREAM_HMAC_SECRET],
-    memory: "256MiB",
+    // Same bundle floor as sendblue webhook — 256Mi too tight under burst.
+    memory: "512MiB",
     timeoutSeconds: 60,
     cors: false,
   },
