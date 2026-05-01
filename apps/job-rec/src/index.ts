@@ -93,5 +93,14 @@ export {
   runDailyJobRecBatch,
   formatBatchMessage,
   formatJobLine,
+  defaultUserEmbedFetcher,
+  rerankByCosine,
+  cosineSimilarity,
 } from "./daily-batch.js"
-export type { DailyBatchDeps, BatchOutcome, FlagChecker } from "./daily-batch.js"
+export type {
+  DailyBatchDeps,
+  BatchOutcome,
+  FlagChecker,
+  UserEmbedFetcher,
+  UserEmbedComputer,
+} from "./daily-batch.js"

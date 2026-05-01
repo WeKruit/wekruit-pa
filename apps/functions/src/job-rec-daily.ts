@@ -15,9 +15,73 @@
 
 import { onSchedule } from "firebase-functions/v2/scheduler"
 import { logger } from "firebase-functions/v2"
-import { getFirestore } from "firebase-admin/firestore"
-import { runDailyJobRecBatch } from "@pa/job-rec"
+import { getFirestore, type Firestore } from "firebase-admin/firestore"
+import { runDailyJobRecBatch, defaultUserEmbedFetcher } from "@pa/job-rec"
 import { getFlag } from "@pa/pa-persistence"
+
+/**
+ * Stream G1 — Production user-embedding computer. When daily-batch's
+ * fetcher returns no cached embedding for a user with a parsed resume,
+ * this lazy-computes via OpenAI text-embedding-3-small (1536-d) and
+ * caches back to parsedCandidateResumes/{resumeId}.embedding for next
+ * day's run. Fail-open: any error → return null → daily-batch falls
+ * back to legacy keyword rank. Never throws.
+ */
+async function defaultUserEmbedComputer(
+  db: Firestore,
+  userId: string,
+  resumeId: string,
+  resumeText: string
+): Promise<number[] | null> {
+  try {
+    const apiKey =
+      process.env.PA_OPENAI_AGENT_API_KEY?.trim() ||
+      process.env.OPENAI_API_KEY?.trim() ||
+      ""
+    if (!apiKey) {
+      logger.warn("[job-rec-daily] embed_compute_no_key", { userId })
+      return null
+    }
+    const { default: OpenAI } = await import("openai")
+    const client = new OpenAI({ apiKey })
+    const resp = await client.embeddings.create({
+      model: "text-embedding-3-small",
+      input: resumeText.slice(0, 8000),
+    })
+    const vec = resp.data?.[0]?.embedding
+    if (!vec || vec.length === 0) {
+      logger.warn("[job-rec-daily] embed_compute_empty_response", { userId })
+      return null
+    }
+    // Cache write-back. Best-effort; don't block return on Firestore success.
+    void db
+      .collection("parsedCandidateResumes")
+      .doc(resumeId)
+      .set(
+        {
+          embedding: vec,
+          embeddingModel: "text-embedding-3-small",
+          embeddingDim: vec.length,
+          embeddingComputedAt: new Date().toISOString(),
+        },
+        { merge: true }
+      )
+      .catch((err) => {
+        logger.warn("[job-rec-daily] embed_cache_writeback_failed", {
+          userId,
+          resumeId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      })
+    return vec
+  } catch (err) {
+    logger.error("[job-rec-daily] embed_compute_failed", {
+      userId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    return null
+  }
+}
 
 export const paJobRecDaily = onSchedule(
   {
@@ -33,10 +97,10 @@ export const paJobRecDaily = onSchedule(
     try {
       const result = await runDailyJobRecBatch({
         db,
-        // The batch driver wants `(db, key, ctx, defaultValue)` — adapt
-        // pa-persistence's `getFlag` signature directly. `getFlag` returns
-        // `unknown` (boolean | number); the driver coerces to boolean.
         getFlag: (db, key, ctx, defaultValue) => getFlag(db, key, ctx, defaultValue),
+        // Stream G1 — full cascade: fetcher → computer (lazy + cache) → fallback.
+        userEmbedFetcher: defaultUserEmbedFetcher,
+        userEmbedComputer: defaultUserEmbedComputer,
         log: (...args: unknown[]) => logger.info("[job-rec-daily]", ...args),
       })
       logger.info("[job-rec-daily] batch_complete", result)

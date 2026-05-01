@@ -53,6 +53,15 @@ export type DailyBatchDeps = {
    */
   userEmbedFetcher?: UserEmbedFetcher
   /**
+   * Stream G1 — optional lazy compute + cache when fetcher returns null.
+   * Receives (db, userId, resumeId, resumeText) and is expected to:
+   *   1. Call OpenAI text-embedding-3-small (1536-d) on resumeText
+   *   2. Write back to parsedCandidateResumes/{resumeId}.embedding
+   *   3. Return the new embedding
+   * Errors are caught; cascade falls back to legacy ranking.
+   */
+  userEmbedComputer?: UserEmbedComputer
+  /**
    * Pre-rank candidate pool size. After Firestore filter + Jaccard rank
    * trims to this many, we cosine-rerank to jobsPerUser. Default 50.
    */
@@ -283,6 +292,42 @@ export type UserEmbedComputer = (
 ) => Promise<number[] | null>
 
 /**
+ * Stream G1 — internal helper. Loads the parsed-resume doc by id and
+ * returns a compact text suitable for OpenAI text-embedding-3-small.
+ * Composes from candidateProfile + first 3 experiences. Returns null on
+ * any error or when the doc is missing the required fields.
+ */
+async function loadResumeTextForEmbed(
+  db: Firestore,
+  resumeId: string
+): Promise<string | null> {
+  try {
+    const snap = await db.collection("parsedCandidateResumes").doc(resumeId).get()
+    if (!snap.exists) return null
+    const d = snap.data() as Record<string, unknown> | undefined
+    if (!d) return null
+    const p = (d.candidateProfile ?? {}) as Record<string, unknown>
+    const exps = Array.isArray(d.experiences) ? d.experiences.slice(0, 3) : []
+    const skills = Array.isArray(p.skills) ? (p.skills as unknown[]).filter((x) => typeof x === "string").slice(0, 12) : []
+    const expsText = exps
+      .map((e) => {
+        const x = e as Record<string, unknown>
+        return `${String(x.title ?? "")} at ${String(x.company ?? "")} (${String(x.startDate ?? "")}-${String(x.endDate ?? "")}). ${String(x.description ?? "").slice(0, 240)}`
+      })
+      .join("\n")
+    const text = [
+      `Name: ${String(p.name ?? "")}`,
+      `Location: ${String(p.location ?? "")}`,
+      `Skills: ${skills.join(", ")}`,
+      `Experiences:\n${expsText}`,
+    ].join("\n").trim()
+    return text.length >= 30 ? text : null
+  } catch {
+    return null
+  }
+}
+
+/**
  * Default fetcher — Firestore lookup, no compute. Returns the most-recent
  * parsed resume's embedding when present.
  */
@@ -409,10 +454,40 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
       }
 
       // Stream F5 — embedding rerank when configured + user has embedding.
+      // Stream G1 — cascade: fetcher → computer (lazy compute + cache) → fallback.
       let rankedJobs: MatchingJob[] = queryRes.jobs
       if (deps.userEmbedFetcher) {
         try {
-          const { embedding } = await deps.userEmbedFetcher(deps.db, userId)
+          const fetched = await deps.userEmbedFetcher(deps.db, userId)
+          let embedding: readonly number[] | null = fetched.embedding
+          // Cascade: if fetcher returned null embedding but a resumeId exists,
+          // and a computer is wired, compute on demand + cache.
+          if ((!embedding || embedding.length === 0) && fetched.resumeId && deps.userEmbedComputer) {
+            try {
+              const resumeText = await loadResumeTextForEmbed(deps.db, fetched.resumeId)
+              if (resumeText) {
+                const computed = await deps.userEmbedComputer(
+                  deps.db,
+                  userId,
+                  fetched.resumeId,
+                  resumeText
+                )
+                if (computed && computed.length > 0) {
+                  embedding = computed
+                  log("[job-rec-daily] embedding_computed_cached", {
+                    userId,
+                    resumeId: fetched.resumeId,
+                    dim: computed.length,
+                  })
+                }
+              }
+            } catch (computeErr) {
+              log("[job-rec-daily] embed_compute_failed_fallback", {
+                userId,
+                error: computeErr instanceof Error ? computeErr.message : String(computeErr),
+              })
+            }
+          }
           if (embedding && embedding.length > 0) {
             rankedJobs = rerankByCosine(
               queryRes.jobs as Array<MatchingJob & { embedding?: number[] | null }>,
@@ -421,7 +496,7 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
             )
             log("[job-rec-daily] rerank_applied", { userId, poolSize: queryRes.jobs.length, took: jobsPerUser })
           } else {
-            // No embedding on file — slice to the requested count.
+            // No embedding on file AND compute path didn't succeed — slice.
             rankedJobs = queryRes.jobs.slice(0, jobsPerUser)
           }
         } catch (err) {
