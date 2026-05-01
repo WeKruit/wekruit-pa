@@ -86,3 +86,47 @@ test("idempotence", () => {
 test("STRIP_PARAMS frozen shape", () => {
   assert.ok(STRIP_PARAMS.includes("utm_source"))
 })
+
+test("Phase 40 — flatten nested citation single (domain (url))", () => {
+  const r = normalizeForIMessage(
+    "I saw a few articles on this (fortune.com (https://www.fortune.com/2026/04/news)).",
+    { maxLength: 600 }
+  )
+  assert.match(r.text, /https:\/\/www\.fortune\.com\/2026\/04\/news/)
+  assert.doesNotMatch(r.text, /fortune\.com\s+\(/)
+  assert.doesNotMatch(r.text, /\(\s*https/)
+})
+
+test("Phase 40 — flatten nested citation multiple sources", () => {
+  const r = normalizeForIMessage(
+    "Several outlets covered it (fortune.com (https://fortune.com/x) and axios.com (https://axios.com/y)).",
+    { maxLength: 600 }
+  )
+  assert.match(r.text, /https:\/\/fortune\.com\/x/)
+  assert.match(r.text, /https:\/\/axios\.com\/y/)
+  assert.doesNotMatch(r.text, /fortune\.com\s+\(/)
+  assert.doesNotMatch(r.text, /axios\.com\s+\(/)
+})
+
+test("Phase 40 — bare-domain prefix + (url) collapses to bare url", () => {
+  const r = normalizeForIMessage(
+    "see fortune.com (https://fortune.com/article) for the source",
+    { maxLength: 600 }
+  )
+  assert.match(r.text, /https:\/\/fortune\.com\/article/)
+  assert.doesNotMatch(r.text, /fortune\.com\s+\(/)
+})
+
+test("Phase 40 — dangling bare-domain in parens dropped", () => {
+  const r = normalizeForIMessage("Tesla up this quarter (axios.com).", { maxLength: 600 })
+  assert.doesNotMatch(r.text, /axios\.com/)
+  assert.match(r.text, /Tesla up this quarter/)
+})
+
+test("Phase 40 — citation flatten idempotent + does not break clean URL", () => {
+  const clean = "check this out https://fortune.com/article"
+  const r = normalizeForIMessage(clean, { maxLength: 600 })
+  assert.equal(r.text, clean)
+  const r2 = normalizeForIMessage(r.text, { maxLength: 600 })
+  assert.equal(r2.text, r.text)
+})

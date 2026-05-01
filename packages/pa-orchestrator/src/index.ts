@@ -73,6 +73,16 @@ import {
   injectImperfection,
   resolveArm,
 } from "./voice/imperfection-injector/index.js"
+// Phase 35/38 — detectors + advice tracker run UNCONDITIONALLY on the final
+// visible text, regardless of whether `rewriteIfOff` short-circuited (no_change
+// / rewrite_unsafe / timeout). Inner-rewriter wire-in only fires on the
+// "rewrite happy path" — that's why pre-rev-00024 turns produced zero
+// advice-tracker entries despite the flag being on for the user.
+import {
+  runAllDetectors,
+  type DetectorContext,
+} from "./voice/detectors/index.js"
+import { trackAdvice } from "./voice/memory-policy/index.js"
 import { tapCoachTokens } from "./voice/coach-token-monitor.js"
 import { buildFewShotTurns, prefixFewShotToHistory } from "./voice/few-shot.js"
 import { normalizeForIMessage } from "./output-normalizer.js"
@@ -978,6 +988,63 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     }
     void injectorAppliedFlag
     void injectorArm
+    // Phase 35/38 wire-in (LIFTED) — detectors + trackAdvice run on the FINAL
+    // visible text regardless of `rewriteIfOff` outcome. Previously these
+    // were gated behind the rewriter happy-path inside `rewriteIfOff` and
+    // never fired on no_change / rewrite_unsafe / timeout exits, which is
+    // why pa-advice-tracker stayed empty post-deploy-00023 even with the
+    // umbrella flag ON for allowlisted users.
+    try {
+      const humanizeOnPost = await isHumanizeRuntimeEnabled(store.db, event.userId)
+      if (humanizeOnPost) {
+        if (process.env.PA_DETECTORS_ENABLED !== "false") {
+          try {
+            const detectorCtx: DetectorContext = {
+              turn: { user: event.body, assistant: replyAfterRewrite },
+              history: { claireReplies: claireHistoryForDetectors },
+            }
+            const detectorResults = await runAllDetectors(detectorCtx)
+            const triggered = detectorResults.filter((r) => r.triggered)
+            if (triggered.length > 0) {
+              store.log("pa.voice.detectors.triggered", {
+                userId: event.userId,
+                turnId,
+                detectors: triggered.map((r) => ({
+                  id: r.id,
+                  action: r.suggested_action ?? null,
+                })),
+              })
+            }
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err)
+            store.log("pa.voice.detectors.error", { userId: event.userId, turnId, error: msg })
+          }
+        }
+        if (
+          process.env.PA_MEMORY_POLICY_ENABLED !== "false" &&
+          store.db &&
+          event.userId &&
+          turnId
+        ) {
+          void trackAdvice(
+            event.userId,
+            replyAfterRewrite,
+            turnId,
+            { db: store.db }
+          ).catch((err) => {
+            const msg = err instanceof Error ? err.message : String(err)
+            store.log("pa.voice.advice_tracker.error", { userId: event.userId, turnId, error: msg })
+          })
+        }
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      store.log("pa.voice.wire_in_post_hooks.error", {
+        userId: event.userId,
+        turnId,
+        error: msg,
+      })
+    }
     if (rewritten.rewriteApplied) {
       store.log("pa.voice.llm_rewriter.applied", {
         userId: event.userId,

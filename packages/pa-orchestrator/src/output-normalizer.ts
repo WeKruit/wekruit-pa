@@ -97,6 +97,37 @@ function stripBareUrlsInText(input: string, paramNames: ReadonlyArray<string>, d
   return input.replace(BARE_URL_RE, (m) => stripUrlQueryParams(m, paramNames, dropped))
 }
 
+/**
+ * Phase 40 humanize-runtime — strip "(domain.tld (https://...))" double-paren
+ * citation patterns the LLM emits when it has web_search hosted-tool sources.
+ * Bible v7.5.1 hard rule says "talk like roommate, drop bare URL at most once
+ * at end" but defense-in-depth handles residual emissions: collapse outer
+ * paren wrap + redundant bare-domain prefix into a single space-prefixed URL.
+ *
+ * Idempotent (re-running on cleaned text is no-op since no inner pattern remains).
+ */
+function flattenCitations(input: string): string {
+  let s = input
+  // Step 1: outer paren wrapping "domain.tld (url)" → just the URL (loses parens entirely).
+  // Multiple sources joined with "and"/"和"/"," collapse to space-separated URLs.
+  s = s.replace(
+    /\(\s*((?:[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,})\s+\(https?:\/\/[^)\s]+\))(?:\s*(?:and|或|和|与|,|，)\s*(?:[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,})\s+\(https?:\/\/[^)\s]+\))*\s*\)/gi,
+    (match) => {
+      const urls = match.match(/https?:\/\/[^)\s]+/g) || []
+      return urls.length > 0 ? " " + urls.join(" ") : ""
+    }
+  )
+  // Step 2: bare-domain followed by "(url)" without outer paren → just the URL (no parens).
+  // e.g. "see fortune.com (https://x)" → "see https://x"
+  s = s.replace(
+    /\b([a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,})\s+\((https?:\/\/[^)\s]+)\)/gi,
+    "$2"
+  )
+  // Step 3: dangling "(domain.tld)" with no URL inside → drop entirely (residual citation).
+  s = s.replace(/\s?\(\s*[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}\s*\)/gi, "")
+  return s
+}
+
 function stripEmphasis(input: string): string {
   let s = input
   s = s.replace(/＊＊([^＊]+)＊＊/g, "$1")
@@ -141,6 +172,7 @@ export function normalizeForIMessage(input: string, opts?: NormalizeOpts): Norma
   let s = stripCodeFences(input)
   s = stripInlineCode(s)
   s = replaceMarkdownLinks(s, paramNames, dropped)
+  s = flattenCitations(s)
   s = stripBareUrlsInText(s, paramNames, dropped)
   s = stripEmphasis(s)
   s = replaceListMarkers(s)
