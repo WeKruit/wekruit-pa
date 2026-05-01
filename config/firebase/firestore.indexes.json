@@ -17,6 +17,14 @@
       ]
     },
     {
+      "collectionGroup": "pa-outbound",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "pa-messages",
       "queryScope": "COLLECTION",
       "fields": [
