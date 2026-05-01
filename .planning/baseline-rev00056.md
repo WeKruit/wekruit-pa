@@ -29,13 +29,14 @@ Synthetic methodology limitation acknowledged: real production drift may be high
 | 2 | 50-turn drift score (compounded F1+F4) | **mean 2.6%, p95 9.7%, max 9.7%** | > 50% reduction → ≤ 4.9% p95 | computeDriftScore mirror-only (repeat half null without BGE_API_KEY) |
 | 3 | Tone shift hit rate (user emotion → Claire tone) | **DEFERRED** — needs labeled corpus + judge | > 70% | inferStrategy + stageForTurn (preview only) |
 | 4 | Length compliance (≤ 3 sentences) | **100%** | maintain ≥ 98% | computeLengthCompliance(cap=3) |
-| 5 | Repeat advice rate (cos-sim > 0.85 vs last 3 turns) | **embed: deferred (no BGE_API_KEY)** / **proxy (Jaccard ≥0.5): 0%** | < 5% (embed) / maintain proxy ≤ 5% | computeAdviceNovelty embed half + Jaccard proxy half |
+| 5 | Repeat advice rate (cos-sim > 0.85 vs last 3 turns) | **embed: 0% (p95 cos-sim 0.602-0.711 across 50-turn chains, all below 0.85 threshold)** / proxy 0% | < 5% (embed) / maintain proxy ≤ 5% | computeAdviceNovelty embed half + Jaccard proxy half |
 
 **Interpretation:**
 - Bible v7.4 already strips literal forbidden phrases (commit 323a43c) — baseline ai_telltale = 0%. Phase 35 detectors MUST not regress this.
 - length_compliance is also already at ceiling (100%) on this corpus. Phase 36/38 must maintain.
 - The MEANINGFUL improvement target is metric 2 (drift). Synthetic baseline shows mean 2.6% / max 42.9% mirror_max in worst cycle — Phase 35 (F1 detector) is the active treatment.
-- Metrics 3 + 5 require additional infrastructure (judge / embed) before being measurable. Adam approval needed for budget.
+- Metric 5 LOCKED 2026-04-30 via SILICONFLOW_API_KEY env wire (BGE-M3 embedding via SiliconFlow). Per-scenario p95 cos-sim: anxious-grad-zh-50turn=0.693, venting-zh-50turn=0.664, tech-deep-en-50turn=0.602, multi-turn-mirror-trap=0.711. All BELOW 0.85 threshold → 0% repeat-advice rate. **Metric 5 PASSES** baseline gate (target < 5%).
+- Metric 3 (tone shift hit rate) still requires labeled corpus + LLM judge — Adam P0 budget approval owed.
 
 ---
 

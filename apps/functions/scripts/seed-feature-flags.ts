@@ -108,6 +108,29 @@ const SEED_FLAGS: FlagSpec[] = [
     allowlist: [],
     blocklist: [],
   },
+  // Phase 30 — master kill switch for Downstream Eval Connector.
+  {
+    key: "evalConnectorsEnabled",
+    value: false,
+    type: "bool",
+    scope: "global",
+    allowlist: [],
+    blocklist: [],
+  },
+  // Phase 40 T4 — umbrella feature flag for v1.4 humanize-runtime stack
+  // (Phase 35 detectors + Phase 36 injector + Phase 37 FSM + Phase 38
+  // memory-policy + Phase 40 prefix-cache extras). Default OFF for all
+  // users; flipped via dashboard / setFlag bucketStrategy 1/10/50/100%
+  // per .planning/phases/40-bible-v7.5-ship/WIRE-IN-PATCH.md Section 9.
+  // Kill switch: PA_HUMANIZE_RUNTIME_DISABLED=true env (CF cold-start required).
+  {
+    key: "paHumanizeRuntimeEnabled",
+    value: false,
+    type: "bool",
+    scope: "perUser",
+    allowlist: [],
+    blocklist: [],
+  },
 ]
 
 interface PlannedWrite {
