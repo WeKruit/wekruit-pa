@@ -94,6 +94,41 @@ const DEAD_LETTER_ATTEMPTS = 5
 const SWEEP_LIMIT = 20
 
 /**
+ * Stream H4 D4 — structured failure log for alert pipeline.
+ *
+ * Emits a single severity=ERROR Cloud Logging entry that the
+ * "pa.outbound.failed" log-based metric (see scripts/setup-failure-alert.sh)
+ * counts. Body is truncated to 200 chars to keep log payload bounded.
+ *
+ * Called at every status flip to "failed" or "dead_letter", with
+ * `firebase-functions/logger.error` semantics by way of the injected
+ * `log` callback (which in production binds to logger.error).
+ */
+export function logOutboundFailure(
+  log: (...args: unknown[]) => void,
+  fields: {
+    docId: string
+    userId: string
+    idempotencyKey?: string
+    lastError: string
+    attempts: number
+    body: string
+    terminalStatus: "failed" | "dead_letter"
+  }
+): void {
+  log("pa.outbound.failed", {
+    severity: "ERROR",
+    docId: fields.docId,
+    userId: fields.userId,
+    idempotencyKey: fields.idempotencyKey ?? null,
+    lastError: fields.lastError,
+    attempts: fields.attempts,
+    body_preview: fields.body.slice(0, 200),
+    terminalStatus: fields.terminalStatus,
+  })
+}
+
+/**
  * Stream H4 D2 — top-of-tick stale-row sweep.
  *
  * Rescues two failure modes that the onDocumentCreated trigger cannot:
@@ -187,6 +222,16 @@ export async function sweepStaleOutbound(
       if (ok) {
         deadLettered++
         log("outbound_dead_lettered", { docId: doc.id, attempts })
+        // Stream H4 D4 — structured pa.outbound.failed log for alert metric
+        logOutboundFailure(log, {
+          docId: doc.id,
+          userId: String((d as { userId?: unknown }).userId ?? "?"),
+          idempotencyKey: typeof (d as { idempotencyKey?: unknown }).idempotencyKey === "string" ? String((d as { idempotencyKey?: unknown }).idempotencyKey) : undefined,
+          lastError: String((d as { error?: unknown }).error ?? "exhausted retries"),
+          attempts,
+          body: String((d as { body?: unknown }).body ?? ""),
+          terminalStatus: "dead_letter",
+        })
       }
     }
   } catch (err) {
@@ -259,6 +304,15 @@ export async function paSendblueOutboxHandler(
         },
         { merge: true }
       )
+      logOutboundFailure(log, {
+        docId,
+        userId,
+        idempotencyKey: typeof data.idempotencyKey === "string" ? String(data.idempotencyKey) : undefined,
+        lastError: "blocked by IMESSAGE_DM_ALLOWLIST",
+        attempts: Number((data as { attemptCount?: unknown }).attemptCount ?? 0),
+        body,
+        terminalStatus: "failed",
+      })
       return
     }
   }
@@ -272,6 +326,15 @@ export async function paSendblueOutboxHandler(
       },
       { merge: true }
     )
+    logOutboundFailure(log, {
+      docId,
+      userId,
+      idempotencyKey: typeof data.idempotencyKey === "string" ? String(data.idempotencyKey) : undefined,
+      lastError: "missing userId, toE164, or body",
+      attempts: Number((data as { attemptCount?: unknown }).attemptCount ?? 0),
+      body,
+      terminalStatus: "failed",
+    })
     return
   }
 
@@ -287,6 +350,15 @@ export async function paSendblueOutboxHandler(
         },
         { merge: true }
       )
+      logOutboundFailure(log, {
+        docId,
+        userId,
+        idempotencyKey: typeof data.idempotencyKey === "string" ? String(data.idempotencyKey) : undefined,
+        lastError: "user not found",
+        attempts: Number((data as { attemptCount?: unknown }).attemptCount ?? 0),
+        body,
+        terminalStatus: "failed",
+      })
       return
     }
   }
@@ -349,6 +421,15 @@ export async function paSendblueOutboxHandler(
   if (currentCount >= quotaLimit) {
     try { await recordAuditEvent(deps.db, { type: "quota_hardblock", channel: "imessage_sendblue", toNumber: toPeer, reason: `count=${currentCount} limit=${quotaLimit}` }) } catch {}
     await ref.set({ status: "failed", error: `sendblue daily quota reached (${currentCount}/${quotaLimit})`, updatedAt: now().toISOString() }, { merge: true })
+    logOutboundFailure(log, {
+      docId,
+      userId,
+      idempotencyKey: typeof data.idempotencyKey === "string" ? String(data.idempotencyKey) : undefined,
+      lastError: `sendblue daily quota reached (${currentCount}/${quotaLimit})`,
+      attempts: Number((data as { attemptCount?: unknown }).attemptCount ?? 0),
+      body,
+      terminalStatus: "failed",
+    })
     return
   }
   if (currentCount >= Math.floor(quotaLimit * 0.8)) {
@@ -391,6 +472,15 @@ export async function paSendblueOutboxHandler(
         },
         { merge: true }
       )
+      logOutboundFailure(log, {
+        docId,
+        userId,
+        idempotencyKey: typeof data.idempotencyKey === "string" ? String(data.idempotencyKey) : undefined,
+        lastError: `sendblue ${err.status}: ${err.message}`,
+        attempts: Number((data as { attemptCount?: unknown }).attemptCount ?? 0),
+        body,
+        terminalStatus: "failed",
+      })
       return
     }
     if (err instanceof SendblueServerError) {
@@ -409,15 +499,25 @@ export async function paSendblueOutboxHandler(
       )
       return
     }
-    log("[sendblue][outbox] unexpected error", err instanceof Error ? err.message : String(err))
+    const unexpectedMsg = err instanceof Error ? err.message : String(err)
+    log("[sendblue][outbox] unexpected error", unexpectedMsg)
     await ref.set(
       {
         status: "failed",
-        error: err instanceof Error ? err.message : String(err),
+        error: unexpectedMsg,
         updatedAt: now().toISOString(),
       },
       { merge: true }
     )
+    logOutboundFailure(log, {
+      docId,
+      userId,
+      idempotencyKey: typeof data.idempotencyKey === "string" ? String(data.idempotencyKey) : undefined,
+      lastError: unexpectedMsg,
+      attempts: Number((data as { attemptCount?: unknown }).attemptCount ?? 0),
+      body,
+      terminalStatus: "failed",
+    })
     return
   }
 }
