@@ -130,3 +130,27 @@ test("Phase 40 — citation flatten idempotent + does not break clean URL", () =
   const r2 = normalizeForIMessage(r.text, { maxLength: 600 })
   assert.equal(r2.text, r.text)
 })
+
+test("Phase 40 — long markdown link → newline-separated bare URL (iMessage preview)", () => {
+  // iMessage Smart Linkify only previews URLs when they're standalone tokens.
+  // Paren-wrapped or otherwise-attached URLs do NOT preview. Long URLs go on
+  // their own line so the preview card renders below the prose.
+  const r = normalizeForIMessage(
+    "Read more here [Fortune Magazine Article on Q1 Earnings](https://www.fortune.com/2026/04/26/tesla-q1-earnings-up)",
+    { maxLength: 600 }
+  )
+  assert.match(r.text, /https:\/\/www\.fortune\.com\/2026\/04\/26\/tesla-q1-earnings-up/)
+  // Must NOT be wrapped in parens (kills preview)
+  assert.doesNotMatch(r.text, /\(https:/)
+  // Must be on its own line OR preceded by whitespace/newline
+  assert.match(r.text, /\n\s*https:\/\//)
+})
+
+test("Phase 40 — short markdown link → inline bare URL (still previews)", () => {
+  const r = normalizeForIMessage(
+    "see [link](https://x.com/p)",
+    { maxLength: 600 }
+  )
+  assert.match(r.text, /https:\/\/x\.com\/p/)
+  assert.doesNotMatch(r.text, /\(https/)
+})

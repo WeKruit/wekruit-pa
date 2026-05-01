@@ -86,8 +86,12 @@ function replaceMarkdownLinks(input: string, paramNames: ReadonlyArray<string>, 
     const t = (text as string).trim()
     if (t.length === 0) return u
     if (t === href || t === u) return u
+    // iMessage preview only fires when the URL is "standalone" — bare token
+    // separated by whitespace, not wrapped in parens. Short URLs inline
+    // (text + space + URL); long URLs on their own line so the preview card
+    // renders cleanly under the prose.
     if (u.length <= 30) return `${t} ${u}`
-    return `${t} (${u})`
+    return `${t}\n${u}`
   })
 }
 
