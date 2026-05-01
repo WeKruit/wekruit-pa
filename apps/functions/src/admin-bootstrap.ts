@@ -324,6 +324,12 @@ const SEED_FLAGS: FlagSpec[] = [
   // Adam adds his id to allowlist via dashboard before live testing. The
   // daily cron consults this flag per user and silently skips when off.
   { key: "paJobRecEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
+  // Stream H3 — second-CV overwrite UX. perUser; default OFF; allowlist
+  // empty by design (Adam pulls the trigger via dashboard). When ON for a
+  // user AND that user already has ≥1 parsedCandidateResumes row, cv-ingest
+  // stages new uploads in `pa-cv-pending` and prompts the user via outbound
+  // iMessage (love = replace / question = supplement / 24h TTL = replace).
+  { key: "paCvOverwritePromptEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
 ]
 
 export function checkAdminToken(provided: string | undefined): { ok: boolean; status: number; error?: string } {

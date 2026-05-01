@@ -778,6 +778,29 @@ export const paOnTapbackEvent = onDocumentCreated(
       return
     }
     try {
+      // Stream H3 — try the cv-overwrite resolver first. If the tapback was
+      // a love/question reaction on an `out-cv-overwrite-*` prompt, this
+      // promotes the staged CV (replace or supplement) and short-circuits
+      // the job-rec flow. Otherwise we fall through to the existing
+      // match-feedback pipeline.
+      const { processCvOverwriteTapback } = await import("./job-rec/cv-overwrite-tapback.js")
+      const cvResult = await processCvOverwriteTapback(getFirestore(), {
+        userId: data.userId,
+        fromNumber: data.fromNumber,
+        kind: data.kind,
+        quotedText: data.quotedText,
+      })
+      if (cvResult.handled) {
+        logger.info("paOnTapbackEvent cv_overwrite_handled", {
+          id: event.params.id,
+          kind: data.kind,
+          action: cvResult.action,
+          newResumeId: cvResult.newResumeId,
+          previousResumeId: cvResult.previousResumeId,
+        })
+        return
+      }
+
       const { processTapbackForFeedback } = await import("./job-rec/match-feedback.js")
       const result = await processTapbackForFeedback(getFirestore(), {
         userId: data.userId,

@@ -136,6 +136,41 @@ export type IngestCvDeps = {
    * returning the fields needed by E1 (toE164) and E2 (mem0UserId).
    */
   lookupUserForFollowup?: (db: Firestore, userId: string) => Promise<CvFollowupUser | null>
+
+  // ---- Stream H3 — second-CV detection + overwrite-prompt UX ----
+  //
+  // Flag-gated (paCvOverwritePromptEnabled, default OFF). When the user
+  // already has a parsedCandidateResumes row AND the flag is ON, we DO NOT
+  // write the new CV directly. Instead we stage it in `pa-cv-pending` and
+  // enqueue an outbound iMessage asking whether to replace the previous
+  // version (❤️ tapback = replace, 🤔 = supplement). 24-hour TTL fallback
+  // auto-promotes (replace) via runPendingCvTtlSweep.
+
+  /**
+   * Inject for tests. Defaults to a Firestore feature-flag lookup via
+   * @pa/pa-persistence's getFlag. Resolves the flag for THIS user.
+   */
+  isFlagEnabled?: (db: Firestore, key: string, userId: string) => Promise<boolean>
+  /**
+   * Inject for tests. Defaults to a Firestore query of
+   * `parsedCandidateResumes` where `userId == X`, ordered by `createdAt`
+   * desc, limit 1 (filters out rows with `archived == true`). Returns the
+   * most recent NON-archived doc, or null when the user has none.
+   */
+  findExistingResume?: (
+    db: Firestore,
+    userId: string
+  ) => Promise<{ id: string; data: Record<string, unknown> } | null>
+  /**
+   * Inject for tests. Defaults to a Firestore `.doc(newResumeId).create()`
+   * write on the `pa-cv-pending` collection. Idempotent (duplicate id
+   * throws ALREADY_EXISTS, caller catches + logs).
+   */
+  enqueueCvOverwritePending?: (
+    db: Firestore,
+    newResumeId: string,
+    payload: Record<string, unknown>
+  ) => Promise<void>
 }
 
 const PARSED_RESUMES_COLLECTION = "parsedCandidateResumes"
@@ -148,6 +183,14 @@ const LLM_MODEL = "gpt-5.4-nano"
 const OUTBOUND_COLLECTION = "pa-outbound"
 const FOLLOWUP_DOC_PREFIX = "out-cvfindings-"
 const PA_USERS_COLLECTION = "pa-users"
+
+// Stream H3 — second-CV overwrite UX
+export const CV_OVERWRITE_FLAG_KEY = "paCvOverwritePromptEnabled"
+export const CV_PENDING_COLLECTION = "pa-cv-pending"
+export const CV_OVERWRITE_OUTBOUND_PREFIX = "out-cv-overwrite-"
+const CV_PENDING_TTL_MS = 24 * 60 * 60 * 1000 // 24 hours
+const CV_OVERWRITE_PROMPT_BODY =
+  "欸看到你又发了份新简历 — 替代之前那份吗？回复 ❤️ = 替代旧的，🤔 = 当作另一个版本参考 (24 小时后默认替代)"
 
 // --- Default fetch ---------------------------------------------------------
 
@@ -733,6 +776,88 @@ async function runMem0Write(args: {
 }
 
 // ---------------------------------------------------------------------------
+// Stream H3 — second-CV detection + overwrite UX defaults
+// ---------------------------------------------------------------------------
+
+async function defaultIsFlagEnabled(
+  db: Firestore,
+  key: string,
+  userId: string
+): Promise<boolean> {
+  // Lazy import — pa-persistence pulls in firebase-admin types we already
+  // have, but keeps cv-ingest module-load cheap when the flag path isn't hit.
+  try {
+    const mod = (await import("@pa/pa-persistence")) as {
+      getFlag: (
+        db: Firestore,
+        key: string,
+        ctx: { userId?: string },
+        defaultValue?: boolean
+      ) => Promise<boolean | number | string>
+    }
+    const v = await mod.getFlag(db, key, { userId }, false)
+    return v === true
+  } catch {
+    // Flag-system unavailable → treat as OFF (backward-compat: existing
+    // single-bucket flow runs unchanged).
+    return false
+  }
+}
+
+async function defaultFindExistingResume(
+  db: Firestore,
+  userId: string
+): Promise<{ id: string; data: Record<string, unknown> } | null> {
+  // Strategy: query userId == X order by createdAt desc limit 1. We
+  // intentionally read +1 extra row so we can skip an `archived: true`
+  // doc without a second roundtrip when the most-recent slot was
+  // tombstoned by a previous overwrite. (Indexed query needed in
+  // production; falls back to in-memory filter when the composite
+  // index isn't ready.)
+  type DocLike = {
+    id: string
+    data(): Record<string, unknown> | undefined
+  }
+  type SnapLike = { docs: DocLike[] }
+  let snap: SnapLike
+  try {
+    const q = db
+      .collection(PARSED_RESUMES_COLLECTION)
+      .where("userId", "==", userId)
+      .orderBy("createdAt", "desc")
+      .limit(5)
+    snap = (await (q as unknown as { get: () => Promise<SnapLike> }).get()) as SnapLike
+  } catch {
+    // Index-missing fallback — full-scan filter (small N per user).
+    try {
+      const q = db
+        .collection(PARSED_RESUMES_COLLECTION)
+        .where("userId", "==", userId)
+        .limit(20)
+      snap = (await (q as unknown as { get: () => Promise<SnapLike> }).get()) as SnapLike
+    } catch {
+      return null
+    }
+  }
+  for (const d of snap.docs) {
+    const data = d.data() ?? {}
+    if (data["archived"] === true) continue
+    return { id: d.id, data }
+  }
+  return null
+}
+
+async function defaultEnqueueCvOverwritePending(
+  db: Firestore,
+  newResumeId: string,
+  payload: Record<string, unknown>
+): Promise<void> {
+  // .create() throws ALREADY_EXISTS on duplicate id — exactly the
+  // idempotency semantics we want. Caller catches + logs + skips.
+  await db.collection(CV_PENDING_COLLECTION).doc(newResumeId).create(payload)
+}
+
+// ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
 
@@ -771,6 +896,11 @@ export async function ingestCv(
   const mem0AddFn = deps?.mem0Add ?? defaultMem0Add
   const lookupUserForFollowup =
     deps?.lookupUserForFollowup ?? defaultLookupUserForFollowup
+  // Stream H3 — second-CV overwrite UX (flag-gated, default OFF).
+  const isFlagEnabled = deps?.isFlagEnabled ?? defaultIsFlagEnabled
+  const findExistingResume = deps?.findExistingResume ?? defaultFindExistingResume
+  const enqueueCvOverwritePending =
+    deps?.enqueueCvOverwritePending ?? defaultEnqueueCvOverwritePending
 
   if (!args || typeof args !== "object" || !args.userId || !args.mediaUrl) {
     return { ok: false, reason: "invalid_input" }
@@ -834,7 +964,157 @@ export async function ingestCv(
     model: LLM_MODEL,
   })
 
-  // 4. Firestore write
+  // 4. Stream H3 gate — feature-flag + existing-resume detection.
+  //    When BOTH are true (flag ON AND user has ≥1 prior resume), we DO NOT
+  //    write parsedCandidateResumes yet. Stage in pa-cv-pending and prompt
+  //    the user via outbound iMessage. Otherwise fall through to the
+  //    direct-write path (backward compat).
+  let h3FlagOn = false
+  let prior: { id: string; data: Record<string, unknown> } | null = null
+  try {
+    h3FlagOn = await isFlagEnabled(dbHandle, CV_OVERWRITE_FLAG_KEY, args.userId)
+  } catch (err) {
+    // Flag read failure → treat as OFF (graceful degrade to legacy path).
+    log("pa.cv_overwrite.flag_read_error", {
+      userId: args.userId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    h3FlagOn = false
+  }
+  if (h3FlagOn) {
+    try {
+      prior = await findExistingResume(dbHandle, args.userId)
+    } catch (err) {
+      log("pa.cv_overwrite.lookup_error", {
+        userId: args.userId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+      prior = null
+    }
+  }
+  if (h3FlagOn && prior) {
+    // Flag ON + existing → stage + prompt path.
+    const ts = nowIso()
+    // Reserve a NEW Firestore auto-id for the eventual promoted row. We
+    // only allocate the id; we DO NOT write parsedCandidateResumes here.
+    const newResumeId = dbHandle.collection(PARSED_RESUMES_COLLECTION).doc().id
+    const expireAt = new Date(new Date(ts).getTime() + CV_PENDING_TTL_MS).toISOString()
+    const stagedDoc = {
+      userId: args.userId,
+      candidateProfile: parsed.candidateProfile,
+      experiences: parsed.experiences,
+      education: parsed.education,
+      industryTags: parsed.industryTags,
+      originalFileName: deriveOriginalFileName(args.mediaUrl),
+      fileType: "application/pdf",
+      studentFrom: null,
+      sessionId: args.sessionId ?? null,
+      mediaUrl: args.mediaUrl,
+      ingestedAt: ts,
+      ingestedVia: "imessage-attachment",
+      // No `createdAt` Timestamp here — only set on promote, so the row
+      // doesn't accidentally enter the "most recent" sort window.
+    }
+    // Stage pending (idempotent on auto-id collision, which won't happen
+    // in practice — id is server-allocated).
+    let pendingWritten = false
+    try {
+      await enqueueCvOverwritePending(dbHandle, newResumeId, {
+        newResumeId,
+        previousResumeId: prior.id,
+        userId: args.userId,
+        expireAt,
+        createdAt: ts,
+        parsedDoc: stagedDoc,
+        status: "awaiting_user",
+      })
+      pendingWritten = true
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      const isDup = /already.?exists|6 ALREADY_EXISTS/i.test(msg)
+      log(isDup ? "pa.cv_overwrite.pending_idempotent_skip" : "pa.cv_overwrite.error", {
+        stage: "pending",
+        error: msg,
+        userId: args.userId,
+        newResumeId,
+      })
+      if (!isDup) {
+        // Real failure → fall through to legacy write so we don't drop
+        // the CV silently. Legacy path is the safe baseline.
+        h3FlagOn = false
+      }
+    }
+    if (pendingWritten) {
+      // Enqueue outbound prompt (idempotent docId per newResumeId).
+      const promptDocId = `${CV_OVERWRITE_OUTBOUND_PREFIX}${newResumeId}`
+      let userForPrompt: CvFollowupUser | null = null
+      try {
+        userForPrompt = await lookupUserForFollowup(dbHandle, args.userId)
+      } catch (err) {
+        log("pa.cv_overwrite.user_lookup_error", {
+          userId: args.userId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+      if (userForPrompt?.toE164) {
+        try {
+          await enqueueOutboundFollowup(dbHandle, promptDocId, {
+            id: promptDocId,
+            userId: args.userId,
+            toE164: userForPrompt.toE164,
+            body: CV_OVERWRITE_PROMPT_BODY,
+            status: "pending",
+            createdAt: ts,
+            createdBy: "cv-overwrite-prompt",
+            idempotencyKey: newResumeId,
+            attempts: 0,
+            // Carry resumeIds in rawMeta so the tapback handler can resolve
+            // the pending row without re-querying by docId pattern.
+            rawMeta: {
+              cvOverwrite: {
+                newResumeId,
+                previousResumeId: prior.id,
+              },
+            },
+          })
+          log("pa.cv_overwrite.prompt_enqueued", {
+            userId: args.userId,
+            newResumeId,
+            previousResumeId: prior.id,
+            docId: promptDocId,
+          })
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err)
+          const isDup = /already.?exists|6 ALREADY_EXISTS/i.test(msg)
+          log(
+            isDup ? "pa.cv_overwrite.prompt_idempotent_skip" : "pa.cv_overwrite.error",
+            {
+              stage: "prompt_enqueue",
+              error: msg,
+              userId: args.userId,
+              docId: promptDocId,
+            }
+          )
+        }
+      } else {
+        log("pa.cv_overwrite.prompt_skipped", {
+          reason: "no_phone",
+          userId: args.userId,
+          newResumeId,
+        })
+      }
+      // H3 short-circuits — DO NOT run E1/E2 side effects on a staged CV;
+      // those run after promote. Caller gets the would-be resumeId so
+      // logs are still traceable, but ok=true reflects the staged state.
+      return { ok: true, resumeId: newResumeId }
+    }
+    // Fell through (pendingWritten === false AND h3FlagOn flipped to false)
+    // → continue to legacy write below. Variables `prior` / `newResumeId`
+    // are local only and not referenced further.
+  }
+
+  // 5. Firestore write (legacy single-bucket path — backward compat when
+  //    flag OFF or no prior resume exists).
   let resumeId: string
   try {
     const ts = nowIso()
