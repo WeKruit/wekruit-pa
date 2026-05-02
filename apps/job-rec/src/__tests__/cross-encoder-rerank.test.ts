@@ -19,6 +19,12 @@ import {
   rerankWithCrossEncoder,
   buildRerankQuery,
   buildJobCandidateText,
+  isStartupJob,
+  isFaangCompany,
+  userPreferStartup,
+  computeStartupBoost,
+  applyStartupBoost,
+  BOOST_WEIGHTS,
 } from "../cross-encoder-rerank.js"
 
 function makeFetchOk(payload: unknown): typeof fetch {
@@ -193,5 +199,191 @@ describe("buildJobCandidateText", () => {
   it("handles missing fields gracefully", () => {
     const t = buildJobCandidateText({ jobTitle: "Engineer" })
     assert.match(t, /Engineer/)
+  })
+})
+
+
+// ===========================================================================
+// Stream I (v1.5 / Phase 43.5) — Startup-vs-corp scoring boost tests.
+// Eight cases per the task brief.
+// ===========================================================================
+
+describe("Stream I — startup-vs-corp boost", () => {
+  it("user strong-yes startup × Stripe (FAANG allowlist) → ×1.0", () => {
+    const userSignal = userPreferStartup({
+      statedPreferences: { prefersStartup: true },
+      cvExperiences: [],
+    })
+    assert.equal(userSignal, 1.0, "stated true → strong-yes")
+    const mult = computeStartupBoost(userSignal, {
+      companyName: "Stripe",
+      jobTitle: "Senior PM",
+    })
+    // Stripe is in FAANG_ALLOWLIST so isStartupJob → false. Strong-yes × FAANG
+    // is NOT a defined boost combo → ×1.0 (Stripe is not a startup, even
+    // though it's not "FAANG" by acronym).
+    assert.equal(mult, 1.0, "Stripe is allowlisted as not-startup → no boost")
+    assert.equal(isFaangCompany("Stripe"), true)
+    assert.equal(isFaangCompany("STRIPE"), true, "case-insensitive lookup")
+  })
+
+  it("user strong-yes startup × early-stage YC company → ×1.3", () => {
+    const userSignal = userPreferStartup({
+      statedPreferences: { prefersStartup: true },
+    })
+    const mult = computeStartupBoost(userSignal, {
+      companyName: "Acme Robotics (YC W24)",
+      jobTitle: "Founding Engineer",
+      companyEmployeeCount: 12,
+    })
+    assert.equal(mult, BOOST_WEIGHTS.STRONG_YES_STARTUP)
+    assert.equal(mult, 1.3)
+  })
+
+  it("user lean-yes (CV-detected) startup × early-stage → ×1.15", () => {
+    const userSignal = userPreferStartup({
+      // No stated prefs — CV alone determines lean-yes.
+      cvExperiences: [{ company: "Mercury (Series A)", companyEmployeeCount: 80 }],
+    })
+    assert.equal(userSignal, 0.5, "CV-only signal → lean-yes")
+    const mult = computeStartupBoost(userSignal, {
+      companyName: "EarlyCo",
+      companyEmployeeCount: 20,
+    })
+    assert.equal(mult, BOOST_WEIGHTS.LEAN_YES_STARTUP)
+    assert.equal(mult, 1.15)
+  })
+
+  it("user strong-no × Google (FAANG) → ×1.2 (FAANG-native gets FAANG boost)", () => {
+    const userSignal = userPreferStartup({
+      statedPreferences: { prefersStartup: false },
+      cvExperiences: [{ company: "Google", companyEmployeeCount: 180000 }],
+    })
+    assert.equal(userSignal, -1.0, "stated false + FAANG CV → strong-no")
+    const mult = computeStartupBoost(userSignal, {
+      companyName: "Google",
+      jobTitle: "Staff SWE",
+    })
+    assert.equal(mult, BOOST_WEIGHTS.STRONG_NO_FAANG)
+    assert.equal(mult, 1.2)
+  })
+
+  it("user neutral (no stated, no CV signal) × any → ×1.0", () => {
+    const userSignal = userPreferStartup({})
+    assert.equal(userSignal, 0.0)
+    const mult1 = computeStartupBoost(userSignal, {
+      companyName: "Acme",
+      companyEmployeeCount: 50,
+    })
+    const mult2 = computeStartupBoost(userSignal, {
+      companyName: "Google",
+    })
+    assert.equal(mult1, 1.0)
+    assert.equal(mult2, 1.0)
+  })
+
+  it("unknown company size + no FAANG hit + no keyword → conservative no-boost", () => {
+    // User strong-yes for startup, but the job has zero startup signal.
+    // isStartupJob → null → boost stays 1.0 (we'd rather miss than mis-fire).
+    const userSignal = userPreferStartup({
+      statedPreferences: { prefersStartup: true },
+    })
+    assert.equal(isStartupJob({ companyName: "Mid-Stage Inc", jobTitle: "SWE II" }), null)
+    const mult = computeStartupBoost(userSignal, {
+      companyName: "Mid-Stage Inc",
+      jobTitle: "SWE II",
+      // companyEmployeeCount intentionally undefined
+    })
+    assert.equal(mult, 1.0, "unknown signal stays neutral")
+  })
+
+  it("allowlist edge case: 'Amazon' company name matches even on non-Amazon-flavored role", () => {
+    // The allowlist is companyName-based, so any role at "Amazon" (Web Services,
+    // Retail, Studios, Music...) maps to not-startup. This is by design — the
+    // boost is about company size/stage, not role flavor.
+    assert.equal(isFaangCompany("Amazon"), true)
+    assert.equal(isFaangCompany("amazon"), true)
+    const userYes = userPreferStartup({
+      statedPreferences: { prefersStartup: true },
+    })
+    const mult = computeStartupBoost(userYes, {
+      companyName: "Amazon",
+      jobTitle: "Music Editorial Curator",
+      companyEmployeeCount: 1500000,
+    })
+    assert.equal(mult, 1.0, "Amazon stays not-startup regardless of role")
+  })
+
+  it("bilingual startup keyword detection: 创业 / 早期 / 我们刚拿到融资", () => {
+    // Each keyword on its own should fire isStartupJob → true.
+    assert.equal(isStartupJob({ companyName: "某创业公司" }), true, "创业 (zh)")
+    assert.equal(isStartupJob({ companyName: "Foo Labs", jobTitle: "早期工程师" }), true, "早期 (zh)")
+    assert.equal(isStartupJob({ companyName: "Bar Inc", jobTitle: "我们刚拿到融资 — Eng #3" }), true, "刚拿到融资 (zh)")
+    // English bank too — sanity.
+    assert.equal(isStartupJob({ companyName: "Series B Robotics" }), true, "series b (en)")
+    assert.equal(isStartupJob({ companyName: "Stealth Mode Co" }), true, "stealth mode (en)")
+    assert.equal(isStartupJob({ companyName: "Founding Engineer Inc" }), true, "founding engineer (en)")
+  })
+})
+
+describe("Stream I — applyStartupBoost integration", () => {
+  it("flag-off path: neutral user → returns identity ranking + empty explanations", () => {
+    const jobs = [
+      { id: "a", companyName: "Acme", companyEmployeeCount: 30 },
+      { id: "b", companyName: "Google" },
+      { id: "c", companyName: "Random Co" },
+    ]
+    const out = applyStartupBoost(jobs, 0.0)
+    assert.deepEqual(out.jobs.map((j) => j.id), ["a", "b", "c"])
+    assert.equal(out.explanations.length, 0)
+  })
+
+  it("strong-yes user reorders startup ahead of FAANG when base scores are equal", () => {
+    const jobs = [
+      { id: "faang", companyName: "Google" },
+      { id: "startup", companyName: "Acme YC W24", companyEmployeeCount: 15 },
+    ]
+    const out = applyStartupBoost(jobs, 1.0)
+    assert.equal(out.jobs[0]!.id, "startup", "startup should now lead")
+    assert.equal(out.explanations.length, 1)
+    assert.equal(out.explanations[0]!.jobId, "startup")
+    assert.equal(out.explanations[0]!.boostMult, 1.3)
+    assert.equal(out.explanations[0]!.jobSignal, "startup")
+  })
+
+  it("respects baseScores when provided (cross-encoder integration)", () => {
+    const jobs = [
+      { id: "x", companyName: "Tiny Co", companyEmployeeCount: 25 },
+      { id: "y", companyName: "Random Mid", companyEmployeeCount: 5000 },
+    ]
+    const baseScores = new Map<string, number | null>([
+      ["x", 0.5],
+      ["y", 0.9],
+    ])
+    // Without boost: y > x. With strong-yes startup boost: x*1.3=0.65, y*1.0=0.9 → y still wins.
+    const out = applyStartupBoost(jobs, 1.0, baseScores)
+    assert.equal(out.jobs[0]!.id, "y")
+    // But if x's base was 0.8: 0.8*1.3=1.04 > 0.9 → x wins.
+    const baseScores2 = new Map<string, number | null>([
+      ["x", 0.8],
+      ["y", 0.9],
+    ])
+    const out2 = applyStartupBoost(jobs, 1.0, baseScores2)
+    assert.equal(out2.jobs[0]!.id, "x", "boosted x should overtake y")
+  })
+
+  it("latency budget: < 5ms over 100 jobs", () => {
+    const jobs = Array.from({ length: 100 }, (_, i) => ({
+      id: `j${i}`,
+      companyName: i % 7 === 0 ? "Google" : i % 5 === 0 ? "Series B Co" : `Random ${i}`,
+      companyEmployeeCount: i * 50,
+      jobTitle: i % 11 === 0 ? "founding engineer" : "senior engineer",
+    }))
+    const t0 = performance.now()
+    for (let k = 0; k < 10; k++) {
+      applyStartupBoost(jobs, 1.0)
+    }
+    const elapsed = (performance.now() - t0) / 10
+    assert.ok(elapsed < 5, `boost must be < 5ms over 100 jobs, got ${elapsed.toFixed(2)}ms`)
   })
 })

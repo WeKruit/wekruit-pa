@@ -94,6 +94,12 @@ export const MatchingJobSchema = z.object({
   jobType: z.string().optional(),
   requiredSkills: z.array(z.string()).optional(),
   firstSeenAt: z.string().optional(),
+  /**
+   * Stream I (v1.5 / Phase 43.5) — optional Firestore enrichment field used
+   * by the startup-vs-corp boost. When unknown, the boost is conservative
+   * (no startup signal). Persisted by enrichment crawlers (Phase 39).
+   */
+  companyEmployeeCount: z.number().int().nonnegative().nullable().optional(),
 })
 export type MatchingJob = z.infer<typeof MatchingJobSchema>
 

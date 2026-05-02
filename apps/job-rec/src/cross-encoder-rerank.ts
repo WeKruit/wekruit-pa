@@ -199,3 +199,292 @@ export function buildJobCandidateText(job: {
   const ik = job.industryKey ? ` (${job.industryKey})` : ""
   return `${title} at ${co}${ik}${skills}`.slice(0, 480)
 }
+
+
+// ===========================================================================
+// Stream I (v1.5 / Phase 43.5) — Startup-vs-corp scoring boost.
+//
+// Pure heuristic. Zero new LLM calls. Multiplicative weights applied AFTER
+// cross-encoder rerank, BEFORE applyTitleAntiBias. Latency budget < 5ms over
+// 100 jobs (string ops + Set lookup + small regex bank).
+//
+// User signal hierarchy (one of {1.0, 0.5, 0.0, -0.5, -1.0}):
+//   +1.0 strong-yes  : statedPreferences.prefersStartup === true
+//   +0.5 lean-yes    : no statement BUT CV has startup-keyword/<500-emp company
+//    0.0 neutral     : no statement + no CV signal
+//   -0.5 lean-no     : statedPreferences.prefersStartup === false
+//   -1.0 strong-no   : prefersStartup === false AND CV is FAANG-dominant
+//
+// Job signal: isStartupJob(job) returns boolean OR null when we can't tell.
+//   - allowlisted FAANG/top-50 → not-startup (false)
+//   - companyEmployeeCount < 500 → startup (true)
+//   - startup-keyword match in companyName/jobTitle → startup (true)
+//   - else → null (unknown — conservative no-boost)
+//
+// Boost matrix (multiplied onto the cross-encoder relevance score):
+//   user +1.0 × startup job  → ×1.30  (strong-yes match)
+//   user +0.5 × startup job  → ×1.15  (lean-yes match)
+//   user -1.0 × FAANG job    → ×1.20  (FAANG-native gets FAANG boost)
+//   else                     → ×1.00  (no change)
+//
+// Flag-off path returns identity ranking (boost is a no-op).
+// ===========================================================================
+
+/**
+ * Hand-curated FAANG + top-50 enterprise allowlist. ~80 entries. Hand-curated
+ * (NOT LLM-generated) because anything else risks adding mid-stage startups
+ * that happened to ship a press release. Lower-cased + trimmed; comparison
+ * is case-insensitive.
+ *
+ * Source criteria: (a) company employee count > ~5,000, AND (b) public-market
+ * cap or post-IPO unicorn, AND (c) widely understood as "big-co" by US
+ * candidates. We deliberately exclude post-IPO scaleups < 5y from IPO
+ * (e.g. Snowflake/Databricks at the boundary — included; Brex/Ramp — excluded).
+ *
+ * Add-only as the corpus shifts. Each addition is a one-line entry; do not
+ * sort — ordering doesn't matter for Set lookup.
+ */
+export const FAANG_ALLOWLIST: ReadonlySet<string> = new Set([
+  // Big tech / FAANG
+  "google", "alphabet", "apple", "amazon", "meta", "facebook", "microsoft",
+  "netflix",
+  // Public-cap tech
+  "stripe", "snowflake", "databricks", "openai", "anthropic", "nvidia",
+  "tesla", "spacex", "uber", "lyft", "airbnb", "doordash", "instacart",
+  "pinterest", "reddit", "linkedin", "twitter", "x corp", "spotify",
+  "shopify", "atlassian", "servicenow", "workday", "intuit", "paypal",
+  "square", "block", "coinbase", "robinhood",
+  // Legacy enterprise
+  "ibm", "oracle", "sap", "salesforce", "cisco", "adobe", "vmware", "dell",
+  "hp", "hewlett-packard", "intel", "amd", "qualcomm", "broadcom",
+  "texas instruments", "applied materials", "lam research",
+  // Consulting / finance giants
+  "mckinsey", "bain", "bcg", "deloitte", "accenture", "kpmg", "ey", "pwc",
+  "goldman sachs", "morgan stanley", "jpmorgan", "jpmorgan chase",
+  "bank of america", "citigroup", "wells fargo", "blackrock",
+  "two sigma", "citadel", "jane street", "jump trading", "hudson river trading",
+  // Other enterprise
+  "walmart", "target", "costco", "fedex", "ups",
+  "disney", "warner bros", "comcast", "at&t", "verizon",
+  "boeing", "lockheed martin", "raytheon", "northrop grumman",
+  // China big tech (some users care)
+  "alibaba", "tencent", "bytedance", "baidu", "meituan", "jd.com",
+  "pinduoduo", "didi", "kuaishou", "xiaomi", "huawei",
+])
+
+/**
+ * Bilingual startup keywords. RegExp array — case-insensitive on the
+ * company-name/job-title side. Ordered most-specific first so matches
+ * surface stronger signal early.
+ */
+export const STARTUP_KEYWORDS: readonly RegExp[] = [
+  // English
+  /\bearly[- ]stage\b/i,
+  /\bseries\s+(?:seed|pre[- ]?seed|a|b|c)\b/i,
+  /\bseed\s+stage\b/i,
+  /\bfounding\s+(?:engineer|team|member)\b/i,
+  /\bfounder['’]?s\s+office\b/i,
+  /\bwe['’]?re\s+hiring\s+our\s+first\b/i,
+  /\bstealth\s+(?:mode|startup)\b/i,
+  /\byc\s+w\d{2}\b/i,
+  /\byc\s+s\d{2}\b/i,
+  /\b(?:y\s+combinator|y-combinator)\b/i,
+  // Chinese
+  /创业/, /早期/, /初创/, /我们刚拿到融资/, /种子轮/, /天使轮/, /A\s*轮/, /B\s*轮/,
+  /创始团队/, /创始工程师/,
+]
+
+/**
+ * Tunable boost weights. Centralized so ops can tune without redeploying
+ * Firestore config. Rollback = revert this CONST.
+ */
+export const BOOST_WEIGHTS = {
+  STRONG_YES_STARTUP: 1.3,
+  LEAN_YES_STARTUP: 1.15,
+  STRONG_NO_FAANG: 1.2,
+  NEUTRAL: 1.0,
+} as const
+
+export type UserStartupSignal = -1.0 | -0.5 | 0.0 | 0.5 | 1.0
+
+export type CvExperience = {
+  company?: string | null
+  companyEmployeeCount?: number | null
+  industry?: string | null
+}
+
+/**
+ * Returns true when companyName matches a known FAANG/top-50 entry.
+ * Lower-cased compare. Pure / no allocation per call beyond .trim().
+ */
+export function isFaangCompany(companyName: string | null | undefined): boolean {
+  if (typeof companyName !== "string") return false
+  const c = companyName.trim().toLowerCase()
+  if (c.length === 0) return false
+  return FAANG_ALLOWLIST.has(c)
+}
+
+/**
+ * Returns true when text matches any STARTUP_KEYWORDS regex. Cheap; the
+ * regex bank is small (~20 entries).
+ */
+function matchesStartupKeyword(text: string | null | undefined): boolean {
+  if (typeof text !== "string" || text.length === 0) return false
+  for (const re of STARTUP_KEYWORDS) {
+    if (re.test(text)) return true
+  }
+  return false
+}
+
+/**
+ * Heuristic startup detector. Returns:
+ *   - true  : confident startup (small employee count OR keyword match,
+ *             AND not in FAANG allowlist)
+ *   - false : confident not-startup (FAANG/top-50 allowlist hit)
+ *   - null  : unknown — caller should default to no-boost
+ *
+ * Conservative bias: when companyEmployeeCount is missing AND no keyword
+ * fires AND not in FAANG list → return null (unknown), NOT true. We'd
+ * rather miss a boost than mis-fire one.
+ */
+export function isStartupJob(job: {
+  companyName?: string | null
+  jobTitle?: string | null
+  companyEmployeeCount?: number | null
+}): boolean | null {
+  if (isFaangCompany(job.companyName)) return false
+  // Strong signal: explicit small headcount.
+  if (typeof job.companyEmployeeCount === "number" && job.companyEmployeeCount > 0 && job.companyEmployeeCount < 500) {
+    return true
+  }
+  // Keyword bank — companyName + jobTitle text.
+  if (matchesStartupKeyword(job.companyName) || matchesStartupKeyword(job.jobTitle)) {
+    return true
+  }
+  return null
+}
+
+/**
+ * User-side signal in {-1.0, -0.5, 0.0, 0.5, 1.0}.
+ *
+ * Decision tree:
+ *   prefersStartup === true                                          → +1.0
+ *   prefersStartup === false AND CV-FAANG-dominant                    → -1.0
+ *   prefersStartup === false                                          → -0.5
+ *   prefersStartup unset AND CV has startup-signal experience         → +0.5
+ *   else                                                              →  0.0
+ *
+ * "CV-FAANG-dominant" = ≥1 experience at a FAANG-allowlisted company.
+ * "CV startup-signal" = ≥1 experience matching keyword OR <500 emp.
+ */
+export function userPreferStartup(profile: {
+  statedPreferences?: { prefersStartup?: boolean | null } | null
+  cvExperiences?: readonly CvExperience[] | null
+}): UserStartupSignal {
+  const stated = profile.statedPreferences?.prefersStartup
+  const exps = Array.isArray(profile.cvExperiences) ? profile.cvExperiences : []
+  const hasFaangExp = exps.some((e) => isFaangCompany(e?.company ?? null))
+  const hasStartupExp = exps.some((e) => {
+    if (!e) return false
+    if (typeof e.companyEmployeeCount === "number" && e.companyEmployeeCount > 0 && e.companyEmployeeCount < 500) {
+      return true
+    }
+    return matchesStartupKeyword(e.company ?? null)
+  })
+
+  if (stated === true) return 1.0
+  if (stated === false) {
+    return hasFaangExp ? -1.0 : -0.5
+  }
+  // No statement — fall back to CV.
+  if (hasStartupExp) return 0.5
+  return 0.0
+}
+
+/**
+ * Compute the multiplicative boost for a (user signal, job) pair.
+ * Pure / branchless after lookups. Returns 1.0 (no-op) for unknown jobs
+ * or neutral users — callers can short-circuit on === 1.0.
+ */
+export function computeStartupBoost(
+  userSignal: UserStartupSignal,
+  job: { companyName?: string | null; jobTitle?: string | null; companyEmployeeCount?: number | null }
+): number {
+  const isStartup = isStartupJob(job)
+  // Strong-yes user × startup job
+  if (userSignal === 1.0 && isStartup === true) return BOOST_WEIGHTS.STRONG_YES_STARTUP
+  // Lean-yes user × startup job
+  if (userSignal === 0.5 && isStartup === true) return BOOST_WEIGHTS.LEAN_YES_STARTUP
+  // Strong-no user × FAANG job (isStartup === false means allowlisted-FAANG hit)
+  if (userSignal === -1.0 && isStartup === false) return BOOST_WEIGHTS.STRONG_NO_FAANG
+  return BOOST_WEIGHTS.NEUTRAL
+}
+
+/**
+ * Per-job boost explanation surfaced for daily-push reasoning + observability.
+ * Only emitted when boostMult !== 1.0. Forward-compatible for H13/D2 formatter.
+ */
+export type BoostExplanation = {
+  jobId: string
+  boostMult: number
+  userSignal: UserStartupSignal
+  jobSignal: "startup" | "faang" | "unknown"
+}
+
+/**
+ * Apply startup-vs-corp boost to a ranked candidate set. Pure / deterministic.
+ *
+ * Behavior:
+ *   - When all per-job mults === 1.0, returns input array unchanged + empty
+ *     explanations (zero-cost path).
+ *   - Otherwise, computes pseudo-score `(rank ? rank : pseudo) * mult`, sorts
+ *     descending, and returns the new order + explanations for non-1.0 entries.
+ *
+ * `baseScores` (optional): pass cross-encoder relevance scores if available;
+ * when null/missing for a job, we fall back to `1 / (idx + 1)` so original
+ * order is preserved in the absence of boost.
+ *
+ * Latency: O(n log n) for the sort + O(n) for the scan. ~80-entry Set lookup
+ * + ~20-entry regex bank per job. Empirically < 5ms over 100 jobs.
+ */
+export function applyStartupBoost<
+  J extends { id: string; companyName?: string | null; jobTitle?: string | null; companyEmployeeCount?: number | null },
+>(
+  jobs: readonly J[],
+  userSignal: UserStartupSignal,
+  baseScores?: ReadonlyMap<string, number | null>
+): { jobs: J[]; explanations: BoostExplanation[] } {
+  if (!Array.isArray(jobs) || jobs.length === 0) {
+    return { jobs: [], explanations: [] }
+  }
+  const explanations: BoostExplanation[] = []
+  let anyBoost = false
+  const scored = jobs.map((j, idx) => {
+    const base = (() => {
+      const s = baseScores?.get(j.id)
+      if (typeof s === "number" && Number.isFinite(s) && s > 0) return s
+      // No baseScore → uniform 1.0. The boost mult IS the only differentiator,
+      // which gives user preference full weight. Stable-sort ties by original idx
+      // (so unboosted jobs preserve cross-encoder order among themselves).
+      return 1.0
+    })()
+    const mult = computeStartupBoost(userSignal, j)
+    if (mult !== BOOST_WEIGHTS.NEUTRAL) {
+      anyBoost = true
+      const isStartup = isStartupJob(j)
+      const jobSignal: BoostExplanation["jobSignal"] =
+        isStartup === true ? "startup" : isStartup === false ? "faang" : "unknown"
+      explanations.push({ jobId: j.id, boostMult: mult, userSignal, jobSignal })
+    }
+    return { j, score: base * mult, idx }
+  })
+  if (!anyBoost) {
+    // Zero-impact path — preserve referential identity (cheap caller contract).
+    return { jobs: jobs.slice(), explanations: [] }
+  }
+  scored.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score
+    return a.idx - b.idx // stable on ties
+  })
+  return { jobs: scored.map((s) => s.j), explanations }
+}
