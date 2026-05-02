@@ -89,6 +89,7 @@ import {
 } from "./voice/llm-rewriter.js"
 // Phase 36 — ImperfectionInjector applied post-strip on final visible text.
 import {
+  detectLang,
   injectImperfection,
   resolveArm,
 } from "./voice/imperfection-injector/index.js"
@@ -993,9 +994,19 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
         (evt, payload) => store.log(evt, payload as Record<string, unknown>)
       )
     }
-    const systemPrompt = isVoiceV1Disabled()
+    // v1.5 hotfix — pre-generation language lock. Detect user input language
+    // (zh|en) from event.body and prepend a hard directive. Reactive F3
+    // detector caught some misses post-gen but couldn't always rewrite a fully
+    // generated EN reply back to ZH (and vice versa). Cheap, deterministic,
+    // works regardless of paHumanizeRuntimeEnabled flag state.
+    const userLang = detectLang(event.body)
+    const langLockDirective = userLang === "zh"
+      ? "[LANGUAGE-LOCK]\nuser_input_language: zh (Chinese)\nYou MUST reply in Chinese (中文). Do NOT switch to English unless quoting code, URLs, or proper nouns. Match the user's language register (formal/casual) but NEVER reply in a language different from theirs.\n[/LANGUAGE-LOCK]"
+      : "[LANGUAGE-LOCK]\nuser_input_language: en (English)\nYou MUST reply in English. Do NOT switch to Chinese unless the user explicitly asks for translation or code-switches mid-sentence. Match the user's language.\n[/LANGUAGE-LOCK]"
+    const baseSystemPrompt = isVoiceV1Disabled()
       ? LEGACY_V0_SYSTEM_PROMPT
       : composedSystemPrompt ?? agent.systemPrompt
+    const systemPrompt = `${langLockDirective}\n\n${baseSystemPrompt}`
     // Phase 24 T1B — few-shot relocation. Prepend 12 mes_examples as
     // messages-array alternating turns (~3x style transfer vs system-block).
     // Synthetic fs_* ids MUST be filtered before any Firestore write
