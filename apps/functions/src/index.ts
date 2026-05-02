@@ -62,6 +62,10 @@ export { paAdminBootstrap } from "./admin-bootstrap.js"
 // queries matching-jobs, formats per Bible v7.5.2, enqueues pa-outbound.
 export { paJobRecDaily } from "./job-rec-daily.js"
 
+// Phase 49 (v1.5 / Stream-H / D9) — operator reverse-match dashboard CF.
+// JD + tags + industry → top-K candidates → outbound notify via pa-outbound.
+export { paReverseMatch } from "./paReverseMatch.js"
+
 // Phase 27 T2 — public /health endpoints (one per existing CF). Returns
 // {ok, name, version, ts, deps:{firestore, secrets}}. No auth (probes
 // must be reachable). All endpoints HTTP 200 always; failure surfaces in body.

@@ -152,3 +152,40 @@ export type {
   ExplainMatchDeps,
   ExplainerCv,
 } from "./match-explainer.js"
+
+// Phase 43 (v1.5 / Stream-C) — hard-filter primitives. Newly exported in
+// Phase 49 so the reverse-match dashboard CF can reuse the same logic on
+// the (profile, [synthJob]) pair. Forward path still imports directly via
+// daily-batch.ts; this re-export is purely additive.
+export {
+  applyHardFilters,
+  applyHardFiltersWithFallback,
+} from "./tools/query-matching-jobs.js"
+export type {
+  HardFilterUserProfile,
+  HardFilterResult,
+} from "./tools/query-matching-jobs.js"
+
+// Phase 49 (v1.5 / Stream-H / D9) — reverse-match domain logic. Pure;
+// CF wrapper lives in apps/functions/src/paReverseMatch.ts.
+export {
+  runReverseMatch,
+  synthesizeJobFromJd,
+  buildUserCandidateText,
+  buildMatchedReasons,
+  buildNotifyMessage,
+  passesReverseHardFilter,
+  REVERSE_MATCH_FLAG_KEY,
+  REVERSE_MATCH_POOL_CAP,
+  REVERSE_MATCH_COSINE_TOP_N,
+  REVERSE_MATCH_DEFAULT_TOP_K,
+  REVERSE_MATCH_DAILY_CAP_PER_JD,
+  REVERSE_MATCH_BULK_NOTIFY_CAP,
+} from "./reverse-match.js"
+export type {
+  ReverseMatchInput,
+  ReverseMatchOutput,
+  ReverseMatchCandidate,
+  ReverseMatchUserProfile,
+  ReverseMatchDeps,
+} from "./reverse-match.js"

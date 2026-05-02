@@ -18,6 +18,7 @@ import { UpstreamTemplates } from "./pages/UpstreamTemplates.js"
 import { DownstreamTriggers } from "./pages/DownstreamTriggers.js"
 import { VoiceReview } from "./pages/VoiceReview.js"
 import { NRoundSim } from "./pages/NRoundSim.js"
+import { MatchCandidates } from "./pages/MatchCandidates.js"
 import { auth } from "./lib/firebase.js"
 
 export default function App() {
@@ -85,6 +86,11 @@ export default function App() {
         </div>
 
         <div className="nav-section">
+          <div className="nav-section-label">Match</div>
+          <NavLink to="/match/candidates">Match Candidates</NavLink>
+        </div>
+
+        <div className="nav-section">
           <div className="nav-section-label">Integrations</div>
           <NavLink to="/admin/upstream-templates">Upstream Templates</NavLink>
           <NavLink to="/admin/downstream-triggers">Downstream Triggers</NavLink>
@@ -129,6 +135,9 @@ export default function App() {
           <Route path="/voice" element={<Navigate to="/eval/voice-review" replace />} />
           <Route path="/eval/voice-review" element={<VoiceReview />} />
           <Route path="/eval/n-round-sim" element={<NRoundSim />} />
+          {/* Phase 49 (v1.5 Stream-H D9) — operator reverse-match dashboard. Admin-only;
+              CF gates on paReverseMatchEnabled flag (default OFF). */}
+          <Route path="/match/candidates" element={<MatchCandidates />} />
           {/* Phase 32 Wave 3 — Playbooks + Personas Firestore CRUD. */}
           <Route path="/agent/playbooks" element={<Playbooks />} />
           <Route path="/agent/personas" element={<Personas />} />
