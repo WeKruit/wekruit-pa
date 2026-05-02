@@ -1,0 +1,69 @@
+{
+  "id": "startup-founder-en",
+  "name": "Raj (Ex-Founder)",
+  "language": "en",
+  "description": "Ex-startup founder, 7 years, citizen, strongly prefers startup.",
+  "cv": {
+    "name": "Raj Mehta",
+    "currentRole": "Co-Founder & CTO",
+    "education": "B.S. Electrical Engineering, Stanford (2018)",
+    "yearsExp": 7,
+    "skills": [
+      "TypeScript",
+      "Rust",
+      "Postgres",
+      "Distributed Systems",
+      "Hiring",
+      "Fundraising"
+    ],
+    "experiences": [
+      {
+        "title": "Co-Founder & CTO",
+        "company": "Lattice Labs",
+        "companyEmployeeCount": 12,
+        "startDate": "2022-03",
+        "endDate": "present",
+        "description": "Bootstrapped infra startup; raised seed."
+      },
+      {
+        "title": "Founding Engineer",
+        "company": "Notion",
+        "companyEmployeeCount": 50,
+        "startDate": "2018-06",
+        "endDate": "2022-02",
+        "description": "Early product engineering."
+      }
+    ],
+    "industryTags": [
+      "b2b",
+      "tech"
+    ]
+  },
+  "statedPreferences": {
+    "targetRole": [
+      "founding engineer",
+      "head of engineering"
+    ],
+    "yoeRange": [
+      6,
+      8
+    ],
+    "visaStatus": "citizen",
+    "prefersStartup": true,
+    "targetLocations": [
+      "SF Bay Area"
+    ],
+    "researchOriented": false
+  },
+  "expected_assertions": {
+    "hard_filter_drops_senior": false,
+    "hard_filter_drops_no_sponsorship": false,
+    "friend_tone_opener": true,
+    "no_yoe_violation": true,
+    "ux_no_filler_en": true,
+    "resume_industry_in_enum": true,
+    "startup_boost_positive": true
+  },
+  "canned_first_reply": "more into startup hustle vibe or stable big-co?",
+  "canned_visa_question": "got work auth sorted? citizen / GC / OPT / need sponsorship?"
+}

@@ -1,0 +1,69 @@
+{
+  "id": "researcher-en",
+  "name": "Sara (ML Researcher)",
+  "language": "en",
+  "description": "PhD ML researcher, 3 years post-PhD, sponsorship needed, research-oriented strict.",
+  "cv": {
+    "name": "Sara Patel",
+    "currentRole": "Research Scientist",
+    "education": "Ph.D. Computer Science, MIT (2022); B.Tech, IIT Bombay (2017)",
+    "yearsExp": 3,
+    "skills": [
+      "PyTorch",
+      "JAX",
+      "LLMs",
+      "Distributed Training",
+      "CUDA",
+      "Python",
+      "Research Writing"
+    ],
+    "experiences": [
+      {
+        "title": "Research Scientist",
+        "company": "DeepMind",
+        "companyEmployeeCount": 2500,
+        "startDate": "2022-09",
+        "endDate": "present",
+        "description": "Foundation-model post-training research; 4 first-author papers."
+      },
+      {
+        "title": "PhD Candidate",
+        "company": "MIT CSAIL",
+        "startDate": "2017-09",
+        "endDate": "2022-08",
+        "description": "Thesis on RLHF stability."
+      }
+    ],
+    "industryTags": [
+      "tech"
+    ]
+  },
+  "statedPreferences": {
+    "targetRole": [
+      "research scientist",
+      "applied scientist"
+    ],
+    "yoeRange": [
+      3,
+      5
+    ],
+    "visaStatus": "sponsorship_needed",
+    "prefersStartup": null,
+    "targetLocations": [
+      "SF Bay Area",
+      "remote"
+    ],
+    "researchOriented": true
+  },
+  "expected_assertions": {
+    "hard_filter_drops_senior": false,
+    "hard_filter_drops_no_sponsorship": true,
+    "hard_filter_keeps_research": true,
+    "friend_tone_opener": true,
+    "no_yoe_violation": true,
+    "ux_no_filler_en": true,
+    "resume_industry_in_enum": true
+  },
+  "canned_first_reply": "how many years you been working? or fresh outta school?",
+  "canned_visa_question": "got work auth sorted? citizen / GC / OPT / need sponsorship?"
+}

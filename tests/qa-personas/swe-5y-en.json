@@ -1,0 +1,71 @@
+{
+  "id": "swe-5y-en",
+  "name": "Mike (SWE 5y)",
+  "language": "en",
+  "description": "Mid-level SWE, 5 years at FAANG-adjacent, prefers stable big-co, GC holder.",
+  "cv": {
+    "name": "Mike Chen",
+    "currentRole": "Senior Software Engineer",
+    "education": "B.S. Computer Science, UCLA (2020)",
+    "yearsExp": 5,
+    "skills": [
+      "Go",
+      "Kubernetes",
+      "PostgreSQL",
+      "AWS",
+      "Terraform",
+      "Python",
+      "gRPC"
+    ],
+    "experiences": [
+      {
+        "title": "Senior Software Engineer",
+        "company": "Google",
+        "companyEmployeeCount": 180000,
+        "startDate": "2023-03",
+        "endDate": "present",
+        "description": "Distributed systems on GCP infra team."
+      },
+      {
+        "title": "Software Engineer",
+        "company": "Meta",
+        "companyEmployeeCount": 75000,
+        "startDate": "2020-08",
+        "endDate": "2023-02",
+        "description": "Backend services for Marketplace."
+      }
+    ],
+    "industryTags": [
+      "tech",
+      "b2b"
+    ]
+  },
+  "statedPreferences": {
+    "targetRole": [
+      "staff engineer",
+      "senior engineer"
+    ],
+    "yoeRange": [
+      4,
+      6
+    ],
+    "visaStatus": "gc",
+    "prefersStartup": false,
+    "targetLocations": [
+      "SF Bay Area",
+      "Seattle"
+    ],
+    "researchOriented": false
+  },
+  "expected_assertions": {
+    "hard_filter_drops_senior": false,
+    "hard_filter_drops_no_sponsorship": false,
+    "friend_tone_opener": true,
+    "no_yoe_violation": true,
+    "ux_no_filler_en": true,
+    "resume_industry_in_enum": true,
+    "startup_boost_negative": true
+  },
+  "canned_first_reply": "btw — what kinda role you eyeing? eng / pm / research / design? roughly is fine",
+  "canned_visa_question": "got work auth sorted? citizen / GC / OPT / need sponsorship?"
+}

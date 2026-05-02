@@ -1,0 +1,51 @@
+{
+  "id": "pm-10y-zh",
+  "name": "Jenny (PM 10y)",
+  "language": "zh",
+  "description": "Senior PM, 10 years across consumer + fintech, US citizen, prefers startup.",
+  "cv": {
+    "name": "Jenny Liu",
+    "currentRole": "Senior Product Manager",
+    "education": "MBA, Wharton (2018); B.A. Economics, Tsinghua (2014)",
+    "yearsExp": 10,
+    "skills": ["Product Strategy", "User Research", "SQL", "Roadmapping", "A/B Testing", "Figma"],
+    "experiences": [
+      {
+        "title": "Senior Product Manager",
+        "company": "Stripe",
+        "companyEmployeeCount": 7000,
+        "startDate": "2022-01",
+        "endDate": "present",
+        "description": "Led payments-API team; launched 3 SMB-facing products."
+      },
+      {
+        "title": "Product Manager",
+        "company": "Snap Inc",
+        "companyEmployeeCount": 5000,
+        "startDate": "2018-08",
+        "endDate": "2021-12",
+        "description": "Owned Spotlight monetization."
+      }
+    ],
+    "industryTags": ["fintech", "consumer"]
+  },
+  "statedPreferences": {
+    "targetRole": ["principal pm", "head of product"],
+    "yoeRange": [9, 11],
+    "visaStatus": "citizen",
+    "prefersStartup": true,
+    "targetLocations": ["NYC", "SF Bay Area"],
+    "researchOriented": false
+  },
+  "expected_assertions": {
+    "hard_filter_drops_senior": false,
+    "hard_filter_drops_no_sponsorship": false,
+    "friend_tone_opener": true,
+    "no_yoe_violation": true,
+    "ux_no_filler_zh": true,
+    "resume_industry_in_enum": true,
+    "startup_boost_positive": true
+  },
+  "canned_first_reply": "在呢. 你工作几年了? 还是刚毕业找新人岗?",
+  "canned_visa_question": "那你有身份不? 公民/绿卡/OPT/还是要 sponsor?"
+}

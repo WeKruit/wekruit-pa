@@ -1,0 +1,65 @@
+{
+  "id": "college-student-zh",
+  "name": "Wei (大三在读)",
+  "language": "zh",
+  "description": "College junior, ZH primary, OPT-eligible after graduation, looking for entry-level data/SWE.",
+  "cv": {
+    "name": "Wei Zhang",
+    "currentRole": "Computer Science Student",
+    "education": "B.S. Computer Science, UC Berkeley (expected 2027)",
+    "yearsExp": 0,
+    "skills": [
+      "Python",
+      "JavaScript",
+      "React",
+      "SQL",
+      "Git"
+    ],
+    "experiences": [
+      {
+        "title": "Software Engineering Intern",
+        "company": "EarlyStartup AI",
+        "companyEmployeeCount": 35,
+        "startDate": "2025-06",
+        "endDate": "present",
+        "description": "Built internal LLM-eval dashboard in React + Python."
+      },
+      {
+        "title": "CS Student",
+        "company": "UC Berkeley",
+        "startDate": "2024-09",
+        "endDate": "present",
+        "description": "Coursework in algorithms, OS, ML."
+      }
+    ],
+    "industryTags": [
+      "tech"
+    ]
+  },
+  "statedPreferences": {
+    "targetRole": [
+      "software engineer",
+      "data analyst"
+    ],
+    "yoeRange": [
+      0,
+      0
+    ],
+    "visaStatus": "opt",
+    "prefersStartup": null,
+    "targetLocations": [
+      "SF Bay Area"
+    ],
+    "researchOriented": null
+  },
+  "expected_assertions": {
+    "hard_filter_drops_senior": true,
+    "hard_filter_drops_no_sponsorship": false,
+    "friend_tone_opener": true,
+    "no_yoe_violation": true,
+    "ux_no_filler_zh": true,
+    "resume_industry_in_enum": true
+  },
+  "canned_first_reply": "在呢. 那你大概想找啥方向的活? 比如做产品、做工程、还是做研究 — 给我个大致就行 🍋",
+  "canned_visa_question": "那你有身份不? 公民/绿卡/OPT/还是要 sponsor?"
+}

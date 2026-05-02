@@ -1,0 +1,68 @@
+{
+  "id": "new-grad-en",
+  "name": "Alex (CS New Grad)",
+  "language": "en",
+  "description": "CS new grad, 0 yoe, OPT, location-flexible, startup-curious.",
+  "cv": {
+    "name": "Alex Kim",
+    "currentRole": "CS New Grad",
+    "education": "B.S. Computer Science, CMU (2025)",
+    "yearsExp": 0,
+    "skills": [
+      "Python",
+      "TypeScript",
+      "React",
+      "Node",
+      "Postgres",
+      "Docker"
+    ],
+    "experiences": [
+      {
+        "title": "Software Engineering Intern",
+        "company": "Linear",
+        "companyEmployeeCount": 80,
+        "startDate": "2024-06",
+        "endDate": "2024-08",
+        "description": "Issue tracker UI work."
+      },
+      {
+        "title": "CS Student",
+        "company": "Carnegie Mellon",
+        "startDate": "2021-09",
+        "endDate": "2025-05",
+        "description": "Coursework + open-source contributions."
+      }
+    ],
+    "industryTags": [
+      "tech"
+    ]
+  },
+  "statedPreferences": {
+    "targetRole": [
+      "software engineer",
+      "new grad swe"
+    ],
+    "yoeRange": [
+      0,
+      0
+    ],
+    "visaStatus": "opt",
+    "prefersStartup": null,
+    "targetLocations": [
+      "SF Bay Area",
+      "NYC",
+      "remote"
+    ],
+    "researchOriented": false
+  },
+  "expected_assertions": {
+    "hard_filter_drops_senior": true,
+    "hard_filter_drops_no_sponsorship": false,
+    "friend_tone_opener": true,
+    "no_yoe_violation": true,
+    "ux_no_filler_en": true,
+    "resume_industry_in_enum": true
+  },
+  "canned_first_reply": "btw — what kinda role you eyeing? eng / pm / research / design? roughly is fine",
+  "canned_visa_question": "got work auth sorted? citizen / GC / OPT / need sponsorship?"
+}

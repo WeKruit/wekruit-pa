@@ -27,6 +27,7 @@
     "deploy:hosting:infisical": "bash scripts/deploy-pa-hosting-with-infisical.sh",
     "deploy:hosting:firestore": "firebase deploy --only hosting:pa-dashboard,firestore:rules,firestore:indexes --project wekruit-5f89b --non-interactive",
     "test:voice": "cd apps/eval/voice && PA_RUN_EVAL=1 deepeval test run test_voice_baseline.py -n 4",
-    "test:voice:anchors": "cd apps/eval/voice && PA_RUN_EVAL=1 deepeval test run test_voice_baseline.py -k regression-anchor"
+    "test:voice:anchors": "cd apps/eval/voice && PA_RUN_EVAL=1 deepeval test run test_voice_baseline.py -k regression-anchor",
+    "qa:v1.5": "node tests/qa/run-all.mjs"
   }
 }

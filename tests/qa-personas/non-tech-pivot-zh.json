@@ -1,0 +1,50 @@
+{
+  "id": "non-tech-pivot-zh",
+  "name": "Tom (转行)",
+  "language": "zh",
+  "description": "Non-tech-to-tech pivot, ex-finance, 6 years, GC, no startup pref.",
+  "cv": {
+    "name": "Tom Zhao",
+    "currentRole": "Investment Analyst (transitioning)",
+    "education": "MBA, NYU Stern (2021); B.A. Finance, Fudan (2017)",
+    "yearsExp": 6,
+    "skills": ["Excel", "SQL", "Financial Modeling", "Python (basic)", "Tableau"],
+    "experiences": [
+      {
+        "title": "Investment Analyst",
+        "company": "Morgan Stanley",
+        "companyEmployeeCount": 70000,
+        "startDate": "2021-08",
+        "endDate": "present",
+        "description": "Public-equities sector coverage; building data tooling."
+      },
+      {
+        "title": "Junior Analyst",
+        "company": "ICBC",
+        "companyEmployeeCount": 400000,
+        "startDate": "2017-09",
+        "endDate": "2021-07",
+        "description": "Corporate banking coverage."
+      }
+    ],
+    "industryTags": ["fintech"]
+  },
+  "statedPreferences": {
+    "targetRole": ["product manager", "data analyst"],
+    "yoeRange": [5, 7],
+    "visaStatus": "gc",
+    "prefersStartup": null,
+    "targetLocations": ["NYC", "SF Bay Area"],
+    "researchOriented": false
+  },
+  "expected_assertions": {
+    "hard_filter_drops_senior": false,
+    "hard_filter_drops_no_sponsorship": false,
+    "friend_tone_opener": true,
+    "no_yoe_violation": true,
+    "ux_no_filler_zh": true,
+    "resume_industry_in_enum": true
+  },
+  "canned_first_reply": "在呢. 你工作几年了? 还是刚毕业找新人岗?",
+  "canned_visa_question": "那你有身份不? 公民/绿卡/OPT/还是要 sponsor?"
+}

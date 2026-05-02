@@ -1,0 +1,65 @@
+# Phase 50 — v1.5 E2E QA team gate.
+#
+# Runs the 4-agent × 8-persona × bilingual harness on PR + nightly cron.
+# Default mode: DRY (no API spend, no Firestore creds required) — matches
+# the "$1 cost ceiling" in the Phase 50 brief. Live mode is documented in
+# .planning/phases/50-e2e-qa-team/DELIVERY.md and gated by repo secrets.
+#
+# Wall time: < 1 minute on a GitHub-hosted Ubuntu runner (the 4 agents run
+# in parallel, each does deterministic checks in <300ms).
+
+name: qa-v1.5
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Nightly at 09:00 UTC = 02:00 PT — matches the daily-batch cron window
+    # so any drift from yesterday's job-rec push surfaces before Adam wakes.
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qa-v1.5-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  qa-v1-5:
+    name: v1.5 QA team (4 agents × 8 personas × bilingual)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build job-rec workspace (Agent-Match deep-mode dependency)
+        run: pnpm --filter @pa/job-rec build
+
+      - name: Run QA suite (DRY mode)
+        run: node tests/qa/run-all.mjs
+        env:
+          NODE_ENV: test
+
+      - name: Upload QA artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-v1.5-results
+          path: tests/qa/.results/**
+          retention-days: 14
