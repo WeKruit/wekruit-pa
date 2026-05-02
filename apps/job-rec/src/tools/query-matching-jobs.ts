@@ -25,6 +25,7 @@
 
 import type { Firestore } from "firebase-admin/firestore"
 import { tool } from "@openai/agents"
+import { getFlag } from "@pa/pa-persistence"
 import {
   MatchingJobSchema,
   QueryMatchingJobsInputSchema,
@@ -137,10 +138,205 @@ export function expandIndustryTags(tags: readonly string[]): string[] {
   return out
 }
 
+// ---------------------------------------------------------------------------
+// Stream H7 — Location fallback ladder for under-represented preferences.
+//
+// The matching-jobs corpus has near-zero coverage of some metro areas (e.g.
+// Baltimore,MD: 0/8000 active rows on 2026-05-01). Without a ladder, the
+// scoreJob location component collapses to the 0.2 floor for every job, so
+// the location signal degenerates to noise.
+//
+// Ladder semantics:
+//   - Primary substring match           → 1.0 (already handled in scoreJob)
+//   - "remote" preference + remote job  → 1.0 (already handled)
+//   - Neighbor city substring match     → 0.6 (clearly secondary signal)
+//   - Neighbor=remote + remote job      → 0.7 (remote satisfies remote-OK candidates better)
+//   - No match in primary or ladder     → 0.2 floor
+//
+// Keys are lower-cased, whitespace-trimmed forms of `filters.location`. We
+// intentionally include both the long form ("baltimore,md") and the short
+// form ("baltimore"), because `normalizeJobProfile` passes
+// `locationPreference` verbatim and users have written either.
+// ---------------------------------------------------------------------------
+
+export const LOCATION_NEIGHBORS: Record<string, string[]> = {
+  // Neighbors are loose substring tokens designed to hit real
+  // `locationRaw` values (e.g. "Washington, DC" → "washington"; "Remote"
+  // → "remote"). All entries are case-insensitive (we lowercase the job
+  // location before substring-testing). Each preference key includes the
+  // common spelling variants users actually type.
+  //
+  // Baltimore / DMV
+  "baltimore,md": ["washington", "annapolis", "philadelphia", "remote"],
+  "baltimore, md": ["washington", "annapolis", "philadelphia", "remote"],
+  "baltimore": ["washington", "annapolis", "philadelphia", "remote"],
+  // NYC
+  "nyc": ["jersey city", "newark", "brooklyn", "long island", "remote"],
+  "new york,ny": ["jersey city", "newark", "brooklyn", "remote"],
+  "new york, ny": ["jersey city", "newark", "brooklyn", "remote"],
+  "new york": ["jersey city", "newark", "brooklyn", "remote"],
+  // Bay Area / SF
+  "san francisco,ca": ["oakland", "san jose", "palo alto", "berkeley", "remote"],
+  "san francisco, ca": ["oakland", "san jose", "palo alto", "berkeley", "remote"],
+  "san francisco": ["oakland", "san jose", "palo alto", "berkeley", "remote"],
+  "sf": ["oakland", "san jose", "palo alto", "berkeley", "remote"],
+  // LA
+  "los angeles,ca": ["santa monica", "pasadena", "irvine", "burbank", "remote"],
+  "los angeles, ca": ["santa monica", "pasadena", "irvine", "burbank", "remote"],
+  "los angeles": ["santa monica", "pasadena", "irvine", "burbank", "remote"],
+  "la": ["santa monica", "pasadena", "irvine", "burbank", "remote"],
+  // Seattle
+  "seattle,wa": ["bellevue", "redmond", "kirkland", "tacoma", "remote"],
+  "seattle, wa": ["bellevue", "redmond", "kirkland", "tacoma", "remote"],
+  "seattle": ["bellevue", "redmond", "kirkland", "tacoma", "remote"],
+  // Boston
+  "boston,ma": ["cambridge", "somerville", "waltham", "burlington", "remote"],
+  "boston, ma": ["cambridge", "somerville", "waltham", "burlington", "remote"],
+  "boston": ["cambridge", "somerville", "waltham", "burlington", "remote"],
+  // Austin
+  "austin,tx": ["round rock", "san antonio", "dallas", "houston", "remote"],
+  "austin, tx": ["round rock", "san antonio", "dallas", "houston", "remote"],
+  "austin": ["round rock", "san antonio", "dallas", "houston", "remote"],
+  // Chicago
+  "chicago,il": ["evanston", "naperville", "schaumburg", "milwaukee", "remote"],
+  "chicago, il": ["evanston", "naperville", "schaumburg", "milwaukee", "remote"],
+  "chicago": ["evanston", "naperville", "schaumburg", "milwaukee", "remote"],
+  // Atlanta
+  "atlanta,ga": ["alpharetta", "sandy springs", "marietta", "remote"],
+  "atlanta, ga": ["alpharetta", "sandy springs", "marietta", "remote"],
+  "atlanta": ["alpharetta", "sandy springs", "marietta", "remote"],
+  // Denver
+  "denver,co": ["boulder", "aurora", "colorado springs", "remote"],
+  "denver, co": ["boulder", "aurora", "colorado springs", "remote"],
+  "denver": ["boulder", "aurora", "colorado springs", "remote"],
+  // DC (Washington, DC)
+  "washington,dc": ["arlington", "alexandria", "bethesda", "baltimore", "remote"],
+  "washington, dc": ["arlington", "alexandria", "bethesda", "baltimore", "remote"],
+  "washington dc": ["arlington", "alexandria", "bethesda", "baltimore", "remote"],
+  "dc": ["arlington", "alexandria", "bethesda", "baltimore", "remote"],
+}
+
+// ---------------------------------------------------------------------------
+// Stream H7 — Title anti-bias rerank for QA/QC/manufacturing false-friends.
+//
+// The H6 industryKey-in expansion includes `engineering` for the canonical
+// `tech_software` tag, but in the corpus `engineering` is a job-FUNCTION
+// bucket that mixes SWE / QA / QC / manufacturing-engineering rows. Cosine
+// then false-friends "QC Analyst" with a Data Analyst CV by sharing the
+// "Analyst" token. We surface this as a deterministic title-pattern penalty
+// applied AFTER cosine rerank, gated on the user's industry intent.
+//
+// Decision: multiply by 0.3 (don't zero) — corner cases like "QA Engineer
+// at Stripe" can still be valid for some users; we degrade signal but don't
+// kill it. Combined with the input-order initial rank, a heavily-penalized
+// row sinks to the bottom of top-N but isn't removed from the candidate set.
+// ---------------------------------------------------------------------------
+
+export const QA_QC_TITLE_REGEX =
+  /\b(quality\s+(assurance|control|engineer|technician|specialist|analyst)|qa\s+(specialist|analyst|engineer|technician)|qc\s+(analyst|inspector|specialist)|manufacturing\s+engineer|process\s+engineer|technician|inspector)\b/i
+
+const TECH_USER_TAGS_FOR_ANTIBIAS = new Set([
+  "tech_software",
+  "ai_ml",
+  "fintech_finance",
+])
+
+const TITLE_PENALTY_MULTIPLIER = 0.3
+
+/**
+ * Apply title-pattern anti-bias to an already-ranked job list. Pure /
+ * deterministic.
+ *
+ * Inputs:
+ *   - jobs: list pre-sorted by upstream rank (cosine or Jaccard). Input
+ *           order encodes initial rank.
+ *   - industryTags: user's canonical 10-tag list. When it contains any of
+ *           {tech_software, ai_ml, fintech_finance}, anti-bias is active.
+ *   - limit: number of jobs to return. When omitted, returns the full list.
+ *
+ * Algorithm:
+ *   1. Map each job to a synthetic score N..1 by input-index (preserves the
+ *      upstream cosine ordering as the prior).
+ *   2. If anti-bias is active AND title matches QA_QC_TITLE_REGEX, multiply
+ *      the synthetic score by 0.3.
+ *   3. Stable-sort by score desc, ties broken by input index (older index
+ *      = higher original rank wins).
+ *   4. Take first `limit`.
+ *
+ * The 0.3x is chosen so a top-1 cosine match (synthetic score N) penalized
+ * to 0.3*N still ranks above the 0.31*N-th-placed clean job — i.e. a hit
+ * needs to be ~3x worse than the next clean job to fully sink it. With
+ * candidate pools of 20 and limit 3, this means the top QC false-friend
+ * still loses to the #4-#7 clean job, which is the desired behavior.
+ */
+export function applyTitleAntiBias<T extends { jobTitle?: string }>(
+  jobs: readonly T[],
+  industryTags: readonly string[] | undefined,
+  limit?: number
+): T[] {
+  const N = jobs.length
+  if (N === 0) return []
+  const active =
+    Array.isArray(industryTags) &&
+    industryTags.some((t) => TECH_USER_TAGS_FOR_ANTIBIAS.has(t))
+
+  const scored = jobs.map((j, i) => {
+    const initial = N - i // N..1
+    const title = typeof j.jobTitle === "string" ? j.jobTitle : ""
+    const penalized = active && QA_QC_TITLE_REGEX.test(title)
+    const score = penalized ? initial * TITLE_PENALTY_MULTIPLIER : initial
+    return { j, i, score }
+  })
+  scored.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score
+    return a.i - b.i
+  })
+  const out = scored.map((x) => x.j)
+  return typeof limit === "number" ? out.slice(0, limit) : out
+}
+
 // Type-only import guard — JobIndustry is referenced in the table type only
 // for runtime documentation; the table key is a string union of
 // JobIndustryTag values. JobIndustry import retained for forward-compat.
 void ((): JobIndustry | undefined => undefined)
+
+// ---------------------------------------------------------------------------
+// Stream H8 — industryEnum-primary query path (flag-gated).
+//
+// After H8 enrichment writes `industryEnum: [tag]` (1-element array) to the
+// matching-jobs corpus, the query can hit the canonical 10-tag bucket
+// directly via `where industryEnum array-contains-any [...userTags]` instead
+// of the H6 expansion-to-corpus-keys workaround.
+//
+// Switch is gated by `pa-feature-flags/matchingIndustryEnumPopulated` so we
+// can flip it ON only AFTER the LIVE enrichment run completes successfully.
+// Default OFF — falls through to H6 path. Read happens once per query (the
+// pa-persistence SDK has a 30s in-process cache, so the per-query overhead
+// is amortized to ~zero).
+// ---------------------------------------------------------------------------
+
+const FLAG_INDUSTRY_ENUM_POPULATED = "matchingIndustryEnumPopulated"
+const MAX_INDUSTRY_ENUM_VALUES = 10 // Firestore array-contains-any cap
+
+/**
+ * Cap a list of canonical 10-tag values to the array-contains-any limit.
+ * Pure / deterministic — exported for unit tests.
+ */
+export function capIndustryEnumValues(tags: readonly string[]): string[] {
+  if (!Array.isArray(tags) || tags.length === 0) return []
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const t of tags) {
+    const s = typeof t === "string" ? t.trim() : ""
+    if (!s) continue
+    if (seen.has(s)) continue
+    seen.add(s)
+    out.push(s)
+    if (out.length >= MAX_INDUSTRY_ENUM_VALUES) break
+  }
+  return out
+}
+
 
 export type QueryMatchingJobsDeps = {
   db: Firestore
@@ -232,12 +428,37 @@ export function scoreJob(job: MatchingJob, filters: QueryMatchingJobsFilters): n
 
   let locationScore = 0.5
   if (filters.location && job.locationRaw) {
-    const f = filters.location.toLowerCase()
+    const f = filters.location.toLowerCase().trim()
     const l = job.locationRaw.toLowerCase()
+    // Stream H7 — primary city-token also tested as substring. User
+    // preferences like "Baltimore,MD" don't substring-match real
+    // `locationRaw` like "Baltimore, MD" (the comma-space difference
+    // breaks the literal match), so we also derive a primary city token
+    // from the first comma-segment and substring-test that.
+    const primaryCity = f.split(",")[0]?.trim() ?? ""
     if (l.includes(f)) locationScore = 1.0
+    else if (primaryCity && primaryCity.length >= 3 && l.includes(primaryCity)) locationScore = 1.0
     else if (f === "remote" && l.includes("remote")) locationScore = 1.0
     else if (f === "anywhere" || f === "any") locationScore = 0.7
-    else locationScore = 0.2
+    else {
+      // Stream H7 — fallback ladder for under-represented preferences.
+      // When the primary city is sparse in corpus (e.g. Baltimore,MD has
+      // 0/8000 active rows), fall through to deterministic neighbor list.
+      // Match precedence: remote-neighbor (0.7, since "remote" satisfies
+      // a Baltimore-based candidate well) > city-neighbor (0.6) > 0.2 floor.
+      const neighbors = LOCATION_NEIGHBORS[f] ?? []
+      let ladderScore = 0.2
+      for (const n of neighbors) {
+        if (n === "remote" && l.includes("remote")) {
+          ladderScore = Math.max(ladderScore, 0.7)
+          continue
+        }
+        if (n && l.includes(n)) {
+          ladderScore = Math.max(ladderScore, 0.6)
+        }
+      }
+      locationScore = ladderScore
+    }
   }
 
   let salaryScore = 0.5
@@ -280,19 +501,38 @@ export async function queryMatchingJobs(
   const log = deps.log ?? defaultLog
 
   let q = deps.db.collection(MATCHING_JOBS_COLLECTION).where("status", "==", ACTIVE_STATUS)
-  // Stream H6 — prefer industryTags expansion (in-clause over real corpus
-  // industryKey value-set) when caller provides it (daily-batch); fall back
-  // to the legacy single-equality compound-where for tool-path callers.
-  const expandedKeys = expandIndustryTags(parsed.filters.industryTags ?? [])
-  if (expandedKeys.length > 0) {
-    log("[queryMatchingJobs] industry_keys_expanded", {
-      tags: parsed.filters.industryTags,
-      keys: expandedKeys,
-    })
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    q = (q as any).where("industryKey", "in", expandedKeys)
-  } else if (parsed.filters.industry && parsed.filters.industry !== "any") {
-    q = q.where("industryKey", "==", parsed.filters.industry)
+  // Stream H8 — read the flag once per query. SDK has a 30s in-process cache
+  // so cost is amortized. Default false → fall through to H6 path.
+  const enumPopulated =
+    (await getFlag(deps.db, FLAG_INDUSTRY_ENUM_POPULATED, {}, false)) === true
+  const userTags = parsed.filters.industryTags ?? []
+
+  if (enumPopulated && userTags.length > 0) {
+    // H8 primary path — canonical industryEnum array-contains-any.
+    const enumValues = capIndustryEnumValues(userTags)
+    if (enumValues.length > 0) {
+      log("[queryMatchingJobs] industryEnum_array_contains_any", {
+        tags: userTags,
+        enumValues,
+      })
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      q = (q as any).where("industryEnum", "array-contains-any", enumValues)
+    } else if (parsed.filters.industry && parsed.filters.industry !== "any") {
+      q = q.where("industryKey", "==", parsed.filters.industry)
+    }
+  } else {
+    // H6 fallback path — expand 10-tag → corpus industryKey value-set.
+    const expandedKeys = expandIndustryTags(userTags)
+    if (expandedKeys.length > 0) {
+      log("[queryMatchingJobs] industry_keys_expanded", {
+        tags: parsed.filters.industryTags,
+        keys: expandedKeys,
+      })
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      q = (q as any).where("industryKey", "in", expandedKeys)
+    } else if (parsed.filters.industry && parsed.filters.industry !== "any") {
+      q = q.where("industryKey", "==", parsed.filters.industry)
+    }
   }
   // The composite indexes brief-cited support `status,industryKey,firstSeenAt`
   // (and the longer one with jobType+sponsorship). Order by firstSeenAt desc

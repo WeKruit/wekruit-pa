@@ -19,7 +19,7 @@
  */
 
 import type { Firestore } from "firebase-admin/firestore"
-import { queryMatchingJobs } from "./tools/query-matching-jobs.js"
+import { queryMatchingJobs, applyTitleAntiBias } from "./tools/query-matching-jobs.js"
 import { sendImessage } from "./tools/send-imessage.js"
 import {
   JOB_PROFILES_COLLECTION,
@@ -516,6 +516,14 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
       } else {
         rankedJobs = queryRes.jobs.slice(0, jobsPerUser)
       }
+
+      // Stream H7 — title anti-bias rerank for tech-track users. When the
+      // user is in {tech_software, ai_ml, fintech_finance}, multiply
+      // QA/QC/manufacturing-engineer titles by 0.3 so cosine false-friends
+      // (e.g. "QC Analyst" matching a Data Analyst CV via shared "Analyst")
+      // sink. Pure / deterministic; no-op when industryTags absent or user
+      // is non-tech. Re-clamps to jobsPerUser as a safety belt.
+      rankedJobs = applyTitleAntiBias(rankedJobs, normalized.industryTags, jobsPerUser)
 
       const body = formatBatchMessage(rankedJobs)
       const sendRes = await sendImessage(
