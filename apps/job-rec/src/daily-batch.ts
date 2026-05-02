@@ -49,6 +49,9 @@ import {
   type JobProfileDoc,
   type MatchingJob,
 } from "./types.js"
+import {
+  PA_TAG_CLUSTER_REC_FLAG_KEY,
+} from "./tag-cluster-rec.js"
 
 export type FlagChecker = (
   db: Firestore,
@@ -107,6 +110,13 @@ export type DailyBatchDeps = {
    */
   matchExplainerChatImpl?: ExplainMatchDeps["chatImpl"]
   matchExplainerDailyBudgetUsd?: number
+  /**
+   * Phase 51 (v1.5 / Stream-G.2) — optional cluster-cache fetcher. When
+   * provided AND paTagClusterRecEnabled flag is ON, replaces queryMatchingJobs
+   * with cluster lookup. Empty result triggers fallback to queryMatchingJobs
+   * (zero-regression). See tag-cluster-rec.ts for the production fetcher.
+   */
+  tagClusterFetcher?: TagClusterFetcher
 }
 
 export type BatchOutcome = {
@@ -654,6 +664,26 @@ export type CrossEncoderReranker = (
 
 
 /**
+ * Phase 51 (v1.5 / Stream-G.2) — tag cluster fetcher. Replaces the
+ * per-user `queryMatchingJobs` Firestore-where scan with a cluster-cache
+ * lookup. Returns [] when no cluster doc exists (or none match the user's
+ * tags) → daily-batch falls back to legacy queryMatchingJobs path
+ * (zero-regression contract).
+ *
+ * Flag-gated by paTagClusterRecEnabled. Wire production fetcher in
+ * apps/functions/src/job-rec-daily.ts; tests inject a stub.
+ */
+export type TagClusterFetcher = (
+  userTags: {
+    industryTags: readonly string[]
+    skills: readonly string[]
+    userEmbedding?: readonly number[] | null
+  },
+  k: number
+) => Promise<Array<MatchingJob & { embedding?: number[] | null }>>
+
+
+/**
  * Stream G1 — internal helper. Loads the parsed-resume doc by id and
  * returns a compact text suitable for OpenAI text-embedding-3-small.
  * Composes from candidateProfile + first 3 experiences. Returns null on
@@ -910,28 +940,102 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
       const poolSize = deps.userEmbedFetcher
         ? Math.min(20, Math.max(jobsPerUser, deps.candidatePoolSize ?? 20))
         : jobsPerUser
-      const queryRes = await queryMatchingJobs(
-        {
-          filters: {
-            industry: normalized.industry,
-            // Stream H6 — pass canonical 10-tag list so query expands to
-            // industryKey-in over the corpus' real token-set (instead of
-            // collapsing all 3 user tags to a single 6-enum bucket and
-            // matching ~191/40374 active rows).
-            ...(normalized.industryTags.length > 0
-              ? { industryTags: normalized.industryTags }
-              : {}),
-            location: normalized.location,
-            sponsorship: normalized.sponsorship,
-            sizePreference: normalized.sizePreference,
-            ...(normalized.salaryMin !== undefined
-              ? { salaryMin: normalized.salaryMin }
-              : {}),
+      // Phase 51 (v1.5 / Stream-G.2) — flag-gated tag cluster path. When
+      // paTagClusterRecEnabled is ON AND a fetcher is wired AND the cluster
+      // returns ≥1 row, REPLACE queryMatchingJobs entirely. When the cluster
+      // is cold/empty/missing, fall through to the legacy path so the user
+      // still gets recs (zero-regression contract).
+      let queryRes: { jobs: MatchingJob[] } | null = null
+      const tagClusterOn = deps.tagClusterFetcher
+        ? Boolean(
+            await deps.getFlag(
+              deps.db,
+              PA_TAG_CLUSTER_REC_FLAG_KEY,
+              { userId, env: process.env },
+              false
+            )
+          )
+        : false
+      if (tagClusterOn && deps.tagClusterFetcher) {
+        try {
+          // Pull user skills + embedding to feed the cluster scoring.
+          let userSkills: string[] = []
+          let userEmbedding: readonly number[] | null = null
+          try {
+            const resumeSnap = await deps.db
+              .collection("parsedCandidateResumes")
+              .where("userId", "==", userId)
+              .orderBy("createdAt", "desc")
+              .limit(1)
+              .get()
+            if (!resumeSnap.empty) {
+              const rd = resumeSnap.docs[0]!.data() as Record<string, unknown>
+              const cp = (rd.candidateProfile ?? {}) as Record<string, unknown>
+              if (Array.isArray(cp.skills)) {
+                userSkills = (cp.skills as unknown[])
+                  .filter((x) => typeof x === "string")
+                  .slice(0, 10) as string[]
+              }
+              const e = rd.embedding
+              if (Array.isArray(e) && e.every((n) => typeof n === "number")) {
+                userEmbedding = e as number[]
+              }
+            }
+          } catch (rerr) {
+            log("[job-rec-daily] tag_cluster_resume_lookup_failed", {
+              userId,
+              error: rerr instanceof Error ? rerr.message : String(rerr),
+            })
+          }
+          const clusterJobs = await deps.tagClusterFetcher(
+            {
+              industryTags: normalized.industryTags,
+              skills: userSkills,
+              userEmbedding,
+            },
+            poolSize
+          )
+          if (clusterJobs.length > 0) {
+            queryRes = { jobs: clusterJobs as MatchingJob[] }
+            log("[job-rec-daily] tag_cluster_fetch_applied", {
+              userId,
+              poolSize,
+              returned: clusterJobs.length,
+            })
+          } else {
+            log("[job-rec-daily] tag_cluster_empty_falling_back", { userId })
+          }
+        } catch (cerr) {
+          log("[job-rec-daily] tag_cluster_threw_falling_back", {
+            userId,
+            error: cerr instanceof Error ? cerr.message : String(cerr),
+          })
+        }
+      }
+      if (!queryRes) {
+        queryRes = await queryMatchingJobs(
+          {
+            filters: {
+              industry: normalized.industry,
+              // Stream H6 — pass canonical 10-tag list so query expands to
+              // industryKey-in over the corpus' real token-set (instead of
+              // collapsing all 3 user tags to a single 6-enum bucket and
+              // matching ~191/40374 active rows).
+              ...(normalized.industryTags.length > 0
+                ? { industryTags: normalized.industryTags }
+                : {}),
+              location: normalized.location,
+              sponsorship: normalized.sponsorship,
+              sizePreference: normalized.sizePreference,
+              ...(normalized.salaryMin !== undefined
+                ? { salaryMin: normalized.salaryMin }
+                : {}),
+            },
+            limit: poolSize,
           },
-          limit: poolSize,
-        },
-        { db: deps.db, log, includeEmbedding: true }
-      )
+          { db: deps.db, log, includeEmbedding: true }
+        )
+      }
 
       if (queryRes.jobs.length === 0) {
         skippedNoJobs += 1

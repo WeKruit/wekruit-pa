@@ -62,6 +62,10 @@ export { paAdminBootstrap } from "./admin-bootstrap.js"
 // queries matching-jobs, formats per Bible v7.5.2, enqueues pa-outbound.
 export { paJobRecDaily } from "./job-rec-daily.js"
 
+// Phase 51 (v1.5 / Stream-G.2) — TS-native tag cluster cache rebuild CF.
+// Triggered by pa-events doc {eventKind="matching:pipeline:completed"}.
+export { paJobRecClusterRebuild } from "./job-rec-cluster-rebuild.js"
+
 // Phase 49 (v1.5 / Stream-H / D9) — operator reverse-match dashboard CF.
 // JD + tags + industry → top-K candidates → outbound notify via pa-outbound.
 export { paReverseMatch } from "./paReverseMatch.js"

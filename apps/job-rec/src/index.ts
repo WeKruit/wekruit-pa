@@ -189,3 +189,26 @@ export type {
   ReverseMatchUserProfile,
   ReverseMatchDeps,
 } from "./reverse-match.js"
+
+// Phase 51 (v1.5 / Stream-G.2) — TS-native tag cluster cache. Cluster
+// docs live in `pa-rec-tag-clusters/{clusterId}`; default-OFF flag
+// `paTagClusterRecEnabled` ramps 1% → 100%. Read RESEARCH.md §0 for the
+// honest premise calibration (real win = compute reuse + determinism +
+// LLM-summary cache; ~28% read reduction, NOT 10x).
+export {
+  computeClusterId,
+  clusterKeysForUser,
+  rebuildClusters,
+  fetchTopKFromCluster,
+  TagClusterDocSchema,
+  PA_TAG_CLUSTER_REC_FLAG_KEY,
+  TAG_CLUSTERS_COLLECTION,
+  DEFAULT_TOP_K_PER_CLUSTER,
+} from "./tag-cluster-rec.js"
+export type {
+  TagClusterDoc,
+  RebuildClustersDeps,
+  RebuildClustersOutcome,
+  FetchTopKFromClusterDeps,
+  UserTags,
+} from "./tag-cluster-rec.js"

@@ -16,7 +16,11 @@
 import { onSchedule } from "firebase-functions/v2/scheduler"
 import { logger } from "firebase-functions/v2"
 import { getFirestore, type Firestore } from "firebase-admin/firestore"
-import { runDailyJobRecBatch, defaultUserEmbedFetcher } from "@pa/job-rec"
+import {
+  runDailyJobRecBatch,
+  defaultUserEmbedFetcher,
+  fetchTopKFromCluster,
+} from "@pa/job-rec"
 import { getFlag } from "@pa/pa-persistence"
 
 /**
@@ -101,6 +105,15 @@ export const paJobRecDaily = onSchedule(
         // Stream G1 — full cascade: fetcher → computer (lazy + cache) → fallback.
         userEmbedFetcher: defaultUserEmbedFetcher,
         userEmbedComputer: defaultUserEmbedComputer,
+        // Phase 51 (v1.5 / Stream-G.2) — TS-native tag cluster cache.
+        // Flag-gated by paTagClusterRecEnabled; default OFF. Empty result
+        // falls through to legacy queryMatchingJobs path (zero regression).
+        tagClusterFetcher: (userTags, k) =>
+          fetchTopKFromCluster(
+            { db, log: (...args: unknown[]) => logger.info("[job-rec-daily/cluster]", ...args) },
+            userTags,
+            k
+          ),
         log: (...args: unknown[]) => logger.info("[job-rec-daily]", ...args),
       })
       logger.info("[job-rec-daily] batch_complete", result)
