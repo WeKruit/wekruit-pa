@@ -617,3 +617,251 @@ test("Stream H12: dedupe by (jobTitle|companyName) drops near-identical JDs", as
   assert.equal(stripeCount, 1, `Stripe should appear once, got ${stripeCount}`)
 })
 
+
+// =============================================================================
+// Stream H13 — friend-tone CV-aware daily-push opener (D4: 6 tests + edges)
+// =============================================================================
+import {
+  formatDailyPushBody,
+  formatJobLineWithReason,
+  buildJobReason,
+  type DailyPushContext,
+} from "../daily-batch.js"
+
+const h13Job = (over: Partial<MatchingJob> = {}): MatchingJob => ({
+  id: over.id ?? "j1",
+  companyName: over.companyName ?? "Stripe",
+  jobTitle: over.jobTitle ?? "Senior PM",
+  salaryMax: over.salaryMax ?? null,
+  salaryMin: null,
+  locationRaw: over.locationRaw ?? "San Francisco, CA",
+  primaryUrl: over.primaryUrl ?? "https://j/1",
+  industry: over.industry ?? "tech",
+  industryKey: over.industryKey ?? "tech_software",
+  sponsorship: null,
+  requiredSkills: over.requiredSkills ?? ["Python", "ML"],
+})
+
+test("H13 variant B (CV-known, prefs-unknown) zh: opener names recentCompany + topSkill[0]", () => {
+  const ctx: DailyPushContext = {
+    recentCompany: "NEUROVA",
+    recentRoleTitle: "Data Analyst",
+    topSkills: ["Python", "ML", "SQL"],
+    industryTags: ["tech_software", "ai_ml"],
+    hasUserStatedPreferences: false,
+    language: "zh",
+  }
+  const body = formatDailyPushBody([h13Job()], ctx)
+  // Variant B opener: should reference NEUROVA + Python + the friend-tone phrase
+  assert.match(body, /NEUROVA/)
+  assert.match(body, /Python/)
+  assert.match(body, /没具体问过你想找啥|没问过/)
+  // Per-job line still has bare URL on its own line
+  assert.match(body, /\nhttps:\/\/j\/1$/)
+  // Per-job reason injected (skill exact match Python)
+  assert.match(body, /Python 经验直接对得上/)
+})
+
+test("H13 variant B en: opener uses friend-tone English with recentCompany + topSkill", () => {
+  const ctx: DailyPushContext = {
+    recentCompany: "NEUROVA",
+    topSkills: ["Python"],
+    industryTags: ["tech_software"],
+    hasUserStatedPreferences: false,
+    language: "en",
+  }
+  const body = formatDailyPushBody([h13Job()], ctx)
+  assert.match(body, /NEUROVA/)
+  assert.match(body, /Python/)
+  assert.match(body, /haven't asked|Hey/)
+  // English reason
+  assert.match(body, /your Python experience lines up directly/)
+})
+
+test("H13 variant A (CV + prefs) zh: opener references stated targetRole, no 'haven't asked' phrase", () => {
+  const ctx: DailyPushContext = {
+    recentCompany: "NEUROVA",
+    topSkills: ["Python"],
+    industryTags: ["fintech_finance"],
+    hasUserStatedPreferences: true,
+    statedPreferences: { targetRole: ["支付"] },
+    language: "zh",
+  }
+  const body = formatDailyPushBody([h13Job()], ctx)
+  assert.match(body, /支付/)
+  assert.doesNotMatch(body, /没问过|没具体问过/)
+  // Should not nudge for CV (we have it)
+  assert.doesNotMatch(body, /发我看看简历/)
+})
+
+test("H13 variant A en: opener uses stated targetRole in English", () => {
+  const ctx: DailyPushContext = {
+    recentCompany: "NEUROVA",
+    topSkills: ["Python"],
+    industryTags: ["fintech_finance"],
+    hasUserStatedPreferences: true,
+    statedPreferences: { targetRole: ["payments"] },
+    language: "en",
+  }
+  const body = formatDailyPushBody([h13Job()], ctx)
+  assert.match(body, /payments/)
+  assert.doesNotMatch(body, /haven't asked/)
+})
+
+test("H13 variant C (no CV) zh: keeps legacy lead + appends gentle CV nudge", () => {
+  const ctx: DailyPushContext = {
+    industryTags: ["tech_software"],
+    hasUserStatedPreferences: false,
+    language: "zh",
+  }
+  const body = formatDailyPushBody(
+    [h13Job(), h13Job({ id: "j2", companyName: "Acme", primaryUrl: "https://j/2" })],
+    ctx
+  )
+  assert.match(body, /今日给你挑了 2 个/)
+  assert.match(body, /顺便发我看看简历/)
+})
+
+test("H13 variant C en: legacy lead + CV nudge in English", () => {
+  const ctx: DailyPushContext = {
+    industryTags: ["tech_software"],
+    hasUserStatedPreferences: false,
+    language: "en",
+  }
+  const body = formatDailyPushBody([h13Job()], ctx)
+  assert.match(body, /Picked 1/)
+  assert.match(body, /send me your CV/)
+})
+
+test("H13 edge: CV with no recentCompany (only skills) → falls to variant C (no nudge needed if recentCompany absent)", () => {
+  // recentCompany undefined → variant C even if topSkills present
+  const ctx: DailyPushContext = {
+    topSkills: ["Python", "Tableau"],
+    industryTags: ["tech_software"],
+    hasUserStatedPreferences: false,
+    language: "zh",
+  }
+  const body = formatDailyPushBody([h13Job()], ctx)
+  // No recentCompany → the friend-tone "看你简历那段 X" branch must NOT fire
+  assert.doesNotMatch(body, /看你简历那段/)
+  // Variant C does fire — legacy lead + nudge
+  assert.match(body, /今日给你挑了/)
+  assert.match(body, /顺便发我看看简历/)
+})
+
+test("H13 cap: variant B lead-in is ≤ 250 chars even with long company + long skill", () => {
+  const ctx: DailyPushContext = {
+    recentCompany: "A".repeat(200),
+    topSkills: ["B".repeat(100)],
+    industryTags: ["tech_software"],
+    hasUserStatedPreferences: false,
+    language: "zh",
+  }
+  const body = formatDailyPushBody([h13Job()], ctx)
+  const leadIn = body.split("\n\n")[0]!
+  assert.ok(leadIn.length <= 250, `lead-in ${leadIn.length} chars exceeds 250`)
+})
+
+test("H13 buildJobReason: skill exact-match wins over industry-match", () => {
+  const ctx: DailyPushContext = {
+    recentCompany: "NEUROVA",
+    topSkills: ["Python"],
+    industryTags: ["tech_software"],
+    hasUserStatedPreferences: false,
+    language: "zh",
+  }
+  const job = h13Job({ requiredSkills: ["Python"], industryKey: "tech_software" })
+  // Skill match should take precedence
+  assert.equal(buildJobReason(job, ctx), "你 Python 经验直接对得上")
+})
+
+test("H13 buildJobReason: returns empty string when no signal — clean line beats forced reason", () => {
+  const ctx: DailyPushContext = {
+    recentCompany: "NEUROVA",
+    topSkills: ["Cobol"],
+    industryTags: ["healthcare_biotech"],
+    hasUserStatedPreferences: false,
+    language: "zh",
+  }
+  const job = h13Job({ requiredSkills: ["JavaScript"], industryKey: "tech_software" })
+  // No skill overlap, no industry overlap → empty
+  assert.equal(buildJobReason(job, ctx), "")
+})
+
+test("H13 formatJobLineWithReason: when reason empty, falls back to plain title-line + URL (no trailing dash)", () => {
+  const ctx: DailyPushContext = {
+    industryTags: [],
+    hasUserStatedPreferences: false,
+    language: "zh",
+  }
+  const job = h13Job({ requiredSkills: [], salaryMax: 250000 })
+  const out = formatJobLineWithReason(job, ctx)
+  // Should have title-line then bare URL on next line, no " — " trailing
+  assert.match(out, /\$250k\nhttps/)
+  assert.doesNotMatch(out, / — \nhttps/)
+})
+
+test("H13 runDailyJobRecBatch wires friend-tone variant B end-to-end (default flag on)", async () => {
+  const mfs = new MockFirestore()
+  await mfs.collection("pa-users").doc("u1").set({
+    phoneE164: "+15551112222",
+    preferredLanguage: "zh",
+  })
+  // Resume doc with NEUROVA + Python — exercises variant B path
+  await mfs.collection("parsedCandidateResumes").doc("r1").set({
+    userId: "u1",
+    createdAt: "2026-04-30T00:00:00Z",
+    candidateProfile: { name: "Adam", skills: ["Python", "ML", "SQL"] },
+    experiences: [
+      { title: "Data Analyst", company: "NEUROVA", startDate: "2024", endDate: "present" },
+    ],
+  })
+  await mfs.collection("pa-job-profiles").doc("u1").set({
+    userId: "u1",
+    profile: {
+      industry: "tech",
+      industryTags: ["tech_software"],
+      sponsorshipNeeded: "none",
+      locationPreference: "Remote",
+      sizePreference: "any",
+      salaryMin: null,
+    },
+    cvParsedAt: "2026-04-30T00:00:00Z",
+    lastJobBatchSentAt: null,
+    status: "active",
+    createdAt: "2026-04-30T00:00:00Z",
+    updatedAt: "2026-04-30T00:00:00Z",
+  })
+  await mfs.collection("matching-jobs").doc("j1").set({
+    status: "active",
+    industryKey: "tech",
+    industryEnum: ["tech_software"],
+    companyName: "Stripe",
+    roleTitle: "Senior PM",
+    salaryMax: 250000,
+    locationRaw: "Remote",
+    primaryUrl: "https://j/1",
+    industry: "tech",
+    sponsorship: false,
+    firstSeenAt: "2026-04-30",
+    requiredSkills: ["Python"],
+  })
+  const out = await runDailyJobRecBatch({
+    db: asFirestore(mfs),
+    // Selective flag: paJobRecEnabled / paFriendToneOpenerEnabled true; matchingIndustryEnumPopulated also true (industryEnum populated above for H8 path).
+    getFlag: async (_db, key) => {
+      if (key === "paJobRecEnabled") return true
+      if (key === "paFriendToneOpenerEnabled") return true
+      if (key === "matchingIndustryEnumPopulated") return true
+      return false
+    },
+    todayYmd: () => "20260430",
+    jobsPerUser: 1,
+  })
+  assert.equal(out.delivered, 1)
+  const body = String(mfs.writeLog.filter((w) => w.path === "pa-outbound")[0]!.data.body)
+  // Friend-tone B applied: NEUROVA + Python referenced in lead-in
+  assert.match(body, /NEUROVA/)
+  assert.match(body, /Python/)
+  assert.match(body, /没/)  // friend-tone phrase contains 没
+})

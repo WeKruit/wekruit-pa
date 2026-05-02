@@ -97,6 +97,12 @@ export {
   rerankByCosine,
   cosineSimilarity,
   normalizeJobProfile,
+  // Stream H13 — friend-tone CV-aware opener
+  formatDailyPushBody,
+  formatJobLineWithReason,
+  buildJobReason,
+  loadDailyPushContext,
+  FRIEND_TONE_OPENER_FLAG_KEY,
 } from "./daily-batch.js"
 export type {
   DailyBatchDeps,
@@ -105,6 +111,8 @@ export type {
   UserEmbedFetcher,
   UserEmbedComputer,
   CrossEncoderReranker,
+  // Stream H13
+  DailyPushContext,
 } from "./daily-batch.js"
 
 export {

@@ -278,6 +278,277 @@ export function formatBatchMessage(jobs: MatchingJob[]): string {
   return `${lead}:\n\n${blocks}`
 }
 
+// ---------------------------------------------------------------------------
+// Stream H13 — friend-tone CV-aware daily-push opener.
+//
+// Replaces the robotic "今日给你挑了 3 个" lead-in with one of three variants
+// based on (CV-known? × prefs-stated?) signals:
+//
+//   A. recentCompany + hasUserStatedPreferences → "看到这 3 个跟你之前说想找的
+//      [targetRole] 对得上" + per-job concrete reason
+//   B. recentCompany + !hasUserStatedPreferences → "嘿没问过你具体想找啥，看
+//      你简历那段 [Company] 的 [Skill] 挺硬，今天发现这 3 个对得上：" + per-job reason
+//   C. !recentCompany → keep current "今日给你挑了 X 个" + append gentle CV
+//      nudge "(顺便发我看看简历不？我帮你过一遍)"
+//
+// ZERO new LLM calls in this path — per-job reasons are token-overlap
+// heuristic only. (Full LLM-grounded match-explainer is D2/Phase 42, separate.)
+//
+// Bilingual zh/en symmetric. Bible v7.5.2 hard rule preserved (bare URL on
+// its own line). 250-char cap applies to the LEAD-IN ONLY (not URLs/lines).
+// ---------------------------------------------------------------------------
+
+export type DailyPushContext = {
+  candidateName?: string
+  recentRoleTitle?: string
+  recentCompany?: string
+  /** First 3 from candidateProfile.skills. */
+  topSkills?: string[]
+  industryTags?: string[]
+  hasUserStatedPreferences: boolean
+  statedPreferences?: {
+    targetRole?: string[]
+    prefersStartup?: boolean
+    visaStatus?: string
+  }
+  language: "zh" | "en"
+}
+
+/**
+ * Stream H13 — synthesize a 1-sentence concrete reason citing a CV fact.
+ * Pure / deterministic, no LLM. Returns empty string when no clean signal
+ * (we'd rather show a clean line than a forced "this matches because..." line).
+ *
+ * Signal hierarchy (first hit wins):
+ *   1. exact case-insensitive skill overlap (job.requiredSkills ∩ topSkills) →
+ *      "你 [Skill] 经验直接对得上"
+ *   2. industry match (job.industryKey ∈ ctx.industryTags) → "和你之前 [Company]
+ *      一个赛道"
+ *   3. nothing — return ""
+ */
+export function buildJobReason(
+  job: MatchingJob,
+  ctx: DailyPushContext
+): string {
+  const lang = ctx.language
+  const required = Array.isArray(job.requiredSkills) ? job.requiredSkills : []
+  const requiredLower = new Set(required.map((s) => s.toLowerCase().trim()))
+  const skills = Array.isArray(ctx.topSkills) ? ctx.topSkills : []
+  for (const s of skills) {
+    if (typeof s !== "string" || s.length === 0) continue
+    if (requiredLower.has(s.toLowerCase().trim())) {
+      return lang === "zh"
+        ? `你 ${s} 经验直接对得上`
+        : `your ${s} experience lines up directly`
+    }
+  }
+  // Industry match — coarser signal, only fire when we have a recentCompany
+  // to anchor the reason to.
+  const industryTags = Array.isArray(ctx.industryTags) ? ctx.industryTags : []
+  const jobIndustryKey = (job.industryKey ?? "").toLowerCase().trim()
+  if (jobIndustryKey && industryTags.some((t) => t.toLowerCase().trim() === jobIndustryKey) && ctx.recentCompany) {
+    return lang === "zh"
+      ? `和你之前 ${ctx.recentCompany} 一个赛道`
+      : `same lane as your ${ctx.recentCompany} stint`
+  }
+  return ""
+}
+
+/**
+ * Stream H13 — format a job line with optional inline reason.
+ * Bare URL on its own line stays (Bible v7.5.2). Reason (if any) is
+ * appended to the title-line with " — <reason>" so the URL line is
+ * unchanged for downstream parsers.
+ */
+export function formatJobLineWithReason(
+  job: MatchingJob,
+  ctx: DailyPushContext
+): string {
+  const titleCo = `${job.jobTitle || "Role"} @ ${job.companyName || "Company"}`
+  const loc = job.locationRaw ? ` (${job.locationRaw})` : ""
+  const sal =
+    typeof job.salaryMax === "number" && job.salaryMax > 0
+      ? ` ~$${Math.round(job.salaryMax / 1000)}k`
+      : ""
+  const reason = buildJobReason(job, ctx)
+  const reasonSuffix = reason ? ` — ${reason}` : ""
+  return `- ${titleCo}${loc}${sal}${reasonSuffix}\n${job.primaryUrl}`
+}
+
+/** Lead-in length cap (chars). Bible v7.5 3-sentence ceiling. */
+const LEAD_IN_CHAR_CAP = 250
+
+/**
+ * Stream H13 — friend-tone CV-aware body composer. Routes to one of three
+ * variants based on ctx.recentCompany × ctx.hasUserStatedPreferences and
+ * synthesizes the lead-in. Per-job lines call formatJobLineWithReason.
+ *
+ * Returns "" when jobs is empty (matches formatBatchMessage contract).
+ */
+export function formatDailyPushBody(
+  jobs: MatchingJob[],
+  ctx: DailyPushContext
+): string {
+  if (jobs.length === 0) return ""
+  const n = jobs.length
+  const zh = ctx.language === "zh"
+
+  let lead: string
+  if (ctx.recentCompany && ctx.hasUserStatedPreferences) {
+    // Variant A — both CV + stated prefs.
+    const targetRole = ctx.statedPreferences?.targetRole?.[0]
+    if (zh) {
+      lead = targetRole
+        ? `今天看到这 ${n} 个跟你之前说想找的${targetRole}方向对得上：`
+        : `今天看到这 ${n} 个跟你之前说的方向对得上：`
+    } else {
+      lead = targetRole
+        ? `Spotted ${n} that line up with the ${targetRole} angle you mentioned:`
+        : `Spotted ${n} that fit the direction you mentioned:`
+    }
+  } else if (ctx.recentCompany) {
+    // Variant B — CV-known, prefs-unknown. Names recentCompany + topSkills[0].
+    const skill0 = ctx.topSkills?.[0]
+    if (zh) {
+      lead = skill0
+        ? `嘿，没具体问过你想找啥，看你简历那段 ${ctx.recentCompany} 的 ${skill0} 挺硬，今天发现这 ${n} 个对得上：`
+        : `嘿，没具体问过你想找啥，看你简历 ${ctx.recentCompany} 那段挺有料，今天发现这 ${n} 个对得上：`
+    } else {
+      lead = skill0
+        ? `Hey — haven't asked what you're after exactly, but your ${skill0} stretch at ${ctx.recentCompany} looked solid; here are ${n} that line up:`
+        : `Hey — haven't asked what you're after exactly, but your ${ctx.recentCompany} stint looked solid; here are ${n} that line up:`
+    }
+  } else {
+    // Variant C — no CV signal. Keep legacy lead, append gentle nudge.
+    const base = zh
+      ? n === 1
+        ? "今日给你挑了 1 个看上去对路的"
+        : `今日给你挑了 ${n} 个看上去对路的`
+      : n === 1
+        ? "Picked 1 that looks on point today"
+        : `Picked ${n} that look on point today`
+    const nudge = zh
+      ? "（顺便发我看看简历不？我帮你过一遍）"
+      : " (btw — wanna send me your CV? happy to give it a once-over)"
+    lead = zh ? `${base}${nudge}：` : `${base}.${nudge}:`
+  }
+
+  // Defensive cap on lead-in only (URLs/job lines untouched).
+  if (lead.length > LEAD_IN_CHAR_CAP) {
+    lead = lead.slice(0, LEAD_IN_CHAR_CAP - 1) + "…"
+  }
+
+  const blocks = jobs.map((j) => formatJobLineWithReason(j, ctx)).join("\n\n")
+  return `${lead}\n\n${blocks}`
+}
+
+/**
+ * Stream H13 — load DailyPushContext from Firestore. Best-effort: any
+ * lookup error silently produces a context with hasUserStatedPreferences=false
+ * and language="zh". Pulls:
+ *   - parsedCandidateResumes (latest by userId,createdAt) → recentRoleTitle,
+ *     recentCompany, topSkills, candidateName, industryTags
+ *   - pa-users/{userId} → preferredLanguage, statedPreferences (D5/D13;
+ *     when absent we set hasUserStatedPreferences=false)
+ *
+ * Note on D5/D13: pa-users.statedPreferences is the v1.5 onboarding-probe
+ * landing zone (Phase 44). Until that lands, hasUserStatedPreferences will
+ * read false for everyone → Variant B is the de-facto path for CV-known
+ * users, which is exactly what Adam asked for in the H13 brief.
+ */
+export async function loadDailyPushContext(
+  db: Firestore,
+  userId: string,
+  industryTags: string[],
+  log?: (...args: unknown[]) => void
+): Promise<DailyPushContext> {
+  const ctx: DailyPushContext = {
+    industryTags,
+    hasUserStatedPreferences: false,
+    language: "zh",
+  }
+  // 1. Resume — recentRole / recentCompany / topSkills / name.
+  try {
+    const snap = await db
+      .collection("parsedCandidateResumes")
+      .where("userId", "==", userId)
+      .orderBy("createdAt", "desc")
+      .limit(1)
+      .get()
+    if (!snap.empty) {
+      const rd = snap.docs[0]!.data() as Record<string, unknown>
+      const exps = Array.isArray(rd.experiences) ? rd.experiences : []
+      if (exps.length > 0) {
+        const e0 = exps[0] as Record<string, unknown>
+        if (typeof e0.title === "string" && e0.title.length > 0) {
+          ctx.recentRoleTitle = e0.title
+        }
+        if (typeof e0.company === "string" && e0.company.length > 0) {
+          ctx.recentCompany = e0.company
+        }
+      }
+      const cp = (rd.candidateProfile ?? {}) as Record<string, unknown>
+      if (typeof cp.name === "string" && cp.name.length > 0) {
+        ctx.candidateName = cp.name
+      }
+      if (Array.isArray(cp.skills)) {
+        const skills = (cp.skills as unknown[])
+          .filter((x) => typeof x === "string" && (x as string).length > 0)
+          .slice(0, 3) as string[]
+        if (skills.length > 0) ctx.topSkills = skills
+      }
+    }
+  } catch (err) {
+    log?.("[job-rec-daily] daily_push_ctx_resume_lookup_failed", {
+      userId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+  // 2. pa-users — preferredLanguage + statedPreferences (D5/D13 forward).
+  try {
+    const userDoc = await db.collection("pa-users").doc(userId).get()
+    if (userDoc.exists) {
+      const ud = userDoc.data() as Record<string, unknown>
+      if (ud.preferredLanguage === "en") ctx.language = "en"
+      const sp = ud.statedPreferences
+      if (sp && typeof sp === "object") {
+        const sprec = sp as Record<string, unknown>
+        const hasAny =
+          (Array.isArray(sprec.targetRole) && sprec.targetRole.length > 0) ||
+          typeof sprec.prefersStartup === "boolean" ||
+          typeof sprec.visaStatus === "string"
+        if (hasAny) {
+          ctx.hasUserStatedPreferences = true
+          ctx.statedPreferences = {
+            ...(Array.isArray(sprec.targetRole)
+              ? {
+                  targetRole: (sprec.targetRole as unknown[]).filter(
+                    (x) => typeof x === "string"
+                  ) as string[],
+                }
+              : {}),
+            ...(typeof sprec.prefersStartup === "boolean"
+              ? { prefersStartup: sprec.prefersStartup }
+              : {}),
+            ...(typeof sprec.visaStatus === "string"
+              ? { visaStatus: sprec.visaStatus }
+              : {}),
+          }
+        }
+      }
+    }
+  } catch (err) {
+    log?.("[job-rec-daily] daily_push_ctx_user_lookup_failed", {
+      userId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+  return ctx
+}
+
+/** Stream H13 — feature flag key for friend-tone opener. Default true. */
+export const FRIEND_TONE_OPENER_FLAG_KEY = "paFriendToneOpenerEnabled"
+
 
 /**
  * Stream F5 — Embedding rerank deps. All optional; when omitted the cron
@@ -658,7 +929,37 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
       // is non-tech. Re-clamps to jobsPerUser as a safety belt.
       rankedJobs = applyTitleAntiBias(rankedJobs, normalized.industryTags, jobsPerUser)
 
-      const body = formatBatchMessage(rankedJobs)
+      // Stream H13 — friend-tone CV-aware opener. Default-on flag; falls back
+      // to the legacy formatBatchMessage when explicitly disabled.
+      let body: string
+      const friendToneOn = Boolean(
+        await deps.getFlag(
+          deps.db,
+          FRIEND_TONE_OPENER_FLAG_KEY,
+          { userId, env: process.env },
+          true
+        )
+      )
+      if (friendToneOn) {
+        const pushCtx = await loadDailyPushContext(
+          deps.db,
+          userId,
+          normalized.industryTags,
+          log
+        )
+        body = formatDailyPushBody(rankedJobs, pushCtx)
+        log("[job-rec-daily] friend_tone_opener_applied", {
+          userId,
+          variant: pushCtx.recentCompany
+            ? pushCtx.hasUserStatedPreferences
+              ? "A_cv_and_prefs"
+              : "B_cv_only"
+            : "C_no_cv",
+          language: pushCtx.language,
+        })
+      } else {
+        body = formatBatchMessage(rankedJobs)
+      }
       const sendRes = await sendImessage(
         {
           userId,
