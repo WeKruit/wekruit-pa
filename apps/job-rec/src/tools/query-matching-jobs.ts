@@ -537,18 +537,51 @@ export function isStillInSchool(
  * Returns null on unparseable input. Year-only inputs default to month=0
  * (January). Pure / deterministic. Exposed for unit tests.
  */
+/**
+ * Parse a CV experience start date. Accepts:
+ *   - `2025` or `2025-09` or `2025-09-01` (ISO-ish)
+ *   - `Sep2025` / `Aug2025` / `Oct2025` (resume-parser default — month names jammed against year)
+ *   - `Sep 2025` / `September 2025` (with space)
+ * Returns 0-indexed month (Jan=0). Falls back to month=0 when only year is given.
+ *
+ * v1.5 fix (Adam dry-run job-rec E2E showed Adam's resume produced "Oct2025"
+ * which the original `^(\d{4})...` regex skipped — silently dropping
+ * `inferCollegeStudent` to false and disabling all hard-filter rules).
+ */
+const MONTH_NAME_TO_INDEX: Record<string, number> = {
+  jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+  jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
+  january: 0, february: 1, march: 2, april: 3, june: 5,
+  july: 6, august: 7, september: 8, october: 9, november: 10, december: 11,
+}
+
 export function parseStartYearMonth(s: string | undefined): { year: number; month: number } | null {
   if (typeof s !== "string") return null
-  const m = s.match(/^(\d{4})(?:-(\d{1,2}))?/)
-  if (!m) return null
-  const year = Number.parseInt(m[1]!, 10)
-  if (!Number.isFinite(year)) return null
-  let month = 0
-  if (typeof m[2] === "string") {
-    const mm = Number.parseInt(m[2], 10)
-    if (Number.isFinite(mm) && mm >= 1 && mm <= 12) month = mm - 1
+  const trimmed = s.trim()
+  // Form A: ISO-ish — `2025`, `2025-09`, `2025-09-01`
+  const isoMatch = trimmed.match(/^(\d{4})(?:-(\d{1,2}))?/)
+  if (isoMatch) {
+    const year = Number.parseInt(isoMatch[1]!, 10)
+    if (Number.isFinite(year)) {
+      let month = 0
+      if (typeof isoMatch[2] === "string") {
+        const mm = Number.parseInt(isoMatch[2], 10)
+        if (Number.isFinite(mm) && mm >= 1 && mm <= 12) month = mm - 1
+      }
+      return { year, month }
+    }
   }
-  return { year, month }
+  // Form B: month name (jammed or with space) — `Sep2025`, `Sep 2025`, `September 2025`
+  const nameMatch = trimmed.match(/^([A-Za-z]+)\s*(\d{4})\b/)
+  if (nameMatch) {
+    const monthName = nameMatch[1]!.toLowerCase()
+    const year = Number.parseInt(nameMatch[2]!, 10)
+    const month = MONTH_NAME_TO_INDEX[monthName]
+    if (Number.isFinite(year) && typeof month === "number") {
+      return { year, month }
+    }
+  }
+  return null
 }
 
 // ----- The actual hard-filter pipeline --------------------------------------

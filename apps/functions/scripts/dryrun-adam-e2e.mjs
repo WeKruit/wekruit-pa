@@ -82,13 +82,32 @@ const dry = applyHardFiltersWithFallback(hfProfile, queryRes.jobs, [], 20);
 console.log(`Hard-filter result: relaxLevel=${dry.relaxLevel} survivors=${dry.jobs.length}`);
 let hardFiltered = dry.jobs;
 
+// v1.5 fix mirror — early dedupe BEFORE cosine, matches the production
+// path now in apps/job-rec/src/daily-batch.ts (post-job-rec-E2E agent
+// finding: Adam was getting 2 jobs because Mastercard×6 + Deloitte×4
+// dominated the pool and only collapsed at end). Pure / deterministic.
+console.log("\n=== STAGE 2.5: early dedupe (v1.5 fix) ===");
+{
+  const seen = new Set();
+  const earlyDeduped = [];
+  for (const j of hardFiltered) {
+    const key = `${(j.jobTitle ?? "").toLowerCase().trim()}|${(j.companyName ?? "").toLowerCase().trim()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    earlyDeduped.push(j);
+  }
+  console.log(`Early dedupe: ${hardFiltered.length} → ${earlyDeduped.length}`);
+  hardFiltered = earlyDeduped;
+}
+
 // 4. Cosine rerank
 console.log("\n=== STAGE 3: cosine rerank ===");
 const fetched = await defaultUserEmbedFetcher(db, ADAM);
 console.log(`User embedding: dim=${fetched.embedding?.length ?? 0} resumeId=${fetched.resumeId}`);
 let ranked = hardFiltered;
 if (fetched.embedding && fetched.embedding.length > 0) {
-  ranked = rerankByCosine(hardFiltered, fetched.embedding, 10);
+  // v1.5 fix mirror — pool 10→25 (matches prod default change)
+  ranked = rerankByCosine(hardFiltered, fetched.embedding, 25);
   const dot = (a,b) => { let d=0,na=0,nb=0; for(let i=0;i<a.length;i++){d+=a[i]*b[i];na+=a[i]*a[i];nb+=b[i]*b[i];} return na===0||nb===0?0:d/(Math.sqrt(na)*Math.sqrt(nb)); };
   console.log(`Cosine top-${ranked.length}:`);
   ranked.forEach((j,i) => {

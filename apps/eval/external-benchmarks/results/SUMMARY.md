@@ -34,7 +34,7 @@ BotChat humanlikeness (judge wins / 50):
 | **RoleLLM** generated_rate | 0 (200 fetch-failed)** | 0 (200 fetch-failed)** | 1.0 (200 generated, $0.077) |
 
 \* Qwen-72B judging Qwen-72B — score=1.0 reflects self-evaluation, not absolute humanness.
-\*\* `role-llm` fetch-failed pattern: BOTH claire-stack and qwen-7b-raw arms fail (Qwen-7B-Instruct backing). qwen-72b-raw succeeds 100%. Bug is **Qwen-7B-specific** (likely model-side prompt size or rate-limit) not adapter-config.
+\*\* `role-llm` 0/200 footnote was wrong. v1.5 deep-dive (commit `e08e1db`) found the real cause: cumulative socket-pool exhaustion when run-matrix.sh runs all 5 benchmarks in one Node process — empathetic-dialogues' 25-min run with 840 timeouts degrades undici sockets so role-llm fails "fetch failed" instantly (200 calls / 139ms). qwen-72b-raw runs in a separate process so it succeeded coincidentally. With the per-call retry fix shipped in `apps/eval/external-benchmarks/runners/role-llm.mjs:102-138`, subset=10 standalone now generates 39/40 (97.5%) at $0.0026. Permanent fix for run-matrix.sh: split per-benchmark `node` invocations so socket pools start fresh each time. **Not a Qwen-7B-Instruct backing limitation.**
 
 ---
 
@@ -61,8 +61,9 @@ BotChat humanlikeness (judge wins / 50):
 
 ### RoleLLM (50 chars × 4 prompts = 200 prompts; ZH-EN role-play)
 - qwen-72b 100% generated — avg response 1028 chars (rich roleplay output)
-- claire-stack + qwen-7b both 0/200 fetch-failed — Qwen-7B backing model too small for RoleLLM character-loaded prompts
+- ~~claire-stack + qwen-7b both 0/200 fetch-failed — Qwen-7B backing model too small~~ — corrected: socket-pool exhaustion in single-process matrix runner (see footnote ** above). With per-call retry fix (commit `e08e1db`), subset=10 standalone Qwen-7B yields 39/40 (97.5%). Full 200/200 expected on next run with the retry hotfix; pending matrix orchestrator split for cumulative-socket-pool root fix.
 - Data path resolution required pre-flight fix (vendor repo doesn't ship test data; HF dataset structure differs from runner's expected layout)
+- v1.5 ESConv strategy_acc bug also fixed (commit `bbc3aa3`): runner was reading `supporterTurn.strategy` but ESConv stores strategy under `supporterTurn.annotation.strategy`. Pre-fix: 0.015 (3/200, baseline-by-chance). Post-fix subset=30: 0.10 (6.7×). Remaining gap to >25% target = Qwen-7B-base 8-class classifier ceiling, requires fewshot/72B/majority-vote — explicitly v1.6 scope.
 
 ---
 

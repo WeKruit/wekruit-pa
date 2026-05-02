@@ -1098,6 +1098,31 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
         }
       }
 
+      // v1.5 fix — early dedupe BEFORE cosine narrows the pool. Duplicate
+      // listings (same role × N cities for Mastercard / Deloitte / consulting
+      // umbrellas) used to take ~80% of the post-cosine top-10 slots, then
+      // H12 collapsed them at the end leaving 2 unique. Move the (title,
+      // company) collapse upstream so cosine + cross-encoder operate on
+      // unique candidates only. Job-rec dry-run agent (commit 05375d3) caught
+      // this — Adam was getting 2 jobs (target 5-8). Pure / deterministic.
+      if (hardFilteredJobs.length > 1) {
+        const seen = new Set<string>()
+        const earlyDeduped: MatchingJob[] = []
+        for (const j of hardFilteredJobs) {
+          const key = `${(j.jobTitle ?? "").toLowerCase().trim()}|${(j.companyName ?? "").toLowerCase().trim()}`
+          if (seen.has(key)) continue
+          seen.add(key)
+          earlyDeduped.push(j)
+        }
+        if (earlyDeduped.length < hardFilteredJobs.length) {
+          log("[job-rec-daily] early_dedupe_applied", {
+            userId,
+            before: hardFilteredJobs.length,
+            after: earlyDeduped.length,
+          })
+          hardFilteredJobs = earlyDeduped
+        }
+      }
       // Stream F5 — embedding rerank when configured + user has embedding.
       // Stream G1 — cascade: fetcher → computer (lazy compute + cache) → fallback.
       let rankedJobs: MatchingJob[] = hardFilteredJobs
@@ -1135,9 +1160,11 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
           }
           if (embedding && embedding.length > 0) {
             // H10: when cross-encoder is wired, keep a wider cosine top-N
-            // (default 10) so the cross-encoder has room to reorder.
+            // (default 25 post-v1.5 dry-run finding) so the cross-encoder
+            // has room to reorder. Was 10 — too tight after early-dedupe
+            // collapses duplicate listings (Adam got 2 jobs at default 10).
             const cosineKeep = deps.crossEncoderReranker
-              ? Math.max(jobsPerUser, deps.crossEncoderPoolSize ?? 10)
+              ? Math.max(jobsPerUser, deps.crossEncoderPoolSize ?? 25)
               : jobsPerUser
             rankedJobs = rerankByCosine(
               hardFilteredJobs as Array<MatchingJob & { embedding?: number[] | null }>,
