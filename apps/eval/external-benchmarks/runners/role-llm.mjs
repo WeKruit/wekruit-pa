@@ -101,24 +101,40 @@ export async function runRoleLLM(opts) {
 
   for (let i = 0; i < items.length; i++) {
     const it = items[i]
-    try {
-      const r = await opts.adapter.chat({
-        messages: [
-          { role: "system", content: `You are role-playing as ${it.role}. Stay in character.` },
-          { role: "user", content: it.prompt },
-        ],
-        opts: {
-          benchmark: BENCHMARK_NAME,
-          userId: `role-llm-${i}`,
-          turnNumber: 1,
-        },
-      })
-      if (r && typeof r.text === "string" && r.text.length > 0) {
-        generated += 1
-        totalLen += r.text.length
+    // Single retry on transient errors (timeout / "fetch failed"). Phase 39
+    // retro: qwen-7b-raw role-llm hit ~15% timeouts at subset=10 due to
+    // SiliconFlow Qwen-7B p99 latency on character-loaded prompts; retrying
+    // recovers most of them. Non-transient errors (HTTP 4xx/5xx, auth) are
+    // not retried — they fail fast on first attempt.
+    let lastErr = null
+    let succeeded = false
+    for (let attempt = 0; attempt < 2 && !succeeded; attempt++) {
+      try {
+        const r = await opts.adapter.chat({
+          messages: [
+            { role: "system", content: `You are role-playing as ${it.role}. Stay in character.` },
+            { role: "user", content: it.prompt },
+          ],
+          opts: {
+            benchmark: BENCHMARK_NAME,
+            userId: `role-llm-${i}`,
+            turnNumber: 1,
+          },
+        })
+        if (r && typeof r.text === "string" && r.text.length > 0) {
+          generated += 1
+          totalLen += r.text.length
+        }
+        succeeded = true
+      } catch (err) {
+        lastErr = err
+        const msg = err instanceof Error ? err.message : String(err)
+        const transient = /timeout|fetch failed|ECONNRESET|socket hang up|EAI_AGAIN/i.test(msg)
+        if (!transient) break
       }
-    } catch (err) {
-      errors.push(`${i}: ${err instanceof Error ? err.message : String(err)}`)
+    }
+    if (!succeeded && lastErr) {
+      errors.push(`${i}: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`)
     }
   }
 
