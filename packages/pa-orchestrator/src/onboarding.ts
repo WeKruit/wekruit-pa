@@ -1,33 +1,174 @@
 /**
  * Phase 23 — Onboarding state machine for closed-beta first-contact flow.
+ * Phase 44 (v1.5 Stream-B / D5+D13) — extended to 8-state rich JOB-PREF
+ * probe (role / yoe / visa / startup-pref / location). One question per turn,
+ * bilingual, friend-tone (Adam-locked: "那你有身份不" not "What is your visa
+ * status"). Synthetic system inputs only — ZERO new LLM calls per probe step.
  *
  * D-03: Onboarding state lives on pa_users (onboardingState field).
  * D-04: Uses Voice v1 prompt unchanged — synthetic system inputs inject the
  *       onboarding step hint; Claude composes actual replies naturally.
  * D-08: status=invited triggers onboarding flow; auto-promotes to active at complete.
  *
- * State machine:
- *   undefined/pending → send_first_mes → first_mes_sent
- *   first_mes_sent → ask_grounding_q → grounding_q1_asked
- *   grounding_q1_asked → complete → complete
- *   complete → skip (no-op)
+ * State machine (v2):
+ *   pending/undefined → send_first_mes        → first_mes_sent
+ *   first_mes_sent    → ask_q_role            → q_role_asked
+ *   q_role_asked      → ask_q_yoe             → q_yoe_asked
+ *   q_yoe_asked       → ask_q_visa            → q_visa_asked
+ *   q_visa_asked      → ask_q_startup_pref    → q_startup_pref_asked
+ *   q_startup_pref_asked → ask_q_location     → q_location_asked
+ *   q_location_asked  → complete              → complete
+ *   complete          → skip                  → (no-op)
+ *
+ * Legacy state (v1 compat): when `enableV2 = false`, `first_mes_sent` resolves
+ * to legacy `ask_grounding_q` (single-question path) and `grounding_q1_asked`
+ * resolves to `complete`. Existing prod users with `grounding_q1_asked` keep
+ * working unchanged.
  */
 import type { Firestore } from "firebase-admin/firestore"
 import { PA_COLLECTIONS } from "@pa/core-types"
-import type { User, AgentDef, OnboardingState } from "@pa/core-types"
+import type {
+  User,
+  AgentDef,
+  OnboardingState,
+  StatedPreferences,
+  VisaStatus,
+} from "@pa/core-types"
 
-export type OnboardingStep = "send_first_mes" | "ask_grounding_q" | "complete" | "skip"
+export type OnboardingStep =
+  | "send_first_mes"
+  | "ask_grounding_q" // legacy v1 single-question path (kept for backward compat)
+  | "ask_q_role"
+  | "ask_q_yoe"
+  | "ask_q_visa"
+  | "ask_q_startup_pref"
+  | "ask_q_location"
+  | "complete"
+  | "skip"
+
+export type ResolveOpts = {
+  /** v2 8-state probe; default false = legacy 4-state. */
+  enableV2?: boolean
+}
 
 /**
  * Pure function: derive the next onboarding action from user state.
  * Called before every inbound turn; returns "skip" for active/complete users.
+ *
+ * When `enableV2=false` (default), legacy first_mes_sent → ask_grounding_q
+ * path is preserved exactly. When `enableV2=true`, first_mes_sent advances
+ * into the 5-question chain (q_role → q_yoe → q_visa → q_startup → q_location).
  */
-export function resolveOnboardingStep(user: Pick<User, "onboardingState">): OnboardingStep {
+export function resolveOnboardingStep(
+  user: Pick<User, "onboardingState">,
+  opts: ResolveOpts = {}
+): OnboardingStep {
   const state = user.onboardingState
   if (!state || state === "pending") return "send_first_mes"
+  if (opts.enableV2) {
+    if (state === "first_mes_sent") return "ask_q_role"
+    if (state === "q_role_asked") return "ask_q_yoe"
+    if (state === "q_yoe_asked") return "ask_q_visa"
+    if (state === "q_visa_asked") return "ask_q_startup_pref"
+    if (state === "q_startup_pref_asked") return "ask_q_location"
+    if (state === "q_location_asked") return "complete"
+    // Legacy v1 state encountered with v2 on — treat grounding_q1_asked as
+    // already-grounded; advance to complete (don't re-probe the user).
+    if (state === "grounding_q1_asked") return "complete"
+    return "skip"
+  }
+  // Legacy v1 path (enableV2=false)
   if (state === "first_mes_sent") return "ask_grounding_q"
   if (state === "grounding_q1_asked") return "complete"
+  // v2 question states encountered with v2 off (e.g. flag flipped back) →
+  // converge to complete to avoid stranding the user mid-probe.
+  if (
+    state === "q_role_asked" ||
+    state === "q_yoe_asked" ||
+    state === "q_visa_asked" ||
+    state === "q_startup_pref_asked" ||
+    state === "q_location_asked"
+  ) {
+    return "complete"
+  }
   return "skip"
+}
+
+/**
+ * Phase 44 — Should the onboarding probe run at all for this user?
+ *
+ * D3: any user message that triggers `intent=job_search` (or any inbound when
+ * onboarding hasn't completed) should reuse the same probe instead of asking
+ * a fresh question. Returns the next step, or "skip" when complete.
+ *
+ * v1.5 simplification: 30-day staleness check is deferred to v1.6. Today we
+ * only probe when onboardingState is incomplete — fully-completed users are
+ * never re-probed (they have whatever statedPreferences they answered).
+ */
+export function shouldRunOnboardingProbe(
+  user: Pick<User, "onboardingState" | "statedPreferences">,
+  opts: { enableV2?: boolean; intent?: string } = {}
+): OnboardingStep {
+  const step = resolveOnboardingStep(user, { enableV2: opts.enableV2 })
+  if (step === "skip") return "skip"
+  // First-contact flow always runs regardless of intent (legacy behavior preserved).
+  // For mid-conversation intents like `job_search`, only probe when v2 is on
+  // AND we're past the opener — otherwise the user gets bumped back to greeting.
+  if (opts.intent === "job_search" && step === "send_first_mes" && !opts.enableV2) {
+    return "skip"
+  }
+  return step
+}
+
+/**
+ * Detect zh vs en from user input. Returns "zh" when ≥30% of non-whitespace
+ * characters are CJK; otherwise "en". Empty input defaults to "zh" (Claire's
+ * first_mes is Chinese — keep the opener consistent).
+ */
+function pickLang(userMessage: string | undefined): "zh" | "en" {
+  const text = (userMessage ?? "").replace(/\s+/g, "")
+  if (!text) return "zh"
+  let cjk = 0
+  for (const ch of text) {
+    const code = ch.codePointAt(0) ?? 0
+    // CJK Unified Ideographs + extensions (rough but sufficient for routing)
+    if (
+      (code >= 0x4e00 && code <= 0x9fff) ||
+      (code >= 0x3400 && code <= 0x4dbf) ||
+      (code >= 0xf900 && code <= 0xfaff)
+    ) {
+      cjk++
+    }
+  }
+  const total = [...text].length
+  return cjk / total >= 0.3 ? "zh" : "en"
+}
+
+/** Friend-tone bilingual prompts — Adam-locked tone, do NOT paraphrase. */
+const Q_PROMPTS: Record<
+  "ask_q_role" | "ask_q_yoe" | "ask_q_visa" | "ask_q_startup_pref" | "ask_q_location",
+  { zh: string; en: string }
+> = {
+  ask_q_role: {
+    zh: "那你大概想找啥方向的活? 比如做产品、做工程、还是做研究 — 给我个大致就行",
+    en: "btw — what kinda role you eyeing? eng / pm / research / design? roughly is fine",
+  },
+  ask_q_yoe: {
+    zh: "你工作几年了? 还是刚毕业找新人岗?",
+    en: "how many years you been working? or fresh outta school?",
+  },
+  ask_q_visa: {
+    zh: "那你有身份不? 公民/绿卡/OPT/还是要 sponsor?",
+    en: "got work auth sorted? citizen / GC / OPT / need sponsorship?",
+  },
+  ask_q_startup_pref: {
+    zh: "你更想去 startup 那种小而拼的, 还是大厂稳一点?",
+    en: "more into startup hustle vibe or stable big-co?",
+  },
+  ask_q_location: {
+    zh: "想找哪边的工作? 湾区、纽约、还是看远程?",
+    en: "where you wanna be? SF / NYC / remote ok?",
+  },
 }
 
 /**
@@ -37,37 +178,177 @@ export function resolveOnboardingStep(user: Pick<User, "onboardingState">): Onbo
  * context — NOT a separate prompt. The LLM composes the actual reply
  * naturally from the Character Bible v1 personality.
  *
- * Grounding question voice follows Character Bible v1:
- *   - Roommate register, short (1 sentence max)
- *   - No "你好" opener, no "欢迎", no host-mode probing
- *   - Casual curiosity about what brought them here
+ * Phase 44: For v2 question steps, the prompt instructs the LLM to ask the
+ * given Adam-locked phrase verbatim (or near-verbatim — picking either zh or
+ * en register based on the user's most recent input). This is a directive,
+ * not a paraphrase license.
  */
-export function composeOnboardingInput(step: OnboardingStep, agent: AgentDef): string {
+export function composeOnboardingInput(
+  step: OnboardingStep,
+  agent: AgentDef,
+  ctx: { userMessage?: string } = {}
+): string {
   if (step === "send_first_mes") {
-    // Extract first_mes from agent systemPrompt if available (Bible v6.4+)
-    // Pattern: "First message: <text>" in systemPrompt
     const match = agent.systemPrompt.match(/[Ff]irst\s+message:\s*(.+?)(?:\n|$)/)
     const firstMes = match?.[1]?.trim() ?? "在呢. 今天找你聊点啥? 🍋"
     return `[onboarding_step: send_first_mes] Reply EXACTLY with Claire's first_mes: "${firstMes}". Nothing else. No greeting. No explanation.`
   }
   if (step === "ask_grounding_q") {
-    // Character Bible v1 grounding: 1 casual question, roommate register
-    // "What brings you here" in Claire's voice — light, not clinical
     return `[onboarding_step: ask_grounding_q] Ask ONE casual question to understand what's going on with the user right now. Roommate register: short, genuine, no "欢迎", no formal opener. Example: "你最近怎么了, 找我有什么事吗" or "今天有什么事?" — Claude picks naturally from Character Bible v1 voice.`
+  }
+  if (
+    step === "ask_q_role" ||
+    step === "ask_q_yoe" ||
+    step === "ask_q_visa" ||
+    step === "ask_q_startup_pref" ||
+    step === "ask_q_location"
+  ) {
+    const lang = pickLang(ctx.userMessage)
+    const phrase = Q_PROMPTS[step][lang]
+    return `[onboarding_step: ${step}] Ask EXACTLY this ONE friend-tone question (Adam-locked phrasing — do not paraphrase, do not add greeting, do not chain a second question): "${phrase}". 1 sentence. No "好的" / "OK" preface. No "btw" if zh. No follow-up clauses.`
   }
   // complete / skip don't need synthetic inputs
   return ""
 }
 
+/** State transition map: which OnboardingState a step writes. */
 const ONBOARDING_NEXT_STATE: Partial<Record<OnboardingStep, OnboardingState>> = {
   send_first_mes: "first_mes_sent",
   ask_grounding_q: "grounding_q1_asked",
+  ask_q_role: "q_role_asked",
+  ask_q_yoe: "q_yoe_asked",
+  ask_q_visa: "q_visa_asked",
+  ask_q_startup_pref: "q_startup_pref_asked",
+  ask_q_location: "q_location_asked",
   complete: "complete",
+}
+
+/**
+ * Ordered state vector for idempotent advancement. Both v1 and v2 states are
+ * present so a v1 user partway through (`grounding_q1_asked`) cannot regress
+ * into a v2 question state, and vice versa.
+ */
+const STATE_ORDER: Array<OnboardingState | undefined> = [
+  undefined,
+  "pending",
+  "first_mes_sent",
+  // v1 leaf
+  "grounding_q1_asked",
+  // v2 chain
+  "q_role_asked",
+  "q_yoe_asked",
+  "q_visa_asked",
+  "q_startup_pref_asked",
+  "q_location_asked",
+  "complete",
+]
+
+// ============================================================================
+// Phase 44 — Lightweight regex/keyword parsers for statedPreferences writes.
+// NO LLM in this path (Adam-locked). Each parser returns the patch to merge
+// into statedPreferences, or {} when the user reply doesn't match — null
+// fields are stored explicitly to record "we asked, no clean signal yet".
+// ============================================================================
+
+function parseRoleAnswer(reply: string): Partial<StatedPreferences> {
+  const trimmed = reply.trim().slice(0, 80)
+  if (!trimmed) return {}
+  return { targetRole: [trimmed] }
+}
+
+function parseYoeAnswer(reply: string): Partial<StatedPreferences> {
+  const lower = reply.toLowerCase()
+  // New-grad signals (zh + en)
+  if (
+    /(刚毕业|应届|新人|new\s*grad|fresh(\s*out)?|just\s*graduated|no\s*experience)/i.test(reply)
+  ) {
+    return { yoeRange: [0, 1] }
+  }
+  // Numeric "N years/yrs/y" or "N 年"
+  const num = lower.match(/(\d{1,2})\s*(\+)?\s*(years?|yrs?|y\b|年)/i)
+  if (num && num[1]) {
+    const n = parseInt(num[1], 10)
+    if (Number.isFinite(n) && n >= 0 && n <= 50) {
+      return { yoeRange: [n, n] }
+    }
+  }
+  return { yoeRange: null }
+}
+
+function parseVisaAnswer(reply: string): Partial<StatedPreferences> {
+  const lower = reply.toLowerCase()
+  // Order matters: most-specific first to avoid GC matching "card" via citizen.
+  if (/(sponsor|sponsorship|h-?1\s*b\s*later|need.*visa)/i.test(reply)) {
+    return { visaStatus: "sponsorship_needed" satisfies VisaStatus }
+  }
+  if (/(h-?1\s*b|h1)/i.test(reply)) {
+    return { visaStatus: "h1b" }
+  }
+  if (/(opt\b|stem.*opt)/i.test(lower) || /\bOPT\b/.test(reply)) {
+    return { visaStatus: "opt" }
+  }
+  if (/(green\s*card|绿卡|gc\b|permanent\s*resident)/i.test(reply)) {
+    return { visaStatus: "gc" }
+  }
+  if (/(citizen|公民|美国人|us\s*citizen)/i.test(reply)) {
+    return { visaStatus: "citizen" }
+  }
+  return { visaStatus: "unknown" }
+}
+
+function parseStartupPrefAnswer(reply: string): Partial<StatedPreferences> {
+  const lower = reply.toLowerCase()
+  const startupHit = /(startup|小公司|小厂|创业|early\s*stage|hustle)/i.test(reply)
+  const bigcoHit = /(大厂|大公司|big[-\s]*co|big\s*tech|stable|faang|enterprise)/i.test(reply)
+  if (startupHit && !bigcoHit) return { prefersStartup: true }
+  if (bigcoHit && !startupHit) return { prefersStartup: false }
+  return { prefersStartup: null }
+}
+
+function parseLocationAnswer(reply: string): Partial<StatedPreferences> {
+  const trimmed = reply.trim().slice(0, 120)
+  if (!trimmed) return { targetLocations: [] }
+  // Detect "remote" mentions but still keep the raw reply as a hint.
+  const tokens: string[] = []
+  if (/(remote|在家|远程|wfh)/i.test(reply)) tokens.push("remote")
+  if (/(湾区|bay\s*area|sf|san\s*francisco)/i.test(reply)) tokens.push("SF Bay Area")
+  if (/(ny|纽约|new\s*york|nyc)/i.test(reply)) tokens.push("NYC")
+  if (/(seattle|西雅图)/i.test(reply)) tokens.push("Seattle")
+  if (/(la\b|los\s*angeles|洛杉矶)/i.test(reply)) tokens.push("LA")
+  if (tokens.length === 0) tokens.push(trimmed)
+  return { targetLocations: Array.from(new Set(tokens)) }
+}
+
+/**
+ * Parse a user's free-form reply for the question state we just asked.
+ * Idempotent: parsing is pure, callers decide whether to write.
+ *
+ * The `step` param is the step we ASKED — i.e. we're now parsing the reply
+ * that arrived AFTER that step ran. Map: ask_q_role → parses reply for role.
+ */
+export function parseUserAnswerForStep(
+  step: OnboardingStep,
+  reply: string
+): Partial<StatedPreferences> {
+  if (!reply) return {}
+  if (step === "ask_q_role") return parseRoleAnswer(reply)
+  if (step === "ask_q_yoe") return parseYoeAnswer(reply)
+  if (step === "ask_q_visa") return parseVisaAnswer(reply)
+  if (step === "ask_q_startup_pref") return parseStartupPrefAnswer(reply)
+  if (step === "ask_q_location") return parseLocationAnswer(reply)
+  return {}
 }
 
 /**
  * Advance the user's onboarding state in Firestore. Idempotent: if the user
  * already has a state >= the target, the write is a no-op.
+ *
+ * Phase 44: when `opts.priorUserReply` is supplied AND the *previous* step
+ * was a question step, parse the reply and merge into statedPreferences in
+ * the same Firestore set() call. This means the answer to q_role gets
+ * written when we transition q_role_asked → q_yoe_asked (i.e. when the next
+ * step "ask_q_yoe" is applied). The `opts.priorAskedStep` declares which
+ * step's answer we are parsing.
  *
  * On "complete": also promotes the matching pa_beta_participants row to active
  * and sets onboardedAt + metadata.cohort=beta-v1 (D-07, D-08).
@@ -76,7 +357,13 @@ export async function applyOnboardingStep(
   db: Firestore,
   user: Pick<User, "id" | "phoneE164" | "onboardingState">,
   step: OnboardingStep,
-  opts: { now?: string } = {}
+  opts: {
+    now?: string
+    /** Phase 44 — previous step asked (parses reply into statedPreferences). */
+    priorAskedStep?: OnboardingStep
+    /** Phase 44 — user's reply to the prior step's question. */
+    priorUserReply?: string
+  } = {}
 ): Promise<void> {
   if (step === "skip") return
 
@@ -85,30 +372,33 @@ export async function applyOnboardingStep(
 
   const currentState = user.onboardingState
   // Idempotency: don't regress state
-  const stateOrder: Array<OnboardingState | undefined> = [
-    undefined,
-    "pending",
-    "first_mes_sent",
-    "grounding_q1_asked",
-    "complete",
-  ]
-  const currentIdx = stateOrder.indexOf(currentState)
-  const nextIdx = stateOrder.indexOf(nextState)
-  if (currentIdx >= nextIdx) return // already at or past this state
+  const currentIdx = STATE_ORDER.indexOf(currentState)
+  const nextIdx = STATE_ORDER.indexOf(nextState)
+  if (currentIdx >= 0 && nextIdx >= 0 && currentIdx >= nextIdx) return
 
   const now = opts.now ?? new Date().toISOString()
   const userRef = db.collection(PA_COLLECTIONS.users).doc(user.id)
 
+  // Phase 44 — parse the user's prior answer (if any) into a statedPreferences
+  // patch. Empty patch = no-op merge.
+  let prefPatch: Partial<StatedPreferences> = {}
+  if (opts.priorAskedStep && opts.priorUserReply) {
+    prefPatch = parseUserAnswerForStep(opts.priorAskedStep, opts.priorUserReply)
+  }
+  const hasPrefPatch = Object.keys(prefPatch).length > 0
+  const statedPreferencesWrite: StatedPreferences | undefined = hasPrefPatch
+    ? { ...prefPatch, updatedAt: now }
+    : undefined
+
   if (nextState === "complete") {
-    await userRef.set(
-      {
-        onboardingState: "complete",
-        onboardedAt: now,
-        updatedAt: now,
-        metadata: { cohort: "beta-v1" },
-      },
-      { merge: true }
-    )
+    const completePayload: Record<string, unknown> = {
+      onboardingState: "complete",
+      onboardedAt: now,
+      updatedAt: now,
+      metadata: { cohort: "beta-v1" },
+    }
+    if (statedPreferencesWrite) completePayload.statedPreferences = statedPreferencesWrite
+    await userRef.set(completePayload, { merge: true })
     // Auto-promote beta participant: find by userId = user.id and status in (invited, active)
     const snap = await db
       .collection(PA_COLLECTIONS.betaParticipants)
@@ -139,9 +429,11 @@ export async function applyOnboardingStep(
       }
     }
   } else {
-    await userRef.set(
-      { onboardingState: nextState, updatedAt: now },
-      { merge: true }
-    )
+    const payload: Record<string, unknown> = {
+      onboardingState: nextState,
+      updatedAt: now,
+    }
+    if (statedPreferencesWrite) payload.statedPreferences = statedPreferencesWrite
+    await userRef.set(payload, { merge: true })
   }
 }

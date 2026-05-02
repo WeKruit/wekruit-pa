@@ -29,14 +29,71 @@ export type MemoryMode = z.infer<typeof MemoryModeSchema>
 export const MessageRoleSchema = z.enum(["user", "assistant", "system"])
 export type MessageRole = z.infer<typeof MessageRoleSchema>
 
-/** Phase 23 — onboarding state machine step */
+/**
+ * Phase 23 — onboarding state machine step.
+ *
+ * Phase 44 (v1.5 Stream-B) extends the original 4-state machine with 5 new
+ * question states (q_role_asked → q_location_asked) for the rich friend-tone
+ * JOB-PREF probe. Backward compatible: legacy values (`pending`,
+ * `first_mes_sent`, `grounding_q1_asked`, `complete`) still resolve via
+ * `resolveOnboardingStep` exactly as before; new states only enter the
+ * write path when `paOnboardingProbeV2Enabled` is on for the user.
+ */
 export const OnboardingStateSchema = z.enum([
   "pending",
   "first_mes_sent",
   "grounding_q1_asked",
+  "q_role_asked",
+  "q_yoe_asked",
+  "q_visa_asked",
+  "q_startup_pref_asked",
+  "q_location_asked",
   "complete",
 ])
 export type OnboardingState = z.infer<typeof OnboardingStateSchema>
+
+/**
+ * Phase 44 (v1.5 Stream-B / D5+D13) — `User.statedPreferences` map.
+ *
+ * Captured by the onboarding probe v2 state machine + future
+ * `intent=preference_update` paths. ALL FIELDS OPTIONAL — partial fills
+ * are normal (a user may answer 3 of 6 questions before disengaging).
+ *
+ * Read by:
+ *   - `applyHardFilters()` (D4) — yoe / visa / role exclusivity
+ *   - cross-encoder rerank (D10) — startup-vs-corp boost
+ *   - daily-batch opener (D1) — known-preference variants
+ *
+ * NEVER block on absence — fall back to CV-only signals when fields are null.
+ */
+export const VisaStatusSchema = z.enum([
+  "citizen",
+  "gc",
+  "opt",
+  "h1b",
+  "sponsorship_needed",
+  "unknown",
+])
+export type VisaStatus = z.infer<typeof VisaStatusSchema>
+
+export const StatedPreferencesSchema = z.object({
+  /** Free-text role hints, e.g. ["product manager", "research scientist"]. */
+  targetRole: z.array(z.string()).optional(),
+  /** [minYears, maxYears]. `[0, 1]` for new grads. */
+  yoeRange: z.tuple([z.number().nonnegative(), z.number().nonnegative()]).nullable().optional(),
+  visaStatus: VisaStatusSchema.optional(),
+  /** true = prefers startups; false = prefers big-co; null = no signal. */
+  prefersStartup: z.boolean().nullable().optional(),
+  /** Free-text location hints, e.g. ["SF Bay Area", "remote"]. */
+  targetLocations: z.array(z.string()).optional(),
+  /** true = leans research-oriented; null = no signal. */
+  researchOriented: z.boolean().nullable().optional(),
+  /** Annual USD floor; null = no signal. */
+  salaryFloor: z.number().nullable().optional(),
+  /** ISO timestamp of last write. */
+  updatedAt: z.string().optional(),
+})
+export type StatedPreferences = z.infer<typeof StatedPreferencesSchema>
 
 /** Phase 23 — closed-beta participant lifecycle */
 export const BetaParticipantStatusSchema = z.enum([
@@ -106,6 +163,8 @@ export const UserSchema = z.object({
   metadata: z.object({
     cohort: z.string().optional(),
   }).optional(),
+  /** Phase 44 (v1.5 Stream-B / D5+D13) — captured by onboarding probe v2. */
+  statedPreferences: StatedPreferencesSchema.optional(),
 })
 export type User = z.infer<typeof UserSchema>
 

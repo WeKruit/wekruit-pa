@@ -59,8 +59,15 @@ import {
   type LoadContextResult,
 } from "@pa/memory"
 import { appendAuditEvent } from "@pa/pa-broker"
+import { getFlag } from "@pa/pa-persistence"
 import { checkPromptInjection, checkPromptInjectionAndRecord, enforceRateLimit } from "@pa/pa-safety"
-import { resolveOnboardingStep, applyOnboardingStep, composeOnboardingInput } from "./onboarding.js"
+import {
+  resolveOnboardingStep,
+  applyOnboardingStep,
+  composeOnboardingInput,
+  shouldRunOnboardingProbe,
+  type OnboardingStep,
+} from "./onboarding.js"
 import { LEGACY_V0_SYSTEM_PROMPT } from "./legacy-voice-prompt.js"
 import { buildVoiceReminder, isVoiceV1Disabled } from "./voice-reminder.js"
 import { computeMirrorForTurn, isVoiceMirrorDisabledFlag } from "./voice/mirror-injection.js"
@@ -254,12 +261,33 @@ export type OrchestratorStore = {
   getOnboardingUser(userId: string): Promise<{
     id: string
     phoneE164: string
-    onboardingState?: "pending" | "first_mes_sent" | "grounding_q1_asked" | "complete"
+    onboardingState?:
+      | "pending"
+      | "first_mes_sent"
+      | "grounding_q1_asked"
+      | "q_role_asked"
+      | "q_yoe_asked"
+      | "q_visa_asked"
+      | "q_startup_pref_asked"
+      | "q_location_asked"
+      | "complete"
+    /** Phase 44 — read so orchestrator can decide reusable-trigger flow. */
+    statedPreferences?: import("@pa/core-types").StatedPreferences
   } | null>
   /**
    * Phase 23 — apply onboarding step to advance user state + promote beta participant.
    */
-  applyOnboarding(userId: string, phoneE164: string, step: "send_first_mes" | "ask_grounding_q" | "complete"): Promise<void>
+  applyOnboarding(
+    userId: string,
+    phoneE164: string,
+    step: OnboardingStep,
+    opts?: {
+      /** Phase 44 — previous step asked (for parsing user reply into statedPreferences). */
+      priorAskedStep?: OnboardingStep
+      /** Phase 44 — user's reply to that prior step. */
+      priorUserReply?: string
+    }
+  ): Promise<void>
 
   /**
    * Phase 24.5 — optional Firestore handle for `getFlag()` reads. Tests omit
@@ -346,6 +374,44 @@ function shouldSuppressOutbound(event: InboundEvent): boolean {
       (harness as { suppressOutbound?: unknown }).suppressOutbound === true
   )
 }
+
+/**
+ * Phase 44 — flag check for v1.5 Stream-B onboarding probe v2.
+ * Default OFF. Env override: `PA_ONBOARDING_PROBE_V2_DISABLED=true` short-circuits to false.
+ */
+async function isOnboardingProbeV2Enabled(
+  db: Firestore | undefined,
+  userId: string | undefined
+): Promise<boolean> {
+  if (process.env.PA_ONBOARDING_PROBE_V2_DISABLED === "true") return false
+  if (!db) return false
+  try {
+    const v = await getFlag(db, "paOnboardingProbeV2Enabled", {
+      userId,
+      env: process.env,
+    })
+    return v === true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Phase 44 — given the user's onboardingState BEFORE this turn, return the
+ * step that asked the question we're now receiving the reply to. Used to
+ * route `event.body` into the right `parseUserAnswerForStep` parser.
+ */
+function priorOnboardingAskedStep(
+  state: string | undefined
+): OnboardingStep | undefined {
+  if (state === "q_role_asked") return "ask_q_role"
+  if (state === "q_yoe_asked") return "ask_q_yoe"
+  if (state === "q_visa_asked") return "ask_q_visa"
+  if (state === "q_startup_pref_asked") return "ask_q_startup_pref"
+  if (state === "q_location_asked") return "ask_q_location"
+  return undefined
+}
+
 
 async function sendMemoryReply(store: OrchestratorStore, event: InboundEvent, turnId: string, body: string) {
   const { text: safe } = normalizeForIMessage(body, { maxLength: 600 })
@@ -606,9 +672,14 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // prompt). On "complete", auto-promotes beta participant status.
     const onboardingUser = await store.getOnboardingUser(event.userId)
     if (onboardingUser) {
-      const onboardingStep = resolveOnboardingStep(onboardingUser)
+      // Phase 44 (v1.5 Stream-B / D5+D13) — v2 8-state probe behind flag.
+      // Default off → falls through to legacy 4-state path identically.
+      const enableV2 = await isOnboardingProbeV2Enabled(store.db, event.userId)
+      const onboardingStep = resolveOnboardingStep(onboardingUser, { enableV2 })
       if (onboardingStep !== "skip") {
-        const syntheticInput = composeOnboardingInput(onboardingStep, agent)
+        const syntheticInput = composeOnboardingInput(onboardingStep, agent, {
+          userMessage: event.body,
+        })
         if (syntheticInput) {
           // Build system inputs for onboarding reply using the normal Voice v1 path
           const onboardingSystemInputs = [syntheticInput]
@@ -644,7 +715,15 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
             })
           }
           // Advance onboarding state
-          await store.applyOnboarding(event.userId, onboardingUser.phoneE164, onboardingStep)
+          await store.applyOnboarding(
+            event.userId,
+            onboardingUser.phoneE164,
+            onboardingStep,
+            {
+              priorAskedStep: priorOnboardingAskedStep(onboardingUser.onboardingState),
+              priorUserReply: event.body,
+            }
+          )
           await store.updateTurn(turnId, {
             status: "succeeded",
             stage: "succeeded",
@@ -655,7 +734,15 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
           return
         }
         // complete step with no synthetic input — just advance state, fall through to normal turn
-        await store.applyOnboarding(event.userId, onboardingUser.phoneE164, onboardingStep)
+        await store.applyOnboarding(
+            event.userId,
+            onboardingUser.phoneE164,
+            onboardingStep,
+            {
+              priorAskedStep: priorOnboardingAskedStep(onboardingUser.onboardingState),
+              priorUserReply: event.body,
+            }
+          )
       }
     }
 
@@ -1569,16 +1656,35 @@ export function createFirestoreOrchestratorStore(db: Firestore): OrchestratorSto
       const data = snap.data() as {
         id?: string
         phoneE164?: string
-        onboardingState?: "pending" | "first_mes_sent" | "grounding_q1_asked" | "complete"
+        onboardingState?:
+          | "pending"
+          | "first_mes_sent"
+          | "grounding_q1_asked"
+          | "q_role_asked"
+          | "q_yoe_asked"
+          | "q_visa_asked"
+          | "q_startup_pref_asked"
+          | "q_location_asked"
+          | "complete"
+        statedPreferences?: import("@pa/core-types").StatedPreferences
       }
       return {
         id: data.id ?? userId,
         phoneE164: data.phoneE164 ?? "",
         onboardingState: data.onboardingState,
+        statedPreferences: data.statedPreferences,
       }
     },
-    async applyOnboarding(userId, phoneE164, step) {
-      await applyOnboardingStep(db, { id: userId, phoneE164, onboardingState: undefined }, step)
+    async applyOnboarding(userId, phoneE164, step, opts) {
+      await applyOnboardingStep(
+        db,
+        { id: userId, phoneE164, onboardingState: undefined },
+        step,
+        {
+          priorAskedStep: opts?.priorAskedStep,
+          priorUserReply: opts?.priorUserReply,
+        }
+      )
     },
   }
 }
