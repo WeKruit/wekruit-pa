@@ -865,3 +865,233 @@ test("H13 runDailyJobRecBatch wires friend-tone variant B end-to-end (default fl
   assert.match(body, /Python/)
   assert.match(body, /没/)  // friend-tone phrase contains 没
 })
+
+// =============================================================================
+// Stream F (Phase 42) — match-explainer wiring tests
+// =============================================================================
+import type { ChatImpl } from "../match-explainer.js"
+
+test("Phase 42 regression: explainer flag OFF → body bytewise matches H13 (no LLM call)", async () => {
+  const mfs = new MockFirestore()
+  await mfs.collection("pa-users").doc("u1").set({ phoneE164: "+15551112222" })
+  await mfs.collection("parsedCandidateResumes").doc("r1").set({
+    userId: "u1",
+    createdAt: "2026-04-30T00:00:00Z",
+    experiences: [{ title: "Data Analyst", company: "NEUROVA" }],
+    candidateProfile: { name: "Adam", skills: ["Python", "ML", "SQL"] },
+  })
+  await mfs.collection("pa-job-profiles").doc("u1").set({
+    userId: "u1",
+    profile: {
+      industry: "tech",
+      industryTags: ["tech_software"],
+      sponsorshipNeeded: "none",
+      locationPreference: "Remote",
+      sizePreference: "any",
+      salaryMin: null,
+    },
+    cvParsedAt: "2026-04-30T00:00:00Z",
+    lastJobBatchSentAt: null,
+    status: "active",
+    createdAt: "2026-04-30T00:00:00Z",
+    updatedAt: "2026-04-30T00:00:00Z",
+  })
+  await mfs.collection("matching-jobs").doc("j1").set({
+    status: "active",
+    industryKey: "tech",
+    industryEnum: ["tech_software"],
+    companyName: "Stripe",
+    roleTitle: "Senior PM",
+    salaryMax: 250000,
+    locationRaw: "Remote",
+    primaryUrl: "https://j/1",
+    industry: "tech",
+    sponsorship: false,
+    firstSeenAt: "2026-04-30",
+    requiredSkills: ["Python"],
+  })
+
+  let chatCallCount = 0
+  const stubChat: ChatImpl = async () => {
+    chatCallCount += 1
+    return { text: "SHOULD NOT BE CALLED", usage: { inputTokens: 0, outputTokens: 0 } }
+  }
+
+  const out = await runDailyJobRecBatch({
+    db: asFirestore(mfs),
+    // paMatchExplainerEnabled returns FALSE → explainer path skipped entirely.
+    getFlag: async (_db, key) => {
+      if (key === "paJobRecEnabled") return true
+      if (key === "paFriendToneOpenerEnabled") return true
+      if (key === "matchingIndustryEnumPopulated") return true
+      if (key === "paMatchExplainerEnabled") return false
+      return false
+    },
+    todayYmd: () => "20260430",
+    jobsPerUser: 1,
+    matchExplainerChatImpl: stubChat,
+  })
+  assert.equal(out.delivered, 1)
+  assert.equal(chatCallCount, 0, "explainer must NOT run when flag is off")
+  const body = String(mfs.writeLog.filter((w) => w.path === "pa-outbound")[0]!.data.body)
+  // H13 heuristic still fires (Python skill overlap) — bytewise compatible
+  // with pre-Phase-42 because no ctx.reasons map was populated.
+  assert.match(body, /Python 经验直接对得上/)
+  // Pa-job-rec-explanations must be untouched.
+  assert.equal(mfs.writeLog.some((w) => w.path === "pa-job-rec-explanations"), false)
+})
+
+test("Phase 42: explainer flag ON → LLM reason injected into body + cached", async () => {
+  const mfs = new MockFirestore()
+  await mfs.collection("pa-users").doc("u1").set({ phoneE164: "+15551112222" })
+  await mfs.collection("parsedCandidateResumes").doc("r1").set({
+    userId: "u1",
+    createdAt: "2026-04-30T00:00:00Z",
+    experiences: [{ title: "Senior PM", company: "NEUROVA" }],
+    candidateProfile: { name: "Adam", skills: ["payments", "product strategy"] },
+  })
+  await mfs.collection("pa-job-profiles").doc("u1").set({
+    userId: "u1",
+    profile: {
+      industry: "fintech",
+      industryTags: ["fintech_finance"],
+      sponsorshipNeeded: "none",
+      locationPreference: "Remote",
+      sizePreference: "any",
+      salaryMin: null,
+    },
+    cvParsedAt: "2026-04-30T00:00:00Z",
+    lastJobBatchSentAt: null,
+    status: "active",
+    createdAt: "2026-04-30T00:00:00Z",
+    updatedAt: "2026-04-30T00:00:00Z",
+  })
+  await mfs.collection("matching-jobs").doc("j1").set({
+    status: "active",
+    industryKey: "fintech",
+    industryEnum: ["fintech_finance"],
+    companyName: "Stripe",
+    roleTitle: "Senior Product Manager",
+    salaryMax: 280000,
+    locationRaw: "Remote",
+    primaryUrl: "https://j/1",
+    industry: "fintech",
+    sponsorship: false,
+    firstSeenAt: "2026-04-30",
+    requiredSkills: ["payments"],
+  })
+
+  let chatCallCount = 0
+  const stubChat: ChatImpl = async () => {
+    chatCallCount += 1
+    return {
+      text: "你 NEUROVA 那段 payments 经验和 Stripe 这条线直接对得上",
+      usage: { inputTokens: 200, outputTokens: 30 },
+    }
+  }
+
+  const out = await runDailyJobRecBatch({
+    db: asFirestore(mfs),
+    getFlag: async (_db, key) => {
+      if (key === "paJobRecEnabled") return true
+      if (key === "paFriendToneOpenerEnabled") return true
+      if (key === "matchingIndustryEnumPopulated") return true
+      if (key === "paMatchExplainerEnabled") return true
+      return false
+    },
+    todayYmd: () => "20260430",
+    jobsPerUser: 1,
+    matchExplainerChatImpl: stubChat,
+  })
+  assert.equal(out.delivered, 1)
+  assert.equal(chatCallCount, 1, "explainer must run exactly once")
+  const body = String(mfs.writeLog.filter((w) => w.path === "pa-outbound")[0]!.data.body)
+  // LLM-grounded reason replaces the heuristic reason (Stripe job skill
+  // overlap on "payments" would have produced "你 payments 经验直接对得上";
+  // explainer's grounded reason wins).
+  assert.match(body, /NEUROVA 那段 payments 经验和 Stripe 这条线直接对得上/)
+  // Cache write happened in pa-job-rec-explanations.
+  assert.ok(
+    mfs.writeLog.some(
+      (w) => w.path === "pa-job-rec-explanations" && w.id === "u1__j1__zh"
+    ),
+    "cache write expected"
+  )
+  // Cost-ledger increment.
+  assert.ok(
+    mfs.writeLog.some(
+      (w) => w.path === "pa-cost-ledger" && w.id === "match-explainer__20260430"
+    ),
+    "ledger write expected"
+  )
+})
+
+test("Phase 42: explainer flag ON + LLM throws → fail-open keeps H13 heuristic line", async () => {
+  const mfs = new MockFirestore()
+  await mfs.collection("pa-users").doc("u1").set({ phoneE164: "+15551112222" })
+  await mfs.collection("parsedCandidateResumes").doc("r1").set({
+    userId: "u1",
+    createdAt: "2026-04-30T00:00:00Z",
+    experiences: [{ title: "Data Analyst", company: "NEUROVA" }],
+    candidateProfile: { name: "Adam", skills: ["Python", "ML"] },
+  })
+  await mfs.collection("pa-job-profiles").doc("u1").set({
+    userId: "u1",
+    profile: {
+      industry: "tech",
+      industryTags: ["tech_software"],
+      sponsorshipNeeded: "none",
+      locationPreference: "Remote",
+      sizePreference: "any",
+      salaryMin: null,
+    },
+    cvParsedAt: "2026-04-30T00:00:00Z",
+    lastJobBatchSentAt: null,
+    status: "active",
+    createdAt: "2026-04-30T00:00:00Z",
+    updatedAt: "2026-04-30T00:00:00Z",
+  })
+  await mfs.collection("matching-jobs").doc("j1").set({
+    status: "active",
+    industryKey: "tech",
+    industryEnum: ["tech_software"],
+    companyName: "Stripe",
+    roleTitle: "Senior PM",
+    salaryMax: 250000,
+    locationRaw: "Remote",
+    primaryUrl: "https://j/1",
+    industry: "tech",
+    sponsorship: false,
+    firstSeenAt: "2026-04-30",
+    requiredSkills: ["Python"],
+  })
+
+  const stubChat: ChatImpl = async () => {
+    throw new Error("match-explainer: HTTP 503 upstream")
+  }
+
+  const out = await runDailyJobRecBatch({
+    db: asFirestore(mfs),
+    getFlag: async (_db, key) => {
+      if (key === "paJobRecEnabled") return true
+      if (key === "paFriendToneOpenerEnabled") return true
+      if (key === "matchingIndustryEnumPopulated") return true
+      if (key === "paMatchExplainerEnabled") return true
+      return false
+    },
+    todayYmd: () => "20260430",
+    jobsPerUser: 1,
+    matchExplainerChatImpl: stubChat,
+  })
+  assert.equal(out.delivered, 1)
+  const body = String(mfs.writeLog.filter((w) => w.path === "pa-outbound")[0]!.data.body)
+  // Heuristic reason still appears (Python skill overlap) — fail-open
+  // means we degrade to H13 behavior, never break the user.
+  assert.match(body, /Python 经验直接对得上/)
+  // No cache poisoned with empty string.
+  assert.equal(
+    mfs.writeLog.some((w) => w.path === "pa-job-rec-explanations"),
+    false,
+    "no cache write on LLM failure"
+  )
+})

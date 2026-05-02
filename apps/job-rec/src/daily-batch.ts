@@ -19,9 +19,30 @@
  */
 
 import type { Firestore } from "firebase-admin/firestore"
-import { queryMatchingJobs, applyTitleAntiBias } from "./tools/query-matching-jobs.js"
+import {
+  queryMatchingJobs,
+  applyTitleAntiBias,
+  applyHardFiltersWithFallback,
+  HARD_FILTERS_FLAG_KEY,
+  projectMatchingJobRow,
+  type HardFilterUserProfile,
+} from "./tools/query-matching-jobs.js"
 import { sendImessage } from "./tools/send-imessage.js"
-import { buildJobCandidateText, buildRerankQuery } from "./cross-encoder-rerank.js"
+import {
+  buildJobCandidateText,
+  buildRerankQuery,
+  applyStartupBoost,
+  userPreferStartup,
+  type BoostExplanation,
+  type CvExperience,
+  type UserStartupSignal,
+} from "./cross-encoder-rerank.js"
+import {
+  explainMatch,
+  MATCH_EXPLAINER_FLAG_KEY,
+  type ExplainMatchDeps,
+  type ExplainerCv,
+} from "./match-explainer.js"
 import {
   JOB_PROFILES_COLLECTION,
   JOB_REC_FLAG_KEY,
@@ -78,6 +99,14 @@ export type DailyBatchDeps = {
   crossEncoderReranker?: CrossEncoderReranker
   /** Pool size handed to the cross-encoder. Default 10. */
   crossEncoderPoolSize?: number
+  /**
+   * Stream F (Phase 42) — optional injected ChatImpl + budget for the
+   * async match-explainer. When omitted but the feature flag is ON,
+   * runDailyJobRecBatch falls back to defaultChatImpl() (real fetch).
+   * Tests inject a stubbed chatImpl to keep tests offline + deterministic.
+   */
+  matchExplainerChatImpl?: ExplainMatchDeps["chatImpl"]
+  matchExplainerDailyBudgetUsd?: number
 }
 
 export type BatchOutcome = {
@@ -312,6 +341,28 @@ export type DailyPushContext = {
     visaStatus?: string
   }
   language: "zh" | "en"
+  /**
+   * Stream F (Phase 42) — pre-computed LLM-grounded reasons keyed by jobId.
+   * When present and a key matches a job, formatJobLineWithReason prefers
+   * this over the H13 buildJobReason heuristic. Absent / undefined map →
+   * H13 heuristic path runs unchanged (zero regression off-flag).
+   */
+  reasons?: ReadonlyMap<string, string>
+  /**
+   * Phase 43 (v1.5 / Stream-C / D5) — true when applyHardFiltersWithFallback
+   * landed on the prev-7-day fallback tier (no fresh survivors today). When
+   * set, formatDailyPushBody picks the Variant D opener
+   *   "我看你简历目前还没找到完美的 fit，但这 X 个之前推过的方向你可以再考虑下："
+   * which bypasses the A/B/C CV-known × prefs-known routing.
+   */
+  fallbackMode?: boolean
+  /**
+   * Stream I (v1.5 / Phase 43.5) — per-job startup-vs-corp boost explanations.
+   * Surfaced from applyStartupBoost; forward-compatible — current H13 formatter
+   * ignores; future D2/H13.next can render "你的 startup 背景对得上 这家在 series A".
+   * Empty/absent = no boost applied (off-flag, neutral user, or unknown jobs).
+   */
+  boostExplanations?: BoostExplanation[]
 }
 
 /**
@@ -370,7 +421,11 @@ export function formatJobLineWithReason(
     typeof job.salaryMax === "number" && job.salaryMax > 0
       ? ` ~$${Math.round(job.salaryMax / 1000)}k`
       : ""
-  const reason = buildJobReason(job, ctx)
+  // Stream F (Phase 42) — prefer LLM reason from ctx.reasons[jobId]; fall
+  // back to the H13 token-overlap heuristic. Empty string from either path
+  // renders cleanly (no " — " suffix), matching pre-Phase-42 output.
+  const llmReason = ctx.reasons?.get(job.id) ?? ""
+  const reason = llmReason || buildJobReason(job, ctx)
   const reasonSuffix = reason ? ` — ${reason}` : ""
   return `- ${titleCo}${loc}${sal}${reasonSuffix}\n${job.primaryUrl}`
 }
@@ -394,7 +449,15 @@ export function formatDailyPushBody(
   const zh = ctx.language === "zh"
 
   let lead: string
-  if (ctx.recentCompany && ctx.hasUserStatedPreferences) {
+  if (ctx.fallbackMode) {
+    // Phase 43 / D2 / D5 — Variant D: prev-7-day fallback opener. Honest
+    // friend tone — admit we didn't land a perfect fit today, point at the
+    // recycled set as a re-consideration nudge. Bypasses the A/B/C router
+    // because fallback state is meta-information that dominates.
+    lead = zh
+      ? `我看你简历目前还没找到完美的 fit，但这 ${n} 个之前推过的方向你可以再考虑下：`
+      : `Couldn't land a perfect fit today, but here are ${n} previously-shared angles worth a second look:`
+  } else if (ctx.recentCompany && ctx.hasUserStatedPreferences) {
     // Variant A — both CV + stated prefs.
     const targetRole = ctx.statedPreferences?.targetRole?.[0]
     if (zh) {
@@ -549,6 +612,11 @@ export async function loadDailyPushContext(
 /** Stream H13 — feature flag key for friend-tone opener. Default true. */
 export const FRIEND_TONE_OPENER_FLAG_KEY = "paFriendToneOpenerEnabled"
 
+/** Stream I (v1.5 / Phase 43.5) — startup-vs-corp boost flag. Default OFF;
+ *  ramp 1% → 100% via Firestore feature-flags doc. Rollback = flag flip;
+ *  weights live in BOOST_WEIGHTS CONST in cross-encoder-rerank.ts. */
+export const STARTUP_BOOST_FLAG_KEY = "paStartupBoostEnabled"
+
 
 /**
  * Stream F5 — Embedding rerank deps. All optional; when omitted the cron
@@ -675,6 +743,122 @@ export function rerankByCosine(
   return scored.slice(0, limit).map((x) => x.j)
 }
 
+// ---------------------------------------------------------------------------
+// Phase 43 (v1.5 / Stream-C) — daily-batch helpers for hard filters.
+//
+// loadHardFilterProfile: assembles a HardFilterUserProfile from
+//   - pa-users/{userId}.statedPreferences (Phase 44 ship; may be absent)
+//   - parsedCandidateResumes (latest by userId,createdAt) → experiences[]
+// Best-effort: any lookup error returns a profile with both fields absent
+// → applyHardFilters then operates as a no-op (pure conservative behavior).
+//
+// fetchPrevious7DayJobs: pulls active matching-jobs with firstSeenAt within
+// the last 7 days, deduped against today's run via the firestore where
+// clause. Used ONLY when the hard-filter relax ladder hits the prev7d tier
+// (sparse — <1% of users on warm corpus). Re-uses the existing
+// projectMatchingJobRow path so the shape is consistent with queryMatchingJobs.
+// ---------------------------------------------------------------------------
+
+async function loadHardFilterProfile(
+  db: Firestore,
+  userId: string,
+  log: (...args: unknown[]) => void
+): Promise<HardFilterUserProfile> {
+  const profile: HardFilterUserProfile = {}
+  try {
+    const userDoc = await db.collection("pa-users").doc(userId).get()
+    if (userDoc.exists) {
+      const ud = userDoc.data() as Record<string, unknown>
+      const sp = ud.statedPreferences
+      if (sp && typeof sp === "object") {
+        // Pass the raw map through — applyHardFilters only reads optional
+        // fields and is defensive about types. Avoids re-importing the
+        // StatedPreferences zod schema for runtime parsing in the hot path.
+        profile.statedPreferences = sp as HardFilterUserProfile["statedPreferences"]
+      }
+    }
+  } catch (err) {
+    log("[job-rec-daily] hard_filter_profile_user_lookup_failed", {
+      userId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+  try {
+    const snap = await db
+      .collection("parsedCandidateResumes")
+      .where("userId", "==", userId)
+      .orderBy("createdAt", "desc")
+      .limit(1)
+      .get()
+    if (!snap.empty) {
+      const rd = snap.docs[0]!.data() as Record<string, unknown>
+      const exps = Array.isArray(rd.experiences) ? rd.experiences : []
+      profile.experiences = exps
+        .map((e) => {
+          const x = (e ?? {}) as Record<string, unknown>
+          return {
+            startDate: typeof x.startDate === "string" ? x.startDate : undefined,
+            endDate: typeof x.endDate === "string" ? x.endDate : undefined,
+          }
+        })
+        .filter((e) => e.startDate !== undefined || e.endDate !== undefined)
+    }
+  } catch (err) {
+    log("[job-rec-daily] hard_filter_profile_resume_lookup_failed", {
+      userId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+  return profile
+}
+
+async function fetchPrevious7DayJobs(
+  db: Firestore,
+  industryTags: string[] | undefined,
+  take: number,
+  log: (...args: unknown[]) => void
+): Promise<MatchingJob[]> {
+  const cutoffMs = Date.now() - 7 * 24 * 3600 * 1000
+  const cutoff = new Date(cutoffMs).toISOString().slice(0, 10) // YYYY-MM-DD
+  try {
+    // Reuse the same query shape as queryMatchingJobs but without the
+    // top-N cap pressure — we already know hard-filter dropped everything
+    // fresh. Skip industryEnum/Key gate for the fallback to keep recall
+    // wide; the fallback opener acknowledges the recycled set.
+    let q = db
+      .collection("matching-jobs")
+      .where("status", "==", "active")
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    q = (q as any)
+      .orderBy("firstSeenAt", "desc")
+      .limit(Math.max(take, 10))
+    const snap = await q.get()
+    const out: MatchingJob[] = []
+    for (const doc of snap.docs) {
+      try {
+        const raw = doc.data() as Record<string, unknown>
+        const fs = typeof raw.firstSeenAt === "string" ? raw.firstSeenAt : ""
+        if (fs && fs < cutoff) continue
+        const m = projectMatchingJobRow(doc.id, raw)
+        out.push(m)
+        if (out.length >= take) break
+      } catch (err) {
+        log("[job-rec-daily] prev7d_dropping_malformed_row", {
+          id: doc.id,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    }
+    void industryTags // reserved for future tier-3 industry filter; unused today
+    return out
+  } catch (err) {
+    log("[job-rec-daily] prev7d_query_failed", {
+      error: err instanceof Error ? err.message : String(err),
+    })
+    return []
+  }
+}
+
 /** Run one batch. Caller owns scheduling. */
 export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOutcome> {
   const log = deps.log ?? defaultLog
@@ -754,9 +938,65 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
         continue
       }
 
+      // Phase 43 (v1.5 / Stream-C) — hard filters using statedPreferences.
+      // Position: AFTER queryMatchingJobs (post-Firestore-where + post-Jaccard),
+      // BEFORE cosine + cross-encoder rerank. Flag-gated default OFF; ramp
+      // 1%→100%. When OFF, hardFilteredJobs === queryRes.jobs and downstream
+      // path is byte-identical to pre-43 behavior.
+      let hardFilteredJobs: MatchingJob[] = queryRes.jobs
+      let fallbackMode = false
+      const hardFiltersOn = Boolean(
+        await deps.getFlag(
+          deps.db,
+          HARD_FILTERS_FLAG_KEY,
+          { userId, env: process.env },
+          false
+        )
+      )
+      if (hardFiltersOn) {
+        const hfProfile = await loadHardFilterProfile(deps.db, userId, log)
+        // Pre-fetch prev-7-day jobs ONLY when we suspect a 0-survivor outcome
+        // would land. Conservative: do a cheap dry-run with the full ruleset
+        // first; only if zero survive AND no relaxation tier helps will we
+        // need the prev7d set. Easiest implementation: run the dry-run
+        // synchronously, check, and fetch+re-orchestrate when needed.
+        const dry = applyHardFiltersWithFallback(
+          hfProfile,
+          queryRes.jobs as MatchingJob[],
+          [],
+          poolSize
+        )
+        if (dry.relaxLevel !== "prev7d") {
+          hardFilteredJobs = dry.jobs
+          log("[job-rec-daily] hard_filter_applied", {
+            userId,
+            before: queryRes.jobs.length,
+            after: dry.jobs.length,
+            relaxLevel: dry.relaxLevel,
+          })
+        } else {
+          // 0-survival across all relax tiers — fetch prev-7-day jobs and
+          // surface fallbackMode to the opener.
+          const prev7d = await fetchPrevious7DayJobs(deps.db, normalized.industryTags, poolSize, log)
+          hardFilteredJobs = prev7d
+          fallbackMode = prev7d.length > 0
+          log("[job-rec-daily] hard_filter_fallback_prev7d", {
+            userId,
+            prev7dCount: prev7d.length,
+            fallbackMode,
+          })
+        }
+        if (hardFilteredJobs.length === 0) {
+          // True 0-result: no fresh survivors AND no prev7d. Skip user
+          // gracefully — no ghost message.
+          skippedNoJobs += 1
+          continue
+        }
+      }
+
       // Stream F5 — embedding rerank when configured + user has embedding.
       // Stream G1 — cascade: fetcher → computer (lazy compute + cache) → fallback.
-      let rankedJobs: MatchingJob[] = queryRes.jobs
+      let rankedJobs: MatchingJob[] = hardFilteredJobs
       if (deps.userEmbedFetcher) {
         try {
           const fetched = await deps.userEmbedFetcher(deps.db, userId)
@@ -796,25 +1036,29 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
               ? Math.max(jobsPerUser, deps.crossEncoderPoolSize ?? 10)
               : jobsPerUser
             rankedJobs = rerankByCosine(
-              queryRes.jobs as Array<MatchingJob & { embedding?: number[] | null }>,
+              hardFilteredJobs as Array<MatchingJob & { embedding?: number[] | null }>,
               embedding,
               cosineKeep
             )
-            log("[job-rec-daily] rerank_applied", { userId, poolSize: queryRes.jobs.length, took: cosineKeep })
+            log("[job-rec-daily] rerank_applied", { userId, poolSize: hardFilteredJobs.length, took: cosineKeep })
           } else {
             // No embedding on file AND compute path didn't succeed — slice.
-            rankedJobs = queryRes.jobs.slice(0, jobsPerUser)
+            rankedJobs = hardFilteredJobs.slice(0, jobsPerUser)
           }
         } catch (err) {
           log("[job-rec-daily] rerank_failed_fallback", {
             userId,
             error: err instanceof Error ? err.message : String(err),
           })
-          rankedJobs = queryRes.jobs.slice(0, jobsPerUser)
+          rankedJobs = hardFilteredJobs.slice(0, jobsPerUser)
         }
       } else {
-        rankedJobs = queryRes.jobs.slice(0, jobsPerUser)
+        rankedJobs = hardFilteredJobs.slice(0, jobsPerUser)
       }
+
+      // Stream I (v1.5 / Phase 43.5) — cross-encoder scores carried over for
+      // the startup boost downstream. null = fail-open / not run.
+      let crossEncoderScores: Map<string, number | null> | null = null
 
       // Stream H10 — cross-encoder rerank. Runs AFTER cosine narrows to ~10
       // candidates. Synthesizes a query string from the user's profile
@@ -882,6 +1126,7 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
               if (!reranked.find((r) => r.id === j.id)) reordered.push(j)
             }
             rankedJobs = reordered
+            crossEncoderScores = new Map(reranked.map((r) => [r.id, r.score]))
             log("[job-rec-daily] cross_encoder_applied", {
               userId,
               poolSize: cands.length,
@@ -895,6 +1140,102 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
             userId,
             error: xeErr instanceof Error ? xeErr.message : String(xeErr),
           })
+        }
+      }
+
+      // Stream I (v1.5 / Phase 43.5) — startup-vs-corp scoring boost.
+      //
+      // Pure heuristic, multiplicative boost on cross-encoder relevance.
+      // Reads: user.statedPreferences.prefersStartup (Phase 44) + CV experiences
+      // (lean-yes fallback). Job-side: FAANG allowlist + companyEmployeeCount
+      // + bilingual startup-keyword bank. Default-OFF flag — when off, the
+      // entire block short-circuits at the flag check (byte-identical behavior).
+      //
+      // Position: AFTER cross-encoder reorder, BEFORE H12 dedupe / H7 anti-bias
+      // / H13 formatter (so the formatter sees the final order + can render
+      // boost reasons via DailyPushContext.boostExplanations).
+      let boostExplanations: BoostExplanation[] = []
+      if (rankedJobs.length > 1) {
+        const startupBoostOn = Boolean(
+          await deps.getFlag(
+            deps.db,
+            STARTUP_BOOST_FLAG_KEY,
+            { userId, env: process.env },
+            false
+          )
+        )
+        if (startupBoostOn) {
+          try {
+            // Pull statedPreferences + CV experiences. Best-effort — any
+            // miss falls through to neutral signal (mult=1.0 = no-op).
+            let prefersStartup: boolean | null = null
+            let cvExperiences: CvExperience[] = []
+            try {
+              const userDoc = await deps.db.collection("pa-users").doc(userId).get()
+              if (userDoc.exists) {
+                const ud = userDoc.data() as Record<string, unknown>
+                const sp = ud.statedPreferences as Record<string, unknown> | undefined
+                if (sp && typeof sp.prefersStartup === "boolean") {
+                  prefersStartup = sp.prefersStartup
+                }
+              }
+            } catch {
+              // ignore — neutral fallback
+            }
+            try {
+              const resumeSnap = await deps.db
+                .collection("parsedCandidateResumes")
+                .where("userId", "==", userId)
+                .orderBy("createdAt", "desc")
+                .limit(1)
+                .get()
+              if (!resumeSnap.empty) {
+                const rd = resumeSnap.docs[0]!.data() as Record<string, unknown>
+                const exps = Array.isArray(rd.experiences) ? rd.experiences : []
+                cvExperiences = exps.map((e) => {
+                  const x = e as Record<string, unknown>
+                  return {
+                    company: typeof x.company === "string" ? x.company : null,
+                    companyEmployeeCount:
+                      typeof x.companyEmployeeCount === "number"
+                        ? x.companyEmployeeCount
+                        : null,
+                  }
+                })
+              }
+            } catch {
+              // ignore — neutral fallback
+            }
+
+            const userSignal: UserStartupSignal = userPreferStartup({
+              statedPreferences: { prefersStartup },
+              cvExperiences,
+            })
+            const boosted = applyStartupBoost(
+              rankedJobs,
+              userSignal,
+              crossEncoderScores ?? undefined
+            )
+            for (const expl of boosted.explanations) {
+              log("[job-rec-daily] boost.applied", {
+                userId,
+                jobId: expl.jobId,
+                boostMult: expl.boostMult,
+                userSignal: expl.userSignal,
+                jobSignal: expl.jobSignal,
+              })
+            }
+            if (boosted.explanations.length > 0) {
+              rankedJobs = boosted.jobs
+              boostExplanations = boosted.explanations
+            }
+            // No explanations → identity ranking — leave rankedJobs unchanged.
+          } catch (boostErr) {
+            log("[job-rec-daily] startup_boost_threw_fallback", {
+              userId,
+              error: boostErr instanceof Error ? boostErr.message : String(boostErr),
+            })
+          }
         }
       }
 
@@ -947,6 +1288,76 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
           normalized.industryTags,
           log
         )
+        // Stream F (Phase 42) — async LLM match-explainer. Default OFF.
+        // When ON, sequentially explain each ranked job (sequential keeps
+        // budget check authoritative); inject results into pushCtx.reasons.
+        // Each call is fail-open — empty reason = clean line per H13 design.
+        const explainerOn = Boolean(
+          await deps.getFlag(
+            deps.db,
+            MATCH_EXPLAINER_FLAG_KEY,
+            { userId, env: process.env },
+            false
+          )
+        )
+        if (explainerOn) {
+          const cv: ExplainerCv = {
+            ...(pushCtx.recentRoleTitle ? { recentRoleTitle: pushCtx.recentRoleTitle } : {}),
+            ...(pushCtx.recentCompany ? { recentCompany: pushCtx.recentCompany } : {}),
+            ...(pushCtx.topSkills ? { topSkills: pushCtx.topSkills } : {}),
+          }
+          const reasonsMap = new Map<string, string>()
+          for (const job of rankedJobs) {
+            try {
+              const reason = await explainMatch(
+                {
+                  db: deps.db,
+                  ...(deps.matchExplainerChatImpl
+                    ? { chatImpl: deps.matchExplainerChatImpl }
+                    : {}),
+                  ...(typeof deps.matchExplainerDailyBudgetUsd === "number"
+                    ? { dailyBudgetUsd: deps.matchExplainerDailyBudgetUsd }
+                    : {}),
+                  // Forward batch's todayYmd so the cost-ledger doc id
+                  // matches the batch date (matters for back-fills / tests
+                  // and operational dashboards).
+                  todayYmd: () => todayYmd,
+                  log,
+                },
+                {
+                  userId,
+                  userCv: cv,
+                  job,
+                  language: pushCtx.language,
+                }
+              )
+              if (reason) reasonsMap.set(job.id, reason)
+            } catch (xeErr) {
+              // Defensive: explainMatch is fail-open; this catch is a
+              // belt-and-suspenders for unexpected throws.
+              log("[job-rec-daily] match_explainer_threw", {
+                userId,
+                jobId: job.id,
+                error: xeErr instanceof Error ? xeErr.message : String(xeErr),
+              })
+            }
+          }
+          if (reasonsMap.size > 0) {
+            pushCtx.reasons = reasonsMap
+            log("[job-rec-daily] match_explainer_applied", {
+              userId,
+              reasonsCount: reasonsMap.size,
+              jobsCount: rankedJobs.length,
+            })
+          }
+        }
+        if (fallbackMode) {
+          pushCtx.fallbackMode = true
+        }
+        // Stream I — surface boost reasons for forward-compat formatters.
+        if (boostExplanations.length > 0) {
+          pushCtx.boostExplanations = boostExplanations
+        }
         body = formatDailyPushBody(rankedJobs, pushCtx)
         log("[job-rec-daily] friend_tone_opener_applied", {
           userId,

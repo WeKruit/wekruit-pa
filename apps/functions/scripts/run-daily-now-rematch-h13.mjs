@@ -65,6 +65,8 @@ const {
   rerankWithCrossEncoder,
   buildRerankQuery,
   buildJobCandidateText,
+  // Phase 42 — async match-explainer (gated by env, additive)
+  explainMatch,
 } = await import("@pa/job-rec");
 const { queryMatchingJobs, applyTitleAntiBias } = await import("@pa/job-rec/tools/query-matching-jobs");
 const { sendImessage } = await import("@pa/job-rec/tools/send-imessage");
@@ -225,9 +227,46 @@ async function rematchOne(userId) {
     hasUserStatedPreferences: pushCtx.hasUserStatedPreferences,
     language: pushCtx.language,
   });
+  // Phase 42: optional async match-explainer. Gated by env flag — when
+  // unset, H13 behavior is bytewise identical to pre-Phase-42 ship.
+  // Set PA_MATCH_EXPLAINER_FORCE_ON=1 to invoke Qwen-7B for each ranked
+  // job and inject the resulting reason into pushCtx.reasons.
+  let explainerSamples = [];
+  if (process.env.PA_MATCH_EXPLAINER_FORCE_ON === "1") {
+    const reasonsMap = new Map();
+    for (const job of ranked) {
+      try {
+        const reason = await explainMatch(
+          { db, log: (e, p) => console.log("[explainer]", e, JSON.stringify(p ?? {})) },
+          {
+            userId,
+            userCv: {
+              recentRoleTitle: pushCtx.recentRoleTitle,
+              recentCompany: pushCtx.recentCompany,
+              topSkills: pushCtx.topSkills,
+            },
+            job,
+            language: pushCtx.language,
+          }
+        );
+        if (reason) reasonsMap.set(job.id, reason);
+        explainerSamples.push({
+          jobId: job.id,
+          jobTitle: job.jobTitle,
+          companyName: job.companyName,
+          language: pushCtx.language,
+          reason,
+        });
+      } catch (err) {
+        log("explainer_failed", { jobId: job.id, error: err?.message });
+      }
+    }
+    if (reasonsMap.size > 0) pushCtx.reasons = reasonsMap;
+    log("explainer_done", { reasons: reasonsMap.size, jobs: ranked.length });
+  }
   // BEFORE = legacy robotic body (what H11 production was sending).
   const bodyBefore = formatBatchMessage(ranked);
-  // AFTER = H13 friend-tone body.
+  // AFTER = H13 friend-tone body (with optional explainer injection).
   const body = formatDailyPushBody(ranked, pushCtx);
   log("body_lengths", { before: bodyBefore.length, after: body.length });
   const idempotencyKey = `${userId}-${ymd}-${REMATCH_SUFFIX}`;
@@ -263,6 +302,7 @@ async function rematchOne(userId) {
         ? (pushCtx.hasUserStatedPreferences ? "A_cv_and_prefs" : "B_cv_only")
         : "C_no_cv",
     },
+    explainerSamples,
   };
 
   if (args.dryRun) {

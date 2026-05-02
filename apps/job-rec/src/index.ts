@@ -125,3 +125,30 @@ export type {
   RerankerDeps,
   RerankedItem,
 } from "./cross-encoder-rerank.js"
+
+// Stream F (Phase 42) — async cheap-LLM match-explainer (closes TD-H13-1).
+export {
+  explainMatch,
+  buildExplainerMessages,
+  sanitizeReason,
+  computeChargeUsd,
+  resolveDailyBudgetUsd,
+  cacheDocId,
+  costLedgerDocId,
+  defaultTodayYmd as defaultExplainerYmd,
+  defaultChatImpl,
+  MATCH_EXPLAINER_FLAG_KEY,
+  EXPLANATIONS_COLLECTION,
+  COST_LEDGER_COLLECTION,
+  COST_LEDGER_DOC_PREFIX,
+  CACHE_TTL_MS,
+  DEFAULT_MODEL as MATCH_EXPLAINER_DEFAULT_MODEL,
+  DEFAULT_TIMEOUT_MS as MATCH_EXPLAINER_DEFAULT_TIMEOUT_MS,
+  DEFAULT_DAILY_BUDGET_USD as MATCH_EXPLAINER_DEFAULT_DAILY_BUDGET_USD,
+} from "./match-explainer.js"
+export type {
+  ChatImpl as MatchExplainerChatImpl,
+  ExplainMatchInput,
+  ExplainMatchDeps,
+  ExplainerCv,
+} from "./match-explainer.js"
