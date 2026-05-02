@@ -1,15 +1,52 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.4
-milestone_name: Humanize-Runtime v2 + v1.3 Carryover (Dual Stream)
-status: ready_for_milestone_complete
-last_updated: "2026-04-30T18:00:00.000Z"
-last_activity: 2026-04-30
+milestone: v1.5
+milestone_name: Friend-Companion Job-Rec System (production-grade)
+status: ready_for_adam_hitl_deploy
+last_updated: "2026-05-02T08:00:00.000Z"
+last_activity: 2026-05-02
 progress:
-  total_phases: 12
-  completed_phases: 12
+  total_phases: 14
+  completed_phases: 14
   total_plans: 0
   completed_plans: 0
+---
+
+## v1.5 — Friend-Companion Job-Rec System (this milestone)
+
+Spawned 2026-05-02 by P10 from Adam directive after H7 daily push received as 人机. **All 14 streams shipped 2026-05-02 in single autonomous session** (16 commits + Mac mini Cloud Tasks bootstrap + qa:v1.5 gate PASS).
+
+| # | Stream | Commit | Tests |
+|---|---|---|---|
+| 41 | H13 friend-tone CV-aware opener | `bc8863c` | 113/113 + LIVE Adam push 140e3177 |
+| 42 | F async match-explainer (Qwen-7B) | `92db7cb` | 140/140 |
+| 43 | C hard filters (YoE/visa/research/loc) | `a3a03dd` | 161/161 |
+| 43.5 | I startup-vs-corp boost | `c49884d` | 24/24 cross-encoder |
+| 44 | B onboarding probe v2 (8-state) | `b1b0468` | 255/255 |
+| 45 | D message coalescer + ops bootstrap | `d8e91b8` | 6+336+255+33 |
+| 46 | E safety 3-layer | `a92f5fe` | 14+4 |
+| 47 | A matching cloud audit (Option D) | `6c6f3b2` | doc |
+| 47.1 | A2 mac-mini → CF webhook bridge | `471e25b` | 345/345 |
+| 49 | H reverse-match dashboard | `edd9226` | 351+161+11 |
+| 50 | J E2E QA team (4 agents × 8 personas) | `97b53b6` | qa:v1.5 PASS 262ms / $0 |
+| 51 | G.1 research (premise audit) | `be420b0` | doc |
+| 51 | G.2 BUILD (TS-native cluster cache) | `2d08bce` | 168+352 |
+
+Plus docs/infra commits:
+- `9fce53f` v1.5 milestone scoping
+- `59eb915` ROADMAP append + V1.5-ROLLOUT.md
+- (pending) firestore indexes 3 net-new for ramp blockers
+
+**Adam HITL queue** (per V1.5-ROLLOUT.md):
+1. firebase deploy + fill PA_COALESCE_TARGET_URL + redeploy
+2. flag canary 4-stage (Adam → 24h soak → 10% → 100%)
+3. Mac mini ssh + WEKRUIT-MATCHING-PATCH.md apply
+4. SMS LIVE smoke (Adam keeps)
+
+**Cost projection**: ~$0.60/mo at 100 active users (Adam budget AS LOW AS POSSIBLE target hit).
+
+**v1.6 backlog** (20 tech debts handed): see V1.5-ROLLOUT.md "Tech debts handed to P8".
+
 ---
 
 # Milestone state
