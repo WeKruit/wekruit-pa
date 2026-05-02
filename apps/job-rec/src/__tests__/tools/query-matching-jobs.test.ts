@@ -12,6 +12,16 @@ import {
   applyTitleAntiBias,
   LOCATION_NEIGHBORS,
   QA_QC_TITLE_REGEX,
+  applyHardFilters,
+  applyHardFiltersWithFallback,
+  inferCollegeStudent,
+  isStillInSchool,
+  parseStartYear,
+  SENIOR_TITLE_REGEX,
+  RESEARCH_KEYWORDS_REGEX,
+  NO_SPONSORSHIP_KEYWORDS_REGEX,
+  HARD_FILTERS_FLAG_KEY,
+  type HardFilterUserProfile,
 } from "../../tools/query-matching-jobs.js"
 import type { MatchingJob } from "../../types.js"
 
@@ -658,3 +668,302 @@ test("applyTitleAntiBias H7: regex sanity — covers brief's full title patterns
   }
 })
 
+
+
+// ---------------------------------------------------------------------------
+// Phase 43 (v1.5 / Stream-C) — applyHardFilters tests (D4 brief: 8 tests).
+// Plus inferCollegeStudent / isStillInSchool / parseStartYear smoke coverage.
+// ---------------------------------------------------------------------------
+
+const NOW_2026_05_02 = new Date("2026-05-02T00:00:00Z")
+
+function makeJob(overrides: Partial<MatchingJob> & { id: string }): MatchingJob {
+  return {
+    id: overrides.id,
+    companyName: overrides.companyName ?? "Co",
+    jobTitle: overrides.jobTitle ?? "Engineer",
+    salaryMax: overrides.salaryMax ?? null,
+    salaryMin: overrides.salaryMin ?? null,
+    locationRaw: overrides.locationRaw ?? "Remote",
+    primaryUrl: overrides.primaryUrl ?? "https://x",
+    industry: overrides.industry ?? "tech",
+    industryKey: overrides.industryKey,
+    sponsorship: overrides.sponsorship ?? null,
+    jobType: overrides.jobType,
+    requiredSkills: overrides.requiredSkills,
+    firstSeenAt: overrides.firstSeenAt,
+  }
+}
+
+test("Phase43 D4 #1: college student (yoeRange [0,0]) + senior job → dropped", () => {
+  const profile: HardFilterUserProfile = {
+    statedPreferences: { yoeRange: [0, 0] },
+  }
+  const senior = makeJob({ id: "s", jobTitle: "Senior Software Engineer" })
+  const junior = makeJob({ id: "j", jobTitle: "Software Engineer" })
+  const out = applyHardFilters(profile, [senior, junior], undefined, NOW_2026_05_02)
+  assert.equal(out.length, 1)
+  assert.equal(out[0]?.id, "j", "junior survives, senior dropped")
+})
+
+test("Phase43 D4 #2: YoE 5y user + senior job → kept", () => {
+  const profile: HardFilterUserProfile = {
+    statedPreferences: { yoeRange: [5, 7] },
+  }
+  const senior = makeJob({ id: "s", jobTitle: "Senior Software Engineer" })
+  const out = applyHardFilters(profile, [senior], undefined, NOW_2026_05_02)
+  assert.equal(out.length, 1)
+  assert.equal(out[0]?.id, "s")
+})
+
+test("Phase43 D4 #3: researchOriented=true + research job → kept", () => {
+  const profile: HardFilterUserProfile = {
+    statedPreferences: { researchOriented: true },
+  }
+  const research = makeJob({
+    id: "r",
+    jobTitle: "Research Scientist",
+    requiredSkills: ["python", "ml"],
+  })
+  const out = applyHardFilters(profile, [research], undefined, NOW_2026_05_02)
+  assert.equal(out.length, 1)
+  assert.equal(out[0]?.id, "r")
+})
+
+test("Phase43 D4 #4: researchOriented=true + non-research job → dropped (research-only when explicit)", () => {
+  const profile: HardFilterUserProfile = {
+    statedPreferences: { researchOriented: true },
+  }
+  const eng = makeJob({ id: "e", jobTitle: "Software Engineer", requiredSkills: ["python"] })
+  const out = applyHardFilters(profile, [eng], undefined, NOW_2026_05_02)
+  assert.equal(out.length, 0, "non-research dropped under researchOriented=true")
+  // Symmetry check: when researchOriented is undefined, the same eng survives.
+  const profileNoPref: HardFilterUserProfile = { statedPreferences: {} }
+  const out2 = applyHardFilters(profileNoPref, [eng], undefined, NOW_2026_05_02)
+  assert.equal(out2.length, 1, "no researchOriented signal → no exclusion")
+})
+
+test("Phase43 D4 #5: sponsorship_needed + 'no sponsorship' job (text marker) → dropped", () => {
+  const profile: HardFilterUserProfile = {
+    statedPreferences: { visaStatus: "sponsorship_needed" },
+  }
+  const j1 = makeJob({
+    id: "x",
+    jobTitle: "Software Engineer (US Citizen Only)",
+    requiredSkills: ["python"],
+  })
+  const j2 = makeJob({
+    id: "y",
+    jobTitle: "ML Engineer",
+    requiredSkills: ["must have green card", "python"],
+  })
+  // Also test corpus boolean signal: sponsorship === false hard-blocked too.
+  const j3 = makeJob({ id: "z", jobTitle: "Backend Engineer", sponsorship: false })
+  const out = applyHardFilters(profile, [j1, j2, j3], undefined, NOW_2026_05_02)
+  assert.equal(out.length, 0, "all three should drop")
+})
+
+test("Phase43 D4 #6: sponsorship_needed + sponsor-friendly job → kept", () => {
+  const profile: HardFilterUserProfile = {
+    statedPreferences: { visaStatus: "sponsorship_needed" },
+  }
+  const j = makeJob({
+    id: "ok",
+    jobTitle: "ML Engineer",
+    requiredSkills: ["python"],
+    sponsorship: true,
+  })
+  const out = applyHardFilters(profile, [j], undefined, NOW_2026_05_02)
+  assert.equal(out.length, 1)
+  assert.equal(out[0]?.id, "ok")
+})
+
+test("Phase43 D4 #7: 0-survival fallback returns prev-7-day jobs + fallbackMode=true", () => {
+  // College student + ALL fresh jobs are senior → tier1, tier2, tier3 all 0.
+  // prev7d set provided → tier4 returns that with fallbackMode=true.
+  const profile: HardFilterUserProfile = {
+    statedPreferences: { yoeRange: [0, 0] },
+  }
+  const fresh = [
+    makeJob({ id: "s1", jobTitle: "Staff Engineer" }),
+    makeJob({ id: "s2", jobTitle: "Principal Architect" }),
+  ]
+  const prev7d = [
+    makeJob({ id: "p1", jobTitle: "Junior Engineer" }),
+    makeJob({ id: "p2", jobTitle: "Associate Engineer" }),
+    makeJob({ id: "p3", jobTitle: "New Grad SWE" }),
+  ]
+  const res = applyHardFiltersWithFallback(profile, fresh, prev7d, 3, NOW_2026_05_02)
+  assert.equal(res.fallbackMode, true)
+  assert.equal(res.relaxLevel, "prev7d")
+  assert.equal(res.jobs.length, 3)
+  assert.equal(res.jobs[0]?.id, "p1")
+})
+
+test("Phase43 D4 #8: 0-survival → flag passed back to daily-batch (HardFilterResult.fallbackMode)", () => {
+  // Brief D4 #8: "0-survival → flag passed back to daily-batch indicating
+  // fallback mode". The flag is HardFilterResult.fallbackMode = true any
+  // time the relax ladder lands on the prev7d tier — whether or not the
+  // prev7dJobs list is non-empty. The caller (daily-batch) then either
+  // surfaces Variant D ("没找到完美 fit") with prev7d content, OR — if
+  // prev7d is also empty — gracefully skips the user (no ghost message).
+  const profile: HardFilterUserProfile = {
+    statedPreferences: { yoeRange: [0, 0] },
+  }
+  const fresh = [makeJob({ id: "s1", jobTitle: "Senior SWE" })]
+  const res = applyHardFiltersWithFallback(profile, fresh, [], 3, NOW_2026_05_02)
+  assert.equal(res.relaxLevel, "prev7d")
+  assert.equal(res.jobs.length, 0)
+  assert.equal(res.fallbackMode, true, "fallbackMode flag is set even when prev7dJobs is empty — daily-batch needs the signal to skip cleanly")
+  // Sanity — flag key constant is the documented one.
+  assert.equal(HARD_FILTERS_FLAG_KEY, "paHardFiltersEnabled")
+})
+
+// ----- Helper smoke tests --------------------------------------------------
+
+test("inferCollegeStudent: all-present + recent → true", () => {
+  const exps = [
+    { startDate: "2024-09", endDate: "present" },
+    { startDate: "2023-06", endDate: "present" },
+  ]
+  assert.equal(inferCollegeStudent(exps, NOW_2026_05_02), true)
+})
+
+test("inferCollegeStudent: any non-present → false", () => {
+  const exps = [
+    { startDate: "2024", endDate: "present" },
+    { startDate: "2022", endDate: "2023" },
+  ]
+  assert.equal(inferCollegeStudent(exps, NOW_2026_05_02), false)
+})
+
+test("inferCollegeStudent: 5+ year-old startDate → false (out of 4yr lookback)", () => {
+  const exps = [{ startDate: "2018", endDate: "present" }]
+  assert.equal(inferCollegeStudent(exps, NOW_2026_05_02), false)
+})
+
+test("isStillInSchool: present + startDate within 12mo → true", () => {
+  // now=2026-05-02, startDate=2025-08 → ~9mo back → true.
+  const exps = [{ startDate: "2025-08", endDate: "present" }]
+  assert.equal(isStillInSchool(exps, NOW_2026_05_02), true)
+})
+
+test("isStillInSchool: present + startDate >12mo back → false", () => {
+  const exps = [{ startDate: "2024", endDate: "present" }]
+  assert.equal(isStillInSchool(exps, NOW_2026_05_02), false)
+})
+
+test("parseStartYear: handles bare year + YYYY-MM + YYYY-MM-DD", () => {
+  assert.equal(parseStartYear("2024"), 2024)
+  assert.equal(parseStartYear("2024-09"), 2024)
+  assert.equal(parseStartYear("2024-09-15"), 2024)
+  assert.equal(parseStartYear("garbage"), null)
+  assert.equal(parseStartYear(undefined), null)
+})
+
+test("SENIOR_TITLE_REGEX: bilingual + boundary-aware", () => {
+  const hits = [
+    "Senior Engineer",
+    "Sr. Software Engineer",
+    "Staff ML Engineer",
+    "Principal Architect",
+    "VP of Engineering",
+    "Tech Lead",
+    "Director of Product",
+    "资深前端工程师",
+    "高级数据分析师",
+    "AI 主管",
+  ]
+  for (const t of hits) assert.ok(SENIOR_TITLE_REGEX.test(t), `should match: ${t}`)
+  const misses = ["Software Engineer", "Data Analyst", "ML Researcher", "前端工程师"]
+  for (const t of misses) assert.ok(!SENIOR_TITLE_REGEX.test(t), `should NOT match: ${t}`)
+})
+
+test("RESEARCH_KEYWORDS_REGEX: bilingual coverage", () => {
+  const hits = [
+    "Research Scientist",
+    "Applied Scientist",
+    "PhD required",
+    "Postdoc Fellow",
+    "research engineer",
+    "研究员",
+    "AI 科研工程师",
+  ]
+  for (const t of hits) assert.ok(RESEARCH_KEYWORDS_REGEX.test(t), `should match: ${t}`)
+  const misses = ["Software Engineer", "Frontend Developer"]
+  for (const t of misses) assert.ok(!RESEARCH_KEYWORDS_REGEX.test(t), `should NOT match: ${t}`)
+})
+
+test("NO_SPONSORSHIP_KEYWORDS_REGEX: bilingual coverage", () => {
+  const hits = [
+    "US Citizen Only",
+    "no sponsorship",
+    "Must have Green Card",
+    "GC required",
+    "需要美国公民身份",
+    "仅限绿卡",
+    "不提供 sponsorship",
+  ]
+  for (const t of hits) assert.ok(NO_SPONSORSHIP_KEYWORDS_REGEX.test(t), `should match: ${t}`)
+  const misses = ["Software Engineer", "ML Engineer at Google"]
+  for (const t of misses) assert.ok(!NO_SPONSORSHIP_KEYWORDS_REGEX.test(t), `should NOT match: ${t}`)
+})
+
+test("Phase43 location hard-block: targetLocations + non-matching job → dropped", () => {
+  const profile: HardFilterUserProfile = {
+    statedPreferences: { targetLocations: ["San Francisco", "Remote"] },
+  }
+  const sf = makeJob({ id: "sf", locationRaw: "San Francisco, CA" })
+  const ny = makeJob({ id: "ny", locationRaw: "New York, NY" })
+  const remote = makeJob({ id: "rm", locationRaw: "Remote" })
+  const out = applyHardFilters(profile, [sf, ny, remote], undefined, NOW_2026_05_02)
+  const ids = out.map((j) => j.id).sort()
+  assert.deepEqual(ids, ["rm", "sf"], "NY dropped, SF + Remote kept")
+})
+
+test("Phase43 location ladder: targetLocation Baltimore + DC-area job → kept (LOCATION_NEIGHBORS)", () => {
+  const profile: HardFilterUserProfile = {
+    statedPreferences: { targetLocations: ["baltimore"] },
+  }
+  const dc = makeJob({ id: "dc", locationRaw: "Washington, DC" })
+  const out = applyHardFilters(profile, [dc], undefined, NOW_2026_05_02)
+  assert.equal(out.length, 1, "DC counts as Baltimore-neighbor")
+})
+
+test("Phase43 fallback ladder: tier-2 (relaxed=drop location) yields survivor", () => {
+  // Profile: NO yoeRange (so YoE rule depends on CV; absent), needs sponsorship,
+  // wants only SF. Single job: sponsorship-friendly NY ML role. Tier 1 drops
+  // it (location mismatch); tier 2 keeps it (location relaxed).
+  const profile: HardFilterUserProfile = {
+    statedPreferences: {
+      visaStatus: "sponsorship_needed",
+      targetLocations: ["San Francisco"],
+    },
+  }
+  const ny = makeJob({
+    id: "ny",
+    jobTitle: "ML Engineer",
+    locationRaw: "New York, NY",
+    sponsorship: true,
+  })
+  const res = applyHardFiltersWithFallback(profile, [ny], [], 3, NOW_2026_05_02)
+  assert.equal(res.relaxLevel, "relaxed")
+  assert.equal(res.fallbackMode, false)
+  assert.equal(res.jobs[0]?.id, "ny")
+})
+
+test("Phase43 D3 smart fallback: no statedPreferences + CV all-present → infer college-student → drop seniors", () => {
+  // Onboarding probe v2 not done (statedPreferences absent). CV: 2 ongoing
+  // experiences within last 4 years → inferred student → drop seniors.
+  const profile: HardFilterUserProfile = {
+    experiences: [
+      { startDate: "2024", endDate: "present" },
+      { startDate: "2023", endDate: "present" },
+    ],
+  }
+  const senior = makeJob({ id: "s", jobTitle: "Senior Engineer" })
+  const intern = makeJob({ id: "i", jobTitle: "Software Engineer Intern" })
+  const out = applyHardFilters(profile, [senior, intern], undefined, NOW_2026_05_02)
+  assert.equal(out.length, 1)
+  assert.equal(out[0]?.id, "i")
+})

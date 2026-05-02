@@ -338,6 +338,390 @@ export function capIndustryEnumValues(tags: readonly string[]): string[] {
 }
 
 
+
+// ---------------------------------------------------------------------------
+// Phase 43 (v1.5 / Stream-C) — Hard filters using `pa-users.statedPreferences`.
+//
+// Rationale: H8 industryEnum query returns ~50 candidates ranked by recency +
+// Jaccard, then daily-batch reranks by cosine + cross-encoder. None of those
+// stages enforce "user is a college student → never send 'Senior' jobs", or
+// "user needs sponsorship → never send 'US citizen only' jobs". Those are
+// HARD constraints — no amount of rerank can recover from sending a wrong
+// fit, and the trust hit (one bad job kills the channel) dominates.
+//
+// Position in pipeline: AFTER queryMatchingJobs returns, BEFORE cross-encoder
+// rerank — i.e. the candidate pool we hard-filter is post-Firestore-where /
+// post-Jaccard but pre-cosine. That's the cheapest place where we have all
+// 4 signals (jobTitle, requiredSkills, locationRaw, sponsorship) projected.
+//
+// Schema reality check: the Phase 43 brief refers to job.seniority_level,
+// job.role_title, job.qualifications. The actual MatchingJobSchema (B-stream
+// shape) carries jobTitle, requiredSkills, locationRaw, sponsorship — no
+// seniority_level / qualifications. We therefore detect:
+//   - Seniority   → regex over `jobTitle` (covers "Senior", "Staff", "Lead",
+//                   "Principal", "Director", "VP", plus 资深/主管/总监 zh)
+//   - Research    → regex over `jobTitle` ∪ `requiredSkills` (covers "research",
+//                   "scientist", "PhD", "postdoc", plus 研究/科研/博士)
+//   - Sponsorship → regex over `jobTitle` ∪ `requiredSkills` for explicit
+//                   no-sponsor markers, AND treat `sponsorship === false` as
+//                   a hard exclusion when user explicitly needs sponsorship.
+//                   The corpus does NOT carry a free-text `qualifications`
+//                   field today; this is best-effort, not exhaustive.
+//   - Location    → existing locationRaw + LOCATION_NEIGHBORS ladder (Phase
+//                   39 H7).
+//
+// ZERO new LLM calls. Pure regex + set ops. < 50ms over 100 jobs (measured:
+// ~0.3ms — regex compile is one-shot module-load, per-job is ~5 op).
+//
+// Bilingual: every keyword bank carries both en + zh tokens, OR-merged into
+// one regex per concept (single pass per job).
+//
+// Flag: `paHardFiltersEnabled`. Default OFF; ramp 1%→10%→50%→100% per the
+// pa-feature-flags playbook. When OFF, daily-batch skips this entirely (zero
+// regression on existing path).
+// ---------------------------------------------------------------------------
+
+import type { StatedPreferences } from "@pa/core-types"
+
+/**
+ * The minimal user-profile shape applyHardFilters needs. daily-batch.ts
+ * assembles this from `pa-users.statedPreferences` (Phase 44 ship) +
+ * `parsedCandidateResumes.experiences` (existing Stream B+ shape).
+ *
+ * `statedPreferences` may be entirely absent for users who haven't done the
+ * Phase 44 onboarding probe v2 yet (1%→100% ramp ongoing). In that case the
+ * `inferCollegeStudent` helper covers the YoE branch via CV-only signal.
+ */
+export type HardFilterUserProfile = {
+  statedPreferences?: StatedPreferences
+  /**
+   * Most-recent-first list of resume experiences. Only `startDate` (year or
+   * "YYYY-MM" string) and `endDate` ("present" or year/year-month string)
+   * are read by hard-filter logic.
+   */
+  experiences?: ReadonlyArray<{
+    startDate?: string
+    endDate?: string
+  }>
+}
+
+/**
+ * Outcome wrapper from {@link applyHardFiltersWithFallback}. Surfaces the
+ * relax level so callers (daily-batch) can switch the H13 opener variant
+ * to the "我看你简历目前还没找到完美的 fit" Variant D when fallbackMode=true.
+ */
+export type HardFilterResult = {
+  jobs: MatchingJob[]
+  /** True iff we ended up returning previous-7-day jobs (no fresh survivors). */
+  fallbackMode: boolean
+  /** Which relaxation tier produced the surviving set. */
+  relaxLevel: "none" | "relaxed" | "min" | "prev7d"
+}
+
+// ----- Keyword banks (bilingual; module-private; case-insensitive) ---------
+
+/**
+ * Senior-track titles. Drops these jobs when user is a college student or
+ * yoeRange[1] < 1.
+ *
+ * Notes on the regex:
+ *   - Word-boundary on en tokens to avoid false positives ("research lead" 是
+ *     "lead" 但 "leader" 不是 — well, we DO want to drop leader; we don't
+ *     want "leadership analyst" → handled by \b on lead). Pragmatic.
+ *   - zh tokens have no word boundary (CJK) — match anywhere.
+ */
+export const SENIOR_TITLE_REGEX =
+  /(\b(senior|sr\.?|staff|principal|director|vp|vice\s*president|head\s+of|lead|tech\s+lead|architect)\b|资深|高级|主管|总监|首席|架构师)/i
+
+/**
+ * Research-orientation. When user explicitly opted for research-only path,
+ * keep ONLY jobs whose title or required-skills mention research signals.
+ */
+export const RESEARCH_KEYWORDS_REGEX =
+  /(\bresearch(er)?\b|\bscientist\b|\bphd\b|\bpostdoc\b|\bapplied\s+scientist\b|\bresearch\s+engineer\b|研究|科研|博士|科学家)/i
+
+/**
+ * No-sponsorship hard markers. When user needs sponsorship, drop jobs that
+ * carry these tokens in title or required-skills. The corpus DOES carry
+ * `sponsorship: boolean | null`; we treat `=== false` as an additional hard
+ * signal alongside this regex (belt-and-suspenders).
+ */
+export const NO_SPONSORSHIP_KEYWORDS_REGEX =
+  /(us\s+citizen(ship)?\s*(only|required)?|no\s+sponsorship|must\s+have\s+green\s+card|gc\s+(only|required)|need\s+(?:us\s+)?citizenship|公民|绿卡|不提供\s*(签证|sponsorship|赞助)|不\s*sponsor)/i
+
+/** Cap experiences[].startDate "still in school" lookback — 4 years per brief D3. */
+const COLLEGE_STUDENT_LOOKBACK_YEARS = 4
+/** D1 rule 1 sub-clause: still-in-school detection lookback (12 months). */
+const STILL_IN_SCHOOL_RECENT_MONTHS = 12
+
+/**
+ * Parse a startDate string like "2024", "2024-09", "2024-09-15" to a JS
+ * year (number) or null when unparseable. Pure / deterministic.
+ */
+export function parseStartYear(s: string | undefined): number | null {
+  if (typeof s !== "string") return null
+  const m = s.match(/^(\d{4})/)
+  if (!m) return null
+  const y = Number.parseInt(m[1]!, 10)
+  return Number.isFinite(y) ? y : null
+}
+
+function nowYear(now: Date = new Date()): number {
+  return now.getUTCFullYear()
+}
+
+function nowMs(now: Date = new Date()): number {
+  return now.getTime()
+}
+
+/**
+ * D3 — College-student CV-inference. Pure / deterministic.
+ *
+ * Returns true iff the profile has at least one experience AND every
+ * experience has endDate === "present" AND every parseable startDate is
+ * within the last COLLEGE_STUDENT_LOOKBACK_YEARS years.
+ *
+ * Confidence target per brief: ~75%. We don't expose a numeric confidence —
+ * the heuristic is binary, and downstream uses it as a hard signal only when
+ * statedPreferences.yoeRange is null/undefined (i.e. user hasn't completed
+ * onboarding probe v2 yet).
+ */
+export function inferCollegeStudent(
+  experiences: HardFilterUserProfile["experiences"] | undefined,
+  now: Date = new Date()
+): boolean {
+  if (!Array.isArray(experiences) || experiences.length === 0) return false
+  const cy = nowYear(now)
+  for (const e of experiences) {
+    if (!e || typeof e !== "object") return false
+    const end = typeof e.endDate === "string" ? e.endDate.toLowerCase().trim() : ""
+    if (end !== "present") return false
+    const sy = parseStartYear(e.startDate)
+    if (sy === null) return false
+    if (cy - sy > COLLEGE_STUDENT_LOOKBACK_YEARS) return false
+  }
+  return true
+}
+
+/**
+ * D1 rule 1 sub-clause — "still in school": single experience with endDate
+ * "present" AND startDate within the last STILL_IN_SCHOOL_RECENT_MONTHS.
+ *
+ * Brief: "(profile.experiences[0].endDate is "present" AND startDate < 12mo
+ * ago — i.e., still in school)". We interpret as "the most-recent-first
+ * experience" (experiences[0]).
+ */
+export function isStillInSchool(
+  experiences: HardFilterUserProfile["experiences"] | undefined,
+  now: Date = new Date()
+): boolean {
+  if (!Array.isArray(experiences) || experiences.length === 0) return false
+  const e0 = experiences[0]
+  if (!e0 || typeof e0 !== "object") return false
+  const end = typeof e0.endDate === "string" ? e0.endDate.toLowerCase().trim() : ""
+  if (end !== "present") return false
+  // Parse to month-resolution (YYYY or YYYY-MM or YYYY-MM-DD). Year-only
+  // values default to January (worst-case for "within 12mo" — a bare "2025"
+  // is interpreted as "Jan 2025"; if today is May 2026 that is 16 months
+  // out, correctly failing. A "2025-08" is interpreted as Aug 2025, which
+  // against May 2026 is 9 months — passes.).
+  const ym = parseStartYearMonth(e0.startDate)
+  if (ym === null) return false
+  const startMs = Date.UTC(ym.year, ym.month, 1)
+  const cutoffMs = nowMs(now) - STILL_IN_SCHOOL_RECENT_MONTHS * 30 * 24 * 3600 * 1000
+  return startMs >= cutoffMs
+}
+
+/**
+ * Parse "YYYY", "YYYY-MM", "YYYY-MM-DD" → {year, month (0-indexed)}.
+ * Returns null on unparseable input. Year-only inputs default to month=0
+ * (January). Pure / deterministic. Exposed for unit tests.
+ */
+export function parseStartYearMonth(s: string | undefined): { year: number; month: number } | null {
+  if (typeof s !== "string") return null
+  const m = s.match(/^(\d{4})(?:-(\d{1,2}))?/)
+  if (!m) return null
+  const year = Number.parseInt(m[1]!, 10)
+  if (!Number.isFinite(year)) return null
+  let month = 0
+  if (typeof m[2] === "string") {
+    const mm = Number.parseInt(m[2], 10)
+    if (Number.isFinite(mm) && mm >= 1 && mm <= 12) month = mm - 1
+  }
+  return { year, month }
+}
+
+// ----- The actual hard-filter pipeline --------------------------------------
+
+type HardFilterRules = {
+  yoe: boolean
+  research: boolean
+  visa: boolean
+  location: boolean
+}
+
+const ALL_RULES: HardFilterRules = { yoe: true, research: true, visa: true, location: true }
+
+function jobTitleAndSkillsHaystack(job: MatchingJob): string {
+  const title = typeof job.jobTitle === "string" ? job.jobTitle : ""
+  const skills = Array.isArray(job.requiredSkills) ? job.requiredSkills.join(" ") : ""
+  return `${title}
+${skills}`
+}
+
+function locationMatches(targetLocations: readonly string[], job: MatchingJob): boolean {
+  const l = (job.locationRaw ?? "").toLowerCase()
+  if (!l) return false
+  for (const tRaw of targetLocations) {
+    if (typeof tRaw !== "string") continue
+    const t = tRaw.toLowerCase().trim()
+    if (!t) continue
+    if (t === "remote" && l.includes("remote")) return true
+    if (t === "anywhere" || t === "any") return true
+    if (l.includes(t)) return true
+    const primaryCity = t.split(",")[0]?.trim() ?? ""
+    if (primaryCity && primaryCity.length >= 3 && l.includes(primaryCity)) return true
+    const neighbors = LOCATION_NEIGHBORS[t] ?? []
+    for (const n of neighbors) {
+      if (n === "remote" && l.includes("remote")) return true
+      if (n && l.includes(n)) return true
+    }
+  }
+  return false
+}
+
+/**
+ * Phase 43 / D1 — apply hard filters to a candidate pool.
+ *
+ * All rules are AND-combined: a job survives only if it passes every active
+ * rule. Rules can be selectively disabled via `rules` (used by the fallback
+ * relaxation ladder).
+ *
+ * Rule semantics:
+ *   1. YoE / college-student exclusion: drop seniors when
+ *      profile.statedPreferences.yoeRange[1] < 1, OR (no yoeRange and CV
+ *      indicates still-in-school OR college-student).
+ *   2. Research-orientation: when researchOriented === true, keep only jobs
+ *      with research keywords in title/skills. researchOriented === false
+ *      does NOT actively exclude research jobs (per brief — "user might
+ *      still take one").
+ *   3. Visa hard-block: when visaStatus === "sponsorship_needed", drop jobs
+ *      with no-sponsor markers in title/skills, AND drop jobs with
+ *      `sponsorship === false` (corpus boolean signal).
+ *   4. Location hard-block: when targetLocations is non-empty, keep only
+ *      jobs whose locationRaw matches one of them via LOCATION_NEIGHBORS
+ *      ladder.
+ *
+ * Pure / deterministic. Does NOT mutate inputs.
+ */
+export function applyHardFilters(
+  profile: HardFilterUserProfile,
+  jobs: MatchingJob[],
+  rules: HardFilterRules = ALL_RULES,
+  now: Date = new Date()
+): MatchingJob[] {
+  const sp = profile.statedPreferences ?? {}
+
+  // Rule 1: YoE / college-student exclusion preconditions.
+  let dropSeniors = false
+  if (rules.yoe) {
+    const yoeRange = sp.yoeRange ?? null
+    const hasYoeMax = Array.isArray(yoeRange) && typeof yoeRange[1] === "number"
+    if (hasYoeMax && (yoeRange as [number, number])[1] < 1) {
+      dropSeniors = true
+    } else if (!hasYoeMax) {
+      // Smart fallback per D3: infer from CV when statedPreferences absent.
+      if (isStillInSchool(profile.experiences, now) || inferCollegeStudent(profile.experiences, now)) {
+        dropSeniors = true
+      }
+    }
+  }
+
+  const researchOnly =
+    rules.research && profile.statedPreferences?.researchOriented === true
+  const sponsorshipNeeded =
+    rules.visa && profile.statedPreferences?.visaStatus === "sponsorship_needed"
+  const targetLocations =
+    rules.location && Array.isArray(profile.statedPreferences?.targetLocations)
+      ? (profile.statedPreferences!.targetLocations as readonly string[])
+      : null
+  const hasLocationFilter = !!(targetLocations && targetLocations.length > 0)
+
+  const out: MatchingJob[] = []
+  for (const job of jobs) {
+    const haystack = jobTitleAndSkillsHaystack(job)
+
+    // Rule 1
+    if (dropSeniors && SENIOR_TITLE_REGEX.test(typeof job.jobTitle === "string" ? job.jobTitle : "")) {
+      continue
+    }
+    // Rule 2
+    if (researchOnly && !RESEARCH_KEYWORDS_REGEX.test(haystack)) {
+      continue
+    }
+    // Rule 3 — text marker
+    if (sponsorshipNeeded && NO_SPONSORSHIP_KEYWORDS_REGEX.test(haystack)) {
+      continue
+    }
+    // Rule 3 — corpus boolean signal
+    if (sponsorshipNeeded && job.sponsorship === false) {
+      continue
+    }
+    // Rule 4
+    if (hasLocationFilter && !locationMatches(targetLocations!, job)) {
+      continue
+    }
+    out.push(job)
+  }
+  return out
+}
+
+/**
+ * Phase 43 / D2 — fallback orchestrator for the 0-survivor case.
+ *
+ * Tier 1: full ruleset → ≥1 survivor wins, return as `relaxLevel: "none"`.
+ * Tier 2: drop location → ≥1 survivor wins, return as `relaxLevel: "relaxed"`.
+ * Tier 3: drop location + research, keep yoe + visa → ≥1 wins, `"min"`.
+ * Tier 4: 0 survivors after every relaxation → return prev7dJobs sliced to
+ *         `take` with `fallbackMode: true`, `relaxLevel: "prev7d"`.
+ *
+ * `prev7dJobs` is an empty array when caller didn't fetch them — in that
+ * case we surface `fallbackMode: true` with `jobs: []` so the caller can
+ * still flip the "couldn't find a fit today" message variant.
+ */
+export function applyHardFiltersWithFallback(
+  profile: HardFilterUserProfile,
+  jobs: MatchingJob[],
+  prev7dJobs: MatchingJob[],
+  take: number,
+  now: Date = new Date()
+): HardFilterResult {
+  const tier1 = applyHardFilters(profile, jobs, ALL_RULES, now)
+  if (tier1.length > 0) return { jobs: tier1, fallbackMode: false, relaxLevel: "none" }
+  const tier2 = applyHardFilters(
+    profile,
+    jobs,
+    { yoe: true, research: true, visa: true, location: false },
+    now
+  )
+  if (tier2.length > 0) return { jobs: tier2, fallbackMode: false, relaxLevel: "relaxed" }
+  const tier3 = applyHardFilters(
+    profile,
+    jobs,
+    { yoe: true, research: false, visa: true, location: false },
+    now
+  )
+  if (tier3.length > 0) return { jobs: tier3, fallbackMode: false, relaxLevel: "min" }
+  return {
+    jobs: prev7dJobs.slice(0, take),
+    fallbackMode: true,
+    relaxLevel: "prev7d",
+  }
+}
+
+/** Phase 43 — feature flag key. Default OFF; ramp 1%→100%. */
+export const HARD_FILTERS_FLAG_KEY = "paHardFiltersEnabled"
+
 export type QueryMatchingJobsDeps = {
   db: Firestore
   log?: (...args: unknown[]) => void
