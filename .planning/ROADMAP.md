@@ -637,3 +637,51 @@ D1: Drop Reflexion-lite critic loop default | D2: Plutchik demoted to internal s
 | S2 | Phase 30 downstream eval connector | Phase 33 eval harness | Different "eval" namespaces (runtime nl_judge vs offline pairwise judge); zero file collision verified |
 | S3 | Phase 32 dashboard reorg Wave 3 (Personas CRUD) | Phase 38 memory policy | Personas seed contains current Bible voice; Phase 38 must not depend on inline strings |
 
+
+---
+
+## Milestone v1.5 — Friend-Companion Job-Rec System (production-grade)
+
+**Goal:** Convert Claire from "voice-good but flow-stiff job push bot" → friend-toned recommender that talks like a roommate, knows you from CV alone, never floods, scales without Mac mini. 14 Adam-stated streams unified.
+
+**Spawned:** 2026-05-02 by P10 from Adam directive after H7 daily push received as 人机.
+
+**Estimate:** ~18 dev-days (delivered in single autonomous session via parallel P7 wave).
+
+**Status:** ✅ ALL 14 STREAMS SHIPPED 2026-05-02 (13 commits + Mac mini bootstrap + qa:v1.5 gate PASS). Adam HITL deploy + SMS smoke pending.
+
+| # | Phase | Stream | Status | Commit |
+|---|-------|--------|--------|--------|
+| 41 | Friend-tone CV-aware opener | H13 | ✅ COMPLETE 2026-05-02 (113/113 + LIVE Adam push handle 140e3177) | `bc8863c` |
+| 42 | Async match-explainer (Qwen-7B) | F | ✅ COMPLETE 2026-05-02 (140/140 — 11+3 new, $1/day cap) | `92db7cb` |
+| 43 | Hard filters (YoE/visa/research/loc) | C | ✅ COMPLETE 2026-05-02 (161/161 — 21 new, 4-tier fallback) | `a3a03dd` |
+| 43.5 | Startup-vs-corp boost | I | ✅ COMPLETE 2026-05-02 (24/24 cross-encoder, 80-entry FAANG allowlist) | `c49884d` |
+| 44 | Onboarding probe v2 | B | ✅ COMPLETE 2026-05-02 (255/255 — 12 new, 8-state machine + statedPreferences) | `b1b0468` |
+| 45 | Message coalescer | D | ✅ COMPLETE 2026-05-02 (6/6 + 336/336, R1 sweep, Cloud Tasks bootstrap done) | `d8e91b8` |
+| 46 | Safety / abuse hardening | E | ✅ COMPLETE 2026-05-02 (14+4 — 3-layer: injection + illegal + rate-abuse) | `a92f5fe` |
+| 47 | Matching repo cloud audit | A | ✅ COMPLETE 2026-05-02 (Option D — Mac mini stays + webhook bridge) | `6c6f3b2` |
+| 47.1 | Mac mini → paMatchingPipelineComplete webhook | A2 | ✅ COMPLETE 2026-05-02 (345/345 — 9 new, HMAC + dashboard tile + bash patch) | `471e25b` |
+| 49 | Reverse-match dashboard | H | ✅ COMPLETE 2026-05-02 (351+161+11 — 6 backend + 4 frontend tests) | `edd9226` |
+| 50 | E2E QA team CN+EN | J | ✅ COMPLETE 2026-05-02 (4 agents × 8 personas × bilingual gate PASS in 262ms / $0) | `97b53b6` |
+| 51 | Tag-grouped rec (G.1 research) | G | ✅ G.1 SHIPPED 2026-05-02 (premise audit; G.2 build deferred — TS-native ~150 LOC, $0/mo) | `be420b0` |
+
+**Backlog deferred to v1.6:**
+- G.2 build (TS-native cluster cache, pending Adam premise approval)
+- LIVE mode for qa:v1.5 (ship Firestore + OpenAI creds in CI = security trade-off)
+- 30-day staleness check on statedPreferences
+- Legacy complete-state users re-probe backfill
+- Adam-CV live load in Agent-Resume
+- Per-tenant flag bucketing for non-WeKruit recruiter clients
+- Notify-history surface (dupe prevention in reverse-match)
+
+**Adam HITL queue:**
+1. firebase deploy + fill PA_COALESCE_TARGET_URL + redeploy
+2. flag flips for canary (see `.planning/V1.5-ROLLOUT.md`)
+3. SMS LIVE smoke (Adam-only, kept by Adam direction)
+4. Mac mini patch apply (`apps/functions/src/WEKRUIT-MATCHING-PATCH.md`)
+5. G.2 build go/no-go (read RESEARCH.md §0 premise re-frame)
+
+**Cross-stream collisions resolved during this session:**
+- daily-batch.ts shared between H13 + Stream-C + Stream-F + Stream-I — final state in HEAD verified internally consistent (140/140 tests)
+- Stream-D self-reset accidentally dropped 0e8997a Stream-B commit — recovered via cherry-pick to `b1b0468`
+- WHERE-domain discipline enforced: each P7 only commits its own files; P10 reconciles via TodoWrite tracker
