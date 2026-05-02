@@ -1,0 +1,67 @@
+# Intent Matrix — casual_chat × zh × senior
+# Generated 2026-05-02 by P7 bilingual intent matrix task.
+# 6 intents × 3 langs × 3 personas = 54 cells total.
+id: intent_matrix_casual_chat_zh_senior
+description: |
+  Intent: casual_chat
+  Language: zh
+  Persona: senior
+    YoE: 8+
+    Status: Senior+ engineer with 8+ YoE, US citizen, IC track
+    Visa: US citizen (no visa concerns)
+    Target: Staff / Principal / EM role at FAANG-tier
+
+  Validates Claire's response on this (intent × lang × persona) cell.
+  Axes: language_compliance, intent_recognition, tone_friend, length_cap,
+  safety (abuse_offtopic only), tag_match (job_search only).
+
+  Run:
+    PA_RUN_EVAL=1 PA_OPENAI_AGENT_API_KEY=... \
+      GOOGLE_APPLICATION_CREDENTIALS=... \
+      node tests/scenarios/runner.mjs tests/scenarios/intent-matrix/casual_chat_zh_senior.yaml
+testMode: true
+locale: zh-CN
+agentId: default
+participant: "+19999991038"
+chatId: "iMessage;+19999991038"
+turnTimeoutMs: 120000
+turns:
+  - user: "做了 8 年代码，最近 burnout，想 sabbatical"
+    assert:
+      reply_min_length: 4
+      reply_not_contains_any:
+        - "好的，我记住了"
+        - "已记录"
+        - "作为 AI"
+        - "我是 AI"
+        - "I'm an AI"
+        - "As an AI"
+      judge:
+        criterion: "The reply is predominantly Mandarin Chinese (zh-CN). It MAY include 1-2 English tech terms (SWE, OPT, H1B, OA, FAANG) but the structural language MUST be Mandarin. Length: ≤3 sentences. Tone: friend, not coach. NO numbered lists, NO 'N步法', NO 'try these three'. NO robot filler ('好的, 我记住了', 'It\\'s important to', 'Of course'). NO 'X 还是 Y?' clinical A/B framework questions. Intent: emotional support / casual register. Sit with the feeling. NO pep talk ('你一定可以的' / 'you got this'). NO numbered fixes. May ask one open question."
+        threshold: 0.55
+  - user: "感觉一直在 grind，看不到头"
+    assert:
+      reply_min_length: 4
+      reply_not_contains_any:
+        - "好的，我记住了"
+        - "已记录"
+        - "作为 AI"
+        - "我是 AI"
+        - "I'm an AI"
+        - "As an AI"
+      judge:
+        criterion: "The reply is predominantly Mandarin Chinese (zh-CN). It MAY include 1-2 English tech terms (SWE, OPT, H1B, OA, FAANG) but the structural language MUST be Mandarin. Length: ≤3 sentences. Tone: friend, not coach. NO numbered lists, NO 'N步法', NO 'try these three'. NO robot filler ('好的, 我记住了', 'It\\'s important to', 'Of course'). NO 'X 还是 Y?' clinical A/B framework questions. Intent: emotional support / casual register. Sit with the feeling. NO pep talk ('你一定可以的' / 'you got this'). NO numbered fixes. May ask one open question."
+        threshold: 0.55
+  - user: "你平时怎么放松的"
+    assert:
+      reply_min_length: 4
+      reply_not_contains_any:
+        - "好的，我记住了"
+        - "已记录"
+        - "作为 AI"
+        - "我是 AI"
+        - "I'm an AI"
+        - "As an AI"
+      judge:
+        criterion: "The reply is predominantly Mandarin Chinese (zh-CN). It MAY include 1-2 English tech terms (SWE, OPT, H1B, OA, FAANG) but the structural language MUST be Mandarin. Length: ≤3 sentences. Tone: friend, not coach. NO numbered lists, NO 'N步法', NO 'try these three'. NO robot filler ('好的, 我记住了', 'It\\'s important to', 'Of course'). NO 'X 还是 Y?' clinical A/B framework questions. Intent: emotional support / casual register. Sit with the feeling. NO pep talk ('你一定可以的' / 'you got this'). NO numbered fixes. May ask one open question."
+        threshold: 0.55

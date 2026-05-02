@@ -1,0 +1,336 @@
+[
+  {
+    "file": "/tmp/sim-zh.json",
+    "cell": {
+      "intent": "casual_chat",
+      "lang": "zh",
+      "persona": "college",
+      "note": "anxious_grad ≈ casual_chat × zh × college"
+    },
+    "personaId": "anxious_grad",
+    "sessionId": "sim-anxious_grad-1777479224130",
+    "turns": 8,
+    "overallPass": false,
+    "axisPassRate": 0.6666666666666666,
+    "axes": {
+      "language_compliance": {
+        "pass": true,
+        "rate": 1,
+        "detail": {
+          "rate": 1,
+          "pass": 8,
+          "total": 8,
+          "detected": [
+            "zh",
+            "zh",
+            "zh",
+            "zh",
+            "zh",
+            "zh",
+            "zh",
+            "zh"
+          ]
+        }
+      },
+      "length_cap": {
+        "pass": true,
+        "rate": 1,
+        "detail": {
+          "compliance": 1,
+          "withinCap": 8,
+          "total": 8,
+          "overCapTurns": []
+        }
+      },
+      "no_robot_filler": {
+        "pass": false,
+        "rate": 0.75,
+        "detail": {
+          "hits": 2,
+          "total": 8,
+          "offenders": [
+            {
+              "turn": 0,
+              "phrase": "zh_X_还是_Y_question",
+              "lang": "structural"
+            },
+            {
+              "turn": 2,
+              "phrase": "zh_X_还是_Y_question",
+              "lang": "structural"
+            }
+          ],
+          "rate": 0.75
+        }
+      },
+      "no_ab_framework": {
+        "pass": false,
+        "rate": 0.75,
+        "detail": {
+          "hits": 2,
+          "total": 8,
+          "offenders": [
+            {
+              "turn": 0,
+              "pattern": "zh_X_还是_Y_question",
+              "snippet": "草 真的很离谱…你现在是投得太多还是简历那块卡住了？我在 你先吐一会儿。"
+            },
+            {
+              "turn": 2,
+              "pattern": "zh_X_还是_Y_question",
+              "snippet": "哎 那一下确实容易连锁翻车…你现在更像是“卡在当场的衔接追问”，不是单纯不会题。你这轮更想先把那种后续追问的类型搞明白，还是先继续把题量堆上去？"
+            }
+          ],
+          "rate": 0.75
+        }
+      },
+      "imessage_render_safe": {
+        "pass": true,
+        "rate": 1,
+        "detail": {
+          "hits": 0,
+          "total": 8,
+          "offenders": [],
+          "rate": 1
+        }
+      },
+      "drift_resistance": {
+        "pass": true,
+        "rate": 0.9848903106636739,
+        "detail": {
+          "driftScore": 0.015109689336326093,
+          "mirrorMax": 0.04032258064516129,
+          "mirrorAvg": 0.015109689336326093,
+          "repeatMax": null,
+          "samples": 5
+        }
+      }
+    }
+  },
+  {
+    "file": "/tmp/sim-en.json",
+    "cell": {
+      "intent": "casual_chat",
+      "lang": "en",
+      "persona": "college",
+      "note": "en_grad ≈ casual_chat × en × college"
+    },
+    "personaId": "en_grad",
+    "sessionId": "sim-en_grad-1777479225838",
+    "turns": 8,
+    "overallPass": false,
+    "axisPassRate": 0.6666666666666666,
+    "axes": {
+      "language_compliance": {
+        "pass": true,
+        "rate": 1,
+        "detail": {
+          "rate": 1,
+          "pass": 8,
+          "total": 8,
+          "detected": [
+            "en",
+            "en",
+            "en",
+            "en",
+            "en",
+            "en",
+            "en",
+            "en"
+          ]
+        }
+      },
+      "length_cap": {
+        "pass": true,
+        "rate": 1,
+        "detail": {
+          "compliance": 1,
+          "withinCap": 8,
+          "total": 8,
+          "overCapTurns": []
+        }
+      },
+      "no_robot_filler": {
+        "pass": false,
+        "rate": 0.875,
+        "detail": {
+          "hits": 1,
+          "total": 8,
+          "offenders": [
+            {
+              "turn": 0,
+              "phrase": "en_X_or_Y_question",
+              "lang": "structural"
+            }
+          ],
+          "rate": 0.875
+        }
+      },
+      "no_ab_framework": {
+        "pass": false,
+        "rate": 0.875,
+        "detail": {
+          "hits": 1,
+          "total": 8,
+          "offenders": [
+            {
+              "turn": 0,
+              "pattern": "en_X_or_Y_question",
+              "snippet": "bruh that’s actually brutal—2 months and still getting cooked on OAs is rage-fue"
+            }
+          ],
+          "rate": 0.875
+        }
+      },
+      "imessage_render_safe": {
+        "pass": true,
+        "rate": 1,
+        "detail": {
+          "hits": 0,
+          "total": 8,
+          "offenders": [],
+          "rate": 1
+        }
+      },
+      "drift_resistance": {
+        "pass": true,
+        "rate": 0.979938803729594,
+        "detail": {
+          "driftScore": 0.020061196270406013,
+          "mirrorMax": 0.039473684210526314,
+          "mirrorAvg": 0.020061196270406013,
+          "repeatMax": null,
+          "samples": 5
+        }
+      }
+    }
+  },
+  {
+    "file": "/tmp/sim-mixed.json",
+    "cell": {
+      "intent": "casual_chat",
+      "lang": "mixed",
+      "persona": "mid",
+      "note": "mixed_pm ≈ casual_chat × mixed × mid"
+    },
+    "personaId": "mixed_pm",
+    "sessionId": "sim-mixed_pm-1777479228079",
+    "turns": 8,
+    "overallPass": false,
+    "axisPassRate": 0.5,
+    "axes": {
+      "language_compliance": {
+        "pass": false,
+        "rate": 0.125,
+        "detail": {
+          "rate": 0.125,
+          "pass": 1,
+          "total": 8,
+          "detected": [
+            "mixed",
+            "zh",
+            "zh",
+            "zh",
+            "zh",
+            "zh",
+            "zh",
+            "zh"
+          ]
+        }
+      },
+      "length_cap": {
+        "pass": true,
+        "rate": 1,
+        "detail": {
+          "compliance": 1,
+          "withinCap": 8,
+          "total": 8,
+          "overCapTurns": []
+        }
+      },
+      "no_robot_filler": {
+        "pass": false,
+        "rate": 0.5,
+        "detail": {
+          "hits": 4,
+          "total": 8,
+          "offenders": [
+            {
+              "turn": 0,
+              "phrase": "zh_X_还是_Y_question",
+              "lang": "structural"
+            },
+            {
+              "turn": 1,
+              "phrase": "zh_X_还是_Y_question",
+              "lang": "structural"
+            },
+            {
+              "turn": 3,
+              "phrase": "zh_X_还是_Y_question",
+              "lang": "structural"
+            },
+            {
+              "turn": 4,
+              "phrase": "zh_X_还是_Y_question",
+              "lang": "structural"
+            }
+          ],
+          "rate": 0.5
+        }
+      },
+      "no_ab_framework": {
+        "pass": false,
+        "rate": 0.5,
+        "detail": {
+          "hits": 4,
+          "total": 8,
+          "offenders": [
+            {
+              "turn": 0,
+              "pattern": "zh_X_还是_Y_question",
+              "snippet": "oh noooo wtf, ghosted your spec is so cooked…😭  \n你现在是等他们回，还是已经被迫自己兜着走了？"
+            },
+            {
+              "turn": 1,
+              "pattern": "zh_X_还是_Y_question",
+              "snippet": "我看到你这张图了，周末搞个小项目好啊，至少能把你那口气先转成“能落地的东西”。  \n你更想做的是把这个新项目idee做成demo，还是先把spec/流程那块自己"
+            },
+            {
+              "turn": 3,
+              "pattern": "zh_X_还是_Y_question",
+              "snippet": "对，这种“先抓一个最关键的转化步骤做出能跑的效果”最靠谱，周末就该这样把战场打穿🧟‍♂️  \n你现在心里那个“关键步骤”更像是表单/支付前那一下，还是落地页到"
+            },
+            {
+              "turn": 4,
+              "pattern": "zh_X_还是_Y_question",
+              "snippet": "行你这个聚焦点很硬：注册到支付这段一旦跑通，demo就是真能打的。你现在是想先把“支付前最后一步”做干净（少摩擦），还是从注册开始把每一步的数据埋点也一起补上？"
+            }
+          ],
+          "rate": 0.5
+        }
+      },
+      "imessage_render_safe": {
+        "pass": true,
+        "rate": 1,
+        "detail": {
+          "hits": 0,
+          "total": 8,
+          "offenders": [],
+          "rate": 1
+        }
+      },
+      "drift_resistance": {
+        "pass": true,
+        "rate": 0.9670496985798691,
+        "detail": {
+          "driftScore": 0.03295030142013086,
+          "mirrorMax": 0.06493506493506493,
+          "mirrorAvg": 0.03295030142013086,
+          "repeatMax": null,
+          "samples": 5
+        }
+      }
+    }
+  }
+]

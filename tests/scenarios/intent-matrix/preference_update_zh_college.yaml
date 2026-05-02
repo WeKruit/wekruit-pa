@@ -1,0 +1,67 @@
+# Intent Matrix — preference_update × zh × college
+# Generated 2026-05-02 by P7 bilingual intent matrix task.
+# 6 intents × 3 langs × 3 personas = 54 cells total.
+id: intent_matrix_preference_update_zh_college
+description: |
+  Intent: preference_update
+  Language: zh
+  Persona: college
+    YoE: 0
+    Status: OPT-eligible CS senior, looking for new-grad SWE / internship
+    Visa: OPT (post-graduation work auth, 12mo + 24mo STEM ext)
+    Target: internship or new-grad SWE at FAANG / mid-size tech
+
+  Validates Claire's response on this (intent × lang × persona) cell.
+  Axes: language_compliance, intent_recognition, tone_friend, length_cap,
+  safety (abuse_offtopic only), tag_match (job_search only).
+
+  Run:
+    PA_RUN_EVAL=1 PA_OPENAI_AGENT_API_KEY=... \
+      GOOGLE_APPLICATION_CREDENTIALS=... \
+      node tests/scenarios/runner.mjs tests/scenarios/intent-matrix/preference_update_zh_college.yaml
+testMode: true
+locale: zh-CN
+agentId: default
+participant: "+19999991027"
+chatId: "iMessage;+19999991027"
+turnTimeoutMs: 120000
+turns:
+  - user: "我想从 SWE 换到 PM 方向"
+    assert:
+      reply_min_length: 4
+      reply_not_contains_any:
+        - "好的，我记住了"
+        - "已记录"
+        - "作为 AI"
+        - "我是 AI"
+        - "I'm an AI"
+        - "As an AI"
+      judge:
+        criterion: "The reply is predominantly Mandarin Chinese (zh-CN). It MAY include 1-2 English tech terms (SWE, OPT, H1B, OA, FAANG) but the structural language MUST be Mandarin. Length: ≤3 sentences. Tone: friend, not coach. NO numbered lists, NO 'N步法', NO 'try these three'. NO robot filler ('好的, 我记住了', 'It\\'s important to', 'Of course'). NO 'X 还是 Y?' clinical A/B framework questions. Intent: confirm the new preference direction (PM / EM / director). Do NOT echo the user's verbs verbatim; do NOT auto-fill a coach script."
+        threshold: 0.55
+  - user: "麻烦把我之前的 SWE 偏好都更新成新的"
+    assert:
+      reply_min_length: 4
+      reply_not_contains_any:
+        - "好的，我记住了"
+        - "已记录"
+        - "作为 AI"
+        - "我是 AI"
+        - "I'm an AI"
+        - "As an AI"
+      judge:
+        criterion: "The reply is predominantly Mandarin Chinese (zh-CN). It MAY include 1-2 English tech terms (SWE, OPT, H1B, OA, FAANG) but the structural language MUST be Mandarin. Length: ≤3 sentences. Tone: friend, not coach. NO numbered lists, NO 'N步法', NO 'try these three'. NO robot filler ('好的, 我记住了', 'It\\'s important to', 'Of course'). NO 'X 还是 Y?' clinical A/B framework questions. Intent: confirm the new preference direction (PM / EM / director). Do NOT echo the user's verbs verbatim; do NOT auto-fill a coach script."
+        threshold: 0.55
+  - user: "下次推荐就按新方向来"
+    assert:
+      reply_min_length: 4
+      reply_not_contains_any:
+        - "好的，我记住了"
+        - "已记录"
+        - "作为 AI"
+        - "我是 AI"
+        - "I'm an AI"
+        - "As an AI"
+      judge:
+        criterion: "The reply is predominantly Mandarin Chinese (zh-CN). It MAY include 1-2 English tech terms (SWE, OPT, H1B, OA, FAANG) but the structural language MUST be Mandarin. Length: ≤3 sentences. Tone: friend, not coach. NO numbered lists, NO 'N步法', NO 'try these three'. NO robot filler ('好的, 我记住了', 'It\\'s important to', 'Of course'). NO 'X 还是 Y?' clinical A/B framework questions. Intent: confirm the new preference direction (PM / EM / director). Do NOT echo the user's verbs verbatim; do NOT auto-fill a coach script."
+        threshold: 0.55

@@ -1,0 +1,67 @@
+# Intent Matrix — visa_check × mixed × college
+# Generated 2026-05-02 by P7 bilingual intent matrix task.
+# 6 intents × 3 langs × 3 personas = 54 cells total.
+id: intent_matrix_visa_check_mixed_college
+description: |
+  Intent: visa_check
+  Language: mixed
+  Persona: college
+    YoE: 0
+    Status: OPT-eligible CS senior, looking for new-grad SWE / internship
+    Visa: OPT (post-graduation work auth, 12mo + 24mo STEM ext)
+    Target: internship or new-grad SWE at FAANG / mid-size tech
+
+  Validates Claire's response on this (intent × lang × persona) cell.
+  Axes: language_compliance, intent_recognition, tone_friend, length_cap,
+  safety (abuse_offtopic only), tag_match (job_search only).
+
+  Run:
+    PA_RUN_EVAL=1 PA_OPENAI_AGENT_API_KEY=... \
+      GOOGLE_APPLICATION_CREDENTIALS=... \
+      node tests/scenarios/runner.mjs tests/scenarios/intent-matrix/visa_check_mixed_college.yaml
+testMode: true
+locale: zh-CN
+agentId: default
+participant: "+19999991024"
+chatId: "iMessage;+19999991024"
+turnTimeoutMs: 120000
+turns:
+  - user: "我 OPT，能投 sponsorship 岗吗？"
+    assert:
+      reply_min_length: 4
+      reply_not_contains_any:
+        - "好的，我记住了"
+        - "已记录"
+        - "作为 AI"
+        - "我是 AI"
+        - "I'm an AI"
+        - "As an AI"
+      judge:
+        criterion: "The reply mirrors the user's bilingual zh-en code-switching register, blending zh and en within sentences naturally. Length: ≤3 sentences. Tone: friend, not coach. NO numbered lists, NO 'N步法', NO 'try these three'. NO robot filler ('好的, 我记住了', 'It\\'s important to', 'Of course'). NO 'X 还是 Y?' clinical A/B framework questions. Intent: address visa question grounded in persona's status (OPT / H1B / citizen). Do NOT give legal advice; defer to immigration attorney for irreversible decisions."
+        threshold: 0.55
+  - user: "如果 sponsor 拒了 what happens?"
+    assert:
+      reply_min_length: 4
+      reply_not_contains_any:
+        - "好的，我记住了"
+        - "已记录"
+        - "作为 AI"
+        - "我是 AI"
+        - "I'm an AI"
+        - "As an AI"
+      judge:
+        criterion: "The reply mirrors the user's bilingual zh-en code-switching register, blending zh and en within sentences naturally. Length: ≤3 sentences. Tone: friend, not coach. NO numbered lists, NO 'N步法', NO 'try these three'. NO robot filler ('好的, 我记住了', 'It\\'s important to', 'Of course'). NO 'X 还是 Y?' clinical A/B framework questions. Intent: address visa question grounded in persona's status (OPT / H1B / citizen). Do NOT give legal advice; defer to immigration attorney for irreversible decisions."
+        threshold: 0.55
+  - user: "推荐些 visa-friendly companies？"
+    assert:
+      reply_min_length: 4
+      reply_not_contains_any:
+        - "好的，我记住了"
+        - "已记录"
+        - "作为 AI"
+        - "我是 AI"
+        - "I'm an AI"
+        - "As an AI"
+      judge:
+        criterion: "The reply mirrors the user's bilingual zh-en code-switching register, blending zh and en within sentences naturally. Length: ≤3 sentences. Tone: friend, not coach. NO numbered lists, NO 'N步法', NO 'try these three'. NO robot filler ('好的, 我记住了', 'It\\'s important to', 'Of course'). NO 'X 还是 Y?' clinical A/B framework questions. Intent: address visa question grounded in persona's status (OPT / H1B / citizen). Do NOT give legal advice; defer to immigration attorney for irreversible decisions."
+        threshold: 0.55

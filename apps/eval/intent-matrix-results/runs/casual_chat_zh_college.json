@@ -1,0 +1,64 @@
+{
+  "total": 1,
+  "passed": 0,
+  "failed": 1,
+  "judgeCallCount": 3,
+  "judgeCostUsd": 0.000202,
+  "aborted": null,
+  "runStamp": "2026-05-02T22-58-55-652Z",
+  "results": [
+    {
+      "id": "intent_matrix_casual_chat_zh_college",
+      "file": "casual_chat_zh_college.yaml",
+      "turns": [
+        {
+          "idx": 0,
+          "user": "找工作真的好累，OA 一个接一个",
+          "reply": "在呢. 今天找你聊点啥? 🍋",
+          "eventId": "harness_db2ba16d-e6b0-450a-afd7-5a8f3fcc02a1",
+          "pass": true,
+          "failures": [],
+          "judge": {
+            "verdict": "pass",
+            "confidence": 0.84,
+            "costUsd": 0.000054000000000000005
+          },
+          "usage": null
+        },
+        {
+          "idx": 1,
+          "user": "感觉一直在 grind，看不到头",
+          "reply": "那你大概想找啥方向的活? 比如做产品、做工程、还是做研究 — 给我个大致就行",
+          "eventId": "harness_664e9c1a-cb98-4854-9282-07b4d1773fc9",
+          "pass": false,
+          "failures": [
+            "judge verdict=fail confidence=0.93 threshold=0.55 rationale=\"回复包含“那你大概想找啥方向的活? 比如做产品、做工程、还是做研究 — 给我个大致就行”，属于中英混合？（无英词），但语言结构是中文，且≤3句、语气相对友好。主要问题是包含“产品/工程/研究”这种对选项的框架提问，类似A/B式“还是”对比提问，不符合禁止的临床A/B框架问题；同时缺少“坐 with feeling”的安抚表达。\""
+          ],
+          "judge": {
+            "verdict": "fail",
+            "confidence": 0.93,
+            "costUsd": 0.00008204999999999999
+          },
+          "usage": null
+        },
+        {
+          "idx": 2,
+          "user": "你平时怎么放松的",
+          "reply": "你工作几年了? 还是刚毕业找新人岗?",
+          "eventId": "harness_eb76e7a6-3048-44d1-9a2b-7ce9110766df",
+          "pass": false,
+          "failures": [
+            "judge verdict=fail confidence=0.98 threshold=0.55 rationale=\"回复使用了“你工作几年了? 还是刚毕业...”这种临床式A/B对比框架问题，不符合情绪支持的随聊与“坐在感觉里”。同时语气偏问答/审视而非安抚放松相关的友好体贴，且与用户“你平时怎么放松的”意图不对齐。\""
+          ],
+          "judge": {
+            "verdict": "fail",
+            "confidence": 0.98,
+            "costUsd": 0.00006555
+          },
+          "usage": null
+        }
+      ],
+      "pass": false
+    }
+  ]
+}

@@ -1,0 +1,67 @@
+# Intent Matrix — resume_parse × zh × senior
+# Generated 2026-05-02 by P7 bilingual intent matrix task.
+# 6 intents × 3 langs × 3 personas = 54 cells total.
+id: intent_matrix_resume_parse_zh_senior
+description: |
+  Intent: resume_parse
+  Language: zh
+  Persona: senior
+    YoE: 8+
+    Status: Senior+ engineer with 8+ YoE, US citizen, IC track
+    Visa: US citizen (no visa concerns)
+    Target: Staff / Principal / EM role at FAANG-tier
+
+  Validates Claire's response on this (intent × lang × persona) cell.
+  Axes: language_compliance, intent_recognition, tone_friend, length_cap,
+  safety (abuse_offtopic only), tag_match (job_search only).
+
+  Run:
+    PA_RUN_EVAL=1 PA_OPENAI_AGENT_API_KEY=... \
+      GOOGLE_APPLICATION_CREDENTIALS=... \
+      node tests/scenarios/runner.mjs tests/scenarios/intent-matrix/resume_parse_zh_senior.yaml
+testMode: true
+locale: zh-CN
+agentId: default
+participant: "+19999991011"
+chatId: "iMessage;+19999991011"
+turnTimeoutMs: 120000
+turns:
+  - user: "我把简历贴过来你帮我看看"
+    assert:
+      reply_min_length: 4
+      reply_not_contains_any:
+        - "好的，我记住了"
+        - "已记录"
+        - "作为 AI"
+        - "我是 AI"
+        - "I'm an AI"
+        - "As an AI"
+      judge:
+        criterion: "The reply is predominantly Mandarin Chinese (zh-CN). It MAY include 1-2 English tech terms (SWE, OPT, H1B, OA, FAANG) but the structural language MUST be Mandarin. Length: ≤3 sentences. Tone: friend, not coach. NO numbered lists, NO 'N步法', NO 'try these three'. NO robot filler ('好的, 我记住了', 'It\\'s important to', 'Of course'). NO 'X 还是 Y?' clinical A/B framework questions. Intent: acknowledge resume content; if extracting fields, list YoE/skills concisely; do not invent data not in the paste."
+        threshold: 0.55
+  - user: "8+ YoE.\\n- Staff @ Datadog 2020-now (distributed systems).\\n- Senior @ Twitter 2017-2020.\\n- BS CS @ CMU 2016."
+    assert:
+      reply_min_length: 4
+      reply_not_contains_any:
+        - "好的，我记住了"
+        - "已记录"
+        - "作为 AI"
+        - "我是 AI"
+        - "I'm an AI"
+        - "As an AI"
+      judge:
+        criterion: "The reply is predominantly Mandarin Chinese (zh-CN). It MAY include 1-2 English tech terms (SWE, OPT, H1B, OA, FAANG) but the structural language MUST be Mandarin. Length: ≤3 sentences. Tone: friend, not coach. NO numbered lists, NO 'N步法', NO 'try these three'. NO robot filler ('好的, 我记住了', 'It\\'s important to', 'Of course'). NO 'X 还是 Y?' clinical A/B framework questions. Intent: acknowledge resume content; if extracting fields, list YoE/skills concisely; do not invent data not in the paste."
+        threshold: 0.55
+  - user: "你能 parse 出我的工作经验和技能吗？"
+    assert:
+      reply_min_length: 4
+      reply_not_contains_any:
+        - "好的，我记住了"
+        - "已记录"
+        - "作为 AI"
+        - "我是 AI"
+        - "I'm an AI"
+        - "As an AI"
+      judge:
+        criterion: "The reply is predominantly Mandarin Chinese (zh-CN). It MAY include 1-2 English tech terms (SWE, OPT, H1B, OA, FAANG) but the structural language MUST be Mandarin. Length: ≤3 sentences. Tone: friend, not coach. NO numbered lists, NO 'N步法', NO 'try these three'. NO robot filler ('好的, 我记住了', 'It\\'s important to', 'Of course'). NO 'X 还是 Y?' clinical A/B framework questions. Intent: acknowledge resume content; if extracting fields, list YoE/skills concisely; do not invent data not in the paste."
+        threshold: 0.55
