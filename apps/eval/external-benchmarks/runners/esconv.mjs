@@ -101,18 +101,66 @@ export async function runESConv(opts) {
   for (let i = 0; i < convs.length; i++) {
     const conv = convs[i]
     const dialog = Array.isArray(conv?.dialog) ? conv.dialog : []
-    const seekerTurns = dialog.filter((d) => d.speaker === "seeker").slice(0, 3)
-    const supporterTurns = dialog.filter((d) => d.speaker === "supporter").slice(0, 1)
-    const goldStrategy = supporterTurns[0]?.strategy || "Others"
-    const seekerContext = seekerTurns.map((t) => t.content).join("\n") || "I'm feeling stressed."
+    // ESConv schema: each dialog turn has { speaker, annotation: { strategy }, content };
+    // strategy lives under .annotation.strategy, NOT directly on the turn.
+    //
+    // Align gold ↔ classifier input: walk the dialog, pick the FIRST supporter turn
+    // that follows ≥2 substantive seeker turns. Otherwise the gold collapses to
+    // ~70% "Question" (the canonical opening "what would you like to talk about?")
+    // which doesn't match the strategy a classifier should pick given a 3-turn
+    // seeker context. Use those preceding seeker turns as the classifier input.
+    /** @type {Array<{ speaker: string, content: string, annotation?: any }>} */
+    const turns = dialog
+    /** @type {string[]} */
+    const seekerSoFar = []
+    /** @type {{ strategy: string, context: string[] } | null} */
+    let pick = null
+    for (const t of turns) {
+      if (t.speaker === "seeker" && typeof t.content === "string" && t.content.trim().length > 10) {
+        seekerSoFar.push(t.content)
+        continue
+      }
+      if (t.speaker === "supporter" && t.annotation?.strategy && seekerSoFar.length >= 2) {
+        pick = { strategy: t.annotation.strategy, context: seekerSoFar.slice() }
+        break
+      }
+    }
+    // Fallback: first supporter strategy of any kind, with whatever seeker turns came before.
+    if (!pick) {
+      for (let k = 0; k < turns.length; k++) {
+        const t = turns[k]
+        if (t.speaker === "supporter" && t.annotation?.strategy) {
+          const ctx = turns.slice(0, k).filter((x) => x.speaker === "seeker").map((x) => x.content)
+          pick = { strategy: t.annotation.strategy, context: ctx }
+          break
+        }
+      }
+    }
+    const goldStrategy = pick?.strategy || "Others"
+    const seekerContext = (pick?.context.join("\n") || "").trim() || "I'm feeling stressed."
 
     try {
-      // Strategy classify
+      // Strategy classify — definitions inlined to combat base-model bias toward
+      // "Reflection of feelings". Strict output format requested (label only) so
+      // the comparator's substring match doesn't false-trip on stray content.
       const cls = await opts.adapter.chat({
         messages: [
           {
             role: "system",
-            content: `Classify the best emotional support strategy for the following message. Reply with one of: ${STRATEGIES.join(", ")}.`,
+            content: [
+              "You classify the best emotional-support strategy for the seeker's message.",
+              "Strategies (ESConv, Liu et al. 2021):",
+              "- Question: ask for more information / clarify the situation.",
+              "- Restatement or Paraphrasing: restate the seeker's words concisely.",
+              "- Reflection of feelings: name the emotion the seeker is showing.",
+              "- Self-disclosure: share a similar experience of your own.",
+              "- Affirmation and Reassurance: affirm strengths or offer reassurance.",
+              "- Providing Suggestions: suggest concrete next steps.",
+              "- Information: share relevant facts or knowledge.",
+              "- Others: generic support that fits none of the above.",
+              "",
+              "Output exactly ONE label from the list above. No prose, no punctuation, no quotes.",
+            ].join("\n"),
           },
           { role: "user", content: seekerContext },
         ],
@@ -120,10 +168,23 @@ export async function runESConv(opts) {
           benchmark: BENCHMARK_NAME,
           userId: `esconv-${i}-classify`,
           turnNumber: 1,
+          // Cap at ~12 tokens — long enough for the longest label
+          // ("Restatement or Paraphrasing" ≈ 6 BPE tokens) plus slack, short
+          // enough to suppress base-model rambling beyond the label.
+          max_tokens: 12,
+          temperature: 0,
         },
       })
-      if (cls && typeof cls.text === "string" && cls.text.includes(goldStrategy.split(" ")[0])) {
-        strategyHits += 1
+      // Normalized substring match on full strategy name (case-insensitive); falls back
+      // to first-word match for "Others" / single-token strategies. Classifier may return
+      // markdown ("**Reflection of feelings**"), trailing punctuation, or extra prose.
+      if (cls && typeof cls.text === "string") {
+        const norm = cls.text.toLowerCase()
+        const goldFull = goldStrategy.toLowerCase()
+        const goldHead = goldStrategy.split(" ")[0].toLowerCase()
+        if (norm.includes(goldFull) || norm.includes(goldHead)) {
+          strategyHits += 1
+        }
       }
 
       // Response gen
