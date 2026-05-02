@@ -967,3 +967,226 @@ test("Phase43 D3 smart fallback: no statedPreferences + CV all-present → infer
   assert.equal(out.length, 1)
   assert.equal(out[0]?.id, "i")
 })
+
+// ---------------------------------------------------------------------------
+// TD-#10 — Defensive guard against polluted industryEnum
+// ---------------------------------------------------------------------------
+
+import {
+  applyEnrichmentNeverList,
+  NON_TECH_NEVER_KEYS,
+  TECH_LEANING_USER_TAGS,
+} from "../../tools/query-matching-jobs.js"
+
+test("applyEnrichmentNeverList: tech user + management/marketing/consulting jobs → all rejected", () => {
+  const jobs = [
+    { id: "g", industryKey: "management", jobTitle: "Groundskeeper" },
+    { id: "m", industryKey: "marketing", jobTitle: "Marketing Liaison" },
+    { id: "c", industryKey: "consulting", jobTitle: "Tax Consultant II" },
+    { id: "ok", industryKey: "tech", jobTitle: "SWE" },
+  ]
+  const r = applyEnrichmentNeverList(jobs, ["tech_software", "ai_ml", "fintech_finance"])
+  assert.equal(r.kept.length, 1)
+  assert.equal(r.kept[0]?.id, "ok")
+  assert.equal(r.rejected, 3)
+  assert.equal(r.rejectedKeys.management, 1)
+  assert.equal(r.rejectedKeys.marketing, 1)
+  assert.equal(r.rejectedKeys.consulting, 1)
+})
+
+test("applyEnrichmentNeverList: non-tech user + management job → KEPT (NEVER list disabled)", () => {
+  const jobs = [
+    { id: "g", industryKey: "management", jobTitle: "Property Manager" },
+    { id: "ok", industryKey: "healthtech", jobTitle: "Care Coordinator" },
+  ]
+  const r = applyEnrichmentNeverList(jobs, ["healthcare_biotech"])
+  assert.equal(r.kept.length, 2, "healthcare user may legitimately want management roles")
+  assert.equal(r.rejected, 0)
+})
+
+test("applyEnrichmentNeverList: tech user + tech jobs → all kept", () => {
+  const jobs = [
+    { id: "a", industryKey: "tech", jobTitle: "SWE" },
+    { id: "b", industryKey: "ai_ml", jobTitle: "ML Eng" },
+    { id: "c", industryKey: "fintech", jobTitle: "Quant Dev" },
+    { id: "d", industryKey: "engineering", jobTitle: "Software Engineer" },
+  ]
+  const r = applyEnrichmentNeverList(jobs, ["tech_software"])
+  assert.equal(r.kept.length, 4)
+  assert.equal(r.rejected, 0)
+})
+
+test("applyEnrichmentNeverList: empty userTags → bypass (return everything)", () => {
+  const jobs = [
+    { id: "g", industryKey: "management", jobTitle: "Groundskeeper" },
+    { id: "ok", industryKey: "tech", jobTitle: "SWE" },
+  ]
+  const r = applyEnrichmentNeverList(jobs, [])
+  assert.equal(r.kept.length, 2)
+  assert.equal(r.rejected, 0)
+})
+
+test("applyEnrichmentNeverList: tech_hardware user also triggers NEVER list", () => {
+  const jobs = [
+    { id: "g", industryKey: "management", jobTitle: "Facilities Manager" },
+    { id: "ok", industryKey: "hardware", jobTitle: "EE Intern" },
+  ]
+  const r = applyEnrichmentNeverList(jobs, ["tech_hardware"])
+  assert.equal(r.kept.length, 1)
+  assert.equal(r.kept[0]?.id, "ok")
+})
+
+test("applyEnrichmentNeverList: empty job list → empty result", () => {
+  const r = applyEnrichmentNeverList([], ["tech_software"])
+  assert.deepEqual(r.kept, [])
+  assert.equal(r.rejected, 0)
+})
+
+test("applyEnrichmentNeverList: jobs with no industryKey are kept (defensive)", () => {
+  // A doc that's missing industryKey shouldn't be rejected — we only reject
+  // on POSITIVE evidence the bucket is non-tech.
+  const jobs = [
+    { id: "noKey", jobTitle: "SWE" },
+    { id: "g", industryKey: "management", jobTitle: "Groundskeeper" },
+  ]
+  const r = applyEnrichmentNeverList(jobs, ["tech_software"])
+  assert.equal(r.kept.length, 1)
+  assert.equal(r.kept[0]?.id, "noKey")
+  assert.equal(r.rejected, 1)
+})
+
+test("NON_TECH_NEVER_KEYS contains the 17%-mislabel buckets observed 2026-05-02", () => {
+  // Lock the keys so future edits surface intent.
+  for (const k of [
+    "management",
+    "customer_service",
+    "sales",
+    "legal",
+    "government",
+    "consulting",
+    "marketing",
+    "business",
+    "reinsurance",
+    "operations",
+  ]) {
+    assert.ok(NON_TECH_NEVER_KEYS.has(k), `${k} should be in NON_TECH_NEVER_KEYS`)
+  }
+  // And does NOT contain ambiguous buckets we explicitly want to keep.
+  for (const k of ["education", "media", "healthcare", "tech", "fintech", "ai_ml"]) {
+    assert.ok(!NON_TECH_NEVER_KEYS.has(k), `${k} should NOT be in NON_TECH_NEVER_KEYS`)
+  }
+})
+
+test("TECH_LEANING_USER_TAGS covers the 4 tech-leaning canonical tags", () => {
+  for (const t of ["tech_software", "ai_ml", "fintech_finance", "tech_hardware"]) {
+    assert.ok(TECH_LEANING_USER_TAGS.has(t), `${t} should be tech-leaning`)
+  }
+  assert.ok(!TECH_LEANING_USER_TAGS.has("healthcare_biotech"))
+  assert.ok(!TECH_LEANING_USER_TAGS.has("consumer_retail"))
+})
+
+test("queryMatchingJobs: TD-#10 — tech user + polluted industryEnum → Groundskeeper rejected", async () => {
+  _clearFeatureFlagCache()
+  const mfs = new MockFirestore()
+  await mfs.collection("pa-feature-flags").doc("matchingIndustryEnumPopulated").set({
+    key: "matchingIndustryEnumPopulated",
+    value: true,
+    type: "bool",
+    scope: "global",
+  })
+  // Mislabeled doc: enrichment errored — Groundskeeper tagged industryEnum=fintech_finance.
+  await mfs.collection("matching-jobs").doc("groundskeeper").set({
+    status: "active",
+    companyName: "Nicsa Property Co",
+    roleTitle: "Groundskeeper - Sabine Street Lofts",
+    locationRaw: "Houston, TX",
+    primaryUrl: "https://gk",
+    industry: "management",
+    industryKey: "management",
+    industryEnum: ["fintech_finance"], // ← polluted
+    sponsorship: false,
+    firstSeenAt: "2026-04-30",
+  })
+  // Properly labeled tech doc.
+  await mfs.collection("matching-jobs").doc("swe").set({
+    status: "active",
+    companyName: "Stripe",
+    roleTitle: "Software Engineer",
+    locationRaw: "Remote",
+    primaryUrl: "https://swe",
+    industry: "fintech",
+    industryKey: "fintech",
+    industryEnum: ["fintech_finance"],
+    sponsorship: false,
+    requiredSkills: ["python"],
+    firstSeenAt: "2026-04-29",
+  })
+  const out = await queryMatchingJobs(
+    {
+      filters: {
+        industryTags: ["tech_software", "ai_ml", "fintech_finance"],
+        sponsorship: "h1b",
+        userSkills: ["python"],
+      },
+      limit: 10,
+    },
+    { db: asFirestore(mfs) }
+  )
+  const ids = new Set(out.jobs.map((j) => j.id))
+  assert.ok(!ids.has("groundskeeper"), "TD-#10: Groundskeeper must be rejected by NEVER list")
+  assert.ok(ids.has("swe"), "Properly labeled SWE row must survive")
+  _clearFeatureFlagCache()
+})
+
+test("queryMatchingJobs: TD-#10 — non-tech user + management job → KEPT (no over-filtering)", async () => {
+  // Healthcare user with H8 flag ON — even though the doc lands in industryKey=
+  // management, the NEVER list is gated on TECH_LEANING_USER_TAGS, so it must
+  // be bypassed for healthcare users (they may legitimately want a Practice
+  // Manager role).
+  _clearFeatureFlagCache()
+  const mfs = new MockFirestore()
+  await mfs.collection("pa-feature-flags").doc("matchingIndustryEnumPopulated").set({
+    key: "matchingIndustryEnumPopulated",
+    value: true,
+    type: "bool",
+    scope: "global",
+  })
+  await mfs.collection("matching-jobs").doc("pmgr").set({
+    status: "active",
+    companyName: "Local Clinic",
+    roleTitle: "Practice Manager",
+    locationRaw: "Boston, MA",
+    primaryUrl: "https://pm",
+    industry: "management",
+    industryKey: "management",
+    industryEnum: ["healthcare_biotech"],
+    sponsorship: false,
+    firstSeenAt: "2026-04-30",
+  })
+  await mfs.collection("matching-jobs").doc("nurse").set({
+    status: "active",
+    companyName: "BetterHelp",
+    roleTitle: "Care Coordinator",
+    locationRaw: "Boston, MA",
+    primaryUrl: "https://nu",
+    industry: "healthtech",
+    industryKey: "healthtech",
+    industryEnum: ["healthcare_biotech"],
+    sponsorship: false,
+    firstSeenAt: "2026-04-29",
+  })
+  const out = await queryMatchingJobs(
+    {
+      filters: {
+        industryTags: ["healthcare_biotech"],
+        sponsorship: "h1b",
+      },
+      limit: 10,
+    },
+    { db: asFirestore(mfs) }
+  )
+  const ids = new Set(out.jobs.map((j) => j.id))
+  assert.ok(ids.has("pmgr"), "non-tech user: management role must survive (NEVER list bypassed)")
+  assert.ok(ids.has("nurse"), "non-tech user: tech-bucket healthtech also survives")
+  _clearFeatureFlagCache()
+})

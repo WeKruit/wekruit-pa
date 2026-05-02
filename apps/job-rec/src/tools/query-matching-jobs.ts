@@ -295,6 +295,122 @@ export function applyTitleAntiBias<T extends { jobTitle?: string }>(
   return typeof limit === "number" ? out.slice(0, limit) : out
 }
 
+// ---------------------------------------------------------------------------
+// TD-#10 (v1.5 / 2026-05-02) — Defensive guard against polluted industryEnum.
+//
+// Background. The H8 enrichment writes `industryEnum: [tag]` per matching-job
+// doc using an LLM classifier. Audit on 2026-05-02 (500-doc sample with
+// industryEnum array-contains-any [tech_software, ai_ml, fintech_finance])
+// found 17% (85/500) docs with mislabeled industryEnum — e.g. a Groundskeeper
+// posting whose industryKey="management" was tagged industryEnum=
+// ["fintech_finance"]. Since Adam's CV (SQL/Python/ML, h1b) carries
+// industryTags=["tech_software","ai_ml","fintech_finance"], the legacy
+// queryMatchingJobs path returned Groundskeeper / Community Manager /
+// Marketing Liaison in the top-20.
+//
+// Root cause is upstream (Mac mini enrichment LLM-classifier quality). This
+// file's responsibility is the Cloud-side defensive guard: when the user is
+// tech-leaning, reject docs whose `industryKey` (the older, more-stable
+// enrichment field) is in a known-non-tech bucket — even if their
+// `industryEnum` claims tech.
+//
+// Two-signal design:
+//   - industryKey is the H6-era field; ~stable across the corpus, derived
+//     from the source URL/board taxonomy. Sample audit confirmed
+//     industryKey="management" rows are real management/operations jobs.
+//   - industryEnum is the H8 LLM-derived tag-array; ~17% mislabel rate.
+//   - When the two disagree AND industryKey ∈ NEVER_KEYS AND user is tech,
+//     trust industryKey and reject. Belt-and-suspenders.
+//
+// NOT a whitelist: a "Software Engineer @ Goldman" with industryKey="banking"
+// is valid for fintech_finance users, so we use a tight blacklist of
+// observed-mislabeled buckets only.
+//
+// Logging: when ≥1 doc is rejected per query, emit one summary log line so
+// the v1.6 enrichment-fix backlog has data on mislabel volume over time.
+// ---------------------------------------------------------------------------
+
+/**
+ * industryKey buckets that are NEVER tech/finance/AI roles. When the user's
+ * industryTags contain a tech-leaning tag, any doc whose industryKey lands
+ * here is rejected regardless of what industryEnum claims.
+ *
+ * Derived from a 500-doc sample (2026-05-02) of industryEnum-matched jobs;
+ * every key here was observed mislabeled in that sample. Conservative — we
+ * intentionally OMIT ambiguous buckets like "media" (could be a tech-media
+ * SWE role) and "education" (edtech overlap). When in doubt, keep it out of
+ * the never-list.
+ */
+export const NON_TECH_NEVER_KEYS: ReadonlySet<string> = new Set([
+  "management", // Groundskeeper, Community Manager, Property Manager
+  "customer_service", // Call-center, support reps
+  "sales", // Outbound, account exec, retail sales
+  "legal", // Paralegal, attorney
+  "government", // Civil-service postings
+  "consulting", // Pure mgmt-consulting (Big-4 GTS, etc.) — tech consulting goes under "tech"
+  "marketing", // Marketing Liaison, brand marketing
+  "business", // Business Coordinator, ops-business hybrid
+  "reinsurance", // Industry-specific underwriting
+  "operations", // Facilities/ops/logistics
+])
+
+/**
+ * User industryTags considered "tech-leaning". When the user has ANY of
+ * these in their industryTags, the never-list applies. Superset of the
+ * existing TECH_USER_TAGS_FOR_ANTIBIAS — we also include tech_hardware
+ * because a hardware-EE candidate is unlikely to want a Groundskeeper job.
+ */
+export const TECH_LEANING_USER_TAGS: ReadonlySet<string> = new Set([
+  "tech_software",
+  "ai_ml",
+  "fintech_finance",
+  "tech_hardware",
+])
+
+/**
+ * Apply the TD-#10 defensive never-list. Pure / deterministic.
+ *
+ * Inputs:
+ *   - jobs: post-Firestore candidate pool, projected MatchingJob shape.
+ *   - userTags: user's industryTags (from normalizeJobProfile).
+ *
+ * Behavior:
+ *   - When userTags is empty OR contains no tech-leaning tag → return jobs
+ *     unchanged (non-tech users may legitimately want management/sales/etc).
+ *   - Otherwise, drop any job whose industryKey ∈ NON_TECH_NEVER_KEYS.
+ *
+ * Returns the kept-jobs array (does NOT mutate input).
+ *
+ * Exposed for unit tests in
+ * apps/job-rec/src/__tests__/tools/query-matching-jobs.test.ts.
+ */
+export function applyEnrichmentNeverList<T extends { industryKey?: string }>(
+  jobs: readonly T[],
+  userTags: readonly string[] | undefined
+): { kept: T[]; rejected: number; rejectedKeys: Record<string, number> } {
+  if (!Array.isArray(jobs) || jobs.length === 0) {
+    return { kept: [], rejected: 0, rejectedKeys: {} }
+  }
+  const tags = Array.isArray(userTags) ? userTags : []
+  const isTechLeaning = tags.some((t) => TECH_LEANING_USER_TAGS.has(t))
+  if (!isTechLeaning) {
+    return { kept: [...jobs], rejected: 0, rejectedKeys: {} }
+  }
+  const kept: T[] = []
+  const rejectedKeys: Record<string, number> = {}
+  let rejected = 0
+  for (const j of jobs) {
+    const ik = typeof j.industryKey === "string" ? j.industryKey : ""
+    if (ik && NON_TECH_NEVER_KEYS.has(ik)) {
+      rejected += 1
+      rejectedKeys[ik] = (rejectedKeys[ik] ?? 0) + 1
+      continue
+    }
+    kept.push(j)
+  }
+  return { kept, rejected, rejectedKeys }
+}
+
 // Type-only import guard — JobIndustry is referenced in the table type only
 // for runtime documentation; the table key is a string union of
 // JobIndustryTag values. JobIndustry import retained for forward-compat.
@@ -1001,10 +1117,26 @@ export async function queryMatchingJobs(
 
   // Optional sponsorship hard filter — only apply if the user explicitly
   // does NOT want sponsorship; otherwise we keep the score-based soft pref.
-  const filtered =
+  const sponsorshipFiltered =
     parsed.filters.sponsorship === "none"
       ? projected.filter((j) => j.sponsorship !== true)
       : projected
+
+  // TD-#10 — defensive guard against polluted industryEnum (see comment block
+  // above NON_TECH_NEVER_KEYS). When the user is tech-leaning, reject docs
+  // whose industryKey lands in a known-non-tech bucket regardless of what
+  // their industryEnum claims. Pure in-memory; ~50 docs ≪ 1ms.
+  const userTagsForGuard = parsed.filters.industryTags ?? []
+  const guardResult = applyEnrichmentNeverList(sponsorshipFiltered, userTagsForGuard)
+  if (guardResult.rejected > 0) {
+    log("[queryMatchingJobs] enrichment_never_list_rejected", {
+      rejected: guardResult.rejected,
+      kept: guardResult.kept.length,
+      rejectedKeys: guardResult.rejectedKeys,
+      userTags: userTagsForGuard,
+    })
+  }
+  const filtered = guardResult.kept
 
   const ranked = rankJobs(filtered, parsed.filters, parsed.limit)
   return { jobs: ranked }
