@@ -189,6 +189,51 @@
           "order": "DESCENDING"
         }
       ]
+    },
+    {
+      "_comment": "v1.5 Stream-D buffer-sweep: where(status==pending).where(firstReceivedAt<cutoff)",
+      "collectionGroup": "pa-message-coalesce-buffer",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "firstReceivedAt",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "_comment": "v1.5 Stream-H paReverseMatch: where(status==active).where(profile.industry==X)",
+      "collectionGroup": "pa-job-profiles",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "profile.industry",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "_comment": "v1.5 Stream-G.2 tag-cluster-rec fetchTopK: where(status==active).orderBy(firstSeenAt desc) — pa-outbound (userId, createdAt desc) for Stream-H notify lookups already exists at line 17-30",
+      "collectionGroup": "matching-jobs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "firstSeenAt",
+          "order": "DESCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": []
