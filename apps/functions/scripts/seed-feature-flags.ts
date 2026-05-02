@@ -140,6 +140,20 @@ const SEED_FLAGS: FlagSpec[] = [
     allowlist: [],
     blocklist: [],
   },
+  // Phase 51 (v1.5 §3.1) — Crisis-ideation deterministic hotline injection.
+  // P0 SAFETY FEATURE: default ON for ALL users (scope: global). Bible v7.5
+  // directive remains primary; this is the deterministic fail-safe layer
+  // that guarantees a hotline trailer reaches users tripping crisis keywords
+  // even if the model ignores the system-prompt directive.
+  // Emergency disable: env `PA_CRISIS_HOTLINE_DISABLED=true` (cold-start).
+  {
+    key: "paCrisisHotlineInjectionEnabled",
+    value: true,
+    type: "bool",
+    scope: "global",
+    allowlist: [],
+    blocklist: [],
+  },
 ]
 
 interface PlannedWrite {

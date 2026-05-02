@@ -337,6 +337,16 @@ const SEED_FLAGS: FlagSpec[] = [
   // `industryEnum: [tag]` to ≥60% of the matching-jobs collection. Global
   // scope — applies to ALL queries, ALL users.
   { key: "matchingIndustryEnumPopulated", value: false, type: "bool", scope: "global", allowlist: [], blocklist: [] },
+  // Phase 51 (v1.5 §3.1) — Crisis-ideation deterministic hotline injection.
+  // P0 SAFETY FEATURE: default ON for ALL users (scope: global). The
+  // orchestrator post-rewrite hook injects a hotline trailer when the user
+  // input matches the bilingual crisis regex bank AND the model reply lacks
+  // a canonical hotline string. Bible v7.5 directive remains the primary
+  // path; this is the deterministic fail-safe.
+  // Emergency disable: env `PA_CRISIS_HOTLINE_DISABLED=true` (cold-start
+  // required). This flag should NEVER be flipped to false at the doc level
+  // without an Adam-signed audit trail per V1.5-ROLLOUT Step 4.
+  { key: "paCrisisHotlineInjectionEnabled", value: true, type: "bool", scope: "global", allowlist: [], blocklist: [] },
 ]
 
 export function checkAdminToken(provided: string | undefined): { ok: boolean; status: number; error?: string } {

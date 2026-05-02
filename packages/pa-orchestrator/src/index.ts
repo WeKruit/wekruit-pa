@@ -70,6 +70,10 @@ import {
   SAFETY_CANNED_REPLIES,
   type SafetyAction,
   type Severity as SafetySeverity,
+  // Phase 51 (v1.5 §3.1) — deterministic crisis-ideation hotline guard.
+  // Post-gen append-only safety net for crisis_ideation intent. Bible v7.5
+  // directive remains the primary path; this is the fail-safe.
+  guardCrisisHotline,
 } from "@pa/pa-safety"
 import {
   resolveOnboardingStep,
@@ -1313,6 +1317,109 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
         reason: rewritten.reason,
         beforeLen: reply.length,
         afterLen: replyAfterRewrite.length,
+      })
+    }
+    // -------------------------------------------------------------------
+    // Phase 51 (v1.5 §3.1) — Crisis-ideation deterministic hotline guard.
+    // -------------------------------------------------------------------
+    // Bible v7.5 system-prompt directive is the PRIMARY path for crisis
+    // empathy + hotline injection. This block is the SECOND, deterministic
+    // layer: if the loader degrades or the model ignores the directive,
+    // we still guarantee a hotline trailer reaches users who tripped a
+    // crisis keyword on input.
+    //
+    // Behaviors:
+    //   - Detection runs on `event.body` (pre-LLM input); language picked
+    //     by detectCrisisInInput's lightweight CJK ratio.
+    //   - If reply already contains a canonical hotline string, NO-OP
+    //     (we don't double-append when Bible directive worked).
+    //   - If reply lacks a hotline, append the friend-tone trailer.
+    //   - PII-safe telemetry: only `inputHash` (sha256[:16]) + length.
+    //
+    // Flag: `paCrisisHotlineInjectionEnabled` (default ON, scope global).
+    // Emergency disable: env `PA_CRISIS_HOTLINE_DISABLED=true` (cold-start).
+    // Default-true rationale: this is a P0 safety feature; fail-OPEN
+    // (i.e. when flag read fails, still inject) is the correct posture.
+    try {
+      const envDisabled = process.env.PA_CRISIS_HOTLINE_DISABLED === "true"
+      let crisisFlagOn = !envDisabled
+      if (!envDisabled && store.db) {
+        try {
+          const v = await getFlag(
+            store.db,
+            "paCrisisHotlineInjectionEnabled",
+            { userId: event.userId, env: process.env },
+            true // default true — P0 safety
+          )
+          crisisFlagOn = v === true
+        } catch (flagErr) {
+          // Fail-OPEN: if flag read errors, keep the safety net active.
+          // Logging only — do NOT short-circuit the orchestrator.
+          store.log("pa.safety.crisis_flag_read_error", {
+            userId: event.userId,
+            turnId,
+            error: flagErr instanceof Error ? flagErr.message : String(flagErr),
+          })
+        }
+      }
+      if (crisisFlagOn) {
+        const guardResult = guardCrisisHotline({
+          userInput: event.body,
+          reply: replyAfterRewrite,
+        })
+        if (guardResult.detection.detected) {
+          store.log("pa.safety.crisis_detected", {
+            userId: event.userId,
+            turnId,
+            detectedFrom: guardResult.injected
+              ? "input_and_output_missing_hotline"
+              : "input_only",
+            language: guardResult.detection.language,
+            confidence: guardResult.detection.confidence,
+            inputHash: guardResult.inputHash,
+            inputLength: guardResult.inputLength,
+            signalCount: guardResult.detection.signals.length,
+            injected: guardResult.injected,
+            reason: guardResult.reason,
+          })
+          if (guardResult.injected && store.db) {
+            try {
+              await appendAuditEvent(store.db, {
+                actor: "orchestrator",
+                kind: "safety_block",
+                userId: event.userId,
+                message:
+                  "Crisis-ideation deterministic hotline trailer appended",
+                meta: {
+                  crisis: true,
+                  turnId,
+                  language: guardResult.detection.language,
+                  confidence: guardResult.detection.confidence,
+                  inputHash: guardResult.inputHash,
+                },
+              })
+            } catch (auditErr) {
+              store.log("pa.safety.crisis_audit_error", {
+                userId: event.userId,
+                turnId,
+                error:
+                  auditErr instanceof Error
+                    ? auditErr.message
+                    : String(auditErr),
+              })
+            }
+          }
+        }
+        replyAfterRewrite = guardResult.reply
+      }
+    } catch (err) {
+      // Defense-in-depth: NEVER let the crisis guard itself break the turn.
+      // Log + fall through with the un-modified reply.
+      const msg = err instanceof Error ? err.message : String(err)
+      store.log("pa.safety.crisis_guard_error", {
+        userId: event.userId,
+        turnId,
+        error: msg,
       })
     }
     const rawVisible =

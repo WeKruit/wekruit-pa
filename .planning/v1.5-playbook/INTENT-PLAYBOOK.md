@@ -37,7 +37,7 @@ Five categories. **Trigger surface** column says where in the inbound chain this
 | 2 | `illegal_content` | Boundary | `runSafetyCheck` Layer 2 (drugs/weapons/CSAM/violence/solicitation regex) | **Yes — deterministic regex** (canary-flag-gated) |
 | 3 | `rate_abuse_24h` | Boundary | `runSafetyCheck` Layer 3 (Firestore counter) | **Yes — deterministic counter** (canary-flag-gated) |
 | 4 | `rate_limit_1m` | Boundary | `enforceRateLimit` (Phase 23) | **Yes — deterministic** |
-| 5 | `crisis_ideation` | Boundary | **NO orchestrator code path.** Bible v7.5 prompt instructions only. FSM `QuietWitness` UX-state classifier biases ESConv strategy but does not inject hotline. | **No — LLM-only** ⚠ |
+| 5 | `crisis_ideation` | Boundary | **Phase 51 (v1.5 §3.1 fix):** `guardCrisisHotline` (post-rewrite, gated by `paCrisisHotlineInjectionEnabled` default ON) deterministically appends a bilingual hotline trailer when input matches the crisis regex bank AND reply lacks a canonical hotline string. Bible v7.5 directive remains primary. FSM `QuietWitness` still biases ESConv strategy. | **Yes — code (post-gen guard) + LLM (Bible)** |
 | 6 | `reset_command` (test-mode) | Admin | `store.maybeHandleResetCommand` (testMode users only) | **Yes — deterministic** |
 | 7 | `memory_list` | Admin | `parseMemoryCommand` → `kind=list` ("我的记忆") | **Yes — regex grammar** |
 | 8 | `memory_forget` | Admin | `parseMemoryCommand` → `kind=forget` ("忘记 X") | **Yes — regex grammar** |
@@ -128,18 +128,19 @@ Format per intent: trigger signals → routing path → response strategy → to
 | Memory read | Skipped. |
 | Cost ledger | None. |
 
-#### 2.1.5 `crisis_ideation` ⚠
+#### 2.1.5 `crisis_ideation` (Phase 51 — code+LLM dual layer)
 | Field | Value |
 |---|---|
-| Trigger signals | **No code-level trigger.** FSM UX-state classifier (`packages/pa-orchestrator/src/voice/fsm/ux-state-classifier.ts:146-171`) bumps `QuietWitness` score on tokens like `想死/不想活/撑不住/want to die/can't go on/no point/hopeless` etc. — but the score only **biases the ESConv strategy set**. It does NOT inject hotlines. |
-| Routing code path | (1) FSM `runFsm` (gated `paHumanizeRuntimeEnabled` AND `PA_FSM_ENABLED!=false`). When `QuietWitness` wins, allowed strategies = `Reflection / Affirmation / SelfDisclosure`. (2) Crisis hotline injection happens in **bible/handbook prompt** (`apps/functions/scripts/migrate-bible-v7.5-to-handbook.ts:226-234`) loaded as system prompt at LLM time. |
-| Response strategy | LLM-driven; **no deterministic guarantee hotline appears**. Crisis red-team scenarios (`tests/scenarios/scenarios/eval-crisis-redteam-{en,zh}.yaml`) assert `contains_hotline: true` but the test runner judges output, not a routing rule. |
-| Tone | depends on bible compliance |
-| Length cap | none enforced for crisis path |
-| Bilingual policy | bible covers both langs; LLM compliance not enforced |
-| Memory write | normal `afterAssistantTurn` runs — **crisis text potentially flows into Mem0**, no scrub layer. |
+| Trigger signals | **TWO LAYERS.** (1) Deterministic regex bank in `packages/pa-safety/src/crisis-detector.ts` — bilingual two-tier confidence. HIGH: 自杀/自残/想死/一了百了/上吊/割腕 + `kill myself`/`kms`/`suicide`/`self-harm`/`overdose`/`end my life`. LOW: 不想活/活不下去/我撑不住了 + `can't go on`/`want to die`/`end it all`/`don't want to live`, suppressed when followed by a rhetorical anchor (`这种 deadline`, `this deadline`, etc.). (2) FSM UX-state classifier (`packages/pa-orchestrator/src/voice/fsm/ux-state-classifier.ts:146-171`) still bumps `QuietWitness` score and biases ESConv strategy set. |
+| Routing code path | (1) **Phase 51 deterministic guard** — `guardCrisisHotline()` invoked at `packages/pa-orchestrator/src/index.ts` post-rewrite (after `rewriteIfOff` + `stripABProbeFromTail` + `injectImperfection`, before `normalizeForIMessage`). Gated by `paCrisisHotlineInjectionEnabled` (default ON, scope global). Emergency disable: env `PA_CRISIS_HOTLINE_DISABLED=true`. Fail-OPEN posture: flag-read errors keep the safety net active. (2) FSM `runFsm` (gated `paHumanizeRuntimeEnabled` AND `PA_FSM_ENABLED!=false`). When `QuietWitness` wins, allowed strategies = `Reflection / Affirmation / SelfDisclosure`. (3) Bible v7.5 hotline directive (`apps/functions/scripts/migrate-bible-v7.5-to-handbook.ts:226-234`) remains the PRIMARY hotline injection path at LLM time. |
+| Response strategy | LLM body (Bible-driven empathetic acknowledgement) + deterministic hotline trailer when reply lacks canonical hotline. The guard NEVER replaces the body — it only APPENDS a friend-tone trailer with double-newline separator. |
+| Tone | LLM body follows Bible v7.5 NEVER PEP-TALK rules; trailer is friend-tone, lowercase, brief. |
+| Length cap | none enforced for the LLM body; trailer adds ~80 chars (well within `normalizeForIMessage` 600-char chunk boundary). |
+| Bilingual policy | trailer language picked by `detectLanguage` (cjk-ratio ≥0.5 → zh, ≤0.1 → en, else mixed bilingual). Mixed trailer contains BOTH ZH (400-161-9995) and EN (741741, 988) hotlines. |
+| Memory write | normal `afterAssistantTurn` runs — **crisis text potentially flows into Mem0**, no scrub layer. (Pre-existing gap — out of Phase 51 scope; tracked as a follow-up.) |
 | Memory read | normal |
-| Cost ledger | full LLM turn cost |
+| Cost ledger | full LLM turn cost; deterministic guard adds zero LLM tokens (pure regex + string ops). |
+| Telemetry | `pa.safety.crisis_detected` (every detection) + `pa.safety.crisis_guard_error` (defensive); audit row `kind=safety_block` with `meta.crisis=true` on injection. PII-safe: only `inputHash` (sha256[:16]) + `inputLength`, NEVER raw text. |
 
 #### 2.1.6 `reset_command` (test-mode)
 | Field | Value |
@@ -294,10 +295,18 @@ No deterministic intent classification distinguishes "casual" from "venting" fro
 
 The honest list of where routing is fragile or LLM-only.
 
-### Gap 3.1 — `crisis_ideation` has NO deterministic hotline-injection layer ⚠ (HIGH-RISK)
-**Evidence:** `grep -rn '741741\|988\|hotline'` against `packages/pa-orchestrator/src` and `packages/pa-safety/src` returns ZERO matches in production code. Only the migration script (`apps/functions/scripts/migrate-bible-v7.5-to-handbook.ts`) and FSM tests reference it.
-**Risk:** if Bible loader fails OR LLM ignores the bible (low instruction-following on Qwen-7B — already documented as a known issue, see lang-lock v4 hotfix), crisis users get pep-talk instead of a hotline. The `eval-crisis-redteam-{en,zh}.yaml` red-team scenarios test for `contains_hotline: true` but those are **judge-based assertions on output**, not routing guarantees.
-**Owner question for Adam:** do we deterministically inject hotline canned text on `QuietWitness` UX-state classification + crisis lexicon hit, or do we trust the LLM? Today: we trust the LLM.
+### Gap 3.1 — `crisis_ideation` has NO deterministic hotline-injection layer ⚠ (HIGH-RISK) — **FIXED in Phase 51**
+**Resolution (Phase 51, P0 ship):** `packages/pa-safety/src/crisis-detector.ts` adds a deterministic two-tier bilingual regex bank + post-gen `guardCrisisHotline` orchestrator hook. Behavior:
+- **Detection:** HIGH-confidence keywords (suicide/self-harm/method) ALWAYS fire; LOW-confidence keywords (想死/活不下去/can't go on) fire UNLESS a rhetorical anchor (`这种 deadline`, `this project`) follows in the same clause. Bias: FN cost > FP cost.
+- **Injection:** if input trips the bank AND reply lacks a canonical hotline string (988 / 741741 / 400-161-9995 / 心理援助热线 / 12320 / Crisis Text Line), append a friend-tone bilingual fallback trailer. NEVER replaces the body.
+- **Flag:** `paCrisisHotlineInjectionEnabled` (default ON, scope global). Emergency disable: env `PA_CRISIS_HOTLINE_DISABLED=true`. Flag-read errors fail OPEN (safety net stays active).
+- **Telemetry:** `pa.safety.crisis_detected` + audit `kind=safety_block` `meta.crisis=true`. PII-safe (sha256[:16] hash only).
+- **Tests:** 21 new unit tests in `packages/pa-safety/src/crisis-detector.test.ts` (8 true-positive bilingual, 4 false-positive rhetorical, 9 integration/aux). Existing `eval-crisis-redteam-{en,zh}.yaml` red-team scenarios continue to pass at 20/20 (mock runner unchanged).
+- **Bible v7.5 directive remains the PRIMARY path.** This is the deterministic SECOND layer.
+
+**Original evidence (preserved for historical context):** `grep -rn '741741\|988\|hotline'` against `packages/pa-orchestrator/src` and `packages/pa-safety/src` returned ZERO matches in production code prior to Phase 51. Only the migration script and FSM tests referenced it.
+**Original risk:** if Bible loader fails OR LLM ignores the bible (low instruction-following on Qwen-7B), crisis users got pep-talk instead of a hotline.
+**Owner answer:** Adam confirmed deterministic injection is required (P0). Implemented as Phase 51.
 
 ### Gap 3.2 — `rate_limit_1m` reply is English-only (regression of bilingual contract)
 **Evidence:** `packages/pa-orchestrator/src/index.ts:658-660` — the legacy reason-based safety branch hard-codes `"You're sending a bit too fast..."`. ZH users see English. Phase 46 added `pickLangForSafety` but it's only used in the `action=respond_sanitized/escalate/silent_drop` branches, NOT the legacy `reason==='rate_limited'` branch.
@@ -402,7 +411,7 @@ flowchart TD
 - `S_RL` — rate_limited legacy reply (en-only, Gap §3.2)
 - `CANCEL_OUT` — proactive cancel reply (zh-only, Gap §3.3)
 
-Crisis_ideation has **no node** in this tree — its only signal is FSM UX-state inside `RUN_LLM/POSTGEN/rewriteIfOff`, and bible content inside `RUN_LLM`. That absence is itself the §3.1 finding.
+Crisis_ideation gained a deterministic node in **Phase 51**: `POSTGEN/guardCrisisHotline` runs after `rewriteIfOff` + `stripABProbeFromTail` + `injectImperfection`, before `normalizeForIMessage`. The original §3.1 finding is now resolved (see §3.1 above). FSM UX-state still biases ESConv strategy inside `RUN_LLM`.
 
 ---
 
