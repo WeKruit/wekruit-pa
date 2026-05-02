@@ -34,7 +34,7 @@ async function main() {
         key,
         {
           value: true,
-          type: "boolean",
+          type: "bool",
           scope: "perUser",
           allowlist: [ADAM_UID],
         },
