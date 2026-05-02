@@ -676,6 +676,13 @@ export type CrossEncoderReranker = (
 export type TagClusterFetcher = (
   userTags: {
     industryTags: readonly string[]
+    /**
+     * Phase 51 alignment fix — JobProfile.sponsorship enum value
+     * ("h1b" | "gc" | "none" | "either"). Drives which sponsorship
+     * cluster buckets the user fans out into. Optional/null → fan out
+     * across all 3 buckets (sponsor/no-sponsor/unknown).
+     */
+    sponsorship?: string | null
     skills: readonly string[]
     userEmbedding?: readonly number[] | null
   },
@@ -990,6 +997,10 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
           const clusterJobs = await deps.tagClusterFetcher(
             {
               industryTags: normalized.industryTags,
+              // Phase 51 alignment fix — sponsorship is the cluster key,
+              // not skills. Skills still feed the in-cluster jaccard
+              // fallback when user embedding is missing.
+              sponsorship: normalized.sponsorship,
               skills: userSkills,
               userEmbedding,
             },

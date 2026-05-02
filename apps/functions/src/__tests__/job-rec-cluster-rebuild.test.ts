@@ -180,10 +180,13 @@ test("paJobRecClusterRebuild handler: filters eventKind, gates on flag, rebuilds
   // ---------- branch 3: matching kind + flag ON → rebuild fires ----------
   const fdb3 = new FakeDb()
   // Seed an active matching-job so rebuild has something to bucket.
+  // Phase 51 alignment fix — cluster key is now (industry, sponsorshipBucket).
+  // Seeding sponsorship=true so this job lands in the "sponsor" bucket.
   await fdb3.collection("matching-jobs").doc("j1").set({
     status: "active",
     industryKey: "tech_software",
     requiredSkills: ["python", "ts"],
+    sponsorship: true,
     firstSeenAt: "2026-05-01",
   })
   const out3 = await handleClusterRebuildEvent(
@@ -201,9 +204,12 @@ test("paJobRecClusterRebuild handler: filters eventKind, gates on flag, rebuilds
     assert.equal(out3.runId, "r3")
     assert.equal(out3.outcome.clusters, 1, "exactly 1 cluster bucketed")
     assert.equal(out3.outcome.jobsBucketed, 1)
-    // Cluster doc was written.
-    const clusterWrites = fdb3.writes.filter((w) => w.path === "pa-rec-tag-clusters")
+    // Cluster doc was written to the v2 collection (Phase 51 alignment fix).
+    const clusterWrites = fdb3.writes.filter((w) => w.path === "pa-rec-tag-clusters-v2")
     assert.equal(clusterWrites.length, 1)
     assert.equal(clusterWrites[0]!.data.lastRebuildRunId, "r3")
+    // Sanity: cluster doc carries the sponsorship bucket the job mapped to.
+    assert.equal(clusterWrites[0]!.data.sponsorshipBucket, "sponsor")
+    assert.equal(clusterWrites[0]!.data.industryEnum, "tech_software")
   }
 })

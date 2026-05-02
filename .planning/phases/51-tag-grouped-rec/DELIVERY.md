@@ -140,3 +140,116 @@ $ pnpm -C apps/functions test
 - Add Cloud Scheduler 06:30 PT cluster-rebuild fallback (insurance against pipeline misses).
 - Wire LLM cluster-summary (separate flag, separate phase).
 - Formalize `PaEventDoc` type in `@pa/core-types` (deferred from G.1 tech debt).
+
+---
+
+## Post-ship cluster-key alignment fix (2026-05-02)
+
+**Status**: Shipped. Production cluster path now hits real jobs.
+
+### What was wrong (root cause)
+
+The G.2 ship (commit `2d08bce`) used `(industryEnum, top-3 sorted requiredSkills)` for the cluster id on **both** sides:
+- Job side (`rebuildClusters` in `tag-cluster-rec.ts`) bucketed each `matching-jobs` row by sorted top-3 of its `requiredSkills`.
+- User side (`clusterKeysForUser`) bucketed each user by sorted top-3 of their CV `skills`.
+
+The two top-3 sets almost never intersected (skills have a long-tail distribution; user CV skills and job-required skills come from different vocabularies even within the same industry). Result: **cluster ids never aligned → cluster docs were never read → all three of Adam's cluster keys returned `exists=false`** (Agent 2 audit, commit `4ef44ed`). The cluster path silently fell through to the legacy `queryMatchingJobs` for every user. The "28% read reduction + compute reuse + LLM-summary cache" wins were 0 because the cache was never queried.
+
+Cardinality also exploded: 6549 cluster docs in production vs RESEARCH §6 stated design of 30 (218× overshoot, 69% singletons).
+
+### What was fixed
+
+Switched the cluster-key algorithm to match RESEARCH §6 stated design:
+
+```
+clusterId = sha256(industryEnum + "|" + sponsorshipBucket).slice(0, 12)
+sponsorshipBucket ∈ {"sponsor", "no-sponsor", "unknown"}
+```
+
+- **Job side** (`rebuildClusters`): bucket derived from `raw.sponsorship: boolean | null` via `jobSponsorshipBucket` helper (`true → sponsor`, `false → no-sponsor`, `null/missing → unknown`).
+- **User side** (`clusterKeysForUser`): bucket derived from `JobProfile.sponsorship` enum via `userSponsorshipBuckets` helper:
+  - `"h1b" / "gc"` → `["sponsor", "unknown"]` (2 buckets per industry)
+  - `"none"` → `["no-sponsor", "unknown"]` (2 buckets per industry)
+  - `"either" / undefined / null` → `["sponsor", "no-sponsor", "unknown"]` (3 buckets per industry)
+- Each user fans out across (≤3 industryTags × 2-3 buckets) = 2-9 cluster reads/user.
+- `requiredSkills` / user `skills` no longer participate in the cluster key. They still feed the in-cluster scoring fallback (jaccard when no embedding).
+
+### Migration path
+
+**New collection `pa-rec-tag-clusters-v2`** (was `pa-rec-tag-clusters`). Constant flip in `TAG_CLUSTERS_COLLECTION`. Zero in-place mutation; old 6549 docs are orphaned and no longer read. Cleanup deferred (~33MB total, well under the 1GB free tier — filed as tech-debt below).
+
+### Cardinality + verify (production)
+
+Manual rebuild ran via `apps/functions/scripts/trigger-cluster-rebuild.mjs` (admin SDK; bypasses CF + flag):
+
+```
+Target collection: pa-rec-tag-clusters-v2
+clusters written:        30        ← exactly RESEARCH §6 stated design
+jobs bucketed (total):   1451       ← (30 × top-50 cap) - thin clusters
+jobs scanned:            40308
+pages read:              81
+by bucket: sponsor=10 no-sponsor=10 unknown=10  ← perfectly balanced
+```
+
+Cluster ON vs OFF dryrun (`scripts/dryrun-adam-cluster-compare.mjs`) for Adam (`e5d97cd8-…`):
+
+```
+[STAGE 1] all 6 user cluster keys exist=true, jobIds.len=50 each
+[STAGE 2] Cluster ON pool: 20 jobs in 22120ms
+[STAGE 3] Cluster OFF pool: 20 jobs in 724ms (legacy)
+
+VERDICT: Cluster path supplies the pool (was: empty fallback, every day)
+Top-10 cluster ON jobs: Junior Data Scientist / AI ML Engineering /
+                       Data Analyst (CV-aligned: SQL+Python+ML+R)
+Top-10 cluster OFF jobs: Groundskeeper / Community Manager / Marketing
+                        Liaison (legacy quality issue — separate phase)
+```
+
+Cluster wall-time (22s) > legacy (700ms) is expected given current sequential `db.doc.get()` (≤450 reads when fanout is full). Filed as tech-debt #2 below; daily-batch is async per-user so this latency is not user-visible.
+
+### Files touched
+
+- `apps/job-rec/src/tag-cluster-rec.ts` — algorithm + `TAG_CLUSTERS_COLLECTION` v2 constant + `SponsorshipBucket` type + `jobSponsorshipBucket` + `userSponsorshipBuckets` helpers + `UserTags.sponsorship`
+- `apps/job-rec/src/daily-batch.ts` — `TagClusterFetcher` type adds `sponsorship?` field + cluster path call site passes `normalized.sponsorship`
+- `apps/job-rec/src/__tests__/tag-cluster-rec.test.ts` — 7 tests rewritten + 4 new (8/9/10/11) → 11 cluster tests total
+- `apps/functions/src/__tests__/job-rec-cluster-rebuild.test.ts` — assert `pa-rec-tag-clusters-v2` collection + `sponsorshipBucket` field on cluster doc
+- `apps/functions/scripts/dryrun-adam-cluster-compare.mjs` — pass `sponsorship` not `topSkills`
+- `apps/functions/scripts/trigger-cluster-rebuild.mjs` (NEW) — one-shot admin-SDK rebuild that bypasses CF + flag, prints inventory by bucket
+
+### Test status
+
+```
+$ pnpm -C apps/job-rec test     →  172 / 172 pass (was 168, +4 new tests, -3 removed/folded)
+$ pnpm -C apps/functions test   →  352 / 352 pass
+```
+
+### Adam — commands to trigger first cluster fill
+
+After deploying this change to prod (or running locally with admin SDK), run:
+
+```bash
+# 1. (Optional, only first time after deploy) Pre-fill the v2 cluster docs.
+#    No flag needed — script bypasses paTagClusterRecEnabled.
+node apps/functions/scripts/trigger-cluster-rebuild.mjs
+
+# 2. Verify Adam's cluster path hits jobs (>0 expected).
+node apps/functions/scripts/dryrun-adam-cluster-compare.mjs
+```
+
+Subsequent rebuilds happen automatically via `paJobRecClusterRebuild` CF on every `pa-events / matching:pipeline:completed` doc — but only when the `paTagClusterRecEnabled` flag is on. **Adam's user already has the flag enabled (allowlist confirmed in dryrun output).** Flag still default-OFF for everyone else.
+
+### Deviation from RESEARCH §6 — explicit list
+
+| Item | RESEARCH §6 said | Shipped (alignment fix) | Why |
+|---|---|---|---|
+| Cluster key | `(industryTag, sponsorship)` (open) and `(industryTag, top-3 skills)` (D1) — RESEARCH was internally contradictory | `(industryEnum, sponsorshipBucket ∈ {sponsor, no-sponsor, unknown})` | RESEARCH §6 opening text wins; D1 implementation was the bug source |
+| Reads/user/day estimate | "1 cluster doc + ~30 batched job gets = ~31" | Up to 9 cluster reads + ~150 (3 industries × 3 buckets × 50 cap) sequential job gets | Fanout grew with sponsorship dimension; still well under daily-batch latency budget |
+| Cluster count | 30 (10 industries × 3 sponsorship) | 30 exactly (perfectly balanced 10/10/10) | Matched the design |
+| New collection | (not specified) | `pa-rec-tag-clusters-v2` (was `pa-rec-tag-clusters`) | Migration safety; zero in-place risk |
+
+### Tech debt surfaced (filed; out of scope for this fix)
+
+6. **Cleanup orphaned `pa-rec-tag-clusters` collection** (Phase 51 v1 docs). 6549 docs × ~5KB = ~33MB, well under free-tier 1GB. Single-shot cleanup script suffices.
+7. **`getAll` batching for `fetchTopKFromCluster`**: current sequential `db.doc.get()` is ≤450 reads when fanout is full (3 industries × 3 buckets × top-50). 22s wall-time observed in dryrun. Daily-batch is async per-user so not user-visible, but `getAll` would cut it ≥4×.
+8. **`startAfter` pagination unused in tests**: mock-firestore.ts doesn't implement `startAfter`; production paginator works fine but tests stay under 500 docs (REBUILD_PAGE_SIZE) so the path never fires. If corpus exceeds 500 active jobs in tests, mock will throw `not a function`. Cosmetic — fix when next test needs >500 rows.
+9. **Cluster-rebuild flag-gating ambiguity**: the production CF `paJobRecClusterRebuild` is gated on the same `paTagClusterRecEnabled` flag that controls the consumer. Means turning the flag off stops both the cache writer AND the reader, leaving stale docs. Acceptable given small cluster doc count + idempotency, but worth a `paTagClusterRebuildEnabled` separate flag if we add ramp gates per-side.

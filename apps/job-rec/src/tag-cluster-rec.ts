@@ -8,15 +8,44 @@
  *   trigger (apps/functions/src/job-rec-cluster-rebuild.ts) invokes
  *   rebuildClusters() defined here.
  *
+ *   ┌─────────────────────────────────────────────────────────────────┐
+ *   │  Phase 51 post-ship alignment fix (2026-05-02)                  │
+ *   │                                                                  │
+ *   │  Original G.2 ship used (industryEnum, top-3 sorted skills) for │
+ *   │  cluster key. Job side and user side computed top-3 skills      │
+ *   │  independently → cluster ids never aligned → cluster path was   │
+ *   │  dormant in production (Agent 2 commit 4ef44ed: Adam's three    │
+ *   │  cluster keys all returned exists=false).                        │
+ *   │                                                                  │
+ *   │  Cardinality also blew up: 6549 clusters in prod vs RESEARCH §6 │
+ *   │  expected ~30 (218× overshoot, 69% singleton).                  │
+ *   │                                                                  │
+ *   │  Fix: switch to RESEARCH §6 stated design — (industryEnum,      │
+ *   │  sponsorshipBucket) where bucket ∈ {sponsor, no-sponsor,        │
+ *   │  unknown}. Cardinality bounded at 10 industries × 3 buckets =   │
+ *   │  30 clusters (some empty → ~25 effective). Both job side and    │
+ *   │  user side derive bucket from a low-cardinality field that       │
+ *   │  exists on both schemas (job.sponsorship: boolean|null and      │
+ *   │  user.profile.sponsorship: "h1b"|"gc"|"none"|"either"), so       │
+ *   │  alignment is mechanical instead of relying on top-K skill set  │
+ *   │  intersection.                                                   │
+ *   │                                                                  │
+ *   │  Migration: writes go to a fresh collection                     │
+ *   │  pa-rec-tag-clusters-v2 (was pa-rec-tag-clusters). Old docs are │
+ *   │  no longer read; safe to leave orphaned (≈33MB, well under free │
+ *   │  tier 1GB). A cleanup script is filed as tech-debt for a future │
+ *   │  phase.                                                          │
+ *   └─────────────────────────────────────────────────────────────────┘
+ *
  *   rebuildClusters: paginate active matching-jobs; bucket by clusterId =
- *   sha256(industryEnum + top-3 skills) → write top-K (default 50, by
- *   firstSeenAt desc) into pa-rec-tag-clusters/{clusterId}.
+ *   sha256(industryEnum + sponsorshipBucket) → write top-K (default 50, by
+ *   firstSeenAt desc) into pa-rec-tag-clusters-v2/{clusterId}.
  *
  *   daily-batch.ts (flag-gated by paTagClusterRecEnabled): fetchTopKFromCluster
- *   reads cluster docs for the user's tag set, batched-getAll's the underlying
- *   matching-jobs rows, returns the existing MatchingJob shape so the rest of
- *   the rerank cascade (hard filter → cosine → cross-encoder → boost → dedupe
- *   → anti-bias → formatter) runs UNCHANGED.
+ *   reads cluster docs for the user's (industryTag × sponsorshipPref) cross,
+ *   batched-getAll's the underlying matching-jobs rows, returns the existing
+ *   MatchingJob shape so the rest of the rerank cascade (hard filter → cosine →
+ *   cross-encoder → boost → dedupe → anti-bias → formatter) runs UNCHANGED.
  *
  * Honest savings story (read RESEARCH.md §0):
  *   - ~28% Firestore read reduction at 1k users (50k → 36k/day)
@@ -45,8 +74,14 @@ import { MatchingJobSchema, type MatchingJob } from "./types.js"
 /** Phase 51 — feature flag key. Default OFF; ramp 1% → 100%. */
 export const PA_TAG_CLUSTER_REC_FLAG_KEY = "paTagClusterRecEnabled"
 
-/** Firestore collection for cluster docs (one per industry × skills bucket). */
-export const TAG_CLUSTERS_COLLECTION = "pa-rec-tag-clusters"
+/**
+ * Firestore collection for cluster docs. Phase 51 alignment fix (2026-05-02)
+ * bumped this from `pa-rec-tag-clusters` → `pa-rec-tag-clusters-v2` to start
+ * fresh after the (industryEnum, top-3 skills) → (industryEnum,
+ * sponsorshipBucket) key-algorithm change. The old collection's 6549 docs
+ * are no longer read; safe to leave orphaned (cleanup is filed as tech-debt).
+ */
+export const TAG_CLUSTERS_COLLECTION = "pa-rec-tag-clusters-v2"
 
 /** Firestore collection the cluster rebuild reads from. */
 const MATCHING_JOBS_COLLECTION = "matching-jobs"
@@ -60,6 +95,14 @@ const REBUILD_PAGE_SIZE = 500
 /** Defensive cap on the rebuild scan to keep CF Gen2 under 60s. */
 const REBUILD_MAX_PAGES = 200
 
+/**
+ * The 3 sponsorship buckets every cluster falls into. Both job-side
+ * (rebuildClusters) and user-side (clusterKeysForUser) derive their bucket
+ * from this finite set so cluster ids align mechanically.
+ */
+export const SPONSORSHIP_BUCKETS = ["sponsor", "no-sponsor", "unknown"] as const
+export type SponsorshipBucket = (typeof SPONSORSHIP_BUCKETS)[number]
+
 // ---------------------------------------------------------------------------
 // Cluster doc schema (zod) — read-side validation when daily-batch consumes.
 // ---------------------------------------------------------------------------
@@ -69,8 +112,11 @@ export const TagClusterDocSchema = z.object({
   clusterId: z.string(),
   /** Canonical industry enum that anchored the cluster (zh+en collapsed). */
   industryEnum: z.string(),
-  /** Top-3 sorted skills tags that anchored the cluster. */
-  topSkills: z.array(z.string()),
+  /**
+   * Sponsorship bucket the cluster represents. One of "sponsor",
+   * "no-sponsor", "unknown" — matches the SponsorshipBucket type.
+   */
+  sponsorshipBucket: z.enum(SPONSORSHIP_BUCKETS),
   /** Top-K jobIds, sorted by firstSeenAt desc (highest priority first). */
   jobIds: z.array(z.string()),
   /** Number of buckets matched (informational, not load-bearing). */
@@ -89,13 +135,12 @@ export type TagClusterDoc = z.infer<typeof TagClusterDocSchema>
 // ---------------------------------------------------------------------------
 
 /**
- * Compute a stable cluster id from (industryEnum, top-3 sorted skills tags).
+ * Compute a stable cluster id from (industryEnum, sponsorshipBucket).
  *
  * Properties:
  *   - Deterministic: same input → same id (across processes, across days).
  *   - Bilingual-safe: relies on industryEnum which is already canonicalized
  *     by the F2 enrichment pipeline (zh + en collapse to same enum value).
- *   - Skills sorted before hashing so input order doesn't matter.
  *   - Lowercase + trim normalization to absorb trivial casing/whitespace.
  *   - 12-char hex prefix → 48-bit collision space, plenty for ~30 clusters.
  *
@@ -103,39 +148,80 @@ export type TagClusterDoc = z.infer<typeof TagClusterDocSchema>
  */
 export function computeClusterId(
   industryEnum: string,
-  topSkills: readonly string[]
+  sponsorshipBucket: SponsorshipBucket
 ): string {
   const normIndustry = String(industryEnum ?? "").toLowerCase().trim()
   if (!normIndustry) return ""
-  const skills = (Array.isArray(topSkills) ? topSkills : [])
-    .map((s) => String(s ?? "").toLowerCase().trim())
-    .filter((s) => s.length > 0)
-    .slice(0, 3)
-  skills.sort() // canonical order
-  const payload = `${normIndustry}|${skills.join(",")}`
+  // Defensive: callers should always pass a SponsorshipBucket literal, but
+  // narrow at runtime to avoid hashing garbage if caller drifts.
+  const bucket: SponsorshipBucket =
+    sponsorshipBucket === "sponsor" ||
+    sponsorshipBucket === "no-sponsor" ||
+    sponsorshipBucket === "unknown"
+      ? sponsorshipBucket
+      : "unknown"
+  const payload = `${normIndustry}|${bucket}`
   return createHash("sha256").update(payload).digest("hex").slice(0, 12)
 }
 
 /**
+ * Map a job's raw `sponsorship: boolean | null | undefined` field to a
+ * SponsorshipBucket. Pure / no I/O.
+ */
+export function jobSponsorshipBucket(
+  jobSponsorship: unknown
+): SponsorshipBucket {
+  if (jobSponsorship === true) return "sponsor"
+  if (jobSponsorship === false) return "no-sponsor"
+  return "unknown"
+}
+
+/**
+ * Map a user's `JobProfile.sponsorship` enum (or absent value) to the
+ * cluster buckets that user should fan out into.
+ *
+ *   "h1b" / "gc" → user wants sponsorship → ["sponsor", "unknown"]
+ *   "none"       → user does not want    → ["no-sponsor", "unknown"]
+ *   "either" / undefined / null → no preference → all 3 buckets
+ *
+ * Always includes "unknown" because corpus jobs frequently lack a
+ * sponsorship signal and we'd rather over-fetch than miss the user's pool.
+ *
+ * Pure / no I/O.
+ */
+export function userSponsorshipBuckets(
+  pref: string | null | undefined
+): SponsorshipBucket[] {
+  if (pref === "h1b" || pref === "gc") return ["sponsor", "unknown"]
+  if (pref === "none") return ["no-sponsor", "unknown"]
+  // "either" / undefined / null / unknown values → fan out across all buckets
+  return ["sponsor", "no-sponsor", "unknown"]
+}
+
+/**
  * Compute the (up to N) cluster ids a user belongs to, based on their
- * industry tag set + skills. We bucket each industry tag separately and
- * cap at top-3 industry tags so the daily-batch fetcher does at most 3
- * cluster doc reads per user.
+ * industry tag set + sponsorship preference. Each industry tag fans out
+ * across the user's sponsorship buckets (2 or 3 per industry). We cap at
+ * top-3 industry tags so worst case is 3 industries × 3 buckets = 9 reads.
  *
  * Pure / no I/O.
  */
 export function clusterKeysForUser(args: {
   industryTags: readonly string[]
-  topSkills: readonly string[]
+  /** User's `JobProfile.sponsorship` enum value (or null/undefined). */
+  sponsorship?: string | null
 }): string[] {
   const tags = (Array.isArray(args.industryTags) ? args.industryTags : [])
     .filter((t) => typeof t === "string" && t.trim().length > 0)
     .slice(0, 3)
   if (tags.length === 0) return []
+  const buckets = userSponsorshipBuckets(args.sponsorship ?? null)
   const ids = new Set<string>()
   for (const tag of tags) {
-    const id = computeClusterId(tag, args.topSkills)
-    if (id) ids.add(id)
+    for (const bucket of buckets) {
+      const id = computeClusterId(tag, bucket)
+      if (id) ids.add(id)
+    }
   }
   return [...ids]
 }
@@ -164,13 +250,12 @@ export type RebuildClustersOutcome = {
 }
 
 /**
- * Scan active matching-jobs, bucket by (industryEnum × top-3 skills tags),
- * write top-K per cluster to pa-rec-tag-clusters.
+ * Scan active matching-jobs, bucket by (industryEnum × sponsorshipBucket),
+ * write top-K per cluster to pa-rec-tag-clusters-v2.
  *
  * Bilingual handling: relies on `industryEnum` (canonicalized) when present;
- * falls back to `industryKey` (legacy schema). Skills come from
- * `requiredSkills`; sorted lexicographically before hashing so the cluster
- * id is order-independent.
+ * falls back to `industryKey` (legacy schema). Sponsorship bucket is derived
+ * from `raw.sponsorship: boolean | null` via `jobSponsorshipBucket`.
  *
  * Idempotency: when `runId` is supplied, each cluster doc skips the write
  * if its `lastRebuildRunId` matches. Counted in `skippedDueToIdempotency`.
@@ -186,10 +271,10 @@ export async function rebuildClusters(
   const topK = deps.topKPerCluster ?? DEFAULT_TOP_K_PER_CLUSTER
   const runId = deps.runId ?? null
 
-  // Bucket: clusterId → { industryEnum, topSkills, jobs[] }
+  // Bucket: clusterId → { industryEnum, sponsorshipBucket, jobs[] }
   type Bucket = {
     industryEnum: string
-    topSkills: string[]
+    sponsorshipBucket: SponsorshipBucket
     // Pre-sorted by firstSeenAt desc as we accumulate; capped at topK.
     jobs: Array<{ id: string; firstSeenAt: string }>
   }
@@ -235,26 +320,23 @@ export async function rebuildClusters(
         }
         if (!industryEnum) continue // can't cluster a row without an industry signal
 
-        const skillsRaw = Array.isArray(raw.requiredSkills) ? raw.requiredSkills : []
-        const topSkills = (skillsRaw as unknown[])
-          .filter((s) => typeof s === "string" && (s as string).trim().length > 0)
-          .map((s) => (s as string).toLowerCase().trim())
-          .slice() // copy
-        topSkills.sort()
-        const top3 = topSkills.slice(0, 3)
-
-        const id = computeClusterId(industryEnum, top3)
+        const bucket = jobSponsorshipBucket(raw.sponsorship)
+        const id = computeClusterId(industryEnum, bucket)
         if (!id) continue
 
         const fs = typeof raw.firstSeenAt === "string" ? raw.firstSeenAt : ""
-        const bucket =
+        const b =
           buckets.get(id) ??
           ((): Bucket => {
-            const b: Bucket = { industryEnum, topSkills: top3, jobs: [] }
-            buckets.set(id, b)
-            return b
+            const fresh: Bucket = {
+              industryEnum: industryEnum.toLowerCase().trim(),
+              sponsorshipBucket: bucket,
+              jobs: [],
+            }
+            buckets.set(id, fresh)
+            return fresh
           })()
-        bucket.jobs.push({ id: doc.id, firstSeenAt: fs })
+        b.jobs.push({ id: doc.id, firstSeenAt: fs })
         jobsScanned += 1
         lastFirstSeenAt = fs || lastFirstSeenAt
       } catch (err) {
@@ -300,7 +382,7 @@ export async function rebuildClusters(
     const docPayload: TagClusterDoc = {
       clusterId,
       industryEnum: bucket.industryEnum,
-      topSkills: bucket.topSkills,
+      sponsorshipBucket: bucket.sponsorshipBucket,
       jobIds: bucket.jobs.map((j) => j.id),
       jobCount: bucket.jobs.length,
       refreshedAt: nowIso,
@@ -348,8 +430,18 @@ export type FetchTopKFromClusterDeps = {
 export type UserTags = {
   /** Canonical 10-tag list from normalized profile.industryTags. */
   industryTags: readonly string[]
-  /** First-3 candidate skills. */
-  skills: readonly string[]
+  /**
+   * User's sponsorship preference enum from JobProfile.sponsorship —
+   * "h1b" | "gc" | "none" | "either". Drives which sponsorship buckets
+   * the user fans out into. Optional/null → fan out across all 3 buckets.
+   */
+  sponsorship?: string | null
+  /**
+   * User's CV skills — kept for IN-CLUSTER scoring (jaccard fallback when
+   * embeddings unavailable). NO LONGER part of the cluster key (Phase 51
+   * alignment fix). Optional.
+   */
+  skills?: readonly string[]
   /** Optional 1536-d user embedding for cosine rerank inside cluster. */
   userEmbedding?: readonly number[] | null
 }
@@ -358,7 +450,8 @@ export type UserTags = {
  * Fetch top-K MatchingJobs from the cluster cache for a user.
  *
  * Algorithm:
- *   1. computeClusterIds = clusterKeysForUser(industryTags, skills) — up to 3
+ *   1. computeClusterIds = clusterKeysForUser({industryTags, sponsorship})
+ *      — up to 9 (3 industries × 3 buckets); typically 2-6 in practice.
  *   2. For each clusterId: db.collection.doc(clusterId).get() → jobIds[]
  *   3. Union jobIds (dedupe), batch fetch via getAll (or sequential if no
  *      getAll on the Firestore impl)
@@ -371,8 +464,7 @@ export type UserTags = {
  * zero-regression contract when cluster cache is cold.
  *
  * Includes embedding field on returned jobs (mirrors queryMatchingJobs's
- * `includeEmbedding: true` mode) so downstream cosine rerank still has
- * fuel.
+ * `includeEmbedding: true` mode) so downstream cosine rerank still has fuel.
  */
 export async function fetchTopKFromCluster(
   deps: FetchTopKFromClusterDeps,
@@ -382,14 +474,14 @@ export async function fetchTopKFromCluster(
   const log = deps.log ?? (() => {})
   const clusterIds = clusterKeysForUser({
     industryTags: userTags.industryTags,
-    topSkills: userTags.skills,
+    sponsorship: userTags.sponsorship ?? null,
   })
   if (clusterIds.length === 0) {
     log("[tag-cluster-rec] no_cluster_keys_for_user")
     return []
   }
 
-  // 1. Fetch each cluster doc (≤3) and union the jobIds.
+  // 1. Fetch each cluster doc (≤9) and union the jobIds.
   const allIds = new Set<string>()
   for (const cid of clusterIds) {
     try {
@@ -412,8 +504,8 @@ export async function fetchTopKFromCluster(
   }
   if (allIds.size === 0) return []
 
-  // 2. Fetch matching-job docs by id. Sequential get is acceptable at ≤150
-  //    rows (3 clusters × top-50). Future enhancement: getAll batching.
+  // 2. Fetch matching-job docs by id. Sequential get is acceptable at ≤450
+  //    rows (9 clusters × top-50). Future enhancement: getAll batching.
   const projected: Array<MatchingJob & { embedding?: number[] | null }> = []
   for (const id of allIds) {
     try {

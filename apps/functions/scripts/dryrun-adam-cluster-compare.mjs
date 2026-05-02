@@ -85,7 +85,7 @@ if (flagDoc.exists) {
   console.log("  blocklist:", JSON.stringify(fd.blocklist || []));
 }
 
-const clusterIds = clusterKeysForUser({ industryTags: normalized.industryTags, topSkills: userSkills });
+const clusterIds = clusterKeysForUser({ industryTags: normalized.industryTags, sponsorship: normalized.sponsorship });
 console.log("  user cluster keys:", clusterIds);
 for (const cid of clusterIds) {
   const snap = await db.collection(TAG_CLUSTERS_COLLECTION).doc(cid).get();
@@ -99,7 +99,12 @@ console.log("\n[STAGE 2] cluster ON — fetchTopKFromCluster");
 const t0 = Date.now();
 const clusterJobs = await fetchTopKFromCluster(
   { db, log },
-  { industryTags: normalized.industryTags, skills: userSkills, userEmbedding: userEmb ?? null },
+  {
+    industryTags: normalized.industryTags,
+    sponsorship: normalized.sponsorship,
+    skills: userSkills,
+    userEmbedding: userEmb ?? null,
+  },
   POOL
 );
 const dCluster = Date.now() - t0;
