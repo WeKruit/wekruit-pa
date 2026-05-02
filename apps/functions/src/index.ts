@@ -13,6 +13,7 @@
  */
 import { onDocumentCreated } from "firebase-functions/v2/firestore"
 import { onRequest } from "firebase-functions/v2/https"
+import { onSchedule } from "firebase-functions/v2/scheduler"
 import { defineSecret } from "firebase-functions/params"
 import { setGlobalOptions, logger } from "firebase-functions/v2"
 import { initializeApp, getApps } from "firebase-admin/app"
@@ -739,6 +740,59 @@ export const paSendblueOutbox = onDocumentCreated(
         getUser,
       }
     )
+  }
+)
+
+// =============================================================================
+// Stream H9 TD2 — paSendblueOutboxRetrySweep (5-min scheduled fallback)
+// =============================================================================
+//
+// onDocumentCreated only fires once per row. If that single dispatch fails
+// (cold start, OOM, transient infra hiccup), the row sits at status=pending
+// indefinitely and the existing top-of-tick `sweepStaleOutbound` only fires
+// when SOMETHING ELSE creates a row. This scheduled CF closes the gap by
+// scanning every 5 min for orphans (status=pending, age >60s) and re-invoking
+// the same `paSendblueOutboxHandler`. Idempotent via the handler's claim
+// transaction.
+
+export const paSendblueOutboxRetrySweep = onSchedule(
+  {
+    schedule: "every 5 minutes",
+    region: "us-central1",
+    secrets: [SENDBLUE_API_KEY_ID, SENDBLUE_API_SECRET_KEY, SENDBLUE_FROM_NUMBER],
+    memory: "512MiB",
+    timeoutSeconds: 120,
+  },
+  async () => {
+    process.env.SENDBLUE_API_KEY_ID = SENDBLUE_API_KEY_ID.value()
+    process.env.SENDBLUE_API_SECRET_KEY = SENDBLUE_API_SECRET_KEY.value()
+    try {
+      const fromNumber = SENDBLUE_FROM_NUMBER.value().trim()
+      if (fromNumber) process.env.SENDBLUE_FROM_NUMBER = fromNumber
+    } catch {
+      // optional secret on paid lines
+    }
+
+    const { sendImessage } = await import("./sendblue/sendblue-client.js")
+    const { sendTypingIndicator } = await import("./sendblue/typing-indicator.js")
+    const { appendMessage, getOrCreateSession, getUser } = await import("@pa/pa-persistence")
+    const { paSendblueOutboxRetrySweepHandler } = await import("./sendblue/outbox-retry-sweep.js")
+
+    try {
+      const result = await paSendblueOutboxRetrySweepHandler({
+        db: getFirestore(),
+        sendblueClient: { sendImessage, sendTypingIndicator },
+        log: (...args: unknown[]) => logger.info("[sendblue][retry-sweep]", ...args),
+        appendMessage,
+        getOrCreateSession,
+        getUser,
+      })
+      logger.info("paSendblueOutboxRetrySweep done", result)
+    } catch (err) {
+      logger.error("paSendblueOutboxRetrySweep fatal", {
+        err: err instanceof Error ? err.message : String(err),
+      })
+    }
   }
 )
 

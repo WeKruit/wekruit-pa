@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import type { Firestore } from "firebase-admin/firestore"
+import { Timestamp, type Firestore } from "firebase-admin/firestore"
 import {
   TRIGGERS_COLLECTION,
   TRIGGER_FIRES_COLLECTION,
@@ -346,6 +346,29 @@ test("recordFire: writes both fire row + audit row", async () => {
   assert.equal(store.fires.size, 1)
   const audits = Array.from(store.audit.values()).map((r) => r.data.action)
   assert.ok(audits.includes("trigger.fire"))
+})
+
+// Stream H9 TD1 — pa-trigger-fires TTL anchor must be a Timestamp.
+test("recordFire: writes Timestamp-typed expiresAtTs (Stream H9 TD1)", async () => {
+  const { db, store } = makeFakeFirestore()
+  await recordFire(db, {
+    triggerId: "tt1",
+    userId: "uu1",
+    firedAt: new Date().toISOString(),
+    httpStatus: 200,
+    errorMsg: null,
+  })
+  assert.equal(store.fires.size, 1)
+  const fireRow = Array.from(store.fires.values())[0]!
+  const ts = fireRow.data.expiresAtTs
+  assert.ok(
+    ts instanceof Timestamp,
+    "expiresAtTs MUST be a Timestamp instance — Firestore TTL only fires on Timestamp"
+  )
+  // 30-day window per H9 brief
+  const expected = Date.now() + 30 * 24 * 60 * 60 * 1000
+  const ms = (ts as Timestamp).toMillis()
+  assert.ok(Math.abs(ms - expected) < 5000, `expiresAtTs ${ms}ms diverges from expected ${expected}ms`)
 })
 
 test("listFiresForTrigger: filters by triggerId", async () => {

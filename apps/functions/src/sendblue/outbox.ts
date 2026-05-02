@@ -28,6 +28,7 @@ import { sendTypingIndicator as defaultSendTypingIndicator, computeTypingDwellMs
 import type { SendblueSendResponse } from "./types.js"
 import { getFlag, getDailyOutboundCount, incrementDailyOutbound } from "@pa/pa-persistence"
 import { recordAuditEvent } from "./audit.js"
+import { outboundExpiresAtTs } from "./ttl.js"
 
 const OUT = PA_COLLECTIONS.outbound
 
@@ -181,6 +182,7 @@ export async function sweepStaleOutbound(
           status: "pending",
           updatedAt: nowIso,
           staleSweptAt: nowIso,
+          expiresAtTs: outboundExpiresAtTs(now()),
         })
         return true
       })
@@ -216,6 +218,7 @@ export async function sweepStaleOutbound(
           status: "dead_letter",
           updatedAt: nowIso,
           deadLetteredAt: nowIso,
+          expiresAtTs: outboundExpiresAtTs(now()),
         })
         return true
       })
@@ -281,7 +284,7 @@ export async function paSendblueOutboxHandler(
     if (!s.exists) return false
     const d = (s.data() ?? {}) as { status?: string }
     if (d.status !== "pending") return false
-    t.update(ref as never, { status: "sending", updatedAt: now().toISOString() })
+    t.update(ref as never, { status: "sending", updatedAt: now().toISOString(), expiresAtTs: outboundExpiresAtTs(now()) })
     return true
   })
   if (!claimed) return
@@ -301,6 +304,7 @@ export async function paSendblueOutboxHandler(
           status: "failed",
           error: "blocked by IMESSAGE_DM_ALLOWLIST",
           updatedAt: now().toISOString(),
+          expiresAtTs: outboundExpiresAtTs(now()),
         },
         { merge: true }
       )
@@ -323,6 +327,7 @@ export async function paSendblueOutboxHandler(
         status: "failed",
         error: "missing userId, toE164, or body",
         updatedAt: now().toISOString(),
+        expiresAtTs: outboundExpiresAtTs(now()),
       },
       { merge: true }
     )
@@ -347,6 +352,7 @@ export async function paSendblueOutboxHandler(
           status: "failed",
           error: "user not found",
           updatedAt: now().toISOString(),
+          expiresAtTs: outboundExpiresAtTs(now()),
         },
         { merge: true }
       )
@@ -420,7 +426,7 @@ export async function paSendblueOutboxHandler(
   const currentCount = await getDailyOutboundCount(deps.db, now())
   if (currentCount >= quotaLimit) {
     try { await recordAuditEvent(deps.db, { type: "quota_hardblock", channel: "imessage_sendblue", toNumber: toPeer, reason: `count=${currentCount} limit=${quotaLimit}` }) } catch {}
-    await ref.set({ status: "failed", error: `sendblue daily quota reached (${currentCount}/${quotaLimit})`, updatedAt: now().toISOString() }, { merge: true })
+    await ref.set({ status: "failed", error: `sendblue daily quota reached (${currentCount}/${quotaLimit})`, updatedAt: now().toISOString(), expiresAtTs: outboundExpiresAtTs(now()) }, { merge: true })
     logOutboundFailure(log, {
       docId,
       userId,
@@ -448,6 +454,7 @@ export async function paSendblueOutboxHandler(
         status: "sent",
         sentAt: now().toISOString(),
         updatedAt: now().toISOString(),
+        expiresAtTs: outboundExpiresAtTs(now()),
         ...(messageHandle ? { messageHandle, sendblueUuid: response.uuid ?? messageHandle } : {}),
         sendblueStatus: response.status,
       },
@@ -469,6 +476,7 @@ export async function paSendblueOutboxHandler(
           status: "failed",
           error: `sendblue ${err.status}: ${err.message}`,
           updatedAt: now().toISOString(),
+          expiresAtTs: outboundExpiresAtTs(now()),
         },
         { merge: true }
       )
@@ -494,6 +502,7 @@ export async function paSendblueOutboxHandler(
           attemptCount: prevAttempts + 1,
           ...(err.retryAfter ? { retryAfter: err.retryAfter } : {}),
           updatedAt: now().toISOString(),
+          expiresAtTs: outboundExpiresAtTs(now()),
         },
         { merge: true }
       )
@@ -506,6 +515,7 @@ export async function paSendblueOutboxHandler(
         status: "failed",
         error: unexpectedMsg,
         updatedAt: now().toISOString(),
+        expiresAtTs: outboundExpiresAtTs(now()),
       },
       { merge: true }
     )

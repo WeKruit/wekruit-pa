@@ -42,6 +42,7 @@ import { useDmAllowlist, getPeerAllowlist, isSamePeer } from "./allowlist.js"
 import { recordAuditEvent, type AuditEventInput } from "./audit.js"
 import { parseInboundTapback } from "./tapback-parser.js"
 import type { SendblueInboundPayload } from "./types.js"
+import { inboundEventExpiresAtTs, outboundExpiresAtTs } from "./ttl.js"
 
 export type WebhookRequest = {
   rawBody?: Buffer | string
@@ -245,7 +246,57 @@ export async function handleSendblueWebhook(
   const payload = parsed as Record<string, unknown>
 
   // ---- 3a. Outbound mirror events (is_outbound=true) --------------------
+  // Stream H9 TD3 — Sendblue delivers SENT → DELIVERED → (FAILED) status
+  // updates as inbound `is_outbound:true` webhooks. Look up the matching
+  // pa-outbound row by messageHandle and persist the latest sendblueStatus,
+  // plus a per-state timestamp (sendblueDeliveredAt / sendblueFailedAt). The
+  // update is idempotent — re-delivery overwrites with merge:true and the
+  // SENT → DELIVERED state machine is monotonic on these fields.
   if (payload.is_outbound === true) {
+    const handle =
+      typeof payload.message_handle === "string"
+        ? payload.message_handle
+        : typeof payload.uuid === "string"
+          ? (payload.uuid as string)
+          : undefined
+    const sbStatus =
+      typeof payload.status === "string" ? payload.status.toUpperCase() : undefined
+    if (handle && sbStatus) {
+      // Best-effort tracking — never break the 200 OK or fail the audit.
+      try {
+        const snap = await deps.db
+          .collection("pa-outbound")
+          .where("messageHandle", "==", handle)
+          .limit(1)
+          .get()
+        if (!snap.empty) {
+          const docRef = snap.docs[0]!.ref
+          const nowIso = new Date().toISOString()
+          const patch: Record<string, unknown> = {
+            sendblueStatus: sbStatus,
+            updatedAt: nowIso,
+            expiresAtTs: outboundExpiresAtTs(),
+          }
+          if (sbStatus === "DELIVERED") patch.sendblueDeliveredAt = nowIso
+          if (sbStatus === "FAILED" || sbStatus === "ERROR")
+            patch.sendblueFailedAt = nowIso
+          await docRef.set(patch, { merge: true })
+          log("[sendblue][webhook] outbound_status_tracked", {
+            handle,
+            sendblueStatus: sbStatus,
+            docId: snap.docs[0]!.id,
+          })
+        } else {
+          log("[sendblue][webhook] outbound_status_no_row", {
+            handle,
+            sendblueStatus: sbStatus,
+          })
+        }
+      } catch (trackErr) {
+        log("[sendblue][webhook] outbound_status_track_failed (non-fatal)",
+          trackErr instanceof Error ? trackErr.message : String(trackErr))
+      }
+    }
     await safeAudit(
       deps,
       {
@@ -253,12 +304,7 @@ export async function handleSendblueWebhook(
         channel: "imessage_sendblue",
         fromNumber: typeof payload.from_number === "string" ? payload.from_number : undefined,
         toNumber: typeof payload.number === "string" ? payload.number : undefined,
-        correlationId:
-          typeof payload.message_handle === "string"
-            ? payload.message_handle
-            : typeof payload.uuid === "string"
-              ? (payload.uuid as string)
-              : undefined,
+        correlationId: handle,
       },
       log
     )
@@ -458,6 +504,19 @@ export async function handleSendblueWebhook(
       handle: normalized.messageHandle,
       hasAttachment: !!mediaUrl,
     })
+    // Stream H9 TD1 — write Timestamp-typed `expiresAtTs` (60d) so the
+    // pa-inbound-events TTL policy can GC the row. The broker writes only
+    // ISO strings; Firestore TTL only fires on Timestamp fields. Idempotent
+    // (merge:true) — safe under re-delivery + safe under both created paths.
+    try {
+      await deps.db.collection("pa-inbound-events").doc(result.id).set(
+        { expiresAtTs: inboundEventExpiresAtTs() },
+        { merge: true }
+      )
+    } catch (ttlErr) {
+      log("[sendblue][webhook] expiresAtTs write failed (non-fatal)",
+        ttlErr instanceof Error ? ttlErr.message : String(ttlErr))
+    }
     // Stream D — CV side-effects (fire-and-forget). Both run in parallel:
     //   1. Tapback ❤️ via Sendblue Reactions API — immediate user ack.
     //   2. CV ingestion → parsedCandidateResumes — async best-effort.

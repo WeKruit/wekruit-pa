@@ -62,6 +62,13 @@ function makeFakeDb(opts: { rateLimitFlag?: boolean } = {}) {
           const data = inbound.get(id)
           return { exists: data !== undefined, data: () => data, id }
         },
+        // Stream H9 TD1 — webhook now writes Timestamp expiresAtTs after broker
+        // enqueue via .set({merge:true}). Harness must accept it so the
+        // non-fatal log path doesn't trip and noise the test output.
+        async set(data: DocData, opts?: { merge?: boolean }) {
+          if (opts?.merge) inbound.set(id, { ...(inbound.get(id) ?? {}), ...data })
+          else inbound.set(id, { ...data })
+        },
       }
     },
   }

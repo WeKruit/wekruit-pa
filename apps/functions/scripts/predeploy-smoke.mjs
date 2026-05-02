@@ -1,0 +1,68 @@
+#!/usr/bin/env node
+/**
+ * Stream H9 TD4 — predeploy smoke test for stale @pa/pa-orchestrator dist.
+ *
+ * Why this exists: P7-E observed the predeploy chain occasionally shipping a
+ * stale `packages/pa-orchestrator/dist/` whose compiled shape didn't match
+ * the latest source. The deploy succeeded, but the function imported
+ * yesterday's bytecode. This smoke test fails LOUDLY if dist is missing or
+ * doesn't match the current source — preventing the deploy from continuing.
+ *
+ * What it asserts:
+ *   1. `packages/pa-orchestrator/dist/cv-context-injection.js` exists.
+ *   2. The dist file's mtime is NEWER than the corresponding `.ts` source.
+ *      If the .ts was edited after the build, the build is stale.
+ *   3. Loading the dist file via `import()` succeeds and exposes
+ *      `appendCvContextToSystemPrompt` as a function.
+ *
+ * Exit code: 0 on pass, 1 on fail (predeploy chain aborts on non-zero).
+ */
+import { existsSync, statSync } from "node:fs"
+import { resolve, dirname } from "node:path"
+import { fileURLToPath, pathToFileURL } from "node:url"
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+const REPO_ROOT = resolve(__dirname, "../../..") // apps/functions/scripts → repo root
+const DIST_FILE = resolve(REPO_ROOT, "packages/pa-orchestrator/dist/cv-context-injection.js")
+const SRC_FILE = resolve(REPO_ROOT, "packages/pa-orchestrator/src/cv-context-injection.ts")
+
+function fail(msg) {
+  console.error("[predeploy-smoke] FAIL —", msg)
+  process.exit(1)
+}
+
+if (!existsSync(DIST_FILE)) {
+  fail(`missing dist file: ${DIST_FILE}\nRun: npm run build --workspace=@pa/pa-orchestrator`)
+}
+if (!existsSync(SRC_FILE)) {
+  fail(`missing source file (smoke test target moved?): ${SRC_FILE}`)
+}
+
+const distStat = statSync(DIST_FILE)
+const srcStat = statSync(SRC_FILE)
+if (srcStat.mtimeMs > distStat.mtimeMs) {
+  fail(
+    `STALE DIST — ${SRC_FILE} (mtime ${new Date(srcStat.mtimeMs).toISOString()}) ` +
+    `is newer than ${DIST_FILE} (mtime ${new Date(distStat.mtimeMs).toISOString()}).\n` +
+    `Run: rm -rf packages/pa-orchestrator/dist && ` +
+    `npm run build --workspace=@pa/pa-orchestrator`
+  )
+}
+
+// Load via filesystem URL — works regardless of package.json `exports` map.
+const distUrl = pathToFileURL(DIST_FILE).href
+try {
+  const mod = await import(distUrl)
+  if (typeof mod.appendCvContextToSystemPrompt !== "function") {
+    fail(
+      `dist loaded but appendCvContextToSystemPrompt is ${typeof mod.appendCvContextToSystemPrompt} ` +
+      `(expected function). dist is corrupt or function shape changed.`
+    )
+  }
+  console.log(
+    `[predeploy-smoke] OK — appendCvContextToSystemPrompt is a function (dist mtime: ` +
+    `${new Date(distStat.mtimeMs).toISOString()})`
+  )
+} catch (err) {
+  fail(`dist failed to load: ${err.message}`)
+}

@@ -16,7 +16,9 @@
         "*.local"
       ],
       "predeploy": [
+        "rm -rf \"$RESOURCE_DIR/../../packages/pa-orchestrator/dist\"",
         "npm --prefix \"$RESOURCE_DIR/../..\" run build --workspace=@pa/core-types --workspace=@pa/firebase-admin --workspace=@pa/agent-runtime --workspace=@pa/memory --workspace=@pa/agent-registry --workspace=@pa/pa-orchestrator",
+        "node \"$RESOURCE_DIR/../scripts/predeploy-smoke.mjs\"",
         "npm --prefix \"$RESOURCE_DIR/..\" run build",
         "npm --prefix \"$RESOURCE_DIR/..\" run typecheck",
         "npm --prefix \"$RESOURCE_DIR/..\" test"
@@ -45,7 +47,10 @@
         {
           "source": "/assets/**",
           "headers": [
-            { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+            {
+              "key": "Cache-Control",
+              "value": "public, max-age=31536000, immutable"
+            }
           ]
         },
         {

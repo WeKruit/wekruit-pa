@@ -27,7 +27,7 @@
  */
 
 import { createHash, createHmac, randomUUID } from "node:crypto"
-import type { Firestore } from "firebase-admin/firestore"
+import { Timestamp, type Firestore } from "firebase-admin/firestore"
 
 export const TRIGGERS_COLLECTION = "pa-downstream-triggers"
 export const TRIGGER_FIRES_COLLECTION = "pa-trigger-fires"
@@ -295,6 +295,11 @@ export async function recordFire(
   row: TriggerFireRow
 ): Promise<void> {
   const ref = db.collection(TRIGGER_FIRES_COLLECTION).doc(fireDocId(row.triggerId, row.userId))
+  // Stream H9 TD1 — Timestamp-typed `expiresAtTs` (30d) so the pa-trigger-fires
+  // TTL policy can GC stale cooldown rows. Firestore TTL only fires on
+  // Timestamp fields, NOT ISO strings, so `lastFiredAt` (string) cannot be
+  // used as a TTL anchor. Sliding window — refreshed on every fire.
+  const expiresAtTs = Timestamp.fromDate(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000))
   await ref.set(
     {
       triggerId: row.triggerId,
@@ -303,6 +308,7 @@ export async function recordFire(
       httpStatus: row.httpStatus,
       errorMsg: row.errorMsg,
       conversationId: row.conversationId ?? null,
+      expiresAtTs,
     },
     { merge: true }
   )
