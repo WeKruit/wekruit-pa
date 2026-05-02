@@ -995,18 +995,22 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       )
     }
     // v1.5 hotfix — pre-generation language lock. Detect user input language
-    // (zh|en) from event.body and prepend a hard directive. Reactive F3
-    // detector caught some misses post-gen but couldn't always rewrite a fully
-    // generated EN reply back to ZH (and vice versa). Cheap, deterministic,
-    // works regardless of paHumanizeRuntimeEnabled flag state.
+    // (zh|en) from event.body and SANDWICH the directive (top + bottom of
+    // system prompt) so Qwen-7B's weak instruction-following can't lose it
+    // in the ~10k-char Bible/handbook tail. v1 single-prepend + Qwen-7B was
+    // observed Turn-1 EN→ZH leaking on en_grad sim (2026-05-02). Recency
+    // bias from the trailing copy is what actually clamps the model.
     const userLang = detectLang(event.body)
-    const langLockDirective = userLang === "zh"
-      ? "[LANGUAGE-LOCK]\nuser_input_language: zh (Chinese)\nYou MUST reply in Chinese (中文). Do NOT switch to English unless quoting code, URLs, or proper nouns. Match the user's language register (formal/casual) but NEVER reply in a language different from theirs.\n[/LANGUAGE-LOCK]"
-      : "[LANGUAGE-LOCK]\nuser_input_language: en (English)\nYou MUST reply in English. Do NOT switch to Chinese unless the user explicitly asks for translation or code-switches mid-sentence. Match the user's language.\n[/LANGUAGE-LOCK]"
+    const langLockOpen = userLang === "zh"
+      ? "[LANGUAGE-LOCK · TOP-PRIORITY]\nuser_input_language: zh (Chinese)\nABSOLUTE RULE: You MUST reply in Chinese (中文). Do NOT switch to English unless the token is a code symbol, URL, or proper noun (人名/公司名). NEVER reply in English when the user wrote Chinese.\n[/LANGUAGE-LOCK]"
+      : "[LANGUAGE-LOCK · TOP-PRIORITY]\nuser_input_language: en (English)\nABSOLUTE RULE: You MUST reply in English. Do NOT switch to Chinese / use Chinese characters (汉字) at all. NEVER reply in Chinese when the user wrote English. Casual register is fine; language must be English.\n[/LANGUAGE-LOCK]"
+    const langLockClose = userLang === "zh"
+      ? "\n\n[FINAL-REMINDER]\nThe user just wrote in Chinese. Your reply MUST be in Chinese (中文). 不要用英文回复中文输入。\n[/FINAL-REMINDER]"
+      : "\n\n[FINAL-REMINDER]\nThe user just wrote in English. Your reply MUST be in English. Do not output any Chinese characters (汉字).\n[/FINAL-REMINDER]"
     const baseSystemPrompt = isVoiceV1Disabled()
       ? LEGACY_V0_SYSTEM_PROMPT
       : composedSystemPrompt ?? agent.systemPrompt
-    const systemPrompt = `${langLockDirective}\n\n${baseSystemPrompt}`
+    const systemPrompt = `${langLockOpen}\n\n${baseSystemPrompt}${langLockClose}`
     // Phase 24 T1B — few-shot relocation. Prepend 12 mes_examples as
     // messages-array alternating turns (~3x style transfer vs system-block).
     // Synthetic fs_* ids MUST be filtered before any Firestore write
@@ -1017,6 +1021,14 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     const historyForModel = fewShotTurns.length > 0
       ? prefixFewShotToHistory(fewShotTurns, history)
       : history
+    // v1.5 hotfix v3 — append lang-lock directive to user message itself.
+    // System-prompt sandwich (v2) was insufficient because few-shot examples
+    // in agent doc are ZH-heavy and bias turn-1 generation. Injecting at the
+    // end of userMessage means the LLM reads the directive immediately
+    // before generating its reply — strongest possible recency.
+    const userMessageWithLangLock = userLang === "en"
+      ? `${event.body}\n\n[SYSTEM-DIRECTIVE: Reply in English only. Do not output any Chinese characters.]`
+      : `${event.body}\n\n[SYSTEM-DIRECTIVE: 用中文回复。Reply only in Chinese.]`
     const { text, usage } = await store.runAgentTurn({
       agent,
       systemPrompt,
@@ -1027,7 +1039,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       // keeps working.
       memoryBlock,
       history: historyForModel,
-      userMessage: event.body,
+      userMessage: userMessageWithLangLock,
       session,
       systemInputs,
       tools: turnTools,
@@ -1035,7 +1047,77 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // Defense-in-depth: even if the model echoes a [ISO] prefix, strip it
     // before persisting + sending. Root cause is upstream in
     // `toOpenAIMessages` (was prefixing history bodies); this catches stragglers.
-    const reply = stripLeadingIsoTimestamp(text.trim()) || "我暂时没有生成有效回复，请稍后再试。"
+    let reply = stripLeadingIsoTimestamp(text.trim()) || "我暂时没有生成有效回复，请稍后再试。"
+    // v1.5 hotfix v4 — post-gen language correction. Pre-gen directives (v1
+    // prepend, v2 sandwich, v3 user-message inject) all leaked: agent's
+    // systemPrompt has heavy ZH examples in NEVER rules that prime Qwen-7B
+    // toward Chinese even when user wrote English. If reply language
+    // mismatches user input language, run a fast Qwen translate. Fail-open
+    // on timeout/error — original reply still ships.
+    try {
+      const replyLang = detectLang(reply)
+      if (replyLang !== userLang && reply.length > 0) {
+        const targetLang = userLang === "zh" ? "Chinese (中文)" : "English"
+        const translatePrompt = userLang === "zh"
+          ? `Rewrite the following message in Chinese (中文) only. Keep the casual texting tone, brevity, and meaning EXACT. Do NOT add or remove content. Do NOT use any English words except code/URLs/proper nouns. Output ONLY the rewritten message, no preface.\n\n${reply}`
+          : `Rewrite the following message in English only. Keep the casual texting tone, brevity, and meaning EXACT. Do NOT add or remove content. Do NOT use any Chinese characters (汉字). Output ONLY the rewritten message, no preface.\n\n${reply}`
+        const sfKey = process.env.SILICONFLOW_API_KEY?.trim() || ""
+        if (sfKey) {
+          const ac = new AbortController()
+          const timer = setTimeout(() => ac.abort(), 5000)
+          try {
+            const resp = await fetch("https://api.siliconflow.cn/v1/chat/completions", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${sfKey}`,
+              },
+              body: JSON.stringify({
+                model: "Qwen/Qwen2.5-7B-Instruct",
+                messages: [{ role: "user", content: translatePrompt }],
+                max_tokens: 200,
+                temperature: 0.2,
+              }),
+              signal: ac.signal,
+            })
+            if (resp.ok) {
+              const j = (await resp.json()) as { choices?: { message?: { content?: string } }[] }
+              const translated = (j.choices?.[0]?.message?.content ?? "").trim()
+              const translatedLang = detectLang(translated)
+              if (translated.length > 0 && translatedLang === userLang) {
+                store.log("pa.voice.lang_translate.applied", {
+                  userId: event.userId,
+                  turnId,
+                  fromLang: replyLang,
+                  toLang: userLang,
+                  beforeLen: reply.length,
+                  afterLen: translated.length,
+                })
+                reply = translated
+              } else {
+                store.log("pa.voice.lang_translate.rejected", {
+                  userId: event.userId,
+                  turnId,
+                  reason: translated.length === 0 ? "empty" : "still_wrong_lang",
+                  translatedLang,
+                })
+              }
+            } else {
+              store.log("pa.voice.lang_translate.http_error", {
+                userId: event.userId,
+                turnId,
+                status: resp.status,
+              })
+            }
+          } finally {
+            clearTimeout(timer)
+          }
+        }
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      store.log("pa.voice.lang_translate.error", { userId: event.userId, turnId, error: msg })
+    }
     // Phase 24 T1D — telemetry-only coach-token monitor. Pure observation.
     // Hits feed Phase 25 self-evolve dataset. NO transform on `reply`.
     tapCoachTokens(

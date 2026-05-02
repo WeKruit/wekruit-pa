@@ -440,7 +440,9 @@ test("processInboundEvent T5: 'remember' command falls through to LLM (no short-
     runAgentTurn: async (input) => {
       llmCalls++
       // The LLM sees the raw user message — no orchestrator-level rewriting.
-      assert.equal(input.userMessage, "记住 我喜欢冰美式")
+      // v1.5 lang-lock hotfix appends a [SYSTEM-DIRECTIVE: ...] suffix
+      // post-event.body before passing to runAgentTurn. Assert prefix only.
+      assert.ok(input.userMessage.startsWith("记住 我喜欢冰美式"))
       return { text: "好的，我会记住的。" }
     },
     createMemoryFact: async () => {
