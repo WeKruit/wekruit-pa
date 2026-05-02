@@ -804,6 +804,65 @@ function lookupRoleTitle(title: string | null | undefined): IndustryTag | null {
   return null
 }
 
+// ---------------------------------------------------------------------------
+// Stream H11 — companyName × roleTitle compound check.
+//
+// H8/H10's companyName lift was too aggressive for multi-vertical employers.
+// Audit on 2026-05-01: Amazon-tagged "tech_software" rows in the corpus
+// included EHS Specialist, Workplace Safety, Lead Fulfillment Associate, Prime
+// Air Ground Handler — alongside legit SDE I and Robotics Engineer. Same for
+// Snowflake (SDE vs Account Based Marketing Specialist).
+//
+// Fix: gate the companyName lift on a roleTitle compatibility check. If the
+// role is a non-tech blue-collar / non-tech function role (warehouse, EHS,
+// marketing, customer service, etc.), DO NOT lift via companyName — fall
+// through to roleTitle's own bucket (often consumer_retail or manufacturing
+// via ROLE_TITLE_KEYWORDS), or "other" as last resort.
+//
+// A tech-positive whitelist (engineer / scientist / SDE / ML / research)
+// reverses the gate so e.g. "Software Engineer Associate" is NOT blocked
+// just because it contains "associate".
+//
+// Special case: when companyName lifts to fintech_finance AND roleTitle is a
+// finance function (tax / accountant / bookkeeper), we KEEP the lift — tax
+// IS finance even though it triggers NON_TECH_FUNCTION_REGEX. This matches
+// the H11 spec: JPMorgan Tax Consultant → fintech_finance, but Deloitte Tax
+// Consultant ALSO stays fintech_finance (Deloitte mapped to fintech bucket).
+// ---------------------------------------------------------------------------
+
+/**
+ * Non-tech blue-collar / hourly / service role titles. Matching here blocks
+ * the companyName lift unless the role ALSO matches TECH_POSITIVE_REGEX.
+ */
+export const NON_TECH_ROLE_REGEX =
+  /\b(warehouse|fulfillment|associate(?!\s+(engineer|software|product|data))|cashier|stocker|janitor|cleaner|driver|driving|valet|safety\s+specialist|ehs|workplace\s+safety|ground\s+handler|operator(?!\s+engineer)|loader|packer|forklift|sorter|environmental\s+health|building\s+coordinator|maintenance\s+worker|housekeeper|server|barista|cook|line\s+cook|dishwasher|store\s+associate|valet\s+operations)\b/i
+
+/**
+ * Non-tech functional roles (marketing / sales / HR / customer service / tax
+ * / accounting). Matching blocks the companyName lift unless TECH_POSITIVE
+ * fires OR (companyName is in fintech_finance bucket AND role is finance).
+ */
+export const NON_TECH_FUNCTION_REGEX =
+  /\b(account\s+based\s+marketing|marketing\s+specialist|marketing\s+manager|marketing\s+coordinator|sales\s+representative|sales\s+associate|sales\s+coordinator|hr\s+specialist|hr\s+coordinator|recruiter|talent\s+acquisition|customer\s+service|customer\s+support|tax\s+consultant|tax\s+associate|accountant|bookkeeper|operations\s+coordinator|operations\s+specialist)\b/i
+
+/**
+ * Tech-positive whitelist — these tokens override the NON_TECH gates so we
+ * don't accidentally block legitimate Amazon/Snowflake SDE/ML/research roles.
+ * Note word-boundary handling: "engineer" must NOT collide with the
+ * negative-lookahead "associate(?!\s+engineer)" — that's why we keep the
+ * whitelist independent of NON_TECH_ROLE.
+ */
+export const TECH_POSITIVE_REGEX =
+  /\b(software\s+engineer|swe|sde\b|sdet\b|ml\s+engineer|ai\s+engineer|machine\s+learning|data\s+engineer|data\s+scientist|data\s+analyst|research\s+scientist|applied\s+scientist|robotics\s+engineer|hardware\s+engineer|firmware|developer|architect|platform\s+engineer|backend|frontend|full\s*stack|sre|devops|cloud\s+engineer|security\s+engineer)\b/i
+
+/**
+ * Finance-function roles inside fintech/finance employers (Deloitte, KPMG,
+ * JPMorgan, banks, insurance carriers). When the company already maps to
+ * fintech_finance, these roles ARE the finance bucket — don't block them.
+ */
+const FINANCE_FUNCTION_REGEX =
+  /\b(tax\s+consultant|tax\s+associate|tax\s+manager|accountant|bookkeeper|auditor|finance\s+associate|finance\s+analyst|financial\s+analyst|financial\s+advisor|underwriter|actuary|risk\s+analyst)\b/i
+
 /**
  * H8 multi-signal cascade. Returns the FIRST non-"other" hit from
  * (industryKey → companyName → roleTitle). Falls through to "other" only
@@ -814,18 +873,69 @@ function lookupRoleTitle(title: string | null | undefined): IndustryTag | null {
  * name is next-strongest signal. Role title is last because it bleeds
  * across industries (a "software engineer" works in healthcare AND
  * fintech AND tech).
+ *
+ * H11 (2026-05-01): companyName lift now gated by roleTitle compatibility
+ * check. See NON_TECH_ROLE_REGEX / NON_TECH_FUNCTION_REGEX above.
  */
+/**
+ * White-collar tech-bias buckets where multi-vertical employers (Amazon,
+ * Snowflake, Microsoft, JPMorgan, Stripe, Apple, Nvidia) cause false-positive
+ * lifts when their warehouse / fulfillment / EHS / marketing / customer-service
+ * jobs inherit the bucket. The H11 gate only fires for these buckets.
+ */
+const TECH_BIAS_BUCKETS: ReadonlyArray<IndustryTag> = [
+  "tech_software",
+  "tech_hardware",
+  "ai_ml",
+  "fintech_finance",
+]
+
+/**
+ * Returns true if the (bucket, roleTitle) pair should be BLOCKED — i.e. the
+ * lift to a tech-bias bucket is not coherent with a non-tech role.
+ *
+ * Rules:
+ *   - Only tech-bias buckets are gated. consumer_retail / manufacturing /
+ *     healthcare / media / education / education are pass-through.
+ *   - Tech-positive role tokens (engineer / scientist / SDE / ML / etc.)
+ *     ALWAYS allow the lift.
+ *   - Inside fintech_finance: finance-function roles (tax / accountant /
+ *     auditor) ALSO allow the lift (tax IS finance).
+ *   - Otherwise: NON_TECH_ROLE or NON_TECH_FUNCTION matches → blocked.
+ */
+function shouldBlockTechBiasLift(bucket: IndustryTag, roleTitle: string | null | undefined): boolean {
+  if (!(TECH_BIAS_BUCKETS as readonly string[]).includes(bucket)) return false
+  const role = typeof roleTitle === "string" ? roleTitle : ""
+  if (role.length === 0) return false
+  if (TECH_POSITIVE_REGEX.test(role)) return false
+  const nonTechRole = NON_TECH_ROLE_REGEX.test(role)
+  const nonTechFn = NON_TECH_FUNCTION_REGEX.test(role)
+  if (!nonTechRole && !nonTechFn) return false
+  // Special case: finance-function roles inside fintech_finance bucket
+  // are coherent (tax IS finance) — don't block.
+  if (bucket === "fintech_finance" && FINANCE_FUNCTION_REGEX.test(role)) return false
+  return true
+}
+
 export function mapToCanonicalIndustryFromSignals(s: IndustrySignals): IndustryTag {
   // 1. industryKey — strongest signal, hits the existing F2 map.
+  // H11: even when industryKey resolves cleanly, gate against roleTitle for
+  // tech-bias buckets. This catches Amazon "EHS Specialist" rows scraped
+  // with industryKey="enterprise_saas" — without the gate, step 1 would
+  // return tech_software and bypass step 2's gate.
   const fromKey =
     typeof s.industryKey === "string" && s.industryKey.length > 0
       ? mapToCanonicalIndustry(s.industryKey)
       : "other"
-  if (fromKey !== "other") return fromKey
+  if (fromKey !== "other" && !shouldBlockTechBiasLift(fromKey, s.roleTitle)) {
+    return fromKey
+  }
 
-  // 2. companyName — second-strongest signal.
+  // 2. companyName — second-strongest signal, also H11-gated.
   const fromCompany = lookupCompany(s.companyName)
-  if (fromCompany) return fromCompany
+  if (fromCompany && !shouldBlockTechBiasLift(fromCompany, s.roleTitle)) {
+    return fromCompany
+  }
 
   // 3. roleTitle — last resort, weakest signal.
   const fromRole = lookupRoleTitle(s.roleTitle)

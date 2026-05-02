@@ -192,3 +192,300 @@ describe("mapToCanonicalIndustryFromSignals — H10 long-tail company entries", 
   })
 })
 
+
+describe("mapToCanonicalIndustryFromSignals — H11 companyName × roleTitle compound check", () => {
+  // H10 LIVE rematch (1f569f90) surfaced two false-positives in Adam's top-3:
+  //   - "Lead Fulfillment Associate @ Amazon" was lifted to tech_software
+  //     because companyName=Amazon mapped to tech_software, even though the
+  //     industryKey was "management".
+  //   - "Account Based Marketing Specialist @ Snowflake" was lifted to
+  //     tech_software the same way.
+  // H11 gates the companyName lift on a roleTitle compatibility check.
+
+  it("Amazon SDE → tech_software (companyName + tech-positive role keeps lift)", () => {
+    const out = mapToCanonicalIndustryFromSignals({
+      industryKey: "management", // common Amazon scraper output → 'other'
+      companyName: "Amazon",
+      roleTitle: "Software Development Engineer (SDE I)",
+    })
+    assert.equal(out, "tech_software")
+  })
+
+  it("Amazon Lead Fulfillment Associate → does NOT lift to tech_software (NON_TECH_ROLE blocks)", () => {
+    const out = mapToCanonicalIndustryFromSignals({
+      industryKey: "management",
+      companyName: "Amazon",
+      roleTitle: "Lead Fulfillment Associate",
+    })
+    assert.notEqual(out, "tech_software", "companyName lift must be blocked for warehouse role")
+    // Falls through to roleTitle keywords; "Fulfillment Associate" alone
+    // doesn't match the narrow consumer_retail "warehouse associate"
+    // pattern, so the cascade ends at "other". That's fine — the goal is
+    // to prevent the FALSE-POSITIVE tech_software lift. "other" is correct
+    // because we honestly don't know without more signal.
+    assert.equal(out, "other")
+  })
+
+  it("Amazon Robotics Engineer → tech_software (TECH_POSITIVE overrides NON_TECH suffix)", () => {
+    // "Robotics Engineer" matches TECH_POSITIVE_REGEX. Even if a regex
+    // variant happened to fire NON_TECH_ROLE, the whitelist wins.
+    const out = mapToCanonicalIndustryFromSignals({
+      industryKey: "engineering", // → 'other'
+      companyName: "Amazon",
+      roleTitle: "Robotics Engineer II",
+    })
+    assert.equal(out, "tech_software")
+  })
+
+  it("Snowflake Marketing Specialist → does NOT lift (NON_TECH_FUNCTION blocks)", () => {
+    const out = mapToCanonicalIndustryFromSignals({
+      industryKey: "marketing", // → 'other'
+      companyName: "Snowflake",
+      roleTitle: "Account Based Marketing Specialist",
+    })
+    assert.notEqual(out, "tech_software", "Snowflake marketing role must be blocked from tech_software lift")
+    // No roleTitle keyword for "marketing specialist" → falls through to "other".
+    assert.equal(out, "other")
+  })
+
+  it("Snowflake Senior Data Scientist → tech_software (TECH_POSITIVE keeps lift)", () => {
+    const out = mapToCanonicalIndustryFromSignals({
+      industryKey: "data_science", // → 'ai_ml' — wins at industryKey step
+      companyName: "Snowflake",
+      roleTitle: "Senior Data Scientist",
+    })
+    // industryKey already maps to ai_ml so cascade stops at step 1.
+    assert.equal(out, "ai_ml")
+  })
+
+  it("Snowflake SDE with no industryKey → tech_software via companyName (TECH_POSITIVE)", () => {
+    const out = mapToCanonicalIndustryFromSignals({
+      industryKey: null,
+      companyName: "Snowflake",
+      roleTitle: "SDE II",
+    })
+    assert.equal(out, "tech_software")
+  })
+
+  it("JPMorgan Software Engineer → fintech_finance (companyName lift OK, no role conflict)", () => {
+    const out = mapToCanonicalIndustryFromSignals({
+      industryKey: "engineering", // → 'other'
+      companyName: "JPMorgan Chase",
+      roleTitle: "Software Engineer III",
+    })
+    assert.equal(out, "fintech_finance")
+  })
+
+  it("JPMorgan Tax Consultant → fintech_finance (FINANCE_FUNCTION exception keeps lift)", () => {
+    // Tax IS finance — even though tax_consultant matches NON_TECH_FUNCTION,
+    // when companyName is in fintech_finance bucket the lift is allowed.
+    const out = mapToCanonicalIndustryFromSignals({
+      industryKey: "consulting", // → 'other'
+      companyName: "JPMorgan Chase",
+      roleTitle: "Tax Consultant II",
+    })
+    assert.equal(out, "fintech_finance")
+  })
+
+  it("Deloitte Tax Consultant → fintech_finance (Deloitte mapped to fintech bucket; finance role allowed)", () => {
+    const out = mapToCanonicalIndustryFromSignals({
+      industryKey: "consulting",
+      companyName: "Deloitte",
+      roleTitle: "Tax Consultant II, SAP Global Trade Services",
+    })
+    assert.equal(out, "fintech_finance")
+  })
+
+  it("Walmart Cashier → consumer_retail (verify NON_TECH_ROLE doesn't double-block consumer_retail employers)", () => {
+    // Walmart maps to consumer_retail via companyName; "cashier" is in
+    // NON_TECH_ROLE_REGEX. The lift would be blocked — but cashier ALSO
+    // hits ROLE_TITLE_KEYWORDS consumer_retail in step 3, so the result
+    // ends up consumer_retail anyway. Either path is correct; this test
+    // locks the end-state for the expected industryEnum.
+    const out = mapToCanonicalIndustryFromSignals({
+      industryKey: "retail", // → consumer_retail directly at step 1
+      companyName: "Walmart",
+      roleTitle: "Cashier",
+    })
+    assert.equal(out, "consumer_retail")
+  })
+
+  it("Software Engineer Associate → tech-positive overrides 'associate' negative-lookahead", () => {
+    // The NON_TECH_ROLE 'associate(?!\s+(engineer|software|product|data))'
+    // negative lookahead means 'Software Engineer Associate' should NOT
+    // match NON_TECH_ROLE in the first place. Belt-and-suspenders: even
+    // if it did, TECH_POSITIVE wins.
+    const out = mapToCanonicalIndustryFromSignals({
+      industryKey: "engineering",
+      companyName: "Amazon",
+      roleTitle: "Software Engineer Associate",
+    })
+    assert.equal(out, "tech_software")
+  })
+
+  it("Amazon EHS Specialist → does NOT lift (workplace safety blocked)", () => {
+    const out = mapToCanonicalIndustryFromSignals({
+      industryKey: "management",
+      companyName: "Amazon",
+      roleTitle: "EHS Specialist",
+    })
+    assert.notEqual(out, "tech_software")
+    assert.equal(out, "other")
+  })
+})
+
+describe("mapToCanonicalIndustryFromSignals — H11 gate scope (only tech-bias buckets)", () => {
+  // The H11 gate must NOT fire for consumer_retail / manufacturing_industrial
+  // / healthcare_biotech employers, where non-tech roles are coherent with
+  // the bucket. Otherwise we'd downgrade thousands of legitimate hourly /
+  // service / industrial rows to "other".
+
+  it("Walmart Cashier with industryKey=customer_service → consumer_retail (gate does not fire)", () => {
+    const out = mapToCanonicalIndustryFromSignals({
+      industryKey: "customer_service", // → 'other'
+      companyName: "Walmart",
+      roleTitle: "Cashier",
+    })
+    assert.equal(out, "consumer_retail")
+  })
+
+  it("Caterpillar Forklift Operator → manufacturing_industrial (gate does not fire on industrial bucket)", () => {
+    const out = mapToCanonicalIndustryFromSignals({
+      industryKey: "management",
+      companyName: "Caterpillar",
+      roleTitle: "Forklift Operator",
+    })
+    assert.equal(out, "manufacturing_industrial")
+  })
+
+  it("Kaiser Permanente Patient Care Tech → healthcare_biotech (gate does not fire on healthcare bucket)", () => {
+    const out = mapToCanonicalIndustryFromSignals({
+      industryKey: "management",
+      companyName: "Kaiser Permanente",
+      roleTitle: "Patient Care Technician",
+    })
+    assert.equal(out, "healthcare_biotech")
+  })
+
+  it("Starbucks Barista → consumer_retail (NON_TECH_ROLE.barista doesn't gate non-tech-bias bucket)", () => {
+    const out = mapToCanonicalIndustryFromSignals({
+      industryKey: "food_beverage", // → consumer_retail at step 1, but ensure even if it didn't:
+      companyName: "Starbucks",
+      roleTitle: "Barista",
+    })
+    assert.equal(out, "consumer_retail")
+  })
+
+  it("Disney HR Specialist → media_entertainment (gate doesn't fire — media is not tech-bias)", () => {
+    const out = mapToCanonicalIndustryFromSignals({
+      industryKey: "management",
+      companyName: "Disney",
+      roleTitle: "HR Specialist",
+    })
+    assert.equal(out, "media_entertainment")
+  })
+
+  it("Microsoft Workplace Safety Specialist → does NOT lift (tech_software bucket gated)", () => {
+    const out = mapToCanonicalIndustryFromSignals({
+      industryKey: "management",
+      companyName: "Microsoft",
+      roleTitle: "Workplace Safety Specialist",
+    })
+    assert.notEqual(out, "tech_software", "Microsoft tech_software lift must be blocked for safety role")
+    assert.equal(out, "other")
+  })
+})
+
+describe("mapToCanonicalIndustryFromSignals — H11 step-1 gate (industryKey lift also blocked)", () => {
+  // Discovered during H11 LIVE: Amazon EHS Specialist rows had industryKey
+  // scraped as "enterprise_saas" → step 1 returned tech_software directly,
+  // bypassing the companyName-step-2 gate. The gate now applies to step 1
+  // for tech-bias buckets too.
+
+  it("Amazon EHS Specialist with industryKey=enterprise_saas → does NOT lift to tech_software", () => {
+    const out = mapToCanonicalIndustryFromSignals({
+      industryKey: "enterprise_saas",
+      companyName: "Amazon",
+      roleTitle: "EHS Specialist",
+    })
+    assert.notEqual(out, "tech_software", "step-1 industryKey lift must also be gated")
+    assert.equal(out, "other")
+  })
+
+  it("Amazon Software Engineer with industryKey=enterprise_saas → tech_software (TECH_POSITIVE keeps step-1)", () => {
+    const out = mapToCanonicalIndustryFromSignals({
+      industryKey: "enterprise_saas",
+      companyName: "Amazon",
+      roleTitle: "Software Development Engineer 1",
+    })
+    assert.equal(out, "tech_software")
+  })
+
+  it("Amazon IT Support Associate with industryKey=enterprise_saas → does NOT lift", () => {
+    // Not tech-positive (no engineer/SDE/scientist), and "associate" alone
+    // would normally be blocked by NON_TECH_ROLE (depending on lookahead).
+    // "Support Associate" matches NON_TECH_ROLE.associate(?!\s+(engineer|software|product|data)).
+    const out = mapToCanonicalIndustryFromSignals({
+      industryKey: "enterprise_saas",
+      companyName: "Amazon",
+      roleTitle: "IT Support Associate II, Ops Tech Solutions",
+    })
+    assert.notEqual(out, "tech_software")
+  })
+
+  it("Random non-tech-bias industryKey lift not affected by gate", () => {
+    // industryKey=retail → consumer_retail; cashier roleTitle is fine.
+    const out = mapToCanonicalIndustryFromSignals({
+      industryKey: "retail",
+      companyName: "Random Co",
+      roleTitle: "Cashier",
+    })
+    assert.equal(out, "consumer_retail")
+  })
+
+  it("industryKey lift to fintech_finance with tax role keeps lift via FINANCE_FUNCTION exception", () => {
+    const out = mapToCanonicalIndustryFromSignals({
+      industryKey: "accounting_finance", // → fintech_finance directly
+      companyName: "Random Tax Co",
+      roleTitle: "Tax Consultant II",
+    })
+    assert.equal(out, "fintech_finance")
+  })
+})
+
+describe("mapToCanonicalIndustryFromSignals — H11 regex extension (driving / valet ops / operations coord)", () => {
+  // Discovered during H11 LIVE rematch: "Supervisor - Driving @ metropolis"
+  // and "Operations Coordinator @ spectrum medical partners" survived the
+  // initial spec-only regex. metropolis.companyName maps to tech_software,
+  // and these roleTitles weren't in NON_TECH_ROLE/NON_TECH_FUNCTION.
+  // H11 extends the regexes to include them.
+
+  it("Metropolis Technologies Supervisor Driving → does NOT lift to tech_software", () => {
+    const out = mapToCanonicalIndustryFromSignals({
+      industryKey: "management",
+      companyName: "Metropolis Technologies",
+      roleTitle: "Supervisor - Driving",
+    })
+    assert.notEqual(out, "tech_software")
+    assert.equal(out, "other")
+  })
+
+  it("Metropolis Assistant Manager Valet Operations → does NOT lift", () => {
+    const out = mapToCanonicalIndustryFromSignals({
+      industryKey: "management",
+      companyName: "Metropolis Technologies",
+      roleTitle: "Assistant Manager, Valet Operations",
+    })
+    assert.notEqual(out, "tech_software")
+    assert.equal(out, "other")
+  })
+
+  it("Spectrum (tech_software bucket) Operations Coordinator → does NOT lift", () => {
+    const out = mapToCanonicalIndustryFromSignals({
+      industryKey: "management",
+      companyName: "Spectrum",
+      roleTitle: "Operations Coordinator",
+    })
+    assert.notEqual(out, "tech_software")
+  })
+})

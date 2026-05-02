@@ -173,3 +173,51 @@ describe("summarizeDecision + formatSummary", () => {
     }
   })
 })
+
+describe("H11 — --re-enrich-all flag", () => {
+  it("--re-enrich-all parses to reenrichAll=true", () => {
+    const a = parseArgs(["--apply", "--re-enrich-all"])
+    assert.equal(a.reenrichAll, true)
+    assert.equal(a.reenrichOther, false)
+  })
+
+  it("--re-enrich-other still parses (backward compat with H10)", () => {
+    const a = parseArgs(["--apply", "--re-enrich-other"])
+    assert.equal(a.reenrichOther, true)
+    assert.equal(a.reenrichAll, false)
+  })
+
+  it("decideEnrichment with reenrichAll re-evaluates an already-tagged 'tech_software' row", () => {
+    // Simulates the H11 scenario: an Amazon Lead Fulfillment row was
+    // tagged ["tech_software"] by H8/H10. Without the flag it skips;
+    // with --re-enrich-all the new H11 mapper downgrades to "other".
+    const data = {
+      industryKey: "management",
+      companyName: "Amazon",
+      roleTitle: "Lead Fulfillment Associate",
+      industryEnum: ["tech_software"], // H8/H10 false-positive lift
+    }
+    const skipped = decideEnrichment(data, signalMapper)
+    assert.equal(skipped.action, "skip")
+
+    const reenriched = decideEnrichment(data, signalMapper, { reenrichAll: true })
+    assert.equal(reenriched.action, "update")
+    if (reenriched.action === "update") {
+      assert.equal(reenriched.industryEnum, "other")
+    }
+  })
+
+  it("decideEnrichment with reenrichAll keeps a correct tech_software lift (Amazon SDE)", () => {
+    const data = {
+      industryKey: "engineering",
+      companyName: "Amazon",
+      roleTitle: "Software Development Engineer (SDE I)",
+      industryEnum: ["tech_software"],
+    }
+    const out = decideEnrichment(data, signalMapper, { reenrichAll: true })
+    assert.equal(out.action, "update")
+    if (out.action === "update") {
+      assert.equal(out.industryEnum, "tech_software")
+    }
+  })
+})

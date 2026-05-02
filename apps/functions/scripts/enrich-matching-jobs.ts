@@ -85,6 +85,15 @@ type Args = {
    */
   reenrichOther: boolean
   /**
+   * Stream H11 — when true, re-evaluate ALL existing rows regardless of
+   * their current industryEnum. Used after the H11 companyName × roleTitle
+   * compound check: false-positives currently tagged as ["tech_software"]
+   * (e.g. "Lead Fulfillment Associate @ Amazon") need re-evaluation, which
+   * --re-enrich-other cannot reach. Strictly more aggressive than
+   * reenrichOther; supersedes it when both are passed.
+   */
+  reenrichAll: boolean
+  /**
    * Stream H8 — non-other coverage threshold (0..1). When LIVE coverage is
    * BELOW this value the script still completes the writes (data is only
    * better-than-before) but exits non-zero so caller can detect quality
@@ -102,6 +111,7 @@ export function parseArgs(argv: string[]): Args {
     batch: FIRESTORE_BATCH_MAX,
     threshold: 0.6,
     reenrichOther: false,
+    reenrichAll: false,
   }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!
@@ -115,6 +125,7 @@ export function parseArgs(argv: string[]): Args {
     else if (a === "--threshold") out.threshold = Number(argv[++i] ?? "0.6")
     else if (a.startsWith("--threshold=")) out.threshold = Number(a.slice("--threshold=".length))
     else if (a === "--re-enrich-other") out.reenrichOther = true
+    else if (a === "--re-enrich-all") out.reenrichAll = true
   }
   if (!out.dryRun && !out.live) {
     out.dryRun = true // default to dry-run for safety
@@ -177,19 +188,22 @@ export type SignalMapper = (s: {
 export function decideEnrichment(
   data: Record<string, unknown>,
   mapper: SignalMapper,
-  opts: { reenrichOther?: boolean } = {}
+  opts: { reenrichOther?: boolean; reenrichAll?: boolean } = {}
 ): EnrichDecision {
   // F2 wrote string; H8 writes string-or-array. Treat either as enriched —
-  // EXCEPT under --re-enrich-other, where rows currently tagged as "other"
-  // are re-evaluated against the latest mapper (H10 long-tail addition).
+  // EXCEPT under --re-enrich-other (re-evaluates "other"-tagged rows only)
+  // or --re-enrich-all (re-evaluates EVERY row regardless of current tag).
+  // H11: --re-enrich-all is needed to reach false-positive tech_software
+  // rows that --re-enrich-other cannot.
   const existing = data.industryEnum
   const isOtherOnly =
     (typeof existing === "string" && existing === "other") ||
     (Array.isArray(existing) && existing.length === 1 && existing[0] === "other")
-  if (typeof existing === "string" && existing.length > 0 && !(opts.reenrichOther && isOtherOnly)) {
+  const skipIdempotency = opts.reenrichAll || (opts.reenrichOther && isOtherOnly)
+  if (typeof existing === "string" && existing.length > 0 && !skipIdempotency) {
     return { action: "skip", reason: "already_enriched" }
   }
-  if (Array.isArray(existing) && existing.length > 0 && !(opts.reenrichOther && isOtherOnly)) {
+  if (Array.isArray(existing) && existing.length > 0 && !skipIdempotency) {
     return { action: "skip", reason: "already_enriched" }
   }
 
@@ -324,7 +338,7 @@ async function main() {
       if (snap.empty) break
       for (const d of snap.docs) {
         summary.scanned++
-        const decision = decideEnrichment(d.data() as Record<string, unknown>, mapper, { reenrichOther: args.reenrichOther })
+        const decision = decideEnrichment(d.data() as Record<string, unknown>, mapper, { reenrichOther: args.reenrichOther, reenrichAll: args.reenrichAll })
         summarizeDecision(decision, d.id, summary)
       }
       last = snap.docs[snap.docs.length - 1] ?? null
@@ -367,7 +381,7 @@ async function main() {
     let writesPending = 0
     for (const d of snap.docs) {
       summary.scanned++
-      const decision = decideEnrichment(d.data() as Record<string, unknown>, mapper, { reenrichOther: args.reenrichOther })
+      const decision = decideEnrichment(d.data() as Record<string, unknown>, mapper, { reenrichOther: args.reenrichOther, reenrichAll: args.reenrichAll })
       summarizeDecision(decision, d.id, summary)
       if (decision.action === "update") {
         // H8: write a 1-element ARRAY so query-matching-jobs can use
