@@ -7,6 +7,8 @@ import {
   rankJobs,
   projectMatchingJobRow,
   queryMatchingJobs,
+  mapTagToIndustryKeys,
+  expandIndustryTags,
 } from "../../tools/query-matching-jobs.js"
 import type { MatchingJob } from "../../types.js"
 
@@ -244,4 +246,92 @@ test("queryMatchingJobs: ignores industry filter when industry == any", async ()
     { db: asFirestore(mfs) }
   )
   assert.equal(out.jobs.length, 1)
+})
+
+// ---------------------------------------------------------------------------
+// Stream H6 — industryTag → industryKey mapping
+// ---------------------------------------------------------------------------
+
+test("mapTagToIndustryKeys: tech_software expands to multiple corpus keys including 'tech' and 'engineering'", () => {
+  const keys = mapTagToIndustryKeys("tech_software")
+  assert.ok(keys.includes("tech"), "tech_software should map to 'tech'")
+  assert.ok(keys.includes("engineering"), "tech_software should map to 'engineering'")
+  assert.ok(keys.length >= 3, "tech_software should expand to >= 3 corpus keys")
+})
+
+test("mapTagToIndustryKeys: unknown tag falls open by returning [tag] (literal pass-through)", () => {
+  const keys = mapTagToIndustryKeys("nonexistent_industry_xyz")
+  assert.deepEqual(keys, ["nonexistent_industry_xyz"])
+})
+
+test("expandIndustryTags: dedupes overlapping keys across multiple tags + caps at 10", () => {
+  // tech_software and ai_ml both include "tech" — expanded list must dedupe.
+  const out = expandIndustryTags(["tech_software", "ai_ml"])
+  const dedup = new Set(out)
+  assert.equal(out.length, dedup.size, "no duplicates in expanded set")
+  assert.ok(out.includes("tech"))
+  assert.ok(out.includes("ai_ml"))
+  assert.ok(out.length <= 10, "in-clause cap")
+  // Empty + non-array inputs → []
+  assert.deepEqual(expandIndustryTags([]), [])
+  assert.deepEqual(expandIndustryTags(["", "  "]), [])
+})
+
+test("queryMatchingJobs: industryTags filter uses industryKey 'in' path and matches multiple corpus keys", async () => {
+  const mfs = new MockFirestore()
+  // Three rows spanning different industryKey values — only those reachable
+  // via the tech_software/ai_ml tag union should be returned.
+  await mfs.collection("matching-jobs").doc("a").set({
+    status: "active",
+    companyName: "AICo",
+    roleTitle: "ML Eng",
+    salaryMax: 200000,
+    locationRaw: "Baltimore, MD",
+    primaryUrl: "https://a",
+    industry: "ai_ml",
+    industryKey: "ai_ml", // hits ai_ml expansion
+    sponsorship: false,
+    requiredSkills: ["python", "ml"],
+    firstSeenAt: "2026-04-30",
+  })
+  await mfs.collection("matching-jobs").doc("b").set({
+    status: "active",
+    companyName: "TechCo",
+    roleTitle: "SWE",
+    salaryMax: 180000,
+    locationRaw: "Remote",
+    primaryUrl: "https://b",
+    industry: "tech",
+    industryKey: "tech", // hits tech_software expansion
+    sponsorship: false,
+    requiredSkills: ["python"],
+    firstSeenAt: "2026-04-29",
+  })
+  await mfs.collection("matching-jobs").doc("c").set({
+    status: "active",
+    companyName: "MarketingCo",
+    roleTitle: "Marketing Mgr",
+    salaryMax: 120000,
+    locationRaw: "Anywhere",
+    primaryUrl: "https://c",
+    industry: "marketing",
+    industryKey: "marketing", // NOT in tech_software/ai_ml expansion
+    sponsorship: false,
+    firstSeenAt: "2026-04-28",
+  })
+  const out = await queryMatchingJobs(
+    {
+      filters: {
+        industryTags: ["tech_software", "ai_ml"],
+        sponsorship: "h1b",
+        userSkills: ["python"],
+      },
+      limit: 5,
+    },
+    { db: asFirestore(mfs) }
+  )
+  const ids = new Set(out.jobs.map((j) => j.id))
+  assert.ok(ids.has("a"), "ai_ml row should be returned")
+  assert.ok(ids.has("b"), "tech row should be returned")
+  assert.ok(!ids.has("c"), "marketing row should be filtered OUT by industryKey-in")
 })

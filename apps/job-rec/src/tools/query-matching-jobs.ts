@@ -37,6 +37,111 @@ const MATCHING_JOBS_COLLECTION = "matching-jobs"
 const ACTIVE_STATUS = "active"
 const QUERY_FETCH_CAP = 50 // pre-rank window
 
+// ---------------------------------------------------------------------------
+// Stream H6 — industryTag → industryKey mapping
+// ---------------------------------------------------------------------------
+//
+// Background. The matching-jobs corpus stores a flat string `industryKey`
+// per row. The token-set is wider than our 10 canonical user-facing
+// `industryTags` and mixes industry-domain tokens (`fintech`, `healthcare`,
+// `enterprise_saas`) with job-function tokens (`engineering`, `sales`,
+// `customer_service`, `data_analytics`, `cybersecurity`). We deliberately
+// over-include here: each canonical tag expands to MULTIPLE corpus keys so
+// the resulting `where industryKey in [...]` filter returns a fat candidate
+// pool that the cosine-rerank can then sort by user resume similarity.
+//
+// The H6 brief gave a base mapping (enterprise_saas, engineering, etc.) — but
+// an active-corpus sample of 8000 docs (2026-05-01) shows top keys are
+// {tech, hardware, accounting_finance, ai_ml, marketing, education, ...} and
+// the brief's expected high-volume keys (`enterprise_saas`, `engineering`,
+// `customer_service`) appear 0 times in active. We therefore UNION the
+// brief's table with the actually-present keys so the mapping is robust to
+// either snapshot. Forward-compat: when the F2 enrichment lands and
+// industryEnum/wider keys repopulate, this table covers both shapes.
+//
+// Cap: Firestore `where field in [...]` accepts up to 30 values. We cap to
+// MAX_INDUSTRY_KEY_VALUES below for safety; the longest deduplicated list
+// is currently 8.
+// ---------------------------------------------------------------------------
+
+import type { JobIndustry } from "../types.js"
+
+const MAX_INDUSTRY_KEY_VALUES = 10
+
+const TAG_TO_INDUSTRY_KEY: Record<string, string[]> = {
+  // Brief-base + active-corpus union. Best-effort coverage; daily-batch
+  // post-filters by skills/location/sponsorship anyway.
+  tech_software: [
+    "enterprise_saas",
+    "tech",
+    "engineering",
+    "ai_ml",
+    "data_analytics",
+    "cybersecurity",
+    "product",
+    "technology",
+  ],
+  tech_hardware: ["hardware", "tech", "semiconductor", "semiconductors", "consumer_electronics"],
+  fintech_finance: ["fintech", "accounting_finance", "banking", "insurance"],
+  // No canonical "ai_ml" industryKey in the original schema; the corpus
+  // does carry an `ai_ml` token in 77/8000 active rows, so we include it.
+  ai_ml: ["ai_ml", "ai_infrastructure", "enterprise_saas", "tech", "data_analytics"],
+  healthcare_biotech: ["healthtech", "healthcare"],
+  consumer_retail: ["ecommerce", "retail", "consumer_electronics"],
+  media_entertainment: ["media", "arts_entertainment", "gaming", "social_media"],
+  manufacturing_industrial: [
+    "manufacturing",
+    "aerospace_defense",
+    "automotive",
+    "energy",
+    "transportation",
+  ],
+  education: ["education"],
+  other: ["other"],
+}
+
+/**
+ * Map a single canonical 10-tag industry token to the corpus' industryKey
+ * value-set. Returns the input wrapped in [tag] when the tag isn't in our
+ * table (fail-open: still attempts a literal match rather than empty-set).
+ *
+ * Pure / deterministic — exposed for unit tests in
+ * apps/job-rec/src/__tests__/tools/query-matching-jobs.test.ts.
+ */
+export function mapTagToIndustryKeys(tag: string): string[] {
+  const t = String(tag ?? "").trim()
+  if (!t) return []
+  return TAG_TO_INDUSTRY_KEY[t] ?? [t]
+}
+
+/**
+ * Expand a list of canonical industry tags to a deduplicated, capped
+ * industryKey value-set suitable for `where industryKey in [...]`.
+ * Returns up to MAX_INDUSTRY_KEY_VALUES values. Returns [] when the
+ * input is empty or every tag is unknown — caller should treat empty as
+ * "no industry filter".
+ */
+export function expandIndustryTags(tags: readonly string[]): string[] {
+  if (!Array.isArray(tags) || tags.length === 0) return []
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const tag of tags) {
+    for (const key of mapTagToIndustryKeys(tag)) {
+      if (!seen.has(key)) {
+        seen.add(key)
+        out.push(key)
+        if (out.length >= MAX_INDUSTRY_KEY_VALUES) return out
+      }
+    }
+  }
+  return out
+}
+
+// Type-only import guard — JobIndustry is referenced in the table type only
+// for runtime documentation; the table key is a string union of
+// JobIndustryTag values. JobIndustry import retained for forward-compat.
+void ((): JobIndustry | undefined => undefined)
+
 export type QueryMatchingJobsDeps = {
   db: Firestore
   log?: (...args: unknown[]) => void
@@ -175,7 +280,18 @@ export async function queryMatchingJobs(
   const log = deps.log ?? defaultLog
 
   let q = deps.db.collection(MATCHING_JOBS_COLLECTION).where("status", "==", ACTIVE_STATUS)
-  if (parsed.filters.industry && parsed.filters.industry !== "any") {
+  // Stream H6 — prefer industryTags expansion (in-clause over real corpus
+  // industryKey value-set) when caller provides it (daily-batch); fall back
+  // to the legacy single-equality compound-where for tool-path callers.
+  const expandedKeys = expandIndustryTags(parsed.filters.industryTags ?? [])
+  if (expandedKeys.length > 0) {
+    log("[queryMatchingJobs] industry_keys_expanded", {
+      tags: parsed.filters.industryTags,
+      keys: expandedKeys,
+    })
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    q = (q as any).where("industryKey", "in", expandedKeys)
+  } else if (parsed.filters.industry && parsed.filters.industry !== "any") {
     q = q.where("industryKey", "==", parsed.filters.industry)
   }
   // The composite indexes brief-cited support `status,industryKey,firstSeenAt`

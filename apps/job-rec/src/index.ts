@@ -96,6 +96,7 @@ export {
   defaultUserEmbedFetcher,
   rerankByCosine,
   cosineSimilarity,
+  normalizeJobProfile,
 } from "./daily-batch.js"
 export type {
   DailyBatchDeps,

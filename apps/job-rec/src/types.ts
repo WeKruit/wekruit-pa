@@ -125,6 +125,18 @@ export const QueryMatchingJobsFiltersSchema = z.object({
   salaryMin: z.number().int().nonnegative().optional(),
   /** Optional skills weighting — skills bumped via in-memory rank. */
   userSkills: z.array(z.string()).optional(),
+  /**
+   * Stream H6 — canonical 10-tag industry list (e.g. ["tech_software",
+   * "ai_ml"]). When non-empty, queryMatchingJobs expands these tags into
+   * the corpus' `industryKey` token-set via {@link mapTagToIndustryKeys}
+   * and filters with `where industryKey in [...]` (Firestore in-clause,
+   * cap 10). Preferred over the 6-enum `industry` field for daily-batch:
+   * the 6-enum collapse loses signal (tech_software + ai_ml + fintech_finance
+   * → "tech" matches only ~191/40374 active rows).
+   * Tool-path callers (recruiter-agent) typically don't set this; they
+   * pass `industry` and we keep the legacy compound-where path.
+   */
+  industryTags: z.array(z.string()).optional(),
 })
 export type QueryMatchingJobsFilters = z.infer<typeof QueryMatchingJobsFiltersSchema>
 

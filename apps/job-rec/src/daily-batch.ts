@@ -436,6 +436,13 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
         {
           filters: {
             industry: normalized.industry,
+            // Stream H6 — pass canonical 10-tag list so query expands to
+            // industryKey-in over the corpus' real token-set (instead of
+            // collapsing all 3 user tags to a single 6-enum bucket and
+            // matching ~191/40374 active rows).
+            ...(normalized.industryTags.length > 0
+              ? { industryTags: normalized.industryTags }
+              : {}),
             location: normalized.location,
             sponsorship: normalized.sponsorship,
             sizePreference: normalized.sizePreference,
