@@ -77,11 +77,15 @@ const INDUSTRY_KEY_MAP: Record<string, IndustryTag> = {
   it: "tech_software",
   cybersecurity: "tech_software",
   security: "tech_software",
+  technology: "tech_software",
+  telecom: "tech_software",
+  telecommunications: "tech_software",
   // ---- tech_hardware ------------------------------------------------------
   hardware: "tech_hardware",
   semiconductors: "tech_hardware",
   semiconductor: "tech_hardware",
   electronics: "tech_hardware",
+  consumer_electronics: "tech_hardware",
   iot: "tech_hardware",
   robotics: "tech_hardware",
   // ---- fintech_finance ----------------------------------------------------
@@ -93,6 +97,9 @@ const INDUSTRY_KEY_MAP: Record<string, IndustryTag> = {
   investment: "fintech_finance",
   trading: "fintech_finance",
   hedge_fund: "fintech_finance",
+  financial_services: "fintech_finance",
+  reinsurance: "fintech_finance",
+  insurance_services: "fintech_finance",
   // ---- ai_ml --------------------------------------------------------------
   ai: "ai_ml",
   ai_ml: "ai_ml",
@@ -101,6 +108,7 @@ const INDUSTRY_KEY_MAP: Record<string, IndustryTag> = {
   data_science: "ai_ml",
   data_analytics: "ai_ml",
   data: "ai_ml",
+  ai_infrastructure: "ai_ml",
   // ---- healthcare_biotech -------------------------------------------------
   healthtech: "healthcare_biotech",
   healthcare: "healthcare_biotech",
@@ -119,6 +127,13 @@ const INDUSTRY_KEY_MAP: Record<string, IndustryTag> = {
   hospitality: "consumer_retail",
   restaurants: "consumer_retail",
   travel: "consumer_retail",
+  real_estate: "consumer_retail",
+  facilities: "consumer_retail",
+  facilities_services: "consumer_retail",
+  hr_outsourcing: "consumer_retail",
+  apparel: "consumer_retail",
+  beauty: "consumer_retail",
+  grocery: "consumer_retail",
   // ---- media_entertainment ------------------------------------------------
   media: "media_entertainment",
   entertainment: "media_entertainment",
@@ -138,6 +153,19 @@ const INDUSTRY_KEY_MAP: Record<string, IndustryTag> = {
   construction: "manufacturing_industrial",
   automotive: "manufacturing_industrial",
   aerospace: "manufacturing_industrial",
+  aerospace_defense: "manufacturing_industrial",
+  defense: "manufacturing_industrial",
+  defense_contractor: "manufacturing_industrial",
+  mining: "manufacturing_industrial",
+  agriculture: "manufacturing_industrial",
+  chemicals: "manufacturing_industrial",
+  materials: "manufacturing_industrial",
+  pest_control: "consumer_retail",
+  fitness: "consumer_retail",
+  wellness: "consumer_retail",
+  staffing: "consumer_retail",
+  recruiting: "consumer_retail",
+  property_management: "consumer_retail",
   logistics: "manufacturing_industrial",
   transportation: "manufacturing_industrial",
   // ---- education ----------------------------------------------------------
@@ -172,6 +200,487 @@ export function mapToCanonicalIndustry(raw: string | null | undefined): Industry
     return norm as IndustryTag
   }
   return INDUSTRY_KEY_MAP[norm] ?? "other"
+}
+
+// ---------------------------------------------------------------------------
+// Stream H8 — Multi-signal cascade mapper (F2-redo).
+//
+// F2's deterministic mapper hit 32% non-other on the 40374-doc corpus, well
+// below the 80% threshold and the 60% pragmatic floor. RCA (b67c964 + corpus
+// audit): industryKey alone carries job-function tokens (`engineering`,
+// `marketing`, `sales`, `customer_service`, `hr`, `consulting`, `design`,
+// `product`) for ~half the corpus — these CANNOT be mapped to a 10-tag
+// industry from the key alone. We need a SECOND signal.
+//
+// H8 fix: cascade three signals (industryKey → companyName → roleTitle).
+// First non-"other" hit wins. Cost stays at $0 — no LLM, no embedding.
+//
+// Surface contract: `mapToCanonicalIndustryFromSignals(signals)` is the new
+// preferred entry point for the matching-jobs enricher. Legacy
+// `mapToCanonicalIndustry(raw)` is preserved untouched for cv-ingest's CV-tag
+// enrichment (different problem domain — LLM emits canonical tokens already).
+// ---------------------------------------------------------------------------
+
+export type IndustrySignals = {
+  industryKey?: string | null
+  companyName?: string | null
+  roleTitle?: string | null
+}
+
+/**
+ * Top-companies → canonical industry. Hand-curated, ~115 entries. Lookup is
+ * performed against `normalizeCompanyName(name)`; well-known multi-word
+ * names (e.g. "Bank of America", "General Motors") are keyed in their
+ * normalized snake form ("bank_of_america"). Misses fall through to
+ * roleTitle — never bias incorrectly when uncertain.
+ */
+const COMPANY_INDUSTRY_MAP: Record<string, IndustryTag> = {
+  // tech_software — big tech + SaaS
+  google: "tech_software",
+  alphabet: "tech_software",
+  microsoft: "tech_software",
+  amazon: "tech_software",
+  meta: "tech_software",
+  facebook: "tech_software",
+  netflix: "media_entertainment",
+  uber: "tech_software",
+  lyft: "tech_software",
+  airbnb: "tech_software",
+  doordash: "tech_software",
+  instacart: "consumer_retail",
+  shopify: "tech_software",
+  salesforce: "tech_software",
+  oracle: "tech_software",
+  ibm: "tech_software",
+  vmware: "tech_software",
+  servicenow: "tech_software",
+  workday: "tech_software",
+  atlassian: "tech_software",
+  snowflake: "tech_software",
+  databricks: "ai_ml",
+  mongodb: "tech_software",
+  cloudflare: "tech_software",
+  datadog: "tech_software",
+  splunk: "tech_software",
+  palo_alto_networks: "tech_software",
+  paloalto: "tech_software",
+  crowdstrike: "tech_software",
+  zscaler: "tech_software",
+  okta: "tech_software",
+  hashicorp: "tech_software",
+  github: "tech_software",
+  gitlab: "tech_software",
+  twilio: "tech_software",
+  zoom: "tech_software",
+  slack: "tech_software",
+  asana: "tech_software",
+  notion: "tech_software",
+  figma: "tech_software",
+  canva: "tech_software",
+  dropbox: "tech_software",
+  box: "tech_software",
+  // ai_ml
+  anthropic: "ai_ml",
+  openai: "ai_ml",
+  scale_ai: "ai_ml",
+  hugging_face: "ai_ml",
+  huggingface: "ai_ml",
+  cohere: "ai_ml",
+  mistral: "ai_ml",
+  mistral_ai: "ai_ml",
+  // tech_hardware / semis
+  apple: "tech_hardware",
+  cisco: "tech_hardware",
+  nvidia: "tech_hardware",
+  amd: "tech_hardware",
+  intel: "tech_hardware",
+  qualcomm: "tech_hardware",
+  broadcom: "tech_hardware",
+  micron: "tech_hardware",
+  asml: "tech_hardware",
+  tsmc: "tech_hardware",
+  arm: "tech_hardware",
+  applied_materials: "tech_hardware",
+  // fintech / finance
+  stripe: "fintech_finance",
+  block: "fintech_finance",
+  square: "fintech_finance",
+  paypal: "fintech_finance",
+  visa: "fintech_finance",
+  mastercard: "fintech_finance",
+  jpmorgan: "fintech_finance",
+  jpmorgan_chase: "fintech_finance",
+  goldman_sachs: "fintech_finance",
+  morgan_stanley: "fintech_finance",
+  blackrock: "fintech_finance",
+  citadel: "fintech_finance",
+  jane_street: "fintech_finance",
+  two_sigma: "fintech_finance",
+  bridgewater: "fintech_finance",
+  bridgewater_associates: "fintech_finance",
+  bank_of_america: "fintech_finance",
+  wells_fargo: "fintech_finance",
+  citigroup: "fintech_finance",
+  citi: "fintech_finance",
+  coinbase: "fintech_finance",
+  robinhood: "fintech_finance",
+  affirm: "fintech_finance",
+  klarna: "fintech_finance",
+  plaid: "fintech_finance",
+  brex: "fintech_finance",
+  zurich_insurance: "fintech_finance",
+  zurich: "fintech_finance",
+  goosehead_insurance: "fintech_finance",
+  goosehead: "fintech_finance",
+  h_r_block: "fintech_finance",
+  hr_block: "fintech_finance",
+  nicsa: "fintech_finance",
+  fidelity: "fintech_finance",
+  vanguard: "fintech_finance",
+  schwab: "fintech_finance",
+  charles_schwab: "fintech_finance",
+  ally: "fintech_finance",
+  ally_financial: "fintech_finance",
+  amex: "fintech_finance",
+  american_express: "fintech_finance",
+  capital_one: "fintech_finance",
+  discover: "fintech_finance",
+  // healthcare / biotech
+  natera: "healthcare_biotech",
+  bristol_myers_squibb: "healthcare_biotech",
+  bristol_myers: "healthcare_biotech",
+  amgen: "healthcare_biotech",
+  regeneron: "healthcare_biotech",
+  vertex_pharmaceuticals: "healthcare_biotech",
+  gilead: "healthcare_biotech",
+  eli_lilly: "healthcare_biotech",
+  lilly: "healthcare_biotech",
+  kaiser_permanente: "healthcare_biotech",
+  cleveland_clinic: "healthcare_biotech",
+  mayo_clinic: "healthcare_biotech",
+  mass_general_brigham: "healthcare_biotech",
+  hca_healthcare: "healthcare_biotech",
+  hca: "healthcare_biotech",
+  medline: "healthcare_biotech",
+  medline_industries: "healthcare_biotech",
+  baxter: "healthcare_biotech",
+  baxter_international: "healthcare_biotech",
+  stryker: "healthcare_biotech",
+  thermo_fisher: "healthcare_biotech",
+  thermo_fisher_scientific: "healthcare_biotech",
+  becton_dickinson: "healthcare_biotech",
+  bd: "healthcare_biotech",
+  abbott: "healthcare_biotech",
+  abbott_laboratories: "healthcare_biotech",
+  moderna: "healthcare_biotech",
+  pfizer: "healthcare_biotech",
+  johnson_johnson: "healthcare_biotech",
+  merck: "healthcare_biotech",
+  novartis: "healthcare_biotech",
+  roche: "healthcare_biotech",
+  abbvie: "healthcare_biotech",
+  unitedhealth: "healthcare_biotech",
+  cvs_health: "healthcare_biotech",
+  oscar_health: "healthcare_biotech",
+  flatiron_health: "healthcare_biotech",
+  illumina: "healthcare_biotech",
+  // consumer / retail
+  walgreens: "consumer_retail",
+  cvs: "consumer_retail",
+  rite_aid: "consumer_retail",
+  whole_foods_market: "consumer_retail",
+  whole_foods: "consumer_retail",
+  the_tjx_companies: "consumer_retail",
+  tjx: "consumer_retail",
+  tj_maxx: "consumer_retail",
+  marshalls: "consumer_retail",
+  homegoods: "consumer_retail",
+  rent_a_center: "consumer_retail",
+  carvana: "consumer_retail",
+  ulta_beauty: "consumer_retail",
+  ulta: "consumer_retail",
+  express: "consumer_retail",
+  dollar_tree: "consumer_retail",
+  dollar_tree_stores: "consumer_retail",
+  dollar_general: "consumer_retail",
+  best_version_media: "media_entertainment",
+  hibu: "media_entertainment",
+  circle_k: "consumer_retail",
+  domino_s: "consumer_retail",
+  dominos: "consumer_retail",
+  victoria_s_secret: "consumer_retail",
+  victorias_secret: "consumer_retail",
+  o_reilly_auto_parts: "consumer_retail",
+  oreilly_auto_parts: "consumer_retail",
+  autozone: "consumer_retail",
+  walmart: "consumer_retail",
+  allied_universal: "consumer_retail",
+  victra: "consumer_retail",
+  sun_auto_tire_service: "consumer_retail",
+  rollins: "consumer_retail",
+  american_residential_services: "consumer_retail",
+  renuity: "consumer_retail",
+  public_storage: "consumer_retail",
+  asset_living: "consumer_retail",
+  greystar: "consumer_retail",
+  greystar_international: "consumer_retail",
+  panda_restaurant_group: "consumer_retail",
+  panda_express: "consumer_retail",
+  ross_stores: "consumer_retail",
+  ross: "consumer_retail",
+  floor_decor: "consumer_retail",
+  nordstrom: "consumer_retail",
+  camping_world: "consumer_retail",
+  cbre: "consumer_retail",
+  cushman_wakefield: "consumer_retail",
+  couche_tard: "consumer_retail",
+  hometeam_pest_defense: "consumer_retail",
+  sunbelt_rentals: "consumer_retail",
+  holiday_stationstores: "consumer_retail",
+  leaf_home: "consumer_retail",
+  aaa: "consumer_retail",
+  visionworks: "consumer_retail",
+  visionworks_of_america: "consumer_retail",
+  jcpenney: "consumer_retail",
+  kohls: "consumer_retail",
+  kohl_s: "consumer_retail",
+  macy_s: "consumer_retail",
+  macys: "consumer_retail",
+  bestbuy: "consumer_retail",
+  best_buy: "consumer_retail",
+  starbucks: "consumer_retail",
+  mcdonalds: "consumer_retail",
+  mcdonald_s: "consumer_retail",
+  chick_fil_a: "consumer_retail",
+  chipotle: "consumer_retail",
+  chipotle_mexican_grill: "consumer_retail",
+  uber_eats: "consumer_retail",
+  hilton: "consumer_retail",
+  marriott: "consumer_retail",
+  hyatt: "consumer_retail",
+  five_below: "consumer_retail",
+  hobby_lobby: "consumer_retail",
+  hannaford_supermarkets: "consumer_retail",
+  hannaford: "consumer_retail",
+  publix: "consumer_retail",
+  publix_pharmacy: "consumer_retail",
+  bj_s_wholesale_club: "consumer_retail",
+  bjs_wholesale_club: "consumer_retail",
+  bjs: "consumer_retail",
+  foot_locker: "consumer_retail",
+  sherwin_williams: "consumer_retail",
+  the_aaron_s_company: "consumer_retail",
+  aaron_s: "consumer_retail",
+  aarons: "consumer_retail",
+  hdr: "manufacturing_industrial",
+  cintas: "consumer_retail",
+  trugreen: "consumer_retail",
+  orkin: "consumer_retail",
+  adt: "consumer_retail",
+  valet_living: "consumer_retail",
+  firstservice_residential: "consumer_retail",
+  sbm_management_services: "consumer_retail",
+  national_fitness_partners: "consumer_retail",
+  eos_fitness: "consumer_retail",
+  windermere_real_estate: "consumer_retail",
+  windermere: "consumer_retail",
+  blain_s_farm_fleet: "consumer_retail",
+  blains_farm_fleet: "consumer_retail",
+  kal_tire: "consumer_retail",
+  jerry: "fintech_finance",
+  prolific: "consumer_retail",
+  metropolis_technologies: "tech_software",
+  metropolis: "tech_software",
+  softchoice: "tech_software",
+  microchip_technology: "tech_hardware",
+  microchip: "tech_hardware",
+  zoll_cardiac_management_solutions: "healthcare_biotech",
+  zoll: "healthcare_biotech",
+  pace_analytical_services: "healthcare_biotech",
+  pace_analytical: "healthcare_biotech",
+  eurofins: "healthcare_biotech",
+  community_choice_financial: "fintech_finance",
+  marsh_mclennan_agency: "fintech_finance",
+  marsh_mclennan: "fintech_finance",
+  farmers_insurance: "fintech_finance",
+  allstate: "fintech_finance",
+  total_quality_logistics: "manufacturing_industrial",
+  cargill: "manufacturing_industrial",
+  flatirondragados: "manufacturing_industrial",
+  flatiron: "manufacturing_industrial",
+  wsp: "manufacturing_industrial",
+  spacex: "manufacturing_industrial",
+  gpm_investments: "consumer_retail",
+  target: "consumer_retail",
+  costco: "consumer_retail",
+  ebay: "consumer_retail",
+  etsy: "consumer_retail",
+  wayfair: "consumer_retail",
+  // media / entertainment
+  disney: "media_entertainment",
+  walt_disney: "media_entertainment",
+  warner_bros: "media_entertainment",
+  spotify: "media_entertainment",
+  tiktok: "media_entertainment",
+  bytedance: "media_entertainment",
+  pinterest: "media_entertainment",
+  snap: "media_entertainment",
+  snapchat: "media_entertainment",
+  reddit: "media_entertainment",
+  comcast: "media_entertainment",
+  nbcuniversal: "media_entertainment",
+  paramount: "media_entertainment",
+  hulu: "media_entertainment",
+  twitch: "media_entertainment",
+  twitter: "media_entertainment",
+  x_corp: "media_entertainment",
+  // manufacturing / industrial
+  tesla: "manufacturing_industrial",
+  ford: "manufacturing_industrial",
+  ford_motor: "manufacturing_industrial",
+  gm: "manufacturing_industrial",
+  general_motors: "manufacturing_industrial",
+  boeing: "manufacturing_industrial",
+  airbus: "manufacturing_industrial",
+  lockheed_martin: "manufacturing_industrial",
+  raytheon: "manufacturing_industrial",
+  caterpillar: "manufacturing_industrial",
+  ge: "manufacturing_industrial",
+  general_electric: "manufacturing_industrial",
+  siemens: "manufacturing_industrial",
+  honda: "manufacturing_industrial",
+  toyota: "manufacturing_industrial",
+  bmw: "manufacturing_industrial",
+  volkswagen: "manufacturing_industrial",
+  rivian: "manufacturing_industrial",
+  lucid: "manufacturing_industrial",
+  northrop_grumman: "manufacturing_industrial",
+  northrop: "manufacturing_industrial",
+  general_dynamics: "manufacturing_industrial",
+  honeywell: "manufacturing_industrial",
+  t_mobile: "tech_software",
+  tmobile: "tech_software",
+  at_t: "tech_software",
+  att: "tech_software",
+  verizon: "tech_software",
+  verizon_communications: "tech_software",
+  exxonmobil: "manufacturing_industrial",
+  exxon: "manufacturing_industrial",
+  chevron: "manufacturing_industrial",
+  shell: "manufacturing_industrial",
+  bp: "manufacturing_industrial",
+  techtronic_industries: "manufacturing_industrial",
+  techtronic: "manufacturing_industrial",
+  rrd: "manufacturing_industrial",
+  precision_castparts: "manufacturing_industrial",
+  jacobs: "manufacturing_industrial",
+  jacobs_engineering: "manufacturing_industrial",
+  leidos: "manufacturing_industrial",
+  fluor: "manufacturing_industrial",
+  bechtel: "manufacturing_industrial",
+  parsons: "manufacturing_industrial",
+  "3m": "manufacturing_industrial",
+  // education
+  coursera: "education",
+  udemy: "education",
+  duolingo: "education",
+  chegg: "education",
+}
+
+/**
+ * roleTitle keyword → canonical industry. Compound matching: substring
+ * search against the lowercased title. First match by ORDER wins, so put
+ * narrower phrases before broader ones (e.g. "machine learning" before
+ * "engineer"). Cost: O(N*K) per row but K is small (~30) and N is the
+ * batch size — acceptable for a one-shot enrichment.
+ */
+const ROLE_TITLE_KEYWORDS: Array<{ pattern: RegExp; tag: IndustryTag }> = [
+  // ai_ml — narrow phrases first
+  { pattern: /\b(machine\s*learning|ml\s*engineer|data\s*scientist|applied\s*scientist|ai\s*engineer|nlp\s*engineer|computer\s*vision)\b/i, tag: "ai_ml" },
+  { pattern: /\b(ml|ai)\s*(researcher|scientist|engineer)\b/i, tag: "ai_ml" },
+  // tech_hardware — narrow phrases first (before generic "engineer")
+  { pattern: /\b(asic|fpga|firmware|embedded|hardware\s*engineer|silicon|chip\s*design|semiconductor)\b/i, tag: "tech_hardware" },
+  // fintech_finance
+  { pattern: /\b(quant|quantitative|trader|trading|investment\s*bank|portfolio\s*manager|risk\s*analyst|actuary|underwriter)\b/i, tag: "fintech_finance" },
+  // healthcare_biotech
+  { pattern: /\b(clinical|biostatistician|bioinformatic|pharmacist|nurse|physician|medical\s*affairs)\b/i, tag: "healthcare_biotech" },
+  // tech_software — broad coverage; placed AFTER hardware so "embedded" wins
+  { pattern: /\b(software\s*engineer|swe|full\s*stack|fullstack|frontend|front\s*end|backend|back\s*end|platform\s*engineer|sre|site\s*reliability|devops|cloud\s*engineer|security\s*engineer|web\s*developer|mobile\s*engineer|ios\s*engineer|android\s*engineer|application\s*engineer)\b/i, tag: "tech_software" },
+  // education
+  { pattern: /\b(teacher|professor|lecturer|tutor|instructor|education\s*specialist)\b/i, tag: "education" },
+  // consumer_retail — store-level + restaurant + delivery roles
+  { pattern: /\b(store\s*manager|store\s*associate|sales\s*associate|cashier|barista|server|bartender|line\s*cook|retail\s*sales|delivery\s*driver|warehouse\s*associate|loss\s*prevention)\b/i, tag: "consumer_retail" },
+  // manufacturing_industrial — blue-collar industrial roles
+  { pattern: /\b(maintenance\s*technician|machinist|assembly\s*technician|production\s*operator|forklift|truck\s*driver|cdl\s*driver|welder|electrician|hvac\s*technician|plumber)\b/i, tag: "manufacturing_industrial" },
+  // sales — explicitly stay other (job-function, not industry)
+  // (intentionally not present; "sales" alone shouldn't bias to any industry)
+  // healthcare_biotech — service roles in healthcare orgs
+  { pattern: /\b(certified\s*nursing|cna|medical\s*assistant|patient\s*care|phlebotomist|radiology\s*tech|respiratory\s*therapist|registered\s*nurse|rn\b)\b/i, tag: "healthcare_biotech" },
+]
+
+/**
+ * Normalize a company name for COMPANY_INDUSTRY_MAP lookup. Drops common
+ * legal suffixes (Inc., LLC., Co., Ltd., Corp., Corporation) and reduces
+ * whitespace + punctuation to single underscores.
+ */
+export function normalizeCompanyName(raw: string | null | undefined): string {
+  if (!raw || typeof raw !== "string") return ""
+  let s = raw.toLowerCase().trim()
+  // Strip legal suffixes (multi-pass since some names chain them).
+  s = s.replace(/[,.]/g, " ")
+  s = s.replace(/\b(inc|incorporated|llc|llp|ltd|limited|co|corp|corporation|company|gmbh|ag|sa|plc|nv)\b\.?/g, " ")
+  s = s.replace(/[^a-z0-9]+/g, "_")
+  s = s.replace(/^_+|_+$/g, "")
+  return s
+}
+
+function lookupCompany(name: string | null | undefined): IndustryTag | null {
+  const norm = normalizeCompanyName(name)
+  if (!norm) return null
+  if (norm in COMPANY_INDUSTRY_MAP) return COMPANY_INDUSTRY_MAP[norm]!
+  // Defensive: try the first word too — covers "Stripe Payments", "Uber
+  // Eats", etc. without needing a long-tail entry.
+  const first = norm.split("_")[0]
+  if (first && first in COMPANY_INDUSTRY_MAP) return COMPANY_INDUSTRY_MAP[first]!
+  return null
+}
+
+function lookupRoleTitle(title: string | null | undefined): IndustryTag | null {
+  if (!title || typeof title !== "string") return null
+  for (const { pattern, tag } of ROLE_TITLE_KEYWORDS) {
+    if (pattern.test(title)) return tag
+  }
+  return null
+}
+
+/**
+ * H8 multi-signal cascade. Returns the FIRST non-"other" hit from
+ * (industryKey → companyName → roleTitle). Falls through to "other" only
+ * when ALL three signals are missing or unmappable.
+ *
+ * Ordering rationale: industryKey is the most reliable when present (the
+ * scraper extracted it from the JD's structured industry field). Company
+ * name is next-strongest signal. Role title is last because it bleeds
+ * across industries (a "software engineer" works in healthcare AND
+ * fintech AND tech).
+ */
+export function mapToCanonicalIndustryFromSignals(s: IndustrySignals): IndustryTag {
+  // 1. industryKey — strongest signal, hits the existing F2 map.
+  const fromKey =
+    typeof s.industryKey === "string" && s.industryKey.length > 0
+      ? mapToCanonicalIndustry(s.industryKey)
+      : "other"
+  if (fromKey !== "other") return fromKey
+
+  // 2. companyName — second-strongest signal.
+  const fromCompany = lookupCompany(s.companyName)
+  if (fromCompany) return fromCompany
+
+  // 3. roleTitle — last resort, weakest signal.
+  const fromRole = lookupRoleTitle(s.roleTitle)
+  if (fromRole) return fromRole
+
+  return "other"
 }
 
 /**

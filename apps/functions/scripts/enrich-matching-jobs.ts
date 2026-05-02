@@ -59,6 +59,11 @@ type IndustryTag =
 async function loadMapper() {
   const mod = (await import("../src/cv-ingest/industry-tags.js")) as {
     mapToCanonicalIndustry: (raw: string | null | undefined) => IndustryTag
+    mapToCanonicalIndustryFromSignals: (s: {
+      industryKey?: string | null
+      companyName?: string | null
+      roleTitle?: string | null
+    }) => IndustryTag
     INDUSTRY_TAGS: readonly string[]
   }
   return mod
@@ -72,6 +77,14 @@ type Args = {
   live: boolean
   maxJobs: number | null
   batch: number
+  /**
+   * Stream H8 — non-other coverage threshold (0..1). When LIVE coverage is
+   * BELOW this value the script still completes the writes (data is only
+   * better-than-before) but exits non-zero so caller can detect quality
+   * regression. DRY-RUN prints a WARN line. Default 0.60 — pragmatic floor
+   * (down from F2's aspirational 0.80 that aborted at 32%).
+   */
+  threshold: number
 }
 
 export function parseArgs(argv: string[]): Args {
@@ -80,21 +93,28 @@ export function parseArgs(argv: string[]): Args {
     live: false,
     maxJobs: null,
     batch: FIRESTORE_BATCH_MAX,
+    threshold: 0.6,
   }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!
     if (a === "--dry-run") out.dryRun = true
-    else if (a === "--live") out.live = true
+    // Stream H8 — `--apply` is the brief's preferred LIVE alias.
+    else if (a === "--live" || a === "--apply") out.live = true
     else if (a === "--max-jobs") out.maxJobs = Number(argv[++i] ?? "0")
     else if (a.startsWith("--max-jobs=")) out.maxJobs = Number(a.slice("--max-jobs=".length))
     else if (a === "--batch") out.batch = Number(argv[++i] ?? "500")
     else if (a.startsWith("--batch=")) out.batch = Number(a.slice("--batch=".length))
+    else if (a === "--threshold") out.threshold = Number(argv[++i] ?? "0.6")
+    else if (a.startsWith("--threshold=")) out.threshold = Number(a.slice("--threshold=".length))
   }
   if (!out.dryRun && !out.live) {
     out.dryRun = true // default to dry-run for safety
   }
   if (out.batch <= 0 || out.batch > FIRESTORE_BATCH_MAX) {
     out.batch = FIRESTORE_BATCH_MAX
+  }
+  if (!Number.isFinite(out.threshold) || out.threshold < 0 || out.threshold > 1) {
+    out.threshold = 0.6
   }
   return out
 }
@@ -120,33 +140,70 @@ export function makeEmptySummary(): EnrichSummary {
 }
 
 /**
- * Pure decision function: given a doc's data + the mapper, return a write
- * decision. Exposed for unit tests.
+ * Pure decision function: given a doc's data + a multi-signal mapper,
+ * return a write decision.
+ *
+ * H8 changes vs F2:
+ *   - Accepts a multi-signal mapper (industryKey + companyName + roleTitle).
+ *   - `already_enriched` now triggers on EITHER string OR array shape (F2
+ *     wrote string; H8 writes a 1-element array so query-matching-jobs can
+ *     `array-contains-any`). Existing F2 string rows are NOT rewritten —
+ *     idempotent across script versions.
+ *   - When neither industryKey nor industry is present, falls through to
+ *     companyName / roleTitle instead of skipping. Skips ONLY when ALL
+ *     three signals are absent.
+ *
+ * Exposed for unit tests.
  */
 export type EnrichDecision =
   | { action: "skip"; reason: "already_enriched" | "no_industry" }
   | { action: "update"; industryEnum: IndustryTag; sourceKey: string }
 
+export type SignalMapper = (s: {
+  industryKey?: string | null
+  companyName?: string | null
+  roleTitle?: string | null
+}) => IndustryTag
+
 export function decideEnrichment(
   data: Record<string, unknown>,
-  mapper: (raw: string | null | undefined) => IndustryTag
+  mapper: SignalMapper
 ): EnrichDecision {
-  if (typeof data.industryEnum === "string") {
+  // F2 wrote string; H8 writes string-or-array. Treat either as enriched.
+  const existing = data.industryEnum
+  if (typeof existing === "string" && existing.length > 0) {
     return { action: "skip", reason: "already_enriched" }
   }
-  const sourceKey =
+  if (Array.isArray(existing) && existing.length > 0) {
+    return { action: "skip", reason: "already_enriched" }
+  }
+
+  const industryKey =
     typeof data.industryKey === "string" && data.industryKey.length > 0
       ? data.industryKey
       : typeof data.industry === "string" && data.industry.length > 0
         ? data.industry
-        : ""
-  if (!sourceKey) {
-    // Safest behavior: still tag as "other" so downstream queries can match.
-    // BUT: skip writes when the doc has nothing to map at all — these rows
-    // are typically corrupted; tag them on next refresh instead.
+        : null
+  const companyName =
+    typeof data.companyName === "string" && data.companyName.length > 0
+      ? data.companyName
+      : null
+  const roleTitle =
+    typeof data.roleTitle === "string" && data.roleTitle.length > 0
+      ? data.roleTitle
+      : typeof data.jobTitle === "string" && data.jobTitle.length > 0
+        ? data.jobTitle
+        : null
+
+  if (!industryKey && !companyName && !roleTitle) {
+    // Truly no signal — corrupt or stub doc. Don't write.
     return { action: "skip", reason: "no_industry" }
   }
-  const industryEnum = mapper(sourceKey)
+
+  const industryEnum = mapper({ industryKey, companyName, roleTitle })
+  // sourceKey is reported in summaries — prefer the strongest available
+  // signal so the unmapped-samples list is debuggable.
+  const sourceKey = industryKey ?? companyName ?? roleTitle ?? ""
   return { action: "update", industryEnum, sourceKey }
 }
 
@@ -196,19 +253,30 @@ export function formatSummary(summary: EnrichSummary, args: Args): string {
   if (summary.unmappedSamples.length > 0) {
     lines.push("")
     lines.push(
-      `Unmapped samples (industryKey → "other") — first ${summary.unmappedSamples.length}:`
+      `Unmapped samples (signals → "other") — first ${summary.unmappedSamples.length}:`
     )
     for (const s of summary.unmappedSamples) {
-      lines.push(`  ${s.id}  industryKey="${s.industryKey}"`)
+      lines.push(`  ${s.id}  source="${s.industryKey}"`)
     }
   }
+  // H8: surface the non-other coverage % so the operator can compare to
+  // the --threshold floor and decide whether to flip the runtime flag.
+  const totalUpdated = summary.updated
+  const otherCount = summary.byTag.get("other") ?? 0
+  const nonOther = totalUpdated - otherCount
+  const pctNonOther = totalUpdated > 0 ? nonOther / totalUpdated : 0
+  lines.push("")
+  lines.push(
+    `Non-other coverage: ${nonOther}/${totalUpdated} (${(pctNonOther * 100).toFixed(2)}%)`
+  )
   lines.push("=".repeat(70))
   return lines.join("\n")
 }
 
 async function main() {
   const args = parseArgs(process.argv.slice(2))
-  const { mapToCanonicalIndustry } = await loadMapper()
+  const { mapToCanonicalIndustryFromSignals } = await loadMapper()
+  const mapper: SignalMapper = (s) => mapToCanonicalIndustryFromSignals(s)
 
   if (args.dryRun) {
     // Dry-run mode: still hits Firestore (read-only) so we get a real
@@ -233,7 +301,7 @@ async function main() {
     while (summary.scanned < cap) {
       let q: FirebaseFirestore.Query = db
         .collection(COLLECTION)
-        .select("industryKey", "industry", "industryEnum")
+        .select("industryKey", "industry", "industryEnum", "companyName", "roleTitle", "jobTitle")
         .orderBy("__name__")
         .limit(Math.min(2000, cap - summary.scanned))
       if (last) q = q.startAfter(last)
@@ -241,7 +309,7 @@ async function main() {
       if (snap.empty) break
       for (const d of snap.docs) {
         summary.scanned++
-        const decision = decideEnrichment(d.data() as Record<string, unknown>, mapToCanonicalIndustry)
+        const decision = decideEnrichment(d.data() as Record<string, unknown>, mapper)
         summarizeDecision(decision, d.id, summary)
       }
       last = snap.docs[snap.docs.length - 1] ?? null
@@ -249,6 +317,14 @@ async function main() {
     }
     console.log(formatSummary(summary, args))
     console.log(`(dry-run: NO writes performed)`)
+    const otherCount = summary.byTag.get("other") ?? 0
+    const totalUpdated = summary.updated
+    const pctNonOther = totalUpdated > 0 ? (totalUpdated - otherCount) / totalUpdated : 0
+    if (pctNonOther < args.threshold) {
+      console.error(
+        `[enrich-matching-jobs] WARN dry-run coverage ${(pctNonOther * 100).toFixed(2)}% < threshold ${(args.threshold * 100).toFixed(0)}%`
+      )
+    }
     return
   }
 
@@ -266,7 +342,7 @@ async function main() {
   while (summary.scanned < cap) {
     let q: FirebaseFirestore.Query = db
       .collection(COLLECTION)
-      .select("industryKey", "industry", "industryEnum")
+      .select("industryKey", "industry", "industryEnum", "companyName", "roleTitle", "jobTitle")
       .orderBy("__name__")
       .limit(Math.min(2000, cap - summary.scanned))
     if (last) q = q.startAfter(last)
@@ -276,11 +352,14 @@ async function main() {
     let writesPending = 0
     for (const d of snap.docs) {
       summary.scanned++
-      const decision = decideEnrichment(d.data() as Record<string, unknown>, mapToCanonicalIndustry)
+      const decision = decideEnrichment(d.data() as Record<string, unknown>, mapper)
       summarizeDecision(decision, d.id, summary)
       if (decision.action === "update") {
+        // H8: write a 1-element ARRAY so query-matching-jobs can use
+        // `array-contains-any` against the user's 10-tag profile. F2 wrote a
+        // bare string; we never landed any of those, so no migration needed.
         writeBatch.update(d.ref, {
-          industryEnum: decision.industryEnum,
+          industryEnum: [decision.industryEnum],
           industryEnumEnrichedAt: new Date().toISOString(),
         })
         writesPending++
@@ -299,6 +378,18 @@ async function main() {
   }
   console.log(formatSummary(summary, args))
   console.log(`(live: ${summary.updated} docs updated)`)
+  // H8: non-zero exit when coverage is below the configured threshold so
+  // CI / operator can detect a regression. Writes are kept (data is still
+  // an improvement over zero coverage); only the exit code flags the dip.
+  const otherCount = summary.byTag.get("other") ?? 0
+  const totalUpdated = summary.updated
+  const pctNonOther = totalUpdated > 0 ? (totalUpdated - otherCount) / totalUpdated : 0
+  if (pctNonOther < args.threshold) {
+    console.error(
+      `[enrich-matching-jobs] WARN coverage ${(pctNonOther * 100).toFixed(2)}% < threshold ${(args.threshold * 100).toFixed(0)}% — writes kept, exiting 2`
+    )
+    process.exit(2)
+  }
 }
 
 const invokedAsScript =

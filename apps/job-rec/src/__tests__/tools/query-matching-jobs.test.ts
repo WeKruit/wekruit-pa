@@ -340,6 +340,132 @@ test("queryMatchingJobs: industryTags filter uses industryKey 'in' path and matc
 })
 
 // ---------------------------------------------------------------------------
+// Stream H8 — flag-gated industryEnum array-contains-any path
+// ---------------------------------------------------------------------------
+
+import { capIndustryEnumValues } from "../../tools/query-matching-jobs.js"
+import { _clearFeatureFlagCache } from "@pa/pa-persistence"
+
+test("capIndustryEnumValues: dedupes + caps at 10 + drops empty", () => {
+  assert.deepEqual(capIndustryEnumValues(["a", "b", "a", " ", "", "c"]), ["a", "b", "c"])
+  const big = Array.from({ length: 20 }, (_, i) => `t${i}`)
+  assert.equal(capIndustryEnumValues(big).length, 10)
+  assert.deepEqual(capIndustryEnumValues([]), [])
+})
+
+test("queryMatchingJobs: flag=false (default) keeps the H6 industryKey-in path", async () => {
+  _clearFeatureFlagCache()
+  const mfs = new MockFirestore()
+  // No pa-feature-flags doc → getFlag returns the default `false`.
+  await mfs.collection("matching-jobs").doc("h6row").set({
+    status: "active",
+    companyName: "TechCo",
+    roleTitle: "SWE",
+    salaryMax: 180000,
+    locationRaw: "NYC",
+    primaryUrl: "https://t",
+    industry: "tech",
+    industryKey: "tech",  // H6 expansion path matches "tech"
+    industryEnum: ["tech_software"], // H8 path would ALSO match this
+    sponsorship: false,
+    requiredSkills: ["python"],
+    firstSeenAt: "2026-04-30",
+  })
+  const out = await queryMatchingJobs(
+    { filters: { industryTags: ["tech_software"], userSkills: ["python"] }, limit: 5 },
+    { db: asFirestore(mfs) }
+  )
+  assert.equal(out.jobs.length, 1)
+  assert.equal(out.jobs[0]?.id, "h6row")
+})
+
+test("queryMatchingJobs: flag=true uses industryEnum array-contains-any path", async () => {
+  _clearFeatureFlagCache()
+  const mfs = new MockFirestore()
+  // Seed the flag doc as a global bool=true.
+  await mfs.collection("pa-feature-flags").doc("matchingIndustryEnumPopulated").set({
+    key: "matchingIndustryEnumPopulated",
+    value: true,
+    type: "bool",
+    scope: "global",
+  })
+  // Row that hits via industryEnum (H8) — industryKey is a job-function so
+  // the H6 expansion would have NOT pulled it in; this isolates the flag path.
+  await mfs.collection("matching-jobs").doc("h8row").set({
+    status: "active",
+    companyName: "Stripe",
+    roleTitle: "Senior SWE",
+    salaryMax: 220000,
+    locationRaw: "Remote",
+    primaryUrl: "https://h8",
+    industry: "fintech",
+    industryKey: "engineering", // job-function, NOT in tech_software H6 expansion
+    industryEnum: ["fintech_finance"], // H8 enrichment value
+    sponsorship: false,
+    requiredSkills: ["python"],
+    firstSeenAt: "2026-04-30",
+  })
+  // Row that should NOT match — industryEnum=other.
+  await mfs.collection("matching-jobs").doc("nope").set({
+    status: "active",
+    companyName: "Random Co",
+    roleTitle: "Marketing Mgr",
+    salaryMax: 120000,
+    locationRaw: "NYC",
+    primaryUrl: "https://nope",
+    industry: "marketing",
+    industryKey: "marketing",
+    industryEnum: ["other"],
+    sponsorship: false,
+    firstSeenAt: "2026-04-29",
+  })
+  const out = await queryMatchingJobs(
+    {
+      filters: {
+        industryTags: ["fintech_finance", "tech_software"],
+        sponsorship: "h1b",
+        userSkills: ["python"],
+      },
+      limit: 5,
+    },
+    { db: asFirestore(mfs) }
+  )
+  const ids = new Set(out.jobs.map((j) => j.id))
+  assert.ok(ids.has("h8row"), "industryEnum array-contains-any should match Stripe row")
+  assert.ok(!ids.has("nope"), "marketing row with industryEnum=[other] should NOT match")
+  _clearFeatureFlagCache()
+})
+
+test("queryMatchingJobs: flag=true with empty industryTags falls through (no industryEnum filter applied)", async () => {
+  _clearFeatureFlagCache()
+  const mfs = new MockFirestore()
+  await mfs.collection("pa-feature-flags").doc("matchingIndustryEnumPopulated").set({
+    key: "matchingIndustryEnumPopulated",
+    value: true,
+    type: "bool",
+    scope: "global",
+  })
+  await mfs.collection("matching-jobs").doc("any").set({
+    status: "active",
+    companyName: "Random Co",
+    roleTitle: "SWE",
+    locationRaw: "NYC",
+    primaryUrl: "https://x",
+    industry: "any",
+    industryKey: "tech",
+    sponsorship: false,
+    firstSeenAt: "2026-04-30",
+  })
+  const out = await queryMatchingJobs(
+    { filters: { industry: "any" }, limit: 5 },
+    { db: asFirestore(mfs) }
+  )
+  assert.equal(out.jobs.length, 1, "empty industryTags + flag=true should still return rows (no filter)")
+  _clearFeatureFlagCache()
+})
+
+
+// ---------------------------------------------------------------------------
 // Stream H7 — Location fallback ladder (D1)
 // ---------------------------------------------------------------------------
 

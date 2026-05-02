@@ -330,6 +330,13 @@ const SEED_FLAGS: FlagSpec[] = [
   // stages new uploads in `pa-cv-pending` and prompts the user via outbound
   // iMessage (love = replace / question = supplement / 24h TTL = replace).
   { key: "paCvOverwritePromptEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
+  // Stream H8 — gates the matching-jobs query path. When OFF, queryMatchingJobs
+  // uses the H6 industryKey-expansion fallback. When ON, it uses the canonical
+  // `industryEnum array-contains-any` path against the H8-enriched corpus.
+  // Default OFF; flipped ON only AFTER the LIVE enrichment script writes
+  // `industryEnum: [tag]` to ≥60% of the matching-jobs collection. Global
+  // scope — applies to ALL queries, ALL users.
+  { key: "matchingIndustryEnumPopulated", value: false, type: "bool", scope: "global", allowlist: [], blocklist: [] },
 ]
 
 export function checkAdminToken(provided: string | undefined): { ok: boolean; status: number; error?: string } {

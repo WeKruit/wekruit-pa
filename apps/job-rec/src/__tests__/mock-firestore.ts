@@ -77,7 +77,7 @@ class DocRef {
   }
 }
 
-type Filter = { field: string; op: "==" | "<=" | "in"; value: unknown }
+type Filter = { field: string; op: "==" | "<=" | "in" | "array-contains" | "array-contains-any"; value: unknown }
 class Query {
   constructor(
     protected mfs: MockFirestore,
@@ -88,7 +88,7 @@ class Query {
     protected lim: number = 0
   ) {}
 
-  where(field: string, op: "==" | "<=" | "in", value: unknown): Query {
+  where(field: string, op: "==" | "<=" | "in" | "array-contains" | "array-contains-any", value: unknown): Query {
     return new Query(this.mfs, this.collectionPath, [...this.filters, { field, op, value }], this.orderField, this.orderDir, this.lim)
   }
 
@@ -110,6 +110,15 @@ class Query {
         if (f.op === "==") return got === f.value
         if (f.op === "<=") return typeof got === "string" && typeof f.value === "string" && got <= f.value
         if (f.op === "in") return Array.isArray(f.value) && (f.value as unknown[]).includes(got)
+        if (f.op === "array-contains") {
+          return Array.isArray(got) && (got as unknown[]).includes(f.value)
+        }
+        if (f.op === "array-contains-any") {
+          if (!Array.isArray(got) || !Array.isArray(f.value)) return false
+          const want = new Set(f.value as unknown[])
+          for (const g of got as unknown[]) if (want.has(g)) return true
+          return false
+        }
         return false
       })
     )
