@@ -60,7 +60,17 @@ import {
 } from "@pa/memory"
 import { appendAuditEvent } from "@pa/pa-broker"
 import { getFlag } from "@pa/pa-persistence"
-import { checkPromptInjection, checkPromptInjectionAndRecord, enforceRateLimit } from "@pa/pa-safety"
+import {
+  checkPromptInjection,
+  checkPromptInjectionAndRecord,
+  enforceRateLimit,
+  // Phase 46 (v1.5 Stream-E) — safety/abuse hardening
+  runSafetyCheck,
+  pickLangForSafety,
+  SAFETY_CANNED_REPLIES,
+  type SafetyAction,
+  type Severity as SafetySeverity,
+} from "@pa/pa-safety"
 import {
   resolveOnboardingStep,
   applyOnboardingStep,
@@ -239,7 +249,18 @@ export type OrchestratorStore = {
    * v1.1 P0 — rate limit + regex injection gate before model turn.
    * Default Firestore impl uses @pa/pa-safety; tests return allow: true.
    */
-  checkInboundSafety(event: InboundEvent): Promise<{ allow: boolean; reason?: string }>
+  /**
+   * Phase 46 — extended return: safety-check may also surface `action`
+   * (respond_sanitized | silent_drop | escalate) + `severity`. Old callers
+   * that return `{ allow, reason? }` continue to work because new fields are
+   * optional. Default impl uses @pa/pa-safety `runSafetyCheck`.
+   */
+  checkInboundSafety(event: InboundEvent): Promise<{
+    allow: boolean
+    reason?: string
+    action?: SafetyAction
+    severity?: SafetySeverity
+  }>
   /**
    * Phase 22 — cancel all pending proactive jobs for a user (D-07, PROACTIVE-06).
    * Returns the count of jobs cancelled.
@@ -618,11 +639,28 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
 
     const safety = await store.checkInboundSafety(event)
     if (!safety.allow) {
-      const msg =
-        safety.reason === "rate_limited"
-          ? "You’re sending a bit too fast. Give it a few seconds and try again."
-          : "I can’t work with that message. Try rephrasing."
-      await sendMemoryReply(store, event, turnId, msg)
+      // Phase 46 (v1.5 Stream-E) — action-aware safety branch with bilingual canned replies.
+      // Backward-compat: if `action` is undefined (legacy callers / test mocks), fall
+      // through to the legacy reason-based message selection.
+      const lang = pickLangForSafety(event.body)
+      let msg: string | null
+      if (safety.action === "silent_drop") {
+        msg = null // no reply at all (cooldown)
+      } else if (safety.action === "respond_sanitized") {
+        msg = SAFETY_CANNED_REPLIES.respond_sanitized[lang]
+      } else if (safety.action === "escalate") {
+        msg = SAFETY_CANNED_REPLIES.escalate[lang]
+      } else {
+        // Legacy path (Phase 23 reason-only). Keep wording bytewise identical for
+        // zero-regression on flag-off + legacy mock callers.
+        msg =
+          safety.reason === "rate_limited"
+            ? "You’re sending a bit too fast. Give it a few seconds and try again."
+            : "I can’t work with that message. Try rephrasing."
+      }
+      if (msg !== null) {
+        await sendMemoryReply(store, event, turnId, msg)
+      }
       await store.updateTurn(turnId, {
         status: "succeeded",
         stage: "succeeded",
@@ -1590,6 +1628,14 @@ export function createFirestoreOrchestratorStore(db: Firestore): OrchestratorSto
       }
     },
     async checkInboundSafety(event) {
+      // Phase 46 (v1.5 Stream-E) — master flag. When OFF, fall through to the
+      // pre-Phase-46 path bytewise (Phase 23 1-min rate-limit + legacy injection)
+      // for zero regression. When ON, run the layered runSafetyCheck (which uses
+      // the v2 pattern bank + illegal-content + 24h rate-abuse, gated per-layer).
+      const masterOn = await getFlag(db, "paSafetyCheckEnabled", { userId: event.userId }, true)
+
+      // Phase 23 1-minute rate-limit ALWAYS runs. Pre-existing protection;
+      // Phase 46 only adds the 24h abuse counter on top, never replaces.
       const rl = await enforceRateLimit(db, { userId: event.userId, channel: event.channel })
       if (!rl.allow) {
         await appendAuditEvent(db, {
@@ -1602,18 +1648,42 @@ export function createFirestoreOrchestratorStore(db: Firestore): OrchestratorSto
         })
         return { allow: false, reason: rl.reason }
       }
-      // Phase 23 — checkPromptInjectionAndRecord writes the pa_abuse_events row
-      // (kind=prompt_injection) in addition to the audit event. The sync
-      // checkPromptInjection is still imported for tests that don't need DB.
-      const inj = await checkPromptInjectionAndRecord(db, {
-        userId: event.userId,
-        channel: event.channel,
-        text: event.body,
-      })
-      if (!inj.allow) {
-        return { allow: false, reason: inj.reason }
+
+      if (masterOn === false) {
+        // Master kill-switch: revert to pre-Phase-46 behavior (Phase 23 path).
+        const inj = await checkPromptInjectionAndRecord(db, {
+          userId: event.userId,
+          channel: event.channel,
+          text: event.body,
+        })
+        if (!inj.allow) return { allow: false, reason: inj.reason }
+        return { allow: true }
       }
-      return { allow: true }
+
+      // Phase 46 layered check. Per-layer canary flags:
+      //   - prompt-injection: ON by default (established protection layer)
+      //   - illegal-content : OFF by default (canary)
+      //   - rate-abuse-24h  : OFF by default (canary)
+      const [illegalOn, rate24hOn] = await Promise.all([
+        getFlag(db, "paSafetyIllegalContentEnabled", { userId: event.userId }, false),
+        getFlag(db, "paSafetyRateAbuse24hEnabled", { userId: event.userId }, false),
+      ])
+      const verdict = await runSafetyCheck(
+        db,
+        { userId: event.userId, channel: event.channel, text: event.body },
+        {
+          promptInjection: true,
+          illegalContent: illegalOn === true,
+          rateAbuse24h: rate24hOn === true,
+        }
+      )
+      if (verdict.verdict === "pass") return { allow: true }
+      return {
+        allow: false,
+        reason: verdict.layer ?? verdict.reasons[0] ?? "safety_block",
+        action: verdict.action,
+        severity: verdict.severity,
+      }
     },
     nowIso,
     log: (...args) => console.log(new Date().toISOString(), ...args),

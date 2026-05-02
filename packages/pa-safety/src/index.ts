@@ -190,3 +190,439 @@ export function filterMemoryWrite(input: {
 export function isUnsafeMemoryContent(text: string): boolean {
   return UNSAFE_MEMORY_PATTERNS.some((p) => p.test(text))
 }
+
+// ============================================================================
+// Phase 46 (v1.5 Stream-E) — safety/abuse hardening
+// ============================================================================
+// Adam directive (verbatim): "Also we need the prompt injection & safety check
+// & protection, we cannot tolerate abuse and illegle usage".
+//
+// Layered detection (all run; severity wins):
+//   1. Prompt injection — bilingual regex bank (high severity)
+//   2. Illegal content   — small bilingual keyword bank (critical severity)
+//   3. Rate abuse 24h    — Firestore counter (high severity)
+//
+// Action mapping:
+//   high prompt-injection       → respond_sanitized (canned bilingual reply)
+//   critical illegal content    → escalate (canned reply + admin audit flag)
+//   high 24h rate abuse         → silent_drop (no reply at all, cooldown)
+//
+// Latency budget: < 30ms p99 over 100-char input. Layers 1 & 2 are pure
+// regex/keyword (sub-ms); layer 3 is one Firestore txn (~20ms platform-bound).
+//
+// Pattern bank versioned in code (NOT Firestore) for fast load + git audit.
+// Each pattern carries `addedAt` so we can audit drift across phases.
+// ============================================================================
+
+export type Severity = "low" | "med" | "high" | "critical"
+export type SafetyAction =
+  | "respond_normally"
+  | "respond_sanitized"
+  | "silent_drop"
+  | "escalate"
+export type SafetyVerdict = "pass" | "warn" | "block"
+
+export type SafetyCheckResult = {
+  verdict: SafetyVerdict
+  severity: Severity
+  action: SafetyAction
+  reasons: string[]
+  /** Layer that fired (highest-severity wins); undefined when verdict=pass. */
+  layer?: "prompt_injection" | "illegal_content" | "rate_abuse_24h"
+  /** Detailed signals for logging/audit. NEVER includes raw illegal text. */
+  signals: string[]
+}
+
+type PatternEntry = {
+  id: string
+  regex: RegExp
+  /** ISO date string for audit; bump when patterns change. */
+  addedAt: string
+}
+
+/**
+ * Bilingual prompt-injection bank. Anchored carefully to avoid false positives
+ * on legit conversational text. The legacy `INJECTION_PATTERNS` (above) stays
+ * for backward-compat with `checkPromptInjection`/`checkPromptInjectionAndRecord`;
+ * this v2 bank is consulted by `runSafetyCheck`.
+ */
+export const INJECTION_PATTERNS_V2: readonly PatternEntry[] = [
+  // English — direct injection
+  { id: "en_ignore_prev", regex: /ignore\s+(?:all\s+)?(?:previous|prior|above)\s+(?:instructions|prompts?)/i, addedAt: "2026-05-02" },
+  { id: "en_disregard_prev", regex: /disregard\s+(?:all\s+)?(?:previous|prior|above)\s+(?:instructions|prompts?)/i, addedAt: "2026-05-02" },
+  { id: "en_you_are_now", regex: /you\s+are\s+now\s+(?:DAN|admin|root|developer|jailbroken|unrestricted)/i, addedAt: "2026-05-02" },
+  { id: "en_dan", regex: /\b(?:DAN|do\s+anything\s+now)\b/i, addedAt: "2026-05-02" },
+  { id: "en_jailbreak", regex: /\bjailbreak\b/i, addedAt: "2026-05-02" },
+  { id: "en_reveal_prompt", regex: /(?:reveal|print|show|leak|output|repeat)\s+(?:your\s+|the\s+)?(?:system|developer|initial)\s+prompt/i, addedAt: "2026-05-02" },
+  { id: "en_pretend_you_are", regex: /\bpretend\s+(?:you\s+are|to\s+be)\s+(?:DAN|admin|root|jailbroken|unrestricted|evil)/i, addedAt: "2026-05-02" },
+  { id: "en_system_marker", regex: /<\|im_(?:start|end)\|>|\[SYSTEM\]|\[ADMIN\]|\[\/?INST\]|\[\/?s\]|\bSYS_PROMPT\b/i, addedAt: "2026-05-02" },
+  { id: "en_slash_system", regex: /^\s*\/(?:system|admin|root|sudo|debug)\b/i, addedAt: "2026-05-02" },
+
+  // Chinese — direct injection (anchored; bare "你现在是" is too broad)
+  { id: "zh_ignore_above", regex: /忽略(?:上面|前面|之前|所有|全部)(?:的)?(?:指令|指示|提示|规则|要求)/, addedAt: "2026-05-02" },
+  { id: "zh_you_are_now_role", regex: /你现在是\s*(?:DAN|admin|管理员|开发者|系统|root|越狱)/i, addedAt: "2026-05-02" },
+  { id: "zh_pretend_role", regex: /假装你是\s*(?:DAN|admin|管理员|开发者|系统|越狱|没有限制)/i, addedAt: "2026-05-02" },
+  { id: "zh_role_play_jailbreak", regex: /角色扮演.*(?:DAN|越狱|没有限制|无限制)/i, addedAt: "2026-05-02" },
+  { id: "zh_reveal_prompt", regex: /(?:告诉|展示|显示|输出|说出)(?:我|出)?(?:你的|系统|原始)?(?:系统提示|系统指令|prompt|提示词)/i, addedAt: "2026-05-02" },
+  { id: "zh_jailbreak_word", regex: /越狱(?:模式|指令|提示)/, addedAt: "2026-05-02" },
+] as const
+
+/**
+ * Illegal-content keyword bank — bilingual, intentionally small to avoid
+ * false-positive bloat. Categories: drugs, weapons, CSAM, violence,
+ * solicitation. Match → critical severity → escalate.
+ *
+ * NOTE: matched text is NEVER stored. Only `bucket` + sha256 hash are written
+ * to pa_abuse_events (D3 requirement).
+ */
+export type IllegalBucket =
+  | "drugs"
+  | "weapons"
+  | "csam"
+  | "violence"
+  | "solicitation"
+
+export const ILLEGAL_CONTENT_PATTERNS: readonly (PatternEntry & { bucket: IllegalBucket })[] = [
+  // Drugs (manufacture/sell — possession alone is not blocked, this is for solicitation/instructions)
+  { id: "drugs_synth_meth", regex: /how\s+to\s+(?:make|cook|synthesize)\s+(?:meth|methamphetamine|crack|heroin|fentanyl)/i, bucket: "drugs", addedAt: "2026-05-02" },
+  { id: "drugs_zh_synth", regex: /(?:怎么|如何)(?:制作|制造|合成)(?:冰毒|海洛因|可卡因|芬太尼)/, bucket: "drugs", addedAt: "2026-05-02" },
+
+  // Weapons (build/3d-print firearms/explosives instructions)
+  { id: "weapons_build_bomb", regex: /how\s+to\s+(?:build|make|construct)\s+(?:a\s+)?(?:bomb|pipe\s+bomb|ied|explosive|grenade|nerve\s+agent)/i, bucket: "weapons", addedAt: "2026-05-02" },
+  { id: "weapons_ghost_gun", regex: /\b(?:ghost\s+gun|3d[\s-]?print(?:ed|ing)?\s+(?:gun|firearm|glock)|untraceable\s+firearm)\b/i, bucket: "weapons", addedAt: "2026-05-02" },
+  { id: "weapons_zh", regex: /(?:怎么|如何)(?:制作|制造)(?:炸弹|枪|手枪|爆炸物)/, bucket: "weapons", addedAt: "2026-05-02" },
+
+  // CSAM — extremely conservative; we use unambiguous solicitation phrasing only
+  { id: "csam_en", regex: /\b(?:cp|csam|child\s+(?:porn|sex|abuse))\b/i, bucket: "csam", addedAt: "2026-05-02" },
+  { id: "csam_zh", regex: /(?:儿童|未成年)(?:色情|性|裸照)/, bucket: "csam", addedAt: "2026-05-02" },
+
+  // Violence — targeted/imminent (NOT general violent ideation in fiction)
+  { id: "violence_target_kill", regex: /\bhow\s+to\s+(?:kill|murder|assassinate)\s+(?:my|a\s+specific|the)\s+(?:wife|husband|boss|coworker|neighbor)\b/i, bucket: "violence", addedAt: "2026-05-02" },
+  { id: "violence_zh_target", regex: /(?:怎么|如何)(?:杀死|杀掉|谋杀|刺杀)(?:我的|具体的)/, bucket: "violence", addedAt: "2026-05-02" },
+
+  // Solicitation — sex services / illegal escorts
+  { id: "solicit_en", regex: /\b(?:hire\s+(?:a\s+)?(?:hooker|prostitute|escort\s+for\s+sex)|buy\s+sex|underage\s+escort)\b/i, bucket: "solicitation", addedAt: "2026-05-02" },
+  { id: "solicit_zh", regex: /(?:找|约|嫖)(?:小姐|妓女|未成年).*(?:服务|价格)/, bucket: "solicitation", addedAt: "2026-05-02" },
+] as const
+
+/**
+ * Pure-fast prompt-injection check using the v2 bank. Returns matched
+ * pattern ids (safe to log — no raw user text).
+ */
+export function checkPromptInjectionV2(text: string): {
+  matched: boolean
+  signals: string[]
+} {
+  const signals: string[] = []
+  for (const p of INJECTION_PATTERNS_V2) {
+    if (p.regex.test(text)) signals.push(p.id)
+  }
+  return { matched: signals.length > 0, signals }
+}
+
+/**
+ * Pure-fast illegal-content check. Returns matched pattern ids + bucket
+ * (safe to log). Caller is responsible for hashing+redacting raw text
+ * before persistence.
+ */
+export function checkIllegalContent(text: string): {
+  matched: boolean
+  signals: string[]
+  buckets: IllegalBucket[]
+} {
+  const signals: string[] = []
+  const buckets = new Set<IllegalBucket>()
+  for (const p of ILLEGAL_CONTENT_PATTERNS) {
+    if (p.regex.test(text)) {
+      signals.push(p.id)
+      buckets.add(p.bucket)
+    }
+  }
+  return { matched: signals.length > 0, signals, buckets: [...buckets] }
+}
+
+/**
+ * 24-hour rate-abuse counter. Distinct from `enforceRateLimit` (1-min window).
+ * Threshold default 100 inbound/24h triggers a 24h cooldown window.
+ *
+ * Doc id namespace: `abuse24h_<channel>_<userId>_<windowStart>` to avoid
+ * collision with the 1-min counter (`<channel>_<userId>_<windowStart>`).
+ */
+export async function checkRateAbuse24h(
+  db: Firestore,
+  input: {
+    userId: string
+    channel: Channel
+    limit?: number
+  }
+): Promise<{ exceeded: boolean; count: number; limit: number }> {
+  const limit = input.limit ?? Number(process.env.PA_RATE_ABUSE_24H_LIMIT || "100")
+  const windowMs = 24 * 60 * 60 * 1000
+  const started = Math.floor(Date.now() / windowMs) * windowMs
+  const id = `abuse24h_${input.channel}_${input.userId}_${started}`
+  const ref = db.collection(PA_COLLECTIONS.rateLimits).doc(id)
+  const now = new Date().toISOString()
+  return await db.runTransaction(async (t) => {
+    const snap = await t.get(ref)
+    const cur = snap.exists ? (snap.data() as { count?: number }) : null
+    const nextCount = (cur?.count ?? 0) + 1
+    t.set(
+      ref,
+      {
+        id,
+        userId: input.userId,
+        channel: input.channel,
+        windowKey: String(started),
+        windowStartedAt: new Date(started).toISOString(),
+        windowMs,
+        count: nextCount,
+        updatedAt: now,
+      },
+      { merge: true }
+    )
+    return { exceeded: nextCount > limit, count: nextCount, limit }
+  })
+}
+
+/**
+ * Best-effort sha256 hex of a string. Uses node:crypto. Only used for
+ * redacted-audit of illegal-content matches.
+ */
+async function sha256Hex(input: string): Promise<string> {
+  const { createHash } = await import("node:crypto")
+  return createHash("sha256").update(input).digest("hex")
+}
+
+/**
+ * Write a `pa_abuse_events` row for an illegal-content hit. Stores ONLY
+ * the matched bucket + a sha256 hash of the input — NEVER the raw text.
+ */
+export async function recordIllegalContent(
+  db: Firestore,
+  input: {
+    userId: string
+    channel: Channel
+    text: string
+    signals: string[]
+    buckets: IllegalBucket[]
+  }
+): Promise<void> {
+  const now = new Date().toISOString()
+  const abuseId = randomUUID()
+  const textHash = await sha256Hex(input.text.slice(0, 2048))
+  await db.collection(PA_COLLECTIONS.abuseEvents).doc(abuseId).set({
+    id: abuseId,
+    kind: "illegal_content",
+    severity: "critical",
+    createdAt: now,
+    userId: input.userId,
+    channel: input.channel,
+    signals: input.signals,
+    buckets: input.buckets,
+    textHash,
+    message: `Illegal content blocked (${input.buckets.join(", ")}) — escalated for admin review`,
+  })
+  await appendAuditEvent(db, {
+    actor: "orchestrator",
+    kind: "safety_block",
+    userId: input.userId,
+    message: "Inbound blocked: illegal content (escalated)",
+    meta: { channel: input.channel, buckets: input.buckets, signals: input.signals, textHash },
+  })
+}
+
+/**
+ * Write a `pa_abuse_events` row for a 24h rate-abuse hit.
+ */
+export async function recordRateAbuse24h(
+  db: Firestore,
+  input: {
+    userId: string
+    channel: Channel
+    count: number
+    limit: number
+  }
+): Promise<void> {
+  const now = new Date().toISOString()
+  const abuseId = randomUUID()
+  await db.collection(PA_COLLECTIONS.abuseEvents).doc(abuseId).set({
+    id: abuseId,
+    kind: "rate_abuse_24h",
+    severity: "high",
+    createdAt: now,
+    userId: input.userId,
+    channel: input.channel,
+    windowMs: 24 * 60 * 60 * 1000,
+    count: input.count,
+    limit: input.limit,
+    message: `24h rate abuse: ${input.count} > ${input.limit}`,
+  })
+  await appendAuditEvent(db, {
+    actor: "orchestrator",
+    kind: "rate_limit",
+    userId: input.userId,
+    message: "Inbound silently dropped: 24h rate abuse",
+    meta: { channel: input.channel, count: input.count, limit: input.limit, windowMs: 24 * 60 * 60 * 1000 },
+  })
+}
+
+/**
+ * Top-level safety dispatcher. All three layers run; the highest-severity
+ * match wins. Layer enable flags let canary turn layers on independently.
+ *
+ * Layer-enable defaults (matches D6 rollout plan):
+ *   - promptInjection: true  (always on; established in Phase 23)
+ *   - illegalContent : false (canary OFF until validation)
+ *   - rateAbuse24h   : false (canary OFF until validation)
+ *
+ * The Phase-23 1-minute rate limit (`enforceRateLimit`) is OUTSIDE this
+ * function and is invoked separately by the orchestrator — it predates
+ * Phase 46 and stays unchanged for zero-regression compliance.
+ */
+export async function runSafetyCheck(
+  db: Firestore,
+  input: {
+    userId: string
+    channel: Channel
+    text: string
+    lang?: "zh" | "en"
+  },
+  enable: {
+    promptInjection?: boolean
+    illegalContent?: boolean
+    rateAbuse24h?: boolean
+  } = {}
+): Promise<SafetyCheckResult> {
+  const enabled = {
+    promptInjection: enable.promptInjection ?? true,
+    illegalContent: enable.illegalContent ?? false,
+    rateAbuse24h: enable.rateAbuse24h ?? false,
+  }
+
+  // Layer 1 — prompt injection (high)
+  let injMatched = false
+  let injSignals: string[] = []
+  if (enabled.promptInjection) {
+    const r = checkPromptInjectionV2(input.text)
+    injMatched = r.matched
+    injSignals = r.signals
+  }
+
+  // Layer 2 — illegal content (critical)
+  let illMatched = false
+  let illSignals: string[] = []
+  let illBuckets: IllegalBucket[] = []
+  if (enabled.illegalContent) {
+    const r = checkIllegalContent(input.text)
+    illMatched = r.matched
+    illSignals = r.signals
+    illBuckets = r.buckets
+  }
+
+  // Layer 3 — 24h rate abuse (high). Only consult if first two clean.
+  // (If injection or illegal already fired, we'd silent-drop or escalate —
+  // no need to bump the 24h counter on a blocked turn.)
+  let rate24hExceeded = false
+  let rate24hCount = 0
+  let rate24hLimit = 0
+  if (enabled.rateAbuse24h && !injMatched && !illMatched) {
+    const r = await checkRateAbuse24h(db, { userId: input.userId, channel: input.channel })
+    rate24hExceeded = r.exceeded
+    rate24hCount = r.count
+    rate24hLimit = r.limit
+  }
+
+  // Severity wins: critical > high > pass. Within "high" prefer prompt-injection
+  // over rate-abuse (we want sanitized reply over silent-drop when both fire).
+  if (illMatched) {
+    await recordIllegalContent(db, {
+      userId: input.userId,
+      channel: input.channel,
+      text: input.text,
+      signals: illSignals,
+      buckets: illBuckets,
+    })
+    return {
+      verdict: "block",
+      severity: "critical",
+      action: "escalate",
+      reasons: ["illegal_content"],
+      layer: "illegal_content",
+      signals: illSignals,
+    }
+  }
+  if (injMatched) {
+    await recordPromptInjection(db, {
+      userId: input.userId,
+      channel: input.channel,
+      text: input.text,
+      signals: injSignals,
+    })
+    return {
+      verdict: "block",
+      severity: "high",
+      action: "respond_sanitized",
+      reasons: ["prompt_injection"],
+      layer: "prompt_injection",
+      signals: injSignals,
+    }
+  }
+  if (rate24hExceeded) {
+    await recordRateAbuse24h(db, {
+      userId: input.userId,
+      channel: input.channel,
+      count: rate24hCount,
+      limit: rate24hLimit,
+    })
+    return {
+      verdict: "block",
+      severity: "high",
+      action: "silent_drop",
+      reasons: ["rate_abuse_24h"],
+      layer: "rate_abuse_24h",
+      signals: [`count=${rate24hCount}/${rate24hLimit}`],
+    }
+  }
+
+  return {
+    verdict: "pass",
+    severity: "low",
+    action: "respond_normally",
+    reasons: [],
+    signals: [],
+  }
+}
+
+/**
+ * Bilingual canned responses — keyed off action + lang. Use these in the
+ * orchestrator's safety branch.
+ */
+export const SAFETY_CANNED_REPLIES = {
+  respond_sanitized: {
+    zh: "嘿，我们换个话题聊吧。",
+    en: "let's talk about something else.",
+  },
+  escalate: {
+    zh: "这个我没法帮忙。",
+    en: "I can't help with that.",
+  },
+  // silent_drop emits no text at all (handled at orchestrator).
+} as const
+
+/**
+ * Lightweight CJK-ratio language picker. Mirrors the Phase 44 onboarding
+ * detector (>=30% CJK chars → zh). Pure / sync / sub-microsecond.
+ */
+export function pickLangForSafety(text: string): "zh" | "en" {
+  if (!text) return "en"
+  let cjk = 0
+  let alpha = 0
+  for (const ch of text) {
+    const cp = ch.codePointAt(0) ?? 0
+    if (cp >= 0x4e00 && cp <= 0x9fff) cjk++
+    else if (cp >= 0x41 && cp <= 0x7a) alpha++
+  }
+  const total = cjk + alpha
+  if (total === 0) return "en"
+  return cjk / total >= 0.3 ? "zh" : "en"
+}

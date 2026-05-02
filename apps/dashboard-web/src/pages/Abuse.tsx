@@ -44,18 +44,30 @@ type AbuseRow = {
   resolutionNote?: string
 }
 
-type KindFilter = "all" | "rate_limited" | "prompt_injection" | "allowlist_deny"
+type KindFilter =
+  | "all"
+  | "rate_limited"
+  | "prompt_injection"
+  | "allowlist_deny"
+  // Phase 46 (v1.5 Stream-E) — safety/abuse hardening
+  | "illegal_content"
+  | "rate_abuse_24h"
 
 const KIND_FILTER_LABELS: Record<KindFilter, string> = {
   all: "All",
-  rate_limited: "Rate Limited",
+  rate_limited: "Rate Limited (1m)",
   prompt_injection: "Injection",
   allowlist_deny: "Allowlist Deny",
+  // Phase 46 (v1.5 Stream-E)
+  illegal_content: "Illegal (Escalated)",
+  rate_abuse_24h: "Abuse (24h)",
 }
 
 function kindBadgeColor(kind: string): string {
   if (kind === "prompt_injection" || kind === "prompt_injection_signal") return "bad"
-  if (kind === "rate_limited") return "warn"
+  // Phase 46 — illegal_content is critical → bad; rate_abuse_24h is warn
+  if (kind === "illegal_content") return "bad"
+  if (kind === "rate_limited" || kind === "rate_abuse_24h") return "warn"
   return "muted"
 }
 
