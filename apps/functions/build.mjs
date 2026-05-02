@@ -56,6 +56,11 @@ await build({
     // Cloud Build npm install path for the SDK rather than inline.
     "openai",
     "openai/*",
+    // v1.5 Stream-D — Cloud Tasks SDK is heavy (gRPC + protos ~10MB);
+    // externalize so Cloud Build npm-installs at deploy time. Keeps
+    // bundle <16MB.
+    "@google-cloud/tasks",
+    "@google-cloud/tasks/*",
   ],
   legalComments: "none",
   logLevel: "info",
@@ -82,6 +87,8 @@ const runtimePackage = {
     // it's listed as an OPTIONAL peer; Cloud Run instance failed to start
     // 2026-04-30 with ERR_MODULE_NOT_FOUND 'zod'. Pin it explicitly here.
     "zod": "^3.25.0",
+    // v1.5 Stream-D — Cloud Tasks SDK (externalized for bundle size).
+    "@google-cloud/tasks": "^5.5.0",
   },
 }
 writeFileSync(

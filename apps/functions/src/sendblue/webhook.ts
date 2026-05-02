@@ -43,6 +43,11 @@ import { recordAuditEvent, type AuditEventInput } from "./audit.js"
 import { parseInboundTapback } from "./tapback-parser.js"
 import type { SendblueInboundPayload } from "./types.js"
 import { inboundEventExpiresAtTs, outboundExpiresAtTs } from "./ttl.js"
+// v1.5 Stream-D — message coalescer dispatch (flag-gated; default off).
+import {
+  enqueueOrCoalesce as defaultEnqueueOrCoalesce,
+  type CoalescerDeps,
+} from "../coalesce/paMessageCoalescer.js"
 
 export type WebhookRequest = {
   rawBody?: Buffer | string
@@ -72,6 +77,16 @@ export type WebhookDeps = {
   ingestCv?: (input: IngestCvInput) => Promise<IngestCvResult>
   /** Stream D — phone→userId resolver. Inject for tests. */
   lookupUserByPhone?: (db: Firestore, phoneE164: string) => Promise<string | null>
+  /**
+   * v1.5 Stream-D — message coalescer dispatch. Inject for tests; in
+   * production the CF wrapper binds CoalescerDeps with a real Cloud Tasks
+   * client. Webhook only calls this when paMessageCoalesceEnabled is true
+   * for the message's userId.
+   */
+  enqueueOrCoalesce?: typeof defaultEnqueueOrCoalesce
+  /** Coalescer dependency bundle bound at CF wrapper layer. Required only when
+   *  enqueueOrCoalesce is invoked (i.e. flag=on). */
+  coalescerDeps?: CoalescerDeps
   log?: (...args: unknown[]) => void
 }
 
@@ -517,6 +532,77 @@ export async function handleSendblueWebhook(
       log("[sendblue][webhook] expiresAtTs write failed (non-fatal)",
         ttlErr instanceof Error ? ttlErr.message : String(ttlErr))
     }
+
+    // v1.5 Stream-D — message coalescer dispatch (flag-gated, attachment-skip).
+    //
+    // Conditions for entering the coalescer:
+    //   - paMessageCoalesceEnabled flag = true for THIS user (perUser scope)
+    //   - text-only inbound (mediaUrl absent — attachments have their own
+    //     ❤️ + CV-ingest flow that must not be deferred)
+    //   - coalescerDeps + enqueueOrCoalesce wired by CF wrapper
+    //
+    // The original pa-inbound-events row written by the broker above stays
+    // in place; the coalescer marks it `coalescing:true` so onPaInbound
+    // skips it. On enqueue failure we fall back to legacy direct path
+    // (do nothing — onPaInbound's onDocumentCreated will fire normally).
+    if (!mediaUrl && deps.enqueueOrCoalesce && deps.coalescerDeps) {
+      try {
+        // Resolve userId via phone lookup. If absent, treat as legacy path —
+        // we can't write a buffer keyed by an unknown userId.
+        const lookupFn = deps.lookupUserByPhone ?? defaultLookupUserByPhone
+        const resolvedUserId = await lookupFn(deps.db, normalized.fromNumber)
+        if (!resolvedUserId) {
+          log("[coalesce][webhook] no userId for phone — skipping coalesce, legacy path proceeds", {
+            phone: normalized.fromNumber,
+          })
+        } else {
+          const coalesceFlag = await getFlag(
+            deps.db,
+            "paMessageCoalesceEnabled",
+            { userId: resolvedUserId, env: process.env },
+            false
+          )
+          if (coalesceFlag === true) {
+            try {
+              await deps.enqueueOrCoalesce(deps.coalescerDeps, {
+                userId: resolvedUserId,
+                fromNumber: normalized.fromNumber,
+                toNumber: normalized.toNumber,
+                messageHandle: normalized.messageHandle,
+                body: normalized.text,
+                inboundEventId: result.id,
+              })
+              log("[coalesce][webhook] enqueued", {
+                userId: resolvedUserId,
+                eventId: result.id,
+                handle: normalized.messageHandle,
+              })
+            } catch (coalesceErr) {
+              // Cloud Tasks enqueue failed — bail out of coalesce path; the
+              // pa-inbound-events row is still pending so onPaInbound's
+              // onDocumentCreated will fire and the user gets a (single,
+              // non-coalesced) reply. ZERO-regression on hard failure.
+              log("[coalesce][webhook] enqueue failed — falling back to legacy direct path", {
+                userId: resolvedUserId,
+                err: coalesceErr instanceof Error ? coalesceErr.message : String(coalesceErr),
+              })
+              // Important: revert the `coalescing:true` flag if the coalescer
+              // managed to set it before failing. Best-effort.
+              try {
+                await deps.db.collection("pa-inbound-events").doc(result.id).set(
+                  { coalescing: false, coalesceFallback: true },
+                  { merge: true }
+                )
+              } catch {/* swallow */}
+            }
+          }
+        }
+      } catch (flagErr) {
+        log("[coalesce][webhook] flag/lookup failed (non-fatal)",
+          flagErr instanceof Error ? flagErr.message : String(flagErr))
+      }
+    }
+
     // Stream D — CV side-effects (fire-and-forget). Both run in parallel:
     //   1. Tapback ❤️ via Sendblue Reactions API — immediate user ack.
     //   2. CV ingestion → parsedCandidateResumes — async best-effort.

@@ -32,6 +32,19 @@ import { createHash, randomUUID } from "node:crypto"
 // Phase 21 Sendblue migration
 import { handleSendblueWebhook } from "./sendblue/webhook.js"
 import { paSendblueOutboxHandler } from "./sendblue/outbox.js"
+import { sendReaction as defaultSendReaction } from "./sendblue/send-reaction.js"
+
+// v1.5 Stream-D — message coalescer (paMessageCoalesceEnabled flag-gated)
+import {
+  GoogleCloudTasksClient,
+  resolveTasksConfigFromEnv,
+} from "./coalesce/tasks-client.js"
+import {
+  enqueueOrCoalesce as defaultEnqueueOrCoalesce,
+  processCoalescedTurn,
+  type CoalescerDeps,
+} from "./coalesce/paMessageCoalescer.js"
+import { runCoalesceBufferSweep } from "./coalesce/buffer-sweep.js"
 
 // Phase 31 — Upstream Event Connector
 import { handleUpstreamEventWebhook } from "./upstream-event-webhook.js"
@@ -407,6 +420,18 @@ export const onPaInbound = onDocumentCreated(
       })
       return
     }
+    // v1.5 Stream-D — when paMessageCoalesceEnabled is on, the webhook stamps
+    // `coalescing:true` on the per-message inbound row and enqueues a Cloud
+    // Tasks delayed task. The coalescer fires later, synthesizes ONE merged
+    // event, and drives the orchestrator from there. Per-message rows must
+    // NOT be processed here — that would defeat the entire coalescer.
+    if ((data as { coalescing?: boolean }).coalescing === true && (data as { coalesced?: boolean }).coalesced !== true) {
+      logger.info("onPaInbound skipping coalescing inbound (handled by paMessageCoalescer)", {
+        eventId: data.id,
+        coalesceTurnId: (data as { coalesceTurnId?: string }).coalesceTurnId,
+      })
+      return
+    }
 
     // Re-export secret values into the env so that `@pa/memory` and
     // `@pa/agent-runtime` (which read process.env) pick them up. Cloud
@@ -674,16 +699,181 @@ export const paSendblueWebhook = onRequest(
             return res.set(field, value)
           },
         },
-        {
-          db: getFirestore(),
-          secret: SENDBLUE_WEBHOOK_SIGNING_SECRET.value(),
-          log: (...args: unknown[]) => logger.info("[sendblue][webhook]", ...args),
-        }
+        buildSendblueWebhookDeps()
       )
     } catch (err) {
       logger.error("paSendblueWebhook fatal", { error: err instanceof Error ? err.message : String(err) })
       // Sendblue retry policy will redeliver on 5xx — appropriate for unexpected errors.
       if (!res.headersSent) res.status(500).json({ ok: false, error: "internal" })
+    }
+  }
+)
+
+/**
+ * v1.5 Stream-D — coalescer dep builder.
+ *
+ * Lazy: builds the Cloud Tasks client on first call after env is hydrated.
+ * Re-used by `paSendblueWebhook` (enqueue path) AND `paMessageCoalescer`
+ * (the Cloud Tasks→CF receiver) AND the buffer sweep.
+ *
+ * Returns deps even when env config is missing — but in that case the
+ * tasks-client will throw at first use, and the webhook treats that as a
+ * "fall back to legacy direct path" signal (zero-regression contract).
+ */
+function buildCoalescerDeps(): CoalescerDeps {
+  const cfg = resolveTasksConfigFromEnv(process.env)
+  return {
+    db: getFirestore(),
+    tasks: new GoogleCloudTasksClient(cfg),
+    sendReaction: defaultSendReaction,
+    log: (...args: unknown[]) => logger.info("[coalesce]", ...args),
+  }
+}
+
+/**
+ * Build the deps object passed to handleSendblueWebhook. Wires the
+ * coalescer in BUT only if env config is present — otherwise the webhook
+ * runs in legacy mode (flag check inside webhook also gates the call,
+ * defense in depth).
+ */
+function buildSendblueWebhookDeps() {
+  let coalescerDeps: CoalescerDeps | undefined
+  try {
+    coalescerDeps = buildCoalescerDeps()
+  } catch (err) {
+    logger.warn("[coalesce][webhook] coalescer deps not built (env incomplete) — legacy path only", {
+      err: err instanceof Error ? err.message : String(err),
+    })
+  }
+  return {
+    db: getFirestore(),
+    secret: SENDBLUE_WEBHOOK_SIGNING_SECRET.value(),
+    log: (...args: unknown[]) => logger.info("[sendblue][webhook]", ...args),
+    enqueueOrCoalesce: coalescerDeps ? defaultEnqueueOrCoalesce : undefined,
+    coalescerDeps,
+  }
+}
+
+/**
+ * paMessageCoalescer — Cloud Tasks → CF endpoint (HTTP target).
+ *
+ * Cloud Tasks POSTs to this URL after the configured delay. Body shape:
+ *   { userId: string, turnSeq: number, messageCount?: number }
+ *
+ * Auth: Cloud Tasks signs requests with an OIDC token (audience = this CF
+ * URL, SA = `wekruit-5f89b@appspot.gserviceaccount.com`). Cloud Functions
+ * Gen 2 enforces invoker IAM on its own — operator gates this CF with
+ * `roles/cloudfunctions.invoker` granted ONLY to that SA, so no extra
+ * verification is needed in the handler. (Public access is denied by
+ * default for v2 functions unless `--allow-unauthenticated` is set.)
+ *
+ * Idempotent: `processCoalescedTurn` flips status atomically; duplicate
+ * deliveries return early.
+ */
+export const paMessageCoalescer = onRequest(
+  {
+    region: "us-central1",
+    secrets: [SENDBLUE_API_KEY_ID, SENDBLUE_API_SECRET_KEY, SENDBLUE_FROM_NUMBER, SILICONFLOW_API_KEY, PA_OPENAI_AGENT_API_KEY, QDRANT_URL, QDRANT_API_KEY],
+    memory: "512MiB",
+    timeoutSeconds: 120,
+    cors: false,
+    invoker: "private",
+  },
+  async (req, res) => {
+    // Hydrate env so the orchestrator chain (LLM + memory) can run.
+    process.env.SENDBLUE_API_KEY_ID = SENDBLUE_API_KEY_ID.value()
+    process.env.SENDBLUE_API_SECRET_KEY = SENDBLUE_API_SECRET_KEY.value()
+    process.env.SILICONFLOW_API_KEY = SILICONFLOW_API_KEY.value()
+    process.env.QDRANT_URL = QDRANT_URL.value()
+    process.env.QDRANT_API_KEY = QDRANT_API_KEY.value()
+    if (!process.env.OPENAI_API_KEY) process.env.OPENAI_API_KEY = SILICONFLOW_API_KEY.value()
+    try {
+      const fromNumber = SENDBLUE_FROM_NUMBER.value().trim()
+      if (fromNumber) process.env.SENDBLUE_FROM_NUMBER = fromNumber
+    } catch {
+      // optional on paid lines
+    }
+    try {
+      const openAiKey = PA_OPENAI_AGENT_API_KEY.value().trim()
+      if (openAiKey) process.env.PA_OPENAI_AGENT_API_KEY = openAiKey
+      else delete process.env.PA_OPENAI_AGENT_API_KEY
+    } catch {
+      delete process.env.PA_OPENAI_AGENT_API_KEY
+    }
+
+    try {
+      const body = (req.body ?? {}) as { userId?: unknown; turnSeq?: unknown; messageCount?: unknown }
+      const userId = typeof body.userId === "string" ? body.userId : ""
+      const turnSeq = typeof body.turnSeq === "number" ? body.turnSeq : Number(body.turnSeq ?? NaN)
+      if (!userId || !Number.isFinite(turnSeq)) {
+        logger.warn("paMessageCoalescer bad payload", { body })
+        res.status(400).json({ ok: false, error: "bad_payload" })
+        return
+      }
+      const deps = buildCoalescerDeps()
+      const result = await processCoalescedTurn(deps, userId, turnSeq)
+      logger.info("paMessageCoalescer processed", {
+        userId,
+        turnSeq,
+        status: result.status,
+        messageCount: result.buffer?.messageCount,
+      })
+      res.status(200).json({ ok: true, status: result.status })
+    } catch (err) {
+      logger.error("paMessageCoalescer fatal", { err: err instanceof Error ? err.message : String(err) })
+      // 5xx → Cloud Tasks retries (with its own backoff). Caller should
+      // configure max-attempts on the queue to bound replay.
+      res.status(500).json({ ok: false, error: "internal" })
+    }
+  }
+)
+
+/**
+ * paCoalesceBufferSweep — every 60s scheduled CF (R1 mitigation).
+ *
+ * Force-fires any pa-message-coalesce-buffer doc whose firstReceivedAt is
+ * older than 30s and status="pending". Failures (Cloud Tasks queue paused,
+ * IAM regression, etc.) leave buffers stuck — sweep ensures they always
+ * drain within ~90s worst case.
+ */
+export const paCoalesceBufferSweep = onSchedule(
+  {
+    schedule: "every 60 seconds",
+    region: "us-central1",
+    secrets: [SENDBLUE_API_KEY_ID, SENDBLUE_API_SECRET_KEY, SENDBLUE_FROM_NUMBER, SILICONFLOW_API_KEY, PA_OPENAI_AGENT_API_KEY, QDRANT_URL, QDRANT_API_KEY],
+    memory: "256MiB",
+    timeoutSeconds: 120,
+  },
+  async () => {
+    process.env.SENDBLUE_API_KEY_ID = SENDBLUE_API_KEY_ID.value()
+    process.env.SENDBLUE_API_SECRET_KEY = SENDBLUE_API_SECRET_KEY.value()
+    process.env.SILICONFLOW_API_KEY = SILICONFLOW_API_KEY.value()
+    process.env.QDRANT_URL = QDRANT_URL.value()
+    process.env.QDRANT_API_KEY = QDRANT_API_KEY.value()
+    if (!process.env.OPENAI_API_KEY) process.env.OPENAI_API_KEY = SILICONFLOW_API_KEY.value()
+    try {
+      const fromNumber = SENDBLUE_FROM_NUMBER.value().trim()
+      if (fromNumber) process.env.SENDBLUE_FROM_NUMBER = fromNumber
+    } catch {/* optional */}
+    try {
+      const openAiKey = PA_OPENAI_AGENT_API_KEY.value().trim()
+      if (openAiKey) process.env.PA_OPENAI_AGENT_API_KEY = openAiKey
+      else delete process.env.PA_OPENAI_AGENT_API_KEY
+    } catch {
+      delete process.env.PA_OPENAI_AGENT_API_KEY
+    }
+    try {
+      const deps = buildCoalescerDeps()
+      const result = await runCoalesceBufferSweep(deps)
+      if (result.scanned > 0 || result.errors > 0) {
+        logger.info("paCoalesceBufferSweep tick", result)
+      }
+    } catch (err) {
+      // Never let the sweep tick throw — Cloud Scheduler retries every
+      // minute, but we want clean logs not a stack trace.
+      logger.error("paCoalesceBufferSweep fatal", {
+        err: err instanceof Error ? err.message : String(err),
+      })
     }
   }
 )
