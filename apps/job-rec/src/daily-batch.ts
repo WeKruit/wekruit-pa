@@ -627,6 +627,29 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
         }
       }
 
+      // Stream H12 — dedupe near-identical JDs (same title+company across
+      // cities) BEFORE final slice, so users don't get 3-job pushes that
+      // collapse to 1 unique role × 3 cities. Keep the highest-ranked row
+      // per (title|company) key. Pure / deterministic.
+      if (rankedJobs.length > 1) {
+        const seen = new Set<string>()
+        const deduped: MatchingJob[] = []
+        for (const j of rankedJobs) {
+          const key = `${(j.jobTitle ?? "").toLowerCase().trim()}|${(j.companyName ?? "").toLowerCase().trim()}`
+          if (seen.has(key)) continue
+          seen.add(key)
+          deduped.push(j)
+        }
+        if (deduped.length < rankedJobs.length) {
+          log("[job-rec-daily] dedupe_applied", {
+            userId,
+            before: rankedJobs.length,
+            after: deduped.length,
+          })
+          rankedJobs = deduped
+        }
+      }
+
       // Stream H7 — title anti-bias rerank for tech-track users. When the
       // user is in {tech_software, ai_ml, fintech_finance}, multiply
       // QA/QC/manufacturing-engineer titles by 0.3 so cosine false-friends

@@ -565,3 +565,55 @@ test("Stream H10: cross-encoder fail-open (all-null scores) preserves cosine ord
   assert.doesNotMatch(body, /BotCo/)
 })
 
+test("Stream H12: dedupe by (jobTitle|companyName) drops near-identical JDs", async () => {
+  const mfs = new MockFirestore()
+  await mfs.collection("pa-users").doc("u1").set({ phoneE164: "+15551112222" })
+  await mfs.collection("pa-job-profiles").doc("u1").set({
+    userId: "u1",
+    profile: { industry: "tech", sponsorship: "none", location: "remote", sizePreference: "either" },
+    cvParsedAt: "2026-04-30T00:00:00Z",
+    lastJobBatchSentAt: null,
+    status: "active",
+    createdAt: "2026-04-30T00:00:00Z",
+    updatedAt: "2026-04-30T00:00:00Z",
+  })
+  // 4 jobs: 2 are exact title+company duplicates across cities, 2 are unique.
+  await mfs.collection("matching-jobs").doc("j1").set({
+    status: "active", industryKey: "tech", companyName: "Mastercard",
+    roleTitle: "Tax Consultant", salaryMax: 120000, locationRaw: "Princeton, NJ",
+    primaryUrl: "https://j/1", industry: "tech", sponsorship: false, firstSeenAt: "2026-04-30",
+  })
+  await mfs.collection("matching-jobs").doc("j2").set({
+    status: "active", industryKey: "tech", companyName: "Mastercard",
+    roleTitle: "Tax Consultant", salaryMax: 120000, locationRaw: "Richmond, VA",
+    primaryUrl: "https://j/2", industry: "tech", sponsorship: false, firstSeenAt: "2026-04-29",
+  })
+  await mfs.collection("matching-jobs").doc("j3").set({
+    status: "active", industryKey: "tech", companyName: "Stripe",
+    roleTitle: "Software Engineer", salaryMax: 200000, locationRaw: "Remote",
+    primaryUrl: "https://j/3", industry: "tech", sponsorship: false, firstSeenAt: "2026-04-28",
+  })
+  await mfs.collection("matching-jobs").doc("j4").set({
+    status: "active", industryKey: "tech", companyName: "Stripe",
+    roleTitle: "Software Engineer", salaryMax: 200000, locationRaw: "San Francisco, CA",
+    primaryUrl: "https://j/4", industry: "tech", sponsorship: false, firstSeenAt: "2026-04-27",
+  })
+  const out = await runDailyJobRecBatch({
+    db: asFirestore(mfs),
+    getFlag: async () => true,
+    todayYmd: () => "20260430",
+    jobsPerUser: 4,  // request 4 — dedupe should still leave 2 unique
+  })
+  assert.equal(out.delivered, 1)
+  const body = String(mfs.writeLog.filter((w) => w.path === "pa-outbound")[0]!.data.body)
+  // Both unique title-company pairs should appear, but only ONCE each
+  assert.match(body, /Tax Consultant/)
+  assert.match(body, /Software Engineer/)
+  // Mastercard appears exactly once (not twice)
+  const mastercardCount = (body.match(/Mastercard/g) || []).length
+  assert.equal(mastercardCount, 1, `Mastercard should appear once, got ${mastercardCount}`)
+  // Stripe appears exactly once
+  const stripeCount = (body.match(/Stripe/g) || []).length
+  assert.equal(stripeCount, 1, `Stripe should appear once, got ${stripeCount}`)
+})
+
