@@ -854,7 +854,7 @@ export const paMessageCoalescer = onRequest(
  */
 export const paCoalesceBufferSweep = onSchedule(
   {
-    schedule: "every 60 seconds",
+    schedule: "every 1 minutes",
     region: "us-central1",
     secrets: [SENDBLUE_API_KEY_ID, SENDBLUE_API_SECRET_KEY, SENDBLUE_FROM_NUMBER, SILICONFLOW_API_KEY, PA_OPENAI_AGENT_API_KEY, QDRANT_URL, QDRANT_API_KEY],
     memory: "256MiB",
