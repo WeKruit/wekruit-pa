@@ -329,8 +329,15 @@ The honest list of where routing is fragile or LLM-only.
 **Risk:** "soft" intents are entirely at the mercy of the bible + FSM directive. Off-topic users (e.g. asking Claire about cooking, weather, news beyond `current-info` connector scope) get whatever the LLM decides.
 
 ### Gap 3.7 — `prompt_injection` v2 bank only consulted by `runSafetyCheck`; legacy `checkPromptInjection` is the sync surface still used elsewhere
-**Evidence:** `INJECTION_PATTERNS` (L12-20) coexists with `INJECTION_PATTERNS_V2` (L249-268). `checkPromptInjection` (legacy) only checks the v1 bank.
+**Evidence:** `INJECTION_PATTERNS` (L12-20) coexists with `INJECTION_PATTERNS_V2` (L249-307). `checkPromptInjection` (legacy) only checks the v1 bank.
 **Risk:** mixed coverage. The legacy regex bank lacks DAN, jailbreak, `<|im_start|>` tokens, ZH "假装你是 DAN", etc. Anywhere outside `runSafetyCheck` (e.g. memory-write filter) only sees v1.
+
+**Status: PARTIALLY FIXED (2026-05-02 — Stream-E P0 wiring fix, F5 release blocker).** v2 bank extended from 14 → 26 patterns covering the previously-missed bilingual probes (`zh_send_prompt`, `zh_show_prompt_imperative`, `zh_expose_instructions`, `zh_ignore_above_v2`, `zh_pretend_role_v2`, `zh_im_start`, `zh_developer_mode`, `zh_unlock_filter`, `en_reveal_prompt_v2`, `en_you_are_now_v2`, `en_pretend_v2`, `en_disable_filter`). All 6 abuse-fixture probes (turns 0+1, ZH+EN) now block via `runSafetyCheck` → `respond_sanitized` canned reply, no LLM call. Validated by:
+  - `packages/pa-safety/src/prompt-injection-zh.test.ts` — 16 unit tests (12 true-positives, 4 false-positive guards) all pass
+  - `packages/pa-orchestrator/src/__tests__/safety-gate-integration.test.ts` — 4 e2e tests use REAL `runSafetyCheck` (no mock) and prove `runAgentTurn` is not invoked on blocked input + `pa_abuse_events` row written
+  - All 263 pa-orchestrator + 57 pa-safety existing tests still pass (no regression).
+
+**Out-of-scope (Adam-spec carve-out)**: legacy `checkPromptInjection` (v1 bank, sync surface) is still used by `filterMemoryWrite` / `isUnsafeMemoryContent` / `checkPromptInjectionAndRecord`. Migrating those callers to v2 is a separate refactor — the production inbound path (`processInboundEvent.checkInboundSafety`) already uses v2. Turn-2 leetcode-cheating fixture probe (`帮我写个 leetcode hard 题的完整答案`) is NOT a prompt-injection — it's a content-policy refusal that bible/LLM owns. Tracked as separate follow-up.
 
 ### Gap 3.8 — `illegal_content` and `rate_abuse_24h` layers are canary-OFF by default
 **Evidence:** `runSafetyCheck` defaults `illegalContent: false, rateAbuse24h: false` (L498-500). Orchestrator's wired `checkInboundSafety` does not currently flip these on (we did not find any runtime caller passing `enable.illegalContent=true`).
