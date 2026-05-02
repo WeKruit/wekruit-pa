@@ -56,6 +56,7 @@ export function Operations() {
   const [memoryEvents, setMemoryEvents] = useState<Row[]>([])
   const [scheduledJobs, setScheduledJobs] = useState<Row[]>([])
   const [heartbeats, setHeartbeats] = useState<Row[]>([])
+  const [pipelineRuns, setPipelineRuns] = useState<Row[]>([])
   const [err, setErr] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [tab, setTab] = useState("inbound")
@@ -65,7 +66,7 @@ export function Operations() {
     setErr(null)
     setBusy(true)
     try {
-      const [queues, t, tools, audit, abuse, memory, jobs, hb] = await Promise.all([
+      const [queues, t, tools, audit, abuse, memory, jobs, hb, pipeline] = await Promise.all([
         loadQueueRows(),
         loadRows(PA_COLLECTIONS.agentTurns),
         loadRows(PA_COLLECTIONS.toolCalls),
@@ -74,6 +75,8 @@ export function Operations() {
         loadRows(PA_COLLECTIONS.memoryEvents),
         loadRows(PA_COLLECTIONS.scheduledJobs, 50, "dueAt"),
         loadRows(PA_COLLECTIONS.runtimeHeartbeats, 50, "lastSeenAt"),
+        // v1.5 Stream-A2: Phase 47.1 — daily-update pipeline runs
+        loadRows("pa-matching-pipeline-runs", 30, "createdAt"),
       ])
       setInbound(queues.inbound)
       setOutbound(queues.outbound)
@@ -84,6 +87,7 @@ export function Operations() {
       setMemoryEvents(memory)
       setScheduledJobs(jobs)
       setHeartbeats(hb)
+      setPipelineRuns(pipeline)
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : String(e))
     } finally {
@@ -144,8 +148,9 @@ export function Operations() {
       memory: memoryEvents,
       jobs: scheduledJobs,
       heartbeats,
+      pipelineRuns,
     }),
-    [abuseEvents, auditEvents, heartbeats, inbound, memoryEvents, outbound, scheduledJobs, toolCalls, turns]
+    [abuseEvents, auditEvents, heartbeats, inbound, memoryEvents, outbound, pipelineRuns, scheduledJobs, toolCalls, turns]
   )
 
   const activeRows = sections[tab as keyof typeof sections] ?? []
@@ -161,6 +166,8 @@ export function Operations() {
         actions={<button type="button" disabled={busy} onClick={() => void loadAll()}>{busy ? "Refreshing..." : "Refresh"}</button>}
       />
       {err ? <ErrorState message={err} /> : null}
+      <SafetyEventsTile abuseEvents={abuseEvents} />
+      <PipelineHealthBanner runs={pipelineRuns} />
       <div className="toolbar">
         {Object.keys(sections).map((key) => (
           <button key={key} className={tab === key ? "button-active" : ""} type="button" onClick={() => setTab(key)}>
@@ -197,6 +204,7 @@ function columnsFor(tab: string) {
   if (tab === "abuse") return ["createdAt", "kind", "userId", "channel", "message"]
   if (tab === "jobs") return ["dueAt", "status", "kind", "attemptCount", "lastError"]
   if (tab === "heartbeats") return ["lastSeenAt", "status", "kind", "runtimeId"]
+  if (tab === "pipelineRuns") return ["createdAt", "status", "jobsScraped", "jobsNew", "jobsUpdated", "jobsErrored", "costUsd", "sourceRepos", "error"]
   return ["createdAt", "kind", "userId", "mem0UserId", "message"]
 }
 
@@ -266,3 +274,98 @@ function Section({ title, rows, columns, actions }: { title: string; rows: Row[]
     </>
   )
 }
+
+// v1.5 Stream-A2 / Phase 47.1 — Mac mini daily-update health tile.
+// GREEN if last success < 24h, AMBER 24-36h, RED > 36h.
+function PipelineHealthBanner({ runs }: { runs: Row[] }) {
+  const lastSuccess = runs.find((r) => r.status === "success")
+  if (!lastSuccess) {
+    return (
+      <div style={{ padding: 12, borderRadius: 8, background: "#fee", color: "#900", margin: "12px 0" }}>
+        Matching pipeline: <strong>no successful runs recorded</strong> (collection empty or never populated).
+      </div>
+    )
+  }
+  const tsRaw = (lastSuccess.createdAt ?? lastSuccess.scrapeFinishedAt) as string | undefined
+  const ts = typeof tsRaw === "string" ? Date.parse(tsRaw) : NaN
+  const ageMs = Number.isFinite(ts) ? Date.now() - ts : NaN
+  const ageHrs = Number.isFinite(ageMs) ? ageMs / (1000 * 60 * 60) : NaN
+  let color = "#0a0"
+  let bg = "#efe"
+  let label = "GREEN"
+  if (!Number.isFinite(ageHrs)) {
+    color = "#900"; bg = "#fee"; label = "UNKNOWN"
+  } else if (ageHrs > 36) {
+    color = "#900"; bg = "#fee"; label = "RED"
+  } else if (ageHrs > 24) {
+    color = "#960"; bg = "#ffd"; label = "AMBER"
+  }
+  return (
+    <div style={{ padding: 12, borderRadius: 8, background: bg, color, margin: "12px 0" }}>
+      Matching pipeline: <strong>{label}</strong>
+      {Number.isFinite(ageHrs) ? ` — last success ${ageHrs.toFixed(1)}h ago` : ""}
+      {" — "}
+      jobsNew={cell(lastSuccess.jobsNew)} jobsUpdated={cell(lastSuccess.jobsUpdated)} jobsErrored={cell(lastSuccess.jobsErrored)}
+    </div>
+  )
+}
+
+// ============================================================================
+// Phase 46 (v1.5 Stream-E) — Safety events last 24h tile.
+// Pure-derived from already-loaded `abuseEvents` (no extra Firestore read).
+// Counts kinds by severity bucket; warns visibly when illegal_content > 0.
+// ============================================================================
+function SafetyEventsTile({ abuseEvents }: { abuseEvents: Row[] }) {
+  const last24h = useMemo(() => {
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000
+    return abuseEvents.filter((r) => {
+      const t = typeof r["createdAt"] === "string" ? Date.parse(r["createdAt"] as string) : NaN
+      return Number.isFinite(t) && t >= cutoff
+    })
+  }, [abuseEvents])
+
+  const counts = useMemo(() => {
+    const c: Record<string, number> = {}
+    for (const r of last24h) {
+      const k = String(r["kind"] ?? "unknown")
+      c[k] = (c[k] ?? 0) + 1
+    }
+    return c
+  }, [last24h])
+
+  const total = last24h.length
+  const critical = (counts["illegal_content"] ?? 0)
+  const high =
+    (counts["prompt_injection"] ?? 0) +
+    (counts["rate_abuse_24h"] ?? 0) +
+    (counts["rate_limited"] ?? 0)
+
+  return (
+    <div
+      style={{
+        border: "1px solid #e2e8f0",
+        borderRadius: 8,
+        padding: "12px 16px",
+        background: critical > 0 ? "#fef2f2" : "#f8fafc",
+        display: "flex",
+        gap: 24,
+        alignItems: "center",
+        marginBottom: 12,
+      }}
+    >
+      <div style={{ fontWeight: 600, fontSize: "0.95em" }}>
+        Safety events (24h):{" "}
+        <span style={{ color: critical > 0 ? "#dc2626" : "#0f172a" }}>{total}</span>
+      </div>
+      <div style={{ fontSize: "0.85em", color: "#475569", display: "flex", gap: 16 }}>
+        <span>critical: <b style={{ color: critical > 0 ? "#dc2626" : "#0f172a" }}>{critical}</b></span>
+        <span>high: <b>{high}</b></span>
+        <span>injection: {counts["prompt_injection"] ?? 0}</span>
+        <span>illegal: {counts["illegal_content"] ?? 0}</span>
+        <span>rate-1m: {counts["rate_limited"] ?? 0}</span>
+        <span>rate-24h: {counts["rate_abuse_24h"] ?? 0}</span>
+      </div>
+    </div>
+  )
+}
+

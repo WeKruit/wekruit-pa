@@ -49,6 +49,9 @@ import { runCoalesceBufferSweep } from "./coalesce/buffer-sweep.js"
 // Phase 31 — Upstream Event Connector
 import { handleUpstreamEventWebhook } from "./upstream-event-webhook.js"
 
+// v1.5 Stream-A2 / Phase 47.1 — Matching pipeline complete webhook
+import { handleMatchingPipelineComplete } from "./matching-pipeline-complete.js"
+
 // Phase 22 — proactive check-in sweep
 export { paProactiveSweep } from "./proactive-sweep.js"
 
@@ -104,6 +107,11 @@ const SENDBLUE_FROM_NUMBER = defineSecret("SENDBLUE_FROM_NUMBER")
 // Sendblue traffic (and vice versa). Set via:
 //   echo "$TOKEN" | firebase functions:secrets:set PA_UPSTREAM_HMAC_SECRET --data-file=-
 const PA_UPSTREAM_HMAC_SECRET = defineSecret("PA_UPSTREAM_HMAC_SECRET")
+
+// v1.5 Stream-A2 / Phase 47.1 — Mac mini → cloud webhook for daily-update
+// pipeline complete. HMAC shared secret. Set via:
+//   echo "$TOKEN" | firebase functions:secrets:set PA_MATCHING_WEBHOOK_SECRET --data-file=-
+const PA_MATCHING_WEBHOOK_SECRET = defineSecret("PA_MATCHING_WEBHOOK_SECRET")
 
 const SILICONFLOW_API_KEY = defineSecret("SILICONFLOW_API_KEY")
 const PA_OPENAI_AGENT_API_KEY = defineSecret("PA_OPENAI_AGENT_API_KEY")
@@ -1124,5 +1132,63 @@ export const paUpstreamEventWebhook = onRequest(
 export const paHealthUpstreamEventWebhook = makeHealthHandler({
   name: "paUpstreamEventWebhook",
   requiredSecrets: ["PA_UPSTREAM_HMAC_SECRET"],
+})
+
+// =============================================================================
+// v1.5 Stream-A2 / Phase 47.1 — paMatchingPipelineComplete
+// =============================================================================
+//
+// Mac mini cron (`scripts/daily-update.sh`) POSTs here after each daily
+// scrape+enrich+embed+sync run with HMAC-signed body so wekruit-pa can
+// surface daily-update health and downstream consumers can react to new
+// jobs landing. See apps/functions/src/matching-pipeline-complete.ts and
+// .planning/phases/47.1-matching-pipeline-webhook/DELIVERY.md.
+
+export const paMatchingPipelineComplete = onRequest(
+  {
+    region: "us-central1",
+    secrets: [PA_MATCHING_WEBHOOK_SECRET],
+    memory: "256MiB",
+    timeoutSeconds: 30,
+    cors: false,
+  },
+  async (req, res) => {
+    try {
+      await handleMatchingPipelineComplete(
+        {
+          rawBody: req.rawBody,
+          body: req.body,
+          headers: req.headers as Record<string, string | string[] | undefined>,
+          method: req.method,
+        },
+        {
+          status(code: number) {
+            res.status(code)
+            return this
+          },
+          json(body: unknown) {
+            res.json(body)
+            return this
+          },
+        },
+        {
+          db: getFirestore(),
+          secret: PA_MATCHING_WEBHOOK_SECRET.value(),
+          log: (...args: unknown[]) =>
+            logger.info("[matching-pipeline-complete]", ...args),
+        }
+      )
+    } catch (err) {
+      logger.error("paMatchingPipelineComplete fatal", {
+        error: err instanceof Error ? err.message : String(err),
+      })
+      if (!res.headersSent) res.status(500).json({ ok: false, error: "internal" })
+    }
+  }
+)
+
+export const paHealthMatchingPipelineComplete = makeHealthHandler({
+  name: "paMatchingPipelineComplete",
+  requiredSecrets: ["PA_MATCHING_WEBHOOK_SECRET"],
 })
 
