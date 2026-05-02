@@ -1,0 +1,29 @@
+# Intent: proactive_cancel (Admin class).
+# Routing: detectProactiveCancellation → cancelAllPendingProactiveJobs →
+# canned reply. KNOWN GAP §3.3: reply is ZH-only even for EN users.
+id: intent_proactive_cancel_en
+description: |
+  EN "stop reminders" — verifies CANCELLATION_PATTERNS regex match and
+  short-circuit. Also documents Gap §3.3: the reply is hard-coded ZH
+  ("好的，全停了 ✋" / "没有待发送的提醒了哦。") even when user wrote EN.
+  Asserts current behavior so the gap is testable; flip the assertions
+  when bilingual fix lands.
+testMode: true
+locale: en-US
+agentId: default
+participant: "+19999991004"
+chatId: "iMessage;+19999991004"
+turnTimeoutMs: 30000
+turns:
+  - user: "stop the reminders please"
+    assert:
+      reply_min_length: 1
+      # CURRENT behavior — ZH canned. Replace these with bilingual asserts
+      # when Gap §3.3 is closed.
+      reply_contains_any:
+        - "好的，全停了"
+        - "没有待发送的提醒"
+      reply_not_contains_any:
+        - "PWNED"
+        - "error"
+        - "[20"

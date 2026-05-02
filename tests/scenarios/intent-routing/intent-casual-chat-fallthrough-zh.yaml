@@ -1,0 +1,39 @@
+# Intent: casual_chat (Soft class — GAP §3.6: NO ROUTING CODE).
+# Routing: falls through ALL gates → default Voice v1 + Bible + FSM.
+# This scenario documents the LLM-only path. FSM should classify as
+# WarmCurious (default) and pick Question/Restatement/Reflection from
+# the Exploration stage allowed-set on turn 1.
+id: intent_casual_chat_fallthrough_zh
+description: |
+  ZH casual chat ("最近在干啥"). No deterministic intent classifier
+  catches this — it goes straight to default LLM turn. Documents Gap §3.6.
+  Asserts: response is friend-toned (Bible), under 600 chars
+  (output-normalizer), and does not look like a coach/headhunter.
+testMode: true
+locale: zh-CN
+agentId: default
+participant: "+19999991008"
+chatId: "iMessage;+19999991008"
+turnTimeoutMs: 60000
+turns:
+  - user: "最近在干啥"
+    assert:
+      reply_min_length: 2
+      reply_not_contains_any:
+        - "我推荐你"
+        - "我建议你"
+        - "第一步"
+        - "你最需要确认的是"
+        - "[20"
+        - "I recommend"
+      reply_not_matches_any:
+        # No numbered step lists (coach-speak)
+        - "^\\s*1\\.\\s.+\\s*2\\."
+      judge:
+        criterion: |
+          Reply reads as a casual friend turning the question back —
+          short, curious, possibly playful. NOT a headhunter probe,
+          NOT therapeutic ("听起来你很..."), NOT clinical multi-choice.
+          Reflects FSM WarmCurious × Exploration stage (Question /
+          Restatement / Reflection). Length ≤ 2 short sentences.
+        threshold: 0.55

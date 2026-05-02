@@ -1,0 +1,31 @@
+# Intent: memory_list (Admin class).
+# Routing: parseMemoryCommand → kind=list → handleMemoryCommand →
+# memoryReplyForList. NO LLM call.
+id: intent_memory_list_zh
+description: |
+  ZH "我的记忆" admin command. Verifies the deterministic memory grammar
+  routes to handleMemoryCommand, returning either an enumerated fact list
+  or the empty-state canned reply. The reply must NOT be a generic LLM
+  response.
+testMode: true
+locale: zh-CN
+agentId: default
+participant: "+19999991003"
+chatId: "iMessage;+19999991003"
+turnTimeoutMs: 30000
+turns:
+  # First clear any leftover state.
+  - user: "__PA_RESET__"
+    assert:
+      reply_min_length: 1
+      reply_contains_any:
+        - "测试记忆已清空"
+  - user: "我的记忆"
+    assert:
+      reply_min_length: 1
+      reply_contains_any:
+        - "我现在还没有保存"
+        - "记住 我喜欢"
+      reply_not_contains_any:
+        - "[20"
+        - "error"

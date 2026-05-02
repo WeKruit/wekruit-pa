@@ -1,0 +1,35 @@
+# Intent: onboarding_q_role (Info-collect class).
+# Routing: resolveOnboardingStep(state=first_mes_sent, enableV2=true) →
+# composeOnboardingInput("ask_q_role", agent, ctx={userMessage:"嗯"}) →
+# Adam-locked phrase forced via synthetic systemInput.
+# REQUIRES: paOnboardingProbeV2Enabled=true on test user.
+id: intent_onboarding_q_role_zh
+description: |
+  ZH user replies to first_mes; expects ask_q_role Adam-locked phrase.
+  Routes through onboarding state machine; one LLM call with synthetic
+  systemInput. Locked verbiage check ensures the LLM did not paraphrase.
+  PRECONDITION: provision pa_users.{onboardingState:"first_mes_sent"}
+  + pa-feature-flags/paOnboardingProbeV2Enabled.allowlist contains
+  this participant. Sim-matrix agent must seed both before run.
+testMode: true
+locale: zh-CN
+agentId: default
+participant: "+19999991005"
+chatId: "iMessage;+19999991005"
+turnTimeoutMs: 60000
+turns:
+  - user: "嗯"
+    assert:
+      reply_min_length: 4
+      reply_contains_any:
+        - "做产品"
+        - "做工程"
+        - "做研究"
+      reply_not_contains_any:
+        - "好的"
+        - "OK"
+        - "btw"
+        - "[20"
+      # The directive forbids second clauses chained on; cap is 1 sentence.
+      reply_not_matches_any:
+        - "^好的"

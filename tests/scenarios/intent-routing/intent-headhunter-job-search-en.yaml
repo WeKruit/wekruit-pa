@@ -1,0 +1,36 @@
+# Intent: job_search (Job class) — headhunter playbook activation.
+# Routing: matchCachedPlaybooks OR HEADHUNTER_TRIGGER_RE → headhunterAddendum.
+# KNOWN GAP §3.4: addendum is ZH-flavored — EN users get a mixed prompt.
+# KNOWN GAP §3.5: lastSignals not persisted, probe rotation undefined.
+id: intent_headhunter_job_search_en
+description: |
+  EN "i'm looking for a new job, help me" — should activate headhunter
+  playbook (regex hit on "looking for"). Reply must NOT recommend
+  jobs, must NOT analyze. Should ask ONE feeling-probe.
+  Documents Gap §3.4 (addendum is ZH).
+testMode: true
+locale: en-US
+agentId: default
+participant: "+19999991006"
+chatId: "iMessage;+19999991006"
+turnTimeoutMs: 60000
+turns:
+  - user: "ngl looking for a new job, help me figure out what to do"
+    assert:
+      reply_min_length: 4
+      # NEVER rules from headhunter addendum
+      reply_not_contains_any:
+        - "I recommend"
+        - "I suggest you"
+        - "Step 1"
+        - "framework"
+        - "the most important thing"
+        - "[20"
+      judge:
+        criterion: |
+          The reply pushes the user to talk about feelings or memories
+          (e.g. "what part of your last project did you actually enjoy",
+          "what was the worst part of your last interview"). It does
+          NOT recommend specific roles, does NOT lay out a framework,
+          does NOT teach. Tone reads as a friend, not a recruiter.
+        threshold: 0.6
