@@ -82,6 +82,9 @@ import {
   shouldRunOnboardingProbe,
   type OnboardingStep,
 } from "./onboarding.js"
+// Phase 52 — F1 fix: lightweight bilingual intent detection for turn-0
+// onboarding ack (no LLM, regex only). See onboarding-intent.ts for the bank.
+import { detectFirstTurnIntent } from "./onboarding-intent.js"
 import { LEGACY_V0_SYSTEM_PROMPT } from "./legacy-voice-prompt.js"
 import { buildVoiceReminder, isVoiceV1Disabled } from "./voice-reminder.js"
 import { computeMirrorForTurn, isVoiceMirrorDisabledFlag } from "./voice/mirror-injection.js"
@@ -312,6 +315,12 @@ export type OrchestratorStore = {
       priorAskedStep?: OnboardingStep
       /** Phase 44 — user's reply to that prior step. */
       priorUserReply?: string
+      /**
+       * Phase 52 — F1 fix: when true AND step is `send_first_mes`, we already
+       * chained `ask_q_role` inline (intent-aware first_mes), so the state
+       * jumps to `q_role_asked` directly, skipping `first_mes_sent`.
+       */
+      intentAcked?: boolean
     }
   ): Promise<void>
 
@@ -419,6 +428,34 @@ async function isOnboardingProbeV2Enabled(
     return v === true
   } catch {
     return false
+  }
+}
+
+/**
+ * Phase 52 — F1 fix flag for turn-0 intent ack on cold-start onboarding.
+ *
+ * Default ON (fail-OPEN — flag-read errors keep the new behavior active so
+ * a transient Firestore blip doesn't regress us back to the bug). Emergency
+ * disable: env `PA_ONBOARDING_INTENT_ACK_DISABLED=true`.
+ */
+async function isOnboardingIntentAckEnabled(
+  db: Firestore | undefined,
+  userId: string | undefined
+): Promise<boolean> {
+  if (process.env.PA_ONBOARDING_INTENT_ACK_DISABLED === "true") return false
+  if (!db) return true // fail-OPEN when no db handle (test mocks); flag default is ON
+  try {
+    const v = await getFlag(
+      db,
+      "paOnboardingIntentAckEnabled",
+      { userId, env: process.env },
+      true /* defaultValue: ON */
+    )
+    return v !== false
+  } catch {
+    // Flag-read error → keep the new behavior active (fail-OPEN). The bug we
+    // are fixing is silent intent loss, not a feature-flag toggle.
+    return true
   }
 }
 
@@ -719,9 +756,30 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       // Default off → falls through to legacy 4-state path identically.
       const enableV2 = await isOnboardingProbeV2Enabled(store.db, event.userId)
       const onboardingStep = resolveOnboardingStep(onboardingUser, { enableV2 })
+      // Phase 52 — F1 fix: detect intent on turn-0 (send_first_mes) ONLY.
+      // Mid-conversation steps already have specific Adam-locked questions and
+      // mustn't be re-shaped by the intent classifier. Flag-gated, default ON,
+      // fail-OPEN.
+      const intentAckEnabled =
+        onboardingStep === "send_first_mes" &&
+        (await isOnboardingIntentAckEnabled(store.db, event.userId))
+      const detectedIntent = intentAckEnabled
+        ? detectFirstTurnIntent(event.body)
+        : undefined
+      // We only treat the detection as an "ack" trigger when the intent is
+      // actionable (not casual / abuse / null). casual / abuse / null fall
+      // through to the unchanged Adam-locked greeting.
+      const intentAcked = Boolean(
+        detectedIntent &&
+          detectedIntent.confidence === "high" &&
+          detectedIntent.intent !== null &&
+          detectedIntent.intent !== "casual_chat" &&
+          detectedIntent.intent !== "abuse"
+      )
       if (onboardingStep !== "skip") {
         const syntheticInput = composeOnboardingInput(onboardingStep, agent, {
           userMessage: event.body,
+          detectedIntent,
         })
         if (syntheticInput) {
           // Build system inputs for onboarding reply using the normal Voice v1 path
@@ -765,6 +823,11 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
             {
               priorAskedStep: priorOnboardingAskedStep(onboardingUser.onboardingState),
               priorUserReply: event.body,
+              // Phase 52 — F1 fix: when we acked the intent inline (i.e. we
+              // chained ask_q_role into the first_mes reply), jump state to
+              // q_role_asked so the user's NEXT message is parsed as a role
+              // answer.
+              intentAcked,
             }
           )
           await store.updateTurn(turnId, {
@@ -1953,6 +2016,7 @@ export function createFirestoreOrchestratorStore(db: Firestore): OrchestratorSto
         {
           priorAskedStep: opts?.priorAskedStep,
           priorUserReply: opts?.priorUserReply,
+          intentAcked: opts?.intentAcked,
         }
       )
     },

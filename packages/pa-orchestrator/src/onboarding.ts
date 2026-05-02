@@ -34,6 +34,9 @@ import type {
   StatedPreferences,
   VisaStatus,
 } from "@pa/core-types"
+// Phase 52 — F1 fix: bilingual turn-0 intent detection / ack directives.
+import type { FirstTurnDetection, FirstTurnIntent } from "./onboarding-intent.js"
+import { INTENT_ACK_DIRECTIVES } from "./onboarding-intent.js"
 
 export type OnboardingStep =
   | "send_first_mes"
@@ -186,11 +189,40 @@ const Q_PROMPTS: Record<
 export function composeOnboardingInput(
   step: OnboardingStep,
   agent: AgentDef,
-  ctx: { userMessage?: string } = {}
+  ctx: { userMessage?: string; detectedIntent?: FirstTurnDetection } = {}
 ): string {
   if (step === "send_first_mes") {
     const match = agent.systemPrompt.match(/[Ff]irst\s+message:\s*(.+?)(?:\n|$)/)
     const firstMes = match?.[1]?.trim() ?? "在呢. 今天找你聊点啥? 🍋"
+    // Phase 52 — F1 fix: intent-aware first message. When the user's opening
+    // message expressed a high-confidence actionable intent (job_search /
+    // visa_check / resume_parse / preference_update), we weave a 1-clause
+    // ack into the synthetic input AND chain ask_q_role's Adam-locked
+    // phrasing — instead of regurgitating the bare greeting and discarding
+    // the user's intent. casual_chat / abuse / null intents fall through to
+    // the unchanged Adam-locked greeting (defense-in-depth: never ack
+    // injection-shaped text even if pa-safety let it through).
+    const detected = ctx.detectedIntent
+    const ackable: ReadonlyArray<FirstTurnIntent> = [
+      "job_search",
+      "visa_check",
+      "resume_parse",
+      "preference_update",
+    ]
+    if (
+      detected &&
+      detected.intent !== null &&
+      detected.intent !== "casual_chat" &&
+      detected.intent !== "abuse" &&
+      detected.confidence === "high" &&
+      ackable.includes(detected.intent)
+    ) {
+      const ackKey = detected.intent as keyof typeof INTENT_ACK_DIRECTIVES
+      const lang = pickLang(ctx.userMessage)
+      const ackDirective = INTENT_ACK_DIRECTIVES[ackKey][lang]
+      const rolePhrase = Q_PROMPTS.ask_q_role[lang]
+      return `[onboarding_step: send_first_mes_with_intent_ack | intent=${detected.intent}] ${ackDirective} The role-direction question to chain (Adam-locked, do not paraphrase): "${rolePhrase}". Total reply: ≤ 2 sentences. No "好的" / "OK" preface. No numbering. No A/B framework like "X 还是 Y?" — the role question already enumerates options. Friend-tone, ${lang === "zh" ? "Mandarin" : "English"} register matching the user's input.`
+    }
     return `[onboarding_step: send_first_mes] Reply EXACTLY with Claire's first_mes: "${firstMes}". Nothing else. No greeting. No explanation.`
   }
   if (step === "ask_grounding_q") {
@@ -363,12 +395,25 @@ export async function applyOnboardingStep(
     priorAskedStep?: OnboardingStep
     /** Phase 44 — user's reply to the prior step's question. */
     priorUserReply?: string
+    /**
+     * Phase 52 — F1 fix: when true AND step is `send_first_mes`, we already
+     * chained `ask_q_role` inline (intent-aware first_mes), so jump state
+     * directly to `q_role_asked` instead of `first_mes_sent`. Saves one
+     * round-trip and lines up the next reply for `parseRoleAnswer`.
+     */
+    intentAcked?: boolean
   } = {}
 ): Promise<void> {
   if (step === "skip") return
 
-  const nextState = ONBOARDING_NEXT_STATE[step]
+  let nextState = ONBOARDING_NEXT_STATE[step]
   if (!nextState) return
+  // Phase 52 — F1 fix: intent-acked first_mes already asked the role question
+  // inline; advance state past first_mes_sent to q_role_asked so the user's
+  // NEXT reply is parsed by ask_q_role's parser.
+  if (opts.intentAcked && step === "send_first_mes") {
+    nextState = "q_role_asked"
+  }
 
   const currentState = user.onboardingState
   // Idempotency: don't regress state
