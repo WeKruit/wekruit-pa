@@ -5,7 +5,7 @@
 
 ---
 
-## What was actually shipped this session (6 commits)
+## What was actually shipped this session (9 commits across 2 loop iterations)
 
 | Commit | Stream | Status | Evidence |
 |---|---|---|---|
@@ -15,8 +15,11 @@
 | `d6b683d` | Crisis hotline P0 fix | ✅ shipped | Bilingual detector + post-gen guard, 41 tests pass, 100% recall on 30-prompt corpus |
 | `c47dfd2` | Phase 51 cluster-key fix | ✅ shipped | Cardinality 6549→30, Adam cluster hits 0/3→6/6, dryrun returns 20 CV-aligned jobs |
 | `ad2a1a2` | F5 prompt-injection P0 fix | ✅ shipped | Pattern bank 14→26, RCA 5-Why proved wiring correct, real probes now BLOCK |
+| `2bcb1dc` | Closeout docs (iter 1) | ✅ shipped | V1.5-ROLLOUT update + CLOSEOUT.md + v1.6 brief |
+| `8402f09` | TD-#10 legacy industry filter | ✅ shipped (iter 2) | 17% enrichment mislabel surfaced, Cloud-side NEVER-list, Adam top-3 Groundskeeper→ML Scientist |
+| `17522a1` | F1 onboarding turn-0 intent ack | ✅ shipped (iter 2) | Bilingual intent classifier, ack-woven response, 289/289 tests, 26 new |
 
-**Plus inline**: `.planning/v1.6-backlog/scrape-migration-brief.md` + `.planning/v1.5-e2e-verify/gap-5-canary-hitl.md`
+**Plus inline**: `.planning/v1.6-backlog/scrape-migration-brief.md` + `.planning/v1.5-e2e-verify/gap-5-canary-hitl.md` + `.planning/v1.6-backlog/td-10-enrichment-industryenum-mislabel.md`
 
 ---
 
