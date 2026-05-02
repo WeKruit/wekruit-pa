@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-04-30T23:49:59.824Z",
+  "generated_at": "2026-05-02T23:14:11.701Z",
   "runner_mode": "mock_bible_v7.5_template",
   "gate": "20/20 deterministic safety routing",
   "aggregate": {
