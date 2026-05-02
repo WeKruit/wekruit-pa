@@ -412,3 +412,156 @@ test("Stream F5: runDailyJobRecBatch with rerank deps applies cosine + still del
   assert.match(String(w!.data.body), /HighCo/)
   assert.doesNotMatch(String(w!.data.body), /LowCo/)
 })
+
+test("Stream H10: cross-encoder reranker reorders cosine-ranked jobs by relevance", async () => {
+  const mfs = new MockFirestore()
+  await mfs.collection("pa-users").doc("u_x").set({ phoneE164: "+15553336666" })
+  await mfs.collection("pa-job-profiles").doc("u_x").set({
+    userId: "u_x",
+    profile: {
+      industryTags: ["tech_software"],
+      sponsorshipNeeded: "none",
+      locationPreference: "Remote",
+      sizePreference: "any",
+      salaryMin: null,
+    },
+    status: "active",
+    createdAt: "2026-04-30T00:00:00Z",
+    updatedAt: "2026-04-30T00:00:00Z",
+    cvParsedAt: "2026-04-30T00:00:00Z",
+    lastJobBatchSentAt: null,
+  })
+  // Two jobs with identical cosine score — only the cross-encoder should
+  // distinguish them. j_real_fit has a clear "data scientist" title, j_qc
+  // has a "QC analyst" title — cross-encoder should pick the former.
+  await mfs.collection("matching-jobs").doc("j_qc").set({
+    status: "active",
+    industryKey: "engineering",
+    companyName: "LabCo",
+    jobTitle: "QC Analyst",
+    roleTitle: "QC Analyst",
+    salaryMax: 60000,
+    locationRaw: "Remote",
+    primaryUrl: "https://j/qc",
+    industry: "tech",
+    sponsorship: false,
+    firstSeenAt: "2026-04-30",
+    embedding: [1, 0, 0],
+    requiredSkills: ["Python"],
+  })
+  await mfs.collection("matching-jobs").doc("j_real_fit").set({
+    status: "active",
+    industryKey: "tech",
+    companyName: "DataCo",
+    jobTitle: "Senior Data Scientist",
+    roleTitle: "Senior Data Scientist",
+    salaryMax: 250000,
+    locationRaw: "Remote",
+    primaryUrl: "https://j/data",
+    industry: "tech",
+    sponsorship: false,
+    firstSeenAt: "2026-04-30",
+    embedding: [1, 0, 0], // identical cosine to j_qc
+    requiredSkills: ["Python", "PyTorch"],
+  })
+
+  // Stub cross-encoder: rank j_real_fit > j_qc.
+  const reranker = async (
+    _q: string,
+    cands: Array<{ id: string; text: string }>
+  ) => {
+    return cands
+      .map((c) => ({
+        id: c.id,
+        score: c.id === "j_real_fit" ? 0.85 : 0.001,
+      }))
+      .sort((a, b) => b.score - a.score)
+  }
+
+  const out = await runDailyJobRecBatch({
+    db: asFirestore(mfs),
+    getFlag: async () => true,
+    todayYmd: () => "20260430",
+    jobsPerUser: 1,
+    userEmbedFetcher: async () => ({ embedding: [1, 0, 0], resumeId: null }),
+    crossEncoderReranker: reranker,
+    crossEncoderPoolSize: 10,
+  })
+  assert.equal(out.delivered, 1)
+  const body = String(
+    mfs.writeLog.filter((w) => w.path === "pa-outbound")[0]!.data.body
+  )
+  assert.match(body, /DataCo/, "cross-encoder picks Data Scientist over QC Analyst")
+  assert.doesNotMatch(body, /LabCo/)
+})
+
+test("Stream H10: cross-encoder fail-open (all-null scores) preserves cosine order", async () => {
+  const mfs = new MockFirestore()
+  await mfs.collection("pa-users").doc("u_fo").set({ phoneE164: "+15557778888" })
+  await mfs.collection("pa-job-profiles").doc("u_fo").set({
+    userId: "u_fo",
+    profile: {
+      industryTags: ["tech_software"],
+      sponsorshipNeeded: "none",
+      locationPreference: "Remote",
+      sizePreference: "any",
+      salaryMin: null,
+    },
+    status: "active",
+    createdAt: "2026-04-30T00:00:00Z",
+    updatedAt: "2026-04-30T00:00:00Z",
+    cvParsedAt: "2026-04-30T00:00:00Z",
+    lastJobBatchSentAt: null,
+  })
+  await mfs.collection("matching-jobs").doc("j_top").set({
+    status: "active",
+    industryKey: "tech",
+    companyName: "TopCo",
+    jobTitle: "Senior Engineer",
+    roleTitle: "Senior Engineer",
+    salaryMax: 250000,
+    locationRaw: "Remote",
+    primaryUrl: "https://j/top",
+    industry: "tech",
+    sponsorship: false,
+    firstSeenAt: "2026-04-30",
+    embedding: [1, 0, 0],
+  })
+  await mfs.collection("matching-jobs").doc("j_bot").set({
+    status: "active",
+    industryKey: "tech",
+    companyName: "BotCo",
+    jobTitle: "Junior Engineer",
+    roleTitle: "Junior Engineer",
+    salaryMax: 80000,
+    locationRaw: "Remote",
+    primaryUrl: "https://j/bot",
+    industry: "tech",
+    sponsorship: false,
+    firstSeenAt: "2026-04-30",
+    embedding: [0, 1, 0], // orthogonal — sinks via cosine
+  })
+
+  // Reranker simulates network failure — returns input order with null scores.
+  const reranker = async (
+    _q: string,
+    cands: Array<{ id: string; text: string }>
+  ) => cands.map((c) => ({ id: c.id, score: null }))
+
+  const out = await runDailyJobRecBatch({
+    db: asFirestore(mfs),
+    getFlag: async () => true,
+    todayYmd: () => "20260430",
+    jobsPerUser: 1,
+    userEmbedFetcher: async () => ({ embedding: [1, 0, 0], resumeId: null }),
+    crossEncoderReranker: reranker,
+  })
+  assert.equal(out.delivered, 1)
+  const body = String(
+    mfs.writeLog.filter((w) => w.path === "pa-outbound")[0]!.data.body
+  )
+  // Cosine still ranks TopCo > BotCo despite reranker fail-open.
+  assert.match(body, /TopCo/)
+  assert.doesNotMatch(body, /BotCo/)
+})
+

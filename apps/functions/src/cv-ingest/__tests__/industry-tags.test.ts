@@ -147,3 +147,48 @@ describe("mapToCanonicalIndustryFromSignals — cascade ordering", () => {
     assert.equal(out, "ai_ml")
   })
 })
+
+describe("mapToCanonicalIndustryFromSignals — H10 long-tail company entries", () => {
+  it("Pearson → education (textbook + ed-tech publisher)", () => {
+    assert.equal(
+      mapToCanonicalIndustryFromSignals({ companyName: "Pearson" }),
+      "education"
+    )
+  })
+  it("Rural King / Cintas / Dollar Tree / 7-Eleven → consumer_retail", () => {
+    assert.equal(mapToCanonicalIndustryFromSignals({ companyName: "Rural King" }), "consumer_retail")
+    assert.equal(mapToCanonicalIndustryFromSignals({ companyName: "Cintas" }), "consumer_retail")
+    assert.equal(mapToCanonicalIndustryFromSignals({ companyName: "Dollar Tree" }), "consumer_retail")
+    assert.equal(mapToCanonicalIndustryFromSignals({ companyName: "7-Eleven" }), "consumer_retail")
+  })
+  it("PNC / BMO / USAA / Edward Jones → fintech_finance", () => {
+    assert.equal(mapToCanonicalIndustryFromSignals({ companyName: "PNC" }), "fintech_finance")
+    assert.equal(mapToCanonicalIndustryFromSignals({ companyName: "BMO" }), "fintech_finance")
+    assert.equal(mapToCanonicalIndustryFromSignals({ companyName: "USAA" }), "fintech_finance")
+    assert.equal(mapToCanonicalIndustryFromSignals({ companyName: "Edward Jones" }), "fintech_finance")
+  })
+  it("Humana / Cedars-Sinai / Banfield Pet Hospital → healthcare_biotech", () => {
+    assert.equal(mapToCanonicalIndustryFromSignals({ companyName: "Humana" }), "healthcare_biotech")
+    assert.equal(mapToCanonicalIndustryFromSignals({ companyName: "Cedars-Sinai" }), "healthcare_biotech")
+    assert.equal(mapToCanonicalIndustryFromSignals({ companyName: "Banfield Pet Hospital" }), "healthcare_biotech")
+  })
+  it("Spectrum / Rippling / Toast / Samsara → tech_software (telecom + B2B SaaS)", () => {
+    assert.equal(mapToCanonicalIndustryFromSignals({ companyName: "Spectrum" }), "tech_software")
+    assert.equal(mapToCanonicalIndustryFromSignals({ companyName: "Rippling" }), "tech_software")
+    assert.equal(mapToCanonicalIndustryFromSignals({ companyName: "Toast" }), "tech_software")
+    assert.equal(mapToCanonicalIndustryFromSignals({ companyName: "Samsara" }), "tech_software")
+  })
+  it("RTX / Westinghouse Electric / UPS / PepsiCo → manufacturing_industrial", () => {
+    assert.equal(mapToCanonicalIndustryFromSignals({ companyName: "RTX" }), "manufacturing_industrial")
+    assert.equal(mapToCanonicalIndustryFromSignals({ companyName: "Westinghouse Electric Company" }), "manufacturing_industrial")
+    assert.equal(mapToCanonicalIndustryFromSignals({ companyName: "UPS" }), "manufacturing_industrial")
+    assert.equal(mapToCanonicalIndustryFromSignals({ companyName: "PepsiCo" }), "manufacturing_industrial")
+  })
+  it("legal-suffix variants resolve via normalizeCompanyName", () => {
+    // 'CarMax, Inc.' → 'carmax' should hit consumer_retail entry.
+    assert.equal(mapToCanonicalIndustryFromSignals({ companyName: "CarMax, Inc." }), "consumer_retail")
+    // 'The Aaron's Company Inc' (legal suffix + apostrophe) — first-word fallback hits 'the'? no — prefix to full normalized.
+    assert.equal(mapToCanonicalIndustryFromSignals({ companyName: "The Aaron's Company Inc" }), "consumer_retail")
+  })
+})
+

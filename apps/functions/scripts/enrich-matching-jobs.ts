@@ -78,6 +78,13 @@ type Args = {
   maxJobs: number | null
   batch: number
   /**
+   * Stream H10 — when true, re-evaluate rows whose `industryEnum`
+   * is `["other"]` (or string "other") against the latest mapper. Used
+   * after adding long-tail company entries — rows enriched by H8 are
+   * locked behind the idempotency guard otherwise.
+   */
+  reenrichOther: boolean
+  /**
    * Stream H8 — non-other coverage threshold (0..1). When LIVE coverage is
    * BELOW this value the script still completes the writes (data is only
    * better-than-before) but exits non-zero so caller can detect quality
@@ -94,6 +101,7 @@ export function parseArgs(argv: string[]): Args {
     maxJobs: null,
     batch: FIRESTORE_BATCH_MAX,
     threshold: 0.6,
+    reenrichOther: false,
   }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!
@@ -106,6 +114,7 @@ export function parseArgs(argv: string[]): Args {
     else if (a.startsWith("--batch=")) out.batch = Number(a.slice("--batch=".length))
     else if (a === "--threshold") out.threshold = Number(argv[++i] ?? "0.6")
     else if (a.startsWith("--threshold=")) out.threshold = Number(a.slice("--threshold=".length))
+    else if (a === "--re-enrich-other") out.reenrichOther = true
   }
   if (!out.dryRun && !out.live) {
     out.dryRun = true // default to dry-run for safety
@@ -167,14 +176,20 @@ export type SignalMapper = (s: {
 
 export function decideEnrichment(
   data: Record<string, unknown>,
-  mapper: SignalMapper
+  mapper: SignalMapper,
+  opts: { reenrichOther?: boolean } = {}
 ): EnrichDecision {
-  // F2 wrote string; H8 writes string-or-array. Treat either as enriched.
+  // F2 wrote string; H8 writes string-or-array. Treat either as enriched —
+  // EXCEPT under --re-enrich-other, where rows currently tagged as "other"
+  // are re-evaluated against the latest mapper (H10 long-tail addition).
   const existing = data.industryEnum
-  if (typeof existing === "string" && existing.length > 0) {
+  const isOtherOnly =
+    (typeof existing === "string" && existing === "other") ||
+    (Array.isArray(existing) && existing.length === 1 && existing[0] === "other")
+  if (typeof existing === "string" && existing.length > 0 && !(opts.reenrichOther && isOtherOnly)) {
     return { action: "skip", reason: "already_enriched" }
   }
-  if (Array.isArray(existing) && existing.length > 0) {
+  if (Array.isArray(existing) && existing.length > 0 && !(opts.reenrichOther && isOtherOnly)) {
     return { action: "skip", reason: "already_enriched" }
   }
 
@@ -309,7 +324,7 @@ async function main() {
       if (snap.empty) break
       for (const d of snap.docs) {
         summary.scanned++
-        const decision = decideEnrichment(d.data() as Record<string, unknown>, mapper)
+        const decision = decideEnrichment(d.data() as Record<string, unknown>, mapper, { reenrichOther: args.reenrichOther })
         summarizeDecision(decision, d.id, summary)
       }
       last = snap.docs[snap.docs.length - 1] ?? null
@@ -352,7 +367,7 @@ async function main() {
     let writesPending = 0
     for (const d of snap.docs) {
       summary.scanned++
-      const decision = decideEnrichment(d.data() as Record<string, unknown>, mapper)
+      const decision = decideEnrichment(d.data() as Record<string, unknown>, mapper, { reenrichOther: args.reenrichOther })
       summarizeDecision(decision, d.id, summary)
       if (decision.action === "update") {
         // H8: write a 1-element ARRAY so query-matching-jobs can use

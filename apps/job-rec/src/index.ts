@@ -104,4 +104,16 @@ export type {
   FlagChecker,
   UserEmbedFetcher,
   UserEmbedComputer,
+  CrossEncoderReranker,
 } from "./daily-batch.js"
+
+export {
+  rerankWithCrossEncoder,
+  buildRerankQuery,
+  buildJobCandidateText,
+} from "./cross-encoder-rerank.js"
+export type {
+  RerankCandidate,
+  RerankerDeps,
+  RerankedItem,
+} from "./cross-encoder-rerank.js"

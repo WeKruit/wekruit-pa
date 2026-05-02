@@ -21,6 +21,7 @@
 import type { Firestore } from "firebase-admin/firestore"
 import { queryMatchingJobs, applyTitleAntiBias } from "./tools/query-matching-jobs.js"
 import { sendImessage } from "./tools/send-imessage.js"
+import { buildJobCandidateText, buildRerankQuery } from "./cross-encoder-rerank.js"
 import {
   JOB_PROFILES_COLLECTION,
   JOB_REC_FLAG_KEY,
@@ -66,6 +67,17 @@ export type DailyBatchDeps = {
    * trims to this many, we cosine-rerank to jobsPerUser. Default 50.
    */
   candidatePoolSize?: number
+  /**
+   * Stream H10 — optional cross-encoder reranker. When provided, runs AFTER
+   * cosine rerank (which trims pool to `crossEncoderPoolSize`). Cross-encoder
+   * reorders by joint (query, doc) relevance — much sharper signal than
+   * cosine for distinguishing role-titles like "QC Analyst" vs "Data
+   * Analyst" that share token overlap but differ semantically.
+   * Returns NEW order with relevance_score; null score means fail-open.
+   */
+  crossEncoderReranker?: CrossEncoderReranker
+  /** Pool size handed to the cross-encoder. Default 10. */
+  crossEncoderPoolSize?: number
 }
 
 export type BatchOutcome = {
@@ -292,6 +304,17 @@ export type UserEmbedComputer = (
 ) => Promise<number[] | null>
 
 /**
+ * Stream H10 — cross-encoder reranker dep. Pure function returning
+ * relevance-sorted (id, score) pairs. score === null means fail-open from
+ * the underlying API; daily-batch then preserves cosine order.
+ */
+export type CrossEncoderReranker = (
+  query: string,
+  candidates: Array<{ id: string; text: string }>
+) => Promise<Array<{ id: string; score: number | null }>>
+
+
+/**
  * Stream G1 — internal helper. Loads the parsed-resume doc by id and
  * returns a compact text suitable for OpenAI text-embedding-3-small.
  * Composes from candidateProfile + first 3 experiences. Returns null on
@@ -496,12 +519,17 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
             }
           }
           if (embedding && embedding.length > 0) {
+            // H10: when cross-encoder is wired, keep a wider cosine top-N
+            // (default 10) so the cross-encoder has room to reorder.
+            const cosineKeep = deps.crossEncoderReranker
+              ? Math.max(jobsPerUser, deps.crossEncoderPoolSize ?? 10)
+              : jobsPerUser
             rankedJobs = rerankByCosine(
               queryRes.jobs as Array<MatchingJob & { embedding?: number[] | null }>,
               embedding,
-              jobsPerUser
+              cosineKeep
             )
-            log("[job-rec-daily] rerank_applied", { userId, poolSize: queryRes.jobs.length, took: jobsPerUser })
+            log("[job-rec-daily] rerank_applied", { userId, poolSize: queryRes.jobs.length, took: cosineKeep })
           } else {
             // No embedding on file AND compute path didn't succeed — slice.
             rankedJobs = queryRes.jobs.slice(0, jobsPerUser)
@@ -515,6 +543,88 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
         }
       } else {
         rankedJobs = queryRes.jobs.slice(0, jobsPerUser)
+      }
+
+      // Stream H10 — cross-encoder rerank. Runs AFTER cosine narrows to ~10
+      // candidates. Synthesizes a query string from the user's profile
+      // (recent role + skills + industries), encodes each remaining job as
+      // (title at company; skills) and asks BAAI/bge-reranker-v2-m3 (via
+      // SiliconFlow free tier) for joint-relevance scores. Fail-open: if
+      // the dep returns score=null on every item we keep cosine order.
+      if (deps.crossEncoderReranker && rankedJobs.length > 1) {
+        try {
+          // Pull the most-recent resume for query synthesis. Best-effort —
+          // null result falls back to industryTags-only query.
+          let recentRoleTitle: string | null = null
+          let topSkills: readonly string[] = []
+          try {
+            const resumeSnap = await deps.db
+              .collection("parsedCandidateResumes")
+              .where("userId", "==", userId)
+              .orderBy("createdAt", "desc")
+              .limit(1)
+              .get()
+            if (!resumeSnap.empty) {
+              const rd = resumeSnap.docs[0]!.data() as Record<string, unknown>
+              const exps = Array.isArray(rd.experiences) ? rd.experiences : []
+              if (exps.length > 0) {
+                const e0 = exps[0] as Record<string, unknown>
+                if (typeof e0.title === "string") recentRoleTitle = e0.title
+              }
+              const cp = (rd.candidateProfile ?? {}) as Record<string, unknown>
+              if (Array.isArray(cp.skills)) {
+                topSkills = (cp.skills as unknown[]).filter((x) => typeof x === "string") as string[]
+              }
+            }
+          } catch {
+            // ignore — fall through to industryTags-only query
+          }
+
+          const query = buildRerankQuery({
+            recentRoleTitle,
+            topSkills,
+            industryTags: normalized.industryTags,
+          })
+          const cands = rankedJobs.map((j) => ({
+            id: j.id,
+            text: buildJobCandidateText({
+              jobTitle: j.jobTitle,
+              companyName: j.companyName,
+              requiredSkills: j.requiredSkills,
+              industryKey: j.industryKey,
+            }),
+          }))
+          const reranked = await deps.crossEncoderReranker(query, cands)
+          // If at least one score is non-null the cross-encoder succeeded;
+          // re-order rankedJobs by the new ranking. Otherwise keep cosine.
+          const haveScores = reranked.some((r) => r.score !== null)
+          if (haveScores) {
+            const byId = new Map(rankedJobs.map((j) => [j.id, j]))
+            const reordered: MatchingJob[] = []
+            for (const r of reranked) {
+              const j = byId.get(r.id)
+              if (j) reordered.push(j)
+            }
+            // Append any cosine-pool jobs the cross-encoder didn't rank
+            // (defensive: shouldn't happen since topN === pool size).
+            for (const j of rankedJobs) {
+              if (!reranked.find((r) => r.id === j.id)) reordered.push(j)
+            }
+            rankedJobs = reordered
+            log("[job-rec-daily] cross_encoder_applied", {
+              userId,
+              poolSize: cands.length,
+              topScore: reranked[0]?.score ?? null,
+            })
+          } else {
+            log("[job-rec-daily] cross_encoder_fail_open", { userId })
+          }
+        } catch (xeErr) {
+          log("[job-rec-daily] cross_encoder_threw", {
+            userId,
+            error: xeErr instanceof Error ? xeErr.message : String(xeErr),
+          })
+        }
       }
 
       // Stream H7 — title anti-bias rerank for tech-track users. When the
