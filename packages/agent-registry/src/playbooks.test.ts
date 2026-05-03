@@ -268,10 +268,19 @@ test("composePlaybooks loads from Firestore and concatenates addenda", async () 
   assert.equal(r3.addendum, "")
 })
 
-test("seedDefaultPlaybooks is idempotent — creates headhunter then skips", async () => {
+test("seedDefaultPlaybooks is idempotent — creates all 6 then skips", async () => {
   const { db } = fakeFirestore()
   const r1 = await seedDefaultPlaybooks(db)
-  assert.deepEqual(r1.created, ["headhunter"])
+  // Adam iter 18 — added 5 playbooks (vent / motivation / jd_roast /
+  // interview_prep / negotiation) on top of the original headhunter.
+  assert.deepEqual(r1.created, [
+    "headhunter",
+    "vent_support",
+    "motivation_nudge",
+    "jd_roast",
+    "interview_prep",
+    "negotiation",
+  ])
   assert.deepEqual(r1.skipped, [])
 
   const stored = await getPlaybook(db, "headhunter")
@@ -279,9 +288,22 @@ test("seedDefaultPlaybooks is idempotent — creates headhunter then skips", asy
   assert.ok(stored!.regexTriggers.includes("想换"))
   assert.match(stored!.addendum, /PLAYBOOK MODE: HEADHUNTER/)
 
+  // Spot-check one of the new ones.
+  const ventStored = await getPlaybook(db, "vent_support")
+  assert.ok(ventStored)
+  assert.ok(ventStored!.regexTriggers.some((p) => p.includes("崩溃")))
+  assert.match(ventStored!.addendum, /PLAYBOOK MODE: VENT_SUPPORT/)
+
   const r2 = await seedDefaultPlaybooks(db)
   assert.deepEqual(r2.created, [])
-  assert.deepEqual(r2.skipped, ["headhunter"])
+  assert.deepEqual(r2.skipped, [
+    "headhunter",
+    "vent_support",
+    "motivation_nudge",
+    "jd_roast",
+    "interview_prep",
+    "negotiation",
+  ])
 })
 
 test("listPlaybooks returns playbooks sorted by key", async () => {
