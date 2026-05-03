@@ -94,6 +94,28 @@ export type WebhookDeps = {
   /** Coalescer dependency bundle bound at CF wrapper layer. Required only when
    *  enqueueOrCoalesce is invoked (i.e. flag=on). */
   coalescerDeps?: CoalescerDeps
+  /**
+   * v1.5 TD-A (2026-05-03 Adam P0 race-condition): proper-fix fallback path.
+   *
+   *   When we pre-stamp `coalescing:true` on the inbound row at create time
+   *   (TD-A race-window fix), `onPaInbound`'s onDocumentCreated trigger sees
+   *   the flag and SKIPS processing — handing the row off to the coalescer.
+   *   If the subsequent `enqueueOrCoalesce` call then FAILS (Cloud Tasks
+   *   outage, etc.), the row is now orphaned: onPaInbound already declined to
+   *   handle it because of the flag. Without an active fallback, the user
+   *   gets NO reply.
+   *
+   *   This dep is the injection point for `processBrokerImessageEvent` (lives
+   *   in apps/functions/src/index.ts, not exported as a package because it
+   *   needs `getOrCreateSession`, etc.). The wiring in `buildSendblueWebhookDeps`
+   *   passes it through. Default: undefined → fallback degrades to revert-only
+   *   (matches pre-TD-A behaviour for callers who don't wire it).
+   *
+   *   Signature mirrors the production fn: takes the broker-shape event by
+   *   id, drives orchestrator → ONE reply. Idempotent on its own (claim is
+   *   transactional + lease-guarded inside the orchestrator).
+   */
+  processBrokerImessageFallback?: (eventId: string) => Promise<void>
   log?: (...args: unknown[]) => void
 }
 
@@ -566,11 +588,60 @@ export async function handleSendblueWebhook(
   }
 
   // ---- 4. Broker enqueue (idempotent on sendblue-${handle}) -------------
+  //
+  // v1.5 TD-A (2026-05-03 Adam P0): atomic-coalescing-flag-on-create.
+  //
+  //   Before TD-A: webhook called broker.createInboundEvent FIRST, then
+  //   coalescer.enqueueOrCoalesce ran a Firestore transaction and merged
+  //   coalescing:true on the doc. In between those two writes,
+  //   `onPaInbound` (onDocumentCreated trigger) fires within milliseconds and
+  //   reads the OLD doc where coalescing is still undefined → it processes
+  //   the row as an independent turn. Adam's "4 quick messages → 4 turns"
+  //   incident was exactly this race for every single message.
+  //
+  //   Fix: PRE-DECIDE whether this row goes to coalescer (cheap reads only —
+  //   phone lookup + flag get — both already in the post-broker block) and
+  //   pass `coalescing:true` to broker.createInboundEvent so the flag is
+  //   present in the SAME doc.create() write. onPaInbound's single read
+  //   then sees the flag and skips correctly — race window closed.
+  //
+  //   The coalescer's later `merge({coalescing:true})` becomes a no-op (still
+  //   safe, idempotent), but its `coalesceTurnId` stamp still adds value
+  //   because we don't know turnSeq at create time.
+  let willCoalesce = false
+  let resolvedUserIdForCoalesce: string | null = null
+  if (!mediaUrl && deps.enqueueOrCoalesce && deps.coalescerDeps) {
+    try {
+      const lookupFn = deps.lookupUserByPhone ?? defaultLookupUserByPhone
+      resolvedUserIdForCoalesce = await lookupFn(deps.db, normalized.fromNumber)
+      if (resolvedUserIdForCoalesce) {
+        const coalesceFlag = await getFlag(
+          deps.db,
+          "paMessageCoalesceEnabled",
+          { userId: resolvedUserIdForCoalesce, env: process.env },
+          false
+        )
+        willCoalesce = coalesceFlag === true
+      }
+    } catch (preErr) {
+      // Pre-decision failure → degrade to legacy path (no flag stamped).
+      // Same semantic as pre-TD-A behavior: onPaInbound handles directly.
+      log("[coalesce][webhook] pre-decision failed (non-fatal — legacy path)",
+        preErr instanceof Error ? preErr.message : String(preErr))
+      willCoalesce = false
+      resolvedUserIdForCoalesce = null
+    }
+  }
+
   const broker = deps.createInboundEvent ?? createInboundEvent
   try {
     const result = await broker(deps.db, {
       channel: "imessage",
       idempotencyKey: normalized.idempotencyKey,
+      // TD-A: when willCoalesce=true, broker writes coalescing:true on the
+      // SAME create() call → onPaInbound's onDocumentCreated trigger sees
+      // the flag in its first read → skip → no race-induced split.
+      ...(willCoalesce ? { coalescing: true } : {}),
       rawPayload: {
         kind: "imessage",
         source: "sendblue",
@@ -615,71 +686,61 @@ export async function handleSendblueWebhook(
 
     // v1.5 Stream-D — message coalescer dispatch (flag-gated, attachment-skip).
     //
-    // Conditions for entering the coalescer:
-    //   - paMessageCoalesceEnabled flag = true for THIS user (perUser scope)
-    //   - text-only inbound (mediaUrl absent — attachments have their own
-    //     ❤️ + CV-ingest flow that must not be deferred)
-    //   - coalescerDeps + enqueueOrCoalesce wired by CF wrapper
-    //
-    // The original pa-inbound-events row written by the broker above stays
-    // in place; the coalescer marks it `coalescing:true` so onPaInbound
-    // skips it. On enqueue failure we fall back to legacy direct path
-    // (do nothing — onPaInbound's onDocumentCreated will fire normally).
-    if (!mediaUrl && deps.enqueueOrCoalesce && deps.coalescerDeps) {
+    // TD-A note: the pre-decision already ran BEFORE broker.create — see the
+    // willCoalesce / resolvedUserIdForCoalesce locals computed above. If
+    // willCoalesce=true, the doc was written with `coalescing:true` so
+    // onPaInbound's onDocumentCreated trigger has already skipped it. We now
+    // just enqueue the Cloud Tasks task. On hard enqueue failure we MUST
+    // actively drive the legacy path because onPaInbound will not re-fire
+    // (onDocumentCreated is one-shot per row, and the flag is true).
+    if (willCoalesce && resolvedUserIdForCoalesce && deps.enqueueOrCoalesce && deps.coalescerDeps) {
       try {
-        // Resolve userId via phone lookup. If absent, treat as legacy path —
-        // we can't write a buffer keyed by an unknown userId.
-        const lookupFn = deps.lookupUserByPhone ?? defaultLookupUserByPhone
-        const resolvedUserId = await lookupFn(deps.db, normalized.fromNumber)
-        if (!resolvedUserId) {
-          log("[coalesce][webhook] no userId for phone — skipping coalesce, legacy path proceeds", {
-            phone: normalized.fromNumber,
-          })
-        } else {
-          const coalesceFlag = await getFlag(
-            deps.db,
-            "paMessageCoalesceEnabled",
-            { userId: resolvedUserId, env: process.env },
-            false
+        await deps.enqueueOrCoalesce(deps.coalescerDeps, {
+          userId: resolvedUserIdForCoalesce,
+          fromNumber: normalized.fromNumber,
+          toNumber: normalized.toNumber,
+          messageHandle: normalized.messageHandle,
+          body: normalized.text,
+          inboundEventId: result.id,
+        })
+        log("[coalesce][webhook] enqueued", {
+          userId: resolvedUserIdForCoalesce,
+          eventId: result.id,
+          handle: normalized.messageHandle,
+        })
+      } catch (coalesceErr) {
+        // Cloud Tasks enqueue failed. Pre-TD-A this would just log and let
+        // onPaInbound handle it via onDocumentCreated. POST-TD-A that trigger
+        // already saw `coalescing:true` and skipped, so we must drive the
+        // legacy orchestrator path explicitly:
+        //   1. revert the flag (cosmetic — for dashboards / forensic reads)
+        //   2. invoke the injected processBrokerImessageFallback if wired
+        //      (CF wrapper passes processBrokerImessageEvent in production)
+        log("[coalesce][webhook] enqueue failed — invoking legacy fallback", {
+          userId: resolvedUserIdForCoalesce,
+          err: coalesceErr instanceof Error ? coalesceErr.message : String(coalesceErr),
+        })
+        try {
+          await deps.db.collection("pa-inbound-events").doc(result.id).set(
+            { coalescing: false, coalesceFallback: true },
+            { merge: true }
           )
-          if (coalesceFlag === true) {
-            try {
-              await deps.enqueueOrCoalesce(deps.coalescerDeps, {
-                userId: resolvedUserId,
-                fromNumber: normalized.fromNumber,
-                toNumber: normalized.toNumber,
-                messageHandle: normalized.messageHandle,
-                body: normalized.text,
-                inboundEventId: result.id,
-              })
-              log("[coalesce][webhook] enqueued", {
-                userId: resolvedUserId,
-                eventId: result.id,
-                handle: normalized.messageHandle,
-              })
-            } catch (coalesceErr) {
-              // Cloud Tasks enqueue failed — bail out of coalesce path; the
-              // pa-inbound-events row is still pending so onPaInbound's
-              // onDocumentCreated will fire and the user gets a (single,
-              // non-coalesced) reply. ZERO-regression on hard failure.
-              log("[coalesce][webhook] enqueue failed — falling back to legacy direct path", {
-                userId: resolvedUserId,
-                err: coalesceErr instanceof Error ? coalesceErr.message : String(coalesceErr),
-              })
-              // Important: revert the `coalescing:true` flag if the coalescer
-              // managed to set it before failing. Best-effort.
-              try {
-                await deps.db.collection("pa-inbound-events").doc(result.id).set(
-                  { coalescing: false, coalesceFallback: true },
-                  { merge: true }
-                )
-              } catch {/* swallow */}
-            }
+        } catch {/* swallow — flag is cosmetic at this point */}
+        if (deps.processBrokerImessageFallback) {
+          try {
+            await deps.processBrokerImessageFallback(result.id)
+            log("[coalesce][webhook] legacy fallback completed", { eventId: result.id })
+          } catch (fallbackErr) {
+            log("[coalesce][webhook] legacy fallback FAILED — user gets no reply this turn", {
+              eventId: result.id,
+              err: fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr),
+            })
           }
+        } else {
+          log("[coalesce][webhook] no processBrokerImessageFallback wired — row stays pending", {
+            eventId: result.id,
+          })
         }
-      } catch (flagErr) {
-        log("[coalesce][webhook] flag/lookup failed (non-fatal)",
-          flagErr instanceof Error ? flagErr.message : String(flagErr))
       }
     }
 

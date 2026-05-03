@@ -19,6 +19,23 @@ export type CreateInboundEventInput = {
   idempotencyKey: string
   rawPayload: Record<string, unknown>
   correlationId?: string
+  /**
+   * v1.5 TD-A fix (2026-05-03 Adam P0 race-condition):
+   *   When the SendBlue webhook KNOWS in advance that this inbound row will be
+   *   handed to the message coalescer (paMessageCoalesceEnabled=true for the
+   *   user, no media attachment, coalescer wired), it MUST stamp
+   *   `coalescing: true` on the doc at create-time so the
+   *   `onPaInbound` onDocumentCreated trigger sees a populated flag in the
+   *   single read it does. Without this, the trigger races the post-create
+   *   `coalescer.enqueueOrCoalesce` merge and processes the row as an
+   *   independent turn — which is the RCA for Adam's "4 quick messages →
+   *   4 turns" production incident.
+   *
+   *   Default-undefined keeps every other broker caller (test mode, admin,
+   *   processCoalescedTurn synthesizing the merged event) byte-for-byte
+   *   compatible — the field is only persisted when explicitly set true.
+   */
+  coalescing?: boolean
 }
 
 /**
@@ -42,9 +59,16 @@ export async function createInboundEvent(
     maxAttempts: 8,
     correlationId: input.correlationId ?? randomUUID(),
   }
+  // TD-A: when the caller pre-decided this row will be coalesced, stamp the
+  // flag on the SAME write that creates the doc. Cast to a permissive shape
+  // because PaInboundEvent doesn't (intentionally) carry the coalescing
+  // sentinel in its base typing — it's a transport flag the coalescer + the
+  // onPaInbound trigger read defensively via `(data as { coalescing?: boolean })`.
+  const writeBody: Record<string, unknown> =
+    input.coalescing === true ? { ...base, coalescing: true } : { ...base }
 
   try {
-    await ref.create(base)
+    await ref.create(writeBody)
     return { id, created: true, event: base }
   } catch (e: unknown) {
     const code = (e as { code?: number })?.code

@@ -223,3 +223,46 @@ test("completeInboundEvent clears stale error and lease fields", async () => {
   assert.equal(docs.get("evt")?.claimedBy, null)
   assert.equal(docs.get("evt")?.userId, "u1")
 })
+
+test("createInboundEvent stamps coalescing:true on create when input.coalescing=true (TD-A race fix)", async () => {
+  // v1.5 TD-A (2026-05-03 Adam P0 race-condition): the SendBlue webhook now
+  // pre-decides whether a row will be coalesced and asks broker to write the
+  // flag on the SAME doc.create() call so onPaInbound's onDocumentCreated
+  // trigger sees `coalescing:true` in its single read — no race window.
+  const { db, docs } = fakeFirestore()
+  const result = await createInboundEvent(db, {
+    channel: "imessage",
+    idempotencyKey: "td-a-with-flag",
+    rawPayload: { text: "hi" },
+    coalescing: true,
+  })
+  assert.equal(result.created, true)
+  const written = docs.get(result.id) as Record<string, unknown> | undefined
+  assert.ok(written, "doc was created")
+  assert.equal(written!.coalescing, true, "coalescing flag stamped immediately")
+  assert.equal(written!.status, "pending")
+  assert.equal(written!.idempotencyKey, "td-a-with-flag")
+})
+
+test("createInboundEvent omits coalescing field when input.coalescing is absent or false", async () => {
+  // Backward compatibility: every legacy caller (test-mode, admin path,
+  // processCoalescedTurn synthesizing the merged event) MUST NOT have a
+  // `coalescing` field stamped on their docs — that would cause onPaInbound
+  // to skip them.
+  const { db, docs } = fakeFirestore()
+  const r1 = await createInboundEvent(db, {
+    channel: "imessage",
+    idempotencyKey: "td-a-no-flag",
+    rawPayload: { text: "hi" },
+  })
+  const r2 = await createInboundEvent(db, {
+    channel: "imessage",
+    idempotencyKey: "td-a-flag-false",
+    rawPayload: { text: "hi" },
+    coalescing: false,
+  })
+  const w1 = docs.get(r1.id) as Record<string, unknown>
+  const w2 = docs.get(r2.id) as Record<string, unknown>
+  assert.equal("coalescing" in w1, false, "no field when omitted")
+  assert.equal("coalescing" in w2, false, "no field when explicitly false (backward compat)")
+})

@@ -761,12 +761,41 @@ function buildSendblueWebhookDeps() {
       err: err instanceof Error ? err.message : String(err),
     })
   }
+  // v1.5 TD-A (2026-05-03): proper-fix fallback for Cloud Tasks enqueue
+  // failure. After TD-A the inbound row is stamped `coalescing:true` AT
+  // CREATE so onPaInbound's onDocumentCreated trigger skips it. If the
+  // subsequent Cloud Tasks enqueue then errors, nothing else will pick the
+  // row up — we must drive the legacy orchestrator path right here.
+  // `processBrokerImessageEvent` is the byte-equivalent of what onPaInbound
+  // does for non-coalesced rows (claim → user/session resolve → run
+  // orchestrator). Re-using it keeps the fallback path symmetric with the
+  // happy path.
+  const processBrokerImessageFallback = async (eventId: string): Promise<void> => {
+    const db = getFirestore()
+    const ref = db.collection(PA_COLLECTIONS.inboundEvents).doc(eventId)
+    const snap = await ref.get()
+    if (!snap.exists) {
+      logger.warn("[sendblue][webhook][fallback] inbound row missing", { eventId })
+      return
+    }
+    // Cast widely; isBrokerImessageEvent does the runtime narrowing.
+    const data = { id: snap.id, ...snap.data() } as InboundEvent | BrokerImessageEvent
+    if (!isBrokerImessageEvent(data)) {
+      logger.warn("[sendblue][webhook][fallback] inbound row is not a broker iMessage event", {
+        eventId,
+        kind: (data as BrokerImessageEvent).rawPayload?.kind,
+      })
+      return
+    }
+    await processBrokerImessageEvent(db, data)
+  }
   return {
     db: getFirestore(),
     secret: SENDBLUE_WEBHOOK_SIGNING_SECRET.value(),
     log: (...args: unknown[]) => logger.info("[sendblue][webhook]", ...args),
     enqueueOrCoalesce: coalescerDeps ? defaultEnqueueOrCoalesce : undefined,
     coalescerDeps,
+    processBrokerImessageFallback,
   }
 }
 

@@ -624,4 +624,167 @@ describe("handleSendblueWebhook", () => {
       "organic traffic must NOT have rawPayload.e2eTest field")
   })
 
+
+  // ---------- TD-A: Adam P0 race-condition fix (atomic coalescing flag) ----------
+
+  it("Test TD-A.1: willCoalesce=true → broker writes coalescing:true on the SAME create() call (race window closed)", async () => {
+    // Adam 2026-05-03 实测: post-deploy 4 quick messages still split into 4
+    // turns. RCA: webhook used to call broker.createInboundEvent FIRST then
+    // coalescer.enqueueOrCoalesce (which merged coalescing:true). In between
+    // those writes, onPaInbound's onDocumentCreated trigger fired (within ms)
+    // and read the OLD doc (coalescing undefined) → processed as independent
+    // turn. This test pins the FIX: when willCoalesce=true at decision time,
+    // the broker write itself carries coalescing:true so onPaInbound's single
+    // read sees the flag and skips.
+    const { db, inbound, flags } = makeFakeDb()
+    flags.set("paMessageCoalesceEnabled", {
+      key: "paMessageCoalesceEnabled",
+      value: true,
+      type: "bool",
+      scope: "perUser",
+      allowlist: [],
+      blocklist: [],
+    })
+    _clearFeatureFlagCache()
+
+    let enqueueOrder: string[] = []
+    const enqueueOrCoalesceMock = async (_deps: unknown, msg: { inboundEventId: string }) => {
+      // CRITICAL ORDERING ASSERTION: by the time the coalescer is invoked,
+      // the inbound row MUST ALREADY EXIST with coalescing=true. This is
+      // the post-condition of the TD-A fix.
+      const stored = inbound.get(msg.inboundEventId)
+      assert.ok(stored, "inbound row already written before enqueueOrCoalesce called")
+      assert.equal(
+        (stored as { coalescing?: boolean }).coalescing,
+        true,
+        "broker MUST stamp coalescing:true on doc.create() so onPaInbound sees it in its single read"
+      )
+      enqueueOrder.push("coalesce")
+      return { action: "created" as const }
+    }
+
+    const body = JSON.stringify(basePayload({ message_handle: "msg-td-a-1" }))
+    const req = makeReq({ body, signature: SECRET })
+    const res = makeRes()
+
+    await handleSendblueWebhook(req, res, {
+      db,
+      secret: SECRET,
+      log: () => { /* swallow */ },
+      enqueueOrCoalesce: enqueueOrCoalesceMock as never,
+      coalescerDeps: {} as never,
+      lookupUserByPhone: async () => "u_adam_test",
+    })
+
+    assert.equal(res.statusCode, 200)
+    assert.equal(inbound.size, 1)
+    const [doc] = [...inbound.values()]
+    assert.ok(doc, "inbound doc exists post-handler")
+    assert.equal(
+      (doc as { coalescing?: boolean }).coalescing,
+      true,
+      "TD-A fix: doc has coalescing:true persisted (set on create, race window closed)"
+    )
+    assert.deepEqual(enqueueOrder, ["coalesce"], "enqueueOrCoalesce was called once")
+  })
+
+  it("Test TD-A.2: willCoalesce=false (flag off) → broker omits coalescing field (legacy path keeps onPaInbound processing)", async () => {
+    // Sister-test for TD-A.1: when the flag is OFF, the broker MUST NOT
+    // stamp coalescing:true. Otherwise onPaInbound would skip rows that
+    // nobody else handles → user gets no reply.
+    const { db, inbound, flags } = makeFakeDb()
+    flags.set("paMessageCoalesceEnabled", {
+      key: "paMessageCoalesceEnabled",
+      value: false,
+      type: "bool",
+      scope: "perUser",
+      allowlist: [],
+      blocklist: [],
+    })
+    _clearFeatureFlagCache()
+
+    let coalesceCalled = false
+    const enqueueOrCoalesceMock = async () => {
+      coalesceCalled = true
+      return { action: "created" as const }
+    }
+
+    const body = JSON.stringify(basePayload({ message_handle: "msg-td-a-2" }))
+    const req = makeReq({ body, signature: SECRET })
+    const res = makeRes()
+
+    await handleSendblueWebhook(req, res, {
+      db,
+      secret: SECRET,
+      log: () => { /* swallow */ },
+      enqueueOrCoalesce: enqueueOrCoalesceMock as never,
+      coalescerDeps: {} as never,
+      lookupUserByPhone: async () => "u_adam_test",
+    })
+
+    assert.equal(res.statusCode, 200)
+    assert.equal(inbound.size, 1)
+    const [doc] = [...inbound.values()]
+    assert.equal(
+      (doc as { coalescing?: boolean }).coalescing,
+      undefined,
+      "flag=false → no coalescing field (legacy path: onPaInbound processes normally)"
+    )
+    assert.equal(coalesceCalled, false, "coalescer never invoked when flag is off")
+  })
+
+  it("Test TD-A.3: enqueue failure post-create → fallback driver invoked, coalescing reverted to false", async () => {
+    // Post-TD-A: when the doc was stamped coalescing:true at create time
+    // and the subsequent Cloud Tasks enqueue fails, onPaInbound has ALREADY
+    // skipped the row. Without an active fallback, the user gets no reply.
+    // This test pins the proper-fix: webhook calls
+    // processBrokerImessageFallback (injected by index.ts in production).
+    const { db, inbound, flags } = makeFakeDb()
+    flags.set("paMessageCoalesceEnabled", {
+      key: "paMessageCoalesceEnabled",
+      value: true,
+      type: "bool",
+      scope: "perUser",
+      allowlist: [],
+      blocklist: [],
+    })
+    _clearFeatureFlagCache()
+
+    const enqueueOrCoalesceMock = async () => {
+      throw new Error("Cloud Tasks 503")
+    }
+    const fallbackCalls: string[] = []
+    const fallbackMock = async (eventId: string) => {
+      fallbackCalls.push(eventId)
+    }
+
+    const body = JSON.stringify(basePayload({ message_handle: "msg-td-a-3" }))
+    const req = makeReq({ body, signature: SECRET })
+    const res = makeRes()
+
+    await handleSendblueWebhook(req, res, {
+      db,
+      secret: SECRET,
+      log: () => { /* swallow */ },
+      enqueueOrCoalesce: enqueueOrCoalesceMock as never,
+      coalescerDeps: {} as never,
+      lookupUserByPhone: async () => "u_adam_test",
+      processBrokerImessageFallback: fallbackMock,
+    })
+
+    assert.equal(res.statusCode, 200)
+    assert.equal(fallbackCalls.length, 1, "fallback called exactly once on enqueue failure")
+    const [doc] = [...inbound.values()]
+    assert.equal(
+      (doc as { coalescing?: boolean }).coalescing,
+      false,
+      "flag reverted to false (cosmetic — for forensic visibility)"
+    )
+    assert.equal(
+      (doc as { coalesceFallback?: boolean }).coalesceFallback,
+      true,
+      "coalesceFallback marker set so dashboards can identify these rows"
+    )
+  })
+
 })
