@@ -1172,15 +1172,20 @@ test("Phase 46 — safety silent_drop → no reply, no LLM, turn still marked su
   assert.ok(updateCalled, "turn must still be updated to succeeded for queue cleanup")
 })
 
-// ----------------- Bug 4 (2026-05-03) — single-send invariant -----------------
-test("Bug 4 — long reply (>600 chars) emits exactly 1 enqueueOutbound (single bubble)", async () => {
-  // Construct a >600 char reply so output-normalizer's chunker would, pre-fix,
-  // split into N chunks → N enqueueOutbound calls → N iMessage bubbles. Adam
-  // implemented实测 (2026-05-03) saw 6 bubbles per inbound burst.
-  // Post-fix: outboundParts is always [visibleReply], so exactly 1 enqueue.
-  // Use plain ASCII so each char is a single code unit; need length>600 to
-  // trigger output-normalizer's chunker pre-fix path. Use multiple sentences
-  // separated by ". " so the planner has clean split points.
+// ----------------- Bug 4 (2026-05-03) — ≤2-sends-per-turn invariant -----------------
+//
+// Original Bug 4 fix (commit ea59897) shipped a strict single-send invariant
+// to stop length-based chunking (Adam observed 6 bubbles per inbound burst).
+// The 2026-05-03 humanize spec relaxes the invariant to "≤2 sends per turn"
+// via voice/probabilistic-split.ts (post-gen, seeded). The original Bug 4
+// protection that MUST still hold:
+//   - never 3+ bubbles regardless of reply length
+//   - never length-based chunking from output-normalizer.norm.chunks
+//   - the user receives the COMPLETE reply (concatenation = original visible)
+test("Bug 4 — long reply (>600 chars) emits ≤2 enqueueOutbound (no length-based chunking)", async () => {
+  // Same fixture as the original Bug 4 test. Pre-Bug-4 path would chunk into
+  // N parts via norm.chunks; post-Bug-4 path forced 1; new path picks 1 or 2
+  // via decideReplySplit at sentence/transition boundaries — never length-based.
   const longReply = (
     "Sure, here's a structured plan for your PM job search in the energy space at top-tier companies. " +
     "First, the target industry within energy: new energy (solar/wind/storage), traditional oil and gas, grid infrastructure, or battery materials. " +
@@ -1192,22 +1197,38 @@ test("Bug 4 — long reply (>600 chars) emits exactly 1 enqueueOutbound (single 
   )
   assert.ok(longReply.length > 600, `setup: reply length ${longReply.length} must exceed maxLength=600`)
   let enqueueCount = 0
-  let lastBody = ""
+  const bodies: string[] = []
   const store = makeStore({
     runAgentTurn: async () => ({ text: longReply }),
     enqueueOutbound: async (_uid, _to, body) => {
       enqueueCount++
-      lastBody = body
+      bodies.push(body)
     },
   })
   await processInboundEvent(baseEvent, store)
-  assert.equal(
-    enqueueCount,
-    1,
-    `Bug 4 single-send invariant: expected 1 enqueueOutbound, got ${enqueueCount}`
+  // Hard cap: 1 or 2, never 3+ (Bug 4 length-chunking protection).
+  assert.ok(
+    enqueueCount === 1 || enqueueCount === 2,
+    `≤2-sends invariant: expected 1 or 2 enqueueOutbound, got ${enqueueCount}`
   )
-  // The single bubble carries the full reply (post-normalize join) — no truncation.
-  assert.ok(lastBody.length > 600, "single bubble body must contain full reply")
+  // Concatenated bodies must contain every sentence of the original reply.
+  // We check landmark substrings (one from each of the 7 sentences) rather
+  // than strict equality because the splitter trims whitespace at the cut.
+  const joined = bodies.join(" ")
+  for (const fragment of [
+    "structured plan",
+    "target industry within energy",
+    "preferred city",
+    "English communication level",
+    "existing projects",
+    "willingness to relocate",
+    "specific role leads",
+  ]) {
+    assert.ok(
+      joined.includes(fragment),
+      `concat of bubbles must contain "${fragment}" (Bug 4: complete reply preserved)`
+    )
+  }
 })
 
 // ----------------- Bug 5 body invariant tests (Adam 2026-05-03 01:05+01:22) -----------------

@@ -128,6 +128,12 @@ import { normalizeForIMessage, stripABProbeFromTail } from "./output-normalizer.
 // (X-or-Y tail probes) — see ab-framework-detector.ts module docstring.
 import { stripABFramework } from "./voice/ab-framework-detector.js"
 import { applyMixedRegisterMirror } from "./voice/mixed-register-mirror.js"
+// v1.5 humanize (Adam spec, 2026-05-03) — probabilistic 1-or-2 messages
+// per turn. Replaces Bug 4 single-send invariant (commit ea59897) with a
+// post-gen seeded probabilistic split. See voice/probabilistic-split.ts
+// for design notes (hotline-trailer guard, sentence/transition tokenizer,
+// 30%-70% position window, mulberry32 RNG keyed by turnId).
+import { decideReplySplit } from "./voice/probabilistic-split.js"
 // Phase 21 Track 5 — Headhunter playbook addendum (job-search probe rotation).
 import { headhunterAddendum } from "./playbooks/headhunter.js"
 // Phase 32 W3 — Firestore-backed playbook cache (30s TTL). Replaces the
@@ -1489,13 +1495,30 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
         : replyAfterRewrite
     const norm = normalizeForIMessage(rawVisible, { maxLength: 600 })
     const visibleReply = norm.text
-    // Bug 4 (2026-05-03): single-send invariant. Was: long replies (>600 chars)
-    // got split into N chunks → N pa-outbound docs → N iMessage bubbles. Adam
-    // implemented实测 4 inbound msgs → 6 reply bubbles (3 turns × 2 chunks).
-    // iMessage has no per-message length cap, so 1 long bubble is acceptable.
-    // We retain `norm.chunks` only for telemetry (`outputChunks` rawMeta
-    // exposes the LLM-was-too-long signal for dashboards).
-    const outboundParts: string[] = [visibleReply]
+    // Bug 4 (2026-05-03 commit ea59897) shipped a single-send-per-turn
+    // invariant after Adam observed 4 inbound msgs → 6 outbound bubbles
+    // (norm.chunks length-based splitting). We keep that fix in spirit:
+    // norm.chunks remains a TELEMETRY-ONLY signal (`outputChunks` rawMeta
+    // surfaces over-length LLM output for dashboards) and is no longer
+    // wired to the outbound-parts pipeline.
+    // 2026-05-03 humanize spec relaxes that to "≤2 sends per turn":
+    // decideReplySplit picks 1 or 2 outbound bubbles per a seeded
+    // weighted_random (turnId is the seed → replay-deterministic). Short
+    // replies, single-sentence replies, crisis-hotline trailers and
+    // mem0Degraded notices all force count=1. See probabilistic-split.ts.
+    const splitDecision = decideReplySplit(visibleReply, { seed: turnId })
+    const outboundParts = splitDecision.parts
+    store.log("pa.voice.reply_split.decided", {
+      userId: event.userId,
+      turnId,
+      eventId: event.id,
+      count: splitDecision.count,
+      reason: splitDecision.reason,
+      replyLen: visibleReply.length,
+      ...(splitDecision.splitAtIndex != null
+        ? { splitAtIndex: splitDecision.splitAtIndex }
+        : {}),
+    })
     const llmWasOverLength =
       norm.chunks != null && norm.chunks.length > 1
 
@@ -1553,11 +1576,11 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       }
     }
     if (!shouldSuppressOutbound(event)) {
-      // Bug 4 single-send invariant: exactly 1 enqueueOutbound call per turn.
-      // outboundParts is always length=1 by construction above; the assert
-      // documents the invariant in source so future refactors can't silently
-      // re-introduce multi-bubble behavior.
-      if (outboundParts.length !== 1) {
+      // ≤2-sends-per-turn invariant (relaxes Bug 4's strict single-send;
+      // see decideReplySplit comment block above). Out-of-bounds counts
+      // (0, or ≥3) still log an ERROR — the splitter contract guarantees
+      // count ∈ {1,2} so this is purely future-regression insurance.
+      if (outboundParts.length < 1 || outboundParts.length > 2) {
         store.log("pa.outbound.invariant_violation", {
           severity: "ERROR",
           turnId,
@@ -1566,11 +1589,20 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
           partsLength: outboundParts.length,
         })
       }
-      await store.enqueueOutbound(event.userId, event.from, outboundParts[0]!, {
-        sessionId: event.sessionId,
-        role: "assistant",
-        idempotencyKey: `outbound-${event.id}`,
-      })
+      // Per-part idempotency keys: index 0 keeps the historical key shape
+       // (`outbound-${event.id}`) so replays of single-part turns dedup
+      // against pre-split-feature pa-outbound docs. Subsequent parts get
+      // a `-pN` suffix so each (eventId, partIndex) pair is its own row.
+      for (let i = 0; i < outboundParts.length; i++) {
+        const part = outboundParts[i]!
+        const idempotencyKey =
+          i === 0 ? `outbound-${event.id}` : `outbound-${event.id}-p${i + 1}`
+        await store.enqueueOutbound(event.userId, event.from, part, {
+          sessionId: event.sessionId,
+          role: "assistant",
+          idempotencyKey,
+        })
+      }
     }
     // Phase 30 T2 — Downstream Eval Connector hook (P9-Connectors).
     // Fire-and-forget: we await with a soft 2s budget so the chat path is
