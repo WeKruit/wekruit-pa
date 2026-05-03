@@ -22,6 +22,7 @@
 
 export {
   detectLang,
+  detectUserLang,
   injectImperfection,
 } from "./injector.js"
 

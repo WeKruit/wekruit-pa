@@ -98,10 +98,18 @@ import {
 } from "./voice/llm-rewriter.js"
 // Phase 36 — ImperfectionInjector applied post-strip on final visible text.
 import {
-  detectLang,
+  detectUserLang,
   injectImperfection,
   resolveArm,
 } from "./voice/imperfection-injector/index.js"
+// Phase 53 — Bug 2 fix: lang-lock helper extracted to runner so both
+// onboarding cold-start branch + main path share single source of truth.
+// Mirrors Phase 53 Bug A pattern (`crisis-guard-runner.ts`).
+import {
+  buildLangLockSandwich,
+  buildLangLockUserDirective,
+  runLangLockGuard,
+} from "./voice/lang-lock-runner.js"
 // Phase 35/38 — detectors + advice tracker run UNCONDITIONALLY on the final
 // visible text, regardless of whether `rewriteIfOff` short-circuited (no_change
 // / rewrite_unsafe / timeout). Inner-rewriter wire-in only fires on the
@@ -789,16 +797,27 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
           detectedIntent,
         })
         if (syntheticInput) {
-          // Build system inputs for onboarding reply using the normal Voice v1 path
+          // Build system inputs for onboarding reply using the normal Voice v1 path.
+          //
+          // Phase 53 Bug 2 fix: cold-start onboarding used to bypass the
+          // Phase 11 langLock pre-gen sandwich + post-gen translate (Adam
+          // iMessage 2026-05-03 00:34 — ZH user got EN+ZH-mixed reply).
+          // Mirror the main-path lang-lock chain: detect user lang →
+          // sandwich systemPrompt → user-message directive → run guard.
+          const onboardingUserLang = detectUserLang(event.body)
+          const { open: onboardingLangOpen, close: onboardingLangClose } =
+            buildLangLockSandwich(onboardingUserLang)
+          const onboardingSystemPrompt = `${onboardingLangOpen}\n\n${agent.systemPrompt}${onboardingLangClose}`
+          const onboardingUserMessage = `${event.body}${buildLangLockUserDirective(onboardingUserLang)}`
           const onboardingSystemInputs = [syntheticInput]
           const onboardingHistory = await store.loadHistory(event.sessionId, 5)
           const onboardingSession = store.createSession({ sessionId: event.sessionId, userId: event.userId })
           const { text: onboardingText } = await store.runAgentTurn({
             agent,
-            systemPrompt: agent.systemPrompt,
+            systemPrompt: onboardingSystemPrompt,
             memoryBlock: null,
             history: onboardingHistory,
-            userMessage: event.body,
+            userMessage: onboardingUserMessage,
             session: onboardingSession,
             systemInputs: onboardingSystemInputs,
             tools: [],
@@ -810,7 +829,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
           // same guard here so cold-start crisis input still gets a hotline
           // trailer. callSite="onboarding" tags telemetry so we can dashboard
           // cold-start vs main-path injection rates separately.
-          const onboardingGuarded = await runCrisisHotlineGuard({
+          const onboardingCrisisGuarded = await runCrisisHotlineGuard({
             store,
             event,
             turnId,
@@ -818,7 +837,18 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
             reply: onboardingReplyRaw,
             callSite: "onboarding",
           })
-          const onboardingReply = onboardingGuarded.reply
+          // Phase 53 Bug 2 fix: post-gen lang-lock translate (mirror main path
+          // line ~1140). Cold-start ZH user with reply that leaked to EN gets
+          // translated back to ZH. Fail-open — original ships if translate fails.
+          const onboardingLangGuarded = await runLangLockGuard({
+            store,
+            userId: event.userId,
+            turnId,
+            userLang: onboardingUserLang,
+            reply: onboardingCrisisGuarded.reply,
+            callSite: "onboarding",
+          })
+          const onboardingReply = onboardingLangGuarded.reply
           const { text: normalizedOnboardingReply } = normalizeForIMessage(onboardingReply, { maxLength: 600 })
           await store.appendMessage({
             id: `out-${event.id}`,
@@ -1089,13 +1119,12 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // in the ~10k-char Bible/handbook tail. v1 single-prepend + Qwen-7B was
     // observed Turn-1 EN→ZH leaking on en_grad sim (2026-05-02). Recency
     // bias from the trailing copy is what actually clamps the model.
-    const userLang = detectLang(event.body)
-    const langLockOpen = userLang === "zh"
-      ? "[LANGUAGE-LOCK · TOP-PRIORITY]\nuser_input_language: zh (Chinese)\nABSOLUTE RULE: You MUST reply in Chinese (中文). Do NOT switch to English unless the token is a code symbol, URL, or proper noun (人名/公司名). NEVER reply in English when the user wrote Chinese.\n[/LANGUAGE-LOCK]"
-      : "[LANGUAGE-LOCK · TOP-PRIORITY]\nuser_input_language: en (English)\nABSOLUTE RULE: You MUST reply in English. Do NOT switch to Chinese / use Chinese characters (汉字) at all. NEVER reply in Chinese when the user wrote English. Casual register is fine; language must be English.\n[/LANGUAGE-LOCK]"
-    const langLockClose = userLang === "zh"
-      ? "\n\n[FINAL-REMINDER]\nThe user just wrote in Chinese. Your reply MUST be in Chinese (中文). 不要用英文回复中文输入。\n[/FINAL-REMINDER]"
-      : "\n\n[FINAL-REMINDER]\nThe user just wrote in English. Your reply MUST be in English. Do not output any Chinese characters (汉字).\n[/FINAL-REMINDER]"
+    //
+    // Phase 53 Bug 2 fix: detectUserLang (any-CJK → zh) replaces detectLang
+    // (cjk-vs-ascii majority). Adam iMessage repro: "swe的"/"yoe1年的" used
+    // to read as EN majority; user is writing ZH-frame so reply MUST be ZH.
+    const userLang = detectUserLang(event.body)
+    const { open: langLockOpen, close: langLockClose } = buildLangLockSandwich(userLang)
     const baseSystemPrompt = isVoiceV1Disabled()
       ? LEGACY_V0_SYSTEM_PROMPT
       : composedSystemPrompt ?? agent.systemPrompt
@@ -1115,9 +1144,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // in agent doc are ZH-heavy and bias turn-1 generation. Injecting at the
     // end of userMessage means the LLM reads the directive immediately
     // before generating its reply — strongest possible recency.
-    const userMessageWithLangLock = userLang === "en"
-      ? `${event.body}\n\n[SYSTEM-DIRECTIVE: Reply in English only. Do not output any Chinese characters.]`
-      : `${event.body}\n\n[SYSTEM-DIRECTIVE: 用中文回复。Reply only in Chinese.]`
+    const userMessageWithLangLock = `${event.body}${buildLangLockUserDirective(userLang)}`
     const { text, usage } = await store.runAgentTurn({
       agent,
       systemPrompt,
@@ -1143,69 +1170,20 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // toward Chinese even when user wrote English. If reply language
     // mismatches user input language, run a fast Qwen translate. Fail-open
     // on timeout/error — original reply still ships.
-    try {
-      const replyLang = detectLang(reply)
-      if (replyLang !== userLang && reply.length > 0) {
-        const targetLang = userLang === "zh" ? "Chinese (中文)" : "English"
-        const translatePrompt = userLang === "zh"
-          ? `Rewrite the following message in Chinese (中文) only. Keep the casual texting tone, brevity, and meaning EXACT. Do NOT add or remove content. Do NOT use any English words except code/URLs/proper nouns. Output ONLY the rewritten message, no preface.\n\n${reply}`
-          : `Rewrite the following message in English only. Keep the casual texting tone, brevity, and meaning EXACT. Do NOT add or remove content. Do NOT use any Chinese characters (汉字). Output ONLY the rewritten message, no preface.\n\n${reply}`
-        const sfKey = process.env.SILICONFLOW_API_KEY?.trim() || ""
-        if (sfKey) {
-          const ac = new AbortController()
-          const timer = setTimeout(() => ac.abort(), 5000)
-          try {
-            const resp = await fetch("https://api.siliconflow.cn/v1/chat/completions", {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${sfKey}`,
-              },
-              body: JSON.stringify({
-                model: "Qwen/Qwen2.5-7B-Instruct",
-                messages: [{ role: "user", content: translatePrompt }],
-                max_tokens: 200,
-                temperature: 0.2,
-              }),
-              signal: ac.signal,
-            })
-            if (resp.ok) {
-              const j = (await resp.json()) as { choices?: { message?: { content?: string } }[] }
-              const translated = (j.choices?.[0]?.message?.content ?? "").trim()
-              const translatedLang = detectLang(translated)
-              if (translated.length > 0 && translatedLang === userLang) {
-                store.log("pa.voice.lang_translate.applied", {
-                  userId: event.userId,
-                  turnId,
-                  fromLang: replyLang,
-                  toLang: userLang,
-                  beforeLen: reply.length,
-                  afterLen: translated.length,
-                })
-                reply = translated
-              } else {
-                store.log("pa.voice.lang_translate.rejected", {
-                  userId: event.userId,
-                  turnId,
-                  reason: translated.length === 0 ? "empty" : "still_wrong_lang",
-                  translatedLang,
-                })
-              }
-            } else {
-              store.log("pa.voice.lang_translate.http_error", {
-                userId: event.userId,
-                turnId,
-                status: resp.status,
-              })
-            }
-          } finally {
-            clearTimeout(timer)
-          }
-        }
-      }
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      store.log("pa.voice.lang_translate.error", { userId: event.userId, turnId, error: msg })
+    //
+    // Phase 53 Bug 2 fix: extracted to runLangLockGuard helper so the
+    // onboarding cold-start branch can share the same scaffold. callSite
+    // tags telemetry for cold-start vs main-path dashboarding.
+    {
+      const guarded = await runLangLockGuard({
+        store,
+        userId: event.userId,
+        turnId,
+        userLang,
+        reply,
+        callSite: "main",
+      })
+      reply = guarded.reply
     }
     // Phase 24 T1D — telemetry-only coach-token monitor. Pure observation.
     // Hits feed Phase 25 self-evolve dataset. NO transform on `reply`.

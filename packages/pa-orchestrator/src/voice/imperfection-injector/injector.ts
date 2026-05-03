@@ -63,6 +63,45 @@ export function detectLang(text: string): "zh" | "en" {
 }
 
 /**
+ * Phase 53 — Bug 2 fix: zh-biased detection for USER INPUT.
+ *
+ * `detectLang` uses cjk-vs-ascii majority; this misclassifies bilingual user
+ * inputs like "swe的" (1 cjk + 3 ascii) or "yoe1年的" (3 ascii + 2 cjk) as
+ * "en". When a user mixes English tokens (acronyms, role names like SWE/PM,
+ * tech terms like react/python) with Chinese, they are still WRITING IN
+ * CHINESE — the English bits are loanword-shaped fragments inside a
+ * Chinese-frame utterance. Replying in English is wrong.
+ *
+ * Heuristic: ANY presence of CJK characters → "zh" (the user is writing
+ * Chinese-frame; English fragments are loanwords). Pure-ASCII → "en".
+ *
+ * USE THIS for USER-INPUT lang detection (langLock decisions). For REPLY
+ * lang detection (post-gen translate decision), keep using `detectLang`
+ * because that is a faithful "what did the model actually emit" check.
+ *
+ * Adam iMessage 2026-05-03 00:34 repro:
+ *   "我想找工作"   → detectLang=zh (current OK)
+ *   "swe的"        → detectLang=en (WRONG; detectUserLang=zh ✓)
+ *   "yoe1年的"     → detectLang=en (WRONG; detectUserLang=zh ✓)
+ *   "I want a job" → detectLang=en (correct; detectUserLang=en ✓)
+ *   "我是 senior on OPT" → detectLang=en (debatable; detectUserLang=zh ✓)
+ */
+export function detectUserLang(text: string): "zh" | "en" {
+  if (typeof text !== "string" || text.length === 0) return "en"
+  for (const ch of text) {
+    const code = ch.codePointAt(0) ?? 0
+    if (
+      (code >= 0x4e00 && code <= 0x9fff) ||
+      (code >= 0x3400 && code <= 0x4dbf) ||
+      (code >= 0x3000 && code <= 0x303f)
+    ) {
+      return "zh"
+    }
+  }
+  return "en"
+}
+
+/**
  * Pick a policy from a same-type sub-bank using weighted random draw.
  * Returns the chosen policy index in `policies` (NOT the sub-bank index).
  *
