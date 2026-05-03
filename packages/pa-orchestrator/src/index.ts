@@ -133,7 +133,6 @@ import { buildFewShotTurns, prefixFewShotToHistory } from "./voice/few-shot.js"
 // turns can still inform style mirroring.
 import {
   truncateHistoryByTokens,
-  estimateHistoryTokens,
   TELEMETRY_THRESHOLD_TOKENS,
 } from "./voice/context-window.js"
 import { normalizeForIMessage, stripABProbeFromTail } from "./output-normalizer.js"
