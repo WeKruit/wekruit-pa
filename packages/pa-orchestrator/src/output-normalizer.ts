@@ -71,6 +71,18 @@ function stripUrlQueryParams(href: string, paramNames: ReadonlyArray<string>, dr
   }
 }
 
+/**
+ * Iter 16 Bug 10: Qwen-7B sometimes echoes literal placeholder tokens like
+ * `<TOPIC>`, `<topic>`, `<X>` from rewriter prompt examples. Strip them out
+ * before downstream renders. We delete the placeholder + any single space
+ * adjacent to it so reply doesn't have weird gaps.
+ */
+function stripPromptPlaceholders(input: string): string {
+  // Common leak patterns: <TOPIC>, <topic>, <X>, <Y>, <CATEGORY>, <USER_TOPIC>
+  // Strip ONLY the placeholder + adjacent single space — preserve newlines.
+  return input.replace(/ ?<[A-Z_]{1,20}> ?/gi, "").replace(/[ \t]+/g, " ")
+}
+
 function stripCodeFences(input: string): string {
   return input.replace(/```[\w]*\r?\n([\s\S]*?)```/g, (_m, inner: string) => inner)
 }
@@ -175,6 +187,7 @@ export function normalizeForIMessage(input: string, opts?: NormalizeOpts): Norma
 
   let s = stripCodeFences(input)
   s = stripInlineCode(s)
+  s = stripPromptPlaceholders(s)
   s = replaceMarkdownLinks(s, paramNames, dropped)
   s = flattenCitations(s)
   s = stripBareUrlsInText(s, paramNames, dropped)

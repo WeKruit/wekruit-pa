@@ -363,7 +363,7 @@ const REWRITER_V2_SYSTEM_PROMPT = [
   "  'X 还是 Y?' (binary choice) → drop the question entirely",
   "  '你最近怎么 X' / probing question → drop it",
   "  Pop-therapy (接住你/硬撑着/hold space) → plain empathy ('听起来挺烦的')",
-  "  '我懂' / '我懂那种 X' / '我懂你那 X' (validation tic) → DELETE the entire phrase AND X. Keep ONLY content directly. WRONG: '草 我懂那种卡在<TOPIC>的感觉'. RIGHT: '草 <TOPIC>那块确实最磨人' (replace <TOPIC> with the user's actual topic — DO NOT output literal '算法' or '<TOPIC>')",
+  "  '我懂' / '我懂那种 X' / '我懂你那 X' (validation tic) → DELETE the entire phrase AND X. Keep ONLY direct content. (Iter 16: do not echo any meta-tokens or placeholder labels in output.)",
   "  '我陪你 X' / '我们一起 X' / '让我帮你 X' (coach-opener) → DROP entirely or replace with peer reaction",
   "  '我那时候也 X' → keep ONLY if not used in last 2 turns; else DROP",
   "",
