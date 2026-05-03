@@ -30,6 +30,21 @@ import { PA_COLLECTIONS } from "@pa/core-types"
 export const PLAYBOOKS_COLLECTION = "pa-playbooks"
 export const PLAYBOOK_AUDIT_PREFIX = "playbook"
 
+/**
+ * Adam iter 27 — onboarding routing hint.
+ *
+ * Replaces the duplicated regex bank in `onboarding-intent.ts` (TS-compiled,
+ * requires deploy to edit). Playbook regex (Firestore-editable via dashboard)
+ * becomes the SINGLE SOURCE for first-turn intent routing.
+ *
+ *   - `no_chain` — playbook is for distress/qualifier-context (vent /
+ *     interview_prep / negotiation / motivation_nudge / jd_roast). Onboarding
+ *     should NOT chain ask_q_role; should suspend mid-probe state advance.
+ *   - `role_chain` — playbook is for explicit job-search/visa/resume intent.
+ *     Onboarding chains the Adam-locked ask_q_role question after the ack.
+ *   - `null` — no special routing; playbook addendum injects but onboarding
+ *     follows the bare first_mes path.
+ */
 export const PlaybookSchema = z.object({
   playbookKey: z.string().min(1),
   name: z.string().min(1),
@@ -37,6 +52,8 @@ export const PlaybookSchema = z.object({
   regexTriggers: z.array(z.string()).default([]),
   addendum: z.string().default(""),
   enabled: z.boolean().default(true),
+  /** iter27 — onboarding routing semantics; null = no special routing. */
+  routingHint: z.enum(["no_chain", "role_chain"]).nullable().default(null),
   version: z.number().int().nonnegative().default(0),
   updatedAt: z.string().nullable().default(null),
   updatedBy: z.string().default(""),
@@ -51,6 +68,7 @@ export type SavePlaybookInput = {
   regexTriggers?: string[]
   addendum?: string
   enabled?: boolean
+  routingHint?: "no_chain" | "role_chain" | null
 }
 
 export type SavePlaybookOpts = {
@@ -81,6 +99,9 @@ function toIso(value: unknown): string | null {
 }
 
 function fromSnap(id: string, raw: Record<string, unknown>): Playbook {
+  const rh = raw.routingHint
+  const routingHint: "no_chain" | "role_chain" | null =
+    rh === "no_chain" || rh === "role_chain" ? rh : null
   return {
     playbookKey: (raw.playbookKey as string) ?? id,
     name: (raw.name as string) ?? id,
@@ -90,6 +111,7 @@ function fromSnap(id: string, raw: Record<string, unknown>): Playbook {
       : [],
     addendum: (raw.addendum as string) ?? "",
     enabled: raw.enabled === undefined ? true : Boolean(raw.enabled),
+    routingHint,
     version: typeof raw.version === "number" ? raw.version : 0,
     updatedAt: toIso(raw.updatedAt),
     updatedBy: (raw.updatedBy as string) ?? "",
@@ -140,6 +162,8 @@ export async function upsertPlaybook(
     regexTriggers: fields.regexTriggers ?? prev?.regexTriggers ?? [],
     addendum: fields.addendum ?? prev?.addendum ?? "",
     enabled: fields.enabled ?? prev?.enabled ?? true,
+    routingHint:
+      fields.routingHint !== undefined ? fields.routingHint : prev?.routingHint ?? null,
     version: nextVersion,
     updatedAt: nowIso(),
     updatedBy: actor,
@@ -167,6 +191,7 @@ export async function upsertPlaybook(
     regexTriggers: merged.regexTriggers,
     addendum: merged.addendum,
     enabled: merged.enabled,
+    routingHint: merged.routingHint ?? null,
     version: nextVersion,
     updatedAt: merged.updatedAt,
     updatedBy: actor,
@@ -378,7 +403,7 @@ OK: "嗯 然后呢" / "卧 那段听着爽" / "诶 这个我想多听点" / 沉�
 // ---------------------------------------------------------------------------
 
 export const VENT_SUPPORT_TRIGGERS: ReadonlyArray<string> = [
-  // zh
+  // zh — original
   "烦死",
   "烦透",
   "崩溃",
@@ -391,7 +416,24 @@ export const VENT_SUPPORT_TRIGGERS: ReadonlyArray<string> = [
   "破防",
   "emo",
   "丧",
-  // en
+  // zh — iter24/27 broadened distress vocab (real-user observed)
+  "焦虑",
+  "睡不着",
+  "睡不好",
+  "撑不住",
+  "翻车",
+  "喘不过气",
+  "喘不上气",
+  "自我怀疑",
+  "心慌",
+  "心烦",
+  "心情不好",
+  "麻了",
+  "不行了",
+  "要疯了",
+  "垮了",
+  "(感觉|觉得).{0,5}(不行|没用|没希望|没意思|累|空|废|loser|失败)",
+  // en — original
   "I'm so done",
   "I can'?t",
   "fed up",
@@ -402,6 +444,20 @@ export const VENT_SUPPORT_TRIGGERS: ReadonlyArray<string> = [
   "going to lose it",
   "exhausted",
   "drained",
+  // en — iter27 broadened
+  "anxious",
+  "anxiety",
+  "can'?t sleep",
+  "panicking",
+  "overwhelmed",
+  "hopeless",
+  "spiraling",
+  "self[-\\s]?doubt",
+  "doubting myself",
+  "imposter",
+  "worthless",
+  "tanked (my|the) interview",
+  "bombed (my|the) interview",
 ] as const
 
 export const VENT_SUPPORT_ADDENDUM = `# PLAYBOOK MODE: VENT_SUPPORT (active)
@@ -587,6 +643,8 @@ type PlaybookSpec = {
   description: string
   triggers: ReadonlyArray<string>
   addendum: string
+  /** iter27 — onboarding routing hint. Replaces onboarding-intent.ts regex bank. */
+  routingHint?: "no_chain" | "role_chain" | null
 }
 
 const DEFAULT_PLAYBOOK_SPECS: ReadonlyArray<PlaybookSpec> = [
@@ -597,6 +655,7 @@ const DEFAULT_PLAYBOOK_SPECS: ReadonlyArray<PlaybookSpec> = [
       "Activates when user signals job search (regex on inbound body). Pushes Claire to ask feeling-probes instead of dispensing job advice.",
     triggers: HEADHUNTER_DEFAULT_TRIGGERS,
     addendum: HEADHUNTER_DEFAULT_ADDENDUM,
+    routingHint: "role_chain",
   },
   {
     key: "vent_support",
@@ -605,6 +664,7 @@ const DEFAULT_PLAYBOOK_SPECS: ReadonlyArray<PlaybookSpec> = [
       "Activates when user signals burnout / breakdown / emotional overload. Forces Claire to acknowledge + companion ONLY — no advice, no analysis, short replies.",
     triggers: VENT_SUPPORT_TRIGGERS,
     addendum: VENT_SUPPORT_ADDENDUM,
+    routingHint: "no_chain",
   },
   {
     key: "motivation_nudge",
@@ -613,6 +673,7 @@ const DEFAULT_PLAYBOOK_SPECS: ReadonlyArray<PlaybookSpec> = [
       "Activates when user signals procrastination / no motivation / can't start. Forces Claire to find the smallest 5-min action — no rah-rah, no time-management lectures.",
     triggers: MOTIVATION_NUDGE_TRIGGERS,
     addendum: MOTIVATION_NUDGE_ADDENDUM,
+    routingHint: "no_chain",
   },
   {
     key: "jd_roast",
@@ -621,6 +682,7 @@ const DEFAULT_PLAYBOOK_SPECS: ReadonlyArray<PlaybookSpec> = [
       "Activates when user shares a job description and asks for thoughts. Forces friend-perspective reaction + ranking against other options — no pros/cons charts, no checklists.",
     triggers: JD_ROAST_TRIGGERS,
     addendum: JD_ROAST_ADDENDUM,
+    routingHint: "role_chain",
   },
   {
     key: "interview_prep",
@@ -629,6 +691,7 @@ const DEFAULT_PLAYBOOK_SPECS: ReadonlyArray<PlaybookSpec> = [
       "Activates when user mentions upcoming interview / nervous / prepping. Forces Claire to first identify the user's #1 worry then suggest one small concrete drill — no STAR/system-design textbook lectures.",
     triggers: INTERVIEW_PREP_TRIGGERS,
     addendum: INTERVIEW_PREP_ADDENDUM,
+    routingHint: "no_chain",
   },
   {
     key: "negotiation",
@@ -637,6 +700,7 @@ const DEFAULT_PLAYBOOK_SPECS: ReadonlyArray<PlaybookSpec> = [
       "Activates when user is comparing offers / asking how much to ask. Forces Claire to surface stake + leverage BEFORE numbers — no specific dollar figures, only ranges with stake/leverage logic.",
     triggers: NEGOTIATION_TRIGGERS,
     addendum: NEGOTIATION_ADDENDUM,
+    routingHint: "no_chain",
   },
 ]
 
@@ -664,6 +728,7 @@ export async function seedDefaultPlaybooks(
         regexTriggers: [...spec.triggers],
         addendum: spec.addendum,
         enabled: true,
+        routingHint: spec.routingHint ?? null,
       },
       { actor, reason }
     )

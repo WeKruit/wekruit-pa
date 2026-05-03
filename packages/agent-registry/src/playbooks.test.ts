@@ -198,6 +198,7 @@ test("matchPlaybooks returns matched playbooks; disabled excluded", () => {
       regexTriggers: ["想换", "offer"],
       addendum: "addendum-headhunter",
       enabled: true,
+      routingHint: null,
       version: 1,
       updatedAt: null,
       updatedBy: "",
@@ -210,6 +211,7 @@ test("matchPlaybooks returns matched playbooks; disabled excluded", () => {
       regexTriggers: ["promo", "升职"],
       addendum: "addendum-celebrate",
       enabled: false, // disabled — should not match even if regex hits
+      routingHint: null,
       version: 1,
       updatedAt: null,
       updatedBy: "",

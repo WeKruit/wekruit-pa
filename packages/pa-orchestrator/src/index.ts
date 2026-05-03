@@ -861,9 +861,70 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       const intentAckEnabled =
         (onboardingStep === "send_first_mes" || isMidProbeStep) &&
         (await isOnboardingIntentAckEnabled(store.db, event.userId))
-      const detectedIntent = intentAckEnabled
-        ? detectFirstTurnIntent(event.body)
-        : undefined
+      // iter27 — Firestore playbook is now the SINGLE SOURCE for first-turn
+      // intent routing. matchCachedPlaybooks already runs later in the main
+      // path; we run it here too (cache TTL=30s so this is cheap). Each
+      // matched playbook carries `routingHint`:
+      //   - "no_chain"  → vent / interview_prep / negotiation / motivation_nudge
+      //                   semantics (suspend onboarding, no role chain)
+      //   - "role_chain" → job_search / jd_roast / headhunter (ack + chain
+      //                   ask_q_role). Currently piped through detectFirstTurnIntent
+      //                   for ack-template selection, but the routing decision
+      //                   comes from playbook routingHint.
+      //   - null → no special routing
+      // Falls back to detectFirstTurnIntent regex bank if no playbook match
+      // (e.g. visa_check / resume_parse / preference_update — those still
+      // live in the regex bank pending future playbook expansion).
+      let matchedPlaybookKeys: string[] = []
+      let playbookRoutingHint: "no_chain" | "role_chain" | null = null
+      if (intentAckEnabled && store.db) {
+        try {
+          const { matched } = await matchCachedPlaybooks(store.db, event.body)
+          matchedPlaybookKeys = matched.map((p) => p.playbookKey)
+          // First playbook with a routingHint wins.
+          for (const p of matched) {
+            if (p.routingHint === "no_chain" || p.routingHint === "role_chain") {
+              playbookRoutingHint = p.routingHint
+              break
+            }
+          }
+        } catch (err) {
+          store.log("pa.onboarding.playbook_route.error", {
+            userId: event.userId,
+            turnId,
+            error: err instanceof Error ? err.message : String(err),
+          })
+        }
+      }
+      // Map matched playbook key → FirstTurnDetection for ack-template lookup.
+      // For the 4 noChain playbooks (vent_support / interview_prep /
+      // motivation_nudge / negotiation) the playbookKey maps 1:1 to a
+      // FirstTurnIntent (after stripping "_support" suffix). For role_chain
+      // playbooks we fall through to detectFirstTurnIntent for the ack
+      // template selection.
+      const PLAYBOOK_KEY_TO_INTENT: Record<string, "vent" | "interview_prep" | "motivation_nudge" | "negotiation"> = {
+        vent_support: "vent",
+        interview_prep: "interview_prep",
+        motivation_nudge: "motivation_nudge",
+        negotiation: "negotiation",
+      }
+      let detectedIntent: ReturnType<typeof detectFirstTurnIntent> | undefined
+      if (intentAckEnabled) {
+        // First check playbook-derived intent (broader regex, dashboard-editable)
+        const playbookIntent = matchedPlaybookKeys
+          .map((k) => PLAYBOOK_KEY_TO_INTENT[k])
+          .find((v): v is "vent" | "interview_prep" | "motivation_nudge" | "negotiation" => Boolean(v))
+        if (playbookIntent) {
+          detectedIntent = {
+            intent: playbookIntent,
+            confidence: "high",
+            signals: matchedPlaybookKeys.map((k) => `playbook:${k}`),
+          }
+        } else {
+          // Fall back to legacy regex bank (job_search / visa_check / resume_parse / preference_update)
+          detectedIntent = detectFirstTurnIntent(event.body)
+        }
+      }
       // We only treat the detection as an "ack" trigger when the intent is
       // actionable (not casual / abuse / null). casual / abuse / null fall
       // through to the unchanged Adam-locked greeting.
@@ -875,27 +936,35 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
           detectedIntent.intent !== "abuse" &&
           onboardingStep === "send_first_mes"
       )
-      // Adam iter 24 — mid-probe suspension. Two triggers:
-      //   (A) noChainIntent (vent / interview_prep / negotiation / motivation_nudge)
-      //   (B) user did NOT answer the current step's question (e.g. user
-      //       says "再帮我想想" while we asked q_visa)
-      // When either fires, state is NOT advanced. State stays at the same
-      // q_X so the next turn (if user actually answers or moves on) parses
-      // correctly.
+      // Adam iter 24/27 — mid-probe suspension. Triggers:
+      //   (A) playbook routingHint = "no_chain" (preferred — Firestore-editable)
+      //   (B) detectedIntent is one of vent / interview_prep / negotiation /
+      //       motivation_nudge (legacy regex fallback)
+      //   (C) user did NOT answer the current step's question
+      // State stays at q_X under suspension.
       const ventLikeMidProbe =
         isMidProbeStep &&
-        detectedIntent &&
-        detectedIntent.confidence === "high" &&
-        (detectedIntent.intent === "vent" ||
-          detectedIntent.intent === "interview_prep" ||
-          detectedIntent.intent === "negotiation" ||
-          detectedIntent.intent === "motivation_nudge")
+        (playbookRoutingHint === "no_chain" ||
+          (detectedIntent?.confidence === "high" &&
+            (detectedIntent.intent === "vent" ||
+              detectedIntent.intent === "interview_prep" ||
+              detectedIntent.intent === "negotiation" ||
+              detectedIntent.intent === "motivation_nudge")))
       const userAnsweredCurrentStep = isMidProbeStep
         ? userAnsweredStep(onboardingStep, event.body)
         : true
       const suspendedForVent = Boolean(
         isMidProbeStep && (ventLikeMidProbe || !userAnsweredCurrentStep)
       )
+      if (matchedPlaybookKeys.length > 0) {
+        store.log("pa.onboarding.playbook_route.matched", {
+          userId: event.userId,
+          turnId,
+          playbookKeys: matchedPlaybookKeys,
+          routingHint: playbookRoutingHint,
+          step: onboardingStep,
+        })
+      }
       if (onboardingStep !== "skip") {
         const syntheticInput = composeOnboardingInput(onboardingStep, agent, {
           userMessage: event.body,
@@ -927,7 +996,26 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
             systemInputs: onboardingSystemInputs,
             tools: [],
           })
-          const onboardingReplyRaw = stripLeadingIsoTimestamp(onboardingText.trim()) || "在呢. 今天找你聊点啥? 🍋"
+          let onboardingReplyRaw = stripLeadingIsoTimestamp(onboardingText.trim()) || "在呢. 今天找你聊点啥? 🍋"
+          // iter27 — AB-probe strip in onboarding cold-start (Bible v7.5 NEVER
+          // PROBE). Main path strips this at line ~1543; cold-start used to
+          // skip it. interview_prep playbook addendum encourages multi-choice
+          // probes, so without this guard the LLM emits "X 还是 Y?" through
+          // ack templates. Defense-in-depth.
+          {
+            const onboAbResult = stripABProbeFromTail(onboardingReplyRaw)
+            if (onboAbResult.hits.length > 0) {
+              store.log("pa.voice.ab_probe_strip.applied", {
+                userId: event.userId,
+                turnId,
+                callSite: "onboarding",
+                patterns: onboAbResult.hits,
+                beforeLen: onboardingReplyRaw.length,
+                afterLen: onboAbResult.stripped.length,
+              })
+              onboardingReplyRaw = onboAbResult.stripped || onboardingReplyRaw
+            }
+          }
           // Phase 53 — Bug A fix: cold-start crisis users (onboardingState=
           // undefined) used to bypass the Phase 51 hotline guard because this
           // branch returns BEFORE the main-path post-rewrite hook. Run the

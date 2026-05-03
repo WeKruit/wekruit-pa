@@ -4,8 +4,8 @@ description: |
 testMode: true
 locale: en-US
 agentId: default
-participant: "+19999992005"
-chatId: "iMessage;+19999992005"
+participant: "+19999992731"
+chatId: "iMessage;+19999992731"
 turnTimeoutMs: 120000
 turns:
   - user: "I just got 2 offers and need to negotiate. What number should I ask for?"

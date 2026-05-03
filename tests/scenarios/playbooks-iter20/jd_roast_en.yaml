@@ -4,8 +4,8 @@ description: |
 testMode: true
 locale: en-US
 agentId: default
-participant: "+19999992003"
-chatId: "iMessage;+19999992003"
+participant: "+19999992751"
+chatId: "iMessage;+19999992751"
 turnTimeoutMs: 120000
 turns:
   - user: "I want your thoughts on this JD: Senior PM at a Series B fintech in NYC, 150k base, 0.5% equity. Should I apply?"

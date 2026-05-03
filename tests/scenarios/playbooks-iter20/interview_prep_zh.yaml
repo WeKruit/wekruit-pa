@@ -4,8 +4,8 @@ description: |
 testMode: true
 locale: zh-CN
 agentId: default
-participant: "+19999992004"
-chatId: "iMessage;+19999992004"
+participant: "+19999992721"
+chatId: "iMessage;+19999992721"
 turnTimeoutMs: 120000
 turns:
   - user: "明天 system design 面试紧张 不知道怎么准备"
