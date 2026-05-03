@@ -198,6 +198,38 @@ export function countSentences(text: string): number {
 }
 
 /**
+ * Strip reply to first N sentences. Used by orchestrator wire-in to enforce
+ * F2 cap (Adam iter 17 spec — replies too long, must shorten before prob-split).
+ *
+ * Returns:
+ *   - { stripped: false, text } if input ≤ cap or empty
+ *   - { stripped: true, text: kept, original, dropped } if truncation applied
+ *
+ * Pure, sync, < 10ms. Uses the same splitSentences tokenizer as detectLengthCap
+ * so detector trigger ⇒ strip is guaranteed self-consistent.
+ */
+export function stripToSentenceCap(
+  text: string,
+  cap?: number
+): { stripped: boolean; text: string; original?: string; dropped?: number } {
+  if (typeof text !== "string" || text.length === 0) {
+    return { stripped: false, text: text ?? "" }
+  }
+  const effectiveCap = cap ?? readEnvCap()
+  const parts = splitSentences(text)
+  if (parts.length <= effectiveCap) {
+    return { stripped: false, text }
+  }
+  const kept = parts.slice(0, effectiveCap).join(" ").trim()
+  return {
+    stripped: true,
+    text: kept,
+    original: text,
+    dropped: parts.length - effectiveCap,
+  }
+}
+
+/**
  * F2 detector entry point. Pure text, sync.
  */
 export function detectLengthCap(ctx: DetectorContext): DetectorResult {

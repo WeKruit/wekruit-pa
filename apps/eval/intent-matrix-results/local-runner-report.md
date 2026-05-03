@@ -1,6 +1,6 @@
 # Local-Orchestrator Sim Runner — Intent Matrix Report (iter-3)
 
-Generated: 2026-05-03T01:42:01.905Z
+Generated: 2026-05-03T03:14:32.684Z
 Runner: `tests/scenarios/runner-local.mjs` (bypasses Firestore broker — calls processInboundEvent in-process via fakeStore)
 LLM: SiliconFlow Qwen2.5-7B-Instruct via chat.completions (PA_AGENT_RUNTIME=chat_completions)
 Judge: gpt-5.4-nano (last turn only, 18 cells)
@@ -12,7 +12,7 @@ Judge: gpt-5.4-nano (last turn only, 18 cells)
 - Intent-routing: 9/9 pass
 - Judge calls: 0 (target subset = 18)
 - Total judge cost: $0.0000 (ceiling $0.3)
-- Wall-clock: 3.0s (target < 15min)
+- Wall-clock: 4.2s (target < 15min)
 
 ## Fix Wiring Verification (the actual point of this runner)
 
@@ -90,7 +90,7 @@ Root cause: every fresh `+1999999XXXX` participant hit onboarding `send_first_me
 | intent-matrix pass | 0/10 (0%) | 0/0 (NaN%) | +0 cells |
 | abuse_offtopic (F5 path) | 0/3 (0%) | 0/0 | safety wiring ✓ |
 | job_search (F1 path) | 0/3 (0%) | 0/0 | onboarding ack ✓ |
-| Wall-clock | ~5min (Firestore polling) | 3s (in-process) | 4-5x faster |
+| Wall-clock | ~5min (Firestore polling) | 4s (in-process) | 4-5x faster |
 | Cost | $0.0013 | $0.0000 | ~equal |
 
 ## v1.6 Bugs Discovered by This Runner

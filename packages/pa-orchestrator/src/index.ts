@@ -124,6 +124,11 @@ import {
   runAllDetectors,
   type DetectorContext,
 } from "./voice/detectors/index.js"
+// Adam iter 17 (2026-05-03) — F2 hard-cap enforcement. Detector was logging
+// `suggested_action: "strip"` since Phase 35 but no caller acted on it. With
+// 3-sentence cap actually enforced, prob-split downstream picks 1-or-2 bubbles
+// from the capped reply (instead of from a 5+-sentence overflow).
+import { stripToSentenceCap } from "./voice/detectors/f2-length-cap.js"
 import { trackAdvice } from "./voice/memory-policy/index.js"
 import { tapCoachTokens } from "./voice/coach-token-monitor.js"
 import { buildFewShotTurns, prefixFewShotToHistory } from "./voice/few-shot.js"
@@ -1593,6 +1598,39 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
         callSite: "main",
       })
       replyAfterRewrite = guarded.reply
+    }
+    // -------------------------------------------------------------------
+    // Adam iter 17 (2026-05-03) — F2 hard-cap enforcement.
+    //
+    // Spec: "需要缩短一下reply，如果一个reply太长我们可以分好几句话说"
+    //
+    // Detector at line ~1486 already flags `suggested_action: "strip"` when
+    // count > 3 sentences (Bible v7.5 directive), but no caller ever acted
+    // on it — replies could overflow indefinitely and just get split into
+    // ≤2 bubbles regardless of content size. Adam's iter-17 iMessage tests
+    // surfaced this: 4-5 sentence replies stuffed into 2 bubbles.
+    //
+    // Placement: AFTER all rewrites/strips/guards/injections, BEFORE
+    // `normalizeForIMessage` (which produces `visibleReply` consumed by
+    // `decideReplySplit`). Cap is read from PA_F2_SENTENCE_CAP env (default
+    // 3, matches Bible v7.5). Skipped when the mem0Degraded marker would be
+    // appended (the marker is its own forced-single-bubble path).
+    //
+    // Telemetry: `pa.voice.f2_cap.enforced` for dashboards. Pure text op,
+    // <10ms, fail-open (returns input unchanged on empty/short reply).
+    // -------------------------------------------------------------------
+    {
+      const cap = stripToSentenceCap(replyAfterRewrite)
+      if (cap.stripped) {
+        store.log("pa.voice.f2_cap.enforced", {
+          userId: event.userId,
+          turnId,
+          beforeLen: replyAfterRewrite.length,
+          afterLen: cap.text.length,
+          droppedSentences: cap.dropped ?? 0,
+        })
+        replyAfterRewrite = cap.text
+      }
     }
     const rawVisible =
       mem.mem0Degraded && agent.memoryMode !== "firestore_only"

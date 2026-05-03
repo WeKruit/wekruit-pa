@@ -1,0 +1,139 @@
+{
+  "runStamp": "2026-05-03T01-14-48-439Z",
+  "totalMs": 8051,
+  "costUsd": 0,
+  "results": [
+    {
+      "scenarioId": "intent_matrix_job_search_zh_mid",
+      "file": "/Users/adam/Desktop/WeKruit/wekruit-pa/tests/scenarios/intent-matrix/job_search_zh_mid.yaml",
+      "matrix": {
+        "kind": "matrix",
+        "intent": "job_search",
+        "lang": "zh",
+        "persona": "mid",
+        "cellId": "job_search/zh/mid",
+        "valid": true
+      },
+      "flagsApplied": null,
+      "pass": true,
+      "turns": [
+        {
+          "idx": 0,
+          "user": "想看看 senior SWE 的机会，我现在 4 年经验 H1B",
+          "reply": "好咧， 帮你看看 senior SDE 的机会。 �那你大概想找啥方向的研发工作? 比如如前端、后端、或者移动端开发?",
+          "pass": true,
+          "failures": [],
+          "judgeRecord": null,
+          "onboardingStateAfter": {
+            "step": "send_first_mes",
+            "intentAcked": true
+          }
+        },
+        {
+          "idx": 1,
+          "user": "湾区或者 NYC 都行，最好 hybrid",
+          "reply": "技术栈偏好能帮你更快定位方向，有特别倾向的吗？",
+          "pass": true,
+          "failures": [],
+          "judgeRecord": null,
+          "onboardingStateAfter": {
+            "step": "complete",
+            "intentAcked": false
+          }
+        },
+        {
+          "idx": 2,
+          "user": "TC 250k+，base 不能低于 180",
+          "reply": "底薪180k起步，TC 250k+，湾区或NYC，hybrid更理想。简历筛好了？",
+          "pass": true,
+          "failures": [],
+          "judgeRecord": null,
+          "onboardingStateAfter": {
+            "step": "complete",
+            "intentAcked": false
+          }
+        }
+      ],
+      "safetyBlocks": [],
+      "appliedSteps": [
+        {
+          "step": "send_first_mes",
+          "intentAcked": true
+        },
+        {
+          "step": "complete",
+          "intentAcked": false
+        }
+      ],
+      "elapsedMs": 8051
+    },
+    {
+      "scenarioId": "intent_matrix_job_search_mixed_mid",
+      "file": "/Users/adam/Desktop/WeKruit/wekruit-pa/tests/scenarios/intent-matrix/job_search_mixed_mid.yaml",
+      "matrix": {
+        "kind": "matrix",
+        "intent": "job_search",
+        "lang": "mixed",
+        "persona": "mid",
+        "cellId": "job_search/mixed/mid",
+        "valid": true
+      },
+      "flagsApplied": null,
+      "pass": false,
+      "turns": [
+        {
+          "idx": 0,
+          "user": "想看 senior SWE roles，4 YoE H1B",
+          "reply": "好的，",
+          "pass": false,
+          "failures": [
+            "reply length 3 < min 4"
+          ],
+          "judgeRecord": null,
+          "onboardingStateAfter": {
+            "step": "send_first_mes",
+            "intentAcked": true
+          }
+        },
+        {
+          "idx": 1,
+          "user": "hybrid 可以，base 不能太低",
+          "reply": "好的，",
+          "pass": false,
+          "failures": [
+            "reply length 3 < min 4"
+          ],
+          "judgeRecord": null,
+          "onboardingStateAfter": {
+            "step": "complete",
+            "intentAcked": false
+          }
+        },
+        {
+          "idx": 2,
+          "user": "TC 250k+ base 180+",
+          "reply": "明白了。",
+          "pass": true,
+          "failures": [],
+          "judgeRecord": null,
+          "onboardingStateAfter": {
+            "step": "complete",
+            "intentAcked": false
+          }
+        }
+      ],
+      "safetyBlocks": [],
+      "appliedSteps": [
+        {
+          "step": "send_first_mes",
+          "intentAcked": true
+        },
+        {
+          "step": "complete",
+          "intentAcked": false
+        }
+      ],
+      "elapsedMs": 7001
+    }
+  ]
+}

@@ -19,6 +19,7 @@ import {
   countSentences,
   detectLengthCap,
   splitSentences,
+  stripToSentenceCap,
 } from "./f2-length-cap.js"
 import type { DetectorContext } from "./types.js"
 
@@ -171,4 +172,51 @@ test("F2 splitSentences exported for wire-in strip impl", () => {
   // Wire-in patch will use splitSentences to truncate. Confirm export.
   const out = splitSentences("a. b. c. d.")
   assert.deepEqual(out, ["a.", "b.", "c.", "d."])
+})
+
+// -----------------------------------------------------------------------
+// Adam iter 17 — stripToSentenceCap helper coverage.
+// -----------------------------------------------------------------------
+
+test("stripToSentenceCap: input ≤ cap → not stripped", () => {
+  const r = stripToSentenceCap("one. two. three.")
+  assert.equal(r.stripped, false)
+  assert.equal(r.text, "one. two. three.")
+})
+
+test("stripToSentenceCap: 5 sentences EN → keeps first 3", () => {
+  const r = stripToSentenceCap("one. two. three. four. five.")
+  assert.equal(r.stripped, true)
+  assert.equal(r.dropped, 2)
+  assert.equal(r.text, "one. two. three.")
+  assert.equal(countSentences(r.text), 3)
+})
+
+test("stripToSentenceCap: 5 sentences ZH → keeps first 3", () => {
+  const r = stripToSentenceCap("一句。两句。三句。四句。五句。")
+  assert.equal(r.stripped, true)
+  assert.equal(r.dropped, 2)
+  assert.equal(countSentences(r.text), 3)
+})
+
+test("stripToSentenceCap: empty string fails open", () => {
+  const r = stripToSentenceCap("")
+  assert.equal(r.stripped, false)
+  assert.equal(r.text, "")
+})
+
+test("stripToSentenceCap: explicit cap=2 truncates 4-sentence reply", () => {
+  const r = stripToSentenceCap("a. b. c. d.", 2)
+  assert.equal(r.stripped, true)
+  assert.equal(r.dropped, 2)
+  assert.equal(countSentences(r.text), 2)
+})
+
+test("stripToSentenceCap: bilingual mixed → counts terminators correctly", () => {
+  const text =
+    "yeah I get it. 这个事儿确实挺难的。Honestly the right move is just to ship. 别想太多。然后再迭代。"
+  const r = stripToSentenceCap(text)
+  assert.equal(r.stripped, true)
+  // 5 sentences → keep 3
+  assert.equal(countSentences(r.text), 3)
 })
