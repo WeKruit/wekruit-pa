@@ -1,0 +1,35 @@
+id: pbk_iter25_midprobe_interview_suspend_zh
+description: |
+  iter 25 — verify mid-probe interview_prep intent suspends onboarding.
+  User starts with vague chat → bumps into q_role → switches to interview anxiety
+  mid-probe. Onboarding state should suspend, NOT continue asking visa/location.
+testMode: true
+locale: zh-CN
+agentId: default
+participant: "+19999992503"
+chatId: "iMessage;+19999992503"
+turnTimeoutMs: 120000
+turns:
+  - user: "你好"
+    assert:
+      reply_min_length: 4
+  - user: "做 SWE"
+    assert:
+      reply_not_contains_any:
+        - "公民/绿卡"
+  - user: "我下周有 system design 面试 紧张得要死"
+    assert:
+      reply_not_contains_any:
+        - "公民/绿卡/OPT"
+        - "湾区"
+        - "startup"
+  - user: "完全不知道怎么准备"
+    assert:
+      reply_not_contains_any:
+        - "公民/绿卡"
+        - "湾区"
+  - user: "感觉自己撑不住了"
+    assert:
+      reply_not_contains_any:
+        - "公民/绿卡"
+        - "湾区"
