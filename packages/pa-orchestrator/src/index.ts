@@ -75,6 +75,8 @@ import {
 // `guardCrisisHotline` (Phase 51) with flag/telemetry/audit scaffolding so
 // BOTH onboarding and main paths can call it identically.
 import { runCrisisHotlineGuard } from "./safety/crisis-guard-runner.js"
+// v1.5 §3.8 — OpenAI Moderation runner (replaces dead-code 12-pattern bank).
+import { runOpenaiModeration } from "./safety/moderation-runner.js"
 import {
   resolveOnboardingStep,
   applyOnboardingStep,
@@ -113,6 +115,11 @@ import { trackAdvice } from "./voice/memory-policy/index.js"
 import { tapCoachTokens } from "./voice/coach-token-monitor.js"
 import { buildFewShotTurns, prefixFewShotToHistory } from "./voice/few-shot.js"
 import { normalizeForIMessage, stripABProbeFromTail } from "./output-normalizer.js"
+// Phase 53 (v1.6 voice-quality closure) — conditional A/B framework strip
+// + mixed-register mirror append. Distinct from stripABProbeFromTail
+// (X-or-Y tail probes) — see ab-framework-detector.ts module docstring.
+import { stripABFramework } from "./voice/ab-framework-detector.js"
+import { applyMixedRegisterMirror } from "./voice/mixed-register-mirror.js"
 // Phase 21 Track 5 — Headhunter playbook addendum (job-search probe rotation).
 import { headhunterAddendum } from "./playbooks/headhunter.js"
 // Phase 32 W3 — Firestore-backed playbook cache (30s TTL). Replaces the
@@ -1286,6 +1293,36 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
         error: msg,
       })
     }
+    // Phase 53 (v1.6 voice-quality closure) — conditional A/B framework
+    // head strip ("如果你想 X，那可以 Y" / "If you want X, you could Y").
+    // Distinct from the X-or-Y tail probe stripped above. Conservative:
+    // only removes the if-clause head, preserves the then-clause verbatim.
+    // Gated by paHumanizeRuntimeEnabled umbrella + paABFrameworkStrippingEnabled.
+    // Defaults ON; env disable via PA_AB_FRAMEWORK_STRIP_DISABLED=true.
+    try {
+      const humanizeOnAB2 = await isHumanizeRuntimeEnabled(store.db, event.userId)
+      const flagEnabled = process.env.PA_AB_FRAMEWORK_STRIP_DISABLED !== "true"
+      if (humanizeOnAB2 && flagEnabled) {
+        const abFwResult = stripABFramework(stripped)
+        if (abFwResult.applied) {
+          store.log("pa.voice.ab_framework_strip.applied", {
+            userId: event.userId,
+            turnId,
+            pattern: abFwResult.pattern ?? null,
+            beforeLen: stripped.length,
+            afterLen: abFwResult.text.length,
+          })
+          stripped = abFwResult.text
+        }
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      store.log("pa.voice.ab_framework_strip.error", {
+        userId: event.userId,
+        turnId,
+        error: msg,
+      })
+    }
     // Phase 36 wire-in — ImperfectionInjector applied to FINAL visible text
     // post-strip. Gated by paHumanizeRuntimeEnabled umbrella + arm-resolver
     // (PA_IMPERFECTION_ARM env or userId-hash bucket). Default arm = "off"
@@ -1331,6 +1368,37 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     }
     void injectorAppliedFlag
     void injectorArm
+    // Phase 53 (v1.6 voice-quality closure) — mixed-register mirror append.
+    // When the user code-switches zh-en within a sentence but Claire's reply
+    // collapses to a single language, append a single bracketed register
+    // token "(re: OPT)" so the user-recognized term lands in history for
+    // next-turn signal. Pure post-gen append; never rewrites the body.
+    // Gated by paHumanizeRuntimeEnabled umbrella + paMixedRegisterMirrorEnabled.
+    // Defaults ON; env disable via PA_MIXED_REGISTER_MIRROR_DISABLED=true.
+    try {
+      const humanizeOnMix = await isHumanizeRuntimeEnabled(store.db, event.userId)
+      const mixFlagEnabled = process.env.PA_MIXED_REGISTER_MIRROR_DISABLED !== "true"
+      if (humanizeOnMix && mixFlagEnabled) {
+        const mixResult = applyMixedRegisterMirror(event.body ?? "", replyAfterRewrite)
+        if (mixResult.applied) {
+          store.log("pa.voice.mixed_register_mirror.applied", {
+            userId: event.userId,
+            turnId,
+            appended: mixResult.appended ?? null,
+            beforeLen: replyAfterRewrite.length,
+            afterLen: mixResult.text.length,
+          })
+          replyAfterRewrite = mixResult.text
+        }
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      store.log("pa.voice.mixed_register_mirror.error", {
+        userId: event.userId,
+        turnId,
+        error: msg,
+      })
+    }
     // Phase 35/38 wire-in (LIFTED) — detectors + trackAdvice run on the FINAL
     // visible text regardless of `rewriteIfOff` outcome. Previously these
     // were gated behind the rewriter happy-path inside `rewriteIfOff` and
@@ -1871,7 +1939,24 @@ export function createFirestoreOrchestratorStore(db: Firestore): OrchestratorSto
           rateAbuse24h: rate24hOn === true,
         }
       )
-      if (verdict.verdict === "pass") return { allow: true }
+      if (verdict.verdict === "pass") {
+        // v1.5 §3.8 — OpenAI Moderation runs AFTER the regex layers pass.
+        // Severity hierarchy: ESCALATE_NCMEC (critical CSAM) > BLOCK > pass.
+        // Fail-open: any moderation runner error short-circuits to allow=true.
+        const mod = await runOpenaiModeration({
+          store: { db, log: (...args) => console.log(new Date().toISOString(), ...args) },
+          event: { userId: event.userId, channel: event.channel, body: event.body, id: event.id },
+        })
+        if (mod.allow) return { allow: true }
+        // BLOCK → escalate canned reply; ESCALATE_NCMEC → silent_drop (no tip-off).
+        const isCsam = mod.routedAction === "ESCALATE_NCMEC"
+        return {
+          allow: false,
+          reason: mod.reason ?? (isCsam ? "csam_detected" : "moderation_block"),
+          action: isCsam ? "silent_drop" : "escalate",
+          severity: "critical",
+        }
+      }
       return {
         allow: false,
         reason: verdict.layer ?? verdict.reasons[0] ?? "safety_block",

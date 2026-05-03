@@ -154,6 +154,18 @@ const SEED_FLAGS: FlagSpec[] = [
     allowlist: [],
     blocklist: [],
   },
+  // Stream-E P0 follow-up (2026-05-02) — Mem0 crisis-text scrub gate.
+  // Phase 51 TD-1 fix; default ON; env disable: PA_MEM0_CRISIS_SCRUB_DISABLED.
+  // SDK-layer enforcement is env-only — Firestore-flag wiring at caller stack
+  // is a follow-up (INTENT-PLAYBOOK §3.7-followup TD).
+  {
+    key: "paMem0CrisisScrubEnabled",
+    value: true,
+    type: "bool",
+    scope: "global",
+    allowlist: [],
+    blocklist: [],
+  },
 ]
 
 interface PlannedWrite {

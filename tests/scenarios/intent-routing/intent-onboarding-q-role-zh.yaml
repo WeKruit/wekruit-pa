@@ -17,6 +17,19 @@ agentId: default
 participant: "+19999991005"
 chatId: "iMessage;+19999991005"
 turnTimeoutMs: 60000
+# v1.5 plumbing — Bug B fixture seed (Backlog item attached to v1.5 e2e-verify
+# closeout D12). Without these two precondition lines, the runner-local store
+# has `db: undefined` AND `onboardingState: undefined`, both of which short-
+# circuit the v2 8-state probe path:
+#   - resolveOnboardingStep(state=undefined) returns "send_first_mes" (first
+#     greeting), NOT "ask_q_role". The asserts below would never fire.
+#   - isOnboardingProbeV2Enabled() returns false when store.db is null,
+#     forcing v1 4-state path (`first_mes_sent` → `ask_grounding_q`).
+# Both seeds together unblock the ask_q_role assertion.
+userState:
+  onboardingState: first_mes_sent
+flags:
+  paOnboardingProbeV2Enabled: true
 turns:
   - user: "嗯"
     assert:

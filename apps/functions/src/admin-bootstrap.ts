@@ -347,6 +347,14 @@ const SEED_FLAGS: FlagSpec[] = [
   // required). This flag should NEVER be flipped to false at the doc level
   // without an Adam-signed audit trail per V1.5-ROLLOUT Step 4.
   { key: "paCrisisHotlineInjectionEnabled", value: true, type: "bool", scope: "global", allowlist: [], blocklist: [] },
+  // Stream-E P0 follow-up (2026-05-02) — Mem0 crisis-text scrub gate.
+  // Phase 51 TD-1 fix: pre-flight scrub of crisis-shaped messages before
+  // mem0.add() is called. Skip-not-redact strategy preserves writeback
+  // contract while keeping crisis text out of Qdrant. Default ON.
+  // Emergency disable env: PA_MEM0_CRISIS_SCRUB_DISABLED=true (cold-start).
+  // NOTE: enforcement at the SDK layer is env-only (mem0.ts has no Firestore
+  // handle). Caller-stack Firestore-flag wiring is tracked as TD §3.7-followup.
+  { key: "paMem0CrisisScrubEnabled", value: true, type: "bool", scope: "global", allowlist: [], blocklist: [] },
 ]
 
 export function checkAdminToken(provided: string | undefined): { ok: boolean; status: number; error?: string } {

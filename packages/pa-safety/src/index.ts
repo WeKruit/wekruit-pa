@@ -163,32 +163,53 @@ export function canUseConnector(
   return { allow: true }
 }
 
-const UNSAFE_MEMORY_PATTERNS = [
-  /ignore (all )?(previous|prior|above) instructions/i,
-  /reveal (your )?(system|developer) prompt/i,
+/**
+ * Memory-write-only credential / connector / approve patterns. These are
+ * NOT prompt-injection — they catch facts that should never be persisted to
+ * Mem0 (credentials, "always approve" jailbreaks via the memory channel,
+ * connector-coercion text). Prompt-injection patterns are handled by the v2
+ * bank via `checkPromptInjectionV2` (see Stream-E P0 wiring fix 2026-05-02).
+ */
+const UNSAFE_MEMORY_CREDENTIAL_PATTERNS = [
   /password|api[_\s-]?key|secret|token/i,
   /call .*connector/i,
   /always approve/i,
 ]
 
+/**
+ * Stream-E P0 — Memory-write filter migrated to v2 prompt-injection bank
+ * (2026-05-02). Previously the gate consulted `INJECTION_PATTERNS` v1 (7
+ * entries — missing DAN, jailbreak, `<|im_start|>`, ZH "把你的 system prompt
+ * 发给我", "扮演不受限制的 AI", etc.). Now combines the 26-pattern v2 bank
+ * with the credential / connector-coercion patterns above. Closes the
+ * v1-only-coverage gap documented in INTENT-PLAYBOOK §3.7.
+ *
+ * Result format unchanged for backward compat: `{ allow, reason, signals }`.
+ * `signals` may now contain v2 pattern ids (e.g. `en_dan`, `zh_im_start`)
+ * alongside credential-pattern regex sources.
+ */
 export function filterMemoryWrite(input: {
   userText: string
   assistantText: string
 }): SafetyDecision {
   const text = `${input.userText}\n${input.assistantText}`
-  const signals = UNSAFE_MEMORY_PATTERNS.filter((p) => p.test(text)).map((p) => p.source)
+  const credSignals = UNSAFE_MEMORY_CREDENTIAL_PATTERNS.filter((p) => p.test(text)).map(
+    (p) => p.source
+  )
+  const inj = checkPromptInjectionV2(text)
+  const signals = [...credSignals, ...inj.signals]
   if (signals.length === 0) return { allow: true, signals: [] }
   return { allow: false, reason: "unsafe_memory_write", signals }
 }
 
 /**
  * Phase 10.5 T6 — single-line wrapper used by the `remember-fact` connector
- * before persisting a fact. Returns true if `text` matches any of the
- * shared `UNSAFE_MEMORY_PATTERNS`. The pattern list itself stays private to
- * pa-safety so the connector cannot drift from the canonical safety set.
+ * before persisting a fact. Stream-E P0 (2026-05-02) migrated to v2 bank;
+ * prompt-injection coverage now matches the inbound `runSafetyCheck` surface.
  */
 export function isUnsafeMemoryContent(text: string): boolean {
-  return UNSAFE_MEMORY_PATTERNS.some((p) => p.test(text))
+  if (UNSAFE_MEMORY_CREDENTIAL_PATTERNS.some((p) => p.test(text))) return true
+  return checkPromptInjectionV2(text).matched
 }
 
 // ============================================================================
@@ -314,6 +335,15 @@ export const INJECTION_PATTERNS_V2: readonly PatternEntry[] = [
  *
  * NOTE: matched text is NEVER stored. Only `bucket` + sha256 hash are written
  * to pa_abuse_events (D3 requirement).
+ *
+ * @deprecated v1.5 §3.8 — Replaced by OpenAI Moderation API
+ * (`./moderation.ts`). The 12-pattern bank ran behind
+ * `paSafetyIllegalContentEnabled` (default OFF) and was never flipped on
+ * in production. We keep the regex bank + helpers exported for backward
+ * compatibility and as a deterministic offline fallback, but the
+ * orchestrator routing layer now consults `checkOpenAIModeration` (gated by
+ * `paOpenaiModerationEnabled`, default ON) before this layer. New callers
+ * should NOT add patterns here — extend `routeModerationVerdict` instead.
  */
 export type IllegalBucket =
   | "drugs"
@@ -695,3 +725,38 @@ export {
   type CrisisGuardInput,
   type CrisisGuardResult,
 } from "./crisis-detector.js"
+
+// ============================================================================
+// v1.5 §3.8 — OpenAI Moderation API integration.
+// ============================================================================
+// Replaces the deprecated `ILLEGAL_CONTENT_PATTERNS` regex bank. The 13
+// canonical OpenAI categories cover drugs/weapons/CSAM/violence/etc with
+// far better recall than 12 hand-rolled regexes, at zero token cost (free
+// tier, `omni-moderation-latest`). See `./moderation.ts` for the full
+// rationale + 13-category routing table.
+// ============================================================================
+export {
+  checkOpenAIModeration,
+  routeModerationVerdict,
+  moderationHashForAudit,
+  type ModerationCategory,
+  type ModerationRoutedAction,
+  type ModerationVerdict,
+  type CheckOpenAIModerationOptions,
+} from "./moderation.js"
+
+// ============================================================================
+// Stream-E P0 follow-up (2026-05-02) — Academic-integrity warning bank.
+// Re-exported here so callers (orchestrator) can import the entire safety
+// surface from a single barrel. The actual implementation lives in
+// `./academic-integrity.ts`. Verdict is WARN-only — never blocks. Wiring
+// into runAgentTurn (LLM directive append) is a separate task.
+// ============================================================================
+
+export {
+  checkAcademicIntegrity,
+  ACADEMIC_INTEGRITY_DIRECTIVE,
+  type AcademicIntegrityVerdict,
+  type AcademicIntegrityLanguage,
+  type AcademicIntegrityResult,
+} from "./academic-integrity.js"

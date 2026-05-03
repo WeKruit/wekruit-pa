@@ -19,7 +19,8 @@
   "dependencies": {
     "@pa/core-types": "0.0.1",
     "firebase-admin": "^13.0.0",
-    "mem0ai": "^3.0.1"
+    "mem0ai": "^3.0.1",
+    "@pa/pa-safety": "0.0.1"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

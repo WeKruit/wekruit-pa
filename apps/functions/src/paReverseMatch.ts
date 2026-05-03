@@ -56,6 +56,7 @@ import { getFlag } from "@pa/pa-persistence"
 import { JOB_REC_FLAG_KEY } from "@pa/job-rec"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import { checkAdminToken } from "./admin-bootstrap.js"
+import { logTokenSpend } from "./instrumentation/cost-logger.js"
 
 const PA_ADMIN_TOKEN = defineSecret("PA_ADMIN_TOKEN")
 const SILICONFLOW_API_KEY = defineSecret("SILICONFLOW_API_KEY")
@@ -89,6 +90,23 @@ async function defaultEmbedJd(text: string): Promise<number[] | null> {
     if (!vec || vec.length === 0) {
       logger.warn("[paReverseMatch] embed_empty_response")
       return null
+    }
+    // Backlog #23 — cost-ledger wiring. Mirrors the job-rec-daily emit so
+    // the operator-facing reverse-match path doesn't ghost-spend.
+    try {
+      const usage = (resp as { usage?: { prompt_tokens?: number; total_tokens?: number } }).usage
+      const tokens =
+        usage?.prompt_tokens ?? usage?.total_tokens ?? Math.ceil(text.slice(0, 8000).length / 4)
+      logTokenSpend({
+        kind: "embedding",
+        service: "openai",
+        model: "text-embedding-3-small",
+        inputTokens: tokens,
+        count: 1,
+        labels: { caller: "paReverseMatch" },
+      })
+    } catch {
+      /* fail-open */
     }
     return vec
   } catch (err) {

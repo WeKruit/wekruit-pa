@@ -15,6 +15,7 @@
  * generic OpenAI-compatible LLM key + base URL).
  */
 import type { Memory as MemoryType } from "mem0ai/oss"
+import { detectCrisisInInput, hashForAudit } from "@pa/pa-safety"
 import { FetchQdrantClient } from "./qdrant-fetch.js"
 
 export type Mem0Config = {
@@ -89,6 +90,45 @@ export function normalizeMem0RuntimeConfig(cfg: Mem0Config): Mem0Config {
 }
 
 type MemoryCtor = new (cfg: Record<string, unknown>) => MemoryType
+
+/**
+ * Backlog #24 — emit a `pa.spend.daily` event so Mem0 internal-LLM call
+ * volume is observable. mem0ai/oss does NOT surface token usage to the
+ * client, so we tag count only (usd=0). The same telemetry shape is used
+ * by `apps/functions/src/instrumentation/cost-logger.ts` — keeping mem0
+ * dependency-free (no firebase-functions import) so this package stays
+ * a pure SDK wrapper. Cloud Logging parses console.log JSON identically
+ * to the firebase-functions logger.
+ *
+ * Fail-open: any synchronous error inside this emit is swallowed.
+ *
+ * TODO(mem0-fork): mem0ai/oss internal extractor cost is opaque (no
+ * client-visible token counts). Real $/call enforcement requires a fork
+ * exposing usage via the client.add/search return shape. Tracked alongside
+ * V1.5-ROLLOUT.md backlog #24.
+ */
+function emitMem0CostEvent(op: "add" | "search", config: Mem0Config, userId: string, extra: Record<string, string | number | undefined> = {}): void {
+  try {
+    const payload = {
+      "pa.metric": "pa.spend.daily",
+      kind: "mem0",
+      service: "mem0",
+      model: (config.llmModel ?? "Qwen/Qwen2.5-72B-Instruct") + "::" + (config.embedModel ?? "BAAI/bge-m3"),
+      inputTokens: 0,
+      outputTokens: 0,
+      count: 1,
+      usd: 0,
+      operation: op,
+      userId,
+      ...extra,
+    }
+    // eslint-disable-next-line no-console
+    console.log("pa.spend.daily", payload)
+  } catch {
+    /* fail-open: cost-ledger never blocks production path */
+  }
+}
+
 
 let cachedClient: { key: string; client: MemoryType } | null = null
 let cachedCtor: MemoryCtor | null = null
@@ -184,6 +224,7 @@ export async function mem0Search(
       | Array<{ memory?: string; text?: string }>
       | undefined
     const list = Array.isArray(res) ? res : res?.results ?? []
+    emitMem0CostEvent("search", config, userId, { resultCount: list.length })
     return list.map((m) => m.memory || m.text || "").filter(Boolean)
   } catch (e) {
     // eslint-disable-next-line no-console
@@ -192,14 +233,76 @@ export async function mem0Search(
   }
 }
 
+/**
+ * Stream-E P0 (2026-05-02) — Crisis-text scrub gate for Mem0 writes.
+ *
+ * Phase 51 commit d6b683d TD-1: crisis-ideation user input was being
+ * written to Mem0 unredacted, violating Adam directive on PII / re-traumatization.
+ * This helper inspects every outgoing message; if ANY message tripping the
+ * crisis bank, we SKIP the entire `mem0.add` call and return faux-success.
+ *
+ * Why skip-not-redact:
+ *   - Redacting to `[CRISIS_REDACTED]` still creates a Qdrant vector that
+ *     could be surfaced in future recall (degrading reply quality).
+ *   - Skipping is cheap (no client call) AND keeps the upstream
+ *     `afterAssistantTurn.writebackRan` semantics intact (caller's view of
+ *     "did writeback succeed" is preserved at the boolean level).
+ *
+ * Emergency disable: env `PA_MEM0_CRISIS_SCRUB_DISABLED=true` (cold-start).
+ * Default ON. Firestore-flag wiring (`paMem0CrisisScrubEnabled`) is a
+ * follow-up — `mem0.ts` is a pure SDK wrapper with no Firestore handle, so
+ * the env-var path is the only enforcement point at this layer. Caller-stack
+ * Firestore flag is tracked as TD in INTENT-PLAYBOOK §3.7-followup.
+ */
+export function scrubCrisisFromMessages(
+  messages: ReadonlyArray<{ role: "user" | "assistant"; content: string }>
+): { skip: boolean; reason: "no_match" | "crisis_detected" | "scrub_disabled"; signals: string[]; inputHashes: string[] } {
+  if (process.env.PA_MEM0_CRISIS_SCRUB_DISABLED === "true") {
+    return { skip: false, reason: "scrub_disabled", signals: [], inputHashes: [] }
+  }
+  const allSignals: string[] = []
+  const allHashes: string[] = []
+  for (const m of messages) {
+    const det = detectCrisisInInput(m.content ?? "")
+    if (det.detected) {
+      allSignals.push(...det.signals)
+      allHashes.push(hashForAudit(m.content ?? ""))
+    }
+  }
+  if (allSignals.length === 0) {
+    return { skip: false, reason: "no_match", signals: [], inputHashes: [] }
+  }
+  return { skip: true, reason: "crisis_detected", signals: allSignals, inputHashes: allHashes }
+}
+
 export async function mem0Add(
   config: Mem0Config,
   messages: { role: "user" | "assistant"; content: string }[],
   userId: string
 ): Promise<void> {
+  // Stream-E P0: pre-flight crisis-text scrub. NEVER write crisis content to
+  // Mem0. Skip silently with PII-safe telemetry; return faux-success so the
+  // upstream `afterAssistantTurn` writeback contract is preserved.
+  const scrub = scrubCrisisFromMessages(messages)
+  if (scrub.skip) {
+    // eslint-disable-next-line no-console
+    console.log("[mem0/add] memory:crisis_scrubbed", {
+      userId,
+      reason: scrub.reason,
+      signalCount: scrub.signals.length,
+      // signal IDs are pattern sources (no raw user text). Truncate to
+      // first 8 to keep log line bounded.
+      signals: scrub.signals.slice(0, 8),
+      inputHashes: scrub.inputHashes.slice(0, 4),
+      messageCount: messages.length,
+    })
+    return
+  }
+
   const client = await getClient(config)
   try {
     await client.add(messages, { userId })
+    emitMem0CostEvent("add", config, userId, { messageCount: messages.length })
   } catch (e) {
     // eslint-disable-next-line no-console
     console.log("[mem0/add] error", e instanceof Error ? `${e.name}: ${e.message}` : String(e))

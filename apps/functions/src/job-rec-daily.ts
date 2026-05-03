@@ -22,6 +22,7 @@ import {
   fetchTopKFromCluster,
 } from "@pa/job-rec"
 import { getFlag } from "@pa/pa-persistence"
+import { logTokenSpend } from "./instrumentation/cost-logger.js"
 
 /**
  * Stream G1 — Production user-embedding computer. When daily-batch's
@@ -56,6 +57,25 @@ async function defaultUserEmbedComputer(
     if (!vec || vec.length === 0) {
       logger.warn("[job-rec-daily] embed_compute_empty_response", { userId })
       return null
+    }
+    // Backlog #23 — cost-ledger wiring. Emit pa.spend.daily so the daily
+    // metric reflects OpenAI embedding spend (~$0.02 / 1M input tokens at
+    // 2026-Q1). Token count surfaced via resp.usage.prompt_tokens; falls
+    // back to char-based estimate (4 chars/token) when usage absent.
+    try {
+      const usage = (resp as { usage?: { prompt_tokens?: number; total_tokens?: number } }).usage
+      const tokens =
+        usage?.prompt_tokens ?? usage?.total_tokens ?? Math.ceil(resumeText.slice(0, 8000).length / 4)
+      logTokenSpend({
+        kind: "embedding",
+        service: "openai",
+        model: "text-embedding-3-small",
+        inputTokens: tokens,
+        count: 1,
+        labels: { caller: "job-rec-daily", userId, resumeId },
+      })
+    } catch {
+      /* fail-open: cost-ledger never blocks production path */
     }
     // Cache write-back. Best-effort; don't block return on Firestore success.
     void db
