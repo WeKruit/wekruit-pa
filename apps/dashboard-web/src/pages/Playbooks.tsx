@@ -48,6 +48,7 @@ type DraftState = {
   triggersText: string // newline-separated regex sources
   addendum: string
   enabled: boolean
+  routingHint: "no_chain" | "role_chain" | "none"
   reason: string
 }
 
@@ -58,6 +59,7 @@ function makeDraft(p: Playbook): DraftState {
     triggersText: p.regexTriggers.join("\n"),
     addendum: p.addendum,
     enabled: p.enabled,
+    routingHint: p.routingHint ?? "none",
     reason: "",
   }
 }
@@ -112,6 +114,7 @@ function PlaybookEditor({
         regexTriggers: validation.regexes,
         addendum: draft.addendum,
         enabled: draft.enabled,
+        routingHint: draft.routingHint === "none" ? null : draft.routingHint,
         reason: draft.reason.trim(),
       })
       onSaved()
@@ -164,6 +167,31 @@ function PlaybookEditor({
             placeholder="What this playbook is for"
             style={{ display: "block", width: "100%", marginTop: 4, padding: "4px 6px" }}
           />
+        </label>
+      </div>
+
+      <div style={{ marginTop: "0.75rem" }}>
+        <label style={{ fontSize: "0.85em" }}>
+          Routing hint (iter27) — controls onboarding behavior on first-turn match
+          <select
+            value={draft.routingHint}
+            disabled={busy}
+            onChange={(e) =>
+              setDraft({
+                ...draft,
+                routingHint: e.target.value as DraftState["routingHint"],
+              })
+            }
+            style={{ display: "block", width: "100%", marginTop: 4, padding: "4px 6px" }}
+          >
+            <option value="none">none — no special routing (addendum only)</option>
+            <option value="no_chain">
+              no_chain — distress / qualifier (vent / interview / negotiation / motivation): suspend onboarding, addendum is the ack
+            </option>
+            <option value="role_chain">
+              role_chain — explicit job intent (headhunter / jd_roast): ack + chain ask_q_role
+            </option>
+          </select>
         </label>
       </div>
 
@@ -425,6 +453,28 @@ export function Playbooks() {
         key: "enabled",
         header: "Enabled",
         render: (r) => <StatusBadge value={r.enabled ? "enabled" : "disabled"} />,
+      },
+      {
+        key: "routingHint",
+        header: "Routing",
+        render: (r) => (
+          <span
+            style={{
+              fontSize: "0.75em",
+              padding: "2px 6px",
+              borderRadius: 4,
+              background:
+                r.routingHint === "no_chain"
+                  ? "#fef3c7"
+                  : r.routingHint === "role_chain"
+                  ? "#dbeafe"
+                  : "#f1f5f9",
+              color: "#475569",
+            }}
+          >
+            {r.routingHint ?? "—"}
+          </span>
+        ),
       },
       {
         key: "addendum",

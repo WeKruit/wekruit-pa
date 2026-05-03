@@ -26,6 +26,8 @@ import { auth, db } from "./firebase.js"
 export const PLAYBOOKS_COLLECTION = "pa-playbooks"
 export const PLAYBOOK_AUDIT_PREFIX = "playbook"
 
+export type RoutingHint = "no_chain" | "role_chain" | null
+
 export type Playbook = {
   playbookKey: string
   name: string
@@ -33,6 +35,8 @@ export type Playbook = {
   regexTriggers: string[]
   addendum: string
   enabled: boolean
+  /** iter27 — onboarding routing hint */
+  routingHint: RoutingHint
   version: number
   updatedAt: string | null
   updatedBy: string
@@ -80,6 +84,9 @@ function currentActor(): string {
 }
 
 function fromSnap(id: string, raw: Record<string, unknown>): Playbook {
+  const rh = raw.routingHint
+  const routingHint: RoutingHint =
+    rh === "no_chain" || rh === "role_chain" ? rh : null
   return {
     playbookKey: (raw.playbookKey as string) ?? id,
     name: (raw.name as string) ?? id,
@@ -89,6 +96,7 @@ function fromSnap(id: string, raw: Record<string, unknown>): Playbook {
       : [],
     addendum: (raw.addendum as string) ?? "",
     enabled: raw.enabled === undefined ? true : Boolean(raw.enabled),
+    routingHint,
     version: typeof raw.version === "number" ? raw.version : 0,
     updatedAt: tsToIso(raw.updatedAt),
     updatedBy: (raw.updatedBy as string) ?? "",
@@ -149,6 +157,7 @@ export type SavePlaybookInput = {
   regexTriggers?: string[]
   addendum?: string
   enabled?: boolean
+  routingHint?: RoutingHint
   reason: string
 }
 
@@ -170,6 +179,7 @@ export async function savePlaybook(input: SavePlaybookInput): Promise<void> {
     regexTriggers: input.regexTriggers ?? prev?.regexTriggers ?? [],
     addendum: input.addendum ?? prev?.addendum ?? "",
     enabled: input.enabled ?? prev?.enabled ?? true,
+    routingHint: input.routingHint !== undefined ? input.routingHint : prev?.routingHint ?? null,
     version: (prev?.version ?? 0) + 1,
   }
 

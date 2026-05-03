@@ -1,0 +1,20 @@
+id: iter28_judge_vent_realistic
+description: iter28 — vent playbook with LLM-judge (gpt-5.4-nano).
+testMode: true
+locale: zh-CN
+agentId: default
+participant: "+19999992895"
+chatId: "iMessage;+19999992895"
+turnTimeoutMs: 120000
+turns:
+  - user: "今天又被 manager 当众挂了 心慌到现在缓不过来"
+    assert:
+      reply_min_length: 4
+      judge:
+        criterion: |
+          Reply is a vent acknowledgement. Friend register (室友, not coach).
+          NO advice, NO "X 还是 Y" AB framework, NO numbered steps,
+          NO "建议 / 你可以试试". Short (≤2 sentences). May offer presence
+          ("我在") or empathy ("听着挺烦的"). Does NOT chain a job-search
+          onboarding question (visa / location / role).
+        threshold: 0.65

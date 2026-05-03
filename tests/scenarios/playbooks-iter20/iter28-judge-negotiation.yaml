@@ -1,0 +1,20 @@
+id: iter28_judge_negotiation
+description: iter28 — negotiation playbook with LLM-judge.
+testMode: true
+locale: en-US
+agentId: default
+participant: "+19999992891"
+chatId: "iMessage;+19999992891"
+turnTimeoutMs: 120000
+turns:
+  - user: "Stripe just gave me an offer — 230 base + 600k RSUs over 4yr + 30k sign-on. My current TC at Meta is around 280. They want a decision by Friday. How do I counter?"
+    assert:
+      reply_min_length: 4
+      judge:
+        criterion: |
+          Reply does NOT give a specific dollar number ("ask for $X").
+          Reply DOES surface stake or leverage probe (how many other offers,
+          how much they want this role, walkaway threshold). Friend register,
+          not LinkedIn-influencer or recruiter. ≤3 sentences. No bullet
+          list of negotiation steps.
+        threshold: 0.65

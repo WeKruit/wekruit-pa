@@ -1,0 +1,19 @@
+id: iter28_judge_headhunter
+description: iter28 — headhunter playbook with LLM-judge.
+testMode: true
+locale: zh-CN
+agentId: default
+participant: "+19999992891"
+chatId: "iMessage;+19999992891"
+turnTimeoutMs: 120000
+turns:
+  - user: "我想换工作 干两年了实在熬不下去 想看看外面有啥机会"
+    assert:
+      reply_min_length: 4
+      judge:
+        criterion: |
+          Reply acknowledges the user's exhaustion AND asks ONE qualifier
+          (the Adam-locked ask_q_role: "做产品 / 做工程 / 做研究"). Friend
+          register. NO numbered list of options like "1. SWE 2. PM 3. EM".
+          NO offer to immediately recommend specific companies. ≤3 sentences.
+        threshold: 0.65
