@@ -1,0 +1,31 @@
+id: pbk_iter23_long_context_12turn_zh
+description: |
+  iter 23 — long-context drift test (12 turns, zh).
+  Adam directive: "context 一长就不够好" — verify replies stay short, no advice
+  repeat, no AI tell-tale across 12 turns of repeated emotional venting.
+testMode: true
+locale: zh-CN
+agentId: default
+participant: "+19999992301"
+chatId: "iMessage;+19999992301"
+turnTimeoutMs: 120000
+turns:
+  - user: "我快崩溃了 工作压力太大了 烦死了"
+    assert:
+      reply_min_length: 4
+      reply_not_contains_any:
+        - "作为 AI"
+        - "As an AI"
+  - user: "我又焦虑了, 睡不着"
+  - user: "感觉自己快撑不住了"
+  - user: "今天面试又翻车了"
+  - user: "再帮我想想怎么办?"
+  - user: "我又开始自我怀疑了"
+  - user: "压力大得喘不过气"
+  - user: "再给点建议?"
+  - user: "今天又投了 5 份简历, 都没回"
+  - user: "我感觉自己在原地踏步"
+  - user: "你能换个角度说吗"
+  - user: "最后再帮我想想?"
+    assert:
+      voice_axes_full: true
