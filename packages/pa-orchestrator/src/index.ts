@@ -661,6 +661,24 @@ export function buildTurnTools(
 }
 
 export async function processInboundEvent(event: InboundEvent, store: OrchestratorStore): Promise<void> {
+  // Bug 5 invariant — Adam iMessage 2026-05-03 01:05+01:22 production crash:
+  //   `[orchestrator] turn failed … errorCode: 'TURN_FAILED', error:
+  //    'Cannot use "undefined" as a Firestore value (found in field "body")'`
+  // RCA: the coalescer's synthesized inbound doc used to omit a top-level
+  // `body` (only `userId`/`sessionId` were stamped — see the Bug 1 analog in
+  // apps/functions/src/coalesce/paMessageCoalescer.ts processCoalescedTurn).
+  // `event.body` arrived `undefined`, the appendMessage write below received
+  // `body: undefined`, and Firestore rejected. The proper fix lives in the
+  // coalescer stamp; this is defense-in-depth at the orchestrator boundary so
+  // any future synthesis path that forgets `body` fails LOUD with a clear
+  // engineering message instead of an opaque Firestore validation crash.
+  // Same pattern as packages/pa-broker/src/turns.ts createAgentTurn's
+  // sessionId/userId invariants.
+  if (event.body === undefined || event.body === null) {
+    throw new Error(
+      `processInboundEvent: event.body is required (received ${event.body === undefined ? "undefined" : "null"}) — eventId=${event.id}, userId=${event.userId ?? "<missing>"}. Fix the upstream synthesizer (likely paMessageCoalescer.processCoalescedTurn).`
+    )
+  }
   await store.markEventRunning(event.id)
   const turnId = await store.createTurn(event)
   const at = store.nowIso()
@@ -1120,9 +1138,12 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // observed Turn-1 EN→ZH leaking on en_grad sim (2026-05-02). Recency
     // bias from the trailing copy is what actually clamps the model.
     //
-    // Phase 53 Bug 2 fix: detectUserLang (any-CJK → zh) replaces detectLang
-    // (cjk-vs-ascii majority). Adam iMessage repro: "swe的"/"yoe1年的" used
-    // to read as EN majority; user is writing ZH-frame so reply MUST be ZH.
+    // Phase 53 Bug 2 + Adam 2026-05-03 01:22 amendment: detectUserLang now
+    // returns 3 classes (zh/en/mixed). buildLangLockSandwich and
+    // buildLangLockUserDirective return empty strings for "mixed", and
+    // runLangLockGuard short-circuits — letting the reply mirror the user's
+    // zh-frame + en-token register naturally instead of hard-locking single
+    // language. Pure-zh / pure-en still get the lock as before.
     const userLang = detectUserLang(event.body)
     const { open: langLockOpen, close: langLockClose } = buildLangLockSandwich(userLang)
     const baseSystemPrompt = isVoiceV1Disabled()

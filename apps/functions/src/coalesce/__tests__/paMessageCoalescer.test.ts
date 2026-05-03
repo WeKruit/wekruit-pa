@@ -250,7 +250,8 @@ describe("paMessageCoalescer — case 1: single message creates buffer", () => {
     assert.equal(outcome.delayMs, DEFAULT_DELAY_MS)
     // Bug 4 (2026-05-03): coalesce window bumped 4s→8s to absorb >4s typing
     // gaps. Adam 4 inbound msgs in 12s used to wave-split into 3 turns; 8s
-    // catches them inside HARD_CAP_MS=12s.
+    // catches them inside HARD_CAP_MS (since-bumped to 20s — see Adam
+    // 2026-05-03 01:22 amendment, plus the rapid-gap heuristic below).
     assert.equal(DEFAULT_DELAY_MS, 8_000, "Bug 4 — coalesce window must be 8s")
     assert.equal(tasks.enqueued.length, 1)
     assert.equal(tasks.cancelled.length, 0)
@@ -623,5 +624,122 @@ describe("paMessageCoalescer — case 10: deterministic sessionId across calls",
     assert.ok(s1)
     assert.ok(s2)
     assert.equal(s1, s2, "same (userId, fromNumber) MUST yield the same sessionId across turns")
+  })
+})
+
+// ----------------- TEST 11: Bug 5 body invariant — synth inbound stamps body/from/externalChatId -----------------
+
+describe("paMessageCoalescer — case 11: synthesized inbound stamps body (Bug 5 fix)", () => {
+  it("processCoalescedTurn populates `body` (and `from`/`externalChatId`) on the synthesized inbound row", async () => {
+    // Bug 5 RCA (2026-05-03 01:05+01:22 Adam iMessage TURN_FAILED, repeated):
+    //   Without this fix, the synthesized inbound doc only had userId +
+    //   sessionId stamped — top-level `body` (and `from`, `externalChatId`)
+    //   were absent. The orchestrator's `claimInboundEvent` reads the doc as
+    //   InboundEvent, so `event.body` came back undefined; downstream
+    //   `store.appendMessage({ body: event.body })` then crashed Firestore:
+    //     "Cannot use \"undefined\" as a Firestore value (found in field \"body\")".
+    //   Same RCA mode as Bug 1 (sessionId). This test pins the contract that
+    //   the synth doc carries ALL InboundEvent-required scalars after stamp.
+    const t0 = new Date("2026-05-02T12:00:00Z")
+    let now = t0.getTime()
+    const { deps, db } = buildDeps({ now: () => new Date(now) })
+    await enqueueOrCoalesce(deps, {
+      ...BASE_MSG, messageHandle: "msg-1", body: "hi there", inboundEventId: "inb_1",
+      receivedAt: new Date(now).toISOString(),
+    })
+    now += 1500
+    await enqueueOrCoalesce(deps, {
+      ...BASE_MSG, messageHandle: "msg-2", body: "are you up", inboundEventId: "inb_2",
+      receivedAt: new Date(now).toISOString(),
+    })
+    const fired = await processCoalescedTurn(deps, "u_adam", 1)
+    assert.equal(fired.status, "fired")
+    const inbounds = (db as ReturnType<typeof makeFakeDb>)._stores.get("pa-inbound-events")
+    const synth = inbounds?.get("inb_synth_coalesced-u_adam-1") as DocData | undefined
+    assert.ok(synth, "synthetic inbound exists")
+    // Bug 5 contract — top-level `body` is the accumulated text
+    const body = (synth as { body?: string }).body
+    assert.ok(body && typeof body === "string", "body stamped (non-empty string)")
+    assert.match(body!, /hi there/)
+    assert.match(body!, /are you up/)
+    assert.equal(body, "hi there\nare you up", "body equals accumulatedBody verbatim")
+    // sessionId / userId still stamped (Bug 1 regression guard)
+    assert.equal((synth as { userId?: string }).userId, "u_adam")
+    assert.ok((synth as { sessionId?: string }).sessionId)
+    // from + externalChatId — completes InboundEvent required-scalar set
+    assert.equal((synth as { from?: string }).from, BASE_MSG.fromNumber)
+    assert.equal((synth as { externalChatId?: string }).externalChatId, BASE_MSG.fromNumber)
+  })
+})
+
+// ----------------- TEST 12: rapid-gap heuristic extends delay (Adam 2026-05-03 amendment) -----------------
+
+describe("paMessageCoalescer — case 12: rapid-gap heuristic extends delay", () => {
+  it("when gap < RAPID_MESSAGE_THRESHOLD_MS, the next-task delay is bumped to defaultDelay+RAPID_BUMP_MS (clamped to remaining cap)", async () => {
+    // Adam amendment 2026-05-03 ("可以消息间隔 < 5s 自动延长"): when a follow-up
+    // message arrives within 5s of the previous one, treat it as the SAME
+    // thought and extend the coalesce window. The window is still clamped to
+    // `firstReceivedAt + HARD_CAP_MS`, so the bump cannot push past 20s.
+    const { RAPID_BUMP_MS, RAPID_MESSAGE_THRESHOLD_MS } = await import("../buffer.js")
+    const t0 = new Date("2026-05-02T12:00:00Z")
+    let now = t0.getTime()
+    const { deps, tasks } = buildDeps({ now: () => new Date(now) })
+    await enqueueOrCoalesce(deps, {
+      ...BASE_MSG, messageHandle: "msg-1", body: "hi", inboundEventId: "inb_1",
+      receivedAt: new Date(now).toISOString(),
+    })
+    // First enqueue at t=0 → default delay
+    assert.equal(tasks.enqueued[0]!.delayMs, DEFAULT_DELAY_MS)
+
+    // Rapid follow-up: 1.5s < 5s threshold → extend to defaultDelay+RAPID_BUMP_MS
+    now += 1_500
+    await enqueueOrCoalesce(deps, {
+      ...BASE_MSG, messageHandle: "msg-2", body: "u there", inboundEventId: "inb_2",
+      receivedAt: new Date(now).toISOString(),
+    })
+    const expectedRapidDelay = Math.min(
+      DEFAULT_DELAY_MS + RAPID_BUMP_MS,
+      HARD_CAP_MS - 1_500
+    )
+    assert.equal(
+      tasks.enqueued[1]!.delayMs,
+      expectedRapidDelay,
+      `rapid-gap follow-up (1.5s < ${RAPID_MESSAGE_THRESHOLD_MS}ms) extends delay to ${expectedRapidDelay}ms (default+bump, clamped to remaining)`
+    )
+    assert.ok(
+      expectedRapidDelay > DEFAULT_DELAY_MS,
+      "rapid-gap delay MUST be greater than default — proves the bump fired"
+    )
+  })
+
+  it("when gap >= RAPID_MESSAGE_THRESHOLD_MS, the next-task delay stays at default (no bump)", async () => {
+    // Slow gap (>5s) reads as pause/topic-shift; bump should NOT fire.
+    const { RAPID_MESSAGE_THRESHOLD_MS } = await import("../buffer.js")
+    const t0 = new Date("2026-05-02T12:00:00Z")
+    let now = t0.getTime()
+    const { deps, tasks } = buildDeps({ now: () => new Date(now) })
+    await enqueueOrCoalesce(deps, {
+      ...BASE_MSG, messageHandle: "msg-1", body: "hi", inboundEventId: "inb_1",
+      receivedAt: new Date(now).toISOString(),
+    })
+    // Slow follow-up: 5.5s >= 5s threshold → no bump, default delay (clamped)
+    now += RAPID_MESSAGE_THRESHOLD_MS + 500
+    await enqueueOrCoalesce(deps, {
+      ...BASE_MSG, messageHandle: "msg-2", body: "still there?", inboundEventId: "inb_2",
+      receivedAt: new Date(now).toISOString(),
+    })
+    const remainingMs = HARD_CAP_MS - (RAPID_MESSAGE_THRESHOLD_MS + 500)
+    const expectedDelay = Math.min(DEFAULT_DELAY_MS, remainingMs)
+    assert.equal(
+      tasks.enqueued[1]!.delayMs,
+      expectedDelay,
+      `slow-gap follow-up (>=${RAPID_MESSAGE_THRESHOLD_MS}ms) uses default delay, no bump`
+    )
+  })
+
+  it("HARD_CAP_MS = 20_000 (Adam 2026-05-03 amendment 长一点)", async () => {
+    // Pin the cap value so future regression cannot silently shrink it back to
+    // 12s/18s without updating Adam's directive context.
+    assert.equal(HARD_CAP_MS, 20_000, "HARD_CAP_MS must be 20s per Adam amendment")
   })
 })

@@ -53,12 +53,46 @@ export const COALESCE_USER_FIELD = "coalesceTurnSeq"
 
 /** Soft cap: force-fire (delay=0) when a turn accumulates more than this many messages. */
 export const FORCE_FIRE_MESSAGE_COUNT = 5
-/** Hard cap: total wait from firstReceivedAt before force-fire, regardless of cancel/re-enqueue. */
-export const HARD_CAP_MS = 12_000
+/** Hard cap: total wait from firstReceivedAt before force-fire, regardless of cancel/re-enqueue.
+ *
+ *  Adam 2026-05-03 01:22 spec ("我们的 typing window 8s 没问题, 但是不能一条对应
+ *  一个, 肯定要稍微 merge 一下" + amendment "可以消息间隔 < 5s 自动延长 …
+ *  然后长一点, 我觉得可以"): 4 zh msgs across ~01:22:00–01:22:38 still wave-split
+ *  into 3 turns under the 12s hard cap. Bumping to 20s pairs with the new
+ *  rapid-message gap heuristic (see RAPID_MESSAGE_THRESHOLD_MS below) to give
+ *  the buffer enough headroom to absorb 3-4 quick zh msgs before force-fire.
+ *
+ *  Anti-troll guard preserved: the cap is still bounded — continuous typing
+ *  past 20s force-fires; the gap-heuristic bump can only extend firesAt up to
+ *  `firstReceivedAt + HARD_CAP_MS`. The +8s extension is ~1 typing burst
+ *  longer than the previous cap, NOT an open-ended deadline.
+ *
+ *  NB: Sendblue typing_indicator webhook is verified absent in the
+ *  pa-sendblue-webhook-raw collection (Adam 2026-05-03 dashboard check —
+ *  no typing inbounds across 5 categories). bumpCoalesceBufferTransaction
+ *  remains as dead code for forward compatibility, but the gap heuristic
+ *  inside coalesceTransaction is now the PRIMARY merge-driving signal. */
+export const HARD_CAP_MS = 20_000
 /** Default coalesce delay window.
  *  Bug 4 (2026-05-03): bumped 4s→8s — Adam实测 4 msg in 12s 触发 wave-split 3 turns;
- *  人类打字间隔常 >4s, 8s 在 HARD_CAP_MS=12s 内还有 4s 缓冲. */
+ *  人类打字间隔常 >4s, 8s 在 HARD_CAP_MS 内有充裕缓冲. */
 export const DEFAULT_DELAY_MS = 8_000
+
+/** Rapid-message gap heuristic — Adam 2026-05-03 amendment ("可以消息间隔 < 5s
+ *  自动延长 (heuristic — 连发就是同 thought)").
+ *
+ *  When a new inbound arrives within RAPID_MESSAGE_THRESHOLD_MS of the previous
+ *  one, treat it as the SAME thought and extend the coalesce window by an
+ *  extra RAPID_BUMP_MS on top of the default delay. The combined window is
+ *  still clamped to `firstReceivedAt + HARD_CAP_MS` so adversarial inputs
+ *  cannot keep the buffer pending forever.
+ *
+ *  Why 5s: human typing-burst RTT is ~1-3s for short messages, ~3-5s for
+ *  longer ones. >5s reads as a pause/topic-shift; <5s reads as continuation.
+ *  Why +6s bump: 8s default + 6s = 14s effective, leaving 6s under the 20s
+ *  hard cap for one more rapid follow-up. */
+export const RAPID_MESSAGE_THRESHOLD_MS = 5_000
+export const RAPID_BUMP_MS = 6_000
 
 /**
  * Event-driven coalesce — Adam 顶层设计 (2026-05-03):
@@ -149,10 +183,14 @@ export async function coalesceTransaction(
     now?: () => Date
     /** Override default 4s window (tests). */
     defaultDelayMs?: number
-    /** Override 12s hard cap (tests). */
+    /** Override default hard cap (tests). */
     hardCapMs?: number
     /** Override 5-msg soft cap (tests). */
     forceFireCount?: number
+    /** Override 5s rapid-gap threshold (tests). Adam 2026-05-03 amendment. */
+    rapidThresholdMs?: number
+    /** Override 6s rapid-gap bump (tests). Adam 2026-05-03 amendment. */
+    rapidBumpMs?: number
     /** Stable short-name builder; default uses ${userId}-${turnSeq}-${count}. */
     taskNameFn?: (userId: string, turnSeq: number, messageCount: number) => string
   } = {}
@@ -161,6 +199,8 @@ export async function coalesceTransaction(
   const defaultDelay = opts.defaultDelayMs ?? DEFAULT_DELAY_MS
   const hardCap = opts.hardCapMs ?? HARD_CAP_MS
   const forceFireCount = opts.forceFireCount ?? FORCE_FIRE_MESSAGE_COUNT
+  const rapidThresholdMs = opts.rapidThresholdMs ?? RAPID_MESSAGE_THRESHOLD_MS
+  const rapidBumpMs = opts.rapidBumpMs ?? RAPID_BUMP_MS
   const taskNameFn =
     opts.taskNameFn ?? ((u, t, c) => `pa-coalesce-${sanitizeTaskComponent(u)}-${t}-${c}`)
 
@@ -237,14 +277,26 @@ export async function coalesceTransaction(
     const isHardCapped = remainingMs === 0
     const isSoftCapped = newCount > forceFireCount
 
-    // Recommended delay: min(default, remaining), force-fire ⇒ 0
+    // Adam 2026-05-03 amendment — rapid-message gap heuristic.
+    //   gap = now - lastReceivedAt
+    //   if gap < RAPID_MESSAGE_THRESHOLD_MS → user is mid-thought (连发就是
+    //     同 thought); extend target delay to default + RAPID_BUMP_MS so the
+    //     buffer waits longer for follow-ups before firing.
+    //   else → use default delay (gap >= 5s reads as pause/topic-shift).
+    // Both branches still clamp to `remainingMs` so the hard cap is respected.
+    const lastReceivedAtMs = Date.parse(existing.lastReceivedAt)
+    const gapMs = Number.isFinite(lastReceivedAtMs) ? Math.max(0, nowMs - lastReceivedAtMs) : Infinity
+    const isRapidGap = gapMs < rapidThresholdMs
+    const targetDelay = isRapidGap ? defaultDelay + rapidBumpMs : defaultDelay
+
+    // Recommended delay: min(targetDelay, remaining), force-fire ⇒ 0
     let recommendedDelayMs: number
     let action: "appended" | "force-fire"
     if (isHardCapped || isSoftCapped) {
       recommendedDelayMs = 0
       action = "force-fire"
     } else {
-      recommendedDelayMs = Math.min(defaultDelay, remainingMs)
+      recommendedDelayMs = Math.min(targetDelay, remainingMs)
       action = "appended"
     }
 
@@ -389,7 +441,7 @@ export type BumpOutcome =
  *
  * `firstReceivedAt` is NEVER mutated — HARD_CAP_MS is anchored to the moment
  * the FIRST message landed, not the last typing tick. That's the anti-troll
- * invariant: even continuous typing cannot keep a turn pending past 12 s.
+ * invariant: even continuous typing cannot keep a turn pending past HARD_CAP_MS (18s).
  *
  * `messageCount` is NOT incremented either — typing is not a message; counts
  * stay aligned with actual `pa-inbound-events` rows for forensic accuracy.

@@ -70,9 +70,12 @@ export interface RunLangLockGuardInput {
   turnId: string
   /**
    * The user's already-detected language (use `detectUserLang(event.body)`
-   * — the zh-biased variant — for caller correctness on bilingual input).
+   * — the 3-class variant — for caller correctness on bilingual input).
+   * "mixed" = code-switched user input; guard becomes a no-op so the reply
+   * can naturally mirror the user's zh-frame + en-token register instead
+   * of being hard-locked to one language.
    */
-  userLang: "zh" | "en"
+  userLang: "zh" | "en" | "mixed"
   /** Reply text after agent turn (BEFORE iMessage normalization). */
   reply: string
   /**
@@ -114,6 +117,22 @@ export async function runLangLockGuard(
 
   if (reply.length === 0) {
     return { reply, applied: false, reason: "empty_reply" }
+  }
+
+  // Adam 2026-05-03 01:22 spec — mixed-register bypass. When the user wrote
+  // a code-switched message ("你觉得我能去 Nvidia 吗?", "swe行业"), the reply
+  // MUST mirror naturally (zh frame + en tokens preserved). Hard-locking to
+  // pure-zh would scrub legitimate English tokens (proper nouns, role
+  // acronyms, tech terms) the user expects to see echoed back. Skip translate
+  // entirely so the model's emitted reply ships verbatim.
+  if (userLang === "mixed") {
+    store.log("pa.voice.lang_translate.bypass_mixed", {
+      userId,
+      turnId,
+      callSite,
+      replyLen: reply.length,
+    })
+    return { reply, applied: false, reason: "mixed_register_bypass" }
   }
 
   try {
@@ -219,11 +238,24 @@ export async function runLangLockGuard(
  *
  * Returns `{ open, close }` — caller wraps own systemPrompt as
  * `${open}\n\n${baseSystemPrompt}${close}`.
+ *
+ * Adam 2026-05-03 01:22 spec — "mixed" branch returns empty strings so the
+ * sandwich becomes a no-op. The model is free to mirror the user's
+ * code-switched register (zh frame + en tokens) without being clamped to
+ * either pure language. Mirrors runLangLockGuard's mixed bypass — both
+ * pre-gen and post-gen guards must agree, otherwise the post-gen translate
+ * would undo a faithfully-mirrored reply.
  */
-export function buildLangLockSandwich(userLang: "zh" | "en"): {
+export function buildLangLockSandwich(userLang: "zh" | "en" | "mixed"): {
   open: string
   close: string
 } {
+  if (userLang === "mixed") {
+    // No sandwich — let the model mirror naturally. Empty strings are safe to
+    // concatenate at the call site (`${open}\n\n${prompt}${close}`); the
+    // resulting prompt is just the base systemPrompt with extra whitespace.
+    return { open: "", close: "" }
+  }
   const open =
     userLang === "zh"
       ? "[LANGUAGE-LOCK · TOP-PRIORITY]\nuser_input_language: zh (Chinese)\nABSOLUTE RULE: You MUST reply in Chinese (中文). Do NOT switch to English unless the token is a code symbol, URL, or proper noun (人名/公司名). NEVER reply in English when the user wrote Chinese.\n[/LANGUAGE-LOCK]"
@@ -238,8 +270,12 @@ export function buildLangLockSandwich(userLang: "zh" | "en"): {
 /**
  * Build the user-message langLock directive (mirrors index.ts:1118-1120).
  * Caller appends to userMessage before runAgentTurn.
+ *
+ * Adam 2026-05-03 01:22 spec — "mixed" returns empty string so the user
+ * message is unchanged. Pairs with buildLangLockSandwich's mixed branch.
  */
-export function buildLangLockUserDirective(userLang: "zh" | "en"): string {
+export function buildLangLockUserDirective(userLang: "zh" | "en" | "mixed"): string {
+  if (userLang === "mixed") return ""
   return userLang === "en"
     ? "\n\n[SYSTEM-DIRECTIVE: Reply in English only. Do not output any Chinese characters.]"
     : "\n\n[SYSTEM-DIRECTIVE: 用中文回复。Reply only in Chinese.]"

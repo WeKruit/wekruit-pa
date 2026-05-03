@@ -256,11 +256,14 @@ test("coldstart-langlock: EN user 'I want a job' → EN langLock pre-gen wired",
 })
 
 // ============================================================================
-// Test 3 — Adam Bug 2 repro: ZH-frame with EN loanword "swe的". detectLang
-// (majority) used to return 'en' here; detectUserLang (any-CJK) correctly
-// returns 'zh' so the systemPrompt MUST get the ZH lang-lock.
+// Test 3 — Adam Bug 2 repro evolved (2026-05-03 01:22 amendment): ZH-frame with
+// EN loanword "swe的" was classified as "zh" under Phase 53 binary detection.
+// New 3-class detectUserLang classifies it as "mixed" (≥1 CJK + ≥1 ASCII word).
+// The langLock sandwich is now a NO-OP for mixed input — Adam directive
+// "lang must mirror user, 不能 hard-lock 单语" — the model should be free to
+// mirror the user's zh-frame + en-token register naturally.
 // ============================================================================
-test("coldstart-langlock: Adam Bug 2 repro 'swe的' → detectUserLang→zh, ZH langLock injected", async () => {
+test("coldstart-langlock: 'swe的' → detectUserLang→mixed, NO langLock sandwich (Adam 01:22 spec)", async () => {
   const captures = emptyCaptures()
   const store = makeStore(captures, {
     llmReplyBody: "在呢. 今天找你聊点啥? 🍋",
@@ -270,22 +273,31 @@ test("coldstart-langlock: Adam Bug 2 repro 'swe的' → detectUserLang→zh, ZH 
     store
   )
   const sp = captures.systemPrompts[0]
+  // No language-lock block at all — neither zh nor en sandwich inserted
   assert.ok(
-    sp.includes("user_input_language: zh"),
-    `Bug 2 fix: 'swe的' must trigger ZH langLock (detectUserLang any-CJK rule). systemPrompt: ${sp.slice(0, 300)}`
+    !sp.includes("user_input_language: zh"),
+    `mixed input MUST NOT inject ZH langLock — let reply mirror naturally. systemPrompt: ${sp.slice(0, 300)}`
+  )
+  assert.ok(
+    !sp.includes("user_input_language: en"),
+    `mixed input MUST NOT inject EN langLock either. systemPrompt: ${sp.slice(0, 300)}`
   )
   const um = captures.userMessages[0]
+  // The userMessage equals the original event.body (no directive appended)
   assert.ok(
-    um.includes("[SYSTEM-DIRECTIVE: 用中文回复"),
-    "Bug 2 fix: 'swe的' must trigger ZH user-directive"
+    !um.includes("[SYSTEM-DIRECTIVE: 用中文回复"),
+    "mixed input MUST NOT append ZH user-directive"
+  )
+  assert.ok(
+    !um.includes("[SYSTEM-DIRECTIVE: Reply in English"),
+    "mixed input MUST NOT append EN user-directive either"
   )
 })
 
 // ============================================================================
-// Test 4 — Cold-start ZH user "yoe1年的" (another Adam Bug 2 repro) → also
-// triggers ZH langLock despite ASCII-letter majority.
+// Test 4 — Cold-start mixed "yoe1年的" (Adam 01:22 spec) → mixed bypass.
 // ============================================================================
-test("coldstart-langlock: Adam Bug 2 repro 'yoe1年的' → detectUserLang→zh, ZH langLock injected", async () => {
+test("coldstart-langlock: 'yoe1年的' → detectUserLang→mixed, NO langLock sandwich (Adam 01:22 spec)", async () => {
   const captures = emptyCaptures()
   const store = makeStore(captures, {
     llmReplyBody: "在呢. 今天找你聊点啥? 🍋",
@@ -296,8 +308,12 @@ test("coldstart-langlock: Adam Bug 2 repro 'yoe1年的' → detectUserLang→zh,
   )
   const sp = captures.systemPrompts[0]
   assert.ok(
-    sp.includes("user_input_language: zh"),
-    `'yoe1年的' must trigger ZH langLock. systemPrompt: ${sp.slice(0, 300)}`
+    !sp.includes("user_input_language: zh"),
+    `mixed input MUST NOT inject ZH langLock. systemPrompt: ${sp.slice(0, 300)}`
+  )
+  assert.ok(
+    !sp.includes("user_input_language: en"),
+    "mixed input MUST NOT inject EN langLock either."
   )
 })
 

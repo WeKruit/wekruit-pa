@@ -451,18 +451,41 @@ export async function processCoalescedTurn(
     },
   })
 
-  // Stamp `userId` AND `sessionId` directly on the synthesized event so the
-  // orchestrator's `claimInboundEvent` (which only does a raw `t.get(ref)`,
-  // no session lookup) sees a fully-populated InboundEvent. Without the
-  // sessionId stamp, `store.createTurn` writes `sessionId: undefined` to
-  // `pa-turns` and Firestore rejects — see Bug 1 RCA above.
+  // Stamp ALL InboundEvent-required scalar fields directly on the synthesized
+  // event so the orchestrator's `claimInboundEvent` (which only does a raw
+  // `t.get(ref)`, no rawPayload extraction, no session lookup) sees a
+  // fully-populated InboundEvent. Without these stamps the legacy broker
+  // path's `body`/`from`/`externalChatId` writes (apps/functions/src/index.ts
+  // ~line 404) are silently absent on the coalesced path and the orchestrator
+  // crashes Firestore.
+  //
+  //   Bug 1 (sessionId): fixed earlier by stamping `userId` + `sessionId`.
+  //   Bug 5 (body) — Adam iMessage 2026-05-03 01:05 + 01:22 production crash:
+  //     `[orchestrator] turn failed ... errorCode: 'TURN_FAILED', error:
+  //      'Cannot use "undefined" as a Firestore value (found in field "body")'`
+  //     Same RCA mode as Bug 1 — the synthesized doc was missing a top-level
+  //     `body`. `processInboundEvent` then called `store.appendMessage({ body:
+  //     event.body /* undefined */ })` and Firestore rejected the write.
+  //
+  // The accumulatedBody is the canonical inbound text. `fromNumber` is already
+  // E.164-normalized at the SendBlue webhook (no email path possible — phones
+  // only); `externalChatId` per the legacy `normalizeImessageParticipant` is a
+  // no-op for E.164, so we reuse `fromNumber` verbatim. Mirrors
+  // apps/functions/src/index.ts:404 byte-equivalent for forensic determinism.
   try {
     await deps.db.collection("pa-inbound-events").doc(created.id).set(
-      { userId, sessionId, coalesced: true },
+      {
+        userId,
+        sessionId,
+        body: fired.accumulatedBody,
+        from: fired.fromNumber,
+        externalChatId: fired.fromNumber,
+        coalesced: true,
+      },
       { merge: true }
     )
   } catch (err) {
-    log("[coalesce] inbound-stamp-user FAILED (non-fatal)", {
+    log("[coalesce] inbound-stamp-event FAILED (non-fatal)", {
       eventId: created.id,
       err: err instanceof Error ? err.message : String(err),
     })

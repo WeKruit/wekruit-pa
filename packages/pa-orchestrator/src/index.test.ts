@@ -1209,3 +1209,31 @@ test("Bug 4 — long reply (>600 chars) emits exactly 1 enqueueOutbound (single 
   // The single bubble carries the full reply (post-normalize join) — no truncation.
   assert.ok(lastBody.length > 600, "single bubble body must contain full reply")
 })
+
+// ----------------- Bug 5 body invariant tests (Adam 2026-05-03 01:05+01:22) -----------------
+
+/**
+ * Bug 5 invariant: processInboundEvent must reject early if event.body is
+ * undefined/null. Same defensive pattern as Bug 1's sessionId guard in
+ * packages/pa-broker/src/turns.ts createAgentTurn — fail loud at the
+ * boundary so the upstream synthesizer (paMessageCoalescer.processCoalescedTurn)
+ * is forced to stamp `body` instead of producing an opaque
+ * "Cannot use \"undefined\" as a Firestore value" crash deep inside Firestore.
+ */
+test("processInboundEvent throws when event.body is undefined (Bug 5 invariant)", async () => {
+  const store = makeStore()
+  const badEvent = { ...baseEvent, body: undefined as unknown as string }
+  await assert.rejects(
+    () => processInboundEvent(badEvent, store),
+    /event\.body is required/
+  )
+})
+
+test("processInboundEvent throws when event.body is null (Bug 5 invariant)", async () => {
+  const store = makeStore()
+  const badEvent = { ...baseEvent, body: null as unknown as string }
+  await assert.rejects(
+    () => processInboundEvent(badEvent, store),
+    /event\.body is required/
+  )
+})

@@ -63,41 +63,70 @@ export function detectLang(text: string): "zh" | "en" {
 }
 
 /**
- * Phase 53 — Bug 2 fix: zh-biased detection for USER INPUT.
+ * Phase 53 + Adam 2026-05-03 01:22 spec — 3-class user-input lang detection.
  *
- * `detectLang` uses cjk-vs-ascii majority; this misclassifies bilingual user
- * inputs like "swe的" (1 cjk + 3 ascii) or "yoe1年的" (3 ascii + 2 cjk) as
- * "en". When a user mixes English tokens (acronyms, role names like SWE/PM,
- * tech terms like react/python) with Chinese, they are still WRITING IN
- * CHINESE — the English bits are loanword-shaped fragments inside a
- * Chinese-frame utterance. Replying in English is wrong.
+ * `detectLang` (cjk-vs-ascii majority) misclassifies bilingual user inputs
+ * like "swe的" or "yoe1年的" as "en". Phase 53 corrected this with a
+ * zh-biased "any CJK → zh" rule, but Adam iMessage 01:22 repro proved that
+ * binary classification still over-locks: a user writing "你觉得我能去
+ * Nvidia 吗?" or "swe行业" should get a reply that *mirrors* the mixed
+ * register (zh frame + en token preserved), not a hard zh translate that
+ * scrubs the English token.
  *
- * Heuristic: ANY presence of CJK characters → "zh" (the user is writing
- * Chinese-frame; English fragments are loanwords). Pure-ASCII → "en".
+ * Three classes:
+ *   - "zh"    — pure-zh: ≥1 CJK char AND zero ASCII letter words
+ *   - "en"    — pure-en: zero CJK chars AND ≥1 ASCII letter word
+ *   - "mixed" — code-switched: ≥1 CJK char AND ≥1 ASCII letter word.
+ *               The reply MUST mirror — no langLock translate, let the model
+ *               choose the natural balance of zh frame + en tokens.
+ *
+ * Counting:
+ *   - CJK char: any code point in U+4E00..U+9FFF, U+3400..U+4DBF, or
+ *     U+3000..U+303F (CJK punctuation block — matches detectLang).
+ *   - ASCII word: a maximal run of [A-Za-z]+ counts as ONE word
+ *     ("Nvidia" = 1, "swe行业" = 1 ASCII word + 2 CJK chars = mixed).
+ *
+ * Empty / non-string → "en" (defensive default; matches detectLang).
+ * Punctuation-only ASCII (no letters) → "en" (no signal).
+ * CJK-punctuation-only (e.g. "。") → "zh" (matches detectLang behavior).
+ *
+ * Examples:
+ *   "我想找工作"             → "zh"    (≥1 CJK, 0 ASCII words)
+ *   "I want a job"           → "en"    (0 CJK, 4 ASCII words)
+ *   "swe的"                  → "mixed" (1 ASCII word + 1 CJK char)
+ *   "yoe1年的"               → "mixed" (1 ASCII word + 2 CJK chars)
+ *   "你觉得我能去 Nvidia 吗?" → "mixed" (1 ASCII word + many CJK)
+ *   "swe行业"                → "mixed" (1 ASCII word + 2 CJK)
+ *   "算了我还是想做cs"        → "mixed" (1 ASCII word + many CJK)
  *
  * USE THIS for USER-INPUT lang detection (langLock decisions). For REPLY
- * lang detection (post-gen translate decision), keep using `detectLang`
- * because that is a faithful "what did the model actually emit" check.
- *
- * Adam iMessage 2026-05-03 00:34 repro:
- *   "我想找工作"   → detectLang=zh (current OK)
- *   "swe的"        → detectLang=en (WRONG; detectUserLang=zh ✓)
- *   "yoe1年的"     → detectLang=en (WRONG; detectUserLang=zh ✓)
- *   "I want a job" → detectLang=en (correct; detectUserLang=en ✓)
- *   "我是 senior on OPT" → detectLang=en (debatable; detectUserLang=zh ✓)
+ * lang detection, keep using `detectLang` (faithful majority).
  */
-export function detectUserLang(text: string): "zh" | "en" {
+export function detectUserLang(text: string): "zh" | "en" | "mixed" {
   if (typeof text !== "string" || text.length === 0) return "en"
+  let cjk = 0
+  let inAsciiWord = false
+  let asciiWords = 0
   for (const ch of text) {
     const code = ch.codePointAt(0) ?? 0
-    if (
+    const isCjk =
       (code >= 0x4e00 && code <= 0x9fff) ||
       (code >= 0x3400 && code <= 0x4dbf) ||
       (code >= 0x3000 && code <= 0x303f)
-    ) {
-      return "zh"
+    const isAsciiLetter = code < 128 && /[A-Za-z]/.test(ch)
+    if (isCjk) cjk += 1
+    if (isAsciiLetter) {
+      if (!inAsciiWord) {
+        asciiWords += 1
+        inAsciiWord = true
+      }
+    } else {
+      inAsciiWord = false
     }
   }
+  if (cjk > 0 && asciiWords > 0) return "mixed"
+  if (cjk > 0) return "zh"
+  if (asciiWords > 0) return "en"
   return "en"
 }
 
