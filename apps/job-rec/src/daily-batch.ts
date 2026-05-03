@@ -52,6 +52,13 @@ import {
 import {
   PA_TAG_CLUSTER_REC_FLAG_KEY,
 } from "./tag-cluster-rec.js"
+// v1.5 / Phase 53.5 — weighted skill match scoring (Adam 2026-05-02 spec).
+import {
+  AI_AGENT_SKILL_WEIGHTS,
+  WEIGHTED_MATCH_FLAG_KEY,
+  applyWeightedMatchBoost,
+  type WeightedMatchExplanation,
+} from "./match-weights.js"
 
 export type FlagChecker = (
   db: Firestore,
@@ -1380,6 +1387,119 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
           }
         }
       }
+
+      // v1.5 / Phase 53.5 — weighted skill match scoring (Adam 2026-05-02
+      // spec). Multiplicative boost on top of cross-encoder + startup boost.
+      // For AI agent users: jobs whose CORE keywords (RAG / tool calling /
+      // workflow orchestration) are in the user's CV get STRONG mult (1.2);
+      // jobs that match only on generic skills (Python alone) get WEAK (0.85).
+      // Default-OFF flag — when off, byte-identical to pre-Phase-53.5 ranking.
+      //
+      // Position: AFTER startup boost (so most-recent semantic reorder wins),
+      // BEFORE H12 dedupe + H7 anti-bias + H13 formatter (so explanations
+      // can flow through to DailyPushContext for the reason explainer).
+      //
+      // Role detection: simple keyword scan over user's industryTags +
+      // statedPreferences.targetRole. AI_AGENT_SKILL_WEIGHTS is the only
+      // table wired today; PM/SWE tables are deferred to follow-up phases.
+      let weightedMatchExplanations: WeightedMatchExplanation[] = []
+      if (rankedJobs.length > 1) {
+        const weightedMatchOn = Boolean(
+          await deps.getFlag(
+            deps.db,
+            WEIGHTED_MATCH_FLAG_KEY,
+            { userId, env: process.env },
+            false
+          )
+        )
+        if (weightedMatchOn) {
+          try {
+            // Pull user's CV skills + targetRole hint. Best-effort — missing
+            // signals fall through to neutral (no boost).
+            let userSkillsForWeighted: string[] = []
+            let targetRoleSignal = ""
+            try {
+              const resumeSnap = await deps.db
+                .collection("parsedCandidateResumes")
+                .where("userId", "==", userId)
+                .orderBy("createdAt", "desc")
+                .limit(1)
+                .get()
+              if (!resumeSnap.empty) {
+                const rd = resumeSnap.docs[0]!.data() as Record<string, unknown>
+                const cp = (rd.candidateProfile ?? {}) as Record<string, unknown>
+                if (Array.isArray(cp.skills)) {
+                  userSkillsForWeighted = (cp.skills as unknown[])
+                    .filter((x) => typeof x === "string") as string[]
+                }
+              }
+            } catch {
+              // ignore — neutral fallback
+            }
+            try {
+              const userDoc = await deps.db.collection("pa-users").doc(userId).get()
+              if (userDoc.exists) {
+                const ud = userDoc.data() as Record<string, unknown>
+                const sp = ud.statedPreferences as Record<string, unknown> | undefined
+                if (sp && Array.isArray(sp.targetRole)) {
+                  targetRoleSignal = (sp.targetRole as unknown[])
+                    .filter((x) => typeof x === "string")
+                    .join(" ")
+                    .toLowerCase()
+                }
+              }
+            } catch {
+              // ignore — neutral fallback
+            }
+            // Role detection — only AI agent table wired today. Fire when
+            // industryTags include ai_ml OR targetRole mentions AI agent
+            // keywords. Conservative: false-negative friendly (matches
+            // job-market-knowledge.detectJobMarketRole spirit).
+            const isAiAgentUser =
+              normalized.industryTags.includes("ai_ml") ||
+              /ai\s*agent|llm|rag|langchain|agentic/.test(targetRoleSignal)
+            if (isAiAgentUser && userSkillsForWeighted.length > 0) {
+              const wm = applyWeightedMatchBoost(
+                rankedJobs,
+                userSkillsForWeighted,
+                AI_AGENT_SKILL_WEIGHTS,
+                crossEncoderScores ?? undefined
+              )
+              for (const expl of wm.explanations) {
+                log("[job-rec-daily] weighted_match.applied", {
+                  userId,
+                  jobId: expl.jobId,
+                  score: expl.score,
+                  boostMult: expl.boostMult,
+                  matchedCount: expl.matched.length,
+                  coreMissingCount: expl.coreMissing.length,
+                  coreMissing: expl.coreMissing.map((w) => w.skill),
+                  matched: expl.matched.map((w) => w.skill),
+                })
+              }
+              if (wm.explanations.length > 0) {
+                rankedJobs = wm.jobs
+                weightedMatchExplanations = wm.explanations
+              }
+            } else {
+              log("[job-rec-daily] weighted_match.skipped_role", {
+                userId,
+                isAiAgentUser,
+                userSkillsCount: userSkillsForWeighted.length,
+              })
+            }
+          } catch (wmErr) {
+            log("[job-rec-daily] weighted_match.threw_fallback", {
+              userId,
+              error: wmErr instanceof Error ? wmErr.message : String(wmErr),
+            })
+          }
+        }
+      }
+      // Suppress unused-var warning — weightedMatchExplanations is captured
+      // for forward-compat: future H13.next will surface coreMissing in reasons
+      // ("core 缺 RAG"). Today the reasons go through the cross-encoder path.
+      void weightedMatchExplanations
 
       // Stream H12 — dedupe near-identical JDs (same title+company across
       // cities) BEFORE final slice, so users don't get 3-job pushes that

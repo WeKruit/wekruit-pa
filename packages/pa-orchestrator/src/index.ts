@@ -13,6 +13,11 @@ import {
 } from "./handbook/loader.js"
 // Stream D — CV context injection (appendCvContextToSystemPrompt).
 import { appendCvContextToSystemPrompt } from "./cv-context-injection.js"
+// v1.5 / Phase 53.5 — JOB MARKET CONTEXT harness (Adam 2026-05-02 spec).
+import {
+  appendJobMarketKnowledgeToSystemPrompt,
+  detectJobMarketRole,
+} from "./voice/job-market-knowledge.js"
 import {
   runAgentTurn as defaultRunAgentTurn,
   stripLeadingIsoTimestamp,
@@ -122,6 +127,15 @@ import {
 import { trackAdvice } from "./voice/memory-policy/index.js"
 import { tapCoachTokens } from "./voice/coach-token-monitor.js"
 import { buildFewShotTurns, prefixFewShotToHistory } from "./voice/few-shot.js"
+// v1.5 long-context humanize control (Adam 2026-05-02) — sliding-window
+// truncation of the model-input history. mirror analyzer still consumes
+// raw `history` (untruncated) at computeMirrorForTurn above so older
+// turns can still inform style mirroring.
+import {
+  truncateHistoryByTokens,
+  estimateHistoryTokens,
+  TELEMETRY_THRESHOLD_TOKENS,
+} from "./voice/context-window.js"
 import { normalizeForIMessage, stripABProbeFromTail } from "./output-normalizer.js"
 // Phase 53 (v1.6 voice-quality closure) — conditional A/B framework strip
 // + mixed-register mirror append. Distinct from stripABProbeFromTail
@@ -1137,6 +1151,36 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
         (evt, payload) => store.log(evt, payload as Record<string, unknown>)
       )
     }
+    // v1.5 / Phase 53.5 — JOB MARKET CONTEXT harness prompt (Adam 2026-05-02
+    // spec: harness Claire on the actual 2026 keyword set for AI agent / PM /
+    // SWE so she stops confirming "single Python = match"). Pure / synchronous;
+    // fires only when the current user message explicitly names a target role.
+    // No-op for casual chat — system prompt unchanged. NEVER throws (defensive).
+    if (composedSystemPrompt !== null) {
+      try {
+        const harnessLang: "zh" | "en" = detectUserLang(event.body) === "en" ? "en" : "zh"
+        const detectedRole = detectJobMarketRole(event.body)
+        const before = composedSystemPrompt
+        composedSystemPrompt = appendJobMarketKnowledgeToSystemPrompt(
+          composedSystemPrompt,
+          { userMessage: event.body, lang: harnessLang }
+        )
+        if (composedSystemPrompt !== before) {
+          store.log("pa.job_market_knowledge.applied", {
+            userId: event.userId,
+            turnId,
+            role: detectedRole,
+            lang: harnessLang,
+          })
+        }
+      } catch (err) {
+        store.log("pa.job_market_knowledge.failed", {
+          userId: event.userId,
+          turnId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    }
     // v1.5 hotfix — pre-generation language lock. Detect user input language
     // (zh|en) from event.body and SANDWICH the directive (top + bottom of
     // system prompt) so Qwen-7B's weak instruction-following can't lose it
@@ -1162,10 +1206,33 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // (see persistence-layer filter; Pitfall 4 in 24-RESEARCH.md).
     // historyForModel is MODEL INPUT ONLY — `history` remains the
     // source-of-truth for persistence paths (no fs_* rows in pa_messages).
+    // v1.5 long-context humanize control (Adam 2026-05-02 spec) — sliding
+    // window truncation BEFORE few-shot prefixing. Qwen-7B advertises 32k
+    // context but effective attention degrades past ~6k input tokens; long
+    // sessions caused repeated tokens, hallucinated literal-prompt copies,
+    // and Bible v7.5 NEVER-rule drift as the system prompt was pushed out of
+    // the attention window. We cap model-input history at ~1500 estimated
+    // tokens, always preserving the last 8 turns (most recent context the
+    // user is replying to). The raw `history` variable is unchanged so
+    // mirror analyzer + persistence still see full context.
+    const historyTrunc = truncateHistoryByTokens(history)
+    const truncatedHistory = historyTrunc.kept
+    if (historyTrunc.truncated || historyTrunc.originalTokens >= TELEMETRY_THRESHOLD_TOKENS) {
+      store.log("pa.voice.context_window_truncated", {
+        userId: event.userId,
+        turnId,
+        originalTurns: history.length,
+        keptTurns: truncatedHistory.length,
+        droppedTurns: historyTrunc.droppedCount,
+        originalTokenEst: historyTrunc.originalTokens,
+        keptTokenEst: historyTrunc.keptTokens,
+        warningOverThreshold: historyTrunc.originalTokens >= TELEMETRY_THRESHOLD_TOKENS,
+      })
+    }
     const fewShotTurns = buildFewShotTurns(agent)
     const historyForModel = fewShotTurns.length > 0
-      ? prefixFewShotToHistory(fewShotTurns, history)
-      : history
+      ? prefixFewShotToHistory(fewShotTurns, truncatedHistory)
+      : truncatedHistory
     // v1.5 hotfix v3 — append lang-lock directive to user message itself.
     // System-prompt sandwich (v2) was insufficient because few-shot examples
     // in agent doc are ZH-heavy and bias turn-1 generation. Injecting at the
