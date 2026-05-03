@@ -4,10 +4,17 @@
  * Embedder: SiliconFlow BAAI/bge-m3 (1024 dims)
  * VectorStore: Qdrant (self-hosted on Fly)
  *
- * Public API kept identical to the previous Mem0 Cloud HTTP shim so that
- * `stacked.ts` and `pa-orchestrator` need no source changes:
+ * Public API kept backward-compatible with the previous Mem0 Cloud HTTP shim
+ * so that `stacked.ts` and `pa-orchestrator` need no source changes:
  *   - `mem0Search(config, query, userId): Promise<string[]>`
- *   - `mem0Add(config, messages, userId): Promise<void>`
+ *   - `mem0Add(config, messages, userId, options?): Promise<void>`
+ *
+ * iter30 WS1 (2026-05-03): `mem0Add` now accepts an optional 4th `options`
+ * parameter carrying `metadata` + `agentId`. Both flow through to the
+ * underlying Mem0 SDK call (`AddMemoryOptions.metadata` /
+ * `AddMemoryOptions.agentId`) which round-trips them into the Qdrant point
+ * payload alongside the SDK-managed user_id/agent_id/run_id stamps. All
+ * pre-iter30 callers remain valid (3-arg invocations).
  *
  * Config is sourced from process env at the call boundary in `stacked.ts`.
  * The `Mem0Config` shape is widened to carry the new OSS-specific fields,
@@ -275,10 +282,35 @@ export function scrubCrisisFromMessages(
   return { skip: true, reason: "crisis_detected", signals: allSignals, inputHashes: allHashes }
 }
 
+/**
+ * Optional iter30 extension on top of the legacy 3-arg signature. Callers can
+ * pass arbitrary `metadata` (round-tripped to Qdrant payload via Mem0 SDK's
+ * `AddMemoryOptions.metadata`) and/or an `agentId` (forwarded as the SDK's
+ * `agentId` field which Mem0 stamps into both `filters.agent_id` and the
+ * payload's `agent_id` key).
+ *
+ * Backward compat: every existing 3-arg call (`mem0Add(config, messages,
+ * userId)`) keeps the same shape — `options` is optional and defaults to
+ * passing nothing extra to the SDK.
+ *
+ * `infer` is intentionally left at the SDK default (true). When callers
+ * explicitly opt out, they pass `{ infer: false }` here and we forward that
+ * to the SDK so the messages are stored verbatim with the supplied metadata
+ * (used by round-trip tests / direct-write paths). Default behaviour stays
+ * extractor-on so production traffic is unchanged.
+ */
+export type Mem0AddOptions = {
+  metadata?: Record<string, unknown>
+  agentId?: string
+  /** Forwarded to Mem0 SDK `AddMemoryOptions.infer`. Defaults to SDK default (true). */
+  infer?: boolean
+}
+
 export async function mem0Add(
   config: Mem0Config,
   messages: { role: "user" | "assistant"; content: string }[],
-  userId: string
+  userId: string,
+  options?: Mem0AddOptions
 ): Promise<void> {
   // Stream-E P0: pre-flight crisis-text scrub. NEVER write crisis content to
   // Mem0. Skip silently with PII-safe telemetry; return faux-success so the
@@ -301,11 +333,33 @@ export async function mem0Add(
 
   const client = await getClient(config)
   try {
-    await client.add(messages, { userId })
-    emitMem0CostEvent("add", config, userId, { messageCount: messages.length })
+    // Build Mem0 SDK AddMemoryOptions. Only include keys when the caller
+    // supplied them so the SDK falls back to its own defaults otherwise
+    // (3-arg legacy calls land here with `options === undefined`, producing
+    // the exact same `{ userId }` payload as before iter30).
+    const sdkOptions: Record<string, unknown> = { userId }
+    if (options?.metadata !== undefined) sdkOptions.metadata = options.metadata
+    if (options?.agentId !== undefined) sdkOptions.agentId = options.agentId
+    if (options?.infer !== undefined) sdkOptions.infer = options.infer
+    await client.add(messages, sdkOptions as Parameters<typeof client.add>[1])
+    emitMem0CostEvent("add", config, userId, {
+      messageCount: messages.length,
+      hasMetadata: options?.metadata ? "1" : "0",
+      hasAgentId: options?.agentId ? "1" : "0",
+    })
   } catch (e) {
     // eslint-disable-next-line no-console
     console.log("[mem0/add] error", e instanceof Error ? `${e.name}: ${e.message}` : String(e))
     throw e
   }
+}
+
+// ============================================================================
+// iter30 WS1 — test seam: lets unit tests inject a fake Memory ctor without
+// reaching the real `mem0ai/oss` module. Production code path never touches
+// this. Reset together with `_resetMem0Client`.
+// ============================================================================
+export function __test__setMemoryCtor(ctor: MemoryCtor | null): void {
+  cachedCtor = ctor
+  cachedClient = null
 }
