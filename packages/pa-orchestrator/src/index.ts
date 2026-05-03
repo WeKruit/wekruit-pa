@@ -1537,6 +1537,47 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       })
     }
     // -------------------------------------------------------------------
+    // Bug 7 fix (2026-05-03) — POST-REWRITE lang-lock translate guard.
+    //
+    // RCA: production log evidence (SYNTHETIC_SIM_en_grad turn b56746f2,
+    // 2026-05-03T05:40:21Z) — `pa.voice.detectors.triggered` fired with
+    // `f3_lang_lock action=regenerate` BUT no `lang_translate.applied`
+    // event for the same turn. The first lang-lock guard at ~line 1271
+    // ran BEFORE `rewriteIfOff` (~line 1308); the rewriter, whose system
+    // prompt contains ZH-heavy FAILURE EXAMPLEs (see llm-rewriter.ts
+    // REWRITER_V2_SYSTEM_PROMPT), then rewrote the EN draft into ZH and
+    // shipped it. The pure-EN user got a ZH reply.
+    //
+    // The Adam 02:00 zh-direction path (en draft → zh translate, ZH user)
+    // works via the first guard because the LLM's raw output is EN-leaked
+    // and gets translated to ZH before rewriter runs. The reverse path
+    // (rewriter introduces ZH for EN user) needed a SECOND guard AFTER
+    // rewriter + injector + mixed-mirror.
+    //
+    // Defense-in-depth: this is a no-op when reply lang already matches
+    // userLang ("already_correct_lang"). For mixed-register users
+    // (`detectUserLang === "mixed"`), guard short-circuits via
+    // `mixed_register_bypass` so the model's natural code-switched reply
+    // ships verbatim. Fail-open on Qwen translate timeout / error /
+    // missing API key — the (possibly wrong-lang) reply still ships.
+    //
+    // Placement: AFTER `rewriteIfOff` + opener-strip + injector +
+    // ab-probe-strip + mixed-register-mirror; BEFORE crisis-hotline guard
+    // so the hotline trailer (lang-aware via `guardCrisisHotline`) sees
+    // the corrected reply lang and appends the matching trailer.
+    // -------------------------------------------------------------------
+    {
+      const postRewriteGuarded = await runLangLockGuard({
+        store,
+        userId: event.userId,
+        turnId,
+        userLang,
+        reply: replyAfterRewrite,
+        callSite: "post_rewrite",
+      })
+      replyAfterRewrite = postRewriteGuarded.reply
+    }
+    // -------------------------------------------------------------------
     // Phase 51 (v1.5 §3.1) — Crisis-ideation deterministic hotline guard.
     // Phase 53 — extracted to `runCrisisHotlineGuard` helper so the
     // onboarding cold-start branch can call it too (Bug A fix).

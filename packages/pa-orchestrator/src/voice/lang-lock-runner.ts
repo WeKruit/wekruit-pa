@@ -80,10 +80,28 @@ export interface RunLangLockGuardInput {
   reply: string
   /**
    * Where the call was made from — used in telemetry so we can dashboard
-   * cold-start vs main-path translate rates separately.
-   * Allowed values: "main" (post-rewrite path) | "onboarding" (cold-start).
+   * pre-rewrite (LLM raw output) vs post-rewrite (after rewriter +
+   * imperfection injector) vs cold-start onboarding translate rates
+   * separately.
+   *
+   * Bug 7 fix (2026-05-03): "post_rewrite" added because the rewriter
+   * (`rewriteIfOff`, index.ts ~line 1308) uses a ZH-heavy prompt with
+   * Chinese FAILURE EXAMPLEs that demonstrably rewrites EN drafts into
+   * ZH for pure-EN users (production log evidence: en_grad sim turn
+   * b56746f2, no `lang_translate.applied` event but f3_lang_lock
+   * detector triggered post-rewrite). The first guard call (callSite=
+   * "main", before rewriter) cannot fix this because the rewriter runs
+   * AFTER it. We add a second post-rewrite call so EN users always get
+   * EN final visible reply. zh_translate (the working Adam 02:00 path)
+   * is preserved by the first guard.
+   *
+   * Allowed values:
+   *   "main"         — pre-rewrite, on raw runAgentTurn output
+   *   "post_rewrite" — post-rewrite + injector + mixed-mirror, before
+   *                    crisis guard. Bug 7 fix.
+   *   "onboarding"   — cold-start onboarding branch.
    */
-  callSite: "main" | "onboarding"
+  callSite: "main" | "post_rewrite" | "onboarding"
 }
 
 export interface RunLangLockGuardResult {
