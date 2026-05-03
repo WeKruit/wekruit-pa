@@ -712,8 +712,10 @@ describe("paMessageCoalescer — case 12: rapid-gap heuristic extends delay", ()
     )
   })
 
-  it("when gap >= RAPID_MESSAGE_THRESHOLD_MS, the next-task delay stays at default (no bump)", async () => {
-    // Slow gap (>5s) reads as pause/topic-shift; bump should NOT fire.
+  it("when gap >= RAPID_MESSAGE_THRESHOLD_MS AND no continuation marker, delay stays default (no bump)", async () => {
+    // Slow gap (>= rapidThreshold) AND non-continuation body → no bump.
+    // Adam 02:01 amendment: rapid-gap threshold is now 8s. Body "still there?"
+    // does NOT start with any continuation marker, so the no-bump path applies.
     const { RAPID_MESSAGE_THRESHOLD_MS } = await import("../buffer.js")
     const t0 = new Date("2026-05-02T12:00:00Z")
     let now = t0.getTime()
@@ -722,7 +724,8 @@ describe("paMessageCoalescer — case 12: rapid-gap heuristic extends delay", ()
       ...BASE_MSG, messageHandle: "msg-1", body: "hi", inboundEventId: "inb_1",
       receivedAt: new Date(now).toISOString(),
     })
-    // Slow follow-up: 5.5s >= 5s threshold → no bump, default delay (clamped)
+    // Slow follow-up: gap = threshold + 500ms → no rapid-gap; "still there?"
+    // is not a continuation marker → no continuation bump. Net: default delay.
     now += RAPID_MESSAGE_THRESHOLD_MS + 500
     await enqueueOrCoalesce(deps, {
       ...BASE_MSG, messageHandle: "msg-2", body: "still there?", inboundEventId: "inb_2",
@@ -733,13 +736,172 @@ describe("paMessageCoalescer — case 12: rapid-gap heuristic extends delay", ()
     assert.equal(
       tasks.enqueued[1]!.delayMs,
       expectedDelay,
-      `slow-gap follow-up (>=${RAPID_MESSAGE_THRESHOLD_MS}ms) uses default delay, no bump`
+      `slow-gap + non-marker follow-up (>=${RAPID_MESSAGE_THRESHOLD_MS}ms) uses default delay, no bump`
     )
   })
 
-  it("HARD_CAP_MS = 20_000 (Adam 2026-05-03 amendment 长一点)", async () => {
-    // Pin the cap value so future regression cannot silently shrink it back to
-    // 12s/18s without updating Adam's directive context.
-    assert.equal(HARD_CAP_MS, 20_000, "HARD_CAP_MS must be 20s per Adam amendment")
+  it("HARD_CAP_MS = 30_000 (Adam 2026-05-03 02:01 amendment 长一点)", async () => {
+    // Pin the cap value. Adam 2026-05-03 02:01 spec ("长一点") bumped 20s → 30s
+    // after observing 3 zh msgs ("算了/还是/或者") still wave-split into 4
+    // outbounds at 20s cap. Future regression must not silently shrink without
+    // updating Adam's directive context.
+    assert.equal(HARD_CAP_MS, 30_000, "HARD_CAP_MS must be 30s per Adam 02:01 amendment")
+  })
+
+  it("RAPID_MESSAGE_THRESHOLD_MS = 8_000 (Adam 2026-05-03 02:01 tightened)", async () => {
+    // Pin the threshold. Adam observed 3 zh msgs across natural thinking-pauses
+    // had gaps > 5s yet were clearly the same thought. 8s captures slow-typing-
+    // but-still-continuing cadence; the continuation-marker heuristic catches
+    // the semantic case independent of timing.
+    const { RAPID_MESSAGE_THRESHOLD_MS } = await import("../buffer.js")
+    assert.equal(
+      RAPID_MESSAGE_THRESHOLD_MS,
+      8_000,
+      "RAPID_MESSAGE_THRESHOLD_MS must be 8s per Adam 02:01 tighten"
+    )
+  })
+})
+
+// ----------------- TEST 13: continuation-marker heuristic (Adam 2026-05-03 02:01 spec) -----------------
+
+describe("paMessageCoalescer — case 13: continuation-marker bumps delay regardless of gap timing", () => {
+  it("zh msg starting with continuation marker (\"还是\") bumps delay even when gap > rapid threshold", async () => {
+    // Adam 02:01 实测 spec: 3 zh msgs ("算了 我觉得可能有点难" / "还是找点ai的?" /
+    // "或者是pm") arrived with thinking-pauses > 5s yet semantically were
+    // clearly one brainstorm. Without the continuation-marker heuristic, gaps
+    // > rapidThreshold would NOT bump and turn would wave-split.
+    const { RAPID_BUMP_MS, RAPID_MESSAGE_THRESHOLD_MS } = await import("../buffer.js")
+    const t0 = new Date("2026-05-02T12:00:00Z")
+    let now = t0.getTime()
+    const { deps, tasks } = buildDeps({ now: () => new Date(now) })
+    await enqueueOrCoalesce(deps, {
+      ...BASE_MSG, messageHandle: "msg-1", body: "算了 我觉得可能有点难", inboundEventId: "inb_1",
+      receivedAt: new Date(now).toISOString(),
+    })
+    // Gap = rapidThreshold + 2s, so rapid-gap is FALSE; only continuation
+    // marker can drive the bump.
+    now += RAPID_MESSAGE_THRESHOLD_MS + 2_000
+    await enqueueOrCoalesce(deps, {
+      ...BASE_MSG, messageHandle: "msg-2", body: "还是找点ai的?", inboundEventId: "inb_2",
+      receivedAt: new Date(now).toISOString(),
+    })
+    const remaining = HARD_CAP_MS - (RAPID_MESSAGE_THRESHOLD_MS + 2_000)
+    const expectedDelay = Math.min(DEFAULT_DELAY_MS + RAPID_BUMP_MS, remaining)
+    assert.equal(
+      tasks.enqueued[1]!.delayMs,
+      expectedDelay,
+      "continuation-marker (\"还是\") MUST bump delay even when gap exceeds rapid threshold"
+    )
+    assert.ok(
+      expectedDelay > DEFAULT_DELAY_MS,
+      "bumped delay MUST be > default — proves continuation-marker fired"
+    )
+  })
+
+  it("en msg starting with \"or \" continuation marker bumps delay across slow gap", async () => {
+    const { RAPID_BUMP_MS, RAPID_MESSAGE_THRESHOLD_MS } = await import("../buffer.js")
+    const t0 = new Date("2026-05-02T12:00:00Z")
+    let now = t0.getTime()
+    const { deps, tasks } = buildDeps({ now: () => new Date(now) })
+    await enqueueOrCoalesce(deps, {
+      ...BASE_MSG, messageHandle: "msg-1", body: "I'm looking at SWE roles", inboundEventId: "inb_1",
+      receivedAt: new Date(now).toISOString(),
+    })
+    now += RAPID_MESSAGE_THRESHOLD_MS + 1_500
+    await enqueueOrCoalesce(deps, {
+      ...BASE_MSG, messageHandle: "msg-2", body: "or maybe PM positions?", inboundEventId: "inb_2",
+      receivedAt: new Date(now).toISOString(),
+    })
+    const remaining = HARD_CAP_MS - (RAPID_MESSAGE_THRESHOLD_MS + 1_500)
+    const expectedDelay = Math.min(DEFAULT_DELAY_MS + RAPID_BUMP_MS, remaining)
+    assert.equal(
+      tasks.enqueued[1]!.delayMs,
+      expectedDelay,
+      "en \"or \" continuation must bump"
+    )
+  })
+
+
+  it("non-continuation slow message body \"can you help me\" does NOT bump", async () => {
+    const { RAPID_MESSAGE_THRESHOLD_MS } = await import("../buffer.js")
+    const t0 = new Date("2026-05-02T12:00:00Z")
+    let now = t0.getTime()
+    const { deps, tasks } = buildDeps({ now: () => new Date(now) })
+    await enqueueOrCoalesce(deps, {
+      ...BASE_MSG, messageHandle: "msg-1", body: "I want a job", inboundEventId: "inb_1",
+      receivedAt: new Date(now).toISOString(),
+    })
+    now += RAPID_MESSAGE_THRESHOLD_MS + 2_000
+    await enqueueOrCoalesce(deps, {
+      ...BASE_MSG, messageHandle: "msg-2", body: "can you help me with my resume", inboundEventId: "inb_2",
+      receivedAt: new Date(now).toISOString(),
+    })
+    const remaining = HARD_CAP_MS - (RAPID_MESSAGE_THRESHOLD_MS + 2_000)
+    const expectedDelay = Math.min(DEFAULT_DELAY_MS, remaining)
+    assert.equal(
+      tasks.enqueued[1]!.delayMs,
+      expectedDelay,
+      "non-marker slow follow-up uses default delay (no bump)"
+    )
+    assert.ok(
+      tasks.enqueued[1]!.delayMs <= DEFAULT_DELAY_MS,
+      "non-bumped delay MUST NOT exceed default"
+    )
+  })
+
+  it("HARD_CAP clamps continuation-marker bump (anti-troll invariant)", async () => {
+    // Continuous slow continuation messages cannot push firesAt past
+    // firstReceivedAt + HARD_CAP_MS — the clamp still applies.
+    const t0 = new Date("2026-05-02T12:00:00Z")
+    let now = t0.getTime()
+    const { deps, tasks } = buildDeps({ now: () => new Date(now) })
+    await enqueueOrCoalesce(deps, {
+      ...BASE_MSG, messageHandle: "msg-1", body: "first", inboundEventId: "inb_1",
+      receivedAt: new Date(now).toISOString(),
+    })
+    // Advance to within 1s of HARD_CAP — bump should clamp to ~1000ms
+    now += HARD_CAP_MS - 1_000
+    await enqueueOrCoalesce(deps, {
+      ...BASE_MSG, messageHandle: "msg-2", body: "或者这样行吗", inboundEventId: "inb_2",
+      receivedAt: new Date(now).toISOString(),
+    })
+    assert.ok(
+      tasks.enqueued[1]!.delayMs <= 1_000,
+      `continuation bump must clamp to remaining cap; got ${tasks.enqueued[1]!.delayMs}ms`
+    )
+  })
+
+  it("isContinuationMessage unit cases — Adam実測 strings + edge cases", async () => {
+    const { isContinuationMessage } = await import("../buffer.js")
+    // Adam 02:01 production-observed strings — MUST classify as continuation:
+    assert.equal(isContinuationMessage("还是找点ai的?"), true, "还是 prefix")
+    assert.equal(isContinuationMessage("或者是pm"), true, "或者 prefix")
+    // zh listing markers
+    assert.equal(isContinuationMessage("或者这样"), true)
+    assert.equal(isContinuationMessage("还有一个问题"), true)
+    assert.equal(isContinuationMessage("另外想问"), true)
+    assert.equal(isContinuationMessage("然后呢"), true)
+    assert.equal(isContinuationMessage("而且我觉得"), true)
+    // en markers
+    assert.equal(isContinuationMessage("or maybe PM"), true)
+    assert.equal(isContinuationMessage("And also remote ok"), true)
+    assert.equal(isContinuationMessage("actually wait"), true)
+    assert.equal(isContinuationMessage("btw, do you have time"), true)
+    // Single-word edge case
+    assert.equal(isContinuationMessage("or"), true)
+    // en word-boundary protection — "order" must NOT match "or"
+    assert.equal(isContinuationMessage("order placed yesterday"), false, "boundary blocks order≠or")
+    assert.equal(isContinuationMessage("Android phone broke"), false, "boundary blocks Android≠and")
+    assert.equal(isContinuationMessage("plus-size shirts"), false, "punct hyphen blocks plus-size≠plus")
+    // Topic-shift NEGATIVES (intentionally NOT in marker list)
+    assert.equal(isContinuationMessage("对了你那边怎么样"), false, "对了 = topic shift, NOT continuation")
+    assert.equal(isContinuationMessage("但是我不确定"), false, "但是 contrast = excluded by design")
+    assert.equal(isContinuationMessage("不过算了"), false, "不过 contrast = excluded")
+    // Defensive defaults
+    assert.equal(isContinuationMessage(""), false, "empty → false")
+    assert.equal(isContinuationMessage("   "), false, "whitespace-only → false")
+    assert.equal(isContinuationMessage(undefined as unknown as string), false, "non-string → false")
+    // Leading whitespace handled by trim
+    assert.equal(isContinuationMessage("  还是不要了"), true, "leading ws trimmed")
   })
 })
