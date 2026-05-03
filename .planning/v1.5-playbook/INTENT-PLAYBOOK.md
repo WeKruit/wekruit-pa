@@ -405,6 +405,37 @@ The honest list of where routing is fragile or LLM-only.
 **Evidence:** if `parseMemoryCommand` returns null AND no other intent matches, we go straight to LLM. There is no telemetry tag `intent=unknown` so we can't measure intent-classification coverage.
 **Risk:** unknown-unknowns. We can't answer "what % of inbounds match no recognized intent" today.
 
+### Gap 3.11 — Voice F2 (conditional A/B framework) + F3 (mixed-register drift) ⚠ — **MITIGATED 2026-05-02 (Phase 53 v1.6 voice-quality closure)**
+
+Two distinct voice-quality leaks the v1.6 sim-matrix exposed (commit 457d85f):
+
+**F2 — conditional A/B framework heads** (`如果你想 X, 那可以 Y` / `If you want X, you could Y`). Bible v7.5 NEVER rules already forbid clinical advice framing, but Qwen-7B and even gpt-5.4-nano periodically emit the conditional shape because it reads as "polite" advice. **Distinct** from the existing X-or-Y tail probe (`stripABProbeFromTail` in `output-normalizer.ts`) — that one targets `"X 还是 Y?"` multi-choice questions, which Phase 21 already handles.
+
+**F3 — mixed-register drift**. When the user code-switches zh-en within a sentence (`work stress 好大，OPT 还有半年`), Claire collapses to a single language and drops the user's en register tokens (`OPT`, `H1B`, `PM`, `TC`). The `f3-lang-lock` detector (Phase 35) is binary majority and doesn't cover the "user mixed → reply single-lang" case.
+
+**Resolution (Phase 53):**
+- `packages/pa-orchestrator/src/voice/ab-framework-detector.ts` — `stripABFramework(text)` deterministic conservative head strip. Removes only the `如果你想 X，` / `If you want X,` head; preserves the entire then-clause verbatim. Idempotent. zh + en patterns. Latency < 1ms.
+- `packages/pa-orchestrator/src/voice/mixed-register-mirror.ts` — `applyMixedRegisterMirror(userText, reply)` conservative append-only mirror. Detects user-mixed (cjk≥3 AND ascii≥3, neither >90%) + reply-single-lang (≥95% one script) + register-token-absent. Appends single ` (re: TOKEN)` suffix where TOKEN is from a curated 30-entry register bank (visa / role / track / comp / known companies). Never rewrites the body — additive only.
+- Wire-in: `packages/pa-orchestrator/src/index.ts:processInboundEvent` post-gen pipeline. Order:
+  1. `stripABProbeFromTail` (Phase 21 — X-or-Y probe)
+  2. `stripABFramework` (Phase 53 — conditional A/B head) — **NEW**
+  3. `injectImperfection` (Phase 36)
+  4. `applyMixedRegisterMirror` (Phase 53 — mixed-register mirror) — **NEW**
+  5. detectors + trackAdvice (Phase 35/38)
+  6. `runCrisisHotlineGuard` (Phase 51 / 53 — must remain LAST so the trailer never gets stripped)
+- Both hooks gated by `paHumanizeRuntimeEnabled` umbrella (default OFF on rollout, default ON for allowlist) + sub-flag (`paABFrameworkStrippingEnabled` / `paMixedRegisterMirrorEnabled`, defaults ON when umbrella ON). Env emergency disable: `PA_AB_FRAMEWORK_STRIP_DISABLED=true` / `PA_MIXED_REGISTER_MIRROR_DISABLED=true`.
+- Prompt-injection canned-reply path (Phase 46) bypasses `runAgentTurn` entirely → my hooks never see it. Verified by walking the early-return at line ~720.
+
+**Tests (34 new + 1 integration):**
+- `packages/pa-orchestrator/src/voice/ab-framework-detector.test.ts` — 14 unit tests (zh + en match + no-match + strip + idempotent + edge cases).
+- `packages/pa-orchestrator/src/voice/mixed-register-mirror.test.ts` — 15 unit tests (`isUserMixed`, `classifyReplyRegister`, `extractRegisterTokens`, `applyMixedRegisterMirror` happy path + 6 no-op branches + idempotency).
+- `packages/pa-orchestrator/src/__tests__/voice-quality-closure.test.ts` — 5 wire-in integration tests using a soft-stub Firestore handle + `process.env.paHumanizeRuntimeEnabled=true` env-override to exercise the hooks end-to-end inside `processInboundEvent`. Asserts F2 strip telemetry log, mirror append shape, env-disable bypass, and Phase 51 hotline-trailer boundary preservation.
+- 683/684 pa-orchestrator tests pass. The 1 failure is a pre-existing fixture path issue in `accuracy-gate.test.js` (json fixture not copied to `dist/`) — unrelated to this work.
+
+**Honest caveat:** `runner-local.mjs` cannot measure end-to-end pass-rate delta from these hooks because `fakeStore.db = undefined` short-circuits `isHumanizeRuntimeEnabled` to false, so my hooks never fire under runner-local. Both pre-/post- runs scored 46/63 = consistent with my hooks being inactive in both. Production verification (real db, real flag value) is the only path to measure live impact — runner-local is a wiring smoke test, not a behavioral A/B. The integration test (`voice-quality-closure.test.ts`) is the proof the hooks engage given a non-undefined db handle.
+
+**Bible content note:** The task spec called for editing `bible.ts` to add anti-pattern examples, but Bible content lives in Firestore as `pa-handbooks/{slug}.sections` (P10-locked schema, dashboard-edited). No `bible.ts` source file exists. Anti-A/B-framework examples are owed as a Bible v7.6 dashboard edit; this PR ships the deterministic post-gen safety net only. (TD: §3.11-followup, Adam-owed: dashboard edit + version bump.)
+
 ---
 
 ## 4. Decision Tree (Mermaid)

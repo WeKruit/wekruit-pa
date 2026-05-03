@@ -1,0 +1,42 @@
+{
+  "runStamp": "2026-05-03T00-45-41-363Z",
+  "totalMs": 1755,
+  "costUsd": 0,
+  "results": [
+    {
+      "scenarioId": "intent_onboarding_q_role_zh",
+      "file": "/Users/adam/Desktop/WeKruit/wekruit-pa/tests/scenarios/intent-routing/intent-onboarding-q-role-zh.yaml",
+      "matrix": {
+        "kind": "routing",
+        "route": "onboarding-q-role-zh",
+        "cellId": "intent-onboarding-q-role-zh",
+        "valid": true
+      },
+      "pass": false,
+      "turns": [
+        {
+          "idx": 0,
+          "user": "嗯",
+          "reply": "最近咋样了？",
+          "pass": false,
+          "failures": [
+            "reply does not contain any of [做产品, 做工程, 做研究]"
+          ],
+          "judgeRecord": null,
+          "onboardingStateAfter": {
+            "step": "ask_grounding_q",
+            "intentAcked": false
+          }
+        }
+      ],
+      "safetyBlocks": [],
+      "appliedSteps": [
+        {
+          "step": "ask_grounding_q",
+          "intentAcked": false
+        }
+      ],
+      "elapsedMs": 1754
+    }
+  ]
+}
