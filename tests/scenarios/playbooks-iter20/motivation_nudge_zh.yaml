@@ -1,0 +1,18 @@
+id: pbk_iter20_motivation_nudge_zh
+description: |
+  iter 20 — verify MOTIVATION_NUDGE playbook fires on direct trigger.
+testMode: true
+locale: zh-CN
+agentId: default
+participant: "+19999992002"
+chatId: "iMessage;+19999992002"
+turnTimeoutMs: 120000
+turns:
+  - user: "我没动力 拖延症犯了 不想做事"
+    assert:
+      reply_min_length: 4
+      reply_not_contains_any:
+        - "作为 AI"
+        - "As an AI"
+        - "番茄钟"
+        - "时间管理"

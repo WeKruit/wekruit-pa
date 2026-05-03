@@ -209,11 +209,24 @@ export function composeOnboardingInput(
       "resume_parse",
       "preference_update",
     ]
+    // Adam iter 21 — vent intent gets a SEPARATE branch. Unlike the role-
+    // probe-ackable intents, vent must NOT chain ask_q_role (questioning a
+    // distressed user about their target role IS the bug we're fixing).
+    if (
+      detected &&
+      detected.intent === "vent" &&
+      detected.confidence === "high"
+    ) {
+      const lang = pickLang(ctx.userMessage)
+      const ackDirective = INTENT_ACK_DIRECTIVES.vent[lang]
+      return `[onboarding_step: send_first_mes_with_vent_ack | intent=vent] ${ackDirective}`
+    }
     if (
       detected &&
       detected.intent !== null &&
       detected.intent !== "casual_chat" &&
       detected.intent !== "abuse" &&
+      detected.intent !== "vent" &&
       detected.confidence === "high" &&
       ackable.includes(detected.intent)
     ) {

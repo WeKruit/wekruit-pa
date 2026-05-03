@@ -1,0 +1,21 @@
+id: pbk_iter20_vent_support_zh
+description: |
+  iter 20 — verify VENT_SUPPORT playbook fires on direct trigger word.
+  Trigger keyword: 崩溃 / 烦死.
+  Expected: short ≤2-sentence acknowledge-only reply, no advice/analysis.
+testMode: true
+locale: zh-CN
+agentId: default
+participant: "+19999992001"
+chatId: "iMessage;+19999992001"
+turnTimeoutMs: 120000
+turns:
+  - user: "我快崩溃了 工作压力太大了 烦死了"
+    assert:
+      reply_min_length: 4
+      reply_not_contains_any:
+        - "作为 AI"
+        - "As an AI"
+        - "好的，我记住了"
+        - "建议你"
+        - "你可以试试 1"

@@ -1,0 +1,17 @@
+id: pbk_iter20_interview_prep_zh
+description: |
+  iter 20 — verify INTERVIEW_PREP playbook fires on direct trigger.
+testMode: true
+locale: zh-CN
+agentId: default
+participant: "+19999992004"
+chatId: "iMessage;+19999992004"
+turnTimeoutMs: 120000
+turns:
+  - user: "明天 system design 面试紧张 不知道怎么准备"
+    assert:
+      reply_min_length: 4
+      reply_not_contains_any:
+        - "作为 AI"
+        - "As an AI"
+        - "STAR 法"

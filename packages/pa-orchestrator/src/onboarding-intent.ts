@@ -34,6 +34,7 @@ export type FirstTurnIntent =
   | "preference_update"
   | "casual_chat"
   | "abuse"
+  | "vent"
 
 export type FirstTurnDetection = {
   intent: FirstTurnIntent | null
@@ -150,6 +151,24 @@ const INTENT_PATTERNS: readonly IntentPattern[] = [
     intent: "preference_update",
     regex: /\b(?:pivot(?:ing)?|switch(?:ing)?|moving)\s+(?:to|into)\b[^.!?]{0,30}\b(?:pm|em|director|management|ic|engineering|design|research|founder)\b/i,
   },
+
+  // ---------- vent (Adam iter 21) ----------
+  // First-turn distress signal. Without this, "我崩溃了" / "I'm losing it"
+  // gets the bare "在呢. 今天找你聊点啥?" boilerplate — discards the
+  // user's emotional state on turn-0. iter-20 5-playbook test surfaced
+  // this in vent_support_zh scenario.
+  // ZH
+  {
+    id: "vent_zh",
+    intent: "vent",
+    regex: /(?:崩溃|崩了|烦死|烦透|累死|想哭|我裂开|压力大|破防|emo|心累|绝望|受不了)/,
+  },
+  // EN
+  {
+    id: "vent_en",
+    intent: "vent",
+    regex: /\b(?:so\s+done|can'?t\s+(?:do\s+this|anymore|take\s+(?:it|this))|fed\s+up|burnt?\s+out|breaking\s+down|losing\s+it|exhausted|drained|miserable|going\s+to\s+lose\s+it)\b/i,
+  },
 ]
 
 /**
@@ -249,5 +268,9 @@ export const INTENT_ACK_DIRECTIVES: Record<
   preference_update: {
     zh: '用户开口就在说想转方向 (PM / EM / 转 IC / 转管理). friend-tone 说"嗯, 那我们顺着这个方向聊" 类似一句 ack, 然后 chain ask_q_role 那句确认问题.',
     en: 'user came in talking about pivoting direction (PM / EM / IC / management). friend-tone ack like "got it, let\'s go with that" (1 clause), then chain ask_q_role to lock the new direction.',
+  },
+  vent: {
+    zh: "用户开口就在情绪发泄 (崩溃 / 烦死 / 心累). 你不是治疗师, 不是 coach, 是那个不打断的室友. ONE-SHORT acknowledgement only — 比如 \"嗯, 听着挺累的.\" 或 \"卧, 那确实.\" 或 \"听起来挺烦的, 你想说说不?\" — 不超过 12 字 / ≤2 短句. NEVER 给建议, NEVER 列原因, NEVER 引导 ask_q_role 这种 onboarding 问题, NEVER 鸡汤. 之后不接任何问题 — 让用户继续吐. friend-tone, Mandarin.",
+    en: "user came in venting / distressed. you're not a therapist, not a coach — you're the roommate who doesn't interrupt. ONE-SHORT ack only — like \"yeah, that sounds rough.\" or \"oh fr, that sucks.\" or \"i hear you. wanna say more?\" — under 15 words / ≤2 short sentences. NEVER give advice, NEVER list reasons, NEVER chain into ask_q_role onboarding, NEVER pep talk. don't append any question — let them keep venting. friend-tone, English.",
   },
 }

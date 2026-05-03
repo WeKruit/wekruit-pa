@@ -1,0 +1,18 @@
+id: pbk_iter20_jd_roast_en
+description: |
+  iter 20 — verify JD_ROAST playbook fires on direct trigger.
+testMode: true
+locale: en-US
+agentId: default
+participant: "+19999992003"
+chatId: "iMessage;+19999992003"
+turnTimeoutMs: 120000
+turns:
+  - user: "I want your thoughts on this JD: Senior PM at a Series B fintech in NYC, 150k base, 0.5% equity. Should I apply?"
+    assert:
+      reply_min_length: 4
+      reply_not_contains_any:
+        - "作为 AI"
+        - "As an AI"
+        - "Pros:"
+        - "Cons:"
