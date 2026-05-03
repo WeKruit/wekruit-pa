@@ -292,13 +292,15 @@ export function composeOnboardingInput(
         const ackDirective = INTENT_ACK_DIRECTIVES[ackKey][lang]
         return `[onboarding_step: ${step}_suspended_for_${detected.intent} | intent=${detected.intent}] ${ackDirective}`
       }
-      // Non-answer path — user neither vented nor answered. Emit a soft
-      // empathy + redirect (no bare q_X repeat). LLM picks register from
-      // history; we just instruct: "they didn't answer; reply with friend-
-      // tone empathy + ONE optional gentle hint at the question, ≤2 short
-      // sentences."
+      // iter26 — Non-answer path. Adam observed iter24's "ONE clarifier
+      // specific to {step}" directive induced LLM to emit AB-framework
+      // ("X 还是 Y") on 18/30 turns of long-context test. NEVER PROBE rule
+      // (Bible v7.5) violated. Rewrite: NO clarifier question, just
+      // empathy + presence. The state already stays at q_X; if user comes
+      // back with an actual answer next turn, parser advances. Until then,
+      // Claire stays present, no leading questions.
       const langCue = lang === "zh" ? "Mandarin" : "English"
-      return `[onboarding_step: ${step}_suspended_no_answer | reason=user_did_not_answer_question] User didn't answer the ${step} question yet — they may be venting, asking for help, or off-topic. Reply with friend-tone empathy (1 short ack), then ONE short gentle clarifier specific to ${step.replace("ask_q_", "")} — but DO NOT repeat the Adam-locked question verbatim and DO NOT ask 2 questions. ≤ 2 short sentences. ${langCue} register matching the user's input.`
+      return `[onboarding_step: ${step}_suspended_no_answer | reason=user_did_not_answer_question] User didn't answer the ${step} question yet. They may be venting, asking meta-questions, or just continuing the thread. Reply with ONE short friend-tone acknowledgement only — no question, no probe, no "A 还是 B / A or B" framework. Examples (do NOT echo verbatim, pick register from history): "嗯, 我在." / "听着挺累的." / "卧, 那确实." / "yeah, i hear you." / "fr, that's a lot." STRICTLY: ≤ 1 short sentence, ≤ 12 字 / ≤ 8 words. NEVER append a clarifier question. NEVER list options. Let the user keep talking. ${langCue} register.`
     }
     const lang = pickLang(ctx.userMessage)
     const phrase = Q_PROMPTS[step][lang]

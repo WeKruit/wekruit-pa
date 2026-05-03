@@ -246,12 +246,11 @@ const AB_PROBE_ZH_RE = /[^?？\n。！!]{2,30}还是[^?？\n。！!]{2,30}[?？]
 const AB_PROBE_EN_RE = /[A-Za-z][A-Za-z\s,'’-]{2,40}\bor\b[A-Za-z\s,'’-]{2,40}\?\s*$/i
 
 function splitIntoClauses(text: string): string[] {
-  // Split on clause delimiters: zh/en sentence terminators AND commas, since
-  // clinical A/B probes often appear after a leading validation clause
-  // ("嗯 我在, 你今天是 X 还是 Y?"). We want clause-level granularity so the
-  // tail strip can preserve the validation stem and drop only the probe
-  // clause. Each chunk retains its trailing delimiter so re-joining is
-  // lossless.
+  // Used only as a presence-check. iter26 NOTE: stripABProbeFromTail no
+  // longer relies on clause splitting for the strip itself — it matches
+  // the AB span in-place to handle "X，还是Y?" within a single sentence.
+  // We keep this fn for back-compat callers (none currently) but the AB
+  // strip below ignores its output.
   const out: string[] = []
   const re = /[^。！？!?\.\n,，]+[。！？!?\.,，]?\n?/g
   let m: RegExpExecArray | null
@@ -261,35 +260,160 @@ function splitIntoClauses(text: string): string[] {
   return out.length > 0 ? out : [text]
 }
 
+// iter26 — procedural AB strip. The regex-only approach failed because:
+//   - allowing commas in X swallows the validation stem ("嗯 我在, X还是Y?")
+//   - excluding commas from X breaks "X，还是Y?" pattern (production case)
+// Solution: locate the rightmost AB span, then walk backward from X start
+// to find a STEM-PRESERVING boundary (sentence terminator OR comma where
+// the X-comma-side is ≥2 chars). This matches both back-compat test cases.
+
+const SENTENCE_TERM_RE = /[。！？!?.\n]/
+const CLAUSE_TERM_RE = /[。！？!?.\n,，]/
+
+function findZhABSpanEnd(text: string, fromIdx: number): { yEnd: number } | null {
+  // Scan forward from idx (after 还是) up to 30 chars, find ?/？ that ends Y.
+  // Y must not contain sentence terminators or commas.
+  for (let i = fromIdx; i < Math.min(text.length, fromIdx + 32); i++) {
+    const ch = text[i]!
+    if (ch === "?" || ch === "？") {
+      const yLen = i - fromIdx
+      if (yLen >= 2) return { yEnd: i + 1 }
+      return null
+    }
+    if (SENTENCE_TERM_RE.test(ch)) return null
+    if (ch === "," || ch === "，") return null
+  }
+  return null
+}
+
+function findEnABSpanEnd(text: string, fromIdx: number): { yEnd: number } | null {
+  // Y after " or " up to "?" within 40 chars.
+  for (let i = fromIdx; i < Math.min(text.length, fromIdx + 42); i++) {
+    const ch = text[i]!
+    if (ch === "?") {
+      const yLen = i - fromIdx
+      if (yLen >= 2) return { yEnd: i + 1 }
+      return null
+    }
+    if (SENTENCE_TERM_RE.test(ch) && ch !== "?") return null
+  }
+  return null
+}
+
+function stripFromX(text: string, xStart: number, label: "zh_X_还是_Y_question" | "en_X_or_Y_question"): StripABResult {
+  let kept = text.slice(0, xStart)
+  kept = kept.replace(/[\s,，]+$/g, "")
+  return { stripped: kept, hits: [label] }
+}
+
 export function stripABProbeFromTail(text: string): StripABResult {
   if (!text || typeof text !== "string") return { stripped: text ?? "", hits: [] }
-  const sentences = splitIntoClauses(text)
-  if (sentences.length === 0) return { stripped: text, hits: [] }
-  // Find the LAST sentence that matches an A/B pattern. We only strip the
-  // tail — earlier sentences are preserved verbatim even if they also match.
-  let lastABIdx = -1
-  let lastLabel = ""
-  for (let i = sentences.length - 1; i >= 0; i--) {
-    const s = sentences[i]!
-    const trimmed = s.trim()
-    if (AB_PROBE_ZH_RE.test(trimmed)) {
-      lastABIdx = i
-      lastLabel = "zh_X_还是_Y_question"
-      break
+
+  // Find rightmost ZH AB span first, then EN. Whichever is later wins.
+  let bestStart = -1
+  let bestLabel: "zh_X_还是_Y_question" | "en_X_or_Y_question" | "" = ""
+
+  // ZH 还是 scan
+  let zhCursor = 0
+  while (zhCursor < text.length) {
+    const idx = text.indexOf("还是", zhCursor)
+    if (idx === -1) break
+    const yResult = findZhABSpanEnd(text, idx + 2)
+    if (yResult) {
+      // Walk backward from idx to find X start. Prefer:
+      //   1. Sentence terminator boundary (gives clean stem preservation)
+      //   2. Comma boundary IF X-after-comma is ≥3 chars meaningful
+      //   3. Start of string
+      let xStart = idx
+      let sawCommaCandidate = -1
+      for (let i = idx - 1; i >= Math.max(0, idx - 32); i--) {
+        const ch = text[i]!
+        if (SENTENCE_TERM_RE.test(ch)) {
+          xStart = i + 1
+          break
+        }
+        if ((ch === "," || ch === "，") && sawCommaCandidate === -1) {
+          // Closest comma. Tentative — only use if no sentence terminator
+          // appears further back AND the resulting X is ≥2 chars.
+          const tentativeXStart = i + 1
+          const xLen = idx - tentativeXStart
+          if (xLen >= 2) {
+            sawCommaCandidate = tentativeXStart
+          }
+        }
+        if (i === Math.max(0, idx - 32)) {
+          // Hit window edge; if we have a comma candidate use it; else
+          // fall through (xStart stays at idx → no valid X, skip below).
+        }
+      }
+      if (xStart === idx && sawCommaCandidate !== -1) {
+        xStart = sawCommaCandidate
+      }
+      if (xStart === idx) {
+        // No boundary found in window; X = window start (not ideal but valid)
+        const winStart = Math.max(0, idx - 30)
+        const xLen = idx - winStart
+        if (xLen >= 2) xStart = winStart
+      }
+      // Skip leading whitespace at xStart (boundary char left it).
+      while (xStart < idx && /\s/.test(text[xStart]!)) xStart++
+      // Verify X has no excluded chars
+      const xSlice = text.slice(xStart, idx)
+      if (
+        xSlice.length >= 2 &&
+        xSlice.length <= 30 &&
+        !/[?？\n。！!]/.test(xSlice)
+      ) {
+        if (xStart > bestStart) {
+          bestStart = xStart
+          bestLabel = "zh_X_还是_Y_question"
+        }
+      }
     }
-    if (AB_PROBE_EN_RE.test(trimmed)) {
-      lastABIdx = i
-      lastLabel = "en_X_or_Y_question"
-      break
+    zhCursor = idx + 2
+  }
+
+  // EN " or " scan (case-insensitive)
+  const enRe = /\bor\b/gi
+  let em: RegExpExecArray | null
+  while ((em = enRe.exec(text)) !== null) {
+    const orIdx = em.index
+    const yResult = findEnABSpanEnd(text, orIdx + em[0].length)
+    if (yResult) {
+      // Walk backward from orIdx to find X start (sentence/comma boundary).
+      let xStart = orIdx
+      let commaCandidate = -1
+      for (let i = orIdx - 1; i >= Math.max(0, orIdx - 42); i--) {
+        const ch = text[i]!
+        if (SENTENCE_TERM_RE.test(ch)) {
+          xStart = i + 1
+          break
+        }
+        if ((ch === "," || ch === "，") && commaCandidate === -1) {
+          if (orIdx - (i + 1) >= 3) commaCandidate = i + 1
+        }
+      }
+      if (xStart === orIdx && commaCandidate !== -1) xStart = commaCandidate
+      if (xStart === orIdx) {
+        const winStart = Math.max(0, orIdx - 40)
+        if (orIdx - winStart >= 3) xStart = winStart
+      }
+      while (xStart < orIdx && /\s/.test(text[xStart]!)) xStart++
+      const xSlice = text.slice(xStart, orIdx).trim()
+      if (
+        xSlice.length >= 3 &&
+        /[A-Za-z]/.test(xSlice) &&
+        !/[?。！!\n]/.test(xSlice)
+      ) {
+        if (xStart > bestStart) {
+          bestStart = xStart
+          bestLabel = "en_X_or_Y_question"
+        }
+      }
     }
   }
-  if (lastABIdx === -1) return { stripped: text, hits: [] }
-  // Reconstruct: keep everything except the matched tail sentence.
-  const kept = sentences.slice(0, lastABIdx).join("")
-  // Trim any dangling whitespace/newline left behind. If kept is empty (the
-  // whole reply was a single A/B probe), preserve it as empty rather than
-  // returning the original to honor the strip contract.
-  const stripped = kept.replace(/\s+$/g, "")
-  return { stripped, hits: [lastLabel] }
+
+  if (bestStart === -1 || bestLabel === "") return { stripped: text, hits: [] }
+  return stripFromX(text, bestStart, bestLabel as "zh_X_还是_Y_question" | "en_X_or_Y_question")
 }
 
