@@ -128,7 +128,24 @@ import {
 // `suggested_action: "strip"` since Phase 35 but no caller acted on it. With
 // 3-sentence cap actually enforced, prob-split downstream picks 1-or-2 bubbles
 // from the capped reply (instead of from a 5+-sentence overflow).
-import { stripToSentenceCap } from "./voice/detectors/f2-length-cap.js"
+import {
+  stripToSentenceCap,
+  stripToCharCap,
+} from "./voice/detectors/f2-length-cap.js"
+// Adam iter 19 — slang lexicon was orphaned (only consumed by disabled
+// mirror). Now wired as a per-turn system-prompt directive injecting 2-3
+// lang-appropriate slang terms from the curated VOICE-07 lexicon.
+import { buildSlangInjection } from "./voice/slang-injector.js"
+// Adam iter 19 — academic-integrity detector exists in @pa/pa-safety since
+// Stream-E P0 (2026-05-02) but the orchestrator never wired it. This module
+// detects leetcode-cheating asks deterministically + returns a bilingual
+// LLM directive that redirects the user to study approach instead. WARN-
+// only, never blocks. Wired into systemInputs alongside playbookAddendum.
+import { checkAcademicIntegrity } from "@pa/pa-safety"
+// Adam iter 19 — real-time tag write-back (mid-conversation profile update).
+// Pure regex (sub-1ms), fire-and-forget Firestore merge-write to pa_users.
+// Spec: "边聊天我们要给用户边打标，这个标记应该是实时变化的但是cost不能高"
+import { applyRealtimeTagWriteback } from "./voice/realtime-tagger.js"
 import { trackAdvice } from "./voice/memory-policy/index.js"
 import { tapCoachTokens } from "./voice/coach-token-monitor.js"
 import { buildFewShotTurns, prefixFewShotToHistory } from "./voice/few-shot.js"
@@ -1044,6 +1061,18 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       if (matched.length > 0 && addendum.trim().length > 0) {
         playbookAddendum = addendum
         headhunterActive = matched.some((p) => p.playbookKey === HEADHUNTER_PLAYBOOK_ID)
+        // Adam iter 19 — playbook match telemetry. Previously zero log
+        // events; impossible to dashboard which playbooks fire how often.
+        // Each matched playbookKey emits one event. Privacy-safe: keys
+        // only, no user-message body.
+        for (const p of matched) {
+          store.log("pa.playbook.matched", {
+            userId: event.userId,
+            turnId,
+            playbookKey: p.playbookKey,
+            playbookVersion: p.version,
+          })
+        }
       }
     }
     if (!playbookAddendum) {
@@ -1068,11 +1097,82 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     }
     // Suppress unused-warning when the failsafe path is dead (env-disabled).
     void headhunterActive
+    // -------------------------------------------------------------------
+    // Adam iter 19 — slang directive injection. Re-uses the Phase-18
+    // VOICE-07 slang lexicon (orphaned since mirror disable per Bug 11)
+    // as a per-turn system-prompt hint. Pure text, sub-1ms, lang-aware
+    // (zh/en/mixed), seeded by turnId for replay determinism.
+    //
+    // Wired into systemInputs alongside playbookAddendum so the LLM sees
+    // a fresh "FRIEND SLANG" directive each turn. Rollback via
+    // PA_SLANG_INJECTOR_DISABLED=true.
+    // -------------------------------------------------------------------
+    let slangDirective: string | null = null
+    {
+      try {
+        const slangDecision = buildSlangInjection({
+          userMessage: event.body,
+          seed: turnId,
+        })
+        slangDirective = slangDecision.directive
+        if (slangDirective) {
+          store.log("pa.voice.slang_injector.applied", {
+            userId: event.userId,
+            turnId,
+            picked: slangDecision.picked,
+            lang: slangDecision.lang,
+          })
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        store.log("pa.voice.slang_injector.error", {
+          userId: event.userId,
+          turnId,
+          error: msg,
+        })
+      }
+    }
+    // -------------------------------------------------------------------
+    // Adam iter 19 — academic-integrity directive injection. Stream-E P0
+    // (2026-05-02) shipped detection bank but never wired the directive
+    // into the orchestrator. WARN-only — when a leetcode-cheating probe
+    // hits, we append a bilingual directive that asks Claire to redirect
+    // to study approach. Never blocks the LLM call.
+    //
+    // Telemetry: pa.voice.academic_integrity.matched. signals[] carry
+    // pattern ids (NEVER raw user text — privacy contract).
+    // -------------------------------------------------------------------
+    let academicIntegrityDirective: string | null = null
+    {
+      try {
+        const aiResult = checkAcademicIntegrity(event.body)
+        if (aiResult.matched) {
+          academicIntegrityDirective = aiResult.suggestedDirective || null
+          store.log("pa.voice.academic_integrity.matched", {
+            userId: event.userId,
+            turnId,
+            verdict: aiResult.verdict,
+            signals: aiResult.signals,
+            language: aiResult.language,
+            inputHash: aiResult.inputHash,
+          })
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        store.log("pa.voice.academic_integrity.error", {
+          userId: event.userId,
+          turnId,
+          error: msg,
+        })
+      }
+    }
     const systemInputs: string[] = [
       personaCard,
       recallEntry,
       voiceReminder,
       playbookAddendum,
+      slangDirective,
+      academicIntegrityDirective,
       mirror.snippet,
     ].filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
     // Phase 10.5 T7 — bridge agent.allowedConnectors → SDK tools. When the
@@ -1521,6 +1621,30 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
             store.log("pa.voice.advice_tracker.error", { userId: event.userId, turnId, error: msg })
           })
         }
+        // ---------------------------------------------------------------
+        // Adam iter 19 — real-time tag write-back. Fire-and-forget on the
+        // user message (NOT the reply) so pa_users.statedPreferences stays
+        // current. Match pipeline reads statedPreferences on next 09:00 PT
+        // batch; up-to-date tags = better job recs.
+        //
+        // Pure regex, sub-1ms; never blocks the user-facing reply path.
+        // Rollback: PA_REALTIME_TAGGER_DISABLED=true.
+        // ---------------------------------------------------------------
+        if (store.db && event.userId) {
+          void applyRealtimeTagWriteback(
+            store.db,
+            event.userId,
+            event.body,
+            (evt, payload) => store.log(evt, payload)
+          ).catch((err) => {
+            const msg = err instanceof Error ? err.message : String(err)
+            store.log("pa.realtime_tagger.error", {
+              userId: event.userId,
+              turnId,
+              error: msg,
+            })
+          })
+        }
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -1630,6 +1754,28 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
           droppedSentences: cap.dropped ?? 0,
         })
         replyAfterRewrite = cap.text
+      }
+    }
+    // -------------------------------------------------------------------
+    // Adam iter 19 — F2 char-cap (run-on monsters).
+    //
+    // Sentence-cap above caps count, not length. anxious_grad sim showed
+    // 130-char single-sentence run-ons slipping through (1 sentence < 3
+    // cap, but the sentence itself is a wall). char-cap truncates at the
+    // last sentence boundary that still fits PA_F2_CHAR_CAP (default 180).
+    // Telemetry: pa.voice.f2_char_cap.enforced for dashboards.
+    // -------------------------------------------------------------------
+    {
+      const charCap = stripToCharCap(replyAfterRewrite)
+      if (charCap.stripped) {
+        store.log("pa.voice.f2_char_cap.enforced", {
+          userId: event.userId,
+          turnId,
+          beforeLen: replyAfterRewrite.length,
+          afterLen: charCap.text.length,
+          droppedChars: charCap.droppedChars ?? 0,
+        })
+        replyAfterRewrite = charCap.text
       }
     }
     const rawVisible =

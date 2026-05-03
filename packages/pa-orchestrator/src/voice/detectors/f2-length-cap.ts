@@ -229,6 +229,82 @@ export function stripToSentenceCap(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Adam iter 19 — F2 char-cap addendum.
+//
+// iter-17 sentence-cap (count > 3 → strip) doesn't catch the run-on case
+// where a single sentence is 200+ chars. Witnessed in anxious_grad sim:
+// "我之前确实碰过偏支付/风控那类的职责：核心差别是你不只是把功能跑通...异常链路的闭
+// 环一起做出来；比如实时特征/规则命中、黑白名单与策略下发、以及事后追溯都很吃系统
+// 设计。" — 1 sentence, 130+ chars, slips through sentence-cap.
+//
+// Spec (Adam iter 17 + iter 19 combined):
+//   "需要缩短一下reply，如果一个reply太长我们可以分好几句话说"
+//   = if total reply length > char-cap, truncate at the last sentence
+//     boundary that still fits the budget (no mid-sentence truncation).
+//
+// Cap defaults: 180 chars total. Configurable via PA_F2_CHAR_CAP env.
+// (180 ≈ 3 medium zh sentences ≈ 30-40 en words; aligns with friend-chat
+//  iMessage register, not LinkedIn-post register.)
+//
+// Algorithm:
+//   1. If text ≤ cap → no-op.
+//   2. Walk sentences, accumulating chars; stop at last sentence that
+//      still fits cap.
+//   3. If even sentence-1 already > cap → keep sentence-1 verbatim
+//      (better to ship one over-cap sentence than zero — fail-open).
+// ---------------------------------------------------------------------------
+
+const DEFAULT_CHAR_CAP = 180
+
+function readEnvCharCap(): number {
+  const raw = process.env.PA_F2_CHAR_CAP?.trim()
+  if (!raw) return DEFAULT_CHAR_CAP
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n < 40) return DEFAULT_CHAR_CAP
+  return Math.floor(n)
+}
+
+export function stripToCharCap(
+  text: string,
+  cap?: number
+): { stripped: boolean; text: string; original?: string; droppedChars?: number } {
+  if (typeof text !== "string" || text.length === 0) {
+    return { stripped: false, text: text ?? "" }
+  }
+  const effectiveCap = cap ?? readEnvCharCap()
+  if (text.length <= effectiveCap) {
+    return { stripped: false, text }
+  }
+  const sentences = splitSentences(text)
+  if (sentences.length === 0) {
+    return { stripped: false, text }
+  }
+  // Walk sentences accumulating until next would exceed cap.
+  let kept: string[] = []
+  let runningLen = 0
+  for (const s of sentences) {
+    const candidateLen = runningLen + (kept.length > 0 ? 1 : 0) + s.length
+    if (candidateLen > effectiveCap) break
+    kept.push(s)
+    runningLen = candidateLen
+  }
+  // Fail-open: if no sentence fits, keep sentence-1 anyway.
+  if (kept.length === 0) {
+    kept = [sentences[0] as string]
+  }
+  const out = kept.join(" ").trim()
+  if (out.length === text.length) {
+    return { stripped: false, text }
+  }
+  return {
+    stripped: true,
+    text: out,
+    original: text,
+    droppedChars: text.length - out.length,
+  }
+}
+
 /**
  * F2 detector entry point. Pure text, sync.
  */

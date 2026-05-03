@@ -36,11 +36,15 @@ import type { Firestore } from "firebase-admin/firestore"
 // Phase 40 T5 — wrap SiliconFlow client with prefix cache for ~20-40% latency
 // reduction on warm path (server-side KV cache hits on identical Bible +
 // few-shot prefix). 0 net new LLM calls — wrapper, not duplicate caller.
+//
+// Adam iter 19 — module relocated to @pa/agent-runtime so the main agent LLM
+// call path (`runWithOpenAI`) can use the same wrapper. Single source of truth.
 import {
   wrapWithPrefixCache,
   type CachedChatClient,
-  type ChatClient,
-} from "./prefix-cache/index.js"
+  type PrefixCacheChatMessage as _PrefixCacheMsg,
+} from "@pa/agent-runtime"
+import type { ChatClient } from "@pa/agent-runtime"
 
 // Phase 40 T4 — umbrella feature flag for v1.4 humanize-runtime stack.
 import { getFlag } from "@pa/pa-persistence"

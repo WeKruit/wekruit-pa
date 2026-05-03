@@ -20,6 +20,7 @@ import {
   detectLengthCap,
   splitSentences,
   stripToSentenceCap,
+  stripToCharCap,
 } from "./f2-length-cap.js"
 import type { DetectorContext } from "./types.js"
 
@@ -219,4 +220,69 @@ test("stripToSentenceCap: bilingual mixed → counts terminators correctly", () 
   assert.equal(r.stripped, true)
   // 5 sentences → keep 3
   assert.equal(countSentences(r.text), 3)
+})
+
+// -----------------------------------------------------------------------
+// Adam iter 19 — stripToCharCap helper coverage.
+// -----------------------------------------------------------------------
+
+test("stripToCharCap: short text → not stripped", () => {
+  const r = stripToCharCap("hi there", 180)
+  assert.equal(r.stripped, false)
+})
+
+test("stripToCharCap: 300-char run-on → truncated to last fitting sentence", () => {
+  const text =
+    "one short. two also short. " +
+    "three is the offending run-on sentence that goes on forever past the cap because it just keeps adding more and more content without any terminator to break it."
+  // sentences: 1=10ch, 2=14ch, 3=160+ch ; cap=60 → keep first 2
+  const r = stripToCharCap(text, 60)
+  assert.equal(r.stripped, true)
+  assert.ok(r.text.length <= 60, `kept ${r.text.length} chars, cap 60`)
+  assert.ok(!r.text.includes("offending"), "run-on sentence dropped")
+})
+
+test("stripToCharCap: single over-cap sentence → keep it (fail-open)", () => {
+  const text = "this is one really long sentence that exceeds the cap on its own."
+  const r = stripToCharCap(text, 20)
+  // Whole sentence kept since dropping it would yield empty.
+  assert.equal(r.stripped, false)
+})
+
+test("stripToCharCap: bilingual zh+en mix → boundary on terminators", () => {
+  const text = "我之前确实碰过类似的职责。核心差别是延迟可观测性更硬。然后还有一些其它考虑比如审计链路。"
+  // 3 sentences zh; cap=20 → keep first sentence only (12 chars + period)
+  const r = stripToCharCap(text, 20)
+  assert.equal(r.stripped, true)
+  assert.ok(r.text.length <= 20)
+})
+
+test("stripToCharCap: anxious_grad-style 200-char zh run-on → cap honored", () => {
+  // Real witnessed run-on from anxious_grad sim.
+  const text =
+    "我之前确实碰过偏支付/风控那类的职责，核心差别是你不只是把功能跑通，而是要把延迟、准确率、误杀/漏放、可审计、以及异常链路的闭环一起做出来；比如实时特征/规则命中、黑白名单与策略下发、以及事后追溯都很吃系统设计。"
+  const r = stripToCharCap(text, 100)
+  assert.equal(r.stripped, true)
+  assert.ok(r.text.length <= 100, `text=${r.text.length}ch`)
+})
+
+test("stripToCharCap: env override PA_F2_CHAR_CAP", () => {
+  const original = process.env.PA_F2_CHAR_CAP
+  process.env.PA_F2_CHAR_CAP = "50"
+  try {
+    const r = stripToCharCap(
+      "first sentence here. second sentence here. third sentence here. fourth sentence here."
+    )
+    assert.equal(r.stripped, true)
+    assert.ok(r.text.length <= 50)
+  } finally {
+    if (original === undefined) delete process.env.PA_F2_CHAR_CAP
+    else process.env.PA_F2_CHAR_CAP = original
+  }
+})
+
+test("stripToCharCap: empty input fail-open", () => {
+  const r = stripToCharCap("")
+  assert.equal(r.stripped, false)
+  assert.equal(r.text, "")
 })

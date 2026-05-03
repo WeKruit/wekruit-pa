@@ -43,12 +43,48 @@ export function resolveOpenAICompatConfig(agent: Pick<AgentDef, "provider">): Op
   }
 }
 
+// Adam iter 19 — memoize+wrap with prefix-cache. Previously each agent turn
+// constructed a fresh OpenAI client (line 47 of pre-fix). With the prefix
+// cache wrap, the client must persist across turns so the LRU keeps warm
+// entries — a fresh client every turn = fresh cache every turn = 0% hit rate.
+//
+// Memoize per (apiKey, baseURL) pair; production has 1-2 distinct providers
+// (OpenAI default, occasional SiliconFlow). Cache wrapping is opt-out via
+// PA_PREFIX_CACHE_DISABLED=true so we can rollback without redeploying.
+import { wrapWithPrefixCache } from "./prefix-cache/index.js"
+import type { CachedChatClient, ChatClient } from "./prefix-cache/types.js"
+
+const memoizedClients = new Map<string, OpenAI | CachedChatClient>()
+
 const defaultClient = (agent: Pick<AgentDef, "provider">) => {
   const config = resolveOpenAICompatConfig(agent)
-  return new OpenAI({
+  const key = `${config.apiKey}|${config.baseURL ?? ""}`
+  const cached = memoizedClients.get(key)
+  if (cached) return cached as OpenAI
+  const raw = new OpenAI({
     apiKey: config.apiKey,
     baseURL: config.baseURL,
   })
+  if (process.env.PA_PREFIX_CACHE_DISABLED === "true") {
+    memoizedClients.set(key, raw)
+    return raw
+  }
+  // Wrap. Cast at boundary: OpenAI's ChatCompletionMessageParam is a stricter
+  // discriminated union than prefix-cache's lighter ChatMessage shape; the
+  // wrapper only forwards the request body unchanged so casting is safe.
+  const wrapped = wrapWithPrefixCache(raw as unknown as ChatClient, {
+    capacity: 50,
+  }) as unknown as OpenAI
+  memoizedClients.set(key, wrapped)
+  return wrapped
+}
+
+/**
+ * Test-only — reset memoized clients between tests so each test gets a
+ * fresh prefix-cache. Production code must not call this.
+ */
+export function _resetMemoizedClientsForTesting(): void {
+  memoizedClients.clear()
 }
 
 export async function runWithOpenAI(

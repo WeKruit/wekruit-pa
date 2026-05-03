@@ -15,6 +15,26 @@ export { hydrateOpenAiFromAtm, getAtmBearerToken } from "./atm-llm-runtime.js"
 export { FirestoreSession, deriveSessionMessageIdempotencyKey } from "./firestore-session.js"
 export type { FirestoreSessionDeps } from "./firestore-session.js"
 export type { Session as AgentsSdkSession, AgentInputItem } from "@openai/agents"
+// Adam iter 19 — prefix-cache moved here from pa-orchestrator/voice/prefix-cache
+// so the main LLM call path (`runWithOpenAI` in openai-provider.ts) can wrap
+// its OpenAI client with the cache. Previously only the small rewriter LLM
+// benefited; main agent turns hit raw OpenAI. Single source of truth.
+export {
+  wrapWithPrefixCache,
+  getPrefixCacheStats,
+  defaultIsPrefixMessage,
+  _resetPrefixCache,
+} from "./prefix-cache/index.js"
+export type {
+  CachedChatClient,
+  CachedChatCompletion,
+  ChatClient,
+  ChatCompletionRequest,
+  ChatMessage as PrefixCacheChatMessage,
+  PrefixCacheGlobalStats,
+  PrefixCacheOpts,
+  PrefixCacheStats,
+} from "./prefix-cache/types.js"
 
 export function toOpenAIMessageList(
   systemPrompt: string,
