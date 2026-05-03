@@ -1,0 +1,15 @@
+id: pbk_iter28_headhunter_realistic
+description: iter28 — headhunter playbook, realistic job-search opener.
+testMode: true
+locale: zh-CN
+agentId: default
+participant: "+19999992801"
+chatId: "iMessage;+19999992801"
+turnTimeoutMs: 120000
+turns:
+  - user: "我想换工作了 现在这家干两年了实在熬不下去 想看看外面有啥机会"
+    assert:
+      reply_min_length: 4
+      reply_not_contains_any:
+        - "作为 AI"
+        - "卧,"

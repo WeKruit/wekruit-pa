@@ -1,0 +1,15 @@
+id: pbk_iter28_negotiation_realistic
+description: iter28 — negotiation playbook, realistic offer comparison.
+testMode: true
+locale: en-US
+agentId: default
+participant: "+19999992806"
+chatId: "iMessage;+19999992806"
+turnTimeoutMs: 120000
+turns:
+  - user: "Stripe just gave me an offer — 230 base + 600k RSUs over 4yr + 30k sign-on. My current TC at Meta is around 280. They want a decision by Friday. How do I counter?"
+    assert:
+      reply_min_length: 4
+      reply_not_contains_any:
+        - "ask for $"
+        - "you should ask for"

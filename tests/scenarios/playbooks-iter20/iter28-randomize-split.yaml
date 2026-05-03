@@ -1,0 +1,16 @@
+id: pbk_iter28_randomize_split
+description: |
+  iter28 — verify probabilistic 1-or-2 reply split.
+  User asks for substantive content; Claire reply expected to be ≥3 sentences;
+  decideReplySplit picks 1 or 2 outbound bubbles (mulberry32 seeded by turnId).
+  Run multiple times → distribution skews ~65% one-bubble, ~35% two-bubble.
+testMode: true
+locale: zh-CN
+agentId: default
+participant: "+19999992881"
+chatId: "iMessage;+19999992881"
+turnTimeoutMs: 120000
+turns:
+  - user: "我想换工作 找软件工程师的方向 在湾区 工作 3 年 H1B"
+    assert:
+      reply_min_length: 4

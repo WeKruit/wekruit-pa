@@ -1,0 +1,15 @@
+id: pbk_iter28_jdroast_realistic
+description: iter28 — jd_roast playbook, realistic JD share.
+testMode: true
+locale: en-US
+agentId: default
+participant: "+19999992804"
+chatId: "iMessage;+19999992804"
+turnTimeoutMs: 120000
+turns:
+  - user: "Got a recruiter ping — Staff PM at a Series C health-tech in Boston, base 200k, 0.3% equity vesting 4yrs, hybrid 3 days. Should I take the call?"
+    assert:
+      reply_min_length: 4
+      reply_not_contains_any:
+        - "Pros:"
+        - "Cons:"
