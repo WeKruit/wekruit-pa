@@ -1440,15 +1440,13 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     void injectorAppliedFlag
     void injectorArm
     // Phase 53 (v1.6 voice-quality closure) — mixed-register mirror append.
-    // When the user code-switches zh-en within a sentence but Claire's reply
-    // collapses to a single language, append a single bracketed register
-    // token "(re: OPT)" so the user-recognized term lands in history for
-    // next-turn signal. Pure post-gen append; never rewrites the body.
-    // Gated by paHumanizeRuntimeEnabled umbrella + paMixedRegisterMirrorEnabled.
-    // Defaults ON; env disable via PA_MIXED_REGISTER_MIRROR_DISABLED=true.
+    // ITER 16 DISABLED BY DEFAULT: Adam feedback "(re: swe)" appendix feels
+    // artificial. We rely on lang-mixed bypass + LLM having seen user input
+    // for natural mirror. Re-enable via env if A/B test shows value:
+    // PA_MIXED_REGISTER_MIRROR_FORCE=true.
     try {
       const humanizeOnMix = await isHumanizeRuntimeEnabled(store.db, event.userId)
-      const mixFlagEnabled = process.env.PA_MIXED_REGISTER_MIRROR_DISABLED !== "true"
+      const mixFlagEnabled = process.env.PA_MIXED_REGISTER_MIRROR_FORCE === "true"
       if (humanizeOnMix && mixFlagEnabled) {
         const mixResult = applyMixedRegisterMirror(event.body ?? "", replyAfterRewrite)
         if (mixResult.applied) {
