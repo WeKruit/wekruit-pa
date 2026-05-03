@@ -146,6 +146,11 @@ import { checkAcademicIntegrity } from "@pa/pa-safety"
 // Pure regex (sub-1ms), fire-and-forget Firestore merge-write to pa_users.
 // Spec: "边聊天我们要给用户边打标，这个标记应该是实时变化的但是cost不能高"
 import { applyRealtimeTagWriteback } from "./voice/realtime-tagger.js"
+// Adam iter 20 — phrase-repeat stripper. iter-19 10-turn sim found 5
+// consecutive replies opening with "要不要试" — F1 detects user-mirror
+// not Claire-self-mirror; stripRepeatOpener only checks last-2 + first
+// clause. This module checks last-5 + 4+ char substrings in first 30c.
+import { stripPhraseRepeat } from "./voice/phrase-repeat-stripper.js"
 import { trackAdvice } from "./voice/memory-policy/index.js"
 import { tapCoachTokens } from "./voice/coach-token-monitor.js"
 import { buildFewShotTurns, prefixFewShotToHistory } from "./voice/few-shot.js"
@@ -1441,6 +1446,41 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
         ? stripRepeatOpener(rewritten.text, priorAssistantReplies)
         : rewritten.text
     let stripped = stripValidationTic(afterOpenerStrip)
+    // -------------------------------------------------------------------
+    // Adam iter 20 — phrase-repeat stripper (Claire self-mirror).
+    //
+    // iter-19 10-turn anxious_grad sim showed 5 consecutive replies
+    // opening with "要不要试 / 要不要试试". stripRepeatOpener catches
+    // identical first-clause-before-terminator only and only checks
+    // last-2; F1 verb-mirror checks user→Claire not Claire→Claire.
+    //
+    // This module fills the gap: 4+ char substring match in first 30
+    // chars of current vs anywhere in last-5 prior Claire replies.
+    // Bilingual, sub-1ms, deterministic.
+    //
+    // Wider window (last-5) than stripRepeatOpener intentionally — the
+    // failure mode is a tic that persists across MANY turns, not just
+    // back-to-back.
+    // -------------------------------------------------------------------
+    {
+      const widerPriors = (history ?? [])
+        .filter((m) => m.role === "assistant")
+        .slice(-5)
+        .reverse()
+        .map((m) => m.body)
+      const phraseStrip = stripPhraseRepeat(stripped, widerPriors)
+      if (phraseStrip.stripped) {
+        store.log("pa.voice.phrase_repeat_strip.applied", {
+          userId: event.userId,
+          turnId,
+          matched_phrase: phraseStrip.matched_phrase,
+          matched_in_priors: phraseStrip.matched_in_priors,
+          beforeLen: stripped.length,
+          afterLen: phraseStrip.text.length,
+        })
+        stripped = phraseStrip.text
+      }
+    }
     // Stream H5 — runtime A/B probe tail strip (Bible v7.5 NEVER PROBE rule
     // mirrored from voice-axes.mjs checkABFramework). Gated by the same
     // paHumanizeRuntimeEnabled umbrella as the imperfection injector below
