@@ -2,8 +2,8 @@
  * v1.5 Stream-D — paMessageCoalescer test suite (6 cases).
  *
  * Coverage map:
- *   1. single message — creates buffer, enqueues at delay=4000, no cancel
- *   2. 3 quick messages within 4s window — cancel + re-enqueue, single fire
+ *   1. single message — creates buffer, enqueues at delay=DEFAULT_DELAY_MS, no cancel
+ *   2. 3 quick messages within DEFAULT_DELAY_MS window — cancel + re-enqueue, single fire
  *   3. 6 messages — soft-cap (>5) triggers force-fire (delay=0)
  *   4. hard 12s cap — buffer aged 12.5s yields delay=0 + force-fire
  *   5. cancel-and-re-enqueue idempotency — duplicate Cloud Tasks fire is no-op
@@ -248,6 +248,10 @@ describe("paMessageCoalescer — case 1: single message creates buffer", () => {
     })
     assert.equal(outcome.action, "created")
     assert.equal(outcome.delayMs, DEFAULT_DELAY_MS)
+    // Bug 4 (2026-05-03): coalesce window bumped 4s→8s to absorb >4s typing
+    // gaps. Adam 4 inbound msgs in 12s used to wave-split into 3 turns; 8s
+    // catches them inside HARD_CAP_MS=12s.
+    assert.equal(DEFAULT_DELAY_MS, 8_000, "Bug 4 — coalesce window must be 8s")
     assert.equal(tasks.enqueued.length, 1)
     assert.equal(tasks.cancelled.length, 0)
     assert.match(tasks.enqueued[0]!.taskName, /^pa-coalesce-u_adam-1-1$/)
@@ -294,7 +298,7 @@ describe("paMessageCoalescer — case 2: 3 quick messages coalesce", () => {
     assert.match(tasks.enqueued[2]!.taskName, /-1-3$/)
 
     // Now fire (Cloud Tasks would call us)
-    now += 4000
+    now += DEFAULT_DELAY_MS
     const fired = await processCoalescedTurn(deps, "u_adam", 1)
     assert.equal(fired.status, "fired")
     assert.equal(fired.buffer?.messageCount, 3)

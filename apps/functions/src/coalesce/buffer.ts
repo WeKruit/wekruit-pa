@@ -55,8 +55,10 @@ export const COALESCE_USER_FIELD = "coalesceTurnSeq"
 export const FORCE_FIRE_MESSAGE_COUNT = 5
 /** Hard cap: total wait from firstReceivedAt before force-fire, regardless of cancel/re-enqueue. */
 export const HARD_CAP_MS = 12_000
-/** Default coalesce delay window. */
-export const DEFAULT_DELAY_MS = 4_000
+/** Default coalesce delay window.
+ *  Bug 4 (2026-05-03): bumped 4s→8s — Adam实测 4 msg in 12s 触发 wave-split 3 turns;
+ *  人类打字间隔常 >4s, 8s 在 HARD_CAP_MS=12s 内还有 4s 缓冲. */
+export const DEFAULT_DELAY_MS = 8_000
 
 export type BufferDoc = {
   userId: string

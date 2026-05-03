@@ -1171,3 +1171,41 @@ test("Phase 46 — safety silent_drop → no reply, no LLM, turn still marked su
   assert.equal(outboundCalls, 0, "no outbound message on silent_drop")
   assert.ok(updateCalled, "turn must still be updated to succeeded for queue cleanup")
 })
+
+// ----------------- Bug 4 (2026-05-03) — single-send invariant -----------------
+test("Bug 4 — long reply (>600 chars) emits exactly 1 enqueueOutbound (single bubble)", async () => {
+  // Construct a >600 char reply so output-normalizer's chunker would, pre-fix,
+  // split into N chunks → N enqueueOutbound calls → N iMessage bubbles. Adam
+  // implemented实测 (2026-05-03) saw 6 bubbles per inbound burst.
+  // Post-fix: outboundParts is always [visibleReply], so exactly 1 enqueue.
+  // Use plain ASCII so each char is a single code unit; need length>600 to
+  // trigger output-normalizer's chunker pre-fix path. Use multiple sentences
+  // separated by ". " so the planner has clean split points.
+  const longReply = (
+    "Sure, here's a structured plan for your PM job search in the energy space at top-tier companies. " +
+    "First, the target industry within energy: new energy (solar/wind/storage), traditional oil and gas, grid infrastructure, or battery materials. " +
+    "Second, the preferred city: Beijing, Shanghai, Shenzhen, and Hangzhou all have headquarters or regional offices for big tech companies running energy verticals. " +
+    "Third, your English communication level: if you target multinational energy corporations this is a critical filter. " +
+    "Fourth, your resume's existing projects: can they map to energy scenarios via data modeling, supply chain, operations, or AI deployment? " +
+    "Fifth, your willingness to relocate or accept frequent travel for site visits to power plants or factory floors. " +
+    "Tell me which dimension you want to discuss first and I'll give you specific role leads plus the hard interview questions HR usually asks. "
+  )
+  assert.ok(longReply.length > 600, `setup: reply length ${longReply.length} must exceed maxLength=600`)
+  let enqueueCount = 0
+  let lastBody = ""
+  const store = makeStore({
+    runAgentTurn: async () => ({ text: longReply }),
+    enqueueOutbound: async (_uid, _to, body) => {
+      enqueueCount++
+      lastBody = body
+    },
+  })
+  await processInboundEvent(baseEvent, store)
+  assert.equal(
+    enqueueCount,
+    1,
+    `Bug 4 single-send invariant: expected 1 enqueueOutbound, got ${enqueueCount}`
+  )
+  // The single bubble carries the full reply (post-normalize join) — no truncation.
+  assert.ok(lastBody.length > 600, "single bubble body must contain full reply")
+})

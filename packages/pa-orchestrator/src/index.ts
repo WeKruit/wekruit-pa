@@ -1490,8 +1490,15 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
         : replyAfterRewrite
     const norm = normalizeForIMessage(rawVisible, { maxLength: 600 })
     const visibleReply = norm.text
-    const outboundParts =
-      norm.chunks && norm.chunks.length > 1 ? norm.chunks : [visibleReply]
+    // Bug 4 (2026-05-03): single-send invariant. Was: long replies (>600 chars)
+    // got split into N chunks → N pa-outbound docs → N iMessage bubbles. Adam
+    // implemented实测 4 inbound msgs → 6 reply bubbles (3 turns × 2 chunks).
+    // iMessage has no per-message length cap, so 1 long bubble is acceptable.
+    // We retain `norm.chunks` only for telemetry (`outputChunks` rawMeta
+    // exposes the LLM-was-too-long signal for dashboards).
+    const outboundParts: string[] = [visibleReply]
+    const llmWasOverLength =
+      norm.chunks != null && norm.chunks.length > 1
 
     await store.appendMessage({
       id: `out-${event.id}`,
@@ -1510,7 +1517,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
         turnId,
         eventId: event.id,
         outboundIdempotencyKey: `out-${event.id}`,
-        ...(outboundParts.length > 1 ? { outputChunks: outboundParts } : {}),
+        ...(llmWasOverLength ? { outputChunks: norm.chunks } : {}),
         ...(norm.droppedTracking.length > 0 ? { droppedUrlParams: norm.droppedTracking } : {}),
       },
     })
@@ -1547,15 +1554,24 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       }
     }
     if (!shouldSuppressOutbound(event)) {
-      for (let i = 0; i < outboundParts.length; i++) {
-        const part = outboundParts[i]!
-        const idk = outboundParts.length > 1 ? `outbound-${event.id}-c${i}` : `outbound-${event.id}`
-        await store.enqueueOutbound(event.userId, event.from, part, {
-          sessionId: event.sessionId,
-          role: "assistant",
-          idempotencyKey: idk,
+      // Bug 4 single-send invariant: exactly 1 enqueueOutbound call per turn.
+      // outboundParts is always length=1 by construction above; the assert
+      // documents the invariant in source so future refactors can't silently
+      // re-introduce multi-bubble behavior.
+      if (outboundParts.length !== 1) {
+        store.log("pa.outbound.invariant_violation", {
+          severity: "ERROR",
+          turnId,
+          userId: event.userId,
+          eventId: event.id,
+          partsLength: outboundParts.length,
         })
       }
+      await store.enqueueOutbound(event.userId, event.from, outboundParts[0]!, {
+        sessionId: event.sessionId,
+        role: "assistant",
+        idempotencyKey: `outbound-${event.id}`,
+      })
     }
     // Phase 30 T2 — Downstream Eval Connector hook (P9-Connectors).
     // Fire-and-forget: we await with a soft 2s budget so the chat path is
