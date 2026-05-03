@@ -167,16 +167,16 @@ test("countSentences — bilingual punctuation handling", () => {
   assert.equal(countSentences("first sentence. second one"), 2)
 })
 
-test("findSplitCandidates respects 30%-70% position window", () => {
-  // 100 chars total. Split candidate indices must fall in [30, 70].
+test("findSplitCandidates respects 20%-80% position window (Bug 9 widened)", () => {
+  // Split candidate indices must fall in [20%, 80%].
   const reply =
     "abcdefghij. klmnopqrst. uvwxyzabcd. efghijklmn. opqrstuvwx. yzabcdefgh. ijklmnopqr. stuvwxyzab"
   const candidates = findSplitCandidates(reply)
   for (const c of candidates) {
     assert.ok(
-      c.index >= Math.floor(reply.length * 0.3) &&
-        c.index <= Math.floor(reply.length * 0.7),
-      `candidate ${c.index} out of [30%, 70%] for len=${reply.length}`
+      c.index >= Math.floor(reply.length * 0.2) &&
+        c.index <= Math.floor(reply.length * 0.8),
+      `candidate ${c.index} out of [20%, 80%] for len=${reply.length}`
     )
   }
 })

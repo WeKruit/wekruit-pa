@@ -117,12 +117,13 @@ function buildRng(seed: string | undefined): () => number {
 // ---------------------------------------------------------------------------
 
 /**
- * Sentence-terminator regex: zh `。！？` or en `.!?` followed by whitespace
- * or end-of-string. Captures the punctuation in group 1 so callers can
- * preserve it in the first part. We DO NOT split on bare commas — those are
- * intra-sentence pauses, not sentence boundaries.
+ * Sentence-terminator regex (Bug 9 Iter 16 fix):
+ *   - ZH punct `。！？` requires NO trailing whitespace (CJK convention often skips ws)
+ *   - EN punct `.!?` still requires trailing ws or EOF (avoids U.S. / e.g. false positives)
+ * Captures the punctuation so callers can preserve it in the first part.
+ * We DO NOT split on bare commas — those are intra-sentence pauses.
  */
-const SENTENCE_TERMINATOR = /([.。!?！？])(\s+|$)/g
+const SENTENCE_TERMINATOR = /([。！？])|([.!?])(\s+|$)/g
 
 /**
  * Count sentences. We use the terminator regex; if a reply has no terminator
@@ -171,8 +172,8 @@ interface SplitCandidate {
 function findSplitCandidates(reply: string): SplitCandidate[] {
   const len = reply.length
   if (len < 2) return []
-  const minPos = Math.floor(len * 0.3)
-  const maxPos = Math.floor(len * 0.7)
+  const minPos = Math.floor(len * 0.2)
+  const maxPos = Math.floor(len * 0.8)
   const center = Math.floor(len / 2)
   const candidates: SplitCandidate[] = []
 
