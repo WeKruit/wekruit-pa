@@ -101,7 +101,7 @@ export const DEFAULT_DELAY_MS = 8_000
  *
  *  Why +6s bump: 8s default + 6s = 14s effective, leaving 16s under the 30s
  *  hard cap for additional follow-ups. */
-export const RAPID_MESSAGE_THRESHOLD_MS = 8_000
+export const RAPID_MESSAGE_THRESHOLD_MS = 5_000
 export const RAPID_BUMP_MS = 6_000
 
 /** Continuation-marker heuristic — Adam 2026-05-03 02:01 spec.

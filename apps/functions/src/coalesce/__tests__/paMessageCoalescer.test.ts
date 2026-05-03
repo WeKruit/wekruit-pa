@@ -748,16 +748,16 @@ describe("paMessageCoalescer — case 12: rapid-gap heuristic extends delay", ()
     assert.equal(HARD_CAP_MS, 30_000, "HARD_CAP_MS must be 30s per Adam 02:01 amendment")
   })
 
-  it("RAPID_MESSAGE_THRESHOLD_MS = 8_000 (Adam 2026-05-03 02:01 tightened)", async () => {
-    // Pin the threshold. Adam observed 3 zh msgs across natural thinking-pauses
-    // had gaps > 5s yet were clearly the same thought. 8s captures slow-typing-
-    // but-still-continuing cadence; the continuation-marker heuristic catches
-    // the semantic case independent of timing.
+  it("RAPID_MESSAGE_THRESHOLD_MS = 5_000 (Adam 2026-05-03 02:30 spec)", async () => {
+    // Pin the threshold. Adam spec: time range 5-30s. Continuation-marker
+    // heuristic catches semantic case independent of timing, so 5s rapid is
+    // sufficient — slow-typing users will hit continuation marker path or
+    // wait for HARD_CAP=30s.
     const { RAPID_MESSAGE_THRESHOLD_MS } = await import("../buffer.js")
     assert.equal(
       RAPID_MESSAGE_THRESHOLD_MS,
-      8_000,
-      "RAPID_MESSAGE_THRESHOLD_MS must be 8s per Adam 02:01 tighten"
+      5_000,
+      "RAPID_MESSAGE_THRESHOLD_MS must be 5s per Adam 02:30 spec (5-30s range)"
     )
   })
 })
