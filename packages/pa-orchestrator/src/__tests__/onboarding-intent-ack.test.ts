@@ -494,3 +494,71 @@ test("integration: env disable PA_ONBOARDING_INTENT_ACK_DISABLED=true → falls 
     else process.env.PA_ONBOARDING_INTENT_ACK_DISABLED = prev
   }
 })
+
+// ============================================================================
+// iter23 — interview_prep / negotiation / motivation_nudge intent coverage
+// ============================================================================
+
+test("detect: zh interview_prep — '明天 system design 面试紧张'", () => {
+  const r = detectFirstTurnIntent("明天 system design 面试紧张 不知道怎么准备")
+  assert.equal(r.intent, "interview_prep")
+  assert.equal(r.confidence, "high")
+})
+
+test("detect: en interview_prep — 'nervous about my system design interview tomorrow'", () => {
+  const r = detectFirstTurnIntent("nervous about my system design interview tomorrow")
+  assert.equal(r.intent, "interview_prep")
+  assert.equal(r.confidence, "high")
+})
+
+test("detect: zh negotiation — '拿到 2 个 offer 怎么 counter'", () => {
+  const r = detectFirstTurnIntent("拿到 2 个 offer 怎么 counter")
+  assert.equal(r.intent, "negotiation")
+})
+
+test("detect: en negotiation — 'I just got 2 offers and need to negotiate'", () => {
+  const r = detectFirstTurnIntent("I just got 2 offers and need to negotiate. What number should I ask for?")
+  assert.equal(r.intent, "negotiation")
+})
+
+test("detect: zh motivation_nudge — '我没动力 拖延症犯了 不想做事'", () => {
+  const r = detectFirstTurnIntent("我没动力 拖延症犯了 不想做事")
+  assert.equal(r.intent, "motivation_nudge")
+})
+
+test("detect: en motivation_nudge — 'no motivation, can't start anything'", () => {
+  const r = detectFirstTurnIntent("no motivation, can't start anything")
+  assert.equal(r.intent, "motivation_nudge")
+})
+
+test("compose: interview_prep zh ack — directive contains interview-specific cue, NO ask_q_role chain", () => {
+  const input = composeOnboardingInput("send_first_mes", agent, {
+    userMessage: "明天 system design 面试紧张 不知道怎么准备",
+    detectedIntent: { intent: "interview_prep", confidence: "high", signals: ["interview_prep_zh"] },
+  })
+  // No ask_q_role chained for interview_prep — playbook directive carries its own probe.
+  assert.ok(!input.includes("那你大概想找啥方向的活"), "MUST NOT chain ask_q_role for interview_prep")
+  assert.ok(!input.includes("intent=job_search"))
+  assert.ok(input.includes("send_first_mes_with_interview_prep_ack"), "missing interview_prep ack tag: " + input)
+  assert.ok(input.includes("intent=interview_prep"))
+})
+
+test("compose: negotiation en ack — directive contains anchoring question, NO ask_q_role chain", () => {
+  const input = composeOnboardingInput("send_first_mes", agent, {
+    userMessage: "I just got 2 offers and need to negotiate",
+    detectedIntent: { intent: "negotiation", confidence: "high", signals: ["negotiation_en_offers", "negotiation_en"] },
+  })
+  assert.ok(!input.includes("what kinda role you eyeing"), "MUST NOT chain ask_q_role en for negotiation")
+  assert.ok(input.includes("send_first_mes_with_negotiation_ack"))
+  assert.ok(input.includes("intent=negotiation"))
+})
+
+test("compose: motivation_nudge zh ack — directive contains nudge, NO ask_q_role chain, NO pep talk markers", () => {
+  const input = composeOnboardingInput("send_first_mes", agent, {
+    userMessage: "我没动力 拖延症犯了 不想做事",
+    detectedIntent: { intent: "motivation_nudge", confidence: "high", signals: ["motivation_zh"] },
+  })
+  assert.ok(!input.includes("那你大概想找啥方向的活"))
+  assert.ok(input.includes("send_first_mes_with_motivation_nudge_ack"))
+  assert.ok(input.includes("intent=motivation_nudge"))
+})

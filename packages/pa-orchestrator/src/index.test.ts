@@ -210,14 +210,14 @@ test("processInboundEvent passes a Session and systemInputs into the default age
   const seen: Captured = captured
   assert.strictEqual(seen.session, fakeSession)
   assert.ok(Array.isArray(seen.systemInputs))
-  // Phase 19 ADAPT-02: systemInputs grew from 2 to 3 on the default path
-  // (recall + Phase 18 voice reminder + Phase 19 mirror snippet).
-  assert.equal(seen.systemInputs!.length, 3)
+  // iter19: + slang directive between voiceReminder and mirror.snippet.
+  assert.equal(seen.systemInputs!.length, 4)
   assert.match(seen.systemInputs![0]!, /Memory context:/)
   assert.match(seen.systemInputs![0]!, /User likes concise answers\./)
   assert.match(seen.systemInputs![1]!, /Reminder: you're Claire/)
+  assert.match(seen.systemInputs![2]!, /^FRIEND SLANG/)
   // D-04 ordering: mirror snippet sits AFTER the voice reminder.
-  assert.match(seen.systemInputs![2]!, /^User is currently/)
+  assert.match(seen.systemInputs![3]!, /^User is currently/)
   // Legacy fields still passed for chat.completions emergency rollback.
   assert.ok(Array.isArray(seen.history))
   assert.match(String(seen.memoryBlock), /User likes concise answers\./)
@@ -238,9 +238,10 @@ test("processInboundEvent omits mirror snippet when PA_VOICE_MIRROR_DISABLED=tru
     if (!captured) throw new Error("runAgentTurn was not called")
     const seen = captured as { systemInputs?: string[] }
     assert.ok(Array.isArray(seen.systemInputs))
-    // Only the Phase 18 voice reminder (no recall block in this fake, no mirror).
-    assert.equal(seen.systemInputs!.length, 1)
+    // Voice reminder + iter19 slang directive (no recall, no mirror under kill switch).
+    assert.equal(seen.systemInputs!.length, 2)
     assert.match(seen.systemInputs![0]!, /Reminder: you're Claire/)
+    assert.match(seen.systemInputs![1]!, /^FRIEND SLANG/)
     for (const entry of seen.systemInputs!) {
       assert.doesNotMatch(entry, /^User is currently/, "mirror snippet must NOT appear under kill switch")
     }
@@ -875,8 +876,8 @@ test("Phase 11.1.2: persona + Mem0 → systemInputs[0]=persona, [1]=recall", asy
   }
 
   if (!captured) throw new Error("runAgentTurn was not called")
-  // Phase 19 ADAPT-02: appended adaptive-mirror snippet last (D-04 ordering).
-  assert.equal(captured.length, 4, "persona + recall + voice reminder + mirror")
+  // iter19 wired slang directive between voiceReminder and mirror.snippet.
+  assert.equal(captured.length, 5, "persona + recall + voice + slang + mirror")
   assert.match(captured[0]!, /^Persona facts \(confirmed\):/)
   assert.match(captured[0]!, /我喜欢冰美式/)
   assert.match(captured[0]!, /我住在上海/)
@@ -885,7 +886,8 @@ test("Phase 11.1.2: persona + Mem0 → systemInputs[0]=persona, [1]=recall", asy
   assert.equal(captured[1]!, "Memory context:\nUser likes brevity.")
   assert.equal(captured[1]!.startsWith("Memory context:\nConfirmed user facts:"), false)
   assert.match(captured[2]!, /Reminder: you're Claire/)
-  assert.match(captured[3]!, /^User is currently/)
+  assert.match(captured[3]!, /^FRIEND SLANG/)
+  assert.match(captured[4]!, /^User is currently/)
 })
 
 test("Phase 11.1.2: zero facts + non-null Mem0 → systemInputs has only recall", async () => {
@@ -913,12 +915,13 @@ test("Phase 11.1.2: zero facts + non-null Mem0 → systemInputs has only recall"
   }
 
   if (!captured) throw new Error("runAgentTurn was not called")
-  // Phase 19: + mirror snippet at tail.
-  assert.equal(captured.length, 3, "recall + voice reminder + mirror")
+  // iter19: + slang directive between voiceReminder and mirror.
+  assert.equal(captured.length, 4, "recall + voice + slang + mirror")
   assert.match(captured[0]!, /^Memory context:/)
   assert.match(captured[0]!, /User prefers terse answers\./)
   assert.match(captured[1]!, /Reminder: you're Claire/)
-  assert.match(captured[2]!, /^User is currently/)
+  assert.match(captured[2]!, /^FRIEND SLANG/)
+  assert.match(captured[3]!, /^User is currently/)
 })
 
 test("Phase 11.1.2: persona present + null Mem0 → systemInputs has only persona", async () => {
@@ -949,14 +952,12 @@ test("Phase 11.1.2: persona present + null Mem0 → systemInputs has only person
   }
 
   if (!captured) throw new Error("runAgentTurn was not called")
-  // Phase 11.1 cleanup D2 — facts no longer double-write into the recall
-  // channel; when mem.memoryBlock is null, recall is null and systemInputs
-  // contains the persona card, post-history voice reminder, and Phase 19
-  // adaptive-mirror snippet.
-  assert.equal(captured.length, 3)
+  // iter19: + slang directive (between voiceReminder and mirror).
+  assert.equal(captured.length, 4)
   assert.match(captured[0]!, /^Persona facts \(confirmed\):/)
   assert.match(captured[1]!, /Reminder: you're Claire/)
-  assert.match(captured[2]!, /^User is currently/)
+  assert.match(captured[2]!, /^FRIEND SLANG/)
+  assert.match(captured[3]!, /^User is currently/)
   for (const entry of captured.slice(0, 1)) {
     assert.equal(entry.includes("Confirmed user facts:"), false, "facts must not leak into recall")
   }
@@ -987,10 +988,11 @@ test("Phase 11.1.2: zero facts + null Mem0 → systemInputs is empty", async () 
   }
 
   if (!captured) throw new Error("runAgentTurn was not called")
-  // No persona / no recall — voice reminder (Phase 18) + adaptive mirror (Phase 19).
-  assert.equal(captured.length, 2)
+  // No persona / no recall — voice reminder + slang directive (iter19) + adaptive mirror.
+  assert.equal(captured.length, 3)
   assert.match(captured[0]!, /Reminder: you're Claire/)
-  assert.match(captured[1]!, /^User is currently/)
+  assert.match(captured[1]!, /^FRIEND SLANG/)
+  assert.match(captured[2]!, /^User is currently/)
 })
 
 test("Phase 11.1.2: PA_PERSONA_CARD_DISABLED=true → persona absent even when facts exist", async () => {
@@ -1021,12 +1023,13 @@ test("Phase 11.1.2: PA_PERSONA_CARD_DISABLED=true → persona absent even when f
   }
 
   if (!captured) throw new Error("runAgentTurn was not called")
-  // Persona suppressed; recall remains; voice reminder + Phase 19 mirror trail.
-  assert.equal(captured.length, 3)
+  // Persona suppressed; recall + voice + slang (iter19) + mirror trail.
+  assert.equal(captured.length, 4)
   assert.match(captured[0]!, /^Memory context:/)
   assert.equal(captured[0]!.startsWith("Persona facts"), false)
   assert.match(captured[1]!, /Reminder: you're Claire/)
-  assert.match(captured[2]!, /^User is currently/)
+  assert.match(captured[2]!, /^FRIEND SLANG/)
+  assert.match(captured[3]!, /^User is currently/)
 })
 
 // -------- Phase 11.1 cleanup D2: buildRecallSystemInput unit tests --------

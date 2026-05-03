@@ -257,6 +257,35 @@ export function stripToSentenceCap(
 
 const DEFAULT_CHAR_CAP = 180
 
+/**
+ * Detect "structured" replies — numbered/multi-step plans where caps would
+ * destroy content the user explicitly asked for (CV plan, interview prep
+ * checklist, multi-step roadmap). These bypass BOTH sentence-cap and
+ * char-cap; let prob-split + iMessage normalizer handle multi-bubble
+ * delivery instead of strip.
+ *
+ * Heuristic markers (any one trips):
+ *   - English ordinal markers ≥2: "First, ... Second,"
+ *   - Numbered list ≥2: "1. ... 2."
+ *   - Chinese ordinal markers ≥2: "一、二、" / "第一，第二，"
+ *   - Bullet list ≥2: "- foo\n- bar"
+ *
+ * Pure regex, sub-1ms. Conservative — single occurrence doesn't trip
+ * (chitchat "first off let me say..." should still cap).
+ */
+export function isStructuredReply(text: string): boolean {
+  if (typeof text !== "string" || text.length === 0) return false
+  const enOrdinal = /\b(First|Second|Third|Fourth|Fifth)[,\s:]/g
+  const enMatches = text.match(enOrdinal)
+  if (enMatches && enMatches.length >= 2) return true
+  if (/\b1\.\s.+[\s\S]*?\b2\.\s/.test(text)) return true
+  const zhOrdinal = /(一、|二、|三、|四、|五、|第一[，,]|第二[，,]|第三[，,])/g
+  const zhMatches = text.match(zhOrdinal)
+  if (zhMatches && zhMatches.length >= 2) return true
+  if (/^\s*[-*•].+\n[\s\S]*?^\s*[-*•]/m.test(text)) return true
+  return false
+}
+
 function readEnvCharCap(): number {
   const raw = process.env.PA_F2_CHAR_CAP?.trim()
   if (!raw) return DEFAULT_CHAR_CAP

@@ -35,6 +35,9 @@ export type FirstTurnIntent =
   | "casual_chat"
   | "abuse"
   | "vent"
+  | "interview_prep"
+  | "negotiation"
+  | "motivation_nudge"
 
 export type FirstTurnDetection = {
   intent: FirstTurnIntent | null
@@ -150,6 +153,78 @@ const INTENT_PATTERNS: readonly IntentPattern[] = [
     id: "preference_update_en",
     intent: "preference_update",
     regex: /\b(?:pivot(?:ing)?|switch(?:ing)?|moving)\s+(?:to|into)\b[^.!?]{0,30}\b(?:pm|em|director|management|ic|engineering|design|research|founder)\b/i,
+  },
+
+  // ---------- interview_prep (Adam iter 23) ----------
+  // ZH — interview prep / system design / behavioral
+  {
+    id: "interview_prep_zh",
+    intent: "interview_prep",
+    regex: /(?:(?:明天|后天|下周|这周)?\s*(?:面试|interview|onsite|on-site|technical\s*screen)\s*(?:紧张|怎么准备|怎么搞|不知道|准备一下|有点慌))|(?:(?:system\s*design|系统设计|behavioral|行为面|coding\s*题|算法题|leetcode)\s*(?:紧张|不会|怎么|没准备))/i,
+  },
+  {
+    id: "interview_prep_zh_general",
+    intent: "interview_prep",
+    regex: /(?:面试|onsite|on-site)\s*(?:有点|挺|很|超)?\s*(?:紧张|慌|焦虑|害怕)/,
+  },
+  // EN
+  {
+    id: "interview_prep_en",
+    intent: "interview_prep",
+    regex: /\b(?:interview|onsite|on-site|technical\s*screen|coding\s*round|behavioral\s*round|system\s*design)\b[^.!?]{0,40}\b(?:tomorrow|next\s+week|coming\s+up|prep|nervous|anxious|scared|don'?t\s+know|how\s+to|help)/i,
+  },
+  {
+    id: "interview_prep_en_nervous",
+    intent: "interview_prep",
+    regex: /\b(?:nervous|anxious|scared|stressed|freaking\s+out)\s+(?:about|for|over)\s+(?:my\s+)?(?:interview|onsite|coding|behavioral)/i,
+  },
+
+  // ---------- negotiation (Adam iter 23) ----------
+  // ZH — offer negotiation / counter
+  {
+    id: "negotiation_zh",
+    intent: "negotiation",
+    regex: /(?:(?:谈|聊|要|怎么)\s*(?:offer|薪资|工资|待遇|package|tc))|(?:(?:counter|反报|加薪|涨薪|压价))|(?:(?:拿到|收到|有了)\s*(?:\d+\s*个)?\s*(?:offer|offers))/i,
+  },
+  {
+    id: "negotiation_zh_amount",
+    intent: "negotiation",
+    regex: /(?:报多少|要多少|开价|应该开|应该问)\s*(?:钱|薪|tc|总包|base)/,
+  },
+  // EN
+  {
+    id: "negotiation_en",
+    intent: "negotiation",
+    regex: /\b(?:negotiat(?:e|ing|ion)|counter\s*(?:offer|the))\b/i,
+  },
+  {
+    id: "negotiation_en_offers",
+    intent: "negotiation",
+    regex: /\b(?:got|have|received)\s+(?:\d+\s+|two\s+|multiple\s+|competing\s+)?offers?\b/i,
+  },
+  {
+    id: "negotiation_en_ask",
+    intent: "negotiation",
+    regex: /\b(?:what\s+(?:number|amount|salary|tc|package)\s+should\s+i\s+(?:ask|request|target))\b/i,
+  },
+
+  // ---------- motivation_nudge (Adam iter 23) ----------
+  // ZH — procrastination / no motivation
+  {
+    id: "motivation_zh",
+    intent: "motivation_nudge",
+    regex: /(?:没动力|没劲|不想做|拖延|拖着|提不起|懒得|emo)/,
+  },
+  {
+    id: "motivation_zh_paralyzed",
+    intent: "motivation_nudge",
+    regex: /(?:不知道(?:从哪里|怎么)\s*(?:开始|下手))|(?:卡住了|动不起来|啥也不想干)/,
+  },
+  // EN
+  {
+    id: "motivation_en",
+    intent: "motivation_nudge",
+    regex: /\b(?:no\s+motivation|unmotivated|procrastinat(?:e|ing)|can'?t\s+start|stuck|paralyzed|don'?t\s+(?:wanna|want\s+to)\s+do)/i,
   },
 
   // ---------- vent (Adam iter 21) ----------
@@ -272,5 +347,17 @@ export const INTENT_ACK_DIRECTIVES: Record<
   vent: {
     zh: "用户开口就在情绪发泄 (崩溃 / 烦死 / 心累). 你不是治疗师, 不是 coach, 是那个不打断的室友. ONE-SHORT acknowledgement only — 比如 \"嗯, 听着挺累的.\" 或 \"卧, 那确实.\" 或 \"听起来挺烦的, 你想说说不?\" — 不超过 12 字 / ≤2 短句. NEVER 给建议, NEVER 列原因, NEVER 引导 ask_q_role 这种 onboarding 问题, NEVER 鸡汤. 之后不接任何问题 — 让用户继续吐. friend-tone, Mandarin.",
     en: "user came in venting / distressed. you're not a therapist, not a coach — you're the roommate who doesn't interrupt. ONE-SHORT ack only — like \"yeah, that sounds rough.\" or \"oh fr, that sucks.\" or \"i hear you. wanna say more?\" — under 15 words / ≤2 short sentences. NEVER give advice, NEVER list reasons, NEVER chain into ask_q_role onboarding, NEVER pep talk. don't append any question — let them keep venting. friend-tone, English.",
+  },
+  interview_prep: {
+    zh: "用户开口就在面试前焦虑 (system design / behavioral / coding). 你是那个一起复盘过的朋友, 不是 coach. ONE-SHORT acknowledgement (e.g. \"嗯, 我在.\" 或 \"在的, 别慌.\") + 1 句具体的问 (e.g. \"什么公司什么岗位, 系统设计还是 behavioral?\" 或 \"你最担心哪一块?\"). ≤2 短句, ≤30 字. NEVER 长篇 STAR 法 / 列 framework / 列 N 个 tips, NEVER 引导 ask_q_role onboarding 问题. friend-tone, Mandarin.",
+    en: "user came in nervous about an upcoming interview (system design / behavioral / coding). you're the friend who's been through it, not a coach. ONE-SHORT ack (e.g. \"hey, i got you.\" or \"deep breath.\") + ONE concrete question (e.g. \"what company / role, sys design or behavioral?\" or \"what part are you most stuck on?\"). ≤2 short sentences, ≤25 words. NEVER deliver a STAR-method paragraph or list 5 tips, NEVER chain into ask_q_role onboarding. friend-tone, English.",
+  },
+  negotiation: {
+    zh: "用户开口就在谈 offer / 薪资 / counter. 你是过来人朋友, 不是 recruiter. ONE-SHORT ack (e.g. \"哦那挺好, 多少 offer 在手?\") + 1 句锚定信息的问 (\"现在手上几个 offer? 当前 base / total comp 大概多少? 想 target 多少?\"). ≤2 短句, ≤30 字. NEVER 直接给数字 (e.g. \"应该问 30 万\"), NEVER 列谈判 N 步法, NEVER 引导 ask_q_role onboarding 问题. friend-tone, Mandarin.",
+    en: "user came in asking about negotiating offer / salary / counter. you're a friend who's been through it, not a recruiter. ONE-SHORT ack (e.g. \"ok cool, how many offers do you have?\") + ONE anchoring question (\"how many offers, current base / TC, what number do you want?\"). ≤2 short sentences, ≤25 words. NEVER state a specific number (e.g. \"ask for 250k\"), NEVER list a 5-step negotiation framework, NEVER chain into ask_q_role onboarding. friend-tone, English.",
+  },
+  motivation_nudge: {
+    zh: "用户开口就在低能量 / 拖延 / 没动力. 你是那个不强求的朋友. ONE-SHORT ack (e.g. \"嗯, 我在.\" 或 \"懂的, 那种状态.\") + 1 句轻量 nudge — 不是 \"加油!\" 鸡汤, 而是降低门槛的话 (e.g. \"先别硬做, 把手边最小的那一件先放眼前就好.\" 或 \"今天就先躺一下, 等会儿再看?\"). ≤2 短句, ≤30 字. NEVER 列 5 步走 / framework, NEVER 鸡汤, NEVER 引导 ask_q_role onboarding 问题. friend-tone, Mandarin.",
+    en: "user came in low-energy / procrastinating / unmotivated. you're the friend who doesn't push. ONE-SHORT ack (e.g. \"yeah, i got you.\" or \"that vibe i know.\") + ONE light nudge — NOT a pep talk; lower the bar (e.g. \"don't force it. just put the smallest one in front of you.\" or \"take a beat, look at it again later.\"). ≤2 short sentences, ≤25 words. NEVER deliver a 5-step framework, NEVER pep talk, NEVER chain into ask_q_role onboarding. friend-tone, English.",
   },
 }

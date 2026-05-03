@@ -212,21 +212,35 @@ export function composeOnboardingInput(
     // Adam iter 21 — vent intent gets a SEPARATE branch. Unlike the role-
     // probe-ackable intents, vent must NOT chain ask_q_role (questioning a
     // distressed user about their target role IS the bug we're fixing).
+    //
+    // Adam iter 23 — interview_prep / negotiation / motivation_nudge get the
+    // same NO-CHAIN treatment: a stressed-pre-interview / negotiation /
+    // procrastinating user does not want to be asked "are you SWE or PM?"
+    // first. Their playbook directive itself contains the question (specific
+    // to their context), so we route through the no-chain branch.
+    const noChainIntents: ReadonlyArray<FirstTurnIntent> = [
+      "vent",
+      "interview_prep",
+      "negotiation",
+      "motivation_nudge",
+    ]
     if (
       detected &&
-      detected.intent === "vent" &&
+      detected.intent !== null &&
+      noChainIntents.includes(detected.intent) &&
       detected.confidence === "high"
     ) {
       const lang = pickLang(ctx.userMessage)
-      const ackDirective = INTENT_ACK_DIRECTIVES.vent[lang]
-      return `[onboarding_step: send_first_mes_with_vent_ack | intent=vent] ${ackDirective}`
+      const ackKey = detected.intent as keyof typeof INTENT_ACK_DIRECTIVES
+      const ackDirective = INTENT_ACK_DIRECTIVES[ackKey][lang]
+      return `[onboarding_step: send_first_mes_with_${detected.intent}_ack | intent=${detected.intent}] ${ackDirective}`
     }
     if (
       detected &&
       detected.intent !== null &&
       detected.intent !== "casual_chat" &&
       detected.intent !== "abuse" &&
-      detected.intent !== "vent" &&
+      !noChainIntents.includes(detected.intent) &&
       detected.confidence === "high" &&
       ackable.includes(detected.intent)
     ) {

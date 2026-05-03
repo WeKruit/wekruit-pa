@@ -131,6 +131,7 @@ import {
 import {
   stripToSentenceCap,
   stripToCharCap,
+  isStructuredReply,
 } from "./voice/detectors/f2-length-cap.js"
 // Adam iter 19 — slang lexicon was orphaned (only consumed by disabled
 // mirror). Now wired as a per-turn system-prompt directive injecting 2-3
@@ -1752,6 +1753,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // Bible v7.5 system-prompt directive is the PRIMARY path; this is the
     // deterministic SECOND layer. callSite="main" tags telemetry so we can
     // dashboard cold-start vs main-path injection rates separately.
+    let crisisInjected = false
     {
       const guarded = await runCrisisHotlineGuard({
         store,
@@ -1762,6 +1764,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
         callSite: "main",
       })
       replyAfterRewrite = guarded.reply
+      crisisInjected = guarded.injected === true
     }
     // -------------------------------------------------------------------
     // Adam iter 17 (2026-05-03) — F2 hard-cap enforcement.
@@ -1783,7 +1786,22 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // Telemetry: `pa.voice.f2_cap.enforced` for dashboards. Pure text op,
     // <10ms, fail-open (returns input unchanged on empty/short reply).
     // -------------------------------------------------------------------
-    {
+    // iter23 — bypass both caps when (a) reply is structured (CV plan,
+    // multi-step roadmap, numbered list) or (b) crisis trailer was injected
+    // (988/741741 must NEVER be stripped). Strip would destroy explicit
+    // user-asked or P0-safety content; let prob-split + normalizer multi-
+    // bubble handle delivery.
+    const replyIsStructured = isStructuredReply(replyAfterRewrite)
+    const skipF2Caps = replyIsStructured || crisisInjected
+    if (skipF2Caps) {
+      store.log("pa.voice.f2_cap.bypassed", {
+        userId: event.userId,
+        turnId,
+        len: replyAfterRewrite.length,
+        reason: crisisInjected ? "crisis_injected" : "structured_reply",
+      })
+    }
+    if (!skipF2Caps) {
       const cap = stripToSentenceCap(replyAfterRewrite)
       if (cap.stripped) {
         store.log("pa.voice.f2_cap.enforced", {
@@ -1805,7 +1823,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // last sentence boundary that still fits PA_F2_CHAR_CAP (default 180).
     // Telemetry: pa.voice.f2_char_cap.enforced for dashboards.
     // -------------------------------------------------------------------
-    {
+    if (!skipF2Caps) {
       const charCap = stripToCharCap(replyAfterRewrite)
       if (charCap.stripped) {
         store.log("pa.voice.f2_char_cap.enforced", {
