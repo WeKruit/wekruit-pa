@@ -212,14 +212,17 @@ test("v2: q_role_asked → ask_q_yoe → ask_q_visa → ask_q_startup_pref → a
 })
 
 // --- v2-3: bilingual prompts — zh selected when user input has CJK majority ---
+// iter24: userMessage must contain a recognizable visa-answer keyword (per
+// userAnsweredStep) for the bare q_visa phrase to show; non-answer messages
+// route through the suspended path now.
 test("v2: composeOnboardingInput picks zh when userMessage is Chinese", () => {
-  const out = composeOnboardingInput("ask_q_visa", agent, { userMessage: "找工作呢" })
+  const out = composeOnboardingInput("ask_q_visa", agent, { userMessage: "我有 OPT 身份" })
   assert.ok(out.includes("那你有身份不"), "expected zh visa phrase, got: " + out)
 })
 
 // --- v2-4: bilingual prompts — en selected when user input is English ---
 test("v2: composeOnboardingInput picks en when userMessage is English", () => {
-  const out = composeOnboardingInput("ask_q_visa", agent, { userMessage: "looking for jobs" })
+  const out = composeOnboardingInput("ask_q_visa", agent, { userMessage: "I'm on OPT now" })
   assert.ok(
     out.toLowerCase().includes("got work auth sorted"),
     "expected en visa phrase, got: " + out

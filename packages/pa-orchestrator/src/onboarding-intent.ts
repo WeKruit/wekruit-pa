@@ -238,11 +238,29 @@ const INTENT_PATTERNS: readonly IntentPattern[] = [
     intent: "vent",
     regex: /(?:崩溃|崩了|烦死|烦透|累死|想哭|我裂开|压力大|破防|emo|心累|绝望|受不了)/,
   },
+  // ZH iter24 — broader distress vocab ("焦虑/翻车/撑不住/自我怀疑/睡不着/喘不过气")
+  {
+    id: "vent_zh_distress",
+    intent: "vent",
+    regex: /(?:焦虑|睡不着|睡不好|撑不住|翻车|喘不过气|喘不上气|自我怀疑|心慌|心烦|心情不好|麻了|不行了|要疯了|垮了)/,
+  },
+  // ZH iter24 — "感觉/觉得 + negative state"
+  {
+    id: "vent_zh_feel",
+    intent: "vent",
+    regex: /(?:感觉|觉得).{0,5}(?:不行|没用|没希望|没意思|累|空|废|废物|loser|失败)/,
+  },
   // EN
   {
     id: "vent_en",
     intent: "vent",
     regex: /\b(?:so\s+done|can'?t\s+(?:do\s+this|anymore|take\s+(?:it|this))|fed\s+up|burnt?\s+out|breaking\s+down|losing\s+it|exhausted|drained|miserable|going\s+to\s+lose\s+it)\b/i,
+  },
+  // EN iter24 — broader distress vocab
+  {
+    id: "vent_en_distress",
+    intent: "vent",
+    regex: /\b(?:anxious|anxiety|can'?t\s+sleep|panicking|overwhelmed|hopeless|spiraling|self[-\s]?doubt|doubting\s+myself|imposter|worthless|tanked\s+(?:my|the)\s+interview|bombed\s+(?:my|the)\s+interview)\b/i,
   },
 ]
 

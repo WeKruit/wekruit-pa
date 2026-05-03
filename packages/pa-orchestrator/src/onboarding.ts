@@ -262,6 +262,44 @@ export function composeOnboardingInput(
     step === "ask_q_startup_pref" ||
     step === "ask_q_location"
   ) {
+    // Adam iter 24 — mid-probe suspension. Two triggers, both emit empathetic
+    // ack instead of the bare q_X question:
+    //   (A) noChainIntent fired (vent / interview_prep / negotiation /
+    //       motivation_nudge) — user is in distress / off-topic
+    //   (B) user's message does NOT contain a recognizable answer keyword
+    //       for the current step (e.g. user says "再帮我想想" while we asked
+    //       q_visa) — they're not answering
+    // The orchestrator ALSO sees the suspension via the same checks and skips
+    // applyOnboardingStep so the state stays where it was.
+    const detected = ctx.detectedIntent
+    const noChainIntents: ReadonlyArray<FirstTurnIntent> = [
+      "vent",
+      "interview_prep",
+      "negotiation",
+      "motivation_nudge",
+    ]
+    const ventLike = Boolean(
+      detected &&
+        detected.intent !== null &&
+        noChainIntents.includes(detected.intent) &&
+        detected.confidence === "high"
+    )
+    const userAnswered = userAnsweredStep(step, ctx.userMessage)
+    if (ventLike || !userAnswered) {
+      const lang = pickLang(ctx.userMessage)
+      if (ventLike && detected) {
+        const ackKey = detected.intent as keyof typeof INTENT_ACK_DIRECTIVES
+        const ackDirective = INTENT_ACK_DIRECTIVES[ackKey][lang]
+        return `[onboarding_step: ${step}_suspended_for_${detected.intent} | intent=${detected.intent}] ${ackDirective}`
+      }
+      // Non-answer path — user neither vented nor answered. Emit a soft
+      // empathy + redirect (no bare q_X repeat). LLM picks register from
+      // history; we just instruct: "they didn't answer; reply with friend-
+      // tone empathy + ONE optional gentle hint at the question, ≤2 short
+      // sentences."
+      const langCue = lang === "zh" ? "Mandarin" : "English"
+      return `[onboarding_step: ${step}_suspended_no_answer | reason=user_did_not_answer_question] User didn't answer the ${step} question yet — they may be venting, asking for help, or off-topic. Reply with friend-tone empathy (1 short ack), then ONE short gentle clarifier specific to ${step.replace("ask_q_", "")} — but DO NOT repeat the Adam-locked question verbatim and DO NOT ask 2 questions. ≤ 2 short sentences. ${langCue} register matching the user's input.`
+    }
     const lang = pickLang(ctx.userMessage)
     const phrase = Q_PROMPTS[step][lang]
     return `[onboarding_step: ${step}] Ask EXACTLY this ONE friend-tone question (Adam-locked phrasing — do not paraphrase, do not add greeting, do not chain a second question): "${phrase}". 1 sentence. No "好的" / "OK" preface. No "btw" if zh. No follow-up clauses.`
@@ -379,6 +417,43 @@ function parseLocationAnswer(reply: string): Partial<StatedPreferences> {
 }
 
 /**
+ * Adam iter 24 — did the user actually ANSWER the question we asked?
+ *
+ * Different from `parseUserAnswerForStep` which loosely parses anything as a
+ * potential answer (e.g. parseRoleAnswer returns any non-empty string as
+ * `targetRole: [reply]`). This is the strict signal: did the user's reply
+ * contain a recognizable answer keyword for the step?
+ *
+ * Used by `applyOnboardingStep` to gate state advancement: if user did NOT
+ * answer and is just venting / asking for help / changing topic, KEEP the
+ * state at the same q_X so the next turn re-asks (or stays suspended via
+ * the noChainIntent path).
+ */
+export function userAnsweredStep(
+  step: OnboardingStep,
+  reply: string | undefined | null
+): boolean {
+  const r = (reply ?? "").trim()
+  if (!r) return false
+  if (step === "ask_q_role") {
+    return /(swe|pm\b|em\b|ic\b|staff|senior|junior|new\s*grad|应届|工程|产品|设计|研究|design|research|engineer|developer|前端|后端|算法|数据|machine\s*learning|ml\b)/i.test(r)
+  }
+  if (step === "ask_q_yoe") {
+    return /(\d{1,2}\s*(?:\+)?\s*(?:years?|yrs?|y\b|年))|(刚毕业|应届|新人|new\s*grad|fresh(?:\s*out)?|just\s*graduated|no\s*experience)/i.test(r)
+  }
+  if (step === "ask_q_visa") {
+    return /(citizen|公民|美国人|us\s*citizen|green\s*card|绿卡|gc\b|permanent\s*resident|opt\b|stem.*opt|\bOPT\b|h-?1\s*b|h1\b|sponsor|sponsorship|need.*visa)/i.test(r)
+  }
+  if (step === "ask_q_startup_pref") {
+    return /(startup|小公司|小厂|创业|early\s*stage|hustle|大厂|大公司|big[-\s]*co|big\s*tech|stable|faang|enterprise)/i.test(r)
+  }
+  if (step === "ask_q_location") {
+    return /(remote|在家|远程|wfh|湾区|bay\s*area|sf\b|san\s*francisco|ny\b|纽约|new\s*york|nyc|seattle|西雅图|la\b|los\s*angeles|洛杉矶|波士顿|boston|chicago|austin|texas|tx\b)/i.test(r)
+  }
+  return false
+}
+
+/**
  * Parse a user's free-form reply for the question state we just asked.
  * Idempotent: parsing is pure, callers decide whether to write.
  *
@@ -429,9 +504,16 @@ export async function applyOnboardingStep(
      * round-trip and lines up the next reply for `parseRoleAnswer`.
      */
     intentAcked?: boolean
+    /**
+     * Adam iter 24 — mid-probe vent suspension. When set, do NOT advance the
+     * onboarding state. The current question stays "asked" so the user's
+     * next non-vent reply gets parsed by the same step's parser.
+     */
+    suspendedForVent?: boolean
   } = {}
 ): Promise<void> {
   if (step === "skip") return
+  if (opts.suspendedForVent) return
 
   let nextState = ONBOARDING_NEXT_STATE[step]
   if (!nextState) return

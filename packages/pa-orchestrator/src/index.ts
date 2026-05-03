@@ -87,6 +87,7 @@ import {
   applyOnboardingStep,
   composeOnboardingInput,
   shouldRunOnboardingProbe,
+  userAnsweredStep,
   type OnboardingStep,
 } from "./onboarding.js"
 // Phase 52 — F1 fix: lightweight bilingual intent detection for turn-0
@@ -383,6 +384,12 @@ export type OrchestratorStore = {
        * jumps to `q_role_asked` directly, skipping `first_mes_sent`.
        */
       intentAcked?: boolean
+      /**
+       * Adam iter 24 — mid-probe vent suspension. When set, the onboarding
+       * state is NOT advanced; user gets the same ask_q_X next time they
+       * stop venting.
+       */
+      suspendedForVent?: boolean
     }
   ): Promise<void>
 
@@ -840,8 +847,19 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       // Mid-conversation steps already have specific Adam-locked questions and
       // mustn't be re-shaped by the intent classifier. Flag-gated, default ON,
       // fail-OPEN.
+      //
+      // Adam iter 24 — also detect on mid-probe steps (ask_q_role through
+      // ask_q_location) so we can SUSPEND the probe when user is venting.
+      // Different semantics than turn-0: send_first_mes uses intent to ENRICH
+      // the ack; mid-probe uses noChainIntent only to PAUSE the state machine.
+      const isMidProbeStep =
+        onboardingStep === "ask_q_role" ||
+        onboardingStep === "ask_q_yoe" ||
+        onboardingStep === "ask_q_visa" ||
+        onboardingStep === "ask_q_startup_pref" ||
+        onboardingStep === "ask_q_location"
       const intentAckEnabled =
-        onboardingStep === "send_first_mes" &&
+        (onboardingStep === "send_first_mes" || isMidProbeStep) &&
         (await isOnboardingIntentAckEnabled(store.db, event.userId))
       const detectedIntent = intentAckEnabled
         ? detectFirstTurnIntent(event.body)
@@ -854,7 +872,29 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
           detectedIntent.confidence === "high" &&
           detectedIntent.intent !== null &&
           detectedIntent.intent !== "casual_chat" &&
-          detectedIntent.intent !== "abuse"
+          detectedIntent.intent !== "abuse" &&
+          onboardingStep === "send_first_mes"
+      )
+      // Adam iter 24 — mid-probe suspension. Two triggers:
+      //   (A) noChainIntent (vent / interview_prep / negotiation / motivation_nudge)
+      //   (B) user did NOT answer the current step's question (e.g. user
+      //       says "再帮我想想" while we asked q_visa)
+      // When either fires, state is NOT advanced. State stays at the same
+      // q_X so the next turn (if user actually answers or moves on) parses
+      // correctly.
+      const ventLikeMidProbe =
+        isMidProbeStep &&
+        detectedIntent &&
+        detectedIntent.confidence === "high" &&
+        (detectedIntent.intent === "vent" ||
+          detectedIntent.intent === "interview_prep" ||
+          detectedIntent.intent === "negotiation" ||
+          detectedIntent.intent === "motivation_nudge")
+      const userAnsweredCurrentStep = isMidProbeStep
+        ? userAnsweredStep(onboardingStep, event.body)
+        : true
+      const suspendedForVent = Boolean(
+        isMidProbeStep && (ventLikeMidProbe || !userAnsweredCurrentStep)
       )
       if (onboardingStep !== "skip") {
         const syntheticInput = composeOnboardingInput(onboardingStep, agent, {
@@ -932,7 +972,15 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
               idempotencyKey: `outbound-onboarding-${event.id}`,
             })
           }
-          // Advance onboarding state
+          // Advance onboarding state — UNLESS suspended for vent (iter24).
+          if (suspendedForVent) {
+            store.log("pa.onboarding.suspended_for_intent", {
+              userId: event.userId,
+              turnId,
+              step: onboardingStep,
+              intent: detectedIntent?.intent,
+            })
+          }
           await store.applyOnboarding(
             event.userId,
             onboardingUser.phoneE164,
@@ -945,6 +993,8 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
               // q_role_asked so the user's NEXT message is parsed as a role
               // answer.
               intentAcked,
+              // iter24 — when true, applyOnboardingStep is a no-op (state stays).
+              suspendedForVent,
             }
           )
           await store.updateTurn(turnId, {
@@ -2427,6 +2477,7 @@ export function createFirestoreOrchestratorStore(db: Firestore): OrchestratorSto
           priorAskedStep: opts?.priorAskedStep,
           priorUserReply: opts?.priorUserReply,
           intentAcked: opts?.intentAcked,
+          suspendedForVent: opts?.suspendedForVent,
         }
       )
     },

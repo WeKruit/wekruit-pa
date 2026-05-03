@@ -562,3 +562,98 @@ test("compose: motivation_nudge zh ack — directive contains nudge, NO ask_q_ro
   assert.ok(input.includes("send_first_mes_with_motivation_nudge_ack"))
   assert.ok(input.includes("intent=motivation_nudge"))
 })
+
+// ============================================================================
+// iter24 — mid-probe vent suspension
+// ============================================================================
+
+test("compose: ask_q_visa step + vent intent → suspended ack, NO visa question", () => {
+  const input = composeOnboardingInput("ask_q_visa", agent, {
+    userMessage: "我又崩溃了 撑不住了",
+    detectedIntent: { intent: "vent", confidence: "high", signals: ["vent_zh"] },
+  })
+  // Suspended path emits vent ack, NOT the visa question
+  assert.ok(input.includes("ask_q_visa_suspended_for_vent"), "missing suspended tag: " + input)
+  assert.ok(!input.includes("公民/绿卡/OPT"), "MUST NOT ask q_visa when user is venting")
+  assert.ok(input.includes("intent=vent"))
+})
+
+test("compose: ask_q_role step + vent intent → suspended ack, NO role question", () => {
+  const input = composeOnboardingInput("ask_q_role", agent, {
+    userMessage: "我裂开了 emo死了",
+    detectedIntent: { intent: "vent", confidence: "high", signals: ["vent_zh"] },
+  })
+  assert.ok(input.includes("ask_q_role_suspended_for_vent"))
+  assert.ok(!input.includes("找啥方向的活"), "MUST NOT ask q_role when user is venting")
+})
+
+test("compose: ask_q_location step + interview_prep intent → suspended, NO location question", () => {
+  const input = composeOnboardingInput("ask_q_location", agent, {
+    userMessage: "明天 system design 面试紧张",
+    detectedIntent: { intent: "interview_prep", confidence: "high", signals: ["interview_prep_zh"] },
+  })
+  assert.ok(input.includes("ask_q_location_suspended_for_interview_prep"))
+  assert.ok(!input.includes("湾区"), "MUST NOT ask q_location when interview anxiety present")
+})
+
+test("compose: ask_q_role + non-vent (job_search) intent → normal q_role question", () => {
+  // job_search is NOT in noChainIntents → mid-probe path falls through to normal q_role
+  const input = composeOnboardingInput("ask_q_role", agent, {
+    userMessage: "找软件工程师工作",
+    detectedIntent: { intent: "job_search", confidence: "high", signals: ["job_search_zh_find"] },
+  })
+  assert.ok(input.includes("找啥方向的活") || input.includes("ask_q_role"), "should ask q_role normally: " + input)
+  assert.ok(!input.includes("suspended_for"), "should not be suspended for job_search")
+})
+
+test("compose: ask_q_role + non-answer reply → suspended_no_answer (iter24)", () => {
+  // iter24: user said "嗯" — doesn't answer q_role → suspended path
+  const input = composeOnboardingInput("ask_q_role", agent, {
+    userMessage: "嗯",
+  })
+  assert.ok(!input.includes("找啥方向的活"), "iter24: bare q_role MUST NOT fire when user didn't answer")
+  assert.ok(input.includes("ask_q_role_suspended_no_answer") || input.includes("suspended_for"))
+})
+
+test("compose: ask_q_role + valid role answer → bare q_role question (iter24 back-compat)", () => {
+  // iter24: user clearly answered with role keyword → state advances, q_role text shown
+  const input = composeOnboardingInput("ask_q_role", agent, {
+    userMessage: "做 SWE",
+  })
+  assert.ok(input.includes("找啥方向的活") || input.includes("ask_q_role"))
+  assert.ok(!input.includes("suspended"))
+})
+
+// iter24 — broader vent vocab
+test("detect: vent zh — '我又焦虑了, 睡不着' (iter24 broadened)", () => {
+  assert.equal(detectFirstTurnIntent("我又焦虑了, 睡不着").intent, "vent")
+})
+
+test("detect: vent zh — '感觉自己快撑不住了' (iter24)", () => {
+  assert.equal(detectFirstTurnIntent("感觉自己快撑不住了").intent, "vent")
+})
+
+test("detect: vent zh — '今天面试又翻车了' (iter24)", () => {
+  assert.equal(detectFirstTurnIntent("今天面试又翻车了").intent, "vent")
+})
+
+test("detect: vent zh — '我又开始自我怀疑了' (iter24)", () => {
+  assert.equal(detectFirstTurnIntent("我又开始自我怀疑了").intent, "vent")
+})
+
+test("detect: vent zh — '压力大得喘不过气' (iter24)", () => {
+  assert.equal(detectFirstTurnIntent("压力大得喘不过气").intent, "vent")
+})
+
+test("detect: vent en — 'I'm so anxious, can't sleep' (iter24)", () => {
+  assert.equal(detectFirstTurnIntent("I'm so anxious, can't sleep").intent, "vent")
+})
+
+test("detect: vent en — 'totally bombed my interview' (iter24)", () => {
+  assert.equal(detectFirstTurnIntent("totally bombed my interview").intent, "vent")
+})
+
+test("detect: NOT vent zh — '帮我找软件工程师工作' (job_search wins)", () => {
+  // Make sure broadened vent regex doesn't false-trigger on job_search
+  assert.equal(detectFirstTurnIntent("帮我找软件工程师工作").intent, "job_search")
+})

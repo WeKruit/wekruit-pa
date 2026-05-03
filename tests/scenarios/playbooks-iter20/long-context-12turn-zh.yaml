@@ -1,13 +1,14 @@
-id: pbk_iter23_long_context_12turn_zh
+id: pbk_iter24_long_context_12turn_zh
 description: |
-  iter 23 — long-context drift test (12 turns, zh).
-  Adam directive: "context 一长就不够好" — verify replies stay short, no advice
-  repeat, no AI tell-tale across 12 turns of repeated emotional venting.
+  iter 24 — long-context drift test (12 turns, zh) WITH mid-probe vent suspension.
+  Adam directive: "context 一长就不够好" + iter23 found bug "vent ack only delays
+  onboarding 1 turn → claire asks visa/location while user still venting".
+  Post-iter24 fix: state suspends until user stops venting.
 testMode: true
 locale: zh-CN
 agentId: default
-participant: "+19999992301"
-chatId: "iMessage;+19999992301"
+participant: "+19999992403"
+chatId: "iMessage;+19999992403"
 turnTimeoutMs: 120000
 turns:
   - user: "我快崩溃了 工作压力太大了 烦死了"
@@ -16,10 +17,29 @@ turns:
       reply_not_contains_any:
         - "作为 AI"
         - "As an AI"
+        - "公民/绿卡"
+        - "找啥方向的活"
   - user: "我又焦虑了, 睡不着"
+    assert:
+      reply_not_contains_any:
+        - "公民/绿卡"
+        - "湾区"
   - user: "感觉自己快撑不住了"
+    assert:
+      reply_not_contains_any:
+        - "公民/绿卡"
+        - "湾区"
+        - "startup"
   - user: "今天面试又翻车了"
+    assert:
+      reply_not_contains_any:
+        - "公民/绿卡"
+        - "湾区"
   - user: "再帮我想想怎么办?"
+    assert:
+      reply_not_contains_any:
+        - "公民/绿卡"
+        - "湾区"
   - user: "我又开始自我怀疑了"
   - user: "压力大得喘不过气"
   - user: "再给点建议?"
