@@ -481,3 +481,143 @@ describe("paMessageCoalescer — case 6: webhook bypasses coalesce when flag=fal
     assert.equal(coalesceWasCalled, false, "coalesce path must not run when flag is off")
   })
 })
+
+// ----------------- TEST 7: synthesized inbound carries sessionId (Bug 1 fix) -----------------
+
+describe("paMessageCoalescer — case 7: synthesized inbound stamps sessionId", () => {
+  it("processCoalescedTurn populates BOTH userId and sessionId on the synthesized inbound row", async () => {
+    // Bug 1 RCA (2026-05-03 Adam iMessage CRASH):
+    //   Without this fix, the synthesized inbound doc only had `userId` —
+    //   sessionId was undefined, so the orchestrator's `claimInboundEvent`
+    //   produced an InboundEvent with `sessionId: undefined`, which then
+    //   crashed `store.createTurn` writing to pa-turns:
+    //     "Cannot use undefined as a Firestore value (found in field sessionId)".
+    //   This test asserts the synthesized inbound has BOTH identifiers and
+    //   that the resolved sessionId is also persisted as a pa-sessions row.
+    const t0 = new Date("2026-05-02T12:00:00Z")
+    const { deps, db } = buildDeps({ now: () => t0 })
+    await enqueueOrCoalesce(deps, {
+      ...BASE_MSG, messageHandle: "msg-1", body: "hi", inboundEventId: "inb_1",
+      receivedAt: t0.toISOString(),
+    })
+    const fired = await processCoalescedTurn(deps, "u_adam", 1)
+    assert.equal(fired.status, "fired")
+    const inbounds = (db as ReturnType<typeof makeFakeDb>)._stores.get("pa-inbound-events")
+    const synth = inbounds?.get("inb_synth_coalesced-u_adam-1") as DocData | undefined
+    assert.ok(synth, "synthetic inbound must exist")
+    assert.equal((synth as { userId?: string }).userId, "u_adam", "userId stamped")
+    const sessionId = (synth as { sessionId?: string }).sessionId
+    assert.ok(sessionId && typeof sessionId === "string", "sessionId stamped (non-empty string)")
+    assert.match(sessionId!, /^ses_[0-9a-f]{32}$/, "sessionId follows ses_<hash> shape")
+    // The pa-sessions row was also written
+    const sessions = (db as ReturnType<typeof makeFakeDb>)._stores.get("pa-sessions")
+    assert.ok(sessions, "pa-sessions collection populated")
+    const sess = sessions!.get(sessionId!) as DocData | undefined
+    assert.ok(sess, "session row exists for resolved sessionId")
+    assert.equal((sess as { userId?: string }).userId, "u_adam")
+    assert.equal((sess as { channel?: string }).channel, "imessage")
+    assert.equal((sess as { externalChatId?: string }).externalChatId, BASE_MSG.fromNumber)
+  })
+})
+
+// ----------------- TEST 8: session is reused across coalesced turns (idempotent) -----------------
+
+describe("paMessageCoalescer — case 8: session reused across turns", () => {
+  it("a second coalesced turn for the same user reuses the existing session row", async () => {
+    // Without idempotent reuse, every coalesced turn would create a NEW
+    // session — splitting the user's history across many ses_* docs and
+    // breaking history.loadHistory() retrieval. Determinism comes from
+    // sha256(userId|imessage|externalChatId), so the same inputs MUST yield
+    // the same docId.
+    const t0 = new Date("2026-05-02T12:00:00Z")
+    let now = t0.getTime()
+    const { deps, db } = buildDeps({ now: () => new Date(now) })
+    // Turn 1
+    await enqueueOrCoalesce(deps, {
+      ...BASE_MSG, messageHandle: "msg-1", body: "hi", inboundEventId: "inb_1",
+      receivedAt: new Date(now).toISOString(),
+    })
+    await processCoalescedTurn(deps, "u_adam", 1)
+    const sessions = (db as ReturnType<typeof makeFakeDb>)._stores.get("pa-sessions")!
+    assert.equal(sessions.size, 1, "exactly 1 session after turn 1")
+    const sessionIdT1 = Array.from(sessions.keys())[0]!
+    const t1CreatedAt = (sessions.get(sessionIdT1) as { createdAt?: string }).createdAt
+    // Turn 2 (advance clock past hard-cap so the buffer is fresh)
+    now += HARD_CAP_MS + 5000
+    await enqueueOrCoalesce(deps, {
+      ...BASE_MSG, messageHandle: "msg-2", body: "second turn", inboundEventId: "inb_2",
+      receivedAt: new Date(now).toISOString(),
+    })
+    await processCoalescedTurn(deps, "u_adam", 2)
+    assert.equal(sessions.size, 1, "still exactly 1 session after turn 2 (reuse)")
+    assert.ok(sessions.get(sessionIdT1), "same sessionId still present")
+    // createdAt was NOT clobbered (idempotent: existing rows are not overwritten)
+    assert.equal(
+      (sessions.get(sessionIdT1) as { createdAt?: string }).createdAt,
+      t1CreatedAt,
+      "createdAt preserved on reuse"
+    )
+  })
+})
+
+// ----------------- TEST 9: R1 sweep path also gets sessionId populated -----------------
+
+describe("paMessageCoalescer — case 9: R1 sweep path stamps sessionId", () => {
+  it("processCoalescedTurn invoked from buffer-sweep path also populates sessionId", async () => {
+    // The R1 sweep (apps/functions/src/coalesce/buffer-sweep.ts) calls
+    // `processCoalescedTurn` directly — no different code path, but this
+    // explicit test pins the contract so a future refactor can't silently
+    // break sweep-fired turns while leaving Cloud Tasks-fired turns ok.
+    const t0 = new Date("2026-05-02T12:00:00Z")
+    let now = t0.getTime()
+    const { deps, db } = buildDeps({ now: () => new Date(now) })
+    await enqueueOrCoalesce(deps, {
+      ...BASE_MSG, messageHandle: "msg-1", body: "stuck task", inboundEventId: "inb_stuck",
+      receivedAt: new Date(now).toISOString(),
+    })
+    // Simulate a stuck Cloud Tasks task — the sweep just calls
+    // processCoalescedTurn directly with the same (userId, turnSeq).
+    now += 35_000
+    const fired = await processCoalescedTurn(deps, "u_adam", 1)
+    assert.equal(fired.status, "fired")
+    const synth = (db as ReturnType<typeof makeFakeDb>)._stores.get("pa-inbound-events")
+      ?.get("inb_synth_coalesced-u_adam-1") as DocData | undefined
+    assert.ok(synth, "synthetic inbound exists")
+    assert.ok((synth as { sessionId?: string }).sessionId, "sessionId stamped on sweep-fired turn")
+  })
+})
+
+// ----------------- TEST 10: sessionId is missing → no stamp, but Bug 1 protection still holds -----------------
+
+describe("paMessageCoalescer — case 10: deterministic sessionId across calls", () => {
+  it("two calls with the same (userId, fromNumber) produce the same sessionId hash", async () => {
+    // Ensures the inline sessionDocIdForCoalesce mirrors the production
+    // getOrCreateSession (apps/functions/src/index.ts) byte-for-byte. If
+    // the hash inputs ever drift, the broker iMessage path and the
+    // coalesce path would write to different sessions and history would
+    // bifurcate. This test pins the determinism property.
+    const t0 = new Date("2026-05-02T12:00:00Z")
+    let now = t0.getTime()
+    const { deps, db } = buildDeps({ now: () => new Date(now) })
+
+    await enqueueOrCoalesce(deps, {
+      ...BASE_MSG, messageHandle: "msg-1", body: "first", inboundEventId: "inb_a",
+      receivedAt: new Date(now).toISOString(),
+    })
+    await processCoalescedTurn(deps, "u_adam", 1)
+
+    now += HARD_CAP_MS + 5000
+    await enqueueOrCoalesce(deps, {
+      ...BASE_MSG, messageHandle: "msg-2", body: "second", inboundEventId: "inb_b",
+      receivedAt: new Date(now).toISOString(),
+    })
+    await processCoalescedTurn(deps, "u_adam", 2)
+
+    const inbounds = (db as ReturnType<typeof makeFakeDb>)._stores.get("pa-inbound-events")!
+    const s1 = (inbounds.get("inb_synth_coalesced-u_adam-1") as { sessionId?: string }).sessionId
+    const s2 = (inbounds.get("inb_synth_coalesced-u_adam-2") as { sessionId?: string }).sessionId
+    assert.ok(s1)
+    assert.ok(s2)
+    assert.equal(s1, s2, "same (userId, fromNumber) MUST yield the same sessionId across turns")
+  })
+})

@@ -18,6 +18,19 @@ export async function createAgentTurn(
     idempotencyKey: string
   }
 ): Promise<PaAgentTurn> {
+  // Invariant — Firestore rejects "undefined" for any field on the doc, so
+  // catching the missing identifier *before* the write produces a clear
+  // engineering error instead of an opaque Firestore validation crash. See
+  // v1.5 Stream-D Bug 1: coalescer used to synthesize inbound events without
+  // resolving sessionId, which surfaced here as
+  //   "Cannot use \"undefined\" as a Firestore value (found in field \"sessionId\")".
+  // Fail loud at the boundary so the upstream gap is fixed, not papered over.
+  if (!input.userId) {
+    throw new Error("createAgentTurn: userId is required (received undefined/empty)")
+  }
+  if (!input.sessionId) {
+    throw new Error("createAgentTurn: sessionId is required (received undefined/empty)")
+  }
   const id = suggestedTurnId(input.inboundEventId)
   const ref = db.collection(TURNS).doc(id)
   const now = new Date().toISOString()

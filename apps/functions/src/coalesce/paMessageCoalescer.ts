@@ -38,9 +38,11 @@
  *   smoke step can grep Cloud Logging for the canary trace.
  */
 
+import { createHash } from "node:crypto"
 import type { Firestore } from "firebase-admin/firestore"
 import { createInboundEvent } from "@pa/pa-broker"
 import { claimAndProcessInboundEvent } from "@pa/pa-orchestrator"
+import { PA_COLLECTIONS } from "@pa/core-types"
 
 import {
   coalesceTransaction,
@@ -170,6 +172,62 @@ export async function enqueueOrCoalesce(
   }
 }
 
+
+/**
+ * Bug-1 fix (v1.5 Stream-D, 2026-05-03 Adam iMessage CRASH):
+ *   The coalescer used to synthesize an inbound event and immediately drive
+ *   the orchestrator via `claimAndProcessInboundEvent` — bypassing the
+ *   `onPaInbound` BrokerImessageEvent path which is where session resolution
+ *   lives. The orchestrator then read `event.sessionId === undefined` from
+ *   the synthesized inbound row, and `store.createTurn` (writing to
+ *   `pa-turns`) crashed with a Firestore validation error.
+ *
+ *   This helper deterministically resolves (or creates) a session id for
+ *   `(userId, channel=imessage, externalChatId)` so the synthesized inbound
+ *   event ALWAYS carries a usable sessionId. It mirrors `getOrCreateSession`
+ *   in apps/functions/src/index.ts byte-for-byte (same docId hash) so the
+ *   per-message broker path and the coalesced path converge on the SAME
+ *   session row — no orphan rows, no history split.
+ *
+ *   Why inline rather than abstract: the helper is ~12 lines and lives next
+ *   to its only caller. Lifting it into a shared module would force broker
+ *   or core-types to know about "sessions" and "channels", which is the
+ *   wrong layering. If a third caller ever needs it, then we extract.
+ */
+function sessionDocIdForCoalesce(userId: string, externalChatId: string): string {
+  const h = createHash("sha256")
+    .update(`${userId}|imessage|${externalChatId}`)
+    .digest("hex")
+  return `ses_${h.slice(0, 32)}`
+}
+
+async function resolveOrCreateImessageSession(
+  db: Firestore,
+  userId: string,
+  fromNumber: string,
+  nowIso: string
+): Promise<string> {
+  // Buffer.fromNumber is already E.164-normalized by the SendBlue webhook
+  // path, so we use it as the externalChatId verbatim. (The legacy broker
+  // path runs `normalizeImessageParticipant` which lowercases emails — the
+  // coalescer only handles iMessage phone numbers, no email addresses, so
+  // the normalize step is a no-op here.)
+  const sessionId = sessionDocIdForCoalesce(userId, fromNumber)
+  const ref = db.collection(PA_COLLECTIONS.sessions).doc(sessionId)
+  const snap = await ref.get()
+  if (!snap.exists) {
+    await ref.set({
+      id: sessionId,
+      userId,
+      channel: "imessage",
+      externalChatId: fromNumber,
+      createdAt: nowIso,
+      lastMessageAt: nowIso,
+    })
+  }
+  return sessionId
+}
+
 /**
  * Cloud Tasks → CF endpoint. Executes the coalesced turn:
  *   1. Atomic flip status pending→fired (re-entrant safe).
@@ -223,7 +281,29 @@ export async function processCoalescedTurn(
     }
   }
 
-  // 2. Synthesize ONE inbound event carrying the concatenated body. Reuses
+  // 2. Resolve (or create) the iMessage session BEFORE synthesizing the
+  //    inbound event. Bug 1 root cause: the coalescer used to skip session
+  //    resolution and drive the orchestrator directly via
+  //    `claimAndProcessInboundEvent`, bypassing the BrokerImessageEvent path
+  //    in `onPaInbound` where session lookup happens. The orchestrator then
+  //    read `event.sessionId === undefined` and `store.createTurn` crashed
+  //    Firestore.
+  //
+  //    Doing this BEFORE the broker write lets us stamp `sessionId` onto the
+  //    synthesized inbound doc atomically below (same merge() call as
+  //    `userId`), so the orchestrator's `claimInboundEvent` always reads a
+  //    populated `sessionId` and the downstream `pa-turns` write succeeds.
+  //
+  //    `nowIso` is computed once and reused for `createdAt`/`lastMessageAt`.
+  const synthNowIso = (deps.now ? deps.now() : new Date()).toISOString()
+  const sessionId = await resolveOrCreateImessageSession(
+    deps.db,
+    userId,
+    fired.fromNumber,
+    synthNowIso
+  )
+
+  // 3. Synthesize ONE inbound event carrying the concatenated body. Reuses
   //    the broker idempotency contract (same key = no-op), and reuses the
   //    same rawPayload shape onPaInbound already understands (kind="imessage",
   //    participant + text + chatId).
@@ -253,12 +333,14 @@ export async function processCoalescedTurn(
     },
   })
 
-  // Stamp `userId` directly on the synthesized event so onPaInbound's
-  // BrokerImessageEvent path picks the right user without phone lookup
-  // (the orchestrator path supports both, but explicit beats implicit).
+  // Stamp `userId` AND `sessionId` directly on the synthesized event so the
+  // orchestrator's `claimInboundEvent` (which only does a raw `t.get(ref)`,
+  // no session lookup) sees a fully-populated InboundEvent. Without the
+  // sessionId stamp, `store.createTurn` writes `sessionId: undefined` to
+  // `pa-turns` and Firestore rejects — see Bug 1 RCA above.
   try {
     await deps.db.collection("pa-inbound-events").doc(created.id).set(
-      { userId, coalesced: true },
+      { userId, sessionId, coalesced: true },
       { merge: true }
     )
   } catch (err) {
@@ -268,12 +350,12 @@ export async function processCoalescedTurn(
     })
   }
 
-  // 3. Drive orchestrator → ONE reply. Use the same path onPaInbound uses
+  // 4. Drive orchestrator → ONE reply. Use the same path onPaInbound uses
   //    so we get identical lease + claim semantics.
   const claimer = deps.claimAndProcessInboundEvent ?? claimAndProcessInboundEvent
   await claimer(deps.db, created.id)
 
-  // 4. Mark all original per-message inbound rows as "coalesced" — purely
+  // 5. Mark all original per-message inbound rows as "coalesced" — purely
   //    for housekeeping (status visible in dashboards). Best-effort.
   await Promise.allSettled(
     fired.inboundEventIds.map((eventId) =>
@@ -288,7 +370,7 @@ export async function processCoalescedTurn(
     )
   )
 
-  // 5. Structured log for DELIVERY.md smoke verification.
+  // 6. Structured log for DELIVERY.md smoke verification.
   const firstAtMs = Date.parse(fired.firstReceivedAt)
   const lastAtMs = Date.parse(fired.lastReceivedAt)
   const elapsedMs =
