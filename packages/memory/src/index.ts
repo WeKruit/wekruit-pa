@@ -5,7 +5,7 @@ export {
   isMem0EnvConfigured,
   type MemoryStackDeps,
 } from "./stacked.js"
-export { mem0Add, mem0Search } from "./mem0.js"
+export { mem0Add, mem0Search, type Mem0AddOptions, type Mem0Config } from "./mem0.js"
 export { rerankAndTrim, defaultLlmRerank } from "./mem0-rerank.js"
 export {
   FirestoreCanonicalMemoryStore,
