@@ -38,7 +38,7 @@
 | D9 | Phase 51 — flag still default OFF | Code ready | Adam flips `paTagClusterRecEnabled` after canary Stage A |
 | D10 | Phase 39 RoleLLM full 200/200 standalone re-run | Retry hotfix shipped | Optional — subset=10 = 39/40 already proves fix |
 | D11 | Phase 51 — getAll batching for fetchTopKFromCluster | 22s wall-time vs 700ms legacy | TD-#7 — daily-batch async per-user, not user-facing |
-| D12 | Phase 51 — cleanup 6549 orphan v1 cluster docs | 33MB free-tier OK | TD-#6 — one-line cleanup script next session |
+| D12 | Phase 51 — cleanup 6549 orphan v1 cluster docs | 33MB free-tier OK | RESOLVED — `apps/functions/scripts/cleanup-cluster-v1-orphans.mjs` (dry-run by default, --confirm to delete). Pending operator ADC re-auth (`gcloud auth application-default login`) for live count + execution. |
 
 ---
 

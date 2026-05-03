@@ -95,7 +95,51 @@ const ONBOARDING_STATE_TRANSITIONS = {
   complete: "complete",
 }
 
-function makeFakeStore({ scenarioId, lang, sessionId, userId, phoneE164, initialOnboardingState, testMode }) {
+
+// ----------------------------------------------------------------------------
+// Stub Firestore — minimal `db.collection(name).doc(id).get()` implementation
+// returning {exists:false}. Used only when a scenario declares top-level
+// `flags:` block (forces the orchestrator to consult flags via the `env`
+// emergency-override path of getFlag, since `if (!store.db) return false`
+// short-circuits before getFlag is even called).
+// ----------------------------------------------------------------------------
+function makeStubFirestore() {
+  const emptyDocRef = {
+    async get() {
+      return { exists: false, data: () => undefined, id: "stub" }
+    },
+    async set() {},
+    async update() {},
+    async delete() {},
+  }
+  const emptyQuery = {
+    async get() {
+      return { empty: true, size: 0, docs: [], forEach: () => {} }
+    },
+    where() { return emptyQuery },
+    orderBy() { return emptyQuery },
+    limit() { return emptyQuery },
+    select() { return emptyQuery },
+    startAfter() { return emptyQuery },
+  }
+  return {
+    collection() {
+      return {
+        doc() { return emptyDocRef },
+        where() { return emptyQuery },
+        orderBy() { return emptyQuery },
+        limit() { return emptyQuery },
+        select() { return emptyQuery },
+        async get() { return { empty: true, size: 0, docs: [], forEach: () => {} } },
+      }
+    },
+    batch() {
+      return { delete() {}, set() {}, update() {}, async commit() {} }
+    },
+  }
+}
+
+function makeFakeStore({ scenarioId, lang, sessionId, userId, phoneE164, initialOnboardingState, testMode, scenarioFlags }) {
   // Per-scenario state. Persists across turns within a scenario, fresh
   // per scenario. messages[] indexed by sessionId so SDK loadHistory works.
   const messages = []
@@ -278,9 +322,19 @@ function makeFakeStore({ scenarioId, lang, sessionId, userId, phoneE164, initial
       if (next) onboardingState = next
     },
 
-    // No db — fail-open on all flag reads (paOnboardingIntentAckEnabled
-    // default ON, paOnboardingProbeV2Enabled default OFF, etc).
-    db: undefined,
+    // Stub Firestore — only present when scenario opts in via top-level
+    // `flags:` block. Required for `paOnboardingProbeV2Enabled`-style flags
+    // (orchestrator path early-returns false when `store.db` is null). The
+    // stub:
+    //   - returns `{exists: false, data: () => undefined}` for any doc.get(),
+    //     so cached-playbook / handbook-v2 / cv-context loaders fail-open
+    //     onto their inline fallbacks (matches prod when the collection is
+    //     empty — zero-regression contract).
+    //   - lets `getFlag()` short-circuit via the `env` emergency override:
+    //     scenario.flags entries are mirrored into process.env at scenario
+    //     boot, so `getFlag(db, "paOnboardingProbeV2Enabled", {env: process.env})`
+    //     returns true BEFORE any Firestore read.
+    db: scenarioFlags && Object.keys(scenarioFlags).length > 0 ? makeStubFirestore() : undefined,
   }
 
   return store
@@ -403,6 +457,17 @@ async function runScenarioLocal(scenario, opts) {
   const sessionId = `s-${userId}`
   const phoneE164 = scenario.participant ?? "+19999999999"
 
+  // Flag emergency-override mirror: yaml `flags:` block populates process.env
+  // so `getFlag()` short-circuits via `isEnvOverride()` BEFORE any Firestore
+  // read. We snapshot prior values so we can restore after the scenario.
+  const flagSnapshot = {}
+  if (scenario.flags && typeof scenario.flags === "object") {
+    for (const [k, v] of Object.entries(scenario.flags)) {
+      flagSnapshot[k] = process.env[k]
+      process.env[k] = v === true || v === "true" ? "true" : v === false ? "false" : String(v)
+    }
+  }
+
   const store = makeFakeStore({
     scenarioId: scenario.id,
     lang: scenario.locale,
@@ -411,6 +476,7 @@ async function runScenarioLocal(scenario, opts) {
     phoneE164,
     initialOnboardingState: scenario.userState?.onboardingState,
     testMode: scenario.testMode === true,
+    scenarioFlags: scenario.flags,
   })
 
   const turnResults = []
@@ -501,10 +567,17 @@ async function runScenarioLocal(scenario, opts) {
   }
 
   const elapsedMs = Date.now() - startMs
+  // Restore env (don't bleed scenario.flags across scenarios).
+  for (const [k, prev] of Object.entries(flagSnapshot)) {
+    if (prev === undefined) delete process.env[k]
+    else process.env[k] = prev
+  }
+
   return {
     scenarioId: scenario.id,
     file: scenario.__sourceFile,
     matrix: deriveMatrixCell(scenario.__sourceFile),
+    flagsApplied: scenario.flags ?? null,
     pass: scenarioPass,
     turns: turnResults,
     safetyBlocks: store._captures.safetyBlocks,

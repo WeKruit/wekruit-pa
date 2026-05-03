@@ -1,0 +1,43 @@
+{
+  "runStamp": "2026-05-03T00-46-08-507Z",
+  "totalMs": 1836,
+  "costUsd": 0,
+  "results": [
+    {
+      "scenarioId": "intent_onboarding_q_role_zh",
+      "file": "/Users/adam/Desktop/WeKruit/wekruit-pa/tests/scenarios/intent-routing/intent-onboarding-q-role-zh.yaml",
+      "matrix": {
+        "kind": "routing",
+        "route": "onboarding-q-role-zh",
+        "cellId": "intent-onboarding-q-role-zh",
+        "valid": true
+      },
+      "flagsApplied": {
+        "paOnboardingProbeV2Enabled": true
+      },
+      "pass": true,
+      "turns": [
+        {
+          "idx": 0,
+          "user": "嗯",
+          "reply": "那你大概想找啥方向的活? 比如做产品、做工程 还是做研究? �",
+          "pass": true,
+          "failures": [],
+          "judgeRecord": null,
+          "onboardingStateAfter": {
+            "step": "ask_q_role",
+            "intentAcked": false
+          }
+        }
+      ],
+      "safetyBlocks": [],
+      "appliedSteps": [
+        {
+          "step": "ask_q_role",
+          "intentAcked": false
+        }
+      ],
+      "elapsedMs": 1835
+    }
+  ]
+}
