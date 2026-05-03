@@ -69,6 +69,17 @@ export type SavePlaybookInput = {
   addendum?: string
   enabled?: boolean
   routingHint?: "no_chain" | "role_chain" | null
+  // iter30 WS4-A — V2 metadata (optional; defaults preserved when absent).
+  intentDescription?: string
+  provides?: string[]
+  requires?: string[]
+  requiresCtxState?: Record<string, boolean>
+  composableWith?: string[]
+  conflictsWith?: string[]
+  priority?: number
+  allowedTools?: string[]
+  llmInvokable?: boolean
+  paths?: string[]
 }
 
 export type SavePlaybookOpts = {
@@ -116,6 +127,24 @@ function fromSnap(id: string, raw: Record<string, unknown>): Playbook {
     updatedAt: toIso(raw.updatedAt),
     updatedBy: (raw.updatedBy as string) ?? "",
     reason: (raw.reason as string) ?? "",
+  }
+}
+
+/**
+ * iter30 WS4-A — read raw doc to a V2-shaped Playbook (with V2 fields when
+ * present). V1 docs round-trip with V2 fields populated to schema defaults
+ * via `fromSkillSnap` (re-exported from skill-schema.ts).
+ *
+ * This function only powers V2-aware callers — existing V1 readers
+ * (matchPlaybooks, composePlaybooks) continue using fromSnap above.
+ */
+function fromSnapV2Aware(
+  id: string,
+  raw: Record<string, unknown>
+): Playbook & { v2Raw: Record<string, unknown> } {
+  return {
+    ...fromSnap(id, raw),
+    v2Raw: raw,
   }
 }
 
@@ -184,7 +213,29 @@ export async function upsertPlaybook(
     commit: () => Promise<unknown>
   }
   const dbWithBatch = db as unknown as { batch?: () => BatchLike }
-  const payload = {
+  // iter30 WS4-A — V2 metadata is OPTIONAL; we read prev raw doc to preserve
+  // any existing V2 fields when caller doesn't supply new ones, and overlay
+  // explicit fields when provided. NOT validated by V1 PlaybookSchema (those
+  // fields aren't on the V1 schema); V2 callers validate via SkillSchemaV2.
+  const prevRaw = (await db.collection(PLAYBOOKS_COLLECTION).doc(playbookKey).get()).data() as
+    | Record<string, unknown>
+    | undefined
+  const v2Existing = prevRaw ?? {}
+  const v2Overlay: Record<string, unknown> = {}
+  if (fields.intentDescription !== undefined)
+    v2Overlay.intentDescription = fields.intentDescription
+  if (fields.provides !== undefined) v2Overlay.provides = fields.provides
+  if (fields.requires !== undefined) v2Overlay.requires = fields.requires
+  if (fields.requiresCtxState !== undefined)
+    v2Overlay.requiresCtxState = fields.requiresCtxState
+  if (fields.composableWith !== undefined) v2Overlay.composableWith = fields.composableWith
+  if (fields.conflictsWith !== undefined) v2Overlay.conflictsWith = fields.conflictsWith
+  if (fields.priority !== undefined) v2Overlay.priority = fields.priority
+  if (fields.allowedTools !== undefined) v2Overlay.allowedTools = fields.allowedTools
+  if (fields.llmInvokable !== undefined) v2Overlay.llmInvokable = fields.llmInvokable
+  if (fields.paths !== undefined) v2Overlay.paths = fields.paths
+
+  const payload: Record<string, unknown> = {
     playbookKey,
     name: merged.name,
     description: merged.description,
@@ -196,6 +247,40 @@ export async function upsertPlaybook(
     updatedAt: merged.updatedAt,
     updatedBy: actor,
     reason: merged.reason,
+    // V2 fields preserved-or-overlaid. Reading from prevRaw avoids clobbering
+    // any V2 metadata seeded by migrate-skills-v2.mjs.
+    intentDescription:
+      v2Overlay.intentDescription !== undefined
+        ? v2Overlay.intentDescription
+        : (v2Existing.intentDescription ?? ""),
+    provides:
+      v2Overlay.provides !== undefined ? v2Overlay.provides : (v2Existing.provides ?? []),
+    requires:
+      v2Overlay.requires !== undefined ? v2Overlay.requires : (v2Existing.requires ?? []),
+    composableWith:
+      v2Overlay.composableWith !== undefined
+        ? v2Overlay.composableWith
+        : (v2Existing.composableWith ?? []),
+    conflictsWith:
+      v2Overlay.conflictsWith !== undefined
+        ? v2Overlay.conflictsWith
+        : (v2Existing.conflictsWith ?? []),
+    priority:
+      v2Overlay.priority !== undefined ? v2Overlay.priority : (v2Existing.priority ?? 50),
+    allowedTools:
+      v2Overlay.allowedTools !== undefined
+        ? v2Overlay.allowedTools
+        : (v2Existing.allowedTools ?? []),
+    llmInvokable:
+      v2Overlay.llmInvokable !== undefined
+        ? v2Overlay.llmInvokable
+        : (v2Existing.llmInvokable ?? true),
+    paths: v2Overlay.paths !== undefined ? v2Overlay.paths : (v2Existing.paths ?? []),
+  }
+  if (v2Overlay.requiresCtxState !== undefined) {
+    payload.requiresCtxState = v2Overlay.requiresCtxState
+  } else if (v2Existing.requiresCtxState !== undefined) {
+    payload.requiresCtxState = v2Existing.requiresCtxState
   }
   const auditPayload = {
     actor,
