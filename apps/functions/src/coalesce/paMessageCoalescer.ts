@@ -47,8 +47,10 @@ import { PA_COLLECTIONS } from "@pa/core-types"
 import {
   coalesceTransaction,
   markFiredTransaction,
+  bumpCoalesceBufferTransaction,
   type BufferDoc,
   type IncomingMessage,
+  type BumpOutcome,
   COALESCE_BUFFER_COLLECTION,
 } from "./buffer.js"
 import type { TasksClient } from "./tasks-client.js"
@@ -227,6 +229,122 @@ async function resolveOrCreateImessageSession(
   }
   return sessionId
 }
+
+export type BumpEnqueueOutcome = {
+  action: BumpOutcome["action"]
+  taskName?: string
+  delayMs?: number
+  turnSeq?: number
+  reason?: string
+}
+
+/**
+ * Webhook-side entry for Sendblue typing-indicator events.
+ *
+ * Adam 顶层设计 fix (2026-05-03): we already receive `typing_indicator`
+ * webhook events but historically only audited and dropped them. This bumps
+ * the active coalesce buffer so natural typing gaps > DEFAULT_DELAY_MS still
+ * coalesce into one turn → one outbound. Time-driven coalesce is a fallback
+ * baseline; this is the event-driven primary path.
+ *
+ * Idempotent + fail-open:
+ *   - "no-buffer" / "fired" / "hard-capped" → no Cloud Tasks side effects.
+ *   - On Cloud Tasks failure (cancel OR enqueue) we log and return; the
+ *     existing pending task fires on schedule → user still gets a reply,
+ *     coalesce just degrades to time-driven for that turn.
+ *
+ * Returns the high-level decision so the caller (webhook) can audit-log the
+ * hit/miss rate.
+ */
+export async function bumpCoalesceBuffer(
+  deps: CoalescerDeps,
+  input: { userId: string; isTyping: boolean }
+): Promise<BumpEnqueueOutcome> {
+  const log = deps.log ?? console.log
+  let outcome: BumpOutcome
+  try {
+    outcome = await bumpCoalesceBufferTransaction(deps.db, input.userId, {
+      isTyping: input.isTyping,
+      now: deps.now,
+    })
+  } catch (err) {
+    log("[coalesce] bump-tx FAILED (non-fatal — typing is fail-open)", {
+      userId: input.userId,
+      err: err instanceof Error ? err.message : String(err),
+    })
+    return { action: "no-buffer", reason: "tx_error" }
+  }
+
+  if (outcome.action !== "bumped") {
+    log("[coalesce] bump", {
+      userId: input.userId,
+      isTyping: input.isTyping,
+      action: outcome.action,
+    })
+    return { action: outcome.action }
+  }
+
+  // 1. Cancel prior task (best-effort; race-tolerant — same pattern as
+  //    enqueueOrCoalesce).
+  if (outcome.cancelTaskName) {
+    try {
+      const cancelled = await deps.tasks.cancelTask(outcome.cancelTaskName)
+      log("[coalesce] bump cancel-prior-task", {
+        taskName: outcome.cancelTaskName,
+        cancelled,
+        userId: input.userId,
+      })
+    } catch (err) {
+      log("[coalesce] bump cancel-prior-task FAILED (non-fatal)", {
+        taskName: outcome.cancelTaskName,
+        userId: input.userId,
+        err: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+
+  // 2. Enqueue new task with the bumped delay.
+  try {
+    await deps.tasks.enqueueDelayedTask({
+      taskName: outcome.nextTaskName,
+      delayMs: outcome.recommendedDelayMs,
+      payload: {
+        userId: input.userId,
+        turnSeq: outcome.turnSeq,
+        messageCount: outcome.messageCount,
+        bumpedByTyping: true,
+      },
+    })
+  } catch (err) {
+    // Fail-open: prior task was already cancelled (or failed silently). The
+    // R1 sweeper (buffer-sweep) catches stuck buffers within `staleAfterMs`,
+    // and a follow-up real inbound message would re-enqueue normally. Worst
+    // case: this turn fires via sweep ~30s later instead of the bumped 8s.
+    log("[coalesce] bump enqueue FAILED (non-fatal — sweep will catch)", {
+      taskName: outcome.nextTaskName,
+      userId: input.userId,
+      err: err instanceof Error ? err.message : String(err),
+    })
+    return { action: "bumped", reason: "enqueue_failed", turnSeq: outcome.turnSeq }
+  }
+
+  log("[coalesce] bump", {
+    userId: input.userId,
+    isTyping: input.isTyping,
+    action: "bumped",
+    turnSeq: outcome.turnSeq,
+    delayMs: outcome.recommendedDelayMs,
+    taskName: outcome.nextTaskName,
+  })
+
+  return {
+    action: "bumped",
+    taskName: outcome.nextTaskName,
+    delayMs: outcome.recommendedDelayMs,
+    turnSeq: outcome.turnSeq,
+  }
+}
+
 
 /**
  * Cloud Tasks → CF endpoint. Executes the coalesced turn:

@@ -46,6 +46,7 @@ import { inboundEventExpiresAtTs, outboundExpiresAtTs } from "./ttl.js"
 // v1.5 Stream-D — message coalescer dispatch (flag-gated; default off).
 import {
   enqueueOrCoalesce as defaultEnqueueOrCoalesce,
+  bumpCoalesceBuffer as defaultBumpCoalesceBuffer,
   type CoalescerDeps,
 } from "../coalesce/paMessageCoalescer.js"
 
@@ -84,6 +85,12 @@ export type WebhookDeps = {
    * for the message's userId.
    */
   enqueueOrCoalesce?: typeof defaultEnqueueOrCoalesce
+  /**
+   * v1.5 event-driven coalesce — Sendblue typing-indicator → buffer bump.
+   * Adam 顶层设计 fix (2026-05-03). Inject for tests; production wiring uses
+   * the same `coalescerDeps` bundle.
+   */
+  bumpCoalesceBuffer?: typeof defaultBumpCoalesceBuffer
   /** Coalescer dependency bundle bound at CF wrapper layer. Required only when
    *  enqueueOrCoalesce is invoked (i.e. flag=on). */
   coalescerDeps?: CoalescerDeps
@@ -328,6 +335,17 @@ export async function handleSendblueWebhook(
   }
 
   // ---- 3b. Non-receive events (typing_indicator / line_blocked / other) -
+  // v1.5 event-driven coalesce — Adam 顶层设计 fix (2026-05-03):
+  //   We have ALWAYS received Sendblue's `typing_indicator` events here, but
+  //   historically only logged + dropped them. They're now first-class
+  //   buffer-bump signals: when the user is still composing, we extend the
+  //   coalesce window so natural typing gaps > DEFAULT_DELAY_MS don't
+  //   wave-split a single thought into multiple replies.
+  //
+  //   Sendblue typing payload (verified 2026-05-03 via docs.sendblue.com):
+  //     { number, is_typing, from_number, timestamp }
+  //   Note: `number` = the contact who is typing (the user), `from_number` =
+  //   the Sendblue line — REVERSED relative to receive events.
   if (!isInboundReceiveEvent(payload)) {
     const typeHint =
       typeof payload.type === "string"
@@ -336,13 +354,75 @@ export async function handleSendblueWebhook(
     let auditType: AuditEventInput["type"] = "inbound_skipped"
     if (typeHint === "typing_indicator") auditType = "typing_indicator_received"
     else if (typeHint === "line_blocked") auditType = "line_blocked_received"
+
+    // typing → BUFFER BUMP (fail-open).
+    if (typeHint === "typing_indicator") {
+      // typing payload field semantics — be defensive:
+      //   - `number` is the user typing (E.164 from the device).
+      //   - `is_typing` may be missing on legacy / minimal payloads. Treat
+      //     missing as `true` (conservative: extend the window).
+      const typerNumber =
+        typeof payload.number === "string" ? payload.number : ""
+      const isTyping =
+        typeof payload.is_typing === "boolean" ? payload.is_typing : true
+
+      if (typerNumber && deps.coalescerDeps) {
+        try {
+          const lookupFn = deps.lookupUserByPhone ?? defaultLookupUserByPhone
+          const resolvedUserId = await lookupFn(deps.db, typerNumber)
+          if (resolvedUserId) {
+            const coalesceFlag = await getFlag(
+              deps.db,
+              "paMessageCoalesceEnabled",
+              { userId: resolvedUserId, env: process.env },
+              false
+            )
+            if (coalesceFlag === true) {
+              const bumpFn = deps.bumpCoalesceBuffer ?? defaultBumpCoalesceBuffer
+              const bumpRes = await bumpFn(deps.coalescerDeps, {
+                userId: resolvedUserId,
+                isTyping,
+              })
+              log("[coalesce][webhook] typing-bump", {
+                userId: resolvedUserId,
+                isTyping,
+                action: bumpRes.action,
+                taskName: bumpRes.taskName,
+                delayMs: bumpRes.delayMs,
+              })
+            }
+          } else {
+            log("[coalesce][webhook] typing-skip — no userId for phone", {
+              phone: typerNumber,
+            })
+          }
+        } catch (bumpErr) {
+          // Fail-open: typing is a hint, never a blocker. The audit + 200 OK
+          // path below still runs.
+          log(
+            "[coalesce][webhook] typing-bump failed (non-fatal)",
+            bumpErr instanceof Error ? bumpErr.message : String(bumpErr),
+          )
+        }
+      }
+    }
+
     await safeAudit(
       deps,
       {
         type: auditType,
         channel: "imessage_sendblue",
+        // Forensics: the user's number for typing events lives in `number`,
+        // not `from_number`. Persist the right one so dashboard filters work.
+        fromNumber:
+          typeHint === "typing_indicator"
+            ? typeof payload.number === "string"
+              ? payload.number
+              : undefined
+            : typeof payload.from_number === "string"
+              ? payload.from_number
+              : undefined,
         reason: typeHint,
-        fromNumber: typeof payload.from_number === "string" ? payload.from_number : undefined,
       },
       log
     )

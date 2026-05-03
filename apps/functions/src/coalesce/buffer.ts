@@ -60,6 +60,29 @@ export const HARD_CAP_MS = 12_000
  *  人类打字间隔常 >4s, 8s 在 HARD_CAP_MS=12s 内还有 4s 缓冲. */
 export const DEFAULT_DELAY_MS = 8_000
 
+/**
+ * Event-driven coalesce — Adam 顶层设计 (2026-05-03):
+ *
+ * Sendblue's `typing_indicator` inbound webhook gives us a real-time signal
+ * that the user is still composing. We use it to BUMP the active buffer's
+ * fire deadline before each natural-typing-gap > DEFAULT_DELAY_MS would
+ * otherwise wave-split the conversation.
+ *
+ * Two values:
+ *   - TYPING_BUMP_DELAY_MS = 8_000 — equal to DEFAULT_DELAY_MS so a typing
+ *     start fully resets the window (intuitive: "keep waiting, user is still
+ *     typing").
+ *   - TYPING_STOPPED_TAIL_MS = 2_000 — when typing transitions to STOPPED,
+ *     fire after a short tail so we don't reply DURING the user's send. The
+ *     2s tail tolerates the lag between "fingers off keys" and "tap send".
+ *
+ * HARD_CAP_MS still applies. A bump can only EXTEND firesAt up to
+ * `firstReceivedAt + HARD_CAP_MS`. Adversarial typing that never stops cannot
+ * keep a turn pending forever.
+ */
+export const TYPING_BUMP_DELAY_MS = 8_000
+export const TYPING_STOPPED_TAIL_MS = 2_000
+
 export type BufferDoc = {
   userId: string
   turnSeq: number
@@ -324,6 +347,131 @@ export async function findStaleBuffers(
  * "+". Strip / replace to keep names valid. Same input always maps to same
  * output (idempotency).
  */
+/**
+ * Outcome of a typing-driven buffer bump.
+ *
+ *   "bumped"  — there was an active pending buffer and we patched
+ *               `lastReceivedAt`. Caller should cancel the prior Cloud Tasks
+ *               task and re-enqueue at `recommendedDelayMs`.
+ *   "no-buffer" — typing event arrived before any inbound message. No-op;
+ *               nothing to do (we cannot create a buffer from typing alone
+ *               because there's no message body to coalesce).
+ *   "hard-capped" — buffer exists but `firstReceivedAt + HARD_CAP_MS` already
+ *               elapsed. We do NOT extend the deadline (anti-troll guard).
+ *               Caller should leave the existing task alone — it'll force-fire
+ *               on schedule.
+ *   "fired"   — buffer status was already `fired`. No-op.
+ */
+export type BumpOutcome =
+  | {
+      action: "bumped"
+      cancelTaskName: string | null
+      nextTaskName: string
+      recommendedDelayMs: number
+      turnSeq: number
+      messageCount: number
+    }
+  | { action: "no-buffer" | "hard-capped" | "fired" }
+
+/**
+ * Event-driven coalesce — Sendblue typing webhook bump path.
+ *
+ * Reads the user's current turnSeq + active buffer doc inside a transaction.
+ * If a pending buffer exists, atomically:
+ *   - patches `lastReceivedAt = now()`,
+ *   - bumps `pendingTaskName` to the next monotonic task short-name,
+ *   - returns the prior task name so the caller can cancel + re-enqueue.
+ *
+ * Side-effect free w.r.t. Cloud Tasks (caller does the actual enqueue/cancel)
+ * to keep the transaction tight. Mirrors the
+ * `coalesceTransaction → enqueueOrCoalesce` separation already established
+ * in this module.
+ *
+ * `firstReceivedAt` is NEVER mutated — HARD_CAP_MS is anchored to the moment
+ * the FIRST message landed, not the last typing tick. That's the anti-troll
+ * invariant: even continuous typing cannot keep a turn pending past 12 s.
+ *
+ * `messageCount` is NOT incremented either — typing is not a message; counts
+ * stay aligned with actual `pa-inbound-events` rows for forensic accuracy.
+ */
+export async function bumpCoalesceBufferTransaction(
+  db: Firestore,
+  userId: string,
+  opts: {
+    /** true = typing started (extend window); false = stopped (short tail). */
+    isTyping: boolean
+    now?: () => Date
+    typingBumpMs?: number
+    typingStoppedTailMs?: number
+    hardCapMs?: number
+    taskNameFn?: (userId: string, turnSeq: number, messageCount: number) => string
+  }
+): Promise<BumpOutcome> {
+  const now = opts.now ?? (() => new Date())
+  const bumpMs = opts.typingBumpMs ?? TYPING_BUMP_DELAY_MS
+  const tailMs = opts.typingStoppedTailMs ?? TYPING_STOPPED_TAIL_MS
+  const hardCap = opts.hardCapMs ?? HARD_CAP_MS
+  const taskNameFn =
+    opts.taskNameFn ?? ((u, t, c) => `pa-coalesce-${sanitizeTaskComponent(u)}-${t}-${c}`)
+
+  const userRef = db.collection("pa-users").doc(userId)
+
+  return db.runTransaction(async (tx) => {
+    const userSnap = await tx.get(userRef)
+    const userData = (userSnap.exists ? userSnap.data() : {}) as Record<string, unknown>
+    const turnSeq = Number(userData[COALESCE_USER_FIELD] ?? 0)
+    if (!turnSeq) return { action: "no-buffer" } as BumpOutcome
+
+    const bufferRef = db.collection(COALESCE_BUFFER_COLLECTION).doc(
+      bufferDocId(userId, turnSeq)
+    )
+    const bufSnap = (await tx.get(bufferRef)) as DocumentSnapshot
+    if (!bufSnap.exists) return { action: "no-buffer" } as BumpOutcome
+    const buf = bufSnap.data() as BufferDoc
+    if (buf.status === "fired") return { action: "fired" } as BumpOutcome
+
+    // Hard-cap guard — typing cannot push beyond firstReceivedAt + HARD_CAP_MS.
+    const firstAtMs = Date.parse(buf.firstReceivedAt)
+    const nowMs = now().getTime()
+    const elapsedMs = Number.isFinite(firstAtMs) ? nowMs - firstAtMs : 0
+    const remainingMs = Math.max(0, hardCap - elapsedMs)
+    if (remainingMs === 0) return { action: "hard-capped" } as BumpOutcome
+
+    // Pick desired delay based on typing state, then clamp to remaining cap.
+    const desired = opts.isTyping ? bumpMs : tailMs
+    const recommendedDelayMs = Math.min(desired, remainingMs)
+
+    // Increment messageCount-like counter ONLY for task-name uniqueness; we
+    // re-use the existing `messageCount` for stability but DO NOT persist a
+    // changed value (typing is not a message). The next inbound message will
+    // bump messageCount via coalesceTransaction's normal path.
+    //
+    // Cloud Tasks rejects duplicate task names within ~1h tombstone window,
+    // so we synthesize a fresh suffix using the current `messageCount` plus
+    // a deterministic typing-tick salt. We persist `lastTypingTickSeq` so
+    // subsequent typing events keep producing fresh names.
+    const tickSeq = Number((buf as Record<string, unknown>).lastTypingTickSeq ?? 0) + 1
+    const taskNameSeq = buf.messageCount * 100 + tickSeq // clearly distinct namespace
+    const nextTaskName = taskNameFn(userId, turnSeq, taskNameSeq)
+
+    const patched: Partial<BufferDoc> & Record<string, unknown> = {
+      pendingTaskName: nextTaskName,
+      lastReceivedAt: now().toISOString(),
+      lastTypingTickSeq: tickSeq,
+    }
+    tx.set(bufferRef, patched, { merge: true })
+
+    return {
+      action: "bumped",
+      cancelTaskName: buf.pendingTaskName,
+      nextTaskName,
+      recommendedDelayMs,
+      turnSeq: buf.turnSeq,
+      messageCount: buf.messageCount,
+    }
+  })
+}
+
 function sanitizeTaskComponent(s: string): string {
   return s.replace(/[^A-Za-z0-9_-]/g, "_")
 }

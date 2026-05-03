@@ -53,8 +53,28 @@ export type SendblueOutboundPayload = {
   [key: string]: unknown
 }
 
+/**
+ * Inbound typing-indicator webhook payload.
+ *
+ * Sendblue docs (verified 2026-05-03 via docs.sendblue.com/api-v2/typing-indicators):
+ *   { number, is_typing, from_number, timestamp }
+ *   - `number`: E.164 of the contact who is typing (the user).
+ *   - `is_typing`: true when typing started, false when stopped.
+ *   - `from_number`: Sendblue line that received the indicator (Claire's number).
+ *   - `timestamp`: ISO-8601 of the device-side event.
+ *
+ * Older deliveries may arrive with only `{ type: "typing_indicator", number }`;
+ * downstream code MUST handle the missing `is_typing` case (treat as
+ * "typing started" — the conservative buffer-extending interpretation).
+ *
+ * NOTE: number/from_number direction is REVERSED relative to inbound `receive`
+ * events (where `from_number` = sender). Be careful when reusing payload keys.
+ */
 export type SendblueTypingIndicatorPayload = {
   number: string
+  is_typing?: boolean
+  from_number?: string
+  timestamp?: string
   type?: "typing_indicator"
   status?: string
   [key: string]: unknown
