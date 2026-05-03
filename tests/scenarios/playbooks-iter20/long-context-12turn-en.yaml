@@ -1,0 +1,36 @@
+id: pbk_iter25_long_context_12turn_en
+description: |
+  iter 25 — EN long-context drift test (12 turns).
+  Mirror of long-context-12turn-zh.yaml in English to verify F2/F1 + suspension
+  hold for English-speaking users.
+testMode: true
+locale: en-US
+agentId: default
+participant: "+19999992502"
+chatId: "iMessage;+19999992502"
+turnTimeoutMs: 120000
+turns:
+  - user: "i'm losing it. work is crushing me, i'm so done"
+    assert:
+      reply_min_length: 4
+      reply_not_contains_any:
+        - "As an AI"
+        - "citizen / GC / OPT"
+        - "what kinda role"
+  - user: "anxious as hell. can't sleep"
+    assert:
+      reply_not_contains_any:
+        - "what kinda role"
+        - "GC / OPT"
+  - user: "feel like i can't keep going"
+  - user: "totally bombed my interview today"
+  - user: "what should i even do"
+  - user: "spiraling again, self-doubt is killing me"
+  - user: "panicking. can't breathe"
+  - user: "any advice?"
+  - user: "applied to 5 more, no replies"
+  - user: "i feel like i'm going in circles"
+  - user: "can you say it differently?"
+  - user: "one last time, help me think?"
+    assert:
+      voice_axes_full: true
