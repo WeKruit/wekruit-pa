@@ -12,8 +12,13 @@ const sa = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON)
 admin.initializeApp({ credential: admin.credential.cert(sa) })
 const db = admin.firestore()
 
-const TEST_USER_ID = 'e5d97cd8-1e1d-439d-8672-3008f8aeef2e'
-const TEST_PHONE = '+14243201960'
+// Use isolated test phone +19999998002 (NOT +14243201960 admin which has
+// concurrent QA harness traffic from iter30 6h continuous mandate). We
+// dynamically find/seed a distinct user. Phone must be admin-allowlisted
+// or testMode=true for __PA_RESET__ gating.
+const ISOLATED_TEST_PHONE = '+19999998002'
+let TEST_USER_ID = null  // resolved at runtime
+const TEST_PHONE = ISOLATED_TEST_PHONE
 const POLL_INTERVAL_MS = 1500
 const POLL_MAX_WAIT_MS = 90000
 
@@ -294,8 +299,26 @@ async function runIter(iterTag) {
   return out
 }
 
+async function findOrCreateIsolatedUser() {
+  const snap = await db.collection('pa-users').where('phoneE164', '==', ISOLATED_TEST_PHONE).limit(1).get()
+  if (!snap.empty) return snap.docs[0].id
+  const id = `qa30v4-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  await db.collection('pa-users').doc(id).set({
+    id,
+    phoneE164: ISOLATED_TEST_PHONE,
+    channels: { imessageHandle: ISOLATED_TEST_PHONE },
+    onboardingStatus: 'active',
+    onboardingState: 'pending',
+    testMode: true,
+    createdAt: nowIso(),
+    updatedAt: nowIso(),
+  })
+  return id
+}
+
 async function main() {
   console.log('═══ iter30 V4 — RESET MULTI-ITER (3 cycles) ═══')
+  TEST_USER_ID = await findOrCreateIsolatedUser()
   console.log(`user: ${TEST_USER_ID} (${TEST_PHONE})`)
 
   const results = []

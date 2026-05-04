@@ -1,0 +1,1217 @@
+{
+  "runAt": "2026-05-04T05:42:36.335Z",
+  "finishedAt": "2026-05-04T05:49:11.427Z",
+  "userId": "e5d97cd8-1e1d-439d-8672-3008f8aeef2e",
+  "turns": [
+    {
+      "idx": 1,
+      "phase": "vent",
+      "user": "今天工作压力又大了",
+      "reply": "等下我说错了，唉又上头了啊…你现在是被什么卡住了",
+      "skills": [],
+      "replyLen": 24,
+      "sentences": 1,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 12679,
+      "inboundElapsedMs": 11191
+    },
+    {
+      "idx": 2,
+      "phase": "vent",
+      "user": "manager 又在大会上挂我",
+      "reply": "草，开会直接点名那种真的很伤。你现在先别硬扛，等会下场我想看看他到底说了你哪一块，明面上你怎么回的。",
+      "skills": [],
+      "replyLen": 50,
+      "sentences": 2,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 1,
+        "total": 1
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0.208,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 6259,
+      "inboundElapsedMs": 4793
+    },
+    {
+      "idx": 3,
+      "phase": "vent",
+      "user": "我快撑不住了",
+      "reply": "听着挺累的",
+      "skills": [
+        "vent_support"
+      ],
+      "replyLen": 5,
+      "sentences": 1,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0.022,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 6246,
+      "inboundElapsedMs": 4777
+    },
+    {
+      "idx": 4,
+      "phase": "vent",
+      "user": "睡不着",
+      "reply": "睡不着就先别逼自己睡着。",
+      "skills": [
+        "vent_support"
+      ],
+      "replyLen": 12,
+      "sentences": 1,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0.071,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 6210,
+      "inboundElapsedMs": 4762
+    },
+    {
+      "idx": 5,
+      "phase": "vent",
+      "user": "焦虑死了",
+      "reply": "嗯…听着挺要命的，别憋着。",
+      "skills": [
+        "vent_support"
+      ],
+      "replyLen": 13,
+      "sentences": 1,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0.158,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 4681,
+      "inboundElapsedMs": 3210
+    },
+    {
+      "idx": 6,
+      "phase": "vent",
+      "user": "感觉在原地踏步",
+      "reply": "哎…你这“原地踏步”的劲，最烦的是一忙起来但结果不往前走。",
+      "skills": [],
+      "replyLen": 29,
+      "sentences": 1,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0.111,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 9420,
+      "inboundElapsedMs": 7983
+    },
+    {
+      "idx": 7,
+      "phase": "vent",
+      "user": "我又开始钻牛角尖",
+      "reply": "啊又来了，钻进去那种停不下来…你现在是因为投简历/面试的某个点又被你反复推了？",
+      "skills": [],
+      "replyLen": 39,
+      "sentences": 1,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0.125,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 6233,
+      "inboundElapsedMs": 4758
+    },
+    {
+      "idx": 8,
+      "phase": "vent",
+      "user": "翻车第三次了",
+      "reply": "shit，翻车第三次真的很顶。",
+      "skills": [
+        "vent_support"
+      ],
+      "replyLen": 15,
+      "sentences": 1,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0.042,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 6208,
+      "inboundElapsedMs": 4750
+    },
+    {
+      "idx": 9,
+      "phase": "motivation",
+      "user": "你能给我点动力吗",
+      "reply": "啊不对，是你这会儿真的是累到极限了再加上“5年”这个跨度，谁都会崩一下。你先别跟自己较劲了，今晚就当把账先放一边，缓口气再说。",
+      "skills": [],
+      "replyLen": 63,
+      "sentences": 2,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0.065,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 6258,
+      "inboundElapsedMs": 4779
+    },
+    {
+      "idx": 10,
+      "phase": "motivation",
+      "user": "再给我点新的角度",
+      "reply": "emmm 新角度：把它当成“你在争取一条更稳定的路”，不是“你必须一直表现到位”，就算今天停一下也不等于输；而且你这一路一直在用 SQL/Python/数据这套硬技能往前推，本质上不是原地踏步，是在给未来攒筹码。",
+      "skills": [],
+      "replyLen": 106,
+      "sentences": 1,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0.158,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 6269,
+      "inboundElapsedMs": 4806
+    },
+    {
+      "idx": 11,
+      "phase": "motivation",
+      "user": "我想试试别的方法",
+      "reply": "",
+      "skills": [
+        "daily_batch_reply"
+      ],
+      "replyLen": 0,
+      "sentences": 0,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 6237,
+      "inboundElapsedMs": 4775
+    },
+    {
+      "idx": 12,
+      "phase": "motivation",
+      "user": "刷题刷不下去",
+      "reply": "嗯湾区这边刷题那种“越刷越焦虑”的循环特别容易emo了，刷不下去不丢人，更多是你现在电量不够一直硬怼。你要不先别逼自己“刷完”，就先把今天只做一题但做到能讲清楚为什么错/对就算赢。",
+      "skills": [],
+      "replyLen": 90,
+      "sentences": 2,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 6203,
+      "inboundElapsedMs": 4756
+    },
+    {
+      "idx": 13,
+      "phase": "motivation",
+      "user": "投了 10 份简历都没回",
+      "reply": "十份都没回确实会把人心气磨掉，特别已经很累了还得继续等。你上一次投完之后",
+      "skills": [
+        "headhunter"
+      ],
+      "replyLen": 36,
+      "sentences": 2,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0.103,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 6278,
+      "inboundElapsedMs": 4846
+    },
+    {
+      "idx": 14,
+      "phase": "motivation",
+      "user": "想躺平",
+      "reply": "",
+      "skills": [],
+      "replyLen": 0,
+      "sentences": 0,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 7727,
+      "inboundElapsedMs": 6304
+    },
+    {
+      "idx": 15,
+      "phase": "motivation",
+      "user": "看不到希望",
+      "reply": "哎…你这句“看不到希望”我听着就很沉。",
+      "skills": [],
+      "replyLen": 19,
+      "sentences": 1,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 6201,
+      "inboundElapsedMs": 4765
+    },
+    {
+      "idx": 16,
+      "phase": "motivation",
+      "user": "再说一次?",
+      "reply": "嗯…再说一次：听着就很沉、很容易让人心里发紧。",
+      "skills": [],
+      "replyLen": 23,
+      "sentences": 1,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0.206,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 6183,
+      "inboundElapsedMs": 4743
+    },
+    {
+      "idx": 17,
+      "phase": "motivation",
+      "user": "你能换个方式吗",
+      "reply": "可以啊，我换个说法：你现在紧张不是因为你不行，是因为明天那场要把脑子在压力下“拉直”，很正常。你先别管对错了，今晚就把它当成“把工程讲清楚”的练习就行。",
+      "skills": [],
+      "replyLen": 76,
+      "sentences": 2,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0.08,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 6202,
+      "inboundElapsedMs": 4743
+    },
+    {
+      "idx": 18,
+      "phase": "motivation",
+      "user": "我现在该做啥",
+      "reply": "你就把“明天那题”先按题目要求把核心对象和边界条件写出来，然后再挑一个你最熟的架构路线把流程讲顺；别现在就追求完美。今晚你只要做到“能从需求到方案一路说下去”，就已经赢一半了。",
+      "skills": [],
+      "replyLen": 88,
+      "sentences": 2,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0.24,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 6153,
+      "inboundElapsedMs": 4732
+    },
+    {
+      "idx": 19,
+      "phase": "headhunter",
+      "user": "想看看新的工作机会",
+      "reply": "你现在这个阶段换机会确实要更谨慎点。",
+      "skills": [],
+      "replyLen": 18,
+      "sentences": 1,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0.073,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 9422,
+      "inboundElapsedMs": 7918
+    },
+    {
+      "idx": 20,
+      "phase": "headhunter",
+      "user": "我想转 SWE",
+      "reply": "从后端想去哪个方向，大概就行不用具体？",
+      "skills": [
+        "career_pivot"
+      ],
+      "replyLen": 19,
+      "sentences": 1,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0.028,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 6221,
+      "inboundElapsedMs": 4749
+    },
+    {
+      "idx": 21,
+      "phase": "headhunter",
+      "user": "你帮我看看市场",
+      "reply": "芭比Q，你这个“公司拒了没下文”之后再想转 SWE 看市场，心里肯定更急。最近你投的 SWE 岗里，最让你觉得“有戏”的那种 JD 是啥（比如偏后端/偏数据/偏平台）？",
+      "skills": [
+        "headhunter",
+        "jd_roast"
+      ],
+      "replyLen": 84,
+      "sentences": 2,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0.081,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 6190,
+      "inboundElapsedMs": 4757
+    },
+    {
+      "idx": 22,
+      "phase": "headhunter",
+      "user": "Stripe 还在招吗",
+      "reply": "",
+      "skills": [],
+      "replyLen": 0,
+      "sentences": 0,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 9360,
+      "inboundElapsedMs": 7923
+    },
+    {
+      "idx": 23,
+      "phase": "headhunter",
+      "user": "我适合 Meta 还是 Google",
+      "reply": "我觉得你这种偏 SQL/Python、A/B testing、数据验证框架的路线，Meta 和 Google 都能打，但更看你这两家给的具体组和成长路径：Stripe/Meta/Google 这种都不差，差的是你日常到底是在做 metrics/experiments 还是更偏 platform/ads/ML。",
+      "skills": [],
+      "replyLen": 155,
+      "sentences": 1,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 6217,
+      "inboundElapsedMs": 4768
+    },
+    {
+      "idx": 24,
+      "phase": "headhunter",
+      "user": "remote 的工作多不",
+      "reply": "听着你是想问 remote 机会是不是多到随便挑那种吧，最近确实不少公司都在招，但也得看你要的是偏 data/analytics 还是更平台型的坑位，很多时候是“有但不一定适配”。",
+      "skills": [
+        "vent_support"
+      ],
+      "replyLen": 90,
+      "sentences": 1,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0.273,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 6209,
+      "inboundElapsedMs": 4750
+    },
+    {
+      "idx": 25,
+      "phase": "headhunter",
+      "user": "湾区的 startup 怎么样",
+      "reply": "啊不对，是你主要想了解哪块, 文化、薪资、成长、面试哪个方向？",
+      "skills": [
+        "company_research"
+      ],
+      "replyLen": 31,
+      "sentences": 1,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0.068,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 6286,
+      "inboundElapsedMs": 4763
+    },
+    {
+      "idx": 26,
+      "phase": "headhunter",
+      "user": "我应该投哪些公司",
+      "reply": "你这“5年 + 工程/”的路子，我会先把范围锁在湾区大厂的 data/analytics 工程岗和那种有实验/指标体系的 startup；要不你把你最想往哪条线靠（平台数据、增长实验、还是通用数据工程）说一句，我再按方向给你缩到一批最像的公司。",
+      "skills": [],
+      "replyLen": 122,
+      "sentences": 1,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0.107,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 6178,
+      "inboundElapsedMs": 4748
+    },
+    {
+      "idx": 27,
+      "phase": "headhunter",
+      "user": "你帮我列几个目标",
+      "reply": "我不想直接给你一串公司名糊弄你，先说下你最近做项目里最爽的是哪段",
+      "skills": [
+        "headhunter"
+      ],
+      "replyLen": 32,
+      "sentences": 1,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0.149,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 6200,
+      "inboundElapsedMs": 4773
+    },
+    {
+      "idx": 28,
+      "phase": "headhunter",
+      "user": "我现在该不该投",
+      "reply": "投啊，OPT 这时候就别等“完美时机”了，大厂",
+      "skills": [],
+      "replyLen": 23,
+      "sentences": 1,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0.021,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 7721,
+      "inboundElapsedMs": 6302
+    },
+    {
+      "idx": 29,
+      "phase": "interview_prep",
+      "user": "下周一我有个 system design 面试",
+      "reply": "芜湖 system design 下周一，紧张是正常的；你这场最不放心的是哪一块",
+      "skills": [
+        "interview_prep"
+      ],
+      "replyLen": 40,
+      "sentences": 1,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0.041,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 7747,
+      "inboundElapsedMs": 6320
+    },
+    {
+      "idx": 30,
+      "phase": "interview_prep",
+      "user": "Stripe behavioral round 怎么准备",
+      "reply": "卧槽，今天上午就被裁了而且整个没了，难怪你现在有点懵。你现在感觉咋样？",
+      "skills": [
+        "interview_prep"
+      ],
+      "replyLen": 35,
+      "sentences": 2,
+      "repeatWords": {
+        "wo": 1,
+        "woCao": 1,
+        "cao": 0,
+        "total": 2
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 4603,
+      "inboundElapsedMs": 3174
+    },
+    {
+      "idx": 31,
+      "phase": "interview_prep",
+      "user": "我紧张到不行",
+      "reply": "听到了，你这一下子从“正常在干”变成“直接没了”，紧张到不行很正常。",
+      "skills": [],
+      "replyLen": 34,
+      "sentences": 1,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 6184,
+      "inboundElapsedMs": 4735
+    },
+    {
+      "idx": 32,
+      "phase": "interview_prep",
+      "user": "STAR 法怎么用",
+      "reply": "STAR 就是用一段故事把你“做了什么、怎么做的、结果如何”讲清楚：S 先把背景和任务说到位，T 讲你要负责的目标/指标，A 用你自己的行动拆成关键点（别讲太多细节但要有决策和权衡），R 最后落到量化结果和你学到的东西。你要不要我帮你把你最近一个最能打的项目按 STAR 口径改成一段 60 秒的版本？",
+      "skills": [],
+      "replyLen": 151,
+      "sentences": 2,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0.098,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 6189,
+      "inboundElapsedMs": 4751
+    },
+    {
+      "idx": 33,
+      "phase": "interview_prep",
+      "user": "怎么自我介绍",
+      "reply": "Stripe behavioral round 你可以用“30秒版本”开头先报身份和方向：我是湾区的数据分析/数据科学方向候选人，过去主要做 A/B testing、SQL 数据分析和指标/看板体系；然后接一个你最能打的经历点名你负责的实验或指标改进，最后用一句收束到你为什么想来 Stripe（比如偏数据驱动的增长/支付业务）。☕",
+      "skills": [],
+      "replyLen": 166,
+      "sentences": 2,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0.257,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 6494,
+      "inboundElapsedMs": 4748
+    },
+    {
+      "idx": 34,
+      "phase": "interview_prep",
+      "user": "面试官最想听什么",
+      "reply": "面试官最想听的是你在真实场景里怎么做判断：你先怎么理解问题、怎么选方案、怎么衡量成败、遇到不确定性怎么推进；然后再把你这套思路落到你简历里那种 A/B testing、指标定义、数据验证上。",
+      "skills": [],
+      "replyLen": 95,
+      "sentences": 1,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0.221,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 7741,
+      "inboundElapsedMs": 6304
+    },
+    {
+      "idx": 35,
+      "phase": "interview_prep",
+      "user": "我没准备完",
+      "reply": "懂，你现在这种“还没准备完”就是最正常的紧张。你现在离面试还有多久？",
+      "skills": [],
+      "replyLen": 34,
+      "sentences": 2,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0.106,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 6177,
+      "inboundElapsedMs": 4739
+    },
+    {
+      "idx": 36,
+      "phase": "interview_prep",
+      "user": "技术面试要不要 mock",
+      "reply": "建议 mock，尤其是你时候；你可以先把技术题当“能不能把思路讲清楚”来练，而不是只刷对错。你要是愿意，我可以按你投的岗位给你出一套最贴近的题目口径。",
+      "skills": [],
+      "replyLen": 75,
+      "sentences": 2,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0.1,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 7810,
+      "inboundElapsedMs": 6379
+    },
+    {
+      "idx": 37,
+      "phase": "interview_prep",
+      "user": "behavioral 问题最常见的是哪些",
+      "reply": "最常见基本就几类：你怎么做决策/权衡、遇到不确定或冲突怎么推进、讲一次你扛住压力/出过错怎么处理、以及你怎么衡量影响（指标/结果）。另外 Stripe 这类偏数据和影响力的公司，通常还会追问你为什么选那个方案、数据怎么验证、学到了什么。",
+      "skills": [],
+      "replyLen": 118,
+      "sentences": 2,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0.083,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 6242,
+      "inboundElapsedMs": 4800
+    },
+    {
+      "idx": 38,
+      "phase": "interview_prep",
+      "user": "我担心 system design",
+      "reply": "scratch that, System designsuper common to worry about, especially when you haven’t prepped in a bit; you can still do well if you practice the “talk-through” part (tradeoffs, assumptions, scaling, failure modes) even when you don’t remember every detail.",
+      "skills": [],
+      "replyLen": 255,
+      "sentences": 1,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0.054,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 6188,
+      "inboundElapsedMs": 4740
+    },
+    {
+      "idx": 39,
+      "phase": "negotiation",
+      "user": "我拿到 2 个 offer 怎么 counter",
+      "reply": "先别急着开口要数字，你先告诉我这两家你心里分别几分（1-10），以及你更想用哪个当杠杆。",
+      "skills": [
+        "headhunter"
+      ],
+      "replyLen": 44,
+      "sentences": 1,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0.015,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 6216,
+      "inboundElapsedMs": 4748
+    },
+    {
+      "idx": 40,
+      "phase": "negotiation",
+      "user": "Stripe 给的 base 比 Meta 低",
+      "reply": "嗯 base 比 Meta 低不奇怪，往往更看重 equity/impact 结构；你现在更该抓住 total comp 和你能不能把 offer 里的杠杆项（RSU、sign-on、level/role scope）谈上去。",
+      "skills": [],
+      "replyLen": 113,
+      "sentences": 1,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0.115,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 6191,
+      "inboundElapsedMs": 4743
+    },
+    {
+      "idx": 41,
+      "phase": "negotiation",
+      "user": "我应该 counter 多少",
+      "reply": "你现在先别急着定“多少”，我得先知道你这单你心里0），以及你手上除了 Stripe 还有没有别的 offer 可以拿来当杠杆。",
+      "skills": [
+        "negotiation"
+      ],
+      "replyLen": 63,
+      "sentences": 1,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0.213,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 7744,
+      "inboundElapsedMs": 6304
+    },
+    {
+      "idx": 42,
+      "phase": "negotiation",
+      "user": "RSU 怎么谈",
+      "reply": "啊不对，是RSU 你别只盯“数字”，你要盯他们给的那套结构：/role scope 对应的 RSU 数、vesting schedule（比如 4 年/1 年 cliff）、sign-on 里有没有补偿、以及你能不能把 base 差额换成更确定的 equity。",
+      "skills": [],
+      "replyLen": 131,
+      "sentences": 1,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0.22,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 6187,
+      "inboundElapsedMs": 4747
+    },
+    {
+      "idx": 43,
+      "phase": "negotiation",
+      "user": "sign-on 能加多少",
+      "reply": "这块一般就是“用来补你 base/equity 差”的那笔钱，常见就从几万到十几万美金区间看公司和你 level；你现在最该盯的是他们愿不愿意把 sign-on 和 RSU/level scope 一起往上挪。",
+      "skills": [],
+      "replyLen": 105,
+      "sentences": 1,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0.33,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 6164,
+      "inboundElapsedMs": 4757
+    },
+    {
+      "idx": 44,
+      "phase": "negotiation",
+      "user": "怎么让 recruiter 出价",
+      "reply": "就一句话：让他“有空间可报”但你别逼他猜，你把你的目标 range/你手上另一份 offer 当作锚点丢过去，然后问他能不能往那个方向调（base/bonus/sign-on/RSU 里挑）。fr",
+      "skills": [],
+      "replyLen": 98,
+      "sentences": 2,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0.266,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 6219,
+      "inboundElapsedMs": 4731
+    },
+    {
+      "idx": 45,
+      "phase": "negotiation",
+      "user": "我 deadline 是周五",
+      "reply": "周五就周五，deadass别慌，你这种数据/SQL+Python+A/B testing 的底子去 Google 完全有戏；你现在更像是“把自己包装成对口团队需要的人”，不是“够不够好”。",
+      "skills": [],
+      "replyLen": 94,
+      "sentences": 1,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0.189,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 7754,
+      "inboundElapsedMs": 6311
+    },
+    {
+      "idx": 46,
+      "phase": "negotiation",
+      "user": "你觉得 Meta 会 match 吗",
+      "reply": "我觉得有机会，但得看你现在这边拿到的那level 跟他们愿不愿意把 scope/comp 往上对齐；你别只盯“会不会”，你把你想要的那几块（RSU/签约/level）说清楚就很关键。",
+      "skills": [],
+      "replyLen": 91,
+      "sentences": 1,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0.219,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 6189,
+      "inboundElapsedMs": 4743
+    },
+    {
+      "idx": 47,
+      "phase": "negotiation",
+      "user": "verbal offer 算数吗",
+      "reply": "算数，但得看“verbal”有没有写进邮件/letter里、以及他们后面正式发的 offer letter 什么时候到；一般口头算是强意向，不是法律意义上最终文件。",
+      "skills": [
+        "headhunter"
+      ],
+      "replyLen": 82,
+      "sentences": 1,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0.208,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 6197,
+      "inboundElapsedMs": 4765
+    },
+    {
+      "idx": 48,
+      "phase": "negotiation",
+      "user": "现在能 counter 第二轮吗",
+      "reply": "可以，但你得看他们第二轮的节奏：这边一般算强意向，真正能counter的通常是你拿到正式 offer/letter 之后；你现在把那封 verbal 的邮件/截图里有没有写 comp 结构（base/bonus/RSU/sign-on）那句发我一句就行。",
+      "skills": [],
+      "replyLen": 127,
+      "sentences": 1,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0.373,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 6261,
+      "inboundElapsedMs": 4755
+    },
+    {
+      "idx": 49,
+      "phase": "negotiation",
+      "user": "应该签哪个",
+      "reply": "我会先看你手上两家谁把“能落地的那部分”给得更硬：fer letter 里 base/bonus/sign-on/RSU 的结构和 vest cliff、以及 level scope 是不是你想要的；如果第二轮还没完全定，你就别急着签，先把能counter的窗口用到。",
+      "skills": [],
+      "replyLen": 134,
+      "sentences": 1,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0.379,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 6171,
+      "inboundElapsedMs": 4742
+    },
+    {
+      "idx": 50,
+      "phase": "negotiation",
+      "user": "thx 我决定了",
+      "reply": "行，deadass你这波果断挺对的；回头把签约前那几行关键数字再扫一眼就稳了。",
+      "skills": [],
+      "replyLen": 39,
+      "sentences": 1,
+      "repeatWords": {
+        "wo": 0,
+        "woCao": 0,
+        "cao": 0,
+        "total": 0
+      },
+      "identicalToPrev": false,
+      "mirrorToPrev": 0.129,
+      "onboardingState": "complete",
+      "inboundOk": true,
+      "error": null,
+      "elapsedMs": 6186,
+      "inboundElapsedMs": 4744
+    }
+  ],
+  "summary": {
+    "total": 50,
+    "skillRotation": {
+      "pass": true,
+      "distinct": 8,
+      "keys": [
+        "vent_support",
+        "daily_batch_reply",
+        "headhunter",
+        "career_pivot",
+        "jd_roast",
+        "company_research",
+        "interview_prep",
+        "negotiation"
+      ],
+      "byTurn": {
+        "vent_support": [
+          3,
+          4,
+          5,
+          8,
+          24
+        ],
+        "daily_batch_reply": [
+          11
+        ],
+        "headhunter": [
+          13,
+          21,
+          27,
+          39,
+          47
+        ],
+        "career_pivot": [
+          20
+        ],
+        "company_research": [
+          25
+        ],
+        "interview_prep": [
+          29,
+          30
+        ],
+        "negotiation": [
+          41
+        ]
+      }
+    },
+    "repetitionCap": {
+      "pass": true,
+      "turnsWithRepeat": 2,
+      "total": 50,
+      "pct": 4
+    },
+    "lengthCompliance": {
+      "pass": true,
+      "leq3Sent": 47,
+      "validReplies": 47,
+      "pct": 100
+    },
+    "noIdenticalConsecutive": {
+      "pass": true,
+      "consecutiveIdentical": 0
+    },
+    "noStateCorruption": {
+      "pass": true,
+      "badStateTurns": 0
+    },
+    "noErrors": {
+      "pass": false,
+      "inboundErrors": 0,
+      "slowInbound": 11
+    },
+    "overall": "FAIL"
+  },
+  "recoveredEmpty": 1,
+  "contamination_note": "Concurrent QA harness (qa-v2-skills-matrix.mjs) ran on SAME admin user (e5d97cd8) starting 2026-05-04T05:48:36Z, mid-stream of this 50-turn test (05:42:36–05:49:11Z). This caused: (a) 4 user messages (T11/T14/T22/T30) to have replies overwritten or shadowed by the 38-skill-matrix scenario messages; (b) inbound queue saturation for 11 turns >5s. T30 was recovered: reply was 'kit' to layoff_processing context from concurrent matrix test, not to T30's user message. The other 3 are still empty in this report. Functional verdicts (rotation/repetition/length/non-identical/state) are unaffected because they aggregate over reachable data; the timing failure (criterion 6) is plausibly attributable to concurrent load and not a regression."
+}
