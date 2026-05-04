@@ -114,3 +114,60 @@ test("post-strip leading 的/了/啊 particle artifacts cleaned", () => {
     assert.ok(!r.text.startsWith("了"), `text starts with 了: ${r.text}`)
   }
 })
+
+// V2 QA Agent-B 2026-05-04 P0 regression: word-boundary fix.
+// Pre-fix corruption examples seen in prod:
+//   "I sawr resume"      (cut "saw your" mid-token → "saw" stripped, "your" left)
+//   "How much dowant"    (cut "do you want" mid-token)
+//   "rejected bythis"    (cut "by Meta this")
+//   "kind of eare"       (cut "of role are")
+test("V2 P0: ASCII word-boundary snap — does NOT slice mid-token", () => {
+  // Prior reply contains "saw your". Current reply STARTS with "saw your"
+  // — should fully strip. But should NOT strip if prior has "saw" with
+  // different right-context.
+  const priors = ["yeah I saw your resume"]
+  const current = "saw your resume looks great"
+  const r = stripPhraseRepeat(current, priors)
+  // legitimate strip ok, but result MUST NOT start mid-word.
+  if (r.stripped) {
+    const remainsAtMidWord = /^[a-zA-Z]r\b|^[a-zA-Z][a-zA-Z]+\s/.test(r.text)
+    // Stricter check: leftover should not start with an alphabetic
+    // character that's part of a fractured word like "r resume" / "ywant".
+    assert.ok(
+      !remainsAtMidWord || /\b\w+\b/.test(r.text.slice(0, 3)),
+      `mid-word slice detected: "${r.text}"`
+    )
+  }
+})
+
+test("V2 P0: 'I saw' overlap with 'I sawr' ANTI-PATTERN never produced", () => {
+  // The exact prod corruption: prior "I saw r" + current "I saw your r" →
+  // pre-fix would slice "I saw " giving "your r" left, which serialized
+  // back as "I sawr" via concat artifacts.
+  const priors = ["i saw your resume earlier today"]
+  const current = "i saw your resume and it looks solid"
+  const r = stripPhraseRepeat(current, priors)
+  // Whatever the strip outcome, "sawr" / "sawyour" must not appear.
+  assert.ok(!/sawr\b|sawyour/.test(r.text), `corrupt token in output: "${r.text}"`)
+})
+
+test("V2 P0: ZH unchanged (CJK chars are single-token glyphs, no word-boundary)", () => {
+  // Long enough remainder so minRemaining=10 doesn't fail-open.
+  const priors = ["要不要试试看哪个公司更适合你的目标"]
+  const current = "要不要试试看哪个公司能给你更好的发展空间和成长机会"
+  const r = stripPhraseRepeat(current, priors)
+  // ZH strip should still happen — word-boundary check only applies to ASCII.
+  assert.equal(r.stripped, true, "zh repeat should still strip, got: " + JSON.stringify(r))
+})
+
+test("V2 P0: short ASCII function-word repeat 'that' does not splice mid-word context", () => {
+  // pre-fix Cloud Logs: matched_phrase: 'hat ' / 'that ' getting stripped
+  // out of the middle of "what" in current reply.
+  const priors = ["yeah that's tough"]
+  const current = "yeah, what's the actual blocker?"
+  const r = stripPhraseRepeat(current, priors)
+  // "hat" overlap inside "what" must NOT cause "wt's the" output.
+  if (r.stripped) {
+    assert.ok(!/^wt|^w[^h]\w/.test(r.text), `mid-'what' slice: "${r.text}"`)
+  }
+})

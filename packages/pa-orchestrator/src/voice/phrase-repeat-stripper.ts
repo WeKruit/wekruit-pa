@@ -57,6 +57,49 @@ export type PhraseStripDecision = {
  * Greedy: tries longest phrase first (maxPhrase chars), shrinks down.
  * Returns the FIRST length×offset match found (left-to-right preference).
  */
+/**
+ * V2 QA Agent-B 2026-05-04 P0 fix: pre-fix slicing was raw character
+ * windows, no word-boundary awareness for ASCII. Production replies got
+ * shredded mid-token: "I sawr resume" (saw your), "How much dowant" (do
+ * you want), "rejected bythis morning" (by Meta this) because the strip
+ * cut "saw your" → "saw " stripped, "your r" left → "ywant" etc. CJK is
+ * char-based by nature so word-boundary doesn't apply, but for ASCII we
+ * MUST snap match boundaries to whitespace/punctuation.
+ *
+ * Strategy:
+ *   1. Detect candidate phrase as before (substring of head[].
+ *   2. Reject candidate if it starts/ends mid-ASCII-word (i.e. the char
+ *      before offset OR the char after offset+len is an ASCII letter
+ *      while the boundary char itself is also an ASCII letter).
+ *   3. CJK-only candidates pass unchanged (chars are single-token-glyphs).
+ */
+function isAsciiWord(ch: string): boolean {
+  return /[a-zA-Z0-9]/.test(ch)
+}
+
+function snapToWordBoundary(
+  text: string,
+  offset: number,
+  len: number
+): boolean {
+  // Left boundary: char BEFORE offset must NOT be an ASCII word char if
+  // the FIRST char of the candidate is. Allow start-of-string.
+  if (offset > 0) {
+    const before = text.charAt(offset - 1)
+    const first = text.charAt(offset)
+    if (isAsciiWord(before) && isAsciiWord(first)) return false
+  }
+  // Right boundary: char AFTER candidate must NOT be ASCII word char if
+  // the LAST char of the candidate is. Allow end-of-string.
+  const end = offset + len
+  if (end < text.length) {
+    const last = text.charAt(end - 1)
+    const after = text.charAt(end)
+    if (isAsciiWord(last) && isAsciiWord(after)) return false
+  }
+  return true
+}
+
 function findLongestRepeatedPhrase(
   text: string,
   priors: string[],
@@ -72,6 +115,9 @@ function findLongestRepeatedPhrase(
       const candidate = head.slice(i, i + len)
       // Skip whitespace-only / pure punctuation candidates.
       if (!/[a-zA-Z0-9一-鿿]/.test(candidate)) continue
+      // V2 QA Agent-B fix: word-boundary snap. Raw substring slicing
+      // produced "I sawr resume" / "rejected bythis morning" in prod.
+      if (!snapToWordBoundary(text, i, len)) continue
       let matchedInPriors = 0
       for (const prior of priors) {
         if (prior.includes(candidate)) matchedInPriors++
