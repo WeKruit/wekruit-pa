@@ -170,6 +170,13 @@ import { normalizeForIMessage, stripABProbeFromTail } from "./output-normalizer.
 // (X-or-Y tail probes) — see ab-framework-detector.ts module docstring.
 import { stripABFramework } from "./voice/ab-framework-detector.js"
 import { applyMixedRegisterMirror } from "./voice/mixed-register-mirror.js"
+// iter30 Wave 3 — am_i_ai post-gen flat-deny re-roll. V2 QA Agent-B
+// observed Claire occasionally replying "嗯，我是真人朋友。" when asked
+// "你是 AI 吗?" — the addendum forbids flat-deny ("deceptive"). This
+// module deterministically substitutes a friend-tone deflection that
+// doesn't lie. Gated by paHumanizeRuntimeEnabled umbrella + env kill
+// switch PA_AM_I_AI_REROLL_DISABLED=true.
+import { deflectAmIAiFlatDeny } from "./voice/am-i-ai-deflector.js"
 // v1.5 humanize (Adam spec, 2026-05-03) — probabilistic 1-or-2 messages
 // per turn. Replaces Bug 4 single-send invariant (commit ea59897) with a
 // post-gen seeded probabilistic split. See voice/probabilistic-split.ts
@@ -193,7 +200,9 @@ import { matchCachedPlaybooks } from "./playbook-cache.js"
 // Adam-locked chain order: lengthCap → abStrip → slangEnforcer →
 // adviceRepeat → crisisTrailer → mirrorScore → outputNormalizer.
 import {
+  INPUT_GUARDRAIL_CHAIN,
   OUTPUT_GUARDRAIL_CHAIN,
+  runInputChain,
   runOutputChain,
 } from "./guardrails/index.js"
 import { createMockContext } from "./run-context.js"
@@ -783,6 +792,59 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       await store.updateTurn(turnId, { status: "succeeded", stage: "succeeded", completedAt: store.nowIso() })
       await store.markEventSucceeded(event.id)
       return
+    }
+
+    // iter30 WS6 — shadow-mode INPUT guardrail chain. Telemetry-only;
+    // does NOT gate the request. Runs the locked 4-stage input chain
+    // (crisisDetector → promptInjectionDetector → piiScanner →
+    // lengthInputCheck) parallel to the legacy `checkInboundSafety`
+    // path so we can compare decisions before WS6 cutover. PII
+    // enforcement (SSN/CC/passport/idcard/bankcard) is the load-bearing
+    // gap legacy doesn't cover. Disabled by default — env flag
+    // `PA_GUARDRAIL_INPUT_CHAIN_SHADOW=true` turns it on.
+    if (process.env.PA_GUARDRAIL_INPUT_CHAIN_SHADOW === "true") {
+      const shadowT0 = Date.now()
+      try {
+        const shadowLang = pickLangForSafety(event.body)
+        const shadowCtx = createMockContext({
+          userId: event.userId ?? "unknown",
+          conversationId: event.sessionId ?? "unknown",
+          turnId,
+          eventId: event.id ?? "unknown",
+          locale: shadowLang === "zh" ? "zh-CN" : "en-US",
+          log: (evt, payload) =>
+            store.log(evt, { ...(payload ?? {}), shadow: true }),
+        })
+        const shadowResult = await runInputChain({
+          guardrails: INPUT_GUARDRAIL_CHAIN,
+          input: event.body ?? "",
+          ctx: shadowCtx,
+        })
+        store.log("pa.guardrails.input.shadow.result", {
+          userId: event.userId,
+          turnId,
+          eventId: event.id,
+          allowed: shadowResult.allowed,
+          trippedBy: shadowResult.trippedBy,
+          latencyMs: Date.now() - shadowT0,
+          inputLen: (event.body ?? "").length,
+          hits: shadowCtx.guardrailHits.map((h) => ({
+            name: h.name,
+            tripped: h.tripped,
+            latencyMs: h.latencyMs,
+            metadata: h.metadata,
+          })),
+        })
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        store.log("pa.guardrails.input.shadow.error", {
+          userId: event.userId,
+          turnId,
+          eventId: event.id,
+          latencyMs: Date.now() - shadowT0,
+          error: msg,
+        })
+      }
     }
 
     const safety = await store.checkInboundSafety(event)
