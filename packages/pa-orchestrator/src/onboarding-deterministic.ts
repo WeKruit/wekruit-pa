@@ -171,7 +171,13 @@ const VENT_ACK: OnboardingPrompt = {
 // deterministic module has zero external coupling).
 // ────────────────────────────────────────────────────────────────────
 export function pickLang(userMessage: string | undefined): "zh" | "en" {
-  const text = (userMessage ?? "").replace(/\s+/g, "")
+  // iter32: strip email addresses + URLs before counting so a zh user
+  // saying "我邮箱是 adam@wekruit.com" doesn't tip into EN due to the
+  // ASCII-heavy email tail. Same for "看 https://example.com" etc.
+  const stripped = (userMessage ?? "")
+    .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "")
+    .replace(/https?:\/\/\S+/gi, "")
+  const text = stripped.replace(/\s+/g, "")
   if (!text) return "zh"
   let cjk = 0
   for (const ch of text) {
@@ -692,7 +698,9 @@ export async function runDeterministicOnboardingTurn(
         emailVerificationVerified: true,
       })
       const verifiedAck = lang === "zh" ? "✓ 邮箱验过了" : "✓ email verified"
-      const rolePhrase = config.ask_q_role!.prompt[lang]
+      // Strip a leading "btw — " / "btw, " from the role phrase so we don't
+      // emit a doubled "btw —" after the verified-ack join. Cosmetic.
+      const rolePhrase = config.ask_q_role!.prompt[lang].replace(/^btw\s*[—,-]\s*/i, "")
       await sendDirect(input, `${verifiedAck} — ${rolePhrase}`)
       store.log("pa.onboarding.deterministic.email_verify_verified", {
         userId: event.userId,
