@@ -1,0 +1,20 @@
+# iter30 test channel — Sendblue (no Apple AID)
+id: iter30_judge_daily_batch_reply_zh
+description: iter30 — daily_batch_reply skill, zh.
+testMode: true
+locale: zh-CN
+agentId: default
+participant: "+19999992999"
+chatId: "iMessage;+19999992999"
+turnTimeoutMs: 120000
+turns:
+  - user: "你昨天发的那个 Anthropic 的 ML eng 我看了感觉挺对路 想试试"
+    assert:
+      reply_min_length: 4
+      judge:
+        criterion: |
+          Reply does NOT push more options ("要不要再看 3 个类似的"). Asks
+          ONE open Q anchoring why this one. Then offers ONE concrete next
+          step (CV tweak / cold email / interview prep). Friend register.
+          ≤2 sentences. NO 8-step application checklist.
+        threshold: 0.6

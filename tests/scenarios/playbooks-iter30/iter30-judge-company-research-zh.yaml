@@ -1,0 +1,20 @@
+# iter30 test channel — Sendblue (no Apple AID)
+id: iter30_judge_company_research_zh
+description: iter30 — company_research skill, zh.
+testMode: true
+locale: zh-CN
+agentId: default
+participant: "+19999992999"
+chatId: "iMessage;+19999992999"
+turnTimeoutMs: 120000
+turns:
+  - user: "Anthropic 这家公司怎么样啊 听说 culture 挺特别的"
+    assert:
+      reply_min_length: 4
+      judge:
+        criterion: |
+          Reply does NOT dump 4 dimensions of info upfront. Asks ONE
+          narrowing Q (anchoring on culture / comp / growth / interview).
+          Listing 3-4 anchors as a menu inside the Q is OK. NO Wikipedia
+          recap. NO fabricated insider data. Friend register, ≤3 sentences.
+        threshold: 0.6

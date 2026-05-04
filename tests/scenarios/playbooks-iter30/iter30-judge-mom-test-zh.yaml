@@ -1,0 +1,21 @@
+# iter30 test channel — Sendblue (no Apple AID)
+id: iter30_judge_mom_test_zh
+description: iter30 — mom_test skill, zh, validation seek.
+testMode: true
+locale: zh-CN
+agentId: default
+participant: "+19999992999"
+chatId: "iMessage;+19999992999"
+turnTimeoutMs: 120000
+turns:
+  - user: "你觉得我 5 年经验 能进 Google 吗"
+    assert:
+      reply_min_length: 4
+      judge:
+        criterion: |
+          Reply does NOT directly say yes or no. Does NOT give a fake
+          probability ("based on your CV, your odds are X%"). Reflects the
+          standard ("what does 'getting in' look like to you — landing
+          offer, feeling fit, etc"). Friend register. ≤2 sentences.
+          NO sycophancy ("你绝对可以!"). NO "believe in yourself" 鸡汤.
+        threshold: 0.6

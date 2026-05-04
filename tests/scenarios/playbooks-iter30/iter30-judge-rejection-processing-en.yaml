@@ -1,0 +1,21 @@
+# iter30 test channel — Sendblue (no Apple AID)
+id: iter30_judge_rejection_processing_en
+description: iter30 — rejection_processing skill, en.
+testMode: true
+locale: en-US
+agentId: default
+participant: "+19999992999"
+chatId: "iMessage;+19999992999"
+turnTimeoutMs: 120000
+turns:
+  - user: "got the email back from Anthropic — they passed. I really thought I had this one"
+    assert:
+      reply_min_length: 4
+      judge:
+        criterion: |
+          Reply acknowledges the rejection sting (≤1 sentence). Friend register,
+          not "career coach". Offers ONE open question OR one concrete next-step
+          (asking for feedback, processing fit, etc). NO numbered list,
+          NO AB framework, NO "everything happens for a reason" / "their loss".
+          ≤2 sentences total.
+        threshold: 0.65

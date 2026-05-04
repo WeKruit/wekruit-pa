@@ -1,0 +1,20 @@
+# iter30 test channel — Sendblue (no Apple AID)
+id: iter30_judge_daily_batch_reply_en
+description: iter30 — daily_batch_reply skill, en.
+testMode: true
+locale: en-US
+agentId: default
+participant: "+19999992999"
+chatId: "iMessage;+19999992999"
+turnTimeoutMs: 120000
+turns:
+  - user: "the Stripe one you sent yesterday actually looks pretty good, wanna apply"
+    assert:
+      reply_min_length: 4
+      judge:
+        criterion: |
+          Reply does NOT push more options ("here are 5 similar ones").
+          One open Q on why this one (stack / company / role). One concrete
+          next-step (CV review / cold email / prep). Friend register.
+          ≤2 sentences. NO numbered application checklist.
+        threshold: 0.6

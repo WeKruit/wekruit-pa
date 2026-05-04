@@ -1,0 +1,21 @@
+# iter30 test channel — Sendblue (no Apple AID)
+id: iter30_judge_mom_test_en
+description: iter30 — mom_test skill, en.
+testMode: true
+locale: en-US
+agentId: default
+participant: "+19999992999"
+chatId: "iMessage;+19999992999"
+turnTimeoutMs: 120000
+turns:
+  - user: "honestly, do you think someone with my background can actually make it at Anthropic?"
+    assert:
+      reply_min_length: 4
+      judge:
+        criterion: |
+          Reply does NOT direct yes/no. Does NOT fabricate odds. Reflects
+          the standard ("what does 'making it' look like — landing offer,
+          feeling fit, being employed"). Friend register. ≤2 sentences.
+          NO sycophancy ("you absolutely can!"). NO "believe in yourself"
+          rhetoric.
+        threshold: 0.6

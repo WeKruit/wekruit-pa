@@ -1,0 +1,20 @@
+# iter30 test channel — Sendblue (no Apple AID)
+id: iter30_judge_career_pivot_zh
+description: iter30 — career_pivot skill, zh.
+testMode: true
+locale: zh-CN
+agentId: default
+participant: "+19999992999"
+chatId: "iMessage;+19999992999"
+turnTimeoutMs: 120000
+turns:
+  - user: "做了 5 年后端 真的不想再 debug 了 想转 AI/ML 这块 但是又觉得有点晚"
+    assert:
+      reply_min_length: 4
+      judge:
+        criterion: |
+          Reply asks ONE open question anchoring (a) from→to direction OR
+          (b) what's driving the pivot. Does NOT immediately give a 6-step
+          roadmap. NO "you should consider 3 paths". NO "follow your passion".
+          Friend register, ≤2 sentences.
+        threshold: 0.6

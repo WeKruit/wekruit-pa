@@ -1,0 +1,27 @@
+# iter30 test channel — Sendblue (no Apple AID)
+id: iter30_judge_cv_followup_zh
+description: iter30 — cv_followup skill, zh, post-CV-ingest.
+testMode: true
+locale: zh-CN
+agentId: default
+participant: "+19999992999"
+chatId: "iMessage;+19999992999"
+turnTimeoutMs: 120000
+setup:
+  userPatch:
+    resumeAccepted: "true"
+cleanup:
+  userPatch:
+    resumeAccepted: "false"
+turns:
+  - user: "那我这周末就更新一下简历"
+    assert:
+      reply_min_length: 4
+      judge:
+        criterion: |
+          Reply acknowledges the CV update naturally. Asks ONE open question
+          about the CV or job search (e.g. which role to target, what to
+          highlight, what's changing). Friend register, NOT recruiter tone
+          ("感谢分享你的简历！" is a FAIL). ≤2 sentences.
+          NO "你的背景很 strong". NO numbered checklist.
+        threshold: 0.55

@@ -1,0 +1,21 @@
+# iter30 test channel — Sendblue (no Apple AID)
+id: iter30_judge_return_to_work_zh
+description: iter30 — return_to_work skill, zh, post-maternity.
+testMode: true
+locale: zh-CN
+agentId: default
+participant: "+19999992999"
+chatId: "iMessage;+19999992999"
+turnTimeoutMs: 120000
+turns:
+  - user: "休产假回来一年多了 现在准备开始投简历 有点慌 不知道怎么 explain 这个 gap"
+    assert:
+      reply_min_length: 4
+      judge:
+        criterion: |
+          Reply acknowledges gap anxiety in ≤1 sentence WITHOUT denying it
+          ("the gap doesn't matter at all" is wrong). Offers ONE concrete
+          step (e.g. how to frame on CV, ramp-up pacing). Friend register.
+          ≤2 sentences. NO "you got this!" cheerleading. NO list of 8
+          returnship programs.
+        threshold: 0.6

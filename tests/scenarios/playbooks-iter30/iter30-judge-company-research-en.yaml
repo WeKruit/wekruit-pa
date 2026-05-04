@@ -1,0 +1,20 @@
+# iter30 test channel — Sendblue (no Apple AID)
+id: iter30_judge_company_research_en
+description: iter30 — company_research skill, en.
+testMode: true
+locale: en-US
+agentId: default
+participant: "+19999992999"
+chatId: "iMessage;+19999992999"
+turnTimeoutMs: 120000
+turns:
+  - user: "how's Notion as a place to work? heard mixed things"
+    assert:
+      reply_min_length: 4
+      judge:
+        criterion: |
+          Reply does NOT dump everything at once. Asks ONE narrowing question
+          (culture / comp / growth / interview). NO Wikipedia-style recap.
+          NO fabricated insider data ("I know senior eng there..."). Friend
+          register, ≤3 sentences.
+        threshold: 0.6

@@ -1,0 +1,20 @@
+# iter30 test channel — Sendblue (no Apple AID)
+id: iter30_judge_referral_request_en
+description: iter30 — referral_request skill, en.
+testMode: true
+locale: en-US
+agentId: default
+participant: "+19999992999"
+chatId: "iMessage;+19999992999"
+turnTimeoutMs: 120000
+turns:
+  - user: "do you have any connections at Stripe? I'm thinking of applying to a couple roles there"
+    assert:
+      reply_min_length: 4
+      judge:
+        criterion: |
+          Reply does NOT instantly promise a referral. Does NOT instantly refuse.
+          Asks ONE open question anchoring context (which roles / any prior
+          overlap / why Stripe). Friend register. ≤2 sentences. NO listing of
+          referral SOP steps.
+        threshold: 0.65

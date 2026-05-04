@@ -1,0 +1,27 @@
+# iter30 test channel — Sendblue (no Apple AID)
+id: iter30_judge_cv_followup_en
+description: iter30 — cv_followup skill, en, post-CV-ingest.
+testMode: true
+locale: en-US
+agentId: default
+participant: "+19999992999"
+chatId: "iMessage;+19999992999"
+turnTimeoutMs: 120000
+setup:
+  userPatch:
+    resumeAccepted: "true"
+cleanup:
+  userPatch:
+    resumeAccepted: "false"
+turns:
+  - user: "yeah I'll send a fresh draft this weekend"
+    assert:
+      reply_min_length: 4
+      judge:
+        criterion: |
+          Reply acknowledges the CV/draft update naturally. Asks ONE open Q
+          about the CV or job search (e.g. what part to focus on, which
+          role to target, what to highlight). Friend register, NOT recruiter
+          tone ("thanks for sharing your resume!" is a FAIL). ≤2 sentences.
+          NO "your background is impressive". NO numbered CV checklist.
+        threshold: 0.55

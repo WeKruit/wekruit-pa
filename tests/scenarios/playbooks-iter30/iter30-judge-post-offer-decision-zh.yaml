@@ -1,0 +1,21 @@
+# iter30 test channel — Sendblue (no Apple AID)
+id: iter30_judge_post_offer_decision_zh
+description: iter30 — post_offer_decision skill, zh, multi-offer.
+testMode: true
+locale: zh-CN
+agentId: default
+participant: "+19999992999"
+chatId: "iMessage;+19999992999"
+turnTimeoutMs: 120000
+turns:
+  - user: "现在两个 offer Anthropic 和 一个早期 startup 我真的拿不准 startup 给的多但是风险大"
+    assert:
+      reply_min_length: 4
+      judge:
+        criterion: |
+          Reply does NOT pick one for the user ("I'd take Anthropic"). Names 2-3
+          trade-off dimensions (TC / team / growth path / risk). Asks ONE open
+          Q on which dimension they're least sure on. Friend register.
+          ≤3 sentences. NO pros/cons table, NO numbered scoring system,
+          NO binary "Anthropic 还是 startup".
+        threshold: 0.65

@@ -1,0 +1,20 @@
+# iter30 test channel — Sendblue (no Apple AID)
+id: iter30_judge_post_offer_decision_en
+description: iter30 — post_offer_decision skill, en, single offer hesitation.
+testMode: true
+locale: en-US
+agentId: default
+participant: "+19999992999"
+chatId: "iMessage;+19999992999"
+turnTimeoutMs: 120000
+turns:
+  - user: "Got the offer from Notion but I keep going back and forth on it. The team's smaller than I expected"
+    assert:
+      reply_min_length: 4
+      judge:
+        criterion: |
+          Reply does NOT pick for the user. Names 2-3 trade-off dimensions
+          (team, growth, comp, risk). One open Q on what they're weighing
+          most heavily. Friend register, ≤3 sentences. NO scoring framework,
+          NO "based on the data you should...".
+        threshold: 0.65

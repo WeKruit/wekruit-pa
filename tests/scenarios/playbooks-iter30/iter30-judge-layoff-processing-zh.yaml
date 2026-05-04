@@ -1,0 +1,21 @@
+# iter30 test channel — Sendblue (no Apple AID)
+id: iter30_judge_layoff_processing_zh
+description: iter30 — layoff_processing skill, zh, fresh layoff.
+testMode: true
+locale: zh-CN
+agentId: default
+participant: "+19999992999"
+chatId: "iMessage;+19999992999"
+turnTimeoutMs: 120000
+turns:
+  - user: "今天上午被 layoff 了 整个 team 都没了 现在还有点懵"
+    assert:
+      reply_min_length: 4
+      judge:
+        criterion: |
+          Reply is companion-mode acknowledgment (presence + empathy).
+          NO immediate action talk ("let's update your resume" / "great
+          opportunity to..."). NO rocket emoji / "open to work" rhetoric.
+          NO numbered "5 things to do after a layoff". Friend register
+          (室友 not coach). ≤2 sentences.
+        threshold: 0.7

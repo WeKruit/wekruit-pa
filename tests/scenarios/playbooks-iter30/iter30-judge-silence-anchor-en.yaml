@@ -1,0 +1,19 @@
+# iter30 test channel — Sendblue (no Apple AID)
+id: iter30_judge_silence_anchor_en
+description: iter30 — silence_anchor skill, en.
+testMode: true
+locale: en-US
+agentId: default
+participant: "+19999992999"
+chatId: "iMessage;+19999992999"
+turnTimeoutMs: 120000
+turns:
+  - user: "hey you there?"
+    assert:
+      reply_min_length: 1
+      judge:
+        criterion: |
+          Reply is ultra-short (≤6 words). No recap of previous conversation.
+          No "yes! we were talking about X — wanna continue?". No emoji
+          string. Single short presence acknowledgment.
+        threshold: 0.6

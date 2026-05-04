@@ -1,0 +1,20 @@
+# iter30 test channel — Sendblue (no Apple AID)
+id: iter30_judge_career_pivot_en
+description: iter30 — career_pivot skill, en.
+testMode: true
+locale: en-US
+agentId: default
+participant: "+19999992999"
+chatId: "iMessage;+19999992999"
+turnTimeoutMs: 120000
+turns:
+  - user: "thinking about leaving consulting for product. been at it 6 years and just done"
+    assert:
+      reply_min_length: 4
+      judge:
+        criterion: |
+          Reply asks ONE open Q on (a) target direction OR (b) what's
+          driving the pivot. Does NOT give a 6-step pivot framework.
+          NO "many people who pivot find...". NO "follow your passion".
+          Friend register, ≤2 sentences.
+        threshold: 0.6

@@ -1,0 +1,20 @@
+# iter30 test channel — Sendblue (no Apple AID)
+id: iter30_judge_layoff_processing_en
+description: iter30 — layoff_processing skill, en.
+testMode: true
+locale: en-US
+agentId: default
+participant: "+19999992999"
+chatId: "iMessage;+19999992999"
+turnTimeoutMs: 120000
+turns:
+  - user: "got laid off this morning. whole org got cut. still kinda numb tbh"
+    assert:
+      reply_min_length: 4
+      judge:
+        criterion: |
+          Reply stays in companion mode (presence + empathy). NO immediate
+          action talk ("update your resume now"). NO "great opportunity to
+          pivot!" / rocket-emoji-rhetoric. NO numbered list of post-layoff
+          tasks. Friend register, ≤2 sentences.
+        threshold: 0.7

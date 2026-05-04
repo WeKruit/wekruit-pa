@@ -1,0 +1,20 @@
+# iter30 test channel — Sendblue (no Apple AID)
+id: iter30_judge_return_to_work_en
+description: iter30 — return_to_work skill, en.
+testMode: true
+locale: en-US
+agentId: default
+participant: "+19999992999"
+chatId: "iMessage;+19999992999"
+turnTimeoutMs: 120000
+turns:
+  - user: "been off for 14 months on parental leave, starting to think about going back. kinda nervous about how to handle the gap on my resume"
+    assert:
+      reply_min_length: 4
+      judge:
+        criterion: |
+          Reply ack gap anxiety in ≤1 sentence (does NOT dismiss the gap
+          as irrelevant). Offers ONE concrete step (CV framing or ramp
+          pacing). Friend register, ≤2 sentences. NO "you'll be back in
+          no time!". NO list of returnship programs.
+        threshold: 0.6

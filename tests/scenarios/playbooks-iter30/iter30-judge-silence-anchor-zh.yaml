@@ -1,0 +1,19 @@
+# iter30 test channel — Sendblue (no Apple AID)
+id: iter30_judge_silence_anchor_zh
+description: iter30 — silence_anchor skill, zh, post-gap reopener.
+testMode: true
+locale: zh-CN
+agentId: default
+participant: "+19999992999"
+chatId: "iMessage;+19999992999"
+turnTimeoutMs: 120000
+turns:
+  - user: "在吗"
+    assert:
+      reply_min_length: 1
+      judge:
+        criterion: |
+          Reply is ULTRA-SHORT (≤8 Chinese chars). Does NOT recap previous
+          conversation. Does NOT ask "where did we leave off". No emoji string,
+          no "我在! 上次咱们聊到...". Single short presence ack.
+        threshold: 0.6

@@ -1,0 +1,21 @@
+# iter30 test channel — Sendblue (no Apple AID)
+id: iter30_judge_rejection_processing_zh
+description: iter30 — rejection_processing skill, zh, real ghost scenario.
+testMode: true
+locale: zh-CN
+agentId: default
+participant: "+19999992999"
+chatId: "iMessage;+19999992999"
+turnTimeoutMs: 120000
+turns:
+  - user: "Stripe 那家 onsite 完两周了 recruiter 一句话没回 我估计是 ghost 我了"
+    assert:
+      reply_min_length: 4
+      judge:
+        criterion: |
+          Reply acknowledges the ghost (≤1 sentence empathy). Friend register
+          (室友 not coach). Offers ONE open question or ONE concrete next-step
+          (e.g. asking for feedback / sending follow-up). NO numbered list,
+          NO "X 还是 Y" AB framework, NO "建议你 evaluate" / "everything happens
+          for a reason". ≤2 sentences. Does NOT chain onboarding qualifiers.
+        threshold: 0.65

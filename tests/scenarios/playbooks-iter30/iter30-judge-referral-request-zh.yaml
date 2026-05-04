@@ -1,0 +1,20 @@
+# iter30 test channel — Sendblue (no Apple AID)
+id: iter30_judge_referral_request_zh
+description: iter30 — referral_request skill, zh.
+testMode: true
+locale: zh-CN
+agentId: default
+participant: "+19999992999"
+chatId: "iMessage;+19999992999"
+turnTimeoutMs: 120000
+turns:
+  - user: "你那边能 refer 我去 Anthropic 吗 我准备投他们家的 ML eng"
+    assert:
+      reply_min_length: 4
+      judge:
+        criterion: |
+          Reply does NOT instantly promise a referral. Does NOT instantly refuse.
+          Asks ONE open Q anchoring context (specific role / overlap with
+          existing connection / why this company). Friend register, ≤2 sentences.
+          NO 5-step referral process listing.
+        threshold: 0.65

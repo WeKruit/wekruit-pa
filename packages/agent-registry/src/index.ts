@@ -59,6 +59,23 @@ export {
   getExistingSkillMetadata,
 } from "./skill-defaults.js"
 export type { SkillMetadataV2 } from "./skill-defaults.js"
+// iter30 WS4-B — 13 new skill bodies (V2 schema).
+export {
+  NEW_13_SKILLS,
+  REJECTION_PROCESSING,
+  POST_OFFER_DECISION,
+  REFERRAL_REQUEST,
+  SILENCE_ANCHOR,
+  CV_FOLLOWUP,
+  LAYOFF_PROCESSING,
+  COMPANY_RESEARCH,
+  CAREER_PIVOT,
+  RETURN_TO_WORK,
+  DAILY_BATCH_REPLY,
+  AM_I_AI_CHECK,
+  BOUNDARY_TEST,
+  MOM_TEST,
+} from "./skills-iter30.js"
 // Phase 32 W3 — Personas Firestore CRUD (soul.md three-file pattern).
 export {
   PERSONAS_COLLECTION,
