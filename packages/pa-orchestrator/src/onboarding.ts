@@ -199,11 +199,28 @@ const Q_PROMPTS: Record<
 export function composeOnboardingInput(
   step: OnboardingStep,
   agent: AgentDef,
-  ctx: { userMessage?: string; detectedIntent?: FirstTurnDetection } = {}
+  ctx: {
+    userMessage?: string
+    detectedIntent?: FirstTurnDetection
+    /**
+     * iter30 closure (Adam directive 2026-05-04 "我说完 hello 之后, 为什么
+     * 不开始??"): when true (default), casual_chat / null intents on T0
+     * chain ask_q_role so the 6Q probe visibly starts on T0 instead of T1.
+     * Set false to honor the `PA_ONBOARDING_INTENT_ACK_DISABLED=true`
+     * emergency kill switch — restores the old bare-greeting behavior.
+     */
+    chainCasualOnFresh?: boolean
+  } = {}
 ): string {
   if (step === "send_first_mes") {
     const match = agent.systemPrompt.match(/[Ff]irst\s+message:\s*(.+?)(?:\n|$)/)
-    const firstMes = match?.[1]?.trim() ?? "在呢. 今天找你聊点啥? 🍋"
+    // iter30 closure — bilingual fallback per user lang. Adam directive
+    // 2026-05-04 ("这个柠檬哪里来的? 你没测试英文吗???"): the lemon emoji
+    // 🍋 was hardcoded zh-only and bled into English replies via LLM
+    // translation. Split by language; remove emoji from default greetings.
+    const fbLang = pickLang(ctx.userMessage)
+    const fallback = fbLang === "zh" ? "在呢. 今天找你聊点啥?" : "Here. What's on your mind today?"
+    const firstMes = match?.[1]?.trim() ?? fallback
     // Phase 52 — F1 fix: intent-aware first message. When the user's opening
     // message expressed a high-confidence actionable intent (job_search /
     // visa_check / resume_parse / preference_update), we weave a 1-clause
@@ -259,6 +276,25 @@ export function composeOnboardingInput(
       const ackDirective = INTENT_ACK_DIRECTIVES[ackKey][lang]
       const rolePhrase = Q_PROMPTS.ask_q_role[lang]
       return `[onboarding_step: send_first_mes_with_intent_ack | intent=${detected.intent}] ${ackDirective} The role-direction question to chain (Adam-locked, do not paraphrase): "${rolePhrase}". Total reply: ≤ 2 sentences. No "好的" / "OK" preface. No numbering. No A/B framework like "X 还是 Y?" — the role question already enumerates options. Friend-tone, ${lang === "zh" ? "Mandarin" : "English"} register matching the user's input.`
+    }
+    // iter30 closure — Adam directive 2026-05-04 ("我说完 hello 之后, 为什么
+    // 不开始??"): casual_chat / null / unrecognized intent on a fresh user
+    // should ALSO chain ask_q_role. Previously these fell through to a bare
+    // greeting, which felt passive — Claire said hi, then user had to send
+    // ANOTHER message before the probe started. Now: friendly opener +
+    // chain role-Q in the same reply, so the 6Q chain visibly begins on T0.
+    // abuse intent still falls through to bare greeting (defense-in-depth).
+    // Honors `chainCasualOnFresh: false` for the
+    // `PA_ONBOARDING_INTENT_ACK_DISABLED=true` emergency rollback path.
+    const chainCasual = ctx.chainCasualOnFresh !== false
+    if (
+      chainCasual &&
+      (!detected || detected.intent === null || detected.intent === "casual_chat")
+    ) {
+      const lang = pickLang(ctx.userMessage)
+      const rolePhrase = Q_PROMPTS.ask_q_role[lang]
+      const opener = lang === "zh" ? "嗨, 我在." : "hey, i'm here."
+      return `[onboarding_step: send_first_mes_with_casual_chain] User opened with a casual greeting / ambiguous intent. Reply with a friend-tone short opener like "${opener}" (1 short clause), then chain the role-direction question (Adam-locked, do not paraphrase): "${rolePhrase}". Total reply: ≤ 2 sentences. No emoji. No "好的" / "OK" preface. Friend-tone, ${lang === "zh" ? "Mandarin" : "English"} register matching the user's input.`
     }
     return `[onboarding_step: send_first_mes] Reply EXACTLY with Claire's first_mes: "${firstMes}". Nothing else. No greeting. No explanation.`
   }

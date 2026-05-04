@@ -184,16 +184,17 @@ test("compose: zh visa_check ack — directive contains visa-ack zh template", (
   assert.ok(input.includes("intent=visa_check"))
 })
 
-test("compose: casual_chat → falls back to Adam-locked greeting unchanged", () => {
+test("compose: casual_chat → chains ask_q_role on T0 (iter30 closure: probe starts immediately)", () => {
   const input = composeOnboardingInput("send_first_mes", agent, {
     userMessage: "你好",
     detectedIntent: { intent: "casual_chat", confidence: "high", signals: ["casual_pattern"] },
   })
   assert.ok(
-    input.includes('Reply EXACTLY with Claire\'s first_mes'),
-    "casual_chat must use Adam-locked greeting path, got: " + input
+    input.includes("send_first_mes_with_casual_chain"),
+    "casual_chat must chain role-Q on T0 (iter30 closure), got: " + input
   )
-  assert.ok(input.includes("在呢. 今天找你聊点啥"), "missing first_mes")
+  // Adam-locked role phrase verbatim
+  assert.ok(input.includes("想找啥方向的活"), "missing zh role-Q phrase")
 })
 
 test("compose: abuse intent → falls back to Adam-locked greeting (defense-in-depth)", () => {
@@ -207,11 +208,15 @@ test("compose: abuse intent → falls back to Adam-locked greeting (defense-in-d
   )
 })
 
-test("compose: null intent (no detection passed) → unchanged Adam-locked greeting", () => {
+test("compose: null intent (no detection passed) → chains ask_q_role on T0", () => {
   const input = composeOnboardingInput("send_first_mes", agent, {
     userMessage: "随便聊聊",
   })
-  assert.ok(input.includes('Reply EXACTLY with Claire\'s first_mes'))
+  assert.ok(
+    input.includes("send_first_mes_with_casual_chain"),
+    "null intent must chain role-Q on T0 (iter30 closure), got: " + input
+  )
+  assert.ok(input.includes("想找啥方向的活"), "missing zh role-Q phrase")
 })
 
 test("compose: low-confidence intent → falls back to greeting (only high fires ack)", () => {
@@ -426,7 +431,7 @@ test("integration: turn-0 with en job_search input — en role phrase chained, i
   assert.ok(captures.appliedSteps.some((s) => s.step === "send_first_mes" && s.intentAcked === true))
 })
 
-test("integration: turn-0 with casual greeting — falls to Adam-locked greeting, intentAcked NOT set", async () => {
+test("integration: turn-0 with casual greeting — chains role-Q, intentAcked SET (iter30 closure)", async () => {
   const captures: OnboardingCaptures = {
     systemInputs: [],
     appliedSteps: [],
@@ -440,11 +445,12 @@ test("integration: turn-0 with casual greeting — falls to Adam-locked greeting
   )
   const input = captures.systemInputs[0]?.join("\n") ?? ""
   assert.ok(
-    input.includes('Reply EXACTLY with Claire\'s first_mes'),
-    "casual must use bare greeting, got: " + input
+    input.includes("send_first_mes_with_casual_chain"),
+    "casual must chain role-Q on T0 (iter30 closure), got: " + input
   )
-  assert.ok(!input.includes("send_first_mes_with_intent_ack"))
-  assert.ok(captures.appliedSteps.some((s) => s.step === "send_first_mes" && !s.intentAcked))
+  assert.ok(input.includes("想找啥方向的活"), "missing role-Q phrase")
+  // intentAcked=true so state advances directly to q_role_asked.
+  assert.ok(captures.appliedSteps.some((s) => s.step === "send_first_mes" && s.intentAcked === true))
 })
 
 test("integration: turn-0 with abuse-shaped input — defense-in-depth, falls to greeting, NOT acked", async () => {

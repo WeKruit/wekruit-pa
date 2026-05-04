@@ -940,17 +940,29 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
           detectedIntent = detectFirstTurnIntent(event.body)
         }
       }
-      // We only treat the detection as an "ack" trigger when the intent is
-      // actionable (not casual / abuse / null). casual / abuse / null fall
-      // through to the unchanged Adam-locked greeting.
-      const intentAcked = Boolean(
+      // iter30 closure (Adam directive 2026-05-04 "我说完 hello 之后, 为什么
+      // 不开始??"): casual_chat / null intents now ALSO chain ask_q_role on
+      // the first turn, so the 6Q chain visibly begins on T0 instead of T1.
+      // composeOnboardingInput emits the chained reply directive, and we
+      // advance state directly to q_role_asked so the user's NEXT reply is
+      // parsed by ask_q_role's parser.
+      // abuse intent still falls through to bare greeting (defense-in-depth).
+      const isAckableIntent = Boolean(
         detectedIntent &&
           detectedIntent.confidence === "high" &&
           detectedIntent.intent !== null &&
           detectedIntent.intent !== "casual_chat" &&
-          detectedIntent.intent !== "abuse" &&
-          onboardingStep === "send_first_mes"
+          detectedIntent.intent !== "abuse"
       )
+      const isCasualOrNullChain = Boolean(
+        onboardingStep === "send_first_mes" &&
+          intentAckEnabled &&
+          (!detectedIntent ||
+            detectedIntent.intent === null ||
+            detectedIntent.intent === "casual_chat")
+      )
+      const intentAcked =
+        onboardingStep === "send_first_mes" && (isAckableIntent || isCasualOrNullChain)
       // Adam iter 24/27 — mid-probe suspension. Triggers:
       //   (A) playbook routingHint = "no_chain" (preferred — Firestore-editable)
       //   (B) detectedIntent is one of vent / interview_prep / negotiation /
@@ -984,6 +996,10 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
         const syntheticInput = composeOnboardingInput(onboardingStep, agent, {
           userMessage: event.body,
           detectedIntent,
+          // iter30 closure — when the env kill switch is on, also disable the
+          // casual_chat→role-Q chain so the rollback path restores byte-old
+          // bare-greeting behavior end-to-end.
+          chainCasualOnFresh: intentAckEnabled,
         })
         if (syntheticInput) {
           // Build system inputs for onboarding reply using the normal Voice v1 path.
