@@ -610,6 +610,24 @@ export async function applyOnboardingStep(
       updatedAt: now,
     }
     if (statedPreferencesWrite) payload.statedPreferences = statedPreferencesWrite
+    // iter30 closure (Adam directive 2026-05-03 "不要一直用这些 fking regex,
+    // 可以有但是只能是 helper"): when the orchestrator dispatches
+    // ask_q_resume, we KNOW Claire is proactively asking for the CV — open
+    // the 24h upload gate deterministically here instead of pattern-matching
+    // her reply post-turn. cv-gate-detector regex remains as a fallback for
+    // OTHER skills (cv_followup, headhunter mid-conversation) where the
+    // orchestrator doesn't already have first-class signal. 24h TTL matches
+    // GATE_TTL_MS in cv-gate-detector.ts.
+    if (step === "ask_q_resume") {
+      const expiresAt = new Date(new Date(now).getTime() + 24 * 60 * 60 * 1000).toISOString()
+      payload.resumeAccepted = {
+        at: now,
+        expiresAt,
+        triggerHash: "onboarding_ask_q_resume",
+      }
+      payload.lastAssistantTurnAt = now
+      payload.lastAssistantTurnAskedResume = true
+    }
     await userRef.set(payload, { merge: true })
   }
 }
