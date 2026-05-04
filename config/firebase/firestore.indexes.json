@@ -279,17 +279,6 @@
           "order": "ASCENDING"
         }
       ]
-    },
-    {
-      "_comment": "iter30 WS2 P2 — entity-tag item mutex query: where(mutexGroup==X) in items subcollection",
-      "collectionGroup": "items",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
-          "fieldPath": "mutexGroup",
-          "order": "ASCENDING"
-        }
-      ]
     }
   ],
   "fieldOverrides": []
