@@ -26,6 +26,17 @@ const GATE_REGEX_ZH = [
   /把你的简历发[给]?我/,
   /简历发[给]?我看[一下]?/,
   /把简历[甩贴]给我/,
+  // iter30 closure — ask_q_resume Adam-locked phrase variants. The
+  // proactive 6Q chain ends with "对了, 简历方便发我一份不?" (Q_PROMPTS
+  // .ask_q_resume.zh in onboarding.ts). Without this, the gate stays
+  // closed even though Claire just asked for the CV — and a user uploading
+  // 5min later would hit a "haven't asked yet" rejection. The pattern is
+  // intentionally narrow: "简历...发(我|给我)" (request shape, not
+  // confirmation shape). Caveman tone variants ("简历给我看看",
+  // "简历贴一下") collapse into the existing 简历发[给]?我看 line.
+  /简历(?:方便)?发(?:我|给我)/,
+  // Imperative variant ("发我份简历" / "发份简历给我看")
+  /发(?:我)?份?\s*简历/,
 ]
 
 const GATE_REGEX_EN = [

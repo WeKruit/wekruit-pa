@@ -12,6 +12,17 @@ describe("detectsCvAsk (zh + en bank)", () => {
     assert.equal(detectsCvAsk("你可以发我简历吗"), true)
     assert.equal(detectsCvAsk("把你简历发我"), true)
   })
+  it("matches iter30 ask_q_resume Adam-locked phrase + variants", () => {
+    // The exact phrase Q_PROMPTS.ask_q_resume.zh outputs at the end of the
+    // 6Q chain. Without this, the cv-ingest gate stays closed even though
+    // Claire just proactively asked.
+    assert.equal(
+      detectsCvAsk("对了, 简历方便发我一份不? 后面帮你看 JD / 内推都准多了"),
+      true
+    )
+    assert.equal(detectsCvAsk("简历方便发给我吗"), true)
+    assert.equal(detectsCvAsk("发我份简历看看"), true)
+  })
   it("matches en send-resume phrasings", () => {
     assert.equal(detectsCvAsk("send me your resume"), true)
     assert.equal(detectsCvAsk("Can you send your CV?"), true)
