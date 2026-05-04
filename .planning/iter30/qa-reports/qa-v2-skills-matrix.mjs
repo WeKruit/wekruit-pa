@@ -302,6 +302,10 @@ function checkToneMatch(skillKey, lang, reply) {
 }
 
 async function runCase(c, playbooks) {
+  // Per-case state reset — onboardingState drifts between turns when not
+  // reset, which conflates skill routing tests with onboarding tests.
+  await resetAdminUser()
+  await new Promise((r) => setTimeout(r, 400)) // consistency window
   const predicted = predictRegexMatches(c.text, playbooks)
   const eid = await sendBrokerInbound(c.text)
   let inboundOk = true
