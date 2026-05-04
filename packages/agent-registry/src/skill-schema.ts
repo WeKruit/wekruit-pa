@@ -63,6 +63,14 @@ export const SKILL_KEYS = [
   "am_i_ai_check",
   "boundary_test",
   "mom_test",
+  // iter30 final closure — proactive onboarding probe (Adam directive
+  // 2026-05-03 "用我们的playbook/skill来加…onboarding 的 skill 而且要判断
+  // 一个用户如果已经onboard过了就不需要重复问"). priority 95 (highest in
+  // catalog) + requiresCtxState.onboarding_completed=false ensures it
+  // activates ONLY for incomplete-onboarding users, then conflictsWith
+  // every other skill so the 6Q chain (role / yoe / visa / startup /
+  // location / resume) drives content uninterrupted.
+  "onboarding_probe",
 ] as const
 
 export type SkillKey = (typeof SKILL_KEYS)[number]

@@ -1,5 +1,15 @@
 import type { Firestore } from "firebase-admin/firestore"
+import { FieldValue } from "firebase-admin/firestore"
 import { PA_COLLECTIONS } from "@pa/core-types"
+
+// iter30 WS2 tag-pipeline collection names. Hard-coded here (rather than
+// importing `@wekruit/shared-tags`) to avoid a circular dep — `@pa/memory`
+// is consumed by far more than the tag layer, and `shared-tags` may be
+// extracted to a separate repo (GH Packages publish in iter30 W2).
+const PA_TAG_EVENTS = "pa-tag-events"
+const PA_ENTITY_TAGS = "pa-entity-tags"
+/** EntityRef.kind for PA users — matches `@wekruit/shared-tags` types.ts. */
+const ENTITY_KIND_PA_USER = "pa-user"
 
 /**
  * Single source of truth for clearing all PA memory belonging to one user.
@@ -8,13 +18,29 @@ import { PA_COLLECTIONS } from "@pa/core-types"
  *   - `pa-orchestrator` (in-band magic-string trigger for test users)
  *   - Phase 3 Memory Admin dashboard (HTTP wrapper)
  *
- * Always clears: Qdrant `pa-memory` (semantic memory), `pa-memory-facts`,
- * `pa-memory-actions`, `pa-memory-events`. With `keepMessages: false`
- * (default) also clears `pa-messages`, `pa-agent-turns`, `pa-turns`.
+ * Always clears (memory plane):
+ *   - Qdrant `pa-memory` (semantic memory)
+ *   - `pa-memory-facts`, `pa-memory-actions`, `pa-memory-events`
+ *   - iter30 v2 surfaces: `pa-memory-profiles`, `pa-memory-evolution-events`,
+ *     `pa-conversation-summaries`, `pa-message-archives`, `pa-surprise-events`
+ *   - iter30 WS2 tag pipeline: `pa-tag-events` (where userId), and
+ *     `pa-entity-tags/pa-user:{userId}` doc + `items` subcollection
  *
- * Never touches: `pa-users`, `pa-sessions`, `pa-inbound-events`,
- * `pa-outbound`. The user record + session id are preserved so the next
- * iMessage from the same handle reuses the same Firestore identity.
+ * With `keepMessages: false` (default) also clears `pa-messages`,
+ * `pa-agent-turns`, `pa-turns`.
+ *
+ * User-record reset (iter30 closure — Adam directive 2026-05-03 "我们 __PA_RESET__
+ * 也需要清楚相关tag等memory包括mem0所有的"):
+ *   When `keepMessages` is false (full reset path), also resets these
+ *   `pa-users/{userId}` fields so the next inbound re-runs onboarding cleanly:
+ *     - onboardingState → "pending"
+ *     - statedPreferences → cleared
+ *     - resumeAccepted → cleared
+ *     - resumeId → cleared
+ *
+ * Never touches: `pa-sessions`, `pa-inbound-events`, `pa-outbound`. The
+ * user record + session id are preserved so the next iMessage from the
+ * same handle reuses the same Firestore identity.
  */
 export type ClearUserMemoryDeps = {
   db: Firestore
@@ -117,6 +143,68 @@ async function clearFirestoreCollection(
   return snap.size
 }
 
+/**
+ * iter30 WS2 — clear a user's entity-tags root doc + `items` subcollection.
+ *
+ * Keyed on `pa-entity-tags/pa-user:{userId}` per shared-tags entityKey
+ * convention. Returns the count of items deleted (root doc not counted).
+ */
+async function clearEntityTagsForUser(
+  db: Firestore,
+  userId: string,
+  dryRun: boolean
+): Promise<number> {
+  const entityKey = `${ENTITY_KIND_PA_USER}:${userId}`
+  const rootRef = db.collection(PA_ENTITY_TAGS).doc(entityKey)
+  const itemsSnap = await rootRef.collection("items").get()
+  if (dryRun) return itemsSnap.size
+  if (!itemsSnap.empty) {
+    for (let i = 0; i < itemsSnap.docs.length; i += 400) {
+      const batch = db.batch()
+      for (const doc of itemsSnap.docs.slice(i, i + 400)) batch.delete(doc.ref)
+      await batch.commit()
+    }
+  }
+  // Best-effort root-doc delete. .delete() is a no-op on missing doc.
+  try {
+    await rootRef.delete()
+  } catch {
+    /* swallow — root doc may not exist when the user never produced tags */
+  }
+  return itemsSnap.size
+}
+
+/**
+ * iter30 closure — reset onboarding + resume state on the user record so
+ * the next inbound after a `__PA_RESET__` re-runs the 5-question probe
+ * cleanly (Adam directive 2026-05-03).
+ *
+ * Never throws — wrapped in caller try/catch and logged. Skipped on dryRun.
+ */
+async function resetUserOnboardingState(
+  db: Firestore,
+  userId: string,
+  dryRun: boolean
+): Promise<{ reset: boolean }> {
+  if (dryRun) return { reset: false }
+  await db
+    .collection(PA_COLLECTIONS.users)
+    .doc(userId)
+    .set(
+      {
+        onboardingState: "pending",
+        onboardingStep: FieldValue.delete(),
+        statedPreferences: FieldValue.delete(),
+        resumeAccepted: FieldValue.delete(),
+        resumeId: FieldValue.delete(),
+        lastAssistantTurnAskedResume: FieldValue.delete(),
+        updatedAt: new Date().toISOString(),
+      },
+      { merge: true }
+    )
+  return { reset: true }
+}
+
 export async function clearUserMemory(
   userId: string,
   deps: ClearUserMemoryDeps,
@@ -131,15 +219,32 @@ export async function clearUserMemory(
   log(`[clear-user] qdrant matched=${qdrant.matched} deleted=${qdrant.deleted}`)
 
   const firestore: Record<string, number> = {}
+  // Memory plane — always cleared. iter30 closure adds 5 v2 surfaces +
+  // tag pipeline so reset is a true blank slate.
   const memoryCollections = [
     PA_COLLECTIONS.memoryFacts,
     PA_COLLECTIONS.memoryActions,
     PA_COLLECTIONS.memoryEvents,
+    PA_COLLECTIONS.memoryProfiles,
+    PA_COLLECTIONS.memoryEvolutionEvents,
+    PA_COLLECTIONS.conversationSummaries,
+    PA_COLLECTIONS.messageArchives,
+    PA_COLLECTIONS.surpriseEvents,
+    // iter30 WS2 — tag pipeline events (entity-tags is a subcollection,
+    // handled separately below).
+    PA_TAG_EVENTS,
   ]
   for (const c of memoryCollections) {
     firestore[c] = await clearFirestoreCollection(deps.db, c, userId, dryRun)
     log(`[clear-user] firestore ${c}: ${firestore[c]}`)
   }
+  // iter30 WS2 — entity-tags `pa-entity-tags/pa-user:{userId}/items/*`.
+  // Different shape (subcollection under per-entity root doc), so it gets
+  // its own helper. Bucketed under PA_ENTITY_TAGS in the result for
+  // operator visibility.
+  firestore[PA_ENTITY_TAGS] = await clearEntityTagsForUser(deps.db, userId, dryRun)
+  log(`[clear-user] firestore ${PA_ENTITY_TAGS}: ${firestore[PA_ENTITY_TAGS]} items`)
+
   if (!keepMessages) {
     const transcriptCollections = [
       PA_COLLECTIONS.messages,
@@ -149,6 +254,15 @@ export async function clearUserMemory(
     for (const c of transcriptCollections) {
       firestore[c] = await clearFirestoreCollection(deps.db, c, userId, dryRun)
       log(`[clear-user] firestore ${c}: ${firestore[c]}`)
+    }
+    // iter30 closure — full reset re-arms onboarding probe so the next
+    // inbound triggers the 5Q chain again (Adam: 我们 __PA_RESET__ 也需要
+    // 清楚相关tag等memory包括mem0所有的, 主动问简历).
+    try {
+      const r = await resetUserOnboardingState(deps.db, userId, dryRun)
+      log(`[clear-user] user-record onboarding reset: ${r.reset}`)
+    } catch (err) {
+      log(`[clear-user] user-record reset FAILED: ${err instanceof Error ? err.message : String(err)}`)
     }
   }
 

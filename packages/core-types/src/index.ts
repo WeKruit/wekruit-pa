@@ -48,6 +48,9 @@ export const OnboardingStateSchema = z.enum([
   "q_visa_asked",
   "q_startup_pref_asked",
   "q_location_asked",
+  // iter30 closure (Adam directive 2026-05-03 "主动问简历"): proactive resume
+  // request as the final probe step before transitioning to complete.
+  "q_resume_asked",
   "complete",
 ])
 export type OnboardingState = z.infer<typeof OnboardingStateSchema>

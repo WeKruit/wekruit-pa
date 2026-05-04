@@ -159,7 +159,7 @@ async function ensureScenarioTestUser(db, scenario) {
  *
  * Scenarios MUST also have `testMode: true`. Refuses to run otherwise.
  */
-const ALLOWED_USER_PATCH_FIELDS = new Set(["mem0UserId"])
+const ALLOWED_USER_PATCH_FIELDS = new Set(["mem0UserId", "onboardingStatus", "onboardingStep", "onboardingState"])
 
 async function applyUserPatch(db, userId, patchSpec, label) {
   if (!patchSpec || typeof patchSpec !== "object") return

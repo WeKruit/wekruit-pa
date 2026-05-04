@@ -342,7 +342,7 @@ test("(h3) evaluateCtxState: derives flags correctly", () => {
       preferences: [],
       resumeAccepted: true,
       resumeParseCount: 1,
-      onboardingState: "done",
+      onboardingState: "complete",
     },
     recentTurns: Array.from({ length: 5 }).map((_, i) => ({
       id: `t${i}`,

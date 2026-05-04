@@ -46,6 +46,7 @@ export type OnboardingStep =
   | "ask_q_visa"
   | "ask_q_startup_pref"
   | "ask_q_location"
+  | "ask_q_resume" // iter30 closure — proactive resume request after location.
   | "complete"
   | "skip"
 
@@ -74,7 +75,8 @@ export function resolveOnboardingStep(
     if (state === "q_yoe_asked") return "ask_q_visa"
     if (state === "q_visa_asked") return "ask_q_startup_pref"
     if (state === "q_startup_pref_asked") return "ask_q_location"
-    if (state === "q_location_asked") return "complete"
+    if (state === "q_location_asked") return "ask_q_resume"
+    if (state === "q_resume_asked") return "complete"
     // Legacy v1 state encountered with v2 on — treat grounding_q1_asked as
     // already-grounded; advance to complete (don't re-probe the user).
     if (state === "grounding_q1_asked") return "complete"
@@ -149,7 +151,7 @@ function pickLang(userMessage: string | undefined): "zh" | "en" {
 
 /** Friend-tone bilingual prompts — Adam-locked tone, do NOT paraphrase. */
 const Q_PROMPTS: Record<
-  "ask_q_role" | "ask_q_yoe" | "ask_q_visa" | "ask_q_startup_pref" | "ask_q_location",
+  "ask_q_role" | "ask_q_yoe" | "ask_q_visa" | "ask_q_startup_pref" | "ask_q_location" | "ask_q_resume",
   { zh: string; en: string }
 > = {
   ask_q_role: {
@@ -171,6 +173,14 @@ const Q_PROMPTS: Record<
   ask_q_location: {
     zh: "想找哪边的工作? 湾区、纽约、还是看远程?",
     en: "where you wanna be? SF / NYC / remote ok?",
+  },
+  // iter30 closure — proactive resume request. Friend-tone, low-friction;
+  // signals "for matching, not gatekeeping". cv-gate-detector regex
+  // (`/发简历给我/`, `/send.*your\s+resume/i`) catches this phrasing and
+  // opens the 24h upload gate automatically.
+  ask_q_resume: {
+    zh: "对了, 简历方便发我一份不? 后面帮你看 JD / 内推都准多了",
+    en: "btw — can you send me your resume? makes JD review and referrals way more on-point",
   },
 }
 
@@ -260,7 +270,8 @@ export function composeOnboardingInput(
     step === "ask_q_yoe" ||
     step === "ask_q_visa" ||
     step === "ask_q_startup_pref" ||
-    step === "ask_q_location"
+    step === "ask_q_location" ||
+    step === "ask_q_resume"
   ) {
     // Adam iter 24 — mid-probe suspension. Two triggers, both emit empathetic
     // ack instead of the bare q_X question:
@@ -319,6 +330,7 @@ const ONBOARDING_NEXT_STATE: Partial<Record<OnboardingStep, OnboardingState>> = 
   ask_q_visa: "q_visa_asked",
   ask_q_startup_pref: "q_startup_pref_asked",
   ask_q_location: "q_location_asked",
+  ask_q_resume: "q_resume_asked",
   complete: "complete",
 }
 
@@ -451,6 +463,14 @@ export function userAnsweredStep(
   }
   if (step === "ask_q_location") {
     return /(remote|在家|远程|wfh|湾区|bay\s*area|sf\b|san\s*francisco|ny\b|纽约|new\s*york|nyc|seattle|西雅图|la\b|los\s*angeles|洛杉矶|波士顿|boston|chicago|austin|texas|tx\b)/i.test(r)
+  }
+  if (step === "ask_q_resume") {
+    // Resume answer is acceptance/decline/defer — any short reply counts as
+    // an "answered" so we advance past the ask. Actual resume upload happens
+    // out-of-band via Sendblue attachment + cv-ingest pipeline; the gate
+    // opens automatically because the ask_q_resume phrase matches
+    // cv-gate-detector regex (`/发简历给我/`, `/send.*your\s+resume/i`).
+    return r.length >= 1
   }
   return false
 }

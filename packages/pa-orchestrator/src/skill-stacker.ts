@@ -96,7 +96,7 @@ export function satisfiesRequirement(
  *   - conversation_warmed: ctx.recentTurns.length >= 3
  *   - job_search_active: any active skill provides "intent:job_search" OR
  *     active set includes "headhunter".
- *   - onboarding_completed: ctx.userProfile.onboardingState === "done"
+ *   - onboarding_completed: ctx.userProfile.onboardingState === "complete"
  */
 export function evaluateCtxState(
   ctx: ClaireContext,
@@ -118,7 +118,10 @@ export function evaluateCtxState(
 
   const resume_recently_accepted = Boolean(ctx.userProfile?.resumeAccepted)
   const conversation_warmed = (ctx.recentTurns?.length ?? 0) >= 3
-  const onboarding_completed = ctx.userProfile?.onboardingState === "done"
+  // onboarding.ts writes "complete" on q_location_asked → next; legacy v1 also
+  // resolves to "complete". "done" was a doc-only typo from earlier draft —
+  // never written by any code path.
+  const onboarding_completed = ctx.userProfile?.onboardingState === "complete"
 
   const job_search_active =
     active.some((s) => s.provides.includes("intent:job_search")) ||

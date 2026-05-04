@@ -71,7 +71,19 @@ function makeEmptyFirestoreFake(): Firestore {
     docs: [],
   } as unknown
   const where = () => ({ get: async () => empty })
-  const collection = () => ({ where, get: async () => empty })
+  // iter30 closure adds clearEntityTagsForUser() (subcollection delete) +
+  // resetUserOnboardingState() (user-doc set/merge). Both go through
+  // collection().doc() instead of where(). Stub with a noop ref.
+  const docRef = {
+    collection: () => ({ get: async () => empty }),
+    delete: async () => undefined,
+    set: async () => undefined,
+  }
+  const collection = () => ({
+    where,
+    get: async () => empty,
+    doc: () => docRef,
+  })
   return { collection } as unknown as Firestore
 }
 

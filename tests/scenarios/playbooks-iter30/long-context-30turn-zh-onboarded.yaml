@@ -1,0 +1,55 @@
+id: pbk_iter30_long_context_30turn_zh_onboarded
+description: |
+  iter30 final closure — 30-turn long-context drift stress (zh) with PRE-ONBOARDED
+  test user, so the orchestrator routes through the iter30 main pipeline (skill
+  stacker + multi-skill compose + shadow guardrail chain) instead of the
+  onboarding-suspended fallback path.
+
+  Adam directive 2026-05-03: "全部跑通". This scenario is the iter30-true E2E
+  validator — without onboardingStatus=active, the previous 30-turn-zh.yaml
+  was effectively measuring onboarding fallback quality, NOT iter30 features.
+testMode: true
+locale: zh-CN
+agentId: default
+participant: "+19999992772"
+chatId: "iMessage;+19999992772"
+turnTimeoutMs: 120000
+setup:
+  userPatch:
+    onboardingStatus: "active"
+    onboardingState: "complete"
+turns:
+  - user: "我快崩溃了 工作压力太大了 烦死了"
+    assert:
+      reply_min_length: 4
+  - user: "我又焦虑了 睡不着"
+  - user: "感觉自己快撑不住了"
+  - user: "今天面试又翻车了"
+  - user: "再帮我想想怎么办?"
+  - user: "我又开始自我怀疑了"
+  - user: "压力大得喘不过气"
+  - user: "再给点建议?"
+  - user: "今天又投了 5 份简历, 都没回"
+  - user: "我感觉自己在原地踏步"
+  - user: "你能换个角度说吗"
+  - user: "再来一次?"
+  - user: "我又陷入死循环了"
+  - user: "你能换个方式说吗"
+  - user: "我又焦虑得睡不着"
+  - user: "你还有别的建议吗"
+  - user: "我又卡在原地了"
+  - user: "再给我点动力?"
+  - user: "我感觉自己在原地踏步"
+  - user: "再说一次?"
+  - user: "我又开始钻牛角尖"
+  - user: "你能给点新的吗"
+  - user: "我又陷在情绪里了"
+  - user: "再帮我看看出路?"
+  - user: "今天又是焦虑的一天"
+  - user: "你还有什么角度吗"
+  - user: "我又开始焦虑了"
+  - user: "再来一次?"
+  - user: "我又翻车了第四次"
+  - user: "最后再帮我想想?"
+    assert:
+      voice_axes_full: true

@@ -126,6 +126,60 @@ export const EXISTING_6_METADATA: Record<SkillKey, SkillMetadataV2 | null> = {
   am_i_ai_check: null,
   boundary_test: null,
   mom_test: null,
+  // iter30 final closure — proactive onboarding probe.
+  //
+  // Architecture: this skill is the ACTIVATION GATE; the 6Q content + state
+  // machine lives in `packages/pa-orchestrator/src/onboarding.ts` (the
+  // existing v2 chain extended with `ask_q_resume` step). The skill's only
+  // job is to (a) activate ONLY when onboarding is incomplete via
+  // `requiresCtxState.onboarding_completed=false`, (b) conflict with every
+  // other skill so vent / headhunter / jd_roast can't hijack the
+  // proactive-question turn, and (c) inject a tone-constraint addendum
+  // (the literal Q phrase is injected by `composeOnboardingInput`).
+  onboarding_probe: {
+    intentDescription:
+      "Activate when user has not completed onboarding (onboardingState != 'complete'). Drives the proactive 6-question chain (role → yoe → visa → startup-vs-corp → location → resume), one per turn. Skips entirely once onboarding is complete — never re-probes a returning user. Resets to active when __PA_RESET__ clears the user (clearUserMemory writes onboardingState=pending).",
+    provides: ["stance:advisor", "tone:friend-roommate", "mode:onboarding_probe", "intent:onboarding"],
+    requires: [],
+    requiresCtxState: { onboarding_completed: false },
+    composableWith: [],
+    // Onboarding takes priority over EVERY skill — the orchestrator's
+    // `composeOnboardingInput` already produces the exact directive line
+    // for the current step, so other skills must not inject additional
+    // addenda or LLM would produce a frankenturn (greeting + role-Q +
+    // jd-roast tone all at once).
+    conflictsWith: [
+      "headhunter",
+      "vent_support",
+      "motivation_nudge",
+      "jd_roast",
+      "interview_prep",
+      "negotiation",
+      "rejection_processing",
+      "post_offer_decision",
+      "referral_request",
+      "silence_anchor",
+      "cv_followup",
+      "layoff_processing",
+      "company_research",
+      "career_pivot",
+      "return_to_work",
+      "daily_batch_reply",
+      "am_i_ai_check",
+      "boundary_test",
+      "mom_test",
+    ],
+    // Highest priority in the catalog. Crisis pseudo-skill (vent at 80) is
+    // the floor for everything else; onboarding_probe sits ABOVE crisis
+    // because we never want a brand-new user to be hijacked into vent
+    // mirroring on turn 0 (intent-aware first_mes already routes vent
+    // separately via INTENT_ACK_DIRECTIVES — onboarding_probe still wins
+    // because composeOnboardingInput dispatches to the suspended branch
+    // when ventLike fires).
+    priority: 95,
+    allowedTools: [],
+    llmInvokable: true,
+  },
 }
 
 /** Convenience helper: returns only the 6 existing keys with metadata. */

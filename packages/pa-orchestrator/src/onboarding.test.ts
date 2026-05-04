@@ -207,6 +207,10 @@ test("v2: q_role_asked → ask_q_yoe → ask_q_visa → ask_q_startup_pref → a
   )
   assert.equal(
     resolveOnboardingStep({ ...baseUser, onboardingState: "q_location_asked" }, v2),
+    "ask_q_resume"
+  )
+  assert.equal(
+    resolveOnboardingStep({ ...baseUser, onboardingState: "q_resume_asked" }, v2),
     "complete"
   )
 })
