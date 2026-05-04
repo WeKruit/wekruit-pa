@@ -34,6 +34,12 @@ import { handleSendblueWebhook } from "./sendblue/webhook.js"
 import { paSendblueOutboxHandler } from "./sendblue/outbox.js"
 import { sendReaction as defaultSendReaction } from "./sendblue/send-reaction.js"
 
+// iter31 — Mailgun transport for email-verification step in onboarding.
+import {
+  generateVerificationCode,
+  sendVerificationEmail as sendVerificationEmailViaMailgun,
+} from "./email/mailgun.js"
+
 // v1.5 Stream-D — message coalescer (paMessageCoalesceEnabled flag-gated)
 import {
   GoogleCloudTasksClient,
@@ -112,6 +118,17 @@ const SENDBLUE_API_KEY_ID = defineSecret("SENDBLUE_API_KEY_ID")
 const SENDBLUE_API_SECRET_KEY = defineSecret("SENDBLUE_API_SECRET_KEY")
 const SENDBLUE_WEBHOOK_SIGNING_SECRET = defineSecret("SENDBLUE_WEBHOOK_SIGNING_SECRET")
 const SENDBLUE_FROM_NUMBER = defineSecret("SENDBLUE_FROM_NUMBER")
+
+// iter31 — Mailgun secrets for email-verification step in onboarding.
+// Populate via:
+//   echo -n "$KEY" | firebase functions:secrets:set MAILGUN_API_KEY --data-file=-
+//   echo -n "mg.wekruit.com" | firebase functions:secrets:set MAILGUN_DOMAIN --data-file=-
+//   echo -n "Claire <claire@mg.wekruit.com>" | firebase functions:secrets:set MAILGUN_FROM --data-file=-
+//   echo -n "us" | firebase functions:secrets:set MAILGUN_REGION --data-file=-   # optional, default us
+const MAILGUN_API_KEY = defineSecret("MAILGUN_API_KEY")
+const MAILGUN_DOMAIN = defineSecret("MAILGUN_DOMAIN")
+const MAILGUN_FROM = defineSecret("MAILGUN_FROM")
+const MAILGUN_REGION = defineSecret("MAILGUN_REGION")
 
 // Phase 31 — Upstream Event Connector HMAC shared secret. Distinct from
 // Sendblue secrets so a compromised upstream partner cannot forge inbound
@@ -369,7 +386,72 @@ async function claimBrokerEvent(db: Firestore, data: BrokerImessageEvent): Promi
   })
 }
 
-async function processBrokerImessageEvent(db: Firestore, data: BrokerImessageEvent): Promise<number> {
+// iter31 — orchestrator deps factory. Builds the Mailgun callback (or null
+// when secrets are unset). Called per-inbound so secret values are read
+// fresh; cheap because defineSecret().value() is cached by Cloud Functions.
+function makeOrchestratorDeps(): import("@pa/pa-orchestrator").OrchestratorStoreDeps {
+  let mailgunApiKey = ""
+  let mailgunDomain = ""
+  let mailgunFrom = ""
+  let mailgunRegion: "us" | "eu" | undefined
+  try {
+    mailgunApiKey = MAILGUN_API_KEY.value().trim()
+    mailgunDomain = MAILGUN_DOMAIN.value().trim()
+    mailgunFrom = MAILGUN_FROM.value().trim()
+    const region = MAILGUN_REGION.value().trim().toLowerCase()
+    mailgunRegion = region === "eu" ? "eu" : "us"
+  } catch {
+    // Secrets unset → all fields empty → callback returns null below.
+  }
+  if (!mailgunApiKey || !mailgunDomain || !mailgunFrom) {
+    return {}
+  }
+  const cfg = {
+    apiKey: mailgunApiKey,
+    domain: mailgunDomain,
+    from: mailgunFrom,
+    region: mailgunRegion,
+  }
+  return {
+    sendVerificationEmail: async (email: string) => {
+      const code = generateVerificationCode()
+      const sentAt = nowIso()
+      const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString()
+      try {
+        const result = await sendVerificationEmailViaMailgun(cfg, {
+          to: email,
+          code,
+        })
+        if (!result.ok) {
+          logger.warn("[mailgun] send failed", {
+            email,
+            status: result.status,
+            response: result.rawResponse?.slice(0, 200),
+          })
+          return null
+        }
+        return {
+          rawCode: code,
+          sentAt,
+          expiresAt,
+          ...(result.messageId ? { providerMessageId: result.messageId } : {}),
+        }
+      } catch (err) {
+        logger.error("[mailgun] send threw", {
+          email,
+          err: err instanceof Error ? err.message : String(err),
+        })
+        return null
+      }
+    },
+  }
+}
+
+async function processBrokerImessageEvent(
+  db: Firestore,
+  data: BrokerImessageEvent,
+  deps: import("@pa/pa-orchestrator").OrchestratorStoreDeps = {}
+): Promise<number> {
   const claimed = await claimBrokerEvent(db, data)
   if (!claimed) return 0
   const payload = claimed.rawPayload
@@ -431,7 +513,7 @@ async function processBrokerImessageEvent(db: Firestore, data: BrokerImessageEve
     { userId: user.id, sessionId: session.id, externalChatId, from: payload.participant, body: payload.text.trim() },
     { merge: true }
   )
-  await processInboundEvent(event, createFirestoreOrchestratorStore(db))
+  await processInboundEvent(event, createFirestoreOrchestratorStore(db, deps))
   return 1
 }
 
@@ -439,7 +521,20 @@ export const onPaInbound = onDocumentCreated(
   {
     document: "pa-inbound-events/{eventId}",
     region: "us-central1",
-    secrets: [SILICONFLOW_API_KEY, PA_OPENAI_AGENT_API_KEY, QDRANT_URL, QDRANT_API_KEY],
+    secrets: [
+      SILICONFLOW_API_KEY,
+      PA_OPENAI_AGENT_API_KEY,
+      QDRANT_URL,
+      QDRANT_API_KEY,
+      // iter31 — Mailgun for email-verification onboarding step. All
+      // optional at runtime: if any value is empty, sendVerificationEmail
+      // returns null and the orchestrator falls through to complete-without-
+      // verification.
+      MAILGUN_API_KEY,
+      MAILGUN_DOMAIN,
+      MAILGUN_FROM,
+      MAILGUN_REGION,
+    ],
     memory: "1GiB",
     timeoutSeconds: 300,
     concurrency: 1,
@@ -543,9 +638,13 @@ export const onPaInbound = onDocumentCreated(
     // (apps/functions/src/sendblue/webhook.ts); onPaInbound runs the
     // default Claire orchestrator path UNCONDITIONALLY for every event.
     try {
+      // iter31 — Mailgun transport callback for the email-verification
+      // onboarding step. Returns null when secrets are empty, signaling the
+      // orchestrator to fall through to complete-without-verification.
+      const orchestratorDeps = makeOrchestratorDeps()
       const processed = isBrokerImessageEvent(data)
-        ? await processBrokerImessageEvent(db, data)
-        : await claimAndProcessInboundEvent(db, data.id)
+        ? await processBrokerImessageEvent(db, data, orchestratorDeps)
+        : await claimAndProcessInboundEvent(db, data.id, undefined, orchestratorDeps)
       logger.info("onPaInbound processed", { eventId: data.id, userId: "userId" in data ? data.userId : undefined, processed })
     } catch (err) {
       logger.error("onPaInbound failed", {
@@ -663,6 +762,110 @@ export const memoryAdmin = onRequest(
     }
   }
 )
+
+// =============================================================================
+// iter31 — Human-in-the-loop runtime-mode admin endpoint.
+// Adam directive 2026-05-04 ("human in the loop -> intervene conversation
+// (pause & resume)"). Operator flips user.runtimeMode to "paused" or "auto"
+// + records audit (runtimeModeAt + runtimeModeSetBy + runtimeModeReason).
+//
+// On pause: orchestrator skips reply generation but still appends inbound to
+// pa-messages so memory + audit are preserved.
+// On resume: NO confirmation reply is auto-emitted; the next user inbound
+// flows through the normal path.
+// =============================================================================
+export const paRuntimeMode = onRequest(
+  {
+    region: "us-central1",
+    memory: "256MiB",
+    timeoutSeconds: 30,
+    cors: false,
+  },
+  async (req, res) => {
+    setCors(res)
+    if (req.method === "OPTIONS") {
+      res.status(204).send("")
+      return
+    }
+    try {
+      const decoded = await requireDashboardAdmin(req)
+      const userId = String(req.query.userId ?? req.body?.userId ?? "").trim()
+      if (!userId) {
+        sendJson(res, 400, { error: "userId is required" })
+        return
+      }
+      const db = getFirestore()
+      const userRef = db.collection(PA_COLLECTIONS.users).doc(userId)
+      if (req.method === "GET") {
+        const snap = await userRef.get()
+        if (!snap.exists) {
+          sendJson(res, 404, { error: "user_not_found", userId })
+          return
+        }
+        const u = snap.data() as {
+          runtimeMode?: "auto" | "paused"
+          runtimeModeAt?: string
+          runtimeModeSetBy?: string
+          runtimeModeReason?: string
+        }
+        sendJson(res, 200, {
+          userId,
+          runtimeMode: u.runtimeMode ?? "auto",
+          runtimeModeAt: u.runtimeModeAt,
+          runtimeModeSetBy: u.runtimeModeSetBy,
+          runtimeModeReason: u.runtimeModeReason,
+        })
+        return
+      }
+      if (req.method === "POST") {
+        const mode = String(req.body?.mode ?? "").trim()
+        if (mode !== "paused" && mode !== "auto") {
+          sendJson(res, 400, { error: "mode must be 'paused' or 'auto'" })
+          return
+        }
+        const reason = String(req.body?.reason ?? "").trim().slice(0, 500)
+        const now = nowIso()
+        const setBy = decoded.email ?? decoded.uid ?? "operator"
+        const patch: Record<string, unknown> = {
+          runtimeMode: mode,
+          runtimeModeAt: now,
+          runtimeModeSetBy: setBy,
+          updatedAt: now,
+        }
+        if (reason) patch.runtimeModeReason = reason
+        await userRef.set(patch, { merge: true })
+        // Append audit row for forensic traceability.
+        try {
+          await db.collection(PA_COLLECTIONS.auditEvents).add({
+            kind: "hitl_runtime_mode",
+            userId,
+            actor: setBy,
+            createdAt: now,
+            message: `Runtime mode set to ${mode}`,
+            meta: { mode, reason: reason || null },
+          })
+        } catch (auditErr) {
+          logger.warn("paRuntimeMode audit write failed", {
+            userId,
+            err: auditErr instanceof Error ? auditErr.message : String(auditErr),
+          })
+        }
+        sendJson(res, 200, { ok: true, userId, mode, runtimeModeAt: now, setBy })
+        return
+      }
+      sendJson(res, 405, { error: "Method not allowed" })
+    } catch (err) {
+      const rawStatus = typeof err === "object" && err && "status" in err ? Number((err as { status: unknown }).status) : 500
+      const status = Number.isFinite(rawStatus) ? rawStatus : 500
+      logger.warn("paRuntimeMode failed", { status, error: err instanceof Error ? err.message : String(err) })
+      sendJson(res, status, { error: err instanceof Error ? err.message : String(err) })
+    }
+  }
+)
+export const paHealthRuntimeMode = makeHealthHandler({
+  name: "paRuntimeMode",
+  requiredSecrets: [],
+})
 
 // =============================================================================
 // Phase 21 — Sendblue channel migration (CHANNEL-01, CHANNEL-05)
