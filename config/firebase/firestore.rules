@@ -1,6 +1,6 @@
 rules_version = '2';
 // Personal assistant platform collections — namespaced (pa-*) in shared project wekruit-5f89b.
-// macOS worker uses Admin SDK and bypasses these rules.
+// macOS worker / Cloud Functions use Admin SDK and bypass these rules.
 // Dashboard: allow any signed-in user whose email is @wekruit.com, or the allowlisted address below.
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -16,10 +16,15 @@ service cloud.firestore {
           || request.auth.token.email.lower() == "indolencorlol@gmail.com"
         );
     }
+
+    // ─── Core entity collections ─────────────────────────────────────
     match /pa-users/{id} {
       allow read, write: if isPaOperator();
     }
     match /pa-agents/{id} {
+      allow read, write: if isPaOperator();
+    }
+    match /pa-agent-versions/{id} {
       allow read, write: if isPaOperator();
     }
     match /pa-sessions/{id} {
@@ -28,16 +33,21 @@ service cloud.firestore {
     match /pa-messages/{id} {
       allow read, write: if isPaOperator();
     }
-    match /pa-remote-config/{id} {
+    match /pa-message-archives/{id} {
       allow read, write: if isPaOperator();
     }
-    match /pa-outbound/{id} {
+    match /pa-conversation-summaries/{id} {
       allow read, write: if isPaOperator();
     }
+    match /pa-session-links/{id} {
+      allow read, write: if isPaOperator();
+    }
+
+    // ─── Inbound / outbound / events ─────────────────────────────────
     match /pa-inbound-events/{id} {
       allow read, write: if isPaOperator();
     }
-    match /pa-agent-turns/{id} {
+    match /pa-outbound/{id} {
       allow read, write: if isPaOperator();
     }
     match /pa-tool-calls/{id} {
@@ -52,17 +62,15 @@ service cloud.firestore {
     match /pa-abuse-events/{id} {
       allow read, write: if isPaOperator();
     }
-    match /pa-session-links/{id} {
+    match /pa-surprise-events/{id} {
       allow read, write: if isPaOperator();
     }
-    match /pa-memory-events/{id} {
-      allow read, write: if isPaOperator();
-    }
-    match /pa-beta-participants/{id} {
-      allow read, write: if isPaOperator();
-    }
-    // Operator overview surfaces (read-only from dashboard; orchestrator writes via Admin SDK)
+
+    // ─── Turns / scheduled / heartbeats (Operator overview) ──────────
     match /pa-turns/{id} {
+      allow read, write: if isPaOperator();
+    }
+    match /pa-agent-turns/{id} {
       allow read, write: if isPaOperator();
     }
     match /pa-scheduled-jobs/{id} {
@@ -71,17 +79,112 @@ service cloud.firestore {
     match /pa-runtime-heartbeats/{id} {
       allow read, write: if isPaOperator();
     }
-    // iter30/WS8 — operator-editable match weight tables (per-table doc + items subcollection).
+    match /pa-worker-cursors/{id} {
+      allow read, write: if isPaOperator();
+    }
+
+    // ─── Memory subsystem ────────────────────────────────────────────
+    match /pa-memory-events/{id} {
+      allow read, write: if isPaOperator();
+    }
+    match /pa-memory-actions/{id} {
+      allow read, write: if isPaOperator();
+    }
+    match /pa-memory-facts/{id} {
+      allow read, write: if isPaOperator();
+    }
+    match /pa-memory-profiles/{id} {
+      allow read, write: if isPaOperator();
+    }
+    match /pa-memory-evolution-events/{id} {
+      allow read, write: if isPaOperator();
+    }
+
+    // ─── Handbook + personas + playbooks (configurable behavior) ─────
+    match /pa-handbooks/{slug} {
+      allow read, write: if isPaOperator();
+      match /versions/{v} {
+        allow read, write: if isPaOperator();
+      }
+    }
+    match /pa-personas/{id} {
+      allow read, write: if isPaOperator();
+      match /versions/{v} {
+        allow read, write: if isPaOperator();
+      }
+    }
+    match /pa-playbooks/{key} {
+      allow read, write: if isPaOperator();
+      match /versions/{v} {
+        allow read, write: if isPaOperator();
+      }
+      match /audit/{id} {
+        allow read, write: if isPaOperator();
+      }
+    }
+
+    // ─── Feature flags + remote config ───────────────────────────────
+    match /pa-feature-flags/{id} {
+      allow read, write: if isPaOperator();
+    }
+    match /pa-remote-config/{id} {
+      allow read, write: if isPaOperator();
+    }
+
+    // ─── Triggers (upstream + downstream) ────────────────────────────
+    match /pa-upstream-templates/{id} {
+      allow read, write: if isPaOperator();
+    }
+    match /pa-downstream-triggers/{id} {
+      allow read, write: if isPaOperator();
+    }
+    match /pa-trigger-fires/{id} {
+      allow read, write: if isPaOperator();
+    }
+
+    // ─── Beta + voice eval ───────────────────────────────────────────
+    match /pa-beta-participants/{id} {
+      allow read, write: if isPaOperator();
+    }
+    match /pa-voice-eval-runs/{id} {
+      allow read, write: if isPaOperator();
+    }
+    match /pa-voice-reviews/{id} {
+      allow read, write: if isPaOperator();
+    }
+
+    // ─── iter30/WS8 — match weights + explainer ──────────────────────
     match /pa-match-weight-tables/{tableKey} {
       allow read, write: if isPaOperator();
       match /items/{skillKey} {
         allow read, write: if isPaOperator();
       }
+      match /audit/{id} {
+        allow read, write: if isPaOperator();
+      }
     }
-    // iter30/WS8 — explainer cache; cloud functions bypass via Admin SDK for writes.
     match /pa-job-rec-explanations/{id} {
       allow read, write: if isPaOperator();
     }
+
+    // ─── iter30/WS2 — tag pipeline (canonical + events + entity) ─────
+    match /pa-canonical-tags/{tagKey} {
+      allow read, write: if isPaOperator();
+    }
+    match /pa-tag-events/{eventId} {
+      allow read, write: if isPaOperator();
+    }
+    match /pa-entity-tags/{entityId} {
+      allow read, write: if isPaOperator();
+      match /items/{tagKey} {
+        allow read, write: if isPaOperator();
+      }
+    }
+    match /pa-alerts/{id} {
+      allow read, write: if isPaOperator();
+    }
+
+    // ─── Default deny ────────────────────────────────────────────────
     match /{document=**} {
       allow read, write: if false;
     }

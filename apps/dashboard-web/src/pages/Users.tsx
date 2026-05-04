@@ -23,6 +23,7 @@ type ConversationStatus = "active" | "idle" | "blocked" | "failed" | "provisiona
 type Row = {
   id: string
   phoneE164?: string
+  testMode?: boolean
   onboardingStatus?: string
   activeAgentId?: string
   createdAt?: string
@@ -87,6 +88,7 @@ export function Users() {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState("")
   const [filter, setFilter] = useState("all")
+  const [showTest, setShowTest] = useState(false)
 
   useEffect(() => {
     ;(async () => {
@@ -168,6 +170,8 @@ export function Users() {
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase()
     return rows.filter((r) => {
+      // Hide test users by default (toggle to show)
+      if (!showTest && r.testMode === true) return false
       const haystack = `${r.id} ${r.phoneE164 ?? ""} ${r.activeAgentId ?? ""} ${r.latestMessage ?? ""}`.toLowerCase()
       const matchesSearch = !q || haystack.includes(q)
       const matchesFilter =
@@ -178,7 +182,7 @@ export function Users() {
         (filter === "provisional" && r.status === "provisional")
       return matchesSearch && matchesFilter
     })
-  }, [filter, rows, search])
+  }, [filter, rows, search, showTest])
   if (err) return <ErrorState message={err} />
 
   return (
@@ -202,6 +206,14 @@ export function Users() {
           <option value="active">Active</option>
           <option value="provisional">Provisional</option>
         </select>
+        <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.875rem" }}>
+          <input
+            type="checkbox"
+            checked={showTest}
+            onChange={(e) => setShowTest(e.target.checked)}
+          />
+          Show test users
+        </label>
       </div>
       {loading ? <div className="panel">Loading conversations...</div> : null}
       {!loading ? (
