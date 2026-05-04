@@ -144,7 +144,7 @@ test("resolveDeterministicAction: q_resume_asked + cvParsed=false → wait_for_r
   assert.equal(action.kind, "wait_for_resume_upload")
 })
 
-test("resolveDeterministicAction: q_resume_asked + cvParsed=true → complete (iter32: final step, email already verified upstream)", () => {
+test("resolveDeterministicAction: q_resume_asked + cvParsed=true → send_cv_analysis (iter33 P3: ack + LLM summary, then complete)", () => {
   const action = resolveDeterministicAction(
     {
       onboardingState: "q_resume_asked",
@@ -154,7 +154,20 @@ test("resolveDeterministicAction: q_resume_asked + cvParsed=true → complete (i
     },
     "ok"
   )
-  assert.equal(action.kind, "complete")
+  assert.equal(action.kind, "send_cv_analysis")
+})
+
+test("resolveDeterministicAction: q_cv_analyzing → send_cv_analysis (iter33 P3: re-attempt if last turn's analysis didn't fire)", () => {
+  const action = resolveDeterministicAction(
+    {
+      onboardingState: "q_cv_analyzing",
+      cvParsed: true,
+      emailCaptured: true,
+      emailVerified: true,
+    },
+    "?"
+  )
+  assert.equal(action.kind, "send_cv_analysis")
 })
 
 test("resolveDeterministicAction: q_email_asked + valid email → ask_q_email_verify_start (carries email)", () => {

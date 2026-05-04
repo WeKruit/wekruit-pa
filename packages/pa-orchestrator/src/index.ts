@@ -508,6 +508,19 @@ export type OrchestratorStore = {
   getUserCvParsed?(userId: string): Promise<boolean>
 
   /**
+   * iter33 P3 — produce a 1-2 sentence CV analysis blurb in the user's
+   * preferred language. Reads parsedCandidateResumes for the user, calls
+   * Qwen-7B via SiliconFlow (or test stub), and returns the summary.
+   * Returns null when LLM is unconfigured or fails — the deterministic
+   * dispatcher then falls back to a generic "thanks for sending it" line
+   * so onboarding completes either way.
+   */
+  generateCvAnalysis?(
+    userId: string,
+    lang: "zh" | "en"
+  ): Promise<{ summary: string } | null>
+
+  /**
    * Phase 24.5 — optional Firestore handle for `getFlag()` reads. Tests omit
    * `db`; production wires the live Firestore so flag-backed kill-switches
    * (e.g. `PA_VOICE_MIRROR_DISABLED`) consult `pa-feature-flags`. env vars
@@ -2947,6 +2960,13 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
  */
 export type OrchestratorStoreDeps = {
   sendVerificationEmail?: NonNullable<OrchestratorStore["sendVerificationEmail"]>
+  /**
+   * iter33 P3 — produce a 1-2 sentence CV analysis blurb in the user's
+   * preferred language. Wired from apps/functions where SiliconFlow API
+   * key + Qwen-7B model handle live. Tests pass a stub (or omit entirely
+   * — onboarding still completes via fallback line in dispatcher).
+   */
+  generateCvAnalysis?: NonNullable<OrchestratorStore["generateCvAnalysis"]>
 }
 
 export function createFirestoreOrchestratorStore(
@@ -3402,6 +3422,13 @@ export function createFirestoreOrchestratorStore(
     // complete-without-verification when undefined.
     ...(deps.sendVerificationEmail
       ? { sendVerificationEmail: deps.sendVerificationEmail }
+      : {}),
+    // iter33 P3 — generateCvAnalysis is wired by the apps/functions layer
+    // (which has SiliconFlow API key + Qwen-7B model). Tests omit it; the
+    // deterministic dispatcher falls back to a generic "skimmed it" line
+    // so onboarding still completes when LLM is unconfigured.
+    ...(deps.generateCvAnalysis
+      ? { generateCvAnalysis: deps.generateCvAnalysis }
       : {}),
     // iter32 — CV gate. Reads parsedCandidateResumes (cross-product
     // collection — see CLAUDE.md) for the user; returns true iff a row

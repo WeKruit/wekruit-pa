@@ -906,9 +906,11 @@ async function main() {
     })
   }
 
-  // ── i32-4: CV gate releases when cvParsed=true → complete (iter32: resume is the LAST step)
+  // ── i32-4: CV gate releases when cvParsed=true → send_cv_analysis →
+  //         applyOnboarding(complete) (iter33 P3: 2 messages — ack + LLM
+  //         summary, terminal step before agent runtime activates)
   if (should("i32-cv-gate-releases")) {
-    await scenario("i32-cv-gate-releases: q_resume_asked + cvParsed=true → complete (iter32: final step)", async () => {
+    await scenario("i32-cv-gate-releases: q_resume_asked + cvParsed=true → send_cv_analysis (iter33 P3)", async () => {
       const det = await import("@pa/pa-orchestrator")
       const ev = []
       const captures = []
@@ -919,6 +921,9 @@ async function main() {
         async enqueueOutbound() {},
         async applyOnboarding(_uid, _phone, step) {
           ev.push({ step })
+        },
+        async generateCvAnalysis() {
+          return { summary: "RAG infra + agent orchestration is your strongest line — i'll lean recommendations there." }
         },
         log() {},
         nowIso() {
@@ -949,8 +954,10 @@ async function main() {
         cvParsed: true,
         agent: { id: "c" },
       })
-      expect(ev.find((x) => x.step === "complete") !== undefined, `must advance to complete`)
-      expect(/简历|resume|all set|搞定/i.test(captures[0].body), `complete reply must mention resume/all-set (got "${captures[0].body}")`)
+      expect(ev.find((x) => x.step === "complete") !== undefined, `must advance to complete after CV analysis`)
+      expect(captures.length === 2, `must send 2 outbound messages (ack + analysis), got ${captures.length}`)
+      expect(/看一下|read your resume|resume/i.test(captures[0].body), `first reply must be CV-read ack (got "${captures[0].body}")`)
+      expect(/RAG|agent|recommendation|background/i.test(captures[1].body), `second reply must be CV summary (got "${captures[1].body}")`)
     })
   }
 
