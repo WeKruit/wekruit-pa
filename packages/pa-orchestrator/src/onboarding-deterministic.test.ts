@@ -53,7 +53,7 @@ test("resolveDeterministicAction: first_mes_sent → ask_q_lang (iter33 P1)", ()
   assert.equal(action.kind, "ask_q_lang")
 })
 
-test("resolveDeterministicAction: q_lang_asked → ask_q_tos (iter33 P1)", () => {
+test("resolveDeterministicAction: q_lang_asked → ask_q_email (iter33 P2 reorder)", () => {
   const action = resolveDeterministicAction(
     {
       onboardingState: "q_lang_asked",
@@ -63,10 +63,10 @@ test("resolveDeterministicAction: q_lang_asked → ask_q_tos (iter33 P1)", () =>
     },
     "中文"
   )
-  assert.equal(action.kind, "ask_q_tos")
+  assert.equal(action.kind, "ask_q_email")
 })
 
-test("resolveDeterministicAction: q_tos_asked + 同意 → ask_q_email (iter32 reorder)", () => {
+test("resolveDeterministicAction: q_tos_asked + 同意 → ask_q_role (iter33 P2 reorder)", () => {
   const action = resolveDeterministicAction(
     {
       onboardingState: "q_tos_asked",
@@ -76,7 +76,7 @@ test("resolveDeterministicAction: q_tos_asked + 同意 → ask_q_email (iter32 r
     },
     "同意"
   )
-  assert.equal(action.kind, "ask_q_email")
+  assert.equal(action.kind, "ask_q_role")
 })
 
 test("resolveDeterministicAction: q_tos_asked + no → ask_q_tos_decline", () => {
@@ -509,7 +509,7 @@ test("runDeterministicOnboardingTurn: fresh user → send_first_mes verbatim, NO
   )
 })
 
-test("runDeterministicOnboardingTurn: ToS accept → ask_q_email + writes tosAcceptedVersion=v1.0 (iter32 reorder)", async () => {
+test("runDeterministicOnboardingTurn: ToS accept → ask_q_role + writes tosAcceptedVersion=v1.0 (iter33 P2 reorder)", async () => {
   _resetOnboardingConfigCache()
   const { store, captures } = makeFakeRunnerStore()
   const result = await runDeterministicOnboardingTurn({
@@ -525,10 +525,10 @@ test("runDeterministicOnboardingTurn: ToS accept → ask_q_email + writes tosAcc
     agent: FAKE_AGENT,
   })
   assert.equal(result.handled, true)
-  const advance = captures.appliedSteps.find((s) => s.step === "ask_q_email")
-  assert.ok(advance, "applyOnboarding(ask_q_email) must fire")
+  const advance = captures.appliedSteps.find((s) => s.step === "ask_q_role")
+  assert.ok(advance, "applyOnboarding(ask_q_role) must fire")
   assert.equal(advance!.opts.tosAcceptedVersion, "v1.0")
-  assert.match(captures.appendedMessages[0]!.body, /邮箱|email/i)
+  assert.match(captures.appendedMessages[0]!.body, /role|kinda|方向|做啥/i)
 })
 
 test("runDeterministicOnboardingTurn: ToS decline → state stays + decline reply", async () => {
@@ -615,7 +615,7 @@ test("runDeterministicOnboardingTurn: q_email_asked + valid email → fires Mail
   assert.match(captures.appendedMessages[0]!.body, /6/)
 })
 
-test("runDeterministicOnboardingTurn: q_email_verifying + correct code → ask_q_role + verifiedAt (iter32: NOT complete; probe sequence still ahead)", async () => {
+test("runDeterministicOnboardingTurn: q_email_verifying + correct code → ask_q_tos + verifiedAt (iter33 P2: verify→ToS, then ToS→role)", async () => {
   _resetOnboardingConfigCache()
   const correctCode = "654321"
   const codeHash = createHash("sha256").update(correctCode).digest("hex")
@@ -643,12 +643,12 @@ test("runDeterministicOnboardingTurn: q_email_verifying + correct code → ask_q
     agent: FAKE_AGENT,
   })
   const advance = captures.appliedSteps.find(
-    (s) => s.step === "ask_q_role" && s.opts.emailVerificationVerified === true
+    (s) => s.step === "ask_q_tos" && s.opts.emailVerificationVerified === true
   )
-  assert.ok(advance, "applyOnboarding(ask_q_role, emailVerificationVerified=true) must fire")
+  assert.ok(advance, "applyOnboarding(ask_q_tos, emailVerificationVerified=true) must fire")
   assert.match(captures.appendedMessages[0]!.body, /verified|✓|验过/i)
-  // ack + role question chained
-  assert.match(captures.appendedMessages[0]!.body, /方向|kinda role/i)
+  // ack + ToS prompt chained
+  assert.match(captures.appendedMessages[0]!.body, /privacy|隐私|legal|协议/i)
 })
 
 test("runDeterministicOnboardingTurn: q_email_verifying + wrong code → bumps attempts, stays", async () => {

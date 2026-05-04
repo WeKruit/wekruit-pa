@@ -1048,6 +1048,24 @@ export async function applyOnboardingStep(
           : {}),
       }
     }
+    // iter33 P2 (Bug #5 fix) — verifiedAt stamp must fire for ANY
+    // post-verify transition, not just nextState=='complete'. Adam-locked
+    // sequence has email-verify → q_tos_asked → q_role_asked → ... →
+    // q_resume_asked → complete; the verifiedAt was previously stamped
+    // ONLY on the final complete write, leaving statedPreferences in an
+    // "email captured but no verifiedAt" state through the entire probe
+    // chain. Now: when emailVerificationVerified flag flips, clear the
+    // challenge + stamp verifiedAt regardless of which intermediate state
+    // we're transitioning into.
+    if (opts.emailVerificationVerified) {
+      payload.emailVerification = null
+      const merged: Partial<StatedPreferences> = {
+        ...(payload.statedPreferences as Partial<StatedPreferences> | undefined),
+        contactEmailVerifiedAt: now,
+        updatedAt: now,
+      }
+      payload.statedPreferences = merged
+    }
     await userRef.set(payload, { merge: true })
   }
 }

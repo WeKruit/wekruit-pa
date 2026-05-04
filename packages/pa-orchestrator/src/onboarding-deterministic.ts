@@ -312,34 +312,39 @@ export function resolveDeterministicAction(
   if (!state || state === "pending") return { kind: "send_first_mes" }
 
   // iter33 P1 — first_mes_sent → ask_q_lang (zh/en/mixed). Adam-locked
-  // sequence puts lang preference BEFORE ToS so the ToS prompt can render
-  // in the user's chosen language. P2 (next phase) reorders email/verify
-  // ahead of ToS as well.
+  // sequence puts lang preference at the very top so subsequent prompts
+  // can render in the user's locked language.
   if (state === "first_mes_sent") return { kind: "ask_q_lang" }
 
-  // q_lang_asked → parse + advance to ask_q_tos. Parser is permissive:
-  // ambiguous reply defaults to "mixed", never blocks the chain.
-  if (state === "q_lang_asked") return { kind: "ask_q_tos" }
+  // iter33 P2 (Adam directive 2026-05-04 "1. 然后问 email, 然后等 email
+  // verification. verify 完就是 ToS, 必须接受才能继续"): reordered chain is
+  // q_lang → q_email → q_email_verify → q_tos → q_role/yoe/visa/...
+  // ToS must come AFTER email-verify so the user's mailbox owns a
+  // record of the relationship before they sign anything.
+  // Parser is permissive: ambiguous reply defaults to "mixed", never
+  // blocks the chain.
+  if (state === "q_lang_asked") return { kind: "ask_q_email" }
 
-  // q_tos_asked → branch on parsed answer (iter32 reorder: accept advances
-  // to email step, NOT role)
-  if (state === "q_tos_asked") {
-    const decision = parseTosAnswer(userMessage)
-    if (decision === "accept") return { kind: "ask_q_email" }
-    if (decision === "decline") return { kind: "ask_q_tos_decline" }
-    return { kind: "ask_q_tos_reask" }
-  }
-
-  // q_email_asked → branch on parsed email (iter32: email comes BEFORE
-  // role, as part of pre-CV trust handshake with TOS)
+  // q_email_asked → branch on parsed email (iter33: email is now the
+  // FIRST data-collection step, before ToS).
   if (state === "q_email_asked") {
     const parsed = parseUserAnswerForStep("ask_q_email", userMessage)
     if (parsed.contactEmail) {
       return { kind: "ask_q_email_verify_start", email: parsed.contactEmail }
     }
     // User skipped — Adam directive: email + verification REQUIRED before
-    // agent runtime activates. Re-ask gentler.
+    // ToS. Re-ask gentler.
     return { kind: "ask_q_email" }
+  }
+
+  // q_tos_asked (iter33 reorder: now AFTER verify, GATES role-probe chain)
+  // → branch on parsed answer. Accept advances to ask_q_role (probe chain),
+  // decline / unclear stays at q_tos_asked.
+  if (state === "q_tos_asked") {
+    const decision = parseTosAnswer(userMessage)
+    if (decision === "accept") return { kind: "ask_q_role" }
+    if (decision === "decline") return { kind: "ask_q_tos_decline" }
+    return { kind: "ask_q_tos_reask" }
   }
 
   // q_email_verifying → branch on parsed code, expired, exhausted
@@ -710,20 +715,20 @@ export async function runDeterministicOnboardingTurn(
     const candidateHash = createHash("sha256").update(action.candidate).digest("hex")
     const lang = pickLang(event.body)
     if (candidateHash === challenge.codeHash) {
-      // iter32: advance to q_role_asked (NOT complete — probe sequence
-      // still needs to run). Email is verified; stamp contactEmailVerifiedAt
-      // on statedPreferences via emailVerificationVerified opt + write the
-      // role question via composeDeterministicReply.
-      await store.applyOnboarding(event.userId, onboardingUser.phoneE164, "ask_q_role", {
+      // iter33 P2 — advance to q_tos_asked (NOT complete, NOT q_role).
+      // Adam-locked sequence: email-verify clears → ToS gate is the next
+      // step. Email is verified; stamp contactEmailVerifiedAt on
+      // statedPreferences via emailVerificationVerified opt (Bug #5 fix
+      // in applyOnboardingStep makes this stamp fire regardless of
+      // nextState). Compose ack + ToS prompt joined.
+      await store.applyOnboarding(event.userId, onboardingUser.phoneE164, "ask_q_tos", {
         priorAskedStep: "ask_q_email_verify",
         priorUserReply: event.body,
         emailVerificationVerified: true,
       })
       const verifiedAck = lang === "zh" ? "✓ 邮箱验过了" : "✓ email verified"
-      // Strip a leading "btw — " / "btw, " from the role phrase so we don't
-      // emit a doubled "btw —" after the verified-ack join. Cosmetic.
-      const rolePhrase = config.ask_q_role!.prompt[lang].replace(/^btw\s*[—,-]\s*/i, "")
-      await sendDirect(input, `${verifiedAck} — ${rolePhrase}`)
+      const tosPhrase = config.ask_q_tos!.prompt[lang]
+      await sendDirect(input, `${verifiedAck} — ${tosPhrase}`)
       store.log("pa.onboarding.deterministic.email_verify_verified", {
         userId: event.userId,
         turnId,
@@ -851,16 +856,17 @@ export async function runDeterministicOnboardingTurn(
     return { handled: true, action }
   }
 
-  // ToS accept path → advance to q_email_asked + write tosAcceptance audit.
-  // iter32 reorder: TOS accept now leads to email step (not role).
-  if (action.kind === "ask_q_email" && onboardingUser.onboardingState === "q_tos_asked") {
+  // ToS accept path (iter33 P2 reorder) → advance to q_role_asked +
+  // write tosAcceptance audit. iter33 sequence: q_tos_asked accept now
+  // gates the role-probe chain (email + verify already cleared upstream).
+  if (action.kind === "ask_q_role" && onboardingUser.onboardingState === "q_tos_asked") {
     const tosVersion = store.getTosVersion ? await store.getTosVersion() : "v1.0"
-    await store.applyOnboarding(event.userId, onboardingUser.phoneE164, "ask_q_email", {
+    await store.applyOnboarding(event.userId, onboardingUser.phoneE164, "ask_q_role", {
       priorAskedStep: "ask_q_tos",
       priorUserReply: event.body,
       tosAcceptedVersion: tosVersion,
     })
-    await sendDirect(input, config.ask_q_email!.prompt[pickLang(event.body)])
+    await sendDirect(input, config.ask_q_role!.prompt[pickLang(event.body)])
     store.log("pa.onboarding.deterministic.tos_accepted", {
       userId: event.userId,
       turnId,
