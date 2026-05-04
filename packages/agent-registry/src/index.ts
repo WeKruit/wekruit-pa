@@ -40,6 +40,25 @@ export type {
   SavePlaybookInput,
   SavePlaybookOpts,
 } from "./playbooks.js"
+// iter30 WS4-A — Skill V2 schema (7+1 fields, backward-compat with V1 Playbook).
+export {
+  SKILL_KEYS,
+  SkillKeyEnum,
+  SkillSchemaV2,
+  RequiresCtxStateSchema,
+  fromSkillSnap,
+} from "./skill-schema.js"
+export type {
+  Skill,
+  SkillKey,
+  SkillV2,
+  RequiresCtxState,
+} from "./skill-schema.js"
+export {
+  EXISTING_6_METADATA,
+  getExistingSkillMetadata,
+} from "./skill-defaults.js"
+export type { SkillMetadataV2 } from "./skill-defaults.js"
 // Phase 32 W3 — Personas Firestore CRUD (soul.md three-file pattern).
 export {
   PERSONAS_COLLECTION,
