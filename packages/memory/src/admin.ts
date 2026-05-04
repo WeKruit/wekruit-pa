@@ -11,6 +11,14 @@ const PA_ENTITY_TAGS = "pa-entity-tags"
 /** EntityRef.kind for PA users — matches `@wekruit/shared-tags` types.ts. */
 const ENTITY_KIND_PA_USER = "pa-user"
 
+// iter30 closure (Adam directive 2026-05-04 "只能删 pa- 的, 不能删了别的本身
+// 的 user 的"): resume-related Firestore surfaces in the pa-* namespace.
+// `parsedCandidateResumes` (NO pa- prefix) is whole-product shared with the
+// main hiring product — DO NOT clear, would clobber non-PA candidate rows.
+// `pa-cv-pending` is the PA-owned stage-and-confirm overwrite holding bay
+// (CV_PENDING_COLLECTION in apps/functions/src/cv-ingest/cv-ingest.ts:240).
+const PA_CV_PENDING = "pa-cv-pending"
+
 /**
  * Single source of truth for clearing all PA memory belonging to one user.
  * Consumed by:
@@ -219,8 +227,15 @@ export async function clearUserMemory(
   log(`[clear-user] qdrant matched=${qdrant.matched} deleted=${qdrant.deleted}`)
 
   const firestore: Record<string, number> = {}
-  // Memory plane — always cleared. iter30 closure adds 5 v2 surfaces +
-  // tag pipeline so reset is a true blank slate.
+  // Memory plane — always cleared. iter30 closure (Adam directive
+  // 2026-05-04 "这个 clear 要 clear 完, 要不然我们测试 biz test 不能测") —
+  // every PA-namespaced collection with a userId field gets cleared so a
+  // reset user is a true blank slate for biz testing.
+  //
+  // SCOPE: only pa-* prefixed collections are cleared. The cross-product
+  // shared `parsedCandidateResumes` (NO pa- prefix) is NOT cleared because
+  // deleting from it would clobber non-PA candidate rows owned by the
+  // main hiring product.
   const memoryCollections = [
     PA_COLLECTIONS.memoryFacts,
     PA_COLLECTIONS.memoryActions,
@@ -233,6 +248,20 @@ export async function clearUserMemory(
     // iter30 WS2 — tag pipeline events (entity-tags is a subcollection,
     // handled separately below).
     PA_TAG_EVENTS,
+    // iter30 closure — PA-owned resume surface (pending overwrite holding
+    // bay). Original PDF blob lives in Sendblue's storage (external).
+    PA_CV_PENDING,
+    // iter30 closure — biz-test isolation surfaces (every pa-* collection
+    // with a userId field). Without these, a reset user retains stale
+    // abuse-events / rate-limits / job-rec output / tapback history,
+    // which contaminates biz E2E runs.
+    "pa-abuse-events",
+    "pa-rate-limits",
+    "pa-job-profiles",
+    "pa-job-rec-explanations",
+    "pa-tapback-events",
+    "pa-scheduled-jobs",
+    "pa-tool-calls",
   ]
   for (const c of memoryCollections) {
     firestore[c] = await clearFirestoreCollection(deps.db, c, userId, dryRun)
@@ -246,10 +275,16 @@ export async function clearUserMemory(
   log(`[clear-user] firestore ${PA_ENTITY_TAGS}: ${firestore[PA_ENTITY_TAGS]} items`)
 
   if (!keepMessages) {
+    // Full transcript wipe — biz test must see a clean conversation
+    // history. Inbound + outbound queues are cleared as part of this
+    // bucket because the dashboard surfaces them as "conversation history"
+    // for the operator.
     const transcriptCollections = [
       PA_COLLECTIONS.messages,
       PA_COLLECTIONS.agentTurns,
       PA_COLLECTIONS.turns,
+      PA_COLLECTIONS.inboundEvents,
+      PA_COLLECTIONS.outbound,
     ]
     for (const c of transcriptCollections) {
       firestore[c] = await clearFirestoreCollection(deps.db, c, userId, dryRun)

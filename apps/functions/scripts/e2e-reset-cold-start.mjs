@@ -106,6 +106,8 @@ async function findOrCreateTestUser(phone) {
 }
 
 async function seedDataForReset(userId) {
+  // Seed across every PA-namespaced surface that clearUserMemory should clear
+  // so each iteration's reset closure is verifiable end-to-end.
   await db.collection('pa-memory-facts').doc(`e2e-fact-${userId}`).set({
     id: `e2e-fact-${userId}`, userId, body: 'pre-reset test fact', kind: 'preference',
     createdAt: nowIso(),
@@ -117,9 +119,30 @@ async function seedDataForReset(userId) {
     createdAt: nowIso(), normalizedTo: null, decision: null, workerConfidence: null,
     processedAt: null, processingDurationMs: null,
   })
-  // entity-tags item subcollection
   await db.collection(`pa-entity-tags/pa-user:${userId}/items`).doc('python').set({
     canonicalKey: 'python', userId, lastSeen: nowIso(), confidence: 0.9, status: 'accepted',
+  })
+  // iter30 closure — biz-test isolation surfaces.
+  await db.collection('pa-abuse-events').doc(`e2e-abuse-${userId}`).set({
+    userId, kind: 'rate_limit', createdAt: nowIso(),
+  })
+  await db.collection('pa-rate-limits').doc(`e2e-rl-${userId}`).set({
+    userId, count: 5, windowStart: nowIso(),
+  })
+  await db.collection('pa-job-profiles').doc(`e2e-jp-${userId}`).set({
+    userId, profileVersion: 'v1', createdAt: nowIso(),
+  })
+  await db.collection('pa-job-rec-explanations').doc(`e2e-jre-${userId}`).set({
+    userId, jobId: 'fake-job-1', createdAt: nowIso(),
+  })
+  await db.collection('pa-tapback-events').doc(`e2e-tap-${userId}`).set({
+    userId, messageId: 'fake-msg-1', emoji: '👍', createdAt: nowIso(),
+  })
+  await db.collection('pa-scheduled-jobs').doc(`e2e-sched-${userId}`).set({
+    userId, kind: 'silence-anchor', scheduledFor: nowIso(),
+  })
+  await db.collection('pa-cv-pending').doc(`e2e-cvp-${userId}`).set({
+    userId, status: 'awaiting_user', createdAt: nowIso(),
   })
 }
 
@@ -130,6 +153,10 @@ async function countUserData(userId) {
     'pa-memory-profiles', 'pa-memory-evolution-events',
     'pa-conversation-summaries', 'pa-message-archives', 'pa-surprise-events',
     'pa-tag-events',
+    // iter30 closure — biz-test isolation surfaces
+    'pa-abuse-events', 'pa-rate-limits', 'pa-job-profiles',
+    'pa-job-rec-explanations', 'pa-tapback-events', 'pa-scheduled-jobs',
+    'pa-cv-pending',
   ]) {
     const snap = await db.collection(c).where('userId', '==', userId).limit(50).get()
     counts[c] = snap.size
@@ -185,6 +212,13 @@ async function main() {
     ['pa-memory-facts cleared', after['pa-memory-facts'] === 0],
     ['pa-tag-events cleared', after['pa-tag-events'] === 0],
     ['pa-entity-tags-items cleared', after['pa-entity-tags-items'] === 0],
+    ['pa-abuse-events cleared', after['pa-abuse-events'] === 0],
+    ['pa-rate-limits cleared', after['pa-rate-limits'] === 0],
+    ['pa-job-profiles cleared', after['pa-job-profiles'] === 0],
+    ['pa-job-rec-explanations cleared', after['pa-job-rec-explanations'] === 0],
+    ['pa-tapback-events cleared', after['pa-tapback-events'] === 0],
+    ['pa-scheduled-jobs cleared', after['pa-scheduled-jobs'] === 0],
+    ['pa-cv-pending cleared', after['pa-cv-pending'] === 0],
     ['onboardingState = pending', after.__user_onboardingState === 'pending'],
     ['resumeAccepted CLEARED', after.__user_resumeAccepted === 'CLEARED'],
     ['statedPreferences CLEARED', after.__user_statedPreferences === 'CLEARED'],
