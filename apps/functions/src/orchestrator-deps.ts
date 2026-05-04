@@ -18,6 +18,8 @@
  */
 import { defineSecret } from "firebase-functions/params"
 import { logger } from "firebase-functions/v2"
+import { initializeApp, getApps } from "firebase-admin/app"
+import { getFirestore } from "firebase-admin/firestore"
 import {
   generateVerificationCode,
   sendVerificationEmail as sendVerificationEmailViaMailgun,
@@ -37,6 +39,11 @@ export const MAILGUN_SECRETS: SecretParamHandle[] = [
   MAILGUN_FROM,
   MAILGUN_REGION,
 ]
+
+// iter33 P3 — SiliconFlow API key (already used by other Qwen-7B paths in
+// this repo). Reused here for the CV-analysis brief.
+const SILICONFLOW_API_KEY: SecretParamHandle = defineSecret("SILICONFLOW_API_KEY")
+export const CV_ANALYSIS_SECRETS: SecretParamHandle[] = [SILICONFLOW_API_KEY]
 
 const nowIso = () => new Date().toISOString()
 
@@ -103,5 +110,125 @@ export function makeOrchestratorDeps(): import("@pa/pa-orchestrator").Orchestrat
         return null
       }
     },
+    generateCvAnalysis: makeGenerateCvAnalysis(),
+  }
+}
+
+/**
+ * iter33 P3 — Read parsedCandidateResumes for the user, ask Qwen-7B for
+ * a 1-2 sentence summary, return it. Returns null when SILICONFLOW_API_KEY
+ * is unbound, the CV row doesn't exist, or the LLM call throws — caller
+ * (deterministic dispatcher) falls back to a generic line so onboarding
+ * always completes. Cost: ~$0.0002/call (Qwen2.5-7B SiliconFlow).
+ */
+function makeGenerateCvAnalysis(): NonNullable<
+  import("@pa/pa-orchestrator").OrchestratorStoreDeps["generateCvAnalysis"]
+> {
+  return async (userId: string, lang: "zh" | "en") => {
+    let apiKey = ""
+    try {
+      apiKey = SILICONFLOW_API_KEY.value().trim()
+    } catch {
+      // secret not bound — caller falls back
+    }
+    if (!apiKey) {
+      logger.warn("[cv-analysis] SILICONFLOW_API_KEY unbound", { userId })
+      return null
+    }
+
+    if (!getApps().length) initializeApp()
+    const db = getFirestore()
+
+    // Read the most recent parsedCandidateResumes row.
+    let cvFields = ""
+    try {
+      const snap = await db
+        .collection("parsedCandidateResumes")
+        .where("userId", "==", userId)
+        .orderBy("parsedAt", "desc")
+        .limit(1)
+        .get()
+      if (snap.empty) {
+        logger.warn("[cv-analysis] no parsedCandidateResumes row", { userId })
+        return null
+      }
+      const cv = snap.docs[0]!.data() as {
+        recentRoleTitle?: string
+        recentCompany?: string
+        topSkills?: string[]
+        recentBullet?: string
+        resumeText?: string
+      }
+      const parts: string[] = []
+      if (cv.recentRoleTitle) parts.push(`recent role: ${cv.recentRoleTitle}`)
+      if (cv.recentCompany) parts.push(`@${cv.recentCompany}`)
+      if (cv.topSkills?.length) parts.push(`skills: ${cv.topSkills.slice(0, 8).join(", ")}`)
+      if (cv.recentBullet) parts.push(`recent: ${cv.recentBullet.slice(0, 200)}`)
+      cvFields = parts.join("\n")
+      if (!cvFields) {
+        // fall back to a small slice of resumeText if no structured fields
+        cvFields = (cv.resumeText ?? "").slice(0, 600)
+      }
+      if (!cvFields) {
+        logger.warn("[cv-analysis] CV row had no parseable fields", { userId })
+        return null
+      }
+    } catch (err) {
+      logger.error("[cv-analysis] firestore read threw", {
+        userId,
+        err: err instanceof Error ? err.message : String(err),
+      })
+      return null
+    }
+
+    const langDirective =
+      lang === "zh"
+        ? "用中文回，1-2 句，朋友语气，不要列表，不要客套。"
+        : "Reply in English, 1-2 sentences, friend-tone casual, no bullets, no fluff."
+    const systemPrompt = `You are Claire reading a candidate's resume aloud to them. Highlight ONE concrete strength (specific skill or trajectory) you noticed and ONE direction you'll lean job recommendations toward. ${langDirective}`
+    const userPrompt = `Resume highlights:\n${cvFields}\n\nGive the candidate your read in 1-2 sentences.`
+
+    try {
+      const res = await fetch("https://api.siliconflow.cn/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "Qwen/Qwen2.5-7B-Instruct",
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
+          ],
+          temperature: 0.6,
+          max_tokens: 160,
+        }),
+        signal: AbortSignal.timeout(8000),
+      })
+      if (!res.ok) {
+        logger.warn("[cv-analysis] siliconflow non-200", {
+          userId,
+          status: res.status,
+        })
+        return null
+      }
+      const data = (await res.json()) as {
+        choices?: { message?: { content?: string } }[]
+      }
+      const summary = data.choices?.[0]?.message?.content?.trim()
+      if (!summary) {
+        logger.warn("[cv-analysis] empty completion", { userId })
+        return null
+      }
+      logger.info("[cv-analysis] ok", { userId, lang, summaryLen: summary.length })
+      return { summary }
+    } catch (err) {
+      logger.error("[cv-analysis] llm call threw", {
+        userId,
+        err: err instanceof Error ? err.message : String(err),
+      })
+      return null
+    }
   }
 }

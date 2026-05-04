@@ -70,6 +70,11 @@ export const OnboardingStateSchema = z.enum([
   // iter30 closure (Adam directive 2026-05-03 "主动问简历"): proactive resume
   // request as the final probe step before transitioning to complete.
   "q_resume_asked",
+  // iter33 P3 (Adam directive 2026-05-04 "OK 你等我小下我看看你简历, 然后看完
+  // 以后给一个简历分析"): brief between resume-parse and complete. Claire
+  // sends "let me look at your resume" + a short CV analysis (LLM-summary,
+  // ~2 sentences). P4 will further interpose a job-rec push before complete.
+  "q_cv_analyzing",
   "complete",
 ])
 export type OnboardingState = z.infer<typeof OnboardingStateSchema>

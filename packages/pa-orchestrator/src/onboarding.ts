@@ -44,6 +44,7 @@ export type OnboardingStep =
   | "send_first_mes"
   | "ask_grounding_q" // legacy v1 single-question path (kept for backward compat)
   | "ask_q_lang" // iter33 — explicit zh/en/mixed preference question, fires after first_mes.
+  | "send_cv_analysis" // iter33 P3 — Claire reads CV, sends 1-line ack + 2-sentence LLM summary, advances to complete.
   | "ask_q_tos" // iter31 — privacy + terms acceptance gate, before any data probes.
   | "ask_q_role"
   | "ask_q_yoe"
@@ -504,6 +505,7 @@ const ONBOARDING_NEXT_STATE: Partial<Record<OnboardingStep, OnboardingState>> = 
   send_first_mes: "first_mes_sent",
   ask_grounding_q: "grounding_q1_asked",
   ask_q_lang: "q_lang_asked",
+  send_cv_analysis: "complete", // iter33 P3 — terminal CV-analysis step
   ask_q_tos: "q_tos_asked",
   ask_q_role: "q_role_asked",
   ask_q_yoe: "q_yoe_asked",
@@ -547,6 +549,8 @@ const STATE_ORDER: Array<OnboardingState | undefined> = [
   "q_startup_pref_asked",
   "q_location_asked",
   "q_resume_asked",
+  // iter33 P3 — CV analysis brief between q_resume_asked + complete
+  "q_cv_analyzing",
   "complete",
 ]
 

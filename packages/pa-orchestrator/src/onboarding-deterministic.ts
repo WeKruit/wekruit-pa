@@ -166,6 +166,15 @@ export const DEFAULT_ONBOARDING_CONFIG: Record<OnboardingStep, OnboardingStepCon
       en: "still waiting on that 6-digit code from your email",
     },
   },
+  // iter33 P3 — send_cv_analysis is not a question step; the runner emits
+  // ack + LLM-summary inline. Config slot present for completeness so a
+  // Firestore override can replace the ack/fallback strings later.
+  send_cv_analysis: {
+    prompt: {
+      zh: "OK 让我看一下你简历, 等我一下下",
+      en: "ok — give me a sec to read your resume",
+    },
+  },
   complete: undefined,
   skip: undefined,
 }
@@ -291,6 +300,7 @@ export type DeterministicAction =
   | { kind: "ask_q_email_verify_reissue"; email: string } // expired/exhausted → re-fire Mailgun, stay
   | { kind: "verify_email_code"; candidate: string }
   | { kind: "vent_ack" } // user is venting mid-onboarding
+  | { kind: "send_cv_analysis" } // iter33 P3 — Claire reads CV + sends ack + 2-sentence summary, advances to complete
   | { kind: "complete" }
   | { kind: "skip" } // already complete + all gates passed
 
@@ -379,16 +389,25 @@ export function resolveDeterministicAction(
     return { kind: "ask_q_resume" }
   }
 
-  // q_resume_asked — final CV gate. Hold here until parsedCandidateResumes
-  // row exists. cv-ingest pipeline writes the row after Sendblue delivers
-  // the attachment. iter32: this is the LAST step before complete (email
-  // already verified upstream).
+  // q_resume_asked — CV gate. Hold here until parsedCandidateResumes row
+  // exists. cv-ingest pipeline writes the row after Sendblue delivers the
+  // attachment. iter33 P3: when CV is parsed, dispatch send_cv_analysis
+  // (Claire reads + summarizes + advances to complete). Previously this
+  // jumped straight to complete.
   if (state === "q_resume_asked") {
     if (!input.cvParsed) return { kind: "wait_for_resume_upload" }
-    return { kind: "complete" }
+    return { kind: "send_cv_analysis" }
   }
 
-  // complete — all gates passed (TOS + email verified + CV parsed).
+  // q_cv_analyzing — terminal pause if for some reason the analysis didn't
+  // fire (e.g. LLM unavailable on the original turn). Re-attempt on the
+  // next inbound to give the user the closure they expect.
+  if (state === "q_cv_analyzing") {
+    return { kind: "send_cv_analysis" }
+  }
+
+  // complete — all gates passed (TOS + email verified + CV parsed +
+  // analysis sent).
   if (state === "complete") return { kind: "skip" }
 
   return { kind: "skip" }
@@ -563,6 +582,17 @@ export type DeterministicRunnerStore = {
     expiresAt: string
     providerMessageId?: string
   } | null>
+  /**
+   * iter33 P3 — produce a 1-2 sentence CV analysis blurb in the user's
+   * preferred language. Reads parsedCandidateResumes for the user, calls
+   * Qwen-7B (or test stub), and returns the summary. Returns null when
+   * LLM is unconfigured / fails — caller falls back to a generic ack so
+   * onboarding completes either way.
+   */
+  generateCvAnalysis?(
+    userId: string,
+    lang: "zh" | "en"
+  ): Promise<{ summary: string } | null>
   log(event: string, payload?: Record<string, unknown>): void
   nowIso(): string
   db?: Firestore
@@ -833,25 +863,60 @@ export async function runDeterministicOnboardingTurn(
     return { handled: true, action }
   }
 
-  // q_resume_asked + cvParsed=true → complete (final transition).
-  // iter32 reorder: this is the LAST step (email already verified before
-  // role probe). Send a friendly "all set" ack; agent runtime activates
-  // on the next inbound. The dispatcher returns handled=true so this
-  // turn finalizes; user's next message goes through the normal LLM path.
-  if (action.kind === "complete" && onboardingUser.onboardingState === "q_resume_asked") {
+  // iter33 P3 — q_resume_asked + cvParsed=true (or stuck at q_cv_analyzing
+  // re-attempt) → send_cv_analysis. Two outbound messages in one turn:
+  //   1. ack: "OK 让我看一下你简历"
+  //   2. analysis: 1-2 sentence LLM summary of the CV (Qwen-7B). Falls
+  //      back to a generic 'thanks for sending it through' line if the
+  //      LLM hook is unavailable so onboarding still completes.
+  // State advances to "complete" (P4 will interpose a job-rec push here).
+  if (action.kind === "send_cv_analysis") {
+    const lang = pickLang(event.body)
+    const ackMsg =
+      lang === "zh"
+        ? "OK 让我看一下你简历, 等我一下下"
+        : "ok — give me a sec to read your resume"
+    await sendDirect(input, ackMsg)
+    store.log("pa.onboarding.deterministic.cv_analysis_ack_sent", {
+      userId: event.userId,
+      turnId,
+    })
+
+    // LLM analysis. Fail-open to a generic line so onboarding always closes.
+    let analysisMsg: string
+    try {
+      const result = store.generateCvAnalysis
+        ? await store.generateCvAnalysis(event.userId, lang)
+        : null
+      if (result?.summary && result.summary.trim().length > 0) {
+        analysisMsg = result.summary.trim()
+      } else {
+        analysisMsg =
+          lang === "zh"
+            ? "看下来你背景挺扎实的, 后面给你推岗位会贴着你的方向来"
+            : "skimmed it — solid background, i'll lean recommendations toward your trajectory"
+      }
+    } catch (err) {
+      store.log("pa.onboarding.deterministic.cv_analysis_error", {
+        userId: event.userId,
+        turnId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+      analysisMsg =
+        lang === "zh"
+          ? "看下来你背景挺扎实的, 后面给你推岗位会贴着你的方向来"
+          : "skimmed it — solid background, i'll lean recommendations toward your trajectory"
+    }
+    await sendDirect(input, analysisMsg)
+
     await store.applyOnboarding(event.userId, onboardingUser.phoneE164, "complete", {
       priorAskedStep: "ask_q_resume",
       priorUserReply: event.body,
     })
-    const lang = pickLang(event.body)
-    const msg =
-      lang === "zh"
-        ? "✓ 简历也收到了, 都搞定咯. 想聊啥跟我说就行"
-        : "✓ got the resume. all set — let me know whatever you wanna chat about"
-    await sendDirect(input, msg)
     store.log("pa.onboarding.deterministic.complete", {
       userId: event.userId,
       turnId,
+      withCvAnalysis: true,
     })
     return { handled: true, action }
   }
