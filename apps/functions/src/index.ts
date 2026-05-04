@@ -70,6 +70,9 @@ export { paJobRecClusterRebuild } from "./job-rec-cluster-rebuild.js"
 // JD + tags + industry → top-K candidates → outbound notify via pa-outbound.
 export { paReverseMatch } from "./paReverseMatch.js"
 
+// iter30 WS2 P2 — Canonical tag worker (onDocumentCreated pa-tag-events + retry scheduler)
+export { paCanonicalTagWorker, paCanonicalTagWorkerRetry } from "./tag-worker/normalize.js"
+
 // Phase 27 T2 — public /health endpoints (one per existing CF). Returns
 // {ok, name, version, ts, deps:{firestore, secrets}}. No auth (probes
 // must be reachable). All endpoints HTTP 200 always; failure surfaces in body.
