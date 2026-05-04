@@ -59,6 +59,11 @@ import {
   applyWeightedMatchBoost,
   type WeightedMatchExplanation,
 } from "./match-weights.js"
+// iter30/WS8 — Firestore-backed weight tables (dual-read behind flag).
+import {
+  BoostCalculator,
+  WEIGHTS_FROM_FIRESTORE_FLAG_KEY,
+} from "./boost-calculator.js"
 
 export type FlagChecker = (
   db: Firestore,
@@ -1459,12 +1464,61 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
               normalized.industryTags.includes("ai_ml") ||
               /ai\s*agent|llm|rag|langchain|agentic/.test(targetRoleSignal)
             if (isAiAgentUser && userSkillsForWeighted.length > 0) {
-              const wm = applyWeightedMatchBoost(
-                rankedJobs,
-                userSkillsForWeighted,
-                AI_AGENT_SKILL_WEIGHTS,
-                crossEncoderScores ?? undefined
+              // iter30/WS8 — dual-read: when paWeightsFromFirestore flag is ON,
+              // load from Firestore via BoostCalculator (operator-editable
+              // weights). Default OFF preserves byte-identical legacy ranking
+              // (TS const path). Flag flips to ON in T6 / T21 ramp per detail-
+              // plan §10.
+              let wm: ReturnType<typeof applyWeightedMatchBoost> = {
+                jobs: rankedJobs,
+                explanations: [],
+              }
+              const useFirestore = Boolean(
+                await deps.getFlag(
+                  deps.db,
+                  WEIGHTS_FROM_FIRESTORE_FLAG_KEY,
+                  { userId, env: process.env },
+                  false
+                )
               )
+              if (useFirestore) {
+                try {
+                  const bc = new BoostCalculator({ db: deps.db, log })
+                  const { table, rows } = await bc.loadTable("ai-agent-2026")
+                  const fsBoost = bc.applyBoost(
+                    rankedJobs,
+                    userSkillsForWeighted,
+                    table,
+                    rows,
+                    crossEncoderScores ?? undefined
+                  )
+                  wm = { jobs: fsBoost.jobs, explanations: fsBoost.explanations }
+                  log("[job-rec-daily] weighted_match.firestore_loaded", {
+                    userId,
+                    tableKey: table.tableKey,
+                    tableVersion: table.version,
+                    rowCount: rows.length,
+                  })
+                } catch (fsErr) {
+                  log("[job-rec-daily] weighted_match.firestore_failed_fallback", {
+                    userId,
+                    error: fsErr instanceof Error ? fsErr.message : String(fsErr),
+                  })
+                  wm = applyWeightedMatchBoost(
+                    rankedJobs,
+                    userSkillsForWeighted,
+                    AI_AGENT_SKILL_WEIGHTS,
+                    crossEncoderScores ?? undefined
+                  )
+                }
+              } else {
+                wm = applyWeightedMatchBoost(
+                  rankedJobs,
+                  userSkillsForWeighted,
+                  AI_AGENT_SKILL_WEIGHTS,
+                  crossEncoderScores ?? undefined
+                )
+              }
               for (const expl of wm.explanations) {
                 log("[job-rec-daily] weighted_match.applied", {
                   userId,
