@@ -17,6 +17,9 @@ import { onRequest } from "firebase-functions/v2/https"
 import { defineSecret } from "firebase-functions/params"
 import { getFirestore, FieldValue, type Firestore } from "firebase-admin/firestore"
 import { getApps, initializeApp } from "firebase-admin/app"
+// iter32 deploy-fix 2026-05-04 — share Mailgun deps with onPaInbound so the
+// paAdminBootstrap simulator gets the same `sendVerificationEmail` callback.
+import { MAILGUN_SECRETS, makeOrchestratorDeps } from "./orchestrator-deps.js"
 
 const PA_ADMIN_TOKEN = defineSecret("PA_ADMIN_TOKEN")
 const SILICONFLOW_API_KEY = defineSecret("SILICONFLOW_API_KEY")
@@ -1120,7 +1123,14 @@ async function defaultOrchestrator(input: {
     },
   }
 
-  const baseStore = createFirestoreOrchestratorStore(db)
+  // iter32 deploy-fix 2026-05-04 — pull in the Mailgun deps via the
+  // shared module so the simulator's deterministic onboarding path can
+  // fire Mailgun exactly as production iMessage does. Previously this
+  // was `createFirestoreOrchestratorStore(db)` (no deps) → email verify
+  // never wired → the dispatcher took the graceful-fallback "Mailgun
+  // unconfigured" branch, advancing state to complete without
+  // contactEmailVerifiedAt.
+  const baseStore = createFirestoreOrchestratorStore(db, makeOrchestratorDeps())
   // Capture the exact text sent to the user (post-rewrite, post-normalize).
   // Multi-part messages are joined with newline to match what the user reads.
   const outboundParts: string[] = []
@@ -1580,7 +1590,19 @@ export const paAdminBootstrap = onRequest(
     // page calls simulateConversation directly with x-admin-token in header).
     // Token-gated, so cross-origin is acceptable.
     cors: ["https://wekruit-pa.web.app", "https://wekruit-pa.firebaseapp.com", "http://localhost:5173"],
-    secrets: [PA_ADMIN_TOKEN, SILICONFLOW_API_KEY, PA_OPENAI_AGENT_API_KEY, QDRANT_URL, QDRANT_API_KEY],
+    // iter32 deploy-fix 2026-05-04 — bind MAILGUN_* so the simulator's
+    // `defaultOrchestrator` can call makeOrchestratorDeps() and produce a
+    // working `sendVerificationEmail` callback. Previously the simulator
+    // path silently fell back to "Mailgun unconfigured" (no verifiedAt)
+    // because these secrets weren't bound to paAdminBootstrap.
+    secrets: [
+      PA_ADMIN_TOKEN,
+      SILICONFLOW_API_KEY,
+      PA_OPENAI_AGENT_API_KEY,
+      QDRANT_URL,
+      QDRANT_API_KEY,
+      ...MAILGUN_SECRETS,
+    ],
   },
   async (req, res) => {
     const auth = checkAdminToken(req.header("x-admin-token") ?? undefined)

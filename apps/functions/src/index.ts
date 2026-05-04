@@ -35,10 +35,26 @@ import { paSendblueOutboxHandler } from "./sendblue/outbox.js"
 import { sendReaction as defaultSendReaction } from "./sendblue/send-reaction.js"
 
 // iter31 — Mailgun transport for email-verification step in onboarding.
+// iter32 deploy-fix 2026-05-04 — MAILGUN_* defineSecret bindings + the
+// `makeOrchestratorDeps` factory live in ./orchestrator-deps.js so
+// admin-bootstrap.ts can share them. Re-export below for callers that
+// still reference them on this module.
 import {
-  generateVerificationCode,
-  sendVerificationEmail as sendVerificationEmailViaMailgun,
-} from "./email/mailgun.js"
+  MAILGUN_API_KEY,
+  MAILGUN_DOMAIN,
+  MAILGUN_FROM,
+  MAILGUN_REGION,
+  MAILGUN_SECRETS,
+  makeOrchestratorDeps,
+} from "./orchestrator-deps.js"
+export {
+  MAILGUN_API_KEY,
+  MAILGUN_DOMAIN,
+  MAILGUN_FROM,
+  MAILGUN_REGION,
+  MAILGUN_SECRETS,
+  makeOrchestratorDeps,
+}
 
 // v1.5 Stream-D — message coalescer (paMessageCoalesceEnabled flag-gated)
 import {
@@ -119,16 +135,13 @@ const SENDBLUE_API_SECRET_KEY = defineSecret("SENDBLUE_API_SECRET_KEY")
 const SENDBLUE_WEBHOOK_SIGNING_SECRET = defineSecret("SENDBLUE_WEBHOOK_SIGNING_SECRET")
 const SENDBLUE_FROM_NUMBER = defineSecret("SENDBLUE_FROM_NUMBER")
 
-// iter31 — Mailgun secrets for email-verification step in onboarding.
-// Populate via:
+// iter32 deploy-fix 2026-05-04 — MAILGUN_* defineSecret bindings + factory
+// moved to ./orchestrator-deps.ts for sharing with admin-bootstrap.ts.
+// (Imports + re-exports above near the top of this file.) Populate via:
 //   echo -n "$KEY" | firebase functions:secrets:set MAILGUN_API_KEY --data-file=-
 //   echo -n "mg.wekruit.com" | firebase functions:secrets:set MAILGUN_DOMAIN --data-file=-
 //   echo -n "Claire <claire@mg.wekruit.com>" | firebase functions:secrets:set MAILGUN_FROM --data-file=-
 //   echo -n "us" | firebase functions:secrets:set MAILGUN_REGION --data-file=-   # optional, default us
-const MAILGUN_API_KEY = defineSecret("MAILGUN_API_KEY")
-const MAILGUN_DOMAIN = defineSecret("MAILGUN_DOMAIN")
-const MAILGUN_FROM = defineSecret("MAILGUN_FROM")
-const MAILGUN_REGION = defineSecret("MAILGUN_REGION")
 
 // Phase 31 — Upstream Event Connector HMAC shared secret. Distinct from
 // Sendblue secrets so a compromised upstream partner cannot forge inbound
@@ -386,66 +399,10 @@ async function claimBrokerEvent(db: Firestore, data: BrokerImessageEvent): Promi
   })
 }
 
-// iter31 — orchestrator deps factory. Builds the Mailgun callback (or null
-// when secrets are unset). Called per-inbound so secret values are read
-// fresh; cheap because defineSecret().value() is cached by Cloud Functions.
-function makeOrchestratorDeps(): import("@pa/pa-orchestrator").OrchestratorStoreDeps {
-  let mailgunApiKey = ""
-  let mailgunDomain = ""
-  let mailgunFrom = ""
-  let mailgunRegion: "us" | "eu" | undefined
-  try {
-    mailgunApiKey = MAILGUN_API_KEY.value().trim()
-    mailgunDomain = MAILGUN_DOMAIN.value().trim()
-    mailgunFrom = MAILGUN_FROM.value().trim()
-    const region = MAILGUN_REGION.value().trim().toLowerCase()
-    mailgunRegion = region === "eu" ? "eu" : "us"
-  } catch {
-    // Secrets unset → all fields empty → callback returns null below.
-  }
-  if (!mailgunApiKey || !mailgunDomain || !mailgunFrom) {
-    return {}
-  }
-  const cfg = {
-    apiKey: mailgunApiKey,
-    domain: mailgunDomain,
-    from: mailgunFrom,
-    region: mailgunRegion,
-  }
-  return {
-    sendVerificationEmail: async (email: string) => {
-      const code = generateVerificationCode()
-      const sentAt = nowIso()
-      const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString()
-      try {
-        const result = await sendVerificationEmailViaMailgun(cfg, {
-          to: email,
-          code,
-        })
-        if (!result.ok) {
-          logger.warn("[mailgun] send failed", {
-            email,
-            status: result.status,
-            response: result.rawResponse?.slice(0, 200),
-          })
-          return null
-        }
-        return {
-          rawCode: code,
-          sentAt,
-          expiresAt,
-          ...(result.messageId ? { providerMessageId: result.messageId } : {}),
-        }
-      } catch (err) {
-        logger.error("[mailgun] send threw", {
-          email,
-          err: err instanceof Error ? err.message : String(err),
-        })
-        return null
-      }
-    },
-  }
-}
+// iter32 deploy-fix 2026-05-04 — `makeOrchestratorDeps` factory moved to
+// ./orchestrator-deps.ts. Imported + re-exported above so admin-bootstrap
+// can share the identical Mailgun bindings.
+
 
 async function processBrokerImessageEvent(
   db: Firestore,

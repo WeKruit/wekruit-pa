@@ -56,13 +56,25 @@ async function main() {
     },
   ]
   for (const f of flags) {
+    // iter32 deploy-fix 2026-05-04 — write the canonical FlagDoc shape
+    // (`value` + `type` + `scope`) that getFlag() actually reads.
+    // Previous version wrote `defaultValue` + `rollout`, which getFlag
+    // ignored → flag read as `undefined !== true` → returned false →
+    // ToS gate + email verify never fired in production despite the
+    // seed script reporting "ON".
     await db.collection("pa-feature-flags").doc(f.key).set(
       {
         key: f.key,
-        defaultValue: f.value,
+        value: f.value,
+        type: "bool",
+        scope: "global",
+        allowlist: [],
+        blocklist: [],
+        bucketStrategy: null,
         description: f.description,
-        rollout: { kind: "all", percent: 100 },
         updatedAt: now,
+        updatedBy: "seed-iter31",
+        version: 2,
       },
       { merge: true }
     )
