@@ -234,6 +234,33 @@
           "order": "DESCENDING"
         }
       ]
+    },
+    {
+      "_comment": "iter30/WS8 — /match/weights audit drawer: where(key==tableKey or tableKey/skillKey).orderBy(ts desc). Same shape used by /agent/playbooks audit reads.",
+      "collectionGroup": "pa-audit-events",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "key", "order": "ASCENDING" },
+        { "fieldPath": "ts", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "_comment": "iter30/WS8 — /match/explainer-history filter-by-user: where(userId==X).orderBy(createdAt desc).",
+      "collectionGroup": "pa-job-rec-explanations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "_comment": "iter30/WS8 — /match/explainer-history filter-by-language: where(language==zh|en).orderBy(createdAt desc).",
+      "collectionGroup": "pa-job-rec-explanations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "language", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []
