@@ -22,10 +22,23 @@ import {
   listMemoryPoints,
   type MemoryPoint,
 } from "../lib/memoryAdmin.js"
+// iter31 — HITL pause/resume admin client
+import { setRuntimeMode, type RuntimeMode } from "../lib/runtimeMode.js"
 import { fetchWorkerHealth, getWorkerHealthBaseUrl, type WorkerHealth } from "../lib/workerHealth.js"
 import { renderToolCallSummary } from "./toolCallSummary.js"
 
-type U = { id: string; phoneE164?: string; activeAgentId?: string; onboardingStatus?: string; createdAt?: string }
+type U = {
+  id: string
+  phoneE164?: string
+  activeAgentId?: string
+  onboardingStatus?: string
+  createdAt?: string
+  // iter31 — HITL runtime mode (paused | auto). Unset / undefined = auto.
+  runtimeMode?: "auto" | "paused"
+  runtimeModeAt?: string
+  runtimeModeSetBy?: string
+  runtimeModeReason?: string
+}
 type M = { id: string; role?: string; body?: string; createdAt?: string; sessionId?: string }
 type EventRow = { id: string; kind?: string; message?: string; createdAt?: string; mem0UserId?: string }
 type AnyRow = Record<string, unknown> & { id: string }
@@ -330,6 +343,35 @@ export function UserDetail() {
     setActionNotice("Send check-in is a stub — wire to paAdminBootstrap.sendCheckIn action.")
   }
 
+  // iter31 — HITL pause/resume action. Calls paRuntimeMode admin endpoint
+  // which writes user.runtimeMode + audit row. On pause the orchestrator
+  // skips reply generation but keeps memory ingest. On resume no auto-reply
+  // is emitted — next user inbound flows through normal path.
+  async function onToggleRuntimeMode(target: RuntimeMode) {
+    if (!id) return
+    const reason = target === "paused"
+      ? window.prompt("Reason for pausing? (optional)") ?? ""
+      : window.prompt("Reason for resuming? (optional)") ?? ""
+    setActionNotice(target === "paused" ? "Pausing agent…" : "Resuming agent…")
+    try {
+      const result = await setRuntimeMode(id, target, reason)
+      setUser((u) => (u ? {
+        ...u,
+        runtimeMode: result.mode,
+        runtimeModeAt: result.runtimeModeAt,
+        runtimeModeSetBy: result.setBy,
+        runtimeModeReason: reason,
+      } : u))
+      setActionNotice(
+        target === "paused"
+          ? `Agent paused at ${new Date(result.runtimeModeAt).toLocaleTimeString()} — inbound writes still flow into memory; outbound suppressed.`
+          : `Agent resumed at ${new Date(result.runtimeModeAt).toLocaleTimeString()} — next user message flows through normally.`
+      )
+    } catch (e) {
+      setActionNotice(`Runtime mode change failed: ${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
+
   if (err) return <ErrorState message={err} />
   if (!user) return <div className="panel">Loading conversation…</div>
 
@@ -362,6 +404,32 @@ export function UserDetail() {
           {stats.health}
         </p>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: "0.85rem" }}>
+          {/* iter31 — HITL pause/resume control. Pausing skips reply
+              generation but keeps memory ingest; resuming emits no auto
+              reply (next user inbound flows through normally). */}
+          {user.runtimeMode === "paused" ? (
+            <button
+              type="button"
+              onClick={() => void onToggleRuntimeMode("auto")}
+              style={{
+                background: "#fef3c7",
+                border: "1px solid #f59e0b",
+                color: "#78350f",
+                fontWeight: 600,
+              }}
+              title={`Paused at ${user.runtimeModeAt ?? "—"} by ${user.runtimeModeSetBy ?? "—"}${user.runtimeModeReason ? ` · ${user.runtimeModeReason}` : ""}`}
+            >
+              ▶ Resume agent
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void onToggleRuntimeMode("paused")}
+              title="Pause auto-replies for this conversation. Inbound still records to memory + audit; operator can read in real time and resume when ready."
+            >
+              ⏸ Pause agent
+            </button>
+          )}
           <button type="button" onClick={() => void onMuteOutbound()}>Mute outbound 24h</button>
           <button type="button" onClick={onSendCheckIn}>Send check-in</button>
           <Link
@@ -398,6 +466,18 @@ export function UserDetail() {
         ) : null}
         <p className="muted-copy" style={{ marginTop: "0.85rem" }}>
           Onboarding: <StatusBadge value={user.onboardingStatus} /> · Risk: <RiskPill level={stats.risk} />
+          {user.runtimeMode === "paused" ? (
+            <>
+              {" "}· <span style={{
+                background: "#fef3c7",
+                color: "#78350f",
+                padding: "2px 8px",
+                borderRadius: 999,
+                fontWeight: 600,
+                fontSize: "0.85em",
+              }}>HITL paused</span>
+            </>
+          ) : null}
           {activeAgent ? (
             <>
               {" "}· Active agent <code>{activeAgent.id}</code> (memory: <b>{activeAgent.memoryMode}</b>)

@@ -42,6 +42,18 @@ export type MessageRole = z.infer<typeof MessageRoleSchema>
 export const OnboardingStateSchema = z.enum([
   "pending",
   "first_mes_sent",
+  // iter31 (Adam directive 2026-05-04 "1. email verification & privacy + terms"):
+  // ToS + privacy acceptance MUST land before any data-collection probes.
+  "q_tos_asked",
+  // iter32 reorder (Adam directive 2026-05-04 "Email & verify should be part
+  // of pre cv in tos.."): email + verify form a trust handshake immediately
+  // after ToS, BEFORE the role/yoe probe sequence and BEFORE resume upload.
+  // Sequence: q_tos_asked → q_email_asked → q_email_verifying → q_role_asked
+  // → q_yoe_asked → q_visa_asked → q_startup_pref_asked → q_location_asked
+  // → q_resume_asked → complete. STATE_ORDER below mirrors this order so
+  // applyOnboardingStep idempotency advances forward only.
+  "q_email_asked",
+  "q_email_verifying",
   "grounding_q1_asked",
   "q_role_asked",
   "q_yoe_asked",
@@ -51,11 +63,6 @@ export const OnboardingStateSchema = z.enum([
   // iter30 closure (Adam directive 2026-05-03 "主动问简历"): proactive resume
   // request as the final probe step before transitioning to complete.
   "q_resume_asked",
-  // iter30 V6 (Adam directive 2026-05-03 "怎么连接 email"): 7th probe step —
-  // collect optional contact email after resume ask. Outbound transport
-  // (SendGrid/Postmark) deferred to post-launch hot-fix; today we only store
-  // the email so launch-day users can opt in.
-  "q_email_asked",
   "complete",
 ])
 export type OnboardingState = z.infer<typeof OnboardingStateSchema>
@@ -106,6 +113,13 @@ export const StatedPreferencesSchema = z.object({
    * deferred — today we only store the address.
    */
   contactEmail: z.string().email().optional(),
+  /**
+   * iter31 — ISO timestamp when the user replied with the verification code
+   * sent to `contactEmail`. Unset means email captured but not verified.
+   * Set by `applyOnboardingStep` when transitioning q_email_verifying →
+   * complete with a matching code.
+   */
+  contactEmailVerifiedAt: z.string().optional(),
   /** ISO timestamp of last write. */
   updatedAt: z.string().optional(),
 })
@@ -181,6 +195,54 @@ export const UserSchema = z.object({
   }).optional(),
   /** Phase 44 (v1.5 Stream-B / D5+D13) — captured by onboarding probe v2. */
   statedPreferences: StatedPreferencesSchema.optional(),
+  /**
+   * iter31 — ToS + privacy acceptance audit. Set by `applyOnboardingStep`
+   * when q_tos_asked → q_role_asked. `version` mirrors `pa-remote-config/
+   * platform/tosVersion` at the time of acceptance so we can re-prompt if
+   * Adam ships a new ToS.
+   */
+  tosAcceptance: z.object({
+    version: z.string(),
+    acceptedAt: z.string(),
+    /** "imessage_sms" today; "dashboard_admin" if operator clicks override. */
+    channel: z.string(),
+    /** Free-text record of the message that constituted acceptance. */
+    rawReply: z.string().optional(),
+  }).optional(),
+  /**
+   * iter31 — pending email verification challenge. Issued when q_email_asked
+   * produced a valid email; cleared when user replies with the code (→
+   * q_email_verifying → complete) or when TTL elapses. Code is hashed (sha256)
+   * so the raw never sits at rest in Firestore — code is sent via Mailgun and
+   * never persisted; Firestore stores only the hash + the email it was sent to.
+   */
+  emailVerification: z.object({
+    /** sha256(code) hex. Raw never persisted. */
+    codeHash: z.string(),
+    /** Email the code was dispatched to (lower-cased). */
+    email: z.string().email(),
+    sentAt: z.string(),
+    /** ISO; default issuer = sentAt + 30 minutes. */
+    expiresAt: z.string(),
+    /** Mailgun message-id (when send succeeded). */
+    providerMessageId: z.string().optional(),
+    /** Failed attempts (lockout after 5). */
+    attempts: z.number().int().nonnegative().default(0),
+  }).optional(),
+  /**
+   * iter31 — Human-in-the-loop runtime mode. `auto` (default / unset) = agent
+   * runs normally. `paused` = orchestrator skips reply generation but still
+   * appends inbound to pa-messages so memory + audit are preserved. Operator
+   * flips via dashboard or `paRuntimeMode` HTTP endpoint. Resume produces NO
+   * confirmation reply — the next user inbound flows through the normal path.
+   */
+  runtimeMode: z.enum(["auto", "paused"]).optional(),
+  /** ISO of last runtimeMode flip. */
+  runtimeModeAt: z.string().optional(),
+  /** Operator email that flipped runtimeMode (audit). */
+  runtimeModeSetBy: z.string().optional(),
+  /** Free-text reason recorded by operator for the pause/resume. */
+  runtimeModeReason: z.string().optional(),
 })
 export type User = z.infer<typeof UserSchema>
 

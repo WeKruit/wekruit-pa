@@ -88,8 +88,27 @@ import {
   composeOnboardingInput,
   shouldRunOnboardingProbe,
   userAnsweredStep,
+  parseUserAnswerForStep,
+  parseTosAnswer,
+  parseEmailVerificationCode,
   type OnboardingStep,
 } from "./onboarding.js"
+// iter32 — deterministic onboarding dispatcher (Adam directive
+// 2026-05-04: pre-runtime onboarding goes through configured phrases,
+// not the LLM). Flag-gated; default OFF for one launch cycle.
+import {
+  runDeterministicOnboardingTurn,
+  isDeterministicOnboardingEnabled,
+} from "./onboarding-deterministic.js"
+// Re-export for downstream consumers (apps/functions sim, scripts).
+export {
+  runDeterministicOnboardingTurn,
+  isDeterministicOnboardingEnabled,
+  resolveDeterministicAction,
+  composeDeterministicReply,
+  loadOnboardingConfig,
+  DEFAULT_ONBOARDING_CONFIG,
+} from "./onboarding-deterministic.js"
 // Phase 52 — F1 fix: lightweight bilingual intent detection for turn-0
 // onboarding ack (no LLM, regex only). See onboarding-intent.ts for the bank.
 import { detectFirstTurnIntent } from "./onboarding-intent.js"
@@ -381,14 +400,20 @@ export type OrchestratorStore = {
       | "pending"
       | "first_mes_sent"
       | "grounding_q1_asked"
+      | "q_tos_asked"
       | "q_role_asked"
       | "q_yoe_asked"
       | "q_visa_asked"
       | "q_startup_pref_asked"
       | "q_location_asked"
+      | "q_resume_asked"
+      | "q_email_asked"
+      | "q_email_verifying"
       | "complete"
     /** Phase 44 — read so orchestrator can decide reusable-trigger flow. */
     statedPreferences?: import("@pa/core-types").StatedPreferences
+    /** iter31 — operator-set HITL runtime mode (auto | paused). */
+    runtimeMode?: "auto" | "paused"
   } | null>
   /**
    * Phase 23 — apply onboarding step to advance user state + promote beta participant.
@@ -414,8 +439,73 @@ export type OrchestratorStore = {
        * stop venting.
        */
       suspendedForVent?: boolean
+      /** iter31 — see applyOnboardingStep opts of the same name. */
+      tosAcceptedVersion?: string
+      tosDeclined?: boolean
+      intentAckTarget?: "q_role_asked" | "q_tos_asked"
+      emailVerification?: {
+        codeHash: string
+        email: string
+        sentAt: string
+        expiresAt: string
+        providerMessageId?: string
+      }
+      emailVerificationVerified?: boolean
+      emailVerificationFailed?: boolean
     }
   ): Promise<void>
+
+  /**
+   * iter31 — Human-in-the-loop runtime mode. Returns "paused" when an
+   * operator has paused the agent for this user (orchestrator skips reply
+   * generation but still appends inbound to pa-messages so memory/audit
+   * are preserved). Default "auto" when unset / user-not-found.
+   */
+  getRuntimeMode?(userId: string): Promise<"auto" | "paused">
+
+  /**
+   * iter31 — current ToS version string for acceptance writes. Reads
+   * pa-remote-config/platform.tosVersion; defaults to "v1.0" when unset.
+   */
+  getTosVersion?(): Promise<string>
+
+  /**
+   * iter31 — read pending email verification challenge for a user. Used by
+   * the q_email_verifying inbound branch to compare sha256(reply-code)
+   * against the stored hash. Returns null when no challenge is pending.
+   */
+  getUserEmailVerification?(userId: string): Promise<{
+    codeHash: string
+    email: string
+    sentAt: string
+    expiresAt: string
+    attempts: number
+  } | null>
+
+  /**
+   * iter31 — Mailgun transport callback. Generates a 6-digit code, sends it
+   * to `email`, and returns the raw code + provider message-id so the
+   * orchestrator can hash + persist before replying. Returns null when
+   * Mailgun is not configured (orchestrator falls through to "complete"
+   * without verification — biz tester not blocked).
+   */
+  sendVerificationEmail?(
+    email: string
+  ): Promise<{
+    rawCode: string
+    sentAt: string
+    expiresAt: string
+    providerMessageId?: string
+  } | null>
+
+  /**
+   * iter32 — has the user's CV been ingested + parsed? cv-ingest pipeline
+   * writes a parsedCandidateResumes row when Sendblue delivers the
+   * iMessage attachment. The deterministic onboarding's CV gate (Adam
+   * directive 2026-05-04 #2 "stricter") holds at q_resume_asked until
+   * this returns true.
+   */
+  getUserCvParsed?(userId: string): Promise<boolean>
 
   /**
    * Phase 24.5 — optional Firestore handle for `getFlag()` reads. Tests omit
@@ -553,6 +643,49 @@ async function isOnboardingIntentAckEnabled(
 }
 
 /**
+ * iter31 — ToS + privacy acceptance gate. Default OFF for in-flight users.
+ * Flip ON via `paOnboardingTosGateEnabled` Firestore flag for biz testers.
+ */
+async function isOnboardingTosGateEnabled(
+  db: Firestore | undefined,
+  userId: string | undefined
+): Promise<boolean> {
+  if (process.env.PA_ONBOARDING_TOS_GATE_DISABLED === "true") return false
+  if (!db) return false
+  try {
+    const v = await getFlag(db, "paOnboardingTosGateEnabled", {
+      userId,
+      env: process.env,
+    })
+    return v === true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * iter31 — Mailgun email-verification step. Default OFF; requires the ToS
+ * gate AND the contactEmail (statedPreferences.contactEmail) to be present.
+ * Flip ON via `paOnboardingEmailVerifyEnabled`.
+ */
+async function isOnboardingEmailVerifyEnabled(
+  db: Firestore | undefined,
+  userId: string | undefined
+): Promise<boolean> {
+  if (process.env.PA_ONBOARDING_EMAIL_VERIFY_DISABLED === "true") return false
+  if (!db) return false
+  try {
+    const v = await getFlag(db, "paOnboardingEmailVerifyEnabled", {
+      userId,
+      env: process.env,
+    })
+    return v === true
+  } catch {
+    return false
+  }
+}
+
+/**
  * Phase 44 — given the user's onboardingState BEFORE this turn, return the
  * step that asked the question we're now receiving the reply to. Used to
  * route `event.body` into the right `parseUserAnswerForStep` parser.
@@ -569,6 +702,10 @@ function priorOnboardingAskedStep(
   // iter30 V6 — q_email_asked routes the user's reply through parseEmailAnswer
   // so contactEmail is written to statedPreferences when advancing to complete.
   if (state === "q_email_asked") return "ask_q_email"
+  // iter31 — q_tos_asked / q_email_verifying map to their corresponding ask_*
+  // steps for parser/userAnsweredStep lookups.
+  if (state === "q_tos_asked") return "ask_q_tos"
+  if (state === "q_email_verifying") return "ask_q_email_verify"
   return undefined
 }
 
@@ -784,6 +921,35 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       },
     })
 
+    // iter31 — Human-in-the-loop pause gate. Adam directive 2026-05-04
+    // ("on pause agent won't process any response but will process memory,
+    // on resume it won't say anything until next texts"). When operator has
+    // flipped user.runtimeMode = "paused", we keep the inbound write to
+    // pa-messages above (so memory + audit are preserved for the operator
+    // to read) but skip ALL of safety / onboarding / LLM / outbound. Reset
+    // commands ARE honored even under pause so testers can scrub state. On
+    // resume: no auto-reply is generated; the next inbound flows through
+    // the normal path. Self-gating: when getRuntimeMode is unimplemented
+    // (older test harnesses) or returns "auto", behavior is unchanged.
+    if (store.getRuntimeMode) {
+      const mode = await store.getRuntimeMode(event.userId)
+      if (mode === "paused") {
+        store.log("pa.hitl.paused.inbound_skip", {
+          userId: event.userId,
+          turnId,
+          eventId: event.id,
+          inboundLen: (event.body ?? "").length,
+        })
+        await store.updateTurn(turnId, {
+          status: "succeeded",
+          stage: "hitl_paused",
+          completedAt: store.nowIso(),
+        })
+        await store.markEventSucceeded(event.id)
+        return
+      }
+    }
+
     // Test-admin magic string. Must run BEFORE parseMemoryCommand so it
     // doesn't get swallowed by an unrelated memory grammar rule.
     const reset = await store.maybeHandleResetCommand(event)
@@ -919,11 +1085,94 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // onboarding steps using Voice v1 system prompt (D-04: no separate utility
     // prompt). On "complete", auto-promotes beta participant status.
     const onboardingUser = await store.getOnboardingUser(event.userId)
+
+    // ════════════════════════════════════════════════════════════════
+    // iter32 — Deterministic onboarding dispatcher. Adam directive
+    // 2026-05-04 ("we should have resume parsed before we start agent
+    // runtime"): pre-runtime onboarding turns dispatch a configured
+    // phrase verbatim via sendMemoryReply. NO LLM, NO Voice v1, NO
+    // langlock. Same friend-tone surface, zero drift, ~7 LLM calls
+    // saved per new user.
+    //
+    // Strict gate sequence (Adam directive 2026-05-04 #2 + #3):
+    //   1. Onboarding state must be `complete` (TOS accepted, all 5 q_*
+    //      answered, resume requested, email captured + verified)
+    //   2. parsedCandidateResumes row must exist (CV uploaded + parsed)
+    //   3. statedPreferences.contactEmailVerifiedAt must be set
+    // Until ALL three gates pass, agent runtime does NOT activate. The
+    // dispatcher emits a deterministic re-prompt at whichever gate
+    // hasn't cleared yet.
+    //
+    // Flag-gated: paOnboardingDeterministicEnabled (default OFF — old
+    // LLM-compose path stays as a rollback for one launch cycle).
+    // ════════════════════════════════════════════════════════════════
+    if (onboardingUser) {
+      const enableDeterministic = await isDeterministicOnboardingEnabled(
+        store.db,
+        event.userId
+      )
+      if (enableDeterministic && onboardingUser.onboardingState !== "complete") {
+        // iter32: deterministic dispatcher enforces ALL gates internally
+        // (TOS → email → verify → role/yoe/visa/startup/location → resume
+        // → complete). When state=complete, all gates have already cleared,
+        // so we fall through to agent runtime. Legacy users at state=complete
+        // (pre-iter32, may not have email verified or CV parsed) are NOT
+        // re-gated here — they keep their existing access. Adam directive
+        // strict-gating applies to NEW users going through the dispatcher.
+        const cvParsed = store.getUserCvParsed
+          ? await store.getUserCvParsed(event.userId)
+          : false
+        const result = await runDeterministicOnboardingTurn({
+          event,
+          store,
+          turnId,
+          onboardingUser,
+          cvParsed,
+          agent,
+          suppressOutbound: shouldSuppressOutbound(event),
+        })
+        if (result.handled) {
+          await store.updateTurn(turnId, {
+            status: "succeeded",
+            stage: "succeeded",
+            completedAt: store.nowIso(),
+            onboardingDeterministicAction: result.action.kind,
+          })
+          await store.markEventSucceeded(event.id)
+          return
+        }
+        // result.handled === false only when state=complete (dispatcher
+        // returns skip). Falls through to agent runtime path below.
+      }
+    }
     if (onboardingUser) {
       // Phase 44 (v1.5 Stream-B / D5+D13) — v2 8-state probe behind flag.
       // Default off → falls through to legacy 4-state path identically.
       const enableV2 = await isOnboardingProbeV2Enabled(store.db, event.userId)
-      const onboardingStep = resolveOnboardingStep(onboardingUser, { enableV2 })
+      // iter31 — flag-gated ToS gate + email verification. The resolver
+      // routes:
+      //   first_mes_sent → ask_q_tos       (when enableTosGate)
+      //   q_email_asked  → ask_q_email_verify (when enableEmailVerification
+      //                                        AND emailCaptured)
+      const enableTosGate = await isOnboardingTosGateEnabled(store.db, event.userId)
+      const enableEmailVerification = await isOnboardingEmailVerifyEnabled(
+        store.db,
+        event.userId
+      )
+      // emailCaptured: did the user supply a parseable email at q_email_asked?
+      // Determined by parsing the prior reply ONCE here so the resolver routes
+      // q_email_asked → ask_q_email_verify (capture + flag on) or → complete
+      // (skip / no-flag) deterministically.
+      const isEmailReplyTurn = onboardingUser.onboardingState === "q_email_asked"
+      const emailCaptured =
+        isEmailReplyTurn &&
+        Boolean(parseUserAnswerForStep("ask_q_email", event.body).contactEmail)
+      const onboardingStep = resolveOnboardingStep(onboardingUser, {
+        enableV2,
+        enableTosGate,
+        enableEmailVerification,
+        emailCaptured,
+      })
       // Phase 52 — F1 fix: detect intent on turn-0 (send_first_mes) ONLY.
       // Mid-conversation steps already have specific Adam-locked questions and
       // mustn't be re-shaped by the intent classifier. Flag-gated, default ON,
@@ -1084,8 +1333,274 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
           step: onboardingStep,
         })
       }
+
+      // ────────────────────────────────────────────────────────────────────
+      // iter31 — ToS branching. Adam directive 2026-05-04 ("1. email
+      // verification & privacy + terms"). When the prior turn ASKED ToS,
+      // we parse the user's reply to decide accept / decline / unclear:
+      //   - accept   → record tosAcceptance.version=current, advance to
+      //                q_role_asked via the normal compose path
+      //   - decline  → record tosAcceptance.declinedAt, STAY at q_tos_asked,
+      //                emit decline-ack via composeOnboardingInput's
+      //                ask_q_tos_declined branch
+      //   - unclear  → STAY at q_tos_asked, emit re-ask via the
+      //                ask_q_tos_reask branch
+      // ────────────────────────────────────────────────────────────────────
+      const isPriorTosAsk = onboardingUser.onboardingState === "q_tos_asked"
+      let tosAnswerKind: "accept" | "decline" | "unclear" | undefined
+      let resolvedTosVersion: string | undefined
+      if (isPriorTosAsk) {
+        tosAnswerKind = parseTosAnswer(event.body)
+        if (tosAnswerKind === "accept" && store.getTosVersion) {
+          try {
+            resolvedTosVersion = await store.getTosVersion()
+          } catch {
+            resolvedTosVersion = "v1.0"
+          }
+        }
+        store.log("pa.onboarding.tos_decision", {
+          userId: event.userId,
+          turnId,
+          decision: tosAnswerKind,
+          tosVersion: resolvedTosVersion,
+        })
+      }
+      const tosSuspended =
+        isPriorTosAsk && tosAnswerKind !== "accept"
+
+      // ────────────────────────────────────────────────────────────────────
+      // iter31 — Email verification. Adam directive 2026-05-04 ("send code
+      // they respond in sms"). Two distinct branches:
+      //
+      // (A) state was q_email_asked AND user supplied a parseable email AND
+      //     paOnboardingEmailVerifyEnabled is on → fire Mailgun NOW, hash
+      //     the code, advance state to q_email_verifying with the challenge
+      //     persisted. The reply is the ask_q_email_verify directive (LLM
+      //     compose path; nothing special).
+      //
+      // (B) state was q_email_verifying → user is replying with the code.
+      //     Look up the stored hash, compare sha256(parsed code), branch
+      //     into verified / miss / expired / exhausted / no_code. Verified
+      //     and exhausted/expired short-circuit with deterministic replies;
+      //     miss bumps attempts and stays; no_code falls through to the
+      //     normal compose (re-ask via ask_q_email_verify directive).
+      // ────────────────────────────────────────────────────────────────────
+      const isPriorEmailVerify =
+        onboardingUser.onboardingState === "q_email_verifying"
+      let emailVerifyChallenge:
+        | {
+            codeHash: string
+            email: string
+            sentAt: string
+            expiresAt: string
+            providerMessageId?: string
+          }
+        | undefined
+      // Branch (A): start verification.
+      if (
+        onboardingStep === "ask_q_email_verify" &&
+        onboardingUser.onboardingState === "q_email_asked" &&
+        emailCaptured
+      ) {
+        const parsedEmail = parseUserAnswerForStep(
+          "ask_q_email",
+          event.body
+        ).contactEmail
+        if (parsedEmail && store.sendVerificationEmail) {
+          try {
+            const sent = await store.sendVerificationEmail(parsedEmail)
+            if (sent) {
+              const { createHash: ch } = await import("node:crypto")
+              const codeHash = ch("sha256").update(sent.rawCode).digest("hex")
+              emailVerifyChallenge = {
+                codeHash,
+                email: parsedEmail,
+                sentAt: sent.sentAt,
+                expiresAt: sent.expiresAt,
+                ...(sent.providerMessageId
+                  ? { providerMessageId: sent.providerMessageId }
+                  : {}),
+              }
+              store.log("pa.onboarding.email_verify.sent", {
+                userId: event.userId,
+                turnId,
+                email: parsedEmail,
+                providerMessageId: sent.providerMessageId,
+              })
+            } else {
+              store.log("pa.onboarding.email_verify.skipped_no_transport", {
+                userId: event.userId,
+                turnId,
+                email: parsedEmail,
+              })
+            }
+          } catch (err) {
+            store.log("pa.onboarding.email_verify.send_error", {
+              userId: event.userId,
+              turnId,
+              email: parsedEmail,
+              error: err instanceof Error ? err.message : String(err),
+            })
+          }
+        }
+        // If Mailgun failed or transport unavailable, fall through: the
+        // resolver still routes to ask_q_email_verify but the verify branch
+        // can't actually verify. Operator can resume manually via dashboard.
+      }
+      // Branch (B): verification reply turn.
+      if (isPriorEmailVerify) {
+        const candidate = parseEmailVerificationCode(event.body)
+        const challenge = store.getUserEmailVerification
+          ? await store.getUserEmailVerification(event.userId)
+          : null
+        const nowMs = Date.now()
+        if (challenge) {
+          const { createHash: ch } = await import("node:crypto")
+          const expired = Date.parse(challenge.expiresAt) < nowMs
+          const exhausted = challenge.attempts >= 5
+          if (expired || exhausted) {
+            // Move on without verification — biz tester not blocked.
+            await store.applyOnboarding(
+              event.userId,
+              onboardingUser.phoneE164,
+              "complete",
+              {
+                priorAskedStep: "ask_q_email_verify",
+                priorUserReply: event.body,
+              }
+            )
+            const replyZh = expired
+              ? "验证码过期了, 没事我先放着, 验证后面再做也行"
+              : "试了几次都没对上, 先继续吧, 后面再补也行"
+            const replyEn = expired
+              ? "code expired — no worries, we can verify later"
+              : "couldn't match the code after a few tries — moving on, we can verify later"
+            const replyLang = detectUserLang(event.body)
+            await sendMemoryReply(
+              store,
+              event,
+              turnId,
+              replyLang === "zh" ? replyZh : replyEn
+            )
+            store.log("pa.onboarding.email_verify.bypass", {
+              userId: event.userId,
+              turnId,
+              reason: expired ? "expired" : "exhausted",
+            })
+            await store.updateTurn(turnId, {
+              status: "succeeded",
+              stage: "succeeded",
+              completedAt: store.nowIso(),
+              onboardingStep: "complete",
+            })
+            await store.markEventSucceeded(event.id)
+            return
+          }
+          if (candidate) {
+            const candidateHash = ch("sha256").update(candidate).digest("hex")
+            if (candidateHash === challenge.codeHash) {
+              await store.applyOnboarding(
+                event.userId,
+                onboardingUser.phoneE164,
+                "complete",
+                {
+                  priorAskedStep: "ask_q_email_verify",
+                  priorUserReply: event.body,
+                  emailVerificationVerified: true,
+                }
+              )
+              const replyLang = detectUserLang(event.body)
+              const reply =
+                replyLang === "zh"
+                  ? "✓ 邮箱验过了, 都搞定咯"
+                  : "✓ email verified — all set"
+              await sendMemoryReply(store, event, turnId, reply)
+              store.log("pa.onboarding.email_verify.verified", {
+                userId: event.userId,
+                turnId,
+                email: challenge.email,
+              })
+              await store.updateTurn(turnId, {
+                status: "succeeded",
+                stage: "succeeded",
+                completedAt: store.nowIso(),
+                onboardingStep: "complete",
+              })
+              await store.markEventSucceeded(event.id)
+              return
+            }
+            // Miss: bump attempts, stay at q_email_verifying.
+            await store.applyOnboarding(
+              event.userId,
+              onboardingUser.phoneE164,
+              "ask_q_email_verify",
+              {
+                emailVerificationFailed: true,
+              }
+            )
+            const replyLang = detectUserLang(event.body)
+            const remaining = Math.max(0, 5 - challenge.attempts - 1)
+            const reply =
+              replyLang === "zh"
+                ? `验证码不对, 再试一次? 还剩 ${remaining} 次`
+                : `code didn't match — try again? ${remaining} ${remaining === 1 ? "try" : "tries"} left`
+            await sendMemoryReply(store, event, turnId, reply)
+            store.log("pa.onboarding.email_verify.miss", {
+              userId: event.userId,
+              turnId,
+              attempts: challenge.attempts + 1,
+              remaining,
+            })
+            await store.updateTurn(turnId, {
+              status: "succeeded",
+              stage: "succeeded",
+              completedAt: store.nowIso(),
+              onboardingStep: "ask_q_email_verify",
+            })
+            await store.markEventSucceeded(event.id)
+            return
+          }
+          // No code parsed in reply — fall through to compose ask_q_email_verify
+          // re-ask. Don't bump attempts (user just chatting, not guessing).
+        }
+        // No challenge and we're at q_email_verifying — shouldn't happen, but
+        // recover by completing without verification.
+        if (!challenge) {
+          store.log("pa.onboarding.email_verify.missing_challenge", {
+            userId: event.userId,
+            turnId,
+          })
+          await store.applyOnboarding(
+            event.userId,
+            onboardingUser.phoneE164,
+            "complete",
+            {
+              priorAskedStep: "ask_q_email_verify",
+              priorUserReply: event.body,
+            }
+          )
+          // fall through to main path — no special reply
+        }
+      }
+
+      // iter31 — ToS gate suspension override: when state was q_tos_asked
+      // and the user did NOT accept (decline / unclear), the resolver
+      // already routed onboardingStep="ask_q_role". Override locally to
+      // "ask_q_tos" so compose emits the decline/reask branch + we don't
+      // accidentally chain a role question over an unaccepted ToS.
+      const composeStep: OnboardingStep =
+        tosSuspended ? "ask_q_tos" : onboardingStep
       if (onboardingStep !== "skip") {
-        const syntheticInput = composeOnboardingInput(onboardingStep, agent, {
+        // iter31 — when state was q_tos_asked, surface the prior step to
+        // composeOnboardingInput so the ask_q_tos_declined / ask_q_tos_reask
+        // branches can fire. Same idea for q_email_verifying.
+        const priorAskedStepForCompose: OnboardingStep | undefined =
+          isPriorTosAsk
+            ? "ask_q_tos"
+            : isPriorEmailVerify
+              ? "ask_q_email_verify"
+              : priorAskedStepForSuspendCheck
+        const syntheticInput = composeOnboardingInput(composeStep, agent, {
           userMessage: event.body,
           detectedIntent,
           // iter30 closure — when the env kill switch is on, also disable the
@@ -1095,7 +1610,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
           // V4 QA Agent-I 2026-05-04 P0 fix — pass priorAskedStep so the
           // suspended-vs-advance decision checks the question we LAST
           // asked, not the one we're about to ask.
-          priorAskedStep: priorAskedStepForSuspendCheck,
+          priorAskedStep: priorAskedStepForCompose,
         })
         if (syntheticInput) {
           // Build system inputs for onboarding reply using the normal Voice v1 path.
@@ -1187,7 +1702,8 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
               idempotencyKey: `outbound-onboarding-${event.id}`,
             })
           }
-          // Advance onboarding state — UNLESS suspended for vent (iter24).
+          // Advance onboarding state — UNLESS suspended for vent (iter24)
+          // OR ToS unclear/decline (iter31).
           if (suspendedForVent) {
             store.log("pa.onboarding.suspended_for_intent", {
               userId: event.userId,
@@ -1196,6 +1712,18 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
               intent: detectedIntent?.intent,
             })
           }
+          if (tosSuspended) {
+            store.log("pa.onboarding.tos_suspended", {
+              userId: event.userId,
+              turnId,
+              step: onboardingStep,
+              decision: tosAnswerKind,
+            })
+          }
+          // iter31 — when intent-ack chains AND ToS gate is enabled, target
+          // q_tos_asked instead of q_role_asked for the inline-ack path.
+          const intentAckTarget: "q_role_asked" | "q_tos_asked" | undefined =
+            intentAcked && enableTosGate ? "q_tos_asked" : undefined
           await store.applyOnboarding(
             event.userId,
             onboardingUser.phoneE164,
@@ -1208,8 +1736,18 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
               // q_role_asked so the user's NEXT message is parsed as a role
               // answer.
               intentAcked,
+              ...(intentAckTarget ? { intentAckTarget } : {}),
               // iter24 — when true, applyOnboardingStep is a no-op (state stays).
-              suspendedForVent,
+              // iter31 — also no-op when ToS unclear/decline so user stays at
+              // q_tos_asked.
+              suspendedForVent: suspendedForVent || tosSuspended,
+              ...(tosAnswerKind === "accept" && resolvedTosVersion
+                ? { tosAcceptedVersion: resolvedTosVersion }
+                : {}),
+              ...(tosAnswerKind === "decline" ? { tosDeclined: true } : {}),
+              ...(emailVerifyChallenge
+                ? { emailVerification: emailVerifyChallenge }
+                : {}),
             }
           )
           await store.updateTurn(turnId, {
@@ -2400,7 +2938,21 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
   }
 }
 
-export function createFirestoreOrchestratorStore(db: Firestore): OrchestratorStore {
+/**
+ * iter31 — optional injection points for createFirestoreOrchestratorStore.
+ * The Mailgun transport for `sendVerificationEmail` lives in apps/functions
+ * (where the secret values are pinned at deploy time). Pass it here so the
+ * orchestrator can fire verification mails without the package importing
+ * firebase-functions/params or fetch'ing Mailgun directly.
+ */
+export type OrchestratorStoreDeps = {
+  sendVerificationEmail?: NonNullable<OrchestratorStore["sendVerificationEmail"]>
+}
+
+export function createFirestoreOrchestratorStore(
+  db: Firestore,
+  deps: OrchestratorStoreDeps = {}
+): OrchestratorStore {
   // Phase 19 ADAPT-03 — provision the Firestore-backed voice style store
   // at orchestrator boot. Tests that build their own store should call
   // setVoiceStyleStore(createInMemoryVoiceStyleStore()) BEFORE invoking
@@ -2759,33 +3311,115 @@ export function createFirestoreOrchestratorStore(db: Firestore): OrchestratorSto
           | "pending"
           | "first_mes_sent"
           | "grounding_q1_asked"
+          | "q_tos_asked"
           | "q_role_asked"
           | "q_yoe_asked"
           | "q_visa_asked"
           | "q_startup_pref_asked"
           | "q_location_asked"
+          | "q_resume_asked"
+          | "q_email_asked"
+          | "q_email_verifying"
           | "complete"
         statedPreferences?: import("@pa/core-types").StatedPreferences
+        runtimeMode?: "auto" | "paused"
       }
       return {
         id: data.id ?? userId,
         phoneE164: data.phoneE164 ?? "",
         onboardingState: data.onboardingState,
         statedPreferences: data.statedPreferences,
+        runtimeMode: data.runtimeMode,
       }
     },
     async applyOnboarding(userId, phoneE164, step, opts) {
+      // iter31 — read currentState so applyOnboardingStep idempotency check
+      // (STATE_ORDER) lines up; previously we passed undefined which forced
+      // every call to advance from scratch.
+      const snap = await db.collection(PA_COLLECTIONS.users).doc(userId).get()
+      const data = snap.exists ? (snap.data() as { onboardingState?: import("@pa/core-types").OnboardingState }) : undefined
       await applyOnboardingStep(
         db,
-        { id: userId, phoneE164, onboardingState: undefined },
+        { id: userId, phoneE164, onboardingState: data?.onboardingState },
         step,
         {
           priorAskedStep: opts?.priorAskedStep,
           priorUserReply: opts?.priorUserReply,
           intentAcked: opts?.intentAcked,
           suspendedForVent: opts?.suspendedForVent,
+          tosAcceptedVersion: opts?.tosAcceptedVersion,
+          tosDeclined: opts?.tosDeclined,
+          intentAckTarget: opts?.intentAckTarget,
+          emailVerification: opts?.emailVerification,
+          emailVerificationVerified: opts?.emailVerificationVerified,
+          emailVerificationFailed: opts?.emailVerificationFailed,
         }
       )
+    },
+    // iter31 — HITL runtime mode + ToS version + email-verification helpers.
+    async getRuntimeMode(userId) {
+      const snap = await db.collection(PA_COLLECTIONS.users).doc(userId).get()
+      if (!snap.exists) return "auto"
+      const data = snap.data() as { runtimeMode?: "auto" | "paused" } | undefined
+      return data?.runtimeMode === "paused" ? "paused" : "auto"
+    },
+    async getTosVersion() {
+      try {
+        const snap = await db
+          .collection(PA_COLLECTIONS.remoteConfig)
+          .doc("platform")
+          .get()
+        const data = snap.exists ? (snap.data() as { tosVersion?: string }) : undefined
+        return data?.tosVersion ?? "v1.0"
+      } catch {
+        return "v1.0"
+      }
+    },
+    async getUserEmailVerification(userId) {
+      const snap = await db.collection(PA_COLLECTIONS.users).doc(userId).get()
+      if (!snap.exists) return null
+      const data = snap.data() as {
+        emailVerification?: {
+          codeHash?: string
+          email?: string
+          sentAt?: string
+          expiresAt?: string
+          attempts?: number
+        }
+      } | undefined
+      const ev = data?.emailVerification
+      if (!ev || !ev.codeHash || !ev.email || !ev.sentAt || !ev.expiresAt) return null
+      return {
+        codeHash: ev.codeHash,
+        email: ev.email,
+        sentAt: ev.sentAt,
+        expiresAt: ev.expiresAt,
+        attempts: ev.attempts ?? 0,
+      }
+    },
+    // sendVerificationEmail is wired by the apps/functions layer (which has
+    // the Mailgun secrets). Tests omit it; orchestrator falls through to
+    // complete-without-verification when undefined.
+    ...(deps.sendVerificationEmail
+      ? { sendVerificationEmail: deps.sendVerificationEmail }
+      : {}),
+    // iter32 — CV gate. Reads parsedCandidateResumes (cross-product
+    // collection — see CLAUDE.md) for the user; returns true iff a row
+    // exists. Defensive fail-OPEN is NOT appropriate here (Adam directive
+    // 2026-05-04 #2: stricter). On Firestore error, we fail CLOSED (return
+    // false) so the gate holds. cv-ingest pipeline retries are robust;
+    // a transient read error shouldn't blow past the gate.
+    async getUserCvParsed(userId) {
+      try {
+        const snap = await db
+          .collection("parsedCandidateResumes")
+          .where("userId", "==", userId)
+          .limit(1)
+          .get()
+        return !snap.empty
+      } catch {
+        return false
+      }
     },
   }
 }
@@ -2831,11 +3465,12 @@ export async function claimInboundEvent(db: Firestore, eventId: string, now = ne
 export async function claimAndProcessInboundEvent(
   db: Firestore,
   eventId: string,
-  log: (...args: unknown[]) => void = (...args) => console.log(new Date().toISOString(), ...args)
+  log: (...args: unknown[]) => void = (...args) => console.log(new Date().toISOString(), ...args),
+  deps: OrchestratorStoreDeps = {}
 ): Promise<number> {
   const event = await claimInboundEvent(db, eventId)
   if (!event) return 0
-  await processInboundEvent(event, createFirestoreOrchestratorStore(db))
+  await processInboundEvent(event, createFirestoreOrchestratorStore(db, deps))
   log("[orchestrator] processed", eventId)
   return 1
 }

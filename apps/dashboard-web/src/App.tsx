@@ -2,6 +2,7 @@ import { getRedirectResult, onAuthStateChanged, signOut } from "firebase/auth"
 import { useEffect, useState } from "react"
 import { Navigate, NavLink, Route, Routes } from "react-router-dom"
 import { AgentBuilder } from "./pages/AgentBuilder.js"
+import Legal from "./pages/Legal.js"
 import { Login } from "./pages/Login.js"
 import { Operations } from "./pages/Operations.js"
 import { Overview } from "./pages/Overview.js"
@@ -52,6 +53,10 @@ export default function App() {
   if (!user) {
     return (
       <Routes>
+        {/* iter31 — public privacy + terms route. Linked from onboarding ToS
+            prompt sent over iMessage; biz testers tap through before signing
+            in to the dashboard, so it must render outside the auth wall. */}
+        <Route path="/legal" element={<Legal />} />
         <Route path="*" element={<Login />} />
       </Routes>
     )
@@ -162,6 +167,9 @@ export default function App() {
           {/* Phase 32 Wave 1 — /playground (E2E Lab) deleted; superseded by
               /eval/n-round-sim (Wave 3). Redirect to keep old links alive. */}
           <Route path="/playground" element={<Navigate to="/eval/n-round-sim" replace />} />
+          {/* iter31 — public privacy + terms route also reachable from inside
+              the dashboard (so operators can preview what testers see). */}
+          <Route path="/legal" element={<Legal />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>

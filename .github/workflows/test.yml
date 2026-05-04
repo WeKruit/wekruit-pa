@@ -45,6 +45,14 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # iter32 deploy-fix 2026-05-04 — typecheck of apps/eval/external-benchmarks
+      # imports from pa-orchestrator/dist/* (build artifacts), so we must run
+      # a workspace build before typecheck or those packages fail with
+      # TS2307 "Cannot find module .../dist/...". This was a pre-existing CI
+      # red on this branch; cheap fix.
+      - name: Build (workspace, prerequisite for typecheck of dist-import sites)
+        run: pnpm -r build
+
       - name: Typecheck (all 15 packages)
         run: pnpm -r typecheck
 

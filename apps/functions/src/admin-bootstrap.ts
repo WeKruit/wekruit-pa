@@ -17,6 +17,9 @@ import { onRequest } from "firebase-functions/v2/https"
 import { defineSecret } from "firebase-functions/params"
 import { getFirestore, FieldValue, type Firestore } from "firebase-admin/firestore"
 import { getApps, initializeApp } from "firebase-admin/app"
+// iter32 deploy-fix 2026-05-04 — share Mailgun deps with onPaInbound so the
+// paAdminBootstrap simulator gets the same `sendVerificationEmail` callback.
+import { MAILGUN_SECRETS, makeOrchestratorDeps } from "./orchestrator-deps.js"
 
 const PA_ADMIN_TOKEN = defineSecret("PA_ADMIN_TOKEN")
 const SILICONFLOW_API_KEY = defineSecret("SILICONFLOW_API_KEY")
@@ -89,6 +92,17 @@ const SIM_PERSONAS: Record<SimPersonaId, SimPersona> = {
 export type SimulateConversationInput = {
   persona: string
   turns?: number
+  /**
+   * iter32 — scripted user messages mode. When provided, the simulator
+   * uses these messages in order INSTEAD of calling the persona-LLM to
+   * generate them. Each turn pops the next scripted message and
+   * dispatches it to the orchestrator. This is the preferred mode for
+   * deterministic-onboarding walkthroughs (no LLM cost, reproducible
+   * transcripts). When the array runs out before `turns`, the simulator
+   * stops gracefully. `persona` is still required for systemPrompt
+   * sourcing but the LLM call is skipped.
+   */
+  scriptedUserMessages?: string[]
 }
 
 export type SimulateConversationResult = {
@@ -220,26 +234,40 @@ export async function simulateConversation(
   const errors: { turn: number; error: string }[] = []
   let processed = 0
 
-  let userText = persona.openingMessage
-  for (let i = 0; i < turnCount; i++) {
+  // iter32 — scripted-user mode bypasses persona-LLM entirely. Useful for
+  // deterministic-onboarding walkthroughs where we control the user
+  // sequence (TOS accept, valid email, code, etc.) and want zero LLM cost.
+  const scripted = input.scriptedUserMessages
+  const useScripted = Array.isArray(scripted) && scripted.length > 0
+  const effectiveTurnCount = useScripted
+    ? Math.min(turnCount, scripted.length)
+    : turnCount
+
+  let userText = useScripted ? scripted[0]! : persona.openingMessage
+  for (let i = 0; i < effectiveTurnCount; i++) {
     if (i > 0) {
-      // Generate persona's next user message from full history.
-      const ac = new AbortController()
-      try {
-        userText = await withTimeout(
-          deps.personaLLM({
-            systemPrompt: personaSystemPrompt,
-            history: transcript.map((t) => ({ role: t.role, content: t.body })),
-            signal: ac.signal,
-          }),
-          timeoutMs,
-          ac
-        )
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e)
-        errors.push({ turn: i, error: `persona_llm_failed: ${msg}` })
-        log("[simulateConversation] persona-LLM failed", { turn: i, error: msg })
-        break
+      if (useScripted) {
+        userText = scripted[i] ?? ""
+        if (!userText) break
+      } else {
+        // Generate persona's next user message from full history.
+        const ac = new AbortController()
+        try {
+          userText = await withTimeout(
+            deps.personaLLM({
+              systemPrompt: personaSystemPrompt,
+              history: transcript.map((t) => ({ role: t.role, content: t.body })),
+              signal: ac.signal,
+            }),
+            timeoutMs,
+            ac
+          )
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e)
+          errors.push({ turn: i, error: `persona_llm_failed: ${msg}` })
+          log("[simulateConversation] persona-LLM failed", { turn: i, error: msg })
+          break
+        }
       }
     }
 
@@ -290,6 +318,97 @@ export async function simulateConversation(
 }
 
 export const SIM_PERSONA_IDS = Object.keys(SIM_PERSONAS) as SimPersonaId[]
+
+/**
+ * iter32 — Canned onboarding walkthrough scripts. Each preset is a
+ * sequence of user messages that exercises the deterministic onboarding
+ * dispatcher end-to-end without the persona-LLM. Pair with
+ * `paOnboardingDeterministicEnabled=true` so the orchestrator routes
+ * through runDeterministicOnboardingTurn instead of the legacy LLM path.
+ *
+ * Persona is required by simulateConversation for system-prompt context
+ * (used downstream once agent runtime activates) but the persona-LLM is
+ * NOT called in scripted mode.
+ *
+ * NOTE: post-resume turns require parsedCandidateResumes to be populated
+ * by the cv-ingest pipeline (out-of-band) before the dispatcher will
+ * advance past q_resume_asked. For end-to-end testing, seed a
+ * parsedCandidateResumes row for the synthetic sim user before running.
+ */
+export const ONBOARDING_PRESETS: Record<
+  string,
+  { persona: string; messages: string[]; description: string }
+> = {
+  "onboarding-zh-happy": {
+    persona: "anxious_grad",
+    description: "ZH user, all answers correct, full sequence through complete",
+    messages: [
+      "你好",
+      "在不",
+      "同意",
+      "我邮箱是 adam@wekruit.com",
+      "654321",
+      "swe 后端",
+      "5年",
+      "h1b",
+      "大厂稳一点",
+      "湾区",
+      "好我去发简历",
+      "发了",
+      "你能帮我看下 JD 吗",
+    ],
+  },
+  "onboarding-en-happy": {
+    persona: "en_grad",
+    description: "EN user, all answers correct, full sequence through complete",
+    messages: [
+      "hey there",
+      "what's up",
+      "agree",
+      "alex@example.com",
+      "654321",
+      "pm — product manager",
+      "8 years",
+      "us citizen",
+      "startup vibe",
+      "NYC or remote",
+      "ok sending",
+      "sent",
+      "got any pm roles in fintech?",
+    ],
+  },
+  "onboarding-tos-decline": {
+    persona: "en_grad",
+    description: "ToS decline → unclear → accept (state stays at q_tos_asked through decline + unclear)",
+    messages: [
+      "hey",
+      "lol idk",
+      "no thanks i don't agree",
+      "actually how does this work",
+      "agree",
+      "alex@example.com",
+      "654321",
+    ],
+  },
+  "onboarding-verify-miss-then-correct": {
+    persona: "en_grad",
+    description: "Email verify: 2 wrong codes, then correct (attempts bumped, state stays till verified)",
+    messages: ["hi", "yes", "agree", "alex@example.com", "111111", "222222", "654321"],
+  },
+  "onboarding-vent-mid-probe": {
+    persona: "vent_seeker",
+    description: "Vent mid-probe: state stays at q_role_asked, deterministic empathy ack, no LLM",
+    messages: [
+      "hey",
+      "yo",
+      "agree",
+      "alex@example.com",
+      "654321",
+      "fuck this i just got laid off i'm exhausted",
+      "ok let me try. swe backend i guess",
+    ],
+  },
+}
 
 interface FlagSpec {
   key: string
@@ -1004,7 +1123,14 @@ async function defaultOrchestrator(input: {
     },
   }
 
-  const baseStore = createFirestoreOrchestratorStore(db)
+  // iter32 deploy-fix 2026-05-04 — pull in the Mailgun deps via the
+  // shared module so the simulator's deterministic onboarding path can
+  // fire Mailgun exactly as production iMessage does. Previously this
+  // was `createFirestoreOrchestratorStore(db)` (no deps) → email verify
+  // never wired → the dispatcher took the graceful-fallback "Mailgun
+  // unconfigured" branch, advancing state to complete without
+  // contactEmailVerifiedAt.
+  const baseStore = createFirestoreOrchestratorStore(db, makeOrchestratorDeps())
   // Capture the exact text sent to the user (post-rewrite, post-normalize).
   // Multi-part messages are joined with newline to match what the user reads.
   const outboundParts: string[] = []
@@ -1464,7 +1590,19 @@ export const paAdminBootstrap = onRequest(
     // page calls simulateConversation directly with x-admin-token in header).
     // Token-gated, so cross-origin is acceptable.
     cors: ["https://wekruit-pa.web.app", "https://wekruit-pa.firebaseapp.com", "http://localhost:5173"],
-    secrets: [PA_ADMIN_TOKEN, SILICONFLOW_API_KEY, PA_OPENAI_AGENT_API_KEY, QDRANT_URL, QDRANT_API_KEY],
+    // iter32 deploy-fix 2026-05-04 — bind MAILGUN_* so the simulator's
+    // `defaultOrchestrator` can call makeOrchestratorDeps() and produce a
+    // working `sendVerificationEmail` callback. Previously the simulator
+    // path silently fell back to "Mailgun unconfigured" (no verifiedAt)
+    // because these secrets weren't bound to paAdminBootstrap.
+    secrets: [
+      PA_ADMIN_TOKEN,
+      SILICONFLOW_API_KEY,
+      PA_OPENAI_AGENT_API_KEY,
+      QDRANT_URL,
+      QDRANT_API_KEY,
+      ...MAILGUN_SECRETS,
+    ],
   },
   async (req, res) => {
     const auth = checkAdminToken(req.header("x-admin-token") ?? undefined)
@@ -1568,8 +1706,25 @@ export const paAdminBootstrap = onRequest(
 
         const persona = typeof body.persona === "string" ? body.persona : ""
         const turns = typeof body.turns === "number" ? body.turns : undefined
+        // iter32 — preset onboarding walkthroughs via `body.preset`. When
+        // provided, we look up the canned script + persona and run scripted
+        // mode (no persona-LLM call). Available presets:
+        //   - onboarding-zh-happy / onboarding-en-happy / onboarding-tos-decline
+        //   - onboarding-verify-miss-then-correct / onboarding-vent-mid-probe
+        const preset = typeof body.preset === "string" ? body.preset : null
+        let scriptedUserMessages: string[] | undefined
+        let resolvedPersona = persona
+        if (preset && ONBOARDING_PRESETS[preset]) {
+          scriptedUserMessages = ONBOARDING_PRESETS[preset]!.messages
+          resolvedPersona = persona || ONBOARDING_PRESETS[preset]!.persona
+        } else if (Array.isArray(body.scriptedUserMessages)) {
+          // Raw scripted mode — caller supplies the array directly.
+          scriptedUserMessages = (body.scriptedUserMessages as unknown[])
+            .filter((x): x is string => typeof x === "string")
+            .slice(0, 50) // hard cap on script length for safety
+        }
         const result = await simulateConversation(
-          { persona, turns },
+          { persona: resolvedPersona, turns, scriptedUserMessages },
           {
             db,
             orchestrator: defaultOrchestrator,

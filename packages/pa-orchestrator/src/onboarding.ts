@@ -43,6 +43,7 @@ import { INTENT_ACK_DIRECTIVES } from "./onboarding-intent.js"
 export type OnboardingStep =
   | "send_first_mes"
   | "ask_grounding_q" // legacy v1 single-question path (kept for backward compat)
+  | "ask_q_tos" // iter31 — privacy + terms acceptance gate, before any data probes.
   | "ask_q_role"
   | "ask_q_yoe"
   | "ask_q_visa"
@@ -50,12 +51,34 @@ export type OnboardingStep =
   | "ask_q_location"
   | "ask_q_resume" // iter30 closure — proactive resume request after location.
   | "ask_q_email" // iter30 V6 — optional contact email after resume.
+  | "ask_q_email_verify" // iter31 — emit code + ask user to text it back.
   | "complete"
   | "skip"
 
 export type ResolveOpts = {
   /** v2 8-state probe; default false = legacy 4-state. */
   enableV2?: boolean
+  /**
+   * iter31 — when true, route first_mes_sent → ask_q_tos (privacy + terms
+   * acceptance gate) instead of going straight into ask_q_role. Default
+   * false so existing in-flight users keep advancing as today; flip on via
+   * `paOnboardingTosGateEnabled` Firestore flag for new biz testers.
+   */
+  enableTosGate?: boolean
+  /**
+   * iter31 — when true, route q_email_asked → ask_q_email_verify (Mailgun
+   * code + SMS reply) instead of straight to complete. Requires
+   * `opts.emailCaptured=true` to actually fire — if user skipped email at
+   * q_email_asked, this flag has no effect. Flip on via
+   * `paOnboardingEmailVerifyEnabled`.
+   */
+  enableEmailVerification?: boolean
+  /**
+   * iter31 — orchestrator-provided signal: did parseEmailAnswer succeed
+   * for the q_email_asked reply? (i.e. did the user supply a parseable
+   * email address?) When false, q_email_asked → complete unconditionally.
+   */
+  emailCaptured?: boolean
 }
 
 /**
@@ -73,14 +96,27 @@ export function resolveOnboardingStep(
   const state = user.onboardingState
   if (!state || state === "pending") return "send_first_mes"
   if (opts.enableV2) {
-    if (state === "first_mes_sent") return "ask_q_role"
+    // iter32 reorder (Adam directive 2026-05-04 "Email & verify should be
+    // part of pre cv in tos.."): email + verify happen BEFORE the role
+    // probe. Sequence: first_mes_sent → q_tos_asked → q_email_asked →
+    // q_email_verifying → q_role_asked → q_yoe_asked → … → q_resume_asked
+    // → complete. The ToS gate is enableable separately via
+    // `opts.enableTosGate` so we can ship the schema first and flip the
+    // gate ON for biz testers without disturbing existing in-flight users.
+    if (state === "first_mes_sent") return opts.enableTosGate ? "ask_q_tos" : "ask_q_email"
+    if (state === "q_tos_asked") return "ask_q_email"
+    if (state === "q_email_asked") {
+      return opts.emailCaptured && opts.enableEmailVerification
+        ? "ask_q_email_verify"
+        : "ask_q_role"
+    }
+    if (state === "q_email_verifying") return "ask_q_email_verify"
     if (state === "q_role_asked") return "ask_q_yoe"
     if (state === "q_yoe_asked") return "ask_q_visa"
     if (state === "q_visa_asked") return "ask_q_startup_pref"
     if (state === "q_startup_pref_asked") return "ask_q_location"
     if (state === "q_location_asked") return "ask_q_resume"
-    if (state === "q_resume_asked") return "ask_q_email"
-    if (state === "q_email_asked") return "complete"
+    if (state === "q_resume_asked") return "complete"
     // Legacy v1 state encountered with v2 on — treat grounding_q1_asked as
     // already-grounded; advance to complete (don't re-probe the user).
     if (state === "grounding_q1_asked") return "complete"
@@ -92,13 +128,15 @@ export function resolveOnboardingStep(
   // v2 question states encountered with v2 off (e.g. flag flipped back) →
   // converge to complete to avoid stranding the user mid-probe.
   if (
+    state === "q_tos_asked" ||
     state === "q_role_asked" ||
     state === "q_yoe_asked" ||
     state === "q_visa_asked" ||
     state === "q_startup_pref_asked" ||
     state === "q_location_asked" ||
     state === "q_resume_asked" ||
-    state === "q_email_asked"
+    state === "q_email_asked" ||
+    state === "q_email_verifying"
   ) {
     return "complete"
   }
@@ -157,15 +195,25 @@ function pickLang(userMessage: string | undefined): "zh" | "en" {
 
 /** Friend-tone bilingual prompts — Adam-locked tone, do NOT paraphrase. */
 const Q_PROMPTS: Record<
+  | "ask_q_tos"
   | "ask_q_role"
   | "ask_q_yoe"
   | "ask_q_visa"
   | "ask_q_startup_pref"
   | "ask_q_location"
   | "ask_q_resume"
-  | "ask_q_email",
+  | "ask_q_email"
+  | "ask_q_email_verify",
   { zh: string; en: string }
 > = {
+  // iter31 — ToS + privacy gate. Friend-tone but explicit; the user must
+  // affirmatively reply "yes/同意/agree" for state to advance. Link points at
+  // the public hosting page; copy line is short enough to fit the iMessage
+  // chunker. Adam-locked: do NOT paraphrase or remove the link.
+  ask_q_tos: {
+    zh: "开聊前先说一下: 我会记一些咱聊天的事来给你推工作 / 找内推. 隐私 + 用户协议在这: https://wekruit-pa.web.app/legal — 同意就回个 \"同意\" 我们继续",
+    en: "before we get into it — heads up i remember bits of our chat to surface jobs + referrals for you. privacy + terms here: https://wekruit-pa.web.app/legal — reply \"agree\" if cool with that and we keep going",
+  },
   ask_q_role: {
     zh: "那你大概想找啥方向的活? 比如做产品、做工程、还是做研究 — 给我个大致就行",
     en: "btw — what kinda role you eyeing? eng / pm / research / design? roughly is fine",
@@ -200,6 +248,14 @@ const Q_PROMPTS: Record<
   ask_q_email: {
     zh: "对了, 平时邮箱用啥? 后面如果你不在线我直接发邮件给你",
     en: "btw — what email should I send stuff to when you're afk? roughly fine",
+  },
+  // iter31 — email verification. Code is freshly generated by the
+  // orchestrator's `startEmailVerification` callback; the prompt directive
+  // injects the masked email into the reply ("xxx@yyy") and instructs Claire
+  // to ask the user to text back the 6-digit code. Adam-locked phrasing.
+  ask_q_email_verify: {
+    zh: "已经发了一个 6 位验证码到你邮箱了, 收到回我一下就行 (30 分钟有效)",
+    en: "just sent a 6-digit code to your email — text it back to me and we're set (good for 30 mins)",
   },
 }
 
@@ -333,6 +389,46 @@ export function composeOnboardingInput(
   if (step === "ask_grounding_q") {
     return `[onboarding_step: ask_grounding_q] Ask ONE casual question to understand what's going on with the user right now. Roommate register: short, genuine, no "欢迎", no formal opener. Example: "你最近怎么了, 找我有什么事吗" or "今天有什么事?" — Claude picks naturally from Character Bible v1 voice.`
   }
+  // iter31 — ToS gate. Distinct from the q_X probe steps: no "suspended"
+  // empathy branch (the user EITHER accepts, declines, or stays mute), and
+  // no LLM voice-shaping (the prompt is a legal-flavored line that needs to
+  // ship verbatim). Composed deterministically.
+  if (step === "ask_q_tos") {
+    const lang = pickLang(ctx.userMessage)
+    const phrase = Q_PROMPTS.ask_q_tos[lang]
+    // If we're re-asking (user replied something other than accept/decline),
+    // soften the tone. Caller signals via priorAskedStep === "ask_q_tos".
+    if (ctx.priorAskedStep === "ask_q_tos" && ctx.userMessage) {
+      const parsed = parseTosAnswer(ctx.userMessage)
+      if (parsed === "decline") {
+        // Decline path: respectful, do NOT pressure. State stays at
+        // q_tos_asked (caller decides not to advance) — Claire just
+        // acknowledges and offers to be there if the user changes mind.
+        const declineMsg =
+          lang === "zh"
+            ? "完全 ok, 你不同意我就不主动记你聊天的事. 想聊别的随时. 改主意了说一声"
+            : "totally ok — i won't store chat memory if you'd rather not. happy to keep chatting either way. lmk if you change your mind"
+        return `[onboarding_step: ask_q_tos_declined | reason=user_declined_tos] Reply EXACTLY: "${declineMsg}". 1-2 sentences. No emoji. No follow-up question. No legal language. Friend-tone, ${lang === "zh" ? "Mandarin" : "English"} register.`
+      }
+      if (parsed === "unclear") {
+        // Unclear: gentle re-ask, do NOT escalate.
+        const reaskMsg =
+          lang === "zh"
+            ? "刚那个隐私 + 用户协议你看一下哦, 同意就回 \"同意\" — 不同意我们也能继续聊但不会保存"
+            : "just need a quick \"agree\" on the privacy + terms above — or \"no\" and we can chat without me saving anything"
+        return `[onboarding_step: ask_q_tos_reask | reason=ambiguous_reply] Reply EXACTLY: "${reaskMsg}". 1 sentence. No emoji. ${lang === "zh" ? "Mandarin" : "English"} register.`
+      }
+    }
+    return `[onboarding_step: ask_q_tos] Reply EXACTLY this ToS+privacy line (Adam-locked, do not paraphrase, do not chain a follow-up question, do not preface with greeting): "${phrase}". 1-2 short sentences. No emoji. No "好的" / "OK" preface. ${lang === "zh" ? "Mandarin" : "English"} register matching the user's input.`
+  }
+  // iter31 — email verification step. The orchestrator side already wrote
+  // user.emailVerification (codeHash + email) and dispatched the Mailgun
+  // send before we got here. Compose a deterministic reply directive.
+  if (step === "ask_q_email_verify") {
+    const lang = pickLang(ctx.userMessage)
+    const phrase = Q_PROMPTS.ask_q_email_verify[lang]
+    return `[onboarding_step: ask_q_email_verify] Reply EXACTLY this verification line (Adam-locked, do not paraphrase, do not include the actual code, do not chain a follow-up question): "${phrase}". 1 sentence. No emoji. ${lang === "zh" ? "Mandarin" : "English"} register.`
+  }
   if (
     step === "ask_q_role" ||
     step === "ask_q_yoe" ||
@@ -387,6 +483,15 @@ export function composeOnboardingInput(
     }
     const lang = pickLang(ctx.userMessage)
     const phrase = Q_PROMPTS[step][lang]
+    // iter31 — T6 tone-lock for ask_q_email. Adam directive 2026-05-04 ("T6
+    // ask_q_email LLM tone drift — state advances correctly but reply
+    // doesn't always include literal '邮箱'"). Strengthen the constraint by
+    // naming the load-bearing keyword explicitly so the LLM can't drift
+    // into "what's your contact" / "drop me an email" style paraphrase.
+    if (step === "ask_q_email") {
+      const keyword = lang === "zh" ? "邮箱" : "email"
+      return `[onboarding_step: ${step}] Ask EXACTLY this ONE friend-tone question (Adam-locked phrasing — do not paraphrase, do not add greeting, do not chain a second question): "${phrase}". MUST contain the literal word "${keyword}". 1 sentence. No "好的" / "OK" preface. No "btw" if zh. No follow-up clauses.`
+    }
     return `[onboarding_step: ${step}] Ask EXACTLY this ONE friend-tone question (Adam-locked phrasing — do not paraphrase, do not add greeting, do not chain a second question): "${phrase}". 1 sentence. No "好的" / "OK" preface. No "btw" if zh. No follow-up clauses.`
   }
   // complete / skip don't need synthetic inputs
@@ -397,6 +502,7 @@ export function composeOnboardingInput(
 const ONBOARDING_NEXT_STATE: Partial<Record<OnboardingStep, OnboardingState>> = {
   send_first_mes: "first_mes_sent",
   ask_grounding_q: "grounding_q1_asked",
+  ask_q_tos: "q_tos_asked",
   ask_q_role: "q_role_asked",
   ask_q_yoe: "q_yoe_asked",
   ask_q_visa: "q_visa_asked",
@@ -404,6 +510,7 @@ const ONBOARDING_NEXT_STATE: Partial<Record<OnboardingStep, OnboardingState>> = 
   ask_q_location: "q_location_asked",
   ask_q_resume: "q_resume_asked",
   ask_q_email: "q_email_asked",
+  ask_q_email_verify: "q_email_verifying",
   complete: "complete",
 }
 
@@ -412,20 +519,30 @@ const ONBOARDING_NEXT_STATE: Partial<Record<OnboardingStep, OnboardingState>> = 
  * present so a v1 user partway through (`grounding_q1_asked`) cannot regress
  * into a v2 question state, and vice versa.
  */
+// iter32 reorder (Adam directive 2026-05-04 "Email & verify should be part
+// of pre cv in tos.."): email + verify form a pre-CV trust handshake
+// immediately after ToS, BEFORE the role/yoe probe sequence. STATE_ORDER
+// is FORWARD-ONLY for idempotency in applyOnboardingStep — when adding
+// new states or reordering, ensure all in-flight users are at states
+// that still advance monotonically.
 const STATE_ORDER: Array<OnboardingState | undefined> = [
   undefined,
   "pending",
   "first_mes_sent",
   // v1 leaf
   "grounding_q1_asked",
-  // v2 chain
+  // iter31 — ToS gate
+  "q_tos_asked",
+  // iter32 — email + verify (pre-CV trust handshake)
+  "q_email_asked",
+  "q_email_verifying",
+  // v2 probe chain
   "q_role_asked",
   "q_yoe_asked",
   "q_visa_asked",
   "q_startup_pref_asked",
   "q_location_asked",
   "q_resume_asked",
-  "q_email_asked",
   "complete",
 ]
 
@@ -524,6 +641,19 @@ export function userAnsweredStep(
 ): boolean {
   const r = (reply ?? "").trim()
   if (!r) return false
+  // iter31 — ToS gate. ANY explicit accept token counts as answered. Decline
+  // tokens also count as answered (they progress us out of the suspended /
+  // re-ask state into a "user has chosen" branch handled by parseTosAnswer).
+  // Anything else stays in the suspended path so we don't accidentally
+  // treat random chatter as consent.
+  if (step === "ask_q_tos") {
+    return TOS_ACCEPT_REGEX.test(r) || TOS_DECLINE_REGEX.test(r)
+  }
+  if (step === "ask_q_email_verify") {
+    // 6-digit codes (digits only, ignoring punctuation/spaces around).
+    const compact = r.replace(/[\s\-—–]/g, "")
+    return /^\d{6}$/.test(compact)
+  }
   if (step === "ask_q_role") {
     return /(swe|pm\b|em\b|ic\b|staff|senior|junior|new\s*grad|应届|工程|产品|设计|研究|design|research|engineer|developer|前端|后端|算法|数据|machine\s*learning|ml\b)/i.test(r)
   }
@@ -565,6 +695,18 @@ const EMAIL_SKIP_REGEX =
   /(^|[\s,，.。])(no|nope|nah|skip|later|pass|不用|算了|以后再说|没有|不想|不要|跳过)(\b|[\s,，.。!！?？]|$)/i
 
 /**
+ * iter31 — bilingual ToS accept tokens. Word-boundary checked so casual
+ * mentions inside longer text still count ("ok 同意" / "yeah, agree"). NOT
+ * matched on negation context like "i don't agree" — that's caught by the
+ * decline regex which we test FIRST in parseTosAnswer.
+ */
+export const TOS_ACCEPT_REGEX =
+  /(^|[\s,，.。])(同意|接受|可以|没问题|好的|好|行|ok\b|okay\b|sure\b|yes\b|yep\b|yeah\b|yup\b|agree(d)?|i\s*agree|accept(ed)?|deal\b|sounds\s*good)(\b|[\s,，.。!！?？]|$)/i
+/** iter31 — bilingual ToS decline tokens. Tested BEFORE accept. */
+export const TOS_DECLINE_REGEX =
+  /(^|[\s,，.。])(不同意|拒绝|不行|不要|不可以|算了|no\b|nope\b|nah\b|don'?t\s*agree|do\s*not\s*agree|decline(d)?|disagree(d)?|reject(ed)?|不接受|hard\s*pass)(\b|[\s,，.。!！?？]|$)/i
+
+/**
  * iter30 V6 — extract an email address from a free-form reply, or detect a
  * skip-shaped answer. Returns `{ contactEmail }` if a valid email was found,
  * or `{}` if the user declined / didn't include one. Empty patch means the
@@ -577,6 +719,31 @@ function parseEmailAnswer(reply: string): Partial<StatedPreferences> {
     return { contactEmail: match[0].toLowerCase() }
   }
   return {}
+}
+
+/**
+ * iter31 — Did the user accept the ToS? Returns `"accept"` | `"decline"` |
+ * `"unclear"`. Decline is tested FIRST so "i don't agree" doesn't
+ * accidentally trip the accept token "agree". `"unclear"` keeps state at
+ * q_tos_asked so the next inbound retries.
+ */
+export function parseTosAnswer(reply: string): "accept" | "decline" | "unclear" {
+  if (!reply) return "unclear"
+  if (TOS_DECLINE_REGEX.test(reply)) return "decline"
+  if (TOS_ACCEPT_REGEX.test(reply)) return "accept"
+  return "unclear"
+}
+
+/**
+ * iter31 — Extract a 6-digit code from a free-form reply. Tolerates
+ * punctuation / spacing ("123 456", "123-456", "code: 123456"). Returns
+ * the canonicalized 6 digits or null when no match.
+ */
+export function parseEmailVerificationCode(reply: string): string | null {
+  if (!reply) return null
+  const compact = reply.replace(/[\s\-—–.,，。:]/g, "")
+  const match = compact.match(/(\d{6})/)
+  return match ? match[1]! : null
 }
 
 /**
@@ -597,6 +764,9 @@ export function parseUserAnswerForStep(
   if (step === "ask_q_startup_pref") return parseStartupPrefAnswer(reply)
   if (step === "ask_q_location") return parseLocationAnswer(reply)
   if (step === "ask_q_email") return parseEmailAnswer(reply)
+  // ask_q_tos / ask_q_email_verify don't write into statedPreferences directly
+  // — they affect User-level fields (tosAcceptance / contactEmailVerifiedAt)
+  // which applyOnboardingStep handles separately.
   return {}
 }
 
@@ -632,23 +802,88 @@ export async function applyOnboardingStep(
      */
     intentAcked?: boolean
     /**
+     * iter31 — when intent-ack chained ask_q_tos (not ask_q_role) because the
+     * ToS gate is enabled, set this to "q_tos_asked" so state advances there
+     * instead of q_role_asked. Default behavior (undefined) keeps the F1 path.
+     */
+    intentAckTarget?: "q_role_asked" | "q_tos_asked"
+    /**
      * Adam iter 24 — mid-probe vent suspension. When set, do NOT advance the
      * onboarding state. The current question stays "asked" so the user's
      * next non-vent reply gets parsed by the same step's parser.
      */
     suspendedForVent?: boolean
+    /**
+     * iter31 — when true, the user explicitly DECLINED ToS. We DO advance
+     * state to q_tos_asked (so we don't loop) but we record the decline in
+     * tosAcceptance with version=null and a `declinedAt` field so downstream
+     * memory ingest stays opt-out. The orchestrator emits the decline ack
+     * via composeOnboardingInput's ask_q_tos_declined branch.
+     */
+    tosDeclined?: boolean
+    /**
+     * iter31 — when truthy AND step === ask_q_tos: the user accepted; record
+     * tosAcceptance with this version + the raw reply for audit.
+     */
+    tosAcceptedVersion?: string
+    /**
+     * iter31 — when set AND step === ask_q_email_verify: the orchestrator
+     * generated and sent a code; persist the hash + email + sentAt so
+     * `verifyEmailCode` can match the user's next reply against it.
+     */
+    emailVerification?: {
+      codeHash: string
+      email: string
+      sentAt: string
+      expiresAt: string
+      providerMessageId?: string
+    }
+    /**
+     * iter31 — when true, the verification code matched. Clears
+     * emailVerification, sets statedPreferences.contactEmailVerifiedAt,
+     * advances to complete.
+     */
+    emailVerificationVerified?: boolean
+    /**
+     * iter31 — when true, the verification code MISSED. Increment
+     * emailVerification.attempts but DO NOT advance state.
+     */
+    emailVerificationFailed?: boolean
   } = {}
 ): Promise<void> {
   if (step === "skip") return
   if (opts.suspendedForVent) return
+
+  // iter31 — verification miss: stay at q_email_verifying, bump attempts.
+  if (opts.emailVerificationFailed) {
+    const now = opts.now ?? new Date().toISOString()
+    const userRef = db.collection(PA_COLLECTIONS.users).doc(user.id)
+    const snap = await userRef.get()
+    const cur = snap.data() as { emailVerification?: { attempts?: number } } | undefined
+    const attempts = (cur?.emailVerification?.attempts ?? 0) + 1
+    await userRef.set(
+      {
+        updatedAt: now,
+        "emailVerification.attempts": attempts,
+      },
+      { merge: true }
+    )
+    return
+  }
+
+  // iter31 — ToS unclear / re-ask: do NOT advance, suspended-for-vent style.
+  // Caller handles this branch by setting suspendedForVent=true (above) when
+  // ask_q_tos was the prior step and parseTosAnswer returned "unclear".
 
   let nextState = ONBOARDING_NEXT_STATE[step]
   if (!nextState) return
   // Phase 52 — F1 fix: intent-acked first_mes already asked the role question
   // inline; advance state past first_mes_sent to q_role_asked so the user's
   // NEXT reply is parsed by ask_q_role's parser.
+  // iter31 — when ToS gate is on, intent-ack chains ask_q_tos (not
+  // ask_q_role). Caller passes the gate-aware target via `intentAckTarget`.
   if (opts.intentAcked && step === "send_first_mes") {
-    nextState = "q_role_asked"
+    nextState = opts.intentAckTarget === "q_tos_asked" ? "q_tos_asked" : "q_role_asked"
   }
 
   const currentState = user.onboardingState
@@ -679,6 +914,17 @@ export async function applyOnboardingStep(
       metadata: { cohort: "beta-v1" },
     }
     if (statedPreferencesWrite) completePayload.statedPreferences = statedPreferencesWrite
+    // iter31 — verified email transition: clear the verification challenge
+    // and stamp contactEmailVerifiedAt onto statedPreferences.
+    if (opts.emailVerificationVerified) {
+      completePayload.emailVerification = null
+      const merged: Partial<StatedPreferences> = {
+        ...(completePayload.statedPreferences as Partial<StatedPreferences> | undefined),
+        contactEmailVerifiedAt: now,
+        updatedAt: now,
+      }
+      completePayload.statedPreferences = merged
+    }
     await userRef.set(completePayload, { merge: true })
     // Auto-promote beta participant: find by userId = user.id and status in (invited, active)
     const snap = await db
@@ -732,6 +978,42 @@ export async function applyOnboardingStep(
       }
       payload.lastAssistantTurnAt = now
       payload.lastAssistantTurnAskedResume = true
+    }
+    // iter31 — ToS gate writes. Step-agnostic: orchestrator passes
+    // tosAcceptedVersion / tosDeclined when transitioning OUT of
+    // q_tos_asked (typically with step=ask_q_role on accept, or step=
+    // ask_q_tos on a re-ask that surfaced a clear answer this time).
+    // Accept → version + acceptedAt; decline → declinedAt + version="declined"
+    // so downstream consumers can opt the user out of memory ingest.
+    if (opts.tosAcceptedVersion) {
+      payload.tosAcceptance = {
+        version: opts.tosAcceptedVersion,
+        acceptedAt: now,
+        channel: "imessage_sms",
+        ...(opts.priorUserReply ? { rawReply: opts.priorUserReply.slice(0, 200) } : {}),
+      }
+    } else if (opts.tosDeclined) {
+      payload.tosAcceptance = {
+        version: "declined",
+        acceptedAt: now,
+        channel: "imessage_sms",
+        declinedAt: now,
+        ...(opts.priorUserReply ? { rawReply: opts.priorUserReply.slice(0, 200) } : {}),
+      }
+    }
+    // iter31 — Email verification setup: persist hash + email + sent/expires
+    // so verifyEmailCode can match the user's reply on the next inbound.
+    if (step === "ask_q_email_verify" && opts.emailVerification) {
+      payload.emailVerification = {
+        codeHash: opts.emailVerification.codeHash,
+        email: opts.emailVerification.email.toLowerCase(),
+        sentAt: opts.emailVerification.sentAt,
+        expiresAt: opts.emailVerification.expiresAt,
+        attempts: 0,
+        ...(opts.emailVerification.providerMessageId
+          ? { providerMessageId: opts.emailVerification.providerMessageId }
+          : {}),
+      }
     }
     await userRef.set(payload, { merge: true })
   }
