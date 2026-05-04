@@ -182,6 +182,21 @@ import { headhunterAddendum } from "./playbooks/headhunter.js"
 // inline HEADHUNTER_TRIGGER_RE constant; the regex below is kept as a
 // failsafe when Firestore is empty (zero-downtime cutover).
 import { matchCachedPlaybooks } from "./playbook-cache.js"
+// iter30 WS6 — guardrail chain (Wave 2 day 3 wire-in). Shadow-mode
+// telemetry by default (`PA_GUARDRAIL_CHAIN_SHADOW=true` flag); the
+// scattered patches at lines 1623-1976 stay in charge of mutating the
+// reply until shadow-mode parity-telemetry confirms equivalence
+// (Wave 3). Once flipped, the patches are removed and the chain owns
+// AB-strip + length-cap + crisis-trailer + slang-enforce + normalize.
+//
+// Detail-plan: .planning/iter30/ws-3-6-detail.md §5-7
+// Adam-locked chain order: lengthCap → abStrip → slangEnforcer →
+// adviceRepeat → crisisTrailer → mirrorScore → outputNormalizer.
+import {
+  OUTPUT_GUARDRAIL_CHAIN,
+  runOutputChain,
+} from "./guardrails/index.js"
+import { createMockContext } from "./run-context.js"
 
 const HEADHUNTER_PLAYBOOK_ID = "headhunter"
 /**
@@ -1978,6 +1993,54 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       mem.mem0Degraded && agent.memoryMode !== "firestore_only"
         ? `${replyAfterRewrite}\n\n（长期语义记忆暂时不可用；我仍使用已确认事实和最近对话。）`
         : replyAfterRewrite
+    // iter30 WS6 — shadow-mode guardrail chain. We feed `rawVisible` (the
+    // post-strip / post-rewrite / post-trailer text) through the locked
+    // 7-stage output chain and emit telemetry without mutating the live
+    // reply. Live cutover (delete the inline patches at 1623-1976) lands
+    // in Wave 3 once shadow-mode parity is confirmed in production
+    // telemetry. Disabled by default — env flag `PA_GUARDRAIL_CHAIN_SHADOW=true`
+    // turns it on.
+    if (process.env.PA_GUARDRAIL_CHAIN_SHADOW === "true") {
+      try {
+        const shadowCtx = createMockContext({
+          userId: event.userId ?? "unknown",
+          conversationId: event.sessionId ?? "unknown",
+          turnId,
+          eventId: event.id ?? "unknown",
+          locale: userLang === "zh" ? "zh-CN" : userLang === "en" ? "en-US" : "mixed",
+          crisisTripped: crisisInjected, // mirror today's input-detection state
+          log: (evt, payload) =>
+            store.log(evt, { ...(payload ?? {}), shadow: true }),
+        })
+        const shadowResult = await runOutputChain({
+          guardrails: OUTPUT_GUARDRAIL_CHAIN,
+          agentOutput: rawVisible,
+          userInput: event.body ?? "",
+          ctx: shadowCtx,
+        })
+        store.log("pa.guardrails.shadow.result", {
+          userId: event.userId,
+          turnId,
+          transformed: shadowResult.transformed,
+          beforeLen: rawVisible.length,
+          afterLen: shadowResult.text.length,
+          delta: rawVisible === shadowResult.text ? "match" : "differ",
+          hits: shadowCtx.guardrailHits.map((h) => ({
+            name: h.name,
+            tripped: h.tripped,
+            latencyMs: h.latencyMs,
+          })),
+          suggestedActions: shadowResult.suggestedActions,
+        })
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        store.log("pa.guardrails.shadow.error", {
+          userId: event.userId,
+          turnId,
+          error: msg,
+        })
+      }
+    }
     const norm = normalizeForIMessage(rawVisible, { maxLength: 600 })
     const visibleReply = norm.text
     // Bug 4 (2026-05-03 commit ea59897) shipped a single-send-per-turn
