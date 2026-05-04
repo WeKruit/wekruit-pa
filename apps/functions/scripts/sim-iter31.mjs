@@ -805,9 +805,9 @@ async function main() {
     )
   }
 
-  // ── i32-2: ToS accept advances to ask_q_role + writes tosAcceptance
+  // ── i32-2: ToS accept advances to ask_q_email + writes tosAcceptance (iter32 reorder)
   if (should("i32-tos-accept")) {
-    await scenario("i32-tos-accept: 同意 → ask_q_role + tosAcceptedVersion=v1.0", async () => {
+    await scenario("i32-tos-accept: 同意 → ask_q_email + tosAcceptedVersion=v1.0 (iter32 reorder)", async () => {
       const det = await import("@pa/pa-orchestrator")
       const ev = []
       const captures = []
@@ -851,10 +851,10 @@ async function main() {
         cvParsed: false,
         agent: { id: "c" },
       })
-      const advance = ev.find((x) => x.step === "ask_q_role")
-      expect(advance !== undefined, `must advance to ask_q_role`)
+      const advance = ev.find((x) => x.step === "ask_q_email")
+      expect(advance !== undefined, `must advance to ask_q_email (iter32 reorder)`)
       expect(advance.opts.tosAcceptedVersion === "v1.0", `tosAcceptedVersion must be v1.0 (got ${advance.opts.tosAcceptedVersion})`)
-      expect(/方向|kinda role/.test(captures[0].body), `must ask role question (got "${captures[0].body}")`)
+      expect(/邮箱|email/i.test(captures[0].body), `must ask email question (got "${captures[0].body}")`)
     })
   }
 
@@ -906,9 +906,9 @@ async function main() {
     })
   }
 
-  // ── i32-4: CV gate releases when cvParsed=true → ask_q_email
+  // ── i32-4: CV gate releases when cvParsed=true → complete (iter32: resume is the LAST step)
   if (should("i32-cv-gate-releases")) {
-    await scenario("i32-cv-gate-releases: q_resume_asked + cvParsed=true → ask_q_email", async () => {
+    await scenario("i32-cv-gate-releases: q_resume_asked + cvParsed=true → complete (iter32: final step)", async () => {
       const det = await import("@pa/pa-orchestrator")
       const ev = []
       const captures = []
@@ -949,8 +949,8 @@ async function main() {
         cvParsed: true,
         agent: { id: "c" },
       })
-      expect(ev.find((x) => x.step === "ask_q_email") !== undefined, `must advance to ask_q_email`)
-      expect(/邮箱|email/i.test(captures[0].body), `ask_q_email reply must contain 邮箱/email (got "${captures[0].body}")`)
+      expect(ev.find((x) => x.step === "complete") !== undefined, `must advance to complete`)
+      expect(/简历|resume|all set|搞定/i.test(captures[0].body), `complete reply must mention resume/all-set (got "${captures[0].body}")`)
     })
   }
 

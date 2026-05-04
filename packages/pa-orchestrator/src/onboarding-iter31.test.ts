@@ -74,12 +74,12 @@ const FAKE_AGENT = {
 // resolveOnboardingStep — new gate + verify routing
 // ────────────────────────────────────────────────────────────────────
 
-test("resolveOnboardingStep: TOS gate off → first_mes_sent → ask_q_role (legacy behavior preserved)", () => {
+test("resolveOnboardingStep: TOS gate off → first_mes_sent → ask_q_email (iter32 reorder: email comes after first_mes when no TOS gate)", () => {
   const step = resolveOnboardingStep(
     { onboardingState: "first_mes_sent" },
     { enableV2: true, enableTosGate: false }
   )
-  assert.equal(step, "ask_q_role")
+  assert.equal(step, "ask_q_email")
 })
 
 test("resolveOnboardingStep: TOS gate on → first_mes_sent → ask_q_tos", () => {
@@ -90,12 +90,12 @@ test("resolveOnboardingStep: TOS gate on → first_mes_sent → ask_q_tos", () =
   assert.equal(step, "ask_q_tos")
 })
 
-test("resolveOnboardingStep: q_tos_asked → ask_q_role (only after acceptance write advanced state)", () => {
+test("resolveOnboardingStep: q_tos_asked → ask_q_email (iter32 reorder: TOS accept advances to email step)", () => {
   const step = resolveOnboardingStep(
     { onboardingState: "q_tos_asked" },
     { enableV2: true, enableTosGate: true }
   )
-  assert.equal(step, "ask_q_role")
+  assert.equal(step, "ask_q_email")
 })
 
 test("resolveOnboardingStep: q_email_asked + emailCaptured + verify on → ask_q_email_verify", () => {
@@ -110,7 +110,7 @@ test("resolveOnboardingStep: q_email_asked + emailCaptured + verify on → ask_q
   assert.equal(step, "ask_q_email_verify")
 })
 
-test("resolveOnboardingStep: q_email_asked + emailCaptured but verify OFF → complete (skip verification)", () => {
+test("resolveOnboardingStep: q_email_asked + emailCaptured but verify OFF → ask_q_role (iter32 reorder: skip verify, proceed to role probe)", () => {
   const step = resolveOnboardingStep(
     { onboardingState: "q_email_asked" },
     {
@@ -119,10 +119,10 @@ test("resolveOnboardingStep: q_email_asked + emailCaptured but verify OFF → co
       emailCaptured: true,
     }
   )
-  assert.equal(step, "complete")
+  assert.equal(step, "ask_q_role")
 })
 
-test("resolveOnboardingStep: q_email_asked + verify on but user skipped email → complete (no verification when no email)", () => {
+test("resolveOnboardingStep: q_email_asked + verify on but user skipped email → ask_q_role (iter32 reorder: skip verify, proceed)", () => {
   const step = resolveOnboardingStep(
     { onboardingState: "q_email_asked" },
     {
@@ -131,7 +131,7 @@ test("resolveOnboardingStep: q_email_asked + verify on but user skipped email �
       emailCaptured: false,
     }
   )
-  assert.equal(step, "complete")
+  assert.equal(step, "ask_q_role")
 })
 
 test("resolveOnboardingStep: q_email_verifying → ask_q_email_verify (re-ask)", () => {

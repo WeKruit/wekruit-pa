@@ -1111,79 +1111,38 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
         store.db,
         event.userId
       )
-      if (enableDeterministic) {
+      if (enableDeterministic && onboardingUser.onboardingState !== "complete") {
+        // iter32: deterministic dispatcher enforces ALL gates internally
+        // (TOS → email → verify → role/yoe/visa/startup/location → resume
+        // → complete). When state=complete, all gates have already cleared,
+        // so we fall through to agent runtime. Legacy users at state=complete
+        // (pre-iter32, may not have email verified or CV parsed) are NOT
+        // re-gated here — they keep their existing access. Adam directive
+        // strict-gating applies to NEW users going through the dispatcher.
         const cvParsed = store.getUserCvParsed
           ? await store.getUserCvParsed(event.userId)
           : false
-        const emailVerified = Boolean(
-          onboardingUser.statedPreferences?.contactEmailVerifiedAt
-        )
-        // Outer gate: if state==complete BUT one of CV/email gates
-        // hasn't cleared, re-emit a deterministic re-prompt and STAY.
-        // This handles the case where applyOnboarding(complete) fired
-        // (e.g. via legacy path) but the side-effects haven't settled.
-        if (onboardingUser.onboardingState === "complete") {
-          if (!cvParsed) {
-            const lang = pickLangForSafety(event.body)
-            const msg =
-              lang === "zh"
-                ? "等你发简历过来哦, iMessage 里直接附件就行"
-                : "just waiting on the resume — send it as an iMessage attachment whenever"
-            await sendMemoryReply(store, event, turnId, msg)
-            store.log("pa.onboarding.deterministic.cv_gate_hold", {
-              userId: event.userId,
-              turnId,
-            })
-            await store.updateTurn(turnId, {
-              status: "succeeded",
-              stage: "succeeded",
-              completedAt: store.nowIso(),
-            })
-            await store.markEventSucceeded(event.id)
-            return
-          }
-          if (!emailVerified) {
-            const lang = pickLangForSafety(event.body)
-            const msg =
-              lang === "zh"
-                ? "等你把邮箱里的 6 位验证码发我"
-                : "still waiting on that 6-digit code from your email"
-            await sendMemoryReply(store, event, turnId, msg)
-            store.log("pa.onboarding.deterministic.email_gate_hold", {
-              userId: event.userId,
-              turnId,
-            })
-            await store.updateTurn(turnId, {
-              status: "succeeded",
-              stage: "succeeded",
-              completedAt: store.nowIso(),
-            })
-            await store.markEventSucceeded(event.id)
-            return
-          }
-          // All gates passed → fall through to agent runtime path below.
-        } else {
-          // onboarding still in progress — run deterministic dispatcher.
-          const result = await runDeterministicOnboardingTurn({
-            event,
-            store,
-            turnId,
-            onboardingUser,
-            cvParsed,
-            agent,
-            suppressOutbound: shouldSuppressOutbound(event),
+        const result = await runDeterministicOnboardingTurn({
+          event,
+          store,
+          turnId,
+          onboardingUser,
+          cvParsed,
+          agent,
+          suppressOutbound: shouldSuppressOutbound(event),
+        })
+        if (result.handled) {
+          await store.updateTurn(turnId, {
+            status: "succeeded",
+            stage: "succeeded",
+            completedAt: store.nowIso(),
+            onboardingDeterministicAction: result.action.kind,
           })
-          if (result.handled) {
-            await store.updateTurn(turnId, {
-              status: "succeeded",
-              stage: "succeeded",
-              completedAt: store.nowIso(),
-              onboardingDeterministicAction: result.action.kind,
-            })
-            await store.markEventSucceeded(event.id)
-            return
-          }
+          await store.markEventSucceeded(event.id)
+          return
         }
+        // result.handled === false only when state=complete (dispatcher
+        // returns skip). Falls through to agent runtime path below.
       }
     }
     if (onboardingUser) {

@@ -271,6 +271,7 @@ export type DeterministicAction =
   | { kind: "ask_q_email" }
   | { kind: "ask_q_email_verify_start"; email: string } // need to fire Mailgun
   | { kind: "ask_q_email_verify_retry" } // wrong code branch
+  | { kind: "ask_q_email_verify_reissue"; email: string } // expired/exhausted → re-fire Mailgun, stay
   | { kind: "verify_email_code"; candidate: string }
   | { kind: "vent_ack" } // user is venting mid-onboarding
   | { kind: "complete" }
@@ -296,18 +297,38 @@ export function resolveDeterministicAction(
   // first_mes_sent → ask_q_tos
   if (state === "first_mes_sent") return { kind: "ask_q_tos" }
 
-  // q_tos_asked → branch on parsed answer
+  // q_tos_asked → branch on parsed answer (iter32 reorder: accept advances
+  // to email step, NOT role)
   if (state === "q_tos_asked") {
     const decision = parseTosAnswer(userMessage)
-    if (decision === "accept") return { kind: "ask_q_role" } // advance + ask role
+    if (decision === "accept") return { kind: "ask_q_email" }
     if (decision === "decline") return { kind: "ask_q_tos_decline" }
     return { kind: "ask_q_tos_reask" }
   }
 
-  // q_role_asked → did user actually answer?
+  // q_email_asked → branch on parsed email (iter32: email comes BEFORE
+  // role, as part of pre-CV trust handshake with TOS)
+  if (state === "q_email_asked") {
+    const parsed = parseUserAnswerForStep("ask_q_email", userMessage)
+    if (parsed.contactEmail) {
+      return { kind: "ask_q_email_verify_start", email: parsed.contactEmail }
+    }
+    // User skipped — Adam directive: email + verification REQUIRED before
+    // agent runtime activates. Re-ask gentler.
+    return { kind: "ask_q_email" }
+  }
+
+  // q_email_verifying → branch on parsed code, expired, exhausted
+  if (state === "q_email_verifying") {
+    const code = parseEmailVerificationCode(userMessage)
+    if (code) return { kind: "verify_email_code", candidate: code }
+    return { kind: "ask_q_email_verify_retry" }
+  }
+
+  // q_role_asked + onward — same as before
   if (state === "q_role_asked") {
     if (!userAnsweredStep("ask_q_role", userMessage)) {
-      return { kind: "ask_q_role" } // re-ask same
+      return { kind: "ask_q_role" }
     }
     return { kind: "ask_q_yoe" }
   }
@@ -329,35 +350,16 @@ export function resolveDeterministicAction(
     return { kind: "ask_q_resume" }
   }
 
-  // q_resume_asked — CV gate. Hold here until parsedCandidateResumes
-  // row exists. cv-ingest pipeline writes the row after Sendblue
-  // delivers the attachment. Stricter mode (Adam directive #2): NO
-  // bypass — cannot proceed to email step until CV is parsed.
+  // q_resume_asked — final CV gate. Hold here until parsedCandidateResumes
+  // row exists. cv-ingest pipeline writes the row after Sendblue delivers
+  // the attachment. iter32: this is the LAST step before complete (email
+  // already verified upstream).
   if (state === "q_resume_asked") {
     if (!input.cvParsed) return { kind: "wait_for_resume_upload" }
-    return { kind: "ask_q_email" }
+    return { kind: "complete" }
   }
 
-  // q_email_asked → branch on parsed email
-  if (state === "q_email_asked") {
-    const parsed = parseUserAnswerForStep("ask_q_email", userMessage)
-    if (parsed.contactEmail) {
-      return { kind: "ask_q_email_verify_start", email: parsed.contactEmail }
-    }
-    // User skipped — Adam locked: email + verification REQUIRED to
-    // start agent runtime. So treat skip as "re-ask gentler".
-    return { kind: "ask_q_email" }
-  }
-
-  // q_email_verifying → branch on parsed code
-  if (state === "q_email_verifying") {
-    const code = parseEmailVerificationCode(userMessage)
-    if (code) return { kind: "verify_email_code", candidate: code }
-    return { kind: "ask_q_email_verify_retry" }
-  }
-
-  // complete — orchestrator gates above already enforce CV + email
-  // verified. If we're here with state=complete, agent runtime can run.
+  // complete — all gates passed (TOS + email verified + CV parsed).
   if (state === "complete") return { kind: "skip" }
 
   return { kind: "skip" }
@@ -586,6 +588,12 @@ export async function runDeterministicOnboardingTurn(
 
   // verify_email_code: hash the candidate, compare to stored hash, route
   // to verified / miss / expired / exhausted.
+  // iter32: expired or exhausted → re-issue Mailgun code in place, stay
+  // at q_email_verifying (NOT bypass to complete — Adam directive: email
+  // verify is mandatory before agent runtime activates, so the dispatcher
+  // never lets the user past q_email_verifying without a verified code).
+  // Verified → advance to q_role_asked (NOT complete — we still have to
+  // run the role/yoe/visa/startup/location/resume probes before complete).
   if (action.kind === "verify_email_code") {
     const challenge = store.getUserEmailVerification
       ? await store.getUserEmailVerification(event.userId)
@@ -600,27 +608,73 @@ export async function runDeterministicOnboardingTurn(
     const expired = Date.parse(challenge.expiresAt) < nowMs
     const exhausted = challenge.attempts >= 5
     if (expired || exhausted) {
-      // Bypass to complete — biz tester not blocked but verifiedAt NOT set.
-      // Operator can re-trigger verification via dashboard if needed. Email
-      // gate at the outer level will hold until verifiedAt is set.
-      await store.applyOnboarding(event.userId, onboardingUser.phoneE164, "complete", {
-        priorAskedStep: "ask_q_email_verify",
-        priorUserReply: event.body,
-      })
+      // Re-issue: fresh code, fresh challenge, attempts reset to 0. Stay
+      // at q_email_verifying. User retries with the new code from the
+      // re-sent email. Edge case: if user supplied a typo'd email, the
+      // re-issued code goes nowhere — operator can resolve via HITL pause
+      // (paRuntimeMode) and manual user.runtimeMode override.
+      let reissued: typeof challenge | null = null
+      if (store.sendVerificationEmail) {
+        try {
+          const sent = await store.sendVerificationEmail(challenge.email)
+          if (sent) {
+            const { createHash } = await import("node:crypto")
+            reissued = {
+              codeHash: createHash("sha256").update(sent.rawCode).digest("hex"),
+              email: challenge.email,
+              sentAt: sent.sentAt,
+              expiresAt: sent.expiresAt,
+              attempts: 0,
+            }
+          }
+        } catch (err) {
+          store.log("pa.onboarding.deterministic.email_verify_reissue_error", {
+            userId: event.userId,
+            turnId,
+            error: err instanceof Error ? err.message : String(err),
+          })
+        }
+      }
       const lang = pickLang(event.body)
-      const msg = expired
-        ? lang === "zh"
-          ? "验证码过期了, 没事我先放着, 验证后面再做也行"
-          : "code expired — no worries, we can verify later"
-        : lang === "zh"
-          ? "试了几次都没对上, 先继续吧, 后面再补也行"
-          : "couldn't match the code after a few tries — moving on, we can verify later"
-      await sendDirect(input, msg)
-      store.log("pa.onboarding.deterministic.email_verify_bypass", {
-        userId: event.userId,
-        turnId,
-        reason: expired ? "expired" : "exhausted",
-      })
+      if (reissued) {
+        // Persist via applyOnboarding with emailVerification opt — same
+        // step (q_email_verifying), just refreshed challenge fields.
+        await store.applyOnboarding(event.userId, onboardingUser.phoneE164, "ask_q_email_verify", {
+          priorAskedStep: "ask_q_email_verify",
+          priorUserReply: event.body,
+          emailVerification: {
+            codeHash: reissued.codeHash,
+            email: reissued.email,
+            sentAt: reissued.sentAt,
+            expiresAt: reissued.expiresAt,
+          },
+        })
+        const msg = expired
+          ? lang === "zh"
+            ? "验证码过期了, 我重新发了一个新的, 收到再回我"
+            : "code expired — sent you a fresh one, text it back when you get it"
+          : lang === "zh"
+            ? "试错好几次了, 重新发了个新的, 仔细看一下"
+            : "few wrong tries — sent a fresh code, double-check this one"
+        await sendDirect(input, msg)
+        store.log("pa.onboarding.deterministic.email_verify_reissued", {
+          userId: event.userId,
+          turnId,
+          reason: expired ? "expired" : "exhausted",
+        })
+      } else {
+        // Mailgun unavailable — fall back to a "still trying" reply, no
+        // state change. Operator can intervene.
+        const msg =
+          lang === "zh"
+            ? "邮件服务暂时有点问题, 我们等会再试 (或者发个新邮箱给我)"
+            : "email service is having a moment — we'll retry (or share a new email if you prefer)"
+        await sendDirect(input, msg)
+        store.log("pa.onboarding.deterministic.email_verify_reissue_no_transport", {
+          userId: event.userId,
+          turnId,
+        })
+      }
       return { handled: true, action }
     }
     // Hash compare
@@ -628,13 +682,18 @@ export async function runDeterministicOnboardingTurn(
     const candidateHash = createHash("sha256").update(action.candidate).digest("hex")
     const lang = pickLang(event.body)
     if (candidateHash === challenge.codeHash) {
-      await store.applyOnboarding(event.userId, onboardingUser.phoneE164, "complete", {
+      // iter32: advance to q_role_asked (NOT complete — probe sequence
+      // still needs to run). Email is verified; stamp contactEmailVerifiedAt
+      // on statedPreferences via emailVerificationVerified opt + write the
+      // role question via composeDeterministicReply.
+      await store.applyOnboarding(event.userId, onboardingUser.phoneE164, "ask_q_role", {
         priorAskedStep: "ask_q_email_verify",
         priorUserReply: event.body,
         emailVerificationVerified: true,
       })
-      const msg = lang === "zh" ? "✓ 邮箱验过了, 都搞定咯" : "✓ email verified — all set"
-      await sendDirect(input, msg)
+      const verifiedAck = lang === "zh" ? "✓ 邮箱验过了" : "✓ email verified"
+      const rolePhrase = config.ask_q_role!.prompt[lang]
+      await sendDirect(input, `${verifiedAck} — ${rolePhrase}`)
       store.log("pa.onboarding.deterministic.email_verify_verified", {
         userId: event.userId,
         turnId,
@@ -739,15 +798,39 @@ export async function runDeterministicOnboardingTurn(
     return { handled: true, action }
   }
 
-  // ToS accept path → advance to q_role_asked + write tosAcceptance audit.
-  if (action.kind === "ask_q_role" && onboardingUser.onboardingState === "q_tos_asked") {
+  // q_resume_asked + cvParsed=true → complete (final transition).
+  // iter32 reorder: this is the LAST step (email already verified before
+  // role probe). Send a friendly "all set" ack; agent runtime activates
+  // on the next inbound. The dispatcher returns handled=true so this
+  // turn finalizes; user's next message goes through the normal LLM path.
+  if (action.kind === "complete" && onboardingUser.onboardingState === "q_resume_asked") {
+    await store.applyOnboarding(event.userId, onboardingUser.phoneE164, "complete", {
+      priorAskedStep: "ask_q_resume",
+      priorUserReply: event.body,
+    })
+    const lang = pickLang(event.body)
+    const msg =
+      lang === "zh"
+        ? "✓ 简历也收到了, 都搞定咯. 想聊啥跟我说就行"
+        : "✓ got the resume. all set — let me know whatever you wanna chat about"
+    await sendDirect(input, msg)
+    store.log("pa.onboarding.deterministic.complete", {
+      userId: event.userId,
+      turnId,
+    })
+    return { handled: true, action }
+  }
+
+  // ToS accept path → advance to q_email_asked + write tosAcceptance audit.
+  // iter32 reorder: TOS accept now leads to email step (not role).
+  if (action.kind === "ask_q_email" && onboardingUser.onboardingState === "q_tos_asked") {
     const tosVersion = store.getTosVersion ? await store.getTosVersion() : "v1.0"
-    await store.applyOnboarding(event.userId, onboardingUser.phoneE164, "ask_q_role", {
+    await store.applyOnboarding(event.userId, onboardingUser.phoneE164, "ask_q_email", {
       priorAskedStep: "ask_q_tos",
       priorUserReply: event.body,
       tosAcceptedVersion: tosVersion,
     })
-    await sendDirect(input, config.ask_q_role!.prompt[pickLang(event.body)])
+    await sendDirect(input, config.ask_q_email!.prompt[pickLang(event.body)])
     store.log("pa.onboarding.deterministic.tos_accepted", {
       userId: event.userId,
       turnId,

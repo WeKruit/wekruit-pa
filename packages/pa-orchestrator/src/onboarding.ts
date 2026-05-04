@@ -96,30 +96,27 @@ export function resolveOnboardingStep(
   const state = user.onboardingState
   if (!state || state === "pending") return "send_first_mes"
   if (opts.enableV2) {
-    // iter31 — ToS + privacy gate inserted between first_mes_sent and the
-    // role probe. Adam directive 2026-05-04 ("1. email verification & privacy
-    // + terms"). The gate is enableable separately via
+    // iter32 reorder (Adam directive 2026-05-04 "Email & verify should be
+    // part of pre cv in tos.."): email + verify happen BEFORE the role
+    // probe. Sequence: first_mes_sent → q_tos_asked → q_email_asked →
+    // q_email_verifying → q_role_asked → q_yoe_asked → … → q_resume_asked
+    // → complete. The ToS gate is enableable separately via
     // `opts.enableTosGate` so we can ship the schema first and flip the
-    // probe ON for biz testers without disturbing existing in-flight users.
-    if (state === "first_mes_sent") return opts.enableTosGate ? "ask_q_tos" : "ask_q_role"
-    if (state === "q_tos_asked") return "ask_q_role"
+    // gate ON for biz testers without disturbing existing in-flight users.
+    if (state === "first_mes_sent") return opts.enableTosGate ? "ask_q_tos" : "ask_q_email"
+    if (state === "q_tos_asked") return "ask_q_email"
+    if (state === "q_email_asked") {
+      return opts.emailCaptured && opts.enableEmailVerification
+        ? "ask_q_email_verify"
+        : "ask_q_role"
+    }
+    if (state === "q_email_verifying") return "ask_q_email_verify"
     if (state === "q_role_asked") return "ask_q_yoe"
     if (state === "q_yoe_asked") return "ask_q_visa"
     if (state === "q_visa_asked") return "ask_q_startup_pref"
     if (state === "q_startup_pref_asked") return "ask_q_location"
     if (state === "q_location_asked") return "ask_q_resume"
-    if (state === "q_resume_asked") return "ask_q_email"
-    // iter31 — q_email_asked → q_email_verifying when the email parser
-    // captured a verifiable address; otherwise → complete. The orchestrator
-    // (which has access to the freshly-parsed contactEmail) supplies that
-    // signal via `opts.emailCaptured`. resolver itself stays pure: it just
-    // routes based on the boolean.
-    if (state === "q_email_asked") {
-      return opts.emailCaptured && opts.enableEmailVerification
-        ? "ask_q_email_verify"
-        : "complete"
-    }
-    if (state === "q_email_verifying") return "ask_q_email_verify"
+    if (state === "q_resume_asked") return "complete"
     // Legacy v1 state encountered with v2 on — treat grounding_q1_asked as
     // already-grounded; advance to complete (don't re-probe the user).
     if (state === "grounding_q1_asked") return "complete"
@@ -522,24 +519,30 @@ const ONBOARDING_NEXT_STATE: Partial<Record<OnboardingStep, OnboardingState>> = 
  * present so a v1 user partway through (`grounding_q1_asked`) cannot regress
  * into a v2 question state, and vice versa.
  */
+// iter32 reorder (Adam directive 2026-05-04 "Email & verify should be part
+// of pre cv in tos.."): email + verify form a pre-CV trust handshake
+// immediately after ToS, BEFORE the role/yoe probe sequence. STATE_ORDER
+// is FORWARD-ONLY for idempotency in applyOnboardingStep — when adding
+// new states or reordering, ensure all in-flight users are at states
+// that still advance monotonically.
 const STATE_ORDER: Array<OnboardingState | undefined> = [
   undefined,
   "pending",
   "first_mes_sent",
   // v1 leaf
   "grounding_q1_asked",
-  // iter31 — ToS gate (sits between first_mes_sent and the role probe)
+  // iter31 — ToS gate
   "q_tos_asked",
-  // v2 chain
+  // iter32 — email + verify (pre-CV trust handshake)
+  "q_email_asked",
+  "q_email_verifying",
+  // v2 probe chain
   "q_role_asked",
   "q_yoe_asked",
   "q_visa_asked",
   "q_startup_pref_asked",
   "q_location_asked",
   "q_resume_asked",
-  "q_email_asked",
-  // iter31 — email verification (sits between q_email_asked and complete)
-  "q_email_verifying",
   "complete",
 ]
 

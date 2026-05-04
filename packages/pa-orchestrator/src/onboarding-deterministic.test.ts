@@ -53,7 +53,7 @@ test("resolveDeterministicAction: first_mes_sent → ask_q_tos", () => {
   assert.equal(action.kind, "ask_q_tos")
 })
 
-test("resolveDeterministicAction: q_tos_asked + 同意 → ask_q_role", () => {
+test("resolveDeterministicAction: q_tos_asked + 同意 → ask_q_email (iter32 reorder)", () => {
   const action = resolveDeterministicAction(
     {
       onboardingState: "q_tos_asked",
@@ -63,7 +63,7 @@ test("resolveDeterministicAction: q_tos_asked + 同意 → ask_q_role", () => {
     },
     "同意"
   )
-  assert.equal(action.kind, "ask_q_role")
+  assert.equal(action.kind, "ask_q_email")
 })
 
 test("resolveDeterministicAction: q_tos_asked + no → ask_q_tos_decline", () => {
@@ -131,17 +131,17 @@ test("resolveDeterministicAction: q_resume_asked + cvParsed=false → wait_for_r
   assert.equal(action.kind, "wait_for_resume_upload")
 })
 
-test("resolveDeterministicAction: q_resume_asked + cvParsed=true → ask_q_email (advances past CV gate)", () => {
+test("resolveDeterministicAction: q_resume_asked + cvParsed=true → complete (iter32: final step, email already verified upstream)", () => {
   const action = resolveDeterministicAction(
     {
       onboardingState: "q_resume_asked",
       cvParsed: true,
-      emailCaptured: false,
-      emailVerified: false,
+      emailCaptured: true,
+      emailVerified: true,
     },
     "ok"
   )
-  assert.equal(action.kind, "ask_q_email")
+  assert.equal(action.kind, "complete")
 })
 
 test("resolveDeterministicAction: q_email_asked + valid email → ask_q_email_verify_start (carries email)", () => {
@@ -496,7 +496,7 @@ test("runDeterministicOnboardingTurn: fresh user → send_first_mes verbatim, NO
   )
 })
 
-test("runDeterministicOnboardingTurn: ToS accept → ask_q_role + writes tosAcceptedVersion=v1.0", async () => {
+test("runDeterministicOnboardingTurn: ToS accept → ask_q_email + writes tosAcceptedVersion=v1.0 (iter32 reorder)", async () => {
   _resetOnboardingConfigCache()
   const { store, captures } = makeFakeRunnerStore()
   const result = await runDeterministicOnboardingTurn({
@@ -512,10 +512,10 @@ test("runDeterministicOnboardingTurn: ToS accept → ask_q_role + writes tosAcce
     agent: FAKE_AGENT,
   })
   assert.equal(result.handled, true)
-  const advance = captures.appliedSteps.find((s) => s.step === "ask_q_role")
-  assert.ok(advance, "applyOnboarding(ask_q_role) must fire")
+  const advance = captures.appliedSteps.find((s) => s.step === "ask_q_email")
+  assert.ok(advance, "applyOnboarding(ask_q_email) must fire")
   assert.equal(advance!.opts.tosAcceptedVersion, "v1.0")
-  assert.match(captures.appendedMessages[0]!.body, /角度|方向|kinda role/i)
+  assert.match(captures.appendedMessages[0]!.body, /邮箱|email/i)
 })
 
 test("runDeterministicOnboardingTurn: ToS decline → state stays + decline reply", async () => {
@@ -602,7 +602,7 @@ test("runDeterministicOnboardingTurn: q_email_asked + valid email → fires Mail
   assert.match(captures.appendedMessages[0]!.body, /6/)
 })
 
-test("runDeterministicOnboardingTurn: q_email_verifying + correct code → complete + verifiedAt", async () => {
+test("runDeterministicOnboardingTurn: q_email_verifying + correct code → ask_q_role + verifiedAt (iter32: NOT complete; probe sequence still ahead)", async () => {
   _resetOnboardingConfigCache()
   const correctCode = "654321"
   const codeHash = createHash("sha256").update(correctCode).digest("hex")
@@ -626,14 +626,16 @@ test("runDeterministicOnboardingTurn: q_email_verifying + correct code → compl
       phoneE164: "+15551234567",
       onboardingState: "q_email_verifying",
     },
-    cvParsed: true,
+    cvParsed: false,
     agent: FAKE_AGENT,
   })
   const advance = captures.appliedSteps.find(
-    (s) => s.step === "complete" && s.opts.emailVerificationVerified === true
+    (s) => s.step === "ask_q_role" && s.opts.emailVerificationVerified === true
   )
-  assert.ok(advance, "applyOnboarding(complete, emailVerificationVerified=true) must fire")
+  assert.ok(advance, "applyOnboarding(ask_q_role, emailVerificationVerified=true) must fire")
   assert.match(captures.appendedMessages[0]!.body, /verified|✓|验过/i)
+  // ack + role question chained
+  assert.match(captures.appendedMessages[0]!.body, /方向|kinda role/i)
 })
 
 test("runDeterministicOnboardingTurn: q_email_verifying + wrong code → bumps attempts, stays", async () => {
@@ -669,9 +671,10 @@ test("runDeterministicOnboardingTurn: q_email_verifying + wrong code → bumps a
   assert.match(captures.appendedMessages[0]!.body, /try again|不对/i)
 })
 
-test("runDeterministicOnboardingTurn: q_email_verifying + expired challenge → bypass to complete (no verifiedAt)", async () => {
+test("runDeterministicOnboardingTurn: q_email_verifying + expired challenge → re-issue code in place (iter32: do NOT bypass)", async () => {
   _resetOnboardingConfigCache()
   const codeHash = createHash("sha256").update("654321").digest("hex")
+  const sentMailgun: Array<{ email: string }> = []
   const { store, captures } = makeFakeRunnerStore({
     async getUserEmailVerification() {
       return {
@@ -680,6 +683,15 @@ test("runDeterministicOnboardingTurn: q_email_verifying + expired challenge → 
         sentAt: new Date(Date.now() - 60 * 60_000).toISOString(),
         expiresAt: new Date(Date.now() - 30 * 60_000).toISOString(),
         attempts: 1,
+      }
+    },
+    async sendVerificationEmail(email: string) {
+      sentMailgun.push({ email })
+      return {
+        rawCode: "789012",
+        sentAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(),
+        providerMessageId: "msg_reissue",
       }
     },
   })
@@ -692,14 +704,23 @@ test("runDeterministicOnboardingTurn: q_email_verifying + expired challenge → 
       phoneE164: "+15551234567",
       onboardingState: "q_email_verifying",
     },
-    cvParsed: true,
+    cvParsed: false,
     agent: FAKE_AGENT,
   })
-  const advance = captures.appliedSteps.find((s) => s.step === "complete")
-  assert.ok(advance)
-  assert.notEqual(advance!.opts.emailVerificationVerified, true)
+  // Mailgun re-fires
+  assert.equal(sentMailgun.length, 1, "Mailgun must re-fire on expired")
+  // State stays at q_email_verifying — applyOnboarding called with same step
+  const reissue = captures.appliedSteps.find(
+    (s) => s.step === "ask_q_email_verify" && s.opts.emailVerification !== undefined
+  )
+  assert.ok(reissue, "applyOnboarding(ask_q_email_verify, fresh emailVerification) must fire on reissue")
+  // The new code's hash differs from the old hash
+  const newHash = createHash("sha256").update("789012").digest("hex")
+  assert.equal((reissue!.opts.emailVerification as { codeHash: string }).codeHash, newHash)
+  // Reply mentions code resent
+  assert.match(captures.appendedMessages[0]!.body, /resent|新的|fresh/i)
   const logEv = captures.logEvents.find(
-    (e) => e.event === "pa.onboarding.deterministic.email_verify_bypass"
+    (e) => e.event === "pa.onboarding.deterministic.email_verify_reissued"
   )
   assert.equal(logEv?.payload?.reason, "expired")
 })

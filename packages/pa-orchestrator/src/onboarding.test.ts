@@ -180,15 +180,21 @@ test("composeOnboardingInput ask_grounding_q returns a grounding question prompt
 // write parity + idempotency + reusable-trigger flow + skip-if-recent flow.
 // ============================================================================
 
-// --- v2-1: resolveOnboardingStep with enableV2 walks first_mes_sent → ask_q_role ---
-test("v2: first_mes_sent → ask_q_role when enableV2", () => {
+// --- v2-1: resolveOnboardingStep with enableV2 walks first_mes_sent → ask_q_email
+//          (iter32 reorder: TOS gate off → first_mes_sent skips ToS step and
+//           goes directly to email; with TOS gate on → ask_q_tos)
+test("v2: first_mes_sent → ask_q_email when enableV2 (iter32 reorder)", () => {
   const user = { ...baseUser, onboardingState: "first_mes_sent" as const }
-  assert.equal(resolveOnboardingStep(user, { enableV2: true }), "ask_q_role")
+  assert.equal(resolveOnboardingStep(user, { enableV2: true }), "ask_q_email")
 })
 
-// --- v2-2: full v2 chain transitions in order ---
-test("v2: q_role_asked → ask_q_yoe → ask_q_visa → ask_q_startup_pref → ask_q_location → complete", () => {
+// --- v2-2: full v2 chain transitions in iter32 order ---
+test("v2: q_email_asked → ask_q_role → ask_q_yoe → … → ask_q_resume → complete (iter32 reorder)", () => {
   const v2 = { enableV2: true }
+  assert.equal(
+    resolveOnboardingStep({ ...baseUser, onboardingState: "q_email_asked" }, v2),
+    "ask_q_role"
+  )
   assert.equal(
     resolveOnboardingStep({ ...baseUser, onboardingState: "q_role_asked" }, v2),
     "ask_q_yoe"
@@ -211,10 +217,6 @@ test("v2: q_role_asked → ask_q_yoe → ask_q_visa → ask_q_startup_pref → a
   )
   assert.equal(
     resolveOnboardingStep({ ...baseUser, onboardingState: "q_resume_asked" }, v2),
-    "ask_q_email"
-  )
-  assert.equal(
-    resolveOnboardingStep({ ...baseUser, onboardingState: "q_email_asked" }, v2),
     "complete"
   )
 })

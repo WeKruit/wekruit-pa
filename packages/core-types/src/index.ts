@@ -43,11 +43,17 @@ export const OnboardingStateSchema = z.enum([
   "pending",
   "first_mes_sent",
   // iter31 (Adam directive 2026-05-04 "1. email verification & privacy + terms"):
-  // ToS + privacy acceptance MUST land before any data-collection probes
-  // (role/yoe/visa). Inserted between first_mes_sent and q_role_asked.
-  // User reply with bilingual accept keyword ("同意"/"accept"/"yes"/"ok"/"i agree")
-  // advances; decline keyword ("不同意"/"decline"/"no") suspends with neutral ack.
+  // ToS + privacy acceptance MUST land before any data-collection probes.
   "q_tos_asked",
+  // iter32 reorder (Adam directive 2026-05-04 "Email & verify should be part
+  // of pre cv in tos.."): email + verify form a trust handshake immediately
+  // after ToS, BEFORE the role/yoe probe sequence and BEFORE resume upload.
+  // Sequence: q_tos_asked → q_email_asked → q_email_verifying → q_role_asked
+  // → q_yoe_asked → q_visa_asked → q_startup_pref_asked → q_location_asked
+  // → q_resume_asked → complete. STATE_ORDER below mirrors this order so
+  // applyOnboardingStep idempotency advances forward only.
+  "q_email_asked",
+  "q_email_verifying",
   "grounding_q1_asked",
   "q_role_asked",
   "q_yoe_asked",
@@ -57,15 +63,6 @@ export const OnboardingStateSchema = z.enum([
   // iter30 closure (Adam directive 2026-05-03 "主动问简历"): proactive resume
   // request as the final probe step before transitioning to complete.
   "q_resume_asked",
-  // iter30 V6 (Adam directive 2026-05-03 "怎么连接 email"): 7th probe step —
-  // collect optional contact email after resume ask.
-  "q_email_asked",
-  // iter31 (Adam directive 2026-05-04 "send code they respond in sms"):
-  // when q_email_asked produced a valid email, transition here, send a
-  // 6-digit verification code via Mailgun, and wait for the user to reply
-  // the code via SMS. On match → complete. On skip/decline at q_email_asked
-  // → straight to complete (skip verification).
-  "q_email_verifying",
   "complete",
 ])
 export type OnboardingState = z.infer<typeof OnboardingStateSchema>

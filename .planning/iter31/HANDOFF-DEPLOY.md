@@ -47,14 +47,24 @@ Strict gate sequence enforced in `processInboundEvent`:
 5. statedPreferences.contactEmailVerifiedAt must be set
    ↓ ONLY then does agent runtime activate
 
-Sequence: `send_first_mes → ask_q_tos → ask_q_role → ask_q_yoe →
-ask_q_visa → ask_q_startup_pref → ask_q_location → ask_q_resume`
-[CV gate hold] `→ ask_q_email → ask_q_email_verify` [email-verified gate hold]
+Sequence (iter32 reorder — Adam directive 2026-05-04 "Email & verify
+should be part of pre cv in tos.."): `send_first_mes → ask_q_tos →
+ask_q_email → ask_q_email_verify → ask_q_role → ask_q_yoe → ask_q_visa
+→ ask_q_startup_pref → ask_q_location → ask_q_resume` [CV gate hold]
 `→ complete → agent runtime + playbooks`
+
+Email + verify form a pre-CV trust handshake immediately after TOS,
+BEFORE preference probing and BEFORE resume upload. Resume upload is
+the LAST step.
 
 Vent / distress mid-onboarding: deterministic short empathy ack, state
 stays. Crisis (self-harm) keywords still routed through pa-safety's
 hotline injection guard.
+
+Email-verify expired or 5-attempt-exhausted: re-issue Mailgun code in
+place (NOT bypass to complete). User retries with the fresh code. Edge
+case: typo'd email → operator HITL pause + manual user.runtimeMode
+override.
 
 Config in `pa-onboarding-config/v1` Firestore doc — operator-editable
 in dashboard (UI is a v2 follow-up; for now edit via Firestore console).
@@ -169,13 +179,18 @@ matches `e2e-reset-cold-start.mjs`.
 4. Send "同意" → state advances to q_role_asked
 5. Send "what" → re-ask branch fires (ask_q_tos_reask directive)
 
-### Flow C: Email verify pass
-1. Reset user; advance to q_email_asked; flip paOnboardingEmailVerifyEnabled ON
+### Flow C: Email verify pass (iter32 reorder — happens AFTER TOS, BEFORE role probe)
+1. Reset user; complete TOS accept → state=q_email_asked; flip paOnboardingDeterministicEnabled ON
 2. Send "myemail@gmail.com" → Mailgun fires → state=q_email_verifying;
    user.emailVerification.codeHash set
 3. Read the code from the actual email Mailgun delivered
-4. Send the 6-digit code → state=complete; user.statedPreferences.contactEmailVerifiedAt set
-5. Confirm reply contains "✓ verified" or "邮箱验过了"
+4. Send the 6-digit code → state=q_role_asked (NOT complete);
+   user.statedPreferences.contactEmailVerifiedAt set
+5. Confirm reply contains "✓ verified" + ack chain to role question
+   ("kinda role you eyeing" / "想找啥方向的活")
+6. Continue probing through yoe → visa → startup_pref → location → resume
+7. Upload resume → cv-ingest writes parsedCandidateResumes row → state=complete
+8. Confirm "all set" reply on the next inbound after resume parses
 
 ### Flow D: HITL pause/resume
 1. Open dashboard https://wekruit-pa.web.app, navigate to user
