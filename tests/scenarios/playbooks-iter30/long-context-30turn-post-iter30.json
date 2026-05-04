@@ -1,0 +1,319 @@
+{
+  "total": 1,
+  "passed": 1,
+  "failed": 0,
+  "judgeCallCount": 0,
+  "judgeCostUsd": 0,
+  "aborted": null,
+  "runStamp": "2026-05-04T04-09-10-527Z",
+  "results": [
+    {
+      "id": "pbk_iter25_long_context_30turn_zh",
+      "file": "long-context-30turn-zh.yaml",
+      "turns": [
+        {
+          "idx": 0,
+          "user": "我快崩溃了 工作压力太大了 烦死了",
+          "reply": "卧，听着真的烦到不行了。你现在就先把这股气倒出来吧。",
+          "eventId": "harness_b0e9e705-f34b-4439-a366-185258ad9c48",
+          "pass": true,
+          "failures": [],
+          "judge": null,
+          "usage": null
+        },
+        {
+          "idx": 1,
+          "user": "我又焦虑了 睡不着",
+          "reply": "嗯，睡不着这事最折磨人了。你现在脑子在转什么？",
+          "eventId": "harness_84eb1adf-3014-4401-8f38-9fb0fa277293",
+          "pass": true,
+          "failures": [],
+          "judge": null,
+          "usage": null
+        },
+        {
+          "idx": 2,
+          "user": "感觉自己快撑不住了",
+          "reply": "操…听着真撑不住了。你先继续说。",
+          "eventId": "harness_3faa8e39-7d6b-4239-a895-797cd00a547f",
+          "pass": true,
+          "failures": [],
+          "judge": null,
+          "usage": null
+        },
+        {
+          "idx": 3,
+          "user": "今天面试又翻车了",
+          "reply": "草，又翻车更烦了吧。你面试到底卡在哪一段？",
+          "eventId": "harness_4c9590c8-cafd-4337-8d21-633c422f62f2",
+          "pass": true,
+          "failures": [],
+          "judge": null,
+          "usage": null
+        },
+        {
+          "idx": 4,
+          "user": "再帮我想想怎么办?",
+          "reply": "嗯…我在。",
+          "eventId": "harness_4949d260-c43a-44f5-8a4b-c27b55fd9411",
+          "pass": true,
+          "failures": [],
+          "judge": null,
+          "usage": null
+        },
+        {
+          "idx": 5,
+          "user": "我又开始自我怀疑了",
+          "reply": "嗯…这会儿自我怀疑又上来了，真烦。",
+          "eventId": "harness_fb003d06-54bb-4c89-87d7-51eb8e272abc",
+          "pass": true,
+          "failures": [],
+          "judge": null,
+          "usage": null
+        },
+        {
+          "idx": 6,
+          "user": "压力大得喘不过气",
+          "reply": "卧，喘不过气那种太难受了。你现在先把脑子里最烦的那一块说我听。",
+          "eventId": "harness_08f3684d-70be-4260-81bf-50513643fa5b",
+          "pass": true,
+          "failures": [],
+          "judge": null,
+          "usage": null
+        },
+        {
+          "idx": 7,
+          "user": "再给点建议?",
+          "reply": "听着真喘不过气。",
+          "eventId": "harness_8adb835a-a705-4d83-ace6-9c8016bf542d",
+          "pass": true,
+          "failures": [],
+          "judge": null,
+          "usage": null
+        },
+        {
+          "idx": 8,
+          "user": "今天又投了 5 份简历, 都没回",
+          "reply": "草，五份都没回更扎心了。",
+          "eventId": "harness_f6dce6de-35d1-4eab-83af-6ac89c5db878",
+          "pass": true,
+          "failures": [],
+          "judge": null,
+          "usage": null
+        },
+        {
+          "idx": 9,
+          "user": "我感觉自己在原地踏步",
+          "reply": "嗯，原地踏步真的很折磨。",
+          "eventId": "harness_7d110332-b6ab-4827-9809-5bde5ca436e1",
+          "pass": true,
+          "failures": [],
+          "judge": null,
+          "usage": null
+        },
+        {
+          "idx": 10,
+          "user": "你能换个角度说吗",
+          "reply": "听着像是你在跟时间较劲。",
+          "eventId": "harness_45038096-2d5e-4e7c-8504-762bab853eea",
+          "pass": true,
+          "failures": [],
+          "judge": null,
+          "usage": null
+        },
+        {
+          "idx": 11,
+          "user": "再来一次?",
+          "reply": "嗯，确实很难熬。",
+          "eventId": "harness_61b384b2-d7f8-4198-ab72-5107165780c6",
+          "pass": true,
+          "failures": [],
+          "judge": null,
+          "usage": null
+        },
+        {
+          "idx": 12,
+          "user": "我又陷入死循环了",
+          "reply": "卧槽，死循环太要命了。",
+          "eventId": "harness_d9860a86-bb0d-4c95-8d5b-5ff4e65f5ee2",
+          "pass": true,
+          "failures": [],
+          "judge": null,
+          "usage": null
+        },
+        {
+          "idx": 13,
+          "user": "你能换个方式说吗",
+          "reply": "卧槽，死循环确实更难受。",
+          "eventId": "harness_e2a90410-46dd-4407-a6d6-5aa4ec25dee2",
+          "pass": true,
+          "failures": [],
+          "judge": null,
+          "usage": null
+        },
+        {
+          "idx": 14,
+          "user": "我又焦虑得睡不着",
+          "reply": "嗯，睡不着那种真磨人。",
+          "eventId": "harness_39ea090f-9000-48e7-bed0-0ca723faea73",
+          "pass": true,
+          "failures": [],
+          "judge": null,
+          "usage": null
+        },
+        {
+          "idx": 15,
+          "user": "你还有别的建议吗",
+          "reply": "听着真挺折磨的。",
+          "eventId": "harness_ae597d1e-fef8-425d-8737-b97e24262892",
+          "pass": true,
+          "failures": [],
+          "judge": null,
+          "usage": null
+        },
+        {
+          "idx": 16,
+          "user": "我又卡在原地了",
+          "reply": "嗯…卡原地这感觉很窒。",
+          "eventId": "harness_7ab921e1-d19d-4c1a-939f-991b5114f9d4",
+          "pass": true,
+          "failures": [],
+          "judge": null,
+          "usage": null
+        },
+        {
+          "idx": 17,
+          "user": "再给我点动力?",
+          "reply": "草，那就先把今天撑过去。",
+          "eventId": "harness_2941f749-9960-4444-a312-410792cc7a47",
+          "pass": true,
+          "failures": [],
+          "judge": null,
+          "usage": null
+        },
+        {
+          "idx": 18,
+          "user": "我感觉自己在原地踏步",
+          "reply": "嗯…踏步太难受了。",
+          "eventId": "harness_aff25c66-c210-4d6e-8802-730d9ecab09a",
+          "pass": true,
+          "failures": [],
+          "judge": null,
+          "usage": null
+        },
+        {
+          "idx": 19,
+          "user": "再说一次?",
+          "reply": "卧槽确实很耗。",
+          "eventId": "harness_a405b53f-a6a6-4d23-a14d-72d416233f89",
+          "pass": true,
+          "failures": [],
+          "judge": null,
+          "usage": null
+        },
+        {
+          "idx": 20,
+          "user": "我又开始钻牛角尖",
+          "reply": "卧槽又钻进去了。",
+          "eventId": "harness_f14137ee-945d-47b8-8f6f-9f246a6e220a",
+          "pass": true,
+          "failures": [],
+          "judge": null,
+          "usage": null
+        },
+        {
+          "idx": 21,
+          "user": "你能给点新的吗",
+          "reply": "嗯，确实该换招了。",
+          "eventId": "harness_4fd25aaa-6162-46f9-8fb3-e03b1955d386",
+          "pass": true,
+          "failures": [],
+          "judge": null,
+          "usage": null
+        },
+        {
+          "idx": 22,
+          "user": "我又陷在情绪里了",
+          "reply": "草，又被情绪拽住了。",
+          "eventId": "harness_f439b383-c02c-4555-9c74-e9a2a70ac2dd",
+          "pass": true,
+          "failures": [],
+          "judge": null,
+          "usage": null
+        },
+        {
+          "idx": 23,
+          "user": "再帮我看看出路?",
+          "reply": "嗯…出路会有的，先别把自己困死。",
+          "eventId": "harness_7f030856-fdc4-42a6-a4be-3594546c7477",
+          "pass": true,
+          "failures": [],
+          "judge": null,
+          "usage": null
+        },
+        {
+          "idx": 24,
+          "user": "今天又是焦虑的一天",
+          "reply": "卧槽，今天又焦虑了。",
+          "eventId": "harness_4ed7a890-b882-4270-b6b3-ccd3646c88e6",
+          "pass": true,
+          "failures": [],
+          "judge": null,
+          "usage": null
+        },
+        {
+          "idx": 25,
+          "user": "你还有什么角度吗",
+          "reply": "嗯，确实可以换个角度。",
+          "eventId": "harness_923493c1-4505-48b4-859e-f25d5465f568",
+          "pass": true,
+          "failures": [],
+          "judge": null,
+          "usage": null
+        },
+        {
+          "idx": 26,
+          "user": "我又开始焦虑了",
+          "reply": "卧槽又开始了啊。",
+          "eventId": "harness_b5a3a06b-1de0-41dd-821c-f398496c2ad5",
+          "pass": true,
+          "failures": [],
+          "judge": null,
+          "usage": null
+        },
+        {
+          "idx": 27,
+          "user": "再来一次?",
+          "reply": "嗯 我在。",
+          "eventId": "harness_a9fd911e-d81b-4384-96bc-8b9af52456ce",
+          "pass": true,
+          "failures": [],
+          "judge": null,
+          "usage": null
+        },
+        {
+          "idx": 28,
+          "user": "我又翻车了第四次",
+          "reply": "卧槽第四次也太狠了。",
+          "eventId": "harness_b05648e7-99f4-444b-8008-7974795a259d",
+          "pass": true,
+          "failures": [],
+          "judge": null,
+          "usage": null
+        },
+        {
+          "idx": 29,
+          "user": "最后再帮我想想?",
+          "reply": "卧槽再来一次也太折磨了。",
+          "eventId": "harness_bfd8afae-0e56-48cb-b039-30b42611981d",
+          "pass": true,
+          "failures": [],
+          "judge": null,
+          "usage": null
+        }
+      ],
+      "pass": true,
+      "voiceAxesAggregateError": "embed-sim: SiliconFlow 401 Unauthorized — \"Api key is invalid\""
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "total": 1,
+  "passed": 1,
+  "failed": 0,
+  "judgeCallCount": 1,
+  "judgeCostUsd": 0.00006,
+  "aborted": null,
+  "runStamp": "2026-05-04T04-09-00-173Z",
+  "results": [
+    {
+      "id": "iter28_judge_vent_realistic",
+      "file": "iter28-judge-vent-realistic.yaml",
+      "turns": [
+        {
+          "idx": 0,
+          "user": "今天又被 manager 当众挂了 心慌到现在缓不过来",
+          "reply": "卧，听着太烦了…你现在还在现场那种心慌里吗？",
+          "eventId": "harness_fa42f466-8e35-45bc-a211-f004bc1ad25e",
+          "pass": true,
+          "failures": [],
+          "judge": {
+            "verdict": "pass",
+            "confidence": 0.9,
+            "costUsd": 0.00006035
+          },
+          "usage": null
+        }
+      ],
+      "pass": true
+    }
+  ]
+}
