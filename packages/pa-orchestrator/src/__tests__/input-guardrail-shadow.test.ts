@@ -110,7 +110,8 @@ function makeStore(captures: Captures, opts: { allowSafety: boolean }): Orchestr
     buildTurnTools: async () => [],
     recordHostedToolCalls: async () => undefined,
     nowIso: () => "2026-05-03T12:00:00.000Z",
-    log: (evt, payload) => {
+    log: (...args: unknown[]) => {
+      const [evt, payload] = args as [string, Record<string, unknown> | undefined]
       captures.logs.push({ evt, payload })
     },
     // Toggle legacy safety pass/block at the test seam.

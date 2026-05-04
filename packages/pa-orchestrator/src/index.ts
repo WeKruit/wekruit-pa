@@ -1819,6 +1819,35 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
         error: msg,
       })
     }
+    // iter30 Wave 3 — am_i_ai flat-deny post-gen re-roll. Runs BEFORE
+    // imperfection injector so any injected typos go on top of the
+    // deflection text (not the lie). Gated by paHumanizeRuntimeEnabled
+    // umbrella + env kill switch PA_AM_I_AI_REROLL_DISABLED=true.
+    // Idempotent (substitute strings don't match deny patterns).
+    try {
+      const humanizeOnAmIAi = await isHumanizeRuntimeEnabled(store.db, event.userId)
+      if (humanizeOnAmIAi && process.env.PA_AM_I_AI_REROLL_DISABLED !== "true") {
+        const deflected = deflectAmIAiFlatDeny(stripped)
+        if (deflected.applied) {
+          store.log("pa.voice.am_i_ai_deflect.applied", {
+            userId: event.userId,
+            turnId,
+            matched_pattern: deflected.matched_pattern,
+            lang: deflected.lang,
+            beforeLen: stripped.length,
+            afterLen: deflected.text.length,
+          })
+          stripped = deflected.text
+        }
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      store.log("pa.voice.am_i_ai_deflect.error", {
+        userId: event.userId,
+        turnId,
+        error: msg,
+      })
+    }
     // Phase 36 wire-in — ImperfectionInjector applied to FINAL visible text
     // post-strip. Gated by paHumanizeRuntimeEnabled umbrella + arm-resolver
     // (PA_IMPERFECTION_ARM env or userId-hash bucket). Default arm = "off"

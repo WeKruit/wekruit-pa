@@ -107,6 +107,90 @@ test("OG-3 slangEnforcer — en-US locale skips", async () => {
   assert.equal(out.outputInfo.skipped, "en_locale")
 })
 
+// iter30 Wave 3 — Bible v7 banlist expansion (友好 / 没问题).
+
+test("OG-3 slangEnforcer — 太友好了 corporate-praise frame is dropped", async () => {
+  const ctx = createMockContext({ locale: "zh-CN" })
+  const out = await slangEnforcerGuardrail.execute({
+    agentOutput: "你真是太友好了, 谢谢。",
+    userInput: "",
+    ctx,
+  })
+  const text = out.outputInfo.transformedOutput as string
+  assert.ok(typeof text === "string", "should transform")
+  assert.ok(!text.includes("太友好了"), "praise-frame stripped")
+  // Must not break grammar by leaving "你真是太了"
+  assert.ok(!text.includes("太了"))
+})
+
+test("OG-3 slangEnforcer — bare 没问题 reply → friend-tone 嗯，行", async () => {
+  const ctx = createMockContext({ locale: "zh-CN" })
+  const out = await slangEnforcerGuardrail.execute({
+    agentOutput: "没问题",
+    userInput: "",
+    ctx,
+  })
+  assert.equal(out.outputInfo.transformedOutput, "嗯，行")
+})
+
+test("OG-3 slangEnforcer — bare 没问题。 with period → friend-tone", async () => {
+  const ctx = createMockContext({ locale: "zh-CN" })
+  const out = await slangEnforcerGuardrail.execute({
+    agentOutput: "没问题。",
+    userInput: "",
+    ctx,
+  })
+  assert.equal(out.outputInfo.transformedOutput, "嗯，行")
+})
+
+test("OG-3 slangEnforcer — sentence-head 没问题 → 好", async () => {
+  const ctx = createMockContext({ locale: "zh-CN" })
+  const out = await slangEnforcerGuardrail.execute({
+    agentOutput: "没问题, 我帮你看。",
+    userInput: "",
+    ctx,
+  })
+  const text = out.outputInfo.transformedOutput as string
+  assert.ok(typeof text === "string", "should transform")
+  assert.ok(!text.includes("没问题"))
+  assert.ok(text.startsWith("好"))
+})
+
+test("OG-3 slangEnforcer — mid-sentence 没问题 stripped", async () => {
+  const ctx = createMockContext({ locale: "zh-CN" })
+  const out = await slangEnforcerGuardrail.execute({
+    agentOutput: "嗯, 我看完简历没问题就给你回复",
+    userInput: "",
+    ctx,
+  })
+  const text = out.outputInfo.transformedOutput as string
+  assert.ok(typeof text === "string", "should transform")
+  assert.ok(!text.includes("没问题"))
+})
+
+test("OG-3 slangEnforcer — 很友好 stripped without breaking sentence", async () => {
+  const ctx = createMockContext({ locale: "zh-CN" })
+  const out = await slangEnforcerGuardrail.execute({
+    agentOutput: "他很友好, 你可以问他。",
+    userInput: "",
+    ctx,
+  })
+  const text = out.outputInfo.transformedOutput as string
+  assert.ok(typeof text === "string", "should transform")
+  assert.ok(!text.includes("友好"))
+})
+
+test("OG-3 slangEnforcer — neutral 友好 alone is left intact (conservative)", async () => {
+  const ctx = createMockContext({ locale: "zh-CN" })
+  // No intensifier prefix → no strip (conservative; might be a noun reference).
+  const out = await slangEnforcerGuardrail.execute({
+    agentOutput: "中美友好关系。",
+    userInput: "",
+    ctx,
+  })
+  assert.equal(out.outputInfo.transformedOutput, undefined)
+})
+
 test("OG-5 crisisTrailer — appends when crisisTripped + flag on", async () => {
   const ctx = createMockContext({ crisisTripped: true })
   const out = await crisisTrailerGuardrail.execute({
