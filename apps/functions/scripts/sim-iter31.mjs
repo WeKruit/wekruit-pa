@@ -733,6 +733,275 @@ async function main() {
     })
   }
 
+  // ──────────────────────────────────────────────────────────────────
+  // iter32 — deterministic onboarding scenarios (paOnboardingDeterministicEnabled)
+  // ──────────────────────────────────────────────────────────────────
+
+  // Helper: run with the deterministic flag forced ON via env override.
+  async function withDeterministicFlag(fn) {
+    process.env.PA_ONBOARDING_DETERMINISTIC_ENABLED = "true"
+    try {
+      await fn()
+    } finally {
+      delete process.env.PA_ONBOARDING_DETERMINISTIC_ENABLED
+    }
+  }
+
+  // ── i32-1: Fresh user → deterministic send_first_mes verbatim
+  if (should("i32-fresh-user")) {
+    await scenario(
+      "i32-fresh-user: deterministic send_first_mes — verbatim, NO LLM call",
+      async () => {
+        // Direct test of the runDeterministicOnboardingTurn export.
+        const det = await import("@pa/pa-orchestrator")
+        const captures = []
+        const ev = []
+        const store = {
+          async appendMessage(m) {
+            captures.push({ role: m.role, body: m.body })
+          },
+          async enqueueOutbound(_uid, _to, body) {
+            ev.push({ kind: "outbound", body })
+          },
+          async applyOnboarding(_uid, _phone, step, opts = {}) {
+            ev.push({ kind: "apply", step, opts })
+          },
+          async getTosVersion() {
+            return "v1.0"
+          },
+          log(event, payload) {
+            ev.push({ kind: "log", event, payload })
+          },
+          nowIso() {
+            return new Date().toISOString()
+          },
+        }
+        const result = await det.runDeterministicOnboardingTurn({
+          event: {
+            id: "evt-1",
+            userId: "u1",
+            sessionId: "ses-1",
+            channel: "imessage",
+            externalChatId: "+15551234567",
+            from: "+15551234567",
+            body: "hi",
+            status: "pending",
+            createdAt: new Date().toISOString(),
+            idempotencyKey: "idem-1",
+            rawMeta: {},
+          },
+          store,
+          turnId: "t1",
+          onboardingUser: { id: "u1", phoneE164: "+15551234567", onboardingState: undefined },
+          cvParsed: false,
+          agent: { id: "claire" },
+        })
+        expect(result.handled === true, `runner must return handled=true (got ${JSON.stringify(result)})`)
+        expect(captures.length === 1, `1 assistant message appended (got ${captures.length})`)
+        expect(/Here|在呢/.test(captures[0].body), `first_mes verbatim (got "${captures[0].body}")`)
+        const applied = ev.find((x) => x.kind === "apply" && x.step === "send_first_mes")
+        expect(applied !== undefined, `applyOnboarding(send_first_mes) must fire`)
+      }
+    )
+  }
+
+  // ── i32-2: ToS accept advances to ask_q_role + writes tosAcceptance
+  if (should("i32-tos-accept")) {
+    await scenario("i32-tos-accept: 同意 → ask_q_role + tosAcceptedVersion=v1.0", async () => {
+      const det = await import("@pa/pa-orchestrator")
+      const ev = []
+      const captures = []
+      const store = {
+        async appendMessage(m) {
+          captures.push({ role: m.role, body: m.body })
+        },
+        async enqueueOutbound() {},
+        async applyOnboarding(_uid, _phone, step, opts = {}) {
+          ev.push({ step, opts })
+        },
+        async getTosVersion() {
+          return "v1.0"
+        },
+        log() {},
+        nowIso() {
+          return new Date().toISOString()
+        },
+      }
+      await det.runDeterministicOnboardingTurn({
+        event: {
+          id: "evt",
+          userId: "u",
+          sessionId: "s",
+          channel: "imessage",
+          externalChatId: "x",
+          from: "x",
+          body: "同意",
+          status: "pending",
+          createdAt: new Date().toISOString(),
+          idempotencyKey: "i",
+          rawMeta: {},
+        },
+        store,
+        turnId: "t",
+        onboardingUser: {
+          id: "u",
+          phoneE164: "+1",
+          onboardingState: "q_tos_asked",
+        },
+        cvParsed: false,
+        agent: { id: "c" },
+      })
+      const advance = ev.find((x) => x.step === "ask_q_role")
+      expect(advance !== undefined, `must advance to ask_q_role`)
+      expect(advance.opts.tosAcceptedVersion === "v1.0", `tosAcceptedVersion must be v1.0 (got ${advance.opts.tosAcceptedVersion})`)
+      expect(/方向|kinda role/.test(captures[0].body), `must ask role question (got "${captures[0].body}")`)
+    })
+  }
+
+  // ── i32-3: CV gate holds at q_resume_asked when cvParsed=false
+  if (should("i32-cv-gate-holds")) {
+    await scenario("i32-cv-gate-holds: q_resume_asked + cvParsed=false → wait reply, NO state advance", async () => {
+      const det = await import("@pa/pa-orchestrator")
+      const ev = []
+      const captures = []
+      const store = {
+        async appendMessage(m) {
+          captures.push({ body: m.body })
+        },
+        async enqueueOutbound() {},
+        async applyOnboarding(_uid, _phone, step, opts = {}) {
+          ev.push({ step, opts })
+        },
+        log() {},
+        nowIso() {
+          return new Date().toISOString()
+        },
+      }
+      await det.runDeterministicOnboardingTurn({
+        event: {
+          id: "evt",
+          userId: "u",
+          sessionId: "s",
+          channel: "imessage",
+          externalChatId: "x",
+          from: "x",
+          body: "ok sending now",
+          status: "pending",
+          createdAt: new Date().toISOString(),
+          idempotencyKey: "i",
+          rawMeta: {},
+        },
+        store,
+        turnId: "t",
+        onboardingUser: {
+          id: "u",
+          phoneE164: "+1",
+          onboardingState: "q_resume_asked",
+        },
+        cvParsed: false,
+        agent: { id: "c" },
+      })
+      expect(ev.length === 0, `state MUST NOT advance until CV parsed (got ${ev.length} steps)`)
+      expect(/attach|附件/.test(captures[0].body), `wait prompt must mention attachment (got "${captures[0].body}")`)
+    })
+  }
+
+  // ── i32-4: CV gate releases when cvParsed=true → ask_q_email
+  if (should("i32-cv-gate-releases")) {
+    await scenario("i32-cv-gate-releases: q_resume_asked + cvParsed=true → ask_q_email", async () => {
+      const det = await import("@pa/pa-orchestrator")
+      const ev = []
+      const captures = []
+      const store = {
+        async appendMessage(m) {
+          captures.push({ body: m.body })
+        },
+        async enqueueOutbound() {},
+        async applyOnboarding(_uid, _phone, step) {
+          ev.push({ step })
+        },
+        log() {},
+        nowIso() {
+          return new Date().toISOString()
+        },
+      }
+      await det.runDeterministicOnboardingTurn({
+        event: {
+          id: "evt",
+          userId: "u",
+          sessionId: "s",
+          channel: "imessage",
+          externalChatId: "x",
+          from: "x",
+          body: "ok",
+          status: "pending",
+          createdAt: new Date().toISOString(),
+          idempotencyKey: "i",
+          rawMeta: {},
+        },
+        store,
+        turnId: "t",
+        onboardingUser: {
+          id: "u",
+          phoneE164: "+1",
+          onboardingState: "q_resume_asked",
+        },
+        cvParsed: true,
+        agent: { id: "c" },
+      })
+      expect(ev.find((x) => x.step === "ask_q_email") !== undefined, `must advance to ask_q_email`)
+      expect(/邮箱|email/i.test(captures[0].body), `ask_q_email reply must contain 邮箱/email (got "${captures[0].body}")`)
+    })
+  }
+
+  // ── i32-5: vent during onboarding → vent_ack, state stays
+  if (should("i32-vent-mid-probe")) {
+    await scenario("i32-vent-mid-probe: 'fuck this' mid-probe → vent_ack, NO state advance, NO LLM", async () => {
+      const det = await import("@pa/pa-orchestrator")
+      const ev = []
+      const captures = []
+      const store = {
+        async appendMessage(m) {
+          captures.push({ body: m.body })
+        },
+        async enqueueOutbound() {},
+        async applyOnboarding(_uid, _phone, step) {
+          ev.push({ step })
+        },
+        log() {},
+        nowIso() {
+          return new Date().toISOString()
+        },
+      }
+      await det.runDeterministicOnboardingTurn({
+        event: {
+          id: "evt",
+          userId: "u",
+          sessionId: "s",
+          channel: "imessage",
+          externalChatId: "x",
+          from: "x",
+          body: "fuck this i just got laid off",
+          status: "pending",
+          createdAt: new Date().toISOString(),
+          idempotencyKey: "i",
+          rawMeta: {},
+        },
+        store,
+        turnId: "t",
+        onboardingUser: {
+          id: "u",
+          phoneE164: "+1",
+          onboardingState: "q_role_asked",
+        },
+        cvParsed: false,
+        agent: { id: "c" },
+      })
+      expect(ev.length === 0, `vent must NOT advance state (got ${ev.length})`)
+      expect(captures.length === 1 && captures[0].body.length <= 60, `vent ack short (got "${captures[0]?.body}")`)
+    })
+  }
+
   // ── 10. Reset command honored even under HITL pause
   if (should("hitl-reset-honored")) {
     await scenario("hitl-reset-honored-NO: reset command still skipped under HITL pause (correct: pause is hard gate)", async () => {

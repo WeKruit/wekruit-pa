@@ -93,6 +93,22 @@ import {
   parseEmailVerificationCode,
   type OnboardingStep,
 } from "./onboarding.js"
+// iter32 — deterministic onboarding dispatcher (Adam directive
+// 2026-05-04: pre-runtime onboarding goes through configured phrases,
+// not the LLM). Flag-gated; default OFF for one launch cycle.
+import {
+  runDeterministicOnboardingTurn,
+  isDeterministicOnboardingEnabled,
+} from "./onboarding-deterministic.js"
+// Re-export for downstream consumers (apps/functions sim, scripts).
+export {
+  runDeterministicOnboardingTurn,
+  isDeterministicOnboardingEnabled,
+  resolveDeterministicAction,
+  composeDeterministicReply,
+  loadOnboardingConfig,
+  DEFAULT_ONBOARDING_CONFIG,
+} from "./onboarding-deterministic.js"
 // Phase 52 — F1 fix: lightweight bilingual intent detection for turn-0
 // onboarding ack (no LLM, regex only). See onboarding-intent.ts for the bank.
 import { detectFirstTurnIntent } from "./onboarding-intent.js"
@@ -481,6 +497,15 @@ export type OrchestratorStore = {
     expiresAt: string
     providerMessageId?: string
   } | null>
+
+  /**
+   * iter32 — has the user's CV been ingested + parsed? cv-ingest pipeline
+   * writes a parsedCandidateResumes row when Sendblue delivers the
+   * iMessage attachment. The deterministic onboarding's CV gate (Adam
+   * directive 2026-05-04 #2 "stricter") holds at q_resume_asked until
+   * this returns true.
+   */
+  getUserCvParsed?(userId: string): Promise<boolean>
 
   /**
    * Phase 24.5 — optional Firestore handle for `getFlag()` reads. Tests omit
@@ -1060,6 +1085,107 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // onboarding steps using Voice v1 system prompt (D-04: no separate utility
     // prompt). On "complete", auto-promotes beta participant status.
     const onboardingUser = await store.getOnboardingUser(event.userId)
+
+    // ════════════════════════════════════════════════════════════════
+    // iter32 — Deterministic onboarding dispatcher. Adam directive
+    // 2026-05-04 ("we should have resume parsed before we start agent
+    // runtime"): pre-runtime onboarding turns dispatch a configured
+    // phrase verbatim via sendMemoryReply. NO LLM, NO Voice v1, NO
+    // langlock. Same friend-tone surface, zero drift, ~7 LLM calls
+    // saved per new user.
+    //
+    // Strict gate sequence (Adam directive 2026-05-04 #2 + #3):
+    //   1. Onboarding state must be `complete` (TOS accepted, all 5 q_*
+    //      answered, resume requested, email captured + verified)
+    //   2. parsedCandidateResumes row must exist (CV uploaded + parsed)
+    //   3. statedPreferences.contactEmailVerifiedAt must be set
+    // Until ALL three gates pass, agent runtime does NOT activate. The
+    // dispatcher emits a deterministic re-prompt at whichever gate
+    // hasn't cleared yet.
+    //
+    // Flag-gated: paOnboardingDeterministicEnabled (default OFF — old
+    // LLM-compose path stays as a rollback for one launch cycle).
+    // ════════════════════════════════════════════════════════════════
+    if (onboardingUser) {
+      const enableDeterministic = await isDeterministicOnboardingEnabled(
+        store.db,
+        event.userId
+      )
+      if (enableDeterministic) {
+        const cvParsed = store.getUserCvParsed
+          ? await store.getUserCvParsed(event.userId)
+          : false
+        const emailVerified = Boolean(
+          onboardingUser.statedPreferences?.contactEmailVerifiedAt
+        )
+        // Outer gate: if state==complete BUT one of CV/email gates
+        // hasn't cleared, re-emit a deterministic re-prompt and STAY.
+        // This handles the case where applyOnboarding(complete) fired
+        // (e.g. via legacy path) but the side-effects haven't settled.
+        if (onboardingUser.onboardingState === "complete") {
+          if (!cvParsed) {
+            const lang = pickLangForSafety(event.body)
+            const msg =
+              lang === "zh"
+                ? "等你发简历过来哦, iMessage 里直接附件就行"
+                : "just waiting on the resume — send it as an iMessage attachment whenever"
+            await sendMemoryReply(store, event, turnId, msg)
+            store.log("pa.onboarding.deterministic.cv_gate_hold", {
+              userId: event.userId,
+              turnId,
+            })
+            await store.updateTurn(turnId, {
+              status: "succeeded",
+              stage: "succeeded",
+              completedAt: store.nowIso(),
+            })
+            await store.markEventSucceeded(event.id)
+            return
+          }
+          if (!emailVerified) {
+            const lang = pickLangForSafety(event.body)
+            const msg =
+              lang === "zh"
+                ? "等你把邮箱里的 6 位验证码发我"
+                : "still waiting on that 6-digit code from your email"
+            await sendMemoryReply(store, event, turnId, msg)
+            store.log("pa.onboarding.deterministic.email_gate_hold", {
+              userId: event.userId,
+              turnId,
+            })
+            await store.updateTurn(turnId, {
+              status: "succeeded",
+              stage: "succeeded",
+              completedAt: store.nowIso(),
+            })
+            await store.markEventSucceeded(event.id)
+            return
+          }
+          // All gates passed → fall through to agent runtime path below.
+        } else {
+          // onboarding still in progress — run deterministic dispatcher.
+          const result = await runDeterministicOnboardingTurn({
+            event,
+            store,
+            turnId,
+            onboardingUser,
+            cvParsed,
+            agent,
+            suppressOutbound: shouldSuppressOutbound(event),
+          })
+          if (result.handled) {
+            await store.updateTurn(turnId, {
+              status: "succeeded",
+              stage: "succeeded",
+              completedAt: store.nowIso(),
+              onboardingDeterministicAction: result.action.kind,
+            })
+            await store.markEventSucceeded(event.id)
+            return
+          }
+        }
+      }
+    }
     if (onboardingUser) {
       // Phase 44 (v1.5 Stream-B / D5+D13) — v2 8-state probe behind flag.
       // Default off → falls through to legacy 4-state path identically.
@@ -3318,6 +3444,24 @@ export function createFirestoreOrchestratorStore(
     ...(deps.sendVerificationEmail
       ? { sendVerificationEmail: deps.sendVerificationEmail }
       : {}),
+    // iter32 — CV gate. Reads parsedCandidateResumes (cross-product
+    // collection — see CLAUDE.md) for the user; returns true iff a row
+    // exists. Defensive fail-OPEN is NOT appropriate here (Adam directive
+    // 2026-05-04 #2: stricter). On Firestore error, we fail CLOSED (return
+    // false) so the gate holds. cv-ingest pipeline retries are robust;
+    // a transient read error shouldn't blow past the gate.
+    async getUserCvParsed(userId) {
+      try {
+        const snap = await db
+          .collection("parsedCandidateResumes")
+          .where("userId", "==", userId)
+          .limit(1)
+          .get()
+        return !snap.empty
+      } catch {
+        return false
+      }
+    },
   }
 }
 
