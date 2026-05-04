@@ -27,6 +27,48 @@ type PersonaKey = string
 
 const TURN_OPTIONS = [4, 8, 16] as const
 
+/**
+ * iter32 — onboarding walkthrough presets. Pair with simulateConversation
+ * scriptedUserMessages mode (see apps/functions/src/admin-bootstrap.ts
+ * ONBOARDING_PRESETS). When selected, persona-LLM is bypassed and the
+ * canned message sequence drives the orchestrator turn-by-turn. Useful
+ * for QA-ing the deterministic-onboarding dispatcher (iter32) without
+ * paying for LLM calls.
+ *
+ * Requires `paOnboardingDeterministicEnabled=true` server-side for the
+ * deterministic path to fire; otherwise the legacy LLM-compose onboarding
+ * runs and the transcript will look different (LLM-shaped phrasing).
+ */
+const ONBOARDING_PRESETS = [
+  {
+    key: "onboarding-zh-happy",
+    label: "Onboarding · ZH happy path (full sequence)",
+    turns: 13,
+  },
+  {
+    key: "onboarding-en-happy",
+    label: "Onboarding · EN happy path (full sequence)",
+    turns: 13,
+  },
+  {
+    key: "onboarding-tos-decline",
+    label: "Onboarding · ToS decline → unclear → accept",
+    turns: 7,
+  },
+  {
+    key: "onboarding-verify-miss-then-correct",
+    label: "Onboarding · Email verify (2 misses then correct)",
+    turns: 7,
+  },
+  {
+    key: "onboarding-vent-mid-probe",
+    label: "Onboarding · Vent mid-probe (state stays)",
+    turns: 7,
+  },
+] as const
+
+type PresetKey = (typeof ONBOARDING_PRESETS)[number]["key"]
+
 type SimRun = {
   id: string
   persona?: string
@@ -43,6 +85,11 @@ const SIM_RUNS_COLLECTION = "pa-sim-runs"
 export function NRoundSim() {
   const [persona, setPersona] = useState<PersonaKey>(FALLBACK_PERSONAS[0].key)
   const [turns, setTurns] = useState<number>(8)
+  // iter32 — onboarding preset selector. When non-null, simulateConversation
+  // is invoked with body.preset which overrides persona + scripts the user
+  // messages from ONBOARDING_PRESETS in admin-bootstrap.ts. Empty string =
+  // free-form (LLM-driven) mode.
+  const [preset, setPreset] = useState<PresetKey | "">("")
   const [running, setRunning] = useState(false)
   const [progress, setProgress] = useState<{ current: number; total: number } | null>(null)
   const [transcript, setTranscript] = useState<{ role: string; body: string }[]>([])
@@ -72,14 +119,21 @@ export function NRoundSim() {
   }, [])
 
   async function runSim() {
+    // iter32 — preset mode short-circuits the LLM persona path. The server
+    // looks up scripts in ONBOARDING_PRESETS and replays them deterministically.
+    const presetMeta = preset
+      ? ONBOARDING_PRESETS.find((p) => p.key === preset) ?? null
+      : null
+    const effectiveTurns = presetMeta?.turns ?? turns
+    const label = presetMeta ? `preset "${preset}"` : `persona "${persona}" (${turns} turns)`
     const token = window.prompt(
-      `Run N-round simulation for persona "${persona}" (${turns} turns)?\n\nPaste PA_ADMIN_TOKEN (one-time, not stored):`
+      `Run simulation for ${label}?\n\nPaste PA_ADMIN_TOKEN (one-time, not stored):`
     )
     if (!token || !token.trim()) return
     setRunning(true)
     setErr(null)
     setTranscript([])
-    setProgress({ current: 0, total: turns })
+    setProgress({ current: 0, total: effectiveTurns })
 
     // Phase 33 — live polling. simulateConversation runs server-side for the
     // full 8 turns before returning. Without polling, the user sees a frozen
@@ -135,7 +189,12 @@ export function NRoundSim() {
             "x-admin-token": token.trim(),
             "content-type": "application/json",
           },
-          body: JSON.stringify({ action: "simulateConversation", persona, turns }),
+          body: JSON.stringify({
+            action: "simulateConversation",
+            persona,
+            turns: effectiveTurns,
+            ...(preset ? { preset } : {}),
+          }),
         }
       )
       const json = (await resp.json()) as {
@@ -183,12 +242,36 @@ export function NRoundSim() {
       />
 
       <Panel title="Configure run">
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignItems: "end" }}>
+        {/* iter32 — onboarding preset selector. Non-empty preset bypasses
+            LLM persona generation and replays the canned message script.
+            Free-form (empty preset) = original LLM-vs-LLM rehearsal. */}
+        <label style={{ fontSize: "0.85em", display: "block", marginBottom: 14 }}>
+          Mode
+          <select
+            value={preset}
+            disabled={running}
+            onChange={(e) => setPreset(e.target.value as PresetKey | "")}
+            style={{ display: "block", width: "100%", marginTop: 4, padding: "6px 8px" }}
+          >
+            <option value="">Free-form (LLM-driven persona, full agent runtime)</option>
+            {ONBOARDING_PRESETS.map((p) => (
+              <option key={p.key} value={p.key}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+          <div style={{ fontSize: "0.75em", color: "#64748b", marginTop: 4 }}>
+            {preset
+              ? "Preset: scripted user messages, no LLM cost. Tests the deterministic onboarding dispatcher (paOnboardingDeterministicEnabled must be ON)."
+              : "Free-form: persona-LLM generates user messages, full agent runtime engages."}
+          </div>
+        </label>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignItems: "end", opacity: preset ? 0.5 : 1 }}>
           <label style={{ fontSize: "0.85em", display: "block" }}>
-            Persona
+            Persona <span style={{ color: "#64748b" }}>{preset ? "(overridden by preset)" : ""}</span>
             <select
               value={persona}
-              disabled={running}
+              disabled={running || Boolean(preset)}
               onChange={(e) => setPersona(e.target.value)}
               style={{ display: "block", width: "100%", marginTop: 4, padding: "6px 8px" }}
             >
@@ -200,13 +283,13 @@ export function NRoundSim() {
             </select>
           </label>
           <label style={{ fontSize: "0.85em", display: "block" }}>
-            Turns
+            Turns <span style={{ color: "#64748b" }}>{preset ? `(preset: ${ONBOARDING_PRESETS.find((p) => p.key === preset)?.turns})` : ""}</span>
             <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
               {TURN_OPTIONS.map((n) => (
                 <button
                   key={n}
                   type="button"
-                  disabled={running}
+                  disabled={running || Boolean(preset)}
                   onClick={() => setTurns(n)}
                   style={{
                     flex: 1,
@@ -227,7 +310,11 @@ export function NRoundSim() {
         </div>
         <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 12 }}>
           <button type="button" disabled={running} onClick={() => void runSim()}>
-            {running ? "Running…" : `▶ Run ${turns}-turn simulation`}
+            {running
+              ? "Running…"
+              : preset
+                ? `▶ Run ${preset.replace("onboarding-", "")} preset`
+                : `▶ Run ${turns}-turn simulation`}
           </button>
           {progress ? (
             <div style={{ flex: 1 }}>
