@@ -556,6 +556,10 @@ function priorOnboardingAskedStep(
   if (state === "q_visa_asked") return "ask_q_visa"
   if (state === "q_startup_pref_asked") return "ask_q_startup_pref"
   if (state === "q_location_asked") return "ask_q_location"
+  if (state === "q_resume_asked") return "ask_q_resume"
+  // iter30 V6 — q_email_asked routes the user's reply through parseEmailAnswer
+  // so contactEmail is written to statedPreferences when advancing to complete.
+  if (state === "q_email_asked") return "ask_q_email"
   return undefined
 }
 

@@ -51,6 +51,11 @@ export const OnboardingStateSchema = z.enum([
   // iter30 closure (Adam directive 2026-05-03 "主动问简历"): proactive resume
   // request as the final probe step before transitioning to complete.
   "q_resume_asked",
+  // iter30 V6 (Adam directive 2026-05-03 "怎么连接 email"): 7th probe step —
+  // collect optional contact email after resume ask. Outbound transport
+  // (SendGrid/Postmark) deferred to post-launch hot-fix; today we only store
+  // the email so launch-day users can opt in.
+  "q_email_asked",
   "complete",
 ])
 export type OnboardingState = z.infer<typeof OnboardingStateSchema>
@@ -93,6 +98,14 @@ export const StatedPreferencesSchema = z.object({
   researchOriented: z.boolean().nullable().optional(),
   /** Annual USD floor; null = no signal. */
   salaryFloor: z.number().nullable().optional(),
+  /**
+   * iter30 V6 — optional contact email captured at onboarding step 7
+   * (`ask_q_email`). Used by post-launch outbound email helper for
+   * proactive checkins (silence-anchor / time-anchor / cv-followup) when
+   * the user is offline on iMessage. Transport (SendGrid/Postmark) is
+   * deferred — today we only store the address.
+   */
+  contactEmail: z.string().email().optional(),
   /** ISO timestamp of last write. */
   updatedAt: z.string().optional(),
 })

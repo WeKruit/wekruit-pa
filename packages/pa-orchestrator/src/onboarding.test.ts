@@ -211,8 +211,45 @@ test("v2: q_role_asked → ask_q_yoe → ask_q_visa → ask_q_startup_pref → a
   )
   assert.equal(
     resolveOnboardingStep({ ...baseUser, onboardingState: "q_resume_asked" }, v2),
+    "ask_q_email"
+  )
+  assert.equal(
+    resolveOnboardingStep({ ...baseUser, onboardingState: "q_email_asked" }, v2),
     "complete"
   )
+})
+
+// --- iter30 V6: parseEmailAnswer extracts email + handles skip ---
+test("iter30 V6: parseUserAnswerForStep email extracts email shapes + skip keywords", () => {
+  // Plain email
+  assert.deepEqual(
+    parseUserAnswerForStep("ask_q_email", "adam@wekruit.com"),
+    { contactEmail: "adam@wekruit.com" }
+  )
+  // Embedded in friend-tone reply
+  assert.deepEqual(
+    parseUserAnswerForStep("ask_q_email", "sure use Adam@WeKruit.com pls"),
+    { contactEmail: "adam@wekruit.com" }
+  )
+  // Plus-tag preserved
+  assert.deepEqual(
+    parseUserAnswerForStep("ask_q_email", "user+tag@gmail.com"),
+    { contactEmail: "user+tag@gmail.com" }
+  )
+  // Bilingual mid-sentence
+  assert.deepEqual(
+    parseUserAnswerForStep("ask_q_email", "好的 我邮箱是 zhang.san@163.com 谢谢"),
+    { contactEmail: "zhang.san@163.com" }
+  )
+  // Skip keyword en — no email written
+  assert.deepEqual(parseUserAnswerForStep("ask_q_email", "no thanks"), {})
+  assert.deepEqual(parseUserAnswerForStep("ask_q_email", "skip"), {})
+  assert.deepEqual(parseUserAnswerForStep("ask_q_email", "later"), {})
+  // Skip keyword zh — no email written
+  assert.deepEqual(parseUserAnswerForStep("ask_q_email", "不用了"), {})
+  assert.deepEqual(parseUserAnswerForStep("ask_q_email", "算了"), {})
+  // Garbage — no email written, parser returns empty
+  assert.deepEqual(parseUserAnswerForStep("ask_q_email", "uhh idk"), {})
 })
 
 // --- v2-3: bilingual prompts — zh selected when user input has CJK majority ---

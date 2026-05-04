@@ -17,7 +17,9 @@
  *   q_yoe_asked       → ask_q_visa            → q_visa_asked
  *   q_visa_asked      → ask_q_startup_pref    → q_startup_pref_asked
  *   q_startup_pref_asked → ask_q_location     → q_location_asked
- *   q_location_asked  → complete              → complete
+ *   q_location_asked  → ask_q_resume          → q_resume_asked
+ *   q_resume_asked    → ask_q_email           → q_email_asked        (iter30 V6)
+ *   q_email_asked     → complete              → complete
  *   complete          → skip                  → (no-op)
  *
  * Legacy state (v1 compat): when `enableV2 = false`, `first_mes_sent` resolves
@@ -47,6 +49,7 @@ export type OnboardingStep =
   | "ask_q_startup_pref"
   | "ask_q_location"
   | "ask_q_resume" // iter30 closure — proactive resume request after location.
+  | "ask_q_email" // iter30 V6 — optional contact email after resume.
   | "complete"
   | "skip"
 
@@ -76,7 +79,8 @@ export function resolveOnboardingStep(
     if (state === "q_visa_asked") return "ask_q_startup_pref"
     if (state === "q_startup_pref_asked") return "ask_q_location"
     if (state === "q_location_asked") return "ask_q_resume"
-    if (state === "q_resume_asked") return "complete"
+    if (state === "q_resume_asked") return "ask_q_email"
+    if (state === "q_email_asked") return "complete"
     // Legacy v1 state encountered with v2 on — treat grounding_q1_asked as
     // already-grounded; advance to complete (don't re-probe the user).
     if (state === "grounding_q1_asked") return "complete"
@@ -92,7 +96,9 @@ export function resolveOnboardingStep(
     state === "q_yoe_asked" ||
     state === "q_visa_asked" ||
     state === "q_startup_pref_asked" ||
-    state === "q_location_asked"
+    state === "q_location_asked" ||
+    state === "q_resume_asked" ||
+    state === "q_email_asked"
   ) {
     return "complete"
   }
@@ -151,7 +157,13 @@ function pickLang(userMessage: string | undefined): "zh" | "en" {
 
 /** Friend-tone bilingual prompts — Adam-locked tone, do NOT paraphrase. */
 const Q_PROMPTS: Record<
-  "ask_q_role" | "ask_q_yoe" | "ask_q_visa" | "ask_q_startup_pref" | "ask_q_location" | "ask_q_resume",
+  | "ask_q_role"
+  | "ask_q_yoe"
+  | "ask_q_visa"
+  | "ask_q_startup_pref"
+  | "ask_q_location"
+  | "ask_q_resume"
+  | "ask_q_email",
   { zh: string; en: string }
 > = {
   ask_q_role: {
@@ -181,6 +193,13 @@ const Q_PROMPTS: Record<
   ask_q_resume: {
     zh: "对了, 简历方便发我一份不? 后面帮你看 JD / 内推都准多了",
     en: "btw — can you send me your resume? makes JD review and referrals way more on-point",
+  },
+  // iter30 V6 — optional contact email. Friend-tone, low-friction; user can
+  // skip with "no" / "later" / "skip" and onboarding still advances to
+  // complete (email is an optional channel, not a gate).
+  ask_q_email: {
+    zh: "对了, 平时邮箱用啥? 后面如果你不在线我直接发邮件给你",
+    en: "btw — what email should I send stuff to when you're afk? roughly fine",
   },
 }
 
@@ -307,7 +326,8 @@ export function composeOnboardingInput(
     step === "ask_q_visa" ||
     step === "ask_q_startup_pref" ||
     step === "ask_q_location" ||
-    step === "ask_q_resume"
+    step === "ask_q_resume" ||
+    step === "ask_q_email"
   ) {
     // Adam iter 24 — mid-probe suspension. Two triggers, both emit empathetic
     // ack instead of the bare q_X question:
@@ -367,6 +387,7 @@ const ONBOARDING_NEXT_STATE: Partial<Record<OnboardingStep, OnboardingState>> = 
   ask_q_startup_pref: "q_startup_pref_asked",
   ask_q_location: "q_location_asked",
   ask_q_resume: "q_resume_asked",
+  ask_q_email: "q_email_asked",
   complete: "complete",
 }
 
@@ -387,6 +408,8 @@ const STATE_ORDER: Array<OnboardingState | undefined> = [
   "q_visa_asked",
   "q_startup_pref_asked",
   "q_location_asked",
+  "q_resume_asked",
+  "q_email_asked",
   "complete",
 ]
 
@@ -508,7 +531,36 @@ export function userAnsweredStep(
     // cv-gate-detector regex (`/发简历给我/`, `/send.*your\s+resume/i`).
     return r.length >= 1
   }
+  if (step === "ask_q_email") {
+    // iter30 V6 — accept either an email-shaped string OR a skip keyword
+    // (no/later/skip/不用/算了/以后/没有). Either way we advance past the
+    // ask; parseEmailAnswer decides whether to record contactEmail.
+    if (EMAIL_REGEX.test(r)) return true
+    if (EMAIL_SKIP_REGEX.test(r)) return true
+    return false
+  }
   return false
+}
+
+/** iter30 V6 — RFC-5322-lite email shape (good enough for friend-tone parsing). */
+const EMAIL_REGEX = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/
+/** iter30 V6 — bilingual skip keywords for declining to share email. */
+const EMAIL_SKIP_REGEX =
+  /(^|[\s,，.。])(no|nope|nah|skip|later|pass|不用|算了|以后再说|没有|不想|不要|跳过)(\b|[\s,，.。!！?？]|$)/i
+
+/**
+ * iter30 V6 — extract an email address from a free-form reply, or detect a
+ * skip-shaped answer. Returns `{ contactEmail }` if a valid email was found,
+ * or `{}` if the user declined / didn't include one. Empty patch means the
+ * orchestrator advances state without writing contactEmail.
+ */
+function parseEmailAnswer(reply: string): Partial<StatedPreferences> {
+  if (!reply) return {}
+  const match = reply.match(EMAIL_REGEX)
+  if (match) {
+    return { contactEmail: match[0].toLowerCase() }
+  }
+  return {}
 }
 
 /**
@@ -528,6 +580,7 @@ export function parseUserAnswerForStep(
   if (step === "ask_q_visa") return parseVisaAnswer(reply)
   if (step === "ask_q_startup_pref") return parseStartupPrefAnswer(reply)
   if (step === "ask_q_location") return parseLocationAnswer(reply)
+  if (step === "ask_q_email") return parseEmailAnswer(reply)
   return {}
 }
 
