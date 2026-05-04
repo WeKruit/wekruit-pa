@@ -374,7 +374,30 @@ async function processBrokerImessageEvent(db: Firestore, data: BrokerImessageEve
   if (!claimed) return 0
   const payload = claimed.rawPayload
   if (!payload?.participant || !payload.text || !payload.chatId) {
-    throw new Error("Invalid broker iMessage payload")
+    // V5 QA Agent-E 2026-05-04: when validation throws, the doc was already
+    // claimed (status="running") so it leaks until the 120s lease expires.
+    // Finalize the row here so dashboard / downstream observability see it
+    // as failed instead of silently stuck.
+    const reason = !payload?.participant
+      ? "missing_participant"
+      : !payload.text
+        ? "empty_text"
+        : "missing_chatId"
+    try {
+      await db.collection(PA_COLLECTIONS.inboundEvents).doc(claimed.id).set(
+        {
+          status: "failed",
+          lastError: `Invalid broker iMessage payload: ${reason}`,
+          errorCode: "INVALID_BROKER_PAYLOAD",
+          completedAt: nowIso(),
+          updatedAt: nowIso(),
+        },
+        { merge: true }
+      )
+    } catch {
+      /* swallow — finalization is best-effort, the original throw still surfaces */
+    }
+    throw new Error(`Invalid broker iMessage payload: ${reason}`)
   }
   let user = await findUserByParticipant(db, payload.participant)
   if (!user) {
