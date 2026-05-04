@@ -61,6 +61,27 @@ service cloud.firestore {
     match /pa-beta-participants/{id} {
       allow read, write: if isPaOperator();
     }
+    // Operator overview surfaces (read-only from dashboard; orchestrator writes via Admin SDK)
+    match /pa-turns/{id} {
+      allow read, write: if isPaOperator();
+    }
+    match /pa-scheduled-jobs/{id} {
+      allow read, write: if isPaOperator();
+    }
+    match /pa-runtime-heartbeats/{id} {
+      allow read, write: if isPaOperator();
+    }
+    // iter30/WS8 — operator-editable match weight tables (per-table doc + items subcollection).
+    match /pa-match-weight-tables/{tableKey} {
+      allow read, write: if isPaOperator();
+      match /items/{skillKey} {
+        allow read, write: if isPaOperator();
+      }
+    }
+    // iter30/WS8 — explainer cache; cloud functions bypass via Admin SDK for writes.
+    match /pa-job-rec-explanations/{id} {
+      allow read, write: if isPaOperator();
+    }
     match /{document=**} {
       allow read, write: if false;
     }
