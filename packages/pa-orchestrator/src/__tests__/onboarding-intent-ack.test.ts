@@ -656,6 +656,37 @@ test("compose: ask_q_location step + interview_prep intent → suspended, NO loc
   assert.ok(!input.includes("湾区"), "MUST NOT ask q_location when interview anxiety present")
 })
 
+test("V4 P0: compose with priorAskedStep advances when user answered prior Q (off-by-one fix)", () => {
+  // V4 QA Agent-I 2026-05-04 P0 regression: orchestrator passes step=ask_q_yoe
+  // (next) but priorAskedStep=ask_q_role (last). User reply "工程" answers
+  // role; pre-fix the suspended check ran userAnsweredStep("ask_q_yoe","工程")
+  // → false → wrongly suspended. Post-fix uses priorAskedStep → matches role
+  // regex → user answered → no suspend → normal yoe-Q fires.
+  const input = composeOnboardingInput("ask_q_yoe", agent, {
+    userMessage: "工程",
+    priorAskedStep: "ask_q_role",
+  })
+  assert.ok(
+    !input.includes("suspended"),
+    "user-answered role-Q via priorAskedStep must NOT suspend, got: " + input
+  )
+  assert.ok(input.includes("工作几年了"), "should ask q_yoe normally, got: " + input)
+})
+
+test("V4 P0: compose with priorAskedStep suspends when user did NOT answer prior Q", () => {
+  // Counter-case: user replies meta question, doesn't answer role.
+  // priorAskedStep="ask_q_role"; userAnsweredStep("ask_q_role", "你能再问一遍吗") → false
+  // → suspended_no_answer fires. State should stay at q_role_asked.
+  const input = composeOnboardingInput("ask_q_yoe", agent, {
+    userMessage: "你能再问一遍吗",
+    priorAskedStep: "ask_q_role",
+  })
+  assert.ok(
+    input.includes("suspended_no_answer") || input.includes("suspended"),
+    "no-answer reply must suspend, got: " + input
+  )
+})
+
 test("compose: ask_q_role + non-vent (job_search) intent → normal q_role question", () => {
   // job_search is NOT in noChainIntents → mid-probe path falls through to normal q_role
   const input = composeOnboardingInput("ask_q_role", agent, {

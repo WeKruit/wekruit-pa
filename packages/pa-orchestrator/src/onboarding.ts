@@ -229,6 +229,19 @@ export function composeOnboardingInput(
      * emergency kill switch — restores the old bare-greeting behavior.
      */
     chainCasualOnFresh?: boolean
+    /**
+     * V4 QA Agent-I 2026-05-04 P0 fix: the q_X step suspend-vs-advance
+     * decision must check whether the user answered the LAST question we
+     * asked (priorAskedStep), NOT the question we're about to ask
+     * (`step`). For state=q_role_asked → step=ask_q_yoe, priorAskedStep is
+     * "ask_q_role". Pre-fix used `step` directly, which checked YOE regex
+     * against a ROLE answer "工程" → false → off-by-one chain stall (T1
+     * ack-only, T2 advance-and-ask).
+     *
+     * Pass undefined to fall back to legacy behavior (used by tests that
+     * assert the suspended branch directly with a synthetic step).
+     */
+    priorAskedStep?: OnboardingStep
   } = {}
 ): string {
   if (step === "send_first_mes") {
@@ -351,7 +364,10 @@ export function composeOnboardingInput(
         noChainIntents.includes(detected.intent) &&
         detected.confidence === "high"
     )
-    const userAnswered = userAnsweredStep(step, ctx.userMessage)
+    // V4 QA Agent-I 2026-05-04 P0 fix: prefer priorAskedStep when caller
+    // provides it. Falls back to `step` for legacy callers (tests that
+    // synthesize the suspended branch with a forward step name).
+    const userAnswered = userAnsweredStep(ctx.priorAskedStep ?? step, ctx.userMessage)
     if (ventLike || !userAnswered) {
       const lang = pickLang(ctx.userMessage)
       if (ventLike && detected) {

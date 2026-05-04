@@ -996,11 +996,22 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
               detectedIntent.intent === "interview_prep" ||
               detectedIntent.intent === "negotiation" ||
               detectedIntent.intent === "motivation_nudge")))
-      const userAnsweredCurrentStep = isMidProbeStep
-        ? userAnsweredStep(onboardingStep, event.body)
+      // V4 QA Agent-I 2026-05-04 P0 fix: previously used onboardingStep (the
+      // NEXT step we're about to ask) for the userAnswered check — checked
+      // YOE regex against a ROLE answer "工程" → false → mid-probe suspend
+      // fired incorrectly. Net effect was the chain stalled one turn behind:
+      // T1 ack-only, T2 advance-and-ask. Real semantics: did the user answer
+      // the question we LAST asked (i.e. the question implied by current
+      // user.onboardingState)? Map state→priorAskedStep, run the correct
+      // parser regex.
+      const priorAskedStepForSuspendCheck = isMidProbeStep
+        ? priorOnboardingAskedStep(onboardingUser.onboardingState)
+        : undefined
+      const userAnsweredPriorStep = isMidProbeStep && priorAskedStepForSuspendCheck
+        ? userAnsweredStep(priorAskedStepForSuspendCheck, event.body)
         : true
       const suspendedForVent = Boolean(
-        isMidProbeStep && (ventLikeMidProbe || !userAnsweredCurrentStep)
+        isMidProbeStep && (ventLikeMidProbe || !userAnsweredPriorStep)
       )
       if (matchedPlaybookKeys.length > 0) {
         store.log("pa.onboarding.playbook_route.matched", {
@@ -1019,6 +1030,10 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
           // casual_chat→role-Q chain so the rollback path restores byte-old
           // bare-greeting behavior end-to-end.
           chainCasualOnFresh: intentAckEnabled,
+          // V4 QA Agent-I 2026-05-04 P0 fix — pass priorAskedStep so the
+          // suspended-vs-advance decision checks the question we LAST
+          // asked, not the one we're about to ask.
+          priorAskedStep: priorAskedStepForSuspendCheck,
         })
         if (syntheticInput) {
           // Build system inputs for onboarding reply using the normal Voice v1 path.
