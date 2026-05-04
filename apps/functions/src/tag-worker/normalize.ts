@@ -20,7 +20,7 @@ import { onDocumentCreated } from "firebase-functions/v2/firestore"
 import { onSchedule } from "firebase-functions/v2/scheduler"
 import { logger } from "firebase-functions/v2"
 import { getFirestore, FieldValue } from "firebase-admin/firestore"
-import type { Firestore, Transaction, DocumentSnapshot } from "firebase-admin/firestore"
+import type { Firestore, Transaction, DocumentSnapshot, DocumentReference } from "firebase-admin/firestore"
 
 import {
   SHARED_TAG_COLLECTIONS,
@@ -188,6 +188,37 @@ async function commit(
 
     const processingDurationMs = Date.now() - startMs
 
+    // ── Read phase — ALL reads before ANY writes (Firestore tx requirement) ───
+    // eventSnap already read above. For the entity-tag writes we need 3 more reads.
+    let canSnap: DocumentSnapshot | null = null
+    let existingItemSnap: DocumentSnapshot | null = null
+    let entityRootSnap: DocumentSnapshot | null = null
+    let itemRef: DocumentReference | null = null
+    let entityRootRef: DocumentReference | null = null
+    let mutexGroup: string | null = null
+
+    if (canonicalKey) {
+      const canRef = fs.collection(SHARED_TAG_COLLECTIONS.canonicalTags).doc(canonicalKey)
+      const entityKey = `${ev.entityRef.kind}:${ev.entityRef.id}`
+      entityRootRef = fs.collection(SHARED_TAG_COLLECTIONS.entityTags).doc(entityKey)
+      itemRef = entityRootRef
+        .collection(SHARED_TAG_COLLECTIONS.entityTagItems)
+        .doc(canonicalKey)
+
+      // All reads in one batch before any write
+      ;[canSnap, existingItemSnap, entityRootSnap] = await Promise.all([
+        tx.get(canRef),
+        tx.get(itemRef),
+        tx.get(entityRootRef),
+      ])
+
+      mutexGroup =
+        (canSnap.data() as { mutexGroup?: string } | undefined)?.mutexGroup ?? canonicalKey
+    }
+
+    // ── Write phase — starts here, no more reads below ─────────────────────
+
+    // Update event status
     tx.update(eventRef, {
       status: canonicalKey ? "normalized" : "needs-review",
       normalizedTo: canonicalKey,
@@ -197,26 +228,9 @@ async function commit(
       processingDurationMs,
     })
 
-    if (!canonicalKey) return
+    if (!canonicalKey || !itemRef || !entityRootRef || !existingItemSnap || !entityRootSnap) return
 
-    // ── Mutual-exclusion enforcement ────────────────────────────────────────
-    const canRef = fs.collection(SHARED_TAG_COLLECTIONS.canonicalTags).doc(canonicalKey)
-    const canSnap: DocumentSnapshot = await tx.get(canRef)
-    const mutexGroup: string =
-      (canSnap.data() as { mutexGroup?: string } | undefined)?.mutexGroup ?? canonicalKey
-
-    const entityKey = `${ev.entityRef.kind}:${ev.entityRef.id}`
-    const entityRootRef = fs.collection(SHARED_TAG_COLLECTIONS.entityTags).doc(entityKey)
-    const itemRef = entityRootRef
-      .collection(SHARED_TAG_COLLECTIONS.entityTagItems)
-      .doc(canonicalKey)
-
-    // Query for existing sibling canonical with same mutexGroup
-    // NOTE: Firestore transactions require reads before writes, and
-    // collection-group queries inside transactions are not supported.
-    // We fall back to a simple read of the canonicalKey doc itself
-    // for the exact mutex collision case — full sibling scan done outside tx.
-    const existingItemSnap: DocumentSnapshot = await tx.get(itemRef)
+    const entityKey2 = `${ev.entityRef.kind}:${ev.entityRef.id}`
 
     if (existingItemSnap.exists) {
       // Exact same canonical already tagged for this entity — reinforce count
@@ -238,33 +252,33 @@ async function commit(
     }
 
     // No exact match — write new entity-tag assignment
-    tx.set(
-      itemRef,
-      {
-        canonicalKey,
-        type: ev.type,
-        mutexGroup,
-        confidence: computeEntityTagConfidence(workerConfidence),
-        firstSeen: ev.createdAt,
-        lastReinforced: now,
-        count: 1,
-        sources: buildSourceEntry([], ev.source, now),
-        decayHalfLifeDays: DECAY_HALF_LIFE_DAYS_BY_TYPE[ev.type] ?? 0,
-        schemaVersion: "v1",
-      },
-      { merge: true },
-    )
+    tx.set(itemRef, {
+      canonicalKey,
+      type: ev.type,
+      mutexGroup: mutexGroup ?? canonicalKey,
+      confidence: computeEntityTagConfidence(workerConfidence),
+      firstSeen: ev.createdAt,
+      lastReinforced: now,
+      count: 1,
+      sources: buildSourceEntry([], ev.source, now),
+      decayHalfLifeDays: DECAY_HALF_LIFE_DAYS_BY_TYPE[ev.type] ?? 0,
+      schemaVersion: "v1",
+    })
 
-    tx.set(
-      entityRootRef,
-      {
-        entityKey,
+    // Update entity root — if exists increment, else create
+    if (entityRootSnap.exists) {
+      tx.update(entityRootRef, {
         tagCount: FieldValue.increment(1),
+        updatedAt: now,
+      })
+    } else {
+      tx.set(entityRootRef, {
+        entityKey: entityKey2,
+        tagCount: 1,
         schemaVersion: "v1",
         updatedAt: now,
-      },
-      { merge: true },
-    )
+      })
+    }
   })
 }
 
