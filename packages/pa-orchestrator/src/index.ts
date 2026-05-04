@@ -1695,14 +1695,28 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       if (humanizeOnAB && process.env.PA_AB_PROBE_STRIP_ENABLED !== "false") {
         const abResult = stripABProbeFromTail(stripped)
         if (abResult.hits.length > 0) {
+          // V2 QA Agent-B 2026-05-04 P0-3: when the entire reply IS the
+          // AB span (no clean stem-terminator before the AB framework),
+          // stripABProbeFromTail returns stripped="" — replacing Claire's
+          // whole reply with empty string. Fall back to a friend-tone
+          // holding ack so the user sees a non-empty response, and the
+          // next turn lets the LLM produce a non-AB reply.
+          const MIN_KEEP = 4
+          const trimmed = abResult.stripped.trim()
+          // pick lang via input message's CJK majority — same heuristic
+          // as onboarding pickLang. Inline simple check to avoid coupling.
+          const isZh = /[一-鿿]/.test(event.body ?? "")
+          const fallback = isZh ? "嗯，我在听。" : "yeah, i'm here."
+          const safeStripped = trimmed.length >= MIN_KEEP ? abResult.stripped : fallback
           store.log("pa.voice.ab_probe_strip.applied", {
             userId: event.userId,
             turnId,
             patterns: abResult.hits,
             beforeLen: stripped.length,
-            afterLen: abResult.stripped.length,
+            afterLen: safeStripped.length,
+            usedFallback: safeStripped !== abResult.stripped,
           })
-          stripped = abResult.stripped
+          stripped = safeStripped
         }
       }
     } catch (err) {
