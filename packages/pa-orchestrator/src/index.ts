@@ -950,13 +950,28 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       // composeOnboardingInput emits the chained reply directive, and we
       // advance state directly to q_role_asked so the user's NEXT reply is
       // parsed by ask_q_role's parser.
-      // abuse intent still falls through to bare greeting (defense-in-depth).
+      //
+      // EXCLUSIONS (do NOT chain — leave state at first_mes_sent):
+      //   - abuse: bare greeting (defense-in-depth)
+      //   - vent / interview_prep / negotiation / motivation_nudge:
+      //     composeOnboardingInput's noChainIntents branch emits bare
+      //     empathy with NO role question. Setting intentAcked=true here
+      //     would still advance state to q_role_asked → next user reply
+      //     gets parsed by parseRoleAnswer → pollutes statedPreferences
+      //     with random text. (V1 QA Agent-A 2026-05-04 P0 bug.)
+      const noChainIntentSet: ReadonlySet<string> = new Set([
+        "vent",
+        "interview_prep",
+        "negotiation",
+        "motivation_nudge",
+      ])
       const isAckableIntent = Boolean(
         detectedIntent &&
           detectedIntent.confidence === "high" &&
           detectedIntent.intent !== null &&
           detectedIntent.intent !== "casual_chat" &&
-          detectedIntent.intent !== "abuse"
+          detectedIntent.intent !== "abuse" &&
+          !noChainIntentSet.has(detectedIntent.intent)
       )
       const isCasualOrNullChain = Boolean(
         onboardingStep === "send_first_mes" &&

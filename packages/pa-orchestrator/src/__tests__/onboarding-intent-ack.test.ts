@@ -453,6 +453,60 @@ test("integration: turn-0 with casual greeting — chains role-Q, intentAcked SE
   assert.ok(captures.appliedSteps.some((s) => s.step === "send_first_mes" && s.intentAcked === true))
 })
 
+test("integration: turn-0 with vent input does NOT advance state to q_role_asked (V1 QA P0 regression)", async () => {
+  // Adam directive 2026-05-04 (V1 QA Agent-A): vent on T0 emits bare empathy
+  // (no role question chained), so state must stay at first_mes_sent. Setting
+  // intentAcked=true here would jump state to q_role_asked → next user reply
+  // (e.g. "今天好点了") gets parsed as targetRole — pollutes statedPreferences.
+  for (const ventBody of ["我快崩溃了", "i'm so burnt out"]) {
+    const captures: OnboardingCaptures = {
+      systemInputs: [],
+      appliedSteps: [],
+      llmCalls: 0,
+      outboundBodies: [],
+    }
+    const store = makeOnboardingCapturesStore(captures, undefined)
+    await processInboundEvent(
+      { ...baseEvent, id: `evt-onb-vent-${ventBody.slice(0, 4)}`, body: ventBody },
+      store
+    )
+    const applied = captures.appliedSteps.find((s) => s.step === "send_first_mes")
+    assert.ok(applied, `applyOnboarding(send_first_mes) missing for body="${ventBody}"`)
+    assert.equal(
+      applied!.intentAcked,
+      false,
+      `vent T0 must NOT set intentAcked=true (would jump state to q_role_asked); body="${ventBody}"`
+    )
+  }
+})
+
+test("integration: turn-0 with interview_prep / negotiation / motivation_nudge does NOT advance state", async () => {
+  for (const body of [
+    "明天系统设计面试紧张",
+    "拿到 2 个 offer 怎么 counter",
+    "拖了一周没动力开始投",
+  ]) {
+    const captures: OnboardingCaptures = {
+      systemInputs: [],
+      appliedSteps: [],
+      llmCalls: 0,
+      outboundBodies: [],
+    }
+    const store = makeOnboardingCapturesStore(captures, undefined)
+    await processInboundEvent(
+      { ...baseEvent, id: `evt-onb-noChain-${body.slice(0, 4)}`, body },
+      store
+    )
+    const applied = captures.appliedSteps.find((s) => s.step === "send_first_mes")
+    assert.ok(applied)
+    assert.equal(
+      applied!.intentAcked,
+      false,
+      `noChain intent T0 must NOT set intentAcked=true; body="${body}"`
+    )
+  }
+})
+
 test("integration: turn-0 with abuse-shaped input — defense-in-depth, falls to greeting, NOT acked", async () => {
   // Note: real safety layer would have already blocked this upstream — here
   // we mock checkInboundSafety to allow, simulating a probe that slipped past.
