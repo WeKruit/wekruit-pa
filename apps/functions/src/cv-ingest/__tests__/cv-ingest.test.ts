@@ -136,6 +136,9 @@ function makeStubbedDeps(opts: {
     db: opts.db,
     log: opts.log,
     nowIso: () => "2026-04-30T00:00:00.000Z",
+    // iter30 WS1 — pre-iter30 fixture stubs don't populate gate / quota
+    // Firestore docs; bypass the new limits to preserve test intent.
+    skipLimitEnforcement: true,
     fetchPdf: async () => ({ bytes: new Uint8Array([1, 2, 3]), contentType: "application/pdf" }),
     parsePdf: async () => ({ text: "John Doe\nWorked at WeKruit.", numPages: 1 }),
     llmExtract: async () => ({
@@ -199,6 +202,7 @@ describe("ingestCv", () => {
       { userId: "user_x", mediaUrl: "https://example.com/cv.pdf" },
       {
         db,
+        skipLimitEnforcement: true,
         fetchPdf: async () => {
           throw new Error("HTTP 404 Not Found")
         },
@@ -217,6 +221,7 @@ describe("ingestCv", () => {
       { userId: "user_x", mediaUrl: "https://example.com/cv.pdf" },
       {
         db,
+        skipLimitEnforcement: true,
         fetchPdf: async () => ({ bytes: new Uint8Array([0x25, 0x50]), contentType: "application/pdf" }),
         parsePdf: async () => {
           throw new Error("malformed PDF")
@@ -235,6 +240,7 @@ describe("ingestCv", () => {
       { userId: "user_x", mediaUrl: "https://example.com/cv.pdf" },
       {
         db,
+        skipLimitEnforcement: true,
         fetchPdf: async () => ({ bytes: new Uint8Array([0x25]), contentType: "application/pdf" }),
         parsePdf: async () => ({ text: "real cv text" }),
         // Missing required candidateProfile.skills array → validator throws.
@@ -254,6 +260,7 @@ describe("ingestCv", () => {
       { userId: "user_x", mediaUrl: "" },
       {
         db,
+        skipLimitEnforcement: true,
         fetchPdf: async () => {
           fetchCount++
           return { bytes: new Uint8Array(), contentType: undefined }
@@ -274,6 +281,7 @@ describe("ingestCv", () => {
       { userId: "user_x", mediaUrl: "https://example.com/cv.pdf" },
       {
         db,
+        skipLimitEnforcement: true,
         log,
         fetchPdf: async () => ({ bytes: new Uint8Array([1]), contentType: "application/pdf" }),
         parsePdf: async () => ({ text: "real cv text" }),

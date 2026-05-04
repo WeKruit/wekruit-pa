@@ -37,6 +37,17 @@ import {
   mapToCanonicalIndustry,
   type IndustryTag,
 } from "./industry-tags.js"
+import { checkResumeGate } from "./cv-gate.js"
+import {
+  isQuotaExhausted,
+  readQuotaCount,
+  incrementQuota,
+} from "./cv-quota.js"
+import {
+  fetchPdfWithSizeCap,
+  PdfSizeError,
+  MAX_PDF_BYTES,
+} from "./cv-size-cap.js"
 
 export type IngestCvInput = {
   userId: string
@@ -171,6 +182,46 @@ export type IngestCvDeps = {
     newResumeId: string,
     payload: Record<string, unknown>
   ) => Promise<void>
+
+  // ---- iter30 WS1 — gate / quota injectables -----------------------------
+  //
+  // Defaults wire to the real Firestore-backed implementations. Pre-iter30
+  // tests use simple in-memory db stubs that never populate `resumeAccepted`
+  // / `resumeParseCount` — to keep them green during ramp, we expose
+  // overridable predicates here. The CHECKED-IN webhook path uses the
+  // defaults; manually-constructed integration tests (cv-overwrite, etc.)
+  // pass override fns that always succeed (gate open, quota=0).
+
+  /**
+   * Returns gate state. Default: checkResumeGate from cv-gate.ts. Override
+   * to bypass for tests without setting up Firestore docs.
+   */
+  checkGate?: (
+    db: Firestore,
+    userId: string,
+    nowIso: string
+  ) => Promise<{ open: boolean; reason: string }>
+  /** Override for tests. Default: readQuotaCount from cv-quota.ts. */
+  readQuotaCount?: (db: Firestore, userId: string) => Promise<number>
+  /** Override for tests. Default: incrementQuota from cv-quota.ts. */
+  incrementQuota?: (db: Firestore, userId: string, nowIso: string) => Promise<void>
+  /** Override for tests. Default: defaultIsParserV2Enabled (Firestore flag). */
+  isParserV2Enabled?: (db: Firestore, userId: string) => Promise<boolean>
+  /**
+   * Override for tests. Default: parseResumeText from @pa/pa-resume-parser.
+   * Test paths can produce a stub ParserV2Output without hitting OpenAI.
+   */
+  parserV2Extract?: (
+    text: string,
+    log: (event: string, payload?: Record<string, unknown>) => void
+  ) => Promise<{
+    parsed: import("@pa/pa-resume-parser").ParsedResumeData
+    usedTier: import("@pa/pa-resume-parser").Tier
+    usedModel: string
+    usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number }
+  }>
+  /** Skip quota / gate enforcement entirely. Tests use this; production never. */
+  skipLimitEnforcement?: boolean
 }
 
 const PARSED_RESUMES_COLLECTION = "parsedCandidateResumes"
@@ -188,6 +239,29 @@ const PA_USERS_COLLECTION = "pa-users"
 export const CV_OVERWRITE_FLAG_KEY = "paCvOverwritePromptEnabled"
 export const CV_PENDING_COLLECTION = "pa-cv-pending"
 export const CV_OVERWRITE_OUTBOUND_PREFIX = "out-cv-overwrite-"
+
+// iter30 WS1 — feature flag for parseResume v2 (3-tier retry chain).
+// When ON for this user, we route through @pa/pa-resume-parser instead of
+// the legacy single-shot defaultLlmExtract. Default OFF; ramp staff first.
+export const RESUME_PARSER_V2_FLAG_KEY = "paResumeParserV2"
+
+// iter30 WS1 — Claire-voice rejection bodies for the 3 limit-rejected paths.
+// Idempotent on `out-cv-reject-{userId}-{YYYYMMDD}-{reason}` per detail-plan §5.4.
+export const CV_REJECT_OUTBOUND_PREFIX = "out-cv-reject-"
+const CV_REJECT_TEXTS: Record<"not_invited" | "quota_exhausted" | "pdf_too_large", { zh: string; en: string }> = {
+  not_invited: {
+    zh: "我还没问你要简历呢，先聊聊呗～你想找啥方向?",
+    en: "haven't asked for your resume yet — wanna chat first about what you're looking for?",
+  },
+  quota_exhausted: {
+    zh: "我已经看过你两份简历了😅 这次咱们口头聊聊吧 — 现在卡在哪个环节?",
+    en: "I've read two of your resumes already — let's just talk this time. Where are you stuck?",
+  },
+  pdf_too_large: {
+    zh: "诶，你这简历是不是图片版的? 文件太大了 (>5MB)，发个文字版 PDF 给我看看~",
+    en: "is your resume an image PDF? too big to read (>5MB) — can you send a text-based one?",
+  },
+}
 const CV_PENDING_TTL_MS = 24 * 60 * 60 * 1000 // 24 hours
 const CV_OVERWRITE_PROMPT_BODY =
   "欸看到你又发了份新简历 — 替代之前那份吗？回复 ❤️ = 替代旧的，🤔 = 当作另一个版本参考 (24 小时后默认替代)"
@@ -858,6 +932,152 @@ async function defaultEnqueueCvOverwritePending(
 }
 
 // ---------------------------------------------------------------------------
+// iter30 WS1 — limit-rejection outbound enqueue + parser-v2 adapter
+// ---------------------------------------------------------------------------
+
+function ymdUtc(iso: string): string {
+  return iso.slice(0, 10).replace(/-/g, "")
+}
+
+/**
+ * Pick rejection language. We don't have access to a stable user-language
+ * preference here yet (no resume parsed → no `detectCvLang` path), so we
+ * default to bilingual zh/en with `\n` separator. This matches Claire's
+ * usual code-switch fallback.
+ */
+function buildRejectionBody(reason: "not_invited" | "quota_exhausted" | "pdf_too_large"): string {
+  const t = CV_REJECT_TEXTS[reason]
+  return `${t.zh}\n${t.en}`
+}
+
+async function enqueueLimitRejection(args: {
+  db: Firestore
+  userId: string
+  reason: "not_invited" | "quota_exhausted" | "pdf_too_large"
+  toE164: string | null
+  nowIso: string
+  enqueueOutboundFollowup: NonNullable<IngestCvDeps["enqueueOutboundFollowup"]>
+  log: (event: string, payload?: Record<string, unknown>) => void
+}): Promise<void> {
+  if (!args.toE164) {
+    args.log("pa.cv_reject.skipped", { reason: "no_phone", userId: args.userId, kind: args.reason })
+    return
+  }
+  const docId = `${CV_REJECT_OUTBOUND_PREFIX}${args.userId}-${ymdUtc(args.nowIso)}-${args.reason}`
+  const body = buildRejectionBody(args.reason)
+  try {
+    await args.enqueueOutboundFollowup(args.db, docId, {
+      id: docId,
+      userId: args.userId,
+      toE164: args.toE164,
+      body,
+      status: "pending",
+      createdAt: args.nowIso,
+      createdBy: "cv-ingest-reject",
+      idempotencyKey: docId,
+      rejectReason: args.reason,
+      attempts: 0,
+    })
+    args.log("pa.cv_reject.enqueued", { userId: args.userId, kind: args.reason, docId })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    const isDup = /already.?exists|6 ALREADY_EXISTS/i.test(msg)
+    args.log(isDup ? "pa.cv_reject.idempotent_skip" : "pa.cv_reject.error", {
+      stage: "enqueue",
+      kind: args.reason,
+      userId: args.userId,
+      error: msg,
+    })
+  }
+}
+
+/**
+ * Adapter from `@pa/pa-resume-parser` v2 output to legacy `StructuredCv`
+ * shape so the rest of cv-ingest (Firestore write, Stream E1, Stream E2,
+ * etc.) is unchanged. The richer v2 fields (inferredAnswers, projects,
+ * etc.) are also written to Firestore alongside the legacy ones for
+ * downstream consumers.
+ */
+type ParserV2Output = {
+  parsed: import("@pa/pa-resume-parser").ParsedResumeData
+  usedTier: import("@pa/pa-resume-parser").Tier
+  usedModel: string
+  usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number }
+}
+
+function adaptV2ToStructuredCv(v2: ParserV2Output["parsed"]): StructuredCv {
+  const candidateProfile: CandidateProfile = {
+    name: v2.fullName,
+    email: v2.email,
+    phone: v2.phone,
+    linkedIn: null,
+    location: v2.location ?? "",
+    skills: v2.skills,
+  }
+  const experiences: Experience[] = v2.workHistory.map((w) => ({
+    company: w.company,
+    title: w.title,
+    startDate: w.startDate ?? "",
+    endDate: w.endDate ?? null,
+    location: w.location ?? "",
+    description: w.description ?? (w.bullets.length > 0 ? w.bullets.join(" ") : ""),
+  }))
+  const education: Education[] = v2.education.map((e) => ({
+    school: e.school,
+    degree: e.degree,
+    field: e.fieldOfStudy ?? e.major ?? null,
+    startDate: e.startDate ?? null,
+    endDate: e.endDate ?? null,
+  }))
+  // Reuse industry-tag heuristic: feed top-3 experience companies+titles to
+  // mapToCanonicalIndustry. v2 parser doesn't emit industryTags directly.
+  const seen = new Set<IndustryTag>()
+  const tags: IndustryTag[] = []
+  for (const w of v2.workHistory.slice(0, 3)) {
+    const blob = `${w.company} ${w.title}`
+    const t = mapToCanonicalIndustry(blob)
+    if (!seen.has(t)) {
+      seen.add(t)
+      tags.push(t)
+      if (tags.length >= 3) break
+    }
+  }
+  if (tags.length === 0) tags.push("other")
+  return { candidateProfile, experiences, education, industryTags: tags }
+}
+
+async function defaultParserV2Extract(text: string, log: (e: string, p?: Record<string, unknown>) => void): Promise<ParserV2Output> {
+  const mod = (await import("@pa/pa-resume-parser")) as {
+    parseResumeText: typeof import("@pa/pa-resume-parser").parseResumeText
+  }
+  const result = await mod.parseResumeText({
+    resumeText: text,
+    log,
+  })
+  return result
+}
+
+async function defaultIsParserV2Enabled(
+  db: Firestore,
+  userId: string
+): Promise<boolean> {
+  try {
+    const mod = (await import("@pa/pa-persistence")) as {
+      getFlag: (
+        db: Firestore,
+        key: string,
+        ctx: { userId?: string },
+        defaultValue?: boolean
+      ) => Promise<boolean | number | string>
+    }
+    const v = await mod.getFlag(db, RESUME_PARSER_V2_FLAG_KEY, { userId }, false)
+    return v === true
+  } catch {
+    return false
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
 
@@ -902,16 +1122,108 @@ export async function ingestCv(
   const enqueueCvOverwritePending =
     deps?.enqueueCvOverwritePending ?? defaultEnqueueCvOverwritePending
 
+  // iter30 WS1 — gate / quota / parser-v2 overrides (test seam)
+  const skipLimits = deps?.skipLimitEnforcement === true
+  const checkGate = deps?.checkGate ?? checkResumeGate
+  const readQuota = deps?.readQuotaCount ?? readQuotaCount
+  const writeQuotaIncrement = deps?.incrementQuota ?? incrementQuota
+  const isParserV2EnabledFn = deps?.isParserV2Enabled ?? defaultIsParserV2Enabled
+  const parserV2ExtractFn =
+    deps?.parserV2Extract ??
+    ((text: string, l: (e: string, p?: Record<string, unknown>) => void) =>
+      defaultParserV2Extract(text, l))
+
   if (!args || typeof args !== "object" || !args.userId || !args.mediaUrl) {
     return { ok: false, reason: "invalid_input" }
   }
 
-  // 1. Download
+  // ─────────────────────────────────────────────────────────────────
+  // iter30 WS1 — 4-limit gate stack (entry, before download).
+  //   gate (resumeAccepted+grace) → quota (lifetime cap=2) → size (5MB).
+  //   parser retry chain is the 4th limit and lives inside the parser.
+  //
+  //   On rejection, we enqueue a Claire-voice rejection iMessage
+  //   (idempotent per-user-per-day-per-reason) before returning.
+  // ─────────────────────────────────────────────────────────────────
+
+  // Helper to send rejection then return — pulled into a closure so the
+  // user-lookup happens once.
+  const sendRejectAndReturn = async (
+    reason: "not_invited" | "quota_exhausted" | "pdf_too_large"
+  ): Promise<IngestCvResult> => {
+    let user: CvFollowupUser | null = null
+    try {
+      user = await lookupUserForFollowup(dbHandle, args.userId)
+    } catch {
+      user = null
+    }
+    await enqueueLimitRejection({
+      db: dbHandle,
+      userId: args.userId,
+      reason,
+      toE164: user?.toE164 ?? null,
+      nowIso: nowIso(),
+      enqueueOutboundFollowup,
+      log,
+    })
+    return { ok: false, reason }
+  }
+
+  // Limit 1: gate (resumeAccepted flag OR kill-switch OR grace window).
+  if (!skipLimits) {
+    try {
+      const gate = await checkGate(dbHandle, args.userId, nowIso())
+      log("pa.cv_ingest.gate_check", {
+        userId: args.userId,
+        open: gate.open,
+        reason: gate.reason,
+      })
+      if (!gate.open) {
+        return await sendRejectAndReturn("not_invited")
+      }
+    } catch (err) {
+      log("pa.cv_ingest.gate_error", {
+        userId: args.userId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+      return await sendRejectAndReturn("not_invited")
+    }
+
+    // Limit 2: lifetime quota cap (default = 2).
+    try {
+      const count = await readQuota(dbHandle, args.userId)
+      log("pa.cv_ingest.quota_check", { userId: args.userId, count })
+      if (isQuotaExhausted(count)) {
+        return await sendRejectAndReturn("quota_exhausted")
+      }
+    } catch (err) {
+      log("pa.cv_ingest.quota_error", {
+        userId: args.userId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+
+  // 1. Download (with size cap when caller didn't override fetchPdf).
+  // We default to fetchPdfWithSizeCap; tests can still inject deps.fetchPdf.
   let bytes: Uint8Array
   try {
-    const downloaded = await fetchPdf(args.mediaUrl)
-    bytes = downloaded.bytes
+    if (deps?.fetchPdf) {
+      const downloaded = await deps.fetchPdf(args.mediaUrl)
+      bytes = downloaded.bytes
+    } else {
+      const downloaded = await fetchPdfWithSizeCap(args.mediaUrl)
+      bytes = downloaded.bytes
+    }
   } catch (err) {
+    if (err instanceof PdfSizeError) {
+      log("pa.cv_ingest.size_cap_rejected", {
+        userId: args.userId,
+        observed: err.observedBytes,
+        limit: MAX_PDF_BYTES,
+      })
+      return await sendRejectAndReturn("pdf_too_large")
+    }
     log("pa.cv_ingest.error", {
       stage: "download",
       error: err instanceof Error ? err.message : String(err),
@@ -938,18 +1250,41 @@ export async function ingestCv(
     return { ok: false, reason: "pdf_parse_failed" }
   }
 
-  // 3. LLM structured extraction
+  // 3. LLM structured extraction.
+  //
+  // iter30 WS1 — paResumeParserV2 flag toggles between:
+  //   - v2: @pa/pa-resume-parser (3-tier retry chain, structured output,
+  //         qaBank → Mem0 + tag-event coupling). Default OFF.
+  //   - v1: legacy single-shot defaultLlmExtract (backward compat).
+  let parserV2On = false
+  try {
+    parserV2On = await isParserV2EnabledFn(dbHandle, args.userId)
+  } catch {
+    parserV2On = false
+  }
   let parsed: StructuredCv
   let usage: { input_tokens?: number; output_tokens?: number; total_tokens?: number } | undefined
+  let v2Output: ParserV2Output | null = null
+  let usedTier: string | undefined
+  let usedModel: string = LLM_MODEL
   try {
-    const out = await llmExtract(text)
-    parsed = validateStructuredCv(out.parsed)
-    usage = out.usage
+    if (parserV2On && !deps?.llmExtract) {
+      v2Output = await parserV2ExtractFn(text, log)
+      parsed = adaptV2ToStructuredCv(v2Output.parsed)
+      usage = v2Output.usage
+      usedTier = v2Output.usedTier
+      usedModel = v2Output.usedModel
+    } else {
+      const out = await llmExtract(text)
+      parsed = validateStructuredCv(out.parsed)
+      usage = out.usage
+    }
   } catch (err) {
     log("pa.cv_ingest.error", {
       stage: "llm",
       error: err instanceof Error ? err.message : String(err),
       userId: args.userId,
+      parserV2: parserV2On,
     })
     return { ok: false, reason: "llm_parse_failed" }
   }
@@ -961,7 +1296,9 @@ export async function ingestCv(
     inputTokens: usage?.input_tokens,
     outputTokens: usage?.output_tokens,
     totalTokens: usage?.total_tokens,
-    model: LLM_MODEL,
+    model: usedModel,
+    parserV2: parserV2On,
+    tier: usedTier,
   })
 
   // 4. Stream H3 gate — feature-flag + existing-resume detection.
@@ -1118,7 +1455,7 @@ export async function ingestCv(
   let resumeId: string
   try {
     const ts = nowIso()
-    const doc = {
+    const baseDoc: Record<string, unknown> = {
       userId: args.userId,
       candidateProfile: parsed.candidateProfile,
       experiences: parsed.experiences,
@@ -1136,9 +1473,34 @@ export async function ingestCv(
       // Firestore Admin SDK accepts a Date here and converts server-side.
       createdAt: new Date(ts),
     }
-    const ref = await dbHandle.collection(PARSED_RESUMES_COLLECTION).add(doc)
+    // iter30 WS1 — when parser-v2 ran, persist the rich v2 fields alongside
+    // the legacy projection. Downstream consumers (job-rec, dashboard) can
+    // opt in to the v2 fields without breaking on missing data.
+    if (v2Output) {
+      baseDoc.parserVersion = "v2"
+      baseDoc.parserTier = v2Output.usedTier
+      baseDoc.parserModel = v2Output.usedModel
+      baseDoc.workHistory = v2Output.parsed.workHistory
+      baseDoc.projects = v2Output.parsed.projects
+      baseDoc.certifications = v2Output.parsed.certifications
+      baseDoc.languages = v2Output.parsed.languages
+      baseDoc.awards = v2Output.parsed.awards
+      baseDoc.volunteerWork = v2Output.parsed.volunteerWork
+      baseDoc.websites = v2Output.parsed.websites
+      baseDoc.totalYearsExperience = v2Output.parsed.totalYearsExperience
+      baseDoc.workAuthorization = v2Output.parsed.workAuthorization
+      baseDoc.parseConfidence = v2Output.parsed.parseConfidence
+      baseDoc.inferredAnswers = v2Output.parsed.inferredAnswers
+    } else {
+      baseDoc.parserVersion = "v1"
+    }
+    const ref = await dbHandle.collection(PARSED_RESUMES_COLLECTION).add(baseDoc)
     resumeId = ref.id
-    log("pa.cv_ingest.ok", { userId: args.userId, resumeId: ref.id })
+    log("pa.cv_ingest.ok", {
+      userId: args.userId,
+      resumeId: ref.id,
+      parserVersion: v2Output ? "v2" : "v1",
+    })
   } catch (err) {
     log("pa.cv_ingest.error", {
       stage: "firestore",
@@ -1148,8 +1510,21 @@ export async function ingestCv(
     return { ok: false, reason: "firestore_write_failed" }
   }
 
-  // 5. Stream E side effects (E1 + E2 in parallel, both fire-and-forget,
-  //    both NEVER throw). We resolve the user once + share the read.
+  // iter30 WS1 — atomic quota increment AFTER successful write. Failure
+  // here is logged + tolerated (off-by-one acceptable per detail-plan §5.3).
+  if (!skipLimits) {
+    try {
+      await writeQuotaIncrement(dbHandle, args.userId, nowIso())
+    } catch (err) {
+      log("pa.cv_ingest.quota_increment_error", {
+        userId: args.userId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+
+  // 6. Stream E side effects (E1 + E2 + E3 in parallel, fire-and-forget,
+  //    all NEVER throw). We resolve the user once + share the read.
   let user: CvFollowupUser | null = null
   try {
     user = await lookupUserForFollowup(dbHandle, args.userId)
@@ -1161,7 +1536,7 @@ export async function ingestCv(
     })
   }
   if (user) {
-    await Promise.allSettled([
+    const branches: Array<Promise<unknown>> = [
       runFindingsFollowup({
         db: dbHandle,
         userId: args.userId,
@@ -1181,10 +1556,189 @@ export async function ingestCv(
         mem0Add: mem0AddFn,
         log,
       }),
-    ])
+    ]
+    // iter30 WS1 — Stream E3: qaBank → Mem0 with metadata + tag-event coupling.
+    // Only runs when parser v2 produced inferredAnswers. Failure is silent
+    // (the Mem0 fact body and outbound followup are already written).
+    if (v2Output && v2Output.parsed.inferredAnswers.length > 0) {
+      branches.push(
+        runQaBankToMem0({
+          db: dbHandle,
+          userId: args.userId,
+          partitionKey: user.mem0UserId ?? args.userId,
+          resumeId,
+          inferredAnswers: v2Output.parsed.inferredAnswers,
+          nowIso,
+          log,
+        })
+      )
+    }
+    await Promise.allSettled(branches)
   } else {
     log("pa.cv_followup.skipped", { reason: "no_user_record", userId: args.userId })
   }
 
   return { ok: true, resumeId }
+}
+
+// ---------------------------------------------------------------------------
+// Stream E3 — qaBank → Mem0 + tag-event coupling
+// ---------------------------------------------------------------------------
+
+async function runQaBankToMem0(args: {
+  db: Firestore
+  userId: string
+  partitionKey: string
+  resumeId: string
+  inferredAnswers: import("@pa/pa-resume-parser").InferredAnswer[]
+  nowIso: () => string
+  log: (event: string, payload?: Record<string, unknown>) => void
+}): Promise<void> {
+  if (mem0KillSwitchOn()) {
+    args.log("pa.cv_qabank.skipped", { reason: "kill_switch", userId: args.userId })
+    return
+  }
+  let parserMod: typeof import("@pa/pa-resume-parser")
+  try {
+    parserMod = (await import("@pa/pa-resume-parser")) as typeof import("@pa/pa-resume-parser")
+  } catch (err) {
+    args.log("pa.cv_qabank.error", {
+      stage: "parser_import",
+      userId: args.userId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    return
+  }
+
+  // Adapter: writeQaBankToMem0 expects callbacks that hide the Mem0 config.
+  const memMod = (await import("@pa/memory")) as unknown as {
+    mem0Add: (
+      cfg: Record<string, unknown>,
+      messages: { role: "user" | "assistant"; content: string }[],
+      userId: string,
+      options?: { metadata?: Record<string, unknown>; agentId?: string }
+    ) => Promise<void>
+    mem0Search: (
+      cfg: Record<string, unknown>,
+      query: string,
+      userId: string
+    ) => Promise<string[]>
+    isMem0EnvConfigured: () => boolean
+  }
+  if (!memMod.isMem0EnvConfigured()) {
+    args.log("pa.cv_qabank.skipped", { reason: "mem0_not_configured", userId: args.userId })
+    return
+  }
+
+  const envTrim = (k: string): string | undefined => {
+    const v = process.env[k]?.trim()
+    return v && v.length > 0 ? v : undefined
+  }
+  const apiKey = envTrim("SILICONFLOW_API_KEY") || envTrim("MEM0_LLM_API_KEY")
+  const qdrantUrl = envTrim("QDRANT_URL")
+  const qdrantApiKey = envTrim("QDRANT_API_KEY")
+  if (!apiKey || !qdrantUrl || !qdrantApiKey) {
+    args.log("pa.cv_qabank.skipped", { reason: "mem0_env_missing", userId: args.userId })
+    return
+  }
+  const cfg: Record<string, unknown> = {
+    apiKey,
+    baseUrl: envTrim("MEM0_LLM_BASE_URL") ?? envTrim("OPENAI_BASE_URL"),
+    llmModel: envTrim("MEM0_LLM_MODEL"),
+    embedModel: envTrim("MEM0_EMBED_MODEL"),
+    qdrantUrl,
+    qdrantApiKey,
+    qdrantCollection: envTrim("MEM0_QDRANT_COLLECTION"),
+  }
+
+  // Adapter: writeQaBankToMem0 expects a `Mem0AddAdapter`-shaped callback.
+  // We bridge it to memMod.mem0Add with the qaBank metadata.
+  const mem0AddAdapter = async (a: {
+    userId: string
+    partitionKey: string
+    question: string
+    answer: string
+    metadata: Record<string, string | number | boolean>
+  }): Promise<void> => {
+    const text = `Q: ${a.question}\nA: ${a.answer}`
+    await memMod.mem0Add(
+      cfg,
+      [{ role: "user", content: text }],
+      a.partitionKey,
+      {
+        metadata: a.metadata,
+        agentId: "claire",
+      }
+    )
+  }
+
+  const mem0SearchAdapter = async (a: {
+    partitionKey: string
+    query: string
+  }): Promise<string[]> => {
+    return memMod.mem0Search(cfg, a.query, a.partitionKey)
+  }
+
+  // Tag-event adapter using @wekruit/shared-tags (Wave 1 merged).
+  let recordTagEventAdapter: typeof parserMod.writeQaBankToMem0 extends (a: { recordTagEvent?: infer T }) => unknown ? T : never
+  try {
+    const tagsMod = (await import("@wekruit/shared-tags")) as typeof import("@wekruit/shared-tags")
+    recordTagEventAdapter = (async (e: {
+      userId: string
+      rawTag: string
+      source: "pa-cv-ingest"
+      sourceField?: string
+      sourceDocId?: string
+      evidence?: string
+    }) => {
+      await tagsMod.recordTagEvent(
+        {
+          userId: e.userId,
+          rawTag: e.rawTag,
+          source: e.source,
+          sourceField: e.sourceField,
+          sourceDocId: e.sourceDocId,
+          type: "preference",
+          evidence: e.evidence,
+        },
+        { firestore: args.db as unknown as import("@wekruit/shared-tags").FirestoreLike }
+      )
+    }) as typeof recordTagEventAdapter
+  } catch (err) {
+    args.log("pa.cv_qabank.tag_module_error", {
+      userId: args.userId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    recordTagEventAdapter = undefined as unknown as typeof recordTagEventAdapter
+  }
+
+  try {
+    const r = await parserMod.writeQaBankToMem0({
+      userId: args.userId,
+      partitionKey: args.partitionKey,
+      resumeId: args.resumeId,
+      inferredAnswers: args.inferredAnswers,
+      mem0Add: mem0AddAdapter,
+      mem0Search: mem0SearchAdapter,
+      recordTagEvent: recordTagEventAdapter as unknown as Parameters<
+        typeof parserMod.writeQaBankToMem0
+      >[0]["recordTagEvent"],
+      nowIso: args.nowIso,
+      log: args.log,
+    })
+    args.log("pa.cv_qabank.summary", {
+      userId: args.userId,
+      resumeId: args.resumeId,
+      written: r.written,
+      skippedDedupe: r.skippedDedupe,
+      errored: r.errored,
+      tagEventsRecorded: r.tagEventsRecorded,
+    })
+  } catch (err) {
+    args.log("pa.cv_qabank.error", {
+      stage: "writeQaBank",
+      userId: args.userId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
 }

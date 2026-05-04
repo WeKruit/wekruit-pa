@@ -277,6 +277,7 @@ function makeBaseDeps(args: {
     db: args.db,
     log: args.log,
     nowIso: () => "2026-05-01T12:00:00.000Z",
+    skipLimitEnforcement: true,
     fetchPdf: async () => ({ bytes: new Uint8Array([1]), contentType: "application/pdf" }),
     parsePdf: async () => ({ text: "resume", numPages: 1 }),
     llmExtract: async () => ({ parsed: happyParsed() }),
