@@ -221,6 +221,41 @@ test("v2: q_email_asked → ask_q_role → ask_q_yoe → … → ask_q_resume �
   )
 })
 
+// --- iter33 P1: parseLangAnswer (zh/en/mixed) ---
+test("iter33 P1: parseUserAnswerForStep ask_q_lang — zh signals", () => {
+  assert.deepEqual(parseUserAnswerForStep("ask_q_lang", "中文"), { preferredLang: "zh" })
+  assert.deepEqual(parseUserAnswerForStep("ask_q_lang", "chinese"), { preferredLang: "zh" })
+  assert.deepEqual(parseUserAnswerForStep("ask_q_lang", "zh"), { preferredLang: "zh" })
+  assert.deepEqual(parseUserAnswerForStep("ask_q_lang", "汉语"), { preferredLang: "zh" })
+  assert.deepEqual(parseUserAnswerForStep("ask_q_lang", "普通话就行"), { preferredLang: "zh" })
+})
+
+test("iter33 P1: parseUserAnswerForStep ask_q_lang — en signals", () => {
+  assert.deepEqual(parseUserAnswerForStep("ask_q_lang", "english"), { preferredLang: "en" })
+  assert.deepEqual(parseUserAnswerForStep("ask_q_lang", "en"), { preferredLang: "en" })
+  assert.deepEqual(parseUserAnswerForStep("ask_q_lang", "let's go english"), { preferredLang: "en" })
+  assert.deepEqual(parseUserAnswerForStep("ask_q_lang", "英文"), { preferredLang: "en" })
+})
+
+test("iter33 P1: parseUserAnswerForStep ask_q_lang — mixed signals", () => {
+  assert.deepEqual(parseUserAnswerForStep("ask_q_lang", "mixed"), { preferredLang: "mixed" })
+  assert.deepEqual(parseUserAnswerForStep("ask_q_lang", "中英混"), { preferredLang: "mixed" })
+  assert.deepEqual(parseUserAnswerForStep("ask_q_lang", "都行"), { preferredLang: "mixed" })
+  assert.deepEqual(parseUserAnswerForStep("ask_q_lang", "either"), { preferredLang: "mixed" })
+  assert.deepEqual(parseUserAnswerForStep("ask_q_lang", "both"), { preferredLang: "mixed" })
+  assert.deepEqual(parseUserAnswerForStep("ask_q_lang", "whatever"), { preferredLang: "mixed" })
+})
+
+test("iter33 P1: parseUserAnswerForStep ask_q_lang — ambiguous defaults to mixed", () => {
+  assert.deepEqual(parseUserAnswerForStep("ask_q_lang", "uhh idk"), { preferredLang: "mixed" })
+  assert.deepEqual(parseUserAnswerForStep("ask_q_lang", "okok"), { preferredLang: "mixed" })
+})
+
+test("iter33 P1: parseUserAnswerForStep ask_q_lang — empty returns {}", () => {
+  assert.deepEqual(parseUserAnswerForStep("ask_q_lang", ""), {})
+  assert.deepEqual(parseUserAnswerForStep("ask_q_lang", "   "), {})
+})
+
 // --- iter30 V6: parseEmailAnswer extracts email + handles skip ---
 test("iter30 V6: parseUserAnswerForStep email extracts email shapes + skip keywords", () => {
   // Plain email

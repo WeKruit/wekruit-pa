@@ -86,6 +86,16 @@ export const DEFAULT_ONBOARDING_CONFIG: Record<OnboardingStep, OnboardingStepCon
     prompt: { zh: FIRST_MES_ZH, en: FIRST_MES_EN },
   },
   ask_grounding_q: undefined, // legacy v1 — not used in deterministic path
+  // iter33 P1 (Adam directive 2026-05-04 "问 你 prefer 中文、英文、中英文混合"):
+  // explicit lang preference question. Fires after first_mes_sent. Reply
+  // parsed by parseLangAnswer → preferredLang (zh / en / mixed). Default to
+  // mixed when ambiguous so Claire keeps adapting.
+  ask_q_lang: {
+    prompt: {
+      zh: "我们用啥语聊比较顺? 中文、英文、还是中英混着说?",
+      en: "what language works best for you? Chinese / English / both mixed?",
+    },
+  },
   ask_q_tos: {
     prompt: {
       zh: "开聊前先说一下: 我会记一些咱聊天的事来给你推工作 / 找内推. 隐私 + 用户协议在这: https://wekruit-pa.web.app/legal — 同意就回个 \"同意\" 我们继续",
@@ -268,6 +278,7 @@ export type DeterministicTurnInput = {
 
 export type DeterministicAction =
   | { kind: "send_first_mes" }
+  | { kind: "ask_q_lang" }
   | { kind: "ask_q_tos" }
   | { kind: "ask_q_tos_decline" }
   | { kind: "ask_q_tos_reask" }
@@ -300,8 +311,15 @@ export function resolveDeterministicAction(
   // T0 — fresh user
   if (!state || state === "pending") return { kind: "send_first_mes" }
 
-  // first_mes_sent → ask_q_tos
-  if (state === "first_mes_sent") return { kind: "ask_q_tos" }
+  // iter33 P1 — first_mes_sent → ask_q_lang (zh/en/mixed). Adam-locked
+  // sequence puts lang preference BEFORE ToS so the ToS prompt can render
+  // in the user's chosen language. P2 (next phase) reorders email/verify
+  // ahead of ToS as well.
+  if (state === "first_mes_sent") return { kind: "ask_q_lang" }
+
+  // q_lang_asked → parse + advance to ask_q_tos. Parser is permissive:
+  // ambiguous reply defaults to "mixed", never blocks the chain.
+  if (state === "q_lang_asked") return { kind: "ask_q_tos" }
 
   // q_tos_asked → branch on parsed answer (iter32 reorder: accept advances
   // to email step, NOT role)
@@ -372,6 +390,7 @@ export function resolveDeterministicAction(
 }
 
 function priorAskedStepFromState(state: OnboardingState | undefined): OnboardingStep | undefined {
+  if (state === "q_lang_asked") return "ask_q_lang"
   if (state === "q_tos_asked") return "ask_q_tos"
   if (state === "q_role_asked") return "ask_q_role"
   if (state === "q_yoe_asked") return "ask_q_yoe"
@@ -422,6 +441,9 @@ export function composeDeterministicReply(
 
   if (action.kind === "send_first_mes") {
     return config.send_first_mes!.prompt[lang]
+  }
+  if (action.kind === "ask_q_lang") {
+    return config.ask_q_lang!.prompt[lang]
   }
   if (action.kind === "ask_q_tos") {
     return config.ask_q_tos!.prompt[lang]

@@ -40,7 +40,7 @@ test("resolveDeterministicAction: pending → send_first_mes", () => {
   assert.equal(action.kind, "send_first_mes")
 })
 
-test("resolveDeterministicAction: first_mes_sent → ask_q_tos", () => {
+test("resolveDeterministicAction: first_mes_sent → ask_q_lang (iter33 P1)", () => {
   const action = resolveDeterministicAction(
     {
       onboardingState: "first_mes_sent",
@@ -49,6 +49,19 @@ test("resolveDeterministicAction: first_mes_sent → ask_q_tos", () => {
       emailVerified: false,
     },
     "hi"
+  )
+  assert.equal(action.kind, "ask_q_lang")
+})
+
+test("resolveDeterministicAction: q_lang_asked → ask_q_tos (iter33 P1)", () => {
+  const action = resolveDeterministicAction(
+    {
+      onboardingState: "q_lang_asked",
+      cvParsed: false,
+      emailCaptured: false,
+      emailVerified: false,
+    },
+    "中文"
   )
   assert.equal(action.kind, "ask_q_tos")
 })
