@@ -19,8 +19,11 @@ import { DownstreamTriggers } from "./pages/DownstreamTriggers.js"
 import { VoiceReview } from "./pages/VoiceReview.js"
 import { NRoundSim } from "./pages/NRoundSim.js"
 import { MatchCandidates } from "./pages/MatchCandidates.js"
-// iter30/WS8 — Day-1 skeleton; shadcn Table proof-of-render.
+// iter30/WS8 — biz-demo Wave 2 — full match-* admin surface.
 import { MatchWeights } from "./pages/MatchWeights.js"
+import { MatchWeightsTest } from "./pages/MatchWeightsTest.js"
+import { MatchExplainerHistory } from "./pages/MatchExplainerHistory.js"
+import { MatchExplainerTest } from "./pages/MatchExplainerTest.js"
 import { auth } from "./lib/firebase.js"
 
 export default function App() {
@@ -89,9 +92,12 @@ export default function App() {
 
         <div className="nav-section">
           <div className="nav-section-label">Match</div>
-          <NavLink to="/match/candidates">Match Candidates</NavLink>
-          {/* iter30/WS8 — Day-1 skeleton route. */}
-          <NavLink to="/match/weights">Match Weights</NavLink>
+          <NavLink to="/match/candidates">Candidates</NavLink>
+          {/* iter30/WS8 Wave 2 — biz-demo match admin surface. */}
+          <NavLink to="/match/weights">Weights</NavLink>
+          <NavLink to="/match/weights/test">Weights · Dry Run</NavLink>
+          <NavLink to="/match/explainer-history">Explainer History</NavLink>
+          <NavLink to="/match/explainer-test">Explainer Test</NavLink>
         </div>
 
         <div className="nav-section">
@@ -142,8 +148,14 @@ export default function App() {
           {/* Phase 49 (v1.5 Stream-H D9) — operator reverse-match dashboard. Admin-only;
               CF gates on paReverseMatchEnabled flag (default OFF). */}
           <Route path="/match/candidates" element={<MatchCandidates />} />
-          {/* iter30/WS8 Day-1 — shadcn/Tailwind smoke route. */}
+          {/* iter30/WS8 Wave 2 — biz-demo match admin surface. */}
           <Route path="/match/weights" element={<MatchWeights />} />
+          <Route path="/match/weights/test" element={<MatchWeightsTest />} />
+          <Route
+            path="/match/explainer-history"
+            element={<MatchExplainerHistory />}
+          />
+          <Route path="/match/explainer-test" element={<MatchExplainerTest />} />
           {/* Phase 32 Wave 3 — Playbooks + Personas Firestore CRUD. */}
           <Route path="/agent/playbooks" element={<Playbooks />} />
           <Route path="/agent/personas" element={<Personas />} />

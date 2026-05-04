@@ -72,8 +72,17 @@ class DocRef {
     }
   }
 
-  collection(_subPath: string): Coll {
-    throw new Error("MockFirestore: subcollections not supported in tests")
+  /**
+   * iter30/WS8 — minimal subcollection support so BoostCalculator's
+   * `tableRef.collection("items").get()` works in tests. Subcollection path
+   * encoded as `${parentPath}/${parentDocId}/${subName}` — matches the
+   * production wire format closely enough for read-only enumeration tests.
+   */
+  collection(subPath: string): Coll {
+    return new Coll(
+      this.mfs,
+      `${this.collectionPath}/${this.id}/${subPath}`
+    )
   }
 }
 

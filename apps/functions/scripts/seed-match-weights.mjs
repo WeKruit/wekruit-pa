@@ -146,7 +146,11 @@ async function main() {
           ? "AI Agent / LLM Engineer 2026"
           : table,
       description:
-        "Seeded from apps/job-rec/src/match-weights.ts AI_AGENT_SKILL_WEIGHTS.",
+        "Seeded from apps/job-rec/src/match-weights.ts AI_AGENT_SKILL_WEIGHTS. Edit rows on the /match/weights dashboard — changes go live within 30s without a redeploy.",
+      // iter30/WS8 — full BoostCalculator-shape seed (version/active/defaultForRoles).
+      version: 1,
+      active: true,
+      defaultForRoles: ["ai engineer", "llm engineer", "ai agent engineer"],
       rowCount: rows.length,
       updatedAt: FieldValue.serverTimestamp(),
       updatedBy: "seed-match-weights.mjs",
@@ -160,10 +164,14 @@ async function main() {
       itemsCol.doc(key),
       {
         skill: r.skill,
+        // iter30/WS8 — forward-compat FK → pa-canonical-tags (WS2 backfill).
+        skillCanonical: null,
         weight: r.weight,
         category: r.category,
+        market: table,
         updatedAt: FieldValue.serverTimestamp(),
         updatedBy: "seed-match-weights.mjs",
+        reason: "Seeded from match-weights.ts AI_AGENT_SKILL_WEIGHTS",
       },
       { merge: true }
     )

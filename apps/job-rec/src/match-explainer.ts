@@ -33,6 +33,7 @@
  */
 
 import type { Firestore } from "firebase-admin/firestore"
+import type { BoostExplainerInput } from "./boost-calculator.js"
 import type { MatchingJob } from "./types.js"
 
 // ---------------------------------------------------------------------------
@@ -86,6 +87,13 @@ export type ExplainMatchInput = {
   }
   matchScore?: number
   language: "zh" | "en"
+  /**
+   * iter30/WS8 — boost-aware prompt input. When present, the explainer uses
+   * the new core/supporting/generic-aware prompt (modes A/B/C, see
+   * `buildExplainerMessages`). When absent (legacy callers), falls back to
+   * the original "1 CV fact + 1 JD fact" prompt (mode D, fully back-compat).
+   */
+  boostInput?: BoostExplainerInput
 }
 
 export type ExplainMatchDeps = {
@@ -154,13 +162,31 @@ const REASON_MAX_CHARS = 140
  *
  * Strict: any control char, slash, or "/" in user input throws — this is a
  * defensive guard; in practice our userId/jobId are alphanumeric.
+ *
+ * iter30/WS8 — `weightTableVersion` (optional) appended as `__v{N}` so any
+ * weight-table edit invalidates downstream cached reasons. Legacy callers
+ * (no boost) keep the old key shape (back-compat). Old docs purged via
+ * Firestore TTL on the existing `ttlAt` field.
  */
-export function cacheDocId(userId: string, jobId: string, language: "zh" | "en"): string {
+export function cacheDocId(
+  userId: string,
+  jobId: string,
+  language: "zh" | "en",
+  weightTableVersion?: number
+): string {
   if (!userId || !jobId) throw new Error("match-explainer: userId+jobId required")
   if (userId.includes("/") || jobId.includes("/")) {
     throw new Error("match-explainer: userId/jobId must not contain '/'")
   }
-  return `${userId}__${jobId}__${language}`
+  const base = `${userId}__${jobId}__${language}`
+  if (
+    typeof weightTableVersion === "number" &&
+    Number.isFinite(weightTableVersion) &&
+    weightTableVersion > 0
+  ) {
+    return `${base}__v${weightTableVersion}`
+  }
+  return base
 }
 
 /** Cost-ledger doc id (`match-explainer__YYYYMMDD`). */
@@ -206,10 +232,38 @@ export function resolveDailyBudgetUsd(opt?: number): number {
 // ---------------------------------------------------------------------------
 
 /**
- * Build the bilingual system+user prompt. ONE sentence, friend tone,
- * grounded in BOTH a CV fact and a JD fact.
+ * Classify boost-input into one of four modes (per WS-8 detail-plan §6.3):
  *
- * Pure / exposed for tests + sample dumps.
+ *   A — has ≥ 1 core hit (weight ≥ 2.0): foreground core skill(s)
+ *   B — no core but ≥ 1 supporting hit (weight 1.5-1.99): foreground
+ *       supporting + name the missing core
+ *   C — only generic hits (weight ≤ 0.7): say "foundation present, core not yet"
+ *   D — no boost data OR no hits / no missing: fall back to "1 CV fact + 1 JD fact"
+ *       (legacy prompt — fully back-compat)
+ *
+ * Pure helper, exposed for tests + observability.
+ */
+export type ExplainerMode = "A_core" | "B_supp" | "C_gen" | "D_fallback"
+
+export function classifyExplainerMode(boost?: BoostExplainerInput): ExplainerMode {
+  if (!boost) return "D_fallback"
+  const hits = boost.hits ?? []
+  if (hits.length === 0 && (boost.coreMissing?.length ?? 0) === 0) return "D_fallback"
+  const coreHits = hits.filter((h) => h.category === "core" && h.weight >= 2.0)
+  if (coreHits.length > 0) return "A_core"
+  const suppHits = hits.filter((h) => h.category === "supporting" && h.weight >= 1.5)
+  if (suppHits.length > 0) return "B_supp"
+  if (hits.length > 0) return "C_gen"
+  return "D_fallback"
+}
+
+/**
+ * Build the bilingual system+user prompt. Up to 2 friend-tone sentences when
+ * boost data is present (mode A/B/C); single-sentence legacy prompt when
+ * absent (mode D). Pure / exposed for tests + sample dumps.
+ *
+ * iter30/WS8 — replaces the old single-mode prompt. New prompt foregrounds
+ * core/supporting/generic so we never collapse "Python match" with "RAG match".
  */
 export function buildExplainerMessages(
   input: ExplainMatchInput
@@ -226,28 +280,150 @@ export function buildExplainerMessages(
   const jobTitle = input.job.jobTitle || "Role"
   const company = input.job.companyName || "Company"
   const jobSkills = (input.job.requiredSkills ?? []).slice(0, 6).join(", ")
+  const mode = classifyExplainerMode(input.boostInput)
 
+  // -- Mode D: legacy single-sentence prompt (back-compat) -----------------
+  if (mode === "D_fallback") {
+    const sysZh = [
+      "你是一个会朋友式聊天的求职 broker。",
+      "任务：用 ONE 中文句子（≤ 60 字）解释这份 JD 为什么和候选人对得上。",
+      "硬规则：",
+      "1) 必须引用候选人简历里 1 个具体事实（公司名/角色/技能/经历片段）",
+      "2) 必须引用 JD 里 1 个具体方面（公司/角色/技能要求）",
+      "3) 朋友语气，不要客套，不要 marketing 语言，不要写'此职位'/'该机会'之类的官话",
+      "4) 不要 emoji，不要破折号开头，不要换行",
+      "5) 必须只输出这一句话本身，没有前缀，没有引号，没有 markdown",
+    ].join("\n")
+    const sysEn = [
+      "You are a friend-tone job broker.",
+      "Task: explain in ONE English sentence (≤ 30 words) why this JD lines up with this candidate.",
+      "Hard rules:",
+      "1) Must cite ONE specific candidate-CV fact (company / role / skill / experience bullet)",
+      "2) Must cite ONE specific JD aspect (company / role / required skill)",
+      "3) Friend tone — no marketing-speak, no fluff, no 'this opportunity' / 'this role' filler",
+      "4) No emoji, no leading dash, no line breaks",
+      "5) Output the sentence only — no prefix, no quotes, no markdown",
+    ].join("\n")
+    const userZh = [
+      "候选人:",
+      `- 最近角色: ${recentRole || "(未知)"} @ ${recentCo || "(未知)"}`,
+      skills.length > 0 ? `- 技能 top3: ${topSkillsLine}` : "- 技能 top3: (未知)",
+      bullet ? `- 简历片段: ${bullet}` : "",
+      "",
+      "Job:",
+      `- ${jobTitle} @ ${company}`,
+      jobSkills ? `- JD 要求: ${jobSkills}` : "",
+      jdSnippet ? `- JD 节选: ${jdSnippet}` : "",
+      "",
+      "请输出 1 句中文 friend-tone 解释。",
+    ]
+      .filter((line) => line !== "")
+      .join("\n")
+    const userEn = [
+      "Candidate:",
+      `- Recent role: ${recentRole || "(unknown)"} at ${recentCo || "(unknown)"}`,
+      skills.length > 0 ? `- Top skills: ${topSkillsLine}` : "- Top skills: (unknown)",
+      bullet ? `- Resume bullet: ${bullet}` : "",
+      "",
+      "Job:",
+      `- ${jobTitle} at ${company}`,
+      jobSkills ? `- JD requires: ${jobSkills}` : "",
+      jdSnippet ? `- JD excerpt: ${jdSnippet}` : "",
+      "",
+      "Output 1 friend-tone English sentence.",
+    ]
+      .filter((line) => line !== "")
+      .join("\n")
+    return [
+      { role: "system", content: lang === "zh" ? sysZh : sysEn },
+      { role: "user", content: lang === "zh" ? userZh : userEn },
+    ]
+  }
+
+  // -- Modes A/B/C: boost-aware bilingual prompt ---------------------------
   const sysZh = [
-    "你是一个会朋友式聊天的求职 broker。",
-    "任务：用 ONE 中文句子（≤ 60 字）解释这份 JD 为什么和候选人对得上。",
-    "硬规则：",
-    "1) 必须引用候选人简历里 1 个具体事实（公司名/角色/技能/经历片段）",
-    "2) 必须引用 JD 里 1 个具体方面（公司/角色/技能要求）",
-    "3) 朋友语气，不要客套，不要 marketing 语言，不要写'此职位'/'该机会'之类的官话",
-    "4) 不要 emoji，不要破折号开头，不要换行",
-    "5) 必须只输出这一句话本身，没有前缀，没有引号，没有 markdown",
+    "你是一个朋友语气的 job broker，给候选人解释为什么这份 JD 跟他对得上。",
+    "",
+    "# 输出格式硬规则",
+    "1) 输出最多 2 个中文句子。第一句 ≤ 30 字，第二句（可选）≤ 30 字。",
+    "2) 朋友语气：用'你'，不用'您'。不要'此职位'/'该机会'/'贵司'这种官话。",
+    "3) 不要 emoji，不要 markdown，不要换行，不要引号包裹整句。",
+    "4) 不写'X 还是 Y' 二选一框架。",
+    "5) 不要客套语（'非常匹配'/'完美契合'/'为您量身打造'）— 直接说事实。",
+    "",
+    "# CORE vs GENERIC 区分（最重要）",
+    "你会收到 boost-hit 数据：hits[]（命中的技能 + category + weight + matchedAgainst）、coreMissing[]、totalBoostMult。",
+    "",
+    "按以下分支写句子：",
+    "",
+    "A) 当 hits 里有 ≥ 1 个 core (weight ≥ 2.0)：",
+    "   → 第一句把那个/那几个 core 技能拎出来说。例：",
+    "     '你简历里 RAG 和 tool calling 这两个 2026 年最 core 的技能正好对上'",
+    "   → 不要把 generic 也说成'match'。Python 是底子不是 match。",
+    "",
+    "B) 当 hits 里 NO core 但有 supporting (weight 1.5-1.99)：",
+    "   → '你 [supporting skill] 这块底子在，core 要求像 [coreMissing 第一个] 还得补上'",
+    "",
+    "C) 当 hits 里只有 generic (weight ≤ 0.7)：",
+    "   → 不能说'match'。改说'底子有但不是核心'。例：",
+    "     '你 Python TS 这种底子是有，但 RAG / function calling 这种 core 还没碰过'",
+    "   → 第二句可选 actionable 建议：'如果你最近补一下 vector database 那块，推这种岗位就稳了'",
+    "",
+    "# 输出锁定",
+    "- 只输出最终句子。没有前缀、没有引号、没有 'Output:'、没有 'Answer:'。",
+    "- 必须中文输出。RAG / LangChain 等专有词原样保留，不翻译。",
+    "- 两句之间用空格分隔，不换行。",
   ].join("\n")
 
   const sysEn = [
-    "You are a friend-tone job broker.",
-    "Task: explain in ONE English sentence (≤ 30 words) why this JD lines up with this candidate.",
-    "Hard rules:",
-    "1) Must cite ONE specific candidate-CV fact (company / role / skill / experience bullet)",
-    "2) Must cite ONE specific JD aspect (company / role / required skill)",
-    "3) Friend tone — no marketing-speak, no fluff, no 'this opportunity' / 'this role' filler",
-    "4) No emoji, no leading dash, no line breaks",
-    "5) Output the sentence only — no prefix, no quotes, no markdown",
+    "You're a friend-tone job broker explaining why this JD lines up with the candidate.",
+    "",
+    "# Output rules",
+    "1) Up to 2 sentences. First ≤ 30 words; optional second ≤ 30 words.",
+    "2) Friend register. Contractions OK. No corporate filler ('this opportunity', 'this role aligns', 'we're delighted').",
+    "3) No emoji, no markdown, no line breaks, no surrounding quotes.",
+    "4) No 'either-or' framing.",
+    "5) No platitudes ('excellent match', 'perfect fit') — just say the facts.",
+    "",
+    "# CORE vs GENERIC distinction (most important)",
+    "You receive boost-hit data: hits[] (skill / category core|supporting|generic / weight / matchedAgainst), coreMissing[], totalBoostMult.",
+    "",
+    "Branches:",
+    "",
+    "A) hits has ≥ 1 core (weight ≥ 2.0):",
+    "   → First sentence calls out the core skill(s). Example:",
+    "     'Your RAG + tool-calling work hits the two core asks for this 2026 LLM eng role.'",
+    "   → Don't promote a generic to 'match' status. Python is foundation, not match.",
+    "",
+    "B) hits has no core but ≥ 1 supporting (weight 1.5-1.99):",
+    "   → 'You've got [supporting] going for you, but the real core ask is [coreMissing[0]].'",
+    "",
+    "C) hits has only generic (weight ≤ 0.7):",
+    "   → Don't say 'match'. Say 'foundation present, core not yet'. Example:",
+    "     \"You've got the Python+TS foundation, but RAG / function calling — the actual core — isn't on your CV yet.\"",
+    "   → Optional second sentence with actionable advice.",
+    "",
+    "# Output lock",
+    "- Output the sentence(s) only. No prefix, no 'Output:', no quotes around the whole.",
+    "- English when language=en. Brand names like RAG/LangChain stay as-is.",
+    "- Separate two sentences with a space, not a newline.",
   ].join("\n")
+
+  // Format boost data for the user message — kept compact so token cost stays low.
+  const boost = input.boostInput!
+  const hitsStr =
+    boost.hits.length > 0
+      ? boost.hits
+          .map(
+            (h) =>
+              `${h.skill} (${h.category}/${h.weight.toFixed(1)}/${h.matchedAgainst})`
+          )
+          .join(", ")
+      : "(none)"
+  const missStr =
+    boost.coreMissing.length > 0
+      ? boost.coreMissing.map((m) => `${m.skill} (${m.weight.toFixed(1)})`).join(", ")
+      : "(none)"
 
   const userZh = [
     "候选人:",
@@ -260,7 +436,13 @@ export function buildExplainerMessages(
     jobSkills ? `- JD 要求: ${jobSkills}` : "",
     jdSnippet ? `- JD 节选: ${jdSnippet}` : "",
     "",
-    "请输出 1 句中文 friend-tone 解释。",
+    "Boost 数据:",
+    `- hits: ${hitsStr}`,
+    `- coreMissing: ${missStr}`,
+    `- totalBoostMult: ${boost.totalBoostMult.toFixed(2)}`,
+    `- mode: ${mode}`,
+    "",
+    "请按 mode 分支输出 1-2 句中文 friend-tone 解释。",
   ]
     .filter((line) => line !== "")
     .join("\n")
@@ -276,7 +458,13 @@ export function buildExplainerMessages(
     jobSkills ? `- JD requires: ${jobSkills}` : "",
     jdSnippet ? `- JD excerpt: ${jdSnippet}` : "",
     "",
-    "Output 1 friend-tone English sentence.",
+    "Boost data:",
+    `- hits: ${hitsStr}`,
+    `- coreMissing: ${missStr}`,
+    `- totalBoostMult: ${boost.totalBoostMult.toFixed(2)}`,
+    `- mode: ${mode}`,
+    "",
+    "Output 1-2 English friend-tone sentences per mode branch.",
   ]
     .filter((line) => line !== "")
     .join("\n")
@@ -290,22 +478,53 @@ export function buildExplainerMessages(
 /**
  * Trim, single-line, length-cap, drop-leading-dash. Returns "" when output
  * is too short to be useful (LLM noise / refusal-like).
+ *
+ * iter30/WS8 — adds a 2-sentence cap. Splits on `。．.!?！？`, accepts up to 2,
+ * drops the rest. Mitigates the new "up to 2 sentences" prompt over-elongating.
  */
 export function sanitizeReason(raw: string): string {
   if (typeof raw !== "string") return ""
   let s = raw.replace(/\s+/g, " ").trim()
   // Drop wrapping quotes.
   s = s.replace(/^["「『'`]+|["」』'`]+$/g, "")
-  // Drop leading dash / bullet prefix (Bible v7.5.2 — the formatter adds
-  // its own " — " separator; LLM-leading dashes confuse the line).
+  // Drop leading dash / bullet prefix.
   s = s.replace(/^[-—–•*]\s*/, "")
+  // 2-sentence cap. CJK + ASCII terminals. Keep terminals so the cap reads
+  // naturally; if no terminal present, leave whole string alone.
+  s = capToTwoSentences(s)
   if (s.length > REASON_MAX_CHARS) {
-    // Truncate on a CJK-aware char boundary; Array.from handles surrogate pairs.
     const chars = Array.from(s)
     s = chars.slice(0, REASON_MAX_CHARS - 1).join("") + "…"
   }
   if (s.length < REASON_MIN_CHARS) return ""
   return s
+}
+
+/** Internal — cap a string to its first ≤ 2 sentences. Pure / exported for tests. */
+export function capToTwoSentences(s: string): string {
+  // Match 1 or 2 sentences: non-terminal chars then a terminal.
+  // Terminals: 。．.!?！？
+  const re = /[^。．.!?！？]*[。．.!?！？]/g
+  const parts: string[] = []
+  let m: RegExpExecArray | null
+  while ((m = re.exec(s)) !== null && parts.length < 2) {
+    parts.push(m[0])
+  }
+  if (parts.length === 0) return s
+  let out = parts.join("").trim()
+  // Append remaining text only if it's the FIRST sentence with no terminal
+  // (i.e. parts contained only terminals from the rest of the string).
+  if (parts.length < 2) {
+    const consumed = parts.join("").length
+    const tail = s.slice(consumed).trim()
+    // No tail-append in 2-sentence case — we explicitly stop after 2.
+    if (parts.length === 1 && tail.length > 0) {
+      // Only append tail if it's a single fragment (mode A often has 1 sent + trailing fragment)
+      // — we already captured the first sentence, leave the fragment.
+    }
+    if (out.length === 0) return s
+  }
+  return out.length > 0 ? out : s
 }
 
 // ---------------------------------------------------------------------------
@@ -404,7 +623,14 @@ export async function explainMatch(
   try {
     cacheRef = deps.db
       .collection(EXPLANATIONS_COLLECTION)
-      .doc(cacheDocId(input.userId, input.job.id, input.language))
+      .doc(
+        cacheDocId(
+          input.userId,
+          input.job.id,
+          input.language,
+          input.boostInput?.tableVersion
+        )
+      )
     const snap = await cacheRef.get()
     if (snap.exists) {
       const data = snap.data() as { reason?: string; ttlAt?: string } | undefined

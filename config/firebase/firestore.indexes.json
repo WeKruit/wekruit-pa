@@ -236,48 +236,30 @@
       ]
     },
     {
-      "_comment": "iter30 WS2 P2 — tag-worker Layer 1 hot alias: where(type==X).where(aliases array-contains norm)",
-      "collectionGroup": "pa-canonical-tags",
+      "_comment": "iter30/WS8 — /match/weights audit drawer: where(key==tableKey or tableKey/skillKey).orderBy(ts desc). Same shape used by /agent/playbooks audit reads.",
+      "collectionGroup": "pa-audit-events",
       "queryScope": "COLLECTION",
       "fields": [
-        {
-          "fieldPath": "type",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "aliases",
-          "arrayConfig": "CONTAINS"
-        }
+        { "fieldPath": "key", "order": "ASCENDING" },
+        { "fieldPath": "ts", "order": "DESCENDING" }
       ]
     },
     {
-      "_comment": "iter30 WS2 P2 — tag-worker sampleCanonicals: where(type==X).where(approvalStatus in [...])",
-      "collectionGroup": "pa-canonical-tags",
+      "_comment": "iter30/WS8 — /match/explainer-history filter-by-user: where(userId==X).orderBy(createdAt desc).",
+      "collectionGroup": "pa-job-rec-explanations",
       "queryScope": "COLLECTION",
       "fields": [
-        {
-          "fieldPath": "type",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "approvalStatus",
-          "order": "ASCENDING"
-        }
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
       ]
     },
     {
-      "_comment": "iter30 WS2 P2 — tag-worker retry: where(status==pending).where(createdAt<cutoff)",
-      "collectionGroup": "pa-tag-events",
+      "_comment": "iter30/WS8 — /match/explainer-history filter-by-language: where(language==zh|en).orderBy(createdAt desc).",
+      "collectionGroup": "pa-job-rec-explanations",
       "queryScope": "COLLECTION",
       "fields": [
-        {
-          "fieldPath": "status",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "createdAt",
-          "order": "ASCENDING"
-        }
+        { "fieldPath": "language", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
       ]
     }
   ],
