@@ -807,7 +807,7 @@ async function main() {
 
   // ── i32-2: ToS accept advances to ask_q_email + writes tosAcceptance (iter32 reorder)
   if (should("i32-tos-accept")) {
-    await scenario("i32-tos-accept: 同意 → ask_q_email + tosAcceptedVersion=v1.0 (iter32 reorder)", async () => {
+    await scenario("i32-tos-accept: 同意 → ask_q_role + tosAcceptedVersion=v1.0 (iter33 P2 reorder)", async () => {
       const det = await import("@pa/pa-orchestrator")
       const ev = []
       const captures = []
@@ -851,10 +851,10 @@ async function main() {
         cvParsed: false,
         agent: { id: "c" },
       })
-      const advance = ev.find((x) => x.step === "ask_q_email")
-      expect(advance !== undefined, `must advance to ask_q_email (iter32 reorder)`)
+      const advance = ev.find((x) => x.step === "ask_q_role")
+      expect(advance !== undefined, `must advance to ask_q_role (iter33 P2 reorder: ToS now AFTER verify, gates role-probe chain)`)
       expect(advance.opts.tosAcceptedVersion === "v1.0", `tosAcceptedVersion must be v1.0 (got ${advance.opts.tosAcceptedVersion})`)
-      expect(/邮箱|email/i.test(captures[0].body), `must ask email question (got "${captures[0].body}")`)
+      expect(/方向|kinda|role|做啥/i.test(captures[0].body), `must ask role question (got "${captures[0].body}")`)
     })
   }
 
