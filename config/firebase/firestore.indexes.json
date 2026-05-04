@@ -234,6 +234,62 @@
           "order": "DESCENDING"
         }
       ]
+    },
+    {
+      "_comment": "iter30 WS2 P2 — tag-worker Layer 1 hot alias: where(type==X).where(aliases array-contains norm)",
+      "collectionGroup": "pa-canonical-tags",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "type",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "aliases",
+          "arrayConfig": "CONTAINS"
+        }
+      ]
+    },
+    {
+      "_comment": "iter30 WS2 P2 — tag-worker sampleCanonicals: where(type==X).where(approvalStatus in [...])",
+      "collectionGroup": "pa-canonical-tags",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "type",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "approvalStatus",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "_comment": "iter30 WS2 P2 — tag-worker retry: where(status==pending).where(createdAt<cutoff)",
+      "collectionGroup": "pa-tag-events",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "_comment": "iter30 WS2 P2 — entity-tag item mutex query: where(mutexGroup==X) in items subcollection",
+      "collectionGroup": "items",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "mutexGroup",
+          "order": "ASCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": []
