@@ -23,11 +23,45 @@ but before live deploy.
 
 ## State on origin/claude/wekruit-pa-biz-test-prep-8MICh
 
-- HEAD: 1f55b9d (or later if more commits land)
-- 2 commits since main (3c3b4c9):
+- HEAD: 896badc (or later if more commits land)
+- 4 commits since main (3c3b4c9):
   - ffb5fde feat(iter31): biz-test prep — HITL pause/resume + ToS gate + email verify
   - 1f55b9d test(iter31): offline simulator for HITL + email-verify branches
+  - b5e66fc docs(iter31): deploy handoff
+  - 896badc feat(iter32): deterministic onboarding + strict CV/email gates before agent runtime
 - PR: https://github.com/WeKruit/wekruit-pa/pull/1 (draft)
+- Tests: 633/633 pa-orchestrator + 437/437 apps/functions + 15/15 simulator
+
+## What landed in iter32 (on top of iter31)
+
+**Deterministic onboarding before agent runtime** — Adam directive
+2026-05-04 ("we should have resume parsed before we start agent runtime").
+The entire pre-runtime onboarding sequence dispatches configured phrases
+verbatim via sendMemoryReply. NO LLM hop, ~7 LLM calls saved per new user.
+
+Strict gate sequence enforced in `processInboundEvent`:
+1. HITL pause gate
+2. Safety check
+3. Onboarding state must be `complete`
+4. parsedCandidateResumes row must exist (CV uploaded + parsed)
+5. statedPreferences.contactEmailVerifiedAt must be set
+   ↓ ONLY then does agent runtime activate
+
+Sequence: `send_first_mes → ask_q_tos → ask_q_role → ask_q_yoe →
+ask_q_visa → ask_q_startup_pref → ask_q_location → ask_q_resume`
+[CV gate hold] `→ ask_q_email → ask_q_email_verify` [email-verified gate hold]
+`→ complete → agent runtime + playbooks`
+
+Vent / distress mid-onboarding: deterministic short empathy ack, state
+stays. Crisis (self-harm) keywords still routed through pa-safety's
+hotline injection guard.
+
+Config in `pa-onboarding-config/v1` Firestore doc — operator-editable
+in dashboard (UI is a v2 follow-up; for now edit via Firestore console).
+Hot-reload via 30s TTL cache.
+
+Flag: `paOnboardingDeterministicEnabled` (default OFF). Env kill switch:
+`PA_ONBOARDING_DETERMINISTIC_DISABLED=true`.
 
 ## What landed in iter31
 
@@ -64,9 +98,9 @@ git checkout claude/wekruit-pa-biz-test-prep-8MICh
 git pull origin claude/wekruit-pa-biz-test-prep-8MICh
 pnpm install   # or npm install with PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 npm run build --workspace=@pa/core-types --workspace=@pa/firebase-admin --workspace=@pa/agent-runtime --workspace=@pa/memory --workspace=@pa/agent-registry --workspace=@pa/pa-orchestrator
-npm test --workspace=@pa/pa-orchestrator    # expect 590/590 green
+npm test --workspace=@pa/pa-orchestrator    # expect 633/633 green
 npm test --workspace=@pa/functions          # expect 437/437 green
-node apps/functions/scripts/sim-iter31.mjs  # expect 10/10 green
+node apps/functions/scripts/sim-iter31.mjs  # expect 15/15 green
 ```
 
 ## Deploy steps (in order, do NOT skip)
@@ -90,6 +124,19 @@ pnpm run deploy:hosting
 
 # 5. Seed ToS version + flip iter31 flags ON
 node apps/functions/scripts/seed-iter31.mjs
+
+# 5b. Flip iter32 deterministic-onboarding flag ON
+node -e "
+const admin = require('firebase-admin');
+admin.initializeApp({projectId:'wekruit-5f89b'});
+admin.firestore().collection('pa-feature-flags').doc('paOnboardingDeterministicEnabled').set({
+  key:'paOnboardingDeterministicEnabled',
+  defaultValue:true,
+  description:'iter32 — deterministic onboarding dispatcher before agent runtime',
+  rollout:{kind:'all',percent:100},
+  updatedAt:new Date().toISOString(),
+}, {merge:true}).then(() => {console.log('✓ paOnboardingDeterministicEnabled = true'); process.exit(0)});
+"
 
 # 6. Verify
 node apps/functions/scripts/audit-mvp-state.mjs
@@ -152,13 +199,19 @@ After deploy, these events should appear in Cloud Logging (search by event
 name in the Logs Explorer):
 
 - `pa.hitl.paused.inbound_skip` — HITL pause active
-- `pa.onboarding.tos_decision` — every q_tos_asked turn (decision: accept / decline / unclear)
-- `pa.onboarding.tos_suspended` — decline / unclear path
-- `pa.onboarding.email_verify.sent` — Mailgun fire success
-- `pa.onboarding.email_verify.send_error` — Mailgun fire failure
-- `pa.onboarding.email_verify.verified` — verification success
-- `pa.onboarding.email_verify.miss` — verification miss
-- `pa.onboarding.email_verify.bypass` — expired / exhausted bypass
+- `pa.onboarding.deterministic.action` — every deterministic turn (action kind)
+- `pa.onboarding.deterministic.tos_accepted` / `tos_declined`
+- `pa.onboarding.deterministic.cv_wait` — at q_resume_asked, no CV yet
+- `pa.onboarding.deterministic.cv_gate_hold` — state=complete but no CV
+- `pa.onboarding.deterministic.email_verify_sent` — Mailgun fired
+- `pa.onboarding.deterministic.email_verify_verified` — code matched
+- `pa.onboarding.deterministic.email_verify_miss` — wrong code
+- `pa.onboarding.deterministic.email_verify_bypass` — expired/exhausted
+- `pa.onboarding.deterministic.email_gate_hold` — state=complete but unverified
+- `pa.onboarding.deterministic.vent_suspended` — vent ack, state stayed
+- `pa.onboarding.tos_decision` — (legacy LLM path) every q_tos_asked turn
+- `pa.onboarding.tos_suspended` — (legacy)
+- `pa.onboarding.email_verify.sent` / `verified` / `miss` / `bypass` — (legacy)
 
 ## Rollback
 
