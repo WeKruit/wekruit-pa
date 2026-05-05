@@ -45,6 +45,11 @@ import {
   userAnsweredStep,
   type OnboardingStep,
 } from "./onboarding.js"
+import {
+  ONBOARDING_WORKFLOW,
+  walkWorkflow,
+  type WorkflowContext,
+} from "./onboarding-workflow.js"
 
 // ────────────────────────────────────────────────────────────────────
 // Config
@@ -322,124 +327,139 @@ export function resolveDeterministicAction(
   userMessage: string
 ): DeterministicAction {
   const state = input.onboardingState
+
+  // iter33 GAP 4 escape hatch — when V33 disabled, skip q_lang at
+  // first_mes_sent and fall back to iter32 sequence. Handled inline
+  // before graph walk because it's an environmental short-circuit, not
+  // a state-machine edge.
+  if (state === "first_mes_sent" && isV33Disabled()) {
+    return { kind: "ask_q_tos" }
+  }
+
+  // iter33 GAP 2 — graph executor. Build context from parsers + state,
+  // walk ONBOARDING_WORKFLOW edges declaratively, return the action
+  // attached to the matching edge (with payloads injected from the
+  // parsed context).
+  const ctx = buildWorkflowContext(input, userMessage)
+  const edge = walkWorkflow(ONBOARDING_WORKFLOW, state, ctx)
+  if (!edge) {
+    // No edge matched — onboarding terminal (state=complete) or
+    // unreachable. Either way, hand off to agent runtime.
+    return { kind: "skip" }
+  }
+  return actionFromEdge(edge.action, ctx)
+}
+
+/**
+ * iter33 GAP 2 — assemble the WorkflowContext for the graph walker.
+ * All parser invocations happen here so the walker stays pure-data.
+ */
+function buildWorkflowContext(
+  input: DeterministicTurnInput,
+  userMessage: string
+): WorkflowContext {
+  const state = input.onboardingState
   const priorAskedStep = priorAskedStepFromState(state)
+  const isVent = priorAskedStep ? isVentingMessage(userMessage) : false
 
-  // Vent / distress detection — still no LLM. Simple keyword set covers
-  // the high-leverage cases; pa-safety's crisis hotline still wraps the
-  // outbound at processInboundEvent's outer layer for self-harm.
-  if (priorAskedStep && isVentingMessage(userMessage)) {
-    return { kind: "vent_ack" }
+  let tosDecision: "accept" | "decline" | "unclear" | undefined
+  if (state === "q_tos_asked") {
+    tosDecision = parseTosAnswer(userMessage)
   }
 
-  // T0 — fresh user
-  if (!state || state === "pending") return { kind: "send_first_mes" }
-
-  // iter33 P1 — first_mes_sent → ask_q_lang (zh/en/mixed). Adam-locked
-  // sequence puts lang preference at the very top so subsequent prompts
-  // can render in the user's locked language.
-  //
-  // iter33 GAP 4 escape hatch: when `PA_ONBOARDING_V33_DISABLED=true`
-  // (env-only, evaluated at module load via runtime check below),
-  // skip q_lang and fall back to iter32 sequence (first_mes_sent →
-  // q_tos_asked). Operator-flippable via Cloud Functions env update +
-  // function restart. Wider rollback (re-ordering revert) requires git
-  // revert of iter33 P2 commit ce2fa6c.
-  if (state === "first_mes_sent") {
-    if (isV33Disabled()) return { kind: "ask_q_tos" }
-    return { kind: "ask_q_lang" }
-  }
-
-  // iter33 P2 (Adam directive 2026-05-04 "1. 然后问 email, 然后等 email
-  // verification. verify 完就是 ToS, 必须接受才能继续"): reordered chain is
-  // q_lang → q_email → q_email_verify → q_tos → q_role/yoe/visa/...
-  // ToS must come AFTER email-verify so the user's mailbox owns a
-  // record of the relationship before they sign anything.
-  // Parser is permissive: ambiguous reply defaults to "mixed", never
-  // blocks the chain.
-  if (state === "q_lang_asked") return { kind: "ask_q_email" }
-
-  // iter33 GAP 4 — when V33 disabled, q_lang_asked is unreachable
-  // (dispatcher skips at first_mes_sent above). Defensive: if a user
-  // somehow has state=q_lang_asked AND V33 is disabled, advance them
-  // to q_tos_asked so they aren't stuck.
-
-  // q_email_asked → branch on parsed email (iter33: email is now the
-  // FIRST data-collection step, before ToS).
+  let parsedEmail: string | undefined
   if (state === "q_email_asked") {
     const parsed = parseUserAnswerForStep("ask_q_email", userMessage)
-    if (parsed.contactEmail) {
-      return { kind: "ask_q_email_verify_start", email: parsed.contactEmail }
-    }
-    // User skipped — Adam directive: email + verification REQUIRED before
-    // ToS. Re-ask gentler.
-    return { kind: "ask_q_email" }
+    if (parsed.contactEmail) parsedEmail = parsed.contactEmail
   }
 
-  // q_tos_asked (iter33 reorder: now AFTER verify, GATES role-probe chain)
-  // → branch on parsed answer. Accept advances to ask_q_role (probe chain),
-  // decline / unclear stays at q_tos_asked.
-  if (state === "q_tos_asked") {
-    const decision = parseTosAnswer(userMessage)
-    if (decision === "accept") return { kind: "ask_q_role" }
-    if (decision === "decline") return { kind: "ask_q_tos_decline" }
-    return { kind: "ask_q_tos_reask" }
-  }
-
-  // q_email_verifying → branch on parsed code, expired, exhausted
+  let parsedCode: string | undefined
   if (state === "q_email_verifying") {
     const code = parseEmailVerificationCode(userMessage)
-    if (code) return { kind: "verify_email_code", candidate: code }
-    return { kind: "ask_q_email_verify_retry" }
+    if (code) parsedCode = code
   }
 
-  // q_role_asked + onward — same as before
-  if (state === "q_role_asked") {
-    if (!userAnsweredStep("ask_q_role", userMessage)) {
-      return { kind: "ask_q_role" }
+  let answered = false
+  if (priorAskedStep) {
+    // ask_q_role / ask_q_yoe / ask_q_visa / ask_q_startup_pref / ask_q_location
+    if (
+      priorAskedStep === "ask_q_role" ||
+      priorAskedStep === "ask_q_yoe" ||
+      priorAskedStep === "ask_q_visa" ||
+      priorAskedStep === "ask_q_startup_pref" ||
+      priorAskedStep === "ask_q_location"
+    ) {
+      answered = userAnsweredStep(priorAskedStep, userMessage)
     }
-    return { kind: "ask_q_yoe" }
-  }
-  if (state === "q_yoe_asked") {
-    if (!userAnsweredStep("ask_q_yoe", userMessage)) return { kind: "ask_q_yoe" }
-    return { kind: "ask_q_visa" }
-  }
-  if (state === "q_visa_asked") {
-    if (!userAnsweredStep("ask_q_visa", userMessage)) return { kind: "ask_q_visa" }
-    return { kind: "ask_q_startup_pref" }
-  }
-  if (state === "q_startup_pref_asked") {
-    if (!userAnsweredStep("ask_q_startup_pref", userMessage))
-      return { kind: "ask_q_startup_pref" }
-    return { kind: "ask_q_location" }
-  }
-  if (state === "q_location_asked") {
-    if (!userAnsweredStep("ask_q_location", userMessage)) return { kind: "ask_q_location" }
-    return { kind: "ask_q_resume" }
   }
 
-  // q_resume_asked — CV gate. Hold here until parsedCandidateResumes row
-  // exists. cv-ingest pipeline writes the row after Sendblue delivers the
-  // attachment. iter33 P3: when CV is parsed, dispatch send_cv_analysis
-  // (Claire reads + summarizes + advances to complete). Previously this
-  // jumped straight to complete.
-  if (state === "q_resume_asked") {
-    if (!input.cvParsed) return { kind: "wait_for_resume_upload" }
-    return { kind: "send_cv_analysis" }
+  return {
+    userMessage,
+    cvParsed: input.cvParsed,
+    emailCaptured: input.emailCaptured,
+    emailVerified: input.emailVerified,
+    v33Disabled: isV33Disabled(),
+    isVent,
+    tosDecision,
+    parsedEmail,
+    parsedCode,
+    answered,
   }
-
-  // q_cv_analyzing — terminal pause if for some reason the analysis didn't
-  // fire (e.g. LLM unavailable on the original turn). Re-attempt on the
-  // next inbound to give the user the closure they expect.
-  if (state === "q_cv_analyzing") {
-    return { kind: "send_cv_analysis" }
-  }
-
-  // complete — all gates passed (TOS + email verified + CV parsed +
-  // analysis sent).
-  if (state === "complete") return { kind: "skip" }
-
-  return { kind: "skip" }
 }
+
+/**
+ * iter33 GAP 2 — convert an edge.action string + context into the
+ * concrete DeterministicAction object. Edges with data-carrying actions
+ * (ask_q_email_verify_start.email, verify_email_code.candidate) inject
+ * the parsed payload from ctx.
+ */
+function actionFromEdge(
+  actionKind: string,
+  ctx: WorkflowContext
+): DeterministicAction {
+  switch (actionKind) {
+    case "send_first_mes":
+      return { kind: "send_first_mes" }
+    case "ask_q_lang":
+      return { kind: "ask_q_lang" }
+    case "ask_q_tos":
+      return { kind: "ask_q_tos" }
+    case "ask_q_tos_decline":
+      return { kind: "ask_q_tos_decline" }
+    case "ask_q_tos_reask":
+      return { kind: "ask_q_tos_reask" }
+    case "ask_q_email":
+      return { kind: "ask_q_email" }
+    case "ask_q_email_verify_start":
+      return { kind: "ask_q_email_verify_start", email: ctx.parsedEmail ?? "" }
+    case "ask_q_email_verify_retry":
+      return { kind: "ask_q_email_verify_retry" }
+    case "verify_email_code":
+      return { kind: "verify_email_code", candidate: ctx.parsedCode ?? "" }
+    case "ask_q_role":
+    case "ask_q_yoe":
+    case "ask_q_visa":
+    case "ask_q_startup_pref":
+    case "ask_q_location":
+      return { kind: actionKind }
+    case "ask_q_resume":
+      return { kind: "ask_q_resume" }
+    case "wait_for_resume_upload":
+      return { kind: "wait_for_resume_upload" }
+    case "send_cv_analysis":
+      return { kind: "send_cv_analysis" }
+    case "vent_ack":
+      return { kind: "vent_ack" }
+    case "complete":
+      return { kind: "complete" }
+    default:
+      return { kind: "skip" }
+  }
+}
+
+// (iter33 GAP 2: legacy switch-based dispatcher REMOVED — see git
+// history at PR #3 commit ce67358 for the original imperative version.
+// Current dispatcher above walks ONBOARDING_WORKFLOW edges declaratively.)
 
 function priorAskedStepFromState(state: OnboardingState | undefined): OnboardingStep | undefined {
   if (state === "q_lang_asked") return "ask_q_lang"
