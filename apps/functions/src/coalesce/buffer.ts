@@ -189,7 +189,20 @@ export type IncomingMessage = {
   inboundEventId: string
   /** ISO; defaults to now() if omitted (tests inject deterministic clocks). */
   receivedAt?: string
+  /**
+   * iter33 Bug 12 fix 2026-05-05 (Adam: "deterministic 阶段消息可以恢复
+   * 的快一点"). When user is mid-onboarding (onboardingState !== complete),
+   * messages are short identifier strings (email, code, "agree") with no
+   * typing-gap absorption need. Set true to use ONBOARDING_DELAY_MS (3s)
+   * instead of DEFAULT_DELAY_MS (8s). Webhook caller looks up user state
+   * before invoking enqueueOrCoalesce.
+   */
+  isOnboarding?: boolean
 }
+
+/** Onboarding-phase coalesce delay — fast turn-around for short
+ *  identifier messages. Bug 12 fix 2026-05-05. */
+export const ONBOARDING_DELAY_MS = 3_000
 
 export type CoalesceOutcome = {
   /**
@@ -327,7 +340,12 @@ export async function coalesceTransaction(
   } = {}
 ): Promise<CoalesceOutcome> {
   const now = opts.now ?? (() => new Date())
-  const defaultDelay = opts.defaultDelayMs ?? DEFAULT_DELAY_MS
+  // iter33 Bug 12 fix 2026-05-05 — onboarding-phase messages use a 3s
+  // window (vs 8s default) so deterministic Q/A turns feel responsive.
+  // Explicit opts override (tests) wins over the per-msg flag.
+  const defaultDelay =
+    opts.defaultDelayMs ??
+    (msg.isOnboarding ? ONBOARDING_DELAY_MS : DEFAULT_DELAY_MS)
   const hardCap = opts.hardCapMs ?? HARD_CAP_MS
   const forceFireCount = opts.forceFireCount ?? FORCE_FIRE_MESSAGE_COUNT
   const rapidThresholdMs = opts.rapidThresholdMs ?? RAPID_MESSAGE_THRESHOLD_MS

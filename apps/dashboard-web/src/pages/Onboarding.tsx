@@ -62,8 +62,8 @@ const DEFAULTS: Record<OnboardingStepKey, OnboardingStepConfig> = {
   },
   ask_q_tos: {
     prompt: {
-      zh: '开聊前先说一下: 我会记一些咱聊天的事来给你推工作 / 找内推. 隐私 + 用户协议在这: https://wekruit-pa.web.app/legal — 同意就回个 "同意" 我们继续',
-      en: 'before we get into it — heads up i remember bits of our chat to surface jobs + referrals for you. privacy + terms here: https://wekruit-pa.web.app/legal — reply "agree" if cool with that and we keep going',
+      zh: '开聊前先说一下: 我会记一些咱聊天的事来给你推工作 / 找内推. 隐私 + 用户协议在这: https://wekruit-pa-landing.web.app/legal — 同意就回个 "同意" 我们继续',
+      en: 'before we get into it — heads up i remember bits of our chat to surface jobs + referrals for you. privacy + terms here: https://wekruit-pa-landing.web.app/legal — reply "agree" if cool with that and we keep going',
     },
     declinePrompt: {
       zh: "OK 不存就不存. 想聊啥都行, 但下次再聊就当全新开始, 我啥都记不住",

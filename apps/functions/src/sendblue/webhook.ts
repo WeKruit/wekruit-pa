@@ -610,6 +610,7 @@ export async function handleSendblueWebhook(
   //   because we don't know turnSeq at create time.
   let willCoalesce = false
   let resolvedUserIdForCoalesce: string | null = null
+  let isOnboardingForCoalesce = false
   if (!mediaUrl && deps.enqueueOrCoalesce && deps.coalescerDeps) {
     try {
       const lookupFn = deps.lookupUserByPhone ?? defaultLookupUserByPhone
@@ -622,6 +623,26 @@ export async function handleSendblueWebhook(
           false
         )
         willCoalesce = coalesceFlag === true
+        // iter33 Bug 12 fix 2026-05-05 (Adam: "deterministic 阶段消息可以
+        // 恢复的快一点"). Read user.onboardingState to decide whether the
+        // coalesce window should be 8s (default — typing-gap absorption
+        // for free-form chat) or 3s (deterministic — short Q/A turns).
+        // No state OR state === "complete" → free-form chat, full 8s.
+        // Anything else → onboarding deterministic phase, fast 3s.
+        try {
+          const userSnap = await deps.db
+            .collection("pa-users")
+            .doc(resolvedUserIdForCoalesce)
+            .get()
+          if (userSnap.exists) {
+            const data = userSnap.data() as { onboardingState?: string } | undefined
+            const state = data?.onboardingState
+            isOnboardingForCoalesce = Boolean(state) && state !== "complete"
+          }
+        } catch {
+          // Fall back to default 8s on any read error — non-blocking.
+          isOnboardingForCoalesce = false
+        }
       }
     } catch (preErr) {
       // Pre-decision failure → degrade to legacy path (no flag stamped).
@@ -702,6 +723,8 @@ export async function handleSendblueWebhook(
           messageHandle: normalized.messageHandle,
           body: normalized.text,
           inboundEventId: result.id,
+          // iter33 Bug 12 — deterministic phase coalesce delay = 3s.
+          isOnboarding: isOnboardingForCoalesce,
         })
         log("[coalesce][webhook] enqueued", {
           userId: resolvedUserIdForCoalesce,

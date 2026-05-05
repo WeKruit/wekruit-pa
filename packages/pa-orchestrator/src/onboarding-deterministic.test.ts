@@ -345,7 +345,8 @@ test("composeDeterministicReply: ask_q_tos includes /legal link", () => {
     DEFAULT_ONBOARDING_CONFIG,
     "hi"
   )
-  assert.match(reply, /https:\/\/wekruit-pa\.web\.app\/legal/)
+  // iter33 Bug 13 fix 2026-05-05 — legal page moved to pa-landing host.
+  assert.match(reply, /https:\/\/wekruit-pa-landing\.web\.app\/legal/)
 })
 
 test("composeDeterministicReply: ask_q_tos_decline is respectful (no pressure)", () => {

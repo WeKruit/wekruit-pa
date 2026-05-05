@@ -213,8 +213,8 @@ const Q_PROMPTS: Record<
   // the public hosting page; copy line is short enough to fit the iMessage
   // chunker. Adam-locked: do NOT paraphrase or remove the link.
   ask_q_tos: {
-    zh: "开聊前先说一下: 我会记一些咱聊天的事来给你推工作 / 找内推. 隐私 + 用户协议在这: https://wekruit-pa.web.app/legal — 同意就回个 \"同意\" 我们继续",
-    en: "before we get into it — heads up i remember bits of our chat to surface jobs + referrals for you. privacy + terms here: https://wekruit-pa.web.app/legal — reply \"agree\" if cool with that and we keep going",
+    zh: "开聊前先说一下: 我会记一些咱聊天的事来给你推工作 / 找内推. 隐私 + 用户协议在这: https://wekruit-pa-landing.web.app/legal — 同意就回个 \"同意\" 我们继续",
+    en: "before we get into it — heads up i remember bits of our chat to surface jobs + referrals for you. privacy + terms here: https://wekruit-pa-landing.web.app/legal — reply \"agree\" if cool with that and we keep going",
   },
   ask_q_role: {
     zh: "那你大概想找啥方向的活? 比如做产品、做工程、还是做研究 — 给我个大致就行",
