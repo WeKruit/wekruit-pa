@@ -11,6 +11,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import fs from "node:fs"
 import path from "node:path"
+import { fileURLToPath } from "node:url"
 
 import { detectContradiction } from "./contradiction-detector.js"
 import type {
@@ -35,10 +36,12 @@ interface Fixture {
 // ---------------------------------------------------------------------------
 
 function loadFixtures(): Fixture[] {
-  const fixturesPath = path.join(
-    process.cwd(),
-    "packages/pa-orchestrator/src/voice/memory-policy/__fixtures__/contradictions.json"
-  )
+  // Resolve relative to THIS test file, not process.cwd() — pnpm runs the
+  // test suite with cwd=packages/pa-orchestrator which would double-prefix
+  // the path. Walk up from this test file's location to find __fixtures__.
+  const __filename = fileURLToPath(import.meta.url)
+  const __dirname = path.dirname(__filename)
+  const fixturesPath = path.join(__dirname, "__fixtures__", "contradictions.json")
   const raw = fs.readFileSync(fixturesPath, "utf8")
   const parsed = JSON.parse(raw) as Fixture[]
   return parsed

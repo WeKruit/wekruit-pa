@@ -18,7 +18,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import path from "node:path"
-import { pathToFileURL } from "node:url"
+import { pathToFileURL, fileURLToPath } from "node:url"
 import type { Firestore } from "firebase-admin/firestore"
 
 import { runMemoryPolicy, trackAdvice } from "./index.js"
@@ -121,9 +121,16 @@ interface SyntheticPersona {
 }
 
 async function loadCorpus(): Promise<SyntheticPersona[]> {
-  // Resolve to absolute file:// URL so dynamic import works regardless of cwd.
+  // Resolve relative to monorepo root, NOT process.cwd(). When pnpm runs
+  // tests with cwd=packages/pa-orchestrator, process.cwd()-based path
+  // resolved to packages/pa-orchestrator/.planning/... (wrong). Walk up
+  // from this test file's location: src/voice/memory-policy/*.test.ts
+  // → ../../../../ → packages/pa-orchestrator → ../../ → monorepo root.
+  const __filename = fileURLToPath(import.meta.url)
+  const __dirname = path.dirname(__filename)
+  const monoroot = path.resolve(__dirname, "../../../../..")
   const corpusPath = path.join(
-    process.cwd(),
+    monoroot,
     ".planning/phases/34-baseline-measurement/synthetic-corpus.mjs"
   )
   const corpusUrl = pathToFileURL(corpusPath).href

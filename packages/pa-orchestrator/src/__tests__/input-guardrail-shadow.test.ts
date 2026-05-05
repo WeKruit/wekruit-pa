@@ -63,7 +63,9 @@ function makeStore(captures: Captures, opts: { allowSafety: boolean }): Orchestr
     markEventRunning: async () => undefined,
     markEventSucceeded: async () => undefined,
     markEventFailed: async () => undefined,
-    createTurn: async () => "turn-shadow",
+    // iter32+ tightened guardrail-shadow ctx schema to require turnId be a
+    // real UUID — return one here so the shadow chain validation passes.
+    createTurn: async () => "00000000-0000-0000-0000-000000000001",
     updateTurn: async () => undefined,
     appendMessage: async (m) => {
       if (m.role === "assistant") captures.appendedAssistantBodies.push(m.body)

@@ -262,6 +262,11 @@ test("vqc-F3: user mixed + reply pure-zh + register token absent → mirror appe
   const store = makeStore(captures, llmBody)
 
   process.env.paHumanizeRuntimeEnabled = "true"
+  // ITER 16 (Adam decision) — mixed-register mirror is opt-in via the FORCE
+  // env. Default is disabled because "(re: swe)" appendix felt artificial.
+  // This test asserts the FORCE path still works for the A/B-style validation
+  // case where the appendix is intentional.
+  process.env.PA_MIXED_REGISTER_MIRROR_FORCE = "true"
   delete process.env.PA_MIXED_REGISTER_MIRROR_DISABLED
   process.env.PA_DETECTORS_ENABLED = "false"
   process.env.PA_MEMORY_POLICY_ENABLED = "false"
@@ -278,6 +283,7 @@ test("vqc-F3: user mixed + reply pure-zh + register token absent → mirror appe
     )
   } finally {
     delete process.env.paHumanizeRuntimeEnabled
+    delete process.env.PA_MIXED_REGISTER_MIRROR_FORCE
     delete process.env.PA_DETECTORS_ENABLED
     delete process.env.PA_MEMORY_POLICY_ENABLED
     delete process.env.PA_FSM_ENABLED
