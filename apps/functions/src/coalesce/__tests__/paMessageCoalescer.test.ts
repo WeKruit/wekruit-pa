@@ -905,3 +905,251 @@ describe("paMessageCoalescer — case 13: continuation-marker bumps delay regard
     assert.equal(isContinuationMessage("  还是不要了"), true, "leading ws trimmed")
   })
 })
+
+// ──────────────────────────────────────────────────────────────────
+// iter33 Bug 9 fix 2026-05-05 — Tapback ❤️ randomization tests.
+// Adam ("we dont need to like all the message, give it a randomized
+// 30-40% percentage").
+// ──────────────────────────────────────────────────────────────────
+
+// Helper — seed a pending buffer + run processCoalescedTurn so the
+// markFiredTransaction (pending→fired flip) actually executes.
+async function setupAndProcess(
+  configure: (deps: CoalescerDeps) => void,
+  msgHandle = "msg-last"
+): Promise<{
+  reactionCalls: Array<{ messageHandle: string; reaction: string }>
+  status: string
+}> {
+  const t0 = new Date("2026-05-05T12:00:00Z")
+  const reactionCalls: Array<{ messageHandle: string; reaction: string }> = []
+  const { deps } = buildDeps({ now: () => t0, reactionCalls })
+  configure(deps)
+  await enqueueOrCoalesce(deps, {
+    ...BASE_MSG,
+    messageHandle: msgHandle,
+    body: "hi",
+    inboundEventId: "inb-1",
+    receivedAt: t0.toISOString(),
+  })
+  const result = await processCoalescedTurn(deps, BASE_MSG.userId, 1)
+  return { reactionCalls, status: result.status }
+}
+
+describe("iter33 Bug 9: love-tapback rate gate", () => {
+  it("rng=0.0 + p=0.35 → tapback FIRES", async () => {
+    const { reactionCalls, status } = await setupAndProcess((deps) => {
+      deps.loveTapbackProbability = 0.35
+      deps.rng = () => 0.0
+    })
+    assert.equal(status, "fired")
+    assert.equal(reactionCalls.length, 1, "reaction MUST fire when rng < probability")
+    assert.equal(reactionCalls[0].reaction, "love")
+  })
+
+  it("rng=0.99 + p=0.35 → tapback SKIPPED", async () => {
+    const { reactionCalls, status } = await setupAndProcess((deps) => {
+      deps.loveTapbackProbability = 0.35
+      deps.rng = () => 0.99
+    })
+    assert.equal(status, "fired")
+    assert.equal(reactionCalls.length, 0, "reaction MUST NOT fire when rng >= probability")
+  })
+
+  it("100 trials at p=0.35 → fires within [25%, 45%] band", async () => {
+    const trials = 100
+    const probability = 0.35
+    let fires = 0
+    let s = 49297
+    const sharedRng = () => {
+      s = (s * 1103515245 + 12345) & 0x7fffffff
+      return s / 0x7fffffff
+    }
+    for (let i = 0; i < trials; i++) {
+      const { reactionCalls } = await setupAndProcess(
+        (deps) => {
+          deps.loveTapbackProbability = probability
+          deps.rng = sharedRng
+        },
+        `msg-${i}`
+      )
+      if (reactionCalls.length === 1) fires++
+    }
+    const rate = fires / trials
+    assert.ok(
+      rate >= 0.25 && rate <= 0.45,
+      `expected rate ~0.35, got ${rate.toFixed(2)} (${fires}/${trials})`
+    )
+  })
+
+  it("default probability = 0.35 when not specified", async () => {
+    const { reactionCalls } = await setupAndProcess((deps) => {
+      // Don't set loveTapbackProbability → falls back to 0.35
+      deps.rng = () => 0.34 // just below default threshold
+    })
+    assert.equal(reactionCalls.length, 1, "default p=0.35: rng=0.34 → fires")
+  })
+})
+
+// ──────────────────────────────────────────────────────────────────
+// iter33 Bug 8 fix 2026-05-05 — orchestratorDeps wiring test.
+// Adam ("i dont see verification coming after I gave the email" — coalescer
+// path was building orchestrator with empty deps → Mailgun no-op).
+// ──────────────────────────────────────────────────────────────────
+
+describe("iter33 Bug 8: orchestratorDeps passed through claimAndProcessInboundEvent", () => {
+  it("passes orchestratorDeps as 4th arg (NOT empty default)", async () => {
+    let capturedDeps: unknown = "uncalled"
+    const t0 = new Date("2026-05-05T12:00:00Z")
+    const { deps } = buildDeps({ now: () => t0 })
+    // Inject a fake orchestratorDeps object that we'll assert on
+    const sentinel = {
+      sendVerificationEmail: async () => ({ rawCode: "654321", sentAt: "x", expiresAt: "y" }),
+    }
+    deps.orchestratorDeps = sentinel as never
+    // Replace the claimer to capture what deps it receives
+    deps.claimAndProcessInboundEvent = async (_db, _eventId, _log, dps) => {
+      capturedDeps = dps
+      return 1
+    }
+    await enqueueOrCoalesce(deps, {
+      ...BASE_MSG,
+      messageHandle: "msg-1",
+      body: "hi",
+      inboundEventId: "inb-1",
+      receivedAt: t0.toISOString(),
+    })
+    await processCoalescedTurn(deps, BASE_MSG.userId, 1)
+    assert.strictEqual(
+      capturedDeps,
+      sentinel,
+      "orchestratorDeps MUST be forwarded to claimer (not empty {})"
+    )
+  })
+
+  it("falls back to {} when orchestratorDeps not provided", async () => {
+    let capturedDeps: unknown = "uncalled"
+    const t0 = new Date("2026-05-05T12:00:00Z")
+    const { deps } = buildDeps({ now: () => t0 })
+    delete deps.orchestratorDeps
+    deps.claimAndProcessInboundEvent = async (_db, _eventId, _log, dps) => {
+      capturedDeps = dps
+      return 1
+    }
+    await enqueueOrCoalesce(deps, {
+      ...BASE_MSG,
+      messageHandle: "msg-1",
+      body: "hi",
+      inboundEventId: "inb-1",
+      receivedAt: t0.toISOString(),
+    })
+    await processCoalescedTurn(deps, BASE_MSG.userId, 1)
+    assert.deepEqual(capturedDeps, {}, "absent orchestratorDeps falls back to {}")
+  })
+})
+
+// ──────────────────────────────────────────────────────────────────
+// iter33 Bug 8 — REGRESSION GUARD for the actual prod path.
+// Adam 2026-05-05: "why is this not tested..? like just sending email no
+// response, it fking happy path not even the edge cases."
+//
+// Root cause of the gap: prior tests stubbed claimAndProcessInboundEvent
+// AND used a fake makeOrchestratorDeps. Nobody asserted on the SHAPE
+// of what buildCoalescerDeps() actually returns — and that's where the
+// bug lived (it called createFirestoreOrchestratorStore with NO deps,
+// so sendVerificationEmail was undefined → Mailgun no-op → onboarding
+// dropped to "got it — email saved" complete state).
+//
+// This test exercises buildCoalescerDeps() with MAILGUN_* env vars set
+// (matching the prod CF runtime where the secret is bound). Asserts
+// the returned deps.orchestratorDeps has sendVerificationEmail wired.
+// If that ever regresses, this fails immediately — no need to wait for
+// Adam to live-test and find the silent failure.
+// ──────────────────────────────────────────────────────────────────
+
+describe("iter33 Bug 8 REGRESSION: buildCoalescerDeps wires Mailgun in orchestratorDeps", () => {
+  it("orchestratorDeps.sendVerificationEmail is non-null when MAILGUN_* env is set", async () => {
+    // Save + stub env
+    const saved = {
+      MAILGUN_API_KEY: process.env.MAILGUN_API_KEY,
+      MAILGUN_DOMAIN: process.env.MAILGUN_DOMAIN,
+      MAILGUN_FROM: process.env.MAILGUN_FROM,
+      MAILGUN_REGION: process.env.MAILGUN_REGION,
+      CLOUD_TASKS_PROJECT: process.env.CLOUD_TASKS_PROJECT,
+      CLOUD_TASKS_LOCATION: process.env.CLOUD_TASKS_LOCATION,
+      CLOUD_TASKS_QUEUE: process.env.CLOUD_TASKS_QUEUE,
+      CLOUD_TASKS_TARGET_URL: process.env.CLOUD_TASKS_TARGET_URL,
+      CLOUD_TASKS_INVOKER_SA: process.env.CLOUD_TASKS_INVOKER_SA,
+    }
+    process.env.MAILGUN_API_KEY = "test-key-stub"
+    process.env.MAILGUN_DOMAIN = "wekruit.com"
+    process.env.MAILGUN_FROM = "Claire <claire@wekruit.com>"
+    process.env.MAILGUN_REGION = "us"
+    process.env.PA_COALESCE_PROJECT_ID = "wekruit-5f89b"
+    process.env.PA_COALESCE_LOCATION = "us-central1"
+    process.env.PA_COALESCE_QUEUE = "pa-coalesce"
+    process.env.PA_COALESCE_TARGET_URL = "https://example.run.app/x"
+    process.env.PA_COALESCE_INVOKER_SA = "test-sa@example.iam.gserviceaccount.com"
+
+    try {
+      // Import lazily so the env stubbing above takes effect
+      const { buildCoalescerDeps } = await import("../../index.js")
+      const deps = buildCoalescerDeps()
+      assert.ok(deps.orchestratorDeps, "buildCoalescerDeps MUST populate orchestratorDeps")
+      assert.equal(
+        typeof deps.orchestratorDeps.sendVerificationEmail,
+        "function",
+        "orchestratorDeps.sendVerificationEmail MUST be a function (was undefined → Bug 8)"
+      )
+    } finally {
+      // Restore env
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k]
+        else process.env[k] = v
+      }
+    }
+  })
+
+  it("orchestratorDeps still defined (with sendVerificationEmail=undefined) when MAILGUN_* missing — graceful degrade", async () => {
+    const saved = {
+      MAILGUN_API_KEY: process.env.MAILGUN_API_KEY,
+      MAILGUN_DOMAIN: process.env.MAILGUN_DOMAIN,
+      MAILGUN_FROM: process.env.MAILGUN_FROM,
+      MAILGUN_REGION: process.env.MAILGUN_REGION,
+      CLOUD_TASKS_PROJECT: process.env.CLOUD_TASKS_PROJECT,
+      CLOUD_TASKS_LOCATION: process.env.CLOUD_TASKS_LOCATION,
+      CLOUD_TASKS_QUEUE: process.env.CLOUD_TASKS_QUEUE,
+      CLOUD_TASKS_TARGET_URL: process.env.CLOUD_TASKS_TARGET_URL,
+      CLOUD_TASKS_INVOKER_SA: process.env.CLOUD_TASKS_INVOKER_SA,
+    }
+    delete process.env.MAILGUN_API_KEY
+    delete process.env.MAILGUN_DOMAIN
+    delete process.env.MAILGUN_FROM
+    delete process.env.MAILGUN_REGION
+    process.env.PA_COALESCE_PROJECT_ID = "wekruit-5f89b"
+    process.env.PA_COALESCE_LOCATION = "us-central1"
+    process.env.PA_COALESCE_QUEUE = "pa-coalesce"
+    process.env.PA_COALESCE_TARGET_URL = "https://example.run.app/x"
+    process.env.PA_COALESCE_INVOKER_SA = "test-sa@example.iam.gserviceaccount.com"
+
+    try {
+      const { buildCoalescerDeps } = await import("../../index.js")
+      const deps = buildCoalescerDeps()
+      // Object exists (no throw)
+      assert.ok(deps.orchestratorDeps, "orchestratorDeps must be defined even on Mailgun fallback")
+      // sendVerificationEmail returns undefined (orchestrator falls back to
+      // no-transport branch with "got it — email saved" — same behavior the
+      // bug exhibited, but now it's INTENTIONAL not silent).
+      assert.equal(
+        deps.orchestratorDeps.sendVerificationEmail,
+        undefined,
+        "MAILGUN_* missing → sendVerificationEmail intentionally undefined"
+      )
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k]
+        else process.env[k] = v
+      }
+    }
+  })
+})

@@ -63,11 +63,28 @@ export type CoalescerDeps = {
   sendReaction?: (input: SendReactionInput) => Promise<unknown>
   /** Orchestrator entry. Injected for tests; default = pa-orchestrator. */
   claimAndProcessInboundEvent?: typeof claimAndProcessInboundEvent
+  /**
+   * iter33 Bug 8 fix 2026-05-05 — orchestrator-store deps (Mailgun
+   * sendVerificationEmail, etc.). Without this, claimAndProcessInboundEvent
+   * builds a bare FirestoreOrchestratorStore with NO Mailgun callback →
+   * email-verify path skipped entirely → user goes straight to "got it —
+   * email saved" complete state. Wired in apps/functions/src/index.ts via
+   * makeOrchestratorDeps().
+   */
+  orchestratorDeps?: Parameters<typeof claimAndProcessInboundEvent>[3]
   /** Broker entry for synthetic event creation. Injected for tests. */
   createInboundEvent?: typeof createInboundEvent
   /** Inject for tests. Default Date.now. */
   now?: () => Date
   log?: (...args: unknown[]) => void
+  /**
+   * iter33 Bug 9 fix 2026-05-05 (Adam: "we dont need to like all the
+   * message, give it a randomized 30-40% percentage"). Probability that
+   * the per-turn ❤️ tapback fires. Injected for tests; default 0.35.
+   */
+  loveTapbackProbability?: number
+  /** Inject for tests. Default Math.random. */
+  rng?: () => number
 }
 
 export type EnqueueOutcome = {
@@ -378,7 +395,19 @@ export async function processCoalescedTurn(
   //    received message, not first. Failure is non-fatal (R5: send-reaction
   //    has its own breaker; 4xx on expired handle is expected for very-old
   //    messages but doesn't matter for the ~4s coalesce window).
-  if (deps.sendReaction && fired.lastMessageId) {
+  //
+  //    iter33 Bug 9 fix 2026-05-05 — Adam ("we dont need to like all the
+  //    message, give it a randomized 30-40% percentage is good"). Old
+  //    behavior: every coalesced turn fired ❤️ unconditionally → spammy.
+  //    New: 35% probability gate (configurable via deps.loveTapbackProbability
+  //    so tests can pin it). Skip-decision logged so dashboards can verify
+  //    the rate matches expectation over a sample window.
+  const loveProbability = typeof deps.loveTapbackProbability === "number"
+    ? Math.max(0, Math.min(1, deps.loveTapbackProbability))
+    : 0.35
+  const rng = deps.rng ?? Math.random
+  const shouldLove = rng() < loveProbability
+  if (deps.sendReaction && fired.lastMessageId && shouldLove) {
     try {
       await deps.sendReaction({
         to: fired.fromNumber,
@@ -389,6 +418,7 @@ export async function processCoalescedTurn(
         userId,
         turnSeq,
         lastMessageId: fired.lastMessageId,
+        probability: loveProbability,
       })
     } catch (err) {
       log("[coalesce] tap-back FAILED (non-fatal — reply still proceeds)", {
@@ -397,6 +427,13 @@ export async function processCoalescedTurn(
         err: err instanceof Error ? err.message : String(err),
       })
     }
+  } else if (deps.sendReaction && fired.lastMessageId) {
+    log("[coalesce] tap-back SKIPPED (rng gate)", {
+      userId,
+      turnSeq,
+      lastMessageId: fired.lastMessageId,
+      probability: loveProbability,
+    })
   }
 
   // 2. Resolve (or create) the iMessage session BEFORE synthesizing the
@@ -493,8 +530,16 @@ export async function processCoalescedTurn(
 
   // 4. Drive orchestrator → ONE reply. Use the same path onPaInbound uses
   //    so we get identical lease + claim semantics.
+  //
+  //    iter33 Bug 8 fix 2026-05-05 — pass orchestratorDeps so the
+  //    Mailgun sendVerificationEmail callback survives into
+  //    createFirestoreOrchestratorStore. Old call site was
+  //    `claimer(deps.db, created.id)` (2 args) → orchestrator built
+  //    with empty deps → email-verify path no-op → user skipped to
+  //    complete with bare "got it — email saved".
   const claimer = deps.claimAndProcessInboundEvent ?? claimAndProcessInboundEvent
-  await claimer(deps.db, created.id)
+  const orchLog = (...a: unknown[]) => log("[coalesce/orchestrator]", ...a)
+  await claimer(deps.db, created.id, orchLog, deps.orchestratorDeps ?? {})
 
   // 5. Mark all original per-message inbound rows as "coalesced" — purely
   //    for housekeeping (status visible in dashboards). Best-effort.
