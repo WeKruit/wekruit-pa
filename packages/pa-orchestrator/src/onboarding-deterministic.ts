@@ -207,15 +207,37 @@ export function isV33Disabled(): boolean {
 // Lang detect (mirrors onboarding.ts pickLang — kept local so the
 // deterministic module has zero external coupling).
 // ────────────────────────────────────────────────────────────────────
-export function pickLang(userMessage: string | undefined): "zh" | "en" {
+export function pickLang(
+  userMessage: string | undefined,
+  fallback: "zh" | "en" = "zh",
+): "zh" | "en" {
   // iter32: strip email addresses + URLs before counting so a zh user
   // saying "我邮箱是 adam@wekruit.com" doesn't tip into EN due to the
   // ASCII-heavy email tail. Same for "看 https://example.com" etc.
-  const stripped = (userMessage ?? "")
+  const raw = userMessage ?? ""
+  const stripped = raw
     .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "")
     .replace(/https?:\/\/\S+/gi, "")
   const text = stripped.replace(/\s+/g, "")
-  if (!text) return "zh"
+  if (!text) {
+    // iter33 Bug 7 fix (sim-walkthrough C/D/E exposed): user msg was
+    // ENTIRELY email/URL ("alex@example.com"). Old behavior returned
+    // "zh" hardcoded — meant en-speaking users got zh verify-start
+    // template. Now: scan raw msg for CJK glyphs first; if none and
+    // raw has ASCII letters, treat as en; else fall back to caller's
+    // hint (defaults zh for backward compat).
+    const hasCjk = [...raw].some((ch) => {
+      const code = ch.codePointAt(0) ?? 0
+      return (
+        (code >= 0x4e00 && code <= 0x9fff) ||
+        (code >= 0x3400 && code <= 0x4dbf) ||
+        (code >= 0xf900 && code <= 0xfaff)
+      )
+    })
+    if (hasCjk) return "zh"
+    if (/[a-z]/i.test(raw)) return "en"
+    return fallback
+  }
   let cjk = 0
   for (const ch of text) {
     const code = ch.codePointAt(0) ?? 0
@@ -663,7 +685,14 @@ export type RunDeterministicTurnInput = {
     id: string
     phoneE164: string
     onboardingState?: OnboardingState
-    statedPreferences?: { contactEmail?: string; contactEmailVerifiedAt?: string }
+    statedPreferences?: {
+      contactEmail?: string
+      contactEmailVerifiedAt?: string
+      // iter33 Bug 7 — preferredLang as pickLang fallback when current msg
+      // strips empty (email-only / URL-only). zh / en / mixed (mixed
+      // demoted to zh fallback in runner — most conservative).
+      preferredLang?: "zh" | "en" | "mixed"
+    }
   }
   cvParsed: boolean
   agent: AgentDef
@@ -685,6 +714,17 @@ export async function runDeterministicOnboardingTurn(
 ): Promise<RunDeterministicTurnResult> {
   const { event, store, turnId, onboardingUser, cvParsed } = input
   const config = await loadOnboardingConfig(store.db)
+  // iter33 Bug 7 fix — when user msg is email-only / URL-only / empty,
+  // pickLang has no signal and would otherwise default to "zh", flipping
+  // en-speaking users into a zh template. Pass the user's stored
+  // preferredLang as fallback so the verify-start prompt etc. honors
+  // the lang they answered q_lang_asked with. "mixed" → "zh" (legacy
+  // default; kept conservative). Helper keeps call sites compact.
+  const prefLang = onboardingUser.statedPreferences?.preferredLang
+  const langFallback: "zh" | "en" =
+    prefLang === "zh" ? "zh" : prefLang === "en" ? "en" : "zh"
+  const langFor = (msg: string | undefined): "zh" | "en" =>
+    pickLang(msg, langFallback)
   const action = resolveDeterministicAction(
     {
       onboardingState: onboardingUser.onboardingState,
@@ -721,7 +761,7 @@ export async function runDeterministicOnboardingTurn(
     if (!challenge) {
       // shouldn't happen — if we're at q_email_verifying the doc must
       // exist. Recover gracefully by re-asking.
-      await sendDirect(input, config.ask_q_email_verify!.waitingPrompt![pickLang(event.body)])
+      await sendDirect(input, config.ask_q_email_verify!.waitingPrompt![langFor(event.body)])
       return { handled: true, action }
     }
     const nowMs = Date.now()
@@ -755,7 +795,7 @@ export async function runDeterministicOnboardingTurn(
           })
         }
       }
-      const lang = pickLang(event.body)
+      const lang = langFor(event.body)
       if (reissued) {
         // Persist via applyOnboarding with emailVerification opt — same
         // step (q_email_verifying), just refreshed challenge fields.
@@ -800,7 +840,7 @@ export async function runDeterministicOnboardingTurn(
     // Hash compare
     const { createHash } = await import("node:crypto")
     const candidateHash = createHash("sha256").update(action.candidate).digest("hex")
-    const lang = pickLang(event.body)
+    const lang = langFor(event.body)
     if (candidateHash === challenge.codeHash) {
       // iter33 P2 — advance to q_tos_asked (NOT complete, NOT q_role).
       // Adam-locked sequence: email-verify clears → ToS gate is the next
@@ -854,7 +894,7 @@ export async function runDeterministicOnboardingTurn(
         priorAskedStep: "ask_q_email",
         priorUserReply: event.body,
       })
-      const lang = pickLang(event.body)
+      const lang = langFor(event.body)
       const msg = lang === "zh" ? "收到, 邮箱记下了" : "got it — email saved"
       await sendDirect(input, msg)
       store.log("pa.onboarding.deterministic.email_verify_skipped_no_transport", {
@@ -905,7 +945,7 @@ export async function runDeterministicOnboardingTurn(
         priorAskedStep: "ask_q_email",
         priorUserReply: event.body,
       })
-      const lang = pickLang(event.body)
+      const lang = langFor(event.body)
       const msg = lang === "zh" ? "收到, 邮箱记下了" : "got it — email saved"
       await sendDirect(input, msg)
       return { handled: true, action }
@@ -915,7 +955,7 @@ export async function runDeterministicOnboardingTurn(
       priorUserReply: event.body,
       emailVerification: challenge,
     })
-    const phrase = config.ask_q_email_verify!.prompt[pickLang(event.body)]
+    const phrase = config.ask_q_email_verify!.prompt[langFor(event.body)]
     await sendDirect(input, phrase)
     return { handled: true, action }
   }
@@ -928,7 +968,7 @@ export async function runDeterministicOnboardingTurn(
   //      LLM hook is unavailable so onboarding still completes.
   // State advances to "complete" (P4 will interpose a job-rec push here).
   if (action.kind === "send_cv_analysis") {
-    const lang = pickLang(event.body)
+    const lang = langFor(event.body)
     const ackMsg =
       lang === "zh"
         ? "OK 让我看一下你简历, 等我一下下"
@@ -1022,7 +1062,7 @@ export async function runDeterministicOnboardingTurn(
       priorUserReply: event.body,
       tosAcceptedVersion: tosVersion,
     })
-    await sendDirect(input, config.ask_q_role!.prompt[pickLang(event.body)])
+    await sendDirect(input, config.ask_q_role!.prompt[langFor(event.body)])
     store.log("pa.onboarding.deterministic.tos_accepted", {
       userId: event.userId,
       turnId,
@@ -1039,7 +1079,7 @@ export async function runDeterministicOnboardingTurn(
       tosDeclined: true,
       suspendedForVent: true, // re-use suspension semantics: state stays
     })
-    const phrase = config.ask_q_tos!.declinePrompt![pickLang(event.body)]
+    const phrase = config.ask_q_tos!.declinePrompt![langFor(event.body)]
     await sendDirect(input, phrase)
     store.log("pa.onboarding.deterministic.tos_declined", {
       userId: event.userId,
@@ -1055,14 +1095,14 @@ export async function runDeterministicOnboardingTurn(
       priorUserReply: event.body,
       suspendedForVent: true,
     })
-    const phrase = config.ask_q_tos!.reaskPrompt![pickLang(event.body)]
+    const phrase = config.ask_q_tos!.reaskPrompt![langFor(event.body)]
     await sendDirect(input, phrase)
     return { handled: true, action }
   }
 
   // Vent / distress mid-onboarding — short ack + state stays.
   if (action.kind === "vent_ack") {
-    await sendDirect(input, VENT_ACK[pickLang(event.body)])
+    await sendDirect(input, VENT_ACK[langFor(event.body)])
     store.log("pa.onboarding.deterministic.vent_suspended", {
       userId: event.userId,
       turnId,
@@ -1073,7 +1113,7 @@ export async function runDeterministicOnboardingTurn(
 
   // wait_for_resume_upload — CV gate, send waitingPrompt, no advance.
   if (action.kind === "wait_for_resume_upload") {
-    await sendDirect(input, config.ask_q_resume!.waitingPrompt![pickLang(event.body)])
+    await sendDirect(input, config.ask_q_resume!.waitingPrompt![langFor(event.body)])
     store.log("pa.onboarding.deterministic.cv_wait", {
       userId: event.userId,
       turnId,
@@ -1083,7 +1123,7 @@ export async function runDeterministicOnboardingTurn(
 
   // ask_q_email_verify_retry — wrong code branch (no code parsed).
   if (action.kind === "ask_q_email_verify_retry") {
-    await sendDirect(input, config.ask_q_email_verify!.waitingPrompt![pickLang(event.body)])
+    await sendDirect(input, config.ask_q_email_verify!.waitingPrompt![langFor(event.body)])
     return { handled: true, action }
   }
 

@@ -414,6 +414,41 @@ test("pickLang: mixed at threshold → zh when >=30% CJK", () => {
   assert.equal(pickLang("ok 你好"), "zh")
 })
 
+// iter33 Bug 7 fix — sim-walkthrough C/D/E exposed: when user msg is
+// ENTIRELY email/URL ("alex@example.com"), strip leaves empty text and
+// old code returned "zh" hardcoded → en-speaking users got zh
+// verify-start template. Now: scan raw msg for CJK first, then ASCII
+// letters, then fall back to caller's hint.
+test("pickLang Bug 7: email-only msg → en (raw has [a-z] no CJK)", () => {
+  assert.equal(pickLang("alex@example.com"), "en")
+  assert.equal(pickLang("user+tag@gmail.com"), "en")
+})
+
+test("pickLang Bug 7: zh user emailing → zh (raw has CJK)", () => {
+  assert.equal(pickLang("我邮箱是 adam@wekruit.com"), "zh")
+})
+
+test("pickLang Bug 7: URL-only msg → en", () => {
+  assert.equal(pickLang("https://example.com/path"), "en")
+})
+
+test("pickLang Bug 7: fallback param honored when stripped+raw have no signal", () => {
+  // Empty / whitespace-only → strip empty + raw has no [a-z] no CJK →
+  // fallback wins.
+  assert.equal(pickLang("", "en"), "en")
+  assert.equal(pickLang("", "zh"), "zh")
+  assert.equal(pickLang("   ", "en"), "en")
+  assert.equal(pickLang("   ", "zh"), "zh")
+  assert.equal(pickLang(""), "zh") // default fallback = zh (back-compat)
+})
+
+test("pickLang Bug 7: strip-empty + raw [a-z] → en (no fallback consulted)", () => {
+  // Email-only msg with caller passing "zh" fallback — but raw has [a-z]
+  // so en wins over fallback. This is the actual sim case: en user typed
+  // "alex@example.com" and stored preferredLang was undefined / "mixed".
+  assert.equal(pickLang("alex@example.com", "zh"), "en")
+})
+
 // ────────────────────────────────────────────────────────────────────
 // loadOnboardingConfig — Firestore override merge
 // ────────────────────────────────────────────────────────────────────
