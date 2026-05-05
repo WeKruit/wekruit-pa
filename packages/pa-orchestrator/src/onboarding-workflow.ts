@@ -267,11 +267,25 @@ export const ONBOARDING_WORKFLOW: OnboardingWorkflow = {
       description: "Role captured → YoE",
     },
     {
+      from: "q_role_asked",
+      to: "q_role_asked",
+      action: "ask_q_role",
+      condition: { kind: "default" },
+      description: "Role unclear → re-ask same",
+    },
+    {
       from: "q_yoe_asked",
       to: "q_visa_asked",
       action: "ask_q_visa",
       condition: { kind: "parsedAnswer", parser: "ask_q_yoe", matches: "answered" },
       description: "YoE captured → visa",
+    },
+    {
+      from: "q_yoe_asked",
+      to: "q_yoe_asked",
+      action: "ask_q_yoe",
+      condition: { kind: "default" },
+      description: "YoE unclear → re-ask same",
     },
     {
       from: "q_visa_asked",
@@ -281,6 +295,13 @@ export const ONBOARDING_WORKFLOW: OnboardingWorkflow = {
       description: "Visa captured → startup pref",
     },
     {
+      from: "q_visa_asked",
+      to: "q_visa_asked",
+      action: "ask_q_visa",
+      condition: { kind: "default" },
+      description: "Visa unclear → re-ask same",
+    },
+    {
       from: "q_startup_pref_asked",
       to: "q_location_asked",
       action: "ask_q_location",
@@ -288,11 +309,25 @@ export const ONBOARDING_WORKFLOW: OnboardingWorkflow = {
       description: "Startup pref captured → location",
     },
     {
+      from: "q_startup_pref_asked",
+      to: "q_startup_pref_asked",
+      action: "ask_q_startup_pref",
+      condition: { kind: "default" },
+      description: "Startup pref unclear → re-ask same",
+    },
+    {
       from: "q_location_asked",
       to: "q_resume_asked",
       action: "ask_q_resume",
       condition: { kind: "parsedAnswer", parser: "ask_q_location", matches: "answered" },
       description: "Location captured → CV ask",
+    },
+    {
+      from: "q_location_asked",
+      to: "q_location_asked",
+      action: "ask_q_location",
+      condition: { kind: "default" },
+      description: "Location unclear → re-ask same",
     },
     {
       from: "q_resume_asked",
@@ -350,6 +385,124 @@ export function incomingEdges(
   state: OnboardingState | "complete"
 ): WorkflowEdge[] {
   return workflow.edges.filter((e) => e.to === state)
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Graph executor (iter33 GAP 2)
+// ────────────────────────────────────────────────────────────────────
+
+/**
+ * iter33 GAP 2 — workflow context shape consumed by the graph executor
+ * to evaluate edge conditions. Pure-data: tests can construct a context
+ * literal without booting Firestore.
+ */
+export type WorkflowContext = {
+  userMessage: string
+  cvParsed: boolean
+  emailCaptured: boolean
+  emailVerified: boolean
+  v33Disabled: boolean
+  /** True when the user message is a vent / distress signal. */
+  isVent: boolean
+  /** Result of parseTosAnswer(userMessage); undefined when not at q_tos_asked. */
+  tosDecision?: "accept" | "decline" | "unclear"
+  /** Captured email when parser succeeded at q_email_asked. */
+  parsedEmail?: string
+  /** Captured 6-digit code at q_email_verifying. */
+  parsedCode?: string
+  /** True when userAnsweredStep returned true for the current state's parser. */
+  answered: boolean
+}
+
+/**
+ * Walk outgoing edges of `state` in declared order; return the first edge
+ * whose condition evaluates true given `ctx`. Falls back to a `default`
+ * edge if present. Returns `null` when no edge matches (caller emits
+ * `skip` action — onboarding terminal).
+ *
+ * Edge precedence (matches dispatcher's switch order):
+ *   1. ventDetected (when ctx.isVent && state has a vent self-loop)
+ *   2. parsedAnswer with specific match
+ *   3. externalSignal (cvParsed, emailCaptured, etc.)
+ *   4. default (always last)
+ */
+export function walkWorkflow(
+  workflow: OnboardingWorkflow,
+  state: OnboardingState | "pending" | undefined,
+  ctx: WorkflowContext
+): WorkflowEdge | null {
+  const from = state ?? "pending"
+  const edges = workflow.edges.filter((e) => e.from === from)
+  if (edges.length === 0) return null
+
+  // 1) vent — short-circuits ANY parser/default edge.
+  if (ctx.isVent) {
+    const ventEdge = edges.find((e) => e.condition.kind === "ventDetected")
+    if (ventEdge) return ventEdge
+  }
+
+  // 2) parsedAnswer — first matching edge wins.
+  for (const e of edges) {
+    if (e.condition.kind !== "parsedAnswer") continue
+    if (matchParsedAnswer(e.condition, ctx)) return e
+  }
+
+  // 3) externalSignal — cvParsed / emailCaptured / etc.
+  for (const e of edges) {
+    if (e.condition.kind !== "externalSignal") continue
+    if (matchExternalSignal(e.condition, ctx)) return e
+  }
+
+  // 4) default — last resort.
+  const def = edges.find((e) => e.condition.kind === "default")
+  if (def) return def
+
+  return null
+}
+
+function matchParsedAnswer(
+  cond: { kind: "parsedAnswer"; parser: string; matches: string },
+  ctx: WorkflowContext
+): boolean {
+  const { parser, matches } = cond
+  if (parser === "ask_q_tos") {
+    if (matches === "accept") return ctx.tosDecision === "accept"
+    if (matches === "decline") return ctx.tosDecision === "decline"
+    if (matches === "ambiguous") return ctx.tosDecision === "unclear"
+  }
+  if (parser === "ask_q_email") {
+    if (matches === "valid_email") return Boolean(ctx.parsedEmail)
+    if (matches === "no_email") return !ctx.parsedEmail
+  }
+  if (parser === "ask_q_email_verify") {
+    if (matches === "code_correct") return Boolean(ctx.parsedCode)
+    if (matches === "code_wrong_or_missing") return !ctx.parsedCode
+    // "code_expired_or_exhausted" is determined by the runner from the
+    // challenge doc; the dispatcher resolver doesn't have that signal,
+    // so it routes to retry and the runner re-routes to reissue when it
+    // discovers expired/exhausted state.
+    if (matches === "code_expired_or_exhausted") return false
+  }
+  if (
+    parser === "ask_q_role" ||
+    parser === "ask_q_yoe" ||
+    parser === "ask_q_visa" ||
+    parser === "ask_q_startup_pref" ||
+    parser === "ask_q_location"
+  ) {
+    if (matches === "answered") return ctx.answered
+  }
+  return false
+}
+
+function matchExternalSignal(
+  cond: { kind: "externalSignal"; signal: string },
+  ctx: WorkflowContext
+): boolean {
+  if (cond.signal === "cvParsed") return ctx.cvParsed
+  if (cond.signal === "emailCaptured") return ctx.emailCaptured
+  if (cond.signal === "emailVerified") return ctx.emailVerified
+  return false
 }
 
 /** All states in topological order from entry → terminal. */
