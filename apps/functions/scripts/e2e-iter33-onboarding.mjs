@@ -187,7 +187,9 @@ async function main() {
   await pollUntilStatus(resetEid)
   await new Promise((r) => setTimeout(r, 4000))
   const initialState = await readUserState()
-  record("reset succeeded", !initialState?.onboardingState || initialState.onboardingState === undefined, `state=${initialState?.onboardingState ?? "none"}`)
+  // Reset leaves state at "pending" or unset — both are valid starting points.
+  const resetOK = !initialState?.onboardingState || initialState.onboardingState === "pending"
+  record("reset succeeded", resetOK, `state=${initialState?.onboardingState ?? "none"}`)
 
   // Step 1: hi → q_lang Q (iter33 spec collapse, no first_mes)
   await step("[1] hi → q_lang Q (iter33 spec collapse: 1 turn)", "hi", {
@@ -248,8 +250,12 @@ async function main() {
   record("[7.state] contactEmailVerifiedAt stamped", Boolean(state?.contactEmailVerifiedAt))
 
   // Step 8: 同意 → q_role Q (iter33 P2 reorder)
+  // Wording is operator-editable via /admin/onboarding so the assertion
+  // matches the SEMANTIC intent (asking about role/direction) rather
+  // than literal default text. Fail-fast on regression: the reply must
+  // mention 岗/role/方向/eng/pm/research/design/产品/工程/研究/设计.
   await step("[8] 同意 → q_role Q (Bug 11 full closure)", "同意", {
-    expect: /想找啥岗|kinda role you eyeing/,
+    expect: /(岗|role|方向)|(工程|产品|研究|设计|eng|pm|design)/i,
   })
   state = await readUserState()
   record("[8.state] onboardingState=q_role_asked", state?.onboardingState === "q_role_asked", `actual=${state?.onboardingState}`)
