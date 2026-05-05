@@ -40,6 +40,38 @@ test("resolveDeterministicAction: pending → send_first_mes", () => {
   assert.equal(action.kind, "send_first_mes")
 })
 
+test("iter33 GAP 4: PA_ONBOARDING_V33_DISABLED=true → first_mes_sent skips q_lang, falls back to ask_q_tos (iter32 sequence)", () => {
+  process.env.PA_ONBOARDING_V33_DISABLED = "true"
+  try {
+    const action = resolveDeterministicAction(
+      {
+        onboardingState: "first_mes_sent",
+        cvParsed: false,
+        emailCaptured: false,
+        emailVerified: false,
+      },
+      "hi"
+    )
+    assert.equal(action.kind, "ask_q_tos")
+  } finally {
+    delete process.env.PA_ONBOARDING_V33_DISABLED
+  }
+})
+
+test("iter33 GAP 4: PA_ONBOARDING_V33_DISABLED unset → iter33 path (q_lang) is default", () => {
+  delete process.env.PA_ONBOARDING_V33_DISABLED
+  const action = resolveDeterministicAction(
+    {
+      onboardingState: "first_mes_sent",
+      cvParsed: false,
+      emailCaptured: false,
+      emailVerified: false,
+    },
+    "hi"
+  )
+  assert.equal(action.kind, "ask_q_lang")
+})
+
 test("resolveDeterministicAction: first_mes_sent → ask_q_lang (iter33 P1)", () => {
   const action = resolveDeterministicAction(
     {
