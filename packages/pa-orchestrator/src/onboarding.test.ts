@@ -246,9 +246,22 @@ test("iter33 P1: parseUserAnswerForStep ask_q_lang — mixed signals", () => {
   assert.deepEqual(parseUserAnswerForStep("ask_q_lang", "whatever"), { preferredLang: "mixed" })
 })
 
-test("iter33 P1: parseUserAnswerForStep ask_q_lang — ambiguous defaults to mixed", () => {
-  assert.deepEqual(parseUserAnswerForStep("ask_q_lang", "uhh idk"), { preferredLang: "mixed" })
-  assert.deepEqual(parseUserAnswerForStep("ask_q_lang", "okok"), { preferredLang: "mixed" })
+test("iter33 P1 Bug 6 fix: parseUserAnswerForStep ask_q_lang — ambiguous → CJK-ratio tiebreak (no silent mixed)", () => {
+  // Old behavior: ambiguous → preferredLang: "mixed" (silent default).
+  // New behavior (sim-walkthrough exposed): mirror pickLang detection so the
+  // stored preferredLang matches what Claire is already replying in.
+  // Pure-ASCII ambiguous → en
+  assert.deepEqual(parseUserAnswerForStep("ask_q_lang", "uhh idk"), { preferredLang: "en" })
+  assert.deepEqual(parseUserAnswerForStep("ask_q_lang", "okok"), { preferredLang: "en" })
+  assert.deepEqual(parseUserAnswerForStep("ask_q_lang", "agree"), { preferredLang: "en" })
+  assert.deepEqual(parseUserAnswerForStep("ask_q_lang", "yo"), { preferredLang: "en" })
+  // Pure-CJK ambiguous → zh (covers sim Walkthrough A user said "同意"
+  // thinking they were agreeing to a previous prompt; old code stored
+  // mixed; new code correctly stores zh).
+  assert.deepEqual(parseUserAnswerForStep("ask_q_lang", "同意"), { preferredLang: "zh" })
+  assert.deepEqual(parseUserAnswerForStep("ask_q_lang", "好"), { preferredLang: "zh" })
+  // Mixed-ratio ambiguous (≥30% CJK) → zh
+  assert.deepEqual(parseUserAnswerForStep("ask_q_lang", "ok 好"), { preferredLang: "zh" })
 })
 
 test("iter33 P1: parseUserAnswerForStep ask_q_lang — empty returns {}", () => {

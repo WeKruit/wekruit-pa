@@ -782,9 +782,14 @@ export function parseUserAnswerForStep(
 /**
  * iter33 — parse zh/en/mixed reply to ask_q_lang. Bilingual + permissive:
  * "中文" / "zh" / "chinese" → zh; "english" / "en" / "英文" → en; explicit
- * "mixed" / "混" / "中英" / "both" / "都行" / "either" → mixed. Default to
- * mixed when reply ambiguous (most permissive — Claire keeps adapting per
- * turn). NEVER throws.
+ * "mixed" / "混" / "中英" / "both" / "都行" / "either" → mixed. NEVER throws.
+ *
+ * iter33 Bug 6 fix (sim-walkthrough A/C/D/E exposed): ambiguous reply (e.g.
+ * "同意" / "agree" / "yo" — user thinks they're answering a different Q)
+ * USED to silently default to "mixed", polluting downstream lang selection.
+ * Now uses CJK-ratio tiebreak: ≥30% CJK chars → zh, else → en. Matches
+ * pickLang() detection so the stored preferredLang lines up with what
+ * Claire was already replying in. Empty/whitespace still returns {}.
  */
 export function parseLangAnswer(reply: string): Partial<StatedPreferences> {
   const t = reply.trim().toLowerCase()
@@ -803,8 +808,26 @@ export function parseLangAnswer(reply: string): Partial<StatedPreferences> {
   if (/中文|chinese|\bzh\b|汉语|普通话|国语/.test(t) || /^[一-鿿]+$/.test(reply.trim())) {
     return { preferredLang: "zh" }
   }
-  // Ambiguous — default to mixed (Claire stays adaptive)
-  return { preferredLang: "mixed" }
+  // Bug 6 fix: ambiguous → CJK-ratio tiebreak (mirrors pickLang). Pure CJK
+  // glyph reply ("同意" / "好") → zh; ASCII-only reply ("agree" / "yo" /
+  // "okok") → en. Removes silent-mixed pollution that masked real lang
+  // signal from downstream verify-start template selection.
+  let cjk = 0
+  let total = 0
+  for (const ch of reply) {
+    if (/\s/.test(ch)) continue
+    total++
+    const code = ch.codePointAt(0) ?? 0
+    if (
+      (code >= 0x4e00 && code <= 0x9fff) ||
+      (code >= 0x3400 && code <= 0x4dbf) ||
+      (code >= 0xf900 && code <= 0xfaff)
+    ) {
+      cjk++
+    }
+  }
+  if (total === 0) return {}
+  return { preferredLang: cjk / total >= 0.3 ? "zh" : "en" }
 }
 
 /**
