@@ -113,6 +113,11 @@ service cloud.firestore {
         allow read, write: if isPaOperator();
       }
     }
+    // iter33 spec collapse 2026-05-05 — onboarding prompt config (pa-onboarding-config/v1).
+    // Edited via /admin/onboarding dashboard; orchestrator reads with 30s TTL cache.
+    match /pa-onboarding-config/{id} {
+      allow read, write: if isPaOperator();
+    }
     match /pa-playbooks/{key} {
       allow read, write: if isPaOperator();
       match /versions/{v} {

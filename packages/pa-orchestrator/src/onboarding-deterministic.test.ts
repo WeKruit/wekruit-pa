@@ -608,6 +608,98 @@ test("iter33 spec collapse: fresh user → ask_q_lang verbatim (no first_mes gre
   )
 })
 
+test("DETERMINISM E2E: Firestore override flows through dispatcher (operator edit → live prompt)", async () => {
+  // Adam directive 2026-05-05 — proves /admin/onboarding edits actually
+  // change Claire's outbound text, end-to-end, without code redeploy.
+  // Inject a Firestore override for ask_q_lang.prompt.zh; run the full
+  // dispatcher; assert the override text was sent verbatim.
+  _resetOnboardingConfigCache()
+  const fakeDb = {
+    collection: () => ({
+      doc: () => ({
+        async get() {
+          return {
+            exists: true,
+            data: () => ({
+              ask_q_lang: {
+                prompt: {
+                  zh: "OPERATOR-EDITED-ZH-PROMPT",
+                  en: "OPERATOR-EDITED-EN-PROMPT",
+                },
+              },
+            }),
+          }
+        },
+      }),
+    }),
+  } as unknown as Parameters<typeof loadOnboardingConfig>[0]
+  const { store, captures } = makeFakeRunnerStore({ db: fakeDb })
+  // zh user msg → langFor returns zh → should pick override.zh
+  const result = await runDeterministicOnboardingTurn({
+    event: makeEvent("你好"),
+    store,
+    turnId: "turn-override-zh",
+    onboardingUser: {
+      id: "user-override",
+      phoneE164: "+15551234567",
+      onboardingState: undefined,
+    },
+    cvParsed: false,
+    agent: FAKE_AGENT,
+  })
+  assert.equal(result.handled, true)
+  assert.equal(captures.enqueuedOutbound.length, 1)
+  assert.equal(
+    captures.enqueuedOutbound[0],
+    "OPERATOR-EDITED-ZH-PROMPT",
+    "operator-edited prompt MUST flow through dispatcher → outbound"
+  )
+  _resetOnboardingConfigCache()
+})
+
+test("DETERMINISM E2E: en user gets en override (lang-specific routing preserved through override)", async () => {
+  _resetOnboardingConfigCache()
+  const fakeDb = {
+    collection: () => ({
+      doc: () => ({
+        async get() {
+          return {
+            exists: true,
+            data: () => ({
+              ask_q_lang: {
+                prompt: {
+                  zh: "OPERATOR-EDITED-ZH-PROMPT",
+                  en: "OPERATOR-EDITED-EN-PROMPT",
+                },
+              },
+            }),
+          }
+        },
+      }),
+    }),
+  } as unknown as Parameters<typeof loadOnboardingConfig>[0]
+  const { store, captures } = makeFakeRunnerStore({ db: fakeDb })
+  const result = await runDeterministicOnboardingTurn({
+    event: makeEvent("hello there"),
+    store,
+    turnId: "turn-override-en",
+    onboardingUser: {
+      id: "user-override-en",
+      phoneE164: "+15551234567",
+      onboardingState: undefined,
+    },
+    cvParsed: false,
+    agent: FAKE_AGENT,
+  })
+  assert.equal(result.handled, true)
+  assert.equal(
+    captures.enqueuedOutbound[0],
+    "OPERATOR-EDITED-EN-PROMPT",
+    "en user MUST receive override.en, not override.zh"
+  )
+  _resetOnboardingConfigCache()
+})
+
 test("runDeterministicOnboardingTurn: ToS accept → ask_q_role + writes tosAcceptedVersion=v1.0 (iter33 P2 reorder)", async () => {
   _resetOnboardingConfigCache()
   const { store, captures } = makeFakeRunnerStore()

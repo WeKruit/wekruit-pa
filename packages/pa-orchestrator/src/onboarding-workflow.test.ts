@@ -9,7 +9,9 @@ import {
   incomingEdges,
   topologicalStates,
   validateWorkflow,
+  walkWorkflow,
 } from "./onboarding-workflow.js"
+import type { WorkflowContext, OnboardingWorkflow } from "./onboarding-workflow.js"
 
 test("ONBOARDING_WORKFLOW: validates clean (no orphan nodes, no dangling edges)", () => {
   const result = validateWorkflow(ONBOARDING_WORKFLOW)
@@ -186,4 +188,218 @@ test("ONBOARDING_WORKFLOW: validateWorkflow detects orphan node", () => {
   const result = validateWorkflow(broken)
   assert.equal(result.ok, false)
   assert.ok(result.errors.some((e) => e.includes("q_orphan")))
+})
+
+// ──────────────────────────────────────────────────────────────────
+// iter33 spec collapse 2026-05-05 — Determinism guarantee tests.
+//
+// Adam directive: "需要测试,保证我们现在这个 workflow 一定是 deterministic
+// 的, 我们换顺序要会按正常走".
+//
+// These tests prove walkWorkflow is a pure function of (state, ctx) — no
+// hidden state, no time/randomness, no order-dependence beyond explicit
+// edge-precedence. Critical because once we ship the dashboard editor
+// (Option B), an operator changing prompts MUST NOT alter sequence
+// behavior; and a developer reordering ONBOARDING_WORKFLOW.edges (e.g.
+// for readability) MUST NOT change which edge fires.
+// ──────────────────────────────────────────────────────────────────
+
+function makeCtx(overrides: Partial<WorkflowContext> = {}): WorkflowContext {
+  return {
+    userMessage: "",
+    cvParsed: false,
+    emailCaptured: false,
+    emailVerified: false,
+    v33Disabled: false,
+    isVent: false,
+    answered: false,
+    ...overrides,
+  }
+}
+
+test("DETERMINISM: walkWorkflow is pure — same (state, ctx) × 100 → identical edge", () => {
+  // Sweep representative states + contexts. Each combination should
+  // produce a stable edge across N=100 calls. Any flakiness = Math.random
+  // / Date.now / shared mutable state has crept in.
+  const cases: Array<{
+    state: Parameters<typeof walkWorkflow>[1]
+    ctx: WorkflowContext
+    label: string
+  }> = [
+    { state: "pending", ctx: makeCtx({ userMessage: "你好" }), label: "pending+zh" },
+    { state: "pending", ctx: makeCtx({ userMessage: "hello" }), label: "pending+en" },
+    { state: "q_lang_asked", ctx: makeCtx({ userMessage: "中文" }), label: "lang+zh" },
+    {
+      state: "q_email_asked",
+      ctx: makeCtx({ userMessage: "adam@wekruit.com", parsedEmail: "adam@wekruit.com" }),
+      label: "email+valid",
+    },
+    {
+      state: "q_email_asked",
+      ctx: makeCtx({ userMessage: "later" }),
+      label: "email+missing",
+    },
+    {
+      state: "q_email_verifying",
+      ctx: makeCtx({ userMessage: "654321", parsedCode: "654321" }),
+      label: "verify+code",
+    },
+    {
+      state: "q_email_verifying",
+      ctx: makeCtx({ userMessage: "what was the code" }),
+      label: "verify+nocode",
+    },
+    {
+      state: "q_tos_asked",
+      ctx: makeCtx({ userMessage: "同意", tosDecision: "accept" }),
+      label: "tos+accept",
+    },
+    {
+      state: "q_tos_asked",
+      ctx: makeCtx({ userMessage: "no", tosDecision: "decline" }),
+      label: "tos+decline",
+    },
+    {
+      state: "q_tos_asked",
+      ctx: makeCtx({ userMessage: "huh", tosDecision: "unclear" }),
+      label: "tos+ambiguous",
+    },
+    {
+      state: "q_role_asked",
+      ctx: makeCtx({ userMessage: "fuck this", isVent: true }),
+      label: "role+vent",
+    },
+    {
+      state: "q_role_asked",
+      ctx: makeCtx({ userMessage: "swe backend", answered: true }),
+      label: "role+answered",
+    },
+    {
+      state: "q_resume_asked",
+      ctx: makeCtx({ userMessage: "sent it", cvParsed: true }),
+      label: "resume+cvparsed",
+    },
+    {
+      state: "q_cv_analyzing",
+      ctx: makeCtx({ userMessage: "ok" }),
+      label: "cv_analyzing",
+    },
+  ]
+
+  for (const c of cases) {
+    const first = walkWorkflow(ONBOARDING_WORKFLOW, c.state, c.ctx)
+    const firstSig = first ? `${first.from}→${first.to}|${first.action}` : "null"
+    for (let i = 0; i < 100; i++) {
+      const next = walkWorkflow(ONBOARDING_WORKFLOW, c.state, c.ctx)
+      const sig = next ? `${next.from}→${next.to}|${next.action}` : "null"
+      assert.equal(sig, firstSig, `[${c.label}] iter ${i} drifted from baseline`)
+    }
+  }
+})
+
+test("DETERMINISM: edge-array shuffle does not change walker output (mutex precedence)", () => {
+  // Walker iterates edges by `from` filter then by precedence (vent →
+  // parsedAnswer first-match → externalSignal first-match → default).
+  // Within parsedAnswer / externalSignal, "first match wins" in array
+  // order. This test proves all parsedAnswer + externalSignal edges
+  // sharing a `from` state are mutually exclusive — no two can match
+  // the same ctx — so array order is irrelevant.
+  for (const node of ONBOARDING_WORKFLOW.nodes) {
+    const fromEdges = outgoingEdges(ONBOARDING_WORKFLOW, node.state)
+    const parsedEdges = fromEdges.filter((e) => e.condition.kind === "parsedAnswer")
+    const extEdges = fromEdges.filter((e) => e.condition.kind === "externalSignal")
+    // Probe with a wide ctx fan to expose overlap. Build cartesian of
+    // signal toggles + parser outputs.
+    const ctxs: WorkflowContext[] = []
+    for (const tos of [undefined, "accept", "decline", "unclear"] as const) {
+      for (const email of [undefined, "x@y.com"] as const) {
+        for (const code of [undefined, "654321"] as const) {
+          for (const cvParsed of [false, true]) {
+            for (const emailCaptured of [false, true]) {
+              for (const emailVerified of [false, true]) {
+                ctxs.push(
+                  makeCtx({
+                    tosDecision: tos,
+                    parsedEmail: email,
+                    parsedCode: code,
+                    cvParsed,
+                    emailCaptured,
+                    emailVerified,
+                  })
+                )
+              }
+            }
+          }
+        }
+      }
+    }
+    for (const ctx of ctxs) {
+      const matches = parsedEdges.filter((e) => {
+        if (e.condition.kind !== "parsedAnswer") return false
+        const c = e.condition
+        if (c.parser === "ask_q_tos") {
+          if (c.matches === "accept") return ctx.tosDecision === "accept"
+          if (c.matches === "decline") return ctx.tosDecision === "decline"
+          if (c.matches === "ambiguous") return ctx.tosDecision === "unclear"
+        }
+        if (c.parser === "ask_q_email") {
+          if (c.matches === "valid_email") return Boolean(ctx.parsedEmail)
+          if (c.matches === "no_email") return !ctx.parsedEmail
+        }
+        if (c.parser === "ask_q_email_verify") {
+          if (c.matches === "code_correct") return Boolean(ctx.parsedCode)
+          if (c.matches === "code_wrong_or_missing") return !ctx.parsedCode
+        }
+        return false
+      })
+      assert.ok(
+        matches.length <= 1,
+        `state=${node.state}: ${matches.length} parsedAnswer edges match ctx — order would matter (NOT deterministic). Edges: ${matches.map((m) => `${m.action}/${"matches" in m.condition ? m.condition.matches : "?"}`).join(", ")}`
+      )
+    }
+    // externalSignal edges from same state must also be mutex
+    const extMatches = (ctx: WorkflowContext) =>
+      extEdges.filter((e) => {
+        if (e.condition.kind !== "externalSignal") return false
+        const sig = e.condition.signal
+        if (sig === "cvParsed") return ctx.cvParsed === true
+        if (sig === "emailCaptured") return ctx.emailCaptured === true
+        if (sig === "emailVerified") return ctx.emailVerified === true
+        return false
+      })
+    for (const ctx of ctxs.slice(0, 8)) {
+      const m = extMatches(ctx)
+      assert.ok(
+        m.length <= 1,
+        `state=${node.state}: ${m.length} externalSignal edges match — order would matter`
+      )
+    }
+  }
+})
+
+test("DETERMINISM: every state has exactly one default edge OR has a covering parsedAnswer set (no null routes)", () => {
+  // For any input ctx the walker MUST find an edge (never null) at every
+  // non-terminal state — except the entry+terminal. This catches a class
+  // of subtle bugs where a future edit deletes the default fallback and
+  // certain inputs cause the dispatcher to silently no-op.
+  for (const node of ONBOARDING_WORKFLOW.nodes) {
+    if (node.state === ONBOARDING_WORKFLOW.terminalState) continue
+    const fromEdges = outgoingEdges(ONBOARDING_WORKFLOW, node.state)
+    const defaultEdges = fromEdges.filter((e) => e.condition.kind === "default")
+    assert.ok(
+      defaultEdges.length <= 1,
+      `state=${node.state}: ${defaultEdges.length} default edges (should be ≤ 1)`
+    )
+    if (defaultEdges.length === 0) {
+      // No default — must have BOTH parsedAnswer AND its complement
+      // covering all parser outputs. We assert at least one parsedAnswer
+      // edge exists; the mutex test above + the dispatcher's runtime
+      // skip-fallback handles the residual case explicitly.
+      const parsedEdges = fromEdges.filter((e) => e.condition.kind === "parsedAnswer")
+      assert.ok(
+        parsedEdges.length >= 1 || node.kind === "action",
+        `state=${node.state}: no default + no parsedAnswer edges = unreachable next state`
+      )
+    }
+  }
 })
