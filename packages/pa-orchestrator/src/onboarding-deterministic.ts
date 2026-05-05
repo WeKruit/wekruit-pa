@@ -557,9 +557,13 @@ function isVentingMessage(text: string): boolean {
 export function composeDeterministicReply(
   action: DeterministicAction,
   config: typeof DEFAULT_ONBOARDING_CONFIG,
-  userMessage: string
+  userMessage: string,
+  langOverride?: "zh" | "en"
 ): string {
-  const lang = pickLang(userMessage)
+  // iter34 P0.2 — accept caller's resolved lang so the LLM tail-call
+  // path doesn't lose preferredLang when the LLM-formatted value
+  // ("ai infra engineer") trips pickLang into en.
+  const lang = langOverride ?? pickLang(userMessage)
 
   if (action.kind === "vent_ack") return VENT_ACK[lang]
   if (action.kind === "skip") return ""
@@ -1498,7 +1502,7 @@ export async function runDeterministicOnboardingTurn(
     priorAskedStep: priorAskedStepFromState(onboardingUser.onboardingState),
     priorUserReply: event.body,
   })
-  const reply = composeDeterministicReply(action, config, event.body)
+  const reply = composeDeterministicReply(action, config, event.body, langFor(event.body))
   await sendDirect(input, reply)
   return { handled: true, action }
 }
