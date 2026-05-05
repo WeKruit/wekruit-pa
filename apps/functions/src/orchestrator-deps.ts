@@ -111,6 +111,58 @@ export function makeOrchestratorDeps(): import("@pa/pa-orchestrator").Orchestrat
       }
     },
     generateCvAnalysis: makeGenerateCvAnalysis(),
+    generateJobRecs: makeGenerateJobRecs(),
+  }
+}
+
+/**
+ * iter33 P4 — produce the 2-job-rec push message before complete.
+ *
+ * Current implementation: always returns null → caller emits the
+ * deferred-promise fallback ("first batch tomorrow ~9am"). Reason: at
+ * onboard time the daily-batch matching pipeline (paJobRecDaily) hasn't
+ * run for this user yet, so there are no live matches to surface. The
+ * batch runs at 09:00 PT and writes top-K matches via sendImessage
+ * directly (no persistent top-N rec list to read inline).
+ *
+ * Follow-up (iter34): trigger an inline single-user match when the user
+ * onboards outside the daily window, so they get matches immediately. For
+ * now the deferred-promise sets clear expectations + onboarding always
+ * completes.
+ */
+function makeGenerateJobRecs(): NonNullable<
+  import("@pa/pa-orchestrator").OrchestratorStoreDeps["generateJobRecs"]
+> {
+  return async (userId: string, _lang: "zh" | "en") => {
+    if (!getApps().length) initializeApp()
+    const db = getFirestore()
+    try {
+      // Check if user has a recent batch — if so, point them to it.
+      const profile = await db.collection("pa-job-profiles").doc(userId).get()
+      if (profile.exists) {
+        const data = profile.data() as { lastJobBatchSentAt?: string }
+        const sentAt = data.lastJobBatchSentAt
+        if (sentAt) {
+          const ageHours = (Date.now() - Date.parse(sentAt)) / (3600 * 1000)
+          if (ageHours < 24) {
+            logger.info("[job-recs] recent batch already sent", {
+              userId,
+              ageHours,
+            })
+            // Defer to dispatcher's fallback message — no need to repeat
+            // recs since user just got them.
+            return null
+          }
+        }
+      }
+    } catch (err) {
+      logger.warn("[job-recs] profile read failed", {
+        userId,
+        err: err instanceof Error ? err.message : String(err),
+      })
+    }
+    // Default: dispatcher fallback (deferred-promise message).
+    return null
   }
 }
 
