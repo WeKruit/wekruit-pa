@@ -109,11 +109,18 @@ test("ONBOARDING_WORKFLOW: vent self-loop on probe nodes (parser-owned nodes exc
   }
 })
 
-test("ONBOARDING_WORKFLOW: topologicalStates includes all 14 states in order", () => {
+test("ONBOARDING_WORKFLOW: topologicalStates includes all 13 states in order (iter33 spec collapse)", () => {
+  // iter33 spec collapse 2026-05-05 — first_mes_sent removed from graph.
+  // Backward-compat for persisted-state users is handled inline in
+  // resolveDeterministicAction.
   const states = topologicalStates(ONBOARDING_WORKFLOW)
-  assert.equal(states.length, 14)
+  assert.equal(states.length, 13)
   assert.equal(states[0], "pending")
   assert.equal(states[states.length - 1], "complete")
+  // first_mes_sent is no longer a graph node
+  assert.ok(!states.includes("first_mes_sent" as never))
+  // pending → q_lang_asked is the new direct entry transition
+  assert.ok(states.indexOf("pending") < states.indexOf("q_lang_asked"))
   // P1 lang state appears before email
   assert.ok(states.indexOf("q_lang_asked") < states.indexOf("q_email_asked"))
   // P2 reorder: email/verify before ToS
@@ -124,10 +131,20 @@ test("ONBOARDING_WORKFLOW: topologicalStates includes all 14 states in order", (
   assert.ok(states.indexOf("q_cv_analyzing") < states.indexOf("complete"))
 })
 
+test("ONBOARDING_WORKFLOW iter33 spec collapse: pending → q_lang_asked direct (no first_mes_sent)", () => {
+  // Adam directive 2026-05-05: "reset 后发消息应该上来就是 onboard, 为什么
+  // 还聊点啥". User's first iMessage → Claire's first outbound = q_lang Q
+  // (which now opens with "在呢/Here" greeting in the prompt itself).
+  const edges = outgoingEdges(ONBOARDING_WORKFLOW, "pending")
+  assert.equal(edges.length, 1, "pending should have exactly one outgoing edge")
+  assert.equal(edges[0].to, "q_lang_asked")
+  assert.equal(edges[0].action, "ask_q_lang")
+  assert.equal(edges[0].condition.kind, "default")
+})
+
 test("ONBOARDING_WORKFLOW: incoming + outgoing edges traverse the entire happy path", () => {
   const happyPath = [
     "pending",
-    "first_mes_sent",
     "q_lang_asked",
     "q_email_asked",
     "q_email_verifying",

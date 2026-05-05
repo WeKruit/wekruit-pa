@@ -24,20 +24,38 @@ import {
 // resolveDeterministicAction
 // ────────────────────────────────────────────────────────────────────
 
-test("resolveDeterministicAction: undefined state → send_first_mes", () => {
+test("iter33 spec collapse: undefined state → ask_q_lang (no first_mes greeting)", () => {
+  // Adam directive 2026-05-05: kill the redundant first_mes step. User's
+  // first inbound → Claire's first outbound = q_lang Q (which itself opens
+  // with a short "在呢/Here" acknowledgment).
   const action = resolveDeterministicAction(
     { onboardingState: undefined, cvParsed: false, emailCaptured: false, emailVerified: false },
     "hi"
   )
-  assert.equal(action.kind, "send_first_mes")
+  assert.equal(action.kind, "ask_q_lang")
 })
 
-test("resolveDeterministicAction: pending → send_first_mes", () => {
+test("iter33 spec collapse: pending → ask_q_lang (no first_mes greeting)", () => {
   const action = resolveDeterministicAction(
     { onboardingState: "pending", cvParsed: false, emailCaptured: false, emailVerified: false },
     "hi"
   )
-  assert.equal(action.kind, "send_first_mes")
+  assert.equal(action.kind, "ask_q_lang")
+})
+
+test("iter33 spec collapse backward-compat: persisted first_mes_sent → ask_q_lang", () => {
+  // Users with persisted onboardingState=first_mes_sent from before the
+  // collapse shipped hop cleanly to q_lang_asked on next inbound.
+  const action = resolveDeterministicAction(
+    {
+      onboardingState: "first_mes_sent",
+      cvParsed: false,
+      emailCaptured: false,
+      emailVerified: false,
+    },
+    "hi"
+  )
+  assert.equal(action.kind, "ask_q_lang")
 })
 
 test("iter33 GAP 4: PA_ONBOARDING_V33_DISABLED=true → first_mes_sent skips q_lang, falls back to ask_q_tos (iter32 sequence)", () => {
@@ -561,7 +579,7 @@ function makeEvent(body: string, userId = "user-1", sessionId = "ses-1") {
   }
 }
 
-test("runDeterministicOnboardingTurn: fresh user → send_first_mes verbatim, NO LLM", async () => {
+test("iter33 spec collapse: fresh user → ask_q_lang verbatim (no first_mes greeting), NO LLM", async () => {
   _resetOnboardingConfigCache()
   const { store, captures } = makeFakeRunnerStore()
   const result = await runDeterministicOnboardingTurn({
@@ -578,14 +596,15 @@ test("runDeterministicOnboardingTurn: fresh user → send_first_mes verbatim, NO
   })
   assert.equal(result.handled, true)
   if (result.handled) {
-    assert.equal(result.action.kind, "send_first_mes")
+    assert.equal(result.action.kind, "ask_q_lang")
   }
   assert.equal(captures.appendedMessages.length, 1)
-  assert.match(captures.appendedMessages[0]!.body, /Here/i)
+  // q_lang prompt opens with "Here" greeting (en) followed by lang Q
+  assert.match(captures.appendedMessages[0]!.body, /Here.*language/i)
   assert.equal(captures.enqueuedOutbound.length, 1)
   assert.deepEqual(
     captures.appliedSteps.map((s) => s.step),
-    ["send_first_mes"]
+    ["ask_q_lang"]
   )
 })
 

@@ -63,6 +63,37 @@
           ]
         }
       ]
+    },
+    {
+      "_comment": "iter33 spec collapse 2026-05-05 — public CTA landing page. MVP: single static index.html with sms:+13054507715 deep link. Future: pa.wekruit.com custom domain (DNS step in Firebase console).",
+      "target": "pa-landing",
+      "public": "apps/pa-landing/public",
+      "ignore": [
+        "firebase.json",
+        "**/.*",
+        "**/node_modules/**"
+      ],
+      "rewrites": [
+        {
+          "source": "**",
+          "destination": "/index.html"
+        }
+      ],
+      "headers": [
+        {
+          "source": "/index.html",
+          "headers": [
+            {
+              "key": "Cache-Control",
+              "value": "no-cache, no-store, must-revalidate"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            }
+          ]
+        }
+      ]
     }
   ]
 }
