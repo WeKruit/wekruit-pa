@@ -551,6 +551,40 @@ export type OrchestratorStore = {
   ): Promise<{ message: string; recCount: number } | null>
 
   /**
+   * iter34 P0 — LLM-fallback intent extraction for q_email_asked when
+   * the deterministic regex parser failed. Adam directive 2026-05-05
+   * ("edge case 处理应该是能 involve llm啊 ... 一个认证过程").
+   *
+   * Called ONLY when:
+   *   - state === q_email_asked (re-ask path)
+   *   - parseEmailAnswer(reply) returned {} (no contactEmail captured)
+   *   - reply has email-shape intent signal (contains "@" / "邮箱" / "email" / "send to")
+   *
+   * Returns structured intent:
+   *   - intent="provided" + email: confidence-extracted email (we then
+   *     advance state + fire Mailgun)
+   *   - intent="typo" + suggestion: domain looks misspelled (we surface
+   *     the suggestion to user to confirm)
+   *   - intent="declined": user said no/skip (we accept, advance with
+   *     no contactEmail)
+   *   - intent="unclear" + clarifyingQuestion: LLM's clarifying ask
+   *
+   * Returns null when LLM unconfigured / failed → caller falls back to
+   * the deterministic typo map + generic re-ask. Cost: ~$0.0002/edge call
+   * (Qwen2.5-7B SiliconFlow). Latency: <2s p99.
+   */
+  extractEmailIntent?(
+    reply: string,
+    lang: "zh" | "en"
+  ): Promise<
+    | { intent: "provided"; email: string; confidence: number }
+    | { intent: "typo"; suggestion: string; original: string }
+    | { intent: "declined" }
+    | { intent: "unclear"; clarifyingQuestion: string }
+    | null
+  >
+
+  /**
    * Phase 24.5 — optional Firestore handle for `getFlag()` reads. Tests omit
    * `db`; production wires the live Firestore so flag-backed kill-switches
    * (e.g. `PA_VOICE_MIRROR_DISABLED`) consult `pa-feature-flags`. env vars
@@ -3025,6 +3059,12 @@ export type OrchestratorStoreDeps = {
    * ledger handles live. Tests pass a stub.
    */
   generateJobRecs?: NonNullable<OrchestratorStore["generateJobRecs"]>
+  /**
+   * iter34 P0 — LLM-fallback email intent extractor. Wired from
+   * apps/functions where SiliconFlow key + Qwen-7B model handle live.
+   * Tests pass a stub OR omit (deterministic-only fallback fires).
+   */
+  extractEmailIntent?: NonNullable<OrchestratorStore["extractEmailIntent"]>
 }
 
 export function createFirestoreOrchestratorStore(
@@ -3493,6 +3533,12 @@ export function createFirestoreOrchestratorStore(
     // promise so onboarding still completes.
     ...(deps.generateJobRecs
       ? { generateJobRecs: deps.generateJobRecs }
+      : {}),
+    // iter34 P0 — LLM-fallback email intent extractor. Wired from
+    // apps/functions; tests omit and dispatcher falls back to the
+    // deterministic typo map + generic re-ask.
+    ...(deps.extractEmailIntent
+      ? { extractEmailIntent: deps.extractEmailIntent }
       : {}),
     // iter32 — CV gate. Reads parsedCandidateResumes (cross-product
     // collection — see CLAUDE.md) for the user; returns true iff a row
