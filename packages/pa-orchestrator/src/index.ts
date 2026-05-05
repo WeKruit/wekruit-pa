@@ -109,6 +109,21 @@ export {
   loadOnboardingConfig,
   DEFAULT_ONBOARDING_CONFIG,
 } from "./onboarding-deterministic.js"
+// iter33 P5 — onboarding workflow as introspectable graph data.
+export {
+  ONBOARDING_WORKFLOW,
+  outgoingEdges,
+  incomingEdges,
+  topologicalStates,
+  validateWorkflow,
+} from "./onboarding-workflow.js"
+export type {
+  OnboardingWorkflow,
+  WorkflowNode,
+  WorkflowEdge,
+  WorkflowNodeKind,
+  WorkflowEdgeCondition,
+} from "./onboarding-workflow.js"
 // Phase 52 — F1 fix: lightweight bilingual intent detection for turn-0
 // onboarding ack (no LLM, regex only). See onboarding-intent.ts for the bank.
 import { detectFirstTurnIntent } from "./onboarding-intent.js"
