@@ -118,6 +118,12 @@ service cloud.firestore {
     match /pa-onboarding-config/{id} {
       allow read, write: if isPaOperator();
     }
+    // iter34 P3 — Q-as-class registry (pa-onboarding-questions/{qId}).
+    // Read by orchestrator pipeline, surfaced via /admin/onboarding-questions
+    // dashboard for Adam to verify Q config without code redeploy.
+    match /pa-onboarding-questions/{qId} {
+      allow read, write: if isPaOperator();
+    }
     match /pa-playbooks/{key} {
       allow read, write: if isPaOperator();
       match /versions/{v} {
