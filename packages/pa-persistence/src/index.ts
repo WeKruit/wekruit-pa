@@ -196,6 +196,24 @@ export type {
   FlagContext,
 } from "./feature-flags.js"
 
+// iter34 P3 — pa-onboarding-questions Firestore SDK (Adam directive 2026-05-05
+// "dashboard对应的管理呢?"). Dashboard UI is next-session work; this SDK ships
+// the data plane so the orchestrator can read Q config from Firestore instead
+// of hard-coded defaultQuestions().
+export {
+  listOnboardingQuestions,
+  getOnboardingQuestion,
+  upsertOnboardingQuestion,
+  disableOnboardingQuestion,
+} from "./onboarding-questions.js"
+export type {
+  OnboardingQuestionDoc,
+  OnboardingJudgeKind,
+  OnboardingRephraserKind,
+  OnboardingLLMStep,
+  BilingualText as OnboardingBilingualText,
+} from "./onboarding-questions.js"
+
 // Phase 25 — pa_voice_reviews helpers (P9-Voice). LOCKED schema; see
 // .planning/phases/25-voice-review-dashboard/CONTEXT.md.
 export {

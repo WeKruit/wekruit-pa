@@ -252,10 +252,13 @@ test("vqc-F2: PA_AB_FRAMEWORK_STRIP_DISABLED=true bypasses the strip", async () 
 })
 
 // ---------------------------------------------------------------------------
-// F3 — mixed-register mirror append
+// mixed-register-mirror — append "(re: TOKEN)" when user code-switches en
+// terms but Claire reply is pure zh. (Was confusingly tagged F3; F3 is
+// actually the lang-lock detector, not this. Renamed for clarity 2026-05-05
+// per Adam: "F3是什么??".)
 // ---------------------------------------------------------------------------
 
-test("vqc-F3: user mixed + reply pure-zh + register token absent → mirror appends", async () => {
+test("mixed-register-mirror: user mixed + reply pure-zh + register token absent → appends '(re: TOKEN)'", async () => {
   const captures = emptyCaptures()
   // Reply is pure zh; register token "OPT" should be appended.
   const llmBody = "嗯，听起来真的挺纠结的"
@@ -304,7 +307,7 @@ test("vqc-F3: user mixed + reply pure-zh + register token absent → mirror appe
   assert.ok(log, `expected mixed_register_mirror.applied log, got: ${JSON.stringify(captures.logs.map((l) => l.event))}`)
 })
 
-test("vqc-F3: PA_MIXED_REGISTER_MIRROR_DISABLED=true bypasses the mirror", async () => {
+test("mixed-register-mirror: PA_MIXED_REGISTER_MIRROR_DISABLED=true bypasses the mirror", async () => {
   const captures = emptyCaptures()
   const llmBody = "嗯，听起来真的挺纠结的"
   const store = makeStore(captures, llmBody)
