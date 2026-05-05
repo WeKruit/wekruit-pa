@@ -185,6 +185,19 @@ const VENT_ACK: OnboardingPrompt = {
   en: "yeah, i'm here. lmk when you're ready to keep going",
 }
 
+/**
+ * iter33 GAP 4 — env-only kill switch for the iter33 P1+P2 sequence.
+ * Set `PA_ONBOARDING_V33_DISABLED=true` on the Cloud Function (or in
+ * apps/functions/.env) to skip q_lang_asked + fall back to iter32
+ * sequence (first_mes_sent → q_tos_asked → ...). Reading from env
+ * each call (cheap) so an operator can flip without redeploying the
+ * orchestrator package — only the Cloud Function bundle restart.
+ */
+export function isV33Disabled(): boolean {
+  const v = (process.env.PA_ONBOARDING_V33_DISABLED ?? "").trim().toLowerCase()
+  return v === "true" || v === "1" || v === "yes"
+}
+
 // ────────────────────────────────────────────────────────────────────
 // Lang detect (mirrors onboarding.ts pickLang — kept local so the
 // deterministic module has zero external coupling).
@@ -324,7 +337,17 @@ export function resolveDeterministicAction(
   // iter33 P1 — first_mes_sent → ask_q_lang (zh/en/mixed). Adam-locked
   // sequence puts lang preference at the very top so subsequent prompts
   // can render in the user's locked language.
-  if (state === "first_mes_sent") return { kind: "ask_q_lang" }
+  //
+  // iter33 GAP 4 escape hatch: when `PA_ONBOARDING_V33_DISABLED=true`
+  // (env-only, evaluated at module load via runtime check below),
+  // skip q_lang and fall back to iter32 sequence (first_mes_sent →
+  // q_tos_asked). Operator-flippable via Cloud Functions env update +
+  // function restart. Wider rollback (re-ordering revert) requires git
+  // revert of iter33 P2 commit ce2fa6c.
+  if (state === "first_mes_sent") {
+    if (isV33Disabled()) return { kind: "ask_q_tos" }
+    return { kind: "ask_q_lang" }
+  }
 
   // iter33 P2 (Adam directive 2026-05-04 "1. 然后问 email, 然后等 email
   // verification. verify 完就是 ToS, 必须接受才能继续"): reordered chain is
@@ -334,6 +357,11 @@ export function resolveDeterministicAction(
   // Parser is permissive: ambiguous reply defaults to "mixed", never
   // blocks the chain.
   if (state === "q_lang_asked") return { kind: "ask_q_email" }
+
+  // iter33 GAP 4 — when V33 disabled, q_lang_asked is unreachable
+  // (dispatcher skips at first_mes_sent above). Defensive: if a user
+  // somehow has state=q_lang_asked AND V33 is disabled, advance them
+  // to q_tos_asked so they aren't stuck.
 
   // q_email_asked → branch on parsed email (iter33: email is now the
   // FIRST data-collection step, before ToS).
