@@ -1257,7 +1257,19 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
             { userId: event.userId, env: process.env },
             false
           )
-          if (usePipeline === true) {
+          // SAFETY GUARD (iter34 P3 conservative cutover): pipeline only
+          // takes turns where the user is at the START of onboarding
+          // (state pending/null/missing) OR mid-pipeline already in
+          // pipelineState. For users mid-flow under LEGACY state machine
+          // (q_email_asked, q_role_asked, etc.), legacy keeps running.
+          // This prevents shipped-broken-hooks from stranding users.
+          // Once all hooks (onLangAccepted preferredLang write, Mailgun
+          // wire, code-hash store, cv-ingest enqueue) are full-parity
+          // with legacy, the guard can drop.
+          const safeForPipeline =
+            !onboardingUser.onboardingState ||
+            onboardingUser.onboardingState === "pending"
+          if (usePipeline === true && safeForPipeline) {
             store.log("pa.onboarding.pipeline.dispatch", {
               userId: event.userId,
               turnId,
