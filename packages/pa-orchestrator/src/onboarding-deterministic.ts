@@ -704,6 +704,20 @@ export type DeterministicRunnerStore = {
     userId: string,
     lang: "zh" | "en"
   ): Promise<{ message: string; recCount: number } | null>
+  /**
+   * iter34 P0 — LLM-fallback email intent extractor. See
+   * OrchestratorStoreDeps.extractEmailIntent for full contract.
+   */
+  extractEmailIntent?(
+    reply: string,
+    lang: "zh" | "en"
+  ): Promise<
+    | { intent: "provided"; email: string; confidence: number }
+    | { intent: "typo"; suggestion: string; original: string }
+    | { intent: "declined" }
+    | { intent: "unclear"; clarifyingQuestion: string }
+    | null
+  >
   log(event: string, payload?: Record<string, unknown>): void
   nowIso(): string
   db?: Firestore
@@ -1173,40 +1187,148 @@ export async function runDeterministicOnboardingTurn(
   // for typo'd domains so the workflow routes here; we re-detect on the
   // raw msg to extract the canonical suggestion.
   if (action.kind === "ask_q_email" && onboardingUser.onboardingState === "q_email_asked") {
+    const lang = langFor(event.body)
+    const { detectEmailDomainTypo } = await import("./onboarding.js")
+
+    // iter34 P0 — LLM-fallback intent extraction (Adam directive 2026-05-05:
+    // "edge case 处理应该是能 involve llm啊 ... 一个认证过程"). We invoke
+    // the LLM ONLY when:
+    //   • the reply has email-shape signal (contains "@" / "邮箱" / "email" /
+    //     "send" — heuristic to avoid hitting LLM on pure noise like "哈哈")
+    //   • the deterministic regex parser failed (which is why we're here)
+    //   • the deterministic typo map didn't already match (cheap path wins)
+    // LLM gives us 4 outcomes (provided / typo / declined / unclear). Each
+    // routes to a different runner action. On LLM null/error we fall back
+    // to the deterministic typo + generic re-ask path.
+    const emailRegex = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/
+    const rawMatch = event.body.match(emailRegex)
+    const hasEmailIntent =
+      Boolean(rawMatch) ||
+      /邮箱|邮件|email|gmail|yahoo|outlook|hotmail|icloud|mail/i.test(event.body)
+
+    // Cheap path: deterministic typo map first — saves an LLM call when
+    // we already know the canonical domain.
+    if (rawMatch) {
+      const candidate = rawMatch[0].toLowerCase()
+      const canonical = detectEmailDomainTypo(candidate)
+      if (canonical) {
+        await store.applyOnboarding(event.userId, onboardingUser.phoneE164, "ask_q_email", {
+          priorAskedStep: "ask_q_email",
+          priorUserReply: event.body,
+          suspendedForVent: true,
+        })
+        const at = candidate.lastIndexOf("@")
+        const local = candidate.slice(0, at)
+        const suggested = `${local}@${canonical}`
+        const reaskPhrase =
+          lang === "zh"
+            ? `${candidate} 这个域名我没找到, 你是不是想发到 ${suggested}? 帮我确认一下`
+            : `${candidate} doesn't look right — did you mean ${suggested}? lemme know which`
+        await sendDirect(input, reaskPhrase)
+        store.log("pa.onboarding.deterministic.email_typo_suggested", {
+          userId: event.userId,
+          turnId,
+          source: "static_map",
+          original: candidate,
+          suggested,
+        })
+        return { handled: true, action }
+      }
+    }
+
+    // LLM path — only when there's signal worth spending an LLM call on.
+    if (hasEmailIntent && store.extractEmailIntent) {
+      try {
+        const intent = await store.extractEmailIntent(event.body, lang)
+        if (intent) {
+          if (intent.intent === "provided") {
+            // LLM extracted a clean email → save + advance to verify-start.
+            // Re-emit the runner with a synthetic ask_q_email_verify_start
+            // action; reuse the existing handler so Mailgun-fire + state
+            // advance + verify-prompt all happen in one place.
+            store.log("pa.onboarding.deterministic.email_llm_extracted", {
+              userId: event.userId,
+              turnId,
+              email: intent.email,
+              confidence: intent.confidence,
+            })
+            // Tail-call the verify-start handler with the LLM-extracted email.
+            return runDeterministicOnboardingTurn({
+              ...input,
+              event: { ...event, body: intent.email },
+            })
+          }
+          if (intent.intent === "typo") {
+            await store.applyOnboarding(event.userId, onboardingUser.phoneE164, "ask_q_email", {
+              priorAskedStep: "ask_q_email",
+              priorUserReply: event.body,
+              suspendedForVent: true,
+            })
+            const reaskPhrase =
+              lang === "zh"
+                ? `${intent.original} 这个邮箱我打不通, 你是不是想发到 ${intent.suggestion}? 帮我确认一下`
+                : `${intent.original} didn't look right — did you mean ${intent.suggestion}? lemme know which`
+            await sendDirect(input, reaskPhrase)
+            store.log("pa.onboarding.deterministic.email_typo_suggested", {
+              userId: event.userId,
+              turnId,
+              source: "llm",
+              original: intent.original,
+              suggested: intent.suggestion,
+            })
+            return { handled: true, action }
+          }
+          if (intent.intent === "declined") {
+            // User said no/skip → accept, advance with no contactEmail.
+            await store.applyOnboarding(event.userId, onboardingUser.phoneE164, "complete", {
+              priorAskedStep: "ask_q_email",
+              priorUserReply: event.body,
+            })
+            const ackMsg =
+              lang === "zh" ? "好的, 不强求邮箱. 那我们继续聊吧" : "no worries — we can keep chatting without email"
+            await sendDirect(input, ackMsg)
+            store.log("pa.onboarding.deterministic.email_declined_via_llm", {
+              userId: event.userId,
+              turnId,
+              reply: event.body,
+            })
+            return { handled: true, action }
+          }
+          if (intent.intent === "unclear") {
+            // LLM provided a clarifying question — use that.
+            await store.applyOnboarding(event.userId, onboardingUser.phoneE164, "ask_q_email", {
+              priorAskedStep: "ask_q_email",
+              priorUserReply: event.body,
+              suspendedForVent: true,
+            })
+            await sendDirect(input, intent.clarifyingQuestion)
+            store.log("pa.onboarding.deterministic.email_clarify_via_llm", {
+              userId: event.userId,
+              turnId,
+              clarifyingQuestion: intent.clarifyingQuestion,
+            })
+            return { handled: true, action }
+          }
+        }
+      } catch (err) {
+        // LLM call threw — fall through to deterministic re-ask. Don't
+        // block onboarding on a transient LLM failure.
+        store.log("pa.onboarding.deterministic.email_llm_error", {
+          userId: event.userId,
+          turnId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    }
+
+    // Deterministic fallback re-ask (no email signal in reply, or LLM
+    // unconfigured / failed / returned null).
     await store.applyOnboarding(event.userId, onboardingUser.phoneE164, "ask_q_email", {
       priorAskedStep: "ask_q_email",
       priorUserReply: event.body,
       suspendedForVent: true,
     })
-    const lang = langFor(event.body)
-    // Try typo detection on whatever email-shaped substring exists in the
-    // raw msg. If found → personalized prompt with suggestion.
-    const { detectEmailDomainTypo } = await import("./onboarding.js")
-    const emailMatch = event.body.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/)
-    let reaskPhrase: string
-    if (emailMatch) {
-      const candidate = emailMatch[0].toLowerCase()
-      const canonical = detectEmailDomainTypo(candidate)
-      if (canonical) {
-        const at = candidate.lastIndexOf("@")
-        const local = candidate.slice(0, at)
-        const suggested = `${local}@${canonical}`
-        reaskPhrase =
-          lang === "zh"
-            ? `${candidate} 这个域名我没找到, 你是不是想发到 ${suggested}? 帮我确认一下`
-            : `${candidate} doesn't look right — did you mean ${suggested}? lemme know which`
-        store.log("pa.onboarding.deterministic.email_typo_suggested", {
-          userId: event.userId,
-          turnId,
-          original: candidate,
-          suggested,
-        })
-      } else {
-        reaskPhrase = config.ask_q_email!.reaskPrompt?.[lang] ?? config.ask_q_email!.prompt[lang]
-      }
-    } else {
-      reaskPhrase = config.ask_q_email!.reaskPrompt?.[lang] ?? config.ask_q_email!.prompt[lang]
-    }
+    const reaskPhrase = config.ask_q_email!.reaskPrompt?.[lang] ?? config.ask_q_email!.prompt[lang]
     await sendDirect(input, reaskPhrase)
     store.log("pa.onboarding.deterministic.email_reask", {
       userId: event.userId,

@@ -999,3 +999,247 @@ test("runDeterministicOnboardingTurn: complete + all gates → handled=false (ca
   })
   assert.equal(result.handled, false, "handled=false signals caller to activate agent runtime")
 })
+
+// ────────────────────────────────────────────────────────────────────
+// iter34 P0 — LLM-fallback email intent extraction (Adam directive
+// 2026-05-05: "edge case 处理应该是能 involve llm啊").
+// ────────────────────────────────────────────────────────────────────
+
+test("iter34 P0: LLM intent=provided → re-runs runner with extracted email + advances to verify", async () => {
+  _resetOnboardingConfigCache()
+  const { store, captures } = makeFakeRunnerStore({
+    extractEmailIntent: async () => ({
+      intent: "provided",
+      email: "john@gmail.com",
+      confidence: 0.95,
+    }),
+    sendVerificationEmail: async (email: string) => ({
+      rawCode: "654321",
+      sentAt: "2026-05-05T00:00:00Z",
+      expiresAt: "2026-05-05T00:30:00Z",
+      providerMessageId: "stub",
+    }),
+  })
+  const result = await runDeterministicOnboardingTurn({
+    event: makeEvent("我邮箱是 john at gmail dot com"),
+    store,
+    turnId: "turn-llm-provided",
+    onboardingUser: {
+      id: "user-llm",
+      phoneE164: "+15551234567",
+      onboardingState: "q_email_asked",
+      statedPreferences: { preferredLang: "zh" },
+    },
+    cvParsed: false,
+    agent: FAKE_AGENT,
+  })
+  assert.equal(result.handled, true)
+  // The recursive call should land on ask_q_email_verify_start since
+  // the LLM-extracted email is now the "user reply"
+  const verifyEvents = captures.logEvents.filter((e) =>
+    e.event === "pa.onboarding.deterministic.email_llm_extracted"
+  )
+  assert.equal(verifyEvents.length, 1, "email_llm_extracted log must fire")
+  assert.equal(verifyEvents[0]!.payload?.email, "john@gmail.com")
+})
+
+test("iter34 P0: LLM intent=typo (described, not typed) → personalized re-ask with suggestion", async () => {
+  // User describes email instead of typing it. parseEmailAnswer regex
+  // misses (no @ in raw), workflow stays at q_email_asked, LLM extracts
+  // the typo'd domain from the prose description.
+  _resetOnboardingConfigCache()
+  const { store, captures } = makeFakeRunnerStore({
+    extractEmailIntent: async () => ({
+      intent: "typo",
+      original: "user@dgmail.com",
+      suggestion: "user@gmail.com",
+    }),
+  })
+  const result = await runDeterministicOnboardingTurn({
+    event: makeEvent("user at dgmail dot com"),
+    store,
+    turnId: "turn-llm-typo",
+    onboardingUser: {
+      id: "user-llm",
+      phoneE164: "+15551234567",
+      onboardingState: "q_email_asked",
+      statedPreferences: { preferredLang: "zh" },
+    },
+    cvParsed: false,
+    agent: FAKE_AGENT,
+  })
+  assert.equal(result.handled, true)
+  assert.equal(captures.enqueuedOutbound.length, 1)
+  assert.match(
+    captures.enqueuedOutbound[0]!,
+    /dgmail\.com.*user@gmail\.com/,
+    "re-ask must surface both original AND suggestion"
+  )
+  const typoLogs = captures.logEvents.filter(
+    (e) => e.event === "pa.onboarding.deterministic.email_typo_suggested"
+  )
+  assert.equal(typoLogs.length, 1)
+  assert.equal(typoLogs[0]!.payload?.source, "llm")
+})
+
+test("iter34 P0: LLM intent=declined → advance to complete with friendly ack", async () => {
+  _resetOnboardingConfigCache()
+  const { store, captures } = makeFakeRunnerStore({
+    extractEmailIntent: async () => ({ intent: "declined" }),
+  })
+  const result = await runDeterministicOnboardingTurn({
+    event: makeEvent("没邮箱不想发"),
+    store,
+    turnId: "turn-llm-declined",
+    onboardingUser: {
+      id: "user-llm",
+      phoneE164: "+15551234567",
+      onboardingState: "q_email_asked",
+      statedPreferences: { preferredLang: "zh" },
+    },
+    cvParsed: false,
+    agent: FAKE_AGENT,
+  })
+  assert.equal(result.handled, true)
+  const declineLogs = captures.logEvents.filter(
+    (e) => e.event === "pa.onboarding.deterministic.email_declined_via_llm"
+  )
+  assert.equal(declineLogs.length, 1)
+  assert.match(captures.enqueuedOutbound[0]!, /不强求邮箱/)
+  // State advance to complete must fire
+  const advanceCalls = captures.appliedSteps.filter((s) => s.step === "complete")
+  assert.equal(advanceCalls.length, 1)
+})
+
+test("iter34 P0: LLM intent=unclear → use clarifyingQuestion verbatim", async () => {
+  _resetOnboardingConfigCache()
+  const { store, captures } = makeFakeRunnerStore({
+    extractEmailIntent: async () => ({
+      intent: "unclear",
+      clarifyingQuestion: "你说的工作邮箱具体是哪个? 直接打出来给我",
+    }),
+  })
+  const result = await runDeterministicOnboardingTurn({
+    event: makeEvent("用我工作邮箱"),
+    store,
+    turnId: "turn-llm-unclear",
+    onboardingUser: {
+      id: "user-llm",
+      phoneE164: "+15551234567",
+      onboardingState: "q_email_asked",
+      statedPreferences: { preferredLang: "zh" },
+    },
+    cvParsed: false,
+    agent: FAKE_AGENT,
+  })
+  assert.equal(result.handled, true)
+  assert.equal(
+    captures.enqueuedOutbound[0],
+    "你说的工作邮箱具体是哪个? 直接打出来给我",
+    "clarifying question must be sent verbatim"
+  )
+})
+
+test("iter34 P0: LLM unconfigured → falls back to deterministic re-ask (no regression)", async () => {
+  _resetOnboardingConfigCache()
+  const { store, captures } = makeFakeRunnerStore({
+    // extractEmailIntent omitted entirely
+  })
+  const result = await runDeterministicOnboardingTurn({
+    event: makeEvent("哈哈"),
+    store,
+    turnId: "turn-llm-absent",
+    onboardingUser: {
+      id: "user-llm",
+      phoneE164: "+15551234567",
+      onboardingState: "q_email_asked",
+      statedPreferences: { preferredLang: "zh" },
+    },
+    cvParsed: false,
+    agent: FAKE_AGENT,
+  })
+  assert.equal(result.handled, true)
+  // Must still get the deterministic Bug 10 reaskPrompt
+  assert.match(captures.enqueuedOutbound[0]!, /没看到邮箱地址/)
+})
+
+test("iter34 P0: LLM throws → swallow + fall back to deterministic re-ask", async () => {
+  _resetOnboardingConfigCache()
+  const { store, captures } = makeFakeRunnerStore({
+    extractEmailIntent: async () => {
+      throw new Error("LLM 503")
+    },
+  })
+  const result = await runDeterministicOnboardingTurn({
+    event: makeEvent("send to my work email"),
+    store,
+    turnId: "turn-llm-throws",
+    onboardingUser: {
+      id: "user-llm",
+      phoneE164: "+15551234567",
+      onboardingState: "q_email_asked",
+      statedPreferences: { preferredLang: "en" },
+    },
+    cvParsed: false,
+    agent: FAKE_AGENT,
+  })
+  assert.equal(result.handled, true)
+  const errLogs = captures.logEvents.filter(
+    (e) => e.event === "pa.onboarding.deterministic.email_llm_error"
+  )
+  assert.equal(errLogs.length, 1, "LLM error must be logged but not propagate")
+  assert.match(captures.enqueuedOutbound[0]!, /didn't catch an email/)
+})
+
+test("iter34 P0: noise reply (no email signal) → SKIPS LLM call (cost guard)", async () => {
+  _resetOnboardingConfigCache()
+  let llmCalled = false
+  const { store, captures } = makeFakeRunnerStore({
+    extractEmailIntent: async () => {
+      llmCalled = true
+      return { intent: "unclear", clarifyingQuestion: "?" }
+    },
+  })
+  const result = await runDeterministicOnboardingTurn({
+    event: makeEvent("123"),
+    store,
+    turnId: "turn-no-signal",
+    onboardingUser: {
+      id: "user-llm",
+      phoneE164: "+15551234567",
+      onboardingState: "q_email_asked",
+      statedPreferences: { preferredLang: "zh" },
+    },
+    cvParsed: false,
+    agent: FAKE_AGENT,
+  })
+  assert.equal(result.handled, true)
+  assert.equal(llmCalled, false, "no email signal in '123' → LLM must NOT be called (cost guard)")
+})
+
+test("iter34 P0: deterministic typo map wins over LLM (cheap path first)", async () => {
+  _resetOnboardingConfigCache()
+  let llmCalled = false
+  const { store, captures } = makeFakeRunnerStore({
+    extractEmailIntent: async () => {
+      llmCalled = true
+      return null
+    },
+  })
+  const result = await runDeterministicOnboardingTurn({
+    event: makeEvent("test@gmal.com"),
+    store,
+    turnId: "turn-static-typo",
+    onboardingUser: {
+      id: "user-llm",
+      phoneE164: "+15551234567",
+      onboardingState: "q_email_asked",
+      statedPreferences: { preferredLang: "zh" },
+    },
+    cvParsed: false,
+    agent: FAKE_AGENT,
+  })
+  assert.equal(result.handled, true)
+  assert.equal(llmCalled, false, "static map matched gmal.com → no LLM call")
+  assert.match(captures.enqueuedOutbound[0]!, /test@gmail\.com.*帮我确认/)
+})
