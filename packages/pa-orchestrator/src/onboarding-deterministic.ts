@@ -593,6 +593,15 @@ export type DeterministicRunnerStore = {
     userId: string,
     lang: "zh" | "en"
   ): Promise<{ summary: string } | null>
+  /**
+   * iter33 P4 — push a 2-job-rec message before complete. Returns null
+   * when no recs are available yet (caller falls back to deferred-promise
+   * line). recCount lets callers log/track delivered counts.
+   */
+  generateJobRecs?(
+    userId: string,
+    lang: "zh" | "en"
+  ): Promise<{ message: string; recCount: number } | null>
   log(event: string, payload?: Record<string, unknown>): void
   nowIso(): string
   db?: Firestore
@@ -909,6 +918,38 @@ export async function runDeterministicOnboardingTurn(
     }
     await sendDirect(input, analysisMsg)
 
+    // iter33 P4 — third outbound: 2-job-rec push (or deferred-promise
+    // when no live matches yet). Adam-locked sequence: "推荐两个岗位.
+    // onboard 结束". Fail-OPEN to deferred-promise so onboarding always
+    // completes even if matching pipeline is offline.
+    let jobRecMsg: string
+    let recCount = 0
+    try {
+      const recs = store.generateJobRecs
+        ? await store.generateJobRecs(event.userId, lang)
+        : null
+      if (recs?.message && recs.message.trim().length > 0) {
+        jobRecMsg = recs.message.trim()
+        recCount = recs.recCount
+      } else {
+        jobRecMsg =
+          lang === "zh"
+            ? "明早 9 点你会收到第一批匹配岗位 (2 个 / 天). 有想法随时告诉我"
+            : "you'll get your first 2 matches tomorrow ~9am. ping me anytime with thoughts"
+      }
+    } catch (err) {
+      store.log("pa.onboarding.deterministic.job_recs_error", {
+        userId: event.userId,
+        turnId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+      jobRecMsg =
+        lang === "zh"
+          ? "明早 9 点你会收到第一批匹配岗位 (2 个 / 天). 有想法随时告诉我"
+          : "you'll get your first 2 matches tomorrow ~9am. ping me anytime with thoughts"
+    }
+    await sendDirect(input, jobRecMsg)
+
     await store.applyOnboarding(event.userId, onboardingUser.phoneE164, "complete", {
       priorAskedStep: "ask_q_resume",
       priorUserReply: event.body,
@@ -917,6 +958,8 @@ export async function runDeterministicOnboardingTurn(
       userId: event.userId,
       turnId,
       withCvAnalysis: true,
+      jobRecCount: recCount,
+      jobRecsLive: recCount > 0,
     })
     return { handled: true, action }
   }

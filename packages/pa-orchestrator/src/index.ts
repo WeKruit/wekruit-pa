@@ -521,6 +521,21 @@ export type OrchestratorStore = {
   ): Promise<{ summary: string } | null>
 
   /**
+   * iter33 P4 — produce a 1-message blurb pushing 2 job recommendations
+   * to the user before agent runtime activates. Implementations may:
+   *  - read recently-cached matches (e.g. pa-job-profiles ledger) and
+   *    format the top 2, OR
+   *  - fall back to a deferred-promise line ("first batch lands tomorrow
+   *    around 9am") when no live matches exist yet
+   * Returns null when LLM/DB lookups fail; deterministic dispatcher then
+   * emits a generic deferred-promise so onboarding always completes.
+   */
+  generateJobRecs?(
+    userId: string,
+    lang: "zh" | "en"
+  ): Promise<{ message: string; recCount: number } | null>
+
+  /**
    * Phase 24.5 — optional Firestore handle for `getFlag()` reads. Tests omit
    * `db`; production wires the live Firestore so flag-backed kill-switches
    * (e.g. `PA_VOICE_MIRROR_DISABLED`) consult `pa-feature-flags`. env vars
@@ -2967,6 +2982,12 @@ export type OrchestratorStoreDeps = {
    * — onboarding still completes via fallback line in dispatcher).
    */
   generateCvAnalysis?: NonNullable<OrchestratorStore["generateCvAnalysis"]>
+  /**
+   * iter33 P4 — produce a 2-job-rec push message before complete. Wired
+   * from apps/functions where the matching pipeline + pa-job-profiles
+   * ledger handles live. Tests pass a stub.
+   */
+  generateJobRecs?: NonNullable<OrchestratorStore["generateJobRecs"]>
 }
 
 export function createFirestoreOrchestratorStore(
@@ -3429,6 +3450,12 @@ export function createFirestoreOrchestratorStore(
     // so onboarding still completes when LLM is unconfigured.
     ...(deps.generateCvAnalysis
       ? { generateCvAnalysis: deps.generateCvAnalysis }
+      : {}),
+    // iter33 P4 — generateJobRecs is wired by the apps/functions layer.
+    // Tests omit it; the deterministic dispatcher falls back to a deferred
+    // promise so onboarding still completes.
+    ...(deps.generateJobRecs
+      ? { generateJobRecs: deps.generateJobRecs }
       : {}),
     // iter32 — CV gate. Reads parsedCandidateResumes (cross-product
     // collection — see CLAUDE.md) for the user; returns true iff a row

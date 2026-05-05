@@ -907,10 +907,10 @@ async function main() {
   }
 
   // ── i32-4: CV gate releases when cvParsed=true → send_cv_analysis →
-  //         applyOnboarding(complete) (iter33 P3: 2 messages — ack + LLM
-  //         summary, terminal step before agent runtime activates)
+  //         3-msg push (ack + analysis + job-recs) → applyOnboarding(complete)
+  //         (iter33 P3 + P4)
   if (should("i32-cv-gate-releases")) {
-    await scenario("i32-cv-gate-releases: q_resume_asked + cvParsed=true → send_cv_analysis (iter33 P3)", async () => {
+    await scenario("i32-cv-gate-releases: q_resume_asked + cvParsed=true → 3 msgs + complete (iter33 P3+P4)", async () => {
       const det = await import("@pa/pa-orchestrator")
       const ev = []
       const captures = []
@@ -924,6 +924,10 @@ async function main() {
         },
         async generateCvAnalysis() {
           return { summary: "RAG infra + agent orchestration is your strongest line — i'll lean recommendations there." }
+        },
+        async generateJobRecs() {
+          // Return null to exercise the deferred-promise fallback path.
+          return null
         },
         log() {},
         nowIso() {
@@ -954,10 +958,11 @@ async function main() {
         cvParsed: true,
         agent: { id: "c" },
       })
-      expect(ev.find((x) => x.step === "complete") !== undefined, `must advance to complete after CV analysis`)
-      expect(captures.length === 2, `must send 2 outbound messages (ack + analysis), got ${captures.length}`)
-      expect(/看一下|read your resume|resume/i.test(captures[0].body), `first reply must be CV-read ack (got "${captures[0].body}")`)
-      expect(/RAG|agent|recommendation|background/i.test(captures[1].body), `second reply must be CV summary (got "${captures[1].body}")`)
+      expect(ev.find((x) => x.step === "complete") !== undefined, `must advance to complete after CV analysis + job recs`)
+      expect(captures.length === 3, `must send 3 outbound messages (ack + analysis + job-recs), got ${captures.length}`)
+      expect(/看一下|read your resume|resume/i.test(captures[0].body), `1st reply must be CV-read ack (got "${captures[0].body}")`)
+      expect(/RAG|agent|recommendation|background/i.test(captures[1].body), `2nd reply must be CV summary (got "${captures[1].body}")`)
+      expect(/tomorrow|9am|匹配|明早/i.test(captures[2].body), `3rd reply must be deferred-promise job-rec (got "${captures[2].body}")`)
     })
   }
 
