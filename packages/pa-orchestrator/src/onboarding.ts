@@ -684,7 +684,12 @@ export function userAnsweredStep(
     return /(citizen|公民|美国人|us\s*citizen|green\s*card|绿卡|gc\b|permanent\s*resident|opt\b|stem.*opt|\bOPT\b|h-?1\s*b|h1\b|sponsor|sponsorship|need.*visa)/i.test(r)
   }
   if (step === "ask_q_startup_pref") {
-    return /(startup|小公司|小厂|创业|early\s*stage|hustle|大厂|大公司|big[-\s]*co|big\s*tech|stable|faang|enterprise)/i.test(r)
+    // iter34 hotfix 2026-05-05 — Adam LIVE bug: regex didn't recognize
+    // "都行/either/无所谓/随便/都可以/都OK/都喜欢/都接受/whatever". User answered
+    // "我都可以" + "都行" twice and got reasked into variant[1] which drifts
+    // off-theme ("公司规模/中型"). Add either-keywords to bilingual coverage
+    // mirroring parseLangAnswer (line ~866) which already accepts these.
+    return /(startup|小公司|小厂|创业|early\s*stage|hustle|大厂|大公司|big[-\s]*co|big\s*tech|stable|faang|enterprise|都行|都可以|都ok|都OK|都喜欢|都接受|无所谓|随便|两个都|either|whatever|both\s*ok|either\s*works|don'?t\s*care|no\s*preference)/i.test(r)
   }
   if (step === "ask_q_location") {
     return /(remote|在家|远程|wfh|湾区|bay\s*area|sf\b|san\s*francisco|ny\b|纽约|new\s*york|nyc|seattle|西雅图|la\b|los\s*angeles|洛杉矶|波士顿|boston|chicago|austin|texas|tx\b)/i.test(r)

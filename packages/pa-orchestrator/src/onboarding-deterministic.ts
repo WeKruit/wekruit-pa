@@ -239,8 +239,12 @@ export const DEFAULT_ONBOARDING_CONFIG: Record<OnboardingStep, OnboardingStepCon
         en: "startup / bigtech / either — pick one",
       },
       {
-        zh: "公司规模偏好? 早期 startup / 中型 / 大厂 — 哪个更合你?",
-        en: "company size preference — early startup / mid / bigco — which fits?",
+        // iter34 hotfix 2026-05-05 — was "公司规模偏好? 早期 startup / 中型 / 大厂"
+        // which drifts off-theme (introduces "中型/公司规模" — concepts user
+        // wasn't asked about). Keep variants ON-THEME for q_startup_pref:
+        // strictly startup vs bigtech vs either.
+        zh: "硬要选一个? startup / 大厂 / 都行 — 都可以的话回'都行'就好",
+        en: "if you had to pick — startup / bigtech / either? 'either' is fine",
       },
       {
         zh: "你想要那种快节奏 startup 体验, 还是更看重稳定大厂?",

@@ -9,6 +9,7 @@ import {
   composeOnboardingInput,
   parseUserAnswerForStep,
   shouldRunOnboardingProbe,
+  userAnsweredStep,
 } from "./onboarding.js"
 
 type StoredDoc = Record<string, unknown>
@@ -375,6 +376,31 @@ test("v2: parseUserAnswerForStep startup-pref distinguishes startup vs big-co", 
   assert.deepEqual(parseUserAnswerForStep("ask_q_startup_pref", "都行"), {
     prefersStartup: null,
   })
+})
+
+// --- iter34 hotfix 2026-05-05: userAnsweredStep recognizes either-keywords ---
+// Regression: Adam LIVE bug — user answered "我都可以" + "都行" twice, regex
+// didn't match → reask chain → drift to off-theme variant[1].
+test("iter34 hotfix: userAnsweredStep startup_pref accepts 都行/either/无所谓/随便 etc", () => {
+  // Affirmative either-answers (zh)
+  assert.equal(userAnsweredStep("ask_q_startup_pref", "都行"), true)
+  assert.equal(userAnsweredStep("ask_q_startup_pref", "我都可以"), true)
+  assert.equal(userAnsweredStep("ask_q_startup_pref", "都可以"), true)
+  assert.equal(userAnsweredStep("ask_q_startup_pref", "都OK"), true)
+  assert.equal(userAnsweredStep("ask_q_startup_pref", "无所谓"), true)
+  assert.equal(userAnsweredStep("ask_q_startup_pref", "随便"), true)
+  assert.equal(userAnsweredStep("ask_q_startup_pref", "两个都行"), true)
+  // Affirmative either-answers (en)
+  assert.equal(userAnsweredStep("ask_q_startup_pref", "either"), true)
+  assert.equal(userAnsweredStep("ask_q_startup_pref", "whatever"), true)
+  assert.equal(userAnsweredStep("ask_q_startup_pref", "either works"), true)
+  assert.equal(userAnsweredStep("ask_q_startup_pref", "don't care"), true)
+  assert.equal(userAnsweredStep("ask_q_startup_pref", "no preference"), true)
+  // Specific preference still works
+  assert.equal(userAnsweredStep("ask_q_startup_pref", "想去 startup"), true)
+  assert.equal(userAnsweredStep("ask_q_startup_pref", "大厂稳一点"), true)
+  // Off-topic still rejected
+  assert.equal(userAnsweredStep("ask_q_startup_pref", "我饿了"), false)
 })
 
 // --- v2-9: idempotency — re-running same step does not double-write or regress ---
