@@ -233,7 +233,8 @@ test("composeOnboardingInput ask_q_tos: emits ToS line with privacy URL", () => 
   })
   assert.match(input, /ask_q_tos\b/)
   assert.match(input, /privacy/i)
-  assert.match(input, /https:\/\/wekruit-pa\.web\.app\/legal/)
+  // iter33 Bug 13 fix 2026-05-05 — legal page moved to pa-landing host.
+  assert.match(input, /https:\/\/wekruit-pa-landing\.web\.app\/legal/)
 })
 
 test("composeOnboardingInput ask_q_tos with priorAskedStep + decline reply: emits decline-ack branch", () => {

@@ -107,8 +107,8 @@ export const DEFAULT_ONBOARDING_CONFIG: Record<OnboardingStep, OnboardingStepCon
   },
   ask_q_tos: {
     prompt: {
-      zh: "开聊前先说一下: 我会记一些咱聊天的事来给你推工作 / 找内推. 隐私 + 用户协议在这: https://wekruit-pa.web.app/legal — 同意就回个 \"同意\" 我们继续",
-      en: "before we get into it — heads up i remember bits of our chat to surface jobs + referrals for you. privacy + terms here: https://wekruit-pa.web.app/legal — reply \"agree\" if cool with that and we keep going",
+      zh: "开聊前先说一下: 我会记一些咱聊天的事来给你推工作 / 找内推. 隐私 + 用户协议在这: https://wekruit-pa-landing.web.app/legal — 同意就回个 \"同意\" 我们继续",
+      en: "before we get into it — heads up i remember bits of our chat to surface jobs + referrals for you. privacy + terms here: https://wekruit-pa-landing.web.app/legal — reply \"agree\" if cool with that and we keep going",
     },
     declinePrompt: {
       zh: "完全 ok, 你不同意我就不主动记你聊天的事. 想聊别的随时. 改主意了说一声",
@@ -163,6 +163,14 @@ export const DEFAULT_ONBOARDING_CONFIG: Record<OnboardingStep, OnboardingStepCon
     prompt: {
       zh: "对了, 平时邮箱用啥? 后面如果你不在线我直接发邮件给你",
       en: "btw — what email should I send stuff to when you're afk? roughly fine",
+    },
+    // iter33 Bug 10 fix 2026-05-05 (Adam: edge case — user replies "哈哈"
+    // or any non-email text). Workflow's no_email edge re-asks; without a
+    // distinct reaskPrompt the user sees the SAME prompt again and feels
+    // unheard. Use a specific re-ask that acknowledges the parse failure.
+    reaskPrompt: {
+      zh: "没看到邮箱地址哎, 直接发个 email 给我就行 (像 you@example.com 这种)",
+      en: "didn't catch an email there — just paste the address (like you@example.com)",
     },
   },
   ask_q_email_verify: {
@@ -1148,6 +1156,29 @@ export async function runDeterministicOnboardingTurn(
   // ask_q_email_verify_retry — wrong code branch (no code parsed).
   if (action.kind === "ask_q_email_verify_retry") {
     await sendDirect(input, config.ask_q_email_verify!.waitingPrompt![langFor(event.body)])
+    return { handled: true, action }
+  }
+
+  // iter33 Bug 10 fix 2026-05-05 (Adam: edge case "哈哈" reply at q_email).
+  // When the dispatcher re-emits ask_q_email at the q_email_asked state
+  // (workflow's no_email re-ask edge), use the dedicated reaskPrompt so
+  // the user understands their reply didn't parse — not just see the
+  // same Q again. State doesn't advance (q_email_asked → q_email_asked
+  // self-loop), so suspendedForVent semantics keep STATE_ORDER happy.
+  if (action.kind === "ask_q_email" && onboardingUser.onboardingState === "q_email_asked") {
+    await store.applyOnboarding(event.userId, onboardingUser.phoneE164, "ask_q_email", {
+      priorAskedStep: "ask_q_email",
+      priorUserReply: event.body,
+      suspendedForVent: true,
+    })
+    const lang = langFor(event.body)
+    const reaskPhrase = config.ask_q_email!.reaskPrompt?.[lang] ?? config.ask_q_email!.prompt[lang]
+    await sendDirect(input, reaskPhrase)
+    store.log("pa.onboarding.deterministic.email_reask", {
+      userId: event.userId,
+      turnId,
+      reply: event.body,
+    })
     return { handled: true, action }
   }
 
