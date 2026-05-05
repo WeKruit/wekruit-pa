@@ -225,11 +225,11 @@ function makeGenerateJobRecs(): NonNullable<
       sponsorship = "none"
     }
 
-    const sizePreference: "startup" | "bigco" | undefined =
+    const sizePreference: "startup" | "bigtech" | "either" | undefined =
       prefersStartup === true
         ? "startup"
         : prefersStartup === false
-          ? "bigco"
+          ? "bigtech"
           : undefined
 
     const filters = {
