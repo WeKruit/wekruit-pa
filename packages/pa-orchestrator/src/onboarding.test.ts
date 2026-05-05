@@ -10,6 +10,9 @@ import {
   parseUserAnswerForStep,
   shouldRunOnboardingProbe,
   userAnsweredStep,
+  canonicalizeRole,
+  canonicalizeLocations,
+  canonicalizeStartupPref,
 } from "./onboarding.js"
 
 type StoredDoc = Record<string, unknown>
@@ -340,7 +343,8 @@ test("v2: applyOnboardingStep writes targetRole when advancing past ask_q_role",
   const userDocAfterYoeAsk = store.get(`${PA_COLLECTIONS.users}/u1`)
   assert.equal(userDocAfterYoeAsk?.["onboardingState"], "q_yoe_asked")
   const prefs = userDocAfterYoeAsk?.["statedPreferences"] as { targetRole?: string[] } | undefined
-  assert.deepEqual(prefs?.targetRole, ["wanna do PM"])
+  // iter34 hotfix 2026-05-05 — targetRole now canonical, "wanna do PM" → "pm".
+  assert.deepEqual(prefs?.targetRole, ["pm"])
 })
 
 // --- v2-6: parser parity — q_yoe extracts numeric years and new-grad signal ---
@@ -468,6 +472,85 @@ test("iter34 hotfix: parseVisaAnswer / userAnsweredStep handle H-1B variants inc
   }
 })
 
+// --- iter34 hotfix 2026-05-05: closed-set canonicalize functions ---
+// Adam directive: "所有的 deterministic 问题用户答案我们都要这么处理...
+// 这些问题不应该是 open ended，都需要 normalize 好"
+test("iter34 hotfix: canonicalizeRole maps free-text to closed enum", () => {
+  // SWE family
+  assert.equal(canonicalizeRole("我想找个 cs 的都行，就是和 SWE 的就好了"), "swe")
+  assert.equal(canonicalizeRole("software engineer"), "swe")
+  assert.equal(canonicalizeRole("engineer"), "swe")
+  assert.equal(canonicalizeRole("前端开发"), "swe")
+  assert.equal(canonicalizeRole("全栈"), "swe")
+  assert.equal(canonicalizeRole("staff engineer"), "swe")
+  // PM
+  assert.equal(canonicalizeRole("product manager"), "pm")
+  assert.equal(canonicalizeRole("PM for fintech"), "pm")
+  assert.equal(canonicalizeRole("产品经理"), "pm")
+  // Research
+  assert.equal(canonicalizeRole("research scientist"), "research")
+  assert.equal(canonicalizeRole("研究员"), "research")
+  // Data
+  assert.equal(canonicalizeRole("data scientist"), "data")
+  assert.equal(canonicalizeRole("数据分析"), "data")
+  // ML
+  assert.equal(canonicalizeRole("ml infra"), "ml")
+  assert.equal(canonicalizeRole("算法工程师"), "ml")
+  // Designer
+  assert.equal(canonicalizeRole("UX designer"), "designer")
+  assert.equal(canonicalizeRole("产品设计"), "designer")
+  // EM
+  assert.equal(canonicalizeRole("engineering manager"), "em")
+  // Founder
+  assert.equal(canonicalizeRole("创始人"), "founder")
+  assert.equal(canonicalizeRole("co-founder"), "founder")
+  // Unknown → "other" (not raw text!)
+  assert.equal(canonicalizeRole("我想躺平"), "other")
+  assert.equal(canonicalizeRole("xxx random"), "other")
+  assert.equal(canonicalizeRole(""), "other")
+})
+
+test("iter34 hotfix: canonicalizeLocations maps to closed enum array", () => {
+  // US cities
+  assert.deepEqual(canonicalizeLocations("湾区"), ["sf"])
+  assert.deepEqual(canonicalizeLocations("Bay Area"), ["sf"])
+  assert.deepEqual(canonicalizeLocations("SF"), ["sf"])
+  assert.deepEqual(canonicalizeLocations("NYC"), ["nyc"])
+  assert.deepEqual(canonicalizeLocations("纽约"), ["nyc"])
+  assert.deepEqual(canonicalizeLocations("seattle"), ["seattle"])
+  assert.deepEqual(canonicalizeLocations("LA"), ["la"])
+  assert.deepEqual(canonicalizeLocations("Boston"), ["boston"])
+  // China cities
+  assert.deepEqual(canonicalizeLocations("上海"), ["shanghai"])
+  assert.deepEqual(canonicalizeLocations("北京"), ["beijing"])
+  assert.deepEqual(canonicalizeLocations("杭州"), ["hangzhou"])
+  // Remote / anywhere
+  assert.deepEqual(canonicalizeLocations("remote"), ["remote"])
+  assert.deepEqual(canonicalizeLocations("远程"), ["remote"])
+  assert.deepEqual(canonicalizeLocations("都行"), ["anywhere"])
+  assert.deepEqual(canonicalizeLocations("anywhere"), ["anywhere"])
+  // Multi-location
+  const multi = canonicalizeLocations("NYC or remote")
+  assert.ok(multi.includes("nyc") && multi.includes("remote"))
+  // Unknown → "other"
+  assert.deepEqual(canonicalizeLocations("我家"), ["other"])
+})
+
+test("iter34 hotfix: canonicalizeStartupPref maps to startup|bigtech|either|null", () => {
+  assert.equal(canonicalizeStartupPref("想去 startup"), "startup")
+  assert.equal(canonicalizeStartupPref("小公司"), "startup")
+  assert.equal(canonicalizeStartupPref("创业"), "startup")
+  assert.equal(canonicalizeStartupPref("大厂稳一点"), "bigtech")
+  assert.equal(canonicalizeStartupPref("FAANG"), "bigtech")
+  assert.equal(canonicalizeStartupPref("都行"), "either")
+  assert.equal(canonicalizeStartupPref("我都可以"), "either")
+  assert.equal(canonicalizeStartupPref("无所谓"), "either")
+  assert.equal(canonicalizeStartupPref("either"), "either")
+  assert.equal(canonicalizeStartupPref("startup or bigco"), "either")
+  assert.equal(canonicalizeStartupPref("我饿了"), null)
+  assert.equal(canonicalizeStartupPref(""), null)
+})
+
 // --- iter34 hotfix 2026-05-05: q_location accepts 都行/anywhere ---
 test("iter34 hotfix: userAnsweredStep location accepts 都行/anywhere/wherever", () => {
   assert.equal(userAnsweredStep("ask_q_location", "都行"), true)
@@ -495,7 +578,8 @@ test("v2: applyOnboardingStep idempotent — re-applying same step is no-op", as
   }
   const firstRoles = after1.statedPreferences?.targetRole
   assert.equal(after1.onboardingState, "q_yoe_asked")
-  assert.deepEqual(firstRoles, ["engineer"])
+  // iter34 hotfix — canonical: "engineer" → "swe" (matches engineer\b pattern)
+  assert.deepEqual(firstRoles, ["swe"])
 
   // Re-apply the same advancement — currentIdx >= nextIdx → early return, no overwrite
   const userAfter = { ...baseUser, onboardingState: "q_yoe_asked" as const }
@@ -509,7 +593,7 @@ test("v2: applyOnboardingStep idempotent — re-applying same step is no-op", as
   }
   // No regression: state stayed q_yoe_asked AND statedPreferences not overwritten
   assert.equal(after2.onboardingState, "q_yoe_asked")
-  assert.deepEqual(after2.statedPreferences?.targetRole, ["engineer"])
+  assert.deepEqual(after2.statedPreferences?.targetRole, ["swe"])
 })
 
 // --- v2-10: reusable-trigger flow — shouldRunOnboardingProbe returns next step when incomplete ---

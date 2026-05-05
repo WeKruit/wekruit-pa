@@ -573,10 +573,49 @@ const STATE_ORDER: Array<OnboardingState | undefined> = [
 // fields are stored explicitly to record "we asked, no clean signal yet".
 // ============================================================================
 
+/**
+ * iter34 hotfix 2026-05-05 — Adam directive "所有的 deterministic 问题
+ * 用户答案我们都要这么处理...这些问题不应该是 open ended，都需要
+ * normalize 好". canonicalizeRole maps any reply to a canonical role
+ * token from a CLOSED set. Free-form fallback → "other" (NOT raw text).
+ * Bilingual keyword bank.
+ */
+export type CanonicalRole =
+  | "swe" | "pm" | "em" | "designer" | "research" | "data" | "ml"
+  | "ops" | "marketing" | "sales" | "founder" | "other"
+
+const ROLE_CANONICAL_MAP: Array<{ pattern: RegExp; token: CanonicalRole }> = [
+  // Order matters — most-specific first. Multi-word matches before single words.
+  { pattern: /(staff|principal|tech\s*lead|tl\b|架构|首席工程)/i, token: "swe" },
+  { pattern: /(ml\b|machine\s*learning|deep\s*learning|算法|ai\s*engineer|llm)/i, token: "ml" },
+  // data before research so "data scientist" → data, not research
+  { pattern: /(data\s*(scientist|analyst|engineer)|数据(科学|分析|工程)?|ds\b|de\b)/i, token: "data" },
+  { pattern: /(research(er)?|科研|研究员|phd\s*role|\bscientist\b)/i, token: "research" },
+  { pattern: /(designer|design\b|设计|\bux\b|\bui\b|product\s*designer)/i, token: "designer" },
+  { pattern: /(\bpm\b|product\s*manager|产品经理|tpm\b)/i, token: "pm" },
+  { pattern: /(\bem\b|engineering\s*manager|工程经理|manager|director|vp\b)/i, token: "em" },
+  { pattern: /(swe|software\s*engineer|software\s*dev|engineer\b|developer|前端|后端|全栈|frontend|backend|fullstack|fe\b|be\b|coder|程序员|开发|工程师|cs\b|computer\s*science)/i, token: "swe" },
+  { pattern: /(\bops\b|sre\b|devops|infra|platform|reliability|运维)/i, token: "ops" },
+  { pattern: /(marketing|growth|brand|市场|营销)/i, token: "marketing" },
+  { pattern: /(sales|account\s*exec|ae\b|bd\b|商务|销售)/i, token: "sales" },
+  { pattern: /(founder|co[-\s]?founder|创始人|创业者|ceo\b|cto\b)/i, token: "founder" },
+]
+
+export function canonicalizeRole(reply: string): CanonicalRole {
+  if (!reply.trim()) return "other"
+  for (const { pattern, token } of ROLE_CANONICAL_MAP) {
+    if (pattern.test(reply)) return token
+  }
+  return "other"
+}
+
 function parseRoleAnswer(reply: string): Partial<StatedPreferences> {
-  const trimmed = reply.trim().slice(0, 80)
+  const trimmed = reply.trim()
   if (!trimmed) return {}
-  return { targetRole: [trimmed] }
+  // iter34 hotfix 2026-05-05 — canonicalize, never store raw free-text.
+  // statedPreferences.targetRole stays string[] (schema-compatible) but
+  // contents are now ALWAYS from CanonicalRole enum (closed set).
+  return { targetRole: [canonicalizeRole(trimmed)] }
 }
 
 function parseYoeAnswer(reply: string): Partial<StatedPreferences> {
@@ -619,27 +658,85 @@ function parseVisaAnswer(reply: string): Partial<StatedPreferences> {
   return { visaStatus: "unknown" }
 }
 
-function parseStartupPrefAnswer(reply: string): Partial<StatedPreferences> {
-  const lower = reply.toLowerCase()
+/**
+ * iter34 hotfix 2026-05-05 — closed-set CanonicalStartupPref. Adam's
+ * explicit "either" needs to be a first-class value, not represented as
+ * `null`. Three states: "startup" / "bigtech" / "either".
+ */
+export type CanonicalStartupPref = "startup" | "bigtech" | "either"
+
+const EITHER_KEYWORDS_RE =
+  /(都行|都可以|都ok|都OK|都喜欢|都接受|无所谓|随便|两个都|either|whatever|both\s*ok|either\s*works|don'?t\s*care|no\s*preference)/i
+
+export function canonicalizeStartupPref(reply: string): CanonicalStartupPref | null {
+  if (!reply.trim()) return null
+  // Either-keywords first (explicit "都行")
+  if (EITHER_KEYWORDS_RE.test(reply)) return "either"
   const startupHit = /(startup|小公司|小厂|创业|early\s*stage|hustle)/i.test(reply)
   const bigcoHit = /(大厂|大公司|big[-\s]*co|big\s*tech|stable|faang|enterprise)/i.test(reply)
-  if (startupHit && !bigcoHit) return { prefersStartup: true }
-  if (bigcoHit && !startupHit) return { prefersStartup: false }
-  return { prefersStartup: null }
+  if (startupHit && bigcoHit) return "either"
+  if (startupHit) return "startup"
+  if (bigcoHit) return "bigtech"
+  return null
+}
+
+function parseStartupPrefAnswer(reply: string): Partial<StatedPreferences> {
+  // iter34 hotfix 2026-05-05 — schema-compatible: still write
+  // `prefersStartup: boolean | null` but null now cleanly = "either"
+  // (canonicalizeStartupPref handled the explicit either parsing).
+  const canon = canonicalizeStartupPref(reply)
+  if (canon === "startup") return { prefersStartup: true }
+  if (canon === "bigtech") return { prefersStartup: false }
+  return { prefersStartup: null } // canon === "either" or unknown
+}
+
+/**
+ * iter34 hotfix 2026-05-05 — closed-set CanonicalLocation enum mirroring
+ * canonicalizeRole. All location answers normalize to these tokens.
+ * Free-form / unrecognized → "other" (NOT raw text). "anywhere" / "都行"
+ * → "anywhere" (semantic: open to any location).
+ */
+export type CanonicalLocation =
+  | "sf" | "nyc" | "seattle" | "la" | "boston" | "chicago" | "austin"
+  | "shanghai" | "beijing" | "hangzhou" | "shenzhen" | "guangzhou"
+  | "remote" | "anywhere" | "china" | "other"
+
+const LOCATION_CANONICAL_MAP: Array<{ pattern: RegExp; token: CanonicalLocation }> = [
+  // Remote / open-ended first
+  { pattern: /(remote|在家|远程|wfh|work\s*from\s*home)/i, token: "remote" },
+  { pattern: /(anywhere|wherever|哪都行|哪儿都行|都行|无所谓|随便|no\s*preference|don'?t\s*care|都可以|都ok|都OK)/i, token: "anywhere" },
+  // US cities
+  { pattern: /(湾区|bay\s*area|sf\b|san\s*francisco|south\s*bay|peninsula|silicon\s*valley)/i, token: "sf" },
+  { pattern: /(nyc|new\s*york|纽约|manhattan|brooklyn|ny\b)/i, token: "nyc" },
+  { pattern: /(seattle|西雅图|wa\s*state)/i, token: "seattle" },
+  { pattern: /(\bla\b|los\s*angeles|洛杉矶)/i, token: "la" },
+  { pattern: /(boston|波士顿|cambridge\s*ma|ma\b)/i, token: "boston" },
+  { pattern: /(chicago|芝加哥|il\b)/i, token: "chicago" },
+  { pattern: /(austin|奥斯汀|texas|tx\b)/i, token: "austin" },
+  // China cities
+  { pattern: /(上海|shanghai)/i, token: "shanghai" },
+  { pattern: /(北京|beijing|peking)/i, token: "beijing" },
+  { pattern: /(杭州|hangzhou)/i, token: "hangzhou" },
+  { pattern: /(深圳|shenzhen)/i, token: "shenzhen" },
+  { pattern: /(广州|guangzhou)/i, token: "guangzhou" },
+  { pattern: /(china|国内|大陆|中国)/i, token: "china" },
+]
+
+export function canonicalizeLocations(reply: string): CanonicalLocation[] {
+  if (!reply.trim()) return []
+  const matched = new Set<CanonicalLocation>()
+  for (const { pattern, token } of LOCATION_CANONICAL_MAP) {
+    if (pattern.test(reply)) matched.add(token)
+  }
+  if (matched.size === 0) return ["other"]
+  return Array.from(matched)
 }
 
 function parseLocationAnswer(reply: string): Partial<StatedPreferences> {
-  const trimmed = reply.trim().slice(0, 120)
+  const trimmed = reply.trim()
   if (!trimmed) return { targetLocations: [] }
-  // Detect "remote" mentions but still keep the raw reply as a hint.
-  const tokens: string[] = []
-  if (/(remote|在家|远程|wfh)/i.test(reply)) tokens.push("remote")
-  if (/(湾区|bay\s*area|sf|san\s*francisco)/i.test(reply)) tokens.push("SF Bay Area")
-  if (/(ny|纽约|new\s*york|nyc)/i.test(reply)) tokens.push("NYC")
-  if (/(seattle|西雅图)/i.test(reply)) tokens.push("Seattle")
-  if (/(la\b|los\s*angeles|洛杉矶)/i.test(reply)) tokens.push("LA")
-  if (tokens.length === 0) tokens.push(trimmed)
-  return { targetLocations: Array.from(new Set(tokens)) }
+  // iter34 hotfix 2026-05-05 — canonicalize, never store raw free-text.
+  return { targetLocations: canonicalizeLocations(trimmed) }
 }
 
 /**
