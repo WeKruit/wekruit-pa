@@ -22,6 +22,7 @@
 export * from "./question.js"
 export * from "./pipeline.js"
 export * from "./state-memory.js"
+export * from "./state-firestore.js"
 export * from "./post-collect.js"
 export * from "./questions.js"
 
