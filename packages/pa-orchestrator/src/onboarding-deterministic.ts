@@ -718,6 +718,24 @@ export type DeterministicRunnerStore = {
     | { intent: "unclear"; clarifyingQuestion: string }
     | null
   >
+  /**
+   * iter34 P0.2 — generic LLM-fallback for q_role / q_yoe / q_visa /
+   * q_startup_pref / q_location. See OrchestratorStoreDeps for contract.
+   */
+  extractAnswerIntent?(
+    step:
+      | "ask_q_role"
+      | "ask_q_yoe"
+      | "ask_q_visa"
+      | "ask_q_startup_pref"
+      | "ask_q_location",
+    reply: string,
+    lang: "zh" | "en"
+  ): Promise<
+    | { intent: "provided"; value: string | number; confidence: number }
+    | { intent: "unclear"; clarifyingQuestion: string }
+    | null
+  >
   log(event: string, payload?: Record<string, unknown>): void
   nowIso(): string
   db?: Firestore
@@ -1336,6 +1354,93 @@ export async function runDeterministicOnboardingTurn(
       reply: event.body,
     })
     return { handled: true, action }
+  }
+
+  // iter34 P0.2 — generic LLM-fallback for the 5 non-email probe Q's.
+  // Adam directive 2026-05-05 ("不只是 email, 包括所有一开始的
+  // deterministic 的 question 都需要加这个"). Detection: action emits
+  // ask_q_role/yoe/visa/startup_pref/location AND state matches that
+  // step's "asked" variant — which is the workflow's default re-ask
+  // self-loop (parser missed). Skip when action came from a prior-state
+  // forward transition (e.g. q_tos_asked accept → ask_q_role); those
+  // are fresh asks, not re-asks.
+  const probeStepToState: Record<string, OnboardingState> = {
+    ask_q_role: "q_role_asked",
+    ask_q_yoe: "q_yoe_asked",
+    ask_q_visa: "q_visa_asked",
+    ask_q_startup_pref: "q_startup_pref_asked",
+    ask_q_location: "q_location_asked",
+  }
+  const probeReaskState = probeStepToState[action.kind]
+  if (
+    probeReaskState &&
+    onboardingUser.onboardingState === probeReaskState &&
+    store.extractAnswerIntent
+  ) {
+    // Cheap noise filter — skip LLM only on clearly empty/control
+    // input. For probe Qs, almost any non-trivial reply could be a
+    // valid edge ("什么都行" / "看机会" / "I dunno") and deserves LLM
+    // intent extraction. Cost guard: ≥2 non-whitespace chars + has
+    // letter/digit/CJK content (rules out pure punct like "??" / "...").
+    const trimmed = event.body.trim()
+    const hasMeaningfulContent =
+      trimmed.length >= 2 &&
+      /[A-Za-z0-9一-鿿]/.test(trimmed)
+    if (hasMeaningfulContent) {
+      try {
+        const intent = await store.extractAnswerIntent(
+          action.kind as
+            | "ask_q_role"
+            | "ask_q_yoe"
+            | "ask_q_visa"
+            | "ask_q_startup_pref"
+            | "ask_q_location",
+          event.body,
+          langFor(event.body)
+        )
+        if (intent) {
+          if (intent.intent === "provided" && intent.confidence >= 0.6) {
+            // LLM extracted a usable answer → tail-call the runner with
+            // the canonical value as the "user reply" so the deterministic
+            // parser captures it on the second pass + advances to next state.
+            store.log("pa.onboarding.deterministic.probe_llm_extracted", {
+              userId: event.userId,
+              turnId,
+              step: action.kind,
+              value: intent.value,
+              confidence: intent.confidence,
+            })
+            return runDeterministicOnboardingTurn({
+              ...input,
+              event: { ...event, body: String(intent.value) },
+            })
+          }
+          if (intent.intent === "unclear") {
+            await store.applyOnboarding(event.userId, onboardingUser.phoneE164, action.kind as OnboardingStep, {
+              priorAskedStep: action.kind as OnboardingStep,
+              priorUserReply: event.body,
+              suspendedForVent: true,
+            })
+            await sendDirect(input, intent.clarifyingQuestion)
+            store.log("pa.onboarding.deterministic.probe_llm_clarify", {
+              userId: event.userId,
+              turnId,
+              step: action.kind,
+              clarifyingQuestion: intent.clarifyingQuestion,
+            })
+            return { handled: true, action }
+          }
+        }
+      } catch (err) {
+        store.log("pa.onboarding.deterministic.probe_llm_error", {
+          userId: event.userId,
+          turnId,
+          step: action.kind,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    }
+    // Fall through to deterministic re-ask (no signal / LLM null / threw).
   }
 
   // Standard advance steps (send_first_mes, ask_q_tos, ask_q_yoe, etc.)

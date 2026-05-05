@@ -113,6 +113,7 @@ export function makeOrchestratorDeps(): import("@pa/pa-orchestrator").Orchestrat
     generateCvAnalysis: makeGenerateCvAnalysis(),
     generateJobRecs: makeGenerateJobRecs(),
     extractEmailIntent: makeExtractEmailIntent(),
+    extractAnswerIntent: makeExtractAnswerIntent(),
   }
 }
 
@@ -522,6 +523,181 @@ Rules:
       return null
     } catch (err) {
       logger.error("[email-intent] llm call threw", {
+        err: err instanceof Error ? err.message : String(err),
+      })
+      return null
+    }
+  }
+}
+
+/**
+ * iter34 P0.2 — generic LLM intent extractor for the 5 non-email
+ * deterministic Q's. Adam directive 2026-05-05: "不只是 email, 包括所有
+ * 一开始的 deterministic 的 question 都需要加这个".
+ *
+ * Per-step prompts live inline so each Q has its own canonical value
+ * space + clarifying-question style. Returns null on any error so the
+ * dispatcher falls back to deterministic re-ask cleanly.
+ */
+function makeExtractAnswerIntent(): NonNullable<
+  import("@pa/pa-orchestrator").OrchestratorStoreDeps["extractAnswerIntent"]
+> {
+  const stepDefs = {
+    ask_q_role: {
+      label: "target job role",
+      valueSchema:
+        '"value":<role token, e.g. "swe" | "pm" | "research" | "design" | "data" | "ops" | "marketing" | "ml" | "founder" | <free-form lowercase phrase>>',
+      examples: [
+        '"engineer at a startup" → {"intent":"provided","value":"swe","confidence":0.85}',
+        '"PM for fintech" → {"intent":"provided","value":"pm","confidence":0.9}',
+        '"我做 ml infra 的" → {"intent":"provided","value":"ml","confidence":0.9}',
+        '"我什么都行" → {"intent":"unclear","clarifyingQuestion":"那大致偏哪个方向? 工程 / 产品 / 研究 / 设计?"}',
+      ],
+    },
+    ask_q_yoe: {
+      label: "years of experience",
+      valueSchema:
+        '"value":<integer years OR "fresh" for fresh-grad / 0 yrs>',
+      examples: [
+        '"about 5 years" → {"intent":"provided","value":5,"confidence":0.95}',
+        '"两年多" → {"intent":"provided","value":2,"confidence":0.85}',
+        '"刚毕业" → {"intent":"provided","value":"fresh","confidence":0.95}',
+        '"还没工作过" → {"intent":"provided","value":"fresh","confidence":0.9}',
+        '"a while" → {"intent":"unclear","clarifyingQuestion":"a while is like... 2 years? 5? a number is fine"}',
+      ],
+    },
+    ask_q_visa: {
+      label: "US work authorization",
+      valueSchema:
+        '"value":"citizen" | "gc" | "opt" | "cpt" | "h1b" | "tn" | "sponsorship" | "other"',
+      examples: [
+        '"i\'m a US citizen" → {"intent":"provided","value":"citizen","confidence":0.95}',
+        '"绿卡" → {"intent":"provided","value":"gc","confidence":0.95}',
+        '"need h1b" → {"intent":"provided","value":"h1b","confidence":0.9}',
+        '"opt extension" → {"intent":"provided","value":"opt","confidence":0.9}',
+        '"i need sponsorship" → {"intent":"provided","value":"sponsorship","confidence":0.85}',
+        '"i\'m on a visa" → {"intent":"unclear","clarifyingQuestion":"哪种签证? 比如 H1B / OPT / 其他?"}',
+      ],
+    },
+    ask_q_startup_pref: {
+      label: "startup vs bigtech preference",
+      valueSchema:
+        '"value":"startup" | "bigtech" | "either"',
+      examples: [
+        '"想去创业公司" → {"intent":"provided","value":"startup","confidence":0.95}',
+        '"big company stable" → {"intent":"provided","value":"bigtech","confidence":0.9}',
+        '"都行" → {"intent":"provided","value":"either","confidence":0.9}',
+        '"看具体团队" → {"intent":"provided","value":"either","confidence":0.7}',
+      ],
+    },
+    ask_q_location: {
+      label: "target work location",
+      valueSchema:
+        '"value":<location string, e.g. "sf" | "nyc" | "bay area" | "remote" | "boston" | "seattle" | "la" | "china" | "shanghai" | "beijing" | "hangzhou" | <free-form>>',
+      examples: [
+        '"Bay Area" → {"intent":"provided","value":"sf","confidence":0.9}',
+        '"想做远程" → {"intent":"provided","value":"remote","confidence":0.95}',
+        '"NYC or remote" → {"intent":"provided","value":"nyc or remote","confidence":0.85}',
+        '"上海" → {"intent":"provided","value":"shanghai","confidence":0.95}',
+        '"看机会" → {"intent":"unclear","clarifyingQuestion":"大致哪个城市/地区方便? 或者只看远程?"}',
+      ],
+    },
+  } as const
+
+  return async (step, reply, lang) => {
+    let apiKey = ""
+    try {
+      apiKey = SILICONFLOW_API_KEY.value().trim()
+    } catch {
+      // not bound — null fallback
+    }
+    if (!apiKey) {
+      logger.warn("[answer-intent] SILICONFLOW_API_KEY unbound", { step })
+      return null
+    }
+    const def = stepDefs[step]
+    if (!def) return null
+    const langDirective =
+      lang === "zh"
+        ? "If the question warrants a clarifying question, ask in Chinese."
+        : "If the question warrants a clarifying question, ask in English."
+    const systemPrompt = `You extract structured intent from a user's reply during onboarding.
+
+Question topic: ${def.label}.
+
+Output JSON ONLY (no prose, no markdown). Two possible intents:
+  • {"intent":"provided", ${def.valueSchema}, "confidence":0.0-1.0}
+  • {"intent":"unclear", "clarifyingQuestion":"<friendly short follow-up>"}
+
+Rules:
+- Confidence reflects how sure you are. Below 0.6 → "unclear" with clarifying question.
+- Clarifying question must be SHORT (≤1 sentence), friend-tone, no marketing-speak.
+- ${langDirective}
+- DO NOT invent specifics the user didn't say.
+
+Examples:
+${def.examples.map((e) => `  ${e}`).join("\n")}`
+
+    const userPrompt = `User reply: "${reply}"\n\nOutput JSON:`
+
+    try {
+      const res = await fetch("https://api.siliconflow.cn/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "Qwen/Qwen2.5-7B-Instruct",
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
+          ],
+          temperature: 0.1,
+          max_tokens: 200,
+          response_format: { type: "json_object" },
+        }),
+        signal: AbortSignal.timeout(6000),
+      })
+      if (!res.ok) {
+        logger.warn("[answer-intent] siliconflow non-200", { step, status: res.status })
+        return null
+      }
+      const data = (await res.json()) as {
+        choices?: { message?: { content?: string } }[]
+      }
+      const raw = data.choices?.[0]?.message?.content?.trim() ?? ""
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(raw)
+      } catch {
+        logger.warn("[answer-intent] non-JSON output", { step, raw: raw.slice(0, 200) })
+        return null
+      }
+      if (typeof parsed !== "object" || parsed === null) return null
+      const obj = parsed as Record<string, unknown>
+      if (
+        obj.intent === "provided" &&
+        (typeof obj.value === "string" || typeof obj.value === "number")
+      ) {
+        const conf = typeof obj.confidence === "number" ? obj.confidence : 0.5
+        return {
+          intent: "provided",
+          value: obj.value,
+          confidence: conf,
+        }
+      }
+      if (obj.intent === "unclear" && typeof obj.clarifyingQuestion === "string") {
+        return {
+          intent: "unclear",
+          clarifyingQuestion: obj.clarifyingQuestion.slice(0, 200),
+        }
+      }
+      logger.warn("[answer-intent] unrecognized shape", { step, obj })
+      return null
+    } catch (err) {
+      logger.error("[answer-intent] llm call threw", {
+        step,
         err: err instanceof Error ? err.message : String(err),
       })
       return null

@@ -1243,3 +1243,185 @@ test("iter34 P0: deterministic typo map wins over LLM (cheap path first)", async
   assert.equal(llmCalled, false, "static map matched gmal.com → no LLM call")
   assert.match(captures.enqueuedOutbound[0]!, /test@gmail\.com.*帮我确认/)
 })
+
+// ────────────────────────────────────────────────────────────────────
+// iter34 P0.2 — LLM fallback for q_role / q_yoe / q_visa /
+// q_startup_pref / q_location (Adam directive 2026-05-05: "不只是
+// email, 包括所有一开始的 deterministic 的 question 都需要加这个").
+// ────────────────────────────────────────────────────────────────────
+
+test("iter34 P0.2: q_role unclear → LLM clarifyingQuestion verbatim", async () => {
+  _resetOnboardingConfigCache()
+  const { store, captures } = makeFakeRunnerStore({
+    extractAnswerIntent: async (step: string) => {
+      assert.equal(step, "ask_q_role")
+      return {
+        intent: "unclear" as const,
+        clarifyingQuestion: "那大致偏哪个方向? 工程 / 产品 / 研究 / 设计?",
+      }
+    },
+  })
+  const result = await runDeterministicOnboardingTurn({
+    event: makeEvent("我什么都行 看机会"),
+    store,
+    turnId: "turn-role-unclear",
+    onboardingUser: {
+      id: "user-role",
+      phoneE164: "+15551234567",
+      onboardingState: "q_role_asked",
+      statedPreferences: { preferredLang: "zh" },
+    },
+    cvParsed: false,
+    agent: FAKE_AGENT,
+  })
+  assert.equal(result.handled, true)
+  assert.equal(captures.enqueuedOutbound[0], "那大致偏哪个方向? 工程 / 产品 / 研究 / 设计?")
+})
+
+test("iter34 P0.2: q_yoe provided 'about 5 years' → tail-call advances state", async () => {
+  _resetOnboardingConfigCache()
+  let llmCalls = 0
+  const { store, captures } = makeFakeRunnerStore({
+    extractAnswerIntent: async (step: string) => {
+      llmCalls++
+      assert.equal(step, "ask_q_yoe")
+      return { intent: "provided" as const, value: 5, confidence: 0.95 }
+    },
+  })
+  const result = await runDeterministicOnboardingTurn({
+    // Deterministic parser needs a digit. Descriptive reply misses → LLM fires.
+    event: makeEvent("想想啊 大概有那么几年了 具体记不清"),
+    store,
+    turnId: "turn-yoe-llm",
+    onboardingUser: {
+      id: "user-yoe",
+      phoneE164: "+15551234567",
+      onboardingState: "q_yoe_asked",
+      statedPreferences: { preferredLang: "zh" },
+    },
+    cvParsed: false,
+    agent: FAKE_AGENT,
+  })
+  assert.equal(result.handled, true)
+  assert.equal(llmCalls, 1, "LLM called exactly once")
+  const llmLogs = captures.logEvents.filter(
+    (e) => e.event === "pa.onboarding.deterministic.probe_llm_extracted"
+  )
+  assert.equal(llmLogs.length, 1)
+  assert.equal(llmLogs[0]!.payload?.value, 5)
+})
+
+test("iter34 P0.2: q_visa 'I'm on H1B' → LLM extracts → state advances to q_startup_pref_asked", async () => {
+  _resetOnboardingConfigCache()
+  const { store, captures } = makeFakeRunnerStore({
+    extractAnswerIntent: async () => ({
+      intent: "provided",
+      value: "h1b",
+      confidence: 0.9,
+    }),
+  })
+  const result = await runDeterministicOnboardingTurn({
+    // Reply that the deterministic parser doesn't catch → LLM fires.
+    event: makeEvent("我现在工作签证那个状态吧"),
+    store,
+    turnId: "turn-visa-llm",
+    onboardingUser: {
+      id: "user-visa",
+      phoneE164: "+15551234567",
+      onboardingState: "q_visa_asked",
+      statedPreferences: { preferredLang: "zh" },
+    },
+    cvParsed: false,
+    agent: FAKE_AGENT,
+  })
+  assert.equal(result.handled, true)
+  // Tail-call → second pass uses "h1b" as user message → parser captures.
+  // Outbound should be the q_startup_pref Q (state advanced).
+  const llmLogs = captures.logEvents.filter(
+    (e) => e.event === "pa.onboarding.deterministic.probe_llm_extracted"
+  )
+  assert.equal(llmLogs.length, 1)
+  assert.equal(llmLogs[0]!.payload?.step, "ask_q_visa")
+})
+
+test("iter34 P0.2: q_startup_pref '看具体团队' → LLM unclear → clarifying question", async () => {
+  _resetOnboardingConfigCache()
+  const { store, captures } = makeFakeRunnerStore({
+    extractAnswerIntent: async () => ({
+      intent: "unclear",
+      clarifyingQuestion: "大致偏向小公司还是大厂? 选不出来也行说'都行'",
+    }),
+  })
+  const result = await runDeterministicOnboardingTurn({
+    event: makeEvent("看具体团队 不一定"),
+    store,
+    turnId: "turn-startup-unclear",
+    onboardingUser: {
+      id: "user-sp",
+      phoneE164: "+15551234567",
+      onboardingState: "q_startup_pref_asked",
+      statedPreferences: { preferredLang: "zh" },
+    },
+    cvParsed: false,
+    agent: FAKE_AGENT,
+  })
+  assert.equal(result.handled, true)
+  assert.match(captures.enqueuedOutbound[0]!, /大致偏向小公司还是大厂/)
+})
+
+test("iter34 P0.2: q_location pure noise '???' → LLM SKIPPED (cost guard)", async () => {
+  _resetOnboardingConfigCache()
+  let llmCalled = false
+  const { store, captures } = makeFakeRunnerStore({
+    extractAnswerIntent: async () => {
+      llmCalled = true
+      return { intent: "provided", value: "sf", confidence: 0.5 }
+    },
+  })
+  const result = await runDeterministicOnboardingTurn({
+    event: makeEvent("???"),
+    store,
+    turnId: "turn-loc-noise",
+    onboardingUser: {
+      id: "user-loc",
+      phoneE164: "+15551234567",
+      onboardingState: "q_location_asked",
+      statedPreferences: { preferredLang: "zh" },
+    },
+    cvParsed: false,
+    agent: FAKE_AGENT,
+  })
+  assert.equal(result.handled, true)
+  assert.equal(llmCalled, false, "no location signal in '???' → LLM must NOT be called")
+})
+
+test("iter34 P0.2: low-confidence LLM result (<0.6) → falls back to deterministic", async () => {
+  _resetOnboardingConfigCache()
+  const { store, captures } = makeFakeRunnerStore({
+    extractAnswerIntent: async () => ({
+      intent: "provided",
+      value: "founder",
+      confidence: 0.4, // too low to trust
+    }),
+  })
+  const result = await runDeterministicOnboardingTurn({
+    event: makeEvent("我做点啥都行 ml ai backend"),
+    store,
+    turnId: "turn-role-low-conf",
+    onboardingUser: {
+      id: "user-r",
+      phoneE164: "+15551234567",
+      onboardingState: "q_role_asked",
+      statedPreferences: { preferredLang: "zh" },
+    },
+    cvParsed: false,
+    agent: FAKE_AGENT,
+  })
+  assert.equal(result.handled, true)
+  // Below 0.6 confidence MUST NOT auto-advance — fell through to
+  // deterministic re-ask path
+  const advanceLogs = captures.logEvents.filter(
+    (e) => e.event === "pa.onboarding.deterministic.probe_llm_extracted"
+  )
+  assert.equal(advanceLogs.length, 0, "low-confidence MUST NOT log extracted (no auto-advance)")
+})

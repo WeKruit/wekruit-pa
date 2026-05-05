@@ -585,6 +585,43 @@ export type OrchestratorStore = {
   >
 
   /**
+   * iter34 P0.2 — generic LLM-fallback intent extractor for the
+   * non-email deterministic Q's (q_role / q_yoe / q_visa /
+   * q_startup_pref / q_location). Adam directive 2026-05-05 ("不只是
+   * email, 包括所有一开始的 deterministic 的 question 都需要加这个").
+   *
+   * Called when the regex/keyword parser failed AND the user msg has
+   * step-relevant signal (heuristic per-step). Returns structured intent
+   * so the dispatcher can advance (intent="provided"+value), retry with
+   * clarification (intent="unclear"+clarifyingQuestion), or fall back
+   * deterministically (null).
+   *
+   * `value` shape varies by step:
+   *   - ask_q_role      → string (free-form role token, e.g. "swe", "pm")
+   *   - ask_q_yoe       → number | "fresh" (years OR fresh-grad sentinel)
+   *   - ask_q_visa      → "citizen" | "gc" | "opt" | "h1b" | "sponsorship"
+   *   - ask_q_startup_pref → "startup" | "bigtech" | "either"
+   *   - ask_q_location  → string (free-form location, e.g. "SF", "remote")
+   *
+   * Cost ~$0.0002/edge call; latency <2s p99; fail-safe (returns null
+   * → caller falls back to deterministic re-ask).
+   */
+  extractAnswerIntent?(
+    step:
+      | "ask_q_role"
+      | "ask_q_yoe"
+      | "ask_q_visa"
+      | "ask_q_startup_pref"
+      | "ask_q_location",
+    reply: string,
+    lang: "zh" | "en"
+  ): Promise<
+    | { intent: "provided"; value: string | number; confidence: number }
+    | { intent: "unclear"; clarifyingQuestion: string }
+    | null
+  >
+
+  /**
    * Phase 24.5 — optional Firestore handle for `getFlag()` reads. Tests omit
    * `db`; production wires the live Firestore so flag-backed kill-switches
    * (e.g. `PA_VOICE_MIRROR_DISABLED`) consult `pa-feature-flags`. env vars
@@ -3065,6 +3102,11 @@ export type OrchestratorStoreDeps = {
    * Tests pass a stub OR omit (deterministic-only fallback fires).
    */
   extractEmailIntent?: NonNullable<OrchestratorStore["extractEmailIntent"]>
+  /**
+   * iter34 P0.2 — generic LLM-fallback for q_role / q_yoe / q_visa /
+   * q_startup_pref / q_location. Wired from apps/functions.
+   */
+  extractAnswerIntent?: NonNullable<OrchestratorStore["extractAnswerIntent"]>
 }
 
 export function createFirestoreOrchestratorStore(
@@ -3539,6 +3581,12 @@ export function createFirestoreOrchestratorStore(
     // deterministic typo map + generic re-ask.
     ...(deps.extractEmailIntent
       ? { extractEmailIntent: deps.extractEmailIntent }
+      : {}),
+    // iter34 P0.2 — generic LLM-fallback for q_role / q_yoe / q_visa /
+    // q_startup_pref / q_location. Wired from apps/functions; tests omit
+    // and dispatcher falls back to deterministic re-ask.
+    ...(deps.extractAnswerIntent
+      ? { extractAnswerIntent: deps.extractAnswerIntent }
       : {}),
     // iter32 — CV gate. Reads parsedCandidateResumes (cross-product
     // collection — see CLAUDE.md) for the user; returns true iff a row
