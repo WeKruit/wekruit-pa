@@ -66,6 +66,23 @@ export type OnboardingStepConfig = {
    */
   reaskPrompt?: OnboardingPrompt
   /**
+   * iter34 P0.6.2 — multi-variant re-ask phrasing. Adam directive
+   * 2026-05-05: "如果重新问, 可以换一种问法". When set, the probe re-ask
+   * path picks variants[attemptCount-1] so each retry shows a DIFFERENT
+   * phrasing (instead of the user seeing the same string 4×). Falls back
+   * to `reaskPrompt` once the array is exhausted.
+   *
+   * Index mapping (attempt counter starts at 1):
+   *   attempt 1 → variants[0]
+   *   attempt 2 → variants[1]
+   *   attempt 3 → variants[2]
+   *   attempt 4 → variants[3]
+   *   attempt ≥ 5 → halt (handled separately, never reaches here)
+   *
+   * Recommended size: 4 variants for probe Qs (covers attempts 1-4).
+   */
+  reaskPromptVariants?: OnboardingPrompt[]
+  /**
    * Reply when the user actively declines (q_tos_asked + "no").
    */
   declinePrompt?: OnboardingPrompt
@@ -130,6 +147,26 @@ export const DEFAULT_ONBOARDING_CONFIG: Record<OnboardingStep, OnboardingStepCon
       zh: "我没太 get 到 — 你具体是做啥的? swe / pm / 研究 / 设计 都行, 一两个词就行",
       en: "didn't quite catch that — what role specifically? eng / pm / research / design — one or two words works",
     },
+    // iter34 P0.6.2 — rotating phrasings so the user doesn't see the
+    // same line 4× when LLM extract returns null/low-confidence.
+    reaskPromptVariants: [
+      {
+        zh: "我没太 get 到 — 你具体是做啥的? swe / pm / 研究 / 设计 都行, 一两个词就行",
+        en: "didn't quite catch that — what role specifically? eng / pm / research / design — one or two words works",
+      },
+      {
+        zh: "那大致偏哪个方向? 工程 / 产品 / 研究 / 设计 — 选一个就行",
+        en: "roughly which direction — eng / pm / research / design? just pick one",
+      },
+      {
+        zh: "再换个角度问 — 你之前/现在做的是啥岗? 比如 '前端' / '数据' / 'PM' 这种",
+        en: "let me try again — what's your role been? like 'frontend' / 'data' / 'pm' style",
+      },
+      {
+        zh: "一个词概括一下你做的活就行, 比如 'swe' / 'pm' / 'designer' / 'researcher'",
+        en: "one word for what you do is fine — 'swe' / 'pm' / 'designer' / 'researcher'",
+      },
+    ],
   },
   ask_q_yoe: {
     prompt: {
@@ -140,6 +177,24 @@ export const DEFAULT_ONBOARDING_CONFIG: Record<OnboardingStep, OnboardingStepCon
       zh: "数字大概多少年就行 — 比如 '3年' / '8年' / 或者 '刚毕业'",
       en: "roughly a number works — '3 years' / '8 years' / or 'fresh grad'",
     },
+    reaskPromptVariants: [
+      {
+        zh: "数字大概多少年就行 — 比如 '3年' / '8年' / 或者 '刚毕业'",
+        en: "roughly a number works — '3 years' / '8 years' / or 'fresh grad'",
+      },
+      {
+        zh: "几年就好啦, 不用很精确 — 0 / 1 / 3 / 5 / 10 哪个差不多?",
+        en: "ballpark is fine — 0 / 1 / 3 / 5 / 10 — closest one?",
+      },
+      {
+        zh: "工作经验大概几年? 还是说还在读书 / 应届?",
+        en: "roughly how many years working? or still in school / new grad?",
+      },
+      {
+        zh: "给个数字就行哦, 比如 '2年' 或者 'fresh grad'",
+        en: "just need a number, like '2 years' or 'fresh grad'",
+      },
+    ],
   },
   ask_q_visa: {
     prompt: {
@@ -150,6 +205,24 @@ export const DEFAULT_ONBOARDING_CONFIG: Record<OnboardingStep, OnboardingStepCon
       zh: "选一个就行: 公民 / 绿卡 / OPT / H1B / 需要 sponsor",
       en: "pick one: citizen / GC / OPT / H1B / need sponsorship",
     },
+    reaskPromptVariants: [
+      {
+        zh: "选一个就行: 公民 / 绿卡 / OPT / H1B / 需要 sponsor",
+        en: "pick one: citizen / GC / OPT / H1B / need sponsorship",
+      },
+      {
+        zh: "签证状态大概是哪种? 我列下: 公民、绿卡、OPT、H1B、要 sponsor",
+        en: "what's your status — citizen, GC, OPT, H1B, or need sponsorship?",
+      },
+      {
+        zh: "你能在美国合法工作吗? 是哪种身份? OPT / H1B / 绿卡 / 公民",
+        en: "are you eligible to work in the US? which one — OPT / H1B / GC / citizen?",
+      },
+      {
+        zh: "一个词答下身份吧, 比如 'citizen' / 'opt' / 'h1b' / 'need sponsor'",
+        en: "one word on your auth — 'citizen' / 'opt' / 'h1b' / 'need sponsor'",
+      },
+    ],
   },
   ask_q_startup_pref: {
     prompt: {
@@ -160,6 +233,24 @@ export const DEFAULT_ONBOARDING_CONFIG: Record<OnboardingStep, OnboardingStepCon
       zh: "startup / 大厂 / 都行 三选一",
       en: "startup / bigtech / either — pick one",
     },
+    reaskPromptVariants: [
+      {
+        zh: "startup / 大厂 / 都行 三选一",
+        en: "startup / bigtech / either — pick one",
+      },
+      {
+        zh: "公司规模偏好? 早期 startup / 中型 / 大厂 — 哪个更合你?",
+        en: "company size preference — early startup / mid / bigco — which fits?",
+      },
+      {
+        zh: "你想要那种快节奏 startup 体验, 还是更看重稳定大厂?",
+        en: "you want fast-paced startup energy or stability of a big company?",
+      },
+      {
+        zh: "一个词就行: 'startup' / 'bigtech' / 'either'",
+        en: "one word works: 'startup' / 'bigtech' / 'either'",
+      },
+    ],
   },
   ask_q_location: {
     prompt: {
@@ -170,6 +261,24 @@ export const DEFAULT_ONBOARDING_CONFIG: Record<OnboardingStep, OnboardingStepCon
       zh: "城市/地区或者 '远程'",
       en: "city/region or 'remote'",
     },
+    reaskPromptVariants: [
+      {
+        zh: "城市/地区或者 '远程' 都行",
+        en: "city / region / or just 'remote' is fine",
+      },
+      {
+        zh: "想在哪工作哦? 湾区 / NYC / Seattle / 上海 / 北京 / remote — 任选",
+        en: "where you wanna be — SF / NYC / Seattle / China / remote? any of those",
+      },
+      {
+        zh: "再问一遍: 城市 + remote 偏好 — 比如 'sf' / 'nyc' / 'remote'",
+        en: "let me ask again — city + remote pref, like 'sf' / 'nyc' / 'remote'",
+      },
+      {
+        zh: "一个地点就行, 比如 'bay area' / '上海' / 'remote'",
+        en: "one location is fine — 'bay area' / 'shanghai' / 'remote'",
+      },
+    ],
   },
   ask_q_resume: {
     prompt: {
@@ -1423,6 +1532,11 @@ export async function runDeterministicOnboardingTurn(
     ask_q_location: "q_location_asked",
   }
   const probeReaskState = probeStepToState[action.kind]
+  // iter34 P0.6.2 (Adam directive 2026-05-05) — capture LLM clarifyingQuestion
+  // here so the re-ask block below can use it as preferred phrasing for the
+  // current attempt. Counter bumps only happen in the re-ask block (failure
+  // path), so a successful "provided" extract doesn't burn an attempt.
+  let llmClarifyingQuestion: string | undefined = undefined
   if (
     probeReaskState &&
     onboardingUser.onboardingState === probeReaskState &&
@@ -1502,19 +1616,16 @@ export async function runDeterministicOnboardingTurn(
             })
           }
           if (intent.intent === "unclear") {
-            await store.applyOnboarding(event.userId, onboardingUser.phoneE164, action.kind as OnboardingStep, {
-              priorAskedStep: action.kind as OnboardingStep,
-              priorUserReply: event.body,
-              suspendedForVent: true,
-            })
-            await sendDirect(input, intent.clarifyingQuestion)
+            // iter34 P0.6.2 — capture clarifyingQuestion for use by the
+            // re-ask block. Counter bump + halt check happen there, NOT
+            // here (so LLM unclear cycles count toward the 5-attempt cap).
+            llmClarifyingQuestion = intent.clarifyingQuestion
             store.log("pa.onboarding.deterministic.probe_llm_clarify", {
               userId: event.userId,
               turnId,
               step: action.kind,
               clarifyingQuestion: intent.clarifyingQuestion,
             })
-            return { handled: true, action }
           }
         }
       } catch (err) {
@@ -1526,7 +1637,8 @@ export async function runDeterministicOnboardingTurn(
         })
       }
     }
-    // Fall through to deterministic re-ask (no signal / LLM null / threw).
+    // Fall through to deterministic re-ask block — counter bump + halt
+    // check + variant rotation all happen there.
   }
 
   // iter34 P0.4 + P0.5 + P0.6 — probe re-ask UX upgrade + attempt counting.
@@ -1634,8 +1746,23 @@ export async function runDeterministicOnboardingTurn(
       })
       return { handled: true, action }
     }
-    // (4) Use escalating reaskPrompt instead of verbatim original.
+    // (4) Pick the re-ask phrasing.
+    //     Priority order (Adam directive 2026-05-05 "如果重新问, 可以换
+    //     一种问法" → predictable rotation wins over LLM):
+    //       a. reaskPromptVariants[attemptCount-1] — guaranteed rotation
+    //       b. LLM clarifyingQuestion — smart but can repeat across attempts
+    //          if model parrots prompt examples
+    //       c. reaskPrompt (legacy single string)
+    //       d. prompt (worst case — same string as the original Q)
+    const variants = config[stepName]?.reaskPromptVariants
+    const variantIdx = attemptCount - 1 // 1-indexed → 0-indexed
+    const variantPhrase =
+      variants && variantIdx >= 0 && variantIdx < variants.length
+        ? variants[variantIdx]?.[lang]
+        : undefined
     const reaskPhrase =
+      variantPhrase ??
+      llmClarifyingQuestion ??
       config[stepName]?.reaskPrompt?.[lang] ??
       config[stepName]?.prompt[lang] ??
       ""

@@ -160,6 +160,68 @@ test("clearUserMemory: empty/whitespace mem0PartitionKey falls back to userId (d
   assert.equal(filter.must[0]!.match.value, "u1")
 })
 
+// ----------------------------------------------------------------------------
+// iter34 P0.6 closure (Adam directive 2026-05-05) — reset must clear
+// onboardingProbeAttempts + systemFlags (else halt-at-5 sticks across reset).
+// ----------------------------------------------------------------------------
+
+function makeFirestoreCapturingUserSet(): {
+  db: Firestore
+  setCalls: { docPath: string; payload: Record<string, unknown>; opts: unknown }[]
+} {
+  const setCalls: { docPath: string; payload: Record<string, unknown>; opts: unknown }[] = []
+  const empty = { empty: true, size: 0, docs: [] } as unknown
+  const where = () => ({ get: async () => empty })
+  const makeDocRef = (docPath: string) => ({
+    collection: () => ({ get: async () => empty }),
+    delete: async () => undefined,
+    set: async (payload: Record<string, unknown>, opts: unknown) => {
+      setCalls.push({ docPath, payload, opts })
+    },
+  })
+  const collection = (collectionName: string) => ({
+    where,
+    get: async () => empty,
+    doc: (docId: string) => makeDocRef(`${collectionName}/${docId}`),
+  })
+  return { db: { collection } as unknown as Firestore, setCalls }
+}
+
+test("iter34 P0.6 — clearUserMemory wipes onboardingProbeAttempts + systemFlags on reset", async () => {
+  const { db, setCalls } = makeFirestoreCapturingUserSet()
+  const { fetchFn } = makeQdrantFakes()
+  const deps: ClearUserMemoryDeps = {
+    db,
+    qdrantUrl: "https://qdrant.local",
+    qdrantApiKey: "key",
+    fetch: fetchFn,
+  }
+  // resetUserOnboardingState only fires on the FULL reset path
+  // (keepMessages=false). The orchestrator's __PA_RESET__ handler always uses
+  // keepMessages=false, so that's the path users hit.
+  await clearUserMemory("u1", deps, { keepMessages: false })
+
+  // Find the set() against pa-users/u1 — should be exactly one (resetUserOnboardingState).
+  const userSet = setCalls.find((c) => c.docPath === "pa-users/u1")
+  assert.ok(userSet, "expected resetUserOnboardingState to call pa-users/u1.set")
+  assert.deepEqual(userSet!.opts, { merge: true })
+
+  const payload = userSet!.payload
+  // Pre-existing fields still present
+  assert.equal(payload.onboardingState, "pending")
+  assert.ok("onboardingStep" in payload, "onboardingStep delete-marker present")
+  assert.ok("statedPreferences" in payload, "statedPreferences delete-marker present")
+  // iter34 P0.6 additions
+  assert.ok(
+    "onboardingProbeAttempts" in payload,
+    "onboardingProbeAttempts must be deleted on reset (else halt-at-5 sticks across reset)"
+  )
+  assert.ok(
+    "systemFlags" in payload,
+    "systemFlags must be deleted on reset (else onboardingHalted=true sticks across reset)"
+  )
+})
+
 test("clearUserMemory: dry-run with mem0PartitionKey still scopes count by partition (no delete)", async () => {
   const { calls, fetchFn } = makeQdrantFakes()
   const deps: ClearUserMemoryDeps = {

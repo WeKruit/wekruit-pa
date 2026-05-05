@@ -206,6 +206,19 @@ async function resetUserOnboardingState(
         resumeAccepted: FieldValue.delete(),
         resumeId: FieldValue.delete(),
         lastAssistantTurnAskedResume: FieldValue.delete(),
+        // iter34 P0.6 closure (Adam directive 2026-05-05) — reset must also
+        // clear the per-probe attempt counter and onboarding-related
+        // systemFlags. Otherwise:
+        //   1. probe attempts persist across reset → user halts on attempt
+        //      3-4 of next walkthrough instead of 5
+        //   2. systemFlags.onboardingHalted=true persists → user is
+        //      permanently stuck even after admin reset
+        // The only writers to systemFlags are the onboarding probe re-ask
+        // path (irrelevant-pattern + halted), so nuking the whole subdoc
+        // is safe today. If new non-onboarding flags get added later, switch
+        // to .update() with field-path FieldValue.delete().
+        onboardingProbeAttempts: FieldValue.delete(),
+        systemFlags: FieldValue.delete(),
         updatedAt: new Date().toISOString(),
       },
       { merge: true }

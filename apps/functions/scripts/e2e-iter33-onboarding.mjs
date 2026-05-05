@@ -119,6 +119,7 @@ async function readUserState() {
     preferredLang: d.statedPreferences?.preferredLang,
     contactEmail: d.statedPreferences?.contactEmail,
     contactEmailVerifiedAt: d.statedPreferences?.contactEmailVerifiedAt,
+    systemFlags: d.systemFlags ?? {},
   }
 }
 
@@ -352,6 +353,83 @@ async function main() {
     )
   } else {
     record("[13] skipped", true, `state=${state?.onboardingState}`)
+  }
+
+  // ──────────────────────────────────────────────────────────────────
+  // iter34 P0.6 — halt-at-5 verification.
+  // Adam directive 2026-05-05: deterministic Qs cannot be skipped.
+  // After 5 attempts on a single Q, halt with admin contact + flag user.
+  // ──────────────────────────────────────────────────────────────────
+
+  console.log("\n━━━ Halt-at-5 sub-test ━━━\n")
+
+  // Reset + walk fast to q_role state.
+  console.log("[H0] reset for halt test")
+  const haltResetEid = await sendBroker("__PA_RESET__")
+  await pollUntilStatus(haltResetEid)
+  await new Promise((r) => setTimeout(r, 4000))
+
+  await step("[H1] hi → q_lang", "hi", { expect: /[\s\S]+/ })
+  await step("[H2] 中文 → q_email", "中文", { expect: /[\s\S]+/ })
+  await step("[H3] test@gmail.com → verify-start", "test@gmail.com", { expect: /[\s\S]+/ })
+  await presetVerificationCode(KNOWN_VERIFY_CODE_FOR_TESTING)
+  await step("[H4] 654321 → ToS", KNOWN_VERIFY_CODE_FOR_TESTING, { expect: /[\s\S]+/ })
+  await step("[H5] 同意 → q_role", "同意", { expect: /[\s\S]+/ })
+
+  state = await readUserState()
+  if (state?.onboardingState !== "q_role_asked") {
+    record("[H5.state] reached q_role_asked", false, `actual=${state?.onboardingState}`)
+  } else {
+    record("[H5.state] reached q_role_asked", true)
+
+    // Send 5 irrelevant messages to q_role.
+    // Each should advance attempt counter without changing state.
+    // 5th should fire halt message.
+    const irrelevant = ["哈哈", "嗯嗯", "哦", "好", "嗯"]
+    let haltFired = false
+    let haltReply = ""
+    const preHaltReplies = []
+    for (let i = 0; i < irrelevant.length; i++) {
+      const r = await step(
+        `[H${6 + i}] q_role attempt ${i + 1}/5: '${irrelevant[i]}'`,
+        irrelevant[i],
+        { expect: /[\s\S]+/ }
+      )
+      // Check if halt message fired.
+      if (r?.joined && /admin1@wekruit\.com|失败了五次|failed 5 times/i.test(r.joined)) {
+        haltFired = true
+        haltReply = r.joined
+        break
+      }
+      if (r?.joined) preHaltReplies.push(r.joined)
+    }
+
+    record(
+      "[H.halt] halt msg with admin1@wekruit.com after 5 attempts",
+      haltFired,
+      haltFired ? `reply=${haltReply.slice(0, 100)}…` : "halt msg never fired in 5 attempts"
+    )
+
+    // iter34 P0.6.2 — Adam directive 2026-05-05 ("如果重新问, 可以换一种
+    // 问法"). The 4 pre-halt replies should rotate through reaskPromptVariants
+    // (when LLM extract returns null/low-conf) so user sees different
+    // phrasings. Assert ≥3 distinct strings out of 4 pre-halt msgs (allows
+    // some LLM clarifyingQuestion-vs-deterministic overlap).
+    const distinctPreHalt = new Set(preHaltReplies).size
+    record(
+      `[H.variants] reask phrasings rotate (≥3 distinct of ${preHaltReplies.length})`,
+      distinctPreHalt >= 3,
+      `distinct=${distinctPreHalt} samples=${preHaltReplies.map((s, i) => `[${i}]${s.slice(0, 30)}`).join(" | ")}`
+    )
+
+    // Verify systemFlags.onboardingHalted=true.
+    state = await readUserState()
+    const haltedFlag = state?.systemFlags?.onboardingHalted === true
+    record(
+      "[H.flag] systemFlags.onboardingHalted=true",
+      haltedFlag,
+      `flags=${JSON.stringify(state?.systemFlags ?? {})}`
+    )
   }
 
   // Summary

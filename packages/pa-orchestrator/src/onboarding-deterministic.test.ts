@@ -1275,7 +1275,17 @@ test("iter34 P0.2: q_role unclear → LLM clarifyingQuestion verbatim", async ()
     agent: FAKE_AGENT,
   })
   assert.equal(result.handled, true)
-  assert.equal(captures.enqueuedOutbound[0], "那大致偏哪个方向? 工程 / 产品 / 研究 / 设计?")
+  // iter34 P0.6.2 — priority order is variants > LLM clarifyingQuestion.
+  // For attempt 1 (counter=1 after bump), variants[0].zh is used.
+  assert.equal(
+    captures.enqueuedOutbound[0],
+    "我没太 get 到 — 你具体是做啥的? swe / pm / 研究 / 设计 都行, 一两个词就行"
+  )
+  // LLM was called (clarifyingQuestion captured but not used at attempt 1).
+  const llmLogs = captures.logEvents.filter(
+    (e) => e.event === "pa.onboarding.deterministic.probe_llm_clarify"
+  )
+  assert.equal(llmLogs.length, 1, "LLM clarify path was hit (logged)")
 })
 
 test("iter34 P0.2: q_yoe provided 'about 5 years' → tail-call advances state", async () => {
@@ -1366,7 +1376,15 @@ test("iter34 P0.2: q_startup_pref '看具体团队' → LLM unclear → clarifyi
     agent: FAKE_AGENT,
   })
   assert.equal(result.handled, true)
-  assert.match(captures.enqueuedOutbound[0]!, /大致偏向小公司还是大厂/)
+  // iter34 P0.6.2 — variants[0].zh wins over LLM clarifyingQuestion at
+  // attempt 1. The test still validates the LLM unclear path was reached
+  // (probe_llm_clarify log emitted) but the user-facing reply is the
+  // deterministic variant, not the LLM's.
+  assert.equal(captures.enqueuedOutbound[0], "startup / 大厂 / 都行 三选一")
+  const llmLogs = captures.logEvents.filter(
+    (e) => e.event === "pa.onboarding.deterministic.probe_llm_clarify"
+  )
+  assert.equal(llmLogs.length, 1, "LLM clarify path was hit (logged)")
 })
 
 test("iter34 P0.2: q_location pure noise '???' → LLM SKIPPED (cost guard)", async () => {
