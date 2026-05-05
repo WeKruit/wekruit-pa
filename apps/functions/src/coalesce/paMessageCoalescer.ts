@@ -399,14 +399,17 @@ export async function processCoalescedTurn(
   //    iter33 Bug 9 fix 2026-05-05 — Adam ("we dont need to like all the
   //    message, give it a randomized 30-40% percentage is good"). Old
   //    behavior: every coalesced turn fired ❤️ unconditionally → spammy.
-  //    New: 35% probability gate (configurable via deps.loveTapbackProbability
-  //    so tests can pin it). Skip-decision logged so dashboards can verify
-  //    the rate matches expectation over a sample window.
+  //    Bumped from 35% → 40% after Adam reported 6/6 SKIPPED in a session
+  //    (0.65^6 ≈ 7.5% theoretical streak; 0.6^6 ≈ 4.7% at 40%). Tunable
+  //    via deps.loveTapbackProbability. Skip-decision now logs the raw
+  //    rng roll so prod-log inspection can distinguish "gate skipped"
+  //    from "transport down".
   const loveProbability = typeof deps.loveTapbackProbability === "number"
     ? Math.max(0, Math.min(1, deps.loveTapbackProbability))
-    : 0.35
+    : 0.40
   const rng = deps.rng ?? Math.random
-  const shouldLove = rng() < loveProbability
+  const rngRoll = rng()
+  const shouldLove = rngRoll < loveProbability
   if (deps.sendReaction && fired.lastMessageId && shouldLove) {
     try {
       await deps.sendReaction({
@@ -419,6 +422,7 @@ export async function processCoalescedTurn(
         turnSeq,
         lastMessageId: fired.lastMessageId,
         probability: loveProbability,
+        rngRoll: rngRoll.toFixed(4),
       })
     } catch (err) {
       log("[coalesce] tap-back FAILED (non-fatal — reply still proceeds)", {
@@ -433,6 +437,7 @@ export async function processCoalescedTurn(
       turnSeq,
       lastMessageId: fired.lastMessageId,
       probability: loveProbability,
+      rngRoll: rngRoll.toFixed(4),
     })
   }
 
