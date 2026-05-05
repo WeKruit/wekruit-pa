@@ -12,6 +12,7 @@ import { Abuse } from "./pages/Abuse.js"
 import { Beta } from "./pages/Beta.js"
 import { Flags } from "./pages/Flags.js"
 import { Handbook } from "./pages/Handbook.js"
+import { Onboarding } from "./pages/Onboarding.js"
 import { Playbooks } from "./pages/Playbooks.js"
 import { Personas } from "./pages/Personas.js"
 import { Triggers } from "./pages/Triggers.js"
@@ -85,6 +86,7 @@ export default function App() {
           <div className="nav-section-label">Agent</div>
           <NavLink to="/agents">Agents</NavLink>
           <NavLink to="/admin/handbook">Handbook</NavLink>
+          <NavLink to="/admin/onboarding">Onboarding</NavLink>
           <NavLink to="/agent/playbooks">Playbooks</NavLink>
           <NavLink to="/agent/personas">Personas</NavLink>
         </div>
@@ -143,6 +145,7 @@ export default function App() {
           <Route path="/triggers" element={<Triggers />} />
           <Route path="/admin/flags" element={<Flags />} />
           <Route path="/admin/handbook" element={<Handbook />} />
+          <Route path="/admin/onboarding" element={<Onboarding />} />
           <Route path="/admin/upstream-templates" element={<UpstreamTemplates />} />
           <Route path="/admin/downstream-triggers" element={<DownstreamTriggers />} />
           {/* Phase 32 Wave 2c — /voice split into /eval/voice-review +
