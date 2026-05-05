@@ -529,19 +529,31 @@ const ONBOARDING_NEXT_STATE: Partial<Record<OnboardingStep, OnboardingState>> = 
 // is FORWARD-ONLY for idempotency in applyOnboardingStep — when adding
 // new states or reordering, ensure all in-flight users are at states
 // that still advance monotonically.
+// iter33 P2 reorder — Bug 11 fix 2026-05-05 (Adam reported live: "我发过
+// code了现在又说waiting wtf"). Sequence is now:
+//   q_lang → q_email → q_email_verifying → q_tos → q_role → ...
+// Old STATE_ORDER had q_tos_asked BEFORE q_email_asked (iter32 pre-iter33),
+// so the verify_email_code transition q_email_verifying → q_tos_asked was
+// blocked by the FORWARD-ONLY idempotency guard (currentIdx=7 >= nextIdx=5
+// → return without writing). User saw the verify-success message but state
+// stayed at q_email_verifying, so their next reply ("agree") was routed
+// back to the verify_email_code handler with no parsedCode → waiting
+// prompt. Fix: move q_tos_asked AFTER q_email_verifying to match the
+// actual workflow graph. Backward-compat: any iter32-era user persisted
+// at q_tos_asked still has a valid forward path (q_tos → q_role).
 const STATE_ORDER: Array<OnboardingState | undefined> = [
   undefined,
   "pending",
   "first_mes_sent",
   // v1 leaf
   "grounding_q1_asked",
-  // iter33 — explicit zh/en/mixed preference (P1)
+  // iter33 P1 — explicit zh/en/mixed preference
   "q_lang_asked",
-  // iter31 — ToS gate
-  "q_tos_asked",
-  // iter32 — email + verify (pre-CV trust handshake)
+  // iter33 P2 — email + verify FIRST (pre-ToS trust handshake)
   "q_email_asked",
   "q_email_verifying",
+  // iter33 P2 — ToS gate AFTER verify
+  "q_tos_asked",
   // v2 probe chain
   "q_role_asked",
   "q_yoe_asked",

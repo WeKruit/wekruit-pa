@@ -224,25 +224,22 @@ export function pickLang(
     .replace(/https?:\/\/\S+/gi, "")
   const text = stripped.replace(/\s+/g, "")
   if (!text) {
-    // iter33 Bug 7 fix (sim-walkthrough C/D/E exposed): user msg was
-    // ENTIRELY email/URL ("alex@example.com"). Old behavior returned
-    // "zh" hardcoded — meant en-speaking users got zh verify-start
-    // template. Now: scan raw msg for CJK glyphs first; if none and
-    // raw has ASCII letters, treat as en; else fall back to caller's
-    // hint (defaults zh for backward compat).
-    const hasCjk = [...raw].some((ch) => {
-      const code = ch.codePointAt(0) ?? 0
-      return (
-        (code >= 0x4e00 && code <= 0x9fff) ||
-        (code >= 0x3400 && code <= 0x4dbf) ||
-        (code >= 0xf900 && code <= 0xfaff)
-      )
-    })
-    if (hasCjk) return "zh"
-    if (/[a-z]/i.test(raw)) return "en"
+    // iter33 Bug 7 + Bug 14 fix (Adam 2026-05-05 "后面的语言也不对啊"):
+    // stripped text empty (msg was email/URL only) → use fallback.
+    // Honors caller's preferredLang. CJK in raw still wins (covers
+    // mixed inline like "我邮箱是 adam@x.com"; that branch reaches the
+    // count-loop below, this branch only fires when raw == stripped).
     return fallback
   }
+  // Count CJK + en letters. If text has CJK → standard ratio test. If
+  // text has en letters (no CJK) → en. If neither (e.g. "654321" —
+  // digits/punct only verify code) → fallback (preferredLang). This
+  // is the second half of Bug 14: a zh user replying with the 6-digit
+  // verify code "654321" used to get en templates because 0 CJK / 6
+  // chars = 0 < 0.3 → en. Now we detect "no language signal at all"
+  // and defer to preferredLang.
   let cjk = 0
+  let enLetters = 0
   for (const ch of text) {
     const code = ch.codePointAt(0) ?? 0
     if (
@@ -251,7 +248,16 @@ export function pickLang(
       (code >= 0xf900 && code <= 0xfaff)
     ) {
       cjk++
+    } else if (
+      (code >= 0x41 && code <= 0x5a) ||
+      (code >= 0x61 && code <= 0x7a)
+    ) {
+      enLetters++
     }
+  }
+  if (cjk === 0 && enLetters === 0) {
+    // Pure digits / punctuation / symbols — no language content.
+    return fallback
   }
   const total = [...text].length
   return cjk / total >= 0.3 ? "zh" : "en"

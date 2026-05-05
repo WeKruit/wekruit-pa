@@ -452,3 +452,79 @@ test("v2: legacy 4-state path preserved when enableV2=false", () => {
     "complete"
   )
 })
+
+// ────────────────────────────────────────────────────────────────────
+// iter33 Bug 11 fix 2026-05-05 — STATE_ORDER reorder regression test.
+// Adam reported: verify code accepted → claire showed ToS prompt → user
+// said "agree" → claire said "still waiting on that 6-digit code". Root
+// cause: STATE_ORDER had q_tos_asked BEFORE q_email_asked + q_email_verifying
+// (iter32 layout), so the verify_email_code transition q_email_verifying
+// (idx=7) → q_tos_asked (idx=5) was BLOCKED by FORWARD-ONLY idempotency.
+// Fix moved q_tos_asked AFTER q_email_verifying. This test pins the
+// new order so a future edit cannot regress without breaking CI.
+// ────────────────────────────────────────────────────────────────────
+
+test("iter33 Bug 11: q_email_verifying → q_tos_asked is a FORWARD transition (STATE_ORDER reorder)", async () => {
+  // Use a fake Firestore that mirrors the user's persisted onboardingState.
+  // Drive applyOnboardingStep directly with currentState=q_email_verifying
+  // and step=ask_q_tos (the verify_email_code success path's call) — assert
+  // the write actually happens (was no-op under the buggy order).
+  const userDocs = new Map<string, Record<string, unknown>>()
+  userDocs.set("user-1", {
+    id: "user-1",
+    phoneE164: "+15551234567",
+    onboardingState: "q_email_verifying",
+    statedPreferences: { contactEmail: "x@y.com", preferredLang: "zh" },
+    emailVerification: { codeHash: "abc", email: "x@y.com", attempts: 0, sentAt: "ts", expiresAt: "ts2" },
+  })
+  const fakeDb = {
+    collection: () => ({
+      doc: (id: string) => ({
+        async get() {
+          const d = userDocs.get(id)
+          return { exists: Boolean(d), data: () => d, id }
+        },
+        async update(patch: Record<string, unknown>) {
+          const cur = userDocs.get(id) ?? {}
+          // Simulate Firestore field-path semantics for nested updates
+          const merged = { ...cur }
+          for (const [key, value] of Object.entries(patch)) {
+            if (key.includes(".")) {
+              // Skip — orchestrator uses flat top-level for state writes
+              ;(merged as Record<string, unknown>)[key] = value
+            } else {
+              ;(merged as Record<string, unknown>)[key] = value
+            }
+          }
+          userDocs.set(id, merged)
+        },
+        async set(data: Record<string, unknown>, opts?: { merge?: boolean }) {
+          if (opts?.merge) {
+            userDocs.set(id, { ...(userDocs.get(id) ?? {}), ...data })
+          } else {
+            userDocs.set(id, data)
+          }
+        },
+      }),
+    }),
+  } as unknown as Parameters<typeof applyOnboardingStep>[0]
+
+  await applyOnboardingStep(fakeDb, userDocs.get("user-1") as never, "ask_q_tos", {
+    priorAskedStep: "ask_q_email_verify",
+    priorUserReply: "654321",
+    emailVerificationVerified: true,
+  })
+
+  const after = userDocs.get("user-1")!
+  assert.equal(
+    after.onboardingState,
+    "q_tos_asked",
+    "Bug 11: q_email_verifying → q_tos_asked transition MUST persist (was blocked by old STATE_ORDER)"
+  )
+  // Verified flag must be stamped onto statedPreferences (Bug #5 invariant).
+  const prefs = after.statedPreferences as Record<string, unknown> | undefined
+  assert.ok(
+    prefs?.contactEmailVerifiedAt,
+    "contactEmailVerifiedAt must be stamped on the verify-success transition"
+  )
+})

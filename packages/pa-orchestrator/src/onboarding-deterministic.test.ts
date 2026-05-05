@@ -437,22 +437,27 @@ test("pickLang: mixed at threshold → zh when >=30% CJK", () => {
 // old code returned "zh" hardcoded → en-speaking users got zh
 // verify-start template. Now: scan raw msg for CJK first, then ASCII
 // letters, then fall back to caller's hint.
-test("pickLang Bug 7: email-only msg → en (raw has [a-z] no CJK)", () => {
-  assert.equal(pickLang("alex@example.com"), "en")
-  assert.equal(pickLang("user+tag@gmail.com"), "en")
+test("pickLang Bug 7: email-only msg uses fallback (caller's preferredLang)", () => {
+  // Bug 14 fix 2026-05-05: emails are NOT a language signal. They're
+  // ASCII identifier strings. Honor the caller's preferredLang fallback
+  // instead of inferring from [a-z] presence.
+  assert.equal(pickLang("alex@example.com", "en"), "en", "en preferredLang user")
+  assert.equal(pickLang("alex@example.com", "zh"), "zh", "zh preferredLang user (Bug 14)")
+  assert.equal(pickLang("user+tag@gmail.com", "en"), "en")
+  assert.equal(pickLang("user+tag@gmail.com", "zh"), "zh")
 })
 
-test("pickLang Bug 7: zh user emailing → zh (raw has CJK)", () => {
+test("pickLang Bug 7: zh user emailing inline still detects CJK in raw → zh", () => {
   assert.equal(pickLang("我邮箱是 adam@wekruit.com"), "zh")
 })
 
-test("pickLang Bug 7: URL-only msg → en", () => {
-  assert.equal(pickLang("https://example.com/path"), "en")
+test("pickLang Bug 7: URL-only msg → fallback (NOT [a-z] heuristic)", () => {
+  // Bug 14 fix: URL is not a language signal.
+  assert.equal(pickLang("https://example.com/path", "en"), "en")
+  assert.equal(pickLang("https://example.com/path", "zh"), "zh")
 })
 
 test("pickLang Bug 7: fallback param honored when stripped+raw have no signal", () => {
-  // Empty / whitespace-only → strip empty + raw has no [a-z] no CJK →
-  // fallback wins.
   assert.equal(pickLang("", "en"), "en")
   assert.equal(pickLang("", "zh"), "zh")
   assert.equal(pickLang("   ", "en"), "en")
@@ -460,11 +465,27 @@ test("pickLang Bug 7: fallback param honored when stripped+raw have no signal", 
   assert.equal(pickLang(""), "zh") // default fallback = zh (back-compat)
 })
 
-test("pickLang Bug 7: strip-empty + raw [a-z] → en (no fallback consulted)", () => {
-  // Email-only msg with caller passing "zh" fallback — but raw has [a-z]
-  // so en wins over fallback. This is the actual sim case: en user typed
-  // "alex@example.com" and stored preferredLang was undefined / "mixed".
-  assert.equal(pickLang("alex@example.com", "zh"), "en")
+test("pickLang Bug 14: digits-only msg (verify code) honors preferredLang", () => {
+  // Adam's actual case: zh user got Mailgun code, replied "133340" or
+  // "654321". Pure digits = no language content → MUST defer to caller's
+  // preferredLang (Bug 14 second-half fix 2026-05-05). Old behavior used
+  // CJK ratio (0/6 = 0 → en) regardless of preferredLang.
+  assert.equal(pickLang("133340", "zh"), "zh", "zh user digits → zh fallback")
+  assert.equal(pickLang("654321", "zh"), "zh", "zh user verify code → zh fallback")
+  assert.equal(pickLang("133340", "en"), "en", "en user digits → en fallback")
+})
+
+test("pickLang Bug 14: pure punctuation/symbols → fallback", () => {
+  assert.equal(pickLang("...!", "zh"), "zh")
+  assert.equal(pickLang("???", "en"), "en")
+  assert.equal(pickLang("👍", "zh"), "zh", "emoji-only → fallback")
+})
+
+test("pickLang Bug 14: en letters present + 0 CJK → en (regardless of fallback)", () => {
+  // "agree" is genuine en content — should stay en even if user's
+  // preferredLang was zh (they switched mid-flow / typed en explicitly).
+  assert.equal(pickLang("agree", "zh"), "en", "explicit en content overrides zh fallback")
+  assert.equal(pickLang("yes thanks", "zh"), "en")
 })
 
 // ────────────────────────────────────────────────────────────────────

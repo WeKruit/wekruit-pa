@@ -982,12 +982,12 @@ describe("iter33 Bug 9: love-tapback rate gate", () => {
     )
   })
 
-  it("default probability = 0.35 when not specified", async () => {
+  it("default probability = 0.40 when not specified", async () => {
     const { reactionCalls } = await setupAndProcess((deps) => {
-      // Don't set loveTapbackProbability → falls back to 0.35
-      deps.rng = () => 0.34 // just below default threshold
+      // Bug 9 update 2026-05-05: bumped 0.35 → 0.40 (Adam: 6/6 SKIPPED)
+      deps.rng = () => 0.39 // just below default threshold
     })
-    assert.equal(reactionCalls.length, 1, "default p=0.35: rng=0.34 → fires")
+    assert.equal(reactionCalls.length, 1, "default p=0.40: rng=0.39 → fires")
   })
 })
 
