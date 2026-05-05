@@ -25,7 +25,7 @@ export * from "./state-memory.js"
 export * from "./state-firestore.js"
 export * from "./post-collect.js"
 export * from "./questions.js"
-export * from "./bridge.js"
+export * from "./runtime-bridge.js"
 
 // Judges
 export * from "./judges/email.js"

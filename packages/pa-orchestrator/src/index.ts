@@ -100,6 +100,11 @@ import {
   runDeterministicOnboardingTurn,
   isDeterministicOnboardingEnabled,
 } from "./onboarding-deterministic.js"
+// iter34 P3 (Adam directive 2026-05-05) — Q-as-class pipeline runtime
+// bridge. Flag-gated by `paOnboardingPipelineEnabled` (perUser, default
+// off; auto-allowlisted on reset). Try/catch around the call falls back
+// to legacy on any throw so flag-on users never end up stuck.
+import { runOnboardingPipelineTurn } from "./onboarding/runtime-bridge.js"
 // Re-export for downstream consumers (apps/functions sim, scripts).
 export {
   runDeterministicOnboardingTurn,
@@ -1236,6 +1241,72 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
         const cvParsed = store.getUserCvParsed
           ? await store.getUserCvParsed(event.userId)
           : false
+
+        // iter34 P3 (Adam directive 2026-05-05 "接近去啊要不然我们做他干嘛")
+        // — Q-as-class pipeline routing. When `paOnboardingPipelineEnabled`
+        // is on for this user (auto-on for resets per memory/admin.ts), try
+        // the new pipeline FIRST. Any throw = silent fall-back to legacy
+        // (which is unchanged + battle-tested). The flag is perUser, default
+        // off, so unallowlisted users always go legacy unchanged.
+        let pipelineResult: { handled: boolean; action: { kind: string } } | null = null
+        try {
+          if (!store.db) throw new Error("pipeline_dispatch: store.db missing — cannot read flag")
+          const usePipeline = await getFlag(
+            store.db,
+            "paOnboardingPipelineEnabled",
+            { userId: event.userId, env: process.env },
+            false
+          )
+          if (usePipeline === true) {
+            store.log("pa.onboarding.pipeline.dispatch", {
+              userId: event.userId,
+              turnId,
+              eventId: event.id,
+              currentState: onboardingUser.onboardingState ?? null,
+            })
+            pipelineResult = await runOnboardingPipelineTurn({
+              event,
+              turnId,
+              agent,
+              suppressOutbound: shouldSuppressOutbound(event),
+              deps: {
+                appendMessage: (args) => store.appendMessage(args),
+                enqueueOutbound: (uid, to, body, opts) =>
+                  store.enqueueOutbound(uid, to, body, opts),
+                applyOnboarding: store.applyOnboarding
+                  ? (uid, phone, step, opts) =>
+                      store.applyOnboarding(uid, phone, step as never, opts)
+                  : undefined,
+                getOnboardingUser: store.getOnboardingUser
+                  ? (uid) => store.getOnboardingUser(uid)
+                  : undefined,
+                extractAnswerIntent: store.extractAnswerIntent,
+                extractEmailIntent: store.extractEmailIntent,
+                nowIso: () => store.nowIso(),
+                log: store.log,
+                db: store.db,
+              },
+            })
+          }
+        } catch (err) {
+          store.log("pa.onboarding.pipeline.crash_fallback_to_legacy", {
+            userId: event.userId,
+            turnId,
+            error: err instanceof Error ? err.message : String(err),
+          })
+          pipelineResult = null
+        }
+        if (pipelineResult?.handled) {
+          await store.updateTurn(turnId, {
+            status: "succeeded",
+            stage: "succeeded",
+            completedAt: store.nowIso(),
+            onboardingDeterministicAction: pipelineResult.action.kind,
+          })
+          await store.markEventSucceeded(event.id)
+          return
+        }
+
         const result = await runDeterministicOnboardingTurn({
           event,
           store,
