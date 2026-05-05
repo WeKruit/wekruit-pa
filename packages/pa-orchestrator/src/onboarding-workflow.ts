@@ -103,12 +103,6 @@ export const ONBOARDING_WORKFLOW: OnboardingWorkflow = {
       description: "Fresh user, never seen first_mes",
     },
     {
-      state: "first_mes_sent",
-      kind: "question",
-      origin: "iter33 P1 (Adam 2026-05-04)",
-      description: "Claire said hi; awaits any reply to advance to lang Q",
-    },
-    {
       state: "q_lang_asked",
       kind: "question",
       origin: "iter33 P1 (Adam 2026-05-04)",
@@ -183,19 +177,22 @@ export const ONBOARDING_WORKFLOW: OnboardingWorkflow = {
   ],
   edges: [
     {
+      // iter33 spec collapse (Adam directive 2026-05-05 "reset 后发消息应
+      // 该上来就是 onboard"): kill the redundant first_mes greeting step.
+      // User's first inbound → Claire's first outbound = q_lang Q (which
+      // includes a short "在呢/Here" greeting in its prompt). Saves 1
+      // round-trip, matches spec phrase "1. user → iMessage 'hello'.
+      // 2. q_lang Q (Claire's first response)".
       from: "pending",
-      to: "first_mes_sent",
-      action: "send_first_mes",
-      condition: { kind: "default" },
-      description: "First user inbound → Claire greeting",
-    },
-    {
-      from: "first_mes_sent",
       to: "q_lang_asked",
       action: "ask_q_lang",
       condition: { kind: "default" },
-      description: "iter33 P1: any reply triggers explicit lang preference Q",
+      description: "iter33 spec collapse: first user inbound → q_lang Q (no separate greeting step)",
     },
+    // first_mes_sent state is removed from the iter33-spec-collapse graph.
+    // Backward-compat for users with persisted onboardingState=first_mes_sent
+    // is handled inline in resolveDeterministicAction (pre-walker special-case
+    // → ask_q_lang). See onboarding-deterministic.ts.
     {
       from: "q_lang_asked",
       to: "q_email_asked",

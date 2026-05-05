@@ -96,9 +96,13 @@ export const DEFAULT_ONBOARDING_CONFIG: Record<OnboardingStep, OnboardingStepCon
   // parsed by parseLangAnswer → preferredLang (zh / en / mixed). Default to
   // mixed when ambiguous so Claire keeps adapting.
   ask_q_lang: {
+    // iter33 spec collapse 2026-05-05 — q_lang is now Claire's FIRST
+    // outbound (no separate first_mes greeting). Prompt opens with a
+    // short "在呢/Here" acknowledgment so it reads as a greeting + Q,
+    // not a cold question.
     prompt: {
-      zh: "我们用啥语聊比较顺? 中文、英文、还是中英混着说?",
-      en: "what language works best for you? Chinese / English / both mixed?",
+      zh: "在呢. 用啥语聊比较顺? 中文 / 英文 / 中英混着说都行",
+      en: "Here. What language works for you? Chinese / English / both mixed?",
     },
   },
   ask_q_tos: {
@@ -350,12 +354,26 @@ export function resolveDeterministicAction(
 ): DeterministicAction {
   const state = input.onboardingState
 
-  // iter33 GAP 4 escape hatch — when V33 disabled, skip q_lang at
-  // first_mes_sent and fall back to iter32 sequence. Handled inline
-  // before graph walk because it's an environmental short-circuit, not
-  // a state-machine edge.
-  if (state === "first_mes_sent" && isV33Disabled()) {
-    return { kind: "ask_q_tos" }
+  // iter33 GAP 4 escape hatch — when V33 disabled, restore iter32
+  // sequence: pending → send_first_mes → first_mes_sent → ask_q_tos
+  // (skips the iter33 collapse + q_lang Q). Handled inline before graph
+  // walk because it's an environmental short-circuit.
+  if (isV33Disabled()) {
+    if (state === undefined || state === "pending") {
+      return { kind: "send_first_mes" }
+    }
+    if (state === "first_mes_sent") {
+      return { kind: "ask_q_tos" }
+    }
+  }
+
+  // iter33 spec collapse 2026-05-05 backward-compat — first_mes_sent state
+  // was removed from the workflow graph (pending → q_lang_asked direct).
+  // Any user with persisted onboardingState="first_mes_sent" from before
+  // this ships hops cleanly to q_lang_asked on next inbound. New users
+  // never enter first_mes_sent at all.
+  if (state === "first_mes_sent") {
+    return { kind: "ask_q_lang" }
   }
 
   // iter33 GAP 2 — graph executor. Build context from parsers + state,
