@@ -55,7 +55,27 @@ import {
 // Config
 // ────────────────────────────────────────────────────────────────────
 
-export type OnboardingPrompt = { zh: string; en: string }
+/**
+ * iter34 hotfix 2026-05-05 — Adam directive "中英文混合的开头 onboarding
+ * 还没有，我说 mix 他就 either 纯英或者纯中". OnboardingPrompt now
+ * supports an optional `mixed` field (zh+en code-switch in the SAME
+ * sentence). When user.statedPreferences.preferredLang === "mixed",
+ * template selector picks `mixed` if present, falls back to `zh`.
+ */
+export type OnboardingPrompt = { zh: string; en: string; mixed?: string }
+
+/**
+ * iter34 hotfix 2026-05-05 — pick prompt text honoring "mixed" prefLang.
+ * For "zh"|"en" path-through. For "mixed" use prompt.mixed when set,
+ * else fall back to zh (zh has more natural en-keyword sprinkles).
+ */
+export function pickPromptText(
+  p: OnboardingPrompt,
+  lang: "zh" | "en" | "mixed"
+): string {
+  if (lang === "mixed") return p.mixed ?? p.zh
+  return p[lang]
+}
 
 export type OnboardingStepConfig = {
   /** Phrase to dispatch verbatim via sendMemoryReply. */
@@ -105,7 +125,11 @@ const FIRST_MES_EN = "Here. What's on your mind today?"
  */
 export const DEFAULT_ONBOARDING_CONFIG: Record<OnboardingStep, OnboardingStepConfig | undefined> = {
   send_first_mes: {
-    prompt: { zh: FIRST_MES_ZH, en: FIRST_MES_EN },
+    prompt: {
+      zh: FIRST_MES_ZH,
+      en: FIRST_MES_EN,
+      mixed: "在呢. today 想聊点啥?",
+    },
   },
   ask_grounding_q: undefined, // legacy v1 — not used in deterministic path
   // iter33 P1 (Adam directive 2026-05-04 "问 你 prefer 中文、英文、中英文混合"):
@@ -120,12 +144,14 @@ export const DEFAULT_ONBOARDING_CONFIG: Record<OnboardingStep, OnboardingStepCon
     prompt: {
       zh: "在呢. 用啥语聊比较顺? 中文 / 英文 / 中英混着说都行",
       en: "Here. What language works for you? Chinese / English / both mixed?",
+      mixed: "在呢. 用啥 lang 顺手聊? 中文 / English / 中英 mixed 都 OK",
     },
   },
   ask_q_tos: {
     prompt: {
       zh: "开聊前先说一下: 我会记一些咱聊天的事来给你推工作 / 找内推. 隐私 + 用户协议在这: https://wekruit-pa-landing.web.app/legal — 同意就回个 \"同意\" 我们继续",
       en: "before we get into it — heads up i remember bits of our chat to surface jobs + referrals for you. privacy + terms here: https://wekruit-pa-landing.web.app/legal — reply \"agree\" if cool with that and we keep going",
+      mixed: "开聊前 heads up: 我会记一些 chat 内容来给你 push jobs / 找内推. 隐私 + ToS 在这: https://wekruit-pa-landing.web.app/legal — 同意就回 \"同意\" or \"yes\" 我们继续",
     },
     declinePrompt: {
       zh: "完全 ok, 你不同意我就不主动记你聊天的事. 想聊别的随时. 改主意了说一声",
@@ -140,6 +166,7 @@ export const DEFAULT_ONBOARDING_CONFIG: Record<OnboardingStep, OnboardingStepCon
     prompt: {
       zh: "那你大概想找啥方向的活? 比如做产品、做工程、还是做研究 — 给我个大致就行",
       en: "btw — what kinda role you eyeing? eng / pm / research / design? roughly is fine",
+      mixed: "btw 想找啥 direction 的活儿? engineer / PM / research / design — 大致就行",
     },
     // iter34 P0.4 — escalating reask. Adam directive 2026-05-05:
     // deterministic Q 必答, 不可 skip. 换问法即可.
@@ -172,6 +199,7 @@ export const DEFAULT_ONBOARDING_CONFIG: Record<OnboardingStep, OnboardingStepCon
     prompt: {
       zh: "你工作几年了? 还是刚毕业找新人岗?",
       en: "how many years you been working? or fresh outta school?",
+      mixed: "工作几年了? '3 years' / '8 years' / 还是 fresh grad?",
     },
     reaskPrompt: {
       zh: "数字大概多少年就行 — 比如 '3年' / '8年' / 或者 '刚毕业'",
@@ -200,6 +228,7 @@ export const DEFAULT_ONBOARDING_CONFIG: Record<OnboardingStep, OnboardingStepCon
     prompt: {
       zh: "那你有身份不? 公民/绿卡/OPT/还是要 sponsor?",
       en: "got work auth sorted? citizen / GC / OPT / need sponsorship?",
+      mixed: "签证 status 怎么样? citizen / GC / OPT / H1B / 还是 need sponsor?",
     },
     reaskPrompt: {
       zh: "选一个就行: 公民 / 绿卡 / OPT / H1B / 需要 sponsor",
@@ -228,6 +257,7 @@ export const DEFAULT_ONBOARDING_CONFIG: Record<OnboardingStep, OnboardingStepCon
     prompt: {
       zh: "你更想去 startup 那种小而拼的, 还是大厂稳一点?",
       en: "more into startup hustle vibe or stable big-co?",
+      mixed: "想去 startup 那种小而拼? 还是 bigtech 稳一点? '都行 / either' 也 OK",
     },
     reaskPrompt: {
       zh: "startup / 大厂 / 都行 三选一",
@@ -260,6 +290,7 @@ export const DEFAULT_ONBOARDING_CONFIG: Record<OnboardingStep, OnboardingStepCon
     prompt: {
       zh: "想找哪边的工作? 湾区、纽约、还是看远程?",
       en: "where you wanna be? SF / NYC / remote ok?",
+      mixed: "想找哪边? 湾区 / NYC / Seattle / 上海 / remote — 任选, 'anywhere / 都行' 也 OK",
     },
     reaskPrompt: {
       zh: "城市/地区或者 '远程'",
@@ -288,16 +319,19 @@ export const DEFAULT_ONBOARDING_CONFIG: Record<OnboardingStep, OnboardingStepCon
     prompt: {
       zh: "对了, 简历方便发我一份不? 后面帮你看 JD / 内推都准多了",
       en: "btw — can you send me your resume? makes JD review and referrals way more on-point",
+      mixed: "对了, 你 resume 方便发我一份不? 后面帮你看 JD / 内推都准多了",
     },
     waitingPrompt: {
       zh: "等你发简历过来哦, iMessage 里直接附件就行",
       en: "just waiting on the resume — send it as an iMessage attachment whenever",
+      mixed: "等你 resume 过来哦, iMessage 直接附件就行",
     },
   },
   ask_q_email: {
     prompt: {
       zh: "对了, 平时邮箱用啥? 后面如果你不在线我直接发邮件给你",
       en: "btw — what email should I send stuff to when you're afk? roughly fine",
+      mixed: "对了, 平时 email 用啥? 后面你要不在线我直接发邮件给你",
     },
     // iter33 Bug 10 fix 2026-05-05 (Adam: edge case — user replies "哈哈"
     // or any non-email text). Workflow's no_email edge re-asks; without a
@@ -312,10 +346,12 @@ export const DEFAULT_ONBOARDING_CONFIG: Record<OnboardingStep, OnboardingStepCon
     prompt: {
       zh: "已经发了一个 6 位验证码到你邮箱了, 收到回我一下就行 (30 分钟有效)",
       en: "just sent a 6-digit code to your email — text it back to me and we're set (good for 30 mins)",
+      mixed: "已经发了 6 位 verify code 到你 email 了, 收到回我一下 (30 min 有效)",
     },
     waitingPrompt: {
       zh: "等你把邮箱里的 6 位验证码发我",
       en: "still waiting on that 6-digit code from your email",
+      mixed: "等你 email 里的 6 位 verify code 发我",
     },
   },
   // iter33 P3 — send_cv_analysis is not a question step; the runner emits
@@ -754,31 +790,33 @@ export function composeDeterministicReply(
   action: DeterministicAction,
   config: typeof DEFAULT_ONBOARDING_CONFIG,
   userMessage: string,
-  langOverride?: "zh" | "en"
+  // iter34 hotfix 2026-05-05 — widen langOverride to include "mixed" so
+  // composer can return the zh+en code-switch prompt when prefLang ===
+  // "mixed". Callers that pass "zh"|"en" still typecheck.
+  langOverride?: "zh" | "en" | "mixed"
 ): string {
-  // iter34 P0.2 — accept caller's resolved lang so the LLM tail-call
-  // path doesn't lose preferredLang when the LLM-formatted value
-  // ("ai infra engineer") trips pickLang into en.
   const lang = langOverride ?? pickLang(userMessage)
+  // VENT_ACK only has zh/en — demote mixed to zh for those non-Q strings.
+  const langZhEn: "zh" | "en" = lang === "mixed" ? "zh" : lang
 
-  if (action.kind === "vent_ack") return VENT_ACK[lang]
+  if (action.kind === "vent_ack") return VENT_ACK[langZhEn]
   if (action.kind === "skip") return ""
   if (action.kind === "complete") return ""
 
   if (action.kind === "send_first_mes") {
-    return config.send_first_mes!.prompt[lang]
+    return pickPromptText(config.send_first_mes!.prompt, lang)
   }
   if (action.kind === "ask_q_lang") {
-    return config.ask_q_lang!.prompt[lang]
+    return pickPromptText(config.ask_q_lang!.prompt, lang)
   }
   if (action.kind === "ask_q_tos") {
-    return config.ask_q_tos!.prompt[lang]
+    return pickPromptText(config.ask_q_tos!.prompt, lang)
   }
   if (action.kind === "ask_q_tos_decline") {
-    return config.ask_q_tos!.declinePrompt![lang]
+    return pickPromptText(config.ask_q_tos!.declinePrompt!, lang)
   }
   if (action.kind === "ask_q_tos_reask") {
-    return config.ask_q_tos!.reaskPrompt![lang]
+    return pickPromptText(config.ask_q_tos!.reaskPrompt!, lang)
   }
   if (
     action.kind === "ask_q_role" ||
@@ -787,28 +825,24 @@ export function composeDeterministicReply(
     action.kind === "ask_q_startup_pref" ||
     action.kind === "ask_q_location"
   ) {
-    return config[action.kind]!.prompt[lang]
+    return pickPromptText(config[action.kind]!.prompt, lang)
   }
   if (action.kind === "ask_q_resume") {
-    return config.ask_q_resume!.prompt[lang]
+    return pickPromptText(config.ask_q_resume!.prompt, lang)
   }
   if (action.kind === "wait_for_resume_upload") {
-    return config.ask_q_resume!.waitingPrompt![lang]
+    return pickPromptText(config.ask_q_resume!.waitingPrompt!, lang)
   }
   if (action.kind === "ask_q_email") {
-    return config.ask_q_email!.prompt[lang]
+    return pickPromptText(config.ask_q_email!.prompt, lang)
   }
   if (action.kind === "ask_q_email_verify_start") {
-    return config.ask_q_email_verify!.prompt[lang]
+    return pickPromptText(config.ask_q_email_verify!.prompt, lang)
   }
   if (action.kind === "ask_q_email_verify_retry") {
-    return config.ask_q_email_verify!.waitingPrompt![lang]
+    return pickPromptText(config.ask_q_email_verify!.waitingPrompt!, lang)
   }
-  if (action.kind === "verify_email_code") {
-    // Outcome-specific reply lives in the orchestrator (after hash
-    // compare); compose returns empty here so caller composes its own.
-    return ""
-  }
+  if (action.kind === "verify_email_code") return ""
   return ""
 }
 
@@ -1001,20 +1035,23 @@ export async function runDeterministicOnboardingTurn(
   // the lang they answered q_lang_asked with. "mixed" → "zh" (legacy
   // default; kept conservative). Helper keeps call sites compact.
   const prefLang = onboardingUser.statedPreferences?.preferredLang
-  // iter34 hotfix 2026-05-05 — Adam directive "我说 mix 他就 either 纯英或者
-  // 纯中". prefLang must STRICT-LOCK lang choice: when user declared a
-  // preference at q_lang, ignore per-message pickLang detection (which
-  // flipped EN when user typed "swe或者ai engineer" — high en-ratio).
-  // Per-msg detection ONLY applies to users with no prefLang yet.
-  // mixed → demoted to zh (zh prompts already use en sprinkles like
-  // "swe / pm / 研究 / 设计" — most mixed-friendly). Honors langOverride
-  // tail-call (LLM canonical value like "h1b" doesn't flip lang).
+  // iter34 hotfix 2026-05-05 — Adam directive "我说 mix 他就 either 纯英
+  // 或者纯中". STRICT-LOCK lang choice when prefLang declared. Per-msg
+  // pickLang detection only fires for users with no prefLang yet.
+  // langFor returns ZH|EN for downstream (state advance, log meta etc).
+  // promptLang returns "mixed" too, used ONLY for pickPromptText so the
+  // mixed-style prompt fires when prefLang === "mixed".
   const langFallback: "zh" | "en" =
     prefLang === "zh" ? "zh" : prefLang === "en" ? "en" : "zh"
   const langFor = (msg: string | undefined): "zh" | "en" => {
     if (input.langOverride) return input.langOverride
     if (prefLang === "zh" || prefLang === "en") return prefLang
     if (prefLang === "mixed") return "zh"
+    return pickLang(msg, langFallback)
+  }
+  const promptLang = (msg: string | undefined): "zh" | "en" | "mixed" => {
+    if (input.langOverride) return input.langOverride
+    if (prefLang === "zh" || prefLang === "en" || prefLang === "mixed") return prefLang
     return pickLang(msg, langFallback)
   }
   const action = resolveDeterministicAction(
@@ -1886,7 +1923,9 @@ export async function runDeterministicOnboardingTurn(
     priorAskedStep: priorAskedStepFromState(onboardingUser.onboardingState),
     priorUserReply: event.body,
   })
-  const reply = composeDeterministicReply(action, config, event.body, langFor(event.body))
+  // iter34 hotfix 2026-05-05 — pass promptLang (zh|en|mixed) so the
+  // composer picks the mixed-style template when prefLang === "mixed".
+  const reply = composeDeterministicReply(action, config, event.body, promptLang(event.body))
   await sendDirect(input, reply)
   return { handled: true, action }
 }
