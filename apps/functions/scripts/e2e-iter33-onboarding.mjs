@@ -260,6 +260,100 @@ async function main() {
   state = await readUserState()
   record("[8.state] onboardingState=q_role_asked", state?.onboardingState === "q_role_asked", `actual=${state?.onboardingState}`)
 
+  // ──────────────────────────────────────────────────────────────────
+  // iter34 P0.2 — LLM-fallback edge cases for the 5 probe Qs.
+  // Each step sends a reply that the deterministic regex MISSES but
+  // the LLM should resolve (either extract the canonical value OR
+  // emit a clarifying question). Asserts the orchestrator did NOT
+  // get stuck repeating the same prompt verbatim.
+  // ──────────────────────────────────────────────────────────────────
+
+  // ──────────────────────────────────────────────────────────────────
+  // iter34 P0.2 — LLM-fallback edge cases for ALL 5 probe Qs.
+  // Each step uses an input that MISSES the deterministic regex parser
+  // → triggers the LLM path. Asserts:
+  //   1. zh user gets zh prompt (langOverride preserved across LLM tail-call)
+  //   2. State either advances (LLM extract confidence>=0.6) OR stays
+  //      same (LLM unclear → clarifying question)
+  //   3. Whatever Claire emits is non-empty + non-verbatim repeat
+  // ──────────────────────────────────────────────────────────────────
+
+  async function probeEdge(label, userText, expectedStates, langCheck) {
+    const r = await step(label, userText, { expect: /[\s\S]+/ })
+    state = await readUserState()
+    const stateOk = expectedStates.includes(state?.onboardingState)
+    record(
+      `${label.replace(/^\[\d+\] /, "[")}.state → one of: ${expectedStates.join("|")}`,
+      stateOk,
+      `actual=${state?.onboardingState}`
+    )
+    if (langCheck && r?.joined) {
+      const langOk = langCheck.test(r.joined)
+      record(
+        `${label.replace(/^\[\d+\] /, "[")}.lang preserved (${langCheck})`,
+        langOk,
+        `reply=${r.joined.slice(0, 60)}…`
+      )
+    }
+    return r
+  }
+
+  // Step 9: q_role descriptive (zh) — parser misses, LLM should resolve in zh.
+  await probeEdge(
+    "[9] q_role 'ai infra' (zh edge → LLM)",
+    "我做点 ai infra 之类的",
+    ["q_role_asked", "q_yoe_asked"],
+    /[一-鿿]/ // zh char somewhere in reply (lang preserved)
+  )
+
+  // Step 10: q_yoe descriptive (zh) — needs LLM to extract or clarify.
+  if (state?.onboardingState === "q_yoe_asked") {
+    await probeEdge(
+      "[10] q_yoe '工作好几年了' (zh edge → LLM)",
+      "工作好几年了 具体记不太清",
+      ["q_yoe_asked", "q_visa_asked"],
+      /[一-鿿]/
+    )
+  } else {
+    record("[10] skipped — q_role still at q_role_asked", true, "(LLM clarified instead)")
+  }
+
+  // Step 11: q_visa descriptive (zh).
+  if (state?.onboardingState === "q_visa_asked") {
+    await probeEdge(
+      "[11] q_visa '工作签证那个状态吧' (zh edge → LLM)",
+      "我现在工作签证那个状态吧",
+      ["q_visa_asked", "q_startup_pref_asked"],
+      /[一-鿿]/
+    )
+  } else {
+    record("[11] skipped", true, `state=${state?.onboardingState}`)
+  }
+
+  // Step 12: q_startup_pref descriptive (zh).
+  if (state?.onboardingState === "q_startup_pref_asked") {
+    await probeEdge(
+      "[12] q_startup_pref '看具体团队 不一定' (zh edge → LLM)",
+      "看具体团队 不一定",
+      ["q_startup_pref_asked", "q_location_asked"],
+      /[一-鿿]/
+    )
+  } else {
+    record("[12] skipped", true, `state=${state?.onboardingState}`)
+  }
+
+  // Step 13: q_location descriptive (zh).
+  if (state?.onboardingState === "q_location_asked") {
+    await probeEdge(
+      "[13] q_location '在哪都行 看机会' (zh edge → LLM)",
+      "在哪都行 看机会",
+      ["q_location_asked", "q_resume_asked"],
+      /[一-鿿]/
+    )
+  } else {
+    record("[13] skipped", true, `state=${state?.onboardingState}`)
+  }
+
   // Summary
   console.log("\n━━━ Summary ━━━")
   const passed = results.filter((r) => r.ok).length

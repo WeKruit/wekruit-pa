@@ -744,6 +744,15 @@ export type DeterministicRunnerStore = {
 export type RunDeterministicTurnInput = {
   event: InboundEvent
   store: DeterministicRunnerStore
+  /**
+   * iter34 P0.2 — tail-call lang preservation. When the dispatcher
+   * recurses with an LLM-extracted canonical value as event.body
+   * (e.g. "swe" / "h1b"), the inner runner's pickLang sees a short
+   * ASCII string and would flip to "en". Setting this overrides
+   * langFor to use the caller's resolved lang so the user's chosen
+   * preferredLang carries through the recursion.
+   */
+  langOverride?: "zh" | "en"
   turnId: string
   onboardingUser: {
     id: string
@@ -787,8 +796,10 @@ export async function runDeterministicOnboardingTurn(
   const prefLang = onboardingUser.statedPreferences?.preferredLang
   const langFallback: "zh" | "en" =
     prefLang === "zh" ? "zh" : prefLang === "en" ? "en" : "zh"
+  // iter34 P0.2 — when caller supplies langOverride (LLM tail-call),
+  // honor it directly so the canonical value ("swe") doesn't flip lang.
   const langFor = (msg: string | undefined): "zh" | "en" =>
-    pickLang(msg, langFallback)
+    input.langOverride ?? pickLang(msg, langFallback)
   const action = resolveDeterministicAction(
     {
       onboardingState: onboardingUser.onboardingState,
@@ -1271,9 +1282,12 @@ export async function runDeterministicOnboardingTurn(
               confidence: intent.confidence,
             })
             // Tail-call the verify-start handler with the LLM-extracted email.
+            // langOverride preserves user's chosen lang across the recursion
+            // (LLM-extracted "user@example.com" alone wouldn't preserve zh).
             return runDeterministicOnboardingTurn({
               ...input,
               event: { ...event, body: intent.email },
+              langOverride: lang,
             })
           }
           if (intent.intent === "typo") {
@@ -1413,6 +1427,9 @@ export async function runDeterministicOnboardingTurn(
             return runDeterministicOnboardingTurn({
               ...input,
               event: { ...event, body: String(intent.value) },
+              // Preserve user's chosen lang across tail-call (canonical
+              // value like "swe" / "h1b" is too short for pickLang).
+              langOverride: langFor(event.body),
             })
           }
           if (intent.intent === "unclear") {
