@@ -1165,6 +1165,13 @@ export async function runDeterministicOnboardingTurn(
   // the user understands their reply didn't parse — not just see the
   // same Q again. State doesn't advance (q_email_asked → q_email_asked
   // self-loop), so suspendedForVent semantics keep STATE_ORDER happy.
+  //
+  // iter33 Bug 15 fix 2026-05-05 (Adam: typed gmal.com → no code received).
+  // When the user DID type something email-shaped but with a known-typo
+  // domain (gmal.com → gmail.com, yahooo.com → yahoo.com), surface the
+  // typo back with a suggestion. parseEmailAnswer already returned {}
+  // for typo'd domains so the workflow routes here; we re-detect on the
+  // raw msg to extract the canonical suggestion.
   if (action.kind === "ask_q_email" && onboardingUser.onboardingState === "q_email_asked") {
     await store.applyOnboarding(event.userId, onboardingUser.phoneE164, "ask_q_email", {
       priorAskedStep: "ask_q_email",
@@ -1172,7 +1179,34 @@ export async function runDeterministicOnboardingTurn(
       suspendedForVent: true,
     })
     const lang = langFor(event.body)
-    const reaskPhrase = config.ask_q_email!.reaskPrompt?.[lang] ?? config.ask_q_email!.prompt[lang]
+    // Try typo detection on whatever email-shaped substring exists in the
+    // raw msg. If found → personalized prompt with suggestion.
+    const { detectEmailDomainTypo } = await import("./onboarding.js")
+    const emailMatch = event.body.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/)
+    let reaskPhrase: string
+    if (emailMatch) {
+      const candidate = emailMatch[0].toLowerCase()
+      const canonical = detectEmailDomainTypo(candidate)
+      if (canonical) {
+        const at = candidate.lastIndexOf("@")
+        const local = candidate.slice(0, at)
+        const suggested = `${local}@${canonical}`
+        reaskPhrase =
+          lang === "zh"
+            ? `${candidate} 这个域名我没找到, 你是不是想发到 ${suggested}? 帮我确认一下`
+            : `${candidate} doesn't look right — did you mean ${suggested}? lemme know which`
+        store.log("pa.onboarding.deterministic.email_typo_suggested", {
+          userId: event.userId,
+          turnId,
+          original: candidate,
+          suggested,
+        })
+      } else {
+        reaskPhrase = config.ask_q_email!.reaskPrompt?.[lang] ?? config.ask_q_email!.prompt[lang]
+      }
+    } else {
+      reaskPhrase = config.ask_q_email!.reaskPrompt?.[lang] ?? config.ask_q_email!.prompt[lang]
+    }
     await sendDirect(input, reaskPhrase)
     store.log("pa.onboarding.deterministic.email_reask", {
       userId: event.userId,

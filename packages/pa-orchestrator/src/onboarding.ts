@@ -727,16 +727,71 @@ export const TOS_DECLINE_REGEX =
   /(^|[\s,，.。])(不同意|拒绝|不行|不要|不可以|算了|no\b|nope\b|nah\b|don'?t\s*agree|do\s*not\s*agree|decline(d)?|disagree(d)?|reject(ed)?|不接受|hard\s*pass)(\b|[\s,，.。!！?？]|$)/i
 
 /**
+ * iter33 Bug 15 fix 2026-05-05 — common-typo detector for email domains.
+ * Adam reported typing `indolencorlol@gmal.com` (gmal not gmail) → Mailgun
+ * accepted the API call (domain not validated client-side) but SMTP
+ * delivery permanently bounced ("No MX for gmal.com"). User got no code
+ * but Claire said "已发码". Now we catch the typo before the send and
+ * surface a confirm-prompt back to the user.
+ *
+ * Map kept conservative — only HIGH-confidence typos that are vanishingly
+ * unlikely to be real domains. Things like `gmail.co` (could be a
+ * Colombian co-domain) are NOT in here. Edge cases that look like real
+ * non-US domains are explicitly NOT flagged.
+ */
+export const COMMON_EMAIL_DOMAIN_TYPOS: Record<string, string> = {
+  "gmal.com": "gmail.com",
+  "gmial.com": "gmail.com",
+  "gnail.com": "gmail.com",
+  "gail.com": "gmail.com",
+  "gmail.con": "gmail.com",
+  "gmali.com": "gmail.com",
+  "yhoo.com": "yahoo.com",
+  "yahooo.com": "yahoo.com",
+  "yaho.com": "yahoo.com",
+  "yhao.com": "yahoo.com",
+  "outlok.com": "outlook.com",
+  "outloook.com": "outlook.com",
+  "outlokk.com": "outlook.com",
+  "hotmial.com": "hotmail.com",
+  "hotmal.com": "hotmail.com",
+  "hotmil.com": "hotmail.com",
+  "icloid.com": "icloud.com",
+  "iclod.com": "icloud.com",
+  "iclud.com": "icloud.com",
+}
+
+/** Returns the canonical domain when `email`'s domain is a known typo,
+ *  or `null` when the domain is OK / unknown. */
+export function detectEmailDomainTypo(email: string): string | null {
+  const at = email.lastIndexOf("@")
+  if (at < 0) return null
+  const domain = email.slice(at + 1).toLowerCase().trim()
+  return COMMON_EMAIL_DOMAIN_TYPOS[domain] ?? null
+}
+
+/**
  * iter30 V6 — extract an email address from a free-form reply, or detect a
  * skip-shaped answer. Returns `{ contactEmail }` if a valid email was found,
  * or `{}` if the user declined / didn't include one. Empty patch means the
  * orchestrator advances state without writing contactEmail.
+ *
+ * iter33 Bug 15 fix — when the captured email's domain matches a known
+ * typo (gmal.com, yahooo.com, etc.), return `{}` so the workflow re-asks
+ * instead of advancing. Runner detects this case via `detectEmailDomainTypo`
+ * on the raw user message and sends a domain-aware suggestion prompt.
  */
 function parseEmailAnswer(reply: string): Partial<StatedPreferences> {
   if (!reply) return {}
   const match = reply.match(EMAIL_REGEX)
   if (match) {
-    return { contactEmail: match[0].toLowerCase() }
+    const email = match[0].toLowerCase()
+    if (detectEmailDomainTypo(email)) {
+      // Don't persist a doomed-to-bounce email. Workflow's no_email edge
+      // re-asks; runner emits a typo-suggestion prompt instead.
+      return {}
+    }
+    return { contactEmail: email }
   }
   return {}
 }
