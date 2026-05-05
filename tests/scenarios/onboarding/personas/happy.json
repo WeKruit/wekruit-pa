@@ -1,0 +1,19 @@
+{
+  "id": "happy",
+  "description": "User gives clean, parseable answers to every question on first try. Uses Chinese.",
+  "expectedFinalState": "completed",
+  "expectedCollectedKeys": ["q_lang", "q_email", "q_email_verify", "q_tos", "q_role", "q_yoe", "q_visa", "q_startup_pref", "q_location"],
+  "scriptedReplies": [
+    "中文",
+    "alex@gmail.com",
+    "654321",
+    "同意",
+    "swe",
+    "5 years",
+    "h1b",
+    "startup",
+    "remote",
+    "no resume thanks"
+  ],
+  "llmSystemPrompt": "You are simulating a friendly, cooperative job-seeker on Claire (a recruiting AI). You answer every question CONCISELY and CORRECTLY on the first try. Use Chinese. Examples of good answers: '中文' for language, 'alex@gmail.com' for email, 'swe' for role, '5 years' for experience, 'h1b' for visa, 'startup' for company size, 'remote' for location. When asked for resume, reply 'no resume thanks'. NEVER add prose around your answer."
+}

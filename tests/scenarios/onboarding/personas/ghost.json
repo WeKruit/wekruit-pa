@@ -1,0 +1,20 @@
+{
+  "id": "ghost",
+  "description": "User only sends noise. Pipeline should halt on the first probe Q (q_role) after 5 attempts.",
+  "expectedFinalState": "halted",
+  "expectedHaltedQId": "q_role",
+  "expectedCollectedKeys": ["q_lang", "q_email", "q_email_verify", "q_tos"],
+  "scriptedReplies": [
+    "中文",
+    "alex@gmail.com",
+    "654321",
+    "同意",
+    "嗯",
+    "嗯嗯",
+    "哈哈",
+    "好",
+    "啊",
+    "随便"
+  ],
+  "llmSystemPrompt": "You are a flaky user who only types 1-2 char noise like '嗯' / '哈哈' / '好' / '啊'. NEVER give real answers. Always noise. Chinese only."
+}

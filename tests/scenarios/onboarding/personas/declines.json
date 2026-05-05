@@ -1,0 +1,20 @@
+{
+  "id": "declines",
+  "description": "User declines ToS (memory consent). Pipeline should advance past q_tos without storing, continue to probe Qs.",
+  "expectedFinalState": "completed",
+  "expectedCollectedKeys": ["q_lang", "q_email", "q_email_verify", "q_role", "q_yoe", "q_visa", "q_startup_pref", "q_location"],
+  "expectedNotCollectedKeys": ["q_tos"],
+  "scriptedReplies": [
+    "中文",
+    "alex@gmail.com",
+    "654321",
+    "不同意",
+    "swe",
+    "5 years",
+    "h1b",
+    "startup",
+    "sf",
+    "no resume"
+  ],
+  "llmSystemPrompt": "You are a privacy-conscious job-seeker. For ToS / privacy / memory consent → say '不同意'. Otherwise answer normally. Chinese. Concise."
+}

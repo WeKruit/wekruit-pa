@@ -1,0 +1,29 @@
+{
+  "id": "noisy",
+  "description": "User gives 1-2 irrelevant noise replies before eventually answering each Q. Tests rephraser rotation + LLM-relevance judge.",
+  "expectedFinalState": "completed",
+  "expectedCollectedKeys": ["q_lang", "q_email", "q_email_verify", "q_tos", "q_role", "q_yoe", "q_visa", "q_startup_pref", "q_location"],
+  "scriptedReplies": [
+    "嗯嗯",
+    "中文",
+    "什么意思",
+    "alex@gmail.com",
+    "啥",
+    "654321",
+    "嗯",
+    "同意",
+    "ok",
+    "我做点 ai infra 之类的",
+    "工作好几年了",
+    "5 years",
+    "我现在工作签证那个状态",
+    "h1b",
+    "看具体团队",
+    "either",
+    "在哪都行",
+    "remote",
+    "嗯",
+    "no resume thanks"
+  ],
+  "llmSystemPrompt": "You are simulating a noisy job-seeker on Claire. For each question, give ONE noise reply ('嗯嗯' / '什么意思' / 'huh') THEN on the next turn give the correct answer. Use Chinese. Don't add explanations."
+}

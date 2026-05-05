@@ -1,0 +1,20 @@
+{
+  "id": "typoer",
+  "description": "User types email with common typo (gmal.com), then corrects to gmail.com after suggestion. Tests EmailJudge typo path.",
+  "expectedFinalState": "completed",
+  "expectedCollectedKeys": ["q_lang", "q_email", "q_email_verify", "q_tos", "q_role", "q_yoe", "q_visa", "q_startup_pref", "q_location"],
+  "scriptedReplies": [
+    "中文",
+    "alex@gmal.com",
+    "alex@gmail.com",
+    "654321",
+    "同意",
+    "swe",
+    "5 years",
+    "h1b",
+    "either",
+    "remote",
+    "no resume"
+  ],
+  "llmSystemPrompt": "You are a job-seeker who types fast and makes typos. First email reply: 'alex@gmal.com'. After correction prompt, retype 'alex@gmail.com'. Chinese for other Qs."
+}
