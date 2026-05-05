@@ -1401,6 +1401,15 @@ export async function runDeterministicOnboardingTurn(
       trimmed.length >= 2 &&
       /[A-Za-z0-9一-鿿]/.test(trimmed)
     if (hasMeaningfulContent) {
+      // iter34 P0.2 — observability for the LLM probe path. Logs ALWAYS
+      // fire on entry so prod-log inspection can diagnose silent fallback
+      // (e.g. LLM unconfigured, threw, returned null, returned low-conf).
+      store.log("pa.onboarding.deterministic.probe_llm_invoke", {
+        userId: event.userId,
+        turnId,
+        step: action.kind,
+        replyLen: trimmed.length,
+      })
       try {
         const intent = await store.extractAnswerIntent(
           action.kind as
@@ -1417,16 +1426,39 @@ export async function runDeterministicOnboardingTurn(
             // LLM extracted a usable answer → tail-call the runner with
             // the canonical value as the "user reply" so the deterministic
             // parser captures it on the second pass + advances to next state.
+            //
+            // Format the value to match each Q's parser regex so the
+            // tail-call's parseUserAnswerForStep actually accepts it (raw
+            // "ai infra" or "5" misses the role/yoe regex → would cause
+            // infinite tail-call recursion).
+            const v = intent.value
+            let formatted: string
+            if (action.kind === "ask_q_yoe") {
+              if (v === "fresh" || v === 0) formatted = "fresh grad"
+              else if (typeof v === "number") formatted = `${v} years`
+              else formatted = String(v)
+            } else if (action.kind === "ask_q_role") {
+              // Append "engineer" suffix as a regex-friendly hint. The
+              // role regex includes /engineer|developer|ml\b|design|.../
+              // so "ai infra engineer" matches "engineer" reliably even
+              // when the LLM emits a free-form role token.
+              const s = String(v).toLowerCase()
+              const regexHits = /(swe|pm\b|em\b|ic\b|staff|senior|junior|new\s*grad|应届|工程|产品|设计|研究|design|research|engineer|developer|前端|后端|算法|数据|machine\s*learning|ml\b)/i
+              formatted = regexHits.test(s) ? s : `${s} engineer`
+            } else {
+              formatted = String(v)
+            }
             store.log("pa.onboarding.deterministic.probe_llm_extracted", {
               userId: event.userId,
               turnId,
               step: action.kind,
               value: intent.value,
+              formatted,
               confidence: intent.confidence,
             })
             return runDeterministicOnboardingTurn({
               ...input,
-              event: { ...event, body: String(intent.value) },
+              event: { ...event, body: formatted },
               // Preserve user's chosen lang across tail-call (canonical
               // value like "swe" / "h1b" is too short for pickLang).
               langOverride: langFor(event.body),
