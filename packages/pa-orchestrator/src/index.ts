@@ -109,6 +109,21 @@ export {
   loadOnboardingConfig,
   DEFAULT_ONBOARDING_CONFIG,
 } from "./onboarding-deterministic.js"
+// iter33 P5 — onboarding workflow as introspectable graph data.
+export {
+  ONBOARDING_WORKFLOW,
+  outgoingEdges,
+  incomingEdges,
+  topologicalStates,
+  validateWorkflow,
+} from "./onboarding-workflow.js"
+export type {
+  OnboardingWorkflow,
+  WorkflowNode,
+  WorkflowEdge,
+  WorkflowNodeKind,
+  WorkflowEdgeCondition,
+} from "./onboarding-workflow.js"
 // Phase 52 — F1 fix: lightweight bilingual intent detection for turn-0
 // onboarding ack (no LLM, regex only). See onboarding-intent.ts for the bank.
 import { detectFirstTurnIntent } from "./onboarding-intent.js"
@@ -506,6 +521,34 @@ export type OrchestratorStore = {
    * this returns true.
    */
   getUserCvParsed?(userId: string): Promise<boolean>
+
+  /**
+   * iter33 P3 — produce a 1-2 sentence CV analysis blurb in the user's
+   * preferred language. Reads parsedCandidateResumes for the user, calls
+   * Qwen-7B via SiliconFlow (or test stub), and returns the summary.
+   * Returns null when LLM is unconfigured or fails — the deterministic
+   * dispatcher then falls back to a generic "thanks for sending it" line
+   * so onboarding completes either way.
+   */
+  generateCvAnalysis?(
+    userId: string,
+    lang: "zh" | "en"
+  ): Promise<{ summary: string } | null>
+
+  /**
+   * iter33 P4 — produce a 1-message blurb pushing 2 job recommendations
+   * to the user before agent runtime activates. Implementations may:
+   *  - read recently-cached matches (e.g. pa-job-profiles ledger) and
+   *    format the top 2, OR
+   *  - fall back to a deferred-promise line ("first batch lands tomorrow
+   *    around 9am") when no live matches exist yet
+   * Returns null when LLM/DB lookups fail; deterministic dispatcher then
+   * emits a generic deferred-promise so onboarding always completes.
+   */
+  generateJobRecs?(
+    userId: string,
+    lang: "zh" | "en"
+  ): Promise<{ message: string; recCount: number } | null>
 
   /**
    * Phase 24.5 — optional Firestore handle for `getFlag()` reads. Tests omit
@@ -2947,6 +2990,19 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
  */
 export type OrchestratorStoreDeps = {
   sendVerificationEmail?: NonNullable<OrchestratorStore["sendVerificationEmail"]>
+  /**
+   * iter33 P3 — produce a 1-2 sentence CV analysis blurb in the user's
+   * preferred language. Wired from apps/functions where SiliconFlow API
+   * key + Qwen-7B model handle live. Tests pass a stub (or omit entirely
+   * — onboarding still completes via fallback line in dispatcher).
+   */
+  generateCvAnalysis?: NonNullable<OrchestratorStore["generateCvAnalysis"]>
+  /**
+   * iter33 P4 — produce a 2-job-rec push message before complete. Wired
+   * from apps/functions where the matching pipeline + pa-job-profiles
+   * ledger handles live. Tests pass a stub.
+   */
+  generateJobRecs?: NonNullable<OrchestratorStore["generateJobRecs"]>
 }
 
 export function createFirestoreOrchestratorStore(
@@ -3402,6 +3458,19 @@ export function createFirestoreOrchestratorStore(
     // complete-without-verification when undefined.
     ...(deps.sendVerificationEmail
       ? { sendVerificationEmail: deps.sendVerificationEmail }
+      : {}),
+    // iter33 P3 — generateCvAnalysis is wired by the apps/functions layer
+    // (which has SiliconFlow API key + Qwen-7B model). Tests omit it; the
+    // deterministic dispatcher falls back to a generic "skimmed it" line
+    // so onboarding still completes when LLM is unconfigured.
+    ...(deps.generateCvAnalysis
+      ? { generateCvAnalysis: deps.generateCvAnalysis }
+      : {}),
+    // iter33 P4 — generateJobRecs is wired by the apps/functions layer.
+    // Tests omit it; the deterministic dispatcher falls back to a deferred
+    // promise so onboarding still completes.
+    ...(deps.generateJobRecs
+      ? { generateJobRecs: deps.generateJobRecs }
       : {}),
     // iter32 — CV gate. Reads parsedCandidateResumes (cross-product
     // collection — see CLAUDE.md) for the user; returns true iff a row

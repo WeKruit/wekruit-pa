@@ -42,6 +42,13 @@ export type MessageRole = z.infer<typeof MessageRoleSchema>
 export const OnboardingStateSchema = z.enum([
   "pending",
   "first_mes_sent",
+  // iter33 (Adam directive 2026-05-04 "问 你 prefer 中文、英文、中英文混合"):
+  // explicit lang preference question right after first_mes. Replaces the
+  // implicit per-turn pickLang() heuristic for the *captured* preference
+  // (pickLang remains as the realtime detector for unstructured chat).
+  // Sequence: first_mes_sent → q_lang_asked → q_email_asked → ... (P1).
+  // P2 will reorder Email/Verify ahead of ToS per Adam-locked spec.
+  "q_lang_asked",
   // iter31 (Adam directive 2026-05-04 "1. email verification & privacy + terms"):
   // ToS + privacy acceptance MUST land before any data-collection probes.
   "q_tos_asked",
@@ -63,6 +70,11 @@ export const OnboardingStateSchema = z.enum([
   // iter30 closure (Adam directive 2026-05-03 "主动问简历"): proactive resume
   // request as the final probe step before transitioning to complete.
   "q_resume_asked",
+  // iter33 P3 (Adam directive 2026-05-04 "OK 你等我小下我看看你简历, 然后看完
+  // 以后给一个简历分析"): brief between resume-parse and complete. Claire
+  // sends "let me look at your resume" + a short CV analysis (LLM-summary,
+  // ~2 sentences). P4 will further interpose a job-rec push before complete.
+  "q_cv_analyzing",
   "complete",
 ])
 export type OnboardingState = z.infer<typeof OnboardingStateSchema>
@@ -120,6 +132,15 @@ export const StatedPreferencesSchema = z.object({
    * complete with a matching code.
    */
   contactEmailVerifiedAt: z.string().optional(),
+  /**
+   * iter33 — captured at q_lang_asked step. Drives Bible directive
+   * language and locks Claire's reply language for the rest of the
+   * session. zh = Chinese-only, en = English-only, mixed = bilingual
+   * (zh + en code-switching allowed). Realtime pickLang() still adapts
+   * within the chosen lock (e.g. user replies in en briefly during zh
+   * lock — Claire mirrors the user turn but stays anchored to lock).
+   */
+  preferredLang: z.enum(["zh", "en", "mixed"]).optional(),
   /** ISO timestamp of last write. */
   updatedAt: z.string().optional(),
 })

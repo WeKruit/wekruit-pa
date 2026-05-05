@@ -43,6 +43,8 @@ import { INTENT_ACK_DIRECTIVES } from "./onboarding-intent.js"
 export type OnboardingStep =
   | "send_first_mes"
   | "ask_grounding_q" // legacy v1 single-question path (kept for backward compat)
+  | "ask_q_lang" // iter33 — explicit zh/en/mixed preference question, fires after first_mes.
+  | "send_cv_analysis" // iter33 P3 — Claire reads CV, sends 1-line ack + 2-sentence LLM summary, advances to complete.
   | "ask_q_tos" // iter31 — privacy + terms acceptance gate, before any data probes.
   | "ask_q_role"
   | "ask_q_yoe"
@@ -502,6 +504,8 @@ export function composeOnboardingInput(
 const ONBOARDING_NEXT_STATE: Partial<Record<OnboardingStep, OnboardingState>> = {
   send_first_mes: "first_mes_sent",
   ask_grounding_q: "grounding_q1_asked",
+  ask_q_lang: "q_lang_asked",
+  send_cv_analysis: "complete", // iter33 P3 — terminal CV-analysis step
   ask_q_tos: "q_tos_asked",
   ask_q_role: "q_role_asked",
   ask_q_yoe: "q_yoe_asked",
@@ -531,6 +535,8 @@ const STATE_ORDER: Array<OnboardingState | undefined> = [
   "first_mes_sent",
   // v1 leaf
   "grounding_q1_asked",
+  // iter33 — explicit zh/en/mixed preference (P1)
+  "q_lang_asked",
   // iter31 — ToS gate
   "q_tos_asked",
   // iter32 — email + verify (pre-CV trust handshake)
@@ -543,6 +549,8 @@ const STATE_ORDER: Array<OnboardingState | undefined> = [
   "q_startup_pref_asked",
   "q_location_asked",
   "q_resume_asked",
+  // iter33 P3 — CV analysis brief between q_resume_asked + complete
+  "q_cv_analyzing",
   "complete",
 ]
 
@@ -758,6 +766,7 @@ export function parseUserAnswerForStep(
   reply: string
 ): Partial<StatedPreferences> {
   if (!reply) return {}
+  if (step === "ask_q_lang") return parseLangAnswer(reply)
   if (step === "ask_q_role") return parseRoleAnswer(reply)
   if (step === "ask_q_yoe") return parseYoeAnswer(reply)
   if (step === "ask_q_visa") return parseVisaAnswer(reply)
@@ -768,6 +777,34 @@ export function parseUserAnswerForStep(
   // — they affect User-level fields (tosAcceptance / contactEmailVerifiedAt)
   // which applyOnboardingStep handles separately.
   return {}
+}
+
+/**
+ * iter33 — parse zh/en/mixed reply to ask_q_lang. Bilingual + permissive:
+ * "中文" / "zh" / "chinese" → zh; "english" / "en" / "英文" → en; explicit
+ * "mixed" / "混" / "中英" / "both" / "都行" / "either" → mixed. Default to
+ * mixed when reply ambiguous (most permissive — Claire keeps adapting per
+ * turn). NEVER throws.
+ */
+export function parseLangAnswer(reply: string): Partial<StatedPreferences> {
+  const t = reply.trim().toLowerCase()
+  if (!t) return {}
+  // Explicit mixed first — phrases like "中英文" contain "中" and "英" and
+  // would otherwise be miscategorized.
+  if (/混|中英|both|either|都行|都可以|whatever|mix/.test(t)) {
+    return { preferredLang: "mixed" }
+  }
+  // English signals next — "英文" contains 文 (CJK) but is an EN selection.
+  // Check before the pure-CJK fallback so "英文" → en (not zh).
+  if (/english|英文|engl|\ben\b/.test(t)) {
+    return { preferredLang: "en" }
+  }
+  // Chinese signals
+  if (/中文|chinese|\bzh\b|汉语|普通话|国语/.test(t) || /^[一-鿿]+$/.test(reply.trim())) {
+    return { preferredLang: "zh" }
+  }
+  // Ambiguous — default to mixed (Claire stays adaptive)
+  return { preferredLang: "mixed" }
 }
 
 /**
@@ -1014,6 +1051,24 @@ export async function applyOnboardingStep(
           ? { providerMessageId: opts.emailVerification.providerMessageId }
           : {}),
       }
+    }
+    // iter33 P2 (Bug #5 fix) — verifiedAt stamp must fire for ANY
+    // post-verify transition, not just nextState=='complete'. Adam-locked
+    // sequence has email-verify → q_tos_asked → q_role_asked → ... →
+    // q_resume_asked → complete; the verifiedAt was previously stamped
+    // ONLY on the final complete write, leaving statedPreferences in an
+    // "email captured but no verifiedAt" state through the entire probe
+    // chain. Now: when emailVerificationVerified flag flips, clear the
+    // challenge + stamp verifiedAt regardless of which intermediate state
+    // we're transitioning into.
+    if (opts.emailVerificationVerified) {
+      payload.emailVerification = null
+      const merged: Partial<StatedPreferences> = {
+        ...(payload.statedPreferences as Partial<StatedPreferences> | undefined),
+        contactEmailVerifiedAt: now,
+        updatedAt: now,
+      }
+      payload.statedPreferences = merged
     }
     await userRef.set(payload, { merge: true })
   }

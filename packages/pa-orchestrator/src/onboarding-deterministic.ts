@@ -86,6 +86,16 @@ export const DEFAULT_ONBOARDING_CONFIG: Record<OnboardingStep, OnboardingStepCon
     prompt: { zh: FIRST_MES_ZH, en: FIRST_MES_EN },
   },
   ask_grounding_q: undefined, // legacy v1 — not used in deterministic path
+  // iter33 P1 (Adam directive 2026-05-04 "问 你 prefer 中文、英文、中英文混合"):
+  // explicit lang preference question. Fires after first_mes_sent. Reply
+  // parsed by parseLangAnswer → preferredLang (zh / en / mixed). Default to
+  // mixed when ambiguous so Claire keeps adapting.
+  ask_q_lang: {
+    prompt: {
+      zh: "我们用啥语聊比较顺? 中文、英文、还是中英混着说?",
+      en: "what language works best for you? Chinese / English / both mixed?",
+    },
+  },
   ask_q_tos: {
     prompt: {
       zh: "开聊前先说一下: 我会记一些咱聊天的事来给你推工作 / 找内推. 隐私 + 用户协议在这: https://wekruit-pa.web.app/legal — 同意就回个 \"同意\" 我们继续",
@@ -156,6 +166,15 @@ export const DEFAULT_ONBOARDING_CONFIG: Record<OnboardingStep, OnboardingStepCon
       en: "still waiting on that 6-digit code from your email",
     },
   },
+  // iter33 P3 — send_cv_analysis is not a question step; the runner emits
+  // ack + LLM-summary inline. Config slot present for completeness so a
+  // Firestore override can replace the ack/fallback strings later.
+  send_cv_analysis: {
+    prompt: {
+      zh: "OK 让我看一下你简历, 等我一下下",
+      en: "ok — give me a sec to read your resume",
+    },
+  },
   complete: undefined,
   skip: undefined,
 }
@@ -164,6 +183,19 @@ export const DEFAULT_ONBOARDING_CONFIG: Record<OnboardingStep, OnboardingStepCon
 const VENT_ACK: OnboardingPrompt = {
   zh: "嗯, 我在. 准备好继续就告诉我",
   en: "yeah, i'm here. lmk when you're ready to keep going",
+}
+
+/**
+ * iter33 GAP 4 — env-only kill switch for the iter33 P1+P2 sequence.
+ * Set `PA_ONBOARDING_V33_DISABLED=true` on the Cloud Function (or in
+ * apps/functions/.env) to skip q_lang_asked + fall back to iter32
+ * sequence (first_mes_sent → q_tos_asked → ...). Reading from env
+ * each call (cheap) so an operator can flip without redeploying the
+ * orchestrator package — only the Cloud Function bundle restart.
+ */
+export function isV33Disabled(): boolean {
+  const v = (process.env.PA_ONBOARDING_V33_DISABLED ?? "").trim().toLowerCase()
+  return v === "true" || v === "1" || v === "yes"
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -268,6 +300,7 @@ export type DeterministicTurnInput = {
 
 export type DeterministicAction =
   | { kind: "send_first_mes" }
+  | { kind: "ask_q_lang" }
   | { kind: "ask_q_tos" }
   | { kind: "ask_q_tos_decline" }
   | { kind: "ask_q_tos_reask" }
@@ -280,6 +313,7 @@ export type DeterministicAction =
   | { kind: "ask_q_email_verify_reissue"; email: string } // expired/exhausted → re-fire Mailgun, stay
   | { kind: "verify_email_code"; candidate: string }
   | { kind: "vent_ack" } // user is venting mid-onboarding
+  | { kind: "send_cv_analysis" } // iter33 P3 — Claire reads CV + sends ack + 2-sentence summary, advances to complete
   | { kind: "complete" }
   | { kind: "skip" } // already complete + all gates passed
 
@@ -300,28 +334,55 @@ export function resolveDeterministicAction(
   // T0 — fresh user
   if (!state || state === "pending") return { kind: "send_first_mes" }
 
-  // first_mes_sent → ask_q_tos
-  if (state === "first_mes_sent") return { kind: "ask_q_tos" }
-
-  // q_tos_asked → branch on parsed answer (iter32 reorder: accept advances
-  // to email step, NOT role)
-  if (state === "q_tos_asked") {
-    const decision = parseTosAnswer(userMessage)
-    if (decision === "accept") return { kind: "ask_q_email" }
-    if (decision === "decline") return { kind: "ask_q_tos_decline" }
-    return { kind: "ask_q_tos_reask" }
+  // iter33 P1 — first_mes_sent → ask_q_lang (zh/en/mixed). Adam-locked
+  // sequence puts lang preference at the very top so subsequent prompts
+  // can render in the user's locked language.
+  //
+  // iter33 GAP 4 escape hatch: when `PA_ONBOARDING_V33_DISABLED=true`
+  // (env-only, evaluated at module load via runtime check below),
+  // skip q_lang and fall back to iter32 sequence (first_mes_sent →
+  // q_tos_asked). Operator-flippable via Cloud Functions env update +
+  // function restart. Wider rollback (re-ordering revert) requires git
+  // revert of iter33 P2 commit ce2fa6c.
+  if (state === "first_mes_sent") {
+    if (isV33Disabled()) return { kind: "ask_q_tos" }
+    return { kind: "ask_q_lang" }
   }
 
-  // q_email_asked → branch on parsed email (iter32: email comes BEFORE
-  // role, as part of pre-CV trust handshake with TOS)
+  // iter33 P2 (Adam directive 2026-05-04 "1. 然后问 email, 然后等 email
+  // verification. verify 完就是 ToS, 必须接受才能继续"): reordered chain is
+  // q_lang → q_email → q_email_verify → q_tos → q_role/yoe/visa/...
+  // ToS must come AFTER email-verify so the user's mailbox owns a
+  // record of the relationship before they sign anything.
+  // Parser is permissive: ambiguous reply defaults to "mixed", never
+  // blocks the chain.
+  if (state === "q_lang_asked") return { kind: "ask_q_email" }
+
+  // iter33 GAP 4 — when V33 disabled, q_lang_asked is unreachable
+  // (dispatcher skips at first_mes_sent above). Defensive: if a user
+  // somehow has state=q_lang_asked AND V33 is disabled, advance them
+  // to q_tos_asked so they aren't stuck.
+
+  // q_email_asked → branch on parsed email (iter33: email is now the
+  // FIRST data-collection step, before ToS).
   if (state === "q_email_asked") {
     const parsed = parseUserAnswerForStep("ask_q_email", userMessage)
     if (parsed.contactEmail) {
       return { kind: "ask_q_email_verify_start", email: parsed.contactEmail }
     }
     // User skipped — Adam directive: email + verification REQUIRED before
-    // agent runtime activates. Re-ask gentler.
+    // ToS. Re-ask gentler.
     return { kind: "ask_q_email" }
+  }
+
+  // q_tos_asked (iter33 reorder: now AFTER verify, GATES role-probe chain)
+  // → branch on parsed answer. Accept advances to ask_q_role (probe chain),
+  // decline / unclear stays at q_tos_asked.
+  if (state === "q_tos_asked") {
+    const decision = parseTosAnswer(userMessage)
+    if (decision === "accept") return { kind: "ask_q_role" }
+    if (decision === "decline") return { kind: "ask_q_tos_decline" }
+    return { kind: "ask_q_tos_reask" }
   }
 
   // q_email_verifying → branch on parsed code, expired, exhausted
@@ -356,22 +417,32 @@ export function resolveDeterministicAction(
     return { kind: "ask_q_resume" }
   }
 
-  // q_resume_asked — final CV gate. Hold here until parsedCandidateResumes
-  // row exists. cv-ingest pipeline writes the row after Sendblue delivers
-  // the attachment. iter32: this is the LAST step before complete (email
-  // already verified upstream).
+  // q_resume_asked — CV gate. Hold here until parsedCandidateResumes row
+  // exists. cv-ingest pipeline writes the row after Sendblue delivers the
+  // attachment. iter33 P3: when CV is parsed, dispatch send_cv_analysis
+  // (Claire reads + summarizes + advances to complete). Previously this
+  // jumped straight to complete.
   if (state === "q_resume_asked") {
     if (!input.cvParsed) return { kind: "wait_for_resume_upload" }
-    return { kind: "complete" }
+    return { kind: "send_cv_analysis" }
   }
 
-  // complete — all gates passed (TOS + email verified + CV parsed).
+  // q_cv_analyzing — terminal pause if for some reason the analysis didn't
+  // fire (e.g. LLM unavailable on the original turn). Re-attempt on the
+  // next inbound to give the user the closure they expect.
+  if (state === "q_cv_analyzing") {
+    return { kind: "send_cv_analysis" }
+  }
+
+  // complete — all gates passed (TOS + email verified + CV parsed +
+  // analysis sent).
   if (state === "complete") return { kind: "skip" }
 
   return { kind: "skip" }
 }
 
 function priorAskedStepFromState(state: OnboardingState | undefined): OnboardingStep | undefined {
+  if (state === "q_lang_asked") return "ask_q_lang"
   if (state === "q_tos_asked") return "ask_q_tos"
   if (state === "q_role_asked") return "ask_q_role"
   if (state === "q_yoe_asked") return "ask_q_yoe"
@@ -422,6 +493,9 @@ export function composeDeterministicReply(
 
   if (action.kind === "send_first_mes") {
     return config.send_first_mes!.prompt[lang]
+  }
+  if (action.kind === "ask_q_lang") {
+    return config.ask_q_lang!.prompt[lang]
   }
   if (action.kind === "ask_q_tos") {
     return config.ask_q_tos!.prompt[lang]
@@ -536,6 +610,26 @@ export type DeterministicRunnerStore = {
     expiresAt: string
     providerMessageId?: string
   } | null>
+  /**
+   * iter33 P3 — produce a 1-2 sentence CV analysis blurb in the user's
+   * preferred language. Reads parsedCandidateResumes for the user, calls
+   * Qwen-7B (or test stub), and returns the summary. Returns null when
+   * LLM is unconfigured / fails — caller falls back to a generic ack so
+   * onboarding completes either way.
+   */
+  generateCvAnalysis?(
+    userId: string,
+    lang: "zh" | "en"
+  ): Promise<{ summary: string } | null>
+  /**
+   * iter33 P4 — push a 2-job-rec message before complete. Returns null
+   * when no recs are available yet (caller falls back to deferred-promise
+   * line). recCount lets callers log/track delivered counts.
+   */
+  generateJobRecs?(
+    userId: string,
+    lang: "zh" | "en"
+  ): Promise<{ message: string; recCount: number } | null>
   log(event: string, payload?: Record<string, unknown>): void
   nowIso(): string
   db?: Firestore
@@ -688,20 +782,20 @@ export async function runDeterministicOnboardingTurn(
     const candidateHash = createHash("sha256").update(action.candidate).digest("hex")
     const lang = pickLang(event.body)
     if (candidateHash === challenge.codeHash) {
-      // iter32: advance to q_role_asked (NOT complete — probe sequence
-      // still needs to run). Email is verified; stamp contactEmailVerifiedAt
-      // on statedPreferences via emailVerificationVerified opt + write the
-      // role question via composeDeterministicReply.
-      await store.applyOnboarding(event.userId, onboardingUser.phoneE164, "ask_q_role", {
+      // iter33 P2 — advance to q_tos_asked (NOT complete, NOT q_role).
+      // Adam-locked sequence: email-verify clears → ToS gate is the next
+      // step. Email is verified; stamp contactEmailVerifiedAt on
+      // statedPreferences via emailVerificationVerified opt (Bug #5 fix
+      // in applyOnboardingStep makes this stamp fire regardless of
+      // nextState). Compose ack + ToS prompt joined.
+      await store.applyOnboarding(event.userId, onboardingUser.phoneE164, "ask_q_tos", {
         priorAskedStep: "ask_q_email_verify",
         priorUserReply: event.body,
         emailVerificationVerified: true,
       })
       const verifiedAck = lang === "zh" ? "✓ 邮箱验过了" : "✓ email verified"
-      // Strip a leading "btw — " / "btw, " from the role phrase so we don't
-      // emit a doubled "btw —" after the verified-ack join. Cosmetic.
-      const rolePhrase = config.ask_q_role!.prompt[lang].replace(/^btw\s*[—,-]\s*/i, "")
-      await sendDirect(input, `${verifiedAck} — ${rolePhrase}`)
+      const tosPhrase = config.ask_q_tos!.prompt[lang]
+      await sendDirect(input, `${verifiedAck} — ${tosPhrase}`)
       store.log("pa.onboarding.deterministic.email_verify_verified", {
         userId: event.userId,
         turnId,
@@ -806,39 +900,109 @@ export async function runDeterministicOnboardingTurn(
     return { handled: true, action }
   }
 
-  // q_resume_asked + cvParsed=true → complete (final transition).
-  // iter32 reorder: this is the LAST step (email already verified before
-  // role probe). Send a friendly "all set" ack; agent runtime activates
-  // on the next inbound. The dispatcher returns handled=true so this
-  // turn finalizes; user's next message goes through the normal LLM path.
-  if (action.kind === "complete" && onboardingUser.onboardingState === "q_resume_asked") {
+  // iter33 P3 — q_resume_asked + cvParsed=true (or stuck at q_cv_analyzing
+  // re-attempt) → send_cv_analysis. Two outbound messages in one turn:
+  //   1. ack: "OK 让我看一下你简历"
+  //   2. analysis: 1-2 sentence LLM summary of the CV (Qwen-7B). Falls
+  //      back to a generic 'thanks for sending it through' line if the
+  //      LLM hook is unavailable so onboarding still completes.
+  // State advances to "complete" (P4 will interpose a job-rec push here).
+  if (action.kind === "send_cv_analysis") {
+    const lang = pickLang(event.body)
+    const ackMsg =
+      lang === "zh"
+        ? "OK 让我看一下你简历, 等我一下下"
+        : "ok — give me a sec to read your resume"
+    await sendDirect(input, ackMsg)
+    store.log("pa.onboarding.deterministic.cv_analysis_ack_sent", {
+      userId: event.userId,
+      turnId,
+    })
+
+    // LLM analysis. Fail-open to a generic line so onboarding always closes.
+    let analysisMsg: string
+    try {
+      const result = store.generateCvAnalysis
+        ? await store.generateCvAnalysis(event.userId, lang)
+        : null
+      if (result?.summary && result.summary.trim().length > 0) {
+        analysisMsg = result.summary.trim()
+      } else {
+        analysisMsg =
+          lang === "zh"
+            ? "看下来你背景挺扎实的, 后面给你推岗位会贴着你的方向来"
+            : "skimmed it — solid background, i'll lean recommendations toward your trajectory"
+      }
+    } catch (err) {
+      store.log("pa.onboarding.deterministic.cv_analysis_error", {
+        userId: event.userId,
+        turnId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+      analysisMsg =
+        lang === "zh"
+          ? "看下来你背景挺扎实的, 后面给你推岗位会贴着你的方向来"
+          : "skimmed it — solid background, i'll lean recommendations toward your trajectory"
+    }
+    await sendDirect(input, analysisMsg)
+
+    // iter33 P4 — third outbound: 2-job-rec push (or deferred-promise
+    // when no live matches yet). Adam-locked sequence: "推荐两个岗位.
+    // onboard 结束". Fail-OPEN to deferred-promise so onboarding always
+    // completes even if matching pipeline is offline.
+    let jobRecMsg: string
+    let recCount = 0
+    try {
+      const recs = store.generateJobRecs
+        ? await store.generateJobRecs(event.userId, lang)
+        : null
+      if (recs?.message && recs.message.trim().length > 0) {
+        jobRecMsg = recs.message.trim()
+        recCount = recs.recCount
+      } else {
+        jobRecMsg =
+          lang === "zh"
+            ? "明早 9 点你会收到第一批匹配岗位 (2 个 / 天). 有想法随时告诉我"
+            : "you'll get your first 2 matches tomorrow ~9am. ping me anytime with thoughts"
+      }
+    } catch (err) {
+      store.log("pa.onboarding.deterministic.job_recs_error", {
+        userId: event.userId,
+        turnId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+      jobRecMsg =
+        lang === "zh"
+          ? "明早 9 点你会收到第一批匹配岗位 (2 个 / 天). 有想法随时告诉我"
+          : "you'll get your first 2 matches tomorrow ~9am. ping me anytime with thoughts"
+    }
+    await sendDirect(input, jobRecMsg)
+
     await store.applyOnboarding(event.userId, onboardingUser.phoneE164, "complete", {
       priorAskedStep: "ask_q_resume",
       priorUserReply: event.body,
     })
-    const lang = pickLang(event.body)
-    const msg =
-      lang === "zh"
-        ? "✓ 简历也收到了, 都搞定咯. 想聊啥跟我说就行"
-        : "✓ got the resume. all set — let me know whatever you wanna chat about"
-    await sendDirect(input, msg)
     store.log("pa.onboarding.deterministic.complete", {
       userId: event.userId,
       turnId,
+      withCvAnalysis: true,
+      jobRecCount: recCount,
+      jobRecsLive: recCount > 0,
     })
     return { handled: true, action }
   }
 
-  // ToS accept path → advance to q_email_asked + write tosAcceptance audit.
-  // iter32 reorder: TOS accept now leads to email step (not role).
-  if (action.kind === "ask_q_email" && onboardingUser.onboardingState === "q_tos_asked") {
+  // ToS accept path (iter33 P2 reorder) → advance to q_role_asked +
+  // write tosAcceptance audit. iter33 sequence: q_tos_asked accept now
+  // gates the role-probe chain (email + verify already cleared upstream).
+  if (action.kind === "ask_q_role" && onboardingUser.onboardingState === "q_tos_asked") {
     const tosVersion = store.getTosVersion ? await store.getTosVersion() : "v1.0"
-    await store.applyOnboarding(event.userId, onboardingUser.phoneE164, "ask_q_email", {
+    await store.applyOnboarding(event.userId, onboardingUser.phoneE164, "ask_q_role", {
       priorAskedStep: "ask_q_tos",
       priorUserReply: event.body,
       tosAcceptedVersion: tosVersion,
     })
-    await sendDirect(input, config.ask_q_email!.prompt[pickLang(event.body)])
+    await sendDirect(input, config.ask_q_role!.prompt[pickLang(event.body)])
     store.log("pa.onboarding.deterministic.tos_accepted", {
       userId: event.userId,
       turnId,

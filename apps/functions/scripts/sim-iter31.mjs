@@ -807,7 +807,7 @@ async function main() {
 
   // ── i32-2: ToS accept advances to ask_q_email + writes tosAcceptance (iter32 reorder)
   if (should("i32-tos-accept")) {
-    await scenario("i32-tos-accept: 同意 → ask_q_email + tosAcceptedVersion=v1.0 (iter32 reorder)", async () => {
+    await scenario("i32-tos-accept: 同意 → ask_q_role + tosAcceptedVersion=v1.0 (iter33 P2 reorder)", async () => {
       const det = await import("@pa/pa-orchestrator")
       const ev = []
       const captures = []
@@ -851,10 +851,10 @@ async function main() {
         cvParsed: false,
         agent: { id: "c" },
       })
-      const advance = ev.find((x) => x.step === "ask_q_email")
-      expect(advance !== undefined, `must advance to ask_q_email (iter32 reorder)`)
+      const advance = ev.find((x) => x.step === "ask_q_role")
+      expect(advance !== undefined, `must advance to ask_q_role (iter33 P2 reorder: ToS now AFTER verify, gates role-probe chain)`)
       expect(advance.opts.tosAcceptedVersion === "v1.0", `tosAcceptedVersion must be v1.0 (got ${advance.opts.tosAcceptedVersion})`)
-      expect(/邮箱|email/i.test(captures[0].body), `must ask email question (got "${captures[0].body}")`)
+      expect(/方向|kinda|role|做啥/i.test(captures[0].body), `must ask role question (got "${captures[0].body}")`)
     })
   }
 
@@ -906,9 +906,11 @@ async function main() {
     })
   }
 
-  // ── i32-4: CV gate releases when cvParsed=true → complete (iter32: resume is the LAST step)
+  // ── i32-4: CV gate releases when cvParsed=true → send_cv_analysis →
+  //         3-msg push (ack + analysis + job-recs) → applyOnboarding(complete)
+  //         (iter33 P3 + P4)
   if (should("i32-cv-gate-releases")) {
-    await scenario("i32-cv-gate-releases: q_resume_asked + cvParsed=true → complete (iter32: final step)", async () => {
+    await scenario("i32-cv-gate-releases: q_resume_asked + cvParsed=true → 3 msgs + complete (iter33 P3+P4)", async () => {
       const det = await import("@pa/pa-orchestrator")
       const ev = []
       const captures = []
@@ -919,6 +921,13 @@ async function main() {
         async enqueueOutbound() {},
         async applyOnboarding(_uid, _phone, step) {
           ev.push({ step })
+        },
+        async generateCvAnalysis() {
+          return { summary: "RAG infra + agent orchestration is your strongest line — i'll lean recommendations there." }
+        },
+        async generateJobRecs() {
+          // Return null to exercise the deferred-promise fallback path.
+          return null
         },
         log() {},
         nowIso() {
@@ -949,8 +958,11 @@ async function main() {
         cvParsed: true,
         agent: { id: "c" },
       })
-      expect(ev.find((x) => x.step === "complete") !== undefined, `must advance to complete`)
-      expect(/简历|resume|all set|搞定/i.test(captures[0].body), `complete reply must mention resume/all-set (got "${captures[0].body}")`)
+      expect(ev.find((x) => x.step === "complete") !== undefined, `must advance to complete after CV analysis + job recs`)
+      expect(captures.length === 3, `must send 3 outbound messages (ack + analysis + job-recs), got ${captures.length}`)
+      expect(/看一下|read your resume|resume/i.test(captures[0].body), `1st reply must be CV-read ack (got "${captures[0].body}")`)
+      expect(/RAG|agent|recommendation|background/i.test(captures[1].body), `2nd reply must be CV summary (got "${captures[1].body}")`)
+      expect(/tomorrow|9am|匹配|明早/i.test(captures[2].body), `3rd reply must be deferred-promise job-rec (got "${captures[2].body}")`)
     })
   }
 

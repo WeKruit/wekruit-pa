@@ -40,7 +40,26 @@ test("resolveDeterministicAction: pending → send_first_mes", () => {
   assert.equal(action.kind, "send_first_mes")
 })
 
-test("resolveDeterministicAction: first_mes_sent → ask_q_tos", () => {
+test("iter33 GAP 4: PA_ONBOARDING_V33_DISABLED=true → first_mes_sent skips q_lang, falls back to ask_q_tos (iter32 sequence)", () => {
+  process.env.PA_ONBOARDING_V33_DISABLED = "true"
+  try {
+    const action = resolveDeterministicAction(
+      {
+        onboardingState: "first_mes_sent",
+        cvParsed: false,
+        emailCaptured: false,
+        emailVerified: false,
+      },
+      "hi"
+    )
+    assert.equal(action.kind, "ask_q_tos")
+  } finally {
+    delete process.env.PA_ONBOARDING_V33_DISABLED
+  }
+})
+
+test("iter33 GAP 4: PA_ONBOARDING_V33_DISABLED unset → iter33 path (q_lang) is default", () => {
+  delete process.env.PA_ONBOARDING_V33_DISABLED
   const action = resolveDeterministicAction(
     {
       onboardingState: "first_mes_sent",
@@ -50,10 +69,36 @@ test("resolveDeterministicAction: first_mes_sent → ask_q_tos", () => {
     },
     "hi"
   )
-  assert.equal(action.kind, "ask_q_tos")
+  assert.equal(action.kind, "ask_q_lang")
 })
 
-test("resolveDeterministicAction: q_tos_asked + 同意 → ask_q_email (iter32 reorder)", () => {
+test("resolveDeterministicAction: first_mes_sent → ask_q_lang (iter33 P1)", () => {
+  const action = resolveDeterministicAction(
+    {
+      onboardingState: "first_mes_sent",
+      cvParsed: false,
+      emailCaptured: false,
+      emailVerified: false,
+    },
+    "hi"
+  )
+  assert.equal(action.kind, "ask_q_lang")
+})
+
+test("resolveDeterministicAction: q_lang_asked → ask_q_email (iter33 P2 reorder)", () => {
+  const action = resolveDeterministicAction(
+    {
+      onboardingState: "q_lang_asked",
+      cvParsed: false,
+      emailCaptured: false,
+      emailVerified: false,
+    },
+    "中文"
+  )
+  assert.equal(action.kind, "ask_q_email")
+})
+
+test("resolveDeterministicAction: q_tos_asked + 同意 → ask_q_role (iter33 P2 reorder)", () => {
   const action = resolveDeterministicAction(
     {
       onboardingState: "q_tos_asked",
@@ -63,7 +108,7 @@ test("resolveDeterministicAction: q_tos_asked + 同意 → ask_q_email (iter32 r
     },
     "同意"
   )
-  assert.equal(action.kind, "ask_q_email")
+  assert.equal(action.kind, "ask_q_role")
 })
 
 test("resolveDeterministicAction: q_tos_asked + no → ask_q_tos_decline", () => {
@@ -131,7 +176,7 @@ test("resolveDeterministicAction: q_resume_asked + cvParsed=false → wait_for_r
   assert.equal(action.kind, "wait_for_resume_upload")
 })
 
-test("resolveDeterministicAction: q_resume_asked + cvParsed=true → complete (iter32: final step, email already verified upstream)", () => {
+test("resolveDeterministicAction: q_resume_asked + cvParsed=true → send_cv_analysis (iter33 P3: ack + LLM summary, then complete)", () => {
   const action = resolveDeterministicAction(
     {
       onboardingState: "q_resume_asked",
@@ -141,7 +186,20 @@ test("resolveDeterministicAction: q_resume_asked + cvParsed=true → complete (i
     },
     "ok"
   )
-  assert.equal(action.kind, "complete")
+  assert.equal(action.kind, "send_cv_analysis")
+})
+
+test("resolveDeterministicAction: q_cv_analyzing → send_cv_analysis (iter33 P3: re-attempt if last turn's analysis didn't fire)", () => {
+  const action = resolveDeterministicAction(
+    {
+      onboardingState: "q_cv_analyzing",
+      cvParsed: true,
+      emailCaptured: true,
+      emailVerified: true,
+    },
+    "?"
+  )
+  assert.equal(action.kind, "send_cv_analysis")
 })
 
 test("resolveDeterministicAction: q_email_asked + valid email → ask_q_email_verify_start (carries email)", () => {
@@ -496,7 +554,7 @@ test("runDeterministicOnboardingTurn: fresh user → send_first_mes verbatim, NO
   )
 })
 
-test("runDeterministicOnboardingTurn: ToS accept → ask_q_email + writes tosAcceptedVersion=v1.0 (iter32 reorder)", async () => {
+test("runDeterministicOnboardingTurn: ToS accept → ask_q_role + writes tosAcceptedVersion=v1.0 (iter33 P2 reorder)", async () => {
   _resetOnboardingConfigCache()
   const { store, captures } = makeFakeRunnerStore()
   const result = await runDeterministicOnboardingTurn({
@@ -512,10 +570,10 @@ test("runDeterministicOnboardingTurn: ToS accept → ask_q_email + writes tosAcc
     agent: FAKE_AGENT,
   })
   assert.equal(result.handled, true)
-  const advance = captures.appliedSteps.find((s) => s.step === "ask_q_email")
-  assert.ok(advance, "applyOnboarding(ask_q_email) must fire")
+  const advance = captures.appliedSteps.find((s) => s.step === "ask_q_role")
+  assert.ok(advance, "applyOnboarding(ask_q_role) must fire")
   assert.equal(advance!.opts.tosAcceptedVersion, "v1.0")
-  assert.match(captures.appendedMessages[0]!.body, /邮箱|email/i)
+  assert.match(captures.appendedMessages[0]!.body, /role|kinda|方向|做啥/i)
 })
 
 test("runDeterministicOnboardingTurn: ToS decline → state stays + decline reply", async () => {
@@ -602,7 +660,7 @@ test("runDeterministicOnboardingTurn: q_email_asked + valid email → fires Mail
   assert.match(captures.appendedMessages[0]!.body, /6/)
 })
 
-test("runDeterministicOnboardingTurn: q_email_verifying + correct code → ask_q_role + verifiedAt (iter32: NOT complete; probe sequence still ahead)", async () => {
+test("runDeterministicOnboardingTurn: q_email_verifying + correct code → ask_q_tos + verifiedAt (iter33 P2: verify→ToS, then ToS→role)", async () => {
   _resetOnboardingConfigCache()
   const correctCode = "654321"
   const codeHash = createHash("sha256").update(correctCode).digest("hex")
@@ -630,12 +688,12 @@ test("runDeterministicOnboardingTurn: q_email_verifying + correct code → ask_q
     agent: FAKE_AGENT,
   })
   const advance = captures.appliedSteps.find(
-    (s) => s.step === "ask_q_role" && s.opts.emailVerificationVerified === true
+    (s) => s.step === "ask_q_tos" && s.opts.emailVerificationVerified === true
   )
-  assert.ok(advance, "applyOnboarding(ask_q_role, emailVerificationVerified=true) must fire")
+  assert.ok(advance, "applyOnboarding(ask_q_tos, emailVerificationVerified=true) must fire")
   assert.match(captures.appendedMessages[0]!.body, /verified|✓|验过/i)
-  // ack + role question chained
-  assert.match(captures.appendedMessages[0]!.body, /方向|kinda role/i)
+  // ack + ToS prompt chained
+  assert.match(captures.appendedMessages[0]!.body, /privacy|隐私|legal|协议/i)
 })
 
 test("runDeterministicOnboardingTurn: q_email_verifying + wrong code → bumps attempts, stays", async () => {
