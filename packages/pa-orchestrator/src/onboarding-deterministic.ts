@@ -124,11 +124,21 @@ export const DEFAULT_ONBOARDING_CONFIG: Record<OnboardingStep, OnboardingStepCon
       zh: "那你大概想找啥方向的活? 比如做产品、做工程、还是做研究 — 给我个大致就行",
       en: "btw — what kinda role you eyeing? eng / pm / research / design? roughly is fine",
     },
+    // iter34 P0.4 — escalating reask after parser miss + LLM low-conf.
+    // First miss = soft hint; later misses = "or just say 跳过 to skip".
+    reaskPrompt: {
+      zh: "我没太 get 到 — 是 swe / pm / 研究 / 设计 这种方向, 还是你心里有别的? 一两个词就行 (实在说不上来回 '跳过' 也行)",
+      en: "didn't quite catch that — eng / pm / research / design / or something else? one or two words works (or 'skip' if you'd rather)",
+    },
   },
   ask_q_yoe: {
     prompt: {
       zh: "你工作几年了? 还是刚毕业找新人岗?",
       en: "how many years you been working? or fresh outta school?",
+    },
+    reaskPrompt: {
+      zh: "数字大概多少年就行 — 比如 '3年' / '8年' / 或者 '刚毕业' 都可以 (回 '跳过' 也行)",
+      en: "roughly a number works — '3 years' / '8 years' / or 'fresh grad' (or 'skip')",
     },
   },
   ask_q_visa: {
@@ -136,17 +146,29 @@ export const DEFAULT_ONBOARDING_CONFIG: Record<OnboardingStep, OnboardingStepCon
       zh: "那你有身份不? 公民/绿卡/OPT/还是要 sponsor?",
       en: "got work auth sorted? citizen / GC / OPT / need sponsorship?",
     },
+    reaskPrompt: {
+      zh: "选一个就行: 公民 / 绿卡 / OPT / H1B / 需要 sponsor — 不想说回 '跳过' 也行",
+      en: "pick one: citizen / GC / OPT / H1B / need sponsorship — or 'skip'",
+    },
   },
   ask_q_startup_pref: {
     prompt: {
       zh: "你更想去 startup 那种小而拼的, 还是大厂稳一点?",
       en: "more into startup hustle vibe or stable big-co?",
     },
+    reaskPrompt: {
+      zh: "startup / 大厂 / 都行 三选一就行 (回 '跳过' 也可以)",
+      en: "startup / bigtech / either — pick one (or 'skip')",
+    },
   },
   ask_q_location: {
     prompt: {
       zh: "想找哪边的工作? 湾区、纽约、还是看远程?",
       en: "where you wanna be? SF / NYC / remote ok?",
+    },
+    reaskPrompt: {
+      zh: "城市/地区或者 '远程' 就行 — 不想说回 '跳过' 也可以",
+      en: "city/region or 'remote' works — or 'skip'",
     },
   },
   ask_q_resume: {
@@ -1494,6 +1516,57 @@ export async function runDeterministicOnboardingTurn(
       }
     }
     // Fall through to deterministic re-ask (no signal / LLM null / threw).
+  }
+
+  // iter34 P0.4 — probe re-ask UX upgrade.
+  // Adam directive 2026-05-05 ("为什么问了同样的问题... 不相关的我们都需要
+  // handle 好... 错误三次就给系统标记, 最多 5 次尝试"). When the
+  // dispatcher re-emits a probe step at its own asked-state (workflow
+  // default self-loop), use the dedicated reaskPrompt (escalating
+  // language with skip option) instead of the verbatim original prompt.
+  // Also: detect "skip" / "跳过" → advance with empty patch (user opts
+  // out of the Q).
+  if (probeReaskState && onboardingUser.onboardingState === probeReaskState) {
+    const lang = langFor(event.body)
+    // Skip-keyword detection.
+    if (/(?:^|\s)(skip|跳过|不想说|算了)(?:\s|$|[,.，。!?])/i.test(event.body)) {
+      // User explicitly opted out — advance state with empty patch.
+      // Re-derive the next-state action by walking workflow with answered=true
+      // (the canonical advance edge fires).
+      const stepName = action.kind as OnboardingStep
+      await store.applyOnboarding(event.userId, onboardingUser.phoneE164, stepName, {
+        priorAskedStep: action.kind as OnboardingStep,
+        priorUserReply: event.body,
+        // No statedPreferences patch — explicitly skipped.
+      })
+      const ackMsg = lang === "zh" ? "OK 跳过这个" : "ok, skipping this one"
+      await sendDirect(input, ackMsg)
+      store.log("pa.onboarding.deterministic.probe_skipped", {
+        userId: event.userId,
+        turnId,
+        step: action.kind,
+      })
+      return { handled: true, action }
+    }
+    // Use reaskPrompt (with skip hint) instead of verbatim original.
+    const reaskPhrase =
+      config[action.kind as OnboardingStep]?.reaskPrompt?.[lang] ??
+      config[action.kind as OnboardingStep]?.prompt[lang] ??
+      ""
+    if (reaskPhrase) {
+      await store.applyOnboarding(event.userId, onboardingUser.phoneE164, action.kind as OnboardingStep, {
+        priorAskedStep: action.kind as OnboardingStep,
+        priorUserReply: event.body,
+        suspendedForVent: true,
+      })
+      await sendDirect(input, reaskPhrase)
+      store.log("pa.onboarding.deterministic.probe_reask", {
+        userId: event.userId,
+        turnId,
+        step: action.kind,
+      })
+      return { handled: true, action }
+    }
   }
 
   // Standard advance steps (send_first_mes, ask_q_tos, ask_q_yoe, etc.)
