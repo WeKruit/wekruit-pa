@@ -363,6 +363,79 @@ export async function revertFlag(
 }
 
 // -----------------------------------------------------------------------------
+// addUserToFlagAllowlist — atomic add + audit trail.
+// Used by reset / new-user flows that must auto-enable a flag for the user
+// (Adam directive 2026-05-05: "flag必须开, 只要是reset或者新用户都必须开").
+//
+// Idempotent: arrayUnion ensures repeated calls don't duplicate. If the flag
+// doc doesn't exist, the call CREATES it with default value=false, scope=
+// "perUser", and the user pre-populated in allowlist. This means the flag is
+// "default off, this user is on". Other paths can later flip the global
+// `value` to true once safe rollout is complete.
+//
+// Cache invalidation: clears every cache entry for this key (perUser hash
+// variants too) since the allowlist changed.
+// -----------------------------------------------------------------------------
+export async function addUserToFlagAllowlist(
+  db: Firestore,
+  key: string,
+  userId: string,
+  opts: { actor: string; reason: string; defaultValue?: FlagValue; defaultType?: FlagType; defaultScope?: FlagScope }
+): Promise<void> {
+  const flagRef = db.collection(COLLECTION).doc(key)
+  const auditRef = db.collection(AUDIT_COLLECTION).doc()
+  const nowIso = new Date().toISOString()
+  // We need FieldValue.arrayUnion. Import via dynamic import to avoid pulling
+  // firebase-admin into module load when this helper isn't used.
+  const { FieldValue } = await import("firebase-admin/firestore")
+
+  await db.runTransaction(async (t) => {
+    const cur = await t.get(flagRef)
+    const prev = cur.exists ? (cur.data() as FlagDoc) : null
+    const action = prev ? "flag.allowlist_add" : "flag.create"
+    if (prev) {
+      // Update only allowlist (preserve other fields).
+      t.update(flagRef, {
+        allowlist: FieldValue.arrayUnion(userId),
+        updatedAt: nowIso,
+        updatedBy: opts.actor,
+        reason: opts.reason,
+        version: (prev.version ?? 0) + 1,
+      })
+    } else {
+      // Create the flag with this user pre-allowlisted + default off.
+      const doc: FlagDoc = {
+        key,
+        value: opts.defaultValue ?? false,
+        type: opts.defaultType ?? "bool",
+        scope: opts.defaultScope ?? "perUser",
+        allowlist: [userId],
+        blocklist: [],
+        bucketStrategy: null,
+        updatedAt: nowIso,
+        updatedBy: opts.actor,
+        reason: opts.reason,
+        version: 1,
+      }
+      t.set(flagRef, doc)
+    }
+    t.set(auditRef, {
+      actor: opts.actor,
+      action,
+      key,
+      userId,
+      reason: opts.reason,
+      ts: nowIso,
+    })
+  })
+
+  // Invalidate every cache entry for this key (perUser hash variants too).
+  for (const k of Array.from(cache.keys())) {
+    if (k.startsWith(`${key}::`)) cache.delete(k)
+  }
+}
+
+// -----------------------------------------------------------------------------
 // Test-only helpers (exported but not part of the public API contract).
 // -----------------------------------------------------------------------------
 

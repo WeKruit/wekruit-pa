@@ -184,6 +184,7 @@ export {
   getFlag,
   setFlag,
   revertFlag,
+  addUserToFlagAllowlist,
   _clearFeatureFlagCache,
   _getFeatureFlagCacheStats,
 } from "./feature-flags.js"
