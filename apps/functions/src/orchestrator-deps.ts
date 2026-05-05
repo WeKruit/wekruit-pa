@@ -267,9 +267,10 @@ function makeGenerateJobRecs(): NonNullable<
         lines.push(`• ${j.jobTitle}${tag}${url}`)
       }
       lines.push(
+        // iter34 hotfix 2026-05-05 — Adam directive on phrasing.
         lang === "zh"
-          ? "明早 9 点会再给你 1 批新的, 这个先看看"
-          : "tomorrow ~9am you'll get a fresh batch — start with these"
+          ? "先看看, 不准就告诉我我再找; 之后每天会再给你新的"
+          : "see if these fit — if not lmk, i'll keep digging; daily fresh batch from here"
       )
       return { message: lines.join("\n"), recCount: jobs.length }
     } catch (err) {

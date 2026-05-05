@@ -677,6 +677,67 @@ const VENT_KEYWORDS = [
   /\b(laid\s*off|fired|rejected|ghosted)\b/i,
   /(操|草|妈的|我服了|我不行了|累死|崩了|裂开|撑不住|心累|快疯了)/,
 ]
+/**
+ * iter34 hotfix 2026-05-05 — Adam directive "聊完以后我在哪看系统给我的 tag?".
+ * Format canonical statedPreferences as a friend-tone reflection message
+ * the user receives at end of onboarding. Returns "" when no signal yet.
+ *
+ * Output examples:
+ *   zh: "我记的是: 方向 swe · 2 yoe · h1b · startup/大厂都行 · location 都行. 不对告诉我我改"
+ *   en: "noted: swe · 2 yoe · h1b · startup/bigtech either · location open. lmk if any wrong"
+ */
+function formatStatedPreferencesForUser(
+  prefs:
+    | {
+        targetRole?: string[]
+        yoeRange?: [number, number] | null
+        visaStatus?: string
+        prefersStartup?: boolean | null
+        targetLocations?: string[]
+      }
+    | undefined,
+  lang: "zh" | "en"
+): string {
+  if (!prefs) return ""
+  const parts: string[] = []
+  // Role
+  const role = prefs.targetRole?.[0]
+  if (role) parts.push(lang === "zh" ? `方向 ${role}` : role)
+  // YOE
+  const yoe = prefs.yoeRange
+  if (Array.isArray(yoe) && yoe.length === 2) {
+    if (yoe[0] === 0 && yoe[1] <= 1) {
+      parts.push(lang === "zh" ? "应届" : "fresh grad")
+    } else if (yoe[0] === yoe[1]) {
+      parts.push(lang === "zh" ? `${yoe[0]} yoe` : `${yoe[0]} yoe`)
+    } else {
+      parts.push(`${yoe[0]}-${yoe[1]} yoe`)
+    }
+  }
+  // Visa
+  const visa = prefs.visaStatus
+  if (visa && visa !== "unknown") parts.push(visa)
+  // Startup pref
+  const startup = prefs.prefersStartup
+  if (startup === true) parts.push(lang === "zh" ? "偏 startup" : "startup")
+  else if (startup === false) parts.push(lang === "zh" ? "偏大厂" : "bigtech")
+  else if (startup === null)
+    parts.push(lang === "zh" ? "startup/大厂都行" : "startup/bigtech either")
+  // Location
+  const locs = prefs.targetLocations
+  if (Array.isArray(locs) && locs.length > 0) {
+    if (locs.includes("anywhere") || locs.includes("other")) {
+      parts.push(lang === "zh" ? "location 都行" : "location open")
+    } else {
+      parts.push(lang === "zh" ? `location ${locs.join("/")}` : `loc ${locs.join("/")}`)
+    }
+  }
+  if (parts.length === 0) return ""
+  const head = lang === "zh" ? "我记的是: " : "noted: "
+  const tail = lang === "zh" ? ". 不对告诉我我改" : ". lmk if any wrong"
+  return head + parts.join(" · ") + tail
+}
+
 function isVentingMessage(text: string): boolean {
   if (!text) return false
   for (const re of VENT_KEYWORDS) {
@@ -904,6 +965,13 @@ export type RunDeterministicTurnInput = {
       // strips empty (email-only / URL-only). zh / en / mixed (mixed
       // demoted to zh fallback in runner — most conservative).
       preferredLang?: "zh" | "en" | "mixed"
+      // iter34 hotfix 2026-05-05 — canonical fields read for tag-reflect
+      // surface message ("我记的是: ...") at end of onboarding.
+      targetRole?: string[]
+      yoeRange?: [number, number] | null
+      visaStatus?: string
+      prefersStartup?: boolean | null
+      targetLocations?: string[]
     }
   }
   cvParsed: boolean
@@ -933,12 +1001,22 @@ export async function runDeterministicOnboardingTurn(
   // the lang they answered q_lang_asked with. "mixed" → "zh" (legacy
   // default; kept conservative). Helper keeps call sites compact.
   const prefLang = onboardingUser.statedPreferences?.preferredLang
+  // iter34 hotfix 2026-05-05 — Adam directive "我说 mix 他就 either 纯英或者
+  // 纯中". prefLang must STRICT-LOCK lang choice: when user declared a
+  // preference at q_lang, ignore per-message pickLang detection (which
+  // flipped EN when user typed "swe或者ai engineer" — high en-ratio).
+  // Per-msg detection ONLY applies to users with no prefLang yet.
+  // mixed → demoted to zh (zh prompts already use en sprinkles like
+  // "swe / pm / 研究 / 设计" — most mixed-friendly). Honors langOverride
+  // tail-call (LLM canonical value like "h1b" doesn't flip lang).
   const langFallback: "zh" | "en" =
     prefLang === "zh" ? "zh" : prefLang === "en" ? "en" : "zh"
-  // iter34 P0.2 — when caller supplies langOverride (LLM tail-call),
-  // honor it directly so the canonical value ("swe") doesn't flip lang.
-  const langFor = (msg: string | undefined): "zh" | "en" =>
-    input.langOverride ?? pickLang(msg, langFallback)
+  const langFor = (msg: string | undefined): "zh" | "en" => {
+    if (input.langOverride) return input.langOverride
+    if (prefLang === "zh" || prefLang === "en") return prefLang
+    if (prefLang === "mixed") return "zh"
+    return pickLang(msg, langFallback)
+  }
   const action = resolveDeterministicAction(
     {
       onboardingState: onboardingUser.onboardingState,
@@ -1224,8 +1302,18 @@ export async function runDeterministicOnboardingTurn(
     // when no live matches yet). Adam-locked sequence: "推荐两个岗位.
     // onboard 结束". Fail-OPEN to deferred-promise so onboarding always
     // completes even if matching pipeline is offline.
+    //
+    // iter34 hotfix 2026-05-05 — Adam directive on phrasing:
+    //   "应该是我们马上聊聊看然后帮你找找最近比较匹配的，如果不好我们就在
+    //    找找看，然后之后每天都会有"
+    // Old "tomorrow ~9am" robotic phrasing replaced with friend-tone:
+    // "马上看看 / 不准就再找 / 之后每天会有".
     let jobRecMsg: string
     let recCount = 0
+    const deferredFallback =
+      lang === "zh"
+        ? "我先帮你拉一批最近比较匹配的看看, 不准的话我们再找找; 之后每天会自动给你新的, 想换方向随时说"
+        : "lemme pull some close matches now — if they don't fit we keep iterating; daily fresh batch from here on, ping me anytime to retune"
     try {
       const recs = store.generateJobRecs
         ? await store.generateJobRecs(event.userId, lang)
@@ -1234,10 +1322,7 @@ export async function runDeterministicOnboardingTurn(
         jobRecMsg = recs.message.trim()
         recCount = recs.recCount
       } else {
-        jobRecMsg =
-          lang === "zh"
-            ? "明早 9 点你会收到第一批匹配岗位 (2 个 / 天). 有想法随时告诉我"
-            : "you'll get your first 2 matches tomorrow ~9am. ping me anytime with thoughts"
+        jobRecMsg = deferredFallback
       }
     } catch (err) {
       store.log("pa.onboarding.deterministic.job_recs_error", {
@@ -1245,12 +1330,20 @@ export async function runDeterministicOnboardingTurn(
         turnId,
         error: err instanceof Error ? err.message : String(err),
       })
-      jobRecMsg =
-        lang === "zh"
-          ? "明早 9 点你会收到第一批匹配岗位 (2 个 / 天). 有想法随时告诉我"
-          : "you'll get your first 2 matches tomorrow ~9am. ping me anytime with thoughts"
+      jobRecMsg = deferredFallback
     }
     await sendDirect(input, jobRecMsg)
+
+    // iter34 hotfix 2026-05-05 — Adam directive: "聊完以后我在哪看系统给我
+    // 的 tag?". Surface canonical statedPreferences so user can verify +
+    // correct ("不对告诉我"). Mirrors what's stored in pa-users doc.
+    const tagSummary = formatStatedPreferencesForUser(
+      onboardingUser.statedPreferences,
+      lang
+    )
+    if (tagSummary) {
+      await sendDirect(input, tagSummary)
+    }
 
     await store.applyOnboarding(event.userId, onboardingUser.phoneE164, "complete", {
       priorAskedStep: "ask_q_resume",

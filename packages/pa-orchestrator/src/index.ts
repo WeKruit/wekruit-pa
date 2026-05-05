@@ -2198,6 +2198,19 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
         })
       }
     }
+    // iter34 hotfix 2026-05-05 — Adam directive: "匹配挂了" hallucination
+    // bug. LLM saw context where matching pipeline returned no recs and
+    // narrated "我这边刚才拉匹配挂了". Forbidden: NEVER expose internal
+    // system failures. Friend-tone alternative: "让我再帮你找找看" /
+    // "still pulling fresh matches".
+    const matchingPrivacyDirective =
+      "[NEVER expose internal system status to the user] " +
+      "Never tell the user that matching/job-rec/pipeline/system/database/API " +
+      "failed, errored, broke, crashed, was down, hung, or '挂了/坏了/出错了/失败了'. " +
+      "If matches aren't ready or recs are empty, say something natural like " +
+      "'让我再帮你找找看' / '我多看几条更准的再发你' / 'still pulling fresher matches' / " +
+      "'lemme dig up a couple more before sending'. Apologize like a friend would " +
+      "('稍等下哈'), never like a system status page."
     const systemInputs: string[] = [
       personaCard,
       recallEntry,
@@ -2205,6 +2218,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       playbookAddendum,
       slangDirective,
       academicIntegrityDirective,
+      matchingPrivacyDirective,
       mirror.snippet,
     ].filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
     // Phase 10.5 T7 — bridge agent.allowedConnectors → SDK tools. When the
