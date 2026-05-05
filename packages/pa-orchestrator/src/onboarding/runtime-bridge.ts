@@ -165,9 +165,11 @@ export async function runOnboardingPipelineTurn(
     onLangAccepted: async (lang, ctx) => {
       ctx.log?.("pa.onboarding.pipeline.q_lang.accepted", { userId: ctx.userId, lang })
       if (deps.applyOnboarding) {
+        // iter34 hotfix 2026-05-05 — Adam directive "为什么还在用 regex??".
+        // Pass canonical Judge output via `parsedAnswer`, no re-parse.
         const fsLang: "zh" | "en" | "mixed" = lang === "mixed" ? "mixed" : lang
         await deps.applyOnboarding(event.userId, phoneE164, "ask_q_email", {
-          preferredLang: fsLang,
+          parsedAnswer: { preferredLang: fsLang },
         })
       }
     },
@@ -175,7 +177,7 @@ export async function runOnboardingPipelineTurn(
       ctx.log?.("pa.onboarding.pipeline.q_email.accepted", { userId: ctx.userId, email })
       if (deps.applyOnboarding) {
         await deps.applyOnboarding(event.userId, phoneE164, "ask_q_email_verify_start", {
-          parsedEmail: email,
+          parsedAnswer: { contactEmail: email },
         })
       }
     },
@@ -183,7 +185,75 @@ export async function runOnboardingPipelineTurn(
       ctx.log?.("pa.onboarding.pipeline.q_email_verify.accepted", { userId: ctx.userId })
       if (deps.applyOnboarding) {
         await deps.applyOnboarding(event.userId, phoneE164, "ask_q_tos", {
-          emailVerificationVerifiedAt: deps.nowIso(),
+          emailVerificationVerified: true,
+          parsedAnswer: { contactEmailVerifiedAt: deps.nowIso() },
+        })
+      }
+    },
+    // iter34 hotfix 2026-05-05 — wire previously-deferred probe Q hooks.
+    // VisaJudge / RoleJudge / etc produce canonical values; we pass them
+    // via parsedAnswer so applyOnboarding writes statedPreferences without
+    // any regex re-parse.
+    onRoleAccepted: async (role, ctx) => {
+      ctx.log?.("pa.onboarding.pipeline.q_role.accepted", { userId: ctx.userId, role })
+      if (deps.applyOnboarding && typeof role === "string") {
+        await deps.applyOnboarding(event.userId, phoneE164, "ask_q_yoe", {
+          parsedAnswer: { targetRole: [role] },
+        })
+      }
+    },
+    onYoeAccepted: async (yoe, ctx) => {
+      ctx.log?.("pa.onboarding.pipeline.q_yoe.accepted", { userId: ctx.userId, yoe })
+      if (deps.applyOnboarding) {
+        const yoeRange: [number, number] | null =
+          yoe === "fresh" || yoe === 0
+            ? [0, 1]
+            : typeof yoe === "number" && Number.isFinite(yoe)
+              ? [yoe, yoe]
+              : null
+        await deps.applyOnboarding(event.userId, phoneE164, "ask_q_visa", {
+          parsedAnswer: { yoeRange },
+        })
+      }
+    },
+    onVisaAccepted: async (visa, ctx) => {
+      ctx.log?.("pa.onboarding.pipeline.q_visa.accepted", { userId: ctx.userId, visa })
+      if (deps.applyOnboarding && typeof visa === "string") {
+        // Map LLM-extracted visa intent to our canonical VisaStatus enum.
+        const norm = (visa as string).toLowerCase()
+        const visaStatus =
+          norm === "citizen" ? "citizen"
+          : norm === "gc" || norm === "green_card" ? "gc"
+          : norm === "opt" || norm === "cpt" ? "opt"
+          : norm === "h1b" ? "h1b"
+          : norm === "tn" || norm === "sponsorship" || norm === "sponsorship_needed" ? "sponsorship_needed"
+          : "unknown"
+        await deps.applyOnboarding(event.userId, phoneE164, "ask_q_startup_pref", {
+          parsedAnswer: { visaStatus },
+        })
+      }
+    },
+    onStartupPrefAccepted: async (pref, ctx) => {
+      ctx.log?.("pa.onboarding.pipeline.q_startup_pref.accepted", { userId: ctx.userId, pref })
+      if (deps.applyOnboarding) {
+        // pref ∈ "startup" | "bigtech" | "either"
+        const prefersStartup =
+          pref === "startup" ? true : pref === "bigtech" ? false : null
+        await deps.applyOnboarding(event.userId, phoneE164, "ask_q_location", {
+          parsedAnswer: { prefersStartup },
+        })
+      }
+    },
+    onLocationAccepted: async (loc, ctx) => {
+      ctx.log?.("pa.onboarding.pipeline.q_location.accepted", { userId: ctx.userId, loc })
+      if (deps.applyOnboarding) {
+        const arr = Array.isArray(loc)
+          ? loc
+          : typeof loc === "string" && loc.trim()
+            ? [loc.trim()]
+            : []
+        await deps.applyOnboarding(event.userId, phoneE164, "ask_q_resume", {
+          parsedAnswer: { targetLocations: arr },
         })
       }
     },
@@ -192,9 +262,7 @@ export async function runOnboardingPipelineTurn(
       // cv-ingest worker enqueue is downstream; the worker watches for
       // attachment payloads on inbound events and processes async.
       if (deps.applyOnboarding) {
-        await deps.applyOnboarding(event.userId, phoneE164, "complete", {
-          resumeAccepted: true,
-        })
+        await deps.applyOnboarding(event.userId, phoneE164, "complete", {})
       }
     },
   })

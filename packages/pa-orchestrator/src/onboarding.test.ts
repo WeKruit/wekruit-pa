@@ -378,6 +378,42 @@ test("v2: parseUserAnswerForStep startup-pref distinguishes startup vs big-co", 
   })
 })
 
+// --- iter34 hotfix 2026-05-05: applyOnboardingStep parsedAnswer canonical bypass ---
+// Pipeline (Q-as-class) hooks pass canonical Judge output via opts.parsedAnswer.
+// applyOnboardingStep merges it into statedPreferences WITHOUT calling
+// regex parser. This is the path Adam asked for ("为什么还在用 regex??").
+test("iter34 hotfix: applyOnboardingStep parsedAnswer (canonical) bypasses regex parse", async () => {
+  const { db, store } = fakeFirestore()
+  const user = { ...baseUser, onboardingState: "q_visa_asked" as const }
+  // Pipeline hook would pass canonical { visaStatus: "h1b" } directly
+  // (NOT priorUserReply="我中了 H 1 B" — which would require regex parse).
+  await applyOnboardingStep(db, user, "ask_q_startup_pref", {
+    parsedAnswer: { visaStatus: "h1b" },
+  })
+  const after = store.get(`${PA_COLLECTIONS.users}/u1`) as {
+    onboardingState?: string
+    statedPreferences?: { visaStatus?: string }
+  }
+  assert.equal(after.onboardingState, "q_startup_pref_asked")
+  assert.equal(after.statedPreferences?.visaStatus, "h1b")
+})
+
+test("iter34 hotfix: applyOnboardingStep parsedAnswer takes precedence over priorUserReply regex", async () => {
+  const { db, store } = fakeFirestore()
+  const user = { ...baseUser, onboardingState: "q_role_asked" as const }
+  // Caller passes BOTH priorUserReply (would parse via regex) AND
+  // parsedAnswer (canonical). parsedAnswer wins.
+  await applyOnboardingStep(db, user, "ask_q_visa", {
+    priorAskedStep: "ask_q_yoe",
+    priorUserReply: "5 years",  // would regex-parse to yoeRange [5, 5]
+    parsedAnswer: { yoeRange: [10, 10] },  // canonical override
+  })
+  const after = store.get(`${PA_COLLECTIONS.users}/u1`) as {
+    statedPreferences?: { yoeRange?: [number, number] }
+  }
+  assert.deepEqual(after.statedPreferences?.yoeRange, [10, 10])
+})
+
 // --- iter34 hotfix 2026-05-05: userAnsweredStep recognizes either-keywords ---
 // Regression: Adam LIVE bug — user answered "我都可以" + "都行" twice, regex
 // didn't match → reask chain → drift to off-theme variant[1].
@@ -401,6 +437,48 @@ test("iter34 hotfix: userAnsweredStep startup_pref accepts 都行/either/无所�
   assert.equal(userAnsweredStep("ask_q_startup_pref", "大厂稳一点"), true)
   // Off-topic still rejected
   assert.equal(userAnsweredStep("ask_q_startup_pref", "我饿了"), false)
+})
+
+// --- iter34 hotfix 2026-05-05: visa regex handles "H 1 B" space-separated ---
+test("iter34 hotfix: parseVisaAnswer / userAnsweredStep handle H-1B variants incl space-separated", () => {
+  // Verify all forms Adam asked about + the space edge case
+  const cases: Array<[string, "h1b" | "sponsorship_needed"]> = [
+    ["H-1B", "h1b"],
+    ["H1B", "h1b"],
+    ["h1b", "h1b"],
+    ["H1b", "h1b"],
+    ["我中了 H1B", "h1b"],
+    ["我在h1b", "h1b"],
+    ["i'm on h1b", "h1b"],
+    ["H 1 B", "h1b"],  // edge case from hotfix
+    ["i need h1b sponsor", "sponsorship_needed"],  // sponsorship is more specific
+  ]
+  for (const [reply, expected] of cases) {
+    const out = parseUserAnswerForStep("ask_q_visa", reply)
+    assert.equal(
+      (out as { visaStatus?: string }).visaStatus,
+      expected,
+      `parseVisaAnswer("${reply}") should be ${expected}`
+    )
+    assert.equal(
+      userAnsweredStep("ask_q_visa", reply),
+      true,
+      `userAnsweredStep("${reply}") should accept`
+    )
+  }
+})
+
+// --- iter34 hotfix 2026-05-05: q_location accepts 都行/anywhere ---
+test("iter34 hotfix: userAnsweredStep location accepts 都行/anywhere/wherever", () => {
+  assert.equal(userAnsweredStep("ask_q_location", "都行"), true)
+  assert.equal(userAnsweredStep("ask_q_location", "无所谓"), true)
+  assert.equal(userAnsweredStep("ask_q_location", "anywhere"), true)
+  assert.equal(userAnsweredStep("ask_q_location", "wherever"), true)
+  assert.equal(userAnsweredStep("ask_q_location", "no preference"), true)
+  assert.equal(userAnsweredStep("ask_q_location", "哪都行"), true)
+  // Specific locations still work
+  assert.equal(userAnsweredStep("ask_q_location", "湾区"), true)
+  assert.equal(userAnsweredStep("ask_q_location", "remote"), true)
 })
 
 // --- v2-9: idempotency — re-running same step does not double-write or regress ---

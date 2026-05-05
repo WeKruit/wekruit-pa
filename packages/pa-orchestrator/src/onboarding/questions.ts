@@ -52,6 +52,17 @@ export interface DefaultQuestionsDeps {
   ) => Promise<void>
   /** Hook fired when q_lang accepts (writes preferredLang to user doc + adjusts pipeline state). */
   onLangAccepted?: (lang: LangPref, ctx: AcceptedCtx) => Promise<void>
+  /**
+   * iter34 hotfix 2026-05-05 — Adam directive "为什么还在用 regex??".
+   * Hooks fired when each probe Q accepts. The judge produces canonical
+   * values (e.g. "h1b" / "either"); the runtime hook persists them via
+   * `parsedAnswer` (no regex re-parse).
+   */
+  onRoleAccepted?: (role: unknown, ctx: AcceptedCtx) => Promise<void>
+  onYoeAccepted?: (yoe: unknown, ctx: AcceptedCtx) => Promise<void>
+  onVisaAccepted?: (visa: unknown, ctx: AcceptedCtx) => Promise<void>
+  onStartupPrefAccepted?: (pref: unknown, ctx: AcceptedCtx) => Promise<void>
+  onLocationAccepted?: (loc: unknown, ctx: AcceptedCtx) => Promise<void>
 }
 
 const HALT_DEFAULT: BilingualText = {
@@ -224,6 +235,7 @@ export function defaultQuestions(deps: DefaultQuestionsDeps): Question<unknown>[
       }
     ),
     haltMessage: HALT_DEFAULT,
+    onAccepted: deps.onRoleAccepted,
   })
 
   const yoeQ: Question<unknown> = makeQuestion({
@@ -261,6 +273,7 @@ export function defaultQuestions(deps: DefaultQuestionsDeps): Question<unknown>[
       }
     ),
     haltMessage: HALT_DEFAULT,
+    onAccepted: deps.onYoeAccepted,
   })
 
   const visaQ: Question<unknown> = makeQuestion({
@@ -298,6 +311,7 @@ export function defaultQuestions(deps: DefaultQuestionsDeps): Question<unknown>[
       }
     ),
     haltMessage: HALT_DEFAULT,
+    onAccepted: deps.onVisaAccepted,
   })
 
   const startupPrefQ: Question<unknown> = makeQuestion({
@@ -336,6 +350,7 @@ export function defaultQuestions(deps: DefaultQuestionsDeps): Question<unknown>[
       }
     ),
     haltMessage: HALT_DEFAULT,
+    onAccepted: deps.onStartupPrefAccepted,
   })
 
   const locationQ: Question<unknown> = makeQuestion({
@@ -373,6 +388,7 @@ export function defaultQuestions(deps: DefaultQuestionsDeps): Question<unknown>[
       }
     ),
     haltMessage: HALT_DEFAULT,
+    onAccepted: deps.onLocationAccepted,
   })
 
   const resumeQ: Question<ResumeAttachment[]> = makeQuestion({

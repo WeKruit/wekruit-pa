@@ -604,7 +604,7 @@ function parseVisaAnswer(reply: string): Partial<StatedPreferences> {
   if (/(sponsor|sponsorship|h-?1\s*b\s*later|need.*visa)/i.test(reply)) {
     return { visaStatus: "sponsorship_needed" satisfies VisaStatus }
   }
-  if (/(h-?1\s*b|h1)/i.test(reply)) {
+  if (/(h[-\s]?1\s*b|h1)/i.test(reply)) {
     return { visaStatus: "h1b" }
   }
   if (/(opt\b|stem.*opt)/i.test(lower) || /\bOPT\b/.test(reply)) {
@@ -681,7 +681,8 @@ export function userAnsweredStep(
     return /(\d{1,2}\s*(?:\+)?\s*(?:years?|yrs?|y\b|年))|(刚毕业|应届|新人|new\s*grad|fresh(?:\s*out)?|just\s*graduated|no\s*experience)/i.test(r)
   }
   if (step === "ask_q_visa") {
-    return /(citizen|公民|美国人|us\s*citizen|green\s*card|绿卡|gc\b|permanent\s*resident|opt\b|stem.*opt|\bOPT\b|h-?1\s*b|h1\b|sponsor|sponsorship|need.*visa)/i.test(r)
+    // iter34 hotfix 2026-05-05 — handle "H 1 B" (space-separated) form too.
+    return /(citizen|公民|美国人|us\s*citizen|green\s*card|绿卡|gc\b|permanent\s*resident|opt\b|stem.*opt|\bOPT\b|h[-\s]?1\s*b|h1\b|sponsor|sponsorship|need.*visa)/i.test(r)
   }
   if (step === "ask_q_startup_pref") {
     // iter34 hotfix 2026-05-05 — Adam LIVE bug: regex didn't recognize
@@ -692,7 +693,9 @@ export function userAnsweredStep(
     return /(startup|小公司|小厂|创业|early\s*stage|hustle|大厂|大公司|big[-\s]*co|big\s*tech|stable|faang|enterprise|都行|都可以|都ok|都OK|都喜欢|都接受|无所谓|随便|两个都|either|whatever|both\s*ok|either\s*works|don'?t\s*care|no\s*preference)/i.test(r)
   }
   if (step === "ask_q_location") {
-    return /(remote|在家|远程|wfh|湾区|bay\s*area|sf\b|san\s*francisco|ny\b|纽约|new\s*york|nyc|seattle|西雅图|la\b|los\s*angeles|洛杉矶|波士顿|boston|chicago|austin|texas|tx\b)/i.test(r)
+    // iter34 hotfix 2026-05-05 — accept "都行/anywhere/wherever" as
+    // location=open. Semantic: user has no location constraint.
+    return /(remote|在家|远程|wfh|湾区|bay\s*area|sf\b|san\s*francisco|ny\b|纽约|new\s*york|nyc|seattle|西雅图|la\b|los\s*angeles|洛杉矶|波士顿|boston|chicago|austin|texas|tx\b|都行|都可以|都ok|都OK|无所谓|随便|anywhere|wherever|whatever\s*works|don'?t\s*care|no\s*preference|哪都行|哪儿都行|都喜欢)/i.test(r)
   }
   if (step === "ask_q_resume") {
     // Resume answer is acceptance/decline/defer — any short reply counts as
@@ -981,6 +984,19 @@ export async function applyOnboardingStep(
      * emailVerification.attempts but DO NOT advance state.
      */
     emailVerificationFailed?: boolean
+    /**
+     * iter34 hotfix 2026-05-05 — Adam directive "为什么还在用regex??". When
+     * provided, this CANONICAL StatedPreferences patch REPLACES the
+     * regex-based `parseUserAnswerForStep(priorAskedStep, priorUserReply)`
+     * extraction. Pipeline (Q-as-class) hooks pass Judge canonical output
+     * directly (e.g. `{ visaStatus: "h1b" }` from VisaJudge). No re-parse,
+     * no regex. Legacy callers don't pass this → regex fallback unchanged.
+     *
+     * Migration path: as legacy callsites get rewritten to use Judge
+     * canonical output, they switch from `priorAskedStep+priorUserReply`
+     * to `parsedAnswer`. When all callers migrated, the regex parser dies.
+     */
+    parsedAnswer?: Partial<StatedPreferences>
   } = {}
 ): Promise<void> {
   if (step === "skip") return
@@ -1029,8 +1045,13 @@ export async function applyOnboardingStep(
 
   // Phase 44 — parse the user's prior answer (if any) into a statedPreferences
   // patch. Empty patch = no-op merge.
+  // iter34 hotfix 2026-05-05 — `parsedAnswer` (canonical Judge output)
+  // takes precedence over regex parse. Pipeline path uses this; legacy
+  // path falls back to regex.
   let prefPatch: Partial<StatedPreferences> = {}
-  if (opts.priorAskedStep && opts.priorUserReply) {
+  if (opts.parsedAnswer && Object.keys(opts.parsedAnswer).length > 0) {
+    prefPatch = opts.parsedAnswer
+  } else if (opts.priorAskedStep && opts.priorUserReply) {
     prefPatch = parseUserAnswerForStep(opts.priorAskedStep, opts.priorUserReply)
   }
   const hasPrefPatch = Object.keys(prefPatch).length > 0

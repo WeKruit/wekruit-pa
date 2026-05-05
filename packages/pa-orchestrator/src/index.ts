@@ -1257,18 +1257,22 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
             { userId: event.userId, env: process.env },
             false
           )
-          // SAFETY GUARD (iter34 P3 conservative cutover): pipeline only
-          // takes turns where the user is at the START of onboarding
-          // (state pending/null/missing) OR mid-pipeline already in
-          // pipelineState. For users mid-flow under LEGACY state machine
-          // (q_email_asked, q_role_asked, etc.), legacy keeps running.
-          // This prevents shipped-broken-hooks from stranding users.
-          // Once all hooks (onLangAccepted preferredLang write, Mailgun
-          // wire, code-hash store, cv-ingest enqueue) are full-parity
-          // with legacy, the guard can drop.
-          const safeForPipeline =
+          // SAFETY GUARD (iter34 P3 conservative cutover, refined 2026-05-05):
+          // Pipeline takes turns when EITHER:
+          //   (a) user has pipelineState already (pipeline owns this flow)
+          //   (b) user is at the START of onboarding (pending/null state)
+          // Mid-flow LEGACY users (state≠pending AND no pipelineState) keep
+          // running on legacy — prevents stranding mid-flow users on
+          // partially-implemented hooks. Adam directive 2026-05-05
+          // "为什么还在用regex" — pipeline now writes canonical
+          // statedPreferences via parsedAnswer (no regex re-parse). Once
+          // all legacy mid-flow users complete/reset, guard becomes
+          // redundant and can drop.
+          const hasPipelineState = !!(onboardingUser as Record<string, unknown>).pipelineState
+          const isAtStart =
             !onboardingUser.onboardingState ||
             onboardingUser.onboardingState === "pending"
+          const safeForPipeline = hasPipelineState || isAtStart
           if (usePipeline === true && safeForPipeline) {
             store.log("pa.onboarding.pipeline.dispatch", {
               userId: event.userId,
