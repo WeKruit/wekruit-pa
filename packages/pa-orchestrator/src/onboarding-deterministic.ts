@@ -124,11 +124,11 @@ export const DEFAULT_ONBOARDING_CONFIG: Record<OnboardingStep, OnboardingStepCon
       zh: "那你大概想找啥方向的活? 比如做产品、做工程、还是做研究 — 给我个大致就行",
       en: "btw — what kinda role you eyeing? eng / pm / research / design? roughly is fine",
     },
-    // iter34 P0.4 — escalating reask after parser miss + LLM low-conf.
-    // First miss = soft hint; later misses = "or just say 跳过 to skip".
+    // iter34 P0.4 — escalating reask. Adam directive 2026-05-05:
+    // deterministic Q 必答, 不可 skip. 换问法即可.
     reaskPrompt: {
-      zh: "我没太 get 到 — 是 swe / pm / 研究 / 设计 这种方向, 还是你心里有别的? 一两个词就行 (实在说不上来回 '跳过' 也行)",
-      en: "didn't quite catch that — eng / pm / research / design / or something else? one or two words works (or 'skip' if you'd rather)",
+      zh: "我没太 get 到 — 你具体是做啥的? swe / pm / 研究 / 设计 都行, 一两个词就行",
+      en: "didn't quite catch that — what role specifically? eng / pm / research / design — one or two words works",
     },
   },
   ask_q_yoe: {
@@ -137,8 +137,8 @@ export const DEFAULT_ONBOARDING_CONFIG: Record<OnboardingStep, OnboardingStepCon
       en: "how many years you been working? or fresh outta school?",
     },
     reaskPrompt: {
-      zh: "数字大概多少年就行 — 比如 '3年' / '8年' / 或者 '刚毕业' 都可以 (回 '跳过' 也行)",
-      en: "roughly a number works — '3 years' / '8 years' / or 'fresh grad' (or 'skip')",
+      zh: "数字大概多少年就行 — 比如 '3年' / '8年' / 或者 '刚毕业'",
+      en: "roughly a number works — '3 years' / '8 years' / or 'fresh grad'",
     },
   },
   ask_q_visa: {
@@ -147,8 +147,8 @@ export const DEFAULT_ONBOARDING_CONFIG: Record<OnboardingStep, OnboardingStepCon
       en: "got work auth sorted? citizen / GC / OPT / need sponsorship?",
     },
     reaskPrompt: {
-      zh: "选一个就行: 公民 / 绿卡 / OPT / H1B / 需要 sponsor — 不想说回 '跳过' 也行",
-      en: "pick one: citizen / GC / OPT / H1B / need sponsorship — or 'skip'",
+      zh: "选一个就行: 公民 / 绿卡 / OPT / H1B / 需要 sponsor",
+      en: "pick one: citizen / GC / OPT / H1B / need sponsorship",
     },
   },
   ask_q_startup_pref: {
@@ -157,8 +157,8 @@ export const DEFAULT_ONBOARDING_CONFIG: Record<OnboardingStep, OnboardingStepCon
       en: "more into startup hustle vibe or stable big-co?",
     },
     reaskPrompt: {
-      zh: "startup / 大厂 / 都行 三选一就行 (回 '跳过' 也可以)",
-      en: "startup / bigtech / either — pick one (or 'skip')",
+      zh: "startup / 大厂 / 都行 三选一",
+      en: "startup / bigtech / either — pick one",
     },
   },
   ask_q_location: {
@@ -167,8 +167,8 @@ export const DEFAULT_ONBOARDING_CONFIG: Record<OnboardingStep, OnboardingStepCon
       en: "where you wanna be? SF / NYC / remote ok?",
     },
     reaskPrompt: {
-      zh: "城市/地区或者 '远程' 就行 — 不想说回 '跳过' 也可以",
-      en: "city/region or 'remote' works — or 'skip'",
+      zh: "城市/地区或者 '远程'",
+      en: "city/region or 'remote'",
     },
   },
   ask_q_resume: {
@@ -1163,7 +1163,18 @@ export async function runDeterministicOnboardingTurn(
       priorUserReply: event.body,
       tosAcceptedVersion: tosVersion,
     })
-    await sendDirect(input, config.ask_q_role!.prompt[langFor(event.body)])
+    // iter34 P0.6 — upfront framing before first probe Q. Adam directive
+    // 2026-05-05 ("在开始问之前说这几个是我必须要了解清楚的信息要不然
+    // 我不好帮助你"). Sets expectation that the next 5 Qs are MANDATORY
+    // before agent runtime activates. Joined into the same outbound as
+    // the q_role prompt so user sees it as a single contextual message.
+    const lang = langFor(event.body)
+    const framingLine =
+      lang === "zh"
+        ? "下面这几个是我必须了解清楚的, 不然不好帮你 —"
+        : "heads up — i need to nail down these next few before I can actually help you —"
+    const rolePrompt = config.ask_q_role!.prompt[lang]
+    await sendDirect(input, `${framingLine} ${rolePrompt}`)
     store.log("pa.onboarding.deterministic.tos_accepted", {
       userId: event.userId,
       turnId,
@@ -1518,35 +1529,21 @@ export async function runDeterministicOnboardingTurn(
     // Fall through to deterministic re-ask (no signal / LLM null / threw).
   }
 
-  // iter34 P0.4 + P0.5 — probe re-ask UX upgrade + attempt counting.
-  // Adam directive 2026-05-05 ("错误三次就给系统标记, 最多 5 次尝试").
+  // iter34 P0.4 + P0.5 + P0.6 — probe re-ask UX upgrade + attempt counting.
+  // Adam directive 2026-05-05 ("skip 是不能 skip 的, deterministic 的问题
+  // 必须回答; 错误三次给系统标记; 满 5 次后请联系 admin1@wekruit.com").
   //
-  // Pipeline:
-  //   1. Skip keyword (skip|跳过|不想说|算了) → advance with empty patch
-  //   2. Increment per-step attempt counter (Firestore tx-safe)
-  //   3. attempt == 3 → set systemFlags.onboardingIrrelevantPattern=true
-  //   4. attempt >= 5 → force-advance to next state with empty patch
-  //   5. Else → use escalating reaskPrompt (with skip option)
+  // Pipeline (deterministic Q 必须答, 不可 skip):
+  //   1. Increment per-step attempt counter (Firestore tx-safe)
+  //   2. attempt == 3 → set systemFlags.onboardingIrrelevantPattern=true
+  //   3. attempt >= 5 → HALT onboarding (NO advance, NO skip — Adam 锁定):
+  //                     send "请联系 admin1@wekruit.com..." + set
+  //                     systemFlags.onboardingHalted=true
+  //   4. Else → escalating reaskPrompt (different wording, NO skip mention)
   if (probeReaskState && onboardingUser.onboardingState === probeReaskState) {
     const lang = langFor(event.body)
     const stepName = action.kind as OnboardingStep
-    // (1) Skip keyword detection.
-    if (/(?:^|\s)(skip|跳过|不想说|算了)(?:\s|$|[,.，。!?])/i.test(event.body)) {
-      await store.applyOnboarding(event.userId, onboardingUser.phoneE164, stepName, {
-        priorAskedStep: stepName,
-        priorUserReply: event.body,
-      })
-      const ackMsg = lang === "zh" ? "OK 跳过这个" : "ok, skipping this one"
-      await sendDirect(input, ackMsg)
-      store.log("pa.onboarding.deterministic.probe_skipped", {
-        userId: event.userId,
-        turnId,
-        step: stepName,
-        reason: "skip_keyword",
-      })
-      return { handled: true, action }
-    }
-    // (2) Increment attempt counter via Firestore tx (skip if no db, e.g. tests).
+    // (1) Increment attempt counter via Firestore tx (skip if no db, e.g. tests).
     let attemptCount = 1
     if (store.db) {
       try {
@@ -1568,7 +1565,7 @@ export async function runDeterministicOnboardingTurn(
         })
       }
     }
-    // (3) Attempt 3 → set systemFlag (Adam: "错误三次就给系统标记").
+    // (2) Attempt 3 → set systemFlag (Adam: "错误三次就给系统标记").
     if (attemptCount === 3 && store.db) {
       try {
         const ref = store.db.collection("pa-users").doc(event.userId)
@@ -1597,26 +1594,47 @@ export async function runDeterministicOnboardingTurn(
         })
       }
     }
-    // (4) Attempt >= 5 → force-advance with empty patch (Adam: "最多 5 次").
+    // (3) Attempt >= 5 → HALT (Adam: "请联系 admin1@wekruit.com 解决问题,
+    //     你现在连续失败了五次, 请不要继续"). NO skip, NO state advance.
+    //     Set onboardingHalted flag so future inbounds get the same msg
+    //     (downstream handler can short-circuit).
     if (attemptCount >= 5) {
-      await store.applyOnboarding(event.userId, onboardingUser.phoneE164, stepName, {
-        priorAskedStep: stepName,
-        priorUserReply: event.body,
-      })
-      const ackMsg = lang === "zh"
-        ? "好 这个先跳过, 后面有空再聊"
-        : "ok let's skip this one — we can come back to it"
-      await sendDirect(input, ackMsg)
-      store.log("pa.onboarding.deterministic.probe_skipped", {
+      if (store.db) {
+        try {
+          const ref = store.db.collection("pa-users").doc(event.userId)
+          await ref.set(
+            {
+              systemFlags: {
+                onboardingHalted: true,
+                onboardingHaltedStep: stepName,
+                onboardingHaltedAt: store.nowIso(),
+              },
+            },
+            { merge: true }
+          )
+        } catch (err) {
+          store.log("pa.onboarding.deterministic.probe_halt_error", {
+            userId: event.userId,
+            turnId,
+            step: stepName,
+            error: err instanceof Error ? err.message : String(err),
+          })
+        }
+      }
+      const haltMsg =
+        lang === "zh"
+          ? "请联系 admin1@wekruit.com 解决问题. 你现在连续失败了五次, 请不要继续"
+          : "please contact admin1@wekruit.com — you've failed 5 times in a row, please stop"
+      await sendDirect(input, haltMsg)
+      store.log("pa.onboarding.deterministic.probe_halted", {
         userId: event.userId,
         turnId,
         step: stepName,
-        reason: "max_attempts",
         attemptCount,
       })
       return { handled: true, action }
     }
-    // (5) Use escalating reaskPrompt instead of verbatim original.
+    // (4) Use escalating reaskPrompt instead of verbatim original.
     const reaskPhrase =
       config[stepName]?.reaskPrompt?.[lang] ??
       config[stepName]?.prompt[lang] ??
