@@ -163,13 +163,20 @@ function makeGenerateJobRecs(): NonNullable<
     }
 
     // Read CV for skills + statedPreferences for visa/location/startup.
+    // iter34 hotfix 2026-05-05 — Adam LIVE bug "为什么匹配出问题了". RCA:
+    // cv-ingest writes `createdAt` (Firestore Timestamp) + `ingestedAt`
+    // (ISO), but this orderBy was using non-existent `parsedAt` field.
+    // Firestore orderBy EXCLUDES docs missing the field → cvSnap always
+    // empty → topSkills/industryTags=[] → return null fallback. Even
+    // when Adam had 5 valid CV docs, generateJobRecs saw "no CV signal".
+    // Fix: orderBy("createdAt") — the field cv-ingest actually writes.
     let topSkills: string[] = []
     let industryTags: string[] = []
     try {
       const cvSnap = await db
         .collection("parsedCandidateResumes")
         .where("userId", "==", userId)
-        .orderBy("parsedAt", "desc")
+        .orderBy("createdAt", "desc")
         .limit(1)
         .get()
       if (!cvSnap.empty) {
@@ -309,12 +316,15 @@ function makeGenerateCvAnalysis(): NonNullable<
     const db = getFirestore()
 
     // Read the most recent parsedCandidateResumes row.
+    // iter34 hotfix 2026-05-05 — same fix as generateJobRecs above:
+    // cv-ingest writes createdAt (not parsedAt). orderBy was excluding
+    // every CV record because parsedAt field doesn't exist.
     let cvFields = ""
     try {
       const snap = await db
         .collection("parsedCandidateResumes")
         .where("userId", "==", userId)
-        .orderBy("parsedAt", "desc")
+        .orderBy("createdAt", "desc")
         .limit(1)
         .get()
       if (snap.empty) {
