@@ -1518,44 +1518,112 @@ export async function runDeterministicOnboardingTurn(
     // Fall through to deterministic re-ask (no signal / LLM null / threw).
   }
 
-  // iter34 P0.4 — probe re-ask UX upgrade.
-  // Adam directive 2026-05-05 ("为什么问了同样的问题... 不相关的我们都需要
-  // handle 好... 错误三次就给系统标记, 最多 5 次尝试"). When the
-  // dispatcher re-emits a probe step at its own asked-state (workflow
-  // default self-loop), use the dedicated reaskPrompt (escalating
-  // language with skip option) instead of the verbatim original prompt.
-  // Also: detect "skip" / "跳过" → advance with empty patch (user opts
-  // out of the Q).
+  // iter34 P0.4 + P0.5 — probe re-ask UX upgrade + attempt counting.
+  // Adam directive 2026-05-05 ("错误三次就给系统标记, 最多 5 次尝试").
+  //
+  // Pipeline:
+  //   1. Skip keyword (skip|跳过|不想说|算了) → advance with empty patch
+  //   2. Increment per-step attempt counter (Firestore tx-safe)
+  //   3. attempt == 3 → set systemFlags.onboardingIrrelevantPattern=true
+  //   4. attempt >= 5 → force-advance to next state with empty patch
+  //   5. Else → use escalating reaskPrompt (with skip option)
   if (probeReaskState && onboardingUser.onboardingState === probeReaskState) {
     const lang = langFor(event.body)
-    // Skip-keyword detection.
+    const stepName = action.kind as OnboardingStep
+    // (1) Skip keyword detection.
     if (/(?:^|\s)(skip|跳过|不想说|算了)(?:\s|$|[,.，。!?])/i.test(event.body)) {
-      // User explicitly opted out — advance state with empty patch.
-      // Re-derive the next-state action by walking workflow with answered=true
-      // (the canonical advance edge fires).
-      const stepName = action.kind as OnboardingStep
       await store.applyOnboarding(event.userId, onboardingUser.phoneE164, stepName, {
-        priorAskedStep: action.kind as OnboardingStep,
+        priorAskedStep: stepName,
         priorUserReply: event.body,
-        // No statedPreferences patch — explicitly skipped.
       })
       const ackMsg = lang === "zh" ? "OK 跳过这个" : "ok, skipping this one"
       await sendDirect(input, ackMsg)
       store.log("pa.onboarding.deterministic.probe_skipped", {
         userId: event.userId,
         turnId,
-        step: action.kind,
+        step: stepName,
+        reason: "skip_keyword",
       })
       return { handled: true, action }
     }
-    // Use reaskPrompt (with skip hint) instead of verbatim original.
+    // (2) Increment attempt counter via Firestore tx (skip if no db, e.g. tests).
+    let attemptCount = 1
+    if (store.db) {
+      try {
+        const ref = store.db.collection("pa-users").doc(event.userId)
+        attemptCount = await store.db.runTransaction(async (tx: any) => {
+          const snap = await tx.get(ref)
+          const data = (snap.data() ?? {}) as { onboardingProbeAttempts?: Record<string, number> }
+          const map = { ...(data.onboardingProbeAttempts ?? {}) }
+          map[stepName] = (map[stepName] ?? 0) + 1
+          tx.set(ref, { onboardingProbeAttempts: map }, { merge: true })
+          return map[stepName]
+        })
+      } catch (err) {
+        store.log("pa.onboarding.deterministic.probe_attempt_tx_error", {
+          userId: event.userId,
+          turnId,
+          step: stepName,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    }
+    // (3) Attempt 3 → set systemFlag (Adam: "错误三次就给系统标记").
+    if (attemptCount === 3 && store.db) {
+      try {
+        const ref = store.db.collection("pa-users").doc(event.userId)
+        await ref.set(
+          {
+            systemFlags: {
+              onboardingIrrelevantPattern: true,
+              onboardingIrrelevantStep: stepName,
+              onboardingIrrelevantAt: store.nowIso(),
+            },
+          },
+          { merge: true }
+        )
+        store.log("pa.onboarding.deterministic.probe_irrelevant_flag", {
+          userId: event.userId,
+          turnId,
+          step: stepName,
+          attempt: 3,
+        })
+      } catch (err) {
+        store.log("pa.onboarding.deterministic.probe_flag_error", {
+          userId: event.userId,
+          turnId,
+          step: stepName,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    }
+    // (4) Attempt >= 5 → force-advance with empty patch (Adam: "最多 5 次").
+    if (attemptCount >= 5) {
+      await store.applyOnboarding(event.userId, onboardingUser.phoneE164, stepName, {
+        priorAskedStep: stepName,
+        priorUserReply: event.body,
+      })
+      const ackMsg = lang === "zh"
+        ? "好 这个先跳过, 后面有空再聊"
+        : "ok let's skip this one — we can come back to it"
+      await sendDirect(input, ackMsg)
+      store.log("pa.onboarding.deterministic.probe_skipped", {
+        userId: event.userId,
+        turnId,
+        step: stepName,
+        reason: "max_attempts",
+        attemptCount,
+      })
+      return { handled: true, action }
+    }
+    // (5) Use escalating reaskPrompt instead of verbatim original.
     const reaskPhrase =
-      config[action.kind as OnboardingStep]?.reaskPrompt?.[lang] ??
-      config[action.kind as OnboardingStep]?.prompt[lang] ??
+      config[stepName]?.reaskPrompt?.[lang] ??
+      config[stepName]?.prompt[lang] ??
       ""
     if (reaskPhrase) {
-      await store.applyOnboarding(event.userId, onboardingUser.phoneE164, action.kind as OnboardingStep, {
-        priorAskedStep: action.kind as OnboardingStep,
+      await store.applyOnboarding(event.userId, onboardingUser.phoneE164, stepName, {
+        priorAskedStep: stepName,
         priorUserReply: event.body,
         suspendedForVent: true,
       })
@@ -1563,7 +1631,8 @@ export async function runDeterministicOnboardingTurn(
       store.log("pa.onboarding.deterministic.probe_reask", {
         userId: event.userId,
         turnId,
-        step: action.kind,
+        step: stepName,
+        attempt: attemptCount,
       })
       return { handled: true, action }
     }
