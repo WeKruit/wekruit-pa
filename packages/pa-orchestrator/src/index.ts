@@ -1186,6 +1186,28 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
         }
         // result.handled === false only when state=complete (dispatcher
         // returns skip). Falls through to agent runtime path below.
+        //
+        // iter33 GAP 3 — explicit handoff log event so the deterministic
+        // → agent-runtime boundary is observable. Adam P10 directive:
+        // post-complete is the OpenAI-Agents-SDK runtime side of the
+        // workflow. Treating this transition as a "handoff" makes the
+        // architecture inspectable + matches the "必须是 workflow"
+        // contract.
+        store.log("pa.onboarding.deterministic.handoff_to_agent_runtime", {
+          userId: event.userId,
+          turnId,
+          eventId: event.id,
+          fromState: onboardingUser.onboardingState,
+          gates: {
+            // Reaching this branch means the dispatcher returned skip
+            // (no remaining onboarding edges), which only happens at
+            // state=complete in iter33's graph. emailVerified is
+            // implicit at complete since the verify→ToS→role chain
+            // forces it before complete is reachable.
+            cvParsed,
+          },
+          runtime: "openai-agents-sdk",
+        })
       }
     }
     if (onboardingUser) {
