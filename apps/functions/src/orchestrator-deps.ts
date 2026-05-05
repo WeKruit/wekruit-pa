@@ -116,28 +116,28 @@ export function makeOrchestratorDeps(): import("@pa/pa-orchestrator").Orchestrat
 }
 
 /**
- * iter33 P4 — produce the 2-job-rec push message before complete.
+ * iter33 P4 + GAP 1 — produce the 2-job-rec push message before complete.
  *
- * Current implementation: always returns null → caller emits the
- * deferred-promise fallback ("first batch tomorrow ~9am"). Reason: at
- * onboard time the daily-batch matching pipeline (paJobRecDaily) hasn't
- * run for this user yet, so there are no live matches to surface. The
- * batch runs at 09:00 PT and writes top-K matches via sendImessage
- * directly (no persistent top-N rec list to read inline).
+ * Live inline matching: read user's parsedCandidateResumes (top skills +
+ * preferred industry tags), pa-users.statedPreferences (visa, location,
+ * startup pref), then call `queryMatchingJobs` with limit=2 to fetch top
+ * matches against the active corpus. Formats the result into a single
+ * iMessage-shaped reply with title + company + URL per job.
  *
- * Follow-up (iter34): trigger an inline single-user match when the user
- * onboards outside the daily window, so they get matches immediately. For
- * now the deferred-promise sets clear expectations + onboarding always
- * completes.
+ * Fail-OPEN: any error path (CV not parsed, no matches in corpus, query
+ * threw, recent batch already sent) → return null and the deterministic
+ * dispatcher emits the deferred-promise fallback ("first batch tomorrow
+ * ~9am") so onboarding ALWAYS completes.
  */
 function makeGenerateJobRecs(): NonNullable<
   import("@pa/pa-orchestrator").OrchestratorStoreDeps["generateJobRecs"]
 > {
-  return async (userId: string, _lang: "zh" | "en") => {
+  return async (userId: string, lang: "zh" | "en") => {
     if (!getApps().length) initializeApp()
     const db = getFirestore()
+
+    // Skip live match when daily batch already sent recs in the last 24h.
     try {
-      // Check if user has a recent batch — if so, point them to it.
       const profile = await db.collection("pa-job-profiles").doc(userId).get()
       if (profile.exists) {
         const data = profile.data() as { lastJobBatchSentAt?: string }
@@ -145,12 +145,10 @@ function makeGenerateJobRecs(): NonNullable<
         if (sentAt) {
           const ageHours = (Date.now() - Date.parse(sentAt)) / (3600 * 1000)
           if (ageHours < 24) {
-            logger.info("[job-recs] recent batch already sent", {
+            logger.info("[job-recs] recent batch already sent — defer", {
               userId,
               ageHours,
             })
-            // Defer to dispatcher's fallback message — no need to repeat
-            // recs since user just got them.
             return null
           }
         }
@@ -161,8 +159,124 @@ function makeGenerateJobRecs(): NonNullable<
         err: err instanceof Error ? err.message : String(err),
       })
     }
-    // Default: dispatcher fallback (deferred-promise message).
-    return null
+
+    // Read CV for skills + statedPreferences for visa/location/startup.
+    let topSkills: string[] = []
+    let industryTags: string[] = []
+    try {
+      const cvSnap = await db
+        .collection("parsedCandidateResumes")
+        .where("userId", "==", userId)
+        .orderBy("parsedAt", "desc")
+        .limit(1)
+        .get()
+      if (!cvSnap.empty) {
+        const cv = cvSnap.docs[0]!.data() as {
+          topSkills?: unknown
+          industryTags?: unknown
+        }
+        if (Array.isArray(cv.topSkills)) {
+          topSkills = cv.topSkills.filter(
+            (s): s is string => typeof s === "string" && s.length > 0
+          )
+        }
+        if (Array.isArray(cv.industryTags)) {
+          industryTags = cv.industryTags.filter(
+            (s): s is string => typeof s === "string" && s.length > 0
+          )
+        }
+      }
+    } catch (err) {
+      logger.warn("[job-recs] CV read failed", {
+        userId,
+        err: err instanceof Error ? err.message : String(err),
+      })
+    }
+
+    let visa: string | undefined
+    let location: string | undefined
+    let prefersStartup: boolean | null | undefined
+    try {
+      const userDoc = await db.collection("pa-users").doc(userId).get()
+      if (userDoc.exists) {
+        const u = userDoc.data() as {
+          statedPreferences?: {
+            visaStatus?: string
+            targetLocations?: string[]
+            prefersStartup?: boolean | null
+          }
+        }
+        visa = u.statedPreferences?.visaStatus
+        location = u.statedPreferences?.targetLocations?.[0]
+        prefersStartup = u.statedPreferences?.prefersStartup
+      }
+    } catch (err) {
+      logger.warn("[job-recs] user read failed", {
+        userId,
+        err: err instanceof Error ? err.message : String(err),
+      })
+    }
+
+    // Map visa → sponsorship filter (matches QueryMatchingJobs schema).
+    let sponsorship: "h1b" | "gc" | "none" | undefined
+    if (visa === "h1b" || visa === "opt" || visa === "sponsorship_needed") {
+      sponsorship = "h1b"
+    } else if (visa === "citizen" || visa === "gc") {
+      sponsorship = "none"
+    }
+
+    const sizePreference: "startup" | "bigco" | undefined =
+      prefersStartup === true
+        ? "startup"
+        : prefersStartup === false
+          ? "bigco"
+          : undefined
+
+    const filters = {
+      ...(industryTags.length > 0 ? { industryTags } : {}),
+      ...(topSkills.length > 0 ? { userSkills: topSkills } : {}),
+      ...(sponsorship ? { sponsorship } : {}),
+      ...(sizePreference ? { sizePreference } : {}),
+      ...(location ? { location } : {}),
+    }
+
+    if (!topSkills.length && !industryTags.length) {
+      // No CV signal — can't usefully rank. Dispatcher fallback.
+      logger.info("[job-recs] no CV signal — fallback", { userId })
+      return null
+    }
+
+    try {
+      const { queryMatchingJobs } = await import("@pa/job-rec")
+      const out = await queryMatchingJobs(
+        { filters, limit: 2 },
+        { db, log: () => {} }
+      )
+      const jobs = out.jobs ?? []
+      if (jobs.length === 0) {
+        logger.info("[job-recs] no matches in corpus", { userId, filters })
+        return null
+      }
+      const lines: string[] = []
+      lines.push(lang === "zh" ? "先给你看两个对得上的岗位:" : "two roles that line up for you:")
+      for (const j of jobs) {
+        const tag = j.companyName ? ` @ ${j.companyName}` : ""
+        const url = j.primaryUrl ? `\n${j.primaryUrl}` : ""
+        lines.push(`• ${j.jobTitle}${tag}${url}`)
+      }
+      lines.push(
+        lang === "zh"
+          ? "明早 9 点会再给你 1 批新的, 这个先看看"
+          : "tomorrow ~9am you'll get a fresh batch — start with these"
+      )
+      return { message: lines.join("\n"), recCount: jobs.length }
+    } catch (err) {
+      logger.warn("[job-recs] queryMatchingJobs threw", {
+        userId,
+        err: err instanceof Error ? err.message : String(err),
+      })
+      return null
+    }
   }
 }
 
