@@ -227,7 +227,7 @@ Cloud Functions deployed:
 
 Hosting deployed: `https://wekruit-pa.web.app` with `/admin/canonical-tags`, `/admin/qa-evaluator`, `/admin/onboarding-questions` (extended).
 
-Macmini state: Stage 2.5 url_resolver hangs (Supabase pooler) — `SKIP_URL_RESOLUTION=1` hotfix is the production path. wekruit-pa CFs `paBackfillMatchingJobsAtsUrl` + `paLivenessSweepDaily` handle URL resolution + liveness. Documented in `.planning/phases/57-.../macmini-state.md`.
+Macmini state (post-Phase 66, 2026-05-06): Stage 2.5 (url_resolver / run_url_resolution) **deleted**. URL resolution is now sole responsibility of wekruit-pa Cloud Functions `paBackfillAtsUrlsBatch` (hourly) + `paLivenessSweepDaily` (daily). Macmini daily pipeline = scrape + JD-enrich + LLM gap-fill + embed + Firebase sync (no URL resolution). The `SKIP_URL_RESOLUTION=1` env hotfix is removed from `/Users/Shared/wekruit/run-pipeline.sh` — no longer needed because the code path doesn't exist. Files deleted: `pipeline/url_resolver.py`, `pipeline/run_url_resolution.py`, `tests/test_url_resolver*.py`, `tests/test_run_url_resolution.py`. `pipeline/url_classifier.py` retained (still used by `run_jd_enrichment.py`/`firecrawl_enricher.py`/`ats_enricher.py` for ATS routing).
 
 Open Adam-actions:
 - Set `ANTHROPIC_API_KEY` Firebase secret to activate Sonnet-4-6 middle tier (chain falls through gracefully without it)
