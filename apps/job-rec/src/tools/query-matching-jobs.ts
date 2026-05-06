@@ -465,6 +465,96 @@ export function applyEnrichmentNeverList<
 void ((): JobIndustry | undefined => undefined)
 
 // ---------------------------------------------------------------------------
+// iter34 sprint B.13 — title regex anti-bias (tech-leaning users → drop
+// blue-collar / non-tech roleTitle even when other signals leak through).
+//
+// Background: the never-list (B.12) catches docs whose canonical
+// industryEnum lands in NEVER_KEYS, but it can't catch a doc whose
+// industryEnum is mislabeled as `tech_software` while the actual roleTitle
+// is "Warehouse Team Lead" or "Truck Driver II". We add a deterministic
+// roleTitle blacklist that activates only for tech-leaning users.
+//
+// Blacklist tokens cover the most-observed false-friend buckets in the
+// 2026-05-02 audit: warehouse / driver / nurse / teacher / cashier /
+// retail / janitor / cleaner / cook / server / bartender / barber /
+// stylist / paramedic / housekeeper / caregiver. Plus `technician` with a
+// negative lookahead — we DROP "Lab Technician" / "Maintenance Technician"
+// but KEEP "Software Technician" / "Cloud Technician" / "Data Technician"
+// since those are valid SWE-adjacent roles.
+//
+// Position in pipeline: AFTER applyEnrichmentNeverList + role filter,
+// BEFORE rankJobs — same insertion point as the existing QA-anti-bias
+// rerank, but this is a HARD filter (drop), not a rerank.
+// ---------------------------------------------------------------------------
+
+/**
+ * Tech-leaning blue-collar / non-tech roleTitle blacklist. Fires only
+ * when the user has a tech-leaning industry tag.
+ *
+ * Notes on the regex:
+ *   - Word boundary on most tokens (\b) to avoid false positives.
+ *   - "Manager in Training" / "Management Trainee" caught via the
+ *     "manager in training" / "management trainee" patterns; "Engineering
+ *     Manager" survives because it doesn't carry those phrases.
+ *   - `technician` uses negative lookBEHIND `(?<!(?:software|cloud|cyber|data|ml|ai)\s)`
+ *     so "Cloud Technician" / "Software Technician" / "Data Technician"
+ *     survive (valid SWE-adjacent roles), while "Lab Technician" /
+ *     "Maintenance Technician" are caught.
+ *
+ * Limitation: "server" can collide with "Server Engineer" (the token
+ * "server" before " Engineer" matches \bserver\b). Tech users with
+ * legitimate "Server Engineer" hits should use targetRoleIndustryEnum
+ * (B.10 / A.3) which would surface them via the role-fit gate.
+ */
+export const TECH_LEANING_TITLE_BLACKLIST_REGEX =
+  /\b(warehouse|truck|driver|nurse|teacher|cashier|retail|janitor|cleaner|cook|server|bartender|barber|stylist|paramedic|housekeeper|caregiver|manager\s+in\s+training|management\s+trainee|(?<!(?:software|cloud|cyber|data|ml|ai)\s)technician)\b/i
+
+/**
+ * Apply the B.13 tech-leaning title blacklist. Pure / deterministic.
+ *
+ * Inputs:
+ *   - jobs: candidate pool (post-never-list, post-role-filter).
+ *   - userTags: user's industryTags. When NONE of TECH_LEANING_USER_TAGS
+ *     are present, the blacklist is BYPASSED (non-tech users may
+ *     legitimately want warehouse/retail roles).
+ *
+ * Behavior:
+ *   - When user is non-tech-leaning OR userTags is empty → return jobs unchanged.
+ *   - Otherwise, drop any job whose roleTitle / jobTitle matches
+ *     TECH_LEANING_TITLE_BLACKLIST_REGEX.
+ *
+ * Returns the kept-jobs array (does NOT mutate input). Provides a
+ * `rejected` count for log observability.
+ *
+ * Exposed for unit tests in
+ * apps/job-rec/src/__tests__/tools/query-matching-jobs.test.ts.
+ */
+export function applyTechLeaningTitleBlacklist<T extends { jobTitle?: string }>(
+  jobs: readonly T[],
+  userTags: readonly string[] | undefined
+): { kept: T[]; rejected: number } {
+  if (!Array.isArray(jobs) || jobs.length === 0) {
+    return { kept: [], rejected: 0 }
+  }
+  const tags = Array.isArray(userTags) ? userTags : []
+  const isTechLeaning = tags.some((t) => TECH_LEANING_USER_TAGS.has(t))
+  if (!isTechLeaning) {
+    return { kept: [...jobs], rejected: 0 }
+  }
+  const kept: T[] = []
+  let rejected = 0
+  for (const j of jobs) {
+    const title = typeof j.jobTitle === "string" ? j.jobTitle : ""
+    if (title && TECH_LEANING_TITLE_BLACKLIST_REGEX.test(title)) {
+      rejected += 1
+      continue
+    }
+    kept.push(j)
+  }
+  return { kept, rejected }
+}
+
+// ---------------------------------------------------------------------------
 // Stream H8 — industryEnum-primary query path (flag-gated).
 //
 // After H8 enrichment writes `industryEnum: [tag]` (1-element array) to the
@@ -1403,7 +1493,21 @@ export async function queryMatchingJobs(
       targetRole: parsed.filters.targetRole,
     })
   }
-  const filtered = afterRoleFilter
+
+  // iter34 sprint B.13 — title-regex anti-bias for tech-leaning users.
+  // Runs AFTER role filter so it only sees the role-fit pool. Drops docs
+  // whose roleTitle matches the blue-collar / non-tech blacklist (e.g.
+  // "Warehouse Team Lead", "Truck Driver II"). Bypassed for non-tech-leaning
+  // users (a healthcare candidate may legitimately want a warehouse role).
+  const titleBlacklistResult = applyTechLeaningTitleBlacklist(afterRoleFilter, userTagsForGuard)
+  if (titleBlacklistResult.rejected > 0) {
+    log("[queryMatchingJobs] tech_leaning_title_blacklist_rejected", {
+      rejected: titleBlacklistResult.rejected,
+      kept: titleBlacklistResult.kept.length,
+      userTags: userTagsForGuard,
+    })
+  }
+  const filtered = titleBlacklistResult.kept
 
   const ranked = rankJobs(filtered, parsed.filters, parsed.limit)
   return { jobs: ranked }

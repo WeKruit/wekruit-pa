@@ -1256,6 +1256,151 @@ test("applyEnrichmentNeverList B.12: industryEnum present + clean → industryKe
   assert.equal(r.rejected, 0)
 })
 
+// ---------------------------------------------------------------------------
+// iter34 sprint B.13 — title regex anti-bias for tech-leaning users
+// ---------------------------------------------------------------------------
+
+import {
+  applyTechLeaningTitleBlacklist,
+  TECH_LEANING_TITLE_BLACKLIST_REGEX,
+} from "../../tools/query-matching-jobs.js"
+
+test("applyTechLeaningTitleBlacklist B.13: tech user + Warehouse Team Lead → dropped", () => {
+  const jobs = [
+    { id: "wh", jobTitle: "Warehouse Team Lead" },
+    { id: "ok", jobTitle: "Software Engineer" },
+  ]
+  const r = applyTechLeaningTitleBlacklist(jobs, ["tech_software"])
+  assert.equal(r.kept.length, 1)
+  assert.equal(r.kept[0]?.id, "ok")
+  assert.equal(r.rejected, 1)
+})
+
+test("applyTechLeaningTitleBlacklist B.13: tech user + 'Manager in Training' → dropped, 'Engineering Manager' → kept", () => {
+  const jobs = [
+    { id: "mit", jobTitle: "Manager in Training" },
+    { id: "em", jobTitle: "Engineering Manager" },
+  ]
+  const r = applyTechLeaningTitleBlacklist(jobs, ["tech_software"])
+  assert.equal(r.kept.length, 1, "Engineering Manager should survive (no blacklist token)")
+  assert.equal(r.kept[0]?.id, "em")
+  assert.equal(r.rejected, 1)
+})
+
+test("applyTechLeaningTitleBlacklist B.13: tech user + 'Software Engineer' → kept", () => {
+  const jobs = [{ id: "swe", jobTitle: "Software Engineer" }]
+  const r = applyTechLeaningTitleBlacklist(jobs, ["tech_software", "ai_ml"])
+  assert.equal(r.kept.length, 1)
+  assert.equal(r.rejected, 0)
+})
+
+test("applyTechLeaningTitleBlacklist B.13: non-tech user + Warehouse → KEPT (filter bypassed)", () => {
+  const jobs = [{ id: "wh", jobTitle: "Warehouse Team Lead" }]
+  const r = applyTechLeaningTitleBlacklist(jobs, ["consumer_retail"])
+  assert.equal(r.kept.length, 1, "non-tech user may legitimately want warehouse roles")
+  assert.equal(r.rejected, 0)
+})
+
+test("applyTechLeaningTitleBlacklist B.13: 'Software Technician' → kept (negative lookahead)", () => {
+  // The regex's negative lookahead allows technician + tech qualifier.
+  assert.ok(!TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Software Technician"), "Software Technician should not match")
+  assert.ok(!TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Cloud Technician"), "Cloud Technician should not match")
+  assert.ok(!TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Data Technician"), "Data Technician should not match")
+  assert.ok(!TECH_LEANING_TITLE_BLACKLIST_REGEX.test("ML Technician"), "ML Technician should not match")
+  const jobs = [
+    { id: "st", jobTitle: "Software Technician" },
+    { id: "ct", jobTitle: "Cloud Technician" },
+  ]
+  const r = applyTechLeaningTitleBlacklist(jobs, ["tech_software"])
+  assert.equal(r.kept.length, 2, "tech-flavored technicians survive negative lookahead")
+})
+
+test("applyTechLeaningTitleBlacklist B.13: 'Lab Technician' → dropped (no tech qualifier)", () => {
+  // Bare 'Lab Technician' has no tech qualifier in the negative lookahead set,
+  // so the blacklist fires.
+  assert.ok(TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Lab Technician"), "Lab Technician matches blacklist")
+  const jobs = [{ id: "lab", jobTitle: "Lab Technician" }]
+  const r = applyTechLeaningTitleBlacklist(jobs, ["tech_software"])
+  assert.equal(r.kept.length, 0)
+  assert.equal(r.rejected, 1)
+})
+
+test("applyTechLeaningTitleBlacklist B.13: empty user tags → bypass (no rejection)", () => {
+  const jobs = [{ id: "wh", jobTitle: "Warehouse Team Lead" }]
+  const r = applyTechLeaningTitleBlacklist(jobs, [])
+  assert.equal(r.kept.length, 1)
+  assert.equal(r.rejected, 0)
+})
+
+test("applyTechLeaningTitleBlacklist B.13: covers paramedic / barber / housekeeper / caregiver", () => {
+  const jobs = [
+    { id: "p", jobTitle: "Paramedic" },
+    { id: "b", jobTitle: "Master Barber" },
+    { id: "h", jobTitle: "Housekeeper - Full Time" },
+    { id: "c", jobTitle: "Caregiver Companion" },
+    { id: "ok", jobTitle: "Software Engineer II" },
+  ]
+  const r = applyTechLeaningTitleBlacklist(jobs, ["tech_software"])
+  assert.equal(r.kept.length, 1)
+  assert.equal(r.kept[0]?.id, "ok")
+  assert.equal(r.rejected, 4)
+})
+
+test("queryMatchingJobs B.13: tech user + Warehouse doc with industryEnum=tech_software → still rejected by title blacklist", async () => {
+  // Belt-and-suspenders: even when the never-list and role filter both pass
+  // (because the doc claims industryEnum=tech_software), the title blacklist
+  // catches blue-collar roles.
+  _clearFeatureFlagCache()
+  const mfs = new MockFirestore()
+  await mfs.collection("pa-feature-flags").doc("matchingIndustryEnumPopulated").set({
+    key: "matchingIndustryEnumPopulated",
+    value: true,
+    type: "bool",
+    scope: "global",
+  })
+  // Mislabeled doc: warehouse role tagged as tech_software (would slip past
+  // both never-list and role filter).
+  await mfs.collection("matching-jobs").doc("wh").set({
+    status: "active",
+    companyName: "MegaWarehouse",
+    roleTitle: "Warehouse Team Lead",
+    locationRaw: "Houston, TX",
+    primaryUrl: "https://wh",
+    industry: "tech",
+    industryKey: "tech",
+    industryEnum: ["tech_software"],
+    sponsorship: false,
+    firstSeenAt: "2026-04-30",
+  })
+  await mfs.collection("matching-jobs").doc("swe").set({
+    status: "active",
+    companyName: "Stripe",
+    roleTitle: "Software Engineer",
+    locationRaw: "Remote",
+    primaryUrl: "https://swe",
+    industry: "fintech",
+    industryKey: "fintech",
+    industryEnum: ["fintech_finance"],
+    sponsorship: false,
+    requiredSkills: ["python"],
+    firstSeenAt: "2026-04-29",
+  })
+  const out = await queryMatchingJobs(
+    {
+      filters: {
+        industryTags: ["tech_software", "ai_ml", "fintech_finance"],
+        sponsorship: "h1b",
+      },
+      limit: 10,
+    },
+    { db: asFirestore(mfs) }
+  )
+  const ids = new Set(out.jobs.map((j) => j.id))
+  assert.ok(!ids.has("wh"), "B.13: Warehouse title blacklisted even with mislabeled industryEnum=tech_software")
+  assert.ok(ids.has("swe"))
+  _clearFeatureFlagCache()
+})
+
 test("applyEnrichmentNeverList: tech user + management/marketing/consulting jobs → all rejected", () => {
   const jobs = [
     { id: "g", industryKey: "management", jobTitle: "Groundskeeper" },
