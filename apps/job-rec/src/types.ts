@@ -72,6 +72,37 @@ export const JobProfileDocSchema = z.object({
 export type JobProfileDoc = z.infer<typeof JobProfileDocSchema>
 
 // ---------------------------------------------------------------------------
+// iter34 sprint B.11 — score breakdown surfaced from rankJobs/queryMatchingJobs
+// so callers (orchestrator-deps live recs, daily-batch fallback) can render a
+// human-readable "为啥推" reason line. The shape mirrors `scoreJob`'s return
+// (skill / embedding / sponsorship / location / salary in [0..1] + weighted
+// `total`). Defined here (not in tools/query-matching-jobs.ts) to avoid a
+// circular import when MatchingJobSchema embeds it as an optional field.
+// ---------------------------------------------------------------------------
+
+export const ScoreBreakdownSchema = z.object({
+  /** Jaccard skill overlap (0..1). */
+  skill: z.number(),
+  /** CV × job embedding cosine (0..1). 0 when either vector is missing. */
+  embedding: z.number(),
+  /** Sponsorship match (0..1). */
+  sponsorship: z.number(),
+  /** Location ladder (0..1). */
+  location: z.number(),
+  /** Salary floor met (0..1). */
+  salary: z.number(),
+  /** Weighted sum: 0.35*skill + 0.30*embedding + 0.15*sponsorship + 0.15*location + 0.05*salary. */
+  total: z.number(),
+})
+export type ScoreBreakdown = z.infer<typeof ScoreBreakdownSchema>
+
+export const MatchScoreSchema = z.object({
+  total: z.number(),
+  breakdown: ScoreBreakdownSchema,
+})
+export type MatchScore = z.infer<typeof MatchScoreSchema>
+
+// ---------------------------------------------------------------------------
 // matching-jobs corpus row (subset relevant to recommender)
 // ---------------------------------------------------------------------------
 
@@ -117,6 +148,14 @@ export const MatchingJobSchema = z.object({
    * non-overlap docs. Optional because legacy / unenriched rows may lack it.
    */
   industryEnum: z.array(z.string()).optional(),
+  /**
+   * iter34 sprint B.11 — score components attached by `rankJobs` so callers
+   * can render a "为啥推" reason line (see `formatJobMatchReason`). Not
+   * persisted to Firestore; only present on jobs returned through the
+   * ranking pipeline. Optional + back-compat for callers that bypass
+   * scoring (legacy paths, raw projection consumers).
+   */
+  matchScore: MatchScoreSchema.optional(),
 })
 export type MatchingJob = z.infer<typeof MatchingJobSchema>
 

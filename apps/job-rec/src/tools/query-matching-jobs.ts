@@ -32,6 +32,7 @@ import {
   type MatchingJob,
   type QueryMatchingJobsFilters,
   type QueryMatchingJobsOutput,
+  type ScoreBreakdown as ScoreBreakdownT,
 } from "../types.js"
 
 const MATCHING_JOBS_COLLECTION = "matching-jobs"
@@ -1191,26 +1192,12 @@ export function cosineSimilarity(a: number[], b: number[]): number {
 
 /**
  * iter34 sprint B.10 — score component breakdown returned by {@link scoreJob}.
- * All components are raw 0..1; `total` is the weighted sum per the
- * documented weights.
+ * Canonical definition lives in `../types.ts` (avoids a circular import when
+ * `MatchingJobSchema` embeds it as `matchScore`). Re-exported here so existing
+ * `import { type ScoreBreakdown } from "tools/query-matching-jobs"` callers
+ * (tests, legacy importers) keep working.
  */
-export type ScoreBreakdown = {
-  /** Jaccard skill overlap (0..1). */
-  skill: number
-  /**
-   * CV × job embedding cosine (0..1). 0 when either vector is missing /
-   * empty / dimension-mismatched.
-   */
-  embedding: number
-  /** Sponsorship match (0..1). */
-  sponsorship: number
-  /** Location ladder (0..1). */
-  location: number
-  /** Salary floor met (0..1). */
-  salary: number
-  /** Weighted sum: 0.35*skill + 0.30*embedding + 0.15*sponsorship + 0.15*location + 0.05*salary. */
-  total: number
-}
+export type ScoreBreakdown = ScoreBreakdownT
 
 /**
  * iter34 sprint B.10 — score weights. Re-balanced from (0.5, 0.2, 0.2, 0.1)
@@ -1340,19 +1327,33 @@ export function scoreJob(
   }
 }
 
-/** Pure ranking helper — exposed for direct unit testing. */
+/**
+ * Pure ranking helper — exposed for direct unit testing.
+ *
+ * iter34 sprint B.11 — attaches the per-job `matchScore` ({ total, breakdown })
+ * onto each returned job so downstream callers (orchestrator-deps live recs,
+ * daily-batch fallback) can render a human-readable "为啥推" reason via
+ * `formatJobMatchReason`. The job is shallow-cloned before the assignment so
+ * we don't mutate the caller's input array.
+ */
 export function rankJobs(
   jobs: MatchingJob[],
   filters: QueryMatchingJobsFilters,
   limit: number
 ): MatchingJob[] {
-  const scored = jobs.map((j) => ({ j, s: scoreJob(j, filters).total }))
+  const scored = jobs.map((j) => {
+    const score = scoreJob(j, filters)
+    return { j, score }
+  })
   scored.sort((a, b) => {
-    if (b.s !== a.s) return b.s - a.s
+    if (b.score.total !== a.score.total) return b.score.total - a.score.total
     // tie-break: newer firstSeenAt wins
     return (b.j.firstSeenAt ?? "").localeCompare(a.j.firstSeenAt ?? "")
   })
-  return scored.slice(0, limit).map((x) => x.j)
+  return scored.slice(0, limit).map(({ j, score }) => ({
+    ...j,
+    matchScore: { total: score.total, breakdown: score.breakdown },
+  }))
 }
 
 export type QueryMatchingJobsArgs = {

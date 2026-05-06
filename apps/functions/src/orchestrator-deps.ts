@@ -25,6 +25,7 @@ import {
   generateVerificationCode,
   sendVerificationEmail as sendVerificationEmailViaMailgun,
 } from "./email/mailgun.js"
+import { formatJobMatchReason } from "./lib/match-reason.js"
 
 type SecretParamHandle = ReturnType<typeof defineSecret>
 
@@ -302,7 +303,30 @@ function makeGenerateJobRecs(): NonNullable<
           : j.primaryUrl
             ? `\n${j.primaryUrl}`
             : ""
-        lines.push(`• ${j.jobTitle}${tag}${url}`)
+        // iter34 sprint B.11 — third line: "为啥推:" reason derived from
+        // ScoreBreakdown. Empty when matchScore unavailable or no signal
+        // strong enough → line is dropped (legacy two-line format).
+        const reasonText = formatJobMatchReason(
+          {
+            jobTitle: j.jobTitle,
+            matchScore: j.matchScore,
+            requiredSkills: j.requiredSkills,
+            locationRaw: j.locationRaw,
+            sponsorship: j.sponsorship,
+            industryEnum: j.industryEnum,
+          },
+          lang,
+          {
+            targetRole,
+            userSkills: topSkills,
+            targetLocations: location ? [location] : undefined,
+            visaStatus: visa,
+          }
+        )
+        const reasonLine = reasonText
+          ? `\n${lang === "zh" ? "为啥推" : "why"}: ${reasonText}`
+          : ""
+        lines.push(`• ${j.jobTitle}${tag}${url}${reasonLine}`)
       }
       lines.push(
         // iter34 hotfix 2026-05-05 — Adam directive on phrasing.
