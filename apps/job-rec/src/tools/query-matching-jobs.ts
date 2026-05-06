@@ -785,6 +785,54 @@ export function applyRecencyFilterWithFallback<T extends { lastSeenAt?: unknown 
 }
 
 // ---------------------------------------------------------------------------
+// iter34 followup D.13 — liveness hard filter.
+//
+// Background. Some `atsApplyUrl` values point at job postings that the board
+// has taken down (404), redirected to a closed-jobs page (410), or crashed
+// (500). Recommending a dead link is a UX failure (candidate clicks "Apply",
+// sees an error page, loses trust). We can't HTTP HEAD-check synchronously in
+// the query path (latency unbounded; would re-check the same URL N times per
+// day). Instead, an out-of-band sweep (G.4 worker) writes `dead: true` on the
+// doc when its HEAD returns 4xx/5xx, and this filter drops those rows from
+// query results.
+//
+// Pure / deterministic. Position in pipeline: AFTER applyRecencyFilter,
+// BEFORE rankJobs.
+// ---------------------------------------------------------------------------
+
+/**
+ * Apply the iter34 D.13 liveness filter. Pure / deterministic.
+ *
+ * Inputs:
+ *   - jobs: candidate pool with `dead?: boolean` projected.
+ *
+ * Behavior:
+ *   - Drops jobs where `dead === true`.
+ *   - Keeps jobs where `dead === false` (sweep ran and got 2xx).
+ *   - Keeps jobs where `dead === undefined` (sweep has not run yet —
+ *     back-compat with legacy rows).
+ *
+ * Exposed for unit tests.
+ */
+export function applyLivenessFilter<T extends { dead?: boolean }>(
+  jobs: readonly T[]
+): { kept: T[]; rejected: number } {
+  if (!Array.isArray(jobs) || jobs.length === 0) {
+    return { kept: [], rejected: 0 }
+  }
+  const kept: T[] = []
+  let rejected = 0
+  for (const j of jobs) {
+    if (j.dead === true) {
+      rejected += 1
+      continue
+    }
+    kept.push(j)
+  }
+  return { kept, rejected }
+}
+
+// ---------------------------------------------------------------------------
 // Stream H8 — industryEnum-primary query path (flag-gated).
 //
 // After H8 enrichment writes `industryEnum: [tag]` (1-element array) to the
@@ -1377,6 +1425,11 @@ export function projectMatchingJobRow(id: string, raw: Record<string, unknown>):
         : raw.lastSeenAt != null
           ? (raw.lastSeenAt as unknown)
           : undefined,
+    // iter34 followup D.13 — surface liveness sweep fields.
+    dead: typeof raw.dead === "boolean" ? raw.dead : undefined,
+    deadCheckedAt:
+      typeof raw.deadCheckedAt === "string" ? raw.deadCheckedAt : undefined,
+    deadReason: typeof raw.deadReason === "string" ? raw.deadReason : undefined,
   }
 }
 
@@ -1771,7 +1824,19 @@ export async function queryMatchingJobs(
     fallback: recencyResult.fallback,
     windowMs: recencyResult.windowMs,
   })
-  const filtered = recencyResult.kept
+  const afterRecency = recencyResult.kept
+
+  // iter34 followup D.13 — liveness hard filter. Drops rows the out-of-band
+  // sweep flagged as dead (HEAD returned 4xx/5xx). `undefined` and `false`
+  // are kept (legacy rows + alive rows).
+  const livenessResult = applyLivenessFilter(afterRecency)
+  if (livenessResult.rejected > 0) {
+    log("[queryMatchingJobs] liveness_filter_rejected", {
+      rejected: livenessResult.rejected,
+      kept: livenessResult.kept.length,
+    })
+  }
+  const filtered = livenessResult.kept
 
   const ranked = rankJobs(filtered, parsed.filters, parsed.limit)
   return { jobs: ranked }

@@ -162,6 +162,31 @@ export const MatchingJobSchema = z.object({
    */
   lastSeenAt: z.union([z.string(), z.any()]).optional(),
   /**
+   * iter34 followup D.13 — Liveness signal used by the liveness hard
+   * filter. Set to `true` by an out-of-band liveness sweep (G.4 worker)
+   * when an HTTP HEAD against `atsApplyUrl` returns 404 / 410 / 500 / etc.
+   * The query-layer filter (`applyLivenessFilter`) drops docs with
+   * `dead === true`; `dead === false` and `dead === undefined` are kept
+   * (back-compat: legacy rows have never been checked yet).
+   *
+   * Why not synchronous in the query path: HEAD-checking N URLs adds
+   * unbounded latency to the read path. The sweep runs async and writes
+   * the result into the doc; the query just reads the cached signal.
+   */
+  dead: z.boolean().optional(),
+  /**
+   * iter34 followup D.13 — ISO timestamp of the most-recent liveness
+   * sweep that wrote `dead`. Optional; present when the sweep has run
+   * against this row at least once.
+   */
+  deadCheckedAt: z.string().optional(),
+  /**
+   * iter34 followup D.13 — Short tag describing why the row was marked
+   * dead (e.g. "404", "410", "500", "timeout", "dns"). Optional;
+   * informational for log/dashboard, not consumed by the query filter.
+   */
+  deadReason: z.string().optional(),
+  /**
    * iter34 sprint B.11 — score components attached by `rankJobs` so callers
    * can render a "为啥推" reason line (see `formatJobMatchReason`). Not
    * persisted to Firestore; only present on jobs returned through the

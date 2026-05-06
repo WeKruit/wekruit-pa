@@ -2141,6 +2141,89 @@ test("applyRecencyFilterWithFallback D.9: empty input → empty output, no fallb
   assert.equal(r.fallback, false)
 })
 
+// ---------------------------------------------------------------------------
+// iter34 followup D.13 — liveness hard filter (drop dead=true rows)
+// ---------------------------------------------------------------------------
+
+import { applyLivenessFilter } from "../../tools/query-matching-jobs.js"
+
+test("applyLivenessFilter D.13: doc dead=true → drop", () => {
+  const jobs = [{ id: "dead", dead: true }]
+  const r = applyLivenessFilter(jobs)
+  assert.equal(r.kept.length, 0)
+  assert.equal(r.rejected, 1)
+})
+
+test("applyLivenessFilter D.13: doc dead=false → keep", () => {
+  const jobs = [{ id: "alive", dead: false }]
+  const r = applyLivenessFilter(jobs)
+  assert.equal(r.kept.length, 1)
+  assert.equal(r.kept[0]?.id, "alive")
+  assert.equal(r.rejected, 0)
+})
+
+test("applyLivenessFilter D.13: doc dead=undefined → keep (back-compat with legacy rows)", () => {
+  const jobs: { id: string; dead?: boolean }[] = [{ id: "legacy" }]
+  const r = applyLivenessFilter(jobs)
+  assert.equal(r.kept.length, 1)
+  assert.equal(r.kept[0]?.id, "legacy")
+  assert.equal(r.rejected, 0)
+})
+
+test("applyLivenessFilter D.13: mixed pool keeps alive + legacy, drops dead", () => {
+  const jobs: { id: string; dead?: boolean }[] = [
+    { id: "a-alive", dead: false },
+    { id: "b-dead", dead: true },
+    { id: "c-legacy" },
+    { id: "d-dead", dead: true },
+  ]
+  const r = applyLivenessFilter(jobs)
+  assert.equal(r.kept.length, 2)
+  assert.deepEqual(r.kept.map((j) => j.id), ["a-alive", "c-legacy"])
+  assert.equal(r.rejected, 2)
+})
+
+test("applyLivenessFilter D.13: empty input → empty output", () => {
+  const r = applyLivenessFilter([])
+  assert.equal(r.kept.length, 0)
+  assert.equal(r.rejected, 0)
+})
+
+// ---------------------------------------------------------------------------
+// iter34 followup D.13 — projectMatchingJobRow surfaces dead/deadCheckedAt/deadReason
+// ---------------------------------------------------------------------------
+
+test("projectMatchingJobRow D.13: surfaces dead=true with deadReason+deadCheckedAt", () => {
+  const out = projectMatchingJobRow("doc-dead", {
+    companyName: "Co",
+    roleTitle: "SWE",
+    locationRaw: "Remote",
+    primaryUrl: "u",
+    industry: "tech",
+    sponsorship: false,
+    dead: true,
+    deadCheckedAt: "2026-05-04T12:00:00Z",
+    deadReason: "404",
+  })
+  assert.equal(out.dead, true)
+  assert.equal(out.deadCheckedAt, "2026-05-04T12:00:00Z")
+  assert.equal(out.deadReason, "404")
+})
+
+test("projectMatchingJobRow D.13: dead absent → undefined (back-compat)", () => {
+  const out = projectMatchingJobRow("doc-legacy", {
+    companyName: "Co",
+    roleTitle: "SWE",
+    locationRaw: "Remote",
+    primaryUrl: "u",
+    industry: "tech",
+    sponsorship: false,
+  })
+  assert.equal(out.dead, undefined)
+  assert.equal(out.deadCheckedAt, undefined)
+  assert.equal(out.deadReason, undefined)
+})
+
 test("projectMatchingJobRow D.9: surfaces lastSeenAt string", () => {
   const out = projectMatchingJobRow("doc-fresh", {
     companyName: "Co",
@@ -2241,5 +2324,87 @@ test("queryMatchingJobs D.9: doc missing lastSeenAt → dropped", async () => {
     { db: asFirestore(mfs) }
   )
   assert.equal(out.jobs.length, 0)
+})
+
+// ---------------------------------------------------------------------------
+// iter34 followup D.13 — integration through queryMatchingJobs
+// ---------------------------------------------------------------------------
+
+test("queryMatchingJobs D.13: doc with dead=true → dropped", async () => {
+  const mfs = new MockFirestore()
+  const recentIso = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString()
+  await mfs.collection("matching-jobs").doc("dead-job").set({
+    status: "active",
+    industryKey: "tech",
+    companyName: "Acme",
+    roleTitle: "SWE",
+    locationRaw: "Remote",
+    primaryUrl: "https://x",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/d13-1",
+    industry: "tech",
+    sponsorship: false,
+    requiredSkills: ["python"],
+    firstSeenAt: recentIso,
+    lastSeenAt: recentIso,
+    dead: true,
+    deadReason: "404",
+    deadCheckedAt: recentIso,
+  })
+  const out = await queryMatchingJobs(
+    { filters: { industry: "tech", userSkills: ["python"] }, limit: 5 },
+    { db: asFirestore(mfs) }
+  )
+  assert.equal(out.jobs.length, 0)
+})
+
+test("queryMatchingJobs D.13: doc with dead=false → kept", async () => {
+  const mfs = new MockFirestore()
+  const recentIso = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString()
+  await mfs.collection("matching-jobs").doc("alive-job").set({
+    status: "active",
+    industryKey: "tech",
+    companyName: "Acme",
+    roleTitle: "SWE",
+    locationRaw: "Remote",
+    primaryUrl: "https://x",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/d13-2",
+    industry: "tech",
+    sponsorship: false,
+    requiredSkills: ["python"],
+    firstSeenAt: recentIso,
+    lastSeenAt: recentIso,
+    dead: false,
+  })
+  const out = await queryMatchingJobs(
+    { filters: { industry: "tech", userSkills: ["python"] }, limit: 5 },
+    { db: asFirestore(mfs) }
+  )
+  assert.equal(out.jobs.length, 1)
+  assert.equal(out.jobs[0]?.id, "alive-job")
+})
+
+test("queryMatchingJobs D.13: doc with dead absent → kept (legacy back-compat)", async () => {
+  const mfs = new MockFirestore()
+  const recentIso = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString()
+  await mfs.collection("matching-jobs").doc("legacy-job").set({
+    status: "active",
+    industryKey: "tech",
+    companyName: "Acme",
+    roleTitle: "SWE",
+    locationRaw: "Remote",
+    primaryUrl: "https://x",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/d13-3",
+    industry: "tech",
+    sponsorship: false,
+    requiredSkills: ["python"],
+    firstSeenAt: recentIso,
+    lastSeenAt: recentIso,
+    // No `dead` field.
+  })
+  const out = await queryMatchingJobs(
+    { filters: { industry: "tech", userSkills: ["python"] }, limit: 5 },
+    { db: asFirestore(mfs) }
+  )
+  assert.equal(out.jobs.length, 1)
 })
 
