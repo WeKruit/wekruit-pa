@@ -584,15 +584,34 @@ export function computeSalaryFit(userMin: number | undefined, jobMin: number | n
 }
 
 /**
+ * Phase 70 — admin debug surface accepts partial weight overrides via
+ * `paAdminMatchDebug` (sandbox sliders 0..1 each). When provided, these
+ * replace the corresponding V16_SCORE_WEIGHTS entries; missing keys fall
+ * back to the canonical values. Default behaviour (overrides=undefined) is
+ * byte-identical to pre-Phase-70 V16.
+ *
+ * Each key is `number` (not the V16_SCORE_WEIGHTS literal) so callers can
+ * pass arbitrary slider values. `scoreV16Job` clamps each to [0, 1].
+ */
+export type V16ScoreWeightOverrides = {
+  [K in keyof typeof V16_SCORE_WEIGHTS]?: number
+}
+
+/**
  * Compute the v1.6 weighted score for one (user, job) pair. Pure /
  * deterministic; pass-through behaviour when caches are missing (jdRel=1.0,
  * llmRerank=0).
+ *
+ * @param weightOverrides Phase 70 admin sandbox — partial overrides (0..1
+ *   each, clamped). Missing keys fall back to canonical V16_SCORE_WEIGHTS.
+ *   Default (undefined) preserves canonical behaviour byte-identically.
  */
 export function scoreV16Job(
   user: UserTags,
   job: MatchingJob & { embedding?: number[] | null },
   jdRelative?: Record<string, number>,
-  llmRerankScore?: number
+  llmRerankScore?: number,
+  weightOverrides?: V16ScoreWeightOverrides
 ): { breakdown: V16ScoreBreakdown; matched: MatchedSkillContribution[] } {
   const llm = typeof llmRerankScore === "number" && Number.isFinite(llmRerankScore)
     ? Math.max(0, Math.min(1, llmRerankScore))
@@ -618,13 +637,29 @@ export function scoreV16Job(
   const indSector = computeOverlap(userIndustryUnion, job.industrySector)
   const cvEmb = cosineSim(user.embedding, job.embedding ?? undefined)
   const salary = computeSalaryFit(userExt.minSalary, job.salaryMin)
+
+  // Phase 70: resolve effective weights — overrides shadow canonical, missing
+  // keys fall back. Each override clamped to [0, 1] for safety.
+  const clamp01 = (n: unknown, fallback: number): number =>
+    typeof n === "number" && Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : fallback
+  const W = weightOverrides
+    ? {
+        llmMatch: clamp01(weightOverrides.llmMatch, V16_SCORE_WEIGHTS.llmMatch),
+        skillJaccard: clamp01(weightOverrides.skillJaccard, V16_SCORE_WEIGHTS.skillJaccard),
+        relevantTags: clamp01(weightOverrides.relevantTags, V16_SCORE_WEIGHTS.relevantTags),
+        industrySector: clamp01(weightOverrides.industrySector, V16_SCORE_WEIGHTS.industrySector),
+        cvEmbCosine: clamp01(weightOverrides.cvEmbCosine, V16_SCORE_WEIGHTS.cvEmbCosine),
+        salaryFit: clamp01(weightOverrides.salaryFit, V16_SCORE_WEIGHTS.salaryFit),
+      }
+    : V16_SCORE_WEIGHTS
+
   const total =
-    llm * V16_SCORE_WEIGHTS.llmMatch +
-    skill.score * V16_SCORE_WEIGHTS.skillJaccard +
-    relTags * V16_SCORE_WEIGHTS.relevantTags +
-    indSector * V16_SCORE_WEIGHTS.industrySector +
-    cvEmb * V16_SCORE_WEIGHTS.cvEmbCosine +
-    salary * V16_SCORE_WEIGHTS.salaryFit
+    llm * W.llmMatch +
+    skill.score * W.skillJaccard +
+    relTags * W.relevantTags +
+    indSector * W.industrySector +
+    cvEmb * W.cvEmbCosine +
+    salary * W.salaryFit
   return {
     breakdown: {
       llmMatch: llm,
@@ -690,6 +725,12 @@ export type QueryMatchingJobsV16Args = {
   limit?: number
   /** Pinned `now` for deterministic tests. Default `Date.now()`. */
   nowMs?: number
+  /**
+   * Phase 70 admin debug surface — partial overrides for V16_SCORE_WEIGHTS.
+   * Missing keys fall back to canonical weights. Each value clamped to [0, 1]
+   * by `scoreV16Job`. Default (undefined) preserves V16 default behaviour.
+   */
+  weightOverrides?: V16ScoreWeightOverrides
 }
 
 export type QueryMatchingJobsV16Deps = {
@@ -872,11 +913,11 @@ export async function queryMatchingJobsV16(
     loadLlmRerankCache(deps.db, args.userId, log),
   ])
 
-  // 4. Soft score.
+  // 4. Soft score (Phase 70 — passes optional weightOverrides through).
   const scored = filteredJobs.map((job) => {
     const jdRel = jdRelCache.get(job.id)
     const llmScore = rerankCache.map.get(job.id)
-    const { breakdown, matched } = scoreV16Job(userTags, job, jdRel, llmScore)
+    const { breakdown, matched } = scoreV16Job(userTags, job, jdRel, llmScore, args.weightOverrides)
     return { job, breakdown, matched }
   })
 
@@ -905,6 +946,11 @@ export async function queryMatchingJobsV16(
     dropped,
     hardFilter: counters,
     ...(rerankCache.stale ? { llmCacheStale: true as const } : {}),
+    // Phase 70 — surface a snapshot of the user's tags so the admin
+    // match-debug page can render the canonical profile alongside ranked
+    // output. Cast through `unknown` so we can attach without leaking the
+    // narrow UserTags type to non-orchestrator consumers.
+    userTags: userTags as unknown as Record<string, unknown>,
   }
 }
 

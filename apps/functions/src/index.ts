@@ -141,6 +141,12 @@ export { paPromoteSandboxTag } from "./promote-sandbox-tag.js"
 // Milestone state pa-milestones-state/v1.6.qaShipGate updated per run.
 export { paQaEvaluatorWeekly } from "./qa-evaluator-weekly.js"
 
+// v1.7 Phase 70 (MATCHDEBUG-01..04) — admin-only callable backing the
+// /admin/match-debug page. Loads pa-users.tags, runs the V16 cascade with
+// optional weight-override sandbox values, and returns full per-job score
+// breakdown + counters for the dashboard's live debugger.
+export { paAdminMatchDebug } from "./admin-match-debug.js"
+
 // Phase 27 T2 — public /health endpoints (one per existing CF). Returns
 // {ok, name, version, ts, deps:{firestore, secrets}}. No auth (probes
 // must be reachable). All endpoints HTTP 200 always; failure surfaces in body.

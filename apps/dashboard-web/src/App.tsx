@@ -31,6 +31,9 @@ import { MatchExplainerTest } from "./pages/MatchExplainerTest.js"
 // QA evaluator weekly run viewer.
 import { CanonicalTags } from "./pages/CanonicalTags.js"
 import { QaEvaluator } from "./pages/QaEvaluator.js"
+// v1.7 Phase 70 (MATCHDEBUG-01..04) — admin live debugger for the V16 cascade
+// with score-weight sandbox sliders. Backed by paAdminMatchDebug callable.
+import { MatchDebug } from "./pages/MatchDebug.js"
 import { auth } from "./lib/firebase.js"
 
 export default function App() {
@@ -111,6 +114,8 @@ export default function App() {
           <NavLink to="/match/weights/test">Weights · Dry Run</NavLink>
           <NavLink to="/match/explainer-history">Explainer History</NavLink>
           <NavLink to="/match/explainer-test">Explainer Test</NavLink>
+          {/* v1.7 Phase 70 — V16 live debugger with weight-sandbox sliders. */}
+          <NavLink to="/admin/match-debug">Match Debug</NavLink>
         </div>
 
         <div className="nav-section">
@@ -182,6 +187,8 @@ export default function App() {
             element={<MatchExplainerHistory />}
           />
           <Route path="/match/explainer-test" element={<MatchExplainerTest />} />
+          {/* v1.7 Phase 70 (MATCHDEBUG-01..04) — V16 live debugger. */}
+          <Route path="/admin/match-debug" element={<MatchDebug />} />
           {/* Phase 32 Wave 3 — Playbooks + Personas Firestore CRUD. */}
           <Route path="/agent/playbooks" element={<Playbooks />} />
           <Route path="/agent/personas" element={<Personas />} />

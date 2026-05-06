@@ -431,4 +431,10 @@ export type V16QueryResult = {
   noUserTags?: boolean
   /** True when the LLM rerank cache was stale (>36h) — llmMatch defaults to 0. */
   llmCacheStale?: boolean
+  /**
+   * Phase 70 — surfaced when caller is the admin match-debug CF; opaque
+   * snapshot of the user's tags doc so the dashboard can render the canonical
+   * profile alongside the ranked output. Omitted in the recruiter-tool path.
+   */
+  userTags?: Record<string, unknown>
 }

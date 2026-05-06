@@ -498,6 +498,61 @@ test("scoreV16Job: llm cache present applies 0.40 weight", () => {
 })
 
 // ---------------------------------------------------------------------------
+// Phase 70 — scoreV16Job weight overrides
+// ---------------------------------------------------------------------------
+
+test("scoreV16Job: undefined overrides → byte-identical to canonical V16", () => {
+  const tags = {
+    skills: ["python"],
+    industryEnum: ["tech_software"],
+    schemaVersion: 1,
+  } as never
+  const job = mkJob({ requiredSkills: ["python"] })
+  const a = scoreV16Job(tags, job, undefined, 0.5)
+  const b = scoreV16Job(tags, job, undefined, 0.5, undefined)
+  assert.equal(a.breakdown.total, b.breakdown.total)
+  assert.equal(a.breakdown.skillJaccard, b.breakdown.skillJaccard)
+})
+
+test("scoreV16Job: weightOverrides replaces only the supplied keys", () => {
+  const tags = {
+    skills: ["python"],
+    industryEnum: [],
+    schemaVersion: 1,
+  } as never
+  const job = mkJob({ requiredSkills: ["python"] })
+  // Override skillJaccard from 0.20 → 0.50; leave salaryFit canonical at 0.05.
+  const r = scoreV16Job(tags, job, undefined, 0, { skillJaccard: 0.5 })
+  // skillJaccard=1.0 * 0.5 + salary=0.5 * 0.05 = 0.525
+  const expected = 1.0 * 0.5 + 0.5 * V16_SCORE_WEIGHTS.salaryFit
+  assert.ok(Math.abs(r.breakdown.total - expected) < 1e-6, `total=${r.breakdown.total}`)
+})
+
+test("scoreV16Job: weightOverrides clamps NaN/non-numeric → fallback to canonical", () => {
+  const tags = {
+    skills: ["python"],
+    industryEnum: [],
+    schemaVersion: 1,
+  } as never
+  const job = mkJob({ requiredSkills: ["python"] })
+  const r = scoreV16Job(tags, job, undefined, 0, {
+    skillJaccard: NaN as never,
+  })
+  // NaN falls back to canonical 0.20.
+  const expected = 1.0 * V16_SCORE_WEIGHTS.skillJaccard + 0.5 * V16_SCORE_WEIGHTS.salaryFit
+  assert.ok(Math.abs(r.breakdown.total - expected) < 1e-6, `total=${r.breakdown.total}`)
+})
+
+test("scoreV16Job: weightOverrides zeroing component drops its contribution", () => {
+  const tags = { skills: [], industryEnum: [], schemaVersion: 1 } as never
+  const job = mkJob({})
+  // Zero salaryFit so the only fallback (=0.5 neutral) doesn't contribute.
+  const r = scoreV16Job(tags, job, undefined, 0.7, { salaryFit: 0 })
+  const expected = 0.7 * V16_SCORE_WEIGHTS.llmMatch
+  assert.ok(Math.abs(r.breakdown.total - expected) < 1e-6, `total=${r.breakdown.total}`)
+})
+
+// ---------------------------------------------------------------------------
 // queryMatchingJobsV16 — end-to-end happy path
 // ---------------------------------------------------------------------------
 
@@ -570,6 +625,67 @@ test("queryMatchingJobsV16: with role-fn filter returns matching jobs", async ()
   assert.ok(r.jobs[0]!.v16Score.total >= r.jobs[1]!.v16Score.total)
   // Reason mentions a matched skill
   assert.match(r.jobs[0]!.reason, /python|typescript/)
+  // Phase 70 — userTags surfaced for admin debug surface
+  assert.ok(r.userTags && typeof r.userTags === "object")
+  assert.deepEqual(
+    (r.userTags as Record<string, unknown>).targetRoleFunction,
+    ["software_engineering"],
+  )
+})
+
+test("queryMatchingJobsV16: weightOverrides propagate to scoreV16Job (Phase 70)", async () => {
+  // Same fixture as the prior test — flipping skillJaccard to 0 should
+  // collapse swe1's lead over swe2 (their llm/relTags/etc components are
+  // identical because both lack caches; the diff was 100% skill Jaccard).
+  const mfs = new MockFirestore()
+  await mfs
+    .collection("pa-users")
+    .doc("u1")
+    .set({
+      tags: {
+        skills: ["python", "typescript"],
+        industryEnum: ["tech_software"],
+        schemaVersion: 1,
+        targetRoleFunction: ["software_engineering"],
+      },
+    })
+  await seedJob(mfs, "swe1", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["python", "typescript"],
+  })
+  await seedJob(mfs, "swe2", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["python"],
+  })
+
+  // With canonical weights swe1 has higher skillJaccard contribution.
+  const baseline = await queryMatchingJobsV16(
+    { userId: "u1", nowMs: NOW },
+    { db: asFirestore(mfs) }
+  )
+  assert.ok(baseline.jobs[0]!.v16Score.skillJaccard > 0)
+
+  // Zeroing skillJaccard via overrides → both jobs should get skill weight 0
+  // contribution (other components dominate).
+  const override = await queryMatchingJobsV16(
+    {
+      userId: "u1",
+      nowMs: NOW,
+      weightOverrides: { skillJaccard: 0 },
+    },
+    { db: asFirestore(mfs) }
+  )
+  // Component values still echoed unchanged (clamping happens on weights only).
+  assert.equal(
+    override.jobs[0]!.v16Score.skillJaccard,
+    baseline.jobs[0]!.v16Score.skillJaccard,
+  )
+  // But total must be lower than baseline because skillJaccard contribution
+  // gone (everything else equal).
+  assert.ok(
+    override.jobs[0]!.v16Score.total < baseline.jobs[0]!.v16Score.total,
+    `override total ${override.jobs[0]!.v16Score.total} should be < baseline ${baseline.jobs[0]!.v16Score.total}`,
+  )
 })
 
 test("queryMatchingJobsV16: caps targetRoleFunction at 10", async () => {
