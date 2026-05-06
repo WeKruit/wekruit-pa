@@ -147,6 +147,14 @@ export { paQaEvaluatorWeekly } from "./qa-evaluator-weekly.js"
 // breakdown + counters for the dashboard's live debugger.
 export { paAdminMatchDebug } from "./admin-match-debug.js"
 
+// v1.8 ENRICHER-04 — `paEnrichJobTags` HTTP CF wraps the unified
+// @pa/job-tag-enricher service (mirror of pa-resume-parser, job-side).
+// Replaces scattered regex tag-derivation in the macmini matching pipeline
+// (the bug: `buildMatchingJobRecord` had ZERO roleFunction/industrySector
+// derivation, so non-SimplifyJobs sources got "other" silently → P73 jobs
+// surfaced as random sales/SWE soup). Auth via X-API-Key.
+export { paEnrichJobTags } from "./enrich-job-tags-http.js"
+
 // Phase 27 T2 — public /health endpoints (one per existing CF). Returns
 // {ok, name, version, ts, deps:{firestore, secrets}}. No auth (probes
 // must be reachable). All endpoints HTTP 200 always; failure surfaces in body.
