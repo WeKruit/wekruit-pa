@@ -60,9 +60,99 @@ const sa = JSON.parse(readFileSync(credPath, "utf8"))
 if (!getApps().length) initializeApp({ credential: cert(sa), projectId: sa.project_id })
 const db = getFirestore()
 
-const SOURCE_CV_DOC_ID = "zLSRbpWz8edA7tAhRadA" // Adam's CV — used by H2 sim
 const KNOWN_VERIFICATION_CODE = "654321"
 const codeHash = createHash("sha256").update(KNOWN_VERIFICATION_CODE).digest("hex")
+
+// SWE persona definitions — purpose-built so match-correctness scenarios
+// actually exercise the SWE/Tesla/Node+React path (NOT the source-CV
+// "Mike"/NEUROVAInc/SQL+Python signals we used to clone). Both personas
+// are SWE 2yo OPT remote candidates aligned with the seeded
+// statedPreferences.targetRole=["swe"].
+const PERSONAS = {
+  zh: {
+    candidateProfile: {
+      name: "Alex Chen",
+      email: "alex.chen@example.com",
+      phone: null,
+      linkedIn: null,
+      location: "Remote",
+      skills: ["Node.js", "React", "TypeScript", "AWS", "PostgreSQL", "Docker", "Kubernetes"],
+    },
+    topSkills: ["node.js", "react", "typescript", "aws", "postgresql", "docker", "kubernetes"],
+    experiences: [
+      {
+        company: "Tesla",
+        title: "Software Engineer",
+        startDate: "2023-06",
+        endDate: null,
+        location: "Austin, TX",
+        description:
+          "Built V&C routing system for 300+ stores using Node.js + React. Migrated backend to Azure. Set up CI/CD with Kubernetes/Docker.",
+      },
+      {
+        company: "Self-employed",
+        title: "Founder / Engineer",
+        startDate: "2022-01",
+        endDate: "2023-05",
+        location: "Austin, TX",
+        description:
+          "Built education platform with Flask/React/React Native + 阿里云. Integrated LangChain for LLM APIs.",
+      },
+    ],
+    education: [
+      {
+        school: "UT Austin",
+        degree: "BS",
+        field: "Computer Science",
+        startDate: "2018-08",
+        endDate: "2022-05",
+      },
+    ],
+    industryTags: ["tech_software", "ai_ml"],
+    originalFileName: "alex-chen-resume.pdf",
+  },
+  en: {
+    candidateProfile: {
+      name: "Sam Patel",
+      email: "sam.patel@example.com",
+      phone: null,
+      linkedIn: null,
+      location: "Remote",
+      skills: ["Go", "Kubernetes", "gRPC", "PostgreSQL", "Terraform", "AWS"],
+    },
+    topSkills: ["go", "kubernetes", "grpc", "postgresql", "terraform", "aws"],
+    experiences: [
+      {
+        company: "Stripe",
+        title: "Backend Engineer",
+        startDate: "2024-01",
+        endDate: null,
+        location: "San Francisco, CA",
+        description:
+          "Built payment infrastructure on Go + gRPC. Scaled K8s deployments globally.",
+      },
+      {
+        company: "Cloudflare",
+        title: "Software Engineer Intern",
+        startDate: "2022-06",
+        endDate: "2022-09",
+        location: "Remote",
+        description: "Edge worker runtime in Rust + V8 isolates.",
+      },
+    ],
+    education: [
+      {
+        school: "MIT",
+        degree: "BS",
+        field: "Computer Science",
+        startDate: "2020-08",
+        endDate: "2024-05",
+      },
+    ],
+    industryTags: ["tech_software", "fintech_finance"],
+    originalFileName: "sam-patel-resume.pdf",
+  },
+}
 
 async function findOrCreateUser() {
   const snap = await db.collection("pa-users").where("phoneE164", "==", participant).limit(1).get()
@@ -124,42 +214,43 @@ async function seedCv(userId) {
   // any row matching userId. ID is deterministic so re-runs are idempotent.
   const targetDocId = `harness-match-correctness-${userId}`
 
-  // Try to clone from the known-good source CV first (preserves topSkills
-  // + industryTags shape exactly as cv-ingest produces). If source isn't
-  // available, fall back to a hand-rolled minimal SWE doc with the fields
-  // generateJobRecs reads.
-  let data
-  try {
-    const src = await db.collection("parsedCandidateResumes").doc(SOURCE_CV_DOC_ID).get()
-    if (src.exists) {
-      data = src.data()
-    }
-  } catch (err) {
-    // fall through to fallback
+  // iter34 followup D.2: build SWE persona doc from scratch (NOT clone
+  // from source CV — that pulled "Mike"/NEUROVAInc/SQL+Python signals
+  // unrelated to the SWE path the scenario claims to test). Persona is
+  // selected by LANG so zh and en runs exercise distinct, fully-formed
+  // SWE candidates. Both populate every field generateJobRecs +
+  // send_cv_analysis read: candidateProfile, topSkills, experiences,
+  // workHistory (v2 path), education, industryTags, plus a mock
+  // 1536-d embedding so cosineSimilarity-based scoring exercises too.
+  const persona = PERSONAS[LANG]
+  const nowIso = new Date().toISOString()
+  const data = {
+    userId,
+    candidateProfile: persona.candidateProfile,
+    experiences: persona.experiences,
+    workHistory: persona.experiences, // v2 path uses same shape
+    topSkills: persona.topSkills,
+    education: persona.education,
+    industryTags: persona.industryTags,
+    parserVersion: "v1",
+    ingestedAt: nowIso,
+    ingestedVia: "harness-seed",
+    originalFileName: persona.originalFileName,
+    fileType: "application/pdf",
+    studentFrom: null,
+    sessionId: null,
+    mediaUrl: "https://example.com/seed-resume.pdf",
+    createdAt: Timestamp.now(),
+    // Mock 1536-d embedding (text-embedding-3-small dim) so the embedding
+    // path doesn't crash cosineSimilarity. Uniform 0.01 vector — not a
+    // semantic match against any real job, but exercises the code path.
+    embedding: new Array(1536).fill(0.01),
+    embeddingModel: "text-embedding-3-small",
+    embeddingDim: 1536,
+    embeddingComputedAt: nowIso,
+    harnessSeed: true,
+    note: "iter34 followup D.2 — SWE persona (no source-CV clone)",
   }
-
-  if (!data) {
-    // Fallback minimal CV: SWE with Node/React/Tesla-flavored signals.
-    data = {
-      candidateProfile: {
-        name: "Alex SWE",
-        skills: ["Node.js", "React", "TypeScript", "Python", "AWS"],
-        workHistory: [
-          { company: "Tesla", title: "Software Engineer", years: 2, current: false },
-          { company: "Acme Inc.", title: "Junior Software Engineer", years: 1 },
-        ],
-      },
-      topSkills: ["Node.js", "React", "TypeScript", "Python", "AWS"],
-      industryTags: ["tech_software"],
-    }
-  }
-
-  data.userId = userId
-  data.createdAt = Timestamp.now()
-  data.ingestedAt = new Date().toISOString()
-  data.harnessSeed = true
-  data.note = "iter34 sprint C.16 match-correctness harness seed"
-  data.sourceDocId = SOURCE_CV_DOC_ID
 
   await db.collection("parsedCandidateResumes").doc(targetDocId).set(data, { merge: true })
   return targetDocId
