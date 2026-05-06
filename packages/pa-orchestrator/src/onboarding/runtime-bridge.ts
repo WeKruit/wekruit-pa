@@ -35,6 +35,12 @@ import { defaultQuestions } from "./questions.js"
 import { FirestorePipelineStateProvider } from "./state-firestore.js"
 import { makePostCollectHook } from "./post-collect.js"
 import type { Lang } from "./question.js"
+import { composeInterimResumeAck } from "../onboarding-deterministic.js"
+import { formatCvSummaryForUser } from "../cv-summary.js"
+import {
+  pollParsedCandidateResume,
+  type PollParsedResumeOpts,
+} from "./cv-poll.js"
 
 export type PipelineLogFn = (event: string, payload: Record<string, unknown>) => void
 
@@ -74,6 +80,13 @@ export interface PipelineEmitDeps {
   log: PipelineLogFn
   /** Firestore handle. Optional — pipeline degrades to in-memory state when missing. */
   db?: unknown
+  /**
+   * iter34 Sprint A.6 — CV gate poll injection point. Tests pass a
+   * fake `sleep` + `now` to fast-forward virtual time. Production
+   * leaves these undefined so pollParsedCandidateResume uses real
+   * setTimeout + Date.now.
+   */
+  cvPollOpts?: PollParsedResumeOpts
 }
 
 export interface RunPipelineTurnInput {
@@ -259,11 +272,16 @@ export async function runOnboardingPipelineTurn(
     },
     onResumeAccepted: async (_attachments, ctx) => {
       ctx.log?.("pa.onboarding.pipeline.q_resume.accepted", { userId: ctx.userId })
-      // cv-ingest worker enqueue is downstream; the worker watches for
-      // attachment payloads on inbound events and processes async.
-      if (deps.applyOnboarding) {
-        await deps.applyOnboarding(event.userId, phoneE164, "complete", {})
-      }
+      await runResumeAcceptedFlow({
+        userId: event.userId,
+        phoneE164,
+        getOnboardingUser: deps.getOnboardingUser,
+        applyOnboarding: deps.applyOnboarding,
+        emit,
+        db: deps.db,
+        log: deps.log,
+        cvPollOpts: deps.cvPollOpts,
+      })
     },
   })
 
@@ -305,5 +323,95 @@ export async function runOnboardingPipelineTurn(
     handled: result.handled,
     action: { kind: "pipeline" },
     raw: result,
+  }
+}
+
+/**
+ * iter34 Sprint A.6 — exported for testability + reuse from any path
+ * that fires "user just sent a resume". Does the full sequence:
+ *   1. Resolve user lang (from statedPreferences.preferredLang).
+ *   2. Emit interim ack ("OK 让我看一下你简历, 等我一下下" + variants).
+ *   3. Poll parsedCandidateResumes up to 90s.
+ *   4. Emit either:
+ *        - tag-summary line (formatCvSummaryForUser) when poll succeeded
+ *        - "still parsing, going by chat" line on timeout
+ *   5. applyOnboarding("complete", {}) so caller's match pipeline runs
+ *      AFTER the user has SEEN what CV signal we have. This is the fix
+ *      for the iter34 bug where generateJobRecs was running with empty CV.
+ */
+export interface RunResumeAcceptedFlowInput {
+  userId: string
+  phoneE164: string
+  getOnboardingUser?: PipelineEmitDeps["getOnboardingUser"]
+  applyOnboarding?: PipelineEmitDeps["applyOnboarding"]
+  emit: (
+    text: string,
+    meta: { qId: string | null; kind: string }
+  ) => Promise<void>
+  db?: unknown
+  log: PipelineLogFn
+  cvPollOpts?: PipelineEmitDeps["cvPollOpts"]
+}
+
+export async function runResumeAcceptedFlow(
+  input: RunResumeAcceptedFlowInput
+): Promise<void> {
+  const { userId, phoneE164, getOnboardingUser, applyOnboarding, emit, db, log, cvPollOpts } = input
+
+  // Step 1 — resolve user lang. Default zh when unset.
+  let userLang: "zh" | "en" | "mixed" = "zh"
+  if (getOnboardingUser) {
+    try {
+      const u = await getOnboardingUser(userId)
+      const pref = u?.statedPreferences?.preferredLang
+      if (pref === "mixed") userLang = "mixed"
+      else if (pref === "en") userLang = "en"
+      else userLang = "zh"
+    } catch (err) {
+      log("pa.onboarding.cv_flow.lang_resolve_error", {
+        userId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+
+  // Step 2 — interim ack. iter 7 helper provides variants.
+  const ackMsg = composeInterimResumeAck(userLang)
+  await emit(ackMsg, { qId: "q_resume", kind: "cv_interim_ack" })
+
+  // Step 3 — poll cv-ingest output.
+  const pollResult = await pollParsedCandidateResume(db, userId, {
+    ...cvPollOpts,
+    log,
+  })
+
+  // Step 4 — tag-summary message.
+  let summaryMsg: string
+  if (pollResult.timedOut) {
+    summaryMsg =
+      userLang === "zh"
+        ? "简历还在分析, 我先按你聊的方向找; 等我搞完会再调"
+        : userLang === "en"
+          ? "resume still parsing — going by what you told me for now, i'll retune once it lands"
+          : "简历还在 parsing, 我先按你聊的方向找; 等 done 了再调"
+  } else if (pollResult.cv) {
+    summaryMsg = formatCvSummaryForUser(pollResult.cv, userLang)
+  } else {
+    // Defensive — pollResult was non-timeout but cv null. Shouldn't
+    // happen; treat as "couldn't extract much" fallback.
+    summaryMsg =
+      userLang === "zh"
+        ? "简历看了一下, 信息不多, 我按你聊的方向先推"
+        : userLang === "en"
+          ? "skimmed your resume — not much in there, going by chat for now"
+          : "看了一下 CV, 信息不多, 我按你聊的方向先推"
+  }
+  await emit(summaryMsg, { qId: "q_resume", kind: "cv_summary_tag" })
+
+  // Step 5 — advance state. Caller's match pipeline (postCollect →
+  // triggerJobMatch + legacy generateJobRecs) runs after this and now
+  // gets a populated parsedCandidateResumes row when poll succeeded.
+  if (applyOnboarding) {
+    await applyOnboarding(userId, phoneE164, "complete", {})
   }
 }
