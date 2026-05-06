@@ -481,6 +481,90 @@ function validateStructuredCv(raw: unknown): StructuredCv {
   return o as unknown as StructuredCv
 }
 
+// ---------------------------------------------------------------------------
+// iter34 sprint A.1 — topSkills compute (ghost-field fix)
+//
+// Before this sprint, `parsedCandidateResumes/{id}` documents never wrote a
+// `topSkills` field, but `orchestrator-deps.generateJobRecs` reads it as a
+// signal for SWE / role-specific matching. The fallback was the 10-bucket
+// `industryTags`, which is far too coarse for a SWE candidate ("tech" bucket
+// matches every other role in tech). Result: SWE candidates were perpetually
+// fanning out to 10 buckets and the job-rec quality warning fired.
+//
+// computeTopSkills now derives the field at write time. Sources:
+//   1. v2 parser path: `workHistory[].skills` (if present — defensive read;
+//      the current ParsedResumeData schema doesn't carry per-experience
+//      skills, but we tolerate future extensions without code changes).
+//   2. `candidateProfile.skills` (LLM-extracted; both v1 and v2 paths
+//      populate this — v2 via adaptV2ToStructuredCv).
+//
+// Frequency = number of times the same normalized skill appears across all
+// sources (a skill listed under three jobs ranks above one listed once).
+// Output is normalized (trim + lowercase), deduped, filtered (empty / single-
+// char / numeric-only dropped), and capped at 12.
+// ---------------------------------------------------------------------------
+
+const TOP_SKILLS_CAP = 12
+
+/** Coerce arbitrary v2 workHistory shapes into a safe `string[]`. */
+function readSkillsField(entry: unknown): string[] {
+  if (!entry || typeof entry !== "object") return []
+  const v = (entry as Record<string, unknown>).skills
+  if (!Array.isArray(v)) return []
+  return v.filter((x): x is string => typeof x === "string")
+}
+
+function normalizeSkill(raw: string): string | null {
+  const trimmed = raw.trim().toLowerCase()
+  if (trimmed.length <= 1) return null
+  // Drop pure-numeric tokens ("2024", "10") — those are dates / years not
+  // skills. Keep alphanumeric tokens like "ec2" or "es6".
+  if (/^[0-9]+$/.test(trimmed)) return null
+  return trimmed
+}
+
+export function computeTopSkills(args: {
+  candidateProfileSkills?: readonly string[]
+  workHistory?: ReadonlyArray<unknown>
+}): string[] {
+  const counts = new Map<string, number>()
+  const order: string[] = [] // insertion order tiebreak (stable sort)
+
+  const ingest = (raw: unknown): void => {
+    if (typeof raw !== "string") return
+    const norm = normalizeSkill(raw)
+    if (!norm) return
+    if (!counts.has(norm)) {
+      counts.set(norm, 1)
+      order.push(norm)
+    } else {
+      counts.set(norm, counts.get(norm)! + 1)
+    }
+  }
+
+  // Source 1 — v2 workHistory[].skills (defensive; field may not exist).
+  if (Array.isArray(args.workHistory)) {
+    for (const w of args.workHistory) {
+      for (const s of readSkillsField(w)) ingest(s)
+    }
+  }
+  // Source 2 — candidateProfile.skills (always present after validation).
+  if (Array.isArray(args.candidateProfileSkills)) {
+    for (const s of args.candidateProfileSkills) ingest(s)
+  }
+
+  // Sort by descending frequency; ties broken by first-seen order so
+  // candidateProfile order is preserved when nothing else differentiates.
+  const sorted = order
+    .slice()
+    .sort((a, b) => {
+      const da = counts.get(b)! - counts.get(a)!
+      if (da !== 0) return da
+      return order.indexOf(a) - order.indexOf(b)
+    })
+  return sorted.slice(0, TOP_SKILLS_CAP)
+}
+
 function deriveOriginalFileName(mediaUrl: string): string {
   try {
     const u = new URL(mediaUrl)
@@ -1336,12 +1420,19 @@ export async function ingestCv(
     // only allocate the id; we DO NOT write parsedCandidateResumes here.
     const newResumeId = dbHandle.collection(PARSED_RESUMES_COLLECTION).doc().id
     const expireAt = new Date(new Date(ts).getTime() + CV_PENDING_TTL_MS).toISOString()
+    // iter34 A.1 — derive topSkills so the staged → promoted row also
+    // carries the field that orchestrator-deps.generateJobRecs reads.
+    const stagedTopSkills = computeTopSkills({
+      candidateProfileSkills: parsed.candidateProfile.skills,
+      workHistory: v2Output ? v2Output.parsed.workHistory : undefined,
+    })
     const stagedDoc = {
       userId: args.userId,
       candidateProfile: parsed.candidateProfile,
       experiences: parsed.experiences,
       education: parsed.education,
       industryTags: parsed.industryTags,
+      topSkills: stagedTopSkills,
       originalFileName: deriveOriginalFileName(args.mediaUrl),
       fileType: "application/pdf",
       studentFrom: null,
@@ -1455,6 +1546,13 @@ export async function ingestCv(
   let resumeId: string
   try {
     const ts = nowIso()
+    // iter34 A.1 — derive topSkills (was a ghost field — written by no one,
+    // read by orchestrator-deps.generateJobRecs). Frequency-ranked + capped
+    // at 12 from candidateProfile.skills + (when v2) workHistory[].skills.
+    const topSkills = computeTopSkills({
+      candidateProfileSkills: parsed.candidateProfile.skills,
+      workHistory: v2Output ? v2Output.parsed.workHistory : undefined,
+    })
     const baseDoc: Record<string, unknown> = {
       userId: args.userId,
       candidateProfile: parsed.candidateProfile,
@@ -1462,6 +1560,8 @@ export async function ingestCv(
       education: parsed.education,
       // Stream F1 — 1..3 canonical industry tags inferred from experiences.
       industryTags: parsed.industryTags,
+      // iter34 A.1 — flat top-level field consumed by job-rec.
+      topSkills,
       originalFileName: deriveOriginalFileName(args.mediaUrl),
       fileType: "application/pdf",
       studentFrom: null,

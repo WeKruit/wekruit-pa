@@ -4,6 +4,7 @@ import assert from "node:assert/strict"
 import {
   ingestCv,
   buildCvFactBody,
+  computeTopSkills,
   detectCvLang,
   type IngestCvDeps,
   type StructuredCv,
@@ -583,5 +584,164 @@ describe("buildCvFactBody / detectCvLang", () => {
     const body = buildCvFactBody(zh)
     assert.ok(body.startsWith("用户简历摘要:"))
     assert.ok(body.includes("瑞银集团"))
+  })
+})
+
+// ---------- iter34 sprint A.1 — topSkills compute + write -------------------
+
+describe("computeTopSkills (iter34 A.1)", () => {
+  it("only candidateProfile.skills → output is normalized + deduped list", () => {
+    const out = computeTopSkills({
+      candidateProfileSkills: ["TypeScript", "React", "Node.js"],
+    })
+    assert.deepEqual(out, ["typescript", "react", "node.js"])
+  })
+
+  it("v2 workHistory[].skills + candidateProfile.skills → merged with frequency-rank", () => {
+    // "Python" appears in 3 workHistory entries + candidateProfile (4x total)
+    // "SQL" appears in 1 workHistory entry + candidateProfile (2x total)
+    // "Docker" appears in candidateProfile only (1x total)
+    const workHistory = [
+      { skills: ["Python", "SQL"] },
+      { skills: ["Python"] },
+      { skills: ["Python"] },
+    ]
+    const out = computeTopSkills({
+      candidateProfileSkills: ["Python", "SQL", "Docker"],
+      workHistory,
+    })
+    // Highest freq first.
+    assert.equal(out[0], "python")
+    assert.equal(out[1], "sql")
+    assert.equal(out[2], "docker")
+    assert.equal(out.length, 3)
+  })
+
+  it("empty input → returns []", () => {
+    assert.deepEqual(computeTopSkills({}), [])
+    assert.deepEqual(computeTopSkills({ candidateProfileSkills: [] }), [])
+    assert.deepEqual(
+      computeTopSkills({ candidateProfileSkills: [], workHistory: [] }),
+      []
+    )
+    assert.deepEqual(
+      computeTopSkills({ candidateProfileSkills: ["", "  ", "x", "42"] }),
+      []
+    )
+  })
+
+  it("duplicates + case mixing → single normalized entry with summed count", () => {
+    const out = computeTopSkills({
+      candidateProfileSkills: ["TypeScript", "typescript", "TYPESCRIPT", "React"],
+    })
+    // dedupe after normalize → ["typescript", "react"], typescript first (3x)
+    assert.deepEqual(out, ["typescript", "react"])
+  })
+
+  it("frequency wins over insertion order (A 3x, B 1x → A first)", () => {
+    const out = computeTopSkills({
+      // B inserted first to verify count beats order.
+      candidateProfileSkills: ["SkillB", "SkillA"],
+      workHistory: [
+        { skills: ["SkillA"] },
+        { skills: ["SkillA"] },
+      ],
+    })
+    assert.deepEqual(out, ["skilla", "skillb"])
+  })
+
+  it("caps at 12", () => {
+    const skills = Array.from({ length: 30 }, (_, i) => `Skill_${i}`)
+    const out = computeTopSkills({ candidateProfileSkills: skills })
+    assert.equal(out.length, 12)
+    // First 12 preserved (all freq=1, tiebreak = insertion order).
+    assert.deepEqual(
+      out,
+      Array.from({ length: 12 }, (_, i) => `skill_${i}`)
+    )
+  })
+
+  it("filters single-char and pure-numeric tokens", () => {
+    const out = computeTopSkills({
+      candidateProfileSkills: ["A", "x", "  ", "2024", "ec2", "es6", "TypeScript"],
+    })
+    // Drops "A", "x" (single char after trim), "2024" (pure numeric).
+    // Keeps "ec2", "es6", "typescript" (alphanumeric).
+    assert.deepEqual(out, ["ec2", "es6", "typescript"])
+  })
+
+  it("tolerates malformed v2 workHistory entries (missing/wrong-typed skills)", () => {
+    const workHistory: unknown[] = [
+      { skills: ["Go"] },
+      { skills: "not-an-array" },
+      null,
+      undefined,
+      { /* no skills field */ },
+      { skills: [42, "Rust", { nested: true }] },
+    ]
+    const out = computeTopSkills({
+      candidateProfileSkills: ["Go"],
+      workHistory,
+    })
+    assert.deepEqual(out, ["go", "rust"])
+  })
+})
+
+describe("ingestCv writes topSkills (iter34 A.1)", () => {
+  it("legacy v1 path: topSkills present on parsedCandidateResumes doc", async () => {
+    const { db, state } = makeFakeDb()
+    const { log } = captureLog()
+    const customParsed: StructuredCv = {
+      candidateProfile: {
+        name: "SWE Candidate",
+        email: null,
+        phone: null,
+        linkedIn: null,
+        location: "Remote",
+        skills: ["TypeScript", "React", "PostgreSQL", "Docker"],
+      },
+      experiences: [],
+      education: [],
+      industryTags: ["tech_software"],
+    }
+    const { deps } = makeStubbedDeps({ db, log, parsed: customParsed })
+    const res = await ingestCv(
+      { userId: "user_swe", mediaUrl: "https://example.com/cv.pdf" },
+      deps
+    )
+    assert.equal(res.ok, true)
+    assert.equal(state.resumes.length, 1)
+    const w = state.resumes[0]!
+    assert.ok(Array.isArray(w.data.topSkills))
+    assert.deepEqual(w.data.topSkills, ["typescript", "react", "postgresql", "docker"])
+  })
+
+  it("empty candidateProfile.skills → topSkills is [] (not missing)", async () => {
+    const { db, state } = makeFakeDb()
+    const { log } = captureLog()
+    const customParsed: StructuredCv = {
+      candidateProfile: {
+        name: null,
+        email: null,
+        phone: null,
+        linkedIn: null,
+        location: "",
+        skills: [],
+      },
+      experiences: [],
+      education: [],
+      industryTags: ["other"],
+    }
+    const { deps } = makeStubbedDeps({ db, log, parsed: customParsed })
+    const res = await ingestCv(
+      { userId: "user_blank", mediaUrl: "https://example.com/cv.pdf" },
+      deps
+    )
+    assert.equal(res.ok, true)
+    const w = state.resumes[0]!
+    // Field must be present (job-rec read does `?? []` but absence vs []
+    // is meaningful for downstream nullability assumptions).
+    assert.ok("topSkills" in w.data)
+    assert.deepEqual(w.data.topSkills, [])
   })
 })
