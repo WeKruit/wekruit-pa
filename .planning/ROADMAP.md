@@ -685,3 +685,265 @@ D1: Drop Reflexion-lite critic loop default | D2: Plutchik demoted to internal s
 - daily-batch.ts shared between H13 + Stream-C + Stream-F + Stream-I — final state in HEAD verified internally consistent (140/140 tests)
 - Stream-D self-reset accidentally dropped 0e8997a Stream-B commit — recovered via cherry-pick to `b1b0468`
 - WHERE-domain discipline enforced: each P7 only commits its own files; P10 reconciles via TodoWrite tracker
+
+---
+
+## Milestone v1.6 — Unified Canonical Tags & Match Quality v1
+
+**Goal:** Replace fragmented industry/skill/topSkill logic across `cv-ingest` + `parsedCandidateResumes` + `pa-users` + `matching-jobs` with single-source canonical 2-axis vocab in `packages/shared-tags`. Match cascade: hard filter → soft score → LLM rerank async → emb fallback. All vocab spelled out, **no abbreviations**.
+
+**Spawned:** 2026-05-05 after iter34 sprint surfaced fragmented tag system as root cause of bad match quality (SWE candidate Adam recommended BDR / Account Manager / Warehouse Team Lead). Design conversation locked **16 decisions** (D1–D16) before code dispatch — see `PROJECT.md` and `STATE.md`.
+
+**Estimate:** ~10–14 dev-days across **11 phases (52–62)**, each 1–2 dev-days. Eval-first ordering applied via Phase 61 (QA evaluator runs against changed runtime — baseline locked AFTER vocab foundation).
+
+**Phases:**
+
+- [ ] **Phase 52: Canonical Tag Vocab Foundation** — `packages/shared-tags` extends 10 axes, all spelled-out, zod write-time validation. Foundation for all downstream phases.
+- [ ] **Phase 53: pa-resume-parser v2 wire + relevantTags extract** — cv-ingest wires v2 `parseResumeText`, schema gains `relevantIndustry` / `relevantSpecialization` / `proposedTags`, idempotency + Sonnet-4-6 fallback in chain.
+- [ ] **Phase 54: Unified pa-users.tags writer** — single source-of-truth user tag store, `mergeUserTags()` only writer, migration script for 100+ existing users.
+- [ ] **Phase 55: matching-jobs schema migration + roleFunction backfill** — Firestore schema gains `roleFunction[]`, deterministic 116K-job migration from `industry` → 17 jobright role functions.
+- [ ] **Phase 56: queryMatchingJobs read pa-users.tags + filter + score** — generateJobRecs reads exclusively from pa-users.tags, hard-filter chain + soft score weights + per-job reasoning with top-2 weighted skills.
+- [ ] **Phase 57: Liveness/404 sweep + atsApplyUrl backfill** — daily 404 sweep CF + 30K active in <60min, dead>30d hard-delete, paBackfillMatchingJobsAtsUrl wired into daily.
+- [ ] **Phase 58: Nightly LLM rerank batch + per-skill JD-rel weight** — Cloud Scheduler 03:00 UTC Qwen-7B JSON-mode batch, `pa-user-rerank-cache` + `pa-user-skill-jdrel-cache`, fire-and-forget reuse.
+- [ ] **Phase 59: Dashboards (canonical-tags + qa-evaluator + onboarding-questions extension)** — `/admin/canonical-tags` with sandbox-promotion + counts; `/admin/qa-evaluator` weekly results; `/admin/onboarding-questions` per-user pa-users.tags view.
+- [ ] **Phase 60: Dev triggers + scenarios + fixtures** — `__PA_FIND_MATCH__` mirrors `__PA_RESET__`, scenario runner `--user-id` flag, dump tail rerank-cache flag, 5-persona fixture set.
+- [ ] **Phase 61: QA evaluator thread weekly run** — Cloud Scheduler `paQaEvaluatorWeekly` Mon 09:00 UTC, 100 user×match pair sample, hard-filter pass + top-3 acceptable, failure-loop until ≥90%/70% pass.
+- [ ] **Phase 62: Documentation (CLAUDE.md / MILESTONE-v1.6.md / cross-repo handoff)** — milestone doc, CLAUDE.md design lock, packages/shared-tags README, wekruit-scraping `WEKRUIT_PA_TAG_HANDOFF.md`.
+
+**Phase summary table:**
+
+| # | Phase | Goal | Requirements | Quantitative Gate | Status |
+|---|-------|------|--------------|-------------------|--------|
+| 52 | Canonical Tag Vocab Foundation | Extend `packages/shared-tags` with 10 axes (roleFunction 17 / industrySector 42 / major 45 / visa 4 / jobType 10 / careerStage 13 / location 130+ / relevantTags / skills / sandbox-promote), all spelled-out, zod write-time validation, Firestore overlay readable. | TAG-01..12 | Zod write-time rejects abbreviations + non-canonical tokens; all 10 axes exported with type tests | Not started |
+| 53 | pa-resume-parser v2 wire + relevantTags extract | cv-ingest uses `pa-resume-parser` v2 `parseResumeText`; schema extended with `relevantIndustry`, `relevantSpecialization`, `proposedTags` (max 12); LLM chain gpt-5.4-nano → claude-sonnet-4-6 → gpt-4.1-mini; post-parse Claire dialogue confirm; idempotent on sha256. | PARSE-01..09 | Adam re-parse round-trip yields `industryTags = ["artificial_intelligence_and_machine_learning", "technology_general"]` (not `["other"]`); idempotent on sha256 | Not started |
+| 54 | Unified pa-users.tags writer | Single source-of-truth `pa-users/{userId}.tags`. cv-ingest + chat-answer hooks both go through `mergeUserTags()` (iter34 H.1). Migration script for 100+ users. Inconsistency surfaced to admin. | USER-TAG-01..05 | All 100+ existing users have populated `pa-users.tags`; only `mergeUserTags()` is the writer (grep shows zero direct writes) | Not started |
+| 55 | matching-jobs schema migration + roleFunction backfill | Add `roleFunction: string[]` to `matching-jobs`, retain `industrySector`. Deterministic mapper backfills 116K+ jobs from current `industry` → 17 jobright role functions. | MATCH-02 | 116K+ `matching-jobs` rows have `roleFunction[]`; migration is idempotent + dry-run audit shows ≤1% unmapped | Not started |
+| 56 | queryMatchingJobs read pa-users.tags + filter + score | generateJobRecs reads exclusively from `pa-users.tags` (no legacy fallback). Firestore `array-contains-any roleFunction`, limit 500. Hard post-filter chain (visa/loc/stage/jobType/firstSeenAt<20d/atsApplyUrl/dead). Soft score weights (llm 0.40 / skill 0.20 / relevant 0.15 / industry 0.10 / emb 0.10 / salary 0.05). Per-skill base × JD-relative weight. Per-job reasoning shows top-2 weighted skills. | MATCH-01, MATCH-03..08 | SWE Adam scenario yields 0 BDR/sales/cashier recs; per-job reason surfaces top-2 weighted JD-aligned skills; `lastSeenAt` not read (replaced by 20d firstSeenAt window) | Not started |
+| 57 | Liveness/404 sweep + atsApplyUrl backfill | Daily Cloud Scheduler HEAD-checks `matching-jobs.atsApplyUrl`, marks dead, hard-deletes >30d. Reuses `paBackfillMatchingJobsAtsUrl` (iter34 G.3). | LIVE-01..04 | jobright.ai-leaked recommendation rate: 50%+ → 0%; sweep clears 30K active in <60min | Not started |
+| 58 | Nightly LLM rerank batch + per-skill JD-rel weight | Cloud Scheduler 03:00 UTC Qwen-7B JSON-mode batch. `pa-user-rerank-cache/{userId}` (top-50/active user). Per-skill JD-rel cache `pa-user-skill-jdrel-cache/{userId}/{jobId}`. Reuses fire-and-forget llmRerank (iter34 H.2). | RERANK-01..04 | Nightly batch completes in <24h for all active users; cache stale-by >36h triggers fallback | Not started |
+| 59 | Dashboards (canonical-tags + qa-evaluator + onboarding-questions extension) | `/admin/canonical-tags` reads vocab + Firestore overlay + sandbox→canonical promotion + counts. `/admin/qa-evaluator` weekly run results. `/admin/onboarding-questions` per-user `pa-users.tags` view. | DASH-01..04 | Admin can promote a sandbox `proposedTag` to canonical industrySector via UI without code change; counts visible per axis | Not started |
+| 60 | Dev triggers + scenarios + fixtures | `__PA_FIND_MATCH__` iMessage trigger. Scenario runner `--user-id <uid>` flag. `dump-outbound-tail.mjs --include-rerank-cache`. 5-persona fixtures (SWE / PM / Designer / ML / Data Analyst). | DEV-01..04 | `__PA_FIND_MATCH__` triggers `generateJobRecs` against any user; 5-persona fixture suite checks in CI | Not started |
+| 61 | QA evaluator thread weekly run | `paQaEvaluatorWeekly` (Mon 09:00 UTC), 100 user×match pair sample, Qwen-7B judge, `pa-qa-evaluator-runs/{runId}` writes. Slack/email alert <90%/70%. Failure-loop priority queue until pass. **Eval-first contract:** runs AFTER vocab foundation (Phase 52) so baseline reflects new pipeline. | QA-01..05 | Hard-filter pass ≥90% + top-3 acceptable ≥70% on weekly auto-sample; failure-loop closes within 1 week | Not started |
+| 62 | Documentation (CLAUDE.md / MILESTONE-v1.6.md / cross-repo handoff) | `CLAUDE.md` v1.6 design lock. `.planning/MILESTONE-v1.6-unified-tags.md` (architecture + vocab + flow + measurement). `packages/shared-tags/README.md` v1.6 additions. `wekruit-scraping/WEKRUIT_PA_TAG_HANDOFF.md` cross-repo coordination doc. | DOC-01..04 | All 4 docs land before milestone-complete; cross-repo handoff doc reviewed by scraping repo owner | Not started |
+
+### v1.6 Eval-First Ordering Note
+
+P0 = Phase 61 QA evaluator extends BEFORE any runtime change to lock baseline. **However**, Phase 52 (canonical tag vocab) is the foundation everything depends on; without it, every downstream phase has no schema to read. **Resolved order:**
+
+```
+Phase 52 (vocab foundation, hard prerequisite)
+   ↓
+Phase 53–58 (runtime rewire on top of vocab)
+   ↓
+Phase 61 (QA evaluator runs against new runtime — locks v1.6 baseline)
+   ↓
+Phase 62 (docs)
+   ↓
+Milestone close (Phase 61 must pass ≥90%/70% to ship v1.6)
+```
+
+Phase 59 (dashboards), Phase 60 (dev triggers) are parallelizable side-tracks. Phase 61 is the final ship gate.
+
+### v1.6 Decision Log Summary (D1–D16)
+
+D1: roleFunction = jobright 17 verbatim (closed enum). | D2: industrySector = 42 add-able via dashboard (sandbox→promote). | D3: major = soft score (not hard filter). | D4: visa = 4 enum (`citizen` / `permanent_resident` / `sponsor_needed` / `other`). | D5: NO abbreviations anywhere (LLM confusion). | D6: relevantTags / proposedTags parse-time extract. | D7: per-skill base + JD-relative weight (Qwen-7B nightly). | D8: unified `pa-users.tags` single source. | D9: hard filter → skill+relevant+industry score → LLM async → emb fallback. | D10: 20d `firstSeenAt` window + 404 daily, abandon `lastSeenAt`. | D11: cv-ingest wires `pa-resume-parser` v2 (not single-shot nano). | D12: post-parse Claire dialogue confirm. | D13: QA evaluator thread weekly. | D14: `__PA_FIND_MATCH__` dev trigger. | D15: reduce regex, prefer LLM. | D16: industry add-able via dashboard.
+
+### v1.6 Goal Metrics (5)
+
+1. SWE candidate Adam (`e5d97cd8-1e1d-439d-8672-3008f8aeef2e`) → BDR/sales/cashier/warehouse leak rate: **100% → <5%**.
+2. jobright.ai-leaked match URL rate: **50%+ → 0%**.
+3. Adam industryTags: `["other"] → ["artificial_intelligence_and_machine_learning", "technology_general"]`.
+4. Per-job reasoning surfaces top-2 JD-aligned weighted skill matches.
+5. QA evaluator pass rate: hard filter 100% (no leak), soft score top-3 acceptable **≥70%** weekly auto-sample.
+
+### v1.6 Launch Gate
+
+- [ ] Phase 52 vocab foundation locked + zod schema rejects abbreviations
+- [ ] Phase 53 pa-resume-parser v2 wired + Adam re-parse yields correct industry tags
+- [ ] Phase 54 unified `pa-users.tags` migration complete (100+ users, 0 direct-writers)
+- [ ] Phase 55 `matching-jobs` schema migration complete (116K+ rows backfilled)
+- [ ] Phase 56 generateJobRecs read-side cutover; SWE Adam scenario yields 0 BDR/sales recs
+- [ ] Phase 57 daily 404 sweep stable; jobright.ai leak rate 0%
+- [ ] Phase 58 nightly Qwen-7B rerank batch operational <24h
+- [ ] Phase 59 admin dashboards live; sandbox→canonical promotion verified
+- [ ] Phase 60 `__PA_FIND_MATCH__` + 5-persona fixtures committed
+- [ ] Phase 61 weekly QA evaluator: hard filter ≥90% + top-3 ≥70%
+- [ ] Phase 62 docs landed (CLAUDE.md / MILESTONE-v1.6.md / shared-tags README / cross-repo handoff)
+
+### v1.6 Backlog (defer to v2.0)
+
+- CROSS-REPO-PYTHON-PORT — port `packages/shared-tags` to `wekruit-scraping/researcher/pipeline/canonical_tags.py`.
+- SCRAPING-EMIT-TAG-EVENTS — `wekruit-scraping/scripts/emit_tag_events.py` writer.
+- RECRUITER-AGENT-TAGS — extend tag system to candidate-sourcing flows.
+- MULTI-LOCATION-WEIGHTING — distance similarity (NYC ≈ Boston East-coast clustering).
+- SKILL-SIMILARITY-EMBEDDING — pre-computed skill embedding dict (python ≈ pyspark).
+- RESUME-VARIANT-PER-JOB — VALET-style per-job CV rewriting.
+
+### v1.6 Out of Scope
+
+- Cross-repo Python tag emit (defer v2.0).
+- UK/EU/non-NA visa types (NA-only focus).
+- Recruiter agent overhaul (already shipped v1.5).
+- Multi-language CV parse (English-only).
+- Job application auto-fill (qaBank-to-mem0 already covers).
+- Real-time match notifications (async daily batch only).
+
+---
+
+## Phase Details (52–62)
+
+> Detail sections so `gsd-tools roadmap analyze` can discover phases 52–62. Summary rows live in the v1.6 milestone table above.
+
+### Phase 52: Canonical Tag Vocab Foundation
+
+**Goal:** Extend `packages/shared-tags` with all 10 canonical axes — `roleFunction` 17 / `industrySector` 42 / `major` 45 / `visa` 4 / `jobType` 10 / `careerStage` 13 / `location` 130+ / `relevantTags` open-vocab / `skills` bucketed open-vocab + per-skill weight / sandbox-promote pattern. **All values spelled out, zero abbreviations** (D5). Zod write-time validation. Firestore overlay (sandbox + promote-to-canonical) for industrySector.
+**Requirements:** TAG-01, TAG-02, TAG-03, TAG-04, TAG-05, TAG-06, TAG-07, TAG-08, TAG-09, TAG-10, TAG-11, TAG-12
+**Hard prerequisite:** none — foundation phase, blocks all v1.6 downstream phases.
+**Reuse:** `packages/shared-tags` already has 10-type + mutexGroup + sha256 + decay (iter30 WS2); extend, don't rewrite.
+**Status:** Not started.
+**Success Criteria**:
+1. All 10 canonical vocabs exported from `packages/shared-tags`, each with zod schema + TS type + tests confirming closed enum size (17 / 42 / 45 / 4 / 10 / 13 / 130+).
+2. Zod schema rejects abbreviations (`"swe"`, `"pm"`, `"ml"`, `"ai"`) and any non-`[a-z][a-z0-9_]*` token at write-time, with explanatory error.
+3. `industrySector` Firestore overlay (`pa-canonical-vocab/industrySector`) readable from dashboard with per-tag count.
+4. Sandbox-promotion API: `proposedTags[]` (max 12, lowercase, sandbox) → admin promote-to-canonical button → write to overlay.
+5. `packages/shared-tags` consumers (cv-ingest, generateJobRecs, dashboards) compile against new exports without runtime errors.
+
+### Phase 53: pa-resume-parser v2 wire + relevantTags extract
+
+**Goal:** `cv-ingest` Cloud Function uses `packages/pa-resume-parser` v2 `parseResumeText` — removes inline single-shot nano call. LLM chain `gpt-5.4-nano (primary) → claude-sonnet-4-6 (fallback) → gpt-4.1-mini (final)` with Sonnet-4-6 reintroduced. Schema extended with `relevantIndustry: string[]` / `relevantSpecialization: string[]` / `proposedTags: string[]` (max 12, sandbox) parse-time. Post-parse Claire dialogue confirms understanding ("我看到你: <skills+companies+roles+relevantTags>; 对吗?"). Industry classification reduces regex (D15) — when LLM emits `["other"]`, Sonnet-4-6 second-pass with explicit reasoning prompt. cv-ingest idempotent on sha256.
+**Requirements:** PARSE-01, PARSE-02, PARSE-03, PARSE-04, PARSE-05, PARSE-06, PARSE-07, PARSE-08, PARSE-09
+**Hard prerequisite:** Phase 52 (vocab schema).
+**Reuse:** `packages/pa-resume-parser` already has 3-tier router + valet-port done (iter30 WS1); `apps/functions/src/cv-ingest/cv-ingest.ts` already imports the package (partial wire).
+**Status:** Not started.
+**Success Criteria**:
+1. `cv-ingest` parses Adam's CV (`rQIqQEghvZLwVkMad2lJ`) and yields `industryTags = ["artificial_intelligence_and_machine_learning", "technology_general"]` (D15 second-pass triggered).
+2. Schema includes `relevantIndustry`, `relevantSpecialization`, `proposedTags` (max 12), each populated from work history.
+3. LLM chain uses Sonnet-4-6 fallback on 5xx/timeout/rate (visible in `pa_tool_calls`).
+4. Re-parsing same PDF (same sha256) returns existing `parsedCandidateResumes` record without duplicate side-effects.
+5. Post-parse Claire dialogue ("我看到你: ...") fires within 1 turn of cv-ingest completion; user correction writes back through `mergeUserTags()`.
+
+### Phase 54: Unified pa-users.tags writer
+
+**Goal:** Every user has unified `pa-users/{userId}.tags` with full canonical schema. cv-ingest writes `tags.skills` (full list, not truncated) + `tags.industrySector` + `tags.relevantIndustry` + `tags.relevantSpecialization` + `tags.proposedTags` + `tags.embedding` + `tags.lastUpdatedFromCv`. Onboarding chat answer hooks write `tags.targetRole` / `tags.yoeRange` / `tags.visaStatus` / `tags.prefersStartup` / `tags.targetLocations` / `tags.preferredLang` / `tags.lastUpdatedFromChat`. Migration script ports 100+ existing users from fragmented data into `pa-users.tags`. **`mergeUserTags()` is the only writer**.
+**Requirements:** USER-TAG-01, USER-TAG-02, USER-TAG-03, USER-TAG-04, USER-TAG-05
+**Hard prerequisite:** Phase 52 + Phase 53.
+**Reuse:** `packages/pa-orchestrator/src/tags/user-tags-merger.ts` `mergeUserTags()` lib already shipped (iter34 H.1 commit `253ce87`); cv-ingest already calls it (commit `ad099a2`).
+**Status:** Not started.
+**Success Criteria**:
+1. 100% of 100+ existing users have populated `pa-users/{userId}.tags` after migration script (idempotent — re-run is no-op).
+2. Missing-tag user surfaced to admin dashboard as "tags-inconsistent" list.
+3. `grep -r "pa-users.*\.tags.*set\|pa-users.*\.tags.*update" apps/ packages/` shows zero hits outside `mergeUserTags()` — the only writer.
+4. cv-ingest on Adam refresh writes full skill list (not truncated to 12) + relevantIndustry + proposedTags + embedding to `pa-users.tags`.
+5. Chat answer hook (onboarding probe v2 from Phase 44) writes targetRole + yoeRange + visaStatus + targetLocations through `mergeUserTags()`.
+
+### Phase 55: matching-jobs schema migration + roleFunction backfill
+
+**Goal:** Firestore `matching-jobs` schema gains `roleFunction: string[]` (closed enum 17 from D1) while retaining `industrySector: string[]`. **Two orthogonal axes.** Deterministic migration backfills 116K+ jobs from current `industry` field via mapper (e.g., `"tech_software"` → `software_engineering`). Migration is idempotent + dry-run audit before write.
+**Requirements:** MATCH-02
+**Hard prerequisite:** Phase 52 (vocab schema).
+**Reuse:** existing iter34 G.3 backfill CF pattern (`paBackfillMatchingJobsAtsUrl`); same job-runner shape.
+**Status:** Not started.
+**Success Criteria**:
+1. 116K+ `matching-jobs` rows have `roleFunction[]` after migration; verified via Firestore aggregate count.
+2. Dry-run report shows ≤1% unmapped jobs (logged for manual review, not blocking).
+3. Migration is idempotent — second run is no-op (skip rows where `roleFunction` already populated).
+4. `industrySector[]` field retained, not destroyed.
+5. Sample 100 jobs spot-checked: BDR job → `roleFunction = ["sales"]`, SWE job → `roleFunction = ["software_engineering"]`, no ambiguous mappings.
+
+### Phase 56: queryMatchingJobs read pa-users.tags + filter + score
+
+**Goal:** `generateJobRecs` reads exclusively from `pa-users.tags` (no legacy fragmented reads). Firestore query: `where('roleFunction', 'array-contains-any', user.targetRoleFunction)` + `orderBy firstSeenAt desc` + limit raised 50 → 500. Hard post-filter chain: `visa intersect` → `location intersect (anywhere bypass)` → `careerStage window` → `jobType exact` → `firstSeenAt < 20d` → `atsApplyUrl present + not jobright.ai` → `dead !== true`. Soft score weights: `llm_match 0.40` / `skill_jaccard 0.20` / `relevantTags 0.15` / `industrySector_overlap 0.10` / `cv_emb_cosine 0.10` / `salary_fit 0.05`. Per-skill `skill_jaccard` = base × JD-relative weight (Qwen-7B nightly cache). Per-job reasoning shows top-2 weighted matched skills + reason. **`lastSeenAt` deprecated** — 20d `firstSeenAt` window only.
+**Requirements:** MATCH-01, MATCH-03, MATCH-04, MATCH-05, MATCH-06, MATCH-07, MATCH-08
+**Hard prerequisite:** Phase 52 + 54 + 55.
+**Reuse:** `apps/functions/src/lib/llm-rerank.ts` Qwen-7B JSON-mode (iter34 G.4 / H.2 wire `c187c50`); cvEmbedding already wired (iter34 H.2 `d8e60e3`).
+**Status:** Not started.
+**Success Criteria**:
+1. SWE Adam scenario (`tests/scenarios/eval-adam-real-cv-en.yaml` + new `__PA_FIND_MATCH__` trigger) yields 0 BDR/sales/cashier/warehouse recommendations in top-3 (was 100% leak in iter34 G5 sim).
+2. `queryMatchingJobs` reads exclusively from `pa-users.tags` — `grep -r "parsedCandidateResumes" apps/functions/src/job-rec/` shows zero non-test reads on the recommendation hot path.
+3. Per-job reasoning message includes top-2 weighted JD-aligned skill matches with reason.
+4. `lastSeenAt` field not read anywhere on the recommendation path; only `firstSeenAt < 20d` window enforced.
+5. Filter cascade observable in audit log: hard-filter pass count + soft-score breakdown per recommended job.
+
+### Phase 57: Liveness/404 sweep + atsApplyUrl backfill
+
+**Goal:** Daily Cloud Scheduler CF HEAD-checks `matching-jobs.atsApplyUrl` for active jobs, marks `dead=true` on 404/410/500/timeout. Sweep batch 500/min, concurrent 50, 100ms throttle. 30K active in <60min. Re-checks dead jobs after 7d. Dead jobs older than 30d after marking are hard-deleted. `paBackfillMatchingJobsAtsUrl` (iter34 G.3 commit `a56da02`) wired into the daily sweep.
+**Requirements:** LIVE-01, LIVE-02, LIVE-03, LIVE-04
+**Hard prerequisite:** Phase 55 (schema must include atsApplyUrl).
+**Reuse:** `apps/functions/src/backfill-ats-urls.ts` Serper backfill CF.
+**Status:** Not started.
+**Success Criteria**:
+1. Daily Cloud Scheduler runs sweep at fixed UTC time; 30K active jobs HEAD-checked within 60min.
+2. jobright.ai-leaked recommendation rate **50%+ → 0%** (combined with Phase 56 hard-filter `not jobright.ai`).
+3. Dead-marked jobs age >30d are hard-deleted; verified by Firestore count delta.
+4. Re-check after 7d resurrects jobs that come back online (false-positive recovery).
+5. Sweep dashboard tile shows daily run health + dead-mark count + delete count.
+
+### Phase 58: Nightly LLM rerank batch + per-skill JD-rel weight
+
+**Goal:** Cloud Scheduler `paLlmRerankNightly` at 03:00 UTC runs LLM JD-CV match scorer using `Qwen/Qwen2.5-7B-Instruct` JSON-mode for top-50/active user. Output stored in `pa-user-rerank-cache/{userId}` with `ranked` + `computedAt`. Read-side falls back if cache stale >36h. Per-skill JD-relative weight stored as `pa-user-skill-jdrel-cache/{userId}/{jobId}`. Async fire-and-forget llmRerank already wired (iter34 H.2 commit `c187c50`); daily batch reuses same function.
+**Requirements:** RERANK-01, RERANK-02, RERANK-03, RERANK-04
+**Hard prerequisite:** Phase 56 (read path must use cache).
+**Reuse:** `apps/functions/src/lib/llm-rerank.ts` Qwen-7B JSON-mode (iter34 G.4); already wired into orchestrator-deps (H.2 `c187c50`).
+**Status:** Not started.
+**Success Criteria**:
+1. Nightly batch runs Mon-Sun 03:00 UTC; completes in <24h for all active users.
+2. `pa-user-rerank-cache/{userId}` has `ranked[]` + `computedAt`; stale >36h triggers read-side fallback to embedding cosine.
+3. `pa-user-skill-jdrel-cache/{userId}/{jobId}` populated for top-50 user×job pairs; consumed by Phase 56 `skill_jaccard` per-skill weight.
+4. Single fire-and-forget llmRerank function reused — no code duplication between sync and nightly paths.
+5. Cost ledger logged: tokens × Qwen-7B SiliconFlow price; spend visible in dashboard.
+
+### Phase 59: Dashboards (canonical-tags + qa-evaluator + onboarding-questions extension)
+
+**Goal:** Admin page `/admin/canonical-tags` reads `packages/shared-tags` vocab + Firestore overlay, displays all 10 axes with per-tag counts; supports promoting sandbox `proposedTags` to canonical `industrySector` with one click. Admin page `/admin/qa-evaluator` displays QA evaluator weekly run results (per-pair scores + summary). `/admin/onboarding-questions` extended with link to `pa-users.tags` view per user.
+**Requirements:** DASH-01, DASH-02, DASH-03, DASH-04
+**Hard prerequisite:** Phase 52 (vocab) + Phase 54 (pa-users.tags).
+**Reuse:** existing dashboard-web shell + design system; no new top-level navigation needed.
+**Status:** Not started.
+**Success Criteria**:
+1. `/admin/canonical-tags` lists all 10 axes; counts per tag visible (e.g., `software_engineering: 4310 jobs / 32 users`).
+2. Sandbox→canonical promotion button writes to Firestore overlay; promoted tag appears in dropdown next refresh; audit row written.
+3. `/admin/qa-evaluator` lists last 8 weekly runs with hard-filter pass + top-3 acceptable + Slack/email alert state.
+4. `/admin/onboarding-questions` user row → "View tags" link opens `pa-users/{userId}.tags` Firestore-rendered view.
+5. All admin actions audit-logged to `pa_audit_events`.
+
+### Phase 60: Dev triggers + scenarios + fixtures
+
+**Goal:** `__PA_FIND_MATCH__` iMessage trigger forces `generateJobRecs` execution (mirrors `__PA_RESET__` pattern, D14). Scenario runner `tests/scenarios/runner.mjs` gains `--user-id <uid>` flag for real-user scenario runs. `dump-outbound-tail.mjs` extended with `--include-rerank-cache` flag. 5-persona fixture set committed under `tests/fixtures/v1.6-personas/` (SWE / PM / Designer / ML / Data Analyst).
+**Requirements:** DEV-01, DEV-02, DEV-03, DEV-04
+**Hard prerequisite:** Phase 56 (must have a working generateJobRecs to trigger).
+**Reuse:** `__PA_RESET__` trigger pattern in orchestrator dispatch.
+**Status:** Not started.
+**Success Criteria**:
+1. Adam sends `__PA_FIND_MATCH__` via iMessage → `generateJobRecs` fires within 1 turn → match recommendation message returns.
+2. `node tests/scenarios/runner.mjs --user-id e5d97cd8-1e1d-439d-8672-3008f8aeef2e` executes scenario against Adam's real CV.
+3. `pnpm dump-outbound --include-rerank-cache` shows latest rerank cache state for the dumped user.
+4. 5 persona fixtures in `tests/fixtures/v1.6-personas/` (SWE / PM / Designer / ML / Data Analyst) each have `pa-users.tags` JSON + expected top-3 match shape.
+5. CI runs all 5 persona fixtures against `generateJobRecs` and verifies no leak (BDR/cashier/warehouse).
+
+### Phase 61: QA evaluator thread weekly run
+
+**Goal:** Cloud Scheduler `paQaEvaluatorWeekly` runs Mon 09:00 UTC, samples 100 user×match pairs, computes hard-filter pass + top-3 acceptable rate via Qwen-7B (D13). Output written to `pa-qa-evaluator-runs/{runId}` with full sample + per-pair score + summary. Surfaced via `/admin/qa-evaluator`. Slack/email alert if pass rate <90% hard filter or <70% top-3 acceptable. Evaluator prompt grounds judgment in candidate's `tags.targetRole` + `tags.relevantIndustry` + `tags.skills` (explicit reasoning per match). Failure-loop: failing pairs go to priority queue, next-week run re-evaluates same users; until pass ≥90%/70%, milestone not-shipped. **This is the v1.6 final ship gate.**
+**Requirements:** QA-01, QA-02, QA-03, QA-04, QA-05
+**Hard prerequisite:** Phase 56 + 58 (runtime must be in target state); Phase 59 (dashboard surfaces results).
+**Reuse:** `apps/functions/src/lib/llm-rerank.ts` Qwen-7B JSON-mode (same model, different prompt); existing Cloud Scheduler infra.
+**Status:** Not started.
+**Success Criteria**:
+1. `paQaEvaluatorWeekly` runs every Mon 09:00 UTC; produces `pa-qa-evaluator-runs/{runId}` doc.
+2. 100 user×match pair sample size; each pair has hard-filter-pass bool + top-3-acceptable rating + Qwen-7B reason.
+3. Hard-filter pass rate **≥90%** + top-3 acceptable rate **≥70%** on weekly auto-sample → milestone ship gate green.
+4. Slack/email alert fires when thresholds breached; alert includes link to `/admin/qa-evaluator` run detail.
+5. Failure-loop: priority queue re-evaluates failing pairs in subsequent weekly run; loop closes within ≤2 weeks of breach.
+
+### Phase 62: Documentation (CLAUDE.md / MILESTONE-v1.6.md / cross-repo handoff)
+
+**Goal:** `CLAUDE.md` updated with v1.6 design lock (16 decisions, 5 metrics, vocab references, match flow diagram). `.planning/MILESTONE-v1.6-unified-tags.md` written with full architecture diagram + vocab table + match flow + measurement protocol. `packages/shared-tags/README.md` updated with v1.6 vocab additions + sandbox-promotion pattern + cross-repo notes. `wekruit-scraping/WEKRUIT_PA_TAG_HANDOFF.md` (cross-repo coordination doc, no code change in scraping repo).
+**Requirements:** DOC-01, DOC-02, DOC-03, DOC-04
+**Hard prerequisite:** Phase 61 (numbers in milestone doc require QA evaluator results).
+**Reuse:** existing `MILESTONE-v1.4-humanize-runtime-v2.md` + `MILESTONE-v1.5-friend-companion.md` doc shape.
+**Status:** Not started.
+**Success Criteria**:
+1. `CLAUDE.md` v1.6 section added with 16 decisions + 5 metrics + match flow ASCII diagram.
+2. `.planning/MILESTONE-v1.6-unified-tags.md` exists with architecture diagram + 10-axis vocab table + filter→score→rerank flow + measurement protocol.
+3. `packages/shared-tags/README.md` documents v1.6 additions + sandbox-promotion pattern + cross-repo handoff note.
+4. `wekruit-scraping/WEKRUIT_PA_TAG_HANDOFF.md` ships in scraping repo with v1.6 schema reference + future Python port plan (deferred to v2).
+5. Adam reads all 4 docs and confirms v1.6 design lock matches shipped behavior; no doc-vs-code drift.

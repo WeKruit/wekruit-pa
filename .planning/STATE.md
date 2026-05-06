@@ -2,11 +2,11 @@
 gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: Unified Canonical Tags & Match Quality v1
-status: defining_requirements
-last_updated: "2026-05-05T22:00:00.000Z"
+status: roadmap_locked
+last_updated: "2026-05-05T23:30:00.000Z"
 last_activity: 2026-05-05
 progress:
-  total_phases: 0
+  total_phases: 11
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -14,16 +14,50 @@ progress:
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: **Phase 52 — Canonical Tag Vocab Foundation (not started)**
 Plan: —
-Status: Defining requirements
-Last activity: 2026-05-05 — Milestone v1.6 started
+Status: Roadmap locked 2026-05-05; v1.6 phases 52–62 derived (11 phases, ~10–14 dev-days)
+Last activity: 2026-05-05 — Roadmap created with 100% requirement coverage (59 REQ-IDs across 11 phases)
 
 ## v1.6 — Unified Canonical Tags & Match Quality v1 (this milestone)
 
-Spawned 2026-05-05 by Adam after iter34 sprint surfaced fragmented tag system as root cause of bad match quality (SWE candidate Adam recommended BDR / Account Manager / Warehouse Team Lead). Design conversation locked 16 decisions before any code dispatch.
+Spawned 2026-05-05 by Adam after iter34 sprint surfaced fragmented tag system as root cause of bad match quality (SWE candidate Adam recommended BDR / Account Manager / Warehouse Team Lead). Design conversation locked **16 decisions** before any code dispatch.
+
+**Phase numbering:** continues from v1.5 last phase 51. v1.6 spans phases **52–62** (11 phases).
 
 **Architecture pivot:** previously matching used 4 fragmented tag sources (`statedPreferences` + `parsedCandidateResumes.industryTags` + `parsedCandidateResumes.topSkills` + `parsedCandidateResumes.embedding`). v1.6 unifies into single source `pa-users/{userId}.tags` with two orthogonal axes (`roleFunction` 17 + `industrySector` 42, no abbreviations).
+
+**Phases (52–62):**
+
+| # | Phase | Reqs | Status |
+|---|-------|------|--------|
+| 52 | Canonical Tag Vocab Foundation | TAG-01..12 (12) | Not started |
+| 53 | pa-resume-parser v2 wire + relevantTags extract | PARSE-01..09 (9) | Not started |
+| 54 | Unified pa-users.tags writer | USER-TAG-01..05 (5) | Not started |
+| 55 | matching-jobs schema migration + roleFunction backfill | MATCH-02 (1) | Not started |
+| 56 | queryMatchingJobs read pa-users.tags + filter + score | MATCH-01, 03..08 (7) | Not started |
+| 57 | Liveness/404 sweep + atsApplyUrl backfill | LIVE-01..04 (4) | Not started |
+| 58 | Nightly LLM rerank batch + per-skill JD-rel weight | RERANK-01..04 (4) | Not started |
+| 59 | Dashboards (canonical-tags + qa-evaluator + onboarding-questions ext) | DASH-01..04 (4) | Not started |
+| 60 | Dev triggers + scenarios + fixtures | DEV-01..04 (4) | Not started |
+| 61 | QA evaluator thread weekly run (final ship gate) | QA-01..05 (5) | Not started |
+| 62 | Documentation (CLAUDE.md / MILESTONE-v1.6.md / cross-repo handoff) | DOC-01..04 (4) | Not started |
+
+**Coverage:** 59/59 REQ-IDs mapped, no orphans, no duplicates.
+
+**Eval-first ordering resolution:**
+```
+Phase 52 (vocab foundation, hard prerequisite for all)
+   ↓
+Phase 53–58 (runtime rewire on top of vocab)
+   ↓
+Phase 61 (QA evaluator runs against new runtime — locks v1.6 baseline)
+   ↓
+Phase 62 (docs)
+   ↓
+Milestone close (Phase 61 must pass ≥90%/70% to ship v1.6)
+```
+Phase 59 (dashboards), Phase 60 (dev triggers) are parallelizable side-tracks. Phase 61 is the final ship gate.
 
 **Foundation already shipped (iter34 G + H + I waves):**
 - Wave A.1-A.8 (Sprint A P0): cv-ingest topSkills + atsApplyUrl + targetRole filter + role-to-industry map + CV gating poll + interim ack + tag surface
@@ -34,14 +68,15 @@ Spawned 2026-05-05 by Adam after iter34 sprint surfaced fragmented tag system as
 - Wave H.1-H.3: mergeUserTags lib (canonical schema) + 5 sim CR fixes + cv-ingest unified writes
 - Wave I research: jobright industry truth (utm_campaign 17 = role function, NOT sector) + scraping repo audit (INDUSTRY_VOCAB 38 already exists, packages/shared-tags ready, packages/pa-resume-parser valet-port done)
 
-**Real sim from G5 (deployed CF):** 4-message bundle works end-to-end (interim ack + CV summary + match recommendation + tag summary), but recommended jobs are categorically wrong (BDR + Account Manager for SWE) due to:
-- CR1: CV-analysis Qwen-7B degenerates ("Docker × 60") — fixed in H.2 commit `6ffd184`
-- CR2: BDR/Account Manager not in title blacklist — fixed in H.2 commit `6e5e7c1`
-- CR3: orderBy firstSeenAt (Adam pointed out: hard filter post-fetch + raise cap is correct path, NOT changing orderBy) — needs revisit in v1.6
-- CR4: G.4 llmRerank shipped but TODO comment, wired in H.2 commit `c187c50`
-- CR5: cvEmbedding accepted by scoreJob but not passed in — wired in H.2 commit `d8e60e3`
+**Real sim from G5 (deployed CF):** 4-message bundle works end-to-end (interim ack + CV summary + match recommendation + tag summary), but recommended jobs are categorically wrong (BDR + Account Manager for SWE). v1.6 scope replaces piecemeal CR fixes with structural fix: unified canonical vocab + single tag source + filter-first-then-rank query + per-skill weight + LLM JD-CV match + QA evaluator thread.
 
-**v1.6 scope replaces piecemeal CR fixes with structural fix:** unified canonical vocab + single tag source + filter-first-then-rank query + per-skill weight + LLM JD-CV match + QA evaluator thread.
+## v1.6 Goal Metrics (5)
+
+1. SWE candidate Adam (`e5d97cd8-1e1d-439d-8672-3008f8aeef2e`) → BDR/sales/cashier/warehouse leak rate **100% → <5%**
+2. jobright.ai-leaked match URL rate **50%+ → 0%**
+3. Adam industryTags `["other"] → ["artificial_intelligence_and_machine_learning", "technology_general"]`
+4. Per-job reasoning surfaces top-2 JD-aligned weighted skill matches
+5. QA evaluator pass rate: hard filter ≥90%, top-3 acceptable **≥70%** weekly auto-sample
 
 ## Accumulated Context
 
@@ -52,13 +87,16 @@ Spawned 2026-05-05 by Adam after iter34 sprint surfaced fragmented tag system as
 
 **LLM chain (locked):**
 - Tier 1: `gpt-5.4-nano` (primary, 2 SDK retries)
-- Tier 2: `claude-sonnet-4-6` (fallback on 5xx/timeout/rate, 2 SDK retries) ← **NEW** for v1.6, replaces gpt-4.1-mini
+- Tier 2: `claude-sonnet-4-6` (fallback on 5xx/timeout/rate, 2 SDK retries) ← **NEW** for v1.6
 - Tier 3: `gpt-4.1-mini` (final fallback, 1 SDK retry)
 
 **Stack already in place:**
 - `packages/shared-tags` — 10-type canonical with mutexGroup + sha256 event ID + decay half-life + `ENTITY_KINDS` covers scraping-job/researcher/github-repo/devpost-project (iter30 WS2)
 - `packages/pa-resume-parser` — 3-tier router + valet-port complete + `qabank-to-mem0.ts` (iter30 WS1)
 - `packages/pa-orchestrator/src/tags/user-tags-merger.ts` — H.1 commit `253ce87` (`mergeUserTags` lib + UserTagsSchema zod)
+- `apps/functions/src/lib/llm-rerank.ts` — Qwen-7B JSON-mode (iter34 G.4); fire-and-forget wired (H.2 `c187c50`)
+- `apps/functions/src/backfill-ats-urls.ts` — Serper backfill CF (iter34 G.3 `a56da02`)
+- `apps/functions/src/cv-ingest/cv-ingest.ts` — already imports pa-resume-parser, partial wire (iter34 H.3b `ad099a2`)
 - `tests/scenarios/runner.mjs` + `dump-outbound-tail.mjs` — Firestore broker integration with pa-outbound observability bypass
 
 **Cross-repo state:**
@@ -92,4 +130,12 @@ queryMatchingJobs(userId):
 
 ## Phase Numbering
 
-Continue from v1.5 ending phase 51. v1.6 starts at phase **52**.
+Continue from v1.5 ending phase 51. v1.6 starts at phase **52** and runs through phase **62** (11 phases).
+
+## v1.6 Decision Log (D1–D16, Adam-locked)
+
+D1: roleFunction = jobright 17 verbatim (closed enum) | D2: industrySector = 42 add-able via dashboard (sandbox→promote) | D3: major = soft score (not hard filter) | D4: visa = 4 enum (`citizen` / `permanent_resident` / `sponsor_needed` / `other`) | D5: NO abbreviations anywhere (LLM confusion) | D6: relevantTags / proposedTags parse-time extract | D7: per-skill base + JD-relative weight (Qwen-7B nightly) | D8: unified `pa-users.tags` single source | D9: hard filter → skill+relevant+industry score → LLM async → emb fallback | D10: 20d `firstSeenAt` window + 404 daily, abandon `lastSeenAt` | D11: cv-ingest wires `pa-resume-parser` v2 (not single-shot nano) | D12: post-parse Claire dialogue confirm | D13: QA evaluator thread weekly | D14: `__PA_FIND_MATCH__` dev trigger | D15: reduce regex, prefer LLM | D16: industry add-able via dashboard
+
+## Next Action
+
+Run `/gsd:plan-phase 52` to decompose Phase 52 (Canonical Tag Vocab Foundation) into executable plans.

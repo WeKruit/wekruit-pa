@@ -121,22 +121,71 @@ This file is append-only across milestones. Active milestone requirements at top
 
 ## v1.6 Traceability
 
-(Filled by roadmap.)
+Filled by roadmap 2026-05-05. **100% coverage: 59 REQ-IDs across 11 phases (52–62), no orphans, no duplicates.**
 
 | REQ-ID | Phase | Status |
 |---|---|---|
-| TAG-01..12 | — | pending |
-| PARSE-01..09 | — | pending |
-| USER-TAG-01..05 | — | pending |
-| MATCH-01..08 | — | pending |
-| LIVE-01..04 | — | pending |
-| RERANK-01..04 | — | pending |
-| DASH-01..04 | — | pending |
-| DEV-01..04 | — | pending |
-| QA-01..05 | — | pending |
-| DOC-01..04 | — | pending |
+| TAG-01 | Phase 52 — Canonical Tag Vocab Foundation | pending |
+| TAG-02 | Phase 52 — Canonical Tag Vocab Foundation | pending |
+| TAG-03 | Phase 52 — Canonical Tag Vocab Foundation | pending |
+| TAG-04 | Phase 52 — Canonical Tag Vocab Foundation | pending |
+| TAG-05 | Phase 52 — Canonical Tag Vocab Foundation | pending |
+| TAG-06 | Phase 52 — Canonical Tag Vocab Foundation | pending |
+| TAG-07 | Phase 52 — Canonical Tag Vocab Foundation | pending |
+| TAG-08 | Phase 52 — Canonical Tag Vocab Foundation | pending |
+| TAG-09 | Phase 52 — Canonical Tag Vocab Foundation | pending |
+| TAG-10 | Phase 52 — Canonical Tag Vocab Foundation | pending |
+| TAG-11 | Phase 52 — Canonical Tag Vocab Foundation | pending |
+| TAG-12 | Phase 52 — Canonical Tag Vocab Foundation | pending |
+| PARSE-01 | Phase 53 — pa-resume-parser v2 wire + relevantTags extract | pending |
+| PARSE-02 | Phase 53 — pa-resume-parser v2 wire + relevantTags extract | pending |
+| PARSE-03 | Phase 53 — pa-resume-parser v2 wire + relevantTags extract | pending |
+| PARSE-04 | Phase 53 — pa-resume-parser v2 wire + relevantTags extract | pending |
+| PARSE-05 | Phase 53 — pa-resume-parser v2 wire + relevantTags extract | pending |
+| PARSE-06 | Phase 53 — pa-resume-parser v2 wire + relevantTags extract | pending |
+| PARSE-07 | Phase 53 — pa-resume-parser v2 wire + relevantTags extract | pending |
+| PARSE-08 | Phase 53 — pa-resume-parser v2 wire + relevantTags extract | pending |
+| PARSE-09 | Phase 53 — pa-resume-parser v2 wire + relevantTags extract | pending |
+| USER-TAG-01 | Phase 54 — Unified pa-users.tags writer | pending |
+| USER-TAG-02 | Phase 54 — Unified pa-users.tags writer | pending |
+| USER-TAG-03 | Phase 54 — Unified pa-users.tags writer | pending |
+| USER-TAG-04 | Phase 54 — Unified pa-users.tags writer | pending |
+| USER-TAG-05 | Phase 54 — Unified pa-users.tags writer | pending |
+| MATCH-02 | Phase 55 — matching-jobs schema migration + roleFunction backfill | pending |
+| MATCH-01 | Phase 56 — queryMatchingJobs read pa-users.tags + filter + score | pending |
+| MATCH-03 | Phase 56 — queryMatchingJobs read pa-users.tags + filter + score | pending |
+| MATCH-04 | Phase 56 — queryMatchingJobs read pa-users.tags + filter + score | pending |
+| MATCH-05 | Phase 56 — queryMatchingJobs read pa-users.tags + filter + score | pending |
+| MATCH-06 | Phase 56 — queryMatchingJobs read pa-users.tags + filter + score | pending |
+| MATCH-07 | Phase 56 — queryMatchingJobs read pa-users.tags + filter + score | pending |
+| MATCH-08 | Phase 56 — queryMatchingJobs read pa-users.tags + filter + score | pending |
+| LIVE-01 | Phase 57 — Liveness/404 sweep + atsApplyUrl backfill | pending |
+| LIVE-02 | Phase 57 — Liveness/404 sweep + atsApplyUrl backfill | pending |
+| LIVE-03 | Phase 57 — Liveness/404 sweep + atsApplyUrl backfill | pending |
+| LIVE-04 | Phase 57 — Liveness/404 sweep + atsApplyUrl backfill | pending |
+| RERANK-01 | Phase 58 — Nightly LLM rerank batch + per-skill JD-rel weight | pending |
+| RERANK-02 | Phase 58 — Nightly LLM rerank batch + per-skill JD-rel weight | pending |
+| RERANK-03 | Phase 58 — Nightly LLM rerank batch + per-skill JD-rel weight | pending |
+| RERANK-04 | Phase 58 — Nightly LLM rerank batch + per-skill JD-rel weight | pending |
+| DASH-01 | Phase 59 — Dashboards (canonical-tags + qa-evaluator + onboarding-questions ext) | pending |
+| DASH-02 | Phase 59 — Dashboards (canonical-tags + qa-evaluator + onboarding-questions ext) | pending |
+| DASH-03 | Phase 59 — Dashboards (canonical-tags + qa-evaluator + onboarding-questions ext) | pending |
+| DASH-04 | Phase 59 — Dashboards (canonical-tags + qa-evaluator + onboarding-questions ext) | pending |
+| DEV-01 | Phase 60 — Dev triggers + scenarios + fixtures | pending |
+| DEV-02 | Phase 60 — Dev triggers + scenarios + fixtures | pending |
+| DEV-03 | Phase 60 — Dev triggers + scenarios + fixtures | pending |
+| DEV-04 | Phase 60 — Dev triggers + scenarios + fixtures | pending |
+| QA-01 | Phase 61 — QA evaluator thread weekly run | pending |
+| QA-02 | Phase 61 — QA evaluator thread weekly run | pending |
+| QA-03 | Phase 61 — QA evaluator thread weekly run | pending |
+| QA-04 | Phase 61 — QA evaluator thread weekly run | pending |
+| QA-05 | Phase 61 — QA evaluator thread weekly run | pending |
+| DOC-01 | Phase 62 — Documentation | pending |
+| DOC-02 | Phase 62 — Documentation | pending |
+| DOC-03 | Phase 62 — Documentation | pending |
+| DOC-04 | Phase 62 — Documentation | pending |
 
-**Total: 55 requirements across 10 categories.**
+**Total: 59 REQ-IDs across 10 categories (note: previous summary stated 55; actual count audited 2026-05-05 is 59 — 12 TAG + 9 PARSE + 5 USER-TAG + 8 MATCH + 4 LIVE + 4 RERANK + 4 DASH + 4 DEV + 5 QA + 4 DOC). All 59 mapped to phases 52–62.**
 
 ---
 
