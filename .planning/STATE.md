@@ -1,27 +1,33 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.6
-milestone_name: Unified Canonical Tags & Match Quality v1
-status: in_progress
-last_updated: "2026-05-06T00:30:00.000Z"
+milestone: v1.7
+milestone_name: Match Quality Depth + Pipeline Reliability Hardening
+status: roadmap_locked
+last_updated: "2026-05-06T17:00:00.000Z"
 last_activity: 2026-05-06
 progress:
-  total_phases: 11
-  completed_phases: 11
-  total_plans: 11
-  completed_plans: 11
+  total_phases: 10
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
 ---
 
 ## Current Position
 
-Phase: **All 11 phases ✅ — entering lifecycle (audit → complete → cleanup)**
+Phase: **Phase 63 — LinkedIn / Wellfound senior-job scraper (next)**
 Plan: —
-Status: Phase 62 ✅ complete (commit `eab4e63`) — CLAUDE.md ship state subsection + .planning/MILESTONE-v1.6-unified-tags.md (mermaid arch + vocab tables + match flow + measurement protocol) + packages/shared-tags/README.md rewrite + cross-repo handoff doc on macmini; v1.6 implementation phase 11/11 COMPLETE
-Last activity: 2026-05-06 — Phase 62 documentation shipped (DOC-01..04 covered)
-Ship gate signal pending: data prereqs (more onboarding completion + fresh corpus).
-Adam-action items (all optional, milestone shippable without):
-- Set `ANTHROPIC_API_KEY` Firebase Secret — chain falls through gracefully
-- Set `PA_SLACK_ALERT_WEBHOOK` env — alert falls back to Mailgun-only
+Status: v1.7 spawned 2026-05-06; roadmap locked (37 REQ-IDs, phases 63-72, 10 phases). v1.6 archived.
+Last activity: 2026-05-06 — v1.6 milestone tagged + archived; v1.7 REQUIREMENTS + ROADMAP committed
+
+## v1.6 Post-Ship Verification
+
+- ✅ orchestrator-deps V16 cutover (commit `e10d50b`)
+- ✅ skill schema string→SkillEntry migration (529 users, commit `e10d50b`)
+- ✅ industrySector vocab typo fix (commit `e10d50b`)
+- ✅ targetJobType vocab dedupe (commit `e10d50b`)
+- ✅ V16 adaptive freshness 20d → 45d → 90d (commit `b9019a2`)
+- ✅ paLivenessSweepDaily verified live: 184 dead_marked, 33 backfill_resolved, 0 errors
+- ✅ Live render Adam scenario: top-5 SWE, no jobright leak, top-2 weighted skill reasoning
 
 ## v1.6 — Unified Canonical Tags & Match Quality v1 (this milestone)
 

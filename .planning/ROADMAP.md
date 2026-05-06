@@ -947,3 +947,134 @@ D1: roleFunction = jobright 17 verbatim (closed enum). | D2: industrySector = 42
 3. `packages/shared-tags/README.md` documents v1.6 additions + sandbox-promotion pattern + cross-repo handoff note.
 4. `wekruit-scraping/WEKRUIT_PA_TAG_HANDOFF.md` ships in scraping repo with v1.6 schema reference + future Python port plan (deferred to v2).
 5. Adam reads all 4 docs and confirms v1.6 design lock matches shipped behavior; no doc-vs-code drift.
+
+## Milestone v1.7 — Match Quality Depth + Pipeline Reliability Hardening
+
+**Goal:** Close v1.6 post-ship gaps. Add senior/staff job source. Sponsorship inference. Harden Serper backfill + macmini reliability. Drop legacy. Provision secrets. Ship match-debug admin UI + QA data ramp.
+
+**Spawned:** 2026-05-06 by Adam after v1.6 ship + post-ship matching diagnostics.
+
+**Phase numbering:** continues from v1.6 last phase 62. v1.7 spans phases **63–72** (10 phases).
+
+| # | Phase | Reqs | Status |
+|---|-------|------|--------|
+| 63 | LinkedIn / Wellfound senior-job scraper | SENIOR-01..05 (5) | Not started |
+| 64 | Sponsorship LLM inference + allowlist | SPONSOR-01..05 (5) | Not started |
+| 65 | Serper backfill batch parallelism + retry | ATSURL-01..04 (4) | Not started |
+| 66 | Macmini Stage 2.5 permanent fix | MACMINI-01..03 (3) | Not started |
+| 67 | Launchd reliability + health-check | LAUNCHD-01..03 (3) | Not started |
+| 68 | Vocab hygiene closure | HYGIENE-01..04 (4) | Not started |
+| 69 | Secrets + Slack alert provisioning | SECRETS-01..03 (3) | Not started |
+| 70 | Match-debug admin UI | MATCHDEBUG-01..04 (4) | Not started |
+| 71 | QA data ramp (auto-derive tags) | QADATA-01..04 (4) | Not started |
+| 72 | Documentation v1.7 | DOC-V17-01..02 (2) | Not started |
+
+**Coverage:** 37/37 REQ-IDs mapped. No orphans.
+
+**Eval-first ordering:**
+- Phase 63 (senior source) → Phase 64 (sponsorship inference, depends on richer corpus) → Phase 71 (QA ramp uses both)
+- Phase 65 (ATS URL) + 66 (macmini) + 67 (launchd) parallelizable infrastructure track
+- Phase 68 (vocab hygiene) + 69 (secrets) + 70 (match-debug UI) parallelizable
+
+### Phase 63: LinkedIn / Wellfound senior-job scraper
+
+**Goal:** Add LinkedIn API + Wellfound + Otta scrapers to `wekruit-scraping/src/wekruit_matching/scraper/` to ingest 100+ senior+staff SWE jobs/day. Per-source feature flags, source attribution, dedup with JobRight corpus.
+**Requirements:** SENIOR-01..05
+**Hard prerequisite:** macmini SSH access (verified Phase 57). LinkedIn API token (SECRETS-03).
+**Status:** Not started.
+**Success Criteria:**
+1. `wekruit-scraping/src/wekruit_matching/scraper/linkedin.py` + `wellfound.py` + `otta.py` implemented + tested.
+2. Daily macmini run ingests ≥100 senior+staff SWE jobs from new sources.
+3. Active matching-jobs corpus has ≥5% senior/staff after 7 days of new ingestion.
+4. Source attribution `sources: [...]` field present + admin-visible.
+
+### Phase 64: Sponsorship LLM inference + company allowlist
+
+**Goal:** Infer `sponsorship: boolean` from JD text via gpt-5.4-nano/Qwen-7B when scraper raw value is null. Maintain `pa-sponsorship-allowlist` Firestore collection seeded from h1bdata.info + manual curation (200+ companies).
+**Requirements:** SPONSOR-01..05
+**Status:** Not started.
+**Success Criteria:**
+1. Backfill script applied to 1944 active jobs; `sponsorship` field populated for ≥80%.
+2. V16 hard filter respects null vs false correctly (sponsor_needed × null = keep; × false = drop).
+3. Adam scenario top-5 includes ≥1 sponsor=true result.
+
+### Phase 65: Serper backfill batch parallelism + retry
+
+**Goal:** Refactor `paBackfillMatchingJobsAtsUrl` from inline-in-liveness-sweep to dedicated hourly batch CF. 200 jobs/run, 5-concurrent, retry queue for misses.
+**Requirements:** ATSURL-01..04
+**Status:** Not started.
+**Success Criteria:**
+1. `paBackfillAtsUrlsBatch` CF deployed, hourly cron.
+2. `pa-ats-resolve-priority/{jobId}` retry queue functional.
+3. % active jobs missing atsApplyUrl drops from 22% → <5% within 7 days.
+4. Cost ledger entries logged + weekly summary email.
+
+### Phase 66: Macmini Stage 2.5 permanent fix
+
+**Goal:** Fix Supabase pooler hang in `wekruit-matching/src/wekruit_matching/pipeline/url_resolver.py` OR migrate URL-resolution to wekruit-pa CF. Remove `SKIP_URL_RESOLUTION=1` hotfix. Fix Stage 2c LLM "connection lost" failures.
+**Requirements:** MACMINI-01..03
+**Status:** Not started.
+**Success Criteria:**
+1. macmini daily run completes Stage 2.5 without hang.
+2. `SKIP_URL_RESOLUTION=1` removed from `/Users/Shared/wekruit/run-pipeline.sh`.
+3. Stage 2c LLM enrichment success rate >80% (currently silent fail).
+
+### Phase 67: Launchd reliability + health-check
+
+**Goal:** Permanently load `com.wekruit.daily-update` + `com.wekruit.health-check` plists. Health-check verifies last successful daily-update <26h ago, alerts via Mailgun. Fix post-pipeline-webhook PermissionError.
+**Requirements:** LAUNCHD-01..03
+**Status:** Not started.
+**Success Criteria:**
+1. Both launchd services loaded + persistent across reboots.
+2. Health-check fires hourly; alerts on 26h staleness.
+3. post-pipeline-webhook completes without error.
+
+### Phase 68: Vocab hygiene closure
+
+**Goal:** Delete legacy `apps/job-rec/src/tools/query-matching-jobs.ts`. Tighten seniorityLevel + jobType regex. Backfill remaining ~38 parsedCandidateResumes canonical fields.
+**Requirements:** HYGIENE-01..04
+**Status:** Not started.
+**Success Criteria:**
+1. Legacy file deleted; tests still pass against V16.
+2. matching-jobs raw-value seniority pollution = 0 (no `Entry Level` + `New Grad, Entry Level` etc).
+3. parsedCandidateResumes canonical `industries` + `relevantIndustry` populated for all 44 docs.
+
+### Phase 69: Secrets + Slack alert provisioning
+
+**Goal:** Provision `ANTHROPIC_API_KEY`, `PA_SLACK_ALERT_WEBHOOK`, `LINKEDIN_ACCESS_TOKEN` Firebase Secrets / macmini env. Slack alerts wired in QA evaluator + macmini health-check.
+**Requirements:** SECRETS-01..03
+**Status:** Not started.
+**Success Criteria:**
+1. All 3 secrets provisioned + verified accessible by deployed CFs.
+2. Sonnet-4-6 middle tier active in pa-resume-parser chain (verified via cv-ingest log of `tier_ok: secondary`).
+3. Slack alert fires on QA evaluator failure threshold breach.
+
+### Phase 70: Match-debug admin UI
+
+**Goal:** New page `/admin/match-debug`. Admin enters userId → sees live V16 query result with full ScoreBreakdown + drop-counter visualization + per-job inspector. Score weight tuning sandbox.
+**Requirements:** MATCHDEBUG-01..04
+**Status:** Not started.
+**Success Criteria:**
+1. `/admin/match-debug` page deployed at `https://wekruit-pa.web.app/admin/match-debug`.
+2. Adam can simulate his own match path + see all 7 hard-filter gate decisions.
+3. Score weight slider sandbox functional (writes to `pa-match-weight-overrides/{userId}`).
+
+### Phase 71: QA data ramp (auto-derive tags)
+
+**Goal:** Auto-derive `targetRoleFunction` from CV skills+industries for users who haven't completed onboarding. Fill-gaps script. QA evaluator post-ramp re-trigger; verify sampleSize >50.
+**Requirements:** QADATA-01..04
+**Status:** Not started.
+**Success Criteria:**
+1. ≥80% of users with CV uploaded have `targetRoleFunction` populated (auto-derived if missing).
+2. Phase 61 QA evaluator weekly run produces sampleSize ≥50.
+3. Onboarding completion-rate widget on `/admin/overview`.
+
+### Phase 72: Documentation v1.7
+
+**Goal:** `CLAUDE.md` v1.7 design lock subsection. `.planning/MILESTONE-v1.7-match-depth.md` with architecture diagram + per-source data flow + sponsorship inference flow + match-debug screenshots.
+**Requirements:** DOC-V17-01..02
+**Hard prerequisite:** All 9 prior v1.7 phases shipped.
+**Status:** Not started.
+**Success Criteria:**
+1. `CLAUDE.md` v1.7 section appended.
+2. `.planning/MILESTONE-v1.7-match-depth.md` exists with full architecture + flow diagrams.
