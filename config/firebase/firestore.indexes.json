@@ -289,6 +289,25 @@
       ]
     },
     {
+      "_comment": "v1.6 Phase 55/56 (MATCH-02 / MATCH-03) — queryMatchingJobs hard-filter on roleFunction: where(status==active).where(roleFunction array-contains-any X).orderBy(firstSeenAt desc).",
+      "collectionGroup": "matching-jobs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "roleFunction",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "firstSeenAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
       "_comment": "iter30/WS8 — /match/weights audit drawer: where(key==tableKey or tableKey/skillKey).orderBy(ts desc). Same shape used by /agent/playbooks audit reads.",
       "collectionGroup": "pa-audit-events",
       "queryScope": "COLLECTION",

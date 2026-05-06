@@ -252,6 +252,9 @@ importers:
 
   packages/core-types:
     dependencies:
+      '@wekruit/shared-tags':
+        specifier: 0.1.0
+        version: link:../shared-tags
       zod:
         specifier: ^3.24.0
         version: 3.25.76
@@ -377,6 +380,9 @@ importers:
       '@pa/pa-safety':
         specifier: 0.0.1
         version: link:../pa-safety
+      '@wekruit/shared-tags':
+        specifier: 0.1.0
+        version: link:../shared-tags
       firebase-admin:
         specifier: ^13.0.0
         version: 13.8.0

@@ -637,3 +637,9 @@ export {
   PaMemoryEventSchema,
   type PaMemoryEvent,
 } from "./broker.js"
+
+// v1.6 Phase 55 (MATCH-02) — matching-jobs schema extension.
+export {
+  MatchingJobV16PartialSchema,
+  type MatchingJobV16Partial,
+} from "./matching-jobs.js"
