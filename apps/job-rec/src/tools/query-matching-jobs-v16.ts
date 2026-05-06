@@ -318,7 +318,8 @@ const ANYWHERE_LOCATION_TOKENS = new Set(["remote_anywhere", "remote_global", "a
 export function applyV16HardFilters(
   jobs: MatchingJob[],
   userTags: UserTags,
-  nowMs: number = Date.now()
+  nowMs: number = Date.now(),
+  freshnessWindowMs: number = FRESHNESS_WINDOW_MS
 ): { kept: MatchingJob[]; counters: V16HardFilterCounters } {
   const counters: V16HardFilterCounters = {
     visa: 0,
@@ -421,9 +422,10 @@ export function applyV16HardFilters(
       }
     }
 
-    // 5. firstSeenAt < 20d (D10).
+    // 5. firstSeenAt < freshness window (D10 default 20d, adaptive relaxation
+    //    handled by caller — see `queryMatchingJobsV16`).
     const firstSeenMs = timestampToMs(job.firstSeenAt)
-    if (firstSeenMs === 0 || nowMs - firstSeenMs > FRESHNESS_WINDOW_MS) {
+    if (firstSeenMs === 0 || nowMs - firstSeenMs > freshnessWindowMs) {
       counters.freshness++
       continue
     }
@@ -825,14 +827,41 @@ export async function queryMatchingJobsV16(
   // 2. Run query (push role to query layer).
   const { jobs: rawJobs } = await runV16Query(deps.db, userTags, log)
 
-  // 3. Hard-filter chain.
-  const { kept: filteredJobs, counters } = applyV16HardFilters(rawJobs, userTags, nowMs)
+  // 3. Hard-filter chain — adaptive freshness cascade for thin corpora.
+  // Try strict 20d (D10) first. When zero jobs survive AND freshness was the
+  // killer, relax progressively (45d → 90d). Preserves D10 spec for happy path
+  // while degrading gracefully when ingestion lags or seniorityLevel is sparse.
+  const FRESHNESS_RELAX_LADDER = [
+    FRESHNESS_WINDOW_MS,                                  // 20d (D10)
+    45 * 24 * 3600 * 1000,                                // 45d
+    90 * 24 * 3600 * 1000,                                // 90d
+  ]
+  let filteredJobs: MatchingJob[] = []
+  let counters: V16HardFilterCounters = {
+    visa: 0, location: 0, careerStage: 0, jobType: 0, freshness: 0, atsApplyUrl: 0, dead: 0,
+  }
+  let appliedFreshnessMs = FRESHNESS_RELAX_LADDER[0]!
+  for (const win of FRESHNESS_RELAX_LADDER) {
+    const result = applyV16HardFilters(rawJobs, userTags, nowMs, win)
+    filteredJobs = result.kept
+    counters = result.counters
+    appliedFreshnessMs = win
+    if (filteredJobs.length > 0) break
+    // Relax only when freshness is the dominant blocker (counters.freshness >> 0).
+    if (counters.freshness === 0) break
+    log("pa.match.freshness_relax", {
+      attemptedWindowMs: win,
+      droppedByFreshness: counters.freshness,
+      total: rawJobs.length,
+    })
+  }
   const dropped = rawJobs.length - filteredJobs.length
   log("pa.match.hard_filter_applied", {
     input: rawJobs.length,
     output: filteredJobs.length,
     dropped,
     counters,
+    freshnessWindowDays: Math.round(appliedFreshnessMs / (24 * 3600 * 1000)),
   })
 
   // Cache reads run in parallel — both fail-graceful.
