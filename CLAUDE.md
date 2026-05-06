@@ -203,7 +203,7 @@ queryMatchingJobs(userId):
 
 ## v1.7 Ship State (2026-05-06)
 
-10 phases shipped (63-72), 37 REQ-IDs covered. Same-day spawn + ship after v1.6 post-ship matching diagnostics.
+11 phases shipped (63-73), 43 REQ-IDs covered. Same-day spawn + ship after v1.6 post-ship matching diagnostics.
 
 | Phase | Subject | Commit |
 |---|---|---|
@@ -217,6 +217,7 @@ queryMatchingJobs(userId):
 | 70 | /admin/match-debug live UI | `87bb878` |
 | 71 | Auto-derive targetRoleFunction + fill-tag-gaps | `b0a9c39` |
 | 72 | Documentation v1.7 | `c3f1120` |
+| 73 | career-ops port — Greenhouse/Lever/Ashby direct APIs (6700+ jobs/day, 1700+ senior+) | macmini Phase 73 commit |
 
 **Plus matching hotfixes:**
 - `e10d50b` orchestrator-deps V16 cutover + skill schema + vocab typos
