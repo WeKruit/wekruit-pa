@@ -174,6 +174,7 @@ function makeGenerateJobRecs(): NonNullable<
     // Fix: orderBy("createdAt") — the field cv-ingest actually writes.
     let topSkills: string[] = []
     let industryTags: string[] = []
+    let cvEmbeddingFromCv: number[] | undefined
     try {
       const cvSnap = await db
         .collection("parsedCandidateResumes")
@@ -185,6 +186,7 @@ function makeGenerateJobRecs(): NonNullable<
         const cv = cvSnap.docs[0]!.data() as {
           topSkills?: unknown
           industryTags?: unknown
+          embedding?: unknown
         }
         if (Array.isArray(cv.topSkills)) {
           topSkills = cv.topSkills.filter(
@@ -195,6 +197,15 @@ function makeGenerateJobRecs(): NonNullable<
           industryTags = cv.industryTags.filter(
             (s): s is string => typeof s === "string" && s.length > 0
           )
+        }
+        // iter34 H.2 / CR5 — surface CV embedding for scoreJob's cosine
+        // component (B.10). queryMatchingJobs accepts `cvEmbedding` in
+        // filters but the orchestrator-deps wire was missing — without it
+        // the embedding component contributes 0 and matching falls back to
+        // pure skill overlap (which loses sensitivity for Adam-style resumes
+        // where industry-enum + role-fit alone underconstrain the rank).
+        if (Array.isArray(cv.embedding) && cv.embedding.every((n) => typeof n === "number")) {
+          cvEmbeddingFromCv = cv.embedding as number[]
         }
       }
     } catch (err) {
@@ -208,6 +219,7 @@ function makeGenerateJobRecs(): NonNullable<
     let location: string | undefined
     let prefersStartup: boolean | null | undefined
     let targetRole: string[] | undefined
+    let cvEmbeddingFromUserTags: number[] | undefined
     try {
       const userDoc = await db.collection("pa-users").doc(userId).get()
       if (userDoc.exists) {
@@ -217,6 +229,9 @@ function makeGenerateJobRecs(): NonNullable<
             targetLocations?: string[]
             prefersStartup?: boolean | null
             targetRole?: string[]
+          }
+          tags?: {
+            embedding?: unknown
           }
         }
         visa = u.statedPreferences?.visaStatus
@@ -232,6 +247,13 @@ function makeGenerateJobRecs(): NonNullable<
           )
           if (cleaned.length > 0) targetRole = cleaned
         }
+        // iter34 H.2 / CR5 — pa-users.tags.embedding takes priority over the
+        // parsedCandidateResumes embedding. tags.* is the H.1 worker's
+        // canonical merged signal; CV embedding is the per-resume baseline.
+        const rawTagsEmbedding = u.tags?.embedding
+        if (Array.isArray(rawTagsEmbedding) && rawTagsEmbedding.every((n) => typeof n === "number")) {
+          cvEmbeddingFromUserTags = rawTagsEmbedding as number[]
+        }
       }
     } catch (err) {
       logger.warn("[job-recs] user read failed", {
@@ -239,6 +261,9 @@ function makeGenerateJobRecs(): NonNullable<
         err: err instanceof Error ? err.message : String(err),
       })
     }
+    // Priority: pa-users.tags.embedding > parsedCandidateResumes.embedding > undefined.
+    const cvEmbedding: number[] | undefined =
+      cvEmbeddingFromUserTags ?? cvEmbeddingFromCv
 
     // Map visa → sponsorship filter (matches QueryMatchingJobs schema).
     let sponsorship: "h1b" | "gc" | "none" | undefined
@@ -272,6 +297,10 @@ function makeGenerateJobRecs(): NonNullable<
       ...(location ? { location } : {}),
       ...(targetRole ? { targetRole } : {}),
       ...(targetRoleIndustryEnum ? { targetRoleIndustryEnum } : {}),
+      // iter34 H.2 / CR5 — wire CV embedding so scoreJob's 0.30-weighted
+      // cosine component contributes. When undefined (CV not yet enriched)
+      // queryMatchingJobs falls back to pure skill+location+sponsorship.
+      ...(cvEmbedding ? { cvEmbedding } : {}),
     }
 
     if (!topSkills.length && !industryTags.length) {

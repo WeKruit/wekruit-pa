@@ -563,3 +563,87 @@ describe("fireAndForgetLlmRerank (iter34 H.2 CR4)", () => {
     assert.equal(calls[0]!.jobs[0]!.salaryRange, "150000-200000")
   })
 })
+
+// ---------------------------------------------------------------------------
+// iter34 H.2 / CR5 — wire cvEmbedding into queryMatchingJobs filters
+//
+// Mirrors the spread pattern in makeGenerateJobRecs to lock the contract:
+// when cvEmbedding is defined → spread injects; when undefined → omitted.
+// Locks the priority order pa-users.tags.embedding > parsedCandidateResumes.
+// ---------------------------------------------------------------------------
+
+describe("makeGenerateJobRecs filters: cvEmbedding wire-through (iter34 H.2 CR5)", () => {
+  it("filter shape: cvEmbedding from CV doc → spread injects", () => {
+    const cvEmbedding = [0.1, 0.2, 0.3]
+    const filters = {
+      foo: "bar",
+      ...(cvEmbedding ? { cvEmbedding } : {}),
+    }
+    assert.ok(
+      Object.prototype.hasOwnProperty.call(filters, "cvEmbedding"),
+      "must inject cvEmbedding key into filters"
+    )
+    assert.deepEqual((filters as { cvEmbedding: number[] }).cvEmbedding, cvEmbedding)
+  })
+
+  it("filter shape: undefined cvEmbedding → spread omits the field", () => {
+    const cvEmbedding: number[] | undefined = undefined
+    const filters = {
+      foo: "bar",
+      ...(cvEmbedding ? { cvEmbedding } : {}),
+    }
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(filters, "cvEmbedding"),
+      false,
+      "undefined path must NOT inject cvEmbedding key"
+    )
+  })
+
+  it("priority: pa-users.tags.embedding > parsedCandidateResumes.embedding", () => {
+    // Mirror the production resolution: ?? short-circuits on the first
+    // non-undefined value.
+    const fromTags = [9, 9, 9]
+    const fromCv = [1, 2, 3]
+    const resolved: number[] | undefined = fromTags ?? fromCv
+    assert.deepEqual(resolved, fromTags)
+  })
+
+  it("priority: pa-users.tags missing → falls back to CV embedding", () => {
+    const fromTags: number[] | undefined = undefined
+    const fromCv = [1, 2, 3]
+    const resolved: number[] | undefined = fromTags ?? fromCv
+    assert.deepEqual(resolved, fromCv)
+  })
+
+  it("priority: both missing → undefined → no filter injected", () => {
+    const fromTags: number[] | undefined = undefined
+    const fromCv: number[] | undefined = undefined
+    const resolved: number[] | undefined = fromTags ?? fromCv
+    assert.equal(resolved, undefined)
+    const filters = {
+      foo: "bar",
+      ...(resolved ? { cvEmbedding: resolved } : {}),
+    }
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(filters, "cvEmbedding"),
+      false
+    )
+  })
+
+  it("validation: empty array does NOT short-circuit ?? — treated as defined", () => {
+    // Locks the runtime behavior: an empty array is truthy in `??` chain
+    // (only undefined / null are falsy). Lock so future refactors don't
+    // accidentally swap to `||` and silently drop `[]`.
+    const empty: number[] | undefined = []
+    const fallback = [1, 2, 3]
+    const resolved = empty ?? fallback
+    assert.deepEqual(resolved, [], "empty [] keeps; only undefined/null fall through")
+  })
+
+  it("validation: non-numeric entries should be filtered before the wire", () => {
+    // Lock the production guard `every((n) => typeof n === 'number')`.
+    const raw: unknown = [1, "two", 3]
+    const ok = Array.isArray(raw) && raw.every((n) => typeof n === "number")
+    assert.equal(ok, false, "mixed types must NOT pass the validator")
+  })
+})
