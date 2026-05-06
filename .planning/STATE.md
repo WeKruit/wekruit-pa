@@ -7,20 +7,19 @@ last_updated: "2026-05-06T00:30:00.000Z"
 last_activity: 2026-05-06
 progress:
   total_phases: 11
-  completed_phases: 7
-  total_plans: 7
-  completed_plans: 7
+  completed_phases: 8
+  total_plans: 8
+  completed_plans: 8
 ---
 
 ## Current Position
 
-Phase: **Phase 59 — Dashboards (canonical-tags + qa-evaluator + onboarding-questions ext) (next)**
+Phase: **Phase 60 — Dev triggers + scenarios + fixtures + daily-batch v16 cutover (next)**
 Plan: —
-Status: Phase 58 ✅ complete (commit `463bcdb`) — paLlmRerankNightly CF deployed (04:00 UTC daily) + JD-rel weights helper (Sonnet→OpenAI→Qwen chain) + 821 tests pass + cache reader graceful-miss handling validated; v1.6 in progress (7/11)
-Last activity: 2026-05-06 — Phase 58 nightly LLM rerank batch shipped (RERANK-01..04 covered)
+Status: Phase 59 ✅ complete (commit `661a039`) — 3 admin dashboard pages (CanonicalTags + QaEvaluator + OnboardingQuestions tags view) + paPromoteSandboxTag CF + 20 new tests + browser-safe shared-tags barrel + hosting deployed (https://wekruit-pa.web.app); v1.6 in progress (8/11)
+Last activity: 2026-05-06 — Phase 59 dashboards shipped (DASH-01..04 covered)
 Adam-action items:
-- Set `ANTHROPIC_API_KEY` Firebase Secret (Phase 53/58) — optional, chain falls through gracefully
-- Daily-batch.ts cutover legacy → V16 deferred to Phase 60
+- Set `ANTHROPIC_API_KEY` Firebase Secret — optional, chain falls through gracefully
 
 ## v1.6 — Unified Canonical Tags & Match Quality v1 (this milestone)
 
