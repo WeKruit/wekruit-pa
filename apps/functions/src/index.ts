@@ -106,6 +106,15 @@ export { paBackfillMatchingJobsAtsUrl } from "./backfill-ats-urls.js"
 // resolver from paBackfillMatchingJobsAtsUrl (cap 1000/run).
 export { paLivenessSweepDaily } from "./liveness-sweep.js"
 
+// v1.6 Phase 58 (RERANK-01..04) — Nightly LLM rerank batch + per-skill
+// JD-relative weight cache. Cloud Scheduler 04:00 UTC (1h after liveness
+// sweep). For each active user: rerank top-50 candidates via Qwen-7B and
+// compute per-skill JD-rel weights for top-10 via Sonnet → gpt-5.4-nano →
+// Qwen-7B fallback chain. Writes pa-user-rerank-cache/{userId} +
+// pa-user-skill-jdrel-cache/{userId}/jobs/{jobId} consumed by Phase 56's
+// queryMatchingJobsV16 (already wired with graceful-miss handling).
+export { paLlmRerankNightly } from "./nightly-rerank.js"
+
 // Phase 27 T2 — public /health endpoints (one per existing CF). Returns
 // {ok, name, version, ts, deps:{firestore, secrets}}. No auth (probes
 // must be reachable). All endpoints HTTP 200 always; failure surfaces in body.
