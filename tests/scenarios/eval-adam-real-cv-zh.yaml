@@ -1,0 +1,86 @@
+# iter34 followup D.8 — Adam-real-CV match plausibility (zh).
+#
+# Scope: fire send_cv_analysis with Adam's REAL CV + inferred
+# statedPreferences and capture the four outbound messages (ack,
+# analysis, jobRec, tagSummary). Adam himself reviews the resulting
+# job recommendations — does Tesla → AI Study → OFO Delivery + USC CS
+# +1.9yoe → SWE/OPT/LA-Austin-Remote → match output make sense?
+#
+# Pre-conditions (run BEFORE the runner):
+#   GOOGLE_APPLICATION_CREDENTIALS=... \
+#     node tests/scenarios/seed-adam-real-cv.mjs +19999990603
+# That:
+#   - Creates pa-users/{harness-id} with onboardingState=q_resume_asked,
+#     statedPreferences = {zh, swe, [1,2] yoe, opt, LA+Austin+Remote},
+#     testMode=true.
+#   - Clones parsedCandidateResumes/rQIqQEghvZLwVkMad2lJ (Adam's real
+#     CV) into parsedCandidateResumes/harness-adam-real-{harness-id}
+#     swapping userId so dispatcher's externalSignal cvParsed=true →
+#     fires send_cv_analysis edge.
+#
+# We bypass q_lang→q_email→q_email_verify→q_tos→q_role→…→q_location
+# because the runner cannot inject Mailgun's verification code. By
+# pre-staging state at q_resume_asked we focus the assertion on the
+# match-content surface.
+#
+# Run:
+#   GOOGLE_APPLICATION_CREDENTIALS=... \
+#     PA_SCENARIO_KEEP_PARTICIPANTS=1 \
+#     node tests/scenarios/seed-adam-real-cv.mjs +19999990603 && \
+#   GOOGLE_APPLICATION_CREDENTIALS=... \
+#     PA_SCENARIO_KEEP_PARTICIPANTS=1 \
+#     node tests/scenarios/runner.mjs tests/scenarios/eval-adam-real-cv-zh.yaml
+#
+# After the run, dump all four assistant messages for that eventId via
+# `pa-messages where rawMeta.eventId == <id>` and read the actual job
+# recommendations. Adam's call: do they make sense for him?
+
+id: eval_adam_real_cv_zh
+description: |
+  iter34 followup D.8 — fire send_cv_analysis for the harness
+  participant whose CV is cloned from Adam Yang's real
+  parsedCandidateResumes row + inferred statedPreferences. Capture
+  ack/analysis/jobRec/tagSummary for human review of recommendation
+  plausibility against Adam's actual background.
+locale: zh-CN
+agentId: default
+participant: "+19999990603"
+chatId: "iMessage;+19999990603"
+testMode: true
+turnTimeoutMs: 120000
+replyTimeoutMs: 180000
+
+# Tell the runner to keep onboardingState across turns (don't reset).
+# The seed script set state=q_resume_asked + active.
+setup:
+  userPatch:
+    onboardingStatus: "active"
+    onboardingState: "q_resume_asked"
+
+turns:
+  # Single turn — anything triggers the deterministic dispatcher's
+  # q_resume_asked → cvParsed=true → send_cv_analysis edge. Claire
+  # fires FOUR outbound messages (ack, analysis, jobRec, tagSummary).
+  # The runner's pollUntil returns the FIRST one matching this
+  # eventId. Use broad reply_contains_any.
+  - user: "（这里假装我发了简历）"
+    assert:
+      reply_min_length: 1
+      reply_contains_any:
+        - "简历"
+        - "看一下"
+        - "等我"
+        - "背景"
+        - "推荐"
+        - "岗位"
+        - "为啥推"
+        - "记的是"
+      reply_not_contains_any:
+        - "tomorrow ~9am"
+        - "挂了"
+        - "jobright.ai"
+        - "warehouse"
+        - "Warehouse"
+        - "Cashier"
+        - "cashier"
+        - "[object"
