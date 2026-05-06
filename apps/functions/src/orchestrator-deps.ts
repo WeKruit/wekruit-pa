@@ -194,17 +194,81 @@ function makeGenerateJobRecs(): NonNullable<
         return null
       }
       const visibleJobs = jobs.slice(0, 2)
+
+      // v1.7 hotfix — LLM-composed nuanced reasoning for top-2.
+      // Replaces V16 template "为啥推: skill X+Y 跟 JD 核心技能对得上"
+      // with reason citing specific work-history bridge.
+      // Pulls user's parsedCandidateResumes for work-history + projects.
+      // Fail-graceful: if LLM errors, falls back to V16 template `j.reason`.
+      const visibleReasons: (string | null)[] = []
+      try {
+        const cvSnap = await db
+          .collection("parsedCandidateResumes")
+          .where("userId", "==", userId)
+          .orderBy("createdAt", "desc")
+          .limit(1)
+          .get()
+        const cvData = cvSnap.docs[0]?.data() as
+          | {
+              workHistory?: Array<{ title?: string; company?: string; bullets?: string[]; description?: string }>
+              experiences?: Array<{ title?: string; company?: string; bullets?: string[]; description?: string }>
+              projects?: Array<{ name?: string; description?: string; technologies?: string[] }>
+              topSkills?: string[]
+              candidateProfile?: { skills?: string[] }
+            }
+          | undefined
+        if (cvData) {
+          const { composeNuancedReason } = await import("./lib/match-nuanced-reason.js")
+          const wh = cvData.workHistory ?? cvData.experiences ?? []
+          const projects = cvData.projects ?? []
+          const topSkills = cvData.topSkills ?? cvData.candidateProfile?.skills ?? []
+          const openaiKey = process.env.PA_OPENAI_AGENT_API_KEY ?? process.env.OPENAI_API_KEY ?? ""
+          const reasons = await Promise.all(
+            visibleJobs.map((j) =>
+              composeNuancedReason(
+                {
+                  lang,
+                  workHistory: wh.slice(0, 3),
+                  projects: projects.slice(0, 2),
+                  topSkills: topSkills.slice(0, 12),
+                  job: {
+                    title: j.jobTitle,
+                    company: j.companyName ?? null,
+                    requiredSkills: j.requiredSkills ?? null,
+                    seniorityLevel: (j as { seniorityLevel?: string | null }).seniorityLevel ?? null,
+                    jobDescription: (j as { jobDescription?: string | null }).jobDescription ?? null,
+                  },
+                  matchedSkills:
+                    (j as { matchedSkills?: Array<{ name: string; proficiency?: string }> }).matchedSkills ?? [],
+                },
+                { openaiApiKey: openaiKey, timeoutMs: 8000 }
+              )
+            )
+          )
+          for (const r of reasons) visibleReasons.push(r)
+        }
+      } catch (err) {
+        logger.warn("[job-recs] nuanced reason build failed", {
+          userId,
+          err: err instanceof Error ? err.message : String(err),
+        })
+      }
+
       const lines: string[] = []
       lines.push(lang === "zh" ? "先给你看两个对得上的岗位:" : "two roles that line up for you:")
-      for (const j of visibleJobs) {
+      for (let i = 0; i < visibleJobs.length; i++) {
+        const j = visibleJobs[i]!
         const tag = j.companyName ? ` @ ${j.companyName}` : ""
         // V16 hard-filter already drops jobright.ai URLs + jobs without
         // atsApplyUrl. So `j.atsApplyUrl` is non-empty here. We DROP
         // the legacy primaryUrl fallback (was the jobright leak source).
         const url = j.atsApplyUrl ? `\n${j.atsApplyUrl}` : ""
-        // V16 already composes `reason` (top-2 weighted matched skills,
-        // lang-aware per user.preferredLang). Use directly.
-        const reasonLine = j.reason ? `\n${j.reason}` : ""
+        // Prefer LLM-composed nuanced reason; fall back to V16 template.
+        const nuanced = visibleReasons[i]
+        const reason = nuanced && nuanced.length > 0
+          ? `${lang === "zh" ? "为啥推" : "why"}: ${nuanced}`
+          : j.reason ?? ""
+        const reasonLine = reason ? `\n${reason}` : ""
         lines.push(`• ${j.jobTitle}${tag}${url}${reasonLine}`)
       }
       lines.push(
