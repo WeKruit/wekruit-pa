@@ -745,3 +745,116 @@ describe("ingestCv writes topSkills (iter34 A.1)", () => {
     assert.deepEqual(w.data.topSkills, [])
   })
 })
+
+// ---------- iter34 sprint B.9 — sync embedding compute ---------------------
+
+describe("ingestCv writes embedding sync (iter34 B.9)", () => {
+  it("happy path: embedding fields written to parsedCandidateResumes doc", async () => {
+    const { db, state } = makeFakeDb()
+    const { log } = captureLog()
+    const { deps } = makeStubbedDeps({ db, log })
+    const fakeVec = new Array(1536).fill(0.123)
+    deps.computeEmbedding = async () => ({
+      vector: fakeVec,
+      model: "text-embedding-3-small",
+      dim: 1536,
+      computedAt: "2026-05-05T12:00:00.000Z",
+    })
+    const res = await ingestCv(
+      { userId: "user_x", mediaUrl: "https://example.com/cv.pdf" },
+      deps
+    )
+    assert.equal(res.ok, true)
+    assert.equal(state.resumes.length, 1)
+    const w = state.resumes[0]!.data
+    assert.ok(Array.isArray(w.embedding))
+    assert.equal((w.embedding as unknown[]).length, 1536)
+    assert.equal(w.embeddingModel, "text-embedding-3-small")
+    assert.equal(w.embeddingDim, 1536)
+    assert.equal(w.embeddingComputedAt, "2026-05-05T12:00:00.000Z")
+  })
+
+  it("computeEmbedding returns null (OpenAI down) → doc still written, embedding fields absent", async () => {
+    const { db, state } = makeFakeDb()
+    const { log } = captureLog()
+    const { deps } = makeStubbedDeps({ db, log })
+    deps.computeEmbedding = async () => null
+    const res = await ingestCv(
+      { userId: "user_x", mediaUrl: "https://example.com/cv.pdf" },
+      deps
+    )
+    assert.equal(res.ok, true, "doc must still write when embedding is null")
+    assert.equal(state.resumes.length, 1)
+    const w = state.resumes[0]!.data
+    // Daily-batch will lazy-compute on next run; absence is the contract.
+    assert.equal("embedding" in w, false)
+    assert.equal("embeddingModel" in w, false)
+    assert.equal("embeddingDim" in w, false)
+    assert.equal("embeddingComputedAt" in w, false)
+    // Other fields still present.
+    assert.equal(w.userId, "user_x")
+    assert.ok(Array.isArray(w.topSkills))
+  })
+
+  it("computeEmbedding throws (defensive) → doc still written, embedding_error logged", async () => {
+    const { db, state } = makeFakeDb()
+    const { events, log } = captureLog()
+    const { deps } = makeStubbedDeps({ db, log })
+    deps.computeEmbedding = async () => {
+      throw new Error("simulated_failure")
+    }
+    const res = await ingestCv(
+      { userId: "user_x", mediaUrl: "https://example.com/cv.pdf" },
+      deps
+    )
+    assert.equal(res.ok, true, "throw inside computeEmbedding must NOT block doc write")
+    assert.equal(state.resumes.length, 1)
+    const w = state.resumes[0]!.data
+    assert.equal("embedding" in w, false)
+    const errEvt = events.find((e) => e.event === "pa.cv_ingest.embedding_error")
+    assert.ok(errEvt, "expected pa.cv_ingest.embedding_error log event")
+    assert.equal((errEvt!.payload as Record<string, unknown>).userId, "user_x")
+  })
+
+  it("embedding compute is invoked with parsed CV fields (sanity)", async () => {
+    const { db } = makeFakeDb()
+    const { log } = captureLog()
+    const { deps } = makeStubbedDeps({ db, log })
+    let captured: Record<string, unknown> | null = null
+    deps.computeEmbedding = async (input) => {
+      captured = input as unknown as Record<string, unknown>
+      return null
+    }
+    await ingestCv(
+      { userId: "user_x", mediaUrl: "https://example.com/cv.pdf" },
+      deps
+    )
+    assert.ok(captured, "computeEmbedding must be invoked")
+    const cap = captured as Record<string, unknown>
+    const cp = cap.candidateProfile as Record<string, unknown>
+    assert.equal(cp.name, "Adam Test")
+    assert.ok(Array.isArray(cap.experiences))
+    assert.ok(Array.isArray(cap.industryTags))
+    // topSkills is the SHARED computed value (same that's written to doc)
+    assert.ok(Array.isArray(cap.topSkills))
+  })
+
+  it("happy path emits pa.cv_ingest.embedding_computed log with dim + model", async () => {
+    const { db } = makeFakeDb()
+    const { events, log } = captureLog()
+    const { deps } = makeStubbedDeps({ db, log })
+    deps.computeEmbedding = async () => ({
+      vector: new Array(1536).fill(0.1),
+      model: "text-embedding-3-small",
+      dim: 1536,
+      computedAt: "2026-05-05T12:00:00.000Z",
+    })
+    await ingestCv({ userId: "user_x", mediaUrl: "https://example.com/cv.pdf" }, deps)
+    const evt = events.find((e) => e.event === "pa.cv_ingest.embedding_computed")
+    assert.ok(evt, "expected pa.cv_ingest.embedding_computed event")
+    const p = evt!.payload as Record<string, unknown>
+    assert.equal(p.userId, "user_x")
+    assert.equal(p.dim, 1536)
+    assert.equal(p.model, "text-embedding-3-small")
+  })
+})

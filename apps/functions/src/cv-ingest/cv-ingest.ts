@@ -48,6 +48,11 @@ import {
   PdfSizeError,
   MAX_PDF_BYTES,
 } from "./cv-size-cap.js"
+import {
+  computeCvEmbedding,
+  type ComputeCvEmbeddingResult,
+  type EmbeddingResumeInput,
+} from "../lib/embeddings.js"
 
 export type IngestCvInput = {
   userId: string
@@ -222,6 +227,17 @@ export type IngestCvDeps = {
   }>
   /** Skip quota / gate enforcement entirely. Tests use this; production never. */
   skipLimitEnforcement?: boolean
+
+  // ---- iter34 sprint B.9 — synchronous CV embedding compute -------------
+  //
+  // Default: lib/embeddings.ts → OpenAI text-embedding-3-small. Injected
+  // for tests so we can simulate OpenAI throws / empty vectors without
+  // mocking the global SDK. Returns null on any failure → ingestCv MUST
+  // NOT block the parsedCandidateResumes write on embedding success.
+  /** Inject for tests. Default: lib/embeddings.computeCvEmbedding. */
+  computeEmbedding?: (
+    input: EmbeddingResumeInput
+  ) => Promise<ComputeCvEmbeddingResult | null>
 }
 
 const PARSED_RESUMES_COLLECTION = "parsedCandidateResumes"
@@ -1216,6 +1232,9 @@ export async function ingestCv(
     deps?.parserV2Extract ??
     ((text: string, l: (e: string, p?: Record<string, unknown>) => void) =>
       defaultParserV2Extract(text, l))
+  // iter34 sprint B.9 — sync embedding compute (test-injectable). Default
+  // wires to lib/embeddings.computeCvEmbedding which uses OPENAI_API_KEY.
+  const computeEmbedding = deps?.computeEmbedding ?? computeCvEmbedding
 
   if (!args || typeof args !== "object" || !args.userId || !args.mediaUrl) {
     return { ok: false, reason: "invalid_input" }
@@ -1385,6 +1404,47 @@ export async function ingestCv(
     tier: usedTier,
   })
 
+  // iter34 sprint B.9 — compute topSkills + embedding ONCE (shared by H3
+  // staged path and legacy direct-write path). Embedding is sync so a brand
+  // new user has a semantic signal the same day they onboard. NEVER throws;
+  // returns null on any failure (no API key, network error, etc.) and the
+  // doc is written without the embedding fields. Daily-batch then picks up
+  // the empty doc on next run as a fallback (zero-regression contract).
+  const sharedTopSkills = computeTopSkills({
+    candidateProfileSkills: parsed.candidateProfile.skills,
+    workHistory: v2Output ? v2Output.parsed.workHistory : undefined,
+  })
+  let embedResult: ComputeCvEmbeddingResult | null = null
+  try {
+    embedResult = await computeEmbedding({
+      candidateProfile: parsed.candidateProfile,
+      experiences: parsed.experiences,
+      education: parsed.education,
+      industryTags: parsed.industryTags,
+      topSkills: sharedTopSkills,
+    })
+    if (embedResult) {
+      log("pa.cv_ingest.embedding_computed", {
+        userId: args.userId,
+        dim: embedResult.dim,
+        model: embedResult.model,
+      })
+    } else {
+      log("pa.cv_ingest.embedding_skipped", {
+        userId: args.userId,
+        reason: "compute_returned_null",
+      })
+    }
+  } catch (err) {
+    // Defensive — computeCvEmbedding contract is "never throws", but if a
+    // test injectable misbehaves we still must not block the doc write.
+    log("pa.cv_ingest.embedding_error", {
+      userId: args.userId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    embedResult = null
+  }
+
   // 4. Stream H3 gate — feature-flag + existing-resume detection.
   //    When BOTH are true (flag ON AND user has ≥1 prior resume), we DO NOT
   //    write parsedCandidateResumes yet. Stage in pa-cv-pending and prompt
@@ -1422,17 +1482,15 @@ export async function ingestCv(
     const expireAt = new Date(new Date(ts).getTime() + CV_PENDING_TTL_MS).toISOString()
     // iter34 A.1 — derive topSkills so the staged → promoted row also
     // carries the field that orchestrator-deps.generateJobRecs reads.
-    const stagedTopSkills = computeTopSkills({
-      candidateProfileSkills: parsed.candidateProfile.skills,
-      workHistory: v2Output ? v2Output.parsed.workHistory : undefined,
-    })
-    const stagedDoc = {
+    // iter34 sprint B.9 — sharedTopSkills (computed above) reused so the
+    // staged + promoted rows match the legacy direct-write field set.
+    const stagedDoc: Record<string, unknown> = {
       userId: args.userId,
       candidateProfile: parsed.candidateProfile,
       experiences: parsed.experiences,
       education: parsed.education,
       industryTags: parsed.industryTags,
-      topSkills: stagedTopSkills,
+      topSkills: sharedTopSkills,
       originalFileName: deriveOriginalFileName(args.mediaUrl),
       fileType: "application/pdf",
       studentFrom: null,
@@ -1442,6 +1500,15 @@ export async function ingestCv(
       ingestedVia: "imessage-attachment",
       // No `createdAt` Timestamp here — only set on promote, so the row
       // doesn't accidentally enter the "most recent" sort window.
+    }
+    // iter34 sprint B.9 — carry the embedding into the staged doc so when
+    // the user accepts the overwrite prompt, the promoted parsedCandidate-
+    // Resumes row already has semantic-rerank signal on day 1.
+    if (embedResult) {
+      stagedDoc.embedding = embedResult.vector
+      stagedDoc.embeddingModel = embedResult.model
+      stagedDoc.embeddingDim = embedResult.dim
+      stagedDoc.embeddingComputedAt = embedResult.computedAt
     }
     // Stage pending (idempotent on auto-id collision, which won't happen
     // in practice — id is server-allocated).
@@ -1549,10 +1616,8 @@ export async function ingestCv(
     // iter34 A.1 — derive topSkills (was a ghost field — written by no one,
     // read by orchestrator-deps.generateJobRecs). Frequency-ranked + capped
     // at 12 from candidateProfile.skills + (when v2) workHistory[].skills.
-    const topSkills = computeTopSkills({
-      candidateProfileSkills: parsed.candidateProfile.skills,
-      workHistory: v2Output ? v2Output.parsed.workHistory : undefined,
-    })
+    // iter34 sprint B.9 — sharedTopSkills computed once above; reused here
+    // so the legacy + H3 staged rows carry the same field set.
     const baseDoc: Record<string, unknown> = {
       userId: args.userId,
       candidateProfile: parsed.candidateProfile,
@@ -1561,7 +1626,7 @@ export async function ingestCv(
       // Stream F1 — 1..3 canonical industry tags inferred from experiences.
       industryTags: parsed.industryTags,
       // iter34 A.1 — flat top-level field consumed by job-rec.
-      topSkills,
+      topSkills: sharedTopSkills,
       originalFileName: deriveOriginalFileName(args.mediaUrl),
       fileType: "application/pdf",
       studentFrom: null,
@@ -1572,6 +1637,16 @@ export async function ingestCv(
       // Match existing 44-doc convention: createdAt is a Firestore Timestamp.
       // Firestore Admin SDK accepts a Date here and converts server-side.
       createdAt: new Date(ts),
+    }
+    // iter34 sprint B.9 — sync embedding fields. When computeEmbedding
+    // failed (no API key, OpenAI down, etc.), these stay absent and the
+    // daily-batch lazy-compute path (job-rec-daily.defaultUserEmbedComputer)
+    // backfills on the next 09:00 PT run.
+    if (embedResult) {
+      baseDoc.embedding = embedResult.vector
+      baseDoc.embeddingModel = embedResult.model
+      baseDoc.embeddingDim = embedResult.dim
+      baseDoc.embeddingComputedAt = embedResult.computedAt
     }
     // iter30 WS1 — when parser-v2 ran, persist the rich v2 fields alongside
     // the legacy projection. Downstream consumers (job-rec, dashboard) can

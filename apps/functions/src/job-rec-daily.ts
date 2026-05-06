@@ -22,7 +22,7 @@ import {
   fetchTopKFromCluster,
 } from "@pa/job-rec"
 import { getFlag } from "@pa/pa-persistence"
-import { logTokenSpend } from "./instrumentation/cost-logger.js"
+import { computeCvEmbedding } from "./lib/embeddings.js"
 
 /**
  * Stream G1 — Production user-embedding computer. When daily-batch's
@@ -31,6 +31,14 @@ import { logTokenSpend } from "./instrumentation/cost-logger.js"
  * caches back to parsedCandidateResumes/{resumeId}.embedding for next
  * day's run. Fail-open: any error → return null → daily-batch falls
  * back to legacy keyword rank. Never throws.
+ *
+ * iter34 sprint B.9 — delegates to lib/embeddings.computeCvEmbedding so
+ * cv-ingest (sync compute at parse time) and job-rec-daily (lazy fallback
+ * for legacy rows) share a single OpenAI call path. Daily-batch invokes
+ * this with a pre-synthesized `resumeText` string; we wrap the helper in
+ * a minimal EmbeddingResumeInput so the same compute / cost-ledger path
+ * runs end-to-end. The Firestore cache write-back is preserved so future
+ * batches short-circuit on the cached vector.
  */
 async function defaultUserEmbedComputer(
   db: Firestore,
@@ -39,43 +47,23 @@ async function defaultUserEmbedComputer(
   resumeText: string
 ): Promise<number[] | null> {
   try {
-    const apiKey =
-      process.env.PA_OPENAI_AGENT_API_KEY?.trim() ||
-      process.env.OPENAI_API_KEY?.trim() ||
-      ""
-    if (!apiKey) {
-      logger.warn("[job-rec-daily] embed_compute_no_key", { userId })
+    // Wrap the legacy text-only contract inside the structured input the
+    // shared helper expects. We surface the entire resumeText as a single
+    // experience description so synthesizeCvSummaryText returns it intact
+    // (≥ 20 chars triggers the embed; below that → null skip).
+    const trimmed = resumeText.slice(0, 8000)
+    const result = await computeCvEmbedding(
+      {
+        candidateProfile: { name: null },
+        experiences: [{ description: trimmed }],
+      },
+      {
+        costLabels: { caller: "job-rec-daily", userId, resumeId },
+      }
+    )
+    if (!result) {
+      logger.warn("[job-rec-daily] embed_compute_failed_or_skipped", { userId })
       return null
-    }
-    const { default: OpenAI } = await import("openai")
-    const client = new OpenAI({ apiKey })
-    const resp = await client.embeddings.create({
-      model: "text-embedding-3-small",
-      input: resumeText.slice(0, 8000),
-    })
-    const vec = resp.data?.[0]?.embedding
-    if (!vec || vec.length === 0) {
-      logger.warn("[job-rec-daily] embed_compute_empty_response", { userId })
-      return null
-    }
-    // Backlog #23 — cost-ledger wiring. Emit pa.spend.daily so the daily
-    // metric reflects OpenAI embedding spend (~$0.02 / 1M input tokens at
-    // 2026-Q1). Token count surfaced via resp.usage.prompt_tokens; falls
-    // back to char-based estimate (4 chars/token) when usage absent.
-    try {
-      const usage = (resp as { usage?: { prompt_tokens?: number; total_tokens?: number } }).usage
-      const tokens =
-        usage?.prompt_tokens ?? usage?.total_tokens ?? Math.ceil(resumeText.slice(0, 8000).length / 4)
-      logTokenSpend({
-        kind: "embedding",
-        service: "openai",
-        model: "text-embedding-3-small",
-        inputTokens: tokens,
-        count: 1,
-        labels: { caller: "job-rec-daily", userId, resumeId },
-      })
-    } catch {
-      /* fail-open: cost-ledger never blocks production path */
     }
     // Cache write-back. Best-effort; don't block return on Firestore success.
     void db
@@ -83,10 +71,10 @@ async function defaultUserEmbedComputer(
       .doc(resumeId)
       .set(
         {
-          embedding: vec,
-          embeddingModel: "text-embedding-3-small",
-          embeddingDim: vec.length,
-          embeddingComputedAt: new Date().toISOString(),
+          embedding: result.vector,
+          embeddingModel: result.model,
+          embeddingDim: result.dim,
+          embeddingComputedAt: result.computedAt,
         },
         { merge: true }
       )
@@ -97,7 +85,7 @@ async function defaultUserEmbedComputer(
           error: err instanceof Error ? err.message : String(err),
         })
       })
-    return vec
+    return result.vector
   } catch (err) {
     logger.error("[job-rec-daily] embed_compute_failed", {
       userId,
