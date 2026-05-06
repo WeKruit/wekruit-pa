@@ -1190,3 +1190,169 @@ test("queryMatchingJobs: TD-#10 — non-tech user + management job → KEPT (no 
   assert.ok(ids.has("nurse"), "non-tech user: tech-bucket healthtech also survives")
   _clearFeatureFlagCache()
 })
+
+// ---------------------------------------------------------------------------
+// iter34 sprint A.3 — targetRole / targetRoleIndustryEnum post-filter
+// ---------------------------------------------------------------------------
+
+import { applyTargetRoleIndustryEnumFilter } from "../../tools/query-matching-jobs.js"
+
+test("applyTargetRoleIndustryEnumFilter: SWE buckets + customer_service doc → dropped", () => {
+  const job = {
+    id: "cs",
+    industryEnum: ["customer_service"],
+  }
+  const out = applyTargetRoleIndustryEnumFilter([job], ["tech_software"])
+  assert.equal(out.length, 0, "non-overlapping industryEnum must be dropped")
+})
+
+test("applyTargetRoleIndustryEnumFilter: SWE buckets + tech_software doc → kept", () => {
+  const job = {
+    id: "swe",
+    industryEnum: ["tech_software", "fintech_finance"],
+  }
+  const out = applyTargetRoleIndustryEnumFilter([job], ["tech_software"])
+  assert.equal(out.length, 1)
+  assert.equal(out[0]?.id, "swe")
+})
+
+test("applyTargetRoleIndustryEnumFilter: undefined allowedBuckets → no-op (returns all)", () => {
+  const jobs = [
+    { id: "a", industryEnum: ["tech_software"] },
+    { id: "b", industryEnum: ["customer_service"] },
+    { id: "c" },
+  ]
+  const out = applyTargetRoleIndustryEnumFilter(jobs, undefined)
+  assert.equal(out.length, 3, "undefined buckets → backward-compatible bypass")
+})
+
+test("applyTargetRoleIndustryEnumFilter: empty allowedBuckets → no-op", () => {
+  const jobs = [{ id: "a", industryEnum: ["tech_software"] }]
+  const out = applyTargetRoleIndustryEnumFilter(jobs, [])
+  assert.equal(out.length, 1)
+})
+
+test("applyTargetRoleIndustryEnumFilter: doc with no industryEnum field → dropped when filter active", () => {
+  const jobs = [
+    { id: "no-enum" }, // missing field entirely
+    { id: "empty-enum", industryEnum: [] },
+    { id: "match", industryEnum: ["tech_software"] },
+  ]
+  const out = applyTargetRoleIndustryEnumFilter(jobs, ["tech_software"])
+  assert.equal(out.length, 1)
+  assert.equal(out[0]?.id, "match")
+})
+
+test("applyTargetRoleIndustryEnumFilter: any single overlap is enough (intersection-non-empty)", () => {
+  const jobs = [
+    { id: "j1", industryEnum: ["customer_service", "ai_ml"] },
+    { id: "j2", industryEnum: ["customer_service"] },
+  ]
+  const out = applyTargetRoleIndustryEnumFilter(jobs, ["ai_ml", "tech_software"])
+  assert.equal(out.length, 1)
+  assert.equal(out[0]?.id, "j1", "j1 overlaps via ai_ml; j2 has no overlap")
+})
+
+test("queryMatchingJobs A.3: targetRoleIndustryEnum=[tech_software] drops customer_service doc, keeps tech_software doc", async () => {
+  _clearFeatureFlagCache()
+  const mfs = new MockFirestore()
+  // Flag ON — H8 industryEnum array-contains-any path. We pass industryTags
+  // that match BOTH docs so the query returns both, then the post-filter
+  // disambiguates by role.
+  await mfs.collection("pa-feature-flags").doc("matchingIndustryEnumPopulated").set({
+    key: "matchingIndustryEnumPopulated",
+    value: true,
+    type: "bool",
+    scope: "global",
+  })
+  await mfs.collection("matching-jobs").doc("swe").set({
+    status: "active",
+    companyName: "Acme",
+    roleTitle: "Senior SWE",
+    locationRaw: "Remote",
+    primaryUrl: "https://swe",
+    industry: "tech",
+    industryKey: "tech",
+    industryEnum: ["tech_software"],
+    sponsorship: true,
+    firstSeenAt: "2026-04-30",
+  })
+  await mfs.collection("matching-jobs").doc("cs").set({
+    status: "active",
+    companyName: "CallCo",
+    roleTitle: "Customer Support Lead",
+    locationRaw: "Remote",
+    primaryUrl: "https://cs",
+    industry: "tech",
+    industryKey: "tech", // NOT in NEVER_KEYS so survives the never-list
+    industryEnum: ["customer_service"],
+    sponsorship: true,
+    firstSeenAt: "2026-04-29",
+  })
+  const out = await queryMatchingJobs(
+    {
+      filters: {
+        // Both buckets so the H8 query returns both. (cs's enum=customer_service
+        // wouldn't match tech_software alone — we use a wider bucket pair.)
+        industryTags: ["tech_software", "customer_service"],
+        targetRole: ["swe"],
+        targetRoleIndustryEnum: ["tech_software", "ai_ml", "fintech_finance", "tech_hardware"],
+      },
+      limit: 10,
+    },
+    { db: asFirestore(mfs) }
+  )
+  const ids = out.jobs.map((j) => j.id)
+  assert.ok(ids.includes("swe"), "tech_software doc must survive role filter")
+  assert.ok(!ids.includes("cs"), "customer_service doc must be dropped by role filter")
+  _clearFeatureFlagCache()
+})
+
+test("queryMatchingJobs A.3: targetRoleIndustryEnum undefined (founder/other) → no role filter, both docs kept", async () => {
+  _clearFeatureFlagCache()
+  const mfs = new MockFirestore()
+  await mfs.collection("pa-feature-flags").doc("matchingIndustryEnumPopulated").set({
+    key: "matchingIndustryEnumPopulated",
+    value: true,
+    type: "bool",
+    scope: "global",
+  })
+  await mfs.collection("matching-jobs").doc("swe").set({
+    status: "active",
+    companyName: "Acme",
+    roleTitle: "Senior SWE",
+    locationRaw: "Remote",
+    primaryUrl: "https://swe",
+    industry: "tech",
+    industryKey: "tech",
+    industryEnum: ["tech_software"],
+    sponsorship: true,
+    firstSeenAt: "2026-04-30",
+  })
+  await mfs.collection("matching-jobs").doc("cs").set({
+    status: "active",
+    companyName: "CallCo",
+    roleTitle: "Customer Support Lead",
+    locationRaw: "Remote",
+    primaryUrl: "https://cs",
+    industry: "tech",
+    industryKey: "tech",
+    industryEnum: ["customer_service"],
+    sponsorship: true,
+    firstSeenAt: "2026-04-29",
+  })
+  const out = await queryMatchingJobs(
+    {
+      filters: {
+        industryTags: ["tech_software", "customer_service"],
+        // No targetRole / no targetRoleIndustryEnum — backward-compat path.
+      },
+      limit: 10,
+    },
+    { db: asFirestore(mfs) }
+  )
+  const ids = out.jobs.map((j) => j.id)
+  assert.ok(ids.includes("swe"), "no role filter: swe survives")
+  assert.ok(ids.includes("cs"), "no role filter: cs survives (backward compat)")
+  _clearFeatureFlagCache()
+})

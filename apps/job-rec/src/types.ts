@@ -100,6 +100,14 @@ export const MatchingJobSchema = z.object({
    * (no startup signal). Persisted by enrichment crawlers (Phase 39).
    */
   companyEmployeeCount: z.number().int().nonnegative().nullable().optional(),
+  /**
+   * iter34 sprint A.3 — H8-enriched canonical 10-tag bucket array (e.g.
+   * ["tech_software"]). Populated by the H8 enrichment pipeline. When the
+   * caller passes filters.targetRoleIndustryEnum, queryMatchingJobs
+   * intersects this field against the role-derived bucket set and drops
+   * non-overlap docs. Optional because legacy / unenriched rows may lack it.
+   */
+  industryEnum: z.array(z.string()).optional(),
 })
 export type MatchingJob = z.infer<typeof MatchingJobSchema>
 
@@ -143,6 +151,33 @@ export const QueryMatchingJobsFiltersSchema = z.object({
    * pass `industry` and we keep the legacy compound-where path.
    */
   industryTags: z.array(z.string()).optional(),
+  /**
+   * iter34 sprint A.3 — canonical role tokens from
+   * `pa-users.statedPreferences.targetRole` (e.g. ["swe"], ["pm", "em"]).
+   * Currently informational/forward-compat — actual role-vs-job filtering
+   * goes through {@link targetRoleIndustryEnum} below, which the caller
+   * (job-rec daily-batch) computes via
+   * `roleToIndustryBuckets(targetRole)`. We keep the raw token list
+   * here so future iterations can do title-pattern / skill matching by
+   * role without re-derivation.
+   */
+  targetRole: z.array(z.string()).optional(),
+  /**
+   * iter34 sprint A.3 — expanded `industryEnum` buckets that the user's
+   * targetRole(s) plausibly work in (e.g. swe → ["tech_software", "ai_ml",
+   * "fintech_finance", "tech_hardware"]). When set + non-empty,
+   * queryMatchingJobs post-filters the candidate pool to keep only docs
+   * whose `industryEnum` intersects this set.
+   *
+   * Why post-filter (not query-layer): Firestore allows only ONE
+   * array-contains-any per query. The H8 path already uses it for
+   * industryTags expansion (the user's intent buckets). We can't stack
+   * a second array-contains-any for role-derived buckets, so the role
+   * intersection runs in-memory after fetch. ~50 docs ≪ 1ms.
+   *
+   * undefined / empty → no filter (backward-compatible).
+   */
+  targetRoleIndustryEnum: z.array(z.string()).optional(),
 })
 export type QueryMatchingJobsFilters = z.infer<typeof QueryMatchingJobsFiltersSchema>
 

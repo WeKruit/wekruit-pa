@@ -871,6 +871,71 @@ export function applyHardFiltersWithFallback(
 /** Phase 43 — feature flag key. Default OFF; ramp 1%→100%. */
 export const HARD_FILTERS_FLAG_KEY = "paHardFiltersEnabled"
 
+// ---------------------------------------------------------------------------
+// iter34 sprint A.3 — targetRole → industryEnum post-filter.
+//
+// Why post-filter (not query-layer): Firestore allows only ONE
+// `array-contains-any` per query. The H8 path (line ~1052) already burns
+// that quota on `industryTags` (the user's intent buckets). Adding a second
+// `array-contains-any` for role-derived buckets is illegal. So we run the
+// role intersection in-memory after fetch — the QUERY_FETCH_CAP is 50, so
+// the linear scan is ≪ 1ms.
+//
+// Behavior: when filter is set + non-empty, keep docs where
+// `doc.industryEnum ∩ filter !== ∅`. When the doc has no `industryEnum`
+// (legacy / unenriched rows), drop them — without the field we can't
+// verify role fit and the role filter's whole point is to be strict.
+//
+// When filter is undefined / empty (e.g. user is "founder" or "other") →
+// no-op, return jobs unchanged. Backward-compatible.
+// ---------------------------------------------------------------------------
+
+/**
+ * Apply the iter34 A.3 targetRole-derived industryEnum intersection filter.
+ * Pure / deterministic. Does not mutate input.
+ *
+ * Inputs:
+ *   - jobs: candidate pool (post-fetch, post-projection).
+ *   - allowedBuckets: union of `industryEnum` buckets the user's
+ *     targetRole(s) plausibly work in. Computed by the caller via
+ *     `roleToIndustryBuckets(statedPreferences.targetRole)`.
+ *
+ * Behavior:
+ *   - allowedBuckets is undefined / null / empty → return jobs unchanged.
+ *   - For each job: keep iff `Array.isArray(job.industryEnum)` AND at least
+ *     one element of `job.industryEnum` is in `allowedBuckets`.
+ *   - Jobs with no `industryEnum` field → dropped (role filter is intentionally
+ *     strict; legacy rows fall through the role gate).
+ *
+ * Exposed for unit tests.
+ */
+export function applyTargetRoleIndustryEnumFilter<
+  T extends { industryEnum?: string[] }
+>(
+  jobs: readonly T[],
+  allowedBuckets: readonly string[] | undefined | null
+): T[] {
+  if (!Array.isArray(allowedBuckets) || allowedBuckets.length === 0) {
+    return [...jobs]
+  }
+  const allowed = new Set<string>(allowedBuckets.filter((s) => typeof s === "string"))
+  if (allowed.size === 0) return [...jobs]
+  const out: T[] = []
+  for (const j of jobs) {
+    const enumArr = Array.isArray(j.industryEnum) ? j.industryEnum : null
+    if (!enumArr || enumArr.length === 0) continue
+    let hit = false
+    for (const v of enumArr) {
+      if (typeof v === "string" && allowed.has(v)) {
+        hit = true
+        break
+      }
+    }
+    if (hit) out.push(j)
+  }
+  return out
+}
+
 export type QueryMatchingJobsDeps = {
   db: Firestore
   log?: (...args: unknown[]) => void
@@ -907,6 +972,13 @@ export function projectMatchingJobRow(id: string, raw: Record<string, unknown>):
     ? (raw.requiredSkills.filter((s) => typeof s === "string") as string[])
     : []
 
+  // iter34 sprint A.3 — surface the H8 industryEnum array so post-filter
+  // (applyTargetRoleIndustryEnumFilter) can intersect it against
+  // role-derived buckets without re-fetching the raw doc.
+  const industryEnum = Array.isArray(raw.industryEnum)
+    ? (raw.industryEnum.filter((s): s is string => typeof s === "string"))
+    : undefined
+
   return {
     id,
     companyName: str(raw.companyName),
@@ -921,6 +993,7 @@ export function projectMatchingJobRow(id: string, raw: Record<string, unknown>):
     jobType: typeof raw.jobType === "string" ? raw.jobType : undefined,
     requiredSkills: requiredSkills.length > 0 ? requiredSkills : undefined,
     firstSeenAt: typeof raw.firstSeenAt === "string" ? raw.firstSeenAt : undefined,
+    industryEnum: industryEnum && industryEnum.length > 0 ? industryEnum : undefined,
   }
 }
 
@@ -1136,7 +1209,27 @@ export async function queryMatchingJobs(
       userTags: userTagsForGuard,
     })
   }
-  const filtered = guardResult.kept
+  // iter34 sprint A.3 — role → industryEnum post-filter. Runs AFTER the
+  // never-list (so role filter applies to the kept set, not the polluted
+  // pool) and BEFORE rank (so the rank operates on the role-fit subset
+  // only). When filter is undefined/empty, no-op.
+  const roleBuckets = parsed.filters.targetRoleIndustryEnum
+  const beforeRoleFilter = guardResult.kept
+  const afterRoleFilter = applyTargetRoleIndustryEnumFilter(beforeRoleFilter, roleBuckets)
+  if (
+    Array.isArray(roleBuckets) &&
+    roleBuckets.length > 0 &&
+    afterRoleFilter.length !== beforeRoleFilter.length
+  ) {
+    log("[queryMatchingJobs] target_role_industry_enum_filtered", {
+      before: beforeRoleFilter.length,
+      after: afterRoleFilter.length,
+      dropped: beforeRoleFilter.length - afterRoleFilter.length,
+      allowedBuckets: roleBuckets,
+      targetRole: parsed.filters.targetRole,
+    })
+  }
+  const filtered = afterRoleFilter
 
   const ranked = rankJobs(filtered, parsed.filters, parsed.limit)
   return { jobs: ranked }
