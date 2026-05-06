@@ -14,9 +14,21 @@ progress:
 
 ## Current Position
 
-Phase: **All 10 v1.7 phases ✅ — milestone audited + archived**
+Phase: **Phase 73 ✅ shipped (career-ops port) — extends v1.7**
 Plan: —
-Status: v1.7 complete 2026-05-06. All 37 REQ-IDs satisfied. Audit: tech_debt (no blockers). 21 commits in milestone, +9,165 -1,024 LOC.
+Status: v1.7 + Phase 73 add-on shipped 2026-05-06.
+
+## Phase 73 — career-ops port (2026-05-06 add-on)
+
+- `apps/job-rec/...` — no changes (V16 unchanged)
+- macmini `wekruit-matching/scraper/{greenhouse,lever,ashby}_direct.py` — 3 new public-API scrapers, 760 LOC
+- `pipeline/daily.py` Stage 1.6 wired
+- Live smoke: Greenhouse 4943 + Lever 439 + Ashby 1552 = 6696 deduped, **1734 senior+** (Director/Staff/Principal/Senior)
+- Tests: 79/79 macmini new + 79 regression all green
+- Cost: $0 (public APIs)
+- Macmini commit: `2bbaa9a` / wekruit-pa: `c3e786e`
+- Verified ingestion live: pipeline triggered 2026-05-06 16:32 UTC, Stage 1.6 upserts visible in logs (e.g. `ashby:benchling 5 inserted`, `ashby:opensea 33 inserted`)
+- Stage 4 Firebase sync pending (Stage 2b ATS enrichment slow for backlog) — full corpus visible after current run completes
 
 ## v1.7 Phase Roster (shipped)
 
