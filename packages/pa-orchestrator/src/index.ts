@@ -275,6 +275,13 @@ export {
 // Phase 30 T-Wrap — re-export the production NL judge so the admin debug
 // endpoint (paAdminBootstrap → evalDownstreamTriggers) can pass it in.
 export { defaultNlJudge, _resetNlJudgeClient as _resetEvalNlJudgeClient } from "./eval-nl-judge.js"
+// iter34 sprint A.4 — role canonical → industryEnum bucket mapper. Used by
+// the job-rec query path (apps/job-rec) to compute targetRoleIndustryEnum
+// from statedPreferences.targetRole. Pure / deterministic.
+export {
+  roleToIndustryBuckets,
+  type IndustryEnumBucket,
+} from "./voice/role-to-industry.js"
 
 type RunAgentTurn = typeof defaultRunAgentTurn
 

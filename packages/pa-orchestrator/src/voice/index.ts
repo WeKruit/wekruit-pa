@@ -10,3 +10,5 @@
 export { analyzeUserStyle, WEIGHTS_VERSION, type StyleSnapshot } from "./style-analyzer.js"
 export { buildMirrorSnippet } from "./mirror-snippet.js"
 export { ZH_SLANG, EN_SLANG, countSlangHits } from "./slang-lexicon.js"
+// iter34 sprint A.4 — role canonical → industryEnum bucket mapper.
+export { roleToIndustryBuckets, type IndustryEnumBucket } from "./role-to-industry.js"
