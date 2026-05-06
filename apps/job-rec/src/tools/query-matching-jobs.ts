@@ -497,6 +497,24 @@ void ((): JobIndustry | undefined => undefined)
  * recommended. Bare `analyst` / `specialist` / `associate` / `trainee` are
  * dropped UNLESS preceded by a tech qualifier (lookbehind allowlist).
  *
+ * iter34 H.2 / CR2 — extended again after G5 sim surfaced BDR / Account
+ * Manager / Account Executive / Sales Executive / Customer Success
+ * Manager / Operations Manager being recommended to a SWE candidate.
+ * Patterns:
+ *   - business development → ALWAYS drop (catches BDR titles).
+ *   - account manager / account executive → drop UNLESS preceded by a tech
+ *     qualifier (engineering/software/cloud/technical/systems/product).
+ *     Catches "Partner Account Manager" too (no tech qualifier in front).
+ *   - sales (manager|executive|representative|producer|associate) → drop.
+ *   - customer success → drop.
+ *   - business analyst → drop (already covered by `analyst` rule, kept
+ *     here for clarity).
+ *   - operations manager → drop UNLESS preceded by engineering / software /
+ *     cloud / technical / systems / product / infrastructure. NB: bare
+ *     "operations" alone is NOT dropped — "Software Engineer Operations"
+ *     survives.
+ *   - project manager → drop UNLESS preceded by the same tech qualifier set.
+ *
  * Notes on the regex:
  *   - Word boundary on most tokens (\b) to avoid false positives.
  *   - "Manager in Training" / "Management Trainee" caught via the
@@ -530,7 +548,27 @@ export const TECH_LEANING_TITLE_BLACKLIST_REGEX = new RegExp(
     // associate — broader tech allow list.
     String.raw`|(?<!(?:engineering|software|cloud|data|ml|ai|backend|frontend|fullstack|technical|product)\s)\bassociate\b` +
     // trainee — engineer/developer/software/cloud allow.
-    String.raw`|(?<!(?:engineer|engineering|software|cloud|developer|technical)\s)\btrainee\b`,
+    String.raw`|(?<!(?:engineer|engineering|software|cloud|developer|technical)\s)\btrainee\b` +
+    // iter34 H.2 / CR2 — sales / BDR / customer-success / business titles.
+    // business development → always drop (covers BDR).
+    String.raw`|\bbusiness\s+development\b` +
+    // partner account → always drop (covers "Partner Account Manager").
+    String.raw`|\bpartner\s+account\b` +
+    // account (manager|executive) → drop unless preceded by tech qualifier.
+    String.raw`|(?<!(?:software|technical|cloud|engineering|systems|product)\s)\baccount\s+(?:manager|executive)\b` +
+    // sales (manager|executive|representative|producer|associate) → always drop.
+    String.raw`|\bsales\s+(?:manager|executive|representative|producer|associate)\b` +
+    // customer success → always drop (covers "Customer Success Manager").
+    String.raw`|\bcustomer\s+success\b` +
+    // business analyst → drop (also caught by analyst lookbehind, but explicit
+    // here for grep-ability).
+    String.raw`|\bbusiness\s+analyst\b` +
+    // operations manager → drop unless preceded by tech qualifier.
+    // NB bare "operations" is NOT in this set; "Software Engineer Operations"
+    // survives.
+    String.raw`|(?<!(?:engineering|software|cloud|technical|systems|product|infrastructure)\s)\boperations\s+manager\b` +
+    // project manager → drop unless preceded by tech qualifier.
+    String.raw`|(?<!(?:engineering|software|cloud|technical|product|systems|infrastructure)\s)\bproject\s+manager\b`,
   "i"
 )
 

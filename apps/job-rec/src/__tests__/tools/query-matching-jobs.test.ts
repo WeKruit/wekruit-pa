@@ -1986,6 +1986,137 @@ test("D.6 integration: tech user + 'Platform Support - Analyst' → dropped via 
   assert.equal(r.rejected, 1)
 })
 
+// ---------------------------------------------------------------------------
+// iter34 H.2 / CR2 — extend blacklist for BDR / Account Manager / Sales /
+// Customer Success / Operations Manager titles surfaced in G5 sim
+// ---------------------------------------------------------------------------
+
+test("CR2 regex: 'Business Development Representative' → drop", () => {
+  assert.ok(TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Business Development Representative"))
+})
+
+test("CR2 regex: 'BDR' bare token alone → does NOT trip (we match phrase 'business development')", () => {
+  // We match the phrase form; a 3-letter "BDR" alone wouldn't be in a real job
+  // title without "Business Development Representative" alongside.
+  assert.ok(!TECH_LEANING_TITLE_BLACKLIST_REGEX.test("BDR"))
+})
+
+test("CR2 regex: 'Account Manager' (bare) → drop", () => {
+  assert.ok(TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Account Manager"))
+})
+
+test("CR2 regex: 'Partner Account Manager' → drop (no tech qualifier)", () => {
+  assert.ok(TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Partner Account Manager"))
+})
+
+test("CR2 regex: 'Software Account Manager' → keep (tech qualifier)", () => {
+  assert.ok(!TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Software Account Manager"))
+})
+
+test("CR2 regex: 'Technical Account Manager' → keep (tech qualifier)", () => {
+  assert.ok(!TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Technical Account Manager"))
+})
+
+test("CR2 regex: 'Cloud Account Manager' → keep (tech qualifier)", () => {
+  assert.ok(!TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Cloud Account Manager"))
+})
+
+test("CR2 regex: 'Account Executive' → drop", () => {
+  assert.ok(TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Account Executive"))
+})
+
+test("CR2 regex: 'Software Account Executive' → keep (tech qualifier)", () => {
+  assert.ok(!TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Software Account Executive"))
+})
+
+test("CR2 regex: 'Sales Executive' → drop", () => {
+  assert.ok(TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Sales Executive"))
+})
+
+test("CR2 regex: 'Sales Manager' / 'Sales Representative' / 'Sales Producer' / 'Sales Associate' → drop", () => {
+  assert.ok(TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Sales Manager"))
+  assert.ok(TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Sales Representative"))
+  assert.ok(TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Sales Producer"))
+  assert.ok(TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Sales Associate"))
+})
+
+test("CR2 regex: 'Customer Success Manager' → drop", () => {
+  assert.ok(TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Customer Success Manager"))
+})
+
+test("CR2 regex: 'Customer Success Engineer' → drop (customer success token always drops)", () => {
+  // Note: this is intentional — Customer Success Engineering roles tend to be
+  // sales-adjacent, not core SWE. SWE candidates can still surface them via
+  // role-fit gate if they self-tag accordingly.
+  assert.ok(TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Customer Success Engineer"))
+})
+
+test("CR2 regex: 'Operations Manager' → drop (no tech qualifier)", () => {
+  assert.ok(TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Operations Manager"))
+})
+
+test("CR2 regex: 'Engineering Operations Manager' → keep (tech qualifier)", () => {
+  assert.ok(!TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Engineering Operations Manager"))
+})
+
+test("CR2 regex: 'Software Operations Manager' → keep (tech qualifier)", () => {
+  assert.ok(!TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Software Operations Manager"))
+})
+
+test("CR2 regex: 'Infrastructure Operations Manager' → keep (tech qualifier)", () => {
+  assert.ok(!TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Infrastructure Operations Manager"))
+})
+
+test("CR2 regex: 'Software Engineer Operations' → keep (operations not after manager)", () => {
+  // Bare "operations" is NOT in the bare-keywords set; only "operations manager"
+  // is (with tech qualifier lookbehind). A SWE-flavored "Operations" suffix
+  // role survives.
+  assert.ok(!TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Software Engineer Operations"))
+})
+
+test("CR2 regex: 'Project Manager' → drop", () => {
+  assert.ok(TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Project Manager"))
+})
+
+test("CR2 regex: 'Engineering Project Manager' → keep (tech qualifier)", () => {
+  assert.ok(!TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Engineering Project Manager"))
+})
+
+test("CR2 regex: 'Software Project Manager' → keep (tech qualifier)", () => {
+  assert.ok(!TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Software Project Manager"))
+})
+
+test("CR2 regex: 'Business Analyst' → drop", () => {
+  assert.ok(TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Business Analyst"))
+})
+
+test("CR2 integration: tech user + BDR / Account Manager / Sales Executive / Operations Manager → all dropped, SWE kept", () => {
+  const jobs = [
+    { id: "bdr", jobTitle: "Business Development Representative" },
+    { id: "pam", jobTitle: "Partner Account Manager" },
+    { id: "ae", jobTitle: "Account Executive" },
+    { id: "se", jobTitle: "Sales Executive" },
+    { id: "csm", jobTitle: "Customer Success Manager" },
+    { id: "om", jobTitle: "Operations Manager" },
+    { id: "swe", jobTitle: "Software Engineer" },
+    { id: "epm", jobTitle: "Engineering Project Manager" },
+    { id: "sam", jobTitle: "Software Account Manager" },
+  ]
+  const r = applyTechLeaningTitleBlacklist(jobs, ["tech_software"])
+  assert.equal(r.kept.length, 3, "swe, epm, sam should survive")
+  const ids = r.kept.map((j) => j.id).sort()
+  assert.deepEqual(ids, ["epm", "sam", "swe"])
+  assert.equal(r.rejected, 6)
+})
+
+test("CR2 regex: existing D.6 patterns still hold (regression)", () => {
+  // Lock D.6 behavior in place to catch a regression from CR2 regex edits.
+  assert.ok(TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Receptionist"))
+  assert.ok(TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Project Coordinator"))
+  assert.ok(!TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Software Engineer"))
+  assert.ok(!TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Engineering Manager"))
+})
+
 test("applyAtsApplyUrlGate D.5: mixed pool — keeps real ATS, drops missing/jobright", () => {
   const jobs: { id: string; atsApplyUrl?: string }[] = [
     { id: "gh", atsApplyUrl: "https://boards.greenhouse.io/acme/jobs/1" },
