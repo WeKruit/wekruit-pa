@@ -334,6 +334,7 @@ function makeGenerateJobRecs(): NonNullable<
           ? "先看看, 不准就告诉我我再找; 之后每天会再给你新的"
           : "see if these fit — if not lmk, i'll keep digging; daily fresh batch from here"
       )
+      // TODO(iter34-G.4): after returning top-N, fire-and-forget llmRerank() to write pa-user-rerank-cache for next request
       return { message: lines.join("\n"), recCount: jobs.length }
     } catch (err) {
       logger.warn("[job-recs] queryMatchingJobs threw", {
