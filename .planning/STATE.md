@@ -14,10 +14,14 @@ progress:
 
 ## Current Position
 
-Phase: **Phase 63 — LinkedIn / Wellfound senior-job scraper (next)**
+Phase: **Phase 65 — Serper backfill batch + retry queue (next)**
 Plan: —
-Status: v1.7 spawned 2026-05-06; roadmap locked (37 REQ-IDs, phases 63-72, 10 phases). v1.6 archived.
-Last activity: 2026-05-06 — v1.6 milestone tagged + archived; v1.7 REQUIREMENTS + ROADMAP committed
+Status:
+- v1.7 in progress (2/10 phases)
+- P63 (senior scraper) ✅ commit `7c83f62` + macmini `60359a4` — code shipped, Wellfound HTML 0 jobs (anti-bot wall), LinkedIn token-gated (Phase 69 unlock)
+- P64 (sponsorship inference + allowlist) ✅ — 279 companies seeded production, 921/921 tests pass
+- Plus matching hotfix: LLM nuanced reasoning shipped (commit `71b9464`) — cites Tesla 300+ stores experience for Adam, replacing template
+Last activity: 2026-05-06 — Phase 64 sponsorship inference shipped (SPONSOR-01..05)
 
 ## v1.6 Post-Ship Verification
 
