@@ -39,6 +39,19 @@ import type {
 // Phase 52 — F1 fix: bilingual turn-0 intent detection / ack directives.
 import type { FirstTurnDetection, FirstTurnIntent } from "./onboarding-intent.js"
 import { INTENT_ACK_DIRECTIVES } from "./onboarding-intent.js"
+// Phase 54 (USER-TAG-03) — sole-writer for pa-users.tags + onboarding mappers.
+// Phase 52 vocab projection of statedPreferences answers; fail-open contract.
+import {
+  applyPartialUserTags,
+  type PartialUserTags,
+} from "./tags/user-tags-writer.js"
+import {
+  mapAnswerToRoleFunction,
+  mapAnswerToVisa,
+  mapAnswerToLocations,
+  bucketYoe,
+  type YoeRange,
+} from "./tags/onboarding-mappers.js"
 
 export type OnboardingStep =
   | "send_first_mes"
@@ -1003,6 +1016,167 @@ export function parseLangAnswer(reply: string): Partial<StatedPreferences> {
 }
 
 /**
+ * Phase 54 (USER-TAG-03) — Project a `Partial<StatedPreferences>` patch into
+ * canonical Phase 52 vocab and persist via the `applyPartialUserTags` sole-
+ * writer.
+ *
+ * The patch arrives in either shape:
+ *   - regex-derived (parseRoleAnswer / parseYoeAnswer / etc) — already
+ *     canonicalized in this module via canonicalizeRole / canonicalizeLocations
+ *   - LLM Judge canonical — strict StatedPreferences fields
+ *
+ * Mapping:
+ *   - `targetRole` (CanonicalRole tokens like "swe") → `targetRoleFunction[]`
+ *     (ROLE_FUNCTION_VOCAB Phase 52)
+ *   - `yoeRange` ([min,max]) → `yoeRange` Phase 52 bucket string
+ *   - `visaStatus` (CV-side enum incl. opt/h1b/sponsorship_needed) → 4-enum
+ *     `visaStatus` Phase 52 (collapses opt/h1b/cpt → sponsor_needed)
+ *   - `targetLocations` (CanonicalLocation tokens like "sf") → Phase 52
+ *     LOCATION_VOCAB tokens (san_francisco_bay_area, etc)
+ *   - `prefersStartup` (boolean|null) → `prefersStartup` boolean (true)
+ *     when explicitly preferred startups
+ *   - `preferredLang` ('zh'|'en'|'mixed') → 'zh'|'en'|'mixed' Phase 52
+ *
+ * Fail-open: any unrecognized canonical token maps to "skip this field"
+ * rather than poisoning the tags doc with bogus values. The Phase 56 hard-
+ * filter treats missing fields as "no restriction".
+ */
+function projectPrefPatchToPhase52Tags(
+  prefPatch: Partial<StatedPreferences>
+): PartialUserTags {
+  const out: Record<string, unknown> = {}
+
+  // targetRole (CanonicalRole) → targetRoleFunction[] (Phase 52 ROLE_FUNCTION_VOCAB).
+  // CanonicalRole tokens map directly to Phase 52 tokens.
+  if (Array.isArray(prefPatch.targetRole) && prefPatch.targetRole.length > 0) {
+    const mapped: string[] = []
+    for (const r of prefPatch.targetRole) {
+      const rfs = mapAnswerToRoleFunction(r)
+      for (const rf of rfs) if (!mapped.includes(rf)) mapped.push(rf)
+    }
+    if (mapped.length > 0) out.targetRoleFunction = mapped
+  }
+
+  // yoeRange ([min,max]) → bucket string. Use min as the bucketing input
+  // (most representative when min !== max).
+  if (
+    Array.isArray(prefPatch.yoeRange) &&
+    prefPatch.yoeRange.length === 2
+  ) {
+    const [minY] = prefPatch.yoeRange
+    const bucket: YoeRange | null = bucketYoe(minY)
+    if (bucket) out.yoeRange = bucket
+  }
+
+  // visaStatus (CV side: citizen|gc|opt|h1b|sponsorship_needed|unknown)
+  //   → 4-enum Phase 52 (citizen|permanent_resident|sponsor_needed|other).
+  if (typeof prefPatch.visaStatus === "string") {
+    const v = prefPatch.visaStatus
+    if (v === "citizen") out.visaStatus = "citizen"
+    else if (v === "gc") out.visaStatus = "permanent_resident"
+    else if (v === "opt" || v === "h1b" || v === "sponsorship_needed") {
+      out.visaStatus = "sponsor_needed"
+    } else if (v === "unknown") {
+      // map to "other" only when explicitly captured — skip when not seen
+      // so we don't overwrite a previously-set tag.
+      out.visaStatus = "other"
+    } else {
+      // free-text path — try the mapper
+      const mapped = mapAnswerToVisa(v)
+      if (mapped !== "other") out.visaStatus = mapped
+    }
+  }
+
+  // targetLocations (CanonicalLocation: sf|nyc|...) → LOCATION_VOCAB.
+  if (
+    Array.isArray(prefPatch.targetLocations) &&
+    prefPatch.targetLocations.length > 0
+  ) {
+    const mapped: string[] = []
+    for (const l of prefPatch.targetLocations) {
+      const locs = mapAnswerToLocations(l)
+      for (const tok of locs) if (!mapped.includes(tok)) mapped.push(tok)
+    }
+    if (mapped.length > 0) out.targetLocations = mapped
+  }
+
+  // prefersStartup boolean → prefersStartup boolean. Phase 52 schema lives
+  // alongside the StartupPreference enum used elsewhere; we project the raw
+  // boolean signal so Phase 56 soft-score can use either side.
+  if (prefPatch.prefersStartup === true) out.prefersStartup = true
+  else if (prefPatch.prefersStartup === false) out.prefersStartup = false
+  // null = no signal / "either" — leave unset.
+
+  // preferredLang.
+  if (
+    prefPatch.preferredLang === "zh" ||
+    prefPatch.preferredLang === "en" ||
+    prefPatch.preferredLang === "mixed"
+  ) {
+    out.preferredLang = prefPatch.preferredLang
+  }
+
+  return out
+}
+
+/**
+ * Phase 54 (USER-TAG-03) — Hook called after applyOnboardingStep persists
+ * the Phase 44 `statedPreferences` patch to write the SAME signal
+ * (canonically re-projected to Phase 52 vocab) into `pa-users.tags`.
+ *
+ * Fail-open: errors logged via `log` but never thrown back to the caller.
+ * Empty patch (no recognizable Phase 52 signal) → skip silently.
+ *
+ * Public for unit tests; production callers use `applyOnboardingStep`.
+ */
+export async function writeOnboardingTags(
+  db: Firestore,
+  userId: string,
+  prefPatch: Partial<StatedPreferences>,
+  opts: { nowIso?: string; log?: (e: string, p?: Record<string, unknown>) => void } = {}
+): Promise<void> {
+  const log = opts.log ?? (() => {})
+  if (!userId) {
+    log("pa.onboarding_tags.skip", { reason: "no_user_id" })
+    return
+  }
+  if (!prefPatch || typeof prefPatch !== "object") {
+    log("pa.onboarding_tags.skip", { reason: "no_patch" })
+    return
+  }
+  let projected: PartialUserTags
+  try {
+    projected = projectPrefPatchToPhase52Tags(prefPatch)
+  } catch (err) {
+    log("pa.onboarding_tags.project_error", {
+      userId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    return
+  }
+  if (Object.keys(projected).length === 0) {
+    log("pa.onboarding_tags.skip", { reason: "empty_projection", userId })
+    return
+  }
+  try {
+    const res = await applyPartialUserTags(db, userId, projected, {
+      source: "chat",
+      nowIso: opts.nowIso,
+      log,
+    })
+    if (!res.ok) {
+      log("pa.onboarding_tags.write_failed", { userId, error: res.error })
+    }
+  } catch (err) {
+    // applyPartialUserTags already swallows internally — but defense-in-depth.
+    log("pa.onboarding_tags.write_throw", {
+      userId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+}
+
+/**
  * Advance the user's onboarding state in Firestore. Idempotent: if the user
  * already has a state >= the target, the write is a no-op.
  *
@@ -1284,5 +1458,17 @@ export async function applyOnboardingStep(
       payload.statedPreferences = merged
     }
     await userRef.set(payload, { merge: true })
+  }
+
+  // Phase 54 (USER-TAG-03) — Mirror the freshly-persisted statedPreferences
+  // patch into `pa-users.tags` (Phase 52 canonical vocab). This is fail-open:
+  // tag-store coherence MUST NOT block onboarding state advancement.
+  // Skips entirely when there's no patch OR no projectable signal.
+  if (hasPrefPatch) {
+    try {
+      await writeOnboardingTags(db, user.id, prefPatch, { nowIso: now })
+    } catch {
+      // writeOnboardingTags already swallows + logs; final defensive catch.
+    }
   }
 }

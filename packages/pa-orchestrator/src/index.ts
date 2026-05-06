@@ -299,6 +299,26 @@ export {
   type StartupPreference,
   type TagsPreferredLang,
 } from "./tags/user-tags-merger.js"
+// Phase 54 — sole-writer for pa-users.tags Firestore I/O. All onboarding
+// chat hooks + cv-confirm reply parser + migration script funnel through
+// this module so the write contract has one auditable code path.
+export {
+  writeUserTagsFull,
+  applyPartialUserTags,
+  auditUsersWithoutTags,
+  type PartialUserTags,
+  type WriteUserTagsOpts,
+} from "./tags/user-tags-writer.js"
+// Phase 54 — onboarding chat-answer → canonical Phase 52 vocab mappers.
+export {
+  mapAnswerToRoleFunction,
+  mapAnswerToVisa,
+  mapAnswerToLocations,
+  mapAnswerToYoeBucket,
+  bucketYoe,
+  detectLang,
+  type YoeRange,
+} from "./tags/onboarding-mappers.js"
 
 type RunAgentTurn = typeof defaultRunAgentTurn
 
