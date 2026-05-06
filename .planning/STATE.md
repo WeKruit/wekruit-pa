@@ -7,20 +7,21 @@ last_updated: "2026-05-06T00:30:00.000Z"
 last_activity: 2026-05-06
 progress:
   total_phases: 11
-  completed_phases: 9
-  total_plans: 9
-  completed_plans: 9
+  completed_phases: 10
+  total_plans: 10
+  completed_plans: 10
 ---
 
 ## Current Position
 
-Phase: **Phase 61 — QA evaluator weekly (SHIP GATE) (next)**
+Phase: **Phase 62 — Documentation + cross-repo handoff (next, FINAL)**
 Plan: —
-Status: Phase 60 ✅ complete (commit `7499a1b`) — `__PA_FIND_MATCH__` admin trigger + scenario --user-id flag + dump-outbound-tail --include-rerank-cache + 5-persona fixtures + daily-batch V16 cutover (1294 tests pass, paSendblueWebhook+paJobRecDaily redeployed); v1.6 in progress (9/11)
-Last activity: 2026-05-06 — Phase 60 dev triggers + V16 cutover shipped (DEV-01..04 covered)
+Status: Phase 61 ✅ complete (commit `12a5934`) — paQaEvaluatorWeekly CF deployed (Mon 09:00 UTC) + Qwen-7B judge + priority queue + alert (Slack+Mailgun) + milestone state tracker (51 new tests, 889/889 functions tests green); v1.6 ship-gate infra ready, first run sampleSize=0 (data-thin: 5/529 users have targetRoleFunction); v1.6 in progress (10/11)
+Last activity: 2026-05-06 — Phase 61 QA evaluator ship gate shipped (QA-01..05 covered)
+Ship gate signal pending: data prereqs (more onboarding completion + fresh corpus). Infra is solid, will surface signal automatically as data flows.
 Adam-action items:
 - Set `ANTHROPIC_API_KEY` Firebase Secret — optional, chain falls through gracefully
-Note: Adam scenario top-5 currently empty (careerStage=senior × 20d freshness window too tight against current corpus). Phase 61 QA evaluator will surface tuning needs.
+- Set `PA_SLACK_ALERT_WEBHOOK` env — optional, alert falls back to Mailgun-only
 
 ## v1.6 — Unified Canonical Tags & Match Quality v1 (this milestone)
 
