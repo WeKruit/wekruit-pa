@@ -34,6 +34,7 @@
 import type { Firestore } from "firebase-admin/firestore"
 import {
   INDUSTRY_TAGS,
+  applyIndustryTagsFallback,
   mapToCanonicalIndustry,
   type IndustryTag,
 } from "./industry-tags.js"
@@ -385,7 +386,14 @@ const SYSTEM_PROMPT =
   "You are a resume parser. Extract structured data from the CV text. Be accurate; null when unknown. " +
   "For industryTags, return 1-3 BEST-MATCH industry buckets from this fixed list (in priority order, no duplicates): " +
   INDUSTRY_TAGS.join(", ") +
-  ". Choose based on the candidate's most recent / most senior experience. Use 'other' only when no other tag fits."
+  ". Choose based on the candidate's most recent / most senior experience. Use 'other' only when no other tag fits.\n" +
+  // iter34 H.3a — concrete tagging examples. The LLM was repeatedly emitting\n" +
+  // ['other'] for SWE / AI-engineer CVs heavy on tools but light on industry words.\n" +
+  "Examples (apply when the corresponding signals are present in the CV):\n" +
+  "- Skills/companies include Software Engineer / SWE / 工程师 / 程序员 / Python / Java / JavaScript / TypeScript / Go / C++ / Tesla / AWS / GCP / Azure / Docker / Kubernetes → industryTags MUST include 'tech_software'.\n" +
+  "- Skills/companies include ML / AI / TensorFlow / PyTorch / OpenAI / Anthropic / LangChain / LlamaIndex / CUDA → ALSO add 'ai_ml'.\n" +
+  "- Skills/companies include semiconductor / firmware / FPGA / ASIC / chip design → add 'tech_hardware'.\n" +
+  "- Use 'other' ONLY when none of the 9 specific buckets fit at all."
 
 async function defaultLlmExtract(text: string): Promise<{
   parsed: StructuredCv
@@ -493,7 +501,16 @@ function validateStructuredCv(raw: unknown): StructuredCv {
     }
   }
   if (tags.length === 0) tags.push("other")
-  ;(o as unknown as StructuredCv).industryTags = tags
+  // iter34 H.3a — skill-token fallback. Adam's CV (SWE / Tesla / AWS / GCP /
+  // Anthropic) was repeatedly LLM-tagged as ["other"]; the deterministic
+  // skill-token rule rescues these cases without re-running the LLM.
+  // applyIndustryTagsFallback NEVER throws and is a no-op for non-tech CVs
+  // (e.g. medical-only CVs whose LLM tag was healthcare_biotech come through
+  // unchanged).
+  ;(o as unknown as StructuredCv).industryTags = applyIndustryTagsFallback(
+    tags,
+    isStringArr(cp.skills) ? cp.skills : []
+  )
   return o as unknown as StructuredCv
 }
 
@@ -1143,7 +1160,11 @@ function adaptV2ToStructuredCv(v2: ParserV2Output["parsed"]): StructuredCv {
     }
   }
   if (tags.length === 0) tags.push("other")
-  return { candidateProfile, experiences, education, industryTags: tags }
+  // iter34 H.3a — same skill-token fallback as the v1 path. Catches v2 CVs
+  // whose top-3 work-history blobs all map to "other" but whose skills array
+  // contains tech/AI tokens (Adam's CV pattern).
+  const finalTags = applyIndustryTagsFallback(tags, candidateProfile.skills)
+  return { candidateProfile, experiences, education, industryTags: finalTags }
 }
 
 async function defaultParserV2Extract(text: string, log: (e: string, p?: Record<string, unknown>) => void): Promise<ParserV2Output> {

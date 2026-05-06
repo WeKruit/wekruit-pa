@@ -503,6 +503,8 @@ describe("ingestCv", () => {
     const { log } = captureLog()
     const parsedWithFintech: StructuredCv = {
       ...happyParsed(),
+      // happyParsed skills include "TypeScript" so H.3a fallback also adds
+      // tech_software (≤3 cap honored). This validates the additive behavior.
       industryTags: ["fintech_finance", "ai_ml"],
     }
     const { deps } = makeStubbedDeps({ db, log, parsed: parsedWithFintech })
@@ -514,17 +516,23 @@ describe("ingestCv", () => {
     assert.equal(state.resumes.length, 1)
     const written = state.resumes[0]!.data
     assert.ok(Array.isArray(written.industryTags))
-    assert.deepEqual(written.industryTags, ["fintech_finance", "ai_ml"])
+    // iter34 H.3a — TypeScript skill triggers tech_software fallback (additive).
+    assert.deepEqual(written.industryTags, ["fintech_finance", "ai_ml", "tech_software"])
   })
 
-  it("F1 unknown industry → falls back to ['other'] (no throw, doc still written)", async () => {
+  it("F1 unknown industry → no tech skill → falls back to ['other'] (no throw, doc still written)", async () => {
     const { db, state } = makeFakeDb()
     const { log } = captureLog()
     const { deps } = makeStubbedDeps({ db, log })
     // LLM emits a totally bogus tag — validator must clamp + fall back.
+    // Use non-tech skills so the H.3a skill-token fallback ALSO returns ["other"].
     deps.llmExtract = async () => ({
       parsed: {
         ...happyParsed(),
+        candidateProfile: {
+          ...happyParsed().candidateProfile,
+          skills: ["leadership", "communication"], // no tech / AI tokens
+        },
         industryTags: ["completely_made_up_industry"] as unknown as IndustryTag[],
       },
       usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },

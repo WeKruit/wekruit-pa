@@ -944,6 +944,117 @@ export function mapToCanonicalIndustryFromSignals(s: IndustrySignals): IndustryT
   return "other"
 }
 
+// ---------------------------------------------------------------------------
+// iter34 H.3a — skill-token-driven industryTags fallback.
+//
+// Adam complaint: his real CV (SWE @ Tesla / AWS / GCP / Anthropic-stack) was
+// repeatedly mis-tagged by the LLM as ["other"]. The LLM is unreliable on the
+// industry bucket when the CV is heavy on tools/companies but light on
+// industry-vertical phrasing. Fallback rule: if the validator-clamped tags
+// resolve to ["other"] AND the candidateProfile.skills array contains any
+// recognizable tech / AI token, force-add `tech_software` / `ai_ml`. The
+// rule is deterministic, $0 cost, and runs after the LLM call so it cannot
+// regress correctly-tagged CVs.
+//
+// Token lists are intentionally lowercase substring matches — substring lets
+// "tensorflow.js" match "tensorflow", "amazon web services" match "aws", etc.
+// Order matters for readability only; any-match wins.
+// ---------------------------------------------------------------------------
+
+/** Tech tokens that promote `tech_software` when found in a skill string. */
+export const TECH_TOKENS: ReadonlyArray<string> = [
+  "python",
+  "java",
+  "javascript",
+  "typescript",
+  "go",
+  "rust",
+  "c++",
+  "ruby",
+  "swift",
+  "kotlin",
+  "react",
+  "vue",
+  "angular",
+  "node",
+  "express",
+  "django",
+  "flask",
+  "spring",
+  "aws",
+  "gcp",
+  "azure",
+  "docker",
+  "kubernetes",
+]
+
+/** AI/ML tokens that promote `ai_ml` when found in a skill string. */
+export const AI_TOKENS: ReadonlyArray<string> = [
+  "tensorflow",
+  "pytorch",
+  "transformers",
+  "openai",
+  "anthropic",
+  "langchain",
+  "llamaindex",
+  "cuda",
+  "machine learning",
+  "deep learning",
+  "llm",
+  "embedding",
+]
+
+/**
+ * Apply skill-token fallback rules to LLM-emitted industryTags.
+ *
+ * Behavior:
+ *   - Drops any "other" tags from the LLM output (we'll re-add at the end if
+ *     the result is still empty).
+ *   - If any skill contains a TECH_TOKENS substring → adds `tech_software`.
+ *   - If any skill contains an AI_TOKENS substring → adds `ai_ml`.
+ *   - Returns the merged + deduped + capped-at-3 list. Falls back to
+ *     `["other"]` only when no skill matched and the LLM list was empty
+ *     after filtering.
+ *
+ * NEVER throws. Operates on already-canonical IndustryTag values (the caller
+ * passes the output of validateStructuredCv).
+ */
+export function applyIndustryTagsFallback(
+  llmTags: readonly IndustryTag[],
+  skills: readonly string[]
+): IndustryTag[] {
+  const norm = Array.isArray(skills)
+    ? skills.filter((s): s is string => typeof s === "string").map((s) => s.toLowerCase())
+    : []
+  const seen = new Set<IndustryTag>()
+  const result: IndustryTag[] = []
+  // Preserve LLM-emitted tags except "other" (we re-add at the end if empty).
+  for (const t of llmTags) {
+    if (t === "other") continue
+    if (!seen.has(t)) {
+      seen.add(t)
+      result.push(t)
+    }
+  }
+  // Tech-skill fallback.
+  if (norm.some((s) => TECH_TOKENS.some((tok) => s.includes(tok)))) {
+    if (!seen.has("tech_software")) {
+      seen.add("tech_software")
+      result.push("tech_software")
+    }
+  }
+  // AI-skill fallback.
+  if (norm.some((s) => AI_TOKENS.some((tok) => s.includes(tok)))) {
+    if (!seen.has("ai_ml")) {
+      seen.add("ai_ml")
+      result.push("ai_ml")
+    }
+  }
+  if (result.length === 0) return ["other"]
+  // Honor StructuredCv contract (≤3 tags).
+  return result.slice(0, 3)
+}
+
 /**
  * Render the user's industryTags into a 1-line block for system prompt
  * injection. Used by Stream D's appendCvContextToSystemPrompt extension.

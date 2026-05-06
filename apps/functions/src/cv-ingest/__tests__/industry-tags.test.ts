@@ -13,6 +13,7 @@ import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 
 import {
+  applyIndustryTagsFallback,
   mapToCanonicalIndustry,
   mapToCanonicalIndustryFromSignals,
   normalizeCompanyName,
@@ -487,5 +488,92 @@ describe("mapToCanonicalIndustryFromSignals — H11 regex extension (driving / v
       roleTitle: "Operations Coordinator",
     })
     assert.notEqual(out, "tech_software")
+  })
+})
+
+// ---------------------------------------------------------------------------
+// iter34 H.3a — applyIndustryTagsFallback (skill-token rescue)
+// ---------------------------------------------------------------------------
+
+describe("applyIndustryTagsFallback (iter34 H.3a)", () => {
+  it("LLM ['other'] + react skill → ['tech_software']", () => {
+    const out = applyIndustryTagsFallback(["other"], ["React", "Node.js"])
+    assert.deepEqual(out, ["tech_software"])
+  })
+
+  it("LLM ['other'] + python skill → ['tech_software']", () => {
+    const out = applyIndustryTagsFallback(["other"], ["Python", "PostgreSQL"])
+    assert.deepEqual(out, ["tech_software"])
+  })
+
+  it("LLM ['tech_software'] + tensorflow skill → ['tech_software', 'ai_ml']", () => {
+    const out = applyIndustryTagsFallback(["tech_software"], ["Python", "TensorFlow", "PyTorch"])
+    assert.deepEqual(out, ["tech_software", "ai_ml"])
+  })
+
+  it("LLM ['healthcare_biotech'] + medical skills → unchanged (no false tech promotion)", () => {
+    const out = applyIndustryTagsFallback(
+      ["healthcare_biotech"],
+      ["clinical research", "biostatistics", "FDA submission"]
+    )
+    assert.deepEqual(out, ["healthcare_biotech"])
+  })
+
+  it("LLM ['other'] + non-tech skills → ['other'] (no fallback fires)", () => {
+    const out = applyIndustryTagsFallback(["other"], ["leadership", "communication"])
+    assert.deepEqual(out, ["other"])
+  })
+
+  it("LLM ['other'] + AWS skill → ['tech_software']", () => {
+    const out = applyIndustryTagsFallback(["other"], ["AWS", "GCP"])
+    assert.deepEqual(out, ["tech_software"])
+  })
+
+  it("LLM ['other'] + 'tensorflow.js' substring → ['ai_ml'] (substring match)", () => {
+    // TENSORFLOW.JS contains "tensorflow" → AI_TOKENS hit.
+    const out = applyIndustryTagsFallback(["other"], ["TensorFlow.js", "Keras"])
+    assert.deepEqual(out, ["ai_ml"])
+  })
+
+  it("LLM ['other'] + langchain → ['ai_ml'] (AI tokens fire even when tech doesn't)", () => {
+    const out = applyIndustryTagsFallback(["other"], ["LangChain", "RAG", "vector store"])
+    // langchain fires ai_ml; "vector" doesn't contain a tech token; embedding fires ai_ml too
+    assert.ok(out.includes("ai_ml"))
+    // Importantly, NO tech_software because none of these match TECH_TOKENS
+    assert.equal(out.includes("tech_software"), false)
+  })
+
+  it("LLM ['other'] + python + openai → ['tech_software', 'ai_ml']", () => {
+    const out = applyIndustryTagsFallback(["other"], ["Python", "OpenAI API", "Anthropic"])
+    assert.deepEqual(out, ["tech_software", "ai_ml"])
+  })
+
+  it("LLM tag preserved + new tech tag from skills (additive, not replace)", () => {
+    const out = applyIndustryTagsFallback(["fintech_finance"], ["Python", "AWS"])
+    assert.deepEqual(out, ["fintech_finance", "tech_software"])
+  })
+
+  it("respects ≤3 cap from StructuredCv contract", () => {
+    const out = applyIndustryTagsFallback(
+      // Already 3 tags from LLM; tech_software fallback must not push to 4.
+      ["fintech_finance", "consumer_retail", "media_entertainment"],
+      ["Python", "TensorFlow"]
+    )
+    assert.equal(out.length <= 3, true)
+    assert.deepEqual(out, ["fintech_finance", "consumer_retail", "media_entertainment"])
+  })
+
+  it("empty skills array → ['other']", () => {
+    const out = applyIndustryTagsFallback(["other"], [])
+    assert.deepEqual(out, ["other"])
+  })
+
+  it("malformed skills (non-string) → safe (filtered out)", () => {
+    // Type-coerce since callers pass typed arrays, but guard against runtime junk.
+    const out = applyIndustryTagsFallback(
+      ["other"],
+      [42, null, undefined, "Python"] as unknown as string[]
+    )
+    assert.deepEqual(out, ["tech_software"])
   })
 })
