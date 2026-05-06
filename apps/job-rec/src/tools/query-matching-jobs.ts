@@ -987,6 +987,12 @@ export function projectMatchingJobRow(id: string, raw: Record<string, unknown>):
     salaryMin: num(raw.salaryMin),
     locationRaw: str(raw.locationRaw),
     primaryUrl: str(raw.primaryUrl),
+    // iter34 sprint A.2 — surface true ATS apply URL when present.
+    // Firestore raw may be string | null | undefined (camelCase only —
+    // snake_case `ats_apply_url` is the Postgres-side name, not used
+    // here). Normalize to `string | undefined` so downstream Zod
+    // (`.optional()`) doesn't have to know about null.
+    atsApplyUrl: typeof raw.atsApplyUrl === "string" ? raw.atsApplyUrl : undefined,
     industry: str(raw.industry),
     industryKey: typeof raw.industryKey === "string" ? raw.industryKey : undefined,
     sponsorship: bool(raw.sponsorship),

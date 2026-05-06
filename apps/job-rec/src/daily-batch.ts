@@ -313,7 +313,9 @@ export function formatJobLine(job: MatchingJob): string {
     typeof job.salaryMax === "number" && job.salaryMax > 0
       ? ` ~$${Math.round(job.salaryMax / 1000)}k`
       : ""
-  return `- ${titleCo}${loc}${sal}\n${job.primaryUrl}`
+  // iter34 sprint A.2 — prefer real ATS apply URL; fall back to
+  // primaryUrl (jobright.ai mirror) when ATS field is missing.
+  return `- ${titleCo}${loc}${sal}\n${job.atsApplyUrl ?? job.primaryUrl}`
 }
 
 /** Compose the full daily-rec message body for a user. */
@@ -449,7 +451,8 @@ export function formatJobLineWithReason(
   const llmReason = ctx.reasons?.get(job.id) ?? ""
   const reason = llmReason || buildJobReason(job, ctx)
   const reasonSuffix = reason ? ` — ${reason}` : ""
-  return `- ${titleCo}${loc}${sal}${reasonSuffix}\n${job.primaryUrl}`
+  // iter34 sprint A.2 — same atsApplyUrl-preferred fallback as formatJobLine.
+  return `- ${titleCo}${loc}${sal}${reasonSuffix}\n${job.atsApplyUrl ?? job.primaryUrl}`
 }
 
 /** Lead-in length cap (chars). Bible v7.5 3-sentence ceiling. */

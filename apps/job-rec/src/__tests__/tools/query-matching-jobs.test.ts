@@ -180,6 +180,34 @@ test("projectMatchingJobRow: defends against missing fields", () => {
   assert.equal(out.requiredSkills, undefined)
 })
 
+// iter34 sprint A.2 — atsApplyUrl projection (camelCase, Firestore side).
+test("projectMatchingJobRow: surfaces atsApplyUrl when present", () => {
+  const out = projectMatchingJobRow("doc1", {
+    companyName: "Co",
+    roleTitle: "SWE",
+    primaryUrl: "https://jobright.ai/m/abc",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/123",
+  })
+  assert.equal(out.atsApplyUrl, "https://greenhouse.io/co/jobs/123")
+  // primaryUrl untouched — still surfaced for fallback.
+  assert.equal(out.primaryUrl, "https://jobright.ai/m/abc")
+})
+
+test("projectMatchingJobRow: atsApplyUrl normalizes null → undefined", () => {
+  const out = projectMatchingJobRow("doc1", {
+    primaryUrl: "https://x",
+    atsApplyUrl: null,
+  })
+  assert.equal(out.atsApplyUrl, undefined)
+})
+
+test("projectMatchingJobRow: atsApplyUrl absent → undefined", () => {
+  const out = projectMatchingJobRow("doc1", {
+    primaryUrl: "https://x",
+  })
+  assert.equal(out.atsApplyUrl, undefined)
+})
+
 test("queryMatchingJobs: returns top-N from active corpus", async () => {
   const mfs = new MockFirestore()
   for (let i = 0; i < 3; i++) {

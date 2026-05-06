@@ -270,7 +270,14 @@ function makeGenerateJobRecs(): NonNullable<
       lines.push(lang === "zh" ? "先给你看两个对得上的岗位:" : "two roles that line up for you:")
       for (const j of jobs) {
         const tag = j.companyName ? ` @ ${j.companyName}` : ""
-        const url = j.primaryUrl ? `\n${j.primaryUrl}` : ""
+        // iter34 sprint A.2 — prefer real ATS apply link; fall back to
+        // primaryUrl (jobright.ai mirror) only when the ATS field is
+        // empty/undefined. Both empty → omit the URL line entirely.
+        const url = j.atsApplyUrl
+          ? `\n${j.atsApplyUrl}`
+          : j.primaryUrl
+            ? `\n${j.primaryUrl}`
+            : ""
         lines.push(`• ${j.jobTitle}${tag}${url}`)
       }
       lines.push(

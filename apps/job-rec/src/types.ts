@@ -88,6 +88,15 @@ export const MatchingJobSchema = z.object({
   salaryMin: z.number().nullable(),
   locationRaw: z.string(),
   primaryUrl: z.string(),
+  /**
+   * iter34 sprint A.2 — true ATS apply URL persisted on Firestore
+   * `matching-jobs` docs (camelCase). When present we surface this as
+   * the user-facing link; `primaryUrl` (jobright.ai mirror) is the
+   * fallback when the row was scraped before the ATS resolver landed.
+   * `null` from Firestore is normalized to `undefined` by
+   * `projectMatchingJobRow` so consumers only branch on `undefined`.
+   */
+  atsApplyUrl: z.string().optional(),
   industry: z.string(),
   industryKey: z.string().optional(),
   sponsorship: z.boolean().nullable(),

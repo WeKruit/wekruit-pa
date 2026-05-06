@@ -190,6 +190,9 @@ export function synthesizeJobFromJd(input: ReverseMatchInput): MatchingJob {
     salaryMin: null,
     locationRaw: input.location ?? "",
     primaryUrl: "",
+    // iter34 sprint A.2 — synthetic JD has no real ATS link. Leave
+    // undefined so formatters fall through to primaryUrl ("" here).
+    atsApplyUrl: undefined,
     industry: input.industry,
     industryKey: input.industry,
     sponsorship: null, // Operator can't easily express; conservative default

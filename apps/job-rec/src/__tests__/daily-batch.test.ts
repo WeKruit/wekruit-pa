@@ -45,6 +45,64 @@ test("formatJobLine: omits salary when salaryMax is null", () => {
   assert.doesNotMatch(line, /\$/)
 })
 
+// iter34 sprint A.2 — atsApplyUrl preferred over primaryUrl when present.
+test("formatJobLine: atsApplyUrl present → URL line uses ATS link", () => {
+  const j: MatchingJob = {
+    id: "j1",
+    companyName: "Acme",
+    jobTitle: "SWE",
+    salaryMax: null,
+    salaryMin: null,
+    locationRaw: "NYC",
+    primaryUrl: "https://jobright.ai/m/abc",
+    atsApplyUrl: "https://boards.greenhouse.io/acme/jobs/123",
+    industry: "tech",
+    sponsorship: null,
+  }
+  const line = formatJobLine(j)
+  const lines = line.split("\n")
+  assert.equal(lines[1], "https://boards.greenhouse.io/acme/jobs/123")
+  // jobright mirror MUST NOT appear when ATS link is available.
+  assert.doesNotMatch(line, /jobright/)
+})
+
+test("formatJobLine: atsApplyUrl undefined → falls back to primaryUrl", () => {
+  const j: MatchingJob = {
+    id: "j1",
+    companyName: "Acme",
+    jobTitle: "SWE",
+    salaryMax: null,
+    salaryMin: null,
+    locationRaw: "NYC",
+    primaryUrl: "https://jobright.ai/m/abc",
+    atsApplyUrl: undefined,
+    industry: "tech",
+    sponsorship: null,
+  }
+  const line = formatJobLine(j)
+  const lines = line.split("\n")
+  assert.equal(lines[1], "https://jobright.ai/m/abc")
+})
+
+test("formatJobLine: atsApplyUrl absent (legacy MatchingJob shape) → primaryUrl wins", () => {
+  // Legacy shape — no `atsApplyUrl` field at all (older fixtures, reverse-match
+  // synth before iter34 A.2).
+  const j: MatchingJob = {
+    id: "j1",
+    companyName: "Acme",
+    jobTitle: "SWE",
+    salaryMax: null,
+    salaryMin: null,
+    locationRaw: "NYC",
+    primaryUrl: "https://primary.example.com/x",
+    industry: "tech",
+    sponsorship: null,
+  }
+  const line = formatJobLine(j)
+  const lines = line.split("\n")
+  assert.equal(lines[1], "https://primary.example.com/x")
+})
+
 test("formatBatchMessage: empty input -> empty string", () => {
   assert.equal(formatBatchMessage([]), "")
 })
@@ -636,6 +694,9 @@ const h13Job = (over: Partial<MatchingJob> = {}): MatchingJob => ({
   salaryMin: null,
   locationRaw: over.locationRaw ?? "San Francisco, CA",
   primaryUrl: over.primaryUrl ?? "https://j/1",
+  // iter34 sprint A.2 — forward atsApplyUrl override so URL-fallback tests
+  // can exercise both paths. Default undefined matches legacy fixtures.
+  atsApplyUrl: over.atsApplyUrl,
   industry: over.industry ?? "tech",
   industryKey: over.industryKey ?? "tech_software",
   sponsorship: null,
@@ -799,6 +860,39 @@ test("H13 formatJobLineWithReason: when reason empty, falls back to plain title-
   // Should have title-line then bare URL on next line, no " — " trailing
   assert.match(out, /\$250k\nhttps/)
   assert.doesNotMatch(out, / — \nhttps/)
+})
+
+// iter34 sprint A.2 — atsApplyUrl preferred in H13 path too.
+test("H13 formatJobLineWithReason: atsApplyUrl wins over primaryUrl", () => {
+  const ctx: DailyPushContext = {
+    industryTags: [],
+    hasUserStatedPreferences: false,
+    language: "zh",
+  }
+  const job = h13Job({
+    requiredSkills: [],
+    primaryUrl: "https://jobright.ai/m/x",
+    atsApplyUrl: "https://lever.co/co/jobs/1",
+  })
+  const out = formatJobLineWithReason(job, ctx)
+  const lines = out.split("\n")
+  assert.equal(lines[1], "https://lever.co/co/jobs/1")
+})
+
+test("H13 formatJobLineWithReason: atsApplyUrl undefined → falls back to primaryUrl", () => {
+  const ctx: DailyPushContext = {
+    industryTags: [],
+    hasUserStatedPreferences: false,
+    language: "zh",
+  }
+  const job = h13Job({
+    requiredSkills: [],
+    primaryUrl: "https://primary.example.com/x",
+    atsApplyUrl: undefined,
+  })
+  const out = formatJobLineWithReason(job, ctx)
+  const lines = out.split("\n")
+  assert.equal(lines[1], "https://primary.example.com/x")
 })
 
 test("H13 runDailyJobRecBatch wires friend-tone variant B end-to-end (default flag on)", async () => {
