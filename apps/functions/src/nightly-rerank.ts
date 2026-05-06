@@ -67,6 +67,12 @@ const SILICONFLOW_API_KEY = defineSecret("SILICONFLOW_API_KEY")
 // Reuse the existing OpenAI agent key — used as the gpt-5.4-nano fallback
 // for JD-rel weight computation when ANTHROPIC_API_KEY isn't provisioned.
 const PA_OPENAI_AGENT_API_KEY = defineSecret("PA_OPENAI_AGENT_API_KEY")
+// v1.7 Phase 69 — Anthropic Sonnet is the primary tier for JD-rel weight
+// computation (computeJdRelativeWeights chain: Sonnet → gpt-5.4-nano →
+// Qwen-7B). Until Adam provisions ANTHROPIC_API_KEY, the helper falls
+// through to the OpenAI tier with no behavioral change. Centralized in
+// orchestrator-deps.ts so cv-ingest + sponsorship paths share it.
+import { ANTHROPIC_API_KEY } from "./orchestrator-deps.js"
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -683,7 +689,7 @@ export const paLlmRerankNightly = onSchedule(
     memory: "1GiB",
     timeoutSeconds: 540,
     region: "us-central1",
-    secrets: [SILICONFLOW_API_KEY, PA_OPENAI_AGENT_API_KEY],
+    secrets: [SILICONFLOW_API_KEY, PA_OPENAI_AGENT_API_KEY, ANTHROPIC_API_KEY],
     retryCount: 0,
   },
   async () => {
@@ -699,12 +705,25 @@ export const paLlmRerankNightly = onSchedule(
       process.env.SILICONFLOW_API_KEY = siliconflowKey
     }
     const openaiKey = (PA_OPENAI_AGENT_API_KEY.value() ?? "").trim()
-    // ANTHROPIC_API_KEY is NOT defined as a Firebase secret in this project
-    // (see CLAUDE.md / Phase 58 deploy notes). At runtime it may still be
-    // populated via gcloud functions deploy --update-env-vars; we pick it up
-    // from process.env if present, otherwise the JD-rel chain falls back to
-    // the OpenAI tier (gpt-5.4-nano) and ultimately Qwen-7B.
-    const anthropicKey = (process.env.ANTHROPIC_API_KEY ?? "").trim()
+    // v1.7 Phase 69 — ANTHROPIC_API_KEY is now declared as a Firebase secret
+    // in orchestrator-deps.ts. Adam provisions it via `firebase functions:
+    // secrets:set ANTHROPIC_API_KEY`; until then, .value() throws and we
+    // fall back to env (legacy --update-env-vars deploys), and finally to
+    // the OpenAI tier (gpt-5.4-nano) → Qwen-7B chain inside
+    // computeJdRelativeWeights when both are empty.
+    // v1.7 Phase 69 — `__UNSET__` sentinel = Adam-placeholder version.
+    // Treat as empty so the JD-rel chain falls through to the OpenAI tier.
+    const anthropicKey = (() => {
+      const isReal = (v: string) => v.length > 0 && v !== "__UNSET__"
+      try {
+        const v = (ANTHROPIC_API_KEY.value() ?? "").trim()
+        if (isReal(v)) return v
+      } catch {
+        // secret not provisioned yet — fall through to env var
+      }
+      const env = (process.env.ANTHROPIC_API_KEY ?? "").trim()
+      return isReal(env) ? env : ""
+    })()
 
     const db = getFirestore()
     const store = makeFirestoreStore(db)

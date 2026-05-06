@@ -790,7 +790,9 @@ import {
   MAILGUN_DOMAIN,
   MAILGUN_FROM,
   MAILGUN_REGION,
+  PA_SLACK_ALERT_WEBHOOK,
 } from "./orchestrator-deps.js"
+import { postSlackAlert } from "./lib/slack-alert.js"
 
 /** Threshold for sending the cost summary email (USD/week). */
 export const COST_ALERT_THRESHOLD_USD = 10
@@ -823,7 +825,16 @@ export const paCostSummaryWeekly = onSchedule(
     memory: "256MiB",
     timeoutSeconds: 300,
     region: "us-central1",
-    secrets: [MAILGUN_API_KEY, MAILGUN_DOMAIN, MAILGUN_FROM, MAILGUN_REGION],
+    // v1.7 Phase 69 — Slack webhook added alongside Mailgun (defense-in-depth).
+    // Both alert paths fire when totalUsd > $10. Either or both may be missing
+    // creds; helpers log+skip silently rather than throw.
+    secrets: [
+      MAILGUN_API_KEY,
+      MAILGUN_DOMAIN,
+      MAILGUN_FROM,
+      MAILGUN_REGION,
+      PA_SLACK_ALERT_WEBHOOK,
+    ],
     retryCount: 0,
   },
   async () => {
@@ -861,7 +872,51 @@ export const paCostSummaryWeekly = onSchedule(
       return
     }
 
-    // Threshold exceeded — send Mailgun email (best-effort, never throws).
+    // v1.7 Phase 69 — Threshold exceeded. Fire Slack first (faster, lower
+    // cost), then Mailgun alongside. Both are best-effort; either failing
+    // does not block the other. postSlackAlert short-circuits cleanly when
+    // PA_SLACK_ALERT_WEBHOOK is unbound.
+    // v1.7 Phase 69 — `__UNSET__` sentinel = placeholder version Adam created
+    // before populating the real URL. Treat as empty so postSlackAlert
+    // short-circuits cleanly until Adam provisions the real webhook.
+    const slackWebhookUrl = (() => {
+      const isReal = (v: string) => v.length > 0 && v !== "__UNSET__"
+      try {
+        const v = (PA_SLACK_ALERT_WEBHOOK.value() ?? "").trim()
+        if (isReal(v)) return v
+      } catch {
+        // not provisioned — fall through to env var
+      }
+      const env = (process.env.PA_SLACK_ALERT_WEBHOOK ?? "").trim()
+      return isReal(env) ? env : ""
+    })()
+    try {
+      const slackResult = await postSlackAlert(
+        {
+          level: "warn",
+          title: `pa-cost-ledger weekly cost over $${COST_ALERT_THRESHOLD_USD} threshold`,
+          message: `Weekly total: *$${summary.totalUsd.toFixed(2)}* (threshold $${COST_ALERT_THRESHOLD_USD})`,
+          fields: [
+            { name: "totalUsd", value: `$${summary.totalUsd.toFixed(2)}` },
+            { name: "callCount", value: String(summary.callCount ?? 0) },
+            {
+              name: "window",
+              value: `${summary.windowStart} → ${summary.windowEnd}`,
+            },
+          ],
+        },
+        { webhookUrl: slackWebhookUrl.length > 0 ? slackWebhookUrl : undefined }
+      )
+      logger.info("[cost-summary-weekly] slack_post_result", slackResult)
+    } catch (err) {
+      // postSlackAlert is fail-graceful, but belt-and-suspenders the live
+      // path so a bug in the helper can't take down the Mailgun fallback.
+      logger.warn("[cost-summary-weekly] slack_post_threw", {
+        err: err instanceof Error ? err.message : String(err),
+      })
+    }
+
+    // Mailgun fallback — keep alongside Slack (defense-in-depth).
     const mailgunCfg: MailgunConfig | null = (() => {
       const apiKey = (MAILGUN_API_KEY.value() ?? "").trim()
       const domain = (MAILGUN_DOMAIN.value() ?? "").trim()
@@ -873,7 +928,7 @@ export const paCostSummaryWeekly = onSchedule(
       return cfg
     })()
     if (!mailgunCfg) {
-      logger.warn("[cost-summary-weekly] mailgun_creds_missing — alert dropped")
+      logger.warn("[cost-summary-weekly] mailgun_creds_missing — Slack-only alert path")
       return
     }
 

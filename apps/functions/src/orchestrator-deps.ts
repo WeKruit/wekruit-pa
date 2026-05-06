@@ -40,6 +40,20 @@ export const MAILGUN_SECRETS: SecretParamHandle[] = [
   MAILGUN_REGION,
 ]
 
+// v1.7 Phase 69 — Adam-action keys. Adam holds these and provisions them via
+// `firebase functions:secrets:set <NAME> --project wekruit-5f89b --data-file=-`
+// (see ops/secrets/SECRETS-PROVISIONING.md). Until provisioned:
+//   - ANTHROPIC_API_KEY absent → pa-resume-parser router skips Anthropic
+//     fallback tier; JD-rel weights helper skips Anthropic; sponsorship-inference
+//     skips Anthropic — all already coded with fall-through.
+//   - PA_SLACK_ALERT_WEBHOOK absent → postSlackAlert returns
+//     { posted:false, reason:"...not set" }; defense-in-depth Mailgun path still
+//     fires.
+// Declared once here so multiple CFs can list them without `defineSecret` being
+// called repeatedly across the bundle.
+export const ANTHROPIC_API_KEY: SecretParamHandle = defineSecret("ANTHROPIC_API_KEY")
+export const PA_SLACK_ALERT_WEBHOOK: SecretParamHandle = defineSecret("PA_SLACK_ALERT_WEBHOOK")
+
 // iter33 P3 — SiliconFlow API key (already used by other Qwen-7B paths in
 // this repo). Reused here for the CV-analysis brief.
 const SILICONFLOW_API_KEY: SecretParamHandle = defineSecret("SILICONFLOW_API_KEY")

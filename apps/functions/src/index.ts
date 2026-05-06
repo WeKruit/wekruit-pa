@@ -45,6 +45,8 @@ import {
   MAILGUN_FROM,
   MAILGUN_REGION,
   MAILGUN_SECRETS,
+  ANTHROPIC_API_KEY,
+  PA_SLACK_ALERT_WEBHOOK,
   makeOrchestratorDeps,
 } from "./orchestrator-deps.js"
 export {
@@ -53,6 +55,8 @@ export {
   MAILGUN_FROM,
   MAILGUN_REGION,
   MAILGUN_SECRETS,
+  ANTHROPIC_API_KEY,
+  PA_SLACK_ALERT_WEBHOOK,
   makeOrchestratorDeps,
 }
 
@@ -582,6 +586,13 @@ export const onPaInbound = onDocumentCreated(
       MAILGUN_DOMAIN,
       MAILGUN_FROM,
       MAILGUN_REGION,
+      // v1.7 Phase 69 — Anthropic Sonnet powers pa-resume-parser fallback
+      // tier + sponsorship-inference + industry-second-pass. All paths
+      // already gracefully fall through when ANTHROPIC_API_KEY is empty
+      // (gpt-5.4-nano → gpt-4.1-mini → Qwen-7B chain). Listed here so the
+      // moment Adam provisions the secret it auto-activates without redeploy
+      // beyond the one Phase 69 rollout.
+      ANTHROPIC_API_KEY,
     ],
     memory: "1GiB",
     timeoutSeconds: 300,
@@ -634,6 +645,22 @@ export const onPaInbound = onDocumentCreated(
       }
     } catch {
       delete process.env.PA_OPENAI_AGENT_API_KEY
+    }
+    // v1.7 Phase 69 — Re-export ANTHROPIC_API_KEY from the Firebase secret
+    // into process.env so packages that read it directly (pa-resume-parser/
+    // src/router.ts, cv-ingest/industry-second-pass.ts) pick it up. Until
+    // Adam provisions the secret, the placeholder is `__UNSET__` (empty
+    // payloads aren't allowed in Secret Manager) — treat that as unset so
+    // downstream gracefully falls through to the OpenAI tier.
+    try {
+      const anthropicKey = ANTHROPIC_API_KEY.value().trim()
+      if (anthropicKey && anthropicKey !== "__UNSET__") {
+        process.env.ANTHROPIC_API_KEY = anthropicKey
+      } else {
+        delete process.env.ANTHROPIC_API_KEY
+      }
+    } catch {
+      // secret unbound — leave existing env (may be empty, that's fine)
     }
     if (!process.env.OPENAI_API_KEY) {
       // agent-runtime's OpenAI-compatible client points at SiliconFlow.
@@ -938,6 +965,10 @@ export const paSendblueWebhook = onRequest(
       SENDBLUE_API_SECRET_KEY,
       SENDBLUE_FROM_NUMBER,
       PA_OPENAI_AGENT_API_KEY,
+      // v1.7 Phase 69 — cv-ingest's industry-second-pass falls through to
+      // Anthropic Sonnet when industryTags=["other"]. Until Adam provisions,
+      // graceful no-op (industry-second-pass.ts checks for empty key).
+      ANTHROPIC_API_KEY,
     ],
     memory: "512MiB",
     timeoutSeconds: 60,
@@ -965,6 +996,17 @@ export const paSendblueWebhook = onRequest(
       else delete process.env.PA_OPENAI_AGENT_API_KEY
     } catch {
       delete process.env.PA_OPENAI_AGENT_API_KEY
+    }
+    // v1.7 Phase 69 — re-export ANTHROPIC_API_KEY for cv-ingest's
+    // industry-second-pass + pa-resume-parser router fallback tier.
+    // `__UNSET__` is the Adam-placeholder version (empty payloads aren't
+    // allowed in Secret Manager); treat as unset.
+    try {
+      const anthropicKey = ANTHROPIC_API_KEY.value().trim()
+      if (anthropicKey && anthropicKey !== "__UNSET__") process.env.ANTHROPIC_API_KEY = anthropicKey
+      else delete process.env.ANTHROPIC_API_KEY
+    } catch {
+      // secret not bound — leave env as-is (legacy fallback)
     }
     try {
       await handleSendblueWebhook(

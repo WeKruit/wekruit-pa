@@ -58,16 +58,25 @@ import {
 } from "./lib/qa-judge.js"
 import { sendMailgun, type MailgunConfig } from "./email/mailgun.js"
 import { makeLimiter } from "./liveness-sweep.js"
+import { postSlackAlert } from "./lib/slack-alert.js"
 
 // ---------------------------------------------------------------------------
 // Secrets
 // ---------------------------------------------------------------------------
 
 const SILICONFLOW_API_KEY = defineSecret("SILICONFLOW_API_KEY")
-const MAILGUN_API_KEY = defineSecret("MAILGUN_API_KEY")
-const MAILGUN_DOMAIN = defineSecret("MAILGUN_DOMAIN")
-const MAILGUN_FROM = defineSecret("MAILGUN_FROM")
-const MAILGUN_REGION = defineSecret("MAILGUN_REGION")
+// v1.7 Phase 69 — Mailgun + Slack secrets are declared centrally in
+// orchestrator-deps.ts. We import the handles so multiple CFs can share a
+// single defineSecret() call per name (Firebase still permits duplicate
+// declarations but the central location keeps the Adam-action surface
+// auditable in one place).
+import {
+  MAILGUN_API_KEY,
+  MAILGUN_DOMAIN,
+  MAILGUN_FROM,
+  MAILGUN_REGION,
+  PA_SLACK_ALERT_WEBHOOK,
+} from "./orchestrator-deps.js"
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -784,20 +793,17 @@ export function makeProductionIntegrations(opts: {
   }
 
   if (opts.slackWebhookUrl && opts.slackWebhookUrl.length > 0) {
+    const webhookUrl = opts.slackWebhookUrl
     integrations.sendSlack = async (message) => {
-      try {
-        const res = await fetch(opts.slackWebhookUrl!, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: message }),
-        })
-        return res.ok
-      } catch (err) {
-        logger.warn("[qa-evaluator] slack_post_failed", {
-          err: String(err).slice(0, 200),
-        })
-        return false
-      }
+      const res = await postSlackAlert(
+        {
+          level: "warn",
+          title: "QA Evaluator threshold failed",
+          message,
+        },
+        { webhookUrl }
+      )
+      return res.posted
     }
   }
 
@@ -837,6 +843,7 @@ export const paQaEvaluatorWeekly = onSchedule(
       MAILGUN_DOMAIN,
       MAILGUN_FROM,
       MAILGUN_REGION,
+      PA_SLACK_ALERT_WEBHOOK,
     ],
     retryCount: 0,
   },
@@ -864,7 +871,21 @@ export const paQaEvaluatorWeekly = onSchedule(
       })
     }
 
-    const slackWebhookUrl = (process.env.PA_SLACK_ALERT_WEBHOOK ?? "").trim()
+    // v1.7 Phase 69 — read from the defineSecret first (Firebase-managed),
+    // fall back to env var for legacy --update-env-vars deploys. Empty
+    // string OR `__UNSET__` sentinel = secret not provisioned →
+    // postSlackAlert short-circuits and Mailgun alongside picks up the alert.
+    const slackWebhookUrl = (() => {
+      const isReal = (v: string) => v.length > 0 && v !== "__UNSET__"
+      try {
+        const secretVal = (PA_SLACK_ALERT_WEBHOOK.value() ?? "").trim()
+        if (isReal(secretVal)) return secretVal
+      } catch {
+        // secret not provisioned yet — fall through
+      }
+      const env = (process.env.PA_SLACK_ALERT_WEBHOOK ?? "").trim()
+      return isReal(env) ? env : ""
+    })()
 
     const db = getFirestore()
     const store = makeFirestoreStore(db)
