@@ -7,21 +7,19 @@ last_updated: "2026-05-06T00:30:00.000Z"
 last_activity: 2026-05-06
 progress:
   total_phases: 11
-  completed_phases: 5
-  total_plans: 5
-  completed_plans: 5
+  completed_phases: 6
+  total_plans: 6
+  completed_plans: 6
 ---
 
 ## Current Position
 
-Phase: **Phase 57 — Liveness/404 sweep + atsApplyUrl backfill (next)**
+Phase: **Phase 58 — Nightly LLM rerank batch + per-skill JD-rel weight (next)**
 Plan: —
-Status: Phase 56 ✅ complete (commit `6adb9b8`) — queryMatchingJobsV16 single-source + new query + hard filter chain + soft score + per-job reasoning + cache readers (439+1293+736 tests pass, Adam CV scenario verified — top 5 SWE, no BDR/jobright leak); v1.6 in progress (5/11)
-Last activity: 2026-05-06 — Phase 56 queryMatchingJobs v1.6 shipped (MATCH-01,03..08 covered)
-In progress: pa-users.tags migration --apply (Phase 54 catch-up, all users)
+Status: Phase 57 ✅ complete (commit `57c182b`) — paLivenessSweepDaily CF deployed + jobType normalize (253 jobs) + seniorityLevel backfill (1280/1684) + macmini Stage 2.5 hotfix verified (SKIP_URL_RESOLUTION=1) + macmini fresh ingestion synced +2,735 new jobs (759 tests pass); v1.6 in progress (6/11)
+Last activity: 2026-05-06 — Phase 57 liveness + macmini probe + fresh ingestion shipped (LIVE-01..04 covered)
 Adam-action items:
-- Set `ANTHROPIC_API_KEY` Firebase Secret (Phase 53)
-- Phase 55 followup: jobType normalize (intern→internship, new_grad→new_graduate) + seniorityLevel backfill (Phase 57 scope)
+- Set `ANTHROPIC_API_KEY` Firebase Secret (Phase 53) — optional, chain falls through gracefully
 - Daily-batch.ts cutover legacy → V16 deferred to Phase 60
 
 ## v1.6 — Unified Canonical Tags & Match Quality v1 (this milestone)
