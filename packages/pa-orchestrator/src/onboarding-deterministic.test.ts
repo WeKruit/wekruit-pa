@@ -1443,3 +1443,221 @@ test("iter34 P0.2: low-confidence LLM result (<0.6) → falls back to determinis
   )
   assert.equal(advanceLogs.length, 0, "low-confidence MUST NOT log extracted (no auto-advance)")
 })
+
+// ────────────────────────────────────────────────────────────────────
+// iter34 followup D.1 — sendDirect idempotencyKey collapse fix
+//
+// send_cv_analysis fires up to 4 outbounds in one turn (interim ack +
+// cv-analysis + jobRec + tag-summary). Before the fix all 4 reused
+// `out-onboarding-${event.id}`, so the firestore appendMessage dedup
+// path (find-by-idempotencyKey → patch body) collapsed them onto a
+// single pa-messages row whose body = LAST outbound. The dashboard /
+// SDK history then read only one message per turn. iMessage users
+// still received all 4 (pa-outbound uses random docIds), but the
+// in-app history was incomplete.
+//
+// Fix: pass a unique tag to sendDirect for each call so idempotencyKey
+// is suffixed (`out-onboarding-${event.id}-1-interim-ack`, etc.). These
+// tests pin that contract.
+// ────────────────────────────────────────────────────────────────────
+
+function makeFakeRunnerStoreWithMeta(extras: Record<string, unknown> = {}) {
+  const captures = {
+    appendedMessages: [] as Array<{
+      role: string
+      body: string
+      idempotencyKey?: string
+      rawMeta?: Record<string, unknown>
+    }>,
+    enqueuedOutbound: [] as Array<{ body: string; idempotencyKey?: string }>,
+    appliedSteps: [] as Array<{ step: string; opts: Record<string, unknown> }>,
+    logEvents: [] as Array<{ event: string; payload?: Record<string, unknown> }>,
+  }
+  const store = {
+    async appendMessage(msg: {
+      role: string
+      body: string
+      idempotencyKey?: string
+      rawMeta?: Record<string, unknown>
+    }) {
+      captures.appendedMessages.push({
+        role: msg.role,
+        body: msg.body,
+        idempotencyKey: msg.idempotencyKey,
+        rawMeta: msg.rawMeta,
+      })
+    },
+    async enqueueOutbound(
+      _uid: string,
+      _to: string,
+      body: string,
+      opts?: { idempotencyKey?: string }
+    ) {
+      captures.enqueuedOutbound.push({ body, idempotencyKey: opts?.idempotencyKey })
+    },
+    async applyOnboarding(
+      _uid: string,
+      _phone: string,
+      step: string,
+      opts: Record<string, unknown> = {}
+    ) {
+      captures.appliedSteps.push({ step, opts })
+    },
+    async getTosVersion() {
+      return "v1.0"
+    },
+    log(event: string, payload?: Record<string, unknown>) {
+      captures.logEvents.push({ event, payload })
+    },
+    nowIso() {
+      return "2026-05-04T18:00:00.000Z"
+    },
+    ...extras,
+  }
+  return { store, captures }
+}
+
+test("iter34 D.1: send_cv_analysis fires 4 sendDirect calls with 4 DISTINCT idempotencyKeys (no pa-messages collapse)", async () => {
+  _resetOnboardingConfigCache()
+  const { store, captures } = makeFakeRunnerStoreWithMeta({
+    async generateCvAnalysis(_uid: string, lang: "zh" | "en") {
+      return {
+        summary: lang === "zh" ? "你后端经验扎实, 大厂背景也加分" : "solid backend; faang track record helps",
+      }
+    },
+    async generateJobRecs(_uid: string, lang: "zh" | "en") {
+      return {
+        message: lang === "zh" ? "推荐两个: A 公司 SWE / B 公司 ML" : "two for you: A SWE / B ML",
+        recCount: 2,
+      }
+    },
+  })
+  const result = await runDeterministicOnboardingTurn({
+    event: makeEvent("简历发了"),
+    store,
+    turnId: "turn-cv-1",
+    onboardingUser: {
+      id: "user-cv",
+      phoneE164: "+15551234567",
+      onboardingState: "q_resume_asked",
+      statedPreferences: {
+        preferredLang: "zh",
+        targetRole: ["swe"],
+        yoeRange: [3, 5],
+        visaStatus: "h1b",
+      },
+    },
+    cvParsed: true,
+    agent: FAKE_AGENT,
+  })
+  assert.equal(result.handled, true)
+  if (result.handled) {
+    assert.equal(result.action.kind, "send_cv_analysis")
+  }
+  // 4 outbounds: interim-ack + cv-analysis + jobrec + tag-summary
+  assert.equal(captures.appendedMessages.length, 4, "send_cv_analysis MUST fire 4 sendDirect calls")
+
+  const keys = captures.appendedMessages.map((m) => m.idempotencyKey ?? "")
+  // Every key non-empty
+  for (const k of keys) {
+    assert.ok(k.length > 0, `idempotencyKey must be set, got: ${JSON.stringify(k)}`)
+  }
+  // All 4 unique — this is the bug-fix invariant. Before the fix all
+  // 4 = `out-onboarding-evt-1` and pa-messages collapsed to 1 row.
+  const unique = new Set(keys)
+  assert.equal(unique.size, 4, `4 idempotencyKeys MUST be distinct, got: ${JSON.stringify(keys)}`)
+
+  // Each key includes event.id + a per-call tag (regex pin: prefix +
+  // event.id + dash + seq + dash + name). Pinning the shape so future
+  // refactors don't accidentally collapse keys again.
+  const KEY_RE = /^out-onboarding-evt-1-(1-interim-ack|2-cv-analysis|3-jobrec|4-tag-summary)$/
+  for (const k of keys) {
+    assert.match(k, KEY_RE, `idempotencyKey MUST match shape, got: ${k}`)
+  }
+  // Tags ordered: interim-ack first, tag-summary last
+  assert.match(keys[0]!, /1-interim-ack$/)
+  assert.match(keys[1]!, /2-cv-analysis$/)
+  assert.match(keys[2]!, /3-jobrec$/)
+  assert.match(keys[3]!, /4-tag-summary$/)
+
+  // Outbound queue (pa-outbound) ALSO gets distinct keys — same reason
+  // (defensive: even though pa-outbound writers use random docIds in
+  // prod, idempotencyKey is the contract for any future dedup).
+  assert.equal(captures.enqueuedOutbound.length, 4)
+  const outboundKeys = captures.enqueuedOutbound.map((o) => o.idempotencyKey ?? "")
+  assert.equal(new Set(outboundKeys).size, 4, "pa-outbound idempotencyKeys also distinct")
+  for (const k of outboundKeys) {
+    assert.match(k, /^outbound-onboarding-evt-1-(1-interim-ack|2-cv-analysis|3-jobrec|4-tag-summary)$/)
+  }
+})
+
+test("iter34 D.1: single-message dispatcher branches keep the legacy unsuffixed idempotencyKey (no regression for replay/retry dedup)", async () => {
+  // Single sendDirect calls (e.g. ask_q_lang) MUST keep the bare
+  // `out-onboarding-${event.id}` key so genuine event-replay (same
+  // event.id arriving twice) still hits the appendMessage dedup path
+  // and the user does NOT receive the same outbound twice.
+  _resetOnboardingConfigCache()
+  const { store, captures } = makeFakeRunnerStoreWithMeta()
+  await runDeterministicOnboardingTurn({
+    event: makeEvent("hi"),
+    store,
+    turnId: "turn-lang-1",
+    onboardingUser: {
+      id: "user-lang",
+      phoneE164: "+15551234567",
+      onboardingState: undefined,
+    },
+    cvParsed: false,
+    agent: FAKE_AGENT,
+  })
+  assert.equal(captures.appendedMessages.length, 1)
+  assert.equal(
+    captures.appendedMessages[0]!.idempotencyKey,
+    "out-onboarding-evt-1",
+    "single-message branches keep the legacy unsuffixed key"
+  )
+  assert.equal(
+    captures.enqueuedOutbound[0]!.idempotencyKey,
+    "outbound-onboarding-evt-1",
+    "single-message outbound also keeps the legacy unsuffixed key"
+  )
+})
+
+test("iter34 D.1: send_cv_analysis with no CV-analysis hook + no job-rec hook still produces 3+ distinct idempotencyKeys (fail-open path)", async () => {
+  // Even on the LLM-fallback path (no generateCvAnalysis / no
+  // generateJobRecs), the 4 sendDirect calls fire (interim-ack +
+  // generic CV line + deferred-jobrec line + tag-summary). Pin the
+  // distinct-keys invariant on the failure path too.
+  _resetOnboardingConfigCache()
+  const { store, captures } = makeFakeRunnerStoreWithMeta()
+  // No generateCvAnalysis / generateJobRecs → both fall back to
+  // canned text but each still fires its own sendDirect.
+  await runDeterministicOnboardingTurn({
+    event: makeEvent("简历发了"),
+    store,
+    turnId: "turn-cv-fallback",
+    onboardingUser: {
+      id: "user-cv-fb",
+      phoneE164: "+15551234567",
+      onboardingState: "q_resume_asked",
+      statedPreferences: {
+        preferredLang: "zh",
+        targetRole: ["pm"],
+      },
+    },
+    cvParsed: true,
+    agent: FAKE_AGENT,
+  })
+  // tag-summary always fires when statedPreferences has any canonical
+  // tag (targetRole here) → 4 messages.
+  assert.ok(
+    captures.appendedMessages.length >= 3,
+    `expected ≥3 outbounds on fallback path, got ${captures.appendedMessages.length}`
+  )
+  const keys = captures.appendedMessages.map((m) => m.idempotencyKey ?? "")
+  assert.equal(
+    new Set(keys).size,
+    keys.length,
+    `idempotencyKeys must be distinct on fallback path too, got: ${JSON.stringify(keys)}`
+  )
+})

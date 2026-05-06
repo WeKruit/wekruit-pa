@@ -1375,7 +1375,7 @@ export async function runDeterministicOnboardingTurn(
       lang === "zh"
         ? "OK 让我看一下你简历, 等我一下下"
         : "ok — give me a sec to read your resume"
-    await sendDirect(input, ackMsg)
+    await sendDirect(input, ackMsg, "1-interim-ack")
     store.log("pa.onboarding.deterministic.cv_analysis_ack_sent", {
       userId: event.userId,
       turnId,
@@ -1406,7 +1406,7 @@ export async function runDeterministicOnboardingTurn(
           ? "看下来你背景挺扎实的, 后面给你推岗位会贴着你的方向来"
           : "skimmed it — solid background, i'll lean recommendations toward your trajectory"
     }
-    await sendDirect(input, analysisMsg)
+    await sendDirect(input, analysisMsg, "2-cv-analysis")
 
     // iter33 P4 — third outbound: 2-job-rec push (or deferred-promise
     // when no live matches yet). Adam-locked sequence: "推荐两个岗位.
@@ -1442,7 +1442,7 @@ export async function runDeterministicOnboardingTurn(
       })
       jobRecMsg = deferredFallback
     }
-    await sendDirect(input, jobRecMsg)
+    await sendDirect(input, jobRecMsg, "3-jobrec")
 
     // iter34 hotfix 2026-05-05 — Adam directive: "聊完以后我在哪看系统给我
     // 的 tag?". Surface canonical statedPreferences so user can verify +
@@ -1452,7 +1452,7 @@ export async function runDeterministicOnboardingTurn(
       lang
     )
     if (tagSummary) {
-      await sendDirect(input, tagSummary)
+      await sendDirect(input, tagSummary, "4-tag-summary")
     }
 
     await store.applyOnboarding(event.userId, onboardingUser.phoneE164, "complete", {
@@ -2007,21 +2007,37 @@ export async function runDeterministicOnboardingTurn(
  * Internal helper — appendMessage (assistant) + enqueueOutbound. Mirrors
  * the existing sendMemoryReply pattern from index.ts but lives here so
  * the deterministic module is self-contained for testing.
+ *
+ * iter34 followup D.1 — `tag` disambiguates multi-message bundles per
+ * turn (e.g. send_cv_analysis fires 4 sendDirect's: interim ack +
+ * cv-analysis + jobRec + tag-summary). Without a tag they all collapse
+ * onto the same idempotencyKey `out-onboarding-${event.id}` and
+ * appendMessage's dedup logic patches the single pa-messages row to
+ * the LAST body — so dashboard / SDK history reads only see the final
+ * message (real iMessage uses random docIds for pa-outbound and is
+ * unaffected; users still receive all 4). Pass a short tag like
+ * `interim-ack`, `cv-analysis`, `jobrec`, `tag-summary` so each
+ * outbound gets its own unique idempotencyKey.
+ *
+ * Single-message branches (the dominant case) can omit `tag` and keep
+ * the legacy unsuffixed key — replays / retries still dedup correctly.
  */
 async function sendDirect(
   input: RunDeterministicTurnInput,
-  body: string
+  body: string,
+  tag?: string
 ): Promise<void> {
   if (!body) return
   const at = input.store.nowIso()
   const { event } = input
+  const suffix = tag ? `-${tag}` : ""
   await input.store.appendMessage({
     sessionId: event.sessionId,
     userId: event.userId,
     role: "assistant",
     body,
     createdAt: at,
-    idempotencyKey: `out-onboarding-${event.id}`,
+    idempotencyKey: `out-onboarding-${event.id}${suffix}`,
     rawMeta: {
       source: "pa_orchestrator",
       turnId: input.turnId,
@@ -2033,6 +2049,6 @@ async function sendDirect(
   await input.store.enqueueOutbound(event.userId, event.from, body, {
     sessionId: event.sessionId,
     role: "assistant",
-    idempotencyKey: `outbound-onboarding-${event.id}`,
+    idempotencyKey: `outbound-onboarding-${event.id}${suffix}`,
   })
 }
