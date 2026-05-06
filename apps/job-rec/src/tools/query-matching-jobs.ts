@@ -1734,11 +1734,20 @@ export async function queryMatchingJobs(
       q = q.where("industryKey", "==", parsed.filters.industry)
     }
   }
-  // The composite indexes brief-cited support `status,industryKey,firstSeenAt`
-  // (and the longer one with jobType+sponsorship). Order by firstSeenAt desc
-  // and pull a window to rank in memory.
+  // iter34 H.2 / CR3 — orderBy lastSeenAt (was firstSeenAt). The recency
+  // hard filter (D.9) drops rows with stale lastSeenAt; ordering the top-50
+  // fetch by the SAME field keeps the freshest live inventory at the top of
+  // the candidate window before in-memory ranking. firstSeenAt clusters at
+  // 30-50d ago (batch-ingest timestamp) so it's useless for freshness.
+  //
+  // Composite indexes required (added in this commit):
+  //   - status + lastSeenAt desc
+  //   - status + industryKey + lastSeenAt desc
+  //   - industryEnum array-contains + status + lastSeenAt desc
+  // See config/firebase/firestore.indexes.json. On FAILED_PRECONDITION the
+  // catch block below falls back to the simpler status-only query (no order).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  q = (q as any).orderBy("firstSeenAt", "desc").limit(QUERY_FETCH_CAP)
+  q = (q as any).orderBy("lastSeenAt", "desc").limit(QUERY_FETCH_CAP)
 
   let snap
   try {

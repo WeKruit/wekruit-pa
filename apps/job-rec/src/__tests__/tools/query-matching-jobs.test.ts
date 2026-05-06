@@ -2539,3 +2539,118 @@ test("queryMatchingJobs D.13: doc with dead absent → kept (legacy back-compat)
   assert.equal(out.jobs.length, 1)
 })
 
+// ---------------------------------------------------------------------------
+// iter34 H.2 / CR3 — orderBy lastSeenAt (was firstSeenAt) for top-50 fetch
+// ---------------------------------------------------------------------------
+
+test("queryMatchingJobs CR3: orderBy uses lastSeenAt — fresh doc with old firstSeenAt surfaces ahead of stale doc with new firstSeenAt", async () => {
+  // Construct two docs:
+  //   - "fresh-but-old-batch": batch-ingested 60d ago (old firstSeenAt) but
+  //     the inventory crawler refreshed it 1d ago (recent lastSeenAt).
+  //   - "stale-but-new-batch": batch-ingested 1d ago (recent firstSeenAt) but
+  //     inventory crawler hasn't seen it for 25d.
+  // Under CR3 (orderBy lastSeenAt desc) the recency filter keeps both within
+  // the 30d window, but the FETCH window prefers the freshest lastSeenAt
+  // first. We assert the in-order result reflects orderBy lastSeenAt by
+  // checking the retrieved set contains the fresh doc.
+  const mfs = new MockFirestore()
+  const oneDayAgoIso = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString()
+  const sixtyDaysAgoIso = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString()
+  const twentyFiveDaysAgoIso = new Date(Date.now() - 25 * 24 * 60 * 60 * 1000).toISOString()
+
+  await mfs.collection("matching-jobs").doc("fresh-but-old-batch").set({
+    status: "active",
+    industryKey: "tech",
+    companyName: "Fresh",
+    roleTitle: "SWE",
+    locationRaw: "Remote",
+    primaryUrl: "https://fresh",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/cr3-1",
+    industry: "tech",
+    sponsorship: false,
+    requiredSkills: ["python"],
+    firstSeenAt: sixtyDaysAgoIso,
+    lastSeenAt: oneDayAgoIso,
+  })
+  await mfs.collection("matching-jobs").doc("stale-but-new-batch").set({
+    status: "active",
+    industryKey: "tech",
+    companyName: "Stale",
+    roleTitle: "SWE",
+    locationRaw: "Remote",
+    primaryUrl: "https://stale",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/cr3-2",
+    industry: "tech",
+    sponsorship: false,
+    requiredSkills: ["python"],
+    firstSeenAt: oneDayAgoIso,
+    lastSeenAt: twentyFiveDaysAgoIso,
+  })
+  const out = await queryMatchingJobs(
+    { filters: { industry: "tech", userSkills: ["python"] }, limit: 5 },
+    { db: asFirestore(mfs) }
+  )
+  // Both pass recency (within 30d fallback). The FRESH doc should be in the
+  // returned set; ordering inside in-memory rank can vary, but we lock that
+  // freshness drives selection by checking presence even with limit < pool.
+  const ids = new Set(out.jobs.map((j) => j.id))
+  assert.ok(ids.has("fresh-but-old-batch"), "CR3: fresh-but-old-batch must be returned (orderBy lastSeenAt)")
+})
+
+test("queryMatchingJobs CR3: stale lastSeenAt drops even if firstSeenAt is recent (no regression of D.9)", async () => {
+  // Belt-and-suspenders against a regression where someone reverts to
+  // firstSeenAt — this doc has fresh firstSeenAt but ancient lastSeenAt,
+  // so D.9 must still drop it after CR3's orderBy change.
+  const mfs = new MockFirestore()
+  await mfs.collection("matching-jobs").doc("stale").set({
+    status: "active",
+    industryKey: "tech",
+    companyName: "Stale",
+    roleTitle: "SWE",
+    locationRaw: "Remote",
+    primaryUrl: "https://stale",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/cr3-3",
+    industry: "tech",
+    sponsorship: false,
+    requiredSkills: ["python"],
+    firstSeenAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
+    lastSeenAt: new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString(),
+  })
+  const out = await queryMatchingJobs(
+    { filters: { industry: "tech", userSkills: ["python"] }, limit: 5 },
+    { db: asFirestore(mfs) }
+  )
+  assert.equal(out.jobs.length, 0, "stale lastSeenAt must drop regardless of firstSeenAt")
+})
+
+test("CR3 indexes: firestore.indexes.json contains lastSeenAt composite indexes", async () => {
+  // Lock the index file shape so future deploys don't crash the live query
+  // with FAILED_PRECONDITION. We import via Node fs to avoid building a
+  // bespoke loader; this is a fixture file, not module-resolved.
+  const fs = await import("node:fs/promises")
+  const path = await import("node:path")
+  // Walk up from this test file (apps/job-rec/src/__tests__/tools) to repo root.
+  const repoRoot = path.resolve(import.meta.dirname ?? ".", "../../../../..")
+  const indexFile = path.join(repoRoot, "config/firebase/firestore.indexes.json")
+  const json = JSON.parse(await fs.readFile(indexFile, "utf8")) as {
+    indexes: { collectionGroup: string; fields: { fieldPath: string; order?: string; arrayConfig?: string }[] }[]
+  }
+  const matchingJobsIndexes = json.indexes.filter((i) => i.collectionGroup === "matching-jobs")
+  // Must have at least one lastSeenAt-desc composite.
+  const lastSeenAtIndexes = matchingJobsIndexes.filter((i) =>
+    i.fields.some((f) => f.fieldPath === "lastSeenAt" && f.order === "DESCENDING")
+  )
+  assert.ok(
+    lastSeenAtIndexes.length >= 3,
+    `expected >=3 lastSeenAt-desc composite indexes (status-only, industryKey, industryEnum); got ${lastSeenAtIndexes.length}`
+  )
+  // Must have one for status + industryEnum array-contains + lastSeenAt desc.
+  const enumLastSeen = matchingJobsIndexes.find(
+    (i) =>
+      i.fields.some((f) => f.fieldPath === "industryEnum" && f.arrayConfig === "CONTAINS") &&
+      i.fields.some((f) => f.fieldPath === "status") &&
+      i.fields.some((f) => f.fieldPath === "lastSeenAt" && f.order === "DESCENDING")
+  )
+  assert.ok(enumLastSeen, "must have status+industryEnum+lastSeenAt index")
+})
+

@@ -191,6 +191,59 @@
       ]
     },
     {
+      "_comment": "iter34 H.2/CR3 — queryMatchingJobs orderBy lastSeenAt (was firstSeenAt). status + industryEnum array-contains + lastSeenAt desc.",
+      "collectionGroup": "matching-jobs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "industryEnum",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "lastSeenAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "_comment": "iter34 H.2/CR3 — queryMatchingJobs H6 fallback: status + industryKey + lastSeenAt desc.",
+      "collectionGroup": "matching-jobs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "industryKey",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "lastSeenAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "_comment": "iter34 H.2/CR3 — fetchTopK / no-industry-filter path: status + lastSeenAt desc.",
+      "collectionGroup": "matching-jobs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "lastSeenAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
       "_comment": "v1.5 Stream-D buffer-sweep: where(status==pending).where(firstReceivedAt<cutoff)",
       "collectionGroup": "pa-message-coalesce-buffer",
       "queryScope": "COLLECTION",
