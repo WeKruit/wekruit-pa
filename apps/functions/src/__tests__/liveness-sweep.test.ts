@@ -5,8 +5,8 @@
  *   - headCheck: 200/404/503/timeout/network classifications
  *   - runLivenessSweep: alive job no-op, alive→dead mark, dead→alive recover,
  *     dead >30d hard-delete, dead <7d skip, missing-url skip, errors counter
- *   - Inline backfill: missing atsApplyUrl + primaryUrl → resolves and stamps
- *   - Backfill cap (MAX_BACKFILL_PER_RUN) enforces global ceiling
+ *   - v1.7 Phase 65: missing atsApplyUrl is skipped (no inline backfill;
+ *     paBackfillAtsUrlsBatch handles it on hourly cadence)
  */
 
 import { describe, it } from "node:test"
@@ -276,7 +276,9 @@ describe("processOneJob", () => {
     assert.equal(counters.skipped_no_url, 1)
   })
 
-  it("inline backfill: missing atsApplyUrl + primaryUrl is greenhouse → resolves via pass1", async () => {
+  it("v1.7 Phase 65: missing atsApplyUrl is now skipped (no inline backfill, batch CF handles)", async () => {
+    // Even with primaryUrl pointing at a known ATS host, liveness-sweep no
+    // longer copies it across — that's the batch CF's job.
     const counters = emptyCounters()
     const job: SweepJobDoc = {
       id: "j1",
@@ -285,17 +287,17 @@ describe("processOneJob", () => {
       jobTitle: "Engineer",
     }
     const plan = await processOneJob(job, counters, baseDeps({ head: aliveHead }))
-    assert.equal(plan.kind, "update")
-    if (plan.kind === "update") {
-      assert.equal(plan.updates.atsApplyUrl, "https://boards.greenhouse.io/openai/jobs/123")
-      assert.equal(plan.updates.atsResolvedBy, "liveness-sweep-inline")
-    }
-    assert.equal(counters.backfill_resolved, 1)
-    assert.equal(counters.backfill_attempted, 1)
-    assert.equal(counters.head_alive, 1)
+    assert.equal(plan.kind, "noop")
+    assert.equal(counters.skipped_no_url, 1)
+    // No backfill counters bumped — feature removed.
+    assert.equal(counters.backfill_resolved, 0)
+    assert.equal(counters.backfill_attempted, 0)
+    // No HEAD ran — atsApplyUrl was missing.
+    assert.equal(counters.head_alive, 0)
   })
 
-  it("inline backfill skipped when allowBackfill=false (cap reached)", async () => {
+  it("v1.7 Phase 65: missing atsApplyUrl skipped regardless of allowBackfill flag", async () => {
+    // allowBackfill is now ignored — kept on signature for back-compat.
     const counters = emptyCounters()
     const job: SweepJobDoc = {
       id: "j1",
@@ -429,7 +431,10 @@ describe("runLivenessSweep", () => {
     assert.equal(audits[0].counters.processed, 6)
   })
 
-  it("inline backfill resolves up to MAX_BACKFILL_PER_RUN then stops attempting", async () => {
+  it("v1.7 Phase 65: jobs missing atsApplyUrl are all skipped (delegated to paBackfillAtsUrlsBatch)", async () => {
+    // Pre-Phase-65 this test verified the inline backfill cap. Now that the
+    // inline path is gone, every doc missing atsApplyUrl should be skipped —
+    // regardless of whether primaryUrl is a known ATS host.
     const docs: SweepJobDoc[] = []
     for (let i = 0; i < 5; i++) {
       docs.push({
@@ -449,17 +454,16 @@ describe("runLivenessSweep", () => {
       concurrency: 1,
       batchSize: 100,
       throttleMs: 0,
-      maxBackfillPerRun: 2, // cap
     })
 
     assert.equal(counters.processed, 5)
-    // 2 backfilled (passed the cap), 3 skipped after cap reached
-    assert.equal(counters.backfill_resolved, 2)
-    assert.equal(counters.skipped_no_url, 3)
-    assert.equal(updates.length, 2)
-    for (const u of updates) {
-      assert.equal(u.updates.atsResolvedBy, "liveness-sweep-inline")
-    }
+    // No backfill counters bump — Phase 65 removed inline backfill.
+    assert.equal(counters.backfill_resolved, 0)
+    assert.equal(counters.backfill_attempted, 0)
+    // All 5 docs miss atsApplyUrl → all 5 skipped.
+    assert.equal(counters.skipped_no_url, 5)
+    // No writes performed.
+    assert.equal(updates.length, 0)
   })
 
   it("error in one job does not abort the sweep; counters.errors increments", async () => {

@@ -3,32 +3,29 @@
  *
  * Cloud Scheduler trigger at 03:00 UTC daily. HEAD-checks every active
  * matching-jobs.atsApplyUrl. Marks dead on 4xx/5xx/timeout. Re-checks dead
- * jobs after 7d. Hard-deletes dead jobs >30d after marking. Inline-wires
- * paBackfillMatchingJobsAtsUrl resolver for jobs missing atsApplyUrl
- * (capped 1000/run via Serper API cost guard).
+ * jobs after 7d. Hard-deletes dead jobs >30d after marking.
+ *
+ * v1.7 Phase 65 (2026-05-06): inline Serper backfill REMOVED. The dedicated
+ * `paBackfillAtsUrlsBatch` CF runs hourly (200/run × 24/day = 4800 capacity)
+ * and handles all atsApplyUrl resolution. Liveness sweep is now pure-HEAD:
+ * skips jobs without atsApplyUrl (counted under skipped_no_url) and lets the
+ * batch CF resolve them on the next hour boundary.
  *
  * Concurrency 50, 5s HEAD timeout, ~100ms throttle every 500 docs.
  *
- * REQ-IDs: LIVE-01, LIVE-02, LIVE-03, LIVE-04
+ * REQ-IDs: LIVE-01, LIVE-02, LIVE-03, LIVE-04 (Phase 57)
+ *          ATSURL-04 (Phase 65 — backfill delegation)
  *
  * Architecture: pure logic in `runLivenessSweep` (deps-injected) so unit
  * tests can drive it without booting firebase-admin or real fetch. The
  * `paLivenessSweepDaily` onSchedule wrapper at the bottom is a thin shim
- * that wires production deps (Firestore + real fetch + Serper resolver).
+ * that wires production deps (Firestore + real fetch).
  */
 
 import { onSchedule } from "firebase-functions/v2/scheduler"
-import { defineSecret } from "firebase-functions/params"
 import { logger } from "firebase-functions/v2"
 import { getFirestore } from "firebase-admin/firestore"
-import {
-  resolveAtsUrl,
-  createSerperSearch,
-  type SerperFn,
-} from "./backfill-ats-urls.js"
-
-// SERPER_API_KEY — same key already used by paBackfillMatchingJobsAtsUrl.
-const SERPER_API_KEY = defineSecret("SERPER_API_KEY")
+import type { SerperFn } from "./backfill-ats-urls.js"
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -272,44 +269,14 @@ export async function processOneJob(
     }
   }
 
-  // ── 3. Inline backfill if atsApplyUrl missing ──
-  let atsUrl = job.atsApplyUrl
+  // ── 3. Skip jobs without atsApplyUrl ──
+  // v1.7 Phase 65: inline backfill removed. The dedicated
+  // `paBackfillAtsUrlsBatch` CF (hourly) handles resolution. Liveness sweep
+  // simply skips here so we don't burn HEAD capacity on un-resolvable jobs.
+  const atsUrl = job.atsApplyUrl
   if (!atsUrl) {
-    if (!job.primaryUrl) {
-      counters.skipped_no_url++
-      return { kind: "noop" }
-    }
-    if (!deps.allowBackfill) {
-      // Cap reached — defer to the dedicated backfill CF.
-      counters.skipped_no_url++
-      return { kind: "noop" }
-    }
-    counters.backfill_attempted++
-    try {
-      const outcome = await resolveAtsUrl(
-        {
-          primaryUrl: job.primaryUrl,
-          companyName: job.companyName,
-          jobTitle: job.jobTitle,
-          roleTitle: job.roleTitle,
-        },
-        { serper: deps.serper }
-      )
-      if (outcome.kind === "miss") {
-        counters.skipped_no_url++
-        return { kind: "noop" }
-      }
-      atsUrl = outcome.url
-      counters.backfill_resolved++
-      // Fall through into HEAD check for the freshly resolved URL.
-    } catch (err) {
-      counters.errors++
-      ;(deps.errorLog ?? (() => {}))("backfill_resolve_failed", {
-        jobId: job.id,
-        error: err instanceof Error ? err.message : String(err),
-      })
-      return { kind: "noop" }
-    }
+    counters.skipped_no_url++
+    return { kind: "noop" }
   }
 
   // ── 4. HEAD check ──
@@ -327,13 +294,6 @@ export async function processOneJob(
   }
 
   const updates: SweepUpdates = {}
-  // Stamp the freshly-resolved URL even if it ends up dead, so the
-  // dedicated backfill CF doesn't re-spend Serper budget on it next run.
-  if (atsUrl !== job.atsApplyUrl) {
-    updates.atsApplyUrl = atsUrl!
-    updates.atsResolvedAt = new Date(now).toISOString()
-    updates.atsResolvedBy = "liveness-sweep-inline"
-  }
 
   if (verdict.alive) {
     counters.head_alive++
@@ -344,7 +304,7 @@ export async function processOneJob(
       updates.deadReason = null
       counters.dead_recovered++
     } else if (Object.keys(updates).length === 0) {
-      // Already alive, no resolved-URL stamp → no write needed.
+      // Already alive, no updates → no write needed.
       return { kind: "noop" }
     }
   } else {
@@ -376,7 +336,6 @@ export async function runLivenessSweep(deps: SweepDeps): Promise<SweepCounters> 
   const limit = deps.concurrency ?? CONCURRENCY
   const batchSize = deps.batchSize ?? BATCH_SIZE
   const throttleMs = deps.throttleMs ?? 100
-  const maxBackfill = deps.maxBackfillPerRun ?? MAX_BACKFILL_PER_RUN
 
   let jobs: SweepJobDoc[]
   try {
@@ -391,7 +350,6 @@ export async function runLivenessSweep(deps: SweepDeps): Promise<SweepCounters> 
   log("sweep_start", { totalCandidates: jobs.length })
 
   const limiter = makeLimiter(limit)
-  let backfillCount = 0
   let processedThisBatch = 0
 
   const tasks = jobs.map((job) =>
@@ -406,8 +364,9 @@ export async function runLivenessSweep(deps: SweepDeps): Promise<SweepCounters> 
         await sleep(throttleMs)
       }
 
-      const allowBackfill = backfillCount < maxBackfill
-      const plan = await processOneJob(job, counters, { ...deps, allowBackfill })
+      // v1.7 Phase 65: allowBackfill carried for backward compatibility on
+      // processOneJob signature, but the inline logic no longer reads it.
+      const plan = await processOneJob(job, counters, { ...deps, allowBackfill: false })
       if (plan.kind === "noop") return
       if (plan.kind === "delete") {
         try {
@@ -423,10 +382,8 @@ export async function runLivenessSweep(deps: SweepDeps): Promise<SweepCounters> 
       }
       if (plan.kind === "update") {
         try {
-          // Track Serper-backfill commits against the cap.
-          if (plan.updates.atsResolvedBy === "liveness-sweep-inline") {
-            backfillCount++
-          }
+          // v1.7 Phase 65: backfill no longer happens inline. The
+          // plan.updates here are HEAD-only (dead/dead_recovered/etc).
           await deps.store.updateJob(job.id, plan.updates)
         } catch (err) {
           counters.errors++
@@ -523,19 +480,14 @@ export const paLivenessSweepDaily = onSchedule(
     memory: "1GiB",
     timeoutSeconds: 540,
     region: "us-central1",
-    secrets: [SERPER_API_KEY],
+    // v1.7 Phase 65: SERPER_API_KEY no longer needed (no inline backfill).
+    secrets: [],
     retryCount: 0,
   },
   async () => {
-    const apiKey = (process.env.SERPER_API_KEY ?? "").trim()
-    if (!apiKey) {
-      logger.warn(
-        "[liveness-sweep] SERPER_API_KEY missing — inline backfill will no-op"
-      )
-    }
-    const serper: SerperFn = apiKey
-      ? createSerperSearch({ apiKey })
-      : async () => null
+    // Serper no longer wired — kept as no-op placeholder so any test stubs
+    // referencing `deps.serper` continue to compile.
+    const serper: SerperFn = async () => null
 
     const counters = await runLivenessSweep({
       store: makeFirestoreStore(),

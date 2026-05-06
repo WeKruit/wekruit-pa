@@ -100,6 +100,13 @@ export { paCanonicalTagWorker, paCanonicalTagWorkerRetry } from "./tag-worker/no
 // url_resolver.py with a TS-native cloud-side implementation.
 export { paBackfillMatchingJobsAtsUrl } from "./backfill-ats-urls.js"
 
+// v1.7 Phase 65 (ATSURL-01..04) — Hourly Serper backfill batch + retry queue
+// + cost ledger. Replaces the inline backfill that was inside the Phase 57
+// liveness sweep. 200 jobs/run × 24/day = 4800 capacity. 5-concurrent Serper
+// calls. LinkedIn fallback when Serper misses. Cost-ledger row per Serper
+// call. Weekly summary CF emails when >$10/wk.
+export { paBackfillAtsUrlsBatch, paCostSummaryWeekly } from "./backfill-ats-urls-batch.js"
+
 // v1.6 Phase 57 (LIVE-01..04) — Daily HEAD-check sweep for matching-jobs.
 // Cloud Scheduler 03:00 UTC. Marks dead on 4xx/5xx/timeout, recovers on
 // HTTP-200 retry, hard-deletes after 30d dead. Inline-wires the Serper
