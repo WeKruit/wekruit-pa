@@ -1883,6 +1883,86 @@ test("applyAtsApplyUrlGate D.5: doc with workday atsApplyUrl → kept", () => {
   assert.equal(r.rejected, 0)
 })
 
+// ---------------------------------------------------------------------------
+// iter34 followup D.6 — extended title blacklist (analyst/specialist/
+// associate/trainee/coordinator/etc) for tech-leaning users
+// ---------------------------------------------------------------------------
+
+test("D.6 regex: 'Platform Support - Analyst' → drop (bare analyst)", () => {
+  assert.ok(TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Platform Support - Analyst"))
+})
+
+test("D.6 regex: 'Software Analyst' → drop (BA-flavored, no engineer qualifier)", () => {
+  assert.ok(TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Software Analyst"))
+})
+
+test("D.6 regex: 'Data Analyst' → drop (BA-flavored, no engineer qualifier)", () => {
+  assert.ok(TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Data Analyst"))
+})
+
+test("D.6 regex: 'Software Engineer Analyst' → keep (engineer qualifier)", () => {
+  assert.ok(!TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Software Engineer Analyst"))
+})
+
+test("D.6 regex: 'Engineering Analyst' → keep (engineering qualifier)", () => {
+  assert.ok(!TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Engineering Analyst"))
+})
+
+test("D.6 regex: 'Cloud Engineer' → keep (no analyst, no other support tokens)", () => {
+  assert.ok(!TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Cloud Engineer"))
+})
+
+test("D.6 regex: 'Receptionist' / 'Secretary' / 'Clerk' → drop (bare admin)", () => {
+  assert.ok(TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Receptionist"))
+  assert.ok(TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Secretary"))
+  assert.ok(TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Clerk II"))
+  assert.ok(TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Bank Teller"))
+  assert.ok(TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Front Desk Manager"))
+})
+
+test("D.6 regex: 'Junior Software Engineer' → keep", () => {
+  assert.ok(!TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Junior Software Engineer"))
+})
+
+test("D.6 regex: 'Engineering Associate' → keep (engineering qualifier on associate)", () => {
+  assert.ok(!TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Engineering Associate"))
+})
+
+test("D.6 regex: 'Sales Associate' → drop (no tech qualifier on associate)", () => {
+  assert.ok(TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Sales Associate"))
+})
+
+test("D.6 regex: 'Coordinator' / 'Project Coordinator' → drop (bare coordinator)", () => {
+  assert.ok(TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Coordinator"))
+  assert.ok(TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Project Coordinator"))
+  assert.ok(TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Care Coordinator"))
+})
+
+test("D.6 regex: 'Software Specialist' → keep (software qualifier on specialist)", () => {
+  assert.ok(!TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Software Specialist"))
+})
+
+test("D.6 regex: 'Marketing Specialist' → drop (no tech qualifier on specialist)", () => {
+  assert.ok(TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Marketing Specialist"))
+})
+
+test("D.6 regex: 'Trainee' → drop, 'Software Trainee' / 'Engineer Trainee' → keep", () => {
+  assert.ok(TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Trainee"))
+  assert.ok(!TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Software Trainee"))
+  assert.ok(!TECH_LEANING_TITLE_BLACKLIST_REGEX.test("Engineer Trainee"))
+})
+
+test("D.6 integration: tech user + 'Platform Support - Analyst' → dropped via applyTechLeaningTitleBlacklist", () => {
+  const jobs = [
+    { id: "psa", jobTitle: "Platform Support - Analyst" },
+    { id: "swe", jobTitle: "Software Engineer" },
+  ]
+  const r = applyTechLeaningTitleBlacklist(jobs, ["tech_software"])
+  assert.equal(r.kept.length, 1)
+  assert.equal(r.kept[0]?.id, "swe")
+  assert.equal(r.rejected, 1)
+})
+
 test("applyAtsApplyUrlGate D.5: mixed pool — keeps real ATS, drops missing/jobright", () => {
   const jobs: { id: string; atsApplyUrl?: string }[] = [
     { id: "gh", atsApplyUrl: "https://boards.greenhouse.io/acme/jobs/1" },

@@ -489,26 +489,50 @@ void ((): JobIndustry | undefined => undefined)
 // ---------------------------------------------------------------------------
 
 /**
- * Tech-leaning blue-collar / non-tech roleTitle blacklist. Fires only
- * when the user has a tech-leaning industry tag.
+ * Tech-leaning blue-collar / non-tech / support-role roleTitle blacklist.
+ * Fires only when the user has a tech-leaning industry tag.
+ *
+ * iter34 followup D.6 — extended with support / admin / training titles
+ * after SWE-persona sim surfaced "Platform Support - Analyst" being
+ * recommended. Bare `analyst` / `specialist` / `associate` / `trainee` are
+ * dropped UNLESS preceded by a tech qualifier (lookbehind allowlist).
  *
  * Notes on the regex:
  *   - Word boundary on most tokens (\b) to avoid false positives.
  *   - "Manager in Training" / "Management Trainee" caught via the
  *     "manager in training" / "management trainee" patterns; "Engineering
  *     Manager" survives because it doesn't carry those phrases.
- *   - `technician` uses negative lookBEHIND `(?<!(?:software|cloud|cyber|data|ml|ai)\s)`
+ *   - `technician` uses negative lookbehind `(?<!(?:software|cloud|cyber|data|ml|ai)\s)`
  *     so "Cloud Technician" / "Software Technician" / "Data Technician"
  *     survive (valid SWE-adjacent roles), while "Lab Technician" /
  *     "Maintenance Technician" are caught.
+ *   - `analyst`: dropped unless preceded by `engineer` / `engineering`.
+ *     Tighter than other tokens because "Software Analyst" / "Data Analyst"
+ *     are typically BA-flavored, not SWE.
+ *   - `specialist` / `associate` / `trainee`: broader allow list including
+ *     software / cloud / data / ml / ai / etc. "Sales Associate" drops,
+ *     "Engineering Associate" / "Software Trainee" survive.
+ *   - Bare `coordinator` / `receptionist` / `secretary` / `clerk` /
+ *     "bank teller" / "front desk": always drop (no tech context exists).
  *
  * Limitation: "server" can collide with "Server Engineer" (the token
  * "server" before " Engineer" matches \bserver\b). Tech users with
  * legitimate "Server Engineer" hits should use targetRoleIndustryEnum
  * (B.10 / A.3) which would surface them via the role-fit gate.
  */
-export const TECH_LEANING_TITLE_BLACKLIST_REGEX =
-  /\b(warehouse|truck|driver|nurse|teacher|cashier|retail|janitor|cleaner|cook|server|bartender|barber|stylist|paramedic|housekeeper|caregiver|manager\s+in\s+training|management\s+trainee|(?<!(?:software|cloud|cyber|data|ml|ai)\s)technician)\b/i
+export const TECH_LEANING_TITLE_BLACKLIST_REGEX = new RegExp(
+  // Bare keywords: always drop on word-boundary match.
+  String.raw`\b(?:warehouse|truck|driver|nurse|teacher|cashier|retail|janitor|cleaner|cook|server|bartender|barber|stylist|paramedic|housekeeper|caregiver|coordinator|receptionist|secretary|clerk|bank\s+teller|front\s+desk|manager\s+in\s+training|management\s+trainee|(?<!(?:software|cloud|cyber|data|ml|ai)\s)technician)\b` +
+    // analyst — narrow allow list (engineer/engineering only).
+    String.raw`|(?<!(?:engineer|engineering)\s)\banalyst\b` +
+    // specialist — broader tech allow list.
+    String.raw`|(?<!(?:engineer|engineering|software|cloud|ml|ai|technical|integration|systems|infrastructure|security|cyber|product)\s)\bspecialist\b` +
+    // associate — broader tech allow list.
+    String.raw`|(?<!(?:engineering|software|cloud|data|ml|ai|backend|frontend|fullstack|technical|product)\s)\bassociate\b` +
+    // trainee — engineer/developer/software/cloud allow.
+    String.raw`|(?<!(?:engineer|engineering|software|cloud|developer|technical)\s)\btrainee\b`,
+  "i"
+)
 
 /**
  * Apply the B.13 tech-leaning title blacklist. Pure / deterministic.
