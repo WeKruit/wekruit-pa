@@ -67,6 +67,13 @@ export {
 } from "./providers/openai-responses.js"
 
 export {
+  callAnthropicMessages,
+  type AnthropicCallArgs,
+  type AnthropicMessagesClient,
+  type AnthropicResult,
+} from "./providers/anthropic-messages.js"
+
+export {
   parseResumeText,
   type ParseResumeArgs,
   type ParseResumeResult,

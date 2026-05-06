@@ -369,6 +369,8 @@ describe("ingestCv", () => {
     deps.llmFollowup = async () => {
       throw new Error("openai_500")
     }
+    // Phase 53 — stub Claire confirm to no-op so this test stays focused on E1.
+    deps.enqueueCvConfirmFn = async () => {}
     delete process.env.PA_CV_FINDINGS_FOLLOWUP_DISABLED
 
     const res = await ingestCv(
@@ -376,8 +378,16 @@ describe("ingestCv", () => {
       deps
     )
     assert.equal(res.ok, true)
-    assert.equal(enqueueCalls.length, 0)
-    assert.equal(state.outbound.size, 0)
+    // Filter to E1 cv-findings enqueue only — Phase 53 adds a separate
+    // cv-confirm enqueue with a different docId prefix.
+    const e1Calls = enqueueCalls.filter((c) =>
+      c.docId.startsWith("out-cvfindings-")
+    )
+    assert.equal(e1Calls.length, 0)
+    const e1Outbound = Array.from(state.outbound.keys()).filter((k) =>
+      k.startsWith("out-cvfindings-")
+    )
+    assert.equal(e1Outbound.length, 0)
     const errEvt = events.find(
       (e) => e.event === "pa.cv_followup.error" && e.payload?.stage === "llm"
     )
@@ -390,6 +400,8 @@ describe("ingestCv", () => {
     const { db, state } = makeFakeDb()
     const { log } = captureLog()
     const { deps, llmFollowupCalls, enqueueCalls } = makeStubbedDeps({ db, log })
+    // Phase 53 — stub Claire confirm to no-op so this test stays focused on E1.
+    deps.enqueueCvConfirmFn = async () => {}
     process.env.PA_CV_FINDINGS_FOLLOWUP_DISABLED = "true"
     try {
       const res = await ingestCv(
@@ -398,8 +410,14 @@ describe("ingestCv", () => {
       )
       assert.equal(res.ok, true)
       assert.equal(llmFollowupCalls.length, 0, "LLM must not be called when kill switch is on")
-      assert.equal(enqueueCalls.length, 0, "outbound must not be enqueued when kill switch is on")
-      assert.equal(state.outbound.size, 0)
+      const e1Calls = enqueueCalls.filter((c) =>
+        c.docId.startsWith("out-cvfindings-")
+      )
+      assert.equal(e1Calls.length, 0, "E1 outbound must not be enqueued when kill switch is on")
+      const e1Outbound = Array.from(state.outbound.keys()).filter((k) =>
+        k.startsWith("out-cvfindings-")
+      )
+      assert.equal(e1Outbound.length, 0)
     } finally {
       delete process.env.PA_CV_FINDINGS_FOLLOWUP_DISABLED
     }
@@ -410,6 +428,8 @@ describe("ingestCv", () => {
     const { deps, llmFollowupCalls } = makeStubbedDeps({ db, log })
     // Use the default enqueueOutboundFollowup (Firestore .create)
     deps.enqueueOutboundFollowup = undefined
+    // Phase 53 — stub Claire confirm to no-op so this test stays focused on E1.
+    deps.enqueueCvConfirmFn = async () => {}
     delete process.env.PA_CV_FINDINGS_FOLLOWUP_DISABLED
 
     const res1 = await ingestCv(
@@ -418,7 +438,11 @@ describe("ingestCv", () => {
     )
     assert.equal(res1.ok, true)
     const id1 = (res1 as { ok: true; resumeId: string }).resumeId
-    assert.equal(state.outbound.size, 1)
+    // Filter to E1 only.
+    const e1Outbound = Array.from(state.outbound.keys()).filter((k) =>
+      k.startsWith("out-cvfindings-")
+    )
+    assert.equal(e1Outbound.length, 1)
     assert.ok(state.outbound.has(`out-cvfindings-${id1}`))
 
     // Manually attempt second enqueue with the SAME resumeId — must
@@ -1112,5 +1136,245 @@ describe("ingestCv writes pa-users.tags via mergeUserTags (iter34 H.3b)", () => 
     )
     const captured = capturedInput as Record<string, unknown>
     assert.equal(captured.cvUpdatedAt, "2026-05-05T11:22:33.000Z")
+  })
+})
+
+// ---------- Phase 53 (PARSE-09) sha256 idempotency -------------------------
+
+describe("ingestCv sha256 idempotency (Phase 53 PARSE-09)", () => {
+  it("idempotent hit: existing resumeId returned, no re-parse, no duplicate write", async () => {
+    const { db, state } = makeFakeDb()
+    const { events, log } = captureLog()
+    const { deps } = makeStubbedDeps({ db, log })
+    let parseCount = 0
+    deps.llmExtract = async () => {
+      parseCount++
+      return { parsed: happyParsed() }
+    }
+    let confirmCount = 0
+    deps.enqueueCvConfirmFn = async () => {
+      confirmCount++
+    }
+    // Simulate "already parsed this PDF" via injected hit.
+    deps.findResumeBySha256 = async () => "rsm_pre_existing"
+
+    const res = await ingestCv(
+      { userId: "user_x", mediaUrl: "https://example.com/cv.pdf" },
+      deps
+    )
+    assert.equal(res.ok, true)
+    assert.ok(res.ok && res.resumeId === "rsm_pre_existing")
+    assert.equal(parseCount, 0, "must not re-parse on idempotent hit")
+    assert.equal(state.resumes.length, 0, "must not write a new doc")
+    assert.equal(confirmCount, 0, "must not enqueue confirm again")
+    const hit = events.find((e) => e.event === "pa.cv_ingest.idempotent_hit")
+    assert.ok(hit, "expected pa.cv_ingest.idempotent_hit log")
+  })
+
+  it("idempotent miss: parses fresh + writes sha256 to doc", async () => {
+    const { db, state } = makeFakeDb()
+    const { log } = captureLog()
+    const { deps } = makeStubbedDeps({ db, log })
+    deps.findResumeBySha256 = async () => null
+    deps.enqueueCvConfirmFn = async () => {}
+
+    const res = await ingestCv(
+      { userId: "user_x", mediaUrl: "https://example.com/cv.pdf" },
+      deps
+    )
+    assert.equal(res.ok, true)
+    assert.equal(state.resumes.length, 1)
+    const w = state.resumes[0]!.data
+    // sha256 of "[1, 2, 3]" Uint8Array.
+    assert.equal(typeof w.sha256, "string")
+    assert.ok((w.sha256 as string).length === 64, "sha256 must be 64 hex chars")
+  })
+
+  it("findResumeBySha256 throws → fail-open, parses + writes anyway", async () => {
+    const { db, state } = makeFakeDb()
+    const { events, log } = captureLog()
+    const { deps } = makeStubbedDeps({ db, log })
+    deps.findResumeBySha256 = async () => {
+      throw new Error("firestore_unreachable")
+    }
+    deps.enqueueCvConfirmFn = async () => {}
+    const res = await ingestCv(
+      { userId: "user_x", mediaUrl: "https://example.com/cv.pdf" },
+      deps
+    )
+    assert.equal(res.ok, true)
+    assert.equal(state.resumes.length, 1)
+    const errEvt = events.find(
+      (e) => e.event === "pa.cv_ingest.idempotent_lookup_error"
+    )
+    assert.ok(errEvt, "expected pa.cv_ingest.idempotent_lookup_error log")
+  })
+})
+
+// ---------- Phase 53 (PARSE-08) Sonnet second-pass for ['other'] -----------
+
+describe("ingestCv industry second-pass (Phase 53 PARSE-08, D15)", () => {
+  it("triggers when LLM emits ['other'] and writes overridden industries", async () => {
+    const { db, state } = makeFakeDb()
+    const { events, log } = captureLog()
+    const otherParsed: StructuredCv = {
+      ...happyParsed(),
+      candidateProfile: {
+        ...happyParsed().candidateProfile,
+        skills: ["leadership"], // no tech tokens — H.3a fallback also returns "other"
+      },
+      industryTags: ["other"],
+    }
+    const { deps } = makeStubbedDeps({ db, log, parsed: otherParsed })
+    let secondPassInvoked = false
+    deps.runIndustrySecondPassFn = async () => {
+      secondPassInvoked = true
+      return ["financial_technology", "software_and_saas"]
+    }
+    deps.enqueueCvConfirmFn = async () => {}
+    const res = await ingestCv(
+      { userId: "user_x", mediaUrl: "https://example.com/cv.pdf" },
+      deps
+    )
+    assert.equal(res.ok, true)
+    assert.equal(secondPassInvoked, true, "second pass MUST run on ['other']")
+    const applied = events.find(
+      (e) => e.event === "pa.cv_ingest.industry_second_pass.applied"
+    )
+    assert.ok(applied, "expected industry_second_pass.applied log")
+  })
+
+  it("does NOT trigger when LLM gave non-['other'] industries", async () => {
+    const { db, state } = makeFakeDb()
+    const { log } = captureLog()
+    const goodParsed: StructuredCv = {
+      ...happyParsed(),
+      industryTags: ["tech_software"],
+    }
+    const { deps } = makeStubbedDeps({ db, log, parsed: goodParsed })
+    let secondPassInvoked = false
+    deps.runIndustrySecondPassFn = async () => {
+      secondPassInvoked = true
+      return []
+    }
+    deps.enqueueCvConfirmFn = async () => {}
+    await ingestCv(
+      { userId: "user_x", mediaUrl: "https://example.com/cv.pdf" },
+      deps
+    )
+    assert.equal(secondPassInvoked, false, "second pass MUST NOT run on confident tags")
+    void state
+  })
+
+  it("second pass returns [] (LLM gave up) → original ['other'] preserved", async () => {
+    const { db, state } = makeFakeDb()
+    const { log } = captureLog()
+    const otherParsed: StructuredCv = {
+      ...happyParsed(),
+      candidateProfile: {
+        ...happyParsed().candidateProfile,
+        skills: ["leadership"],
+      },
+      industryTags: ["other"],
+    }
+    const { deps } = makeStubbedDeps({ db, log, parsed: otherParsed })
+    deps.runIndustrySecondPassFn = async () => []
+    deps.enqueueCvConfirmFn = async () => {}
+    const res = await ingestCv(
+      { userId: "user_x", mediaUrl: "https://example.com/cv.pdf" },
+      deps
+    )
+    assert.equal(res.ok, true)
+    assert.equal(state.resumes.length, 1)
+    const w = state.resumes[0]!.data
+    // Legacy industryTags preserved when second pass returns nothing.
+    assert.deepEqual(w.industryTags, ["other"])
+  })
+
+  it("second pass throws → fail-open, parsed CV still written", async () => {
+    const { db, state } = makeFakeDb()
+    const { events, log } = captureLog()
+    const otherParsed: StructuredCv = {
+      ...happyParsed(),
+      candidateProfile: {
+        ...happyParsed().candidateProfile,
+        skills: ["leadership"],
+      },
+      industryTags: ["other"],
+    }
+    const { deps } = makeStubbedDeps({ db, log, parsed: otherParsed })
+    deps.runIndustrySecondPassFn = async () => {
+      throw new Error("simulated")
+    }
+    deps.enqueueCvConfirmFn = async () => {}
+    const res = await ingestCv(
+      { userId: "user_x", mediaUrl: "https://example.com/cv.pdf" },
+      deps
+    )
+    assert.equal(res.ok, true)
+    assert.equal(state.resumes.length, 1)
+    const errEvt = events.find(
+      (e) => e.event === "pa.cv_ingest.industry_second_pass.error"
+    )
+    assert.ok(errEvt, "expected industry_second_pass.error log")
+  })
+})
+
+// ---------- Phase 53 (PARSE-07) post-parse Claire confirm enqueue -----------
+
+describe("ingestCv Claire confirm enqueue (Phase 53 PARSE-07, D12)", () => {
+  it("happy path: enqueueCvConfirmFn called with parsed + user", async () => {
+    const { db, state } = makeFakeDb()
+    const { log } = captureLog()
+    const { deps } = makeStubbedDeps({ db, log })
+    const captured: Array<{ userId: string; resumeId: string }> = []
+    deps.enqueueCvConfirmFn = async (_db, args) => {
+      captured.push({ userId: args.userId, resumeId: args.resumeId })
+    }
+    const res = await ingestCv(
+      { userId: "user_x", mediaUrl: "https://example.com/cv.pdf" },
+      deps
+    )
+    assert.equal(res.ok, true)
+    assert.equal(captured.length, 1, "enqueueCvConfirmFn must be called once")
+    assert.equal(captured[0]!.userId, "user_x")
+    assert.ok(captured[0]!.resumeId.startsWith("rsm_"))
+    void state
+  })
+
+  it("enqueueCvConfirmFn throws → ingestCv still ok:true", async () => {
+    const { db, state } = makeFakeDb()
+    const { events, log } = captureLog()
+    const { deps } = makeStubbedDeps({ db, log })
+    deps.enqueueCvConfirmFn = async () => {
+      throw new Error("simulated")
+    }
+    const res = await ingestCv(
+      { userId: "user_x", mediaUrl: "https://example.com/cv.pdf" },
+      deps
+    )
+    assert.equal(res.ok, true, "confirm enqueue failure must NOT break cv-ingest")
+    assert.equal(state.resumes.length, 1)
+    const unexpected = events.find(
+      (e) => e.event === "pa.cv_confirm.unexpected_throw"
+    )
+    assert.ok(unexpected, "expected pa.cv_confirm.unexpected_throw log")
+  })
+
+  it("no user phone → confirm not invoked (Stream E branch skipped)", async () => {
+    const { db } = makeFakeDb()
+    const { log } = captureLog()
+    const { deps } = makeStubbedDeps({ db, log })
+    deps.lookupUserForFollowup = async () => null
+    let invoked = false
+    deps.enqueueCvConfirmFn = async () => {
+      invoked = true
+    }
+    const res = await ingestCv(
+      { userId: "user_x", mediaUrl: "https://example.com/cv.pdf" },
+      deps
+    )
+    assert.equal(res.ok, true)
+    assert.equal(invoked, false, "confirm enqueue runs only with valid user phone")
   })
 })

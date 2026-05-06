@@ -205,6 +205,10 @@ describe("ingestCv — iter30 WS1 4-limit stack", () => {
                   category: "experience",
                 },
               ],
+              // Phase 53 — extended fields default to []
+              relevantIndustry: [],
+              relevantSpecialization: [],
+              proposedTags: [],
             },
             usedTier: "primary",
             usedModel: "gpt-5.4-nano",

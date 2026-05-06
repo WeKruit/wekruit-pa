@@ -102,6 +102,29 @@ export const UserTagsSchema = z.object({
    * ["other"] when no signal). Drives industry filter in job-rec.
    */
   industryEnum: z.array(z.string()),
+  /**
+   * Phase 53 — Phase 52 canonical industry-sector tokens (42-token vocab,
+   * `INDUSTRY_SECTOR_VOCAB`). Distinct from `industryEnum` (legacy 10-tag).
+   * Populated parse-time by pa-resume-parser v2 + post-parse Sonnet
+   * second-pass when the LLM falls through to ["other"] (D15).
+   */
+  industrySector: z.array(z.string()).optional(),
+  /**
+   * Phase 53 — derived industries from work-history (≤6). Same canonical
+   * 42-token vocab as `industrySector`. Used by Phase 56 match query as
+   * the soft-score axis (alongside `industrySector`).
+   */
+  relevantIndustry: z.array(z.string()).optional(),
+  /**
+   * Phase 53 — sub-domain expertise tokens (e.g. `frontend_development`,
+   * `mlops`, `infrastructure_security`). Open vocab.
+   */
+  relevantSpecialization: z.array(z.string()).optional(),
+  /**
+   * Phase 53 — sandbox open-vocab tags (max 12). Pattern `[a-z][a-z0-9_]{1,79}`.
+   * Promoted to canonical via admin dashboard (Phase 59).
+   */
+  proposedTags: z.array(z.string()).optional(),
   /** Most recent role title (workHistory[0].title or experiences[0].title). */
   recentRoleTitle: z.string().optional(),
   /** Most recent company. */
@@ -179,6 +202,20 @@ export interface UserTagsCvInput {
   embedding?: number[]
   embeddingModel?: string
   embeddingComputedAt?: string
+
+  // ---- Phase 53 (PARSE-03..PARSE-05) — canonical Phase 52 vocab ----
+  /**
+   * Phase 52 canonical 42-token industry sectors. Distinct from
+   * `industryTags` (legacy 10-tag bucket). Pass-through from
+   * `parsedResumeData.industries` / second-pass override.
+   */
+  industrySector?: string[]
+  /** Pass-through from `parsedResumeData.relevantIndustry`. */
+  relevantIndustry?: string[]
+  /** Pass-through from `parsedResumeData.relevantSpecialization`. */
+  relevantSpecialization?: string[]
+  /** Pass-through from `parsedResumeData.proposedTags`. */
+  proposedTags?: string[]
 }
 
 export interface UserTagsInput {
@@ -517,6 +554,30 @@ export function mergeUserTags(input: UserTagsInput): UserTags {
     : undefined
   const preferredLang = mapPreferredLang(input.preferredLang, statedPreferences?.preferredLang)
 
+  // ---- Phase 53 — canonical Phase 52 fields pass-through --------------
+  // Each field defensively normalized: lowercase + trimmed strings, dedupe.
+  const dedupedStrings = (
+    raw: string[] | undefined,
+    cap?: number
+  ): string[] | undefined => {
+    if (!Array.isArray(raw)) return undefined
+    const seen = new Set<string>()
+    const out: string[] = []
+    for (const v of raw) {
+      if (typeof v !== "string") continue
+      const norm = v.trim().toLowerCase()
+      if (norm.length === 0 || seen.has(norm)) continue
+      seen.add(norm)
+      out.push(norm)
+      if (cap && out.length >= cap) break
+    }
+    return out.length > 0 ? out : undefined
+  }
+  const industrySector = dedupedStrings(cv?.industrySector, 6)
+  const relevantIndustry = dedupedStrings(cv?.relevantIndustry, 6)
+  const relevantSpecialization = dedupedStrings(cv?.relevantSpecialization, 6)
+  const proposedTags = dedupedStrings(cv?.proposedTags, 12)
+
   // ---- assemble + omit-undefined --------------------------------------
   // We deliberately avoid placing `undefined` keys on the output so the
   // shape round-trips through Firestore (Firestore drops `undefined` on
@@ -539,6 +600,10 @@ export function mergeUserTags(input: UserTagsInput): UserTags {
   if (prefersStartup) out.prefersStartup = prefersStartup
   if (targetLocations) out.targetLocations = targetLocations
   if (preferredLang) out.preferredLang = preferredLang
+  if (industrySector) out.industrySector = industrySector
+  if (relevantIndustry) out.relevantIndustry = relevantIndustry
+  if (relevantSpecialization) out.relevantSpecialization = relevantSpecialization
+  if (proposedTags) out.proposedTags = proposedTags
   if (cv && cvUpdatedAt) out.lastUpdatedFromCv = cvUpdatedAt
   if (statedPreferences && chatUpdatedAt) out.lastUpdatedFromChat = chatUpdatedAt
 

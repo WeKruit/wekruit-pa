@@ -30,11 +30,16 @@ export type ParseResumeArgs = {
   apiKey?: string
   /** Optional override for OpenAI base URL (default reads env). */
   baseURL?: string
+  /** Phase 53 — optional override for Anthropic key (default reads ANTHROPIC_API_KEY env). */
+  anthropicApiKey?: string
+  anthropicBaseURL?: string
   log?: Logger
   /** Outer retry config (default attempts=3, baseMs=1000, maxMs=16000). */
   retry?: Partial<WithOuterRetryOpts>
-  /** Test seam — clientFactory propagated through router → provider. */
+  /** Test seam — clientFactory propagated through router → OpenAI provider. */
   clientFactory?: RouterCallArgs["clientFactory"]
+  /** Test seam — Anthropic clientFactory propagated through router → provider. */
+  anthropicClientFactory?: RouterCallArgs["anthropicClientFactory"]
   /** Test seam — chain override. */
   chain?: RouterCallArgs["chain"]
 }
@@ -80,12 +85,15 @@ export async function parseResumeText(args: ParseResumeArgs): Promise<ParseResum
     const result = await callWithFallback({
       apiKey,
       baseURL,
+      anthropicApiKey: args.anthropicApiKey,
+      anthropicBaseURL: args.anthropicBaseURL,
       systemPrompt,
       userText,
       schemaName: PARSED_RESUME_SCHEMA_NAME,
       schema: PARSED_RESUME_JSON_SCHEMA as unknown as Record<string, unknown>,
       log,
       clientFactory: args.clientFactory,
+      anthropicClientFactory: args.anthropicClientFactory,
       chain: args.chain,
     })
     let raw: unknown

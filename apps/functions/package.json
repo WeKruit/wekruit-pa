@@ -14,6 +14,7 @@
     "deploy": "firebase deploy --only functions --project wekruit-5f89b"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.94.0",
     "@google-cloud/tasks": "^5.5.2",
     "@pa/agent-registry": "0.0.1",
     "@pa/agent-runtime": "0.0.1",
@@ -22,7 +23,6 @@
     "@pa/job-rec": "0.0.1",
     "@pa/memory": "0.0.1",
     "@pa/pa-broker": "0.0.1",
-    "@wekruit/shared-tags": "0.1.0",
     "@pa/pa-orchestrator": "0.0.1",
     "@pa/pa-persistence": "0.0.1",
     "@pa/pa-resume-parser": "0.0.1",

@@ -31,6 +31,7 @@
  * failure CANNOT taint the parsedCandidateResumes write.
  */
 
+import { createHash } from "node:crypto"
 import type { Firestore } from "firebase-admin/firestore"
 import {
   INDUSTRY_TAGS,
@@ -38,6 +39,11 @@ import {
   mapToCanonicalIndustry,
   type IndustryTag,
 } from "./industry-tags.js"
+import {
+  runIndustrySecondPass,
+  type WorkHistorySummary,
+} from "./industry-second-pass.js"
+import { enqueueCvConfirmMessage } from "./cv-confirm-message.js"
 import { checkResumeGate } from "./cv-gate.js"
 import {
   isQuotaExhausted,
@@ -265,6 +271,49 @@ export type IngestCvDeps = {
     userId: string,
     tags: Record<string, unknown>
   ) => Promise<void>
+
+  // ---- Phase 53 (PARSE-08, PARSE-07, PARSE-09) -------------------------
+
+  /**
+   * Phase 53 (PARSE-08, D15) — Industry classification second-pass.
+   * Default: `runIndustrySecondPass` from `./industry-second-pass.ts`,
+   * which uses Anthropic Sonnet-4-6 and falls back to gpt-4.1-mini. Tests
+   * can stub to verify the trigger condition without hitting any LLM.
+   */
+  runIndustrySecondPassFn?: (args: {
+    cvText: string
+    workHistory: ReadonlyArray<WorkHistorySummary>
+    apiKey: string | undefined
+    log: (event: string, payload?: Record<string, unknown>) => void
+  }) => Promise<string[]>
+
+  /**
+   * Phase 53 (PARSE-07, D12) — Post-parse Claire confirm enqueue.
+   * Default: `enqueueCvConfirmMessage` from `./cv-confirm-message.ts`.
+   * NEVER throws — fail-open contract preserved for tests.
+   */
+  enqueueCvConfirmFn?: (
+    db: Firestore,
+    args: {
+      userId: string
+      resumeId: string
+      parsed: Record<string, unknown>
+      user?: { toE164: string | null; preferredLang?: "zh" | "en" | null }
+      log?: (event: string, payload?: Record<string, unknown>) => void
+    }
+  ) => Promise<void>
+
+  /**
+   * Phase 53 (PARSE-09) — sha256 idempotency lookup.
+   * Default: query `parsedCandidateResumes` where
+   * `userId == X AND sha256 == Y`, return existing resumeId if found.
+   * Tests can stub to simulate hit / miss.
+   */
+  findResumeBySha256?: (
+    db: Firestore,
+    userId: string,
+    sha256: string
+  ) => Promise<string | null>
 }
 
 const PARSED_RESUMES_COLLECTION = "parsedCandidateResumes"
@@ -798,6 +847,11 @@ async function runUserTagsMerge(args: {
   parsed: StructuredCv
   workHistory: ReadonlyArray<unknown> | undefined
   embedding: ComputeCvEmbeddingResult | null
+  /** Phase 53 — canonical Phase 52 vocab pass-through (when v2 ran). */
+  industrySector?: string[]
+  relevantIndustry?: string[]
+  relevantSpecialization?: string[]
+  proposedTags?: string[]
   mergeUserTagsFn: (input: UserTagsInput) => Record<string, unknown>
   writeUserTags: (
     db: Firestore,
@@ -851,6 +905,19 @@ async function runUserTagsMerge(args: {
     cvInput.embedding = args.embedding.vector
     cvInput.embeddingModel = args.embedding.model
     cvInput.embeddingComputedAt = args.embedding.computedAt
+  }
+  // Phase 53 — pass canonical Phase 52 fields through to mergeUserTags.
+  if (Array.isArray(args.industrySector) && args.industrySector.length > 0) {
+    cvInput.industrySector = args.industrySector
+  }
+  if (Array.isArray(args.relevantIndustry) && args.relevantIndustry.length > 0) {
+    cvInput.relevantIndustry = args.relevantIndustry
+  }
+  if (Array.isArray(args.relevantSpecialization) && args.relevantSpecialization.length > 0) {
+    cvInput.relevantSpecialization = args.relevantSpecialization
+  }
+  if (Array.isArray(args.proposedTags) && args.proposedTags.length > 0) {
+    cvInput.proposedTags = args.proposedTags
   }
 
   const statedPrefs = (userData?.statedPreferences as UserTagsInput["statedPreferences"]) ?? undefined
@@ -1331,10 +1398,48 @@ async function defaultParserV2Extract(text: string, log: (e: string, p?: Record<
   return result
 }
 
+/**
+ * Phase 53 (PARSE-09) — sha256 idempotency lookup.
+ *
+ * Query `parsedCandidateResumes` where `userId == X AND sha256 == Y`. If
+ * a doc exists, return its id; otherwise null. Skip-if-found avoids
+ * re-parsing the same PDF (saves an LLM call) and prevents duplicate
+ * side-effects (Claire confirm, mem0 write).
+ *
+ * NEVER throws — on any Firestore error returns null (treat as miss).
+ */
+async function defaultFindResumeBySha256(
+  db: Firestore,
+  userId: string,
+  sha256: string
+): Promise<string | null> {
+  type DocLike = {
+    id: string
+    data(): Record<string, unknown> | undefined
+  }
+  type SnapLike = { docs: DocLike[]; empty?: boolean }
+  try {
+    const q = db
+      .collection(PARSED_RESUMES_COLLECTION)
+      .where("userId", "==", userId)
+      .where("sha256", "==", sha256)
+      .limit(1)
+    const snap = (await (q as unknown as { get: () => Promise<SnapLike> }).get()) as SnapLike
+    if (snap.docs.length === 0) return null
+    return snap.docs[0]!.id
+  } catch {
+    return null
+  }
+}
+
 async function defaultIsParserV2Enabled(
   db: Firestore,
   userId: string
 ): Promise<boolean> {
+  // Phase 53 (PARSE-01, D11) — parser-v2 is now the DEFAULT path. Flag
+  // is preserved as a kill-switch (set false to force legacy single-shot
+  // path for a specific user). Flag-system unavailable → still default ON
+  // so deployment regressions don't silently fall back to legacy path.
   try {
     const mod = (await import("@pa/pa-persistence")) as {
       getFlag: (
@@ -1344,10 +1449,10 @@ async function defaultIsParserV2Enabled(
         defaultValue?: boolean
       ) => Promise<boolean | number | string>
     }
-    const v = await mod.getFlag(db, RESUME_PARSER_V2_FLAG_KEY, { userId }, false)
-    return v === true
+    const v = await mod.getFlag(db, RESUME_PARSER_V2_FLAG_KEY, { userId }, true)
+    return v !== false
   } catch {
-    return false
+    return true
   }
 }
 
@@ -1415,6 +1520,43 @@ export async function ingestCv(
     deps?.mergeUserTagsFn ??
     ((input: UserTagsInput) => mergeUserTags(input) as Record<string, unknown>)
   const writeUserTags = deps?.writeUserTags ?? defaultWriteUserTags
+
+  // Phase 53 — second-pass + confirm-enqueue + sha256 idempotency seams.
+  const runIndustrySecondPassFn =
+    deps?.runIndustrySecondPassFn ??
+    (async (a: {
+      cvText: string
+      workHistory: ReadonlyArray<WorkHistorySummary>
+      apiKey: string | undefined
+      log: (event: string, payload?: Record<string, unknown>) => void
+    }): Promise<string[]> => {
+      const out = await runIndustrySecondPass({
+        cvText: a.cvText,
+        workHistory: a.workHistory,
+        apiKey: a.apiKey,
+        log: a.log,
+      })
+      return out as string[]
+    })
+  const enqueueCvConfirmFn =
+    deps?.enqueueCvConfirmFn ??
+    ((db: Firestore, a: {
+      userId: string
+      resumeId: string
+      parsed: Record<string, unknown>
+      user?: { toE164: string | null; preferredLang?: "zh" | "en" | null }
+      log?: (event: string, payload?: Record<string, unknown>) => void
+    }) =>
+      enqueueCvConfirmMessage(db, {
+        userId: a.userId,
+        resumeId: a.resumeId,
+        parsed: a.parsed,
+        user: a.user,
+        log: a.log,
+        nowIso,
+      }))
+  const findResumeBySha256 =
+    deps?.findResumeBySha256 ?? defaultFindResumeBySha256
 
   if (!args || typeof args !== "object" || !args.userId || !args.mediaUrl) {
     return { ok: false, reason: "invalid_input" }
@@ -1515,6 +1657,42 @@ export async function ingestCv(
     return { ok: false, reason: "download_failed" }
   }
 
+  // Phase 53 (PARSE-09) — sha256 idempotency check. Compute hash of the
+  // downloaded PDF bytes and short-circuit if we've already parsed an
+  // identical PDF for this user. Saves an LLM call AND prevents duplicate
+  // side-effects (Claire confirm, mem0 write).
+  let pdfSha256: string
+  try {
+    pdfSha256 = createHash("sha256").update(bytes).digest("hex")
+  } catch (err) {
+    // Crypto failure should be impossible in Node; defensive.
+    log("pa.cv_ingest.sha256_error", {
+      userId: args.userId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    pdfSha256 = ""
+  }
+  if (pdfSha256.length > 0) {
+    try {
+      const existingId = await findResumeBySha256(dbHandle, args.userId, pdfSha256)
+      if (existingId) {
+        log("pa.cv_ingest.idempotent_hit", {
+          userId: args.userId,
+          sha256: pdfSha256,
+          resumeId: existingId,
+        })
+        return { ok: true, resumeId: existingId }
+      }
+    } catch (err) {
+      // Lookup failure → log + proceed (fail-open; parser will write a fresh row).
+      log("pa.cv_ingest.idempotent_lookup_error", {
+        userId: args.userId,
+        sha256: pdfSha256,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+
   // 2. PDF text extraction
   let text: string
   try {
@@ -1583,6 +1761,67 @@ export async function ingestCv(
     parserV2: parserV2On,
     tier: usedTier,
   })
+
+  // Phase 53 (PARSE-08, D15) — Industry second-pass when primary parser
+  // produced ["other"] or empty. Reduces regex reliance by asking Sonnet
+  // to reason explicitly about industry classification with the canonical
+  // 42-token enum embedded in the prompt. NEVER throws.
+  const isOtherOnly =
+    parsed.industryTags.length === 0 ||
+    (parsed.industryTags.length === 1 && parsed.industryTags[0] === "other")
+  if (isOtherOnly) {
+    try {
+      const workHistory: WorkHistorySummary[] = parsed.experiences.slice(0, 3).map((e) => ({
+        title: e.title,
+        company: e.company,
+        description: e.description,
+        location: e.location,
+      }))
+      const secondPassResult = await runIndustrySecondPassFn({
+        cvText: text,
+        workHistory,
+        apiKey: process.env.ANTHROPIC_API_KEY?.trim() || undefined,
+        log,
+      })
+      if (Array.isArray(secondPassResult) && secondPassResult.length > 0) {
+        log("pa.cv_ingest.industry_second_pass.applied", {
+          userId: args.userId,
+          industries: secondPassResult,
+          previousTags: parsed.industryTags,
+        })
+        // Phase 53 attaches Phase 52 canonical industries. Stored downstream
+        // on parsedCandidateResumes.industries (separate from the legacy
+        // 10-bucket industryTags), and on pa-users.tags.relevantIndustry.
+        ;(v2Output as unknown as { __secondPassIndustries?: string[] } | null) &&
+          ((v2Output as unknown as { __secondPassIndustries?: string[] }).__secondPassIndustries =
+            secondPassResult)
+        // Also propagate to relevantIndustry on the v2 parsed output (so the
+        // mergeUserTags input picks them up).
+        if (v2Output) {
+          const existing = Array.isArray(v2Output.parsed.relevantIndustry)
+            ? v2Output.parsed.relevantIndustry
+            : []
+          // Merge + dedupe; keep total ≤ 6.
+          const merged: string[] = []
+          const seen = new Set<string>()
+          for (const x of [...secondPassResult, ...existing]) {
+            if (typeof x !== "string" || seen.has(x)) continue
+            seen.add(x)
+            merged.push(x)
+            if (merged.length >= 6) break
+          }
+          v2Output.parsed.relevantIndustry = merged
+        }
+      }
+    } catch (err) {
+      // Defensive — runIndustrySecondPass is contracted not to throw, but
+      // an injected stub might. Log + continue.
+      log("pa.cv_ingest.industry_second_pass.error", {
+        userId: args.userId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
 
   // iter34 sprint B.9 — compute topSkills + embedding ONCE (shared by H3
   // staged path and legacy direct-write path). Embedding is sync so a brand
@@ -1680,6 +1919,27 @@ export async function ingestCv(
       ingestedVia: "imessage-attachment",
       // No `createdAt` Timestamp here — only set on promote, so the row
       // doesn't accidentally enter the "most recent" sort window.
+    }
+    // Phase 53 — sha256 idempotency token + canonical Phase 52 fields
+    // also propagate through the staged path so promoted docs match the
+    // legacy direct-write field set.
+    if (pdfSha256 && pdfSha256.length > 0) {
+      stagedDoc.sha256 = pdfSha256
+    }
+    if (v2Output) {
+      stagedDoc.relevantIndustry = v2Output.parsed.relevantIndustry ?? []
+      stagedDoc.relevantSpecialization = v2Output.parsed.relevantSpecialization ?? []
+      stagedDoc.proposedTags = v2Output.parsed.proposedTags ?? []
+      const secondPass = (v2Output as unknown as { __secondPassIndustries?: string[] }).__secondPassIndustries
+      stagedDoc.industries =
+        Array.isArray(secondPass) && secondPass.length > 0
+          ? secondPass
+          : (v2Output.parsed.relevantIndustry ?? [])
+    } else {
+      stagedDoc.relevantIndustry = []
+      stagedDoc.relevantSpecialization = []
+      stagedDoc.proposedTags = []
+      stagedDoc.industries = []
     }
     // iter34 sprint B.9 — carry the embedding into the staged doc so when
     // the user accepts the overwrite prompt, the promoted parsedCandidate-
@@ -1846,8 +2106,29 @@ export async function ingestCv(
       baseDoc.workAuthorization = v2Output.parsed.workAuthorization
       baseDoc.parseConfidence = v2Output.parsed.parseConfidence
       baseDoc.inferredAnswers = v2Output.parsed.inferredAnswers
+      // Phase 53 (PARSE-03..PARSE-05) — extended canonical fields.
+      baseDoc.relevantIndustry = v2Output.parsed.relevantIndustry ?? []
+      baseDoc.relevantSpecialization = v2Output.parsed.relevantSpecialization ?? []
+      baseDoc.proposedTags = v2Output.parsed.proposedTags ?? []
+      // Phase 53 — also expose `industries` (canonical 42-token vocab) so
+      // downstream Phase 56 match query reads a single source. Falls back
+      // to relevantIndustry when no second-pass override happened.
+      const secondPass = (v2Output as unknown as { __secondPassIndustries?: string[] }).__secondPassIndustries
+      baseDoc.industries =
+        Array.isArray(secondPass) && secondPass.length > 0
+          ? secondPass
+          : (v2Output.parsed.relevantIndustry ?? [])
     } else {
       baseDoc.parserVersion = "v1"
+      baseDoc.relevantIndustry = []
+      baseDoc.relevantSpecialization = []
+      baseDoc.proposedTags = []
+      baseDoc.industries = []
+    }
+    // Phase 53 (PARSE-09) — sha256 idempotency token. Always present on
+    // new docs so future re-uploads of the SAME PDF short-circuit cleanly.
+    if (pdfSha256 && pdfSha256.length > 0) {
+      baseDoc.sha256 = pdfSha256
     }
     const ref = await dbHandle.collection(PARSED_RESUMES_COLLECTION).add(baseDoc)
     resumeId = ref.id
@@ -1865,12 +2146,25 @@ export async function ingestCv(
     // doc lookup is shared with the Stream E branches and we want to
     // avoid double-reads; (b) tag-write failures should appear in logs
     // alongside the originating cv-ingest event, not minutes later.
+    // Phase 53 — pull canonical Phase 52 fields from v2 output (and the
+    // possibly-overridden second-pass industries).
+    const sectorSecondPass = v2Output
+      ? (v2Output as unknown as { __secondPassIndustries?: string[] }).__secondPassIndustries
+      : undefined
+    const industrySectorMerge: string[] | undefined =
+      Array.isArray(sectorSecondPass) && sectorSecondPass.length > 0
+        ? sectorSecondPass
+        : v2Output?.parsed.relevantIndustry
     await runUserTagsMerge({
       db: dbHandle,
       userId: args.userId,
       parsed,
       workHistory: v2Output?.parsed.workHistory,
       embedding: embedResult,
+      industrySector: industrySectorMerge,
+      relevantIndustry: v2Output?.parsed.relevantIndustry,
+      relevantSpecialization: v2Output?.parsed.relevantSpecialization,
+      proposedTags: v2Output?.parsed.proposedTags,
       mergeUserTagsFn,
       writeUserTags,
       nowIso,
@@ -1930,6 +2224,37 @@ export async function ingestCv(
         user,
         mem0Add: mem0AddFn,
         log,
+      }),
+      // Phase 53 (PARSE-07, D12) — post-parse Claire confirm dialogue.
+      // Surfaces parsed CV understanding to user for confirmation. Reply
+      // analysis is deferred to Phase 54's onboarding-chat hooks.
+      enqueueCvConfirmFn(dbHandle, {
+        userId: args.userId,
+        resumeId,
+        parsed: {
+          // v2 fields (preferred when v2 ran)
+          ...(v2Output
+            ? {
+                workHistory: v2Output.parsed.workHistory,
+                skills: v2Output.parsed.skills,
+                relevantIndustry: v2Output.parsed.relevantIndustry,
+              }
+            : {}),
+          // legacy v1 fallback fields
+          experiences: parsed.experiences,
+          candidateProfile: { skills: parsed.candidateProfile.skills },
+          industryTags: parsed.industryTags,
+        },
+        user,
+        log,
+      }).catch((err: unknown) => {
+        // enqueueCvConfirmFn is contracted not to throw, but the test seam
+        // may. Defensive catch keeps Promise.allSettled clean.
+        log("pa.cv_confirm.unexpected_throw", {
+          userId: args.userId,
+          resumeId,
+          error: err instanceof Error ? err.message : String(err),
+        })
       }),
     ]
     // iter30 WS1 — Stream E3: qaBank → Mem0 with metadata + tag-event coupling.

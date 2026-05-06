@@ -33,6 +33,9 @@ export const PARSED_RESUME_JSON_SCHEMA = {
     "workAuthorization",
     "parseConfidence",
     "inferredAnswers",
+    "relevantIndustry",
+    "relevantSpecialization",
+    "proposedTags",
   ],
   properties: {
     fullName: { type: ["string", "null"] },
@@ -197,6 +200,22 @@ export const PARSED_RESUME_JSON_SCHEMA = {
           },
         },
       },
+    },
+    // ── Phase 53 (PARSE-03..PARSE-05) ─────────────────────────────────
+    relevantIndustry: {
+      type: "array",
+      maxItems: 6,
+      items: { type: "string" },
+    },
+    relevantSpecialization: {
+      type: "array",
+      maxItems: 6,
+      items: { type: "string" },
+    },
+    proposedTags: {
+      type: "array",
+      maxItems: 12,
+      items: { type: "string" },
     },
   },
 } as const
