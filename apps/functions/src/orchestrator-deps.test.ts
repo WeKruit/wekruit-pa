@@ -27,7 +27,12 @@ import assert from "node:assert/strict"
 import { roleToIndustryBuckets } from "@pa/pa-orchestrator"
 import { formatJobMatchReason } from "./lib/match-reason.js"
 import type { ScoreBreakdown } from "@pa/job-rec"
-import { isDegenerateLLMOutput, buildCvAnalysisFallback } from "./orchestrator-deps.js"
+import {
+  isDegenerateLLMOutput,
+  buildCvAnalysisFallback,
+  fireAndForgetLlmRerank,
+} from "./orchestrator-deps.js"
+import type { RerankInput, RerankOutput } from "./lib/llm-rerank.js"
 
 describe("orchestrator-deps targetRole → industryEnum wire-through", () => {
   it("['swe'] expands to tech_software bucket (SWE doesn't get Warehouse)", () => {
@@ -340,5 +345,221 @@ describe("buildCvAnalysisFallback (iter34 H.2 CR1)", () => {
     )
     assert.match(out, /Node, React/)
     assert.ok(!out.includes(", , "))
+  })
+})
+
+// ---------------------------------------------------------------------------
+// iter34 H.2 / CR4 — fire-and-forget llmRerank wired into makeGenerateJobRecs
+//
+// We can't easily integration-test the full closure without spinning Firestore.
+// Instead we lock down the helper that the closure delegates to:
+// `fireAndForgetLlmRerank` — verifying it (a) calls llmRerank with the
+// candidate + jobs we pass, (b) writes the result into pa-user-rerank-cache,
+// (c) NEVER throws on the caller, even when llmRerank rejects.
+// ---------------------------------------------------------------------------
+
+/** Tiny Firestore-shaped mock that records `set` calls on doc paths. */
+interface FakeDoc {
+  collection: string
+  id: string
+  payload: Record<string, unknown>
+}
+function makeFakeDb(): {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  db: any
+  writes: FakeDoc[]
+} {
+  const writes: FakeDoc[] = []
+  const db = {
+    collection(collection: string) {
+      return {
+        doc(id: string) {
+          return {
+            async set(payload: Record<string, unknown>) {
+              writes.push({ collection, id, payload })
+            },
+          }
+        },
+      }
+    },
+  }
+  return { db, writes }
+}
+
+/** Wait one microtask + macrotask for the in-flight fire-and-forget promise. */
+async function flushFireAndForget(): Promise<void> {
+  await new Promise((r) => setImmediate(r))
+  await new Promise((r) => setImmediate(r))
+}
+
+describe("fireAndForgetLlmRerank (iter34 H.2 CR4)", () => {
+  it("calls llmRerank with mapped candidate + top5 jobs and writes pa-user-rerank-cache", async () => {
+    const calls: RerankInput[] = []
+    const fakeRerank = async (input: RerankInput): Promise<RerankOutput> => {
+      calls.push(input)
+      return {
+        ranked: [
+          { jobId: "j1", rank: 1, score: 0.9, reasoning: "best" },
+          { jobId: "j2", rank: 2, score: 0.7, reasoning: "ok" },
+        ],
+        modelUsed: "Qwen/Qwen2.5-7B-Instruct",
+        latencyMs: 1234,
+      }
+    }
+    const { db, writes } = makeFakeDb()
+    const fixedDate = new Date("2026-05-05T12:00:00Z")
+    fireAndForgetLlmRerank({
+      db,
+      userId: "u-1",
+      top5: [
+        {
+          id: "j1",
+          jobTitle: "SWE",
+          companyName: "Acme",
+          industryEnum: ["tech_software"],
+          requiredSkills: ["typescript"],
+          sponsorship: false,
+          locationRaw: "Remote",
+        },
+        {
+          id: "j2",
+          jobTitle: "ML Engineer",
+          companyName: "Beta",
+          requiredSkills: ["python"],
+        },
+      ],
+      candidate: {
+        targetRole: ["swe"],
+        topSkills: ["typescript", "react"],
+        visaStatus: "opt",
+        cvSummary: "SWE 4yo TS/React",
+      },
+      llmRerankImpl: fakeRerank,
+      now: () => fixedDate,
+    })
+
+    await flushFireAndForget()
+
+    assert.equal(calls.length, 1, "llmRerank must be called once")
+    assert.deepEqual(calls[0]!.candidate, {
+      targetRole: ["swe"],
+      topSkills: ["typescript", "react"],
+      visaStatus: "opt",
+      cvSummary: "SWE 4yo TS/React",
+    })
+    assert.equal(calls[0]!.jobs.length, 2)
+    assert.equal(calls[0]!.jobs[0]!.id, "j1")
+    assert.equal(calls[0]!.jobs[0]!.roleTitle, "SWE")
+
+    assert.equal(writes.length, 1, "must write exactly one cache doc")
+    assert.equal(writes[0]!.collection, "pa-user-rerank-cache")
+    assert.equal(writes[0]!.id, "u-1")
+    const payload = writes[0]!.payload as {
+      userId: string
+      ranked: { jobId: string }[]
+      computedAt: string
+      modelUsed: string
+      latencyMs: number
+    }
+    assert.equal(payload.userId, "u-1")
+    assert.equal(payload.ranked.length, 2)
+    assert.equal(payload.ranked[0]!.jobId, "j1")
+    assert.equal(payload.computedAt, fixedDate.toISOString())
+    assert.equal(payload.modelUsed, "Qwen/Qwen2.5-7B-Instruct")
+    assert.equal(payload.latencyMs, 1234)
+  })
+
+  it("when llmRerank returns empty ranked → does NOT write cache", async () => {
+    const fakeRerank = async (): Promise<RerankOutput> => ({
+      ranked: [],
+      modelUsed: "Qwen/Qwen2.5-7B-Instruct",
+      latencyMs: 100,
+    })
+    const { db, writes } = makeFakeDb()
+    fireAndForgetLlmRerank({
+      db,
+      userId: "u-2",
+      top5: [{ id: "j1", jobTitle: "SWE", companyName: "Acme" }],
+      candidate: { targetRole: ["swe"] },
+      llmRerankImpl: fakeRerank,
+    })
+    await flushFireAndForget()
+    assert.equal(writes.length, 0, "empty ranked → no cache write")
+  })
+
+  it("when llmRerank rejects → caller is not affected (errors swallowed)", async () => {
+    const fakeRerank = async (): Promise<RerankOutput> => {
+      throw new Error("network error")
+    }
+    const { db, writes } = makeFakeDb()
+    let unhandled = false
+    const handler = () => {
+      unhandled = true
+    }
+    process.once("unhandledRejection", handler)
+    // Sync call must not throw.
+    fireAndForgetLlmRerank({
+      db,
+      userId: "u-3",
+      top5: [{ id: "j1", jobTitle: "SWE", companyName: "Acme" }],
+      candidate: {},
+      llmRerankImpl: fakeRerank,
+    })
+    await flushFireAndForget()
+    process.removeListener("unhandledRejection", handler)
+    assert.equal(unhandled, false, "promise rejection must be swallowed")
+    assert.equal(writes.length, 0)
+  })
+
+  it("maps sponsorship null → false in rerank input (defensive)", async () => {
+    const calls: RerankInput[] = []
+    const fakeRerank = async (input: RerankInput): Promise<RerankOutput> => {
+      calls.push(input)
+      return {
+        ranked: [{ jobId: "j1", rank: 1, score: 0.5, reasoning: "" }],
+        modelUsed: "Qwen/Qwen2.5-7B-Instruct",
+        latencyMs: 50,
+      }
+    }
+    const { db } = makeFakeDb()
+    fireAndForgetLlmRerank({
+      db,
+      userId: "u-4",
+      top5: [{ id: "j1", jobTitle: "SWE", companyName: "Acme", sponsorship: null }],
+      candidate: {},
+      llmRerankImpl: fakeRerank,
+    })
+    await flushFireAndForget()
+    assert.equal(calls[0]!.jobs[0]!.sponsorship, false)
+  })
+
+  it("composes salaryRange when both salaryMin + salaryMax provided", async () => {
+    const calls: RerankInput[] = []
+    const fakeRerank = async (input: RerankInput): Promise<RerankOutput> => {
+      calls.push(input)
+      return {
+        ranked: [{ jobId: "j1", rank: 1, score: 0.5, reasoning: "" }],
+        modelUsed: "Qwen/Qwen2.5-7B-Instruct",
+        latencyMs: 50,
+      }
+    }
+    const { db } = makeFakeDb()
+    fireAndForgetLlmRerank({
+      db,
+      userId: "u-5",
+      top5: [
+        {
+          id: "j1",
+          jobTitle: "SWE",
+          companyName: "Acme",
+          salaryMin: 150000,
+          salaryMax: 200000,
+        },
+      ],
+      candidate: {},
+      llmRerankImpl: fakeRerank,
+    })
+    await flushFireAndForget()
+    assert.equal(calls[0]!.jobs[0]!.salaryRange, "150000-200000")
   })
 })

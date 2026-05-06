@@ -282,8 +282,11 @@ function makeGenerateJobRecs(): NonNullable<
 
     try {
       const { queryMatchingJobs } = await import("@pa/job-rec")
+      // iter34 H.2 / CR4 — fetch a wider top-10 window so we have material
+      // for the fire-and-forget llmRerank pre-compute (top 5 used for rerank,
+      // first 2 surfaced to the user immediately).
       const out = await queryMatchingJobs(
-        { filters, limit: 2 },
+        { filters, limit: 10 },
         { db, log: () => {} }
       )
       const jobs = out.jobs ?? []
@@ -291,9 +294,10 @@ function makeGenerateJobRecs(): NonNullable<
         logger.info("[job-recs] no matches in corpus", { userId, filters })
         return null
       }
+      const visibleJobs = jobs.slice(0, 2)
       const lines: string[] = []
       lines.push(lang === "zh" ? "先给你看两个对得上的岗位:" : "two roles that line up for you:")
-      for (const j of jobs) {
+      for (const j of visibleJobs) {
         const tag = j.companyName ? ` @ ${j.companyName}` : ""
         // iter34 sprint A.2 — prefer real ATS apply link; fall back to
         // primaryUrl (jobright.ai mirror) only when the ATS field is
@@ -334,8 +338,39 @@ function makeGenerateJobRecs(): NonNullable<
           ? "先看看, 不准就告诉我我再找; 之后每天会再给你新的"
           : "see if these fit — if not lmk, i'll keep digging; daily fresh batch from here"
       )
-      // TODO(iter34-G.4): after returning top-N, fire-and-forget llmRerank() to write pa-user-rerank-cache for next request
-      return { message: lines.join("\n"), recCount: jobs.length }
+
+      // iter34 H.2 / CR4 — fire-and-forget llmRerank for the NEXT request.
+      // Adam-pinned mode (G.4 / D.15): inline reranking adds 1-3s latency on
+      // the live path; instead we write the rerank into pa-user-rerank-cache
+      // so the next time the user pings (or the daily batch fires), the
+      // dispatcher reads the cached LLM rank instead of re-running it.
+      //
+      // No await: errors logged + swallowed; the live response NEVER blocks
+      // on llmRerank. The cache write is best-effort.
+      try {
+        const top5 = jobs.slice(0, 5)
+        if (top5.length > 0) {
+          fireAndForgetLlmRerank({
+            db,
+            userId,
+            top5,
+            candidate: {
+              targetRole,
+              topSkills,
+              visaStatus: visa,
+            },
+          })
+        }
+      } catch (err) {
+        // Defensive — fireAndForgetLlmRerank is sync (returns void) so this
+        // shouldn't throw, but we belt-and-suspenders the live path.
+        logger.warn("[job-recs] fireAndForgetLlmRerank threw at sync setup", {
+          userId,
+          err: err instanceof Error ? err.message : String(err),
+        })
+      }
+
+      return { message: lines.join("\n"), recCount: visibleJobs.length }
     } catch (err) {
       logger.warn("[job-recs] queryMatchingJobs threw", {
         userId,
@@ -344,6 +379,117 @@ function makeGenerateJobRecs(): NonNullable<
       return null
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// iter34 H.2 / CR4 — fire-and-forget llmRerank pre-compute.
+//
+// Wraps llmRerank() in a void-returning helper that:
+//   1. Imports llmRerank lazily (avoid pulling OpenAI SDK into the live path
+//      when the call is skipped).
+//   2. Calls llmRerank with top-5 candidate jobs + minimal candidate signal.
+//   3. On success writes pa-user-rerank-cache/{userId} with the ranked list.
+//   4. On any failure (LLM error, Firestore write error) logs + swallows.
+//
+// Caller MUST NOT await — this runs after the live response has been queued
+// for the user. Latency-sensitive: reranking takes 1-3s for N=5; cache write
+// is small (~5 KB).
+//
+// Exported for unit testing (orchestrator-deps.test.ts mocks llmRerank +
+// asserts cache write semantics).
+// ---------------------------------------------------------------------------
+
+export interface FireAndForgetLlmRerankInput {
+  db: import("firebase-admin/firestore").Firestore
+  userId: string
+  top5: Array<{
+    id: string
+    jobTitle: string
+    companyName: string
+    industryEnum?: string[]
+    requiredSkills?: string[]
+    sponsorship?: boolean | null
+    locationRaw?: string
+    salaryMin?: number | null
+    salaryMax?: number | null
+  }>
+  candidate: {
+    targetRole?: string[]
+    topSkills?: string[]
+    visaStatus?: string
+    cvSummary?: string
+  }
+  /** Inject for unit tests; default lazy-loads ./lib/llm-rerank. */
+  llmRerankImpl?: (
+    input: import("./lib/llm-rerank.js").RerankInput
+  ) => Promise<import("./lib/llm-rerank.js").RerankOutput>
+  /** Inject for unit tests; default uses Date.now(). */
+  now?: () => Date
+}
+
+export function fireAndForgetLlmRerank(input: FireAndForgetLlmRerankInput): void {
+  const promise = (async () => {
+    let llmRerank: FireAndForgetLlmRerankInput["llmRerankImpl"]
+    if (input.llmRerankImpl) {
+      llmRerank = input.llmRerankImpl
+    } else {
+      const mod = await import("./lib/llm-rerank.js")
+      llmRerank = mod.llmRerank
+    }
+    const rerankInput: import("./lib/llm-rerank.js").RerankInput = {
+      candidate: {
+        targetRole: input.candidate.targetRole,
+        topSkills: input.candidate.topSkills,
+        visaStatus: input.candidate.visaStatus,
+        cvSummary: input.candidate.cvSummary,
+      },
+      jobs: input.top5.map((j) => ({
+        id: j.id,
+        roleTitle: j.jobTitle,
+        companyName: j.companyName,
+        industryEnum: j.industryEnum,
+        requiredSkills: j.requiredSkills,
+        sponsorship: j.sponsorship === true ? true : false,
+        locationRaw: j.locationRaw,
+        salaryRange:
+          typeof j.salaryMin === "number" && typeof j.salaryMax === "number"
+            ? `${j.salaryMin}-${j.salaryMax}`
+            : undefined,
+      })),
+    }
+    const result = await llmRerank!(rerankInput)
+    if (!result.ranked || result.ranked.length === 0) {
+      logger.info("[job-recs] llmRerank empty — skipping cache write", {
+        userId: input.userId,
+        latencyMs: result.latencyMs,
+      })
+      return
+    }
+    const computedAt = (input.now ?? (() => new Date()))().toISOString()
+    await input.db
+      .collection("pa-user-rerank-cache")
+      .doc(input.userId)
+      .set({
+        userId: input.userId,
+        ranked: result.ranked,
+        computedAt,
+        modelUsed: result.modelUsed,
+        latencyMs: result.latencyMs,
+      })
+    logger.info("[job-recs] llmRerank cache written", {
+      userId: input.userId,
+      ranked: result.ranked.length,
+      latencyMs: result.latencyMs,
+    })
+  })()
+  // Swallow rejections so the live path can't be poisoned by an unhandled
+  // promise rejection from the lazy-import or LLM call.
+  promise.catch((err) => {
+    logger.warn("[job-recs] fireAndForgetLlmRerank failed", {
+      userId: input.userId,
+      err: err instanceof Error ? err.message : String(err),
+    })
+  })
 }
 
 /**
