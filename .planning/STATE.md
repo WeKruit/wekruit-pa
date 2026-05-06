@@ -7,19 +7,20 @@ last_updated: "2026-05-06T00:30:00.000Z"
 last_activity: 2026-05-06
 progress:
   total_phases: 11
-  completed_phases: 8
-  total_plans: 8
-  completed_plans: 8
+  completed_phases: 9
+  total_plans: 9
+  completed_plans: 9
 ---
 
 ## Current Position
 
-Phase: **Phase 60 — Dev triggers + scenarios + fixtures + daily-batch v16 cutover (next)**
+Phase: **Phase 61 — QA evaluator weekly (SHIP GATE) (next)**
 Plan: —
-Status: Phase 59 ✅ complete (commit `661a039`) — 3 admin dashboard pages (CanonicalTags + QaEvaluator + OnboardingQuestions tags view) + paPromoteSandboxTag CF + 20 new tests + browser-safe shared-tags barrel + hosting deployed (https://wekruit-pa.web.app); v1.6 in progress (8/11)
-Last activity: 2026-05-06 — Phase 59 dashboards shipped (DASH-01..04 covered)
+Status: Phase 60 ✅ complete (commit `7499a1b`) — `__PA_FIND_MATCH__` admin trigger + scenario --user-id flag + dump-outbound-tail --include-rerank-cache + 5-persona fixtures + daily-batch V16 cutover (1294 tests pass, paSendblueWebhook+paJobRecDaily redeployed); v1.6 in progress (9/11)
+Last activity: 2026-05-06 — Phase 60 dev triggers + V16 cutover shipped (DEV-01..04 covered)
 Adam-action items:
 - Set `ANTHROPIC_API_KEY` Firebase Secret — optional, chain falls through gracefully
+Note: Adam scenario top-5 currently empty (careerStage=senior × 20d freshness window too tight against current corpus). Phase 61 QA evaluator will surface tuning needs.
 
 ## v1.6 — Unified Canonical Tags & Match Quality v1 (this milestone)
 
