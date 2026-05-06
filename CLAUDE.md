@@ -200,3 +200,38 @@ queryMatchingJobs(userId):
 - Requirements: `.planning/REQUIREMENTS.md` (59 REQ-IDs across 10 categories)
 - Roadmap: `.planning/ROADMAP.md` (11 phases 52-62)
 - State: `.planning/STATE.md`
+
+## v1.6 Ship State (2026-05-06)
+
+All 11 phases shipped:
+
+| Phase | Subject | Commit | REQ-IDs |
+|---|---|---|---|
+| 52 | Canonical Tag Vocab Foundation | `5d1c603` | TAG-01..12 |
+| 53 | pa-resume-parser v2 wire | `3209bc5` | PARSE-01..09 |
+| 54 | Unified pa-users.tags writer | `d693f81` | USER-TAG-01..05 |
+| 55 | matching-jobs schema migration | `5e74248` | MATCH-02 |
+| 56 | queryMatchingJobs V16 | `6adb9b8` | MATCH-01,03..08 |
+| 57 | Liveness sweep + macmini probe | `57c182b` | LIVE-01..04 |
+| 58 | Nightly LLM rerank batch | `463bcdb` | RERANK-01..04 |
+| 59 | Dashboards | `661a039` | DASH-01..04 |
+| 60 | Dev triggers + V16 cutover | `7499a1b` | DEV-01..04 |
+| 61 | QA evaluator weekly (ship gate) | `12a5934` | QA-01..05 |
+| 62 | Documentation + cross-repo handoff | (this commit) | DOC-01..04 |
+
+Cloud Functions deployed:
+- `paLivenessSweepDaily` — 03:00 UTC daily HEAD-check + atsApplyUrl backfill
+- `paLlmRerankNightly` — 04:00 UTC daily Qwen-7B + Sonnet-4-6/OpenAI/Qwen JD-rel
+- `paQaEvaluatorWeekly` — Mon 09:00 UTC ship-gate evaluator
+- `paPromoteSandboxTag` — admin-only callable for industrySector overlay promotion
+
+Hosting deployed: `https://wekruit-pa.web.app` with `/admin/canonical-tags`, `/admin/qa-evaluator`, `/admin/onboarding-questions` (extended).
+
+Macmini state: Stage 2.5 url_resolver hangs (Supabase pooler) — `SKIP_URL_RESOLUTION=1` hotfix is the production path. wekruit-pa CFs `paBackfillMatchingJobsAtsUrl` + `paLivenessSweepDaily` handle URL resolution + liveness. Documented in `.planning/phases/57-.../macmini-state.md`.
+
+Open Adam-actions:
+- Set `ANTHROPIC_API_KEY` Firebase secret to activate Sonnet-4-6 middle tier (chain falls through gracefully without it)
+- Set `PA_SLACK_ALERT_WEBHOOK` to enable Slack alerts (Mailgun email already wired)
+- Run `node apps/functions/scripts/migrate-pa-users-tags.mjs --apply` for any newly-onboarded users not yet covered by initial 430/529 backfill (idempotent)
+
+Ship gate (Phase 61): pending sufficient data. First weekly run sampleSize=0 because only 5/529 users have `targetRoleFunction` set. As onboarding completion ramps, gate will surface real signal automatically.
