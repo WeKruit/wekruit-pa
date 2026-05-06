@@ -2,26 +2,40 @@
 gsd_state_version: 1.0
 milestone: v1.7
 milestone_name: Match Quality Depth + Pipeline Reliability Hardening
-status: roadmap_locked
-last_updated: "2026-05-06T17:00:00.000Z"
+status: completed
+last_updated: "2026-05-06T19:30:00.000Z"
 last_activity: 2026-05-06
 progress:
   total_phases: 10
-  completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
+  completed_phases: 10
+  total_plans: 10
+  completed_plans: 10
 ---
 
 ## Current Position
 
-Phase: **Phase 65 — Serper backfill batch + retry queue (next)**
+Phase: **All 10 v1.7 phases ✅ — milestone audited + archived**
 Plan: —
-Status:
-- v1.7 in progress (2/10 phases)
-- P63 (senior scraper) ✅ commit `7c83f62` + macmini `60359a4` — code shipped, Wellfound HTML 0 jobs (anti-bot wall), LinkedIn token-gated (Phase 69 unlock)
-- P64 (sponsorship inference + allowlist) ✅ — 279 companies seeded production, 921/921 tests pass
-- Plus matching hotfix: LLM nuanced reasoning shipped (commit `71b9464`) — cites Tesla 300+ stores experience for Adam, replacing template
-Last activity: 2026-05-06 — Phase 64 sponsorship inference shipped (SPONSOR-01..05)
+Status: v1.7 complete 2026-05-06. All 37 REQ-IDs satisfied. Audit: tech_debt (no blockers). 21 commits in milestone, +9,165 -1,024 LOC.
+
+## v1.7 Phase Roster (shipped)
+
+| # | Subject | Commit |
+|---|---|---|
+| 63 | Senior-job scrapers | `7c83f62` (+ macmini `60359a4`) |
+| 64 | Sponsorship LLM + allowlist | (combined) |
+| 65 | Serper hourly batch + retry queue | `a0b6029` |
+| 66 | macmini Stage 2.5 deleted | `6caee56` (+ macmini `b81ecaf`) |
+| 67 | Launchd reliability + critical fix | `7bb9cb0` |
+| 68 | Vocab hygiene closure | `a7bf6c5` |
+| 69 | Secrets + Slack scaffolding | `d26b3fa` |
+| 70 | /admin/match-debug live UI | `87bb878` |
+| 71 | Auto-derive tags | `b0a9c39` |
+| 72 | Documentation | `c3f1120` + `d9722f6` |
+
+Plus matching hotfixes: `e10d50b` V16 cutover, `b9019a2` adaptive freshness, `71b9464` LLM nuanced reasoning.
+
+Last activity: 2026-05-06 — Phase 72 docs + audit shipped.
 
 ## v1.6 Post-Ship Verification
 
