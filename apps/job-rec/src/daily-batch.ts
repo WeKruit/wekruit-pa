@@ -1472,7 +1472,7 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
               // weights). Default OFF preserves byte-identical legacy ranking
               // (TS const path). Flag flips to ON in T6 / T21 ramp per detail-
               // plan §10.
-              let wm: ReturnType<typeof applyWeightedMatchBoost> = {
+              let wm: { jobs: MatchingJob[]; explanations: WeightedMatchExplanation[] } = {
                 jobs: rankedJobs,
                 explanations: [],
               }

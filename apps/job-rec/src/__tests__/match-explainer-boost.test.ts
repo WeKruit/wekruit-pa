@@ -26,11 +26,12 @@ const baseJob: MatchingJob & { jdSnippet?: string } = {
   companyName: "Anthropic",
   requiredSkills: ["rag", "tool calling"],
   jdSnippet: "Build agentic workflows with retrieval pipelines.",
-  url: "https://example.com/j1",
-  source: "test",
-  postedAt: null,
-  jobLocation: "remote",
-  industryTags: ["ai_ml"],
+  primaryUrl: "https://example.com/j1",
+  locationRaw: "remote",
+  industry: "tech",
+  salaryMax: null,
+  salaryMin: null,
+  sponsorship: null,
 }
 
 const baseCv = {
