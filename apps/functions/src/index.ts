@@ -121,6 +121,15 @@ export { paLlmRerankNightly } from "./nightly-rerank.js"
 // via @wekruit/shared-tags `validateCanonicalToken` (rejects abbreviations).
 export { paPromoteSandboxTag } from "./promote-sandbox-tag.js"
 
+// v1.6 Phase 61 (QA-01..05) — V1.6 SHIP GATE. Cloud Scheduler 09:00 UTC
+// Mondays. Samples 100 user×match pairs (priority queue first), evaluates
+// each via Qwen-7B JSON-mode judge, writes pa-qa-evaluator-runs/{runId}
+// with full per-pair verdict + aggregate rates. Alerts via Slack +
+// Mailgun when hardFilter <90% or top3 <70%. Failure-loop: failing users
+// persisted in pa-qa-priority-queue with 8d TTL for next-week re-eval.
+// Milestone state pa-milestones-state/v1.6.qaShipGate updated per run.
+export { paQaEvaluatorWeekly } from "./qa-evaluator-weekly.js"
+
 // Phase 27 T2 — public /health endpoints (one per existing CF). Returns
 // {ok, name, version, ts, deps:{firestore, secrets}}. No auth (probes
 // must be reachable). All endpoints HTTP 200 always; failure surfaces in body.
