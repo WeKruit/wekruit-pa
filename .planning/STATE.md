@@ -7,18 +7,20 @@ last_updated: "2026-05-06T00:30:00.000Z"
 last_activity: 2026-05-06
 progress:
   total_phases: 11
-  completed_phases: 2
-  total_plans: 2
-  completed_plans: 2
+  completed_phases: 3
+  total_plans: 3
+  completed_plans: 3
 ---
 
 ## Current Position
 
-Phase: **Phase 54 — Unified pa-users.tags writer (next)**
+Phase: **Phase 55 — matching-jobs schema migration + roleFunction backfill (next)**
 Plan: —
-Status: Phase 53 ✅ complete (commit `3209bc5`) — Anthropic provider + 3-tier chain + extended schema + cv-ingest rewire + sha256 idempotency + Claire confirm (1920/1920 tests pass); v1.6 in progress (2/11)
-Last activity: 2026-05-06 — Phase 53 pa-resume-parser v2 wire shipped (PARSE-01..PARSE-09 covered)
-Adam-action: Set `ANTHROPIC_API_KEY` Firebase Secret to activate Sonnet middle tier (current chain falls through to gpt-4.1-mini). Phase 54 onwards does NOT block on this.
+Status: Phase 54 ✅ complete (commit `d693f81`) — onboarding tag-writer hooks + cv-confirm reply parser + migration script (DRY-RUN default) + sole-writer audit (1293+632 tests pass); v1.6 in progress (3/11)
+Last activity: 2026-05-06 — Phase 54 unified pa-users.tags writer shipped (USER-TAG-01..05 covered)
+Adam-action items:
+- Set `ANTHROPIC_API_KEY` Firebase Secret (Phase 53)
+- Run `node apps/functions/scripts/migrate-pa-users-tags.mjs --audit-only` first, then `--apply` after reviewing audit collection (Phase 54)
 
 ## v1.6 — Unified Canonical Tags & Match Quality v1 (this milestone)
 
