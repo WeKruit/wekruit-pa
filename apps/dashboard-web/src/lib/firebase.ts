@@ -1,6 +1,7 @@
 import { initializeApp, type FirebaseApp } from "firebase/app"
 import { getAuth } from "firebase/auth"
 import { getFirestore } from "firebase/firestore"
+import { getFunctions } from "firebase/functions"
 
 const cfg = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -24,3 +25,6 @@ export function getFirebaseApp(): FirebaseApp {
 
 export const auth = () => getAuth(getFirebaseApp())
 export const db = () => getFirestore(getFirebaseApp())
+// v1.6 Phase 59 (DASH-02) — callable Cloud Functions client (us-central1
+// matches every CF onCall registration in apps/functions/src/index.ts).
+export const functions = () => getFunctions(getFirebaseApp(), "us-central1")

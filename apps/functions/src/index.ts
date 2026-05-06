@@ -115,6 +115,12 @@ export { paLivenessSweepDaily } from "./liveness-sweep.js"
 // queryMatchingJobsV16 (already wired with graceful-miss handling).
 export { paLlmRerankNightly } from "./nightly-rerank.js"
 
+// v1.6 Phase 59 (DASH-02) — Admin-only callable that promotes/rejects
+// sandbox industry-sector tokens. Wired by /admin/canonical-tags page;
+// writes pa-canonical-tags overlay doc + audit row. Validates token format
+// via @wekruit/shared-tags `validateCanonicalToken` (rejects abbreviations).
+export { paPromoteSandboxTag } from "./promote-sandbox-tag.js"
+
 // Phase 27 T2 — public /health endpoints (one per existing CF). Returns
 // {ok, name, version, ts, deps:{firestore, secrets}}. No auth (probes
 // must be reachable). All endpoints HTTP 200 always; failure surfaces in body.

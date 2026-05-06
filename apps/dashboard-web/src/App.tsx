@@ -27,6 +27,10 @@ import { MatchWeights } from "./pages/MatchWeights.js"
 import { MatchWeightsTest } from "./pages/MatchWeightsTest.js"
 import { MatchExplainerHistory } from "./pages/MatchExplainerHistory.js"
 import { MatchExplainerTest } from "./pages/MatchExplainerTest.js"
+// v1.6 Phase 59 (DASH-01..04) — canonical-tags vocab browser/promote +
+// QA evaluator weekly run viewer.
+import { CanonicalTags } from "./pages/CanonicalTags.js"
+import { QaEvaluator } from "./pages/QaEvaluator.js"
 import { auth } from "./lib/firebase.js"
 
 export default function App() {
@@ -120,6 +124,11 @@ export default function App() {
         <div className="nav-section">
           <div className="nav-section-label">Platform</div>
           <NavLink to="/admin/flags">Flags</NavLink>
+          {/* v1.6 Phase 59 — canonical-tags vocab browser + sandbox→promote
+              UI; QA evaluator weekly run viewer. Both admin-only (CF gates
+              promote/reject on auth.token.admin claim). */}
+          <NavLink to="/admin/canonical-tags">Canonical Tags</NavLink>
+          <NavLink to="/admin/qa-evaluator">QA Evaluator</NavLink>
         </div>
 
         <button
@@ -146,6 +155,9 @@ export default function App() {
           <Route path="/abuse" element={<Abuse />} />
           <Route path="/triggers" element={<Triggers />} />
           <Route path="/admin/flags" element={<Flags />} />
+          {/* v1.6 Phase 59 (DASH-01..03) — canonical-tags + QA evaluator. */}
+          <Route path="/admin/canonical-tags" element={<CanonicalTags />} />
+          <Route path="/admin/qa-evaluator" element={<QaEvaluator />} />
           <Route path="/admin/handbook" element={<Handbook />} />
           <Route path="/admin/onboarding" element={<Onboarding />} />
           <Route

@@ -9,7 +9,12 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
+      "browser": "./dist/index-browser.js",
       "import": "./dist/index.js"
+    },
+    "./canonical": {
+      "types": "./dist/canonical/index-browser.d.ts",
+      "import": "./dist/canonical/index-browser.js"
     }
   },
   "scripts": {
