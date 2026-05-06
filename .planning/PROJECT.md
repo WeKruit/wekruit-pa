@@ -2,7 +2,27 @@
 
 Monorepo: Mac **Photon iMessage worker** (deprecating to Sendblue) + Firestore **`pa_*`** + **PA Console** (Vite, `wekruit-pa.web.app`). Auth: Google; Firestore rules: `@wekruit.com` + allowlisted Gmail (see `config/firebase/firestore.rules`).
 
-## Current Milestone: v1.6 — Unified Canonical Tags & Match Quality v1
+## Current State
+
+**Shipped:** v1.6 — Unified Canonical Tags & Match Quality v1 (2026-05-06)
+
+- All 11 phases (52-62) shipped + production-deployed.
+- 59/59 REQ-IDs satisfied.
+- 32 commits, 125 files, +23,039 -225 LOC.
+- Cloud Functions: `paLivenessSweepDaily` 03:00 UTC, `paLlmRerankNightly` 04:00 UTC, `paQaEvaluatorWeekly` Mon 09:00 UTC, `paPromoteSandboxTag`, plus extended `paSendblueWebhook` + `cv-ingest` + `paJobRecDaily`.
+- Hosting: `https://wekruit-pa.web.app` with `/admin/canonical-tags`, `/admin/qa-evaluator`, `/admin/onboarding-questions` extended.
+- See `.planning/milestones/v1.6-ROADMAP.md` (full archive) + `.planning/v1.6-MILESTONE-AUDIT.md` (audit) + `.planning/MILESTONE-v1.6-unified-tags.md` (architecture).
+
+## Next Milestone Goals (v1.7 — TBD)
+
+Awaiting Adam direction. Likely candidates:
+- Real Python port of canonical tags into wekruit-scraping (cross-repo parity)
+- macmini Stage 2.5 url_resolver permanent fix or migration to wekruit-pa CF
+- Daily-batch.ts legacy `queryMatchingJobs` deletion (deferred from v1.6 for backwards compat)
+- Match quality tuning post-data-ramp (ship gate signal calibration)
+
+<details>
+<summary>v1.6 milestone description (archived)</summary>
 
 **Status:** Started 2026-05-05. Defining requirements.
 
@@ -64,6 +84,8 @@ Monorepo: Mac **Photon iMessage worker** (deprecating to Sendblue) + Firestore *
 - Reverse-match recruiter agent overhaul
 
 **Estimate:** ~10-14 dev-days across 8-10 phases (eval-first ordering).
+
+</details>
 
 ## Previous Milestone: v1.5 — Friend-Companion Job-Rec System — ✅ SHIPPED 2026-05-02
 
@@ -174,4 +196,4 @@ This document evolves at phase transitions and milestone boundaries.
 
 ---
 
-*Last updated: 2026-04-29 — Milestone v1.4 (humanize-runtime-v2) started; supersedes v1.4 drafts (humanize-runtime.md, NARRATIVE, DIAGRAM-PROMPT, RESEARCH-PROMPT).*
+*Last updated: 2026-05-06 — Milestone v1.6 (Unified Canonical Tags & Match Quality v1) shipped. All 11 phases (52-62) deployed. Audit: 59/59 REQ satisfied, tech_debt status (no blockers). v1.7 spawn pending Adam direction.*
