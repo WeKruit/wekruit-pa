@@ -7,21 +7,22 @@ last_updated: "2026-05-06T00:30:00.000Z"
 last_activity: 2026-05-06
 progress:
   total_phases: 11
-  completed_phases: 4
-  total_plans: 4
-  completed_plans: 4
+  completed_phases: 5
+  total_plans: 5
+  completed_plans: 5
 ---
 
 ## Current Position
 
-Phase: **Phase 56 — queryMatchingJobs read+filter+score (next, post-migration)**
+Phase: **Phase 57 — Liveness/404 sweep + atsApplyUrl backfill (next)**
 Plan: —
-Status: Phase 55 ✅ complete (commit `5e74248`) — matching-jobs deterministic mappers + DRY-RUN migration script + Firestore index deployed + production data shape adapted (116K+ docs ready to migrate); v1.6 in progress (4/11)
-Last activity: 2026-05-06 — Phase 55 matching-jobs schema migration shipped (MATCH-02 covered)
-In progress: applying migration --apply to 116K+ matching-jobs production docs
+Status: Phase 56 ✅ complete (commit `6adb9b8`) — queryMatchingJobsV16 single-source + new query + hard filter chain + soft score + per-job reasoning + cache readers (439+1293+736 tests pass, Adam CV scenario verified — top 5 SWE, no BDR/jobright leak); v1.6 in progress (5/11)
+Last activity: 2026-05-06 — Phase 56 queryMatchingJobs v1.6 shipped (MATCH-01,03..08 covered)
+In progress: pa-users.tags migration --apply (Phase 54 catch-up, all users)
 Adam-action items:
 - Set `ANTHROPIC_API_KEY` Firebase Secret (Phase 53)
-- Migration --apply running (Phase 55) — Phase 56 will validate post-migration
+- Phase 55 followup: jobType normalize (intern→internship, new_grad→new_graduate) + seniorityLevel backfill (Phase 57 scope)
+- Daily-batch.ts cutover legacy → V16 deferred to Phase 60
 
 ## v1.6 — Unified Canonical Tags & Match Quality v1 (this milestone)
 
