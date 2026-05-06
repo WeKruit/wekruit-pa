@@ -282,6 +282,23 @@ export {
   roleToIndustryBuckets,
   type IndustryEnumBucket,
 } from "./voice/role-to-industry.js"
+// iter34 sprint H.1 — unified user-tag schema + merger. Folds the 4
+// disjoint candidate-signal sources (CV doc, statedPreferences, embedding,
+// language lock) into one canonical `pa-users/{userId}.tags` projection.
+// Pure / deterministic; H.3 worker wires call-site, H.4 worker wires
+// generateJobRecs read-side.
+export {
+  mergeUserTags,
+  UserTagsSchema,
+  USER_TAGS_SCHEMA_VERSION,
+  type UserTags,
+  type UserTagsInput,
+  type UserTagsCvInput,
+  type IndustryTag as UserTagsIndustryTag,
+  type TagsVisaStatus,
+  type StartupPreference,
+  type TagsPreferredLang,
+} from "./tags/user-tags-merger.js"
 
 type RunAgentTurn = typeof defaultRunAgentTurn
 
