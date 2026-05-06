@@ -291,6 +291,8 @@ export {
   mergeUserTags,
   UserTagsSchema,
   USER_TAGS_SCHEMA_VERSION,
+  inferSkillBucket,
+  canonicalizeSkillName,
   type UserTags,
   type UserTagsInput,
   type UserTagsCvInput,

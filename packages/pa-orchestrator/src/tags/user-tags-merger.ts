@@ -35,6 +35,11 @@
  */
 
 import { z } from "zod"
+import {
+  SkillSchema,
+  type Skill,
+  type SkillBucket,
+} from "@wekruit/shared-tags"
 import { roleToIndustryBuckets, type IndustryEnumBucket } from "../voice/role-to-industry.js"
 import type { CanonicalRole } from "../onboarding.js"
 import type { StatedPreferences } from "@pa/core-types"
@@ -91,12 +96,19 @@ export const USER_TAGS_SCHEMA_VERSION = 1 as const
 export const UserTagsSchema = z.object({
   // ---- CV-derived ------------------------------------------------------
   /**
-   * ALL skills from CV — lowercased, deduplicated, NOT truncated. Adam
-   * spec: "skills 全量". topSkills (top-12 ranked) lives separately on
+   * ALL skills from CV — Phase 52 canonical SkillEntry shape (name + bucket
+   * + proficiency + evidenceCount + baseWeight). NOT truncated. Adam spec:
+   * "skills 全量". topSkills (top-12 ranked) lives separately on
    * parsedCandidateResumes; this is the unranked bag for embedding /
    * cross-rerank consumers.
+   *
+   * Phase 61 fix: was `z.array(z.string())` — but Phase 56 V16
+   * `computeWeightedSkillJaccard` reads `skills[].name` and `skills[].baseWeight`,
+   * so `string[]` made baseWeight undefined → score=0 for everyone. The
+   * migration script `migrate-skills-to-objects.mjs` upgrades existing
+   * pa-users.tags string[] to SkillEntry[] with `baseWeight: 1.0`.
    */
-  skills: z.array(z.string()),
+  skills: z.array(SkillSchema),
   /**
    * 1..N canonical industry-bucket tokens. Always non-empty (defaults to
    * ["other"] when no signal). Drives industry filter in job-rec.
@@ -171,7 +183,13 @@ export type UserTags = z.infer<typeof UserTagsSchema>
 
 export interface UserTagsCvInput {
   candidateProfile?: {
-    skills?: string[]
+    /**
+     * Phase 61 — accepts either raw strings (legacy CV / parser v1) or
+     * Phase 52 SkillEntry-shaped objects (canonical post-Phase 52). The
+     * merger upgrades strings to SkillEntry via `inferSkillBucket` +
+     * neutral defaults (`baseWeight: 1.0`). Mixed arrays tolerated.
+     */
+    skills?: ReadonlyArray<string | { name: string; bucket?: string; proficiency?: string; evidenceCount?: number; baseWeight?: number }>
     name?: string | null
   }
   /**
@@ -183,7 +201,7 @@ export interface UserTagsCvInput {
     title?: string
     role?: string
     company?: string
-    skills?: string[]
+    skills?: ReadonlyArray<string | { name: string; bucket?: string; proficiency?: string; evidenceCount?: number; baseWeight?: number }>
     bullets?: string[]
   }>
   /**
@@ -282,22 +300,223 @@ function normalizeSkill(raw: unknown): string | null {
 }
 
 /**
- * Returns the de-duplicated lower-cased skill bag from the CV. Order is
+ * Phase 61 — heuristic skill-name → SkillBucket inference. Maps common
+ * skill names to one of the 10 Phase 52 SKILL_BUCKET_VOCAB tokens.
+ * Returns `domain_specific` when no pattern matches.
+ *
+ * Used by `migrate-skills-to-objects.mjs` to upgrade legacy pa-users.tags
+ * `skills: string[]` → `skills: SkillEntry[]` and by `mergeUserTags` to
+ * stamp a sensible bucket on freshly-extracted CV skills.
+ *
+ * Order matters: more-specific patterns first (prevent "react" matching as
+ * a programming-language).
+ */
+const SKILL_BUCKET_HEURISTICS: ReadonlyArray<[RegExp, SkillBucket]> = [
+  // Programming languages — exact-token list. Keep BEFORE frameworks so e.g.
+  // "java" doesn't get pulled into a future "javascript" framework regex.
+  [
+    /^(python|javascript|typescript|java|c\+\+|c#|c|go|golang|rust|ruby|swift|kotlin|scala|php|r|matlab|sql|html|css|bash|shell|perl|elixir|haskell|clojure|julia|dart|lua|objective-c|powershell)$/i,
+    "programming_languages",
+  ],
+  // Frameworks & libraries
+  [
+    /^(react|reactjs|vue|vuejs|angular|next\.?js|nextjs|nuxt|svelte|django|flask|fastapi|rails|express|spring(\s|_)?boot|laravel|gatsby|remix|node\.?js|nodejs|graphql|redux|jest|mocha|cypress|playwright|tailwind|bootstrap|jquery|three\.?js|d3\.?js|electron|capacitor|expo|react(-|_)?native|flutter|axios|webpack|vite|rollup|babel)$/i,
+    "frameworks_and_libraries",
+  ],
+  // Databases
+  [
+    /^(postgres(ql)?|mysql|mongodb|mongo|redis|elasticsearch|cassandra|dynamodb|snowflake|bigquery|sqlite|mariadb|oracle(\s|_)?db|sql(\s|_)?server|firebase(\s|_)?firestore|firestore|supabase|cockroachdb|neo4j|opensearch|clickhouse)$/i,
+    "databases",
+  ],
+  // Cloud / infrastructure
+  [
+    /^(aws|amazon(\s|_)?web(\s|_)?services|gcp|google(\s|_)?cloud(\s|_)?platform|google(\s|_)?cloud|azure|microsoft(\s|_)?azure|kubernetes|docker|terraform|ansible|helm|vault|consul|nginx|apache|cloudflare|heroku|vercel|netlify|firebase|fastly|digitalocean|linode|openshift|ecs|eks|gke|aks|lambda|cloud(\s|_)?run|serverless)$/i,
+    "cloud_and_infrastructure",
+  ],
+  // DevOps / tooling
+  [
+    /^(git|github|gitlab|bitbucket|jenkins|circle\s?ci|circleci|github\s?actions|gha|gitlab(\s|_)?ci|datadog|grafana|prometheus|sentry|new(\s|_)?relic|splunk|pagerduty|opsgenie|jira|confluence|slack|notion|linear|asana|trello|sonarqube|snyk|dependabot|renovate|pulumi|argo(\s|_)?cd|argocd|spinnaker|tekton|harness|fastlane|cocoapods|npm|yarn|pnpm|pip|cargo|maven|gradle|bazel|nx|lerna)$/i,
+    "devops_and_tooling",
+  ],
+  // Data & ML
+  [
+    /^(machine(\s|_)?learning|deep(\s|_)?learning|nlp|natural(\s|_)?language(\s|_)?processing|computer(\s|_)?vision|pytorch|tensorflow|scikit(\s|_)?learn|sklearn|pandas|numpy|spark|kafka|airflow|dbt|huggingface|transformers|llm|rag|vector(\s|_)?database|embeddings|fine(\s|_)?tuning|reinforcement(\s|_)?learning|xgboost|lightgbm|keras|jax|mlflow|kubeflow|sagemaker|vertex(\s|_)?ai|databricks|snowpark|tableau|power(\s|_)?bi|looker|mixpanel|amplitude|segment|fivetran|stitch|hadoop|hive|presto|trino|flink|beam|opencv|spacy|nltk|gensim|prophet|statsmodels|matplotlib|seaborn|plotly|jupyter|colab|ray)$/i,
+    "data_and_ml",
+  ],
+  // Design & UX
+  [
+    /^(figma|sketch|adobe|photoshop|illustrator|indesign|after(\s|_)?effects|premiere(\s|_)?pro|xd|design(\s|_)?systems?|ux|ui|wireframing|prototyping|user(\s|_)?research|usability(\s|_)?testing|interaction(\s|_)?design|visual(\s|_)?design|motion(\s|_)?design|invision|zeplin|framer|principle|webflow|axure|miro|whimsical)$/i,
+    "design_and_ux",
+  ],
+  // Product & business
+  [
+    /^(product(\s|_)?management|roadmapping|stakeholder(\s|_)?management|okrs?|kpis?|analytics|product(\s|_)?strategy|go(\s|_)?to(\s|_)?market|gtm|product(\s|_)?marketing|growth|a\/b(\s|_)?testing|funnel(\s|_)?analysis|cohort(\s|_)?analysis|customer(\s|_)?research|jobs(\s|_)?to(\s|_)?be(\s|_)?done|jtbd|product(\s|_)?led(\s|_)?growth|plg)$/i,
+    "product_and_business",
+  ],
+  // Soft skills
+  [
+    /^(communication|leadership|teamwork|presentation|mentorship|negotiation|public(\s|_)?speaking|conflict(\s|_)?resolution|cross(\s|_)?functional(\s|_)?collaboration|stakeholder(\s|_)?management|coaching|feedback|empathy|active(\s|_)?listening|critical(\s|_)?thinking|time(\s|_)?management|prioritization|decision(\s|_)?making|problem(\s|_)?solving)$/i,
+    "soft_skills",
+  ],
+]
+
+export function inferSkillBucket(name: string): SkillBucket {
+  const n = (name ?? "").toLowerCase().trim()
+  if (!n) return "domain_specific"
+  for (const [re, bucket] of SKILL_BUCKET_HEURISTICS) {
+    if (re.test(n)) return bucket
+  }
+  return "domain_specific"
+}
+
+/**
+ * Phase 61 — common-abbreviation → spelled-out expansions for skill names.
+ * The Phase 52 SkillNameSchema rejects `KNOWN_ABBREVIATIONS` (ml, ai, js,
+ * ts, k8s, saas, ux, ui, ...) but these are real skills that show up on
+ * every CV. Pre-expand common abbreviations to their spelled-out form
+ * BEFORE validation so they pass the strict schema.
+ */
+const SKILL_ABBREV_EXPANSIONS: Record<string, string> = {
+  ml: "machine_learning",
+  ai: "artificial_intelligence",
+  js: "javascript",
+  ts: "typescript",
+  py: "python",
+  k8s: "kubernetes",
+  saas: "software_as_a_service",
+  ux: "user_experience",
+  ui: "user_interface",
+  oss: "open_source_software",
+  pr: "pull_requests",
+  ci: "continuous_integration",
+  cd: "continuous_delivery",
+  db: "databases",
+  vm: "virtual_machines",
+  iam: "identity_and_access_management",
+  ide: "integrated_development_environment",
+  cli: "command_line_interface",
+  api: "application_programming_interfaces",
+  hr: "human_resources_skill",
+  kpi: "key_performance_indicators",
+  qa: "quality_assurance",
+  sre: "site_reliability_engineering",
+  ds: "data_science",
+  fe: "frontend_engineering",
+  be: "backend_engineering",
+  rfp: "request_for_proposal",
+}
+
+/**
+ * Phase 61 — sanitize a free-form skill name for canonical storage. The
+ * Phase 52 `SkillNameSchema` regex requires `^[a-z][a-z0-9_+#.-]{1,63}$`
+ * (lowercase + underscore + dot + plus + hyphen) AND rejects entries in
+ * KNOWN_ABBREVIATIONS. LLM / CV extraction routinely emits "C++",
+ * "Node.js", "Spring Boot", "ML", "AI" — we collapse whitespace to
+ * underscore, expand known abbreviations, and ensure first char is a
+ * letter.
+ *
+ * Returns null for inputs that can't be canonicalized.
+ */
+export function canonicalizeSkillName(raw: string): string | null {
+  if (typeof raw !== "string") return null
+  let s = raw.toLowerCase().trim()
+  if (!s) return null
+  // collapse whitespace → underscore
+  s = s.replace(/\s+/g, "_")
+  // strip disallowed chars (keeps a-z 0-9 _ + # . -)
+  s = s.replace(/[^a-z0-9_+#.\-]/g, "")
+  if (!s) return null
+  // Expand known abbreviations PRE-validation so they pass the schema.
+  if (Object.prototype.hasOwnProperty.call(SKILL_ABBREV_EXPANSIONS, s)) {
+    s = SKILL_ABBREV_EXPANSIONS[s]!
+  }
+  // ensure first char is a letter; prefix with `s_` if not
+  if (!/^[a-z]/.test(s)) s = `s_${s}`
+  // length constraint: min 2, max 64. Truncate when over.
+  if (s.length < 2) return null
+  if (s.length > 64) s = s.slice(0, 64)
+  return s
+}
+
+/**
+ * Phase 61 — turn a raw input (string OR existing SkillEntry-shaped object)
+ * into a canonical Phase 52 `Skill` object. Used by `collectSkills` so the
+ * merger output always matches the Phase 52 SkillSchema.
+ *
+ * Applied defaults when the input is a plain string:
+ *   - bucket: `inferSkillBucket(name)` heuristic
+ *   - proficiency: "intermediate" (neutral default)
+ *   - evidenceCount: 1
+ *   - baseWeight: 1.0 (full weight; Phase 56 V16 score =
+ *     `baseWeight × jdRelative` — without baseWeight, JD-rel multiplier is
+ *     wasted; default 1.0 makes legacy users score immediately).
+ *
+ * Returns null when the name fails the Phase 52 SKILL_NAME_PATTERN regex.
+ */
+function toSkillEntry(raw: unknown): Skill | null {
+  // Object shape: pick `name` and pass-through `bucket` / `proficiency` /
+  // `evidenceCount` / `baseWeight` if present.
+  if (raw && typeof raw === "object") {
+    const obj = raw as Record<string, unknown>
+    const rawName = typeof obj.name === "string" ? obj.name : null
+    if (!rawName) return null
+    const name = canonicalizeSkillName(rawName)
+    if (!name) return null
+    const bucket = (typeof obj.bucket === "string" ? obj.bucket : inferSkillBucket(name)) as SkillBucket
+    const proficiency = typeof obj.proficiency === "string" ? obj.proficiency : "intermediate"
+    const evidenceCount =
+      typeof obj.evidenceCount === "number" && Number.isFinite(obj.evidenceCount)
+        ? Math.max(0, Math.floor(obj.evidenceCount))
+        : 1
+    const baseWeight =
+      typeof obj.baseWeight === "number" && Number.isFinite(obj.baseWeight)
+        ? Math.max(0, Math.min(1, obj.baseWeight))
+        : 1.0
+    try {
+      return SkillSchema.parse({ name, bucket, proficiency, evidenceCount, baseWeight })
+    } catch {
+      return null
+    }
+  }
+  // String shape: build with defaults.
+  if (typeof raw === "string") {
+    const norm = canonicalizeSkillName(raw)
+    if (!norm) return null
+    try {
+      return SkillSchema.parse({
+        name: norm,
+        bucket: inferSkillBucket(norm),
+        proficiency: "intermediate",
+        evidenceCount: 1,
+        baseWeight: 1.0,
+      })
+    } catch {
+      return null
+    }
+  }
+  return null
+}
+
+/**
+ * Returns the de-duplicated SkillEntry list from the CV. Order is
  * insertion order across:
  *   1. candidateProfile.skills (LLM-extracted; canonical priority)
  *   2. workHistory[].skills (per-job skills; supplemental)
  *
- * Empty / non-array inputs return [].
+ * Each input string is upgraded to a Phase 52 SkillEntry via
+ * `toSkillEntry` (heuristic bucket + neutral defaults). Empty / non-array
+ * inputs return [].
  */
-function collectSkills(cv: UserTagsCvInput | undefined): string[] {
+function collectSkills(cv: UserTagsCvInput | undefined): Skill[] {
   if (!cv) return []
   const seen = new Set<string>()
-  const skills: string[] = []
+  const skills: Skill[] = []
   const ingest = (raw: unknown): void => {
-    const norm = normalizeSkill(raw)
-    if (!norm || seen.has(norm)) return
-    seen.add(norm)
-    skills.push(norm)
+    const entry = toSkillEntry(raw)
+    if (!entry) return
+    if (seen.has(entry.name)) return
+    seen.add(entry.name)
+    skills.push(entry)
   }
   if (Array.isArray(cv.candidateProfile?.skills)) {
     for (const s of cv.candidateProfile.skills) ingest(s)
@@ -315,12 +534,15 @@ function collectSkills(cv: UserTagsCvInput | undefined): string[] {
 /**
  * Detect industry bucket from skill bag using known tech tokens. Returns
  * `["tech_software"]` when any tech token is present, otherwise [].
+ *
+ * Phase 61 — accepts SkillEntry[] (matching the Phase 52 canonical schema).
  */
-function inferIndustryFromSkills(skills: string[]): IndustryTag[] {
+function inferIndustryFromSkills(skills: ReadonlyArray<Skill>): IndustryTag[] {
   for (const s of skills) {
+    const name = (s?.name ?? "").toLowerCase()
     for (const tok of TECH_SKILL_TOKENS) {
-      if (s === tok.trim()) return ["tech_software"]
-      if (s.includes(tok)) return ["tech_software"]
+      if (name === tok.trim()) return ["tech_software"]
+      if (name.includes(tok)) return ["tech_software"]
     }
   }
   return []
@@ -347,11 +569,14 @@ function filterIndustryTags(raw: string[] | undefined): IndustryTag[] {
  *   2. roleToIndustryBuckets(statedPreferences.targetRole)
  *   3. tech-token sniff on skills
  *   4. ["other"]
+ *
+ * Phase 61 — `skills` is now `ReadonlyArray<Skill>` (Phase 52 canonical
+ * shape) so the sniff inspects `skill.name` instead of the raw string.
  */
 function composeIndustryEnum(
   cv: UserTagsCvInput | undefined,
   statedPreferences: StatedPreferences | undefined,
-  skills: string[]
+  skills: ReadonlyArray<Skill>
 ): IndustryTag[] {
   // 1. CV.industryTags (filtered).
   const fromCv = filterIndustryTags(cv?.industryTags)

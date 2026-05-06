@@ -20,12 +20,10 @@ import { defineSecret } from "firebase-functions/params"
 import { logger } from "firebase-functions/v2"
 import { initializeApp, getApps } from "firebase-admin/app"
 import { getFirestore } from "firebase-admin/firestore"
-import { roleToIndustryBuckets } from "@pa/pa-orchestrator"
 import {
   generateVerificationCode,
   sendVerificationEmail as sendVerificationEmailViaMailgun,
 } from "./email/mailgun.js"
-import { formatJobMatchReason } from "./lib/match-reason.js"
 
 type SecretParamHandle = ReturnType<typeof defineSecret>
 
@@ -120,16 +118,20 @@ export function makeOrchestratorDeps(): import("@pa/pa-orchestrator").Orchestrat
 }
 
 /**
- * iter33 P4 + GAP 1 — produce the 2-job-rec push message before complete.
+ * Phase 61 hotfix — V16 cutover. Replaces the legacy `queryMatchingJobs`
+ * call (which read fragmented sources: parsedCandidateResumes.topSkills +
+ * pa-users.statedPreferences) with `queryMatchingJobsV16` (single-source
+ * read of `pa-users/{userId}.tags`).
  *
- * Live inline matching: read user's parsedCandidateResumes (top skills +
- * preferred industry tags), pa-users.statedPreferences (visa, location,
- * startup pref), then call `queryMatchingJobs` with limit=2 to fetch top
- * matches against the active corpus. Formats the result into a single
- * iMessage-shaped reply with title + company + URL per job.
+ * V16 already includes:
+ *   - Hard filter chain: visa / location / careerStage / jobType /
+ *     freshness / atsApplyUrl (drops jobright.ai) / dead
+ *   - Soft scoring: weighted Jaccard skill + relevant tags + industry
+ *     sector + cv-emb cosine + salary fit + LLM rerank (Phase 58 cache)
+ *   - Pre-composed `reason` per job (top-2 weighted matched skills)
  *
- * Fail-OPEN: any error path (CV not parsed, no matches in corpus, query
- * threw, recent batch already sent) → return null and the deterministic
+ * Fail-OPEN: any error path (no user tags, no matches, query threw,
+ * recent batch already sent) → return null and the deterministic
  * dispatcher emits the deferred-promise fallback ("first batch tomorrow
  * ~9am") so onboarding ALWAYS completes.
  */
@@ -164,163 +166,31 @@ function makeGenerateJobRecs(): NonNullable<
       })
     }
 
-    // Read CV for skills + statedPreferences for visa/location/startup.
-    // iter34 hotfix 2026-05-05 — Adam LIVE bug "为什么匹配出问题了". RCA:
-    // cv-ingest writes `createdAt` (Firestore Timestamp) + `ingestedAt`
-    // (ISO), but this orderBy was using non-existent `parsedAt` field.
-    // Firestore orderBy EXCLUDES docs missing the field → cvSnap always
-    // empty → topSkills/industryTags=[] → return null fallback. Even
-    // when Adam had 5 valid CV docs, generateJobRecs saw "no CV signal".
-    // Fix: orderBy("createdAt") — the field cv-ingest actually writes.
-    let topSkills: string[] = []
-    let industryTags: string[] = []
-    let cvEmbeddingFromCv: number[] | undefined
     try {
-      const cvSnap = await db
-        .collection("parsedCandidateResumes")
-        .where("userId", "==", userId)
-        .orderBy("createdAt", "desc")
-        .limit(1)
-        .get()
-      if (!cvSnap.empty) {
-        const cv = cvSnap.docs[0]!.data() as {
-          topSkills?: unknown
-          industryTags?: unknown
-          embedding?: unknown
+      const { queryMatchingJobsV16 } = await import("@pa/job-rec")
+      // V16 reads `pa-users/{userId}.tags` directly; no `filters` needed.
+      // limit=10 retains the wider window so we can fire-and-forget
+      // llmRerank against the top-5 (next-batch cache).
+      const out = await queryMatchingJobsV16(
+        { userId, limit: 10 },
+        {
+          db,
+          log: (event, payload) =>
+            logger.info("[job-recs][v16]", { event, ...(payload ?? {}) }),
         }
-        if (Array.isArray(cv.topSkills)) {
-          topSkills = cv.topSkills.filter(
-            (s): s is string => typeof s === "string" && s.length > 0
-          )
-        }
-        if (Array.isArray(cv.industryTags)) {
-          industryTags = cv.industryTags.filter(
-            (s): s is string => typeof s === "string" && s.length > 0
-          )
-        }
-        // iter34 H.2 / CR5 — surface CV embedding for scoreJob's cosine
-        // component (B.10). queryMatchingJobs accepts `cvEmbedding` in
-        // filters but the orchestrator-deps wire was missing — without it
-        // the embedding component contributes 0 and matching falls back to
-        // pure skill overlap (which loses sensitivity for Adam-style resumes
-        // where industry-enum + role-fit alone underconstrain the rank).
-        if (Array.isArray(cv.embedding) && cv.embedding.every((n) => typeof n === "number")) {
-          cvEmbeddingFromCv = cv.embedding as number[]
-        }
-      }
-    } catch (err) {
-      logger.warn("[job-recs] CV read failed", {
-        userId,
-        err: err instanceof Error ? err.message : String(err),
-      })
-    }
-
-    let visa: string | undefined
-    let location: string | undefined
-    let prefersStartup: boolean | null | undefined
-    let targetRole: string[] | undefined
-    let cvEmbeddingFromUserTags: number[] | undefined
-    try {
-      const userDoc = await db.collection("pa-users").doc(userId).get()
-      if (userDoc.exists) {
-        const u = userDoc.data() as {
-          statedPreferences?: {
-            visaStatus?: string
-            targetLocations?: string[]
-            prefersStartup?: boolean | null
-            targetRole?: string[]
-          }
-          tags?: {
-            embedding?: unknown
-          }
-        }
-        visa = u.statedPreferences?.visaStatus
-        location = u.statedPreferences?.targetLocations?.[0]
-        prefersStartup = u.statedPreferences?.prefersStartup
-        // iter34 sprint A.5 — pull canonical role tokens (e.g. ["swe"])
-        // so queryMatchingJobs can post-filter on industryEnum buckets the
-        // role plausibly works in. Prevents SWEs from getting Warehouse jobs.
-        const rawTargetRole = u.statedPreferences?.targetRole
-        if (Array.isArray(rawTargetRole)) {
-          const cleaned = rawTargetRole.filter(
-            (s): s is string => typeof s === "string" && s.length > 0
-          )
-          if (cleaned.length > 0) targetRole = cleaned
-        }
-        // iter34 H.2 / CR5 — pa-users.tags.embedding takes priority over the
-        // parsedCandidateResumes embedding. tags.* is the H.1 worker's
-        // canonical merged signal; CV embedding is the per-resume baseline.
-        const rawTagsEmbedding = u.tags?.embedding
-        if (Array.isArray(rawTagsEmbedding) && rawTagsEmbedding.every((n) => typeof n === "number")) {
-          cvEmbeddingFromUserTags = rawTagsEmbedding as number[]
-        }
-      }
-    } catch (err) {
-      logger.warn("[job-recs] user read failed", {
-        userId,
-        err: err instanceof Error ? err.message : String(err),
-      })
-    }
-    // Priority: pa-users.tags.embedding > parsedCandidateResumes.embedding > undefined.
-    const cvEmbedding: number[] | undefined =
-      cvEmbeddingFromUserTags ?? cvEmbeddingFromCv
-
-    // Map visa → sponsorship filter (matches QueryMatchingJobs schema).
-    let sponsorship: "h1b" | "gc" | "none" | undefined
-    if (visa === "h1b" || visa === "opt" || visa === "sponsorship_needed") {
-      sponsorship = "h1b"
-    } else if (visa === "citizen" || visa === "gc") {
-      sponsorship = "none"
-    }
-
-    const sizePreference: "startup" | "bigtech" | "either" | undefined =
-      prefersStartup === true
-        ? "startup"
-        : prefersStartup === false
-          ? "bigtech"
-          : undefined
-
-    // iter34 sprint A.5 — derive industryEnum buckets from canonical role
-    // tokens so queryMatchingJobs post-filter excludes off-domain jobs
-    // (e.g. SWE candidates won't see Warehouse roles). roleToIndustryBuckets
-    // accepts plain string[] at runtime and returns undefined for founder/
-    // other or unknown tokens — that's the desired "no filter" signal.
-    const targetRoleIndustryEnum = roleToIndustryBuckets(
-      targetRole as Parameters<typeof roleToIndustryBuckets>[0]
-    )
-
-    const filters = {
-      ...(industryTags.length > 0 ? { industryTags } : {}),
-      ...(topSkills.length > 0 ? { userSkills: topSkills } : {}),
-      ...(sponsorship ? { sponsorship } : {}),
-      ...(sizePreference ? { sizePreference } : {}),
-      ...(location ? { location } : {}),
-      ...(targetRole ? { targetRole } : {}),
-      ...(targetRoleIndustryEnum ? { targetRoleIndustryEnum } : {}),
-      // iter34 H.2 / CR5 — wire CV embedding so scoreJob's 0.30-weighted
-      // cosine component contributes. When undefined (CV not yet enriched)
-      // queryMatchingJobs falls back to pure skill+location+sponsorship.
-      ...(cvEmbedding ? { cvEmbedding } : {}),
-    }
-
-    if (!topSkills.length && !industryTags.length) {
-      // No CV signal — can't usefully rank. Dispatcher fallback.
-      logger.info("[job-recs] no CV signal — fallback", { userId })
-      return null
-    }
-
-    try {
-      const { queryMatchingJobs } = await import("@pa/job-rec")
-      // iter34 H.2 / CR4 — fetch a wider top-10 window so we have material
-      // for the fire-and-forget llmRerank pre-compute (top 5 used for rerank,
-      // first 2 surfaced to the user immediately).
-      const out = await queryMatchingJobs(
-        { filters, limit: 10 },
-        { db, log: () => {} }
       )
+      if (out.noUserTags) {
+        logger.info("[job-recs] no pa-users.tags — fallback", { userId })
+        return null
+      }
       const jobs = out.jobs ?? []
       if (jobs.length === 0) {
-        logger.info("[job-recs] no matches in corpus", { userId, filters })
+        logger.info("[job-recs] no matches in corpus", {
+          userId,
+          total: out.total,
+          dropped: out.dropped,
+          hardFilter: out.hardFilter,
+        })
         return null
       }
       const visibleJobs = jobs.slice(0, 2)
@@ -328,37 +198,13 @@ function makeGenerateJobRecs(): NonNullable<
       lines.push(lang === "zh" ? "先给你看两个对得上的岗位:" : "two roles that line up for you:")
       for (const j of visibleJobs) {
         const tag = j.companyName ? ` @ ${j.companyName}` : ""
-        // iter34 sprint A.2 — prefer real ATS apply link; fall back to
-        // primaryUrl (jobright.ai mirror) only when the ATS field is
-        // empty/undefined. Both empty → omit the URL line entirely.
-        const url = j.atsApplyUrl
-          ? `\n${j.atsApplyUrl}`
-          : j.primaryUrl
-            ? `\n${j.primaryUrl}`
-            : ""
-        // iter34 sprint B.11 — third line: "为啥推:" reason derived from
-        // ScoreBreakdown. Empty when matchScore unavailable or no signal
-        // strong enough → line is dropped (legacy two-line format).
-        const reasonText = formatJobMatchReason(
-          {
-            jobTitle: j.jobTitle,
-            matchScore: j.matchScore,
-            requiredSkills: j.requiredSkills,
-            locationRaw: j.locationRaw,
-            sponsorship: j.sponsorship,
-            industryEnum: j.industryEnum,
-          },
-          lang,
-          {
-            targetRole,
-            userSkills: topSkills,
-            targetLocations: location ? [location] : undefined,
-            visaStatus: visa,
-          }
-        )
-        const reasonLine = reasonText
-          ? `\n${lang === "zh" ? "为啥推" : "why"}: ${reasonText}`
-          : ""
+        // V16 hard-filter already drops jobright.ai URLs + jobs without
+        // atsApplyUrl. So `j.atsApplyUrl` is non-empty here. We DROP
+        // the legacy primaryUrl fallback (was the jobright leak source).
+        const url = j.atsApplyUrl ? `\n${j.atsApplyUrl}` : ""
+        // V16 already composes `reason` (top-2 weighted matched skills,
+        // lang-aware per user.preferredLang). Use directly.
+        const reasonLine = j.reason ? `\n${j.reason}` : ""
         lines.push(`• ${j.jobTitle}${tag}${url}${reasonLine}`)
       }
       lines.push(
@@ -368,25 +214,54 @@ function makeGenerateJobRecs(): NonNullable<
           : "see if these fit — if not lmk, i'll keep digging; daily fresh batch from here"
       )
 
-      // iter34 H.2 / CR4 — fire-and-forget llmRerank for the NEXT request.
-      // Adam-pinned mode (G.4 / D.15): inline reranking adds 1-3s latency on
-      // the live path; instead we write the rerank into pa-user-rerank-cache
-      // so the next time the user pings (or the daily batch fires), the
-      // dispatcher reads the cached LLM rank instead of re-running it.
-      //
-      // No await: errors logged + swallowed; the live response NEVER blocks
-      // on llmRerank. The cache write is best-effort.
+      // Phase 61 — fire-and-forget llmRerank for the NEXT request, refreshing
+      // the Phase 58 nightly cache pre-emptively so the v16 llmMatch component
+      // is non-zero on the next pull. We pull the user's tags (already loaded
+      // by V16 internally; we re-read a thin slice for the rerank input) and
+      // pass top-5 jobs to the rerank.
       try {
         const top5 = jobs.slice(0, 5)
         if (top5.length > 0) {
+          // Read a thin slice of pa-users.tags for the rerank candidate signal.
+          // We don't need the full V16 input — just role + top-skills + visa.
+          const userDoc = await db.collection("pa-users").doc(userId).get()
+          const userTags =
+            userDoc.exists
+              ? (userDoc.data()?.tags as
+                  | {
+                      targetRoleFunction?: string[]
+                      targetRole?: string[]
+                      skills?: Array<{ name: string } | string>
+                      visaStatus?: string
+                    }
+                  | undefined)
+              : undefined
+          const topSkillsForRerank: string[] = []
+          if (Array.isArray(userTags?.skills)) {
+            for (const s of userTags!.skills.slice(0, 8)) {
+              if (typeof s === "string") topSkillsForRerank.push(s)
+              else if (s && typeof s === "object" && typeof s.name === "string")
+                topSkillsForRerank.push(s.name)
+            }
+          }
           fireAndForgetLlmRerank({
             db,
             userId,
-            top5,
+            top5: top5.map((j) => ({
+              id: j.id,
+              jobTitle: j.jobTitle,
+              companyName: j.companyName,
+              ...(j.industryEnum ? { industryEnum: j.industryEnum } : {}),
+              ...(j.requiredSkills ? { requiredSkills: j.requiredSkills } : {}),
+              ...(j.sponsorship !== undefined ? { sponsorship: j.sponsorship } : {}),
+              ...(j.locationRaw ? { locationRaw: j.locationRaw } : {}),
+              ...(j.salaryMin !== undefined ? { salaryMin: j.salaryMin } : {}),
+              ...(j.salaryMax !== undefined ? { salaryMax: j.salaryMax } : {}),
+            })),
             candidate: {
-              targetRole,
-              topSkills,
-              visaStatus: visa,
+              targetRole: userTags?.targetRoleFunction ?? userTags?.targetRole,
+              topSkills: topSkillsForRerank,
+              visaStatus: userTags?.visaStatus,
             },
           })
         }
@@ -399,9 +274,16 @@ function makeGenerateJobRecs(): NonNullable<
         })
       }
 
+      logger.info("[job-recs] v16_ok", {
+        userId,
+        visible: visibleJobs.length,
+        total: out.total,
+        dropped: out.dropped,
+        llmCacheStale: out.llmCacheStale ?? false,
+      })
       return { message: lines.join("\n"), recCount: visibleJobs.length }
     } catch (err) {
-      logger.warn("[job-recs] queryMatchingJobs threw", {
+      logger.warn("[job-recs] queryMatchingJobsV16 threw", {
         userId,
         err: err instanceof Error ? err.message : String(err),
       })

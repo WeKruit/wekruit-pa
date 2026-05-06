@@ -119,7 +119,7 @@ test("applyPartialUserTags: read-merge-write (chat source stamps lastUpdatedFrom
   assert.deepEqual(res.mergedKeys, ["targetRoleFunction"])
   assert.equal(ctx.writes.length, 1)
   const written = ctx.writes[0]!.data as { tags: Record<string, unknown> }
-  // Merged: existing skills + new targetRoleFunction
+  // Merged: existing skills (string-shape preserved when not in partial) + new targetRoleFunction
   assert.deepEqual(written.tags.skills, ["python"])
   assert.deepEqual(written.tags.targetRoleFunction, ["software_engineering"])
   assert.equal(written.tags.lastUpdatedFromChat, "2026-05-06T00:00:00.000Z")
@@ -131,12 +131,18 @@ test("applyPartialUserTags: cv source stamps lastUpdatedFromCv", async () => {
   await applyPartialUserTags(
     ctx.db,
     "u-1",
-    { skills: ["go"] },
+    { skills: ["go"] } as Record<string, unknown>,
     { source: "cv", nowIso: "2026-05-06T01:00:00.000Z" }
   )
   const written = ctx.writes[0]!.data as { tags: Record<string, unknown> }
   assert.equal(written.tags.lastUpdatedFromCv, "2026-05-06T01:00:00.000Z")
   assert.equal(written.tags.lastUpdatedFromChat, undefined)
+  // Phase 61 — applyPartialUserTags now canonicalizes raw string skills to
+  // SkillEntry objects so the V16 score reads `skills[].baseWeight` correctly.
+  const skills = written.tags.skills as Array<{ name: string; baseWeight: number }>
+  assert.equal(skills.length, 1)
+  assert.equal(skills[0]!.name, "go")
+  assert.equal(skills[0]!.baseWeight, 1.0)
 })
 
 test("applyPartialUserTags: empty partial → ok:false skip", async () => {
@@ -163,7 +169,7 @@ test("applyPartialUserTags: undefined values stripped", async () => {
 
 test("applyPartialUserTags: no userId → ok:false skip", async () => {
   const ctx = makeDb()
-  const res = await applyPartialUserTags(ctx.db, "", { skills: ["x"] })
+  const res = await applyPartialUserTags(ctx.db, "", { skills: ["x"] } as Record<string, unknown>)
   assert.equal(res.ok, false)
   assert.equal(res.error, "no_user_id")
   assert.equal(ctx.writes.length, 0)
@@ -175,7 +181,7 @@ test("applyPartialUserTags: Firestore read fails → continues with empty existi
   const res = await applyPartialUserTags(
     ctx.db,
     "u-1",
-    { skills: ["go"] },
+    { skills: ["go"] } as Record<string, unknown>,
     { source: "chat", nowIso: "2026-05-06T03:00:00.000Z" }
   )
   // Write still proceeds.
@@ -186,9 +192,62 @@ test("applyPartialUserTags: Firestore read fails → continues with empty existi
 test("applyPartialUserTags: Firestore write fails → ok:false (fail-open)", async () => {
   const ctx = makeDb()
   ctx.triggerSetError()
-  const res = await applyPartialUserTags(ctx.db, "u-1", { skills: ["x"] })
+  const res = await applyPartialUserTags(ctx.db, "u-1", { skills: ["x"] } as Record<string, unknown>)
   assert.equal(res.ok, false)
   assert.match(res.error ?? "", /simulated_set_error/)
+})
+
+test("applyPartialUserTags: raw string skills auto-upgraded to SkillEntry[] (Phase 61)", async () => {
+  const ctx = makeDb()
+  await applyPartialUserTags(
+    ctx.db,
+    "u-1",
+    { skills: ["Python", "TypeScript", "react"] } as Record<string, unknown>,
+    { source: "chat" }
+  )
+  const written = ctx.writes[0]!.data as { tags: Record<string, unknown> }
+  const skills = written.tags.skills as Array<{
+    name: string
+    bucket: string
+    proficiency: string
+    evidenceCount: number
+    baseWeight: number
+  }>
+  assert.equal(skills.length, 3)
+  assert.deepEqual(
+    skills.map((s) => s.name),
+    ["python", "typescript", "react"]
+  )
+  // Phase 52 buckets via inferSkillBucket heuristic.
+  assert.equal(skills[0]!.bucket, "programming_languages")
+  assert.equal(skills[2]!.bucket, "frameworks_and_libraries")
+  // baseWeight=1.0 default so V16 score works.
+  assert.ok(skills.every((s) => s.baseWeight === 1.0))
+  assert.ok(skills.every((s) => s.proficiency === "intermediate"))
+})
+
+test("applyPartialUserTags: SkillEntry input preserved (object shape)", async () => {
+  const ctx = makeDb()
+  const inputSkills = [
+    {
+      name: "python",
+      bucket: "programming_languages",
+      proficiency: "expert",
+      evidenceCount: 5,
+      baseWeight: 0.9,
+    },
+  ]
+  await applyPartialUserTags(
+    ctx.db,
+    "u-1",
+    { skills: inputSkills } as Record<string, unknown>,
+    { source: "cv" }
+  )
+  const written = ctx.writes[0]!.data as { tags: Record<string, unknown> }
+  const skills = written.tags.skills as Array<Record<string, unknown>>
+  assert.equal(skills[0]!.proficiency, "expert")
+  assert.equal(skills[0]!.evidenceCount, 5)
+  assert.equal(skills[0]!.baseWeight, 0.9)
 })
 
 // ---------------------------------------------------------------------------

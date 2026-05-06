@@ -463,7 +463,15 @@ export function applyV16HardFilters(
  * jd-rel defaults to 1.0 → degrades gracefully to plain weighted Jaccard.
  */
 export function computeWeightedSkillJaccard(
-  userSkills: UserTags["skills"] | undefined,
+  // Phase 61: tolerate BOTH legacy `string[]` AND canonical SkillEntry[] for
+  // backwards-compat with un-migrated pa-users.tags.skills (the migration
+  // script `migrate-skills-to-objects.mjs` upgrades them but unmigrated
+  // users still flow through this function via daily-batch / live recs).
+  userSkills:
+    | UserTags["skills"]
+    | ReadonlyArray<string>
+    | ReadonlyArray<{ name: string; proficiency?: string; baseWeight?: number }>
+    | undefined,
   jobSkills: string[] | undefined,
   jdRelative?: Record<string, number>
 ): { score: number; matched: MatchedSkillContribution[] } {

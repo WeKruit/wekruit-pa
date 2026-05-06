@@ -53,13 +53,13 @@ const partial = {
   ],
   industryEnum: ["tech_software", "ai_ml", "fintech_finance"],
   industrySector: [
-    "software_as_a_service",
+    "software_and_saas",
     "artificial_intelligence_and_machine_learning",
     "financial_technology",
   ],
   relevantIndustry: [
     "artificial_intelligence_and_machine_learning",
-    "software_as_a_service",
+    "software_and_saas",
     "financial_technology",
   ],
   relevantSpecialization: [

@@ -117,12 +117,10 @@ function projectCorrectionToTags(parsed: {
   correctedIndustries?: string[]
   correctedRoles?: string[]
 }): PartialUserTags {
-  const out: PartialUserTags = {}
+  const out: Record<string, unknown> = {}
   if (Array.isArray(parsed.correctedSkills) && parsed.correctedSkills.length > 0) {
-    // Append-only semantics on chat side: store as a flat array of
-    // lowercased tokens. Phase 53 cv-ingest may already have a canonical
-    // bag at `tags.skills`; this becomes the chat-supplemented bag. Phase
-    // 56 consumers union both sources.
+    // Phase 61 — pass raw strings; applyPartialUserTags canonicalizes them
+    // to Phase 52 SkillEntry[] before writing to pa-users.tags.skills.
     out.skills = parsed.correctedSkills
   }
   if (
@@ -134,9 +132,9 @@ function projectCorrectionToTags(parsed: {
   if (Array.isArray(parsed.correctedRoles) && parsed.correctedRoles.length > 0) {
     // Phase 52 role-function tokens (jobright 17). LLM is instructed to
     // produce snake_case canonical hints; we cast through the schema field.
-    ;(out as Record<string, unknown>).targetRoleFunction = parsed.correctedRoles
+    out.targetRoleFunction = parsed.correctedRoles
   }
-  return out
+  return out as PartialUserTags
 }
 
 /**

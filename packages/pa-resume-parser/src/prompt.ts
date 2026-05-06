@@ -130,8 +130,9 @@ underscore, must start with a letter, 2-80 chars. Examples:
 \`quantitative_trading\`. NEVER emit abbreviations such as \`swe\`, \`pm\`,
 \`tpm\`, \`k8s\`, \`js\`, \`ts\`, \`ml\`, \`ai\`, \`hr\`, \`ux\`, \`ui\`, \`saas\`, \`nyc\`,
 \`sf\`, \`la\`, \`uk\`, \`us\`, \`eu\`, \`ceo\`, \`cto\`, etc. — spell them out
-(\`software_engineering\`, \`new_york_city\`, \`united_states\`,
-\`software_as_a_service\`, etc.).
+(\`software_engineering\`, \`new_york_city\`, \`united_states\`, etc.).
+For "saas" specifically, use the canonical industrySector token
+\`software_and_saas\` — do NOT invent \`software_as_a_service\`.
 
 For every property listed in the schema's required array, emit a value (use null for
 missing string fields, [] for missing arrays). parseConfidence ∈ [0, 1] = your subjective

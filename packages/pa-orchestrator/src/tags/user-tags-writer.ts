@@ -25,7 +25,13 @@
  */
 
 import type { Firestore } from "firebase-admin/firestore"
-import { USER_TAGS_SCHEMA_VERSION, type UserTags } from "./user-tags-merger.js"
+import {
+  USER_TAGS_SCHEMA_VERSION,
+  inferSkillBucket,
+  canonicalizeSkillName,
+  type UserTags,
+} from "./user-tags-merger.js"
+import { SkillSchema, type Skill } from "@wekruit/shared-tags"
 
 const PA_USERS_COLLECTION = "pa-users"
 
@@ -139,6 +145,63 @@ export async function applyPartialUserTags(
   for (const [k, v] of Object.entries(partial)) {
     if (v !== undefined) cleaned[k] = v
   }
+
+  // Phase 61 — canonicalize `skills` if the caller passed raw strings or a
+  // mixed array. The Phase 56 V16 score reads `skills[].baseWeight`; if we
+  // wrote raw strings the multiplier is undefined → score=0 for everyone.
+  // Upgrade to SkillEntry[] with neutral defaults (baseWeight=1.0).
+  if (Array.isArray(cleaned.skills)) {
+    const seen = new Set<string>()
+    const upgraded: Skill[] = []
+    for (const raw of cleaned.skills) {
+      let entry: Skill | null = null
+      if (raw && typeof raw === "object") {
+        const obj = raw as Record<string, unknown>
+        const rawName = typeof obj.name === "string" ? obj.name : null
+        if (rawName) {
+          const name = canonicalizeSkillName(rawName)
+          if (name) {
+            const bucket = (typeof obj.bucket === "string" ? obj.bucket : inferSkillBucket(name))
+            const proficiency = typeof obj.proficiency === "string" ? obj.proficiency : "intermediate"
+            const evidenceCount =
+              typeof obj.evidenceCount === "number" && Number.isFinite(obj.evidenceCount)
+                ? Math.max(0, Math.floor(obj.evidenceCount))
+                : 1
+            const baseWeight =
+              typeof obj.baseWeight === "number" && Number.isFinite(obj.baseWeight)
+                ? Math.max(0, Math.min(1, obj.baseWeight))
+                : 1.0
+            try {
+              entry = SkillSchema.parse({ name, bucket, proficiency, evidenceCount, baseWeight })
+            } catch {
+              entry = null
+            }
+          }
+        }
+      } else if (typeof raw === "string") {
+        const name = canonicalizeSkillName(raw)
+        if (name) {
+          try {
+            entry = SkillSchema.parse({
+              name,
+              bucket: inferSkillBucket(name),
+              proficiency: "intermediate",
+              evidenceCount: 1,
+              baseWeight: 1.0,
+            })
+          } catch {
+            entry = null
+          }
+        }
+      }
+      if (entry && !seen.has(entry.name)) {
+        seen.add(entry.name)
+        upgraded.push(entry)
+      }
+    }
+    cleaned.skills = upgraded
+  }
+
   if (Object.keys(cleaned).length === 0) {
     log("pa.user_tags.skip", { reason: "empty_partial", userId })
     return { ok: false, error: "empty_partial" }

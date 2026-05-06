@@ -962,7 +962,7 @@ describe("ingestCv writes pa-users.tags via mergeUserTags (iter34 H.3b)", () => 
     )
     assert.equal(state.userSets.length, 1)
     const tags = (state.userSets[0]!.data.tags ?? {}) as Record<string, unknown>
-    const writtenSkills = tags.skills as string[]
+    const writtenSkills = tags.skills as Array<{ name: string }>
     // Full list: at least the 30 input skills make it through (lowercased,
     // deduped, but NOT capped at 12 like topSkills).
     assert.equal(
@@ -970,7 +970,11 @@ describe("ingestCv writes pa-users.tags via mergeUserTags (iter34 H.3b)", () => 
       30,
       `expected 30 skills written (full list), got ${writtenSkills.length}`
     )
-    assert.ok(writtenSkills.every((s) => s.toLowerCase() === s), "skills must be lowercased")
+    // Phase 61 — skills are now SkillEntry objects; check `.name`
+    assert.ok(
+      writtenSkills.every((s) => s.name.toLowerCase() === s.name),
+      "skill.name must be lowercased"
+    )
   })
 
   it("statedPreferences (chat-side) is read from pa-users + passed to mergeUserTags", async () => {

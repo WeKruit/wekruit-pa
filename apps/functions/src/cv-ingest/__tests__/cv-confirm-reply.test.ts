@@ -110,7 +110,14 @@ test("handleCvConfirmReply: skill correction → applyPartialUserTags called", a
   // Tag write attempted at least once.
   assert.ok(ctx.writes.length >= 1)
   const written = ctx.writes[0]!.data as { tags: Record<string, unknown> }
-  assert.deepEqual(written.tags.skills, ["react", "typescript"])
+  // Phase 61 — applyPartialUserTags now upgrades raw string skills to
+  // Phase 52 SkillEntry[] (with name + bucket + proficiency + baseWeight)
+  // before writing, so the V16 score reads `skills[].baseWeight` correctly.
+  const skills = written.tags.skills as Array<{ name: string }>
+  assert.deepEqual(
+    skills.map((s) => s.name),
+    ["react", "typescript"]
+  )
 })
 
 test("handleCvConfirmReply: industry correction populates industrySector", async () => {

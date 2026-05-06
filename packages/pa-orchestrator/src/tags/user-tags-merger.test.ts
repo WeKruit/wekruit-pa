@@ -62,7 +62,20 @@ test("mergeUserTags: full input populates every field across CV + chat sources",
   const out = mergeUserTags(input)
 
   // Skills — full bag, lowercased, deduplicated, AWS pulled in from workHistory.
-  assert.deepEqual(out.skills, ["python", "typescript", "react", "aws"])
+  // Phase 61 — skills are now Phase 52 SkillEntry objects with bucket /
+  // proficiency / evidenceCount / baseWeight defaults.
+  assert.deepEqual(
+    out.skills.map((s) => s.name),
+    ["python", "typescript", "react", "aws"]
+  )
+  // Phase 52 buckets — auto-inferred via inferSkillBucket heuristic.
+  assert.equal(out.skills[0]!.bucket, "programming_languages") // python
+  assert.equal(out.skills[2]!.bucket, "frameworks_and_libraries") // react
+  assert.equal(out.skills[3]!.bucket, "cloud_and_infrastructure") // aws
+  // baseWeight defaults to 1.0 (Phase 56 V16 needs this for skill jaccard)
+  assert.equal(out.skills[0]!.baseWeight, 1.0)
+  assert.equal(out.skills[0]!.proficiency, "intermediate")
+  assert.equal(out.skills[0]!.evidenceCount, 1)
   // Industry — direct from CV.industryTags.
   assert.deepEqual(out.industryEnum, ["tech_software", "ai_ml"])
   assert.equal(out.recentRoleTitle, "SWE Intern")
@@ -93,9 +106,9 @@ test("mergeUserTags: skills retains ALL CV skills (no 12-cap truncation)", () =>
     cv: { candidateProfile: { skills } },
   })
   assert.equal(out.skills.length, skillCount, "expected full skill bag, no cap")
-  // Lowercased.
-  assert.equal(out.skills[0], "skill_0")
-  assert.equal(out.skills[skillCount - 1], `skill_${skillCount - 1}`)
+  // Lowercased + canonicalized via canonicalizeSkillName.
+  assert.equal(out.skills[0]!.name, "skill_0")
+  assert.equal(out.skills[skillCount - 1]!.name, `skill_${skillCount - 1}`)
 })
 
 test("mergeUserTags: skills lowercase + dedupe + whitespace collapse", () => {
@@ -105,8 +118,12 @@ test("mergeUserTags: skills lowercase + dedupe + whitespace collapse", () => {
       workHistory: [{ skills: ["python", "REACT"] }],
     },
   })
-  // python (3 forms collapsed → 1), typescript-with-space (2 forms → 1, internal whitespace normalized), react (1)
-  assert.deepEqual(out.skills, ["python", "type script", "react"])
+  // python (3 forms collapsed → 1), type_script (whitespace→underscore via
+  // canonicalizeSkillName, 2 forms → 1), react (1).
+  assert.deepEqual(
+    out.skills.map((s) => s.name),
+    ["python", "type_script", "react"]
+  )
 })
 
 test("mergeUserTags: skills empty when CV has neither candidateProfile nor workHistory skills", () => {
@@ -134,7 +151,7 @@ test("mergeUserTags: industryTags=['other'] + targetRole=['swe'] → fallback to
 
 test("mergeUserTags: empty industryTags + no targetRole + skills include 'react' → infer ['tech_software']", () => {
   const out = mergeUserTags({
-    cv: { candidateProfile: { skills: ["React", "Some Random Skill"] }, industryTags: [] },
+    cv: { candidateProfile: { skills: ["React", "RandomSkill"] }, industryTags: [] },
   })
   assert.deepEqual(out.industryEnum, ["tech_software"])
 })
