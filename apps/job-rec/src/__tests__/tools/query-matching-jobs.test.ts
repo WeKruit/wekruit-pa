@@ -1203,7 +1203,58 @@ import {
   applyEnrichmentNeverList,
   NON_TECH_NEVER_KEYS,
   TECH_LEANING_USER_TAGS,
+  getJobIndustryBuckets,
 } from "../../tools/query-matching-jobs.js"
+
+// ---------------------------------------------------------------------------
+// iter34 sprint B.12 — getJobIndustryBuckets helper (industryEnum > industryKey)
+// ---------------------------------------------------------------------------
+
+test("getJobIndustryBuckets B.12: doc with industryEnum → returns the array", () => {
+  const out = getJobIndustryBuckets({ industryEnum: ["tech_software"], industryKey: "tech" })
+  assert.deepEqual(out, ["tech_software"], "industryEnum wins when both present (cleaner taxonomy)")
+})
+
+test("getJobIndustryBuckets B.12: doc with only industryKey → fallback to [industryKey]", () => {
+  const out = getJobIndustryBuckets({ industryKey: "management" })
+  assert.deepEqual(out, ["management"], "legacy fallback wraps single value into array")
+})
+
+test("getJobIndustryBuckets B.12: doc with neither → empty array", () => {
+  assert.deepEqual(getJobIndustryBuckets({}), [])
+})
+
+test("getJobIndustryBuckets B.12: empty industryEnum array → fallback to industryKey", () => {
+  const out = getJobIndustryBuckets({ industryEnum: [], industryKey: "consulting" })
+  assert.deepEqual(out, ["consulting"], "empty enum array still triggers legacy fallback")
+})
+
+test("applyEnrichmentNeverList B.12: industryEnum=[customer_service] (canonical) → rejected", () => {
+  // Using the canonical taxonomy: customer_service is in NEVER_KEYS, so a
+  // doc tagged industryEnum=["customer_service"] must be rejected even
+  // when industryKey claims something tech-leaning.
+  const jobs = [
+    { id: "cs", industryEnum: ["customer_service"], industryKey: "tech" },
+    { id: "ok", industryEnum: ["tech_software"], industryKey: "tech" },
+  ]
+  const r = applyEnrichmentNeverList(jobs, ["tech_software"])
+  assert.equal(r.kept.length, 1)
+  assert.equal(r.kept[0]?.id, "ok")
+  assert.equal(r.rejected, 1)
+  assert.equal(r.rejectedKeys.customer_service, 1)
+})
+
+test("applyEnrichmentNeverList B.12: industryEnum present + clean → industryKey ignored even if NEVER_KEY", () => {
+  // Trust direction flipped: industryEnum is the CLEAN signal post-H8 fix.
+  // When industryEnum says tech_software, we trust it even if the legacy
+  // industryKey says management.
+  const jobs = [
+    { id: "x", industryEnum: ["tech_software"], industryKey: "management" },
+  ]
+  const r = applyEnrichmentNeverList(jobs, ["tech_software"])
+  assert.equal(r.kept.length, 1, "industryEnum=tech_software trusted; legacy industryKey=management ignored")
+  assert.equal(r.rejected, 0)
+})
 
 test("applyEnrichmentNeverList: tech user + management/marketing/consulting jobs → all rejected", () => {
   const jobs = [
@@ -1312,7 +1363,12 @@ test("TECH_LEANING_USER_TAGS covers the 4 tech-leaning canonical tags", () => {
   assert.ok(!TECH_LEANING_USER_TAGS.has("consumer_retail"))
 })
 
-test("queryMatchingJobs: TD-#10 — tech user + polluted industryEnum → Groundskeeper rejected", async () => {
+test("queryMatchingJobs B.12: tech user + industryEnum=customer_service doc → rejected via never-list (industryEnum preferred over industryKey)", async () => {
+  // iter34 sprint B.12 — flips trust direction from TD-#10. The never-list
+  // now reads industry buckets from `getJobIndustryBuckets`, which prefers
+  // industryEnum (clean, post-fix) over industryKey (legacy 17% mislabel).
+  // A doc whose CANONICAL bucket lands in NEVER_KEYS (e.g. "customer_service")
+  // is rejected even when its legacy industryKey claims a tech bucket.
   _clearFeatureFlagCache()
   const mfs = new MockFirestore()
   await mfs.collection("pa-feature-flags").doc("matchingIndustryEnumPopulated").set({
@@ -1321,16 +1377,17 @@ test("queryMatchingJobs: TD-#10 — tech user + polluted industryEnum → Ground
     type: "bool",
     scope: "global",
   })
-  // Mislabeled doc: enrichment errored — Groundskeeper tagged industryEnum=fintech_finance.
-  await mfs.collection("matching-jobs").doc("groundskeeper").set({
+  // Doc whose CANONICAL bucket is customer_service. industryKey claims tech
+  // (the legacy field is sometimes wrong); we now trust industryEnum.
+  await mfs.collection("matching-jobs").doc("call-center").set({
     status: "active",
-    companyName: "Nicsa Property Co",
-    roleTitle: "Groundskeeper - Sabine Street Lofts",
-    locationRaw: "Houston, TX",
-    primaryUrl: "https://gk",
-    industry: "management",
-    industryKey: "management",
-    industryEnum: ["fintech_finance"], // ← polluted
+    companyName: "CallCo",
+    roleTitle: "Customer Support Specialist",
+    locationRaw: "Remote",
+    primaryUrl: "https://cs",
+    industry: "tech",
+    industryKey: "tech", // ← legacy claims tech (wrong)
+    industryEnum: ["customer_service"], // ← canonical bucket (correct)
     sponsorship: false,
     firstSeenAt: "2026-04-30",
   })
@@ -1351,7 +1408,8 @@ test("queryMatchingJobs: TD-#10 — tech user + polluted industryEnum → Ground
   const out = await queryMatchingJobs(
     {
       filters: {
-        industryTags: ["tech_software", "ai_ml", "fintech_finance"],
+        // Need to query both buckets so the H8 array-contains-any returns both.
+        industryTags: ["tech_software", "ai_ml", "fintech_finance", "customer_service"],
         sponsorship: "h1b",
         userSkills: ["python"],
       },
@@ -1360,10 +1418,11 @@ test("queryMatchingJobs: TD-#10 — tech user + polluted industryEnum → Ground
     { db: asFirestore(mfs) }
   )
   const ids = new Set(out.jobs.map((j) => j.id))
-  assert.ok(!ids.has("groundskeeper"), "TD-#10: Groundskeeper must be rejected by NEVER list")
+  assert.ok(!ids.has("call-center"), "B.12: customer_service-canonical doc must be rejected by NEVER list")
   assert.ok(ids.has("swe"), "Properly labeled SWE row must survive")
   _clearFeatureFlagCache()
 })
+
 
 test("queryMatchingJobs: TD-#10 — non-tech user + management job → KEPT (no over-filtering)", async () => {
   // Healthcare user with H8 flag ON — even though the doc lands in industryKey=
@@ -1536,6 +1595,12 @@ test("queryMatchingJobs A.3: targetRoleIndustryEnum=[tech_software] drops custom
 })
 
 test("queryMatchingJobs A.3: targetRoleIndustryEnum undefined (founder/other) → no role filter, both docs kept", async () => {
+  // iter34 sprint B.12 — user is non-tech-leaning so the never-list bypasses;
+  // this test isolates the role-filter no-op behavior. Pre-B.12 the test
+  // used a tech-leaning user that worked because the never-list only read
+  // industryKey; with B.12 reading industryEnum first, customer_service
+  // would correctly fire the never-list — so we use a non-tech user here
+  // to keep the test focused on its actual subject (role-filter bypass).
   _clearFeatureFlagCache()
   const mfs = new MockFirestore()
   await mfs.collection("pa-feature-flags").doc("matchingIndustryEnumPopulated").set({
@@ -1547,23 +1612,23 @@ test("queryMatchingJobs A.3: targetRoleIndustryEnum undefined (founder/other) �
   await mfs.collection("matching-jobs").doc("swe").set({
     status: "active",
     companyName: "Acme",
-    roleTitle: "Senior SWE",
+    roleTitle: "Care Coordinator",
     locationRaw: "Remote",
     primaryUrl: "https://swe",
-    industry: "tech",
-    industryKey: "tech",
-    industryEnum: ["tech_software"],
+    industry: "healthtech",
+    industryKey: "healthtech",
+    industryEnum: ["healthcare_biotech"],
     sponsorship: true,
     firstSeenAt: "2026-04-30",
   })
   await mfs.collection("matching-jobs").doc("cs").set({
     status: "active",
     companyName: "CallCo",
-    roleTitle: "Customer Support Lead",
+    roleTitle: "Patient Support Lead",
     locationRaw: "Remote",
     primaryUrl: "https://cs",
-    industry: "tech",
-    industryKey: "tech",
+    industry: "healthtech",
+    industryKey: "healthtech",
     industryEnum: ["customer_service"],
     sponsorship: true,
     firstSeenAt: "2026-04-29",
@@ -1571,7 +1636,8 @@ test("queryMatchingJobs A.3: targetRoleIndustryEnum undefined (founder/other) �
   const out = await queryMatchingJobs(
     {
       filters: {
-        industryTags: ["tech_software", "customer_service"],
+        // Non-tech user: never-list bypasses, so customer_service survives.
+        industryTags: ["healthcare_biotech", "customer_service"],
         // No targetRole / no targetRoleIndustryEnum — backward-compat path.
       },
       limit: 10,

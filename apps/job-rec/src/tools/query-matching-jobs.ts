@@ -368,6 +368,38 @@ export const TECH_LEANING_USER_TAGS: ReadonlySet<string> = new Set([
 ])
 
 /**
+ * iter34 sprint B.12 — Resolve a job doc's industry bucket(s).
+ *
+ * Background: the matching-jobs corpus carries TWO industry signals:
+ *   - `industryEnum` (array): H8-enriched canonical 10-tag bucket (e.g.
+ *     ["tech_software"]). LLM-derived but cleaner than industryKey because
+ *     it maps to the canonical user-facing taxonomy. Most active docs have
+ *     it after the H8 enrichment run.
+ *   - `industryKey` (string): older, source-derived token (e.g. "management",
+ *     "tech"). 17% mislabel rate observed in 2026-05-02 audit.
+ *
+ * Preference ladder:
+ *   1. Use `industryEnum` when present and non-empty (canonical taxonomy).
+ *   2. Fall back to `industryKey` (legacy single-value bucket) wrapped in
+ *      a 1-element array.
+ *   3. Empty array when neither present.
+ *
+ * Pure / deterministic. Exposed for unit tests.
+ */
+export function getJobIndustryBuckets(rawDoc: {
+  industryEnum?: readonly string[]
+  industryKey?: string
+}): string[] {
+  if (Array.isArray(rawDoc.industryEnum) && rawDoc.industryEnum.length > 0) {
+    return rawDoc.industryEnum.filter((s): s is string => typeof s === "string")
+  }
+  if (typeof rawDoc.industryKey === "string" && rawDoc.industryKey.length > 0) {
+    return [rawDoc.industryKey] // legacy fallback
+  }
+  return []
+}
+
+/**
  * Apply the TD-#10 defensive never-list. Pure / deterministic.
  *
  * Inputs:
@@ -377,14 +409,23 @@ export const TECH_LEANING_USER_TAGS: ReadonlySet<string> = new Set([
  * Behavior:
  *   - When userTags is empty OR contains no tech-leaning tag → return jobs
  *     unchanged (non-tech users may legitimately want management/sales/etc).
- *   - Otherwise, drop any job whose industryKey ∈ NON_TECH_NEVER_KEYS.
+ *   - Otherwise, drop any job whose industry buckets contain a key in
+ *     NON_TECH_NEVER_KEYS. iter34 B.12 — buckets come from
+ *     {@link getJobIndustryBuckets} which prefers the canonical
+ *     industryEnum array (cleaner) over the legacy industryKey string
+ *     (17% mislabel). Both fields use the same bucket-name namespace for
+ *     the never-list keys (e.g. "management", "sales"), so the same
+ *     NEVER_KEYS table works against either source.
  *
- * Returns the kept-jobs array (does NOT mutate input).
+ * Returns the kept-jobs array (does NOT mutate input). The `rejectedKeys`
+ * map is keyed on the bucket that triggered rejection.
  *
  * Exposed for unit tests in
  * apps/job-rec/src/__tests__/tools/query-matching-jobs.test.ts.
  */
-export function applyEnrichmentNeverList<T extends { industryKey?: string }>(
+export function applyEnrichmentNeverList<
+  T extends { industryKey?: string; industryEnum?: readonly string[] }
+>(
   jobs: readonly T[],
   userTags: readonly string[] | undefined
 ): { kept: T[]; rejected: number; rejectedKeys: Record<string, number> } {
@@ -400,10 +441,17 @@ export function applyEnrichmentNeverList<T extends { industryKey?: string }>(
   const rejectedKeys: Record<string, number> = {}
   let rejected = 0
   for (const j of jobs) {
-    const ik = typeof j.industryKey === "string" ? j.industryKey : ""
-    if (ik && NON_TECH_NEVER_KEYS.has(ik)) {
+    const buckets = getJobIndustryBuckets(j)
+    let firstHit: string | null = null
+    for (const b of buckets) {
+      if (NON_TECH_NEVER_KEYS.has(b)) {
+        firstHit = b
+        break
+      }
+    }
+    if (firstHit !== null) {
       rejected += 1
-      rejectedKeys[ik] = (rejectedKeys[ik] ?? 0) + 1
+      rejectedKeys[firstHit] = (rejectedKeys[firstHit] ?? 0) + 1
       continue
     }
     kept.push(j)
