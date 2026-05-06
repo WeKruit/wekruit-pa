@@ -116,6 +116,7 @@ test("formatBatchMessage: lead-in adapts to count", () => {
     salaryMin: null,
     locationRaw: "",
     primaryUrl: `https://x/${id}`,
+    atsApplyUrl: "https://greenhouse.io/co/jobs/3",
     industry: "tech",
     sponsorship: null,
   })
@@ -165,6 +166,7 @@ test("runDailyJobRecBatch: delivers when flag ON + jobs available + writes lastJ
     salaryMax: 200000,
     locationRaw: "Remote",
     primaryUrl: "https://j/1",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/4",
     industry: "tech",
     sponsorship: false,
     firstSeenAt: "2026-04-30",
@@ -226,6 +228,7 @@ test("runDailyJobRecBatch: idempotency key includes YYYYMMDD", async () => {
     salaryMax: null,
     locationRaw: "Remote",
     primaryUrl: "https://j/1",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/5",
     industry: "tech",
     sponsorship: false,
     firstSeenAt: "2026-04-30",
@@ -343,6 +346,7 @@ test("Stream F5: runDailyJobRecBatch handles new-shape profile end-to-end (deliv
     salaryMax: 350000,
     locationRaw: "Remote",
     primaryUrl: "https://j/fin",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/6",
     industry: "fintech",
     sponsorship: true,
     firstSeenAt: "2026-04-30",
@@ -357,8 +361,9 @@ test("Stream F5: runDailyJobRecBatch handles new-shape profile end-to-end (deliv
   const w = mfs.writeLog.filter((w) => w.path === "pa-outbound")[0]
   assert.ok(w?.data.body)
   assert.match(String(w!.data.body), /FinCo/)
-  // Bare URL on its own line (Bible v7.5.2)
-  assert.match(String(w!.data.body), /\nhttps:\/\/j\/fin/)
+  // Bare URL on its own line (Bible v7.5.2). atsApplyUrl is preferred over primaryUrl
+  // post-iter34-A.2, so we match the greenhouse ATS link rather than primaryUrl.
+  assert.match(String(w!.data.body), /\nhttps:\/\/greenhouse\.io\/co\/jobs\/6/)
 })
 
 import { rerankByCosine } from "../daily-batch.js"
@@ -374,6 +379,7 @@ test("Stream F5: rerankByCosine sorts by cosine similarity, jobs without embeddi
       salaryMin: null,
       locationRaw: "",
       primaryUrl: "https://x/far",
+      atsApplyUrl: "https://greenhouse.io/co/jobs/7",
       industry: "tech",
       sponsorship: null,
       embedding: [0, 1, 0], // orthogonal to user → score 0
@@ -386,6 +392,7 @@ test("Stream F5: rerankByCosine sorts by cosine similarity, jobs without embeddi
       salaryMin: null,
       locationRaw: "",
       primaryUrl: "https://x/close",
+      atsApplyUrl: "https://greenhouse.io/co/jobs/8",
       industry: "tech",
       sponsorship: null,
       embedding: [1, 0, 0], // identical to user → score 1
@@ -398,6 +405,7 @@ test("Stream F5: rerankByCosine sorts by cosine similarity, jobs without embeddi
       salaryMin: null,
       locationRaw: "",
       primaryUrl: "https://x/noemb",
+      atsApplyUrl: "https://greenhouse.io/co/jobs/9",
       industry: "tech",
       sponsorship: null,
       // no embedding field
@@ -435,6 +443,7 @@ test("Stream F5: runDailyJobRecBatch with rerank deps applies cosine + still del
     salaryMax: 300000,
     locationRaw: "Remote",
     primaryUrl: "https://j/high",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/10",
     industry: "tech",
     sponsorship: false,
     firstSeenAt: "2026-04-30",
@@ -448,6 +457,7 @@ test("Stream F5: runDailyJobRecBatch with rerank deps applies cosine + still del
     salaryMax: 80000,
     locationRaw: "Remote",
     primaryUrl: "https://j/low",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/11",
     industry: "tech",
     sponsorship: false,
     firstSeenAt: "2026-04-30",
@@ -501,6 +511,7 @@ test("Stream H10: cross-encoder reranker reorders cosine-ranked jobs by relevanc
     salaryMax: 60000,
     locationRaw: "Remote",
     primaryUrl: "https://j/qc",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/12",
     industry: "tech",
     sponsorship: false,
     firstSeenAt: "2026-04-30",
@@ -516,6 +527,7 @@ test("Stream H10: cross-encoder reranker reorders cosine-ranked jobs by relevanc
     salaryMax: 250000,
     locationRaw: "Remote",
     primaryUrl: "https://j/data",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/13",
     industry: "tech",
     sponsorship: false,
     firstSeenAt: "2026-04-30",
@@ -580,6 +592,7 @@ test("Stream H10: cross-encoder fail-open (all-null scores) preserves cosine ord
     salaryMax: 250000,
     locationRaw: "Remote",
     primaryUrl: "https://j/top",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/14",
     industry: "tech",
     sponsorship: false,
     firstSeenAt: "2026-04-30",
@@ -594,6 +607,7 @@ test("Stream H10: cross-encoder fail-open (all-null scores) preserves cosine ord
     salaryMax: 80000,
     locationRaw: "Remote",
     primaryUrl: "https://j/bot",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/15",
     industry: "tech",
     sponsorship: false,
     firstSeenAt: "2026-04-30",
@@ -639,22 +653,26 @@ test("Stream H12: dedupe by (jobTitle|companyName) drops near-identical JDs", as
   await mfs.collection("matching-jobs").doc("j1").set({
     status: "active", industryKey: "tech", companyName: "Mastercard",
     roleTitle: "Tax Consultant", salaryMax: 120000, locationRaw: "Princeton, NJ",
-    primaryUrl: "https://j/1", industry: "tech", sponsorship: false, firstSeenAt: "2026-04-30",
+    primaryUrl: "https://j/1", atsApplyUrl: "https://greenhouse.io/co/jobs/h12-1",
+    industry: "tech", sponsorship: false, firstSeenAt: "2026-04-30",
   })
   await mfs.collection("matching-jobs").doc("j2").set({
     status: "active", industryKey: "tech", companyName: "Mastercard",
     roleTitle: "Tax Consultant", salaryMax: 120000, locationRaw: "Richmond, VA",
-    primaryUrl: "https://j/2", industry: "tech", sponsorship: false, firstSeenAt: "2026-04-29",
+    primaryUrl: "https://j/2", atsApplyUrl: "https://greenhouse.io/co/jobs/h12-2",
+    industry: "tech", sponsorship: false, firstSeenAt: "2026-04-29",
   })
   await mfs.collection("matching-jobs").doc("j3").set({
     status: "active", industryKey: "tech", companyName: "Stripe",
     roleTitle: "Software Engineer", salaryMax: 200000, locationRaw: "Remote",
-    primaryUrl: "https://j/3", industry: "tech", sponsorship: false, firstSeenAt: "2026-04-28",
+    primaryUrl: "https://j/3", atsApplyUrl: "https://greenhouse.io/co/jobs/h12-3",
+    industry: "tech", sponsorship: false, firstSeenAt: "2026-04-28",
   })
   await mfs.collection("matching-jobs").doc("j4").set({
     status: "active", industryKey: "tech", companyName: "Stripe",
     roleTitle: "Software Engineer", salaryMax: 200000, locationRaw: "San Francisco, CA",
-    primaryUrl: "https://j/4", industry: "tech", sponsorship: false, firstSeenAt: "2026-04-27",
+    primaryUrl: "https://j/4", atsApplyUrl: "https://greenhouse.io/co/jobs/h12-4",
+    industry: "tech", sponsorship: false, firstSeenAt: "2026-04-27",
   })
   const out = await runDailyJobRecBatch({
     db: asFirestore(mfs),
@@ -935,6 +953,7 @@ test("H13 runDailyJobRecBatch wires friend-tone variant B end-to-end (default fl
     salaryMax: 250000,
     locationRaw: "Remote",
     primaryUrl: "https://j/1",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/16",
     industry: "tech",
     sponsorship: false,
     firstSeenAt: "2026-04-30",
@@ -999,6 +1018,7 @@ test("Phase 42 regression: explainer flag OFF → body bytewise matches H13 (no 
     salaryMax: 250000,
     locationRaw: "Remote",
     primaryUrl: "https://j/1",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/17",
     industry: "tech",
     sponsorship: false,
     firstSeenAt: "2026-04-30",
@@ -1069,6 +1089,7 @@ test("Phase 42: explainer flag ON → LLM reason injected into body + cached", a
     salaryMax: 280000,
     locationRaw: "Remote",
     primaryUrl: "https://j/1",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/18",
     industry: "fintech",
     sponsorship: false,
     firstSeenAt: "2026-04-30",
@@ -1154,6 +1175,7 @@ test("Phase 42: explainer flag ON + LLM throws → fail-open keeps H13 heuristic
     salaryMax: 250000,
     locationRaw: "Remote",
     primaryUrl: "https://j/1",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/19",
     industry: "tech",
     sponsorship: false,
     firstSeenAt: "2026-04-30",

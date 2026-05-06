@@ -556,6 +556,66 @@ export function applyTechLeaningTitleBlacklist<T extends { jobTitle?: string }>(
 }
 
 // ---------------------------------------------------------------------------
+// iter34 followup D.5 — atsApplyUrl hard gate.
+//
+// SWE-persona sims (iter34 followup) showed jobs being recommended whose
+// `primaryUrl` is a `jobright.ai` mirror (legacy aggregator scrape). The
+// candidate clicks through to a re-ranked aggregator page rather than the
+// real ATS apply form (Greenhouse / Lever / Workday / Ashby / etc).
+//
+// Coverage data from prod (matching-jobs `status==active`, n=842):
+//   - 27.9% of active docs have `atsApplyUrl` populated as non-empty string
+//   - ~72% are missing or have it as null/undefined (legacy scrape)
+//   - Rare (<1%) jobright leak INTO `atsApplyUrl` itself
+//
+// Trade-off: filtering shrinks active inventory ~72%, but the alternative
+// (recommend a jobright mirror link) is a UX failure — candidates lose trust
+// when an "Apply" link drops them onto an aggregator. Tighter inventory beats
+// fake links. As re-enrichment closes the gap, this filter relaxes naturally.
+//
+// Position in pipeline: AFTER applyTechLeaningTitleBlacklist, BEFORE rankJobs.
+// Pure / deterministic — no Firestore reads.
+// ---------------------------------------------------------------------------
+
+/**
+ * Drop jobs whose `atsApplyUrl` is missing/empty, or whose `atsApplyUrl`
+ * itself contains a `jobright.ai` mirror string (rare leak case observed
+ * in legacy data).
+ *
+ * Inputs:
+ *   - jobs: candidate pool with `atsApplyUrl?: string` projected.
+ *
+ * Returns the kept-jobs array (does not mutate input). Provides a `rejected`
+ * count for log observability.
+ *
+ * Exposed for unit tests in
+ * apps/job-rec/src/__tests__/tools/query-matching-jobs.test.ts.
+ */
+export function applyAtsApplyUrlGate<T extends { atsApplyUrl?: string }>(
+  jobs: readonly T[]
+): { kept: T[]; rejected: number } {
+  if (!Array.isArray(jobs) || jobs.length === 0) {
+    return { kept: [], rejected: 0 }
+  }
+  const kept: T[] = []
+  let rejected = 0
+  for (const j of jobs) {
+    const url = j.atsApplyUrl
+    if (typeof url !== "string" || url.length === 0) {
+      rejected += 1
+      continue
+    }
+    if (url.toLowerCase().includes("jobright.ai")) {
+      // mirror leak — drop even though the field is populated
+      rejected += 1
+      continue
+    }
+    kept.push(j)
+  }
+  return { kept, rejected }
+}
+
+// ---------------------------------------------------------------------------
 // Stream H8 — industryEnum-primary query path (flag-gated).
 //
 // After H8 enrichment writes `industryEnum: [tag]` (1-element array) to the
@@ -1508,7 +1568,19 @@ export async function queryMatchingJobs(
       userTags: userTagsForGuard,
     })
   }
-  const filtered = titleBlacklistResult.kept
+  const afterTitleBlacklist = titleBlacklistResult.kept
+
+  // iter34 followup D.5 — drop jobs whose atsApplyUrl is missing/empty or
+  // contains a jobright.ai mirror leak. Recommending a jobright mirror is a
+  // UX failure (candidate clicks through to aggregator, not real ATS).
+  const atsGateResult = applyAtsApplyUrlGate(afterTitleBlacklist)
+  if (atsGateResult.rejected > 0) {
+    log("[queryMatchingJobs] ats_apply_url_gate_rejected", {
+      rejected: atsGateResult.rejected,
+      kept: atsGateResult.kept.length,
+    })
+  }
+  const filtered = atsGateResult.kept
 
   const ranked = rankJobs(filtered, parsed.filters, parsed.limit)
   return { jobs: ranked }

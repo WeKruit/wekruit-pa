@@ -52,6 +52,7 @@ test("scoreJob: penalizes sponsorship=true when user wants none", () => {
     salaryMin: null,
     locationRaw: "NYC",
     primaryUrl: "u",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/0",
     industry: "tech",
     sponsorship: true,
     requiredSkills: ["python"],
@@ -70,6 +71,7 @@ test("scoreJob: rewards salaryMax >= salaryMin", () => {
     salaryMin: 150000,
     locationRaw: "",
     primaryUrl: "u",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/1",
     industry: "tech",
     sponsorship: null,
   }
@@ -87,6 +89,7 @@ test("scoreJob: location substring match boosts", () => {
     salaryMin: null,
     locationRaw: "San Francisco, CA",
     primaryUrl: "u",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/2",
     industry: "tech",
     sponsorship: null,
   }
@@ -135,6 +138,7 @@ test("scoreJob B.10: cvEmbedding present + matching job embedding → embedding 
     salaryMin: null,
     locationRaw: "",
     primaryUrl: "u",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/3",
     industry: "tech",
     sponsorship: null,
     embedding: [1, 0, 0, 0],
@@ -155,6 +159,7 @@ test("scoreJob B.10: cvEmbedding undefined → embedding component = 0, total na
     salaryMin: null,
     locationRaw: "",
     primaryUrl: "u",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/4",
     industry: "tech",
     sponsorship: null,
     embedding: [1, 0, 0],
@@ -174,6 +179,7 @@ test("scoreJob B.10: job has no embedding → embedding component = 0", () => {
     salaryMin: null,
     locationRaw: "",
     primaryUrl: "u",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/5",
     industry: "tech",
     sponsorship: null,
     // no embedding field
@@ -191,6 +197,7 @@ test("scoreJob B.10: embedding length mismatch → component = 0 (defensive, no 
     salaryMin: null,
     locationRaw: "",
     primaryUrl: "u",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/6",
     industry: "tech",
     sponsorship: null,
     embedding: [1, 0, 0],
@@ -210,6 +217,7 @@ test("scoreJob B.10: breakdown shape carries all 5 components + total", () => {
     salaryMin: null,
     locationRaw: "Remote",
     primaryUrl: "u",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/7",
     industry: "tech",
     sponsorship: true,
     requiredSkills: ["python", "ml"],
@@ -250,6 +258,7 @@ test("scoreJob B.10: weights sum to 1.0 (skill 0.35 + emb 0.30 + spons 0.15 + lo
     salaryMin: null,
     locationRaw: "San Francisco, CA",
     primaryUrl: "u",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/8",
     industry: "tech",
     sponsorship: true,
     requiredSkills: ["python"],
@@ -275,6 +284,7 @@ test("queryMatchingJobs B.10: cvEmbedding plumbed through to scoreJob via filter
     roleTitle: "SWE",
     locationRaw: "Remote",
     primaryUrl: "u",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/9",
     industry: "tech",
     industryKey: "tech",
     sponsorship: true,
@@ -303,6 +313,7 @@ test("rankJobs: orders by composite score desc", () => {
     salaryMin: null,
     locationRaw: "NYC",
     primaryUrl: "u",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/10",
     industry: "tech",
     sponsorship: null,
     requiredSkills: ["python", "go"],
@@ -315,6 +326,7 @@ test("rankJobs: orders by composite score desc", () => {
     salaryMin: null,
     locationRaw: "NYC",
     primaryUrl: "u",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/11",
     industry: "tech",
     sponsorship: null,
     requiredSkills: ["fortran"],
@@ -333,6 +345,7 @@ test("rankJobs: ties broken by newer firstSeenAt", () => {
     salaryMin: null,
     locationRaw: "",
     primaryUrl: "u",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/12",
     industry: "tech",
     sponsorship: null,
     firstSeenAt: "2026-01-01",
@@ -351,6 +364,7 @@ test("rankJobs: limit truncates output", () => {
     salaryMin: null,
     locationRaw: "",
     primaryUrl: "u",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/13",
     industry: "tech",
     sponsorship: null,
   })
@@ -365,6 +379,7 @@ test("projectMatchingJobRow: maps roleTitle → jobTitle when no jobTitle field"
     salaryMax: 100000,
     locationRaw: "NYC",
     primaryUrl: "https://x",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/14",
     industry: "tech",
     sponsorship: false,
   })
@@ -418,6 +433,7 @@ test("queryMatchingJobs: returns top-N from active corpus", async () => {
       salaryMax: 100000 + i * 10000,
       locationRaw: "NYC",
       primaryUrl: `https://x/${i}`,
+      atsApplyUrl: "https://greenhouse.io/co/jobs/16",
       industry: "tech",
       sponsorship: false,
       requiredSkills: ["python"],
@@ -442,6 +458,7 @@ test("queryMatchingJobs: hard-filters out sponsorship=true when user wants none"
     salaryMax: null,
     locationRaw: "NYC",
     primaryUrl: "https://a",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/17",
     industry: "tech",
     industryKey: "tech",
     sponsorship: true,
@@ -454,6 +471,7 @@ test("queryMatchingJobs: hard-filters out sponsorship=true when user wants none"
     salaryMax: null,
     locationRaw: "NYC",
     primaryUrl: "https://b",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/18",
     industry: "tech",
     industryKey: "tech",
     sponsorship: false,
@@ -476,6 +494,7 @@ test("queryMatchingJobs: ignores industry filter when industry == any", async ()
     salaryMax: null,
     locationRaw: "NYC",
     primaryUrl: "https://a",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/19",
     industry: "fintech",
     industryKey: "fintech",
     sponsorship: null,
@@ -528,6 +547,7 @@ test("queryMatchingJobs: industryTags filter uses industryKey 'in' path and matc
     salaryMax: 200000,
     locationRaw: "Baltimore, MD",
     primaryUrl: "https://a",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/20",
     industry: "ai_ml",
     industryKey: "ai_ml", // hits ai_ml expansion
     sponsorship: false,
@@ -541,6 +561,7 @@ test("queryMatchingJobs: industryTags filter uses industryKey 'in' path and matc
     salaryMax: 180000,
     locationRaw: "Remote",
     primaryUrl: "https://b",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/21",
     industry: "tech",
     industryKey: "tech", // hits tech_software expansion
     sponsorship: false,
@@ -554,6 +575,7 @@ test("queryMatchingJobs: industryTags filter uses industryKey 'in' path and matc
     salaryMax: 120000,
     locationRaw: "Anywhere",
     primaryUrl: "https://c",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/22",
     industry: "marketing",
     industryKey: "marketing", // NOT in tech_software/ai_ml expansion
     sponsorship: false,
@@ -601,6 +623,7 @@ test("queryMatchingJobs: flag=false (default) keeps the H6 industryKey-in path",
     salaryMax: 180000,
     locationRaw: "NYC",
     primaryUrl: "https://t",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/23",
     industry: "tech",
     industryKey: "tech",  // H6 expansion path matches "tech"
     industryEnum: ["tech_software"], // H8 path would ALSO match this
@@ -635,6 +658,7 @@ test("queryMatchingJobs: flag=true uses industryEnum array-contains-any path", a
     salaryMax: 220000,
     locationRaw: "Remote",
     primaryUrl: "https://h8",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/24",
     industry: "fintech",
     industryKey: "engineering", // job-function, NOT in tech_software H6 expansion
     industryEnum: ["fintech_finance"], // H8 enrichment value
@@ -650,6 +674,7 @@ test("queryMatchingJobs: flag=true uses industryEnum array-contains-any path", a
     salaryMax: 120000,
     locationRaw: "NYC",
     primaryUrl: "https://nope",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/25",
     industry: "marketing",
     industryKey: "marketing",
     industryEnum: ["other"],
@@ -688,6 +713,7 @@ test("queryMatchingJobs: flag=true with empty industryTags falls through (no ind
     roleTitle: "SWE",
     locationRaw: "NYC",
     primaryUrl: "https://x",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/26",
     industry: "any",
     industryKey: "tech",
     sponsorship: false,
@@ -715,6 +741,7 @@ test("scoreJob H7: Baltimore preference + DC-area job → ladder fallback (0.6) 
     salaryMin: null,
     locationRaw: "Washington, DC",
     primaryUrl: "u",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/27",
     industry: "tech",
     sponsorship: null,
   }
@@ -736,6 +763,7 @@ test("scoreJob H7: Baltimore preference + Remote job → ladder gives 0.7 (remot
     salaryMin: null,
     locationRaw: "Remote",
     primaryUrl: "u",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/28",
     industry: "tech",
     sponsorship: null,
   }
@@ -755,6 +783,7 @@ test("scoreJob H7: primary substring match still wins over ladder neighbor", () 
     salaryMin: null,
     locationRaw: "Baltimore, MD",
     primaryUrl: "u",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/29",
     industry: "tech",
     sponsorship: null,
   }
@@ -775,6 +804,7 @@ test("scoreJob H7: city-without-ladder-entry still falls to 0.2 floor (no-op for
     salaryMin: null,
     locationRaw: "Detroit, MI",
     primaryUrl: "u",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/30",
     industry: "tech",
     sponsorship: null,
   }
@@ -797,6 +827,7 @@ test("scoreJob H7: ladder fallback handles whitespace/case variants in primary p
     salaryMin: null,
     locationRaw: "Washington, DC",
     primaryUrl: "u",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/31",
     industry: "tech",
     sponsorship: null,
   }
@@ -913,6 +944,7 @@ function makeJob(overrides: Partial<MatchingJob> & { id: string }): MatchingJob 
     salaryMin: overrides.salaryMin ?? null,
     locationRaw: overrides.locationRaw ?? "Remote",
     primaryUrl: overrides.primaryUrl ?? "https://x",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/32",
     industry: overrides.industry ?? "tech",
     industryKey: overrides.industryKey,
     sponsorship: overrides.sponsorship ?? null,
@@ -1366,6 +1398,7 @@ test("queryMatchingJobs B.13: tech user + Warehouse doc with industryEnum=tech_s
     roleTitle: "Warehouse Team Lead",
     locationRaw: "Houston, TX",
     primaryUrl: "https://wh",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/33",
     industry: "tech",
     industryKey: "tech",
     industryEnum: ["tech_software"],
@@ -1378,6 +1411,7 @@ test("queryMatchingJobs B.13: tech user + Warehouse doc with industryEnum=tech_s
     roleTitle: "Software Engineer",
     locationRaw: "Remote",
     primaryUrl: "https://swe",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/34",
     industry: "fintech",
     industryKey: "fintech",
     industryEnum: ["fintech_finance"],
@@ -1530,6 +1564,7 @@ test("queryMatchingJobs B.12: tech user + industryEnum=customer_service doc → 
     roleTitle: "Customer Support Specialist",
     locationRaw: "Remote",
     primaryUrl: "https://cs",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/35",
     industry: "tech",
     industryKey: "tech", // ← legacy claims tech (wrong)
     industryEnum: ["customer_service"], // ← canonical bucket (correct)
@@ -1543,6 +1578,7 @@ test("queryMatchingJobs B.12: tech user + industryEnum=customer_service doc → 
     roleTitle: "Software Engineer",
     locationRaw: "Remote",
     primaryUrl: "https://swe",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/36",
     industry: "fintech",
     industryKey: "fintech",
     industryEnum: ["fintech_finance"],
@@ -1588,6 +1624,7 @@ test("queryMatchingJobs: TD-#10 — non-tech user + management job → KEPT (no 
     roleTitle: "Practice Manager",
     locationRaw: "Boston, MA",
     primaryUrl: "https://pm",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/37",
     industry: "management",
     industryKey: "management",
     industryEnum: ["healthcare_biotech"],
@@ -1600,6 +1637,7 @@ test("queryMatchingJobs: TD-#10 — non-tech user + management job → KEPT (no 
     roleTitle: "Care Coordinator",
     locationRaw: "Boston, MA",
     primaryUrl: "https://nu",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/38",
     industry: "healthtech",
     industryKey: "healthtech",
     industryEnum: ["healthcare_biotech"],
@@ -1702,6 +1740,7 @@ test("queryMatchingJobs A.3: targetRoleIndustryEnum=[tech_software] drops custom
     roleTitle: "Senior SWE",
     locationRaw: "Remote",
     primaryUrl: "https://swe",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/39",
     industry: "tech",
     industryKey: "tech",
     industryEnum: ["tech_software"],
@@ -1714,6 +1753,7 @@ test("queryMatchingJobs A.3: targetRoleIndustryEnum=[tech_software] drops custom
     roleTitle: "Customer Support Lead",
     locationRaw: "Remote",
     primaryUrl: "https://cs",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/40",
     industry: "tech",
     industryKey: "tech", // NOT in NEVER_KEYS so survives the never-list
     industryEnum: ["customer_service"],
@@ -1760,6 +1800,7 @@ test("queryMatchingJobs A.3: targetRoleIndustryEnum undefined (founder/other) �
     roleTitle: "Care Coordinator",
     locationRaw: "Remote",
     primaryUrl: "https://swe",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/41",
     industry: "healthtech",
     industryKey: "healthtech",
     industryEnum: ["healthcare_biotech"],
@@ -1772,6 +1813,7 @@ test("queryMatchingJobs A.3: targetRoleIndustryEnum undefined (founder/other) �
     roleTitle: "Patient Support Lead",
     locationRaw: "Remote",
     primaryUrl: "https://cs",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/42",
     industry: "healthtech",
     industryKey: "healthtech",
     industryEnum: ["customer_service"],
@@ -1793,4 +1835,67 @@ test("queryMatchingJobs A.3: targetRoleIndustryEnum undefined (founder/other) �
   assert.ok(ids.includes("swe"), "no role filter: swe survives")
   assert.ok(ids.includes("cs"), "no role filter: cs survives (backward compat)")
   _clearFeatureFlagCache()
+})
+
+// ---------------------------------------------------------------------------
+// iter34 followup D.5 — atsApplyUrl hard gate
+// ---------------------------------------------------------------------------
+
+import { applyAtsApplyUrlGate } from "../../tools/query-matching-jobs.js"
+
+test("applyAtsApplyUrlGate D.5: doc with atsApplyUrl undefined → dropped", () => {
+  // explicit undefined to satisfy generic constraint
+  const jobs: { id: string; atsApplyUrl?: string }[] = [{ id: "no-ats" }]
+  const r = applyAtsApplyUrlGate(jobs)
+  assert.equal(r.kept.length, 0)
+  assert.equal(r.rejected, 1)
+})
+
+test("applyAtsApplyUrlGate D.5: doc with atsApplyUrl empty string → dropped", () => {
+  const jobs = [{ id: "empty", atsApplyUrl: "" }]
+  const r = applyAtsApplyUrlGate(jobs)
+  assert.equal(r.kept.length, 0)
+  assert.equal(r.rejected, 1)
+})
+
+test("applyAtsApplyUrlGate D.5: doc with atsApplyUrl pointing to jobright.ai → dropped (mirror leak)", () => {
+  const jobs = [{ id: "jr", atsApplyUrl: "https://jobright.ai/jobs/info/abc" }]
+  const r = applyAtsApplyUrlGate(jobs)
+  assert.equal(r.kept.length, 0)
+  assert.equal(r.rejected, 1)
+})
+
+test("applyAtsApplyUrlGate D.5: doc with greenhouse atsApplyUrl → kept", () => {
+  const jobs = [{ id: "gh", atsApplyUrl: "https://boards.greenhouse.io/acme/jobs/123" }]
+  const r = applyAtsApplyUrlGate(jobs)
+  assert.equal(r.kept.length, 1)
+  assert.equal(r.kept[0]?.id, "gh")
+  assert.equal(r.rejected, 0)
+})
+
+test("applyAtsApplyUrlGate D.5: doc with workday atsApplyUrl → kept", () => {
+  const jobs = [
+    { id: "wd", atsApplyUrl: "https://salesforce.wd12.myworkdayjobs.com/External_Career_Site/job/abc" },
+  ]
+  const r = applyAtsApplyUrlGate(jobs)
+  assert.equal(r.kept.length, 1)
+  assert.equal(r.kept[0]?.id, "wd")
+  assert.equal(r.rejected, 0)
+})
+
+test("applyAtsApplyUrlGate D.5: mixed pool — keeps real ATS, drops missing/jobright", () => {
+  const jobs: { id: string; atsApplyUrl?: string }[] = [
+    { id: "gh", atsApplyUrl: "https://boards.greenhouse.io/acme/jobs/1" },
+    { id: "missing" },
+    { id: "lever", atsApplyUrl: "https://jobs.lever.co/acme/abc" },
+    { id: "jr-leak", atsApplyUrl: "https://JOBRIGHT.AI/jobs/info/xyz" }, // case-insensitive
+    { id: "ashby", atsApplyUrl: "https://jobs.ashbyhq.com/acme/abc" },
+  ]
+  const r = applyAtsApplyUrlGate(jobs)
+  assert.equal(r.kept.length, 3)
+  assert.deepEqual(
+    r.kept.map((j) => j.id),
+    ["gh", "lever", "ashby"]
+  )
+  assert.equal(r.rejected, 2)
 })
