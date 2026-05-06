@@ -443,6 +443,79 @@ export function pickLang(
 }
 
 // ────────────────────────────────────────────────────────────────────
+// iter34 sprint A.7 — Interim "I'm reading your CV" ack.
+//
+// When the user sends a resume mid-onboarding, the CV-parser worker
+// takes 1-2 minutes to return parsedCandidateResumes row. Without an
+// interim ack the user stares at silence and assumes Claire ghosted.
+//
+// Adam directive iter34 A.7: send a SHORT, human, non-robot ack right
+// after resume upload — "OK 让我看一下你简历, 等我一下下" style. NOT
+// "tomorrow ~9am" (that's the agent-runtime morning-job-rec phrasing,
+// totally wrong for resume ack). NOT "processing your resume,
+// please wait..." (robot tone). Friend-tone, ≤60 zh chars / ≤80 en.
+//
+// Variant pool with deterministic round-robin via Math.random pick —
+// Claire shouldn't repeat the same line every time.
+// ────────────────────────────────────────────────────────────────────
+
+const INTERIM_RESUME_ACK_VARIANTS: { zh: string[]; en: string[]; mixed: string[] } = {
+  zh: [
+    "OK 让我看一下你简历, 等我一下下",
+    "稍等啊我快速过一下",
+    "嗯 我读一下, 一两分钟的事",
+    "好的 我先看看, 完了就给你推",
+    "收到, 我扫一眼简历",
+    "嗯嗯 给我一两分钟看下",
+  ],
+  en: [
+    "ok lemme take a quick look at your resume, brb",
+    "give me a sec to skim through",
+    "hold on, reading now — a min or two",
+    "alright lemme look at this real quick",
+    "got it, scanning your resume now",
+    "ok one sec, reading through",
+  ],
+  mixed: [
+    "OK 让我 quick look 一下你简历 — 一两分钟",
+    "稍等 lemme skim through",
+    "好的 reading now, 完了推几个 jobs 给你",
+    "嗯 give me a sec — 看完就来",
+    "收到 scanning 一下, 一两分钟",
+    "ok 让我 skim 一下简历, brb",
+  ],
+}
+
+/**
+ * Return a short, human, friend-tone interim ack to send right after
+ * the user uploads their resume. Tells them Claire is reading; sets
+ * expectation that a real reply is ~1-2 min away.
+ *
+ * Variant choice is randomized so Claire isn't a parrot — but the
+ * variant pool is curated (no robot phrasing, no "tomorrow ~9am",
+ * no emojis). Length ≤60 chars (zh/mixed) / ≤80 chars (en).
+ *
+ * iter 6 worker calls this from the resume-received branch of the
+ * onboarding dispatcher; iter 8 worker handles the *post*-CV summary
+ * (separate concern, separate file).
+ *
+ * @param lang — user's preferred lang. "mixed" returns a code-switch
+ *   line containing both Chinese and English tokens.
+ * @param rng — optional RNG injection point for tests
+ *   (defaults to Math.random).
+ */
+export function composeInterimResumeAck(
+  lang: "zh" | "en" | "mixed",
+  rng: () => number = Math.random,
+): string {
+  const pool = INTERIM_RESUME_ACK_VARIANTS[lang]
+  const i = Math.floor(rng() * pool.length)
+  // Defensive: guard against pathological rng values (rng() === 1 →
+  // i === pool.length → undefined).
+  return pool[i] ?? pool[0]!
+}
+
+// ────────────────────────────────────────────────────────────────────
 // Firestore override loader. Cache TTL=30s — operator dashboard edits
 // take effect within 30s of save.
 // ────────────────────────────────────────────────────────────────────
