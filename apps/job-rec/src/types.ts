@@ -149,6 +149,19 @@ export const MatchingJobSchema = z.object({
    */
   industryEnum: z.array(z.string()).optional(),
   /**
+   * iter34 followup D.9 — Recency signal used by the recency hard filter.
+   * Source: `lastSeenAt` on Firestore `matching-jobs` docs. May be either
+   * an ISO 8601 string OR a Firestore Timestamp object (with `.toDate()`).
+   * `firstSeenAt` is the batch-ingest timestamp (clusters at 30-50d) and
+   * is NOT a freshness signal — `lastSeenAt` is the right field.
+   *
+   * Optional because legacy / unenriched rows may lack it. The recency
+   * filter (`applyRecencyFilter`) treats absent / unparseable as "drop"
+   * (no signal = conservative drop) so this opt-in shape doesn't
+   * accidentally retain stale rows.
+   */
+  lastSeenAt: z.union([z.string(), z.any()]).optional(),
+  /**
    * iter34 sprint B.11 — score components attached by `rankJobs` so callers
    * can render a "为啥推" reason line (see `formatJobMatchReason`). Not
    * persisted to Firestore; only present on jobs returned through the

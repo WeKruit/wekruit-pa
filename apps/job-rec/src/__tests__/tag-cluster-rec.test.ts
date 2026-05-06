@@ -104,24 +104,28 @@ test("rebuildClusters: buckets active jobs by (industryEnum, sponsorshipBucket) 
     industryKey: "tech_software",
     sponsorship: true,
     firstSeenAt: "2026-05-01",
+    lastSeenAt: "2026-05-01",
   })
   await mfs.collection("matching-jobs").doc("j2").set({
     status: "active",
     industryKey: "tech_software",
     sponsorship: true,
     firstSeenAt: "2026-04-30",
+    lastSeenAt: "2026-04-30",
   })
   await mfs.collection("matching-jobs").doc("j3").set({
     status: "active",
     industryKey: "tech_software",
     sponsorship: false,
     firstSeenAt: "2026-04-29",
+    lastSeenAt: "2026-04-29",
   })
   await mfs.collection("matching-jobs").doc("j4").set({
     status: "active",
     industryKey: "fintech_finance",
     // sponsorship omitted → null/unknown bucket
     firstSeenAt: "2026-04-28",
+    lastSeenAt: "2026-04-28",
   })
 
   const out = await rebuildClusters({
@@ -163,6 +167,7 @@ test("rebuildClusters: idempotent by runId — re-run with same runId skips writ
     industryKey: "tech_software",
     sponsorship: true,
     firstSeenAt: "2026-05-01",
+    lastSeenAt: "2026-05-01",
   })
 
   const first = await rebuildClusters({
@@ -236,6 +241,7 @@ test("fetchTopKFromCluster: scores cosine when embeddings present, jaccard other
     requiredSkills: ["python", "ts"],
     sponsorship: true,
     firstSeenAt: "2026-05-01",
+    lastSeenAt: "2026-05-01",
     embedding: [1, 0, 0],
     companyName: "Acme",
     roleTitle: "SWE",
@@ -250,6 +256,7 @@ test("fetchTopKFromCluster: scores cosine when embeddings present, jaccard other
     requiredSkills: ["sql"],
     sponsorship: true,
     firstSeenAt: "2026-04-30",
+    lastSeenAt: "2026-04-30",
     embedding: [0, 1, 0],
     companyName: "Beta",
     roleTitle: "DBA",
@@ -314,6 +321,7 @@ test("fetchTopKFromCluster: user(sponsorship='h1b') hits the sponsor cluster", a
     industryKey: "tech_software",
     sponsorship: true,
     firstSeenAt: "2026-05-01",
+    lastSeenAt: "2026-05-01",
     companyName: "Acme",
     roleTitle: "SWE",
     locationRaw: "SF",
@@ -373,6 +381,7 @@ test("fetchTopKFromCluster: user(sponsorship='none') hits the no-sponsor cluster
     industryKey: "tech_software",
     sponsorship: true,
     firstSeenAt: "2026-05-01",
+    lastSeenAt: "2026-05-01",
     companyName: "VisaCorp",
     roleTitle: "SWE",
     locationRaw: "SF",
@@ -384,6 +393,7 @@ test("fetchTopKFromCluster: user(sponsorship='none') hits the no-sponsor cluster
     industryKey: "tech_software",
     sponsorship: false,
     firstSeenAt: "2026-04-30",
+    lastSeenAt: "2026-04-30",
     companyName: "USOnly",
     roleTitle: "SWE",
     locationRaw: "SF",

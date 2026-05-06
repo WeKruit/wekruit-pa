@@ -170,6 +170,7 @@ test("runDailyJobRecBatch: delivers when flag ON + jobs available + writes lastJ
     industry: "tech",
     sponsorship: false,
     firstSeenAt: "2026-04-30",
+    lastSeenAt: "2026-04-30",
   })
   const out = await runDailyJobRecBatch({
     db: asFirestore(mfs),
@@ -232,6 +233,7 @@ test("runDailyJobRecBatch: idempotency key includes YYYYMMDD", async () => {
     industry: "tech",
     sponsorship: false,
     firstSeenAt: "2026-04-30",
+    lastSeenAt: "2026-04-30",
   })
   await runDailyJobRecBatch({
     db: asFirestore(mfs),
@@ -350,6 +352,7 @@ test("Stream F5: runDailyJobRecBatch handles new-shape profile end-to-end (deliv
     industry: "fintech",
     sponsorship: true,
     firstSeenAt: "2026-04-30",
+    lastSeenAt: "2026-04-30",
   })
   const out = await runDailyJobRecBatch({
     db: asFirestore(mfs),
@@ -447,6 +450,7 @@ test("Stream F5: runDailyJobRecBatch with rerank deps applies cosine + still del
     industry: "tech",
     sponsorship: false,
     firstSeenAt: "2026-04-30",
+    lastSeenAt: "2026-04-30",
     embedding: [1, 0, 0],
   })
   await mfs.collection("matching-jobs").doc("j_low").set({
@@ -461,6 +465,7 @@ test("Stream F5: runDailyJobRecBatch with rerank deps applies cosine + still del
     industry: "tech",
     sponsorship: false,
     firstSeenAt: "2026-04-30",
+    lastSeenAt: "2026-04-30",
     embedding: [0, 1, 0], // orthogonal to user
   })
   const out = await runDailyJobRecBatch({
@@ -515,6 +520,7 @@ test("Stream H10: cross-encoder reranker reorders cosine-ranked jobs by relevanc
     industry: "tech",
     sponsorship: false,
     firstSeenAt: "2026-04-30",
+    lastSeenAt: "2026-04-30",
     embedding: [1, 0, 0],
     requiredSkills: ["Python"],
   })
@@ -531,6 +537,7 @@ test("Stream H10: cross-encoder reranker reorders cosine-ranked jobs by relevanc
     industry: "tech",
     sponsorship: false,
     firstSeenAt: "2026-04-30",
+    lastSeenAt: "2026-04-30",
     embedding: [1, 0, 0], // identical cosine to j_qc
     requiredSkills: ["Python", "PyTorch"],
   })
@@ -596,6 +603,7 @@ test("Stream H10: cross-encoder fail-open (all-null scores) preserves cosine ord
     industry: "tech",
     sponsorship: false,
     firstSeenAt: "2026-04-30",
+    lastSeenAt: "2026-04-30",
     embedding: [1, 0, 0],
   })
   await mfs.collection("matching-jobs").doc("j_bot").set({
@@ -611,6 +619,7 @@ test("Stream H10: cross-encoder fail-open (all-null scores) preserves cosine ord
     industry: "tech",
     sponsorship: false,
     firstSeenAt: "2026-04-30",
+    lastSeenAt: "2026-04-30",
     embedding: [0, 1, 0], // orthogonal — sinks via cosine
   })
 
@@ -655,24 +664,28 @@ test("Stream H12: dedupe by (jobTitle|companyName) drops near-identical JDs", as
     roleTitle: "Tax Consultant", salaryMax: 120000, locationRaw: "Princeton, NJ",
     primaryUrl: "https://j/1", atsApplyUrl: "https://greenhouse.io/co/jobs/h12-1",
     industry: "tech", sponsorship: false, firstSeenAt: "2026-04-30",
+ lastSeenAt: "2026-04-30",
   })
   await mfs.collection("matching-jobs").doc("j2").set({
     status: "active", industryKey: "tech", companyName: "Mastercard",
     roleTitle: "Tax Consultant", salaryMax: 120000, locationRaw: "Richmond, VA",
     primaryUrl: "https://j/2", atsApplyUrl: "https://greenhouse.io/co/jobs/h12-2",
     industry: "tech", sponsorship: false, firstSeenAt: "2026-04-29",
+ lastSeenAt: "2026-04-29",
   })
   await mfs.collection("matching-jobs").doc("j3").set({
     status: "active", industryKey: "tech", companyName: "Stripe",
     roleTitle: "Software Engineer", salaryMax: 200000, locationRaw: "Remote",
     primaryUrl: "https://j/3", atsApplyUrl: "https://greenhouse.io/co/jobs/h12-3",
     industry: "tech", sponsorship: false, firstSeenAt: "2026-04-28",
+ lastSeenAt: "2026-04-28",
   })
   await mfs.collection("matching-jobs").doc("j4").set({
     status: "active", industryKey: "tech", companyName: "Stripe",
     roleTitle: "Software Engineer", salaryMax: 200000, locationRaw: "San Francisco, CA",
     primaryUrl: "https://j/4", atsApplyUrl: "https://greenhouse.io/co/jobs/h12-4",
     industry: "tech", sponsorship: false, firstSeenAt: "2026-04-27",
+ lastSeenAt: "2026-04-27",
   })
   const out = await runDailyJobRecBatch({
     db: asFirestore(mfs),
@@ -957,6 +970,7 @@ test("H13 runDailyJobRecBatch wires friend-tone variant B end-to-end (default fl
     industry: "tech",
     sponsorship: false,
     firstSeenAt: "2026-04-30",
+    lastSeenAt: "2026-04-30",
     requiredSkills: ["Python"],
   })
   const out = await runDailyJobRecBatch({
@@ -1022,6 +1036,7 @@ test("Phase 42 regression: explainer flag OFF → body bytewise matches H13 (no 
     industry: "tech",
     sponsorship: false,
     firstSeenAt: "2026-04-30",
+    lastSeenAt: "2026-04-30",
     requiredSkills: ["Python"],
   })
 
@@ -1093,6 +1108,7 @@ test("Phase 42: explainer flag ON → LLM reason injected into body + cached", a
     industry: "fintech",
     sponsorship: false,
     firstSeenAt: "2026-04-30",
+    lastSeenAt: "2026-04-30",
     requiredSkills: ["payments"],
   })
 
@@ -1179,6 +1195,7 @@ test("Phase 42: explainer flag ON + LLM throws → fail-open keeps H13 heuristic
     industry: "tech",
     sponsorship: false,
     firstSeenAt: "2026-04-30",
+    lastSeenAt: "2026-04-30",
     requiredSkills: ["Python"],
   })
 

@@ -290,6 +290,7 @@ test("queryMatchingJobs B.10: cvEmbedding plumbed through to scoreJob via filter
     sponsorship: true,
     requiredSkills: ["python"],
     firstSeenAt: "2026-04-30",
+    lastSeenAt: "2026-04-30",
   })
   const out = await queryMatchingJobs(
     {
@@ -349,6 +350,7 @@ test("rankJobs: ties broken by newer firstSeenAt", () => {
     industry: "tech",
     sponsorship: null,
     firstSeenAt: "2026-01-01",
+    lastSeenAt: "2026-01-01",
   }
   const newer: MatchingJob = { ...older, id: "newer", firstSeenAt: "2026-04-01" }
   const ranked = rankJobs([older, newer], {}, 2)
@@ -438,6 +440,7 @@ test("queryMatchingJobs: returns top-N from active corpus", async () => {
       sponsorship: false,
       requiredSkills: ["python"],
       firstSeenAt: `2026-04-${String(28 - i).padStart(2, "0")}`,
+      lastSeenAt: `2026-04-${String(28 - i).padStart(2, "0")}`,
     })
   }
   const out = await queryMatchingJobs(
@@ -463,6 +466,7 @@ test("queryMatchingJobs: hard-filters out sponsorship=true when user wants none"
     industryKey: "tech",
     sponsorship: true,
     firstSeenAt: "2026-04-30",
+    lastSeenAt: "2026-04-30",
   })
   await mfs.collection("matching-jobs").doc("b").set({
     status: "active",
@@ -476,6 +480,7 @@ test("queryMatchingJobs: hard-filters out sponsorship=true when user wants none"
     industryKey: "tech",
     sponsorship: false,
     firstSeenAt: "2026-04-29",
+    lastSeenAt: "2026-04-29",
   })
   const out = await queryMatchingJobs(
     { filters: { industry: "tech", sponsorship: "none" }, limit: 5 },
@@ -499,6 +504,7 @@ test("queryMatchingJobs: ignores industry filter when industry == any", async ()
     industryKey: "fintech",
     sponsorship: null,
     firstSeenAt: "2026-04-30",
+    lastSeenAt: "2026-04-30",
   })
   const out = await queryMatchingJobs(
     { filters: { industry: "any" }, limit: 5 },
@@ -553,6 +559,7 @@ test("queryMatchingJobs: industryTags filter uses industryKey 'in' path and matc
     sponsorship: false,
     requiredSkills: ["python", "ml"],
     firstSeenAt: "2026-04-30",
+    lastSeenAt: "2026-04-30",
   })
   await mfs.collection("matching-jobs").doc("b").set({
     status: "active",
@@ -567,6 +574,7 @@ test("queryMatchingJobs: industryTags filter uses industryKey 'in' path and matc
     sponsorship: false,
     requiredSkills: ["python"],
     firstSeenAt: "2026-04-29",
+    lastSeenAt: "2026-04-29",
   })
   await mfs.collection("matching-jobs").doc("c").set({
     status: "active",
@@ -580,6 +588,7 @@ test("queryMatchingJobs: industryTags filter uses industryKey 'in' path and matc
     industryKey: "marketing", // NOT in tech_software/ai_ml expansion
     sponsorship: false,
     firstSeenAt: "2026-04-28",
+    lastSeenAt: "2026-04-28",
   })
   const out = await queryMatchingJobs(
     {
@@ -630,6 +639,7 @@ test("queryMatchingJobs: flag=false (default) keeps the H6 industryKey-in path",
     sponsorship: false,
     requiredSkills: ["python"],
     firstSeenAt: "2026-04-30",
+    lastSeenAt: "2026-04-30",
   })
   const out = await queryMatchingJobs(
     { filters: { industryTags: ["tech_software"], userSkills: ["python"] }, limit: 5 },
@@ -665,6 +675,7 @@ test("queryMatchingJobs: flag=true uses industryEnum array-contains-any path", a
     sponsorship: false,
     requiredSkills: ["python"],
     firstSeenAt: "2026-04-30",
+    lastSeenAt: "2026-04-30",
   })
   // Row that should NOT match — industryEnum=other.
   await mfs.collection("matching-jobs").doc("nope").set({
@@ -680,6 +691,7 @@ test("queryMatchingJobs: flag=true uses industryEnum array-contains-any path", a
     industryEnum: ["other"],
     sponsorship: false,
     firstSeenAt: "2026-04-29",
+    lastSeenAt: "2026-04-29",
   })
   const out = await queryMatchingJobs(
     {
@@ -718,6 +730,7 @@ test("queryMatchingJobs: flag=true with empty industryTags falls through (no ind
     industryKey: "tech",
     sponsorship: false,
     firstSeenAt: "2026-04-30",
+    lastSeenAt: "2026-04-30",
   })
   const out = await queryMatchingJobs(
     { filters: { industry: "any" }, limit: 5 },
@@ -1404,6 +1417,7 @@ test("queryMatchingJobs B.13: tech user + Warehouse doc with industryEnum=tech_s
     industryEnum: ["tech_software"],
     sponsorship: false,
     firstSeenAt: "2026-04-30",
+    lastSeenAt: "2026-04-30",
   })
   await mfs.collection("matching-jobs").doc("swe").set({
     status: "active",
@@ -1418,6 +1432,7 @@ test("queryMatchingJobs B.13: tech user + Warehouse doc with industryEnum=tech_s
     sponsorship: false,
     requiredSkills: ["python"],
     firstSeenAt: "2026-04-29",
+    lastSeenAt: "2026-04-29",
   })
   const out = await queryMatchingJobs(
     {
@@ -1570,6 +1585,7 @@ test("queryMatchingJobs B.12: tech user + industryEnum=customer_service doc → 
     industryEnum: ["customer_service"], // ← canonical bucket (correct)
     sponsorship: false,
     firstSeenAt: "2026-04-30",
+    lastSeenAt: "2026-04-30",
   })
   // Properly labeled tech doc.
   await mfs.collection("matching-jobs").doc("swe").set({
@@ -1585,6 +1601,7 @@ test("queryMatchingJobs B.12: tech user + industryEnum=customer_service doc → 
     sponsorship: false,
     requiredSkills: ["python"],
     firstSeenAt: "2026-04-29",
+    lastSeenAt: "2026-04-29",
   })
   const out = await queryMatchingJobs(
     {
@@ -1630,6 +1647,7 @@ test("queryMatchingJobs: TD-#10 — non-tech user + management job → KEPT (no 
     industryEnum: ["healthcare_biotech"],
     sponsorship: false,
     firstSeenAt: "2026-04-30",
+    lastSeenAt: "2026-04-30",
   })
   await mfs.collection("matching-jobs").doc("nurse").set({
     status: "active",
@@ -1643,6 +1661,7 @@ test("queryMatchingJobs: TD-#10 — non-tech user + management job → KEPT (no 
     industryEnum: ["healthcare_biotech"],
     sponsorship: false,
     firstSeenAt: "2026-04-29",
+    lastSeenAt: "2026-04-29",
   })
   const out = await queryMatchingJobs(
     {
@@ -1746,6 +1765,7 @@ test("queryMatchingJobs A.3: targetRoleIndustryEnum=[tech_software] drops custom
     industryEnum: ["tech_software"],
     sponsorship: true,
     firstSeenAt: "2026-04-30",
+    lastSeenAt: "2026-04-30",
   })
   await mfs.collection("matching-jobs").doc("cs").set({
     status: "active",
@@ -1759,6 +1779,7 @@ test("queryMatchingJobs A.3: targetRoleIndustryEnum=[tech_software] drops custom
     industryEnum: ["customer_service"],
     sponsorship: true,
     firstSeenAt: "2026-04-29",
+    lastSeenAt: "2026-04-29",
   })
   const out = await queryMatchingJobs(
     {
@@ -1806,6 +1827,7 @@ test("queryMatchingJobs A.3: targetRoleIndustryEnum undefined (founder/other) �
     industryEnum: ["healthcare_biotech"],
     sponsorship: true,
     firstSeenAt: "2026-04-30",
+    lastSeenAt: "2026-04-30",
   })
   await mfs.collection("matching-jobs").doc("cs").set({
     status: "active",
@@ -1819,6 +1841,7 @@ test("queryMatchingJobs A.3: targetRoleIndustryEnum undefined (founder/other) �
     industryEnum: ["customer_service"],
     sponsorship: true,
     firstSeenAt: "2026-04-29",
+    lastSeenAt: "2026-04-29",
   })
   const out = await queryMatchingJobs(
     {
@@ -1979,3 +2002,244 @@ test("applyAtsApplyUrlGate D.5: mixed pool — keeps real ATS, drops missing/job
   )
   assert.equal(r.rejected, 2)
 })
+
+// ---------------------------------------------------------------------------
+// iter34 followup D.9 — recency hard filter (lastSeenAt < 7d, fallback 30d)
+// ---------------------------------------------------------------------------
+
+import {
+  getJobLastSeenMs,
+  applyRecencyFilter,
+  applyRecencyFilterWithFallback,
+} from "../../tools/query-matching-jobs.js"
+
+const D9_NOW_MS = Date.parse("2026-05-05T00:00:00Z") // pinned "today"
+
+test("getJobLastSeenMs D.9: ISO string parses to ms", () => {
+  const ms = getJobLastSeenMs({ lastSeenAt: "2026-05-01T00:00:00Z" })
+  assert.equal(ms, Date.parse("2026-05-01T00:00:00Z"))
+})
+
+test("getJobLastSeenMs D.9: undefined → null", () => {
+  assert.equal(getJobLastSeenMs({}), null)
+})
+
+test("getJobLastSeenMs D.9: malformed string → null", () => {
+  assert.equal(getJobLastSeenMs({ lastSeenAt: "not-a-date" }), null)
+})
+
+test("getJobLastSeenMs D.9: Firestore Timestamp object via toDate()", () => {
+  const date = new Date("2026-05-01T12:00:00Z")
+  const ts = { toDate: () => date }
+  assert.equal(getJobLastSeenMs({ lastSeenAt: ts }), date.getTime())
+})
+
+test("getJobLastSeenMs D.9: Firestore {seconds, nanoseconds} shape", () => {
+  const seconds = Math.floor(Date.parse("2026-05-01T12:00:00Z") / 1000)
+  const ts = { seconds, nanoseconds: 0 }
+  assert.equal(getJobLastSeenMs({ lastSeenAt: ts }), seconds * 1000)
+})
+
+test("applyRecencyFilter D.9: doc lastSeenAt 1d ago → keep", () => {
+  const oneDayAgo = new Date(D9_NOW_MS - 1 * 24 * 60 * 60 * 1000).toISOString()
+  const jobs = [{ id: "fresh", lastSeenAt: oneDayAgo }]
+  const kept = applyRecencyFilter(jobs, { nowMs: D9_NOW_MS })
+  assert.equal(kept.length, 1)
+  assert.equal(kept[0]?.id, "fresh")
+})
+
+test("applyRecencyFilter D.9: doc lastSeenAt 6d ago → keep (within 7d)", () => {
+  const sixDaysAgo = new Date(D9_NOW_MS - 6 * 24 * 60 * 60 * 1000).toISOString()
+  const jobs = [{ id: "edge", lastSeenAt: sixDaysAgo }]
+  const kept = applyRecencyFilter(jobs, { nowMs: D9_NOW_MS })
+  assert.equal(kept.length, 1)
+})
+
+test("applyRecencyFilter D.9: doc lastSeenAt 8d ago → drop (outside 7d)", () => {
+  const eightDaysAgo = new Date(D9_NOW_MS - 8 * 24 * 60 * 60 * 1000).toISOString()
+  const jobs = [{ id: "stale", lastSeenAt: eightDaysAgo }]
+  const kept = applyRecencyFilter(jobs, { nowMs: D9_NOW_MS })
+  assert.equal(kept.length, 0)
+})
+
+test("applyRecencyFilter D.9: doc lastSeenAt undefined → drop", () => {
+  const jobs: { id: string; lastSeenAt?: unknown }[] = [{ id: "no-stamp" }]
+  const kept = applyRecencyFilter(jobs, { nowMs: D9_NOW_MS })
+  assert.equal(kept.length, 0)
+})
+
+test("applyRecencyFilter D.9: doc lastSeenAt malformed → drop", () => {
+  const jobs = [{ id: "bad", lastSeenAt: "not-a-date" }]
+  const kept = applyRecencyFilter(jobs, { nowMs: D9_NOW_MS })
+  assert.equal(kept.length, 0)
+})
+
+test("applyRecencyFilter D.9: future timestamp → drop (defensive)", () => {
+  const tomorrow = new Date(D9_NOW_MS + 24 * 60 * 60 * 1000).toISOString()
+  const jobs = [{ id: "future", lastSeenAt: tomorrow }]
+  const kept = applyRecencyFilter(jobs, { nowMs: D9_NOW_MS })
+  assert.equal(kept.length, 0)
+})
+
+test("applyRecencyFilterWithFallback D.9: 7d window has >=20 → no fallback expansion", () => {
+  // 25 docs all within 7d → primary returns 25, fallback NOT triggered.
+  const jobs: { id: string; lastSeenAt: string }[] = []
+  for (let i = 0; i < 25; i++) {
+    const seenAt = new Date(D9_NOW_MS - i * 60 * 60 * 1000).toISOString() // i hours ago
+    jobs.push({ id: `j${i}`, lastSeenAt: seenAt })
+  }
+  const r = applyRecencyFilterWithFallback(jobs, { nowMs: D9_NOW_MS })
+  assert.equal(r.kept.length, 25)
+  assert.equal(r.fallback, false)
+  assert.equal(r.windowMs, 7 * 24 * 60 * 60 * 1000)
+})
+
+test("applyRecencyFilterWithFallback D.9: 7d window has <20 → fallback to 30d", () => {
+  // 10 docs within 7d, 15 docs at 25d ago. Primary returns 10 (< 20)
+  // → fallback expands to 30d window → returns all 25.
+  const jobs: { id: string; lastSeenAt: string }[] = []
+  for (let i = 0; i < 10; i++) {
+    const seenAt = new Date(D9_NOW_MS - i * 60 * 60 * 1000).toISOString()
+    jobs.push({ id: `fresh-${i}`, lastSeenAt: seenAt })
+  }
+  for (let i = 0; i < 15; i++) {
+    const seenAt = new Date(D9_NOW_MS - 25 * 24 * 60 * 60 * 1000 - i * 60 * 60 * 1000).toISOString()
+    jobs.push({ id: `old-${i}`, lastSeenAt: seenAt })
+  }
+  const r = applyRecencyFilterWithFallback(jobs, { nowMs: D9_NOW_MS })
+  assert.equal(r.kept.length, 25)
+  assert.equal(r.fallback, true)
+  assert.equal(r.windowMs, 30 * 24 * 60 * 60 * 1000)
+})
+
+test("applyRecencyFilterWithFallback D.9: docs at 25d ago, only 10 → fallback expands", () => {
+  // 10 docs at 25d ago. Primary returns 0 (< 20) → fallback returns 10.
+  const jobs: { id: string; lastSeenAt: string }[] = []
+  for (let i = 0; i < 10; i++) {
+    const seenAt = new Date(D9_NOW_MS - 25 * 24 * 60 * 60 * 1000 - i * 60 * 60 * 1000).toISOString()
+    jobs.push({ id: `j${i}`, lastSeenAt: seenAt })
+  }
+  const r = applyRecencyFilterWithFallback(jobs, { nowMs: D9_NOW_MS })
+  assert.equal(r.kept.length, 10)
+  assert.equal(r.fallback, true)
+})
+
+test("applyRecencyFilterWithFallback D.9: docs at 35d ago drop even at fallback (>30d)", () => {
+  const jobs: { id: string; lastSeenAt: string }[] = []
+  for (let i = 0; i < 10; i++) {
+    const seenAt = new Date(D9_NOW_MS - 35 * 24 * 60 * 60 * 1000 - i * 60 * 60 * 1000).toISOString()
+    jobs.push({ id: `j${i}`, lastSeenAt: seenAt })
+  }
+  const r = applyRecencyFilterWithFallback(jobs, { nowMs: D9_NOW_MS })
+  assert.equal(r.kept.length, 0)
+  assert.equal(r.fallback, true)
+})
+
+test("applyRecencyFilterWithFallback D.9: empty input → empty output, no fallback flag", () => {
+  const r = applyRecencyFilterWithFallback([], { nowMs: D9_NOW_MS })
+  assert.equal(r.kept.length, 0)
+  assert.equal(r.fallback, false)
+})
+
+test("projectMatchingJobRow D.9: surfaces lastSeenAt string", () => {
+  const out = projectMatchingJobRow("doc-fresh", {
+    companyName: "Co",
+    roleTitle: "SWE",
+    locationRaw: "Remote",
+    primaryUrl: "u",
+    industry: "tech",
+    sponsorship: false,
+    lastSeenAt: "2026-05-04T12:00:00Z",
+  })
+  assert.equal(out.lastSeenAt, "2026-05-04T12:00:00Z")
+})
+
+test("projectMatchingJobRow D.9: lastSeenAt absent → undefined", () => {
+  const out = projectMatchingJobRow("doc-legacy", {
+    companyName: "Co",
+    roleTitle: "SWE",
+    locationRaw: "Remote",
+    primaryUrl: "u",
+    industry: "tech",
+    sponsorship: false,
+  })
+  assert.equal(out.lastSeenAt, undefined)
+})
+
+// ---------------------------------------------------------------------------
+// iter34 followup D.9 — integration through queryMatchingJobs
+// ---------------------------------------------------------------------------
+
+test("queryMatchingJobs D.9: doc with stale lastSeenAt (>7d) but pool < 20 → fallback expands → kept", async () => {
+  // Single doc 10d ago. 7d primary returns 0, fallback to 30d returns 1.
+  const mfs = new MockFirestore()
+  const tenDaysAgoIso = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString()
+  await mfs.collection("matching-jobs").doc("ten-d-ago").set({
+    status: "active",
+    industryKey: "tech",
+    companyName: "Acme",
+    roleTitle: "SWE",
+    locationRaw: "Remote",
+    primaryUrl: "https://x",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/d9-1",
+    industry: "tech",
+    sponsorship: false,
+    requiredSkills: ["python"],
+    firstSeenAt: tenDaysAgoIso,
+    lastSeenAt: tenDaysAgoIso,
+  })
+  const out = await queryMatchingJobs(
+    { filters: { industry: "tech", userSkills: ["python"] }, limit: 5 },
+    { db: asFirestore(mfs) }
+  )
+  // primary 7d returns 0 < 20 → fallback to 30d → 1 doc kept.
+  assert.equal(out.jobs.length, 1)
+})
+
+test("queryMatchingJobs D.9: doc with lastSeenAt 35d ago → dropped even at fallback", async () => {
+  const mfs = new MockFirestore()
+  const oldIso = new Date(Date.now() - 35 * 24 * 60 * 60 * 1000).toISOString()
+  await mfs.collection("matching-jobs").doc("ancient").set({
+    status: "active",
+    industryKey: "tech",
+    companyName: "Acme",
+    roleTitle: "SWE",
+    locationRaw: "Remote",
+    primaryUrl: "https://x",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/d9-2",
+    industry: "tech",
+    sponsorship: false,
+    requiredSkills: ["python"],
+    firstSeenAt: oldIso,
+    lastSeenAt: oldIso,
+  })
+  const out = await queryMatchingJobs(
+    { filters: { industry: "tech", userSkills: ["python"] }, limit: 5 },
+    { db: asFirestore(mfs) }
+  )
+  assert.equal(out.jobs.length, 0)
+})
+
+test("queryMatchingJobs D.9: doc missing lastSeenAt → dropped", async () => {
+  const mfs = new MockFirestore()
+  await mfs.collection("matching-jobs").doc("no-stamp").set({
+    status: "active",
+    industryKey: "tech",
+    companyName: "Acme",
+    roleTitle: "SWE",
+    locationRaw: "Remote",
+    primaryUrl: "https://x",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/d9-3",
+    industry: "tech",
+    sponsorship: false,
+    requiredSkills: ["python"],
+    firstSeenAt: "2026-05-04",
+    // No lastSeenAt.
+  })
+  const out = await queryMatchingJobs(
+    { filters: { industry: "tech", userSkills: ["python"] }, limit: 5 },
+    { db: asFirestore(mfs) }
+  )
+  assert.equal(out.jobs.length, 0)
+})
+

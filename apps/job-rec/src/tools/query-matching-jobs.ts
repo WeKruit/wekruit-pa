@@ -640,6 +640,151 @@ export function applyAtsApplyUrlGate<T extends { atsApplyUrl?: string }>(
 }
 
 // ---------------------------------------------------------------------------
+// iter34 followup D.9 — recency hard filter (lastSeenAt < 7d, fallback 30d).
+//
+// Background. Adam W4 audit on 2026-05-04 found that `firstSeenAt` is the
+// BATCH-INGEST timestamp (rows cluster at 30-50d ago when a board got
+// re-scraped) and is NOT a freshness signal. The right freshness signal is
+// `lastSeenAt` — written by the inventory crawler on every successful
+// re-fetch. Stale rows (lastSeenAt > 30d) are typically jobs the board has
+// taken down without an explicit `dead` flag.
+//
+// Filter design:
+//   - Primary tier: keep only rows with `lastSeenAt` parsed-and-finite AND
+//     within DEFAULT_RECENCY_WINDOW_MS (7d) of `now`.
+//   - Fallback tier: when the 7d window leaves < FALLBACK_MIN_JOBS (20)
+//     survivors, expand to FALLBACK_RECENCY_WINDOW_MS (30d) and try again.
+//   - Missing / unparseable `lastSeenAt` → DROP (conservative, no-signal-no-row).
+//
+// Pure / deterministic. Position in pipeline: AFTER applyAtsApplyUrlGate,
+// BEFORE rankJobs.
+// ---------------------------------------------------------------------------
+
+const DAY_MS = 24 * 60 * 60 * 1000
+const DEFAULT_RECENCY_WINDOW_MS = 7 * DAY_MS
+const FALLBACK_RECENCY_WINDOW_MS = 30 * DAY_MS
+const FALLBACK_MIN_JOBS = 20
+
+/**
+ * Parse a job doc's `lastSeenAt` to ms-since-epoch. Pure / deterministic.
+ *
+ * Accepts:
+ *   - ISO 8601 string ("2026-05-01T12:34:56Z" / "2026-05-01") — `Date.parse`.
+ *   - Firestore Timestamp object (carries `.toDate()` returning a Date).
+ *   - Anything else (number / null / undefined / malformed string) → null.
+ *
+ * Returns null when the field is absent OR cannot be parsed to a finite ms
+ * value. Callers (recency filter) treat null as "drop" — no signal means
+ * we cannot prove freshness and a stale row would be worse than no row.
+ *
+ * Exposed for unit tests.
+ */
+export function getJobLastSeenMs(job: { lastSeenAt?: unknown }): number | null {
+  const v = job.lastSeenAt
+  if (typeof v === "string") {
+    const t = Date.parse(v)
+    return Number.isFinite(t) ? t : null
+  }
+  // Firestore Timestamp: { toDate(): Date, seconds: number, nanoseconds: number }
+  if (v && typeof v === "object") {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const obj = v as any
+    if (typeof obj.toDate === "function") {
+      try {
+        const d = obj.toDate()
+        if (d instanceof Date) {
+          const t = d.getTime()
+          return Number.isFinite(t) ? t : null
+        }
+      } catch {
+        return null
+      }
+    }
+    // {seconds, nanoseconds} shape (Firestore serialized form)
+    if (typeof obj.seconds === "number" && Number.isFinite(obj.seconds)) {
+      const ns = typeof obj.nanoseconds === "number" ? obj.nanoseconds : 0
+      const t = obj.seconds * 1000 + Math.floor(ns / 1_000_000)
+      return Number.isFinite(t) ? t : null
+    }
+  }
+  return null
+}
+
+export type ApplyRecencyFilterOptions = {
+  /** Recency window in ms. Default 7d (DEFAULT_RECENCY_WINDOW_MS). */
+  maxAgeMs?: number
+  /** Pinned "now" for deterministic tests. Default Date.now(). */
+  nowMs?: number
+}
+
+/**
+ * Apply the iter34 D.9 recency filter. Pure / deterministic.
+ *
+ * Inputs:
+ *   - jobs: candidate pool with `lastSeenAt` projected.
+ *   - opts.maxAgeMs: window in ms. Default 7d.
+ *   - opts.nowMs: pinned now (for tests). Default Date.now().
+ *
+ * Behavior:
+ *   - Drops rows where getJobLastSeenMs returns null (missing / malformed).
+ *   - Drops rows where (now - lastSeenMs) > maxAgeMs (stale).
+ *   - Keeps rows where 0 <= (now - lastSeenMs) <= maxAgeMs.
+ *
+ * Exposed for unit tests.
+ */
+export function applyRecencyFilter<T extends { lastSeenAt?: unknown }>(
+  jobs: readonly T[],
+  opts?: ApplyRecencyFilterOptions
+): T[] {
+  if (!Array.isArray(jobs) || jobs.length === 0) return []
+  const maxAge = opts?.maxAgeMs ?? DEFAULT_RECENCY_WINDOW_MS
+  const now = opts?.nowMs ?? Date.now()
+  const out: T[] = []
+  for (const j of jobs) {
+    const seen = getJobLastSeenMs(j)
+    if (seen === null) continue
+    const age = now - seen
+    if (age < 0) continue // future timestamp — treat as malformed, drop
+    if (age > maxAge) continue
+    out.push(j)
+  }
+  return out
+}
+
+/**
+ * Apply the iter34 D.9 recency filter with fallback expansion. Pure /
+ * deterministic.
+ *
+ * Algorithm:
+ *   1. Try DEFAULT_RECENCY_WINDOW_MS (7d).
+ *   2. If survivors < FALLBACK_MIN_JOBS, retry with FALLBACK_RECENCY_WINDOW_MS (30d).
+ *   3. Return survivors + a `fallback` flag for log observability.
+ *
+ * Exposed for unit tests.
+ */
+export function applyRecencyFilterWithFallback<T extends { lastSeenAt?: unknown }>(
+  jobs: readonly T[],
+  opts?: ApplyRecencyFilterOptions
+): { kept: T[]; fallback: boolean; windowMs: number } {
+  if (!Array.isArray(jobs) || jobs.length === 0) {
+    return { kept: [], fallback: false, windowMs: opts?.maxAgeMs ?? DEFAULT_RECENCY_WINDOW_MS }
+  }
+  const primaryWindow = opts?.maxAgeMs ?? DEFAULT_RECENCY_WINDOW_MS
+  const primary = applyRecencyFilter(jobs, opts)
+  if (primary.length >= FALLBACK_MIN_JOBS) {
+    return { kept: primary, fallback: false, windowMs: primaryWindow }
+  }
+  // Expand to fallback window (30d). When caller passed a custom maxAgeMs,
+  // we still expand to the canonical 30d ceiling — there's no smaller signal
+  // to recover from.
+  const expanded = applyRecencyFilter(jobs, {
+    maxAgeMs: FALLBACK_RECENCY_WINDOW_MS,
+    nowMs: opts?.nowMs,
+  })
+  return { kept: expanded, fallback: true, windowMs: FALLBACK_RECENCY_WINDOW_MS }
+}
+
+// ---------------------------------------------------------------------------
 // Stream H8 — industryEnum-primary query path (flag-gated).
 //
 // After H8 enrichment writes `industryEnum: [tag]` (1-element array) to the
@@ -1223,6 +1368,15 @@ export function projectMatchingJobRow(id: string, raw: Record<string, unknown>):
     requiredSkills: requiredSkills.length > 0 ? requiredSkills : undefined,
     firstSeenAt: typeof raw.firstSeenAt === "string" ? raw.firstSeenAt : undefined,
     industryEnum: industryEnum && industryEnum.length > 0 ? industryEnum : undefined,
+    // iter34 followup D.9 — surface lastSeenAt (string OR Firestore Timestamp).
+    // The schema uses `union(string, any)` so we pass through any non-null
+    // value; getJobLastSeenMs decides parseability downstream.
+    lastSeenAt:
+      typeof raw.lastSeenAt === "string"
+        ? raw.lastSeenAt
+        : raw.lastSeenAt != null
+          ? (raw.lastSeenAt as unknown)
+          : undefined,
   }
 }
 
@@ -1604,7 +1758,20 @@ export async function queryMatchingJobs(
       kept: atsGateResult.kept.length,
     })
   }
-  const filtered = atsGateResult.kept
+  const afterAtsGate = atsGateResult.kept
+
+  // iter34 followup D.9 — recency hard filter (lastSeenAt < 7d, fallback 30d).
+  // `firstSeenAt` is the batch-ingest timestamp (clusters at 30-50d ago) —
+  // NOT a freshness signal. We use the inventory crawler's `lastSeenAt`,
+  // dropping rows missing / unparseable (conservative: no-signal-no-row).
+  const recencyResult = applyRecencyFilterWithFallback(afterAtsGate)
+  log("[queryMatchingJobs] recency_filter_applied", {
+    before: afterAtsGate.length,
+    kept: recencyResult.kept.length,
+    fallback: recencyResult.fallback,
+    windowMs: recencyResult.windowMs,
+  })
+  const filtered = recencyResult.kept
 
   const ranked = rankJobs(filtered, parsed.filters, parsed.limit)
   return { jobs: ranked }
