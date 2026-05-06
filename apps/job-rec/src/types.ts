@@ -187,6 +187,18 @@ export const QueryMatchingJobsFiltersSchema = z.object({
    * undefined / empty → no filter (backward-compatible).
    */
   targetRoleIndustryEnum: z.array(z.string()).optional(),
+  /**
+   * iter34 sprint B.10 — CV embedding (1536-d float[]) used by scoreJob's
+   * cosine similarity component (weight 0.30). Caller-injected from the
+   * user's parsed-resume embedding. When undefined / null / empty,
+   * scoreJob's embedding component contributes 0 (and the other 4 weights
+   * are NOT redistributed — total naturally lower for users without a CV
+   * embedding).
+   *
+   * Why a filter field (not a top-level arg): symmetric with `targetRole`
+   * / `targetRoleIndustryEnum` (also caller-injected per-user signals).
+   */
+  cvEmbedding: z.array(z.number()).optional(),
 })
 export type QueryMatchingJobsFilters = z.infer<typeof QueryMatchingJobsFiltersSchema>
 

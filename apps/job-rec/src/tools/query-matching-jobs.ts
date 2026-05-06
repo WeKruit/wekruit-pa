@@ -1016,18 +1016,121 @@ export function jaccardOverlap(a: string[], b: string[]): number {
 }
 
 /**
+ * iter34 sprint B.10 — Cosine similarity between two equal-length numeric
+ * vectors. Returns ∈ [0, 1] (negative similarity is clamped to 0). Throws
+ * when input lengths differ — there's no semantically-meaningful fallback,
+ * and silently returning 0 would hide upstream bugs.
+ *
+ * Pure / deterministic. Exposed for unit tests.
+ */
+export function cosineSimilarity(a: number[], b: number[]): number {
+  if (!Array.isArray(a) || !Array.isArray(b)) return 0
+  if (a.length !== b.length) {
+    throw new Error(
+      `cosineSimilarity: vector length mismatch (a=${a.length}, b=${b.length})`
+    )
+  }
+  if (a.length === 0) return 0
+  let dot = 0
+  let na = 0
+  let nb = 0
+  for (let i = 0; i < a.length; i++) {
+    const ai = a[i] as number
+    const bi = b[i] as number
+    dot += ai * bi
+    na += ai * ai
+    nb += bi * bi
+  }
+  if (na === 0 || nb === 0) return 0
+  const sim = dot / (Math.sqrt(na) * Math.sqrt(nb))
+  if (!Number.isFinite(sim)) return 0
+  // Clamp to [0, 1] — the breakdown contract is non-negative; opposite
+  // vectors collapse to 0 rather than -1.
+  if (sim < 0) return 0
+  if (sim > 1) return 1
+  return sim
+}
+
+/**
+ * iter34 sprint B.10 — score component breakdown returned by {@link scoreJob}.
+ * All components are raw 0..1; `total` is the weighted sum per the
+ * documented weights.
+ */
+export type ScoreBreakdown = {
+  /** Jaccard skill overlap (0..1). */
+  skill: number
+  /**
+   * CV × job embedding cosine (0..1). 0 when either vector is missing /
+   * empty / dimension-mismatched.
+   */
+  embedding: number
+  /** Sponsorship match (0..1). */
+  sponsorship: number
+  /** Location ladder (0..1). */
+  location: number
+  /** Salary floor met (0..1). */
+  salary: number
+  /** Weighted sum: 0.35*skill + 0.30*embedding + 0.15*sponsorship + 0.15*location + 0.05*salary. */
+  total: number
+}
+
+/**
+ * iter34 sprint B.10 — score weights. Re-balanced from (0.5, 0.2, 0.2, 0.1)
+ * to make room for the embedding cosine component while keeping the skill
+ * Jaccard signal first-class:
+ *
+ *   skill (Jaccard)    0.35
+ *   embedding cosine   0.30
+ *   sponsorship        0.15
+ *   location           0.15
+ *   salary             0.05
+ *
+ * Sum = 1.00. When the user has no CV embedding, embedding contributes 0
+ * and total naturally caps at 0.70 (rather than redistributing the 0.30
+ * across other weights — users without a CV legitimately deserve a lower
+ * absolute match score).
+ */
+const SCORE_WEIGHT_SKILL = 0.35
+const SCORE_WEIGHT_EMBEDDING = 0.3
+const SCORE_WEIGHT_SPONSORSHIP = 0.15
+const SCORE_WEIGHT_LOCATION = 0.15
+const SCORE_WEIGHT_SALARY = 0.05
+
+/**
  * Score a candidate job against user filters. Pure / deterministic so
  * tests can lock the ordering down to specific tie-break behaviour.
  *
- * Components (each 0..1, summed):
- *   - skill overlap (weight 0.5)
- *   - sponsorship match (weight 0.2)
- *   - location match (weight 0.2)
- *   - salary floor met (weight 0.1)
+ * Returns `{ total, breakdown }` where:
+ *   - skill overlap     (weight 0.35)
+ *   - embedding cosine  (weight 0.30, 0 when CV embedding missing)
+ *   - sponsorship match (weight 0.15)
+ *   - location match    (weight 0.15)
+ *   - salary floor met  (weight 0.05)
+ *
+ * The job-side embedding is read from `job.embedding` when the caller
+ * loaded the doc with `includeEmbedding: true` (the `MatchingJob` Zod
+ * schema doesn't carry the field; daily-batch attaches it post-projection).
  */
-export function scoreJob(job: MatchingJob, filters: QueryMatchingJobsFilters): number {
+export function scoreJob(
+  job: MatchingJob & { embedding?: number[] | null },
+  filters: QueryMatchingJobsFilters
+): { total: number; breakdown: ScoreBreakdown } {
   const userSkills = filters.userSkills ?? []
   const skillScore = job.requiredSkills ? jaccardOverlap(userSkills, job.requiredSkills) : 0
+
+  // iter34 B.10 — embedding cosine component.
+  const cv = filters.cvEmbedding
+  const jobEmb = job.embedding
+  let embeddingScore = 0
+  if (
+    Array.isArray(cv) &&
+    cv.length > 0 &&
+    Array.isArray(jobEmb) &&
+    jobEmb.length > 0 &&
+    cv.length === jobEmb.length
+  ) {
+    embeddingScore = cosineSimilarity(cv, jobEmb)
+  }
 
   let sponsorshipScore = 0.5
   if (filters.sponsorship === "none") {
@@ -1079,7 +1182,24 @@ export function scoreJob(job: MatchingJob, filters: QueryMatchingJobsFilters): n
     else if (typeof job.salaryMax === "number") salaryScore = 0.0
   }
 
-  return 0.5 * skillScore + 0.2 * sponsorshipScore + 0.2 * locationScore + 0.1 * salaryScore
+  const total =
+    SCORE_WEIGHT_SKILL * skillScore +
+    SCORE_WEIGHT_EMBEDDING * embeddingScore +
+    SCORE_WEIGHT_SPONSORSHIP * sponsorshipScore +
+    SCORE_WEIGHT_LOCATION * locationScore +
+    SCORE_WEIGHT_SALARY * salaryScore
+
+  return {
+    total,
+    breakdown: {
+      skill: skillScore,
+      embedding: embeddingScore,
+      sponsorship: sponsorshipScore,
+      location: locationScore,
+      salary: salaryScore,
+      total,
+    },
+  }
 }
 
 /** Pure ranking helper — exposed for direct unit testing. */
@@ -1088,7 +1208,7 @@ export function rankJobs(
   filters: QueryMatchingJobsFilters,
   limit: number
 ): MatchingJob[] {
-  const scored = jobs.map((j) => ({ j, s: scoreJob(j, filters) }))
+  const scored = jobs.map((j) => ({ j, s: scoreJob(j, filters).total }))
   scored.sort((a, b) => {
     if (b.s !== a.s) return b.s - a.s
     // tie-break: newer firstSeenAt wins

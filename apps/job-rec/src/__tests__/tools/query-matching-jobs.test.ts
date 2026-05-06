@@ -56,8 +56,8 @@ test("scoreJob: penalizes sponsorship=true when user wants none", () => {
     sponsorship: true,
     requiredSkills: ["python"],
   }
-  const noSponsor = scoreJob(job, { sponsorship: "none", userSkills: ["python"] })
-  const wantSponsor = scoreJob(job, { sponsorship: "h1b", userSkills: ["python"] })
+  const noSponsor = scoreJob(job, { sponsorship: "none", userSkills: ["python"] }).total
+  const wantSponsor = scoreJob(job, { sponsorship: "h1b", userSkills: ["python"] }).total
   assert.ok(wantSponsor > noSponsor, "wanting sponsorship should outscore wanting none")
 })
 
@@ -73,8 +73,8 @@ test("scoreJob: rewards salaryMax >= salaryMin", () => {
     industry: "tech",
     sponsorship: null,
   }
-  const above = scoreJob(job, { salaryMin: 100000 })
-  const below = scoreJob(job, { salaryMin: 300000 })
+  const above = scoreJob(job, { salaryMin: 100000 }).total
+  const below = scoreJob(job, { salaryMin: 300000 }).total
   assert.ok(above > below)
 })
 
@@ -90,9 +90,208 @@ test("scoreJob: location substring match boosts", () => {
     industry: "tech",
     sponsorship: null,
   }
-  const match = scoreJob(j, { location: "san francisco" })
-  const miss = scoreJob(j, { location: "boston" })
+  const match = scoreJob(j, { location: "san francisco" }).total
+  const miss = scoreJob(j, { location: "boston" }).total
   assert.ok(match > miss)
+})
+
+// ---------------------------------------------------------------------------
+// iter34 sprint B.10 — cosineSimilarity + scoreJob breakdown
+// ---------------------------------------------------------------------------
+
+import { cosineSimilarity, type ScoreBreakdown } from "../../tools/query-matching-jobs.js"
+
+test("cosineSimilarity B.10: identical vectors return 1.0", () => {
+  const v = [0.1, 0.2, 0.3, 0.4]
+  assert.ok(Math.abs(cosineSimilarity(v, v) - 1) < 1e-9)
+})
+
+test("cosineSimilarity B.10: orthogonal vectors return 0", () => {
+  const a = [1, 0, 0]
+  const b = [0, 1, 0]
+  assert.equal(cosineSimilarity(a, b), 0)
+})
+
+test("cosineSimilarity B.10: opposite vectors clamped to 0 (not -1)", () => {
+  const a = [1, 2, 3]
+  const b = [-1, -2, -3]
+  assert.equal(cosineSimilarity(a, b), 0)
+})
+
+test("cosineSimilarity B.10: differing length throws", () => {
+  assert.throws(() => cosineSimilarity([1, 2], [1, 2, 3]), /length mismatch/i)
+})
+
+test("cosineSimilarity B.10: zero-magnitude vector returns 0 (no NaN)", () => {
+  assert.equal(cosineSimilarity([0, 0, 0], [1, 2, 3]), 0)
+})
+
+test("scoreJob B.10: cvEmbedding present + matching job embedding → embedding component contributes to total", () => {
+  const job: MatchingJob & { embedding?: number[] | null } = {
+    id: "x",
+    companyName: "X",
+    jobTitle: "SWE",
+    salaryMax: null,
+    salaryMin: null,
+    locationRaw: "",
+    primaryUrl: "u",
+    industry: "tech",
+    sponsorship: null,
+    embedding: [1, 0, 0, 0],
+  }
+  const withEmb = scoreJob(job, { cvEmbedding: [1, 0, 0, 0] })
+  const withoutEmb = scoreJob(job, {})
+  assert.ok(withEmb.breakdown.embedding > 0.99, "cosine of identical = 1")
+  assert.equal(withoutEmb.breakdown.embedding, 0)
+  assert.ok(withEmb.total > withoutEmb.total, "embedding raises total when present + matching")
+})
+
+test("scoreJob B.10: cvEmbedding undefined → embedding component = 0, total naturally lower", () => {
+  const job: MatchingJob & { embedding?: number[] | null } = {
+    id: "x",
+    companyName: "X",
+    jobTitle: "T",
+    salaryMax: null,
+    salaryMin: null,
+    locationRaw: "",
+    primaryUrl: "u",
+    industry: "tech",
+    sponsorship: null,
+    embedding: [1, 0, 0],
+  }
+  const r = scoreJob(job, {})
+  assert.equal(r.breakdown.embedding, 0)
+  // Other 4 weights NOT redistributed — total only includes their contribution.
+  assert.ok(r.total <= 0.7 + 1e-9, "without embedding, total is bounded by 1 - 0.30 = 0.70")
+})
+
+test("scoreJob B.10: job has no embedding → embedding component = 0", () => {
+  const job: MatchingJob & { embedding?: number[] | null } = {
+    id: "x",
+    companyName: "X",
+    jobTitle: "T",
+    salaryMax: null,
+    salaryMin: null,
+    locationRaw: "",
+    primaryUrl: "u",
+    industry: "tech",
+    sponsorship: null,
+    // no embedding field
+  }
+  const r = scoreJob(job, { cvEmbedding: [1, 2, 3] })
+  assert.equal(r.breakdown.embedding, 0)
+})
+
+test("scoreJob B.10: embedding length mismatch → component = 0 (defensive, no throw)", () => {
+  const job: MatchingJob & { embedding?: number[] | null } = {
+    id: "x",
+    companyName: "X",
+    jobTitle: "T",
+    salaryMax: null,
+    salaryMin: null,
+    locationRaw: "",
+    primaryUrl: "u",
+    industry: "tech",
+    sponsorship: null,
+    embedding: [1, 0, 0],
+  }
+  // Mismatched dims must not bring down the whole scoring path.
+  const r = scoreJob(job, { cvEmbedding: [1, 2] })
+  assert.equal(r.breakdown.embedding, 0)
+  assert.ok(Number.isFinite(r.total))
+})
+
+test("scoreJob B.10: breakdown shape carries all 5 components + total", () => {
+  const job: MatchingJob & { embedding?: number[] | null } = {
+    id: "x",
+    companyName: "X",
+    jobTitle: "SWE",
+    salaryMax: 200000,
+    salaryMin: null,
+    locationRaw: "Remote",
+    primaryUrl: "u",
+    industry: "tech",
+    sponsorship: true,
+    requiredSkills: ["python", "ml"],
+    embedding: [1, 0, 0, 0],
+  }
+  const r = scoreJob(job, {
+    sponsorship: "h1b",
+    location: "remote",
+    salaryMin: 100000,
+    userSkills: ["python"],
+    cvEmbedding: [1, 0, 0, 0],
+  })
+  const b: ScoreBreakdown = r.breakdown
+  assert.equal(typeof b.skill, "number")
+  assert.equal(typeof b.embedding, "number")
+  assert.equal(typeof b.sponsorship, "number")
+  assert.equal(typeof b.location, "number")
+  assert.equal(typeof b.salary, "number")
+  assert.equal(typeof b.total, "number")
+  assert.ok(b.skill >= 0 && b.skill <= 1)
+  assert.ok(b.embedding >= 0 && b.embedding <= 1)
+  assert.ok(b.sponsorship >= 0 && b.sponsorship <= 1)
+  assert.ok(b.location >= 0 && b.location <= 1)
+  assert.ok(b.salary >= 0 && b.salary <= 1)
+  // total should equal the weighted sum
+  const expected =
+    0.35 * b.skill + 0.3 * b.embedding + 0.15 * b.sponsorship + 0.15 * b.location + 0.05 * b.salary
+  assert.ok(Math.abs(b.total - expected) < 1e-9, "total = weighted sum of components")
+})
+
+test("scoreJob B.10: weights sum to 1.0 (skill 0.35 + emb 0.30 + spons 0.15 + loc 0.15 + sal 0.05)", () => {
+  // Synthetic job that maxes every component.
+  const job: MatchingJob & { embedding?: number[] | null } = {
+    id: "x",
+    companyName: "X",
+    jobTitle: "T",
+    salaryMax: 200000,
+    salaryMin: null,
+    locationRaw: "San Francisco, CA",
+    primaryUrl: "u",
+    industry: "tech",
+    sponsorship: true,
+    requiredSkills: ["python"],
+    embedding: [1],
+  }
+  const r = scoreJob(job, {
+    userSkills: ["python"],
+    sponsorship: "h1b",
+    location: "san francisco",
+    salaryMin: 100000,
+    cvEmbedding: [1],
+  })
+  // All components = 1 → total = 1
+  assert.ok(Math.abs(r.total - 1) < 1e-9, `expected total=1.0, got ${r.total}`)
+})
+
+test("queryMatchingJobs B.10: cvEmbedding plumbed through to scoreJob via filters (smoke)", async () => {
+  // Light end-to-end: pass cvEmbedding through queryMatchingJobs → no crash.
+  const mfs = new MockFirestore()
+  await mfs.collection("matching-jobs").doc("a").set({
+    status: "active",
+    companyName: "Acme",
+    roleTitle: "SWE",
+    locationRaw: "Remote",
+    primaryUrl: "u",
+    industry: "tech",
+    industryKey: "tech",
+    sponsorship: true,
+    requiredSkills: ["python"],
+    firstSeenAt: "2026-04-30",
+  })
+  const out = await queryMatchingJobs(
+    {
+      filters: {
+        userSkills: ["python"],
+        cvEmbedding: [0.1, 0.2, 0.3],
+      },
+      limit: 5,
+    },
+    { db: asFirestore(mfs) }
+  )
+  assert.equal(out.jobs.length, 1)
 })
 
 test("rankJobs: orders by composite score desc", () => {
@@ -520,12 +719,12 @@ test("scoreJob H7: Baltimore preference + DC-area job → ladder fallback (0.6) 
     sponsorship: null,
   }
   const jobBoise: MatchingJob = { ...jobDC, id: "boise", locationRaw: "Boise, ID" }
-  const ladderHit = scoreJob(jobDC, { location: "Baltimore,MD" })
-  const noMatch = scoreJob(jobBoise, { location: "Baltimore,MD" })
-  // Location-only delta: ladder gives 0.6, no-match gives 0.2 → ladderHit-noMatch = 0.2*(0.6-0.2) = 0.08
+  const ladderHit = scoreJob(jobDC, { location: "Baltimore,MD" }).total
+  const noMatch = scoreJob(jobBoise, { location: "Baltimore,MD" }).total
+  // iter34 B.10 — location weight rebalanced 0.2 → 0.15. Ladder gives 0.6,
+  // no-match gives 0.2 → delta = 0.15 * (0.6 - 0.2) = 0.06
   assert.ok(ladderHit > noMatch, `ladder hit (${ladderHit}) should beat no-match (${noMatch})`)
-  // Sanity floor: noMatch should still equal the legacy 0.2 path scaled
-  assert.ok(Math.abs((ladderHit - noMatch) - 0.2 * (0.6 - 0.2)) < 1e-9, "ladder delta should be 0.2 weight * (0.6 - 0.2)")
+  assert.ok(Math.abs((ladderHit - noMatch) - 0.15 * (0.6 - 0.2)) < 1e-9, "ladder delta should be 0.15 weight * (0.6 - 0.2)")
 })
 
 test("scoreJob H7: Baltimore preference + Remote job → ladder gives 0.7 (remote-neighbor)", () => {
@@ -541,8 +740,8 @@ test("scoreJob H7: Baltimore preference + Remote job → ladder gives 0.7 (remot
     sponsorship: null,
   }
   const dcJob: MatchingJob = { ...remoteJob, id: "dc", locationRaw: "Washington, DC" }
-  const remoteScore = scoreJob(remoteJob, { location: "Baltimore,MD" })
-  const dcScore = scoreJob(dcJob, { location: "Baltimore,MD" })
+  const remoteScore = scoreJob(remoteJob, { location: "Baltimore,MD" }).total
+  const dcScore = scoreJob(dcJob, { location: "Baltimore,MD" }).total
   // Remote should outscore DC because remote-neighbor → 0.7, city-neighbor → 0.6
   assert.ok(remoteScore > dcScore, `remote ladder (${remoteScore}) should beat DC ladder (${dcScore})`)
 })
@@ -560,8 +759,8 @@ test("scoreJob H7: primary substring match still wins over ladder neighbor", () 
     sponsorship: null,
   }
   const philJob: MatchingJob = { ...baltimoreJob, id: "p", locationRaw: "Philadelphia, PA" }
-  const primaryScore = scoreJob(baltimoreJob, { location: "Baltimore,MD" })
-  const ladderScore = scoreJob(philJob, { location: "Baltimore,MD" })
+  const primaryScore = scoreJob(baltimoreJob, { location: "Baltimore,MD" }).total
+  const ladderScore = scoreJob(philJob, { location: "Baltimore,MD" }).total
   assert.ok(primaryScore > ladderScore, "primary city should beat ladder neighbor")
 })
 
@@ -580,11 +779,11 @@ test("scoreJob H7: city-without-ladder-entry still falls to 0.2 floor (no-op for
     sponsorship: null,
   }
   // No primary substring match, no ladder entry, no remote → 0.2 floor
-  const noLadder = scoreJob(job, { location: "Kalamazoo,MI" })
+  const noLadder = scoreJob(job, { location: "Kalamazoo,MI" }).total
   // Pure-substring match (Detroit job vs Detroit pref) for control
-  const directHit = scoreJob({ ...job, locationRaw: "Detroit, MI" }, { location: "Detroit, MI" })
-  // Compute expected: locationScore=0.2 vs 1.0 → 0.2 * (1.0 - 0.2) = 0.16 delta on location
-  assert.ok(directHit - noLadder >= 0.15, "direct hit should be at least 0.15 over no-ladder")
+  const directHit = scoreJob({ ...job, locationRaw: "Detroit, MI" }, { location: "Detroit, MI" }).total
+  // iter34 B.10 — location weight 0.15. Delta = 0.15 * (1.0 - 0.2) = 0.12
+  assert.ok(directHit - noLadder >= 0.1, "direct hit should be at least 0.10 over no-ladder")
 })
 
 test("scoreJob H7: ladder fallback handles whitespace/case variants in primary preference", () => {
@@ -601,9 +800,9 @@ test("scoreJob H7: ladder fallback handles whitespace/case variants in primary p
     industry: "tech",
     sponsorship: null,
   }
-  const a = scoreJob(dc, { location: "BALTIMORE,MD" })
-  const b = scoreJob(dc, { location: "  Baltimore,MD  " })
-  const c = scoreJob(dc, { location: "Baltimore" })
+  const a = scoreJob(dc, { location: "BALTIMORE,MD" }).total
+  const b = scoreJob(dc, { location: "  Baltimore,MD  " }).total
+  const c = scoreJob(dc, { location: "Baltimore" }).total
   // All three should hit the ladder; all > 0.2-floor location component
   // sanity: scores should be equal pairwise (case + trim invariant)
   assert.ok(Math.abs(a - b) < 1e-9, "case insensitivity + trim should be invariant")
