@@ -20,6 +20,7 @@ import { defineSecret } from "firebase-functions/params"
 import { logger } from "firebase-functions/v2"
 import { initializeApp, getApps } from "firebase-admin/app"
 import { getFirestore } from "firebase-admin/firestore"
+import { roleToIndustryBuckets } from "@pa/pa-orchestrator"
 import {
   generateVerificationCode,
   sendVerificationEmail as sendVerificationEmailViaMailgun,
@@ -205,6 +206,7 @@ function makeGenerateJobRecs(): NonNullable<
     let visa: string | undefined
     let location: string | undefined
     let prefersStartup: boolean | null | undefined
+    let targetRole: string[] | undefined
     try {
       const userDoc = await db.collection("pa-users").doc(userId).get()
       if (userDoc.exists) {
@@ -213,11 +215,22 @@ function makeGenerateJobRecs(): NonNullable<
             visaStatus?: string
             targetLocations?: string[]
             prefersStartup?: boolean | null
+            targetRole?: string[]
           }
         }
         visa = u.statedPreferences?.visaStatus
         location = u.statedPreferences?.targetLocations?.[0]
         prefersStartup = u.statedPreferences?.prefersStartup
+        // iter34 sprint A.5 — pull canonical role tokens (e.g. ["swe"])
+        // so queryMatchingJobs can post-filter on industryEnum buckets the
+        // role plausibly works in. Prevents SWEs from getting Warehouse jobs.
+        const rawTargetRole = u.statedPreferences?.targetRole
+        if (Array.isArray(rawTargetRole)) {
+          const cleaned = rawTargetRole.filter(
+            (s): s is string => typeof s === "string" && s.length > 0
+          )
+          if (cleaned.length > 0) targetRole = cleaned
+        }
       }
     } catch (err) {
       logger.warn("[job-recs] user read failed", {
@@ -241,12 +254,23 @@ function makeGenerateJobRecs(): NonNullable<
           ? "bigtech"
           : undefined
 
+    // iter34 sprint A.5 — derive industryEnum buckets from canonical role
+    // tokens so queryMatchingJobs post-filter excludes off-domain jobs
+    // (e.g. SWE candidates won't see Warehouse roles). roleToIndustryBuckets
+    // accepts plain string[] at runtime and returns undefined for founder/
+    // other or unknown tokens — that's the desired "no filter" signal.
+    const targetRoleIndustryEnum = roleToIndustryBuckets(
+      targetRole as Parameters<typeof roleToIndustryBuckets>[0]
+    )
+
     const filters = {
       ...(industryTags.length > 0 ? { industryTags } : {}),
       ...(topSkills.length > 0 ? { userSkills: topSkills } : {}),
       ...(sponsorship ? { sponsorship } : {}),
       ...(sizePreference ? { sizePreference } : {}),
       ...(location ? { location } : {}),
+      ...(targetRole ? { targetRole } : {}),
+      ...(targetRoleIndustryEnum ? { targetRoleIndustryEnum } : {}),
     }
 
     if (!topSkills.length && !industryTags.length) {

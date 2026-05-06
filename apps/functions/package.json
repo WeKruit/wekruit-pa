@@ -10,7 +10,7 @@
   "scripts": {
     "build": "node build.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test src/sendblue/__tests__/*.test.ts src/cv-ingest/__tests__/*.test.ts src/job-rec/__tests__/*.test.ts src/__tests__/*.test.ts src/coalesce/__tests__/*.test.ts src/tag-worker/__tests__/*.test.ts src/proactive-sweep.test.ts src/admin-bootstrap.test.ts src/health.test.ts scripts/__tests__/*.test.ts",
+    "test": "node --import tsx --test src/sendblue/__tests__/*.test.ts src/cv-ingest/__tests__/*.test.ts src/job-rec/__tests__/*.test.ts src/__tests__/*.test.ts src/coalesce/__tests__/*.test.ts src/tag-worker/__tests__/*.test.ts src/proactive-sweep.test.ts src/admin-bootstrap.test.ts src/health.test.ts src/orchestrator-deps.test.ts scripts/__tests__/*.test.ts",
     "deploy": "firebase deploy --only functions --project wekruit-5f89b"
   },
   "dependencies": {
