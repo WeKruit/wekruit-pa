@@ -347,11 +347,118 @@ function makeGenerateJobRecs(): NonNullable<
 }
 
 /**
- * iter33 P3 — Read parsedCandidateResumes for the user, ask Qwen-7B for
- * a 1-2 sentence summary, return it. Returns null when SILICONFLOW_API_KEY
- * is unbound, the CV row doesn't exist, or the LLM call throws — caller
- * (deterministic dispatcher) falls back to a generic line so onboarding
- * always completes. Cost: ~$0.0002/call (Qwen2.5-7B SiliconFlow).
+ * iter34 H.2 / CR1 — fetch wrapper plus degenerate-output guard for CV
+ * analysis (and any future Qwen-7B Chat-Completion path that wants to opt-in
+ * to the same hardening). Exported for unit tests so we can mock the LLM
+ * response and lock in the fallback contract without a live SiliconFlow call.
+ *
+ * Adam G5-sim 2026-05-05 saw Qwen2.5-7B-Instruct emit "Docker, Docker, Docker..."
+ * x60 on Adam's real CV (12 distinct skills) — a cyclical-attention
+ * pathology where the model latches onto a single token. Frequency / presence
+ * penalties + an explicit prompt rule + a runtime degeneracy guard together
+ * make this near-impossible to ship to a candidate.
+ */
+const SILICONFLOW_CHAT_URL = "https://api.siliconflow.cn/v1/chat/completions"
+const CV_ANALYSIS_MIN_LEN = 12 // below this we never trust LLM output (e.g. ".")
+const CV_ANALYSIS_MAX_LEN = 220 // hard truncate for "1 sentence" cap (Adam directive)
+const CV_ANALYSIS_DEGEN_REPEAT_THRESHOLD = 10
+
+/**
+ * Detect token-level cyclical degeneration (e.g. "Docker, Docker, Docker..." x60).
+ *
+ * Strategy:
+ *   - Lowercase + split on non-word boundaries.
+ *   - Count occurrences of every token of length >= 2 (skips ", " noise tokens).
+ *   - Trip if ANY single non-stopword token appears >= threshold times.
+ *
+ * Pure / deterministic. Exported for unit tests.
+ */
+export function isDegenerateLLMOutput(
+  text: string,
+  threshold: number = CV_ANALYSIS_DEGEN_REPEAT_THRESHOLD
+): boolean {
+  if (typeof text !== "string" || text.length === 0) return false
+  const tokens = text.toLowerCase().match(/[a-z0-9_+\-#./]{2,}/g) ?? []
+  if (tokens.length < threshold) return false
+  const counts = new Map<string, number>()
+  for (const t of tokens) {
+    counts.set(t, (counts.get(t) ?? 0) + 1)
+  }
+  for (const [, n] of counts) {
+    if (n >= threshold) return true
+  }
+  return false
+}
+
+/**
+ * Build a deterministic fallback summary line from CV fields when the LLM
+ * either fails, returns degenerate output, or returns nothing usable. Pure /
+ * deterministic. Exported for unit tests.
+ */
+export function buildCvAnalysisFallback(
+  fields: {
+    topSkills?: string[]
+    recentRoleTitle?: string
+    recentCompany?: string
+  },
+  lang: "zh" | "en"
+): string {
+  const skillsArr = (fields.topSkills ?? [])
+    .filter((s): s is string => typeof s === "string" && s.length > 0)
+    .slice(0, 5)
+  const skills = skillsArr.length > 0 ? skillsArr.join(", ") : ""
+  const role = (fields.recentRoleTitle ?? "").trim()
+  const company = (fields.recentCompany ?? "").trim()
+  const trajectory = role
+    ? company
+      ? `${role}@${company}`
+      : role
+    : company
+      ? company
+      : ""
+  if (lang === "zh") {
+    if (skills && trajectory) {
+      return `看下来你: ${skills} + ${trajectory} — 推岗位贴这个方向`
+    }
+    if (skills) return `看下来你 hands-on: ${skills} — 推岗位贴这个方向`
+    if (trajectory) return `看下来你最近: ${trajectory} — 推岗位贴这个方向`
+    return "先按你 CV 上的方向给你找几个岗位看看"
+  }
+  if (skills && trajectory) {
+    return `from your CV: ${skills} + ${trajectory} — i'll lean recs that way`
+  }
+  if (skills) return `from your CV: hands-on with ${skills} — i'll lean recs that way`
+  if (trajectory) return `from your CV: recent ${trajectory} — i'll lean recs that way`
+  return "i'll lean job recs toward what's on your CV"
+}
+
+/** Truncate a summary to MAX_LEN chars on a word boundary, never mid-word. */
+function clampCvSummary(text: string): string {
+  if (text.length <= CV_ANALYSIS_MAX_LEN) return text
+  const slice = text.slice(0, CV_ANALYSIS_MAX_LEN)
+  const lastSpace = slice.lastIndexOf(" ")
+  return (lastSpace > 40 ? slice.slice(0, lastSpace) : slice).trimEnd()
+}
+
+/**
+ * iter33 P3 + iter34 H.2/CR1 — Read parsedCandidateResumes for the user, ask
+ * Qwen-7B for a 1-2 sentence summary, return it. Returns null when
+ * SILICONFLOW_API_KEY is unbound or the CV row doesn't exist (caller / dispatcher
+ * falls back to a generic line). On LLM-side problems (non-200, empty completion,
+ * degenerate "Docker x60" output) we return a deterministic per-CV fallback
+ * line instead so the candidate never sees raw model garbage.
+ *
+ * Cost: ~$0.0002/call (Qwen2.5-7B SiliconFlow).
+ *
+ * iter34 H.2 hardening (Adam G5-sim verifying):
+ *   - frequency_penalty + presence_penalty against cyclical-attention bug.
+ *   - prompt requires >=3 distinct skills covering language + framework/cloud
+ *     + tool/infra so the brief reflects the candidate's actual breadth.
+ *   - max_tokens lowered to ~120 (1 sentence target).
+ *   - response post-checked with isDegenerateLLMOutput; on trip, swap to the
+ *     deterministic CV-fields fallback (still returns successfully, never
+ *     leaks to the user).
+ *   - output truncated to <=220 chars on a word boundary.
  */
 function makeGenerateCvAnalysis(): NonNullable<
   import("@pa/pa-orchestrator").OrchestratorStoreDeps["generateCvAnalysis"]
@@ -376,6 +483,11 @@ function makeGenerateCvAnalysis(): NonNullable<
     // cv-ingest writes createdAt (not parsedAt). orderBy was excluding
     // every CV record because parsedAt field doesn't exist.
     let cvFields = ""
+    let cvForFallback: {
+      topSkills?: string[]
+      recentRoleTitle?: string
+      recentCompany?: string
+    } = {}
     try {
       const snap = await db
         .collection("parsedCandidateResumes")
@@ -394,10 +506,15 @@ function makeGenerateCvAnalysis(): NonNullable<
         recentBullet?: string
         resumeText?: string
       }
+      cvForFallback = {
+        topSkills: Array.isArray(cv.topSkills) ? cv.topSkills : undefined,
+        recentRoleTitle: cv.recentRoleTitle,
+        recentCompany: cv.recentCompany,
+      }
       const parts: string[] = []
       if (cv.recentRoleTitle) parts.push(`recent role: ${cv.recentRoleTitle}`)
       if (cv.recentCompany) parts.push(`@${cv.recentCompany}`)
-      if (cv.topSkills?.length) parts.push(`skills: ${cv.topSkills.slice(0, 8).join(", ")}`)
+      if (cv.topSkills?.length) parts.push(`skills: ${cv.topSkills.slice(0, 12).join(", ")}`)
       if (cv.recentBullet) parts.push(`recent: ${cv.recentBullet.slice(0, 200)}`)
       cvFields = parts.join("\n")
       if (!cvFields) {
@@ -418,13 +535,19 @@ function makeGenerateCvAnalysis(): NonNullable<
 
     const langDirective =
       lang === "zh"
-        ? "用中文回，1-2 句，朋友语气，不要列表，不要客套。"
-        : "Reply in English, 1-2 sentences, friend-tone casual, no bullets, no fluff."
-    const systemPrompt = `You are Claire reading a candidate's resume aloud to them. Highlight ONE concrete strength (specific skill or trajectory) you noticed and ONE direction you'll lean job recommendations toward. ${langDirective}`
-    const userPrompt = `Resume highlights:\n${cvFields}\n\nGive the candidate your read in 1-2 sentences.`
+        ? "用中文回，1 句话，朋友语气，不要列表，不要客套，不要重复同一个 token。"
+        : "Reply in English, 1 sentence, friend-tone casual, no bullets, no fluff, do NOT repeat the same token."
+    // iter34 H.2 / CR1 — diversity rule. Adam G5 sim showed Qwen-7B picking
+    // Azure + Docker only out of 12 distinct CV skills then degenerating into
+    // "Docker, Docker, Docker..." x60. Force at least 3 distinct skills
+    // covering language + framework/cloud + tool/infra so the brief reflects
+    // the candidate's actual breadth.
+    const systemPrompt = `You are Claire reading a candidate's resume aloud to them. In ONE concise sentence, name 3+ DISTINCT skills you saw on the CV — covering at least 1 programming language + 1 framework or cloud + 1 tool or infra — and ONE direction you'll lean job recommendations toward. Never repeat the same word more than twice. ${langDirective}`
+    const userPrompt = `Resume highlights:\n${cvFields}\n\nGive the candidate your read in 1 sentence (<=180 chars).`
 
+    let summary: string | undefined
     try {
-      const res = await fetch("https://api.siliconflow.cn/v1/chat/completions", {
+      const res = await fetch(SILICONFLOW_CHAT_URL, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${apiKey}`,
@@ -436,8 +559,18 @@ function makeGenerateCvAnalysis(): NonNullable<
             { role: "system", content: systemPrompt },
             { role: "user", content: userPrompt },
           ],
+          // iter34 H.2 / CR1 — penalties block "Docker x60" cyclical attention.
+          // SiliconFlow accepts both penalties on Qwen2.5-7B; if the field is
+          // unsupported by a future model the call still succeeds (server
+          // ignores unknown fields).
           temperature: 0.6,
-          max_tokens: 160,
+          frequency_penalty: 0.3,
+          presence_penalty: 0.3,
+          max_tokens: 120,
+          // Stop on common degenerate continuations. Experimental — if the
+          // server rejects this field we'll see a 400 and fall through to the
+          // deterministic fallback.
+          stop: ["[STOP]", "\n\n", "..."],
         }),
         signal: AbortSignal.timeout(8000),
       })
@@ -446,25 +579,39 @@ function makeGenerateCvAnalysis(): NonNullable<
           userId,
           status: res.status,
         })
-        return null
+      } else {
+        const data = (await res.json()) as {
+          choices?: { message?: { content?: string } }[]
+        }
+        summary = data.choices?.[0]?.message?.content?.trim()
       }
-      const data = (await res.json()) as {
-        choices?: { message?: { content?: string } }[]
-      }
-      const summary = data.choices?.[0]?.message?.content?.trim()
-      if (!summary) {
-        logger.warn("[cv-analysis] empty completion", { userId })
-        return null
-      }
-      logger.info("[cv-analysis] ok", { userId, lang, summaryLen: summary.length })
-      return { summary }
     } catch (err) {
       logger.error("[cv-analysis] llm call threw", {
         userId,
         err: err instanceof Error ? err.message : String(err),
       })
-      return null
     }
+
+    // Validate the LLM output — empty / too short / degenerate → fallback.
+    if (!summary || summary.length < CV_ANALYSIS_MIN_LEN) {
+      logger.warn("[cv-analysis] empty_or_short_completion_using_fallback", {
+        userId,
+        len: summary?.length ?? 0,
+      })
+      return { summary: buildCvAnalysisFallback(cvForFallback, lang) }
+    }
+    if (isDegenerateLLMOutput(summary)) {
+      logger.warn("[cv-analysis] degenerate_output_using_fallback", {
+        userId,
+        // log a short preview so we can see what tripped the guard.
+        preview: summary.slice(0, 80),
+        len: summary.length,
+      })
+      return { summary: buildCvAnalysisFallback(cvForFallback, lang) }
+    }
+    const clamped = clampCvSummary(summary)
+    logger.info("[cv-analysis] ok", { userId, lang, summaryLen: clamped.length })
+    return { summary: clamped }
   }
 }
 

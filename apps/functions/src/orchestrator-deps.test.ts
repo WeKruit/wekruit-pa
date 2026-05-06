@@ -27,6 +27,7 @@ import assert from "node:assert/strict"
 import { roleToIndustryBuckets } from "@pa/pa-orchestrator"
 import { formatJobMatchReason } from "./lib/match-reason.js"
 import type { ScoreBreakdown } from "@pa/job-rec"
+import { isDegenerateLLMOutput, buildCvAnalysisFallback } from "./orchestrator-deps.js"
 
 describe("orchestrator-deps targetRole → industryEnum wire-through", () => {
   it("['swe'] expands to tech_software bucket (SWE doesn't get Warehouse)", () => {
@@ -238,5 +239,106 @@ describe("generateJobRecs compose: per-job line shape (iter34 B.11)", () => {
     const out = composeJobLine(j, "en", { topSkills: ["Go"] })
     assert.ok(out.includes("delta.greenhouse.io"), "must use atsApplyUrl not primaryUrl")
     assert.ok(!out.includes("jobright.ai"), "must NOT regress to jobright.ai mirror")
+  })
+})
+
+// ---------------------------------------------------------------------------
+// iter34 H.2 / CR1 — CV-analysis degenerate-output guard
+//
+// G5 sim observed Qwen2.5-7B-Instruct emit "Docker, Docker, Docker..." x60 on
+// Adam's CV. The runtime guard + deterministic fallback line below ensures
+// candidates never see this kind of LLM regurgitation.
+// ---------------------------------------------------------------------------
+
+describe("isDegenerateLLMOutput (iter34 H.2 CR1)", () => {
+  it("trips on 'Docker, Docker, Docker...' x60 (G5 sim regression)", () => {
+    const text = Array.from({ length: 60 }, () => "Docker").join(", ")
+    assert.equal(isDegenerateLLMOutput(text), true, "60x Docker must trip guard")
+  })
+
+  it("trips when ANY single token >= threshold (default 10)", () => {
+    const text = "node react node react node node node node node node node"
+    // node appears 8 times — should NOT trip with default threshold 10
+    assert.equal(isDegenerateLLMOutput(text), false)
+    // but with explicit threshold 5 it does
+    assert.equal(isDegenerateLLMOutput(text, 5), true)
+  })
+
+  it("does NOT trip on a healthy diverse summary", () => {
+    const text =
+      "Strong full-stack + cloud foundations across Node, React, Python, Stripe, Docker — leaning recs toward backend/infra roles."
+    assert.equal(isDegenerateLLMOutput(text), false)
+  })
+
+  it("does NOT trip on legitimate skill repetition (each token < threshold)", () => {
+    // Mentions "Docker" twice but no token hits 10x.
+    const text = "You bring Docker + Kubernetes + Python skills with Docker workflows."
+    assert.equal(isDegenerateLLMOutput(text), false)
+  })
+
+  it("trips on the cyclical-attention pathology with comma separators", () => {
+    // Same as G5 sim but with explicit comma-space separator.
+    const text = "Docker, Docker, Docker, Docker, Docker, Docker, Docker, Docker, Docker, Docker"
+    assert.equal(isDegenerateLLMOutput(text), true)
+  })
+
+  it("returns false on empty / non-string", () => {
+    assert.equal(isDegenerateLLMOutput(""), false)
+    // @ts-expect-error — runtime defensive check
+    assert.equal(isDegenerateLLMOutput(undefined), false)
+  })
+})
+
+describe("buildCvAnalysisFallback (iter34 H.2 CR1)", () => {
+  it("composes top-5 skills + recent role@company in zh", () => {
+    const out = buildCvAnalysisFallback(
+      {
+        topSkills: ["Node", "React", "Python", "AWS", "Docker", "Stripe", "OpenAI"],
+        recentRoleTitle: "Founder",
+        recentCompany: "WeKruit",
+      },
+      "zh"
+    )
+    assert.match(out, /Node, React, Python, AWS, Docker/)
+    assert.match(out, /Founder@WeKruit/)
+    assert.match(out, /推岗位贴这个方向/)
+  })
+
+  it("composes top-5 skills + recent role@company in en", () => {
+    const out = buildCvAnalysisFallback(
+      {
+        topSkills: ["TypeScript", "React", "PostgreSQL"],
+        recentRoleTitle: "Senior SWE",
+        recentCompany: "Acme",
+      },
+      "en"
+    )
+    assert.match(out, /TypeScript, React, PostgreSQL/)
+    assert.match(out, /Senior SWE@Acme/)
+    assert.match(out, /lean recs/)
+  })
+
+  it("falls back gracefully when only skills present (no role)", () => {
+    const out = buildCvAnalysisFallback({ topSkills: ["Go", "K8s"] }, "en")
+    assert.match(out, /Go, K8s/)
+    assert.ok(!out.includes("@"), "no @ when no recentCompany")
+  })
+
+  it("returns generic line when no signal at all", () => {
+    const zh = buildCvAnalysisFallback({}, "zh")
+    const en = buildCvAnalysisFallback({}, "en")
+    assert.ok(zh.length > 0)
+    assert.ok(en.length > 0)
+  })
+
+  it("ignores empty/non-string skills entries (defensive)", () => {
+    const out = buildCvAnalysisFallback(
+      {
+        topSkills: ["Node", "", "React"] as string[],
+      },
+      "en"
+    )
+    assert.match(out, /Node, React/)
+    assert.ok(!out.includes(", , "))
   })
 })
