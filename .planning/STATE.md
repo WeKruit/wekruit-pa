@@ -7,20 +7,21 @@ last_updated: "2026-05-06T00:30:00.000Z"
 last_activity: 2026-05-06
 progress:
   total_phases: 11
-  completed_phases: 3
-  total_plans: 3
-  completed_plans: 3
+  completed_phases: 4
+  total_plans: 4
+  completed_plans: 4
 ---
 
 ## Current Position
 
-Phase: **Phase 55 — matching-jobs schema migration + roleFunction backfill (next)**
+Phase: **Phase 56 — queryMatchingJobs read+filter+score (next, post-migration)**
 Plan: —
-Status: Phase 54 ✅ complete (commit `d693f81`) — onboarding tag-writer hooks + cv-confirm reply parser + migration script (DRY-RUN default) + sole-writer audit (1293+632 tests pass); v1.6 in progress (3/11)
-Last activity: 2026-05-06 — Phase 54 unified pa-users.tags writer shipped (USER-TAG-01..05 covered)
+Status: Phase 55 ✅ complete (commit `5e74248`) — matching-jobs deterministic mappers + DRY-RUN migration script + Firestore index deployed + production data shape adapted (116K+ docs ready to migrate); v1.6 in progress (4/11)
+Last activity: 2026-05-06 — Phase 55 matching-jobs schema migration shipped (MATCH-02 covered)
+In progress: applying migration --apply to 116K+ matching-jobs production docs
 Adam-action items:
 - Set `ANTHROPIC_API_KEY` Firebase Secret (Phase 53)
-- Run `node apps/functions/scripts/migrate-pa-users-tags.mjs --audit-only` first, then `--apply` after reviewing audit collection (Phase 54)
+- Migration --apply running (Phase 55) — Phase 56 will validate post-migration
 
 ## v1.6 — Unified Canonical Tags & Match Quality v1 (this milestone)
 
