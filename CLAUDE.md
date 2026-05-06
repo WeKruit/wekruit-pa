@@ -201,6 +201,41 @@ queryMatchingJobs(userId):
 - Roadmap: `.planning/ROADMAP.md` (11 phases 52-62)
 - State: `.planning/STATE.md`
 
+## v1.7 Ship State (2026-05-06)
+
+10 phases shipped (63-72), 37 REQ-IDs covered. Same-day spawn + ship after v1.6 post-ship matching diagnostics.
+
+| Phase | Subject | Commit |
+|---|---|---|
+| 63 | Senior-job scrapers (LinkedIn/Wellfound/Otta) | wekruit-pa `7c83f62` + macmini `60359a4` |
+| 64 | Sponsorship LLM inference + 279 allowlist | (combined) |
+| 65 | paBackfillAtsUrlsBatch hourly + retry queue | `a0b6029` |
+| 66 | macmini Stage 2.5 deleted (1708 LOC) | wekruit-pa `6caee56` + macmini `b81ecaf` |
+| 67 | Launchd reliability + critical health-check fix | `7bb9cb0` |
+| 68 | Vocab hygiene closure (926 jobs re-canon) | `a7bf6c5` |
+| 69 | Slack-alert helper + secrets scaffolding | `d26b3fa` |
+| 70 | /admin/match-debug live UI | `87bb878` |
+| 71 | Auto-derive targetRoleFunction + fill-tag-gaps | `b0a9c39` |
+| 72 | Documentation v1.7 | `c3f1120` |
+
+**Plus matching hotfixes:**
+- `e10d50b` orchestrator-deps V16 cutover + skill schema + vocab typos
+- `b9019a2` V16 adaptive freshness 20d → 45d → 90d
+- `71b9464` LLM-composed nuanced reasoning
+
+**New CFs:** `paBackfillAtsUrlsBatch` (hourly), `paCostSummaryWeekly` (Mon 09:30 UTC), `paAdminMatchDebug` (admin callable). Plus updated all 30+ existing.
+
+**Macmini:** Stage 2.5 deleted, health-check case-sensitive grep fix (was killing pipelines), post-pipeline-webhook FDA fix, Wellfound+LinkedIn+Otta scrapers scaffolded.
+
+**Adam-action items (all optional with graceful fallback):**
+- `ANTHROPIC_API_KEY` Firebase secret → Sonnet middle tier
+- `PA_SLACK_ALERT_WEBHOOK` Firebase secret → Slack alerts
+- `LINKEDIN_ACCESS_TOKEN` macmini env → senior-job scrape
+
+See `.planning/MILESTONE-v1.7-match-depth.md` for architecture diagram + open v1.8 backlog.
+
+---
+
 ## v1.6 Ship State (2026-05-06)
 
 All 11 phases shipped:
