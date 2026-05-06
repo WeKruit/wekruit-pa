@@ -2,22 +2,22 @@
 gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: Unified Canonical Tags & Match Quality v1
-status: roadmap_locked
-last_updated: "2026-05-05T23:30:00.000Z"
-last_activity: 2026-05-05
+status: in_progress
+last_updated: "2026-05-06T00:30:00.000Z"
+last_activity: 2026-05-06
 progress:
   total_phases: 11
-  completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
+  completed_phases: 1
+  total_plans: 1
+  completed_plans: 1
 ---
 
 ## Current Position
 
-Phase: **Phase 52 — Canonical Tag Vocab Foundation (not started)**
+Phase: **Phase 53 — pa-resume-parser v2 wire + relevantTags extract (next)**
 Plan: —
-Status: Roadmap locked 2026-05-05; v1.6 phases 52–62 derived (11 phases, ~10–14 dev-days)
-Last activity: 2026-05-05 — Roadmap created with 100% requirement coverage (59 REQ-IDs across 11 phases)
+Status: Phase 52 ✅ complete (commit `5d1c603`) — 12 canonical vocab files + zod validation + Firestore overlay + 89/89 tests pass; v1.6 in progress
+Last activity: 2026-05-06 — Phase 52 vocab foundation shipped autonomously (TAG-01..TAG-12 covered)
 
 ## v1.6 — Unified Canonical Tags & Match Quality v1 (this milestone)
 
