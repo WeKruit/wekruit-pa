@@ -7,19 +7,19 @@ last_updated: "2026-05-06T00:30:00.000Z"
 last_activity: 2026-05-06
 progress:
   total_phases: 11
-  completed_phases: 6
-  total_plans: 6
-  completed_plans: 6
+  completed_phases: 7
+  total_plans: 7
+  completed_plans: 7
 ---
 
 ## Current Position
 
-Phase: **Phase 58 — Nightly LLM rerank batch + per-skill JD-rel weight (next)**
+Phase: **Phase 59 — Dashboards (canonical-tags + qa-evaluator + onboarding-questions ext) (next)**
 Plan: —
-Status: Phase 57 ✅ complete (commit `57c182b`) — paLivenessSweepDaily CF deployed + jobType normalize (253 jobs) + seniorityLevel backfill (1280/1684) + macmini Stage 2.5 hotfix verified (SKIP_URL_RESOLUTION=1) + macmini fresh ingestion synced +2,735 new jobs (759 tests pass); v1.6 in progress (6/11)
-Last activity: 2026-05-06 — Phase 57 liveness + macmini probe + fresh ingestion shipped (LIVE-01..04 covered)
+Status: Phase 58 ✅ complete (commit `463bcdb`) — paLlmRerankNightly CF deployed (04:00 UTC daily) + JD-rel weights helper (Sonnet→OpenAI→Qwen chain) + 821 tests pass + cache reader graceful-miss handling validated; v1.6 in progress (7/11)
+Last activity: 2026-05-06 — Phase 58 nightly LLM rerank batch shipped (RERANK-01..04 covered)
 Adam-action items:
-- Set `ANTHROPIC_API_KEY` Firebase Secret (Phase 53) — optional, chain falls through gracefully
+- Set `ANTHROPIC_API_KEY` Firebase Secret (Phase 53/58) — optional, chain falls through gracefully
 - Daily-batch.ts cutover legacy → V16 deferred to Phase 60
 
 ## v1.6 — Unified Canonical Tags & Match Quality v1 (this milestone)
