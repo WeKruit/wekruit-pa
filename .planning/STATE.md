@@ -1,209 +1,95 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.5
-milestone_name: Friend-Companion Job-Rec System (production-grade)
-status: ready_for_adam_hitl_deploy
-last_updated: "2026-05-02T08:00:00.000Z"
-last_activity: 2026-05-02
+milestone: v1.6
+milestone_name: Unified Canonical Tags & Match Quality v1
+status: defining_requirements
+last_updated: "2026-05-05T22:00:00.000Z"
+last_activity: 2026-05-05
 progress:
-  total_phases: 14
-  completed_phases: 14
+  total_phases: 0
+  completed_phases: 0
   total_plans: 0
   completed_plans: 0
 ---
 
-## v1.5 — Friend-Companion Job-Rec System (this milestone)
-
-Spawned 2026-05-02 by P10 from Adam directive after H7 daily push received as 人机. **All 14 streams shipped 2026-05-02 in single autonomous session** (16 commits + Mac mini Cloud Tasks bootstrap + qa:v1.5 gate PASS).
-
-| # | Stream | Commit | Tests |
-|---|---|---|---|
-| 41 | H13 friend-tone CV-aware opener | `bc8863c` | 113/113 + LIVE Adam push 140e3177 |
-| 42 | F async match-explainer (Qwen-7B) | `92db7cb` | 140/140 |
-| 43 | C hard filters (YoE/visa/research/loc) | `a3a03dd` | 161/161 |
-| 43.5 | I startup-vs-corp boost | `c49884d` | 24/24 cross-encoder |
-| 44 | B onboarding probe v2 (8-state) | `b1b0468` | 255/255 |
-| 45 | D message coalescer + ops bootstrap | `d8e91b8` | 6+336+255+33 |
-| 46 | E safety 3-layer | `a92f5fe` | 14+4 |
-| 47 | A matching cloud audit (Option D) | `6c6f3b2` | doc |
-| 47.1 | A2 mac-mini → CF webhook bridge | `471e25b` | 345/345 |
-| 49 | H reverse-match dashboard | `edd9226` | 351+161+11 |
-| 50 | J E2E QA team (4 agents × 8 personas) | `97b53b6` | qa:v1.5 PASS 262ms / $0 |
-| 51 | G.1 research (premise audit) | `be420b0` | doc |
-| 51 | G.2 BUILD (TS-native cluster cache) | `2d08bce` | 168+352 |
-
-Plus docs/infra commits:
-- `9fce53f` v1.5 milestone scoping
-- `59eb915` ROADMAP append + V1.5-ROLLOUT.md
-- (pending) firestore indexes 3 net-new for ramp blockers
-
-**Adam HITL queue** (per V1.5-ROLLOUT.md):
-1. firebase deploy + fill PA_COALESCE_TARGET_URL + redeploy
-2. flag canary 4-stage (Adam → 24h soak → 10% → 100%)
-3. Mac mini ssh + WEKRUIT-MATCHING-PATCH.md apply
-4. SMS LIVE smoke (Adam keeps)
-
-**Cost projection**: ~$0.60/mo at 100 active users (Adam budget AS LOW AS POSSIBLE target hit).
-
-**v1.6 backlog** (20 tech debts handed): see V1.5-ROLLOUT.md "Tech debts handed to P8".
-
----
-
-# Milestone state
-
-## Active milestones (dual stream, P10 strategic call 2026-04-29)
-
-P10 cut: legacy v1.3 carryover phases 29-32 + new v1.4 humanize-runtime phases 33-40 advance **in parallel** under one execution umbrella. STATE.md `milestone: v1.4` because tooling reads single field; ROADMAP `## Phase Details (29-40)` section bundles both streams under v1.4 milestone heading so `gsd-tools roadmap analyze` discovers all 12.
-
-### Stream A — v1.3 carryover (4 phases, infra)
-
-P10 strategy doc: `phases/P9-AUTONOMOUS-RUN-STATUS.md` (legacy) + `MILESTONE-v1.3-PRODUCTIONIZE.md`-equivalent in ROADMAP §v1.3 table.
-
-| # | Phase | Status | Workstream owner |
-|---|-------|--------|------------------|
-| 29 | Agent Handbook (Bible-as-data) | ✅ COMPLETE 2026-04-29 (T1-T4, 4 commits + handbook integration tests 7/7 pass; SDK 18/18 + orch 201/201 pass) | P9-A |
-| 30 | Downstream Eval Connector | ✅ COMPLETE 2026-04-29 (T1-T3 prior + T-Wrap-1/2/3 P9-A Wave 2: master kill switch `evalConnectorsEnabled` + nano default nl-judge + 2 default disabled triggers seeded (mentioned_layoff, mentioned_salary_research) + SEED.md + FIRESTORE-TTL.md; pa-orchestrator 213/213 pass; pa-persistence 91/91 pass; typecheck clean) | P9-A |
-| 31 | Upstream Event Connector | ✅ COMPLETE 2026-04-29 (T1-T3, 3 commits; paUpstreamEventWebhook CF + HMAC + Mustache-lite renderer + dashboard page) | P9-A |
-| 32 | Dashboard IA Reorg + Stress Harness + Playbooks/Personas CRUD | ✅ COMPLETE 2026-04-29 (W1-W4, 8 wave commits + 3 deploy-fix; sidebar 5-cat, Conversations row redesign, UserDetail OperatorSummary, Voice split, Flags drawer, Playbooks+Personas Firestore CRUD, Artillery harness, paSendblueOutbox repaired, cloud-logging dashboard.json; agent-registry 33/33, pa-orchestrator 201/201, typecheck clean) | P9-B |
-
-### Stream C — v1.4 humanize-runtime (8 phases, eval-first)
-
-Canonical doc: [`MILESTONE-v1.4-humanize-runtime-v2.md`](./MILESTONE-v1.4-humanize-runtime-v2.md).
-
-**Goal:** Push Claire's bilingual (zh+en) conversational humanness to ~70-80% Pi-level on 5 quantified metrics by attacking 4 production failure modes via deterministic detectors + ImperfectionInjector + ESConv-FSM + memory policy. Eval-first: no module work until baseline locked. 0 net new LLM calls in production path.
-
-**Phase order:** 33 (Eval Harness Extension) → 34 (Baseline Measurement) → 35 (Detectors) → 36 (ImperfectionInjector A/B) → 37 (FSM) → 38 (Memory Policy) → 39 (External Auto Benchmarks) → 40 (Bible v7.5 + Ship).
-
-**Estimate:** ~7.5 dev-days.
-
-| # | Phase | Status | Workstream owner |
-|---|-------|--------|------------------|
-| 33 | Eval Harness Extension | COMPLETE 2026-04-29 (5 commits, 140 tests pass) | P9-C |
-| 34 | Baseline Measurement | ✅ COMPLETE 2026-04-29 (deterministic-only baseline, 155 turns; baseline-rev00056.md locked + per-Phase gates 35-40; judge + embed deferred Adam-approval) | P10 main |
-| 35 | 4 Deterministic Detectors | ✅ PARTIAL 2026-04-29 (T1-T5, 6 commits; F1/F2/F3/F4 + framework + smoke harness; 67/67 tests pass; F1 recall 100% on Phase 34 known-fails, F1/F2/F3 false-positive 0% on smoke; F4 graceful degrade verified; latency p95 < 250ms total. **Wire-in deferred** — Adam applies `WIRE-IN-PATCH.md` after committing pending llm-rewriter.ts work) | P9-C |
-| 36 | ImperfectionInjector A/B | ✅ PARTIAL 2026-04-30 (T1-T5, 5 commits + docs commit; injector module + 3-arm router + position constraint + bilingual policies + A/B harness + 2 scenarios; 89/89 tests pass; 0 FILLER_BLACKLIST collisions; arm probability ±3pp; latency p95 < 5ms; A/B harness `--dry-run` plans 18 reply + 12 judge calls. **Wire-in deferred** — Adam applies `WIRE-IN-PATCH.md` after Phase 35 wire-in + needs to approve $0.50-$2 LLM budget for live A/B run) | P9-C |
-| 37 | FSM (5 UX × ESConv 8) | ✅ PARTIAL 2026-04-30 (T1-T4, 5 commits incl docs; FSM module + 5-class rule-based ux classifier + per-uxState transitions + Phase 33 parity audit + 50 hand-labeled bilingual fixtures + accuracy gate; 99/99 tests pass; ux_state classifier accuracy 98% (49/50, gate ≥70%); strategy_fit allowed-set 100% on synthetic-aligned (50/50); inferStrategy match expected 100%; runFsm latency p95 < 10ms. **Wire-in deferred** — Adam applies `WIRE-IN-PATCH.md` after Phase 35 + 36 wire-ins land + own pending llm-rewriter.ts work committed) | P9-C |
-| 38 | Memory Policy | ✅ PARTIAL 2026-04-30 (T1-T4, 5 commits incl docs; memory-policy module + advice-tracker SDK + Firestore `pa-advice-tracker/{userId}/items/{turnId}` + BGE-M3 cos-sim repeat detector + 10 contradiction fixtures + S3 sync via `getPersona` Firestore + extractor pinning audit Qwen-7B+ tier + bilingual prompt-injector + 50-turn synthetic detection-rate gate + WIRE-IN-PATCH; 87/87 tests pass; contradiction recall 10/10 on positive fixtures (gate ≥9/10); negative false-positive 0/5 (gate ≤1/5); S3 sync verified (Type 10 reads `pa-personas/{slug}` Firestore not inline); extractor audit rejects 1.5B/0.5B/0.6B/mini/tiny/small + soft-warn default; runMemoryPolicy latency p95 < 200ms over 50 invocations; tight-repeat 50-turn detection rate ≥ 90% on synthetic; 0 net new LLM calls in production path. **Wire-in deferred** — Adam applies `WIRE-IN-PATCH.md` after Phase 35/36/37 wire-ins land + own pending llm-rewriter.ts work committed) | P9-C |
-| 39 | External Auto Benchmarks | ✅ PARTIAL 2026-04-30 (T1-T5, 5 commits; 5 benchmark runners (botchat / character-eval / empathetic-dialogues / esconv / role-llm) + run-all orchestrator + cost-ledger ($25 hard cap) + 3 adapters (qwen-7b raw / qwen-72b raw / claire-stack via direct Phase 35-38 module imports) + sf-client + results-aggregator; 88/88 tests pass; typecheck clean; dry-run exit 0 with 5 runner plans + total_projected_cost_usd $0.232 (claire-stack arm) + budget_headroom $24.77; per-arm projection: qwen-7b $0.21 / qwen-72b $1.78 / claire-stack $0.23 / optional judge $0.18 — grand total $2.41 vs $25 cap; COST-PROJECTION.md + SETUP.md (Adam runbook: clone 5 repos ~3GB + env vars + ~3hr/arm + run command). **RUNS deferred** — Adam P0: approve $25 budget + clone repos per SETUP.md + export SILICONFLOW_API_KEY + run `--live` (~2-4hr per arm)) | P9-C |
-| 40 | Bible v7.5 + Crisis + Ship | ✅ PARTIAL 2026-04-30 (T1-T6, 8 commits incl docs; BIBLE-v7.5.md ~14.5KB ship edition + migrate-bible-v7.5-to-handbook.ts dry-run verified + 20 crisis red-team scenarios (10 zh + 10 en) + crisis-redteam-runner.mjs 20/20 safety routing pass + 4/4 negative-smoke rejections + paHumanizeRuntimeEnabled FLAG-SPEC.md (1/10/50/100% BucketStrategy cookbook + 3 kill switches) + prefix-cache POC (wrapWithPrefixCache + LRU cap 50 + warm/cold telemetry + 10/10 tests pass + ≥30% latency reduction verified on mock 50ms cold/25ms warm) + final-audit.mjs (155 turns through Phase 35-38 simulation; metric 1 0.00%≤1% PASS / metric 2 drift_p95 3.77%≤4.9% PASS = 61% reduction beats 50% target / metric 4 100%≥98% PASS / metrics 3+5 documented DEFERRED Adam-blocker) + final-audit-report.md + WIRE-IN-PATCH consolidating Phase 35+36+37+38+40 wire-ins (9 sections, single Adam patch). **Wire-in deferred** — Adam applies WIRE-IN-PATCH.md after committing pending llm-rewriter.ts + admin-bootstrap.ts work; Adam P0 also: run --live migration + seedFlags + LLM judge $0.50-$2 budget approval + BGE_API_KEY env wiring + 1% canary ramp per FLAG-SPEC §2.2) | P9-C |
-
-### Cross-stream sync points
-
-| Sync | Stream A | Stream C | Action |
-|------|----------|----------|--------|
-| S1 | Phase 29 ships handbook | Phase 40 Bible v7.5 | If 29 done first, Bible v7.5 → `pa-handbooks/claire` v2; else inline seed |
-| S2 | Phase 30 downstream eval connector | Phase 33 eval harness | Different "eval" namespaces (runtime nl_judge vs offline pairwise judge) — zero file collision |
-| S3 | Phase 32 Wave 3 Personas CRUD | Phase 38 memory policy | Personas seed contains current Bible voice; Phase 38 must not depend on inline strings |
-
-## 2026-05-01 reality check (P10 amendment)
-
-Per-phase rows above (Phases 35-40) still say "Wire-in deferred — Adam applies WIRE-IN-PATCH.md". **This is stale.** The wire-in landed 2026-04-30 in commits `a12e85a` (Sections 1+4+5+6+8 — detectors post-gen + advice-tracker + prefix-cache + umbrella flag + admin-bootstrap SEED_FLAGS), `c4dd490` (Section 7 wire-in tests), `ccb1210` (audit doc), `9f275ca` (Sections 2+3 — ImperfectionInjector + FSM directive). Files actually changed: `packages/pa-orchestrator/src/index.ts` (+80 lines), `packages/pa-orchestrator/src/voice/llm-rewriter.ts` (+372 lines), `apps/functions/src/admin-bootstrap.ts`, `llm-rewriter.test.ts` (+220 lines wire-in tests). **8 of 9 sections in code.** Section 9 (BucketStrategy 1%→100%) is a dashboard flag-flip operation only.
-
-2026-05-01 verification: cross-pkg typecheck CLEAN, pa-orchestrator 235/235 tests pass, agent-registry 33/33 tests pass — wire-in zero regression.
-
-Stream G (job-rec vertical, A-G) ✅ FULLY SHIPPED including chaos drills (commit `0ab0f89`, 5/5 pass) and live E2E driver (commit `2df9d56`, 6/7 GREEN at 2026-05-01T06:35Z, A6 INFO-FAIL is observability gap not real fail).
-
-Phase 39 LIVE matrix runs IN PROGRESS as of 2026-05-01T20:54Z (this session) — `apps/eval/external-benchmarks/run-matrix.sh` filling remaining 13 cells (3 claire-stack + 5 qwen-7b-raw + 5 qwen-72b-raw); BotChat + CharacterEval claire-stack already in `results/`. Cost ≤ $2.20 / $25 cap. .env wired with SILICONFLOW_API_KEY + OPENAI_API_KEY + PA_OPENAI_AGENT_API_KEY.
-
-True remaining Adam HITL (not blocked-on-Adam-but-actually-already-done):
-1. Section 9 — flag ramp `paHumanizeRuntimeEnabled` 1%→10%→50%→100% per FLAG-SPEC §2.2-2.5 (dashboard task)
-2. CharacterEval 12-metric Python subprocess scoring (Adam Python venv)
-3. (Optional) handbook live-migration smoke + dashboard editor smoke
-
 ## Current Position
 
-Phase: Stream A v1.3 carryover ✅ COMPLETE (29 + 30 + 31 + 32). Stream C v1.4 ✅ BUILD COMPLETE + WIRE-IN COMPLETE — Phases 33 + 34 ✅ COMPLETE; Phases 35 + 36 + 37 + 38 ✅ COMPLETE (build + tests + wire-in); Phase 39 ✅ BUILD COMPLETE + LIVE matrix runs IN PROGRESS; Phase 40 ✅ BUILD COMPLETE (Section 9 flag-ramp = Adam dashboard task only). v1.4 milestone READY for ship.
-Plan: Stream A done (4/4 phases shipped); Stream C 8/8 BUILD complete (Phases 33 + 34 + 35-partial + 36-partial + 37-partial + 38-partial + 39-partial + 40-partial). Final audit: metrics 1+2+4 PASS deterministic gates (drift_p95 reduced 9.7%→3.77% = 61% reduction beats 50% target); metrics 3+5 documented DEFERRED (Adam P0 LLM judge $0.50-$2 + P1 BGE_API_KEY).
-Status: Stream A wrapped — operator-grade dashboard + connectors + handbook live; Stream C BUILD wrapped — F1/F2/F3/F4 detector module + ImperfectionInjector + 3-arm A/B harness + FSM (5 UX × ESConv 8) module + Memory Policy (advice tracker + contradiction detector + extractor pinning) + External Benchmarks harness (5 runners + 3 adapters + cost ledger $25 cap + run-all orchestrator) + Bible v7.5 ship edition (~14.5KB, bilingual NEVER + crisis_safety playbook D4 + 3-sentence cap D12 + slang banks) + migrate-bible-v7.5-to-handbook script (dry-run verified, idempotent + optimistic concurrency) + 20 crisis red-team scenarios (zh+en, 20/20 safety routing pass + 4/4 negative-smoke rejections) + paHumanizeRuntimeEnabled flag spec (1/10/50/100% BucketStrategy cookbook + 3 kill switches) + SiliconFlow prefix-cache POC (≥30% latency reduction verified on mock; 10/10 tests pass) + final 5-metric audit (3 hard gates PASS, 2 deferred documented) + consolidated WIRE-IN-PATCH (Phase 35+36+37+38+40 wire-ins, 9 sections, single Adam patch) shipped behind feature flags `PA_DETECTORS_ENABLED`, `PA_IMPERFECTION_INJECTOR_ENABLED`, `PA_FSM_ENABLED`, `PA_MEMORY_POLICY_ENABLED`, and umbrella `paHumanizeRuntimeEnabled` (all default off); Adam-owed P0 tasks: commit pending llm-rewriter.ts + admin-bootstrap.ts work + apply consolidated WIRE-IN-PATCH.md (Phase 40, 9 sections) + run `npx tsx apps/functions/scripts/migrate-bible-v7.5-to-handbook.ts --live` + run `paAdminBootstrap?action=seedFlags` + approve $0.50-$2 LLM judge budget for metric 3 baseline + wire BGE_API_KEY env for metric 5 + approve $25 Phase 39 external benchmark spend + ramp `paHumanizeRuntimeEnabled` 1% → 10% → 50% → 100% per FLAG-SPEC §2.2-2.5 cookbook
-Last activity: 2026-04-30 — Phase 40 T1-T6 complete (P9-C); v1.4 milestone BUILD READY; 8 commits (CONTEXT+PLAN, T1 BIBLE-v7.5.md, T2 migration script, T3 crisis red-team, T4 flag spec, T5 prefix-cache POC, T6 final audit, WIRE-IN-PATCH); 10/10 prefix-cache tests pass + typecheck clean; final-audit metric 1 (0.00% ≤ 1%) + metric 2 (drift_p95 3.77% ≤ 4.9% — 61% reduction beats 50% target) + metric 4 (100% ≥ 98%) all PASS; metrics 3 + 5 documented DEFERRED with Adam-blocker; crisis red-team 20/20 safety routing + 4/4 negative-smoke rejections; migrate-bible-v7.5 dry-run verified handbook v2 with 17 NEVERs + 70 vocab.allowed + 51 vocab.banned + 2 playbooks (headhunter + crisis_safety)
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-05-05 — Milestone v1.6 started
 
-## Adam's blocking decisions (none currently)
+## v1.6 — Unified Canonical Tags & Match Quality v1 (this milestone)
 
-All P10 strategic decisions locked:
-- v1.4 D1-D16 in `MILESTONE-v1.4-humanize-runtime-v2.md`
-- v1.3 carryover scope locked in legacy CONTEXT.md per phase
-- Dual-stream parallel execution approved (Adam 2026-04-29 "可以同步推进吗？")
+Spawned 2026-05-05 by Adam after iter34 sprint surfaced fragmented tag system as root cause of bad match quality (SWE candidate Adam recommended BDR / Account Manager / Warehouse Team Lead). Design conversation locked 16 decisions before any code dispatch.
 
-First Adam decision point: end of Phase 34 (baseline interpretation).
+**Architecture pivot:** previously matching used 4 fragmented tag sources (`statedPreferences` + `parsedCandidateResumes.industryTags` + `parsedCandidateResumes.topSkills` + `parsedCandidateResumes.embedding`). v1.6 unifies into single source `pa-users/{userId}.tags` with two orthogonal axes (`roleFunction` 17 + `industrySector` 42, no abbreviations).
 
-## Recommended execution order
+**Foundation already shipped (iter34 G + H + I waves):**
+- Wave A.1-A.8 (Sprint A P0): cv-ingest topSkills + atsApplyUrl + targetRole filter + role-to-industry map + CV gating poll + interim ack + tag surface
+- Wave B.9-B.13 (Sprint B P1): sync CV embedding + emb cosine in scoreJob + per-job reason + industryEnum > industryKey + tech-leaning blacklist
+- Wave C.14-C.20 (Sprint C verify+ship): scenarios + deploy + doc
+- Wave D.1-D.6 follow-ups: idempotencyKey collapse fix + SWE persona seed + typecheck clean + ats gate + extended blacklist
+- Wave G.1-G.4: Adam CV refresh + recency filter + liveness + backfill ATS CF + Qwen-7B llmRerank library
+- Wave H.1-H.3: mergeUserTags lib (canonical schema) + 5 sim CR fixes + cv-ingest unified writes
+- Wave I research: jobright industry truth (utm_campaign 17 = role function, NOT sector) + scraping repo audit (INDUSTRY_VOCAB 38 already exists, packages/shared-tags ready, packages/pa-resume-parser valet-port done)
 
-**Parallel waves** (P10 spawns three P9 in parallel):
+**Real sim from G5 (deployed CF):** 4-message bundle works end-to-end (interim ack + CV summary + match recommendation + tag summary), but recommended jobs are categorically wrong (BDR + Account Manager for SWE) due to:
+- CR1: CV-analysis Qwen-7B degenerates ("Docker × 60") — fixed in H.2 commit `6ffd184`
+- CR2: BDR/Account Manager not in title blacklist — fixed in H.2 commit `6e5e7c1`
+- CR3: orderBy firstSeenAt (Adam pointed out: hard filter post-fetch + raise cap is correct path, NOT changing orderBy) — needs revisit in v1.6
+- CR4: G.4 llmRerank shipped but TODO comment, wired in H.2 commit `c187c50`
+- CR5: cvEmbedding accepted by scoreJob but not passed in — wired in H.2 commit `d8e60e3`
 
-- **Wave 1 (P9-A + P9-B + P9-C parallel):**
-  - P9-A: Phase 29 Handbook (Stream A foundation; downstream/upstream depend on it)
-  - P9-B: Phase 32 Dashboard IA (independent, 4-wave already-spec'd)
-  - P9-C: Phase 33 Eval Harness Extension (Stream C foundation; baseline depends on it)
-- **Wave 2:**
-  - P9-A: Phases 30 + 31 (sequential, both depend on 29 handbook + Sendblue HMAC helper)
-  - P9-B: completes Phase 32 (4-wave continued)
-  - P9-C: Phase 34 Baseline Measurement (gates 35-40)
-- **Wave 3+:**
-  - Stream C continues 35 → 36 → 37 → 38 (per quantitative gates per MILESTONE doc)
-  - 39 (External Benchmarks) parallelizable with 37/38
-  - 40 ships behind feature flag `PA_HUMANIZE_RUNTIME_ENABLED` after all gates pass
+**v1.6 scope replaces piecemeal CR fixes with structural fix:** unified canonical vocab + single tag source + filter-first-then-rank query + per-skill weight + LLM JD-CV match + QA evaluator thread.
 
-## Milestone goal
+## Accumulated Context
 
-Quantitative voice quality improvement: 5 metrics measurably better vs rev-00056 baseline + Claire stack ≥ Qwen-72B raw on ≥1 of 5 public benchmarks (Stream C) + dashboard / handbook / connectors operator-grade (Stream A). No new LLM calls in production path. Latency stays under 12s p99.
+**Adam's CV (real test target):**
+- userId: `e5d97cd8-1e1d-439d-8672-3008f8aeef2e`
+- parsedCandidateResumes docId: `rQIqQEghvZLwVkMad2lJ`
+- Refreshed by `scripts/refresh-adam-cv.mjs` (commit `6f1366e`): industryTags=`["tech_software", "ai_ml"]`, topSkills 12, embedding 1536d, ready for v1.6 sim
 
-## Accumulated Context (carried from v1.0/v1.1/v1.2/v1.3)
+**LLM chain (locked):**
+- Tier 1: `gpt-5.4-nano` (primary, 2 SDK retries)
+- Tier 2: `claude-sonnet-4-6` (fallback on 5xx/timeout/rate, 2 SDK retries) ← **NEW** for v1.6, replaces gpt-4.1-mini
+- Tier 3: `gpt-4.1-mini` (final fallback, 1 SDK retry)
 
-### v1.0/v1.1 baseline shipped
+**Stack already in place:**
+- `packages/shared-tags` — 10-type canonical with mutexGroup + sha256 event ID + decay half-life + `ENTITY_KINDS` covers scraping-job/researcher/github-repo/devpost-project (iter30 WS2)
+- `packages/pa-resume-parser` — 3-tier router + valet-port complete + `qabank-to-mem0.ts` (iter30 WS1)
+- `packages/pa-orchestrator/src/tags/user-tags-merger.ts` — H.1 commit `253ce87` (`mergeUserTags` lib + UserTagsSchema zod)
+- `tests/scenarios/runner.mjs` + `dump-outbound-tail.mjs` — Firestore broker integration with pa-outbound observability bypass
 
-(see prior STATE.md history for detail; preserved below for context)
+**Cross-repo state:**
+- `wekruit-scraping/src/wekruit_matching/scraper/jobright_github.py` — `REPO_TO_CATEGORY` 1:1 with jobright `utm_campaign` 17 verbatim
+- `wekruit-scraping/src/wekruit_matching/enrichment/classifier.py` — `INDUSTRY_VOCAB` 38 frozenset already in place
+- macmini Stage 2.5 URL Resolution still hangs (Supabase pooler) — wekruit-pa CF backfill `paBackfillMatchingJobsAtsUrl` (commit `a56da02`) deployed as backup
 
-- Phase 1-9: Broker correctness + Dashboard shell + Memory evol + Scheduler + Phase 2/3 production hardening
-- Phase 10/10.5: Agents SDK runtime cutover (gpt-5.4-nano default via Responses API)
-- Phase 11.1: Persona card injection (closed 2026-04-27)
-- Phase 14: Companion eval harness (LLM-as-judge + cost ceiling, 23 scenarios pass) — **REUSED for v1.4 D13**
-- Phase 18-23: Voice v1 + Mirror + Normalizer + Sendblue + Proactive + Beta onboarding
-- Phase 21: Sendblue cutover (shipped 2026-04-27)
-- Phase 24: Voice quality baseline (executing in v1.2)
-- Phases 24.5/25/26/27/28: v1.3 Productionize (planned/executing)
+**Match flow target after v1.6:**
+```
+queryMatchingJobs(userId):
+  read pa-users.tags single source           ← D8 unified
+  build filters from tags
+  Firestore query:
+    where status=active
+    where roleFunction array-contains-any tags.roleFunction   ← D1 hard filter
+    orderBy firstSeenAt desc                                  ← D10 (NOT lastSeenAt)
+    limit 500                                                 ← raise cap (was 50)
+  in-memory hard filter:
+    visa intersect, location intersect, careerStage window, jobType exact
+    firstSeenAt < 20d, atsApplyUrl present + not jobright, dead !== true
+  soft score:
+    LLM match (Qwen-7B nightly cache)         0.40
+    skill jaccard (per-skill weight × jd-rel)  0.20
+    relevantTags overlap                       0.15
+    industrySector overlap                     0.10
+    cv emb × jd emb cosine                     0.10
+    salary fit                                 0.05
+  output:
+    title @ company \n atsApplyUrl \n 为啥推: <weighted reason>
+```
 
-### v1.4-specific accumulated context
+## Phase Numbering
 
-- **Two independent Deep Research reports** cross-validated original v1.4 architecture; both verdicts: PROCEED-WITH-MODIFICATIONS
-- **Critic loop dropped** from architecture: 5 peer-reviewed papers show LLM judge bias on subjective style amplifies the same failures it tries to fix
-- **Plutchik demoted** to internal scaffold: no clean Chinese mapping for 委屈/心疼/心累/不甘
-- **Eval harness verified intact**: `tests/scenarios/{runner.mjs,pairwise-runner.mjs,judge.mjs,lib/voice-axes.mjs,lib/pairwise.mjs}` + 20+ scenarios + 33 zh + 15 en filler blacklist already exist — D13 locks reuse
-- **Embedding stack verified**: `BAAI/bge-m3` already wired in `packages/memory/src/mem0.ts` via SiliconFlow — D14 locks no OpenAI embedding swap
-- **External benchmarks verified open**: BotChat, CharacterEval, EmpatheticDialogues, ESConv, RoleLLM all 200 OK (Phase 39)
-- **No prefix cache exists**: `atm-llm-runtime.ts:62` "cache" is profile credential TTL only — D7 locks adding SiliconFlow prefix cache POC
-
-### v1.3 carryover-specific accumulated context
-
-- **Legacy 29-32 are substantive v1.3 work**, not v1.0 leftovers (CONTEXT.md + PLAN.md already locked by P10 on 2026-04-28)
-- **Phase 29 Handbook**: Firestore `pa-handbooks/{slug}` + `/versions/{v}` immutable history; orchestrator loader 30s TTL cache; dashboard editor with diff + rollback. 6 P10 success criteria locked.
-- **Phase 30 Downstream Eval Connector**: post-turn fire-and-forget pipeline; regex + nl_judge conditions; HMAC-signed POST; per-(user × trigger) cooldown via Firestore composite key; master kill switch via flag `evalConnectorsEnabled`.
-- **Phase 31 Upstream Event Connector**: `paInboundEvent` HTTPS CF; HMAC verify with 5-min timestamp window; Mustache-lite renderer (no loops/partials); per-(eventType × userId) rate-limit (soft 1/hr, hard 24/day); enqueue to existing `pa-outbound`.
-- **Phase 32 Dashboard IA Reorg**: 4-wave parallel (IA reorg + UX P1 fixes + Playbooks/Personas CRUD + backend stress harness); converts dashboard from engineering console → operator console; new `apps/stress/` Artillery package; investigate + repair `paSendblueOutbox` last-deploy fail.
-
-### Locked architecture decisions (carry forward, all v1.4 D-series in MILESTONE-v1.4-humanize-runtime-v2.md)
-
-- ONE agent runtime = OpenAI Agents SDK; default LLM = gpt-5.4-nano via Responses API (v1.0)
-- SiliconFlow gated fallback (`PA_AGENT_LLM_PROVIDER=siliconflow`)
-- Mem0/Qdrant remains memory empowerment layer (Mem0 LLM/embedder = SiliconFlow Qwen + bge-m3)
-- Sendblue is pure transport (v1.1)
-- v1.4 D1-D16 (see milestone doc) — locked, do not re-litigate
-
-### Adam-locked v1.4 constraints
-
-- No model escalation (Qwen-7B class only)
-- No fine-tuning
-- 0 net new LLM calls in production path
-- < 12s p99 per turn
-- No LangGraph, no DSPy, no Reflexion-lite critic
-- No new monorepo package — extend `packages/pa-orchestrator/src/voice/`
-- Embedding = `BAAI/bge-m3` via SiliconFlow
-
-### v1.4 backlog (explicit deferrals)
-
-- Jones & Bergen 2024 5-min Turing test human-rater replication (~$300 + 7d, demographic mismatch) → v1.5
-- TexturePool recruitment (10-user × 2h interview) → v1.5
-- Big5-Chat trait scoring engineering → defer
-- Reflexion-lite critic resurrection → would need new evidence
-- LoCoMo memory benchmark → repo offline; revisit if reappears
-- 250 hand-curated texture facts → v1.5
-- EvoEmo full GA training pipeline → not borrowed (only MDP abstraction)
+Continue from v1.5 ending phase 51. v1.6 starts at phase **52**.

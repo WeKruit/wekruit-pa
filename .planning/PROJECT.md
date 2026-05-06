@@ -2,7 +2,74 @@
 
 Monorepo: Mac **Photon iMessage worker** (deprecating to Sendblue) + Firestore **`pa_*`** + **PA Console** (Vite, `wekruit-pa.web.app`). Auth: Google; Firestore rules: `@wekruit.com` + allowlisted Gmail (see `config/firebase/firestore.rules`).
 
-## Current Milestone: v1.4 — Humanize-Runtime v2 (Bilingual, Eval-First) — ✅ BUILD COMPLETE 2026-04-30
+## Current Milestone: v1.6 — Unified Canonical Tags & Match Quality v1
+
+**Status:** Started 2026-05-05. Defining requirements.
+
+**Goal:** Single source-of-truth tag system + match quality overhaul. Replace fragmented industry/skill/topSkill logic across `cv-ingest` + `parsedCandidateResumes` + `pa-users` + `matching-jobs` with canonical 2-axis vocab in `packages/shared-tags` (already exists, extend). Match flow: hard filter → soft score → LLM rerank async → emb fallback. Reduce regex, prefer LLM judgment.
+
+**Two orthogonal axes (Adam-locked):**
+
+1. **`roleFunction`** — closed enum 17, jobright `utm_campaign` verbatim (`software_engineering`, `customer_service_and_support`, `legal_and_compliance`, `sales`, etc — no abbreviations). Hard filter axis.
+
+2. **`industrySector`** — closed enum 42, full spell-out (`crypto_web3_blockchain`, `gaming_and_esports`, `artificial_intelligence_and_machine_learning`, `accessibility_and_assistive_technology`, etc). Add-able via dashboard (sandbox → promote pattern). Soft score axis.
+
+**Target features:**
+
+- **Canonical Tag Vocab Extension** — extend `packages/shared-tags` with all axes (roleFunction 17 / industrySector 42 / major 45 / visa 4 / jobType 10 / careerStage 13 / location 130+ / relevantTags open / skills open + bucket + per-skill weight). All values spelled out, **zero abbreviations**.
+- **CV Parse Wired to pa-resume-parser v2** — extract `relevantIndustry / relevantSpecialization / proposedTags` parse-time. LLM chain `gpt-5.4-nano → claude-sonnet-4-6 → gpt-4.1-mini`. Post-parse Claire dialogue for user confirmation. Fail-open + idempotent.
+- **Unified `pa-users/{userId}.tags`** — both `cv-ingest` + `chat answers` write here. Single read-side for `generateJobRecs`. Migration script for existing users.
+- **Match Quality Overhaul** — hard filter (`roleFunction` / `visa` / `location` / `careerStage` / `jobType` / `firstSeenAt < 20d` / `atsApplyUrl present + not jobright` / `dead !== true`) → soft score (`llm_match 0.40` / `skill_jaccard 0.20` / `relevantTags 0.15` / `industrySector 0.10` / `cv_emb_cosine 0.10` / `salary_fit 0.05`). Per-skill base weight + JD-relative weight (Qwen-7B nightly batch). Daily 404 sweep. `__PA_FIND_MATCH__` dev trigger.
+- **Industry Vocab Dashboard** — admin page reads/writes canonical vocab + sandbox promotion + count visible.
+- **QA Evaluator Thread** — separate weekly auto-run sampling 100 user×match pairs, scores hard-filter pass + top-3 acceptable rate. Surfaces to dashboard. Loops until satisfying.
+
+**Key constraints (Adam-locked, 16 decisions):**
+- D1: roleFunction = jobright 17 verbatim
+- D2: industrySector = 42 add-able via dashboard
+- D3: major = soft score (not hard filter)
+- D4: visa = 4 enum (`citizen, permanent_resident, sponsor_needed, other`)
+- D5: **NO abbreviations** in any closed vocab (LLM confusion risk)
+- D6: relevantTags / proposedTags parse-time extract (in pa-resume-parser schema)
+- D7: per-skill base weight + JD-relative weight (per-job re-rank)
+- D8: unified `pa-users/{userId}.tags` single source
+- D9: match cascade: hard filter → skill+relevant+industry score → JD-CV LLM rerank async → emb cosine fallback
+- D10: 20d `firstSeenAt` window + 404 daily pipeline, **abandon `lastSeenAt`**
+- D11: cv-ingest wires `pa-resume-parser` v2 (not single-shot gpt-5.4-nano)
+- D12: post-parse Claire dialogue confirm understanding
+- D13: QA evaluator thread runs weekly auto-eval
+- D14: `__PA_FIND_MATCH__` dev trigger (mirrors `__PA_RESET__` pattern)
+- D15: reduce regex, prefer LLM judgment for ambiguous classification
+- D16: industry vocab add-able via dashboard
+
+**Stack constraints:**
+- TypeScript / Node / Firebase Cloud Functions Gen2
+- LLM chain: `gpt-5.4-nano → claude-sonnet-4-6 → gpt-4.1-mini` (3-tier retry, Sonnet now in chain)
+- Embedding: `text-embedding-3-small` 1536d (OpenAI direct, sync at cv-ingest)
+- LLM rerank: SiliconFlow Qwen-7B-Instruct JSON-mode (async batch, latency-tolerant)
+- Budget: < 12s p99 per match request (sync) · < 24h for nightly LLM rerank batch
+- No new monorepo packages — extend `packages/shared-tags` + `packages/pa-resume-parser`
+- Cross-repo (wekruit-scraping) wire deferred to v2 — matching-jobs Firestore re-tag in scope
+
+**Success metrics (5):**
+1. SWE candidate Adam (userId `e5d97cd8-1e1d-439d-8672-3008f8aeef2e`, CV doc `rQIqQEghvZLwVkMad2lJ`) → BDR/sales/cashier/warehouse leak rate **100% → < 5%**
+2. Match URL realness: jobright.ai-leaked recommendation rate **50%+ → 0%**
+3. industryTags accuracy on Adam: **`["other"] → ["artificial_intelligence_and_machine_learning", "technology_general"]`**
+4. Per-job reasoning surfaces top-2 JD-aligned weighted skill matches
+5. QA evaluator pass rate: hard filter 100% (no leak), soft score top-3 acceptable rate **≥ 70%** weekly auto-sample
+
+**Backlog (out of scope this milestone):**
+- scraping-side Python tag emit (defer to v2)
+- cross-repo `pa-tag-events` wire from wekruit-scraping (defer)
+- UK visa sponsor matching (NA-only focus)
+- Reverse-match recruiter agent overhaul
+
+**Estimate:** ~10-14 dev-days across 8-10 phases (eval-first ordering).
+
+## Previous Milestone: v1.5 — Friend-Companion Job-Rec System — ✅ SHIPPED 2026-05-02
+
+14/14 phases (41-51, including 43.5 / 47.1) shipped in single autonomous session. See [`.planning/STATE.md`](./STATE.md) for full table. Live ship gated on Adam HITL queue per [`V1.5-ROLLOUT.md`](./V1.5-ROLLOUT.md).
+
+## Previous Milestone (v1.4): Humanize-Runtime v2 (Bilingual, Eval-First) — ✅ BUILD COMPLETE 2026-04-30
 
 **Status:** 12/12 phases shipped (Stream A 29-32 + Stream C 33-40). Audit: `.planning/v1.4-MILESTONE-AUDIT.md`.
 **Verdict:** passed_with_deferrals — 3 of 5 hard-gate metrics PASS (AI tell-tale 0%, drift p95 3.77% beats target 4.9% by 61% reduction, length compliance 100%); 2 metrics deferred pending Adam P0 unblocks (judge budget $0.50-$2 for metric 3, BGE_API_KEY env for metric 5).

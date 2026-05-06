@@ -2,7 +2,141 @@
 
 This file is append-only across milestones. Active milestone requirements at top; prior milestone requirements preserved below for traceability.
 
-**Last updated:** 2026-04-29 (v1.4 spawned)
+**Last updated:** 2026-05-05 (v1.6 spawned)
+
+---
+
+## v1.6 Active Requirements — Unified Canonical Tags & Match Quality v1
+
+**Milestone goal:** Replace fragmented tag system with single canonical source + match quality overhaul. Two orthogonal axes (`roleFunction` 17, `industrySector` 42). Hard filter → soft score → LLM rerank → emb fallback. All vocab spelled out, no abbreviations.
+
+### Canonical Tag Vocab (TAG)
+
+- [ ] **TAG-01**: System provides closed-enum `roleFunction` vocab — 17 jobright `utm_campaign` values verbatim (`software_engineering`, `engineering_and_development`, `data_analysis`, `product_management`, `business_analyst`, `creatives_and_design`, `consultant`, `accounting_and_finance`, `marketing`, `management_and_executive`, `sales`, `human_resources`, `legal_and_compliance`, `arts_and_entertainment`, `education_and_training`, `public_sector_and_government`, `customer_service_and_support`).
+- [ ] **TAG-02**: System provides closed-enum `industrySector` vocab — 42+ spelled-out values, no abbreviations (incl. `crypto_web3_blockchain`, `gaming_and_esports`, `artificial_intelligence_and_machine_learning`, `accessibility_and_assistive_technology`).
+- [ ] **TAG-03**: System provides closed-enum `major` vocab — 45+ spelled-out values; used as soft-score signal not hard filter.
+- [ ] **TAG-04**: System provides closed-enum `visa` vocab — exactly 4 values: `citizen`, `permanent_resident`, `sponsor_needed`, `other`.
+- [ ] **TAG-05**: System provides closed-enum `jobType` vocab — 10 spelled-out values (`full_time`, `internship`, `new_graduate`, `contract`, `part_time`, `fellowship`, `apprenticeship`, `freelance`, `return_to_work_program`, `co_op_rotation`).
+- [ ] **TAG-06**: System provides closed-enum `careerStage` vocab — 13 spelled-out values for hard-seniority filtering.
+- [ ] **TAG-07**: System provides closed-enum `location` vocab — 130+ spelled-out values (US/CA/EU/APAC/LATAM/MEA + remote variants).
+- [ ] **TAG-08**: System provides open-vocab `relevantTags` (sandbox, max 12/profile, lowercase pattern `[a-z][a-z0-9_]{1,79}`) for niche tags.
+- [ ] **TAG-09**: System provides bucketed open-vocab `skills` (10 buckets) with per-skill `name` (no abbrev), `bucket`, `proficiency`, `evidenceCount`, `baseWeight`.
+- [ ] **TAG-10**: All canonical vocabs live in `packages/shared-tags` single source. No vocab duplication.
+- [ ] **TAG-11**: Industry vocab is add-able by admin without code change — sandbox → review → promote-to-canonical button on dashboard. Promotion writes to Firestore overlay.
+- [ ] **TAG-12**: Vocab tokens validated zod schema at write-time — no spaces, no abbreviations, lowercase + underscore only. Abbreviation reject with explanation.
+
+### CV Parse Pipeline (PARSE)
+
+- [ ] **PARSE-01**: `cv-ingest` Cloud Function uses `packages/pa-resume-parser` v2 `parseResumeText`. Removes inline single-shot LLM call.
+- [ ] **PARSE-02**: LLM router chain is `gpt-5.4-nano (primary) → claude-sonnet-4-6 (fallback) → gpt-4.1-mini (final)`. Sonnet-4-6 reintroduced.
+- [ ] **PARSE-03**: pa-resume-parser schema extended with `relevantIndustry: string[]` parse-time extract from work-history.
+- [ ] **PARSE-04**: pa-resume-parser schema extended with `relevantSpecialization: string[]` parse-time extract.
+- [ ] **PARSE-05**: pa-resume-parser schema extended with `proposedTags: string[]` (max 12, sandbox) parse-time extract.
+- [ ] **PARSE-06**: cv-ingest writes raw to `parsedCandidateResumes` AND triggers tag merger to `pa-users/{userId}.tags` in same execution. Tag merge fail-open.
+- [ ] **PARSE-07**: Post-parse Claire dialogue confirms understanding ("我看到你: <skills+companies+roles+relevantTags>; 对吗?"). User correction writes back to tags.
+- [ ] **PARSE-08**: Industry classification reduces regex reliance — when LLM emits `["other"]`, system asks LLM (Sonnet-4-6 fallback) for second pass with explicit reasoning prompt.
+- [ ] **PARSE-09**: cv-ingest is idempotent — re-parsing same PDF (same sha256) returns existing record, no duplicate side-effects.
+
+### Unified User Tag Store (USER-TAG)
+
+- [ ] **USER-TAG-01**: Every user has unified `pa-users/{userId}.tags` document with full canonical schema. Missing-tag user surfaced to admin as inconsistent.
+- [ ] **USER-TAG-02**: cv-ingest writes `tags.skills` (full list, not truncated to top 12) + `tags.industrySector` + `tags.relevantIndustry` + `tags.relevantSpecialization` + `tags.proposedTags` + `tags.embedding` + `tags.lastUpdatedFromCv`.
+- [ ] **USER-TAG-03**: Onboarding chat answer hooks write to `tags.targetRole` / `tags.yoeRange` / `tags.visaStatus` / `tags.prefersStartup` / `tags.targetLocations` / `tags.preferredLang` / `tags.lastUpdatedFromChat`.
+- [ ] **USER-TAG-04**: Migration script ports existing 100+ users from fragmented data into `pa-users.tags`. Idempotent.
+- [ ] **USER-TAG-05**: `mergeUserTags()` lib (iter34 H.1 commit `253ce87`) is the only writer. No direct `pa-users.tags` writes elsewhere.
+
+### Match Quality Pipeline (MATCH)
+
+- [ ] **MATCH-01**: `generateJobRecs` reads exclusively from `pa-users.tags` (single source). Removes legacy reads.
+- [ ] **MATCH-02**: Firestore `matching-jobs` schema gains `roleFunction: string[]` + retains `industrySector: string[]`. Two orthogonal axes. Migration backfills 116K+ jobs from current `industry` field via deterministic mapper.
+- [ ] **MATCH-03**: Firestore query uses `where('roleFunction', 'array-contains-any', user.targetRoleFunction)`. Limit raised from 50 to 500 fetch cap.
+- [ ] **MATCH-04**: Hard post-filter chain: `visa intersect` → `location intersect (anywhere bypass)` → `careerStage window` → `jobType exact` → `firstSeenAt < 20d` → `atsApplyUrl present + not jobright.ai` → `dead !== true`.
+- [ ] **MATCH-05**: Soft score weights: `llm_match 0.40` + `skill_jaccard 0.20` + `relevantTags 0.15` + `industrySector_overlap 0.10` + `cv_emb_cosine 0.10` + `salary_fit 0.05`. Sponsor/location removed from score (already hard-filtered).
+- [ ] **MATCH-06**: Per-skill weight in `skill_jaccard` — base × JD-relative weight (LLM nightly tells which skills are JD-central).
+- [ ] **MATCH-07**: Match recommendation message includes per-job reasoning showing top-2 weighted matched skills + reason.
+- [ ] **MATCH-08**: 20-day freshness window using `firstSeenAt`. `lastSeenAt` deprecated.
+
+### Liveness & 404 Pipeline (LIVE)
+
+- [ ] **LIVE-01**: Daily 404 sweep Cloud Scheduler job HEAD-checks `matching-jobs.atsApplyUrl` for active jobs, marks `dead=true` on 404/410/500/timeout.
+- [ ] **LIVE-02**: Sweep batch 500/min, concurrent 50, 100ms throttle. 30K active in < 60min. Re-checks dead jobs after 7d.
+- [ ] **LIVE-03**: Dead jobs older than 30d after marking are hard-deleted from `matching-jobs`.
+- [ ] **LIVE-04**: `paBackfillMatchingJobsAtsUrl` (iter34 G.3 commit `a56da02`) wired into daily sweep.
+
+### LLM Async Rerank (RERANK)
+
+- [ ] **RERANK-01**: Nightly batch Cloud Scheduler at 03:00 UTC runs LLM JD-CV match scorer using `Qwen/Qwen2.5-7B-Instruct` JSON-mode for top-50/active user.
+- [ ] **RERANK-02**: Output stored in `pa-user-rerank-cache/{userId}` with `ranked` + `computedAt`. Read-side falls back if cache stale > 36h.
+- [ ] **RERANK-03**: Async fire-and-forget llmRerank already wired (iter34 H.2 commit `c187c50`). Daily batch reuses same function.
+- [ ] **RERANK-04**: Per-skill JD-relative weight stored as `pa-user-skill-jdrel-cache/{userId}/{jobId}`.
+
+### Dashboard (DASH)
+
+- [ ] **DASH-01**: Admin page `/admin/canonical-tags` reads `packages/shared-tags` vocab + Firestore overlay, displays all axes with counts.
+- [ ] **DASH-02**: Admin page `/admin/canonical-tags` allows promoting sandbox `proposedTags` to canonical `industrySector`.
+- [ ] **DASH-03**: Admin page `/admin/qa-evaluator` displays QA evaluator weekly run results.
+- [ ] **DASH-04**: `/admin/onboarding-questions` extended with link to `pa-users.tags` view per user.
+
+### Dev / Testing (DEV)
+
+- [ ] **DEV-01**: `__PA_FIND_MATCH__` iMessage trigger forces `generateJobRecs` execution. Mirrors `__PA_RESET__`.
+- [ ] **DEV-02**: Scenario runner gains `--user-id <uid>` flag for real user scenario runs.
+- [ ] **DEV-03**: `dump-outbound-tail.mjs` extended with `--include-rerank-cache`.
+- [ ] **DEV-04**: 5-persona fixture set committed under `tests/fixtures/v1.6-personas/` (SWE / PM / Designer / ML / Data Analyst).
+
+### QA Evaluator Thread (QA)
+
+- [ ] **QA-01**: Cloud Scheduler `paQaEvaluatorWeekly` runs Mon 09:00 UTC, samples 100 user×match pairs, computes hard-filter pass + top-3 acceptable rate via Qwen-7B.
+- [ ] **QA-02**: Output written to `pa-qa-evaluator-runs/{runId}` with full sample + per-pair score + summary. Surfaced via `/admin/qa-evaluator`.
+- [ ] **QA-03**: Evaluator emits Slack/email alert if pass rate < 90% hard filter or < 70% top-3 acceptable.
+- [ ] **QA-04**: Evaluator prompt grounds judgment in candidate's `tags.targetRole` + `tags.relevantIndustry` + `tags.skills`. Explicit reasoning per match.
+- [ ] **QA-05**: Failure-loop: failing pairs go to priority queue, next-week run re-evaluates same users. Until pass ≥ 90%/70%, milestone not-shipped.
+
+### Documentation (DOC)
+
+- [ ] **DOC-01**: `CLAUDE.md` updated with v1.6 design lock (16 decisions, 5 metrics, vocab references, match flow diagram).
+- [ ] **DOC-02**: `.planning/MILESTONE-v1.6-unified-tags.md` written with full architecture diagram + vocab table + match flow + measurement protocol.
+- [ ] **DOC-03**: `packages/shared-tags/README.md` updated with v1.6 vocab additions + sandbox-promotion pattern + cross-repo notes.
+- [ ] **DOC-04**: wekruit-scraping repo gets `WEKRUIT_PA_TAG_HANDOFF.md` (cross-repo coordination message, no code change).
+
+---
+
+## v1.6 Future Requirements (deferred to v2.0+)
+
+- **CROSS-REPO-PYTHON-PORT** — port `packages/shared-tags` types to `wekruit-scraping/researcher/pipeline/canonical_tags.py`.
+- **SCRAPING-EMIT-TAG-EVENTS** — `wekruit-scraping/scripts/emit_tag_events.py` writer.
+- **RECRUITER-AGENT-TAGS** — extend tag system to candidate-sourcing flows.
+- **MULTI-LOCATION-WEIGHTING** — distance similarity weight (NYC ≈ Boston East-coast clustering).
+- **SKILL-SIMILARITY-EMBEDDING** — pre-computed skill embedding dict for `python` ≈ `pyspark` semantic clustering.
+- **RESUME-VARIANT-PER-JOB** — VALET-style per-job CV rewriting.
+
+## v1.6 Out of Scope (explicit exclusions)
+
+- **Cross-repo Python tag emit** — defer to v2.0.
+- **UK / EU / non-NA visa types** — NA-only focus.
+- **Recruiter agent overhaul** — already shipped v1.5.
+- **Multi-language CV parse** — pa-resume-parser v2 English-only.
+- **Job application auto-fill** — qaBank-to-mem0 already handles, no extension.
+- **Real-time match notifications** — async daily batch only.
+
+## v1.6 Traceability
+
+(Filled by roadmap.)
+
+| REQ-ID | Phase | Status |
+|---|---|---|
+| TAG-01..12 | — | pending |
+| PARSE-01..09 | — | pending |
+| USER-TAG-01..05 | — | pending |
+| MATCH-01..08 | — | pending |
+| LIVE-01..04 | — | pending |
+| RERANK-01..04 | — | pending |
+| DASH-01..04 | — | pending |
+| DEV-01..04 | — | pending |
+| QA-01..05 | — | pending |
+| DOC-01..04 | — | pending |
+
+**Total: 55 requirements across 10 categories.**
 
 ---
 
