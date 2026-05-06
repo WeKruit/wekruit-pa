@@ -90,6 +90,15 @@ export const TOP_N_PER_USER = 3
 export const HARD_FILTER_PASS_THRESHOLD = 0.9
 /** Threshold for top3Acceptable rate alert. Below this → alert. */
 export const TOP3_ACCEPTABLE_THRESHOLD = 0.7
+/**
+ * v1.7 hotfix — minimum sample size below which an alert is suppressed.
+ * Insufficient sample is a DATA-THINNESS signal (corpus stale OR no users
+ * have populated `tags.targetRoleFunction`), not a quality regression. Alerting
+ * on it spams Mailgun + Slack without actionable signal. Run is still persisted
+ * to `pa-qa-evaluator-runs` so the audit trail remains complete; ship-gate state
+ * also still updates so the milestone can't false-pass on empty data.
+ */
+export const MIN_SAMPLE_FOR_ALERT = 10
 /** Failing users persist in priority queue for this many days. */
 export const PRIORITY_QUEUE_TTL_DAYS = 8
 /** Concurrency for per-user processing. Bounded by SiliconFlow rate. */
@@ -98,8 +107,13 @@ export const USER_CONCURRENCY = 5
 export const ROLE_FUNCTION_QUERY_CAP = 10
 /** Pool size for top-N query per user (oversample to filter dead jobs). */
 export const PER_USER_JOB_POOL = 50
-/** Phase 56 freshness window — must match V16 reader. */
-export const FRESHNESS_WINDOW_MS = 20 * 24 * 3600 * 1000
+/** v1.7 — freshness window relaxed to 90d. firstSeenAt is INGESTION-DATE
+ * (when scraper added doc), NOT JD posted-at. Real corpus has sparse fresh
+ * data because macmini scraping is rate-limited; 90d window matches V16
+ * adaptive max-relaxation tier so QA samples on what production users
+ * actually see. The 20d strict spec lives in V16 reader; QA is downstream
+ * eval, not the producer of that filter. */
+export const FRESHNESS_WINDOW_MS = 90 * 24 * 3600 * 1000
 
 const PA_USERS_COLLECTION = "pa-users"
 const MATCHING_JOBS_COLLECTION = "matching-jobs"
@@ -212,6 +226,11 @@ export type QaEvaluatorDeps = {
   top3AcceptableThreshold?: number
   priorityQueueTtlDays?: number
   userConcurrency?: number
+  /** Min sample below which alerts suppress (data-thinness guard). Default MIN_SAMPLE_FOR_ALERT (10). Tests override to 1 to exercise alert paths. */
+  minSampleForAlert?: number
+  /** v1.7 — Restrict sample to a specific list of userIds (admin-callable mode).
+   *  When set, ignores priority queue + general user list. Used for ad-hoc Adam-only runs. */
+  forceUserIds?: string[]
   log?: (msg: string, ctx?: Record<string, unknown>) => void
   errorLog?: (msg: string, ctx?: Record<string, unknown>) => void
 }
@@ -387,14 +406,30 @@ export async function runQaEvaluator(
   }
 
   // 3. Build sample.
-  const prioritySet = new Set(priorityUserIds)
-  const sample = buildSample(eligibleUsers, prioritySet, sampleSize, random)
+  // v1.7 admin override — when forceUserIds set, scope the sample to ONLY
+  // those users (admin-callable ad-hoc runs, e.g. "evaluate Adam's matches now").
+  // Bypasses priority-queue + general sampling logic. Tags are loaded directly
+  // from the same store path used for eligibleUsers — the user must exist.
+  let sample: SampleUserDoc[]
+  if (deps.forceUserIds && deps.forceUserIds.length > 0) {
+    const forceSet = new Set(deps.forceUserIds)
+    sample = eligibleUsers.filter((u) => forceSet.has(u.id))
+    log("qa_eval.force_user_mode", {
+      runId,
+      forceUserIds: deps.forceUserIds,
+      matchedCount: sample.length,
+    })
+  } else {
+    const prioritySet = new Set(priorityUserIds)
+    sample = buildSample(eligibleUsers, prioritySet, sampleSize, random)
+  }
 
   log("qa_eval.sampling", {
     runId,
     totalEligible: eligibleUsers.length,
-    priorityQueue: prioritySet.size,
+    priorityQueue: priorityUserIds.length,
     sampleSize: sample.length,
+    forceUserMode: !!deps.forceUserIds?.length,
   })
 
   // 4. Per-user evaluation.
@@ -513,9 +548,15 @@ export async function runQaEvaluator(
   }
 
   // 7. Alerts.
+  // v1.7 hotfix — suppress alert when sample is below MIN_SAMPLE_FOR_ALERT.
+  // Insufficient sample (sampleSize < 10) is a data-thinness signal, not a
+  // quality regression. Run still persists, ship-gate still updates; we only
+  // skip the noisy Slack/Mailgun broadcast.
   const passes = hardFilterPassRate >= hfThreshold && top3AcceptableRate >= t3Threshold
+  const minSampleForAlert = deps.minSampleForAlert ?? MIN_SAMPLE_FOR_ALERT
+  const insufficientSample = evalSampleSize < minSampleForAlert
   let alertSent = false
-  if (!passes) {
+  if (!passes && !insufficientSample) {
     const message =
       `⚠ QA evaluator FAILED (runId=${runId}): hardFilter=` +
       `${(hardFilterPassRate * 100).toFixed(1)}% (target ≥${(hfThreshold * 100).toFixed(0)}%), ` +
@@ -574,6 +615,7 @@ export async function runQaEvaluator(
     failingUserIds,
     durationMs,
     passes,
+    insufficientSample,
   }
   try {
     await deps.store.writeRun(runId, runDoc)
