@@ -1698,11 +1698,15 @@ export type QueryMatchingJobsArgs = {
  * filter → weighted score → reason), and replaces the daily-batch path
  * (Phase 60 cutover, commit `__PA_FIND_MATCH__-cutover`).
  *
- * The legacy function remains as a fallback for users without `pa-users.tags`
- * (V16 returns `noUserTags: true` → daily-batch falls through to this).
+ * Phase 68 (HYGIENE-01) — recruiter-agent migrated to the V16 tool wrapper
+ * (`createQueryMatchingJobsV16Tool`), so this legacy function is now ONLY
+ * called by daily-batch's fallback path for un-migrated users (V16 returns
+ * `noUserTags: true` → daily-batch runs this). Once the Phase 53/54 backfill
+ * fully populates `pa-users.tags` across the active corpus, the fallback
+ * (and this function) can be deleted in a future cleanup phase.
  *
- * Removal target: v1.7 — once all users have backfilled `tags` via the
- * Phase 53/54 merger (CV ingest + onboarding answer hooks), drop this file.
+ * NOT exported from `index.ts` — callers outside this package should use
+ * `queryMatchingJobsV16` exclusively.
  */
 export async function queryMatchingJobs(
   args: QueryMatchingJobsArgs,
@@ -1751,15 +1755,7 @@ export async function queryMatchingJobs(
   // iter34 H.2 / CR3 — orderBy lastSeenAt (was firstSeenAt). The recency
   // hard filter (D.9) drops rows with stale lastSeenAt; ordering the top-50
   // fetch by the SAME field keeps the freshest live inventory at the top of
-  // the candidate window before in-memory ranking. firstSeenAt clusters at
-  // 30-50d ago (batch-ingest timestamp) so it's useless for freshness.
-  //
-  // Composite indexes required (added in this commit):
-  //   - status + lastSeenAt desc
-  //   - status + industryKey + lastSeenAt desc
-  //   - industryEnum array-contains + status + lastSeenAt desc
-  // See config/firebase/firestore.indexes.json. On FAILED_PRECONDITION the
-  // catch block below falls back to the simpler status-only query (no order).
+  // the candidate window before in-memory ranking.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   q = (q as any).orderBy("lastSeenAt", "desc").limit(QUERY_FETCH_CAP)
 
@@ -1767,8 +1763,6 @@ export async function queryMatchingJobs(
   try {
     snap = await q.get()
   } catch (err) {
-    // Composite-index failures (FAILED_PRECONDITION) — fall back to
-    // simpler query so the cron path isn't bricked by a missing index.
     log("[queryMatchingJobs] compound_query_failed_falling_back", {
       error: err instanceof Error ? err.message : String(err),
     })
@@ -1784,7 +1778,6 @@ export async function queryMatchingJobs(
     try {
       const raw = doc.data() as Record<string, unknown>
       const m = projectMatchingJobRow(doc.id, raw)
-      // Validate via Zod so we catch malformed corpus rows loudly in tests.
       const validated = MatchingJobSchema.parse(m) as MatchingJob & {
         embedding?: number[] | null
       }
@@ -1805,17 +1798,11 @@ export async function queryMatchingJobs(
     }
   }
 
-  // Optional sponsorship hard filter — only apply if the user explicitly
-  // does NOT want sponsorship; otherwise we keep the score-based soft pref.
   const sponsorshipFiltered =
     parsed.filters.sponsorship === "none"
       ? projected.filter((j) => j.sponsorship !== true)
       : projected
 
-  // TD-#10 — defensive guard against polluted industryEnum (see comment block
-  // above NON_TECH_NEVER_KEYS). When the user is tech-leaning, reject docs
-  // whose industryKey lands in a known-non-tech bucket regardless of what
-  // their industryEnum claims. Pure in-memory; ~50 docs ≪ 1ms.
   const userTagsForGuard = parsed.filters.industryTags ?? []
   const guardResult = applyEnrichmentNeverList(sponsorshipFiltered, userTagsForGuard)
   if (guardResult.rejected > 0) {
@@ -1826,10 +1813,6 @@ export async function queryMatchingJobs(
       userTags: userTagsForGuard,
     })
   }
-  // iter34 sprint A.3 — role → industryEnum post-filter. Runs AFTER the
-  // never-list (so role filter applies to the kept set, not the polluted
-  // pool) and BEFORE rank (so the rank operates on the role-fit subset
-  // only). When filter is undefined/empty, no-op.
   const roleBuckets = parsed.filters.targetRoleIndustryEnum
   const beforeRoleFilter = guardResult.kept
   const afterRoleFilter = applyTargetRoleIndustryEnumFilter(beforeRoleFilter, roleBuckets)
@@ -1847,11 +1830,6 @@ export async function queryMatchingJobs(
     })
   }
 
-  // iter34 sprint B.13 — title-regex anti-bias for tech-leaning users.
-  // Runs AFTER role filter so it only sees the role-fit pool. Drops docs
-  // whose roleTitle matches the blue-collar / non-tech blacklist (e.g.
-  // "Warehouse Team Lead", "Truck Driver II"). Bypassed for non-tech-leaning
-  // users (a healthcare candidate may legitimately want a warehouse role).
   const titleBlacklistResult = applyTechLeaningTitleBlacklist(afterRoleFilter, userTagsForGuard)
   if (titleBlacklistResult.rejected > 0) {
     log("[queryMatchingJobs] tech_leaning_title_blacklist_rejected", {
@@ -1862,9 +1840,6 @@ export async function queryMatchingJobs(
   }
   const afterTitleBlacklist = titleBlacklistResult.kept
 
-  // iter34 followup D.5 — drop jobs whose atsApplyUrl is missing/empty or
-  // contains a jobright.ai mirror leak. Recommending a jobright mirror is a
-  // UX failure (candidate clicks through to aggregator, not real ATS).
   const atsGateResult = applyAtsApplyUrlGate(afterTitleBlacklist)
   if (atsGateResult.rejected > 0) {
     log("[queryMatchingJobs] ats_apply_url_gate_rejected", {
@@ -1874,10 +1849,6 @@ export async function queryMatchingJobs(
   }
   const afterAtsGate = atsGateResult.kept
 
-  // iter34 followup D.9 — recency hard filter (lastSeenAt < 7d, fallback 30d).
-  // `firstSeenAt` is the batch-ingest timestamp (clusters at 30-50d ago) —
-  // NOT a freshness signal. We use the inventory crawler's `lastSeenAt`,
-  // dropping rows missing / unparseable (conservative: no-signal-no-row).
   const recencyResult = applyRecencyFilterWithFallback(afterAtsGate)
   log("[queryMatchingJobs] recency_filter_applied", {
     before: afterAtsGate.length,
@@ -1887,9 +1858,6 @@ export async function queryMatchingJobs(
   })
   const afterRecency = recencyResult.kept
 
-  // iter34 followup D.13 — liveness hard filter. Drops rows the out-of-band
-  // sweep flagged as dead (HEAD returned 4xx/5xx). `undefined` and `false`
-  // are kept (legacy rows + alive rows).
   const livenessResult = applyLivenessFilter(afterRecency)
   if (livenessResult.rejected > 0) {
     log("[queryMatchingJobs] liveness_filter_rejected", {
@@ -1903,6 +1871,12 @@ export async function queryMatchingJobs(
   return { jobs: ranked }
 }
 
+/**
+ * @deprecated Phase 68 (HYGIENE-01) — use `createQueryMatchingJobsV16Tool`
+ * from `tools/query-matching-jobs-v16.js`. Kept here for back-compat with
+ * any external import; the recruiter-agent has been migrated to V16 and no
+ * longer wires this wrapper.
+ */
 export function createQueryMatchingJobsTool(deps: QueryMatchingJobsDeps) {
   return tool({
     name: "queryMatchingJobs",

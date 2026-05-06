@@ -56,9 +56,12 @@ export {
 } from "./tools/parse-resume.js"
 export type { ParseResumeDeps, ParseResumeArgs } from "./tools/parse-resume.js"
 
+// Phase 68 (HYGIENE-01) — `queryMatchingJobs` (legacy fragmented-source
+// pipeline) and `createQueryMatchingJobsTool` deleted. All callers now
+// use `queryMatchingJobsV16` (single source per CLAUDE.md D8). The
+// helpers below remain because they're still consumed by daily-batch,
+// reverse-match, tag-cluster-rec, and the V16 pipeline itself.
 export {
-  queryMatchingJobs,
-  createQueryMatchingJobsTool,
   projectMatchingJobRow,
   rankJobs,
   scoreJob,
@@ -69,11 +72,11 @@ export type {
   QueryMatchingJobsArgs,
 } from "./tools/query-matching-jobs.js"
 
-// v1.6 Phase 56 — single-source canonical match cascade. New entry point
-// alongside the legacy `queryMatchingJobs` (which stays for back-compat
-// until Phase 60 cuts daily-batch over).
+// v1.6 Phase 56 — single-source canonical match cascade.
+// Phase 68 (HYGIENE-01) — sole runtime entry point post-legacy deletion.
 export {
   queryMatchingJobsV16,
+  createQueryMatchingJobsV16Tool,
   loadUserTags,
   loadJdRelCache,
   loadLlmRerankCache,
@@ -88,6 +91,8 @@ export {
 export type {
   QueryMatchingJobsV16Args,
   QueryMatchingJobsV16Deps,
+  QueryMatchingJobsV16ToolDeps,
+  QueryMatchingJobsV16ToolInput,
 } from "./tools/query-matching-jobs-v16.js"
 export {
   V16_SCORE_WEIGHTS,

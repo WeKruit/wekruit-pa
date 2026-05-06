@@ -94,13 +94,92 @@ export const SENIORITY_REGEX = [
   [/\b(intern(ship)?|co-?op)\b/i, "intern"],
   // New grad / entry-level / early career
   [/\b(new\s*grad(uate)?|entry[\s-]*level|early\s*career)\b/i, "entry_level"],
-  // Senior (sr. + role or "senior" as a word)
-  [/\b(senior|sr\.?\s+(eng(ineer)?|developer|analyst|manager|associate|consultant|designer|scientist|architect|director))\b/i, "senior"],
-  // Junior (jr. + role or "junior" as a word)
-  [/\b(junior|jr\.?\s+(eng(ineer)?|developer|analyst|associate|consultant))\b/i, "junior"],
+  // Senior — match any title that contains "senior" OR starts with "sr.".
+  // Phase 68 — relaxed: "Sr. Data Analyst" + "Sr Backend Engineer" should match.
+  [/\bsenior\b/i, "senior"],
+  [/^sr\.?\s+/i, "senior"],
+  [/\bsr\.?\s+(eng(ineer)?|developer|analyst|manager|associate|consultant|designer|scientist|architect|director|specialist|lead|sde|swe)\b/i, "senior"],
+  // Junior — same approach
+  [/\bjunior\b/i, "junior"],
+  [/^jr\.?\s+/i, "junior"],
+  [/\bjr\.?\s+(eng(ineer)?|developer|analyst|associate|consultant|designer|specialist)\b/i, "junior"],
 ]
 
 export const SENIORITY_DEFAULT = "mid_level"
+
+/**
+ * Phase 68 (HYGIENE-02) — canonical-mapping helper for raw multi-word
+ * seniorityLevel values stored on existing matching-jobs docs.
+ *
+ * Many active jobs have `seniorityLevel` already set, but to a raw string
+ * like "Entry Level", "New Grad, Entry Level", "Entry, Mid Level", or
+ * "Senior, Lead" (from upstream macmini ingestion). These are NOT canonical
+ * (TAG-06 expects spelled-out underscored tokens like "entry_level"), so
+ * the V16 hard-filter window (`acceptableCareerStages`) silently drops
+ * them.
+ *
+ * This helper takes any string and returns the canonical token. Called by
+ * planJob below — when `existing` is non-null but NOT in CAREER_STAGE_VOCAB,
+ * we run it through this mapper; if it produces a canonical token the
+ * doc is rewritten.
+ *
+ * First-match-wins ordered. Multi-token values default to the LOWER tier
+ * (e.g., "Entry, Mid Level" → entry_level — degrade to the more inclusive
+ * canonical bucket so the candidate sees more matches).
+ */
+export const CANONICAL_SENIORITY_MAP_REGEX = [
+  // Already canonical (case-insensitive)
+  [/^(student|intern|entry_level|junior|mid_level|senior|staff|principal|manager|director|vp|c_level|founder)$/i, (m) => m[1].toLowerCase()],
+  // Multi-word raw forms
+  [/^entry[\s-]?level$/i, () => "entry_level"],
+  [/^mid[\s-]?level$/i, () => "mid_level"],
+  [/^c[\s-]?level$/i, () => "c_level"],
+  [/^new[\s-]?grad(uate)?$/i, () => "entry_level"],
+  [/^early[\s-]?career$/i, () => "entry_level"],
+  [/^vice[\s-]?president$/i, () => "vp"],
+  // Comma-separated multi-tier — degrade to the lower tier (broader window)
+  [/^new[\s-]?grad(uate)?\s*,\s*entry[\s-]?level$/i, () => "entry_level"],
+  [/^entry[\s-]?level\s*,\s*new[\s-]?grad(uate)?$/i, () => "entry_level"],
+  [/^entry\s*,\s*mid[\s-]?level$/i, () => "entry_level"],
+  [/^mid\s*,\s*entry[\s-]?level$/i, () => "entry_level"],
+  [/^entry[\s-]?level\s*,\s*mid[\s-]?level$/i, () => "entry_level"],
+  [/^mid[\s-]?level\s*,\s*senior$/i, () => "mid_level"],
+  [/^senior\s*,\s*mid[\s-]?level$/i, () => "mid_level"],
+  [/^senior\s*,\s*lead$/i, () => "senior"],
+  [/^lead\s*,\s*senior$/i, () => "senior"],
+  [/^senior\s*,\s*staff$/i, () => "senior"],
+  [/^staff\s*,\s*senior$/i, () => "senior"],
+  [/^manager\s*,\s*lead$/i, () => "manager"],
+  [/^lead\s*,\s*manager$/i, () => "manager"],
+  [/^director\s*,\s*manager$/i, () => "manager"],
+  [/^manager\s*,\s*director$/i, () => "manager"],
+  [/^director\s*,\s*vp$/i, () => "director"],
+  [/^vp\s*,\s*director$/i, () => "director"],
+  // Bare aliases (no comma)
+  [/^lead$/i, () => "manager"],
+  [/^chief$/i, () => "c_level"],
+  [/^founder$/i, () => "founder"],
+  [/^associate$/i, () => "junior"],
+  [/^intern(ship)?$/i, () => "intern"],
+]
+
+/**
+ * Map any seniorityLevel string to a canonical TAG-06 token. Returns null
+ * when no rule matches (caller leaves the field alone). Called in two
+ * places:
+ *   1. planJob's "rewrite raw existing value" branch (Phase 68)
+ *   2. Manual one-off normalization scripts that need to validate corpus values
+ */
+export function canonicalizeSeniorityLevel(raw) {
+  if (raw == null) return null
+  const s = String(raw).trim()
+  if (!s) return null
+  for (const [re, fn] of CANONICAL_SENIORITY_MAP_REGEX) {
+    const m = s.match(re)
+    if (m) return fn(m)
+  }
+  return null
+}
 
 /**
  * Infer seniorityLevel from a roleTitle string. Returns null if input
@@ -148,21 +227,43 @@ function initFirebase() {
 
 /**
  * Decide what to do for one job.
- *   - skip-already-set : seniorityLevel already present + previously backfilled
- *   - skip-no-title    : no roleTitle to regex against
- *   - rewrite          : value is missing OR differs from regex output
+ *   - skip-canonical    : seniorityLevel is already a canonical TAG-06 token
+ *   - skip-no-title     : no roleTitle to regex against AND no existing value
+ *   - rewrite-canonical : existing raw string mapped to canonical token (Phase 68)
+ *   - rewrite           : value missing → infer from roleTitle
  *
- * NOTE: jobs with seniorityLevel set BUT no `seniorityBackfilledAt` stamp
- * are treated as canonical — they're trusted (came from upstream macmini
- * pipeline). Only `seniorityLevel == null` triggers a fresh inference.
+ * Phase 68 (HYGIENE-02) — also rewrites jobs with existing NON-canonical
+ * seniorityLevel values (e.g., "Entry Level", "New Grad, Entry Level"),
+ * mapping them to TAG-06 canonical tokens via canonicalizeSeniorityLevel.
  */
 export function planJob(job) {
   const existing = job?.seniorityLevel
   const title = job?.roleTitle ?? job?.jobTitle ?? job?.title
 
-  // Already set → skip (whether from upstream or prior run).
   if (existing != null && String(existing).trim() !== "") {
-    return { mode: "skip-already-set", existing }
+    const existingStr = String(existing).trim()
+    // Already canonical (case-insensitive match against vocab)
+    if (SENIORITY_LEVEL_VOCAB.includes(existingStr.toLowerCase())) {
+      // Lowercase canonical (rare misformatting) — write back
+      if (existingStr !== existingStr.toLowerCase()) {
+        return { mode: "rewrite-canonical", from: existing, to: existingStr.toLowerCase() }
+      }
+      return { mode: "skip-already-set", existing }
+    }
+    // Phase 68 — try canonical-mapping helper for raw multi-word values
+    const canonical = canonicalizeSeniorityLevel(existingStr)
+    if (canonical) {
+      return { mode: "rewrite-canonical", from: existing, to: canonical }
+    }
+    // Not canonical and not in regex map — try title-based inference as a
+    // last-resort fallback. If even that fails, leave alone (skip-no-mapping).
+    if (title && typeof title === "string" && title.trim()) {
+      const inferred = inferSeniority(title)
+      if (inferred) {
+        return { mode: "rewrite-canonical", from: existing, to: inferred }
+      }
+    }
+    return { mode: "skip-no-mapping", existing }
   }
 
   if (!title || typeof title !== "string" || !title.trim()) {
@@ -177,7 +278,11 @@ export function planJob(job) {
 
 export async function migrateJob(db, runId, jobId, jobData, opts) {
   const plan = planJob(jobData)
-  if (plan.mode === "skip-already-set" || plan.mode === "skip-no-title") {
+  if (
+    plan.mode === "skip-already-set" ||
+    plan.mode === "skip-no-title" ||
+    plan.mode === "skip-no-mapping"
+  ) {
     return { ...plan, jobId }
   }
 
@@ -255,12 +360,16 @@ async function main() {
 
   let total = 0
   let rewritten = 0
+  let rewrittenCanonical = 0  // Phase 68 — canonicalize raw existing values
   let skippedAlreadySet = 0
   let skippedNoTitle = 0
+  let skippedNoMapping = 0  // Phase 68 — non-canonical, no rule matched
   let errored = 0
   const errors = []
   const sample = []
+  const sampleCanonical = []  // Phase 68 — separate audit trail for canonicalization
   const distribution = {} // bucket → count
+  const nonCanonicalSamples = []  // Phase 68 — track unmapped values
 
   let lastDoc = null
   while (true) {
@@ -283,18 +392,30 @@ async function main() {
         const res = await migrateJob(db, runId, jobId, jobData, { dryRun: DRY_RUN })
         if (res.mode === "skip-already-set") skippedAlreadySet++
         else if (res.mode === "skip-no-title") skippedNoTitle++
+        else if (res.mode === "skip-no-mapping") {
+          skippedNoMapping++
+          if (nonCanonicalSamples.length < 20) {
+            nonCanonicalSamples.push({ jobId, existing: res.existing })
+          }
+        }
         else if (res.mode === "error") {
           errored++
           errors.push({ jobId, error: res.error })
         } else {
-          rewritten++
+          // applied / dry-run-rewrite — track distribution
+          if (res.before && res.before.seniorityLevel != null && String(res.before.seniorityLevel).trim() !== "") {
+            rewrittenCanonical++
+            if (sampleCanonical.length < 10) sampleCanonical.push({ jobId, before: res.before, after: res.after })
+          } else {
+            rewritten++
+            if (sample.length < 5) sample.push({ jobId, before: res.before, after: res.after })
+          }
           const bucket = res.after.seniorityLevel
           distribution[bucket] = (distribution[bucket] ?? 0) + 1
-          if (sample.length < 5) sample.push({ jobId, before: res.before, after: res.after })
         }
         if (total % 200 === 0) {
           console.log(
-            `  ${total} scanned (rewritten=${rewritten} skipSet=${skippedAlreadySet} skipNoTitle=${skippedNoTitle} errored=${errored})...`
+            `  ${total} scanned (rewritten=${rewritten} canonicalized=${rewrittenCanonical} skipSet=${skippedAlreadySet} skipNoTitle=${skippedNoTitle} skipNoMap=${skippedNoMapping} errored=${errored})...`
           )
         }
       } catch (err) {
@@ -315,11 +436,15 @@ async function main() {
         completedAt,
         total,
         rewritten,
+        rewrittenCanonical,
         skippedAlreadySet,
         skippedNoTitle,
+        skippedNoMapping,
         errored,
         errors: errors.slice(0, 50),
         sample,
+        sampleCanonical,
+        nonCanonicalSamples,
         distribution,
       },
       { merge: true }
@@ -334,11 +459,15 @@ async function main() {
     mode: DRY_RUN ? "dry-run" : "apply",
     total,
     rewritten,
+    rewrittenCanonical,
     skippedAlreadySet,
     skippedNoTitle,
+    skippedNoMapping,
     errored,
     errors: errors.slice(0, 20),
     sample,
+    sampleCanonical,
+    nonCanonicalSamples,
     distribution,
   }
   console.log("\nSUMMARY:", JSON.stringify(summary, null, 2))

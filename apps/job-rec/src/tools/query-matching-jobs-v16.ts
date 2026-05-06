@@ -36,6 +36,8 @@
 import type { Firestore } from "firebase-admin/firestore"
 import type { UserTags } from "@pa/pa-orchestrator"
 import { acceptableCareerStages, type CareerStage, CAREER_STAGE_VOCAB } from "@wekruit/shared-tags"
+import { tool } from "@openai/agents"
+import { z } from "zod"
 import {
   MatchingJobSchema,
   type MatchingJob,
@@ -904,4 +906,86 @@ export async function queryMatchingJobsV16(
     hardFilter: counters,
     ...(rerankCache.stale ? { llmCacheStale: true as const } : {}),
   }
+}
+
+// ---------------------------------------------------------------------------
+// LLM tool wrapper (Phase 68 — replaces legacy `createQueryMatchingJobsTool`).
+//
+// The recruiter agent (Claire) needs to call queryMatchingJobs as an
+// LLM-bound tool to surface a sample job during onboarding. The legacy
+// wrapper exposed `filters: {...}` to the LLM, but the v1.6 single-source
+// design (D8) reads `pa-users.tags` and never accepts ad-hoc filters from
+// the LLM. The V16 tool exposes only `limit` to the LLM; userId is
+// injected from deps (the inbound CF knows who the candidate is).
+// ---------------------------------------------------------------------------
+
+export const QueryMatchingJobsV16ToolInputSchema = z.object({
+  /** Top-N jobs to return. Default 1 (Claire previews a single sample). */
+  limit: z.number().int().positive().max(20).default(1),
+})
+export type QueryMatchingJobsV16ToolInput = z.infer<typeof QueryMatchingJobsV16ToolInputSchema>
+
+export type QueryMatchingJobsV16ToolDeps = {
+  db: Firestore
+  /** WeKruit user id — injected by the recruiter-flow caller, not the LLM. */
+  userId: string
+  log?: (event: string, payload?: Record<string, unknown>) => void
+}
+
+/**
+ * Build an LLM tool whose name + description match the legacy
+ * `queryMatchingJobs` contract (the prompt addendum still references it),
+ * but whose execute path runs the v1.6 single-source cascade.
+ *
+ * Returns a JSON-serialized projection of the top-N jobs (id, title,
+ * company, atsApplyUrl, salary, locationRaw, reason). Errors are returned
+ * as `{ ok: false, reason }` so the LLM can surface a graceful fallback.
+ */
+export function createQueryMatchingJobsV16Tool(deps: QueryMatchingJobsV16ToolDeps) {
+  return tool({
+    name: "queryMatchingJobs",
+    description:
+      "Surface 1-3 ranked job matches for the candidate from WeKruit's matching-jobs corpus. " +
+      "Reads the candidate's canonical tags (pa-users.tags) once and runs the v1.6 cascade " +
+      "(roleFunction hard filter → visa/location/careerStage/jobType/freshness gates → " +
+      "weighted score). Returns top-N jobs with title, company, ATS apply URL, and a one-line " +
+      "reason explaining the match. Use this to preview a sample job during onboarding.",
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    parameters: QueryMatchingJobsV16ToolInputSchema as any,
+    execute: async (raw: unknown) => {
+      const args = QueryMatchingJobsV16ToolInputSchema.parse(raw)
+      try {
+        const out = await queryMatchingJobsV16(
+          { userId: deps.userId, limit: args.limit },
+          { db: deps.db, ...(deps.log ? { log: deps.log } : {}) }
+        )
+        if (out.noUserTags) {
+          return JSON.stringify({
+            ok: false,
+            reason: "no_user_tags",
+            jobs: [],
+          })
+        }
+        // Project a thin shape for the LLM (avoid leaking embeddings, raw
+        // breakdowns). The LLM only needs to render a single sample line.
+        const jobs = out.jobs.map((j) => ({
+          id: j.id,
+          jobTitle: j.jobTitle,
+          companyName: j.companyName,
+          atsApplyUrl: j.atsApplyUrl ?? null,
+          locationRaw: j.locationRaw ?? "",
+          salaryMin: j.salaryMin ?? null,
+          salaryMax: j.salaryMax ?? null,
+          reason: j.reason ?? "",
+        }))
+        return JSON.stringify({ ok: true, jobs, total: out.total })
+      } catch (err) {
+        return JSON.stringify({
+          ok: false,
+          reason: err instanceof Error ? err.message : String(err),
+          jobs: [],
+        })
+      }
+    },
+  })
 }

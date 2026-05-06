@@ -28,7 +28,13 @@ import {
 } from "@pa/pa-persistence"
 import { FirestoreSession } from "@pa/agent-runtime"
 import { createParseResumeTool, type ParseResumeDeps } from "./tools/parse-resume.js"
-import { createQueryMatchingJobsTool, type QueryMatchingJobsDeps } from "./tools/query-matching-jobs.js"
+// Phase 68 (HYGIENE-01) — recruiter-agent uses the v1.6 single-source cascade.
+// The legacy `createQueryMatchingJobsTool` is no longer wired here (still
+// re-exported from index.ts for back-compat with any external consumer).
+import {
+  createQueryMatchingJobsV16Tool,
+  type QueryMatchingJobsV16ToolDeps,
+} from "./tools/query-matching-jobs-v16.js"
 import { createSaveJobProfileTool, type SaveJobProfileDeps } from "./tools/save-job-profile.js"
 import { createSendImessageTool, type SendImessageDeps } from "./tools/send-imessage.js"
 
@@ -63,7 +69,14 @@ export type RecruiterAgentDeps = {
   /** Per-tool deps surface (production wires Firestore + GCS; tests pass mocks). */
   tools: {
     parseResume: ParseResumeDeps
-    queryMatchingJobs: QueryMatchingJobsDeps
+    /**
+     * Phase 68 — V16 tool surface. Only `db` is required at construction
+     * time; `userId` is injected at `runRecruiterTurn` boundary so the
+     * V16 tool can read `pa-users/{userId}.tags`. Tests can pass `{ db }`
+     * and the V16 tool will fail-graceful with `noUserTags` until userId
+     * is wired (matches legacy createQueryMatchingJobsTool's `{ db }` shape).
+     */
+    queryMatchingJobs: { db: Firestore }
     saveJobProfile: SaveJobProfileDeps
     sendImessage: SendImessageDeps
   }
@@ -112,18 +125,33 @@ function resolveModel(override?: string): string {
  * (typically `FirestoreSession`) and pass the user's latest turn into
  * `runRecruiterTurn`.
  *
- * Exported for tests that want to inspect `.tools`, etc.
+ * Exported for tests that want to inspect `.tools`, etc. The optional
+ * `userId` arg threads the candidate id into the V16 queryMatchingJobs
+ * tool so it can read `pa-users/{userId}.tags`. When omitted (test path),
+ * the V16 tool returns `{ ok: false, reason: "no_user_tags" }` to the LLM
+ * so the wiring still validates without a real user.
  */
-export async function buildRecruiterAgent(deps: RecruiterAgentDeps): Promise<Agent> {
+export async function buildRecruiterAgent(
+  deps: RecruiterAgentDeps,
+  userId?: string
+): Promise<Agent> {
   const log = deps.log ?? defaultLog
   const slug = deps.handbookSlug ?? DEFAULT_HANDBOOK_SLUG
   const systemPrompt = await buildRecruiterSystemPrompt(deps.db, slug)
   const model = resolveModel(deps.model)
   log("[recruiter-agent] built", { slug, model, promptLen: systemPrompt.length })
 
+  // Phase 68 (HYGIENE-01) — V16 tool replaces the legacy filter-driven
+  // queryMatchingJobs. The V16 tool reads `pa-users/{userId}.tags`
+  // (single-source per CLAUDE.md D8); the LLM only specifies `limit`.
+  const queryMatchingJobsToolDeps: QueryMatchingJobsV16ToolDeps = {
+    db: deps.tools.queryMatchingJobs.db,
+    userId: userId ?? "",
+    log: (event, payload) => log("[recruiter-agent][v16]", event, payload ?? {}),
+  }
   const tools = [
     createParseResumeTool(deps.tools.parseResume, deps.resumeBucket),
-    createQueryMatchingJobsTool(deps.tools.queryMatchingJobs),
+    createQueryMatchingJobsV16Tool(queryMatchingJobsToolDeps),
     createSaveJobProfileTool(deps.tools.saveJobProfile),
     createSendImessageTool(deps.tools.sendImessage),
   ]
@@ -173,7 +201,9 @@ export async function runRecruiterTurn(
   deps: RecruiterAgentDeps,
   args: RunRecruiterTurnArgs
 ): Promise<RunRecruiterTurnResult> {
-  const agent = await buildRecruiterAgent(deps)
+  // Phase 68 — thread userId into the agent build so the V16 queryMatchingJobs
+  // tool can read pa-users.tags for this specific candidate.
+  const agent = await buildRecruiterAgent(deps, args.userId)
   const session: Session =
     args.session ??
     new FirestoreSession({

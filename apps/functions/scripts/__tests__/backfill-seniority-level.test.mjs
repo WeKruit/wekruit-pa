@@ -11,6 +11,7 @@ import {
   SENIORITY_DEFAULT,
   inferSeniority,
   planJob,
+  canonicalizeSeniorityLevel,
 } from "../backfill-seniority-level.mjs"
 
 // ── inferSeniority ──────────────────────────────────────────────────────────
@@ -150,4 +151,112 @@ test("planJob: untaggable plain title → defaults mid_level", () => {
   const r = planJob({ roleTitle: "Software Engineer" })
   assert.equal(r.mode, "rewrite")
   assert.equal(r.to, "mid_level")
+})
+
+// ── canonicalizeSeniorityLevel (Phase 68 / HYGIENE-02) ─────────────────────
+
+test("canonicalizeSeniorityLevel: null/empty input → null", () => {
+  assert.equal(canonicalizeSeniorityLevel(null), null)
+  assert.equal(canonicalizeSeniorityLevel(undefined), null)
+  assert.equal(canonicalizeSeniorityLevel(""), null)
+  assert.equal(canonicalizeSeniorityLevel("   "), null)
+})
+
+test("canonicalizeSeniorityLevel: already-canonical lowercase passes through", () => {
+  for (const v of SENIORITY_LEVEL_VOCAB) {
+    assert.equal(canonicalizeSeniorityLevel(v), v)
+  }
+})
+
+test("canonicalizeSeniorityLevel: case-insensitive canonical match", () => {
+  assert.equal(canonicalizeSeniorityLevel("ENTRY_LEVEL"), "entry_level")
+  assert.equal(canonicalizeSeniorityLevel("Senior"), "senior")
+  assert.equal(canonicalizeSeniorityLevel("MID_LEVEL"), "mid_level")
+})
+
+test("canonicalizeSeniorityLevel: raw multi-word forms → canonical", () => {
+  assert.equal(canonicalizeSeniorityLevel("Entry Level"), "entry_level")
+  assert.equal(canonicalizeSeniorityLevel("Entry-Level"), "entry_level")
+  assert.equal(canonicalizeSeniorityLevel("Mid Level"), "mid_level")
+  assert.equal(canonicalizeSeniorityLevel("Mid-Level"), "mid_level")
+  assert.equal(canonicalizeSeniorityLevel("New Grad"), "entry_level")
+  assert.equal(canonicalizeSeniorityLevel("New Graduate"), "entry_level")
+  assert.equal(canonicalizeSeniorityLevel("Early Career"), "entry_level")
+  assert.equal(canonicalizeSeniorityLevel("Vice President"), "vp")
+})
+
+test("canonicalizeSeniorityLevel: comma-separated multi-tier degrades to lower tier", () => {
+  // Phase 68 — broader window: prefer the more inclusive (lower) bucket so
+  // candidates see more matches.
+  assert.equal(canonicalizeSeniorityLevel("New Grad, Entry Level"), "entry_level")
+  assert.equal(canonicalizeSeniorityLevel("Entry Level, New Grad"), "entry_level")
+  assert.equal(canonicalizeSeniorityLevel("Entry, Mid Level"), "entry_level")
+  assert.equal(canonicalizeSeniorityLevel("Entry Level, Mid Level"), "entry_level")
+  assert.equal(canonicalizeSeniorityLevel("Mid Level, Senior"), "mid_level")
+  assert.equal(canonicalizeSeniorityLevel("Senior, Mid Level"), "mid_level")
+  assert.equal(canonicalizeSeniorityLevel("Senior, Lead"), "senior")
+  assert.equal(canonicalizeSeniorityLevel("Senior, Staff"), "senior")
+  assert.equal(canonicalizeSeniorityLevel("Manager, Lead"), "manager")
+  assert.equal(canonicalizeSeniorityLevel("Director, Manager"), "manager")
+  assert.equal(canonicalizeSeniorityLevel("Director, VP"), "director")
+})
+
+test("canonicalizeSeniorityLevel: bare aliases map to canonical buckets", () => {
+  assert.equal(canonicalizeSeniorityLevel("Lead"), "manager")
+  assert.equal(canonicalizeSeniorityLevel("Chief"), "c_level")
+  assert.equal(canonicalizeSeniorityLevel("Founder"), "founder")
+  assert.equal(canonicalizeSeniorityLevel("Associate"), "junior")
+  assert.equal(canonicalizeSeniorityLevel("Internship"), "intern")
+})
+
+test("canonicalizeSeniorityLevel: unknown raw values → null (caller leaves alone)", () => {
+  assert.equal(canonicalizeSeniorityLevel("Galactic Overlord"), null)
+  assert.equal(canonicalizeSeniorityLevel("???"), null)
+  assert.equal(canonicalizeSeniorityLevel("level 5"), null)
+})
+
+// ── planJob — Phase 68 canonicalization branch ─────────────────────────────
+
+test("planJob: existing canonical lowercase → skip-already-set", () => {
+  const r = planJob({ seniorityLevel: "senior", roleTitle: "Senior Engineer" })
+  assert.equal(r.mode, "skip-already-set")
+  assert.equal(r.existing, "senior")
+})
+
+test("planJob: existing canonical with case mismatch → rewrite-canonical (lowercase)", () => {
+  const r = planJob({ seniorityLevel: "Senior", roleTitle: "Senior Engineer" })
+  assert.equal(r.mode, "rewrite-canonical")
+  assert.equal(r.from, "Senior")
+  assert.equal(r.to, "senior")
+})
+
+test("planJob: existing raw 'Entry Level' → rewrite-canonical to entry_level", () => {
+  const r = planJob({ seniorityLevel: "Entry Level", roleTitle: "New Grad SWE" })
+  assert.equal(r.mode, "rewrite-canonical")
+  assert.equal(r.from, "Entry Level")
+  assert.equal(r.to, "entry_level")
+})
+
+test("planJob: existing raw 'New Grad, Entry Level' → entry_level", () => {
+  const r = planJob({ seniorityLevel: "New Grad, Entry Level", roleTitle: "Engineer" })
+  assert.equal(r.mode, "rewrite-canonical")
+  assert.equal(r.to, "entry_level")
+})
+
+test("planJob: existing raw 'Senior, Lead' → senior", () => {
+  const r = planJob({ seniorityLevel: "Senior, Lead", roleTitle: "Tech Lead" })
+  assert.equal(r.mode, "rewrite-canonical")
+  assert.equal(r.to, "senior")
+})
+
+test("planJob: existing raw unknown + roleTitle present → rewrites via inferSeniority fallback", () => {
+  const r = planJob({ seniorityLevel: "Galactic Overlord", roleTitle: "Senior Engineer" })
+  assert.equal(r.mode, "rewrite-canonical")
+  assert.equal(r.to, "senior")
+})
+
+test("planJob: existing raw unknown + no useful title → skip-no-mapping", () => {
+  const r = planJob({ seniorityLevel: "weird value xyz", roleTitle: "" })
+  assert.equal(r.mode, "skip-no-mapping")
+  assert.equal(r.existing, "weird value xyz")
 })
