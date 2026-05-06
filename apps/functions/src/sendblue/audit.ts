@@ -22,6 +22,10 @@ export type AuditEventType =
   | "rate_limit_exceeded"
   | "quota_soft"
   | "quota_hardblock"
+  // Phase 60 (DEV-01) — admin-only iMessage trigger that force-fires v1.6
+  // match cascade. Audited so dashboards can surface "Adam ran __PA_FIND_MATCH__"
+  // events alongside normal traffic.
+  | "dev_trigger_find_match"
 
 export type AuditChannel =
   | "imessage_sendblue"

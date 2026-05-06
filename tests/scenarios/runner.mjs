@@ -63,6 +63,47 @@ const PA_SCHEDULED_JOBS = "pa-scheduled-jobs"
 const PA_AUDIT_EVENTS = "pa-audit-events"
 const generatedParticipants = new Set()
 
+// Phase 60 (DEV-02) — `--user-id <uid>` flag.
+// When provided, the runner reads the real user's `pa-users.tags` from
+// Firestore and exposes them in scenario context so YAML can validate
+// against live state instead of synthetic profiles. Useful for "ran Adam's
+// scenario through V16 — does the result still pass?"
+//
+// Parses argv ONCE, exported for unit tests + the main() loop.
+export function parseUserIdFlag(argv) {
+  const idx = argv.findIndex((a) => a === "--user-id")
+  if (idx === -1 || idx + 1 >= argv.length) return null
+  const v = argv[idx + 1]
+  if (typeof v !== "string" || v.startsWith("--") || v.length === 0) return null
+  return v
+}
+
+/**
+ * Phase 60 (DEV-02) — fetch the live `pa-users/{userId}.tags` document and
+ * return it. Returns null on lookup failure. Surface includes:
+ *   - tags object as written by the user-tags merger (Phase 53/54 schema)
+ *   - phoneE164 + onboardingState for richer scenario context
+ *
+ * Pure I/O; tested via mock Firestore in __tests__/runner-user-id.test.mjs.
+ */
+export async function loadLiveUserTags(db, userId) {
+  if (!userId || typeof userId !== "string") return null
+  try {
+    const snap = await db.collection(PA_USERS).doc(userId).get()
+    if (!snap.exists) return null
+    const data = snap.data() ?? {}
+    return {
+      userId,
+      tags: data.tags ?? null,
+      phoneE164: data.phoneE164 ?? null,
+      onboardingState: data.onboardingState ?? null,
+      preferredLanguage: data.preferredLanguage ?? null,
+    }
+  } catch {
+    return null
+  }
+}
+
 // Phase 14.4 — cost ceiling. Defaults to $5 per run unless the operator
 // dials it down (used by the eval test "abort on tiny ceiling").
 const DEFAULT_EVAL_MAX_RUN_USD = 5
@@ -983,6 +1024,17 @@ async function runScenario(db, scenarioPath, ctx) {
     turns: [],
     pass: true,
   }
+  // Phase 60 (DEV-02) — surface liveUserContext to the scenario for
+  // visibility (assertions can read it via result.liveUserContext, and
+  // scenarios can swap synthetic profile for the real one).
+  if (ctx?.liveUserContext) {
+    scenario.liveUserContext = ctx.liveUserContext
+    result.liveUserContext = {
+      userId: ctx.liveUserContext.userId,
+      hasTags: !!ctx.liveUserContext.tags,
+      onboardingState: ctx.liveUserContext.onboardingState,
+    }
+  }
   assertScenarioParticipant(scenario)
   const userId = await ensureScenarioTestUser(db, scenario)
   // Phase 11.3 — apply scenario-level setup patch (e.g. set mem0UserId
@@ -1223,9 +1275,19 @@ export async function dryRunPlan(files, evalEnabled, maxUsd) {
 async function main() {
   const argv = process.argv.slice(2).filter((a) => a !== "--")
   const dryRun = argv.includes("--dry-run")
-  const target = argv.find((a) => !a.startsWith("--"))
+  // Phase 60 (DEV-02) — extract --user-id BEFORE deriving the target so
+  // "--user-id <uuid>" doesn't get picked up as a positional argument.
+  const userIdFlag = parseUserIdFlag(argv)
+  const positional = argv.filter((a, i) => {
+    if (a.startsWith("--")) return false
+    // skip the value following --user-id
+    const prev = argv[i - 1]
+    if (prev === "--user-id") return false
+    return true
+  })
+  const target = positional[0]
   if (!target) {
-    console.error("usage: node tests/scenarios/runner.mjs <scenario.yaml | scenarios-dir> [--dry-run]")
+    console.error("usage: node tests/scenarios/runner.mjs <scenario.yaml | scenarios-dir> [--dry-run] [--user-id <uid>]")
     process.exit(2)
   }
   const files = (await expandTargets(target)).sort((a, b) => basename(a).localeCompare(basename(b)))
@@ -1265,7 +1327,30 @@ async function main() {
   }
 
   const ledger = makeCostLedger(maxUsd)
-  const ctx = { runStamp, evalEnabled, ledger }
+
+  // Phase 60 (DEV-02) — when --user-id is provided, fetch pa-users.tags
+  // ONCE and surface it on every scenario context so each scenario can
+  // assert against the live user state. Failure to find the user is fatal
+  // (the operator asked specifically about that user).
+  let liveUserContext = null
+  if (userIdFlag) {
+    liveUserContext = await loadLiveUserTags(db, userIdFlag)
+    if (!liveUserContext) {
+      console.error(
+        `[runner] --user-id ${userIdFlag} but no pa-users/${userIdFlag} doc found (or read failed).`
+      )
+      process.exit(2)
+    }
+    if (!liveUserContext.tags) {
+      console.error(
+        `[runner] --user-id ${userIdFlag} resolved but has no .tags field — V16 cascade will short-circuit.`
+      )
+    }
+    console.error(
+      `[runner] --user-id ${userIdFlag} resolved (phone=${liveUserContext.phoneE164}, onboardingState=${liveUserContext.onboardingState}, tags=${liveUserContext.tags ? "present" : "absent"})`
+    )
+  }
+  const ctx = { runStamp, evalEnabled, ledger, liveUserContext }
 
   const results = []
   let aborted = null

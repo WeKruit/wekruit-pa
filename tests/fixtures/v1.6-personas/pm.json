@@ -1,0 +1,33 @@
+{
+  "personaName": "PM_Cathy",
+  "userTags": {
+    "skills": [
+      { "name": "product_strategy", "bucket": "product_management", "proficiency": "expert", "evidenceCount": 9, "baseWeight": 1.0 },
+      { "name": "user_research", "bucket": "product_management", "proficiency": "advanced", "evidenceCount": 6, "baseWeight": 0.9 },
+      { "name": "sql", "bucket": "data_and_analytics", "proficiency": "intermediate", "evidenceCount": 4, "baseWeight": 0.7 },
+      { "name": "figma", "bucket": "design_tools", "proficiency": "intermediate", "evidenceCount": 3, "baseWeight": 0.6 },
+      { "name": "a_b_testing", "bucket": "data_and_analytics", "proficiency": "advanced", "evidenceCount": 5, "baseWeight": 0.8 },
+      { "name": "agile", "bucket": "methodologies", "proficiency": "advanced", "evidenceCount": 7, "baseWeight": 0.7 },
+      { "name": "stakeholder_management", "bucket": "soft_skills", "proficiency": "expert", "evidenceCount": 8, "baseWeight": 0.7 }
+    ],
+    "industryEnum": ["tech_software", "fintech_finance"],
+    "industrySector": ["software_and_saas", "financial_technology", "e_commerce_and_retail"],
+    "relevantIndustry": ["financial_technology", "e_commerce_and_retail"],
+    "relevantSpecialization": ["b2b_saas", "consumer_products"],
+    "proposedTags": ["growth", "monetization"],
+    "targetRole": ["pm"],
+    "targetRoleFunction": ["product_management"],
+    "yoeRange": [4, 6],
+    "visaStatus": "permanent_resident",
+    "prefersStartup": "either",
+    "targetLocations": ["new_york_metro", "san_francisco_bay_area"],
+    "targetJobType": ["full_time"],
+    "careerStage": "senior",
+    "minSalary": 180000,
+    "preferredLang": "en",
+    "schemaVersion": 1
+  },
+  "expectedRoleFunction": ["product_management"],
+  "expectedIndustrySector": ["software_and_saas", "financial_technology", "e_commerce_and_retail"],
+  "notExpectedRoles": ["software_engineering", "sales", "human_resources", "accounting_and_finance"]
+}

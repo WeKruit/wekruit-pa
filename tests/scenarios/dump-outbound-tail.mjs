@@ -17,18 +17,32 @@
  *
  * Usage:
  *   GOOGLE_APPLICATION_CREDENTIALS=... \
- *     node tests/scenarios/dump-outbound-tail.mjs <userId> [sinceMs]
+ *     node tests/scenarios/dump-outbound-tail.mjs <userId> [sinceMs] [--include-rerank-cache]
  *
  * sinceMs defaults to (now - 10 min).
+ *
+ * Phase 60 (DEV-03): when `--include-rerank-cache` is set, also fetch:
+ *   - pa-user-rerank-cache/{userId} (Phase 58 nightly LLM rerank)
+ *   - pa-user-skill-jdrel-cache/{userId}/jobs/* (Phase 58 JD-rel skills)
+ *
+ * Output remains the existing human-readable dump for the outbound block,
+ * but tail-prints a structured JSON blob with the cache contents under
+ * `rerankCache` / `jdRelCache` keys for easy grep / jq.
  */
 import { readFileSync } from "node:fs"
 import { initializeApp, cert, getApps } from "firebase-admin/app"
-import { getFirestore, Timestamp } from "firebase-admin/firestore"
+import { getFirestore } from "firebase-admin/firestore"
 
-const userId = process.argv[2]
-const sinceArg = process.argv[3]
+const args = process.argv.slice(2)
+const flagIdx = args.findIndex((a) => a === "--include-rerank-cache")
+const includeRerankCache = flagIdx !== -1
+const positional = args.filter((_, i) => i !== flagIdx)
+const userId = positional[0]
+const sinceArg = positional[1]
 if (!userId) {
-  console.error("usage: dump-outbound-tail.mjs <userId> [sinceMs]")
+  console.error(
+    "usage: dump-outbound-tail.mjs <userId> [sinceMs] [--include-rerank-cache]"
+  )
   process.exit(2)
 }
 
@@ -79,4 +93,64 @@ for (const r of rows) {
   console.log(r.body)
 }
 console.log("─────────────────────────────────────────────────────")
+
+// Phase 60 (DEV-03) — Phase 58 cache dump for match-debug context.
+if (includeRerankCache) {
+  console.log("")
+  console.log(`=== rerank cache for userId=${userId} ===`)
+
+  // pa-user-rerank-cache/{userId} — Phase 58 nightly LLM rerank
+  let rerankCache = null
+  try {
+    const rerankSnap = await db.collection("pa-user-rerank-cache").doc(userId).get()
+    if (rerankSnap.exists) {
+      rerankCache = rerankSnap.data() ?? null
+    }
+  } catch (err) {
+    console.error(`rerankCache read failed: ${err instanceof Error ? err.message : String(err)}`)
+  }
+
+  // pa-user-skill-jdrel-cache/{userId}/jobs/{jobId} — Phase 58 JD-rel skills
+  let jdRelCache = []
+  try {
+    const jdRelSnap = await db
+      .collection("pa-user-skill-jdrel-cache")
+      .doc(userId)
+      .collection("jobs")
+      .limit(500)
+      .get()
+    jdRelCache = jdRelSnap.docs.map((d) => ({ jobId: d.id, ...d.data() }))
+  } catch (err) {
+    console.error(`jdRelCache read failed: ${err instanceof Error ? err.message : String(err)}`)
+  }
+
+  // Compact summary first — easy to eyeball.
+  if (rerankCache) {
+    const ranked = Array.isArray(rerankCache.ranked) ? rerankCache.ranked : []
+    console.log(
+      `pa-user-rerank-cache: computedAt=${rerankCache.computedAt ?? "?"} ranked=${ranked.length}`
+    )
+  } else {
+    console.log("pa-user-rerank-cache: <missing>")
+  }
+  console.log(`pa-user-skill-jdrel-cache: ${jdRelCache.length} job(s) cached`)
+
+  // Full structured payload at end for jq.
+  console.log("")
+  console.log("=== JSON dump ===")
+  console.log(
+    JSON.stringify(
+      {
+        userId,
+        sinceMs,
+        outbound: rows,
+        rerankCache,
+        jdRelCache,
+      },
+      null,
+      2
+    )
+  )
+}
+
 process.exit(0)

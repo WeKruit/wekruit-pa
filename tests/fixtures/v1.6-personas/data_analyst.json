@@ -1,0 +1,34 @@
+{
+  "personaName": "DA_David",
+  "userTags": {
+    "skills": [
+      { "name": "sql", "bucket": "data_and_analytics", "proficiency": "expert", "evidenceCount": 10, "baseWeight": 1.0 },
+      { "name": "python", "bucket": "programming_languages", "proficiency": "advanced", "evidenceCount": 6, "baseWeight": 0.9 },
+      { "name": "tableau", "bucket": "data_and_analytics", "proficiency": "expert", "evidenceCount": 7, "baseWeight": 1.0 },
+      { "name": "looker", "bucket": "data_and_analytics", "proficiency": "advanced", "evidenceCount": 5, "baseWeight": 0.8 },
+      { "name": "dbt", "bucket": "data_and_analytics", "proficiency": "intermediate", "evidenceCount": 3, "baseWeight": 0.7 },
+      { "name": "excel", "bucket": "data_and_analytics", "proficiency": "expert", "evidenceCount": 9, "baseWeight": 0.6 },
+      { "name": "statistical_analysis", "bucket": "data_and_analytics", "proficiency": "advanced", "evidenceCount": 5, "baseWeight": 0.9 },
+      { "name": "a_b_testing", "bucket": "data_and_analytics", "proficiency": "advanced", "evidenceCount": 4, "baseWeight": 0.8 }
+    ],
+    "industryEnum": ["fintech_finance", "consumer_retail"],
+    "industrySector": ["financial_technology", "e_commerce_and_retail", "software_and_saas"],
+    "relevantIndustry": ["financial_technology", "e_commerce_and_retail"],
+    "relevantSpecialization": ["business_intelligence", "marketing_analytics"],
+    "proposedTags": ["growth_analytics", "experimentation"],
+    "targetRole": ["data_analyst"],
+    "targetRoleFunction": ["data_analysis", "business_analyst"],
+    "yoeRange": [2, 4],
+    "visaStatus": "permanent_resident",
+    "prefersStartup": "bigtech",
+    "targetLocations": ["chicago_metro", "new_york_metro", "remote_united_states"],
+    "targetJobType": ["full_time"],
+    "careerStage": "mid_level",
+    "minSalary": 110000,
+    "preferredLang": "en",
+    "schemaVersion": 1
+  },
+  "expectedRoleFunction": ["data_analysis", "business_analyst"],
+  "expectedIndustrySector": ["financial_technology", "e_commerce_and_retail", "software_and_saas"],
+  "notExpectedRoles": ["software_engineering", "creatives_and_design", "human_resources", "sales", "legal_and_compliance"]
+}

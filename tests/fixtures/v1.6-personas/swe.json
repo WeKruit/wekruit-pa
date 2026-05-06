@@ -1,0 +1,33 @@
+{
+  "personaName": "SWE_Adam",
+  "userTags": {
+    "skills": [
+      { "name": "python", "bucket": "programming_languages", "proficiency": "advanced", "evidenceCount": 5, "baseWeight": 1.0 },
+      { "name": "typescript", "bucket": "programming_languages", "proficiency": "expert", "evidenceCount": 8, "baseWeight": 1.0 },
+      { "name": "react", "bucket": "frameworks_and_libraries", "proficiency": "advanced", "evidenceCount": 6, "baseWeight": 0.9 },
+      { "name": "node.js", "bucket": "frameworks_and_libraries", "proficiency": "expert", "evidenceCount": 7, "baseWeight": 0.9 },
+      { "name": "docker", "bucket": "devops_and_infrastructure", "proficiency": "intermediate", "evidenceCount": 3, "baseWeight": 0.7 },
+      { "name": "aws", "bucket": "devops_and_infrastructure", "proficiency": "advanced", "evidenceCount": 4, "baseWeight": 0.8 },
+      { "name": "postgresql", "bucket": "databases", "proficiency": "intermediate", "evidenceCount": 3, "baseWeight": 0.7 }
+    ],
+    "industryEnum": ["tech_software", "ai_ml"],
+    "industrySector": ["software_and_saas", "artificial_intelligence_and_machine_learning"],
+    "relevantIndustry": ["software_and_saas"],
+    "relevantSpecialization": ["backend_development", "infrastructure"],
+    "proposedTags": ["distributed_systems", "api_design"],
+    "targetRole": ["swe"],
+    "targetRoleFunction": ["software_engineering"],
+    "yoeRange": [0, 1],
+    "visaStatus": "sponsor_needed",
+    "prefersStartup": "startup",
+    "targetLocations": ["san_francisco_bay_area", "remote_united_states"],
+    "targetJobType": ["full_time", "internship"],
+    "careerStage": "entry_level",
+    "minSalary": 100000,
+    "preferredLang": "zh",
+    "schemaVersion": 1
+  },
+  "expectedRoleFunction": ["software_engineering"],
+  "expectedIndustrySector": ["software_and_saas", "artificial_intelligence_and_machine_learning"],
+  "notExpectedRoles": ["sales", "human_resources", "customer_service_and_support", "accounting_and_finance"]
+}

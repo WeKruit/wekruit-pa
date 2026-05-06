@@ -1,0 +1,53 @@
+# iter34 followup G.5 — Adam-real-CV match plausibility (en mirror of -zh).
+# Used in iter34 G.5 sprint to validate match output plausibility post
+# G.1-G.4 changes (CV refresh, recency/liveness filters, llmRerank).
+#
+# Pre-conditions (run BEFORE the runner):
+#   GOOGLE_APPLICATION_CREDENTIALS=... \
+#     node tests/scenarios/seed-adam-real-cv.mjs +19999990604 en
+#
+# (Note: seed-adam-real-cv.mjs is hardcoded to zh; for en we'd need to
+# either accept a 2nd arg or do a 2-step seed-then-patch. For G.5 we
+# patch preferredLang post-seed.)
+
+id: eval_adam_real_cv_en
+description: |
+  iter34 followup G.5 — fire send_cv_analysis for the harness
+  participant (Adam-real-CV clone) with preferredLang=en. Capture
+  ack/analysis/jobRec/tagSummary in English for evaluation.
+locale: en-US
+agentId: default
+participant: "+19999990604"
+chatId: "iMessage;+19999990604"
+testMode: true
+turnTimeoutMs: 120000
+replyTimeoutMs: 180000
+
+setup:
+  userPatch:
+    onboardingStatus: "active"
+    onboardingState: "q_resume_asked"
+
+turns:
+  - user: "(pretend i sent the cv)"
+    assert:
+      reply_min_length: 1
+      reply_contains_any:
+        - "resume"
+        - "sec"
+        - "read"
+        - "skimmed"
+        - "match"
+        - "role"
+        - "why"
+        - "noted"
+        - "give"
+        - "OK"
+      reply_not_contains_any:
+        - "tomorrow ~9am"
+        - "jobright.ai"
+        - "warehouse"
+        - "Warehouse"
+        - "Cashier"
+        - "cashier"
+        - "[object"

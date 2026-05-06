@@ -1,0 +1,33 @@
+{
+  "personaName": "Designer_Diego",
+  "userTags": {
+    "skills": [
+      { "name": "figma", "bucket": "design_tools", "proficiency": "expert", "evidenceCount": 10, "baseWeight": 1.0 },
+      { "name": "adobe_creative_suite", "bucket": "design_tools", "proficiency": "advanced", "evidenceCount": 6, "baseWeight": 0.8 },
+      { "name": "user_research", "bucket": "ux_design", "proficiency": "advanced", "evidenceCount": 5, "baseWeight": 0.9 },
+      { "name": "design_systems", "bucket": "ux_design", "proficiency": "expert", "evidenceCount": 7, "baseWeight": 1.0 },
+      { "name": "prototyping", "bucket": "ux_design", "proficiency": "advanced", "evidenceCount": 6, "baseWeight": 0.8 },
+      { "name": "usability_testing", "bucket": "ux_design", "proficiency": "intermediate", "evidenceCount": 3, "baseWeight": 0.7 },
+      { "name": "interaction_design", "bucket": "ux_design", "proficiency": "advanced", "evidenceCount": 5, "baseWeight": 0.9 }
+    ],
+    "industryEnum": ["consumer_retail", "tech_software"],
+    "industrySector": ["e_commerce_and_retail", "software_and_saas", "media_and_entertainment"],
+    "relevantIndustry": ["e_commerce_and_retail", "media_and_entertainment"],
+    "relevantSpecialization": ["product_design", "brand_design"],
+    "proposedTags": ["mobile_first", "design_ops"],
+    "targetRole": ["designer"],
+    "targetRoleFunction": ["creatives_and_design"],
+    "yoeRange": [3, 5],
+    "visaStatus": "citizen",
+    "prefersStartup": "either",
+    "targetLocations": ["los_angeles_metro", "remote_united_states"],
+    "targetJobType": ["full_time", "contract"],
+    "careerStage": "mid_level",
+    "minSalary": 130000,
+    "preferredLang": "en",
+    "schemaVersion": 1
+  },
+  "expectedRoleFunction": ["creatives_and_design"],
+  "expectedIndustrySector": ["e_commerce_and_retail", "software_and_saas", "media_and_entertainment"],
+  "notExpectedRoles": ["software_engineering", "data_analysis", "accounting_and_finance", "legal_and_compliance"]
+}

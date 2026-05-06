@@ -1060,6 +1060,71 @@ function buildSendblueWebhookDeps() {
     }
     await processBrokerImessageEvent(db, data)
   }
+  // Phase 60 (DEV-01) — `__PA_FIND_MATCH__` admin trigger handler.
+  // Mirrors what runDailyJobRecBatch does for one user: V16 query against
+  // pa-users.tags + format per CLAUDE.md flow + enqueue pa-outbound. Admin
+  // gating happens INSIDE webhook.ts before this is called; we trust the
+  // caller. Fail-open: any error logs + returns ok:false rather than crashing.
+  const generateJobRecsForUser = async (args: {
+    userId: string
+    toE164: string
+  }): Promise<{ ok: boolean; jobCount: number; reason?: string }> => {
+    const db = getFirestore()
+    try {
+      const { queryMatchingJobsV16 } = await import("@pa/job-rec")
+      const { sendImessage } = await import("@pa/job-rec")
+      const result = await queryMatchingJobsV16(
+        { userId: args.userId, limit: 5 },
+        {
+          db,
+          log: (event, payload) =>
+            logger.info(`[sendblue][webhook][find-match] ${event}`, payload ?? {}),
+        }
+      )
+      if (result.noUserTags) {
+        return { ok: false, jobCount: 0, reason: "no_user_tags" }
+      }
+      if (!result.jobs || result.jobs.length === 0) {
+        return { ok: false, jobCount: 0, reason: "no_matches" }
+      }
+      // Format per the v1.6 cascade contract — title @ company \n url \n why
+      const lines: string[] = []
+      lines.push("先给你拉了几个 (admin force):")
+      for (const job of result.jobs) {
+        const tag = job.companyName ? ` @ ${job.companyName}` : ""
+        const url = job.atsApplyUrl ? `\n${job.atsApplyUrl}` : job.primaryUrl ? `\n${job.primaryUrl}` : ""
+        const reason = job.reason ? `\n${job.reason}` : ""
+        lines.push(`• ${job.jobTitle}${tag}${url}${reason}`)
+      }
+      const body = lines.join("\n\n")
+      const sendRes = await sendImessage(
+        {
+          userId: args.userId,
+          content: body,
+          // Idempotency: include hh:mm so the same admin can retrigger within
+          // a day but rapid spamming (same minute) dedups. Mirrors the daily
+          // batch convention without colliding with it.
+          idempotencyKey: `${args.userId}-${new Date().toISOString().slice(0, 16)}-find-match`,
+        },
+        {
+          db,
+          log: (...a: unknown[]) => logger.info("[sendblue][webhook][find-match][send]", ...a),
+        }
+      )
+      return {
+        ok: sendRes.ok,
+        jobCount: result.jobs.length,
+        ...(sendRes.ok ? {} : { reason: "send_failed" }),
+      }
+    } catch (err) {
+      logger.error("[sendblue][webhook][find-match] threw", {
+        userId: args.userId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+      return { ok: false, jobCount: 0, reason: "exception" }
+    }
+  }
+
   return {
     db: getFirestore(),
     secret: SENDBLUE_WEBHOOK_SIGNING_SECRET.value(),
@@ -1067,6 +1132,7 @@ function buildSendblueWebhookDeps() {
     enqueueOrCoalesce: coalescerDeps ? defaultEnqueueOrCoalesce : undefined,
     coalescerDeps,
     processBrokerImessageFallback,
+    generateJobRecsForUser,
   }
 }
 

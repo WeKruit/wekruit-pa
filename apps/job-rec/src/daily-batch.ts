@@ -27,6 +27,10 @@ import {
   projectMatchingJobRow,
   type HardFilterUserProfile,
 } from "./tools/query-matching-jobs.js"
+// Phase 60 — V16 single-source cascade. Replaces legacy queryMatchingJobs
+// for users with `pa-users.tags`; falls back to legacy when the user has
+// not yet been merged into the v1.6 single-source contract.
+import { queryMatchingJobsV16 } from "./tools/query-matching-jobs-v16.js"
 import { sendImessage } from "./tools/send-imessage.js"
 import {
   buildJobCandidateText,
@@ -962,12 +966,59 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
       const poolSize = deps.userEmbedFetcher
         ? Math.min(20, Math.max(jobsPerUser, deps.candidatePoolSize ?? 20))
         : jobsPerUser
+
+      // Phase 60 — V16 single-source cascade (CLAUDE.md D8). When the user
+      // has `pa-users.tags`, the V16 entry reads it once and runs the
+      // canonical role → hard-filter → weighted-score → reason pipeline.
+      // V16 short-circuits the rest of the legacy ranking (cosine /
+      // cross-encoder / startup-boost / weighted-skill-match / anti-bias)
+      // because its scoring already incorporates those signals via
+      // `V16_SCORE_WEIGHTS` (llmMatch + skillJaccard + relevantTags +
+      // industrySector + cvEmbCosine + salaryFit).
+      //
+      // Fallback: when `noUserTags: true` is returned (user has not yet
+      // been migrated into the v1.6 single source), drop through to the
+      // legacy queryMatchingJobs path so the user still gets recs — zero
+      // regression for the migration window.
+      let v16Jobs: MatchingJob[] | null = null
+      try {
+        const v16Result = await queryMatchingJobsV16(
+          { userId, limit: poolSize },
+          {
+            db: deps.db,
+            log: (event, payload) =>
+              log("[job-rec-daily][v16]", event, payload ?? {}),
+          }
+        )
+        if (!v16Result.noUserTags && v16Result.jobs && v16Result.jobs.length > 0) {
+          v16Jobs = v16Result.jobs as MatchingJob[]
+          log("[job-rec-daily] v16_cascade_applied", {
+            userId,
+            jobs: v16Jobs.length,
+            total: v16Result.total,
+            dropped: v16Result.dropped,
+            hardFilter: v16Result.hardFilter,
+            llmCacheStale: v16Result.llmCacheStale ?? false,
+          })
+        } else {
+          log("[job-rec-daily] v16_cascade_fallback", {
+            userId,
+            reason: v16Result.noUserTags ? "no_user_tags" : "no_matches",
+          })
+        }
+      } catch (err) {
+        log("[job-rec-daily] v16_cascade_threw_falling_back", {
+          userId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+
       // Phase 51 (v1.5 / Stream-G.2) — flag-gated tag cluster path. When
       // paTagClusterRecEnabled is ON AND a fetcher is wired AND the cluster
       // returns ≥1 row, REPLACE queryMatchingJobs entirely. When the cluster
       // is cold/empty/missing, fall through to the legacy path so the user
       // still gets recs (zero-regression contract).
-      let queryRes: { jobs: MatchingJob[] } | null = null
+      let queryRes: { jobs: MatchingJob[] } | null = v16Jobs ? { jobs: v16Jobs } : null
       const tagClusterOn = deps.tagClusterFetcher
         ? Boolean(
             await deps.getFlag(
@@ -1073,16 +1124,23 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
       // BEFORE cosine + cross-encoder rerank. Flag-gated default OFF; ramp
       // 1%→100%. When OFF, hardFilteredJobs === queryRes.jobs and downstream
       // path is byte-identical to pre-43 behavior.
+      //
+      // Phase 60 — When V16 cascade returned jobs, those have already
+      // passed the v1.6 hard-filter chain (visa / location / careerStage /
+      // jobType / freshness / atsApplyUrl / dead) inside the V16 pipeline.
+      // Skip the legacy hardFiltersOn pass to avoid double-filtering.
       let hardFilteredJobs: MatchingJob[] = queryRes.jobs
       let fallbackMode = false
-      const hardFiltersOn = Boolean(
-        await deps.getFlag(
-          deps.db,
-          HARD_FILTERS_FLAG_KEY,
-          { userId, env: process.env },
-          false
+      const hardFiltersOn =
+        !v16Jobs &&
+        Boolean(
+          await deps.getFlag(
+            deps.db,
+            HARD_FILTERS_FLAG_KEY,
+            { userId, env: process.env },
+            false
+          )
         )
-      )
       if (hardFiltersOn) {
         const hfProfile = await loadHardFilterProfile(deps.db, userId, log)
         // Pre-fetch prev-7-day jobs ONLY when we suspect a 0-survivor outcome
@@ -1151,8 +1209,15 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
       }
       // Stream F5 — embedding rerank when configured + user has embedding.
       // Stream G1 — cascade: fetcher → computer (lazy compute + cache) → fallback.
+      //
+      // Phase 60 — when V16 produced the candidates, V16's own scoring already
+      // includes cv-embedding cosine + Jaccard + reasoning. Skip the legacy
+      // rerank pipeline; just slice to jobsPerUser and proceed to formatter.
       let rankedJobs: MatchingJob[] = hardFilteredJobs
-      if (deps.userEmbedFetcher) {
+      if (v16Jobs) {
+        rankedJobs = hardFilteredJobs.slice(0, jobsPerUser)
+        log("[job-rec-daily] v16_skip_legacy_rerank", { userId, count: rankedJobs.length })
+      } else if (deps.userEmbedFetcher) {
         try {
           const fetched = await deps.userEmbedFetcher(deps.db, userId)
           let embedding: readonly number[] | null = fetched.embedding
@@ -1223,7 +1288,11 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
       // (title at company; skills) and asks BAAI/bge-reranker-v2-m3 (via
       // SiliconFlow free tier) for joint-relevance scores. Fail-open: if
       // the dep returns score=null on every item we keep cosine order.
-      if (deps.crossEncoderReranker && rankedJobs.length > 1) {
+      //
+      // Phase 60 — V16 path skips this; the v1.6 cascade already produces
+      // a final ranked top-N via weighted score (no cross-encoder layer
+      // because V16's llmMatch component is the LLM rerank cache equivalent).
+      if (!v16Jobs && deps.crossEncoderReranker && rankedJobs.length > 1) {
         try {
           // Pull the most-recent resume for query synthesis. Best-effort —
           // null result falls back to industryTags-only query.
@@ -1312,7 +1381,7 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
       // / H13 formatter (so the formatter sees the final order + can render
       // boost reasons via DailyPushContext.boostExplanations).
       let boostExplanations: BoostExplanation[] = []
-      if (rankedJobs.length > 1) {
+      if (!v16Jobs && rankedJobs.length > 1) {
         const startupBoostOn = Boolean(
           await deps.getFlag(
             deps.db,
@@ -1411,7 +1480,7 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
       // statedPreferences.targetRole. AI_AGENT_SKILL_WEIGHTS is the only
       // table wired today; PM/SWE tables are deferred to follow-up phases.
       let weightedMatchExplanations: WeightedMatchExplanation[] = []
-      if (rankedJobs.length > 1) {
+      if (!v16Jobs && rankedJobs.length > 1) {
         const weightedMatchOn = Boolean(
           await deps.getFlag(
             deps.db,
@@ -1587,7 +1656,16 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
       // (e.g. "QC Analyst" matching a Data Analyst CV via shared "Analyst")
       // sink. Pure / deterministic; no-op when industryTags absent or user
       // is non-tech. Re-clamps to jobsPerUser as a safety belt.
-      rankedJobs = applyTitleAntiBias(rankedJobs, normalized.industryTags, jobsPerUser)
+      //
+      // Phase 60 — V16 path skips this. The v1.6 cascade does role-level
+      // hard filtering at the Firestore query layer (`array-contains-any`
+      // on user.targetRoleFunction), so the QA/QC false-friend pattern
+      // can't even reach the candidate pool for SWE users.
+      if (!v16Jobs) {
+        rankedJobs = applyTitleAntiBias(rankedJobs, normalized.industryTags, jobsPerUser)
+      } else {
+        rankedJobs = rankedJobs.slice(0, jobsPerUser)
+      }
 
       // Stream H13 — friend-tone CV-aware opener. Default-on flag; falls back
       // to the legacy formatBatchMessage when explicitly disabled.

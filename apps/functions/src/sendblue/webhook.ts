@@ -73,6 +73,26 @@ export type WebhookResponse = {
   set?(field: string, value: string): unknown
 }
 
+/**
+ * Phase 60 (DEV-01) — `__PA_FIND_MATCH__` dev trigger args. Mirrors the
+ * pattern Adam called out in CLAUDE.md (D14): admin-guarded iMessage token
+ * forces an immediate generateJobRecs run for the sender. Production must
+ * not allow this for arbitrary users → admin allowlist via env.
+ */
+export type FindMatchTriggerArgs = {
+  userId: string
+  /** Phone the user iMessaged from — used as the destination for the resulting job-rec push. */
+  toE164: string
+}
+
+export type FindMatchTriggerResult = {
+  ok: boolean
+  /** Number of jobs surfaced; 0 when nothing passes the v1.6 hard-filter chain. */
+  jobCount: number
+  /** Skip reason when not authorized / no tags / no jobs / send failed. */
+  reason?: string
+}
+
 export type WebhookDeps = {
   db: Firestore
   secret: string
@@ -86,6 +106,16 @@ export type WebhookDeps = {
   ingestCv?: (input: IngestCvInput) => Promise<IngestCvResult>
   /** Stream D — phone→userId resolver. Inject for tests. */
   lookupUserByPhone?: (db: Firestore, phoneE164: string) => Promise<string | null>
+  /**
+   * Phase 60 (DEV-01) — `__PA_FIND_MATCH__` dev trigger handler. When the
+   * inbound text contains the trigger token AND the resolved user is in
+   * `PA_ADMIN_USER_IDS`, the webhook short-circuits the normal orchestrator
+   * path and force-runs the V16 match + iMessage send. Returns immediately
+   * (the trigger itself is fire-and-forget); the user receives the
+   * recommendation message via the normal sendImessage queue. Inject for
+   * tests; production wires the V16 query + send-imessage adapter.
+   */
+  generateJobRecsForUser?: (args: FindMatchTriggerArgs) => Promise<FindMatchTriggerResult>
   /**
    * Phase 54 — CV-confirm reply detector. Inject for tests. Production
    * defaults to a Firestore lookup for a recent `out-cvconfirm-*` outbound
@@ -581,6 +611,113 @@ export async function handleSendblueWebhook(
       reply(res, 200, { ok: true, ignored: "allowlist_deny" })
       return
     }
+  }
+
+  // ---- 3e2. Phase 60 (DEV-01) — `__PA_FIND_MATCH__` dev trigger ----------
+  //
+  // CLAUDE.md D14: an admin iMessage containing the literal token
+  // `__PA_FIND_MATCH__` force-runs the v1.6 match cascade for that user.
+  // Useful in production for Adam ("ping myself to refresh recs") and in
+  // staging for end-to-end verification of the match path without waiting
+  // for the daily 09:00 cron.
+  //
+  // Security: GUARDED by `PA_ADMIN_USER_IDS` env (comma-separated userId
+  // allowlist). HMAC verify already ran at line 285 — request came from
+  // Sendblue. Allowlist + HMAC together guarantee a non-admin user typing
+  // the literal token cannot trigger the path.
+  //
+  // Flow on detect-and-authorized:
+  //   1. lookup userId by phone (same resolver as coalesce path)
+  //   2. validate against `PA_ADMIN_USER_IDS`
+  //   3. invoke `deps.generateJobRecsForUser` (fire-and-forget)
+  //   4. audit `dev_trigger_find_match`
+  //   5. SKIP broker enqueue + return 200 OK with action marker
+  //
+  // The trigger short-circuits the orchestrator path so Claire doesn't
+  // also try to respond to the literal token (which would be confusing).
+  if (
+    !mediaUrl &&
+    typeof normalized.text === "string" &&
+    normalized.text.includes("__PA_FIND_MATCH__")
+  ) {
+    const adminUids = (process.env.PA_ADMIN_USER_IDS ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
+    const lookupFn = deps.lookupUserByPhone ?? defaultLookupUserByPhone
+    let triggerUserId: string | null = null
+    try {
+      triggerUserId = await lookupFn(deps.db, normalized.fromNumber)
+    } catch (err) {
+      log("[sendblue][webhook] find_match phone lookup failed",
+        err instanceof Error ? err.message : String(err))
+    }
+    const authorized = !!triggerUserId && adminUids.includes(triggerUserId)
+    if (!authorized) {
+      log("pa.dev_trigger.find_match.unauthorized", {
+        fromNumber: normalized.fromNumber,
+        userId: triggerUserId,
+        adminCount: adminUids.length,
+      })
+      await safeAudit(
+        deps,
+        {
+          type: "inbound_skipped",
+          channel: "imessage_sendblue",
+          fromNumber: normalized.fromNumber,
+          reason: "find_match_unauthorized",
+          correlationId: normalized.messageHandle,
+        },
+        log
+      )
+      reply(res, 200, { ok: true, ignored: "find_match_unauthorized" })
+      return
+    }
+    log("pa.dev_trigger.find_match", {
+      userId: triggerUserId,
+      fromNumber: normalized.fromNumber,
+      handle: normalized.messageHandle,
+    })
+    // Fire-and-forget — the trigger handler does the V16 query + send.
+    // We don't await so the 200 OK to Sendblue is fast (HMAC retries on 5xx).
+    if (deps.generateJobRecsForUser) {
+      void Promise.resolve()
+        .then(() =>
+          deps.generateJobRecsForUser!({
+            userId: triggerUserId!,
+            toE164: normalized.fromNumber,
+          })
+        )
+        .then((res) => {
+          log("[sendblue][webhook] find_match completed", {
+            userId: triggerUserId,
+            jobCount: res.jobCount,
+            ok: res.ok,
+            reason: res.reason,
+          })
+        })
+        .catch((err) => {
+          log("[sendblue][webhook] find_match handler threw",
+            err instanceof Error ? err.message : String(err))
+        })
+    } else {
+      log("[sendblue][webhook] find_match no handler wired (dev only)", {
+        userId: triggerUserId,
+      })
+    }
+    await safeAudit(
+      deps,
+      {
+        type: "dev_trigger_find_match",
+        channel: "imessage_sendblue",
+        fromNumber: normalized.fromNumber,
+        correlationId: normalized.messageHandle,
+        payload: { userId: triggerUserId },
+      },
+      log
+    )
+    reply(res, 200, { ok: true, action: "find_match_triggered" })
+    return
   }
 
   // ---- 3f. Tapback parser (BUG #6 sister-feature) -----------------------

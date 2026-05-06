@@ -1690,6 +1690,20 @@ export type QueryMatchingJobsArgs = {
   limit?: number
 }
 
+/**
+ * @deprecated v1.6 Phase 60 — `queryMatchingJobs` (legacy fragmented-source
+ * pipeline) has been superseded by `queryMatchingJobsV16` in
+ * `tools/query-matching-jobs-v16.ts`. The V16 entry reads `pa-users.tags`
+ * (single source per CLAUDE.md D8), runs the v1.6 cascade (role → hard
+ * filter → weighted score → reason), and replaces the daily-batch path
+ * (Phase 60 cutover, commit `__PA_FIND_MATCH__-cutover`).
+ *
+ * The legacy function remains as a fallback for users without `pa-users.tags`
+ * (V16 returns `noUserTags: true` → daily-batch falls through to this).
+ *
+ * Removal target: v1.7 — once all users have backfilled `tags` via the
+ * Phase 53/54 merger (CV ingest + onboarding answer hooks), drop this file.
+ */
 export async function queryMatchingJobs(
   args: QueryMatchingJobsArgs,
   deps: QueryMatchingJobsDeps

@@ -1,0 +1,34 @@
+{
+  "personaName": "ML_Maya",
+  "userTags": {
+    "skills": [
+      { "name": "python", "bucket": "programming_languages", "proficiency": "expert", "evidenceCount": 12, "baseWeight": 1.0 },
+      { "name": "pytorch", "bucket": "ml_frameworks", "proficiency": "expert", "evidenceCount": 8, "baseWeight": 1.0 },
+      { "name": "tensorflow", "bucket": "ml_frameworks", "proficiency": "advanced", "evidenceCount": 5, "baseWeight": 0.8 },
+      { "name": "transformers", "bucket": "ml_frameworks", "proficiency": "expert", "evidenceCount": 7, "baseWeight": 1.0 },
+      { "name": "rag", "bucket": "ai_engineering", "proficiency": "advanced", "evidenceCount": 4, "baseWeight": 1.0 },
+      { "name": "llm_fine_tuning", "bucket": "ai_engineering", "proficiency": "advanced", "evidenceCount": 4, "baseWeight": 1.0 },
+      { "name": "mlops", "bucket": "devops_and_infrastructure", "proficiency": "intermediate", "evidenceCount": 3, "baseWeight": 0.8 },
+      { "name": "kubernetes", "bucket": "devops_and_infrastructure", "proficiency": "intermediate", "evidenceCount": 2, "baseWeight": 0.6 }
+    ],
+    "industryEnum": ["ai_ml", "tech_software"],
+    "industrySector": ["artificial_intelligence_and_machine_learning", "software_and_saas", "research_and_academia"],
+    "relevantIndustry": ["artificial_intelligence_and_machine_learning", "research_and_academia"],
+    "relevantSpecialization": ["nlp", "computer_vision", "agentic_systems"],
+    "proposedTags": ["llm_orchestration", "vector_search"],
+    "targetRole": ["ml_engineer"],
+    "targetRoleFunction": ["software_engineering", "engineering_and_development"],
+    "yoeRange": [3, 7],
+    "visaStatus": "h1b",
+    "prefersStartup": "startup",
+    "targetLocations": ["san_francisco_bay_area", "seattle_metro", "remote_united_states"],
+    "targetJobType": ["full_time"],
+    "careerStage": "senior",
+    "minSalary": 200000,
+    "preferredLang": "en",
+    "schemaVersion": 1
+  },
+  "expectedRoleFunction": ["software_engineering", "engineering_and_development"],
+  "expectedIndustrySector": ["artificial_intelligence_and_machine_learning", "software_and_saas", "research_and_academia"],
+  "notExpectedRoles": ["sales", "customer_service_and_support", "human_resources", "marketing", "creatives_and_design"]
+}
