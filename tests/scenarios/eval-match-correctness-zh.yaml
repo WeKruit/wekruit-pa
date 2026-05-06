@@ -1,0 +1,90 @@
+# iter34 sprint C.16 — match correctness (zh).
+#
+# Scope: validate the Claire-emitted match recommendation message AFTER
+# CV analysis fires. Asserts:
+#   1. atsApplyUrl present (NOT jobright.ai/...) — iter34 sprint A.2
+#   2. No tech-leaning blacklist titles (warehouse/cashier/etc.) —
+#      iter34 sprint B.13
+#   3. "为啥推:" reason line per job — iter34 sprint B.11
+#   4. No "tomorrow ~9am" robot phrasing or internal-error leaks
+#      ("挂了", "拉匹配挂了") — iter34 hotfix 2026-05-05
+#
+# Pre-conditions (run `seed-match-correctness.mjs` BEFORE the runner):
+#   - pa-users/{harness} pre-staged with onboardingState="q_resume_asked",
+#     full statedPreferences (lang/role/visa/loc/email-verified), testMode=true
+#   - parsedCandidateResumes/{...} row for that userId so the dispatcher's
+#     externalSignal cvParsed=true → fires send_cv_analysis edge
+#
+# We bypass q_lang→q_email→q_email_verify→q_tos→q_role…→q_location because
+# the runner cannot inject Mailgun's verification code (real Mailgun would
+# fire and we'd never know the actual code). Pre-staging state lets us focus
+# the assertion on iter34 sprint C.16 surface — match content correctness.
+#
+# Run:
+#   GOOGLE_APPLICATION_CREDENTIALS=... \
+#     PA_SCENARIO_KEEP_PARTICIPANTS=1 \
+#     node tests/scenarios/seed-match-correctness.mjs +19999990601 zh && \
+#   GOOGLE_APPLICATION_CREDENTIALS=... \
+#     PA_SCENARIO_KEEP_PARTICIPANTS=1 \
+#     node tests/scenarios/runner.mjs tests/scenarios/eval-match-correctness-zh.yaml
+
+id: eval_match_correctness_zh
+description: |
+  iter34 sprint C.16 — SWE-flavored match-correctness assertions on
+  the Claire-emitted send_cv_analysis bundle (interim ack + LLM analysis +
+  2-job-rec push + tag-summary).
+locale: zh-CN
+agentId: default
+participant: "+19999990601"
+chatId: "iMessage;+19999990601"
+testMode: true
+turnTimeoutMs: 120000
+replyTimeoutMs: 180000
+
+# Tell the runner to keep onboardingState across turns (don't reset to
+# "provisional"). The seed script set state=q_resume_asked + active.
+setup:
+  userPatch:
+    onboardingStatus: "active"
+    onboardingState: "q_resume_asked"
+
+turns:
+  # Single turn — anything triggers the deterministic dispatcher's
+  # q_resume_asked → cvParsed=true → send_cv_analysis edge. Claire fires
+  # FOUR outbound messages (ack, analysis, jobRec, tagSummary). The
+  # runner's pollUntil returns the FIRST one matching this eventId. Use
+  # broad reply_contains_any to accept any of the four; rely on
+  # reply_not_contains_any to surface bugs in the bundle as a whole.
+  #
+  # Note on reply assertion: pa_messages stores all four assistant rows
+  # against this same eventId. The runner picks the first body it finds.
+  # Bugs that show up only in the match content (e.g. jobright.ai URL,
+  # "Warehouse" title, missing "为啥推:") would slip past unless the
+  # picked body happens to be the match block. To get all four for
+  # inspection, run the scenario then:
+  #
+  #   GOOGLE_APPLICATION_CREDENTIALS=... \
+  #     node -e 'import("./apps/functions/lib/index.js").then(()=>{...})'
+  #
+  # Or query Firestore: pa-messages where rawMeta.eventId == <id>.
+  - user: "（这里假装我发了简历）"
+    assert:
+      reply_min_length: 1
+      reply_contains_any:
+        - "简历"
+        - "看一下"
+        - "等我"
+        - "背景"
+        - "推荐"
+        - "岗位"
+        - "为啥推"
+        - "记的是"
+      reply_not_contains_any:
+        - "tomorrow ~9am"
+        - "挂了"
+        - "jobright.ai"
+        - "warehouse"
+        - "Warehouse"
+        - "Cashier"
+        - "cashier"
+        - "[object"

@@ -1,0 +1,49 @@
+# iter34 sprint C.16 — match correctness (en). Mirror of -zh; same
+# pre-conditions and seed steps. See -zh header for full notes.
+#
+# Run:
+#   GOOGLE_APPLICATION_CREDENTIALS=... \
+#     PA_SCENARIO_KEEP_PARTICIPANTS=1 \
+#     node tests/scenarios/seed-match-correctness.mjs +19999990602 en && \
+#   GOOGLE_APPLICATION_CREDENTIALS=... \
+#     PA_SCENARIO_KEEP_PARTICIPANTS=1 \
+#     node tests/scenarios/runner.mjs tests/scenarios/eval-match-correctness-en.yaml
+
+id: eval_match_correctness_en
+description: |
+  iter34 sprint C.16 — SWE-flavored match-correctness assertions on
+  the Claire-emitted send_cv_analysis bundle (en mirror of -zh).
+locale: en-US
+agentId: default
+participant: "+19999990602"
+chatId: "iMessage;+19999990602"
+testMode: true
+turnTimeoutMs: 120000
+replyTimeoutMs: 180000
+
+setup:
+  userPatch:
+    onboardingStatus: "active"
+    onboardingState: "q_resume_asked"
+
+turns:
+  - user: "(pretend i sent the cv)"
+    assert:
+      reply_min_length: 1
+      reply_contains_any:
+        - "resume"
+        - "sec"
+        - "read"
+        - "skimmed"
+        - "match"
+        - "role"
+        - "why"
+        - "noted"
+      reply_not_contains_any:
+        - "tomorrow ~9am"
+        - "jobright.ai"
+        - "warehouse"
+        - "Warehouse"
+        - "Cashier"
+        - "cashier"
+        - "[object"
