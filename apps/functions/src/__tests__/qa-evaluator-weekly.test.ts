@@ -363,6 +363,9 @@ describe("runQaEvaluator", () => {
       integrations,
       now: constNow,
       random: constRandom,
+      // Production suppresses alerts when sampleSize < MIN_SAMPLE_FOR_ALERT (10).
+      // Override to 0 here so this small-sample test exercises the alert wiring.
+      minSampleForAlert: 0,
     })
     assert.equal(result.passes, false)
     assert.equal(result.alertSent, true)
@@ -480,6 +483,9 @@ describe("runQaEvaluator", () => {
       integrations,
       now: constNow,
       random: constRandom,
+      // Production suppresses alerts when sampleSize < MIN_SAMPLE_FOR_ALERT (10).
+      // Override to 0 here so this single-pair test exercises the alert wiring.
+      minSampleForAlert: 0,
     })
     assert.equal(result.alertSent, true)
   })
@@ -498,6 +504,9 @@ describe("runQaEvaluator", () => {
       integrations,
       now: constNow,
       random: constRandom,
+      // Production suppresses alerts when sampleSize < MIN_SAMPLE_FOR_ALERT (10).
+      // Override to 0 here so this single-pair test exercises the alert wiring.
+      minSampleForAlert: 0,
     })
     assert.equal(result.alertSent, false)
     assert.equal(result.passes, false)
