@@ -7,17 +7,18 @@ last_updated: "2026-05-06T00:30:00.000Z"
 last_activity: 2026-05-06
 progress:
   total_phases: 11
-  completed_phases: 1
-  total_plans: 1
-  completed_plans: 1
+  completed_phases: 2
+  total_plans: 2
+  completed_plans: 2
 ---
 
 ## Current Position
 
-Phase: **Phase 53 — pa-resume-parser v2 wire + relevantTags extract (next)**
+Phase: **Phase 54 — Unified pa-users.tags writer (next)**
 Plan: —
-Status: Phase 52 ✅ complete (commit `5d1c603`) — 12 canonical vocab files + zod validation + Firestore overlay + 89/89 tests pass; v1.6 in progress
-Last activity: 2026-05-06 — Phase 52 vocab foundation shipped autonomously (TAG-01..TAG-12 covered)
+Status: Phase 53 ✅ complete (commit `3209bc5`) — Anthropic provider + 3-tier chain + extended schema + cv-ingest rewire + sha256 idempotency + Claire confirm (1920/1920 tests pass); v1.6 in progress (2/11)
+Last activity: 2026-05-06 — Phase 53 pa-resume-parser v2 wire shipped (PARSE-01..PARSE-09 covered)
+Adam-action: Set `ANTHROPIC_API_KEY` Firebase Secret to activate Sonnet middle tier (current chain falls through to gpt-4.1-mini). Phase 54 onwards does NOT block on this.
 
 ## v1.6 — Unified Canonical Tags & Match Quality v1 (this milestone)
 
