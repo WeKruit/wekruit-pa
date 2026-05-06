@@ -69,6 +69,37 @@ export type {
   QueryMatchingJobsArgs,
 } from "./tools/query-matching-jobs.js"
 
+// v1.6 Phase 56 — single-source canonical match cascade. New entry point
+// alongside the legacy `queryMatchingJobs` (which stays for back-compat
+// until Phase 60 cuts daily-batch over).
+export {
+  queryMatchingJobsV16,
+  loadUserTags,
+  loadJdRelCache,
+  loadLlmRerankCache,
+  applyV16HardFilters,
+  computeWeightedSkillJaccard,
+  computeOverlap,
+  cosineSim,
+  computeSalaryFit,
+  scoreV16Job,
+  composeReason,
+} from "./tools/query-matching-jobs-v16.js"
+export type {
+  QueryMatchingJobsV16Args,
+  QueryMatchingJobsV16Deps,
+} from "./tools/query-matching-jobs-v16.js"
+export {
+  V16_SCORE_WEIGHTS,
+  V16_SCORE_WEIGHTS_SUM,
+} from "./match-weights.js"
+export type {
+  V16ScoreBreakdown,
+  V16HardFilterCounters,
+  V16QueryResult,
+  MatchedSkillContribution,
+} from "./types.js"
+
 export {
   saveJobProfile,
   createSaveJobProfileTool,

@@ -259,3 +259,39 @@ export function applyWeightedMatchBoost<
 
 /** Feature flag key. Default OFF; ramp 1% → 100%. */
 export const WEIGHTED_MATCH_FLAG_KEY = "paWeightedMatchEnabled"
+
+// ---------------------------------------------------------------------------
+// v1.6 Phase 56 — match cascade score weights (MATCH-05).
+//
+// Five soft components, sum = 1.00. Sponsor + location removed from score
+// (already hard-filtered in `applyV16HardFilters`). Per Adam decision D9
+// (CLAUDE.md v1.6 design lock).
+//
+// Cache contract (MATCH-06):
+//   - llmMatch:    `pa-user-rerank-cache/{userId}.ranked[jobId].llmScore`
+//                  Phase 58 nightly fills; missing → 0 (degrades gracefully).
+//   - skillJaccard: per-skill (base × jd-rel) weighted Jaccard.
+//                   `pa-user-skill-jdrel-cache/{userId}/jobs/{jobId}` populated
+//                   by Phase 58. Missing → jd-rel default 1.0 (plain Jaccard).
+//   - cvEmbCosine: read from `tags.embedding` × `matching-jobs/{id}.embedding`.
+//                  Missing on either side → 0.
+// ---------------------------------------------------------------------------
+
+export const V16_SCORE_WEIGHTS = {
+  llmMatch: 0.40,
+  skillJaccard: 0.20,
+  relevantTags: 0.15,
+  industrySector: 0.10,
+  cvEmbCosine: 0.10,
+  salaryFit: 0.05,
+} as const
+
+/** Compile-time sanity: weights must sum to 1.0. */
+export const V16_SCORE_WEIGHTS_SUM =
+  V16_SCORE_WEIGHTS.llmMatch +
+  V16_SCORE_WEIGHTS.skillJaccard +
+  V16_SCORE_WEIGHTS.relevantTags +
+  V16_SCORE_WEIGHTS.industrySector +
+  V16_SCORE_WEIGHTS.cvEmbCosine +
+  V16_SCORE_WEIGHTS.salaryFit
+

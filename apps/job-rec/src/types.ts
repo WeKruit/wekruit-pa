@@ -149,16 +149,18 @@ export const MatchingJobSchema = z.object({
    */
   industryEnum: z.array(z.string()).optional(),
   /**
-   * iter34 followup D.9 — Recency signal used by the recency hard filter.
-   * Source: `lastSeenAt` on Firestore `matching-jobs` docs. May be either
-   * an ISO 8601 string OR a Firestore Timestamp object (with `.toDate()`).
-   * `firstSeenAt` is the batch-ingest timestamp (clusters at 30-50d) and
-   * is NOT a freshness signal — `lastSeenAt` is the right field.
+   * @deprecated v1.6 Phase 56 (MATCH-08, D10) — `lastSeenAt` is no longer
+   * a freshness signal. The jobright re-scrape pattern makes it noise; the
+   * v1.6 cascade uses `firstSeenAt < 20d` exclusively, with the daily 404
+   * sweep handling real death via `dead === true`. The field is retained
+   * here for back-compat with the legacy `queryMatchingJobs` consumer
+   * (daily-batch.ts) — once Phase 60 cuts it over to `queryMatchingJobsV16`,
+   * the field can be dropped.
    *
-   * Optional because legacy / unenriched rows may lack it. The recency
-   * filter (`applyRecencyFilter`) treats absent / unparseable as "drop"
-   * (no signal = conservative drop) so this opt-in shape doesn't
-   * accidentally retain stale rows.
+   * iter34 followup D.9 (legacy comment) — Recency signal used by the
+   * legacy recency hard filter. ISO 8601 string OR a Firestore Timestamp
+   * object (with `.toDate()`). `firstSeenAt` was clustering at 30-50d when
+   * this comment was written; the v1.6 redesign moves to `firstSeenAt < 20d`.
    */
   lastSeenAt: z.union([z.string(), z.any()]).optional(),
   /**
@@ -194,6 +196,38 @@ export const MatchingJobSchema = z.object({
    * scoring (legacy paths, raw projection consumers).
    */
   matchScore: MatchScoreSchema.optional(),
+  /**
+   * v1.6 Phase 56 (MATCH-02) — canonical roleFunction array (17-token vocab
+   * from jobright `utm_campaign`). Hard filter axis at query layer:
+   * `where('roleFunction', 'array-contains-any', user.targetRoleFunction)`.
+   * Optional in Zod for back-compat with un-migrated rows; queryMatchingJobsV16
+   * does NOT filter when the field is missing (graceful for legacy).
+   */
+  roleFunction: z.array(z.string()).optional(),
+  /**
+   * v1.6 Phase 56 — canonical industrySector array (42-token vocab). Soft
+   * score axis (overlap with user.industrySector). Distinct from legacy
+   * `industryEnum` (10-tag); v1.6 migration (Phase 55) backfills both.
+   */
+  industrySector: z.array(z.string()).optional(),
+  /**
+   * v1.6 Phase 56 — open-vocab relevantTags (max 12 per job, sandbox).
+   * Soft score axis (overlap with user.relevantTags). Populated by
+   * Phase 55 migration / Phase 58 nightly enrichment.
+   */
+  relevantTags: z.array(z.string()).optional(),
+  /**
+   * v1.6 Phase 56 — locationBuckets canonical 130+ vocab. When present,
+   * hard filter intersects with user.targetLocations. Falls back to
+   * locationRaw substring when missing.
+   */
+  locationBuckets: z.array(z.string()).optional(),
+  /**
+   * v1.6 Phase 56 — canonical careerStage seniority (13-token vocab).
+   * Hard filter axis (acceptableCareerStages window). Optional;
+   * legacy rows fall back to title-regex inference.
+   */
+  seniorityLevel: z.string().optional(),
 })
 export type MatchingJob = z.infer<typeof MatchingJobSchema>
 
@@ -318,3 +352,83 @@ export const JOB_PROFILES_COLLECTION = "pa-job-profiles"
 
 /** Feature flag key consulted before paJobRecDaily delivers to a user. */
 export const JOB_REC_FLAG_KEY = "paJobRecEnabled"
+
+// ---------------------------------------------------------------------------
+// v1.6 Phase 56 — score breakdown for the new match cascade (MATCH-05).
+//
+// Five soft components per D9 weights table. `total` is the weighted sum;
+// hard-filter outcomes are surfaced separately via `HardFilterCounters`.
+// Per-skill JD-relative weights (Phase 58 cache) and matched-skill list
+// (used by `composeReason` MATCH-07) are returned alongside the breakdown
+// so the reasoning composer doesn't have to re-derive them.
+// ---------------------------------------------------------------------------
+
+export const V16ScoreBreakdownSchema = z.object({
+  /** Qwen-7B nightly LLM rerank score (Phase 58 cache, 0..1). 0 when missing. */
+  llmMatch: z.number(),
+  /** Per-skill weighted Jaccard: Σ matched (base × jd-rel) / Σ all (base × jd-rel). */
+  skillJaccard: z.number(),
+  /** user.relevantTags ∩ job.relevantTags overlap ratio. */
+  relevantTags: z.number(),
+  /** user.industrySector ∩ job.industrySector overlap ratio. */
+  industrySector: z.number(),
+  /** user.embedding · job.embedding cosine (0..1). 0 when either missing. */
+  cvEmbCosine: z.number(),
+  /** Salary fit: 1.0 when job.salaryMin >= user.minSalary; degrades linearly. */
+  salaryFit: z.number(),
+  /** Weighted total per V16_SCORE_WEIGHTS. */
+  total: z.number(),
+})
+export type V16ScoreBreakdown = z.infer<typeof V16ScoreBreakdownSchema>
+
+/**
+ * Per-skill match contribution surfaced for the reasoning composer
+ * (MATCH-07). The composer picks the top-2 matched skills by `weight`.
+ */
+export type MatchedSkillContribution = {
+  /** Original (canonical) skill name from `tags.skills[].name`. */
+  name: string
+  /** Skill proficiency token from `tags.skills[].proficiency`. */
+  proficiency: string
+  /** base × jd-rel weight (1.0 default when jd-rel cache missing). */
+  weight: number
+}
+
+/**
+ * v1.6 hard-filter counters surfaced for observability + dashboards.
+ * Each field counts how many jobs were dropped by that specific gate.
+ */
+export type V16HardFilterCounters = {
+  visa: number
+  location: number
+  careerStage: number
+  jobType: number
+  freshness: number
+  atsApplyUrl: number
+  dead: number
+}
+
+/**
+ * v1.6 query result shape returned by `queryMatchingJobsV16`. Kept distinct
+ * from the legacy `QueryMatchingJobsOutputSchema` so the new cascade can
+ * surface richer diagnostics (hard-filter counters, stale-cache flags) to
+ * the dashboard without breaking the recruiter-agent tool contract.
+ */
+export type V16QueryResult = {
+  /** Top-N scored jobs (limit honored). Each job carries v16 breakdown + reason. */
+  jobs: Array<MatchingJob & {
+    v16Score: V16ScoreBreakdown
+    matchedSkills: MatchedSkillContribution[]
+    reason: string
+  }>
+  /** Total survivors after hard-filter (pre-rank). */
+  total: number
+  /** Total dropped by hard-filter chain. */
+  dropped: number
+  /** Per-gate hard-filter drop counters. */
+  hardFilter: V16HardFilterCounters
+  /** True when user has no `pa-users.tags` doc / empty tags. */
+  noUserTags?: boolean
+  /** True when the LLM rerank cache was stale (>36h) — llmMatch defaults to 0. */
+  llmCacheStale?: boolean
+}

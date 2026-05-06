@@ -173,9 +173,15 @@ importers:
       '@pa/core-types':
         specifier: 0.0.1
         version: link:../../packages/core-types
+      '@pa/pa-orchestrator':
+        specifier: 0.0.1
+        version: link:../../packages/pa-orchestrator
       '@pa/pa-persistence':
         specifier: 0.0.1
         version: link:../../packages/pa-persistence
+      '@wekruit/shared-tags':
+        specifier: 0.1.0
+        version: link:../../packages/shared-tags
       firebase-admin:
         specifier: ^13.0.0
         version: 13.8.0
