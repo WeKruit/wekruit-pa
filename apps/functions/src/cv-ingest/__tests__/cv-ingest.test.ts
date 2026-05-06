@@ -22,6 +22,8 @@ type FakeDbState = {
   outbound: Map<string, DocData>
   /** pa-users docs available for .doc(id).get() lookups */
   users: Map<string, DocData>
+  /** pa-users .doc(id).set(data, {merge: true}) writes — H.3b unified tags */
+  userSets: Array<{ id: string; data: DocData; merge: boolean }>
 }
 
 function makeFakeDb(opts?: { users?: Record<string, DocData> }) {
@@ -29,6 +31,7 @@ function makeFakeDb(opts?: { users?: Record<string, DocData> }) {
     resumes: [],
     outbound: new Map(),
     users: new Map(Object.entries(opts?.users ?? {})),
+    userSets: [],
   }
   let nextId = 1
   const db = {
@@ -68,6 +71,21 @@ function makeFakeDb(opts?: { users?: Record<string, DocData> }) {
                 return
               }
               throw new Error(`fake-db: .create() not supported for collection ${name}`)
+            },
+            async set(data: DocData, opts?: { merge?: boolean }) {
+              if (name === "pa-users") {
+                state.userSets.push({
+                  id,
+                  data: JSON.parse(JSON.stringify(data)) as DocData,
+                  merge: opts?.merge === true,
+                })
+                // Mirror merge-true semantics so subsequent .get() reads
+                // see the layered fields (test assertions can stay terse).
+                const prev = state.users.get(id) ?? {}
+                state.users.set(id, opts?.merge === true ? { ...prev, ...data } : data)
+                return
+              }
+              throw new Error(`fake-db: .set() not supported for collection ${name}`)
             },
           }
         },
@@ -864,5 +882,235 @@ describe("ingestCv writes embedding sync (iter34 B.9)", () => {
     assert.equal(p.userId, "user_x")
     assert.equal(p.dim, 1536)
     assert.equal(p.model, "text-embedding-3-small")
+  })
+})
+
+// ---------- iter34 H.3b — unified user-tags merge + write ------------------
+
+describe("ingestCv writes pa-users.tags via mergeUserTags (iter34 H.3b)", () => {
+  it("happy path: pa-users/{userId}.set is called with tags object containing skills + industryEnum", async () => {
+    const { db, state } = makeFakeDb()
+    const { events, log } = captureLog()
+    const { deps } = makeStubbedDeps({ db, log })
+    const res = await ingestCv(
+      { userId: "user_x", mediaUrl: "https://example.com/cv.pdf" },
+      deps
+    )
+    assert.equal(res.ok, true)
+    // pa-users.set must have fired exactly once with a `tags` payload.
+    assert.equal(state.userSets.length, 1, "pa-users.set should fire once")
+    const setOp = state.userSets[0]!
+    assert.equal(setOp.id, "user_x")
+    assert.equal(setOp.merge, true, "must use merge:true to preserve chat-side tag fields")
+    const payload = setOp.data as Record<string, unknown>
+    const tags = payload.tags as Record<string, unknown>
+    assert.ok(tags, "payload.tags must be present")
+    assert.ok(Array.isArray(tags.skills), "tags.skills must be array")
+    assert.ok(Array.isArray(tags.industryEnum), "tags.industryEnum must be array")
+    assert.equal(typeof tags.schemaVersion, "number")
+    // Telemetry log written.
+    const ok = events.find((e) => e.event === "pa.cv_user_tags.ok")
+    assert.ok(ok, "expected pa.cv_user_tags.ok log")
+    assert.equal((ok!.payload as Record<string, unknown>).userId, "user_x")
+  })
+
+  it("skills written FULLY (not truncated to 12) — Adam directive", async () => {
+    const { db, state } = makeFakeDb()
+    const { log } = captureLog()
+    const skills30 = Array.from({ length: 30 }, (_, i) => `Skill_${i}`)
+    const customParsed: StructuredCv = {
+      candidateProfile: {
+        name: "Power User",
+        email: null,
+        phone: null,
+        linkedIn: null,
+        location: "",
+        skills: skills30,
+      },
+      experiences: [],
+      education: [],
+      industryTags: ["tech_software"],
+    }
+    const { deps } = makeStubbedDeps({ db, log, parsed: customParsed })
+    await ingestCv(
+      { userId: "user_full", mediaUrl: "https://example.com/cv.pdf" },
+      deps
+    )
+    assert.equal(state.userSets.length, 1)
+    const tags = (state.userSets[0]!.data.tags ?? {}) as Record<string, unknown>
+    const writtenSkills = tags.skills as string[]
+    // Full list: at least the 30 input skills make it through (lowercased,
+    // deduped, but NOT capped at 12 like topSkills).
+    assert.equal(
+      writtenSkills.length,
+      30,
+      `expected 30 skills written (full list), got ${writtenSkills.length}`
+    )
+    assert.ok(writtenSkills.every((s) => s.toLowerCase() === s), "skills must be lowercased")
+  })
+
+  it("statedPreferences (chat-side) is read from pa-users + passed to mergeUserTags", async () => {
+    const { db, state } = makeFakeDb({
+      users: {
+        user_chat: {
+          phoneE164: "+1555",
+          statedPreferences: {
+            targetRole: ["software_engineer"],
+            yoeRange: [3, 5],
+            visaStatus: "h1b",
+            preferredLang: "en",
+          },
+          preferredLang: "en",
+        },
+      },
+    })
+    const { log } = captureLog()
+    let capturedInput: unknown = null
+    const { deps } = makeStubbedDeps({ db, log })
+    deps.mergeUserTagsFn = (input) => {
+      capturedInput = input
+      return {
+        skills: ["typescript"],
+        industryEnum: ["tech_software"],
+        schemaVersion: 1,
+      }
+    }
+    await ingestCv(
+      { userId: "user_chat", mediaUrl: "https://example.com/cv.pdf" },
+      deps
+    )
+    assert.ok(capturedInput, "mergeUserTags must be called")
+    const captured = capturedInput as Record<string, unknown>
+    const sp = captured.statedPreferences as Record<string, unknown>
+    assert.ok(sp, "mergeUserTags must receive statedPreferences from pa-users")
+    assert.deepEqual(sp.targetRole, ["software_engineer"])
+    assert.deepEqual(sp.yoeRange, [3, 5])
+    assert.equal(sp.visaStatus, "h1b")
+    assert.equal(captured.preferredLang, "en")
+    // CV side wired correctly too.
+    const cv = captured.cv as Record<string, unknown>
+    assert.ok(cv, "cv input present")
+    assert.deepEqual((cv.industryTags as string[]), ["tech_software"])
+    void state
+  })
+
+  it("missing pa-users doc → still writes tags from CV-only signals (statedPreferences omitted)", async () => {
+    const { db, state } = makeFakeDb() // no users seeded
+    const { log } = captureLog()
+    let capturedInput: unknown = null
+    const { deps } = makeStubbedDeps({ db, log })
+    deps.mergeUserTagsFn = (input) => {
+      capturedInput = input
+      return { skills: [], industryEnum: ["tech_software"], schemaVersion: 1 }
+    }
+    const res = await ingestCv(
+      { userId: "user_new", mediaUrl: "https://example.com/cv.pdf" },
+      deps
+    )
+    assert.equal(res.ok, true)
+    assert.ok(capturedInput, "mergeUserTags still called")
+    const captured = capturedInput as Record<string, unknown>
+    assert.equal(captured.statedPreferences, undefined, "statedPreferences absent when user doc missing")
+    assert.equal(state.userSets.length, 1, "pa-users.set still fires (creates doc via merge)")
+  })
+
+  it("writeUserTags throws → ingestCv still ok:true, error logged, parsedCandidateResumes intact", async () => {
+    const { db, state } = makeFakeDb()
+    const { events, log } = captureLog()
+    const { deps } = makeStubbedDeps({ db, log })
+    deps.writeUserTags = async () => {
+      throw new Error("firestore_unreachable")
+    }
+    const res = await ingestCv(
+      { userId: "user_x", mediaUrl: "https://example.com/cv.pdf" },
+      deps
+    )
+    assert.equal(res.ok, true, "tag-write failure must NOT break cv-ingest")
+    assert.equal(state.resumes.length, 1, "parsedCandidateResumes must still be written")
+    const errEvt = events.find((e) => e.event === "pa.cv_user_tags.write_error")
+    assert.ok(errEvt, "expected pa.cv_user_tags.write_error log event")
+  })
+
+  it("mergeUserTags throws → ingestCv still ok:true, error logged, no write attempted", async () => {
+    const { db, state } = makeFakeDb()
+    const { events, log } = captureLog()
+    const { deps } = makeStubbedDeps({ db, log })
+    deps.mergeUserTagsFn = () => {
+      throw new Error("merger_panic")
+    }
+    const res = await ingestCv(
+      { userId: "user_x", mediaUrl: "https://example.com/cv.pdf" },
+      deps
+    )
+    assert.equal(res.ok, true)
+    assert.equal(state.userSets.length, 0, "no .set() attempted when merger throws")
+    const errEvt = events.find((e) => e.event === "pa.cv_user_tags.merge_error")
+    assert.ok(errEvt, "expected pa.cv_user_tags.merge_error log event")
+  })
+
+  it("CV with embedding → embedding fields propagate to mergeUserTags input", async () => {
+    const { db } = makeFakeDb()
+    const { log } = captureLog()
+    const { deps } = makeStubbedDeps({ db, log })
+    let capturedInput: unknown = null
+    deps.mergeUserTagsFn = (input) => {
+      capturedInput = input
+      return { skills: [], industryEnum: ["tech_software"], schemaVersion: 1 }
+    }
+    const fakeVec = new Array(1536).fill(0.5)
+    deps.computeEmbedding = async () => ({
+      vector: fakeVec,
+      model: "text-embedding-3-small",
+      dim: 1536,
+      computedAt: "2026-05-05T12:00:00.000Z",
+    })
+    await ingestCv(
+      { userId: "user_e", mediaUrl: "https://example.com/cv.pdf" },
+      deps
+    )
+    const captured = capturedInput as Record<string, unknown>
+    const cv = captured.cv as Record<string, unknown>
+    assert.ok(Array.isArray(cv.embedding))
+    assert.equal((cv.embedding as unknown[]).length, 1536)
+    assert.equal(cv.embeddingModel, "text-embedding-3-small")
+    assert.equal(cv.embeddingComputedAt, "2026-05-05T12:00:00.000Z")
+  })
+
+  it("CV without embedding → mergeUserTags called without embedding fields", async () => {
+    const { db } = makeFakeDb()
+    const { log } = captureLog()
+    const { deps } = makeStubbedDeps({ db, log })
+    let capturedInput: unknown = null
+    deps.mergeUserTagsFn = (input) => {
+      capturedInput = input
+      return { skills: [], industryEnum: ["other"], schemaVersion: 1 }
+    }
+    deps.computeEmbedding = async () => null
+    await ingestCv(
+      { userId: "user_no_embed", mediaUrl: "https://example.com/cv.pdf" },
+      deps
+    )
+    const captured = capturedInput as Record<string, unknown>
+    const cv = captured.cv as Record<string, unknown>
+    assert.equal(cv.embedding, undefined)
+    assert.equal(cv.embeddingModel, undefined)
+  })
+
+  it("cvUpdatedAt timestamp passed through to mergeUserTags", async () => {
+    const { db } = makeFakeDb()
+    const { log } = captureLog()
+    const { deps } = makeStubbedDeps({ db, log })
+    let capturedInput: unknown = null
+    deps.mergeUserTagsFn = (input) => {
+      capturedInput = input
+      return { skills: [], industryEnum: ["tech_software"], schemaVersion: 1 }
+    }
+    deps.nowIso = () => "2026-05-05T11:22:33.000Z"
+    await ingestCv(
+      { userId: "user_t", mediaUrl: "https://example.com/cv.pdf" },
+      deps
+    )
+    const captured = capturedInput as Record<string, unknown>
+    assert.equal(captured.cvUpdatedAt, "2026-05-05T11:22:33.000Z")
   })
 })

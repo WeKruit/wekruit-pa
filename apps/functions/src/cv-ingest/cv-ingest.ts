@@ -54,6 +54,12 @@ import {
   type ComputeCvEmbeddingResult,
   type EmbeddingResumeInput,
 } from "../lib/embeddings.js"
+// iter34 H.3b — unified user-tag store. mergeUserTags is pure; we wire it
+// into the cv-ingest flow so the canonical `pa-users/{userId}.tags` doc
+// stays in sync with the latest CV. H.4 worker reads this; H.3a's industry
+// fallback already runs on parsed.industryTags before we hand it to the
+// merger, so the merger sees the corrected tags.
+import { mergeUserTags, type UserTagsInput } from "@pa/pa-orchestrator"
 
 export type IngestCvInput = {
   userId: string
@@ -239,6 +245,26 @@ export type IngestCvDeps = {
   computeEmbedding?: (
     input: EmbeddingResumeInput
   ) => Promise<ComputeCvEmbeddingResult | null>
+
+  // ---- iter34 H.3b — unified user-tags merge + write --------------------
+  //
+  // Default: @pa/pa-orchestrator's mergeUserTags + Firestore
+  // `pa-users/{userId}.set({tags}, {merge:true})`. Tests can stub the
+  // merger to inspect args, and the writer to capture the resulting
+  // payload. This path is fail-open: any failure is logged but NEVER
+  // blocks the parsedCandidateResumes write or the E1/E2/E3 side effects.
+  /** Inject for tests. Default: @pa/pa-orchestrator.mergeUserTags. */
+  mergeUserTagsFn?: (input: UserTagsInput) => Record<string, unknown>
+  /**
+   * Inject for tests. Default: Firestore `pa-users/{userId}.set({tags},
+   * {merge: true})`. Caller passes the merged tags object plus the
+   * timestamp (already on the tags object via mergeUserTags's cvUpdatedAt).
+   */
+  writeUserTags?: (
+    db: Firestore,
+    userId: string,
+    tags: Record<string, unknown>
+  ) => Promise<void>
 }
 
 const PARSED_RESUMES_COLLECTION = "parsedCandidateResumes"
@@ -739,6 +765,133 @@ async function defaultLookupUserForFollowup(
     return { toE164: phone, mem0UserId: mem0 }
   } catch {
     return null
+  }
+}
+
+// ---------------------------------------------------------------------------
+// iter34 H.3b — unified user-tags writer (default Firestore impl)
+// ---------------------------------------------------------------------------
+
+async function defaultWriteUserTags(
+  db: Firestore,
+  userId: string,
+  tags: Record<string, unknown>
+): Promise<void> {
+  await db.collection(PA_USERS_COLLECTION).doc(userId).set({ tags }, { merge: true })
+}
+
+/**
+ * Runner for the unified user-tag merge + write.
+ *
+ * Reads the existing pa-users doc to pick up `statedPreferences` (chat
+ * answers worker writes there) and `preferredLang`, runs the H.1
+ * `mergeUserTags` merger over the parsed CV + chat signals, and writes
+ * the result back to `pa-users/{userId}.tags`.
+ *
+ * Contract: NEVER throws. Failures are logged and swallowed — the
+ * parsedCandidateResumes write already succeeded; tag-store coherence
+ * issues must NOT cascade and break the user-facing CV ingestion path.
+ */
+async function runUserTagsMerge(args: {
+  db: Firestore
+  userId: string
+  parsed: StructuredCv
+  workHistory: ReadonlyArray<unknown> | undefined
+  embedding: ComputeCvEmbeddingResult | null
+  mergeUserTagsFn: (input: UserTagsInput) => Record<string, unknown>
+  writeUserTags: (
+    db: Firestore,
+    userId: string,
+    tags: Record<string, unknown>
+  ) => Promise<void>
+  nowIso: () => string
+  log: (event: string, payload?: Record<string, unknown>) => void
+}): Promise<void> {
+  // 1. Read existing user doc — statedPreferences + preferredLang flow
+  //    in from the chat-answers worker (separate write side).
+  let userData: Record<string, unknown> | undefined
+  try {
+    const snap = await args.db.collection(PA_USERS_COLLECTION).doc(args.userId).get()
+    if (snap.exists) {
+      userData = snap.data() as Record<string, unknown> | undefined
+    }
+  } catch (err) {
+    args.log("pa.cv_user_tags.user_read_error", {
+      userId: args.userId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    // Soft-degrade: still merge tags from CV-only signals.
+    userData = undefined
+  }
+
+  // 2. Compose mergeUserTags input. CV side carries everything we know
+  //    about the parsed resume; chat side passes through statedPreferences
+  //    so the unified projection captures both.
+  const cvUpdatedAt = args.nowIso()
+  const cvInput: UserTagsInput["cv"] = {
+    candidateProfile: { skills: args.parsed.candidateProfile.skills },
+    experiences: args.parsed.experiences.map((e) => ({
+      title: e.title,
+      company: e.company,
+      description: e.description,
+    })),
+    industryTags: args.parsed.industryTags,
+  }
+  // v2 workHistory carries per-job skills, used by mergeUserTags's full
+  // skill bag. Tolerate the unknown[] runtime shape (caller passes the
+  // raw v2 array; H.1 collectSkills filters defensively).
+  if (Array.isArray(args.workHistory) && args.workHistory.length > 0) {
+    cvInput.workHistory = args.workHistory as UserTagsInput["cv"] extends infer T
+      ? T extends { workHistory?: infer W }
+        ? W
+        : never
+      : never
+  }
+  if (args.embedding) {
+    cvInput.embedding = args.embedding.vector
+    cvInput.embeddingModel = args.embedding.model
+    cvInput.embeddingComputedAt = args.embedding.computedAt
+  }
+
+  const statedPrefs = (userData?.statedPreferences as UserTagsInput["statedPreferences"]) ?? undefined
+  const preferredLang =
+    typeof userData?.preferredLang === "string"
+      ? (userData.preferredLang as UserTagsInput["preferredLang"])
+      : undefined
+
+  let merged: Record<string, unknown>
+  try {
+    merged = args.mergeUserTagsFn({
+      cv: cvInput,
+      statedPreferences: statedPrefs,
+      preferredLang,
+      cvUpdatedAt,
+    }) as Record<string, unknown>
+  } catch (err) {
+    args.log("pa.cv_user_tags.merge_error", {
+      userId: args.userId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    return
+  }
+
+  // 3. Write `pa-users/{userId}.tags`. Merge:true preserves any tag
+  //    fields the chat-answers worker may have populated (we own the
+  //    CV-derived fields; they own the chat-derived ones).
+  try {
+    await args.writeUserTags(args.db, args.userId, merged)
+    const skillsCount = Array.isArray(merged.skills) ? merged.skills.length : 0
+    const industryEnum = Array.isArray(merged.industryEnum) ? merged.industryEnum : []
+    args.log("pa.cv_user_tags.ok", {
+      userId: args.userId,
+      skillsCount,
+      industryEnum,
+    })
+  } catch (err) {
+    args.log("pa.cv_user_tags.write_error", {
+      userId: args.userId,
+      error: err instanceof Error ? err.message : String(err),
+    })
   }
 }
 
@@ -1257,6 +1410,12 @@ export async function ingestCv(
   // wires to lib/embeddings.computeCvEmbedding which uses OPENAI_API_KEY.
   const computeEmbedding = deps?.computeEmbedding ?? computeCvEmbedding
 
+  // iter34 H.3b — unified user-tags merge + write (test seams).
+  const mergeUserTagsFn =
+    deps?.mergeUserTagsFn ??
+    ((input: UserTagsInput) => mergeUserTags(input) as Record<string, unknown>)
+  const writeUserTags = deps?.writeUserTags ?? defaultWriteUserTags
+
   if (!args || typeof args !== "object" || !args.userId || !args.mediaUrl) {
     return { ok: false, reason: "invalid_input" }
   }
@@ -1696,6 +1855,26 @@ export async function ingestCv(
       userId: args.userId,
       resumeId: ref.id,
       parserVersion: v2Output ? "v2" : "v1",
+    })
+
+    // iter34 H.3b — unified user-tags write side. Fail-open: never throws,
+    // never blocks. We `await` here (rather than fire-and-forget) so the
+    // resulting tags are visible to the E1/E2/E3 followups that fire in
+    // parallel below — but `runUserTagsMerge` swallows ALL errors so this
+    // await cannot taint the success path. Awaited because: (a) the user
+    // doc lookup is shared with the Stream E branches and we want to
+    // avoid double-reads; (b) tag-write failures should appear in logs
+    // alongside the originating cv-ingest event, not minutes later.
+    await runUserTagsMerge({
+      db: dbHandle,
+      userId: args.userId,
+      parsed,
+      workHistory: v2Output?.parsed.workHistory,
+      embedding: embedResult,
+      mergeUserTagsFn,
+      writeUserTags,
+      nowIso,
+      log,
     })
   } catch (err) {
     log("pa.cv_ingest.error", {
