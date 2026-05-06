@@ -100,6 +100,12 @@ export { paCanonicalTagWorker, paCanonicalTagWorkerRetry } from "./tag-worker/no
 // url_resolver.py with a TS-native cloud-side implementation.
 export { paBackfillMatchingJobsAtsUrl } from "./backfill-ats-urls.js"
 
+// v1.6 Phase 57 (LIVE-01..04) — Daily HEAD-check sweep for matching-jobs.
+// Cloud Scheduler 03:00 UTC. Marks dead on 4xx/5xx/timeout, recovers on
+// HTTP-200 retry, hard-deletes after 30d dead. Inline-wires the Serper
+// resolver from paBackfillMatchingJobsAtsUrl (cap 1000/run).
+export { paLivenessSweepDaily } from "./liveness-sweep.js"
+
 // Phase 27 T2 — public /health endpoints (one per existing CF). Returns
 // {ok, name, version, ts, deps:{firestore, secrets}}. No auth (probes
 // must be reachable). All endpoints HTTP 200 always; failure surfaces in body.
