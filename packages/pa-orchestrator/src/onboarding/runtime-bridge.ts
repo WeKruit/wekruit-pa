@@ -30,6 +30,7 @@
  *     follow-up commit)
  */
 import type { AgentDef, InboundEvent } from "@pa/core-types"
+import { createHash } from "node:crypto"
 import { OnboardingPipeline, type RunTurnResult } from "./pipeline.js"
 import { defaultQuestions } from "./questions.js"
 import { FirestorePipelineStateProvider } from "./state-firestore.js"
@@ -76,6 +77,7 @@ export interface PipelineEmitDeps {
   } | null>
   extractAnswerIntent?: import("../index.js").OrchestratorStoreDeps["extractAnswerIntent"]
   extractEmailIntent?: import("../index.js").OrchestratorStoreDeps["extractEmailIntent"]
+  sendVerificationEmail?: import("../index.js").OrchestratorStoreDeps["sendVerificationEmail"]
   nowIso(): string
   log: PipelineLogFn
   /** Firestore handle. Optional — pipeline degrades to in-memory state when missing. */
@@ -189,8 +191,21 @@ export async function runOnboardingPipelineTurn(
     onEmailAccepted: async (email, ctx) => {
       ctx.log?.("pa.onboarding.pipeline.q_email.accepted", { userId: ctx.userId, email })
       if (deps.applyOnboarding) {
-        await deps.applyOnboarding(event.userId, phoneE164, "ask_q_email_verify_start", {
+        const sent = deps.sendVerificationEmail
+          ? await deps.sendVerificationEmail(email)
+          : null
+        const emailVerification = sent
+          ? {
+              codeHash: createHash("sha256").update(sent.rawCode).digest("hex"),
+              email,
+              sentAt: sent.sentAt,
+              expiresAt: sent.expiresAt,
+              ...(sent.providerMessageId ? { providerMessageId: sent.providerMessageId } : {}),
+            }
+          : undefined
+        await deps.applyOnboarding(event.userId, phoneE164, "ask_q_email_verify", {
           parsedAnswer: { contactEmail: email },
+          ...(emailVerification ? { emailVerification } : {}),
         })
       }
     },

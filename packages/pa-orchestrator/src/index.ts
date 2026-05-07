@@ -1359,6 +1359,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
                   : undefined,
                 extractAnswerIntent: store.extractAnswerIntent,
                 extractEmailIntent: store.extractEmailIntent,
+                sendVerificationEmail: store.sendVerificationEmail,
                 nowIso: () => store.nowIso(),
                 log: store.log,
                 db: store.db,

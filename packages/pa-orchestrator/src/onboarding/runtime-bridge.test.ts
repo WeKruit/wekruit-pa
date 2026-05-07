@@ -13,8 +13,10 @@
  */
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
+import { createHash } from "node:crypto"
 
-import { runResumeAcceptedFlow } from "./runtime-bridge.js"
+import { runOnboardingPipelineTurn, runResumeAcceptedFlow } from "./runtime-bridge.js"
+import { emptyPipelineState, type PipelineState } from "./pipeline.js"
 import type { CvSummaryInput } from "../cv-summary.js"
 
 // ---------- Test harness -----------------------------------------------------
@@ -72,12 +74,133 @@ function makeClock() {
   }
 }
 
+function makePipelineUserDb(initialPipelineState: PipelineState) {
+  const users = new Map<string, Record<string, unknown>>()
+  users.set("user_email", {
+    id: "user_email",
+    phoneE164: "+15551234",
+    pipelineState: initialPipelineState,
+  })
+
+  function refFor(name: string, id: string) {
+    return {
+      async get() {
+        const doc = name === "pa-users" ? users.get(id) : undefined
+        return { exists: !!doc, data: () => doc }
+      },
+      async set(data: Record<string, unknown>, opts?: { merge: boolean }) {
+        if (name !== "pa-users") return
+        const prior = users.get(id) ?? {}
+        users.set(id, opts?.merge ? { ...prior, ...data } : data)
+      },
+    }
+  }
+
+  return {
+    users,
+    db: {
+      collection(name: string) {
+        return {
+          doc(id: string) {
+            return refFor(name, id)
+          },
+        }
+      },
+      async runTransaction<T>(fn: (tx: unknown) => Promise<T>): Promise<T> {
+        return await fn({
+          get: (ref: { get(): Promise<unknown> }) => ref.get(),
+          set: (
+            ref: { set(data: Record<string, unknown>, opts?: { merge: boolean }): Promise<unknown> },
+            data: Record<string, unknown>,
+            opts?: { merge: boolean }
+          ) => ref.set(data, opts),
+        })
+      },
+    },
+  }
+}
+
 const FULL_CV: CvSummaryInput = {
   topSkills: ["TypeScript", "Firestore"],
   experiences: [{ company: "WeKruit", title: "Founder" }],
 }
 
 // ---------- Tests ------------------------------------------------------------
+
+describe("runOnboardingPipelineTurn — q_email verification bridge", () => {
+  it("accepting an email sends a verification code and persists the challenge via applyOnboarding", async () => {
+    const pipelineState: PipelineState = {
+      ...emptyPipelineState(),
+      currentQId: "q_email",
+      collected: { q_lang: "en" },
+      lang: "en",
+    }
+    const { db } = makePipelineUserDb(pipelineState)
+    const applies: ApplyOnboardingRecord[] = []
+    const outbounds: string[] = []
+
+    const result = await runOnboardingPipelineTurn({
+      event: {
+        id: "evt_email",
+        userId: "user_email",
+        sessionId: "sess_email",
+        from: "+15551234",
+        body: "indolencorlol@gmail.com",
+        createdAt: "2026-05-07T20:25:00.000Z",
+      } as never,
+      turnId: "turn_email",
+      agent: {} as never,
+      suppressOutbound: false,
+      deps: {
+        db,
+        nowIso: () => "2026-05-07T20:25:01.000Z",
+        log: () => {},
+        getOnboardingUser: async () => ({
+          id: "user_email",
+          phoneE164: "+15551234",
+        }),
+        appendMessage: async () => {},
+        enqueueOutbound: async (_userId, _to, body) => {
+          outbounds.push(body)
+        },
+        sendVerificationEmail: async (email) => ({
+          rawCode: "794956",
+          sentAt: "2026-05-07T20:25:02.000Z",
+          expiresAt: "2026-05-07T20:55:02.000Z",
+          providerMessageId: `mailgun-${email}`,
+        }),
+        applyOnboarding: async (userId, phoneE164, step, opts) => {
+          applies.push({
+            userId,
+            phoneE164,
+            step,
+            opts,
+            emitsAtCallTime: outbounds.length,
+          })
+        },
+      },
+    })
+
+    assert.equal(result.handled, true)
+    assert.equal(result.raw?.currentQId, "q_email_verify")
+    assert.deepEqual(outbounds, [
+      "just sent a 6-digit code to your email — text it back to me and we're set (good for 30 mins)",
+    ])
+
+    assert.equal(applies.length, 1)
+    assert.equal(applies[0]!.step, "ask_q_email_verify")
+    assert.deepEqual(applies[0]!.opts?.parsedAnswer, {
+      contactEmail: "indolencorlol@gmail.com",
+    })
+    assert.deepEqual(applies[0]!.opts?.emailVerification, {
+      codeHash: createHash("sha256").update("794956").digest("hex"),
+      email: "indolencorlol@gmail.com",
+      sentAt: "2026-05-07T20:25:02.000Z",
+      expiresAt: "2026-05-07T20:55:02.000Z",
+      providerMessageId: "mailgun-indolencorlol@gmail.com",
+    })
+  })
+})
 
 describe("runResumeAcceptedFlow — happy path (CV available immediately)", () => {
   it("emits ack → emits tag-summary → calls applyOnboarding('complete')", async () => {

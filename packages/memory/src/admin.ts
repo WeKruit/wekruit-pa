@@ -117,6 +117,7 @@ export type ClearUserMemoryResult = {
     tags: boolean
     resumeParseCount: boolean
     onboardingState: boolean
+    pipelineState?: boolean
   }
 }
 
@@ -347,6 +348,12 @@ async function resetUserOnboardingState(
         // to .update() with field-path FieldValue.delete().
         onboardingProbeAttempts: FieldValue.delete(),
         systemFlags: FieldValue.delete(),
+        // 2026-05-07 onboarding-refactor reset bug — the Q-as-class
+        // pipeline stores its own cursor separately from legacy
+        // onboardingState. If this survives reset, the next "first" message
+        // resumes at the old currentQId (e.g. q_tos) even though
+        // onboardingState is back to pending.
+        pipelineState: FieldValue.delete(),
         // 2026-05-06 P9 — full reset must also clear:
         //   - tags (D8 unified-tag store, prevents preferredLang / skills /
         //     industrySector leakage into a fresh re-onboarding session)
@@ -515,6 +522,7 @@ export async function clearUserMemory(
           tags: true,
           resumeParseCount: true,
           onboardingState: true,
+          pipelineState: true,
         }
       }
     } catch (err) {
@@ -575,6 +583,7 @@ export function summarizeClearResult(r: ClearUserMemoryResult): string {
     if (r.userDocReset.tags) parts.push("tags=cleared")
     if (r.userDocReset.resumeParseCount) parts.push("quota=cleared")
     if (r.userDocReset.onboardingState) parts.push("onboarding=reset")
+    if (r.userDocReset.pipelineState) parts.push("pipeline=reset")
     if (parts.length > 0) userDocBlock = `; user-doc ${parts.join(", ")}`
   }
   return r.dryRun

@@ -772,7 +772,6 @@ export async function handleSendblueWebhook(
   //   because we don't know turnSeq at create time.
   let willCoalesce = false
   let resolvedUserIdForCoalesce: string | null = null
-  let isOnboardingForCoalesce = false
   if (!mediaUrl && deps.enqueueOrCoalesce && deps.coalescerDeps) {
     try {
       const lookupFn = deps.lookupUserByPhone ?? defaultLookupUserByPhone
@@ -784,13 +783,12 @@ export async function handleSendblueWebhook(
           { userId: resolvedUserIdForCoalesce, env: process.env },
           false
         )
-        willCoalesce = coalesceFlag === true
-        // iter33 Bug 12 fix 2026-05-05 (Adam: "deterministic 阶段消息可以
-        // 恢复的快一点"). Read user.onboardingState to decide whether the
-        // coalesce window should be 8s (default — typing-gap absorption
-        // for free-form chat) or 3s (deterministic — short Q/A turns).
-        // No state OR state === "complete" → free-form chat, full 8s.
-        // Anything else → onboarding deterministic phase, fast 3s.
+        // 2026-05-07 onboarding-refactor fix: coalescing is an agent-runtime
+        // feature, not an onboarding feature. Onboarding is a strict
+        // one-answer-per-state machine; merging adjacent replies corrupts the
+        // current question boundary (email + 6-digit code became one inbound
+        // and q_email_verify rejected it). Only enable coalescing after
+        // onboarding is complete. Missing state is treated as onboarding/new.
         try {
           const userSnap = await deps.db
             .collection("pa-users")
@@ -799,11 +797,13 @@ export async function handleSendblueWebhook(
           if (userSnap.exists) {
             const data = userSnap.data() as { onboardingState?: string } | undefined
             const state = data?.onboardingState
-            isOnboardingForCoalesce = Boolean(state) && state !== "complete"
+            willCoalesce = coalesceFlag === true && state === "complete"
+          } else {
+            willCoalesce = false
           }
         } catch {
-          // Fall back to default 8s on any read error — non-blocking.
-          isOnboardingForCoalesce = false
+          // If we cannot prove onboarding is complete, do not coalesce.
+          willCoalesce = false
         }
       }
     } catch (preErr) {
@@ -885,8 +885,7 @@ export async function handleSendblueWebhook(
           messageHandle: normalized.messageHandle,
           body: normalized.text,
           inboundEventId: result.id,
-          // iter33 Bug 12 — deterministic phase coalesce delay = 3s.
-          isOnboarding: isOnboardingForCoalesce,
+          isOnboarding: false,
         })
         log("[coalesce][webhook] enqueued", {
           userId: resolvedUserIdForCoalesce,

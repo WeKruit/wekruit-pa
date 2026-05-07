@@ -765,6 +765,9 @@ export async function runDeterministicOnboardingTurn(
       ...(store.extractEmailIntent
         ? { extractEmailIntent: store.extractEmailIntent }
         : {}),
+      ...(store.sendVerificationEmail
+        ? { sendVerificationEmail: store.sendVerificationEmail }
+        : {}),
       nowIso: () => store.nowIso(),
       log: (event2, payload) => store.log(event2, payload),
       db: store.db,

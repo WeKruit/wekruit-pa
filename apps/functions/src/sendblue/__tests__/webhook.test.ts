@@ -18,6 +18,7 @@ function makeFakeDb(opts: { rateLimitFlag?: boolean } = {}) {
   const flags = new Map<string, DocData>()
   const rateLimit = new Map<string, DocData>()
   const tapbacks: DocData[] = []
+  const users = new Map<string, DocData>()
 
   if (opts.rateLimitFlag) {
     flags.set("paRateLimitPerUserEnabled", {
@@ -101,6 +102,7 @@ function makeFakeDb(opts: { rateLimitFlag?: boolean } = {}) {
     "pa-audit-events": auditCollection,
     "pa-feature-flags": flagsCollection,
     "pa-rate-limits": rateLimitCollection,
+    "pa-users": { doc(id: string) { return genericDocRef(users, id) } },
     "pa-rate-limit": rateLimitCollection,
     "pa-sendblue-webhook-raw": rawWebhookCollection,
     "pa-tapback-events": tapbackCollection,
@@ -132,7 +134,7 @@ function makeFakeDb(opts: { rateLimitFlag?: boolean } = {}) {
     },
   } as unknown as Parameters<typeof handleSendblueWebhook>[2]["db"]
 
-  return { db, inbound, audit, flags, rateLimit, tapbacks }
+  return { db, inbound, audit, flags, rateLimit, tapbacks, users }
 }
 
 function sign(body: string, secret = SECRET): string {
@@ -636,7 +638,8 @@ describe("handleSendblueWebhook", () => {
     // turn. This test pins the FIX: when willCoalesce=true at decision time,
     // the broker write itself carries coalescing:true so onPaInbound's single
     // read sees the flag and skips.
-    const { db, inbound, flags } = makeFakeDb()
+    const { db, inbound, flags, users } = makeFakeDb()
+    users.set("u_adam_test", { onboardingState: "complete" })
     flags.set("paMessageCoalesceEnabled", {
       key: "paMessageCoalesceEnabled",
       value: true,
@@ -733,13 +736,8 @@ describe("handleSendblueWebhook", () => {
     assert.equal(coalesceCalled, false, "coalescer never invoked when flag is off")
   })
 
-  it("Test TD-A.3: enqueue failure post-create → fallback driver invoked, coalescing reverted to false", async () => {
-    // Post-TD-A: when the doc was stamped coalescing:true at create time
-    // and the subsequent Cloud Tasks enqueue fails, onPaInbound has ALREADY
-    // skipped the row. Without an active fallback, the user gets no reply.
-    // This test pins the proper-fix: webhook calls
-    // processBrokerImessageFallback (injected by index.ts in production).
-    const { db, inbound, flags } = makeFakeDb()
+  it("Test TD-A.2b: onboarding incomplete → coalescer is bypassed even when flag is on", async () => {
+    const { db, inbound, flags, users } = makeFakeDb()
     flags.set("paMessageCoalesceEnabled", {
       key: "paMessageCoalesceEnabled",
       value: true,
@@ -748,6 +746,55 @@ describe("handleSendblueWebhook", () => {
       allowlist: [],
       blocklist: [],
     })
+    users.set("u_adam_test", { onboardingState: "q_email_asked" })
+    _clearFeatureFlagCache()
+
+    let coalesceCalled = false
+    const enqueueOrCoalesceMock = async () => {
+      coalesceCalled = true
+      return { action: "created" as const }
+    }
+
+    const body = JSON.stringify(basePayload({ message_handle: "msg-td-a-2b" }))
+    const req = makeReq({ body, signature: SECRET })
+    const res = makeRes()
+
+    await handleSendblueWebhook(req, res, {
+      db,
+      secret: SECRET,
+      log: () => { /* swallow */ },
+      enqueueOrCoalesce: enqueueOrCoalesceMock as never,
+      coalescerDeps: {} as never,
+      lookupUserByPhone: async () => "u_adam_test",
+    })
+
+    assert.equal(res.statusCode, 200)
+    assert.equal(inbound.size, 1)
+    const [doc] = [...inbound.values()]
+    assert.equal(
+      (doc as { coalescing?: boolean }).coalescing,
+      undefined,
+      "onboarding users must not get coalescing:true; onPaInbound must process each answer independently"
+    )
+    assert.equal(coalesceCalled, false, "coalescer must not run before onboarding is complete")
+  })
+
+  it("Test TD-A.3: enqueue failure post-create → fallback driver invoked, coalescing reverted to false", async () => {
+    // Post-TD-A: when the doc was stamped coalescing:true at create time
+    // and the subsequent Cloud Tasks enqueue fails, onPaInbound has ALREADY
+    // skipped the row. Without an active fallback, the user gets no reply.
+    // This test pins the proper-fix: webhook calls
+    // processBrokerImessageFallback (injected by index.ts in production).
+    const { db, inbound, flags, users } = makeFakeDb()
+    flags.set("paMessageCoalesceEnabled", {
+      key: "paMessageCoalesceEnabled",
+      value: true,
+      type: "bool",
+      scope: "perUser",
+      allowlist: [],
+      blocklist: [],
+    })
+    users.set("u_adam_test", { onboardingState: "complete" })
     _clearFeatureFlagCache()
 
     const enqueueOrCoalesceMock = async () => {

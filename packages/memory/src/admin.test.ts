@@ -351,6 +351,10 @@ test("P9 — clearUserMemory user-doc reset wipes tags, resumeParseCount, prefer
     "preferredLang" in payload,
     "top-level preferredLang delete-marker required (legacy field path)"
   )
+  assert.ok(
+    "pipelineState" in payload,
+    "pipelineState delete-marker required (else Q-as-class pipeline resumes old currentQId after reset)"
+  )
 })
 
 test("P9 — summarizeClearResult surfaces user-doc resets (tags=cleared, quota=cleared)", async () => {
@@ -367,10 +371,12 @@ test("P9 — summarizeClearResult surfaces user-doc resets (tags=cleared, quota=
   assert.equal(r.userDocReset!.tags, true)
   assert.equal(r.userDocReset!.resumeParseCount, true)
   assert.equal(r.userDocReset!.onboardingState, true)
+  assert.equal(r.userDocReset!.pipelineState, true)
   const summary = summarizeClearResult(r)
   assert.match(summary, /tags=cleared/, "summary should announce tags wipe")
   assert.match(summary, /quota=cleared/, "summary should announce CV-quota wipe")
   assert.match(summary, /onboarding=reset/, "summary should announce onboarding-state reset")
+  assert.match(summary, /pipeline=reset/, "summary should announce pipeline-state reset")
 })
 
 test("clearUserMemory: dry-run with mem0PartitionKey still scopes count by partition (no delete)", async () => {
