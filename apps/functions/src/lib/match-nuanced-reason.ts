@@ -130,40 +130,58 @@ ${input.job.seniorityLevel ? `Seniority: ${input.job.seniorityLevel}\n` : ""}${r
 
 写一句推荐理由, 引用具体经历 + 1-2 个对得上的技能。`
 
-  try {
-    // gpt-5.x family rejects `max_tokens`, requires `max_completion_tokens`.
-    // Detect model family by prefix to pick correct param.
-    const useNewParam = /^gpt-(5|6|7|8|9)/i.test(model)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const requestParams: any = {
-      model,
-      messages: [
-        { role: "system", content: input.lang === "zh" ? SYSTEM_PROMPT_ZH : SYSTEM_PROMPT_EN },
-        { role: "user", content: userText },
-      ],
+  // 2026-05-07 Bug D — production logs showed `pa.match.nuanced_reason_failed`
+  // with `err: 401 status code (no body)`. Root cause: configured model
+  // (gpt-5.4-nano) is unavailable on this org/key, so OpenAI rejects auth
+  // before model use. Fix: try primary, on 401/404/model-not-found error,
+  // retry with widely-available `gpt-4.1-mini` fallback. Per CLAUDE.md the
+  // chain Primary → Fallback → Final has exactly this final tier.
+  const tryModels = [model]
+  const fallbackModel = "gpt-4.1-mini"
+  if (model !== fallbackModel) tryModels.push(fallbackModel)
+
+  let lastErr: unknown = null
+  for (const m of tryModels) {
+    try {
+      const useNewParam = /^gpt-(5|6|7|8|9)/i.test(m)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const requestParams: any = {
+        model: m,
+        messages: [
+          { role: "system", content: input.lang === "zh" ? SYSTEM_PROMPT_ZH : SYSTEM_PROMPT_EN },
+          { role: "user", content: userText },
+        ],
+      }
+      if (useNewParam) {
+        requestParams.max_completion_tokens = MAX_TOKENS
+      } else {
+        requestParams.max_tokens = MAX_TOKENS
+        requestParams.temperature = 0.4
+      }
+      const res = await client.chat.completions.create(requestParams)
+      const text = res.choices?.[0]?.message?.content?.trim()
+      if (!text || text.length < 8 || text.length > 300) {
+        logger.warn("pa.match.nuanced_reason_invalid_length", { model: m, len: text?.length ?? 0 })
+        return null
+      }
+      const cleaned = text
+        .replace(/^("|")?\s*(为啥推|Why match|Reason)\s*[:：]?\s*/i, "")
+        .replace(/^["']|["']$/g, "")
+        .trim()
+      if (m !== model) {
+        logger.info("pa.match.nuanced_reason_fallback_succeeded", { primary: model, fallback: m })
+      }
+      return cleaned || null
+    } catch (err) {
+      lastErr = err
+      const msg = err instanceof Error ? err.message : String(err)
+      const isAuthOrModelMissing = /\b(401|404|model_not_found|model.*not.*found|invalid.*api.*key)\b/i.test(msg)
+      if (!isAuthOrModelMissing) break // non-recoverable error — don't retry
+      logger.warn("pa.match.nuanced_reason_retrying_fallback", { model: m, err: msg.slice(0, 200) })
     }
-    if (useNewParam) {
-      requestParams.max_completion_tokens = MAX_TOKENS
-    } else {
-      requestParams.max_tokens = MAX_TOKENS
-      requestParams.temperature = 0.4
-    }
-    const res = await client.chat.completions.create(requestParams)
-    const text = res.choices?.[0]?.message?.content?.trim()
-    if (!text || text.length < 8 || text.length > 300) {
-      logger.warn("pa.match.nuanced_reason_invalid_length", { len: text?.length ?? 0 })
-      return null
-    }
-    // Strip leading "为啥推:" / "Why match:" if LLM added it (prompt says don't, but defensive)
-    const cleaned = text
-      .replace(/^("|")?\s*(为啥推|Why match|Reason)\s*[:：]?\s*/i, "")
-      .replace(/^["']|["']$/g, "")
-      .trim()
-    return cleaned || null
-  } catch (err) {
-    logger.warn("pa.match.nuanced_reason_failed", {
-      err: err instanceof Error ? err.message.slice(0, 200) : String(err).slice(0, 200),
-    })
-    return null
   }
+  logger.warn("pa.match.nuanced_reason_failed", {
+    err: lastErr instanceof Error ? lastErr.message.slice(0, 200) : String(lastErr).slice(0, 200),
+  })
+  return null
 }
