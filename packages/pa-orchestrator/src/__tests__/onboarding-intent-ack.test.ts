@@ -659,7 +659,7 @@ test("compose: ask_q_location step + interview_prep intent → suspended, NO loc
 test("V4 P0: compose with priorAskedStep advances when user answered prior Q (off-by-one fix)", () => {
   // V4 QA Agent-I 2026-05-04 P0 regression: orchestrator passes step=ask_q_yoe
   // (next) but priorAskedStep=ask_q_role (last). User reply "工程" answers
-  // role; pre-fix the suspended check ran userAnsweredStep("ask_q_yoe","工程")
+  // role; pre-fix the suspended check ran the legacy yoe-keyword check on "工程"
   // → false → wrongly suspended. Post-fix uses priorAskedStep → matches role
   // regex → user answered → no suspend → normal yoe-Q fires.
   const input = composeOnboardingInput("ask_q_yoe", agent, {
@@ -673,17 +673,21 @@ test("V4 P0: compose with priorAskedStep advances when user answered prior Q (of
   assert.ok(input.includes("工作几年了"), "should ask q_yoe normally, got: " + input)
 })
 
-test("V4 P0: compose with priorAskedStep suspends when user did NOT answer prior Q", () => {
-  // Counter-case: user replies meta question, doesn't answer role.
-  // priorAskedStep="ask_q_role"; userAnsweredStep("ask_q_role", "你能再问一遍吗") → false
-  // → suspended_no_answer fires. State should stay at q_role_asked.
+test("V4 P0: compose with priorAskedStep — non-answer falls through (iter35 P7-4)", () => {
+  // iter35 P7-4: regex-based answer-keyword bank deleted. The legacy
+  // LLM-compose path (this test) no longer suspends on non-answer
+  // replies — that responsibility moved to the pipeline-based dispatcher
+  // (GuidedOpenJudge LLM "unclear" verdict). The LLM-compose path now
+  // emits the bare q_X question; the agent-runtime layer's natural
+  // reply handles non-answer replies. State stays at q_X via the
+  // applyOnboardingStep monotonic-advance guard when no parsedAnswer.
   const input = composeOnboardingInput("ask_q_yoe", agent, {
     userMessage: "你能再问一遍吗",
     priorAskedStep: "ask_q_role",
   })
   assert.ok(
-    input.includes("suspended_no_answer") || input.includes("suspended"),
-    "no-answer reply must suspend, got: " + input
+    !input.includes("suspended_no_answer"),
+    "iter35 P7-4 — legacy keyword-suspended path removed, got: " + input
   )
 })
 
@@ -697,13 +701,17 @@ test("compose: ask_q_role + non-vent (job_search) intent → normal q_role quest
   assert.ok(!input.includes("suspended_for"), "should not be suspended for job_search")
 })
 
-test("compose: ask_q_role + non-answer reply → suspended_no_answer (iter24)", () => {
-  // iter24: user said "嗯" — doesn't answer q_role → suspended path
+test("compose: ask_q_role + non-answer reply — falls through to bare q_role (iter35 P7-4)", () => {
+  // iter35 P7-4: legacy keyword-suspended path removed. The
+  // LLM-compose path no longer suspends on bare "嗯" replies — that
+  // logic moved to the pipeline path (GuidedOpenJudge unclear verdict).
+  // composeOnboardingInput now emits the q_role question; downstream
+  // applyOnboardingStep keeps state at q_role_asked when user reply
+  // doesn't yield a parsedAnswer.
   const input = composeOnboardingInput("ask_q_role", agent, {
     userMessage: "嗯",
   })
-  assert.ok(!input.includes("找啥方向的活"), "iter24: bare q_role MUST NOT fire when user didn't answer")
-  assert.ok(input.includes("ask_q_role_suspended_no_answer") || input.includes("suspended_for"))
+  assert.ok(!input.includes("ask_q_role_suspended_no_answer"))
 })
 
 test("compose: ask_q_role + valid role answer → bare q_role question (iter24 back-compat)", () => {

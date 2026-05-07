@@ -87,7 +87,6 @@ import {
   applyOnboardingStep,
   composeOnboardingInput,
   shouldRunOnboardingProbe,
-  userAnsweredStep,
   parseUserAnswerForStep,
   parseTosAnswer,
   parseEmailVerificationCode,
@@ -106,11 +105,11 @@ import {
 // to legacy on any throw so flag-on users never end up stuck.
 import { runOnboardingPipelineTurn } from "./onboarding/runtime-bridge.js"
 // Re-export for downstream consumers (apps/functions sim, scripts).
+// iter35 P7-4 — `resolveDeterministicAction` and `composeDeterministicReply`
+// removed (subsumed by `pipeline.runTurn` + DiscussionPhase pattern).
 export {
   runDeterministicOnboardingTurn,
   isDeterministicOnboardingEnabled,
-  resolveDeterministicAction,
-  composeDeterministicReply,
   loadOnboardingConfig,
   DEFAULT_ONBOARDING_CONFIG,
 } from "./onboarding-deterministic.js"
@@ -884,7 +883,7 @@ function priorOnboardingAskedStep(
   // so contactEmail is written to statedPreferences when advancing to complete.
   if (state === "q_email_asked") return "ask_q_email"
   // iter31 — q_tos_asked / q_email_verifying map to their corresponding ask_*
-  // steps for parser/userAnsweredStep lookups.
+  // steps for parser lookups.
   if (state === "q_tos_asked") return "ask_q_tos"
   if (state === "q_email_verifying") return "ask_q_email_verify"
   return undefined
@@ -1553,7 +1552,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       //     composeOnboardingInput's noChainIntents branch emits bare
       //     empathy with NO role question. Setting intentAcked=true here
       //     would still advance state to q_role_asked → next user reply
-      //     gets parsed by parseRoleAnswer → pollutes statedPreferences
+      //     gets parsed by the role parser → pollutes statedPreferences
       //     with random text. (V1 QA Agent-A 2026-05-04 P0 bug.)
       const noChainIntentSet: ReadonlySet<string> = new Set([
         "vent",
@@ -1592,23 +1591,12 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
               detectedIntent.intent === "interview_prep" ||
               detectedIntent.intent === "negotiation" ||
               detectedIntent.intent === "motivation_nudge")))
-      // V4 QA Agent-I 2026-05-04 P0 fix: previously used onboardingStep (the
-      // NEXT step we're about to ask) for the userAnswered check — checked
-      // YOE regex against a ROLE answer "工程" → false → mid-probe suspend
-      // fired incorrectly. Net effect was the chain stalled one turn behind:
-      // T1 ack-only, T2 advance-and-ask. Real semantics: did the user answer
-      // the question we LAST asked (i.e. the question implied by current
-      // user.onboardingState)? Map state→priorAskedStep, run the correct
-      // parser regex.
-      const priorAskedStepForSuspendCheck = isMidProbeStep
-        ? priorOnboardingAskedStep(onboardingUser.onboardingState)
-        : undefined
-      const userAnsweredPriorStep = isMidProbeStep && priorAskedStepForSuspendCheck
-        ? userAnsweredStep(priorAskedStepForSuspendCheck, event.body)
-        : true
-      const suspendedForVent = Boolean(
-        isMidProbeStep && (ventLikeMidProbe || !userAnsweredPriorStep)
-      )
+      // iter35 P7-4 — regex-based answer-keyword bank deleted. Suspension is
+      // now governed by GuidedOpenJudge LLM "unclear" verdict in the
+      // pipeline path. Legacy LLM-compose path (this branch) suspends only
+      // on detected venting; non-answer replies fall through to the
+      // LLM-compose layer which handles them via the agent-runtime prompt.
+      const suspendedForVent = Boolean(isMidProbeStep && ventLikeMidProbe)
       if (matchedPlaybookKeys.length > 0) {
         store.log("pa.onboarding.playbook_route.matched", {
           userId: event.userId,
@@ -1879,12 +1867,20 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
         // iter31 — when state was q_tos_asked, surface the prior step to
         // composeOnboardingInput so the ask_q_tos_declined / ask_q_tos_reask
         // branches can fire. Same idea for q_email_verifying.
+        // iter35 P7-4 — `priorAskedStepForSuspendCheck` was the
+        // the regex-bank input; with that gone, fall back to
+        // mapping current state → priorAskedStep directly when neither tos
+        // nor email-verify is the prior turn. This drives `composeOnboarding
+        // Input`'s suspended/advance branching for the remaining LLM-compose
+        // path (rollback flag = false).
         const priorAskedStepForCompose: OnboardingStep | undefined =
           isPriorTosAsk
             ? "ask_q_tos"
             : isPriorEmailVerify
               ? "ask_q_email_verify"
-              : priorAskedStepForSuspendCheck
+              : (isMidProbeStep
+                ? priorOnboardingAskedStep(onboardingUser.onboardingState)
+                : undefined)
         const syntheticInput = composeOnboardingInput(composeStep, agent, {
           userMessage: event.body,
           detectedIntent,

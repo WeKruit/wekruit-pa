@@ -8,7 +8,7 @@
  * `industryEnum` was loose enough that "tech" + "ops" buckets both qualified.
  *
  * This module centralizes the mapping from canonical role tokens (the 12-value
- * closed enum produced by `canonicalizeRole` in onboarding.ts) to the
+ * closed enum produced by the legacy role canonicalizer) to the
  * `industryEnum` buckets that role plausibly works in. Caller (job-rec) takes
  * the union, intersects against `doc.industryEnum`, drops any doc with empty
  * intersection.
