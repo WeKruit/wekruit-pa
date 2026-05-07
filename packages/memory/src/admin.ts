@@ -172,16 +172,48 @@ async function clearFirestoreCollection(
   db: Firestore,
   collection: string,
   userId: string,
-  dryRun: boolean
+  dryRun: boolean,
+  alsoMatchPhone?: string
 ): Promise<number> {
-  const snap = await db.collection(collection).where("userId", "==", userId).get()
-  if (dryRun || snap.empty) return snap.size
-  for (let i = 0; i < snap.docs.length; i += 400) {
+  // Primary: docs with userId stamped.
+  const seen = new Map<string, FirebaseFirestore.QueryDocumentSnapshot>()
+  const primary = await db.collection(collection).where("userId", "==", userId).get()
+  for (const d of primary.docs) seen.set(d.id, d)
+
+  // 2026-05-07 — defensive secondary sweep keyed on phone. Some legacy
+  // synthetic events (paMessageCoalescer pre-iter32) wrote `from` /
+  // `externalChatId` BEFORE userId resolution, leaving stale inbound docs
+  // with userId unset. Adam reset on 2026-05-07 hit this: 4 stale events
+  // from 2026-05-04 survived `where userId == X`, then a fresh "Agree"
+  // turn collided on idempotencyKey `coalesced-{userId}-{turnSeq}` and the
+  // broker returned the stale succeeded doc → orchestrator skipped → no
+  // reply. Catch-all by phone here closes that hole.
+  if (alsoMatchPhone) {
+    for (const field of ["from", "externalChatId"]) {
+      try {
+        const sec = await db.collection(collection).where(field, "==", alsoMatchPhone).get()
+        for (const d of sec.docs) if (!seen.has(d.id)) seen.set(d.id, d)
+      } catch {
+        /* missing index for one field is not fatal — userId path still works */
+      }
+    }
+    // rawPayload.participant covers some old shapes
+    try {
+      const sec = await db.collection(collection).where("rawPayload.participant", "==", alsoMatchPhone).get()
+      for (const d of sec.docs) if (!seen.has(d.id)) seen.set(d.id, d)
+    } catch {
+      /* index optional */
+    }
+  }
+
+  const docs = Array.from(seen.values())
+  if (dryRun || docs.length === 0) return docs.length
+  for (let i = 0; i < docs.length; i += 400) {
     const batch = db.batch()
-    for (const doc of snap.docs.slice(i, i + 400)) batch.delete(doc.ref)
+    for (const doc of docs.slice(i, i + 400)) batch.delete(doc.ref)
     await batch.commit()
   }
-  return snap.size
+  return docs.length
 }
 
 /**
@@ -429,8 +461,22 @@ export async function clearUserMemory(
       PA_COLLECTIONS.inboundEvents,
       PA_COLLECTIONS.outbound,
     ]
+    // Resolve user phoneE164 once — used for defensive sweep on inbound /
+    // outbound (catches stale legacy synthetic docs that lack userId).
+    let userPhone: string | undefined
+    try {
+      const u = await deps.db.collection(PA_COLLECTIONS.users).doc(userId).get()
+      const p = u.data()?.phoneE164 || u.data()?.phone
+      if (typeof p === "string" && p.length > 0) userPhone = p
+    } catch {
+      /* pre-existence check optional */
+    }
     for (const c of transcriptCollections) {
-      firestore[c] = await clearFirestoreCollection(deps.db, c, userId, dryRun)
+      const usePhone =
+        c === PA_COLLECTIONS.inboundEvents || c === PA_COLLECTIONS.outbound
+          ? userPhone
+          : undefined
+      firestore[c] = await clearFirestoreCollection(deps.db, c, userId, dryRun, usePhone)
       log(`[clear-user] firestore ${c}: ${firestore[c]}`)
     }
     // 2026-05-06 P9 — parsedCandidateResumes wipe (Adam directive: full
