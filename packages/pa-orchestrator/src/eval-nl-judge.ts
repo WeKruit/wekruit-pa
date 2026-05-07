@@ -45,16 +45,16 @@ function getClient(): OpenAI {
   // judge inherits the same env contract operators already understand:
   // PA_OPENAI_AGENT_* preferred, OPENAI_* as fallback. Keep this module's
   // lookup INDEPENDENT of the rewriter's so a future env split is easy.
+  // 2026-05-07 Adam directive — judge is real OpenAI. Drop poisoned
+  // OPENAI_API_KEY / OPENAI_BASE_URL fallbacks. Always use explicit
+  // OpenAI endpoint unless caller provides PA_EVAL_JUDGE_BASE_URL.
   const apiKey =
     process.env.PA_EVAL_JUDGE_API_KEY?.trim() ||
     process.env.PA_OPENAI_AGENT_API_KEY?.trim() ||
-    process.env.OPENAI_API_KEY?.trim() ||
     ""
   const baseURL =
     process.env.PA_EVAL_JUDGE_BASE_URL?.trim() ||
-    process.env.PA_OPENAI_AGENT_BASE_URL?.trim() ||
-    process.env.OPENAI_BASE_URL?.trim() ||
-    undefined
+    "https://api.openai.com/v1"
   cachedClient = new OpenAI({ apiKey, baseURL })
   return cachedClient
 }

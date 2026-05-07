@@ -52,18 +52,18 @@ export type ParseResumeResult = {
 }
 
 function resolveApiKey(override?: string): string {
+  // 2026-05-07 Adam directive — pa-resume-parser is real OpenAI tier 1.
+  // Drop poisoned OPENAI_API_KEY fallback.
   if (override && override.length > 0) return override
-  const k =
-    process.env.PA_OPENAI_AGENT_API_KEY?.trim() ||
-    process.env.OPENAI_API_KEY?.trim() ||
-    ""
-  return k
+  return process.env.PA_OPENAI_AGENT_API_KEY?.trim() || ""
 }
 
 function resolveBaseURL(override?: string): string | undefined {
+  // Default to real OpenAI endpoint. Caller may override via baseURL arg
+  // or PA_OPENAI_AGENT_BASE_URL env (used in test harnesses).
   if (override && override.length > 0) return override
   const b = process.env.PA_OPENAI_AGENT_BASE_URL?.trim()
-  return b && b.length > 0 ? b : undefined
+  return b && b.length > 0 ? b : "https://api.openai.com/v1"
 }
 
 export async function parseResumeText(args: ParseResumeArgs): Promise<ParseResumeResult> {

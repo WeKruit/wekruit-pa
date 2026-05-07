@@ -419,19 +419,17 @@ function getClient(): CachedChatClient {
   // MUST hit SiliconFlow (Qwen home), not OpenAI. The previous resolver
   // fell back to PA_OPENAI_AGENT_API_KEY + the OpenAI default baseURL,
   // which produced a 401 on every call (verified in prod logs 2026-04-29).
+  // 2026-05-07 Adam directive — explicit provider, no env aliasing.
+  // Qwen models → SiliconFlow + SF endpoint. Non-Qwen (gpt-4.x etc) →
+  // real OpenAI + OpenAI endpoint. NEVER fall through to poisoned
+  // OPENAI_API_KEY or OPENAI_BASE_URL env vars.
   const isQwenModel = DEFAULT_MODEL.toLowerCase().startsWith("qwen")
-  const apiKey =
-    process.env.PA_LLM_REWRITE_API_KEY?.trim() ||
-    (isQwenModel ? process.env.SILICONFLOW_API_KEY?.trim() || "" : "") ||
-    process.env.PA_OPENAI_AGENT_API_KEY?.trim() ||
-    process.env.OPENAI_API_KEY?.trim() ||
-    ""
-  const baseURL =
-    process.env.PA_LLM_REWRITE_BASE_URL?.trim() ||
-    (isQwenModel ? "https://api.siliconflow.cn/v1" : "") ||
-    process.env.PA_OPENAI_AGENT_BASE_URL?.trim() ||
-    process.env.OPENAI_BASE_URL?.trim() ||
-    undefined
+  const apiKey = isQwenModel
+    ? (process.env.PA_LLM_REWRITE_API_KEY?.trim() || process.env.SILICONFLOW_API_KEY?.trim() || "")
+    : (process.env.PA_LLM_REWRITE_API_KEY?.trim() || process.env.PA_OPENAI_AGENT_API_KEY?.trim() || "")
+  const baseURL = isQwenModel
+    ? (process.env.PA_LLM_REWRITE_BASE_URL?.trim() || "https://api.siliconflow.cn/v1")
+    : (process.env.PA_LLM_REWRITE_BASE_URL?.trim() || "https://api.openai.com/v1")
   // Phase 40 T5 — wrap with prefix-cache. Returns a CachedChatClient which
   // is structurally compatible with OpenAI for the chat.completions.create
   // surface used by defaultDeps below. _cacheStats appended on responses.

@@ -952,11 +952,12 @@ export async function handleSendblueWebhook(
             userId,
             resumeId: detection.resumeId ?? undefined,
             replyText: normalized.text,
-            openaiApiKey:
-              process.env.PA_OPENAI_AGENT_API_KEY?.trim() ||
-              process.env.OPENAI_API_KEY?.trim() ||
-              "",
-            openaiBaseURL: process.env.PA_OPENAI_AGENT_BASE_URL?.trim() || undefined,
+            // 2026-05-07 Adam directive — cv-confirm reply is real OpenAI
+            // (gpt-5.4-nano). Drop poisoned OPENAI_API_KEY/_BASE_URL.
+            openaiApiKey: process.env.PA_OPENAI_AGENT_API_KEY?.trim() || "",
+            openaiBaseURL:
+              process.env.PA_OPENAI_AGENT_BASE_URL?.trim() ||
+              "https://api.openai.com/v1",
             log: (e, p) => log(`[cv-confirm-reply] ${e}`, p ?? {}),
           })
         })
