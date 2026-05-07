@@ -155,6 +155,12 @@ export { paAdminMatchDebug } from "./admin-match-debug.js"
 // surfaced as random sales/SWE soup). Auth via X-API-Key.
 export { paEnrichJobTags } from "./enrich-job-tags-http.js"
 
+// v1.8 — Firestore trigger that backfills LLM-canonical tags onto every
+// matching-jobs doc. Necessary because core-service `matching-api` sync CF
+// (off-monorepo, source only in deployed zip) does not derive these fields.
+// Loop-safe via enricherVersion + enricherContentHash idempotency check.
+export { paMatchingJobsAutoEnrich } from "./auto-enrich-matching-jobs.js"
+
 // Phase 27 T2 — public /health endpoints (one per existing CF). Returns
 // {ok, name, version, ts, deps:{firestore, secrets}}. No auth (probes
 // must be reachable). All endpoints HTTP 200 always; failure surfaces in body.
