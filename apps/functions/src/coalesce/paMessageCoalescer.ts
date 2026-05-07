@@ -467,12 +467,33 @@ export async function processCoalescedTurn(
   //    the broker idempotency contract (same key = no-op), and reuses the
   //    same rawPayload shape onPaInbound already understands (kind="imessage",
   //    participant + text + chatId).
-  const idempotencyKey = `coalesced-${userId}-${turnSeq}`
+  //
+  // Bug A fix (2026-05-07) — idempotencyKey collision after PA_RESET.
+  // Old key `coalesced-{userId}-{turnSeq}` re-used the namespace each time
+  // PA_RESET zeroed `coalesceTurnSeq`. Stale events from prior session with
+  // status=succeeded would intercept new turns of the SAME turnSeq. Adding
+  // a per-user `resetEpoch` (incremented in admin.ts on each reset) puts
+  // post-reset turns in a fresh idempotency namespace.
+  let resetEpoch: number | string | undefined
+  try {
+    const us = await deps.db.collection("pa-users").doc(userId).get()
+    resetEpoch = us.data()?.resetEpoch
+  } catch {
+    /* missing user doc → fall back to no-epoch (backwards compat with pre-fix
+       deployments; collision still avoided post-deploy on first reset since
+       resetEpoch will be set going forward) */
+  }
+  const epochSegment = resetEpoch !== undefined ? `-e${resetEpoch}` : ""
+  const idempotencyKey = `coalesced-${userId}${epochSegment}-${turnSeq}`
   const broker = deps.createInboundEvent ?? createInboundEvent
   const chatId = `iMessage;-;${fired.fromNumber}`
   const created = await broker(deps.db, {
     channel: "imessage",
     idempotencyKey,
+    // Bug C fix (2026-05-07) — stamp userId on the SAME write that creates
+    // the doc, eliminating the race where the post-create merge could fail
+    // and leave the doc invisible to userId-based reset wipe.
+    userId,
     rawPayload: {
       kind: "imessage",
       source: "sendblue-coalesced",

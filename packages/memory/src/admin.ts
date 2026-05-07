@@ -380,6 +380,12 @@ async function resetUserOnboardingState(
         coalesceTurnSeq: FieldValue.delete(),
         emailVerification: FieldValue.delete(),
         "emailVerification.attempts": FieldValue.delete(),
+        // 2026-05-07 Bug A fix — bump resetEpoch so any future synthetic
+        // inbound event after this reset uses a fresh idempotencyKey
+        // namespace (`coalesced-{userId}-e{epoch}-{turnSeq}` vs the old
+        // collision-prone `coalesced-{userId}-{turnSeq}`). Stale succeeded
+        // synthetic docs from prior session will never intercept new turns.
+        resetEpoch: FieldValue.increment(1),
         updatedAt: new Date().toISOString(),
       },
       { merge: true }

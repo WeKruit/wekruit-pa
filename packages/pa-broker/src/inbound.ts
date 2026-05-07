@@ -36,6 +36,22 @@ export type CreateInboundEventInput = {
    *   compatible — the field is only persisted when explicitly set true.
    */
   coalescing?: boolean
+  /**
+   * Bug C fix (2026-05-07) — synthetic-event userId stamping race.
+   *
+   * Old paMessageCoalescer flow created the inbound doc WITHOUT userId,
+   * then merged userId in via a follow-up `set({userId, ...}, {merge: true})`.
+   * If that merge failed (network blip / claimer crash / partial transaction)
+   * the doc lived on with userId unset → invisible to the
+   * `clearFirestoreCollection where("userId","==",X)` reset wipe → became
+   * a stale collision target for next turn's `coalesced-{userId}-{turnSeq}`
+   * idempotencyKey. Adam 2026-05-07 reset hit this exact path.
+   *
+   * Stamping userId on the SAME write that creates the doc closes that
+   * race entirely. Optional so non-coalesce callers (real Sendblue webhook
+   * before user resolution) can still create without it.
+   */
+  userId?: string
 }
 
 /**
@@ -64,8 +80,9 @@ export async function createInboundEvent(
   // because PaInboundEvent doesn't (intentionally) carry the coalescing
   // sentinel in its base typing — it's a transport flag the coalescer + the
   // onPaInbound trigger read defensively via `(data as { coalescing?: boolean })`.
-  const writeBody: Record<string, unknown> =
-    input.coalescing === true ? { ...base, coalescing: true } : { ...base }
+  const writeBody: Record<string, unknown> = { ...base }
+  if (input.coalescing === true) writeBody.coalescing = true
+  if (input.userId) writeBody.userId = input.userId
 
   try {
     await ref.create(writeBody)
