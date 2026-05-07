@@ -1546,29 +1546,45 @@ export async function runDeterministicOnboardingTurn(
   // the cv-ingest async window). Skip the prompt if we sent it within 60s.
   if (action.kind === "wait_for_resume_upload") {
     const now = Date.now()
-    const lastFire = (onboardingUser as { cvWaitPromptLastFiredAt?: string }).cvWaitPromptLastFiredAt
-    if (lastFire) {
-      const ageMs = now - Date.parse(lastFire)
-      if (Number.isFinite(ageMs) && ageMs >= 0 && ageMs < 60_000) {
-        store.log("pa.onboarding.deterministic.cv_wait_deduped", {
-          userId: event.userId,
-          turnId,
-          ageMs,
-        })
-        return { handled: true, action }
-      }
-    }
-    await sendDirect(input, config.ask_q_resume!.waitingPrompt![langFor(event.body)])
+    // 2026-05-07 Bug A v2 — re-read user doc + use Firestore transaction so
+    // two near-simultaneous attachment events serialize: only one wins the
+    // "claim" and fires the prompt; the other reads the just-written
+    // timestamp and dedups. The original snapshot-only check failed because
+    // `onboardingUser` is read at turn-start; when event 2 enters this
+    // function while event 1 is still in sendDirect, event 2 sees no
+    // timestamp and both fire.
+    let claimedFire = false
     if (store.db) {
       try {
-        await store.db
-          .collection("pa-users")
-          .doc(event.userId)
-          .set({ cvWaitPromptLastFiredAt: new Date().toISOString() }, { merge: true })
+        const ref = store.db.collection("pa-users").doc(event.userId)
+        await store.db.runTransaction(async (tx) => {
+          const snap = await tx.get(ref)
+          const lastFire = (snap.data() as { cvWaitPromptLastFiredAt?: string } | undefined)
+            ?.cvWaitPromptLastFiredAt
+          if (lastFire) {
+            const ageMs = now - Date.parse(lastFire)
+            if (Number.isFinite(ageMs) && ageMs >= 0 && ageMs < 60_000) {
+              return // do not claim — leave dedup signal in place
+            }
+          }
+          tx.set(ref, { cvWaitPromptLastFiredAt: new Date(now).toISOString() }, { merge: true })
+          claimedFire = true
+        })
       } catch {
-        /* best-effort dedup tracker */
+        // tx failed — fall back to fire (best-effort dedup, prefer over silence)
+        claimedFire = true
       }
+    } else {
+      claimedFire = true
     }
+    if (!claimedFire) {
+      store.log("pa.onboarding.deterministic.cv_wait_deduped", {
+        userId: event.userId,
+        turnId,
+      })
+      return { handled: true, action }
+    }
+    await sendDirect(input, config.ask_q_resume!.waitingPrompt![langFor(event.body)])
     store.log("pa.onboarding.deterministic.cv_wait", {
       userId: event.userId,
       turnId,
