@@ -673,6 +673,52 @@ export async function runDeterministicOnboardingTurn(
       ? { ok: false, error: cvParsedEvent.error ?? "cv-ingest failed" }
       : { ok: true, data: cvParsedEvent.data }
     await phase.onWorkComplete(buildPhaseInput(input), result)
+
+    // 2026-05-07 e2e iter35 fix — after analysis sent + state=complete,
+    // fire job-rec generation. Legacy send_cv_analysis chained these;
+    // the new DiscussionPhase pattern handles ack/analysis but needs
+    // explicit rec hook here so downstream matching pipeline triggers.
+    if (cvParsedEvent.ok !== false && store.generateJobRecs) {
+      try {
+        const recLang = resolveLang(input)
+        const recResult = await store.generateJobRecs(event.userId, recLang)
+        if (recResult?.message && recResult.message.trim().length > 0) {
+          const at = store.nowIso()
+          await store.appendMessage({
+            sessionId: event.sessionId,
+            userId: event.userId,
+            role: "assistant",
+            body: recResult.message,
+            createdAt: at,
+            idempotencyKey: `out-resume-recs-${event.id}`,
+            rawMeta: {
+              source: "pa_orchestrator",
+              turnId,
+              eventId: event.id,
+              onboarding: "discussion_resume_recs",
+            },
+          })
+          if (!input.suppressOutbound) {
+            await store.enqueueOutbound(event.userId, event.from, recResult.message, {
+              sessionId: event.sessionId,
+              role: "assistant",
+              idempotencyKey: `outbound-resume-recs-${event.id}`,
+            })
+          }
+          store.log("pa.onboarding.discussion.rec_emit", {
+            userId: event.userId,
+            turnId,
+            recCount: recResult.recCount,
+          })
+        }
+      } catch (err) {
+        store.log("pa.onboarding.discussion.rec_emit_error", {
+          userId: event.userId,
+          turnId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    }
     return { handled: true, action: { kind: "resume_complete" } }
   }
 
