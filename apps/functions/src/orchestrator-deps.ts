@@ -248,6 +248,21 @@ function makeGenerateJobRecs(): NonNullable<
           // string detection so we don't pass an empty Authorization header.
           const rawKey = (process.env.PA_OPENAI_AGENT_API_KEY ?? "").trim()
           const openaiKey = rawKey.startsWith("sk-") ? rawKey : ""
+          // 2026-05-07 diagnostic — Bug D 401 STILL firing post first fix.
+          // Log the actual key shape (length + prefix + suffix) the CF sees
+          // at call time so we can compare with secret-manager value. We
+          // already verified the secret-manager value works for openai
+          // gpt-5.4-nano via direct burst test, so divergence here = CF
+          // process.env mutation between secret bind + this call site.
+          logger.info("pa.match.nuanced_reason_key_diag", {
+            userId,
+            len: rawKey.length,
+            prefix: rawKey.slice(0, 8),
+            suffix: rawKey.slice(-5),
+            paEnvType: typeof process.env.PA_OPENAI_AGENT_API_KEY,
+            openaiEnvType: typeof process.env.OPENAI_API_KEY,
+            openaiEnvPrefix: (process.env.OPENAI_API_KEY ?? "").slice(0, 8),
+          })
           if (!openaiKey) {
             logger.warn("[job-recs] nuanced reason skipped: PA_OPENAI_AGENT_API_KEY missing or non-OpenAI", {
               userId,
