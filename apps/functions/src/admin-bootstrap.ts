@@ -164,7 +164,8 @@ async function defaultPersonaLLM(input: {
   }
   // SiliconFlow doesn't host `gpt-5.4-nano` — that's an OpenAI-only alias the
   // Agents-SDK path uses. For SF use a small native chat model.
-  const model = sfKey ? "Qwen/Qwen2.5-7B-Instruct" : "gpt-5.4-nano"
+  const usingSf = sf.apiKey !== null && apiKey === sf.apiKey
+  const model = usingSf ? "Qwen/Qwen2.5-7B-Instruct" : "gpt-5.4-nano"
   const resp = await fetch(`${baseURL}/chat/completions`, {
     method: "POST",
     headers: {
