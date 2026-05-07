@@ -1,0 +1,144 @@
+/**
+ * 2026-05-06 P9 — regression test for applyOnboarding wrapper dropping
+ * `parsedAnswer` on the floor.
+ *
+ * Live bug repro (Adam iter23 testing 2026-05-06):
+ *   - User onboarding from cold-start, q_lang asks "Chinese / English /
+ *     mixed?". User replies "English". LangJudge accepts → q_lang.
+ *     onAccepted fires → runtime-bridge calls
+ *     `deps.applyOnboarding(userId, phone, "ask_q_email", { parsedAnswer:
+ *     { preferredLang: "en" } })`.
+ *   - Production wrapper at `createFirestoreOrchestratorStore.applyOnboarding`
+ *     enumerated each `opts.X` field manually (line 3653-3663) and
+ *     **omitted `opts.parsedAnswer`**, silently dropping it.
+ *   - Downstream `applyOnboardingStep` then fell into the regex-fallback
+ *     branch, but with no priorAskedStep+priorUserReply either, so prefPatch
+ *     stayed empty → `writeOnboardingTags` skipped → `pa-users.tags.
+ *     preferredLang` never updated → next bot reply read the prior session's
+ *     "zh" tag and replied in mixed bilingual.
+ *   - Mirror impact: every probe-Q canonical-answer write (q_email,
+ *     q_role, q_yoe, q_visa, q_startup_pref, q_location, q_email_verify)
+ *     was equally broken via the same wrapper hole.
+ *
+ * Fix: forward `parsedAnswer: opts?.parsedAnswer` in the wrapper.
+ *
+ * What we verify:
+ *   - When applyOnboarding is called with opts.parsedAnswer, the resulting
+ *     userRef.set payload contains a `statedPreferences` field with the
+ *     same canonical content (proves the parsedAnswer reached
+ *     applyOnboardingStep).
+ *   - Without the fix this test would observe `statedPreferences` absent
+ *     from the payload (regex fallback would also be empty without
+ *     priorAskedStep+priorUserReply).
+ */
+import assert from "node:assert/strict"
+import test from "node:test"
+import type { Firestore } from "firebase-admin/firestore"
+
+import { createFirestoreOrchestratorStore } from "../index.js"
+
+interface CapturedSet {
+  docPath: string
+  payload: Record<string, unknown>
+}
+
+/**
+ * Minimal Firestore fake. Captures user-doc set() calls so the test can
+ * assert `payload.statedPreferences` content. Read returns "no current
+ * onboardingState" so applyOnboardingStep treats this as a fresh advance
+ * (idempotency guard passes).
+ */
+function makeCapturingDb(): { db: Firestore; sets: CapturedSet[] } {
+  const sets: CapturedSet[] = []
+  const empty = { empty: true, size: 0, docs: [] } as unknown
+  const where = () => ({ get: async () => empty, limit: () => ({ get: async () => empty }) })
+  const makeDocRef = (docPath: string) => ({
+    get: async () => ({ exists: false, data: () => undefined }),
+    set: async (payload: Record<string, unknown>) => {
+      sets.push({ docPath, payload })
+    },
+    update: async (payload: Record<string, unknown>) => {
+      sets.push({ docPath, payload })
+    },
+    delete: async () => undefined,
+    collection: () => ({ get: async () => empty }),
+  })
+  const collection = (collectionName: string) => ({
+    where,
+    get: async () => empty,
+    doc: (docId: string) => makeDocRef(`${collectionName}/${docId}`),
+  })
+  const db = {
+    collection,
+  } as unknown as Firestore
+  return { db, sets }
+}
+
+test("P9 — applyOnboarding wrapper FORWARDS opts.parsedAnswer (q_lang preferredLang)", async () => {
+  const { db, sets } = makeCapturingDb()
+  const store = createFirestoreOrchestratorStore(db)
+
+  // Mirror runtime-bridge.q_lang.onAccepted call exactly:
+  //   applyOnboarding(userId, phone, "ask_q_email", { parsedAnswer: { preferredLang: "en" } })
+  await store.applyOnboarding("u_p9_test", "+15551234", "ask_q_email", {
+    parsedAnswer: { preferredLang: "en" },
+  })
+
+  // The wrapper should have called applyOnboardingStep, which writes a
+  // userRef.set with `statedPreferences: { preferredLang: 'en', updatedAt: ... }`.
+  // Find the pa-users/u_p9_test set call.
+  const userSet = sets.find((s) => s.docPath === "pa-users/u_p9_test")
+  assert.ok(userSet, "applyOnboarding must trigger a pa-users write")
+  const payload = userSet!.payload
+  // The state advance should have fired.
+  assert.equal(
+    payload.onboardingState,
+    "q_email_asked",
+    "ask_q_email step must transition state to q_email_asked"
+  )
+  // Critical assertion — without the wrapper fix this would be undefined.
+  const sp = payload.statedPreferences as { preferredLang?: string } | undefined
+  assert.ok(
+    sp,
+    "statedPreferences must be in the payload (proves parsedAnswer flowed through)"
+  )
+  assert.equal(
+    sp.preferredLang,
+    "en",
+    "parsedAnswer.preferredLang must reach statedPreferences (this regression caused mixed-lang leak)"
+  )
+})
+
+test("P9 — applyOnboarding wrapper forwards parsedAnswer for visa probe (q_visa)", async () => {
+  const { db, sets } = makeCapturingDb()
+  const store = createFirestoreOrchestratorStore(db)
+
+  // Mirror runtime-bridge.q_visa.onAccepted — VisaJudge canonical "h1b".
+  await store.applyOnboarding("u_p9_visa", "+15551235", "ask_q_startup_pref", {
+    parsedAnswer: { visaStatus: "h1b" },
+  })
+
+  const userSet = sets.find((s) => s.docPath === "pa-users/u_p9_visa")
+  assert.ok(userSet)
+  const sp = userSet!.payload.statedPreferences as { visaStatus?: string } | undefined
+  assert.ok(sp, "visa parsedAnswer must reach statedPreferences via wrapper")
+  assert.equal(sp.visaStatus, "h1b", "h1b passes through verbatim")
+})
+
+test("P9 — applyOnboarding wrapper still works WITHOUT parsedAnswer (regression guard)", async () => {
+  const { db, sets } = makeCapturingDb()
+  const store = createFirestoreOrchestratorStore(db)
+
+  // Legacy path: no parsedAnswer, no priorAskedStep — wrapper should still
+  // advance state (this is the "send_first_mes" no-prefs case).
+  await store.applyOnboarding("u_p9_legacy", "+15551236", "send_first_mes")
+
+  const userSet = sets.find((s) => s.docPath === "pa-users/u_p9_legacy")
+  assert.ok(userSet, "wrapper must still write user doc even with no opts")
+  // No statedPreferences expected when nothing was passed.
+  assert.equal(
+    userSet!.payload.statedPreferences,
+    undefined,
+    "no parsedAnswer + no priorAskedStep = no statedPreferences write"
+  )
+})

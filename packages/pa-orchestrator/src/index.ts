@@ -518,6 +518,22 @@ export type OrchestratorStore = {
       }
       emailVerificationVerified?: boolean
       emailVerificationFailed?: boolean
+      /**
+       * iter34 hotfix 2026-05-05 — canonical Judge output bypasses regex.
+       * When provided, this REPLACES the regex parse of priorAskedStep+
+       * priorUserReply. The Q-as-class pipeline (runtime-bridge) passes
+       * Judge canonical output here for q_lang / q_email / q_role / q_yoe /
+       * q_visa / q_startup_pref / q_location / q_email_verify accepts.
+       *
+       * 2026-05-06 P9 fix — was DECLARED in applyOnboardingStep opts but
+       * MISSING from this interface AND the production wrapper at
+       * `applyOnboarding` impl below. The omission silently dropped every
+       * Judge-canonical write — q_lang's accepted "en" never landed in
+       * `pa-users.tags.preferredLang`, leaving the user stuck on whatever
+       * language was in `tags` from a prior session. Re-add to type AND
+       * to the wrapper passthrough (line 3653-ish).
+       */
+      parsedAnswer?: Partial<import("@pa/core-types").StatedPreferences>
     }
   ): Promise<void>
 
@@ -3660,6 +3676,13 @@ export function createFirestoreOrchestratorStore(
           emailVerification: opts?.emailVerification,
           emailVerificationVerified: opts?.emailVerificationVerified,
           emailVerificationFailed: opts?.emailVerificationFailed,
+          // 2026-05-06 P9 fix — was MISSING from passthrough, silently
+          // dropped every Judge-canonical write. Caused the live bug:
+          // q_lang accepted "English" but `tags.preferredLang` stayed on
+          // prior-session "zh" → bot replied in mixed bilingual. Now
+          // forwards so applyOnboardingStep's `parsedAnswer takes precedence
+          // over regex parse` branch is reachable from runtime-bridge.
+          parsedAnswer: opts?.parsedAnswer,
         }
       )
     },

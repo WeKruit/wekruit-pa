@@ -13,11 +13,20 @@ const ENTITY_KIND_PA_USER = "pa-user"
 
 // iter30 closure (Adam directive 2026-05-04 "只能删 pa- 的, 不能删了别的本身
 // 的 user 的"): resume-related Firestore surfaces in the pa-* namespace.
-// `parsedCandidateResumes` (NO pa- prefix) is whole-product shared with the
-// main hiring product — DO NOT clear, would clobber non-PA candidate rows.
 // `pa-cv-pending` is the PA-owned stage-and-confirm overwrite holding bay
 // (CV_PENDING_COLLECTION in apps/functions/src/cv-ingest/cv-ingest.ts:240).
+//
+// 2026-05-06 P9 update (Adam directive iter23 + bug-fix-2 spec):
+//   `parsedCandidateResumes` IS now also cleared on full reset (keepMessages
+//   = false). Rationale: __PA_RESET__ is gated upstream to testMode users +
+//   admin allowlist (orchestrator's maybeHandleResetCommand checks before
+//   calling clearUserMemory). Production users never trigger the magic
+//   string. The cross-product concern from iter30 was about deleting OTHER
+//   users' rows — `where("userId", "==", userId)` only touches this user's
+//   resumes. The Adam-acknowledged win: re-onboarding biz tests no longer
+//   leak "我已经看过你两份简历了" (quota_exhausted) from prior runs.
 const PA_CV_PENDING = "pa-cv-pending"
+const PARSED_CANDIDATE_RESUMES = "parsedCandidateResumes"
 
 /**
  * Single source of truth for clearing all PA memory belonging to one user.
@@ -45,6 +54,20 @@ const PA_CV_PENDING = "pa-cv-pending"
  *     - statedPreferences → cleared
  *     - resumeAccepted → cleared
  *     - resumeId → cleared
+ *     - 2026-05-06 P9 additions:
+ *       - tags → cleared (else stale preferredLang / industrySector /
+ *         skills leak into a fresh onboarding session — the bilingual
+ *         leak Adam saw "English in q_lang but bot replied in 中文")
+ *       - resumeParseCount + resumeParseLastAt → cleared (else CV quota
+ *         counter from prior session triggers quota_exhausted reject on
+ *         the FIRST resume of the new session — the "我已经看过你两份
+ *         简历了" leak)
+ *
+ * Collection wipe (2026-05-06 P9 addition):
+ *   On full reset, also batch-deletes every `parsedCandidateResumes`
+ *   doc where `userId == ${userId}`. Upstream gate (testMode/admin
+ *   allowlist in maybeHandleResetCommand) ensures only PA-test-user
+ *   rows are affected — never the cross-product main hiring data.
  *
  * Never touches: `pa-sessions`, `pa-inbound-events`, `pa-outbound`. The
  * user record + session id are preserved so the next iMessage from the
@@ -85,6 +108,16 @@ export type ClearUserMemoryResult = {
   dryRun: boolean
   qdrant: { collection: string; matched: number; deleted: boolean }
   firestore: Record<string, number>
+  /**
+   * 2026-05-06 P9 — user-doc field reset markers. Surfaced in
+   * summarizeClearResult so operators can see what fields were cleared
+   * (vs collection deletion counts in `firestore`). Empty on dryRun.
+   */
+  userDocReset?: {
+    tags: boolean
+    resumeParseCount: boolean
+    onboardingState: boolean
+  }
 }
 
 // mem0/Qdrant convention — snake_case. Live Qdrant collection is
@@ -282,6 +315,19 @@ async function resetUserOnboardingState(
         // to .update() with field-path FieldValue.delete().
         onboardingProbeAttempts: FieldValue.delete(),
         systemFlags: FieldValue.delete(),
+        // 2026-05-06 P9 — full reset must also clear:
+        //   - tags (D8 unified-tag store, prevents preferredLang / skills /
+        //     industrySector leakage into a fresh re-onboarding session)
+        //   - resumeParseCount + resumeParseLastAt (CV quota counter — else
+        //     biz-test re-uploads hit quota_exhausted and Claire rejects
+        //     with "我已经看过你两份简历了 / I've read two of your resumes"
+        //     even though parsedCandidateResumes was just nuked)
+        //   - preferredLang (top-level field; legacy users had this before
+        //     Phase 52 moved it under `tags`)
+        tags: FieldValue.delete(),
+        resumeParseCount: FieldValue.delete(),
+        resumeParseLastAt: FieldValue.delete(),
+        preferredLang: FieldValue.delete(),
         updatedAt: new Date().toISOString(),
       },
       { merge: true }
@@ -350,6 +396,7 @@ export async function clearUserMemory(
   firestore[PA_ENTITY_TAGS] = await clearEntityTagsForUser(deps.db, userId, dryRun)
   log(`[clear-user] firestore ${PA_ENTITY_TAGS}: ${firestore[PA_ENTITY_TAGS]} items`)
 
+  let userDocReset: ClearUserMemoryResult["userDocReset"] | undefined
   if (!keepMessages) {
     // Full transcript wipe — biz test must see a clean conversation
     // history. Inbound + outbound queues are cleared as part of this
@@ -366,12 +413,38 @@ export async function clearUserMemory(
       firestore[c] = await clearFirestoreCollection(deps.db, c, userId, dryRun)
       log(`[clear-user] firestore ${c}: ${firestore[c]}`)
     }
+    // 2026-05-06 P9 — parsedCandidateResumes wipe (Adam directive: full
+    // reset must clear CV records so re-onboarding doesn't see "我已经看
+    // 过你两份简历了 / quota_exhausted" stale state). Scoped via
+    // `where("userId", "==", userId)` — never touches OTHER users' rows.
+    // Upstream gate (maybeHandleResetCommand testMode/admin allowlist)
+    // already ensures only test/admin users reach this code path.
+    firestore[PARSED_CANDIDATE_RESUMES] = await clearFirestoreCollection(
+      deps.db,
+      PARSED_CANDIDATE_RESUMES,
+      userId,
+      dryRun
+    )
+    log(
+      `[clear-user] firestore ${PARSED_CANDIDATE_RESUMES}: ${firestore[PARSED_CANDIDATE_RESUMES]}`
+    )
     // iter30 closure — full reset re-arms onboarding probe so the next
     // inbound triggers the 5Q chain again (Adam: 我们 __PA_RESET__ 也需要
     // 清楚相关tag等memory包括mem0所有的, 主动问简历).
+    //
+    // 2026-05-06 P9 — also clears `tags`, `resumeParseCount`,
+    // `resumeParseLastAt`, top-level `preferredLang`. See
+    // resetUserOnboardingState for the field list.
     try {
       const r = await resetUserOnboardingState(deps.db, userId, dryRun)
       log(`[clear-user] user-record onboarding reset: ${r.reset}`)
+      if (r.reset) {
+        userDocReset = {
+          tags: true,
+          resumeParseCount: true,
+          onboardingState: true,
+        }
+      }
     } catch (err) {
       log(`[clear-user] user-record reset FAILED: ${err instanceof Error ? err.message : String(err)}`)
     }
@@ -388,7 +461,7 @@ export async function clearUserMemory(
     }
   }
 
-  return { userId, dryRun, qdrant, firestore }
+  return { userId, dryRun, qdrant, firestore, userDocReset }
 }
 
 /**
@@ -422,7 +495,17 @@ export function summarizeClearResult(r: ClearUserMemoryResult): string {
     .join(", ")
   const fsBlock = fsParts.length > 0 ? fsParts : "all empty"
   const qd = `${r.qdrant.collection}=${r.qdrant.matched}`
+  // 2026-05-06 P9 — surface user-doc field resets so operators see the
+  // tags/quota wipe explicitly. e.g. "tags=cleared, quota=cleared".
+  let userDocBlock = ""
+  if (r.userDocReset) {
+    const parts: string[] = []
+    if (r.userDocReset.tags) parts.push("tags=cleared")
+    if (r.userDocReset.resumeParseCount) parts.push("quota=cleared")
+    if (r.userDocReset.onboardingState) parts.push("onboarding=reset")
+    if (parts.length > 0) userDocBlock = `; user-doc ${parts.join(", ")}`
+  }
   return r.dryRun
-    ? `[DRY-RUN] would clear: qdrant ${qd}; firestore ${fsBlock}`
-    : `✓ 测试记忆已清空 — qdrant ${qd}; firestore ${fsBlock}`
+    ? `[DRY-RUN] would clear: qdrant ${qd}; firestore ${fsBlock}${userDocBlock}`
+    : `✓ 测试记忆已清空 — qdrant ${qd}; firestore ${fsBlock}${userDocBlock}`
 }

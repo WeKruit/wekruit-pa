@@ -222,6 +222,157 @@ test("iter34 P0.6 — clearUserMemory wipes onboardingProbeAttempts + systemFlag
   )
 })
 
+// ----------------------------------------------------------------------------
+// 2026-05-06 P9 — full reset must wipe `tags`, `resumeParseCount`,
+// `resumeParseLastAt`, top-level `preferredLang`, and the entire
+// `parsedCandidateResumes` collection scoped to userId.
+// Live bug: re-onboarding biz tester saw "我已经看过你两份简历了" / mixed
+// bilingual reply because the prior session's parsedCandidateResumes
+// (count >= 2) and tags.preferredLang stayed.
+// ----------------------------------------------------------------------------
+
+function makeFirestoreCapturingFullReset(): {
+  db: Firestore
+  setCalls: { docPath: string; payload: Record<string, unknown>; opts: unknown }[]
+  whereQueries: { collection: string; field: string; value: unknown }[]
+} {
+  const setCalls: { docPath: string; payload: Record<string, unknown>; opts: unknown }[] = []
+  const whereQueries: { collection: string; field: string; value: unknown }[] = []
+  const empty = { empty: true, size: 0, docs: [] } as unknown
+  const makeWhere = (collectionName: string) => (field: string, _op: string, value: unknown) => {
+    whereQueries.push({ collection: collectionName, field, value })
+    return { get: async () => empty }
+  }
+  const makeDocRef = (docPath: string) => ({
+    collection: () => ({ get: async () => empty }),
+    delete: async () => undefined,
+    set: async (payload: Record<string, unknown>, opts: unknown) => {
+      setCalls.push({ docPath, payload, opts })
+    },
+  })
+  const collection = (collectionName: string) => ({
+    where: makeWhere(collectionName),
+    get: async () => empty,
+    doc: (docId: string) => makeDocRef(`${collectionName}/${docId}`),
+  })
+  // Add runTransaction so autoEnableOnboardingPipelineFlag doesn't throw.
+  const db = {
+    collection,
+    runTransaction: async (fn: (t: unknown) => Promise<unknown>) => {
+      // Fake transaction: t.get returns empty doc, t.set/update no-op.
+      const t = {
+        get: async (_ref: unknown) => ({
+          exists: false,
+          data: () => undefined,
+        }),
+        set: () => undefined,
+        update: () => undefined,
+      }
+      return await fn(t)
+    },
+  }
+  return { db: db as unknown as Firestore, setCalls, whereQueries }
+}
+
+test("P9 — clearUserMemory wipes parsedCandidateResumes scoped to userId on full reset", async () => {
+  const { db, whereQueries } = makeFirestoreCapturingFullReset()
+  const { fetchFn } = makeQdrantFakes()
+  const deps: ClearUserMemoryDeps = {
+    db,
+    qdrantUrl: "https://qdrant.local",
+    qdrantApiKey: "key",
+    fetch: fetchFn,
+  }
+  await clearUserMemory("u1", deps, { keepMessages: false })
+
+  const cvQuery = whereQueries.find(
+    (q) => q.collection === "parsedCandidateResumes" && q.field === "userId"
+  )
+  assert.ok(
+    cvQuery,
+    "parsedCandidateResumes must be queried with where(userId, ==, userId) on full reset"
+  )
+  assert.equal(cvQuery!.value, "u1", "scope must be exact userId, never global delete")
+})
+
+test("P9 — clearUserMemory does NOT wipe parsedCandidateResumes on keepMessages=true", async () => {
+  const { db, whereQueries } = makeFirestoreCapturingFullReset()
+  const { fetchFn } = makeQdrantFakes()
+  const deps: ClearUserMemoryDeps = {
+    db,
+    qdrantUrl: "https://qdrant.local",
+    qdrantApiKey: "key",
+    fetch: fetchFn,
+  }
+  // keepMessages=true is the legacy "memory plane only" path. Don't touch
+  // parsedCandidateResumes so the dashboard "view CV" feature still works.
+  await clearUserMemory("u1", deps, { keepMessages: true })
+
+  const cvQuery = whereQueries.find((q) => q.collection === "parsedCandidateResumes")
+  assert.equal(
+    cvQuery,
+    undefined,
+    "parsedCandidateResumes must NOT be touched when keepMessages=true"
+  )
+})
+
+test("P9 — clearUserMemory user-doc reset wipes tags, resumeParseCount, preferredLang on full reset", async () => {
+  const { db, setCalls } = makeFirestoreCapturingFullReset()
+  const { fetchFn } = makeQdrantFakes()
+  const deps: ClearUserMemoryDeps = {
+    db,
+    qdrantUrl: "https://qdrant.local",
+    qdrantApiKey: "key",
+    fetch: fetchFn,
+  }
+  await clearUserMemory("u1", deps, { keepMessages: false })
+
+  const userSet = setCalls.find((c) => c.docPath === "pa-users/u1")
+  assert.ok(userSet, "expected resetUserOnboardingState to call pa-users/u1.set")
+  const payload = userSet!.payload
+  // Existing fields still present (regression guard).
+  assert.equal(payload.onboardingState, "pending")
+  assert.ok("statedPreferences" in payload, "statedPreferences delete-marker present")
+  // P9 additions — these MUST be delete-markers (not actual values),
+  // else legacy data leaks across reset.
+  assert.ok(
+    "tags" in payload,
+    "tags delete-marker required (else preferredLang/skills/industrySector leak)"
+  )
+  assert.ok(
+    "resumeParseCount" in payload,
+    "resumeParseCount delete-marker required (else CV quota_exhausted on next upload)"
+  )
+  assert.ok(
+    "resumeParseLastAt" in payload,
+    "resumeParseLastAt delete-marker required (paired with quota count)"
+  )
+  assert.ok(
+    "preferredLang" in payload,
+    "top-level preferredLang delete-marker required (legacy field path)"
+  )
+})
+
+test("P9 — summarizeClearResult surfaces user-doc resets (tags=cleared, quota=cleared)", async () => {
+  const { db } = makeFirestoreCapturingFullReset()
+  const { fetchFn } = makeQdrantFakes()
+  const deps: ClearUserMemoryDeps = {
+    db,
+    qdrantUrl: "https://qdrant.local",
+    qdrantApiKey: "key",
+    fetch: fetchFn,
+  }
+  const r = await clearUserMemory("u1", deps, { keepMessages: false })
+  assert.ok(r.userDocReset, "userDocReset markers must be populated on full reset")
+  assert.equal(r.userDocReset!.tags, true)
+  assert.equal(r.userDocReset!.resumeParseCount, true)
+  assert.equal(r.userDocReset!.onboardingState, true)
+  const summary = summarizeClearResult(r)
+  assert.match(summary, /tags=cleared/, "summary should announce tags wipe")
+  assert.match(summary, /quota=cleared/, "summary should announce CV-quota wipe")
+  assert.match(summary, /onboarding=reset/, "summary should announce onboarding-state reset")
+})
+
 test("clearUserMemory: dry-run with mem0PartitionKey still scopes count by partition (no delete)", async () => {
   const { calls, fetchFn } = makeQdrantFakes()
   const deps: ClearUserMemoryDeps = {
