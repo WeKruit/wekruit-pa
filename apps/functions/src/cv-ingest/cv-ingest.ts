@@ -2274,6 +2274,54 @@ export async function ingestCv(
       )
     }
     await Promise.allSettled(branches)
+
+    // 2026-05-07 — fire a synthetic inbound event AFTER all CV-ingest async
+    // work completes so the orchestrator runs an additional turn with the
+    // freshly-written parsedCandidateResume visible. This advances state
+    // q_resume_asked → q_cv_analyzing → send_cv_analysis (ack + 1-2 sent
+    // analysis + 2-job-rec push) → complete, without waiting for the user
+    // to send another message. Adam reported "分析完没推荐岗位" — root
+    // cause was: cvParsed signal only re-evaluated on inbound events;
+    // cv-ingest finished async but no event was written, so orchestrator
+    // never reached the q_cv_analyzing transition until the user typed
+    // again. This synthetic event closes that gap.
+    try {
+      const phone = user.toE164
+      if (phone) {
+        const eventId = `cv-parsed-trigger-${args.userId}-${resumeId}`
+        await dbHandle.collection("pa-inbound-events").doc(eventId).set({
+          id: eventId,
+          status: "pending",
+          idempotencyKey: `cv-parsed:${args.userId}:${resumeId}`,
+          createdAt: nowIso(),
+          attemptCount: 0,
+          maxAttempts: 1,
+          channel: "imessage",
+          userId: args.userId,
+          rawPayload: {
+            kind: "imessage",
+            source: "cv-parsed-synthetic",
+            participant: phone,
+            chatId: `iMessage;-;${phone}`,
+            messageHandle: `cv-parsed-${resumeId}`,
+            text: "",
+            cvParsedTrigger: true,
+            triggerResumeId: resumeId,
+          },
+        }, { merge: false })
+        log("pa.cv_followup.synthetic_trigger_written", {
+          userId: args.userId,
+          resumeId,
+          eventId,
+        })
+      }
+    } catch (err) {
+      log("pa.cv_followup.synthetic_trigger_failed", {
+        userId: args.userId,
+        resumeId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
   } else {
     log("pa.cv_followup.skipped", { reason: "no_user_record", userId: args.userId })
   }
