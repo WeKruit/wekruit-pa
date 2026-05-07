@@ -2304,7 +2304,13 @@ export async function ingestCv(
             participant: phone,
             chatId: `iMessage;-;${phone}`,
             messageHandle: `cv-parsed-${resumeId}`,
-            text: "",
+            // Orchestrator's broker validator rejects empty text
+            // ("Invalid broker iMessage payload: empty_text"). Use a
+            // non-empty marker token. Parsers all fail recognition on
+            // this token (no role/yoe/visa/etc match), so the
+            // deterministic dispatcher will fall through to its
+            // q_resume_asked + cvParsed branch and emit send_cv_analysis.
+            text: "[cv-parsed]",
             cvParsedTrigger: true,
             triggerResumeId: resumeId,
           },
