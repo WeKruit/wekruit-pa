@@ -785,7 +785,12 @@ export function userAnsweredStep(
     return /^\d{6}$/.test(compact)
   }
   if (step === "ask_q_role") {
-    return /(swe|pm\b|em\b|ic\b|staff|senior|junior|new\s*grad|应届|工程|产品|设计|研究|design|research|engineer|developer|前端|后端|算法|数据|machine\s*learning|ml\b)/i.test(r)
+    // 2026-05-07 Adam LIVE bug: "Anything to do with cs or software is fine"
+    // failed first-time recognition because regex required "engineer/developer"
+    // suffix or specific tokens like "swe". Real users say "cs", "software",
+    // "tech", "coding", "programming", "backend/frontend/fullstack" as
+    // standalone domain markers. Add coverage to match natural phrasing.
+    return /(swe|pm\b|em\b|ic\b|staff|senior|junior|new\s*grad|应届|工程|产品|设计|研究|design|research|engineer|developer|前端|后端|算法|数据|machine\s*learning|ml\b|\bcs\b|computer\s*science|software|tech\b|coding|programmer|programming|backend|front[-\s]?end|full[-\s]?stack|devops|sre|infra(structure)?|cloud|security|data\s*scientist|product\s*manager|product\s*designer|ux\b|ui\b)/i.test(r)
   }
   if (step === "ask_q_yoe") {
     return /(\d{1,2}\s*(?:\+)?\s*(?:years?|yrs?|y\b|年))|(刚毕业|应届|新人|new\s*grad|fresh(?:\s*out)?|just\s*graduated|no\s*experience)/i.test(r)
