@@ -27,6 +27,10 @@ export * from "./post-collect.js"
 export * from "./questions.js"
 export * from "./runtime-bridge.js"
 
+// iter35 G2 — DiscussionPhase abstract base + Resume concrete
+export * from "./discussion-phase.js"
+export * from "./discussion-resume.js"
+
 // Judges
 export * from "./judges/email.js"
 export * from "./judges/code.js"

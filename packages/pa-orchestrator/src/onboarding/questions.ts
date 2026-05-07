@@ -438,3 +438,586 @@ export function defaultQuestions(deps: DefaultQuestionsDeps): Question<unknown>[
     resumeQ as Question<unknown>,
   ]
 }
+
+// ============================================================================
+// V2 — GuidedOpenJudge-backed questions (iter34 P3 / GOAL-onboarding-refactor)
+// ============================================================================
+//
+// Adam directive 2026-05-07: regex is bloom filter only, LLM is primary.
+// Q_COUNTRY is split out of q_location (Adam yes #2). q_visa drops "OPT"
+// as a separate option per CLAUDE.md D4 (OPT/CPT/H1B → sponsorship_needed).
+//
+// Each V2 question:
+//   - judge = GuidedOpenJudge<TAnswer> with hints + few-shot examples
+//   - bloom regex is OPTIMISTIC (skip LLM only on clean hits) — never blocks
+//   - onAccepted writes BOTH statedPreferences AND tags via deps.* hooks
+//     (per D8 single-source — runtime owns dual-write, this layer just
+//     dispatches the canonical value)
+//
+// q_location hints are country-aware: `makeLocationQuestion(country, deps)`
+// returns a Q_LOCATION specialized to USA / China / Anywhere city pools.
+// The exported `Q_LOCATION` constant defaults to the "anywhere" superset
+// (every canonical city); P7-4 dispatcher should swap to the country-
+// specific variant once q_country is answered.
+
+import {
+  GuidedOpenJudge,
+  type GuidedOpenJudgeSpec,
+} from "./judges/guided-open.js"
+
+// ─── Type contracts ────────────────────────────────────────────────────────
+
+/**
+ * q_country canonical answer. Closed enum for the common 5 buckets;
+ * free-form `string` fallback covers tail cases (e.g. "south america")
+ * — the LLM picks whichever fits.
+ */
+export type CountryAnswer =
+  | "usa"
+  | "china"
+  | "canada"
+  | "europe"
+  | "anywhere"
+  | string
+
+/**
+ * q_location canonical answer. Array of city/region tokens (e.g. ["sf",
+ * "nyc"], ["shanghai"], or ["anywhere"]). Tokens come from shared-tags
+ * `LOCATION_VOCAB` but the LLM is permitted to emit free-form strings
+ * when no canonical token fits — downstream `applyToTags` re-canons.
+ */
+export type LocationAnswer = string[]
+
+/**
+ * q_visa canonical answer per CLAUDE.md D4. NOTE: OPT / CPT / H1B
+ * collapse into `"sponsorship_needed"` — this is a deliberate product
+ * decision (the visa prompt no longer lists OPT separately).
+ */
+export type VisaAnswer =
+  | "citizen"
+  | "permanent_resident"
+  | "sponsorship_needed"
+  | "other"
+
+// ─── Q_COUNTRY ──────────────────────────────────────────────────────────────
+
+/**
+ * Canonical country tokens recognized by the LLM. Anything outside the
+ * top 5 returns as free-form (e.g. "australia") so we don't lose info.
+ */
+const COUNTRY_HINTS = ["usa", "china", "canada", "europe", "anywhere"] as const
+
+/**
+ * Few-shot table covering Adam-verified cases:
+ *   - "USA" / "美国"           → "usa"
+ *   - "中国" / "PRC"          → "china"
+ *   - "Anywhere" / "无所谓"   → "anywhere"
+ *   - "in north america"      → ["usa", "canada"] (multi)
+ *   - "either USA or China"   → ["usa", "china"] (multi)
+ *   - "based in europe but ok with us" (multi-country)
+ */
+const COUNTRY_EXAMPLES: GuidedOpenJudgeSpec<CountryAnswer>["examples"] = [
+  { reply: "USA", value: "usa", confidence: 1.0 },
+  { reply: "美国", value: "usa", confidence: 1.0 },
+  { reply: "中国", value: "china", confidence: 1.0 },
+  { reply: "Anywhere is fine", value: "anywhere", confidence: 1.0 },
+  { reply: "无所谓", value: "anywhere", confidence: 0.95 },
+  { reply: "in north america", value: ["usa", "canada"] as unknown as CountryAnswer, confidence: 0.9 },
+  { reply: "either USA or China", value: ["usa", "china"] as unknown as CountryAnswer, confidence: 0.9 },
+  { reply: "based in europe", value: "europe", confidence: 0.95 },
+]
+
+/**
+ * `parseValue` for q_country. Accepts a single canonical string, an
+ * array (multi-country), or any non-empty free-form. Empty / non-string
+ * / non-array → null (judge degrades to "unclear").
+ */
+function parseCountryValue(raw: unknown): CountryAnswer | null {
+  if (typeof raw === "string") {
+    const trimmed = raw.trim().toLowerCase()
+    if (!trimmed) return null
+    return trimmed
+  }
+  if (Array.isArray(raw)) {
+    const items = raw
+      .filter((x): x is string => typeof x === "string")
+      .map((x) => x.trim().toLowerCase())
+      .filter((x) => x.length > 0)
+    if (items.length === 0) return null
+    // CountryAnswer covers `string` so a comma-joined multi-pick is legal;
+    // runtime/applyToTags can split if it cares about array-ness.
+    return items.join(",")
+  }
+  return null
+}
+
+/**
+ * Bloom regex — optimistic short-circuit on the most common clean
+ * one-word replies. Anything ambiguous falls through to the LLM.
+ */
+const COUNTRY_BLOOM: GuidedOpenJudgeSpec<CountryAnswer>["bloomRegex"] = [
+  { pattern: /^\s*(usa|us|america|美国)\s*$/i, value: "usa" },
+  { pattern: /^\s*(china|prc|中国|中華|中華人民共和国)\s*$/i, value: "china" },
+  { pattern: /^\s*(canada|加拿大)\s*$/i, value: "canada" },
+  { pattern: /^\s*(europe|欧洲)\s*$/i, value: "europe" },
+  { pattern: /^\s*(anywhere|都行|无所谓|哪都行|都可以)\s*$/i, value: "anywhere" },
+]
+
+/**
+ * Q_COUNTRY — top-level country/region pick. Asked BEFORE q_location so
+ * the location follow-up can scope its hint pool to the chosen country.
+ *
+ * NOTE: this constant has NO `onAccepted`. Use `defaultQuestionsV2(deps)`
+ * to spawn a pipeline-ready instance with `deps.onCountryAccepted` wired
+ * for dual-write into statedPreferences + tags (per D8).
+ */
+export const Q_COUNTRY: Question<CountryAnswer> = makeQuestion<CountryAnswer>({
+  id: "q_country",
+  prompt: {
+    zh: "想找哪个国家/地区的工作? 美国 / 中国 / 加拿大 / 欧洲 / 都行 — 多选也行",
+    en: "which country/region you targeting? USA / China / Canada / Europe / anywhere — multi is fine",
+  },
+  judge: new GuidedOpenJudge<CountryAnswer>({
+    questionLabel: "target country / region",
+    hints: COUNTRY_HINTS,
+    examples: COUNTRY_EXAMPLES,
+    bloomRegex: COUNTRY_BLOOM,
+    parseValue: parseCountryValue,
+  }),
+  rephraser: new HybridRephraser({
+    variants: [
+      {
+        zh: "国家选一下哦: 美国 / 中国 / 加拿大 / 欧洲 / 都行",
+        en: "pick a country: USA / China / Canada / Europe / anywhere",
+      },
+      {
+        zh: "再问一遍 — 主要看哪个国家? 一个或多个都行",
+        en: "let me ask again — which country are you targeting? one or multiple is fine",
+      },
+      {
+        zh: "美国 / 中国 / 都行 — 给我一个就行",
+        en: "USA / China / anywhere — pick one and we move on",
+      },
+      {
+        zh: "你想去哪个国家工作? 写一两个就行",
+        en: "what country do you wanna work in? one or two is plenty",
+      },
+    ],
+    fallback: {
+      zh: "国家就行: 美国 / 中国 / 都行",
+      en: "country only: USA / China / anywhere",
+    },
+  }),
+  haltMessage: HALT_DEFAULT,
+})
+
+// ─── Q_LOCATION (V2 — country-aware factory) ────────────────────────────────
+
+/** USA city pool (Adam directive 2026-05-07). */
+const USA_LOCATION_HINTS = [
+  "sf",
+  "bay_area",
+  "nyc",
+  "seattle",
+  "los_angeles",
+  "boston",
+  "chicago",
+  "austin",
+  "remote",
+  "anywhere",
+] as const
+
+/** China city pool. */
+const CHINA_LOCATION_HINTS = [
+  "shanghai",
+  "beijing",
+  "hangzhou",
+  "shenzhen",
+  "guangzhou",
+  "anywhere",
+] as const
+
+/** Default (country=anywhere) hint pool — superset of USA + China + Europe. */
+const ANYWHERE_LOCATION_HINTS = [
+  ...USA_LOCATION_HINTS,
+  ...CHINA_LOCATION_HINTS,
+  "london",
+  "berlin",
+  "paris",
+  "amsterdam",
+  "toronto",
+  "vancouver",
+] as const
+
+/**
+ * Few-shot fixtures — includes Adam-verified pain points
+ * ("Bay Area", "sfran or nYC works", "Everywhere is fine", "都行").
+ */
+const LOCATION_EXAMPLES: GuidedOpenJudgeSpec<LocationAnswer>["examples"] = [
+  { reply: "Bay Area", value: ["sf", "bay_area"], confidence: 0.95 },
+  { reply: "sfran or nYC works", value: ["sf", "nyc"], confidence: 0.9 },
+  { reply: "Everywhere is fine", value: ["anywhere"], confidence: 1.0 },
+  { reply: "都行", value: ["anywhere"], confidence: 1.0 },
+  { reply: "remote", value: ["remote"], confidence: 1.0 },
+  { reply: "上海或北京", value: ["shanghai", "beijing"], confidence: 0.95 },
+  { reply: "NYC, Boston, or remote", value: ["nyc", "boston", "remote"], confidence: 0.9 },
+  { reply: "杭州", value: ["hangzhou"], confidence: 1.0 },
+]
+
+/**
+ * `parseValue` for q_location. Always returns string[]; tolerates the
+ * LLM emitting either a single string or array. Empty → null.
+ */
+function parseLocationValue(raw: unknown): LocationAnswer | null {
+  if (typeof raw === "string") {
+    const t = raw.trim().toLowerCase()
+    if (!t) return null
+    return [t]
+  }
+  if (Array.isArray(raw)) {
+    const items = raw
+      .filter((x): x is string => typeof x === "string")
+      .map((x) => x.trim().toLowerCase())
+      .filter((x) => x.length > 0)
+    if (items.length === 0) return null
+    return items
+  }
+  return null
+}
+
+/**
+ * Bloom regex for the most common one-word location replies.
+ * NEVER blocks — the LLM owns ambiguous cases.
+ */
+const LOCATION_BLOOM_COMMON: GuidedOpenJudgeSpec<LocationAnswer>["bloomRegex"] = [
+  { pattern: /^\s*(remote|远程|远端)\s*$/i, value: ["remote"] },
+  { pattern: /^\s*(anywhere|都行|无所谓|哪都行|都可以)\s*$/i, value: ["anywhere"] },
+]
+
+/**
+ * Build a country-scoped Q_LOCATION.
+ *
+ * country=undefined or "anywhere" → ANYWHERE_LOCATION_HINTS (superset)
+ * country="usa"                   → USA_LOCATION_HINTS
+ * country="china"                 → CHINA_LOCATION_HINTS
+ * country=other free-form         → ANYWHERE_LOCATION_HINTS (let LLM canon)
+ *
+ * Use this in P7-4 dispatcher AFTER q_country is answered so the location
+ * follow-up's hint pool is scoped correctly. The exported `Q_LOCATION`
+ * constant uses the anywhere-default for static reference.
+ */
+export function makeLocationQuestion(
+  country: CountryAnswer | undefined,
+  onAccepted?: (loc: LocationAnswer, ctx: AcceptedCtx) => Promise<void>
+): Question<LocationAnswer> {
+  let hints: readonly string[] = ANYWHERE_LOCATION_HINTS
+  if (country === "usa") hints = USA_LOCATION_HINTS
+  else if (country === "china") hints = CHINA_LOCATION_HINTS
+  // any other value (canada, europe, free-form, multi-country) → anywhere
+  // superset; the LLM filters by user intent.
+
+  const promptVariants: { prompt: BilingualText; reAsks: BilingualText[] } =
+    country === "china"
+      ? {
+          prompt: {
+            zh: "想在中国哪个城市工作? 上海 / 北京 / 杭州 / 深圳 / 广州 / 都行",
+            en: "which Chinese city you targeting? Shanghai / Beijing / Hangzhou / Shenzhen / Guangzhou / anywhere",
+          },
+          reAsks: [
+            {
+              zh: "城市说一下: 上海 / 北京 / 杭州 / 深圳 — 一个或多个",
+              en: "city please: Shanghai / Beijing / Hangzhou / Shenzhen — one or more",
+            },
+            {
+              zh: "再问一遍 — 哪个城市? '都行' 也可以",
+              en: "let me ask again — which city? 'anywhere' works too",
+            },
+            {
+              zh: "一个城市就行, 比如 '上海' / '北京' / '都行'",
+              en: "one city is fine, like 'Shanghai' / 'Beijing' / 'anywhere'",
+            },
+          ],
+        }
+      : country === "usa"
+      ? {
+          prompt: {
+            zh: "想在美国哪个城市工作? 湾区 / NYC / Seattle / LA / Boston / Chicago / Austin / Remote / 都行",
+            en: "which US city you targeting? Bay Area / NYC / Seattle / LA / Boston / Chicago / Austin / remote / anywhere",
+          },
+          reAsks: [
+            {
+              zh: "城市说一下: 湾区 / NYC / Seattle / Boston — 一个或多个都行",
+              en: "city please: Bay Area / NYC / Seattle / Boston — one or more",
+            },
+            {
+              zh: "再问一遍 — 美国哪边? remote 或 'anywhere' 也行",
+              en: "let me ask again — where in the US? remote or 'anywhere' is fine",
+            },
+            {
+              zh: "一个城市就行, 比如 'sf' / 'nyc' / 'remote'",
+              en: "one city works, like 'sf' / 'nyc' / 'remote'",
+            },
+          ],
+        }
+      : {
+          prompt: {
+            zh: "想找哪个城市的工作? 城市/地区或者 'remote' / '都行' 都行",
+            en: "which city you targeting? a city / region / 'remote' / 'anywhere' all work",
+          },
+          reAsks: [
+            {
+              zh: "城市/地区或者 'remote' 都行",
+              en: "city / region / or just 'remote' is fine",
+            },
+            {
+              zh: "再问一遍 — 城市 + remote 偏好, 比如 'sf' / '上海' / 'remote'",
+              en: "let me ask again — city + remote pref, like 'sf' / 'shanghai' / 'remote'",
+            },
+            {
+              zh: "一个地点就行: 'bay area' / '上海' / 'remote' / 'anywhere'",
+              en: "one location is fine: 'bay area' / 'shanghai' / 'remote' / 'anywhere'",
+            },
+          ],
+        }
+
+  return makeQuestion<LocationAnswer>({
+    id: "q_location",
+    prompt: promptVariants.prompt,
+    judge: new GuidedOpenJudge<LocationAnswer>({
+      questionLabel: "target work city / region",
+      hints,
+      examples: LOCATION_EXAMPLES,
+      bloomRegex: LOCATION_BLOOM_COMMON,
+      parseValue: parseLocationValue,
+    }),
+    rephraser: new HybridRephraser({
+      variants: promptVariants.reAsks,
+      fallback: {
+        zh: "城市或 'remote' 就行",
+        en: "city or 'remote' is fine",
+      },
+    }),
+    haltMessage: HALT_DEFAULT,
+    onAccepted,
+  })
+}
+
+/**
+ * Default Q_LOCATION export — anywhere-superset hints. P7-4 dispatcher
+ * SHOULD swap to `makeLocationQuestion(country, onAccepted)` once
+ * q_country is answered, so the LLM gets a tighter answer space.
+ */
+export const Q_LOCATION: Question<LocationAnswer> = makeLocationQuestion(
+  undefined,
+  undefined
+)
+
+// ─── Q_VISA (V2 — drops OPT-as-separate per D4) ─────────────────────────────
+
+/** Canonical visa tokens per CLAUDE.md D4. */
+const VISA_HINTS = [
+  "citizen",
+  "permanent_resident",
+  "sponsorship_needed",
+  "other",
+] as const
+
+/**
+ * Few-shot includes the Adam-verified collapse:
+ *   OPT / CPT / H1B / "需要签证" → sponsorship_needed (per D4)
+ *   green card / GC / 绿卡           → permanent_resident
+ *   citizen / 公民                   → citizen
+ *   "我在美国但身份特殊"             → other
+ */
+const VISA_EXAMPLES: GuidedOpenJudgeSpec<VisaAnswer>["examples"] = [
+  { reply: "citizen", value: "citizen", confidence: 1.0 },
+  { reply: "公民", value: "citizen", confidence: 1.0 },
+  { reply: "GC", value: "permanent_resident", confidence: 1.0 },
+  { reply: "绿卡", value: "permanent_resident", confidence: 1.0 },
+  { reply: "I have OPT", value: "sponsorship_needed", confidence: 0.95 },
+  { reply: "on H1B", value: "sponsorship_needed", confidence: 0.95 },
+  { reply: "CPT student", value: "sponsorship_needed", confidence: 0.9 },
+  { reply: "需要 sponsor", value: "sponsorship_needed", confidence: 1.0 },
+  { reply: "need sponsorship", value: "sponsorship_needed", confidence: 1.0 },
+  { reply: "其他特殊情况", value: "other", confidence: 0.8 },
+]
+
+function parseVisaValue(raw: unknown): VisaAnswer | null {
+  if (typeof raw !== "string") return null
+  const t = raw.trim().toLowerCase()
+  if (t === "citizen") return "citizen"
+  if (
+    t === "permanent_resident" ||
+    t === "permanent-resident" ||
+    t === "gc" ||
+    t === "green_card"
+  )
+    return "permanent_resident"
+  if (
+    t === "sponsorship_needed" ||
+    t === "sponsorship-needed" ||
+    t === "sponsor_needed" ||
+    t === "need_sponsorship" ||
+    t === "opt" ||
+    t === "cpt" ||
+    t === "h1b" ||
+    t === "h-1b"
+  )
+    return "sponsorship_needed"
+  if (t === "other") return "other"
+  return null
+}
+
+const VISA_BLOOM: GuidedOpenJudgeSpec<VisaAnswer>["bloomRegex"] = [
+  { pattern: /^\s*(citizen|us citizen|公民|美国公民)\s*$/i, value: "citizen" },
+  {
+    pattern: /^\s*(gc|green card|permanent resident|绿卡|永久居民)\s*$/i,
+    value: "permanent_resident",
+  },
+  // OPT/CPT/H1B all collapse to sponsorship_needed per D4
+  {
+    pattern: /^\s*(opt|cpt|h1b|h-1b|need sponsor|need sponsorship|需要 sponsor|需要赞助|需要签证)\s*$/i,
+    value: "sponsorship_needed",
+  },
+]
+
+/**
+ * Q_VISA — V2 prompt drops "OPT" listing per D4. Internally OPT/CPT/H1B
+ * all canonicalize to `sponsorship_needed`, but the prompt asks the
+ * three-way (citizen / GC / need sponsorship) so the user isn't
+ * confused that "OPT" is a separate visa bucket.
+ */
+export const Q_VISA: Question<VisaAnswer> = makeQuestion<VisaAnswer>({
+  id: "q_visa",
+  prompt: {
+    zh: "那你工作身份是? 公民 / 绿卡 / 需要 sponsor (含 OPT/CPT/H1B)",
+    en: "what's your work auth? citizen / GC / need sponsorship (incl. OPT/CPT/H1B)",
+  },
+  judge: new GuidedOpenJudge<VisaAnswer>({
+    questionLabel: "US work authorization status",
+    hints: VISA_HINTS,
+    examples: VISA_EXAMPLES,
+    bloomRegex: VISA_BLOOM,
+    parseValue: parseVisaValue,
+  }),
+  rephraser: new HybridRephraser({
+    variants: [
+      {
+        zh: "选一个就行: 公民 / 绿卡 / 需要 sponsor",
+        en: "pick one: citizen / GC / need sponsorship",
+      },
+      {
+        zh: "签证状态大概是哪种? 我列下: 公民、绿卡、要 sponsor (OPT/CPT/H1B 都算这种)",
+        en: "what's your status — citizen, GC, or need sponsorship? (OPT/CPT/H1B all count as need sponsorship)",
+      },
+      {
+        zh: "你能在美国合法工作吗? 是哪种身份 — 公民 / 绿卡 / 还是要 sponsor?",
+        en: "are you eligible to work in the US? citizen / GC / or need sponsorship?",
+      },
+      {
+        zh: "一个词答下身份吧, 比如 'citizen' / 'gc' / 'need sponsor'",
+        en: "one word on your auth — 'citizen' / 'gc' / 'need sponsor'",
+      },
+    ],
+    fallback: {
+      zh: "citizen / gc / sponsor — 选一个",
+      en: "citizen / gc / sponsor — pick one",
+    },
+  }),
+  haltMessage: HALT_DEFAULT,
+})
+
+// ─── ONBOARDING_QUESTIONS_V2 ────────────────────────────────────────────────
+
+/**
+ * Deps shape for `defaultQuestionsV2`. Mirrors `DefaultQuestionsDeps` but
+ * adds `onCountryAccepted` and reuses the existing accept hooks for
+ * email / verify / tos / role / yoe / startup_pref / resume.
+ *
+ * Per D8 — every onAccepted is expected to do dual-write
+ * (statedPreferences + tags). Runtime owns that; this layer just
+ * dispatches the canonical value.
+ */
+export interface DefaultQuestionsV2Deps extends DefaultQuestionsDeps {
+  /** Hook fired when q_country accepts. Writes targetCountry to prefs+tags. */
+  onCountryAccepted?: (country: CountryAnswer, ctx: AcceptedCtx) => Promise<void>
+}
+
+/**
+ * Static V2 question list — references the V2 const versions of country /
+ * location / visa, plus the existing q_lang / q_email / q_email_verify /
+ * q_tos / q_role / q_yoe / q_startup_pref / q_resume from defaultQuestions.
+ *
+ * NOTE: this constant has NO onAccepted hooks wired (the country/location/
+ * visa entries reuse the deps-less Q_COUNTRY/Q_LOCATION/Q_VISA constants).
+ * Use `defaultQuestionsV2(deps)` to get a pipeline-ready list with hooks.
+ *
+ * Order (Adam directive 2026-05-07):
+ *   q_lang → q_email → q_email_verify → q_tos
+ *   → q_role → q_yoe → q_visa → q_startup_pref
+ *   → q_country → q_location  (country BEFORE location)
+ *   → q_resume
+ */
+export const ONBOARDING_QUESTIONS_V2: Question<unknown>[] = [
+  // The first 4 (lang / email / verify / tos) and the q_role / q_yoe /
+  // q_startup_pref / q_resume entries still rely on deps-injected hooks,
+  // so the static list omits them. P7-4 should compose its full pipeline
+  // via `defaultQuestionsV2(deps)`. This static export is provided for
+  // reference / docs / tests that need the V2 *new* questions only.
+  Q_COUNTRY as Question<unknown>,
+  Q_LOCATION as Question<unknown>,
+  Q_VISA as Question<unknown>,
+]
+
+/**
+ * Pipeline-ready V2 question list with deps wired into onAccepted hooks.
+ * P7-4 dispatcher calls this at boot time.
+ *
+ * Order matches the directive above. q_country comes BEFORE q_location so
+ * the dispatcher can swap `Q_LOCATION` for `makeLocationQuestion(country,
+ * deps.onLocationAccepted)` once q_country is answered.
+ */
+export function defaultQuestionsV2(deps: DefaultQuestionsV2Deps): Question<unknown>[] {
+  // Reuse the existing factory's lang/email/verify/tos/role/yoe/
+  // startup_pref/resume entries verbatim — they're already
+  // production-tested.
+  const v1List = defaultQuestions(deps)
+  // Pluck out by id; we re-order and replace location/visa with V2 versions.
+  const byId = new Map(v1List.map((q) => [q.id, q]))
+
+  const langQ = byId.get("q_lang")!
+  const emailQ = byId.get("q_email")!
+  const verifyQ = byId.get("q_email_verify")!
+  const tosQ = byId.get("q_tos")!
+  const roleQ = byId.get("q_role")!
+  const yoeQ = byId.get("q_yoe")!
+  const startupPrefQ = byId.get("q_startup_pref")!
+  const resumeQ = byId.get("q_resume")!
+
+  // V2: country / location / visa with deps-wired onAccepted.
+  const countryQ: Question<CountryAnswer> = {
+    ...Q_COUNTRY,
+    onAccepted: deps.onCountryAccepted,
+  }
+  const locationQ = makeLocationQuestion(undefined, deps.onLocationAccepted)
+  const visaQ: Question<VisaAnswer> = {
+    ...Q_VISA,
+    onAccepted: deps.onVisaAccepted as
+      | ((v: VisaAnswer, ctx: AcceptedCtx) => Promise<void>)
+      | undefined,
+  }
+
+  return [
+    langQ,
+    emailQ,
+    verifyQ,
+    tosQ,
+    roleQ,
+    yoeQ,
+    visaQ as Question<unknown>,
+    startupPrefQ,
+    countryQ as Question<unknown>,
+    locationQ as Question<unknown>,
+    resumeQ,
+  ]
+}

@@ -70,6 +70,16 @@ export const OnboardingStateSchema = z.enum([
   // iter30 closure (Adam directive 2026-05-03 "主动问简历"): proactive resume
   // request as the final probe step before transitioning to complete.
   "q_resume_asked",
+  // iter35 G2 (Adam directive 2026-05-07 "resume / LinkedIn URL are NOT
+  // deterministic questions, they are DiscussionPhase: ack → state=processing
+  // → user msg 稍等 → analysis fired async → handover"): two new states wrap
+  // the long-running cv-ingest async work. q_resume_processing = artifact
+  // received, ack sent, cv-ingest running; user sends another msg here →
+  // hold reply. q_resume_done = analysis sent, in chat mode. See
+  // packages/pa-orchestrator/src/onboarding/discussion-phase.ts +
+  // discussion-resume.ts.
+  "q_resume_processing",
+  "q_resume_done",
   // iter33 P3 (Adam directive 2026-05-04 "OK 你等我小下我看看你简历, 然后看完
   // 以后给一个简历分析"): brief between resume-parse and complete. Claire
   // sends "let me look at your resume" + a short CV analysis (LLM-summary,
