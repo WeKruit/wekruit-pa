@@ -13,7 +13,7 @@
  *   5. cv-ingest worker callback → onWorkComplete
  *      - persistAnalysis writes user tags
  *      - sendAnalysis sends summary message
- *      - state advances to q_resume_done
+ *      - state advances to complete
  *
  * This complements the existing discussion-resume.test.ts unit coverage by
  * testing them in INTEGRATION sequence (not just per-method) and asserting
@@ -122,7 +122,7 @@ test("sim/resume-async: full lifecycle (ack → hold → analysis) — message o
   // Assert state machine: idle → processing → complete (2 transitions only).
   assert.deepEqual(
     rec.states,
-    ["q_resume_processing", "q_resume_done"],
+    ["q_resume_processing", "complete"],
     "state: idle → processing → done"
   )
 
