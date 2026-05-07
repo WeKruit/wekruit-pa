@@ -2406,23 +2406,23 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // runLangLockGuard short-circuits — letting the reply mirror the user's
     // zh-frame + en-token register naturally instead of hard-locking single
     // language. Pure-zh / pure-en still get the lock as before.
-    // 2026-05-07 Bug B fix — Adam test: prefLang=en (selected English at
-    // onboarding), but agent runtime emitted ZH because detectUserLang
-    // looked at the CURRENT message body only. When body is "[attachment]"
-    // or "[cv-parsed]" (synthetic), detection is unreliable. Strict
-    // override: if user has set preferredLang in their tags, that wins.
-    let userLang: "zh" | "en" | "mixed" = detectUserLang(event.body)
-    {
-      const onboardingPref =
-        (onboardingUser as { statedPreferences?: { preferredLang?: string } }).statedPreferences
-          ?.preferredLang
-      const tagsPref = (
-        onboardingUser as { tags?: { preferredLang?: string } }
-      ).tags?.preferredLang
-      const pref = onboardingPref || tagsPref
-      if (pref === "en" || pref === "zh" || pref === "mixed") {
-        userLang = pref
-      }
+    // 2026-05-07 Bug B fix v2 — Adam: "应该用统一的语音". Per CLAUDE.md D8
+    // tags is the single canonical source. Read tags.preferredLang FIRST
+    // (set by writeOnboardingTags after q_lang answered + by cv-ingest after
+    // mergeUserTags), statedPreferences.preferredLang SECOND (legacy mirror,
+    // also written by applyOnboardingStep). detectUserLang(event.body) is
+    // ONLY used as last-resort when user hasn't declared preference yet —
+    // never as the override path. This also unifies with onboarding-
+    // deterministic.langFor() which already prioritizes prefLang.
+    const tagsPref = (onboardingUser as { tags?: { preferredLang?: string } }).tags?.preferredLang
+    const onboardingPref = (onboardingUser as { statedPreferences?: { preferredLang?: string } })
+      .statedPreferences?.preferredLang
+    const declaredPref = tagsPref || onboardingPref
+    let userLang: "zh" | "en" | "mixed"
+    if (declaredPref === "en" || declaredPref === "zh" || declaredPref === "mixed") {
+      userLang = declaredPref
+    } else {
+      userLang = detectUserLang(event.body)
     }
     const { open: langLockOpen, close: langLockClose } = buildLangLockSandwich(userLang)
     const baseSystemPrompt = isVoiceV1Disabled()

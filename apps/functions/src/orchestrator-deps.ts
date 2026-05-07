@@ -239,7 +239,22 @@ function makeGenerateJobRecs(): NonNullable<
           const wh = cvData.workHistory ?? cvData.experiences ?? []
           const projects = cvData.projects ?? []
           const topSkills = cvData.topSkills ?? cvData.candidateProfile?.skills ?? []
-          const openaiKey = process.env.PA_OPENAI_AGENT_API_KEY ?? process.env.OPENAI_API_KEY ?? ""
+          // 2026-05-07 Bug D true root cause — `process.env.OPENAI_API_KEY` is
+          // OVERLOADED in production (apps/functions/src/index.ts line 1258
+          // sets it to `SILICONFLOW_API_KEY.value()` when unset). Falling
+          // through to it = passing a SiliconFlow key to OpenAI client →
+          // OpenAI returns "401 status code (no body)". Persistent, not
+          // transient. Use ONLY PA_OPENAI_AGENT_API_KEY here, with empty-
+          // string detection so we don't pass an empty Authorization header.
+          const rawKey = (process.env.PA_OPENAI_AGENT_API_KEY ?? "").trim()
+          const openaiKey = rawKey.startsWith("sk-") ? rawKey : ""
+          if (!openaiKey) {
+            logger.warn("[job-recs] nuanced reason skipped: PA_OPENAI_AGENT_API_KEY missing or non-OpenAI", {
+              userId,
+              hasRawKey: rawKey.length > 0,
+              keyPrefix: rawKey.slice(0, 5),
+            })
+          }
           const reasons = await Promise.all(
             visibleJobs.map((j) =>
               composeNuancedReason(

@@ -96,6 +96,18 @@ export async function composeNuancedReason(
   config: { openaiApiKey: string; model?: string; client?: OpenAI; timeoutMs?: number }
 ): Promise<string | null> {
   if (!config.openaiApiKey) return null
+  // 2026-05-07 Bug D defense-in-depth — caller may inadvertently pass a
+  // SiliconFlow key (sf-...) when env var fallthrough hits the overloaded
+  // OPENAI_API_KEY (set to SILICONFLOW_API_KEY in index.ts:1258). OpenAI's
+  // SDK constructs an Authorization header with whatever string we pass,
+  // and OpenAI returns "401 status code (no body)". Reject upfront so we
+  // log a clear "wrong-key" signal instead of an opaque 401.
+  if (!config.openaiApiKey.startsWith("sk-")) {
+    logger.warn("pa.match.nuanced_reason_wrong_key_prefix", {
+      prefix: config.openaiApiKey.slice(0, 5),
+    })
+    return null
+  }
   const model = config.model ?? "gpt-5.4-nano"
   const client = config.client ?? new OpenAI({ apiKey: config.openaiApiKey, timeout: config.timeoutMs ?? 8000 })
 
