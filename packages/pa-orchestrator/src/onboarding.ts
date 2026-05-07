@@ -574,6 +574,9 @@ const STATE_ORDER: Array<OnboardingState | undefined> = [
   "q_startup_pref_asked",
   "q_location_asked",
   "q_resume_asked",
+  // iter35 G2 — DiscussionPhase: ack → processing → done → cv_analyzing
+  "q_resume_processing",
+  "q_resume_done",
   // iter33 P3 — CV analysis brief between q_resume_asked + complete
   "q_cv_analyzing",
   "complete",
