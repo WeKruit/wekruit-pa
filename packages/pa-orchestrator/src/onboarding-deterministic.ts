@@ -1540,8 +1540,35 @@ export async function runDeterministicOnboardingTurn(
   }
 
   // wait_for_resume_upload — CV gate, send waitingPrompt, no advance.
+  // 2026-05-07 Bug A — dedup: Adam saw "just waiting" twice in a row when
+  // PDF arrived (one inbound for the attachment + cv-ingest synthetic
+  // [cv-parsed] event, both hit q_resume_asked + cvParsed=false during
+  // the cv-ingest async window). Skip the prompt if we sent it within 60s.
   if (action.kind === "wait_for_resume_upload") {
+    const now = Date.now()
+    const lastFire = (onboardingUser as { cvWaitPromptLastFiredAt?: string }).cvWaitPromptLastFiredAt
+    if (lastFire) {
+      const ageMs = now - Date.parse(lastFire)
+      if (Number.isFinite(ageMs) && ageMs >= 0 && ageMs < 60_000) {
+        store.log("pa.onboarding.deterministic.cv_wait_deduped", {
+          userId: event.userId,
+          turnId,
+          ageMs,
+        })
+        return { handled: true, action }
+      }
+    }
     await sendDirect(input, config.ask_q_resume!.waitingPrompt![langFor(event.body)])
+    if (store.db) {
+      try {
+        await store.db
+          .collection("pa-users")
+          .doc(event.userId)
+          .set({ cvWaitPromptLastFiredAt: new Date().toISOString() }, { merge: true })
+      } catch {
+        /* best-effort dedup tracker */
+      }
+    }
     store.log("pa.onboarding.deterministic.cv_wait", {
       userId: event.userId,
       turnId,

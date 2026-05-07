@@ -2406,7 +2406,24 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // runLangLockGuard short-circuits — letting the reply mirror the user's
     // zh-frame + en-token register naturally instead of hard-locking single
     // language. Pure-zh / pure-en still get the lock as before.
-    const userLang = detectUserLang(event.body)
+    // 2026-05-07 Bug B fix — Adam test: prefLang=en (selected English at
+    // onboarding), but agent runtime emitted ZH because detectUserLang
+    // looked at the CURRENT message body only. When body is "[attachment]"
+    // or "[cv-parsed]" (synthetic), detection is unreliable. Strict
+    // override: if user has set preferredLang in their tags, that wins.
+    let userLang: "zh" | "en" | "mixed" = detectUserLang(event.body)
+    {
+      const onboardingPref =
+        (onboardingUser as { statedPreferences?: { preferredLang?: string } }).statedPreferences
+          ?.preferredLang
+      const tagsPref = (
+        onboardingUser as { tags?: { preferredLang?: string } }
+      ).tags?.preferredLang
+      const pref = onboardingPref || tagsPref
+      if (pref === "en" || pref === "zh" || pref === "mixed") {
+        userLang = pref
+      }
+    }
     const { open: langLockOpen, close: langLockClose } = buildLangLockSandwich(userLang)
     const baseSystemPrompt = isVoiceV1Disabled()
       ? LEGACY_V0_SYSTEM_PROMPT
