@@ -20,8 +20,9 @@
  * Fail-graceful: any LLM error → fall back to V16 template `j.reason`.
  */
 
-import OpenAI from "openai"
 import { logger } from "firebase-functions/v2"
+import { callWithFallback } from "@pa/pa-resume-parser"
+import type { OpenAIResponsesClient, AnthropicMessagesClient } from "@pa/pa-resume-parser"
 
 export interface CvWorkExperience {
   title?: string | null
@@ -89,27 +90,52 @@ Example:
 - "Your OFO Delivery cross-platform app on RN+Firebase is the same stack this role uses"
 - "Your ESL Dynamic Knowledge Tracing model in PyTorch transfers cleanly to their LLM fine-tuning"`
 
-const MAX_TOKENS = 120
+// 2026-05-07 Bug D true root cause v3 (Adam: "为什么不是同一个 interface")
+// — composeNuancedReason was a SDK-level OpenAI island: imported `openai`
+// directly, hardcoded model strings, manual fallback chain, manual key
+// resolution. CV parse + sponsorship inference + industry-second-pass all
+// run through the unified `callWithFallback` 3-tier router from
+// `@pa/pa-resume-parser` (gpt-5.4-nano → claude-sonnet-4-6 → gpt-4.1-mini)
+// — those paths never 401. This function bypassed the router and got
+// orphaned. Refactor: route through `callWithFallback` with a 1-field
+// json schema. Auto-inherits 3-tier fallback, retry, key handling, and
+// future provider/model rotations.
+const NUANCED_REASON_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["reason"],
+  properties: {
+    reason: {
+      type: "string",
+      description: "1-sentence personalized recommendation reason citing specific work experience or project + bridging skill.",
+    },
+  },
+} as const
+
+export interface ComposeNuancedReasonConfig {
+  openaiApiKey: string
+  /** Optional Anthropic key — when present, callWithFallback will use Sonnet middle tier. */
+  anthropicApiKey?: string
+  /** Test seam — passed through to router. */
+  clientFactory?: (init: { apiKey: string; baseURL?: string; maxRetries?: number }) => OpenAIResponsesClient | Promise<OpenAIResponsesClient>
+  anthropicClientFactory?: (init: { apiKey: string; baseURL?: string; maxRetries?: number }) => AnthropicMessagesClient | Promise<AnthropicMessagesClient>
+}
 
 export async function composeNuancedReason(
   input: NuancedReasonInput,
-  config: { openaiApiKey: string; model?: string; client?: OpenAI; timeoutMs?: number }
+  config: ComposeNuancedReasonConfig
 ): Promise<string | null> {
   if (!config.openaiApiKey) return null
-  // 2026-05-07 Bug D defense-in-depth — caller may inadvertently pass a
-  // SiliconFlow key (sf-...) when env var fallthrough hits the overloaded
-  // OPENAI_API_KEY (set to SILICONFLOW_API_KEY in index.ts:1258). OpenAI's
-  // SDK constructs an Authorization header with whatever string we pass,
-  // and OpenAI returns "401 status code (no body)". Reject upfront so we
-  // log a clear "wrong-key" signal instead of an opaque 401.
+  // Defense-in-depth: SiliconFlow key (sf-...) accidentally passed via the
+  // overloaded `process.env.OPENAI_API_KEY` (apps/functions/src/index.ts
+  // :1258 sets it to SILICONFLOW_API_KEY when unset) → OpenAI 401 with
+  // empty body. Reject upfront with clear log signal.
   if (!config.openaiApiKey.startsWith("sk-")) {
     logger.warn("pa.match.nuanced_reason_wrong_key_prefix", {
       prefix: config.openaiApiKey.slice(0, 5),
     })
     return null
   }
-  const model = config.model ?? "gpt-5.4-nano"
-  const client = config.client ?? new OpenAI({ apiKey: config.openaiApiKey, timeout: config.timeoutMs ?? 8000 })
 
   // Compose user-text payload — terse, structured.
   const wh = input.workHistory.slice(0, 3).map((e) => {
@@ -140,60 +166,62 @@ ${matched}
 ${input.job.title}${input.job.company ? ` @ ${input.job.company}` : ""}
 ${input.job.seniorityLevel ? `Seniority: ${input.job.seniorityLevel}\n` : ""}${reqSkills ? `Required: ${reqSkills}\n` : ""}${input.job.jobDescription ? `JD: ${input.job.jobDescription.slice(0, 600)}` : ""}
 
-写一句推荐理由, 引用具体经历 + 1-2 个对得上的技能。`
+返回 JSON: { "reason": "<1 句推荐理由, 引用具体经历 + 1-2 个对得上的技能>" }`
 
-  // 2026-05-07 Bug D — production logs showed `pa.match.nuanced_reason_failed`
-  // with `err: 401 status code (no body)`. Root cause: configured model
-  // (gpt-5.4-nano) is unavailable on this org/key, so OpenAI rejects auth
-  // before model use. Fix: try primary, on 401/404/model-not-found error,
-  // retry with widely-available `gpt-4.1-mini` fallback. Per CLAUDE.md the
-  // chain Primary → Fallback → Final has exactly this final tier.
-  const tryModels = [model]
-  const fallbackModel = "gpt-4.1-mini"
-  if (model !== fallbackModel) tryModels.push(fallbackModel)
-
-  let lastErr: unknown = null
-  for (const m of tryModels) {
+  try {
+    // 2026-05-07 Bug D root cause v4 — production CF env has
+    // `OPENAI_BASE_URL = https://api.siliconflow.cn/v1` (global pollution
+    // from index.ts:694, intended for agent-runtime's OpenAI-compatible
+    // SiliconFlow client). OpenAI SDK auto-reads this env when baseURL is
+    // not explicitly passed, so even with a valid OpenAI key, requests go
+    // to SiliconFlow endpoint and 401 because SF doesn't recognize an
+    // OpenAI sk-proj key. Force the OpenAI canonical base URL for THIS
+    // call (we want real OpenAI, not the aliased SF endpoint).
+    const result = await callWithFallback({
+      apiKey: config.openaiApiKey,
+      baseURL: "https://api.openai.com/v1",
+      anthropicApiKey: config.anthropicApiKey,
+      systemPrompt: input.lang === "zh" ? SYSTEM_PROMPT_ZH : SYSTEM_PROMPT_EN,
+      userText,
+      schemaName: "NuancedMatchReason",
+      schema: NUANCED_REASON_SCHEMA as unknown as Record<string, unknown>,
+      clientFactory: config.clientFactory,
+      anthropicClientFactory: config.anthropicClientFactory,
+      log: (event, payload) => logger.info(event, payload as Record<string, unknown>),
+    })
+    let parsed: { reason?: string }
     try {
-      const useNewParam = /^gpt-(5|6|7|8|9)/i.test(m)
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const requestParams: any = {
-        model: m,
-        messages: [
-          { role: "system", content: input.lang === "zh" ? SYSTEM_PROMPT_ZH : SYSTEM_PROMPT_EN },
-          { role: "user", content: userText },
-        ],
-      }
-      if (useNewParam) {
-        requestParams.max_completion_tokens = MAX_TOKENS
-      } else {
-        requestParams.max_tokens = MAX_TOKENS
-        requestParams.temperature = 0.4
-      }
-      const res = await client.chat.completions.create(requestParams)
-      const text = res.choices?.[0]?.message?.content?.trim()
-      if (!text || text.length < 8 || text.length > 300) {
-        logger.warn("pa.match.nuanced_reason_invalid_length", { model: m, len: text?.length ?? 0 })
-        return null
-      }
-      const cleaned = text
-        .replace(/^("|")?\s*(为啥推|Why match|Reason)\s*[:：]?\s*/i, "")
-        .replace(/^["']|["']$/g, "")
-        .trim()
-      if (m !== model) {
-        logger.info("pa.match.nuanced_reason_fallback_succeeded", { primary: model, fallback: m })
-      }
-      return cleaned || null
-    } catch (err) {
-      lastErr = err
-      const msg = err instanceof Error ? err.message : String(err)
-      const isAuthOrModelMissing = /\b(401|404|model_not_found|model.*not.*found|invalid.*api.*key)\b/i.test(msg)
-      if (!isAuthOrModelMissing) break // non-recoverable error — don't retry
-      logger.warn("pa.match.nuanced_reason_retrying_fallback", { model: m, err: msg.slice(0, 200) })
+      parsed = JSON.parse(result.rawJson)
+    } catch (e) {
+      logger.warn("pa.match.nuanced_reason_parse_failed", {
+        rawSample: result.rawJson.slice(0, 200),
+        err: e instanceof Error ? e.message.slice(0, 100) : String(e).slice(0, 100),
+      })
+      return null
     }
+    const reason = (parsed.reason ?? "").trim()
+    if (!reason || reason.length < 8 || reason.length > 300) {
+      logger.warn("pa.match.nuanced_reason_invalid_length", {
+        usedTier: result.usedTier,
+        usedModel: result.usedModel,
+        len: reason.length,
+      })
+      return null
+    }
+    const cleaned = reason
+      .replace(/^("|")?\s*(为啥推|Why match|Reason)\s*[:：]?\s*/i, "")
+      .replace(/^["']|["']$/g, "")
+      .trim()
+    logger.info("pa.match.nuanced_reason_ok", {
+      usedTier: result.usedTier,
+      usedModel: result.usedModel,
+      tokens: result.usage?.total_tokens,
+    })
+    return cleaned || null
+  } catch (err) {
+    logger.warn("pa.match.nuanced_reason_failed", {
+      err: err instanceof Error ? err.message.slice(0, 200) : String(err).slice(0, 200),
+    })
+    return null
   }
-  logger.warn("pa.match.nuanced_reason_failed", {
-    err: lastErr instanceof Error ? lastErr.message.slice(0, 200) : String(lastErr).slice(0, 200),
-  })
-  return null
 }

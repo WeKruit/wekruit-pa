@@ -288,7 +288,13 @@ function makeGenerateJobRecs(): NonNullable<
                   matchedSkills:
                     (j as { matchedSkills?: Array<{ name: string; proficiency?: string }> }).matchedSkills ?? [],
                 },
-                { openaiApiKey: openaiKey, timeoutMs: 8000 }
+                {
+                  openaiApiKey: openaiKey,
+                  // 2026-05-07 — Forward Anthropic key so callWithFallback's
+                  // middle tier (claude-sonnet-4-6) activates if primary 401s.
+                  // When unset, router falls through tier-2 → tier-3 (gpt-4.1-mini).
+                  anthropicApiKey: process.env.ANTHROPIC_API_KEY?.trim() || undefined,
+                }
               )
             )
           )
