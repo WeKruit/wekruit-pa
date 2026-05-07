@@ -9,7 +9,7 @@
  * Used by every probe Q whose answer space is open-ended but bounded by
  * canonical hints (q_role, q_yoe, q_visa, q_country, q_location,
  * q_startup_pref, ...). Replaces the old 4-path dispatch
- * (userAnsweredStep + parseXxxAnswer + canonicalizeXxx + extractAnswerIntent
+ * (the legacy regex parsers + extractAnswerIntent
  * fallback) with a single resolver:
  *
  *   reply ──▶ noise filter ──▶ bloom regex ──▶ LLM (SF Qwen → gpt-4.1-mini)

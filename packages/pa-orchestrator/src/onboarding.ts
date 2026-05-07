@@ -475,11 +475,13 @@ export function composeOnboardingInput(
         noChainIntents.includes(detected.intent) &&
         detected.confidence === "high"
     )
-    // V4 QA Agent-I 2026-05-04 P0 fix: prefer priorAskedStep when caller
-    // provides it. Falls back to `step` for legacy callers (tests that
-    // synthesize the suspended branch with a forward step name).
-    const userAnswered = userAnsweredStep(ctx.priorAskedStep ?? step, ctx.userMessage)
-    if (ventLike || !userAnswered) {
+    // iter35 P7-4 — the legacy regex parser regex bank deleted. Suspension is
+    // now governed by the GuidedOpenJudge LLM "unclear" verdict in the
+    // pipeline path. For the legacy LLM-compose path (still active behind
+    // the rollback flag), we preserve the venting branch (intent-based)
+    // but drop the word-keyword "userAnswered" gate — the LLM-compose
+    // path handles not-an-answer replies via the agent-runtime layer.
+    if (ventLike) {
       const lang = pickLang(ctx.userMessage)
       if (ventLike && detected) {
         const ackKey = detected.intent as keyof typeof INTENT_ACK_DIRECTIVES
@@ -583,258 +585,39 @@ const STATE_ORDER: Array<OnboardingState | undefined> = [
 ]
 
 // ============================================================================
-// Phase 44 — Lightweight regex/keyword parsers for statedPreferences writes.
-// NO LLM in this path (Adam-locked). Each parser returns the patch to merge
-// into statedPreferences, or {} when the user reply doesn't match — null
-// fields are stored explicitly to record "we asked, no clean signal yet".
+// iter35 P7-4 (2026-05-07) — REMOVED: legacy regex parsers + canon-token maps.
+//
+// Adam directive: 整体重构 不打补丁. The functions below were the 4 parallel
+// regex paths (the legacy parsers) doing the same job: parse a free-form user reply
+// into a canonical statedPreferences value. They are SUPERSEDED by
+// `GuidedOpenJudge` in `onboarding/judges/guided-open.ts` (LLM-first +
+// optional bloom regex), wired through the V2 question registry in
+// `onboarding/questions.ts` and dispatched via `pipeline.runTurn`.
+//
+// Type aliases (CanonicalRole / CanonicalLocation / CanonicalStartupPref)
+// are retained as type-only exports because downstream modules
+// (voice/role-to-industry.ts, tags/user-tags-merger.ts) still hold them as
+// shape contracts on stored statedPreferences. New writes use the V2 visa /
+// location / role canonical strings via `parsedAnswer` opt to
+// applyOnboardingStep — no regex re-parse.
+//
+// Email parsers (parseEmailAnswer / detectEmailDomainTypo / parseTosAnswer /
+// parseLangAnswer / parseEmailVerificationCode) are RETAINED — they are
+// NOT subsumed by the pipeline (the legacy LLM-compose path in index.ts
+// still reads parseTosAnswer, parseEmailVerificationCode is shared utility,
+// and email regex is a structural shape check that LLM cannot improve on).
 // ============================================================================
 
-/**
- * iter34 hotfix 2026-05-05 — Adam directive "所有的 deterministic 问题
- * 用户答案我们都要这么处理...这些问题不应该是 open ended，都需要
- * normalize 好". canonicalizeRole maps any reply to a canonical role
- * token from a CLOSED set. Free-form fallback → "other" (NOT raw text).
- * Bilingual keyword bank.
- */
 export type CanonicalRole =
   | "swe" | "pm" | "em" | "designer" | "research" | "data" | "ml"
   | "ops" | "marketing" | "sales" | "founder" | "other"
 
-const ROLE_CANONICAL_MAP: Array<{ pattern: RegExp; token: CanonicalRole }> = [
-  // Order matters — most-specific first. Multi-word matches before single words.
-  { pattern: /(staff|principal|tech\s*lead|tl\b|架构|首席工程)/i, token: "swe" },
-  { pattern: /(ml\b|machine\s*learning|deep\s*learning|算法|ai\s*engineer|llm)/i, token: "ml" },
-  // data before research so "data scientist" → data, not research
-  { pattern: /(data\s*(scientist|analyst|engineer)|数据(科学|分析|工程)?|ds\b|de\b)/i, token: "data" },
-  { pattern: /(research(er)?|科研|研究员|phd\s*role|\bscientist\b)/i, token: "research" },
-  { pattern: /(designer|design\b|设计|\bux\b|\bui\b|product\s*designer)/i, token: "designer" },
-  { pattern: /(\bpm\b|product\s*manager|产品经理|tpm\b)/i, token: "pm" },
-  { pattern: /(\bem\b|engineering\s*manager|工程经理|manager|director|vp\b)/i, token: "em" },
-  { pattern: /(swe|software\s*engineer|software\s*dev|engineer\b|developer|前端|后端|全栈|frontend|backend|fullstack|fe\b|be\b|coder|程序员|开发|工程师|cs\b|computer\s*science)/i, token: "swe" },
-  { pattern: /(\bops\b|sre\b|devops|infra|platform|reliability|运维)/i, token: "ops" },
-  { pattern: /(marketing|growth|brand|市场|营销)/i, token: "marketing" },
-  { pattern: /(sales|account\s*exec|ae\b|bd\b|商务|销售)/i, token: "sales" },
-  { pattern: /(founder|co[-\s]?founder|创始人|创业者|ceo\b|cto\b)/i, token: "founder" },
-]
-
-export function canonicalizeRole(reply: string): CanonicalRole {
-  if (!reply.trim()) return "other"
-  for (const { pattern, token } of ROLE_CANONICAL_MAP) {
-    if (pattern.test(reply)) return token
-  }
-  return "other"
-}
-
-function parseRoleAnswer(reply: string): Partial<StatedPreferences> {
-  const trimmed = reply.trim()
-  if (!trimmed) return {}
-  // iter34 hotfix 2026-05-05 — canonicalize, never store raw free-text.
-  // statedPreferences.targetRole stays string[] (schema-compatible) but
-  // contents are now ALWAYS from CanonicalRole enum (closed set).
-  return { targetRole: [canonicalizeRole(trimmed)] }
-}
-
-function parseYoeAnswer(reply: string): Partial<StatedPreferences> {
-  const lower = reply.toLowerCase()
-  // New-grad signals (zh + en)
-  if (
-    /(刚毕业|应届|新人|new\s*grad|fresh(\s*out)?|just\s*graduated|no\s*experience)/i.test(reply)
-  ) {
-    return { yoeRange: [0, 1] }
-  }
-  // Numeric "N years/yrs/y" or "N 年"
-  const num = lower.match(/(\d{1,2})\s*(\+)?\s*(years?|yrs?|y\b|年)/i)
-  if (num && num[1]) {
-    const n = parseInt(num[1], 10)
-    if (Number.isFinite(n) && n >= 0 && n <= 50) {
-      return { yoeRange: [n, n] }
-    }
-  }
-  return { yoeRange: null }
-}
-
-function parseVisaAnswer(reply: string): Partial<StatedPreferences> {
-  const lower = reply.toLowerCase()
-  // 2026-05-07 Adam directive: "OPT 就是 need sponsorship" — D4 in
-  // CLAUDE.md says all OPT/CPT/H1B → sponsor_needed (4-enum: citizen /
-  // permanent_resident / sponsor_needed / other). Don't split visas.
-  // Order matters: citizen + GC matched first to avoid "card" → citizen
-  // misfire. Then any non-permanent status → sponsor_needed.
-  if (/(green\s*card|绿卡|gc\b|permanent\s*resident)/i.test(reply)) {
-    return { visaStatus: "gc" }
-  }
-  if (/(citizen|公民|美国人|us\s*citizen)/i.test(reply)) {
-    return { visaStatus: "citizen" }
-  }
-  if (
-    /(sponsor|sponsorship|need.*visa|h[-\s]?1\s*b|h1\b|opt\b|stem.*opt|cpt\b)/i.test(reply) ||
-    /\bOPT\b/.test(reply) ||
-    /\bCPT\b/.test(reply)
-  ) {
-    return { visaStatus: "sponsorship_needed" satisfies VisaStatus }
-  }
-  return { visaStatus: "unknown" }
-}
-
-/**
- * iter34 hotfix 2026-05-05 — closed-set CanonicalStartupPref. Adam's
- * explicit "either" needs to be a first-class value, not represented as
- * `null`. Three states: "startup" / "bigtech" / "either".
- */
 export type CanonicalStartupPref = "startup" | "bigtech" | "either"
 
-const EITHER_KEYWORDS_RE =
-  /(都行|都可以|都ok|都OK|都喜欢|都接受|无所谓|随便|两个都|either|whatever|both\s*ok|either\s*works|don'?t\s*care|no\s*preference)/i
-
-export function canonicalizeStartupPref(reply: string): CanonicalStartupPref | null {
-  if (!reply.trim()) return null
-  // Either-keywords first (explicit "都行")
-  if (EITHER_KEYWORDS_RE.test(reply)) return "either"
-  const startupHit = /(startup|小公司|小厂|创业|early\s*stage|hustle)/i.test(reply)
-  const bigcoHit = /(大厂|大公司|big[-\s]*co|big\s*tech|stable|faang|enterprise)/i.test(reply)
-  if (startupHit && bigcoHit) return "either"
-  if (startupHit) return "startup"
-  if (bigcoHit) return "bigtech"
-  return null
-}
-
-function parseStartupPrefAnswer(reply: string): Partial<StatedPreferences> {
-  // iter34 hotfix 2026-05-05 — schema-compatible: still write
-  // `prefersStartup: boolean | null` but null now cleanly = "either"
-  // (canonicalizeStartupPref handled the explicit either parsing).
-  const canon = canonicalizeStartupPref(reply)
-  if (canon === "startup") return { prefersStartup: true }
-  if (canon === "bigtech") return { prefersStartup: false }
-  return { prefersStartup: null } // canon === "either" or unknown
-}
-
-/**
- * iter34 hotfix 2026-05-05 — closed-set CanonicalLocation enum mirroring
- * canonicalizeRole. All location answers normalize to these tokens.
- * Free-form / unrecognized → "other" (NOT raw text). "anywhere" / "都行"
- * → "anywhere" (semantic: open to any location).
- */
 export type CanonicalLocation =
   | "sf" | "nyc" | "seattle" | "la" | "boston" | "chicago" | "austin"
   | "shanghai" | "beijing" | "hangzhou" | "shenzhen" | "guangzhou"
   | "remote" | "anywhere" | "china" | "other"
-
-const LOCATION_CANONICAL_MAP: Array<{ pattern: RegExp; token: CanonicalLocation }> = [
-  // Remote / open-ended first
-  { pattern: /(remote|在家|远程|wfh|work\s*from\s*home)/i, token: "remote" },
-  { pattern: /(anywhere|wherever|哪都行|哪儿都行|都行|无所谓|随便|no\s*preference|don'?t\s*care|都可以|都ok|都OK)/i, token: "anywhere" },
-  // US cities
-  { pattern: /(湾区|bay\s*area|sf\b|san\s*francisco|south\s*bay|peninsula|silicon\s*valley)/i, token: "sf" },
-  { pattern: /(nyc|new\s*york|纽约|manhattan|brooklyn|ny\b)/i, token: "nyc" },
-  { pattern: /(seattle|西雅图|wa\s*state)/i, token: "seattle" },
-  { pattern: /(\bla\b|los\s*angeles|洛杉矶)/i, token: "la" },
-  { pattern: /(boston|波士顿|cambridge\s*ma|ma\b)/i, token: "boston" },
-  { pattern: /(chicago|芝加哥|il\b)/i, token: "chicago" },
-  { pattern: /(austin|奥斯汀|texas|tx\b)/i, token: "austin" },
-  // China cities
-  { pattern: /(上海|shanghai)/i, token: "shanghai" },
-  { pattern: /(北京|beijing|peking)/i, token: "beijing" },
-  { pattern: /(杭州|hangzhou)/i, token: "hangzhou" },
-  { pattern: /(深圳|shenzhen)/i, token: "shenzhen" },
-  { pattern: /(广州|guangzhou)/i, token: "guangzhou" },
-  { pattern: /(china|国内|大陆|中国)/i, token: "china" },
-]
-
-export function canonicalizeLocations(reply: string): CanonicalLocation[] {
-  if (!reply.trim()) return []
-  const matched = new Set<CanonicalLocation>()
-  for (const { pattern, token } of LOCATION_CANONICAL_MAP) {
-    if (pattern.test(reply)) matched.add(token)
-  }
-  if (matched.size === 0) return ["other"]
-  return Array.from(matched)
-}
-
-function parseLocationAnswer(reply: string): Partial<StatedPreferences> {
-  const trimmed = reply.trim()
-  if (!trimmed) return { targetLocations: [] }
-  // iter34 hotfix 2026-05-05 — canonicalize, never store raw free-text.
-  return { targetLocations: canonicalizeLocations(trimmed) }
-}
-
-/**
- * Adam iter 24 — did the user actually ANSWER the question we asked?
- *
- * Different from `parseUserAnswerForStep` which loosely parses anything as a
- * potential answer (e.g. parseRoleAnswer returns any non-empty string as
- * `targetRole: [reply]`). This is the strict signal: did the user's reply
- * contain a recognizable answer keyword for the step?
- *
- * Used by `applyOnboardingStep` to gate state advancement: if user did NOT
- * answer and is just venting / asking for help / changing topic, KEEP the
- * state at the same q_X so the next turn re-asks (or stays suspended via
- * the noChainIntent path).
- */
-export function userAnsweredStep(
-  step: OnboardingStep,
-  reply: string | undefined | null
-): boolean {
-  const r = (reply ?? "").trim()
-  if (!r) return false
-  // iter31 — ToS gate. ANY explicit accept token counts as answered. Decline
-  // tokens also count as answered (they progress us out of the suspended /
-  // re-ask state into a "user has chosen" branch handled by parseTosAnswer).
-  // Anything else stays in the suspended path so we don't accidentally
-  // treat random chatter as consent.
-  if (step === "ask_q_tos") {
-    return TOS_ACCEPT_REGEX.test(r) || TOS_DECLINE_REGEX.test(r)
-  }
-  if (step === "ask_q_email_verify") {
-    // 6-digit codes (digits only, ignoring punctuation/spaces around).
-    const compact = r.replace(/[\s\-—–]/g, "")
-    return /^\d{6}$/.test(compact)
-  }
-  if (step === "ask_q_role") {
-    // 2026-05-07 Adam LIVE bug: "Anything to do with cs or software is fine"
-    // failed first-time recognition because regex required "engineer/developer"
-    // suffix or specific tokens like "swe". Real users say "cs", "software",
-    // "tech", "coding", "programming", "backend/frontend/fullstack" as
-    // standalone domain markers. Add coverage to match natural phrasing.
-    return /(swe|pm\b|em\b|ic\b|staff|senior|junior|new\s*grad|应届|工程|产品|设计|研究|design|research|engineer|developer|前端|后端|算法|数据|machine\s*learning|ml\b|\bcs\b|computer\s*science|software|tech\b|coding|programmer|programming|backend|front[-\s]?end|full[-\s]?stack|devops|sre|infra(structure)?|cloud|security|data\s*scientist|product\s*manager|product\s*designer|ux\b|ui\b)/i.test(r)
-  }
-  if (step === "ask_q_yoe") {
-    return /(\d{1,2}\s*(?:\+)?\s*(?:years?|yrs?|y\b|年))|(刚毕业|应届|新人|new\s*grad|fresh(?:\s*out)?|just\s*graduated|no\s*experience)/i.test(r)
-  }
-  if (step === "ask_q_visa") {
-    // iter34 hotfix 2026-05-05 — handle "H 1 B" (space-separated) form too.
-    return /(citizen|公民|美国人|us\s*citizen|green\s*card|绿卡|gc\b|permanent\s*resident|opt\b|stem.*opt|\bOPT\b|h[-\s]?1\s*b|h1\b|sponsor|sponsorship|need.*visa)/i.test(r)
-  }
-  if (step === "ask_q_startup_pref") {
-    // iter34 hotfix 2026-05-05 — Adam LIVE bug: regex didn't recognize
-    // "都行/either/无所谓/随便/都可以/都OK/都喜欢/都接受/whatever". User answered
-    // "我都可以" + "都行" twice and got reasked into variant[1] which drifts
-    // off-theme ("公司规模/中型"). Add either-keywords to bilingual coverage
-    // mirroring parseLangAnswer (line ~866) which already accepts these.
-    return /(startup|小公司|小厂|创业|early\s*stage|hustle|大厂|大公司|big[-\s]*co|big\s*tech|stable|faang|enterprise|都行|都可以|都ok|都OK|都喜欢|都接受|无所谓|随便|两个都|either|whatever|both\s*ok|either\s*works|don'?t\s*care|no\s*preference)/i.test(r)
-  }
-  if (step === "ask_q_location") {
-    // iter34 hotfix 2026-05-05 — accept "都行/anywhere/wherever" as
-    // location=open. Semantic: user has no location constraint.
-    return /(remote|在家|远程|wfh|湾区|bay\s*area|sf\b|san\s*francisco|ny\b|纽约|new\s*york|nyc|seattle|西雅图|la\b|los\s*angeles|洛杉矶|波士顿|boston|chicago|austin|texas|tx\b|都行|都可以|都ok|都OK|无所谓|随便|anywhere|wherever|whatever\s*works|don'?t\s*care|no\s*preference|哪都行|哪儿都行|都喜欢)/i.test(r)
-  }
-  if (step === "ask_q_resume") {
-    // Resume answer is acceptance/decline/defer — any short reply counts as
-    // an "answered" so we advance past the ask. Actual resume upload happens
-    // out-of-band via Sendblue attachment + cv-ingest pipeline; the gate
-    // opens automatically because the ask_q_resume phrase matches
-    // cv-gate-detector regex (`/发简历给我/`, `/send.*your\s+resume/i`).
-    return r.length >= 1
-  }
-  if (step === "ask_q_email") {
-    // iter30 V6 — accept either an email-shaped string OR a skip keyword
-    // (no/later/skip/不用/算了/以后/没有). Either way we advance past the
-    // ask; parseEmailAnswer decides whether to record contactEmail.
-    if (EMAIL_REGEX.test(r)) return true
-    if (EMAIL_SKIP_REGEX.test(r)) return true
-    return false
-  }
-  return false
-}
 
 /** iter30 V6 — RFC-5322-lite email shape (good enough for friend-tone parsing). */
 const EMAIL_REGEX = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/
@@ -940,7 +723,7 @@ export function parseTosAnswer(reply: string): "accept" | "decline" | "unclear" 
 /**
  * iter31 — Extract a 6-digit code from a free-form reply. Tolerates
  * punctuation / spacing ("123 456", "123-456", "code: 123456"). Returns
- * the canonicalized 6 digits or null when no match.
+ * the canonical 6 digits or null when no match.
  */
 export function parseEmailVerificationCode(reply: string): string | null {
   if (!reply) return null
@@ -961,12 +744,11 @@ export function parseUserAnswerForStep(
   reply: string
 ): Partial<StatedPreferences> {
   if (!reply) return {}
+  // iter35 P7-4 — only `ask_q_lang` and `ask_q_email` retain regex-based
+  // parsing. The 5 probe Qs (role/yoe/visa/startup_pref/location) now flow
+  // through `pipeline.runTurn(QUESTIONS_V2)` + `GuidedOpenJudge` and write
+  // canonical values via `parsedAnswer` opt to `applyOnboardingStep`.
   if (step === "ask_q_lang") return parseLangAnswer(reply)
-  if (step === "ask_q_role") return parseRoleAnswer(reply)
-  if (step === "ask_q_yoe") return parseYoeAnswer(reply)
-  if (step === "ask_q_visa") return parseVisaAnswer(reply)
-  if (step === "ask_q_startup_pref") return parseStartupPrefAnswer(reply)
-  if (step === "ask_q_location") return parseLocationAnswer(reply)
   if (step === "ask_q_email") return parseEmailAnswer(reply)
   // ask_q_tos / ask_q_email_verify don't write into statedPreferences directly
   // — they affect User-level fields (tosAcceptance / contactEmailVerifiedAt)
@@ -1031,8 +813,8 @@ export function parseLangAnswer(reply: string): Partial<StatedPreferences> {
  * writer.
  *
  * The patch arrives in either shape:
- *   - regex-derived (parseRoleAnswer / parseYoeAnswer / etc) — already
- *     canonicalized in this module via canonicalizeRole / canonicalizeLocations
+ *   - regex-derived (the legacy probe parsers) — already
+ *     normalized in this module via the legacy canon-token helpers
  *   - LLM Judge canonical — strict StatedPreferences fields
  *
  * Mapping:
@@ -1214,7 +996,7 @@ export async function applyOnboardingStep(
      * Phase 52 — F1 fix: when true AND step is `send_first_mes`, we already
      * chained `ask_q_role` inline (intent-aware first_mes), so jump state
      * directly to `q_role_asked` instead of `first_mes_sent`. Saves one
-     * round-trip and lines up the next reply for `parseRoleAnswer`.
+     * round-trip and lines up the next reply for the role parser.
      */
     intentAcked?: boolean
     /**

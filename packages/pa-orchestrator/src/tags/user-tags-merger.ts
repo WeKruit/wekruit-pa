@@ -153,7 +153,7 @@ export const UserTagsSchema = z.object({
   embeddingComputedAt: z.string().optional(),
 
   // ---- chat-derived (statedPreferences echo) --------------------------
-  /** Canonical role tokens (closed enum from onboarding canonicalizeRole). */
+  /** Canonical role tokens (closed enum from onboarding canon-role). */
   targetRole: z.array(z.string()).optional(),
   /** [min, max] years-of-experience tuple. */
   yoeRange: z.tuple([z.number(), z.number()]).optional(),

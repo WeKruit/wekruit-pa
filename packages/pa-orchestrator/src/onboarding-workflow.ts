@@ -407,7 +407,7 @@ export type WorkflowContext = {
   parsedEmail?: string
   /** Captured 6-digit code at q_email_verifying. */
   parsedCode?: string
-  /** True when userAnsweredStep returned true for the current state's parser. */
+  /** True when the user reply parsed cleanly for the current state. */
   answered: boolean
 }
 
