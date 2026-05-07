@@ -128,30 +128,9 @@ export function makeOrchestratorDeps(): import("@pa/pa-orchestrator").Orchestrat
     generateJobRecs: makeGenerateJobRecs(),
     extractEmailIntent: makeExtractEmailIntent(),
     extractAnswerIntent: makeExtractAnswerIntent(),
-    // 2026-05-07 Adam reported "after I send the pdf why it asks me again":
-    //   parsedCandidateResumes was created by cv-ingest, but orchestrator's
-    //   `cvParsed` gate defaulted to false because this callback was never
-    //   wired. Adam's onboardingState stayed at q_resume_asked indefinitely
-    //   despite a fully-parsed CV doc. Fix: query parsedCandidateResumes
-    //   by userId; ANY existing doc → cvParsed=true → state advances to
-    //   q_cv_analyzing → send_cv_analysis fires → onboarding completes.
-    getUserCvParsed: async (userId: string): Promise<boolean> => {
-      try {
-        const db = getFirestore()
-        const snap = await db
-          .collection("parsedCandidateResumes")
-          .where("userId", "==", userId)
-          .limit(1)
-          .get()
-        return !snap.empty
-      } catch (err) {
-        logger.warn("[getUserCvParsed] failed", {
-          userId,
-          err: err instanceof Error ? err.message : String(err),
-        })
-        return false
-      }
-    },
+    // Note: getUserCvParsed is already implemented in
+    // packages/pa-orchestrator/src/index.ts:3777 inside
+    // createFirestoreOrchestratorStore — no override needed here.
   }
 }
 

@@ -3270,6 +3270,16 @@ export type OrchestratorStoreDeps = {
    * q_startup_pref / q_location. Wired from apps/functions.
    */
   extractAnswerIntent?: NonNullable<OrchestratorStore["extractAnswerIntent"]>
+  /**
+   * 2026-05-07 Bug D — was declared in OrchestratorStore but not
+   * forwarded through OrchestratorStoreDeps. apps/functions wired the
+   * callback locally, but the deps type didn't accept it → TS rejected
+   * the field at the function-side return site. Add it here so the deps
+   * factory can pass through to createFirestoreOrchestratorStore.
+   * Without this, cvParsed always defaulted to false, onboarding stuck
+   * at q_resume_asked even after parsedCandidateResumes existed.
+   */
+  getUserCvParsed?: NonNullable<OrchestratorStore["getUserCvParsed"]>
 }
 
 export function createFirestoreOrchestratorStore(
