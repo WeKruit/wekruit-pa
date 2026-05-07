@@ -134,7 +134,12 @@ export class ResumeDiscussionPhase extends DiscussionPhase {
   readonly phaseId = "resume" as const
   readonly entryStates = ["q_resume_asked"] as const satisfies readonly OnboardingState[]
   readonly processingState: OnboardingState = "q_resume_processing"
-  readonly completeState: OnboardingState = "q_resume_done"
+  // 2026-05-07 e2e iter35 fix — DiscussionPhase.onWorkComplete must
+  // advance state to "complete" so downstream flow (job rec generation,
+  // agent runtime handover, matching pipeline) kicks in. The intermediate
+  // "q_resume_done" was a dead-end — no caller listened for it. New
+  // state machine: q_resume_asked → q_resume_processing → complete.
+  readonly completeState: OnboardingState = "complete"
 
   constructor(
     private readonly deps: ResumeDiscussionDeps,

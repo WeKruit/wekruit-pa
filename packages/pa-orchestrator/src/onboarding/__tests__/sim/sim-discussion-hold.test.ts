@@ -135,7 +135,7 @@ test("sim/discussion-hold: after holds + completion → final state done, ack ST
 
   assert.deepEqual(
     rec.states,
-    ["q_resume_processing", "q_resume_done"],
+    ["q_resume_processing", "complete"],
     "state: idle → processing → done (only 2 transitions across full flow)"
   )
   assert.equal(rec.kickoffs, 1, "kickoff once across entire flow")

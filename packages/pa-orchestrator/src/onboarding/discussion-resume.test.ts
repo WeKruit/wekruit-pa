@@ -186,7 +186,7 @@ describe("ResumeDiscussionPhase — onWorkComplete (success)", () => {
     assert.match(tracker.sends[0]!.text, /TypeScript \+ 3yr/, "analysis text matches compose output")
     assert.deepEqual(
       tracker.states.map((s) => s.state),
-      ["q_resume_done"],
+      ["complete"],
       "state advanced to complete"
     )
   })
@@ -225,7 +225,7 @@ describe("ResumeDiscussionPhase — onWorkComplete (failure)", () => {
 })
 
 describe("ResumeDiscussionPhase — full lifecycle integration", () => {
-  it("ack → hold → complete sequence (3 turns) — sends 3 distinct messages, ends at q_resume_done", async () => {
+  it("ack → hold → complete sequence (3 turns) — sends 3 distinct messages, ends at complete", async () => {
     const tracker = makeDeps({ composeOutput: "summary text" })
     // RNG=0 → first hold variant, deterministic
     const phase = new ResumeDiscussionPhase(tracker.deps, { rand: () => 0 })
@@ -246,7 +246,7 @@ describe("ResumeDiscussionPhase — full lifecycle integration", () => {
     assert.equal(tracker.sends[2]!.text, "summary text", "msg 3 = analysis")
     assert.deepEqual(
       tracker.states.map((s) => s.state),
-      ["q_resume_processing", "q_resume_done"],
+      ["q_resume_processing", "complete"],
       "state: idle → processing → complete (no extra transitions)"
     )
     assert.equal(tracker.kickoffCalls, 1, "cv-ingest kicked off exactly once")
