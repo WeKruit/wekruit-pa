@@ -652,21 +652,23 @@ function parseYoeAnswer(reply: string): Partial<StatedPreferences> {
 
 function parseVisaAnswer(reply: string): Partial<StatedPreferences> {
   const lower = reply.toLowerCase()
-  // Order matters: most-specific first to avoid GC matching "card" via citizen.
-  if (/(sponsor|sponsorship|h-?1\s*b\s*later|need.*visa)/i.test(reply)) {
-    return { visaStatus: "sponsorship_needed" satisfies VisaStatus }
-  }
-  if (/(h[-\s]?1\s*b|h1)/i.test(reply)) {
-    return { visaStatus: "h1b" }
-  }
-  if (/(opt\b|stem.*opt)/i.test(lower) || /\bOPT\b/.test(reply)) {
-    return { visaStatus: "opt" }
-  }
+  // 2026-05-07 Adam directive: "OPT 就是 need sponsorship" — D4 in
+  // CLAUDE.md says all OPT/CPT/H1B → sponsor_needed (4-enum: citizen /
+  // permanent_resident / sponsor_needed / other). Don't split visas.
+  // Order matters: citizen + GC matched first to avoid "card" → citizen
+  // misfire. Then any non-permanent status → sponsor_needed.
   if (/(green\s*card|绿卡|gc\b|permanent\s*resident)/i.test(reply)) {
     return { visaStatus: "gc" }
   }
   if (/(citizen|公民|美国人|us\s*citizen)/i.test(reply)) {
     return { visaStatus: "citizen" }
+  }
+  if (
+    /(sponsor|sponsorship|need.*visa|h[-\s]?1\s*b|h1\b|opt\b|stem.*opt|cpt\b)/i.test(reply) ||
+    /\bOPT\b/.test(reply) ||
+    /\bCPT\b/.test(reply)
+  ) {
+    return { visaStatus: "sponsorship_needed" satisfies VisaStatus }
   }
   return { visaStatus: "unknown" }
 }

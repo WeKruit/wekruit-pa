@@ -359,10 +359,12 @@ test("v2: parseUserAnswerForStep yoe extracts numeric and fresh-grad signals", (
 
 // --- v2-7: parser parity — q_visa keyword bank match ---
 test("v2: parseUserAnswerForStep visa matches keyword bank", () => {
+  // 2026-05-07 Adam directive: "OPT 就是 need sponsorship" — D4 in CLAUDE.md
+  // says all OPT/CPT/H1B → sponsorship_needed (4-enum strict). Don't split.
   assert.deepEqual(parseUserAnswerForStep("ask_q_visa", "我是公民"), { visaStatus: "citizen" })
   assert.deepEqual(parseUserAnswerForStep("ask_q_visa", "绿卡"), { visaStatus: "gc" })
-  assert.deepEqual(parseUserAnswerForStep("ask_q_visa", "OPT 阶段"), { visaStatus: "opt" })
-  assert.deepEqual(parseUserAnswerForStep("ask_q_visa", "H1B"), { visaStatus: "h1b" })
+  assert.deepEqual(parseUserAnswerForStep("ask_q_visa", "OPT 阶段"), { visaStatus: "sponsorship_needed" })
+  assert.deepEqual(parseUserAnswerForStep("ask_q_visa", "H1B"), { visaStatus: "sponsorship_needed" })
   assert.deepEqual(parseUserAnswerForStep("ask_q_visa", "need sponsorship"), {
     visaStatus: "sponsorship_needed",
   })
@@ -445,17 +447,18 @@ test("iter34 hotfix: userAnsweredStep startup_pref accepts 都行/either/无所�
 
 // --- iter34 hotfix 2026-05-05: visa regex handles "H 1 B" space-separated ---
 test("iter34 hotfix: parseVisaAnswer / userAnsweredStep handle H-1B variants incl space-separated", () => {
-  // Verify all forms Adam asked about + the space edge case
-  const cases: Array<[string, "h1b" | "sponsorship_needed"]> = [
-    ["H-1B", "h1b"],
-    ["H1B", "h1b"],
-    ["h1b", "h1b"],
-    ["H1b", "h1b"],
-    ["我中了 H1B", "h1b"],
-    ["我在h1b", "h1b"],
-    ["i'm on h1b", "h1b"],
-    ["H 1 B", "h1b"],  // edge case from hotfix
-    ["i need h1b sponsor", "sponsorship_needed"],  // sponsorship is more specific
+  // 2026-05-07 Adam directive: H1B / OPT / CPT all map to "sponsorship_needed"
+  // (D4 strict). Updated cases reflect new unified mapping.
+  const cases: Array<[string, "sponsorship_needed"]> = [
+    ["H-1B", "sponsorship_needed"],
+    ["H1B", "sponsorship_needed"],
+    ["h1b", "sponsorship_needed"],
+    ["H1b", "sponsorship_needed"],
+    ["我中了 H1B", "sponsorship_needed"],
+    ["我在h1b", "sponsorship_needed"],
+    ["i'm on h1b", "sponsorship_needed"],
+    ["H 1 B", "sponsorship_needed"],
+    ["i need h1b sponsor", "sponsorship_needed"],
   ]
   for (const [reply, expected] of cases) {
     const out = parseUserAnswerForStep("ask_q_visa", reply)

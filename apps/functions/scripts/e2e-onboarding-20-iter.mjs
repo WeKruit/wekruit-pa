@@ -206,12 +206,28 @@ async function runIteration(db, iterIdx) {
     user = await findUserByPhone(db, phone)
     result.turns.push({ step: "CV-parsed", state: user.data.onboardingState })
 
-    // ── Verify job recs
-    const recs = await db.collection("pa-job-profiles").where("userId", "==", userId).get()
-    result.recsCount = recs.size
+    // ── Verify job recs (proper metric: pa-outbound.body contains "two roles" / "对得上的岗位")
+    const out = await db.collection("pa-outbound").where("userId", "==", userId).get()
+    const recMessages = out.docs.filter((d) => {
+      const body = d.data().body || ""
+      return body.includes("two roles") || body.includes("对得上的岗位")
+    })
+    const ackMessages = out.docs.filter((d) => {
+      const body = d.data().body || ""
+      return body.includes("give me a sec") || body.includes("让我看一下你简历")
+    })
+    result.outboundCount = out.size
+    result.recsCount = recMessages.length
+    result.ackCount = ackMessages.length
     result.finalState = user.data.onboardingState
+    if (recMessages.length > 0) {
+      result.recBody = recMessages[0].data().body.slice(0, 200)
+    }
 
-    result.pass = user.data.onboardingState === "complete" && recs.size > 0
+    result.pass =
+      user.data.onboardingState === "complete" &&
+      recMessages.length >= 1 &&
+      ackMessages.length >= 1
   } catch (err) {
     result.error = err.message
   }
@@ -238,8 +254,9 @@ async function main() {
     const elapsed = ((Date.now() - t0) / 1000).toFixed(1)
     const emoji = r.pass ? "✅" : "❌"
     console.log(
-      ` ${emoji} iter${i.toString().padStart(2)} | ${elapsed}s | finalState=${r.finalState} | recs=${r.recsCount} | turns=${r.turns.length} | error=${r.error || "-"}`
+      ` ${emoji} iter${i.toString().padStart(2)} | ${elapsed}s | state=${r.finalState} | outbound=${r.outboundCount} (ack=${r.ackCount} recs=${r.recsCount}) | turns=${r.turns.length} | error=${r.error || "-"}`
     )
+    if (r.pass && r.recBody) console.log(`     rec preview: ${r.recBody.replace(/\n/g, " | ").slice(0, 160)}`)
     results.push({ ...r, elapsedSec: elapsed })
   }
 

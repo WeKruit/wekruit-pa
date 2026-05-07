@@ -365,6 +365,42 @@ export function applyV16HardFilters(
     targetJobTypes.map((t) => (typeof t === "string" ? t.trim().toLowerCase() : ""))
   )
 
+  // 2026-05-07 Adam directive: country must be hard filter when user
+  // selected US-specific OR has US-only work auth. He saw rec for
+  // "Product Engineer @ speakeasy" with locations Sofia, Bulgaria — Adam:
+  // "如果我要在 north america (USA), 就别给我推荐别的国家". Surgical fix:
+  // when sponsorshipNeeded=true (OPT/CPT/H1B all need US-side employer),
+  // OR targetLocations contains US-specific tokens, treat as US-only.
+  // Drop jobs whose locationBuckets contain ONLY non-US country tokens
+  // (no US bucket present). Job with both "remote_anywhere" AND
+  // "san_francisco_bay_area" → keep. Job with only "sofia,bulgaria" or
+  // "london,uk" → drop.
+  const NON_US_COUNTRY_HINTS = [
+    "bulgaria", "sofia", "london", "uk", "united_kingdom", "england", "ireland", "dublin",
+    "germany", "berlin", "munich", "france", "paris", "spain", "madrid",
+    "india", "bangalore", "hyderabad", "mumbai", "delhi", "pune",
+    "china", "beijing", "shanghai", "singapore", "japan", "tokyo", "korea", "seoul",
+    "australia", "sydney", "melbourne", "brazil", "mexico", "argentina",
+    "canada", "toronto", "vancouver", "montreal", // intentionally treat CA as non-US for sponsor_needed gate
+    "ukraine", "poland", "warsaw", "netherlands", "amsterdam", "hong_kong",
+  ]
+  const US_HINTS = [
+    "united_states", "us", "usa", "remote_united_states", "remote_us",
+    "san_francisco_bay_area", "new_york_metro", "new_york_city_metro",
+    "seattle_metro", "los_angeles_metro", "boston_metro", "chicago_metro",
+    "austin_metro", "denver_metro", "remote_anywhere", // anywhere keeps US too
+  ]
+  const userWantsUsOnly =
+    sponsorshipNeeded || targetLocations.some((l) => {
+      const k = l.toLowerCase()
+      return k.includes("united_states") || k === "us" || k === "usa" ||
+        k.includes("san_francisco") || k.includes("new_york") ||
+        k.includes("seattle") || k.includes("los_angeles") ||
+        k.includes("boston") || k.includes("chicago") ||
+        k.includes("austin") || k.includes("denver") ||
+        k.includes("remote_us")
+    })
+
   const kept: MatchingJob[] = []
   for (const job of jobs) {
     // 1. visa intersect — only drop when user explicitly needs sponsorship
@@ -372,6 +408,27 @@ export function applyV16HardFilters(
     if (sponsorshipNeeded && job.sponsorship === false) {
       counters.visa++
       continue
+    }
+
+    // 1b. country hard filter — drop jobs that are clearly non-US-only
+    // when user wants US (sponsorshipNeeded OR targetLocations US-specific).
+    if (userWantsUsOnly) {
+      const buckets = Array.isArray(job.locationBuckets)
+        ? job.locationBuckets.map((b) => String(b).toLowerCase())
+        : []
+      const rawLoc = (job.locationRaw ?? "").toLowerCase()
+      const hasUsHint =
+        buckets.some((b) => US_HINTS.some((u) => b.includes(u))) ||
+        US_HINTS.some((u) => rawLoc.includes(u.replace(/_/g, " ")))
+      const hasNonUsHint =
+        buckets.some((b) => NON_US_COUNTRY_HINTS.some((c) => b.includes(c))) ||
+        NON_US_COUNTRY_HINTS.some((c) => rawLoc.includes(c.replace(/_/g, " ")))
+      // Drop only if non-US hint present AND no US hint. Jobs with both
+      // (e.g. "remote, US + UK") are kept since they're US-eligible.
+      if (hasNonUsHint && !hasUsHint) {
+        counters.location++
+        continue
+      }
     }
 
     // 2. location intersect (anywhere bypass).
@@ -929,8 +986,20 @@ export async function queryMatchingJobsV16(
     return bf - af
   })
 
-  // 5. Compose reasons for top-N.
-  const top = scored.slice(0, limit).map(({ job, breakdown, matched }) => {
+  // 5. Compose reasons for top-N. Dedup by (company,role-title) so the
+  // same role posted twice (corpus duplicate) doesn't fill both rec slots
+  // — Adam reported 2026-05-07 "Product Engineer - Gram @ speakeasy"
+  // appearing twice in a single rec push.
+  const seenDedupKeys = new Set<string>()
+  const dedupedTop: typeof scored = []
+  for (const s of scored) {
+    const key = `${(s.job.companyName ?? "").toLowerCase()}|${(s.job.jobTitle ?? "").toLowerCase().trim()}`
+    if (seenDedupKeys.has(key)) continue
+    seenDedupKeys.add(key)
+    dedupedTop.push(s)
+    if (dedupedTop.length >= limit) break
+  }
+  const top = dedupedTop.map(({ job, breakdown, matched }) => {
     const reason = composeReason(userTags, job, matched, breakdown)
     return {
       ...job,
