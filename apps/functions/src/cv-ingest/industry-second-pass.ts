@@ -205,18 +205,18 @@ async function callAnthropic(args: IndustrySecondPassArgs): Promise<IndustrySect
 }
 
 async function callOpenAiFallback(args: IndustrySecondPassArgs): Promise<IndustrySector[] | null> {
-  const apiKey = args.openAiApiKey ?? process.env.OPENAI_API_KEY?.trim() ?? process.env.PA_OPENAI_AGENT_API_KEY?.trim()
+  // 2026-05-07 Adam directive — industry second-pass is real OpenAI.
+  // Drop all OPENAI_API_KEY / OPENAI_BASE_URL fallthroughs (poisoned).
+  const { getOpenAIConfig } = await import("../lib/llm-providers.js")
+  const cfg = getOpenAIConfig()
+  const apiKey = args.openAiApiKey ?? cfg.apiKey
   if (!apiKey || apiKey.length === 0) {
     args.log("pa.cv_ingest.industry_second_pass.openai_skipped", {
       reason: "no_openai_key",
     })
     return null
   }
-  const baseURL =
-    args.openAiBaseURL ??
-    process.env.PA_OPENAI_AGENT_BASE_URL?.trim() ??
-    process.env.OPENAI_BASE_URL?.trim() ??
-    "https://api.openai.com/v1"
+  const baseURL = args.openAiBaseURL ?? cfg.baseURL
 
   const factory = args.openAiClientFactory
   let client: Awaited<ReturnType<NonNullable<IndustrySecondPassArgs["openAiClientFactory"]>>>

@@ -162,17 +162,18 @@ export type ComputeCvEmbeddingDeps = {
  * — caller treats null as "skip embedding, log warn, continue".
  */
 async function defaultEmbeddingClient(): Promise<EmbeddingClient | null> {
-  const apiKey =
-    process.env.PA_OPENAI_AGENT_API_KEY?.trim() ||
-    process.env.OPENAI_API_KEY?.trim() ||
-    ""
-  if (!apiKey) return null
-  const baseURL =
-    process.env.PA_OPENAI_AGENT_BASE_URL?.trim() || undefined
+  // 2026-05-07 Adam directive — embedding is real OpenAI
+  // (text-embedding-3-small). MUST use PA_OPENAI_AGENT_API_KEY +
+  // explicit https://api.openai.com/v1. NEVER fall through to
+  // process.env.OPENAI_API_KEY (poisoned with SiliconFlow key) or read
+  // process.env.OPENAI_BASE_URL (poisoned with siliconflow.cn).
+  const { getOpenAIConfig } = await import("./llm-providers.js")
+  const cfg = getOpenAIConfig()
+  if (!cfg.apiKey) return null
   const { default: OpenAI } = (await import("openai")) as unknown as {
     default: new (init: { apiKey: string; baseURL?: string }) => EmbeddingClient
   }
-  return new OpenAI({ apiKey, baseURL })
+  return new OpenAI({ apiKey: cfg.apiKey, baseURL: cfg.baseURL })
 }
 
 /**

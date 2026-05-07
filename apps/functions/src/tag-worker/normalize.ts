@@ -526,11 +526,18 @@ export const paCanonicalTagWorkerRetry = onSchedule(
  * Returns null on any error so Layer 3 gracefully skips.
  */
 async function bgeM3Embed(text: string): Promise<number[] | null> {
-  const apiKey = process.env.SILICONFLOW_API_KEY ?? process.env.OPENAI_API_KEY ?? ""
-  if (!apiKey) return null
+  // 2026-05-07 Adam directive — BGE-M3 is SiliconFlow free tier.
+  // Use SILICONFLOW_API_KEY + explicit baseURL. NEVER read OPENAI_API_KEY
+  // (poisoned with SF key in some prod paths) or OPENAI_BASE_URL
+  // (poisoned with siliconflow.cn — happens to be right host but wrong
+  // semantics; we hardcode the correct one explicitly).
+  const { getSiliconFlowConfig } = await import("../lib/llm-providers.js")
+  const cfg = getSiliconFlowConfig()
+  if (!cfg.apiKey) return null
+  const apiKey = cfg.apiKey
 
   try {
-    const resp = await fetch(`${process.env.OPENAI_BASE_URL ?? "https://api.siliconflow.cn/v1"}/embeddings`, {
+    const resp = await fetch(`${cfg.baseURL}/embeddings`, {
       method: "POST",
       headers: {
         "content-type": "application/json",

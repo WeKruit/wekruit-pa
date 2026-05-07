@@ -179,7 +179,12 @@ async function writeRateLimitAlert(rawText: string): Promise<void> {
  * so the caller can mark the event "pending-review" without crashing.
  */
 export async function llmNormalize(input: LlmNormalizeInput): Promise<LlmNormalizeResult> {
-  const apiKey = process.env.SILICONFLOW_API_KEY ?? process.env.OPENAI_API_KEY ?? ""
+  // 2026-05-07 Adam directive — Qwen-7B normalize is SiliconFlow only.
+  // No OPENAI_API_KEY fallback (which is also SF in prod, but the env-
+  // aliasing scheme is the bug we're cleaning up).
+  const { getSiliconFlowConfig } = await import("../lib/llm-providers.js")
+  const cfg = getSiliconFlowConfig()
+  const apiKey = cfg.apiKey
   if (!apiKey) {
     logger.warn("[tag-worker][llm-normalize] no SILICONFLOW_API_KEY, skipping LLM")
     return { action: "reject", confidence: 0 }

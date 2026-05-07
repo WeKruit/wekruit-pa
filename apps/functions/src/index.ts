@@ -682,19 +682,22 @@ export const onPaInbound = onDocumentCreated(
     } catch {
       // secret unbound — leave existing env (may be empty, that's fine)
     }
-    if (!process.env.OPENAI_API_KEY) {
-      // agent-runtime's OpenAI-compatible client points at SiliconFlow.
-      process.env.OPENAI_API_KEY = SILICONFLOW_API_KEY.value()
-    }
+    // 2026-05-07 Adam directive — STOP poisoning OPENAI_API_KEY and
+    // OPENAI_BASE_URL with SiliconFlow values. Real OpenAI callers
+    // need real OpenAI endpoint; SiliconFlow callers need SF endpoint.
+    // mem0/agent-runtime explicitly points at SF via dedicated MEM0_*
+    // env vars — they don't depend on OPENAI_BASE_URL aliasing anymore.
     const siliconflowBase = "https://api.siliconflow.cn/v1"
     const trimOr = (v: string | undefined, fallback: string) => {
       const t = v?.trim()
       return t && t.length > 0 ? t.replace(/\/+$/, "") : fallback
     }
-    process.env.OPENAI_BASE_URL = trimOr(process.env.OPENAI_BASE_URL, siliconflowBase)
-    // mem0ai embedder merge does not fall back to a remote baseURL when unset — empty strings route to OpenAI.com with bge-m3 → 400 invalid model.
-    process.env.MEM0_LLM_BASE_URL = trimOr(process.env.MEM0_LLM_BASE_URL, process.env.OPENAI_BASE_URL)
+    // mem0 LLM (Qwen-72B) + embedder (BGE-M3) — explicit SF binding.
+    process.env.MEM0_LLM_API_KEY = trimOr(process.env.MEM0_LLM_API_KEY, SILICONFLOW_API_KEY.value())
+    process.env.MEM0_LLM_BASE_URL = trimOr(process.env.MEM0_LLM_BASE_URL, siliconflowBase)
     process.env.MEM0_LLM_MODEL = trimOr(process.env.MEM0_LLM_MODEL, "Qwen/Qwen2.5-72B-Instruct")
+    process.env.MEM0_EMBED_API_KEY = trimOr(process.env.MEM0_EMBED_API_KEY, SILICONFLOW_API_KEY.value())
+    process.env.MEM0_EMBED_BASE_URL = trimOr(process.env.MEM0_EMBED_BASE_URL, siliconflowBase)
     process.env.MEM0_EMBED_MODEL = trimOr(process.env.MEM0_EMBED_MODEL, "BAAI/bge-m3")
     process.env.MEM0_EMBED_DIMS = trimOr(process.env.MEM0_EMBED_DIMS, "1024")
 
@@ -1255,7 +1258,7 @@ export const paMessageCoalescer = onRequest(
     process.env.SILICONFLOW_API_KEY = SILICONFLOW_API_KEY.value()
     process.env.QDRANT_URL = QDRANT_URL.value()
     process.env.QDRANT_API_KEY = QDRANT_API_KEY.value()
-    if (!process.env.OPENAI_API_KEY) process.env.OPENAI_API_KEY = SILICONFLOW_API_KEY.value()
+    // 2026-05-07 Adam directive — no more OPENAI_API_KEY = SF aliasing.
     try {
       const fromNumber = SENDBLUE_FROM_NUMBER.value().trim()
       if (fromNumber) process.env.SENDBLUE_FROM_NUMBER = fromNumber
@@ -1330,7 +1333,7 @@ export const paCoalesceBufferSweep = onSchedule(
     process.env.SILICONFLOW_API_KEY = SILICONFLOW_API_KEY.value()
     process.env.QDRANT_URL = QDRANT_URL.value()
     process.env.QDRANT_API_KEY = QDRANT_API_KEY.value()
-    if (!process.env.OPENAI_API_KEY) process.env.OPENAI_API_KEY = SILICONFLOW_API_KEY.value()
+    // 2026-05-07 Adam directive — no more OPENAI_API_KEY = SF aliasing.
     try {
       const fromNumber = SENDBLUE_FROM_NUMBER.value().trim()
       if (fromNumber) process.env.SENDBLUE_FROM_NUMBER = fromNumber

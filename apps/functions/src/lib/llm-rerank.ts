@@ -161,12 +161,17 @@ function buildSystemPrompt(): string {
  * caller emits a warn and returns an empty ranked array.
  */
 async function defaultRerankClient(): Promise<RerankChatClient | null> {
-  const apiKey = process.env.SILICONFLOW_API_KEY?.trim() || ""
-  if (!apiKey) return null
+  // 2026-05-07 Adam directive — Qwen-7B rerank is SiliconFlow.
+  // Use SILICONFLOW_API_KEY + explicit baseURL. Centralized via
+  // llm-providers helper to keep "two providers, two configs"
+  // discipline in one source of truth.
+  const { getSiliconFlowConfig } = await import("./llm-providers.js")
+  const cfg = getSiliconFlowConfig()
+  if (!cfg.apiKey) return null
   const { default: OpenAI } = (await import("openai")) as unknown as {
     default: new (init: { apiKey: string; baseURL?: string }) => RerankChatClient
   }
-  return new OpenAI({ apiKey, baseURL: "https://api.siliconflow.cn/v1" })
+  return new OpenAI({ apiKey: cfg.apiKey, baseURL: cfg.baseURL })
 }
 
 /**

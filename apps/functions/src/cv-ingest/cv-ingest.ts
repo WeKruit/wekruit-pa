@@ -474,11 +474,13 @@ async function defaultLlmExtract(text: string): Promise<{
   parsed: StructuredCv
   usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number }
 }> {
-  const apiKey =
-    process.env.PA_OPENAI_AGENT_API_KEY?.trim() || process.env.OPENAI_API_KEY?.trim() || ""
-  if (!apiKey) throw new Error("missing_api_key")
-  const baseURL =
-    process.env.PA_OPENAI_AGENT_BASE_URL?.trim() || "https://api.openai.com/v1"
+  // 2026-05-07 Adam directive — CV parse is real OpenAI. Drop
+  // poisoned OPENAI_API_KEY fallback (which is SF key in prod).
+  const { getOpenAIConfig } = await import("../lib/llm-providers.js")
+  const cfg = getOpenAIConfig()
+  if (!cfg.apiKey) throw new Error("missing_api_key")
+  const apiKey = cfg.apiKey
+  const baseURL = process.env.PA_OPENAI_AGENT_BASE_URL?.trim() || cfg.baseURL
   // Lazy import keeps module load cheap (cv-ingest is rarely-hit path).
   const { default: OpenAI } = (await import("openai")) as unknown as {
     default: new (init: { apiKey: string; baseURL?: string }) => {
@@ -748,11 +750,13 @@ const FOLLOWUP_SYSTEM_PROMPT =
   "- Never break character. Never include meta commentary about the CV parsing."
 
 async function defaultLlmFollowup(parsed: StructuredCv): Promise<string> {
-  const apiKey =
-    process.env.PA_OPENAI_AGENT_API_KEY?.trim() || process.env.OPENAI_API_KEY?.trim() || ""
-  if (!apiKey) throw new Error("missing_api_key")
-  const baseURL =
-    process.env.PA_OPENAI_AGENT_BASE_URL?.trim() || "https://api.openai.com/v1"
+  // 2026-05-07 Adam directive — CV parse is real OpenAI. Drop
+  // poisoned OPENAI_API_KEY fallback (which is SF key in prod).
+  const { getOpenAIConfig } = await import("../lib/llm-providers.js")
+  const cfg = getOpenAIConfig()
+  if (!cfg.apiKey) throw new Error("missing_api_key")
+  const apiKey = cfg.apiKey
+  const baseURL = process.env.PA_OPENAI_AGENT_BASE_URL?.trim() || cfg.baseURL
   const { default: OpenAI } = (await import("openai")) as unknown as {
     default: new (init: { apiKey: string; baseURL?: string }) => {
       responses: {

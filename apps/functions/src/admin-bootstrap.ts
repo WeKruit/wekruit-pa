@@ -142,16 +142,15 @@ async function defaultPersonaLLM(input: {
   history: { role: "user" | "assistant"; content: string }[]
   signal: AbortSignal
 }): Promise<string> {
-  // Use SiliconFlow (matches Claire's provider) via raw fetch — the openai
-  // v4 SDK returns empty 400 bodies when SF rejects a payload, masking the
-  // real cause. Raw fetch surfaces the JSON error verbatim.
-  const sfKey = process.env.SILICONFLOW_API_KEY?.trim() || ""
-  const oaKey = process.env.PA_OPENAI_AGENT_API_KEY?.trim() || ""
-  const apiKey = sfKey || oaKey || process.env.OPENAI_API_KEY?.trim() || ""
+  // 2026-05-07 Adam directive — explicit provider, no env aliasing.
+  // Persona LLM (matches Claire's: SiliconFlow Qwen) is preferred.
+  // Falls through to real OpenAI if SF key absent.
+  const { getSiliconFlowConfig, getOpenAIConfig } = await import("./lib/llm-providers.js")
+  const sf = getSiliconFlowConfig()
+  const oa = getOpenAIConfig()
+  const apiKey = sf.apiKey || oa.apiKey || ""
   if (!apiKey) throw new Error("no_persona_llm_api_key")
-  const baseURL = sfKey
-    ? "https://api.siliconflow.cn/v1"
-    : "https://api.openai.com/v1"
+  const baseURL = sf.apiKey ? sf.baseURL : oa.baseURL
   // Persona-LLM speaks AS the user. From its POV: persona's own turns are
   // "assistant" (its outgoing); Claire's replies are "user" (incoming).
   const messages: { role: "system" | "user" | "assistant"; content: string }[] = [
@@ -1668,10 +1667,8 @@ export const paAdminBootstrap = onRequest(
           const k = PA_OPENAI_AGENT_API_KEY.value().trim()
           if (k) process.env.PA_OPENAI_AGENT_API_KEY = k
         } catch { /* optional */ }
-        if (!process.env.OPENAI_API_KEY) {
-          try { process.env.OPENAI_API_KEY = SILICONFLOW_API_KEY.value() } catch { /* */ }
-        }
-        if (!process.env.OPENAI_BASE_URL) process.env.OPENAI_BASE_URL = "https://api.siliconflow.cn/v1"
+        // 2026-05-07 Adam directive — no more OPENAI_API_KEY/_BASE_URL = SF aliasing.
+        // mem0/agent-runtime explicitly bound via MEM0_* env in onPaInbound path.
 
         const fixtures = Array.isArray(body.fixtures) ? (body.fixtures.filter((s) => typeof s === "string") as string[]) : []
         const limit = typeof body.limit === "number" ? body.limit : undefined
@@ -1699,10 +1696,7 @@ export const paAdminBootstrap = onRequest(
           const k = PA_OPENAI_AGENT_API_KEY.value().trim()
           if (k) process.env.PA_OPENAI_AGENT_API_KEY = k
         } catch { /* optional */ }
-        if (!process.env.OPENAI_API_KEY) {
-          try { process.env.OPENAI_API_KEY = SILICONFLOW_API_KEY.value() } catch { /* */ }
-        }
-        if (!process.env.OPENAI_BASE_URL) process.env.OPENAI_BASE_URL = "https://api.siliconflow.cn/v1"
+        // 2026-05-07 Adam directive — no more OPENAI_API_KEY/_BASE_URL = SF aliasing.
 
         const persona = typeof body.persona === "string" ? body.persona : ""
         const turns = typeof body.turns === "number" ? body.turns : undefined

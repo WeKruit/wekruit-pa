@@ -72,16 +72,17 @@ const ALLOWED_INDUSTRIES = ["tech", "fintech", "healthtech", "consumer", "b2b", 
  */
 async function defaultEmbedJd(text: string): Promise<number[] | null> {
   try {
-    const apiKey =
-      process.env.PA_OPENAI_AGENT_API_KEY?.trim() ||
-      process.env.OPENAI_API_KEY?.trim() ||
-      ""
-    if (!apiKey) {
+    // 2026-05-07 Adam directive — JD embed is real OpenAI. Drop poisoned
+    // OPENAI_API_KEY fallback. Pass explicit baseURL so SDK doesn't read
+    // OPENAI_BASE_URL env (legacy SF alias).
+    const { getOpenAIConfig } = await import("./lib/llm-providers.js")
+    const cfg = getOpenAIConfig()
+    if (!cfg.apiKey) {
       logger.warn("[paReverseMatch] embed_no_api_key")
       return null
     }
     const { default: OpenAI } = await import("openai")
-    const client = new OpenAI({ apiKey })
+    const client = new OpenAI({ apiKey: cfg.apiKey, baseURL: cfg.baseURL })
     const resp = await client.embeddings.create({
       model: "text-embedding-3-small",
       input: text.slice(0, 8000),
