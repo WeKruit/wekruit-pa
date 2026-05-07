@@ -601,13 +601,19 @@ test("queryMatchingJobsV16: with role-fn filter returns matching jobs", async ()
         targetRoleFunction: ["software_engineering"],
       },
     })
+  // 2026-05-07 — differentiate (companyName, jobTitle) so Bug E dedup
+  // (commit e266f92) doesn't collapse two distinct SWE jobs.
   await seedJob(mfs, "swe1", {
     roleFunction: ["software_engineering"],
     requiredSkills: ["python", "typescript"],
+    companyName: "AcmeOne",
+    jobTitle: "SWE-1",
   })
   await seedJob(mfs, "swe2", {
     roleFunction: ["software_engineering"],
     requiredSkills: ["python"],
+    companyName: "AcmeTwo",
+    jobTitle: "SWE-2",
   })
   await seedJob(mfs, "sales1", {
     roleFunction: ["sales"],
@@ -649,13 +655,19 @@ test("queryMatchingJobsV16: weightOverrides propagate to scoreV16Job (Phase 70)"
         targetRoleFunction: ["software_engineering"],
       },
     })
+  // 2026-05-07 — differentiate (companyName, jobTitle) so Bug E dedup
+  // (commit e266f92) doesn't collapse two distinct SWE jobs.
   await seedJob(mfs, "swe1", {
     roleFunction: ["software_engineering"],
     requiredSkills: ["python", "typescript"],
+    companyName: "AcmeOne",
+    jobTitle: "SWE-1",
   })
   await seedJob(mfs, "swe2", {
     roleFunction: ["software_engineering"],
     requiredSkills: ["python"],
+    companyName: "AcmeTwo",
+    jobTitle: "SWE-2",
   })
 
   // With canonical weights swe1 has higher skillJaccard contribution.
