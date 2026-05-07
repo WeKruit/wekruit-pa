@@ -328,6 +328,26 @@ async function resetUserOnboardingState(
         resumeParseCount: FieldValue.delete(),
         resumeParseLastAt: FieldValue.delete(),
         preferredLang: FieldValue.delete(),
+        // 2026-05-07 — Adam reset live test surfaced 4 more leakers. Must clear:
+        //   - onboardedAt (timestamp — leaving it makes orchestrator skip
+        //     onboarding scenes thinking user already done)
+        //   - onboardingStatus ("active"|"completed" → leaves user stuck in
+        //     post-onboarding flow even after onboardingState="pending")
+        //   - tosAcceptance (bot skips terms-agreement step → user reset
+        //     wasn't truly fresh)
+        //   - voiceStylePreference (emoji_tolerance / zh_en_mix / register
+        //     persisted from prior session, biases new conversation tone)
+        //   - lastAssistantTurnAt + coalesceLastFiredAt + coalesceTurnSeq
+        //     (turn-counters, otherwise post-reset turn 1 looks like turn 85)
+        onboardedAt: FieldValue.delete(),
+        onboardingStatus: FieldValue.delete(),
+        tosAcceptance: FieldValue.delete(),
+        voiceStylePreference: FieldValue.delete(),
+        lastAssistantTurnAt: FieldValue.delete(),
+        coalesceLastFiredAt: FieldValue.delete(),
+        coalesceTurnSeq: FieldValue.delete(),
+        emailVerification: FieldValue.delete(),
+        "emailVerification.attempts": FieldValue.delete(),
         updatedAt: new Date().toISOString(),
       },
       { merge: true }
