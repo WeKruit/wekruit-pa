@@ -163,6 +163,8 @@ export const UserTagsSchema = z.object({
   prefersStartup: z.enum(["startup", "bigtech", "either"]).optional(),
   /** Free-text location hints from chat. */
   targetLocations: z.array(z.string()).optional(),
+  /** Country/region targets from chat, e.g. ["usa"], ["china"], ["anywhere"]. */
+  targetCountry: z.array(z.string()).optional(),
   preferredLang: z.enum(["zh", "en"]).optional(),
 
   // ---- bookkeeping -----------------------------------------------------
@@ -777,6 +779,9 @@ export function mergeUserTags(input: UserTagsInput): UserTags {
   const targetLocations = Array.isArray(statedPreferences?.targetLocations)
     ? [...statedPreferences.targetLocations]
     : undefined
+  const targetCountry = Array.isArray(statedPreferences?.targetCountry)
+    ? [...statedPreferences.targetCountry]
+    : undefined
   const preferredLang = mapPreferredLang(input.preferredLang, statedPreferences?.preferredLang)
 
   // ---- Phase 53 — canonical Phase 52 fields pass-through --------------
@@ -824,6 +829,7 @@ export function mergeUserTags(input: UserTagsInput): UserTags {
   if (visaStatus) out.visaStatus = visaStatus
   if (prefersStartup) out.prefersStartup = prefersStartup
   if (targetLocations) out.targetLocations = targetLocations
+  if (targetCountry) out.targetCountry = targetCountry
   if (preferredLang) out.preferredLang = preferredLang
   if (industrySector) out.industrySector = industrySector
   if (relevantIndustry) out.relevantIndustry = relevantIndustry

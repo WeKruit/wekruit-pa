@@ -66,6 +66,7 @@ export const OnboardingStateSchema = z.enum([
   "q_yoe_asked",
   "q_visa_asked",
   "q_startup_pref_asked",
+  "q_country_asked",
   "q_location_asked",
   // iter30 closure (Adam directive 2026-05-03 "主动问简历"): proactive resume
   // request as the final probe step before transitioning to complete.
@@ -123,6 +124,8 @@ export const StatedPreferencesSchema = z.object({
   prefersStartup: z.boolean().nullable().optional(),
   /** Free-text location hints, e.g. ["SF Bay Area", "remote"]. */
   targetLocations: z.array(z.string()).optional(),
+  /** Country/region targets captured before city, e.g. ["usa"], ["china"], ["anywhere"]. */
+  targetCountry: z.array(z.string()).optional(),
   /** true = leans research-oriented; null = no signal. */
   researchOriented: z.boolean().nullable().optional(),
   /** Annual USD floor; null = no signal. */

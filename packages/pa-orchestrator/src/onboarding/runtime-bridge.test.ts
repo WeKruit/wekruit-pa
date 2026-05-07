@@ -202,6 +202,36 @@ describe("runOnboardingPipelineTurn — q_email verification bridge", () => {
   })
 })
 
+describe("runOnboardingPipelineTurn — [cv-parsed] synthetic", () => {
+  it("returns handled:false so dispatcher runs deterministic resume completion", async () => {
+    let logged = false
+    const result = await runOnboardingPipelineTurn({
+      event: {
+        id: "evt_cv",
+        userId: "u1",
+        sessionId: "s1",
+        from: "+10000000001",
+        body: "[cv-parsed]",
+        createdAt: "2026-05-07T20:00:00.000Z",
+        rawMeta: { triggerResumeId: "resume-doc-1" },
+      } as never,
+      turnId: "turn_cv",
+      agent: {} as never,
+      suppressOutbound: false,
+      deps: {
+        log: (e) => {
+          if (e === "pa.onboarding.pipeline.defer_cv_parsed_to_deterministic") logged = true
+        },
+        nowIso: () => "2026-05-07T20:00:01.000Z",
+        appendMessage: async () => {},
+        enqueueOutbound: async () => {},
+      },
+    })
+    assert.equal(result.handled, false)
+    assert.equal(logged, true)
+  })
+})
+
 describe("runResumeAcceptedFlow — happy path (CV available immediately)", () => {
   it("emits ack → emits tag-summary → calls applyOnboarding('complete')", async () => {
     const { db } = makeFakeDb([{ docs: [FULL_CV] }])

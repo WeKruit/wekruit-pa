@@ -63,6 +63,7 @@ export type OnboardingStep =
   | "ask_q_yoe"
   | "ask_q_visa"
   | "ask_q_startup_pref"
+  | "ask_q_country"
   | "ask_q_location"
   | "ask_q_resume" // iter30 closure — proactive resume request after location.
   | "ask_q_email" // iter30 V6 — optional contact email after resume.
@@ -215,6 +216,7 @@ const Q_PROMPTS: Record<
   | "ask_q_yoe"
   | "ask_q_visa"
   | "ask_q_startup_pref"
+  | "ask_q_country"
   | "ask_q_location"
   | "ask_q_resume"
   | "ask_q_email"
@@ -244,6 +246,10 @@ const Q_PROMPTS: Record<
   ask_q_startup_pref: {
     zh: "你更想去 startup 那种小而拼的, 还是大厂稳一点?",
     en: "more into startup hustle vibe or stable big-co?",
+  },
+  ask_q_country: {
+    zh: "想找哪个国家/地区的工作? 美国 / 中国 / 加拿大 / 欧洲 / 都行 — 多选也行",
+    en: "which country/region you targeting? USA / China / Canada / Europe / anywhere — multi is fine",
   },
   ask_q_location: {
     zh: "想找哪边的工作? 湾区、纽约、还是看远程?",
@@ -526,6 +532,7 @@ const ONBOARDING_NEXT_STATE: Partial<Record<OnboardingStep, OnboardingState>> = 
   ask_q_yoe: "q_yoe_asked",
   ask_q_visa: "q_visa_asked",
   ask_q_startup_pref: "q_startup_pref_asked",
+  ask_q_country: "q_country_asked",
   ask_q_location: "q_location_asked",
   ask_q_resume: "q_resume_asked",
   ask_q_email: "q_email_asked",
@@ -574,6 +581,7 @@ const STATE_ORDER: Array<OnboardingState | undefined> = [
   "q_yoe_asked",
   "q_visa_asked",
   "q_startup_pref_asked",
+  "q_country_asked",
   "q_location_asked",
   "q_resume_asked",
   // iter35 G2 — DiscussionPhase: ack → processing → done → cv_analyzing
@@ -890,6 +898,20 @@ function projectPrefPatchToPhase52Tags(
       for (const tok of locs) if (!mapped.includes(tok)) mapped.push(tok)
     }
     if (mapped.length > 0) out.targetLocations = mapped
+  }
+
+  // targetCountry (q_country canonical output) → tags.targetCountry.
+  if (Array.isArray(prefPatch.targetCountry) && prefPatch.targetCountry.length > 0) {
+    const seen = new Set<string>()
+    const countries: string[] = []
+    for (const c of prefPatch.targetCountry) {
+      if (typeof c !== "string") continue
+      const norm = c.trim().toLowerCase()
+      if (!norm || seen.has(norm)) continue
+      seen.add(norm)
+      countries.push(norm)
+    }
+    if (countries.length > 0) out.targetCountry = countries
   }
 
   // prefersStartup boolean → prefersStartup boolean. Phase 52 schema lives

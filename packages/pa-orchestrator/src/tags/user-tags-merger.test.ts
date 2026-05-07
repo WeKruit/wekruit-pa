@@ -362,6 +362,11 @@ test("mergeUserTags: targetLocations pass-through", () => {
   assert.deepEqual(out.targetLocations, ["nyc", "sf"])
 })
 
+test("mergeUserTags: targetCountry pass-through", () => {
+  const out = mergeUserTags({ statedPreferences: { targetCountry: ["usa"] } })
+  assert.deepEqual(out.targetCountry, ["usa"])
+})
+
 // ---------------------------------------------------------------------------
 // bookkeeping
 // ---------------------------------------------------------------------------

@@ -148,6 +148,16 @@ export class ResumeDiscussionPhase extends DiscussionPhase {
     super()
   }
 
+  /**
+   * When `[cv-parsed]` arrives with no prior PDF in this session (e2e synthetic,
+   * or worker callback before artifact ack was written), the user never saw
+   * `onArtifactReceived`'s ack. Emit the same line once before `onWorkComplete`
+   * analysis so outbound ordering matches production.
+   */
+  async sendAckBeforeSyntheticComplete(input: PhaseInput): Promise<void> {
+    await this.sendImmediateAck(input)
+  }
+
   protected async sendImmediateAck(input: PhaseInput): Promise<void> {
     const text =
       input.lang === "zh"

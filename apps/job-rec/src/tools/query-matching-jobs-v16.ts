@@ -354,6 +354,7 @@ export function applyV16HardFilters(
     targetJobTypes?: string[]
     targetRoleFunction?: string[]
     relevantTags?: string[]
+    targetCountry?: string[]
     minSalary?: number
   }
   const careerStage = tagsExt.careerStage
@@ -391,7 +392,13 @@ export function applyV16HardFilters(
     "austin_metro", "denver_metro", "remote_anywhere", // anywhere keeps US too
   ]
   const userWantsUsOnly =
-    sponsorshipNeeded || targetLocations.some((l) => {
+    sponsorshipNeeded ||
+    (Array.isArray(tagsExt.targetCountry) &&
+      tagsExt.targetCountry.some((c) => {
+        const k = typeof c === "string" ? c.trim().toLowerCase() : ""
+        return k === "usa" || k === "us" || k === "united_states"
+      })) ||
+    targetLocations.some((l) => {
       const k = l.toLowerCase()
       return k.includes("united_states") || k === "us" || k === "usa" ||
         k.includes("san_francisco") || k.includes("new_york") ||

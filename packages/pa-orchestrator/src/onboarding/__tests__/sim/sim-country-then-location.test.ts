@@ -35,7 +35,7 @@ import type { Question } from "../../question.js"
 const CHINA_CITY_TOKENS = ["shanghai", "上海", "beijing", "北京", "shenzhen", "深圳", "hangzhou", "杭州", "guangzhou", "广州"]
 
 test("sim/country-then-location: makeLocationQuestion('usa') prompt has NO China cities", async () => {
-  const q = makeLocationQuestion("usa")
+  const q = makeLocationQuestion(["usa"])
 
   const promptZh = q.prompt.zh.toLowerCase()
   const promptEn = q.prompt.en.toLowerCase()
@@ -50,7 +50,7 @@ test("sim/country-then-location: makeLocationQuestion('usa') prompt has NO China
 })
 
 test("sim/country-then-location: makeLocationQuestion('usa') re-asks have NO China cities", async () => {
-  const q = makeLocationQuestion("usa")
+  const q = makeLocationQuestion(["usa"])
   // The rephraser is HybridRephraser with US-scoped variants. Drive it
   // through 3 attempts to inspect the actual emitted strings.
   const reasks: string[] = []
@@ -77,7 +77,7 @@ test("sim/country-then-location: makeLocationQuestion('usa') re-asks have NO Chi
 })
 
 test("sim/country-then-location: makeLocationQuestion('china') DOES mention Chinese cities (positive control)", async () => {
-  const q = makeLocationQuestion("china")
+  const q = makeLocationQuestion(["china"])
   const promptZh = q.prompt.zh
   const promptEn = q.prompt.en
   // Must mention at least one Chinese city.
@@ -123,7 +123,7 @@ test("sim/country-then-location: pipeline dispatch — country=USA flow uses USA
   const builtQs = buildV2QuestionsWithStubs({ locationLlm })
   // Replace the q_location entry with the USA-specific variant (preserve
   // the stub LLM by re-cloning the judge from the V2 stubbed list).
-  const usaLocQ = makeLocationQuestion("usa") as Question<unknown>
+  const usaLocQ = makeLocationQuestion(["usa"]) as Question<unknown>
   // Re-use the stubbed judge from the original list to keep LLM canned.
   const stubbedLocQ = builtQs.find((q) => q.id === "q_location")!
   const finalLocQ: Question<unknown> = {
@@ -137,7 +137,7 @@ test("sim/country-then-location: pipeline dispatch — country=USA flow uses USA
   // Pre-seed state: q_location active, country was answered "usa".
   const s0 = await built.state.load("u_sim")
   s0.currentQId = "q_location"
-  s0.collected.q_country = "usa"
+  s0.collected.q_country = ["usa"]
   await built.state.save("u_sim", s0)
 
   // Drive 3 nonsense replies → 3 re-asks emitted.
@@ -171,7 +171,7 @@ test("sim/country-then-location: pipeline dispatch — country=USA flow uses USA
 test("sim/country-then-location: USA-scoped Q_LOCATION accepts 'sf' (positive: USA cities work)", async () => {
   const locationLlm: LlmCallFn = async () => stubGuidedOpenProvided(["sf"])
   const builtQs = buildV2QuestionsWithStubs({ locationLlm })
-  const usaLocQ = makeLocationQuestion("usa") as Question<unknown>
+  const usaLocQ = makeLocationQuestion(["usa"]) as Question<unknown>
   const stubbedLocQ = builtQs.find((q) => q.id === "q_location")!
   const finalList = builtQs.map((q) =>
     q.id === "q_location"

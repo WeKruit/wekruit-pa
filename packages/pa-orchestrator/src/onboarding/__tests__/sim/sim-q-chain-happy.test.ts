@@ -9,9 +9,8 @@
  *   - EmailJudge: regex "alex@gmail.com" → captured (no LLM)
  *   - CodeJudge: no db wired in test → auto-accept (no_db_accept path)
  *   - YesNoJudge: "agree" → captured
- *   - LLMRelevanceJudge probes (q_role / q_yoe / q_startup_pref):
- *     stub extractAnswerIntent → provided
- *   - GuidedOpenJudge V2 (q_visa / q_country / q_location):
+ *   - GuidedOpenJudge V2 (q_role / q_yoe / q_visa / q_startup_pref /
+ *     q_country / q_location):
  *     stub llmCallFactory → provided JSON
  *   - q_resume is REACHED but NOT answered — final state at q_resume_asked
  *     (matches task spec — `lang → ... → location → resume_asked`).
@@ -22,7 +21,6 @@ import assert from "node:assert/strict"
 import {
   buildPipeline,
   buildV2QuestionsWithStubs,
-  stubExtractIntent,
   stubGuidedOpenLLM,
   stubGuidedOpenProvided,
 } from "./_helpers.js"
@@ -31,18 +29,9 @@ test("sim/q-chain-happy: full 11-Q chain runs to q_resume prompt without halt", 
   // Track captured values via onAccepted hooks (where possible) + collected map.
   const collected: Record<string, unknown> = {}
 
-  const extractAnswerIntent = stubExtractIntent([
-    { match: "engineer", step: "ask_q_role", intent: "provided", value: "engineer", confidence: 1.0 },
-    { match: "5 years", step: "ask_q_yoe", intent: "provided", value: 5, confidence: 1.0 },
-    {
-      match: "either",
-      step: "ask_q_startup_pref",
-      intent: "provided",
-      value: "either",
-      confidence: 1.0,
-    },
-  ])
-
+  const roleLlm = stubGuidedOpenLLM({ engineer: stubGuidedOpenProvided("swe") })
+  const yoeLlm = stubGuidedOpenLLM({ "5 years": stubGuidedOpenProvided(5) })
+  const startupPrefLlm = stubGuidedOpenLLM({ either: stubGuidedOpenProvided("either") })
   const visaLlm = stubGuidedOpenLLM({
     "i'm a citizen": stubGuidedOpenProvided("citizen"),
   })
@@ -54,7 +43,9 @@ test("sim/q-chain-happy: full 11-Q chain runs to q_resume prompt without halt", 
   })
 
   const questions = buildV2QuestionsWithStubs({
-    extractAnswerIntent,
+    roleLlm,
+    yoeLlm,
+    startupPrefLlm,
     visaLlm,
     countryLlm,
     locationLlm,
@@ -88,7 +79,7 @@ test("sim/q-chain-happy: full 11-Q chain runs to q_resume prompt without halt", 
   ev = await built.send("agree")
   assert.equal(ev?.qId, "q_role", "turn 5 advances to q_role")
 
-  // Turn 6: answer q_role via LLMRelevanceJudge stub.
+  // Turn 6: answer q_role via GuidedOpenJudge stub.
   ev = await built.send("I'm an engineer")
   assert.equal(ev?.qId, "q_yoe", "turn 6 advances to q_yoe")
 
@@ -131,27 +122,24 @@ test("sim/q-chain-happy: full 11-Q chain runs to q_resume prompt without halt", 
   assert.equal(s?.collected.q_email, "alex@gmail.com", "q_email captured")
   assert.equal(s?.collected.q_email_verify, "123456", "q_email_verify captured")
   assert.equal(s?.collected.q_tos, true, "q_tos captured")
-  assert.equal(s?.collected.q_role, "engineer", "q_role captured")
+  assert.deepEqual(s?.collected.q_role, ["swe"], "q_role captured")
   assert.equal(s?.collected.q_yoe, 5, "q_yoe captured")
   assert.equal(s?.collected.q_visa, "citizen", "q_visa captured")
   assert.equal(s?.collected.q_startup_pref, "either", "q_startup_pref captured")
-  assert.equal(s?.collected.q_country, "usa", "q_country captured")
+  assert.deepEqual(s?.collected.q_country, ["usa"], "q_country captured")
   assert.deepEqual(s?.collected.q_location, ["sf"], "q_location captured")
 
   // onAccepted hooks fired for the V2 Qs we wired.
-  assert.equal(collected.country, "usa")
+  assert.deepEqual(collected.country, ["usa"])
   assert.deepEqual(collected.location, ["sf"])
   assert.equal(collected.visa, "citizen")
 })
 
 test("sim/q-chain-happy: state machine emits exactly 11 events (1 cold + 10 advances)", async () => {
-  const extractAnswerIntent = stubExtractIntent([
-    { match: "engineer", step: "ask_q_role", intent: "provided", value: "engineer" },
-    { match: "5 years", step: "ask_q_yoe", intent: "provided", value: 5 },
-    { match: "either", step: "ask_q_startup_pref", intent: "provided", value: "either" },
-  ])
   const questions = buildV2QuestionsWithStubs({
-    extractAnswerIntent,
+    roleLlm: stubGuidedOpenLLM({ engineer: stubGuidedOpenProvided("swe") }),
+    yoeLlm: stubGuidedOpenLLM({ "5 years": stubGuidedOpenProvided(5) }),
+    startupPrefLlm: stubGuidedOpenLLM({ either: stubGuidedOpenProvided("either") }),
     visaLlm: stubGuidedOpenLLM({ "citizen ": stubGuidedOpenProvided("citizen") }),
     countryLlm: stubGuidedOpenLLM({ "usa-only-please": stubGuidedOpenProvided("usa") }),
     locationLlm: stubGuidedOpenLLM({ "sf only": stubGuidedOpenProvided(["sf"]) }),

@@ -11,9 +11,6 @@
  *   - `stubGuidedOpenJSON(value)` — emits the JSON shape `GuidedOpenJudge`'s
  *     `llmCall` is contracted to return.
  *   - `stubGuidedOpenUnclear(question)` — same, but degrades to {intent:unclear}.
- *   - `stubExtractIntent(map)` — single function used as `extractAnswerIntent`
- *     for the legacy LLMRelevanceJudge probes (q_role/q_yoe/q_startup_pref).
- *     Maps step → reply substring → canonical value.
  *   - `stubExtractEmailIntent(map)` — same pattern for q_email.
  *
  * Re-ask rotation note:
@@ -32,7 +29,10 @@ import { InMemoryPipelineStateProvider } from "../../state-memory.js"
 import {
   defaultQuestionsV2,
   Q_COUNTRY,
+  Q_ROLE,
+  Q_STARTUP_PREF,
   Q_VISA,
+  Q_YOE,
   type DefaultQuestionsV2Deps,
 } from "../../questions.js"
 import type { ExtractIntentFn, IntentResult } from "../../judges/llm-relevance.js"
@@ -48,12 +48,6 @@ export interface EmittedEvent {
 }
 
 export interface BuildPipelineOpts {
-  /**
-   * extractIntent stub used by LLMRelevanceJudge (q_role / q_yoe /
-   * q_startup_pref). Default: returns null → judge maps to "irrelevant".
-   * Tests override per case.
-   */
-  extractAnswerIntent?: ExtractIntentFn
   /**
    * extractEmailIntent stub used by EmailJudge (q_email) when the regex
    * misses. Default: returns null → judge maps to "irrelevant".
@@ -118,7 +112,6 @@ export function buildPipeline(opts: BuildPipelineOpts = {}): BuiltPipeline {
   const emitted: EmittedEvent[] = []
 
   const deps: DefaultQuestionsV2Deps = {
-    extractAnswerIntent: opts.extractAnswerIntent ?? (async () => null),
     extractEmailIntent: opts.extractEmailIntent,
     onLangAccepted: opts.onLangAccepted,
     onCountryAccepted: opts.onCountryAccepted,
@@ -219,6 +212,12 @@ export function stubGuidedOpenLLM(map: Record<string, string>): LlmCallFn {
 export interface StubbedV2Opts extends BuildPipelineOpts {
   /** stub LlmCallFn for q_country */
   countryLlm?: LlmCallFn
+  /** stub LlmCallFn for q_role */
+  roleLlm?: LlmCallFn
+  /** stub LlmCallFn for q_yoe */
+  yoeLlm?: LlmCallFn
+  /** stub LlmCallFn for q_startup_pref */
+  startupPrefLlm?: LlmCallFn
   /** stub LlmCallFn for q_location (default-anywhere variant). */
   locationLlm?: LlmCallFn
   /** stub LlmCallFn for q_visa. */
@@ -227,7 +226,6 @@ export interface StubbedV2Opts extends BuildPipelineOpts {
 
 export function buildV2QuestionsWithStubs(opts: StubbedV2Opts): Question<unknown>[] {
   const deps: DefaultQuestionsV2Deps = {
-    extractAnswerIntent: opts.extractAnswerIntent ?? (async () => null),
     extractEmailIntent: opts.extractEmailIntent,
     onLangAccepted: opts.onLangAccepted,
     onCountryAccepted: opts.onCountryAccepted,
@@ -236,6 +234,68 @@ export function buildV2QuestionsWithStubs(opts: StubbedV2Opts): Question<unknown
   }
   const baseList = defaultQuestionsV2(deps)
   const byId = new Map(baseList.map((q) => [q.id, q]))
+
+  if (opts.roleLlm) {
+    byId.set("q_role", makeQuestion<unknown>({
+      ...(Q_ROLE as Question<unknown>),
+      judge: new GuidedOpenJudge<unknown>({
+        questionLabel: "target job role",
+        hints: ["swe", "pm", "research", "design", "data", "ml"],
+        examples: [],
+        parseValue: (raw): unknown => {
+          const values = Array.isArray(raw) ? raw : [raw]
+          const out = values
+            .filter((v): v is string => typeof v === "string")
+            .flatMap((v) => v.split("/").flatMap((s) => s.split(",")).flatMap((s) => s.split("|")))
+            .map((v) => v.trim().toLowerCase())
+            .filter(Boolean)
+          return out.length > 0 ? out : null
+        },
+        llmCallFactory: () => opts.roleLlm!,
+      }),
+    }))
+  }
+
+  if (opts.yoeLlm) {
+    byId.set("q_yoe", makeQuestion<unknown>({
+      ...(Q_YOE as Question<unknown>),
+      judge: new GuidedOpenJudge<unknown>({
+        questionLabel: "years of experience",
+        hints: ["0", "1", "2", "3", "5", "10", "fresh"],
+        examples: [],
+        parseValue: (raw): unknown => {
+          if (typeof raw === "number" && Number.isFinite(raw) && raw >= 0) return Math.round(raw)
+          if (typeof raw !== "string") return null
+          const t = raw.trim().toLowerCase()
+          if (t === "fresh") return "fresh"
+          const n = Number(t)
+          return Number.isFinite(n) && n >= 0 ? Math.round(n) : null
+        },
+        llmCallFactory: () => opts.yoeLlm!,
+      }),
+    }))
+  }
+
+  if (opts.startupPrefLlm) {
+    byId.set("q_startup_pref", makeQuestion<unknown>({
+      ...(Q_STARTUP_PREF as Question<unknown>),
+      judge: new GuidedOpenJudge<unknown>({
+        questionLabel: "startup vs bigtech preference",
+        hints: ["startup", "bigtech", "either"],
+        examples: [],
+        parseValue: (raw): unknown => {
+          if (typeof raw !== "string") return null
+          const t = raw.trim().toLowerCase()
+          if (t.includes("either") || t.includes("both") || t.includes("any")) return "either"
+          if (t.includes("startup") && (t.includes("bigtech") || t.includes("big tech"))) return "either"
+          if (t.includes("startup")) return "startup"
+          if (t.includes("bigtech") || t.includes("big tech") || t.includes("big company")) return "bigtech"
+          return t === "startup" || t === "bigtech" || t === "either" ? t : null
+        },
+        llmCallFactory: () => opts.startupPrefLlm!,
+      }),
+    }))
+  }
 
   // Replace q_country with one that uses the stub LLM.
   const countryStub = opts.countryLlm
@@ -247,8 +307,15 @@ export function buildV2QuestionsWithStubs(opts: StubbedV2Opts): Question<unknown
         questionLabel: "target country / region",
         hints: ["usa", "china", "canada", "europe", "anywhere"],
         examples: [],
-        parseValue: (raw): unknown =>
-          typeof raw === "string" && raw.trim() ? raw.trim().toLowerCase() : null,
+        parseValue: (raw): unknown => {
+          const values = Array.isArray(raw) ? raw : [raw]
+          const out = values
+            .filter((v): v is string => typeof v === "string")
+            .flatMap((v) => v.split("/").flatMap((s) => s.split(",")).flatMap((s) => s.split("|")))
+            .map((v) => v.trim().toLowerCase())
+            .filter(Boolean)
+          return out.length > 0 ? out : null
+        },
         llmCallFactory: () => countryStub,
       }),
     })

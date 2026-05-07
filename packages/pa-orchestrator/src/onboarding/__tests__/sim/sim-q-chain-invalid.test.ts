@@ -26,21 +26,19 @@ import {
   buildV2QuestionsWithStubs,
   stubExtractEmail,
   stubGuidedOpenProvided,
+  stubGuidedOpenUnclear,
 } from "./_helpers.js"
-import type { ExtractIntentFn } from "../../judges/llm-relevance.js"
 import type { LlmCallFn } from "../../judges/guided-open.js"
 
 test("sim/q-chain-invalid: q_role nonsense → reask + recover", async () => {
   let roleCalls = 0
-  const extractAnswerIntent: ExtractIntentFn = async (step, reply) => {
-    if (step !== "ask_q_role") return null
+  const roleLlm: LlmCallFn = async () => {
     roleCalls++
-    // First call: judge degrades to "irrelevant" because we return null.
-    if (roleCalls === 1) return null
-    return { intent: "provided", value: "engineer", confidence: 1.0 }
+    if (roleCalls === 1) return stubGuidedOpenUnclear("did you mean engineer?")
+    return stubGuidedOpenProvided("swe")
   }
-  const questions = buildV2QuestionsWithStubs({ extractAnswerIntent })
-  const built = buildPipeline({ questionsOverride: questions, extractAnswerIntent })
+  const questions = buildV2QuestionsWithStubs({ roleLlm })
+  const built = buildPipeline({ questionsOverride: questions })
 
   // Pre-seed at q_role.
   const s0 = await built.state.load("u_sim")
@@ -59,11 +57,9 @@ test("sim/q-chain-invalid: q_role nonsense → reask + recover", async () => {
 })
 
 test("sim/q-chain-invalid: re-ask rotation — 3 attempts → 3 DISTINCT phrasings (DOD #3)", async () => {
-  // Always return null → judge says irrelevant on every call → pipeline
-  // re-asks every turn.
-  const extractAnswerIntent: ExtractIntentFn = async () => null
-  const questions = buildV2QuestionsWithStubs({ extractAnswerIntent })
-  const built = buildPipeline({ questionsOverride: questions, extractAnswerIntent })
+  const roleLlm: LlmCallFn = async () => stubGuidedOpenUnclear("which role?")
+  const questions = buildV2QuestionsWithStubs({ roleLlm })
+  const built = buildPipeline({ questionsOverride: questions })
 
   // Pre-seed at q_role.
   const s0 = await built.state.load("u_sim")

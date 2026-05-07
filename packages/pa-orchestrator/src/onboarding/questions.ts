@@ -65,9 +65,192 @@ export interface DefaultQuestionsDeps {
   onLocationAccepted?: (loc: unknown, ctx: AcceptedCtx) => Promise<void>
 }
 
+export interface ClosedQuestionsDeps {
+  /** LLM email intent extractor (typo / declined / unclear). */
+  extractEmailIntent?: ExtractEmailIntentFn
+  onEmailAccepted?: (
+    email: string,
+    ctx: AcceptedCtx
+  ) => Promise<void>
+  onEmailCodeVerified?: (code: string, ctx: AcceptedCtx) => Promise<void>
+  onResumeAccepted?: (
+    attachments: ResumeAttachment[],
+    ctx: AcceptedCtx
+  ) => Promise<void>
+  onLangAccepted?: (lang: LangPref, ctx: AcceptedCtx) => Promise<void>
+}
+
 const HALT_DEFAULT: BilingualText = {
   zh: "请联系 admin1@wekruit.com 解决问题. 你现在连续失败了五次, 请不要继续",
   en: "please contact admin1@wekruit.com — you've failed 5 times in a row, please stop",
+}
+
+function makeClosedQuestions(deps: ClosedQuestionsDeps): {
+  langQ: Question<LangPref>
+  emailQ: Question<string>
+  emailVerifyQ: Question<string>
+  tosQ: Question<boolean>
+  resumeQ: Question<ResumeAttachment[]>
+} {
+  const langQ: Question<LangPref> = makeQuestion({
+    id: "q_lang",
+    prompt: {
+      zh: "在呢. 用啥语聊比较顺? 中文 / 英文 / 中英混着说都行",
+      en: "Here. What language works for you? Chinese / English / both mixed?",
+    },
+    judge: new LangJudge(),
+    rephraser: new StaticVariantsRephraser([
+      {
+        zh: "选一种就行: 中文 / 英文 / 还是混着说?",
+        en: "just pick one: Chinese / English / or mixed?",
+      },
+      {
+        zh: "再问一遍 — 你聊起来更顺手的是中文还是英文? '混' 也行",
+        en: "let me ask again — chinese, english, or mixed-ok?",
+      },
+      {
+        zh: "中文 / 英文 / 混 — 三选一",
+        en: "chinese / english / mixed — pick one",
+      },
+      {
+        zh: "一个词就行: zh / en / mixed",
+        en: "one word works: zh / en / mixed",
+      },
+    ]),
+    haltMessage: HALT_DEFAULT,
+    onAccepted: deps.onLangAccepted,
+  })
+
+  const emailQ: Question<string> = makeQuestion({
+    id: "q_email",
+    prompt: {
+      zh: "对了, 平时邮箱用啥? 后面如果你不在线我直接发邮件给你",
+      en: "btw — what email should I send stuff to when you're afk? roughly fine",
+    },
+    judge: new EmailJudge({ extractEmailIntent: deps.extractEmailIntent }),
+    rephraser: new StaticVariantsRephraser([
+      {
+        zh: "没看到邮箱地址哎, 直接发个 email 给我就行 (像 you@example.com 这种)",
+        en: "didn't catch an email there — just paste the address (like you@example.com)",
+      },
+      {
+        zh: "再发一次邮箱就行 — 我会发 6 位验证码确认是你的",
+        en: "drop your email again — i'll send a 6-digit code to confirm it's yours",
+      },
+      {
+        zh: "邮箱长这样: 用户名@域名.com, 比如 alex@gmail.com",
+        en: "email shape: name@domain.com, like alex@gmail.com",
+      },
+      {
+        zh: "邮箱地址给我就行, 后面验证只要几秒",
+        en: "just need an email address — verify takes a few secs",
+      },
+    ]),
+    haltMessage: HALT_DEFAULT,
+    onAccepted: deps.onEmailAccepted,
+  })
+
+  const emailVerifyQ: Question<string> = makeQuestion({
+    id: "q_email_verify",
+    prompt: {
+      zh: "已经发了一个 6 位验证码到你邮箱了, 收到回我一下就行 (30 分钟有效)",
+      en: "just sent a 6-digit code to your email — text it back to me and we're set (good for 30 mins)",
+    },
+    judge: new CodeJudge(),
+    rephraser: new HybridRephraser({
+      variants: [
+        {
+          zh: "等你把邮箱里的 6 位验证码发我",
+          en: "still waiting on that 6-digit code from your email",
+        },
+        {
+          zh: "看下邮箱 — 6 位数字回我就行",
+          en: "check your inbox — 6 digits back to me",
+        },
+        {
+          zh: "可能在垃圾邮件里? 6 位数字 — 找到回我",
+          en: "maybe in spam? 6-digit code — text it back",
+        },
+        {
+          zh: "实在收不到我重新发, 你回 'resend'",
+          en: "if it never arrived, reply 'resend' and i'll re-issue",
+        },
+      ],
+      fallback: {
+        zh: "6 位验证码 — 看下邮箱回我",
+        en: "6-digit code — check email and text it back",
+      },
+    }),
+    haltMessage: HALT_DEFAULT,
+    onAccepted: deps.onEmailCodeVerified,
+  })
+
+  const tosQ: Question<boolean> = makeQuestion({
+    id: "q_tos",
+    prompt: {
+      zh: "开聊前先说一下: 我会记一些咱聊天的事来给你推工作 / 找内推. 隐私 + 用户协议在这: https://wekruit-pa-landing.web.app/legal — 同意就回个 \"同意\" 我们继续",
+      en: 'before we get into it — heads up i remember bits of our chat to surface jobs + referrals for you. privacy + terms here: https://wekruit-pa-landing.web.app/legal — reply "agree" if cool with that and we keep going',
+    },
+    judge: new YesNoJudge(),
+    rephraser: new StaticVariantsRephraser([
+      {
+        zh: '刚那个隐私 + 用户协议你看一下哦, 同意就回 "同意" — 不同意我们也能继续聊但不会保存',
+        en: 'just need a quick "agree" on the privacy + terms above — or "no" and we can chat without me saving anything',
+      },
+      {
+        zh: "回 '同意' 或者 '不同意' 都行 — 看你",
+        en: "either 'agree' or 'no' works — your call",
+      },
+      {
+        zh: "同意保存咱聊天的事 → 回 '同意'. 不想保存 → 回 '不'",
+        en: "agree to save chat memory → 'agree'. don't want it → 'no'",
+      },
+      {
+        zh: "需要你的明确回复 — '同意' or '不'",
+        en: "need a yes/no — 'agree' or 'no'",
+      },
+    ]),
+    haltMessage: HALT_DEFAULT,
+    onDeclined: async (ctx) => {
+      ctx.log?.("pa.onboarding.tos.declined", { userId: ctx.userId })
+      return { advance: true }
+    },
+  })
+
+  const resumeQ: Question<ResumeAttachment[]> = makeQuestion({
+    id: "q_resume",
+    prompt: {
+      zh: "对了, 简历方便发我一份不? 后面帮你看 JD / 内推都准多了",
+      en: "btw — can you send me your resume? makes JD review and referrals way more on-point",
+    },
+    judge: new ResumeJudge(),
+    rephraser: new StaticVariantsRephraser([
+      {
+        zh: "等你发简历过来哦, iMessage 里直接附件就行",
+        en: "just waiting on the resume — send it as an iMessage attachment whenever",
+      },
+      {
+        zh: "把简历当附件发到 iMessage 这里就行 — pdf / docx 都行",
+        en: "drop the resume as an iMessage attachment — pdf / docx, either works",
+      },
+      {
+        zh: "实在没简历回 'no resume' 也行, 我们靠对话也能帮你",
+        en: "no resume? reply 'no resume' and we'll work with chat alone",
+      },
+      {
+        zh: "再发一次 — iMessage 附件, pdf 最好",
+        en: "try again — iMessage attachment, pdf preferred",
+      },
+    ]),
+    haltMessage: {
+      zh: "暂时跳过简历, 后面想发再说就行",
+      en: "skipping resume for now — drop it whenever",
+    },
+    onAccepted: deps.onResumeAccepted,
+    onDeclined: async () => ({ advance: true }),
+  })
+
+  return { langQ, emailQ, emailVerifyQ, tosQ, resumeQ }
 }
 
 export function defaultQuestions(deps: DefaultQuestionsDeps): Question<unknown>[] {
@@ -454,11 +637,9 @@ export function defaultQuestions(deps: DefaultQuestionsDeps): Question<unknown>[
 //     (per D8 single-source — runtime owns dual-write, this layer just
 //     dispatches the canonical value)
 //
-// q_location hints are country-aware: `makeLocationQuestion(country, deps)`
-// returns a Q_LOCATION specialized to USA / China / Anywhere city pools.
-// The exported `Q_LOCATION` constant defaults to the "anywhere" superset
-// (every canonical city); P7-4 dispatcher should swap to the country-
-// specific variant once q_country is answered.
+// q_location can be scoped by `makeLocationQuestion(["usa"], deps)` /
+// `makeLocationQuestion(["china"], deps)`, while the normal pipeline uses
+// an open "within that country/region" prompt plus the anywhere superset.
 
 import {
   GuidedOpenJudge,
@@ -468,17 +649,12 @@ import {
 // ─── Type contracts ────────────────────────────────────────────────────────
 
 /**
- * q_country canonical answer. Closed enum for the common 5 buckets;
- * free-form `string` fallback covers tail cases (e.g. "south america")
- * — the LLM picks whichever fits.
+ * q_country canonical answer. Always an array so the interface matches
+ * role/location multi-value preferences and writes directly into
+ * statedPreferences.targetCountry / tags.targetCountry.
  */
 export type CountryAnswer =
-  | "usa"
-  | "china"
-  | "canada"
-  | "europe"
-  | "anywhere"
-  | string
+  string[]
 
 /**
  * q_location canonical answer. Array of city/region tokens (e.g. ["sf",
@@ -499,6 +675,265 @@ export type VisaAnswer =
   | "sponsorship_needed"
   | "other"
 
+export type RoleAnswer = string[]
+export type YoeAnswer = number | "fresh"
+export type StartupPrefAnswer = "startup" | "bigtech" | "either"
+
+// ─── Q_ROLE / Q_YOE / Q_STARTUP_PREF (V2 GuidedOpen) ───────────────────────
+
+function normalizeRoleToken(raw: string): string | null {
+  const t = raw.trim().toLowerCase()
+  if (!t) return null
+  return t
+}
+
+function splitOpenListValue(raw: string): string[] {
+  return raw
+    .split("/")
+    .flatMap((s) => s.split(","))
+    .flatMap((s) => s.split("|"))
+    .flatMap((s) => s.split(";"))
+    .map((s) => s.trim().toLowerCase())
+    .filter((s) => s.length > 0)
+}
+
+function parseRoleValue(raw: unknown): RoleAnswer | null {
+  const values = Array.isArray(raw) ? raw : [raw]
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const value of values) {
+    if (typeof value !== "string") continue
+    for (const part of splitOpenListValue(value)) {
+      const role = normalizeRoleToken(part)
+      if (!role || seen.has(role)) continue
+      seen.add(role)
+      out.push(role)
+    }
+  }
+  return out.length > 0 ? out : null
+}
+
+export function makeRoleQuestion(
+  onAccepted?: (role: RoleAnswer, ctx: AcceptedCtx) => Promise<void>,
+  llmCallFactory?: GuidedOpenJudgeSpec<RoleAnswer>["llmCallFactory"]
+): Question<RoleAnswer> {
+  return makeQuestion<RoleAnswer>({
+    id: "q_role",
+    prompt: {
+      zh: "下面这几个是我必须了解清楚的, 不然不好帮你 — 那你大概想找啥方向的活? 比如做产品、做工程、还是做研究 — 给我个大致就行",
+      en: "heads up — i need to nail down these next few before I can actually help you — what kinda role you eyeing? eng / pm / research / design? roughly is fine",
+    },
+    judge: new GuidedOpenJudge<RoleAnswer>({
+      questionLabel: "target job role",
+      hints: ["swe", "pm", "research", "design", "data", "ml", "ops", "marketing", "founder"],
+      examples: [
+        { reply: "Software Engineer", value: ["swe"], confidence: 0.95 },
+        { reply: "Swe / pm", value: ["swe", "pm"], confidence: 0.9 },
+        { reply: "PM for fintech", value: ["pm"], confidence: 0.9 },
+        { reply: "我做 ml infra 的", value: ["ml"], confidence: 0.9 },
+        { reply: "designer", value: ["design"], confidence: 0.95 },
+      ],
+      parseValue: parseRoleValue,
+      ...(llmCallFactory ? { llmCallFactory } : {}),
+    }),
+    rephraser: new HybridRephraser({
+      variants: [
+        {
+          zh: "我没太 get 到 — 你具体是做啥的? swe / pm / 研究 / 设计 都行, 一两个词就行",
+          en: "didn't quite catch that — what role specifically? eng / pm / research / design — one or two words works",
+        },
+        {
+          zh: "那大致偏哪个方向? 工程 / 产品 / 研究 / 设计 — 选一个就行",
+          en: "roughly which direction — eng / pm / research / design? just pick one",
+        },
+        {
+          zh: "再换个角度问 — 你之前/现在做的是啥岗? 比如 '前端' / '数据' / 'PM' 这种",
+          en: "let me try again — what's your role been? like 'frontend' / 'data' / 'pm' style",
+        },
+        {
+          zh: "一个词概括一下你做的活就行, 比如 'swe' / 'pm' / 'designer' / 'researcher'",
+          en: "one word for what you do is fine — 'swe' / 'pm' / 'designer' / 'researcher'",
+        },
+      ],
+      fallback: {
+        zh: "swe / pm / 研究 / 设计 — 给我一个就行",
+        en: "swe / pm / research / design — one works",
+      },
+    }),
+    haltMessage: HALT_DEFAULT,
+    onAccepted,
+  })
+}
+
+export const Q_ROLE: Question<RoleAnswer> = makeRoleQuestion()
+
+function parseYoeValue(raw: unknown): YoeAnswer | null {
+  if (typeof raw === "number" && Number.isFinite(raw) && raw >= 0) {
+    return Math.round(raw)
+  }
+  if (typeof raw !== "string") return null
+  const t = raw.trim().toLowerCase()
+  if (!t) return null
+  if (
+    t.includes("fresh") ||
+    t.includes("new grad") ||
+    t.includes("new_grad") ||
+    t.includes("刚毕业") ||
+    t.includes("应届")
+  ) {
+    return "fresh"
+  }
+  const n = Number(t)
+  if (Number.isFinite(n) && n >= 0) return Math.round(n)
+  let digits = ""
+  for (const ch of t) {
+    if ((ch >= "0" && ch <= "9") || ch === ".") digits += ch
+    else if (digits) break
+  }
+  if (digits) {
+    const parsed = Number(digits)
+    if (Number.isFinite(parsed) && parsed >= 0) return Math.round(parsed)
+  }
+  return null
+}
+
+export function makeYoeQuestion(
+  onAccepted?: (yoe: YoeAnswer, ctx: AcceptedCtx) => Promise<void>,
+  llmCallFactory?: GuidedOpenJudgeSpec<YoeAnswer>["llmCallFactory"]
+): Question<YoeAnswer> {
+  return makeQuestion<YoeAnswer>({
+    id: "q_yoe",
+    prompt: {
+      zh: "你工作几年了? 还是刚毕业找新人岗?",
+      en: "how many years you been working? or fresh outta school?",
+    },
+    judge: new GuidedOpenJudge<YoeAnswer>({
+      questionLabel: "years of experience",
+      hints: ["0", "1", "2", "3", "4", "5", "6", "7", "8", "10", "fresh"],
+      examples: [
+        { reply: "2years", value: 2, confidence: 1.0 },
+        { reply: "2 years", value: 2, confidence: 1.0 },
+        { reply: "5y", value: 5, confidence: 0.95 },
+        { reply: "三年", value: 3, confidence: 0.95 },
+        { reply: "3-5 years", value: 4, confidence: 0.9 },
+        { reply: "fresh grad", value: "fresh", confidence: 1.0 },
+        { reply: "刚毕业", value: "fresh", confidence: 1.0 },
+      ],
+      parseValue: parseYoeValue,
+      ...(llmCallFactory ? { llmCallFactory } : {}),
+    }),
+    rephraser: new HybridRephraser({
+      variants: [
+        {
+          zh: "数字大概多少年就行 — 比如 '3年' / '8年' / 或者 '刚毕业'",
+          en: "roughly a number works — '3 years' / '8 years' / or 'fresh grad'",
+        },
+        {
+          zh: "几年就好啦, 不用很精确 — 0 / 1 / 3 / 5 / 10 哪个差不多?",
+          en: "ballpark is fine — 0 / 1 / 3 / 5 / 10 — closest one?",
+        },
+        {
+          zh: "工作经验大概几年? 还是说还在读书 / 应届?",
+          en: "roughly how many years working? or still in school / new grad?",
+        },
+        {
+          zh: "给个数字就行哦, 比如 '2年' 或者 'fresh grad'",
+          en: "just need a number, like '2 years' or 'fresh grad'",
+        },
+      ],
+      fallback: {
+        zh: "几年? 数字就行",
+        en: "how many years? a number works",
+      },
+    }),
+    haltMessage: HALT_DEFAULT,
+    onAccepted,
+  })
+}
+
+export const Q_YOE: Question<YoeAnswer> = makeYoeQuestion()
+
+function parseStartupPrefValue(raw: unknown): StartupPrefAnswer | null {
+  if (typeof raw !== "string") return null
+  const t = raw.trim().toLowerCase()
+  if (
+    t.includes("either") ||
+    t.includes("both") ||
+    t.includes("any") ||
+    (t.includes("startup") && (t.includes("bigtech") || t.includes("big tech") || t.includes("big-co"))) ||
+    t.includes("都行") ||
+    t.includes("都可以") ||
+    t.includes("无所谓") ||
+    t.includes("看具体")
+  ) return "either"
+  if (t === "startup") return "startup"
+  if (t.includes("startup") || t.includes("start-up")) return "startup"
+  if (
+    t === "bigtech" ||
+    t === "big_tech" ||
+    t === "big tech" ||
+    t.includes("big company") ||
+    t.includes("big-co") ||
+    t.includes("stable") ||
+    t.includes("大厂")
+  ) return "bigtech"
+  return null
+}
+
+export function makeStartupPrefQuestion(
+  onAccepted?: (pref: StartupPrefAnswer, ctx: AcceptedCtx) => Promise<void>,
+  llmCallFactory?: GuidedOpenJudgeSpec<StartupPrefAnswer>["llmCallFactory"]
+): Question<StartupPrefAnswer> {
+  return makeQuestion<StartupPrefAnswer>({
+    id: "q_startup_pref",
+    prompt: {
+      zh: "你更想去 startup 那种小而拼的, 还是大厂稳一点?",
+      en: "more into startup hustle vibe or stable big-co?",
+    },
+    judge: new GuidedOpenJudge<StartupPrefAnswer>({
+      questionLabel: "startup vs bigtech preference",
+      hints: ["startup", "bigtech", "either"],
+      examples: [
+        { reply: "startup", value: "startup", confidence: 1.0 },
+        { reply: "big company stable", value: "bigtech", confidence: 0.9 },
+        { reply: "都行", value: "either", confidence: 0.95 },
+        { reply: "Either", value: "either", confidence: 1.0 },
+        { reply: "看具体团队", value: "either", confidence: 0.8 },
+      ],
+      parseValue: parseStartupPrefValue,
+      ...(llmCallFactory ? { llmCallFactory } : {}),
+    }),
+    rephraser: new HybridRephraser({
+      variants: [
+        {
+          zh: "startup / 大厂 / 都行 三选一",
+          en: "startup / bigtech / either — pick one",
+        },
+        {
+          zh: "硬要选一个? startup / 大厂 / 都行 — 都可以的话回'都行'就好",
+          en: "if you had to pick — startup / bigtech / either? 'either' is fine",
+        },
+        {
+          zh: "你想要那种快节奏 startup 体验, 还是更看重稳定大厂?",
+          en: "you want fast-paced startup energy or stability of a big company?",
+        },
+        {
+          zh: "一个词就行: 'startup' / 'bigtech' / 'either'",
+          en: "one word works: 'startup' / 'bigtech' / 'either'",
+        },
+      ],
+      fallback: {
+        zh: "startup / bigtech / either",
+        en: "startup / bigtech / either",
+      },
+    }),
+    haltMessage: HALT_DEFAULT,
+    onAccepted,
+  })
+}
+
+export const Q_STARTUP_PREF: Question<StartupPrefAnswer> = makeStartupPrefQuestion()
+
 // ─── Q_COUNTRY ──────────────────────────────────────────────────────────────
 
 /**
@@ -517,14 +952,14 @@ const COUNTRY_HINTS = ["usa", "china", "canada", "europe", "anywhere"] as const
  *   - "based in europe but ok with us" (multi-country)
  */
 const COUNTRY_EXAMPLES: GuidedOpenJudgeSpec<CountryAnswer>["examples"] = [
-  { reply: "USA", value: "usa", confidence: 1.0 },
-  { reply: "美国", value: "usa", confidence: 1.0 },
-  { reply: "中国", value: "china", confidence: 1.0 },
-  { reply: "Anywhere is fine", value: "anywhere", confidence: 1.0 },
-  { reply: "无所谓", value: "anywhere", confidence: 0.95 },
-  { reply: "in north america", value: ["usa", "canada"] as unknown as CountryAnswer, confidence: 0.9 },
-  { reply: "either USA or China", value: ["usa", "china"] as unknown as CountryAnswer, confidence: 0.9 },
-  { reply: "based in europe", value: "europe", confidence: 0.95 },
+  { reply: "USA", value: ["usa"], confidence: 1.0 },
+  { reply: "美国", value: ["usa"], confidence: 1.0 },
+  { reply: "中国", value: ["china"], confidence: 1.0 },
+  { reply: "Anywhere is fine", value: ["anywhere"], confidence: 1.0 },
+  { reply: "无所谓", value: ["anywhere"], confidence: 0.95 },
+  { reply: "in north america", value: ["usa", "canada"], confidence: 0.9 },
+  { reply: "either USA or China", value: ["usa", "china"], confidence: 0.9 },
+  { reply: "based in europe", value: ["europe"], confidence: 0.95 },
 ]
 
 /**
@@ -534,19 +969,16 @@ const COUNTRY_EXAMPLES: GuidedOpenJudgeSpec<CountryAnswer>["examples"] = [
  */
 function parseCountryValue(raw: unknown): CountryAnswer | null {
   if (typeof raw === "string") {
-    const trimmed = raw.trim().toLowerCase()
-    if (!trimmed) return null
-    return trimmed
+    const items = splitOpenListValue(raw)
+    if (items.length === 0) return null
+    return items
   }
   if (Array.isArray(raw)) {
     const items = raw
       .filter((x): x is string => typeof x === "string")
-      .map((x) => x.trim().toLowerCase())
-      .filter((x) => x.length > 0)
+      .flatMap((x) => splitOpenListValue(x))
     if (items.length === 0) return null
-    // CountryAnswer covers `string` so a comma-joined multi-pick is legal;
-    // runtime/applyToTags can split if it cares about array-ness.
-    return items.join(",")
+    return items
   }
   return null
 }
@@ -555,14 +987,6 @@ function parseCountryValue(raw: unknown): CountryAnswer | null {
  * Bloom regex — optimistic short-circuit on the most common clean
  * one-word replies. Anything ambiguous falls through to the LLM.
  */
-const COUNTRY_BLOOM: GuidedOpenJudgeSpec<CountryAnswer>["bloomRegex"] = [
-  { pattern: /^\s*(usa|us|america|美国)\s*$/i, value: "usa" },
-  { pattern: /^\s*(china|prc|中国|中華|中華人民共和国)\s*$/i, value: "china" },
-  { pattern: /^\s*(canada|加拿大)\s*$/i, value: "canada" },
-  { pattern: /^\s*(europe|欧洲)\s*$/i, value: "europe" },
-  { pattern: /^\s*(anywhere|都行|无所谓|哪都行|都可以)\s*$/i, value: "anywhere" },
-]
-
 /**
  * Q_COUNTRY — top-level country/region pick. Asked BEFORE q_location so
  * the location follow-up can scope its hint pool to the chosen country.
@@ -581,7 +1005,6 @@ export const Q_COUNTRY: Question<CountryAnswer> = makeQuestion<CountryAnswer>({
     questionLabel: "target country / region",
     hints: COUNTRY_HINTS,
     examples: COUNTRY_EXAMPLES,
-    bloomRegex: COUNTRY_BLOOM,
     parseValue: parseCountryValue,
   }),
   rephraser: new HybridRephraser({
@@ -670,15 +1093,13 @@ const LOCATION_EXAMPLES: GuidedOpenJudgeSpec<LocationAnswer>["examples"] = [
  */
 function parseLocationValue(raw: unknown): LocationAnswer | null {
   if (typeof raw === "string") {
-    const t = raw.trim().toLowerCase()
-    if (!t) return null
-    return [t]
+    const items = splitOpenListValue(raw)
+    return items.length > 0 ? items : null
   }
   if (Array.isArray(raw)) {
     const items = raw
       .filter((x): x is string => typeof x === "string")
-      .map((x) => x.trim().toLowerCase())
-      .filter((x) => x.length > 0)
+      .flatMap((x) => splitOpenListValue(x))
     if (items.length === 0) return null
     return items
   }
@@ -689,18 +1110,13 @@ function parseLocationValue(raw: unknown): LocationAnswer | null {
  * Bloom regex for the most common one-word location replies.
  * NEVER blocks — the LLM owns ambiguous cases.
  */
-const LOCATION_BLOOM_COMMON: GuidedOpenJudgeSpec<LocationAnswer>["bloomRegex"] = [
-  { pattern: /^\s*(remote|远程|远端)\s*$/i, value: ["remote"] },
-  { pattern: /^\s*(anywhere|都行|无所谓|哪都行|都可以)\s*$/i, value: ["anywhere"] },
-]
-
 /**
  * Build a country-scoped Q_LOCATION.
  *
- * country=undefined or "anywhere" → ANYWHERE_LOCATION_HINTS (superset)
- * country="usa"                   → USA_LOCATION_HINTS
- * country="china"                 → CHINA_LOCATION_HINTS
- * country=other free-form         → ANYWHERE_LOCATION_HINTS (let LLM canon)
+ * country=undefined or ["anywhere"] → ANYWHERE_LOCATION_HINTS (superset)
+ * country=["usa"]                   → USA_LOCATION_HINTS
+ * country=["china"]                 → CHINA_LOCATION_HINTS
+ * country=other/multi free-form     → ANYWHERE_LOCATION_HINTS (let LLM canon)
  *
  * Use this in P7-4 dispatcher AFTER q_country is answered so the location
  * follow-up's hint pool is scoped correctly. The exported `Q_LOCATION`
@@ -711,17 +1127,20 @@ export function makeLocationQuestion(
   onAccepted?: (loc: LocationAnswer, ctx: AcceptedCtx) => Promise<void>
 ): Question<LocationAnswer> {
   let hints: readonly string[] = ANYWHERE_LOCATION_HINTS
-  if (country === "usa") hints = USA_LOCATION_HINTS
-  else if (country === "china") hints = CHINA_LOCATION_HINTS
+  if (Array.isArray(country) && country.length === 1 && country[0] === "usa") {
+    hints = USA_LOCATION_HINTS
+  } else if (Array.isArray(country) && country.length === 1 && country[0] === "china") {
+    hints = CHINA_LOCATION_HINTS
+  }
   // any other value (canada, europe, free-form, multi-country) → anywhere
   // superset; the LLM filters by user intent.
 
   const promptVariants: { prompt: BilingualText; reAsks: BilingualText[] } =
-    country === "china"
+    Array.isArray(country) && country.length === 1 && country[0] === "china"
       ? {
           prompt: {
-            zh: "想在中国哪个城市工作? 上海 / 北京 / 杭州 / 深圳 / 广州 / 都行",
-            en: "which Chinese city you targeting? Shanghai / Beijing / Hangzhou / Shenzhen / Guangzhou / anywhere",
+            zh: "OK, 在中国的话, 有具体城市或 remote 偏好吗? 上海 / 北京 / 杭州 / 深圳 / 广州 / 都行",
+            en: "ok, in China, any city or remote preference? Shanghai / Beijing / Hangzhou / Shenzhen / Guangzhou / anywhere",
           },
           reAsks: [
             {
@@ -738,11 +1157,11 @@ export function makeLocationQuestion(
             },
           ],
         }
-      : country === "usa"
+      : Array.isArray(country) && country.length === 1 && country[0] === "usa"
       ? {
           prompt: {
-            zh: "想在美国哪个城市工作? 湾区 / NYC / Seattle / LA / Boston / Chicago / Austin / Remote / 都行",
-            en: "which US city you targeting? Bay Area / NYC / Seattle / LA / Boston / Chicago / Austin / remote / anywhere",
+            zh: "OK, 在美国的话, 有具体城市或 remote 偏好吗? 湾区 / NYC / Seattle / LA / Boston / Chicago / Austin / 都行",
+            en: "ok, in the US, any city or remote preference? Bay Area / NYC / Seattle / LA / Boston / Chicago / Austin / anywhere",
           },
           reAsks: [
             {
@@ -761,8 +1180,8 @@ export function makeLocationQuestion(
         }
       : {
           prompt: {
-            zh: "想找哪个城市的工作? 城市/地区或者 'remote' / '都行' 都行",
-            en: "which city you targeting? a city / region / 'remote' / 'anywhere' all work",
+            zh: "OK, 这些国家/地区里有具体城市或 remote 偏好吗? 城市/地区或者 'remote' / '都行' 都行",
+            en: "ok, within that country/region, any city or remote preference? a city / region / 'remote' / 'anywhere' all work",
           },
           reAsks: [
             {
@@ -787,7 +1206,6 @@ export function makeLocationQuestion(
       questionLabel: "target work city / region",
       hints,
       examples: LOCATION_EXAMPLES,
-      bloomRegex: LOCATION_BLOOM_COMMON,
       parseValue: parseLocationValue,
     }),
     rephraser: new HybridRephraser({
@@ -868,19 +1286,6 @@ function parseVisaValue(raw: unknown): VisaAnswer | null {
   return null
 }
 
-const VISA_BLOOM: GuidedOpenJudgeSpec<VisaAnswer>["bloomRegex"] = [
-  { pattern: /^\s*(citizen|us citizen|公民|美国公民)\s*$/i, value: "citizen" },
-  {
-    pattern: /^\s*(gc|green card|permanent resident|绿卡|永久居民)\s*$/i,
-    value: "permanent_resident",
-  },
-  // OPT/CPT/H1B all collapse to sponsorship_needed per D4
-  {
-    pattern: /^\s*(opt|cpt|h1b|h-1b|need sponsor|need sponsorship|需要 sponsor|需要赞助|需要签证)\s*$/i,
-    value: "sponsorship_needed",
-  },
-]
-
 /**
  * Q_VISA — V2 prompt drops "OPT" listing per D4. Internally OPT/CPT/H1B
  * all canonicalize to `sponsorship_needed`, but the prompt asks the
@@ -897,7 +1302,6 @@ export const Q_VISA: Question<VisaAnswer> = makeQuestion<VisaAnswer>({
     questionLabel: "US work authorization status",
     hints: VISA_HINTS,
     examples: VISA_EXAMPLES,
-    bloomRegex: VISA_BLOOM,
     parseValue: parseVisaValue,
   }),
   rephraser: new HybridRephraser({
@@ -938,15 +1342,22 @@ export const Q_VISA: Question<VisaAnswer> = makeQuestion<VisaAnswer>({
  * (statedPreferences + tags). Runtime owns that; this layer just
  * dispatches the canonical value.
  */
-export interface DefaultQuestionsV2Deps extends DefaultQuestionsDeps {
+export interface DefaultQuestionsV2Deps extends ClosedQuestionsDeps {
+  onRoleAccepted?: (role: RoleAnswer, ctx: AcceptedCtx) => Promise<void>
+  onYoeAccepted?: (yoe: YoeAnswer, ctx: AcceptedCtx) => Promise<void>
+  onVisaAccepted?: (visa: VisaAnswer, ctx: AcceptedCtx) => Promise<void>
+  onStartupPrefAccepted?: (
+    pref: StartupPrefAnswer,
+    ctx: AcceptedCtx
+  ) => Promise<void>
+  onLocationAccepted?: (loc: LocationAnswer, ctx: AcceptedCtx) => Promise<void>
   /** Hook fired when q_country accepts. Writes targetCountry to prefs+tags. */
   onCountryAccepted?: (country: CountryAnswer, ctx: AcceptedCtx) => Promise<void>
 }
 
 /**
- * Static V2 question list — references the V2 const versions of country /
- * location / visa, plus the existing q_lang / q_email / q_email_verify /
- * q_tos / q_role / q_yoe / q_startup_pref / q_resume from defaultQuestions.
+ * Static V2 question list — references the V2 GuidedOpen versions of role /
+ * yoe / visa / startup / country / location.
  *
  * NOTE: this constant has NO onAccepted hooks wired (the country/location/
  * visa entries reuse the deps-less Q_COUNTRY/Q_LOCATION/Q_VISA constants).
@@ -959,14 +1370,12 @@ export interface DefaultQuestionsV2Deps extends DefaultQuestionsDeps {
  *   → q_resume
  */
 export const ONBOARDING_QUESTIONS_V2: Question<unknown>[] = [
-  // The first 4 (lang / email / verify / tos) and the q_role / q_yoe /
-  // q_startup_pref / q_resume entries still rely on deps-injected hooks,
-  // so the static list omits them. P7-4 should compose its full pipeline
-  // via `defaultQuestionsV2(deps)`. This static export is provided for
-  // reference / docs / tests that need the V2 *new* questions only.
+  Q_ROLE as Question<unknown>,
+  Q_YOE as Question<unknown>,
+  Q_VISA as Question<unknown>,
+  Q_STARTUP_PREF as Question<unknown>,
   Q_COUNTRY as Question<unknown>,
   Q_LOCATION as Question<unknown>,
-  Q_VISA as Question<unknown>,
 ]
 
 /**
@@ -978,23 +1387,22 @@ export const ONBOARDING_QUESTIONS_V2: Question<unknown>[] = [
  * deps.onLocationAccepted)` once q_country is answered.
  */
 export function defaultQuestionsV2(deps: DefaultQuestionsV2Deps): Question<unknown>[] {
-  // Reuse the existing factory's lang/email/verify/tos/role/yoe/
-  // startup_pref/resume entries verbatim — they're already
-  // production-tested.
-  const v1List = defaultQuestions(deps)
-  // Pluck out by id; we re-order and replace location/visa with V2 versions.
-  const byId = new Map(v1List.map((q) => [q.id, q]))
+  // V2 normal path owns its closed questions directly; it does not call the
+  // legacy `defaultQuestions()` factory or require `extractAnswerIntent`.
+  const { langQ, emailQ, emailVerifyQ, tosQ, resumeQ } = makeClosedQuestions(deps)
 
-  const langQ = byId.get("q_lang")!
-  const emailQ = byId.get("q_email")!
-  const verifyQ = byId.get("q_email_verify")!
-  const tosQ = byId.get("q_tos")!
-  const roleQ = byId.get("q_role")!
-  const yoeQ = byId.get("q_yoe")!
-  const startupPrefQ = byId.get("q_startup_pref")!
-  const resumeQ = byId.get("q_resume")!
-
-  // V2: country / location / visa with deps-wired onAccepted.
+  const roleQ: Question<RoleAnswer> = {
+    ...makeRoleQuestion(deps.onRoleAccepted),
+  }
+  const yoeQ: Question<YoeAnswer> = {
+    ...Q_YOE,
+    onAccepted: deps.onYoeAccepted as
+      | ((v: YoeAnswer, ctx: AcceptedCtx) => Promise<void>)
+      | undefined,
+  }
+  const startupPrefQ: Question<StartupPrefAnswer> = {
+    ...makeStartupPrefQuestion(deps.onStartupPrefAccepted),
+  }
   const countryQ: Question<CountryAnswer> = {
     ...Q_COUNTRY,
     onAccepted: deps.onCountryAccepted,
@@ -1010,7 +1418,7 @@ export function defaultQuestionsV2(deps: DefaultQuestionsV2Deps): Question<unkno
   return [
     langQ,
     emailQ,
-    verifyQ,
+    emailVerifyQ,
     tosQ,
     roleQ,
     yoeQ,

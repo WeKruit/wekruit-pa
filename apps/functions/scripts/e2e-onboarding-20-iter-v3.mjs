@@ -12,7 +12,7 @@
  *      voiceStylePreference=undefined, emailVerification=null,
  *      onboardedAt=undefined, parsedCandidateResumes=0
  *   3. Send Hi → English → email → Agree → role → yoe → visa → startup
- *      → location → CV synthetic trigger
+ *      → country → location → CV synthetic trigger
  *   4. Verify final state=complete + outbound has ack + 2 job recs
  *
  * Mixes 1/4 iters with INVALID first reply at role/yoe/visa to test
@@ -155,6 +155,7 @@ async function runIter(db, idx) {
     // ── Step 2: walk onboarding
     const invalidStep = idx % 4
     const turns = [
+      { tag: "hi", text: "Hi", wait: 12 },
       { tag: "lang", text: "English", wait: 15 },
       { tag: "email", text: `e2e3${phoneTail}@test.com`, wait: 12 },
       { tag: "stamp" },
@@ -166,6 +167,7 @@ async function runIter(db, idx) {
       ...(invalidStep === 3 ? [{ tag: "visa-bad", text: "🤷", wait: 12 }] : []),
       { tag: "visa", text: "Need sponsorship", wait: 13 },
       { tag: "startup", text: "Either", wait: 13 },
+      { tag: "country", text: "Anywhere", wait: 13 },
       { tag: "loc", text: "Anywhere", wait: 13 },
     ]
 
@@ -220,6 +222,8 @@ async function runIter(db, idx) {
 
     user = await findUser(db, phone)
     r.finalState = user.data.onboardingState
+    r.pipelineCurrentQ = user.data.pipelineState?.currentQId ?? null
+    r.pipelineHalted = user.data.pipelineState?.halted ?? null
 
     // Verify outbound has ack + recs
     const out = await db.collection("pa-outbound").where("userId", "==", userId).get()
@@ -229,13 +233,26 @@ async function runIter(db, idx) {
     })
     const acks = out.docs.filter((d) => {
       const b = d.data().body || ""
-      return b.includes("give me a sec") || b.includes("让我看一下你简历")
+      return (
+        b.includes("give me a sec") ||
+        b.includes("让我看一下你简历") ||
+        /reading (through )?your resume/i.test(b) ||
+        /读一下.*简历|简历.*读/i.test(b) ||
+        /got it, reading|lemme .*resume|skim.*resume|scanning your resume|quick look.*resume/i.test(b)
+      )
     })
     r.recsCount = recs.length
     r.ackCount = acks.length
     r.outboundCount = out.size
     r.onboardingPass = r.finalState === "complete" && recs.length >= 1 && acks.length >= 1
     if (recs.length > 0) r.recBody = recs[0].data().body.slice(0, 160)
+    if (!r.onboardingPass) {
+      r.recentOutbound = out.docs
+        .map((d) => d.data().body || "")
+        .filter(Boolean)
+        .slice(-6)
+        .map((b) => b.slice(0, 140))
+    }
 
     // ── Step 4: MEMORY VERIFY — pa-users.tags has fields populated post-CV
     // Adam spec: "update memory" must persist ≥ N CV-derived fields.
@@ -286,7 +303,9 @@ async function runIter(db, idx) {
     r.error = err.message
   }
 
-  try { await cleanup(db, r.userId, phone) } catch {}
+  if (r.pass) {
+    try { await cleanup(db, r.userId, phone) } catch {}
+  }
   return r
 }
 
@@ -305,6 +324,13 @@ async function main() {
       ` ${emoji} iter${String(i).padStart(2)} | ${elapsed}s | reset=${r.resetPass ? "OK" : "FAIL"} | onboard=${r.onboardingPass ? "OK" : "FAIL"} | mem=${r.memoryPass ? "OK" : "FAIL"}(${r.tagFieldCount ?? 0}) | chat=${r.chatPass ? "OK" : "FAIL"} | state=${r.finalState} | recs=${r.recsCount} | err=${r.error || "-"}`
     )
     if (r.chatReplyBody) console.log(`     chat reply: ${r.chatReplyBody.slice(0, 100)}`)
+    if (!r.onboardingPass) {
+      console.log(`     pipeline: q=${r.pipelineCurrentQ || "-"} halted=${r.pipelineHalted ? JSON.stringify(r.pipelineHalted).slice(0, 180) : "-"}`)
+      if (r.recentOutbound?.length) {
+        console.log(`     recent outbound:`)
+        r.recentOutbound.forEach((b) => console.log(`       - ${b}`))
+      }
+    }
     if (!r.resetPass && r.wipeChecks) {
       console.log(`     wipe gaps: ${Object.entries(r.wipeChecks).filter(([, v]) => !v).map(([k]) => k).join(", ")}`)
     }

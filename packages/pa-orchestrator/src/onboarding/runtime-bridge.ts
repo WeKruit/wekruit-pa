@@ -32,7 +32,7 @@
 import type { AgentDef, InboundEvent } from "@pa/core-types"
 import { createHash } from "node:crypto"
 import { OnboardingPipeline, type RunTurnResult } from "./pipeline.js"
-import { defaultQuestions } from "./questions.js"
+import { defaultQuestionsV2 } from "./questions.js"
 import { FirestorePipelineStateProvider } from "./state-firestore.js"
 import { makePostCollectHook } from "./post-collect.js"
 import type { Lang } from "./question.js"
@@ -75,7 +75,6 @@ export interface PipelineEmitDeps {
     statedPreferences?: { preferredLang?: "zh" | "en" | "mixed" }
     [k: string]: unknown
   } | null>
-  extractAnswerIntent?: import("../index.js").OrchestratorStoreDeps["extractAnswerIntent"]
   extractEmailIntent?: import("../index.js").OrchestratorStoreDeps["extractEmailIntent"]
   sendVerificationEmail?: import("../index.js").OrchestratorStoreDeps["sendVerificationEmail"]
   nowIso(): string
@@ -113,6 +112,19 @@ export async function runOnboardingPipelineTurn(
   input: RunPipelineTurnInput
 ): Promise<RunPipelineTurnResult> {
   const { event, turnId, deps, suppressOutbound } = input
+
+  // Synthetic cv-ingest completion (`[cv-parsed]`). Not a user answer to
+  // q_resume — ResumeJudge would bump/re-ask and swallow the event before
+  // `runDeterministicOnboardingTurn` Route 4 (DiscussionPhase + job recs).
+  const reply = (event.body ?? "").trim()
+  if (reply.startsWith("[cv-parsed]")) {
+    deps.log("pa.onboarding.pipeline.defer_cv_parsed_to_deterministic", {
+      userId: event.userId,
+      turnId,
+      eventId: event.id,
+    })
+    return { handled: false, action: { kind: "pipeline" } }
+  }
 
   // Resolve user phone for outbound. The pipeline doesn't carry user
   // metadata so we read it once via getOnboardingUser if available.
@@ -169,13 +181,12 @@ export async function runOnboardingPipelineTurn(
     throw new Error("runOnboardingPipelineTurn: db required for state persistence")
   }
 
-  // Build defaultQuestions with concrete onAccepted hooks that delegate
+  // Build defaultQuestionsV2 with concrete onAccepted hooks that delegate
   // to the legacy applyOnboarding store method so existing state writes
   // (preferredLang, contactEmail, emailVerification, contactEmailVerifiedAt,
   // resume request) carry over without re-implementation. This keeps the
   // pipeline + legacy paths writing the SAME shape.
-  const questions = defaultQuestions({
-    extractAnswerIntent: deps.extractAnswerIntent ?? (async () => null),
+  const questions = defaultQuestionsV2({
     extractEmailIntent: deps.extractEmailIntent ?? (async () => null),
     onLangAccepted: async (lang, ctx) => {
       ctx.log?.("pa.onboarding.pipeline.q_lang.accepted", { userId: ctx.userId, lang })
@@ -224,9 +235,9 @@ export async function runOnboardingPipelineTurn(
     // any regex re-parse.
     onRoleAccepted: async (role, ctx) => {
       ctx.log?.("pa.onboarding.pipeline.q_role.accepted", { userId: ctx.userId, role })
-      if (deps.applyOnboarding && typeof role === "string") {
+      if (deps.applyOnboarding && Array.isArray(role) && role.length > 0) {
         await deps.applyOnboarding(event.userId, phoneE164, "ask_q_yoe", {
-          parsedAnswer: { targetRole: [role] },
+          parsedAnswer: { targetRole: role },
         })
       }
     },
@@ -251,10 +262,8 @@ export async function runOnboardingPipelineTurn(
         const norm = (visa as string).toLowerCase()
         const visaStatus =
           norm === "citizen" ? "citizen"
-          : norm === "gc" || norm === "green_card" ? "gc"
-          : norm === "opt" || norm === "cpt" ? "opt"
-          : norm === "h1b" ? "h1b"
-          : norm === "tn" || norm === "sponsorship" || norm === "sponsorship_needed" ? "sponsorship_needed"
+          : norm === "gc" || norm === "green_card" || norm === "permanent_resident" ? "gc"
+          : norm === "opt" || norm === "cpt" || norm === "h1b" || norm === "sponsorship" || norm === "sponsorship_needed" ? "sponsorship_needed"
           : "unknown"
         await deps.applyOnboarding(event.userId, phoneE164, "ask_q_startup_pref", {
           parsedAnswer: { visaStatus },
@@ -267,19 +276,24 @@ export async function runOnboardingPipelineTurn(
         // pref ∈ "startup" | "bigtech" | "either"
         const prefersStartup =
           pref === "startup" ? true : pref === "bigtech" ? false : null
-        await deps.applyOnboarding(event.userId, phoneE164, "ask_q_location", {
+        await deps.applyOnboarding(event.userId, phoneE164, "ask_q_country", {
           parsedAnswer: { prefersStartup },
+        })
+      }
+    },
+    onCountryAccepted: async (country, ctx) => {
+      ctx.log?.("pa.onboarding.pipeline.q_country.accepted", { userId: ctx.userId, country })
+      if (deps.applyOnboarding) {
+        const targetCountry = Array.isArray(country) ? country : []
+        await deps.applyOnboarding(event.userId, phoneE164, "ask_q_location", {
+          parsedAnswer: { targetCountry },
         })
       }
     },
     onLocationAccepted: async (loc, ctx) => {
       ctx.log?.("pa.onboarding.pipeline.q_location.accepted", { userId: ctx.userId, loc })
       if (deps.applyOnboarding) {
-        const arr = Array.isArray(loc)
-          ? loc
-          : typeof loc === "string" && loc.trim()
-            ? [loc.trim()]
-            : []
+        const arr = Array.isArray(loc) ? loc : []
         await deps.applyOnboarding(event.userId, phoneE164, "ask_q_resume", {
           parsedAnswer: { targetLocations: arr },
         })

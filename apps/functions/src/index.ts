@@ -239,6 +239,11 @@ type BrokerImessageEvent = {
     chatId?: string
     messageRowId?: number
     text?: string
+    /** Synthetic `[cv-parsed]` worker / E2E — must flow to orchestrator rawMeta. */
+    triggerResumeId?: string
+    cvParsedTrigger?: boolean
+    messageHandle?: string
+    source?: string
     harness?: {
       runner?: string
       suppressOutbound?: boolean
@@ -562,6 +567,7 @@ async function processBrokerImessageEvent(
   }
   const externalChatId = normalizeImessageParticipant(payload.participant)
   const session = await getOrCreateSession(db, user.id, "imessage", externalChatId)
+  const p = payload as BrokerImessageEvent["rawPayload"] & Record<string, unknown>
   const event: InboundEvent = {
     id: claimed.id,
     userId: user.id,
@@ -579,6 +585,12 @@ async function processBrokerImessageEvent(
       ...(payload.chatId !== undefined ? { chatId: payload.chatId } : {}),
       brokerEventId: claimed.id,
       ...(payload.harness ? { harness: payload.harness } : {}),
+      ...(typeof p.triggerResumeId === "string" && p.triggerResumeId.trim()
+        ? { triggerResumeId: p.triggerResumeId.trim() }
+        : {}),
+      ...(p.cvParsedTrigger === true ? { cvParsedTrigger: true } : {}),
+      ...(typeof p.messageHandle === "string" ? { messageHandle: p.messageHandle } : {}),
+      ...(typeof p.source === "string" ? { imessagePayloadSource: p.source } : {}),
     },
   }
   await db.collection(PA_COLLECTIONS.inboundEvents).doc(claimed.id).set(

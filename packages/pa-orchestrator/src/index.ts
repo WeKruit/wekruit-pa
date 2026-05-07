@@ -2414,9 +2414,10 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // ONLY used as last-resort when user hasn't declared preference yet —
     // never as the override path. This also unifies with onboarding-
     // deterministic.langFor() which already prioritizes prefLang.
-    const tagsPref = (onboardingUser as { tags?: { preferredLang?: string } }).tags?.preferredLang
-    const onboardingPref = (onboardingUser as { statedPreferences?: { preferredLang?: string } })
-      .statedPreferences?.preferredLang
+    // `getOnboardingUser` may legitimately return null (tests + rare store
+    // seams). Optional-chain — do not dereference `null` (throws before LLM).
+    const tagsPref = onboardingUser?.tags?.preferredLang
+    const onboardingPref = onboardingUser?.statedPreferences?.preferredLang
     const declaredPref = tagsPref || onboardingPref
     let userLang: "zh" | "en" | "mixed"
     if (declaredPref === "en" || declaredPref === "zh" || declaredPref === "mixed") {

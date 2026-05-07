@@ -14,7 +14,7 @@
  * Tests are FOCUSED on representative probe Qs to avoid 22-step linear chain
  * fatigue:
  *   - q_email (regex hits clean form, but LLM stub catches typo'd shape)
- *   - q_role (LLMRelevanceJudge unclear → provided)
+ *   - q_role (GuidedOpenJudge unclear → provided)
  *   - q_visa (GuidedOpenJudge unclear → provided)
  *   - q_country (GuidedOpenJudge unclear → provided)
  *   - q_location (GuidedOpenJudge unclear → provided)
@@ -29,7 +29,6 @@ import {
   stubGuidedOpenProvided,
   stubGuidedOpenUnclear,
 } from "./_helpers.js"
-import type { ExtractIntentFn } from "../../judges/llm-relevance.js"
 import type { ExtractEmailIntentFn, EmailIntentResult } from "../../judges/email.js"
 import type { LlmCallFn } from "../../judges/guided-open.js"
 
@@ -68,21 +67,20 @@ test("sim/q-chain-typo: q_email typo → recovery", async () => {
   assert.equal(reasks.length, 1, "exactly one reask between typo and recovery")
 })
 
-test("sim/q-chain-typo: q_role typo → recovery (LLMRelevanceJudge)", async () => {
+test("sim/q-chain-typo: q_role typo → recovery (GuidedOpenJudge)", async () => {
   let roleCalls = 0
-  const extractAnswerIntent: ExtractIntentFn = async (step, reply) => {
-    if (step !== "ask_q_role") return null
+  const roleLlm: LlmCallFn = async () => {
     roleCalls++
     if (roleCalls === 1) {
-      return { intent: "unclear", clarifyingQuestion: "did you mean engineer?" }
+      return stubGuidedOpenUnclear("did you mean engineer?")
     }
-    return { intent: "provided", value: "engineer", confidence: 1.0 }
+    return stubGuidedOpenProvided("swe")
   }
 
   // Skip ahead to q_role using pre-seeded state. Easier than typing all
   // earlier Qs by stubbing only what's necessary.
-  const questions = buildV2QuestionsWithStubs({ extractAnswerIntent })
-  const built = buildPipeline({ questionsOverride: questions, extractAnswerIntent })
+  const questions = buildV2QuestionsWithStubs({ roleLlm })
+  const built = buildPipeline({ questionsOverride: questions })
 
   // Pre-seed state: q_role active.
   const s0 = await built.state.load("u_sim")

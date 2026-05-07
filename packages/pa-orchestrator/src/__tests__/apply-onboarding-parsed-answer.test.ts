@@ -125,6 +125,28 @@ test("P9 — applyOnboarding wrapper forwards parsedAnswer for visa probe (q_vis
   assert.equal(sp.visaStatus, "h1b", "h1b passes through verbatim")
 })
 
+test("P9 — applyOnboarding wrapper forwards q_country targetCountry", async () => {
+  const { db, sets } = makeCapturingDb()
+  const store = createFirestoreOrchestratorStore(db)
+
+  await store.applyOnboarding("u_p9_country", "+15551237", "ask_q_location", {
+    parsedAnswer: { targetCountry: ["usa"] },
+  })
+
+  const userSet = sets.find((s) => s.docPath === "pa-users/u_p9_country")
+  assert.ok(userSet)
+  assert.equal(userSet!.payload.onboardingState, "q_location_asked")
+  const sp = userSet!.payload.statedPreferences as { targetCountry?: string[] } | undefined
+  assert.ok(sp, "country parsedAnswer must reach statedPreferences via wrapper")
+  assert.deepEqual(sp.targetCountry, ["usa"])
+  const tagSet = sets.find(
+    (s) => s.docPath === "pa-users/u_p9_country" && s.payload.tags
+  )
+  const tags = tagSet?.payload.tags as { targetCountry?: string[] } | undefined
+  assert.ok(tags, "country parsedAnswer must be projected into user tags")
+  assert.deepEqual(tags.targetCountry, ["usa"])
+})
+
 test("P9 — applyOnboarding wrapper still works WITHOUT parsedAnswer (regression guard)", async () => {
   const { db, sets } = makeCapturingDb()
   const store = createFirestoreOrchestratorStore(db)
