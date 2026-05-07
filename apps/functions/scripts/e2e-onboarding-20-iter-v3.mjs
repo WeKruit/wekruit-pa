@@ -237,7 +237,51 @@ async function runIter(db, idx) {
     r.onboardingPass = r.finalState === "complete" && recs.length >= 1 && acks.length >= 1
     if (recs.length > 0) r.recBody = recs[0].data().body.slice(0, 160)
 
-    r.pass = r.resetPass && r.onboardingPass
+    // ── Step 4: MEMORY VERIFY — pa-users.tags has fields populated post-CV
+    // Adam spec: "update memory" must persist ≥ N CV-derived fields.
+    const tagsAfter = user.data.tags ?? {}
+    const tagFieldCount = Object.keys(tagsAfter).filter((k) => {
+      const v = tagsAfter[k]
+      if (v === null || v === undefined) return false
+      if (Array.isArray(v) && v.length === 0) return false
+      return true
+    }).length
+    r.tagFieldCount = tagFieldCount
+    r.memoryPass = tagFieldCount >= 5 // schemaVersion + preferredLang + targetRoleFunction + visa + skills minimum
+
+    // ── Step 5: CHAT HANDOVER — post-onboarding follow-up triggers main runtime
+    // Adam spec: "正式开始对话聊简历等" — after recs, agent runtime takes over.
+    // Send a follow-up that should NOT route through onboarding-deterministic
+    // (state=complete, so it falls through to main agent runtime).
+    let chatPass = false
+    let chatReplyBody = null
+    try {
+      const followUpId = await send(db, { userId, phone, text: "thanks, tell me about role 1", tag: "chat-follow" })
+      await sleep(20000)
+      // assistant reply written to pa-messages with rawMeta.eventId == followUpId
+      const followSnap = await db
+        .collection("pa-messages")
+        .where("rawMeta.eventId", "==", followUpId)
+        .limit(5)
+        .get()
+      const assistantReplies = followSnap.docs
+        .map((d) => d.data())
+        .filter((d) => d.role === "assistant" && (d.body || d.text))
+      if (assistantReplies.length > 0) {
+        chatReplyBody = (assistantReplies[0].body || assistantReplies[0].text || "").slice(0, 140)
+        // Reject if reply is the canned "still waiting" or a generic onboarding
+        // ack — should be free-form chat about role 1
+        const isOnboardingArtifact = /just waiting|让我看一下你简历|give me a sec|两个对得上|two roles/i.test(chatReplyBody)
+        chatPass = !isOnboardingArtifact && chatReplyBody.length >= 10
+      }
+    } catch (e) {
+      // chat probe failure shouldn't kill the iter; record + continue
+      r.chatErr = e.message?.slice(0, 100)
+    }
+    r.chatPass = chatPass
+    r.chatReplyBody = chatReplyBody
+
+    r.pass = r.resetPass && r.onboardingPass && r.memoryPass && r.chatPass
   } catch (err) {
     r.error = err.message
   }
@@ -258,8 +302,9 @@ async function main() {
     const elapsed = ((Date.now() - t0) / 1000).toFixed(1)
     const emoji = r.pass ? "✅" : "❌"
     console.log(
-      ` ${emoji} iter${String(i).padStart(2)} | ${elapsed}s | reset=${r.resetPass ? "OK" : "FAIL"} | onboard=${r.onboardingPass ? "OK" : "FAIL"} | state=${r.finalState} | outbound=${r.outboundCount} (ack=${r.ackCount} recs=${r.recsCount}) | err=${r.error || "-"}`
+      ` ${emoji} iter${String(i).padStart(2)} | ${elapsed}s | reset=${r.resetPass ? "OK" : "FAIL"} | onboard=${r.onboardingPass ? "OK" : "FAIL"} | mem=${r.memoryPass ? "OK" : "FAIL"}(${r.tagFieldCount ?? 0}) | chat=${r.chatPass ? "OK" : "FAIL"} | state=${r.finalState} | recs=${r.recsCount} | err=${r.error || "-"}`
     )
+    if (r.chatReplyBody) console.log(`     chat reply: ${r.chatReplyBody.slice(0, 100)}`)
     if (!r.resetPass && r.wipeChecks) {
       console.log(`     wipe gaps: ${Object.entries(r.wipeChecks).filter(([, v]) => !v).map(([k]) => k).join(", ")}`)
     }
@@ -269,9 +314,13 @@ async function main() {
   const passCount = results.filter((r) => r.pass).length
   const resetPass = results.filter((r) => r.resetPass).length
   const onboardingPass = results.filter((r) => r.onboardingPass).length
+  const memoryPass = results.filter((r) => r.memoryPass).length
+  const chatPass = results.filter((r) => r.chatPass).length
   console.log(`\n=== AGGREGATE ===`)
   console.log(`Reset pass:      ${resetPass}/${ITER}`)
   console.log(`Onboarding pass: ${onboardingPass}/${ITER}`)
+  console.log(`Memory pass:     ${memoryPass}/${ITER}  (tags has ≥5 populated fields)`)
+  console.log(`Chat handover:   ${chatPass}/${ITER}  (post-recs follow-up gets free-form reply)`)
   console.log(`Combined pass:   ${passCount}/${ITER}`)
   console.log(`Avg time:        ${(results.reduce((a, r) => a + parseFloat(r.elapsedSec), 0) / results.length).toFixed(1)}s`)
 
