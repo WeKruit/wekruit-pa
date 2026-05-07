@@ -43,6 +43,7 @@ import type {
   OnboardingState,
 } from "@pa/core-types"
 import type { OnboardingStep } from "./onboarding.js"
+import { persistUserTagsFromResumeDiscussionData } from "./tags/persist-user-tags-from-cv-discussion.js"
 import { runOnboardingPipelineTurn } from "./onboarding/runtime-bridge.js"
 import { ResumeDiscussionPhase } from "./onboarding/discussion-resume.js"
 import type { PhaseInput, AsyncResult } from "./onboarding/discussion-phase.js"
@@ -130,6 +131,12 @@ export const DEFAULT_ONBOARDING_CONFIG: Record<OnboardingStep, OnboardingStepCon
     prompt: {
       zh: "你更想去 startup 那种小而拼的, 还是大厂稳一点?",
       en: "more into startup hustle vibe or stable big-co?",
+    },
+  },
+  ask_q_country: {
+    prompt: {
+      zh: "主要想找哪个国家/地区的机会? 美国 / 中国 / 加拿大 / 欧洲 / 都行",
+      en: "what country or region should I target first? US / China / Canada / Europe / anywhere?",
     },
   },
   ask_q_location: {
@@ -435,6 +442,7 @@ export type RunDeterministicTurnInput = {
     id: string
     phoneE164: string
     onboardingState?: OnboardingState
+    pipelineState?: { currentQId?: string | null }
     statedPreferences?: {
       contactEmail?: string
       contactEmailVerifiedAt?: string
@@ -544,10 +552,14 @@ function buildResumePhase(input: RunDeterministicTurnInput): ResumeDiscussionPha
     },
 
     writeUserTagsFromCv: async (userId, parsed, _db) => {
-      store.log("pa.onboarding.discussion.tags_write_delegated", {
-        userId,
-        hasParsed: parsed != null,
-      })
+      const db = store.db as Firestore | undefined
+      if (!db) {
+        store.log("pa.onboarding.discussion.tags_skip", { userId, reason: "no_db" })
+        return
+      }
+      await persistUserTagsFromResumeDiscussionData(db, userId, parsed, (e, p) =>
+        store.log(e, p as Record<string, unknown> | undefined)
+      )
     },
 
     composeCvAnalysis: async (_phaseInput, _parsed) => {
@@ -662,17 +674,32 @@ export async function runDeterministicOnboardingTurn(
     isCvParsed: !!detectCvParsedEvent(event),
   })
 
-  // Once onboarding is fully complete, hand off to agent runtime.
-  if (state === "complete") return { handled: false }
-
-  // Route 4 — synthetic cv-parsed event from cv-ingest worker.
+  // Route 4 — synthetic cv-parsed event from cv-ingest worker / E2E.
+  // MUST run before the state===complete early-return: production can mark
+  // onboardingState complete slightly ahead of (or race with) pipeline
+  // cursor; index.ts also dispatches [cv-parsed] when state is complete so
+  // this path still emits the resume-reading ack + analysis + recs.
   const cvParsedEvent = detectCvParsedEvent(event)
   if (cvParsedEvent) {
     const phase = buildResumePhase(input)
+    const phaseInput = buildPhaseInput(input)
+    const pip = onboardingUser.pipelineState
+    const meta = (event.rawMeta ?? {}) as { cvParsedTrigger?: boolean }
+    const isCvParsedTrigger = meta.cvParsedTrigger === true
+    const atResumeGate = state === "q_resume_asked" || pip?.currentQId === "q_resume"
+    // PDF path: onArtifactReceived already sent immediate ack while state moved
+    // to q_resume_processing — do not double-ack. Synthetic/E2E: worker sets
+    // cvParsedTrigger; user never got PDF ack — always pre-ack unless processing.
+    const skipPreAck = state === "q_resume_processing"
+    const shouldPreAck =
+      !skipPreAck && (isCvParsedTrigger || atResumeGate)
+    if (shouldPreAck) {
+      await phase.sendAckBeforeSyntheticComplete(phaseInput)
+    }
     const result: AsyncResult = cvParsedEvent.ok === false
       ? { ok: false, error: cvParsedEvent.error ?? "cv-ingest failed" }
       : { ok: true, data: cvParsedEvent.data }
-    await phase.onWorkComplete(buildPhaseInput(input), result)
+    await phase.onWorkComplete(phaseInput, result)
 
     // 2026-05-07 e2e iter35 fix — after analysis sent + state=complete,
     // fire job-rec generation. Legacy send_cv_analysis chained these;
@@ -722,6 +749,9 @@ export async function runDeterministicOnboardingTurn(
     return { handled: true, action: { kind: "resume_complete" } }
   }
 
+  // Once onboarding is fully complete, hand off to agent runtime.
+  if (state === "complete") return { handled: false }
+
   // Route 1 — text msg while processing -> "wait" hold (Bug A regression
   // check: never re-fires sendImmediateAck).
   if (state === "q_resume_processing" && !hasAttachment(event)) {
@@ -758,9 +788,6 @@ export async function runDeterministicOnboardingTurn(
         store.applyOnboarding(uid, phone, step as OnboardingStep, opts),
       ...(store.getOnboardingUser
         ? { getOnboardingUser: (uid: string) => store.getOnboardingUser!(uid) }
-        : {}),
-      ...(store.extractAnswerIntent
-        ? { extractAnswerIntent: store.extractAnswerIntent }
         : {}),
       ...(store.extractEmailIntent
         ? { extractEmailIntent: store.extractEmailIntent }

@@ -1291,7 +1291,11 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
         store.db,
         event.userId
       )
-      if (enableDeterministic && onboardingUser.onboardingState !== "complete") {
+      const cvParsedInbound = (event.body ?? "").trim().startsWith("[cv-parsed]")
+      if (
+        enableDeterministic &&
+        (onboardingUser.onboardingState !== "complete" || cvParsedInbound)
+      ) {
         // iter32: deterministic dispatcher enforces ALL gates internally
         // (TOS → email → verify → role/yoe/visa/startup/location → resume
         // → complete). When state=complete, all gates have already cleared,
@@ -1357,7 +1361,6 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
                 getOnboardingUser: store.getOnboardingUser
                   ? (uid) => store.getOnboardingUser(uid)
                   : undefined,
-                extractAnswerIntent: store.extractAnswerIntent,
                 extractEmailIntent: store.extractEmailIntent,
                 sendVerificationEmail: store.sendVerificationEmail,
                 nowIso: () => store.nowIso(),
@@ -3677,6 +3680,7 @@ export function createFirestoreOrchestratorStore(
         onboardingState: data.onboardingState,
         statedPreferences: data.statedPreferences,
         runtimeMode: data.runtimeMode,
+        pipelineState: (snap.data() as { pipelineState?: unknown } | undefined)?.pipelineState,
       }
     },
     async applyOnboarding(userId, phoneE164, step, opts) {
