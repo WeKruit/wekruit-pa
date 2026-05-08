@@ -13,6 +13,8 @@ Monorepo: Mac **Photon iMessage worker** (deprecating to Sendblue) + Firestore *
 - Hosting: `https://wekruit-pa.web.app` with `/admin/canonical-tags`, `/admin/qa-evaluator`, `/admin/onboarding-questions` extended.
 - See `.planning/milestones/v1.6-ROADMAP.md` (full archive) + `.planning/v1.6-MILESTONE-AUDIT.md` (audit) + `.planning/MILESTONE-v1.6-unified-tags.md` (architecture).
 
+**Milestone closure (GSD):** before archiving a version, run **`$gsd-audit-milestone`** and/or follow [.planning/GSD-AUDIT-MILESTONE.md](.planning/GSD-AUDIT-MILESTONE.md) so `v*-MILESTONE-AUDIT.md` stays authoritative.
+
 ## Next Milestone Goals (v1.7 — TBD)
 
 Awaiting Adam direction. Likely candidates:

@@ -18,6 +18,10 @@ Phase: **Phase 73 ✅ shipped (career-ops port) — extends v1.7**
 Plan: —
 Status: v1.7 + Phase 73 add-on shipped 2026-05-06.
 
+## Agent / GSD — milestone audit
+
+Future sessions closing a milestone should use **`$gsd-audit-milestone`** (workflow: `~/.codex/get-shit-done/workflows/audit-milestone.md`) and/or read **[.planning/GSD-AUDIT-MILESTONE.md](GSD-AUDIT-MILESTONE.md)** for repo-specific artifacts (`v*-MILESTONE-AUDIT.md`, phase VERIFICATION expectations, integration/E2E reminders including `PA_ADMIN_USER_IDS` / `__PA_RESET__`).
+
 ## Phase 73 — career-ops port (2026-05-06 add-on)
 
 - `apps/job-rec/...` — no changes (V16 unchanged)

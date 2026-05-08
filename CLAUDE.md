@@ -194,6 +194,11 @@ queryMatchingJobs(userId):
 - ❌ **Using abbreviations in vocab** (D5 — `swe` confuses LLM, `software_engineering` doesn't)
 - ❌ **Filter then rank with low limit** — top-50 by `lastSeenAt` may all be sales batch; raise to 500 + push role filter to query layer (D9 / D10)
 
+### GSD — milestone audit
+
+- **`$gsd-audit-milestone`** (Codex/Cursor skill) runs the milestone definition-of-done checklist; upstream workflow: `~/.codex/get-shit-done/workflows/audit-milestone.md`.
+- **Repo guide:** [.planning/GSD-AUDIT-MILESTONE.md](.planning/GSD-AUDIT-MILESTONE.md) — where audit outputs live (`v*-MILESTONE-AUDIT.md`), what to read per phase, and production invariants to double-check during integration review.
+
 ### Reference
 
 - Full spec: `.planning/PROJECT.md` (Current Milestone v1.6 section)
