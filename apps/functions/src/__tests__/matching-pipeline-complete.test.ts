@@ -5,11 +5,15 @@ import type { Firestore } from "firebase-admin/firestore"
 import { setFlag, _clearFeatureFlagCache } from "@pa/pa-persistence"
 import {
   handleMatchingPipelineComplete,
+  composeFailureAlert,
   PIPELINE_RUNS_COLLECTION,
   PIPELINE_RATE_BUCKETS_COLLECTION,
   PA_EVENTS_COLLECTION,
   MATCHING_PIPELINE_FLAG_KEY,
   HARD_LIMIT_PER_DAY,
+  type FailureAlertEmailFn,
+  type FailureAlertSlackFn,
+  type FailureAlertEmailInput,
 } from "../matching-pipeline-complete.js"
 
 // -----------------------------------------------------------------------------
@@ -394,4 +398,184 @@ test("Failed status → 200 + run doc + no event emitted", async () => {
   assert.equal(run!.error, "scrape_blew_up")
   const events = fs._store.get(PA_EVENTS_COLLECTION)
   assert.equal(events?.size ?? 0, 0)
+})
+
+
+// -----------------------------------------------------------------------------
+// P9 directive 2026-05-08 — failure-path alert email tests
+// (fix/pipeline-failure-alert)
+// -----------------------------------------------------------------------------
+
+test("status=failed + alert hooks → 200, alert email + slack invoked with FAILED subject", async () => {
+  const db = makeFakeFirestore()
+  await enableFlag(db)
+  const body = happyBody({
+    status: "failed",
+    runId: "run-failed-1",
+    error: "scraper crashed: AssertionError on line 42",
+    jobsNew: 0,
+    jobsScraped: 0,
+    jobsErrored: 12,
+  })
+  const res = makeRes()
+
+  const emailCalls: FailureAlertEmailInput[] = []
+  const slackCalls: FailureAlertEmailInput[] = []
+  const sendFailureAlertEmail: FailureAlertEmailFn = async (input) => {
+    emailCalls.push(input)
+    return { ok: true }
+  }
+  const sendFailureAlertSlack: FailureAlertSlackFn = async (input) => {
+    slackCalls.push(input)
+    return { posted: true }
+  }
+
+  await handleMatchingPipelineComplete(
+    { rawBody: body, headers: headers(body) },
+    res,
+    baseDeps(db, { sendFailureAlertEmail, sendFailureAlertSlack })
+  )
+
+  assert.equal(res._status, 200)
+  assert.equal((res._json as { ok: boolean }).ok, true)
+  assert.equal(emailCalls.length, 1, "email hook should fire exactly once")
+  assert.equal(emailCalls[0].status, "failed")
+  assert.equal(emailCalls[0].runId, "run-failed-1")
+  assert.equal(emailCalls[0].payload.error, "scraper crashed: AssertionError on line 42")
+  assert.equal(slackCalls.length, 1, "slack hook should fire exactly once")
+  assert.equal(slackCalls[0].status, "failed")
+
+  // Subject + body contract for status=failed
+  const composed = composeFailureAlert(emailCalls[0])
+  assert.match(composed.subject, /^\[WeKruit\] 🔴 Pipeline FAILED — run-failed-1 — \d{4}-\d{2}-\d{2}$/)
+  assert.match(composed.text, /Status:\s+failed/)
+  assert.match(composed.text, /scraper crashed: AssertionError on line 42/)
+  assert.match(composed.text, /runId run-failed-1/)
+  assert.match(composed.text, /Jobs errored:\s+12/)
+  assert.match(composed.html, /🔴 Pipeline FAILED/)
+  assert.match(composed.html, /scraper crashed: AssertionError on line 42/)
+
+  // Run doc must still be persisted (alert is best-effort, never blocks)
+  const fs = db as unknown as { _store: Store }
+  const run = fs._store.get(PIPELINE_RUNS_COLLECTION)?.get("run-failed-1") as Record<string, unknown> | undefined
+  assert.ok(run)
+  assert.equal(run!.status, "failed")
+
+  // No pa-events emitted on failure
+  const events = fs._store.get(PA_EVENTS_COLLECTION)
+  assert.equal(events?.size ?? 0, 0)
+})
+
+test("status=partial + alert hooks → 200, alert email + slack invoked with PARTIAL subject", async () => {
+  const db = makeFakeFirestore()
+  await enableFlag(db)
+  const body = happyBody({
+    status: "partial",
+    runId: "run-partial-7",
+    error: "Greenhouse 503 on 3/12 sources",
+    jobsNew: 18,
+    jobsErrored: 4,
+  })
+  const res = makeRes()
+
+  const emailCalls: FailureAlertEmailInput[] = []
+  const slackCalls: FailureAlertEmailInput[] = []
+  const sendFailureAlertEmail: FailureAlertEmailFn = async (input) => {
+    emailCalls.push(input)
+    return { ok: true }
+  }
+  const sendFailureAlertSlack: FailureAlertSlackFn = async (input) => {
+    slackCalls.push(input)
+    return { posted: true }
+  }
+
+  await handleMatchingPipelineComplete(
+    { rawBody: body, headers: headers(body) },
+    res,
+    baseDeps(db, { sendFailureAlertEmail, sendFailureAlertSlack })
+  )
+
+  assert.equal(res._status, 200)
+  assert.equal(emailCalls.length, 1)
+  assert.equal(emailCalls[0].status, "partial")
+  assert.equal(emailCalls[0].runId, "run-partial-7")
+  assert.equal(slackCalls.length, 1)
+  assert.equal(slackCalls[0].status, "partial")
+
+  const composed = composeFailureAlert(emailCalls[0])
+  assert.match(composed.subject, /^\[WeKruit\] ⚠️ Pipeline PARTIAL — run-partial-7 — \d{4}-\d{2}-\d{2}$/)
+  assert.match(composed.text, /Status:\s+partial/)
+  assert.match(composed.text, /Greenhouse 503 on 3\/12 sources/)
+  assert.match(composed.text, /Jobs errored:\s+4/)
+  assert.match(composed.text, /Jobs new:\s+18/)
+  assert.match(composed.html, /⚠️ Pipeline PARTIAL/)
+
+  // partial != success → still no pa-events emitted
+  const fs = db as unknown as { _store: Store }
+  const events = fs._store.get(PA_EVENTS_COLLECTION)
+  assert.equal(events?.size ?? 0, 0)
+})
+
+test("status=failed + email hook throws → 200 still returned, run doc still written", async () => {
+  // Adam-locked invariant: alert dispatch is best-effort. Mailgun outage
+  // must NEVER cause the webhook to 500 (would corkscrew macmini retries
+  // into the per-day rate-limit ceiling).
+  const db = makeFakeFirestore()
+  await enableFlag(db)
+  const body = happyBody({ status: "failed", runId: "run-fail-throw", error: "boom" })
+  const res = makeRes()
+
+  let slackHit = false
+  const sendFailureAlertEmail: FailureAlertEmailFn = async () => {
+    throw new Error("mailgun 502")
+  }
+  const sendFailureAlertSlack: FailureAlertSlackFn = async () => {
+    slackHit = true
+    return { posted: true }
+  }
+
+  await handleMatchingPipelineComplete(
+    { rawBody: body, headers: headers(body) },
+    res,
+    baseDeps(db, { sendFailureAlertEmail, sendFailureAlertSlack })
+  )
+
+  assert.equal(res._status, 200)
+  assert.equal(slackHit, true, "slack still invoked even when email throws")
+  const fs = db as unknown as { _store: Store }
+  const run = fs._store.get(PIPELINE_RUNS_COLLECTION)?.get("run-fail-throw") as Record<string, unknown> | undefined
+  assert.ok(run, "run doc must still be persisted")
+})
+
+test("status=success → alert hooks NOT invoked (success path unaffected)", async () => {
+  const db = makeFakeFirestore()
+  await enableFlag(db)
+  const body = happyBody({ status: "success", runId: "run-success-1", jobsNew: 5 })
+  const res = makeRes()
+
+  let emailHit = false
+  let slackHit = false
+  const sendFailureAlertEmail: FailureAlertEmailFn = async () => {
+    emailHit = true
+    return { ok: true }
+  }
+  const sendFailureAlertSlack: FailureAlertSlackFn = async () => {
+    slackHit = true
+    return { posted: true }
+  }
+
+  await handleMatchingPipelineComplete(
+    { rawBody: body, headers: headers(body) },
+    res,
+    baseDeps(db, { sendFailureAlertEmail, sendFailureAlertSlack })
+  )
+
+  assert.equal(res._status, 200)
+  assert.equal(emailHit, false, "email hook MUST NOT fire on status=success")
+  assert.equal(slackHit, false, "slack hook MUST NOT fire on status=success")
+
+  // Success-path event still emitted as before
+  const fs = db as unknown as { _store: Store }
+  const events = fs._store.get(PA_EVENTS_COLLECTION)
+  assert.equal(events?.size ?? 0, 1, "success+jobsNew>0 still emits event")
 })

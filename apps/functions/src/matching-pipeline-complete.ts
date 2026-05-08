@@ -63,19 +63,6 @@ export type WebhookResponse = {
   json(body: unknown): WebhookResponse
 }
 
-export type MatchingPipelineCompleteDeps = {
-  db: Firestore
-  /** HMAC shared secret (PA_MATCHING_WEBHOOK_SECRET). */
-  secret: string
-  /** ISO clock; injectable for tests. */
-  nowIso?: () => string
-  /** Epoch ms; injectable for tests (timestamp + rate-limit). */
-  nowMs?: () => number
-  /** UUID factory; default randomUUID. */
-  newId?: () => string
-  log?: (...args: unknown[]) => void
-}
-
 export type MatchingPipelineCompletePayload = {
   runId?: string
   status?: "success" | "failed" | "partial"
@@ -89,6 +76,49 @@ export type MatchingPipelineCompletePayload = {
   sourceRepos?: string[]
   error?: string
   [k: string]: unknown
+}
+
+export type FailureAlertEmailInput = {
+  status: "failed" | "partial"
+  runId: string
+  payload: MatchingPipelineCompletePayload
+  receivedAt: string
+}
+
+export type FailureAlertEmailFn = (
+  input: FailureAlertEmailInput
+) => Promise<{ ok: boolean; reason?: string }>
+
+export type FailureAlertSlackFn = (
+  input: FailureAlertEmailInput
+) => Promise<{ posted: boolean; reason?: string }>
+
+export type MatchingPipelineCompleteDeps = {
+  db: Firestore
+  /** HMAC shared secret (PA_MATCHING_WEBHOOK_SECRET). */
+  secret: string
+  /** ISO clock; injectable for tests. */
+  nowIso?: () => string
+  /** Epoch ms; injectable for tests (timestamp + rate-limit). */
+  nowMs?: () => number
+  /** UUID factory; default randomUUID. */
+  newId?: () => string
+  log?: (...args: unknown[]) => void
+  /**
+   * Failure-path alert email dispatcher. Called when body.status is "failed"
+   * or "partial" after the run doc is persisted. Optional: when undefined,
+   * the failure-alert step is silently skipped (used by tests that don't
+   * care about alerting). Failures inside this function are caught and
+   * logged — they never block the 200 response (macmini cannot retry
+   * because Mailgun is degraded; that would just blow rate-limit budget).
+   */
+  sendFailureAlertEmail?: FailureAlertEmailFn
+  /**
+   * Failure-path Slack alert dispatcher. Same contract as the email path:
+   * optional, fail-graceful. When `PA_SLACK_ALERT_WEBHOOK` is unset, the
+   * production wrapper passes a no-op stub so callers do not need to gate.
+   */
+  sendFailureAlertSlack?: FailureAlertSlackFn
 }
 
 const VALID_STATUSES = new Set(["success", "failed", "partial"])
@@ -208,6 +238,107 @@ async function checkAndIncrementRateLimit(
       dayBucket,
     }
   })
+}
+
+/**
+ * Compose subject + plaintext + html for failure-path alert email.
+ *
+ * Subject format (Adam-locked, do not change without P9 approval):
+ *   "[WeKruit] 🔴 Pipeline FAILED — <runId> — <date>"  (status=failed)
+ *   "[WeKruit] ⚠️ Pipeline PARTIAL — <runId> — <date>" (status=partial)
+ *
+ * Body bullet-list — every field that ops needs to triage without opening
+ * Firestore: status, started/finished, jobs counters, errorMsg, runId,
+ * source repos, plus a deep link to the Firestore run doc and Cloud Logging.
+ */
+export function composeFailureAlert(input: FailureAlertEmailInput): {
+  subject: string
+  text: string
+  html: string
+} {
+  const { status, runId, payload, receivedAt } = input
+  const dateOnly = (() => {
+    const t = Date.parse(payload.scrapeFinishedAt ?? receivedAt)
+    if (!Number.isFinite(t)) return "unknown-date"
+    const d = new Date(t)
+    return d.toISOString().slice(0, 10)
+  })()
+  const emoji = status === "failed" ? "🔴" : "⚠️"
+  const word = status === "failed" ? "FAILED" : "PARTIAL"
+  const subject = `[WeKruit] ${emoji} Pipeline ${word} — ${runId} — ${dateOnly}`
+
+  const sourceRepos = Array.isArray(payload.sourceRepos)
+    ? payload.sourceRepos.filter((s): s is string => typeof s === "string")
+    : []
+  const errorMsg =
+    typeof payload.error === "string" && payload.error.length > 0
+      ? payload.error
+      : "(no error field provided)"
+  const jobsScraped = typeof payload.jobsScraped === "number" ? payload.jobsScraped : 0
+  const jobsNew = typeof payload.jobsNew === "number" ? payload.jobsNew : 0
+  const jobsUpdated = typeof payload.jobsUpdated === "number" ? payload.jobsUpdated : 0
+  const jobsErrored = typeof payload.jobsErrored === "number" ? payload.jobsErrored : 0
+
+  // Cloud Logging deep-link (filter by runId for fast pivot to the actual
+  // pipeline log line that produced this status). We always link the
+  // Firestore run doc too so ops can pull the persisted record without
+  // needing CLI access.
+  const projectId = "wekruit-5f89b"
+  const logsLink =
+    `https://console.cloud.google.com/logs/query` +
+    `;query=resource.type%3D%22cloud_function%22%20AND%20textPayload%3A%22${encodeURIComponent(runId)}%22` +
+    `?project=${projectId}`
+  const runDocLink =
+    `https://console.firebase.google.com/project/${projectId}/firestore/data/~2F${PIPELINE_RUNS_COLLECTION}~2F${encodeURIComponent(runId)}`
+
+  const lines: string[] = [
+    `Pipeline ${word} — runId ${runId}`,
+    "",
+    `Status:           ${status}`,
+    `Started:          ${payload.scrapeStartedAt ?? "(missing)"}`,
+    `Finished:         ${payload.scrapeFinishedAt ?? "(missing)"}`,
+    `Received at:      ${receivedAt}`,
+    `Source repos:     ${sourceRepos.length > 0 ? sourceRepos.join(", ") : "(none)"}`,
+    `Jobs scraped:     ${jobsScraped}`,
+    `Jobs new:         ${jobsNew}`,
+    `Jobs updated:     ${jobsUpdated}`,
+    `Jobs errored:     ${jobsErrored}`,
+    `Error message:    ${errorMsg}`,
+    "",
+    `Run doc:  ${runDocLink}`,
+    `Logs:     ${logsLink}`,
+    "",
+    `— wekruit-pa paMatchingPipelineComplete`,
+  ]
+  const text = lines.join("\n")
+
+  const escape = (s: string) =>
+    s
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+  const html =
+    `<h2 style="margin:0 0 0.4em">${emoji} Pipeline ${word} — <code>${escape(runId)}</code></h2>` +
+    `<table style="border-collapse:collapse;font-family:monospace;font-size:13px">` +
+    `<tr><td style="padding:2px 12px 2px 0;color:#64748b">Status</td><td>${escape(status)}</td></tr>` +
+    `<tr><td style="padding:2px 12px 2px 0;color:#64748b">Started</td><td>${escape(payload.scrapeStartedAt ?? "(missing)")}</td></tr>` +
+    `<tr><td style="padding:2px 12px 2px 0;color:#64748b">Finished</td><td>${escape(payload.scrapeFinishedAt ?? "(missing)")}</td></tr>` +
+    `<tr><td style="padding:2px 12px 2px 0;color:#64748b">Received</td><td>${escape(receivedAt)}</td></tr>` +
+    `<tr><td style="padding:2px 12px 2px 0;color:#64748b">Source repos</td><td>${escape(sourceRepos.length > 0 ? sourceRepos.join(", ") : "(none)")}</td></tr>` +
+    `<tr><td style="padding:2px 12px 2px 0;color:#64748b">Jobs scraped</td><td>${jobsScraped}</td></tr>` +
+    `<tr><td style="padding:2px 12px 2px 0;color:#64748b">Jobs new</td><td>${jobsNew}</td></tr>` +
+    `<tr><td style="padding:2px 12px 2px 0;color:#64748b">Jobs updated</td><td>${jobsUpdated}</td></tr>` +
+    `<tr><td style="padding:2px 12px 2px 0;color:#64748b">Jobs errored</td><td>${jobsErrored}</td></tr>` +
+    `<tr><td style="padding:2px 12px 2px 0;color:#64748b;vertical-align:top">Error</td><td><pre style="margin:0;white-space:pre-wrap">${escape(errorMsg)}</pre></td></tr>` +
+    `</table>` +
+    `<p style="margin-top:1em">` +
+    `<a href="${runDocLink}">Open run doc</a> · ` +
+    `<a href="${logsLink}">Open logs</a>` +
+    `</p>` +
+    `<hr style="border:none;border-top:1px solid #e2e8f0;margin:1.2em 0">` +
+    `<p style="color:#94a3b8;font-size:0.8em">wekruit-pa · paMatchingPipelineComplete</p>`
+
+  return { subject, text, html }
 }
 
 /**
@@ -349,6 +480,59 @@ export async function handleMatchingPipelineComplete(
     )
     reply(res, 500, { ok: false, error: "run_write_failed" })
     return
+  }
+
+  // ---- 7b. Failure-path alerts (failed | partial) -----------------------
+  // Best-effort: errors here are logged but do not block the 200 response.
+  // macmini already considers status=200 the contract that means "webhook
+  // delivered". Mailgun/Slack flapping must not corkscrew us into the per-day
+  // rate-limit ceiling via macmini retry storms.
+  if (status === "failed" || status === "partial") {
+    const alertInput: FailureAlertEmailInput = {
+      status,
+      runId,
+      payload: body,
+      receivedAt: at,
+    }
+    if (deps.sendFailureAlertEmail) {
+      try {
+        const r = await deps.sendFailureAlertEmail(alertInput)
+        if (!r.ok) {
+          log("[matching-pipeline-complete] failure_alert_email_failed", {
+            runId,
+            status,
+            reason: r.reason,
+          })
+        } else {
+          log("[matching-pipeline-complete] failure_alert_email_sent", {
+            runId,
+            status,
+          })
+        }
+      } catch (err) {
+        log(
+          "[matching-pipeline-complete] failure_alert_email_threw",
+          err instanceof Error ? err.message : String(err)
+        )
+      }
+    }
+    if (deps.sendFailureAlertSlack) {
+      try {
+        const r = await deps.sendFailureAlertSlack(alertInput)
+        if (!r.posted) {
+          log("[matching-pipeline-complete] failure_alert_slack_skipped", {
+            runId,
+            status,
+            reason: r.reason,
+          })
+        }
+      } catch (err) {
+        log(
+          "[matching-pipeline-complete] failure_alert_slack_threw",
+          err instanceof Error ? err.message : String(err)
+        )
+      }
+    }
   }
 
   // ---- 8. Emit pa-events on success + jobsNew > 0 -----------------------
