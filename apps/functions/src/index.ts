@@ -76,7 +76,17 @@ import { runCoalesceBufferSweep } from "./coalesce/buffer-sweep.js"
 import { handleUpstreamEventWebhook } from "./upstream-event-webhook.js"
 
 // v1.5 Stream-A2 / Phase 47.1 — Matching pipeline complete webhook
-import { handleMatchingPipelineComplete } from "./matching-pipeline-complete.js"
+import {
+  handleMatchingPipelineComplete,
+  composeFailureAlert,
+  type FailureAlertEmailFn,
+  type FailureAlertSlackFn,
+} from "./matching-pipeline-complete.js"
+// P9 directive 2026-05-08 — failure-path alert email reuses the Mailgun
+// transport already used by qa-evaluator-weekly + cost-summary-weekly, plus
+// the shared Slack alert helper. See task fix/pipeline-failure-alert.
+import { sendMailgun, type MailgunConfig } from "./email/mailgun.js"
+import { postSlackAlert } from "./lib/slack-alert.js"
 
 // Phase 22 — proactive check-in sweep
 export { paProactiveSweep } from "./proactive-sweep.js"
@@ -1639,13 +1649,108 @@ export const paHealthUpstreamEventWebhook = makeHealthHandler({
 export const paMatchingPipelineComplete = onRequest(
   {
     region: "us-central1",
-    secrets: [PA_MATCHING_WEBHOOK_SECRET],
+    // P9 directive 2026-05-08 — Mailgun + Slack secrets bound so the
+    // failure-path alert can reach Adam when status=failed|partial.
+    // Mailgun creds optional at runtime: if any are missing, the alert
+    // becomes a Slack-only / log-only path (graceful degradation, same
+    // pattern as cost-summary-weekly).
+    secrets: [
+      PA_MATCHING_WEBHOOK_SECRET,
+      MAILGUN_API_KEY,
+      MAILGUN_DOMAIN,
+      MAILGUN_FROM,
+      MAILGUN_REGION,
+      PA_SLACK_ALERT_WEBHOOK,
+    ],
     memory: "256MiB",
     timeoutSeconds: 30,
     cors: false,
   },
   async (req, res) => {
     try {
+      // Build production Mailgun config (optional — empty config disables
+      // the email leg, slack continues if its webhook is set).
+      const mailgunCfg: MailgunConfig | null = (() => {
+        try {
+          const apiKey = (MAILGUN_API_KEY.value() ?? "").trim()
+          const domain = (MAILGUN_DOMAIN.value() ?? "").trim()
+          const from = (MAILGUN_FROM.value() ?? "").trim()
+          const regionRaw = (MAILGUN_REGION.value() ?? "us").trim()
+          const region: "us" | "eu" = regionRaw === "eu" ? "eu" : "us"
+          if (!apiKey || !domain || !from) return null
+          return { apiKey, domain, from, region }
+        } catch {
+          return null
+        }
+      })()
+
+      const ALERT_RECIPIENT = "developers@wekruit.com"
+
+      const sendFailureAlertEmail: FailureAlertEmailFn | undefined = mailgunCfg
+        ? async (input) => {
+            const { subject, text, html } = composeFailureAlert(input)
+            try {
+              const res = await sendMailgun(mailgunCfg, {
+                to: ALERT_RECIPIENT,
+                subject,
+                text,
+                html,
+              })
+              if (!res.ok) {
+                return {
+                  ok: false,
+                  reason: `mailgun_${res.status}`,
+                }
+              }
+              return { ok: true }
+            } catch (err) {
+              return {
+                ok: false,
+                reason: err instanceof Error ? err.message : String(err),
+              }
+            }
+          }
+        : undefined
+      if (!mailgunCfg) {
+        logger.warn(
+          "[matching-pipeline-complete] mailgun_creds_missing — failure alert email disabled"
+        )
+      }
+
+      const sendFailureAlertSlack: FailureAlertSlackFn = async (input) => {
+        const { subject } = composeFailureAlert(input)
+        const fields = [
+          { name: "runId", value: input.runId },
+          { name: "status", value: input.status },
+          {
+            name: "started",
+            value: String(input.payload.scrapeStartedAt ?? "(missing)"),
+          },
+          {
+            name: "finished",
+            value: String(input.payload.scrapeFinishedAt ?? "(missing)"),
+          },
+          {
+            name: "jobsScraped",
+            value: String(input.payload.jobsScraped ?? 0),
+          },
+          {
+            name: "jobsErrored",
+            value: String(input.payload.jobsErrored ?? 0),
+          },
+        ]
+        const errorPreview =
+          typeof input.payload.error === "string" && input.payload.error.length > 0
+            ? input.payload.error.slice(0, 400)
+            : "(no error field)"
+        return await postSlackAlert({
+          level: input.status === "failed" ? "error" : "warn",
+          title: subject,
+          message: errorPreview,
+          fields,
+        })
+      }
+
       await handleMatchingPipelineComplete(
         {
           rawBody: req.rawBody,
@@ -1668,6 +1773,8 @@ export const paMatchingPipelineComplete = onRequest(
           secret: PA_MATCHING_WEBHOOK_SECRET.value(),
           log: (...args: unknown[]) =>
             logger.info("[matching-pipeline-complete]", ...args),
+          sendFailureAlertEmail,
+          sendFailureAlertSlack,
         }
       )
     } catch (err) {
