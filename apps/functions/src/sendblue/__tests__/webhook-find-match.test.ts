@@ -185,6 +185,7 @@ const ENV_KEYS = [
   "IMESSAGE_PEER",
   "IMESSAGE_DEFAULT_PEER",
   "PA_ADMIN_USER_IDS",
+  "PA_ADMIN_PHONES",
 ] as const
 
 let savedEnv: Record<string, string | undefined>
@@ -384,6 +385,33 @@ describe("__PA_FIND_MATCH__ admin trigger (Phase 60 DEV-01)", () => {
 
     assert.equal(res.statusCode, 200)
     assert.deepEqual(res.bodyOut, { ok: true, action: "find_match_triggered" })
+    assert.ok(audit.some((a) => a.type === "dev_trigger_find_match"))
+  })
+
+  it("Test 8: PA_ADMIN_PHONES matches from_number → authorized without PA_ADMIN_USER_IDS", async () => {
+    process.env.PA_ADMIN_PHONES = "+1 (555) 123-4567"
+    const { db, audit, phoneToUser } = makeFakeDb({
+      phoneToUser: { [ADMIN_PHONE]: ADMIN_USER_ID },
+    })
+    const body = JSON.stringify(basePayload("__PA_FIND_MATCH__"))
+    const req = makeReq(body, sign(body))
+    const res = makeRes()
+
+    let triggerCalled = false
+    await handleSendblueWebhook(req, res, {
+      db,
+      secret: SECRET,
+      lookupUserByPhone: async (_db, phone) => phoneToUser[phone] ?? null,
+      generateJobRecsForUser: async () => {
+        triggerCalled = true
+        return { ok: true, jobCount: 2 }
+      },
+    })
+
+    await new Promise((r) => setImmediate(r))
+    assert.equal(res.statusCode, 200)
+    assert.deepEqual(res.bodyOut, { ok: true, action: "find_match_triggered" })
+    assert.equal(triggerCalled, true)
     assert.ok(audit.some((a) => a.type === "dev_trigger_find_match"))
   })
 })

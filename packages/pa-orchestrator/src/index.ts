@@ -104,6 +104,7 @@ import {
 // off; auto-allowlisted on reset). Try/catch around the call falls back
 // to legacy on any throw so flag-on users never end up stuck.
 import { runOnboardingPipelineTurn } from "./onboarding/runtime-bridge.js"
+import { normalizeContactHandle } from "./allowlist.js"
 // Re-export for downstream consumers (apps/functions sim, scripts).
 // iter35 P7-4 — `resolveDeterministicAction` and `composeDeterministicReply`
 // removed (subsumed by `pipeline.runTurn` + DiscussionPhase pattern).
@@ -1057,6 +1058,30 @@ export function buildTurnTools(
     })
   }
   return tools
+}
+
+/** `PA_ADMIN_PHONES` CSV — E.164 or US 10-digit; matched by last-10 digits. */
+function parsePaAdminPhonesFromEnv(): string[] {
+  return (process.env.PA_ADMIN_PHONES ?? "")
+    .split(/[,;\n]/g)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((raw) => normalizeContactHandle(raw))
+    .filter(Boolean)
+}
+
+function inboundFromMatchesPaAdminPhone(
+  fromRaw: string,
+  normalizedAdminPhones: string[]
+): boolean {
+  const fd = normalizeContactHandle(fromRaw).replace(/\D/g, "")
+  if (fd.length < 10) return false
+  const suf = fd.slice(-10)
+  for (const p of normalizedAdminPhones) {
+    const pd = p.replace(/\D/g, "")
+    if (pd.length >= 10 && pd.slice(-10) === suf) return true
+  }
+  return false
 }
 
 export async function processInboundEvent(event: InboundEvent, store: OrchestratorStore): Promise<void> {
@@ -3501,13 +3526,17 @@ export function createFirestoreOrchestratorStore(
       // Two-gate authorization, EITHER passes:
       //   (a) per-user opt-in: pa_users/{id}.testMode === true
       //   (b) deploy-time admin allowlist: PA_ADMIN_USER_IDS env (CSV of UUIDs)
+      //       OR PA_ADMIN_PHONES env (CSV of E.164 / US 10-digit vs event.from)
       // Production users never get the magic string — testMode is unset and
       // their UUID is not in the env allowlist.
       const adminUserIds = (process.env.PA_ADMIN_USER_IDS ?? "")
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean)
-      const isAdminAllowlisted = adminUserIds.includes(event.userId)
+      const adminPhonesNorm = parsePaAdminPhonesFromEnv()
+      const isAdminAllowlisted =
+        adminUserIds.includes(event.userId) ||
+        inboundFromMatchesPaAdminPhone(event.from, adminPhonesNorm)
       let isTestUser = false
       if (!isAdminAllowlisted) {
         const userSnap = await db.collection(PA_COLLECTIONS.users).doc(event.userId).get()

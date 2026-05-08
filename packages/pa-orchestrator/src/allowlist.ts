@@ -20,7 +20,7 @@ export type AllowlistEntry = {
 }
 
 /** Normalize a raw contact handle to a canonical form for comparison. */
-function normalizeHandle(raw: string): string {
+export function normalizeContactHandle(raw: string): string {
   const value = raw.trim()
   if (!value) return ""
   if (value.includes("@")) return value.toLowerCase().trim()
@@ -47,7 +47,7 @@ function parseEnvAllowlist(): AllowlistEntry[] {
     .map((s) => s.trim())
     .filter(Boolean)
     .map((handle) => {
-      const normalized = normalizeHandle(handle)
+      const normalized = normalizeContactHandle(handle)
       if (!normalized) return null
       const contactType: "phone" | "email" = normalized.includes("@") ? "email" : "phone"
       return { contactHandle: normalized, contactType }
@@ -87,7 +87,7 @@ export async function resolveAllowlist(db: Firestore): Promise<AllowlistEntry[]>
  * Emails are compared lowercase.
  */
 export function isAllowlisted(handle: string, list: AllowlistEntry[]): boolean {
-  const normalized = normalizeHandle(handle)
+  const normalized = normalizeContactHandle(handle)
   if (!normalized) return false
   const isEmail = normalized.includes("@")
   for (const entry of list) {
@@ -126,7 +126,7 @@ export async function recordAllowlistDeny(
   }
 ): Promise<void> {
   const now = Date.now()
-  const normalizedHandle = normalizeHandle(input.contactHandle) || input.contactHandle
+  const normalizedHandle = normalizeContactHandle(input.contactHandle) || input.contactHandle
   const idempotencyKey = `allowlist_${input.channel}_${normalizedHandle}_${Math.floor(now / 60000)}`
   const createdAt = new Date(now).toISOString()
 

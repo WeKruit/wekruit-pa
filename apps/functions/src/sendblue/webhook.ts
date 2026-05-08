@@ -46,7 +46,7 @@ import {
   isInboundReceiveEvent,
   normalizeSendblueInbound,
 } from "./normalize.js"
-import { useDmAllowlist, getPeerAllowlist, isSamePeer } from "./allowlist.js"
+import { useDmAllowlist, getPeerAllowlist, isSamePeer, normalizePeer } from "./allowlist.js"
 import { recordAuditEvent, type AuditEventInput } from "./audit.js"
 import { parseInboundTapback } from "./tapback-parser.js"
 import type { SendblueInboundPayload } from "./types.js"
@@ -621,10 +621,11 @@ export async function handleSendblueWebhook(
   // staging for end-to-end verification of the match path without waiting
   // for the daily 09:00 cron.
   //
-  // Security: GUARDED by `PA_ADMIN_USER_IDS` env (comma-separated userId
-  // allowlist). HMAC verify already ran at line 285 — request came from
-  // Sendblue. Allowlist + HMAC together guarantee a non-admin user typing
-  // the literal token cannot trigger the path.
+  // Security: GUARDED by `PA_ADMIN_USER_IDS` (userId CSV) and/or
+  // `PA_ADMIN_PHONES` (E.164 / US 10-digit CSV, last-10 match on from_number).
+  // HMAC verify already ran at line 285 — request came from Sendblue.
+  // Allowlist + HMAC together guarantee a random device cannot trigger the
+  // path without being an admin phone or an admin-linked user account.
   //
   // Flow on detect-and-authorized:
   //   1. lookup userId by phone (same resolver as coalesce path)
@@ -644,6 +645,14 @@ export async function handleSendblueWebhook(
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean)
+    const adminPhones = (process.env.PA_ADMIN_PHONES ?? "")
+      .split(/[,;\n]/g)
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .map((raw) => normalizePeer(raw))
+      .filter(Boolean)
+    const phoneMatchesAdmin =
+      adminPhones.length > 0 && adminPhones.some((p) => isSamePeer(normalized.fromNumber, p))
     const lookupFn = deps.lookupUserByPhone ?? defaultLookupUserByPhone
     let triggerUserId: string | null = null
     try {
@@ -652,7 +661,8 @@ export async function handleSendblueWebhook(
       log("[sendblue][webhook] find_match phone lookup failed",
         err instanceof Error ? err.message : String(err))
     }
-    const authorized = !!triggerUserId && adminUids.includes(triggerUserId)
+    const authorized =
+      !!triggerUserId && (adminUids.includes(triggerUserId) || phoneMatchesAdmin)
     if (!authorized) {
       log("pa.dev_trigger.find_match.unauthorized", {
         fromNumber: normalized.fromNumber,
