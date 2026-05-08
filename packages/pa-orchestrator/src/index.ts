@@ -104,7 +104,10 @@ import {
 // off; auto-allowlisted on reset). Try/catch around the call falls back
 // to legacy on any throw so flag-on users never end up stuck.
 import { runOnboardingPipelineTurn } from "./onboarding/runtime-bridge.js"
-import { normalizeContactHandle } from "./allowlist.js"
+import {
+  parsePaAdminContactsFromEnv,
+  inboundFromMatchesPaAdminContacts,
+} from "./admin-contacts.js"
 // Re-export for downstream consumers (apps/functions sim, scripts).
 // iter35 P7-4 — `resolveDeterministicAction` and `composeDeterministicReply`
 // removed (subsumed by `pipeline.runTurn` + DiscussionPhase pattern).
@@ -114,6 +117,19 @@ export {
   loadOnboardingConfig,
   DEFAULT_ONBOARDING_CONFIG,
 } from "./onboarding-deterministic.js"
+// Admin magic-string gates (`__PA_RESET__`, Sendblue `__PA_FIND_MATCH__`, …)
+export {
+  normalizeContactHandle,
+  resolveAllowlist,
+  isAllowlisted,
+  recordAllowlistDeny,
+  type AllowlistEntry,
+} from "./allowlist.js"
+export {
+  parsePaAdminContactsFromEnv,
+  inboundFromMatchesPaAdminContacts,
+  type ParsedPaAdminContacts,
+} from "./admin-contacts.js"
 // iter33 P5 — onboarding workflow as introspectable graph data.
 export {
   ONBOARDING_WORKFLOW,
@@ -480,6 +496,8 @@ export type OrchestratorStore = {
     statedPreferences?: import("@pa/core-types").StatedPreferences
     /** iter31 — operator-set HITL runtime mode (auto | paused). */
     runtimeMode?: "auto" | "paused"
+    /** D8 — canonical tags (preferredLang overrides statedPreferences for voice lock). */
+    tags?: { preferredLang?: "zh" | "en" | "mixed" }
   } | null>
   /**
    * Phase 23 — apply onboarding step to advance user state + promote beta participant.
@@ -1058,34 +1076,6 @@ export function buildTurnTools(
     })
   }
   return tools
-}
-
-/** `PA_ADMIN_PHONES` CSV — E.164 or US 10-digit; matched by last-10 digits. */
-function parsePaAdminPhonesFromEnv(): string[] {
-  return (process.env.PA_ADMIN_PHONES ?? "")
-    .split(/[,;\n]/g)
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .map((raw) => normalizeContactHandle(raw))
-    .filter(Boolean)
-}
-
-function inboundFromMatchesPaAdminPhone(
-  fromRaw: string,
-  normalizedAdminPhones: string[]
-): boolean {
-  // Strip RTL/LTR / ZW marks so paste-from-iMessage numbers still match CSV.
-  const fd = normalizeContactHandle(fromRaw.replace(/[\u200B-\u200F\u2060-\u2064\u2066-\u2069\uFEFF]/g, "")).replace(
-    /\D/g,
-    ""
-  )
-  if (fd.length < 10) return false
-  const suf = fd.slice(-10)
-  for (const p of normalizedAdminPhones) {
-    const pd = p.replace(/\D/g, "")
-    if (pd.length >= 10 && pd.slice(-10) === suf) return true
-  }
-  return false
 }
 
 export async function processInboundEvent(event: InboundEvent, store: OrchestratorStore): Promise<void> {
@@ -3534,17 +3524,17 @@ export function createFirestoreOrchestratorStore(
       // Two-gate authorization, EITHER passes:
       //   (a) per-user opt-in: pa_users/{id}.testMode === true
       //   (b) deploy-time admin allowlist: PA_ADMIN_USER_IDS env (CSV of UUIDs)
-      //       OR PA_ADMIN_PHONES env (CSV of E.164 / US 10-digit vs event.from)
+      //       OR PA_ADMIN_CONTACTS / PA_ADMIN_PHONES / PA_ADMIN_EMAILS vs event.from
       // Production users never get the magic string — testMode is unset and
       // their UUID is not in the env allowlist.
       const adminUserIds = (process.env.PA_ADMIN_USER_IDS ?? "")
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean)
-      const adminPhonesNorm = parsePaAdminPhonesFromEnv()
+      const adminContacts = parsePaAdminContactsFromEnv()
       const isAdminAllowlisted =
         adminUserIds.includes(event.userId) ||
-        inboundFromMatchesPaAdminPhone(event.from, adminPhonesNorm)
+        inboundFromMatchesPaAdminContacts(event.from, adminContacts)
       let isTestUser = false
       if (!isAdminAllowlisted) {
         const userSnap = await db.collection(PA_COLLECTIONS.users).doc(event.userId).get()
@@ -3711,6 +3701,7 @@ export function createFirestoreOrchestratorStore(
           | "complete"
         statedPreferences?: import("@pa/core-types").StatedPreferences
         runtimeMode?: "auto" | "paused"
+        tags?: { preferredLang?: "zh" | "en" | "mixed" }
       }
       return {
         id: data.id ?? userId,
@@ -3718,6 +3709,7 @@ export function createFirestoreOrchestratorStore(
         onboardingState: data.onboardingState,
         statedPreferences: data.statedPreferences,
         runtimeMode: data.runtimeMode,
+        tags: data.tags,
         pipelineState: (snap.data() as { pipelineState?: unknown } | undefined)?.pipelineState,
       }
     },

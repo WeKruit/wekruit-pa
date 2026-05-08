@@ -29,6 +29,11 @@
 import type { Firestore } from "firebase-admin/firestore"
 import { createInboundEvent } from "@pa/pa-broker"
 
+import {
+  normalizeContactHandle,
+  parsePaAdminContactsFromEnv,
+  inboundFromMatchesPaAdminContacts,
+} from "@pa/pa-orchestrator"
 import { getFlag, checkAndIncrementRateLimit } from "@pa/pa-persistence"
 import { verifySendblueSignature, extractSendblueSignatureHeader } from "./hmac.js"
 import { sendReaction as defaultSendReaction, type SendReactionInput } from "./send-reaction.js"
@@ -109,7 +114,8 @@ export type WebhookDeps = {
   /**
    * Phase 60 (DEV-01) — `__PA_FIND_MATCH__` dev trigger handler. When the
    * inbound text contains the trigger token AND the resolved user is in
-   * `PA_ADMIN_USER_IDS`, the webhook short-circuits the normal orchestrator
+   * `PA_ADMIN_USER_IDS` OR the inbound handle matches `PA_ADMIN_CONTACTS`
+   * / legacy `PA_ADMIN_PHONES` / `PA_ADMIN_EMAILS`, the webhook short-circuits
    * path and force-runs the V16 match + iMessage send. Returns immediately
    * (the trigger itself is fire-and-forget); the user receives the
    * recommendation message via the normal sendImessage queue. Inject for
@@ -276,6 +282,29 @@ async function defaultLookupUserByPhone(db: Firestore, phoneE164: string): Promi
   if (!phoneE164) return null
   try {
     const snap = await db.collection("pa-users").where("phoneE164", "==", phoneE164).limit(1).get()
+    if (snap.empty) return null
+    return snap.docs[0]!.id
+  } catch {
+    return null
+  }
+}
+
+/** Strip bidi/zero-width noise from pasted iMessage handles (parity with orchestrator reset gate). */
+const ADMIN_CONTACT_STRIP_RE = /[\u200B-\u200F\u2060-\u2064\u2066-\u2069\uFEFF]/g
+
+async function defaultLookupUserForFindMatchTrigger(
+  db: Firestore,
+  fromHandle: string,
+  lookupPhone: (d: Firestore, phone: string) => Promise<string | null>,
+): Promise<string | null> {
+  const trimmed = (fromHandle ?? "").trim()
+  if (!trimmed) return null
+  const byPhone = await lookupPhone(db, trimmed)
+  if (byPhone) return byPhone
+  const norm = normalizeContactHandle(trimmed.replace(ADMIN_CONTACT_STRIP_RE, ""))
+  if (!norm || !norm.includes("@")) return null
+  try {
+    const snap = await db.collection("pa-users").where("channels.imessageHandle", "==", norm).limit(1).get()
     if (snap.empty) return null
     return snap.docs[0]!.id
   } catch {
@@ -622,14 +651,14 @@ export async function handleSendblueWebhook(
   // for the daily 09:00 cron.
   //
   // Security: GUARDED by `PA_ADMIN_USER_IDS` (userId CSV) and/or
-  // `PA_ADMIN_PHONES` (E.164 / US 10-digit CSV, last-10 match on from_number).
+  // `PA_ADMIN_CONTACTS` / `PA_ADMIN_PHONES` / `PA_ADMIN_EMAILS` vs from_number.
   // HMAC verify already ran at line 285 — request came from Sendblue.
   // Allowlist + HMAC together guarantee a random device cannot trigger the
   // path without being an admin phone or an admin-linked user account.
   //
   // Flow on detect-and-authorized:
-  //   1. lookup userId by phone (same resolver as coalesce path)
-  //   2. validate against `PA_ADMIN_USER_IDS`
+  //   1. lookup userId: phoneE164 exact match; if from_number is Apple ID email, `channels.imessageHandle`
+  //   2. authorize when userId ∈ PA_ADMIN_USER_IDS OR inbound handle matches admin contact CSV
   //   3. invoke `deps.generateJobRecsForUser` (fire-and-forget)
   //   4. audit `dev_trigger_find_match`
   //   5. SKIP broker enqueue + return 200 OK with action marker
@@ -645,24 +674,18 @@ export async function handleSendblueWebhook(
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean)
-    const adminPhones = (process.env.PA_ADMIN_PHONES ?? "")
-      .split(/[,;\n]/g)
-      .map((s) => s.trim())
-      .filter(Boolean)
-      .map((raw) => normalizePeer(raw))
-      .filter(Boolean)
-    const phoneMatchesAdmin =
-      adminPhones.length > 0 && adminPhones.some((p) => isSamePeer(normalized.fromNumber, p))
+    const adminContacts = parsePaAdminContactsFromEnv()
+    const contactMatchesAdmin = inboundFromMatchesPaAdminContacts(normalized.fromNumber, adminContacts)
     const lookupFn = deps.lookupUserByPhone ?? defaultLookupUserByPhone
     let triggerUserId: string | null = null
     try {
-      triggerUserId = await lookupFn(deps.db, normalized.fromNumber)
+      triggerUserId = await defaultLookupUserForFindMatchTrigger(deps.db, normalized.fromNumber, lookupFn)
     } catch (err) {
-      log("[sendblue][webhook] find_match phone lookup failed",
+      log("[sendblue][webhook] find_match user lookup failed",
         err instanceof Error ? err.message : String(err))
     }
     const authorized =
-      !!triggerUserId && (adminUids.includes(triggerUserId) || phoneMatchesAdmin)
+      !!triggerUserId && (adminUids.includes(triggerUserId) || contactMatchesAdmin)
     if (!authorized) {
       log("pa.dev_trigger.find_match.unauthorized", {
         fromNumber: normalized.fromNumber,

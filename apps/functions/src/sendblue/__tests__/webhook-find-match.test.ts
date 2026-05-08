@@ -4,7 +4,8 @@
  * Mirrors the structure of webhook.test.ts (fake DB + signed payload) but
  * focuses on:
  *   1. token detection in normalized.text
- *   2. admin-allowlist enforcement via PA_ADMIN_USER_IDS env
+ *   2. admin-allowlist enforcement via PA_ADMIN_USER_IDS and/or PA_ADMIN_CONTACTS /
+ *      PA_ADMIN_PHONES / PA_ADMIN_EMAILS vs from_number (plus userId lookup)
  *   3. fire-and-forget invocation of generateJobRecsForUser
  *   4. dev_trigger_find_match audit event written
  *   5. NO broker enqueue when trigger fires (short-circuit path)
@@ -19,6 +20,7 @@ import { _clearFeatureFlagCache } from "@pa/pa-persistence"
 
 const SECRET = "test-webhook-secret"
 const ADMIN_PHONE = "+15551234567"
+const ADMIN_EMAIL = "boss@icloud.test"
 const ADMIN_USER_ID = "admin-user-uuid"
 const NON_ADMIN_USER_ID = "non-admin-uuid"
 
@@ -186,6 +188,8 @@ const ENV_KEYS = [
   "IMESSAGE_DEFAULT_PEER",
   "PA_ADMIN_USER_IDS",
   "PA_ADMIN_PHONES",
+  "PA_ADMIN_CONTACTS",
+  "PA_ADMIN_EMAILS",
 ] as const
 
 let savedEnv: Record<string, string | undefined>
@@ -412,6 +416,42 @@ describe("__PA_FIND_MATCH__ admin trigger (Phase 60 DEV-01)", () => {
     assert.equal(res.statusCode, 200)
     assert.deepEqual(res.bodyOut, { ok: true, action: "find_match_triggered" })
     assert.equal(triggerCalled, true)
+    assert.ok(audit.some((a) => a.type === "dev_trigger_find_match"))
+  })
+
+  it("Test 9: PA_ADMIN_EMAILS matches email from_number → authorized without PA_ADMIN_USER_IDS", async () => {
+    process.env.PA_ADMIN_EMAILS = "Boss@ICLOUD.TEST"
+    process.env.IMESSAGE_PEERS = `${ADMIN_PHONE},${ADMIN_EMAIL}`
+    const { db, audit, phoneToUser } = makeFakeDb({ phoneToUser: {} })
+    const payload = {
+      ...basePayload("__PA_FIND_MATCH__"),
+      from_number: ADMIN_EMAIL,
+    }
+    const body = JSON.stringify(payload)
+    const req = makeReq(body, sign(body))
+    const res = makeRes()
+
+    let triggerCalled = false
+    let triggerArgs: unknown = null
+    await handleSendblueWebhook(req, res, {
+      db,
+      secret: SECRET,
+      lookupUserByPhone: async (_db, handle) => {
+        if (handle === ADMIN_EMAIL) return ADMIN_USER_ID
+        return phoneToUser[handle] ?? null
+      },
+      generateJobRecsForUser: async (args) => {
+        triggerCalled = true
+        triggerArgs = args
+        return { ok: true, jobCount: 1 }
+      },
+    })
+
+    await new Promise((r) => setImmediate(r))
+    assert.equal(res.statusCode, 200)
+    assert.deepEqual(res.bodyOut, { ok: true, action: "find_match_triggered" })
+    assert.equal(triggerCalled, true)
+    assert.deepEqual(triggerArgs, { userId: ADMIN_USER_ID, toE164: ADMIN_EMAIL })
     assert.ok(audit.some((a) => a.type === "dev_trigger_find_match"))
   })
 })
