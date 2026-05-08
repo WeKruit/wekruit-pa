@@ -1,7 +1,7 @@
 # Phase 59: Dashboards - Context
 
 **Gathered:** 2026-05-06
-**Status:** Ready for planning
+**Status:** Shipped 2026-05-06 (`661a039`). Verified: [.planning/v1.6-MILESTONE-AUDIT.md](../../v1.6-MILESTONE-AUDIT.md).
 **Mode:** Decisions D2, D11, D16 locked
 
 <domain>

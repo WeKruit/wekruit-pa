@@ -1,7 +1,7 @@
 # Phase 52: Canonical Tag Vocab Foundation - Context
 
 **Gathered:** 2026-05-06
-**Status:** Ready for planning
+**Status:** Shipped 2026-05-06 (`5d1c603`). Verified: [.planning/v1.6-MILESTONE-AUDIT.md](../../v1.6-MILESTONE-AUDIT.md).
 **Mode:** Auto-generated (decisions D1-D16 locked in CLAUDE.md, smart-discuss skipped per directive)
 
 <domain>

@@ -2,6 +2,8 @@
 
 REQ-IDs: SENIOR-V2-01..06 (6, supersedes Phase 63 SENIOR-01..05)
 
+**Status:** Shipped 2026-05-06 (macmini `2bbaa9a`; wekruit-pa `c3e786e`). Roll-up: [.planning/STATE.md](../../STATE.md#phase-73--career-ops-port-2026-05-06-add-on).
+
 **Goal:** Port career-ops scraping logic into wekruit-matching as a nightly Playwright-based harvester. Sources: Greenhouse + Lever + Ashby + Wellfound + Workable + 45+ company portals. Targets senior+ + all-level postings. Source attribution + multi-source dedup. Runs alongside JobRight/SimplifyJobs (Phase 63 keeps junior coverage; Phase 73 adds senior+ depth).
 
 **Reference:** https://github.com/santifer/career-ops (MIT-licensed, study scraping logic + 45-company list)

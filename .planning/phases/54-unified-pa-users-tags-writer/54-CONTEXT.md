@@ -1,7 +1,7 @@
 # Phase 54: Unified pa-users.tags writer - Context
 
 **Gathered:** 2026-05-06
-**Status:** Ready for planning
+**Status:** Shipped 2026-05-06 (`d693f81`). Verified: [.planning/v1.6-MILESTONE-AUDIT.md](../../v1.6-MILESTONE-AUDIT.md).
 **Mode:** Auto-generated (decisions D8, D12 locked, smart-discuss skipped)
 
 <domain>

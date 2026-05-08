@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.7
 milestone_name: Match Quality Depth + Pipeline Reliability Hardening
 status: completed
-last_updated: "2026-05-06T19:30:00.000Z"
-last_activity: 2026-05-06
+last_updated: "2026-05-08T00:00:00.000Z"
+last_activity: 2026-05-08
 progress:
   total_phases: 10
   completed_phases: 10
@@ -59,45 +59,31 @@ Last activity: 2026-05-06 — Phase 72 docs + audit shipped.
 - ✅ paLivenessSweepDaily verified live: 184 dead_marked, 33 backfill_resolved, 0 errors
 - ✅ Live render Adam scenario: top-5 SWE, no jobright leak, top-2 weighted skill reasoning
 
-## v1.6 — Unified Canonical Tags & Match Quality v1 (this milestone)
+## v1.6 — Unified Canonical Tags & Match Quality v1 (**shipped**)
 
-Spawned 2026-05-05 by Adam after iter34 sprint surfaced fragmented tag system as root cause of bad match quality (SWE candidate Adam recommended BDR / Account Manager / Warehouse Team Lead). Design conversation locked **16 decisions** before any code dispatch.
-
-**Phase numbering:** continues from v1.5 last phase 51. v1.6 spans phases **52–62** (11 phases).
+Spawned 2026-05-05; **all 11 phases shipped 2026-05-06.** Roster + verification: [v1.6-MILESTONE-AUDIT.md](v1.6-MILESTONE-AUDIT.md).
 
 **Architecture pivot:** previously matching used 4 fragmented tag sources (`statedPreferences` + `parsedCandidateResumes.industryTags` + `parsedCandidateResumes.topSkills` + `parsedCandidateResumes.embedding`). v1.6 unifies into single source `pa-users/{userId}.tags` with two orthogonal axes (`roleFunction` 17 + `industrySector` 42, no abbreviations).
 
 **Phases (52–62):**
 
-| # | Phase | Reqs | Status |
-|---|-------|------|--------|
-| 52 | Canonical Tag Vocab Foundation | TAG-01..12 (12) | Not started |
-| 53 | pa-resume-parser v2 wire + relevantTags extract | PARSE-01..09 (9) | Not started |
-| 54 | Unified pa-users.tags writer | USER-TAG-01..05 (5) | Not started |
-| 55 | matching-jobs schema migration + roleFunction backfill | MATCH-02 (1) | Not started |
-| 56 | queryMatchingJobs read pa-users.tags + filter + score | MATCH-01, 03..08 (7) | Not started |
-| 57 | Liveness/404 sweep + atsApplyUrl backfill | LIVE-01..04 (4) | Not started |
-| 58 | Nightly LLM rerank batch + per-skill JD-rel weight | RERANK-01..04 (4) | Not started |
-| 59 | Dashboards (canonical-tags + qa-evaluator + onboarding-questions ext) | DASH-01..04 (4) | Not started |
-| 60 | Dev triggers + scenarios + fixtures | DEV-01..04 (4) | Not started |
-| 61 | QA evaluator thread weekly run (final ship gate) | QA-01..05 (5) | Not started |
-| 62 | Documentation (CLAUDE.md / MILESTONE-v1.6.md / cross-repo handoff) | DOC-01..04 (4) | Not started |
+| # | Phase | Reqs | Ship commit |
+|---|-------|------|-------------|
+| 52 | Canonical Tag Vocab Foundation | TAG-01..12 (12) | `5d1c603` |
+| 53 | pa-resume-parser v2 wire + relevantTags extract | PARSE-01..09 (9) | `3209bc5` |
+| 54 | Unified pa-users.tags writer | USER-TAG-01..05 (5) | `d693f81` |
+| 55 | matching-jobs schema migration + roleFunction backfill | MATCH-02 (1) | `5e74248` |
+| 56 | queryMatchingJobs read pa-users.tags + filter + score | MATCH-01, 03..08 (7) | `6adb9b8` |
+| 57 | Liveness/404 sweep + atsApplyUrl backfill | LIVE-01..04 (4) | `57c182b` |
+| 58 | Nightly LLM rerank batch + per-skill JD-rel weight | RERANK-01..04 (4) | `463bcdb` |
+| 59 | Dashboards (canonical-tags + qa-evaluator + onboarding-questions ext) | DASH-01..04 (4) | `661a039` |
+| 60 | Dev triggers + scenarios + fixtures | DEV-01..04 (4) | `7499a1b` |
+| 61 | QA evaluator thread weekly run (final ship gate) | QA-01..05 (5) | `12a5934` |
+| 62 | Documentation (CLAUDE.md / MILESTONE-v1.6.md / cross-repo handoff) | DOC-01..04 (4) | `eab4e63` |
 
-**Coverage:** 59/59 REQ-IDs mapped, no orphans, no duplicates.
+**Coverage:** 59/59 REQ-IDs satisfied (see audit).
 
-**Eval-first ordering resolution:**
-```
-Phase 52 (vocab foundation, hard prerequisite for all)
-   ↓
-Phase 53–58 (runtime rewire on top of vocab)
-   ↓
-Phase 61 (QA evaluator runs against new runtime — locks v1.6 baseline)
-   ↓
-Phase 62 (docs)
-   ↓
-Milestone close (Phase 61 must pass ≥90%/70% to ship v1.6)
-```
-Phase 59 (dashboards), Phase 60 (dev triggers) are parallelizable side-tracks. Phase 61 is the final ship gate.
+**Execution order (historical):** 52 → 53–58 (runtime on vocab) → 59/60 in parallel → 61 ship-gate → 62 docs. Per-phase context: `.planning/phases/*/*-CONTEXT.md` (each lists **Status:** Shipped).
 
 **Foundation already shipped (iter34 G + H + I waves):**
 - Wave A.1-A.8 (Sprint A P0): cv-ingest topSkills + atsApplyUrl + targetRole filter + role-to-industry map + CV gating poll + interim ack + tag surface
@@ -142,7 +128,7 @@ Phase 59 (dashboards), Phase 60 (dev triggers) are parallelizable side-tracks. P
 **Cross-repo state:**
 - `wekruit-scraping/src/wekruit_matching/scraper/jobright_github.py` — `REPO_TO_CATEGORY` 1:1 with jobright `utm_campaign` 17 verbatim
 - `wekruit-scraping/src/wekruit_matching/enrichment/classifier.py` — `INDUSTRY_VOCAB` 38 frozenset already in place
-- macmini Stage 2.5 URL Resolution still hangs (Supabase pooler) — wekruit-pa CF backfill `paBackfillMatchingJobsAtsUrl` (commit `a56da02`) deployed as backup
+- macmini Stage 2.5 URL resolution **removed** (v1.7 Phase 66); wekruit-pa `paBackfillAtsUrlsBatch` + liveness sweep own ATS URL backfill
 
 **Match flow target after v1.6:**
 ```
@@ -178,4 +164,4 @@ D1: roleFunction = jobright 17 verbatim (closed enum) | D2: industrySector = 42 
 
 ## Next Action
 
-Run `/gsd:plan-phase 52` to decompose Phase 52 (Canonical Tag Vocab Foundation) into executable plans.
+v1.6 + v1.7 + Phase 73 are complete in production. Next work: define **v1.8** in `.planning/PROJECT.md` / `.planning/ROADMAP.md` (see [MILESTONE-v1.7-match-depth.md](MILESTONE-v1.7-match-depth.md) backlog); do **not** re-open phase 52 planning from this file.

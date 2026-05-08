@@ -1,7 +1,7 @@
 # Phase 57: Liveness/404 sweep + atsApplyUrl backfill + macmini fixups - Context
 
 **Gathered:** 2026-05-06
-**Status:** Ready for planning
+**Status:** Shipped 2026-05-06 (`57c182b`). Verified: [.planning/v1.6-MILESTONE-AUDIT.md](../../v1.6-MILESTONE-AUDIT.md).
 **Mode:** Decisions D9, D10 locked + Adam directive includes macmini fixes
 
 <domain>

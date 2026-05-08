@@ -2,6 +2,8 @@
 
 REQ-IDs: QADATA-01..04 (4)
 
+**Status:** Shipped 2026-05-06 (`b0a9c39`). Verified: [.planning/v1.7-MILESTONE-AUDIT.md](../../v1.7-MILESTONE-AUDIT.md).
+
 **Goal:** Auto-derive `targetRoleFunction` from CV skills+industries for users without onboarding completion. Fill-gaps script. QA evaluator post-ramp re-trigger to verify sampleSize >50.
 
 **Background:** Phase 61 weekly QA evaluator first run had sampleSize=0 (only 5/529 users have targetRoleFunction populated). Auto-derive bridges the data gap.

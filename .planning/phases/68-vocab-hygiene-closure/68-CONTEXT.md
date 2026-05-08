@@ -2,6 +2,8 @@
 
 REQ-IDs: HYGIENE-01..04 (4)
 
+**Status:** Shipped 2026-05-06 (`a7bf6c5`). Verified: [.planning/v1.7-MILESTONE-AUDIT.md](../../v1.7-MILESTONE-AUDIT.md).
+
 **Goal:** Delete legacy `apps/job-rec/src/tools/query-matching-jobs.ts`. Tighten seniorityLevel + jobType regex on matching-jobs corpus. Backfill remaining ~38 parsedCandidateResumes canonical fields.
 
 **In scope:**

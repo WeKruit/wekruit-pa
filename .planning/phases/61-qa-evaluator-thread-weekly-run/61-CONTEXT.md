@@ -1,7 +1,7 @@
 # Phase 61: QA evaluator weekly (SHIP GATE) - Context
 
 **Gathered:** 2026-05-06
-**Status:** Ready for planning
+**Status:** Shipped 2026-05-06 (`12a5934`). Verified: [.planning/v1.6-MILESTONE-AUDIT.md](../../v1.6-MILESTONE-AUDIT.md).
 **Mode:** Decisions D13 locked. **THIS IS THE V1.6 FINAL SHIP GATE**.
 
 <domain>

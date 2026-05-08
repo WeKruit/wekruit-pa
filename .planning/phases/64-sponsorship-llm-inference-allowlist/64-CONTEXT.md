@@ -1,7 +1,7 @@
 # Phase 64: Sponsorship LLM inference + company allowlist - Context
 
 **Gathered:** 2026-05-06
-**Status:** Ready for planning
+**Status:** Shipped 2026-05-06 (combined commits; see audit). Verified: [.planning/v1.7-MILESTONE-AUDIT.md](../../v1.7-MILESTONE-AUDIT.md).
 
 <domain>
 LLM (gpt-5.4-nano OR Qwen-7B free) infers `sponsorship: boolean` from JD text when scraper raw is null. Maintain `pa-sponsorship-allowlist` Firestore collection seeded from h1bdata.info + manual curation. V16 hard filter respects null vs false correctly.

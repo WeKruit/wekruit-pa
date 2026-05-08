@@ -1,7 +1,7 @@
 # Phase 56: queryMatchingJobs read pa-users.tags + filter + score - Context
 
 **Gathered:** 2026-05-06
-**Status:** Ready for planning
+**Status:** Shipped 2026-05-06 (`6adb9b8`). Verified: [.planning/v1.6-MILESTONE-AUDIT.md](../../v1.6-MILESTONE-AUDIT.md).
 **Mode:** Decisions D1, D7, D8, D9, D10 locked
 
 <domain>

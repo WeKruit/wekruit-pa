@@ -1,7 +1,7 @@
 # Phase 53: pa-resume-parser v2 wire + relevantTags extract - Context
 
 **Gathered:** 2026-05-06
-**Status:** Ready for planning
+**Status:** Shipped 2026-05-06 (`3209bc5`). Verified: [.planning/v1.6-MILESTONE-AUDIT.md](../../v1.6-MILESTONE-AUDIT.md).
 **Mode:** Auto-generated (decisions D6, D11, D12, D15 locked, smart-discuss skipped)
 
 <domain>

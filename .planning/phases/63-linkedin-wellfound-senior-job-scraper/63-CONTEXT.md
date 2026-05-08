@@ -1,7 +1,7 @@
 # Phase 63: LinkedIn / Wellfound senior-job scraper - Context
 
 **Gathered:** 2026-05-06
-**Status:** Ready for planning
+**Status:** Shipped 2026-05-06 (`7c83f62` + macmini `60359a4`). Verified: [.planning/v1.7-MILESTONE-AUDIT.md](../../v1.7-MILESTONE-AUDIT.md).
 **Mode:** Decisions locked: per-source feature flags, source attribution, dedup with JobRight
 
 <domain>

@@ -1,7 +1,7 @@
 # Phase 62: Documentation + cross-repo handoff - Context
 
 **Gathered:** 2026-05-06
-**Status:** Ready for planning
+**Status:** Shipped 2026-05-06 (`eab4e63`). Verified: [.planning/v1.6-MILESTONE-AUDIT.md](../../v1.6-MILESTONE-AUDIT.md).
 **Mode:** Final phase, decisions trivial (just write docs)
 
 <domain>

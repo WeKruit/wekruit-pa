@@ -1,7 +1,7 @@
 # Phase 55: matching-jobs schema migration + roleFunction backfill - Context
 
 **Gathered:** 2026-05-06
-**Status:** Ready for planning
+**Status:** Shipped 2026-05-06 (`5e74248`). Verified: [.planning/v1.6-MILESTONE-AUDIT.md](../../v1.6-MILESTONE-AUDIT.md).
 **Mode:** Auto-generated (decisions D1, D2, D9 locked)
 
 <domain>

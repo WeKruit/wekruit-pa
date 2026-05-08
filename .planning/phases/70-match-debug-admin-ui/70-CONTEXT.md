@@ -2,6 +2,8 @@
 
 REQ-IDs: MATCHDEBUG-01..04 (4)
 
+**Status:** Shipped 2026-05-06 (`87bb878`). Verified: [.planning/v1.7-MILESTONE-AUDIT.md](../../v1.7-MILESTONE-AUDIT.md).
+
 **Goal:** New admin page `/admin/match-debug`. Admin enters userId → live V16 query result with full ScoreBreakdown per job + drop-counter visualization + per-job inspector + score weight tuning sandbox.
 
 **In scope:**

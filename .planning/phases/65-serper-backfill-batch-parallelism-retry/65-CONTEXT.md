@@ -1,6 +1,7 @@
 # Phase 65: Serper backfill batch parallelism + retry queue - Context
 
 **Gathered:** 2026-05-06
+**Status:** Shipped 2026-05-06 (`a0b6029`). Verified: [.planning/v1.7-MILESTONE-AUDIT.md](../../v1.7-MILESTONE-AUDIT.md).
 
 REQ-IDs: ATSURL-01..04 (4)
 

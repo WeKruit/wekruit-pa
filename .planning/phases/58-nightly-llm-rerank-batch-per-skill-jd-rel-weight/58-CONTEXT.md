@@ -1,7 +1,7 @@
 # Phase 58: Nightly LLM rerank batch + per-skill JD-rel weight - Context
 
 **Gathered:** 2026-05-06
-**Status:** Ready for planning
+**Status:** Shipped 2026-05-06 (`463bcdb`). Verified: [.planning/v1.6-MILESTONE-AUDIT.md](../../v1.6-MILESTONE-AUDIT.md).
 **Mode:** Decisions D7, D9 locked (locked llm-rerank.ts existing helper)
 
 <domain>

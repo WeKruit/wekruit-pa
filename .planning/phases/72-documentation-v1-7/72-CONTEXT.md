@@ -2,6 +2,8 @@
 
 REQ-IDs: DOC-V17-01..02 (2)
 
+**Status:** Shipped 2026-05-06 (`c3f1120`, `d9722f6`). Verified: [.planning/v1.7-MILESTONE-AUDIT.md](../../v1.7-MILESTONE-AUDIT.md).
+
 **Goal:** CLAUDE.md v1.7 design lock subsection. .planning/MILESTONE-v1.7-match-depth.md with architecture diagram + per-source data flow + sponsorship inference flow + match-debug screenshots reference.
 
 **Phase commits to reference:**

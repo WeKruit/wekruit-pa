@@ -2,6 +2,8 @@
 
 REQ-IDs: LAUNCHD-01..03 (3)
 
+**Status:** Shipped 2026-05-06 (`7bb9cb0`). Verified: [.planning/v1.7-MILESTONE-AUDIT.md](../../v1.7-MILESTONE-AUDIT.md).
+
 **Goal:** Permanently load `com.wekruit.daily-update` + `com.wekruit.health-check` plists. Health-check verifies last successful daily-update <26h ago, alerts via Mailgun. Fix post-pipeline-webhook PermissionError.
 
 **In scope:**
