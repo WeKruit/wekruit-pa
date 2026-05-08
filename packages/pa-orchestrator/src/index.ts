@@ -479,6 +479,8 @@ export type OrchestratorStore = {
     statedPreferences?: import("@pa/core-types").StatedPreferences
     /** iter31 — operator-set HITL runtime mode (auto | paused). */
     runtimeMode?: "auto" | "paused"
+    /** v1.6 unified tag system (D8) — canonical user tags incl. preferredLang. */
+    tags?: import("./tags/user-tags-merger.js").UserTags
   } | null>
   /**
    * Phase 23 — apply onboarding step to advance user state + promote beta participant.
