@@ -643,6 +643,7 @@ export function defaultQuestions(deps: DefaultQuestionsDeps): Question<unknown>[
 
 import {
   GuidedOpenJudge,
+  type GuidedOpenBloom,
   type GuidedOpenJudgeSpec,
 } from "./judges/guided-open.js"
 
@@ -682,9 +683,33 @@ export type StartupPrefAnswer = "startup" | "bigtech" | "either"
 // ─── Q_ROLE / Q_YOE / Q_STARTUP_PREF (V2 GuidedOpen) ───────────────────────
 
 function normalizeRoleToken(raw: string): string | null {
-  const t = raw.trim().toLowerCase()
+  let t = raw.trim().toLowerCase()
+  t = t.replace(/[.!?。，,?…]+$/g, "").trim()
   if (!t) return null
   return t
+}
+
+/** Map prompt-facing synonyms ("eng" in EN copy) to probe tokens LLM+hints expect. */
+function mapRoleSynonym(canonicalProbe: string): string {
+  switch (canonicalProbe) {
+    case "eng":
+    case "engineering":
+    case "engineer":
+      return "swe"
+    case "developer":
+    case "dev":
+    case "programmer":
+    case "prog":
+      return "swe"
+    case "researcher":
+      return "research"
+    case "designer":
+      return "design"
+    case "product":
+      return "pm"
+    default:
+      return canonicalProbe
+  }
 }
 
 function splitOpenListValue(raw: string): string[] {
@@ -704,7 +729,9 @@ function parseRoleValue(raw: unknown): RoleAnswer | null {
   for (const value of values) {
     if (typeof value !== "string") continue
     for (const part of splitOpenListValue(value)) {
-      const role = normalizeRoleToken(part)
+      const n = normalizeRoleToken(part)
+      if (!n) continue
+      const role = mapRoleSynonym(n)
       if (!role || seen.has(role)) continue
       seen.add(role)
       out.push(role)
@@ -712,6 +739,17 @@ function parseRoleValue(raw: unknown): RoleAnswer | null {
   }
   return out.length > 0 ? out : null
 }
+
+const ROLE_GUIDED_OPEN_BLOOM: readonly GuidedOpenBloom<RoleAnswer>[] = [
+  {
+    pattern:
+      /^\s*(eng|engineering|engineer(?:ing)?|software\s+engineer|swe|developer|\bdev\b|programmer)\s*$/i,
+    value: ["swe"],
+  },
+  { pattern: /^\s*pm\s*$/i, value: ["pm"] },
+  { pattern: /^\s*(research|researcher)\s*$/i, value: ["research"] },
+  { pattern: /^\s*(design|designer)\s*$/i, value: ["design"] },
+]
 
 export function makeRoleQuestion(
   onAccepted?: (role: RoleAnswer, ctx: AcceptedCtx) => Promise<void>,
@@ -725,8 +763,10 @@ export function makeRoleQuestion(
     },
     judge: new GuidedOpenJudge<RoleAnswer>({
       questionLabel: "target job role",
-      hints: ["swe", "pm", "research", "design", "data", "ml", "ops", "marketing", "founder"],
+      hints: ["swe", "eng", "pm", "research", "design", "data", "ml", "ops", "marketing", "founder"],
+      bloomRegex: ROLE_GUIDED_OPEN_BLOOM,
       examples: [
+        { reply: "eng", value: ["swe"], confidence: 0.95 },
         { reply: "Software Engineer", value: ["swe"], confidence: 0.95 },
         { reply: "Swe / pm", value: ["swe", "pm"], confidence: 0.9 },
         { reply: "PM for fintech", value: ["pm"], confidence: 0.9 },

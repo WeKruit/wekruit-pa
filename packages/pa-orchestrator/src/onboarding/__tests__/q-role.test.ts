@@ -23,6 +23,34 @@ function makeJudge(json: string | Error) {
   return { judge, calls: () => calls }
 }
 
+test("q-role: 'eng' blooms to swe — skips LLM", async () => {
+  const { judge, calls } = makeJudge(new Error("should not call"))
+  const r = await judge.judge("eng", "en", ctx())
+  assert.equal(r.accept, true)
+  if (r.accept) assert.deepEqual(r.value, ["swe"])
+  assert.equal(calls(), 0)
+})
+
+test("q-role: LLM value 'eng' normalizes to swe", async () => {
+  const { judge, calls } = makeJudge(
+    JSON.stringify({ intent: "provided", value: "eng", confidence: 0.95 })
+  )
+  const r = await judge.judge("probably engineering idk", "en", ctx())
+  assert.equal(r.accept, true)
+  if (r.accept) assert.deepEqual(r.value, ["swe"])
+  assert.equal(calls(), 1)
+})
+
+test("q-role: low-confidence alone would be unclear — 'eng' no longer relies on LLM after bloom", async () => {
+  const { judge, calls } = makeJudge(
+    JSON.stringify({ intent: "provided", value: "swe", confidence: 0.3 })
+  )
+  const r = await judge.judge("eng", "en", ctx())
+  assert.equal(r.accept, true)
+  if (r.accept) assert.deepEqual(r.value, ["swe"])
+  assert.equal(calls(), 0)
+})
+
 test("q-role: 'engineer' → swe via GuidedOpen", async () => {
   const { judge } = makeJudge(JSON.stringify({ intent: "provided", value: "swe", confidence: 0.95 }))
   const r = await judge.judge("engineer", "en", ctx())
@@ -79,7 +107,7 @@ test("q-role: noise skips LLM", async () => {
 
 test("q-role: LLM throw is non-accept", async () => {
   const { judge } = makeJudge(new Error("network"))
-  const r = await judge.judge("engineer", "en", ctx())
+  const r = await judge.judge("enginer", "en", ctx())
   assert.equal(r.accept, false)
   if (!r.accept) assert.equal(r.reason, "irrelevant")
 })

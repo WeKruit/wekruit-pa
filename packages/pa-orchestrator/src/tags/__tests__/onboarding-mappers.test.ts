@@ -26,6 +26,7 @@ import {
 // ---------------------------------------------------------------------------
 
 test("mapAnswerToRoleFunction: SWE keywords → software_engineering", () => {
+  assert.deepEqual(mapAnswerToRoleFunction("eng"), ["software_engineering"])
   assert.deepEqual(mapAnswerToRoleFunction("software engineer"), [
     "software_engineering",
   ])

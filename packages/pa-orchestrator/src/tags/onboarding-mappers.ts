@@ -138,7 +138,7 @@ const ROLE_FUNCTION_KEYWORDS: ReadonlyArray<{
   // Software engineering — broad fallback for "engineer" / "developer"
   {
     pattern:
-      /(swe|software\s+engineer|software\s+dev|software\s+development|前端|后端|全栈|frontend|backend|fullstack|\bfe\b|\bbe\b|coder|程序员|开发|工程师|\bcs\b|computer\s+science|developer|web\s+developer|mobile\s+developer)/i,
+      /(\beng\b|swe|software\s+engineer|software\s+dev|software\s+development|前端|后端|全栈|frontend|backend|fullstack|\bfe\b|\bbe\b|coder|程序员|开发|工程师|\bcs\b|computer\s+science|developer|web\s+developer|mobile\s+developer)/i,
     token: "software_engineering",
   },
   // Engineering & development (broader — includes hardware, mechanical, etc).
