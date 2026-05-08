@@ -553,11 +553,20 @@ export async function clearUserMemory(
  * Patterns are intentionally redundant: ASCII admin form, slash form, and
  * Chinese verbatim. Match is full-string after trim, case-insensitive for
  * the ASCII forms.
+ *
+ * Carrier/client noise: strips common zero-width / bidi directional marks
+ * (e.g. iMessage wrappers around pasted tokens) so `__PA_RESET__` still
+ * matches without falling through to the LLM.
  */
 export const RESET_PATTERNS = ["__PA_RESET__", "/pa-reset", "重置我的记忆"] as const
 
+/** RTL/LTR isolates + ZW*. Narrow strip — invisible-only code points. */
+function stripInvisibleTextNoise(s: string): string {
+  return s.replace(/[\u200B-\u200F\u2060-\u2064\u2066-\u2069\uFEFF]/g, "")
+}
+
 export function isResetCommand(body: string): boolean {
-  const trimmed = body.trim()
+  const trimmed = stripInvisibleTextNoise(body.trim())
   if (trimmed.length === 0) return false
   for (const p of RESET_PATTERNS) {
     if (trimmed === p) return true

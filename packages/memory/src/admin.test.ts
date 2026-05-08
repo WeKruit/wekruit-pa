@@ -26,6 +26,11 @@ test("isResetCommand rejects partial / surrounding text (must be full body)", ()
   assert.equal(isResetCommand("   "), false)
 })
 
+test("isResetCommand ignores iMessage/carrier invisible bidi wrappers on ASCII tokens", () => {
+  assert.equal(isResetCommand("\u200E__PA_RESET__\u200E"), true)
+  assert.equal(isResetCommand("\uFEFF__PA_RESET__"), true)
+})
+
 test("summarizeClearResult produces a tester-readable line for live runs", () => {
   const out = summarizeClearResult({
     userId: "u1",

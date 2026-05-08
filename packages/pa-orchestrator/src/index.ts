@@ -1074,7 +1074,11 @@ function inboundFromMatchesPaAdminPhone(
   fromRaw: string,
   normalizedAdminPhones: string[]
 ): boolean {
-  const fd = normalizeContactHandle(fromRaw).replace(/\D/g, "")
+  // Strip RTL/LTR / ZW marks so paste-from-iMessage numbers still match CSV.
+  const fd = normalizeContactHandle(fromRaw.replace(/[\u200B-\u200F\u2060-\u2064\u2066-\u2069\uFEFF]/g, "")).replace(
+    /\D/g,
+    ""
+  )
   if (fd.length < 10) return false
   const suf = fd.slice(-10)
   for (const p of normalizedAdminPhones) {
@@ -1126,16 +1130,30 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       },
     })
 
+    // Test-admin magic string. Must run BEFORE parseMemoryCommand so it
+    // doesn't get swallowed by an unrelated memory grammar rule.
+    //
+    // Also BEFORE HITL pause: operators expect __PA_RESET__ to scrub state even
+    // when runtimeMode=paused (iter31 comment parity — previously pause returned
+    // early and reset never fired).
+    const reset = await store.maybeHandleResetCommand(event)
+    if (reset.handled) {
+      await sendMemoryReply(store, event, turnId, reset.summary ?? "✓ 测试记忆已清空。")
+      await store.updateTurn(turnId, { status: "succeeded", stage: "succeeded", completedAt: store.nowIso() })
+      await store.markEventSucceeded(event.id)
+      return
+    }
+
     // iter31 — Human-in-the-loop pause gate. Adam directive 2026-05-04
     // ("on pause agent won't process any response but will process memory,
     // on resume it won't say anything until next texts"). When operator has
     // flipped user.runtimeMode = "paused", we keep the inbound write to
     // pa-messages above (so memory + audit are preserved for the operator
     // to read) but skip ALL of safety / onboarding / LLM / outbound. Reset
-    // commands ARE honored even under pause so testers can scrub state. On
-    // resume: no auto-reply is generated; the next inbound flows through
-    // the normal path. Self-gating: when getRuntimeMode is unimplemented
-    // (older test harnesses) or returns "auto", behavior is unchanged.
+    // commands are handled above. On resume: no auto-reply is generated;
+    // the next inbound flows through the normal path. Self-gating: when
+    // getRuntimeMode is unimplemented (older test harnesses) or returns
+    // "auto", behavior is unchanged.
     if (store.getRuntimeMode) {
       const mode = await store.getRuntimeMode(event.userId)
       if (mode === "paused") {
@@ -1153,16 +1171,6 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
         await store.markEventSucceeded(event.id)
         return
       }
-    }
-
-    // Test-admin magic string. Must run BEFORE parseMemoryCommand so it
-    // doesn't get swallowed by an unrelated memory grammar rule.
-    const reset = await store.maybeHandleResetCommand(event)
-    if (reset.handled) {
-      await sendMemoryReply(store, event, turnId, reset.summary ?? "✓ 测试记忆已清空。")
-      await store.updateTurn(turnId, { status: "succeeded", stage: "succeeded", completedAt: store.nowIso() })
-      await store.markEventSucceeded(event.id)
-      return
     }
 
     // iter30 WS6 — shadow-mode INPUT guardrail chain. Telemetry-only;

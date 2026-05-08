@@ -1016,10 +1016,12 @@ async function main() {
 
   // ── 10. Reset command honored even under HITL pause
   if (should("hitl-reset-honored")) {
-    await scenario("hitl-reset-honored-NO: reset command still skipped under HITL pause (correct: pause is hard gate)", async () => {
-      // Design check: HITL pause gate fires BEFORE maybeHandleResetCommand,
-      // so paused users CANNOT trigger reset. This is intentional — operator
-      // controls the agent fully when paused.
+    await scenario(
+      "hitl-pause-hard-gate-NO-outbound: paused + stub-reset → no outbound (harness stubs reset=false; prod runs reset BEFORE pause)",
+      async () => {
+      // Harness `maybeHandleResetCommand` stub always returns handled:false.
+      // Production `createFirestoreOrchestratorStore` runs reset BEFORE pause
+      // so real __PA_RESET__ still clears; this offline sim does not emulate that.
       const store = makeFakeStore({
         initialState: { onboardingState: "complete", runtimeMode: "paused" },
       })
