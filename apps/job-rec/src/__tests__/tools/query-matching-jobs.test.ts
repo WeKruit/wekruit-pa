@@ -379,6 +379,62 @@ test("projectMatchingJobRow: surfaces atsApplyUrl when present", () => {
   assert.equal(out.primaryUrl, "https://jobright.ai/m/abc")
 })
 
+// P7-C 2026-05-08 — canonical-tags unified schema. The wekruit-pa
+// `paMatchingJobsAutoEnrich` Firestore trigger writes `requiredSkills`
+// as `Skill[]` objects (canonical bucketed shape). The legacy/scraper
+// path writes flat `string[]`. The projector must accept BOTH shapes
+// and emit `string[]` for downstream skill-jaccard scoring.
+test("projectMatchingJobRow: P7-C canonical Skill[] objects → flat name[]", () => {
+  const out = projectMatchingJobRow("doc1", {
+    companyName: "Stripe",
+    roleTitle: "Senior Software Engineer",
+    primaryUrl: "https://x",
+    requiredSkills: [
+      { name: "python", bucket: "programming_languages", baseWeight: 0.8, proficiency: "advanced", evidenceCount: 3 },
+      { name: "rust", bucket: "programming_languages", baseWeight: 0.5, proficiency: "intermediate", evidenceCount: 1 },
+      { name: "kubernetes", bucket: "cloud_and_infrastructure", baseWeight: 0.6, proficiency: "intermediate", evidenceCount: 2 },
+    ],
+  })
+  assert.deepEqual(out.requiredSkills, ["python", "rust", "kubernetes"])
+})
+
+test("projectMatchingJobRow: P7-C legacy string[] still passes through unchanged", () => {
+  const out = projectMatchingJobRow("doc1", {
+    companyName: "Co",
+    roleTitle: "SWE",
+    primaryUrl: "https://x",
+    requiredSkills: ["python", "sql", "go"],
+  })
+  assert.deepEqual(out.requiredSkills, ["python", "sql", "go"])
+})
+
+test("projectMatchingJobRow: P7-C mixed string + Skill objects survives normalization", () => {
+  const out = projectMatchingJobRow("doc1", {
+    companyName: "Co",
+    roleTitle: "SWE",
+    primaryUrl: "https://x",
+    requiredSkills: [
+      "python",  // legacy string
+      { name: "kubernetes", bucket: "cloud_and_infrastructure", baseWeight: 0.5, proficiency: "intermediate", evidenceCount: 1 },
+      null,  // garbage entry
+      { not_a_name: "broken" },  // wrong shape — dropped
+    ],
+  })
+  assert.deepEqual(out.requiredSkills, ["python", "kubernetes"])
+})
+
+test("projectMatchingJobRow: P7-C empty / undefined requiredSkills → undefined (not [])", () => {
+  // The projector returns `undefined` for missing/empty so downstream
+  // consumers branch on `Array.isArray(j.requiredSkills) && j.length > 0`.
+  const out1 = projectMatchingJobRow("doc1", {})
+  assert.equal(out1.requiredSkills, undefined)
+  const out2 = projectMatchingJobRow("doc1", { requiredSkills: [] })
+  assert.equal(out2.requiredSkills, undefined)
+  const out3 = projectMatchingJobRow("doc1", { requiredSkills: [{not_a_skill: 1}, null] })
+  // All entries failed normalization → empty → undefined
+  assert.equal(out3.requiredSkills, undefined)
+})
+
 test("projectMatchingJobRow: atsApplyUrl normalizes null → undefined", () => {
   const out = projectMatchingJobRow("doc1", {
     primaryUrl: "https://x",

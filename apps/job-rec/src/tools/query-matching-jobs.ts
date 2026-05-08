@@ -1422,8 +1422,26 @@ export function projectMatchingJobRow(id: string, raw: Record<string, unknown>):
   const jobTitle =
     str(raw.roleTitle) || str(raw.jobTitle) || str(raw.title) || ""
 
+  // P7-C 2026-05-08 (canonical-tags) — Firestore `matching-jobs` docs may
+  // store `requiredSkills` as EITHER a flat `string[]` (legacy / scraped)
+  // OR a canonical bucketed `Skill[]` written by paMatchingJobsAutoEnrich
+  // (`{name, bucket, baseWeight, proficiency, evidenceCount}`). The
+  // recommender's downstream consumers (`computeWeightedSkillJaccard`,
+  // boost-calculator, match-explainer) accept `string[]`, so we normalize
+  // here by extracting `.name` from object entries. Without this, rows
+  // enriched via the auto-enrich trigger had their skill-jaccard score
+  // silently zero — ~75% of the active corpus as of 2026-05-08.
   const requiredSkills = Array.isArray(raw.requiredSkills)
-    ? (raw.requiredSkills.filter((s) => typeof s === "string") as string[])
+    ? (raw.requiredSkills
+        .map((s): string | null => {
+          if (typeof s === "string") return s
+          if (s && typeof s === "object") {
+            const so = s as { name?: unknown }
+            return typeof so.name === "string" ? so.name : null
+          }
+          return null
+        })
+        .filter((s): s is string => s !== null))
     : []
 
   // iter34 sprint A.3 — surface the H8 industryEnum array so post-filter
