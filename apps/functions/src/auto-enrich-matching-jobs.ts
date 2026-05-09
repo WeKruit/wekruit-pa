@@ -14,6 +14,21 @@
  * Cost: ~$0.0005 per new/changed doc. Pipeline writes ~6500 active docs/day,
  * but enricherVersion gate ensures we don't re-enrich unchanged docs after
  * trigger's own update.
+ *
+ * v1.7 P64 sponsorship wiring (2026-05-08): the trigger was the canonical
+ * inline enricher path but never populated `sponsorship`, so v1.6 D4 visa
+ * hard filter was silently permissive (5.6% boolean coverage on 2000-job
+ * probe pre-fix). After enrichJobTags() succeeds, we run the dedicated
+ * `inferSponsorship()` two-tier helper (allowlist → LLM JD inference) and
+ * write `sponsorship`, `sponsorshipSource`, `sponsorshipConfidence`,
+ * `sponsorshipBackfilledAt` into the SAME Firestore update — one extra
+ * Firestore read per allowlist hit, one extra LLM call per miss (graceful
+ * null when keys absent). Idempotent: skip when sponsorship is already
+ * boolean (trusted upstream/allowlist) and `sponsorshipBackfilledAt` is
+ * stamped.
+ *
+ * Bumped ENRICHER_VERSION → v1.9.0 so existing docs (5500+ at v1.8.1) all
+ * re-enrich on their next pipeline-sync write and pick up sponsorship.
  */
 
 import { onDocumentWritten } from "firebase-functions/v2/firestore"
@@ -22,10 +37,12 @@ import { logger } from "firebase-functions/v2"
 import { getFirestore } from "firebase-admin/firestore"
 import { enrichJobTags } from "@pa/job-tag-enricher"
 import { ANTHROPIC_API_KEY } from "./orchestrator-deps.js"
+import { inferSponsorship } from "./lib/sponsorship-inference.js"
 
 const PA_OPENAI_AGENT_API_KEY = defineSecret("PA_OPENAI_AGENT_API_KEY")
+const SILICONFLOW_API_KEY = defineSecret("SILICONFLOW_API_KEY")
 
-const ENRICHER_VERSION = "v1.8.1"
+const ENRICHER_VERSION = "v1.9.0"
 
 interface MatchingJobDoc {
   status?: string
@@ -44,9 +61,13 @@ interface MatchingJobDoc {
   jobType?: string | null
   enricherVersion?: string | null
   enricherContentHash?: string | null
+  sponsorship?: boolean | null
+  sponsorshipSource?: string | null
+  sponsorshipConfidence?: number | null
+  sponsorshipBackfilledAt?: string | null
 }
 
-function needsEnrichment(doc: MatchingJobDoc | undefined): boolean {
+export function needsEnrichment(doc: MatchingJobDoc | undefined): boolean {
   if (!doc) return false
   if (doc.status !== "active") return false
   // Already enriched at current version + same content_hash → skip
@@ -61,11 +82,34 @@ function needsEnrichment(doc: MatchingJobDoc | undefined): boolean {
   return true
 }
 
+/**
+ * Decide whether to run sponsorship inference for this doc. Skip when:
+ *   - sponsorship is already an explicit boolean AND a backfill stamp exists
+ *     (trusted upstream/allowlist value — don't overwrite or pay LLM cost).
+ *
+ * Otherwise return true to run inference. Note we DO re-attempt jobs whose
+ * sponsorship is null/undefined even if `sponsorshipBackfilledAt` is set,
+ * because the trigger fires on doc-content changes (new JD body) which may
+ * now contain explicit sponsorship language.
+ */
+export function needsSponsorshipInference(doc: MatchingJobDoc | undefined): boolean {
+  if (!doc) return false
+  const s = doc.sponsorship
+  if (
+    (s === true || s === false) &&
+    typeof doc.sponsorshipBackfilledAt === "string" &&
+    doc.sponsorshipBackfilledAt.length > 0
+  ) {
+    return false
+  }
+  return true
+}
+
 export const paMatchingJobsAutoEnrich = onDocumentWritten(
   {
     document: "matching-jobs/{jobId}",
     region: "us-central1",
-    secrets: [PA_OPENAI_AGENT_API_KEY, ANTHROPIC_API_KEY],
+    secrets: [PA_OPENAI_AGENT_API_KEY, ANTHROPIC_API_KEY, SILICONFLOW_API_KEY],
     cpu: 1,
     memory: "512MiB",
     timeoutSeconds: 60,
@@ -85,6 +129,12 @@ export const paMatchingJobsAutoEnrich = onDocumentWritten(
     if (openAiKey) process.env.PA_OPENAI_AGENT_API_KEY = openAiKey
     const anthropicKey = ANTHROPIC_API_KEY.value().trim()
     if (anthropicKey) process.env.ANTHROPIC_API_KEY = anthropicKey
+    let siliconflowKey = ""
+    try {
+      siliconflowKey = SILICONFLOW_API_KEY.value().trim()
+    } catch {
+      // Optional secret — graceful when unset.
+    }
 
     try {
       const result = await enrichJobTags({
@@ -115,6 +165,43 @@ export const paMatchingJobsAutoEnrich = onDocumentWritten(
       }
 
       const db = getFirestore()
+
+      // P64 wiring: sponsorship inference (allowlist → LLM JD).
+      // Runs AFTER enrichJobTags so we benefit from any normalized fields,
+      // but uses the ORIGINAL companyName/JD as input (the inference helper
+      // is robust to either). Failures never abort the enrichment write.
+      if (needsSponsorshipInference(after)) {
+        try {
+          const sp = await inferSponsorship(
+            {
+              jobTitle: after!.roleTitle ?? "",
+              companyName: after!.companyName ?? null,
+              jobDescription: after!.jobDescription ?? null,
+            },
+            {
+              db,
+              openaiApiKey: openAiKey || undefined,
+              anthropicApiKey: anthropicKey || undefined,
+              siliconflowApiKey: siliconflowKey || undefined,
+            },
+          )
+          update.sponsorship = sp.sponsorship
+          update.sponsorshipSource = sp.source
+          update.sponsorshipConfidence = sp.confidence
+          update.sponsorshipBackfilledAt = new Date().toISOString()
+          if (typeof sp.reasoning === "string" && sp.reasoning.length > 0) {
+            update.sponsorshipReasoning = sp.reasoning
+          }
+        } catch (spErr) {
+          // inferSponsorship is documented "NEVER throws", but defensively
+          // catch anyway — partial enrichment write is better than abort.
+          logger.warn("[auto-enrich] sponsorship_inference_threw", {
+            jobId,
+            error: spErr instanceof Error ? spErr.message : String(spErr),
+          })
+        }
+      }
+
       await db.collection("matching-jobs").doc(jobId).update(update)
 
       logger.info("[auto-enrich] ok", {
@@ -123,6 +210,8 @@ export const paMatchingJobsAutoEnrich = onDocumentWritten(
         roleFunction: t.roleFunction,
         skillsCount: (t.skills ?? []).length,
         modelUsed: result.modelUsed,
+        sponsorship: update.sponsorship ?? null,
+        sponsorshipSource: update.sponsorshipSource ?? null,
       })
     } catch (err) {
       logger.warn("[auto-enrich] failed — leaving doc as-is", {
