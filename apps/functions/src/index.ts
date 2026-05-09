@@ -127,6 +127,16 @@ export { paBackfillAtsUrlsBatch, paCostSummaryWeekly } from "./backfill-ats-urls
 // resolver from paBackfillMatchingJobsAtsUrl (cap 1000/run).
 export { paLivenessSweepDaily } from "./liveness-sweep.js"
 
+// v1.7+ TTL — Weekly hybrid GC for matching-jobs collection. Adam Option D
+// (2026-05-08): inactive >90d AND dead >365d are deleted Mon 04:00 UTC.
+// Postgres tombstone (P7-K, alembic 0007) preserves dead flag after Firestore
+// delete so the scraper does not re-add deleted dead URLs. Pure-deps-injected
+// runner with admin-only callable for canary dry-runs.
+export {
+  paMatchingJobsTtlDeleteWeekly,
+  paMatchingJobsTtlDeleteCallable,
+} from "./matching-jobs-ttl-delete.js"
+
 // v1.6 Phase 58 (RERANK-01..04) — Nightly LLM rerank batch + per-skill
 // JD-relative weight cache. Cloud Scheduler 04:00 UTC (1h after liveness
 // sweep). For each active user: rerank top-50 candidates via Qwen-7B and
