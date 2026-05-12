@@ -13,7 +13,7 @@
 import { useEffect, useState } from "react"
 import { useParams } from "react-router-dom"
 import { collection, doc, getDoc, getDocs, orderBy, query } from "firebase/firestore"
-import { ErrorState, LoadingState, PageHeader, Panel, StatusBadge } from "../components/ui.js"
+import { ErrorState, LoadingState, PageHeader, Panel, Badge } from "../components/ui.js"
 import { db } from "../lib/firebase.js"
 
 type PerKeyword = {
@@ -93,7 +93,7 @@ export default function PrescreenSession() {
     void (async () => {
       try {
         setLoading(true)
-        const sessSnap = await getDoc(doc(db, "pa-prescreen-sessions", sessionId))
+        const sessSnap = await getDoc(doc(db(), "pa-prescreen-sessions", sessionId))
         if (cancelled) return
         if (!sessSnap.exists()) {
           setErr(`session ${sessionId} not found`)
@@ -102,7 +102,7 @@ export default function PrescreenSession() {
         setSession({ ...(sessSnap.data() as SessionDoc), sessionId })
         const turnsSnap = await getDocs(
           query(
-            collection(db, "pa-prescreen-sessions", sessionId, "turns"),
+            collection(db(), "pa-prescreen-sessions", sessionId, "turns"),
             orderBy("ts", "asc")
           )
         )
@@ -129,18 +129,18 @@ export default function PrescreenSession() {
     <div>
       <PageHeader
         title={`Pre-screen Session: ${session.sessionId}`}
-        subtitle={`Job ${session.jobId} • User ${session.userId} • Created ${session.createdAt}`}
+        description={`Job ${session.jobId} • User ${session.userId} • Created ${session.createdAt}`}
       />
 
       <Panel title="Summary">
         <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap", marginBottom: "1rem" }}>
-          <StatusBadge tone={terminalTone(session.terminal)}>
+          <Badge tone={terminalTone(session.terminal)}>
             {session.terminal ?? "IN_PROGRESS"}
-          </StatusBadge>
-          <StatusBadge tone="info">
+          </Badge>
+          <Badge tone="info">
             score = {session.score.toFixed(2)} / {session.scoreMax.toFixed(2)} (ratio {(ratio * 100).toFixed(1)}%)
-          </StatusBadge>
-          <StatusBadge tone="info">threshold = {(session.threshold * 100).toFixed(0)}%</StatusBadge>
+          </Badge>
+          <Badge tone="info">threshold = {(session.threshold * 100).toFixed(0)}%</Badge>
         </div>
         {session.terminalReason && (
           <div
@@ -179,9 +179,9 @@ export default function PrescreenSession() {
                 style={{ cursor: "pointer", display: "flex", gap: "0.5rem", alignItems: "center" }}
               >
                 <strong>{qId}</strong>
-                <StatusBadge tone={qState.type === "MUST_HAVE" ? "warn" : qState.type === "PROBING" ? "info" : "ok"}>
+                <Badge tone={qState.type === "MUST_HAVE" ? "warn" : qState.type === "PROBING" ? "info" : "ok"}>
                   {qState.type}
-                </StatusBadge>
+                </Badge>
                 <span style={{ fontSize: "0.85em" }}>weight {qState.weight}</span>
                 {qState.finalS !== undefined && (
                   <>
@@ -189,12 +189,12 @@ export default function PrescreenSession() {
                       s = {qState.finalS.toFixed(2)}, c = {(qState.finalC ?? 0).toFixed(2)}
                     </span>
                     {qState.terminalCause && (
-                      <StatusBadge tone="warn">{qState.terminalCause}</StatusBadge>
+                      <Badge tone="warn">{qState.terminalCause}</Badge>
                     )}
                   </>
                 )}
                 {qState.clarifyRounds > 0 && (
-                  <StatusBadge tone="info">k = {qState.clarifyRounds}</StatusBadge>
+                  <Badge tone="info">k = {qState.clarifyRounds}</Badge>
                 )}
                 <span style={{ marginLeft: "auto", fontSize: "0.8em", opacity: 0.6 }}>
                   {isExpanded ? "▼" : "▶"} {qTurns.length} turn{qTurns.length === 1 ? "" : "s"}
@@ -222,7 +222,7 @@ export default function PrescreenSession() {
                           </div>
                           {t.scored.abortHint && (
                             <div style={{ fontSize: "0.85em" }}>
-                              <StatusBadge tone="warn">abort: {t.scored.abortHint.kind}</StatusBadge>
+                              <Badge tone="warn">abort: {t.scored.abortHint.kind}</Badge>
                               <span style={{ marginLeft: "0.5rem" }}>{t.scored.abortHint.reason}</span>
                             </div>
                           )}

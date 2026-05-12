@@ -14,7 +14,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { useParams } from "react-router-dom"
 import { addDoc, collection, doc, getDoc, getDocs, orderBy, query, setDoc } from "firebase/firestore"
-import { ErrorState, LoadingState, PageHeader, Panel, StatusBadge } from "../components/ui.js"
+import { ErrorState, LoadingState, PageHeader, Panel, Badge } from "../components/ui.js"
 import { db } from "../lib/firebase.js"
 
 type SnapshotDoc = {
@@ -73,11 +73,11 @@ export default function TagSnapshots() {
         const [snapsSnap, userSnap] = await Promise.all([
           getDocs(
             query(
-              collection(db, "pa-users-tag-snapshots", uid, "snapshots"),
+              collection(db(), "pa-users-tag-snapshots", uid, "snapshots"),
               orderBy("ts", "desc")
             )
           ),
-          getDoc(doc(db, "pa-users", uid)),
+          getDoc(doc(db(), "pa-users", uid)),
         ])
         if (cancelled) return
         setSnapshots(
@@ -111,7 +111,7 @@ export default function TagSnapshots() {
     setRollbackMsg(null)
     try {
       // Audit first (so we have a record even if the write fails).
-      await addDoc(collection(db, "pa-tag-rollback-events"), {
+      await addDoc(collection(db(), "pa-tag-rollback-events"), {
         uid,
         snapshotId: snap.id,
         snapshotTs: snap.ts,
@@ -121,7 +121,7 @@ export default function TagSnapshots() {
       })
       // Write — restores the snapshot's tagsBefore to pa-users/{uid}.tags.
       await setDoc(
-        doc(db, "pa-users", uid),
+        doc(db(), "pa-users", uid),
         { tags: snap.tagsBefore ?? {} },
         { merge: true }
       )
@@ -143,12 +143,12 @@ export default function TagSnapshots() {
     <div>
       <PageHeader
         title={`Tag Snapshots: ${uid}`}
-        subtitle="Pre-compaction snapshots of pa-users.{uid}.tags. PS13 — 30-day retention, GC'd nightly."
+        description="Pre-compaction snapshots of pa-users.{uid}.tags. PS13 — 30-day retention, GC'd nightly."
       />
 
       {rollbackMsg && (
         <Panel title="Status">
-          <StatusBadge tone="info">{rollbackMsg}</StatusBadge>
+          <Badge tone="info">{rollbackMsg}</Badge>
         </Panel>
       )}
 
@@ -170,11 +170,11 @@ export default function TagSnapshots() {
             >
               <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
                 <strong style={{ fontFamily: "monospace", fontSize: "0.85em" }}>{snap.ts}</strong>
-                <StatusBadge
+                <Badge
                   tone={snap.reason === "pre_compaction" ? "info" : snap.reason === "migration" ? "ok" : "warn"}
                 >
                   {snap.reason}
-                </StatusBadge>
+                </Badge>
                 {snap.triggeredBy && (
                   <span style={{ fontSize: "0.8em", opacity: 0.7 }}>
                     {snap.triggeredBy.turnCount} turns
@@ -198,12 +198,12 @@ export default function TagSnapshots() {
                   <em>no diff</em>
                 ) : (
                   <>
-                    {diff.added.length > 0 && <StatusBadge tone="ok">+{diff.added.length} added</StatusBadge>}{" "}
+                    {diff.added.length > 0 && <Badge tone="ok">+{diff.added.length} added</Badge>}{" "}
                     {diff.removed.length > 0 && (
-                      <StatusBadge tone="warn">-{diff.removed.length} removed</StatusBadge>
+                      <Badge tone="warn">-{diff.removed.length} removed</Badge>
                     )}{" "}
                     {diff.changed.length > 0 && (
-                      <StatusBadge tone="info">~{diff.changed.length} changed</StatusBadge>
+                      <Badge tone="info">~{diff.changed.length} changed</Badge>
                     )}
                   </>
                 )}

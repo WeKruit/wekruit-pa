@@ -63,6 +63,21 @@ export function StatusBadge({ value }: { value?: string | null }) {
   return <span className={`status-badge ${tone}`}>{normalized}</span>
 }
 
+// v1.8 — tone-explicit badge variant (Phase 78/79 dashboards consume this
+// instead of StatusBadge so they can hand-pick the visual tone for
+// terminal states, question types, etc., independent of the legacy
+// status-string heuristic above).
+export function Badge({
+  tone,
+  children,
+}: {
+  tone: "ok" | "warn" | "info" | "muted"
+  children: ReactNode
+}) {
+  const cls = tone === "ok" ? "good" : tone === "warn" ? "bad" : tone === "info" ? "warn" : "muted"
+  return <span className={`status-badge ${cls}`}>{children}</span>
+}
+
 export function EmptyState({
   title,
   body,

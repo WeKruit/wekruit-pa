@@ -17,19 +17,91 @@
  */
 import { useEffect, useMemo, useState } from "react"
 import { collection, doc, getDoc, getDocs, limit, query, setDoc } from "firebase/firestore"
-import {
-  configMaxScore,
-  configRequiredScore,
-  safeParsePrescreenConfig,
-  type PrescreenConfig,
-  type PrescreenQuestionConfig,
-} from "@pa/pa-orchestrator/dist/prescreen/config.js"
+// Local minimal types — full Zod validation runs server-side via
+// @pa/pa-orchestrator's safeParsePrescreenConfig. Dashboard does lightweight
+// shape checks + lets the operator save anything well-formed JSON; the
+// server rejects on Zod fail.
+type PrescreenQuestionConfig = {
+  qId: string
+  type: "MUST_HAVE" | "PROBING" | "GOOD_TO_HAVE"
+  weight: number
+  prompt: { zh: string; en: string }
+  clarifyPrompt: { zh: string; en: string }
+  keywords: Array<{ keyword: string; weight?: number; hint?: string }>
+}
+type PrescreenConfig = {
+  version: 1
+  jobTitle: string
+  company?: string
+  threshold: number
+  confidenceThreshold: number
+  maxClarifyRounds: number
+  voiceMode: "casual_onboarding" | "professional_prescreen"
+  questions: PrescreenQuestionConfig[]
+  lastEditedBy?: string
+  lastEditedAt?: string
+}
+
+function configMaxScore(cfg: PrescreenConfig): number {
+  return cfg.questions.reduce((s, q) => s + q.weight, 0)
+}
+function configRequiredScore(cfg: PrescreenConfig): number {
+  return configMaxScore(cfg) * cfg.threshold
+}
+
+function safeParsePrescreenConfig(
+  raw: unknown
+): { ok: true; config: PrescreenConfig } | { ok: false; error: { issues: { path: (string | number)[]; message: string }[] } } {
+  const issues: { path: (string | number)[]; message: string }[] = []
+  if (typeof raw !== "object" || raw === null) {
+    return { ok: false, error: { issues: [{ path: [], message: "top-level is not an object" }] } }
+  }
+  const o = raw as Record<string, unknown>
+  if (typeof o.jobTitle !== "string" || o.jobTitle.length === 0) {
+    issues.push({ path: ["jobTitle"], message: "must be non-empty string" })
+  }
+  if (!Array.isArray(o.questions) || o.questions.length === 0) {
+    issues.push({ path: ["questions"], message: "must be non-empty array" })
+  } else if (o.questions.length > 20) {
+    issues.push({ path: ["questions"], message: "max 20 questions" })
+  } else {
+    const seen = new Set<string>()
+    o.questions.forEach((q, i) => {
+      if (typeof q !== "object" || q === null) {
+        issues.push({ path: ["questions", i], message: "not an object" })
+        return
+      }
+      const qo = q as Record<string, unknown>
+      if (typeof qo.qId !== "string" || !/^[a-z0-9_]+$/.test(qo.qId)) {
+        issues.push({ path: ["questions", i, "qId"], message: "must match [a-z0-9_]+" })
+      } else if (seen.has(qo.qId)) {
+        issues.push({ path: ["questions", i, "qId"], message: `duplicate qId ${qo.qId}` })
+      }
+      if (typeof qo.qId === "string") seen.add(qo.qId)
+      if (!["MUST_HAVE", "PROBING", "GOOD_TO_HAVE"].includes(qo.type as string)) {
+        issues.push({ path: ["questions", i, "type"], message: "invalid type" })
+      }
+      if (typeof qo.weight !== "number" || qo.weight < 0.1 || qo.weight > 10) {
+        issues.push({ path: ["questions", i, "weight"], message: "weight ∈ [0.1, 10]" })
+      }
+      if (!Array.isArray(qo.keywords) || qo.keywords.length === 0) {
+        issues.push({ path: ["questions", i, "keywords"], message: "must be non-empty" })
+      }
+    })
+  }
+  const threshold = typeof o.threshold === "number" ? o.threshold : NaN
+  if (Number.isFinite(threshold) && (threshold < 0.3 || threshold > 1.0)) {
+    issues.push({ path: ["threshold"], message: "threshold ∈ [0.3, 1.0]" })
+  }
+  if (issues.length > 0) return { ok: false, error: { issues } }
+  return { ok: true, config: raw as PrescreenConfig }
+}
 import {
   ErrorState,
   LoadingState,
   PageHeader,
   Panel,
-  StatusBadge,
+  Badge,
 } from "../components/ui.js"
 import { db } from "../lib/firebase.js"
 
@@ -92,7 +164,7 @@ export default function JobPrescreen() {
     void (async () => {
       try {
         setLoading(true)
-        const q = query(collection(db, "pa-jobs"), limit(50))
+        const q = query(collection(db(), "pa-jobs"), limit(50))
         const snap = await getDocs(q)
         if (cancelled) return
         const rows: JobDoc[] = snap.docs.map((d) => {
@@ -126,7 +198,7 @@ export default function JobPrescreen() {
     }
     void (async () => {
       try {
-        const snap = await getDoc(doc(db, "pa-jobs", activeJobId))
+        const snap = await getDoc(doc(db(), "pa-jobs", activeJobId))
         if (cancelled) return
         const data = snap.data()
         const raw = data?.prescreenConfig
@@ -205,7 +277,7 @@ export default function JobPrescreen() {
         lastEditedAt: new Date().toISOString(),
       }
       await setDoc(
-        doc(db, "pa-jobs", activeJobId),
+        doc(db(), "pa-jobs", activeJobId),
         { prescreenConfig: withMeta },
         { merge: true }
       )
@@ -227,7 +299,7 @@ export default function JobPrescreen() {
     <div>
       <PageHeader
         title="Job Pre-Screen Config"
-        subtitle="Author the conversational pre-screen — questions, keyword sets, weights, thresholds. v1.8 PS1-PS16 enforced via Zod."
+        description="Author the conversational pre-screen — questions, keyword sets, weights, thresholds. v1.8 PS1-PS16 enforced via Zod."
       />
 
       <div style={{ display: "grid", gridTemplateColumns: "300px 1fr", gap: "1rem" }}>
@@ -249,9 +321,9 @@ export default function JobPrescreen() {
                   {j.company ?? j.id}
                 </div>
                 <div style={{ marginTop: "0.25rem" }}>
-                  <StatusBadge tone={j.hasPrescreenConfig ? "ok" : "warn"}>
+                  <Badge tone={j.hasPrescreenConfig ? "ok" : "warn"}>
                     {j.hasPrescreenConfig ? "configured" : "no config"}
-                  </StatusBadge>
+                  </Badge>
                 </div>
               </li>
             ))}
@@ -268,18 +340,18 @@ export default function JobPrescreen() {
             <>
               {previewStats && (
                 <div style={{ marginBottom: "1rem", display: "flex", gap: "1rem", flexWrap: "wrap" }}>
-                  <StatusBadge tone="info">{previewStats.count} questions</StatusBadge>
-                  <StatusBadge tone="info">
+                  <Badge tone="info">{previewStats.count} questions</Badge>
+                  <Badge tone="info">
                     score_max = {previewStats.max.toFixed(2)}
-                  </StatusBadge>
-                  <StatusBadge tone="info">
+                  </Badge>
+                  <Badge tone="info">
                     required = {previewStats.required.toFixed(2)}
-                  </StatusBadge>
-                  <StatusBadge tone="warn">MUST_HAVE × {previewStats.mustHave}</StatusBadge>
-                  <StatusBadge tone="info">PROBING × {previewStats.probing}</StatusBadge>
-                  <StatusBadge tone="ok">
+                  </Badge>
+                  <Badge tone="warn">MUST_HAVE × {previewStats.mustHave}</Badge>
+                  <Badge tone="info">PROBING × {previewStats.probing}</Badge>
+                  <Badge tone="ok">
                     GOOD_TO_HAVE × {previewStats.goodToHave}
-                  </StatusBadge>
+                  </Badge>
                 </div>
               )}
 

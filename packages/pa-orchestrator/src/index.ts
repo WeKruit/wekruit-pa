@@ -3911,3 +3911,17 @@ export function startInboundEventListener(
     unsubscribe()
   }
 }
+
+// v1.8 — re-exports for dashboard / functions consumers (no subpath
+// imports because exports map is single-entry).
+export {
+  PrescreenConfigSchema,
+  parsePrescreenConfig,
+  safeParsePrescreenConfig,
+  configMaxScore,
+  configRequiredScore,
+  configToStateQuestions,
+  type PrescreenConfig,
+  type PrescreenQuestionConfig,
+  type KeywordSpecConfig,
+} from "./prescreen/config.js"
