@@ -195,6 +195,13 @@ service cloud.firestore {
       allow read, write: if isPaOperator();
     }
 
+    // ─── v1.8 Phase 78 — pa-jobs (employer-authored prescreen config) ────
+    // Operator read/write for the dashboard editor; CFs use Admin SDK
+    // (bypasses these rules). Future v1.9: scope writes to job-owner only.
+    match /pa-jobs/{jobId} {
+      allow read, write: if isPaOperator();
+    }
+
     // ─── v1.8 Phase 74.5 + 79 — Memory compaction + tag snapshots ────
     // PS13: pre-compaction snapshots of pa-users.{uid}.tags. Server-write
     // only (Cloud Functions); operator-read for rollback UI. Candidates

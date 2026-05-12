@@ -39,6 +39,7 @@ import JobPrescreen from "./pages/JobPrescreen.js"
 // v1.8 Phase 79 — Pre-screen session detail + tag-snapshot rollback.
 import PrescreenSession from "./pages/PrescreenSession.js"
 import TagSnapshots from "./pages/TagSnapshots.js"
+import PrescreenSessionsList from "./pages/PrescreenSessionsList.js"
 import { auth } from "./lib/firebase.js"
 
 export default function App() {
@@ -95,12 +96,19 @@ export default function App() {
           <NavLink to="/abuse">Abuse</NavLink>
         </div>
 
+        {/* v1.8 — primary entry point. Job pre-screen authoring + session
+            observability. Put first so it's the surfaced default. */}
+        <div className="nav-section">
+          <div className="nav-section-label">Pre-Screen</div>
+          <NavLink to="/admin/job-prescreen">Jobs · Config</NavLink>
+          <NavLink to="/admin/prescreen-sessions">Sessions</NavLink>
+        </div>
+
         <div className="nav-section">
           <div className="nav-section-label">Agent</div>
           <NavLink to="/agents">Agents</NavLink>
           <NavLink to="/admin/handbook">Handbook</NavLink>
-          <NavLink to="/admin/onboarding">Onboarding</NavLink>
-          <NavLink to="/admin/onboarding-questions">Onboarding Qs (class)</NavLink>
+          <NavLink to="/admin/onboarding-questions">Onboarding Qs</NavLink>
           <NavLink to="/agent/playbooks">Playbooks</NavLink>
           <NavLink to="/agent/personas">Personas</NavLink>
         </div>
@@ -113,14 +121,10 @@ export default function App() {
 
         <div className="nav-section">
           <div className="nav-section-label">Match</div>
-          <NavLink to="/match/candidates">Candidates</NavLink>
-          {/* iter30/WS8 Wave 2 — biz-demo match admin surface. */}
-          <NavLink to="/match/weights">Weights</NavLink>
-          <NavLink to="/match/weights/test">Weights · Dry Run</NavLink>
-          <NavLink to="/match/explainer-history">Explainer History</NavLink>
-          <NavLink to="/match/explainer-test">Explainer Test</NavLink>
-          {/* v1.7 Phase 70 — V16 live debugger with weight-sandbox sliders. */}
+          {/* v1.7 Phase 70 — primary entry point. */}
           <NavLink to="/admin/match-debug">Match Debug</NavLink>
+          <NavLink to="/match/candidates">Candidates</NavLink>
+          {/* Advanced match tools — folded into a single details for less clutter. */}
         </div>
 
         <div className="nav-section">
@@ -134,12 +138,20 @@ export default function App() {
         <div className="nav-section">
           <div className="nav-section-label">Platform</div>
           <NavLink to="/admin/flags">Flags</NavLink>
-          {/* v1.6 Phase 59 — canonical-tags vocab browser + sandbox→promote
-              UI; QA evaluator weekly run viewer. Both admin-only (CF gates
-              promote/reject on auth.token.admin claim). */}
           <NavLink to="/admin/canonical-tags">Canonical Tags</NavLink>
           <NavLink to="/admin/qa-evaluator">QA Evaluator</NavLink>
         </div>
+
+        <details className="nav-section" style={{ opacity: 0.6 }}>
+          <summary style={{ cursor: "pointer", fontSize: "0.8em", padding: "0.25rem 0.5rem" }}>
+            Legacy / advanced
+          </summary>
+          <NavLink to="/admin/onboarding">Onboarding (legacy)</NavLink>
+          <NavLink to="/match/weights">Match Weights</NavLink>
+          <NavLink to="/match/weights/test">Weights · Dry Run</NavLink>
+          <NavLink to="/match/explainer-history">Explainer History</NavLink>
+          <NavLink to="/match/explainer-test">Explainer Test</NavLink>
+        </details>
 
         <button
           type="button"
@@ -197,7 +209,8 @@ export default function App() {
           {/* v1.8 Phase 78 — Job pre-screen config editor. */}
           <Route path="/admin/jobs/:jobId/prescreen" element={<JobPrescreen />} />
           <Route path="/admin/job-prescreen" element={<JobPrescreen />} />
-          {/* v1.8 Phase 79 — Session detail + tag-snapshot rollback. */}
+          {/* v1.8 Phase 79 — Session list + detail + tag-snapshot rollback. */}
+          <Route path="/admin/prescreen-sessions" element={<PrescreenSessionsList />} />
           <Route path="/admin/prescreen-sessions/:sessionId" element={<PrescreenSession />} />
           <Route path="/admin/users/:uid/tag-snapshots" element={<TagSnapshots />} />
           {/* Phase 32 Wave 3 — Playbooks + Personas Firestore CRUD. */}
