@@ -14,9 +14,19 @@ progress:
 
 ## Current Position
 
-Phase: **v1.8 ENGINE LAYER COMPLETE — Phases 74-83 all shipped (commit dd657b9). 196 unit tests + 4 E2E scenarios all green. Operational wiring (CF deploy + flag flip) is Adam-gated.**
+Phase: **v1.8 DEPLOYED — Firestore rules + Hosting + Cloud Functions all released to wekruit-5f89b 2026-05-12. Engine + UI + rules live.**
 Plan: —
-Status: Round 10 of /loop autonomous — final round. All 11 v1.8 phases landed end-to-end across 10 rounds. Phase 81 shadow framework (Jaccard + gate evaluator) shipped, 18/18 tests pass. Phase 82 legacy deletion + Phase 83 milestone audit are documented as production-gated operational steps in MILESTONE-v1.8-prescreen-platform.md "Ship State" appendix. Engine layer complete; production rollout sequencing (deploy CF, flip feature flag, run /gsd:audit-milestone, first live trigger) requires Adam per CLAUDE.md confirmation rules.
+Status: All 11 v1.8 phases shipped + DEPLOYED. Production status:
+- Firestore rules: released (7 new collection rules for prescreen sessions / snapshots / cost ledger / idempotency / rollback events / fixtures / drift runs)
+- Hosting https://wekruit-pa.web.app: released (dashboard with /admin/jobs/:jobId/prescreen, /admin/prescreen-sessions/:sessionId, /admin/users/:uid/tag-snapshots)
+- Cloud Functions: released (all 11+ function URLs returned, predeploy gate 1100/1100 tests green)
+Still pending (operational only):
+- MEMORY_COMPACTION_ENABLED Firebase secret (compaction default-off)
+- pa-feature-flags/onboarding-engine doc (start 7-day shadow window)
+- Phase 77.2 webhook.ts refactor to dispatch through TriggerRouter (HMAC contract test required)
+- Phase 82 onboarding-deterministic.ts deletion (post Phase 81 gate pass)
+- Phase 83 /gsd:audit-milestone run
+- First live pre-screen via WeKruit_<jobId>_<userId>_Job trigger
 
 ## v1.8 Phase Roster (planned)
 
