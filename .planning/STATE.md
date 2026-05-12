@@ -7,16 +7,16 @@ last_updated: "2026-05-11T00:00:00.000Z"
 last_activity: 2026-05-11
 progress:
   total_phases: 11
-  completed_phases: 8
-  total_plans: 8
-  completed_plans: 8
+  completed_phases: 9
+  total_plans: 9
+  completed_plans: 9
 ---
 
 ## Current Position
 
-Phase: **79 ✅ shipped — Session detail + tag-snapshot rollback + Firestore rules (commit 8a4f834).**
+Phase: **80 ✅ shipped — runner-prescreen.mjs + 4 YAML scenarios all green (PASS/FAIL/HARD_STOP/PAUSE). 4/4 pass exit=0.**
 Plan: —
-Status: Round 8 of /loop autonomous. Phase 79: PrescreenSession.tsx + TagSnapshots.tsx pages + 7 new Firestore rule blocks (pa-prescreen-sessions / pa-users-tag-snapshots / pa-compaction-cost-ledger / pa-prescreen-trigger-idempotency / pa-tag-rollback-events / pa-prescreen-fixtures / pa-prescreen-drift-runs). PS13/PS14/PS15 enforced at rules layer: server-write-only for session + snapshot + ledger, operator-read for dashboard render, candidates fully blocked. Next: Phase 80 runner-prescreen.mjs + YAML scenarios + fixture eval.
+Status: Round 9 of /loop autonomous. Phase 80: deterministic E2E simulator runner exercising the full Phase 74-79 stack via stubbed LLM (no live network). All 4 terminal paths verified via separate YAML scenarios. Next: Phase 81 onboarding migration shadow + Phase 77 round-2 webhook refactor + Phase 82 cleanup + Phase 83 ship audit.
 
 ## v1.8 Phase Roster (planned)
 
