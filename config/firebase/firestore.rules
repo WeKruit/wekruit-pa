@@ -271,6 +271,21 @@ service cloud.firestore {
       allow read, write: if isPaOperator();
     }
 
+    // ─── pa-public-jobs — marketing site (wekruit.com) "Open jobs Claire
+    // can fast-track" list. Reads filter where active==true. Public listing
+    // is the entire purpose of the collection. Write operator-only.
+    match /pa-public-jobs/{jobId} {
+      allow read: if resource.data.active == true || isPaOperator();
+      allow write: if isPaOperator();
+    }
+    // pa-job-clicks — anonymous click-tracking from marketing site. Anyone
+    // may create a click record (write-only telemetry); read operator-only.
+    match /pa-job-clicks/{clickId} {
+      allow create: if true;
+      allow read: if isPaOperator();
+      allow update, delete: if isPaOperator();
+    }
+
     // ─── Default deny ────────────────────────────────────────────────
     match /{document=**} {
       allow read, write: if false;
