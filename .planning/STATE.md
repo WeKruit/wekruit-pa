@@ -7,16 +7,16 @@ last_updated: "2026-05-11T00:00:00.000Z"
 last_activity: 2026-05-11
 progress:
   total_phases: 11
-  completed_phases: 3
-  total_plans: 3
-  completed_plans: 3
+  completed_phases: 4
+  total_plans: 4
+  completed_plans: 4
 ---
 
 ## Current Position
 
-Phase: **75 ✅ core shipped — KeywordSetJudge + weighted aggregation + LLM seam (commit 64491fd); production LLM wire-up + drift CF pending P78/P80**
+Phase: **76 ✅ core shipped — PreScreen state machine + voice-mode (32/32 tests). Orchestrator class pending next round.**
 Plan: —
-Status: Round 3 of /loop autonomous. Phase 75 core (validateLlmOutput / computeAggregate / inferAbortHint / KeywordSetJudge class with judgeScored + binary-compat .judge shim / buildKeywordSetPrompt JSON-mode template) shipped 2026-05-12. 24/24 new tests pass. Production caller (gpt-5.4-nano + Sonnet fallback) deferred to Phase 78 dashboard preview CF. Drift CF deferred to Phase 80/CF deploy. Next: Phase 76 Pipeline state machine refactor.
+Status: Round 4 of /loop autonomous. Phase 76 core (state.ts + transitions.ts + voice-mode.ts) shipped 2026-05-12 in packages/pa-orchestrator/src/prescreen/. Pure state-machine transitions exhaustively tested (4 gates × 3 QuestionTypes). Voice-mode injection function preserves prefix-cache on casual mode. Onboarding regression 42/42 green. Pipeline orchestrator class (runTurn assembling these into a Pipeline interface) is the next round's first task — then Phase 77 webhook split + TriggerRouter.
 
 ## v1.8 Phase Roster (planned)
 
