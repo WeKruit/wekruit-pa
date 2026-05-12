@@ -14,7 +14,7 @@ progress:
 
 ## Current Position
 
-Phase: **v1.8 DEPLOYED — Firestore rules + Hosting + Cloud Functions all released to wekruit-5f89b 2026-05-12. Engine + UI + rules live.**
+Phase: **v1.8 LIVE — Phase 77.3 real handlers wired + deployed 2026-05-12. WeKruit_*_Job trigger now starts real sessions; __PA_COMPACT__ runs live gpt-5.4-nano. Audit status: passed.**
 Plan: —
 Status: All 11 v1.8 phases shipped + DEPLOYED. Production status:
 - Firestore rules: released (7 new collection rules for prescreen sessions / snapshots / cost ledger / idempotency / rollback events / fixtures / drift runs)
