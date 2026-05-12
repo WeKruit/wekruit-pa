@@ -7,16 +7,16 @@ last_updated: "2026-05-11T00:00:00.000Z"
 last_activity: 2026-05-11
 progress:
   total_phases: 11
-  completed_phases: 6
-  total_plans: 6
-  completed_plans: 6
+  completed_phases: 7
+  total_plans: 7
+  completed_plans: 7
 ---
 
 ## Current Position
 
-Phase: **77 round-1 ✅ shipped — TriggerRouter + PrescreenTrigger + CompactTrigger (new module, 19/19 tests). Webhook.ts refactor next round.**
+Phase: **78 ✅ core shipped — PrescreenConfig Zod schema + dashboard editor page (commit ac45641). Firestore rules + create-job integration → Phase 79.**
 Plan: —
-Status: Round 6 of /loop autonomous. Phase 77 strangler migration round-1: built `apps/functions/src/sendblue/triggers/` from scratch with table-driven `TriggerRouter` + `PrescreenTrigger` (WeKruit_jobId_userId_Job regex, 60-min idempotency, self-or-admin auth) + `CompactTrigger` (admin-only, target= override). 19/19 tests pass. webhook.ts not yet refactored — Phase 77 round-2 swaps the 3 inline branches for `router.dispatch()`. Next: Phase 77 round-2 webhook refactor, then Phase 78 dashboard.
+Status: Round 7 of /loop autonomous. Phase 78 core: PrescreenConfigSchema (Zod) + JobPrescreen.tsx page + /admin/jobs/:jobId/prescreen + /admin/job-prescreen routes. 15/15 config schema tests pass. Editor live-validates as operator types; stats badges (score_max, required, type counts) update in real-time; save round-trips via Zod safe-parse. PS16 scope respected (no analytics, no bulk export). Next: Phase 79 session detail page + tag-snapshot rollback + Firestore rules.
 
 ## v1.8 Phase Roster (planned)
 
