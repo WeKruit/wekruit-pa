@@ -54,10 +54,16 @@ const prescreenConfig = {
     salaryRange: "$140k-$180k",
     nextStepEta: "within 2-3 business days",
   },
+  // SINGLE keyword per MUST_HAVE Q. Per PS2 ("any mismatch s_i<1.0 →
+  // HARD_STOP"), MUST_HAVE Qs assume single-keyword designs so the LLM
+  // hits a clean 1.0. Multi-keyword Qs aggregate to <1.0 in practice
+  // because real LLMs score variance across keywords → always HARD_STOP.
+  // Use PROBING (τ_m=0.7) when you need multi-keyword nuance.
   questions: [
     {
       qId: "q_react_experience",
       type: "MUST_HAVE",
+      matchThreshold: 0.85,
       weight: 2,
       prompt: {
         en: "Describe your React production experience — what have you shipped, at what scale, and what was your role?",
@@ -68,13 +74,17 @@ const prescreenConfig = {
         zh: "能否更具体 — 项目范围和你的角色?",
       },
       keywords: [
-        { keyword: "react", weight: 1, hint: "React framework experience" },
-        { keyword: "production_scale", weight: 1, hint: "shipped to real users at scale" },
+        {
+          keyword: "react",
+          weight: 1,
+          hint: "Has shipped React-based UI to real users. Any production React work (incl. Next.js, RN) counts; demos/side projects do not.",
+        },
       ],
     },
     {
       qId: "q_production_systems",
       type: "MUST_HAVE",
+      matchThreshold: 0.85,
       weight: 1,
       prompt: {
         en: "What production systems have you owned end-to-end? (deploy, on-call, observability)",
@@ -85,7 +95,11 @@ const prescreenConfig = {
         zh: "请详细说明系统规模和你怎么 own 的.",
       },
       keywords: [
-        { keyword: "production_ownership", weight: 1, hint: "end-to-end deploy + on-call" },
+        {
+          keyword: "production_ownership",
+          weight: 1,
+          hint: "End-to-end ownership of production code: design, deploy, on-call rotation, monitoring, incident response. Any of these signals counts.",
+        },
       ],
     },
   ],

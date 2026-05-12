@@ -50,6 +50,17 @@ export const PrescreenQuestionConfigSchema = z.object({
     .regex(/^[a-z0-9_]+$/, "qId must be lowercase + alphanumeric + underscore"),
   type: QuestionTypeSchema,
   weight: z.number().min(0.1).max(10).default(1.0),
+  /**
+   * v1.9 hotfix — per-Q τ_m match threshold override. Defaults to type's
+   * baseline:
+   *   MUST_HAVE → 1.0 (any mismatch fails — PS2 lock)
+   *   PROBING   → 0.7
+   *   GOOD_TO_HAVE → 0 (never blocks)
+   *
+   * Real-LLM scoring (gpt-5.4-nano) rarely hits 1.0 even on strong answers.
+   * Recommended override for production MUST_HAVE Qs: 0.85.
+   */
+  matchThreshold: z.number().min(0).max(1).optional(),
   prompt: BilingualTextSchema,
   clarifyPrompt: BilingualTextSchema,
   keywords: z.array(KeywordSpecSchema).min(1).max(20),
@@ -171,11 +182,12 @@ export function safeParsePrescreenConfig(
  */
 export function configToStateQuestions(
   cfg: PrescreenConfig
-): Array<{ qId: string; type: QuestionType; weight: number }> {
+): Array<{ qId: string; type: QuestionType; weight: number; matchThreshold?: number }> {
   return cfg.questions.map((q) => ({
     qId: q.qId,
     type: q.type,
     weight: q.weight,
+    ...(q.matchThreshold !== undefined ? { matchThreshold: q.matchThreshold } : {}),
   }))
 }
 

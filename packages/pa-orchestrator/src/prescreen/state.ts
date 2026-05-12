@@ -32,6 +32,12 @@ export interface PreScreenQuestionState {
   qId: string
   type: QuestionType
   weight: number
+  /**
+   * v1.9 — per-Q τ_m override. When unset, evalTypeGate falls back to
+   * DEFAULT_TYPE_THRESHOLDS[type]. Production MUST_HAVE Qs typically set
+   * this to ~0.85 because real LLM scoring rarely hits 1.0.
+   */
+  matchThreshold?: number
   /** k counter — 0..2 clarification rounds. */
   clarifyRounds: number
   /** Best-so-far scored result across clarification rounds (max-by-s). */
@@ -87,7 +93,7 @@ export function emptyPreScreenState(args: {
   sessionId: string
   userId: string
   jobId: string
-  questions: Array<{ qId: string; type: QuestionType; weight: number }>
+  questions: Array<{ qId: string; type: QuestionType; weight: number; matchThreshold?: number }>
   threshold?: number
   confidenceThreshold?: number
   maxClarifyRounds?: number
@@ -100,6 +106,7 @@ export function emptyPreScreenState(args: {
       qId: q.qId,
       type: q.type,
       weight: q.weight,
+      ...(q.matchThreshold !== undefined ? { matchThreshold: q.matchThreshold } : {}),
       clarifyRounds: 0,
     }
     scoreMax += q.weight

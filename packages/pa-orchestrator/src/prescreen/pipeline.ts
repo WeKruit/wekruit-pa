@@ -195,6 +195,8 @@ export class PreScreenPipeline {
       s,
       c,
       confidenceThreshold: state.confidenceThreshold,
+      // v1.9 — per-Q τ_m override (default falls back to type baseline).
+      ...(qState.matchThreshold !== undefined ? { matchThreshold: qState.matchThreshold } : {}),
     })
     if (typeGate.action === "hard_stop") {
       qState.finalS = s
