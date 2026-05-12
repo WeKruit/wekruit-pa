@@ -246,6 +246,8 @@ const QDRANT_URL = defineSecret("QDRANT_URL")
 const QDRANT_API_KEY = defineSecret("QDRANT_API_KEY")
 // v1.8 Phase 74.5 — feature flag for memory compaction (default off, secret=true to enable).
 const MEMORY_COMPACTION_ENABLED = defineSecret("MEMORY_COMPACTION_ENABLED")
+// v1.8 Phase 77 — admin allowlist for __PA_COMPACT__ + __PA_FIND_MATCH__ + prescreen-as-admin.
+const PA_ADMIN_USER_IDS = defineSecret("PA_ADMIN_USER_IDS")
 // mem0/Qdrant convention — snake_case (NOT kebab).
 const QDRANT_COLLECTION = "pa_memory"
 
@@ -1026,6 +1028,13 @@ export const paSendblueWebhook = onRequest(
       // Anthropic Sonnet when industryTags=["other"]. Until Adam provisions,
       // graceful no-op (industry-second-pass.ts checks for empty key).
       ANTHROPIC_API_KEY,
+      // v1.8 Phase 74.5 — compaction enable flag (hydrated into env for
+      // CompactTrigger's runCompactionForUser → isMemoryCompactionEnabled).
+      // NOTE PA_ADMIN_USER_IDS already injected as plain env var on this
+      // function (set via firebase functions:config in an earlier
+      // deploy); we do NOT re-declare as secret here to avoid overlap
+      // error from Cloud Run.
+      MEMORY_COMPACTION_ENABLED,
     ],
     memory: "512MiB",
     timeoutSeconds: 60,
@@ -1065,6 +1074,11 @@ export const paSendblueWebhook = onRequest(
     } catch {
       // secret not bound — leave env as-is (legacy fallback)
     }
+    // v1.8 Phase 74.5 — compaction flag. (PA_ADMIN_USER_IDS already on env.)
+    try {
+      const compactionFlag = MEMORY_COMPACTION_ENABLED.value().trim()
+      if (compactionFlag) process.env.MEMORY_COMPACTION_ENABLED = compactionFlag
+    } catch { /* optional */ }
     try {
       await handleSendblueWebhook(
         {
