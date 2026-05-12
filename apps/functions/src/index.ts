@@ -217,6 +217,17 @@ export const paHealthAdminBootstrap = makeHealthHandler({
 
 if (!getApps().length) initializeApp()
 
+// v1.9 hotfix — KeywordSetJudge / pipeline state can emit optional fields
+// as `undefined` (e.g. scored.abortHint). Firestore Admin SDK throws unless
+// ignoreUndefinedProperties is enabled. Defensive global setting; we still
+// stripUndefined in prescreen-turn-handler for explicitness.
+try {
+  getFirestore().settings({ ignoreUndefinedProperties: true })
+} catch {
+  // settings() throws once getFirestore() has been used — safe to ignore
+  // if a previous handler already initialized it with default settings.
+}
+
 setGlobalOptions({ region: "us-central1" })
 
 // Phase 21 Sendblue secrets — populated via `firebase functions:secrets:set` (D-07)

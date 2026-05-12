@@ -38,11 +38,33 @@ class FirestorePreScreenStore implements PreScreenStateProvider {
     return data as PreScreenState
   }
   async save(state: PreScreenState): Promise<void> {
+    // v1.9 hotfix — Firestore Admin SDK rejects `undefined` field values
+    // unless ignoreUndefinedProperties is set. KeywordSetJudge omits
+    // optional fields (abortHint, etc.) as undefined, which then propagate
+    // into state.questions[qId].scored.abortHint. Strip undefined recursively
+    // before write so save never throws "Cannot use \"undefined\"".
     await this.db
       .collection("pa-prescreen-sessions")
       .doc(state.sessionId)
-      .set(state, { merge: false })
+      .set(stripUndefined(state) as PreScreenState, { merge: false })
   }
+}
+
+/** Recursively drop keys whose value is `undefined`. Preserves null. */
+function stripUndefined<T>(v: T): T {
+  if (v === null || v === undefined) return v
+  if (Array.isArray(v)) {
+    return v.map((x) => stripUndefined(x)) as unknown as T
+  }
+  if (typeof v === "object") {
+    const out: Record<string, unknown> = {}
+    for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+      if (val === undefined) continue
+      out[k] = stripUndefined(val)
+    }
+    return out as T
+  }
+  return v
 }
 
 /** Production LLM caller — gpt-5.4-nano JSON-mode. */
