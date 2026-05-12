@@ -7,16 +7,16 @@ last_updated: "2026-05-11T00:00:00.000Z"
 last_activity: 2026-05-11
 progress:
   total_phases: 11
-  completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
+  completed_phases: 1
+  total_plans: 1
+  completed_plans: 1
 ---
 
 ## Current Position
 
-Phase: **v1.8 strategic input drafted — pending Phase 74 kickoff**
+Phase: **74 ✅ shipped (P9-B direct) — ScoredJudgeResult + QuestionType + weight (commit 1cc2722)**
 Plan: —
-Status: Milestone v1.8 doc + ROADMAP entry written 2026-05-11. STATE flipped from v1.7 (shipped 2026-05-06) to v1.8 in-progress. Next step: Adam approval, then `/gsd:autonomous` picks up Phase 74.
+Status: Phase 74 landed 2026-05-11 via /loop autonomous round 1. 9/9 new tests + 46/46 onboarding regression green. Zero break confirmed. Next: Phase 74.5 Memory Compaction Layer (Wave 2 entry).
 
 ## v1.8 Phase Roster (planned)
 
