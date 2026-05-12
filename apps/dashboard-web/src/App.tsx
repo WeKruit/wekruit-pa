@@ -45,6 +45,8 @@ import AtsInbound from "./pages/AtsInbound.js"
 // v1.9 Phase 87 — public candidate-facing job page + CV upload.
 import PublicJob from "./pages/PublicJob.js"
 import PublicJobCv from "./pages/PublicJobCv.js"
+// v1.9 Phase 88 — Sendblue number pool admin.
+import SendbluePool from "./pages/SendbluePool.js"
 
 // v1.8 — collapsible sidebar section. Persists open/closed to localStorage.
 function NavSection({
@@ -179,6 +181,7 @@ export default function App() {
           <NavLink to="/admin/downstream-triggers">Downstream Triggers</NavLink>
           <NavLink to="/beta">Beta Allowlist</NavLink>
           <NavLink to="/triggers">Triggers</NavLink>
+          <NavLink to="/admin/sendblue-pool">Sendblue Pool</NavLink>
         </NavSection>
         <NavSection id="platform" label="Platform" defaultOpen={false}>
           <NavLink to="/admin/flags">Flags</NavLink>
@@ -255,6 +258,8 @@ export default function App() {
           <Route path="/admin/users/:uid/tag-snapshots" element={<TagSnapshots />} />
           {/* v1.9 Phase 86 — ATS inbound funnel observability. */}
           <Route path="/admin/ats-inbound" element={<AtsInbound />} />
+          {/* v1.9 Phase 88 — Sendblue number pool admin. */}
+          <Route path="/admin/sendblue-pool" element={<SendbluePool />} />
           {/* Phase 32 Wave 3 — Playbooks + Personas Firestore CRUD. */}
           <Route path="/agent/playbooks" element={<Playbooks />} />
           <Route path="/agent/personas" element={<Personas />} />
