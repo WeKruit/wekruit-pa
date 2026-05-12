@@ -3964,3 +3964,12 @@ export {
   composeFailJobRecsPreamble,
   type Level1RevealFields,
 } from "./prescreen/level1-template.js"
+export {
+  createPiiConfirmPipeline,
+  validateEmail,
+  validatePhone,
+  validateLegalName,
+  type PiiConfirmAnswers,
+  type PiiConfirmHooks,
+  type PiiConfirmPipelineOpts,
+} from "./prescreen/pii-confirm.js"

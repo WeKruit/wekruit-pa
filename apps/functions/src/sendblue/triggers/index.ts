@@ -20,3 +20,11 @@ export {
 } from "./prescreen.js"
 
 export { CompactTrigger, type CompactTriggerDeps } from "./compact.js"
+
+// v1.9 Phase 85 — Apply trigger (PASS-verified candidates skip prescreen).
+export {
+  ApplyTrigger,
+  APPLY_IDEMPOTENCY_WINDOW_MS,
+  PASS_LOOKBACK_MS,
+  type ApplyTriggerDeps,
+} from "./apply.js"

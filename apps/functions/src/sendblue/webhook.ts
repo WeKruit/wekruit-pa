@@ -54,6 +54,7 @@ import { parseInboundTapback } from "./tapback-parser.js"
 // the existing inline find_match/reset branches. If the router handles
 // (prescreen / compact), short-circuit. If not, existing flow continues.
 import {
+  ApplyTrigger,
   CompactTrigger,
   PrescreenTrigger,
   TriggerRouter,
@@ -61,6 +62,8 @@ import {
 // v1.8 Phase 77.3 — real prescreen session bootstrap (replaces log placeholder).
 import { runPreScreenForUser } from "../prescreen-session-start.js"
 import { runCompactionForUser } from "../compaction-run.js"
+// v1.9 Phase 85 — PII confirm bootstrap (Apply trigger).
+import { runPiiConfirmForUser } from "../pii-confirm-start.js"
 import type { SendblueInboundPayload } from "./types.js"
 import { inboundEventExpiresAtTs, outboundExpiresAtTs } from "./ttl.js"
 // v1.5 Stream-D — message coalescer dispatch (flag-gated; default off).
@@ -675,6 +678,72 @@ export async function handleSendblueWebhook(
             log("[sendblue][webhook] prescreen_run", {
               jobId, userId, sessionId: result.sessionId,
               reason: result.reason, ok: result.ok,
+            })
+          },
+          audit: async (evt) => {
+            await safeAudit(deps, evt as AuditEventInput, log)
+          },
+        }),
+        new ApplyTrigger({
+          lookupUserByPhone: (phone) => lookupFnRouter(deps.db, phone),
+          findRecentPass: async ({ jobId, userId, sinceMs }) => {
+            try {
+              const cutoffIso = new Date(Date.now() - sinceMs).toISOString()
+              const snap = await deps.db
+                .collection("pa-prescreen-sessions")
+                .where("jobId", "==", jobId)
+                .where("userId", "==", userId)
+                .where("terminal", "==", "PASS")
+                .orderBy("updatedAt", "desc")
+                .limit(1)
+                .get()
+              if (snap.empty) return null
+              const doc = snap.docs[0]
+              const data = doc.data() as { updatedAt?: string }
+              if (!data.updatedAt || data.updatedAt < cutoffIso) return null
+              return {
+                sessionId: doc.id,
+                terminalAtMs: Date.parse(data.updatedAt),
+              }
+            } catch {
+              return null
+            }
+          },
+          getLastFiredMs: async (jobId, userId) => {
+            try {
+              const snap = await deps.db
+                .collection("pa-apply-trigger-idempotency")
+                .doc(`${jobId}_${userId}`)
+                .get()
+              const data = snap.data()
+              return typeof data?.lastFiredMs === "number" ? data.lastFiredMs : null
+            } catch {
+              return null
+            }
+          },
+          setLastFiredMs: async (jobId, userId, ms) => {
+            await deps.db
+              .collection("pa-apply-trigger-idempotency")
+              .doc(`${jobId}_${userId}`)
+              .set({ lastFiredMs: ms, jobId, userId, updatedAt: new Date().toISOString() })
+          },
+          runPiiConfirm: async ({ jobId, userId, toE164, sourceSessionId }) => {
+            await runPiiConfirmForUser({
+              db: deps.db,
+              jobId,
+              userId,
+              toE164,
+              sourceSessionId,
+              log: (event, payload) => log(`pa.pii.${event}`, payload),
+            })
+          },
+          runPreScreen: async ({ jobId, userId, toE164 }) => {
+            await runPreScreenForUser({
+              db: deps.db,
+              jobId,
+              userId,
+              toE164,
+              log: (event, payload) => log(`pa.prescreen.${event}`, payload),
             })
           },
           audit: async (evt) => {
