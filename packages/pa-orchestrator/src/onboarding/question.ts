@@ -56,6 +56,89 @@ export type JudgeResult<TAnswer> =
       confidence?: number
     }
 
+// ────────────────────────────────────────────────────────────────────────────
+// v1.8 Phase 74 (PS1-PS5): ScoredJudgeResult — additive variant for the
+// pre-screening pipeline. Existing binary JudgeResult is untouched; scored
+// judges (KeywordSetJudge, future) emit this richer shape.
+//
+// Discriminated by `kind: "scored"` so a pipeline can branch without losing
+// the safety of TypeScript exhaustiveness.
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Per-keyword evaluation cell. Emitted by scored judges. The pipeline uses
+ * `match`/`confidence` for scoring; `evidence`/`reasoning` are observability
+ * fields surfaced in admin dashboards (NEVER shown to candidates).
+ */
+export interface PerKeywordEvaluation {
+  /** The keyword from the JD-side KeywordSet (PS1-PS3). */
+  keyword: string
+  /** m_ij ∈ [0,1] — semantic match score from the LLM evaluator. */
+  match: number
+  /** ĉ_ij ∈ [0,1] — confidence in the match score. */
+  confidence: number
+  /** ≤60-char excerpt of the candidate reply that supports the score. */
+  evidence: string
+  /** ≤80-char LLM explanation for why this match score was assigned. */
+  reasoning: string
+}
+
+/**
+ * Aggregate score for a single Question after keyword-set evaluation.
+ * Computed by the judge after assembling perKeyword cells.
+ */
+export interface ScoredAggregate {
+  /** s_i ∈ [0,1] — weighted-mean match across keywords. */
+  s: number
+  /** c_i ∈ [0,1] — weighted-mean confidence across keywords. */
+  c: number
+  /** One-sentence (≤120 char) human-readable summary for the dashboard. */
+  summary: string
+}
+
+/**
+ * Optional hint for the Pipeline upper layer — distinguishes routing actions
+ * (clarify vs decline vs off-topic) from raw score signals. Pipelines can
+ * consult this to short-circuit the Type Gate when the candidate clearly
+ * declined or went off-topic.
+ */
+export interface AbortHint {
+  kind: "low_confidence" | "off_topic" | "decline" | "ambiguous"
+  reason: string
+}
+
+/**
+ * ScoredJudgeResult — emitted by judges that compute per-keyword scores.
+ * Additive over JudgeResult: pipelines branch on `kind === "scored"`.
+ *
+ * The `accept` field is derived (not opinionated): scored judges leave the
+ * type-gate decision to the pipeline, which combines `s`, `c`, the Question's
+ * `type` (MUST_HAVE / PROBING / GOOD_TO_HAVE), and `abortHint` to decide.
+ */
+export interface ScoredJudgeResult<TAnswer = unknown> {
+  readonly kind: "scored"
+  /** Whether the judge believes the answer was successfully captured. */
+  answered: boolean
+  /** Optional captured value (e.g. canonical form). */
+  value?: TAnswer
+  /** Per-keyword evaluation cells in the same order as the KeywordSet. */
+  perKeyword: PerKeywordEvaluation[]
+  /** Question-level aggregate. */
+  aggregate: ScoredAggregate
+  /** Pipeline routing hint — see AbortHint. */
+  abortHint?: AbortHint
+}
+
+/**
+ * Type-guard for routing in pipelines that handle both binary and scored
+ * judges. Use in `OnboardingPipeline` to branch the Type Gate.
+ */
+export function isScoredJudgeResult<T>(
+  r: JudgeResult<T> | ScoredJudgeResult<T>
+): r is ScoredJudgeResult<T> {
+  return (r as ScoredJudgeResult<T>).kind === "scored"
+}
+
 /**
  * Context handed to a Judge for cases where the decision needs more than
  * the user's text reply. Examples:
@@ -121,6 +204,17 @@ export interface AcceptedCtx {
   log?(event: string, payload: Record<string, unknown>): void
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// v1.8 Phase 74 (PS2-PS3): QuestionType + per-Q weight.
+//
+// Onboarding Qs default to "MUST_HAVE" + weight 1.0 — zero behavior change
+// for existing 11 onboarding Qs. Pre-screen Qs explicitly set type and
+// weight to drive the Type Gate (MUST_HAVE/PROBING hard-stop) and weighted
+// score aggregation (S = Σ s_i · W_{Q_i}).
+// ────────────────────────────────────────────────────────────────────────────
+
+export type QuestionType = "MUST_HAVE" | "PROBING" | "GOOD_TO_HAVE"
+
 /**
  * Question<TAnswer> — single-Q definition. All onboarding behavior is
  * configured here. Pipeline orchestrates ordering + retries + halts.
@@ -134,6 +228,19 @@ export interface Question<TAnswer> {
   judge: Judge<TAnswer>
   /** Generates re-ask text after judge rejects. */
   rephraser: Rephraser
+  /**
+   * v1.8 PS2 — Question type drives the Type Gate. Defaults to "MUST_HAVE"
+   * for backwards compatibility with existing onboarding Qs.
+   *   - MUST_HAVE: any mismatch (s_i < 1.0) → HARD_STOP terminal
+   *   - PROBING: s_i < τ_m OR c_i < τ_c → HARD_STOP terminal
+   *   - GOOD_TO_HAVE: never hard-stops; low scores still accumulate
+   */
+  type?: QuestionType
+  /**
+   * v1.8 PS3 — per-Q weight contributing to W_{Q_i} in score aggregation.
+   * Defaults to 1.0. Used by pre-screening pipeline; onboarding ignores.
+   */
+  weight?: number
   /**
    * Cap on retries before pipeline halts onboarding (Adam directive
    * 2026-05-05: "最多给一个问题5次尝试"). Default 5. Set to Infinity to
@@ -170,6 +277,8 @@ export interface Question<TAnswer> {
 export function makeQuestion<TAnswer>(spec: Question<TAnswer>): Question<TAnswer> {
   return {
     maxAttempts: 5,
+    type: "MUST_HAVE",
+    weight: 1.0,
     ...spec,
   }
 }
