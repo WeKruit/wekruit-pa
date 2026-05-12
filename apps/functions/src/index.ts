@@ -244,6 +244,8 @@ const SILICONFLOW_API_KEY = defineSecret("SILICONFLOW_API_KEY")
 const PA_OPENAI_AGENT_API_KEY = defineSecret("PA_OPENAI_AGENT_API_KEY")
 const QDRANT_URL = defineSecret("QDRANT_URL")
 const QDRANT_API_KEY = defineSecret("QDRANT_API_KEY")
+// v1.8 Phase 74.5 — feature flag for memory compaction (default off, secret=true to enable).
+const MEMORY_COMPACTION_ENABLED = defineSecret("MEMORY_COMPACTION_ENABLED")
 // mem0/Qdrant convention — snake_case (NOT kebab).
 const QDRANT_COLLECTION = "pa_memory"
 
@@ -1800,4 +1802,82 @@ export const paHealthMatchingPipelineComplete = makeHealthHandler({
   name: "paMatchingPipelineComplete",
   requiredSecrets: ["PA_MATCHING_WEBHOOK_SECRET"],
 })
+
+/**
+ * v1.8 Phase 75 — paPrescreenDriftDetector
+ *
+ * Nightly cron (04:30 UTC). Replays pa-prescreen-fixtures through
+ * KeywordSetJudge with current LLM provider chain, compares to stored
+ * gold scores. Drift > 5% per-keyword variance → Slack alert + audit row
+ * to pa-prescreen-drift-runs.
+ */
+export const paPrescreenDriftDetector = onSchedule(
+  {
+    schedule: "30 4 * * *",
+    timeZone: "UTC",
+    region: "us-central1",
+    secrets: [PA_OPENAI_AGENT_API_KEY],
+    memory: "256MiB",
+    timeoutSeconds: 540,
+  },
+  async () => {
+    process.env.PA_OPENAI_AGENT_API_KEY = PA_OPENAI_AGENT_API_KEY.value()
+    const { runPrescreenDriftDetector } = await import("./prescreen-drift-detector.js")
+    const db = (await import("firebase-admin/firestore")).getFirestore()
+    const result = await runPrescreenDriftDetector({ db, log: (e, p) => logger.info(`drift.${e}`, p) })
+    logger.info("paPrescreenDriftDetector tick", result)
+  }
+)
+
+/**
+ * v1.8 Phase 81 — paOnboardingShadowDiffSweep
+ *
+ * Daily 03:00 UTC aggregator. Reads pa-onboarding-shadow-diff written by
+ * the coalescer during v2_shadow runs, computes mean jaccard + diff rate
+ * + state-disagreement rate. Writes a daily summary doc; gate evaluator
+ * flips default v1→v2 when 7 consecutive days pass.
+ */
+export const paOnboardingShadowDiffSweep = onSchedule(
+  {
+    schedule: "0 3 * * *",
+    timeZone: "UTC",
+    region: "us-central1",
+    memory: "256MiB",
+    timeoutSeconds: 300,
+  },
+  async () => {
+    const { runOnboardingShadowDiffSweep } = await import("./onboarding-shadow-diff-sweep.js")
+    const db = (await import("firebase-admin/firestore")).getFirestore()
+    const result = await runOnboardingShadowDiffSweep({ db, log: (e, p) => logger.info(`shadow.${e}`, p) })
+    logger.info("paOnboardingShadowDiffSweep tick", result)
+  }
+)
+
+/**
+ * v1.8 Phase 74.5 — paMemoryCompactionScheduled
+ *
+ * Daily 05:00 UTC. Per active user, check if pending raw turn count
+ * ≥ 20 since last compaction → trigger runCompactionForUser. Cost cap
+ * (5/user/day) enforced by runCompactionTurn itself.
+ */
+export const paMemoryCompactionScheduled = onSchedule(
+  {
+    schedule: "0 5 * * *",
+    timeZone: "UTC",
+    region: "us-central1",
+    secrets: [PA_OPENAI_AGENT_API_KEY, MEMORY_COMPACTION_ENABLED],
+    memory: "256MiB",
+    timeoutSeconds: 540,
+  },
+  async () => {
+    process.env.PA_OPENAI_AGENT_API_KEY = PA_OPENAI_AGENT_API_KEY.value()
+    try {
+      process.env.MEMORY_COMPACTION_ENABLED = MEMORY_COMPACTION_ENABLED.value()
+    } catch { /* secret optional */ }
+    const { runMemoryCompactionSweep } = await import("./memory-compaction-sweep.js")
+    const db = (await import("firebase-admin/firestore")).getFirestore()
+    const result = await runMemoryCompactionSweep({ db, log: (e, p) => logger.info(`compact.${e}`, p) })
+    logger.info("paMemoryCompactionScheduled tick", result)
+  }
+)
 

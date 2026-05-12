@@ -3950,3 +3950,12 @@ export {
   getVoiceModePrefix,
   type VoiceMode,
 } from "./prescreen/voice-mode.js"
+export {
+  buildShadowDiff,
+  evaluateShadowGate,
+  jaccardSimilarity,
+  resolveEngineVersion,
+  type EngineVersion,
+  type OnboardingShadowDiff,
+  type ShadowGateReport,
+} from "./prescreen/shadow.js"
