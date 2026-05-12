@@ -7,16 +7,16 @@ last_updated: "2026-05-11T00:00:00.000Z"
 last_activity: 2026-05-11
 progress:
   total_phases: 11
-  completed_phases: 4
-  total_plans: 4
-  completed_plans: 4
+  completed_phases: 5
+  total_plans: 5
+  completed_plans: 5
 ---
 
 ## Current Position
 
-Phase: **76 ✅ core shipped — PreScreen state machine + voice-mode (32/32 tests). Orchestrator class pending next round.**
+Phase: **76 ✅ FULL shipped — PreScreenPipeline.runTurn assembled (commit 635c693). 53 tests green across prescreen + onboarding regression.**
 Plan: —
-Status: Round 4 of /loop autonomous. Phase 76 core (state.ts + transitions.ts + voice-mode.ts) shipped 2026-05-12 in packages/pa-orchestrator/src/prescreen/. Pure state-machine transitions exhaustively tested (4 gates × 3 QuestionTypes). Voice-mode injection function preserves prefix-cache on casual mode. Onboarding regression 42/42 green. Pipeline orchestrator class (runTurn assembling these into a Pipeline interface) is the next round's first task — then Phase 77 webhook split + TriggerRouter.
+Status: Round 5 of /loop autonomous. Phase 76 fully complete: state.ts + transitions.ts + voice-mode.ts + pipeline.ts. PreScreenPipeline orchestrator passes 12/12 integration scenarios (happy PASS, MUST_HAVE/PROBING HARD_STOP, GOOD_TO_HAVE pass-through, clarify k-bump/exhaust, viability PAUSE+hysteresis, FAIL on ratio, session-not-found, terminal stickiness, PS15 reason non-leak). Pipeline correctly skips viability on last Q to disambiguate FAIL vs PAUSE. Next: Phase 77 webhook split + TriggerRouter + prescreen.ts trigger + compact.ts trigger.
 
 ## v1.8 Phase Roster (planned)
 
