@@ -554,6 +554,55 @@ export async function processCoalescedTurn(
     })
   }
 
+  // 3a. v1.8 Phase 77.4 — pre-screen routing.
+  //
+  // Before dispatching to Claire, check if the user has an active
+  // pre-screen session. If yes, route this turn through
+  // PreScreenPipeline.runTurn (which handles the 4-gate state machine,
+  // emits the next question / terminal text via sendImessage, persists
+  // state to pa-prescreen-sessions). Short-circuits Claire so the same
+  // user can't get duplicate replies.
+  //
+  // On no active session OR handler error → fall through to Claire.
+  try {
+    const { runPrescreenTurnIfActive } = await import("../prescreen-turn-handler.js")
+    const psResult = await runPrescreenTurnIfActive({
+      db: deps.db,
+      userId,
+      toE164: fired.fromNumber,
+      replyText: fired.accumulatedBody,
+      lang: "en",
+      log: (event, payload) => log(`coalesce.prescreen.${event}`, payload),
+    })
+    if (psResult.handled) {
+      log("[coalesce] prescreen-routed", {
+        userId,
+        sessionId: psResult.sessionId,
+        terminal: psResult.terminal,
+      })
+      // Mark original inbounds as coalesced (housekeeping).
+      await Promise.allSettled(
+        fired.inboundEventIds.map((eventId) =>
+          deps.db.collection("pa-inbound-events").doc(eventId).set(
+            {
+              status: "coalesced",
+              coalesceTurnId: `${userId}__${turnSeq}`,
+              coalesceParentId: created.id,
+              routedTo: "prescreen",
+            },
+            { merge: true }
+          )
+        )
+      )
+      return { status: "fired", buffer: fired }
+    }
+  } catch (err) {
+    log("[coalesce] prescreen-route FAILED (falling through to Claire)", {
+      userId,
+      err: err instanceof Error ? err.message : String(err),
+    })
+  }
+
   // 4. Drive orchestrator → ONE reply. Use the same path onPaInbound uses
   //    so we get identical lease + claim semantics.
   //

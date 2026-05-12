@@ -191,7 +191,7 @@
       ]
     },
     {
-      "_comment": "iter34 H.2/CR3 — queryMatchingJobs orderBy lastSeenAt (was firstSeenAt). status + industryEnum array-contains + lastSeenAt desc.",
+      "_comment": "iter34 H.2/CR3 \u2014 queryMatchingJobs orderBy lastSeenAt (was firstSeenAt). status + industryEnum array-contains + lastSeenAt desc.",
       "collectionGroup": "matching-jobs",
       "queryScope": "COLLECTION",
       "fields": [
@@ -210,7 +210,7 @@
       ]
     },
     {
-      "_comment": "iter34 H.2/CR3 — queryMatchingJobs H6 fallback: status + industryKey + lastSeenAt desc.",
+      "_comment": "iter34 H.2/CR3 \u2014 queryMatchingJobs H6 fallback: status + industryKey + lastSeenAt desc.",
       "collectionGroup": "matching-jobs",
       "queryScope": "COLLECTION",
       "fields": [
@@ -229,7 +229,7 @@
       ]
     },
     {
-      "_comment": "iter34 H.2/CR3 — fetchTopK / no-industry-filter path: status + lastSeenAt desc.",
+      "_comment": "iter34 H.2/CR3 \u2014 fetchTopK / no-industry-filter path: status + lastSeenAt desc.",
       "collectionGroup": "matching-jobs",
       "queryScope": "COLLECTION",
       "fields": [
@@ -274,7 +274,7 @@
       ]
     },
     {
-      "_comment": "v1.5 Stream-G.2 tag-cluster-rec fetchTopK: where(status==active).orderBy(firstSeenAt desc) — pa-outbound (userId, createdAt desc) for Stream-H notify lookups already exists at line 17-30",
+      "_comment": "v1.5 Stream-G.2 tag-cluster-rec fetchTopK: where(status==active).orderBy(firstSeenAt desc) \u2014 pa-outbound (userId, createdAt desc) for Stream-H notify lookups already exists at line 17-30",
       "collectionGroup": "matching-jobs",
       "queryScope": "COLLECTION",
       "fields": [
@@ -289,7 +289,7 @@
       ]
     },
     {
-      "_comment": "v1.6 Phase 55/56 (MATCH-02 / MATCH-03) — queryMatchingJobs hard-filter on roleFunction: where(status==active).where(roleFunction array-contains-any X).orderBy(firstSeenAt desc).",
+      "_comment": "v1.6 Phase 55/56 (MATCH-02 / MATCH-03) \u2014 queryMatchingJobs hard-filter on roleFunction: where(status==active).where(roleFunction array-contains-any X).orderBy(firstSeenAt desc).",
       "collectionGroup": "matching-jobs",
       "queryScope": "COLLECTION",
       "fields": [
@@ -308,30 +308,66 @@
       ]
     },
     {
-      "_comment": "iter30/WS8 — /match/weights audit drawer: where(key==tableKey or tableKey/skillKey).orderBy(ts desc). Same shape used by /agent/playbooks audit reads.",
+      "_comment": "iter30/WS8 \u2014 /match/weights audit drawer: where(key==tableKey or tableKey/skillKey).orderBy(ts desc). Same shape used by /agent/playbooks audit reads.",
       "collectionGroup": "pa-audit-events",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "key", "order": "ASCENDING" },
-        { "fieldPath": "ts", "order": "DESCENDING" }
+        {
+          "fieldPath": "key",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "ts",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
-      "_comment": "iter30/WS8 — /match/explainer-history filter-by-user: where(userId==X).orderBy(createdAt desc).",
+      "_comment": "iter30/WS8 \u2014 /match/explainer-history filter-by-user: where(userId==X).orderBy(createdAt desc).",
       "collectionGroup": "pa-job-rec-explanations",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "userId", "order": "ASCENDING" },
-        { "fieldPath": "createdAt", "order": "DESCENDING" }
+        {
+          "fieldPath": "userId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
-      "_comment": "iter30/WS8 — /match/explainer-history filter-by-language: where(language==zh|en).orderBy(createdAt desc).",
+      "_comment": "iter30/WS8 \u2014 /match/explainer-history filter-by-language: where(language==zh|en).orderBy(createdAt desc).",
       "collectionGroup": "pa-job-rec-explanations",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "language", "order": "ASCENDING" },
-        { "fieldPath": "createdAt", "order": "DESCENDING" }
+        {
+          "fieldPath": "language",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "pa-prescreen-sessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "userId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "terminal",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
       ]
     }
   ],
