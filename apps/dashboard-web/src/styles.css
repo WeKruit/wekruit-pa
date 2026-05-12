@@ -118,7 +118,7 @@ a {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  margin-top: 16px;
+  margin-top: 12px;
 }
 .nav-section:first-of-type {
   margin-top: 0;
@@ -127,10 +127,13 @@ a {
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: rgba(233, 226, 208, 0.45);
-  padding: 0 12px;
-  margin-bottom: 4px;
+  color: rgba(233, 226, 208, 0.55);
+  padding: 4px 12px;
+  margin-bottom: 0;
 }
+.nav-section > summary.nav-section-label::-webkit-details-marker { display: none; }
+.nav-section > summary.nav-section-label:hover { color: rgba(247, 240, 220, 0.9); }
+.nav-section[open] > summary.nav-section-label { color: rgba(247, 240, 220, 0.85); }
 .side-nav a.active,
 .side-nav a:hover {
   background: rgba(242, 193, 102, 0.14);

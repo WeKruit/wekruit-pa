@@ -93,6 +93,233 @@ function validate(cfg: PrescreenConfig): string[] {
   return errs
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// Style primitives
+// ────────────────────────────────────────────────────────────────────────────
+
+const cardStyle: React.CSSProperties = {
+  border: "1px solid rgba(0,0,0,0.08)",
+  borderRadius: 8,
+  padding: "1rem",
+  marginBottom: "1rem",
+  background: "white",
+}
+
+const inputStyle: React.CSSProperties = {
+  width: "100%",
+  padding: "0.45rem 0.6rem",
+  fontSize: "0.9em",
+  border: "1px solid rgba(0,0,0,0.15)",
+  borderRadius: 5,
+  background: "rgba(252,250,243,0.6)",
+  marginTop: "0.25rem",
+  fontFamily: "inherit",
+}
+
+function FieldLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{ fontSize: "0.78em", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em", opacity: 0.7, marginBottom: "0.1rem" }}>
+      {children}
+    </div>
+  )
+}
+function FieldHint({ children }: { children: React.ReactNode }) {
+  return <div style={{ fontSize: "0.72em", opacity: 0.55, marginTop: "0.2rem" }}>{children}</div>
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Question type pill picker — 3 colored buttons
+// ────────────────────────────────────────────────────────────────────────────
+
+const TYPE_META: Record<QuestionType, { label: string; sub: string; color: string; bg: string }> = {
+  MUST_HAVE: { label: "Must-have", sub: "Any mismatch → reject", color: "#a83232", bg: "rgba(239,68,68,0.12)" },
+  PROBING: { label: "Probing", sub: "Score < 0.7 → reject", color: "#a06a13", bg: "rgba(245,158,11,0.12)" },
+  GOOD_TO_HAVE: { label: "Nice-to-have", sub: "Never blocks, adds score", color: "#1e6f4e", bg: "rgba(34,168,93,0.12)" },
+}
+
+function TypePicker({ value, onChange }: { value: QuestionType; onChange: (v: QuestionType) => void }) {
+  return (
+    <div style={{ display: "flex", gap: "0.4rem" }}>
+      {(Object.keys(TYPE_META) as QuestionType[]).map((t) => {
+        const m = TYPE_META[t]
+        const active = value === t
+        return (
+          <button
+            key={t}
+            onClick={() => onChange(t)}
+            style={{
+              flex: 1, padding: "0.5rem 0.6rem", borderRadius: 6, cursor: "pointer", textAlign: "left",
+              border: active ? `2px solid ${m.color}` : "1px solid rgba(0,0,0,0.12)",
+              background: active ? m.bg : "transparent",
+              fontSize: "0.85em",
+            }}
+          >
+            <div style={{ fontWeight: 600, color: active ? m.color : "rgba(0,0,0,0.85)" }}>{m.label}</div>
+            <div style={{ fontSize: "0.78em", opacity: 0.7 }}>{m.sub}</div>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// QuestionCard — single accordion card per question
+// ────────────────────────────────────────────────────────────────────────────
+
+function QuestionCard({
+  q, idx, total, isOpen, onOpen, onUpdate, onMove, onRemove,
+  onAddKeyword, onUpdateKeyword, onRemoveKeyword,
+}: {
+  q: PrescreenQuestionConfig
+  idx: number
+  total: number
+  isOpen: boolean
+  onOpen: () => void
+  onUpdate: (patch: Partial<PrescreenQuestionConfig>) => void
+  onMove: (dir: -1 | 1) => void
+  onRemove: () => void
+  onAddKeyword: () => void
+  onUpdateKeyword: (kIdx: number, patch: Partial<KeywordSpec>) => void
+  onRemoveKeyword: (kIdx: number) => void
+}) {
+  const tm = TYPE_META[q.type]
+  return (
+    <div style={{ ...cardStyle, marginBottom: 0, padding: 0, borderColor: isOpen ? tm.color : "rgba(0,0,0,0.08)" }}>
+      {/* Card header — always visible */}
+      <div
+        onClick={onOpen}
+        style={{ display: "flex", gap: "0.75rem", padding: "0.85rem 1rem", cursor: "pointer", alignItems: "center" }}
+      >
+        <span style={{
+          padding: "0.25rem 0.55rem", borderRadius: 12, fontSize: "0.72em", fontWeight: 700,
+          color: tm.color, background: tm.bg, whiteSpace: "nowrap",
+        }}>
+          {tm.label}
+        </span>
+        <span style={{ fontSize: "0.72em", opacity: 0.55 }}>×{q.weight}</span>
+        <div style={{ flex: 1, fontSize: "0.92em", color: "rgba(0,0,0,0.85)" }}>
+          <span style={{ fontFamily: "monospace", fontSize: "0.82em", opacity: 0.5, marginRight: "0.5rem" }}>{q.qId}</span>
+          {q.prompt.en?.slice(0, 80) || <span style={{ opacity: 0.5 }}>(no question yet)</span>}
+          {(q.prompt.en?.length ?? 0) > 80 && "…"}
+        </div>
+        <span style={{ fontSize: "0.8em", opacity: 0.5, transition: "transform 0.15s", transform: isOpen ? "rotate(180deg)" : "none" }}>▾</span>
+      </div>
+
+      {/* Card body — expanded */}
+      {isOpen && (
+        <div style={{ padding: "0 1rem 1rem", borderTop: "1px solid rgba(0,0,0,0.06)" }}>
+          {/* Type picker */}
+          <div style={{ marginTop: "1rem" }}>
+            <FieldLabel>Type</FieldLabel>
+            <TypePicker value={q.type} onChange={(t) => onUpdate({ type: t })} />
+          </div>
+
+          {/* qId + weight + reorder */}
+          <div style={{ display: "flex", gap: "0.75rem", marginTop: "1rem", alignItems: "flex-end" }}>
+            <div style={{ flex: 2 }}>
+              <FieldLabel>ID</FieldLabel>
+              <input value={q.qId} onChange={(e) => onUpdate({ qId: e.target.value })} style={inputStyle} placeholder="q_react_experience" />
+              <FieldHint>lowercase letters, numbers, underscores</FieldHint>
+            </div>
+            <div style={{ flex: 1 }}>
+              <FieldLabel>Weight × {q.weight}</FieldLabel>
+              <input type="range" min="0.5" max="5" step="0.5" value={q.weight}
+                onChange={(e) => onUpdate({ weight: parseFloat(e.target.value) })}
+                style={{ width: "100%", marginTop: "0.4rem" }} />
+              <FieldHint>How much this Q counts toward total score</FieldHint>
+            </div>
+            <div style={{ display: "flex", gap: "0.25rem" }}>
+              <button onClick={() => onMove(-1)} disabled={idx === 0} title="Move up"
+                style={smallBtn(idx === 0)}>↑</button>
+              <button onClick={() => onMove(1)} disabled={idx === total - 1} title="Move down"
+                style={smallBtn(idx === total - 1)}>↓</button>
+              <button onClick={onRemove} disabled={total <= 1} title="Delete question"
+                style={{ ...smallBtn(total <= 1), color: "rgba(180,30,30,0.85)" }}>🗑</button>
+            </div>
+          </div>
+
+          {/* Question text */}
+          <div style={{ marginTop: "1.25rem" }}>
+            <FieldLabel>What Claire asks</FieldLabel>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.6rem" }}>
+              <div>
+                <div style={{ fontSize: "0.7em", opacity: 0.6, marginBottom: "0.15rem" }}>中文</div>
+                <textarea value={q.prompt.zh} rows={3}
+                  onChange={(e) => onUpdate({ prompt: { ...q.prompt, zh: e.target.value } })}
+                  style={inputStyle} placeholder="请描述你的 React 生产经验…" />
+              </div>
+              <div>
+                <div style={{ fontSize: "0.7em", opacity: 0.6, marginBottom: "0.15rem" }}>English</div>
+                <textarea value={q.prompt.en} rows={3}
+                  onChange={(e) => onUpdate({ prompt: { ...q.prompt, en: e.target.value } })}
+                  style={inputStyle} placeholder="Could you describe your React production experience…" />
+              </div>
+            </div>
+          </div>
+
+          {/* Clarify */}
+          <div style={{ marginTop: "1rem" }}>
+            <FieldLabel>If Claire isn't sure she understood — what to ask</FieldLabel>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.6rem" }}>
+              <textarea value={q.clarifyPrompt.zh} rows={2}
+                onChange={(e) => onUpdate({ clarifyPrompt: { ...q.clarifyPrompt, zh: e.target.value } })}
+                style={inputStyle} placeholder="为了准确评估，能否更具体一点…" />
+              <textarea value={q.clarifyPrompt.en} rows={2}
+                onChange={(e) => onUpdate({ clarifyPrompt: { ...q.clarifyPrompt, en: e.target.value } })}
+                style={inputStyle} placeholder="For accurate evaluation, could you be more specific…" />
+            </div>
+            <FieldHint>Sent when the candidate's first reply isn't clear enough to score</FieldHint>
+          </div>
+
+          {/* Keywords */}
+          <div style={{ marginTop: "1.25rem" }}>
+            <FieldLabel>What Claire scores against</FieldLabel>
+            <FieldHint>LLM rates the candidate's reply on each keyword (match 0–1, confidence 0–1)</FieldHint>
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem", marginTop: "0.5rem" }}>
+              {q.keywords.map((k, kIdx) => (
+                <div key={kIdx} style={{
+                  display: "flex", gap: "0.4rem", alignItems: "center",
+                  padding: "0.4rem 0.5rem", border: "1px solid rgba(0,0,0,0.08)", borderRadius: 5,
+                  background: "rgba(252,250,243,0.5)",
+                }}>
+                  <input value={k.keyword} placeholder="keyword (e.g. react)"
+                    onChange={(e) => onUpdateKeyword(kIdx, { keyword: e.target.value })}
+                    style={{ ...inputStyle, marginTop: 0, flex: 2, padding: "0.35rem 0.5rem" }} />
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
+                    <span style={{ fontSize: "0.75em", opacity: 0.65 }}>×</span>
+                    <input type="number" min="0.5" max="5" step="0.5" value={k.weight ?? 1}
+                      onChange={(e) => onUpdateKeyword(kIdx, { weight: parseFloat(e.target.value) || 1 })}
+                      style={{ ...inputStyle, marginTop: 0, width: "60px", padding: "0.35rem 0.4rem" }} title="keyword weight" />
+                  </div>
+                  <input value={k.hint ?? ""} placeholder="hint (optional, helps LLM)"
+                    onChange={(e) => onUpdateKeyword(kIdx, { hint: e.target.value || undefined })}
+                    style={{ ...inputStyle, marginTop: 0, flex: 3, padding: "0.35rem 0.5rem", fontSize: "0.85em" }} />
+                  <button onClick={() => onRemoveKeyword(kIdx)} disabled={q.keywords.length <= 1}
+                    style={smallBtn(q.keywords.length <= 1)}>×</button>
+                </div>
+              ))}
+              <button onClick={onAddKeyword}
+                style={{ padding: "0.4rem", border: "1px dashed rgba(0,0,0,0.2)", borderRadius: 5, background: "transparent", cursor: "pointer", fontSize: "0.85em", color: "rgba(0,0,0,0.6)" }}>
+                + Add keyword
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function smallBtn(disabled: boolean): React.CSSProperties {
+  return {
+    width: 32, height: 32, padding: 0,
+    border: "1px solid rgba(0,0,0,0.15)", borderRadius: 5,
+    background: "transparent", cursor: disabled ? "not-allowed" : "pointer",
+    opacity: disabled ? 0.35 : 1, fontSize: "1em",
+  }
+}
+
 function makeBlankQuestion(idx: number): PrescreenQuestionConfig {
   return {
     qId: `q_${idx}`,
@@ -313,8 +540,8 @@ export default function JobPrescreen() {
   return (
     <div>
       <PageHeader
-        title="Job Pre-Screen Config"
-        description="Author the conversational pre-screen. v1.8 PS1-PS16 — schema enforced server-side via Zod."
+        title="Pre-Screen"
+        description="Each job has a set of questions Claire asks candidates via SMS."
       />
 
       <div style={{ display: "grid", gridTemplateColumns: "320px 1fr", gap: "1rem" }}>
@@ -360,188 +587,165 @@ export default function JobPrescreen() {
           </ul>
         </Panel>
 
-        <Panel title={activeJobId ? `Edit: ${activeJobId}` : "Select a job"}>
-          {!activeJobId && <p style={{ opacity: 0.7 }}>Pick a job on the left, or click "+ Create new job".</p>}
+        <div>
+          {!activeJobId && (
+            <Panel title="Select a job">
+              <p style={{ opacity: 0.7, padding: "1rem 0" }}>
+                Pick a job on the left, or click "+ Create new job".
+              </p>
+            </Panel>
+          )}
+
           {cfg && (
             <>
-              {/* Job-level fields */}
-              <div style={{ marginBottom: "1rem", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem" }}>
-                <label style={{ fontSize: "0.85em" }}>
-                  Job title
-                  <input value={cfg.jobTitle} onChange={(e) => setCfg({ ...cfg, jobTitle: e.target.value })}
-                    style={{ width: "100%", padding: "0.25rem", marginTop: "0.15rem" }} />
-                </label>
-                <label style={{ fontSize: "0.85em" }}>
-                  Company
-                  <input value={cfg.company ?? ""} onChange={(e) => setCfg({ ...cfg, company: e.target.value || undefined })}
-                    style={{ width: "100%", padding: "0.25rem", marginTop: "0.15rem" }} />
-                </label>
-                <label style={{ fontSize: "0.85em" }}>
-                  Pass threshold T (0.3-1.0)
-                  <input type="number" min="0.3" max="1" step="0.05" value={cfg.threshold}
-                    onChange={(e) => setCfg({ ...cfg, threshold: parseFloat(e.target.value) || 0 })}
-                    style={{ width: "100%", padding: "0.25rem", marginTop: "0.15rem" }} />
-                </label>
-                <label style={{ fontSize: "0.85em" }}>
-                  Confidence threshold τc (0.3-1.0)
-                  <input type="number" min="0.3" max="1" step="0.05" value={cfg.confidenceThreshold}
-                    onChange={(e) => setCfg({ ...cfg, confidenceThreshold: parseFloat(e.target.value) || 0 })}
-                    style={{ width: "100%", padding: "0.25rem", marginTop: "0.15rem" }} />
-                </label>
-                <label style={{ fontSize: "0.85em" }}>
-                  Max clarify rounds k (0-5)
-                  <input type="number" min="0" max="5" step="1" value={cfg.maxClarifyRounds}
-                    onChange={(e) => setCfg({ ...cfg, maxClarifyRounds: parseInt(e.target.value, 10) || 0 })}
-                    style={{ width: "100%", padding: "0.25rem", marginTop: "0.15rem" }} />
-                </label>
-                <label style={{ fontSize: "0.85em" }}>
-                  Voice mode
-                  <select value={cfg.voiceMode} onChange={(e) => setCfg({ ...cfg, voiceMode: e.target.value as PrescreenConfig["voiceMode"] })}
-                    style={{ width: "100%", padding: "0.25rem", marginTop: "0.15rem" }}>
-                    <option value="professional_prescreen">professional_prescreen</option>
-                    <option value="casual_onboarding">casual_onboarding</option>
-                  </select>
-                </label>
+              {/* Hero: job identity */}
+              <div style={cardStyle}>
+                <div style={{ display: "flex", gap: "1rem", alignItems: "flex-end", marginBottom: "0.75rem" }}>
+                  <div style={{ flex: 2 }}>
+                    <FieldLabel>Job title</FieldLabel>
+                    <input value={cfg.jobTitle}
+                      onChange={(e) => setCfg({ ...cfg, jobTitle: e.target.value })}
+                      style={{ ...inputStyle, fontSize: "1.1em", fontWeight: 600 }} />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <FieldLabel>Company</FieldLabel>
+                    <input value={cfg.company ?? ""}
+                      onChange={(e) => setCfg({ ...cfg, company: e.target.value || undefined })}
+                      style={inputStyle} placeholder="(optional)" />
+                  </div>
+                </div>
+                {/* Stats bar */}
+                {stats && (
+                  <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                    <Badge tone="info">{stats.count} question{stats.count === 1 ? "" : "s"}</Badge>
+                    <Badge tone="info">total score {stats.max.toFixed(1)}</Badge>
+                    <Badge tone="info">pass at {stats.required.toFixed(1)} ({Math.round(cfg.threshold * 100)}%)</Badge>
+                    {stats.mustHave > 0 && <Badge tone="warn">{stats.mustHave} must-have</Badge>}
+                    {stats.probing > 0 && <Badge tone="info">{stats.probing} probing</Badge>}
+                    {stats.goodToHave > 0 && <Badge tone="ok">{stats.goodToHave} good-to-have</Badge>}
+                  </div>
+                )}
               </div>
 
-              {/* Stats */}
-              {stats && (
-                <div style={{ marginBottom: "0.75rem", display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-                  <Badge tone="info">{stats.count} Q</Badge>
-                  <Badge tone="info">S_max = {stats.max.toFixed(2)}</Badge>
-                  <Badge tone="info">required = {stats.required.toFixed(2)}</Badge>
-                  <Badge tone="warn">MUST × {stats.mustHave}</Badge>
-                  <Badge tone="info">PROBING × {stats.probing}</Badge>
-                  <Badge tone="ok">GOOD × {stats.goodToHave}</Badge>
+              {/* Advanced — collapsed by default */}
+              <details style={{ ...cardStyle, padding: 0, marginBottom: "1rem" }}>
+                <summary style={{ padding: "0.75rem 1rem", cursor: "pointer", fontSize: "0.9em", color: "rgba(0,0,0,0.7)" }}>
+                  ⚙ Advanced (thresholds, voice mode)
+                </summary>
+                <div style={{ padding: "0 1rem 1rem", display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: "0.75rem" }}>
+                  <div>
+                    <FieldLabel>Pass at T</FieldLabel>
+                    <input type="number" min="0.3" max="1" step="0.05" value={cfg.threshold}
+                      onChange={(e) => setCfg({ ...cfg, threshold: parseFloat(e.target.value) || 0 })}
+                      style={inputStyle} />
+                    <FieldHint>Fraction of total score to pass (default 0.65)</FieldHint>
+                  </div>
+                  <div>
+                    <FieldLabel>Confidence τc</FieldLabel>
+                    <input type="number" min="0.3" max="1" step="0.05" value={cfg.confidenceThreshold}
+                      onChange={(e) => setCfg({ ...cfg, confidenceThreshold: parseFloat(e.target.value) || 0 })}
+                      style={inputStyle} />
+                    <FieldHint>Re-ask threshold (default 0.7)</FieldHint>
+                  </div>
+                  <div>
+                    <FieldLabel>Max clarify k</FieldLabel>
+                    <input type="number" min="0" max="5" step="1" value={cfg.maxClarifyRounds}
+                      onChange={(e) => setCfg({ ...cfg, maxClarifyRounds: parseInt(e.target.value, 10) || 0 })}
+                      style={inputStyle} />
+                    <FieldHint>Max re-asks per Q (default 2)</FieldHint>
+                  </div>
+                  <div>
+                    <FieldLabel>Voice mode</FieldLabel>
+                    <select value={cfg.voiceMode}
+                      onChange={(e) => setCfg({ ...cfg, voiceMode: e.target.value as PrescreenConfig["voiceMode"] })}
+                      style={inputStyle}>
+                      <option value="professional_prescreen">professional</option>
+                      <option value="casual_onboarding">casual</option>
+                    </select>
+                    <FieldHint>Claire's tone</FieldHint>
+                  </div>
                 </div>
-              )}
+              </details>
 
-              {/* Validation panel */}
+              {/* Validation summary */}
               {validation.length > 0 && (
-                <div style={{ padding: "0.5rem", border: "1px solid red", borderRadius: 4, marginBottom: "0.5rem" }}>
-                  <strong>Errors:</strong>
-                  <ul style={{ margin: "0.25rem 0 0", paddingLeft: "1.5rem" }}>
-                    {validation.map((m, i) => <li key={i} style={{ fontSize: "0.8em" }}>{m}</li>)}
+                <div style={{ ...cardStyle, background: "rgba(239,68,68,0.06)", border: "1px solid rgba(239,68,68,0.4)" }}>
+                  <strong style={{ color: "rgba(180,30,30,1)" }}>Fix before saving:</strong>
+                  <ul style={{ margin: "0.25rem 0 0", paddingLeft: "1.25rem", fontSize: "0.85em" }}>
+                    {validation.map((m, i) => <li key={i}>{m}</li>)}
                   </ul>
                 </div>
               )}
 
-              {/* Q tab bar */}
-              <div style={{ display: "flex", gap: "0.25rem", marginBottom: "0.5rem", flexWrap: "wrap" }}>
+              {/* Question accordion cards */}
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", marginBottom: "5rem" }}>
                 {cfg.questions.map((q, i) => (
-                  <button key={i} onClick={() => setActiveQIdx(i)}
-                    style={{
-                      padding: "0.25rem 0.5rem", fontSize: "0.85em",
-                      background: i === activeQIdx ? "rgba(0,123,255,0.2)" : undefined,
-                      border: "1px solid rgba(0,0,0,0.2)", borderRadius: 4,
-                    }}>
-                    {q.qId} <span style={{ opacity: 0.6 }}>· {q.type[0]}{q.weight}</span>
-                  </button>
+                  <QuestionCard
+                    key={i}
+                    q={q}
+                    idx={i}
+                    total={cfg.questions.length}
+                    isOpen={i === activeQIdx}
+                    onOpen={() => setActiveQIdx(i === activeQIdx ? -1 : i)}
+                    onUpdate={(patch) => updateQuestion(i, patch)}
+                    onMove={(dir) => moveQuestion(i, dir)}
+                    onRemove={() => removeQuestion(i)}
+                    onAddKeyword={() => addKeyword(i)}
+                    onUpdateKeyword={(kIdx, patch) => updateKeyword(i, kIdx, patch)}
+                    onRemoveKeyword={(kIdx) => removeKeyword(i, kIdx)}
+                  />
                 ))}
-                <button onClick={addQuestion} style={{ padding: "0.25rem 0.5rem", fontSize: "0.85em" }}>+ Q</button>
-              </div>
-
-              {/* Active Q editor */}
-              {activeQ && (
-                <div style={{ border: "1px solid rgba(0,0,0,0.1)", borderRadius: 4, padding: "0.75rem" }}>
-                  <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.5rem", alignItems: "center" }}>
-                    <label style={{ fontSize: "0.85em" }}>
-                      qId
-                      <input value={activeQ.qId} onChange={(e) => updateQuestion(activeQIdx, { qId: e.target.value })}
-                        style={{ marginLeft: "0.25rem", padding: "0.2rem" }} />
-                    </label>
-                    <label style={{ fontSize: "0.85em" }}>
-                      type
-                      <select value={activeQ.type} onChange={(e) => updateQuestion(activeQIdx, { type: e.target.value as QuestionType })}
-                        style={{ marginLeft: "0.25rem", padding: "0.2rem" }}>
-                        <option value="MUST_HAVE">MUST_HAVE (any mismatch → HARD_STOP)</option>
-                        <option value="PROBING">PROBING (s &lt; 0.7 → HARD_STOP)</option>
-                        <option value="GOOD_TO_HAVE">GOOD_TO_HAVE (never blocks)</option>
-                      </select>
-                    </label>
-                    <label style={{ fontSize: "0.85em" }}>
-                      weight
-                      <input type="number" min="0.1" max="10" step="0.1" value={activeQ.weight}
-                        onChange={(e) => updateQuestion(activeQIdx, { weight: parseFloat(e.target.value) || 1 })}
-                        style={{ marginLeft: "0.25rem", padding: "0.2rem", width: "60px" }} />
-                    </label>
-                    <button onClick={() => moveQuestion(activeQIdx, -1)} disabled={activeQIdx === 0}>↑</button>
-                    <button onClick={() => moveQuestion(activeQIdx, 1)} disabled={activeQIdx === cfg.questions.length - 1}>↓</button>
-                    <button onClick={() => removeQuestion(activeQIdx)} disabled={cfg.questions.length <= 1}
-                      style={{ marginLeft: "auto" }}>Delete Q</button>
-                  </div>
-
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem", marginBottom: "0.5rem" }}>
-                    <label style={{ fontSize: "0.85em" }}>
-                      Prompt (zh)
-                      <textarea value={activeQ.prompt.zh}
-                        onChange={(e) => updateQuestion(activeQIdx, { prompt: { ...activeQ.prompt, zh: e.target.value } })}
-                        rows={3} style={{ width: "100%", padding: "0.25rem", marginTop: "0.15rem", fontFamily: "inherit" }} />
-                    </label>
-                    <label style={{ fontSize: "0.85em" }}>
-                      Prompt (en)
-                      <textarea value={activeQ.prompt.en}
-                        onChange={(e) => updateQuestion(activeQIdx, { prompt: { ...activeQ.prompt, en: e.target.value } })}
-                        rows={3} style={{ width: "100%", padding: "0.25rem", marginTop: "0.15rem", fontFamily: "inherit" }} />
-                    </label>
-                    <label style={{ fontSize: "0.85em" }}>
-                      Clarify prompt (zh)
-                      <textarea value={activeQ.clarifyPrompt.zh}
-                        onChange={(e) => updateQuestion(activeQIdx, { clarifyPrompt: { ...activeQ.clarifyPrompt, zh: e.target.value } })}
-                        rows={2} style={{ width: "100%", padding: "0.25rem", marginTop: "0.15rem", fontFamily: "inherit" }} />
-                    </label>
-                    <label style={{ fontSize: "0.85em" }}>
-                      Clarify prompt (en)
-                      <textarea value={activeQ.clarifyPrompt.en}
-                        onChange={(e) => updateQuestion(activeQIdx, { clarifyPrompt: { ...activeQ.clarifyPrompt, en: e.target.value } })}
-                        rows={2} style={{ width: "100%", padding: "0.25rem", marginTop: "0.15rem", fontFamily: "inherit" }} />
-                    </label>
-                  </div>
-
-                  {/* Keywords */}
-                  <div>
-                    <div style={{ fontSize: "0.85em", fontWeight: 600, marginBottom: "0.25rem" }}>Keywords (set)</div>
-                    {activeQ.keywords.map((k, kIdx) => (
-                      <div key={kIdx} style={{ display: "flex", gap: "0.25rem", marginBottom: "0.25rem", alignItems: "center" }}>
-                        <input value={k.keyword} placeholder="keyword"
-                          onChange={(e) => updateKeyword(activeQIdx, kIdx, { keyword: e.target.value })}
-                          style={{ flex: 2, padding: "0.2rem" }} />
-                        <input type="number" min="0.1" max="10" step="0.1" value={k.weight ?? 1} placeholder="weight"
-                          onChange={(e) => updateKeyword(activeQIdx, kIdx, { weight: parseFloat(e.target.value) || 1 })}
-                          style={{ width: "60px", padding: "0.2rem" }} />
-                        <input value={k.hint ?? ""} placeholder="hint (optional)"
-                          onChange={(e) => updateKeyword(activeQIdx, kIdx, { hint: e.target.value || undefined })}
-                          style={{ flex: 2, padding: "0.2rem", fontSize: "0.85em" }} />
-                        <button onClick={() => removeKeyword(activeQIdx, kIdx)} disabled={activeQ.keywords.length <= 1}>×</button>
-                      </div>
-                    ))}
-                    <button onClick={() => addKeyword(activeQIdx)} style={{ padding: "0.2rem 0.5rem", fontSize: "0.85em" }}>
-                      + Keyword
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* Save bar */}
-              <div style={{ marginTop: "1rem", display: "flex", gap: "0.5rem", alignItems: "center" }}>
-                <button onClick={save} disabled={!isValid || saving} style={{ padding: "0.5rem 1rem", fontWeight: 600 }}>
-                  {saving ? "Saving..." : "Save prescreen config"}
+                <button onClick={addQuestion} style={{
+                  padding: "0.75rem",
+                  border: "2px dashed rgba(0,0,0,0.2)",
+                  borderRadius: 8,
+                  background: "transparent",
+                  cursor: "pointer",
+                  fontSize: "0.9em",
+                  color: "rgba(0,0,0,0.6)",
+                }}>
+                  + Add a question
                 </button>
-                {saveMsg && <span style={{ fontSize: "0.85em" }}>{saveMsg}</span>}
-                <a href={`/admin/jobs/${activeJobId}/prescreen`} style={{ marginLeft: "auto", fontSize: "0.85em" }}>
-                  Direct link
-                </a>
               </div>
-              <details style={{ marginTop: "1rem", fontSize: "0.85em", opacity: 0.85 }}>
-                <summary>Trigger SMS pattern</summary>
-                <code style={{ display: "block", padding: "0.5rem", background: "rgba(0,0,0,0.04)", marginTop: "0.25rem" }}>
-                  WeKruit_{activeJobId}_&lt;candidateUserId&gt;_Job
-                </code>
-                Send this to the Sendblue number; PrescreenTrigger starts a session, sends Q1 via Sendblue, runs PreScreenPipeline on each reply.
-              </details>
+
+              {/* Sticky save bar */}
+              <div style={{
+                position: "sticky",
+                bottom: 0,
+                background: "rgba(255,255,255,0.95)",
+                backdropFilter: "blur(6px)",
+                borderTop: "1px solid rgba(0,0,0,0.08)",
+                padding: "0.75rem 1rem",
+                margin: "-1rem -1rem 0",
+                display: "flex",
+                gap: "0.75rem",
+                alignItems: "center",
+                zIndex: 10,
+              }}>
+                <button onClick={save} disabled={!isValid || saving} style={{
+                  padding: "0.6rem 1.25rem",
+                  fontWeight: 600,
+                  fontSize: "0.95em",
+                  background: isValid ? "#1e6f4e" : "rgba(0,0,0,0.15)",
+                  color: isValid ? "white" : "rgba(0,0,0,0.4)",
+                  border: "none",
+                  borderRadius: 6,
+                  cursor: isValid && !saving ? "pointer" : "not-allowed",
+                }}>
+                  {saving ? "Saving…" : "Save"}
+                </button>
+                {saveMsg && (
+                  <span style={{ fontSize: "0.9em", color: saveMsg.startsWith("Save failed") ? "red" : "rgba(0,120,40,1)" }}>
+                    {saveMsg}
+                  </span>
+                )}
+                <div style={{ marginLeft: "auto", fontSize: "0.8em", opacity: 0.65, fontFamily: "monospace" }}>
+                  trigger: <code>WeKruit_{activeJobId}_&lt;userId&gt;_Job</code>
+                </div>
+              </div>
             </>
           )}
-        </Panel>
+        </div>
       </div>
     </div>
   )

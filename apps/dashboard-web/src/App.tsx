@@ -40,6 +40,59 @@ import JobPrescreen from "./pages/JobPrescreen.js"
 import PrescreenSession from "./pages/PrescreenSession.js"
 import TagSnapshots from "./pages/TagSnapshots.js"
 import PrescreenSessionsList from "./pages/PrescreenSessionsList.js"
+
+// v1.8 — collapsible sidebar section. Persists open/closed to localStorage.
+function NavSection({
+  id,
+  label,
+  children,
+  defaultOpen,
+  dim,
+}: {
+  id: string
+  label: string
+  children: React.ReactNode
+  defaultOpen?: boolean
+  dim?: boolean
+}) {
+  const storageKey = `nav-section-${id}`
+  const stored = typeof window !== "undefined" ? window.localStorage.getItem(storageKey) : null
+  const initial = stored === null ? !!defaultOpen : stored === "open"
+  const [open, setOpen] = useState(initial)
+  const handleToggle = (e: React.SyntheticEvent<HTMLDetailsElement>) => {
+    const next = (e.currentTarget as HTMLDetailsElement).open
+    setOpen(next)
+    try {
+      window.localStorage.setItem(storageKey, next ? "open" : "closed")
+    } catch { /* ignore */ }
+  }
+  return (
+    <details
+      className="nav-section"
+      open={open}
+      onToggle={handleToggle}
+      style={dim ? { opacity: 0.65 } : undefined}
+    >
+      <summary
+        className="nav-section-label"
+        style={{
+          cursor: "pointer",
+          userSelect: "none",
+          listStyle: "none",
+          display: "flex",
+          alignItems: "center",
+          gap: "0.4em",
+        }}
+      >
+        <span style={{ fontSize: "0.7em", opacity: 0.6, transition: "transform 0.15s", transform: open ? "rotate(90deg)" : "none" }}>▶</span>
+        {label}
+      </summary>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 4 }}>
+        {children}
+      </div>
+    </details>
+  )
+}
 import { auth } from "./lib/firebase.js"
 
 export default function App() {
@@ -85,73 +138,51 @@ export default function App() {
           <strong>PA Console</strong>
         </div>
 
-        {/* Phase 32 Wave 1 — sidebar reorg into 5 categories. Old flat list
-            replaced with grouped sections; runtime/debug pages (Operations,
-            Playground, standalone Platform) demoted out of sidebar. All old
-            routes still resolve to keep muscle memory + bookmarks alive. */}
-        <div className="nav-section">
-          <div className="nav-section-label">Monitor</div>
+        {/* v1.8 — collapsible sidebar via <details>/<summary>. Persists
+            open/closed state to localStorage so it survives reloads. Each
+            section's `open` attribute is read on mount + toggle saves. */}
+        <NavSection id="prescreen" label="Pre-Screen" defaultOpen={true}>
+          <NavLink to="/admin/job-prescreen">Jobs · Config</NavLink>
+          <NavLink to="/admin/prescreen-sessions">Sessions</NavLink>
+        </NavSection>
+        <NavSection id="monitor" label="Monitor" defaultOpen={true}>
           <NavLink to="/" end>Overview</NavLink>
           <NavLink to="/conversations">Conversations</NavLink>
           <NavLink to="/abuse">Abuse</NavLink>
-        </div>
-
-        {/* v1.8 — primary entry point. Job pre-screen authoring + session
-            observability. Put first so it's the surfaced default. */}
-        <div className="nav-section">
-          <div className="nav-section-label">Pre-Screen</div>
-          <NavLink to="/admin/job-prescreen">Jobs · Config</NavLink>
-          <NavLink to="/admin/prescreen-sessions">Sessions</NavLink>
-        </div>
-
-        <div className="nav-section">
-          <div className="nav-section-label">Agent</div>
+        </NavSection>
+        <NavSection id="agent" label="Agent" defaultOpen={false}>
           <NavLink to="/agents">Agents</NavLink>
           <NavLink to="/admin/handbook">Handbook</NavLink>
           <NavLink to="/admin/onboarding-questions">Onboarding Qs</NavLink>
           <NavLink to="/agent/playbooks">Playbooks</NavLink>
           <NavLink to="/agent/personas">Personas</NavLink>
-        </div>
-
-        <div className="nav-section">
-          <div className="nav-section-label">Eval</div>
-          <NavLink to="/eval/voice-review">Voice Review</NavLink>
-          <NavLink to="/eval/n-round-sim">N-Round Sim</NavLink>
-        </div>
-
-        <div className="nav-section">
-          <div className="nav-section-label">Match</div>
-          {/* v1.7 Phase 70 — primary entry point. */}
+        </NavSection>
+        <NavSection id="match" label="Match" defaultOpen={false}>
           <NavLink to="/admin/match-debug">Match Debug</NavLink>
           <NavLink to="/match/candidates">Candidates</NavLink>
-          {/* Advanced match tools — folded into a single details for less clutter. */}
-        </div>
-
-        <div className="nav-section">
-          <div className="nav-section-label">Integrations</div>
+        </NavSection>
+        <NavSection id="eval" label="Eval" defaultOpen={false}>
+          <NavLink to="/eval/voice-review">Voice Review</NavLink>
+          <NavLink to="/eval/n-round-sim">N-Round Sim</NavLink>
+        </NavSection>
+        <NavSection id="integrations" label="Integrations" defaultOpen={false}>
           <NavLink to="/admin/upstream-templates">Upstream Templates</NavLink>
           <NavLink to="/admin/downstream-triggers">Downstream Triggers</NavLink>
           <NavLink to="/beta">Beta Allowlist</NavLink>
           <NavLink to="/triggers">Triggers</NavLink>
-        </div>
-
-        <div className="nav-section">
-          <div className="nav-section-label">Platform</div>
+        </NavSection>
+        <NavSection id="platform" label="Platform" defaultOpen={false}>
           <NavLink to="/admin/flags">Flags</NavLink>
           <NavLink to="/admin/canonical-tags">Canonical Tags</NavLink>
           <NavLink to="/admin/qa-evaluator">QA Evaluator</NavLink>
-        </div>
-
-        <details className="nav-section" style={{ opacity: 0.6 }}>
-          <summary style={{ cursor: "pointer", fontSize: "0.8em", padding: "0.25rem 0.5rem" }}>
-            Legacy / advanced
-          </summary>
+        </NavSection>
+        <NavSection id="legacy" label="Legacy / advanced" defaultOpen={false} dim>
           <NavLink to="/admin/onboarding">Onboarding (legacy)</NavLink>
           <NavLink to="/match/weights">Match Weights</NavLink>
           <NavLink to="/match/weights/test">Weights · Dry Run</NavLink>
           <NavLink to="/match/explainer-history">Explainer History</NavLink>
           <NavLink to="/match/explainer-test">Explainer Test</NavLink>
-        </details>
+        </NavSection>
 
         <button
           type="button"
