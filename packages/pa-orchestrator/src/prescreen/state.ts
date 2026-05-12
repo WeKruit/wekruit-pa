@@ -1,0 +1,143 @@
+/**
+ * v1.8 Phase 76 — PreScreenState.
+ *
+ * State machine carrier for pre-screening sessions. Distinct from
+ * `OnboardingPipeline.PipelineState` because:
+ *   1. Onboarding has no score / no terminal (PASS/FAIL/HARD_STOP/PAUSE)
+ *   2. Pre-screen has k≤2 clarification rounds DISTINCT from
+ *      maxAttempts re-asks
+ *   3. Pre-screen has Type Gate, Viability, Final Decision transitions
+ *
+ * Stored under `pa-prescreen-sessions/{sessionId}` in Firestore (Phase 79
+ * dashboard + 81 storage layer wires the Firestore adapter).
+ */
+
+import type { QuestionType, ScoredJudgeResult } from "../onboarding/question.js"
+
+/**
+ * Terminal states (PS6). null = session still in progress.
+ *
+ *   PASS       — `S / S_max ≥ T` after all Qs answered
+ *   FAIL       — `S / S_max < T` after all Qs answered (no single hard stop)
+ *   HARD_STOP  — MUST_HAVE or PROBING Q failed the Type Gate
+ *   PAUSE      — Viability: `S + R_max < T·S_max` after ⌈N/3⌉ answered
+ */
+export type PreScreenTerminal = "PASS" | "FAIL" | "HARD_STOP" | "PAUSE" | null
+
+/**
+ * Per-question state captured by the pipeline. Written to Firestore
+ * (Phase 79 session-detail page reads).
+ */
+export interface PreScreenQuestionState {
+  qId: string
+  type: QuestionType
+  weight: number
+  /** k counter — 0..2 clarification rounds. */
+  clarifyRounds: number
+  /** Best-so-far scored result across clarification rounds (max-by-s). */
+  scored?: ScoredJudgeResult
+  /** Final s_i fed into aggregation. */
+  finalS?: number
+  /** Final c_i fed into aggregation. */
+  finalC?: number
+  /** When this Q was answered (ISO). null when in-progress. */
+  answeredAt?: string
+  /** Reason field set when this Q caused a terminal state. */
+  terminalCause?: "type_gate_fail" | "viability_fail" | "max_clarify_exhausted"
+}
+
+/**
+ * Top-level pre-screen session state.
+ */
+export interface PreScreenState {
+  sessionId: string
+  userId: string
+  jobId: string
+  /** Active Q id, or null when terminal. */
+  currentQId: string | null
+  /** Per-Q state map. */
+  questions: Record<string, PreScreenQuestionState>
+  /** Order of Q ids — drives the queue. */
+  qOrder: string[]
+  /** Running weighted score: S = Σ s_i · W_{Q_i}. */
+  score: number
+  /** Max possible weighted score: S_max = Σ W_{Q_i}. */
+  scoreMax: number
+  /** Pass threshold T ∈ [0,1]. */
+  threshold: number
+  /** Confidence threshold τ_c (default 0.7). */
+  confidenceThreshold: number
+  /** Max clarification rounds per Q (PS6: 2). */
+  maxClarifyRounds: number
+  /** Terminal state or null. */
+  terminal: PreScreenTerminal
+  /** Human-readable reason set on terminal transition. */
+  terminalReason?: string
+  /** ISO created/updated timestamps. */
+  createdAt: string
+  updatedAt: string
+}
+
+/**
+ * Construct a fresh state for a new session. Caller passes the Q ids in
+ * priority order (MUST_HAVE → PROBING → GOOD_TO_HAVE) plus their type +
+ * weight from the prescreenConfig.
+ */
+export function emptyPreScreenState(args: {
+  sessionId: string
+  userId: string
+  jobId: string
+  questions: Array<{ qId: string; type: QuestionType; weight: number }>
+  threshold?: number
+  confidenceThreshold?: number
+  maxClarifyRounds?: number
+  nowIso: string
+}): PreScreenState {
+  const questions: Record<string, PreScreenQuestionState> = {}
+  let scoreMax = 0
+  for (const q of args.questions) {
+    questions[q.qId] = {
+      qId: q.qId,
+      type: q.type,
+      weight: q.weight,
+      clarifyRounds: 0,
+    }
+    scoreMax += q.weight
+  }
+  return {
+    sessionId: args.sessionId,
+    userId: args.userId,
+    jobId: args.jobId,
+    currentQId: args.questions[0]?.qId ?? null,
+    questions,
+    qOrder: args.questions.map((q) => q.qId),
+    score: 0,
+    scoreMax,
+    threshold: args.threshold ?? 0.65,
+    confidenceThreshold: args.confidenceThreshold ?? 0.7,
+    maxClarifyRounds: args.maxClarifyRounds ?? 2,
+    terminal: null,
+    createdAt: args.nowIso,
+    updatedAt: args.nowIso,
+  }
+}
+
+/**
+ * Storage adapter — pipeline reads/writes through this. Firestore impl
+ * lives in Phase 79; in-memory impl below for tests.
+ */
+export interface PreScreenStateProvider {
+  load(sessionId: string): Promise<PreScreenState | null>
+  save(state: PreScreenState): Promise<void>
+}
+
+/** Test-only in-memory provider. */
+export class InMemoryPreScreenStore implements PreScreenStateProvider {
+  private store = new Map<string, PreScreenState>()
+  async load(sessionId: string): Promise<PreScreenState | null> {
+    return this.store.get(sessionId) ?? null
+  }
+  async save(state: PreScreenState): Promise<void> {
+    this.store.set(state.sessionId, { ...state })
+  }
+}
