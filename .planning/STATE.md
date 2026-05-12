@@ -7,16 +7,16 @@ last_updated: "2026-05-11T00:00:00.000Z"
 last_activity: 2026-05-11
 progress:
   total_phases: 11
-  completed_phases: 2
-  total_plans: 2
-  completed_plans: 2
+  completed_phases: 3
+  total_plans: 3
+  completed_plans: 3
 ---
 
 ## Current Position
 
-Phase: **74.5 ✅ core shipped — Memory Compaction Layer (commit 7943cb6); trigger glue pending P76/P77**
+Phase: **75 ✅ core shipped — KeywordSetJudge + weighted aggregation + LLM seam (commit 64491fd); production LLM wire-up + drift CF pending P78/P80**
 Plan: —
-Status: Round 2 of /loop autonomous. Phase 74.5 core (types + helpers + runCompactionTurn orchestrator with injected deps) shipped 2026-05-12. 23/23 new tests pass. Trigger sites (pipeline turn-count, session-end, __PA_COMPACT__) deferred to Phase 76 + 77 wiring. Drift detector deferred to Phase 75. Next: Phase 75 KeywordSetJudge.
+Status: Round 3 of /loop autonomous. Phase 75 core (validateLlmOutput / computeAggregate / inferAbortHint / KeywordSetJudge class with judgeScored + binary-compat .judge shim / buildKeywordSetPrompt JSON-mode template) shipped 2026-05-12. 24/24 new tests pass. Production caller (gpt-5.4-nano + Sonnet fallback) deferred to Phase 78 dashboard preview CF. Drift CF deferred to Phase 80/CF deploy. Next: Phase 76 Pipeline state machine refactor.
 
 ## v1.8 Phase Roster (planned)
 
