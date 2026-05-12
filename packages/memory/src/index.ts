@@ -59,3 +59,27 @@ export {
   type RecordDriftDeps,
   type RecordDriftInput,
 } from "./identity.js"
+
+// v1.8 Phase 74.5 — Memory Compaction Layer
+export {
+  DAILY_COMPACTION_CAP,
+  FACT_TAG_CONFIDENCE_THRESHOLD,
+  SNAPSHOT_RETENTION_DAYS,
+  isMemoryCompactionEnabled,
+  isOverCap,
+  normalizeCompactionOutput,
+  normalizeFact,
+  partitionFactsByConfidence,
+  runCompactionTurn,
+  shouldGcSnapshot,
+  snapshotDocId,
+  utcDateKey,
+  type CompactedFact,
+  type CompactionCostEntry,
+  type CompactionDeps,
+  type CompactionLlmCaller,
+  type CompactionOutput,
+  type CompactionResult,
+  type CompactionTurn,
+  type TagSnapshot,
+} from "./compaction.js"
