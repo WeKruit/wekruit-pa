@@ -2,22 +2,41 @@
 gsd_state_version: 1.0
 milestone: v1.9
 milestone_name: End-to-End Candidate Journey Closure
-status: in_progress
-last_updated: "2026-05-12T00:00:00.000Z"
+status: code_complete_pending_deploy
+last_updated: "2026-05-12T12:00:00.000Z"
 last_activity: 2026-05-12
 progress:
-  total_phases: 0
-  completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
+  total_phases: 7
+  completed_phases: 7
+  total_plans: 7
+  completed_plans: 7
 ---
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: **v1.9 code-complete (84-90) — all 51 REQ-IDs covered. Tests green: orchestrator 1458/1458, functions 1139/1139, prescreen scenarios 6/6. Deploy gated on `ATS_HANDSHAKE_HMAC_SECRET` set + Adam approval.**
 Plan: —
-Status: Defining requirements
-Last activity: 2026-05-12 — Milestone v1.9 started via /gsd:new-milestone
+Status: Awaiting deploy approval + Firebase secret provisioning.
+Last activity: 2026-05-12 — Phase 90 audit + docs commit.
+
+### Deploy checklist (pending)
+1. `firebase functions:secrets:set ATS_HANDSHAKE_HMAC_SECRET`
+2. `firebase deploy --only firestore:rules,firestore:indexes --project wekruit-5f89b`
+3. `pnpm --filter "./apps/functions" run deploy` (ships `paAtsInboundWebhook` + Apply trigger)
+4. `pnpm --filter dashboard-web run deploy:hosting`
+5. Seed `pa-config/sendblue-pool` w/ current single number (BC preservation)
+
+### Phase ship log
+
+| Phase | Commit | REQ count |
+|---|---|---|
+| 84 | `3b2f949` feat(p84): PASS/FAIL terminal → auto job recs + Level 1 | 9 |
+| 85 | (P85 commit) PiiConfirmPipeline + Apply trigger | 9 |
+| 86 | (P86 commit) Generic ATS inbound | 10 |
+| 87 | (P87 commit) Public job page + CV upload | 7 |
+| 88 | (P88 commit) Sendblue multi-number pool | 6 |
+| 89 | (P89 commit) Feedback survey | 5 |
+| 90 | (this commit) docs + audit | 5 |
 
 ## Accumulated Context
 

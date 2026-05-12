@@ -206,6 +206,28 @@ queryMatchingJobs(userId):
 - Roadmap: `.planning/ROADMAP.md` (11 phases 52-62)
 - State: `.planning/STATE.md`
 
+## v1.9 Design Lock — End-to-End Candidate Journey Closure (2026-05-12)
+
+7 phases (84-90), 51/51 REQ-IDs covered. Code-complete.
+
+| Phase | Subject |
+|---|---|
+| 84 | PASS/FAIL terminal → auto generateJobRecs + Level 1 reveal |
+| 85 | PiiConfirmPipeline + `WeKruit_<jobId>_<userId>_Apply` trigger |
+| 86 | Generic ATS inbound (`paAtsInboundWebhook` HTTP CF; Handshake live, GH/Lever/LinkedIn 501 stubs) |
+| 87 | Public candidate page `/j/:jobId` + CV upload + `publicVisible` flag |
+| 88 | Sendblue multi-number pool + hash-by-userId router |
+| 89 | Feedback survey post-PASS + `/admin/prescreen-feedback` |
+| 90 | E2E scenarios + docs + audit |
+
+**Deploy gate:** set `ATS_HANDSHAKE_HMAC_SECRET` Firebase Secret before deploying functions (or `paAtsInboundWebhook` deploy will fail). Other CFs deploy normally.
+
+**Reuse mandate:** zero rebuild. Every new piece extends existing infra (Question/Pipeline, KeywordSetJudge, pa-resume-parser v2, mergeUserTags, generateJobRecs, TriggerRouter, sendImessage, pa-jobs config, PreScreenPipeline). See `.planning/MILESTONE-v1.9-candidate-journey.md`.
+
+**Tests:** orchestrator 1458/1458, functions 1139/1139, prescreen scenarios 6/6.
+
+---
+
 ## v1.7 Ship State (2026-05-06)
 
 11 phases shipped (63-73), 43 REQ-IDs covered. Same-day spawn + ship after v1.6 post-ship matching diagnostics.
