@@ -181,6 +181,10 @@ export { paEnrichJobTags } from "./enrich-job-tags-http.js"
 // Loop-safe via enricherVersion + enricherContentHash idempotency check.
 export { paMatchingJobsAutoEnrich } from "./auto-enrich-matching-jobs.js"
 
+// v1.9 Phase 86 — Generic ATS inbound adapter webhook.
+// Handshake fully implemented; GH/Lever/LinkedIn return 501 stubs.
+export { paAtsInboundWebhook } from "./ats-inbound-webhook.js"
+
 // Phase 27 T2 — public /health endpoints (one per existing CF). Returns
 // {ok, name, version, ts, deps:{firestore, secrets}}. No auth (probes
 // must be reachable). All endpoints HTTP 200 always; failure surfaces in body.

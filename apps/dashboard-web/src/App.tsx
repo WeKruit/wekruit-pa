@@ -40,6 +40,8 @@ import JobPrescreen from "./pages/JobPrescreen.js"
 import PrescreenSession from "./pages/PrescreenSession.js"
 import TagSnapshots from "./pages/TagSnapshots.js"
 import PrescreenSessionsList from "./pages/PrescreenSessionsList.js"
+// v1.9 Phase 86 — ATS inbound dashboard.
+import AtsInbound from "./pages/AtsInbound.js"
 
 // v1.8 — collapsible sidebar section. Persists open/closed to localStorage.
 function NavSection({
@@ -144,6 +146,7 @@ export default function App() {
         <NavSection id="prescreen" label="Pre-Screen" defaultOpen={true}>
           <NavLink to="/admin/job-prescreen">Jobs · Config</NavLink>
           <NavLink to="/admin/prescreen-sessions">Sessions</NavLink>
+          <NavLink to="/admin/ats-inbound">ATS Inbound</NavLink>
         </NavSection>
         <NavSection id="monitor" label="Monitor" defaultOpen={true}>
           <NavLink to="/" end>Overview</NavLink>
@@ -244,6 +247,8 @@ export default function App() {
           <Route path="/admin/prescreen-sessions" element={<PrescreenSessionsList />} />
           <Route path="/admin/prescreen-sessions/:sessionId" element={<PrescreenSession />} />
           <Route path="/admin/users/:uid/tag-snapshots" element={<TagSnapshots />} />
+          {/* v1.9 Phase 86 — ATS inbound funnel observability. */}
+          <Route path="/admin/ats-inbound" element={<AtsInbound />} />
           {/* Phase 32 Wave 3 — Playbooks + Personas Firestore CRUD. */}
           <Route path="/agent/playbooks" element={<Playbooks />} />
           <Route path="/agent/personas" element={<Personas />} />

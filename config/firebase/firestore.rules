@@ -245,6 +245,30 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // ─── v1.9 Phase 85 — Apply trigger idempotency ───────────────────
+    match /pa-apply-trigger-idempotency/{pairKey} {
+      allow read, write: if isPaOperator();
+    }
+    // ─── v1.9 Phase 85 — PII confirm pipeline state ──────────────────
+    match /pa-pii-confirm-state/{userId} {
+      allow read, write: if isPaOperator();
+    }
+    // ─── v1.9 Phase 86 — ATS inbound mapping + idempotency ───────────
+    match /pa-jobs-external-mapping/{key} {
+      allow read, write: if isPaOperator();
+    }
+    match /pa-ats-invite-idempotency/{key} {
+      allow read, write: if isPaOperator();
+    }
+    // ─── v1.9 Phase 87 — Public job page pending invites ─────────────
+    match /pa-prescreen-pending-invites/{requestedUserId} {
+      allow read, write: if isPaOperator();
+    }
+    // ─── v1.9 Phase 88 — Sendblue pool config + others ───────────────
+    match /pa-config/{configId} {
+      allow read, write: if isPaOperator();
+    }
+
     // ─── Default deny ────────────────────────────────────────────────
     match /{document=**} {
       allow read, write: if false;
