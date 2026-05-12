@@ -361,6 +361,8 @@ export default function JobPrescreen() {
   const [saving, setSaving] = useState(false)
   const [saveMsg, setSaveMsg] = useState<string | null>(null)
   const [showCreate, setShowCreate] = useState(false)
+  // v1.9 Phase 87 — publicVisible toggle (flips pa-jobs.{jobId}.publicVisible).
+  const [publicVisible, setPublicVisible] = useState(false)
   const [newJobId, setNewJobId] = useState("")
   const [newJobTitle, setNewJobTitle] = useState("")
   const [newJobCompany, setNewJobCompany] = useState("")
@@ -415,6 +417,7 @@ export default function JobPrescreen() {
           setCfg(makeBlankConfig(data?.title ?? activeJobId, data?.company))
         }
         setActiveQIdx(0)
+        setPublicVisible(!!data?.publicVisible)
       } catch (e) {
         if (!cancelled) setErr(e instanceof Error ? e.message : String(e))
       }
@@ -493,7 +496,13 @@ export default function JobPrescreen() {
       const withMeta: PrescreenConfig = { ...cfg, lastEditedAt: new Date().toISOString() }
       await setDoc(
         doc(db(), "pa-jobs", activeJobId),
-        { prescreenConfig: withMeta, title: cfg.jobTitle, company: cfg.company },
+        {
+          prescreenConfig: withMeta,
+          title: cfg.jobTitle,
+          company: cfg.company,
+          // v1.9 P87 — public-visibility flag for /j/:jobId page.
+          publicVisible,
+        },
         { merge: true }
       )
       setSaveMsg("Saved ✓")
@@ -738,6 +747,20 @@ export default function JobPrescreen() {
                   <span style={{ fontSize: "0.9em", color: saveMsg.startsWith("Save failed") ? "red" : "rgba(0,120,40,1)" }}>
                     {saveMsg}
                   </span>
+                )}
+                {/* v1.9 P87 — publicVisible toggle + preview link */}
+                <label style={{ display: "flex", gap: "0.4rem", alignItems: "center", fontSize: "0.85em", marginLeft: "0.75rem" }}>
+                  <input
+                    type="checkbox"
+                    checked={publicVisible}
+                    onChange={(e) => setPublicVisible(e.target.checked)}
+                  />
+                  Public
+                </label>
+                {publicVisible && activeJobId && (
+                  <a href={`/j/${activeJobId}`} target="_blank" rel="noreferrer" style={{ fontSize: "0.85em", textDecoration: "underline" }}>
+                    /j/{activeJobId} ↗
+                  </a>
                 )}
                 <div style={{ marginLeft: "auto", fontSize: "0.8em", opacity: 0.65, fontFamily: "monospace" }}>
                   trigger: <code>WeKruit_{activeJobId}_&lt;userId&gt;_Job</code>

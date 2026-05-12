@@ -195,11 +195,13 @@ service cloud.firestore {
       allow read, write: if isPaOperator();
     }
 
-    // ─── v1.8 Phase 78 — pa-jobs (employer-authored prescreen config) ────
-    // Operator read/write for the dashboard editor; CFs use Admin SDK
-    // (bypasses these rules). Future v1.9: scope writes to job-owner only.
+    // ─── v1.8 Phase 78 / v1.9 Phase 87 — pa-jobs (employer-authored config) ─
+    // Operator R/W for editor; CFs bypass via Admin SDK.
+    // v1.9 P87: public read when resource.data.publicVisible === true so
+    // /j/:jobId can render outside the auth wall. Write still operator-only.
     match /pa-jobs/{jobId} {
-      allow read, write: if isPaOperator();
+      allow read: if isPaOperator() || resource.data.publicVisible == true;
+      allow write: if isPaOperator();
     }
 
     // ─── v1.8 Phase 74.5 + 79 — Memory compaction + tag snapshots ────

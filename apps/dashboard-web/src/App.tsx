@@ -42,6 +42,9 @@ import TagSnapshots from "./pages/TagSnapshots.js"
 import PrescreenSessionsList from "./pages/PrescreenSessionsList.js"
 // v1.9 Phase 86 — ATS inbound dashboard.
 import AtsInbound from "./pages/AtsInbound.js"
+// v1.9 Phase 87 — public candidate-facing job page + CV upload.
+import PublicJob from "./pages/PublicJob.js"
+import PublicJobCv from "./pages/PublicJobCv.js"
 
 // v1.8 — collapsible sidebar section. Persists open/closed to localStorage.
 function NavSection({
@@ -127,6 +130,9 @@ export default function App() {
             prompt sent over iMessage; biz testers tap through before signing
             in to the dashboard, so it must render outside the auth wall. */}
         <Route path="/legal" element={<Legal />} />
+        {/* v1.9 Phase 87 — public candidate routes (no auth). */}
+        <Route path="/j/:jobId" element={<PublicJob />} />
+        <Route path="/j/:jobId/cv" element={<PublicJobCv />} />
         <Route path="*" element={<Login />} />
       </Routes>
     )
