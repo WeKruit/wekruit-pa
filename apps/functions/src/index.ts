@@ -625,6 +625,48 @@ async function processBrokerImessageEvent(
     { userId: user.id, sessionId: session.id, externalChatId, from: payload.participant, body: payload.text.trim() },
     { merge: true }
   )
+
+  // v1.9 P85 hotfix — pre-screen routing for non-coalesced path.
+  // If user has an active pre-screen session (terminal=null), route this
+  // turn through PreScreenPipeline BEFORE Claire orchestrator. Mirrors the
+  // check in paMessageCoalescer step 3a so onPaInbound + webhook fallback
+  // both honor the prescreen state machine. Fail-open: any error falls
+  // through to Claire so users don't get stuck.
+  try {
+    const { runPrescreenTurnIfActive } = await import("./prescreen-turn-handler.js")
+    const psResult = await runPrescreenTurnIfActive({
+      db,
+      userId: user.id,
+      toE164: payload.participant,
+      replyText: payload.text.trim(),
+      lang: "en",
+      log: (event, payload) => logger.info(`[prescreen][onPaInbound] ${event}`, payload ?? {}),
+    })
+    if (psResult.handled) {
+      logger.info("[prescreen][onPaInbound] handled — short-circuit Claire", {
+        userId: user.id,
+        sessionId: psResult.sessionId,
+        terminal: psResult.terminal,
+      })
+      // Mark inbound as completed so onPaInbound's status-check is happy.
+      await db.collection(PA_COLLECTIONS.inboundEvents).doc(claimed.id).set(
+        {
+          status: "completed",
+          completedAt: nowIso(),
+          updatedAt: nowIso(),
+          routedTo: "prescreen",
+        },
+        { merge: true }
+      )
+      return 1
+    }
+  } catch (err) {
+    logger.warn("[prescreen][onPaInbound] check FAILED — falling through to Claire", {
+      userId: user.id,
+      err: err instanceof Error ? err.message : String(err),
+    })
+  }
+
   await processInboundEvent(event, createFirestoreOrchestratorStore(db, deps))
   return 1
 }
