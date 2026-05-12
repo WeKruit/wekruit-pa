@@ -7,16 +7,16 @@ last_updated: "2026-05-11T00:00:00.000Z"
 last_activity: 2026-05-11
 progress:
   total_phases: 11
-  completed_phases: 7
-  total_plans: 7
-  completed_plans: 7
+  completed_phases: 8
+  total_plans: 8
+  completed_plans: 8
 ---
 
 ## Current Position
 
-Phase: **78 ✅ core shipped — PrescreenConfig Zod schema + dashboard editor page (commit ac45641). Firestore rules + create-job integration → Phase 79.**
+Phase: **79 ✅ shipped — Session detail + tag-snapshot rollback + Firestore rules (commit 8a4f834).**
 Plan: —
-Status: Round 7 of /loop autonomous. Phase 78 core: PrescreenConfigSchema (Zod) + JobPrescreen.tsx page + /admin/jobs/:jobId/prescreen + /admin/job-prescreen routes. 15/15 config schema tests pass. Editor live-validates as operator types; stats badges (score_max, required, type counts) update in real-time; save round-trips via Zod safe-parse. PS16 scope respected (no analytics, no bulk export). Next: Phase 79 session detail page + tag-snapshot rollback + Firestore rules.
+Status: Round 8 of /loop autonomous. Phase 79: PrescreenSession.tsx + TagSnapshots.tsx pages + 7 new Firestore rule blocks (pa-prescreen-sessions / pa-users-tag-snapshots / pa-compaction-cost-ledger / pa-prescreen-trigger-idempotency / pa-tag-rollback-events / pa-prescreen-fixtures / pa-prescreen-drift-runs). PS13/PS14/PS15 enforced at rules layer: server-write-only for session + snapshot + ledger, operator-read for dashboard render, candidates fully blocked. Next: Phase 80 runner-prescreen.mjs + YAML scenarios + fixture eval.
 
 ## v1.8 Phase Roster (planned)
 
