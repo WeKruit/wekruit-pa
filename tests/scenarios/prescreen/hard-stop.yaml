@@ -1,0 +1,63 @@
+# v1.8 Phase 80 — scenario: HARD_STOP terminal
+#
+# MUST_HAVE question where candidate doesn't meet τ_m=1.0. Pipeline:
+#   - Q1 (sql): s=0.7 → MUST_HAVE requires s=1.0 → Type Gate hard-stop
+#   (Q2 never asked)
+# terminalCause: type_gate_fail
+name: "hard-stop — MUST_HAVE not fully met"
+sessionId: "scenario-hardstop-001"
+userId: "candidate_carol"
+jobId: "job_data_eng"
+lang: "en"
+config:
+  version: 1
+  jobTitle: "Data Engineer"
+  threshold: 0.65
+  confidenceThreshold: 0.7
+  maxClarifyRounds: 2
+  voiceMode: "professional_prescreen"
+  questions:
+    - qId: "q_sql"
+      type: "MUST_HAVE"
+      weight: 2
+      prompt:
+        zh: "请描述你的 SQL 经验"
+        en: "Describe your SQL experience"
+      clarifyPrompt:
+        zh: "请更具体"
+        en: "Be more specific"
+      keywords:
+        - keyword: "sql"
+          weight: 1
+    - qId: "q_python"
+      type: "PROBING"
+      weight: 1
+      prompt:
+        zh: "Python 用得熟吗?"
+        en: "How comfortable are you with Python?"
+      clarifyPrompt:
+        zh: "请举例"
+        en: "Please give examples"
+      keywords:
+        - keyword: "python"
+          weight: 1
+turns:
+  - reply: "I've used SQL a bit in a course"
+    stub:
+      q_sql:
+        perKeyword:
+          - keyword: "sql"
+            match: 0.7
+            confidence: 0.9
+            evidence: "course-level sql, no production"
+            reasoning: "academic exposure, not industry depth"
+        summary: "sql is course-level only"
+        answered: true
+expected:
+  terminal: "HARD_STOP"
+  score: 0
+  scoreMax: 3
+  reasonContains: "MUST_HAVE failed"
+  terminalCauseAt:
+    qId: "q_sql"
+    cause: "type_gate_fail"

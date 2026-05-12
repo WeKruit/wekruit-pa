@@ -1,0 +1,71 @@
+# v1.8 Phase 80 — scenario: PASS terminal
+#
+# 2 MUST_HAVE questions, candidate answers both fully. Pipeline:
+#   - Q1 (react): s=1.0 → MUST_HAVE passes → score += 2 (weight 2)
+#   - Q2 (production_systems): s=1.0 → MUST_HAVE passes → score += 1
+# Final: ratio = 3/3 = 1.0 ≥ T=0.65 → PASS
+name: "pass — strong candidate, 2 MUST_HAVE both met"
+sessionId: "scenario-pass-001"
+userId: "candidate_alice"
+jobId: "job_swe_senior"
+lang: "en"
+config:
+  version: 1
+  jobTitle: "Senior Frontend Engineer"
+  threshold: 0.65
+  confidenceThreshold: 0.7
+  maxClarifyRounds: 2
+  voiceMode: "professional_prescreen"
+  questions:
+    - qId: "q_react_experience"
+      type: "MUST_HAVE"
+      weight: 2
+      prompt:
+        zh: "请描述你的 React 生产经验"
+        en: "Describe your React production experience"
+      clarifyPrompt:
+        zh: "能否更具体 — 项目规模和你的角色?"
+        en: "Could you be more specific — project scope and your role?"
+      keywords:
+        - keyword: "react"
+          weight: 1
+    - qId: "q_production_systems"
+      type: "MUST_HAVE"
+      weight: 1
+      prompt:
+        zh: "你在哪些生产系统中工作过?"
+        en: "What production systems have you shipped?"
+      clarifyPrompt:
+        zh: "请详细说明系统规模"
+        en: "Please elaborate on the system scale"
+      keywords:
+        - keyword: "production"
+          weight: 1
+turns:
+  - reply: "I shipped 3 React production apps at FAANG over 4 years"
+    stub:
+      q_react_experience:
+        perKeyword:
+          - keyword: "react"
+            match: 1.0
+            confidence: 0.95
+            evidence: "3 production apps over 4 years"
+            reasoning: "explicit ship history + duration"
+        summary: "strong react production experience"
+        answered: true
+  - reply: "Yes — owned production deploy pipelines, on-call rotation, blameless post-mortems"
+    stub:
+      q_production_systems:
+        perKeyword:
+          - keyword: "production"
+            match: 1.0
+            confidence: 0.95
+            evidence: "owned production deploys + on-call"
+            reasoning: "covers operations + reliability"
+        summary: "owned end-to-end production lifecycle"
+        answered: true
+expected:
+  terminal: "PASS"
+  score: 3
+  scoreMax: 3
+  reasonContains: "ratio=1.000"

@@ -1,0 +1,80 @@
+# v1.8 Phase 80 — scenario: PAUSE terminal
+#
+# 6 GOOD_TO_HAVE questions weight=1 each. Threshold T=0.65, S_max=6,
+# required=3.9. Candidate s=0 on first 3 Qs → after 3 answered (≥ ⌈6/3⌉=2
+# hysteresis), S=0, R_max=3, upper=3 < 3.9 → PAUSE.
+#
+# Tests viability check + hysteresis correctness.
+name: "pause — math says PASS unreachable early"
+sessionId: "scenario-pause-001"
+userId: "candidate_dave"
+jobId: "job_generalist"
+lang: "en"
+config:
+  version: 1
+  jobTitle: "Generalist"
+  threshold: 0.65
+  confidenceThreshold: 0.7
+  maxClarifyRounds: 2
+  voiceMode: "professional_prescreen"
+  questions:
+    - qId: "q_a"
+      type: "GOOD_TO_HAVE"
+      weight: 1
+      prompt: { zh: "Q A?", en: "Q A?" }
+      clarifyPrompt: { zh: "再说?", en: "say more?" }
+      keywords: [{ keyword: "a", weight: 1 }]
+    - qId: "q_b"
+      type: "GOOD_TO_HAVE"
+      weight: 1
+      prompt: { zh: "Q B?", en: "Q B?" }
+      clarifyPrompt: { zh: "再说?", en: "say more?" }
+      keywords: [{ keyword: "b", weight: 1 }]
+    - qId: "q_c"
+      type: "GOOD_TO_HAVE"
+      weight: 1
+      prompt: { zh: "Q C?", en: "Q C?" }
+      clarifyPrompt: { zh: "再说?", en: "say more?" }
+      keywords: [{ keyword: "c", weight: 1 }]
+    - qId: "q_d"
+      type: "GOOD_TO_HAVE"
+      weight: 1
+      prompt: { zh: "Q D?", en: "Q D?" }
+      clarifyPrompt: { zh: "再说?", en: "say more?" }
+      keywords: [{ keyword: "d", weight: 1 }]
+    - qId: "q_e"
+      type: "GOOD_TO_HAVE"
+      weight: 1
+      prompt: { zh: "Q E?", en: "Q E?" }
+      clarifyPrompt: { zh: "再说?", en: "say more?" }
+      keywords: [{ keyword: "e", weight: 1 }]
+    - qId: "q_f"
+      type: "GOOD_TO_HAVE"
+      weight: 1
+      prompt: { zh: "Q F?", en: "Q F?" }
+      clarifyPrompt: { zh: "再说?", en: "say more?" }
+      keywords: [{ keyword: "f", weight: 1 }]
+turns:
+  - reply: "no"
+    stub:
+      q_a:
+        perKeyword: [{ keyword: "a", match: 0, confidence: 0.95, evidence: "no", reasoning: "no signal" }]
+        summary: "no match for a"
+        answered: false
+  - reply: "no"
+    stub:
+      q_b:
+        perKeyword: [{ keyword: "b", match: 0, confidence: 0.95, evidence: "no", reasoning: "no signal" }]
+        summary: "no match for b"
+        answered: false
+  - reply: "no"
+    stub:
+      q_c:
+        perKeyword: [{ keyword: "c", match: 0, confidence: 0.95, evidence: "no", reasoning: "no signal" }]
+        summary: "no match for c"
+        answered: false
+expected:
+  terminal: "PAUSE"
+  score: 0
+  scoreMax: 6
+  reasonContains: "S+R_max"

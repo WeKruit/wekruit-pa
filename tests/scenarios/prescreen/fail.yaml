@@ -1,0 +1,72 @@
+# v1.8 Phase 80 — scenario: FAIL terminal
+#
+# 2 GOOD_TO_HAVE questions, candidate gives partial answers. Pipeline:
+#   - Q1 (mobile): s=0.5 → GOOD_TO_HAVE never blocks → score += 0.5
+#   - Q2 (ci_cd): s=0.5 → score += 0.5
+#   (last Q, viability skipped)
+# Final: ratio = 1/2 = 0.5 < T=0.65 → FAIL
+name: "fail — partial answers, ratio below threshold"
+sessionId: "scenario-fail-001"
+userId: "candidate_bob"
+jobId: "job_eng_mid"
+lang: "en"
+config:
+  version: 1
+  jobTitle: "Mid Engineer"
+  threshold: 0.65
+  confidenceThreshold: 0.7
+  maxClarifyRounds: 2
+  voiceMode: "professional_prescreen"
+  questions:
+    - qId: "q_mobile"
+      type: "GOOD_TO_HAVE"
+      weight: 1
+      prompt:
+        zh: "你有移动端经验吗?"
+        en: "Any mobile experience?"
+      clarifyPrompt:
+        zh: "更具体一点?"
+        en: "Be more specific?"
+      keywords:
+        - keyword: "mobile"
+          weight: 1
+    - qId: "q_ci_cd"
+      type: "GOOD_TO_HAVE"
+      weight: 1
+      prompt:
+        zh: "CI/CD 工具用过哪些?"
+        en: "Which CI/CD tools have you used?"
+      clarifyPrompt:
+        zh: "请详细说明"
+        en: "Please elaborate"
+      keywords:
+        - keyword: "ci_cd"
+          weight: 1
+turns:
+  - reply: "Tinkered a bit with React Native, never shipped"
+    stub:
+      q_mobile:
+        perKeyword:
+          - keyword: "mobile"
+            match: 0.5
+            confidence: 0.85
+            evidence: "tinkered react native, no ship"
+            reasoning: "exposure only, not production"
+        summary: "tangential mobile experience"
+        answered: true
+  - reply: "Used CircleCI once on a side project"
+    stub:
+      q_ci_cd:
+        perKeyword:
+          - keyword: "ci_cd"
+            match: 0.5
+            confidence: 0.85
+            evidence: "circleci on side project"
+            reasoning: "shallow ci/cd, side-project depth"
+        summary: "minimal ci/cd depth"
+        answered: true
+expected:
+  terminal: "FAIL"
+  score: 1
+  scoreMax: 2
+  reasonContains: "ratio=0.500"
