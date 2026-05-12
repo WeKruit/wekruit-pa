@@ -7,16 +7,16 @@ last_updated: "2026-05-11T00:00:00.000Z"
 last_activity: 2026-05-11
 progress:
   total_phases: 11
-  completed_phases: 1
-  total_plans: 1
-  completed_plans: 1
+  completed_phases: 2
+  total_plans: 2
+  completed_plans: 2
 ---
 
 ## Current Position
 
-Phase: **74 ✅ shipped (P9-B direct) — ScoredJudgeResult + QuestionType + weight (commit 1cc2722)**
+Phase: **74.5 ✅ core shipped — Memory Compaction Layer (commit 7943cb6); trigger glue pending P76/P77**
 Plan: —
-Status: Phase 74 landed 2026-05-11 via /loop autonomous round 1. 9/9 new tests + 46/46 onboarding regression green. Zero break confirmed. Next: Phase 74.5 Memory Compaction Layer (Wave 2 entry).
+Status: Round 2 of /loop autonomous. Phase 74.5 core (types + helpers + runCompactionTurn orchestrator with injected deps) shipped 2026-05-12. 23/23 new tests pass. Trigger sites (pipeline turn-count, session-end, __PA_COMPACT__) deferred to Phase 76 + 77 wiring. Drift detector deferred to Phase 75. Next: Phase 75 KeywordSetJudge.
 
 ## v1.8 Phase Roster (planned)
 
