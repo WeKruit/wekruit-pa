@@ -36,6 +36,9 @@ import { QaEvaluator } from "./pages/QaEvaluator.js"
 import { MatchDebug } from "./pages/MatchDebug.js"
 // v1.8 Phase 78 — Job pre-screen config editor.
 import JobPrescreen from "./pages/JobPrescreen.js"
+// v1.8 Phase 79 — Pre-screen session detail + tag-snapshot rollback.
+import PrescreenSession from "./pages/PrescreenSession.js"
+import TagSnapshots from "./pages/TagSnapshots.js"
 import { auth } from "./lib/firebase.js"
 
 export default function App() {
@@ -194,6 +197,9 @@ export default function App() {
           {/* v1.8 Phase 78 — Job pre-screen config editor. */}
           <Route path="/admin/jobs/:jobId/prescreen" element={<JobPrescreen />} />
           <Route path="/admin/job-prescreen" element={<JobPrescreen />} />
+          {/* v1.8 Phase 79 — Session detail + tag-snapshot rollback. */}
+          <Route path="/admin/prescreen-sessions/:sessionId" element={<PrescreenSession />} />
+          <Route path="/admin/users/:uid/tag-snapshots" element={<TagSnapshots />} />
           {/* Phase 32 Wave 3 — Playbooks + Personas Firestore CRUD. */}
           <Route path="/agent/playbooks" element={<Playbooks />} />
           <Route path="/agent/personas" element={<Personas />} />

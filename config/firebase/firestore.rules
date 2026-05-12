@@ -195,6 +195,49 @@ service cloud.firestore {
       allow read, write: if isPaOperator();
     }
 
+    // ─── v1.8 Phase 74.5 + 79 — Memory compaction + tag snapshots ────
+    // PS13: pre-compaction snapshots of pa-users.{uid}.tags. Server-write
+    // only (Cloud Functions); operator-read for rollback UI. Candidates
+    // (non-operator users) cannot read.
+    match /pa-users-tag-snapshots/{uid}/snapshots/{snapId} {
+      allow read: if isPaOperator();
+      allow write: if false;
+    }
+    // PS14: compaction cost ledger. Operator read-only; CF writes via Admin.
+    match /pa-compaction-cost-ledger/{entryId} {
+      allow read: if isPaOperator();
+      allow write: if false;
+    }
+    // PS15: pre-screen sessions + per-turn evaluation explanations.
+    // Server-write only — Cloud Function owns writes. Candidate identity
+    // never reads — explanation fields are server-only.
+    match /pa-prescreen-sessions/{sessionId} {
+      allow read: if isPaOperator();
+      allow write: if false;
+      match /turns/{turnId} {
+        allow read: if isPaOperator();
+        allow write: if false;
+      }
+    }
+    // Phase 77 idempotency stamps for the prescreen trigger (60-min window).
+    match /pa-prescreen-trigger-idempotency/{pairKey} {
+      allow read, write: if isPaOperator();
+    }
+    // Phase 79 rollback audit trail.
+    match /pa-tag-rollback-events/{eventId} {
+      allow read: if isPaOperator();
+      allow write: if isPaOperator();
+    }
+    // Phase 75 fixture corpus for the KeywordSet drift detector.
+    match /pa-prescreen-fixtures/{fixtureId} {
+      allow read, write: if isPaOperator();
+    }
+    // Phase 75 nightly drift run audit.
+    match /pa-prescreen-drift-runs/{runId} {
+      allow read: if isPaOperator();
+      allow write: if false;
+    }
+
     // ─── Default deny ────────────────────────────────────────────────
     match /{document=**} {
       allow read, write: if false;
