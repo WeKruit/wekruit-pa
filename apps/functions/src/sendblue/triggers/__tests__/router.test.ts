@@ -1,0 +1,363 @@
+/**
+ * v1.8 Phase 77 — TriggerRouter + PrescreenTrigger + CompactTrigger tests.
+ *
+ * Exercises:
+ *   - TriggerRouter: priority order, first-match-wins, no-match short-circuit
+ *   - TriggerRouter: match() throw is swallowed; next trigger tried
+ *   - TriggerRouter: handle() throw is caught and routed to error outcome
+ *   - PrescreenTrigger: regex matching, jobId/userId extraction, char-class
+ *   - PrescreenTrigger: idempotency 60-min window
+ *   - PrescreenTrigger: media → unauthorized
+ *   - PrescreenTrigger: phone unresolved → unauthorized
+ *   - PrescreenTrigger: self vs admin authorization
+ *   - PrescreenTrigger: idempotency stamp BEFORE dispatch
+ *   - CompactTrigger: admin-only check, target= override
+ */
+import test from "node:test"
+import assert from "node:assert/strict"
+
+import {
+  CompactTrigger,
+  PrescreenTrigger,
+  PRESCREEN_IDEMPOTENCY_WINDOW_MS,
+  TriggerRouter,
+  type CompactTriggerDeps,
+  type PrescreenTriggerDeps,
+  type Trigger,
+  type TriggerContext,
+} from "../index.js"
+
+// ════════════════════════════════════════════════════════════════════════════
+// Fixtures
+// ════════════════════════════════════════════════════════════════════════════
+
+function makeCtx(text: string, opts: Partial<TriggerContext> = {}): TriggerContext {
+  return {
+    text,
+    fromNumber: opts.fromNumber ?? "+15551234",
+    messageHandle: opts.messageHandle ?? "h1",
+    receivedAtIso: opts.receivedAtIso ?? "2026-05-12T00:00:00Z",
+    log: opts.log ?? (() => {}),
+    hasMedia: opts.hasMedia ?? false,
+  }
+}
+
+class StubTrigger implements Trigger {
+  constructor(
+    readonly name: string,
+    private readonly pattern: RegExp,
+    private readonly onHandle: () => Promise<{ kind: "handled"; action: string }>
+  ) {}
+  match(text: string): boolean {
+    return this.pattern.test(text)
+  }
+  handle = (_: TriggerContext) => this.onHandle()
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// TriggerRouter
+// ════════════════════════════════════════════════════════════════════════════
+
+test("Phase 77: router returns handled=false when no trigger matches", async () => {
+  const router = new TriggerRouter({
+    triggers: [new StubTrigger("a", /AAA/, async () => ({ kind: "handled" as const, action: "a" }))],
+  })
+  const r = await router.dispatch(makeCtx("hello"))
+  assert.equal(r.handled, false)
+})
+
+test("Phase 77: router fires first-match-wins (priority order)", async () => {
+  let aFired = 0
+  let bFired = 0
+  const router = new TriggerRouter({
+    triggers: [
+      new StubTrigger("a", /TOKEN/, async () => {
+        aFired++
+        return { kind: "handled" as const, action: "a_action" }
+      }),
+      new StubTrigger("b", /TOKEN/, async () => {
+        bFired++
+        return { kind: "handled" as const, action: "b_action" }
+      }),
+    ],
+  })
+  const r = await router.dispatch(makeCtx("contains TOKEN"))
+  assert.equal(r.handled, true)
+  assert.equal(r.triggerName, "a")
+  assert.equal(aFired, 1)
+  assert.equal(bFired, 0, "second trigger MUST NOT fire on first-match")
+})
+
+test("Phase 77: router catches handle() throws and routes to error outcome", async () => {
+  const router = new TriggerRouter({
+    triggers: [
+      new StubTrigger("boom", /BOOM/, async () => {
+        throw new Error("kaboom")
+      }),
+    ],
+  })
+  const r = await router.dispatch(makeCtx("BOOM"))
+  assert.equal(r.handled, true)
+  assert.equal(r.outcome?.kind, "error")
+  if (r.outcome?.kind === "error") assert.equal(r.outcome.reason, "kaboom")
+})
+
+test("Phase 77: router swallows match() throw and tries next trigger", async () => {
+  const evil: Trigger = {
+    name: "evil",
+    match() {
+      throw new Error("regex blew up")
+    },
+    async handle() {
+      return { kind: "handled" as const, action: "should_not_reach" }
+    },
+  }
+  const router = new TriggerRouter({
+    triggers: [
+      evil,
+      new StubTrigger("ok", /OK/, async () => ({ kind: "handled" as const, action: "ok_action" })),
+    ],
+  })
+  const r = await router.dispatch(makeCtx("OK ping"))
+  assert.equal(r.triggerName, "ok")
+})
+
+// ════════════════════════════════════════════════════════════════════════════
+// PrescreenTrigger
+// ════════════════════════════════════════════════════════════════════════════
+
+function makePrescreenDeps(opts: {
+  phoneToUser?: Record<string, string | null>
+  adminIds?: string[]
+  lastFired?: Record<string, number>
+  now?: number
+} = {}): PrescreenTriggerDeps & {
+  runs: Array<{ jobId: string; userId: string; toE164: string }>
+  audits: Record<string, unknown>[]
+  setLastCalls: Array<{ jobId: string; userId: string; ms: number }>
+} {
+  const runs: Array<{ jobId: string; userId: string; toE164: string }> = []
+  const audits: Record<string, unknown>[] = []
+  const setLastCalls: Array<{ jobId: string; userId: string; ms: number }> = []
+  const lastFired: Record<string, number> = { ...(opts.lastFired ?? {}) }
+  return {
+    runs,
+    audits,
+    setLastCalls,
+    async lookupUserByPhone(phone) {
+      return (opts.phoneToUser ?? {})[phone] ?? null
+    },
+    async isAdmin(uid) {
+      return (opts.adminIds ?? []).includes(uid)
+    },
+    async getLastFiredMs(jobId, userId) {
+      return lastFired[`${jobId}:${userId}`] ?? null
+    },
+    async setLastFiredMs(jobId, userId, ms) {
+      lastFired[`${jobId}:${userId}`] = ms
+      setLastCalls.push({ jobId, userId, ms })
+    },
+    async runPreScreen(args) {
+      runs.push(args)
+    },
+    async audit(e) {
+      audits.push(e)
+    },
+    now: () => opts.now ?? 1_000_000_000,
+  }
+}
+
+test("Phase 77: PrescreenTrigger.match matches valid pattern", () => {
+  const trig = new PrescreenTrigger(makePrescreenDeps())
+  assert.equal(trig.match("WeKruit_jobABC_user123_Job"), true)
+  assert.equal(trig.match("hey WeKruit_j1_u1_Job please"), true)
+  // Char-class limited to alnum + _ + -
+  assert.equal(trig.match("WeKruit_j-1_u-1_Job"), true)
+})
+
+test("Phase 77: PrescreenTrigger.match rejects non-matching tokens", () => {
+  const trig = new PrescreenTrigger(makePrescreenDeps())
+  assert.equal(trig.match("WeKruit_Job"), false)
+  assert.equal(trig.match("WeKruit_/_/_Job"), false) // invalid char
+  assert.equal(trig.match("nothing here"), false)
+})
+
+test("Phase 77: PrescreenTrigger refuses media-attached messages", async () => {
+  const deps = makePrescreenDeps({ phoneToUser: { "+15551234": "user123" } })
+  const trig = new PrescreenTrigger(deps)
+  const r = await trig.handle(makeCtx("WeKruit_j1_user123_Job", { hasMedia: true }))
+  assert.equal(r.kind, "unauthorized")
+  if (r.kind === "unauthorized") assert.equal(r.reason, "media_attached_pre_screen_text_only")
+  assert.equal(deps.runs.length, 0)
+})
+
+test("Phase 77: PrescreenTrigger unauthorized when phone unresolved", async () => {
+  const deps = makePrescreenDeps({ phoneToUser: { "+15551234": null } })
+  const trig = new PrescreenTrigger(deps)
+  const r = await trig.handle(makeCtx("WeKruit_j1_user123_Job"))
+  assert.equal(r.kind, "unauthorized")
+  if (r.kind === "unauthorized") assert.equal(r.reason, "phone_not_resolved")
+  assert.equal(deps.audits[0].type, "trigger_unauthorized")
+})
+
+test("Phase 77: PrescreenTrigger unauthorized when sender is neither self nor admin", async () => {
+  const deps = makePrescreenDeps({ phoneToUser: { "+15551234": "different_user" }, adminIds: [] })
+  const trig = new PrescreenTrigger(deps)
+  const r = await trig.handle(makeCtx("WeKruit_j1_user123_Job"))
+  assert.equal(r.kind, "unauthorized")
+  if (r.kind === "unauthorized") assert.equal(r.reason, "not_self_or_admin")
+})
+
+test("Phase 77: PrescreenTrigger fires for self (sender matches target userId)", async () => {
+  const deps = makePrescreenDeps({ phoneToUser: { "+15551234": "user123" } })
+  const trig = new PrescreenTrigger(deps)
+  const r = await trig.handle(makeCtx("WeKruit_j1_user123_Job", { fromNumber: "+15551234" }))
+  assert.equal(r.kind, "handled")
+  if (r.kind === "handled") assert.equal(r.action, "prescreen_triggered")
+  // Wait a microtask for the fire-and-forget to land.
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(deps.runs.length, 1)
+  assert.deepEqual(deps.runs[0], { jobId: "j1", userId: "user123", toE164: "+15551234" })
+})
+
+test("Phase 77: PrescreenTrigger fires for admin (sender != target but is admin)", async () => {
+  const deps = makePrescreenDeps({
+    phoneToUser: { "+15551234": "admin_adam" },
+    adminIds: ["admin_adam"],
+  })
+  const trig = new PrescreenTrigger(deps)
+  const r = await trig.handle(makeCtx("WeKruit_j1_user123_Job"))
+  assert.equal(r.kind, "handled")
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(deps.runs[0].userId, "user123")
+  assert.equal(deps.audits[0].role, "admin")
+})
+
+test("Phase 77: PrescreenTrigger idempotency dedupes within 60-min window", async () => {
+  const now = 1_000_000_000
+  const deps = makePrescreenDeps({
+    phoneToUser: { "+15551234": "user123" },
+    lastFired: { "j1:user123": now - 30 * 60 * 1000 }, // 30 min ago
+    now,
+  })
+  const trig = new PrescreenTrigger(deps)
+  const r = await trig.handle(makeCtx("WeKruit_j1_user123_Job"))
+  assert.equal(r.kind, "handled")
+  if (r.kind === "handled") assert.equal(r.action, "prescreen_deduped")
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(deps.runs.length, 0)
+  assert.equal(deps.audits[0].type, "trigger_deduped")
+})
+
+test("Phase 77: PrescreenTrigger fires after window expires", async () => {
+  const now = 1_000_000_000
+  const deps = makePrescreenDeps({
+    phoneToUser: { "+15551234": "user123" },
+    lastFired: { "j1:user123": now - (PRESCREEN_IDEMPOTENCY_WINDOW_MS + 1) },
+    now,
+  })
+  const trig = new PrescreenTrigger(deps)
+  const r = await trig.handle(makeCtx("WeKruit_j1_user123_Job"))
+  assert.equal(r.kind, "handled")
+  if (r.kind === "handled") assert.equal(r.action, "prescreen_triggered")
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(deps.runs.length, 1)
+})
+
+test("Phase 77: PrescreenTrigger stamps idempotency BEFORE dispatch (anti-double-fire)", async () => {
+  const deps = makePrescreenDeps({ phoneToUser: { "+15551234": "user123" } })
+  let dispatched = false
+  const origRun = deps.runPreScreen
+  deps.runPreScreen = async (args) => {
+    // By the time runPreScreen executes, setLastFiredMs must already have
+    // recorded the stamp.
+    assert.equal(deps.setLastCalls.length, 1, "setLastFiredMs must run before runPreScreen")
+    dispatched = true
+    return origRun(args)
+  }
+  const trig = new PrescreenTrigger(deps)
+  await trig.handle(makeCtx("WeKruit_j1_user123_Job"))
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(dispatched, true)
+})
+
+// ════════════════════════════════════════════════════════════════════════════
+// CompactTrigger
+// ════════════════════════════════════════════════════════════════════════════
+
+function makeCompactDeps(opts: {
+  phoneToUser?: Record<string, string | null>
+  adminIds?: string[]
+} = {}): CompactTriggerDeps & {
+  runs: Array<{ userId: string }>
+  audits: Record<string, unknown>[]
+} {
+  const runs: Array<{ userId: string }> = []
+  const audits: Record<string, unknown>[] = []
+  return {
+    runs,
+    audits,
+    async lookupUserByPhone(phone) {
+      return (opts.phoneToUser ?? {})[phone] ?? null
+    },
+    async isAdmin(uid) {
+      return (opts.adminIds ?? []).includes(uid)
+    },
+    async runCompaction({ userId }) {
+      runs.push({ userId })
+    },
+    async audit(e) {
+      audits.push(e)
+    },
+  }
+}
+
+test("Phase 77: CompactTrigger.match detects token", () => {
+  const trig = new CompactTrigger(makeCompactDeps())
+  assert.equal(trig.match("__PA_COMPACT__"), true)
+  assert.equal(trig.match("please run __PA_COMPACT__ target=u1"), true)
+  assert.equal(trig.match("PA_COMPACT"), false)
+})
+
+test("Phase 77: CompactTrigger unauthorized for non-admin", async () => {
+  const deps = makeCompactDeps({ phoneToUser: { "+15551234": "regular_user" }, adminIds: [] })
+  const trig = new CompactTrigger(deps)
+  const r = await trig.handle(makeCtx("__PA_COMPACT__"))
+  assert.equal(r.kind, "unauthorized")
+  if (r.kind === "unauthorized") assert.equal(r.reason, "not_admin")
+  assert.equal(deps.runs.length, 0)
+})
+
+test("Phase 77: CompactTrigger fires for admin sender's own memory by default", async () => {
+  const deps = makeCompactDeps({
+    phoneToUser: { "+15551234": "admin_adam" },
+    adminIds: ["admin_adam"],
+  })
+  const trig = new CompactTrigger(deps)
+  const r = await trig.handle(makeCtx("__PA_COMPACT__"))
+  assert.equal(r.kind, "handled")
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(deps.runs[0].userId, "admin_adam")
+  assert.equal(deps.audits[0].mode, "self")
+})
+
+test("Phase 77: CompactTrigger fires with target= override", async () => {
+  const deps = makeCompactDeps({
+    phoneToUser: { "+15551234": "admin_adam" },
+    adminIds: ["admin_adam"],
+  })
+  const trig = new CompactTrigger(deps)
+  const r = await trig.handle(makeCtx("__PA_COMPACT__ target=user123"))
+  assert.equal(r.kind, "handled")
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(deps.runs[0].userId, "user123")
+  assert.equal(deps.audits[0].mode, "admin_target")
+})
+
+test("Phase 77: CompactTrigger refuses media attachments", async () => {
+  const deps = makeCompactDeps({ phoneToUser: { "+15551234": "admin_adam" }, adminIds: ["admin_adam"] })
+  const trig = new CompactTrigger(deps)
+  const r = await trig.handle(makeCtx("__PA_COMPACT__", { hasMedia: true }))
+  assert.equal(r.kind, "unauthorized")
+  assert.equal(deps.runs.length, 0)
+})
