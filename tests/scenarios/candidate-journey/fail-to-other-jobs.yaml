@@ -1,0 +1,71 @@
+# v1.9 Phase 84 — scenario: FAIL terminal → "match other jobs?" branch
+#
+# All GOOD_TO_HAVE; candidate gives partial answers; ratio < T → FAIL.
+# Post-terminal action sends FAIL preamble + fires generateJobRecs.
+# (Action wiring covered by apps/functions terminal-action tests.)
+name: "v1.9 fail-to-other-jobs — partial, ratio below threshold"
+sessionId: "scenario-v19-fail-001"
+userId: "candidate_v19_bob"
+jobId: "job_v19_swe_senior"
+lang: "en"
+config:
+  version: 1
+  jobTitle: "Senior Frontend Engineer"
+  company: "Acme Robotics"
+  threshold: 0.65
+  confidenceThreshold: 0.7
+  maxClarifyRounds: 2
+  voiceMode: "professional_prescreen"
+  questions:
+    - qId: "q_mobile"
+      type: "GOOD_TO_HAVE"
+      weight: 1
+      prompt:
+        zh: "你有移动端经验吗?"
+        en: "Any mobile experience?"
+      clarifyPrompt:
+        zh: "更具体一点?"
+        en: "Be more specific?"
+      keywords:
+        - keyword: "mobile"
+          weight: 1
+    - qId: "q_ci_cd"
+      type: "GOOD_TO_HAVE"
+      weight: 1
+      prompt:
+        zh: "CI/CD 工具用过哪些?"
+        en: "Which CI/CD tools have you used?"
+      clarifyPrompt:
+        zh: "请详细说明"
+        en: "Please elaborate"
+      keywords:
+        - keyword: "ci_cd"
+          weight: 1
+turns:
+  - reply: "Tinkered a bit with React Native, never shipped"
+    stub:
+      q_mobile:
+        perKeyword:
+          - keyword: "mobile"
+            match: 0.5
+            confidence: 0.85
+            evidence: "tinkered react native, no ship"
+            reasoning: "exposure only"
+        summary: "tangential mobile"
+        answered: true
+  - reply: "Used CircleCI once on a side project"
+    stub:
+      q_ci_cd:
+        perKeyword:
+          - keyword: "ci_cd"
+            match: 0.5
+            confidence: 0.85
+            evidence: "circleci side project"
+            reasoning: "shallow ci/cd"
+        summary: "minimal ci/cd"
+        answered: true
+expected:
+  terminal: "FAIL"
+  score: 1
+  scoreMax: 2
+  reasonContains: "ratio=0.500"

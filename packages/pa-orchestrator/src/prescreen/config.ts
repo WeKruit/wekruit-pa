@@ -87,6 +87,17 @@ export const PrescreenConfigSchema = z
      * author intent + complicate diff reviews.
      */
     questions: z.array(PrescreenQuestionConfigSchema).min(1).max(20),
+    /**
+     * v1.9 Phase 84 — Level 1 reveal fields, surfaced ONLY on PASS terminal.
+     * If omitted, the Level 1 follow-up SMS falls back to a generic CTA.
+     */
+    level1Reveal: z
+      .object({
+        applyUrl: z.string().url().max(2000).optional(),
+        salaryRange: z.string().max(80).optional(),
+        nextStepEta: z.string().max(80).optional(),
+      })
+      .optional(),
     /** Optional last-edited metadata stamped at save time. */
     lastEditedBy: z.string().max(120).optional(),
     lastEditedAt: z.string().datetime().optional(),

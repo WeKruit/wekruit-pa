@@ -25,6 +25,7 @@ import {
   type PreScreenStateProvider,
 } from "@pa/pa-orchestrator"
 import { sendImessage } from "./sendblue/sendblue-client.js"
+import { runPrescreenTerminalAction } from "./prescreen-terminal-action.js"
 
 /** Firestore-backed PreScreenStateProvider. */
 class FirestorePreScreenStore implements PreScreenStateProvider {
@@ -206,6 +207,34 @@ export async function runPrescreenTurnIfActive(
     action: result.action.kind,
     terminal: result.state.terminal,
   })
+
+  // v1.9 Phase 84 — post-terminal action (Level 1 reveal + auto job recs).
+  // Fail-open: never roll back the terminal text on action failure.
+  if (
+    result.action.kind === "terminal" &&
+    (result.action.terminal === "PASS" ||
+      result.action.terminal === "FAIL" ||
+      result.action.terminal === "HARD_STOP" ||
+      result.action.terminal === "PAUSE")
+  ) {
+    try {
+      await runPrescreenTerminalAction({
+        db: args.db,
+        sessionId,
+        terminal: result.action.terminal,
+        userId: args.userId,
+        jobId: result.state.jobId,
+        toE164: args.toE164,
+        lang: args.lang ?? "en",
+        log,
+      })
+    } catch (err) {
+      log("prescreen.terminal_action.threw", {
+        sessionId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
 
   return {
     handled: true,

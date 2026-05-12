@@ -3959,3 +3959,8 @@ export {
   type OnboardingShadowDiff,
   type ShadowGateReport,
 } from "./prescreen/shadow.js"
+export {
+  composeLevel1Reveal,
+  composeFailJobRecsPreamble,
+  type Level1RevealFields,
+} from "./prescreen/level1-template.js"
