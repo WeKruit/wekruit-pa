@@ -34,6 +34,8 @@ import { QaEvaluator } from "./pages/QaEvaluator.js"
 // v1.7 Phase 70 (MATCHDEBUG-01..04) — admin live debugger for the V16 cascade
 // with score-weight sandbox sliders. Backed by paAdminMatchDebug callable.
 import { MatchDebug } from "./pages/MatchDebug.js"
+// v1.8 Phase 78 — Job pre-screen config editor.
+import JobPrescreen from "./pages/JobPrescreen.js"
 import { auth } from "./lib/firebase.js"
 
 export default function App() {
@@ -189,6 +191,9 @@ export default function App() {
           <Route path="/match/explainer-test" element={<MatchExplainerTest />} />
           {/* v1.7 Phase 70 (MATCHDEBUG-01..04) — V16 live debugger. */}
           <Route path="/admin/match-debug" element={<MatchDebug />} />
+          {/* v1.8 Phase 78 — Job pre-screen config editor. */}
+          <Route path="/admin/jobs/:jobId/prescreen" element={<JobPrescreen />} />
+          <Route path="/admin/job-prescreen" element={<JobPrescreen />} />
           {/* Phase 32 Wave 3 — Playbooks + Personas Firestore CRUD. */}
           <Route path="/agent/playbooks" element={<Playbooks />} />
           <Route path="/agent/personas" element={<Personas />} />
