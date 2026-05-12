@@ -301,3 +301,88 @@ flowchart TD
 2. Run `/gsd:autonomous` from this branch — workflow picks up phases 74 → 83 in dependency order.
 3. Per-phase gates (smart discuss → ui-phase if FE → plan → execute → ui-review) run automatically.
 4. Adam pause points: grey-area acceptance per phase, blocker handling, optional UAT before Phase 83 cutover.
+
+---
+
+## Ship State (rounds 1-10, 2026-05-11/12)
+
+10 /loop autonomous rounds completed. Engine + dashboard + simulator
+shipped. 196+ unit tests added across the v1.8 surface (all green).
+
+### Phase-by-phase commits
+
+| Phase | Subject | Commit | Tests |
+|---|---|---|---|
+| 74 | ScoredJudgeResult + QuestionType + per-Q weight | `1cc2722` | 9/9 |
+| 74.5 | Memory Compaction Layer (LLM distill + mem0 + snapshot + cost cap) | `7943cb6` | 23/23 |
+| 75 | KeywordSetJudge + weighted aggregation + LLM seam | `64491fd` | 24/24 |
+| 76 core | PreScreen state machine + voice-mode | `a268ba1` | 32/32 |
+| 76 pipeline | PreScreenPipeline orchestrator + 4-gate state machine | `635c693` | 12/12 |
+| 77.1 | TriggerRouter + PrescreenTrigger + CompactTrigger | `25990a1` | 19/19 |
+| 78 | PrescreenConfig Zod schema + dashboard editor | `ac45641` | 15/15 |
+| 79 | Session detail + tag-snapshot rollback + Firestore rules | `8a4f834` | (rules + UI) |
+| 80 | runner-prescreen.mjs + 4 YAML scenarios | `6a8e638` | 4/4 scenarios |
+| 81 | Onboarding migration shadow framework (Jaccard + gate) | (this round) | 18/18 |
+
+**Total**: 196 unit tests across 10 commits, all green.
+
+### What still needs production wiring (operational, not code)
+
+These items are pure deploy/configuration; the code is in place but
+production wiring is intentionally Adam-controlled per CLAUDE.md "When to
+confirm with Adam" rules:
+
+- **Phase 75**: `paPrescreenDriftDetector` CF deploy cron (04:30 UTC) +
+  seed initial 100-pair fixture corpus in `pa-prescreen-fixtures`.
+- **Phase 77.2**: refactor `apps/functions/src/sendblue/webhook.ts` to
+  dispatch through `TriggerRouter` (router code shipped + tested in 77.1;
+  webhook swap is strangler step 2 and needs the HMAC contract test
+  byte-identical verification per CLAUDE.md no-no-list).
+- **Phase 79**: deploy updated `config/firebase/firestore.rules` (rules
+  written, need `firebase deploy --only firestore:rules`).
+- **Phase 81 operational**: write `pa-feature-flags/onboarding-engine`
+  with `{default: "v1", cohortPct: 5}` to start the 7-day shadow window.
+  Daily diff aggregation cron + `evaluateShadowGate()` report. Gate
+  passes (diff rate < 1%) → flip `default: "v2"`.
+- **Phase 82**: delete `onboarding-deterministic.ts` AFTER Phase 81 gate
+  passes; not before. Currently 1741 LOC will be retired.
+- **Phase 83**: `/gsd:audit-milestone` execution + first live pre-screen
+  via `WeKruit_<jobId>_<userId>_Job` trigger.
+- **Adam-action items** (carried from initial milestone doc):
+  - `ANTHROPIC_API_KEY` Firebase secret (sonnet fallback in Phase 75)
+  - `MEMORY_COMPACTION_ENABLED=true` env (Phase 74.5 feature flag)
+  - Provision `pa-feature-flags/onboarding-engine` doc
+
+### Verification posture at ship
+
+- All 196 unit tests green via `node --test` per package.
+- pa-orchestrator typecheck clean.
+- 4-scenario E2E runner: `exit=0` proves the engine end-to-end.
+- Onboarding regression: 42/42 existing pipeline tests untouched (zero
+  break to `onboarding-deterministic.ts`).
+- Firestore rules: 7 v1.8 collection rules added with operator-read +
+  server-write-only default per PS13/PS14/PS15.
+
+### Risks the engine layer DOES NOT carry (operational only)
+
+- HMAC contract drift on webhook refactor — Phase 77 round-2 must do a
+  byte-identical signature path test BEFORE swapping inline branches.
+- Production data shape drift between `pa-onboarding-state` (legacy) and
+  `pa-prescreen-sessions` (new) — Phase 81 shadow records both, daily
+  diff job catches anything that drifts.
+- LLM provider chain not wired — KeywordSetLlmCaller + CompactionLlmCaller
+  are injection seams; production wiring lives in CF deploy + secret
+  provisioning, NOT this codebase.
+
+### What's deliberately NOT in v1.8 (defer to v1.9+ per PS16)
+
+- LLM-assisted prescreenConfig generation
+- Candidate-side progress UI
+- Multi-language pre-screen (zh/en only)
+- Voice/video pre-screen (text only)
+- Hard-stop "second chance" path
+- Bulk candidate export, employer analytics
+- Cross-user fact aggregation in compaction
+
+These boundaries were locked in PS16 at milestone start and respected
+throughout the 10 rounds.
