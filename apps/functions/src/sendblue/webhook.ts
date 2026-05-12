@@ -49,6 +49,15 @@ import {
 import { useDmAllowlist, getPeerAllowlist, isSamePeer } from "./allowlist.js"
 import { recordAuditEvent, type AuditEventInput } from "./audit.js"
 import { parseInboundTapback } from "./tapback-parser.js"
+// v1.8 Phase 77.2 — TriggerRouter table-driven dispatch for the new
+// pre-screen + compact triggers. Strangler step 2: ADDITIVE — runs before
+// the existing inline find_match/reset branches. If the router handles
+// (prescreen / compact), short-circuit. If not, existing flow continues.
+import {
+  CompactTrigger,
+  PrescreenTrigger,
+  TriggerRouter,
+} from "./triggers/index.js"
 import type { SendblueInboundPayload } from "./types.js"
 import { inboundEventExpiresAtTs, outboundExpiresAtTs } from "./ttl.js"
 // v1.5 Stream-D — message coalescer dispatch (flag-gated; default off).
@@ -609,6 +618,92 @@ export async function handleSendblueWebhook(
         log
       )
       reply(res, 200, { ok: true, ignored: "allowlist_deny" })
+      return
+    }
+  }
+
+  // ---- 3e1. v1.8 Phase 77 — TriggerRouter (prescreen + compact) ----------
+  //
+  // Additive dispatch ahead of the legacy inline branches. Handles:
+  //   - WeKruit_<jobId>_<userId>_Job  → PrescreenTrigger (PS7)
+  //   - __PA_COMPACT__                 → CompactTrigger (Phase 74.5 admin)
+  //
+  // The inline `__PA_FIND_MATCH__` (line ~640) is NOT yet routed here — that
+  // migration is gated on HMAC contract byte-identical verification per
+  // CLAUDE.md no-no list. Patterns don't overlap; safe to coexist.
+  if (!mediaUrl && typeof normalized.text === "string") {
+    const adminUidsRouter = (process.env.PA_ADMIN_USER_IDS ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
+    const lookupFnRouter = deps.lookupUserByPhone ?? defaultLookupUserByPhone
+    const router = new TriggerRouter({
+      triggers: [
+        new PrescreenTrigger({
+          lookupUserByPhone: (phone) => lookupFnRouter(deps.db, phone),
+          isAdmin: async (uid) => adminUidsRouter.includes(uid),
+          getLastFiredMs: async (jobId, userId) => {
+            try {
+              const snap = await deps.db
+                .collection("pa-prescreen-trigger-idempotency")
+                .doc(`${jobId}_${userId}`)
+                .get()
+              const data = snap.data()
+              return typeof data?.lastFiredMs === "number" ? data.lastFiredMs : null
+            } catch {
+              return null
+            }
+          },
+          setLastFiredMs: async (jobId, userId, ms) => {
+            await deps.db
+              .collection("pa-prescreen-trigger-idempotency")
+              .doc(`${jobId}_${userId}`)
+              .set({ lastFiredMs: ms, jobId, userId, updatedAt: new Date().toISOString() })
+          },
+          runPreScreen: async ({ jobId, userId, toE164 }) => {
+            // Phase 78 prescreen pipeline bootstrap. Not yet wired into the
+            // orchestrator runtime; this is the seam where Phase 77.3 will
+            // attach the real session-start handler. Log + audit for now.
+            log("[sendblue][webhook] prescreen_triggered (handler pending wire)", {
+              jobId, userId, toE164,
+            })
+          },
+          audit: async (evt) => {
+            await safeAudit(deps, evt as AuditEventInput, log)
+          },
+        }),
+        new CompactTrigger({
+          lookupUserByPhone: (phone) => lookupFnRouter(deps.db, phone),
+          isAdmin: async (uid) => adminUidsRouter.includes(uid),
+          runCompaction: async ({ userId, reason }) => {
+            // Phase 74.5 compaction. Caller currently logs; full pipeline
+            // wire (compactTurns + mergeUserTags) lands when the orchestrator
+            // exposes a callable handle.
+            log("[sendblue][webhook] compact_triggered (handler pending wire)", {
+              userId, reason,
+            })
+          },
+          audit: async (evt) => {
+            await safeAudit(deps, evt as AuditEventInput, log)
+          },
+        }),
+      ],
+      log: (event, payload) => log(`pa.trigger.${event}`, payload),
+    })
+    const routerResult = await router.dispatch({
+      text: normalized.text,
+      fromNumber: normalized.fromNumber,
+      messageHandle: normalized.messageHandle,
+      receivedAtIso: new Date().toISOString(),
+      log: (event, payload) => log(`pa.trigger.${event}`, payload),
+      hasMedia: !!mediaUrl,
+    })
+    if (routerResult.handled) {
+      const action =
+        routerResult.outcome?.kind === "handled"
+          ? routerResult.outcome.action
+          : `${routerResult.triggerName}_${routerResult.outcome?.kind ?? "unknown"}`
+      reply(res, 200, { ok: true, action })
       return
     }
   }
