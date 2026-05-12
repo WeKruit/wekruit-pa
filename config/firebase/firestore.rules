@@ -267,8 +267,14 @@ service cloud.firestore {
       allow read, write: if isPaOperator();
     }
     // ─── v1.9 Phase 88 — Sendblue pool config + others ───────────────
+    // pa-config/sendblue-pool is read by the public /j/:jobId page so the
+    // candidate's outbound first SMS lands on the same pool number the
+    // server-side selector will pick for replies (thread continuity).
+    // Numbers are NOT secret — candidates see them anyway when SMSing.
+    // All other pa-config docs (and writes anywhere) remain operator-only.
     match /pa-config/{configId} {
-      allow read, write: if isPaOperator();
+      allow read: if configId == "sendblue-pool" || isPaOperator();
+      allow write: if isPaOperator();
     }
 
     // ─── pa-public-jobs — marketing site (wekruit.com) "Open jobs Claire
