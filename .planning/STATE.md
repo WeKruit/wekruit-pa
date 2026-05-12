@@ -7,16 +7,16 @@ last_updated: "2026-05-11T00:00:00.000Z"
 last_activity: 2026-05-11
 progress:
   total_phases: 11
-  completed_phases: 5
-  total_plans: 5
-  completed_plans: 5
+  completed_phases: 6
+  total_plans: 6
+  completed_plans: 6
 ---
 
 ## Current Position
 
-Phase: **76 ✅ FULL shipped — PreScreenPipeline.runTurn assembled (commit 635c693). 53 tests green across prescreen + onboarding regression.**
+Phase: **77 round-1 ✅ shipped — TriggerRouter + PrescreenTrigger + CompactTrigger (new module, 19/19 tests). Webhook.ts refactor next round.**
 Plan: —
-Status: Round 5 of /loop autonomous. Phase 76 fully complete: state.ts + transitions.ts + voice-mode.ts + pipeline.ts. PreScreenPipeline orchestrator passes 12/12 integration scenarios (happy PASS, MUST_HAVE/PROBING HARD_STOP, GOOD_TO_HAVE pass-through, clarify k-bump/exhaust, viability PAUSE+hysteresis, FAIL on ratio, session-not-found, terminal stickiness, PS15 reason non-leak). Pipeline correctly skips viability on last Q to disambiguate FAIL vs PAUSE. Next: Phase 77 webhook split + TriggerRouter + prescreen.ts trigger + compact.ts trigger.
+Status: Round 6 of /loop autonomous. Phase 77 strangler migration round-1: built `apps/functions/src/sendblue/triggers/` from scratch with table-driven `TriggerRouter` + `PrescreenTrigger` (WeKruit_jobId_userId_Job regex, 60-min idempotency, self-or-admin auth) + `CompactTrigger` (admin-only, target= override). 19/19 tests pass. webhook.ts not yet refactored — Phase 77 round-2 swaps the 3 inline branches for `router.dispatch()`. Next: Phase 77 round-2 webhook refactor, then Phase 78 dashboard.
 
 ## v1.8 Phase Roster (planned)
 
