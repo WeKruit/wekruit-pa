@@ -58,6 +58,9 @@ import {
   PrescreenTrigger,
   TriggerRouter,
 } from "./triggers/index.js"
+// v1.8 Phase 77.3 — real prescreen session bootstrap (replaces log placeholder).
+import { runPreScreenForUser } from "../prescreen-session-start.js"
+import { runCompactionForUser } from "../compaction-run.js"
 import type { SendblueInboundPayload } from "./types.js"
 import { inboundEventExpiresAtTs, outboundExpiresAtTs } from "./ttl.js"
 // v1.5 Stream-D — message coalescer dispatch (flag-gated; default off).
@@ -661,11 +664,17 @@ export async function handleSendblueWebhook(
               .set({ lastFiredMs: ms, jobId, userId, updatedAt: new Date().toISOString() })
           },
           runPreScreen: async ({ jobId, userId, toE164 }) => {
-            // Phase 78 prescreen pipeline bootstrap. Not yet wired into the
-            // orchestrator runtime; this is the seam where Phase 77.3 will
-            // attach the real session-start handler. Log + audit for now.
-            log("[sendblue][webhook] prescreen_triggered (handler pending wire)", {
-              jobId, userId, toE164,
+            // Phase 77.3 — real handler: load config, build state, send 1st Q.
+            const result = await runPreScreenForUser({
+              db: deps.db,
+              jobId,
+              userId,
+              toE164,
+              log: (event, payload) => log(`pa.prescreen.${event}`, payload),
+            })
+            log("[sendblue][webhook] prescreen_run", {
+              jobId, userId, sessionId: result.sessionId,
+              reason: result.reason, ok: result.ok,
             })
           },
           audit: async (evt) => {
@@ -676,11 +685,17 @@ export async function handleSendblueWebhook(
           lookupUserByPhone: (phone) => lookupFnRouter(deps.db, phone),
           isAdmin: async (uid) => adminUidsRouter.includes(uid),
           runCompaction: async ({ userId, reason }) => {
-            // Phase 74.5 compaction. Caller currently logs; full pipeline
-            // wire (compactTurns + mergeUserTags) lands when the orchestrator
-            // exposes a callable handle.
-            log("[sendblue][webhook] compact_triggered (handler pending wire)", {
-              userId, reason,
+            // Phase 77.3 — real handler: runCompactionForUser pulls turns,
+            // wires Firestore deps, calls runCompactionTurn pure orchestrator.
+            const result = await runCompactionForUser({
+              db: deps.db,
+              userId,
+              reason: reason as "admin_trigger" | "turn_count" | "session_end",
+              log: (event, payload) => log(event, payload),
+            })
+            log("[sendblue][webhook] compact_run", {
+              userId, reason, ok: result.ok,
+              outcome: result.reason, factsWritten: result.factsWritten,
             })
           },
           audit: async (evt) => {
