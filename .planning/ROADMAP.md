@@ -1263,3 +1263,112 @@ D1: roleFunction = jobright 17 verbatim (closed enum). | D2: industrySector = 42
 2. `/gsd:audit-milestone` status = passed.
 3. `pa-prescreen-sessions` collection has ≥10 real sessions completed end-to-end.
 4. Adam confirms one full live pre-screen via `WeKruit_<live-jobId>_<his-userId>_Job` trigger.
+
+---
+
+## v1.9 — End-to-End Candidate Journey Closure (Phases 84-90)
+
+**Spawned:** 2026-05-12 post-v1.8 ship.
+**Goal:** Wire PASS/FAIL terminals → next-action. Generic ATS inbound adapter (Handshake first). Public candidate-facing job page + CV upload. Sendblue multi-number pool. Reuse v1.6/v1.7/v1.8 infra — zero rebuild.
+
+### Phase 84: PASS/FAIL terminal → auto job recs + Level 1 reveal
+
+**Goal:** Wire `PreScreenPipeline.runTurn` terminal handler to fire `generateJobRecs(userId)` on PASS or FAIL. PASS branch additionally sends Level 1 reveal SMS (company + JD URL + salary + next-step CTA) BEFORE PII collect. HARD_STOP never auto-fires. PAUSE writes pausedAt. Async + fail-open + idempotent per (sessionId, terminal).
+**Requirements:** TERMINAL-01..06, LEVEL1-01..03
+**Hard prerequisite:** v1.8 P76 (PreScreenPipeline), v1.6 P56 (generateJobRecs).
+**Status:** Not started.
+**Success Criteria:**
+1. PASS terminal fires `generateJobRecs` exactly once; idempotency stamp at `pa-prescreen-sessions.{id}.terminalActionFiredAt`.
+2. FAIL terminal fires `generateJobRecs` with "match other jobs?" copy preamble.
+3. HARD_STOP terminal does NOT auto-fire (verified by unit test).
+4. Level 1 reveal SMS template `packages/pa-orchestrator/src/prescreen/level1-template.ts` snapshot tested; pre-PASS messages never contain company/JD/salary.
+5. Audit event written to `pa-audit-events` for each terminal-action fire (success + fail).
+6. `tests/scenarios/candidate-journey/pass-to-level1.yaml` + `fail-to-other-jobs.yaml` exit 0 against runner-prescreen.
+
+### Phase 85: PiiConfirmPipeline + Apply trigger
+
+**Goal:** New `PiiConfirmPipeline` (3 MUST_HAVE Questions: legalName, email, phone) using existing `Question<TAnswer>` + `OnboardingPipeline` base — zero new state-machine code. Sequenced after Level 1 reveal. Skip if `pa-users.{uid}.contactPII.consentedAt` already exists. NEW trigger `WeKruit_<jobId>_<userId>_Apply` skips prescreen and goes straight to PII confirm (fail-safe to prescreen if no prior PASS within 30d).
+**Requirements:** PIICONFIRM-01..06, APPLY-01..03
+**Hard prerequisite:** Phase 84 (Level 1 reveal sequencing), v1.8 P77 (TriggerRouter).
+**Status:** Not started.
+**Success Criteria:**
+1. `PiiConfirmPipeline` extends `OnboardingPipeline` — 3 Qs, weight=1.0 each, email regex + libphonenumber-js validation.
+2. Writes `pa-users.{uid}.contactPII = {legalName, email, phone, consentedAt, source}` + audit event.
+3. Skip-if-present: existing `consentedAt` → straight to closing message.
+4. `WeKruit_<jobId>_<userId>_Apply` trigger registered in TriggerRouter. Regex unit test green.
+5. Apply trigger checks `pa-prescreen-sessions` for PASS within 30d; falls back to `_Job` flow if not found.
+6. Scenario `apply-direct.yaml` + `pii-skip-when-present.yaml` exit 0.
+
+### Phase 86: Generic ATS inbound adapter (Handshake first)
+
+**Goal:** New CF HTTP endpoint `paAtsInboundWebhook` with schema-agnostic core (`CanonicalApplicant`). Per-source adapter dir `apps/functions/src/ats-adapters/`. Handshake fully implemented; Greenhouse/Lever/LinkedIn return 501. HMAC-signed per source. Find-or-create `pa-users` by email; bind resume via `cv-ingest`; fire outbound invite SMS. 7d idempotency. Admin dashboard `/admin/ats-inbound`.
+**Requirements:** ATSADAPTER-01..10
+**Hard prerequisite:** v1.6 P53 (pa-resume-parser v2), v1.8 P77 (TriggerRouter), v1.8 P78 (pa-jobs config).
+**Status:** Not started.
+**Success Criteria:**
+1. `paAtsInboundWebhook` deployed; HMAC-validated; rejects unknown `X-Wekruit-Ats-Source`.
+2. `apps/functions/src/ats-adapters/handshake.ts` parses real Handshake applicant payload → `CanonicalApplicant`. Fixture-tested against 5+ sample payloads.
+3. Greenhouse/Lever/LinkedIn adapters return 501 `not_implemented` (slot stubs).
+4. `pa-jobs-external-mapping/{source}/{externalId}` resolves to internal `jobId`; missing mapping → 404 + audit.
+5. Resume binding fires `cv-ingest` HTTP; failure does NOT block invite SMS (fail-graceful, audited).
+6. Outbound invite SMS via `sendImessage` with body from `pa-jobs.{jobId}` config.
+7. 7d idempotency keyed `pa-ats-invite-idempotency/{source}_{externalJobId}_{applicantId}`; re-fire → 200 no-op + audit.
+8. Inbound reply within 24h virtualizes `WeKruit_<jobId>_<userId>_Job` trigger via TriggerRouter.
+9. `/admin/ats-inbound` page lists applicants per source with status pills + retry button.
+10. Scenario `ats-inbound-handshake.yaml` exit 0 end-to-end.
+
+### Phase 87: Public candidate-facing job page + CV upload
+
+**Goal:** Public unauthenticated route `/j/:jobId` on existing Vite SPA reads `pa-jobs.{jobId}` (gated by new `publicVisible` flag) and renders JD + "Start pre-screen" CTA + QR code + CV upload flow. Cookie-stored `requestedUserId` UUID for pre-prescreen tracking; resolved on first inbound SMS. CV upload POSTs to `cv-ingest` with `{tempUserId, source: 'public_job_page', jobIdContext}`. Admin toggle `Make public` in `/admin/job-prescreen` editor.
+**Requirements:** JOBPAGE-01..07
+**Hard prerequisite:** v1.8 P78 (pa-jobs config), v1.6 P53 (cv-ingest).
+**Status:** Not started.
+**Success Criteria:**
+1. `wekruit-pa.web.app/j/<jobId>` renders public job page when `publicVisible === true`; 404 otherwise.
+2. Firestore rule update: `pa-jobs/{jobId}` read allowed when `resource.data.publicVisible === true`; write still operator-only.
+3. Renders jobTitle/company/location/salary/JD markdown; "Start pre-screen" CTA opens `sms:<sendblueNumber>?body=WeKruit_<jobId>_<requestedUserId>_Job`.
+4. `requestedUserId` UUID stored in cookie + `pa-prescreen-pending-invites/{requestedUserId}` Firestore doc; `paSendblueWebhook` resolves pending invite on first match.
+5. CV upload `<input type="file">` accepts PDF/DOCX; POSTs to `cv-ingest` HTTP endpoint; returns parsed preview.
+6. QR code SVG rendered server-side for desktop visitors.
+7. `/admin/job-prescreen` editor adds `Make public` toggle + `/j/<jobId>` preview link.
+
+### Phase 88: Sendblue multi-number pool + load balancer
+
+**Goal:** Config doc `pa-config/sendblue-pool` with `numbers[]` array. `sendImessage` adapter picks number via `hashByUserId(userId) mod activeNumbers.length` for thread continuity. Inbound webhook routing unchanged (user resolved by `from` field). Per-number cost ledger. Admin dashboard `/admin/sendblue-pool` for add/remove/pause + daily volume per number. Single-number backwards-compat preserved.
+**Requirements:** SBPOOL-01..06
+**Hard prerequisite:** None (parallelizable with Phase 87).
+**Status:** Not started.
+**Success Criteria:**
+1. `pa-config/sendblue-pool` schema validated; default seeded with current single number.
+2. `sendImessage` picks number via hash-by-userId; same user always routed to same number (verified by unit test).
+3. Inbound `paSendblueWebhook` accepts inbound from any pool number; user-resolution by `from` unchanged.
+4. Per-number daily cost ledger entry rolled up nightly.
+5. `/admin/sendblue-pool` page renders + supports add/pause/remove + per-number daily volume chart.
+6. Single-number pool config produces identical behavior to pre-v1.9 (regression scenario green).
+
+### Phase 89: Feedback survey post-PASS
+
+**Goal:** After `PiiConfirmPipeline` closure, send 1-2 Question feedback survey: "On a scale 1-5, how was Claire's pre-screen?" + optional freeform. Reuses `OnboardingPipeline` + `Question`. Default opt-in; reply "skip" exits. Writes `pa-prescreen-sessions.{sessionId}.feedback`. Dashboard session detail shows rating. Weekly aggregate at `/admin/prescreen-feedback`.
+**Requirements:** FEEDBACK-01..05
+**Hard prerequisite:** Phase 85 (PiiConfirmPipeline closure point).
+**Status:** Not started.
+**Success Criteria:**
+1. `FeedbackSurveyPipeline` extends `OnboardingPipeline`; 2 Qs (rating MUST_HAVE, freeform GOOD_TO_HAVE).
+2. "skip" reply exits survey gracefully.
+3. Writes `pa-prescreen-sessions.{sessionId}.feedback = {rating, freeform, completedAt}`.
+4. `/admin/prescreen-sessions/:sessionId` renders feedback section.
+5. `/admin/prescreen-feedback` weekly aggregate page deployed; avg rating + top-10 freeform by recency.
+
+### Phase 90: E2E scenarios + documentation + milestone audit
+
+**Goal:** Full E2E scenarios cover all journey branches (`pass-to-level1`, `fail-to-other-jobs`, `apply-direct`, `ats-inbound-handshake`, `pii-skip-when-present`). Real-LLM smoke variant against gpt-5.4-nano. `CLAUDE.md` v1.9 design lock subsection. `MILESTONE-v1.9-candidate-journey.md` architecture doc with User Flow diagram annotated. `/gsd:audit-milestone` run.
+**Requirements:** E2E-01..03, DOC-V19-01..02
+**Hard prerequisite:** All prior v1.9 phases shipped.
+**Status:** Not started.
+**Success Criteria:**
+1. 5 scenario YAMLs in `tests/scenarios/candidate-journey/` exit 0 via runner-prescreen.mjs.
+2. Real-LLM smoke `scripts/smoke-candidate-journey-llm.mjs` runs PASS → Level 1 → PII against live gpt-5.4-nano; verifies SMS sequencing.
+3. `CLAUDE.md` "v1.9 Design Lock" section appended.
+4. `.planning/MILESTONE-v1.9-candidate-journey.md` written with User Flow diagram + per-trigger flow + ATS adapter contract.
+5. `/gsd:audit-milestone` status = passed; 51/51 REQ-IDs covered.
+6. Adam confirms one live PASS → Level 1 → PII end-to-end via real SMS.

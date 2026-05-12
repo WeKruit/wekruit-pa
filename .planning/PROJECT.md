@@ -15,13 +15,35 @@ Monorepo: Mac **Photon iMessage worker** (deprecating to Sendblue) + Firestore *
 
 **Milestone closure (GSD):** before archiving a version, run **`$gsd-audit-milestone`** and/or follow [.planning/GSD-AUDIT-MILESTONE.md](.planning/GSD-AUDIT-MILESTONE.md) so `v*-MILESTONE-AUDIT.md` stays authoritative.
 
-## Next Milestone Goals (v1.7 — TBD)
+## Current Milestone: v1.9 — End-to-End Candidate Journey Closure
 
-Awaiting Adam direction. Likely candidates:
-- Real Python port of canonical tags into wekruit-scraping (cross-repo parity)
-- macmini Stage 2.5 url_resolver permanent fix or migration to wekruit-pa CF
-- Daily-batch.ts legacy `queryMatchingJobs` deletion (deferred from v1.6 for backwards compat)
-- Match quality tuning post-data-ramp (ship gate signal calibration)
+**Goal:** Close candidate-side loop from User Flow diagram (User Entry → CV/Profile → Match → Interview → Outcome). Wire PASS/FAIL terminals into next-action automation. Open async ATS funnel (generic adapter, Handshake first). Stand up public candidate-facing assets. Reuse all v1.6/v1.7/v1.8 infrastructure — zero rebuild.
+
+**Target features:**
+
+- **PASS/FAIL → auto job recs (P0):** Prescreen terminal triggers `generateJobRecs` automatically. PASS branch reveals Level 1 info + "prepare for interview" CTA. FAIL/HARD_STOP branch surfaces "match other jobs?" alternatives.
+- **PII confirm flow (P0):** Post-PASS, candidate confirms legal name + email + phone via Question class pipeline. Stored in `pa-users.contactPII` with consent timestamp + audit event.
+- **Generic ATS inbound adapter (P1):** Schema-agnostic CF endpoint at `paAtsInboundWebhook` handling Handshake first, pluggable for Greenhouse/Lever/LinkedIn Recruiter later. Find-or-create `pa-users` from applicant payload, bind resume via existing `pa-resume-parser` v2, fire outbound SMS invite with pre-filled `WeKruit_<jobId>_<userId>_Job` trigger. 7-day idempotency keyed `(adapter, jobId, applicantId)`.
+- **Public candidate-facing job page (P2):** `pa.wekruit.com/j/<jobId>` reads `pa-jobs` config + renders JD + "Start pre-screen" deep link (sms:// or QR). CV upload web flow for candidates without prior CV — reuses existing `cv-ingest` pipeline.
+- **Sendblue multi-number pool (P3):** Round-robin or hash-by-userId across N configured numbers. Removes single-number bottleneck before public launch.
+- **Feedback survey post-PASS (P3):** 1-2 Question class survey written to `pa-prescreen-sessions.feedback`.
+
+**Trigger taxonomy (extends v1.8 TriggerRouter):**
+- `WeKruit_<jobId>_<userId>_Job` — existing prescreen start
+- `WeKruit_<jobId>_<userId>_Apply` — NEW: skip prescreen, go straight to PII collect (Direct Route or externally-passed candidate)
+- `paAtsInboundWebhook` HTTP — NEW: ATS adapter inbound (not SMS)
+
+**Reuse mandate (do NOT rebuild):**
+Question/OnboardingPipeline · KeywordSetJudge · pa-resume-parser v2 · mergeUserTags · generateJobRecs · TriggerRouter · sendImessage · pa-jobs config · PreScreenPipeline.runTurn · FirestorePreScreenStore · voice-mode professional prefix · cv-ingest LLM chain.
+
+**Out of scope (defer to v2.0):** employer dashboard / passed-candidate inbox · employer notification webhooks · interview scheduling · multi-stage Level 2/3 info reveal · PII vault encryption beyond standard Firestore at-rest · LinkedIn Recruiter API beyond schema-compatible adapter slot.
+
+**Prior milestone status:**
+- v1.6 (Unified Tags + Match Quality v1) — shipped 2026-05-06, all 11 phases.
+- v1.7 (Match Depth + Senior Scrapers + Stage 2.5 Deletion) — shipped 2026-05-06, all 11 phases.
+- v1.8 (Conversational Pre-Screen Platform + Memory Governance) — shipped 2026-05-11, all 11 phases (74-83). Engine + routing + dashboard + drift detector + shadow sweep + compaction + 100 fixture corpus + real LLM verified.
+
+See `REQUIREMENTS.md`, `ROADMAP.md`, `STATE.md`, `MILESTONE-v1.9-candidate-journey.md` (architecture).
 
 <details>
 <summary>v1.6 milestone description (archived)</summary>
@@ -198,4 +220,4 @@ This document evolves at phase transitions and milestone boundaries.
 
 ---
 
-*Last updated: 2026-05-06 — Milestone v1.6 (Unified Canonical Tags & Match Quality v1) shipped. All 11 phases (52-62) deployed. Audit: 59/59 REQ satisfied, tech_debt status (no blockers). v1.7 spawn pending Adam direction.*
+*Last updated: 2026-05-12 — Milestone v1.9 (End-to-End Candidate Journey Closure) started. v1.6, v1.7, v1.8 shipped. Defining requirements.*
