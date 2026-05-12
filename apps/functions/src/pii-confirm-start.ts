@@ -140,7 +140,7 @@ export async function runPiiConfirmForUser(
   })
 
   // Kick off — pipeline emits Q1 prompt
-  const result = await pipeline.runTurn({
+  const result = await pipeline.startTurn({
     userId: args.userId,
     turnId: `pii_start_${Date.now()}`,
     reply: "",
