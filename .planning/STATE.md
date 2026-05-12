@@ -14,7 +14,7 @@ progress:
 
 ## Current Position
 
-Phase: **v1.8 LIVE END-TO-END — Phase 77.4 deployed 2026-05-12. Candidate replies after first Q now route via paMessageCoalescer → PreScreenPipeline.runTurn → gpt-5.4-nano scoring → sendImessage. Composite index for active-session lookup deployed.**
+Phase: **v1.8 FULLY OPERATIONAL — 3 scheduled CFs + 100 fixture corpus + real LLM verified 2026-05-12. Engine + routing + dashboard + rules + drift detector + shadow sweep + compaction scheduled + Sendblue trigger handler + gpt-5.4-nano caller all live.**
 Plan: —
 Status: All 11 v1.8 phases shipped + DEPLOYED. Production status:
 - Firestore rules: released (7 new collection rules for prescreen sessions / snapshots / cost ledger / idempotency / rollback events / fixtures / drift runs)
