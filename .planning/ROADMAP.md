@@ -2,6 +2,13 @@
 
 This roadmap is intentionally numeric so GSD phase tooling can discover and execute it.
 
+## Active Milestones
+
+- 🚧 **v1.8 Conversational Pre-Screening Platform + Memory Governance** — Phases 74-83 (in progress, spawned 2026-05-11)
+- ✅ v1.7 Match Quality Depth + Pipeline Reliability Hardening — Phases 63-73 (shipped 2026-05-06)
+- ✅ v1.6 Unified Canonical Tags & Match Quality v1 — Phases 52-62 (shipped 2026-05-06)
+- ✅ v1.0–v1.5 — see archived sections below
+
 ## Milestone v1.0 — Agent SDK Runtime + Job Companion (foundational)
 
 | # | Phase | Goal | Requirements | Status |
@@ -1078,3 +1085,181 @@ D1: roleFunction = jobright 17 verbatim (closed enum). | D2: industrySector = 42
 **Success Criteria:**
 1. `CLAUDE.md` v1.7 section appended.
 2. `.planning/MILESTONE-v1.7-match-depth.md` exists with full architecture + flow diagrams.
+
+## 🚧 Milestone v1.8 — Conversational Pre-Screening Platform + Memory Governance
+
+**Goal:** Promote the `Question<TAnswer> / OnboardingPipeline` abstraction (iter34 P1) from "onboarding-only" to a universal conversational engine carrying two business lines: (1) onboarding (migrated) and (2) job-bound pre-screening. Build per-keyword LLM scoring with explanations, state machine with 4 terminal states (PASS / FAIL / HARD_STOP / PAUSE), employer-authored prescreenConfig dashboard, and the missing memory governance layer (LLM compaction + mem0 dedup + tag writeback + snapshot rollback).
+
+**Spawned:** 2026-05-11 by Adam after pre-screening spec + persona/memory follow-up. Explicit directive: "我需要你把所有的东西都做完；要排列出来；而不是 defer 说晚点做".
+
+**Phase numbering:** continues from v1.7 last phase 72. v1.8 spans phases **74, 74.5, 75–83** (11 phases). Phase 73 was a v1.7 late-add (career-ops macmini port — see CLAUDE.md v1.7 ship state).
+
+| # | Phase | Reqs | Status |
+|---|-------|------|--------|
+| 74 | JudgeResult extension + Question.type/weight | PSCORE-01..06 (6) | Not started |
+| 74.5 | Memory Compaction Layer (LLM distill + mem0 dedup + tag writeback + snapshot rollback) | MEMC-01..08 (8) | Not started |
+| 75 | KeywordSetJudge + LLM evaluator + drift detector | KWJUDGE-01..06 (6) | Not started |
+| 76 | Pipeline state machine refactor + voice-mode switching | SM-01..09 (9) | Not started |
+| 77 | webhook split + TriggerRouter + prescreen + compact triggers | TRIG-01..06 (6) | Not started |
+| 78 | Dashboard: job pre-screen config editor | DASHEMP-01..05 (5) | Not started |
+| 79 | Dashboard: prescreen session detail + tag-snapshot rollback UI | DASHCAND-01..06 (6) | Not started |
+| 80 | runner-prescreen.mjs + 4 YAML scenarios + fixture eval | TEST-01..07 (7) | Not started |
+| 81 | Onboarding migration (shadow double-write + diff) | MIG-01..05 (5) | Not started |
+| 82 | Delete legacy onboarding-deterministic.ts + doc consolidation | CLEANUP-01..03 (3) | Not started |
+| 83 | 7-day shadow + cutover + milestone audit | SHIP-01..04 (4) | Not started |
+
+**Coverage:** 65/65 REQ-IDs mapped. Full milestone narrative + architecture diagram + 16 locked decisions (PS1-PS16) live in `.planning/MILESTONE-v1.8-prescreen-platform.md`.
+
+**Eval-first ordering:**
+- Wave 1 (parallel): 74 + 77 — different files, no overlap.
+- Wave 2 (gated on 74): 74.5 + 75 — both consume the new types but write to different modules.
+- Wave 3 (gated on 74.5, 75, 76): 78 + 79 + 80 — dashboards + simulator land together.
+- Wave 4 (sequential on Wave 3): 81 → 82 → 83 — onboarding migration → cleanup → ship gate.
+
+### Phase 74: JudgeResult extension + Question.type/weight
+
+**Goal:** Add `ScoredJudgeResult` discriminated-union variant to `packages/pa-orchestrator/src/onboarding/question.ts`. Add `Question.type: "MUST_HAVE"|"PROBING"|"GOOD_TO_HAVE"` + `Question.weight: number` optional fields with safe defaults. Zero break to existing 7 judges or 11 onboarding Qs.
+**Requirements:** PSCORE-01..06
+**Status:** Not started.
+**Success Criteria:**
+1. `ScoredJudgeResult` type exported with full `perKeyword + aggregate + abortHint` schema.
+2. `Question.type` (default `"MUST_HAVE"`) + `Question.weight` (default `1.0`) added without breaking existing Question constructors.
+3. `pnpm --filter pa-orchestrator test` 100% green; no existing onboarding test changes.
+4. Type-test fixture proves `JudgeResult` vs `ScoredJudgeResult` correctly discriminated.
+
+### Phase 74.5: Memory Compaction Layer
+
+**Goal:** Build the missing memory governance layer. LLM compaction (raw turns → facts + summary + superseded), write facts to mem0 + `mergeUserTags`, delete superseded from mem0 by id, snapshot tags pre-compact, cost cap + drift monitoring. Wire to onboarding postCollect + pre-screen pipeline session-end + `__PA_COMPACT__` admin trigger.
+**Requirements:** MEMC-01..08
+**Hard prerequisite:** None (independent infra). Phase 74 helpful but not blocking.
+**Status:** Not started.
+**Success Criteria:**
+1. `packages/memory/src/compaction.ts` exports `compactTurns(rawTurns, userId, ctx)` returning typed `{facts, summary, superseded}`.
+2. Every emitted fact goes through `mergeUserTags` (D8 sole writer invariant) — unit test counts `tags` writes.
+3. mem0 superseded ids deleted by id (no by-query).
+4. Snapshot `pa-users-tag-snapshots/{uid}/{ts}` written before any tag mutation. 30-day GC.
+5. Cost cap ≤5 compactions/user/day enforced; breach logs to `pa-cost-ledger` + Slack alert.
+6. Three triggers wired: turn-count (every 20 in pipeline), session-end hook, `__PA_COMPACT__` admin trigger (registered in Phase 77).
+7. Feature flag `memoryCompactionEnabled` defaults false; gradual rollout.
+8. `paMemoryCompactionDrift` CF (nightly) replays 100 fixtures, factual accuracy ≥90% vs gold set.
+
+### Phase 75: KeywordSetJudge + LLM evaluator + drift detector
+
+**Goal:** Implement `packages/pa-orchestrator/src/onboarding/judges/keyword-set.ts` — LLM per-keyword scoring (`m_ij` match + `ĉ_ij` confidence) emitting `ScoredJudgeResult` with full explanation. Nightly drift detector replays 100 fixtures, alerts > 5% variance.
+**Requirements:** KWJUDGE-01..06
+**Hard prerequisite:** Phase 74 (`ScoredJudgeResult` type).
+**Status:** Not started.
+**Success Criteria:**
+1. `KeywordSetJudge` implements `Judge` interface, reuses `agent-runtime` (no raw `new OpenAI()`).
+2. JSON-mode + temperature=0 + seed. Output Zod-validated.
+3. `paPrescreenDriftDetector` CF (04:30 UTC). Replays 100 fixtures, per-keyword match variance computed.
+4. Drift > 5% → Slack alert + `pa-prescreen-drift-runs` audit row.
+5. `pa-prescreen-fixtures` collection seeded with 100 hand-labeled (reply, expected score) pairs.
+6. Sonnet-4-6 fallback on gpt-5.4-nano 5xx/JSON-parse-fail (sec D-LLM-chain pattern).
+
+### Phase 76: Pipeline state machine refactor + voice-mode switching
+
+**Goal:** Refactor `OnboardingPipeline` to add `k≤2` clarification rounds, Type Gate (MUST_HAVE/PROBING hard-stop), Viability Check (`S+R_max < T·S_max`), Final Decision, four terminal states. Add `voiceMode` config field + `voice-mode.ts` prefix mapping (`casual_onboarding` / `professional_prescreen`).
+**Requirements:** SM-01..09
+**Hard prerequisite:** Phase 74.
+**Status:** Not started.
+**Success Criteria:**
+1. `PipelineState` extended with `terminalState`, `score`, `scoreMax`, `clarifyRounds`.
+2. Transitions covered by exhaustive unit test grid (Question.type × judge outcome × confidence).
+3. Viability check fires only after ⌈N/3⌉ Qs answered (hysteresis against false PAUSE).
+4. `voice-mode.ts` exports two prompt-prefix presets + injection function.
+5. Onboarding regression scenarios green via `node tests/scenarios/runner.mjs`; no behavior change with `MUST_HAVE` defaults.
+6. Long-context (≥10 turn) scenarios pass in both voice modes; mirror-score within iter30 bounds.
+
+### Phase 77: webhook split + TriggerRouter + new triggers
+
+**Goal:** Refactor `apps/functions/src/sendblue/webhook.ts` (720+ lines mixing 3 concerns) into HTTP layer (`webhook.ts` ≤150 lines) + `inbound-gate.ts` (allowlist/coalesce) + `triggers/` directory (table-driven `TriggerRouter`, one file per trigger). Implement `prescreen.ts` (`WeKruit_<jobId>_<userId>_Job`) + `compact.ts` (`__PA_COMPACT__`).
+**Requirements:** TRIG-01..06
+**Hard prerequisite:** None (parallelizable with Phase 74).
+**Status:** Not started.
+**Success Criteria:**
+1. `webhook.ts` ≤150 lines (HTTP + HMAC + reply only).
+2. `inbound-gate.ts` owns allowlist + coalesce + reply dedup.
+3. `triggers/index.ts` exports `TriggerRouter` with regex registry; one trigger per file.
+4. HMAC contract test byte-identical post-refactor (CI required).
+5. `prescreen.ts` validates regex `^.*WeKruit_([A-Za-z0-9_-]+)_([A-Za-z0-9_-]+)_Job.*$`, idempotency 60 min, admin-or-self auth, fires `runPreScreenForUser`.
+6. `compact.ts` admin-only, fires `compactTurns` for target user.
+
+### Phase 78: Dashboard — Job pre-screen config editor
+
+**Goal:** New page `/admin/jobs/:jobId/prescreen` for employer/admin to author `pa-jobs/{jobId}.prescreenConfig`. Form: Question list with keyword sets + per-keyword weight + per-Q type + thresholds (τ_m, τ_c, T). Live preview against sample reply.
+**Requirements:** DASHEMP-01..05
+**Hard prerequisite:** Phase 74 (schema types) + Phase 75 (KeywordSetJudge config shape).
+**Status:** Not started.
+**Success Criteria:**
+1. Page deployed at `https://wekruit-pa.web.app/admin/jobs/:jobId/prescreen`.
+2. Live preview: paste sample reply → see KeywordSetJudge output (preview CF).
+3. Save writes `pa-jobs/{jobId}.prescreenConfig` Zod-validated.
+4. Firestore rules enforce employer-owns-job for write.
+5. Create-job dashboard flow includes optional "Add pre-screen" step.
+
+### Phase 79: Dashboard — Session detail + tag-snapshot rollback
+
+**Goal:** Two pages. (a) `/admin/prescreen-sessions/:sessionId` — session timeline, per-Q `perKeyword[]` explanation, terminal reason, score breakdown. (b) `/admin/users/:uid/tag-snapshots` — snapshot list + diff vs current + rollback button.
+**Requirements:** DASHCAND-01..06
+**Hard prerequisite:** Phase 74.5 (snapshot collection) + Phase 75 (explanation schema).
+**Status:** Not started.
+**Success Criteria:**
+1. Session detail renders all 4 terminal states with appropriate UX (color + reason).
+2. perKeyword explanation expandable per Q.
+3. Snapshot diff shows added/removed/changed tags.
+4. Rollback writes restore + audit row to `pa-tag-rollback-events`.
+5. Firestore rules: candidates blocked, employers see own-job sessions, admin sees all.
+6. Mobile-responsive (Adam reviews from phone).
+
+### Phase 80: runner-prescreen.mjs + scenarios + fixture eval
+
+**Goal:** E2E simulator at `tests/scenarios/runner-prescreen.mjs`. Builds `pa-jobs` config → POSTs to local webhook emulator → monitors `pa-prescreen-sessions` writes → asserts terminal state + score. 4 YAML scenarios cover the 4 terminal states. 100-pair fixture eval + memory-compaction E2E.
+**Requirements:** TEST-01..07
+**Hard prerequisite:** Phase 75, 76, 77.
+**Status:** Not started.
+**Success Criteria:**
+1. `tests/scenarios/prescreen/{pass,fail,hard-stop,pause}.yaml` produce deterministic terminals.
+2. CLI: `node tests/scenarios/runner-prescreen.mjs <scenario.yaml> --userId=X --jobId=Y`.
+3. CI gate: runner exits 0 only when actual terminal + score match scenario `expected`.
+4. 100 (reply, expected score) fixture pairs in `tests/fixtures/prescreen/`; eval CLI reports per-keyword accuracy + aggregate distribution.
+5. Drift gate: fixture-eval failure rate > 5% blocks merge.
+6. Memory compaction E2E — verify post-session compaction writes facts to user tags.
+7. 20-turn long-context regression scenario — no voice drift in professional mode.
+
+### Phase 81: Onboarding migration
+
+**Goal:** Migrate the 11 onboarding Qs to the new pipeline (Phase 76 state machine) via 7-day shadow double-write. Old `onboarding-deterministic.ts` runs primary, new pipeline runs shadow. Diff detector compares replies; 1% threshold for cutover.
+**Requirements:** MIG-01..05
+**Hard prerequisite:** Phase 76 + Phase 80 (runner verifies regression).
+**Status:** Not started.
+**Success Criteria:**
+1. Feature flag `prescreen.engineVersion = "v1" | "v2_shadow" | "v2"` per user.
+2. Shadow mode: both engines run, only v1 reply emitted; v2 output to `pa-onboarding-shadow-diff`.
+3. Daily diff report — assistant_reply_jaccard ≥ 0.85 mean across all shadow turns.
+4. CV ingestion + tag persistence uses new compaction (74.5) — `persistUserTagsFromResumeDiscussionData` calls `compactTurns` instead of single-shot `mergeUserTags`.
+5. After 7-day shadow with < 1% diff, flag all users to `v2`. Default new users `v2`.
+
+### Phase 82: Delete legacy + doc consolidation
+
+**Goal:** Delete `packages/pa-orchestrator/src/onboarding-deterministic.ts` + dead tests + (if unreferenced) `legacy-voice-prompt.ts`. Append `CLAUDE.md` v1.8 design lock section. Append ship state appendix to `MILESTONE-v1.8-prescreen-platform.md`.
+**Requirements:** CLEANUP-01..03
+**Hard prerequisite:** Phase 81 cutover complete.
+**Status:** Not started.
+**Success Criteria:**
+1. `onboarding-deterministic.ts` deleted; `pnpm --filter pa-orchestrator test` green.
+2. `CLAUDE.md` "v1.8 Design Lock" section appended with PS1-PS16.
+3. `MILESTONE-v1.8-prescreen-platform.md` extended with ship-state appendix.
+4. No `@deprecated` / `// TODO remove` markers from v1.8 work remain.
+
+### Phase 83: 7-day shadow + cutover + milestone audit
+
+**Goal:** Production cutover gate. Verify 7-day shadow window achieved < 1% diff. Verify all v1.8 phases shipped + REQ-IDs covered. Run `/gsd:audit-milestone` + close.
+**Requirements:** SHIP-01..04
+**Hard prerequisite:** All prior v1.8 phases shipped.
+**Status:** Not started.
+**Success Criteria:**
+1. Shadow diff report < 1% mean diff over 7 days.
+2. `/gsd:audit-milestone` status = passed.
+3. `pa-prescreen-sessions` collection has ≥10 real sessions completed end-to-end.
+4. Adam confirms one full live pre-screen via `WeKruit_<live-jobId>_<his-userId>_Job` trigger.

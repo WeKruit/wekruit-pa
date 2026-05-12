@@ -1,22 +1,42 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.7
-milestone_name: Match Quality Depth + Pipeline Reliability Hardening
-status: completed
-last_updated: "2026-05-06T19:30:00.000Z"
-last_activity: 2026-05-06
+milestone: v1.8
+milestone_name: Conversational Pre-Screening Platform + Memory Governance
+status: in_progress
+last_updated: "2026-05-11T00:00:00.000Z"
+last_activity: 2026-05-11
 progress:
-  total_phases: 10
-  completed_phases: 10
-  total_plans: 10
-  completed_plans: 10
+  total_phases: 11
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
 ---
 
 ## Current Position
 
-Phase: **Phase 73 ✅ shipped (career-ops port) — extends v1.7**
+Phase: **v1.8 strategic input drafted — pending Phase 74 kickoff**
 Plan: —
-Status: v1.7 + Phase 73 add-on shipped 2026-05-06.
+Status: Milestone v1.8 doc + ROADMAP entry written 2026-05-11. STATE flipped from v1.7 (shipped 2026-05-06) to v1.8 in-progress. Next step: Adam approval, then `/gsd:autonomous` picks up Phase 74.
+
+## v1.8 Phase Roster (planned)
+
+| # | Phase | Owner | Status |
+|---|-------|-------|--------|
+| 74 | JudgeResult extension + Question.type/weight | P9-B | Not started |
+| 74.5 | Memory Compaction Layer | P9-B + P9-D | Not started |
+| 75 | KeywordSetJudge + LLM evaluator + drift detector | P9-B + P9-D | Not started |
+| 76 | Pipeline state machine refactor + voice-mode switching | P9-B | Not started |
+| 77 | webhook split + TriggerRouter + new triggers | P9-A | Not started |
+| 78 | Dashboard: job pre-screen config editor | P9-C | Not started |
+| 79 | Dashboard: session detail + tag-snapshot rollback | P9-C | Not started |
+| 80 | runner-prescreen.mjs + scenarios + fixture eval | P9-D | Not started |
+| 81 | Onboarding migration (shadow double-write + diff) | P9-B + P9-D | Not started |
+| 82 | Delete legacy + doc consolidation | P9-B | Not started |
+| 83 | 7-day shadow + cutover + milestone audit | P9-D | Not started |
+
+Full architecture, 16 locked decisions (PS1-PS16), risk register, and out-of-scope list live in [.planning/MILESTONE-v1.8-prescreen-platform.md](MILESTONE-v1.8-prescreen-platform.md).
+
+## v1.7 + Phase 73 (shipped 2026-05-06 — archived context)
 
 ## Agent / GSD — milestone audit
 
