@@ -14,7 +14,7 @@ progress:
 
 ## Current Position
 
-Phase: **v1.8 LIVE — Phase 77.3 real handlers wired + deployed 2026-05-12. WeKruit_*_Job trigger now starts real sessions; __PA_COMPACT__ runs live gpt-5.4-nano. Audit status: passed.**
+Phase: **v1.8 LIVE END-TO-END — Phase 77.4 deployed 2026-05-12. Candidate replies after first Q now route via paMessageCoalescer → PreScreenPipeline.runTurn → gpt-5.4-nano scoring → sendImessage. Composite index for active-session lookup deployed.**
 Plan: —
 Status: All 11 v1.8 phases shipped + DEPLOYED. Production status:
 - Firestore rules: released (7 new collection rules for prescreen sessions / snapshots / cost ledger / idempotency / rollback events / fixtures / drift runs)
