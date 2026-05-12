@@ -92,13 +92,7 @@ export default function SendbluePool() {
         title="Sendblue Pool"
         description="Outbound iMessage number rotation. sendImessage routes per user via hash(userId) mod activeNumbers. Empty pool falls back to SENDBLUE_FROM_NUMBER env."
       />
-      <Panel
-        title={
-          <>
-            {pool.numbers.length} number(s) · <Badge tone="ok">{active} active</Badge>
-          </>
-        }
-      >
+      <Panel title={`${pool.numbers.length} number(s) · ${active} active`}>
         <table style={{ width: "100%", fontSize: "0.9em" }}>
           <thead>
             <tr>

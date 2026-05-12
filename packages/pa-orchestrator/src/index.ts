@@ -3973,3 +3973,9 @@ export {
   type PiiConfirmHooks,
   type PiiConfirmPipelineOpts,
 } from "./prescreen/pii-confirm.js"
+export {
+  createFeedbackSurveyPipeline,
+  isSkipReply,
+  type FeedbackHooks,
+  type FeedbackSurveyOpts,
+} from "./prescreen/feedback-survey.js"

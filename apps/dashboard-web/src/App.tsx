@@ -47,6 +47,8 @@ import PublicJob from "./pages/PublicJob.js"
 import PublicJobCv from "./pages/PublicJobCv.js"
 // v1.9 Phase 88 — Sendblue number pool admin.
 import SendbluePool from "./pages/SendbluePool.js"
+// v1.9 Phase 89 — pre-screen feedback aggregate.
+import PrescreenFeedback from "./pages/PrescreenFeedback.js"
 
 // v1.8 — collapsible sidebar section. Persists open/closed to localStorage.
 function NavSection({
@@ -155,6 +157,7 @@ export default function App() {
           <NavLink to="/admin/job-prescreen">Jobs · Config</NavLink>
           <NavLink to="/admin/prescreen-sessions">Sessions</NavLink>
           <NavLink to="/admin/ats-inbound">ATS Inbound</NavLink>
+          <NavLink to="/admin/prescreen-feedback">Feedback</NavLink>
         </NavSection>
         <NavSection id="monitor" label="Monitor" defaultOpen={true}>
           <NavLink to="/" end>Overview</NavLink>
@@ -260,6 +263,8 @@ export default function App() {
           <Route path="/admin/ats-inbound" element={<AtsInbound />} />
           {/* v1.9 Phase 88 — Sendblue number pool admin. */}
           <Route path="/admin/sendblue-pool" element={<SendbluePool />} />
+          {/* v1.9 Phase 89 — pre-screen feedback aggregate. */}
+          <Route path="/admin/prescreen-feedback" element={<PrescreenFeedback />} />
           {/* Phase 32 Wave 3 — Playbooks + Personas Firestore CRUD. */}
           <Route path="/agent/playbooks" element={<Playbooks />} />
           <Route path="/agent/personas" element={<Personas />} />
