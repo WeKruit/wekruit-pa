@@ -4,10 +4,14 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "prebuild": "npm run build --workspace=@pa/core-types",
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "pretypecheck": "npm run build --workspace=@pa/core-types",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "pretest": "npm run build --workspace=@pa/job-rec",
+    "test": "node --import tsx --test src/pages/__tests__/*.test.ts src/pages/toolCallSummary.test.ts"
   },
   "dependencies": {
     "@pa/core-types": "0.0.1",
@@ -27,12 +31,14 @@
     "tailwindcss-animate": "^1.0.7"
   },
   "devDependencies": {
+    "@pa/job-rec": "0.0.1",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.0",
     "autoprefixer": "^10.5.0",
     "postcss": "^8.5.13",
     "tailwindcss": "^3.4.17",
+    "tsx": "^4.7.0",
     "typescript": "^5.3.0",
     "vite": "^6.0.0"
   }

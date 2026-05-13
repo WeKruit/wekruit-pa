@@ -25,6 +25,7 @@ import {
 // iter31 — HITL pause/resume admin client
 import { setRuntimeMode, type RuntimeMode } from "../lib/runtimeMode.js"
 import { fetchWorkerHealth, getWorkerHealthBaseUrl, type WorkerHealth } from "../lib/workerHealth.js"
+import { CandidateMarketplace } from "./CandidateMarketplace.js"
 import { renderToolCallSummary } from "./toolCallSummary.js"
 
 type U = {
@@ -38,13 +39,13 @@ type U = {
   runtimeModeAt?: string
   runtimeModeSetBy?: string
   runtimeModeReason?: string
-}
+} & Record<string, unknown>
 type M = { id: string; role?: string; body?: string; createdAt?: string; sessionId?: string }
 type EventRow = { id: string; kind?: string; message?: string; createdAt?: string; mem0UserId?: string }
 type AnyRow = Record<string, unknown> & { id: string }
 
 type RiskLevel = "low" | "medium" | "high"
-type TabKey = "turns" | "outbound" | "connectors" | "audit" | "memory"
+type TabKey = "turns" | "marketplace" | "outbound" | "connectors" | "audit" | "memory"
 
 function relativeTime(iso: string | undefined | null): string {
   if (!iso) return "—"
@@ -445,6 +446,19 @@ export function UserDetail() {
           >
             Open ops drawer
           </Link>
+          <Link
+            to={`/admin/candidates/${id}/profile`}
+            style={{
+              padding: "5px 12px",
+              border: "1px solid #cbd5e1",
+              borderRadius: 6,
+              fontSize: "0.85em",
+              textDecoration: "none",
+              color: "#334155",
+            }}
+          >
+            Marketplace profile
+          </Link>
           <select
             value={user.activeAgentId || ""}
             onChange={(e) => onAssign(e.target.value)}
@@ -498,6 +512,7 @@ export function UserDetail() {
         {(
           [
             { key: "turns", label: "Turns" },
+            { key: "marketplace", label: "Marketplace" },
             { key: "outbound", label: "Outbound" },
             { key: "connectors", label: "Connectors" },
             { key: "audit", label: "Audit & Safety" },
@@ -543,6 +558,10 @@ export function UserDetail() {
         >
           <ChatStream messages={messages} showSystem={showSystemEvents} />
         </Panel>
+      ) : null}
+
+      {activeTab === "marketplace" ? (
+        <CandidateMarketplace candidateId={user.id} profile={user} />
       ) : null}
 
       {activeTab === "outbound" ? (

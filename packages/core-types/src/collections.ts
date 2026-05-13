@@ -46,6 +46,22 @@ export const PA_COLLECTIONS = {
   workerCursors: "pa-worker-cursors",
   /** Closed-beta participants — source of truth for allowlist + onboarding */
   betaParticipants: "pa-beta-participants",
+  /** v2.0 S1 — global candidate linked handles; candidateId == pa-users doc id. */
+  candidateHandles: "pa-candidate-handles",
+  /** v2.0 S1 — canonical resume artifact pointers and parse status. */
+  resumeArtifacts: "pa-resume-artifacts",
+  /** v2.0 S1 — per-candidate-per-job opportunity state. */
+  candidateJobStates: "pa-candidate-job-states",
+  /** v2.0 S1 — latest match evidence for a candidate/job pair. */
+  candidateJobMatches: "pa-candidate-job-matches",
+  /** v2.0 S1 — marketplace invite policy state, separate from pa-outbound delivery rows. */
+  outboundInvites: "pa-outbound-invites",
+  /** v2.0 S1 — passed-only employer-visible candidate snapshots. */
+  employerVisibleProfiles: "pa-employer-visible-profiles",
+  /** v2.0 S1 — append-only outcome and behavior feedback. */
+  feedbackEvents: "pa-feedback-events",
+  /** v2.0 S1 — append-only HITL correction events. */
+  correctionEvents: "pa-correction-events",
 } as const
 
 export const PA_REMOTE_CONFIG_DOC = "platform"
