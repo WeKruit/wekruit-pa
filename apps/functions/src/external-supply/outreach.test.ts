@@ -109,11 +109,7 @@ function seedEvaluation(
   },
 ) {
   const doc: CandidateCompanyJobEvaluation = {
-    evaluationId: args.evaluationId,
     evaluationRunId: "run-1",
-    candidateId: args.candidateId,
-    companyId: args.companyId,
-    jobId: args.jobId,
     rubricVersion: "rubric-2026-05-v1",
     generalRubricScore: 0.7,
     companyRubricScore: 0.6,

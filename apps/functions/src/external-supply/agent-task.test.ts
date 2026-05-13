@@ -111,8 +111,7 @@ function seedRecord(
   args: Partial<ExternalCandidateRecord> & { recordId: string },
 ) {
   const base: ExternalCandidateRecord = {
-    recordId: args.recordId,
-    batchId: args.batchId ?? "batch-1",
+    batchId: "batch-1",
     source: "juicebox",
     rawPayload: {},
     canonicalLinkedInUrl: "https://linkedin.com/in/example",
