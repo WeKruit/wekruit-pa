@@ -1,0 +1,10 @@
+name: "S7 PAUSE stays invisible"
+entry: "direct"
+candidateId: "cand-s7-paused"
+jobId: "job-s7-product-engineer"
+sessionId: "ps-s7-paused"
+terminal: "PAUSE"
+expected:
+  state: "paused"
+  snapshotCount: 0
+  outboundWrites: 0

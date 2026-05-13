@@ -1,0 +1,13 @@
+{
+  "command": "node --import tsx --test tests/eval/s7-first-interview-passed-surface/*.test.ts",
+  "mode": "offline-fake-firestore",
+  "liveOutboundApproved": false,
+  "before": {
+    "pa-outbound": 0
+  },
+  "after": {
+    "pa-outbound": 0
+  },
+  "result": "PASS",
+  "notes": "S7 verification did not use live Sendblue, production Firestore, or real candidate contact."
+}

@@ -1,0 +1,10 @@
+name: "S7 NOT_PASS stays retained and invisible"
+entry: "direct"
+candidateId: "cand-s7-not-pass"
+jobId: "job-s7-product-engineer"
+sessionId: "ps-s7-not-pass"
+terminal: "HARD_STOP"
+expected:
+  state: "not_passed"
+  snapshotCount: 0
+  outboundWrites: 0

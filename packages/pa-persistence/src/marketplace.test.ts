@@ -23,6 +23,7 @@ import {
 import {
   applyCandidateJobEvent,
   applyCandidateLifecycleEvent,
+  applyPassedCandidateSnapshot,
   approveJobOpportunityDraft,
   markOutboundInviteDelivery,
   markOutboundInviteQueued,
@@ -128,6 +129,18 @@ function lifecycle(type: CandidateLifecycleEvent["type"], over: Partial<Candidat
 }
 
 function job(type: CandidateJobEvent["type"], over: Partial<CandidateJobEvent> = {}): CandidateJobEvent {
+  const prescreenFields = [
+    "prescreen_started",
+    "prescreen_passed",
+    "prescreen_not_passed",
+    "manual_pause",
+  ].includes(type)
+    ? { prescreenSessionId: "ps-job-1-cand-1" }
+    : {}
+  const employerFields =
+    type === "employer_snapshot_created"
+      ? { employerVisibleProfileId: createEmployerVisibleProfileId("job-1", "cand-1") }
+      : {}
   return {
     eventId: `job-${type}`,
     candidateId: "cand-1",
@@ -136,6 +149,8 @@ function job(type: CandidateJobEvent["type"], over: Partial<CandidateJobEvent> =
     occurredAt: now,
     evidence: [{ source: "system", summary: "test" }],
     type,
+    ...prescreenFields,
+    ...employerFields,
     ...(over as Record<string, unknown>),
   } as CandidateJobEvent
 }
@@ -233,6 +248,20 @@ test("applyCandidateJobEvent does not use match score as an interview gate", asy
   const { db } = makeFakeFirestore()
   const result = await applyCandidateJobEvent(db, job("prescreen_started", { matchScore: 0.01 }))
   assert.equal(result.state, "prescreen_started")
+})
+
+test("applyCandidateJobEvent records prescreen session and employer snapshot link", async () => {
+  const { db, store } = makeFakeFirestore()
+  const started = await applyCandidateJobEvent(db, job("prescreen_started"))
+  assert.equal(started.state, "prescreen_started")
+  let stateDoc = store.get(PA_COLLECTIONS.candidateJobStates)!.get(started.stateDocId)!
+  assert.equal(stateDoc.prescreenSessionId, "ps-job-1-cand-1")
+
+  await applyCandidateJobEvent(db, job("prescreen_passed"))
+  const visible = await applyCandidateJobEvent(db, job("employer_snapshot_created"))
+  assert.equal(visible.state, "employer_visible")
+  stateDoc = store.get(PA_COLLECTIONS.candidateJobStates)!.get(started.stateDocId)!
+  assert.equal(stateDoc.employerVisibleProfileId, createEmployerVisibleProfileId("job-1", "cand-1"))
 })
 
 test("writeCandidateJobMatch writes match evidence and latest candidate-job state", async () => {
@@ -510,6 +539,87 @@ test("employer-visible snapshot requires passed candidate-job state", async () =
   const result = await writeEmployerVisibleProfile(db, snapshot)
   assert.equal(result.created, true)
   assert.equal(store.get(PA_COLLECTIONS.employerVisibleProfiles)!.size, 1)
+})
+
+test("applyPassedCandidateSnapshot creates one snapshot and advances state to employer-visible", async () => {
+  const { db, store } = makeFakeFirestore()
+  await applyCandidateJobEvent(db, job("prescreen_started"))
+  const stateId = createCandidateJobStateId("cand-1", "job-1")
+  const snapshot: EmployerVisibleProfile = {
+    snapshotId: createEmployerVisibleProfileId("job-1", "cand-1"),
+    candidateId: "cand-1",
+    jobId: "job-1",
+    candidateJobStateId: stateId,
+    createdFromState: "passed",
+    sourcePrescreenSessionId: "ps-job-1-cand-1",
+    profileSummary: "Frontend engineer with React interview evidence.",
+    resumeSummary: "React and TypeScript experience.",
+    passReason: "Answered all first-interview requirements clearly.",
+    matchReason: "Role and React experience align.",
+    createdBy: "system",
+    createdAt: now,
+  }
+
+  const result = await applyPassedCandidateSnapshot(db, {
+    eventId: "job-prescreen-pass-s7",
+    candidateId: "cand-1",
+    jobId: "job-1",
+    prescreenSessionId: "ps-job-1-cand-1",
+    occurredAt: now,
+    actor: "system",
+    snapshot,
+  })
+
+  assert.equal(result.state, "employer_visible")
+  assert.equal(result.snapshotCreated, true)
+  assert.equal(store.get(PA_COLLECTIONS.employerVisibleProfiles)!.size, 1)
+  const stateDoc = store.get(PA_COLLECTIONS.candidateJobStates)!.get(stateId)!
+  assert.equal(stateDoc.state, "employer_visible")
+  assert.equal(stateDoc.prescreenSessionId, "ps-job-1-cand-1")
+  assert.equal(stateDoc.employerVisibleProfileId, snapshot.snapshotId)
+
+  const duplicate = await applyPassedCandidateSnapshot(db, {
+    eventId: "job-prescreen-pass-s7",
+    candidateId: "cand-1",
+    jobId: "job-1",
+    prescreenSessionId: "ps-job-1-cand-1",
+    occurredAt: now,
+    actor: "system",
+    snapshot,
+  })
+  assert.equal(duplicate.idempotent, true)
+  assert.equal(duplicate.snapshotCreated, false)
+  assert.equal(store.get(PA_COLLECTIONS.employerVisibleProfiles)!.size, 1)
+
+  await assert.rejects(
+    () =>
+      applyPassedCandidateSnapshot(db, {
+        eventId: "job-prescreen-pass-s7-conflict",
+        candidateId: "cand-1",
+        jobId: "job-1",
+        prescreenSessionId: "ps-job-1-cand-1",
+        occurredAt: now,
+        actor: "system",
+        snapshot: { ...snapshot, passReason: "Different reason" },
+      }),
+    /conflicting_duplicate_event/
+  )
+})
+
+test("NOT_PASS and PAUSE create no employer-visible snapshots", async () => {
+  const notPass = makeFakeFirestore()
+  await applyCandidateJobEvent(notPass.db, job("prescreen_started"))
+  await applyCandidateJobEvent(notPass.db, job("prescreen_not_passed"))
+  assert.equal(notPass.store.get(PA_COLLECTIONS.candidateJobStates)!.get(createCandidateJobStateId("cand-1", "job-1"))!.state, "not_passed")
+  assert.equal(notPass.store.get(PA_COLLECTIONS.employerVisibleProfiles)!.size, 0)
+  assert.equal(notPass.store.get(PA_COLLECTIONS.users)!.size, 0)
+
+  const paused = makeFakeFirestore()
+  await applyCandidateJobEvent(paused.db, job("prescreen_started"))
+  await applyCandidateJobEvent(paused.db, job("manual_pause"))
+  assert.equal(paused.store.get(PA_COLLECTIONS.candidateJobStates)!.get(createCandidateJobStateId("cand-1", "job-1"))!.state, "paused")
+  assert.equal(paused.store.get(PA_COLLECTIONS.employerVisibleProfiles)!.size, 0)
+  assert.equal(paused.store.get(PA_COLLECTIONS.users)!.size, 0)
 })
 
 function jobOpportunityDraft(over: Partial<JobOpportunityDraft> = {}): JobOpportunityDraft {

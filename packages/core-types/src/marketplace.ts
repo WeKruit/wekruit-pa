@@ -411,6 +411,7 @@ export const CandidateJobStateDocSchema = z.object({
   stateUpdatedAt: TimestampSchema,
   reason: z.string().max(1_000).optional(),
   prescreenSessionId: z.string().min(1).optional(),
+  employerVisibleProfileId: z.string().min(1).optional(),
   outboundInviteId: z.string().min(1).optional(),
   outboundId: z.string().min(1).optional(),
   latestMatchId: z.string().min(1).optional(),
@@ -585,21 +586,83 @@ export const OutboundInviteSchema = z.object({
 })
 export type OutboundInvite = z.infer<typeof OutboundInviteSchema>
 
-export const EmployerVisibleProfileSchema = z.object({
+function containsEmployerVisibleRawContact(value: unknown): boolean {
+  if (typeof value === "string") {
+    const normalized = value.toLowerCase()
+    if (/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.test(value)) return true
+    if (/(?:\+?\d[\s().-]*){9,}/.test(value)) return true
+    if (
+      normalized.includes("linkedin.com") ||
+      normalized.includes("firebasestorage.googleapis.com") ||
+      normalized.includes("storage.googleapis.com") ||
+      normalized.includes("gs://")
+    ) {
+      return true
+    }
+  }
+  if (Array.isArray(value)) return value.some(containsEmployerVisibleRawContact)
+  if (value && typeof value === "object") {
+    return Object.values(value as Record<string, unknown>).some(containsEmployerVisibleRawContact)
+  }
+  return false
+}
+
+const EmployerVisibleProfileShape = z.object({
   snapshotId: IdSchema,
   candidateId: IdSchema,
   jobId: IdSchema,
   candidateJobStateId: IdSchema,
   createdFromState: z.literal("passed"),
-  displayName: z.string().min(1).optional(),
+  sourcePrescreenSessionId: IdSchema.optional(),
+  sourceMatchId: IdSchema.optional(),
+  sourceResumeArtifactId: IdSchema.optional(),
+  displayName: z.string().min(1).max(200).optional(),
+  profileSummary: z.string().max(4_000).optional(),
   resumeSummary: z.string().max(4_000).optional(),
   tagsSnapshot: CandidateGlobalTagsSchema.optional(),
+  level1Snapshot: z.record(z.unknown()).optional(),
+  transcriptSummary: z.string().max(4_000).optional(),
   passReason: z.string().max(2_000).optional(),
   matchReason: z.string().max(2_000).optional(),
   consentAt: TimestampSchema.optional(),
+  piiConsentAt: TimestampSchema.optional(),
   createdAt: TimestampSchema,
   createdBy: MarketplaceActorSchema.default("system"),
 })
+
+type EmployerVisibleProfileInput = z.input<typeof EmployerVisibleProfileShape>
+
+function employerVisibleRedactionSurface(snapshot: EmployerVisibleProfileInput): unknown {
+  return {
+    sourceResumeArtifactId: snapshot.sourceResumeArtifactId,
+    displayName: snapshot.displayName,
+    profileSummary: snapshot.profileSummary,
+    resumeSummary: snapshot.resumeSummary,
+    level1Snapshot: snapshot.level1Snapshot,
+    transcriptSummary: snapshot.transcriptSummary,
+    passReason: snapshot.passReason,
+    matchReason: snapshot.matchReason,
+  }
+}
+
+export const EmployerVisibleProfileSchema = z
+  .object(EmployerVisibleProfileShape.shape)
+  .superRefine((snapshot, ctx) => {
+    if (snapshot.snapshotId !== createEmployerVisibleProfileId(snapshot.jobId, snapshot.candidateId)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["snapshotId"],
+        message: "snapshotId must equal createEmployerVisibleProfileId(jobId, candidateId)",
+      })
+    }
+    if (containsEmployerVisibleRawContact(employerVisibleRedactionSurface(snapshot))) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [],
+        message: "EmployerVisibleProfile must not contain raw contact or storage locator values",
+      })
+    }
+  })
 export type EmployerVisibleProfile = z.infer<typeof EmployerVisibleProfileSchema>
 
 export const FeedbackEventSchema = z.object({
@@ -943,11 +1006,27 @@ export const CandidateJobEventSchema = z.discriminatedUnion("type", [
     providerStatus: z.string().min(1),
   }),
   CandidateJobEventBaseSchema.extend({ type: z.literal("candidate_interested") }),
-  CandidateJobEventBaseSchema.extend({ type: z.literal("prescreen_started") }),
-  CandidateJobEventBaseSchema.extend({ type: z.literal("prescreen_passed") }),
-  CandidateJobEventBaseSchema.extend({ type: z.literal("prescreen_not_passed") }),
-  CandidateJobEventBaseSchema.extend({ type: z.literal("manual_pause") }),
-  CandidateJobEventBaseSchema.extend({ type: z.literal("employer_snapshot_created") }),
+  CandidateJobEventBaseSchema.extend({
+    type: z.literal("prescreen_started"),
+    prescreenSessionId: IdSchema,
+  }),
+  CandidateJobEventBaseSchema.extend({
+    type: z.literal("prescreen_passed"),
+    prescreenSessionId: IdSchema,
+  }),
+  CandidateJobEventBaseSchema.extend({
+    type: z.literal("prescreen_not_passed"),
+    prescreenSessionId: IdSchema,
+  }),
+  CandidateJobEventBaseSchema.extend({
+    type: z.literal("manual_pause"),
+    prescreenSessionId: IdSchema.optional(),
+  }),
+  CandidateJobEventBaseSchema.extend({
+    type: z.literal("employer_snapshot_created"),
+    prescreenSessionId: IdSchema.optional(),
+    employerVisibleProfileId: IdSchema,
+  }),
   CandidateJobEventBaseSchema.extend({ type: z.literal("candidate_declined") }),
   CandidateJobEventBaseSchema.extend({ type: z.literal("archive") }),
 ])

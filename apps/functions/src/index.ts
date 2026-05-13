@@ -167,6 +167,7 @@ export { paQaEvaluatorWeekly } from "./qa-evaluator-weekly.js"
 // breakdown + counters for the dashboard's live debugger.
 export { paAdminJobMatchDebug, paAdminMatchDebug } from "./admin-match-debug.js"
 export { paAdminOutreachOpsSnapshot } from "./outreach/admin.js"
+export { paAdminPassedCandidatesSnapshot } from "./admin-passed-candidates.js"
 
 // v1.8 ENRICHER-04 — `paEnrichJobTags` HTTP CF wraps the unified
 // @pa/job-tag-enricher service (mirror of pa-resume-parser, job-side).

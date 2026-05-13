@@ -272,6 +272,7 @@ export default function PublicJob() {
   const [err, setErr] = useState<string | null>(null)
   const [job, setJob] = useState<PaJobDoc | null>(null)
   const [pool, setPool] = useState<PoolNumber[] | null>(null)
+  const [smsClicked, setSmsClicked] = useState(false)
 
   const requestedUserId = useMemo(() => (jobId ? getOrCreateRequestedUserId(jobId) : ""), [jobId])
 
@@ -393,6 +394,7 @@ export default function PublicJob() {
           {smsHref ? (
             <a
               href={smsHref}
+              onClick={() => setSmsClicked(true)}
               style={{
                 display: "inline-block",
                 marginTop: "0.5rem",
@@ -411,6 +413,21 @@ export default function PublicJob() {
               WeKruit messaging temporarily unavailable. Please check back shortly.
             </p>
           )}
+          {smsClicked ? (
+            <p
+              style={{
+                margin: "0.75rem 0 0",
+                padding: "0.75rem 1rem",
+                border: "1px solid #c6e6ce",
+                borderRadius: 12,
+                background: "#e8f5ec",
+                color: "#24543c",
+                fontWeight: 700,
+              }}
+            >
+              Continue in iMessage to answer Claire. Sign in to see your status after you start.
+            </p>
+          ) : null}
         </div>
         {qrSrc ? (
           <div style={{ textAlign: "center" }}>

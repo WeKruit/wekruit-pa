@@ -1,0 +1,38 @@
+// @ts-nocheck - landing app typecheck only includes Vite/browser types; this file runs with node --test via tsx.
+import assert from "node:assert/strict"
+import test from "node:test"
+
+import { getCandidateJobStatusDisplay } from "./candidate-job-status.js"
+
+test("getCandidateJobStatusDisplay returns concise candidate-facing status copy", () => {
+  assert.deepEqual(getCandidateJobStatusDisplay("invited", "Frontend Engineer"), {
+    label: "Invited",
+    nextStep: "Claire is ready to run the first interview for this role.",
+    tone: "active",
+    ctaLabel: "Start interview",
+  })
+
+  assert.deepEqual(getCandidateJobStatusDisplay("interview_started"), {
+    label: "Interview started",
+    nextStep: "Continue in iMessage when you are ready to finish the first interview.",
+    tone: "active",
+    ctaLabel: "Continue interview",
+  })
+})
+
+test("getCandidateJobStatusDisplay keeps pass copy consent-safe", () => {
+  const display = getCandidateJobStatusDisplay("passed", "Frontend Engineer")
+
+  assert.equal(display.label, "Passed")
+  assert.equal(display.tone, "positive")
+  assert.doesNotMatch(display.nextStep, /employer|shared|sent|visible/i)
+})
+
+test("getCandidateJobStatusDisplay keeps not-pass role-specific and global-pool safe", () => {
+  const display = getCandidateJobStatusDisplay("not_passed", "Product Designer")
+
+  assert.equal(display.label, "Not passed")
+  assert.match(display.nextStep, /Product Designer/)
+  assert.match(display.nextStep, /profile stays active/)
+  assert.doesNotMatch(display.nextStep, /rejected|removed|closed/i)
+})

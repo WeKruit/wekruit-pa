@@ -29,6 +29,7 @@ import {
   type FeedbackEvent,
   type JobEnrichmentEvalFixture,
   type JobOpportunityDraft,
+  type MarketplaceEvidence,
   type MarketplaceActor,
   type OutboundInvite,
   type StateReductionResult,
@@ -176,6 +177,14 @@ export async function applyCandidateJobEvent(
       previousState: currentState,
       stateUpdatedAt: event.occurredAt,
       reason: reduced.reason,
+      prescreenSessionId:
+        "prescreenSessionId" in event
+          ? event.prescreenSessionId ?? currentDoc?.prescreenSessionId
+          : currentDoc?.prescreenSessionId,
+      employerVisibleProfileId:
+        event.type === "employer_snapshot_created"
+          ? event.employerVisibleProfileId
+          : currentDoc?.employerVisibleProfileId,
       outboundInviteId:
         event.type === "outbound_queued" || event.type === "outbound_sent"
           ? event.outboundInviteId
@@ -982,4 +991,191 @@ export async function writeEmployerVisibleProfile(
     })
   }
   return { snapshot: result.event, created: result.created }
+}
+
+export type ApplyPassedCandidateSnapshotInput = {
+  eventId: string
+  candidateId: string
+  jobId: string
+  prescreenSessionId: string
+  occurredAt: string
+  actor: MarketplaceActor
+  evidence?: MarketplaceEvidence[]
+  snapshot: EmployerVisibleProfile
+}
+
+export type ApplyPassedCandidateSnapshotResult = {
+  snapshot: EmployerVisibleProfile
+  snapshotCreated: boolean
+  state: CandidateJobState
+  stateDocId: string
+  idempotent: boolean
+  auditEventIds: string[]
+}
+
+export async function applyPassedCandidateSnapshot(
+  db: Firestore,
+  input: ApplyPassedCandidateSnapshotInput
+): Promise<ApplyPassedCandidateSnapshotResult> {
+  const passedEvent = CandidateJobEventSchema.parse({
+    eventId: input.eventId,
+    type: "prescreen_passed",
+    candidateId: input.candidateId,
+    jobId: input.jobId,
+    actor: input.actor,
+    occurredAt: input.occurredAt,
+    evidence: input.evidence ?? [{ source: "prescreen", summary: "Candidate passed first interview" }],
+    prescreenSessionId: input.prescreenSessionId,
+  })
+  const snapshot = EmployerVisibleProfileSchema.parse(input.snapshot)
+  const stateDocId = createCandidateJobStateId(input.candidateId, input.jobId)
+  const expectedSnapshotId = createEmployerVisibleProfileId(input.jobId, input.candidateId)
+  if (snapshot.snapshotId !== expectedSnapshotId) {
+    throw new Error(`invalid_employer_visible_snapshot_id:${snapshot.snapshotId}`)
+  }
+  if (
+    snapshot.candidateId !== input.candidateId ||
+    snapshot.jobId !== input.jobId ||
+    snapshot.candidateJobStateId !== stateDocId
+  ) {
+    throw new Error("employer_visible_candidate_job_link_mismatch")
+  }
+  if (
+    snapshot.sourcePrescreenSessionId &&
+    snapshot.sourcePrescreenSessionId !== input.prescreenSessionId
+  ) {
+    throw new Error("employer_visible_prescreen_session_mismatch")
+  }
+
+  const employerEvent: CandidateJobEvent = CandidateJobEventSchema.parse({
+    eventId: `employer-visible-${snapshot.snapshotId}`,
+    type: "employer_snapshot_created",
+    candidateId: input.candidateId,
+    jobId: input.jobId,
+    actor: input.actor,
+    occurredAt: input.occurredAt,
+    evidence: [{ source: "prescreen", summary: "Passed profile snapshot created", refId: snapshot.snapshotId }],
+    prescreenSessionId: input.prescreenSessionId,
+    employerVisibleProfileId: snapshot.snapshotId,
+  })
+
+  const stateRef = db.collection(PA_COLLECTIONS.candidateJobStates).doc(stateDocId)
+  const snapshotRef = db.collection(PA_COLLECTIONS.employerVisibleProfiles).doc(snapshot.snapshotId)
+  const passAuditRef = db.collection(AUDIT_COLLECTION).doc(auditId("marketplace_candidate_job", passedEvent.eventId))
+  const employerAuditRef = db.collection(AUDIT_COLLECTION).doc(auditId("marketplace_candidate_job", employerEvent.eventId))
+  const snapshotAuditRef = db.collection(AUDIT_COLLECTION).doc(auditId("marketplace_employer_visible", snapshot.snapshotId))
+
+  return await db.runTransaction(async (tx) => {
+    const stateSnap = await tx.get(stateRef)
+    const snapshotSnap = await tx.get(snapshotRef)
+    const passAuditSnap = await tx.get(passAuditRef)
+    const employerAuditSnap = await tx.get(employerAuditRef)
+    const snapshotAuditSnap = await tx.get(snapshotAuditRef)
+    const currentDoc = stateSnap.exists
+      ? CandidateJobStateDocSchema.parse(stateSnap.data())
+      : null
+    const currentState = currentDoc?.state ?? "candidate_matched"
+
+    if (snapshotSnap.exists) {
+      const existingSnapshot = EmployerVisibleProfileSchema.parse(snapshotSnap.data())
+      if (stableJson(pruneUndefined(existingSnapshot)) !== stableJson(pruneUndefined(snapshot))) {
+        throw new Error(`conflicting_duplicate_event:${PA_COLLECTIONS.employerVisibleProfiles}/${snapshot.snapshotId}`)
+      }
+      if (
+        passAuditSnap.exists ||
+        employerAuditSnap.exists ||
+        currentState === "employer_visible"
+      ) {
+        return {
+          snapshot: existingSnapshot,
+          snapshotCreated: false,
+          state: currentState,
+          stateDocId,
+          idempotent: true,
+          auditEventIds: [passAuditRef.id, employerAuditRef.id, snapshotAuditRef.id],
+        }
+      }
+    }
+
+    const passReduced = reduceCandidateJobState(currentState, passedEvent)
+    if (passReduced.state !== "passed") {
+      throw new Error(`candidate_job_not_passable:${passReduced.reason}`)
+    }
+    const visibleReduced = reduceCandidateJobState(passReduced.state, employerEvent)
+    if (visibleReduced.state !== "employer_visible") {
+      throw new Error(`candidate_job_not_employer_visible:${visibleReduced.reason}`)
+    }
+
+    const nextDoc: CandidateJobStateDoc = CandidateJobStateDocSchema.parse({
+      ...(currentDoc ?? {}),
+      id: stateDocId,
+      candidateId: input.candidateId,
+      jobId: input.jobId,
+      state: visibleReduced.state,
+      previousState: passReduced.state,
+      stateUpdatedAt: input.occurredAt,
+      reason: visibleReduced.reason,
+      prescreenSessionId: input.prescreenSessionId,
+      employerVisibleProfileId: snapshot.snapshotId,
+      outboundInviteId: currentDoc?.outboundInviteId,
+      outboundId: currentDoc?.outboundId,
+      latestMatchId: currentDoc?.latestMatchId,
+      archivedAt: currentDoc?.archivedAt,
+    })
+
+    tx.set(stateRef, firestorePayload(nextDoc as Record<string, unknown>), { merge: true })
+    tx.set(snapshotRef, firestorePayload(snapshot as Record<string, unknown>))
+    if (!passAuditSnap.exists) {
+      tx.set(passAuditRef, firestorePayload({
+        id: passAuditRef.id,
+        action: "marketplace.candidate_job.transition",
+        candidateId: input.candidateId,
+        jobId: input.jobId,
+        eventId: passedEvent.eventId,
+        eventType: passedEvent.type,
+        from: passReduced.transition.from,
+        to: passReduced.transition.to,
+        changed: passReduced.changed,
+        reason: passReduced.reason,
+        actor: passedEvent.actor,
+        createdAt: passedEvent.occurredAt,
+      }))
+    }
+    if (!employerAuditSnap.exists) {
+      tx.set(employerAuditRef, firestorePayload({
+        id: employerAuditRef.id,
+        action: "marketplace.candidate_job.transition",
+        candidateId: input.candidateId,
+        jobId: input.jobId,
+        eventId: employerEvent.eventId,
+        eventType: employerEvent.type,
+        from: visibleReduced.transition.from,
+        to: visibleReduced.transition.to,
+        changed: visibleReduced.changed,
+        reason: visibleReduced.reason,
+        actor: employerEvent.actor,
+        createdAt: employerEvent.occurredAt,
+      }))
+    }
+    if (!snapshotAuditSnap.exists) {
+      tx.set(snapshotAuditRef, firestorePayload({
+        id: snapshotAuditRef.id,
+        action: "marketplace.employer_visible.create",
+        snapshotId: snapshot.snapshotId,
+        candidateId: snapshot.candidateId,
+        jobId: snapshot.jobId,
+        actor: snapshot.createdBy,
+        createdAt: snapshot.createdAt,
+      }))
+    }
+
+    return {
+      snapshot,
+      snapshotCreated: !snapshotSnap.exists,
+      state: visibleReduced.state,
+      stateDocId,
+      idempotent: false,
+      auditEventIds: [passAuditRef.id, employerAuditRef.id, snapshotAuditRef.id],
+    }
+  })
 }

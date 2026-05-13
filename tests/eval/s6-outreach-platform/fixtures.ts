@@ -343,6 +343,18 @@ export function candidateJobEvent(
 ): CandidateJobEvent {
   const candidateId = over.candidateId ?? defaultCandidateId
   const jobId = over.jobId ?? defaultJobId
+  const prescreenFields = [
+    "prescreen_started",
+    "prescreen_passed",
+    "prescreen_not_passed",
+    "manual_pause",
+  ].includes(type)
+    ? { prescreenSessionId: `ps-${jobId}-${candidateId}` }
+    : {}
+  const employerFields =
+    type === "employer_snapshot_created"
+      ? { employerVisibleProfileId: `${jobId}__${candidateId}` }
+      : {}
   return {
     eventId: `s6-${type}`,
     type,
@@ -351,6 +363,8 @@ export function candidateJobEvent(
     actor: "system",
     occurredAt: now,
     evidence: [{ source: "system", summary: "S6 outreach eval event" }],
+    ...prescreenFields,
+    ...employerFields,
     ...over,
   } as CandidateJobEvent
 }
