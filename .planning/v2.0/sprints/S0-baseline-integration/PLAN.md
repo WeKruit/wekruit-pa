@@ -25,10 +25,16 @@ next sprint trigger for S1.
 
 ## Current Repo Orientation
 
-The current v2.0 planning base is the v1.9 worktree:
+The current S0 execution worktree is:
 
 ```text
-/Users/adam/Desktop/WeKruit/wekruit-pa/.claude/worktrees/frosty-wozniak-84b965
+/Users/adam/Desktop/WeKruit/wekruit-pa/.claude/worktrees/v2-S0-baseline-integration
+```
+
+It was created from updated `main`:
+
+```text
+codex/v2-S0-baseline-integration at 23b9adb258fd10171e62cb8ba5030d5ba08dc3d0
 ```
 
 The canonical product memory is `README.md`. The operating authority is
@@ -135,6 +141,25 @@ The lead must integrate executor plans and explicitly answer:
 - Do docs point to the same roadmap/harness?
 - Are S1 entry criteria clear?
 
+Lead integration note after executor `AGENT_PLAN` responses:
+
+- Write scopes are disjoint because all executors returned read-only plans and
+  the lead owns the S0 docs edits.
+- No executor plan touches runtime code, deploys, mutates data, or sends live
+  outbound.
+- The S0 acceptance checks remain sufficient for a baseline sprint: branch and
+  dirty-state inspection, pa-orchestrator tests, functions tests, candidate
+  landing curl, public job curl, admin redirect curl, public CV ingest
+  validation curl, and canonical doc cross-reference.
+- Domain/Deploy State owns expected live URL behavior; Test Harness owns test
+  command expectations; Repo State owns branch/dirty classification; Roadmap
+  Consistency owns canonical doc consistency. The lead records the final
+  consolidated acceptance evidence.
+- `.planning/V2-GOAL-PROMPT.md` is included in the final cross-reference check
+  because the canonical docs reference it.
+- Historical references to `claude/frosty-wozniak-84b965` are baseline context;
+  the actual S0 closeout branch is `codex/v2-S0-baseline-integration`.
+
 ## Milestones
 
 M0.1: S0 directory and required documents exist.
@@ -157,7 +182,7 @@ M0.6: `SUMMARY.md` records S1 entry conditions.
    git branch --show-current
    ```
 
-   Expected: `claude/frosty-wozniak-84b965`.
+   Expected: `codex/v2-S0-baseline-integration`.
 
 2. Confirm dirty state:
 
@@ -165,7 +190,8 @@ M0.6: `SUMMARY.md` records S1 entry conditions.
    git status --short
    ```
 
-   Expected during S0 setup: docs/planning files only.
+   Expected during S0 closeout: only S0 docs/artifacts edited in the dedicated
+   worktree.
 
 3. Re-run orchestrator tests:
 
@@ -181,7 +207,8 @@ M0.6: `SUMMARY.md` records S1 entry conditions.
    cd apps/functions && pnpm test
    ```
 
-   Expected: all tests pass. Previous baseline was 1143/1143.
+   Expected: all tests pass. Previous baseline was 1143/1143; fresh S0
+   closeout count is 1168/1168 after recent test additions.
 
 5. Re-run candidate landing curl:
 
@@ -270,9 +297,9 @@ If curl checks fail, record:
 - [x] (2026-05-13) v2.0 roadmap written to `.planning/MILESTONE-v2.0-candidate-retention-marketplace.md`.
 - [x] (2026-05-13) autonomous sprint harness written to `.planning/AUTONOMOUS-SPRINT-HARNESS.md`.
 - [x] (2026-05-13) S0 context and plan initialized.
-- [ ] Executor plans requested and integrated.
-- [ ] S0 acceptance checks re-run and recorded.
-- [ ] S0 summary written.
+- [x] Executor plans requested and integrated.
+- [x] S0 acceptance checks re-run and recorded.
+- [x] S0 summary written.
 
 ## Decision Log
 
@@ -284,11 +311,36 @@ If curl checks fail, record:
   Rationale: `/goal` needs explicit planning, write-scope isolation, and acceptance gates before autonomous parallel work.
   Date/Author: 2026-05-13 / lead agent.
 
+- Decision: S0 may include minimal test-harness script fixes when required to
+  make the documented acceptance commands pass from a clean worktree.
+  Rationale: the first test runs failed before product assertions because
+  workspace `dist/` outputs were missing; the correct fix is making the test
+  commands build their declared local package dependencies.
+  Date/Author: 2026-05-13 / lead agent.
+
 ## Surprises And Discoveries
 
-- Observation: Current dirty state after this planning pass is docs/planning only.
-  Evidence: `git status --short` showed only roadmap, README, CLAUDE, AGENTS, harness, and S0 files.
+- Observation: Current dirty state in the dedicated S0 worktree is limited to
+  S0 docs plus two package test scripts.
+  Evidence: `git status --short --branch`.
+
+- Observation: A clean worktree did not have built workspace `dist/` outputs,
+  so the original test commands were not self-contained.
+  Evidence: first `pnpm --filter pa-orchestrator test` failed 1153/1175 with
+  missing `@pa/pa-broker`, `@pa/pa-persistence`, and `@pa/pa-safety` modules;
+  first `apps/functions` test failed 921/939 with missing
+  `@pa/pa-orchestrator`, `@pa/job-rec`, and `@pa/job-tag-enricher` modules.
+
+- Observation: The `apps/functions` sandbox rerun hit EPERM while TypeScript
+  was writing ignored `dist/` outputs. The same command passed when rerun with
+  escalated filesystem permissions.
+  Evidence: final `cd apps/functions && pnpm test` returned 1168/1168 pass.
 
 ## Outcomes And Retrospective
 
-Pending. Fill after acceptance checks pass or fail.
+S0 is accepted. The v2.0 baseline is now recorded from the dedicated
+`codex/v2-S0-baseline-integration` worktree, executor plans are integrated, and
+the required local tests plus live curl checks are green.
+
+S1 can start from updated `main` after this S0 closeout lands. The next sprint
+is S1 - Marketplace Data Foundation.

@@ -1,21 +1,22 @@
 # S0 Acceptance
 
-This file records S0 verification. Fill `Actual result` and `Status` when the
-checks are run.
+This file records S0 verification.
 
 ## Required Checks
 
 | Check | Command or action | Expected result | Actual result | Status |
 |---|---|---|---|---|
-| Branch | `git branch --show-current` | `claude/frosty-wozniak-84b965` | `claude/frosty-wozniak-84b965` | PASS |
-| Dirty state | `git status --short` | S0 docs/planning files only | S0 docs/planning files only at plan creation | PASS |
-| Orchestrator tests | `pnpm --filter pa-orchestrator test` | all pass, prior baseline 1479/1479 | pending rerun | PENDING |
-| Functions tests | `cd apps/functions && pnpm test` | all pass, prior baseline 1143/1143 | pending rerun | PENDING |
-| Candidate landing | `curl -sI https://candidate.wekruit.com/` | HTTP 200 | pending rerun | PENDING |
-| Public job page | `curl -sI https://candidate.wekruit.com/j/hs-11005382-invoko-product-designer` | HTTP 200 | pending rerun | PENDING |
-| Admin redirect | `curl -sI https://wekruit-pa.web.app/j/hs-11005382-invoko-product-designer` | HTTP 301 to candidate domain | pending rerun | PENDING |
-| Public CV ingest validation | `curl -s -X POST https://us-central1-wekruit-5f89b.cloudfunctions.net/paPublicCvIngest -H 'content-type: application/json' -d '{}'` | `{"ok":false,"reason":"missing_userId_or_tempUserId"}` | pending rerun | PENDING |
-| Doc cross-reference | `rg -n "AUTONOMOUS-SPRINT-HARNESS|MILESTONE-v2.0|Product Blueprint" README.md CLAUDE.md AGENTS.md .planning/MILESTONE-v2.0-candidate-retention-marketplace.md .planning/AUTONOMOUS-SPRINT-HARNESS.md` | all canonical docs point to blueprint, roadmap, harness | pending final check | PENDING |
+| Branch | `git branch --show-current` | `codex/v2-S0-baseline-integration` | `codex/v2-S0-baseline-integration` | PASS |
+| Head | `git rev-parse HEAD` | `23b9adb258fd10171e62cb8ba5030d5ba08dc3d0` | `23b9adb258fd10171e62cb8ba5030d5ba08dc3d0` | PASS |
+| Dirty state | `git status --short --branch` | only S0 docs and minimal test-harness scripts edited | S0 `ACCEPTANCE.md`, `CONTEXT.md`, `EXECUTOR-PLANS.md`, `PLAN.md`, `SUMMARY.md`, plus `apps/functions/package.json` and `packages/pa-orchestrator/package.json` | PASS |
+| Worktree install | `pnpm install --frozen-lockfile` | lockfile install succeeds in S0 worktree | exit 0; reused lockfile/store; Node 22 engine warnings under local Node v25.6.1 | PASS |
+| Orchestrator tests | `pnpm --filter pa-orchestrator test` | all pass, prior baseline 1479/1479 | first clean-worktree run failed 1153/1175 due missing built workspace deps; after `pretest` dependency-build fix: 1479/1479 pass, 0 fail | PASS |
+| Functions tests | `cd apps/functions && pnpm test` | all pass | first clean-worktree run failed 921/939 due missing built workspace deps; sandbox rerun hit EPERM writing ignored `dist/`; escalated rerun after `pretest` dependency-build fix: 1168/1168 pass, 0 fail | PASS |
+| Candidate landing | `curl -sI https://candidate.wekruit.com/` | HTTP 200 | sandbox curl first failed DNS exit 6; approved `curl -sS -i -I` returned `HTTP/2 200` | PASS |
+| Public job page | `curl -sI https://candidate.wekruit.com/j/hs-11005382-invoko-product-designer` | HTTP 200 | sandbox curl first failed DNS exit 6; approved `curl -sS -i -I` returned `HTTP/2 200` | PASS |
+| Admin redirect | `curl -sI https://wekruit-pa.web.app/j/hs-11005382-invoko-product-designer` | HTTP 301 to candidate domain | approved `curl -sS -i -I` returned `HTTP/2 301` with `location: https://candidate.wekruit.com/j/hs-11005382-invoko-product-designer` | PASS |
+| Public CV ingest validation | `curl -s -X POST https://us-central1-wekruit-5f89b.cloudfunctions.net/paPublicCvIngest -H 'content-type: application/json' -d '{}'` | `{"ok":false,"reason":"missing_userId_or_tempUserId"}` | approved `curl -sS -i -X POST ... -d '{}'` returned `HTTP/2 400` and `{"ok":false,"reason":"missing_userId_or_tempUserId"}` | PASS |
+| Doc cross-reference | `rg -n "Product Blueprint|Candidate Retention Marketplace|AUTONOMOUS-SPRINT-HARNESS|MILESTONE-v2.0|V2-GOAL-PROMPT|candidate\\.wekruit\\.com|pa\\.wekruit\\.com|wekruit-pa\\.web\\.app|first interview|passed-profile|NOT_PASS|Sendblue" ...` | canonical docs point to blueprint, roadmap, harness, V2 prompt, domain split, and product locks | references found in README.md, CLAUDE.md, AGENTS.md, milestone, harness, V2 prompt, and S0 docs; no contradictory lock found | PASS |
 
 ## Hard Fail Conditions
 
@@ -29,22 +30,35 @@ checks are run.
 
 ## Evidence
 
-Branch:
+Branch and head:
 
 ```text
-claude/frosty-wozniak-84b965
+codex/v2-S0-baseline-integration
+23b9adb258fd10171e62cb8ba5030d5ba08dc3d0
 ```
 
-Initial dirty state:
+Final dirty state:
 
 ```text
-M .planning/MILESTONE-v2.0-candidate-retention-marketplace.md
-M AGENTS.md
-M CLAUDE.md
-M README.md
-?? .planning/AUTONOMOUS-SPRINT-HARNESS.md
-?? .planning/v2.0/sprints/S0-baseline-integration/
+M .planning/v2.0/sprints/S0-baseline-integration/ACCEPTANCE.md
+M .planning/v2.0/sprints/S0-baseline-integration/CONTEXT.md
+M .planning/v2.0/sprints/S0-baseline-integration/EXECUTOR-PLANS.md
+M .planning/v2.0/sprints/S0-baseline-integration/PLAN.md
+M .planning/v2.0/sprints/S0-baseline-integration/SUMMARY.md
+M apps/functions/package.json
+M packages/pa-orchestrator/package.json
 ```
 
-Remaining evidence pending rerun.
+Ignored generated artifacts from `pnpm install` and package builds include
+`node_modules/` and workspace `dist/` directories; they are not part of the
+commit.
 
+S0 harness fixes:
+
+- `packages/pa-orchestrator/package.json`: `pretest` now builds all local
+  workspace packages that `pa-orchestrator` imports via `dist/`.
+- `apps/functions/package.json`: `pretest` now builds local workspace packages
+  imported by functions tests.
+
+No deploy, live SMS, Sendblue outbound, production data mutation, paid eval, or
+PII-printing action was performed during S0.

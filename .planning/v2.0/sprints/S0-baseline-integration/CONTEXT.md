@@ -16,18 +16,25 @@ on hidden thread context.
 Active worktree:
 
 ```text
-/Users/adam/Desktop/WeKruit/wekruit-pa/.claude/worktrees/frosty-wozniak-84b965
+/Users/adam/Desktop/WeKruit/wekruit-pa/.claude/worktrees/v2-S0-baseline-integration
 ```
 
 Current branch:
 
 ```text
-claude/frosty-wozniak-84b965
+codex/v2-S0-baseline-integration
+```
+
+Baseline source:
+
+```text
+main at 23b9adb258fd10171e62cb8ba5030d5ba08dc3d0
 ```
 
 Recent commits:
 
 ```text
+23b9adb docs(v2.0): add autonomous sprint harness
 f356e69 docs(v2.0): Adam-authored Candidate Retention Marketplace product lock + README blueprint
 fce46ae v1.9 hotfix - PrescreenTrigger pending-invite binding (Q1 reply drop-to-Claire fix)
 24bf963 docs - full product handoff brief for incoming lead agent (HANDOFF-TO-LEAD-2026-05-13.md)
@@ -35,15 +42,18 @@ a95ecc8 docs - domain split lock + canonical URLs across CLAUDE.md / AGENTS.md /
 8ad0375 v1.9 hotfix - candidate flow LIVES on pa-landing (Adam: "c端都在这个上面")
 ```
 
-Current dirty files are planning/docs only for this sprint setup:
+Current S0 worktree dirty state:
 
 ```text
-M  .planning/MILESTONE-v2.0-candidate-retention-marketplace.md
-M  AGENTS.md
-M  CLAUDE.md
-M  README.md
-?? .planning/AUTONOMOUS-SPRINT-HARNESS.md
-?? .planning/v2.0/sprints/S0-baseline-integration/
+clean at worktree creation
+```
+
+Root checkout note:
+
+```text
+/Users/adam/Desktop/WeKruit/wekruit-pa is on main and has unrelated local
+package.json/package-lock.json dependency churn. S0 runs from the dedicated
+clean worktree above and does not touch or rely on those root checkout changes.
 ```
 
 If future `git status` shows runtime files, the S0 lead must classify them as:
@@ -66,6 +76,14 @@ From `.planning/HANDOFF-TO-LEAD-2026-05-13.md` and current lead sanity pass:
 - `paPublicCvIngest` empty JSON returned `{"ok":false,"reason":"missing_userId_or_tempUserId"}`.
 
 S0 must re-run and record these checks before S1 implementation starts.
+
+Fresh S0 acceptance results are recorded in `ACCEPTANCE.md`:
+
+- `pnpm --filter pa-orchestrator test`: 1479/1479 pass.
+- `cd apps/functions && pnpm test`: 1168/1168 pass.
+- Candidate landing and public job page return HTTP 200.
+- Admin `/j/*` URL returns HTTP 301 to candidate domain.
+- `paPublicCvIngest` empty JSON returns the expected validation error.
 
 ## Locked Product Invariants
 
@@ -130,4 +148,3 @@ S0 is complete when:
 4. The v2.0 roadmap and autonomous harness references are consistent.
 5. S1 entry criteria are explicit.
 6. A future `/goal` agent can continue from S1 without asking what the baseline is.
-
