@@ -369,6 +369,183 @@
           "order": "DESCENDING"
         }
       ]
+    },
+    {
+      "_comment": "v2.0 S1 — admin candidate inspector: handles by candidate recency.",
+      "collectionGroup": "pa-candidate-handles",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "candidateId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "_comment": "v2.0 S1 — admin candidate inspector: resume artifacts by candidate recency.",
+      "collectionGroup": "pa-resume-artifacts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "candidateId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "_comment": "v2.0 S1 — candidate-job states by candidate and state.",
+      "collectionGroup": "pa-candidate-job-states",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "candidateId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "state",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "stateUpdatedAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "_comment": "v2.0 S1 — candidate-job states by job and state for future activation/debug.",
+      "collectionGroup": "pa-candidate-job-states",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "jobId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "state",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "stateUpdatedAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "_comment": "v2.0 S1 — candidate-job matches by candidate recency.",
+      "collectionGroup": "pa-candidate-job-matches",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "candidateId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "_comment": "v2.0 S1 — candidate-job matches by job recency.",
+      "collectionGroup": "pa-candidate-job-matches",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "jobId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "_comment": "v2.0 S1 — outbound invites by candidate recency.",
+      "collectionGroup": "pa-outbound-invites",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "candidateId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "_comment": "v2.0 S1 — employer-visible snapshots by candidate recency.",
+      "collectionGroup": "pa-employer-visible-profiles",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "candidateId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "_comment": "v2.0 S1 — feedback events by candidate recency.",
+      "collectionGroup": "pa-feedback-events",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "candidateId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "_comment": "v2.0 S1 — correction events by candidate recency.",
+      "collectionGroup": "pa-correction-events",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "candidateId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "_comment": "v2.0 S1 — correction events by corrected object.",
+      "collectionGroup": "pa-correction-events",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "targetType",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "targetId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": []

@@ -12,8 +12,12 @@
     }
   },
   "scripts": {
+    "prebuild": "npm run build --workspace=@wekruit/shared-tags",
     "build": "tsc",
-    "typecheck": "tsc --noEmit"
+    "pretypecheck": "npm run build --workspace=@wekruit/shared-tags",
+    "typecheck": "tsc --noEmit",
+    "pretest": "npm run build --workspace=@wekruit/shared-tags",
+    "test": "node --import tsx --test src/marketplace.test.ts"
   },
   "dependencies": {
     "@wekruit/shared-tags": "0.1.0",
@@ -21,6 +25,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.19.0",
+    "tsx": "^4.7.0",
     "typescript": "^5.3.0"
   }
 }

@@ -22,6 +22,7 @@ import { DownstreamTriggers } from "./pages/DownstreamTriggers.js"
 import { VoiceReview } from "./pages/VoiceReview.js"
 import { NRoundSim } from "./pages/NRoundSim.js"
 import { MatchCandidates } from "./pages/MatchCandidates.js"
+import CandidateProfile from "./pages/CandidateProfile.js"
 // iter30/WS8 — biz-demo Wave 2 — full match-* admin surface.
 import { MatchWeights } from "./pages/MatchWeights.js"
 import { MatchWeightsTest } from "./pages/MatchWeightsTest.js"
@@ -242,6 +243,7 @@ export default function App() {
           {/* Phase 49 (v1.5 Stream-H D9) — operator reverse-match dashboard. Admin-only;
               CF gates on paReverseMatchEnabled flag (default OFF). */}
           <Route path="/match/candidates" element={<MatchCandidates />} />
+          <Route path="/admin/candidates/:candidateId/profile" element={<CandidateProfile />} />
           {/* iter30/WS8 Wave 2 — biz-demo match admin surface. */}
           <Route path="/match/weights" element={<MatchWeights />} />
           <Route path="/match/weights/test" element={<MatchWeightsTest />} />

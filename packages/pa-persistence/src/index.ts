@@ -234,6 +234,16 @@ export type {
   AssistantTurnWithReview,
 } from "./voice-reviews.js"
 
+// v2.0 S1 — marketplace data foundation reducers + append-only flywheel writes.
+export {
+  applyCandidateJobEvent,
+  applyCandidateLifecycleEvent,
+  writeCorrectionEvent,
+  writeEmployerVisibleProfile,
+  writeFeedbackEvent,
+} from "./marketplace.js"
+export type { MarketplaceTransitionResult } from "./marketplace.js"
+
 // Phase 26 T1 — per-user rate limit (P9-Prod-Ops).
 export { checkAndIncrementRateLimit, RATE_LIMIT_COLLECTION } from "./rate-limit.js"
 export type { RateLimitOptions, RateLimitResult } from "./rate-limit.js"

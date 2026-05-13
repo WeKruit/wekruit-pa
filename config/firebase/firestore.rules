@@ -308,6 +308,42 @@ service cloud.firestore {
       allow update, delete: if isPaOperator();
     }
 
+    // ─── v2.0 S1 — marketplace data foundation ─────────────────────
+    // S1 is admin/operator visibility plus server-owned state writes. Future
+    // candidate claim reads belong to S2 after identity is locked.
+    match /pa-candidate-handles/{id} {
+      allow read: if isPaOperator();
+      allow write: if false;
+    }
+    match /pa-resume-artifacts/{id} {
+      allow read: if isPaOperator();
+      allow write: if false;
+    }
+    match /pa-candidate-job-states/{id} {
+      allow read: if isPaOperator();
+      allow write: if false;
+    }
+    match /pa-candidate-job-matches/{id} {
+      allow read: if isPaOperator();
+      allow write: if false;
+    }
+    match /pa-outbound-invites/{id} {
+      allow read: if isPaOperator();
+      allow write: if false;
+    }
+    match /pa-employer-visible-profiles/{id} {
+      allow read: if isPaOperator();
+      allow write: if false;
+    }
+    match /pa-feedback-events/{id} {
+      allow read, create: if isPaOperator();
+      allow update, delete: if false;
+    }
+    match /pa-correction-events/{id} {
+      allow read, create: if isPaOperator();
+      allow update, delete: if false;
+    }
+
     // ─── Default deny ────────────────────────────────────────────────
     match /{document=**} {
       allow read, write: if false;
