@@ -361,3 +361,167 @@ test("Phase 77: CompactTrigger refuses media attachments", async () => {
   assert.equal(r.kind, "unauthorized")
   assert.equal(deps.runs.length, 0)
 })
+
+// ════════════════════════════════════════════════════════════════════════════
+// v1.9 hotfix 2026-05-13 — pending-invite binding (public job page candidate flow)
+// ════════════════════════════════════════════════════════════════════════════
+
+function makePrescreenDepsWithPending(opts: {
+  phoneToUser?: Record<string, string | null>
+  adminIds?: string[]
+  pendingInvites?: Record<string, { jobId: string; createdAt: string }>
+  now?: number
+  ttlMs?: number
+} = {}) {
+  const base = makePrescreenDeps({
+    phoneToUser: opts.phoneToUser,
+    adminIds: opts.adminIds,
+    now: opts.now,
+  })
+  const pending: Record<string, { jobId: string; createdAt: string }> = {
+    ...(opts.pendingInvites ?? {}),
+  }
+  const consumed: string[] = []
+  const augmented = {
+    ...base,
+    consumed,
+    pendingState: pending,
+    async getPendingInvite(reqUserId: string) {
+      return pending[reqUserId] ?? null
+    },
+    async consumePendingInvite(reqUserId: string) {
+      consumed.push(reqUserId)
+      delete pending[reqUserId]
+    },
+    pendingInviteTtlMs: opts.ttlMs ?? 24 * 60 * 60 * 1000,
+  }
+  return augmented
+}
+
+test("v1.9 hotfix: pending-invite binds session to phone-resolved real userId (not wkr_uid)", async () => {
+  // Scenario: public job page generates wkr_uid 'wkrAAA' for jobId 'j1'.
+  // Stamps pa-prescreen-pending-invites/wkrAAA = {jobId:'j1', createdAt:now}.
+  // Candidate SMSes 'WeKruit_j1_wkrAAA_Job' from phone +15551234.
+  // Phone resolves to real userId 'realUser456' (different from wkrAAA).
+  // Trigger MUST bind session to 'realUser456' so Q1-reply lookup hits.
+  const nowMs = 1_700_000_000_000
+  const createdAt = new Date(nowMs - 5 * 60 * 1000).toISOString() // 5 min ago, within TTL
+  const deps = makePrescreenDepsWithPending({
+    phoneToUser: { "+15551234": "realUser456" },
+    adminIds: [], // candidate is NOT admin
+    pendingInvites: { wkrAAA: { jobId: "j1", createdAt } },
+    now: nowMs,
+  })
+  const trig = new PrescreenTrigger(deps)
+  const r = await trig.handle(makeCtx("WeKruit_j1_wkrAAA_Job", { fromNumber: "+15551234" }))
+  assert.equal(r.kind, "handled")
+  if (r.kind === "handled") assert.equal(r.action, "prescreen_triggered")
+
+  // Wait for fire-and-forget to settle
+  await new Promise((resolve) => setImmediate(resolve))
+
+  assert.equal(deps.runs.length, 1, "exactly one runPreScreen call")
+  assert.equal(deps.runs[0].userId, "realUser456", "session keyed by phone-resolved real userId")
+  assert.equal(deps.runs[0].jobId, "j1")
+  assert.equal((deps.runs[0] as { sourceRequestedUserId?: string }).sourceRequestedUserId, "wkrAAA", "attribution carries wkr_uid")
+
+  // Pending invite consumed
+  assert.deepEqual(deps.consumed, ["wkrAAA"])
+  assert.equal(deps.pendingState.wkrAAA, undefined)
+
+  // Idempotency stamped against SESSION userId (real), not wkr_uid
+  assert.equal(deps.setLastCalls[0].userId, "realUser456")
+  assert.equal(deps.setLastCalls[0].jobId, "j1")
+
+  // Audit role
+  const fired = deps.audits.find((a) => a.type === "trigger_fired")
+  assert.ok(fired, "trigger_fired audit emitted")
+  assert.equal(fired!.role, "public_page")
+  assert.equal(fired!.sourceRequestedUserId, "wkrAAA")
+})
+
+test("v1.9 hotfix: pending-invite rejected when TTL expired", async () => {
+  const nowMs = 1_700_000_000_000
+  const createdAt = new Date(nowMs - 25 * 60 * 60 * 1000).toISOString() // 25h ago, expired
+  const deps = makePrescreenDepsWithPending({
+    phoneToUser: { "+15551234": "realUser456" },
+    adminIds: [],
+    pendingInvites: { wkrAAA: { jobId: "j1", createdAt } },
+    now: nowMs,
+  })
+  const trig = new PrescreenTrigger(deps)
+  const r = await trig.handle(makeCtx("WeKruit_j1_wkrAAA_Job", { fromNumber: "+15551234" }))
+  assert.equal(r.kind, "unauthorized")
+  assert.equal(deps.runs.length, 0)
+  assert.equal(deps.consumed.length, 0, "do not consume expired pending invite")
+})
+
+test("v1.9 hotfix: pending-invite rejected when jobId mismatches", async () => {
+  const nowMs = 1_700_000_000_000
+  const createdAt = new Date(nowMs - 60 * 1000).toISOString()
+  const deps = makePrescreenDepsWithPending({
+    phoneToUser: { "+15551234": "realUser456" },
+    adminIds: [],
+    pendingInvites: { wkrAAA: { jobId: "DIFFERENT_JOB", createdAt } },
+    now: nowMs,
+  })
+  const trig = new PrescreenTrigger(deps)
+  const r = await trig.handle(makeCtx("WeKruit_j1_wkrAAA_Job", { fromNumber: "+15551234" }))
+  assert.equal(r.kind, "unauthorized")
+  if (r.kind === "unauthorized") assert.equal(r.reason, "not_self_or_admin")
+  assert.equal(deps.runs.length, 0)
+  assert.equal(deps.consumed.length, 0)
+})
+
+test("v1.9 hotfix: admin sender with public-page pending-invite uses phone-resolved (not body) userId", async () => {
+  // Adam-as-tester case: admin sends from his own phone with body containing
+  // a wkr_uid from his public-page visit. Pending-invite binds session to
+  // admin's REAL userId, not the random wkr_uid.
+  const nowMs = 1_700_000_000_000
+  const createdAt = new Date(nowMs - 60 * 1000).toISOString()
+  const deps = makePrescreenDepsWithPending({
+    phoneToUser: { "+15551234": "adam_admin_real" },
+    adminIds: ["adam_admin_real"],
+    pendingInvites: { wkrAAA: { jobId: "j1", createdAt } },
+    now: nowMs,
+  })
+  const trig = new PrescreenTrigger(deps)
+  const r = await trig.handle(makeCtx("WeKruit_j1_wkrAAA_Job", { fromNumber: "+15551234" }))
+  assert.equal(r.kind, "handled")
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(deps.runs[0].userId, "adam_admin_real", "admin's REAL userId binds, not wkr_uid")
+  const fired = deps.audits.find((a) => a.type === "trigger_fired")
+  // pendingMatch wins over isAdmin → role = public_page
+  assert.equal(fired!.role, "public_page")
+})
+
+test("v1.9 hotfix: admin testing other user (no pending-invite) uses body userId (legacy admin path)", async () => {
+  // Original admin-test-other-user case. body userId = target candidate userId,
+  // no pending-invite. Trigger keeps body userId for session (driving target's session).
+  const deps = makePrescreenDepsWithPending({
+    phoneToUser: { "+15551234": "adam_admin_real" },
+    adminIds: ["adam_admin_real"],
+    // no pendingInvites
+  })
+  const trig = new PrescreenTrigger(deps)
+  const r = await trig.handle(makeCtx("WeKruit_j1_targetCandidate_Job", { fromNumber: "+15551234" }))
+  assert.equal(r.kind, "handled")
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(deps.runs[0].userId, "targetCandidate", "admin override keeps body userId")
+  const fired = deps.audits.find((a) => a.type === "trigger_fired")
+  assert.equal(fired!.role, "admin")
+})
+
+test("v1.9 hotfix: self path unchanged when body userId matches phone-resolved userId", async () => {
+  const deps = makePrescreenDepsWithPending({
+    phoneToUser: { "+15551234": "user123" },
+    adminIds: [],
+  })
+  const trig = new PrescreenTrigger(deps)
+  const r = await trig.handle(makeCtx("WeKruit_j1_user123_Job", { fromNumber: "+15551234" }))
+  assert.equal(r.kind, "handled")
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(deps.runs[0].userId, "user123")
+  const fired = deps.audits.find((a) => a.type === "trigger_fired")
+  assert.equal(fired!.role, "self")
+})

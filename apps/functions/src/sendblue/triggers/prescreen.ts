@@ -40,11 +40,47 @@ export interface PrescreenTriggerDeps {
   /** Write idempotency timestamp. */
   setLastFiredMs(jobId: string, userId: string, ms: number): Promise<void>
   /** Fire the actual pre-screening session bootstrap. Fire-and-forget. */
-  runPreScreen(args: { jobId: string; userId: string; toE164: string }): Promise<void>
+  runPreScreen(args: {
+    jobId: string
+    userId: string
+    toE164: string
+    /**
+     * v1.9 hotfix 2026-05-13 — when the trigger was authorized via a
+     * public-job-page pending-invite (NOT self / NOT admin), this carries
+     * the original wkr_uid for attribution. session userId is the
+     * phone-resolved real userId.
+     */
+     sourceRequestedUserId?: string
+  }): Promise<void>
   /** Audit emitter (logged for both deny + accept). */
   audit(event: Record<string, unknown>): Promise<void>
   /** Optional clock seam for tests. */
   now?(): number
+
+  /**
+   * v1.9 hotfix 2026-05-13 — pending-invite binding.
+   *
+   * Public job page generates a random `wkr_uid` localStorage UUID and
+   * stamps `pa-prescreen-pending-invites/{wkr_uid} = {jobId, createdAt}`
+   * BEFORE the candidate opens iMessage. The candidate's SMS body then
+   * contains that wkr_uid.
+   *
+   * When the trigger fires:
+   *   1. Body userId = wkr_uid (NOT the real pa-users doc id)
+   *   2. Sender phone resolves to the real pa-users userId (different from wkr_uid)
+   *
+   * Without this hook the trigger would either reject "not_self_or_admin"
+   * OR (for admin sender) create a session keyed by the random wkr_uid, and
+   * the Q1-reply webhook — which looks up active session BY phone-resolved
+   * real userId — would miss the session and fall through to Claire.
+   *
+   * Optional for back-compat with v1.8 tests; production should always
+   * inject both.
+   */
+  getPendingInvite?(requestedUserId: string): Promise<{ jobId?: string; createdAt?: string } | null>
+  consumePendingInvite?(requestedUserId: string): Promise<void>
+  /** 24h pending-invite TTL, ms. Override for tests; default 24h. */
+  pendingInviteTtlMs?: number
 }
 
 export class PrescreenTrigger implements Trigger {
@@ -102,7 +138,40 @@ export class PrescreenTrigger implements Trigger {
     }
     const isSelf = resolvedUserId === userId
     const isAdmin = this.deps.isAdmin ? await this.deps.isAdmin(resolvedUserId) : false
-    if (!isSelf && !isAdmin) {
+
+    // v1.9 hotfix 2026-05-13 — pending-invite binding.
+    // Public job page generates random wkr_uid and stamps a pending-invite
+    // doc keyed by it. When the trigger body's userId matches that wkr_uid
+    // AND the doc was created < TTL ago AND the jobId matches, this is a
+    // PUBLIC-PAGE-CANDIDATE flow. Bind session to the phone-resolved real
+    // userId (not the random wkr_uid). Without this, the session is keyed
+    // by wkr_uid and the Q1-reply lookup (which uses phone-resolved real
+    // userId) misses → falls through to Claire.
+    const ttlMs = this.deps.pendingInviteTtlMs ?? 24 * 60 * 60 * 1000
+    let pendingMatch = false
+    if (!isSelf && this.deps.getPendingInvite) {
+      try {
+        const pending = await this.deps.getPendingInvite(userId)
+        if (
+          pending &&
+          typeof pending.jobId === "string" &&
+          pending.jobId === jobId &&
+          typeof pending.createdAt === "string"
+        ) {
+          const createdMs = new Date(pending.createdAt).getTime()
+          if (Number.isFinite(createdMs) && now - createdMs < ttlMs) {
+            pendingMatch = true
+          }
+        }
+      } catch (err) {
+        ctx.log("trigger.prescreen.pending_invite_lookup_failed", {
+          parsedUserId: userId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    }
+
+    if (!isSelf && !isAdmin && !pendingMatch) {
       await this.deps.audit({
         type: "trigger_unauthorized",
         trigger: "prescreen",
@@ -114,34 +183,63 @@ export class PrescreenTrigger implements Trigger {
       return { kind: "unauthorized", reason: "not_self_or_admin" }
     }
 
+    // Session userId selection:
+    //   - self: body userId === resolved userId → use it (no-op)
+    //   - pendingMatch: body userId = wkr_uid; rebind session to resolvedUserId
+    //   - admin (without pendingMatch): admin testing on behalf of another
+    //     user — keep body userId so admin can drive that user's session
+    const sessionUserId = pendingMatch ? resolvedUserId : userId
+    const role: "self" | "admin" | "public_page" = pendingMatch
+      ? "public_page"
+      : isSelf
+        ? "self"
+        : "admin"
+
     // Stamp idempotency BEFORE dispatching so a concurrent retry from
-    // Sendblue (HMAC may double-deliver) doesn't double-fire.
-    await this.deps.setLastFiredMs(jobId, userId, now)
+    // Sendblue (HMAC may double-deliver) doesn't double-fire. Idempotency
+    // is keyed by the SESSION userId so a public-page candidate doesn't
+    // get throttled by a stale wkr_uid stamp.
+    await this.deps.setLastFiredMs(jobId, sessionUserId, now)
 
     // Fire-and-forget. Errors here would otherwise reject the HTTP reply.
     void Promise.resolve()
       .then(() =>
         this.deps.runPreScreen({
           jobId,
-          userId,
+          userId: sessionUserId,
           toE164: ctx.fromNumber,
+          ...(pendingMatch ? { sourceRequestedUserId: userId } : {}),
         })
       )
       .catch((err) => {
         ctx.log("trigger.prescreen.run_threw", {
           jobId,
-          userId,
+          userId: sessionUserId,
           error: err instanceof Error ? err.message : String(err),
         })
       })
+
+    // Consume pending-invite AFTER successful dispatch so a retry can re-
+    // bind. Fail-open — delete failure does not roll back the trigger.
+    if (pendingMatch && this.deps.consumePendingInvite) {
+      try {
+        await this.deps.consumePendingInvite(userId)
+      } catch (err) {
+        ctx.log("trigger.prescreen.pending_invite_consume_failed", {
+          parsedUserId: userId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    }
 
     await this.deps.audit({
       type: "trigger_fired",
       trigger: "prescreen",
       jobId,
-      userId,
+      userId: sessionUserId,
       senderUserId: resolvedUserId,
-      role: isSelf ? "self" : "admin",
+      role,
+      ...(pendingMatch ? { sourceRequestedUserId: userId } : {}),
       correlationId: ctx.messageHandle,
     })
     return { kind: "handled", action: "prescreen_triggered" }

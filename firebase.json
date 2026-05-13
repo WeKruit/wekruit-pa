@@ -21,7 +21,8 @@
         "node \"$RESOURCE_DIR/../scripts/predeploy-smoke.mjs\"",
         "npm --prefix \"$RESOURCE_DIR/..\" run build",
         "npm --prefix \"$RESOURCE_DIR/..\" run typecheck",
-        "npm --prefix \"$RESOURCE_DIR/..\" test"
+        "npm --prefix \"$RESOURCE_DIR/..\" test",
+        "npm --prefix \"$RESOURCE_DIR\" install --no-package-lock --production"
       ]
     }
   ],

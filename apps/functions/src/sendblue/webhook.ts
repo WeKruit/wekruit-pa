@@ -716,22 +716,47 @@ export async function handleSendblueWebhook(
               .doc(`${jobId}_${userId}`)
               .set({ lastFiredMs: ms, jobId, userId, updatedAt: new Date().toISOString() })
           },
-          runPreScreen: async ({ jobId, userId, toE164 }) => {
+          runPreScreen: async ({ jobId, userId, toE164, sourceRequestedUserId }) => {
             // Phase 77.3 — real handler: load config, build state, send 1st Q.
+            // v1.9 hotfix 2026-05-13 — sourceRequestedUserId passed through
+            // for attribution when bound via public-page pending-invite.
             const result = await runPreScreenForUser({
               db: deps.db,
               jobId,
               userId,
               toE164,
+              sourceRequestedUserId,
               log: (event, payload) => log(`pa.prescreen.${event}`, payload),
             })
             log("[sendblue][webhook] prescreen_run", {
               jobId, userId, sessionId: result.sessionId,
               reason: result.reason, ok: result.ok,
+              ...(sourceRequestedUserId ? { sourceRequestedUserId } : {}),
             })
           },
           audit: async (evt) => {
             await safeAudit(deps, evt as AuditEventInput, log)
+          },
+          // v1.9 hotfix 2026-05-13 — pending-invite binding for public-page flow.
+          getPendingInvite: async (requestedUserId) => {
+            try {
+              const snap = await deps.db
+                .collection("pa-prescreen-pending-invites")
+                .doc(requestedUserId)
+                .get()
+              if (!snap.exists) return null
+              const data = snap.data() as { jobId?: string; createdAt?: string } | undefined
+              return data ?? null
+            } catch {
+              return null
+            }
+          },
+          consumePendingInvite: async (requestedUserId) => {
+            await deps.db
+              .collection("pa-prescreen-pending-invites")
+              .doc(requestedUserId)
+              .delete()
+              .catch(() => undefined)
           },
         }),
         new ApplyTrigger({

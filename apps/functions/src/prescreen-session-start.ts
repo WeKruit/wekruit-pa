@@ -31,6 +31,16 @@ export interface RunPreScreenArgs {
   jobId: string
   userId: string
   toE164: string
+  /**
+   * v1.9 hotfix 2026-05-13 — when set, the trigger was authorized via a
+   * public-job-page pending-invite. `userId` is the phone-resolved real
+   * user (canonical session owner); `sourceRequestedUserId` is the original
+   * wkr_uid from localStorage, kept for attribution.
+   *
+   * The pending-invite doc keyed by `sourceRequestedUserId` was already
+   * consumed at the trigger level — do NOT re-consume here.
+   */
+  sourceRequestedUserId?: string
   log?: (event: string, payload: Record<string, unknown>) => void
 }
 
@@ -114,39 +124,41 @@ export async function runPreScreenForUser(args: RunPreScreenArgs): Promise<RunPr
     ? `Resuming pre-screen for ${cfg.jobTitle}. ${firstQText}`
     : `Hi — Claire from ${cfg.company ?? "WeKruit"}. Quick screen for ${cfg.jobTitle}. ${firstQText}`
 
-  // v1.9 G4 — consume any pending-invite stub from public job page so
-  // we can attribute the trigger back to the candidate's job-page visit.
-  // Fire-and-forget; failure is non-fatal.
-  try {
-    const pendingRef = args.db.collection("pa-prescreen-pending-invites").doc(args.userId)
-    const pendingSnap = await pendingRef.get()
-    if (pendingSnap.exists) {
-      const data = pendingSnap.data() as { jobId?: string; createdAt?: string } | undefined
-      if (data?.jobId && data.jobId === args.jobId) {
-        await args.db
-          .collection("pa-users")
-          .doc(args.userId)
-          .set(
-            {
-              attribution: {
-                source: "public_job_page",
-                fromJobPageRequestedUserId: args.userId,
-                jobIdSeen: data.jobId,
-                jobPageAt: data.createdAt,
-                resolvedAt: nowIso,
-              },
-              updatedAt: nowIso,
+  // v1.9 hotfix 2026-05-13 — when the trigger was authorized via a
+  // public-job-page pending-invite, attribute the session to the candidate's
+  // job-page visit. The pending-invite was already CONSUMED at the trigger
+  // level (prescreen.ts), so we only write attribution here — do not look
+  // up or delete the pending-invite doc.
+  //
+  // Pre-2026-05-13 the consume + attribution lived here and was keyed by
+  // args.userId, but that was always the random wkr_uid (now: phone-resolved
+  // real userId), so attribution wrote to the wrong pa-users doc and the
+  // pending-invite was never found because args.userId no longer matches
+  // the doc id. The trigger-level reconciliation passes both pieces through.
+  if (args.sourceRequestedUserId) {
+    try {
+      await args.db
+        .collection("pa-users")
+        .doc(args.userId)
+        .set(
+          {
+            attribution: {
+              source: "public_job_page",
+              fromJobPageRequestedUserId: args.sourceRequestedUserId,
+              jobIdSeen: args.jobId,
+              resolvedAt: nowIso,
             },
-            { merge: true }
-          )
-        await pendingRef.delete().catch(() => undefined)
-      }
+            updatedAt: nowIso,
+          },
+          { merge: true }
+        )
+    } catch (err) {
+      log("prescreen.session_start.pending_attribution_failed", {
+        userId: args.userId,
+        sourceRequestedUserId: args.sourceRequestedUserId,
+        error: err instanceof Error ? err.message : String(err),
+      })
     }
-  } catch (err) {
-    log("prescreen.session_start.pending_attribution_failed", {
-      userId: args.userId,
-      error: err instanceof Error ? err.message : String(err),
-    })
   }
 
   try {
