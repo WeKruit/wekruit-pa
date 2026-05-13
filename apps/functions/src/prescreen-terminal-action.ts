@@ -6,7 +6,13 @@
  *
  *   - TERMINAL-01: PASS → fire generateJobRecs(userId) async
  *   - TERMINAL-02: FAIL → fire generateJobRecs(userId) with "match other jobs?"
- *   - TERMINAL-03: HARD_STOP → no auto-action
+ *   - TERMINAL-03 (v1.9 hotfix 2026-05-12): HARD_STOP → SAME as FAIL.
+ *     Type-gate-fail (the dominant HARD_STOP cause in production — candidate
+ *     missed a hard requirement) deserves "match other jobs?" follow-up.
+ *     Original spec carved out HARD_STOP for "policy violation / abuse" —
+ *     but type_gate_fail is NOT abuse, it's just a poor fit for this role.
+ *     Reserve no-auto-action for explicit abort_hint = "abuse" / "decline"
+ *     (future work).
  *   - TERMINAL-04: PAUSE → write pausedAt + no auto-action
  *   - TERMINAL-05: fail-open + audit event for each fire
  *   - TERMINAL-06: idempotency keyed (sessionId, terminal)
@@ -22,6 +28,7 @@
 import type { Firestore, Timestamp } from "firebase-admin/firestore"
 import { composeLevel1Reveal, composeFailJobRecsPreamble, type Level1RevealFields } from "@pa/pa-orchestrator"
 import { sendImessage } from "./sendblue/sendblue-client.js"
+import { runPiiConfirmForUser } from "./pii-confirm-start.js"
 
 export type PrescreenTerminalKind = "PASS" | "FAIL" | "HARD_STOP" | "PAUSE"
 
@@ -38,6 +45,17 @@ export interface RunPrescreenTerminalActionArgs {
     userId: string
     toE164: string
   }) => Promise<{ ok: boolean; jobCount: number; reason?: string }>
+  /** Optional injected PII bootstrap (for tests). */
+  startPii?: (args: {
+    db: Firestore
+    userId: string
+    toE164: string
+    jobId: string
+    sourceSessionId: string
+    source: "pass" | "fail"
+    onComplete: (a: { userId: string; toE164: string; jobId: string }) => Promise<void>
+    log: (event: string, payload: Record<string, unknown>) => void
+  }) => Promise<{ ok: boolean; skipped: boolean; reason?: string }>
   /** Optional injected SMS sender for tests. */
   sendSms?: (args: { to: string; content: string }) => Promise<void>
   /** Optional clock for tests. */
@@ -139,6 +157,64 @@ async function defaultSendSms(args: { to: string; content: string }): Promise<vo
 }
 
 /**
+ * Kick off PII confirm pipeline (1st Q emit) with onComplete hook wired to
+ * generateJobRecs. Returns true if started successfully.
+ *
+ * If skip-if-present triggers (user already consented), the recs chain
+ * fires immediately via the same generateJobRecs caller.
+ */
+async function startPiiWithRecsChain(
+  args: RunPrescreenTerminalActionArgs,
+  source: "pass" | "fail",
+  genJobRecs: NonNullable<RunPrescreenTerminalActionArgs["generateJobRecs"]>,
+  log: NonNullable<RunPrescreenTerminalActionArgs["log"]>
+): Promise<boolean> {
+  const startFn = args.startPii ?? runPiiConfirmForUser
+  try {
+    const startResult = await startFn({
+      db: args.db,
+      userId: args.userId,
+      toE164: args.toE164,
+      jobId: args.jobId,
+      sourceSessionId: args.sessionId,
+      source,
+      onComplete: async ({ userId, toE164 }) => {
+        try {
+          await genJobRecs({ userId, toE164 })
+        } catch (err) {
+          log("prescreen.terminal_action.pii_recs_failed", {
+            sessionId: args.sessionId,
+            error: err instanceof Error ? err.message : String(err),
+          })
+        }
+      },
+      log: (event, payload) => log(`pii.${event}`, payload),
+    })
+    // Skip-if-present → user already consented. Fire recs immediately.
+    if (startResult.skipped) {
+      log("prescreen.terminal_action.pii_skipped_firing_recs_directly", {
+        sessionId: args.sessionId,
+      })
+      try {
+        await genJobRecs({ userId: args.userId, toE164: args.toE164 })
+      } catch (err) {
+        log("prescreen.terminal_action.recs_direct_failed", {
+          sessionId: args.sessionId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    }
+    return true
+  } catch (err) {
+    log("prescreen.terminal_action.pii_start_failed", {
+      sessionId: args.sessionId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    return false
+  }
+}
+
+/**
  * Main entry. Idempotent: subsequent calls with the same (sessionId,
  * terminal) return alreadyFired=true and do nothing.
  */
@@ -168,7 +244,14 @@ export async function runPrescreenTerminalAction(
   let jobRecsFired = false
   let jobRecsResult: { ok: boolean; jobCount: number; reason?: string } | undefined
 
-  // ── Dispatch by terminal ───────────────────────────────────────────────
+  // v1.9 hotfix flow:
+  //   PASS:        Level 1 reveal → start PII confirm → (onComplete) job recs
+  //   FAIL/HS:     preamble       → start PII confirm → (onComplete) job recs
+  //   PAUSE:       write pausedAt — no PII, no recs (user explicitly paused)
+  // Job recs are fired ASYNCHRONOUSLY after candidate completes the 3 PII Qs.
+  // This way ALL engaged candidates leave their contact info before getting
+  // recs (max funnel capture).
+  let piiStarted = false
   if (args.terminal === "PASS") {
     // LEVEL1-01..03: read level 1 fields + send reveal SMS
     const fields = await readLevel1Fields(args.db, args.jobId)
@@ -191,21 +274,10 @@ export async function runPrescreenTerminalAction(
         })
       }
     }
-
-    // TERMINAL-01: fire generateJobRecs async + fail-open
-    try {
-      jobRecsResult = await genJobRecs({ userId: args.userId, toE164: args.toE164 })
-      jobRecsFired = true
-    } catch (err) {
-      log("prescreen.terminal_action.jobrecs_threw", {
-        sessionId: args.sessionId,
-        error: err instanceof Error ? err.message : String(err),
-      })
-      jobRecsResult = { ok: false, jobCount: 0, reason: "exception" }
-      jobRecsFired = true
-    }
-  } else if (args.terminal === "FAIL") {
-    // TERMINAL-02: preamble + fire generateJobRecs
+    // Kick off PII confirm (pass source); onComplete fires generateJobRecs
+    piiStarted = await startPiiWithRecsChain(args, "pass", genJobRecs, log)
+  } else if (args.terminal === "FAIL" || args.terminal === "HARD_STOP") {
+    // TERMINAL-02 + TERMINAL-03 — preamble first, then PII collect, then recs.
     try {
       await send({ to: args.toE164, content: composeFailJobRecsPreamble(args.lang) })
     } catch (err) {
@@ -214,22 +286,13 @@ export async function runPrescreenTerminalAction(
         error: err instanceof Error ? err.message : String(err),
       })
     }
-    try {
-      jobRecsResult = await genJobRecs({ userId: args.userId, toE164: args.toE164 })
-      jobRecsFired = true
-    } catch (err) {
-      log("prescreen.terminal_action.jobrecs_threw", {
-        sessionId: args.sessionId,
-        error: err instanceof Error ? err.message : String(err),
-      })
-      jobRecsResult = { ok: false, jobCount: 0, reason: "exception" }
-      jobRecsFired = true
-    }
+    piiStarted = await startPiiWithRecsChain(args, "fail", genJobRecs, log)
   } else if (args.terminal === "PAUSE") {
-    // TERMINAL-04: write pausedAt; no auto-action
     await sessRef.update({ pausedAt: now().toISOString() })
   }
-  // TERMINAL-03: HARD_STOP → no action; just stamp idempotency.
+  // jobRecsFired/Result are stamped by the PII onComplete chain (async).
+  // We log piiStarted here for observability.
+  jobRecsFired = piiStarted // proxy — actual recs fire after PII completes
 
   // ── Stamp idempotency + audit ──────────────────────────────────────────
   const stampIso = now().toISOString()

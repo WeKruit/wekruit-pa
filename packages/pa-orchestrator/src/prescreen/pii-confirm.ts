@@ -120,10 +120,17 @@ class StaticRephraser implements Rephraser {
 // Prompts
 // ────────────────────────────────────────────────────────────────────────────
 
-const Q_LEGAL_NAME_PROMPT: BilingualText = {
+// v1.9 hotfix — distinct copy per source. "pass" frames PII as
+// employer-sharing. "fail" frames it as future-matching outreach.
+const Q_LEGAL_NAME_PROMPT_PASS: BilingualText = {
   en: "Great — to share with the employer, can you confirm your legal full name?",
   zh: "好的 — 为了与招聘方分享, 请确认你的法定全名是?",
 }
+const Q_LEGAL_NAME_PROMPT_FAIL: BilingualText = {
+  en: "Before you go — to keep you in the loop for better-aligned roles, what's your legal full name?",
+  zh: "走之前 — 为了之后给你推更合适的机会, 请问你的法定全名是?",
+}
+const Q_LEGAL_NAME_PROMPT: BilingualText = Q_LEGAL_NAME_PROMPT_PASS
 const Q_LEGAL_NAME_RETRIES: BilingualText[] = [
   {
     en: "Need a legal full name (first + last) — what should I send to the employer?",
@@ -183,6 +190,8 @@ export interface PiiConfirmHooks {
   onAllCollected: (answers: PiiConfirmAnswers, ctx: AcceptedCtx) => Promise<void>
 }
 
+export type PiiSource = "pass" | "fail"
+
 export interface PiiConfirmPipelineOpts {
   state: PipelineStateProvider
   hooks: PiiConfirmHooks
@@ -192,6 +201,12 @@ export interface PiiConfirmPipelineOpts {
     meta: { qId: string | null; kind: string }
   ) => Promise<void>
   log?: (event: string, payload: Record<string, unknown>) => void
+  /**
+   * Frames the PII ask copy. "pass" = "share with employer" framing.
+   * "fail" = "keep you in the loop for better-aligned roles" framing.
+   * Defaults to "pass" for backwards-compat with existing ApplyTrigger flow.
+   */
+  source?: PiiSource
 }
 
 /**
@@ -199,9 +214,12 @@ export interface PiiConfirmPipelineOpts {
  * last Q accept, the postCollect hook fires `hooks.onAllCollected`.
  */
 export function createPiiConfirmPipeline(opts: PiiConfirmPipelineOpts): OnboardingPipeline {
+  const source: PiiSource = opts.source ?? "pass"
+  const legalNamePrompt = source === "fail" ? Q_LEGAL_NAME_PROMPT_FAIL : Q_LEGAL_NAME_PROMPT_PASS
+
   const qLegalName: Question<string> = makeQuestion<string>({
     id: "q_pii_legal_name",
-    prompt: Q_LEGAL_NAME_PROMPT,
+    prompt: legalNamePrompt,
     judge: new LegalNameJudge(),
     rephraser: new StaticRephraser(Q_LEGAL_NAME_RETRIES),
     maxAttempts: 3,

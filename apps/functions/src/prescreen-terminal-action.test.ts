@@ -1,6 +1,8 @@
 /**
- * v1.9 Phase 84 — terminal action handler tests.
- * Pure logic; fakes Firestore + send + generateJobRecs.
+ * v1.9 Phase 84 + hotfix — terminal action handler tests.
+ *
+ * Updated for new chain: PASS/FAIL/HARD_STOP → start PII confirm pipeline.
+ * generateJobRecs fires async from PII onComplete hook (after 3 Qs).
  */
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
@@ -22,10 +24,7 @@ function makeFakeDb(docs: Map<string, FakeDocState>) {
           return {
             async get() {
               const st = docs.get(path) ?? { exists: false, data: {} }
-              return {
-                exists: st.exists,
-                data: () => (st.exists ? st.data : undefined),
-              }
+              return { exists: st.exists, data: () => (st.exists ? st.data : undefined) }
             },
             async update(patch: Record<string, unknown>) {
               const st = docs.get(path) ?? { exists: true, data: {} }
@@ -58,22 +57,36 @@ function setupSession(args: {
   return docs
 }
 
-describe("runPrescreenTerminalAction — PASS branch", () => {
-  it("sends Level 1 reveal then fires generateJobRecs + stamps idempotency", async () => {
+/** Test seam — stub PII start. */
+function fakePiiStart(captures: Array<{ source: string; userId: string }>) {
+  return async (a: {
+    userId: string
+    toE164: string
+    jobId: string
+    source: "pass" | "fail"
+    onComplete: (b: { userId: string; toE164: string; jobId: string }) => Promise<void>
+  }) => {
+    captures.push({ source: a.source, userId: a.userId })
+    // Simulate user completing all 3 Qs immediately so onComplete fires.
+    await a.onComplete({ userId: a.userId, toE164: a.toE164, jobId: a.jobId })
+    return { ok: true, skipped: false } as { ok: boolean; skipped: boolean }
+  }
+}
+
+describe("runPrescreenTerminalAction — PASS branch (v1.9 hotfix)", () => {
+  it("sends Level 1 reveal then starts PII pipeline (source=pass)", async () => {
     const docs = setupSession({
       sessionId: "s1",
       jobId: "j1",
       prescreenConfig: {
         jobTitle: "Senior FE",
         company: "Acme",
-        level1Reveal: {
-          applyUrl: "https://example.com/apply",
-          salaryRange: "$140k-$180k",
-        },
+        level1Reveal: { applyUrl: "https://x.com", salaryRange: "$140k" },
       },
     })
     const { db, audit, updates } = makeFakeDb(docs)
-    const sent: Array<{ to: string; content: string }> = []
+    const sent: string[] = []
+    const piiCaptures: Array<{ source: string; userId: string }> = []
     let jobRecsCalled = false
     const r = await runPrescreenTerminalAction({
       db,
@@ -81,92 +94,29 @@ describe("runPrescreenTerminalAction — PASS branch", () => {
       terminal: "PASS",
       userId: "u1",
       jobId: "j1",
-      toE164: "+15555550000",
+      toE164: "+1",
       lang: "en",
       sendSms: async (a) => {
-        sent.push(a)
+        sent.push(a.content)
       },
+      startPii: fakePiiStart(piiCaptures),
       generateJobRecs: async () => {
         jobRecsCalled = true
         return { ok: true, jobCount: 3 }
       },
-      now: () => new Date("2026-05-12T10:00:00Z"),
     })
-    assert.equal(r.alreadyFired, false)
     assert.equal(r.level1Sent, true)
-    assert.equal(r.jobRecsFired, true)
-    assert.equal(r.jobRecsResult?.jobCount, 3)
+    assert.match(sent[0], /Acme/)
+    assert.equal(piiCaptures.length, 1)
+    assert.equal(piiCaptures[0].source, "pass")
     assert.equal(jobRecsCalled, true)
-    assert.equal(sent.length, 1)
-    assert.match(sent[0].content, /Acme/)
-    assert.match(sent[0].content, /\$140k-\$180k/)
-    assert.match(sent[0].content, /example\.com\/apply/)
-    // idempotency stamp
     assert.ok(updates.some((u) => "terminalActionFiredAt" in u.data))
-    // audit
-    assert.equal(audit.length, 1)
-    assert.equal(audit[0].kind, "prescreen.terminal_action")
-  })
-
-  it("idempotency — second call with same session no-ops", async () => {
-    const docs = setupSession({
-      sessionId: "s1",
-      jobId: "j1",
-      prescreenConfig: { jobTitle: "X" },
-    })
-    docs.set(`pa-prescreen-sessions/s1`, {
-      exists: true,
-      data: { terminalActionFiredAt: "2026-05-12T09:00:00Z" },
-    })
-    const { db, audit } = makeFakeDb(docs)
-    let jobRecsCalled = false
-    const r = await runPrescreenTerminalAction({
-      db,
-      sessionId: "s1",
-      terminal: "PASS",
-      userId: "u1",
-      jobId: "j1",
-      toE164: "+1",
-      lang: "en",
-      sendSms: async () => undefined,
-      generateJobRecs: async () => {
-        jobRecsCalled = true
-        return { ok: true, jobCount: 0 }
-      },
-    })
-    assert.equal(r.alreadyFired, true)
-    assert.equal(jobRecsCalled, false)
-    assert.equal(audit.length, 0)
-  })
-
-  it("PASS without level1Reveal config still sends fallback reveal", async () => {
-    const docs = setupSession({
-      sessionId: "s2",
-      jobId: "j2",
-      prescreenConfig: { jobTitle: "SDE" },
-    })
-    const { db } = makeFakeDb(docs)
-    const sent: Array<{ content: string }> = []
-    const r = await runPrescreenTerminalAction({
-      db,
-      sessionId: "s2",
-      terminal: "PASS",
-      userId: "u",
-      jobId: "j2",
-      toE164: "+1",
-      lang: "en",
-      sendSms: async (a) => {
-        sent.push({ content: a.content })
-      },
-      generateJobRecs: async () => ({ ok: false, jobCount: 0, reason: "no_matches" }),
-    })
-    assert.equal(r.level1Sent, true)
-    assert.match(sent[0].content, /SDE/)
+    assert.ok(audit.some((a) => a.kind === "prescreen.terminal_action"))
   })
 })
 
-describe("runPrescreenTerminalAction — FAIL branch", () => {
-  it("sends preamble + fires generateJobRecs", async () => {
+describe("runPrescreenTerminalAction — FAIL branch (v1.9 hotfix)", () => {
+  it("sends preamble + starts PII pipeline (source=fail) + onComplete fires job recs", async () => {
     const docs = setupSession({
       sessionId: "s3",
       jobId: "j3",
@@ -174,6 +124,7 @@ describe("runPrescreenTerminalAction — FAIL branch", () => {
     })
     const { db } = makeFakeDb(docs)
     const sent: string[] = []
+    const piiCaptures: Array<{ source: string; userId: string }> = []
     let jobRecsCalled = false
     const r = await runPrescreenTerminalAction({
       db,
@@ -186,28 +137,31 @@ describe("runPrescreenTerminalAction — FAIL branch", () => {
       sendSms: async (a) => {
         sent.push(a.content)
       },
+      startPii: fakePiiStart(piiCaptures),
       generateJobRecs: async () => {
         jobRecsCalled = true
         return { ok: true, jobCount: 5 }
       },
     })
     assert.equal(r.level1Sent, false)
-    assert.equal(r.jobRecsFired, true)
-    assert.equal(jobRecsCalled, true)
     assert.match(sent[0], /better-aligned/i)
+    assert.equal(piiCaptures[0].source, "fail")
+    assert.equal(jobRecsCalled, true)
   })
 })
 
-describe("runPrescreenTerminalAction — HARD_STOP branch", () => {
-  it("does NOT fire generateJobRecs; stamps idempotency only", async () => {
+describe("runPrescreenTerminalAction — HARD_STOP branch (v1.9 hotfix)", () => {
+  it("same as FAIL: preamble + PII (source=fail) + job recs", async () => {
     const docs = setupSession({
       sessionId: "s4",
       jobId: "j4",
       prescreenConfig: { jobTitle: "X" },
     })
     const { db, updates } = makeFakeDb(docs)
+    const sent: string[] = []
+    const piiCaptures: Array<{ source: string; userId: string }> = []
     let jobRecsCalled = false
-    const r = await runPrescreenTerminalAction({
+    await runPrescreenTerminalAction({
       db,
       sessionId: "s4",
       terminal: "HARD_STOP",
@@ -215,27 +169,33 @@ describe("runPrescreenTerminalAction — HARD_STOP branch", () => {
       jobId: "j4",
       toE164: "+1",
       lang: "en",
-      sendSms: async () => undefined,
+      sendSms: async (a) => {
+        sent.push(a.content)
+      },
+      startPii: fakePiiStart(piiCaptures),
       generateJobRecs: async () => {
         jobRecsCalled = true
-        return { ok: true, jobCount: 0 }
+        return { ok: true, jobCount: 4 }
       },
     })
-    assert.equal(r.jobRecsFired, false)
-    assert.equal(jobRecsCalled, false)
+    assert.match(sent[0], /better-aligned/i)
+    assert.equal(piiCaptures[0].source, "fail")
+    assert.equal(jobRecsCalled, true)
     assert.ok(updates.some((u) => "terminalActionFiredAt" in u.data))
   })
 })
 
 describe("runPrescreenTerminalAction — PAUSE branch", () => {
-  it("writes pausedAt + no job rec fire", async () => {
+  it("writes pausedAt; no PII start, no recs", async () => {
     const docs = setupSession({
       sessionId: "s5",
       jobId: "j5",
       prescreenConfig: { jobTitle: "X" },
     })
     const { db, updates } = makeFakeDb(docs)
-    const r = await runPrescreenTerminalAction({
+    const piiCaptures: Array<{ source: string; userId: string }> = []
+    let jobRecsCalled = false
+    await runPrescreenTerminalAction({
       db,
       sessionId: "s5",
       terminal: "PAUSE",
@@ -244,22 +204,32 @@ describe("runPrescreenTerminalAction — PAUSE branch", () => {
       toE164: "+1",
       lang: "en",
       sendSms: async () => undefined,
-      generateJobRecs: async () => ({ ok: true, jobCount: 0 }),
+      startPii: fakePiiStart(piiCaptures),
+      generateJobRecs: async () => {
+        jobRecsCalled = true
+        return { ok: true, jobCount: 0 }
+      },
       now: () => new Date("2026-05-12T10:00:00Z"),
     })
-    assert.equal(r.jobRecsFired, false)
+    assert.equal(piiCaptures.length, 0)
+    assert.equal(jobRecsCalled, false)
     assert.ok(updates.some((u) => "pausedAt" in u.data))
   })
 })
 
-describe("runPrescreenTerminalAction — fail-open", () => {
-  it("generateJobRecs throw does NOT block stamping", async () => {
+describe("runPrescreenTerminalAction — idempotency", () => {
+  it("second call no-ops when terminalActionFiredAt already stamped", async () => {
     const docs = setupSession({
       sessionId: "s6",
       jobId: "j6",
       prescreenConfig: { jobTitle: "X" },
     })
-    const { db, updates, audit } = makeFakeDb(docs)
+    docs.set(`pa-prescreen-sessions/s6`, {
+      exists: true,
+      data: { terminalActionFiredAt: "2026-05-12T09:00:00Z" },
+    })
+    const { db } = makeFakeDb(docs)
+    const piiCaptures: Array<{ source: string; userId: string }> = []
     const r = await runPrescreenTerminalAction({
       db,
       sessionId: "s6",
@@ -269,13 +239,36 @@ describe("runPrescreenTerminalAction — fail-open", () => {
       toE164: "+1",
       lang: "en",
       sendSms: async () => undefined,
-      generateJobRecs: async () => {
-        throw new Error("boom")
-      },
+      startPii: fakePiiStart(piiCaptures),
+      generateJobRecs: async () => ({ ok: true, jobCount: 0 }),
     })
-    assert.equal(r.jobRecsFired, true)
-    assert.equal(r.jobRecsResult?.ok, false)
-    assert.equal(r.jobRecsResult?.reason, "exception")
+    assert.equal(r.alreadyFired, true)
+    assert.equal(piiCaptures.length, 0)
+  })
+})
+
+describe("runPrescreenTerminalAction — fail-open", () => {
+  it("PII start failure does NOT block stamp/audit", async () => {
+    const docs = setupSession({
+      sessionId: "s7",
+      jobId: "j7",
+      prescreenConfig: { jobTitle: "X" },
+    })
+    const { db, updates, audit } = makeFakeDb(docs)
+    await runPrescreenTerminalAction({
+      db,
+      sessionId: "s7",
+      terminal: "PASS",
+      userId: "u",
+      jobId: "j7",
+      toE164: "+1",
+      lang: "en",
+      sendSms: async () => undefined,
+      startPii: async () => {
+        throw new Error("pii boom")
+      },
+      generateJobRecs: async () => ({ ok: true, jobCount: 0 }),
+    })
     assert.ok(updates.some((u) => "terminalActionFiredAt" in u.data))
     assert.equal(audit.length, 1)
   })

@@ -671,8 +671,34 @@ async function processBrokerImessageEvent(
       )
       return 1
     }
+    // v1.9 hotfix — PII confirm pipeline check (chained after prescreen
+    // terminal). If active PII session, route turn there before Claire.
+    const { runPiiConfirmTurnIfActive } = await import("./pii-confirm-start.js")
+    const piiResult = await runPiiConfirmTurnIfActive({
+      db,
+      userId: user.id,
+      toE164: payload.participant,
+      replyText: payload.text.trim(),
+      log: (event, payload) => logger.info(`[pii][onPaInbound] ${event}`, payload ?? {}),
+    })
+    if (piiResult.handled) {
+      logger.info("[pii][onPaInbound] handled — short-circuit Claire", {
+        userId: user.id,
+        completed: piiResult.completed,
+      })
+      await db.collection(PA_COLLECTIONS.inboundEvents).doc(claimed.id).set(
+        {
+          status: "completed",
+          completedAt: nowIso(),
+          updatedAt: nowIso(),
+          routedTo: "pii_confirm",
+        },
+        { merge: true }
+      )
+      return 1
+    }
   } catch (err) {
-    logger.warn("[prescreen][onPaInbound] check FAILED — falling through to Claire", {
+    logger.warn("[prescreen+pii][onPaInbound] check FAILED — falling through to Claire", {
       userId: user.id,
       err: err instanceof Error ? err.message : String(err),
     })
