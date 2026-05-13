@@ -13,7 +13,7 @@ This file records S0 verification.
 | Orchestrator tests | `pnpm --filter pa-orchestrator test` | all pass, prior baseline 1479/1479 | first clean-worktree run failed 1153/1175 due missing built workspace deps; after `pretest` dependency-build fix: 1479/1479 pass, 0 fail | PASS |
 | Functions tests | `cd apps/functions && pnpm test` | all pass | first clean-worktree run failed 921/939 due missing built workspace deps; sandbox rerun hit EPERM writing ignored `dist/`; escalated rerun after `pretest` dependency-build fix: 1168/1168 pass, 0 fail | PASS |
 | Job-rec isolated build | `pnpm --filter @pa/job-rec build` | build succeeds from clean worktree | first GitHub Actions run failed because `job-rec` imported local packages before their `dist/` outputs existed; after explicit sequential `prebuild`, local rerun passed | PASS |
-| Monorepo build | `pnpm -r build` | recursive build succeeds | first GitHub Actions run failed because `@pa/job-tag-enricher` imported `openai` without declaring it; second run exposed `agent-runtime` missing direct `firebase-admin` plus test-only connector import in library build; clean temp worktree exposed `@pa/pa-resume-parser` missing direct `openai`; after metadata/tsconfig fixes, local rerun passed | PASS |
+| Monorepo build | `pnpm -r build` | recursive build succeeds | first GitHub Actions run failed because `@pa/job-tag-enricher` imported `openai` without declaring it; second run exposed `agent-runtime` missing direct `firebase-admin` plus test-only connector import in library build; clean temp worktree exposed `@pa/pa-resume-parser` missing direct `openai` and `@pa/functions` missing direct `zod`; after metadata/tsconfig fixes, local rerun passed | PASS |
 | Candidate landing | `curl -sI https://candidate.wekruit.com/` | HTTP 200 | sandbox curl first failed DNS exit 6; approved `curl -sS -i -I` returned `HTTP/2 200` | PASS |
 | Public job page | `curl -sI https://candidate.wekruit.com/j/hs-11005382-invoko-product-designer` | HTTP 200 | sandbox curl first failed DNS exit 6; approved `curl -sS -i -I` returned `HTTP/2 200` | PASS |
 | Admin redirect | `curl -sI https://wekruit-pa.web.app/j/hs-11005382-invoko-product-designer` | HTTP 301 to candidate domain | approved `curl -sS -i -I` returned `HTTP/2 301` with `location: https://candidate.wekruit.com/j/hs-11005382-invoko-product-designer` | PASS |
@@ -78,8 +78,10 @@ S0 harness fixes:
   dependency.
 - `packages/pa-resume-parser/package.json`: declares its direct `openai`
   dependency for the Responses provider dynamic import.
+- `apps/functions/package.json`: declares its direct `zod` dependency for
+  function modules bundled by `apps/functions/build.mjs`.
 - `pnpm-lock.yaml`: updated from the current workspace graph; this adds the
-  `openai` and `firebase-admin` importer entries and removes the stale
+  `openai`, `firebase-admin`, and `zod` importer entries and removes the stale
   `apps/candidate-web` importer because that directory is not present in the
   workspace.
 

@@ -37,8 +37,9 @@ Passed:
   self-contained and sequential.
 - `pnpm -r build` -> exit 0 after declaring `@pa/job-tag-enricher`'s direct
   `openai` dependency, declaring `@pa/pa-resume-parser`'s direct `openai`
-  dependency, declaring `@pa/agent-runtime`'s direct `firebase-admin`
-  dependency, and excluding agent-runtime tests from the library build.
+  dependency, declaring `@pa/functions`'s direct `zod` dependency, declaring
+  `@pa/agent-runtime`'s direct `firebase-admin` dependency, and excluding
+  agent-runtime tests from the library build.
 - `curl -sS -i -I https://candidate.wekruit.com/` -> `HTTP/2 200`.
 - `curl -sS -i -I https://candidate.wekruit.com/j/hs-11005382-invoko-product-designer`
   -> `HTTP/2 200`.
