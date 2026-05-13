@@ -239,6 +239,8 @@ export {
   approveJobOpportunityDraft,
   applyCandidateJobEvent,
   applyCandidateLifecycleEvent,
+  markOutboundInviteDelivery,
+  markOutboundInviteQueued,
   rejectJobOpportunityDraft,
   writeCorrectionEvent,
   writeCandidateJobMatch,
@@ -246,13 +248,31 @@ export {
   writeFeedbackEvent,
   writeJobEnrichmentEvalFixture,
   writeJobOpportunityDraft,
+  writeOutboundInviteDecision,
 } from "./marketplace.js"
 export type {
   ApproveJobOpportunityDraftInput,
+  MarkOutboundInviteDeliveryInput,
+  MarkOutboundInviteQueuedInput,
   MarketplaceTransitionResult,
   RejectJobOpportunityDraftInput,
   WriteCandidateJobMatchResult,
+  WriteOutboundInviteDecisionResult,
 } from "./marketplace.js"
+
+export {
+  OUTREACH_CAPACITY_COLLECTION,
+  createOutreachCapacityDocId,
+  formatOutreachCapacityBucket,
+  getOutreachCapacitySnapshot,
+  reserveOutreachCapacity,
+} from "./outreach-capacity.js"
+export type {
+  OutreachCapacitySnapshot,
+  OutreachCapacityStatus,
+  ReserveOutreachCapacityInput,
+  ReserveOutreachCapacityResult,
+} from "./outreach-capacity.js"
 
 // v2.0 S2 — identity + candidate claim data-plane helpers.
 export {

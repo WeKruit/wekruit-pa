@@ -8,6 +8,7 @@ import {
   CandidateIdentityConflictSchema,
   CandidateIdentityEventSchema,
   CandidateIdentityResolutionSchema,
+  CandidateJobEventSchema,
   CandidateJobMatchSchema,
   CandidateJobStateDocSchema,
   CandidateProfileMarketplaceFieldsSchema,
@@ -20,6 +21,7 @@ import {
   JobOpportunityDraftSchema,
   JobOpportunitySchema,
   JobOpportunityPublicSchema,
+  OutreachDecisionSchema,
   OutboundInviteSchema,
   PA_JOB_ENRICHMENT_EVAL_FIXTURES_SUBCOLLECTION,
   PA_JOB_ENRICHMENT_SUBCOLLECTION,
@@ -37,6 +39,9 @@ import {
   createJobEnrichmentEvalFixtureId,
   createJobEnrichmentDraftId,
   createJobOpportunityDraftId,
+  createOutreachDuplicateSuppressionKey,
+  createOutreachIdempotencyKey,
+  createOutboundInviteId,
   normalizeCandidateHandleValue,
   reduceBulkResumeItemStatus,
   reduceCandidateJobState,
@@ -155,12 +160,16 @@ test("marketplace document schemas parse the S1 primitives", () => {
     createdAt: now,
   })
   OutboundInviteSchema.parse({
-    inviteId: "invite-1",
+    inviteId: createOutboundInviteId("cand-1", "job-1"),
     candidateId: "cand-1",
     jobId: "job-1",
     candidateJobStateId: "cand-1__job-1",
     status: "draft",
     policyDecision: "hitl_review",
+    approvalState: "pending",
+    dryRun: true,
+    policyVersion: "s6-outreach-policy-v1",
+    decisionReason: "operator review required",
     createdAt: now,
   })
   EmployerVisibleProfileSchema.parse({
@@ -288,6 +297,126 @@ test("candidate-job match schema rejects invalid score breakdown and nondetermin
     })
   )
   assert.throws(() => CandidateJobMatchSchema.parse({ ...valid, scoreBreakdown: {} }))
+})
+
+test("outbound invite schema carries S6 policy evidence without raw PII ids", () => {
+  const inviteId = createOutboundInviteId("cand-internal-1", "job-internal-1")
+  assert.equal(inviteId, "outinvite_cand-internal-1__job-internal-1")
+  assert.equal(inviteId.includes("@"), false)
+  assert.equal(inviteId.includes("+"), false)
+  assert.equal(
+    createOutreachIdempotencyKey(inviteId),
+    "outreach_idempotency_outinvite_cand-internal-1__job-internal-1"
+  )
+  assert.equal(
+    createOutreachDuplicateSuppressionKey("cand-internal-1", " Acme, Inc. ", "Senior Front-End Engineer!!"),
+    "outreach_dupe_cand-internal-1__acme-inc__senior-front-end-engineer"
+  )
+  assert.equal(
+    createOutreachDuplicateSuppressionKey("cand-internal-1", "ACME inc", "senior front end engineer"),
+    "outreach_dupe_cand-internal-1__acme-inc__senior-front-end-engineer"
+  )
+
+  const invite = OutboundInviteSchema.parse({
+    inviteId,
+    candidateId: "cand-internal-1",
+    jobId: "job-internal-1",
+    candidateJobStateId: createCandidateJobStateId("cand-internal-1", "job-internal-1"),
+    matchId: createCandidateJobMatchId("cand-internal-1", "job-internal-1"),
+    status: "blocked",
+    policyDecision: "blocked",
+    approvalState: "pending",
+    dryRun: true,
+    policyVersion: "s6-outreach-policy-v1",
+    decisionReason: "capacity blocked before queueing",
+    blockedSignals: ["channel_capacity"],
+    missingInfo: ["reachable_phone"],
+    cooldownUntil: "2026-05-20T12:00:00.000Z",
+    stickyAccountGroupId: "sendblue-group-1",
+    duplicateSuppressionKey: createOutreachDuplicateSuppressionKey(
+      "cand-internal-1",
+      "Acme, Inc.",
+      "Senior Front-End Engineer"
+    ),
+    capacitySnapshot: {
+      groupId: "sendblue-group-1",
+      fromNumber: "+15555550100",
+      status: "active",
+      dailyCap: 10,
+      usedToday: 10,
+      remainingToday: 0,
+      rolling24hUsed: 11,
+      checkedAt: now,
+      reason: "daily_capacity_full",
+    },
+    rejectedAt: now,
+    rejectedBy: "operator@wekruit.com",
+    rejectionReason: "capacity cap reached",
+    candidateResponse: {
+      status: "declined",
+      respondedAt: now,
+      summary: "Candidate asked not to pursue this company.",
+    },
+    createdAt: now,
+  })
+
+  assert.equal(invite.dryRun, true)
+  assert.equal(invite.capacitySnapshot?.remainingToday, 0)
+  assert.deepEqual(invite.blockedSignals, ["channel_capacity"])
+  assert.deepEqual(invite.missingInfo, ["reachable_phone"])
+  assert.equal(invite.duplicateSuppressionKey, "outreach_dupe_cand-internal-1__acme-inc__senior-front-end-engineer")
+  assert.equal(invite.candidateResponse?.status, "declined")
+})
+
+test("outreach decision schema preserves auto_outbound as contract evidence only", () => {
+  const inviteId = createOutboundInviteId("cand-1", "job-1")
+  const decision = OutreachDecisionSchema.parse({
+    inviteId,
+    candidateId: "cand-1",
+    jobId: "job-1",
+    matchId: createCandidateJobMatchId("cand-1", "job-1"),
+    policyVersion: "s6-outreach-policy-v1",
+    policyDecision: "auto_outbound",
+    decisionReason: "candidate matched all required signals",
+    blockedSignals: [],
+    missingInfo: [],
+    approvalState: "not_required",
+    dryRun: true,
+    idempotencyKey: createOutreachIdempotencyKey(inviteId),
+    duplicateSuppressionKey: createOutreachDuplicateSuppressionKey("cand-1", "Acme", "Frontend Engineer"),
+    capacitySnapshot: {
+      groupId: "sendblue-group-1",
+      status: "active",
+      dailyCap: 10,
+      usedToday: 3,
+      remainingToday: 7,
+      checkedAt: now,
+    },
+    decidedAt: now,
+  })
+
+  assert.equal(decision.policyDecision, "auto_outbound")
+  assert.equal(decision.dryRun, true)
+  assert.equal(decision.approvalState, "not_required")
+  assert.equal(decision.outboundId, undefined)
+})
+
+test("outbound invite schema rejects manual approval as policy rewrite", () => {
+  assert.throws(() =>
+    OutboundInviteSchema.parse({
+      inviteId: createOutboundInviteId("cand-1", "job-1"),
+      candidateId: "cand-1",
+      jobId: "job-1",
+      candidateJobStateId: createCandidateJobStateId("cand-1", "job-1"),
+      status: "approved",
+      policyDecision: "manual_approved",
+      approvalState: "approved",
+      dryRun: false,
+      policyVersion: "s6-outreach-policy-v1",
+      decisionReason: "operator approved",
+      createdAt: now,
+    })
+  )
 })
 
 test("job enrichment schemas keep drafts private and public opportunity safe", () => {
@@ -482,6 +611,68 @@ test("candidate-job reducer preserves first-interview and NOT_PASS locks", () =>
 
   const global = reduceCandidateLifecycleState("active_job_seeker", lifecycle("retention_allowed"))
   assert.equal(global.state, "retained", "NOT_PASS is not a global exit")
+})
+
+test("candidate-job outbound events require invite and delivery evidence", () => {
+  assert.throws(() => CandidateJobEventSchema.parse(job("outbound_queued")), /outboundInviteId/)
+  assert.throws(
+    () => CandidateJobEventSchema.parse(job("outbound_queued", { outboundInviteId: "invite-1" })),
+    /outboundId/
+  )
+  assert.throws(
+    () =>
+      CandidateJobEventSchema.parse(
+        job("outbound_queued", { evidence: [], outboundInviteId: "invite-1", outboundId: "outbound-1" })
+      ),
+    /Array must contain|too_small|at least/
+  )
+  assert.throws(() => CandidateJobEventSchema.parse(job("outbound_sent")), /outboundInviteId/)
+  assert.throws(
+    () =>
+      CandidateJobEventSchema.parse(
+        job("outbound_sent", { evidence: [], outboundInviteId: "invite-1", outboundId: "outbound-1" })
+      ),
+    /providerStatus|Array must contain|too_small|at least/
+  )
+
+  const queued = reduceCandidateJobState(
+    "candidate_matched",
+    job("outbound_queued", {
+      evidence: [{ source: "outbound_delivery", summary: "queue row exists", refId: "outbound-1" }],
+      outboundInviteId: "invite-1",
+      outboundId: "outbound-1",
+      matchId: createCandidateJobMatchId("cand-1", "job-1"),
+    })
+  )
+  assert.equal(queued.state, "outbound_queued")
+
+  const directSent = reduceCandidateJobState(
+    "candidate_matched",
+    job("outbound_sent", {
+      evidence: [{ source: "outbound_delivery", summary: "provider accepted", refId: "outbound-1" }],
+      outboundInviteId: "invite-1",
+      outboundId: "outbound-1",
+      providerStatus: "SENT",
+    })
+  )
+  assert.equal(directSent.state, "candidate_matched")
+  assert.equal(directSent.reason, "invalid_outbound_sent_transition")
+
+  const sent = reduceCandidateJobState(
+    "outbound_queued",
+    job("outbound_sent", {
+      evidence: [{ source: "outbound_delivery", summary: "provider accepted", refId: "outbound-1" }],
+      outboundInviteId: "invite-1",
+      outboundId: "outbound-1",
+      providerStatus: "SENT",
+    })
+  )
+  assert.equal(sent.state, "outbound_sent")
+
+  for (const from of ["candidate_matched", "outbound_queued", "outbound_sent"] as const) {
+    const started = reduceCandidateJobState(from, job("prescreen_started", { matchScore: 0.01 }))
+    assert.equal(started.state, "prescreen_started")
+  }
 })
 
 test("candidate-job reducer requires passed state before employer visibility", () => {

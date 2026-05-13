@@ -46,11 +46,10 @@ import PrescreenSessionsList from "./pages/PrescreenSessionsList.js"
 import AtsInbound from "./pages/AtsInbound.js"
 import BulkResumes from "./pages/BulkResumes.js"
 import { IdentityConflicts } from "./pages/IdentityConflicts.js"
-// v1.9 Phase 87 — public candidate-facing job page + CV upload.
-import PublicJob from "./pages/PublicJob.js"
-import PublicJobCv from "./pages/PublicJobCv.js"
 // v1.9 Phase 88 — Sendblue number pool admin.
 import SendbluePool from "./pages/SendbluePool.js"
+// v2.0 S6 - admin outreach readiness snapshot.
+import OutreachOps from "./pages/OutreachOps.js"
 // v1.9 Phase 89 — pre-screen feedback aggregate.
 import PrescreenFeedback from "./pages/PrescreenFeedback.js"
 
@@ -138,9 +137,6 @@ export default function App() {
             prompt sent over iMessage; biz testers tap through before signing
             in to the dashboard, so it must render outside the auth wall. */}
         <Route path="/legal" element={<Legal />} />
-        {/* v1.9 Phase 87 — public candidate routes (no auth). */}
-        <Route path="/j/:jobId" element={<PublicJob />} />
-        <Route path="/j/:jobId/cv" element={<PublicJobCv />} />
         <Route path="*" element={<Login />} />
       </Routes>
     )
@@ -191,6 +187,7 @@ export default function App() {
           <NavLink to="/admin/downstream-triggers">Downstream Triggers</NavLink>
           <NavLink to="/beta">Beta Allowlist</NavLink>
           <NavLink to="/triggers">Triggers</NavLink>
+          <NavLink to="/admin/outreach-ops">Outreach Ops</NavLink>
           <NavLink to="/admin/sendblue-pool">Sendblue Pool</NavLink>
         </NavSection>
         <NavSection id="platform" label="Platform" defaultOpen={false}>
@@ -273,6 +270,7 @@ export default function App() {
           {/* v1.9 Phase 86 — ATS inbound funnel observability. */}
           <Route path="/admin/ats-inbound" element={<AtsInbound />} />
           <Route path="/admin/bulk-resumes" element={<BulkResumes />} />
+          <Route path="/admin/outreach-ops" element={<OutreachOps />} />
           {/* v1.9 Phase 88 — Sendblue number pool admin. */}
           <Route path="/admin/sendblue-pool" element={<SendbluePool />} />
           {/* v1.9 Phase 89 — pre-screen feedback aggregate. */}

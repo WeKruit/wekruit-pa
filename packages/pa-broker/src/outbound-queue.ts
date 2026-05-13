@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto"
+import { createHash } from "node:crypto"
 import type { Firestore } from "firebase-admin/firestore"
 import { PA_COLLECTIONS, type OutboundMessage } from "@pa/core-types"
 
@@ -12,23 +12,20 @@ export type EnqueueOutboundInput = {
   idempotencyKey: string
 }
 
+export function outboundMessageDocId(idempotencyKey: string): string {
+  const h = createHash("sha256").update(idempotencyKey, "utf8").digest("hex")
+  return `out_${h.slice(0, 40)}`
+}
+
 /**
- * Idempotent outbound enqueue: duplicate idempotencyKey returns existing pending/sent doc.
+ * Idempotent outbound enqueue: duplicate idempotencyKey returns the same row.
  */
 export async function enqueueOutbound(
   db: Firestore,
   input: EnqueueOutboundInput
 ): Promise<{ id: string; created: boolean }> {
-  const existing = await db
-    .collection(OUT)
-    .where("idempotencyKey", "==", input.idempotencyKey)
-    .limit(1)
-    .get()
-  if (!existing.empty) {
-    return { id: existing.docs[0]!.id, created: false }
-  }
-
-  const id = randomUUID()
+  const id = outboundMessageDocId(input.idempotencyKey)
+  const ref = db.collection(OUT).doc(id)
   const now = new Date().toISOString()
   const doc: OutboundMessage = {
     id,
@@ -40,6 +37,11 @@ export async function enqueueOutbound(
     createdAt: now,
     idempotencyKey: input.idempotencyKey,
   }
-  await db.collection(OUT).doc(id).set(doc)
-  return { id, created: true }
+  try {
+    await ref.create(doc)
+    return { id, created: true }
+  } catch (e: unknown) {
+    if ((e as { code?: number })?.code === 6) return { id, created: false }
+    throw e
+  }
 }

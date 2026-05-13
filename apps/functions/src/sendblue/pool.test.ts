@@ -3,7 +3,13 @@
  */
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { hashStringToUint, pickFromNumber } from "./pool.js"
+import {
+  computeSendblueCapacitySnapshot,
+  hashStringToUint,
+  normalizeSendbluePoolGroups,
+  pickFromNumber,
+  selectCapacityAwareFromNumber,
+} from "./pool.js"
 
 describe("hashStringToUint", () => {
   it("is deterministic", () => {
@@ -76,5 +82,131 @@ describe("pickFromNumber", () => {
       if (v) picks.add(v)
     }
     assert.equal(picks.size, 2)
+  })
+})
+
+describe("normalizeSendbluePoolGroups", () => {
+  it("normalizes legacy number configs into one group per number", () => {
+    const groups = normalizeSendbluePoolGroups({
+      numbers: [{ number: "+13054507716", status: "active", capacity: 10 }],
+    })
+    assert.deepEqual(groups, [
+      {
+        groupId: "+13054507716",
+        status: "active",
+        dailySendCap: 10,
+        numbers: ["+13054507716"],
+      },
+    ])
+  })
+
+  it("normalizes grouped configs with dailySendCap", () => {
+    const groups = normalizeSendbluePoolGroups({
+      groups: [
+        {
+          groupId: "primary",
+          status: "active",
+          dailySendCap: 25,
+          numbers: ["+1", { number: "+2", status: "active" }],
+        },
+      ],
+    })
+    assert.deepEqual(groups, [
+      {
+        groupId: "primary",
+        status: "active",
+        dailySendCap: 25,
+        numbers: ["+1", "+2"],
+      },
+    ])
+  })
+})
+
+describe("computeSendblueCapacitySnapshot", () => {
+  it("computes remaining daily capacity", () => {
+    const snapshot = computeSendblueCapacitySnapshot({
+      group: {
+        groupId: "primary",
+        status: "active",
+        dailySendCap: 3,
+        numbers: ["+1"],
+      },
+      usedToday: 2,
+      fromNumber: "+1",
+      checkedAt: new Date("2026-05-13T12:00:00Z"),
+    })
+    assert.deepEqual(snapshot, {
+      groupId: "primary",
+      fromNumber: "+1",
+      status: "active",
+      dailyCap: 3,
+      usedToday: 2,
+      remainingToday: 1,
+      checkedAt: "2026-05-13T12:00:00.000Z",
+    })
+  })
+})
+
+describe("selectCapacityAwareFromNumber", () => {
+  it("selects from legacy active pool when capacity remains", () => {
+    const result = selectCapacityAwareFromNumber(
+      { numbers: [{ number: "+1", status: "active", capacity: 10 }] },
+      "u1",
+      { checkedAt: new Date("2026-05-13T12:00:00Z") }
+    )
+    assert.equal(result.ok, true)
+    assert.equal(result.groupId, "+1")
+    assert.equal(result.fromNumber, "+1")
+    assert.equal(result.capacitySnapshot.remainingToday, 10)
+  })
+
+  it("preserves sticky group and does not reroute when that group is full", () => {
+    const result = selectCapacityAwareFromNumber(
+      {
+        groups: [
+          { groupId: "sticky", status: "active", dailySendCap: 1, numbers: ["+1"] },
+          { groupId: "open", status: "active", dailySendCap: 10, numbers: ["+2"] },
+        ],
+      },
+      "u1",
+      {
+        stickyGroupId: "sticky",
+        usedTodayByGroupId: { sticky: 1, open: 0 },
+        checkedAt: new Date("2026-05-13T12:00:00Z"),
+      }
+    )
+    assert.equal(result.ok, false)
+    assert.equal(result.groupId, "sticky")
+    assert.equal(result.fromNumber, "+1")
+    assert.equal(result.reason, "sticky_group_capacity")
+    assert.equal(result.capacitySnapshot.remainingToday, 0)
+  })
+
+  it("blocks warmup groups from automatic routing", () => {
+    const result = selectCapacityAwareFromNumber(
+      {
+        groups: [
+          { groupId: "warm", status: "warmup", dailySendCap: 10, numbers: ["+1"] },
+        ],
+      },
+      "u1",
+      { checkedAt: new Date("2026-05-13T12:00:00Z") }
+    )
+    assert.equal(result.ok, false)
+    assert.equal(result.groupId, "warm")
+    assert.equal(result.reason, "warmup_requires_hitl")
+    assert.equal(result.capacitySnapshot.status, "warmup")
+  })
+
+  it("blocks groups with missing capacity", () => {
+    const result = selectCapacityAwareFromNumber(
+      {
+        groups: [{ groupId: "missing-cap", status: "active", numbers: ["+1"] }],
+      },
+      "u1",
+      { checkedAt: new Date("2026-05-13T12:00:00Z") }
+    )
+    assert.equal(result.ok, false)
+    assert.equal(result.reason, "missing_capacity")
   })
 })

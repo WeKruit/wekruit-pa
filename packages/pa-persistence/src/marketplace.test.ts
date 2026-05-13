@@ -9,6 +9,7 @@ import {
   createCandidateJobStateId,
   createEmployerVisibleProfileId,
   createJobEnrichmentEvalFixtureId,
+  createOutboundInviteId,
   type CandidateJobEvent,
   type CandidateJobMatch,
   type CandidateLifecycleEvent,
@@ -17,11 +18,14 @@ import {
   type FeedbackEvent,
   type JobEnrichmentEvalFixture,
   type JobOpportunityDraft,
+  type OutboundInvite,
 } from "@pa/core-types"
 import {
   applyCandidateJobEvent,
   applyCandidateLifecycleEvent,
   approveJobOpportunityDraft,
+  markOutboundInviteDelivery,
+  markOutboundInviteQueued,
   rejectJobOpportunityDraft,
   writeCorrectionEvent,
   writeCandidateJobMatch,
@@ -29,6 +33,7 @@ import {
   writeFeedbackEvent,
   writeJobEnrichmentEvalFixture,
   writeJobOpportunityDraft,
+  writeOutboundInviteDecision,
 } from "./marketplace.js"
 
 type Store = Map<string, Map<string, Record<string, unknown>>>
@@ -164,6 +169,37 @@ function candidateJobMatch(over: Partial<CandidateJobMatch> = {}): CandidateJobM
   }
 }
 
+function outboundInvite(over: Partial<OutboundInvite> = {}): OutboundInvite {
+  const matchId = createCandidateJobMatchId("cand-1", "job-1")
+  return {
+    inviteId: createOutboundInviteId({ candidateId: "cand-1", jobId: "job-1", matchId }),
+    candidateId: "cand-1",
+    jobId: "job-1",
+    candidateJobStateId: createCandidateJobStateId("cand-1", "job-1"),
+    matchId,
+    status: "draft",
+    policyDecision: "auto_outbound",
+    approvalState: "not_required",
+    dryRun: true,
+    policyVersion: "s6-outreach-policy-v1",
+    decisionReason: "eligible dry-run invite",
+    blockedSignals: [],
+    missingInfo: [],
+    stickyAccountGroupId: "group-1",
+    capacitySnapshot: {
+      groupId: "group-1",
+      fromNumber: "+15555550100",
+      status: "active",
+      dailyCap: 10,
+      usedToday: 0,
+      remainingToday: 10,
+      checkedAt: now,
+    },
+    createdAt: now,
+    ...over,
+  }
+}
+
 test("applyCandidateLifecycleEvent writes pa-users marketplace fields plus one audit row", async () => {
   const { db, store } = makeFakeFirestore()
   const res = await applyCandidateLifecycleEvent(db, lifecycle("profile_created"))
@@ -289,6 +325,110 @@ test("writeCandidateJobMatch validates deterministic ids and preserves first-int
   assert.equal(stateDoc.state, "prescreen_started")
   assert.equal(stateDoc.reason, "first_interview_started")
   assert.equal(stateDoc.latestMatchId, createCandidateJobMatchId("cand-1", "job-1"))
+})
+
+test("writeOutboundInviteDecision writes auditable decisions without outbound or user writes", async () => {
+  const { db, store } = makeFakeFirestore()
+  const invite = outboundInvite()
+  const result = await writeOutboundInviteDecision(db, invite)
+
+  assert.equal(result.created, true)
+  assert.equal(result.idempotent, false)
+  assert.equal(result.invite.inviteId, invite.inviteId)
+  assert.equal(store.get(PA_COLLECTIONS.outboundInvites)!.get(invite.inviteId)!.status, "draft")
+  assert.equal(store.get(PA_COLLECTIONS.outbound)!.size, 0)
+  assert.equal(store.get(PA_COLLECTIONS.users)!.size, 0)
+  assert.equal(store.get(PA_COLLECTIONS.auditEvents)!.has(result.auditEventId), true)
+
+  const duplicate = await writeOutboundInviteDecision(db, invite)
+  assert.equal(duplicate.created, false)
+  assert.equal(duplicate.idempotent, true)
+  assert.equal(store.get(PA_COLLECTIONS.outboundInvites)!.size, 1)
+})
+
+test("writeOutboundInviteDecision rejects mismatched ids and conflicting duplicates", async () => {
+  const { db } = makeFakeFirestore()
+  await assert.rejects(
+    () => writeOutboundInviteDecision(db, outboundInvite({ inviteId: "random" })),
+    /outbound_invite_id_mismatch/
+  )
+  await assert.rejects(
+    () => writeOutboundInviteDecision(db, outboundInvite({ candidateJobStateId: "wrong" })),
+    /candidate_job_state_id_mismatch/
+  )
+
+  const invite = outboundInvite()
+  await writeOutboundInviteDecision(db, invite)
+  await assert.rejects(
+    () => writeOutboundInviteDecision(db, outboundInvite({ decisionReason: "changed" })),
+    /conflicting_duplicate_event/
+  )
+})
+
+test("markOutboundInviteQueued links queue evidence then moves candidate-job state", async () => {
+  const { db, store } = makeFakeFirestore()
+  const invite = outboundInvite({ dryRun: false, approvalState: "approved" })
+  await writeOutboundInviteDecision(db, invite)
+  store.get(PA_COLLECTIONS.outbound)!.set("outbound-1", {
+    id: "outbound-1",
+    userId: "cand-1",
+    status: "pending",
+    createdAt: now,
+  })
+
+  const result = await markOutboundInviteQueued(db, {
+    inviteId: invite.inviteId,
+    outboundId: "outbound-1",
+    queuedAt: now,
+    actor: "system",
+  })
+  assert.equal(result.state, "outbound_queued")
+  const storedInvite = store.get(PA_COLLECTIONS.outboundInvites)!.get(invite.inviteId)!
+  assert.equal(storedInvite.status, "queued")
+  assert.equal(storedInvite.outboundId, "outbound-1")
+  const state = store.get(PA_COLLECTIONS.candidateJobStates)!.get(createCandidateJobStateId("cand-1", "job-1"))!
+  assert.equal(state.state, "outbound_queued")
+  assert.equal(state.outboundInviteId, invite.inviteId)
+})
+
+test("markOutboundInviteDelivery only marks sent from queued invite evidence", async () => {
+  const { db, store } = makeFakeFirestore()
+  const invite = outboundInvite({ dryRun: false, approvalState: "approved" })
+  await writeOutboundInviteDecision(db, invite)
+  await assert.rejects(
+    () =>
+      markOutboundInviteDelivery(db, {
+        inviteId: invite.inviteId,
+        outboundId: "outbound-1",
+        providerStatus: "SENT",
+        deliveredAt: now,
+        actor: "system",
+      }),
+    /outbound_invite_not_queued/
+  )
+
+  store.get(PA_COLLECTIONS.outbound)!.set("outbound-1", {
+    id: "outbound-1",
+    userId: "cand-1",
+    status: "pending",
+    createdAt: now,
+  })
+  await markOutboundInviteQueued(db, {
+    inviteId: invite.inviteId,
+    outboundId: "outbound-1",
+    queuedAt: now,
+    actor: "system",
+  })
+
+  const result = await markOutboundInviteDelivery(db, {
+    inviteId: invite.inviteId,
+    outboundId: "outbound-1",
+    providerStatus: "SENT",
+    deliveredAt: now,
+    actor: "system",
+  })
+  assert.equal(result.state, "outbound_sent")
+  assert.equal(store.get(PA_COLLECTIONS.outboundInvites)!.get(invite.inviteId)!.status, "sent")
 })
 
 test("feedback and correction events are append-only with conflict detection", async () => {

@@ -10,6 +10,7 @@ import {
   FeedbackEventSchema,
   JobEnrichmentEvalFixtureSchema,
   JobOpportunityDraftSchema,
+  OutboundInviteSchema,
   PA_COLLECTIONS,
   PA_JOB_ENRICHMENT_EVAL_FIXTURES_SUBCOLLECTION,
   PA_JOB_ENRICHMENT_SUBCOLLECTION,
@@ -28,8 +29,12 @@ import {
   type FeedbackEvent,
   type JobEnrichmentEvalFixture,
   type JobOpportunityDraft,
+  type MarketplaceActor,
+  type OutboundInvite,
+  type StateReductionResult,
   createCandidateJobStateId,
   createCandidateJobMatchId,
+  createOutboundInviteId,
 } from "@pa/core-types"
 
 const AUDIT_COLLECTION = PA_COLLECTIONS.auditEvents
@@ -43,6 +48,22 @@ function stableJson(value: unknown): string {
       .join(",")}}`
   }
   return JSON.stringify(value)
+}
+
+function pruneUndefined(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(pruneUndefined)
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, v]) => v !== undefined)
+        .map(([k, v]) => [k, pruneUndefined(v)])
+    )
+  }
+  return value
+}
+
+function firestorePayload(value: Record<string, unknown>): Record<string, unknown> {
+  return pruneUndefined(value) as Record<string, unknown>
 }
 
 function auditId(prefix: string, eventId: string): string {
@@ -155,6 +176,18 @@ export async function applyCandidateJobEvent(
       previousState: currentState,
       stateUpdatedAt: event.occurredAt,
       reason: reduced.reason,
+      outboundInviteId:
+        event.type === "outbound_queued" || event.type === "outbound_sent"
+          ? event.outboundInviteId
+          : currentDoc?.outboundInviteId,
+      outboundId:
+        event.type === "outbound_queued" || event.type === "outbound_sent"
+          ? event.outboundId
+          : currentDoc?.outboundId,
+      latestMatchId:
+        event.type === "outbound_queued"
+          ? event.matchId ?? currentDoc?.latestMatchId
+          : currentDoc?.latestMatchId,
       archivedAt: reduced.state === "archived" ? event.occurredAt : currentDoc?.archivedAt,
     })
     tx.set(stateRef, nextDoc, { merge: true })
@@ -195,6 +228,10 @@ export type WriteCandidateJobMatchResult = {
 function timestampOrderValue(value: string): number {
   const parsed = Date.parse(value)
   return Number.isFinite(parsed) ? parsed : 0
+}
+
+function addDaysIso(baseIso: string, days: number): string {
+  return new Date(timestampOrderValue(baseIso) + days * 24 * 60 * 60 * 1000).toISOString()
 }
 
 function safeAuditPart(value: string): string {
@@ -301,6 +338,357 @@ export async function writeCandidateJobMatch(
       auditEventId: auditRef.id,
     }
   })
+}
+
+export type WriteOutboundInviteDecisionResult = {
+  invite: OutboundInvite
+  created: boolean
+  idempotent: boolean
+  auditEventId: string
+}
+
+function expectedOutboundInviteId(invite: Pick<OutboundInvite, "candidateId" | "jobId" | "matchId">): string {
+  return createOutboundInviteId({
+    candidateId: invite.candidateId,
+    jobId: invite.jobId,
+    matchId: invite.matchId,
+  })
+}
+
+export async function writeOutboundInviteDecision(
+  db: Firestore,
+  rawInvite: OutboundInvite
+): Promise<WriteOutboundInviteDecisionResult> {
+  const invite = OutboundInviteSchema.parse(rawInvite)
+  if (invite.inviteId !== expectedOutboundInviteId(invite)) {
+    throw new Error("outbound_invite_id_mismatch")
+  }
+  const stateDocId = createCandidateJobStateId(invite.candidateId, invite.jobId)
+  if (invite.candidateJobStateId !== stateDocId) {
+    throw new Error("candidate_job_state_id_mismatch")
+  }
+
+  const inviteRef = db.collection(PA_COLLECTIONS.outboundInvites).doc(invite.inviteId)
+  const auditRef = db
+    .collection(AUDIT_COLLECTION)
+    .doc(auditId("marketplace_outbound_invite_decision", invite.inviteId))
+
+  return await db.runTransaction(async (tx) => {
+    const inviteSnap = await tx.get(inviteRef)
+    const auditSnap = await tx.get(auditRef)
+
+    if (inviteSnap.exists) {
+      const existingInvite = OutboundInviteSchema.parse(inviteSnap.data())
+      if (stableJson(pruneUndefined(existingInvite)) !== stableJson(pruneUndefined(invite))) {
+        throw new Error(`conflicting_duplicate_event:${PA_COLLECTIONS.outboundInvites}/${invite.inviteId}`)
+      }
+      return {
+        invite: existingInvite,
+        created: false,
+        idempotent: true,
+        auditEventId: auditRef.id,
+      }
+    }
+
+    tx.set(inviteRef, firestorePayload(invite as Record<string, unknown>))
+    if (!auditSnap.exists) {
+      tx.set(auditRef, firestorePayload({
+        id: auditRef.id,
+        action: "marketplace.outbound_invite.decision.write",
+        candidateId: invite.candidateId,
+        jobId: invite.jobId,
+        candidateJobStateId: invite.candidateJobStateId,
+        inviteId: invite.inviteId,
+        matchId: invite.matchId,
+        policyDecision: invite.policyDecision,
+        approvalState: invite.approvalState,
+        status: invite.status,
+        dryRun: invite.dryRun,
+        blockedSignals: invite.blockedSignals,
+        stickyAccountGroupId: invite.stickyAccountGroupId,
+        createdAt: invite.createdAt,
+      }))
+    }
+
+    return {
+      invite,
+      created: true,
+      idempotent: false,
+      auditEventId: auditRef.id,
+    }
+  })
+}
+
+export type MarkOutboundInviteQueuedInput = {
+  inviteId: string
+  outboundId: string
+  queuedAt: string
+  actor: MarketplaceActor
+}
+
+export type MarkOutboundInviteDeliveryInput = {
+  inviteId: string
+  outboundId: string
+  providerStatus: string
+  deliveredAt: string
+  actor: MarketplaceActor
+  lastError?: string
+}
+
+function deliveryStatusFromProvider(providerStatus: string): OutboundInvite["status"] {
+  const normalized = providerStatus.trim().toUpperCase()
+  if (normalized === "DELIVERED") return "delivered"
+  if (normalized === "FAILED" || normalized === "ERROR") return "failed"
+  if (normalized === "DEAD_LETTER") return "dead_letter"
+  return "sent"
+}
+
+export async function markOutboundInviteQueued(
+  db: Firestore,
+  input: MarkOutboundInviteQueuedInput
+): Promise<MarketplaceTransitionResult<CandidateJobState> & { stateDocId: string; invite: OutboundInvite }> {
+  const inviteRef = db.collection(PA_COLLECTIONS.outboundInvites).doc(input.inviteId)
+  const outboundRef = db.collection(PA_COLLECTIONS.outbound).doc(input.outboundId)
+  const auditRef = db
+    .collection(AUDIT_COLLECTION)
+    .doc(auditId("marketplace_outbound_invite_queued", `${input.inviteId}_${input.outboundId}`))
+
+  return await db.runTransaction(async (tx) => {
+    const inviteSnap = await tx.get(inviteRef)
+    if (!inviteSnap.exists) throw new Error("outbound_invite_missing")
+    const invite = OutboundInviteSchema.parse(inviteSnap.data())
+    if (invite.dryRun) throw new Error("outbound_invite_dry_run")
+    if (invite.status === "queued" && invite.outboundId === input.outboundId) {
+      const stateDocId = createCandidateJobStateId(invite.candidateId, invite.jobId)
+      const stateSnap = await tx.get(db.collection(PA_COLLECTIONS.candidateJobStates).doc(stateDocId))
+      const currentDoc = stateSnap.exists ? CandidateJobStateDocSchema.parse(stateSnap.data()) : null
+      return {
+        state: currentDoc?.state ?? "outbound_queued",
+        changed: false,
+        idempotent: true,
+        auditEventId: auditRef.id,
+        reason: "duplicate_outbound_invite_queued",
+        stateDocId,
+        invite,
+      }
+    }
+    if (invite.status !== "draft" && invite.status !== "approved") {
+      throw new Error(`outbound_invite_not_queueable:${invite.status}`)
+    }
+    if (invite.approvalState !== "approved" && invite.approvalState !== "not_required") {
+      throw new Error(`outbound_invite_not_approved:${invite.approvalState}`)
+    }
+    const outboundSnap = await tx.get(outboundRef)
+    if (!outboundSnap.exists) throw new Error("outbound_queue_row_missing")
+
+    const stateDocId = createCandidateJobStateId(invite.candidateId, invite.jobId)
+    const stateRef = db.collection(PA_COLLECTIONS.candidateJobStates).doc(stateDocId)
+    const userRef = db.collection(PA_COLLECTIONS.users).doc(invite.candidateId)
+    const stateSnap = await tx.get(stateRef)
+    const userSnap = await tx.get(userRef)
+    const currentDoc = stateSnap.exists ? CandidateJobStateDocSchema.parse(stateSnap.data()) : null
+    const currentUserFields = CandidateProfileMarketplaceFieldsSchema.parse(
+      userSnap.exists ? userSnap.data() : {}
+    )
+    const currentState = currentDoc?.state ?? "candidate_matched"
+    const event: CandidateJobEvent = CandidateJobEventSchema.parse({
+      eventId: `outbound-queued-${input.inviteId}-${input.outboundId}`,
+      type: "outbound_queued",
+      candidateId: invite.candidateId,
+      jobId: invite.jobId,
+      actor: input.actor,
+      occurredAt: input.queuedAt,
+      evidence: [{ source: "outbound_delivery", summary: "Outbound queue row created", refId: input.outboundId }],
+      outboundInviteId: invite.inviteId,
+      outboundId: input.outboundId,
+      matchId: invite.matchId,
+    })
+    const reduced = reduceCandidateJobState(currentState, event)
+    const nextDoc: CandidateJobStateDoc = CandidateJobStateDocSchema.parse({
+      ...(currentDoc ?? {}),
+      id: stateDocId,
+      candidateId: invite.candidateId,
+      jobId: invite.jobId,
+      state: reduced.state,
+      previousState: currentState,
+      stateUpdatedAt: input.queuedAt,
+      reason: reduced.reason,
+      outboundInviteId: invite.inviteId,
+      outboundId: input.outboundId,
+      latestMatchId: invite.matchId ?? currentDoc?.latestMatchId,
+      archivedAt: currentDoc?.archivedAt,
+    })
+    const nextInvite = OutboundInviteSchema.parse({
+      ...invite,
+      status: "queued",
+      outboundId: input.outboundId,
+      queuedAt: input.queuedAt,
+      updatedAt: input.queuedAt,
+    })
+
+    tx.set(inviteRef, firestorePayload(nextInvite as Record<string, unknown>), { merge: true })
+    tx.set(stateRef, firestorePayload(nextDoc as Record<string, unknown>), { merge: true })
+    tx.set(
+      userRef,
+      firestorePayload({
+        outreach: {
+          ...(currentUserFields.outreach ?? {}),
+          status: "cooldown",
+          lastOutboundAt: input.queuedAt,
+          cooldownUntil: addDaysIso(input.queuedAt, 7),
+        },
+        updatedAt: input.queuedAt,
+      }),
+      { merge: true }
+    )
+    tx.set(auditRef, firestorePayload({
+      id: auditRef.id,
+      action: "marketplace.outbound_invite.queued",
+      candidateId: invite.candidateId,
+      jobId: invite.jobId,
+      inviteId: invite.inviteId,
+      outboundId: input.outboundId,
+      from: reduced.transition.from,
+      to: reduced.transition.to,
+      changed: reduced.changed,
+      reason: reduced.reason,
+      actor: input.actor,
+      createdAt: input.queuedAt,
+    }))
+
+    return {
+      state: reduced.state,
+      changed: reduced.changed,
+      idempotent: false,
+      auditEventId: auditRef.id,
+      reason: reduced.reason,
+      stateDocId,
+      invite: nextInvite,
+    }
+  })
+}
+
+export async function markOutboundInviteDelivery(
+  db: Firestore,
+  input: MarkOutboundInviteDeliveryInput
+): Promise<MarketplaceTransitionResult<CandidateJobState> & { stateDocId: string; invite: OutboundInvite }> {
+  const inviteRef = db.collection(PA_COLLECTIONS.outboundInvites).doc(input.inviteId)
+  const auditRef = db
+    .collection(AUDIT_COLLECTION)
+    .doc(auditId("marketplace_outbound_invite_delivery", `${input.inviteId}_${safeAuditPart(input.providerStatus)}`))
+
+  return await db.runTransaction(async (tx) => {
+    const inviteSnap = await tx.get(inviteRef)
+    if (!inviteSnap.exists) throw new Error("outbound_invite_missing")
+    const invite = OutboundInviteSchema.parse(inviteSnap.data())
+    if (invite.status !== "queued" && invite.status !== "sent" && invite.status !== "delivered") {
+      throw new Error("outbound_invite_not_queued")
+    }
+    if (invite.outboundId !== input.outboundId) throw new Error("outbound_id_mismatch")
+
+    const normalizedStatus = deliveryStatusFromProvider(input.providerStatus)
+    const nextStatus =
+      invite.status === "delivered" && normalizedStatus === "sent"
+        ? "delivered"
+        : normalizedStatus
+    const stateDocId = createCandidateJobStateId(invite.candidateId, invite.jobId)
+    const stateRef = db.collection(PA_COLLECTIONS.candidateJobStates).doc(stateDocId)
+    const stateSnap = await tx.get(stateRef)
+    const currentDoc = stateSnap.exists ? CandidateJobStateDocSchema.parse(stateSnap.data()) : null
+    const currentState = currentDoc?.state ?? "candidate_matched"
+
+    let reduced = reductionForNoStateChange(
+      currentState,
+      `outbound_${nextStatus}`,
+      input.deliveredAt,
+      "outbound_delivery_recorded"
+    )
+    if (nextStatus === "sent" || nextStatus === "delivered") {
+      const event: CandidateJobEvent = CandidateJobEventSchema.parse({
+        eventId: `outbound-sent-${input.inviteId}-${input.outboundId}`,
+        type: "outbound_sent",
+        candidateId: invite.candidateId,
+        jobId: invite.jobId,
+        actor: input.actor,
+        occurredAt: input.deliveredAt,
+        evidence: [{ source: "outbound_delivery", summary: "Provider accepted outbound", refId: input.outboundId }],
+        outboundInviteId: invite.inviteId,
+        outboundId: input.outboundId,
+        providerStatus: input.providerStatus,
+      })
+      reduced = reduceCandidateJobState(currentState, event)
+      const nextDoc: CandidateJobStateDoc = CandidateJobStateDocSchema.parse({
+        ...(currentDoc ?? {}),
+        id: stateDocId,
+        candidateId: invite.candidateId,
+        jobId: invite.jobId,
+        state: reduced.state,
+        previousState: currentState,
+        stateUpdatedAt: input.deliveredAt,
+        reason: reduced.reason,
+        outboundInviteId: invite.inviteId,
+        outboundId: input.outboundId,
+        latestMatchId: currentDoc?.latestMatchId,
+        archivedAt: currentDoc?.archivedAt,
+      })
+      tx.set(stateRef, firestorePayload(nextDoc as Record<string, unknown>), { merge: true })
+    }
+
+    const nextInvite = OutboundInviteSchema.parse({
+      ...invite,
+      status: nextStatus,
+      providerStatus: input.providerStatus,
+      sentAt:
+        nextStatus === "sent" || nextStatus === "delivered"
+          ? invite.sentAt ?? input.deliveredAt
+          : invite.sentAt,
+      deliveredAt: nextStatus === "delivered" ? input.deliveredAt : invite.deliveredAt,
+      failedAt: nextStatus === "failed" || nextStatus === "dead_letter" ? input.deliveredAt : invite.failedAt,
+      lastError: input.lastError ?? invite.lastError,
+      updatedAt: input.deliveredAt,
+    })
+    tx.set(inviteRef, firestorePayload(nextInvite as Record<string, unknown>), { merge: true })
+    tx.set(auditRef, firestorePayload({
+      id: auditRef.id,
+      action: "marketplace.outbound_invite.delivery",
+      candidateId: invite.candidateId,
+      jobId: invite.jobId,
+      inviteId: invite.inviteId,
+      outboundId: input.outboundId,
+      providerStatus: input.providerStatus,
+      status: nextStatus,
+      from: reduced.transition.from,
+      to: reduced.transition.to,
+      changed: reduced.changed,
+      reason: reduced.reason,
+      actor: input.actor,
+      createdAt: input.deliveredAt,
+    }))
+
+    return {
+      state: reduced.state,
+      changed: reduced.changed,
+      idempotent: false,
+      auditEventId: auditRef.id,
+      reason: reduced.reason,
+      stateDocId,
+      invite: nextInvite,
+    }
+  })
+}
+
+function reductionForNoStateChange(
+  state: CandidateJobState,
+  eventType: string,
+  occurredAt: string,
+  reason: string
+): StateReductionResult<CandidateJobState> {
+  return {
+    state,
+    changed: false,
+    reason,
+    transition: { from: state, to: state, eventType, occurredAt },
+  }
 }
 
 async function writeAppendOnlyDoc<T>(

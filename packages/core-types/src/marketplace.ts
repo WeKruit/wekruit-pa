@@ -404,6 +404,7 @@ export const CandidateJobStateDocSchema = z.object({
   reason: z.string().max(1_000).optional(),
   prescreenSessionId: z.string().min(1).optional(),
   outboundInviteId: z.string().min(1).optional(),
+  outboundId: z.string().min(1).optional(),
   latestMatchId: z.string().min(1).optional(),
   archivedAt: TimestampSchema.optional(),
 })
@@ -464,25 +465,113 @@ export const CandidateJobMatchSchema = z
   })
 export type CandidateJobMatch = z.infer<typeof CandidateJobMatchSchema>
 
+export const OutboundInviteApprovalStateSchema = z.enum([
+  "not_required",
+  "pending",
+  "approved",
+  "rejected",
+])
+export type OutboundInviteApprovalState = z.infer<typeof OutboundInviteApprovalStateSchema>
+
+export const OutreachPolicyDecisionSchema = z.enum([
+  "auto_outbound",
+  "hitl_review",
+  "do_not_contact",
+  "blocked",
+])
+export type OutreachPolicyDecision = z.infer<typeof OutreachPolicyDecisionSchema>
+
+export const OutreachCapacitySnapshotSchema = z.object({
+  groupId: IdSchema,
+  fromNumber: z.string().min(1).optional(),
+  status: z.enum(["active", "warmup", "paused", "throttled", "degraded", "missing", "unknown"]),
+  dailyCap: z.number().int().nonnegative(),
+  usedToday: z.number().int().nonnegative(),
+  remainingToday: z.number().int().nonnegative(),
+  rolling24hUsed: z.number().int().nonnegative().optional(),
+  checkedAt: TimestampSchema,
+  reason: z.string().max(500).optional(),
+})
+export type OutreachCapacitySnapshot = z.infer<typeof OutreachCapacitySnapshotSchema>
+
+export const OutboundInviteCapacitySnapshotSchema = OutreachCapacitySnapshotSchema
+export type OutboundInviteCapacitySnapshot = OutreachCapacitySnapshot
+
+export const OutboundInviteCandidateResponseSchema = z.object({
+  status: z.enum(["interested", "declined", "do_not_contact", "needs_follow_up", "unknown"]),
+  respondedAt: TimestampSchema,
+  summary: z.string().min(1).max(1_000).optional(),
+  feedbackEventId: z.string().min(1).optional(),
+})
+export type OutboundInviteCandidateResponse = z.infer<
+  typeof OutboundInviteCandidateResponseSchema
+>
+
+export const OutreachDecisionSchema = z.object({
+  inviteId: IdSchema,
+  candidateId: IdSchema,
+  jobId: IdSchema,
+  matchId: z.string().min(1).optional(),
+  policyVersion: IdSchema,
+  policyDecision: OutreachPolicyDecisionSchema,
+  decisionReason: z.string().min(1).max(1_000),
+  blockedSignals: z.array(z.string().min(1)).default([]),
+  missingInfo: z.array(z.string().min(1)).default([]),
+  cooldownUntil: TimestampSchema.optional(),
+  stickyAccountGroupId: z.string().min(1).optional(),
+  capacitySnapshot: OutreachCapacitySnapshotSchema.optional(),
+  approvalState: OutboundInviteApprovalStateSchema.default("not_required"),
+  dryRun: z.boolean().default(true),
+  idempotencyKey: IdSchema,
+  duplicateSuppressionKey: IdSchema,
+  outboundId: z.string().min(1).optional(),
+  decidedAt: TimestampSchema,
+})
+export type OutreachDecision = z.infer<typeof OutreachDecisionSchema>
+
 export const OutboundInviteSchema = z.object({
   inviteId: IdSchema,
   candidateId: IdSchema,
   jobId: IdSchema,
   candidateJobStateId: IdSchema,
+  matchId: z.string().min(1).optional(),
   status: z.enum([
     "draft",
+    "blocked",
+    "approved",
     "queued",
     "sent",
     "delivered",
     "failed",
+    "dead_letter",
     "declined",
     "expired",
     "cancelled",
   ]),
-  policyDecision: z.enum(["auto_outbound", "hitl_review", "do_not_contact", "manual_approved", "blocked"]),
+  policyDecision: OutreachPolicyDecisionSchema,
+  approvalState: OutboundInviteApprovalStateSchema.default("not_required"),
+  dryRun: z.boolean().default(true),
+  policyVersion: IdSchema,
+  decisionReason: z.string().min(1).max(1_000),
+  blockedSignals: z.array(z.string().min(1)).default([]),
+  missingInfo: z.array(z.string().min(1)).default([]),
   outboundId: z.string().min(1).optional(),
   stickyAccountGroupId: z.string().min(1).optional(),
+  capacitySnapshot: OutreachCapacitySnapshotSchema.optional(),
   cooldownUntil: TimestampSchema.optional(),
+  duplicateSuppressionKey: z.string().min(1).optional(),
+  approvedAt: TimestampSchema.optional(),
+  approvedBy: z.string().min(1).optional(),
+  rejectedAt: TimestampSchema.optional(),
+  rejectedBy: z.string().min(1).optional(),
+  rejectionReason: z.string().min(1).max(1_000).optional(),
+  queuedAt: TimestampSchema.optional(),
+  sentAt: TimestampSchema.optional(),
+  deliveredAt: TimestampSchema.optional(),
+  failedAt: TimestampSchema.optional(),
+  providerStatus: z.string().min(1).optional(),
+  lastError: z.string().max(2_000).optional(),
+  candidateResponse: OutboundInviteCandidateResponseSchema.optional(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema.optional(),
 })
@@ -822,10 +911,29 @@ const CandidateJobEventBaseSchema = z.object({
   matchScore: ConfidenceSchema.optional(),
 })
 
+const OutboundDeliveryEvidenceSchema = z
+  .array(MarketplaceEvidenceSchema)
+  .min(1)
+  .refine((items) => items.some((item) => item.source === "outbound_delivery"), {
+    message: "outbound events require outbound_delivery evidence",
+  })
+
 export const CandidateJobEventSchema = z.discriminatedUnion("type", [
   CandidateJobEventBaseSchema.extend({ type: z.literal("match_recorded") }),
-  CandidateJobEventBaseSchema.extend({ type: z.literal("outbound_queued") }),
-  CandidateJobEventBaseSchema.extend({ type: z.literal("outbound_sent") }),
+  CandidateJobEventBaseSchema.extend({
+    type: z.literal("outbound_queued"),
+    evidence: OutboundDeliveryEvidenceSchema,
+    outboundInviteId: IdSchema,
+    outboundId: IdSchema,
+    matchId: IdSchema.optional(),
+  }),
+  CandidateJobEventBaseSchema.extend({
+    type: z.literal("outbound_sent"),
+    evidence: OutboundDeliveryEvidenceSchema,
+    outboundInviteId: IdSchema,
+    outboundId: IdSchema,
+    providerStatus: z.string().min(1),
+  }),
   CandidateJobEventBaseSchema.extend({ type: z.literal("candidate_interested") }),
   CandidateJobEventBaseSchema.extend({ type: z.literal("prescreen_started") }),
   CandidateJobEventBaseSchema.extend({ type: z.literal("prescreen_passed") }),
@@ -1117,6 +1225,64 @@ export function createCandidateJobStateId(candidateId: string, jobId: string): s
 
 export function createCandidateJobMatchId(candidateId: string, jobId: string): string {
   return `${candidateId}__${jobId}`
+}
+
+function safeInternalIdPart(value: string, fieldName: string): string {
+  const trimmed = value.trim()
+  if (!trimmed) throw new Error(`${fieldName}_required`)
+  if (/[+@\s]/.test(trimmed)) throw new Error(`${fieldName}_must_be_internal_id`)
+  return trimmed.replace(/[^A-Za-z0-9._:-]/g, "-")
+}
+
+type OutboundInviteIdInput = {
+  candidateId: string
+  jobId: string
+  matchId?: string
+}
+
+export function createOutboundInviteId(candidateId: string, jobId: string, matchId?: string): string
+export function createOutboundInviteId(input: OutboundInviteIdInput): string
+export function createOutboundInviteId(
+  inputOrCandidateId: string | OutboundInviteIdInput,
+  jobId?: string,
+  matchId?: string
+): string {
+  const input =
+    typeof inputOrCandidateId === "string"
+      ? { candidateId: inputOrCandidateId, jobId: jobId ?? "", matchId }
+      : inputOrCandidateId
+  const candidatePart = safeInternalIdPart(input.candidateId, "candidateId")
+  const jobPart = safeInternalIdPart(input.jobId, "jobId")
+  const matchPart = input.matchId ? `__${stableIdHash(input.matchId)}` : ""
+  return `outinvite_${candidatePart}__${jobPart}${matchPart}`
+}
+
+export function createOutreachIdempotencyKey(inviteId: string): string {
+  return `outreach_idempotency_${safeInternalIdPart(inviteId, "inviteId")}`
+}
+
+function normalizeOutreachKeyPart(value: string, fieldName: string): string {
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-+/g, "-")
+  if (!normalized) throw new Error(`${fieldName}_required`)
+  return normalized
+}
+
+export function createOutreachDuplicateSuppressionKey(
+  candidateId: string,
+  companyName: string,
+  roleFamilyOrTitle: string
+): string {
+  const candidatePart = safeInternalIdPart(candidateId, "candidateId")
+  const companyPart = normalizeOutreachKeyPart(companyName, "companyName")
+  const rolePart = normalizeOutreachKeyPart(roleFamilyOrTitle, "roleFamilyOrTitle")
+  return `outreach_dupe_${candidatePart}__${companyPart}__${rolePart}`
 }
 
 export function createEmployerVisibleProfileId(jobId: string, candidateId: string): string {
