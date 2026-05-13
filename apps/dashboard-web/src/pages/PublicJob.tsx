@@ -4,15 +4,21 @@
  * Route: /j/:jobId (no auth)
  *
  * Reads pa-jobs/{jobId}.prescreenConfig + .publicVisible.
- * Renders JD + "Start pre-screen" SMS deep link + QR code + optional
- * CV upload flow.
+ * Renders JD + "Start pre-screen" SMS deep link + QR code + INLINE CV upload
+ * (no back-and-forth navigation to /j/:jobId/cv).
  *
  * Generates a `requestedUserId` UUID cookie per visit. CF webhook resolves
  * it on first inbound SMS via pa-prescreen-pending-invites/{requestedUserId}.
+ *
+ * v1.9 hotfix 2026-05-13 — Adam directive "这些应该都在一个地方来回".
+ * Upload UI now lives directly on the job page instead of routing to a
+ * separate /cv page. Single-page flow: see job → upload → tap iMessage.
  */
 import { useEffect, useMemo, useState } from "react"
 import { useParams } from "react-router-dom"
 import { doc, getDoc, setDoc } from "firebase/firestore"
+
+const CV_INGEST_URL = import.meta.env.VITE_CV_INGEST_URL ?? ""
 import { db } from "../lib/firebase.js"
 
 interface PrescreenConfig {
@@ -93,6 +99,170 @@ function getOrCreateRequestedUserId(_jobId: string): string {
 
 function hasCvOnFile(): boolean {
   return window.localStorage.getItem(HAS_CV_KEY) === "true"
+}
+
+async function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader()
+    r.onload = () => {
+      const result = r.result as string
+      const idx = result.indexOf(",")
+      resolve(idx >= 0 ? result.slice(idx + 1) : result)
+    }
+    r.onerror = () => reject(r.error)
+    r.readAsDataURL(file)
+  })
+}
+
+interface InlineCvSectionProps {
+  jobId: string
+  requestedUserId: string
+  initialHasCv: boolean
+}
+
+function InlineCvSection({ jobId, requestedUserId, initialHasCv }: InlineCvSectionProps) {
+  const [hasCv, setHasCv] = useState<boolean>(initialHasCv)
+  if (hasCv) {
+    return (
+      <p
+        style={{
+          marginTop: "1rem",
+          fontSize: "0.9em",
+          color: "#16643b",
+          fontWeight: 700,
+          background: "#e8f5ec",
+          padding: "0.75rem 1rem",
+          borderRadius: 12,
+          border: "1px solid #c6e6ce",
+        }}
+      >
+        ✓ We have your resume on file — tap{" "}
+        <span style={{ whiteSpace: "nowrap" }}>"Open in iMessage"</span> above to start.
+      </p>
+    )
+  }
+  return (
+    <div
+      style={{
+        marginTop: "1rem",
+        padding: "1rem",
+        background: "#fff",
+        border: "1px solid #e3dccd",
+        borderRadius: 18,
+      }}
+    >
+      <h3 style={{ marginTop: 0, marginBottom: "0.25rem", fontSize: "1rem" }}>
+        Have a resume? Upload it here (optional)
+      </h3>
+      <p style={{ margin: "0 0 0.5rem", color: "#5f665b", fontSize: "0.85em" }}>
+        PDF or DOCX, under 5 MB. We&rsquo;ll use it to tailor the pre-screen.
+      </p>
+      <InlineCvUpload
+        jobId={jobId}
+        requestedUserId={requestedUserId}
+        onUploaded={() => setHasCv(true)}
+      />
+    </div>
+  )
+}
+
+interface InlineCvUploadProps {
+  jobId: string
+  requestedUserId: string
+  onUploaded: () => void
+}
+
+function InlineCvUpload({ jobId, requestedUserId, onUploaded }: InlineCvUploadProps) {
+  const [file, setFile] = useState<File | null>(null)
+  const [status, setStatus] = useState<"idle" | "uploading" | "ok" | "err">("idle")
+  const [errMsg, setErrMsg] = useState<string | null>(null)
+
+  useEffect(() => {
+    setStatus("idle")
+    setErrMsg(null)
+  }, [file])
+
+  async function onSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!file) return
+    if (file.size > 5 * 1024 * 1024) {
+      setStatus("err")
+      setErrMsg("File must be under 5 MB.")
+      return
+    }
+    if (!CV_INGEST_URL) {
+      setStatus("err")
+      setErrMsg("CV ingest endpoint not configured. Please reach out to support.")
+      return
+    }
+    try {
+      setStatus("uploading")
+      const b64 = await fileToBase64(file)
+      const res = await fetch(CV_INGEST_URL, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          tempUserId: requestedUserId,
+          resumeBase64: b64,
+          resumeName: file.name,
+          jobIdContext: jobId,
+          source: "public_job_page",
+        }),
+      })
+      if (!res.ok) {
+        setStatus("err")
+        setErrMsg(`Upload failed (${res.status})`)
+        return
+      }
+      try {
+        window.localStorage.setItem(HAS_CV_KEY, "true")
+      } catch {
+        // localStorage disabled — non-fatal
+      }
+      setStatus("ok")
+      onUploaded()
+    } catch (err) {
+      setStatus("err")
+      setErrMsg(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  return (
+    <form onSubmit={onSubmit} style={{ marginTop: "0.5rem" }}>
+      <div style={{ display: "flex", gap: "0.75rem", alignItems: "center", flexWrap: "wrap" }}>
+        <input
+          type="file"
+          accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+          onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+          disabled={status === "uploading"}
+        />
+        <button
+          type="submit"
+          disabled={!file || status === "uploading"}
+          style={{
+            padding: "0.55rem 1.25rem",
+            background: file && status !== "uploading" ? "#2f6f4f" : "#cbd5e1",
+            color: "#fff7df",
+            borderRadius: 999,
+            border: "none",
+            fontWeight: 700,
+            cursor: file && status !== "uploading" ? "pointer" : "not-allowed",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {status === "uploading" ? "Parsing resume…" : "Upload"}
+        </button>
+      </div>
+      {status === "uploading" ? (
+        <p style={{ marginTop: "0.5rem", fontSize: "0.85em", color: "#7a6f5d" }}>
+          Reading your CV — takes 10-30 seconds.
+        </p>
+      ) : null}
+      {status === "err" && errMsg ? (
+        <p style={{ marginTop: "0.5rem", color: "#9c2b24", fontWeight: 700 }}>{errMsg}</p>
+      ) : null}
+    </form>
+  )
 }
 
 export default function PublicJob() {
@@ -250,29 +420,12 @@ export default function PublicJob() {
           </div>
         ) : null}
       </div>
-      {hasCvOnFile() ? (
-        <p
-          style={{
-            marginTop: "1rem",
-            fontSize: "0.85em",
-            color: "#16643b",
-            fontWeight: 700,
-            background: "#e8f5ec",
-            padding: "0.75rem 1rem",
-            borderRadius: 12,
-            border: "1px solid #c6e6ce",
-          }}
-        >
-          ✓ We have your resume on file — no need to re-upload. Just tap{" "}
-          <span style={{ whiteSpace: "nowrap" }}>"Open in iMessage"</span> above to start.
-        </p>
-      ) : (
-        <p style={{ marginTop: "1rem", fontSize: "0.85em", color: "#7a6f5d" }}>
-          Have a resume? You can{" "}
-          <a href={`/j/${jobId}/cv`}>upload it here</a>{" "}
-          before starting — it makes the screen faster.
-        </p>
-      )}
+      {/* v1.9 hotfix 2026-05-13 — inline upload UI (no /cv route). */}
+      <InlineCvSection
+        jobId={jobId!}
+        requestedUserId={requestedUserId}
+        initialHasCv={hasCvOnFile()}
+      />
       {sendNumber ? (
         <p style={{ fontSize: "0.75em", color: "#a59781", marginTop: "2rem" }}>
           By starting, you agree to our{" "}
