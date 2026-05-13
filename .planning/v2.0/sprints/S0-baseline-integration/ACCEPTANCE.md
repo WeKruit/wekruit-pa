@@ -8,12 +8,12 @@ This file records S0 verification.
 |---|---|---|---|---|
 | Branch | `git branch --show-current` | `codex/v2-S0-baseline-integration` | `codex/v2-S0-baseline-integration` | PASS |
 | Head | `git rev-parse HEAD` | `23b9adb258fd10171e62cb8ba5030d5ba08dc3d0` | `23b9adb258fd10171e62cb8ba5030d5ba08dc3d0` | PASS |
-| Dirty state | `git status --short --branch` | only S0 docs and minimal test/build-harness scripts edited | S0 `ACCEPTANCE.md`, `CONTEXT.md`, `EXECUTOR-PLANS.md`, `PLAN.md`, `SUMMARY.md`, plus `apps/functions/package.json`, `apps/job-rec/package.json`, `packages/agent-runtime/package.json`, `packages/agent-runtime/tsconfig.json`, `packages/pa-job-tag-enricher/package.json`, `packages/pa-orchestrator/package.json`, and `pnpm-lock.yaml` | PASS |
+| Dirty state | `git status --short --branch` | only S0 docs and minimal test/build-harness scripts edited | S0 `ACCEPTANCE.md`, `CONTEXT.md`, `EXECUTOR-PLANS.md`, `PLAN.md`, `SUMMARY.md`, plus `apps/functions/package.json`, `apps/job-rec/package.json`, `packages/agent-runtime/package.json`, `packages/agent-runtime/tsconfig.json`, `packages/pa-job-tag-enricher/package.json`, `packages/pa-orchestrator/package.json`, `packages/pa-resume-parser/package.json`, and `pnpm-lock.yaml` | PASS |
 | Worktree install | `pnpm install --frozen-lockfile` | lockfile install succeeds in S0 worktree | exit 0; reused lockfile/store; Node 22 engine warnings under local Node v25.6.1 | PASS |
 | Orchestrator tests | `pnpm --filter pa-orchestrator test` | all pass, prior baseline 1479/1479 | first clean-worktree run failed 1153/1175 due missing built workspace deps; after `pretest` dependency-build fix: 1479/1479 pass, 0 fail | PASS |
 | Functions tests | `cd apps/functions && pnpm test` | all pass | first clean-worktree run failed 921/939 due missing built workspace deps; sandbox rerun hit EPERM writing ignored `dist/`; escalated rerun after `pretest` dependency-build fix: 1168/1168 pass, 0 fail | PASS |
 | Job-rec isolated build | `pnpm --filter @pa/job-rec build` | build succeeds from clean worktree | first GitHub Actions run failed because `job-rec` imported local packages before their `dist/` outputs existed; after explicit sequential `prebuild`, local rerun passed | PASS |
-| Monorepo build | `pnpm -r build` | recursive build succeeds | first GitHub Actions run failed because `@pa/job-tag-enricher` imported `openai` without declaring it; second run exposed `agent-runtime` missing direct `firebase-admin` plus test-only connector import in library build; after metadata/tsconfig fixes, local rerun passed | PASS |
+| Monorepo build | `pnpm -r build` | recursive build succeeds | first GitHub Actions run failed because `@pa/job-tag-enricher` imported `openai` without declaring it; second run exposed `agent-runtime` missing direct `firebase-admin` plus test-only connector import in library build; clean temp worktree exposed `@pa/pa-resume-parser` missing direct `openai`; after metadata/tsconfig fixes, local rerun passed | PASS |
 | Candidate landing | `curl -sI https://candidate.wekruit.com/` | HTTP 200 | sandbox curl first failed DNS exit 6; approved `curl -sS -i -I` returned `HTTP/2 200` | PASS |
 | Public job page | `curl -sI https://candidate.wekruit.com/j/hs-11005382-invoko-product-designer` | HTTP 200 | sandbox curl first failed DNS exit 6; approved `curl -sS -i -I` returned `HTTP/2 200` | PASS |
 | Admin redirect | `curl -sI https://wekruit-pa.web.app/j/hs-11005382-invoko-product-designer` | HTTP 301 to candidate domain | approved `curl -sS -i -I` returned `HTTP/2 301` with `location: https://candidate.wekruit.com/j/hs-11005382-invoko-product-designer` | PASS |
@@ -53,6 +53,7 @@ M packages/agent-runtime/package.json
 M packages/agent-runtime/tsconfig.json
 M packages/pa-job-tag-enricher/package.json
 M packages/pa-orchestrator/package.json
+M packages/pa-resume-parser/package.json
 M pnpm-lock.yaml
 ```
 
@@ -75,6 +76,8 @@ S0 harness fixes:
   production build-order cycle.
 - `packages/pa-job-tag-enricher/package.json`: declares its direct `openai`
   dependency.
+- `packages/pa-resume-parser/package.json`: declares its direct `openai`
+  dependency for the Responses provider dynamic import.
 - `pnpm-lock.yaml`: updated from the current workspace graph; this adds the
   `openai` and `firebase-admin` importer entries and removes the stale
   `apps/candidate-web` importer because that directory is not present in the

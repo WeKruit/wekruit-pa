@@ -320,9 +320,9 @@ If curl checks fail, record:
 
 - Decision: S0 may include minimal package metadata fixes when required by the
   PR acceptance build.
-  Rationale: `@pa/job-tag-enricher` imported `openai` without declaring it, and
-  `@pa/agent-runtime` imported Firestore types from `firebase-admin` without
-  declaring it.
+  Rationale: `@pa/job-tag-enricher` and `@pa/pa-resume-parser` imported
+  `openai` without declaring it, and `@pa/agent-runtime` imported Firestore
+  types from `firebase-admin` without declaring it.
   Date/Author: 2026-05-13 / lead agent.
 
 - Decision: S0 may include minimal build-order fixes when required by the PR

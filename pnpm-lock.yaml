@@ -504,6 +504,9 @@ importers:
       '@wekruit/shared-tags':
         specifier: 0.1.0
         version: link:../shared-tags
+      openai:
+        specifier: ^4.80.0
+        version: 4.104.0(ws@8.20.0)(zod@3.25.76)
       zod:
         specifier: ^3.24.0
         version: 3.25.76
