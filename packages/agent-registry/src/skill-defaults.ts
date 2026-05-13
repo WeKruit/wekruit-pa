@@ -182,7 +182,7 @@ export const EXISTING_6_METADATA: Record<SkillKey, SkillMetadataV2 | null> = {
   },
 }
 
-/** Convenience helper: returns only the 6 existing keys with metadata. */
+/** Convenience helper: returns only keys with concrete V2 metadata. */
 export function getExistingSkillMetadata(): Array<{
   key: SkillKey
   metadata: SkillMetadataV2

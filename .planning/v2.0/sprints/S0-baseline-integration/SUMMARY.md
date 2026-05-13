@@ -15,9 +15,12 @@ Updated:
 - `EXECUTOR-PLANS.md`
 - `ACCEPTANCE.md`
 - `SUMMARY.md`
+- `apps/eval/external-benchmarks/lib/sf-client.mjs`
 - `packages/pa-orchestrator/package.json`
 - `apps/functions/package.json`
 - `apps/job-rec/package.json`
+- `packages/agent-registry/src/skill-defaults.ts`
+- `packages/agent-registry/src/skill-schema.test.ts`
 - `packages/agent-runtime/package.json`
 - `packages/agent-runtime/tsconfig.json`
 - `packages/pa-job-tag-enricher/package.json`
@@ -42,6 +45,11 @@ Passed:
   `@pa/agent-runtime`'s direct `firebase-admin` dependency, and excluding
   agent-runtime tests from the library build. Verified again in clean temp
   worktree `/private/tmp/wekruit-s0-ci-c667ffa`.
+- `pnpm -r typecheck` -> exit 0 after fixing the external-benchmarks
+  `sf-client.mjs` JSDoc/catch narrowing uncovered by the PR rerun.
+- `NODE_ENV=test PA_DASHBOARD_ENV=test pnpm -r test` -> exit 0 after removing
+  stale hardcoded skill-count assumptions from agent-registry tests. The
+  functions package still reports 1168/1168 pass inside the recursive run.
 - `curl -sS -i -I https://candidate.wekruit.com/` -> `HTTP/2 200`.
 - `curl -sS -i -I https://candidate.wekruit.com/j/hs-11005382-invoko-product-designer`
   -> `HTTP/2 200`.
@@ -66,6 +74,9 @@ PII-printing action was performed.
   the PR acceptance build must be reproducible from a clean workspace, direct
   imports must be declared, and library builds must not compile test-only
   dependency cycles.
+- Minimal typecheck/test expectation fixes are in scope for S0 because the
+  acceptance contract now includes recursive typecheck and recursive unit tests
+  as PR gates.
 - The S0 source branch is `codex/v2-S0-baseline-integration`, created from
   `main` at `23b9adb258fd10171e62cb8ba5030d5ba08dc3d0`.
 

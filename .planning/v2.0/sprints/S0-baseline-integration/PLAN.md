@@ -190,8 +190,9 @@ M0.6: `SUMMARY.md` records S1 entry conditions.
    git status --short
    ```
 
-   Expected during S0 closeout: only S0 docs/artifacts edited in the dedicated
-   worktree.
+   Expected during S0 closeout: only S0 docs/artifacts plus minimal
+   acceptance-harness, package metadata, typecheck, and stale-test fixes edited
+   in the dedicated worktree.
 
 3. Re-run orchestrator tests:
 
@@ -210,7 +211,23 @@ M0.6: `SUMMARY.md` records S1 entry conditions.
    Expected: all tests pass. Previous baseline was 1143/1143; fresh S0
    closeout count is 1168/1168 after recent test additions.
 
-5. Re-run candidate landing curl:
+5. Re-run monorepo typecheck:
+
+   ```bash
+   pnpm -r typecheck
+   ```
+
+   Expected: all typecheck scripts pass.
+
+6. Re-run monorepo tests:
+
+   ```bash
+   NODE_ENV=test PA_DASHBOARD_ENV=test pnpm -r test
+   ```
+
+   Expected: all recursive unit-test scripts pass.
+
+7. Re-run candidate landing curl:
 
    ```bash
    curl -sI https://candidate.wekruit.com/
@@ -218,7 +235,7 @@ M0.6: `SUMMARY.md` records S1 entry conditions.
 
    Expected: HTTP 200.
 
-6. Re-run public job curl:
+8. Re-run public job curl:
 
    ```bash
    curl -sI https://candidate.wekruit.com/j/hs-11005382-invoko-product-designer
@@ -226,7 +243,7 @@ M0.6: `SUMMARY.md` records S1 entry conditions.
 
    Expected: HTTP 200.
 
-7. Re-run admin redirect curl:
+9. Re-run admin redirect curl:
 
    ```bash
    curl -sI https://wekruit-pa.web.app/j/hs-11005382-invoko-product-designer
@@ -235,7 +252,7 @@ M0.6: `SUMMARY.md` records S1 entry conditions.
    Expected: HTTP 301 with `location:
    https://candidate.wekruit.com/j/hs-11005382-invoko-product-designer`.
 
-8. Re-run public CV ingest validation curl:
+10. Re-run public CV ingest validation curl:
 
    ```bash
    curl -s -X POST https://us-central1-wekruit-5f89b.cloudfunctions.net/paPublicCvIngest \
@@ -245,16 +262,16 @@ M0.6: `SUMMARY.md` records S1 entry conditions.
 
    Expected: `{"ok":false,"reason":"missing_userId_or_tempUserId"}`.
 
-9. Update `ACCEPTANCE.md` with actual outputs.
+11. Update `ACCEPTANCE.md` with actual outputs.
 
-10. Write `SUMMARY.md` with S1 trigger.
+12. Write `SUMMARY.md` with S1 trigger.
 
 ## Verification Harness
 
 S0 verification is intentionally small:
 
 - branch and dirty-state inspection
-- two test commands
+- orchestrator, functions, recursive typecheck, and recursive test commands
 - four curl checks
 - cross-reference check with `rg`
 
