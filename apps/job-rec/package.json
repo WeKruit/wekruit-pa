@@ -31,6 +31,7 @@
     "node": "22"
   },
   "scripts": {
+    "prebuild": "npm run build --workspace=@wekruit/shared-tags --workspace=@pa/core-types --workspace=@pa/firebase-admin --workspace=@pa/pa-persistence --workspace=@pa/pa-broker --workspace=@pa/pa-safety --workspace=@pa/agent-runtime --workspace=@pa/pa-connectors --workspace=@pa/memory --workspace=@pa/agent-registry --workspace=@pa/pa-orchestrator",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test src/__tests__/*.test.ts src/__tests__/tools/*.test.ts"

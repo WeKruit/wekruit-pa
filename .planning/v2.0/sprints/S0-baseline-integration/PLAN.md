@@ -318,10 +318,18 @@ If curl checks fail, record:
   commands build their declared local package dependencies.
   Date/Author: 2026-05-13 / lead agent.
 
+- Decision: S0 may include minimal package metadata fixes when required by the
+  PR acceptance build.
+  Rationale: `@pa/job-tag-enricher` imported `openai` without declaring it, and
+  `@pa/job-rec` needed the same clean-worktree local dependency build behavior
+  as the S0 test commands.
+  Date/Author: 2026-05-13 / lead agent.
+
 ## Surprises And Discoveries
 
 - Observation: Current dirty state in the dedicated S0 worktree is limited to
-  S0 docs plus two package test scripts.
+  S0 docs plus package test/build scripts, one direct dependency declaration,
+  and the generated lockfile update.
   Evidence: `git status --short --branch`.
 
 - Observation: A clean worktree did not have built workspace `dist/` outputs,
@@ -335,6 +343,13 @@ If curl checks fail, record:
   was writing ignored `dist/` outputs. The same command passed when rerun with
   escalated filesystem permissions.
   Evidence: final `cd apps/functions && pnpm test` returned 1168/1168 pass.
+
+- Observation: The initial PR checks exposed two CI-only build reproducibility
+  gaps that local S0 test commands did not cover: `@pa/job-tag-enricher` needed
+  a declared `openai` dependency, and `@pa/job-rec` needed a prebuild step for
+  local workspace packages.
+  Evidence: local reruns of `pnpm --filter @pa/job-rec build` and `pnpm -r
+  build` both passed after the package metadata fixes.
 
 ## Outcomes And Retrospective
 

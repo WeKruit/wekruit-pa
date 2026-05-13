@@ -8,10 +8,12 @@ This file records S0 verification.
 |---|---|---|---|---|
 | Branch | `git branch --show-current` | `codex/v2-S0-baseline-integration` | `codex/v2-S0-baseline-integration` | PASS |
 | Head | `git rev-parse HEAD` | `23b9adb258fd10171e62cb8ba5030d5ba08dc3d0` | `23b9adb258fd10171e62cb8ba5030d5ba08dc3d0` | PASS |
-| Dirty state | `git status --short --branch` | only S0 docs and minimal test-harness scripts edited | S0 `ACCEPTANCE.md`, `CONTEXT.md`, `EXECUTOR-PLANS.md`, `PLAN.md`, `SUMMARY.md`, plus `apps/functions/package.json` and `packages/pa-orchestrator/package.json` | PASS |
+| Dirty state | `git status --short --branch` | only S0 docs and minimal test/build-harness scripts edited | S0 `ACCEPTANCE.md`, `CONTEXT.md`, `EXECUTOR-PLANS.md`, `PLAN.md`, `SUMMARY.md`, plus `apps/functions/package.json`, `apps/job-rec/package.json`, `packages/pa-job-tag-enricher/package.json`, `packages/pa-orchestrator/package.json`, and `pnpm-lock.yaml` | PASS |
 | Worktree install | `pnpm install --frozen-lockfile` | lockfile install succeeds in S0 worktree | exit 0; reused lockfile/store; Node 22 engine warnings under local Node v25.6.1 | PASS |
 | Orchestrator tests | `pnpm --filter pa-orchestrator test` | all pass, prior baseline 1479/1479 | first clean-worktree run failed 1153/1175 due missing built workspace deps; after `pretest` dependency-build fix: 1479/1479 pass, 0 fail | PASS |
 | Functions tests | `cd apps/functions && pnpm test` | all pass | first clean-worktree run failed 921/939 due missing built workspace deps; sandbox rerun hit EPERM writing ignored `dist/`; escalated rerun after `pretest` dependency-build fix: 1168/1168 pass, 0 fail | PASS |
+| Job-rec isolated build | `pnpm --filter @pa/job-rec build` | build succeeds from clean worktree | first GitHub Actions run failed because `job-rec` imported local packages before their `dist/` outputs existed; after `prebuild` dependency-build fix, local rerun passed | PASS |
+| Monorepo build | `pnpm -r build` | recursive build succeeds | first GitHub Actions run failed because `@pa/job-tag-enricher` imported `openai` without declaring it; after adding the dependency and lockfile update, local rerun passed | PASS |
 | Candidate landing | `curl -sI https://candidate.wekruit.com/` | HTTP 200 | sandbox curl first failed DNS exit 6; approved `curl -sS -i -I` returned `HTTP/2 200` | PASS |
 | Public job page | `curl -sI https://candidate.wekruit.com/j/hs-11005382-invoko-product-designer` | HTTP 200 | sandbox curl first failed DNS exit 6; approved `curl -sS -i -I` returned `HTTP/2 200` | PASS |
 | Admin redirect | `curl -sI https://wekruit-pa.web.app/j/hs-11005382-invoko-product-designer` | HTTP 301 to candidate domain | approved `curl -sS -i -I` returned `HTTP/2 301` with `location: https://candidate.wekruit.com/j/hs-11005382-invoko-product-designer` | PASS |
@@ -37,7 +39,7 @@ codex/v2-S0-baseline-integration
 23b9adb258fd10171e62cb8ba5030d5ba08dc3d0
 ```
 
-Final dirty state:
+Final S0 branch changed files:
 
 ```text
 M .planning/v2.0/sprints/S0-baseline-integration/ACCEPTANCE.md
@@ -46,7 +48,10 @@ M .planning/v2.0/sprints/S0-baseline-integration/EXECUTOR-PLANS.md
 M .planning/v2.0/sprints/S0-baseline-integration/PLAN.md
 M .planning/v2.0/sprints/S0-baseline-integration/SUMMARY.md
 M apps/functions/package.json
+M apps/job-rec/package.json
+M packages/pa-job-tag-enricher/package.json
 M packages/pa-orchestrator/package.json
+M pnpm-lock.yaml
 ```
 
 Ignored generated artifacts from `pnpm install` and package builds include
@@ -59,6 +64,13 @@ S0 harness fixes:
   workspace packages that `pa-orchestrator` imports via `dist/`.
 - `apps/functions/package.json`: `pretest` now builds local workspace packages
   imported by functions tests.
+- `apps/job-rec/package.json`: `prebuild` now builds local workspace packages
+  imported by the isolated `@pa/job-rec` build.
+- `packages/pa-job-tag-enricher/package.json`: declares its direct `openai`
+  dependency.
+- `pnpm-lock.yaml`: updated from the current workspace graph; this adds the
+  `openai` importer entry and removes the stale `apps/candidate-web` importer
+  because that directory is not present in the workspace.
 
 No deploy, live SMS, Sendblue outbound, production data mutation, paid eval, or
 PII-printing action was performed during S0.
