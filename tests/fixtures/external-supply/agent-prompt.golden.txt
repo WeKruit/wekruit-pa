@@ -1,0 +1,69 @@
+You are a research assistant. Investigate the following candidates against the listed job/company context. Output strict JSON only. Do not fabricate.
+
+promptVersion: agent-prompt-2026-05-A
+expectedJsonSchemaVersion: agent-result-2026-05-A
+
+Target company + job:
+  companyId: co-acme
+  companyName: Acme Fintech
+  industrySector: financial_technology, payments
+  competitorCompanies: Stripe, Plaid, Square
+  jobId: job-swe-senior
+  jobTitle: Senior Software Engineer
+  jobRoleFunction: software_engineering
+  seniorityLevel: senior
+
+Candidates to research:
+
+Candidate 1:
+  recordId: rec-001
+  candidateId: cand-aaa
+  firstName: Alice
+  linkedinUrl: https://linkedin.com/in/alice
+  currentTitle: Senior Software Engineer
+  currentCompany: Stripe
+  missingInfo:
+    - yearsExperience
+    - currentSalary
+
+Candidate 2:
+  recordId: rec-002
+  firstName: Bob
+  linkedinUrl: https://linkedin.com/in/bob-bui
+  currentCompany: Plaid
+  missingInfo:
+    - seniorityLevel
+
+Candidate 3:
+  recordId: rec-003
+  candidateId: cand-ccc
+  firstName: Charlie
+  missingInfo:
+    - industrySector
+    - graduationYear
+    - skills
+
+Hard guardrails:
+- Do NOT include personal email addresses or phone numbers in findings.
+- Cite at least one public web URL per finding in `evidenceUrls`.
+- If you cannot find the information, set `confidence: 0` and `uncertainty: 'no_public_data_found'` rather than guessing.
+- All findings MUST reference either `candidateId` or `recordId` from the candidate block below.
+- Output a single JSON object. No surrounding prose. No markdown after the closing brace.
+
+Output JSON contract:
+```
+{
+  "schemaVersion": "agent-result-2026-05-A",
+  "findings": [
+    {
+      "candidateId": "<string, optional if recordId set>",
+      "recordId": "<string, optional if candidateId set>",
+      "field": "<string, e.g. currentCompany, yearsExperience, education>",
+      "value": <string | number | boolean | array | object>,
+      "confidence": <number 0..1>,
+      "uncertainty": "<string, optional>",
+      "evidenceUrls": ["https://..."]
+    }
+  ]
+}
+```

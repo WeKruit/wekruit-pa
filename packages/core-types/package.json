@@ -17,7 +17,7 @@
     "pretypecheck": "npm run build --workspace=@wekruit/shared-tags",
     "typecheck": "tsc --noEmit",
     "pretest": "npm run build --workspace=@wekruit/shared-tags",
-    "test": "node --import tsx --test src/marketplace.test.ts"
+    "test": "node --import tsx --test src/marketplace.test.ts src/scheduled-jobs.test.ts src/external-supply.test.ts"
   },
   "dependencies": {
     "@wekruit/shared-tags": "0.1.0",

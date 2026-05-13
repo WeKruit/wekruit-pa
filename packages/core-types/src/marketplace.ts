@@ -67,6 +67,9 @@ export const MarketplaceEvidenceSchema = z.object({
     "ats",
     "system",
     "llm_infer",
+    "external_sourcing",
+    "agent_research",
+    "instantly_delivery",
   ]),
   summary: z.string().min(1).max(2_000),
   confidence: ConfidenceSchema.optional(),
@@ -93,6 +96,7 @@ export const CandidateHandleSourceSchema = z.enum([
   "sendblue",
   "admin",
   "system",
+  "external_sourcing",
 ])
 export type CandidateHandleSource = z.infer<typeof CandidateHandleSourceSchema>
 
@@ -223,6 +227,8 @@ export const IdentityEventTypeSchema = z.enum([
   "identity_conflict_recorded",
   "duplicate_suspected",
   "merge_decision_recorded",
+  "external_source_linked",
+  "external_candidate_imported",
 ])
 export type IdentityEventType = z.infer<typeof IdentityEventTypeSchema>
 
@@ -237,7 +243,7 @@ export const CandidateIdentityEventSchema = z.object({
   handleKind: CandidateHandleKindSchema.optional(),
   handleHash: z.string().min(16).optional(),
   conflictId: IdSchema.optional(),
-  source: z.enum(["candidate", "resume", "ats", "sendblue", "admin", "system", "auth"]),
+  source: z.enum(["candidate", "resume", "ats", "sendblue", "admin", "system", "auth", "external_sourcing"]),
   evidence: z.array(MarketplaceEvidenceSchema).default([]),
   payloadRedacted: z.record(z.unknown()).default({}),
   createdAt: TimestampSchema,
@@ -249,6 +255,8 @@ export const IdentityConflictKindSchema = z.enum([
   "handle_candidate_mismatch",
   "auth_candidate_mismatch",
   "duplicate_suspicion",
+  "linkedin_email_candidate_mismatch",
+  "external_fuzzy_match",
 ])
 export type IdentityConflictKind = z.infer<typeof IdentityConflictKindSchema>
 

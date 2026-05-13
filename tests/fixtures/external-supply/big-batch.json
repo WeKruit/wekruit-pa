@@ -1,0 +1,1362 @@
+[
+  {
+    "testCase": "linkedin_only_1",
+    "adapter": "juicebox",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-001",
+    "email_primary": "bigb-novel-001@external-novel.example.test",
+    "full_name": "Novel User 1",
+    "current_position": "Software Engineer",
+    "current_company_name": "Novel Co 1",
+    "location_string": "Remote",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_2",
+    "adapter": "juicebox",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-002",
+    "email_primary": "bigb-novel-002@external-novel.example.test",
+    "full_name": "Novel User 2",
+    "current_position": "Software Engineer",
+    "current_company_name": "Novel Co 2",
+    "location_string": "Remote",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_3",
+    "adapter": "juicebox",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-003",
+    "email_primary": "bigb-novel-003@external-novel.example.test",
+    "full_name": "Novel User 3",
+    "current_position": "Senior Software Engineer",
+    "current_company_name": "Novel Co 3",
+    "location_string": "Remote",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_4",
+    "adapter": "juicebox",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-004",
+    "email_primary": "bigb-novel-004@external-novel.example.test",
+    "full_name": "Novel User 4",
+    "current_position": "Software Engineer",
+    "current_company_name": "Novel Co 4",
+    "location_string": "Remote",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_5",
+    "adapter": "juicebox",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-005",
+    "email_primary": "bigb-novel-005@external-novel.example.test",
+    "full_name": "Novel User 5",
+    "current_position": "Software Engineer",
+    "current_company_name": "Novel Co 5",
+    "location_string": "New York, NY",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_6",
+    "adapter": "juicebox",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-006",
+    "email_primary": "bigb-novel-006@external-novel.example.test",
+    "full_name": "Novel User 6",
+    "current_position": "Senior Software Engineer",
+    "current_company_name": "Novel Co 6",
+    "location_string": "Remote",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_7",
+    "adapter": "juicebox",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-007",
+    "email_primary": "bigb-novel-007@external-novel.example.test",
+    "full_name": "Novel User 7",
+    "current_position": "Software Engineer",
+    "current_company_name": "Novel Co 7",
+    "location_string": "Remote",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_8",
+    "adapter": "juicebox",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-008",
+    "email_primary": "bigb-novel-008@external-novel.example.test",
+    "full_name": "Novel User 8",
+    "current_position": "Software Engineer",
+    "current_company_name": "Novel Co 8",
+    "location_string": "Remote",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_9",
+    "adapter": "juicebox",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-009",
+    "email_primary": "bigb-novel-009@external-novel.example.test",
+    "full_name": "Novel User 9",
+    "current_position": "Senior Software Engineer",
+    "current_company_name": "Novel Co 9",
+    "location_string": "Remote",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_10",
+    "adapter": "juicebox",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-010",
+    "email_primary": "bigb-novel-010@external-novel.example.test",
+    "full_name": "Novel User 10",
+    "current_position": "Software Engineer",
+    "current_company_name": "Novel Co 10",
+    "location_string": "New York, NY",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_11",
+    "adapter": "juicebox",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-011",
+    "email_primary": "bigb-novel-011@external-novel.example.test",
+    "full_name": "Novel User 11",
+    "current_position": "Software Engineer",
+    "current_company_name": "Novel Co 11",
+    "location_string": "Remote",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_12",
+    "adapter": "juicebox",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-012",
+    "email_primary": "bigb-novel-012@external-novel.example.test",
+    "full_name": "Novel User 12",
+    "current_position": "Senior Software Engineer",
+    "current_company_name": "Novel Co 12",
+    "location_string": "Remote",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_13",
+    "adapter": "juicebox",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-013",
+    "email_primary": "bigb-novel-013@external-novel.example.test",
+    "full_name": "Novel User 13",
+    "current_position": "Software Engineer",
+    "current_company_name": "Novel Co 13",
+    "location_string": "Remote",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_14",
+    "adapter": "juicebox",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-014",
+    "email_primary": "bigb-novel-014@external-novel.example.test",
+    "full_name": "Novel User 14",
+    "current_position": "Software Engineer",
+    "current_company_name": "Novel Co 14",
+    "location_string": "Remote",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_15",
+    "adapter": "juicebox",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-015",
+    "email_primary": "bigb-novel-015@external-novel.example.test",
+    "full_name": "Novel User 15",
+    "current_position": "Senior Software Engineer",
+    "current_company_name": "Novel Co 15",
+    "location_string": "New York, NY",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_16",
+    "adapter": "juicebox",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-016",
+    "email_primary": "bigb-novel-016@external-novel.example.test",
+    "full_name": "Novel User 16",
+    "current_position": "Software Engineer",
+    "current_company_name": "Novel Co 16",
+    "location_string": "Remote",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_17",
+    "adapter": "juicebox",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-017",
+    "email_primary": "bigb-novel-017@external-novel.example.test",
+    "full_name": "Novel User 17",
+    "current_position": "Software Engineer",
+    "current_company_name": "Novel Co 17",
+    "location_string": "Remote",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_18",
+    "adapter": "juicebox",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-018",
+    "email_primary": "bigb-novel-018@external-novel.example.test",
+    "full_name": "Novel User 18",
+    "current_position": "Senior Software Engineer",
+    "current_company_name": "Novel Co 18",
+    "location_string": "Remote",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_19",
+    "adapter": "juicebox",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-019",
+    "email_primary": "bigb-novel-019@external-novel.example.test",
+    "full_name": "Novel User 19",
+    "current_position": "Software Engineer",
+    "current_company_name": "Novel Co 19",
+    "location_string": "Remote",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_20",
+    "adapter": "juicebox",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-020",
+    "email_primary": "bigb-novel-020@external-novel.example.test",
+    "full_name": "Novel User 20",
+    "current_position": "Software Engineer",
+    "current_company_name": "Novel Co 20",
+    "location_string": "New York, NY",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_21",
+    "adapter": "juicebox",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-021",
+    "email_primary": "bigb-novel-021@external-novel.example.test",
+    "full_name": "Novel User 21",
+    "current_position": "Senior Software Engineer",
+    "current_company_name": "Novel Co 21",
+    "location_string": "Remote",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_22",
+    "adapter": "juicebox",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-022",
+    "email_primary": "bigb-novel-022@external-novel.example.test",
+    "full_name": "Novel User 22",
+    "current_position": "Software Engineer",
+    "current_company_name": "Novel Co 22",
+    "location_string": "Remote",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_23",
+    "adapter": "juicebox",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-023",
+    "email_primary": "bigb-novel-023@external-novel.example.test",
+    "full_name": "Novel User 23",
+    "current_position": "Software Engineer",
+    "current_company_name": "Novel Co 23",
+    "location_string": "Remote",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_24",
+    "adapter": "juicebox",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-024",
+    "email_primary": "bigb-novel-024@external-novel.example.test",
+    "full_name": "Novel User 24",
+    "current_position": "Senior Software Engineer",
+    "current_company_name": "Novel Co 24",
+    "location_string": "Remote",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_25",
+    "adapter": "juicebox",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-025",
+    "email_primary": "bigb-novel-025@external-novel.example.test",
+    "full_name": "Novel User 25",
+    "current_position": "Software Engineer",
+    "current_company_name": "Novel Co 25",
+    "location_string": "New York, NY",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_26",
+    "adapter": "juicebox",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-026",
+    "email_primary": "bigb-novel-026@external-novel.example.test",
+    "full_name": "Novel User 26",
+    "current_position": "Software Engineer",
+    "current_company_name": "Novel Co 26",
+    "location_string": "Remote",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_27",
+    "adapter": "juicebox",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-027",
+    "email_primary": "bigb-novel-027@external-novel.example.test",
+    "full_name": "Novel User 27",
+    "current_position": "Senior Software Engineer",
+    "current_company_name": "Novel Co 27",
+    "location_string": "Remote",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_28",
+    "adapter": "juicebox",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-028",
+    "email_primary": "bigb-novel-028@external-novel.example.test",
+    "full_name": "Novel User 28",
+    "current_position": "Software Engineer",
+    "current_company_name": "Novel Co 28",
+    "location_string": "Remote",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_29",
+    "adapter": "juicebox",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-029",
+    "email_primary": "bigb-novel-029@external-novel.example.test",
+    "full_name": "Novel User 29",
+    "current_position": "Software Engineer",
+    "current_company_name": "Novel Co 29",
+    "location_string": "Remote",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_30",
+    "adapter": "juicebox",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-030",
+    "email_primary": "bigb-novel-030@external-novel.example.test",
+    "full_name": "Novel User 30",
+    "current_position": "Senior Software Engineer",
+    "current_company_name": "Novel Co 30",
+    "location_string": "New York, NY",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_31",
+    "adapter": "juicebox",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-031",
+    "email_primary": "bigb-novel-031@external-novel.example.test",
+    "full_name": "Novel User 31",
+    "current_position": "Software Engineer",
+    "current_company_name": "Novel Co 31",
+    "location_string": "Remote",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_32",
+    "adapter": "juicebox",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-032",
+    "email_primary": "bigb-novel-032@external-novel.example.test",
+    "full_name": "Novel User 32",
+    "current_position": "Software Engineer",
+    "current_company_name": "Novel Co 32",
+    "location_string": "Remote",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_33",
+    "adapter": "juicebox",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-033",
+    "email_primary": "bigb-novel-033@external-novel.example.test",
+    "full_name": "Novel User 33",
+    "current_position": "Senior Software Engineer",
+    "current_company_name": "Novel Co 33",
+    "location_string": "Remote",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_34",
+    "adapter": "juicebox",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-034",
+    "email_primary": "bigb-novel-034@external-novel.example.test",
+    "full_name": "Novel User 34",
+    "current_position": "Software Engineer",
+    "current_company_name": "Novel Co 34",
+    "location_string": "Remote",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_35",
+    "adapter": "juicebox",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-035",
+    "email_primary": "bigb-novel-035@external-novel.example.test",
+    "full_name": "Novel User 35",
+    "current_position": "Software Engineer",
+    "current_company_name": "Novel Co 35",
+    "location_string": "New York, NY",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_36",
+    "adapter": "lessie",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-036",
+    "email_primary": "bigb-novel-036@external-novel.example.test",
+    "full_name": "Novel User 36",
+    "current_position": "Senior Software Engineer",
+    "current_company_name": "Novel Co 36",
+    "location_string": "Remote",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_37",
+    "adapter": "lessie",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-037",
+    "email_primary": "bigb-novel-037@external-novel.example.test",
+    "full_name": "Novel User 37",
+    "current_position": "Software Engineer",
+    "current_company_name": "Novel Co 37",
+    "location_string": "Remote",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_38",
+    "adapter": "lessie",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-038",
+    "email_primary": "bigb-novel-038@external-novel.example.test",
+    "full_name": "Novel User 38",
+    "current_position": "Software Engineer",
+    "current_company_name": "Novel Co 38",
+    "location_string": "Remote",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_39",
+    "adapter": "lessie",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-039",
+    "email_primary": "bigb-novel-039@external-novel.example.test",
+    "full_name": "Novel User 39",
+    "current_position": "Senior Software Engineer",
+    "current_company_name": "Novel Co 39",
+    "location_string": "Remote",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_40",
+    "adapter": "lessie",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-040",
+    "email_primary": "bigb-novel-040@external-novel.example.test",
+    "full_name": "Novel User 40",
+    "current_position": "Software Engineer",
+    "current_company_name": "Novel Co 40",
+    "location_string": "New York, NY",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_41",
+    "adapter": "lessie",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-041",
+    "email_primary": "bigb-novel-041@external-novel.example.test",
+    "full_name": "Novel User 41",
+    "current_position": "Software Engineer",
+    "current_company_name": "Novel Co 41",
+    "location_string": "Remote",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_42",
+    "adapter": "lessie",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-042",
+    "email_primary": "bigb-novel-042@external-novel.example.test",
+    "full_name": "Novel User 42",
+    "current_position": "Senior Software Engineer",
+    "current_company_name": "Novel Co 42",
+    "location_string": "Remote",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_43",
+    "adapter": "lessie",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-043",
+    "email_primary": "bigb-novel-043@external-novel.example.test",
+    "full_name": "Novel User 43",
+    "current_position": "Software Engineer",
+    "current_company_name": "Novel Co 43",
+    "location_string": "Remote",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_44",
+    "adapter": "lessie",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-044",
+    "email_primary": "bigb-novel-044@external-novel.example.test",
+    "full_name": "Novel User 44",
+    "current_position": "Software Engineer",
+    "current_company_name": "Novel Co 44",
+    "location_string": "Remote",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_45",
+    "adapter": "lessie",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-045",
+    "email_primary": "bigb-novel-045@external-novel.example.test",
+    "full_name": "Novel User 45",
+    "current_position": "Senior Software Engineer",
+    "current_company_name": "Novel Co 45",
+    "location_string": "New York, NY",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_46",
+    "adapter": "lessie",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-046",
+    "email_primary": "bigb-novel-046@external-novel.example.test",
+    "full_name": "Novel User 46",
+    "current_position": "Software Engineer",
+    "current_company_name": "Novel Co 46",
+    "location_string": "Remote",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_47",
+    "adapter": "lessie",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-047",
+    "email_primary": "bigb-novel-047@external-novel.example.test",
+    "full_name": "Novel User 47",
+    "current_position": "Software Engineer",
+    "current_company_name": "Novel Co 47",
+    "location_string": "Remote",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_48",
+    "adapter": "lessie",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-048",
+    "email_primary": "bigb-novel-048@external-novel.example.test",
+    "full_name": "Novel User 48",
+    "current_position": "Senior Software Engineer",
+    "current_company_name": "Novel Co 48",
+    "location_string": "Remote",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_49",
+    "adapter": "lessie",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-049",
+    "email_primary": "bigb-novel-049@external-novel.example.test",
+    "full_name": "Novel User 49",
+    "current_position": "Software Engineer",
+    "current_company_name": "Novel Co 49",
+    "location_string": "Remote",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "linkedin_only_50",
+    "adapter": "lessie",
+    "linkedin_url": "https://linkedin.com/in/bigb-novel-050",
+    "email_primary": "bigb-novel-050@external-novel.example.test",
+    "full_name": "Novel User 50",
+    "current_position": "Software Engineer",
+    "current_company_name": "Novel Co 50",
+    "location_string": "New York, NY",
+    "skills": [
+      "python",
+      "typescript",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "merge_existing_1_seed_u001",
+    "adapter": "lessie",
+    "linkedin_url": "https://linkedin.com/in/seed-user-001",
+    "email_primary": "seed-user-001@seed.example.test",
+    "full_name": "Seed User 1",
+    "current_position": "Senior Engineer",
+    "current_company_name": "Wekruit Co",
+    "location_string": "New York, NY",
+    "skills": [
+      "python",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "merge_existing_2_seed_u002",
+    "adapter": "lessie",
+    "linkedin_url": "https://linkedin.com/in/seed-user-002",
+    "email_primary": "seed-user-002@seed.example.test",
+    "full_name": "Seed User 2",
+    "current_position": "Senior Engineer",
+    "current_company_name": "Wekruit Co",
+    "location_string": "New York, NY",
+    "skills": [
+      "python",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "merge_existing_3_seed_u003",
+    "adapter": "lessie",
+    "linkedin_url": "https://linkedin.com/in/seed-user-003",
+    "email_primary": "seed-user-003@seed.example.test",
+    "full_name": "Seed User 3",
+    "current_position": "Senior Engineer",
+    "current_company_name": "Wekruit Co",
+    "location_string": "New York, NY",
+    "skills": [
+      "python",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "merge_existing_4_seed_u004",
+    "adapter": "lessie",
+    "linkedin_url": "https://linkedin.com/in/seed-user-004",
+    "email_primary": "seed-user-004@seed.example.test",
+    "full_name": "Seed User 4",
+    "current_position": "Senior Engineer",
+    "current_company_name": "Wekruit Co",
+    "location_string": "New York, NY",
+    "skills": [
+      "python",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "merge_existing_5_seed_u005",
+    "adapter": "lessie",
+    "linkedin_url": "https://linkedin.com/in/seed-user-005",
+    "email_primary": "seed-user-005@seed.example.test",
+    "full_name": "Seed User 5",
+    "current_position": "Senior Engineer",
+    "current_company_name": "Wekruit Co",
+    "location_string": "New York, NY",
+    "skills": [
+      "python",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "merge_existing_6_seed_u006",
+    "adapter": "lessie",
+    "linkedin_url": "https://linkedin.com/in/seed-user-006",
+    "email_primary": "seed-user-006@seed.example.test",
+    "full_name": "Seed User 6",
+    "current_position": "Senior Engineer",
+    "current_company_name": "Wekruit Co",
+    "location_string": "New York, NY",
+    "skills": [
+      "python",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "merge_existing_7_seed_u007",
+    "adapter": "lessie",
+    "linkedin_url": "https://linkedin.com/in/seed-user-007",
+    "email_primary": "seed-user-007@seed.example.test",
+    "full_name": "Seed User 7",
+    "current_position": "Senior Engineer",
+    "current_company_name": "Wekruit Co",
+    "location_string": "New York, NY",
+    "skills": [
+      "python",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "merge_existing_8_seed_u008",
+    "adapter": "lessie",
+    "linkedin_url": "https://linkedin.com/in/seed-user-008",
+    "email_primary": "seed-user-008@seed.example.test",
+    "full_name": "Seed User 8",
+    "current_position": "Senior Engineer",
+    "current_company_name": "Wekruit Co",
+    "location_string": "New York, NY",
+    "skills": [
+      "python",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "merge_existing_9_seed_u009",
+    "adapter": "lessie",
+    "linkedin_url": "https://linkedin.com/in/seed-user-009",
+    "email_primary": "seed-user-009@seed.example.test",
+    "full_name": "Seed User 9",
+    "current_position": "Senior Engineer",
+    "current_company_name": "Wekruit Co",
+    "location_string": "New York, NY",
+    "skills": [
+      "python",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "merge_existing_10_seed_u010",
+    "adapter": "lessie",
+    "linkedin_url": "https://linkedin.com/in/seed-user-010",
+    "email_primary": "seed-user-010@seed.example.test",
+    "full_name": "Seed User 10",
+    "current_position": "Senior Engineer",
+    "current_company_name": "Wekruit Co",
+    "location_string": "New York, NY",
+    "skills": [
+      "python",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "merge_existing_11_seed_u011",
+    "adapter": "lessie",
+    "linkedin_url": "https://linkedin.com/in/seed-user-011",
+    "email_primary": "seed-user-011@seed.example.test",
+    "full_name": "Seed User 11",
+    "current_position": "Senior Engineer",
+    "current_company_name": "Wekruit Co",
+    "location_string": "New York, NY",
+    "skills": [
+      "python",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "merge_existing_12_seed_u012",
+    "adapter": "lessie",
+    "linkedin_url": "https://linkedin.com/in/seed-user-012",
+    "email_primary": "seed-user-012@seed.example.test",
+    "full_name": "Seed User 12",
+    "current_position": "Senior Engineer",
+    "current_company_name": "Wekruit Co",
+    "location_string": "New York, NY",
+    "skills": [
+      "python",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "merge_existing_13_seed_u013",
+    "adapter": "lessie",
+    "linkedin_url": "https://linkedin.com/in/seed-user-013",
+    "email_primary": "seed-user-013@seed.example.test",
+    "full_name": "Seed User 13",
+    "current_position": "Senior Engineer",
+    "current_company_name": "Wekruit Co",
+    "location_string": "New York, NY",
+    "skills": [
+      "python",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "merge_existing_14_seed_u014",
+    "adapter": "lessie",
+    "linkedin_url": "https://linkedin.com/in/seed-user-014",
+    "email_primary": "seed-user-014@seed.example.test",
+    "full_name": "Seed User 14",
+    "current_position": "Senior Engineer",
+    "current_company_name": "Wekruit Co",
+    "location_string": "New York, NY",
+    "skills": [
+      "python",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "merge_existing_15_seed_u015",
+    "adapter": "lessie",
+    "linkedin_url": "https://linkedin.com/in/seed-user-015",
+    "email_primary": "seed-user-015@seed.example.test",
+    "full_name": "Seed User 15",
+    "current_position": "Senior Engineer",
+    "current_company_name": "Wekruit Co",
+    "location_string": "New York, NY",
+    "skills": [
+      "python",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "merge_existing_16_seed_u016",
+    "adapter": "lessie",
+    "linkedin_url": "https://linkedin.com/in/seed-user-016",
+    "email_primary": "seed-user-016@seed.example.test",
+    "full_name": "Seed User 16",
+    "current_position": "Senior Engineer",
+    "current_company_name": "Wekruit Co",
+    "location_string": "New York, NY",
+    "skills": [
+      "python",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "merge_existing_17_seed_u017",
+    "adapter": "lessie",
+    "linkedin_url": "https://linkedin.com/in/seed-user-017",
+    "email_primary": "seed-user-017@seed.example.test",
+    "full_name": "Seed User 17",
+    "current_position": "Senior Engineer",
+    "current_company_name": "Wekruit Co",
+    "location_string": "New York, NY",
+    "skills": [
+      "python",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "merge_existing_18_seed_u018",
+    "adapter": "lessie",
+    "linkedin_url": "https://linkedin.com/in/seed-user-018",
+    "email_primary": "seed-user-018@seed.example.test",
+    "full_name": "Seed User 18",
+    "current_position": "Senior Engineer",
+    "current_company_name": "Wekruit Co",
+    "location_string": "New York, NY",
+    "skills": [
+      "python",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "merge_existing_19_seed_u019",
+    "adapter": "lessie",
+    "linkedin_url": "https://linkedin.com/in/seed-user-019",
+    "email_primary": "seed-user-019@seed.example.test",
+    "full_name": "Seed User 19",
+    "current_position": "Senior Engineer",
+    "current_company_name": "Wekruit Co",
+    "location_string": "New York, NY",
+    "skills": [
+      "python",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "merge_existing_20_seed_u020",
+    "adapter": "lessie",
+    "linkedin_url": "https://linkedin.com/in/seed-user-020",
+    "email_primary": "seed-user-020@seed.example.test",
+    "full_name": "Seed User 20",
+    "current_position": "Senior Engineer",
+    "current_company_name": "Wekruit Co",
+    "location_string": "New York, NY",
+    "skills": [
+      "python",
+      "kubernetes"
+    ]
+  },
+  {
+    "testCase": "email_only_1",
+    "adapter": "coresignal",
+    "linkedin_url": null,
+    "email_primary": "email-only-001@stray.example.test",
+    "full_name": "Email Only 1",
+    "current_position": "Engineer",
+    "current_company_name": "Stray Co"
+  },
+  {
+    "testCase": "email_only_2",
+    "adapter": "coresignal",
+    "linkedin_url": null,
+    "email_primary": "email-only-002@stray.example.test",
+    "full_name": "Email Only 2",
+    "current_position": "Engineer",
+    "current_company_name": "Stray Co"
+  },
+  {
+    "testCase": "email_only_3",
+    "adapter": "coresignal",
+    "linkedin_url": null,
+    "email_primary": "email-only-003@stray.example.test",
+    "full_name": "Email Only 3",
+    "current_position": "Engineer",
+    "current_company_name": "Stray Co"
+  },
+  {
+    "testCase": "email_only_4",
+    "adapter": "coresignal",
+    "linkedin_url": null,
+    "email_primary": "email-only-004@stray.example.test",
+    "full_name": "Email Only 4",
+    "current_position": "Engineer",
+    "current_company_name": "Stray Co"
+  },
+  {
+    "testCase": "email_only_5",
+    "adapter": "coresignal",
+    "linkedin_url": null,
+    "email_primary": "email-only-005@stray.example.test",
+    "full_name": "Email Only 5",
+    "current_position": "Engineer",
+    "current_company_name": "Stray Co"
+  },
+  {
+    "testCase": "email_only_6",
+    "adapter": "coresignal",
+    "linkedin_url": null,
+    "email_primary": "email-only-006@stray.example.test",
+    "full_name": "Email Only 6",
+    "current_position": "Engineer",
+    "current_company_name": "Stray Co"
+  },
+  {
+    "testCase": "email_only_7",
+    "adapter": "coresignal",
+    "linkedin_url": null,
+    "email_primary": "email-only-007@stray.example.test",
+    "full_name": "Email Only 7",
+    "current_position": "Engineer",
+    "current_company_name": "Stray Co"
+  },
+  {
+    "testCase": "email_only_8",
+    "adapter": "coresignal",
+    "linkedin_url": null,
+    "email_primary": "email-only-008@stray.example.test",
+    "full_name": "Email Only 8",
+    "current_position": "Engineer",
+    "current_company_name": "Stray Co"
+  },
+  {
+    "testCase": "email_only_9",
+    "adapter": "coresignal",
+    "linkedin_url": null,
+    "email_primary": "email-only-009@stray.example.test",
+    "full_name": "Email Only 9",
+    "current_position": "Engineer",
+    "current_company_name": "Stray Co"
+  },
+  {
+    "testCase": "email_only_10",
+    "adapter": "coresignal",
+    "linkedin_url": null,
+    "email_primary": "email-only-010@stray.example.test",
+    "full_name": "Email Only 10",
+    "current_position": "Engineer",
+    "current_company_name": "Stray Co"
+  },
+  {
+    "testCase": "linkedin_email_mismatch_1_seed_u005",
+    "adapter": "coresignal",
+    "linkedin_url": "https://linkedin.com/in/seed-user-005",
+    "email_primary": "mismatch-005@conflict.example.test",
+    "full_name": "Mismatch 1",
+    "current_position": "Engineer",
+    "current_company_name": "Confusion Co"
+  },
+  {
+    "testCase": "linkedin_email_mismatch_2_seed_u006",
+    "adapter": "coresignal",
+    "linkedin_url": "https://linkedin.com/in/seed-user-006",
+    "email_primary": "mismatch-006@conflict.example.test",
+    "full_name": "Mismatch 2",
+    "current_position": "Engineer",
+    "current_company_name": "Confusion Co"
+  },
+  {
+    "testCase": "linkedin_email_mismatch_3_seed_u007",
+    "adapter": "coresignal",
+    "linkedin_url": "https://linkedin.com/in/seed-user-007",
+    "email_primary": "mismatch-007@conflict.example.test",
+    "full_name": "Mismatch 3",
+    "current_position": "Engineer",
+    "current_company_name": "Confusion Co"
+  },
+  {
+    "testCase": "linkedin_email_mismatch_4_seed_u008",
+    "adapter": "coresignal",
+    "linkedin_url": "https://linkedin.com/in/seed-user-008",
+    "email_primary": "mismatch-008@conflict.example.test",
+    "full_name": "Mismatch 4",
+    "current_position": "Engineer",
+    "current_company_name": "Confusion Co"
+  },
+  {
+    "testCase": "linkedin_email_mismatch_5_seed_u009",
+    "adapter": "coresignal",
+    "linkedin_url": "https://linkedin.com/in/seed-user-009",
+    "email_primary": "mismatch-009@conflict.example.test",
+    "full_name": "Mismatch 5",
+    "current_position": "Engineer",
+    "current_company_name": "Confusion Co"
+  },
+  {
+    "testCase": "linkedin_email_mismatch_6_seed_u010",
+    "adapter": "coresignal",
+    "linkedin_url": "https://linkedin.com/in/seed-user-010",
+    "email_primary": "mismatch-010@conflict.example.test",
+    "full_name": "Mismatch 6",
+    "current_position": "Engineer",
+    "current_company_name": "Confusion Co"
+  },
+  {
+    "testCase": "linkedin_email_mismatch_7_seed_u011",
+    "adapter": "coresignal",
+    "linkedin_url": "https://linkedin.com/in/seed-user-011",
+    "email_primary": "mismatch-011@conflict.example.test",
+    "full_name": "Mismatch 7",
+    "current_position": "Engineer",
+    "current_company_name": "Confusion Co"
+  },
+  {
+    "testCase": "linkedin_email_mismatch_8_seed_u012",
+    "adapter": "coresignal",
+    "linkedin_url": "https://linkedin.com/in/seed-user-012",
+    "email_primary": "mismatch-012@conflict.example.test",
+    "full_name": "Mismatch 8",
+    "current_position": "Engineer",
+    "current_company_name": "Confusion Co"
+  },
+  {
+    "testCase": "linkedin_email_mismatch_9_seed_u013",
+    "adapter": "coresignal",
+    "linkedin_url": "https://linkedin.com/in/seed-user-013",
+    "email_primary": "mismatch-013@conflict.example.test",
+    "full_name": "Mismatch 9",
+    "current_position": "Engineer",
+    "current_company_name": "Confusion Co"
+  },
+  {
+    "testCase": "linkedin_email_mismatch_10_seed_u014",
+    "adapter": "coresignal",
+    "linkedin_url": "https://linkedin.com/in/seed-user-014",
+    "email_primary": "mismatch-014@conflict.example.test",
+    "full_name": "Mismatch 10",
+    "current_position": "Engineer",
+    "current_company_name": "Confusion Co"
+  },
+  {
+    "testCase": "fuzzy_1",
+    "adapter": "coresignal",
+    "linkedin_url": null,
+    "email_primary": null,
+    "full_name": "Anonymous Person 1",
+    "current_position": "Engineer",
+    "current_company_name": "Fuzzy Co 1",
+    "location_string": "Somewhere"
+  },
+  {
+    "testCase": "fuzzy_2",
+    "adapter": "coresignal",
+    "linkedin_url": null,
+    "email_primary": null,
+    "full_name": "Anonymous Person 2",
+    "current_position": "Engineer",
+    "current_company_name": "Fuzzy Co 2",
+    "location_string": "Somewhere"
+  },
+  {
+    "testCase": "fuzzy_3",
+    "adapter": "coresignal",
+    "linkedin_url": null,
+    "email_primary": null,
+    "full_name": "Anonymous Person 3",
+    "current_position": "Engineer",
+    "current_company_name": "Fuzzy Co 3",
+    "location_string": "Somewhere"
+  },
+  {
+    "testCase": "fuzzy_4",
+    "adapter": "coresignal",
+    "linkedin_url": null,
+    "email_primary": null,
+    "full_name": "Anonymous Person 4",
+    "current_position": "Engineer",
+    "current_company_name": "Fuzzy Co 4",
+    "location_string": "Somewhere"
+  },
+  {
+    "testCase": "fuzzy_5",
+    "adapter": "coresignal",
+    "linkedin_url": null,
+    "email_primary": null,
+    "full_name": "Anonymous Person 5",
+    "current_position": "Engineer",
+    "current_company_name": "Fuzzy Co 5",
+    "location_string": "Somewhere"
+  },
+  {
+    "testCase": "fuzzy_6",
+    "adapter": "coresignal",
+    "linkedin_url": null,
+    "email_primary": null,
+    "full_name": "Anonymous Person 6",
+    "current_position": "Engineer",
+    "current_company_name": "Fuzzy Co 6",
+    "location_string": "Somewhere"
+  },
+  {
+    "testCase": "fuzzy_7",
+    "adapter": "coresignal",
+    "linkedin_url": null,
+    "email_primary": null,
+    "full_name": "Anonymous Person 7",
+    "current_position": "Engineer",
+    "current_company_name": "Fuzzy Co 7",
+    "location_string": "Somewhere"
+  },
+  {
+    "testCase": "fuzzy_8",
+    "adapter": "coresignal",
+    "linkedin_url": null,
+    "email_primary": null,
+    "full_name": "Anonymous Person 8",
+    "current_position": "Engineer",
+    "current_company_name": "Fuzzy Co 8",
+    "location_string": "Somewhere"
+  },
+  {
+    "testCase": "fuzzy_9",
+    "adapter": "coresignal",
+    "linkedin_url": null,
+    "email_primary": null,
+    "full_name": "Anonymous Person 9",
+    "current_position": "Engineer",
+    "current_company_name": "Fuzzy Co 9",
+    "location_string": "Somewhere"
+  },
+  {
+    "testCase": "fuzzy_10",
+    "adapter": "coresignal",
+    "linkedin_url": null,
+    "email_primary": null,
+    "full_name": "Anonymous Person 10",
+    "current_position": "Engineer",
+    "current_company_name": "Fuzzy Co 10",
+    "location_string": "Somewhere"
+  },
+  {
+    "testCase": "fuzzy_11",
+    "adapter": "coresignal",
+    "linkedin_url": null,
+    "email_primary": null,
+    "full_name": "Anonymous Person 11",
+    "current_position": "Engineer",
+    "current_company_name": "Fuzzy Co 11",
+    "location_string": "Somewhere"
+  },
+  {
+    "testCase": "fuzzy_12",
+    "adapter": "coresignal",
+    "linkedin_url": null,
+    "email_primary": null,
+    "full_name": "Anonymous Person 12",
+    "current_position": "Engineer",
+    "current_company_name": "Fuzzy Co 12",
+    "location_string": "Somewhere"
+  },
+  {
+    "testCase": "fuzzy_13",
+    "adapter": "coresignal",
+    "linkedin_url": null,
+    "email_primary": null,
+    "full_name": "Anonymous Person 13",
+    "current_position": "Engineer",
+    "current_company_name": "Fuzzy Co 13",
+    "location_string": "Somewhere"
+  },
+  {
+    "testCase": "fuzzy_14",
+    "adapter": "coresignal",
+    "linkedin_url": null,
+    "email_primary": null,
+    "full_name": "Anonymous Person 14",
+    "current_position": "Engineer",
+    "current_company_name": "Fuzzy Co 14",
+    "location_string": "Somewhere"
+  },
+  {
+    "testCase": "fuzzy_15",
+    "adapter": "coresignal",
+    "linkedin_url": null,
+    "email_primary": null,
+    "full_name": "Anonymous Person 15",
+    "current_position": "Engineer",
+    "current_company_name": "Fuzzy Co 15",
+    "location_string": "Somewhere"
+  }
+]

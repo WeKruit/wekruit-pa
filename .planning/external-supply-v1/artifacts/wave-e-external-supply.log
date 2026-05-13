@@ -1,0 +1,185 @@
+apps/functions                           |  WARN  Unsupported engine: wanted: {"node":"22"} (current: {"node":"v24.3.0","pnpm":"10.31.0"})
+apps/job-rec                             |  WARN  Unsupported engine: wanted: {"node":"22"} (current: {"node":"v24.3.0","pnpm":"10.31.0"})
+
+> @pa/external-supply@0.0.1 pretest /Users/adam/Desktop/WeKruit/wekruit-pa/.claude/worktrees/v2-external-supply-intake/packages/external-supply
+> npm run build --workspace=@wekruit/shared-tags && npm run build --workspace=@pa/core-types
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "recursive". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @wekruit/shared-tags@0.1.0 build
+> tsc
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "recursive". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @pa/core-types@0.0.1 prebuild
+> npm run build --workspace=@wekruit/shared-tags
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "recursive". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @wekruit/shared-tags@0.1.0 build
+> tsc
+
+
+> @pa/core-types@0.0.1 build
+> tsc
+
+
+> @pa/external-supply@0.0.1 test /Users/adam/Desktop/WeKruit/wekruit-pa/.claude/worktrees/v2-external-supply-intake/packages/external-supply
+> node --import tsx --test src/normalize.test.ts src/rubric.test.ts src/agent-prompt.test.ts src/agent-parse.test.ts src/outreach.test.ts src/instantly-client.test.ts
+
+✔ parseAgentResearchResult — empty string returns empty_input error (0.823083ms)
+✔ parseAgentResearchResult — whitespace-only returns empty_input error (0.068209ms)
+✔ parseAgentResearchResult — fenced ```json block extracts cleanly (2.825958ms)
+✔ parseAgentResearchResult — fenced ``` block without json hint also works (0.352292ms)
+✔ parseAgentResearchResult — substring fallback when no fence (0.137167ms)
+✔ parseAgentResearchResult — malformed JSON yields json_parse_failed error (0.12025ms)
+✔ parseAgentResearchResult — truncated JSON (unmatched braces) yields no_json_block_found (0.057458ms)
+✔ parseAgentResearchResult — pure prose with no JSON returns no_json_block_found (0.049584ms)
+✔ parseAgentResearchResult — missing schemaVersion fails envelope (0.338292ms)
+✔ parseAgentResearchResult — schemaVersion mismatch flagged but parsing continues (0.155333ms)
+✔ parseAgentResearchResult — invalid findings produce positional errors and skip (0.322625ms)
+✔ parseAgentResearchResult — every admitted finding has fresh UUID + approved=false (0.191459ms)
+✔ parseAgentResearchResult — uncertainty and recordId carry through (3.113542ms)
+✔ parseAgentResearchResult — recordId-only finding gets candidateId = recordId (2.128792ms)
+✔ parseAgentResearchResult — extra unknown keys silently dropped (0.2075ms)
+✔ parseAgentResearchResult — round-trip from golden prompt's output contract (0.281708ms)
+✔ parseAgentResearchResult — non-string input returns empty_input (0.066458ms)
+✔ buildAgentResearchPrompt — matches golden fixture (multi-candidate) (3.173042ms)
+✔ buildAgentResearchPrompt — promptVersion and schemaVersion appear in body (0.20325ms)
+✔ buildAgentResearchPrompt — deterministic across runs (0.182125ms)
+✔ buildAgentResearchPrompt — strips email-shaped strings from candidate fields (0.126375ms)
+✔ buildAgentResearchPrompt — strips phone-shaped strings from candidate fields (0.164292ms)
+✔ buildAgentResearchPrompt — guardrail lines present verbatim (0.092834ms)
+✔ buildAgentResearchPrompt — empty missingInfo renders the confirm fallback (0.070416ms)
+✔ buildAgentResearchPrompt — missingInfo keyed by candidateId resolves correctly (0.07725ms)
+✔ buildAgentResearchPrompt — never renders undefined for absent optional fields (0.088417ms)
+✔ buildAgentResearchPrompt — caller-supplied promptVersion/schemaVersion echo (0.116875ms)
+✔ addLeadToList dry_run echoes payload without fetching (0.913ms)
+✔ addLeadToList dry_run works even with NO apiKey set (0.16925ms)
+✔ addLeadToList live without apiKey throws instantly_api_key_missing (0.359167ms)
+✔ addLeadToList live happy path: parses lead_id from response (21.458292ms)
+✔ addLeadToList live accepts both `lead_id` and `leadId` field naming (0.276667ms)
+✔ listCampaigns accepts plain array response (0.465541ms)
+✔ listCampaigns accepts wrapped {campaigns: [...]} response (0.392334ms)
+✔ getLead returns parsed response (0.245375ms)
+✔ getLead empty id throws (0.117875ms)
+✔ markUnsubscribed POSTs lowercased email (0.239208ms)
+✔ non-2xx response throws instantly_request_failed:<status> (0.196667ms)
+✔ response missing lead_id throws instantly_response_missing_lead_id (0.193708ms)
+✔ custom baseUrl is honored (0.180958ms)
+✔ canonicalizeLinkedInUrl: lowercases host + slug, strips trailing slash (1.629459ms)
+✔ canonicalizeLinkedInUrl: strips query string + hash anchor (0.249583ms)
+✔ canonicalizeLinkedInUrl: drops locale prefix /{cc}/in/ (0.072291ms)
+✔ canonicalizeLinkedInUrl: accepts http and scheme-less inputs (0.059208ms)
+✔ canonicalizeLinkedInUrl: idempotent on already-canonical input (0.052916ms)
+✔ canonicalizeLinkedInUrl: rejects mailto / non-linkedin / company URLs (0.063375ms)
+✔ canonicalizeLinkedInUrl: rejects null / undefined / empty (0.043166ms)
+✔ linkedinHash: matches sha256(candidateHandleHashMaterial) (0.21025ms)
+✔ linkedinHash: deterministic for the same canonical input (0.054292ms)
+✔ emailHash: matches sha256(candidateHandleHashMaterial) (0.084542ms)
+✔ phoneHash: matches sha256(candidateHandleHashMaterial) (0.058667ms)
+✔ normalizeEmail: trims + lowercases (0.074416ms)
+✔ normalizeEmail: preserves plus-aliases verbatim (0.071542ms)
+✔ normalizeEmail: rejects malformed inputs (0.047375ms)
+✔ normalizePhoneE164: accepts valid E.164 (0.09525ms)
+✔ normalizePhoneE164: strips non-digit punctuation when leading + (0.051625ms)
+✔ normalizePhoneE164: rejects bare 10-digit US-style numbers (no country code) (0.03325ms)
+✔ normalizePhoneE164: rejects leading 0 after + (E.164 disallows) (0.048125ms)
+✔ normalizePhoneE164: rejects empty / null / undefined (0.257583ms)
+✔ normalizePhoneE164: rejects numbers > 15 digits (0.041875ms)
+✔ dedupeWithinBatch: dedupes by LinkedIn hash first occurrence wins (0.63625ms)
+✔ dedupeWithinBatch: falls back to email hash when LinkedIn missing (0.215833ms)
+✔ dedupeWithinBatch: preserves rows with no signal (0.369667ms)
+✔ dedupeWithinBatch: handles empty input (0.052125ms)
+✔ dedupeWithinBatch: dedupe priority — LinkedIn wins over shared email (0.046291ms)
+✔ decideChannel maps each tier to the right channel (1.255625ms)
+✔ evaluateSuppression — opted_out blocks regardless (0.698583ms)
+✔ evaluateSuppression — cooldownUntil > now blocks with cooldown (1.141875ms)
+✔ evaluateSuppression — cooldownUntil in past does NOT block (0.107042ms)
+✔ evaluateSuppression — email_bounced within 30d → previously_bounced (0.129791ms)
+✔ evaluateSuppression — email_bounced older than 30d does NOT block (0.067959ms)
+✔ evaluateSuppression — candidate_declined within 90d → cooldown (0.071583ms)
+✔ evaluateSuppression — candidate_declined older than 90d does NOT block (0.076208ms)
+✔ evaluateSuppression — duplicate same (jobId,companyId) within 14d → duplicate_company_role_recent (0.080916ms)
+✔ evaluateSuppression — duplicate older than 14d does NOT block (0.150291ms)
+✔ evaluateSuppression — duplicate different job does NOT block (only matches same jobId+companyId) (0.087167ms)
+✔ evaluateSuppression — passive email_opened does NOT trigger duplicate (0.06575ms)
+✔ evaluateSuppression — invalid_email when tier requires email but candidate has none (0.366208ms)
+✔ evaluateSuppression — no_outreach tiers don't require email (0.443958ms)
+✔ evaluateSuppression — low_confidence_personalization when tier 1/2 lacks copy (0.282083ms)
+✔ evaluateSuppression — tier_3 does NOT require personalization (0.075875ms)
+✔ evaluateSuppression — multiple reasons stack into sorted array (0.485417ms)
+✔ decideOutreach — tier_2 happy path with copy produces approved-ready draft (0.246834ms)
+✔ decideOutreach — tier_1 produces personal_linkedin channel and supports both payloads (0.118541ms)
+✔ decideOutreach — retain_only tier produces no_outreach channel and is not gated by personalization (0.062125ms)
+✔ decideOutreach — blocked tier maps to no_outreach (0.050042ms)
+✔ decideOutreach — suppression includes evidence in draft (0.049667ms)
+✔ decideOutreach — suppression result is reflected on the draft (0.048208ms)
+✔ decideOutreach — empty/whitespace personalizedHook is treated as missing (0.041625ms)
+✔ decideOutreach — copies are trimmed when persisted (0.048917ms)
+✔ evaluateGeneralRubric — rich profile scores high (1.139125ms)
+✔ evaluateGeneralRubric — top-tier scores (>=10 yoe and >=10 skills) hits ceiling (0.226542ms)
+✔ evaluateGeneralRubric — sparse profile surfaces missing-info and risk (0.151542ms)
+✔ evaluateCompanyRubric — competitor adjacency hits and surfaces evidence (0.3035ms)
+✔ evaluateCompanyRubric — no competitor list surfaces missing-info, no negative score (0.090917ms)
+✔ evaluateCompanyRubric — no industry overlap, no competitor → low score with risk (0.078ms)
+✔ evaluateJobRubric — full pass hard gate + high soft score (0.330458ms)
+✔ evaluateJobRubric — role function no overlap → hard_block (0.08025ms)
+✔ evaluateJobRubric — visa sponsor_needed + sponsorship false → hard_block (0.08675ms)
+✔ evaluateJobRubric — visa sponsor_needed + sponsorship null → soft pass with missing-info (0.128208ms)
+✔ evaluateJobRubric — location no overlap → hard_block (0.600458ms)
+✔ evaluateJobRubric — anywhere bypass passes location gate (0.834083ms)
+✔ evaluateJobRubric — career stage out of window → hard_block (0.079541ms)
+✔ evaluateJobRubric — career stage unknown on profile → soft_block + missing-info (0.086042ms)
+✔ evaluateJobRubric — job type mismatch → soft_block (never hard) (0.093542ms)
+✔ evaluateJobRubric — freshness stale (180d old) → soft_block + risk (1.00175ms)
+✔ evaluateJobRubric — skill jaccard contributes proportionally (0.086166ms)
+✔ evaluateJobRubric — salary below floor → risk + no salary bump (0.051541ms)
+✔ evaluateJobRubric — yoe early career path (0.048375ms)
+✔ proposeTier — hard_block always → blocked (0.053875ms)
+✔ proposeTier — soft_block with low combined → retain_only (0.036125ms)
+✔ proposeTier — score 0 → retain_only (0.035375ms)
+✔ proposeTier — just above 0.45 boundary → tier_3 (0.032334ms)
+✔ proposeTier — just below 0.45 → retain_only (0.026333ms)
+✔ proposeTier — 0.60 boundary → tier_2 (0.025833ms)
+✔ proposeTier — 0.75 boundary → tier_1 (0.02675ms)
+✔ proposeTier — 0.80 + competitor adjacency → tier_1 (boost still tier_1) (0.032334ms)
+✔ proposeTier — competitor adjacency at confidence < 0.7 does not promote (0.032167ms)
+✔ proposeTier — soft_block but combined >= 0.55 lands tier_3 (0.026375ms)
+✔ composeEvaluation — happy path returns deterministic shape (0.261333ms)
+✔ composeEvaluation — same inputs produce identical scores (idempotent) (0.444542ms)
+✔ composeEvaluation — hard-block flow returns 'blocked' + concise explanation (0.096208ms)
+✔ composeEvaluation — softScore matches TIER_WEIGHTS-weighted sum (0.081834ms)
+✔ composeEvaluation — rubricVersion override honored (0.077333ms)
+✔ composeEvaluation — missingInfo + risks dedup and sort (0.121209ms)
+✔ composeEvaluation — competitor adjacency promotes to tier_1 even at threshold (0.101958ms)
+✔ TIER_WEIGHTS sum to 1 (0.029084ms)
+ℹ tests 127
+ℹ suites 0
+ℹ pass 127
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 361.892833

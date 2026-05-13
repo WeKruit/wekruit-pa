@@ -1,0 +1,55 @@
+{
+  "aggregate": {
+    "processed": 105,
+    "created": 50,
+    "merged": 20,
+    "pending": 20,
+    "blocked": 15,
+    "skipped": 0
+  },
+  "byStatus": {
+    "create_new": 50,
+    "merge_existing": 20,
+    "needs_review": 20,
+    "blocked": 15
+  },
+  "byReason": {
+    "email_only_external_row": 10,
+    "linkedin_email_candidate_mismatch": 10,
+    "no_identity_signal": 15
+  },
+  "batches": [
+    {
+      "adapter": "juicebox",
+      "batchId": "juicebox_id_000001",
+      "rowCount": 35,
+      "validLinkedInCount": 35,
+      "validEmailCount": 35,
+      "duplicateCount": 0,
+      "needsReviewCount": 0,
+      "readyToProfileCount": 35
+    },
+    {
+      "adapter": "lessie",
+      "batchId": "lessie_id_000001",
+      "rowCount": 35,
+      "validLinkedInCount": 35,
+      "validEmailCount": 35,
+      "duplicateCount": 0,
+      "needsReviewCount": 0,
+      "readyToProfileCount": 35
+    },
+    {
+      "adapter": "coresignal",
+      "batchId": "coresignal_id_000001",
+      "rowCount": 35,
+      "validLinkedInCount": 10,
+      "validEmailCount": 20,
+      "duplicateCount": 0,
+      "needsReviewCount": 0,
+      "readyToProfileCount": 20
+    }
+  ],
+  "diagnostics": [],
+  "generatedAt": "2026-05-13T12:00:00.000Z"
+}

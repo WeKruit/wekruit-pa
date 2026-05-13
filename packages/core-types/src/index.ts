@@ -807,3 +807,7 @@ export {
   MatchingJobV16PartialSchema,
   type MatchingJobV16Partial,
 } from "./matching-jobs.js"
+
+// v2.0 External Supply V1 — sourcing batch / record / evaluation / outreach /
+// instantly / agent-research contracts. See ./external-supply.ts.
+export * from "./external-supply.js"

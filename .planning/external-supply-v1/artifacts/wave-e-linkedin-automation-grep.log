@@ -1,0 +1,12 @@
+{
+  "flagged": [],
+  "scannedRoots": [
+    "/Users/adam/Desktop/WeKruit/wekruit-pa/.claude/worktrees/v2-external-supply-intake/apps/functions/src/external-supply",
+    "/Users/adam/Desktop/WeKruit/wekruit-pa/.claude/worktrees/v2-external-supply-intake/packages/external-supply/src",
+    "/Users/adam/Desktop/WeKruit/wekruit-pa/.claude/worktrees/v2-external-supply-intake/apps/dashboard-web/src/pages/external-supply",
+    "/Users/adam/Desktop/WeKruit/wekruit-pa/.claude/worktrees/v2-external-supply-intake/apps/dashboard-web/src/components/external-supply",
+    "/Users/adam/Desktop/WeKruit/wekruit-pa/.claude/worktrees/v2-external-supply-intake/apps/dashboard-web/src/lib"
+  ],
+  "rule": "active outbound HTTP to linkedin.com via fetch/axios",
+  "generatedAt": "2026-05-13T12:00:00.000Z"
+}

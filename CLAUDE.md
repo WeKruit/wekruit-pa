@@ -268,6 +268,8 @@ Canonical shared blueprint: `README.md` -> "Product Blueprint: Candidate Retenti
 Execution roadmap: `.planning/MILESTONE-v2.0-candidate-retention-marketplace.md`.
 Autonomous sprint harness: `.planning/AUTONOMOUS-SPRINT-HARNESS.md`.
 Autonomous `/goal` prompt: `.planning/V2-GOAL-PROMPT.md`.
+External candidate supply initiative: `.planning/INITIATIVE-external-candidate-supply-intake.md`.
+External supply `/goal` prompt: `.planning/V2-EXTERNAL-SUPPLY-GOAL-PROMPT.md`.
 
 Adam direction: WeKruit is not just a job page, pre-screen bot, or employer ATS. The final product is a **C-end candidate retention marketplace**. Candidate supply is the long-term asset; each job is a demand event that can activate the historical candidate pool.
 
@@ -276,6 +278,12 @@ Adam direction: WeKruit is not just a job page, pre-screen bot, or employer ATS.
 WeKruit should retain every candidate who enters the platform, continuously improve that candidate's global profile through Claire conversations, resumes, tags, memory, and preferences, then match new jobs against this retained pool and outbound candidates into first interviews.
 
 New job arrives -> enrich job -> match against existing candidates -> outbound through Sendblue -> candidate does first interview -> passed profiles become employer-visible -> all outcomes feed the candidate/job/tag/match data flywheel.
+
+Adjacent initiative: External Candidate Supply Intake turns Juicebox / Lessie /
+Coresignal LinkedIn-centered rows into the same global `pa-users` candidate
+pool. This is a different initiative from the core v2.0 sprint roadmap, but it
+must obey the same candidate-retention rules and use the same profile, tag,
+matching, outreach, HITL, and eval flywheel.
 
 ### Non-Negotiable Product Rules
 
@@ -289,6 +297,20 @@ New job arrives -> enrich job -> match against existing candidates -> outbound t
 8. **User tags and job tags share one canonical vocabulary.** Do not create separate user/job/matching taxonomies.
 9. **HITL corrections must become flywheel data.** Human edits are not one-off fixes; they must write auditable correction events that become eval/regression artifacts.
 10. **Outbound must respect channel capacity.** Sendblue account/number groups use sticky load balancing; one account group should own roughly 300-500 active reachable users before expansion.
+11. **External sourced candidates share `pa-users`.** They are not standalone
+    Instantly leads, Excel rows, or per-client campaign records.
+12. **LinkedIn is the primary source identity lookup handle for external
+    supply.** For Juicebox / Lessie / Coresignal intake, automatic create/merge
+    queries a hashed canonical LinkedIn URL index to find an existing internal
+    `pa-users/{uid}`. Store a normalized URL and hashed index/source link; do
+    not use raw LinkedIn URL, email, or phone as a Firestore document id. Email
+    is a reachability/outreach handle and secondary identity signal, not the
+    primary external-source lookup key.
+13. **LinkedIn outreach is manual in V1.** Generate personalized LinkedIn
+    messages and operator tasks. Do not automate LinkedIn sending.
+14. **Instantly is email delivery infrastructure.** WeKruit owns identity,
+    tags, scoring, personalization, suppression gates, and audit. Instantly
+    owns campaign delivery and reply/bounce/unsubscribe plumbing.
 
 ### Identity And Profile Ownership
 
@@ -303,9 +325,21 @@ Use a stable global candidate profile with linked handles:
 - Sendblue user / thread identity
 - browser `wkr_uid`
 - ATS applicant IDs
-- future LinkedIn binding
+- canonical LinkedIn URL / hashed LinkedIn index
 
 Do not use raw PII as a public doc id. Keep identity merge deterministic with audit events.
+
+External candidate supply uses LinkedIn URL as the strongest external source
+identity because source rows are built from LinkedIn profile URL/content plus
+enrichment. Resolution rules:
+
+- same canonical LinkedIn URL hash lookup -> same internal `pa-users/{uid}`
+  unless already blocked
+- same email but no LinkedIn -> importable row, but no automatic external
+  profile create in V1; route to review
+- LinkedIn resolves to one `pa-users` and email resolves to another -> review
+- fuzzy name/company/school similarity -> review only, never automatic merge
+- `pa-users/{uid}` remains an internal id; indexes map hashed handles to uid
 
 ### Global Candidate State Machine
 
@@ -313,7 +347,7 @@ LLM never directly controls state transitions. LLM may extract intent, judge ans
 
 | State | Entry Condition | Exit Condition | Controller |
 |---|---|---|---|
-| `prospect` | Employer bulk upload, ATS applicant, anonymous job-page uid, or direct text with no resolved profile | Email or phone extracted/linked | deterministic reducer |
+| `prospect` | Employer bulk upload, ATS applicant, external LinkedIn sourced candidate, anonymous job-page uid, or direct text with no resolved profile | Email, phone, or LinkedIn handle extracted/linked | deterministic reducer |
 | `profile_created` | `pa-users` global profile exists | At least one reachable handle verified or deliverable | deterministic reducer |
 | `reachable` | Verified email or deliverable phone exists | Candidate replies, logs in, or explicitly opts out | delivery evidence + reducer |
 | `claimed` | Email magic-link login succeeds | Core profile reaches ready threshold | deterministic reducer |
@@ -368,6 +402,10 @@ Employer/admin surfaces:
 
 - Jobs: create/import job, job tags, prescreen config, public page preview.
 - Bulk Resume Upload: upload emails + PDFs, parse status, extracted email, merge/create result, retry/error state.
+- External Candidate Supply: import Juicebox / Lessie / Coresignal rows,
+  normalize LinkedIn-centered records, resolve identity, create/merge `pa-users`
+  prospects, evaluate against company/job rubrics, generate Instantly email
+  payloads, and create manual LinkedIn tasks.
 - Passed Candidates: only passed profiles, filterable by job.
 - Candidate Profile: resume summary, tags, Level 1 info, PII consent, transcript, pass reason, match reason.
 - Match Debug: hard filters, soft score, LLM rerank, evidence, explanation.
@@ -384,6 +422,7 @@ Long-term backend modules:
    - identity merge
    - global profile state
    - global PII / tags / Level 1 / resume / memory hooks
+   - external LinkedIn identity links and source evidence
    - candidate lifecycle reducer
 
 2. **job-enrichment-service**
@@ -416,6 +455,8 @@ Long-term backend modules:
 
 5. **outreach-service**
    - Sendblue account/number pool assignment
+   - Instantly email lead sync for approved external candidate outreach
+   - manual LinkedIn outreach task generation
    - sticky candidate/account routing
    - account capacity model
    - cooldowns and duplicate suppression

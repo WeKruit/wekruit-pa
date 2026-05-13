@@ -74,6 +74,26 @@ export const PA_COLLECTIONS = {
   correctionEvents: "pa-correction-events",
   /** Public job docs. Draft enrichment internals must live only in subcollections. */
   jobs: "pa-jobs",
+  /** v2.0 external-supply — operator-uploaded sourcing batches (Juicebox/Lessie/Coresignal/manual-csv). */
+  externalSourcingBatches: "pa-external-sourcing-batches",
+  /** v2.0 external-supply — normalized per-row candidate records ingested from a batch. */
+  externalCandidateRecords: "pa-external-candidate-records",
+  /** v2.0 external-supply — pa-users to external record join with linked/pending/blocked status. */
+  candidateSourceLinks: "pa-candidate-source-links",
+  /** v2.0 external-supply — evaluation run metadata (company x job scope, status, counts). */
+  candidateEvaluationRuns: "pa-candidate-evaluation-runs",
+  /** v2.0 external-supply — per-candidate company+job evaluation result (deterministic doc id). */
+  candidateCompanyJobEvaluations: "pa-candidate-company-job-evaluations",
+  /** v2.0 external-supply — ChatGPT Agent Mode research prompt + parsed findings tasks. */
+  agentResearchTasks: "pa-agent-research-tasks",
+  /** v2.0 external-supply — outreach plans (tier->channel, copy, suppression, approval). */
+  outreachPlans: "pa-outreach-plans",
+  /** v2.0 external-supply — Instantly sync record (dry-run or live) per plan. */
+  instantlySyncRecords: "pa-instantly-sync-records",
+  /** v2.0 external-supply — append-only outreach events from Instantly + manual LinkedIn. */
+  outreachEvents: "pa-outreach-events",
+  /** v2.0 external-supply — monthly source-quality rollup metrics per external source. */
+  sourceQualityMetrics: "pa-source-quality-metrics",
 } as const
 
 export const PA_BULK_UPLOAD_ITEMS_SUBCOLLECTION = "items"

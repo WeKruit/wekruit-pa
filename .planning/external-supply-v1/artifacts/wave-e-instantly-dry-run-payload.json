@@ -1,0 +1,14 @@
+{
+  "syncStatus": "dry_run_planned",
+  "mode": "dry_run",
+  "payload": {
+    "listId": "list-fake",
+    "campaignId": "camp-fake",
+    "email": "seed-user-001@seed.example.test",
+    "customFields": {
+      "jobId": "job_acme_swe_senior",
+      "companyId": "co_acme_ai",
+      "tier": "tier_2_personal_email"
+    }
+  }
+}
