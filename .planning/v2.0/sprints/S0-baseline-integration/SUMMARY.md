@@ -73,6 +73,9 @@ Passed:
 - Third CI repair: removed a test-only reverse import from
   `packages/agent-runtime/src/openai-agents-adapter.test.ts` to
   `@pa/pa-connectors`; `pnpm --filter @pa/agent-runtime test` passed 45/45.
+- Third CI repair recursive verification: `NODE_ENV=test PA_DASHBOARD_ENV=test
+  pnpm -r test` -> exit 0 on `f564cb8`; `apps/functions` still reports
+  1168/1168 pass.
 - `curl -sS -i -I https://candidate.wekruit.com/` -> `HTTP/2 200`.
 - `curl -sS -i -I https://candidate.wekruit.com/j/hs-11005382-invoko-product-designer`
   -> `HTTP/2 200`.
