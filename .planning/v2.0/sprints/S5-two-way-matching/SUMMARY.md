@@ -20,11 +20,10 @@
   public-safe match cards through a callable; raw match evidence and actions stay
   server-side.
 - Local verification is green. See `ACCEPTANCE.md` for exact command results.
-- Firebase deploy completed for `pa-dashboard` and `pa-landing`; functions
-  predeploy passed and Firebase reported no function code changes to upload.
-- The landing target was redeployed a second time with
-  `PA_LANDING_VITE_ENV_FILE` so the existing CV upload path kept
-  `VITE_CV_INGEST_URL`.
+- Firebase Functions deploy completed; Firebase created `paAdminJobMatchDebug`
+  and `paCandidateListMatches` and updated the existing codebase.
+- The landing target was redeployed a second time with `VITE_CV_INGEST_URL`
+  explicitly set so the existing CV upload path kept its backend URL.
 - Live smokes passed: candidate job page `200`, candidate `/me/matches` `200`,
   candidate `/j/:jobId/cv` `200`, stale admin `/j/:jobId` `301` to candidate
   domain, admin `/admin/match-debug` `200`, unauth callable probes blocked, and

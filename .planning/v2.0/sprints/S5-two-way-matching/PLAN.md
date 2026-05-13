@@ -2,8 +2,7 @@
 
 ## Status
 
-Executor AGENT_PLAN handshakes are integrated. Implementation can proceed under
-the write scopes in `EXECUTOR-PLANS.md`.
+Implemented, deployed, and live-smoked. PR preparation is next.
 
 ## Target Outcome
 
@@ -84,6 +83,6 @@ not a side effect in S5.
 ## Implementation Gate
 
 Satisfied. Five executor plans were collected for contracts/persistence,
-matching service, admin debug, candidate matches, and eval/deploy. Existing
-partial S5 code in the worktree is not accepted until it is reconciled against
-the integrated plans and verified.
+matching service, admin debug, candidate matches, and eval/deploy. The executor
+outputs were reconciled, verified, deployed to Firebase Functions/Hosting, and
+checked against the route/domain/no-outbound acceptance ledger.
