@@ -266,6 +266,8 @@ Adam: "这个功能点不是admin是customer side". C 端 (candidate-facing) and
 Canonical shared blueprint: `README.md` -> "Product Blueprint: Candidate Retention Marketplace". Keep this section consistent with that README memory.
 
 Execution roadmap: `.planning/MILESTONE-v2.0-candidate-retention-marketplace.md`.
+Autonomous sprint harness: `.planning/AUTONOMOUS-SPRINT-HARNESS.md`.
+Autonomous `/goal` prompt: `.planning/V2-GOAL-PROMPT.md`.
 
 Adam direction: WeKruit is not just a job page, pre-screen bot, or employer ATS. The final product is a **C-end candidate retention marketplace**. Candidate supply is the long-term asset; each job is a demand event that can activate the historical candidate pool.
 

@@ -9,6 +9,8 @@ This section is the persistent product memory for WeKruit v2.0+. `CLAUDE.md` and
 product shape.
 
 Execution roadmap: [.planning/MILESTONE-v2.0-candidate-retention-marketplace.md](.planning/MILESTONE-v2.0-candidate-retention-marketplace.md).
+Autonomous sprint harness: [.planning/AUTONOMOUS-SPRINT-HARNESS.md](.planning/AUTONOMOUS-SPRINT-HARNESS.md).
+`/goal` prompt: [.planning/V2-GOAL-PROMPT.md](.planning/V2-GOAL-PROMPT.md).
 
 ### North Star
 
@@ -564,6 +566,8 @@ Important docs:
 
 - [README.md](README.md) - canonical product blueprint and repository overview
 - [.planning/MILESTONE-v2.0-candidate-retention-marketplace.md](.planning/MILESTONE-v2.0-candidate-retention-marketplace.md) - v2.0 sprint roadmap from current baseline to candidate marketplace
+- [.planning/AUTONOMOUS-SPRINT-HARNESS.md](.planning/AUTONOMOUS-SPRINT-HARNESS.md) - `/goal`-compatible autonomous sprint and executor-plan harness
+- [.planning/V2-GOAL-PROMPT.md](.planning/V2-GOAL-PROMPT.md) - overall prompt for autonomous `/goal` execution
 - [CLAUDE.md](CLAUDE.md) - operating authority, deploy rules, design locks
 - [AGENTS.md](AGENTS.md) - non-Claude agent TL;DR
 - [ARCHITECTURE.md](ARCHITECTURE.md)

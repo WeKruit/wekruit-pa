@@ -2,6 +2,7 @@
 
 **Status:** Planning baseline, 2026-05-13.
 **Canonical product memory:** `README.md` -> "Product Blueprint: Candidate Retention Marketplace".
+**Autonomous execution harness:** `.planning/AUTONOMOUS-SPRINT-HARNESS.md`.
 **Operating lock:** This milestone extends v1.9 candidate journey closure into the final C-end candidate retention marketplace. Do not reduce it back to a job page, pre-screen bot, or employer ATS.
 
 ## 0. Mission
@@ -61,6 +62,16 @@ These invariants hold across every sprint:
 
 The lead owns one coherent system model across product, backend, eval, flywheel, and UIUX. Executors can own disjoint write scopes, but the lead owns integration, scope boundaries, and acceptance.
 
+All autonomous execution must follow `.planning/AUTONOMOUS-SPRINT-HARNESS.md`.
+The lead must create a sprint directory, write `CONTEXT.md` and `PLAN.md`, ask
+executors for `AGENT_PLAN` outputs, integrate those plans, and only then allow
+implementation. This is required so a `/goal` command can run from repo files
+instead of hidden thread context.
+
+Every sprint branches from updated `main` into a dedicated worktree using
+`codex/v2-S<N>-<slug>` and `.claude/worktrees/v2-S<N>-<slug>`. Do not chain new
+sprints from old sprint branches.
+
 ### Lead Artifacts
 
 The lead maintains:
@@ -88,6 +99,14 @@ Each sprint must be a vertical marketplace capability, not an isolated frontend/
 - HITL path
 - Flywheel events produced
 - Acceptance criteria
+
+Each sprint must also define:
+
+- `PLAN.md` location
+- executor write scopes
+- executor `AGENT_PLAN` handshake
+- dry-run/live-run boundary
+- scorecard target from the autonomous harness
 
 ### Integration Gates
 
