@@ -310,6 +310,24 @@ export type {
   UpsertBulkResumeItemInput,
 } from "./bulk-resume-intake.js"
 
+// v2.0 External Supply V1 — identity resolution + pa-users upsert path
+// (Wave B Block C). LinkedIn-first lookup against pa-candidate-handles;
+// email-only rows always need review; weak-tag merge with confidence 0.4.
+export {
+  EXTERNAL_SUPPLY_EVIDENCE_CONFIDENCE,
+  resolveExternalSupplyIdentity,
+} from "./external-supply-identity.js"
+export type {
+  ResolveExternalSupplyIdentityOptions,
+  ResolveExternalSupplyIdentityResult,
+} from "./external-supply-identity.js"
+export { upsertCandidateFromExternalRecord } from "./external-supply-upsert.js"
+export type {
+  CandidateProfileUpsertResult,
+  CandidateProfileUpsertStatus,
+  UpsertCandidateFromExternalRecordArgs,
+} from "./external-supply-upsert.js"
+
 // Phase 26 T1 — per-user rate limit (P9-Prod-Ops).
 export { checkAndIncrementRateLimit, RATE_LIMIT_COLLECTION } from "./rate-limit.js"
 export type { RateLimitOptions, RateLimitResult } from "./rate-limit.js"
