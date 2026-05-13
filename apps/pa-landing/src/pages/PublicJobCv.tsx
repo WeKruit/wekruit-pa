@@ -88,6 +88,7 @@ export default function PublicJobCv() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           tempUserId: requestedUserId,
+          browserUid: requestedUserId,
           resumeBase64: b64,
           resumeName: file.name,
           jobIdContext: jobId,

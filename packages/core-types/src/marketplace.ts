@@ -82,6 +82,16 @@ export const CandidateHandleKindSchema = z.enum([
 ])
 export type CandidateHandleKind = z.infer<typeof CandidateHandleKindSchema>
 
+export const CandidateHandleSourceSchema = z.enum([
+  "candidate",
+  "resume",
+  "ats",
+  "sendblue",
+  "admin",
+  "system",
+])
+export type CandidateHandleSource = z.infer<typeof CandidateHandleSourceSchema>
+
 export const ResumeArtifactStatusSchema = z.enum([
   "uploaded",
   "parsing",
@@ -159,13 +169,134 @@ export const CandidateHandleSchema = z.object({
   kind: CandidateHandleKindSchema,
   handleHash: z.string().min(16),
   normalizedValue: z.string().min(1).optional(),
-  source: z.enum(["candidate", "resume", "ats", "sendblue", "admin", "system"]),
+  source: CandidateHandleSourceSchema,
   verifiedAt: TimestampSchema.nullable().optional(),
   deliverable: z.boolean().optional(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema.optional(),
 })
 export type CandidateHandle = z.infer<typeof CandidateHandleSchema>
+
+export const CandidateAuthMappingSchema = z.object({
+  firebaseUid: IdSchema,
+  candidateId: IdSchema,
+  emailHandleId: IdSchema.optional(),
+  emailHandleHash: z.string().min(16).optional(),
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema.optional(),
+  lastClaimedAt: TimestampSchema.optional(),
+})
+export type CandidateAuthMapping = z.infer<typeof CandidateAuthMappingSchema>
+
+export const CandidateSelfProfileHandleSchema = z.object({
+  kind: CandidateHandleKindSchema,
+  verifiedAt: TimestampSchema.nullable().optional(),
+  source: CandidateHandleSourceSchema.optional(),
+})
+export type CandidateSelfProfileHandle = z.infer<typeof CandidateSelfProfileHandleSchema>
+
+export const CandidateSelfProfileSchema = z.object({
+  candidateId: IdSchema,
+  lifecycleState: CandidateLifecycleStateSchema.default("prospect"),
+  displayName: z.string().min(1).max(200).optional(),
+  emailMasked: z.string().min(3).max(320).optional(),
+  phoneMasked: z.string().min(3).max(64).optional(),
+  handles: z.array(CandidateSelfProfileHandleSchema).default([]),
+  latestResumeArtifactId: z.string().min(1).optional(),
+  resumeStatus: ResumeArtifactStatusSchema.optional(),
+  profileSummary: z.string().max(4_000).optional(),
+  globalTags: CandidateGlobalTagsSchema.optional(),
+  linkedinUrl: z.string().url().optional(),
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema.optional(),
+})
+export type CandidateSelfProfile = z.infer<typeof CandidateSelfProfileSchema>
+
+export const IdentityEventTypeSchema = z.enum([
+  "canonical_candidate_selected",
+  "handle_linked",
+  "candidate_claimed",
+  "identity_conflict_recorded",
+  "duplicate_suspected",
+  "merge_decision_recorded",
+])
+export type IdentityEventType = z.infer<typeof IdentityEventTypeSchema>
+
+export const CandidateIdentityEventSchema = z.object({
+  eventId: IdSchema,
+  type: IdentityEventTypeSchema,
+  actor: MarketplaceActorSchema,
+  candidateId: IdSchema.optional(),
+  relatedCandidateId: IdSchema.optional(),
+  firebaseUid: IdSchema.optional(),
+  handleId: IdSchema.optional(),
+  handleKind: CandidateHandleKindSchema.optional(),
+  handleHash: z.string().min(16).optional(),
+  conflictId: IdSchema.optional(),
+  source: z.enum(["candidate", "resume", "ats", "sendblue", "admin", "system", "auth"]),
+  evidence: z.array(MarketplaceEvidenceSchema).default([]),
+  payloadRedacted: z.record(z.unknown()).default({}),
+  createdAt: TimestampSchema,
+})
+export type CandidateIdentityEvent = z.infer<typeof CandidateIdentityEventSchema>
+
+export const IdentityConflictKindSchema = z.enum([
+  "pdf_email_employer_email_mismatch",
+  "handle_candidate_mismatch",
+  "auth_candidate_mismatch",
+  "duplicate_suspicion",
+])
+export type IdentityConflictKind = z.infer<typeof IdentityConflictKindSchema>
+
+export const CandidateIdentityConflictSchema = z.object({
+  conflictId: IdSchema,
+  kind: IdentityConflictKindSchema,
+  status: z.enum(["open", "resolved", "dismissed"]).default("open"),
+  primaryCandidateId: IdSchema.optional(),
+  competingCandidateId: IdSchema.optional(),
+  firebaseUid: IdSchema.optional(),
+  handleKind: CandidateHandleKindSchema.optional(),
+  handleId: IdSchema.optional(),
+  handleHash: z.string().min(16).optional(),
+  pdfEmailHash: z.string().min(16).optional(),
+  employerEmailHash: z.string().min(16).optional(),
+  evidence: z.array(MarketplaceEvidenceSchema).default([]),
+  payloadRedacted: z.record(z.unknown()).default({}),
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema.optional(),
+  resolvedAt: TimestampSchema.optional(),
+  resolvedBy: z.string().min(1).optional(),
+  resolution: z.string().max(2_000).optional(),
+})
+export type CandidateIdentityConflict = z.infer<typeof CandidateIdentityConflictSchema>
+
+export const CandidateIdentityResolutionSchema = z.discriminatedUnion("outcome", [
+  z.object({
+    outcome: z.literal("resolved_existing"),
+    candidateId: IdSchema,
+    handle: CandidateHandleSchema,
+  }),
+  z.object({
+    outcome: z.literal("created"),
+    candidateId: IdSchema,
+    handle: CandidateHandleSchema,
+  }),
+  z.object({
+    outcome: z.literal("identity_conflict"),
+    conflict: CandidateIdentityConflictSchema,
+  }),
+])
+export type CandidateIdentityResolution = z.infer<typeof CandidateIdentityResolutionSchema>
+
+export const CandidateClaimResultSchema = z.object({
+  candidateId: IdSchema,
+  authMapping: CandidateAuthMappingSchema,
+  selfProfile: CandidateSelfProfileSchema,
+  emailHandle: CandidateHandleSchema,
+  claimedEventId: IdSchema,
+  idempotent: z.boolean(),
+})
+export type CandidateClaimResult = z.infer<typeof CandidateClaimResultSchema>
 
 export const ResumeArtifactSchema = z.object({
   resumeId: IdSchema,
@@ -527,4 +658,35 @@ export function createEmployerVisibleProfileId(jobId: string, candidateId: strin
 
 export function createCandidateHandleId(kind: CandidateHandleKind, handleHash: string): string {
   return `${kind}__${handleHash}`
+}
+
+export function normalizeCandidateHandleValue(
+  kind: CandidateHandleKind,
+  value: string
+): string {
+  const trimmed = value.trim()
+  if (!trimmed) throw new Error("empty_candidate_handle")
+  switch (kind) {
+    case "email":
+      return trimmed.toLowerCase()
+    case "phone":
+      if (!/^\+[1-9]\d{1,14}$/.test(trimmed)) {
+        throw new Error("phone_handle_requires_e164")
+      }
+      return trimmed
+    case "browser_uid":
+      return trimmed.toLowerCase()
+    case "ats_applicant":
+    case "sendblue_thread":
+    case "imessage":
+    case "linkedin":
+      return trimmed.toLowerCase()
+  }
+}
+
+export function candidateHandleHashMaterial(
+  kind: CandidateHandleKind,
+  normalizedValue: string
+): string {
+  return `${kind}:${normalizedValue}`
 }

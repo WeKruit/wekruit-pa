@@ -1215,6 +1215,102 @@ describe("ingestCv sha256 idempotency (Phase 53 PARSE-09)", () => {
   })
 })
 
+// ---------- v2.0 S2 canonical identity before permanent CV writes ----------
+
+describe("ingestCv candidate identity resolution (v2.0 S2)", () => {
+  it("public browser upload resolves canonical user before sha256 dedupe or writes", async () => {
+    const { db, state } = makeFakeDb()
+    const { events, log } = captureLog()
+    const { deps } = makeStubbedDeps({ db, log })
+    const order: string[] = []
+    deps.parsePdf = async () => {
+      order.push("parse")
+      return { text: "public resume", numPages: 1 }
+    }
+    deps.llmExtract = async () => {
+      order.push("llm")
+      return { parsed: happyParsed() }
+    }
+    deps.resolveCandidateIdentity = async (_db, input) => {
+      order.push(`identity:${input.browserUid}`)
+      return {
+        outcome: "created",
+        candidateId: "cand_canonical",
+        handle: {
+          handleId: "email__hash",
+          candidateId: "cand_canonical",
+          kind: "email",
+          handleHash: "hashhashhashhash",
+          source: "resume",
+          createdAt: "2026-05-13T00:00:00.000Z",
+        },
+      }
+    }
+    deps.findResumeBySha256 = async (_db, userId) => {
+      order.push(`sha:${userId}`)
+      return "rsm_existing"
+    }
+    deps.enqueueCvConfirmFn = async () => {}
+
+    const res = await ingestCv(
+      {
+        userId: "browser_temp",
+        browserUid: "browser_temp",
+        mediaUrl: "https://example.com/cv.pdf",
+      },
+      deps
+    )
+
+    assert.equal(res.ok, true)
+    assert.ok(res.ok && res.userId === "cand_canonical")
+    assert.ok(res.ok && res.resumeId === "rsm_existing")
+    assert.deepEqual(order, ["parse", "llm", "identity:browser_temp", "sha:cand_canonical"])
+    assert.equal(state.resumes.length, 0, "identity-enabled dedupe must avoid duplicate write")
+    assert.ok(events.find((e) => e.event === "pa.cv_ingest.identity_resolved"))
+  })
+
+  it("identity conflict stops before resume, tags, memory, or follow-up writes", async () => {
+    const { db, state } = makeFakeDb()
+    const { log } = captureLog()
+    const { deps, mem0Calls, enqueueCalls } = makeStubbedDeps({ db, log })
+    let tagWriteCount = 0
+    deps.writeUserTags = async () => {
+      tagWriteCount++
+    }
+    deps.resolveCandidateIdentity = async () => ({
+      outcome: "identity_conflict",
+      conflict: {
+        conflictId: "identity_conflict_1",
+        kind: "pdf_email_employer_email_mismatch",
+        status: "open",
+        evidence: [],
+        payloadRedacted: {},
+        createdAt: "2026-05-13T00:00:00.000Z",
+      },
+    })
+    deps.findResumeBySha256 = async () => {
+      throw new Error("sha lookup should not run after conflict")
+    }
+
+    const res = await ingestCv(
+      {
+        userId: "ats_temp",
+        browserUid: "browser_temp",
+        employerEmailHint: "hint@example.com",
+        mediaUrl: "https://example.com/cv.pdf",
+      },
+      deps
+    )
+
+    assert.equal(res.ok, false)
+    assert.ok(!res.ok && res.reason === "identity_conflict")
+    assert.equal(state.resumes.length, 0)
+    assert.equal(tagWriteCount, 0)
+    assert.equal(mem0Calls.length, 0)
+    assert.equal(enqueueCalls.length, 0)
+  })
+})
+
 // ---------- Phase 53 (PARSE-08) Sonnet second-pass for ['other'] -----------
 
 describe("ingestCv industry second-pass (Phase 53 PARSE-08, D15)", () => {

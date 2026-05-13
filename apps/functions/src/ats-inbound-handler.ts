@@ -8,12 +8,10 @@
  *      pa-jobs-external-mapping/{source}/{externalId}
  *   2. 7-day idempotency check on
  *      pa-ats-invite-idempotency/{source}_{externalJobId}_{applicantId}
- *   3. Find-or-create pa-users by case-insensitive email
- *   4. Bind resume async (fire-and-forget call to cv-ingest if URL provided)
+ *   3. If a resume is present, bind it through cv-ingest identity resolution
+ *      before invite. Otherwise find-or-create pa-users by email.
  *   5. Send outbound invite SMS via injected sender
  *   6. Stamp idempotency + write audit event
- *
- * Fail-graceful: resume bind failure does NOT block invite SMS.
  */
 
 import type { Firestore } from "firebase-admin/firestore"
@@ -31,13 +29,15 @@ export interface AtsInboundDeps {
     userId: string
     jobIdInternal: string
   }) => Promise<{ ok: boolean }>
-  /** Fire-and-forget resume binder (calls cv-ingest HTTP). */
+  /** Resume binder (calls cv-ingest HTTP) before ATS invite is sent. */
   bindResume?: (args: {
     userId: string
     resumeUrl?: string
     resumeBase64?: string
     source: string
-  }) => Promise<void>
+    employerEmailHint?: string
+    atsApplicantId?: string
+  }) => Promise<void | { ok: boolean; reason?: string; userId?: string }>
   /** Audit emitter. */
   audit: (event: Record<string, unknown>) => Promise<void>
   log?: (event: string, payload: Record<string, unknown>) => void
@@ -93,49 +93,90 @@ export async function handleAtsInbound(
     return { kind: "deduped", reason: "within_7d_window" }
   }
 
-  // ── 3. Find-or-create user by email (case-insensitive) ────────────────
+  // ── 3. Resolve candidate identity before outbound invite ──────────────
   const emailLower = applicant.email.toLowerCase()
-  const existingSnap = await deps.db
-    .collection("pa-users")
-    .where("emailLower", "==", emailLower)
-    .limit(1)
-    .get()
-
-  let userId: string
+  let userId: string | null = null
   let createdUser = false
-  if (!existingSnap.empty) {
-    userId = existingSnap.docs[0].id
-  } else {
-    const newDoc = deps.db.collection("pa-users").doc()
-    userId = newDoc.id
-    await newDoc.set({
+  const hasResume = Boolean(applicant.resumeUrl || applicant.resumeBase64)
+  if (deps.bindResume && hasResume) {
+    const tempUserId = `ats_${applicant.source}_${applicant.applicantId}`.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 80)
+    try {
+      const bindResult = await deps.bindResume({
+        userId: tempUserId,
+        resumeUrl: applicant.resumeUrl,
+        resumeBase64: applicant.resumeBase64,
+        source: `ats:${applicant.source}`,
+        employerEmailHint: applicant.email,
+        atsApplicantId: `${applicant.source}:${applicant.applicantId}`,
+      })
+      if (bindResult && bindResult.ok === false) {
+        await deps.audit({
+          kind: "ats_inbound.identity_rejected",
+          source: applicant.source,
+          jobIdExternal: applicant.jobIdExternal,
+          applicantId: applicant.applicantId,
+          reason: bindResult.reason ?? "resume_bind_failed",
+        })
+        return { kind: "rejected", reason: bindResult.reason ?? "resume_bind_failed" }
+      }
+      if (bindResult && bindResult.ok === true && bindResult.userId) {
+        userId = bindResult.userId
+      }
+    } catch (err) {
+      log("ats_inbound.bind_resume_failed", {
+        error: err instanceof Error ? err.message : String(err),
+        applicantId: applicant.applicantId,
+      })
+      await deps.audit({
+        kind: "ats_inbound.identity_rejected",
+        source: applicant.source,
+        jobIdExternal: applicant.jobIdExternal,
+        applicantId: applicant.applicantId,
+        reason: "resume_bind_failed",
+      })
+      return { kind: "rejected", reason: "resume_bind_failed" }
+    }
+  }
+
+  if (!userId) {
+    const existingSnap = await deps.db
+      .collection("pa-users")
+      .where("emailLower", "==", emailLower)
+      .limit(1)
+      .get()
+
+    if (!existingSnap.empty) {
+      userId = existingSnap.docs[0].id
+    } else {
+      const newDoc = deps.db.collection("pa-users").doc()
+      userId = newDoc.id
+      await newDoc.set({
+        email: applicant.email,
+        emailLower,
+        legalName: applicant.name,
+        phone: applicant.phone ?? null,
+        signupSource: `ats:${applicant.source}`,
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      })
+      createdUser = true
+    }
+  }
+
+  const userSnap = await deps.db.collection("pa-users").doc(userId).get()
+  createdUser = createdUser || !userSnap.exists
+  await deps.db.collection("pa-users").doc(userId).set(
+    {
       email: applicant.email,
       emailLower,
       legalName: applicant.name,
       phone: applicant.phone ?? null,
       signupSource: `ats:${applicant.source}`,
-      createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
-    })
-    createdUser = true
-  }
-
-  // ── 4. Resume bind (fire-and-forget) ──────────────────────────────────
-  if (deps.bindResume && (applicant.resumeUrl || applicant.resumeBase64)) {
-    void deps
-      .bindResume({
-        userId,
-        resumeUrl: applicant.resumeUrl,
-        resumeBase64: applicant.resumeBase64,
-        source: `ats:${applicant.source}`,
-      })
-      .catch((err) =>
-        log("ats_inbound.bind_resume_failed", {
-          userId,
-          error: err instanceof Error ? err.message : String(err),
-        })
-      )
-  }
+      ...(userSnap.exists ? {} : { createdAt: FieldValue.serverTimestamp() }),
+    },
+    { merge: true }
+  )
 
   // ── 5. Build + send outbound invite ───────────────────────────────────
   const jobSnap = await deps.db.collection("pa-jobs").doc(jobIdInternal).get()

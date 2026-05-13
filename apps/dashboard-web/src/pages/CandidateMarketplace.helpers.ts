@@ -1,14 +1,33 @@
-import { PA_COLLECTIONS } from "@pa/core-types"
-
 export type MarketplaceRow = Record<string, unknown> & { id: string }
 
+export const S1_MARKETPLACE_COLLECTIONS = {
+  candidateHandles: "pa-candidate-handles",
+  resumeArtifacts: "pa-resume-artifacts",
+  candidateJobStates: "pa-candidate-job-states",
+  candidateJobMatches: "pa-candidate-job-matches",
+  outboundInvites: "pa-outbound-invites",
+  employerVisibleProfiles: "pa-employer-visible-profiles",
+  feedbackEvents: "pa-feedback-events",
+  correctionEvents: "pa-correction-events",
+} as const
+
+export const S2_IDENTITY_COLLECTIONS = {
+  candidateAuth: "pa-candidate-auth",
+  candidateSelfProfiles: "pa-candidate-self-profiles",
+  identityEvents: "pa-candidate-identity-events",
+  identityConflicts: "pa-candidate-identity-conflicts",
+} as const
+
 export type MarketplaceTableKey =
+  | "authMappings"
   | "handles"
   | "resumes"
   | "jobStates"
   | "matches"
   | "invites"
   | "employerSnapshots"
+  | "identityEvents"
+  | "identityConflicts"
   | "feedback"
   | "corrections"
 
@@ -21,63 +40,84 @@ export const MARKETPLACE_TABLES: {
   timeFields: string[]
 }[] = [
   {
+    key: "authMappings",
+    title: "Candidate auth mappings",
+    collection: S2_IDENTITY_COLLECTIONS.candidateAuth,
+    timeFields: ["lastClaimedAt", "updatedAt", "createdAt"],
+  },
+  {
     key: "handles",
     title: "Linked handles",
-    collection: PA_COLLECTIONS.candidateHandles,
+    collection: S1_MARKETPLACE_COLLECTIONS.candidateHandles,
     timeFields: ["updatedAt", "createdAt", "verifiedAt"],
   },
   {
     key: "resumes",
     title: "Resume artifacts",
-    collection: PA_COLLECTIONS.resumeArtifacts,
+    collection: S1_MARKETPLACE_COLLECTIONS.resumeArtifacts,
     timeFields: ["updatedAt", "createdAt"],
   },
   {
     key: "jobStates",
     title: "Candidate job states",
-    collection: PA_COLLECTIONS.candidateJobStates,
+    collection: S1_MARKETPLACE_COLLECTIONS.candidateJobStates,
     timeFields: ["stateUpdatedAt", "updatedAt", "createdAt"],
   },
   {
     key: "matches",
     title: "Job matches",
-    collection: PA_COLLECTIONS.candidateJobMatches,
+    collection: S1_MARKETPLACE_COLLECTIONS.candidateJobMatches,
     timeFields: ["updatedAt", "createdAt"],
   },
   {
     key: "invites",
     title: "Outbound invites",
-    collection: PA_COLLECTIONS.outboundInvites,
+    collection: S1_MARKETPLACE_COLLECTIONS.outboundInvites,
     timeFields: ["updatedAt", "createdAt"],
   },
   {
     key: "employerSnapshots",
     title: "Employer-visible snapshots",
-    collection: PA_COLLECTIONS.employerVisibleProfiles,
+    collection: S1_MARKETPLACE_COLLECTIONS.employerVisibleProfiles,
     timeFields: ["createdAt"],
+  },
+  {
+    key: "identityEvents",
+    title: "Identity events",
+    collection: S2_IDENTITY_COLLECTIONS.identityEvents,
+    timeFields: ["createdAt"],
+  },
+  {
+    key: "identityConflicts",
+    title: "Identity conflicts",
+    collection: S2_IDENTITY_COLLECTIONS.identityConflicts,
+    timeFields: ["updatedAt", "createdAt"],
   },
   {
     key: "feedback",
     title: "Feedback events",
-    collection: PA_COLLECTIONS.feedbackEvents,
+    collection: S1_MARKETPLACE_COLLECTIONS.feedbackEvents,
     timeFields: ["createdAt"],
   },
   {
     key: "corrections",
     title: "Correction events",
-    collection: PA_COLLECTIONS.correctionEvents,
+    collection: S1_MARKETPLACE_COLLECTIONS.correctionEvents,
     timeFields: ["createdAt"],
   },
 ]
 
 export function emptyMarketplaceRows(): MarketplaceRowsByKey {
   return {
+    authMappings: [],
     handles: [],
     resumes: [],
     jobStates: [],
     matches: [],
     invites: [],
     employerSnapshots: [],
+    identityEvents: [],
+    identityConflicts: [],
     feedback: [],
     corrections: [],
   }
@@ -121,6 +161,9 @@ export function summarizeMarketplace(rows: MarketplaceRowsByKey): {
   employerVisibleProfiles: number
   resumeArtifacts: number
   handles: number
+  authMappings: number
+  identityEvents: number
+  openIdentityConflicts: number
 } {
   const jobStates = rows.jobStates
   return {
@@ -135,5 +178,13 @@ export function summarizeMarketplace(rows: MarketplaceRowsByKey): {
     employerVisibleProfiles: rows.employerSnapshots.length,
     resumeArtifacts: rows.resumes.length,
     handles: rows.handles.length,
+    authMappings: rows.authMappings.length,
+    identityEvents: rows.identityEvents.length,
+    openIdentityConflicts: rows.identityConflicts.filter((row) => !isResolvedIdentityConflict(row)).length,
   }
+}
+
+export function isResolvedIdentityConflict(row: MarketplaceRow): boolean {
+  const status = String(row.status ?? row.state ?? "").toLowerCase()
+  return Boolean(row.resolvedAt) || ["resolved", "closed", "dismissed"].includes(status)
 }

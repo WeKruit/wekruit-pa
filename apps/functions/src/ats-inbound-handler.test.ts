@@ -169,3 +169,78 @@ describe("handleAtsInbound — no phone", () => {
     assert.equal(r.kind, "rejected")
   })
 })
+
+describe("handleAtsInbound — S2 identity-gated resume binding", () => {
+  it("does not send invite when CV identity binding reports a conflict", async () => {
+    const { db, docs, writes } = makeFakeDb()
+    docs.set(`pa-jobs-external-mapping/handshake_hs_job_1`, {
+      exists: true,
+      data: { jobIdInternal: "j99" },
+    })
+    let sendCalled = false
+    const audit: Array<Record<string, unknown>> = []
+    const r = await handleAtsInbound(
+      { ...baseApplicant, resumeUrl: "https://example.com/resume.pdf" },
+      {
+        db,
+        bindResume: async () => ({ ok: false, reason: "identity_conflict" }),
+        sendInvite: async () => {
+          sendCalled = true
+          return { ok: true }
+        },
+        audit: async (event) => {
+          audit.push(event)
+        },
+        now: () => 1_700_000_000_000,
+      }
+    )
+
+    assert.equal(r.kind, "rejected")
+    assert.equal(r.kind === "rejected" ? r.reason : "", "identity_conflict")
+    assert.equal(sendCalled, false)
+    assert.equal(writes.some((w) => w.path.startsWith("pa-users/")), false)
+    assert.ok(audit.some((event) => event.kind === "ats_inbound.identity_rejected"))
+  })
+
+  it("uses canonical candidate id returned by CV identity binding", async () => {
+    const { db, docs, writes } = makeFakeDb()
+    docs.set(`pa-jobs-external-mapping/handshake_hs_job_1`, {
+      exists: true,
+      data: { jobIdInternal: "j99" },
+    })
+    docs.set(`pa-jobs/j99`, {
+      exists: true,
+      data: { prescreenConfig: { jobTitle: "Designer", company: "Invoko" } },
+    })
+    const sent: Array<{ userId: string; to: string }> = []
+    const r = await handleAtsInbound(
+      { ...baseApplicant, resumeUrl: "https://example.com/resume.pdf" },
+      {
+        db,
+        bindResume: async (args) => {
+          assert.equal(args.employerEmailHint, "alex@school.edu")
+          assert.equal(args.atsApplicantId, "handshake:hs_app_1")
+          return { ok: true, userId: "cand_canonical" }
+        },
+        sendInvite: async (args) => {
+          sent.push({ userId: args.userId, to: args.to })
+          return { ok: true }
+        },
+        audit: async () => undefined,
+        now: () => 1_700_000_000_000,
+      }
+    )
+
+    assert.equal(r.kind, "ok")
+    assert.equal(r.kind === "ok" ? r.userId : "", "cand_canonical")
+    assert.deepEqual(sent, [{ userId: "cand_canonical", to: "+14155550199" }])
+    assert.ok(writes.some((w) => w.path === "pa-users/cand_canonical"))
+    assert.ok(
+      writes.some(
+        (w) =>
+          w.path === "pa-ats-pending-trigger/+14155550199" &&
+          w.data.userId === "cand_canonical"
+      )
+    )
+  })
+})

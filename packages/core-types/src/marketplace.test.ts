@@ -2,18 +2,25 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import {
   CandidateHandleSchema,
+  CandidateAuthMappingSchema,
+  CandidateIdentityConflictSchema,
+  CandidateIdentityEventSchema,
+  CandidateIdentityResolutionSchema,
   CandidateJobMatchSchema,
   CandidateJobStateDocSchema,
   CandidateProfileMarketplaceFieldsSchema,
   CandidateProfileSchema,
+  CandidateSelfProfileSchema,
   CorrectionEventSchema,
   EmployerVisibleProfileSchema,
   FeedbackEventSchema,
   OutboundInviteSchema,
   ResumeArtifactSchema,
+  candidateHandleHashMaterial,
   createCandidateHandleId,
   createCandidateJobStateId,
   createEmployerVisibleProfileId,
+  normalizeCandidateHandleValue,
   reduceCandidateJobState,
   reduceCandidateLifecycleState,
   type CandidateJobEvent,
@@ -139,6 +146,47 @@ test("marketplace document schemas parse the S1 primitives", () => {
     reason: "wrong visa tag",
     createdAt: now,
   })
+  CandidateAuthMappingSchema.parse({
+    firebaseUid: "firebase-uid-1",
+    candidateId: "cand-1",
+    emailHandleId: createCandidateHandleId("email", "c".repeat(64)),
+    emailHandleHash: "c".repeat(64),
+    createdAt: now,
+    lastClaimedAt: now,
+  })
+  CandidateSelfProfileSchema.parse({
+    candidateId: "cand-1",
+    lifecycleState: "claimed",
+    emailMasked: "a***@example.com",
+    handles: [{ kind: "email", verifiedAt: now, source: "candidate" }],
+    createdAt: now,
+  })
+  CandidateIdentityEventSchema.parse({
+    eventId: "ident-1",
+    type: "candidate_claimed",
+    actor: "candidate",
+    candidateId: "cand-1",
+    source: "auth",
+    createdAt: now,
+  })
+  CandidateIdentityConflictSchema.parse({
+    conflictId: "conflict-1",
+    kind: "pdf_email_employer_email_mismatch",
+    pdfEmailHash: "d".repeat(64),
+    employerEmailHash: "e".repeat(64),
+    evidence: [{ source: "resume_parse", summary: "PDF email differs from employer hint" }],
+    createdAt: now,
+  })
+  CandidateIdentityResolutionSchema.parse({
+    outcome: "identity_conflict",
+    conflict: {
+      conflictId: "conflict-1",
+      kind: "pdf_email_employer_email_mismatch",
+      pdfEmailHash: "d".repeat(64),
+      employerEmailHash: "e".repeat(64),
+      createdAt: now,
+    },
+  })
 })
 
 test("candidate lifecycle reducer covers README states and terminal behavior", () => {
@@ -215,4 +263,21 @@ test("document id helpers do not require raw PII", () => {
   assert.equal(createCandidateJobStateId("cand-1", "job-1"), "cand-1__job-1")
   assert.equal(createEmployerVisibleProfileId("job-1", "cand-1"), "job-1__cand-1")
   assert.equal(createCandidateHandleId("email", "f".repeat(64)), `email__${"f".repeat(64)}`)
+})
+
+test("candidate handle normalizers keep matching identity material stable", () => {
+  assert.equal(normalizeCandidateHandleValue("email", "  ALICE@Example.COM "), "alice@example.com")
+  assert.equal(
+    candidateHandleHashMaterial("email", normalizeCandidateHandleValue("email", "ALICE@Example.COM")),
+    candidateHandleHashMaterial("email", normalizeCandidateHandleValue("email", " alice@example.com "))
+  )
+  assert.equal(normalizeCandidateHandleValue("phone", "+14155550100"), "+14155550100")
+  assert.throws(() => normalizeCandidateHandleValue("phone", "415-555-0100"), /requires_e164/)
+})
+
+test("candidate handle ids are built from hashes, not raw PII", () => {
+  const rawEmail = "alice@example.com"
+  const handleId = createCandidateHandleId("email", "a".repeat(64))
+  assert.equal(handleId.includes(rawEmail), false)
+  assert.equal(candidateHandleHashMaterial("email", rawEmail), "email:alice@example.com")
 })
