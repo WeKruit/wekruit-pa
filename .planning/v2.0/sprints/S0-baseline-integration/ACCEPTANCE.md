@@ -17,6 +17,7 @@ This file records S0 verification.
 | Monorepo typecheck | `pnpm -r typecheck` | recursive typecheck succeeds | PR rerun exposed `apps/eval/external-benchmarks/lib/sf-client.mjs` JSDoc and catch narrowing issues; later GitHub check `25810771791` exposed the missing `@pa/functions` `@types/express` declaration; after both fixes, local recursive rerun passed | PASS |
 | Functions typecheck PR repair | `pnpm --filter @pa/functions typecheck` | functions package typecheck succeeds from declared direct dependencies | GitHub check `25810771791` failed because `src/health.ts` imports `Response` from `express` without a direct type declaration. Added `@types/express` to `apps/functions/package.json`; local rerun passed with Node 22 engine warning under local Node v25.6.1 | PASS |
 | Frozen lockfile after PR repair | `pnpm install --frozen-lockfile` | package manifests and lockfile are consistent | exit 0; lockfile records the `apps/functions` `@types/express@4.17.25` importer entry | PASS |
+| Direct tsx package tests | `pnpm --filter @pa/agent-runtime test`; `pnpm --filter @pa/pa-broker test`; `pnpm --filter @pa/agent-registry test`; `pnpm --filter @pa/pa-connectors test`; `pnpm --filter @pa/pa-safety test` | packages using `node --import tsx` resolve `tsx` from direct package devDependencies | GitHub check `25811839921` failed because clean CI could not resolve `tsx` from `@pa/agent-runtime` and `@pa/pa-broker`; added direct `tsx` devDependencies to all workspace packages with `tsx` test scripts and no direct declaration. Local targeted reruns passed: agent-runtime 45/45, pa-broker 13/13, agent-registry 52/52, pa-connectors 22/22, pa-safety 87 pass and 1 gated live smoke skipped | PASS |
 | Monorepo tests | `NODE_ENV=test PA_DASHBOARD_ENV=test pnpm -r test` | recursive tests succeed | full recursive run exposed stale hardcoded `agent-registry` test counts after metadata expansion; after deriving counts from current metadata/keys, local rerun passed; `apps/functions` still reports 1168/1168 pass | PASS |
 | Candidate landing | `curl -sI https://candidate.wekruit.com/` | HTTP 200 | sandbox curl first failed DNS exit 6; approved `curl -sS -i -I` returned `HTTP/2 200` | PASS |
 | Public job page | `curl -sI https://candidate.wekruit.com/j/hs-11005382-invoko-product-designer` | HTTP 200 | sandbox curl first failed DNS exit 6; approved `curl -sS -i -I` returned `HTTP/2 200` | PASS |
@@ -54,13 +55,17 @@ M .planning/v2.0/sprints/S0-baseline-integration/SUMMARY.md
 M apps/eval/external-benchmarks/lib/sf-client.mjs
 M apps/functions/package.json
 M apps/job-rec/package.json
+M packages/agent-registry/package.json
 M packages/agent-registry/src/skill-defaults.ts
 M packages/agent-registry/src/skill-schema.test.ts
 M packages/agent-runtime/package.json
 M packages/agent-runtime/tsconfig.json
+M packages/pa-broker/package.json
+M packages/pa-connectors/package.json
 M packages/pa-job-tag-enricher/package.json
 M packages/pa-orchestrator/package.json
 M packages/pa-resume-parser/package.json
+M packages/pa-safety/package.json
 M pnpm-lock.yaml
 ```
 
@@ -90,6 +95,11 @@ S0 harness fixes:
 - `apps/functions/package.json`: declares its direct `@types/express`
   devDependency because `src/health.ts` imports `Response` from `express` and
   clean CI typechecking cannot rely on transitive Firebase types.
+- `packages/agent-registry/package.json`, `packages/agent-runtime/package.json`,
+  `packages/pa-broker/package.json`, `packages/pa-connectors/package.json`, and
+  `packages/pa-safety/package.json`: declare direct `tsx` devDependencies
+  because their test scripts invoke `node --import tsx` and clean CI package
+  roots cannot rely on transitive or hoisted test runtimes.
 - `apps/eval/external-benchmarks/lib/sf-client.mjs`: declares timeout options
   in JSDoc and narrows caught errors before checking `name`, keeping recursive
   JS typechecking clean.
@@ -98,9 +108,9 @@ S0 harness fixes:
   skill-count assumptions from tests/comments so current metadata expansion is
   validated directly.
 - `pnpm-lock.yaml`: updated from the current workspace graph; this adds the
-  `openai`, `firebase-admin`, `zod`, and `@types/express` importer entries and
-  removes the stale `apps/candidate-web` importer because that directory is not
-  present in the workspace.
+  `openai`, `firebase-admin`, `zod`, `@types/express`, and `tsx` importer
+  entries and removes the stale `apps/candidate-web` importer because that
+  directory is not present in the workspace.
 
 No deploy, live SMS, Sendblue outbound, production data mutation, paid eval, or
 PII-printing action was performed during S0.

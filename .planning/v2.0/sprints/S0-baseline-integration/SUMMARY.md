@@ -19,12 +19,16 @@ Updated:
 - `packages/pa-orchestrator/package.json`
 - `apps/functions/package.json`
 - `apps/job-rec/package.json`
+- `packages/agent-registry/package.json`
 - `packages/agent-registry/src/skill-defaults.ts`
 - `packages/agent-registry/src/skill-schema.test.ts`
 - `packages/agent-runtime/package.json`
 - `packages/agent-runtime/tsconfig.json`
+- `packages/pa-broker/package.json`
+- `packages/pa-connectors/package.json`
 - `packages/pa-job-tag-enricher/package.json`
 - `packages/pa-resume-parser/package.json`
+- `packages/pa-safety/package.json`
 - `pnpm-lock.yaml`
 
 ## Verification Status
@@ -60,6 +64,12 @@ Passed:
   functions package still reports 1168/1168 pass inside the recursive run.
 - Final CI repair rerun: `NODE_ENV=test PA_DASHBOARD_ENV=test pnpm -r test` ->
   exit 0; `apps/functions` still reports 1168/1168 pass.
+- Second CI repair: added direct `tsx` devDependencies for every workspace
+  package whose test script uses `node --import tsx`; `pnpm install
+  --frozen-lockfile` passed, and targeted tests passed for `@pa/agent-runtime`
+  (45/45), `@pa/pa-broker` (13/13), `@pa/agent-registry` (52/52),
+  `@pa/pa-connectors` (22/22), and `@pa/pa-safety` (87 pass, 1 gated live
+  smoke skipped).
 - `curl -sS -i -I https://candidate.wekruit.com/` -> `HTTP/2 200`.
 - `curl -sS -i -I https://candidate.wekruit.com/j/hs-11005382-invoko-product-designer`
   -> `HTTP/2 200`.
@@ -89,6 +99,8 @@ PII-printing action was performed.
   as PR gates.
 - Minimal direct type-dependency fixes are in scope for S0 because clean CI
   typechecking must not rely on transitive Firebase package types.
+- Minimal direct test-runtime dependency fixes are in scope for S0 because
+  recursive CI tests must not rely on hoisted `tsx` from another workspace.
 - The S0 source branch is `codex/v2-S0-baseline-integration`, created from
   `main` at `23b9adb258fd10171e62cb8ba5030d5ba08dc3d0`.
 
