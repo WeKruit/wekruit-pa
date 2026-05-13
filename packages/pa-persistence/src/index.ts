@@ -241,6 +241,7 @@ export {
   applyCandidateLifecycleEvent,
   rejectJobOpportunityDraft,
   writeCorrectionEvent,
+  writeCandidateJobMatch,
   writeEmployerVisibleProfile,
   writeFeedbackEvent,
   writeJobEnrichmentEvalFixture,
@@ -250,6 +251,7 @@ export type {
   ApproveJobOpportunityDraftInput,
   MarketplaceTransitionResult,
   RejectJobOpportunityDraftInput,
+  WriteCandidateJobMatchResult,
 } from "./marketplace.js"
 
 // v2.0 S2 — identity + candidate claim data-plane helpers.

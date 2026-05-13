@@ -106,6 +106,21 @@ export type {
 } from "./types.js"
 
 export {
+  candidateMatchToMarketplaceMatch,
+  rankCandidatesForJob,
+  scoreCandidateForJob,
+} from "./two-way-match.js"
+export type {
+  CandidateForJobMatchResult,
+  MatchScoreComponent,
+  MatchingCandidateRow,
+  MatchingCandidateTags,
+  RecommendedMatchAction,
+  S5HardFilterResult,
+  ScoreCandidateForJobOptions,
+} from "./two-way-match.js"
+
+export {
   saveJobProfile,
   createSaveJobProfileTool,
 } from "./tools/save-job-profile.js"

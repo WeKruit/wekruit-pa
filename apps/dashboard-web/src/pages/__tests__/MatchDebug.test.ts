@@ -13,18 +13,15 @@ import test from "node:test"
 import assert from "node:assert/strict"
 
 import { V16_SCORE_WEIGHTS } from "@pa/job-rec"
-
-// Mirror copy of DEFAULT_WEIGHTS in MatchDebug.tsx — keep in sync to detect
-// dashboard/CF drift. If V16 changes the canonical weights, this test fails
-// loud + we update both.
-const MATCH_DEBUG_DEFAULT_WEIGHTS = {
-  llmMatch: 0.4,
-  skillJaccard: 0.2,
-  relevantTags: 0.15,
-  industrySector: 0.1,
-  cvEmbCosine: 0.1,
-  salaryFit: 0.05,
-} as const
+import {
+  MATCH_DEBUG_DEFAULT_WEIGHTS,
+  actionTone,
+  buildCandidateDebugRequest,
+  buildJobDebugRequest,
+  compactList,
+  displaySponsorship,
+  formatScore,
+} from "../MatchDebug.helpers.js"
 
 test("MatchDebug DEFAULT_WEIGHTS mirror V16_SCORE_WEIGHTS exactly", () => {
   for (const k of Object.keys(MATCH_DEBUG_DEFAULT_WEIGHTS) as Array<
@@ -54,4 +51,27 @@ test("V16_SCORE_WEIGHTS sum to 1.0 (sanity for sandbox sliders)", () => {
     V16_SCORE_WEIGHTS.cvEmbCosine +
     V16_SCORE_WEIGHTS.salaryFit
   assert.ok(Math.abs(sum - 1.0) < 1e-9, `V16 weights sum=${sum}`)
+})
+
+test("MatchDebug helpers build direction-specific callable requests", () => {
+  assert.deepEqual(
+    buildCandidateDebugRequest(" user-123456 ", { ...MATCH_DEBUG_DEFAULT_WEIGHTS }, 7),
+    {
+      userId: "user-123456",
+      weightOverrides: MATCH_DEBUG_DEFAULT_WEIGHTS,
+      limit: 7,
+    },
+  )
+  assert.deepEqual(buildJobDebugRequest(" job-1 ", 12), { jobId: "job-1", limit: 12 })
+})
+
+test("MatchDebug helpers format scores, action tones, and unknown sponsorship", () => {
+  assert.equal(formatScore(0.91234), "0.912")
+  assert.equal(formatScore(null), "-")
+  assert.equal(actionTone("auto_outbound"), "ok")
+  assert.equal(actionTone("hitl_review"), "warn")
+  assert.equal(actionTone("do_not_contact"), "muted")
+  assert.equal(displaySponsorship(null), "Unknown/Review")
+  assert.equal(displaySponsorship(false), "No")
+  assert.equal(compactList(["risk", "missing"]), "risk, missing")
 })

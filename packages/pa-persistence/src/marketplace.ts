@@ -1,6 +1,7 @@
 import type { Firestore } from "firebase-admin/firestore"
 import {
   CandidateJobEventSchema,
+  CandidateJobMatchSchema,
   CandidateJobStateDocSchema,
   CandidateLifecycleEventSchema,
   CandidateProfileMarketplaceFieldsSchema,
@@ -17,6 +18,7 @@ import {
   reduceCandidateJobState,
   reduceCandidateLifecycleState,
   type CandidateJobEvent,
+  type CandidateJobMatch,
   type CandidateJobState,
   type CandidateJobStateDoc,
   type CandidateLifecycleEvent,
@@ -27,6 +29,7 @@ import {
   type JobEnrichmentEvalFixture,
   type JobOpportunityDraft,
   createCandidateJobStateId,
+  createCandidateJobMatchId,
 } from "@pa/core-types"
 
 const AUDIT_COLLECTION = PA_COLLECTIONS.auditEvents
@@ -176,6 +179,126 @@ export async function applyCandidateJobEvent(
       auditEventId: auditRef.id,
       reason: reduced.reason,
       stateDocId,
+    }
+  })
+}
+
+export type WriteCandidateJobMatchResult = {
+  match: CandidateJobMatch
+  created: boolean
+  updated: boolean
+  idempotent: boolean
+  stateDocId: string
+  auditEventId: string
+}
+
+function timestampOrderValue(value: string): number {
+  const parsed = Date.parse(value)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function safeAuditPart(value: string): string {
+  return value.replace(/[\\/]/g, "_")
+}
+
+export async function writeCandidateJobMatch(
+  db: Firestore,
+  rawMatch: CandidateJobMatch
+): Promise<WriteCandidateJobMatchResult> {
+  const match = CandidateJobMatchSchema.parse(rawMatch)
+  const expectedMatchId = createCandidateJobMatchId(match.candidateId, match.jobId)
+  if (match.matchId !== expectedMatchId) {
+    throw new Error("candidate_job_match_id_mismatch")
+  }
+
+  const stateDocId = createCandidateJobStateId(match.candidateId, match.jobId)
+  const matchRef = db.collection(PA_COLLECTIONS.candidateJobMatches).doc(match.matchId)
+  const stateRef = db.collection(PA_COLLECTIONS.candidateJobStates).doc(stateDocId)
+  const auditRef = db
+    .collection(AUDIT_COLLECTION)
+    .doc(auditId("marketplace_candidate_job_match", `${match.matchId}_${safeAuditPart(match.computedAt)}`))
+
+  return await db.runTransaction(async (tx) => {
+    const matchSnap = await tx.get(matchRef)
+    const stateSnap = await tx.get(stateRef)
+    const auditSnap = await tx.get(auditRef)
+
+    const currentDoc = stateSnap.exists
+      ? CandidateJobStateDocSchema.parse(stateSnap.data())
+      : null
+    const currentState = currentDoc?.state ?? "candidate_matched"
+
+    if (matchSnap.exists) {
+      const existingMatch = CandidateJobMatchSchema.parse(matchSnap.data())
+      if (stableJson(existingMatch) !== stableJson(match)) {
+        const existingTime = timestampOrderValue(existingMatch.computedAt)
+        const nextTime = timestampOrderValue(match.computedAt)
+        if (nextTime < existingTime) {
+          throw new Error(`stale_candidate_job_match:${PA_COLLECTIONS.candidateJobMatches}/${match.matchId}`)
+        }
+        if (nextTime <= existingTime) {
+          throw new Error(`conflicting_duplicate_event:${PA_COLLECTIONS.candidateJobMatches}/${match.matchId}`)
+        }
+      } else {
+        return {
+          match: existingMatch,
+          created: false,
+          updated: false,
+          idempotent: true,
+          stateDocId,
+          auditEventId: auditRef.id,
+        }
+      }
+    }
+
+    const event: CandidateJobEvent = {
+      eventId: `match-${match.matchId}`,
+      type: "match_recorded",
+      candidateId: match.candidateId,
+      jobId: match.jobId,
+      actor: "system",
+      occurredAt: match.computedAt,
+      evidence: match.evidence,
+      matchScore: match.finalScore,
+    }
+    const reduced = reduceCandidateJobState(currentState, event)
+    const nextDoc: CandidateJobStateDoc = CandidateJobStateDocSchema.parse({
+      ...(currentDoc ?? {}),
+      id: stateDocId,
+      candidateId: match.candidateId,
+      jobId: match.jobId,
+      state: reduced.state,
+      previousState: currentState,
+      stateUpdatedAt: currentDoc?.stateUpdatedAt ?? match.computedAt,
+      reason: currentDoc?.reason ?? reduced.reason,
+      latestMatchId: match.matchId,
+      archivedAt: currentDoc?.archivedAt,
+    })
+
+    tx.set(matchRef, match as Record<string, unknown>)
+    tx.set(stateRef, nextDoc, { merge: true })
+    if (!auditSnap.exists) {
+      tx.set(auditRef, {
+        id: auditRef.id,
+        action: "marketplace.candidate_job.match.write",
+        candidateId: match.candidateId,
+        jobId: match.jobId,
+        matchId: match.matchId,
+        direction: match.direction,
+        matchVersion: match.matchVersion,
+        jobEnrichmentVersion: match.jobEnrichmentVersion,
+        latestMatchId: match.matchId,
+        createdAt: match.computedAt,
+      })
+    }
+
+    return {
+      match,
+      created: !matchSnap.exists,
+      updated: matchSnap.exists,
+      idempotent: false,
+      stateDocId,
+      auditEventId: auditRef.id,
     }
   })
 }

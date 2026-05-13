@@ -5,10 +5,12 @@ import {
   PA_COLLECTIONS,
   PA_JOB_ENRICHMENT_EVAL_FIXTURES_SUBCOLLECTION,
   PA_JOB_ENRICHMENT_SUBCOLLECTION,
+  createCandidateJobMatchId,
   createCandidateJobStateId,
   createEmployerVisibleProfileId,
   createJobEnrichmentEvalFixtureId,
   type CandidateJobEvent,
+  type CandidateJobMatch,
   type CandidateLifecycleEvent,
   type CorrectionEvent,
   type EmployerVisibleProfile,
@@ -22,6 +24,7 @@ import {
   approveJobOpportunityDraft,
   rejectJobOpportunityDraft,
   writeCorrectionEvent,
+  writeCandidateJobMatch,
   writeEmployerVisibleProfile,
   writeFeedbackEvent,
   writeJobEnrichmentEvalFixture,
@@ -132,6 +135,35 @@ function job(type: CandidateJobEvent["type"], over: Partial<CandidateJobEvent> =
   } as CandidateJobEvent
 }
 
+function candidateJobMatch(over: Partial<CandidateJobMatch> = {}): CandidateJobMatch {
+  return {
+    matchId: createCandidateJobMatchId("cand-1", "job-1"),
+    candidateId: "cand-1",
+    jobId: "job-1",
+    direction: "job_to_candidate",
+    matchVersion: "s5-test",
+    jobEnrichmentVersion: "job-enrich-v1",
+    computedAt: now,
+    scoreBreakdown: {
+      skills: { score: 0.82, weight: 0.5, summary: "TypeScript and React match" },
+      location: { score: 1, weight: 0.2 },
+    },
+    matchedSignals: ["typescript", "remote_anywhere"],
+    blockedSignals: [],
+    candidateLifecycleStateAtMatch: "retained",
+    candidateTagsUpdatedAt: now,
+    hardFilterResult: "pass",
+    finalScore: 0.84,
+    reasons: ["strong_skill_match"],
+    risks: [],
+    missingInfo: [],
+    recommendedAction: "hitl_review",
+    evidence: [{ source: "job_match", summary: "S5 test match" }],
+    createdAt: now,
+    ...over,
+  }
+}
+
 test("applyCandidateLifecycleEvent writes pa-users marketplace fields plus one audit row", async () => {
   const { db, store } = makeFakeFirestore()
   const res = await applyCandidateLifecycleEvent(db, lifecycle("profile_created"))
@@ -165,6 +197,98 @@ test("applyCandidateJobEvent does not use match score as an interview gate", asy
   const { db } = makeFakeFirestore()
   const result = await applyCandidateJobEvent(db, job("prescreen_started", { matchScore: 0.01 }))
   assert.equal(result.state, "prescreen_started")
+})
+
+test("writeCandidateJobMatch writes match evidence and latest candidate-job state", async () => {
+  const { db, store } = makeFakeFirestore()
+  const match = candidateJobMatch()
+  const result = await writeCandidateJobMatch(db, match)
+
+  assert.equal(result.created, true)
+  assert.equal(result.updated, false)
+  assert.equal(result.idempotent, false)
+  assert.equal(result.stateDocId, createCandidateJobStateId("cand-1", "job-1"))
+  assert.equal(store.get(PA_COLLECTIONS.candidateJobMatches)!.get(match.matchId)!.matchVersion, "s5-test")
+
+  const stateDoc = store.get(PA_COLLECTIONS.candidateJobStates)!.get(result.stateDocId)!
+  assert.equal(stateDoc.state, "candidate_matched")
+  assert.equal(stateDoc.latestMatchId, match.matchId)
+  assert.equal(store.get(PA_COLLECTIONS.auditEvents)!.has(result.auditEventId), true)
+})
+
+test("writeCandidateJobMatch is idempotent for the same deterministic match and rejects conflicts", async () => {
+  const { db, store } = makeFakeFirestore()
+  const match = candidateJobMatch()
+
+  assert.equal((await writeCandidateJobMatch(db, match)).created, true)
+  const duplicate = await writeCandidateJobMatch(db, match)
+  assert.equal(duplicate.created, false)
+  assert.equal(duplicate.updated, false)
+  assert.equal(duplicate.idempotent, true)
+  assert.equal(store.get(PA_COLLECTIONS.candidateJobMatches)!.size, 1)
+  assert.equal(store.get(PA_COLLECTIONS.auditEvents)!.size, 1)
+
+  await assert.rejects(
+    () => writeCandidateJobMatch(db, candidateJobMatch({ finalScore: 0.4 })),
+    /conflicting_duplicate_event/
+  )
+})
+
+test("writeCandidateJobMatch replaces newer materialized evidence and rejects stale writes", async () => {
+  const { db, store } = makeFakeFirestore()
+  const match = candidateJobMatch({ computedAt: "2026-05-13T12:00:00.000Z", finalScore: 0.7 })
+  const newer = candidateJobMatch({ computedAt: "2026-05-13T13:00:00.000Z", finalScore: 0.91 })
+  const stale = candidateJobMatch({ computedAt: "2026-05-13T11:00:00.000Z", finalScore: 0.99 })
+
+  assert.equal((await writeCandidateJobMatch(db, match)).created, true)
+  const updated = await writeCandidateJobMatch(db, newer)
+
+  assert.equal(updated.created, false)
+  assert.equal(updated.updated, true)
+  assert.equal(updated.idempotent, false)
+  assert.equal(store.get(PA_COLLECTIONS.candidateJobMatches)!.get(match.matchId)!.finalScore, 0.91)
+  assert.equal(store.get(PA_COLLECTIONS.auditEvents)!.size, 2)
+
+  await assert.rejects(
+    () => writeCandidateJobMatch(db, stale),
+    /stale_candidate_job_match/
+  )
+})
+
+test("writeCandidateJobMatch never writes outbound, invites, or global candidate profile", async () => {
+  const { db, store } = makeFakeFirestore()
+  await writeCandidateJobMatch(
+    db,
+    candidateJobMatch({ recommendedAction: "auto_outbound" })
+  )
+
+  assert.equal(store.get(PA_COLLECTIONS.outbound)!.size, 0)
+  assert.equal(store.get(PA_COLLECTIONS.outboundInvites)!.size, 0)
+  assert.equal(store.get(PA_COLLECTIONS.users)!.size, 0)
+})
+
+test("writeCandidateJobMatch validates deterministic ids and preserves first-interview state", async () => {
+  const { db, store } = makeFakeFirestore()
+  await assert.rejects(
+    () => writeCandidateJobMatch(db, candidateJobMatch({ matchId: "random" })),
+    /matchId must equal createCandidateJobMatchId/
+  )
+
+  const stateId = createCandidateJobStateId("cand-1", "job-1")
+  store.get(PA_COLLECTIONS.candidateJobStates)!.set(stateId, {
+    id: stateId,
+    candidateId: "cand-1",
+    jobId: "job-1",
+    state: "prescreen_started",
+    stateUpdatedAt: "2026-05-13T11:00:00.000Z",
+    reason: "first_interview_started",
+  })
+
+  await writeCandidateJobMatch(db, candidateJobMatch({ finalScore: 0.01 }))
+  const stateDoc = store.get(PA_COLLECTIONS.candidateJobStates)!.get(stateId)!
+  assert.equal(stateDoc.state, "prescreen_started")
+  assert.equal(stateDoc.reason, "first_interview_started")
+  assert.equal(stateDoc.latestMatchId, createCandidateJobMatchId("cand-1", "job-1"))
 })
 
 test("feedback and correction events are append-only with conflict detection", async () => {
