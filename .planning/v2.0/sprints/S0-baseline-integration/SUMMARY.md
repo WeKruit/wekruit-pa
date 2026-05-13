@@ -47,6 +47,12 @@ Passed:
   worktree `/private/tmp/wekruit-s0-ci-c667ffa`.
 - `pnpm -r typecheck` -> exit 0 after fixing the external-benchmarks
   `sf-client.mjs` JSDoc/catch narrowing uncovered by the PR rerun.
+- `pnpm --filter @pa/functions typecheck` -> exit 0 after declaring
+  `@pa/functions`'s direct `@types/express` devDependency for
+  `src/health.ts`'s `Response` import, which repaired GitHub check run
+  `25810771791`.
+- `pnpm install --frozen-lockfile` -> exit 0 after the `@types/express`
+  package-manifest and lockfile importer repair.
 - `NODE_ENV=test PA_DASHBOARD_ENV=test pnpm -r test` -> exit 0 after removing
   stale hardcoded skill-count assumptions from agent-registry tests. The
   functions package still reports 1168/1168 pass inside the recursive run.
@@ -77,6 +83,8 @@ PII-printing action was performed.
 - Minimal typecheck/test expectation fixes are in scope for S0 because the
   acceptance contract now includes recursive typecheck and recursive unit tests
   as PR gates.
+- Minimal direct type-dependency fixes are in scope for S0 because clean CI
+  typechecking must not rely on transitive Firebase package types.
 - The S0 source branch is `codex/v2-S0-baseline-integration`, created from
   `main` at `23b9adb258fd10171e62cb8ba5030d5ba08dc3d0`.
 
