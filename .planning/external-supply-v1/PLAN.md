@@ -153,6 +153,15 @@ export const AgentResearchReviewStatusSchema = z.enum([
   "approved",
   "rejected",
 ])
+
+export const SuppressionBlockReasonSchema = z.enum([
+  "opted_out",
+  "previously_bounced",
+  "invalid_email",
+  "cooldown",
+  "duplicate_company_role_recent",
+  "low_confidence_personalization",
+])
 ```
 
 ### 5.2 Core Records (new)
@@ -175,6 +184,7 @@ ExternalSourcingBatch = {
   rawFileRef: { storageUri: string; mime: string; sha256: string; sizeBytes: number }
   normalizerVersion: string                // e.g. "ext-norm-2026-05"
   importedBy: string                       // operator uid
+  meta?: Record<string, unknown>           // adapterVersion, columnMapping, rawHeaderSample — set by B
   createdAt: string
   updatedAt?: string
   completedAt?: string
@@ -211,14 +221,16 @@ ExternalCandidateRecord = {
 
 CandidateSourceLink = {
   sourceLinkId: string                     // doc id (uuid)
-  candidateId: string                      // pa-users uid
+  candidateId?: string                     // pa-users uid; absent for pending_review/blocked
+  status: "linked" | "pending_review" | "blocked"
+  pendingRecordId?: string                 // ExternalCandidateRecord ref when candidateId absent
   source: ExternalSource
   batchId: string
   recordId: string                         // ExternalCandidateRecord ref
   canonicalLinkedInUrl?: string
   linkedinProfileHash?: string
   emailHashes: string[]
-  confidence: number                       // 0..1
+  confidence: number                       // 0..1; default 0.4 for external_sourcing
   evidence: MarketplaceEvidence[]
   createdAt: string
   createdBy: string                        // operator uid or "system"
@@ -492,18 +504,71 @@ Eight executors, disjoint write scopes.
 
 Before code lands, every executor returns an `AGENT_PLAN` (no code) using the exact template in `.planning/AUTONOMOUS-SPRINT-HARNESS.md` §3 Phase 2. Plans are appended to `EXECUTOR-PLANS.md`. Lead writes an integration note here (§9.1) confirming scopes are disjoint before any executor implements.
 
-### 9.1 Integration Note (filled in after AGENT_PLANs return)
+### 9.1 Integration Note (filled 2026-05-13)
 
-To be added by lead after AGENT_PLANs are collected. Answers:
+All 8 AGENT_PLANs collected in `EXECUTOR-PLANS.md`. Lead review:
 
-1. Are file write scopes disjoint? (Y/N)
-2. Are shared files sequenced behind one owner? (Y/N)
-3. Are data contracts consistent? (Y/N)
-4. Does every backend primitive have UI visibility or operator debug state? (Y/N)
-5. Does every LLM behavior have eval or trace coverage? (Y/N)
-6. Does every HITL edit produce a correction/flywheel event? (Y/N)
-7. Does any executor plan violate product invariants? (Y/N)
-8. Wave order: A → (B||C||D||E||F) → G → H.
+1. **Write scopes disjoint?** Yes. Verified each executor edits only paths listed in PLAN §8. Cross-checks:
+   - A owns `packages/core-types/src/external-supply.ts` + additive marketplace/collections edits.
+   - B owns `packages/external-supply/` scaffold + `apps/functions/src/external-supply/import.ts` + adapters/.
+   - C owns `packages/pa-persistence/src/external-supply-*.ts` + `apps/functions/src/external-supply/resolve-identity.ts`.
+   - D owns `packages/external-supply/src/rubric.ts` + `apps/functions/src/external-supply/evaluate.ts`.
+   - E owns `packages/external-supply/src/agent-{prompt,parse}.ts` + `apps/functions/src/external-supply/agent-task.ts`.
+   - F owns `packages/external-supply/src/{outreach,instantly-client}.ts` + `apps/functions/src/external-supply/{outreach,instantly-sync,instantly-webhook,config}.ts`.
+   - G owns `apps/dashboard-web/src/pages/external-supply/*` + `apps/dashboard-web/src/components/external-supply/*` + `apps/dashboard-web/src/lib/external-supply-client.ts`.
+   - H owns `tests/external-supply/*` + `tests/fixtures/external-supply/*` + the planning artifact docs.
+
+2. **Shared files sequenced behind one owner?** Yes.
+   - `apps/functions/src/index.ts` → **F is final owner**. B, C, D, E, F each declare exported callable symbols in their own files. F appends the full export list during integration. The lead applies any remaining merge fix-up.
+   - `apps/dashboard-web/src/App.tsx` → **G is sole owner** (additive nav + route block).
+   - `packages/external-supply/src/index.ts` (barrel) → **B is owner** (scaffold). E + D + F add their exports through their own files; B's barrel re-exports the package's public API.
+   - `pnpm-workspace.yaml` → no edit (existing `packages/*` glob).
+
+3. **Data contracts consistent?** Yes, after the following inline tweaks to PLAN §5 (already applied):
+   - Added `SuppressionBlockReasonSchema` to §5.1.
+   - Added `meta?: Record<string, unknown>` to `ExternalSourcingBatch` in §5.2.
+   - Relaxed `CandidateSourceLink.candidateId` to optional and added `status` + `pendingRecordId` in §5.2.
+   - Added Wave B step for `paExternalSupplyCreateBatchUploadUrl` + `paExternalSupplyCreateBatch` callable (§11 Wave B B5).
+   - Added F's `paExternalSupplyGetConfig` callable (§11 Wave C F3.5).
+
+4. **Every backend primitive has UI visibility or operator debug state?** Yes. Mapping (collection → page):
+   - `pa-external-sourcing-batches` → `/admin/external-supply` + `/admin/external-supply/batches/:batchId`
+   - `pa-external-candidate-records` → batch-detail row table + `/admin/external-supply/review`
+   - `pa-candidate-source-links` → batch-detail row drawer (audit tab)
+   - `pa-candidate-evaluation-runs` → `/admin/external-supply/evaluations`
+   - `pa-candidate-company-job-evaluations` → `/admin/external-supply/evaluations/:runId`
+   - `pa-agent-research-tasks` → `/admin/external-supply/research`
+   - `pa-outreach-plans` → `/admin/external-supply/outreach`
+   - `pa-instantly-sync-records` → `/admin/external-supply/sync`
+   - `pa-outreach-events` → sync detail row + audit page
+   - `pa-source-quality-metrics` → landing page summary cards + `/admin/external-supply/audit`
+
+5. **Every LLM behavior has eval or trace coverage?** Yes.
+   - F's copy generator logs prompt + response (redacted) to `pa-tool-calls` (existing trace channel).
+   - E's agent prompt has a golden fixture; parser tests include malformed-JSON rejection.
+   - F's LLM fallback to deterministic template tested explicitly.
+   - D's rubric is pure / deterministic — no LLM in V1.
+   - H's E2E uses mocked LLM that asserts shape only.
+
+6. **Every HITL edit produces a correction/flywheel event?** Yes.
+   - Operator tier override in `/admin/external-supply/evaluations/:runId` → `pa-correction-events` with `targetType="candidate_company_job_evaluation"`.
+   - Outreach copy edit + reject + tier-override in `/admin/external-supply/outreach` → `pa-correction-events` with `targetType="outreach_plan"` (new target type — A extends `CorrectionEventSchema.targetType` enum **only if** needed; otherwise piggy-back on `feedback_event`). **Resolution:** keep existing `targetType` set; correction events for outreach plans use `targetType="feedback_event"` with `payloadRedacted.planId`. No A change.
+   - Identity-conflict resolution in `/admin/external-supply/review` → existing `merge_decision_recorded` event in `pa-candidate-identity-events` (no new schema).
+   - Reply / bounce / unsubscribe webhook → `pa-feedback-events` (existing flywheel).
+   - Agent finding approval → not a correction event itself; only operator tier override after approval is one.
+
+7. **Any executor plan violates product invariants?** No. Verified each plan against PLAN §4:
+   - LinkedIn auto-send: F explicitly disabled, manual tasks only. ✓
+   - Candidate-domain bleed: G explicit zero `apps/pa-landing` imports; verified. ✓
+   - Raw PII as doc id: A's doc-id rules + B's normalize + C's source-link all uuid/hash. ✓
+   - Match score blocks first interview: D's `proposeTier` never emits "do not interview"; `retain_only`/`blocked` only suppress outreach intensity. ✓
+   - `pa-users` weaker-fact overwrite: C uses `mergeUserTags` weak-only with default confidence 0.4. ✓
+   - Live Instantly without flag: F hard-gates with env + secret. ✓
+   - Two LinkedIn canonicalizers: B is the only TS canonicalizer; Python port deferred. ✓
+
+8. **Wave order:** `A → (B || C) → (D || E || F) → G → H`. Implementation may begin at Wave A. H may begin fixture authoring immediately after A's commit (read-only on schemas).
+
+**Approved. Implementation begins.**
 
 ## 10. Milestones
 
@@ -525,8 +590,8 @@ Each milestone is an independently verifiable slice:
 
 ### Wave A — Contracts (Executor A)
 
-A1. Add `packages/external-supply/` to `pnpm-workspace.yaml` (will be populated by Wave B; A only registers the workspace entry).
-A2. Create `packages/core-types/src/external-supply.ts` exporting every Zod schema + type listed in §5.
+A1. **Skip** — `pnpm-workspace.yaml` already globs `packages/*`, no edit needed (confirmed by A's plan).
+A2. Create `packages/core-types/src/external-supply.ts` exporting every Zod schema + type listed in §5, including `SuppressionBlockReasonSchema` (added per resolution).
 A3. Extend the 4 marketplace enums (§5.3). Pure additive — append new values to the end.
 A4. Update `packages/core-types/src/collections.ts` with §5.4 entries.
 A5. Re-export new public types from `packages/core-types/src/index.ts`.
@@ -553,7 +618,9 @@ B4. Implement source adapters in `apps/functions/src/external-supply/adapters/*.
    - `coresignal.ts` — Coresignal JSON shape.
    - `manual-csv.ts` — operator-defined column mapping.
    - Each adapter returns `Array<Omit<ExternalCandidateRecord, "recordId" | "batchId" | "createdAt">>`.
-B5. Implement `apps/functions/src/external-supply/import.ts` — `createBatch(...)` Cloud Function callable input handler. Writes batch + records, sets `status: normalized`. Computes batch stats.
+B5. Implement `apps/functions/src/external-supply/import.ts`:
+   - `paExternalSupplyCreateBatchUploadUrl({ sha256, mime, sizeBytes, source })` callable → returns Firebase Storage signed PUT URL + intended `storageUri`. Idempotent on (sha256).
+   - `paExternalSupplyCreateBatch({ source, storageUri, sha256, companyId?, jobId?, columnMapping? })` callable → fetches file from Storage, runs adapter, normalizes, dedups, writes batch + records, computes stats, sets `status: "normalized"`. Persists `{ adapterVersion, columnMapping, rawHeaderSample }` to `batch.meta`. Idempotent on `sha256`.
 B6. Tests: parser tests per adapter using small fixture files; one end-to-end test that drives `createBatch` against in-memory Firestore.
 B7. Run `pnpm --filter functions test --testPathPattern external-supply` green.
 B8. Commit `feat(external-supply): batch import + normalize`.
@@ -613,7 +680,9 @@ F1. Implement `packages/external-supply/src/outreach.ts`:
    - Copy generator: invokes existing LLM provider in `packages/agent-runtime` for `personalizedHook` / `whyThisRole` / `whyCompany` / `emailSubject` / `emailBody` / `linkedinMessage`. Each call has a fallback deterministic template.
 F2. Implement `packages/external-supply/src/instantly-client.ts`:
    - Thin HTTP client. Methods: `addLeadToList`, `listCampaigns`, `getLead`, `markUnsubscribed`. Auth: `INSTANTLY_API_KEY` env. Dry-run mode returns the would-be request body without calling network.
-F3. Implement `apps/functions/src/external-supply/instantly-sync.ts` callable: takes `planId`, dry-run or live mode flag, writes `pa-instantly-sync-records`, calls client, updates plan approval status.
+F3. Implement `apps/functions/src/external-supply/instantly-sync.ts` callable: takes `planId`, dry-run or live mode flag, writes `pa-instantly-sync-records`, calls client, updates plan approval status. Re-evaluate suppression at callable entry (defense in depth). Live mode requires `EXTERNAL_SUPPLY_LIVE_OUTREACH_ENABLED=true` AND `INSTANTLY_API_KEY` set; otherwise force dry-run.
+
+F3.5. Implement `apps/functions/src/external-supply/config.ts` callable `paExternalSupplyGetConfig` that returns `{ liveOutreachEnabled: boolean; instantlyConfigured: boolean }` for the dashboard live-sync gate.
 F4. Implement `apps/functions/src/external-supply/instantly-webhook.ts` HTTP function: receives reply / bounce / unsubscribe / open / click events, idempotent write by `(provider, providerEventId)`, updates plan + sync record + emits `pa-feedback-events` so v1.9 candidate state can react.
 F5. Tests: tier→channel mapping, suppression-gate decision matrix, Instantly dry-run payload golden test, webhook idempotency.
 F6. Commit `feat(external-supply): outreach decisioning + instantly sync + webhook`.
@@ -701,9 +770,9 @@ Hard fails (cause sprint to halt and flag Adam):
 - [x] 2026-05-13 — Initiative + goal docs copied into worktree.
 - [x] 2026-05-13 — CONTEXT.md written.
 - [x] 2026-05-13 — PLAN.md written.
-- [ ] EXECUTOR-PLANS.md skeleton in place.
-- [ ] AGENT_PLANs collected from all 8 executors.
-- [ ] Integration note filled in §9.1.
+- [x] 2026-05-13 — EXECUTOR-PLANS.md skeleton in place.
+- [x] 2026-05-13 — AGENT_PLANs collected from all 8 executors.
+- [x] 2026-05-13 — Integration note filled in §9.1; lead resolutions captured in EXECUTOR-PLANS.md.
 - [ ] Wave A green.
 - [ ] Waves B–C green.
 - [ ] Wave D green.
