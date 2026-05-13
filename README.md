@@ -11,6 +11,8 @@ product shape.
 Execution roadmap: [.planning/MILESTONE-v2.0-candidate-retention-marketplace.md](.planning/MILESTONE-v2.0-candidate-retention-marketplace.md).
 Autonomous sprint harness: [.planning/AUTONOMOUS-SPRINT-HARNESS.md](.planning/AUTONOMOUS-SPRINT-HARNESS.md).
 `/goal` prompt: [.planning/V2-GOAL-PROMPT.md](.planning/V2-GOAL-PROMPT.md).
+External candidate supply initiative: [.planning/INITIATIVE-external-candidate-supply-intake.md](.planning/INITIATIVE-external-candidate-supply-intake.md).
+External supply `/goal` prompt: [.planning/V2-EXTERNAL-SUPPLY-GOAL-PROMPT.md](.planning/V2-EXTERNAL-SUPPLY-GOAL-PROMPT.md).
 
 ### North Star
 
@@ -26,7 +28,7 @@ candidate pool, and used to outbound suitable candidates into a first interview.
 The long-term loop is:
 
 1. New candidate enters from a job page, employer resume upload, ATS, or direct
-   Claire message.
+   Claire message, or external LinkedIn-based sourcing.
 2. Resume, chat, PII, Level 1 info, and behavior enrich a global candidate
    profile.
 3. New jobs are ingested, enriched, tagged, and converted into prescreen-ready
@@ -59,6 +61,12 @@ The long-term loop is:
 10. Sendblue outreach must respect account capacity, cooldowns, opt-out, and
     sticky candidate/account assignment. One account/number group should own
     roughly 300-500 active reachable users before expansion.
+11. External sourcing candidates share the same `pa-users` collection. They are
+    not separate campaign leads and must not live only in Excel or Instantly.
+12. For external Juicebox / Lessie / Coresignal intake, canonical LinkedIn URL
+    is the primary source identity lookup handle for automatic create/merge.
+    Query a hashed LinkedIn identity index to find an existing internal `uid`;
+    do not use raw LinkedIn URL, email, or other PII as a Firestore document id.
 
 ### Identity And Global Profile
 
@@ -76,10 +84,19 @@ The global profile links handles:
 - Sendblue user / thread identity
 - browser `wkr_uid`
 - ATS applicant IDs
-- future LinkedIn binding
+- canonical LinkedIn URL / hashed LinkedIn index
 
 Do not use raw PII as a public document id. Identity merge must be deterministic
 and audited.
+
+For external sourced candidates, LinkedIn URL is the strongest source identity
+because Juicebox, Lessie, and Coresignal rows are centered on LinkedIn profile
+content and enrichment. Email is still required for outreach and can be a strong
+secondary identity signal, but automatic profile create/merge first queries by
+canonical LinkedIn URL hash in v1 of the external supply initiative. The index
+returns an internal `pa-users/{uid}`; LinkedIn itself is never the user doc id.
+If LinkedIn and email resolve to different existing `pa-users`, route to review
+rather than silently merging or creating a duplicate.
 
 ### Global Candidate State Machine
 
@@ -89,7 +106,7 @@ events, verified facts, confidence, and policy.
 
 | State | Entry Condition | Exit Condition | Controller |
 |---|---|---|---|
-| `prospect` | Employer bulk upload, ATS applicant, anonymous job-page uid, or direct text with no resolved profile | Email or phone extracted/linked | reducer |
+| `prospect` | Employer bulk upload, ATS applicant, external LinkedIn sourced candidate, anonymous job-page uid, or direct text with no resolved profile | Email, phone, or LinkedIn handle extracted/linked | reducer |
 | `profile_created` | `pa-users` global profile exists | At least one reachable handle verified or deliverable | reducer |
 | `reachable` | Verified email or deliverable phone exists | Candidate replies, logs in, or opts out | delivery evidence + reducer |
 | `claimed` | Email magic-link login succeeds | Core profile reaches ready threshold | reducer |
@@ -147,6 +164,10 @@ Employer/admin surfaces:
 - Jobs: create/import job, job tags, prescreen config, public page preview.
 - Bulk Resume Upload: upload emails + PDFs, parse status, extracted email,
   merge/create result, retry/error state.
+- External Candidate Supply: import Juicebox / Lessie / Coresignal rows,
+  normalize LinkedIn-centered records, resolve identity, create/merge `pa-users`
+  prospects, evaluate against company/job rubrics, generate Instantly email
+  sync payloads, and create manual LinkedIn outreach tasks.
 - Passed Candidates: only passed profiles, filterable by job.
 - Candidate Profile: resume summary, tags, Level 1 info, PII consent,
   transcript, pass reason, match reason.
@@ -168,6 +189,7 @@ Long-term backend modules:
    - identity merge
    - global profile state
    - global PII / tags / Level 1 / resume / memory hooks
+   - external LinkedIn identity links and source evidence
    - candidate lifecycle reducer
 
 2. `job-enrichment-service`
@@ -200,6 +222,8 @@ Long-term backend modules:
 
 5. `outreach-service`
    - Sendblue account/number pool assignment
+   - Instantly email lead sync for approved external candidate outreach
+   - manual LinkedIn outreach task generation
    - sticky candidate/account routing
    - account capacity model
    - cooldowns and duplicate suppression
@@ -566,8 +590,10 @@ Important docs:
 
 - [README.md](README.md) - canonical product blueprint and repository overview
 - [.planning/MILESTONE-v2.0-candidate-retention-marketplace.md](.planning/MILESTONE-v2.0-candidate-retention-marketplace.md) - v2.0 sprint roadmap from current baseline to candidate marketplace
+- [.planning/INITIATIVE-external-candidate-supply-intake.md](.planning/INITIATIVE-external-candidate-supply-intake.md) - external Juicebox / Lessie / Coresignal candidate supply intake initiative
 - [.planning/AUTONOMOUS-SPRINT-HARNESS.md](.planning/AUTONOMOUS-SPRINT-HARNESS.md) - `/goal`-compatible autonomous sprint and executor-plan harness
 - [.planning/V2-GOAL-PROMPT.md](.planning/V2-GOAL-PROMPT.md) - overall prompt for autonomous `/goal` execution
+- [.planning/V2-EXTERNAL-SUPPLY-GOAL-PROMPT.md](.planning/V2-EXTERNAL-SUPPLY-GOAL-PROMPT.md) - standalone `/goal` prompt for external candidate supply intake
 - [CLAUDE.md](CLAUDE.md) - operating authority, deploy rules, design locks
 - [AGENTS.md](AGENTS.md) - non-Claude agent TL;DR
 - [ARCHITECTURE.md](ARCHITECTURE.md)
