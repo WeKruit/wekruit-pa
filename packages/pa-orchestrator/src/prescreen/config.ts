@@ -26,7 +26,9 @@ import type { QuestionType } from "../onboarding/question.js"
 export const KeywordSpecSchema = z.object({
   keyword: z.string().min(1).max(60),
   weight: z.number().min(0.1).max(10).optional(),
-  hint: z.string().max(200).optional(),
+  // v1.9 — raised from 200 → 600 to fit nuanced LLM disambiguation hints
+  // (real production hints need to specify what counts vs what doesn't).
+  hint: z.string().max(600).optional(),
 })
 
 export const QuestionTypeSchema = z.enum(["MUST_HAVE", "PROBING", "GOOD_TO_HAVE"])
