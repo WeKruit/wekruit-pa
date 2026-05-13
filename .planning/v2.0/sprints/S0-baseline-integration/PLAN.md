@@ -359,7 +359,9 @@ If curl checks fail, record:
   commands did not guarantee dependency order in CI.
   Evidence: local reruns of `pnpm --filter @pa/job-rec build`, `pnpm -r
   build`, `pnpm --filter pa-orchestrator test`, and `cd apps/functions && pnpm
-  test` all passed after the package metadata and build-order fixes.
+  test` all passed after the package metadata and build-order fixes; clean temp
+  worktree `/private/tmp/wekruit-s0-ci-c667ffa` also passed `pnpm install
+  --frozen-lockfile`, `pnpm --filter @pa/job-rec build`, and `pnpm -r build`.
 
 ## Outcomes And Retrospective
 
