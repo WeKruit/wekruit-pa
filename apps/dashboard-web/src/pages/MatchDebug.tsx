@@ -1,22 +1,4 @@
-/**
- * v1.7 Phase 70 — `/admin/match-debug` page. [MATCHDEBUG-01..04]
- *
- * Live debugger for the V16 match cascade. Operator pastes a userId, optionally
- * tweaks the score-weight sliders, and sees the ranked top-N jobs with full
- * per-component breakdown (skill Jaccard / industry overlap / cv embedding /
- * salary fit / LLM rerank) plus hard-filter drop counters.
- *
- * Backend: callable `paAdminMatchDebug` (admin-only). The CF runs the same
- * `queryMatchingJobsV16` cascade the orchestrator uses; the only difference
- * is that this CF accepts `weightOverrides` to power the sandbox sliders.
- *
- * Auth: behind dashboard sign-in wall + admin-claim gate enforced inside the
- * CF (mirrors paPromoteSandboxTag from Phase 59).
- *
- * UI conventions match QaEvaluator (PageHeader / Panel / inline table). No
- * shared hooks — page-local useState.
- */
-import { useState } from "react"
+import { useState, type CSSProperties } from "react"
 import { httpsCallable } from "firebase/functions"
 
 import {
@@ -27,423 +9,380 @@ import {
   Panel,
 } from "../components/ui.js"
 import { functions } from "../lib/firebase.js"
+import {
+  MATCH_DEBUG_DEFAULT_WEIGHTS,
+  MATCH_DEBUG_WEIGHT_KEYS,
+  actionTone,
+  buildCandidateDebugRequest,
+  buildJobDebugRequest,
+  compactList,
+  displaySponsorship,
+  formatScore,
+  matchDebugCallableName,
+  type MatchDebugDirection,
+  type MatchDebugWeightKey,
+} from "./MatchDebug.helpers.js"
 
-// ---------------------------------------------------------------------------
-// Types — mirror the CF projection in apps/functions/src/admin-match-debug.ts
-// ---------------------------------------------------------------------------
-
-interface V16ScoreBreakdown {
-  llmMatch: number
-  skillJaccard: number
-  relevantTags: number
-  industrySector: number
-  cvEmbCosine: number
-  salaryFit: number
-  total: number
-}
-
-interface MatchedSkill {
-  name: string
-  proficiency: string
-  weight: number
-}
-
-interface DebugJob {
+interface CandidateDebugJob {
   jobId: string
   jobTitle?: string
   companyName?: string
-  atsApplyUrl: string | null
-  roleFunction: string[]
-  seniorityLevel: string | null
-  sponsorship: boolean | null
-  firstSeenAt: string | null
-  v16Score: V16ScoreBreakdown
-  matchedSkills: MatchedSkill[]
-  reason: string
-  requiredSkills: string[]
+  atsApplyUrl?: string | null
+  roleFunction?: string[]
+  seniorityLevel?: string | null
+  sponsorship?: boolean | null
+  firstSeenAt?: string | null
+  v16Score?: Record<string, number>
+  matchedSkills?: Array<{ name: string; proficiency?: string; weight?: number }>
+  reason?: string
+  requiredSkills?: string[]
 }
 
-interface HardFilterCounters {
-  visa: number
-  location: number
-  careerStage: number
-  jobType: number
-  freshness: number
-  atsApplyUrl: number
-  dead: number
-}
-
-interface DebugResult {
-  jobs: DebugJob[]
+interface CandidateDebugResult {
+  jobs: CandidateDebugJob[]
   total: number
   dropped: number
-  hardFilter: HardFilterCounters
-  noUserTags: boolean
-  llmCacheStale: boolean
-  userTags: Record<string, unknown> | null
+  hardFilter: Record<string, number>
+  noUserTags?: boolean
+  llmCacheStale?: boolean
+  userTags?: Record<string, unknown> | null
 }
 
-// Default weights mirror V16_SCORE_WEIGHTS in apps/job-rec/src/match-weights.ts.
-// Kept in sync manually — V16 is the single source of truth.
-const DEFAULT_WEIGHTS = {
-  llmMatch: 0.4,
-  skillJaccard: 0.2,
-  relevantTags: 0.15,
-  industrySector: 0.1,
-  cvEmbCosine: 0.1,
-  salaryFit: 0.05,
-} as const
-
-type WeightKey = keyof typeof DEFAULT_WEIGHTS
-
-const WEIGHT_KEYS: WeightKey[] = [
-  "llmMatch",
-  "skillJaccard",
-  "relevantTags",
-  "industrySector",
-  "cvEmbCosine",
-  "salaryFit",
-]
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function fmtScore(n: number | undefined): string {
-  if (typeof n !== "number" || !Number.isFinite(n)) return "—"
-  return n.toFixed(3)
+interface JobCandidateRow {
+  candidateId: string
+  displayName?: string
+  candidateLifecycleState?: string
+  hardFilterResult?: string
+  finalScore?: number
+  softScore?: number
+  llmScore?: number
+  embeddingScore?: number
+  finalRank?: number
+  recommendedAction?: "auto_outbound" | "hitl_review" | "do_not_contact"
+  scoreBreakdown?: Record<string, { score?: number; weight?: number; summary?: string }>
+  matchedSignals?: string[]
+  blockedSignals?: string[]
+  reasons?: string[]
+  risks?: string[]
+  missingInfo?: string[]
+  candidateTagSnapshot?: Record<string, unknown>
 }
 
-function fmtDate(iso: string | null): string {
-  if (!iso) return "—"
-  return iso.slice(0, 10)
-}
-
-function isOverridden(weights: Record<WeightKey, number>): boolean {
-  for (const k of WEIGHT_KEYS) {
-    if (Math.abs(weights[k] - DEFAULT_WEIGHTS[k]) > 1e-6) return true
+interface JobDebugResult {
+  direction: "job_to_candidate"
+  jobId: string
+  job: {
+    jobTitle?: string
+    companyName?: string
+    sponsorship?: boolean | null
+    roleFunction?: string[]
+    industrySector?: string[]
   }
-  return false
+  candidatePool: {
+    totalLoaded: number
+    totalReturned: number
+  }
+  candidates: JobCandidateRow[]
+  hardFilter: Record<string, number>
+  dropped: number
 }
-
-// ---------------------------------------------------------------------------
-// Page
-// ---------------------------------------------------------------------------
 
 export function MatchDebug() {
+  const [direction, setDirection] = useState<MatchDebugDirection>("candidate_to_jobs")
   const [userId, setUserId] = useState("")
-  const [result, setResult] = useState<DebugResult | null>(null)
+  const [jobId, setJobId] = useState("")
+  const [jobLimit, setJobLimit] = useState(20)
+  const [candidateResult, setCandidateResult] = useState<CandidateDebugResult | null>(null)
+  const [jobResult, setJobResult] = useState<JobDebugResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
-  const [weights, setWeights] = useState<Record<WeightKey, number>>({
-    ...DEFAULT_WEIGHTS,
+  const [weights, setWeights] = useState<Record<MatchDebugWeightKey, number>>({
+    ...MATCH_DEBUG_DEFAULT_WEIGHTS,
   })
 
   async function runQuery(): Promise<void> {
-    if (!userId.trim()) return
     setLoading(true)
     setError(null)
-    setResult(null)
+    setCandidateResult(null)
+    setJobResult(null)
     try {
-      const fn = httpsCallable<
-        {
-          userId: string
-          weightOverrides: Record<WeightKey, number>
-          limit: number
-        },
-        DebugResult
-      >(functions(), "paAdminMatchDebug")
-      const res = await fn({
-        userId: userId.trim(),
-        weightOverrides: weights,
-        limit: 10,
-      })
-      setResult(res.data)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      if (direction === "candidate_to_jobs") {
+        const fn = httpsCallable<ReturnType<typeof buildCandidateDebugRequest>, CandidateDebugResult>(
+          functions(),
+          matchDebugCallableName(direction)
+        )
+        const res = await fn(buildCandidateDebugRequest(userId, weights, 10))
+        setCandidateResult(res.data)
+      } else {
+        const fn = httpsCallable<ReturnType<typeof buildJobDebugRequest>, JobDebugResult>(
+          functions(),
+          matchDebugCallableName(direction)
+        )
+        const res = await fn(buildJobDebugRequest(jobId, jobLimit))
+        setJobResult(res.data)
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
     } finally {
       setLoading(false)
     }
   }
 
-  function resetWeights(): void {
-    setWeights({ ...DEFAULT_WEIGHTS })
-  }
-
-  const weightSum = WEIGHT_KEYS.reduce((acc, k) => acc + weights[k], 0)
-  const overridden = isOverridden(weights)
+  const canRun = direction === "candidate_to_jobs" ? userId.trim().length > 0 : jobId.trim().length > 0
 
   return (
     <div className="page-stack">
       <PageHeader
-        eyebrow="v1.7 Phase 70 / Admin"
+        eyebrow="v2.0 S5 / Admin"
         title="Match Debug"
-        description="Live debugger for the V16 match cascade. Paste a userId, optionally tweak score weights, and inspect the ranked output with full per-component breakdown."
+        description="Inspect candidate-to-jobs and job-to-candidates matching evidence without sending outbound."
       />
 
-      <Panel title="Query" eyebrow="userId + weight sandbox">
-        <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.75rem" }}>
-          <input
-            type="text"
-            placeholder="userId (UUID — paste from /conversations or pa-users)"
-            value={userId}
-            onChange={(e) => setUserId(e.target.value)}
-            style={{
-              flex: 1,
-              padding: "0.5rem 0.75rem",
-              border: "1px solid #cbd5e1",
-              borderRadius: "0.375rem",
-              fontFamily: "monospace",
-              fontSize: "0.85em",
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && userId.trim() && !loading) {
-                void runQuery()
-              }
-            }}
-          />
-          <button
-            type="button"
-            onClick={() => void runQuery()}
-            disabled={loading || !userId.trim()}
-            style={{
-              padding: "0.5rem 1rem",
-              background: loading || !userId.trim() ? "#94a3b8" : "#1a73e8",
-              color: "white",
-              border: "none",
-              borderRadius: "0.375rem",
-              cursor: loading || !userId.trim() ? "not-allowed" : "pointer",
-              fontWeight: 500,
-            }}
-          >
-            {loading ? "Running…" : "Run V16"}
+      <Panel title="Query" eyebrow="direction + inputs">
+        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+          <button type="button" onClick={() => setDirection("candidate_to_jobs")} style={tabStyle(direction === "candidate_to_jobs")}>
+            Candidate to jobs
+          </button>
+          <button type="button" onClick={() => setDirection("job_to_candidates")} style={tabStyle(direction === "job_to_candidates")}>
+            Job to candidates
           </button>
         </div>
 
-        <details style={{ background: "#f8fafc", padding: "0.75rem", borderRadius: "0.375rem" }}>
-          <summary style={{ cursor: "pointer", fontWeight: 600 }}>
-            Score weight sandbox{" "}
-            {overridden && (
-              <span style={{ color: "#ea580c", fontSize: "0.8em" }}>
-                (overridden — sum {weightSum.toFixed(2)})
-              </span>
-            )}
-          </summary>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(2, 1fr)",
-              gap: "0.5rem 1rem",
-              marginTop: "0.75rem",
-            }}
-          >
-            {WEIGHT_KEYS.map((k) => (
-              <label key={k} style={{ display: "block", fontSize: "0.85em" }}>
-                <span style={{ display: "flex", justifyContent: "space-between" }}>
-                  <span>{k}</span>
-                  <span style={{ fontFamily: "monospace" }}>
-                    {weights[k].toFixed(2)}
-                    {Math.abs(weights[k] - DEFAULT_WEIGHTS[k]) > 1e-6 && (
-                      <span style={{ color: "#94a3b8", marginLeft: "0.5rem" }}>
-                        (default {DEFAULT_WEIGHTS[k].toFixed(2)})
-                      </span>
-                    )}
-                  </span>
-                </span>
-                <input
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.05}
-                  value={weights[k]}
-                  onChange={(e) =>
-                    setWeights((w) => ({ ...w, [k]: parseFloat(e.target.value) }))
-                  }
-                  style={{ width: "100%" }}
-                />
-              </label>
-            ))}
-          </div>
-          <div style={{ marginTop: "0.5rem", textAlign: "right" }}>
-            <button
-              type="button"
-              onClick={resetWeights}
-              disabled={!overridden}
-              style={{
-                fontSize: "0.85em",
-                padding: "0.25rem 0.5rem",
-                color: overridden ? "#1a73e8" : "#94a3b8",
-                background: "transparent",
-                border: "1px solid currentColor",
-                borderRadius: "0.25rem",
-                cursor: overridden ? "pointer" : "not-allowed",
-              }}
-            >
-              Reset to V16 defaults
-            </button>
-          </div>
-        </details>
+        {direction === "candidate_to_jobs" ? (
+          <CandidateQuery userId={userId} setUserId={setUserId} weights={weights} setWeights={setWeights} />
+        ) : (
+          <JobQuery jobId={jobId} setJobId={setJobId} jobLimit={jobLimit} setJobLimit={setJobLimit} />
+        )}
+
+        <button
+          type="button"
+          onClick={() => void runQuery()}
+          disabled={loading || !canRun}
+          style={{
+            marginTop: 12,
+            padding: "0.5rem 1rem",
+            background: loading || !canRun ? "#94a3b8" : "#1a73e8",
+            color: "white",
+            border: "none",
+            borderRadius: "0.375rem",
+            cursor: loading || !canRun ? "not-allowed" : "pointer",
+            fontWeight: 600,
+          }}
+        >
+          {loading ? "Running" : "Run debug"}
+        </button>
       </Panel>
 
-      {error && (
+      {error ? (
         <Panel title="Error" eyebrow="callable failure">
           <ErrorState message={error} />
         </Panel>
-      )}
-
-      {loading && !result && (
-        <Panel title="Running query" eyebrow="paAdminMatchDebug">
-          <LoadingState label="Running V16 cascade…" />
+      ) : null}
+      {loading ? (
+        <Panel title="Running query" eyebrow={direction}>
+          <LoadingState label="Running match debug" />
         </Panel>
-      )}
-
-      {result && (
-        <>
-          <Panel title="Filter summary" eyebrow="hard-filter counters + flags">
-            <div style={{ fontSize: "0.9em", lineHeight: 1.6 }}>
-              <div>
-                Total survivors: <strong>{result.total}</strong> · Dropped by hard-filter:{" "}
-                <strong>{result.dropped}</strong>
-              </div>
-              <div style={{ fontFamily: "monospace", fontSize: "0.85em", marginTop: "0.25rem" }}>
-                {Object.entries(result.hardFilter)
-                  .map(([k, v]) => `${k}=${v}`)
-                  .join(" · ")}
-              </div>
-              {result.noUserTags && (
-                <div style={{ color: "#ea580c", marginTop: "0.5rem" }}>
-                  ⚠ noUserTags=true — pa-users/{userId.trim()}.tags is missing or empty
-                </div>
-              )}
-              {result.llmCacheStale && (
-                <div style={{ color: "#ea580c", marginTop: "0.25rem" }}>
-                  ⚠ llmCacheStale=true — Phase 58 nightly rerank older than 36h; llmMatch contributes 0
-                </div>
-              )}
-            </div>
-          </Panel>
-
-          {result.userTags && (
-            <Panel title="User tags" eyebrow="pa-users.tags snapshot (D8 single source)">
-              <pre
-                style={{
-                  background: "#f8fafc",
-                  padding: "0.75rem",
-                  borderRadius: "0.375rem",
-                  fontSize: "0.75em",
-                  overflowX: "auto",
-                  maxHeight: "20rem",
-                }}
-              >
-                {JSON.stringify(result.userTags, null, 2)}
-              </pre>
-            </Panel>
-          )}
-
-          <Panel
-            title={`Top ${result.jobs.length} jobs`}
-            eyebrow="v16Score breakdown · click for JD diff"
-          >
-            {result.jobs.length === 0 ? (
-              <EmptyState
-                title={result.noUserTags ? "No user tags" : "No matches"}
-                body={
-                  result.noUserTags
-                    ? "Run cv-ingest on the user first so pa-users.tags exists."
-                    : "All jobs dropped by the hard-filter chain. Inspect counters above."
-                }
-              />
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-                {result.jobs.map((j, i) => (
-                  <div
-                    key={j.jobId}
-                    style={{
-                      border: "1px solid #e2e8f0",
-                      borderRadius: "0.375rem",
-                      padding: "0.75rem",
-                      fontSize: "0.85em",
-                    }}
-                  >
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "baseline",
-                      }}
-                    >
-                      <strong>
-                        {i + 1}. {j.jobTitle ?? "(no title)"} @ {j.companyName ?? "(no company)"}
-                      </strong>
-                      <span style={{ fontFamily: "monospace" }}>
-                        total={fmtScore(j.v16Score?.total)}
-                      </span>
-                    </div>
-                    {j.atsApplyUrl && (
-                      <div>
-                        <a
-                          href={j.atsApplyUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          style={{
-                            color: "#1a73e8",
-                            textDecoration: "underline",
-                            fontSize: "0.8em",
-                          }}
-                        >
-                          {j.atsApplyUrl.length > 80
-                            ? j.atsApplyUrl.slice(0, 80) + "…"
-                            : j.atsApplyUrl}
-                        </a>
-                      </div>
-                    )}
-                    <div style={{ color: "#64748b", marginTop: "0.25rem" }}>
-                      seniority={j.seniorityLevel ?? "—"} · sponsor=
-                      {j.sponsorship === null ? "—" : String(j.sponsorship)} · firstSeen=
-                      {fmtDate(j.firstSeenAt)} · roleFunction=[{j.roleFunction.join(", ")}]
-                    </div>
-                    <div style={{ fontFamily: "monospace", fontSize: "0.8em", marginTop: "0.25rem" }}>
-                      breakdown:{" "}
-                      {Object.entries(j.v16Score)
-                        .filter(([k]) => k !== "total")
-                        .map(([k, v]) => `${k}=${fmtScore(v)}`)
-                        .join(" · ")}
-                    </div>
-                    <div style={{ marginTop: "0.25rem" }}>{j.reason}</div>
-                    <details style={{ marginTop: "0.25rem" }}>
-                      <summary
-                        style={{
-                          cursor: "pointer",
-                          fontSize: "0.8em",
-                          color: "#64748b",
-                        }}
-                      >
-                        matched skills + JD requirements
-                      </summary>
-                      <pre
-                        style={{
-                          fontSize: "0.75em",
-                          background: "#f8fafc",
-                          padding: "0.5rem",
-                          borderRadius: "0.25rem",
-                          overflowX: "auto",
-                          marginTop: "0.25rem",
-                        }}
-                      >
-                        {JSON.stringify(
-                          { matched: j.matchedSkills, requiredSkills: j.requiredSkills },
-                          null,
-                          2,
-                        )}
-                      </pre>
-                    </details>
-                  </div>
-                ))}
-              </div>
-            )}
-          </Panel>
-        </>
-      )}
+      ) : null}
+      {candidateResult ? <CandidateResults result={candidateResult} /> : null}
+      {jobResult ? <JobResults result={jobResult} /> : null}
     </div>
   )
+}
+
+function CandidateQuery({
+  userId,
+  setUserId,
+  weights,
+  setWeights,
+}: {
+  userId: string
+  setUserId: (value: string) => void
+  weights: Record<MatchDebugWeightKey, number>
+  setWeights: (value: Record<MatchDebugWeightKey, number>) => void
+}) {
+  return (
+    <>
+      <input
+        type="text"
+        placeholder="userId"
+        value={userId}
+        onChange={(event) => setUserId(event.target.value)}
+        style={inputStyle}
+      />
+      <details style={{ marginTop: 12 }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>Score weights</summary>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 12, marginTop: 10 }}>
+          {MATCH_DEBUG_WEIGHT_KEYS.map((key) => (
+            <label key={key} style={{ display: "grid", gap: 4, fontSize: 13 }}>
+              <span>{key}: {weights[key].toFixed(2)}</span>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={weights[key]}
+                onChange={(event) => setWeights({ ...weights, [key]: Number(event.target.value) })}
+              />
+            </label>
+          ))}
+        </div>
+      </details>
+    </>
+  )
+}
+
+function JobQuery({
+  jobId,
+  setJobId,
+  jobLimit,
+  setJobLimit,
+}: {
+  jobId: string
+  setJobId: (value: string) => void
+  jobLimit: number
+  setJobLimit: (value: number) => void
+}) {
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 120px", gap: 8 }}>
+      <input
+        type="text"
+        placeholder="matching-jobs jobId"
+        value={jobId}
+        onChange={(event) => setJobId(event.target.value)}
+        style={inputStyle}
+      />
+      <input
+        type="number"
+        min={1}
+        max={50}
+        value={jobLimit}
+        onChange={(event) => setJobLimit(Math.max(1, Math.min(50, Number(event.target.value))))}
+        style={inputStyle}
+      />
+    </div>
+  )
+}
+
+function CandidateResults({ result }: { result: CandidateDebugResult }) {
+  return (
+    <>
+      <Panel title="Filter summary" eyebrow="candidate to jobs">
+        <div>Total survivors: <strong>{result.total}</strong> · Dropped: <strong>{result.dropped}</strong></div>
+        <pre style={preStyle}>{JSON.stringify(result.hardFilter, null, 2)}</pre>
+      </Panel>
+      <Panel title={`Top ${result.jobs.length} jobs`} eyebrow="V16 breakdown">
+        {result.jobs.length === 0 ? (
+          <EmptyState title={result.noUserTags ? "No user tags" : "No matches"} body="Inspect hard-filter counters above." />
+        ) : (
+          <div style={{ display: "grid", gap: 10 }}>
+            {result.jobs.map((job, index) => (
+              <article key={job.jobId} style={rowStyle}>
+                <strong>{index + 1}. {job.jobTitle ?? "(no title)"} @ {job.companyName ?? "(no company)"}</strong>
+                <div style={mutedStyle}>
+                  score={formatScore(job.v16Score?.total)} · sponsor={displaySponsorship(job.sponsorship)} · role=[{compactList(job.roleFunction)}]
+                </div>
+                <div>{job.reason}</div>
+              </article>
+            ))}
+          </div>
+        )}
+      </Panel>
+    </>
+  )
+}
+
+function JobResults({ result }: { result: JobDebugResult }) {
+  return (
+    <>
+      <Panel title="Filter summary" eyebrow="job to candidates">
+        <div>
+          Loaded: <strong>{result.candidatePool.totalLoaded}</strong> · Returned:{" "}
+          <strong>{result.candidatePool.totalReturned}</strong> · Dropped: <strong>{result.dropped}</strong>
+        </div>
+        <div style={mutedStyle}>
+          {result.job.jobTitle ?? result.jobId} @ {result.job.companyName ?? "(company unknown)"} · sponsor={displaySponsorship(result.job.sponsorship)}
+        </div>
+        <pre style={preStyle}>{JSON.stringify(result.hardFilter, null, 2)}</pre>
+      </Panel>
+      <Panel title={`Top ${result.candidates.length} candidates`} eyebrow="S5 recommended action">
+        {result.candidates.length === 0 ? (
+          <EmptyState title="No candidates" body="No retained/profile-ready candidates matched this job." />
+        ) : (
+          <div style={{ display: "grid", gap: 10 }}>
+            {result.candidates.map((candidate) => (
+              <article key={candidate.candidateId} style={rowStyle}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                  <strong>{candidate.finalRank ?? "-"} · {candidate.displayName ?? candidate.candidateId}</strong>
+                  <span style={badgeStyle(actionTone(candidate.recommendedAction))}>
+                    {candidate.recommendedAction ? candidate.recommendedAction.replaceAll("_", " ") : "no action"}
+                  </span>
+                </div>
+                <div style={mutedStyle}>
+                  final={formatScore(candidate.finalScore)} · soft={formatScore(candidate.softScore)} · llm={formatScore(candidate.llmScore)} · emb={formatScore(candidate.embeddingScore)} · hard={candidate.hardFilterResult ?? "-"}
+                </div>
+                <DebugList label="Reasons" values={candidate.reasons} />
+                <DebugList label="Risks" values={candidate.risks} />
+                <DebugList label="Missing info" values={candidate.missingInfo} />
+                <DebugList label="Blocked" values={candidate.blockedSignals} />
+              </article>
+            ))}
+          </div>
+        )}
+      </Panel>
+    </>
+  )
+}
+
+function DebugList({ label, values }: { label: string; values?: string[] }) {
+  if (!values || values.length === 0) return null
+  return <div><strong>{label}:</strong> {values.join(", ")}</div>
+}
+
+function tabStyle(active: boolean): CSSProperties {
+  return {
+    padding: "0.45rem 0.75rem",
+    borderRadius: 6,
+    border: `1px solid ${active ? "#1a73e8" : "#cbd5e1"}`,
+    background: active ? "#e8f0fe" : "white",
+    color: active ? "#174ea6" : "#334155",
+    fontWeight: 700,
+    cursor: "pointer",
+  }
+}
+
+function badgeStyle(tone: "ok" | "warn" | "muted"): CSSProperties {
+  const map = {
+    ok: { background: "#dcfce7", color: "#166534" },
+    warn: { background: "#fef3c7", color: "#92400e" },
+    muted: { background: "#f1f5f9", color: "#475569" },
+  }[tone]
+  return { ...map, borderRadius: 999, padding: "0.2rem 0.55rem", fontSize: 12, fontWeight: 800 }
+}
+
+const inputStyle: CSSProperties = {
+  width: "100%",
+  padding: "0.5rem 0.75rem",
+  border: "1px solid #cbd5e1",
+  borderRadius: "0.375rem",
+  fontFamily: "monospace",
+  fontSize: "0.9em",
+}
+
+const rowStyle: CSSProperties = {
+  border: "1px solid #e2e8f0",
+  borderRadius: 6,
+  padding: 12,
+  fontSize: "0.9em",
+}
+
+const mutedStyle: CSSProperties = {
+  color: "#64748b",
+  marginTop: 4,
+}
+
+const preStyle: CSSProperties = {
+  background: "#f8fafc",
+  borderRadius: 6,
+  padding: 10,
+  overflowX: "auto",
 }

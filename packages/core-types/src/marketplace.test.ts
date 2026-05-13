@@ -28,6 +28,7 @@ import {
   canTransitionBulkResumeItemStatus,
   canTransitionJobEnrichmentDraftStatus,
   createCandidateHandleId,
+  createCandidateJobMatchId,
   createCandidateJobStateId,
   createBulkResumeArtifactId,
   createBulkResumeItemId,
@@ -134,9 +135,22 @@ test("marketplace document schemas parse the S1 primitives", () => {
     stateUpdatedAt: now,
   })
   CandidateJobMatchSchema.parse({
-    matchId: "cand-1__job-1",
+    matchId: createCandidateJobMatchId("cand-1", "job-1"),
     candidateId: "cand-1",
     jobId: "job-1",
+    direction: "job_to_candidate",
+    matchVersion: "s5-test",
+    jobEnrichmentVersion: "job-enrich-v1",
+    computedAt: now,
+    scoreBreakdown: {
+      skills: { score: 0.8, weight: 0.5, summary: "TypeScript and React match" },
+      location: { score: 1, weight: 0.2 },
+    },
+    matchedSignals: ["typescript", "remote_anywhere"],
+    blockedSignals: [],
+    candidateLifecycleStateAtMatch: "retained",
+    candidateTagsUpdatedAt: now,
+    hardFilterResult: "soft_block",
     recommendedAction: "hitl_review",
     createdAt: now,
   })
@@ -214,6 +228,66 @@ test("marketplace document schemas parse the S1 primitives", () => {
       createdAt: now,
     },
   })
+})
+
+test("candidate-job match schema requires S5 versioned evidence", () => {
+  const match = CandidateJobMatchSchema.parse({
+    matchId: createCandidateJobMatchId("cand-1", "job-1"),
+    candidateId: "cand-1",
+    jobId: "job-1",
+    direction: "job_to_candidate",
+    matchVersion: "s5-test",
+    jobEnrichmentVersion: "job-enrich-v1",
+    computedAt: now,
+    scoreBreakdown: {
+      skills: { score: 0.8, weight: 0.5, summary: "TypeScript and React match" },
+      location: { score: 1, weight: 0.2 },
+    },
+    matchedSignals: ["typescript", "remote_anywhere"],
+    blockedSignals: ["missing_salary_expectation"],
+    candidateLifecycleStateAtMatch: "retained",
+    candidateTagsUpdatedAt: now,
+    staleAt: "2026-05-20T12:00:00.000Z",
+    hardFilterResult: "soft_block",
+    finalScore: 0.74,
+    recommendedAction: "hitl_review",
+    createdAt: now,
+  })
+
+  assert.equal(match.direction, "job_to_candidate")
+  assert.equal(match.scoreBreakdown.skills.score, 0.8)
+  assert.deepEqual(match.matchedSignals, ["typescript", "remote_anywhere"])
+})
+
+test("candidate-job match schema rejects invalid score breakdown and nondeterministic ids", () => {
+  const valid = {
+    matchId: createCandidateJobMatchId("cand-1", "job-1"),
+    candidateId: "cand-1",
+    jobId: "job-1",
+    direction: "job_to_candidate",
+    matchVersion: "s5-test",
+    jobEnrichmentVersion: "job-enrich-v1",
+    computedAt: now,
+    scoreBreakdown: {
+      skills: { score: 0.8 },
+    },
+    matchedSignals: [],
+    blockedSignals: [],
+    candidateLifecycleStateAtMatch: "retained",
+    candidateTagsUpdatedAt: now,
+    finalScore: 0.8,
+    recommendedAction: "hitl_review",
+    createdAt: now,
+  }
+
+  assert.throws(() => CandidateJobMatchSchema.parse({ ...valid, matchId: "random" }))
+  assert.throws(() =>
+    CandidateJobMatchSchema.parse({
+      ...valid,
+      scoreBreakdown: { skills: { score: 1.1 } },
+    })
+  )
+  assert.throws(() => CandidateJobMatchSchema.parse({ ...valid, scoreBreakdown: {} }))
 })
 
 test("job enrichment schemas keep drafts private and public opportunity safe", () => {

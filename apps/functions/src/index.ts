@@ -165,7 +165,7 @@ export { paQaEvaluatorWeekly } from "./qa-evaluator-weekly.js"
 // /admin/match-debug page. Loads pa-users.tags, runs the V16 cascade with
 // optional weight-override sandbox values, and returns full per-job score
 // breakdown + counters for the dashboard's live debugger.
-export { paAdminMatchDebug } from "./admin-match-debug.js"
+export { paAdminJobMatchDebug, paAdminMatchDebug } from "./admin-match-debug.js"
 
 // v1.8 ENRICHER-04 — `paEnrichJobTags` HTTP CF wraps the unified
 // @pa/job-tag-enricher service (mirror of pa-resume-parser, job-side).
@@ -191,6 +191,9 @@ export { paPublicCvIngest } from "./public-cv-ingest.js"
 // v2.0 S2 — candidate email-link claim callable. Authenticated candidates
 // receive only the redacted candidate self-profile projection.
 export { paCandidateClaimProfile } from "./identity/claim-api.js"
+// v2.0 S5 — candidate-safe match list projection. Authenticated candidates
+// read joined/redacted match cards through a callable, not raw Firestore.
+export { paCandidateListMatches } from "./identity/candidate-matches-api.js"
 // v2.0 S3 — admin/operator-only bulk resume supply intake. Writes canonical
 // pa-users + pa-resume-artifacts through the cv-ingest identity seam.
 export {

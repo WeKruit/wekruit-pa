@@ -40,7 +40,7 @@ type ClaimState =
   | { status: "ready"; user: User; profile: CandidateSelfProfile }
   | { status: "error"; message: string }
 
-function useClaimedProfile(): ClaimState {
+export function useClaimedProfile(): ClaimState {
   const [state, setState] = useState<ClaimState>({ status: "loading" })
 
   useEffect(() => {
@@ -116,6 +116,7 @@ export function CandidateMe() {
               </div>
             </dl>
             <div className="candidate-actions">
+              <Link className="candidate-primary-link" to="/me/matches">View matches</Link>
               <Link className="candidate-primary-link" to="/me/profile">View profile</Link>
               <button className="candidate-secondary-button" type="button" onClick={() => void signOut(auth())}>
                 Sign out

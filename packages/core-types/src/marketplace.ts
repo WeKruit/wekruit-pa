@@ -409,23 +409,59 @@ export const CandidateJobStateDocSchema = z.object({
 })
 export type CandidateJobStateDoc = z.infer<typeof CandidateJobStateDocSchema>
 
-export const CandidateJobMatchSchema = z.object({
-  matchId: IdSchema,
-  candidateId: IdSchema,
-  jobId: IdSchema,
-  hardFilterResult: z.enum(["pass", "soft_block", "hard_block", "unknown"]).default("unknown"),
-  softScore: ConfidenceSchema.optional(),
-  llmScore: ConfidenceSchema.optional(),
-  finalScore: ConfidenceSchema.optional(),
-  finalRank: z.number().int().positive().optional(),
-  reasons: z.array(z.string().min(1)).default([]),
-  risks: z.array(z.string().min(1)).default([]),
-  missingInfo: z.array(z.string().min(1)).default([]),
-  recommendedAction: z.enum(["auto_outbound", "hitl_review", "do_not_contact"]),
-  evidence: z.array(MarketplaceEvidenceSchema).default([]),
-  createdAt: TimestampSchema,
-  updatedAt: TimestampSchema.optional(),
+export const CandidateJobMatchDirectionSchema = z.enum(["candidate_to_job", "job_to_candidate"])
+export type CandidateJobMatchDirection = z.infer<typeof CandidateJobMatchDirectionSchema>
+
+export const CandidateJobMatchScoreComponentSchema = z.object({
+  score: ConfidenceSchema,
+  weight: z.number().min(0).max(1).optional(),
+  summary: z.string().min(1).max(1_000).optional(),
 })
+export type CandidateJobMatchScoreComponent = z.infer<
+  typeof CandidateJobMatchScoreComponentSchema
+>
+
+export const CandidateJobMatchScoreBreakdownSchema = z
+  .record(CandidateJobMatchScoreComponentSchema)
+  .refine((value) => Object.keys(value).length > 0, {
+    message: "scoreBreakdown must include at least one score component",
+  })
+export type CandidateJobMatchScoreBreakdown = z.infer<
+  typeof CandidateJobMatchScoreBreakdownSchema
+>
+
+export const CandidateJobMatchSchema = z
+  .object({
+    matchId: IdSchema,
+    candidateId: IdSchema,
+    jobId: IdSchema,
+    direction: CandidateJobMatchDirectionSchema,
+    matchVersion: IdSchema,
+    jobEnrichmentVersion: IdSchema,
+    computedAt: TimestampSchema,
+    scoreBreakdown: CandidateJobMatchScoreBreakdownSchema,
+    matchedSignals: z.array(z.string().min(1)).default([]),
+    blockedSignals: z.array(z.string().min(1)).default([]),
+    candidateLifecycleStateAtMatch: CandidateLifecycleStateSchema,
+    candidateTagsUpdatedAt: TimestampSchema,
+    staleAt: TimestampSchema.optional(),
+    hardFilterResult: z.enum(["pass", "soft_block", "hard_block", "unknown"]),
+    softScore: ConfidenceSchema.optional(),
+    llmScore: ConfidenceSchema.optional(),
+    finalScore: ConfidenceSchema.optional(),
+    finalRank: z.number().int().positive().optional(),
+    reasons: z.array(z.string().min(1)).default([]),
+    risks: z.array(z.string().min(1)).default([]),
+    missingInfo: z.array(z.string().min(1)).default([]),
+    recommendedAction: z.enum(["auto_outbound", "hitl_review", "do_not_contact"]),
+    evidence: z.array(MarketplaceEvidenceSchema).default([]),
+    createdAt: TimestampSchema,
+    updatedAt: TimestampSchema.optional(),
+  })
+  .refine((value) => value.matchId === createCandidateJobMatchId(value.candidateId, value.jobId), {
+    message: "matchId must equal createCandidateJobMatchId(candidateId, jobId)",
+    path: ["matchId"],
+  })
 export type CandidateJobMatch = z.infer<typeof CandidateJobMatchSchema>
 
 export const OutboundInviteSchema = z.object({

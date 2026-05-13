@@ -15,8 +15,15 @@
  */
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
+import { readFileSync } from "node:fs"
 
-import { AdminMatchDebugInputSchema } from "../admin-match-debug.js"
+import { MockFirestore, asFirestore } from "../job-rec/__tests__/mock-firestore.js"
+import {
+  AdminJobMatchDebugInputSchema,
+  AdminMatchDebugInputSchema,
+  runAdminJobMatchDebug,
+  type JobCandidateDebugMatch,
+} from "../admin-match-debug.js"
 import { authorizeAdminCallable } from "../promote-sandbox-tag.js"
 
 // ---------------------------------------------------------------------------
@@ -129,5 +136,149 @@ describe("paAdminMatchDebug auth gate (via authorizeAdminCallable)", () => {
       if (original !== undefined) process.env.PA_ADMIN_TOKEN = original
       else delete process.env.PA_ADMIN_TOKEN
     }
+  })
+})
+
+describe("AdminJobMatchDebugInputSchema", () => {
+  it("accepts jobId and defaults limit", () => {
+    const out = AdminJobMatchDebugInputSchema.safeParse({ jobId: "job-123456" })
+    assert.equal(out.success, true)
+    if (out.success) {
+      assert.equal(out.data.jobId, "job-123456")
+      assert.equal(out.data.limit, 20)
+    }
+  })
+
+  it("rejects empty jobId and out-of-range limit", () => {
+    assert.equal(AdminJobMatchDebugInputSchema.safeParse({ jobId: "" }).success, false)
+    assert.equal(AdminJobMatchDebugInputSchema.safeParse({ jobId: "job-123456", limit: 0 }).success, false)
+    assert.equal(AdminJobMatchDebugInputSchema.safeParse({ jobId: "job-123456", limit: 51 }).success, false)
+    assert.equal(AdminJobMatchDebugInputSchema.safeParse({ jobId: "job-123456", limit: 1.2 }).success, false)
+  })
+})
+
+describe("paAdminJobMatchDebug auth gate (via authorizeAdminCallable)", () => {
+  it("accepts auth.token.admin === true", () => {
+    const got = authorizeAdminCallable({
+      auth: { uid: "u-admin", token: { admin: true } } as never,
+      data: { jobId: "job-123456" },
+    })
+    assert.equal(got.uid, "u-admin")
+  })
+
+  it("rejects non-admin callers", () => {
+    const original = process.env.PA_ADMIN_TOKEN
+    delete process.env.PA_ADMIN_TOKEN
+    try {
+      assert.throws(
+        () =>
+          authorizeAdminCallable({
+            auth: { uid: "u1", token: {} } as never,
+            data: { jobId: "job-123456" },
+          }),
+        /admin only/,
+      )
+    } finally {
+      if (original !== undefined) process.env.PA_ADMIN_TOKEN = original
+    }
+  })
+})
+
+describe("runAdminJobMatchDebug", () => {
+  it("throws not-found when matching job is missing", async () => {
+    const mfs = new MockFirestore()
+    await assert.rejects(
+      () =>
+        runAdminJobMatchDebug(
+          { jobId: "missing-job", limit: 10 },
+          {
+            db: asFirestore(mfs),
+            rankCandidatesForJob: async () => [],
+          },
+        ),
+      (err) => err instanceof Error && "code" in err && err.code === "not-found",
+    )
+  })
+
+  it("returns ranked retained/profile-ready candidates with debug projection", async () => {
+    const mfs = new MockFirestore()
+    await mfs.collection("matching-jobs").doc("job-1").set({
+      title: "Frontend Engineer",
+      companyName: "Acme",
+      globalTags: { skills: ["react"], industrySector: ["software_and_saas"] },
+    })
+    await mfs.collection("pa-users").doc("cand-ready").set({
+      candidateLifecycleState: "profile_ready",
+      globalTags: { skills: ["react"], industrySector: ["software_and_saas"] },
+    })
+    await mfs.collection("pa-users").doc("cand-retained").set({
+      candidateLifecycleState: "retained",
+      tags: { skills: ["typescript"], industrySector: ["software_and_saas"] },
+    })
+    await mfs.collection("pa-users").doc("cand-prospect").set({
+      candidateLifecycleState: "prospect",
+      globalTags: { skills: ["react"] },
+    })
+
+    const seenCandidates: string[] = []
+    const result = await runAdminJobMatchDebug(
+      { jobId: "job-1", limit: 1 },
+      {
+        db: asFirestore(mfs),
+        rankCandidatesForJob: async ({ candidates }): Promise<JobCandidateDebugMatch[]> => {
+          seenCandidates.push(...candidates.map((candidate) => candidate.userId))
+          return [
+            {
+              candidateId: "cand-ready",
+              finalScore: 0.91,
+              scoreBreakdown: {
+                skills: { score: 0.95, weight: 0.5, summary: "React match" },
+              },
+              hardFilterResult: "pass",
+              reasons: ["React-heavy profile matches job"],
+              risks: ["Needs salary confirmation"],
+              missingInfo: ["target compensation"],
+              recommendedAction: "auto_outbound",
+            },
+            {
+              candidateId: "cand-retained",
+              finalScore: 0.42,
+              scoreBreakdown: {
+                skills: { score: 0.4, weight: 0.5 },
+              },
+              hardFilterResult: "soft_block",
+              reasons: ["Some TypeScript overlap"],
+              risks: [],
+              missingInfo: [],
+              recommendedAction: "hitl_review",
+            },
+          ]
+        },
+      },
+    )
+
+    assert.deepEqual(seenCandidates.sort(), ["cand-ready", "cand-retained"])
+    assert.equal(result.jobId, "job-1")
+    assert.equal(result.candidatePool.totalLoaded, 2)
+    assert.equal(result.candidates.length, 1)
+    assert.equal(result.candidates[0]?.candidateId, "cand-ready")
+    assert.equal(result.candidates[0]?.finalScore, 0.91)
+    assert.equal(result.candidates[0]?.hardFilterResult, "pass")
+    assert.deepEqual(result.candidates[0]?.candidateTagSnapshot, {
+      skills: ["react"],
+      industrySector: ["software_and_saas"],
+    })
+    assert.deepEqual(result.candidates[0]?.reasons, ["React-heavy profile matches job"])
+    assert.deepEqual(result.candidates[0]?.risks, ["Needs salary confirmation"])
+    assert.deepEqual(result.candidates[0]?.missingInfo, ["target compensation"])
+    assert.equal(result.candidates[0]?.recommendedAction, "auto_outbound")
+    assert.equal(mfs.writeLog.some((write) => write.path === "pa-outbound"), false)
+  })
+})
+
+describe("S5 admin match debug import safety", () => {
+  it("does not import sender or legacy notify paths", () => {
+    const source = readFileSync(new URL("../admin-match-debug.ts", import.meta.url), "utf8")
+    assert.doesNotMatch(source, /paReverseMatch|sendImessage|enqueueReverseMatchNotify|bulkNotify|pa-outbound/)
   })
 })
