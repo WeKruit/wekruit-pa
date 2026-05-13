@@ -1088,7 +1088,7 @@ export function createEmployerVisibleProfileId(jobId: string, candidateId: strin
 }
 
 export function createJobOpportunityDraftId(jobId: string, createdAt: string): string {
-  return `jobopp_${jobId}_${createdAt.replace(/[^a-zA-Z0-9]/g, "-").replace(/-+$/, "")}`
+  return `jobopp_${jobId}_${safeIdTimestampPart(createdAt)}`
 }
 
 export function createJobEnrichmentEvalFixtureId(jobId: string, fixtureKey: string): string {
@@ -1106,6 +1106,19 @@ function stableIdHash(value: string): string {
     hash = Math.imul(hash, 0x01000193)
   }
   return (hash >>> 0).toString(16).padStart(8, "0")
+}
+
+function safeIdTimestampPart(value: string): string {
+  let output = ""
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index)
+    const isDigit = code >= 48 && code <= 57
+    const isUpper = code >= 65 && code <= 90
+    const isLower = code >= 97 && code <= 122
+    output += isDigit || isUpper || isLower ? value[index] : "-"
+  }
+  while (output.endsWith("-")) output = output.slice(0, -1)
+  return output
 }
 
 export function createJobEnrichmentDraftId(jobId: string, contentHash?: string | null): string {

@@ -11,10 +11,10 @@
 - Deployed functions, Firestore rules/indexes, and dashboard hosting to project `wekruit-5f89b`.
 - Live route checks passed:
   - `https://wekruit-pa.web.app/admin/job-enrichment` -> HTTP 200.
-  - `https://wekruit-pa.web.app/j/s4-smoke` -> HTTP 301 to `https://candidate.wekruit.com/j/s4-smoke`, then HTTP 200.
-  - `https://candidate.wekruit.com/j/s4-smoke` -> HTTP 200.
+  - `https://wekruit-pa.web.app/j/hs-11005382-invoko-product-designer` -> HTTP 301 to `https://candidate.wekruit.com/j/hs-11005382-invoko-product-designer`.
+  - `https://candidate.wekruit.com/j/hs-11005382-invoko-product-designer` -> HTTP 200.
   - `paPublicCvIngest` empty payload -> HTTP 400 with `missing_userId_or_tempUserId`.
-- No-outbound smoke passed: `pa-outbound` count stayed `190 -> 190` across deployed route/CV smoke.
+- No-outbound smoke passed: `pa-outbound` count stayed `190 -> 190` across deployed admin route, candidate route, and CV smoke.
 
 ## Implemented Scope
 
@@ -32,6 +32,7 @@ See `ACCEPTANCE.md` for exact commands and outputs. High-signal checks:
 - `pnpm --filter @pa/functions test` -> 1,189 pass, 0 fail.
 - `pnpm --filter @pa/dashboard-web test` -> 35 pass, 0 fail.
 - `pnpm --filter @pa/dashboard-web build` -> pass; existing Vite large-chunk warning only.
+- Deployed bundle smoke -> `/assets/index-fTilZ2qE.js` contains the S4 review page and callable markers.
 - `git diff --check` -> pass.
 
 ## Notes For Next Sprint
