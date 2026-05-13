@@ -11,7 +11,7 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "pretest": "npm run build --workspace=@pa/job-rec",
-    "test": "node --import tsx --test src/pages/__tests__/*.test.ts src/pages/toolCallSummary.test.ts"
+    "test": "node --import tsx --test src/pages/__tests__/*.test.ts src/pages/toolCallSummary.test.ts src/components/external-supply/__tests__/*.test.tsx"
   },
   "dependencies": {
     "@pa/core-types": "0.0.1",

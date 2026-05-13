@@ -52,6 +52,19 @@ import SendbluePool from "./pages/SendbluePool.js"
 import OutreachOps from "./pages/OutreachOps.js"
 // v1.9 Phase 89 — pre-screen feedback aggregate.
 import PrescreenFeedback from "./pages/PrescreenFeedback.js"
+// v2.0 External Supply V1 — Wave D admin surfaces (Landing, BatchNew,
+// BatchDetail, Review, Evaluations, EvaluationDetail, Research, Outreach,
+// Sync, Audit). All routes live under /admin/external-supply/**.
+import { Landing as ExternalSupplyLanding } from "./pages/external-supply/Landing.js"
+import { BatchNew as ExternalSupplyBatchNew } from "./pages/external-supply/BatchNew.js"
+import { BatchDetail as ExternalSupplyBatchDetail } from "./pages/external-supply/BatchDetail.js"
+import { Review as ExternalSupplyReview } from "./pages/external-supply/Review.js"
+import { Evaluations as ExternalSupplyEvaluations } from "./pages/external-supply/Evaluations.js"
+import { EvaluationDetail as ExternalSupplyEvaluationDetail } from "./pages/external-supply/EvaluationDetail.js"
+import { Research as ExternalSupplyResearch } from "./pages/external-supply/Research.js"
+import { Outreach as ExternalSupplyOutreach } from "./pages/external-supply/Outreach.js"
+import { Sync as ExternalSupplySync } from "./pages/external-supply/Sync.js"
+import { Audit as ExternalSupplyAudit } from "./pages/external-supply/Audit.js"
 
 // v1.8 — collapsible sidebar section. Persists open/closed to localStorage.
 function NavSection({
@@ -182,6 +195,16 @@ export default function App() {
           <NavLink to="/eval/voice-review">Voice Review</NavLink>
           <NavLink to="/eval/n-round-sim">N-Round Sim</NavLink>
         </NavSection>
+        <NavSection id="external-supply" label="External Supply" defaultOpen={false}>
+          <NavLink to="/admin/external-supply" end>Landing</NavLink>
+          <NavLink to="/admin/external-supply/batches/new">New batch</NavLink>
+          <NavLink to="/admin/external-supply/review">Review queue</NavLink>
+          <NavLink to="/admin/external-supply/evaluations">Evaluations</NavLink>
+          <NavLink to="/admin/external-supply/research">Agent research</NavLink>
+          <NavLink to="/admin/external-supply/outreach">Outreach</NavLink>
+          <NavLink to="/admin/external-supply/sync">Instantly sync</NavLink>
+          <NavLink to="/admin/external-supply/audit">Audit</NavLink>
+        </NavSection>
         <NavSection id="integrations" label="Integrations" defaultOpen={false}>
           <NavLink to="/admin/upstream-templates">Upstream Templates</NavLink>
           <NavLink to="/admin/downstream-triggers">Downstream Triggers</NavLink>
@@ -275,6 +298,17 @@ export default function App() {
           <Route path="/admin/sendblue-pool" element={<SendbluePool />} />
           {/* v1.9 Phase 89 — pre-screen feedback aggregate. */}
           <Route path="/admin/prescreen-feedback" element={<PrescreenFeedback />} />
+          {/* v2.0 External Supply V1 — Wave D admin surfaces. */}
+          <Route path="/admin/external-supply" element={<ExternalSupplyLanding />} />
+          <Route path="/admin/external-supply/batches/new" element={<ExternalSupplyBatchNew />} />
+          <Route path="/admin/external-supply/batches/:batchId" element={<ExternalSupplyBatchDetail />} />
+          <Route path="/admin/external-supply/review" element={<ExternalSupplyReview />} />
+          <Route path="/admin/external-supply/evaluations" element={<ExternalSupplyEvaluations />} />
+          <Route path="/admin/external-supply/evaluations/:runId" element={<ExternalSupplyEvaluationDetail />} />
+          <Route path="/admin/external-supply/research" element={<ExternalSupplyResearch />} />
+          <Route path="/admin/external-supply/outreach" element={<ExternalSupplyOutreach />} />
+          <Route path="/admin/external-supply/sync" element={<ExternalSupplySync />} />
+          <Route path="/admin/external-supply/audit" element={<ExternalSupplyAudit />} />
           {/* Phase 32 Wave 3 — Playbooks + Personas Firestore CRUD. */}
           <Route path="/agent/playbooks" element={<Playbooks />} />
           <Route path="/agent/personas" element={<Personas />} />
