@@ -268,9 +268,19 @@ service cloud.firestore {
     match /pa-ats-pending-trigger/{phoneE164} {
       allow read, write: if isPaOperator();
     }
-    // ─── v1.9 Phase 87 — Public job page pending invites ─────────────
+    // ─── v1.9 Phase 87 + G4 — Public job page pending invites ───────
+    // Public-create allowed (anyone can claim a UUID-keyed slot for their
+    // job-page visit). Limited size + required fields enforced. Updates +
+    // reads operator-only — server consumes the doc on first inbound and
+    // writes attribution to pa-users.{uid}.attribution.
     match /pa-prescreen-pending-invites/{requestedUserId} {
-      allow read, write: if isPaOperator();
+      allow read: if isPaOperator();
+      allow create: if
+        request.resource.data.jobId is string
+        && request.resource.data.requestedUserId is string
+        && request.resource.data.createdAt is string
+        && request.resource.data.size() <= 6;
+      allow update, delete: if isPaOperator();
     }
     // ─── v1.9 Phase 88 — Sendblue pool config + others ───────────────
     // pa-config/sendblue-pool is read by the public /j/:jobId page so the

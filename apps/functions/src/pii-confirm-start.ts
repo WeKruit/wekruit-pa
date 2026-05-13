@@ -194,7 +194,9 @@ function buildPipeline(args: {
           }
           if (answers.level1.visaStatus) tagPatch.visaStatus = answers.level1.visaStatus
           if (answers.level1.targetLocations) tagPatch.targetLocations = answers.level1.targetLocations
-          if (answers.level1.minSalaryUsd !== undefined) tagPatch.minSalaryUsd = answers.level1.minSalaryUsd
+          // v1.9 G5 fix — write to `tags.minSalary` not `minSalaryUsd` so
+          // v16 cascade's computeSalaryFit reads it (already wired since v1.6).
+          if (answers.level1.minSalaryUsd !== undefined) tagPatch.minSalary = answers.level1.minSalaryUsd
           if (answers.level1.industrySector) tagPatch.industrySector = answers.level1.industrySector
           if (answers.level1.companySize) tagPatch.companySize = answers.level1.companySize
           tagPatch.level1CollectedAt = consentedAt

@@ -114,6 +114,41 @@ export async function runPreScreenForUser(args: RunPreScreenArgs): Promise<RunPr
     ? `Resuming pre-screen for ${cfg.jobTitle}. ${firstQText}`
     : `Hi — Claire from ${cfg.company ?? "WeKruit"}. Quick screen for ${cfg.jobTitle}. ${firstQText}`
 
+  // v1.9 G4 — consume any pending-invite stub from public job page so
+  // we can attribute the trigger back to the candidate's job-page visit.
+  // Fire-and-forget; failure is non-fatal.
+  try {
+    const pendingRef = args.db.collection("pa-prescreen-pending-invites").doc(args.userId)
+    const pendingSnap = await pendingRef.get()
+    if (pendingSnap.exists) {
+      const data = pendingSnap.data() as { jobId?: string; createdAt?: string } | undefined
+      if (data?.jobId && data.jobId === args.jobId) {
+        await args.db
+          .collection("pa-users")
+          .doc(args.userId)
+          .set(
+            {
+              attribution: {
+                source: "public_job_page",
+                fromJobPageRequestedUserId: args.userId,
+                jobIdSeen: data.jobId,
+                jobPageAt: data.createdAt,
+                resolvedAt: nowIso,
+              },
+              updatedAt: nowIso,
+            },
+            { merge: true }
+          )
+        await pendingRef.delete().catch(() => undefined)
+      }
+    }
+  } catch (err) {
+    log("prescreen.session_start.pending_attribution_failed", {
+      userId: args.userId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+
   try {
     await sendImessage({ to: args.toE164, content: opener, userId: args.userId, db: args.db })
     log("prescreen.session_started", {
