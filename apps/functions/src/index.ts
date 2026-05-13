@@ -191,6 +191,14 @@ export { paPublicCvIngest } from "./public-cv-ingest.js"
 // v2.0 S2 — candidate email-link claim callable. Authenticated candidates
 // receive only the redacted candidate self-profile projection.
 export { paCandidateClaimProfile } from "./identity/claim-api.js"
+// v2.0 S3 — admin/operator-only bulk resume supply intake. Writes canonical
+// pa-users + pa-resume-artifacts through the cv-ingest identity seam.
+export {
+  paBulkResumeCreateBatch,
+  paBulkResumeAddItems,
+  paBulkResumeProcessBatch,
+  paBulkResumeRetryItem,
+} from "./bulk-resume-intake.js"
 
 // Phase 27 T2 — public /health endpoints (one per existing CF). Returns
 // {ok, name, version, ts, deps:{firestore, secrets}}. No auth (probes

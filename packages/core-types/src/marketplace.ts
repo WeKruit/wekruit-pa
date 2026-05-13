@@ -314,6 +314,82 @@ export const ResumeArtifactSchema = z.object({
 })
 export type ResumeArtifact = z.infer<typeof ResumeArtifactSchema>
 
+export const BulkResumeBatchStatusSchema = z.enum([
+  "draft",
+  "queued",
+  "processing",
+  "completed",
+  "completed_with_errors",
+  "failed",
+  "cancelled",
+])
+export type BulkResumeBatchStatus = z.infer<typeof BulkResumeBatchStatusSchema>
+
+export const BulkResumeItemStatusSchema = z.enum([
+  "queued",
+  "parsing",
+  "parsed",
+  "missing_email_review",
+  "identity_conflict",
+  "parse_failed",
+  "failed",
+  "retry_ready",
+])
+export type BulkResumeItemStatus = z.infer<typeof BulkResumeItemStatusSchema>
+
+export const BulkResumeBatchCountsSchema = z.object({
+  total: z.number().int().nonnegative().default(0),
+  queued: z.number().int().nonnegative().default(0),
+  parsing: z.number().int().nonnegative().default(0),
+  parsed: z.number().int().nonnegative().default(0),
+  review: z.number().int().nonnegative().default(0),
+  failed: z.number().int().nonnegative().default(0),
+  retryReady: z.number().int().nonnegative().default(0),
+})
+export type BulkResumeBatchCounts = z.infer<typeof BulkResumeBatchCountsSchema>
+
+export const BulkResumeBatchSchema = z.object({
+  batchId: IdSchema,
+  label: z.string().min(1).max(200),
+  source: z.string().min(1).max(100),
+  jobId: IdSchema.optional(),
+  createdBy: z.string().min(1),
+  status: BulkResumeBatchStatusSchema,
+  counts: BulkResumeBatchCountsSchema.default({}),
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema.optional(),
+  startedAt: TimestampSchema.optional(),
+  completedAt: TimestampSchema.optional(),
+  errorReason: z.string().max(2_000).optional(),
+})
+export type BulkResumeBatch = z.infer<typeof BulkResumeBatchSchema>
+
+export const BulkResumeItemSchema = z.object({
+  itemId: IdSchema,
+  batchId: IdSchema,
+  fileName: z.string().min(1).max(500),
+  fileSha256: z.string().min(32),
+  fileSizeBytes: z.number().int().nonnegative().optional(),
+  storageUri: z.string().min(1).optional(),
+  employerEmailHint: z.string().email().optional(),
+  employerEmailHintHash: z.string().min(16).optional(),
+  employerEmailHintMasked: z.string().min(3).max(320).optional(),
+  extractedEmailHash: z.string().min(16).optional(),
+  extractedEmailMasked: z.string().min(3).max(320).optional(),
+  status: BulkResumeItemStatusSchema,
+  candidateId: IdSchema.optional(),
+  resumeArtifactId: IdSchema.optional(),
+  parsedCandidateResumeId: IdSchema.optional(),
+  conflictId: IdSchema.optional(),
+  retryCount: z.number().int().nonnegative().default(0),
+  errorReason: z.string().max(2_000).optional(),
+  idempotencyKey: z.string().min(1),
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema.optional(),
+  lastProcessedAt: TimestampSchema.optional(),
+})
+export type BulkResumeItem = z.infer<typeof BulkResumeItemSchema>
+
 export const CandidateJobStateDocSchema = z.object({
   id: IdSchema,
   candidateId: IdSchema,
@@ -500,6 +576,49 @@ export type StateReductionResult<TState extends string> = {
   }
 }
 
+export type BulkResumeItemStatusEvent =
+  | "queue"
+  | "start_parsing"
+  | "parsed"
+  | "missing_email_review"
+  | "identity_conflict"
+  | "parse_failed"
+  | "failed"
+  | "make_retry_ready"
+
+const BULK_RESUME_ITEM_TRANSITIONS: Record<
+  BulkResumeItemStatus,
+  Partial<Record<BulkResumeItemStatusEvent, BulkResumeItemStatus>>
+> = {
+  queued: {
+    start_parsing: "parsing",
+    failed: "failed",
+  },
+  parsing: {
+    parsed: "parsed",
+    missing_email_review: "missing_email_review",
+    identity_conflict: "identity_conflict",
+    parse_failed: "parse_failed",
+    failed: "failed",
+  },
+  parsed: {},
+  missing_email_review: {
+    make_retry_ready: "retry_ready",
+  },
+  identity_conflict: {
+    make_retry_ready: "retry_ready",
+  },
+  parse_failed: {
+    make_retry_ready: "retry_ready",
+  },
+  failed: {
+    make_retry_ready: "retry_ready",
+  },
+  retry_ready: {
+    start_parsing: "parsing",
+  },
+}
+
 function reduction<TState extends string>(
   from: TState,
   to: TState,
@@ -513,6 +632,35 @@ function reduction<TState extends string>(
     reason,
     transition: { from, to, eventType, occurredAt },
   }
+}
+
+export function canTransitionBulkResumeItemStatus(
+  from: BulkResumeItemStatus,
+  to: BulkResumeItemStatus
+): boolean {
+  return Object.values(BULK_RESUME_ITEM_TRANSITIONS[from]).includes(to)
+}
+
+export function reduceBulkResumeItemStatus(
+  current: BulkResumeItemStatus,
+  eventType: BulkResumeItemStatusEvent,
+  occurredAt = ""
+): StateReductionResult<BulkResumeItemStatus> {
+  const next = BULK_RESUME_ITEM_TRANSITIONS[current][eventType]
+  if (!next) {
+    return reduction(current, current, eventType, occurredAt, "invalid_bulk_resume_item_transition")
+  }
+  const reasonByEvent: Record<BulkResumeItemStatusEvent, string> = {
+    queue: "bulk_resume_item_queued",
+    start_parsing: "bulk_resume_item_parse_started",
+    parsed: "bulk_resume_item_parsed",
+    missing_email_review: "pdf_email_missing_requires_operator_review",
+    identity_conflict: "bulk_resume_identity_conflict_requires_operator_review",
+    parse_failed: "bulk_resume_parse_failed_retryable",
+    failed: "bulk_resume_item_failed",
+    make_retry_ready: "bulk_resume_item_retry_ready",
+  }
+  return reduction(current, next, eventType, occurredAt, reasonByEvent[eventType])
 }
 
 export function reduceCandidateLifecycleState(
@@ -654,6 +802,51 @@ export function createCandidateJobMatchId(candidateId: string, jobId: string): s
 
 export function createEmployerVisibleProfileId(jobId: string, candidateId: string): string {
   return `${jobId}__${candidateId}`
+}
+
+export function createBulkResumeItemId(_batchId: string, fileSha256: string): string {
+  return `bulk_item_${fileSha256.slice(0, 32)}`
+}
+
+export function createBulkResumeArtifactId(
+  candidateId: string,
+  fileSha256: string,
+  extractedEmailHash?: string
+): string {
+  const emailPart = extractedEmailHash ? `__${extractedEmailHash.slice(0, 16)}` : ""
+  return `resume_bulk_${candidateId}__${fileSha256.slice(0, 16)}${emailPart}`
+}
+
+export function createBulkResumeItemIdempotencyKey(
+  batchId: string,
+  fileSha256: string,
+  extractedEmailHash?: string
+): string {
+  const emailPart = extractedEmailHash ? `:${extractedEmailHash}` : ""
+  return `bulk_resume:${batchId}:${fileSha256}${emailPart}`
+}
+
+export function summarizeBulkResumeItemCounts(
+  statuses: BulkResumeItemStatus[]
+): BulkResumeBatchCounts {
+  const counts: BulkResumeBatchCounts = {
+    total: statuses.length,
+    queued: 0,
+    parsing: 0,
+    parsed: 0,
+    review: 0,
+    failed: 0,
+    retryReady: 0,
+  }
+  for (const status of statuses) {
+    if (status === "queued") counts.queued += 1
+    else if (status === "parsing") counts.parsing += 1
+    else if (status === "parsed") counts.parsed += 1
+    else if (status === "missing_email_review" || status === "identity_conflict") counts.review += 1
+    else if (status === "parse_failed" || status === "failed") counts.failed += 1
+    else if (status === "retry_ready") counts.retryReady += 1
+  }
+  return counts
 }
 
 export function createCandidateHandleId(kind: CandidateHandleKind, handleHash: string): string {

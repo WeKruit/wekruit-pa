@@ -1,6 +1,8 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import {
+  BulkResumeBatchSchema,
+  BulkResumeItemSchema,
   CandidateHandleSchema,
   CandidateAuthMappingSchema,
   CandidateIdentityConflictSchema,
@@ -17,16 +19,24 @@ import {
   OutboundInviteSchema,
   ResumeArtifactSchema,
   candidateHandleHashMaterial,
+  canTransitionBulkResumeItemStatus,
   createCandidateHandleId,
   createCandidateJobStateId,
+  createBulkResumeArtifactId,
+  createBulkResumeItemId,
+  createBulkResumeItemIdempotencyKey,
   createEmployerVisibleProfileId,
   normalizeCandidateHandleValue,
+  reduceBulkResumeItemStatus,
   reduceCandidateJobState,
   reduceCandidateLifecycleState,
+  summarizeBulkResumeItemCounts,
+  type BulkResumeItemStatus,
   type CandidateJobEvent,
   type CandidateLifecycleEvent,
   type CandidateLifecycleState,
 } from "./marketplace.js"
+import { PA_COLLECTIONS } from "./collections.js"
 
 const now = "2026-05-13T12:00:00.000Z"
 
@@ -280,4 +290,107 @@ test("candidate handle ids are built from hashes, not raw PII", () => {
   const handleId = createCandidateHandleId("email", "a".repeat(64))
   assert.equal(handleId.includes(rawEmail), false)
   assert.equal(candidateHandleHashMaterial("email", rawEmail), "email:alice@example.com")
+})
+
+test("bulk resume schemas parse S3 batch and item contracts", () => {
+  assert.equal(PA_COLLECTIONS.bulkUploadBatches, "pa-bulk-upload-batches")
+
+  BulkResumeBatchSchema.parse({
+    batchId: "batch-1",
+    label: "May UI resumes",
+    source: "admin_upload",
+    jobId: "job-1",
+    createdBy: "operator@wekruit.com",
+    status: "draft",
+    counts: {
+      total: 1,
+      queued: 1,
+      parsing: 0,
+      parsed: 0,
+      review: 0,
+      failed: 0,
+      retryReady: 0,
+    },
+    createdAt: now,
+  })
+
+  BulkResumeItemSchema.parse({
+    itemId: createBulkResumeItemId("batch-1", "a".repeat(64)),
+    batchId: "batch-1",
+    fileName: "resume.pdf",
+    fileSha256: "a".repeat(64),
+    employerEmailHint: "Candidate@Example.com",
+    employerEmailHintHash: "b".repeat(64),
+    employerEmailHintMasked: "c***@example.com",
+    extractedEmailHash: "c".repeat(64),
+    extractedEmailMasked: "d***@example.com",
+    status: "queued",
+    retryCount: 0,
+    idempotencyKey: createBulkResumeItemIdempotencyKey("batch-1", "a".repeat(64), "c".repeat(64)),
+    createdAt: now,
+  })
+})
+
+test("bulk resume id helpers avoid raw PII and stay deterministic", () => {
+  const rawEmail = "candidate@example.com"
+  const fileSha = "f".repeat(64)
+  const emailHash = "e".repeat(64)
+
+  const itemId = createBulkResumeItemId("batch-1", fileSha)
+  const artifactId = createBulkResumeArtifactId("cand-1", fileSha, emailHash)
+  const idempotencyKey = createBulkResumeItemIdempotencyKey("batch-1", fileSha, emailHash)
+
+  assert.equal(itemId, createBulkResumeItemId("batch-1", fileSha))
+  assert.equal(artifactId, createBulkResumeArtifactId("cand-1", fileSha, emailHash))
+  assert.equal(idempotencyKey, createBulkResumeItemIdempotencyKey("batch-1", fileSha, emailHash))
+  assert.equal(itemId.includes(rawEmail), false)
+  assert.equal(artifactId.includes(rawEmail), false)
+  assert.equal(idempotencyKey.includes(rawEmail), false)
+})
+
+test("bulk resume item transitions preserve retry and terminal parsed behavior", () => {
+  let status: BulkResumeItemStatus = "queued"
+  status = reduceBulkResumeItemStatus(status, "start_parsing").state
+  assert.equal(status, "parsing")
+  status = reduceBulkResumeItemStatus(status, "parse_failed").state
+  assert.equal(status, "parse_failed")
+  status = reduceBulkResumeItemStatus(status, "make_retry_ready").state
+  assert.equal(status, "retry_ready")
+  status = reduceBulkResumeItemStatus(status, "start_parsing").state
+  assert.equal(status, "parsing")
+  status = reduceBulkResumeItemStatus(status, "parsed").state
+  assert.equal(status, "parsed")
+
+  assert.equal(canTransitionBulkResumeItemStatus("parsed", "retry_ready"), false)
+  assert.equal(canTransitionBulkResumeItemStatus("queued", "parsed"), false)
+  assert.equal(canTransitionBulkResumeItemStatus("retry_ready", "parse_failed"), false)
+  assert.equal(reduceBulkResumeItemStatus("parsed", "parse_failed").state, "parsed")
+  assert.equal(
+    reduceBulkResumeItemStatus("parsing", "missing_email_review").reason,
+    "pdf_email_missing_requires_operator_review"
+  )
+})
+
+test("bulk resume batch counts classify review and retry states", () => {
+  assert.deepEqual(
+    summarizeBulkResumeItemCounts([
+      "queued",
+      "parsing",
+      "parsed",
+      "missing_email_review",
+      "identity_conflict",
+      "parse_failed",
+      "failed",
+      "retry_ready",
+    ]),
+    {
+      total: 8,
+      queued: 1,
+      parsing: 1,
+      parsed: 1,
+      review: 2,
+      failed: 2,
+      retryReady: 1,
+    }
+  )
 })
