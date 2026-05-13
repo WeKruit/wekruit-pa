@@ -243,7 +243,7 @@ export const CandidateIdentityEventSchema = z.object({
   handleKind: CandidateHandleKindSchema.optional(),
   handleHash: z.string().min(16).optional(),
   conflictId: IdSchema.optional(),
-  source: z.enum(["candidate", "resume", "ats", "sendblue", "admin", "system", "auth"]),
+  source: z.enum(["candidate", "resume", "ats", "sendblue", "admin", "system", "auth", "external_sourcing"]),
   evidence: z.array(MarketplaceEvidenceSchema).default([]),
   payloadRedacted: z.record(z.unknown()).default({}),
   createdAt: TimestampSchema,
