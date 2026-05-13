@@ -1,0 +1,104 @@
+apps/functions                           |  WARN  Unsupported engine: wanted: {"node":"22"} (current: {"node":"v24.3.0","pnpm":"10.31.0"})
+apps/job-rec                             |  WARN  Unsupported engine: wanted: {"node":"22"} (current: {"node":"v24.3.0","pnpm":"10.31.0"})
+
+> @pa/core-types@0.0.1 pretest /Users/adam/Desktop/WeKruit/wekruit-pa/.claude/worktrees/v2-external-supply-intake/packages/core-types
+> npm run build --workspace=@wekruit/shared-tags
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "recursive". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @wekruit/shared-tags@0.1.0 build
+> tsc
+
+
+> @pa/core-types@0.0.1 test /Users/adam/Desktop/WeKruit/wekruit-pa/.claude/worktrees/v2-external-supply-intake/packages/core-types
+> node --import tsx --test src/marketplace.test.ts src/scheduled-jobs.test.ts src/external-supply.test.ts
+
+✔ ExternalSourceSchema accepts every valid value and rejects unknowns (0.829708ms)
+✔ ExternalBatchStatusSchema accepts every valid value and rejects unknowns (0.108833ms)
+✔ IdentityResolutionStatusSchema accepts every valid value and rejects unknowns (0.07275ms)
+✔ EvaluationTierSchema accepts every valid value and rejects unknowns (0.062666ms)
+✔ OutreachChannelSchema accepts every valid value and rejects unknowns (0.068375ms)
+✔ OutreachApprovalStatusSchema accepts every valid value and rejects unknowns (0.059584ms)
+✔ InstantlySyncStatusSchema accepts every valid value and rejects unknowns (0.074666ms)
+✔ OutreachEventKindSchema accepts every valid value and rejects unknowns (0.075916ms)
+✔ AgentResearchReviewStatusSchema accepts every valid value and rejects unknowns (0.071792ms)
+✔ SuppressionBlockReasonSchema accepts every valid value and rejects unknowns (0.094834ms)
+✔ ExternalSourcingBatchSchema parses a minimal valid batch (0.580416ms)
+✔ ExternalSourcingBatchSchema rejects unknown source (0.118916ms)
+✔ ExternalCandidateRecordSchema parses a minimal valid record (0.454125ms)
+✔ ExternalCandidateRecordSchema rejects missing required normalizationStatus (0.117917ms)
+✔ CandidateSourceLinkSchema parses linked row + pending row (0.255083ms)
+✔ CandidateSourceLinkSchema rejects invalid status (0.088125ms)
+✔ CandidateEvaluationRunSchema parses a queued run (0.067167ms)
+✔ CandidateEvaluationRunSchema rejects negative candidateCount (0.069125ms)
+✔ CandidateCompanyJobEvaluationSchema parses a complete evaluation (0.094042ms)
+✔ CandidateCompanyJobEvaluationSchema rejects softScore > 1 (0.207209ms)
+✔ AgentResearchFindingSchema parses a finding with evidence URLs (0.178334ms)
+✔ AgentResearchFindingSchema rejects non-URL evidence (0.098375ms)
+✔ AgentResearchTaskSchema parses a draft prompt task (0.134833ms)
+✔ AgentResearchTaskSchema rejects empty prompt (0.054833ms)
+✔ SuppressionGateResultSchema parses allow + blocked variants (0.059125ms)
+✔ SuppressionGateResultSchema rejects unknown blocked reason (0.159625ms)
+✔ OutreachPlanSchema parses a minimal valid plan (0.096583ms)
+✔ OutreachPlanSchema rejects missing suppressionGateResult (0.085875ms)
+✔ InstantlySyncRecordSchema parses a dry-run sync (0.064166ms)
+✔ InstantlySyncRecordSchema rejects invalid mode (0.05575ms)
+✔ OutreachEventSchema parses an Instantly reply event (0.093459ms)
+✔ OutreachEventSchema rejects unknown provider (0.067208ms)
+✔ SourceQualityMetricSchema parses a monthly rollup (0.071875ms)
+✔ SourceQualityMetricSchema rejects out-of-range rate (0.046334ms)
+✔ createExternalEvaluationId is the composite of candidate/job/run (0.033167ms)
+✔ createOutreachEventId composes provider + providerEventId when present (0.024292ms)
+✔ createOutreachEventId falls back to uuid v4 when providerEventId is undefined (0.250083ms)
+✔ createOutreachEventId treats empty string as absent and yields uuid (0.062ms)
+✔ createSourceQualityMetricId is the composite of source + yyyyMm (0.027833ms)
+✔ MarketplaceEvidenceSchema.source accepts the three external-supply additions (0.0555ms)
+✔ CandidateHandleSourceSchema accepts external_sourcing (0.025833ms)
+✔ IdentityConflictKindSchema accepts the two new external-supply kinds (0.028125ms)
+✔ IdentityEventTypeSchema accepts the two new external-supply event types (0.025583ms)
+✔ marketplace document schemas parse the S1 primitives (2.943167ms)
+✔ candidate lifecycle reducer covers README states and terminal behavior (0.636291ms)
+✔ low-confidence opportunity signal is evidence, not direct lifecycle mutation (0.069417ms)
+✔ candidate-job reducer preserves first-interview and NOT_PASS locks (0.154583ms)
+✔ candidate-job reducer requires passed state before employer visibility (0.082333ms)
+✔ document id helpers do not require raw PII (0.05325ms)
+✔ candidate handle normalizers keep matching identity material stable (0.249042ms)
+✔ candidate handle ids are built from hashes, not raw PII (0.042958ms)
+▶ ProactiveTriggerType
+  ✔ accepts exactly the 3 v1 trigger types (0.317792ms)
+✔ ProactiveTriggerType (0.701417ms)
+▶ ProactiveRecurrence
+  ✔ accepts only 'once' and 'silence_rearm' (0.0735ms)
+✔ ProactiveRecurrence (0.122291ms)
+▶ ProactiveJobContext discriminated union
+  ✔ time_anchor variant requires eventLabel, eventAt, leadTimeSec (0.083541ms)
+  ✔ silence_anchor variant requires windowSec, lastUserMsgAt (0.048292ms)
+  ✔ application_followup variant requires companyName, jobTitle, appliedAt, followupAfterSec (0.048875ms)
+✔ ProactiveJobContext discriminated union (0.263958ms)
+▶ fireWindowHash
+  ✔ returns deterministic sha1 hex for same inputs (0.344291ms)
+  ✔ different fire window (different minute) produces different hash (0.139583ms)
+  ✔ same minute bucket (within same 60s) produces same hash (0.148ms)
+  ✔ different jobId with same timestamp produces different hash (0.089833ms)
+✔ fireWindowHash (0.831333ms)
+▶ ScheduledJob type extends Phase 7 base fields
+  ✔ ScheduledJob includes dueAt and Phase 7 base fields (1.211459ms)
+✔ ScheduledJob type extends Phase 7 base fields (1.26175ms)
+▶ PROACTIVE_JOB_STATUS
+  ✔ includes all expected status values (0.08375ms)
+✔ PROACTIVE_JOB_STATUS (0.126708ms)
+ℹ tests 62
+ℹ suites 6
+ℹ pass 62
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 207.445834

@@ -1,0 +1,47 @@
+{
+  "company": {
+    "companyId": "co_acme_ai",
+    "name": "Acme AI",
+    "industrySector": [
+      "artificial_intelligence_and_machine_learning",
+      "cloud_and_infrastructure"
+    ],
+    "competitorCompanies": [
+      "OpenAI",
+      "Anthropic",
+      "Tesla"
+    ],
+    "size": "scale_up",
+    "schoolPreferences": [
+      "mit",
+      "stanford"
+    ]
+  },
+  "job": {
+    "jobId": "job_acme_swe_senior",
+    "title": "Senior Software Engineer (AI Infra)",
+    "roleFunction": [
+      "software_engineering"
+    ],
+    "requiredSkills": [
+      "python",
+      "typescript",
+      "kubernetes",
+      "system_design",
+      "machine_learning"
+    ],
+    "seniorityLevel": "senior",
+    "locationBuckets": [
+      "new_york",
+      "remote"
+    ],
+    "sponsorship": false,
+    "jobType": "full_time",
+    "industrySector": [
+      "artificial_intelligence_and_machine_learning"
+    ],
+    "firstSeenAt": "2026-05-12T12:00:00.000Z",
+    "salaryMin": 180000,
+    "salaryMax": 260000
+  }
+}

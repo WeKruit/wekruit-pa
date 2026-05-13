@@ -1,0 +1,167 @@
+apps/functions                           |  WARN  Unsupported engine: wanted: {"node":"22"} (current: {"node":"v24.3.0","pnpm":"10.31.0"})
+apps/job-rec                             |  WARN  Unsupported engine: wanted: {"node":"22"} (current: {"node":"v24.3.0","pnpm":"10.31.0"})
+
+> @pa/pa-persistence@0.0.1 pretest /Users/adam/Desktop/WeKruit/wekruit-pa/.claude/worktrees/v2-external-supply-intake/packages/pa-persistence
+> npm run build --workspace=@pa/core-types
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "recursive". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @pa/core-types@0.0.1 prebuild
+> npm run build --workspace=@wekruit/shared-tags
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "recursive". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @wekruit/shared-tags@0.1.0 build
+> tsc
+
+
+> @pa/core-types@0.0.1 build
+> tsc
+
+
+> @pa/pa-persistence@0.0.1 test /Users/adam/Desktop/WeKruit/wekruit-pa/.claude/worktrees/v2-external-supply-intake/packages/pa-persistence
+> node --import tsx --test src/feature-flags.test.ts src/rate-limit.test.ts src/outbound-quota.test.ts src/voice-reviews.test.ts src/triggers.test.ts src/upstream-events.test.ts src/handbook.test.ts src/marketplace.test.ts src/identity.test.ts src/external-supply-identity.test.ts src/external-supply-upsert.test.ts
+
+✔ LinkedIn handle hit returns merge_existing with the linked candidateId (1.626166ms)
+✔ LinkedIn handle miss returns create_new without writing anything (0.26225ms)
+✔ LinkedIn hits one candidate while email hits another -> needs_review + conflict doc (1.075083ms)
+✔ Email-only row always routes to needs_review with email_only_external_row (0.104792ms)
+✔ No LinkedIn and no email returns blocked with no_identity_signal (0.115333ms)
+✔ Evidence on every path carries external_sourcing source + 0.4 confidence (0.151417ms)
+✔ create_new path mints pa-users + linkedin handle + source-link + identity event (2.440792ms)
+✔ merge_existing path skips pa-users overwrite and emits external_source_linked (0.445209ms)
+✔ merge_existing with conflicting linkedinUrl records the mismatch in payloadRedacted (3.334ms)
+✔ needs_review path writes a pending source-link with no pa-users mutation (0.269042ms)
+✔ blocked path writes source-link with status=blocked and no profile mutation (0.138ms)
+✔ idempotent re-run does not duplicate source-link or identity event (0.437916ms)
+✔ weak-only tag merge does not clobber existing populated relevantTags slot (1.234ms)
+✔ create_new attaches email handles when emails are present (0.303166ms)
+✔ getFlag: env override short-circuits to true without Firestore read (0.632541ms)
+✔ getFlag: returns defaultValue when doc absent (0.333042ms)
+✔ getFlag: reads doc value when present (global bool) (0.310417ms)
+✔ getFlag: perUser blocklist beats allowlist beats default (1.223917ms)
+✔ getFlag: 30s TTL cache — second read of same key+ctx is a hit (1.47125ms)
+✔ getFlag: TTL expiry causes re-read (17.197542ms)
+✔ getFlag: ≥95% cache hit rate over 1000 calls (10 distinct keys) (2.519875ms)
+✔ setFlag: writes flag doc + audit row, bumps version (1.293834ms)
+✔ revertFlag: reads last audit and writes oldValue back (16.394083ms)
+✔ setFlag: invalidates cache so next getFlag sees the new value (0.193791ms)
+✔ DEFAULT_TTL_MS is 30s (locked by CONTEXT.md ADR) (0.047291ms)
+✔ djb2Hash: deterministic and non-zero for typical inputs (0.069291ms)
+✔ pickBucketVariant: cumulative weight selection (0.064ms)
+✔ validateBucketStrategy: weights summing to 100 pass; otherwise throw (0.242167ms)
+✔ setFlag: rejects bucketStrategy with weights != 100 (0.109375ms)
+✔ getFlag: bucketStrategy userIdHash — same userId always gets same variant (deterministic) (0.741667ms)
+✔ getFlag: bucketStrategy userIdHash — 50/50 distribution within ±5% over 1000 users (13.190166ms)
+✔ getFlag: bucketStrategy random — non-deterministic but still returns a configured variant (0.316833ms)
+✔ getFlag: bucketStrategy weight drift (sum<100) — last variant absorbs gap (reader-tolerant) (0.076958ms)
+✔ getFlag: blocklist beats bucketStrategy (perUser precedence preserved) (0.062542ms)
+✔ getFlag: bucketStrategy userIdHash with no userId in ctx falls through to default value (0.05125ms)
+✔ constants are locked (collection names + render order + TTL) (1.916958ms)
+✔ emptyHandbookSections returns a fully populated empty scaffold (0.126667ms)
+✔ normalizeHandbookSections coerces missing keys + bad shapes (0.257083ms)
+✔ loadHandbook returns null when slug doc missing (0.196917ms)
+✔ loadHandbook caches reads (2nd call hits cache) (0.184917ms)
+✔ loadHandbook TTL expires and forces re-read (15.728125ms)
+✔ loadHandbook ≥95% cache hit rate over 1000 calls (10 distinct slugs) (1.477209ms)
+✔ saveHandbook v1: writes pointer + versions/1 + handbook.create audit row (4.464083ms)
+✔ saveHandbook v2: bumps version + writes versions/2 + handbook.update audit (0.964875ms)
+✔ saveHandbook: optimistic concurrency — wrong expectedVersion throws (0.525917ms)
+✔ saveHandbook: missing reason throws (audit guarantee) (0.10775ms)
+✔ saveHandbook: cache invalidated after write (next load sees v2) (0.141709ms)
+✔ listVersions returns snapshots newest-first (0.302625ms)
+✔ getVersion returns immutable snapshot (0.116583ms)
+✔ revertHandbook: reads versions/{target} and writes new v+1 (0.236375ms)
+✔ revertHandbook: missing target version throws (0.0725ms)
+✔ composeSystemPrompt: respects HANDBOOK_RENDER_ORDER + skips empties (0.240209ms)
+✔ composeSystemPrompt: empty sections produce no header (no orphan #) (0.040417ms)
+✔ composeSystemPrompt: identity-only renders just identity block (0.037375ms)
+✔ composeSystemPrompt: hard_rules + never_5 numbered list rendering (0.055833ms)
+✔ hashCandidateHandle normalizes and never places raw PII in the handle id (0.905ms)
+✔ same extracted email across browser ids resolves to one candidate (1.46425ms)
+✔ employer email mismatch records identity conflict and creates no candidate (0.333375ms)
+✔ same handle cannot silently link to a second candidate (0.502333ms)
+✔ claimCandidateProfile writes auth mapping, claimed lifecycle, and redacted self profile (13.93675ms)
+✔ writeCandidateSelfProfile redacts phone and preserves candidate-facing state only (0.175125ms)
+✔ applyCandidateLifecycleEvent writes pa-users marketplace fields plus one audit row (3.625ms)
+✔ applyCandidateJobEvent keeps NOT_PASS job-specific and does not mutate pa-users (0.468ms)
+✔ applyCandidateJobEvent does not use match score as an interview gate (1.297167ms)
+✔ feedback and correction events are append-only with conflict detection (13.781625ms)
+✔ employer-visible snapshot requires passed candidate-job state (0.416292ms)
+▶ outbound-quota
+  ✔ formatDailyBucket returns YYYYMMDD UTC (0.365542ms)
+  ✔ incrementDailyOutbound monotonically grows count for same day (1.423709ms)
+  ✔ getDailyOutboundCount returns 0 for absent bucket and the increment value otherwise (1.074416ms)
+  ✔ isolates counters across days (0.182666ms)
+  ✔ writes expiresAt and bucket fields for TTL (0.131167ms)
+✔ outbound-quota (3.861166ms)
+▶ checkAndIncrementRateLimit
+  ✔ allows up to limit then blocks the (limit+1)-th request (2.519458ms)
+  ✔ isolates buckets per user (1.2725ms)
+  ✔ expired bucket (next window) resets the count (0.481125ms)
+  ✔ writes expiresAt for Firestore TTL eligibility (0.164125ms)
+✔ checkAndIncrementRateLimit (11.050667ms)
+✔ saveTrigger: rejects missing name / non-https url / negative cooldown (1.056541ms)
+✔ saveTrigger: writes trigger doc + audit row, bumps version (1.149083ms)
+✔ listTriggers + getTrigger return saved triggers (0.253208ms)
+✔ deleteTrigger: removes doc + writes audit (0.1925ms)
+✔ evaluateTriggers: keyword regex matches user/assistant text (0.213375ms)
+✔ evaluateTriggers: skips disabled triggers (0.082709ms)
+✔ evaluateTriggers: llm-judge matches when judge returns yes (0.191958ms)
+✔ evaluateTriggers: errors in one trigger don't blow up others (0.16175ms)
+✔ checkCooldown + recordFire: blocks within window, allows after (0.464166ms)
+✔ recordFire: writes both fire row + audit row (0.115917ms)
+✔ recordFire: writes Timestamp-typed expiresAtTs (Stream H9 TD1) (0.119458ms)
+✔ listFiresForTrigger: filters by triggerId (0.191833ms)
+✔ renderPayload: substitutes mustache-lite vars; unknown → empty (0.101291ms)
+✔ hmacSign: deterministic hex sha256 (0.168667ms)
+✔ firePostHook: posts to url with hmac header; returns ok+status (0.158792ms)
+✔ firePostHook: returns error on network throw, no exception (0.085208ms)
+✔ firePostHook: marks 5xx as not-ok (0.049625ms)
+✔ newTriggerId: prefixed + unique (0.162375ms)
+✔ renderTemplate substitutes flat vars (0.494041ms)
+✔ renderTemplate handles missing vars as empty (0.057167ms)
+✔ renderTemplate caps per-var output at 256 chars (0.0575ms)
+✔ renderTemplate tolerates whitespace inside braces (0.054875ms)
+✔ renderTemplate coerces numbers and booleans to strings (0.057542ms)
+✔ saveTemplate creates doc with version=1 (1.376542ms)
+✔ saveTemplate bumps version on existing doc (0.295542ms)
+✔ getTemplate returns null when absent (0.386667ms)
+✔ getTemplate returns saved doc (0.233083ms)
+✔ getTemplateByEventKind returns enabled match (0.257167ms)
+✔ getTemplateByEventKind skips disabled and returns null (0.115292ms)
+✔ listTemplates returns all docs (0.141958ms)
+✔ checkRateLimit allows up to limit then blocks (0.235792ms)
+✔ checkRateLimit isolates buckets across users (0.068916ms)
+✔ checkRateLimit isolates buckets across hours (0.076209ms)
+✔ writeVoiceReview: writes all 6 fields + createdAt to pa-voice-reviews/{messageId} (1.828334ms)
+✔ writeVoiceReview: enforces rating 1..5 (0.453208ms)
+✔ writeVoiceReview: tag enum strict — rejects unknown tag (0.102542ms)
+✔ writeVoiceReview: accepts every allowed tag (0.146ms)
+✔ writeVoiceReview: requires agentSnapshot.bibleVersion + modelId (0.158083ms)
+✔ writeVoiceReview: dedupes duplicate tags (0.088083ms)
+✔ writeVoiceReview: idempotent overwrite — same messageId latest wins (0.116584ms)
+✔ listVoiceReviews: filter by ratingMax (Phase 27 contract) (0.297708ms)
+✔ listAssistantTurnsForReview: joins reviewed/unreviewed + prior user turn (0.316334ms)
+ℹ tests 117
+ℹ suites 2
+ℹ pass 117
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 626.01525

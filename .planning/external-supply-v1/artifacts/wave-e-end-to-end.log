@@ -1,0 +1,21 @@
+✔ acceptance row 8 — import normalizes 100+ rows with expected per-status counters (27.223083ms)
+✔ acceptance row 9 — re-running identity resolution is idempotent (17.741708ms)
+✔ acceptance row 10 — profile create / merge with no stronger-fact overwrite (8.535959ms)
+✔ acceptance row 11 — LinkedIn-email mismatch lands in conflicts collection (11.994333ms)
+✔ acceptance row 12 — evaluation produces a mix of tiers (22.082542ms)
+✔ acceptance row 13 — agent research round-trip generate→import→approve (12.547291ms)
+✔ acceptance rows 14 + 15 + 16 — outreach decision + suppression + Instantly dry-run (16.609042ms)
+✔ acceptance row 17 — live-mode without env vars silently downgrades to dry-run (14.4975ms)
+✔ acceptance rows 18 + 19 — webhook reply + bounce land outreach & feedback events; idempotent (7.463875ms)
+✔ acceptance row 23 — operator tier override writes a correction event (8.057875ms)
+✔ acceptance row 22 — no raw PII in doc ids; doc-id audit (10.151208ms)
+✔ acceptance row 21 — apps/pa-landing has zero external-supply references (2.323416ms)
+✔ acceptance row 24 — no active LinkedIn POST automation in new external-supply code (11.451875ms)
+ℹ tests 13
+ℹ suites 0
+ℹ pass 13
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 763.284833

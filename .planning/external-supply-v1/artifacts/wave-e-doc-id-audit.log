@@ -1,0 +1,21 @@
+{
+  "violations": [],
+  "idAudit": {
+    "pa-users": 80,
+    "pa-candidate-handles": 160,
+    "pa-candidate-identity-conflicts": 10,
+    "pa-candidate-identity-events": 80,
+    "pa-candidate-source-links": 105,
+    "pa-external-sourcing-batches": 3,
+    "pa-external-candidate-records": 105,
+    "pa-candidate-evaluation-runs": 0,
+    "pa-candidate-company-job-evaluations": 0,
+    "pa-agent-research-tasks": 0,
+    "pa-outreach-plans": 0,
+    "pa-instantly-sync-records": 0,
+    "pa-outreach-events": 2,
+    "pa-feedback-events": 0,
+    "pa-correction-events": 0
+  },
+  "generatedAt": "2026-05-13T12:00:00.000Z"
+}

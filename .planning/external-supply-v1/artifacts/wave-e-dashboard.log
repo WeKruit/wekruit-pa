@@ -1,0 +1,251 @@
+apps/functions                           |  WARN  Unsupported engine: wanted: {"node":"22"} (current: {"node":"v24.3.0","pnpm":"10.31.0"})
+apps/job-rec                             |  WARN  Unsupported engine: wanted: {"node":"22"} (current: {"node":"v24.3.0","pnpm":"10.31.0"})
+
+> @pa/dashboard-web@0.0.1 pretest /Users/adam/Desktop/WeKruit/wekruit-pa/.claude/worktrees/v2-external-supply-intake/apps/dashboard-web
+> npm run build --workspace=@pa/job-rec
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "recursive". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @pa/job-rec@0.0.1 prebuild
+> npm run build --workspace=@wekruit/shared-tags && npm run build --workspace=@pa/core-types && npm run build --workspace=@pa/firebase-admin && npm run build --workspace=@pa/pa-broker && npm run build --workspace=@pa/pa-safety && npm run build --workspace=@pa/agent-runtime && npm run build --workspace=@pa/memory && npm run build --workspace=@pa/pa-persistence && npm run build --workspace=@pa/pa-connectors && npm run build --workspace=@pa/agent-registry && npm run build --workspace=@pa/pa-orchestrator
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "recursive". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @wekruit/shared-tags@0.1.0 build
+> tsc
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "recursive". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @pa/core-types@0.0.1 prebuild
+> npm run build --workspace=@wekruit/shared-tags
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "recursive". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @wekruit/shared-tags@0.1.0 build
+> tsc
+
+
+> @pa/core-types@0.0.1 build
+> tsc
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "recursive". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @pa/firebase-admin@0.0.1 build
+> tsc
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "recursive". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @pa/pa-broker@0.0.1 build
+> tsc
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "recursive". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @pa/pa-safety@0.0.1 build
+> tsc
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "recursive". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @pa/agent-runtime@0.0.1 build
+> tsc
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "recursive". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @pa/memory@0.0.1 build
+> tsc
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "recursive". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @pa/pa-persistence@0.0.1 prebuild
+> npm run build --workspace=@pa/core-types
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "recursive". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @pa/core-types@0.0.1 prebuild
+> npm run build --workspace=@wekruit/shared-tags
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "recursive". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @wekruit/shared-tags@0.1.0 build
+> tsc
+
+
+> @pa/core-types@0.0.1 build
+> tsc
+
+
+> @pa/pa-persistence@0.0.1 build
+> tsc
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "recursive". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @pa/pa-connectors@0.0.1 build
+> tsc
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "recursive". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @pa/agent-registry@0.0.1 build
+> tsc
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "recursive". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @pa/pa-orchestrator@0.0.1 build
+> tsc
+
+
+> @pa/job-rec@0.0.1 build
+> tsc
+
+
+> @pa/dashboard-web@0.0.1 test /Users/adam/Desktop/WeKruit/wekruit-pa/.claude/worktrees/v2-external-supply-intake/apps/dashboard-web
+> node --import tsx --test src/pages/__tests__/*.test.ts src/pages/toolCallSummary.test.ts src/components/external-supply/__tests__/*.test.tsx
+
+✔ BatchTable: loading state renders the LoadingState label (5.740458ms)
+✔ BatchTable: error state renders the ErrorState message (0.38825ms)
+✔ BatchTable: empty state renders the EmptyState body (0.277ms)
+✔ BatchTable: populated state renders one tbody row per record + header (1.556166ms)
+✔ IDENTITY_STATUS_BADGES covers every IdentityResolutionStatus value (4.666708ms)
+✔ identityStatusBadge: pending → muted 'Pending' (0.134875ms)
+✔ identityStatusBadge: create_new → good 'Create new' (0.057208ms)
+✔ identityStatusBadge: merge_existing → good 'Merge existing' (0.050208ms)
+✔ identityStatusBadge: needs_review → warn 'Needs review' (0.048375ms)
+✔ identityStatusBadge: blocked → bad 'Blocked' (0.042416ms)
+✔ identityStatusBadge: every status value maps to a non-empty label + valid tone (1.001292ms)
+✔ sortRowsByTime orders newest valid timestamp first without mutating input (0.739209ms)
+✔ format helpers handle dashboard-null values and numeric values (0.112209ms)
+✔ summarizeMarketplace keeps passed and not-passed job state counts separate (0.148208ms)
+✔ AXES contains all 9 canonical axes (v1.6 Phase 52 vocabs) (2.508542ms)
+✔ AXES vocab counts are non-zero for closed enums (v1.6 Phase 52) (0.123209ms)
+✔ AXES match semantics — D9: roleFunction hard filter, industrySector soft score (0.063334ms)
+✔ AXES.industrySector supportsOverlay (D16 admin add-able) (0.064292ms)
+✔ relevantTags is the only open-vocab axis (0.048375ms)
+✔ sortSandboxTokens: most-proposed first (count desc) (0.088334ms)
+✔ pct: formats 0..1 → percent, handles bad input (0.070625ms)
+✔ fmtTime: ISO timestamp → human-readable space-separated (0.050917ms)
+✔ parseTagsInput: splits on comma/semicolon/newline + dedupes case-insensitive (0.932541ms)
+✔ validateMatchForm: rejects too-short JD, bad industry, bad topK (0.389459ms)
+✔ formatMatchScore: handles numeric, null, NaN (0.308042ms)
+✔ filterOptedInOnly: keeps hasOptedIn===true only (0.43025ms)
+✔ MatchDebug DEFAULT_WEIGHTS mirror V16_SCORE_WEIGHTS exactly (0.6285ms)
+✔ V16_SCORE_WEIGHTS sum to 1.0 (sanity for sandbox sliders) (0.116708ms)
+✔ QA run summary metrics format via pct() (0.439417ms)
+✔ QA runAt timestamp display via fmtTime() (0.089042ms)
+✔ renderToolCallSummary: passes through non-matching connector rows untouched (0.405542ms)
+✔ renderToolCallSummary: degraded mode surfaces (degraded:reason) tag (0.116459ms)
+✔ renderToolCallSummary: happy path renders rank + title + fitScore (0.101834ms)
+✔ renderToolCallSummary: empty/null roles falls back to summary (0.059584ms)
+✔ renderToolCallSummary: malformed JSON falls back to raw text (legacy/regression safe) (0.057375ms)
+✔ renderToolCallSummary: missing resultSummary returns empty string (0.041959ms)
+✔ renderToolCallSummary: legacy wekruit-matching row from old schema (no roles key) renders summary cleanly (0.059583ms)
+ℹ tests 37
+ℹ suites 0
+ℹ pass 37
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1910.901791

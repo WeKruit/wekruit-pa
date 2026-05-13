@@ -1,0 +1,14 @@
+apps/functions                           |  WARN  Unsupported engine: wanted: {"node":"22"} (current: {"node":"v24.3.0","pnpm":"10.31.0"})
+apps/job-rec                             |  WARN  Unsupported engine: wanted: {"node":"22"} (current: {"node":"v24.3.0","pnpm":"10.31.0"})
+
+> @pa/functions@0.0.1 typecheck /Users/adam/Desktop/WeKruit/wekruit-pa/.claude/worktrees/v2-external-supply-intake/apps/functions
+> tsc --noEmit
+
+src/external-supply/agent-task.test.ts(114,5): error TS2783: 'recordId' is specified more than once, so this usage will be overwritten.
+src/external-supply/outreach.test.ts(112,5): error TS2783: 'evaluationId' is specified more than once, so this usage will be overwritten.
+src/external-supply/outreach.test.ts(114,5): error TS2783: 'candidateId' is specified more than once, so this usage will be overwritten.
+src/external-supply/outreach.test.ts(115,5): error TS2783: 'companyId' is specified more than once, so this usage will be overwritten.
+src/external-supply/outreach.test.ts(116,5): error TS2783: 'jobId' is specified more than once, so this usage will be overwritten.
+/Users/adam/Desktop/WeKruit/wekruit-pa/.claude/worktrees/v2-external-supply-intake/apps/functions:
+ ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  @pa/functions@0.0.1 typecheck: `tsc --noEmit`
+Exit status 2

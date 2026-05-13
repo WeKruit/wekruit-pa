@@ -1,0 +1,6 @@
+{
+  "name": "@pa/external-supply-e2e-tests",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module"
+}

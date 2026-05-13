@@ -1,0 +1,311 @@
+apps/functions                           |  WARN  Unsupported engine: wanted: {"node":"22"} (current: {"node":"v24.3.0","pnpm":"10.31.0"})
+apps/job-rec                             |  WARN  Unsupported engine: wanted: {"node":"22"} (current: {"node":"v24.3.0","pnpm":"10.31.0"})
+Scope: 20 of 21 workspace projects
+packages/firebase-admin build$ tsc
+apps/pa-landing build$ tsc --noEmit && vite build
+packages/shared-tags build$ tsc
+packages/firebase-admin build: Done
+packages/shared-tags build: Done
+apps/pa-landing build: vite v6.4.2 building for production...
+apps/pa-landing build: transforming...
+apps/pa-landing build: ✓ 64 modules transformed.
+apps/pa-landing build: rendering chunks...
+apps/pa-landing build: computing gzip size...
+apps/pa-landing build: dist/index.html                  0.64 kB │ gzip:   0.42 kB
+apps/pa-landing build: dist/assets/index-C4d_nCPy.js  743.60 kB │ gzip: 197.43 kB
+apps/pa-landing build: ✓ built in 991ms
+apps/pa-landing build: (!) Some chunks are larger than 500 kB after minification. Consider:
+apps/pa-landing build: - Using dynamic import() to code-split the application
+apps/pa-landing build: - Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+apps/pa-landing build: - Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+apps/pa-landing build: Done
+packages/pa-job-tag-enricher build$ tsc
+packages/core-types prebuild$ npm run build --workspace=@wekruit/shared-tags
+packages/core-types prebuild: npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+packages/core-types prebuild: npm warn Unknown env config "recursive". This will stop working in the next major version of npm.
+packages/core-types prebuild: npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+packages/core-types prebuild: npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+packages/core-types prebuild: npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+packages/core-types prebuild: npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+packages/core-types prebuild: npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+packages/core-types prebuild: npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+packages/core-types prebuild: > @wekruit/shared-tags@0.1.0 build
+packages/core-types prebuild: > tsc
+packages/pa-job-tag-enricher build: Done
+packages/core-types prebuild: Done
+packages/core-types build$ tsc
+packages/core-types build: Done
+packages/agent-runtime build$ tsc
+packages/external-supply prebuild$ npm run build --workspace=@wekruit/shared-tags && npm run build --workspace=@pa/core-types
+packages/pa-broker build$ tsc
+packages/pa-persistence prebuild$ npm run build --workspace=@pa/core-types
+packages/pa-persistence prebuild: npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+packages/pa-persistence prebuild: npm warn Unknown env config "recursive". This will stop working in the next major version of npm.
+packages/pa-persistence prebuild: npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+packages/pa-persistence prebuild: npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+packages/pa-persistence prebuild: npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+packages/pa-persistence prebuild: npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+packages/pa-persistence prebuild: npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+packages/pa-persistence prebuild: npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+packages/external-supply prebuild: npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+packages/external-supply prebuild: npm warn Unknown env config "recursive". This will stop working in the next major version of npm.
+packages/external-supply prebuild: npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+packages/external-supply prebuild: npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+packages/external-supply prebuild: npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+packages/external-supply prebuild: npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+packages/external-supply prebuild: npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+packages/external-supply prebuild: npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+packages/pa-persistence prebuild: > @pa/core-types@0.0.1 prebuild
+packages/pa-persistence prebuild: > npm run build --workspace=@wekruit/shared-tags
+packages/external-supply prebuild: > @wekruit/shared-tags@0.1.0 build
+packages/external-supply prebuild: > tsc
+packages/pa-persistence prebuild: npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+packages/pa-persistence prebuild: npm warn Unknown env config "recursive". This will stop working in the next major version of npm.
+packages/pa-persistence prebuild: npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+packages/pa-persistence prebuild: npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+packages/pa-persistence prebuild: npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+packages/pa-persistence prebuild: npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+packages/pa-persistence prebuild: npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+packages/pa-persistence prebuild: npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+packages/pa-persistence prebuild: > @wekruit/shared-tags@0.1.0 build
+packages/pa-persistence prebuild: > tsc
+packages/pa-broker build: Done
+packages/agent-runtime build: Done
+packages/external-supply prebuild: npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+packages/external-supply prebuild: npm warn Unknown env config "recursive". This will stop working in the next major version of npm.
+packages/external-supply prebuild: npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+packages/external-supply prebuild: npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+packages/external-supply prebuild: npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+packages/external-supply prebuild: npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+packages/external-supply prebuild: npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+packages/external-supply prebuild: npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+packages/external-supply prebuild: > @pa/core-types@0.0.1 prebuild
+packages/external-supply prebuild: > npm run build --workspace=@wekruit/shared-tags
+packages/pa-persistence prebuild: > @pa/core-types@0.0.1 build
+packages/pa-persistence prebuild: > tsc
+packages/external-supply prebuild: npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+packages/external-supply prebuild: npm warn Unknown env config "recursive". This will stop working in the next major version of npm.
+packages/external-supply prebuild: npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+packages/external-supply prebuild: npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+packages/external-supply prebuild: npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+packages/external-supply prebuild: npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+packages/external-supply prebuild: npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+packages/external-supply prebuild: npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+packages/external-supply prebuild: > @wekruit/shared-tags@0.1.0 build
+packages/external-supply prebuild: > tsc
+packages/external-supply prebuild: > @pa/core-types@0.0.1 build
+packages/external-supply prebuild: > tsc
+packages/pa-persistence prebuild: Done
+packages/pa-persistence build$ tsc
+packages/external-supply prebuild: Done
+packages/external-supply build$ tsc
+packages/pa-persistence build: Done
+packages/external-supply build: Done
+packages/agent-registry build$ tsc
+packages/pa-safety build$ tsc
+packages/pa-safety build: Done
+packages/agent-registry build: Done
+packages/memory build$ tsc
+packages/memory build: Done
+packages/pa-connectors build$ tsc
+packages/pa-resume-parser build$ tsc
+packages/pa-resume-parser build: Done
+packages/pa-connectors build: Done
+packages/pa-orchestrator build$ tsc
+packages/pa-orchestrator build: Done
+apps/job-rec prebuild$ npm run build --workspace=@wekruit/shared-tags && npm run build --workspace=@pa/core-types && npm run build --workspace=@pa/firebase-admin && npm run build --workspace=@pa/pa-broker && npm run build --workspace=@pa/pa-safety && npm run build --workspace=@pa/agent-runtime && npm run build --workspace=@pa/memory && npm run build --workspace=@pa/pa-persistence && npm run build --workspace=@pa/pa-connectors && npm run build --workspace=@pa/agent-registry && npm run build --workspace=@pa/pa-orchestrator
+apps/job-rec prebuild: npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "recursive". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+apps/job-rec prebuild: > @wekruit/shared-tags@0.1.0 build
+apps/job-rec prebuild: > tsc
+apps/job-rec prebuild: npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "recursive". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+apps/job-rec prebuild: > @pa/core-types@0.0.1 prebuild
+apps/job-rec prebuild: > npm run build --workspace=@wekruit/shared-tags
+apps/job-rec prebuild: npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "recursive". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+apps/job-rec prebuild: > @wekruit/shared-tags@0.1.0 build
+apps/job-rec prebuild: > tsc
+apps/job-rec prebuild: > @pa/core-types@0.0.1 build
+apps/job-rec prebuild: > tsc
+apps/job-rec prebuild: npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "recursive". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+apps/job-rec prebuild: > @pa/firebase-admin@0.0.1 build
+apps/job-rec prebuild: > tsc
+apps/job-rec prebuild: npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "recursive". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+apps/job-rec prebuild: > @pa/pa-broker@0.0.1 build
+apps/job-rec prebuild: > tsc
+apps/job-rec prebuild: npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "recursive". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+apps/job-rec prebuild: > @pa/pa-safety@0.0.1 build
+apps/job-rec prebuild: > tsc
+apps/job-rec prebuild: npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "recursive". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+apps/job-rec prebuild: > @pa/agent-runtime@0.0.1 build
+apps/job-rec prebuild: > tsc
+apps/job-rec prebuild: npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "recursive". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+apps/job-rec prebuild: > @pa/memory@0.0.1 build
+apps/job-rec prebuild: > tsc
+apps/job-rec prebuild: npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "recursive". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+apps/job-rec prebuild: > @pa/pa-persistence@0.0.1 prebuild
+apps/job-rec prebuild: > npm run build --workspace=@pa/core-types
+apps/job-rec prebuild: npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "recursive". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+apps/job-rec prebuild: > @pa/core-types@0.0.1 prebuild
+apps/job-rec prebuild: > npm run build --workspace=@wekruit/shared-tags
+apps/job-rec prebuild: npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "recursive". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+apps/job-rec prebuild: > @wekruit/shared-tags@0.1.0 build
+apps/job-rec prebuild: > tsc
+apps/job-rec prebuild: > @pa/core-types@0.0.1 build
+apps/job-rec prebuild: > tsc
+apps/job-rec prebuild: > @pa/pa-persistence@0.0.1 build
+apps/job-rec prebuild: > tsc
+apps/job-rec prebuild: npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "recursive". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+apps/job-rec prebuild: > @pa/pa-connectors@0.0.1 build
+apps/job-rec prebuild: > tsc
+apps/job-rec prebuild: npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "recursive". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+apps/job-rec prebuild: > @pa/agent-registry@0.0.1 build
+apps/job-rec prebuild: > tsc
+apps/job-rec prebuild: npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "recursive". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+apps/job-rec prebuild: npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+apps/job-rec prebuild: > @pa/pa-orchestrator@0.0.1 build
+apps/job-rec prebuild: > tsc
+apps/job-rec prebuild: Done
+apps/job-rec build$ tsc
+apps/job-rec build: Done
+apps/dashboard-web prebuild$ npm run build --workspace=@pa/core-types
+apps/functions build$ node build.mjs
+apps/dashboard-web prebuild: npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+apps/dashboard-web prebuild: npm warn Unknown env config "recursive". This will stop working in the next major version of npm.
+apps/dashboard-web prebuild: npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+apps/dashboard-web prebuild: npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+apps/dashboard-web prebuild: npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+apps/dashboard-web prebuild: npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+apps/dashboard-web prebuild: npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+apps/dashboard-web prebuild: npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+apps/dashboard-web prebuild: > @pa/core-types@0.0.1 prebuild
+apps/dashboard-web prebuild: > npm run build --workspace=@wekruit/shared-tags
+apps/dashboard-web prebuild: npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+apps/dashboard-web prebuild: npm warn Unknown env config "recursive". This will stop working in the next major version of npm.
+apps/dashboard-web prebuild: npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+apps/dashboard-web prebuild: npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+apps/dashboard-web prebuild: npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+apps/dashboard-web prebuild: npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+apps/dashboard-web prebuild: npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+apps/dashboard-web prebuild: npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+apps/dashboard-web prebuild: > @wekruit/shared-tags@0.1.0 build
+apps/dashboard-web prebuild: > tsc
+apps/functions build:   lib/index.js      16.5mb ⚠️
+apps/functions build:   lib/index.js.map  33.8mb
+apps/functions build: ⚡ Done in 928ms
+apps/functions build: [functions] no .env file found at /Users/adam/Desktop/WeKruit/wekruit-pa/.claude/worktrees/v2-external-supply-intake/apps/functions/.env (skipping admin allowlist)
+apps/functions build: [functions] bundled to /Users/adam/Desktop/WeKruit/wekruit-pa/.claude/worktrees/v2-external-supply-intake/apps/functions/lib
+apps/functions build: Done
+apps/dashboard-web prebuild: > @pa/core-types@0.0.1 build
+apps/dashboard-web prebuild: > tsc
+apps/dashboard-web prebuild: Done
+apps/dashboard-web build$ tsc --noEmit && vite build
+apps/dashboard-web build: vite v6.4.2 building for production...
+apps/dashboard-web build: transforming...
+apps/dashboard-web build: ✓ 1970 modules transformed.
+apps/dashboard-web build: rendering chunks...
+apps/dashboard-web build: computing gzip size...
+apps/dashboard-web build: dist/index.html                     0.50 kB │ gzip:   0.31 kB
+apps/dashboard-web build: dist/assets/index-D58eVgvk.css     25.91 kB │ gzip:   6.30 kB
+apps/dashboard-web build: dist/assets/index-B0ltedbU.js   1,342.65 kB │ gzip: 358.56 kB
+apps/dashboard-web build: (!) Some chunks are larger than 500 kB after minification. Consider:
+apps/dashboard-web build: - Using dynamic import() to code-split the application
+apps/dashboard-web build: - Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+apps/dashboard-web build: - Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+apps/dashboard-web build: ✓ built in 2.38s
+apps/dashboard-web build: Done
