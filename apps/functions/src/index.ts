@@ -184,6 +184,10 @@ export { paMatchingJobsAutoEnrich } from "./auto-enrich-matching-jobs.js"
 // v1.9 Phase 86 — Generic ATS inbound adapter webhook.
 // Handshake fully implemented; GH/Lever/LinkedIn return 501 stubs.
 export { paAtsInboundWebhook } from "./ats-inbound-webhook.js"
+// v1.9 hotfix (2026-05-12 live test STOP) — public /j/:jobId CV upload backend.
+// Frontend (PublicJobCv.tsx) POSTs base64 to this endpoint. ATS inbound
+// webhook (paAtsInboundWebhook) also targets this via PA_CV_INGEST_URL env.
+export { paPublicCvIngest } from "./public-cv-ingest.js"
 
 // Phase 27 T2 — public /health endpoints (one per existing CF). Returns
 // {ok, name, version, ts, deps:{firestore, secrets}}. No auth (probes

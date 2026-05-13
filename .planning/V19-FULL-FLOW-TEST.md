@@ -37,6 +37,9 @@
 | **C** | PublicJob: green "✓ We have your resume on file" badge when `wkr_has_cv` localStorage flag set | `PublicJob.tsx` | Second-job visit no longer prompts for re-upload. |
 | **D** | PublicJobCv: stamps `wkr_has_cv = true` after successful upload | `PublicJobCv.tsx` | Powers the above. |
 | **E** | `scripts/v19-reset-adam.mjs` — hard reset Adam's user across all v1.9 collections | new file | Required for a clean test. |
+| **F** | **NEW** `paPublicCvIngest` HTTP CF — the backend that `PublicJobCv.tsx` and ATS webhook both POST to | `apps/functions/src/public-cv-ingest.ts` | **Live test STOP on 2026-05-12**: the frontend posted to `VITE_CV_INGEST_URL` but that URL never had a CF behind it. Phase 87 wired UI without backend. Now: CF accepts base64 PDF, runs `ingestCv` with public-page gate bypass + injected fetchPdf, returns `{ok, resumeId}`. URL: `https://us-central1-wekruit-5f89b.cloudfunctions.net/paPublicCvIngest` |
+| **G** | `VITE_CV_INGEST_URL` wired into dashboard env injector + `apps/dashboard-web/.env.production.local` | `scripts/inject-pa-dashboard-vite-env.mjs` + env file | Inject script previously only kept the 6 Firebase keys and stripped the CV URL on each deploy. Now: REQUIRED + OPTIONAL split, VITE_CV_INGEST_URL preserved. |
+| **H** | ATS webhook defaults `PA_CV_INGEST_URL` to the production CF URL | `apps/functions/src/ats-inbound-webhook.ts` | Removed the `if (!cvIngestUrl) return` dead path for production. process.env override still honored. |
 
 Build status (2026-05-12): orchestrator 1479/1479 ✓, functions 1143/1143 ✓, simulator full-flow PASS ✓.
 
@@ -86,10 +89,33 @@ console.log('cleaned. now:', JSON.stringify(localStorage))
 ### 0.3 Deploy current branch
 
 ```bash
-cd apps/functions && pnpm run deploy        # cv-ingest phoneE164 fix
-cd ../.. && pnpm run deploy:hosting          # PublicJob repeat-user UI
+cd apps/functions && pnpm run deploy        # cv-ingest phoneE164 fix + paPublicCvIngest CF
+cd ../.. && PA_DASHBOARD_VITE_ENV_FILE=apps/dashboard-web/.env.production.local pnpm run deploy:hosting   # PublicJob repeat-user UI + VITE_CV_INGEST_URL embedded
 firebase deploy --only firestore:rules --project wekruit-5f89b --non-interactive
 ```
+
+### 0.4 Verify deploy (paste these, expect output shown)
+
+```bash
+# 1. CF reachable
+curl -s -X OPTIONS https://us-central1-wekruit-5f89b.cloudfunctions.net/paPublicCvIngest -i | head -3
+# Expect: HTTP/2 204 + access-control-allow-origin: *
+
+# 2. CF rejects empty body
+curl -s -X POST https://us-central1-wekruit-5f89b.cloudfunctions.net/paPublicCvIngest -H "content-type: application/json" -d '{}'
+# Expect: {"ok":false,"reason":"missing_userId_or_tempUserId"}
+
+# 3. CF rejects non-PDF base64
+curl -s -X POST https://us-central1-wekruit-5f89b.cloudfunctions.net/paPublicCvIngest -H "content-type: application/json" -d '{"tempUserId":"test-uuid-1234","resumeBase64":"bm90LXBkZi1qdXN0LXRleHQ="}'
+# Expect: {"ok":false,"reason":"not_a_pdf"}
+
+# 4. Hosting bundle embeds CF URL
+JS=$(curl -s "https://wekruit-pa.web.app/j/hs-11005382-invoko-product-designer/cv" | grep -oE "assets/index-[a-zA-Z0-9_-]+\.js" | head -1)
+curl -s "https://wekruit-pa.web.app/$JS" | grep -oE "https://[a-z0-9-]+\.cloudfunctions\.net/paPublicCvIngest" | sort -u
+# Expect: https://us-central1-wekruit-5f89b.cloudfunctions.net/paPublicCvIngest
+```
+
+If any of the 4 fails: STOP. Don't run the live test.
 
 ---
 

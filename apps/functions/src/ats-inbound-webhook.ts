@@ -99,7 +99,11 @@ export const paAtsInboundWebhook: HttpsFunction = onRequest(
     }): Promise<void> => {
       // Lazy import to avoid pulling cv-ingest into the cold-start path.
       try {
-        const cvIngestUrl = process.env.PA_CV_INGEST_URL
+        // v1.9 hotfix 2026-05-12 — default to the deployed paPublicCvIngest CF
+        // URL. process.env override preserved for local/staging.
+        const cvIngestUrl =
+          process.env.PA_CV_INGEST_URL ??
+          "https://us-central1-wekruit-5f89b.cloudfunctions.net/paPublicCvIngest"
         if (!cvIngestUrl) {
           log("no_cv_ingest_url", { userId: args.userId })
           return

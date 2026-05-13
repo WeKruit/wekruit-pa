@@ -23,6 +23,14 @@ const REQUIRED = [
   "VITE_FIREBASE_APP_ID",
 ]
 
+// v1.9 hotfix 2026-05-12 — optional VITE_* keys preserved alongside the
+// required Firebase set. When present in the source env file (or process.env),
+// they get written through to .env.production.local; absence is a soft warn
+// (not fail) so legacy Adam deploys still work.
+const OPTIONAL = [
+  "VITE_CV_INGEST_URL", // paPublicCvIngest CF URL for /j/:jobId/cv upload
+]
+
 /** @param {string} path */
 function parseEnvFile(path) {
   const content = readFileSync(path, "utf8")
@@ -60,7 +68,11 @@ if (filePath) {
 }
 
 for (const k of Object.keys(process.env)) {
-  if (k.startsWith("VITE_FIREBASE_") && process.env[k] != null && String(process.env[k]).trim() !== "") {
+  if (
+    (k.startsWith("VITE_FIREBASE_") || OPTIONAL.includes(k)) &&
+    process.env[k] != null &&
+    String(process.env[k]).trim() !== ""
+  ) {
     merged[k] = String(process.env[k]).trim()
   }
 }
@@ -77,10 +89,18 @@ if (missing.length) {
   process.exit(1)
 }
 
-const body =
-  REQUIRED.map((k) => `${k}=${escapeEnvValue(merged[k])}`).join("\n") + "\n"
+// Warn (don't fail) when optional keys are absent — keeps legacy single-env
+// deploys working but flags missing wiring in CI output.
+for (const k of OPTIONAL) {
+  if (!merged[k] || String(merged[k]).trim() === "") {
+    console.warn(`[inject-pa-dashboard-vite-env] WARN — optional key not set: ${k}`)
+  }
+}
+
+const ALL_KEYS = [...REQUIRED, ...OPTIONAL.filter((k) => merged[k])]
+const body = ALL_KEYS.map((k) => `${k}=${escapeEnvValue(merged[k])}`).join("\n") + "\n"
 writeFileSync(outPath, body, "utf8")
-console.log("[inject-pa-dashboard-vite-env] wrote", outPath)
+console.log("[inject-pa-dashboard-vite-env] wrote", outPath, "keys:", ALL_KEYS.join(","))
 
 /** @param {string} v */
 function escapeEnvValue(v) {
