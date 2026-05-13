@@ -115,7 +115,7 @@ export async function runPreScreenForUser(args: RunPreScreenArgs): Promise<RunPr
     : `Hi — Claire from ${cfg.company ?? "WeKruit"}. Quick screen for ${cfg.jobTitle}. ${firstQText}`
 
   try {
-    await sendImessage({ to: args.toE164, content: opener })
+    await sendImessage({ to: args.toE164, content: opener, userId: args.userId, db: args.db })
     log("prescreen.session_started", {
       sessionId,
       jobId: args.jobId,

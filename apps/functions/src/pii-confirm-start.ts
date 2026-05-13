@@ -99,6 +99,8 @@ export async function runPiiConfirmForUser(
         to: args.toE164,
         content:
           "We already have your contact details on file — the employer will reach out directly.",
+        userId: args.userId,
+        db: args.db,
       })
     } catch (err) {
       log("pii_confirm.skip_send_failed", { error: String(err) })
@@ -160,7 +162,7 @@ function buildPipeline(args: {
     includeLevel1: true,
     emit: async (text) => {
       try {
-        await sendImessage({ to: args.toE164, content: text })
+        await sendImessage({ to: args.toE164, content: text, userId: args.userId, db: args.db })
       } catch (err) {
         args.log("pii_confirm.emit_failed", { error: String(err) })
       }
@@ -306,6 +308,8 @@ export async function runPiiConfirmTurnIfActive(
           to: a.toE164,
           content:
             "Thanks for the details — I'll text you when a stronger fit comes through.",
+          userId: a.userId,
+          db,
         })
         return
       }

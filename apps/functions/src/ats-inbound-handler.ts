@@ -171,6 +171,26 @@ export async function handleAtsInbound(
     return { kind: "rejected", reason: "no_phone_for_outbound_invite" }
   }
 
+  // v1.9 G2 fix — stamp pending trigger doc keyed by phone so the
+  // candidate's first reply (e.g. "START") synthesizes the WeKruit_<jobId>_
+  // <userId>_Job trigger context. 24h expiry.
+  try {
+    const expiresAtMs = now + 24 * 60 * 60 * 1000
+    await deps.db.collection("pa-ats-pending-trigger").doc(applicant.phone).set({
+      phoneE164: applicant.phone,
+      jobId: jobIdInternal,
+      userId,
+      source: applicant.source,
+      expiresAtMs,
+      createdAt: new Date(now).toISOString(),
+    })
+  } catch (err) {
+    log("ats_inbound.pending_trigger_stamp_failed", {
+      userId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+
   let sendOk = false
   try {
     const r = await deps.sendInvite({

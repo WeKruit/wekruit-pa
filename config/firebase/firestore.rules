@@ -262,6 +262,12 @@ service cloud.firestore {
     match /pa-ats-invite-idempotency/{key} {
       allow read, write: if isPaOperator();
     }
+    // ─── v1.9 G2 — ATS pending-trigger virtualization (24h TTL) ─────
+    // Stamped by paAtsInboundWebhook when invite SMS sent; consumed by
+    // paSendblueWebhook on candidate's first non-trigger reply.
+    match /pa-ats-pending-trigger/{phoneE164} {
+      allow read, write: if isPaOperator();
+    }
     // ─── v1.9 Phase 87 — Public job page pending invites ─────────────
     match /pa-prescreen-pending-invites/{requestedUserId} {
       allow read, write: if isPaOperator();

@@ -215,7 +215,7 @@ export async function runPrescreenTurnIfActive(
 
   if (result.text) {
     try {
-      await sendImessage({ to: args.toE164, content: result.text })
+      await sendImessage({ to: args.toE164, content: result.text, userId: args.userId, db: args.db })
     } catch (err) {
       log("prescreen.turn.send_failed", {
         sessionId,

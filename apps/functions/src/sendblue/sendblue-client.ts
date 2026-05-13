@@ -94,6 +94,20 @@ export type SendImessageInput = {
   to: string
   content: string
   statusCallback?: string
+  /**
+   * v1.9 G1 fix — optional userId for pool-aware outbound routing.
+   * When provided AND `pa-config/sendblue-pool` doc has active numbers,
+   * `from_number` is picked deterministically by `hash(userId) mod activeN`.
+   * Same userId → same from-number (thread continuity preserved). Falls
+   * back to `creds.fromNumber` (env SENDBLUE_FROM_NUMBER) when pool empty
+   * or userId not provided.
+   */
+  userId?: string
+  /**
+   * Optional Firestore handle for pool lookup. When unset, `getFirestore()`
+   * is called lazily inside the send path.
+   */
+  db?: import("firebase-admin/firestore").Firestore
 }
 
 /**
@@ -118,10 +132,28 @@ export async function sendImessage(
     )
   }
 
+  // v1.9 G1 fix — pool-aware outbound routing when userId provided.
+  let resolvedFromNumber = creds.fromNumber
+  if (input.userId) {
+    try {
+      const { loadSendbluePool, pickFromNumber } = await import("./pool.js")
+      const { getFirestore } = await import("firebase-admin/firestore")
+      const db = input.db ?? getFirestore()
+      const pool = await loadSendbluePool(db)
+      const picked = pickFromNumber(pool, input.userId)
+      if (picked) {
+        resolvedFromNumber = picked
+      }
+    } catch (err) {
+      // Pool lookup failure → keep env fallback. Non-fatal.
+      // (Could log here but sendImessage doesn't have a logger seam.)
+    }
+  }
+
   const body: SendblueSendRequest = {
     number: input.to,
     content: input.content,
-    ...(creds.fromNumber ? { from_number: creds.fromNumber } : {}),
+    ...(resolvedFromNumber ? { from_number: resolvedFromNumber } : {}),
     ...(input.statusCallback ? { status_callback: input.statusCallback } : {}),
   }
 

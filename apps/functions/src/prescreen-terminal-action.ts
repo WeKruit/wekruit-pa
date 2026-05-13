@@ -57,7 +57,12 @@ export interface RunPrescreenTerminalActionArgs {
     log: (event: string, payload: Record<string, unknown>) => void
   }) => Promise<{ ok: boolean; skipped: boolean; reason?: string }>
   /** Optional injected SMS sender for tests. */
-  sendSms?: (args: { to: string; content: string }) => Promise<void>
+  sendSms?: (args: {
+    to: string
+    content: string
+    userId?: string
+    db?: import("firebase-admin/firestore").Firestore
+  }) => Promise<void>
   /** Optional clock for tests. */
   now?: () => Date
   log?: (event: string, payload: Record<string, unknown>) => void
@@ -152,8 +157,18 @@ async function defaultGenerateJobRecs(args: {
   }
 }
 
-async function defaultSendSms(args: { to: string; content: string }): Promise<void> {
-  await sendImessage({ to: args.to, content: args.content })
+async function defaultSendSms(args: {
+  to: string
+  content: string
+  userId?: string
+  db?: import("firebase-admin/firestore").Firestore
+}): Promise<void> {
+  await sendImessage({
+    to: args.to,
+    content: args.content,
+    userId: args.userId,
+    db: args.db,
+  })
 }
 
 /**
@@ -265,7 +280,7 @@ export async function runPrescreenTerminalAction(
       }
       const text = composeLevel1Reveal(level1Fields, args.lang)
       try {
-        await send({ to: args.toE164, content: text })
+        await send({ to: args.toE164, content: text, userId: args.userId, db: args.db })
         level1Sent = true
       } catch (err) {
         log("prescreen.terminal_action.level1_send_failed", {
@@ -279,7 +294,7 @@ export async function runPrescreenTerminalAction(
   } else if (args.terminal === "FAIL" || args.terminal === "HARD_STOP") {
     // TERMINAL-02 + TERMINAL-03 — preamble first, then PII collect, then recs.
     try {
-      await send({ to: args.toE164, content: composeFailJobRecsPreamble(args.lang) })
+      await send({ to: args.toE164, content: composeFailJobRecsPreamble(args.lang), userId: args.userId, db: args.db })
     } catch (err) {
       log("prescreen.terminal_action.preamble_send_failed", {
         sessionId: args.sessionId,

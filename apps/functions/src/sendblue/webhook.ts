@@ -628,6 +628,56 @@ export async function handleSendblueWebhook(
     }
   }
 
+  // ---- 3e0. v1.9 G2 — ATS pending-trigger virtualization --------------
+  //
+  // If this inbound is from a candidate who recently received an ATS
+  // invite SMS (paAtsInboundWebhook stamped pa-ats-pending-trigger/{phone}
+  // within 24h), synthesize the WeKruit_<jobId>_<userId>_Job trigger body
+  // so the candidate doesn't have to manually type it. Any non-trigger
+  // reply (e.g. "START", "hi", "yes") activates the pending trigger.
+  //
+  // Skip when: media attached, already a verbatim trigger text, or no
+  // pending row exists.
+  if (!mediaUrl && typeof normalized.text === "string") {
+    const looksLikeTrigger = /WeKruit_[A-Za-z0-9_-]+_[A-Za-z0-9_-]+_(Job|Apply)/.test(normalized.text)
+    if (!looksLikeTrigger) {
+      try {
+        const pendingRef = deps.db
+          .collection("pa-ats-pending-trigger")
+          .doc(normalized.fromNumber)
+        const pendingSnap = await pendingRef.get()
+        const pendingData = pendingSnap.data() as
+          | { jobId?: string; userId?: string; expiresAtMs?: number }
+          | undefined
+        const nowMs = Date.now()
+        if (
+          pendingData?.jobId &&
+          pendingData?.userId &&
+          typeof pendingData.expiresAtMs === "number" &&
+          pendingData.expiresAtMs > nowMs
+        ) {
+          const virtualTrigger = `WeKruit_${pendingData.jobId}_${pendingData.userId}_Job`
+          log("[sendblue][webhook] ats-pending-trigger virtualized", {
+            fromNumber: normalized.fromNumber,
+            jobId: pendingData.jobId,
+            userId: pendingData.userId,
+            origText: normalized.text.slice(0, 40),
+          })
+          // Mutate normalized.text so the downstream TriggerRouter sees the
+          // synthesized trigger pattern. Consume the pending doc to prevent
+          // replay on subsequent inbounds.
+          ;(normalized as { text: string }).text = virtualTrigger
+          await pendingRef.delete().catch(() => undefined)
+        }
+      } catch (err) {
+        log("[sendblue][webhook] ats-pending-trigger check failed (non-fatal)", {
+          fromNumber: normalized.fromNumber,
+          err: err instanceof Error ? err.message : String(err),
+        })
+      }
+    }
+  }
+
   // ---- 3e1. v1.8 Phase 77 — TriggerRouter (prescreen + compact) ----------
   //
   // Additive dispatch ahead of the legacy inline branches. Handles:
