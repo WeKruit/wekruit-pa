@@ -46,11 +46,14 @@ const ANTHROPIC_API_KEY = defineSecret("ANTHROPIC_API_KEY")
 interface PublicCvIngestRequest {
   tempUserId?: string
   userId?: string
+  browserUid?: string
   resumeBase64?: string
   resumeUrl?: string
   resumeName?: string
   jobIdContext?: string
   source?: string
+  employerEmailHint?: string
+  atsApplicantId?: string
 }
 
 function setCors(res: { set: (k: string, v: string) => unknown }): void {
@@ -182,6 +185,10 @@ export const paPublicCvIngest = onRequest(
 
     const input: IngestCvInput = {
       userId,
+      browserUid: body.browserUid ?? body.tempUserId,
+      employerEmailHint: body.employerEmailHint,
+      atsApplicantId: body.atsApplicantId,
+      identitySource: body.source?.startsWith("ats:") ? "ats" : "resume",
       // For base64 path the URL is decorative — actual bytes come via
       // injected fetchPdf. We still pass a sentinel so internal logging
       // has something descriptive.
@@ -195,11 +202,12 @@ export const paPublicCvIngest = onRequest(
       if (result.ok) {
         log("public_cv_ingest.ok", {
           userId,
+          canonicalUserId: result.userId,
           resumeId: result.resumeId,
           source: body.source ?? "public_job_page",
           jobIdContext: body.jobIdContext,
         })
-        res.status(200).json({ ok: true, resumeId: result.resumeId })
+        res.status(200).json({ ok: true, resumeId: result.resumeId, userId: result.userId })
       } else {
         log("public_cv_ingest.fail", {
           userId,

@@ -60,6 +60,14 @@ import {
   type ComputeCvEmbeddingResult,
   type EmbeddingResumeInput,
 } from "../lib/embeddings.js"
+import {
+  resolveCandidateIdentity as defaultResolveCandidateIdentity,
+  type ResolveCandidateIdentityInput,
+} from "@pa/pa-persistence"
+import type {
+  CandidateHandleSource,
+  CandidateIdentityResolution,
+} from "@pa/core-types"
 // iter34 H.3b — unified user-tag store. mergeUserTags is pure; we wire it
 // into the cv-ingest flow so the canonical `pa-users/{userId}.tags` doc
 // stays in sync with the latest CV. H.4 worker reads this; H.3a's industry
@@ -71,10 +79,14 @@ export type IngestCvInput = {
   userId: string
   mediaUrl: string
   sessionId?: string
+  employerEmailHint?: string | null
+  browserUid?: string | null
+  atsApplicantId?: string | null
+  identitySource?: CandidateHandleSource
 }
 
 export type IngestCvResult =
-  | { ok: true; resumeId: string }
+  | { ok: true; resumeId: string; userId: string }
   | { ok: false; reason: string }
 
 export type CandidateProfile = {
@@ -314,6 +326,16 @@ export type IngestCvDeps = {
     userId: string,
     sha256: string
   ) => Promise<string | null>
+
+  /**
+   * v2.0 S2 — canonical candidate identity resolver. For public/ATS CV
+   * uploads this must run after parse evidence is available and before any
+   * permanent candidate writes.
+   */
+  resolveCandidateIdentity?: (
+    db: Firestore,
+    input: ResolveCandidateIdentityInput
+  ) => Promise<CandidateIdentityResolution>
 }
 
 const PARSED_RESUMES_COLLECTION = "parsedCandidateResumes"
@@ -326,6 +348,11 @@ const LLM_MODEL = "gpt-5.4-nano"
 const OUTBOUND_COLLECTION = "pa-outbound"
 const FOLLOWUP_DOC_PREFIX = "out-cvfindings-"
 const PA_USERS_COLLECTION = "pa-users"
+
+function nonEmptyTrimmed(value: string | null | undefined): string | undefined {
+  const trimmed = value?.trim()
+  return trimmed && trimmed.length > 0 ? trimmed : undefined
+}
 
 /**
  * v1.9 hotfix (Adam directive 2026-05-12) — normalize parsed CV phone to E.164.
@@ -1583,10 +1610,20 @@ export async function ingestCv(
       }))
   const findResumeBySha256 =
     deps?.findResumeBySha256 ?? defaultFindResumeBySha256
+  const resolveCandidateIdentity =
+    deps?.resolveCandidateIdentity ?? defaultResolveCandidateIdentity
 
   if (!args || typeof args !== "object" || !args.userId || !args.mediaUrl) {
     return { ok: false, reason: "invalid_input" }
   }
+  const sourceUserId = args.userId
+  let userId = sourceUserId
+  const identityEnabled = Boolean(
+    nonEmptyTrimmed(args.browserUid) ||
+      nonEmptyTrimmed(args.employerEmailHint) ||
+      nonEmptyTrimmed(args.atsApplicantId) ||
+      args.identitySource
+  )
 
   // ─────────────────────────────────────────────────────────────────
   // iter30 WS1 — 4-limit gate stack (entry, before download).
@@ -1698,24 +1735,32 @@ export async function ingestCv(
     })
     pdfSha256 = ""
   }
-  if (pdfSha256.length > 0) {
+  const lookupExistingResumeBySha256 = async (lookupUserId: string): Promise<string | null> => {
+    if (pdfSha256.length === 0) return null
     try {
-      const existingId = await findResumeBySha256(dbHandle, args.userId, pdfSha256)
+      const existingId = await findResumeBySha256(dbHandle, lookupUserId, pdfSha256)
       if (existingId) {
         log("pa.cv_ingest.idempotent_hit", {
-          userId: args.userId,
+          userId: lookupUserId,
           sha256: pdfSha256,
           resumeId: existingId,
         })
-        return { ok: true, resumeId: existingId }
+        return existingId
       }
     } catch (err) {
       // Lookup failure → log + proceed (fail-open; parser will write a fresh row).
       log("pa.cv_ingest.idempotent_lookup_error", {
-        userId: args.userId,
+        userId: lookupUserId,
         sha256: pdfSha256,
         error: err instanceof Error ? err.message : String(err),
       })
+    }
+    return null
+  }
+  if (!identityEnabled) {
+    const existingId = await lookupExistingResumeBySha256(userId)
+    if (existingId) {
+      return { ok: true, resumeId: existingId, userId }
     }
   }
 
@@ -1776,10 +1821,73 @@ export async function ingestCv(
     return { ok: false, reason: "llm_parse_failed" }
   }
 
+  if (identityEnabled) {
+    const employerEmailHint = nonEmptyTrimmed(args.employerEmailHint)
+    const browserUid = nonEmptyTrimmed(args.browserUid)
+    const atsApplicantId = nonEmptyTrimmed(args.atsApplicantId)
+    const extractedEmail = nonEmptyTrimmed(parsed.candidateProfile.email)
+    const parsedPhoneRaw = nonEmptyTrimmed(v2Output?.parsed.phone ?? parsed.candidateProfile.phone)
+    const phoneE164 = parsedPhoneRaw ? normalizeCvPhoneToE164(parsedPhoneRaw) : undefined
+    const source: CandidateHandleSource =
+      args.identitySource ?? (atsApplicantId || employerEmailHint ? "ats" : "resume")
+    try {
+      const resolution = await resolveCandidateIdentity(dbHandle, {
+        extractedEmail,
+        employerEmailHint,
+        phoneE164,
+        browserUid,
+        atsApplicantId,
+        source,
+        candidateIdHint: sourceUserId,
+        useCandidateIdHint: false,
+        now: nowIso(),
+        evidence: [
+          {
+            source: source === "ats" ? "ats" : "resume_parse",
+            summary: "CV ingest resolved canonical candidate before permanent writes",
+            refId: args.mediaUrl,
+          },
+        ],
+      })
+      if (resolution.outcome === "identity_conflict") {
+        log("pa.cv_ingest.identity_conflict", {
+          userId: sourceUserId,
+          conflictId: resolution.conflict.conflictId,
+          kind: resolution.conflict.kind,
+        })
+        return { ok: false, reason: "identity_conflict" }
+      }
+      userId = resolution.candidateId
+      log("pa.cv_ingest.identity_resolved", {
+        sourceUserId,
+        userId,
+        outcome: resolution.outcome,
+        source,
+      })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      log("pa.cv_ingest.identity_error", {
+        userId: sourceUserId,
+        error: message,
+      })
+      return {
+        ok: false,
+        reason: message.startsWith("identity_conflict:")
+          ? "identity_conflict"
+          : "identity_resolution_failed",
+      }
+    }
+
+    const existingId = await lookupExistingResumeBySha256(userId)
+    if (existingId) {
+      return { ok: true, resumeId: existingId, userId }
+    }
+  }
+
   // Cost-tracking telemetry — input/output token counts feed cost
   // dashboards. Estimated $0.0005-0.002 per CV with gpt-5.4-nano.
   log("pa.cv_ingest.cost", {
-    userId: args.userId,
+    userId: userId,
     inputTokens: usage?.input_tokens,
     outputTokens: usage?.output_tokens,
     totalTokens: usage?.total_tokens,
@@ -1811,7 +1919,7 @@ export async function ingestCv(
       })
       if (Array.isArray(secondPassResult) && secondPassResult.length > 0) {
         log("pa.cv_ingest.industry_second_pass.applied", {
-          userId: args.userId,
+          userId: userId,
           industries: secondPassResult,
           previousTags: parsed.industryTags,
         })
@@ -1843,7 +1951,7 @@ export async function ingestCv(
       // Defensive — runIndustrySecondPass is contracted not to throw, but
       // an injected stub might. Log + continue.
       log("pa.cv_ingest.industry_second_pass.error", {
-        userId: args.userId,
+        userId: userId,
         error: err instanceof Error ? err.message : String(err),
       })
     }
@@ -1870,13 +1978,13 @@ export async function ingestCv(
     })
     if (embedResult) {
       log("pa.cv_ingest.embedding_computed", {
-        userId: args.userId,
+        userId: userId,
         dim: embedResult.dim,
         model: embedResult.model,
       })
     } else {
       log("pa.cv_ingest.embedding_skipped", {
-        userId: args.userId,
+        userId: userId,
         reason: "compute_returned_null",
       })
     }
@@ -1884,7 +1992,7 @@ export async function ingestCv(
     // Defensive — computeCvEmbedding contract is "never throws", but if a
     // test injectable misbehaves we still must not block the doc write.
     log("pa.cv_ingest.embedding_error", {
-      userId: args.userId,
+      userId: userId,
       error: err instanceof Error ? err.message : String(err),
     })
     embedResult = null
@@ -1898,21 +2006,21 @@ export async function ingestCv(
   let h3FlagOn = false
   let prior: { id: string; data: Record<string, unknown> } | null = null
   try {
-    h3FlagOn = await isFlagEnabled(dbHandle, CV_OVERWRITE_FLAG_KEY, args.userId)
+    h3FlagOn = await isFlagEnabled(dbHandle, CV_OVERWRITE_FLAG_KEY, userId)
   } catch (err) {
     // Flag read failure → treat as OFF (graceful degrade to legacy path).
     log("pa.cv_overwrite.flag_read_error", {
-      userId: args.userId,
+      userId: userId,
       error: err instanceof Error ? err.message : String(err),
     })
     h3FlagOn = false
   }
   if (h3FlagOn) {
     try {
-      prior = await findExistingResume(dbHandle, args.userId)
+      prior = await findExistingResume(dbHandle, userId)
     } catch (err) {
       log("pa.cv_overwrite.lookup_error", {
-        userId: args.userId,
+        userId: userId,
         error: err instanceof Error ? err.message : String(err),
       })
       prior = null
@@ -1930,7 +2038,7 @@ export async function ingestCv(
     // iter34 sprint B.9 — sharedTopSkills (computed above) reused so the
     // staged + promoted rows match the legacy direct-write field set.
     const stagedDoc: Record<string, unknown> = {
-      userId: args.userId,
+      userId: userId,
       candidateProfile: parsed.candidateProfile,
       experiences: parsed.experiences,
       education: parsed.education,
@@ -1983,7 +2091,7 @@ export async function ingestCv(
       await enqueueCvOverwritePending(dbHandle, newResumeId, {
         newResumeId,
         previousResumeId: prior.id,
-        userId: args.userId,
+        userId: userId,
         expireAt,
         createdAt: ts,
         parsedDoc: stagedDoc,
@@ -1996,7 +2104,7 @@ export async function ingestCv(
       log(isDup ? "pa.cv_overwrite.pending_idempotent_skip" : "pa.cv_overwrite.error", {
         stage: "pending",
         error: msg,
-        userId: args.userId,
+        userId: userId,
         newResumeId,
       })
       if (!isDup) {
@@ -2010,10 +2118,10 @@ export async function ingestCv(
       const promptDocId = `${CV_OVERWRITE_OUTBOUND_PREFIX}${newResumeId}`
       let userForPrompt: CvFollowupUser | null = null
       try {
-        userForPrompt = await lookupUserForFollowup(dbHandle, args.userId)
+        userForPrompt = await lookupUserForFollowup(dbHandle, userId)
       } catch (err) {
         log("pa.cv_overwrite.user_lookup_error", {
-          userId: args.userId,
+          userId: userId,
           error: err instanceof Error ? err.message : String(err),
         })
       }
@@ -2021,7 +2129,7 @@ export async function ingestCv(
         try {
           await enqueueOutboundFollowup(dbHandle, promptDocId, {
             id: promptDocId,
-            userId: args.userId,
+            userId: userId,
             toE164: userForPrompt.toE164,
             body: CV_OVERWRITE_PROMPT_BODY,
             status: "pending",
@@ -2039,7 +2147,7 @@ export async function ingestCv(
             },
           })
           log("pa.cv_overwrite.prompt_enqueued", {
-            userId: args.userId,
+            userId: userId,
             newResumeId,
             previousResumeId: prior.id,
             docId: promptDocId,
@@ -2052,7 +2160,7 @@ export async function ingestCv(
             {
               stage: "prompt_enqueue",
               error: msg,
-              userId: args.userId,
+              userId: userId,
               docId: promptDocId,
             }
           )
@@ -2060,14 +2168,14 @@ export async function ingestCv(
       } else {
         log("pa.cv_overwrite.prompt_skipped", {
           reason: "no_phone",
-          userId: args.userId,
+          userId: userId,
           newResumeId,
         })
       }
       // H3 short-circuits — DO NOT run E1/E2 side effects on a staged CV;
       // those run after promote. Caller gets the would-be resumeId so
       // logs are still traceable, but ok=true reflects the staged state.
-      return { ok: true, resumeId: newResumeId }
+      return { ok: true, resumeId: newResumeId, userId }
     }
     // Fell through (pendingWritten === false AND h3FlagOn flipped to false)
     // → continue to legacy write below. Variables `prior` / `newResumeId`
@@ -2085,7 +2193,7 @@ export async function ingestCv(
     // iter34 sprint B.9 — sharedTopSkills computed once above; reused here
     // so the legacy + H3 staged rows carry the same field set.
     const baseDoc: Record<string, unknown> = {
-      userId: args.userId,
+      userId: userId,
       candidateProfile: parsed.candidateProfile,
       experiences: parsed.experiences,
       education: parsed.education,
@@ -2159,7 +2267,7 @@ export async function ingestCv(
     const ref = await dbHandle.collection(PARSED_RESUMES_COLLECTION).add(baseDoc)
     resumeId = ref.id
     log("pa.cv_ingest.ok", {
-      userId: args.userId,
+      userId: userId,
       resumeId: ref.id,
       parserVersion: v2Output ? "v2" : "v1",
     })
@@ -2183,7 +2291,7 @@ export async function ingestCv(
         : v2Output?.parsed.relevantIndustry
     await runUserTagsMerge({
       db: dbHandle,
-      userId: args.userId,
+      userId: userId,
       parsed,
       workHistory: v2Output?.parsed.workHistory,
       embedding: embedResult,
@@ -2208,7 +2316,7 @@ export async function ingestCv(
       try {
         const normalized = normalizeCvPhoneToE164(parsedPhoneRaw)
         if (normalized) {
-          const userRef = dbHandle.collection(PA_USERS_COLLECTION).doc(args.userId)
+          const userRef = dbHandle.collection(PA_USERS_COLLECTION).doc(userId)
           const userSnap = await userRef.get()
           const existingPhone = userSnap.data()?.phoneE164
           if (
@@ -2225,21 +2333,21 @@ export async function ingestCv(
               { merge: true }
             )
             log("pa.cv_ingest.phone_e164_written", {
-              userId: args.userId,
+              userId: userId,
               source: "cv_parsed",
               raw_len: parsedPhoneRaw.length,
             })
           }
         } else {
           log("pa.cv_ingest.phone_e164_unparseable", {
-            userId: args.userId,
+            userId: userId,
             raw_preview: parsedPhoneRaw.slice(0, 20),
           })
         }
       } catch (err) {
         log("pa.cv_ingest.phone_e164_write_failed", {
           error: err instanceof Error ? err.message : String(err),
-          userId: args.userId,
+          userId: userId,
         })
       }
     }
@@ -2247,7 +2355,7 @@ export async function ingestCv(
     log("pa.cv_ingest.error", {
       stage: "firestore",
       error: err instanceof Error ? err.message : String(err),
-      userId: args.userId,
+      userId: userId,
     })
     return { ok: false, reason: "firestore_write_failed" }
   }
@@ -2256,10 +2364,10 @@ export async function ingestCv(
   // here is logged + tolerated (off-by-one acceptable per detail-plan §5.3).
   if (!skipLimits) {
     try {
-      await writeQuotaIncrement(dbHandle, args.userId, nowIso())
+      await writeQuotaIncrement(dbHandle, userId, nowIso())
     } catch (err) {
       log("pa.cv_ingest.quota_increment_error", {
-        userId: args.userId,
+        userId: userId,
         error: err instanceof Error ? err.message : String(err),
       })
     }
@@ -2269,19 +2377,19 @@ export async function ingestCv(
   //    all NEVER throw). We resolve the user once + share the read.
   let user: CvFollowupUser | null = null
   try {
-    user = await lookupUserForFollowup(dbHandle, args.userId)
+    user = await lookupUserForFollowup(dbHandle, userId)
   } catch (err) {
     log("pa.cv_followup.error", {
       stage: "user_lookup",
       error: err instanceof Error ? err.message : String(err),
-      userId: args.userId,
+      userId: userId,
     })
   }
   if (user) {
     const branches: Array<Promise<unknown>> = [
       runFindingsFollowup({
         db: dbHandle,
-        userId: args.userId,
+        userId: userId,
         resumeId,
         parsed,
         user,
@@ -2291,7 +2399,7 @@ export async function ingestCv(
         log,
       }),
       runMem0Write({
-        userId: args.userId,
+        userId: userId,
         resumeId,
         parsed,
         user,
@@ -2302,7 +2410,7 @@ export async function ingestCv(
       // Surfaces parsed CV understanding to user for confirmation. Reply
       // analysis is deferred to Phase 54's onboarding-chat hooks.
       enqueueCvConfirmFn(dbHandle, {
-        userId: args.userId,
+        userId: userId,
         resumeId,
         parsed: {
           // v2 fields (preferred when v2 ran)
@@ -2324,7 +2432,7 @@ export async function ingestCv(
         // enqueueCvConfirmFn is contracted not to throw, but the test seam
         // may. Defensive catch keeps Promise.allSettled clean.
         log("pa.cv_confirm.unexpected_throw", {
-          userId: args.userId,
+          userId: userId,
           resumeId,
           error: err instanceof Error ? err.message : String(err),
         })
@@ -2337,8 +2445,8 @@ export async function ingestCv(
       branches.push(
         runQaBankToMem0({
           db: dbHandle,
-          userId: args.userId,
-          partitionKey: user.mem0UserId ?? args.userId,
+          userId: userId,
+          partitionKey: user.mem0UserId ?? userId,
           resumeId,
           inferredAnswers: v2Output.parsed.inferredAnswers,
           nowIso,
@@ -2361,16 +2469,16 @@ export async function ingestCv(
     try {
       const phone = user.toE164
       if (phone) {
-        const eventId = `cv-parsed-trigger-${args.userId}-${resumeId}`
+        const eventId = `cv-parsed-trigger-${userId}-${resumeId}`
         await dbHandle.collection("pa-inbound-events").doc(eventId).set({
           id: eventId,
           status: "pending",
-          idempotencyKey: `cv-parsed:${args.userId}:${resumeId}`,
+          idempotencyKey: `cv-parsed:${userId}:${resumeId}`,
           createdAt: nowIso(),
           attemptCount: 0,
           maxAttempts: 1,
           channel: "imessage",
-          userId: args.userId,
+          userId: userId,
           rawPayload: {
             kind: "imessage",
             source: "cv-parsed-synthetic",
@@ -2389,23 +2497,23 @@ export async function ingestCv(
           },
         }, { merge: false })
         log("pa.cv_followup.synthetic_trigger_written", {
-          userId: args.userId,
+          userId: userId,
           resumeId,
           eventId,
         })
       }
     } catch (err) {
       log("pa.cv_followup.synthetic_trigger_failed", {
-        userId: args.userId,
+        userId: userId,
         resumeId,
         error: err instanceof Error ? err.message : String(err),
       })
     }
   } else {
-    log("pa.cv_followup.skipped", { reason: "no_user_record", userId: args.userId })
+    log("pa.cv_followup.skipped", { reason: "no_user_record", userId: userId })
   }
 
-  return { ok: true, resumeId }
+  return { ok: true, resumeId, userId }
 }
 
 // ---------------------------------------------------------------------------

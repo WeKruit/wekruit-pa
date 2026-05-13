@@ -1,4 +1,6 @@
 import { initializeApp, type FirebaseApp } from "firebase/app"
+import { getAuth } from "firebase/auth"
+import { getFunctions } from "firebase/functions"
 import { getFirestore } from "firebase/firestore"
 
 const cfg = {
@@ -22,3 +24,5 @@ export function getFirebaseApp(): FirebaseApp {
 }
 
 export const db = () => getFirestore(getFirebaseApp())
+export const auth = () => getAuth(getFirebaseApp())
+export const functions = () => getFunctions(getFirebaseApp(), "us-central1")

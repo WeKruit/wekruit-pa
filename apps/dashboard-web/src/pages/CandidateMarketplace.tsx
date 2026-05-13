@@ -46,13 +46,7 @@ export function CandidateMarketplace({
       try {
         const results = await Promise.all(
           MARKETPLACE_TABLES.map(async (table) => {
-            const snap = await getDocs(
-              query(collection(db(), table.collection), where("candidateId", "==", candidateId), limit(100))
-            )
-            const data = sortRowsByTime(
-              snap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }) as MarketplaceRow),
-              table.timeFields
-            )
+            const data = await readCandidateMarketplaceRows(table, candidateId)
             return [table.key, data] as const
           })
         )
@@ -85,6 +79,9 @@ export function CandidateMarketplace({
           <Metric label="Passed" value={String(summary.passedJobs)} />
           <Metric label="Active" value={String(summary.activeJobs)} />
           <Metric label="Retained" value={String(summary.notPassedJobs)} />
+          <Metric label="Auth mappings" value={String(summary.authMappings)} />
+          <Metric label="Identity events" value={String(summary.identityEvents)} />
+          <Metric label="Open conflicts" value={String(summary.openIdentityConflicts)} />
         </div>
         <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", marginTop: 14 }}>
           <ProfileFact label="mem0 user" value={profile.mem0UserId} />
@@ -102,6 +99,24 @@ export function CandidateMarketplace({
         </Panel>
       ) : (
         <>
+          <MarketplaceTable
+            title="Candidate auth mappings"
+            rows={rows.authMappings}
+            columns={authMappingColumns}
+            tableKey="authMappings"
+          />
+          <MarketplaceTable
+            title="Identity events"
+            rows={rows.identityEvents}
+            columns={identityEventColumns}
+            tableKey="identityEvents"
+          />
+          <MarketplaceTable
+            title="Identity conflicts"
+            rows={rows.identityConflicts}
+            columns={identityConflictColumns}
+            tableKey="identityConflicts"
+          />
           <MarketplaceTable
             title="Candidate job states"
             rows={rows.jobStates}
@@ -123,6 +138,32 @@ export function CandidateMarketplace({
         </>
       )}
     </>
+  )
+}
+
+async function readCandidateMarketplaceRows(
+  table: (typeof MARKETPLACE_TABLES)[number],
+  candidateId: string
+): Promise<MarketplaceRow[]> {
+  if (table.key === "identityConflicts") {
+    const docsById = new Map<string, MarketplaceRow>()
+    for (const field of ["primaryCandidateId", "competingCandidateId"]) {
+      const snap = await getDocs(
+        query(collection(db(), table.collection), where(field, "==", candidateId), limit(100))
+      )
+      for (const docSnap of snap.docs) {
+        docsById.set(docSnap.id, { id: docSnap.id, ...docSnap.data() } as MarketplaceRow)
+      }
+    }
+    return sortRowsByTime([...docsById.values()], table.timeFields)
+  }
+
+  const snap = await getDocs(
+    query(collection(db(), table.collection), where("candidateId", "==", candidateId), limit(100))
+  )
+  return sortRowsByTime(
+    snap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }) as MarketplaceRow),
+    table.timeFields
   )
 }
 
@@ -216,6 +257,33 @@ const handleColumns: DataTableColumn<MarketplaceRow>[] = [
   { key: "verifiedAt", header: "Verified", render: valueCell("verifiedAt") },
   { key: "deliverable", header: "Deliverable", render: (row) => compactValue(row.deliverable) },
   { key: "createdAt", header: "Created", render: valueCell("createdAt") },
+]
+
+const authMappingColumns: DataTableColumn<MarketplaceRow>[] = [
+  { key: "id", header: "Firebase uid", render: valueCell("id") },
+  { key: "candidateId", header: "Candidate", render: valueCell("candidateId") },
+  { key: "emailNormalized", header: "Email", render: valueCell("emailNormalized") },
+  { key: "provider", header: "Provider", render: statusCell("provider") },
+  { key: "claimedAt", header: "Claimed", render: valueCell("claimedAt") },
+  { key: "updatedAt", header: "Updated", render: valueCell("updatedAt") },
+]
+
+const identityEventColumns: DataTableColumn<MarketplaceRow>[] = [
+  { key: "occurredAt", header: "Occurred", render: valueCell("occurredAt") },
+  { key: "type", header: "Type", render: statusCell("type") },
+  { key: "actor", header: "Actor", render: statusCell("actor") },
+  { key: "handleKind", header: "Handle", render: statusCell("handleKind") },
+  { key: "eventId", header: "Event", render: (row) => compactValue(row.eventId ?? row.id) },
+  { key: "summary", header: "Summary", render: (row) => compactValue(row.summary ?? row.reason ?? row.evidence, 320) },
+]
+
+const identityConflictColumns: DataTableColumn<MarketplaceRow>[] = [
+  { key: "createdAt", header: "Created", render: valueCell("createdAt") },
+  { key: "type", header: "Type", render: statusCell("type") },
+  { key: "status", header: "Status", render: statusCell("status") },
+  { key: "severity", header: "Severity", render: statusCell("severity") },
+  { key: "conflictId", header: "Conflict", render: (row) => compactValue(row.conflictId ?? row.id) },
+  { key: "summary", header: "Summary", render: (row) => compactValue(row.summary ?? row.reason ?? row.payloadRedacted, 360) },
 ]
 
 const resumeColumns: DataTableColumn<MarketplaceRow>[] = [

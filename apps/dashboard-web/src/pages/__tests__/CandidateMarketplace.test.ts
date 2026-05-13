@@ -44,6 +44,13 @@ test("summarizeMarketplace keeps passed and not-passed job state counts separate
   rows.employerSnapshots = [{ id: "snap-1" }]
   rows.resumes = [{ id: "resume-1" }]
   rows.handles = [{ id: "handle-1" }, { id: "handle-2" }]
+  rows.authMappings = [{ id: "firebase-uid", candidateId: "candidate-1" }]
+  rows.identityEvents = [{ id: "event-1", type: "candidate_claimed" }]
+  rows.identityConflicts = [
+    { id: "conflict-open", status: "open" },
+    { id: "conflict-resolved", status: "resolved" },
+    { id: "conflict-closed", resolvedAt: "2026-05-13T00:00:00.000Z" },
+  ]
 
   assert.deepEqual(summarizeMarketplace(rows), {
     totalJobStates: 4,
@@ -53,5 +60,8 @@ test("summarizeMarketplace keeps passed and not-passed job state counts separate
     employerVisibleProfiles: 1,
     resumeArtifacts: 1,
     handles: 2,
+    authMappings: 1,
+    identityEvents: 1,
+    openIdentityConflicts: 1,
   })
 })

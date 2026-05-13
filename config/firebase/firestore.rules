@@ -16,6 +16,14 @@ service cloud.firestore {
           || request.auth.token.email.lower() == "indolencorlol@gmail.com"
         );
     }
+    function hasCandidateAuthMapping() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/pa-candidate-auth/$(request.auth.uid));
+    }
+    function isMappedCandidate(candidateId) {
+      return hasCandidateAuthMapping()
+        && get(/databases/$(database)/documents/pa-candidate-auth/$(request.auth.uid)).data.candidateId == candidateId;
+    }
 
     // ─── Core entity collections ─────────────────────────────────────
     match /pa-users/{id} {
@@ -342,6 +350,27 @@ service cloud.firestore {
     match /pa-correction-events/{id} {
       allow read, create: if isPaOperator();
       allow update, delete: if false;
+    }
+
+    // ─── v2.0 S2 — candidate claim identity layer ───────────────────
+    // Raw pa-users remains operator-only above. Candidates may read only their
+    // own auth mapping and the redacted self-profile selected by that mapping.
+    // Identity internals stay operator-only; server writes via Admin SDK.
+    match /pa-candidate-auth/{firebaseUid} {
+      allow read: if isPaOperator() || (isSignedIn() && firebaseUid == request.auth.uid);
+      allow write: if false;
+    }
+    match /pa-candidate-self-profiles/{candidateId} {
+      allow read: if isPaOperator() || isMappedCandidate(candidateId);
+      allow write: if false;
+    }
+    match /pa-candidate-identity-events/{id} {
+      allow read: if isPaOperator();
+      allow write: if false;
+    }
+    match /pa-candidate-identity-conflicts/{id} {
+      allow read: if isPaOperator();
+      allow write: if false;
     }
 
     // ─── Default deny ────────────────────────────────────────────────

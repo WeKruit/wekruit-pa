@@ -203,6 +203,7 @@ function InlineCvUpload({ jobId, requestedUserId, onUploaded }: InlineCvUploadPr
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           tempUserId: requestedUserId,
+          browserUid: requestedUserId,
           resumeBase64: b64,
           resumeName: file.name,
           jobIdContext: jobId,

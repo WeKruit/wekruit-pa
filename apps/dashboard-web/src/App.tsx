@@ -43,6 +43,7 @@ import TagSnapshots from "./pages/TagSnapshots.js"
 import PrescreenSessionsList from "./pages/PrescreenSessionsList.js"
 // v1.9 Phase 86 — ATS inbound dashboard.
 import AtsInbound from "./pages/AtsInbound.js"
+import { IdentityConflicts } from "./pages/IdentityConflicts.js"
 // v1.9 Phase 87 — public candidate-facing job page + CV upload.
 import PublicJob from "./pages/PublicJob.js"
 import PublicJobCv from "./pages/PublicJobCv.js"
@@ -175,6 +176,7 @@ export default function App() {
         <NavSection id="match" label="Match" defaultOpen={false}>
           <NavLink to="/admin/match-debug">Match Debug</NavLink>
           <NavLink to="/match/candidates">Candidates</NavLink>
+          <NavLink to="/admin/identity-conflicts">Identity Conflicts</NavLink>
         </NavSection>
         <NavSection id="eval" label="Eval" defaultOpen={false}>
           <NavLink to="/eval/voice-review">Voice Review</NavLink>
@@ -244,6 +246,7 @@ export default function App() {
               CF gates on paReverseMatchEnabled flag (default OFF). */}
           <Route path="/match/candidates" element={<MatchCandidates />} />
           <Route path="/admin/candidates/:candidateId/profile" element={<CandidateProfile />} />
+          <Route path="/admin/identity-conflicts" element={<IdentityConflicts />} />
           {/* iter30/WS8 Wave 2 — biz-demo match admin surface. */}
           <Route path="/match/weights" element={<MatchWeights />} />
           <Route path="/match/weights/test" element={<MatchWeightsTest />} />

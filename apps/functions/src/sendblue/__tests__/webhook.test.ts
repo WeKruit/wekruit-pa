@@ -388,7 +388,7 @@ describe("handleSendblueWebhook", () => {
     }
     const ingestCvMock = async (input: { userId: string; mediaUrl: string; sessionId?: string }) => {
       ingestCalls.push({ userId: input.userId, mediaUrl: input.mediaUrl, sessionId: input.sessionId })
-      return { ok: true as const, resumeId: "rsm_test_1" }
+      return { ok: true as const, resumeId: "rsm_test_1", userId: input.userId }
     }
     const lookupMock = async (_db: unknown, phone: string) => {
       return phone === "+15551234567" ? "user_adam_test" : null

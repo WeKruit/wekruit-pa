@@ -48,6 +48,14 @@ export const PA_COLLECTIONS = {
   betaParticipants: "pa-beta-participants",
   /** v2.0 S1 — global candidate linked handles; candidateId == pa-users doc id. */
   candidateHandles: "pa-candidate-handles",
+  /** v2.0 S2 — Firebase Auth uid to canonical candidate id mapping. */
+  candidateAuth: "pa-candidate-auth",
+  /** v2.0 S2 — redacted candidate-facing profile projection. */
+  candidateSelfProfiles: "pa-candidate-self-profiles",
+  /** v2.0 S2 — append-only candidate identity resolution events. */
+  candidateIdentityEvents: "pa-candidate-identity-events",
+  /** v2.0 S2 — deterministic identity conflicts for operator review. */
+  candidateIdentityConflicts: "pa-candidate-identity-conflicts",
   /** v2.0 S1 — canonical resume artifact pointers and parse status. */
   resumeArtifacts: "pa-resume-artifacts",
   /** v2.0 S1 — per-candidate-per-job opportunity state. */

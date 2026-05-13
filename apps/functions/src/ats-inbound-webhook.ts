@@ -96,7 +96,9 @@ export const paAtsInboundWebhook: HttpsFunction = onRequest(
       resumeUrl?: string
       resumeBase64?: string
       source: string
-    }): Promise<void> => {
+      employerEmailHint?: string
+      atsApplicantId?: string
+    }): Promise<{ ok: boolean; reason?: string; userId?: string }> => {
       // Lazy import to avoid pulling cv-ingest into the cold-start path.
       try {
         // v1.9 hotfix 2026-05-12 — default to the deployed paPublicCvIngest CF
@@ -106,23 +108,35 @@ export const paAtsInboundWebhook: HttpsFunction = onRequest(
           "https://us-central1-wekruit-5f89b.cloudfunctions.net/paPublicCvIngest"
         if (!cvIngestUrl) {
           log("no_cv_ingest_url", { userId: args.userId })
-          return
+          return { ok: false, reason: "cv_ingest_url_missing" }
         }
-        await fetch(cvIngestUrl, {
+        const response = await fetch(cvIngestUrl, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             userId: args.userId,
+            atsApplicantId: args.atsApplicantId,
+            employerEmailHint: args.employerEmailHint,
             resumeUrl: args.resumeUrl,
             resumeBase64: args.resumeBase64,
             source: args.source,
           }),
         })
+        const json = (await response.json().catch(() => ({}))) as {
+          ok?: boolean
+          reason?: string
+          userId?: string
+        }
+        if (!response.ok || json.ok === false) {
+          return { ok: false, reason: json.reason ?? `cv_ingest_http_${response.status}` }
+        }
+        return { ok: true, userId: json.userId }
       } catch (err) {
         log("cv_ingest_fetch_failed", {
           userId: args.userId,
           error: err instanceof Error ? err.message : String(err),
         })
+        return { ok: false, reason: "cv_ingest_fetch_failed" }
       }
     }
 
