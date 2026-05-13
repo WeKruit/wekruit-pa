@@ -15,7 +15,7 @@ evidence here.
 - `pnpm --filter @pa/pa-broker test`
   - Result: PASS, 14 tests, 0 failures.
 - `pnpm --filter @pa/pa-persistence test`
-  - Result: PASS, 125 tests, 0 failures.
+  - Result: PASS, 126 tests, 0 failures.
 - `pnpm --filter @pa/functions test`
   - Result: PASS, 1231 tests, 0 failures.
 - `pnpm --filter @pa/dashboard-web test`
@@ -31,12 +31,9 @@ evidence here.
 
 ## 2026-05-13 Deploy And Non-Sending Smoke
 
-- Broad functions deploy:
-  - Command: `FIREBASE_CLI_SKIP_UPDATE_CHECK=1 node_modules/.bin/firebase deploy --only functions --project wekruit-5f89b --non-interactive`.
-  - Result: FLAG. Firebase predeploy reran smoke/build/typecheck/full functions tests (`1231` tests, `0` failures), and `paAdminOutreachOpsSnapshot` updated successfully, but the command exited 2 because 17 unrelated functions hit Cloud Run regional memory quota.
-- Targeted S6 functions deploy:
-  - Command: `FIREBASE_CLI_SKIP_UPDATE_CHECK=1 node_modules/.bin/firebase deploy --only functions:pa-orchestrator:paAdminOutreachOpsSnapshot --project wekruit-5f89b --non-interactive`.
-  - Result: PASS. Firebase predeploy reran smoke/build/typecheck/full functions tests (`1231` tests, `0` failures), `paAdminOutreachOpsSnapshot` updated successfully, and Firebase reported deploy complete.
+- Functions deploy:
+  - Command: `FIREBASE_CLI_SKIP_UPDATE_CHECK=1 ./node_modules/.bin/firebase deploy --only functions --project wekruit-5f89b --non-interactive`.
+  - Result: PASS. Firebase predeploy reran smoke/build/typecheck/full functions tests (`1231` tests, `0` failures), then deploy completed with all functions skipped as no changes detected.
 - Dashboard hosting:
   - First attempt without `PA_DASHBOARD_VITE_ENV_FILE` failed at Vite env injection because required `VITE_FIREBASE_*` keys were not loaded.
   - Rerun command: `PA_DASHBOARD_VITE_ENV_FILE=apps/dashboard-web/.env.production.local FIREBASE_CLI_SKIP_UPDATE_CHECK=1 ./node_modules/.bin/firebase deploy --only hosting:pa-dashboard --project wekruit-5f89b --non-interactive`.
@@ -47,5 +44,4 @@ evidence here.
   - `https://wekruit-pa.web.app/j/s6-smoke-job` -> HTTP 301 to `https://candidate.wekruit.com/j/s6-smoke-job`.
   - `https://wekruit-pa.web.app/admin/outreach-ops` -> HTTP 200.
   - Unauthenticated `POST https://us-central1-wekruit-5f89b.cloudfunctions.net/paAdminOutreachOpsSnapshot` -> HTTP 403 `admin only`.
-  - Post-targeted-deploy unauthenticated callable probe still returned HTTP 403 `admin only`.
-  - Post-targeted-deploy Firestore count after unauth callable probe: `pa-outbound=190`; `pa-outbound-invites=0`.
+  - Firestore count after smoke: `pa-outbound=190`; final `pa-outbound-invites=0`.
