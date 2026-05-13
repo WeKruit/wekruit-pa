@@ -224,6 +224,7 @@ S1 defines correction and feedback event schemas but does not require a full HIT
 
 ## Outcomes
 
-S1 marketplace data foundation is implemented and locally accepted. It is ready
-to package into a branch/PR; deploy is still pending landing because this sprint
-changes dashboard code plus Firestore rules/indexes.
+S1 marketplace data foundation landed in PR #24 as merge commit `c153c9a` and
+was deployed to `wekruit-5f89b`. Deployment scope was
+`hosting:pa-dashboard,firestore:rules,firestore:indexes`; post-deploy curl and
+public-deny smoke checks passed.

@@ -1,6 +1,6 @@
 # S1 Summary
 
-**Status:** Locally accepted; not landed/deployed yet.
+**Status:** Landed and deployed.
 **Date:** 2026-05-13.
 
 ## Outcome
@@ -43,6 +43,12 @@ Passed:
   redirect, and invalid public CV ingest request.
 - Local Browser smoke for `/admin/candidates/test-candidate/profile`; reached
   the existing operator sign-in gate at the admin URL.
+- PR #24 CI: CodeQL, analysis, v1.5 QA, and `typecheck + unit tests` passed.
+- Deploy: `hosting:pa-dashboard,firestore:rules,firestore:indexes` deployed to
+  `wekruit-5f89b` with repo-pinned Firebase CLI 15.3.1.
+- Post-deploy smoke: admin `/admin` 200, admin `/j/*` 301 to candidate domain,
+  candidate job route 200, CV ingest validation 400 with expected body,
+  unauthenticated `pa-candidate-handles` read denied with 403.
 
 ## Files Changed
 
@@ -75,12 +81,10 @@ Passed:
 
 ## Known Gaps
 
-- Not landed or deployed yet. Because S1 changes dashboard code and Firestore
-  rules/indexes, deploy should happen directly after landing per repo contract.
 - Browser smoke was unauthenticated and verified the protected route/auth wall.
   The inspector's data rendering is covered by TypeScript, build, and pure
   dashboard tests, not by a signed-in visual smoke with live Firestore data.
 
 ## Next Sprint Trigger
 
-S2 can begin only after S1 lands on `main` and the marketplace data foundation is accepted.
+S2 can begin from updated `main` after merge commit `c153c9a`.

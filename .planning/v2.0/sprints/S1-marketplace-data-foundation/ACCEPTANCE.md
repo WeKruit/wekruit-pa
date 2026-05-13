@@ -22,6 +22,13 @@ This file records S1 verification.
 | Admin redirect | `curl -sS -i -I https://wekruit-pa.web.app/j/hs-11005382-invoko-product-designer` | HTTP 301 to candidate domain | `HTTP/2 301`, `location: https://candidate.wekruit.com/j/hs-11005382-invoko-product-designer` | PASS |
 | Public CV ingest validation | `curl -sS -i -X POST https://us-central1-wekruit-5f89b.cloudfunctions.net/paPublicCvIngest -H content-type:application/json -d {}` | `HTTP/2 400` and `{"ok":false,"reason":"missing_userId_or_tempUserId"}` | exact expected status/body | PASS |
 | Local dashboard route smoke | Browser to `http://127.0.0.1:5175/admin/candidates/test-candidate/profile` | protected route starts without routing to candidate/public surface | reached `Operator sign-in` auth gate at same admin URL | PASS |
+| PR CI | GitHub PR #24 checks | all required checks pass | CodeQL, analysis, v1.5 QA, and `typecheck + unit tests` passed | PASS |
+| Deploy | `firebase deploy --only hosting:pa-dashboard,firestore:rules,firestore:indexes --project wekruit-5f89b --non-interactive` using repo-pinned Firebase CLI 15.3.1 | dashboard hosting plus Firestore rules/indexes deploy | deploy completed; hosting URL `https://wekruit-pa.web.app` | PASS |
+| Post-deploy admin hosting | `curl -sS -i -I https://wekruit-pa.web.app/admin` | HTTP 200 | `HTTP/2 200` | PASS |
+| Post-deploy admin redirect | `curl -sS -i -I https://wekruit-pa.web.app/j/hs-11005382-invoko-product-designer` | HTTP 301 to candidate domain | `HTTP/2 301`, `location: https://candidate.wekruit.com/j/hs-11005382-invoko-product-designer` | PASS |
+| Post-deploy candidate route | `curl -sS -i -I https://candidate.wekruit.com/j/hs-11005382-invoko-product-designer` | HTTP 200 | `HTTP/2 200` | PASS |
+| Post-deploy CV ingest validation | `curl -sS -i -X POST https://us-central1-wekruit-5f89b.cloudfunctions.net/paPublicCvIngest -H content-type:application/json -d {}` | `HTTP/2 400` and `{"ok":false,"reason":"missing_userId_or_tempUserId"}` | exact expected status/body | PASS |
+| Public-deny marketplace collection | unauthenticated Firestore REST read of `pa-candidate-handles/public_probe` | permission denied | `HTTP/2 403`, `PERMISSION_DENIED` | PASS |
 
 ## Hard Fail Conditions
 
@@ -51,3 +58,7 @@ This file records S1 verification.
   dependency and builds `@pa/job-rec` before tests. Targeted dashboard tests
   pass locally after that fix, and the CI-equivalent
   `NODE_ENV=test PA_DASHBOARD_ENV=test pnpm -r test` passes locally.
+- S1 landed in PR #24 as merge commit `c153c9a` and was deployed directly per
+  repo contract. Deployment scope was limited to dashboard hosting and
+  Firestore rules/indexes because no functions or candidate-hosting code
+  changed in S1.
