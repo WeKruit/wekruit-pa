@@ -2004,3 +2004,33 @@ export const paMemoryCompactionScheduled = onSchedule(
     logger.info("paMemoryCompactionScheduled tick", result)
   }
 )
+
+/**
+ * V2 External Candidate Supply Intake — admin callables + Instantly webhook.
+ *
+ * See .planning/external-supply-v1/PLAN.md for the full V1 spec.
+ * Live outreach gated by EXTERNAL_SUPPLY_LIVE_OUTREACH_ENABLED=true +
+ * INSTANTLY_API_KEY Firebase Secret; in their absence the sync callable
+ * silently downgrades to dry-run.
+ */
+export {
+  paExternalSupplyCreateBatchUploadUrl,
+  paExternalSupplyCreateBatch,
+} from "./external-supply/import.js"
+export { paExternalSupplyResolveBatchIdentity } from "./external-supply/resolve-identity.js"
+export { paExternalSupplyRunEvaluation } from "./external-supply/evaluate.js"
+export {
+  paExternalSupplyGenerateAgentResearchPrompt,
+  paExternalSupplyImportAgentResearchResult,
+  paExternalSupplyApproveAgentResearchFinding,
+} from "./external-supply/agent-task.js"
+export {
+  paExternalSupplyDraftOutreachPlan,
+  paExternalSupplyApproveOutreachPlan,
+  paExternalSupplyRejectOutreachPlan,
+  paExternalSupplyAssignManualLinkedInTask,
+  paExternalSupplyMarkManualLinkedInTaskStatus,
+} from "./external-supply/outreach.js"
+export { paExternalSupplySyncPlanToInstantly } from "./external-supply/instantly-sync.js"
+export { paExternalSupplyInstantlyWebhook } from "./external-supply/instantly-webhook.js"
+export { paExternalSupplyGetConfig } from "./external-supply/config.js"

@@ -773,10 +773,11 @@ Hard fails (cause sprint to halt and flag Adam):
 - [x] 2026-05-13 — EXECUTOR-PLANS.md skeleton in place.
 - [x] 2026-05-13 — AGENT_PLANs collected from all 8 executors.
 - [x] 2026-05-13 — Integration note filled in §9.1; lead resolutions captured in EXECUTOR-PLANS.md.
-- [ ] Wave A green.
-- [ ] Waves B–C green.
-- [ ] Wave D green.
-- [ ] Wave E green; acceptance ledger filled.
+- [x] 2026-05-13 — Wave A green (commits `7302587`, `8816ecc`, `ad75bcc`).
+- [x] 2026-05-13 — Waves B + C green (`9dc30b7`, `5627019`, `b07b10a`, `02c158b`, `a74a5f1`).
+- [x] 2026-05-13 — Wave D green (`feb3d94`).
+- [x] 2026-05-13 — Wave E green; acceptance ledger filled (`8866501`); 23 pass / 1 known-gap (manual dashboard click-through deferred to post-deploy smoke).
+- [x] 2026-05-13 — Lead final integration: `apps/functions/src/index.ts` re-exports all 15 external-supply callables + Instantly webhook.
 
 ## 17. Decision Log
 
