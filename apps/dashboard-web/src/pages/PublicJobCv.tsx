@@ -17,12 +17,27 @@ function uuidV4(): string {
     return (c === "x" ? r : (r & 0x3) | 0x8).toString(16)
   })
 }
-function getOrCreateRequestedUserId(jobId: string): string {
-  const key = `wkr_rid_${jobId}`
-  const existing = window.localStorage.getItem(key)
-  if (existing) return existing
+
+// v1.9 hotfix (2026-05-12) — share single global UID across all /j/:jobId
+// pages. Matches the same scheme in PublicJob.tsx.
+const GLOBAL_UID_KEY = "wkr_uid"
+const HAS_CV_KEY = "wkr_has_cv"
+
+function getOrCreateRequestedUserId(_jobId: string): string {
+  const existingGlobal = window.localStorage.getItem(GLOBAL_UID_KEY)
+  if (existingGlobal) return existingGlobal
+  for (let i = 0; i < window.localStorage.length; i++) {
+    const k = window.localStorage.key(i)
+    if (k && k.startsWith("wkr_rid_")) {
+      const v = window.localStorage.getItem(k)
+      if (v) {
+        window.localStorage.setItem(GLOBAL_UID_KEY, v)
+        return v
+      }
+    }
+  }
   const v = uuidV4()
-  window.localStorage.setItem(key, v)
+  window.localStorage.setItem(GLOBAL_UID_KEY, v)
   return v
 }
 
@@ -83,6 +98,13 @@ export default function PublicJobCv() {
         setStatus("err")
         setErrMsg(`Upload failed (${res.status})`)
         return
+      }
+      // v1.9 hotfix — stamp local "has CV" flag so subsequent /j/:jobId
+      // pages can skip the upload prompt for this returning user.
+      try {
+        window.localStorage.setItem(HAS_CV_KEY, "true")
+      } catch {
+        // localStorage disabled — non-fatal; upload still succeeded.
       }
       setStatus("ok")
     } catch (err) {

@@ -327,6 +327,28 @@ const OUTBOUND_COLLECTION = "pa-outbound"
 const FOLLOWUP_DOC_PREFIX = "out-cvfindings-"
 const PA_USERS_COLLECTION = "pa-users"
 
+/**
+ * v1.9 hotfix (Adam directive 2026-05-12) — normalize parsed CV phone to E.164.
+ *
+ * Strategy: digits-only. If 10 digits assume US/CA → prepend "+1". If 11
+ * digits starting with 1 → prepend "+". If 12-15 digits → prepend "+".
+ * Reject < 8 or > 15 digits.
+ *
+ * Adam's CV pattern "(424)-320-1960" → 4243201960 → 10 digits → "+14243201960".
+ *
+ * NOTE: libphonenumber-js is not in deps yet (orchestrator pii-confirm has the
+ * same TODO at packages/pa-orchestrator/src/prescreen/pii-confirm.ts:18-20). v2.0
+ * should swap to libphonenumber-js for international.
+ */
+function normalizeCvPhoneToE164(raw: string | null | undefined): string | null {
+  if (!raw || typeof raw !== "string") return null
+  const digits = raw.replace(/\D/g, "")
+  if (digits.length < 8 || digits.length > 15) return null
+  if (digits.length === 10) return `+1${digits}` // assume NANP
+  if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`
+  return `+${digits}`
+}
+
 // Stream H3 — second-CV overwrite UX
 export const CV_OVERWRITE_FLAG_KEY = "paCvOverwritePromptEnabled"
 export const CV_PENDING_COLLECTION = "pa-cv-pending"
@@ -2174,6 +2196,53 @@ export async function ingestCv(
       nowIso,
       log,
     })
+
+    // v1.9 hotfix (Adam directive 2026-05-12) — write phoneE164 from parsed CV
+    // phone to pa-users, only if not already set. Enables:
+    //   - ATS Pattern B (CV → match → outbound SMS) without prior inbound.
+    //   - Pattern A returning user where PII was not yet collected but CV is.
+    // Never overwrite an existing phone (PII-confirmed user-provided phone wins).
+    // Fail-open: never throws, never blocks parsedCandidateResumes write success.
+    const parsedPhoneRaw = v2Output?.parsed.phone ?? null
+    if (parsedPhoneRaw) {
+      try {
+        const normalized = normalizeCvPhoneToE164(parsedPhoneRaw)
+        if (normalized) {
+          const userRef = dbHandle.collection(PA_USERS_COLLECTION).doc(args.userId)
+          const userSnap = await userRef.get()
+          const existingPhone = userSnap.data()?.phoneE164
+          if (
+            !existingPhone ||
+            typeof existingPhone !== "string" ||
+            existingPhone.length === 0
+          ) {
+            await userRef.set(
+              {
+                phoneE164: normalized,
+                phoneE164Source: "cv_parsed",
+                updatedAt: nowIso,
+              },
+              { merge: true }
+            )
+            log("pa.cv_ingest.phone_e164_written", {
+              userId: args.userId,
+              source: "cv_parsed",
+              raw_len: parsedPhoneRaw.length,
+            })
+          }
+        } else {
+          log("pa.cv_ingest.phone_e164_unparseable", {
+            userId: args.userId,
+            raw_preview: parsedPhoneRaw.slice(0, 20),
+          })
+        }
+      } catch (err) {
+        log("pa.cv_ingest.phone_e164_write_failed", {
+          error: err instanceof Error ? err.message : String(err),
+          userId: args.userId,
+        })
+      }
+    }
   } catch (err) {
     log("pa.cv_ingest.error", {
       stage: "firestore",

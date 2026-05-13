@@ -61,13 +61,38 @@ function uuidV4(): string {
   })
 }
 
-function getOrCreateRequestedUserId(jobId: string): string {
-  const key = `wkr_rid_${jobId}`
-  const existing = window.localStorage.getItem(key)
-  if (existing) return existing
+/**
+ * v1.9 hotfix (Adam directive 2026-05-12) — single global per-browser tempUserId
+ * so a returning visitor across different /j/:jobId pages is recognized as
+ * the SAME pa-user. Replaces the per-job `wkr_rid_${jobId}` scheme.
+ *
+ * Backwards compat: if any legacy `wkr_rid_*` key exists, hoist the first
+ * one we find as the new `wkr_uid` so existing visitors keep their identity.
+ */
+const GLOBAL_UID_KEY = "wkr_uid"
+const HAS_CV_KEY = "wkr_has_cv"
+
+function getOrCreateRequestedUserId(_jobId: string): string {
+  const existingGlobal = window.localStorage.getItem(GLOBAL_UID_KEY)
+  if (existingGlobal) return existingGlobal
+  // Legacy migration — find any old wkr_rid_* key and hoist.
+  for (let i = 0; i < window.localStorage.length; i++) {
+    const k = window.localStorage.key(i)
+    if (k && k.startsWith("wkr_rid_")) {
+      const v = window.localStorage.getItem(k)
+      if (v) {
+        window.localStorage.setItem(GLOBAL_UID_KEY, v)
+        return v
+      }
+    }
+  }
   const v = uuidV4()
-  window.localStorage.setItem(key, v)
+  window.localStorage.setItem(GLOBAL_UID_KEY, v)
   return v
+}
+
+function hasCvOnFile(): boolean {
+  return window.localStorage.getItem(HAS_CV_KEY) === "true"
 }
 
 export default function PublicJob() {
@@ -225,11 +250,29 @@ export default function PublicJob() {
           </div>
         ) : null}
       </div>
-      <p style={{ marginTop: "1rem", fontSize: "0.85em", color: "#7a6f5d" }}>
-        Have a resume? You can{" "}
-        <a href={`/j/${jobId}/cv`}>upload it here</a>{" "}
-        before starting — it makes the screen faster.
-      </p>
+      {hasCvOnFile() ? (
+        <p
+          style={{
+            marginTop: "1rem",
+            fontSize: "0.85em",
+            color: "#16643b",
+            fontWeight: 700,
+            background: "#e8f5ec",
+            padding: "0.75rem 1rem",
+            borderRadius: 12,
+            border: "1px solid #c6e6ce",
+          }}
+        >
+          ✓ We have your resume on file — no need to re-upload. Just tap{" "}
+          <span style={{ whiteSpace: "nowrap" }}>"Open in iMessage"</span> above to start.
+        </p>
+      ) : (
+        <p style={{ marginTop: "1rem", fontSize: "0.85em", color: "#7a6f5d" }}>
+          Have a resume? You can{" "}
+          <a href={`/j/${jobId}/cv`}>upload it here</a>{" "}
+          before starting — it makes the screen faster.
+        </p>
+      )}
       {sendNumber ? (
         <p style={{ fontSize: "0.75em", color: "#a59781", marginTop: "2rem" }}>
           By starting, you agree to our{" "}
