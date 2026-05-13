@@ -17,7 +17,7 @@
     "pretypecheck": "npm run build --workspace=@wekruit/shared-tags && npm run build --workspace=@pa/core-types",
     "typecheck": "tsc --noEmit",
     "pretest": "npm run build --workspace=@wekruit/shared-tags && npm run build --workspace=@pa/core-types",
-    "test": "node --import tsx --test src/normalize.test.ts"
+    "test": "node --import tsx --test src/normalize.test.ts src/rubric.test.ts src/agent-prompt.test.ts src/agent-parse.test.ts src/outreach.test.ts src/instantly-client.test.ts"
   },
   "dependencies": {
     "@pa/core-types": "0.0.1",
