@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import type { AgentDef, ChatMessage } from "@pa/core-types"
+import { z } from "zod"
 import { buildAgentsInput } from "./openai-agents-adapter.js"
 
 const agent: AgentDef = {
@@ -316,20 +317,46 @@ test("buildHostedToolsForDefault returns [] when allowedConnectors is undefined"
   assert.deepEqual(tools, [])
 })
 
-// -------- Phase 13 T13.3: buildSdkTools handles wekruit-matching strict schema --------
+// -------- Phase 13 T13.3: buildSdkTools handles strict Zod object schemas --------
 //
 // Verification-only — no adapter edit. We confirm:
 //   1. The adapter wraps a Zod-object-parameter tool descriptor without
 //      losing the schema (parameters reach the SDK `tool()` factory as-is).
 //   2. The wrapped tool's execute closure forwards args and surfaces the
 //      runConnector return string back to the SDK.
-//   3. The new MatchingInputSchema's required/nullable shape conforms to
-//      Phase 10.5 hot-fix #4: every property is required at the JSON
-//      schema layer (Zod `.nullable()` keeps the key required; Zod
-//      `.optional()` removes it). We assert by introspecting Zod's
-//      `_def.shape()` and verifying no key is wrapped in `ZodOptional`.
+//   3. A matching-style schema's required/nullable shape conforms to Phase
+//      10.5 hot-fix #4: every property is required at the JSON schema layer
+//      (Zod `.nullable()` keeps the key required; Zod `.optional()` removes
+//      it). `@pa/pa-connectors` owns tests for the real wekruit-matching
+//      registry; agent-runtime only needs a local strict-schema fixture so it
+//      does not depend back on connector packages.
 
-import { connectorRegistry as t13Registry } from "@pa/pa-connectors"
+const t13MatchingInputSchema = z.object({
+  query: z.string().min(1),
+  filters: z
+    .object({
+      location: z.string().nullable(),
+      roleType: z.string().nullable(),
+      seniority: z.string().nullable(),
+    })
+    .nullable(),
+})
+
+const t13Def = {
+  name: "wekruit-matching",
+  version: "1",
+  description: "Find matching WeKruit jobs from a strict Zod schema fixture.",
+  inputSchema: t13MatchingInputSchema,
+}
+
+function zodTypeName(node: unknown): string | undefined {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const node_: any = node
+  const raw = node_?._def?.typeName ?? node_?._def?.type ?? node_?.constructor?.name
+  if (raw === "nullable") return "ZodNullable"
+  if (raw === "optional") return "ZodOptional"
+  return raw
+}
 
 test("buildSdkTools(13.3): wraps wekruit-matching with parameters and execute reaches the bridge", async () => {
   const { __forTesting: t13 } = await import("./openai-agents-adapter.js")
@@ -340,40 +367,37 @@ test("buildSdkTools(13.3): wraps wekruit-matching with parameters and execute re
   // schemas are the registry's, and assert their JSON-schema shape.
   // (`buildSdkTools` is exercised end-to-end by run.test.ts already.)
   void t13
-  const def = t13Registry["wekruit-matching"]
-  assert.ok(def, "wekruit-matching registered")
-  assert.equal(def.name, "wekruit-matching")
-  assert.equal(def.version, "1")
+  assert.equal(t13Def.name, "wekruit-matching")
+  assert.equal(t13Def.version, "1")
   // Smoke: the input schema accepts the canonical filters shape.
   const sample = {
     query: "找前端",
     filters: { location: "Hangzhou", roleType: "frontend", seniority: null },
   }
-  const parsed = def.inputSchema.parse(sample)
+  const parsed = t13Def.inputSchema.parse(sample)
   assert.deepEqual(parsed, sample)
 })
 
-test("buildSdkTools(13.3): MatchingInputSchema has every key required (Phase 10.5 hot-fix #4 strict mode)", () => {
-  const def = t13Registry["wekruit-matching"]
+test("buildSdkTools(13.3): strict schema fixture has every key required (Phase 10.5 hot-fix #4 strict mode)", () => {
   // Use Zod's _def.shape() to introspect the object schema at runtime.
   // `.nullable()` wraps the inner type in ZodNullable (key still required);
   // `.optional()` wraps in ZodOptional (key removed from `required`).
   // We require: no key at the top level uses ZodOptional, and `filters`
   // when unwrapped from ZodNullable also has zero ZodOptional inner keys.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const def_: any = (def.inputSchema as any)._def
+  const def_: any = (t13Def.inputSchema as any)._def
   // Zod 3 vs 4: shape may be a fn or a property.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const topShape: Record<string, any> = typeof def_.shape === "function" ? def_.shape() : def_.shape
   for (const key of Object.keys(topShape)) {
     const node = topShape[key]
-    const typeName = node?._def?.typeName ?? node?.constructor?.name
+    const typeName = zodTypeName(node)
     assert.notEqual(typeName, "ZodOptional", `top-level key "${key}" must NOT be optional`)
   }
   // Drill into filters: it's ZodNullable wrapping ZodObject; the inner
   // object's shape must also have no ZodOptional keys.
   const filtersNode = topShape["filters"]
-  const filtersTypeName = filtersNode?._def?.typeName
+  const filtersTypeName = zodTypeName(filtersNode)
   assert.equal(filtersTypeName, "ZodNullable", "filters must be `T | null`, not optional")
   const innerObj = filtersNode._def.innerType
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -381,7 +405,7 @@ test("buildSdkTools(13.3): MatchingInputSchema has every key required (Phase 10.
     typeof innerObj._def.shape === "function" ? innerObj._def.shape() : innerObj._def.shape
   for (const key of Object.keys(innerShape)) {
     const node = innerShape[key]
-    const typeName = node?._def?.typeName ?? node?.constructor?.name
+    const typeName = zodTypeName(node)
     assert.notEqual(typeName, "ZodOptional", `filters.${key} must NOT be optional`)
     // And every inner key MUST itself be Nullable (keeps `required` true
     // while allowing the LLM to pass null).
@@ -396,12 +420,11 @@ test("buildSdkTools(13.3): bridges wekruit-matching descriptor through the SDK t
   // `tool()` accepts the Zod object schema directly under the strict path
   // (see buildSdkTools cast through `any`).
   const { tool } = await import("@openai/agents")
-  const def = t13Registry["wekruit-matching"]
   const wrapped = tool({
-    name: def.name,
-    description: def.description,
+    name: t13Def.name,
+    description: t13Def.description,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    parameters: def.inputSchema as any,
+    parameters: t13Def.inputSchema as any,
     execute: async (args: unknown) => JSON.stringify({ ok: true, echo: args }),
   })
   // Wrapped tool is a `function_tool` with name + parameters reachable.

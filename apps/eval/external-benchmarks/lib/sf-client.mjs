@@ -20,6 +20,7 @@
  * @property {string} [base_url]
  * @property {string} [api_key]
  * @property {typeof fetch} [fetchImpl]
+ * @property {number} [timeoutMs]
  *
  * @typedef {Object} ChatResult
  * @property {string} text
@@ -31,6 +32,7 @@
  * @property {string} [base_url]
  * @property {string} [api_key]
  * @property {typeof fetch} [fetchImpl]
+ * @property {number} [timeoutMs]
  *
  * @typedef {Object} EmbedResult
  * @property {number[][]} embeddings
@@ -110,7 +112,7 @@ export async function chatCompletion({ messages, opts = {} }) {
     rej(new Error(`sf-client/chat: timeout after ${timeoutMs}ms (outer race)`))
   }, timeoutMs))
 
-  /** @returns {Promise<{text:string, usage:object, model:string}>} */
+  /** @returns {Promise<{__json: any}>} */
   const work = (async () => {
     let res
     try {
@@ -124,7 +126,7 @@ export async function chatCompletion({ messages, opts = {} }) {
         signal: ctrl.signal,
       })
     } catch (err) {
-      if (err && err.name === "AbortError") {
+      if (err instanceof Error && err.name === "AbortError") {
         throw new Error(`sf-client/chat: timeout after ${timeoutMs}ms (signal)`)
       }
       throw err
@@ -181,7 +183,7 @@ export async function embed({ input, opts = {} }) {
     body: JSON.stringify({ model, input: inputs }),
   }).catch((err) => {
     clearTimeout(embedTimer)
-    if (err && err.name === "AbortError") {
+    if (err instanceof Error && err.name === "AbortError") {
       throw new Error(`sf-client/embed: timeout after ${embedTimeoutMs}ms`)
     }
     throw err

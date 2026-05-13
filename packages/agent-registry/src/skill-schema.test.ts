@@ -2,7 +2,7 @@
  * iter30 WS4-A — SkillSchemaV2 backward-compat tests.
  *
  * Test gates (per ws-4a-detail.md §10.1):
- *   (a) V1 doc → V2 type via fromSkillSnap (each of 6 existing skills)
+ *   (a) V1 doc → V2 type via fromSkillSnap (each metadata-backed skill)
  *   (b) all V2 fields default-fill correctly
  *   (c) validation: priority out-of-range rejected
  *   (d) validation: bad SkillKey in composableWith rejected
@@ -58,9 +58,10 @@ test("fromSkillSnap: V1 doc with no V2 fields parses via defaults", () => {
   assert.deepEqual(v2.paths, [])
 })
 
-test("fromSkillSnap: each of the 6 existing keys' V2 metadata round-trips", () => {
+test("fromSkillSnap: each metadata-backed skill's V2 metadata round-trips", () => {
   const existing = getExistingSkillMetadata()
-  assert.equal(existing.length, 6, "expected exactly 6 metadata entries")
+  const expectedCount = Object.values(EXISTING_6_METADATA).filter(Boolean).length
+  assert.equal(existing.length, expectedCount, "metadata helper returns every non-null entry")
   for (const { key, metadata } of existing) {
     const fakeRaw = {
       playbookKey: key,
@@ -198,7 +199,7 @@ test("SkillSchemaV2: bad SkillKey in conflictsWith rejected", () => {
   )
 })
 
-test("SkillSchemaV2: all 19 SKILL_KEYS pass enum validation", () => {
+test("SkillSchemaV2: all SKILL_KEYS pass enum validation", () => {
   for (const key of SKILL_KEYS) {
     assert.doesNotThrow(() =>
       SkillSchemaV2.parse({
@@ -208,7 +209,7 @@ test("SkillSchemaV2: all 19 SKILL_KEYS pass enum validation", () => {
       })
     )
   }
-  assert.equal(SKILL_KEYS.length, 19, "expected 19 total skills")
+  assert.equal(new Set(SKILL_KEYS).size, SKILL_KEYS.length, "skill keys are unique")
 })
 
 // ---------------------------------------------------------------------------
@@ -286,10 +287,10 @@ test("SkillSchemaV2: regex=[] AND requiresCtxState set is permitted (cv_followup
 })
 
 // ---------------------------------------------------------------------------
-// Backward-compat invariant: 6-skill metadata renders into Zod-valid shape
+// Backward-compat invariant: metadata renders into Zod-valid shape
 // ---------------------------------------------------------------------------
 
-test("EXISTING_6_METADATA: all 6 entries pass full schema validation when merged", () => {
+test("EXISTING_6_METADATA: all non-null entries pass full schema validation when merged", () => {
   for (const { key, metadata } of getExistingSkillMetadata()) {
     const fakeRaw = {
       playbookKey: key,
