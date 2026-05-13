@@ -186,7 +186,10 @@ export function parseAgentResearchResult(
 // JSON block extraction
 // ---------------------------------------------------------------------------
 
-const FENCED_JSON_RE = /```(?:json)?\s*([\s\S]*?)```/i
+// `\s{0,32}` (bounded) instead of `\s*` to avoid polynomial-time backtracking
+// on adversarial fences padded with thousands of whitespace chars
+// (CodeQL js/redos). 32 chars is generous for typical "```json\n" prelude.
+const FENCED_JSON_RE = /```(?:json)?\s{0,32}([\s\S]*?)```/i
 
 /**
  * Try to find a JSON-shaped block inside the raw agent output.

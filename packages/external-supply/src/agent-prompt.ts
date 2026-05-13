@@ -88,7 +88,9 @@ export interface AgentResearchPromptResult {
  * the rendered prompt. We deliberately do not try to be RFC-5322 strict —
  * false positives are safer than letting a real email reach the prompt.
  */
-const EMAIL_LIKE = /[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}/i
+// Bounded quantifiers per RFC 5321 (local-part ≤ 64, domain ≤ 255, TLD ≤ 24)
+// to avoid polynomial-time backtracking on adversarial inputs (CodeQL js/redos).
+const EMAIL_LIKE = /[A-Z0-9._%+\-]{1,64}@[A-Z0-9.\-]{1,255}\.[A-Z]{2,24}/i
 
 /** US phone, E.164, and common formatted variants. */
 const PHONE_LIKE = /(?:\+\d{1,3}[\s.\-]?)?(?:\(\d{2,4}\)|\d{2,4})[\s.\-]?\d{3,4}[\s.\-]?\d{3,4}/
