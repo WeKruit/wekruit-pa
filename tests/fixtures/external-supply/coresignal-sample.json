@@ -1,0 +1,125 @@
+[
+  {
+    "profile": {
+      "url": "https://www.linkedin.com/in/donna-strickland",
+      "full_name": "Donna Strickland",
+      "headline": "Optical Physicist",
+      "location": {
+        "name": "Waterloo, ON"
+      }
+    },
+    "contact": {
+      "primary_email": "donna@chirped-pulse.example",
+      "phone": "+15195551234"
+    },
+    "experience": [
+      {
+        "company_name": "University of Waterloo",
+        "title": "Professor of Physics",
+        "date_from": "1997-09",
+        "date_to": null
+      }
+    ],
+    "education": [
+      {
+        "school": "University of Rochester",
+        "degree": "PhD",
+        "field_of_study": "Optics",
+        "date_to": "1989"
+      }
+    ],
+    "skills": ["lasers", "optics", "chirped-pulse-amplification"]
+  },
+  {
+    "profile": {
+      "url": "https://linkedin.com/in/marie-curie",
+      "full_name": "Marie Curie",
+      "headline": "Physicist & Chemist",
+      "location": {
+        "name": "Paris, FR"
+      }
+    },
+    "contact": {
+      "primary_email": "marie@radium.example",
+      "phone": null
+    },
+    "experience": [],
+    "education": [],
+    "skills": ["radioactivity"]
+  },
+  {
+    "profile": {
+      "url": "https://www.linkedin.com/de/in/emmy-noether",
+      "full_name": "Emmy Noether",
+      "headline": "Mathematician",
+      "location": {
+        "name": "Erlangen, DE"
+      }
+    },
+    "contact": {
+      "primary_email": null,
+      "phone": null
+    },
+    "experience": [],
+    "education": [],
+    "skills": ["abstract-algebra"]
+  },
+  {
+    "profile": {
+      "url": null,
+      "full_name": "Rosalind Franklin",
+      "headline": "Chemist",
+      "location": {
+        "name": "London, UK"
+      }
+    },
+    "contact": {
+      "primary_email": "rosalind@dna.example",
+      "phone": null
+    },
+    "experience": [],
+    "education": [],
+    "skills": ["x-ray-crystallography"]
+  },
+  {
+    "profile": {
+      "url": "https://linkedin.com/in/maryam-mirzakhani",
+      "full_name": "Maryam Mirzakhani",
+      "headline": "Mathematician",
+      "location": {
+        "name": "Stanford, CA"
+      }
+    },
+    "contact": {
+      "primary_email": "maryam@stanford.example",
+      "phone": "+16505551234"
+    },
+    "experience": [
+      {
+        "company_name": "Stanford University",
+        "title": "Professor of Mathematics",
+        "date_from": "2008-09",
+        "date_to": null
+      }
+    ],
+    "education": [],
+    "skills": ["riemann-surfaces", "moduli-spaces"]
+  },
+  {
+    "profile": {
+      "url": "x://broken",
+      "full_name": "Broken Profile",
+      "headline": "",
+      "location": {
+        "name": ""
+      }
+    },
+    "contact": {
+      "primary_email": "also-broken",
+      "phone": null
+    },
+    "experience": [],
+    "education": [],
+    "skills": []
+  }
+]

@@ -1,0 +1,105 @@
+[
+  {
+    "linkedin_url": "https://www.linkedin.com/in/ada-lovelace",
+    "email_primary": "ada@analytical-engines.com",
+    "full_name": "Ada Lovelace",
+    "current_position": "Senior Software Engineer",
+    "current_company_name": "Analytical Engines",
+    "location_string": "London, UK",
+    "experience_array": [
+      {
+        "company": "Analytical Engines",
+        "title": "Senior Software Engineer",
+        "startDate": "2022-01",
+        "endDate": null,
+        "durationMonths": 38
+      }
+    ],
+    "education_array": [
+      {
+        "school": "King's College London",
+        "degree": "BSc",
+        "field": "Mathematics",
+        "endYear": 2018
+      }
+    ],
+    "skills": ["typescript", "system design", "distributed-systems"]
+  },
+  {
+    "linkedin_url": "https://linkedin.com/in/grace-hopper/",
+    "email_primary": "grace.hopper+jobs@navy.example",
+    "full_name": "Grace Hopper",
+    "current_position": "Compiler Engineer",
+    "current_company_name": "Navy Research Lab",
+    "location_string": "Arlington, VA",
+    "experience_array": [
+      {
+        "company": "Navy Research Lab",
+        "title": "Compiler Engineer",
+        "startDate": "2020-03",
+        "endDate": null,
+        "durationMonths": 60
+      }
+    ],
+    "education_array": [],
+    "skills": ["cobol", "compilers"]
+  },
+  {
+    "linkedin_url": "https://www.linkedin.com/cn/in/alan-turing",
+    "email_primary": null,
+    "full_name": "Alan Turing",
+    "current_position": "Cryptographer",
+    "current_company_name": "GC&CS",
+    "location_string": "Bletchley Park",
+    "experience_array": [],
+    "education_array": [],
+    "skills": ["cryptography", "computation"]
+  },
+  {
+    "linkedin_url": null,
+    "email_primary": "katherine.johnson@example.org",
+    "full_name": "Katherine Johnson",
+    "current_position": "Research Mathematician",
+    "current_company_name": "NACA",
+    "location_string": "Hampton, VA",
+    "experience_array": [],
+    "education_array": [],
+    "skills": ["orbital mechanics", "fortran"]
+  },
+  {
+    "linkedin_url": "not-a-url",
+    "email_primary": "not-an-email",
+    "full_name": "Anonymous Candidate",
+    "current_position": "Engineer",
+    "current_company_name": "Unknown",
+    "location_string": "",
+    "experience_array": [],
+    "education_array": [],
+    "skills": []
+  },
+  {
+    "linkedin_url": "https://linkedin.com/in/margaret-hamilton",
+    "email_primary": "margaret@apollo.example",
+    "full_name": "Margaret Hamilton",
+    "current_position": "Director of Software Engineering",
+    "current_company_name": "MIT Instrumentation Lab",
+    "location_string": "Cambridge, MA",
+    "experience_array": [
+      {
+        "company": "MIT Instrumentation Lab",
+        "title": "Director of Software Engineering",
+        "startDate": "1969-07",
+        "durationMonths": 24
+      }
+    ],
+    "education_array": [
+      {
+        "school": "Earlham College",
+        "degree": "BA",
+        "field": "Mathematics",
+        "endYear": 1958
+      }
+    ],
+    "skills": ["systems engineering", "embedded software"]
+  }
+]

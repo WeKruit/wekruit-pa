@@ -1,0 +1,7 @@
+LinkedIn URL,Email,Name,Title,Company,Location
+https://www.linkedin.com/in/joan-clarke,joan.clarke@bletchley.example,Joan Clarke,Cryptanalyst,Bletchley Park,"Bletchley, UK"
+https://linkedin.com/in/hedy-lamarr/,hedy@frequency.example,Hedy Lamarr,Inventor,Self-Employed,"Beverly Hills, CA"
+https://www.linkedin.com/in/radia-perlman,radia@spanning-tree.example,Radia Perlman,Network Architect,Sun Microsystems,"Boston, MA"
+,barbara.liskov@example.com,Barbara Liskov,Professor,MIT,"Cambridge, MA"
+https://linkedin.com/in/frances-allen,,Frances Allen,Computer Scientist,IBM,"Yorktown Heights, NY"
+malformed-url,bad,No Identity,Engineer,Acme,"Nowhere, NA"
