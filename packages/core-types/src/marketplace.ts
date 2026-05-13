@@ -9,6 +9,10 @@ import {
   SkillsListSchema,
   VisaSchema,
 } from "@wekruit/shared-tags"
+export {
+  PA_JOB_ENRICHMENT_EVAL_FIXTURES_SUBCOLLECTION,
+  PA_JOB_ENRICHMENT_SUBCOLLECTION,
+} from "./collections.js"
 
 const TimestampSchema = z.string().min(1)
 const IdSchema = z.string().min(1)
@@ -494,6 +498,10 @@ export const CorrectionEventSchema = z.object({
     "candidate_job_state",
     "candidate_job_match",
     "job_tags",
+    "job_enrichment_draft",
+    "job_prescreen_config",
+    "job_candidate_brief",
+    "job_eval_fixture",
     "user_tags",
     "employer_visible_profile",
     "feedback_event",
@@ -509,6 +517,235 @@ export const CorrectionEventSchema = z.object({
   createdAt: TimestampSchema,
 })
 export type CorrectionEvent = z.infer<typeof CorrectionEventSchema>
+
+export const RawJobSnapshotSchema = z.object({
+  source: z.enum(["ats", "admin", "crawler", "employer", "system"]),
+  capturedAt: TimestampSchema,
+  title: z.string().min(1).max(300),
+  companyName: z.string().min(1).max(300).optional(),
+  description: z.string().min(1).max(50_000).optional(),
+  applyUrl: z.string().url().optional(),
+  locationText: z.string().max(1_000).optional(),
+  compensationText: z.string().max(1_000).optional(),
+  metadata: z.record(z.unknown()).default({}),
+})
+export type RawJobSnapshot = z.infer<typeof RawJobSnapshotSchema>
+
+export const JobEnrichedTagsSchema = z.object({
+  roleFunction: z.array(RoleFunctionSchema).default([]),
+  industrySector: z.array(IndustrySectorSchema).default([]),
+  skills: SkillsListSchema.default([]),
+  careerStage: CareerStageSchema.optional(),
+  relevantTags: RelevantTagsListSchema.default([]),
+})
+export type JobEnrichedTags = z.infer<typeof JobEnrichedTagsSchema>
+
+export const JobHardFiltersSchema = z.object({
+  sponsorshipAvailable: z.boolean().nullable(),
+  locations: z.array(LocationSchema).default([]),
+  jobTypes: z.array(JobTypeSchema).default([]),
+  minYears: z.number().nonnegative().optional(),
+  maxYears: z.number().nonnegative().optional(),
+  salaryMinUsd: z.number().int().nonnegative().optional(),
+  salaryMaxUsd: z.number().int().nonnegative().optional(),
+})
+export type JobHardFilters = z.infer<typeof JobHardFiltersSchema>
+
+export const JobSoftScoringWeightsSchema = z
+  .object({
+    skills: z.number().min(0).max(1).default(0),
+    roleFunction: z.number().min(0).max(1).default(0),
+    industrySector: z.number().min(0).max(1).default(0),
+    location: z.number().min(0).max(1).default(0),
+    compensation: z.number().min(0).max(1).default(0),
+    visa: z.number().min(0).max(1).default(0),
+    companyPreference: z.number().min(0).max(1).default(0),
+  })
+  .refine((weights) => Object.values(weights).reduce((sum, value) => sum + value, 0) <= 1.000001, {
+    message: "soft scoring weights must sum to 1 or less",
+  })
+export type JobSoftScoringWeights = z.infer<typeof JobSoftScoringWeightsSchema>
+
+const JobPrescreenQuestionDraftSchema = z.object({
+  questionId: IdSchema,
+  prompt: z.string().min(1).max(1_000),
+  signal: z.string().min(1).max(300),
+  required: z.boolean().default(true),
+})
+
+export const JobPrescreenConfigDraftSchema = z.object({
+  questions: z.array(JobPrescreenQuestionDraftSchema).default([]),
+  introPrompt: z.string().max(1_000).optional(),
+  passSignals: z.array(z.string().min(1).max(300)).default([]),
+})
+export type JobPrescreenConfigDraft = z.infer<typeof JobPrescreenConfigDraftSchema>
+
+export const JobScoringRubricSchema = z.object({
+  mustHave: z.array(z.string().min(1).max(500)).default([]),
+  niceToHave: z.array(z.string().min(1).max(500)).default([]),
+  disqualifiers: z.array(z.string().min(1).max(500)).default([]),
+})
+export type JobScoringRubric = z.infer<typeof JobScoringRubricSchema>
+
+export const JobCandidateBriefSchema = z.object({
+  headline: z.string().min(1).max(500),
+  sellingPoints: z.array(z.string().min(1).max(500)).default([]),
+  risksToClarify: z.array(z.string().min(1).max(500)).default([]),
+})
+export type JobCandidateBrief = z.infer<typeof JobCandidateBriefSchema>
+
+export const JobEnrichmentCoverageSchema = z.object({
+  overall: z.enum(["low", "medium", "high"]),
+  missingSignals: z.array(z.string().min(1).max(200)).default([]),
+  seniorityEvidence: z.enum(["none", "title_only", "explicit_years", "rubric", "operator_confirmed"]),
+  sponsorshipSignal: z.enum(["silent", "explicit_yes", "explicit_no"]),
+})
+export type JobEnrichmentCoverage = z.infer<typeof JobEnrichmentCoverageSchema>
+
+export const JobEnrichmentHitlFlagSchema = z.object({
+  flagId: IdSchema,
+  kind: z.enum([
+    "low_coverage",
+    "conflicting_evidence",
+    "sensitive_filter",
+    "seniority_title_only",
+    "operator_review",
+  ]),
+  severity: z.enum(["info", "review", "blocking"]),
+  reason: z.string().min(1).max(1_000),
+  evidence: z.array(MarketplaceEvidenceSchema).default([]),
+})
+export type JobEnrichmentHitlFlag = z.infer<typeof JobEnrichmentHitlFlagSchema>
+
+export const JobOpportunitySchema = z.object({
+  title: z.string().min(1).max(300),
+  companyName: z.string().min(1).max(300).optional(),
+  roleFunction: z.array(RoleFunctionSchema).default([]),
+  industrySector: z.array(IndustrySectorSchema).default([]),
+  skills: SkillsListSchema.default([]),
+  relevantTags: RelevantTagsListSchema.default([]),
+  seniority: z.object({
+    label: z.string().min(1).max(100).optional(),
+    minYears: z.number().nonnegative().optional(),
+    maxYears: z.number().nonnegative().optional(),
+    evidence: z.array(MarketplaceEvidenceSchema).default([]),
+  }).default({}),
+  hardFilters: JobHardFiltersSchema,
+  softScoringWeights: JobSoftScoringWeightsSchema.default({}),
+  prescreen: JobPrescreenConfigDraftSchema.default({}),
+  scoringRubric: JobScoringRubricSchema.default({}),
+  candidateBrief: JobCandidateBriefSchema.optional(),
+})
+export type JobOpportunity = z.infer<typeof JobOpportunitySchema>
+
+export const JobOpportunityPublicSchema = z.object({
+  title: z.string().min(1).max(300),
+  companyName: z.string().min(1).max(300).optional(),
+  roleFunction: z.array(RoleFunctionSchema).default([]),
+  industrySector: z.array(IndustrySectorSchema).default([]),
+  skills: SkillsListSchema.default([]),
+  relevantTags: RelevantTagsListSchema.default([]),
+  seniority: z
+    .object({
+      label: z.string().min(1).max(100).optional(),
+      minYears: z.number().nonnegative().optional(),
+      maxYears: z.number().nonnegative().optional(),
+    })
+    .default({}),
+  hardFilters: JobHardFiltersSchema,
+})
+export type JobOpportunityPublic = z.infer<typeof JobOpportunityPublicSchema>
+
+export function toPublicJobOpportunity(rawOpportunity: JobOpportunity): JobOpportunityPublic {
+  const opportunity = JobOpportunitySchema.parse(rawOpportunity)
+  return JobOpportunityPublicSchema.parse({
+    title: opportunity.title,
+    companyName: opportunity.companyName,
+    roleFunction: opportunity.roleFunction,
+    industrySector: opportunity.industrySector,
+    skills: opportunity.skills,
+    relevantTags: opportunity.relevantTags,
+    seniority: {
+      label: opportunity.seniority.label,
+      minYears: opportunity.seniority.minYears,
+      maxYears: opportunity.seniority.maxYears,
+    },
+    hardFilters: opportunity.hardFilters,
+  })
+}
+
+export const JobOpportunityDraftStatusSchema = z.enum(["draft", "needs_review", "approved", "rejected"])
+export type JobOpportunityDraftStatus = z.infer<typeof JobOpportunityDraftStatusSchema>
+export const JobEnrichmentDraftStatusSchema = JobOpportunityDraftStatusSchema
+export type JobEnrichmentDraftStatus = JobOpportunityDraftStatus
+
+export const JobOpportunityDraftSchema = z
+  .object({
+    draftId: IdSchema,
+    jobId: IdSchema,
+    status: JobOpportunityDraftStatusSchema,
+    approvalReady: z.boolean(),
+    rawSnapshot: RawJobSnapshotSchema,
+    opportunity: JobOpportunitySchema,
+    coverage: JobEnrichmentCoverageSchema,
+    hitlFlags: z.array(JobEnrichmentHitlFlagSchema).default([]),
+    enrichmentVersion: z.string().min(1),
+    createdAt: TimestampSchema,
+    updatedAt: TimestampSchema.optional(),
+    approvedAt: TimestampSchema.optional(),
+    approvedBy: z.string().min(1).optional(),
+    rejectedAt: TimestampSchema.optional(),
+    rejectedBy: z.string().min(1).optional(),
+    rejectionReason: z.string().max(2_000).optional(),
+  })
+  .superRefine((draft, ctx) => {
+    if (draft.coverage.sponsorshipSignal === "silent" && draft.opportunity.hardFilters.sponsorshipAvailable !== null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["opportunity", "hardFilters", "sponsorshipAvailable"],
+        message: "sponsorship silence must be null",
+      })
+    }
+    if (draft.coverage.seniorityEvidence === "title_only") {
+      const hasReviewFlag = draft.hitlFlags.some(
+        (flag) =>
+          (flag.kind === "low_coverage" || flag.kind === "seniority_title_only") &&
+          (flag.severity === "review" || flag.severity === "blocking")
+      )
+      if (draft.coverage.overall !== "low" || draft.approvalReady || !hasReviewFlag) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["coverage", "seniorityEvidence"],
+          message: "title-only seniority evidence requires low coverage and HITL review",
+        })
+      }
+    }
+  })
+export type JobOpportunityDraft = z.infer<typeof JobOpportunityDraftSchema>
+export const JobEnrichmentDraftSchema = JobOpportunityDraftSchema
+export type JobEnrichmentDraft = JobOpportunityDraft
+
+export const JobEnrichmentDraftCountsSchema = z.object({
+  total: z.number().int().nonnegative().default(0),
+  draft: z.number().int().nonnegative().default(0),
+  needsReview: z.number().int().nonnegative().default(0),
+  approved: z.number().int().nonnegative().default(0),
+  rejected: z.number().int().nonnegative().default(0),
+})
+export type JobEnrichmentDraftCounts = z.infer<typeof JobEnrichmentDraftCountsSchema>
+
+export const JobEnrichmentEvalFixtureSchema = z.object({
+  fixtureId: IdSchema,
+  jobId: IdSchema,
+  rawSnapshot: RawJobSnapshotSchema,
+  expectedOpportunity: JobOpportunitySchema.optional(),
+  expectedCoverage: z.enum(["low", "medium", "high"]),
+  expectedHitlFlags: z.array(JobEnrichmentHitlFlagSchema.shape.kind).default([]),
+  notes: z.string().max(2_000).optional(),
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema.optional(),
+})
+export type JobEnrichmentEvalFixture = z.infer<typeof JobEnrichmentEvalFixtureSchema>
 
 const LifecycleEventBaseSchema = z.object({
   eventId: IdSchema,
@@ -586,6 +823,11 @@ export type BulkResumeItemStatusEvent =
   | "failed"
   | "make_retry_ready"
 
+export type JobEnrichmentDraftStatusEvent =
+  | "needs_review"
+  | "approve"
+  | "reject"
+
 const BULK_RESUME_ITEM_TRANSITIONS: Record<
   BulkResumeItemStatus,
   Partial<Record<BulkResumeItemStatusEvent, BulkResumeItemStatus>>
@@ -617,6 +859,23 @@ const BULK_RESUME_ITEM_TRANSITIONS: Record<
   retry_ready: {
     start_parsing: "parsing",
   },
+}
+
+const JOB_ENRICHMENT_DRAFT_TRANSITIONS: Record<
+  JobEnrichmentDraftStatus,
+  Partial<Record<JobEnrichmentDraftStatusEvent, JobEnrichmentDraftStatus>>
+> = {
+  draft: {
+    needs_review: "needs_review",
+    approve: "approved",
+    reject: "rejected",
+  },
+  needs_review: {
+    approve: "approved",
+    reject: "rejected",
+  },
+  approved: {},
+  rejected: {},
 }
 
 function reduction<TState extends string>(
@@ -659,6 +918,30 @@ export function reduceBulkResumeItemStatus(
     parse_failed: "bulk_resume_parse_failed_retryable",
     failed: "bulk_resume_item_failed",
     make_retry_ready: "bulk_resume_item_retry_ready",
+  }
+  return reduction(current, next, eventType, occurredAt, reasonByEvent[eventType])
+}
+
+export function canTransitionJobEnrichmentDraftStatus(
+  from: JobEnrichmentDraftStatus,
+  to: JobEnrichmentDraftStatus
+): boolean {
+  return Object.values(JOB_ENRICHMENT_DRAFT_TRANSITIONS[from]).includes(to)
+}
+
+export function reduceJobEnrichmentDraftStatus(
+  current: JobEnrichmentDraftStatus,
+  eventType: JobEnrichmentDraftStatusEvent,
+  occurredAt = ""
+): StateReductionResult<JobEnrichmentDraftStatus> {
+  const next = JOB_ENRICHMENT_DRAFT_TRANSITIONS[current][eventType]
+  if (!next) {
+    return reduction(current, current, eventType, occurredAt, "invalid_job_enrichment_transition")
+  }
+  const reasonByEvent: Record<JobEnrichmentDraftStatusEvent, string> = {
+    needs_review: "job_enrichment_requires_operator_review",
+    approve: "job_enrichment_approved_for_matching_and_prescreen",
+    reject: "job_enrichment_rejected_by_operator",
   }
   return reduction(current, next, eventType, occurredAt, reasonByEvent[eventType])
 }
@@ -804,8 +1087,44 @@ export function createEmployerVisibleProfileId(jobId: string, candidateId: strin
   return `${jobId}__${candidateId}`
 }
 
+export function createJobOpportunityDraftId(jobId: string, createdAt: string): string {
+  return `jobopp_${jobId}_${safeIdTimestampPart(createdAt)}`
+}
+
+export function createJobEnrichmentEvalFixtureId(jobId: string, fixtureKey: string): string {
+  return `jobopp_eval_${jobId}_${fixtureKey}`
+}
+
 export function createBulkResumeItemId(_batchId: string, fileSha256: string): string {
   return `bulk_item_${fileSha256.slice(0, 32)}`
+}
+
+function stableIdHash(value: string): string {
+  let hash = 0x811c9dc5
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index)
+    hash = Math.imul(hash, 0x01000193)
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0")
+}
+
+function safeIdTimestampPart(value: string): string {
+  let output = ""
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index)
+    const isDigit = code >= 48 && code <= 57
+    const isUpper = code >= 65 && code <= 90
+    const isLower = code >= 97 && code <= 122
+    output += isDigit || isUpper || isLower ? value[index] : "-"
+  }
+  while (output.endsWith("-")) output = output.slice(0, -1)
+  return output
+}
+
+export function createJobEnrichmentDraftId(jobId: string, contentHash?: string | null): string {
+  const material = `${jobId.trim().toLowerCase()}:${contentHash?.trim() || "current"}`
+  const hash = contentHash?.trim().replace(/[^a-fA-F0-9]/g, "").slice(0, 32)
+  return `job_enrich_${hash && hash.length >= 8 ? hash.toLowerCase() : stableIdHash(material)}`
 }
 
 export function createBulkResumeArtifactId(
@@ -845,6 +1164,25 @@ export function summarizeBulkResumeItemCounts(
     else if (status === "missing_email_review" || status === "identity_conflict") counts.review += 1
     else if (status === "parse_failed" || status === "failed") counts.failed += 1
     else if (status === "retry_ready") counts.retryReady += 1
+  }
+  return counts
+}
+
+export function summarizeJobEnrichmentDraftCounts(
+  statuses: JobEnrichmentDraftStatus[]
+): JobEnrichmentDraftCounts {
+  const counts: JobEnrichmentDraftCounts = {
+    total: statuses.length,
+    draft: 0,
+    needsReview: 0,
+    approved: 0,
+    rejected: 0,
+  }
+  for (const status of statuses) {
+    if (status === "draft") counts.draft += 1
+    else if (status === "needs_review") counts.needsReview += 1
+    else if (status === "approved") counts.approved += 1
+    else if (status === "rejected") counts.rejected += 1
   }
   return counts
 }

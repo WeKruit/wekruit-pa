@@ -1,0 +1,39 @@
+{
+  "name": "location_mismatch",
+  "rawJob": {
+    "title": "Product Designer",
+    "companyName": "Northstar Games",
+    "locationRaw": "Los Angeles, CA onsite",
+    "jobDescription": "Onsite product design role for a gaming studio in Los Angeles.",
+    "evalCase": {
+      "caseName": "location_mismatch",
+      "candidateSummary": "Strong product designer seeking remote-only roles outside California.",
+      "expectedOutcome": "not_pass",
+      "expectedSignals": ["candidate_location_preference_does_not_match_job"]
+    }
+  },
+  "enrichedJobTags": {
+    "roleFunction": ["creatives_and_design"],
+    "industrySector": ["gaming_and_esports"],
+    "relevantTags": ["consumer_mobile_games"],
+    "skills": [
+      { "name": "figma", "bucket": "tools_and_platforms", "proficiency": "advanced", "evidenceCount": 2, "baseWeight": 0.8 }
+    ],
+    "seniorityLevel": "mid_level",
+    "sponsorshipHint": true,
+    "locationBuckets": ["los_angeles_metro"],
+    "jobType": "full_time",
+    "confidence": {
+      "overall": 0.87,
+      "fields": {
+        "roleFunction": 0.9,
+        "industrySector": 0.9,
+        "relevantTags": 0.82,
+        "skills": 0.86,
+        "seniorityLevel": 0.81,
+        "locationBuckets": 0.94,
+        "jobType": 0.95
+      }
+    }
+  }
+}

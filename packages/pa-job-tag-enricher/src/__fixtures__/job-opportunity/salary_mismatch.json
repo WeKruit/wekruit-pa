@@ -1,0 +1,40 @@
+{
+  "name": "salary_mismatch",
+  "rawJob": {
+    "title": "Data Analyst",
+    "companyName": "CareBridge",
+    "locationRaw": "Boston, MA",
+    "salaryRange": { "min": 85000, "max": 105000, "currency": "USD" },
+    "jobDescription": "Analyze healthcare operating metrics with SQL and dashboards.",
+    "evalCase": {
+      "caseName": "salary_mismatch",
+      "candidateSummary": "Qualified analyst seeking at least 140000 USD base salary.",
+      "expectedOutcome": "not_pass",
+      "expectedSignals": ["candidate_salary_floor_above_job_range"]
+    }
+  },
+  "enrichedJobTags": {
+    "roleFunction": ["data_analysis"],
+    "industrySector": ["healthcare_and_life_sciences"],
+    "relevantTags": ["operating_metrics"],
+    "skills": [
+      { "name": "sql", "bucket": "data_and_analytics", "proficiency": "advanced", "evidenceCount": 3, "baseWeight": 0.9 }
+    ],
+    "seniorityLevel": "mid_level",
+    "sponsorshipHint": true,
+    "locationBuckets": ["boston_metro"],
+    "jobType": "full_time",
+    "confidence": {
+      "overall": 0.86,
+      "fields": {
+        "roleFunction": 0.9,
+        "industrySector": 0.88,
+        "relevantTags": 0.78,
+        "skills": 0.9,
+        "seniorityLevel": 0.82,
+        "locationBuckets": 0.92,
+        "jobType": 0.95
+      }
+    }
+  }
+}

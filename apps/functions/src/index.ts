@@ -199,6 +199,14 @@ export {
   paBulkResumeProcessBatch,
   paBulkResumeRetryItem,
 } from "./bulk-resume-intake.js"
+// v2.0 S4 — admin/operator-only job enrichment draft review and approval.
+export {
+  paJobEnrichmentApproveDraft,
+  paJobEnrichmentGenerateDraft,
+  paJobEnrichmentRefreshDraft,
+  paJobEnrichmentRejectDraft,
+  paJobEnrichmentSaveCorrections,
+} from "./job-enrichment.js"
 
 // Phase 27 T2 — public /health endpoints (one per existing CF). Returns
 // {ok, name, version, ts, deps:{firestore, secrets}}. No auth (probes

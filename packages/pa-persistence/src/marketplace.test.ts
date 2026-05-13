@@ -3,20 +3,29 @@ import test from "node:test"
 import type { Firestore } from "firebase-admin/firestore"
 import {
   PA_COLLECTIONS,
+  PA_JOB_ENRICHMENT_EVAL_FIXTURES_SUBCOLLECTION,
+  PA_JOB_ENRICHMENT_SUBCOLLECTION,
   createCandidateJobStateId,
   createEmployerVisibleProfileId,
+  createJobEnrichmentEvalFixtureId,
   type CandidateJobEvent,
   type CandidateLifecycleEvent,
   type CorrectionEvent,
   type EmployerVisibleProfile,
   type FeedbackEvent,
+  type JobEnrichmentEvalFixture,
+  type JobOpportunityDraft,
 } from "@pa/core-types"
 import {
   applyCandidateJobEvent,
   applyCandidateLifecycleEvent,
+  approveJobOpportunityDraft,
+  rejectJobOpportunityDraft,
   writeCorrectionEvent,
   writeEmployerVisibleProfile,
   writeFeedbackEvent,
+  writeJobEnrichmentEvalFixture,
+  writeJobOpportunityDraft,
 } from "./marketplace.js"
 
 type Store = Map<string, Map<string, Record<string, unknown>>>
@@ -24,7 +33,10 @@ type Store = Map<string, Map<string, Record<string, unknown>>>
 const now = "2026-05-13T12:00:00.000Z"
 
 function makeStore(): Store {
-  return new Map(Object.values(PA_COLLECTIONS).map((name) => [name, new Map()]))
+  return new Map([
+    ...Object.values(PA_COLLECTIONS).map((name) => [name, new Map()] as const),
+    [PA_COLLECTIONS.jobs, new Map()] as const,
+  ])
 }
 
 function makeFakeFirestore(store: Store = makeStore()): { db: Firestore; store: Store } {
@@ -38,6 +50,9 @@ function makeFakeFirestore(store: Store = makeStore()): { db: Firestore; store: 
       id,
       _collectionName: collectionName,
       _id: id,
+      collection(subcollectionName: string) {
+        return collection(`${collectionName}/${id}/${subcollectionName}`)
+      },
       async get() {
         const data = col(collectionName).get(id)
         return { exists: data !== undefined, id, data: () => data }
@@ -231,4 +246,206 @@ test("employer-visible snapshot requires passed candidate-job state", async () =
   const result = await writeEmployerVisibleProfile(db, snapshot)
   assert.equal(result.created, true)
   assert.equal(store.get(PA_COLLECTIONS.employerVisibleProfiles)!.size, 1)
+})
+
+function jobOpportunityDraft(over: Partial<JobOpportunityDraft> = {}): JobOpportunityDraft {
+  return {
+    draftId: "draft-1",
+    jobId: "job-1",
+    status: "draft",
+    approvalReady: true,
+    rawSnapshot: {
+      source: "ats",
+      capturedAt: now,
+      title: "Founding Product Engineer",
+      companyName: "WeKruit",
+      description: "Build Claire.",
+      metadata: {},
+    },
+    opportunity: {
+      title: "Founding Product Engineer",
+      companyName: "WeKruit",
+      roleFunction: ["software_engineering"],
+      industrySector: ["software_and_saas"],
+      relevantTags: ["ai_infra"],
+      skills: [
+        {
+          name: "typescript",
+          bucket: "programming_languages",
+          proficiency: "advanced",
+          evidenceCount: 1,
+          baseWeight: 0.7,
+        },
+      ],
+      seniority: {
+        label: "senior",
+        minYears: 5,
+        maxYears: 8,
+        evidence: [{ source: "ats", summary: "JD asks for 5+ years" }],
+      },
+      hardFilters: {
+        sponsorshipAvailable: null,
+        locations: ["remote_anywhere"],
+        jobTypes: ["full_time"],
+      },
+      softScoringWeights: {
+        skills: 0.5,
+        roleFunction: 0.2,
+        industrySector: 0.2,
+        location: 0.1,
+        compensation: 0,
+        visa: 0,
+        companyPreference: 0,
+      },
+      prescreen: {
+        questions: [
+          {
+            questionId: "q-react",
+            prompt: "Tell me about a React project you shipped.",
+            signal: "frontend depth",
+            required: true,
+          },
+        ],
+        passSignals: [],
+      },
+      scoringRubric: {
+        mustHave: ["ships production software"],
+        niceToHave: ["AI product experience"],
+        disqualifiers: [],
+      },
+      candidateBrief: {
+        headline: "Consumer AI startup founding engineer role.",
+        sellingPoints: ["high ownership"],
+        risksToClarify: [],
+      },
+    },
+    coverage: {
+      overall: "high",
+      missingSignals: [],
+      seniorityEvidence: "explicit_years",
+      sponsorshipSignal: "silent",
+    },
+    hitlFlags: [],
+    enrichmentVersion: "s4-test",
+    createdAt: now,
+    updatedAt: now,
+    ...over,
+  }
+}
+
+test("job opportunity drafts stay private and approval promotes only public-safe fields", async () => {
+  const { db, store } = makeFakeFirestore()
+  const draft = jobOpportunityDraft()
+  const write = await writeJobOpportunityDraft(db, draft)
+  assert.equal(write.created, true)
+  assert.equal((await writeJobOpportunityDraft(db, draft)).created, false)
+  await assert.rejects(
+    () => writeJobOpportunityDraft(db, { ...draft, enrichmentVersion: "changed" }),
+    /conflicting_duplicate_event/
+  )
+
+  const draftPath = `${PA_COLLECTIONS.jobs}/job-1/${PA_JOB_ENRICHMENT_SUBCOLLECTION}`
+  assert.equal(store.get(draftPath)!.get("draft-1")!.rawSnapshot !== undefined, true)
+  assert.equal(store.get(PA_COLLECTIONS.jobs)!.get("job-1"), undefined)
+
+  const approved = await approveJobOpportunityDraft(db, {
+    jobId: "job-1",
+    draftId: "draft-1",
+    approvedBy: "operator-1",
+    approvedAt: "2026-05-13T12:05:00.000Z",
+  })
+  assert.equal(approved.status, "approved")
+
+  const rootJob = store.get(PA_COLLECTIONS.jobs)!.get("job-1")!
+  assert.deepEqual(Object.keys(rootJob).sort(), [
+    "enrichmentApprovedAt",
+    "enrichmentVersion",
+    "jobOpportunity",
+    "updatedAt",
+  ])
+  assert.equal(rootJob.jobOpportunity && typeof rootJob.jobOpportunity, "object")
+  assert.equal((rootJob.jobOpportunity as Record<string, unknown>).hardFilters !== undefined, true)
+  assert.equal((rootJob.jobOpportunity as Record<string, unknown>).softScoringWeights, undefined)
+  assert.equal((rootJob.jobOpportunity as Record<string, unknown>).prescreen, undefined)
+  assert.equal((rootJob.jobOpportunity as Record<string, unknown>).scoringRubric, undefined)
+  assert.equal((rootJob.jobOpportunity as Record<string, unknown>).candidateBrief, undefined)
+  assert.equal(rootJob.rawSnapshot, undefined)
+  assert.equal(rootJob.hitlFlags, undefined)
+
+  const storedDraft = store.get(draftPath)!.get("draft-1")!
+  assert.equal(storedDraft.status, "approved")
+  assert.equal(storedDraft.approvedBy, "operator-1")
+  assert.equal(store.get(PA_COLLECTIONS.auditEvents)!.has("marketplace_job_enrichment_approved_draft-1"), true)
+
+  await assert.rejects(
+    () =>
+      approveJobOpportunityDraft(db, {
+        jobId: "job-1",
+        draftId: "missing",
+        approvedBy: "operator-1",
+        approvedAt: now,
+      }),
+    /job_opportunity_draft_missing/
+  )
+})
+
+test("job opportunity approval rejects non-ready or rejected drafts", async () => {
+  const { db } = makeFakeFirestore()
+  await writeJobOpportunityDraft(db, jobOpportunityDraft({ draftId: "review-1", approvalReady: false }))
+  await assert.rejects(
+    () =>
+      approveJobOpportunityDraft(db, {
+        jobId: "job-1",
+        draftId: "review-1",
+        approvedBy: "operator-1",
+        approvedAt: now,
+      }),
+    /job_opportunity_draft_not_approval_ready/
+  )
+
+  const rejected = await rejectJobOpportunityDraft(db, {
+    jobId: "job-1",
+    draftId: "review-1",
+    rejectedBy: "operator-1",
+    rejectedAt: now,
+    reason: "needs stronger evidence",
+  })
+  assert.equal(rejected.status, "rejected")
+  await assert.rejects(
+    () =>
+      approveJobOpportunityDraft(db, {
+        jobId: "job-1",
+        draftId: "review-1",
+        approvedBy: "operator-1",
+        approvedAt: now,
+      }),
+    /job_opportunity_draft_rejected/
+  )
+})
+
+test("job enrichment eval fixtures are append-only under pa-jobs subcollection", async () => {
+  const { db, store } = makeFakeFirestore()
+  const fixture: JobEnrichmentEvalFixture = {
+    fixtureId: createJobEnrichmentEvalFixtureId("job-1", "seniority-title-only"),
+    jobId: "job-1",
+    rawSnapshot: {
+      source: "ats",
+      capturedAt: now,
+      title: "Senior Product Engineer",
+      companyName: "WeKruit",
+      description: "Build Claire.",
+      metadata: {},
+    },
+    expectedCoverage: "low",
+    expectedHitlFlags: ["low_coverage"],
+    createdAt: now,
+  }
+  assert.equal((await writeJobEnrichmentEvalFixture(db, fixture)).created, true)
+  assert.equal((await writeJobEnrichmentEvalFixture(db, fixture)).created, false)
+  await assert.rejects(
+    () => writeJobEnrichmentEvalFixture(db, { ...fixture, expectedCoverage: "high" }),
+    /conflicting_duplicate_event/
+  )
+  const path = `${PA_COLLECTIONS.jobs}/job-1/${PA_JOB_ENRICHMENT_EVAL_FIXTURES_SUBCOLLECTION}`
+  assert.equal(store.get(path)!.get(fixture.fixtureId)!.expectedCoverage, "low")
 })

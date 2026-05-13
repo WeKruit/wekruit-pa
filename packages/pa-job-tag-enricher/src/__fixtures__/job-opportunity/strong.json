@@ -1,0 +1,35 @@
+{
+  "name": "strong",
+  "rawJob": {
+    "title": "Senior Backend Engineer",
+    "companyName": "Stripe",
+    "locationRaw": "San Francisco, CA",
+    "salaryRange": { "min": 170000, "max": 230000, "currency": "USD" },
+    "jobDescription": "Build payments infrastructure in Go and Kubernetes. Requires 5+ years of backend engineering experience. Hybrid in San Francisco. We sponsor H-1B transfers."
+  },
+  "enrichedJobTags": {
+    "roleFunction": ["software_engineering"],
+    "industrySector": ["financial_technology", "software_and_saas"],
+    "relevantTags": ["payments", "distributed_systems", "fraud_and_risk"],
+    "skills": [
+      { "name": "go", "bucket": "programming_languages", "proficiency": "expert", "evidenceCount": 3, "baseWeight": 1 },
+      { "name": "kubernetes", "bucket": "cloud_and_infrastructure", "proficiency": "advanced", "evidenceCount": 2, "baseWeight": 0.8 }
+    ],
+    "seniorityLevel": "senior",
+    "sponsorshipHint": true,
+    "locationBuckets": ["san_francisco_bay_area"],
+    "jobType": "full_time",
+    "confidence": {
+      "overall": 0.91,
+      "fields": {
+        "roleFunction": 0.96,
+        "industrySector": 0.93,
+        "relevantTags": 0.88,
+        "skills": 0.91,
+        "seniorityLevel": 0.9,
+        "locationBuckets": 0.95,
+        "jobType": 0.96
+      }
+    }
+  }
+}

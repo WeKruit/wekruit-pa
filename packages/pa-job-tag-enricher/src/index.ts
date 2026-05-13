@@ -68,3 +68,9 @@ export {
   type EnrichJobTagsInput,
   type EnrichJobTagsOptions,
 } from "./enricher.js"
+
+export {
+  deriveJobOpportunityDraft,
+  type JobOpportunityDraft,
+  type JobOpportunityDraftInput,
+} from "./job-opportunity.js"

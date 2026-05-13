@@ -7,8 +7,13 @@ import {
   CorrectionEventSchema,
   EmployerVisibleProfileSchema,
   FeedbackEventSchema,
+  JobEnrichmentEvalFixtureSchema,
+  JobOpportunityDraftSchema,
   PA_COLLECTIONS,
+  PA_JOB_ENRICHMENT_EVAL_FIXTURES_SUBCOLLECTION,
+  PA_JOB_ENRICHMENT_SUBCOLLECTION,
   createEmployerVisibleProfileId,
+  toPublicJobOpportunity,
   reduceCandidateJobState,
   reduceCandidateLifecycleState,
   type CandidateJobEvent,
@@ -19,6 +24,8 @@ import {
   type CorrectionEvent,
   type EmployerVisibleProfile,
   type FeedbackEvent,
+  type JobEnrichmentEvalFixture,
+  type JobOpportunityDraft,
   createCandidateJobStateId,
 } from "@pa/core-types"
 
@@ -190,6 +197,193 @@ async function writeAppendOnlyDoc<T>(
   }
   await ref.set(payload as Record<string, unknown>)
   return { event: payload, created: true }
+}
+
+type FirestoreDocRef = ReturnType<ReturnType<Firestore["collection"]>["doc"]>
+
+function jobRootRef(db: Firestore, jobId: string): FirestoreDocRef {
+  return db.collection(PA_COLLECTIONS.jobs).doc(jobId)
+}
+
+function jobEnrichmentDraftRef(db: Firestore, jobId: string, draftId: string): FirestoreDocRef {
+  return jobRootRef(db, jobId).collection(PA_JOB_ENRICHMENT_SUBCOLLECTION).doc(draftId)
+}
+
+function jobEnrichmentEvalFixtureRef(
+  db: Firestore,
+  jobId: string,
+  fixtureId: string
+): FirestoreDocRef {
+  return jobRootRef(db, jobId)
+    .collection(PA_JOB_ENRICHMENT_EVAL_FIXTURES_SUBCOLLECTION)
+    .doc(fixtureId)
+}
+
+async function writeAppendOnlyRefDoc<T>(
+  ref: FirestoreDocRef,
+  collectionName: string,
+  docId: string,
+  payload: T
+): Promise<{ event: T; created: boolean }> {
+  const existing = await ref.get()
+  if (existing.exists) {
+    const data = existing.data() as T
+    if (stableJson(data) !== stableJson(payload)) {
+      throw new Error(`conflicting_duplicate_event:${collectionName}/${docId}`)
+    }
+    return { event: data, created: false }
+  }
+  await ref.set(payload as Record<string, unknown>)
+  return { event: payload, created: true }
+}
+
+export async function writeJobOpportunityDraft(
+  db: Firestore,
+  rawDraft: JobOpportunityDraft
+): Promise<{ draft: JobOpportunityDraft; created: boolean }> {
+  const draft = JobOpportunityDraftSchema.parse(rawDraft)
+  const result = await writeAppendOnlyRefDoc(
+    jobEnrichmentDraftRef(db, draft.jobId, draft.draftId),
+    `${PA_COLLECTIONS.jobs}/${draft.jobId}/${PA_JOB_ENRICHMENT_SUBCOLLECTION}`,
+    draft.draftId,
+    draft
+  )
+  if (result.created) {
+    await db.collection(AUDIT_COLLECTION).doc(auditId("marketplace_job_enrichment", draft.draftId)).set({
+      id: auditId("marketplace_job_enrichment", draft.draftId),
+      action: "marketplace.job_enrichment.draft.write",
+      jobId: draft.jobId,
+      draftId: draft.draftId,
+      status: draft.status,
+      approvalReady: draft.approvalReady,
+      createdAt: draft.createdAt,
+    })
+  }
+  return { draft: result.event, created: result.created }
+}
+
+export type ApproveJobOpportunityDraftInput = {
+  jobId: string
+  draftId: string
+  approvedBy: string
+  approvedAt: string
+}
+
+export async function approveJobOpportunityDraft(
+  db: Firestore,
+  input: ApproveJobOpportunityDraftInput
+): Promise<JobOpportunityDraft> {
+  const draftRef = jobEnrichmentDraftRef(db, input.jobId, input.draftId)
+  const rootRef = jobRootRef(db, input.jobId)
+  const auditRef = db
+    .collection(AUDIT_COLLECTION)
+    .doc(auditId("marketplace_job_enrichment_approved", input.draftId))
+
+  return await db.runTransaction(async (tx) => {
+    const draftSnap = await tx.get(draftRef)
+    if (!draftSnap.exists) throw new Error("job_opportunity_draft_missing")
+    const draft = JobOpportunityDraftSchema.parse(draftSnap.data())
+    if (draft.jobId !== input.jobId || draft.draftId !== input.draftId) {
+      throw new Error("job_opportunity_draft_link_mismatch")
+    }
+    if (draft.status === "rejected") throw new Error("job_opportunity_draft_rejected")
+    if (!draft.approvalReady) throw new Error("job_opportunity_draft_not_approval_ready")
+
+    const approved = JobOpportunityDraftSchema.parse({
+      ...draft,
+      status: "approved",
+      approvedAt: input.approvedAt,
+      approvedBy: input.approvedBy,
+      updatedAt: input.approvedAt,
+    })
+    tx.set(draftRef, approved, { merge: false })
+    tx.set(
+      rootRef,
+      {
+        jobOpportunity: toPublicJobOpportunity(approved.opportunity),
+        enrichmentVersion: approved.enrichmentVersion,
+        enrichmentApprovedAt: input.approvedAt,
+        updatedAt: input.approvedAt,
+      },
+      { merge: true }
+    )
+    tx.set(auditRef, {
+      id: auditRef.id,
+      action: "marketplace.job_enrichment.approve",
+      jobId: input.jobId,
+      draftId: input.draftId,
+      actor: input.approvedBy,
+      createdAt: input.approvedAt,
+    })
+    return approved
+  })
+}
+
+export type RejectJobOpportunityDraftInput = {
+  jobId: string
+  draftId: string
+  rejectedBy: string
+  rejectedAt: string
+  reason: string
+}
+
+export async function rejectJobOpportunityDraft(
+  db: Firestore,
+  input: RejectJobOpportunityDraftInput
+): Promise<JobOpportunityDraft> {
+  const draftRef = jobEnrichmentDraftRef(db, input.jobId, input.draftId)
+  const auditRef = db
+    .collection(AUDIT_COLLECTION)
+    .doc(auditId("marketplace_job_enrichment_rejected", input.draftId))
+
+  return await db.runTransaction(async (tx) => {
+    const draftSnap = await tx.get(draftRef)
+    if (!draftSnap.exists) throw new Error("job_opportunity_draft_missing")
+    const draft = JobOpportunityDraftSchema.parse(draftSnap.data())
+    if (draft.status === "approved") throw new Error("job_opportunity_draft_already_approved")
+    const rejected = JobOpportunityDraftSchema.parse({
+      ...draft,
+      status: "rejected",
+      rejectedAt: input.rejectedAt,
+      rejectedBy: input.rejectedBy,
+      rejectionReason: input.reason,
+      updatedAt: input.rejectedAt,
+    })
+    tx.set(draftRef, rejected, { merge: false })
+    tx.set(auditRef, {
+      id: auditRef.id,
+      action: "marketplace.job_enrichment.reject",
+      jobId: input.jobId,
+      draftId: input.draftId,
+      actor: input.rejectedBy,
+      reason: input.reason,
+      createdAt: input.rejectedAt,
+    })
+    return rejected
+  })
+}
+
+export async function writeJobEnrichmentEvalFixture(
+  db: Firestore,
+  rawFixture: JobEnrichmentEvalFixture
+): Promise<{ fixture: JobEnrichmentEvalFixture; created: boolean }> {
+  const fixture = JobEnrichmentEvalFixtureSchema.parse(rawFixture)
+  const result = await writeAppendOnlyRefDoc(
+    jobEnrichmentEvalFixtureRef(db, fixture.jobId, fixture.fixtureId),
+    `${PA_COLLECTIONS.jobs}/${fixture.jobId}/${PA_JOB_ENRICHMENT_EVAL_FIXTURES_SUBCOLLECTION}`,
+    fixture.fixtureId,
+    fixture
+  )
+  if (result.created) {
+    await db.collection(AUDIT_COLLECTION).doc(auditId("marketplace_job_enrichment_eval", fixture.fixtureId)).set({
+      id: auditId("marketplace_job_enrichment_eval", fixture.fixtureId),
+      action: "marketplace.job_enrichment.eval_fixture.write",
+      jobId: fixture.jobId,
+      fixtureId: fixture.fixtureId,
+      createdAt: fixture.createdAt,
+    })
+  }
+  return { fixture: result.event, created: result.created }
 }
 
 export async function writeFeedbackEvent(
