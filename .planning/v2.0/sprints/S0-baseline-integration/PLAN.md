@@ -321,15 +321,23 @@ If curl checks fail, record:
 - Decision: S0 may include minimal package metadata fixes when required by the
   PR acceptance build.
   Rationale: `@pa/job-tag-enricher` imported `openai` without declaring it, and
-  `@pa/job-rec` needed the same clean-worktree local dependency build behavior
-  as the S0 test commands.
+  `@pa/agent-runtime` imported Firestore types from `firebase-admin` without
+  declaring it.
+  Date/Author: 2026-05-13 / lead agent.
+
+- Decision: S0 may include minimal build-order fixes when required by the PR
+  acceptance build.
+  Rationale: the original multi-workspace npm commands allowed CI to compile
+  packages before their local dependency `dist/` outputs existed, and
+  `agent-runtime`'s library build included a test-only import of
+  `@pa/pa-connectors`, creating a production build-order cycle.
   Date/Author: 2026-05-13 / lead agent.
 
 ## Surprises And Discoveries
 
 - Observation: Current dirty state in the dedicated S0 worktree is limited to
-  S0 docs plus package test/build scripts, one direct dependency declaration,
-  and the generated lockfile update.
+  S0 docs plus package test/build scripts, direct dependency declarations,
+  one tsconfig build-scope correction, and the generated lockfile update.
   Evidence: `git status --short --branch`.
 
 - Observation: A clean worktree did not have built workspace `dist/` outputs,
@@ -345,11 +353,12 @@ If curl checks fail, record:
   Evidence: final `cd apps/functions && pnpm test` returned 1168/1168 pass.
 
 - Observation: The initial PR checks exposed two CI-only build reproducibility
-  gaps that local S0 test commands did not cover: `@pa/job-tag-enricher` needed
-  a declared `openai` dependency, and `@pa/job-rec` needed a prebuild step for
-  local workspace packages.
-  Evidence: local reruns of `pnpm --filter @pa/job-rec build` and `pnpm -r
-  build` both passed after the package metadata fixes.
+  gaps that local S0 test commands did not cover: direct dependencies were
+  missing for packages compiled by `pnpm -r build`, and multi-workspace npm
+  commands did not guarantee dependency order in CI.
+  Evidence: local reruns of `pnpm --filter @pa/job-rec build`, `pnpm -r
+  build`, `pnpm --filter pa-orchestrator test`, and `cd apps/functions && pnpm
+  test` all passed after the package metadata and build-order fixes.
 
 ## Outcomes And Retrospective
 

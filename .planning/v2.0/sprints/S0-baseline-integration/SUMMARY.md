@@ -18,6 +18,8 @@ Updated:
 - `packages/pa-orchestrator/package.json`
 - `apps/functions/package.json`
 - `apps/job-rec/package.json`
+- `packages/agent-runtime/package.json`
+- `packages/agent-runtime/tsconfig.json`
 - `packages/pa-job-tag-enricher/package.json`
 - `pnpm-lock.yaml`
 
@@ -31,9 +33,10 @@ Passed:
   escalated filesystem permissions after sandbox-only EPERM writing ignored
   `dist/` outputs.
 - `pnpm --filter @pa/job-rec build` -> exit 0 after making the isolated build
-  self-contained.
+  self-contained and sequential.
 - `pnpm -r build` -> exit 0 after declaring `@pa/job-tag-enricher`'s direct
-  `openai` dependency.
+  `openai` dependency, declaring `@pa/agent-runtime`'s direct `firebase-admin`
+  dependency, and excluding agent-runtime tests from the library build.
 - `curl -sS -i -I https://candidate.wekruit.com/` -> `HTTP/2 200`.
 - `curl -sS -i -I https://candidate.wekruit.com/j/hs-11005382-invoko-product-designer`
   -> `HTTP/2 200`.
@@ -54,9 +57,10 @@ PII-printing action was performed.
   behavior was implemented.
 - Minimal test-harness script fixes are in scope for S0 because the documented
   acceptance commands must work from a clean worktree.
-- Minimal package metadata fixes are in scope for S0 because the PR acceptance
-  build must be reproducible from a clean workspace and direct imports must be
-  declared.
+- Minimal package metadata and build-order fixes are in scope for S0 because
+  the PR acceptance build must be reproducible from a clean workspace, direct
+  imports must be declared, and library builds must not compile test-only
+  dependency cycles.
 - The S0 source branch is `codex/v2-S0-baseline-integration`, created from
   `main` at `23b9adb258fd10171e62cb8ba5030d5ba08dc3d0`.
 
