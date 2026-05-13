@@ -193,6 +193,18 @@ function buildPipeline(args: {
         })
         args.log("pii_confirm.collected", { userId: args.userId, source: args.source })
 
+        // Stamp completion timestamp on the pipeline state doc so the
+        // turn handler can swallow duplicate inbound retries for the
+        // dedupe window.
+        try {
+          await args.db
+            .collection("pa-pii-confirm-state")
+            .doc(args.userId)
+            .set({ completedAt: consentedAt }, { merge: true })
+        } catch {
+          /* swallow — dedupe is best-effort */
+        }
+
         // Chain → generateJobRecs (matching) once PII collected.
         if (args.onComplete) {
           try {
@@ -235,7 +247,19 @@ export async function runPiiConfirmTurnIfActive(
     .doc(args.userId)
     .get()
   if (!stateSnap.exists) return { handled: false }
-  const stateData = stateSnap.data() as { currentQId?: string | null; completed?: boolean } | undefined
+  const stateData = stateSnap.data() as { currentQId?: string | null; completed?: boolean; completedAt?: string } | undefined
+  // v1.9 hotfix — swallow inbound for 5 min after PII completed. Sendblue
+  // may resend the same inbound (network retry), and without this we fall
+  // through to Claire which produces a stray reply ("wait—aretrying to sha"
+  // in the live smoke). Return handled=true (silent) for recent completes.
+  const RECENT_COMPLETE_WINDOW_MS = 5 * 60 * 1000
+  if (stateData?.completed && stateData?.completedAt) {
+    const completedAtMs = Date.parse(stateData.completedAt as string)
+    if (Number.isFinite(completedAtMs) && Date.now() - completedAtMs < RECENT_COMPLETE_WINDOW_MS) {
+      log("pii_confirm.swallow_recent_complete", { userId: args.userId })
+      return { handled: true, completed: true }
+    }
+  }
   if (!stateData || stateData.completed || !stateData.currentQId) {
     return { handled: false }
   }

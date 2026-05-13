@@ -98,6 +98,12 @@ export interface PipelineOpts {
   log?: (event: string, payload: Record<string, unknown>) => void
   /** Firestore handle for judges that need it (Code, Resume). */
   db?: unknown
+  /**
+   * v1.9 — optional override for the post-all-Qs completion text. Default
+   * is the onboarding "running the match" copy. PII confirm flow overrides
+   * with "Thanks — you're all set" copy.
+   */
+  completionMessage?: BilingualText
 }
 
 export type TurnEmitKind =
@@ -297,9 +303,13 @@ export class OnboardingPipeline {
   ): Promise<RunTurnResult> {
     const next = this.nextQ(fromQId)
     if (!next) {
-      // All done — fire postCollect.
-      const completionMsg =
-        state.lang === "zh"
+      // All done — fire postCollect. v1.9: allow caller override of the
+      // completion message (PII confirm flow needs "Thanks — you're all
+      // set" framing instead of "running the match" framing).
+      const override = this.opts.completionMessage
+      const completionMsg = override
+        ? override[state.lang]
+        : state.lang === "zh"
           ? "信息都收齐了, 接下来给你跑一下匹配 ✓"
           : "got everything I need — running the match now ✓"
       return await this.completeAndEmit(input, state, completionMsg)

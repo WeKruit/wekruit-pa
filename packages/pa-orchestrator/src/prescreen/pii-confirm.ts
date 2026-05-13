@@ -241,6 +241,16 @@ export function createPiiConfirmPipeline(opts: PiiConfirmPipelineOpts): Onboardi
 
   // Caller supplies `emit` — pipeline never sends directly. The CF wrapper
   // routes emitted text through sendImessage / sendMemoryReply.
+  const completionMessage: BilingualText =
+    source === "fail"
+      ? {
+          en: "Thanks — I'll text you when stronger matches come up.",
+          zh: "收到 — 之后有更合适的我直接推给你.",
+        }
+      : {
+          en: "Thanks — you're all set. The employer will follow up directly.",
+          zh: "收到 — 已经记下了. 招聘方会直接联系你.",
+        }
   return new OnboardingPipeline({
     questions: [qLegalName as Question<unknown>, qEmail as Question<unknown>, qPhone as Question<unknown>],
     state: opts.state,
@@ -257,6 +267,7 @@ export function createPiiConfirmPipeline(opts: PiiConfirmPipelineOpts): Onboardi
       }
       await opts.hooks.onAllCollected(answers, ctx)
     },
+    completionMessage,
     log: opts.log,
   })
 }
