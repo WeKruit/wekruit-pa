@@ -70,6 +70,9 @@ Passed:
   (45/45), `@pa/pa-broker` (13/13), `@pa/agent-registry` (52/52),
   `@pa/pa-connectors` (22/22), and `@pa/pa-safety` (87 pass, 1 gated live
   smoke skipped).
+- Third CI repair: removed a test-only reverse import from
+  `packages/agent-runtime/src/openai-agents-adapter.test.ts` to
+  `@pa/pa-connectors`; `pnpm --filter @pa/agent-runtime test` passed 45/45.
 - `curl -sS -i -I https://candidate.wekruit.com/` -> `HTTP/2 200`.
 - `curl -sS -i -I https://candidate.wekruit.com/j/hs-11005382-invoko-product-designer`
   -> `HTTP/2 200`.
