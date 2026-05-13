@@ -1,6 +1,8 @@
 import React from "react"
 import ReactDOM from "react-dom/client"
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom"
+import { BrowserRouter, Routes, Route } from "react-router-dom"
+import Landing from "./pages/Landing.js"
+import Legal from "./pages/Legal.js"
 import PublicJob from "./pages/PublicJob.js"
 import PublicJobCv from "./pages/PublicJobCv.js"
 
@@ -11,9 +13,11 @@ ReactDOM.createRoot(root).render(
   <React.StrictMode>
     <BrowserRouter>
       <Routes>
+        <Route path="/" element={<Landing />} />
+        <Route path="/legal" element={<Legal />} />
         <Route path="/j/:jobId" element={<PublicJob />} />
         <Route path="/j/:jobId/cv" element={<PublicJobCv />} />
-        <Route path="*" element={<Navigate to="/j/" replace />} />
+        <Route path="*" element={<Landing />} />
       </Routes>
     </BrowserRouter>
   </React.StrictMode>

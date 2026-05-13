@@ -39,9 +39,9 @@
       ],
       "redirects": [
         {
-          "_comment": "v1.9 hotfix 2026-05-13 — candidate routes moved to wekruit-candidate.web.app. Firebase Hosting redirect uses `:rest*` named-capture syntax (not Netlify `:splat`). 301 preserves any stale-bookmark /j/:jobId hits.",
+          "_comment": "v1.9 hotfix 2026-05-13 — candidate routes moved to pa-landing site (Adam: 'c端都在这个上面'). Maps to candidate.wekruit.com (Cloudflare CNAME). 301 from admin domain so stale-bookmark /j/:jobId hits land on the correct customer site.",
           "source": "/j/:rest*",
-          "destination": "https://wekruit-candidate.web.app/j/:rest*",
+          "destination": "https://candidate.wekruit.com/j/:rest*",
           "type": 301
         }
       ],
@@ -73,47 +73,23 @@
       ]
     },
     {
-      "_comment": "iter33 spec collapse 2026-05-05 — public CTA landing page. MVP: single static index.html with sms:+13054507715 deep link. Future: pa.wekruit.com custom domain (DNS step in Firebase console).",
+      "_comment": "v1.9 hotfix 2026-05-13 — pa-landing upgraded from static-only to Vite SPA. Now serves ALL customer-facing surfaces (Adam directive: 'c端都在这个上面'): / → Landing (preserves iter33 black-gradient design), /legal → Privacy/Terms, /j/:jobId → PublicJob (pre-screen entry), /j/:jobId/cv → PublicJobCv (legacy back-compat). Default URL https://wekruit-pa-landing.web.app. Custom domains via Cloudflare CNAMEs: candidate.wekruit.com, pa.wekruit.com both point here.",
       "target": "pa-landing",
-      "public": "apps/pa-landing/public",
+      "public": "apps/pa-landing/dist",
       "ignore": [
         "firebase.json",
         "**/.*",
         "**/node_modules/**"
+      ],
+      "predeploy": [
+        "node scripts/inject-pa-landing-vite-env.mjs",
+        "npm run build --workspace=@pa/landing"
       ],
       "rewrites": [
         {
           "source": "**",
           "destination": "/index.html"
         }
-      ],
-      "headers": [
-        {
-          "source": "/index.html",
-          "headers": [
-            {
-              "key": "Cache-Control",
-              "value": "no-cache, no-store, must-revalidate"
-            },
-            {
-              "key": "X-Content-Type-Options",
-              "value": "nosniff"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "_comment": "v1.9 hotfix 2026-05-13 — Adam directive: candidate flow MUST live on its own domain (candidate.wekruit.com), NOT on the admin wekruit-pa.web.app site. apps/candidate-web is a minimal Vite app with only /j/:jobId routes. Default site URL: https://wekruit-candidate.web.app. DNS step: Adam adds CNAME candidate.wekruit.com → wekruit-candidate.web.app in Firebase console.",
-      "target": "pa-candidate",
-      "public": "apps/candidate-web/dist",
-      "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
-      "predeploy": [
-        "node scripts/inject-pa-candidate-vite-env.mjs",
-        "npm run build --workspace=@pa/candidate-web"
-      ],
-      "rewrites": [
-        { "source": "**", "destination": "/index.html" }
       ],
       "headers": [
         {
@@ -125,7 +101,8 @@
         {
           "source": "/index.html",
           "headers": [
-            { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
+            { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" },
+            { "key": "X-Content-Type-Options", "value": "nosniff" }
           ]
         }
       ]

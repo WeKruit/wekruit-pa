@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * Writes apps/candidate-web/.env.production.local from:
- * 1) PA_CANDIDATE_VITE_ENV_FILE (optional) — KEY=value lines, # comments
+ * Writes apps/pa-landing/.env.production.local from:
+ * 1) PA_LANDING_VITE_ENV_FILE (optional) — KEY=value lines, # comments
  * 2) Falls back to apps/dashboard-web/.env.production.local (same Firebase
  *    project, so the VITE_FIREBASE_* + VITE_CV_INGEST_URL keys are reused).
  *
@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const repoRoot = join(__dirname, "..")
-const outPath = join(repoRoot, "apps/candidate-web/.env.production.local")
+const outPath = join(repoRoot, "apps/pa-landing/.env.production.local")
 
 const REQUIRED = [
   "VITE_FIREBASE_API_KEY",
@@ -51,18 +51,16 @@ function parseEnvFile(path) {
 
 let merged = {}
 
-// 1. Explicit env file
-const filePath = process.env.PA_CANDIDATE_VITE_ENV_FILE?.trim()
+const filePath = process.env.PA_LANDING_VITE_ENV_FILE?.trim()
 if (filePath) {
   const abs = filePath.startsWith("/") ? filePath : join(repoRoot, filePath)
   if (!existsSync(abs)) {
-    console.error(`[inject-pa-candidate-vite-env] File not found: ${abs}`)
+    console.error(`[inject-pa-landing-vite-env] File not found: ${abs}`)
     process.exit(1)
   }
   merged = { ...merged, ...parseEnvFile(abs) }
 }
 
-// 2. Fallback — reuse dashboard env (same Firebase project)
 const dashboardEnv = join(repoRoot, "apps/dashboard-web/.env.production.local")
 if (existsSync(dashboardEnv)) {
   const dash = parseEnvFile(dashboardEnv)
@@ -71,7 +69,6 @@ if (existsSync(dashboardEnv)) {
   }
 }
 
-// 3. process.env overrides
 for (const k of Object.keys(process.env)) {
   if (
     (k.startsWith("VITE_FIREBASE_") || OPTIONAL.includes(k)) &&
@@ -84,15 +81,13 @@ for (const k of Object.keys(process.env)) {
 
 const missing = REQUIRED.filter((k) => !merged[k] || String(merged[k]).trim() === "")
 if (missing.length) {
-  console.error(
-    "[inject-pa-candidate-vite-env] Missing required keys:\n  " + missing.join("\n  "),
-  )
+  console.error("[inject-pa-landing-vite-env] Missing required keys:\n  " + missing.join("\n  "))
   process.exit(1)
 }
 
 for (const k of OPTIONAL) {
   if (!merged[k] || String(merged[k]).trim() === "") {
-    console.warn(`[inject-pa-candidate-vite-env] WARN — optional key not set: ${k}`)
+    console.warn(`[inject-pa-landing-vite-env] WARN — optional key not set: ${k}`)
   }
 }
 
@@ -104,4 +99,4 @@ function escapeEnvValue(v) {
 const ALL_KEYS = [...REQUIRED, ...OPTIONAL.filter((k) => merged[k])]
 const body = ALL_KEYS.map((k) => `${k}=${escapeEnvValue(merged[k])}`).join("\n") + "\n"
 writeFileSync(outPath, body, "utf8")
-console.log("[inject-pa-candidate-vite-env] wrote", outPath, "keys:", ALL_KEYS.join(","))
+console.log("[inject-pa-landing-vite-env] wrote", outPath, "keys:", ALL_KEYS.join(","))
