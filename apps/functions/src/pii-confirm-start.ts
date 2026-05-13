@@ -155,6 +155,9 @@ function buildPipeline(args: {
   return createPiiConfirmPipeline({
     state,
     source: args.source,
+    // v1.9 Adam directive — always chain Level 1 onboarding Qs after PII.
+    // Writes go to pa-users.tags so generateJobRecs matching uses them.
+    includeLevel1: true,
     emit: async (text) => {
       try {
         await sendImessage({ to: args.toE164, content: text })
@@ -165,23 +168,40 @@ function buildPipeline(args: {
     hooks: {
       onAllCollected: async (answers: PiiConfirmAnswers) => {
         const consentedAt = new Date().toISOString()
-        await args.db
-          .collection("pa-users")
-          .doc(args.userId)
-          .set(
-            {
-              contactPII: {
-                legalName: answers.legalName,
-                email: answers.email,
-                phone: answers.phone,
-                consentedAt,
-                source: args.source === "fail" ? "prescreen_fail_followup" : "prescreen_pass",
-                sourceSessionId: args.sourceSessionId,
-              },
-              updatedAt: FieldValue.serverTimestamp(),
-            },
-            { merge: true }
-          )
+        const userDoc: Record<string, unknown> = {
+          contactPII: {
+            legalName: answers.legalName,
+            email: answers.email,
+            phone: answers.phone,
+            consentedAt,
+            source: args.source === "fail" ? "prescreen_fail_followup" : "prescreen_pass",
+            sourceSessionId: args.sourceSessionId,
+          },
+          updatedAt: FieldValue.serverTimestamp(),
+        }
+        // v1.9 — merge Level 1 onboarding answers into pa-users.tags so
+        // generateJobRecs picks them up. Each field merged independently
+        // (preserve any previously-set tags via dot-path semantics).
+        if (answers.level1) {
+          const tagPatch: Record<string, unknown> = {}
+          if (answers.level1.yoeRange) {
+            tagPatch.yoeRange = {
+              lowYears: answers.level1.yoeRange[0],
+              highYears: answers.level1.yoeRange[1],
+            }
+          }
+          if (answers.level1.visaStatus) tagPatch.visaStatus = answers.level1.visaStatus
+          if (answers.level1.targetLocations) tagPatch.targetLocations = answers.level1.targetLocations
+          if (answers.level1.minSalaryUsd !== undefined) tagPatch.minSalaryUsd = answers.level1.minSalaryUsd
+          if (answers.level1.industrySector) tagPatch.industrySector = answers.level1.industrySector
+          if (answers.level1.companySize) tagPatch.companySize = answers.level1.companySize
+          tagPatch.level1CollectedAt = consentedAt
+          tagPatch.level1Source = args.source ?? "pass"
+          if (Object.keys(tagPatch).length > 0) {
+            userDoc.tags = tagPatch
+          }
+        }
+        await args.db.collection("pa-users").doc(args.userId).set(userDoc, { merge: true })
         await args.db.collection("pa-audit-events").add({
           kind: "pii_confirm.collected",
           userId: args.userId,

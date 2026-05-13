@@ -3969,9 +3969,18 @@ export {
   validateEmail,
   validatePhone,
   validateLegalName,
+  // v1.9 Level 1 onboarding validators (yoe / visa / location / salary /
+  // industry / company size).
+  validateYoe,
+  validateVisa,
+  validateLocation,
+  validateSalaryRange,
+  validateIndustry,
+  validateCompanySize,
   type PiiConfirmAnswers,
   type PiiConfirmHooks,
   type PiiConfirmPipelineOpts,
+  type Level1Answers,
 } from "./prescreen/pii-confirm.js"
 export {
   createFeedbackSurveyPipeline,
