@@ -2,8 +2,9 @@
 
 ## Status
 
-Implementation, local verification, deploy, and non-sending smoke checks are
-complete. PR checks and merge are pending.
+Implementation, local verification, targeted S6 deploy, and non-sending smoke
+checks are complete. PR checks and merge are pending. Broad project-wide
+functions deploy is flagged on unrelated Cloud Run regional memory quota.
 
 ## Target Outcome
 
