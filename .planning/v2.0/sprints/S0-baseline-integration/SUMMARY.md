@@ -51,11 +51,15 @@ Passed:
   `@pa/functions`'s direct `@types/express` devDependency for
   `src/health.ts`'s `Response` import, which repaired GitHub check run
   `25810771791`.
+- Final CI repair rerun: `pnpm -r typecheck` -> exit 0 with the
+  `@types/express` dependency and lockfile importer in place.
 - `pnpm install --frozen-lockfile` -> exit 0 after the `@types/express`
   package-manifest and lockfile importer repair.
 - `NODE_ENV=test PA_DASHBOARD_ENV=test pnpm -r test` -> exit 0 after removing
   stale hardcoded skill-count assumptions from agent-registry tests. The
   functions package still reports 1168/1168 pass inside the recursive run.
+- Final CI repair rerun: `NODE_ENV=test PA_DASHBOARD_ENV=test pnpm -r test` ->
+  exit 0; `apps/functions` still reports 1168/1168 pass.
 - `curl -sS -i -I https://candidate.wekruit.com/` -> `HTTP/2 200`.
 - `curl -sS -i -I https://candidate.wekruit.com/j/hs-11005382-invoko-product-designer`
   -> `HTTP/2 200`.

@@ -14,7 +14,7 @@ This file records S0 verification.
 | Functions tests | `cd apps/functions && pnpm test` | all pass | first clean-worktree run failed 921/939 due missing built workspace deps; sandbox rerun hit EPERM writing ignored `dist/`; escalated rerun after `pretest` dependency-build fix: 1168/1168 pass, 0 fail | PASS |
 | Job-rec isolated build | `pnpm --filter @pa/job-rec build` | build succeeds from clean worktree | first GitHub Actions run failed because `job-rec` imported local packages before their `dist/` outputs existed; after explicit sequential `prebuild`, clean temp worktree `/private/tmp/wekruit-s0-ci-c667ffa` rerun passed | PASS |
 | Monorepo build | `pnpm -r build` | recursive build succeeds | first GitHub Actions run failed because `@pa/job-tag-enricher` imported `openai` without declaring it; second run exposed `agent-runtime` missing direct `firebase-admin` plus test-only connector import in library build; clean temp worktree exposed `@pa/pa-resume-parser` missing direct `openai` and `@pa/functions` missing direct `zod`; after metadata/tsconfig fixes, clean temp worktree `/private/tmp/wekruit-s0-ci-c667ffa` rerun passed | PASS |
-| Monorepo typecheck | `pnpm -r typecheck` | recursive typecheck succeeds | PR rerun exposed `apps/eval/external-benchmarks/lib/sf-client.mjs` JSDoc and catch narrowing issues; after the narrow type-only fix, local rerun passed | PASS |
+| Monorepo typecheck | `pnpm -r typecheck` | recursive typecheck succeeds | PR rerun exposed `apps/eval/external-benchmarks/lib/sf-client.mjs` JSDoc and catch narrowing issues; later GitHub check `25810771791` exposed the missing `@pa/functions` `@types/express` declaration; after both fixes, local recursive rerun passed | PASS |
 | Functions typecheck PR repair | `pnpm --filter @pa/functions typecheck` | functions package typecheck succeeds from declared direct dependencies | GitHub check `25810771791` failed because `src/health.ts` imports `Response` from `express` without a direct type declaration. Added `@types/express` to `apps/functions/package.json`; local rerun passed with Node 22 engine warning under local Node v25.6.1 | PASS |
 | Frozen lockfile after PR repair | `pnpm install --frozen-lockfile` | package manifests and lockfile are consistent | exit 0; lockfile records the `apps/functions` `@types/express@4.17.25` importer entry | PASS |
 | Monorepo tests | `NODE_ENV=test PA_DASHBOARD_ENV=test pnpm -r test` | recursive tests succeed | full recursive run exposed stale hardcoded `agent-registry` test counts after metadata expansion; after deriving counts from current metadata/keys, local rerun passed; `apps/functions` still reports 1168/1168 pass | PASS |
@@ -98,9 +98,9 @@ S0 harness fixes:
   skill-count assumptions from tests/comments so current metadata expansion is
   validated directly.
 - `pnpm-lock.yaml`: updated from the current workspace graph; this adds the
-  `openai`, `firebase-admin`, and `zod` importer entries and removes the stale
-  `apps/candidate-web` importer because that directory is not present in the
-  workspace.
+  `openai`, `firebase-admin`, `zod`, and `@types/express` importer entries and
+  removes the stale `apps/candidate-web` importer because that directory is not
+  present in the workspace.
 
 No deploy, live SMS, Sendblue outbound, production data mutation, paid eval, or
 PII-printing action was performed during S0.
