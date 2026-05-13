@@ -398,6 +398,51 @@ service cloud.firestore {
       }
     }
 
+    // ─── v2.0 external-supply V1 — operator-only intake/eval/outreach ───
+    // Internal admin dashboard reads these directly. All mutations route
+    // through admin-gated Cloud Functions via Admin SDK (bypasses rules).
+    // Candidate / public clients must never see external-supply data.
+    match /pa-external-sourcing-batches/{batchId} {
+      allow read: if isPaOperator();
+      allow write: if false;
+    }
+    match /pa-external-candidate-records/{recordId} {
+      allow read: if isPaOperator();
+      allow write: if false;
+    }
+    match /pa-candidate-source-links/{sourceLinkId} {
+      allow read: if isPaOperator();
+      allow write: if false;
+    }
+    match /pa-candidate-evaluation-runs/{runId} {
+      allow read: if isPaOperator();
+      allow write: if false;
+    }
+    match /pa-candidate-company-job-evaluations/{evaluationId} {
+      allow read: if isPaOperator();
+      allow write: if false;
+    }
+    match /pa-agent-research-tasks/{taskId} {
+      allow read: if isPaOperator();
+      allow write: if false;
+    }
+    match /pa-outreach-plans/{planId} {
+      allow read: if isPaOperator();
+      allow write: if false;
+    }
+    match /pa-instantly-sync-records/{syncId} {
+      allow read: if isPaOperator();
+      allow write: if false;
+    }
+    match /pa-outreach-events/{eventId} {
+      allow read: if isPaOperator();
+      allow write: if false;
+    }
+    match /pa-source-quality-metrics/{metricId} {
+      allow read: if isPaOperator();
+      allow write: if false;
+    }
+
     // ─── Default deny ────────────────────────────────────────────────
     match /{document=**} {
       allow read, write: if false;

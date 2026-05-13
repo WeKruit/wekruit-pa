@@ -36,7 +36,6 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto"
 import { onRequest } from "firebase-functions/v2/https"
 import { logger } from "firebase-functions/v2"
 import { getFirestore, type Firestore } from "firebase-admin/firestore"
-import { defineSecret } from "firebase-functions/params"
 import {
   FeedbackEventSchema,
   OutreachEventSchema,
@@ -47,7 +46,14 @@ import {
   type OutreachEventKind,
 } from "@pa/core-types"
 
-const INSTANTLY_WEBHOOK_SECRET = defineSecret("INSTANTLY_WEBHOOK_SECRET")
+/**
+ * INSTANTLY_WEBHOOK_SECRET is read from `process.env` at request time rather
+ * than via `defineSecret(...)` because the secret is OPTIONAL per
+ * .planning/external-supply-v1/PLAN.md §11 F. Without it the webhook accepts
+ * unsigned requests (acceptable until Instantly is wired live). Once Adam
+ * sets the Firebase Secret, deploy with `--update-secrets` to expose it; the
+ * code below verifies HMAC iff the env var is non-empty.
+ */
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -395,10 +401,9 @@ export const paExternalSupplyInstantlyWebhook = onRequest(
     memory: "256MiB",
     timeoutSeconds: 60,
     cors: false,
-    secrets: [INSTANTLY_WEBHOOK_SECRET],
   },
   async (req, res) => {
-    const secret = INSTANTLY_WEBHOOK_SECRET.value()
+    const secret = process.env.INSTANTLY_WEBHOOK_SECRET ?? ""
     await handleInstantlyWebhook(
       {
         method: req.method,

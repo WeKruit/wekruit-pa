@@ -4,7 +4,32 @@
 
 ## Status
 
-**Code-complete.** All 8 executors landed, all 13 e2e acceptance tests pass, the 24-row ACCEPTANCE ledger is filled (23 `pass`, 1 `known_gap` for the manual dashboard click-through which is verified post-deploy). 0 hard-fail conditions triggered.
+**Shipped to production wekruit-5f89b on 2026-05-13.** PR #29 squash-merged to main as `66917fc feat(v2): external candidate supply intake V1 (#29)`. All 15 external-supply Cloud Functions (14 admin callables + 1 Instantly webhook) deployed live; dashboard with `/admin/external-supply/**` routes live on `https://wekruit-pa.web.app`; Firestore rules updated to operator-only read on all 10 new collections. Webhook URL `https://us-central1-wekruit-5f89b.cloudfunctions.net/paExternalSupplyInstantlyWebhook` returns HTTP 200 on empty POST smoke.
+
+Code-complete + deployed: all 8 executors landed, all 13 e2e acceptance tests pass, the 24-row ACCEPTANCE ledger is filled (23 `pass`, 1 `known_gap` for the manual dashboard click-through which is verified post-deploy). 0 hard-fail conditions triggered.
+
+## Deploy Evidence (2026-05-13)
+
+| Surface | Command | Result |
+|---|---|---|
+| Functions | `pnpm --filter functions run deploy` (firebase.json predeploy gate ran build + typecheck + tests + smoke) | 15 external-supply functions created + ~45 existing updated. Project console: https://console.firebase.google.com/project/wekruit-5f89b/overview |
+| Hosting | `PA_DASHBOARD_VITE_ENV_FILE=apps/dashboard-web/.env.production.local pnpm run deploy:hosting` | `wekruit-pa.web.app` released; admin dashboard with `/admin/external-supply/{landing,batches,review,evaluations,research,outreach,sync,audit}` routes live. |
+| Firestore rules | `firebase deploy --only firestore:rules --project wekruit-5f89b --non-interactive` | rules compiled + uploaded; 10 external-supply collections now operator-only read. |
+| Webhook smoke | `curl -X POST .../paExternalSupplyInstantlyWebhook -d '{}'` | `HTTP 200 {"ok":true,"ignored":""}` (graceful no-op on unrecognized event). |
+
+### Deploy-unblock fixes shipped on `codex/v2-external-supply-deploy-followup`
+
+These three fixes were discovered during the first live deploy attempt and applied on a small follow-up branch (deploy log was successful only after these landed):
+
+1. `firebase.json` predeploy chain — add `@pa/external-supply` to the workspace-build list so esbuild can resolve it during functions bundle.
+2. `apps/functions/src/external-supply/instantly-webhook.ts` — drop `defineSecret("INSTANTLY_WEBHOOK_SECRET")` + `secrets: [...]` declaration in favour of runtime `process.env.INSTANTLY_WEBHOOK_SECRET` read. The secret stays OPTIONAL per PLAN §11 F (webhook accepts unsigned requests until Adam sets the secret).
+3. `config/firebase/firestore.rules` — operator-only read rules for all 10 external-supply collections so the dashboard direct Firestore queries don't 403 (mutations go through Admin SDK / Cloud Functions, which bypass rules).
+
+### Adam-action items (still required for live email outreach, not blocking V1 dry-run)
+
+1. Set Firebase Secret `INSTANTLY_API_KEY` + env `EXTERNAL_SUPPLY_LIVE_OUTREACH_ENABLED=true` → enables live email sync. Without these, `syncPlanToInstantly` silently downgrades to dry-run.
+2. Set Firebase Secret `INSTANTLY_WEBHOOK_SECRET` + redeploy with `--update-secrets` → enables HMAC verification on incoming Instantly webhooks. Without it the webhook accepts unsigned requests (documented gap, low real-world risk since URL is operator-known only).
+3. Decide on data source for `pa-companies.competitorCompanies[]` → unlocks D's rubric tier_1 promotion on competitor-adjacency signal.
 
 ## Outcome
 
