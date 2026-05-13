@@ -258,6 +258,508 @@ Adam: "这个功能点不是admin是customer side". C 端 (candidate-facing) and
 
 **Test URLs (canonical):**
 - Public job page: `https://candidate.wekruit.com/j/<jobId>` (e.g. `https://candidate.wekruit.com/j/hs-11005382-invoko-product-designer`)
+
+---
+
+## v2.0 Product Lock — Candidate Retention Marketplace (2026-05-13)
+
+Canonical shared blueprint: `README.md` -> "Product Blueprint: Candidate Retention Marketplace". Keep this section consistent with that README memory.
+
+Execution roadmap: `.planning/MILESTONE-v2.0-candidate-retention-marketplace.md`.
+
+Adam direction: WeKruit is not just a job page, pre-screen bot, or employer ATS. The final product is a **C-end candidate retention marketplace**. Candidate supply is the long-term asset; each job is a demand event that can activate the historical candidate pool.
+
+### North Star
+
+WeKruit should retain every candidate who enters the platform, continuously improve that candidate's global profile through Claire conversations, resumes, tags, memory, and preferences, then match new jobs against this retained pool and outbound candidates into first interviews.
+
+New job arrives -> enrich job -> match against existing candidates -> outbound through Sendblue -> candidate does first interview -> passed profiles become employer-visible -> all outcomes feed the candidate/job/tag/match data flywheel.
+
+### Non-Negotiable Product Rules
+
+1. **Candidate is the durable asset. Job is an event.**
+2. **All durable candidate data is global**: mem0, tags, PII, Level 1 info, YoE, industry preference, salary range, location preference, visa, company size, resume, LinkedIn, conversation-derived preferences, and outreach preferences.
+3. **Job-specific data stays job-specific**: match score, outbound invite, prescreen session, PASS/NOT_PASS/PAUSE, employer-visible profile snapshot, and next-stage status.
+4. **Match score never blocks the first interview.** Once a candidate enters a job flow, Claire gives the first interview regardless of initial match quality.
+5. **NOT_PASS is not an exit.** Candidate remains in the global marketplace pool and can be matched to other jobs later.
+6. **Employer dashboard only shows passed candidate profiles** for now. No employer-wide candidate browsing, no scheduling, no notes, no message-on-behalf-of in v2.0 scope unless Adam explicitly expands it.
+7. **Candidate flow never returns to the admin domain.** C-end surfaces stay on `candidate.wekruit.com` / `pa.wekruit.com`.
+8. **User tags and job tags share one canonical vocabulary.** Do not create separate user/job/matching taxonomies.
+9. **HITL corrections must become flywheel data.** Human edits are not one-off fixes; they must write auditable correction events that become eval/regression artifacts.
+10. **Outbound must respect channel capacity.** Sendblue account/number groups use sticky load balancing; one account group should own roughly 300-500 active reachable users before expansion.
+
+### Identity And Profile Ownership
+
+Email magic-link is the v2.0 candidate identity mechanism. Gmail-only OAuth is not the north star.
+
+For employer bulk resume upload, the PDF-extracted email is the primary identity signal. Employer-provided email is a validation hint. If they disagree, mark for review rather than silently creating a second person.
+
+Use a stable global candidate profile with linked handles:
+
+- `email` / normalized email / hashed email index
+- phone E.164
+- Sendblue user / thread identity
+- browser `wkr_uid`
+- ATS applicant IDs
+- future LinkedIn binding
+
+Do not use raw PII as a public doc id. Keep identity merge deterministic with audit events.
+
+### Global Candidate State Machine
+
+LLM never directly controls state transitions. LLM may extract intent, judge answers, or compose copy. State changes are controlled by deterministic reducers over typed events, verified facts, confidence, and policy.
+
+| State | Entry Condition | Exit Condition | Controller |
+|---|---|---|---|
+| `prospect` | Employer bulk upload, ATS applicant, anonymous job-page uid, or direct text with no resolved profile | Email or phone extracted/linked | deterministic reducer |
+| `profile_created` | `pa-users` global profile exists | At least one reachable handle verified or deliverable | deterministic reducer |
+| `reachable` | Verified email or deliverable phone exists | Candidate replies, logs in, or explicitly opts out | delivery evidence + reducer |
+| `claimed` | Email magic-link login succeeds | Core profile reaches ready threshold | deterministic reducer |
+| `profile_ready` | Resume parsed, core tags present, and at least one reachable handle exists | Candidate becomes active or retained | deterministic reducer |
+| `active_job_seeker` | Candidate explicitly or behaviorally signals open to opportunities | Stop, inactivity window, cooldown, or opt-out | LLM extracts signal; reducer decides |
+| `retained` | Candidate is not actively searching but allows future outreach | Reactivation, new positive signal, or opt-out | deterministic reducer |
+| `opted_out` | Stop/delete/no-outreach request | Only explicit opt-in can reactivate outreach | deterministic reducer, no LLM override |
+| `deleted` | Delete request fulfilled | Terminal | deterministic reducer |
+
+Example LLM output allowed:
+
+```ts
+{
+  intent: "open_to_opportunities",
+  confidence: 0.91,
+  evidence: "I'm actively looking for SWE roles"
+}
+```
+
+The reducer decides whether that evidence updates `active_job_seeker`.
+
+### Candidate x Job State Machine
+
+This state is per opportunity. It must not overwrite global candidate state.
+
+| State | Entry Condition | Exit Condition | Controller |
+|---|---|---|---|
+| `candidate_matched` | New job match score crosses retrieval threshold | Outreach approved or blocked | matching service + policy |
+| `outbound_queued` | Outreach policy allows or HITL approves | Sendblue accepts send | deterministic reducer |
+| `outbound_sent` | Sendblue sent/delivered event | Candidate replies, timeout, or decline | delivery event |
+| `candidate_interested` | Candidate replies yes/interested/asks relevant details | Prescreen starts | LLM intent extraction + reducer |
+| `prescreen_started` | First job interview begins | PASS / NOT_PASS / PAUSE terminal | PreScreenPipeline |
+| `passed` | Prescreen PASS | Employer-visible snapshot created | deterministic reducer |
+| `not_passed` | Prescreen FAIL/HARD_STOP/NOT_PASS | Candidate retained for other jobs | deterministic reducer |
+| `paused` | Ambiguous, sensitive, or manual-review state | HITL resolves | deterministic reducer |
+| `employer_visible` | PASS plus required consent/profile snapshot | Employer sees passed profile | deterministic reducer |
+| `archived` | Job closed, candidate declined, stale invite, or employer no longer hiring | Terminal for this job | deterministic reducer |
+
+### Product Surfaces
+
+Candidate surfaces:
+
+- `/` — Claire landing, positioning as ongoing job-search companion.
+- `/j/:jobId` — public job page, inline resume upload, iMessage start. This remains a single-page C-end flow.
+- `/login` — email magic-link profile claim.
+- `/me` — candidate home: profile completeness, resume on file, Claire status, active opportunities.
+- `/me/profile` — resume, LinkedIn, global PII, Level 1 info, preferences, memory controls.
+- `/me/matches` — recommended jobs, invited jobs, why matched, interview status.
+- `/me/privacy` — export, delete, stop outreach, memory opt-out.
+
+Employer/admin surfaces:
+
+- Jobs: create/import job, job tags, prescreen config, public page preview.
+- Bulk Resume Upload: upload emails + PDFs, parse status, extracted email, merge/create result, retry/error state.
+- Passed Candidates: only passed profiles, filterable by job.
+- Candidate Profile: resume summary, tags, Level 1 info, PII consent, transcript, pass reason, match reason.
+- Match Debug: hard filters, soft score, LLM rerank, evidence, explanation.
+- Tagging Admin: canonical vocab, sandbox proposed tags, promote/reject, backfill status.
+- Sendblue / Outreach Ops: outbound queue, delivery, cooldown, account pool, failures, capacity.
+- HITL Review Queue: low-confidence job enrichment, candidate matching, prescreen ambiguity, employer visibility concerns.
+- Eval / Regression: scenario runs, ranking evals, job-intake evals, live-smoke artifacts.
+
+### Backend System Boundaries
+
+Long-term backend modules:
+
+1. **candidate-profile-service**
+   - identity merge
+   - global profile state
+   - global PII / tags / Level 1 / resume / memory hooks
+   - candidate lifecycle reducer
+
+2. **job-enrichment-service**
+   - raw JD ingest
+   - canonical job tags
+   - hard filters and soft preferences
+   - generated prescreen config
+   - Claire job brief
+   - generated eval fixtures
+   - enrichment confidence + HITL review triggers
+
+3. **tagging-service**
+   - canonical vocab
+   - synonym normalization
+   - proposed-tag sandbox
+   - admin promote/reject
+   - tag confidence, evidence, source attribution
+   - versioned backfills and migrations
+
+4. **matching-service / matching repo**
+   - candidate -> jobs recommendations
+   - job -> candidates activation
+   - hard filters
+   - soft scoring
+   - LLM rerank
+   - embedding similarity
+   - explanations
+   - feedback learning
+   - offline eval and debug output
+
+5. **outreach-service**
+   - Sendblue account/number pool assignment
+   - sticky candidate/account routing
+   - account capacity model
+   - cooldowns and duplicate suppression
+   - delivery health and retries
+   - outbound approval policy
+
+6. **conversation-runtime**
+   - Claire friend persona
+   - job recommendation dialogue
+   - pre-screening
+   - PII / Level 1 collection
+   - long-term retention conversations
+
+7. **quality-control-plane**
+   - HITL queues
+   - simulation
+   - eval
+   - regression
+   - audit
+   - flywheel artifacts from human corrections
+
+### Tagging System Maintenance
+
+Tagging is the central language connecting candidate supply and job demand.
+
+User-side tags include:
+
+- roleFunction
+- skills
+- seniority / careerStage
+- yoe
+- industry preference
+- location preference
+- salary range
+- visa / sponsorship
+- company size preference
+- job type
+- education / major
+- conversation-derived preferences
+- negative preferences
+
+Job-side tags include:
+
+- roleFunction
+- requiredSkills
+- niceToHaveSkills
+- seniorityLevel
+- industrySector
+- locationBuckets
+- salaryRange
+- sponsorship
+- jobType
+- companySize
+- must-have constraints
+- soft preference signals
+
+Every meaningful tag should carry value, source, confidence, evidence, version, and updated timestamp:
+
+```ts
+{
+  value: "software_engineering",
+  source: "resume_parse" | "conversation" | "job_enrich" | "admin" | "llm_infer",
+  confidence: 0.87,
+  evidence: "Tesla SWE intern; React/TypeScript project history",
+  version: "tag-vocab-2026-05",
+  updatedAt: "..."
+}
+```
+
+Maintenance obligations:
+
+- keep canonical vocab in `packages/shared-tags`
+- keep job and user axes aligned
+- log proposed tags before promotion
+- require evidence for low-confidence or new tags
+- write audit events for promote/reject/edit
+- generate backfill tasks when vocab or schema changes
+- add eval cases whenever a tag correction is made
+
+### Job Enrichment Pipeline
+
+Each new job must become an enriched demand object before it participates in matching.
+
+Pipeline:
+
+1. ingest raw JD / employer / source metadata
+2. normalize title, employer, location, salary, apply URL
+3. extract canonical tags
+4. infer hard constraints
+5. infer soft preference signals
+6. generate prescreen questions
+7. generate scoring rubric
+8. generate Claire candidate-facing brief
+9. generate eval fixtures
+10. validate and route low-confidence cases to HITL
+
+Output shape:
+
+```ts
+JobOpportunity {
+  rawJob
+  enrichedJobTags
+  hardFilters
+  softScoringWeights
+  prescreenConfig
+  candidateBrief
+  evalFixtures
+  enrichmentConfidence
+  enrichmentVersion
+}
+```
+
+Guardrails:
+
+- never infer `sponsorship=false` from silence
+- keep `roleFunction` and `industrySector` orthogonal
+- seniority cannot rely only on title regex
+- broken or expired URLs must be swept
+- enrichment version changes require backfill planning
+- generated prescreen config is draft unless confidence and coverage are high
+
+### User Tagging Pipeline
+
+Candidate information comes from resume, chat, PII/Level1, LinkedIn, historical behavior, and HITL.
+
+Pipeline:
+
+1. resume parse
+2. conversation extraction
+3. Level 1 structured answers
+4. preference updates
+5. behavioral events
+6. manual correction
+7. periodic re-enrichment
+
+Transcript and mem0 are not enough. Durable facts must be extracted into structured global profile fields.
+
+Example:
+
+User: "I only want NYC or remote AI infra startups. Below 140k is not worth it. I need H1B sponsor."
+
+Structured updates:
+
+- `targetLocations = ["new_york", "remote"]`
+- `industrySector = ["artificial_intelligence_and_machine_learning", "cloud_and_infrastructure"]`
+- `companySize = ["early_startup", "scale_up"]`
+- `minSalaryUsd = 140000`
+- `visaStatus = "sponsor_needed"`
+
+LLM extracts; deterministic reducer decides whether and how to write.
+
+### Matching Repo Responsibilities
+
+The matching repo/service must support both directions:
+
+1. **candidate -> jobs**: daily recommendations and candidate-requested matching.
+2. **job -> candidates**: new job activates retained candidate pool and creates outbound interview opportunities.
+
+Required output:
+
+```ts
+CandidateJobMatch {
+  candidateId
+  jobId
+  hardFilterResult
+  softScore
+  llmScore
+  finalRank
+  reasons
+  risks
+  missingInfo
+  recommendedAction: "auto_outbound" | "hitl_review" | "do_not_contact"
+}
+```
+
+Ranking layers:
+
+1. Deterministic hard gates: role family, work authorization, location, seniority, freshness, URL validity.
+2. Soft score: skills, industry preference, salary fit, company stage, resume embedding, conversation preference.
+3. LLM / embedding rerank: nuance after hard filters.
+4. Outcome feedback: replies, declines, prescreen outcomes, employer action, HITL corrections.
+
+### Outreach And Sendblue Capacity
+
+Outbound is flexible but policy-controlled.
+
+Account/number groups:
+
+- sticky assignment by candidate
+- one group owns roughly 300-500 active reachable users
+- statuses: `active`, `warmup`, `throttled`, `paused`, `degraded`
+- new users assigned by capacity
+- old users keep thread continuity
+
+Outreach decision shape:
+
+```ts
+OutreachDecision {
+  allow: boolean
+  mode: "auto" | "hitl_required" | "blocked"
+  reason:
+    | "high_fit_active_candidate"
+    | "cooldown"
+    | "low_fit"
+    | "channel_capacity"
+    | "recent_decline"
+    | "opted_out"
+    | "duplicate_company_or_role"
+}
+```
+
+Policy must consider candidate state, recent activity, match score, cooldown, account capacity, delivery health, opt-out status, and duplicate suppression.
+
+### HITL Control Plane
+
+HITL is not a fallback page. It is the control and labeling surface for risky, low-confidence, or high-value actions.
+
+HITL required or strongly considered for:
+
+- low-confidence JD enrichment
+- generated prescreen questions with weak coverage
+- conflicting visa/location/salary constraints
+- borderline candidate-job ranking
+- high-value employer outbound batch
+- new Sendblue account warmup
+- recent candidate decline
+- ambiguous prescreen answer
+- compensation, legal, immigration, or safety-sensitive candidate questions
+- PASS with incomplete PII
+- employer-visible profile with inconsistent transcript/reason
+
+Every human edit writes a correction event:
+
+```ts
+CorrectionEvent {
+  objectType: "job_tag" | "user_tag" | "match_rank" | "question" | "outbound_copy" | "visibility"
+  before
+  after
+  reason
+  reviewer
+  downstreamEvalCaseCreated: true
+}
+```
+
+### Data Flywheel
+
+The flywheel:
+
+1. new candidate enters
+2. resume + chat enrich global profile
+3. candidate receives jobs
+4. candidate replies, ignores, declines, or screens
+5. interview outcome is recorded
+6. employer sees passed profile
+7. employer action is recorded
+8. scoring/tagging/evals improve
+9. future jobs use better profiles and better ranking
+
+Feedback events to persist:
+
+- candidate clicked job
+- candidate replied interested
+- candidate ignored
+- candidate declined
+- candidate said recommendation was irrelevant
+- candidate completed prescreen
+- candidate passed
+- employer viewed profile
+- employer advanced candidate
+- employer rejected candidate
+- HITL corrected tag
+- HITL changed match reason
+- HITL changed generated question
+- HITL changed outbound copy
+
+These events feed analytics, eval datasets, scoring calibration, tag confidence, prompt/rubric improvement, and regression cases.
+
+### Testing And Eval System
+
+Eval must cover marketplace behavior, not only isolated functions.
+
+Layer 1: schema/reducer tests
+
+- tag canonicalization
+- identity merge
+- candidate state transitions
+- candidate-job state transitions
+- hard filters
+- Sendblue assignment
+- cooldown
+- idempotency
+
+Layer 2: pipeline simulation
+
+- direct job page new candidate
+- employer bulk PDF upload
+- old candidate matched to new job
+- outbound invite
+- interested reply
+- prescreen PASS / NOT_PASS / PAUSE
+- employer-visible profile creation
+
+Layer 3: ranking eval
+
+- for a job, top candidates are plausible
+- for a candidate, top jobs are plausible
+- obvious mismatches are suppressed
+- plausible but uncertain candidates go to HITL
+- score/rank changes create regression fixtures
+
+Layer 4: job intake eval
+
+- generated tags are correct
+- generated questions cover true must-haves
+- generated rubric catches strong/weak/ambiguous/visa/location/salary cases
+- low confidence routes to HITL
+
+Layer 5: safety / privacy eval
+
+- prompt injection
+- cross-user leakage
+- PII leakage
+- employer cannot see non-passed candidates
+- delete / opt-out / stop honored
+
+Layer 6: live smoke and channel eval
+
+- Sendblue delivery
+- no duplicate outbound
+- no skipped first interview
+- no admin-domain candidate route
+- no PII before consent
+- account capacity and cooldown respected
+
+### Single-Point Lead Requirement
+
+This product is large enough that work must be split by a single lead, but the lead must preserve one system model. The lead's job is not to create isolated sprints; it is to keep these invariants true across product, backend, UIUX, eval, and flywheel:
+
+- every build slice improves the candidate marketplace
+- every new data field has a lifecycle, owner, audit trail, and eval story
+- every job intake path produces enriched demand
+- every candidate intake path improves global supply
+- every matching change is evaluated in both directions
+- every HITL correction becomes flywheel data
+- every C-end route stays on candidate domain
+- every employer view remains passed-profile-only until Adam expands scope
 - Landing: `https://candidate.wekruit.com/` or `https://pa.wekruit.com/`
 - Legal: `https://candidate.wekruit.com/legal`
 - Admin: `https://wekruit-pa.web.app/admin/...` (requires `@wekruit.com` sign-in)
