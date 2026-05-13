@@ -1,9 +1,26 @@
 # V19 — Full Candidate Journey Live SMS Test Guide
 
 **Author:** Claude (frosty-wozniak-84b965 worktree)
-**Date:** 2026-05-12
+**Date:** 2026-05-13 (revised — domain split locked)
 **Audience:** Adam (the only operator with the test phone + Apple ID)
 **Goal:** End-to-end candidate journey on real iMessage, all 5 seeded jobs, single-session test plan with per-job expectation + exact message sequence.
+
+## Canonical URLs (2026-05-13 LOCK)
+
+| Surface | URL | Hosted on |
+|---|---|---|
+| **Candidate landing** | `https://candidate.wekruit.com/` | `wekruit-pa-landing` site (`apps/pa-landing`) |
+| **Candidate job page** | `https://candidate.wekruit.com/j/<jobId>` | same |
+| **Candidate CV upload (legacy)** | `https://candidate.wekruit.com/j/<jobId>/cv` | same |
+| **Privacy / Terms** | `https://candidate.wekruit.com/legal` | same |
+| **Backup default URL** | `https://wekruit-pa-landing.web.app/...` | same |
+| Admin console | `https://wekruit-pa.web.app/admin/...` | `wekruit-pa` site (`apps/dashboard-web`) |
+| Public CV ingest CF | `https://us-central1-wekruit-5f89b.cloudfunctions.net/paPublicCvIngest` | `apps/functions` |
+| ATS inbound CF | `https://us-central1-wekruit-5f89b.cloudfunctions.net/paAtsInboundWebhook` | same |
+
+**`wekruit-pa.web.app/j/*` 301-redirects to `candidate.wekruit.com/j/*` — do NOT test on the admin domain.**
+
+**The site `wekruit-candidate.web.app` no longer exists** (created and deleted 2026-05-13 — was a wrong-domain mistake). All older docs that reference it are stale.
 
 ---
 
@@ -33,9 +50,10 @@
 | # | Change | File | Why |
 |---|---|---|---|
 | **A** | cv-ingest writes `pa-users.{uid}.phoneE164` from parsed CV `phone` | `apps/functions/src/cv-ingest/cv-ingest.ts` | Parsed phone was extracted then discarded. Now ATS path (no inbound first) can outbound-text the candidate. |
-| **B** | PublicJob page: single global `wkr_uid` localStorage key (not per-job) | `apps/dashboard-web/src/pages/PublicJob.tsx` + `PublicJobCv.tsx` | Returning candidate across multiple job pages was creating a NEW pa-user each time. Now one stable identity per browser. |
-| **C** | PublicJob: green "✓ We have your resume on file" badge when `wkr_has_cv` localStorage flag set | `PublicJob.tsx` | Second-job visit no longer prompts for re-upload. |
-| **D** | PublicJobCv: stamps `wkr_has_cv = true` after successful upload | `PublicJobCv.tsx` | Powers the above. |
+| **B** | PublicJob page: single global `wkr_uid` localStorage key (not per-job) | `apps/pa-landing/src/pages/PublicJob.tsx` + `PublicJobCv.tsx` | Returning candidate across multiple job pages was creating a NEW pa-user each time. Now one stable identity per browser. |
+| **C** | PublicJob: inline single-page UX. Upload form + "Open in iMessage" on same page. Green "✓ We have your resume on file" badge replaces uploader after success. | `apps/pa-landing/src/pages/PublicJob.tsx` | Second-job visit no longer prompts for re-upload AND no back-and-forth navigation. |
+| **D** | PublicJobCv: stamps `wkr_has_cv = true` after successful upload (kept for legacy `/j/:jobId/cv` URL back-compat) | `apps/pa-landing/src/pages/PublicJobCv.tsx` | Powers the badge above. |
+| **E2** | **Domain split** — candidate flow moved from `apps/dashboard-web` (admin) to `apps/pa-landing` (c-end Vite SPA). All `/j/*` routes live at `candidate.wekruit.com`. Admin domain 301-redirects stale `/j/*` hits. | `apps/pa-landing/*` (new), `firebase.json`, `.firebaserc` | Adam directive: "这个功能点不是admin是customer side". |
 | **E** | `scripts/v19-reset-adam.mjs` — hard reset Adam's user across all v1.9 collections | new file | Required for a clean test. |
 | **F** | **NEW** `paPublicCvIngest` HTTP CF — the backend that `PublicJobCv.tsx` and ATS webhook both POST to | `apps/functions/src/public-cv-ingest.ts` | **Live test STOP on 2026-05-12**: the frontend posted to `VITE_CV_INGEST_URL` but that URL never had a CF behind it. Phase 87 wired UI without backend. Now: CF accepts base64 PDF, runs `ingestCv` with public-page gate bypass + injected fetchPdf, returns `{ok, resumeId}`. URL: `https://us-central1-wekruit-5f89b.cloudfunctions.net/paPublicCvIngest` |
 | **G** | `VITE_CV_INGEST_URL` wired into dashboard env injector + `apps/dashboard-web/.env.production.local` | `scripts/inject-pa-dashboard-vite-env.mjs` + env file | Inject script previously only kept the 6 Firebase keys and stripped the CV URL on each deploy. Now: REQUIRED + OPTIONAL split, VITE_CV_INGEST_URL preserved. |
@@ -77,7 +95,7 @@ Reset done. Adam's next inbound SMS creates a fresh pa-users doc.
 
 ### 0.2 Browser-side reset (Safari / Chrome where Adam will open /j/:jobId)
 
-Open DevTools console at any wekruit.com page and run:
+Open DevTools console at `https://candidate.wekruit.com/` and run:
 ```js
 localStorage.removeItem('wkr_uid')
 localStorage.removeItem('wkr_has_cv')
@@ -86,36 +104,58 @@ Object.keys(localStorage).filter(k => k.startsWith('wkr_rid_')).forEach(k => loc
 console.log('cleaned. now:', JSON.stringify(localStorage))
 ```
 
+**Easier:** open `https://candidate.wekruit.com/j/<jobId>` in an **Incognito / Private** window — fresh localStorage every time, no reset needed.
+
 ### 0.3 Deploy current branch
 
 ```bash
-cd apps/functions && pnpm run deploy        # cv-ingest phoneE164 fix + paPublicCvIngest CF
-cd ../.. && PA_DASHBOARD_VITE_ENV_FILE=apps/dashboard-web/.env.production.local pnpm run deploy:hosting   # PublicJob repeat-user UI + VITE_CV_INGEST_URL embedded
+# 1. Cloud Functions (cv-ingest phoneE164 fix + paPublicCvIngest CF + ATS handler)
+cd apps/functions && pnpm run deploy
+
+# 2. C-end site = candidate.wekruit.com (pa-landing target)
+cd ../.. && firebase deploy --only hosting:pa-landing --project wekruit-5f89b --non-interactive
+
+# 3. Admin site = wekruit-pa.web.app (pa-dashboard target — only needed if admin code changed; carries the /j → candidate.wekruit.com 301 redirect)
+PA_DASHBOARD_VITE_ENV_FILE=apps/dashboard-web/.env.production.local \
+  firebase deploy --only hosting:pa-dashboard --project wekruit-5f89b --non-interactive
+
+# 4. Firestore rules (only when changed)
 firebase deploy --only firestore:rules --project wekruit-5f89b --non-interactive
 ```
 
 ### 0.4 Verify deploy (paste these, expect output shown)
 
 ```bash
-# 1. CF reachable
+# 1. CF reachable + CORS preflight
 curl -s -X OPTIONS https://us-central1-wekruit-5f89b.cloudfunctions.net/paPublicCvIngest -i | head -3
 # Expect: HTTP/2 204 + access-control-allow-origin: *
 
 # 2. CF rejects empty body
-curl -s -X POST https://us-central1-wekruit-5f89b.cloudfunctions.net/paPublicCvIngest -H "content-type: application/json" -d '{}'
+curl -s -X POST https://us-central1-wekruit-5f89b.cloudfunctions.net/paPublicCvIngest \
+  -H "content-type: application/json" -d '{}'
 # Expect: {"ok":false,"reason":"missing_userId_or_tempUserId"}
 
 # 3. CF rejects non-PDF base64
-curl -s -X POST https://us-central1-wekruit-5f89b.cloudfunctions.net/paPublicCvIngest -H "content-type: application/json" -d '{"tempUserId":"test-uuid-1234","resumeBase64":"bm90LXBkZi1qdXN0LXRleHQ="}'
+curl -s -X POST https://us-central1-wekruit-5f89b.cloudfunctions.net/paPublicCvIngest \
+  -H "content-type: application/json" \
+  -d '{"tempUserId":"test-uuid-1234","resumeBase64":"bm90LXBkZi1qdXN0LXRleHQ="}'
 # Expect: {"ok":false,"reason":"not_a_pdf"}
 
-# 4. Hosting bundle embeds CF URL
-JS=$(curl -s "https://wekruit-pa.web.app/j/hs-11005382-invoko-product-designer/cv" | grep -oE "assets/index-[a-zA-Z0-9_-]+\.js" | head -1)
-curl -s "https://wekruit-pa.web.app/$JS" | grep -oE "https://[a-z0-9-]+\.cloudfunctions\.net/paPublicCvIngest" | sort -u
+# 4. candidate.wekruit.com serves the c-end SPA
+curl -sI https://candidate.wekruit.com/j/hs-11005382-invoko-product-designer | head -3
+# Expect: HTTP/2 200 + content-type: text/html
+
+# 5. Bundle embeds CV ingest CF URL
+JS=$(curl -s "https://candidate.wekruit.com/" | grep -oE "assets/index-[a-zA-Z0-9_-]+\.js" | head -1)
+curl -s "https://candidate.wekruit.com/$JS" | grep -oE "https://[a-z0-9-]+\.cloudfunctions\.net/paPublicCvIngest" | sort -u
 # Expect: https://us-central1-wekruit-5f89b.cloudfunctions.net/paPublicCvIngest
+
+# 6. Admin domain 301-redirects /j → candidate
+curl -sI https://wekruit-pa.web.app/j/hs-11005382-invoko-product-designer | grep -iE "HTTP|location"
+# Expect: HTTP/2 301 + location: https://candidate.wekruit.com/j/hs-11005382-invoko-product-designer
 ```
 
-If any of the 4 fails: STOP. Don't run the live test.
+If any of the 6 fails: STOP. Don't run the live test.
 
 ---
 
@@ -166,7 +206,7 @@ This test exercises the **complete** flow: fresh user uploads CV once, then runs
 #### Sequence
 
 **Phase A — Public job page**
-1. Adam opens `https://wekruit-pa.web.app/j/hs-11005382-invoko-product-designer` in Safari
+1. Adam opens `https://candidate.wekruit.com/j/hs-11005382-invoko-product-designer` in Safari
 2. Page loads, no CV badge (fresh user)
 3. Page shows: job title "Product Designer", company "invoko.ai", salary range, JD body
 4. Adam taps "**upload it here**" link → routes to `/j/hs-11005382-invoko-product-designer/cv`
@@ -300,7 +340,7 @@ pa-prescreen-sessions/ps_hs-11005382-invoko-product-designer_<UUID-X>_<YYYYMMDD>
 
 **Difference from Job 1**: localStorage now has `wkr_uid` + `wkr_has_cv`. Same browser → SAME UUID.
 
-1. Adam opens `https://wekruit-pa.web.app/j/hs-11005377-invoko-ui-ux-designer`
+1. Adam opens `https://candidate.wekruit.com/j/hs-11005377-invoko-ui-ux-designer`
 2. Page shows green "✓ We have your resume on file — no need to re-upload" box. **DOES NOT** show "upload it here" link.
 3. Adam taps "Open in iMessage →" → SMS body: `WeKruit_hs-11005377-invoko-ui-ux-designer_<UUID-X>_Job` (SAME UUID as Job 1)
 4. Pool number = same as Job 1 (djb2 hash of UUID is stable)
@@ -457,7 +497,7 @@ For each: paste the exact iMessage text + screenshot + which step number it devi
 | Action | Command |
 |---|---|
 | Hard-reset Adam server-side | `node scripts/v19-reset-adam.mjs` |
-| Browser reset | `localStorage.clear()` in DevTools at wekruit-pa.web.app |
+| Browser reset | `localStorage.clear()` in DevTools at candidate.wekruit.com |
 | Re-deploy functions | `cd apps/functions && pnpm run deploy` |
 | Re-deploy hosting | `pnpm run deploy:hosting` |
 | Re-deploy rules | `firebase deploy --only firestore:rules --project wekruit-5f89b --non-interactive` |

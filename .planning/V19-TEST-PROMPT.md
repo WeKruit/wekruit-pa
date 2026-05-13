@@ -32,10 +32,10 @@ All 6 write to `pa-users.{uid}.tags.*` — same source of truth `generateJobRecs
 
 | Job ID | Title | Company | Pay | Public URL |
 |---|---|---|---|---|
-| `hs-11005382-invoko-product-designer` | Product Designer | invoko.ai | $80-120K | https://wekruit-pa.web.app/j/hs-11005382-invoko-product-designer |
-| `hs-11005377-invoko-ui-ux-designer` | UI/UX Designer | invoko.ai | $80-120K | https://wekruit-pa.web.app/j/hs-11005377-invoko-ui-ux-designer |
-| `hs-11005308-paradigm-gtm-growth` | GTM & Growth Marketing Manager | paradigm.study | $90-130K | https://wekruit-pa.web.app/j/hs-11005308-paradigm-gtm-growth |
-| `hs-10996795-invoko-product-manager` | Product Manager | invoko.ai | $90-140K | https://wekruit-pa.web.app/j/hs-10996795-invoko-product-manager |
+| `hs-11005382-invoko-product-designer` | Product Designer | invoko.ai | $80-120K | https://candidate.wekruit.com/j/hs-11005382-invoko-product-designer |
+| `hs-11005377-invoko-ui-ux-designer` | UI/UX Designer | invoko.ai | $80-120K | https://candidate.wekruit.com/j/hs-11005377-invoko-ui-ux-designer |
+| `hs-11005308-paradigm-gtm-growth` | GTM & Growth Marketing Manager | paradigm.study | $90-130K | https://candidate.wekruit.com/j/hs-11005308-paradigm-gtm-growth |
+| `hs-10996795-invoko-product-manager` | Product Manager | invoko.ai | $90-140K | https://candidate.wekruit.com/j/hs-10996795-invoko-product-manager |
 
 All publicly visible (publicVisible=true). All single-keyword MUST_HAVE with matchThreshold=0.85. Threshold T=0.65 to PASS.
 

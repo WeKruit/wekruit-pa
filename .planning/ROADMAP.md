@@ -1324,7 +1324,7 @@ D1: roleFunction = jobright 17 verbatim (closed enum). | D2: industrySector = 42
 **Hard prerequisite:** v1.8 P78 (pa-jobs config), v1.6 P53 (cv-ingest).
 **Status:** Not started.
 **Success Criteria:**
-1. `wekruit-pa.web.app/j/<jobId>` renders public job page when `publicVisible === true`; 404 otherwise.
+1. `candidate.wekruit.com/j/<jobId>` renders public job page when `publicVisible === true`; 404 otherwise.
 2. Firestore rule update: `pa-jobs/{jobId}` read allowed when `resource.data.publicVisible === true`; write still operator-only.
 3. Renders jobTitle/company/location/salary/JD markdown; "Start pre-screen" CTA opens `sms:<sendblueNumber>?body=WeKruit_<jobId>_<requestedUserId>_Job`.
 4. `requestedUserId` UUID stored in cookie + `pa-prescreen-pending-invites/{requestedUserId}` Firestore doc; `paSendblueWebhook` resolves pending invite on first match.

@@ -228,6 +228,53 @@ queryMatchingJobs(userId):
 
 ---
 
+## Domain & Hosting Layout (LOCKED 2026-05-13 — Adam directive)
+
+Adam: "这个功能点不是admin是customer side". C 端 (candidate-facing) and admin MUST live on separate hosting sites. Never put candidate flow on the admin domain again.
+
+| Domain | Firebase Hosting site | Source app | Purpose | Auth |
+|---|---|---|---|---|
+| `https://candidate.wekruit.com` | `wekruit-pa-landing` | `apps/pa-landing` (Vite SPA) | **C 端**: landing CTA + /j/:jobId pre-screen entry + /j/:jobId/cv (legacy) + /legal | None (public) |
+| `https://pa.wekruit.com` | `wekruit-pa-landing` | same | Same site; alternate marketing domain | None |
+| `https://wekruit-pa-landing.web.app` | `wekruit-pa-landing` | same | Default Firebase URL backup for the c-end site | None |
+| `https://wekruit-pa.web.app` | `wekruit-pa` | `apps/dashboard-web` (Vite SPA) | **Admin only**: `/admin/match-debug`, `/admin/canonical-tags`, `/admin/prescreen-feedback`, `/admin/onboarding-questions`, etc. | Google sign-in, `@wekruit.com` only |
+| Cloud Functions | n/a (cloudfunctions.net) | `apps/functions` | HTTP/event CFs (paSendblueWebhook, paAtsInboundWebhook, paPublicCvIngest, etc.) | per-CF auth |
+
+**DNS** (Cloudflare, `wekruit.com` zone, `DNS only` proxy mode):
+- `candidate.wekruit.com` → CNAME → `wekruit-pa-landing.web.app`
+- `pa.wekruit.com` → CNAME → `wekruit-pa-landing.web.app`
+
+**Admin → candidate 301 redirect:** `firebase.json` adds `/j/:rest*` redirect on `pa-dashboard` target to `https://candidate.wekruit.com/j/:rest*` so any stale-bookmark hit on the admin domain lands on the right surface.
+
+**Routes** (canonical, do not duplicate elsewhere):
+- `apps/pa-landing/src/main.tsx` — `/` (Landing) + `/legal` + `/j/:jobId` (PublicJob inline-upload UX) + `/j/:jobId/cv` (legacy back-compat)
+- `apps/dashboard-web/src/App.tsx` — all `/admin/**` routes
+
+**Do not:**
+- ❌ Put candidate routes in `apps/dashboard-web/src/pages/PublicJob.tsx` (this was the 2026-05-12 mistake — file still exists but reachable only via redirect, will purge in cleanup commit)
+- ❌ Create a new Firebase Hosting site for candidate work (`wekruit-candidate` was created and then deleted 2026-05-13)
+- ❌ Mention `wekruit-pa.web.app/j/...` in test guides or commit messages — that URL only 301s
+- ❌ Hardcode `https://wekruit-candidate.web.app` anywhere — that site no longer exists
+
+**Test URLs (canonical):**
+- Public job page: `https://candidate.wekruit.com/j/<jobId>` (e.g. `https://candidate.wekruit.com/j/hs-11005382-invoko-product-designer`)
+- Landing: `https://candidate.wekruit.com/` or `https://pa.wekruit.com/`
+- Legal: `https://candidate.wekruit.com/legal`
+- Admin: `https://wekruit-pa.web.app/admin/...` (requires `@wekruit.com` sign-in)
+
+**Deploy commands:**
+```bash
+# C-end (candidate.wekruit.com)
+firebase deploy --only hosting:pa-landing --project wekruit-5f89b --non-interactive
+# Admin (wekruit-pa.web.app)
+PA_DASHBOARD_VITE_ENV_FILE=apps/dashboard-web/.env.production.local \
+  firebase deploy --only hosting:pa-dashboard --project wekruit-5f89b --non-interactive
+# Functions (cloudfunctions.net)
+cd apps/functions && pnpm run deploy
+```
+
+---
+
 ## v1.7 Ship State (2026-05-06)
 
 11 phases shipped (63-73), 43 REQ-IDs covered. Same-day spawn + ship after v1.6 post-ship matching diagnostics.
