@@ -9,3 +9,4 @@
  */
 
 export * from "./normalize.js"
+export * from "./rubric.js"
