@@ -1,0 +1,31 @@
+{
+  "name": "weak",
+  "rawJob": {
+    "title": "Builder",
+    "companyName": "Stealth",
+    "locationRaw": "",
+    "jobDescription": "Join us to build the future."
+  },
+  "enrichedJobTags": {
+    "roleFunction": ["engineering_and_development"],
+    "industrySector": ["technology_general"],
+    "relevantTags": [],
+    "skills": [],
+    "seniorityLevel": "mid_level",
+    "sponsorshipHint": null,
+    "locationBuckets": [],
+    "jobType": "full_time",
+    "confidence": {
+      "overall": 0.51,
+      "fields": {
+        "roleFunction": 0.58,
+        "industrySector": 0.42,
+        "relevantTags": 0.2,
+        "skills": 0.1,
+        "seniorityLevel": 0.45,
+        "locationBuckets": 0.1,
+        "jobType": 0.7
+      }
+    }
+  }
+}

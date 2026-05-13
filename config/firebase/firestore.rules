@@ -210,6 +210,19 @@ service cloud.firestore {
     match /pa-jobs/{jobId} {
       allow read: if isPaOperator() || resource.data.publicVisible == true;
       allow write: if isPaOperator();
+
+      // v2.0 S4 — generated job enrichment drafts are admin review state.
+      // Dashboard reads them; all client writes must go through callables.
+      match /enrichment/{draftId} {
+        allow read: if isPaOperator();
+        allow write: if false;
+      }
+
+      // v2.0 S4 — eval fixtures may contain unpublished HITL/debug evidence.
+      match /enrichment-eval-fixtures/{fixtureId} {
+        allow read: if isPaOperator();
+        allow write: if false;
+      }
     }
 
     // ─── v1.8 Phase 74.5 + 79 — Memory compaction + tag snapshots ────

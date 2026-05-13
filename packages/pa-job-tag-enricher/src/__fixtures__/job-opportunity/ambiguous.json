@@ -1,0 +1,33 @@
+{
+  "name": "ambiguous",
+  "rawJob": {
+    "title": "Technical Lead",
+    "companyName": "Atlas",
+    "locationRaw": "Remote US",
+    "jobDescription": "Lead technical customer work, roadmap decisions, and occasional coding for enterprise accounts."
+  },
+  "enrichedJobTags": {
+    "roleFunction": ["software_engineering", "consultant"],
+    "industrySector": ["software_and_saas"],
+    "relevantTags": ["enterprise_accounts"],
+    "skills": [
+      { "name": "technical_discovery", "bucket": "domain_specific", "proficiency": "advanced", "evidenceCount": 1, "baseWeight": 0.7 }
+    ],
+    "seniorityLevel": "manager",
+    "sponsorshipHint": true,
+    "locationBuckets": ["remote_united_states"],
+    "jobType": "full_time",
+    "confidence": {
+      "overall": 0.86,
+      "fields": {
+        "roleFunction": 0.62,
+        "industrySector": 0.8,
+        "relevantTags": 0.7,
+        "skills": 0.68,
+        "seniorityLevel": 0.56,
+        "locationBuckets": 0.9,
+        "jobType": 0.95
+      }
+    }
+  }
+}

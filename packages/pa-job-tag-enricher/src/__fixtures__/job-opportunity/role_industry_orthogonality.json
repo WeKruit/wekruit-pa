@@ -1,0 +1,33 @@
+{
+  "name": "role_industry_orthogonality",
+  "rawJob": {
+    "title": "Enterprise Account Executive",
+    "companyName": "Plaid",
+    "locationRaw": "Remote US",
+    "jobDescription": "Sell financial technology APIs to enterprise customers. Remote US role with visa sponsorship available."
+  },
+  "enrichedJobTags": {
+    "roleFunction": ["sales"],
+    "industrySector": ["financial_technology"],
+    "relevantTags": ["enterprise_sales", "api_platforms"],
+    "skills": [
+      { "name": "salesforce", "bucket": "tools_and_platforms", "proficiency": "advanced", "evidenceCount": 2, "baseWeight": 0.8 }
+    ],
+    "seniorityLevel": "senior",
+    "sponsorshipHint": true,
+    "locationBuckets": ["remote_united_states"],
+    "jobType": "full_time",
+    "confidence": {
+      "overall": 0.89,
+      "fields": {
+        "roleFunction": 0.94,
+        "industrySector": 0.9,
+        "relevantTags": 0.86,
+        "skills": 0.84,
+        "seniorityLevel": 0.84,
+        "locationBuckets": 0.9,
+        "jobType": 0.95
+      }
+    }
+  }
+}

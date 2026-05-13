@@ -72,8 +72,12 @@ export const PA_COLLECTIONS = {
   feedbackEvents: "pa-feedback-events",
   /** v2.0 S1 — append-only HITL correction events. */
   correctionEvents: "pa-correction-events",
+  /** Public job docs. Draft enrichment internals must live only in subcollections. */
+  jobs: "pa-jobs",
 } as const
 
 export const PA_BULK_UPLOAD_ITEMS_SUBCOLLECTION = "items"
+export const PA_JOB_ENRICHMENT_SUBCOLLECTION = "enrichment"
+export const PA_JOB_ENRICHMENT_EVAL_FIXTURES_SUBCOLLECTION = "enrichment-eval-fixtures"
 
 export const PA_REMOTE_CONFIG_DOC = "platform"

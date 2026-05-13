@@ -1,0 +1,39 @@
+{
+  "name": "visa_mismatch",
+  "rawJob": {
+    "title": "Backend Engineer",
+    "companyName": "LedgerWorks",
+    "locationRaw": "New York, NY",
+    "jobDescription": "Backend engineering role. Candidates must be authorized to work without sponsorship.",
+    "evalCase": {
+      "caseName": "visa_mismatch",
+      "candidateSummary": "Strong backend candidate who requires H-1B sponsorship.",
+      "expectedOutcome": "not_pass",
+      "expectedSignals": ["requires_sponsorship_but_job_does_not_sponsor"]
+    }
+  },
+  "enrichedJobTags": {
+    "roleFunction": ["software_engineering"],
+    "industrySector": ["financial_technology"],
+    "relevantTags": ["ledger_systems"],
+    "skills": [
+      { "name": "java", "bucket": "programming_languages", "proficiency": "advanced", "evidenceCount": 2, "baseWeight": 0.8 }
+    ],
+    "seniorityLevel": "mid_level",
+    "sponsorshipHint": false,
+    "locationBuckets": ["new_york_metro"],
+    "jobType": "full_time",
+    "confidence": {
+      "overall": 0.88,
+      "fields": {
+        "roleFunction": 0.9,
+        "industrySector": 0.86,
+        "relevantTags": 0.78,
+        "skills": 0.85,
+        "seniorityLevel": 0.82,
+        "locationBuckets": 0.93,
+        "jobType": 0.95
+      }
+    }
+  }
+}

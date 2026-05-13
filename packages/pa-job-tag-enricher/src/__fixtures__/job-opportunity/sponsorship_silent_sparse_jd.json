@@ -1,0 +1,31 @@
+{
+  "name": "sponsorship_silent_sparse_jd",
+  "rawJob": {
+    "title": "Operations Associate",
+    "companyName": "Harbor",
+    "locationRaw": "Austin, TX",
+    "jobDescription": "Support operations across a growing marketplace."
+  },
+  "enrichedJobTags": {
+    "roleFunction": ["business_analyst"],
+    "industrySector": ["technology_general"],
+    "relevantTags": [],
+    "skills": [],
+    "seniorityLevel": "entry_level",
+    "sponsorshipHint": null,
+    "locationBuckets": ["austin_metro"],
+    "jobType": "full_time",
+    "confidence": {
+      "overall": 0.64,
+      "fields": {
+        "roleFunction": 0.7,
+        "industrySector": 0.55,
+        "relevantTags": 0.2,
+        "skills": 0.1,
+        "seniorityLevel": 0.66,
+        "locationBuckets": 0.82,
+        "jobType": 0.88
+      }
+    }
+  }
+}

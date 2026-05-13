@@ -236,13 +236,21 @@ export type {
 
 // v2.0 S1 — marketplace data foundation reducers + append-only flywheel writes.
 export {
+  approveJobOpportunityDraft,
   applyCandidateJobEvent,
   applyCandidateLifecycleEvent,
+  rejectJobOpportunityDraft,
   writeCorrectionEvent,
   writeEmployerVisibleProfile,
   writeFeedbackEvent,
+  writeJobEnrichmentEvalFixture,
+  writeJobOpportunityDraft,
 } from "./marketplace.js"
-export type { MarketplaceTransitionResult } from "./marketplace.js"
+export type {
+  ApproveJobOpportunityDraftInput,
+  MarketplaceTransitionResult,
+  RejectJobOpportunityDraftInput,
+} from "./marketplace.js"
 
 // v2.0 S2 — identity + candidate claim data-plane helpers.
 export {

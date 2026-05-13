@@ -16,27 +16,44 @@ import {
   CorrectionEventSchema,
   EmployerVisibleProfileSchema,
   FeedbackEventSchema,
+  JobEnrichmentEvalFixtureSchema,
+  JobOpportunityDraftSchema,
+  JobOpportunitySchema,
+  JobOpportunityPublicSchema,
   OutboundInviteSchema,
+  PA_JOB_ENRICHMENT_EVAL_FIXTURES_SUBCOLLECTION,
+  PA_JOB_ENRICHMENT_SUBCOLLECTION,
   ResumeArtifactSchema,
   candidateHandleHashMaterial,
   canTransitionBulkResumeItemStatus,
+  canTransitionJobEnrichmentDraftStatus,
   createCandidateHandleId,
   createCandidateJobStateId,
   createBulkResumeArtifactId,
   createBulkResumeItemId,
   createBulkResumeItemIdempotencyKey,
   createEmployerVisibleProfileId,
+  createJobEnrichmentEvalFixtureId,
+  createJobEnrichmentDraftId,
+  createJobOpportunityDraftId,
   normalizeCandidateHandleValue,
   reduceBulkResumeItemStatus,
   reduceCandidateJobState,
   reduceCandidateLifecycleState,
+  reduceJobEnrichmentDraftStatus,
   summarizeBulkResumeItemCounts,
+  summarizeJobEnrichmentDraftCounts,
+  toPublicJobOpportunity,
   type BulkResumeItemStatus,
   type CandidateJobEvent,
   type CandidateLifecycleEvent,
   type CandidateLifecycleState,
 } from "./marketplace.js"
-import { PA_COLLECTIONS } from "./collections.js"
+import {
+  PA_COLLECTIONS,
+  PA_JOB_ENRICHMENT_EVAL_FIXTURES_SUBCOLLECTION,
+  PA_JOB_ENRICHMENT_SUBCOLLECTION,
+} from "./collections.js"
 
 const now = "2026-05-13T12:00:00.000Z"
 
@@ -198,6 +215,141 @@ test("marketplace document schemas parse the S1 primitives", () => {
     },
   })
 })
+
+test("job enrichment schemas keep drafts private and public opportunity safe", () => {
+  assert.equal(PA_JOB_ENRICHMENT_SUBCOLLECTION, "enrichment")
+  assert.equal(PA_JOB_ENRICHMENT_EVAL_FIXTURES_SUBCOLLECTION, "enrichment-eval-fixtures")
+  assert.equal(
+    createJobOpportunityDraftId("job-1", "2026-05-13T12:00:00.000Z"),
+    "jobopp_job-1_2026-05-13T12-00-00-000Z"
+  )
+  assert.equal(
+    createJobEnrichmentEvalFixtureId("job-1", "fixture-main"),
+    "jobopp_eval_job-1_fixture-main"
+  )
+
+  const opportunity = JobOpportunitySchema.parse(makeJobOpportunity())
+  assert.equal(opportunity.hardFilters.sponsorshipAvailable, null)
+  assert.deepEqual(opportunity.roleFunction, ["software_engineering"])
+  assert.deepEqual(opportunity.industrySector, ["software_and_saas"])
+  const publicOpportunity = JobOpportunityPublicSchema.parse(toPublicJobOpportunity(opportunity))
+  assert.equal("softScoringWeights" in publicOpportunity, false)
+  assert.equal("prescreen" in publicOpportunity, false)
+  assert.equal("scoringRubric" in publicOpportunity, false)
+  assert.equal("candidateBrief" in publicOpportunity, false)
+  assert.equal("evidence" in publicOpportunity.seniority, false)
+
+  const draft = JobOpportunityDraftSchema.parse({
+    draftId: "draft-1",
+    jobId: "job-1",
+    status: "needs_review",
+    approvalReady: false,
+    rawSnapshot: {
+      source: "ats",
+      capturedAt: now,
+      title: "Senior Product Engineer",
+      companyName: "WeKruit",
+      description: "Build Claire.",
+    },
+    opportunity,
+    coverage: {
+      overall: "low",
+      missingSignals: ["seniority_evidence"],
+      seniorityEvidence: "title_only",
+      sponsorshipSignal: "silent",
+    },
+    hitlFlags: [
+      {
+        flagId: "flag-1",
+        kind: "low_coverage",
+        severity: "blocking",
+        reason: "Seniority is inferred from title only.",
+      },
+    ],
+    enrichmentVersion: "s4-test",
+    createdAt: now,
+    updatedAt: now,
+  })
+  assert.equal(draft.status, "needs_review")
+  assert.equal(draft.approvalReady, false)
+
+  assert.throws(
+    () =>
+      JobOpportunityDraftSchema.parse({
+        ...draft,
+        coverage: { ...draft.coverage, seniorityEvidence: "title_only", overall: "high" },
+        hitlFlags: [],
+        approvalReady: true,
+      }),
+    /title-only seniority evidence requires low coverage and HITL review/
+  )
+
+  JobEnrichmentEvalFixtureSchema.parse({
+    fixtureId: "fixture-1",
+    jobId: "job-1",
+    rawSnapshot: draft.rawSnapshot,
+    expectedCoverage: "low",
+    expectedHitlFlags: ["low_coverage"],
+    notes: "Title-only seniority cannot silently approve.",
+    createdAt: now,
+  })
+
+  const review = reduceJobEnrichmentDraftStatus("draft", "needs_review", now)
+  assert.equal(review.state, "needs_review")
+  assert.equal(canTransitionJobEnrichmentDraftStatus("needs_review", "approved"), true)
+  const invalid = reduceJobEnrichmentDraftStatus("approved", "reject", now)
+  assert.equal(invalid.changed, false)
+  assert.equal(invalid.reason, "invalid_job_enrichment_transition")
+
+  assert.deepEqual(
+    summarizeJobEnrichmentDraftCounts(["draft", "needs_review", "approved", "rejected"]),
+    {
+      total: 4,
+      draft: 1,
+      needsReview: 1,
+      approved: 1,
+      rejected: 1,
+    }
+  )
+})
+
+function makeJobOpportunity() {
+  return {
+    title: "Frontend Engineer",
+    companyName: "Acme",
+    roleFunction: ["software_engineering"],
+    industrySector: ["software_and_saas"],
+    relevantTags: ["react"],
+    skills: [{ name: "react", bucket: "frameworks_and_libraries", proficiency: "advanced" }],
+    seniority: {
+      label: "entry level",
+      minYears: 1,
+      maxYears: 3,
+      evidence: [{ source: "ats", summary: "JD asks for 1+ years." }],
+    },
+    hardFilters: {
+      sponsorshipAvailable: null,
+      locations: ["remote_united_states"],
+      jobTypes: ["full_time"],
+    },
+    softScoringWeights: { industrySector: 0.25, skills: 0.45, roleFunction: 0.2, location: 0.1 },
+    prescreen: {
+      questions: [
+        {
+          questionId: "q-react",
+          prompt: "Tell me about your React experience.",
+          signal: "frontend depth",
+        },
+      ],
+    },
+    scoringRubric: { mustHave: ["React project work"], niceToHave: ["SaaS UI"], disqualifiers: [] },
+    candidateBrief: {
+      headline: "Frontend Engineer at Acme",
+      sellingPoints: ["Remote US", "Product engineering"],
+      risksToClarify: [],
+    },
+  }
+}
 
 test("candidate lifecycle reducer covers README states and terminal behavior", () => {
   const sequence: CandidateLifecycleState[] = []

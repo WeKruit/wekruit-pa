@@ -639,6 +639,78 @@ test("queryMatchingJobsV16: with role-fn filter returns matching jobs", async ()
   )
 })
 
+test("queryMatchingJobsV16: S4 enriched approved job survives V16 filters and outranks weaker same-role job", async () => {
+  const mfs = new MockFirestore()
+  await mfs
+    .collection("pa-users")
+    .doc("u1")
+    .set({
+      tags: {
+        skills: ["python", "typescript"],
+        relevantTags: ["backend_platforms", "developer_tools"],
+        industrySector: ["enterprise_software"],
+        industryEnum: ["tech_software"],
+        schemaVersion: 1,
+        targetRoleFunction: ["software_engineering"],
+        targetJobType: ["full_time"],
+        targetLocations: ["new_york_city"],
+        careerStage: "entry_level",
+        visaStatus: "sponsor_needed",
+      },
+    })
+
+  await seedJob(mfs, "s4-enriched", {
+    roleFunction: ["software_engineering"],
+    industrySector: ["enterprise_software"],
+    relevantTags: ["backend_platforms", "developer_tools"],
+    requiredSkills: ["python", "typescript"],
+    jobType: "full_time",
+    locationBuckets: ["new_york_city"],
+    seniorityLevel: "junior",
+    sponsorship: null,
+    companyName: "S4Co",
+    jobTitle: "Backend Engineer",
+  })
+  await seedJob(mfs, "same-role-weaker", {
+    roleFunction: ["software_engineering"],
+    industrySector: ["consumer_internet"],
+    relevantTags: ["growth_marketing"],
+    requiredSkills: ["go"],
+    jobType: "full_time",
+    locationBuckets: ["new_york_city"],
+    seniorityLevel: "junior",
+    sponsorship: true,
+    companyName: "WeakCo",
+    jobTitle: "Backend Engineer",
+  })
+  await seedJob(mfs, "wrong-role", {
+    roleFunction: ["sales"],
+    industrySector: ["enterprise_software"],
+    relevantTags: ["backend_platforms", "developer_tools"],
+    requiredSkills: ["python", "typescript"],
+    jobType: "full_time",
+    locationBuckets: ["new_york_city"],
+    seniorityLevel: "junior",
+    sponsorship: true,
+    companyName: "SalesCo",
+    jobTitle: "Account Executive",
+  })
+
+  const r = await queryMatchingJobsV16({ userId: "u1", nowMs: NOW }, { db: asFirestore(mfs) })
+
+  assert.equal(r.jobs.length, 2)
+  assert.deepEqual(r.jobs.map((j) => j.id), ["s4-enriched", "same-role-weaker"])
+  assert.ok(!r.jobs.some((j) => j.id === "wrong-role"))
+  assert.equal(r.hardFilter.visa, 0)
+  assert.equal(r.hardFilter.location, 0)
+  assert.equal(r.hardFilter.careerStage, 0)
+  assert.equal(r.hardFilter.jobType, 0)
+  assert.equal(r.jobs[0]!.v16Score.skillJaccard, 1)
+  assert.equal(r.jobs[0]!.v16Score.relevantTags, 1)
+  assert.equal(r.jobs[0]!.v16Score.industrySector, 1)
+  assert.ok(r.jobs[0]!.v16Score.total > r.jobs[1]!.v16Score.total)
+})
+
 test("queryMatchingJobsV16: weightOverrides propagate to scoreV16Job (Phase 70)", async () => {
   // Same fixture as the prior test — flipping skillJaccard to 0 should
   // collapse swe1's lead over swe2 (their llm/relTags/etc components are

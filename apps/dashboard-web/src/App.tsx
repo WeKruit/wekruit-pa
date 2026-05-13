@@ -37,6 +37,7 @@ import { QaEvaluator } from "./pages/QaEvaluator.js"
 import { MatchDebug } from "./pages/MatchDebug.js"
 // v1.8 Phase 78 — Job pre-screen config editor.
 import JobPrescreen from "./pages/JobPrescreen.js"
+import { JobEnrichmentReview } from "./pages/JobEnrichmentReview.js"
 // v1.8 Phase 79 — Pre-screen session detail + tag-snapshot rollback.
 import PrescreenSession from "./pages/PrescreenSession.js"
 import TagSnapshots from "./pages/TagSnapshots.js"
@@ -158,6 +159,7 @@ export default function App() {
             section's `open` attribute is read on mount + toggle saves. */}
         <NavSection id="prescreen" label="Pre-Screen" defaultOpen={true}>
           <NavLink to="/admin/job-prescreen">Jobs · Config</NavLink>
+          <NavLink to="/admin/job-enrichment">Job Enrichment</NavLink>
           <NavLink to="/admin/prescreen-sessions">Sessions</NavLink>
           <NavLink to="/admin/ats-inbound">ATS Inbound</NavLink>
           <NavLink to="/admin/bulk-resumes">Bulk Resumes</NavLink>
@@ -262,6 +264,8 @@ export default function App() {
           {/* v1.8 Phase 78 — Job pre-screen config editor. */}
           <Route path="/admin/jobs/:jobId/prescreen" element={<JobPrescreen />} />
           <Route path="/admin/job-prescreen" element={<JobPrescreen />} />
+          {/* v2.0 S4 — admin-only job enrichment draft review. */}
+          <Route path="/admin/job-enrichment" element={<JobEnrichmentReview />} />
           {/* v1.8 Phase 79 — Session list + detail + tag-snapshot rollback. */}
           <Route path="/admin/prescreen-sessions" element={<PrescreenSessionsList />} />
           <Route path="/admin/prescreen-sessions/:sessionId" element={<PrescreenSession />} />
