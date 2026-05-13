@@ -43,6 +43,7 @@ import TagSnapshots from "./pages/TagSnapshots.js"
 import PrescreenSessionsList from "./pages/PrescreenSessionsList.js"
 // v1.9 Phase 86 — ATS inbound dashboard.
 import AtsInbound from "./pages/AtsInbound.js"
+import BulkResumes from "./pages/BulkResumes.js"
 import { IdentityConflicts } from "./pages/IdentityConflicts.js"
 // v1.9 Phase 87 — public candidate-facing job page + CV upload.
 import PublicJob from "./pages/PublicJob.js"
@@ -159,6 +160,7 @@ export default function App() {
           <NavLink to="/admin/job-prescreen">Jobs · Config</NavLink>
           <NavLink to="/admin/prescreen-sessions">Sessions</NavLink>
           <NavLink to="/admin/ats-inbound">ATS Inbound</NavLink>
+          <NavLink to="/admin/bulk-resumes">Bulk Resumes</NavLink>
           <NavLink to="/admin/prescreen-feedback">Feedback</NavLink>
         </NavSection>
         <NavSection id="monitor" label="Monitor" defaultOpen={true}>
@@ -266,6 +268,7 @@ export default function App() {
           <Route path="/admin/users/:uid/tag-snapshots" element={<TagSnapshots />} />
           {/* v1.9 Phase 86 — ATS inbound funnel observability. */}
           <Route path="/admin/ats-inbound" element={<AtsInbound />} />
+          <Route path="/admin/bulk-resumes" element={<BulkResumes />} />
           {/* v1.9 Phase 88 — Sendblue number pool admin. */}
           <Route path="/admin/sendblue-pool" element={<SendbluePool />} />
           {/* v1.9 Phase 89 — pre-screen feedback aggregate. */}

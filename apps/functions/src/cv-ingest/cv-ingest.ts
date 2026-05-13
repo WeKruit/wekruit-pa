@@ -83,11 +83,29 @@ export type IngestCvInput = {
   browserUid?: string | null
   atsApplicantId?: string | null
   identitySource?: CandidateHandleSource
+  /**
+   * v2.0 S3 bulk intake guard: require the parsed PDF itself to contain an
+   * email before identity resolution or permanent writes. Employer email
+   * hints remain hints; they must not create identity when the PDF is missing
+   * an email.
+   */
+  requireExtractedEmail?: boolean
 }
 
 export type IngestCvResult =
-  | { ok: true; resumeId: string; userId: string }
-  | { ok: false; reason: string }
+  | {
+      ok: true
+      resumeId: string
+      userId: string
+      extractedEmail?: string
+      candidateProfileSummary?: string
+    }
+  | {
+      ok: false
+      reason: string
+      conflictId?: string
+      extractedEmail?: string
+    }
 
 export type CandidateProfile = {
   name: string | null
@@ -1821,11 +1839,21 @@ export async function ingestCv(
     return { ok: false, reason: "llm_parse_failed" }
   }
 
+  const extractedEmail = nonEmptyTrimmed(parsed.candidateProfile.email)
+  if (args.requireExtractedEmail && !extractedEmail) {
+    log("pa.cv_ingest.missing_extracted_email", {
+      userId: sourceUserId,
+      employerEmailHintPresent: Boolean(nonEmptyTrimmed(args.employerEmailHint)),
+      atsApplicantIdPresent: Boolean(nonEmptyTrimmed(args.atsApplicantId)),
+      browserUidPresent: Boolean(nonEmptyTrimmed(args.browserUid)),
+    })
+    return { ok: false, reason: "missing_extracted_email" }
+  }
+
   if (identityEnabled) {
     const employerEmailHint = nonEmptyTrimmed(args.employerEmailHint)
     const browserUid = nonEmptyTrimmed(args.browserUid)
     const atsApplicantId = nonEmptyTrimmed(args.atsApplicantId)
-    const extractedEmail = nonEmptyTrimmed(parsed.candidateProfile.email)
     const parsedPhoneRaw = nonEmptyTrimmed(v2Output?.parsed.phone ?? parsed.candidateProfile.phone)
     const phoneE164 = parsedPhoneRaw ? normalizeCvPhoneToE164(parsedPhoneRaw) : undefined
     const source: CandidateHandleSource =
@@ -1855,7 +1883,12 @@ export async function ingestCv(
           conflictId: resolution.conflict.conflictId,
           kind: resolution.conflict.kind,
         })
-        return { ok: false, reason: "identity_conflict" }
+        return {
+          ok: false,
+          reason: "identity_conflict",
+          conflictId: resolution.conflict.conflictId,
+          extractedEmail,
+        }
       }
       userId = resolution.candidateId
       log("pa.cv_ingest.identity_resolved", {
@@ -1875,12 +1908,22 @@ export async function ingestCv(
         reason: message.startsWith("identity_conflict:")
           ? "identity_conflict"
           : "identity_resolution_failed",
+        conflictId: message.startsWith("identity_conflict:")
+          ? message.slice("identity_conflict:".length)
+          : undefined,
+        extractedEmail,
       }
     }
 
     const existingId = await lookupExistingResumeBySha256(userId)
     if (existingId) {
-      return { ok: true, resumeId: existingId, userId }
+      return {
+        ok: true,
+        resumeId: existingId,
+        userId,
+        extractedEmail,
+        candidateProfileSummary: buildCvFactBody(parsed),
+      }
     }
   }
 
@@ -2175,7 +2218,13 @@ export async function ingestCv(
       // H3 short-circuits — DO NOT run E1/E2 side effects on a staged CV;
       // those run after promote. Caller gets the would-be resumeId so
       // logs are still traceable, but ok=true reflects the staged state.
-      return { ok: true, resumeId: newResumeId, userId }
+      return {
+        ok: true,
+        resumeId: newResumeId,
+        userId,
+        extractedEmail,
+        candidateProfileSummary: buildCvFactBody(parsed),
+      }
     }
     // Fell through (pendingWritten === false AND h3FlagOn flipped to false)
     // → continue to legacy write below. Variables `prior` / `newResumeId`
@@ -2513,7 +2562,13 @@ export async function ingestCv(
     log("pa.cv_followup.skipped", { reason: "no_user_record", userId: userId })
   }
 
-  return { ok: true, resumeId, userId }
+  return {
+    ok: true,
+    resumeId,
+    userId,
+    extractedEmail,
+    candidateProfileSummary: buildCvFactBody(parsed),
+  }
 }
 
 // ---------------------------------------------------------------------------

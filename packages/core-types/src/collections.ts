@@ -58,6 +58,8 @@ export const PA_COLLECTIONS = {
   candidateIdentityConflicts: "pa-candidate-identity-conflicts",
   /** v2.0 S1 — canonical resume artifact pointers and parse status. */
   resumeArtifacts: "pa-resume-artifacts",
+  /** v2.0 S3 — operator-owned bulk resume upload batches. */
+  bulkUploadBatches: "pa-bulk-upload-batches",
   /** v2.0 S1 — per-candidate-per-job opportunity state. */
   candidateJobStates: "pa-candidate-job-states",
   /** v2.0 S1 — latest match evidence for a candidate/job pair. */
@@ -71,5 +73,7 @@ export const PA_COLLECTIONS = {
   /** v2.0 S1 — append-only HITL correction events. */
   correctionEvents: "pa-correction-events",
 } as const
+
+export const PA_BULK_UPLOAD_ITEMS_SUBCOLLECTION = "items"
 
 export const PA_REMOTE_CONFIG_DOC = "platform"

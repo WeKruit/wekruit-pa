@@ -373,6 +373,18 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // ─── v2.0 S3 — admin/operator bulk resume intake ────────────────
+    // Supply intake is not candidate-facing. Operators manage batch review
+    // state from the admin dashboard; Cloud Functions write through Admin SDK.
+    match /pa-bulk-upload-batches/{batchId} {
+      allow read: if isPaOperator();
+      allow write: if false;
+      match /items/{itemId} {
+        allow read: if isPaOperator();
+        allow write: if false;
+      }
+    }
+
     // ─── Default deny ────────────────────────────────────────────────
     match /{document=**} {
       allow read, write: if false;

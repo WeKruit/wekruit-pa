@@ -1304,10 +1304,62 @@ describe("ingestCv candidate identity resolution (v2.0 S2)", () => {
 
     assert.equal(res.ok, false)
     assert.ok(!res.ok && res.reason === "identity_conflict")
+    assert.ok(!res.ok && res.conflictId === "identity_conflict_1")
+    assert.ok(!res.ok && res.extractedEmail === "adam@example.com")
     assert.equal(state.resumes.length, 0)
     assert.equal(tagWriteCount, 0)
     assert.equal(mem0Calls.length, 0)
     assert.equal(enqueueCalls.length, 0)
+  })
+
+  it("bulk intake can require PDF-extracted email before identity or permanent writes", async () => {
+    const { db, state } = makeFakeDb()
+    const { events, log } = captureLog()
+    const missingEmailParsed: StructuredCv = {
+      ...happyParsed(),
+      candidateProfile: {
+        ...happyParsed().candidateProfile,
+        email: null,
+      },
+    }
+    const { deps, mem0Calls, enqueueCalls } = makeStubbedDeps({
+      db,
+      log,
+      parsed: missingEmailParsed,
+    })
+    let identityCalls = 0
+    let tagWriteCount = 0
+    deps.resolveCandidateIdentity = async () => {
+      identityCalls++
+      throw new Error("identity should not run when PDF email is missing")
+    }
+    deps.writeUserTags = async () => {
+      tagWriteCount++
+    }
+    deps.findResumeBySha256 = async () => {
+      throw new Error("sha lookup should not run without canonical identity")
+    }
+
+    const res = await ingestCv(
+      {
+        userId: "bulk_temp",
+        browserUid: "bulk_browser",
+        employerEmailHint: "hint@example.com",
+        mediaUrl: "https://example.com/cv.pdf",
+        identitySource: "admin",
+        requireExtractedEmail: true,
+      },
+      deps
+    )
+
+    assert.equal(res.ok, false)
+    assert.ok(!res.ok && res.reason === "missing_extracted_email")
+    assert.equal(identityCalls, 0)
+    assert.equal(state.resumes.length, 0)
+    assert.equal(tagWriteCount, 0)
+    assert.equal(mem0Calls.length, 0)
+    assert.equal(enqueueCalls.length, 0)
+    assert.ok(events.find((e) => e.event === "pa.cv_ingest.missing_extracted_email"))
   })
 })
 

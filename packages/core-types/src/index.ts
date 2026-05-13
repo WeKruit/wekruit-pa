@@ -595,11 +595,17 @@ export const RuntimeHeartbeatSchema = z.object({
 export type RuntimeHeartbeat = z.infer<typeof RuntimeHeartbeatSchema>
 
 export {
+  PA_BULK_UPLOAD_ITEMS_SUBCOLLECTION,
   PA_COLLECTIONS,
   PA_REMOTE_CONFIG_DOC,
 } from "./collections.js"
 
 export {
+  BulkResumeBatchCountsSchema,
+  BulkResumeBatchSchema,
+  BulkResumeBatchStatusSchema,
+  BulkResumeItemSchema,
+  BulkResumeItemStatusSchema,
   CandidateGlobalTagsSchema,
   CandidateAuthMappingSchema,
   CandidateClaimResultSchema,
@@ -630,13 +636,25 @@ export {
   ResumeArtifactSchema,
   ResumeArtifactStatusSchema,
   candidateHandleHashMaterial,
+  canTransitionBulkResumeItemStatus,
   createCandidateHandleId,
+  createBulkResumeArtifactId,
+  createBulkResumeItemId,
+  createBulkResumeItemIdempotencyKey,
   createCandidateJobMatchId,
   createCandidateJobStateId,
   createEmployerVisibleProfileId,
   normalizeCandidateHandleValue,
+  reduceBulkResumeItemStatus,
   reduceCandidateJobState,
   reduceCandidateLifecycleState,
+  summarizeBulkResumeItemCounts,
+  type BulkResumeBatch,
+  type BulkResumeBatchCounts,
+  type BulkResumeBatchStatus,
+  type BulkResumeItem,
+  type BulkResumeItemStatus,
+  type BulkResumeItemStatusEvent,
   type CandidateAuthMapping,
   type CandidateClaimResult,
   type CandidateGlobalTags,

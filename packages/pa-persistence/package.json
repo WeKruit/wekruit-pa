@@ -17,7 +17,7 @@
     "pretypecheck": "npm run build --workspace=@pa/core-types",
     "typecheck": "tsc --noEmit",
     "pretest": "npm run build --workspace=@pa/core-types",
-    "test": "node --import tsx --test src/feature-flags.test.ts src/rate-limit.test.ts src/outbound-quota.test.ts src/voice-reviews.test.ts src/triggers.test.ts src/upstream-events.test.ts src/handbook.test.ts src/marketplace.test.ts src/identity.test.ts"
+    "test": "node --import tsx --test src/feature-flags.test.ts src/rate-limit.test.ts src/outbound-quota.test.ts src/voice-reviews.test.ts src/triggers.test.ts src/upstream-events.test.ts src/handbook.test.ts src/marketplace.test.ts src/identity.test.ts src/bulk-resume-intake.test.ts"
   },
   "dependencies": {
     "@pa/core-types": "0.0.1",

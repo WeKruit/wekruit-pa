@@ -260,6 +260,26 @@ export type {
   WriteCandidateSelfProfileInput,
 } from "./identity.js"
 
+// v2.0 S3 — bulk resume intake operator persistence helpers.
+export {
+  bulkResumeEmailHash,
+  createBulkResumeBatch,
+  markBulkResumeItemIdentityConflict,
+  markBulkResumeItemMissingEmailReview,
+  markBulkResumeItemParsed,
+  markBulkResumeItemParseFailed,
+  markBulkResumeItemParsing,
+  markBulkResumeItemRetryReady,
+  recomputeBulkResumeBatchCounts,
+  upsertBulkResumeItem,
+} from "./bulk-resume-intake.js"
+export type {
+  BulkResumeItemPointer,
+  CreateBulkResumeBatchInput,
+  MarkBulkResumeItemParsedInput,
+  UpsertBulkResumeItemInput,
+} from "./bulk-resume-intake.js"
+
 // Phase 26 T1 — per-user rate limit (P9-Prod-Ops).
 export { checkAndIncrementRateLimit, RATE_LIMIT_COLLECTION } from "./rate-limit.js"
 export type { RateLimitOptions, RateLimitResult } from "./rate-limit.js"
