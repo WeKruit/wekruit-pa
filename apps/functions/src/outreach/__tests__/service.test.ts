@@ -85,7 +85,7 @@ describe("planJobOutreach", () => {
           enqueues.push(input.idempotencyKey)
           assert.equal(input.toE164, "+15555550123")
           assert.match(input.body, /Product Designer/)
-          assert.match(input.body, /candidate.wekruit.com\/j\/job-1/)
+          assert.match(input.body, /candidate\.wekruit\.com\/j\/job-1/)
           return { id: "outbound-1", created: true }
         },
         markQueued: async (input) => {
