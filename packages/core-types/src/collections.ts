@@ -102,7 +102,21 @@ export const PA_COLLECTIONS = {
   outreachEvents: "pa-outreach-events",
   /** v2.0 external-supply — monthly source-quality rollup metrics per external source. */
   sourceQualityMetrics: "pa-source-quality-metrics",
+  /**
+   * v2.0 external-supply V2 — per-candidate agent-ranking result row.
+   * Operator-only read; mutations only via Admin SDK / callable. See
+   * `apps/functions/src/external-supply/firestore-rules.note.md`.
+   */
+  agentRankingResults: "pa-agent-ranking-results",
 } as const
+
+/**
+ * v2.0 external-supply V2 — bare constant export sibling of
+ * `PA_COLLECTIONS.agentRankingResults`. Lead resolution L-A1
+ * (EXECUTOR-PLANS.md §A): both surfaces required so V1 callables can use the
+ * map while V2 helpers consume the bare const.
+ */
+export const PA_AGENT_RANKING_RESULTS = "pa-agent-ranking-results" as const
 
 export const PA_BULK_UPLOAD_ITEMS_SUBCOLLECTION = "items"
 export const PA_JOB_ENRICHMENT_SUBCOLLECTION = "enrichment"

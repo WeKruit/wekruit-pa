@@ -757,6 +757,8 @@ export const CorrectionEventSchema = z.object({
     "employer_visible_profile",
     "feedback_event",
     "outbound_copy",
+    // V2 external-supply Wave A — agent-ranking HITL override correction event.
+    "agent_ranking_result",
   ]),
   targetId: IdSchema,
   actor: z.enum(["operator", "system", "candidate"]),

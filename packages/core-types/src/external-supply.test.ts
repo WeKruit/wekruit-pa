@@ -11,6 +11,9 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import {
+  AgentRankingActionSchema,
+  AgentRankingEnsembleVoteSchema,
+  AgentRankingResultSchema,
   AgentResearchFindingSchema,
   AgentResearchReviewStatusSchema,
   AgentResearchTaskSchema,
@@ -33,6 +36,7 @@ import {
   SourceQualityMetricSchema,
   SuppressionBlockReasonSchema,
   SuppressionGateResultSchema,
+  createAgentRankingResultId,
   createExternalEvaluationId,
   createOutreachEventId,
   createSourceQualityMetricId,
@@ -642,4 +646,211 @@ test("IdentityEventTypeSchema accepts the two new external-supply event types", 
     IdentityEventTypeSchema.parse("external_candidate_imported"),
     "external_candidate_imported"
   )
+})
+
+// ---------------------------------------------------------------------------
+// V2 — Agent Ranking contracts (Wave A)
+// ---------------------------------------------------------------------------
+
+const minimalEnsembleVote = {
+  modelUsed: "gpt-5.4-nano",
+  proposedAgentTier: "tier_2_personal_email" as const,
+  agentRationale: "Strong skills overlap with role; appropriate seniority.",
+  agentRisks: [],
+  agentRecommendedAction: "outreach_now" as const,
+  inputTokens: 800,
+  outputTokens: 120,
+  costUsd: 0.0012,
+}
+
+const minimalAgentRankingResult = {
+  resultId: "agent-rank__" + "f".repeat(64),
+  evaluationRunId: "run-1",
+  candidateRecordId: "record-1",
+  companyId: "company-1",
+  jobId: "job-1",
+  deterministicTier: "tier_3_general_email" as const,
+  proposedAgentTier: "tier_2_personal_email" as const,
+  agentRationale: "Promoted from tier_3 to tier_2 due to direct domain match.",
+  agentRisks: [],
+  agentRecommendedAction: "outreach_now" as const,
+  ensembleVotes: [minimalEnsembleVote],
+  modelUsed: "gpt-5.4-nano",
+  ensembleSize: 1,
+  totalInputTokens: 800,
+  totalOutputTokens: 120,
+  totalCostUsd: 0.0012,
+  dryRun: false,
+  promptVersion: "agent-rank-2026-05-A",
+  createdAt: now,
+}
+
+test("AgentRankingResultSchema parses a minimal proposed row", () => {
+  const parsed = AgentRankingResultSchema.parse(minimalAgentRankingResult)
+  assert.equal(parsed.resultId, minimalAgentRankingResult.resultId)
+  // Defaults applied.
+  assert.equal(parsed.status, "proposed")
+  assert.equal(parsed.ensembleSize, 1)
+  assert.equal(parsed.dryRun, false)
+  assert.equal(parsed.approvedTier, undefined)
+  assert.equal(parsed.approvedBy, undefined)
+  assert.equal(parsed.approvedAt, undefined)
+  assert.equal(parsed.correctionEventId, undefined)
+})
+
+test("AgentRankingResultSchema parses an overridden row with full approval audit", () => {
+  const overriddenInput = {
+    ...minimalAgentRankingResult,
+    status: "overridden" as const,
+    approvedTier: "retain_only" as const,
+    approvedBy: "operator-uid",
+    approvedAt: now,
+    correctionEventId: "corr-agent-rank-1",
+  }
+  const parsed = AgentRankingResultSchema.parse(overriddenInput)
+  assert.equal(parsed.status, "overridden")
+  assert.equal(parsed.approvedTier, "retain_only")
+  assert.equal(parsed.approvedBy, "operator-uid")
+  assert.equal(parsed.approvedAt, now)
+  assert.equal(parsed.correctionEventId, "corr-agent-rank-1")
+  // Round-trip preserved.
+  const reparsed = AgentRankingResultSchema.parse(parsed)
+  assert.deepEqual(reparsed, parsed)
+})
+
+test("AgentRankingResultSchema rejects bad ensembleSize and negative tokens / cost", () => {
+  // ensembleSize > 5.
+  const tooBig = AgentRankingResultSchema.safeParse({
+    ...minimalAgentRankingResult,
+    ensembleSize: 6,
+  })
+  assert.equal(tooBig.success, false)
+
+  // ensembleSize < 1.
+  const tooSmall = AgentRankingResultSchema.safeParse({
+    ...minimalAgentRankingResult,
+    ensembleSize: 0,
+  })
+  assert.equal(tooSmall.success, false)
+
+  // Negative input tokens.
+  const negInput = AgentRankingResultSchema.safeParse({
+    ...minimalAgentRankingResult,
+    totalInputTokens: -1,
+  })
+  assert.equal(negInput.success, false)
+
+  // Negative output tokens.
+  const negOutput = AgentRankingResultSchema.safeParse({
+    ...minimalAgentRankingResult,
+    totalOutputTokens: -1,
+  })
+  assert.equal(negOutput.success, false)
+
+  // Negative cost.
+  const negCost = AgentRankingResultSchema.safeParse({
+    ...minimalAgentRankingResult,
+    totalCostUsd: -0.01,
+  })
+  assert.equal(negCost.success, false)
+})
+
+test("AgentRankingEnsembleVoteSchema requires every core field", () => {
+  // Baseline parses.
+  const ok = AgentRankingEnsembleVoteSchema.parse(minimalEnsembleVote)
+  assert.equal(ok.modelUsed, "gpt-5.4-nano")
+
+  // Each required field is removed in isolation -> safeParse fails.
+  const requiredFields = [
+    "modelUsed",
+    "proposedAgentTier",
+    "agentRationale",
+    "agentRecommendedAction",
+  ] as const
+  for (const field of requiredFields) {
+    const copy: Record<string, unknown> = { ...minimalEnsembleVote }
+    delete copy[field]
+    const r = AgentRankingEnsembleVoteSchema.safeParse(copy)
+    assert.equal(r.success, false, `expected missing ${field} to fail parse`)
+  }
+
+  // AgentRankingActionSchema constraint asserted indirectly via vote rejection
+  // of unknown action value.
+  const badAction = AgentRankingEnsembleVoteSchema.safeParse({
+    ...minimalEnsembleVote,
+    agentRecommendedAction: "send_now",
+  })
+  assert.equal(badAction.success, false)
+  // Sanity: the action enum itself accepts only the locked 4.
+  for (const v of [
+    "outreach_now",
+    "outreach_after_research",
+    "retain_warm",
+    "do_not_contact",
+  ]) {
+    assert.equal(AgentRankingActionSchema.parse(v), v)
+  }
+})
+
+test("createAgentRankingResultId is deterministic, unique, and well-formed", () => {
+  const id1 = createAgentRankingResultId({
+    evaluationRunId: "run-1",
+    candidateRecordId: "record-1",
+  })
+  const id2 = createAgentRankingResultId({
+    evaluationRunId: "run-1",
+    candidateRecordId: "record-1",
+  })
+  assert.equal(id1, id2)
+  // Shape: `agent-rank__${sha256 hex}` — 64 lowercase hex chars after sep.
+  assert.match(id1, /^agent-rank__[a-f0-9]{64}$/)
+
+  // Different inputs -> different ids.
+  const id3 = createAgentRankingResultId({
+    evaluationRunId: "run-1",
+    candidateRecordId: "record-2",
+  })
+  assert.notEqual(id1, id3)
+  const id4 = createAgentRankingResultId({
+    evaluationRunId: "run-2",
+    candidateRecordId: "record-1",
+  })
+  assert.notEqual(id1, id4)
+
+  // Empty inputs throw.
+  assert.throws(() =>
+    createAgentRankingResultId({ evaluationRunId: "", candidateRecordId: "record-1" })
+  )
+  assert.throws(() =>
+    createAgentRankingResultId({ evaluationRunId: "run-1", candidateRecordId: "" })
+  )
+})
+
+test("SourceQualityMetricSchema parses a row with the V2 additive agent metrics", () => {
+  const parsed = SourceQualityMetricSchema.parse({
+    metricId: createSourceQualityMetricId("juicebox", "2026-05"),
+    source: "juicebox",
+    windowStart: now,
+    windowEnd: now,
+    rowsIngested: 250,
+    validRate: 0.9,
+    duplicateRate: 0.05,
+    identityConflictRate: 0.02,
+    replyRate: 0.1,
+    bounceRate: 0.03,
+    conversionToFirstInterview: 0.04,
+    agentTierAcceptanceRate: 0.85,
+    agentOperatorOverrideRate: 0.15,
+    agentRankedTotal: 200,
+    agentApprovedUnchangedTotal: 170,
+    agentOverriddenTotal: 30,
+    costTableVersion: "pricing-2026-05-A",
+    createdAt: now,
+  })
+  assert.equal(parsed.agentTierAcceptanceRate, 0.85)
+  assert.equal(parsed.agentOperatorOverrideRate, 0.15)
+  assert.equal(parsed.agentRankedTotal, 200)
+  assert.equal(parsed.agentApprovedUnchangedTotal, 170)
+  assert.equal(parsed.agentOverriddenTotal, 30)
+  assert.equal(parsed.costTableVersion, "pricing-2026-05-A")
 })

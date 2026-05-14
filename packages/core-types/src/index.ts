@@ -595,6 +595,7 @@ export const RuntimeHeartbeatSchema = z.object({
 export type RuntimeHeartbeat = z.infer<typeof RuntimeHeartbeatSchema>
 
 export {
+  PA_AGENT_RANKING_RESULTS,
   PA_BULK_UPLOAD_ITEMS_SUBCOLLECTION,
   PA_COLLECTIONS,
   PA_JOB_ENRICHMENT_EVAL_FIXTURES_SUBCOLLECTION,
