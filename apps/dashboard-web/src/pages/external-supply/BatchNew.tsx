@@ -96,7 +96,14 @@ export function BatchNew() {
   const [preview, setPreview] = useState<PreviewBatchResult | null>(null)
   const [uploaded, setUploaded] = useState<UploadedFileState | null>(null)
 
-  const finalSource: ExternalSource = (adapterOverride || source) as ExternalSource
+  // v2.2 (2026-05-14): xlsx files MUST route through `manual_csv` — every
+  // other adapter (juicebox=JSON, lessie=csv-parse, coresignal=JSON) assumes
+  // text input and explodes on PK binary headers. The manual-csv adapter
+  // sniffs the sheet kind via `parseSheetToRows` and handles xlsx natively.
+  const isXlsx = (file?.name ?? "").toLowerCase().endsWith(".xlsx")
+  const finalSource: ExternalSource = isXlsx
+    ? "manual_csv"
+    : ((adapterOverride || source) as ExternalSource)
 
   async function handlePreview() {
     if (!file) {

@@ -94,7 +94,19 @@ export function dispatchAdapter(
   columnMapping: ManualCsvColumnMapping | undefined,
   filename?: string,
 ): AdapterResult {
-  const descriptor = getAdapter(source)
+  // Defense-in-depth — xlsx files MUST go through manual_csv (only adapter
+  // that knows how to parse a PK-zipped sheet). Lessie/juicebox/coresignal
+  // assume utf8 text and blow up on binary input. Detect by magic bytes
+  // (`PK\x03\x04`) so we don't depend on the operator picking the right
+  // adapter from the dashboard dropdown.
+  const isXlsx =
+    raw.length >= 4 &&
+    raw[0] === 0x50 &&
+    raw[1] === 0x4b &&
+    raw[2] === 0x03 &&
+    raw[3] === 0x04
+  const effectiveSource: ExternalSource = isXlsx && source !== "manual_csv" ? "manual_csv" : source
+  const descriptor = getAdapter(effectiveSource)
   const drafts = descriptor.parse(raw, columnMapping, filename)
   const rawHeaderSample = descriptor.signature.acceptedShapes.includes("csv")
     ? raw.toString("utf8").split(/\r?\n/, 1)[0]

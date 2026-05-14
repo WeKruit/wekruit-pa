@@ -81,6 +81,17 @@ async function main() {
   const batchDoc = {
     batchId,
     source: "manual_csv",
+    // ExternalSourcingBatchSchema (core-types) requires both `rawFileRef`
+    // (storageUri+mime+sha256+sizeBytes) and `normalizerVersion`. Without
+    // these the dashboard's safeParse drops the row and BatchDetail
+    // renders an empty page.
+    rawFileRef: {
+      storageUri: `inline://manual_csv/${sha256}/${fname}`,
+      mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      sha256,
+      sizeBytes: size,
+    },
+    normalizerVersion: "manual-csv-2026-05-B",
     adapterVersion: "manual-csv-2026-05-B",
     storageUri: `inline://manual_csv/${sha256}/${fname}`,
     sha256,
@@ -110,6 +121,21 @@ async function main() {
   }
 
   await db.collection("pa-external-sourcing-batches").doc(batchId).set(batchDoc, { merge: true })
+
+  // 2.5. Clean any stale records for this batch so re-runs don't multiply.
+  const stale = await db
+    .collection("pa-external-candidate-records")
+    .where("batchId", "==", batchId)
+    .get()
+  if (!stale.empty) {
+    console.log(`[seed-lessie] cleaning ${stale.size} stale records before re-seed`)
+    for (let i = 0; i < stale.docs.length; i += 400) {
+      const slice = stale.docs.slice(i, i + 400)
+      const delBatch = db.batch()
+      for (const d of slice) delBatch.delete(d.ref)
+      await delBatch.commit()
+    }
+  }
 
   // 3. Write records in chunks of 400 (Firestore batch limit 500, leave headroom).
   let writtenRecords = 0
