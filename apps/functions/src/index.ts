@@ -197,6 +197,9 @@ export { paLinkedinAuthStart, paLinkedinCallback } from "./linkedin-auth.js"
 // v2.0 S2 — candidate email-link claim callable. Authenticated candidates
 // receive only the redacted candidate self-profile projection.
 export { paCandidateClaimProfile } from "./identity/claim-api.js"
+// Candidate job start gate. Authenticated candidates must have a parsed and
+// labeled resume on the canonical PA profile before iMessage unlocks.
+export { paCandidateResumeGateStatus } from "./identity/candidate-resume-gate.js"
 // v2.0 S5 — candidate-safe match list projection. Authenticated candidates
 // read joined/redacted match cards through a callable, not raw Firestore.
 export { paCandidateListMatches } from "./identity/candidate-matches-api.js"

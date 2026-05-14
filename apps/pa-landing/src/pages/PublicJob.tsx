@@ -19,12 +19,12 @@ import {
   type User,
 } from "firebase/auth"
 import { doc, getDoc, setDoc } from "firebase/firestore"
-import { auth, db } from "../lib/firebase.js"
+import { httpsCallable } from "firebase/functions"
+import { auth, db, functions } from "../lib/firebase.js"
 import { CandidateShell } from "./CandidateLogin.js"
 
 const CV_INGEST_URL = import.meta.env.VITE_CV_INGEST_URL ?? ""
 const GLOBAL_UID_KEY = "wkr_uid"
-const HAS_CV_KEY = "wkr_has_cv"
 const EMAIL_STORAGE_KEY = "wkr_claim_email"
 const LINKEDIN_AUTH_START_URL =
   import.meta.env.VITE_LINKEDIN_AUTH_START_URL ??
@@ -60,6 +60,23 @@ interface PoolNumber {
 }
 
 type LoginStatus = "idle" | "google" | "linkedin" | "email" | "sent" | "error"
+type ResumeGateStatus = "needs_resume_upload" | "resume_processing" | "ready"
+type ResumeGateState =
+  | { status: "idle" | "loading" }
+  | {
+      status: "ready"
+      gate: {
+        ok: true
+        candidateId: string
+        status: ResumeGateStatus
+        hasResume: boolean
+        labelsReady: boolean
+        resumeArtifactId?: string
+        parsedResumeId?: string
+      }
+    }
+  | { status: "error"; message: string }
+type ResumeGateResult = Extract<ResumeGateState, { status: "ready" }>["gate"]
 
 function hashStringToUint(s: string): number {
   let h = 5381 >>> 0
@@ -99,10 +116,6 @@ function getOrCreateRequestedUserId(_jobId: string): string {
   const v = uuidV4()
   window.localStorage.setItem(GLOBAL_UID_KEY, v)
   return v
-}
-
-function hasCvOnFile(): boolean {
-  return window.localStorage.getItem(HAS_CV_KEY) === "true"
 }
 
 function cleanEmail(value: string): string {
@@ -161,6 +174,7 @@ export default function PublicJob() {
   const [loginEmail, setLoginEmail] = useState("")
   const [loginStatus, setLoginStatus] = useState<LoginStatus>("idle")
   const [loginError, setLoginError] = useState<string | null>(null)
+  const [resumeGate, setResumeGate] = useState<ResumeGateState>({ status: "idle" })
 
   const requestedUserId = useMemo(() => (jobId ? getOrCreateRequestedUserId(jobId) : ""), [jobId])
   const nextPath = useMemo(() => (jobId ? `/j/${jobId}` : "/"), [jobId])
@@ -287,6 +301,59 @@ export default function PublicJob() {
     const timer = window.setTimeout(() => setLoginPromptOpen(true), 650)
     return () => window.clearTimeout(timer)
   }, [job, loading, loginPromptDismissed, user])
+
+  async function refreshResumeGate() {
+    if (!user) {
+      setResumeGate({ status: "idle" })
+      return
+    }
+    setResumeGate({ status: "loading" })
+    try {
+      const checkGate = httpsCallable<{ browserUid?: string | null }, ResumeGateResult>(
+        functions(),
+        "paCandidateResumeGateStatus"
+      )
+      const result = await checkGate({ browserUid: requestedUserId })
+      setResumeGate({ status: "ready", gate: result.data })
+    } catch (err) {
+      setResumeGate({ status: "error", message: err instanceof Error ? err.message : String(err) })
+    }
+  }
+
+  useEffect(() => {
+    if (!user) {
+      setResumeGate({ status: "idle" })
+      return
+    }
+    let cancelled = false
+    setResumeGate({ status: "loading" })
+    void (async () => {
+      try {
+        const checkGate = httpsCallable<{ browserUid?: string | null }, ResumeGateResult>(
+          functions(),
+          "paCandidateResumeGateStatus"
+        )
+        const result = await checkGate({ browserUid: requestedUserId })
+        if (!cancelled) setResumeGate({ status: "ready", gate: result.data })
+      } catch (err) {
+        if (!cancelled) setResumeGate({ status: "error", message: err instanceof Error ? err.message : String(err) })
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [requestedUserId, user])
+
+  useEffect(() => {
+    const candidateId = resumeGate.status === "ready" ? resumeGate.gate.candidateId : null
+    if (!candidateId || !jobId) return
+    void setDoc(doc(db(), "pa-prescreen-pending-invites", candidateId), {
+      jobId,
+      requestedUserId: candidateId,
+      browserUid: requestedUserId,
+      createdAt: new Date().toISOString(),
+    }).catch(() => undefined)
+  }, [jobId, requestedUserId, resumeGate])
 
   async function startProviderSignIn(kind: "google" | "linkedin") {
     setLoginStatus(kind)
@@ -420,8 +487,11 @@ export default function PublicJob() {
   const company = job.companyName ?? resolvedCompanyName ?? "Confidential employer"
   const location = job.location ?? cfg.region
   const salary = cfg.level1Reveal?.salaryRange
-  const sendNumber = pickPoolNumber(pool, requestedUserId)
-  const smsBody = `WeKruit_${jobId}_${requestedUserId}_Job`
+  const resumeGateValue = resumeGate.status === "ready" ? resumeGate.gate : null
+  const uploadUserId = resumeGateValue?.candidateId
+  const smsUserId = resumeGateValue?.candidateId ?? requestedUserId
+  const sendNumber = pickPoolNumber(pool, smsUserId)
+  const smsBody = `WeKruit_${jobId}_${smsUserId}_Job`
   const smsHref = sendNumber ? `sms:${sendNumber}?body=${encodeURIComponent(smsBody)}` : null
 
   return (
@@ -456,24 +526,13 @@ export default function PublicJob() {
             <h2>Start the 5-minute screen</h2>
             {user ? (
               <>
-                <p>
-                  Claire will ask a few quick role-fit questions over iMessage, attached to your
-                  WeKruit candidate profile.
-                </p>
-                {smsHref ? (
-                  <a
-                    className="candidate-primary-link public-job-sms-link"
-                    href={smsHref}
-                    onClick={() => setSmsClicked(true)}
-                  >
-                    Open in iMessage
-                  </a>
-                ) : (
-                  <p className="candidate-error">WeKruit messaging is temporarily unavailable.</p>
-                )}
-                {smsClicked ? (
-                  <p className="candidate-success">Continue in iMessage to answer Claire.</p>
-                ) : null}
+                <PrescreenStartGate
+                  gateState={resumeGate}
+                  smsHref={smsHref}
+                  smsClicked={smsClicked}
+                  onSmsClick={() => setSmsClicked(true)}
+                  onRefresh={() => void refreshResumeGate()}
+                />
               </>
             ) : (
               <>
@@ -489,7 +548,10 @@ export default function PublicJob() {
             <InlineCvSection
               jobId={jobId!}
               requestedUserId={requestedUserId}
-              initialHasCv={hasCvOnFile()}
+              uploadUserId={uploadUserId}
+              userSignedIn={Boolean(user)}
+              gateStatus={resumeGateValue?.status}
+              onUploaded={() => void refreshResumeGate()}
             />
           </section>
           <p className="public-job-terms">
@@ -543,13 +605,114 @@ export default function PublicJob() {
 interface InlineCvSectionProps {
   jobId: string
   requestedUserId: string
-  initialHasCv: boolean
+  uploadUserId?: string
+  userSignedIn: boolean
+  gateStatus?: ResumeGateStatus
+  onUploaded: () => void
 }
 
-function InlineCvSection({ jobId, requestedUserId, initialHasCv }: InlineCvSectionProps) {
-  const [hasCv, setHasCv] = useState<boolean>(initialHasCv)
-  if (hasCv) {
+function PrescreenStartGate({
+  gateState,
+  smsHref,
+  smsClicked,
+  onSmsClick,
+  onRefresh,
+}: {
+  gateState: ResumeGateState
+  smsHref: string | null
+  smsClicked: boolean
+  onSmsClick: () => void
+  onRefresh: () => void
+}) {
+  if (gateState.status === "loading" || gateState.status === "idle") {
+    return (
+      <>
+        <p>Checking your candidate profile and resume status.</p>
+        <div className="public-job-disabled-action">Checking resume</div>
+      </>
+    )
+  }
+  if (gateState.status === "error") {
+    return (
+      <>
+        <p>We could not verify your candidate profile yet.</p>
+        <button className="public-job-secondary-action" type="button" onClick={onRefresh}>
+          Try again
+        </button>
+        <p className="candidate-error">{gateState.message}</p>
+      </>
+    )
+  }
+  if (gateState.status !== "ready") return null
+  const gate = gateState.gate
+  if (gate.status === "needs_resume_upload") {
+    return (
+      <>
+        <p>Upload your resume first so WeKruit can parse and label your candidate profile for this role.</p>
+        <div className="public-job-disabled-action">Resume required</div>
+      </>
+    )
+  }
+  if (gate.status === "resume_processing") {
+    return (
+      <>
+        <p>We are parsing and labeling your resume. The employer screen unlocks after that finishes.</p>
+        <button className="public-job-secondary-action" type="button" onClick={onRefresh}>
+          Check again
+        </button>
+      </>
+    )
+  }
+  return (
+    <>
+      <p>
+        Claire will ask a few quick role-fit questions over iMessage, attached to your
+        WeKruit candidate profile.
+      </p>
+      {smsHref ? (
+        <a
+          className="candidate-primary-link public-job-sms-link"
+          href={smsHref}
+          onClick={onSmsClick}
+        >
+          Open in iMessage
+        </a>
+      ) : (
+        <p className="candidate-error">WeKruit messaging is temporarily unavailable.</p>
+      )}
+      {smsClicked ? (
+        <p className="candidate-success">Continue in iMessage to answer Claire.</p>
+      ) : null}
+    </>
+  )
+}
+
+function InlineCvSection({
+  jobId,
+  requestedUserId,
+  uploadUserId,
+  userSignedIn,
+  gateStatus,
+  onUploaded,
+}: InlineCvSectionProps) {
+  if (!userSignedIn) {
+    return (
+      <div className="public-job-cv-section">
+        <h2>Resume</h2>
+        <p>Sign in first so your resume attaches to your WeKruit candidate profile.</p>
+      </div>
+    )
+  }
+  if (gateStatus === "ready") {
     return <p className="candidate-success">We have your resume on file.</p>
+  }
+  if (gateStatus === "resume_processing") {
+    return (
+      <div className="public-job-cv-section">
+        <h2>Resume</h2>
+        <p>Resume uploaded. We are finishing parsing and labeling before the employer screen opens.</p>
+      </div>
+    )
   }
   return (
     <div className="public-job-cv-section">
@@ -558,7 +721,8 @@ function InlineCvSection({ jobId, requestedUserId, initialHasCv }: InlineCvSecti
       <InlineCvUpload
         jobId={jobId}
         requestedUserId={requestedUserId}
-        onUploaded={() => setHasCv(true)}
+        uploadUserId={uploadUserId}
+        onUploaded={onUploaded}
       />
     </div>
   )
@@ -567,10 +731,11 @@ function InlineCvSection({ jobId, requestedUserId, initialHasCv }: InlineCvSecti
 interface InlineCvUploadProps {
   jobId: string
   requestedUserId: string
+  uploadUserId?: string
   onUploaded: () => void
 }
 
-function InlineCvUpload({ jobId, requestedUserId, onUploaded }: InlineCvUploadProps) {
+function InlineCvUpload({ jobId, requestedUserId, uploadUserId, onUploaded }: InlineCvUploadProps) {
   const [file, setFile] = useState<File | null>(null)
   const [status, setStatus] = useState<"idle" | "uploading" | "ok" | "err">("idle")
   const [errMsg, setErrMsg] = useState<string | null>(null)
@@ -593,6 +758,11 @@ function InlineCvUpload({ jobId, requestedUserId, onUploaded }: InlineCvUploadPr
       setErrMsg("CV ingest endpoint is not configured.")
       return
     }
+    if (!uploadUserId) {
+      setStatus("err")
+      setErrMsg("Sign in again before uploading your resume.")
+      return
+    }
     try {
       setStatus("uploading")
       const b64 = await fileToBase64(file)
@@ -600,7 +770,7 @@ function InlineCvUpload({ jobId, requestedUserId, onUploaded }: InlineCvUploadPr
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          tempUserId: requestedUserId,
+          userId: uploadUserId,
           browserUid: requestedUserId,
           resumeBase64: b64,
           resumeName: file.name,
@@ -613,7 +783,6 @@ function InlineCvUpload({ jobId, requestedUserId, onUploaded }: InlineCvUploadPr
         setErrMsg(`Upload failed (${res.status})`)
         return
       }
-      window.localStorage.setItem(HAS_CV_KEY, "true")
       setStatus("ok")
       onUploaded()
     } catch (err) {
@@ -736,6 +905,28 @@ const PUBLIC_JOB_STYLES = `
 }
 .public-job-sms-link {
   width: 100%;
+}
+.public-job-disabled-action,
+.public-job-secondary-action {
+  min-height: 42px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 14px;
+  font: inherit;
+  font-weight: 800;
+}
+.public-job-disabled-action {
+  border: 1px solid #cfc3ae;
+  background: #f0eee8;
+  color: #7a6f5d;
+}
+.public-job-secondary-action {
+  border: 1px solid #2f6f4f;
+  background: #fffdf8;
+  color: #2f6f4f;
+  cursor: pointer;
 }
 .public-job-login-controls {
   display: grid;

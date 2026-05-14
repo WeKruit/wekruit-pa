@@ -31,9 +31,11 @@
  *   - apps/dashboard-web/src/pages/PublicJobCv.tsx (PublicJob page)
  *   - apps/functions/src/ats-inbound-webhook.ts (Handshake/ATS bind path)
  */
+import { createHash } from "node:crypto"
 import { onRequest } from "firebase-functions/v2/https"
 import { defineSecret } from "firebase-functions/params"
 import { getFirestore } from "firebase-admin/firestore"
+import { PA_COLLECTIONS, ResumeArtifactSchema } from "@pa/core-types"
 import { ingestCv } from "./cv-ingest/cv-ingest.js"
 import type { IngestCvInput, IngestCvDeps } from "./cv-ingest/cv-ingest.js"
 
@@ -71,6 +73,97 @@ function sniffPdf(bytes: Uint8Array): boolean {
     bytes[2] === 0x44 && // D
     bytes[3] === 0x46 // F
   )
+}
+
+function stripUndefined<T extends Record<string, unknown>>(input: T): T {
+  return Object.fromEntries(
+    Object.entries(input).filter(([, value]) => value !== undefined)
+  ) as T
+}
+
+function idSafe(value: string): string {
+  return value.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 80)
+}
+
+export function buildCandidateUploadResumeArtifactWrites(input: {
+  candidateId: string
+  parsedCandidateResumeId: string
+  fileName?: string
+  sha256?: string
+  candidateProfileSummary?: string
+  now: string
+}): {
+  artifact: ReturnType<typeof ResumeArtifactSchema.parse>
+  userPatch: Record<string, unknown>
+  selfProfilePatch: Record<string, unknown>
+} {
+  const digest = input.sha256?.slice(0, 32) ??
+    createHash("sha256")
+      .update(`${input.candidateId}:${input.parsedCandidateResumeId}`)
+      .digest("hex")
+      .slice(0, 32)
+  const resumeId = `candidate_upload_${idSafe(input.candidateId)}_${digest}`
+  const artifact = ResumeArtifactSchema.parse(
+    stripUndefined({
+      resumeId,
+      candidateId: input.candidateId,
+      status: "parsed",
+      source: "candidate_upload",
+      fileName: input.fileName,
+      sha256: input.sha256,
+      parsedCandidateResumeId: input.parsedCandidateResumeId,
+      candidateProfileSummary: input.candidateProfileSummary,
+      createdAt: input.now,
+      updatedAt: input.now,
+    })
+  )
+  return {
+    artifact,
+    userPatch: {
+      latestResumeArtifactId: artifact.resumeId,
+      updatedAt: input.now,
+    },
+    selfProfilePatch: stripUndefined({
+      candidateId: input.candidateId,
+      latestResumeArtifactId: artifact.resumeId,
+      resumeStatus: "parsed",
+      profileSummary: input.candidateProfileSummary,
+      updatedAt: input.now,
+    }),
+  }
+}
+
+async function recordCandidateUploadResumeArtifact(args: {
+  db: ReturnType<typeof getFirestore>
+  candidateId: string
+  parsedCandidateResumeId: string
+  fileName?: string
+  sha256?: string
+  candidateProfileSummary?: string
+}): Promise<string> {
+  const writes = buildCandidateUploadResumeArtifactWrites({
+    candidateId: args.candidateId,
+    parsedCandidateResumeId: args.parsedCandidateResumeId,
+    fileName: args.fileName,
+    sha256: args.sha256,
+    candidateProfileSummary: args.candidateProfileSummary,
+    now: new Date().toISOString(),
+  })
+  await Promise.all([
+    args.db
+      .collection(PA_COLLECTIONS.resumeArtifacts)
+      .doc(writes.artifact.resumeId)
+      .set(stripUndefined(writes.artifact as unknown as Record<string, unknown>), { merge: true }),
+    args.db
+      .collection(PA_COLLECTIONS.users)
+      .doc(args.candidateId)
+      .set(writes.userPatch, { merge: true }),
+    args.db
+      .collection(PA_COLLECTIONS.candidateSelfProfiles)
+      .doc(args.candidateId)
+      .set(writes.selfProfilePatch, { merge: true }),
+  ])
+  return writes.artifact.resumeId
 }
 
 export const paPublicCvIngest = onRequest(
@@ -134,6 +227,7 @@ export const paPublicCvIngest = onRequest(
     // Decode base64 path — return bytes via injected fetchPdf so cv-ingest
     // doesn't try to network-fetch an "inline://" URL.
     let injectedBytes: Uint8Array | null = null
+    let resumeSha256: string | undefined
     if (body.resumeBase64) {
       try {
         injectedBytes = Buffer.from(body.resumeBase64, "base64")
@@ -149,6 +243,7 @@ export const paPublicCvIngest = onRequest(
           res.status(415).json({ ok: false, reason: "not_a_pdf" })
           return
         }
+        resumeSha256 = createHash("sha256").update(injectedBytes).digest("hex")
       } catch {
         res.status(400).json({ ok: false, reason: "base64_decode_failed" })
         return
@@ -200,14 +295,23 @@ export const paPublicCvIngest = onRequest(
     try {
       const result = await ingestCv(input, deps)
       if (result.ok) {
+        const resumeArtifactId = await recordCandidateUploadResumeArtifact({
+          db,
+          candidateId: result.userId,
+          parsedCandidateResumeId: result.resumeId,
+          fileName: body.resumeName,
+          sha256: resumeSha256,
+          candidateProfileSummary: result.candidateProfileSummary,
+        })
         log("public_cv_ingest.ok", {
           userId,
           canonicalUserId: result.userId,
           resumeId: result.resumeId,
+          resumeArtifactId,
           source: body.source ?? "public_job_page",
           jobIdContext: body.jobIdContext,
         })
-        res.status(200).json({ ok: true, resumeId: result.resumeId, userId: result.userId })
+        res.status(200).json({ ok: true, resumeId: result.resumeId, userId: result.userId, resumeArtifactId })
       } else {
         log("public_cv_ingest.fail", {
           userId,
