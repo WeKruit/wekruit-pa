@@ -2360,7 +2360,7 @@ export async function ingestCv(
     //   - Pattern A returning user where PII was not yet collected but CV is.
     // Never overwrite an existing phone (PII-confirmed user-provided phone wins).
     // Fail-open: never throws, never blocks parsedCandidateResumes write success.
-    const parsedPhoneRaw = v2Output?.parsed.phone ?? null
+    const parsedPhoneRaw = v2Output?.parsed.phone ?? parsed.candidateProfile.phone ?? null
     if (parsedPhoneRaw) {
       try {
         const normalized = normalizeCvPhoneToE164(parsedPhoneRaw)
@@ -2377,7 +2377,7 @@ export async function ingestCv(
               {
                 phoneE164: normalized,
                 phoneE164Source: "cv_parsed",
-                updatedAt: nowIso,
+                updatedAt: nowIso(),
               },
               { merge: true }
             )

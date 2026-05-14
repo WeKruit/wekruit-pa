@@ -666,6 +666,7 @@ function PrescreenStartGate({
           Your resume is being parsed and labeled. Claire's 5-minute screen unlocks after that
           finishes.
         </p>
+        <ProcessSteps activeStep={3} />
         <button className="public-job-secondary-action" type="button" onClick={onRefresh}>
           Check again
         </button>
@@ -720,6 +721,7 @@ function InlineCvSection({
       <div className="public-job-cv-section">
         <h2>Resume</h2>
         <p>Resume uploaded. We are finishing parsing and labeling before the employer screen opens.</p>
+        <ProcessSteps activeStep={3} />
       </div>
     )
   }
@@ -748,10 +750,12 @@ function InlineCvUpload({ jobId, requestedUserId, uploadUserId, onUploaded }: In
   const [file, setFile] = useState<File | null>(null)
   const [status, setStatus] = useState<"idle" | "uploading" | "ok" | "err">("idle")
   const [errMsg, setErrMsg] = useState<string | null>(null)
+  const [uploadResult, setUploadResult] = useState<{ resumeId?: string; resumeArtifactId?: string } | null>(null)
 
   useEffect(() => {
     setStatus("idle")
     setErrMsg(null)
+    setUploadResult(null)
   }, [file])
 
   async function onSubmit(e: FormEvent) {
@@ -774,6 +778,7 @@ function InlineCvUpload({ jobId, requestedUserId, uploadUserId, onUploaded }: In
     }
     try {
       setStatus("uploading")
+      setErrMsg(null)
       const b64 = await fileToBase64(file)
       const res = await fetch(CV_INGEST_URL, {
         method: "POST",
@@ -788,17 +793,34 @@ function InlineCvUpload({ jobId, requestedUserId, uploadUserId, onUploaded }: In
         }),
       })
       if (!res.ok) {
+        let reason = `Upload failed (${res.status})`
+        try {
+          const body = (await res.json()) as { reason?: string }
+          if (body.reason) reason = friendlyUploadError(body.reason, res.status)
+        } catch {
+          // Keep the HTTP fallback.
+        }
         setStatus("err")
-        setErrMsg(`Upload failed (${res.status})`)
+        setErrMsg(reason)
         return
       }
+      const body = (await res.json().catch(() => ({}))) as {
+        resumeId?: string
+        resumeArtifactId?: string
+      }
+      setUploadResult({
+        resumeId: body.resumeId,
+        resumeArtifactId: body.resumeArtifactId,
+      })
       setStatus("ok")
       onUploaded()
     } catch (err) {
       setStatus("err")
-      setErrMsg(err instanceof Error ? err.message : String(err))
+      setErrMsg("We could not upload the resume. Check your connection and try again.")
     }
   }
+
+  const activeStep = status === "ok" ? 4 : status === "uploading" ? 3 : file ? 1 : 0
 
   return (
     <form onSubmit={onSubmit} className="public-job-cv-upload">
@@ -806,13 +828,72 @@ function InlineCvUpload({ jobId, requestedUserId, uploadUserId, onUploaded }: In
         type="file"
         accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-        disabled={status === "uploading"}
+        disabled={status === "uploading" || status === "ok"}
       />
-      <button type="submit" disabled={!file || status === "uploading"}>
+      <div className="public-job-upload-panel" aria-live="polite">
+        <p className="public-job-upload-status">
+          {uploadStatusText(status, file, uploadResult)}
+        </p>
+        <ProcessSteps activeStep={activeStep} />
+      </div>
+      <button type="submit" disabled={!file || status === "uploading" || status === "ok"}>
         {status === "uploading" ? "Uploading" : "Upload"}
       </button>
       {status === "err" && errMsg ? <p className="candidate-error">{errMsg}</p> : null}
     </form>
+  )
+}
+
+function uploadStatusText(
+  status: "idle" | "uploading" | "ok" | "err",
+  file: File | null,
+  uploadResult: { resumeId?: string; resumeArtifactId?: string } | null
+): string {
+  if (status === "uploading") {
+    return "Uploading, parsing, and labeling your resume. This can take around 20-40 seconds."
+  }
+  if (status === "ok") {
+    return uploadResult?.resumeId
+      ? "Resume parsed. Checking whether Claire's screen is ready to unlock."
+      : "Upload received. Checking whether Claire's screen is ready to unlock."
+  }
+  if (status === "err") return "Resume upload did not finish."
+  return file ? `${file.name} selected. Upload it to continue.` : "Choose a PDF resume to start."
+}
+
+function friendlyUploadError(reason: string, status: number): string {
+  switch (reason) {
+    case "not_a_pdf":
+      return "Use a text-based PDF resume for now."
+    case "resume_too_large":
+      return "Use a resume under 5 MB."
+    case "llm_parse_failed":
+    case "pdf_parse_failed":
+      return "We could not read this resume. Try a cleaner text-based PDF."
+    case "identity_conflict":
+      return "This resume appears to belong to another profile. Use the resume for this signed-in account."
+    case "missing_userId_or_tempUserId":
+      return "Sign in again before uploading your resume."
+    default:
+      return `Upload failed (${status}). Try again.`
+  }
+}
+
+function ProcessSteps({ activeStep }: { activeStep: number }) {
+  const steps = ["Select file", "Upload", "Parse resume", "Unlock screen"]
+  return (
+    <ol className="public-job-process-steps" aria-label="Resume upload progress">
+      {steps.map((step, index) => {
+        const number = index + 1
+        const state = activeStep >= number ? "complete" : activeStep === number - 1 ? "active" : "pending"
+        return (
+          <li key={step} className={`public-job-process-step public-job-process-step-${state}`}>
+            <span>{number}</span>
+            {step}
+          </li>
+        )
+      })}
+    </ol>
   )
 }
 
@@ -1015,6 +1096,57 @@ const PUBLIC_JOB_STYLES = `
 .public-job-cv-upload input {
   width: 100%;
   min-width: 0;
+}
+.public-job-upload-panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 8px;
+  background: #f6f1e8;
+  border: 1px solid #ded4c2;
+}
+.public-job-upload-status {
+  margin: 0;
+  font-size: 14px;
+  color: #4b493f;
+}
+.public-job-process-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.public-job-process-step {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  color: #7a6f5d;
+  font-size: 13px;
+  font-weight: 800;
+}
+.public-job-process-step span {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #cfc3ae;
+  background: #fffdf8;
+  color: #7a6f5d;
+  font-size: 12px;
+}
+.public-job-process-step-complete,
+.public-job-process-step-active {
+  color: #24543c;
+}
+.public-job-process-step-complete span,
+.public-job-process-step-active span {
+  border-color: #2f6f4f;
+  background: #2f6f4f;
+  color: #fffdf8;
 }
 .public-job-terms {
   margin: 0;

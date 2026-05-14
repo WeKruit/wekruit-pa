@@ -921,9 +921,9 @@ describe("ingestCv writes pa-users.tags via mergeUserTags (iter34 H.3b)", () => 
       deps
     )
     assert.equal(res.ok, true)
-    // pa-users.set must have fired exactly once with a `tags` payload.
-    assert.equal(state.userSets.length, 1, "pa-users.set should fire once")
-    const setOp = state.userSets[0]!
+    const tagSetOps = state.userSets.filter((op) => "tags" in op.data)
+    assert.equal(tagSetOps.length, 1, "pa-users.set should write tags once")
+    const setOp = tagSetOps[0]!
     assert.equal(setOp.id, "user_x")
     assert.equal(setOp.merge, true, "must use merge:true to preserve chat-side tag fields")
     const payload = setOp.data as Record<string, unknown>
@@ -936,6 +936,9 @@ describe("ingestCv writes pa-users.tags via mergeUserTags (iter34 H.3b)", () => 
     const ok = events.find((e) => e.event === "pa.cv_user_tags.ok")
     assert.ok(ok, "expected pa.cv_user_tags.ok log")
     assert.equal((ok!.payload as Record<string, unknown>).userId, "user_x")
+    const phoneSet = state.userSets.find((op) => "phoneE164" in op.data)
+    assert.equal(phoneSet?.data.phoneE164, "+15551234567")
+    assert.equal(typeof phoneSet?.data.updatedAt, "string")
   })
 
   it("skills written FULLY (not truncated to 12) — Adam directive", async () => {
@@ -960,8 +963,9 @@ describe("ingestCv writes pa-users.tags via mergeUserTags (iter34 H.3b)", () => 
       { userId: "user_full", mediaUrl: "https://example.com/cv.pdf" },
       deps
     )
-    assert.equal(state.userSets.length, 1)
-    const tags = (state.userSets[0]!.data.tags ?? {}) as Record<string, unknown>
+    const tagSet = state.userSets.find((op) => "tags" in op.data)
+    assert.ok(tagSet, "expected tag set")
+    const tags = (tagSet.data.tags ?? {}) as Record<string, unknown>
     const writtenSkills = tags.skills as Array<{ name: string }>
     // Full list: at least the 30 input skills make it through (lowercased,
     // deduped, but NOT capped at 12 like topSkills).
@@ -1039,7 +1043,11 @@ describe("ingestCv writes pa-users.tags via mergeUserTags (iter34 H.3b)", () => 
     assert.ok(capturedInput, "mergeUserTags still called")
     const captured = capturedInput as Record<string, unknown>
     assert.equal(captured.statedPreferences, undefined, "statedPreferences absent when user doc missing")
-    assert.equal(state.userSets.length, 1, "pa-users.set still fires (creates doc via merge)")
+    assert.equal(
+      state.userSets.filter((op) => "tags" in op.data).length,
+      1,
+      "pa-users.set still writes tags (creates doc via merge)"
+    )
   })
 
   it("writeUserTags throws → ingestCv still ok:true, error logged, parsedCandidateResumes intact", async () => {
@@ -1071,7 +1079,11 @@ describe("ingestCv writes pa-users.tags via mergeUserTags (iter34 H.3b)", () => 
       deps
     )
     assert.equal(res.ok, true)
-    assert.equal(state.userSets.length, 0, "no .set() attempted when merger throws")
+    assert.equal(
+      state.userSets.filter((op) => "tags" in op.data).length,
+      0,
+      "no tag .set() attempted when merger throws"
+    )
     const errEvt = events.find((e) => e.event === "pa.cv_user_tags.merge_error")
     assert.ok(errEvt, "expected pa.cv_user_tags.merge_error log event")
   })

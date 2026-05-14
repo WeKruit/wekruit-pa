@@ -58,6 +58,32 @@ interface PublicCvIngestRequest {
   atsApplicantId?: string
 }
 
+export function buildPublicCvIngestInput(args: {
+  body: PublicCvIngestRequest
+  userId: string
+  mediaUrl: string
+}): IngestCvInput {
+  const isAtsSource = args.body.source?.startsWith("ats:") === true
+  const hasEmployerIdentityHint = Boolean(
+    args.body.employerEmailHint?.trim() || args.body.atsApplicantId?.trim()
+  )
+  const shouldResolveExternalIdentity = isAtsSource || hasEmployerIdentityHint
+
+  return stripUndefined({
+    userId: args.userId,
+    employerEmailHint: shouldResolveExternalIdentity ? args.body.employerEmailHint : undefined,
+    atsApplicantId: shouldResolveExternalIdentity ? args.body.atsApplicantId : undefined,
+    browserUid: shouldResolveExternalIdentity
+      ? (args.body.browserUid ?? args.body.tempUserId)
+      : undefined,
+    identitySource: isAtsSource ? "ats" : undefined,
+    // For base64 path the URL is decorative — actual bytes come via
+    // injected fetchPdf. We still pass a sentinel so internal logging
+    // has something descriptive.
+    mediaUrl: args.mediaUrl,
+  } satisfies IngestCvInput)
+}
+
 function setCors(res: { set: (k: string, v: string) => unknown }): void {
   res.set("Access-Control-Allow-Origin", "*")
   res.set("Access-Control-Allow-Methods", "POST,OPTIONS")
@@ -278,19 +304,13 @@ export const paPublicCvIngest = onRequest(
         : {}),
     }
 
-    const input: IngestCvInput = {
+    const input = buildPublicCvIngestInput({
       userId,
-      browserUid: body.browserUid ?? body.tempUserId,
-      employerEmailHint: body.employerEmailHint,
-      atsApplicantId: body.atsApplicantId,
-      identitySource: body.source?.startsWith("ats:") ? "ats" : "resume",
-      // For base64 path the URL is decorative — actual bytes come via
-      // injected fetchPdf. We still pass a sentinel so internal logging
-      // has something descriptive.
       mediaUrl: injectedBytes
         ? `inline://${(body.resumeName ?? "resume").replace(/[^\w.-]/g, "_")}`
         : body.resumeUrl!,
-    }
+      body,
+    })
 
     try {
       const result = await ingestCv(input, deps)
