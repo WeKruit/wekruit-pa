@@ -1,0 +1,108 @@
+{
+  "runId": "prod-smoke-2026-05-14T01-18-26-580Z",
+  "startedAt": "2026-05-14T01:18:26.580Z",
+  "projectId": "wekruit-5f89b",
+  "steps": [
+    {
+      "step": "seed",
+      "batchId": "prod-smoke-2026-05-14T01-18-26-580Z-batch",
+      "recordIds": [
+        "prod-smoke-2026-05-14T01-18-26-580Z-rec-li-only",
+        "prod-smoke-2026-05-14T01-18-26-580Z-rec-li-and-email",
+        "prod-smoke-2026-05-14T01-18-26-580Z-rec-email-only",
+        "prod-smoke-2026-05-14T01-18-26-580Z-rec-no-signal"
+      ],
+      "companyId": "prod-smoke-2026-05-14T01-18-26-580Z-company",
+      "jobId": "prod-smoke-2026-05-14T01-18-26-580Z-job"
+    },
+    {
+      "step": "resolveBatchIdentity",
+      "result": {
+        "ok": true,
+        "batchId": "prod-smoke-2026-05-14T01-18-26-580Z-batch",
+        "processed": 4,
+        "created": 2,
+        "merged": 0,
+        "pending": 1,
+        "blocked": 1,
+        "skipped": 0
+      }
+    },
+    {
+      "step": "runEvaluation",
+      "runId": "dc51dddf-1ced-4b8f-b9ad-1ad7e53ca9e8",
+      "result": {
+        "ok": true,
+        "runId": "dc51dddf-1ced-4b8f-b9ad-1ad7e53ca9e8",
+        "processed": 0,
+        "completed": 0,
+        "skipped": 0,
+        "tierBreakdown": {
+          "tier_1_personal_linkedin_and_email": 0,
+          "tier_2_personal_email": 0,
+          "tier_3_general_email": 0,
+          "retain_only": 0,
+          "blocked": 0
+        }
+      }
+    },
+    {
+      "step": "runDraftOutreachPlan",
+      "sourceEvaluationId": null,
+      "result": null
+    },
+    {
+      "step": "runSyncPlanToInstantly",
+      "planId": null,
+      "mode": "dry_run",
+      "result": null
+    },
+    {
+      "step": "handleInstantlyWebhook",
+      "iterations": 2,
+      "results": [
+        {
+          "status": 200,
+          "body": {
+            "ok": true,
+            "eventId": "instantly__ed777a73cd0557b9d985fa70d4bc5ad27af8aba777547af5a35e25d0fbd6cab3",
+            "kind": "email_replied"
+          }
+        },
+        {
+          "status": 200,
+          "body": {
+            "ok": true,
+            "idempotent": true,
+            "eventId": "instantly__ed777a73cd0557b9d985fa70d4bc5ad27af8aba777547af5a35e25d0fbd6cab3"
+          }
+        }
+      ]
+    },
+    {
+      "step": "doc_count_audit",
+      "counts": {
+        "pa-external-sourcing-batches": 1,
+        "pa-external-candidate-records": 4,
+        "pa-candidate-source-links": 4,
+        "pa-candidate-evaluation-runs": 1,
+        "pa-candidate-company-job-evaluations": 0,
+        "pa-outreach-plans": 0,
+        "pa-instantly-sync-records": 0,
+        "pa-outreach-events": 0,
+        "pa-feedback-events": 1,
+        "pa-candidate-handles": 3,
+        "pa-candidate-identity-events": 2
+      }
+    },
+    {
+      "step": "pa_users_audit",
+      "linkedinHandleId": "linkedin__6f364cc97368a3abcbed7be0c00b10658556bc80826719ce0bddc2bd457483b8",
+      "handleExists": true,
+      "prospectUserId": "5a5e23b6-7f62-4ec6-aa41-47117901e50b",
+      "prospectTagsHasIndustry": true
+    }
+  ],
+  "completedAt": "2026-05-14T01:18:35.714Z",
+  "success": true
+}

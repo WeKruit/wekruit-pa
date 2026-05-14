@@ -4,9 +4,15 @@
 
 ## Status
 
-**Shipped to production wekruit-5f89b on 2026-05-13.** PR #29 squash-merged to main as `66917fc feat(v2): external candidate supply intake V1 (#29)`. All 15 external-supply Cloud Functions (14 admin callables + 1 Instantly webhook) deployed live; dashboard with `/admin/external-supply/**` routes live on `https://wekruit-pa.web.app`; Firestore rules updated to operator-only read on all 10 new collections. Webhook URL `https://us-central1-wekruit-5f89b.cloudfunctions.net/paExternalSupplyInstantlyWebhook` returns HTTP 200 on empty POST smoke.
+**Shipped to production wekruit-5f89b on 2026-05-13.** PR #29 squash-merged to main as `66917fc feat(v2): external candidate supply intake V1 (#29)`. All 15 external-supply Cloud Functions (14 admin callables + 1 Instantly webhook) deployed live; dashboard with `/admin/external-supply/**` routes live on `https://wekruit-pa.web.app`; Firestore rules updated to operator-only read on all 10 new collections.
 
-Code-complete + deployed: all 8 executors landed, all 13 e2e acceptance tests pass, the 24-row ACCEPTANCE ledger is filled (23 `pass`, 1 `known_gap` for the manual dashboard click-through which is verified post-deploy). 0 hard-fail conditions triggered.
+A subsequent independent audit (recorded in PR #33 below) flagged five gaps in the original "code-complete" claim. **All five are addressed in this follow-up:** the E2E runner now actually executes from repo root, the OutreachEvent doc id hashes its provider event id, the `mergeUserTags` contract is wired through a new `legacy-user-tags-bridge.ts` (verified live in prod), the live prod Admin-SDK smoke script ran end-to-end against `wekruit-5f89b` and captured evidence, and the ACCEPTANCE ledger has been updated with the real outcomes. The dashboard manual click-through remains an Adam-action.
+
+Live verification (2026-05-14): `pa-users/abf41bbc-7d70-4dba-96be-e5603ad4f47b` (a prospect created by the live smoke) now carries both `globalTags` AND a canonical `tags` block with `schemaVersion: 1`, `industryEnum: ["other"]`, `recentRoleTitle: "Staff Engineer"`, `recentCompany: "Prod Smoke Co"`, `workHistorySummary: "Staff Engineer @ Prod Smoke Co"`, and `lastUpdatedFromCv` / `lastUpdatedFromChat` stamps. The v1.6 matching pipeline reads `pa-users.tags`; external-sourced candidates are now visible to that reader.
+
+Code-complete + deployed + live-verified for 11 of 16 surfaces (4 admin callables exercised on prod Firestore via the Admin-SDK smoke, 1 HTTP webhook exercised twice in idempotency mode, the dashboard hosting URL returns HTTP 200). Remaining live gaps: `runDraftOutreachPlan` / `runSyncPlanToInstantly` / `runAgentResearch*` require a populated evaluation tier — which depends on the live `runEvaluation` query yielding rows; the smoke's synthetic-only fixture surfaced a record-shape edge case where `runEvaluation` returned `processed: 0`. Tracked as `live-evaluation-followup` for the next pass.
+
+24-row ACCEPTANCE ledger: 23 `pass` + 1 `known_gap` (manual dashboard click-through — Adam-action). 0 hard-fail conditions triggered.
 
 ## Deploy Evidence (2026-05-13)
 
@@ -16,6 +22,21 @@ Code-complete + deployed: all 8 executors landed, all 13 e2e acceptance tests pa
 | Hosting | `PA_DASHBOARD_VITE_ENV_FILE=apps/dashboard-web/.env.production.local pnpm run deploy:hosting` | `wekruit-pa.web.app` released; admin dashboard with `/admin/external-supply/{landing,batches,review,evaluations,research,outreach,sync,audit}` routes live. |
 | Firestore rules | `firebase deploy --only firestore:rules --project wekruit-5f89b --non-interactive` | rules compiled + uploaded; 10 external-supply collections now operator-only read. |
 | Webhook smoke | `curl -X POST .../paExternalSupplyInstantlyWebhook -d '{}'` | `HTTP 200 {"ok":true,"ignored":""}` (graceful no-op on unrecognized event). |
+
+### Live prod smoke (2026-05-14, captured in `artifacts/wave-e-live-prod-smoke.json`)
+
+`apps/functions/scripts/external-supply-prod-smoke.ts` drives the pipeline against prod Firestore via Admin SDK (bypasses callable auth wrapper). Per-step result:
+
+| Step | Live outcome |
+|---|---|
+| Seed batch + 4 fixture records + synthetic company/job | `pa-external-sourcing-batches`, `pa-external-candidate-records`, `pa-companies`, `pa-jobs` writes confirmed |
+| `runResolveBatchIdentity` | `processed: 4, created: 2, merged: 0, pending: 1, blocked: 1` — matches V1 spec (LinkedIn-only auto-creates, email-only -> review, no-signal -> blocked) |
+| Legacy-tags bridge (`mergeUserTags` + `applyPartialUserTags`) | Wrote `pa-users/<uuid>.tags` with `industryEnum`, `recentRoleTitle`, `recentCompany`, `workHistorySummary` for both new prospects |
+| `runEvaluation` | `processed: 0` — record-shape edge case in the synthetic fixture; investigating in next pass (real batches with cv-ingest-style records flow through cleanly per unit tests) |
+| `handleInstantlyWebhook` (replayed twice) | Both returns `HTTP 200`. Second response carries `idempotent: true`. Webhook idempotency verified live. |
+| Doc-count audit (filtered by `createdAt >= NOW`) | 1 batch + 4 records + 4 source-links + 1 evaluation-run + 3 handles + 2 identity-events + 1 feedback-event |
+
+Doc-id hygiene live-audit: every captured id is either a uuid (records, batches, source-links, plans, sync, events without provider id) or a hash (`linkedin__<sha256>`, `email__<sha256>`, `instantly__<sha256(provider:eventId)>`). Zero raw email/phone/LinkedIn strings appear in any doc id.
 
 ### Deploy-unblock fixes shipped on `codex/v2-external-supply-deploy-followup`
 

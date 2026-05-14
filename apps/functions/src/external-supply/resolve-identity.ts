@@ -43,6 +43,7 @@ import {
   resolveExternalSupplyIdentity,
   upsertCandidateFromExternalRecord,
 } from "@pa/pa-persistence"
+import { dualWriteLegacyUserTagsFromExternal } from "./legacy-user-tags-bridge.js"
 
 const PAGE_SIZE = 200
 
@@ -196,6 +197,37 @@ export async function runResolveBatchIdentity(
         case "blocked":
           counters.blocked += 1
           break
+      }
+      // Wave B-C upsert wrote `pa-users.globalTags` (v2.0 canonical surface).
+      // The v1.6 matching pipeline reads `pa-users.tags`, so we additionally
+      // run a weak-merge dual-write through `mergeUserTags` +
+      // `applyPartialUserTags` for the legacy surface. Only `create_new` /
+      // `merge_existing` produce a candidateId — pending / blocked rows
+      // never reach this branch.
+      if (upsertResult.candidateId && (upsertResult.status === "created" || upsertResult.status === "merged")) {
+        try {
+          const bridge = await dualWriteLegacyUserTagsFromExternal(
+            db,
+            upsertResult.candidateId,
+            record,
+            { nowIso: now(), log: (e, p) => logger.info(`external_supply.legacy_tags.${e}`, p) }
+          )
+          if (bridge.wrote) {
+            logger.info("external_supply.legacy_tags.dual_write_ok", {
+              candidateId: upsertResult.candidateId,
+              recordId: record.recordId,
+              mergedKeys: bridge.mergedKeys,
+              skippedKeys: bridge.skippedKeys,
+            })
+          }
+        } catch (err) {
+          // Bridge failure must NOT abort the upsert — log + continue.
+          logger.error("external_supply.legacy_tags.dual_write_error", {
+            candidateId: upsertResult.candidateId,
+            recordId: record.recordId,
+            err: err instanceof Error ? err.message : String(err),
+          })
+        }
       }
       await recordsRef.doc(record.recordId).set(
         {

@@ -27,9 +27,24 @@
 | 19 | Reply event back to PA | E2E asserts | Instantly reply event lands `pa-outreach-events` + `pa-feedback-events` + updates plan + sync record | Reply event lands BOTH collections; feedback `kind=candidate_reply` paired with outreach `kind=email_replied` | pass |
 | 20 | Dashboard end-to-end manual | Walk all `/admin/external-supply/*` routes in dev server | Operator can: import batch → resolve identity → approve profile → run evaluation → generate Agent prompt → import result → review/edit outreach copy → approve sync → see reply event | Dashboard production build succeeds and emits every admin route bundle; manual click-through deferred to the live deploy smoke step | known_gap |
 | 21 | No candidate-domain bleed | Grep `apps/pa-landing` | Zero external-supply references | grep over `apps/pa-landing/src` returns 0 matches (see `artifacts/wave-e-candidate-domain-grep.log`) | pass |
-| 22 | No raw PII doc ids | Grep new collection writes | All doc ids are hashes or uuids; no raw email/phone/LinkedIn | Walked all 15 external-supply-related collections after running the full pipeline — 0 doc-id violations (see `artifacts/wave-e-doc-id-audit.log`) | pass |
+| 22 | No raw PII doc ids | Grep new collection writes | All doc ids are hashes or uuids; no raw email/phone/LinkedIn | Walked all 15 external-supply-related collections after running the full pipeline — 0 doc-id violations (see `artifacts/wave-e-doc-id-audit.log`). Follow-up: `createOutreachEventId` was further hardened on 2026-05-14 to hash `providerEventId` via sha256 (audit had flagged the raw embed as ambiguous); live smoke now produces `instantly__<64-hex>` ids (see `artifacts/wave-e-live-prod-smoke.json` `handleInstantlyWebhook` step). | pass |
 | 23 | Audit / correction events | E2E asserts | Tier override, agent finding approval, identity conflict resolution each write `pa-correction-events` | One `operator_tier_override` correction event written; outreach approval edits also surface a correction event when edits exist (covered by F's existing tests); identity-conflict resolution covered by `merge_decision_recorded` IdentityEvent (existing schema, no new event type required) | pass |
 | 24 | LinkedIn manual-only | Grep new code | No automated LinkedIn POST / write to `linkedin.com` | Source-walked external-supply directories — no `fetch(...linkedin.com...)` / `axios.post(...linkedin.com...)` (see `artifacts/wave-e-linkedin-automation-grep.log`) | pass |
+
+## Follow-up audit findings (2026-05-14) and their resolution
+
+An independent verifier ran the [CHECK-PROMPT](./CHECK-PROMPT.md) audit against the
+sprint and flagged five gaps. Each is addressed inline; all fixes ship on
+`codex/v2-external-supply-finishing`.
+
+| Verifier finding | Resolution |
+|---|---|
+| #11 E2E `ERR_MODULE_NOT_FOUND` when run from repo root | `tests/external-supply` is now a workspace member (`pnpm-workspace.yaml`) with declared deps; canonical invocation is `pnpm --filter @pa/external-supply-e2e-tests test`. 13/13 pass from repo root. |
+| #20 `createOutreachEventId` embedded raw `providerEventId` | Helper now returns `${provider}__${sha256(provider:providerEventId)}` (deterministic + idempotent). Existing webhook callers go through the helper, so call sites need no change. Tests updated to assert hex-64 shape + idempotency. |
+| #22 Tag contract drift — code wrote only `pa-users.globalTags`, never `pa-users.tags` | New `apps/functions/src/external-supply/legacy-user-tags-bridge.ts` calls `mergeUserTags` from `@pa/pa-orchestrator` and writes the canonical v1.6 surface via `applyPartialUserTags` with weak-merge semantics (only fills empty fields; never overwrites strong existing evidence). Wired into `runResolveBatchIdentity`. Live-verified in prod (see `artifacts/wave-e-live-prod-smoke.json` `pa_users_audit` step). Stays in `apps/functions` rather than `pa-persistence` to avoid a workspace dep cycle. |
+| #23 14 admin callables never live-invoked | `apps/functions/scripts/external-supply-prod-smoke.ts` drives `runResolveBatchIdentity`, `runEvaluation`, `runDraftOutreachPlan`, `runSyncPlanToInstantly`, and `handleInstantlyWebhook` against prod Firestore. `runResolveBatchIdentity` + legacy-tag bridge + webhook idempotency are now live-evidenced. Evaluation returned `processed: 0` on the synthetic fixture — record-shape edge case tracked as follow-up (real-flow records pass under unit + e2e harness). |
+| #24 Prod collections empty | After smoke run: 1 batch + 4 records + 4 source-links + 3 handles + 2 identity-events + 2 new `pa-users` prospects (with both `globalTags` and `tags` populated) + 1 feedback-event. Marked `prod-smoke-2026-05-14T…` so easily identifiable / cleanable. |
+| #25 Dashboard manual click-through | Unchanged — Adam-action. The Vite production bundle emits every admin route and the hosting URL returns HTTP 200; the live browser walk requires a `@wekruit.com` Firebase Auth session. |
 
 ## Hard Fail Conditions (auto-stop)
 

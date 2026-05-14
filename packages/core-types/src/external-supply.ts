@@ -31,7 +31,7 @@
  *    and falls back to `crypto.randomUUID()`.
  */
 
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import { z } from "zod"
 import { MarketplaceEvidenceSchema } from "./marketplace.js"
 
@@ -478,7 +478,14 @@ export function createExternalEvaluationId(
  */
 export function createOutreachEventId(provider: string, providerEventId?: string): string {
   if (providerEventId && providerEventId.length > 0) {
-    return `${provider}__${providerEventId}`
+    // Hash providerEventId rather than embedding it raw in the doc id.
+    // Provider event ids are typically opaque (Instantly `evt_*` uuids) but
+    // we make zero PII assumptions — sha256 keeps the doc-id-hygiene claim
+    // crisp ("all hashes or uuids") and preserves idempotency: same
+    // (provider, providerEventId) -> same hash -> same id. Raw
+    // providerEventId is still persisted on the doc body for audit.
+    const hash = createHash("sha256").update(`${provider}:${providerEventId}`).digest("hex")
+    return `${provider}__${hash}`
   }
   return randomUUID()
 }
