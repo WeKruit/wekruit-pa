@@ -99,6 +99,7 @@ test("sim/completion: final accepted answer clears currentQId", async () => {
       judge: async () => ({ accept: true, value: "accepted" }),
     },
     rephraser: {
+      kind: "test_rephraser",
       rephrase: async () => "try again",
     },
   }
