@@ -422,7 +422,7 @@ export type InstantlySyncRecord = z.infer<typeof InstantlySyncRecordSchema>
 
 export const OutreachEventSchema = z.object({
   eventId: IdSchema,
-  provider: z.enum(["instantly", "manual_linkedin", "system"]),
+  provider: z.enum(["instantly", "mailgun", "manual_linkedin", "system"]),
   providerEventId: z.string().min(1).optional(),
   candidateId: IdSchema,
   planId: IdSchema,
@@ -451,6 +451,46 @@ export const SourceQualityMetricSchema = z.object({
   updatedAt: TimestampSchema.optional(),
 })
 export type SourceQualityMetric = z.infer<typeof SourceQualityMetricSchema>
+
+/**
+ * v2.0 External Supply V1.1 — Mailgun is the active email-delivery channel.
+ *
+ * Adam directive 2026-05-14 ("let's not use instantly for now on the
+ * pipeline, mailgun if enough, we can switch it"): outreach plans dispatch
+ * via the existing `sendMailgun` transport. The Instantly client + sync
+ * record schema stay in the codebase for an easy switch back but are no
+ * longer wired into the default operator path. Mailgun has a one-shot
+ * direct-send model (no campaign / lead concept) so the record shape
+ * stamps the actual mailgun message id rather than a campaign+list pair.
+ */
+export const MailgunSyncRecordSchema = z.object({
+  syncId: IdSchema,
+  planId: IdSchema,
+  candidateId: IdSchema,
+  jobId: IdSchema,
+  companyId: IdSchema,
+  mailgunMessageId: z.string().min(1).optional(),
+  syncStatus: InstantlySyncStatusSchema, // reused — same lifecycle vocabulary
+  mode: z.enum(["dry_run", "live"]),
+  /** Operator-pinned `from` (defaults to MAILGUN_FROM secret when absent). */
+  fromOverride: z.string().min(1).optional(),
+  /** When dry_run: the exact RFC-2822 fields we'd POST to Mailgun. */
+  dryRunPayload: z
+    .object({
+      from: z.string().min(1),
+      to: z.string().min(1),
+      subject: z.string().min(1),
+      text: z.string().min(1),
+      html: z.string().min(1).optional(),
+    })
+    .optional(),
+  liveSyncedAt: TimestampSchema.optional(),
+  lastEventAt: TimestampSchema.optional(),
+  error: z.string().max(4_000).optional(),
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema.optional(),
+})
+export type MailgunSyncRecord = z.infer<typeof MailgunSyncRecordSchema>
 
 // ---------------------------------------------------------------------------
 // §5.5 Deterministic doc-id helpers

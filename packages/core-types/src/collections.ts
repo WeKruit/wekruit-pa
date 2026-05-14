@@ -92,7 +92,13 @@ export const PA_COLLECTIONS = {
   outreachPlans: "pa-outreach-plans",
   /** v2.0 external-supply — Instantly sync record (dry-run or live) per plan. */
   instantlySyncRecords: "pa-instantly-sync-records",
-  /** v2.0 external-supply — append-only outreach events from Instantly + manual LinkedIn. */
+  /**
+   * v2.0 external-supply V1.1 — Mailgun direct-send sync record per plan.
+   * Mailgun is the active email-delivery channel as of 2026-05-14
+   * (Adam directive); Instantly stays in the codebase for an easy switch.
+   */
+  mailgunSyncRecords: "pa-mailgun-sync-records",
+  /** v2.0 external-supply — append-only outreach events from Instantly / Mailgun / manual LinkedIn. */
   outreachEvents: "pa-outreach-events",
   /** v2.0 external-supply — monthly source-quality rollup metrics per external source. */
   sourceQualityMetrics: "pa-source-quality-metrics",

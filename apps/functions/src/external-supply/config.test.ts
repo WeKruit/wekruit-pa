@@ -41,31 +41,61 @@ test("getExternalSupplyConfig rejects non-wekruit email", () => {
   )
 })
 
-test("getExternalSupplyConfig — both true when env set", () => {
+test("getExternalSupplyConfig — fully configured (live + both providers)", () => {
   const out = runGetExternalSupplyConfig({}, ADMIN_AUTH, {
     readEnv: envMap({
       EXTERNAL_SUPPLY_LIVE_OUTREACH_ENABLED: "true",
       INSTANTLY_API_KEY: "k-123",
+      MAILGUN_API_KEY: "mg-key",
+      MAILGUN_DOMAIN: "mg.wekruit.com",
+      MAILGUN_FROM: "claire@mg.wekruit.com",
     }),
   })
-  assert.deepEqual(out, { liveOutreachEnabled: true, instantlyConfigured: true })
+  assert.deepEqual(out, {
+    liveOutreachEnabled: true,
+    instantlyConfigured: true,
+    mailgunConfigured: true,
+    defaultEmailProvider: "mailgun",
+  })
 })
 
-test("getExternalSupplyConfig — both false when env unset", () => {
+test("getExternalSupplyConfig — nothing configured", () => {
   const out = runGetExternalSupplyConfig({}, ADMIN_AUTH, { readEnv: envMap({}) })
-  assert.deepEqual(out, { liveOutreachEnabled: false, instantlyConfigured: false })
+  assert.deepEqual(out, {
+    liveOutreachEnabled: false,
+    instantlyConfigured: false,
+    mailgunConfigured: false,
+    defaultEmailProvider: "mailgun",
+  })
 })
 
 test("getExternalSupplyConfig — mixed env states", () => {
   const out1 = runGetExternalSupplyConfig({}, ADMIN_AUTH, {
     readEnv: envMap({ EXTERNAL_SUPPLY_LIVE_OUTREACH_ENABLED: "true" }),
   })
-  assert.deepEqual(out1, { liveOutreachEnabled: true, instantlyConfigured: false })
+  assert.equal(out1.liveOutreachEnabled, true)
+  assert.equal(out1.instantlyConfigured, false)
+  assert.equal(out1.mailgunConfigured, false)
 
   const out2 = runGetExternalSupplyConfig({}, ADMIN_AUTH, {
     readEnv: envMap({ INSTANTLY_API_KEY: "k-abc" }),
   })
-  assert.deepEqual(out2, { liveOutreachEnabled: false, instantlyConfigured: true })
+  assert.equal(out2.instantlyConfigured, true)
+  assert.equal(out2.mailgunConfigured, false)
+
+  // Mailgun requires all three secrets to flip configured=true.
+  const out2a = runGetExternalSupplyConfig({}, ADMIN_AUTH, {
+    readEnv: envMap({ MAILGUN_API_KEY: "k", MAILGUN_DOMAIN: "d" /* MAILGUN_FROM missing */ }),
+  })
+  assert.equal(out2a.mailgunConfigured, false)
+  const out2b = runGetExternalSupplyConfig({}, ADMIN_AUTH, {
+    readEnv: envMap({
+      MAILGUN_API_KEY: "k",
+      MAILGUN_DOMAIN: "d",
+      MAILGUN_FROM: "claire@d",
+    }),
+  })
+  assert.equal(out2b.mailgunConfigured, true)
 
   // Empty string treated as unset.
   const out3 = runGetExternalSupplyConfig({}, ADMIN_AUTH, {

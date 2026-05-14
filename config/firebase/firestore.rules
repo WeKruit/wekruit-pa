@@ -434,6 +434,10 @@ service cloud.firestore {
       allow read: if isPaOperator();
       allow write: if false;
     }
+    match /pa-mailgun-sync-records/{syncId} {
+      allow read: if isPaOperator();
+      allow write: if false;
+    }
     match /pa-outreach-events/{eventId} {
       allow read: if isPaOperator();
       allow write: if false;
