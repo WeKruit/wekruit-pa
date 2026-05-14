@@ -576,20 +576,22 @@ export async function claimCandidateProfile(
     now: ts,
   })
   const claimedEventId = deterministicId("ident", ["candidate_claimed", input.firebaseUid, candidateId])
-  await writeIdentityEvent(db, {
-    eventId: claimedEventId,
-    type: "candidate_claimed",
-    actor: "candidate",
-    candidateId,
-    firebaseUid: input.firebaseUid,
-    handleId: emailHandle.handle.handleId,
-    handleKind: "email",
-    handleHash: emailHandle.handle.handleHash,
-    source: "auth",
-    evidence: [{ source: "system", summary: "Email magic-link claim completed" }],
-    payloadRedacted: { provider: "email_link" },
-    createdAt: ts,
-  })
+  if (!idempotent) {
+    await writeIdentityEvent(db, {
+      eventId: claimedEventId,
+      type: "candidate_claimed",
+      actor: "candidate",
+      candidateId,
+      firebaseUid: input.firebaseUid,
+      handleId: emailHandle.handle.handleId,
+      handleKind: "email",
+      handleHash: emailHandle.handle.handleHash,
+      source: "auth",
+      evidence: [{ source: "system", summary: "Email magic-link claim completed" }],
+      payloadRedacted: { provider: "email_link" },
+      createdAt: ts,
+    })
+  }
 
   return {
     candidateId,

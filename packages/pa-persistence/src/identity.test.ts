@@ -189,10 +189,14 @@ test("claimCandidateProfile writes auth mapping, claimed lifecycle, and redacted
     email: "alice@example.com",
     browserUid: "browser-a",
     displayName: "Alice",
-    now,
+    now: "2026-05-13T12:05:00.000Z",
   })
   assert.equal(again.idempotent, true)
   assert.equal(again.candidateId, claimed.candidateId)
+  assert.equal(
+    store.get(PA_COLLECTIONS.candidateIdentityEvents)!.get(claimed.claimedEventId)!.createdAt,
+    now
+  )
 })
 
 test("writeCandidateSelfProfile redacts phone and preserves candidate-facing state only", async () => {

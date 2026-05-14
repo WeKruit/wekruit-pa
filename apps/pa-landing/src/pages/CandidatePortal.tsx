@@ -51,8 +51,9 @@ export function useClaimedProfile(): ClaimState {
             setState({ status: "ready", user, profile: result.data.selfProfile })
           }
         } catch (err) {
+          console.error("candidate profile claim failed", err)
           if (!cancelled) {
-            setState({ status: "error", message: err instanceof Error ? err.message : String(err) })
+            setState({ status: "error", message: profileLoadErrorMessage(err) })
           }
         }
       })()
@@ -66,13 +67,29 @@ export function useClaimedProfile(): ClaimState {
   return state
 }
 
+function profileLoadErrorMessage(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err)
+  if (/unauthenticated|sign in/i.test(raw)) {
+    return "Your session expired. Sign in again to load your WeKruit profile."
+  }
+  if (/failed-precondition|operator review|conflict/i.test(raw)) {
+    return "We need to review this profile before showing it here."
+  }
+  return "We could not load your profile just now. Refresh the page, or sign in again if this keeps happening."
+}
+
 export function CandidateMe() {
   const state = useClaimedProfile()
   return (
     <CandidateShell>
       <main className="candidate-panel">
         <p className="candidate-kicker">Candidate profile</p>
-        {state.status === "loading" ? <h1>Loading</h1> : null}
+        {state.status === "loading" ? (
+          <>
+            <h1>Loading your profile</h1>
+            <p>Checking your signed-in WeKruit profile.</p>
+          </>
+        ) : null}
         {state.status === "signed_out" ? (
           <>
             <h1>Sign in required</h1>
@@ -123,7 +140,12 @@ export function CandidateProfile() {
     <CandidateShell>
       <main className="candidate-panel candidate-profile-panel">
         <p className="candidate-kicker">Profile details</p>
-        {state.status === "loading" ? <h1>Loading</h1> : null}
+        {state.status === "loading" ? (
+          <>
+            <h1>Loading your profile</h1>
+            <p>Checking your resume, labels, and saved preferences.</p>
+          </>
+        ) : null}
         {state.status === "signed_out" ? (
           <>
             <h1>Sign in required</h1>
