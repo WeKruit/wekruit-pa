@@ -9,8 +9,11 @@ import {
   createCandidateJobStateId,
   createEmployerVisibleProfileId,
   createEvalArtifactId,
+  createLaunchReadinessSnapshotId,
+  createOutreachStopControlId,
   createJobEnrichmentEvalFixtureId,
   createOutboundInviteId,
+  createPrivacyRequestId,
   type CandidateJobEvent,
   type CandidateJobMatch,
   type CandidateLifecycleEvent,
@@ -20,7 +23,9 @@ import {
   type FeedbackEvent,
   type JobEnrichmentEvalFixture,
   type JobOpportunityDraft,
+  type LaunchReadinessSnapshot,
   type OutboundInvite,
+  type PrivacyRequest,
 } from "@pa/core-types"
 import {
   applyCandidateJobEvent,
@@ -29,6 +34,7 @@ import {
   approveJobOpportunityDraft,
   markOutboundInviteDelivery,
   markOutboundInviteQueued,
+  readOutreachStopControl,
   rejectJobOpportunityDraft,
   writeCorrectionEvent,
   writeCandidateJobMatch,
@@ -38,7 +44,10 @@ import {
   writeFeedbackEvent,
   writeJobEnrichmentEvalFixture,
   writeJobOpportunityDraft,
+  writeLaunchReadinessSnapshot,
   writeOutboundInviteDecision,
+  writeOutreachStopControl,
+  writePrivacyRequest,
 } from "./marketplace.js"
 
 type Store = Map<string, Map<string, Record<string, unknown>>>
@@ -77,12 +86,45 @@ function makeFakeFirestore(store: Store = makeStore()): { db: Firestore; store: 
     }
   }
 
+  type QueryFilter = {
+    field: string
+    op: "==" | "in"
+    value: unknown
+  }
+
+  function matchesQuery(data: Record<string, unknown>, filters: QueryFilter[]): boolean {
+    return filters.every((filter) => {
+      const actual = data[filter.field]
+      if (filter.op === "==") return actual === filter.value
+      if (filter.op === "in") {
+        return Array.isArray(filter.value) && filter.value.includes(actual)
+      }
+      return false
+    })
+  }
+
   function collection(collectionName: string) {
-    return {
+    function query(filters: QueryFilter[] = [], limitValue?: number) {
+      return {
       doc(id: string) {
         return docRef(collectionName, id)
       },
+        where(field: string, op: "==" | "in", value: unknown) {
+          return query([...filters, { field, op, value }], limitValue)
+        },
+        limit(count: number) {
+          return query(filters, count)
+        },
+        async get() {
+          const docs = Array.from(col(collectionName).entries())
+            .filter(([, data]) => matchesQuery(data, filters))
+            .slice(0, limitValue)
+            .map(([id, data]) => ({ id, data: () => data }))
+          return { empty: docs.length === 0, docs }
+        },
+      }
     }
+    return query()
   }
 
   const db = {
@@ -611,6 +653,160 @@ test("writeEvalArtifactForCorrection rejects unsafe artifacts before writing cor
   )
   assert.equal(store.get(PA_COLLECTIONS.correctionEvents)!.size, 0)
   assert.equal(store.get(PA_COLLECTIONS.evalArtifacts)!.size, 0)
+})
+
+test("writePrivacyRequest dedupes open candidate requests by kind", async () => {
+  const { db, store } = makeFakeFirestore()
+  const request: PrivacyRequest = {
+    requestId: createPrivacyRequestId({ candidateId: "cand-1", kind: "export", createdAt: now }),
+    kind: "export",
+    status: "submitted",
+    candidateId: "cand-1",
+    sourceSurface: "me_profile",
+    requestedBy: "candidate",
+    detailRedacted: { note: "candidate requested a data export" },
+    evidence: [{ source: "system", summary: "Submitted from self-serve profile page" }],
+    createdAt: now,
+  }
+
+  const first = await writePrivacyRequest(db, request)
+  assert.equal(first.created, true)
+  assert.equal(first.existingOpen, false)
+  assert.equal(store.get(PA_COLLECTIONS.privacyRequests)!.size, 1)
+  assert.equal(store.get(PA_COLLECTIONS.auditEvents)!.has(`marketplace_privacy_request_${request.requestId}`), true)
+
+  const duplicate = await writePrivacyRequest(db, {
+    ...request,
+    requestId: createPrivacyRequestId({
+      candidateId: "cand-1",
+      kind: "export",
+      createdAt: "2026-05-13T12:01:00.000Z",
+    }),
+    createdAt: "2026-05-13T12:01:00.000Z",
+  })
+  assert.equal(duplicate.created, false)
+  assert.equal(duplicate.existingOpen, true)
+  assert.equal(duplicate.request.requestId, request.requestId)
+  assert.equal(store.get(PA_COLLECTIONS.privacyRequests)!.size, 1)
+})
+
+test("writePrivacyRequest allows a new request after previous request is resolved", async () => {
+  const { db, store } = makeFakeFirestore()
+  const resolved: PrivacyRequest = {
+    requestId: createPrivacyRequestId({ candidateId: "cand-1", kind: "stop_outreach", createdAt: now }),
+    kind: "stop_outreach",
+    status: "resolved",
+    candidateId: "cand-1",
+    sourceSurface: "me_profile",
+    requestedBy: "candidate",
+    detailRedacted: { note: "candidate requested outreach stop" },
+    evidence: [],
+    createdAt: now,
+    resolvedAt: now,
+    resolvedBy: "operator@wekruit.com",
+    resolutionSummary: "Global outreach stop reviewed by operator",
+  }
+  await writePrivacyRequest(db, resolved)
+
+  const createdAt = "2026-05-13T12:05:00.000Z"
+  const next = await writePrivacyRequest(db, {
+    ...resolved,
+    requestId: createPrivacyRequestId({ candidateId: "cand-1", kind: "stop_outreach", createdAt }),
+    status: "submitted",
+    createdAt,
+    resolvedAt: undefined,
+    resolvedBy: undefined,
+    resolutionSummary: undefined,
+  })
+
+  assert.equal(next.created, true)
+  assert.equal(next.existingOpen, false)
+  assert.equal(store.get(PA_COLLECTIONS.privacyRequests)!.size, 2)
+})
+
+test("writeLaunchReadinessSnapshot is append-only and rejects unsafe snapshot payloads", async () => {
+  const { db, store } = makeFakeFirestore()
+  const snapshot: LaunchReadinessSnapshot = {
+    snapshotId: createLaunchReadinessSnapshotId(now, "s9-test"),
+    generatedAt: now,
+    status: "yellow",
+    counts: { privacyOpen: 1, pausedControls: 0 },
+    sections: [
+      {
+        key: "privacy",
+        label: "Privacy requests",
+        status: "yellow",
+        count: 1,
+        summary: "One request awaiting review",
+        sourceRoute: "/admin/launch-readiness",
+        updatedAt: now,
+      },
+    ],
+    privacyRequests: [
+      {
+        requestId: createPrivacyRequestId({ candidateId: "cand-1", kind: "export", createdAt: now }),
+        kind: "export",
+        status: "submitted",
+        candidateId: "cand-1",
+        sourceSurface: "me_profile",
+        createdAt: now,
+      },
+    ],
+    stopControls: [
+      {
+        controlId: createOutreachStopControlId({ scope: "global" }),
+        scope: "global",
+        paused: false,
+        updatedAt: now,
+      },
+    ],
+    evidence: [{ source: "admin", summary: "redacted launch readiness snapshot" }],
+  }
+
+  assert.equal((await writeLaunchReadinessSnapshot(db, snapshot)).created, true)
+  assert.equal((await writeLaunchReadinessSnapshot(db, snapshot)).created, false)
+  assert.equal(store.get(PA_COLLECTIONS.launchReadinessSnapshots)!.size, 1)
+  await assert.rejects(
+    () =>
+      writeLaunchReadinessSnapshot(db, {
+        ...snapshot,
+        evidence: [{ source: "admin", summary: "raw export candidate@example.com" }],
+      }),
+    /must contain redacted summaries/
+  )
+})
+
+test("writeOutreachStopControl writes global pause state and audit rows", async () => {
+  const { db, store } = makeFakeFirestore()
+  const missing = await readOutreachStopControl(db, { scope: "global" })
+  assert.equal(missing.controlId, "outreach_stop_global")
+  assert.equal(missing.paused, false)
+
+  const paused = await writeOutreachStopControl(db, {
+    scope: "global",
+    paused: true,
+    reason: "launch readiness manual pause",
+    actor: "operator",
+    now,
+  })
+  assert.equal(paused.changed, true)
+  assert.equal(paused.previous, null)
+  assert.equal(paused.control.paused, true)
+  assert.equal(store.get(PA_COLLECTIONS.outreachStopControls)!.get("outreach_stop_global")!.paused, true)
+  assert.equal(store.get(PA_COLLECTIONS.auditEvents)!.has(paused.auditEventId), true)
+
+  const readBack = await readOutreachStopControl(db, { scope: "global" })
+  assert.equal(readBack.reason, "launch readiness manual pause")
+
+  const unpaused = await writeOutreachStopControl(db, {
+    scope: "global",
+    paused: false,
+    actor: "operator",
+    now: "2026-05-13T12:10:00.000Z",
+  })
+  assert.equal(unpaused.previous?.paused, true)
+  assert.equal(unpaused.control.paused, false)
+  assert.equal(unpaused.control.createdAt, now)
 })
 
 test("employer-visible snapshot requires passed candidate-job state", async () => {

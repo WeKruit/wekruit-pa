@@ -39,6 +39,10 @@ export function shouldAppendOutboundTranscript(raw: { idempotencyKey?: unknown }
   return true
 }
 
+export function isMarketplaceOutreachOutbound(raw: { idempotencyKey?: unknown }): boolean {
+  return String(raw.idempotencyKey ?? "").startsWith("outreach_idempotency_")
+}
+
 /**
  * Phase 24.5 — flag-backed legacy-channel guard. Reads `PA_CHANNEL_LEGACY` from
  * `pa-feature-flags` via `getFlag()` with the caller's `process.env` injected
@@ -88,6 +92,10 @@ export type OutboxDeps = {
     channel: never,
     externalChatId: string
   ) => Promise<{ id: string }>
+  readOutreachStopControl?: (
+    db: Firestore,
+    input: { scope: "global" }
+  ) => Promise<{ paused: boolean; reason?: string }>
 }
 
 const STALE_SENDING_MS = 10 * 60 * 1000 // 10 minutes
@@ -341,6 +349,60 @@ export async function paSendblueOutboxHandler(
       terminalStatus: "failed",
     })
     return
+  }
+
+  // v2.0 S9 — marketplace outreach global stop gate. This only applies to
+  // S6 marketplace outreach rows, identified by createOutreachIdempotencyKey().
+  // A read failure fails closed before transcript append, typing, quota, or send.
+  if (isMarketplaceOutreachOutbound(data)) {
+    try {
+      const control = await deps.readOutreachStopControl?.(deps.db, { scope: "global" })
+      if (control?.paused) {
+        const reason = control.reason ? `: ${control.reason}` : ""
+        await ref.set(
+          {
+            status: "failed",
+            error: `marketplace outreach paused${reason}`,
+            blockedByOutreachStopControl: true,
+            updatedAt: now().toISOString(),
+            expiresAtTs: outboundExpiresAtTs(now()),
+          },
+          { merge: true }
+        )
+        logOutboundFailure(log, {
+          docId,
+          userId,
+          idempotencyKey: typeof data.idempotencyKey === "string" ? String(data.idempotencyKey) : undefined,
+          lastError: `marketplace outreach paused${reason}`,
+          attempts: Number((data as { attemptCount?: unknown }).attemptCount ?? 0),
+          body,
+          terminalStatus: "failed",
+        })
+        return
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      await ref.set(
+        {
+          status: "failed",
+          error: `marketplace outreach stop control check failed: ${message}`,
+          blockedByOutreachStopControl: true,
+          updatedAt: now().toISOString(),
+          expiresAtTs: outboundExpiresAtTs(now()),
+        },
+        { merge: true }
+      )
+      logOutboundFailure(log, {
+        docId,
+        userId,
+        idempotencyKey: typeof data.idempotencyKey === "string" ? String(data.idempotencyKey) : undefined,
+        lastError: `marketplace outreach stop control check failed: ${message}`,
+        attempts: Number((data as { attemptCount?: unknown }).attemptCount ?? 0),
+        body,
+        terminalStatus: "failed",
+      })
+      return
+    }
   }
 
   // ---- 4. Resolve user, optionally append transcript --------------------

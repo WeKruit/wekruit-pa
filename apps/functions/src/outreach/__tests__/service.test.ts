@@ -150,6 +150,52 @@ describe("planJobOutreach", () => {
     assert.equal(enqueues.length, 0)
   })
 
+  it("live approved path blocks before capacity reservation when global outreach stop is paused", async () => {
+    const enqueues: string[] = []
+    const reserves: string[] = []
+    const writes: string[] = []
+    const result = await planJobOutreach(
+      {
+        job: job(),
+        matches: [match()],
+        candidatesById: { "cand-1": candidate() },
+        capacityByCandidateId: { "cand-1": capacity() },
+        now,
+        dryRun: false,
+        persistDecisions: true,
+        approvalMode: "approved",
+      },
+      {
+        readOutreachStopControl: async () => ({
+          paused: true,
+          reason: "launch readiness pause",
+        }),
+        reserveCapacity: async () => {
+          reserves.push("called")
+          return capacity()
+        },
+        writeInviteDecision: async (outboundInvite) => {
+          writes.push(outboundInvite.inviteId)
+          assert.equal(outboundInvite.status, "blocked")
+          assert.equal(outboundInvite.policyDecision, "blocked")
+          assert.deepEqual(outboundInvite.blockedSignals, ["global_outreach_stop"])
+          return { invite: outboundInvite, created: true, idempotent: false, auditEventId: "audit-1" }
+        },
+        enqueueOutbound: async () => {
+          enqueues.push("called")
+          return { id: "outbound-1", created: true }
+        },
+        markQueued: async () => undefined,
+      }
+    )
+
+    assert.equal(result.summary.queued, 0)
+    assert.equal(result.summary.blocked, 1)
+    assert.equal(writes.length, 1)
+    assert.equal(reserves.length, 0)
+    assert.equal(enqueues.length, 0)
+  })
+
   it("blocked and HITL decisions write evidence but do not queue", async () => {
     const result = await planJobOutreach(
       {

@@ -1,0 +1,14 @@
+id: s9-outreach-stop-no-send
+mode: dry_run
+surface: admin_launch_readiness
+route: /admin/launch-readiness
+action: pause_global_marketplace_outreach
+expected:
+  writes:
+    - collection: pa-outreach-stop-controls
+      control_id: outreach_stop_global
+      paused: true
+  forbidden:
+    - pa_outbound_provider_delivery
+    - capacity_reservation
+    - transcript_append_before_stop_check

@@ -1,7 +1,7 @@
 # S8 Summary
 
-**Status:** Implementation integrated, deployed, and live non-sending smoke
-passed. PR/merge remains.
+**Status:** Implementation integrated, deployed, live non-sending smoke passed,
+and merged in PR #33.
 **Date:** 2026-05-14.
 
 ## Current State
@@ -61,5 +61,5 @@ passed. PR/merge remains.
 
 ## Next Gate
 
-Commit, open PR, watch checks, merge when green, then advance to the next
-roadmap sprint.
+S9 has started from updated `main` on branch
+`codex/v2-S9-production-hardening-scale`.

@@ -849,6 +849,176 @@ export const EvalArtifactSchema = z.object(EvalArtifactShape.shape).superRefine(
 })
 export type EvalArtifact = z.infer<typeof EvalArtifactSchema>
 
+export const PrivacyRequestKindSchema = z.enum([
+  "export",
+  "delete",
+  "stop_outreach",
+  "privacy_question",
+])
+export type PrivacyRequestKind = z.infer<typeof PrivacyRequestKindSchema>
+
+export const PrivacyRequestStatusSchema = z.enum([
+  "submitted",
+  "in_review",
+  "resolved",
+  "rejected",
+  "cancelled",
+])
+export type PrivacyRequestStatus = z.infer<typeof PrivacyRequestStatusSchema>
+
+export const PrivacyRequestSourceSurfaceSchema = z.enum([
+  "me_profile",
+  "admin",
+  "system",
+])
+export type PrivacyRequestSourceSurface = z.infer<typeof PrivacyRequestSourceSurfaceSchema>
+
+const PrivacyRequestShape = z.object({
+  requestId: IdSchema,
+  kind: PrivacyRequestKindSchema,
+  status: PrivacyRequestStatusSchema.default("submitted"),
+  candidateId: IdSchema,
+  sourceSurface: PrivacyRequestSourceSurfaceSchema.default("me_profile"),
+  requestedBy: MarketplaceActorSchema.default("candidate"),
+  detailRedacted: z.record(z.unknown()).default({}),
+  evidence: z.array(MarketplaceEvidenceSchema).default([]),
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema.optional(),
+  resolvedAt: TimestampSchema.optional(),
+  resolvedBy: z.string().min(1).optional(),
+  resolutionSummary: z.string().max(2_000).optional(),
+})
+
+export const PrivacyRequestSchema = z.object(PrivacyRequestShape.shape).superRefine((request, ctx) => {
+  if (containsEvalArtifactUnsafeValue({
+    detailRedacted: request.detailRedacted,
+    evidence: request.evidence,
+    resolutionSummary: request.resolutionSummary,
+  })) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: [],
+      message: "PrivacyRequest must contain redacted request details only",
+    })
+  }
+})
+export type PrivacyRequest = z.infer<typeof PrivacyRequestSchema>
+
+export const LaunchReadinessStatusSchema = z.enum(["green", "yellow", "red", "unknown"])
+export type LaunchReadinessStatus = z.infer<typeof LaunchReadinessStatusSchema>
+
+export const LaunchReadinessSectionSchema = z.object({
+  key: z.string().min(1).max(120),
+  label: z.string().min(1).max(200),
+  status: LaunchReadinessStatusSchema,
+  count: z.number().int().nonnegative().optional(),
+  summary: z.string().min(1).max(2_000).optional(),
+  sourceRoute: z.string().min(1).max(300).optional(),
+  updatedAt: TimestampSchema.optional(),
+})
+export type LaunchReadinessSection = z.infer<typeof LaunchReadinessSectionSchema>
+
+export const LaunchReadinessPrivacyRequestRowSchema = z.object({
+  requestId: IdSchema,
+  kind: PrivacyRequestKindSchema,
+  status: PrivacyRequestStatusSchema,
+  candidateId: IdSchema.optional(),
+  sourceSurface: PrivacyRequestSourceSurfaceSchema.optional(),
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema.optional(),
+})
+export type LaunchReadinessPrivacyRequestRow = z.infer<
+  typeof LaunchReadinessPrivacyRequestRowSchema
+>
+
+export const LaunchReadinessStopControlRowSchema = z.object({
+  controlId: IdSchema,
+  scope: z.enum(["global", "outreach_batch"]),
+  scopeId: IdSchema.optional(),
+  paused: z.boolean(),
+  reason: z.string().max(1_000).optional(),
+  updatedAt: TimestampSchema.optional(),
+})
+export type LaunchReadinessStopControlRow = z.infer<
+  typeof LaunchReadinessStopControlRowSchema
+>
+
+const LaunchReadinessSnapshotShape = z.object({
+  snapshotId: IdSchema,
+  generatedAt: TimestampSchema,
+  status: LaunchReadinessStatusSchema,
+  counts: z.record(z.number().int().nonnegative()).default({}),
+  sections: z.array(LaunchReadinessSectionSchema).default([]),
+  privacyRequests: z.array(LaunchReadinessPrivacyRequestRowSchema).default([]),
+  stopControls: z.array(LaunchReadinessStopControlRowSchema).default([]),
+  evidence: z.array(MarketplaceEvidenceSchema).default([]),
+})
+
+export const LaunchReadinessSnapshotSchema = z
+  .object(LaunchReadinessSnapshotShape.shape)
+  .superRefine((snapshot, ctx) => {
+    if (containsEvalArtifactUnsafeValue(snapshot)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [],
+        message: "LaunchReadinessSnapshot must contain redacted summaries only",
+      })
+    }
+  })
+export type LaunchReadinessSnapshot = z.infer<typeof LaunchReadinessSnapshotSchema>
+
+export const OutreachStopControlScopeSchema = z.enum(["global", "outreach_batch"])
+export type OutreachStopControlScope = z.infer<typeof OutreachStopControlScopeSchema>
+
+const OutreachStopControlShape = z.object({
+  controlId: IdSchema,
+  scope: OutreachStopControlScopeSchema,
+  scopeId: IdSchema.optional(),
+  paused: z.boolean().default(false),
+  reason: z.string().min(1).max(1_000).optional(),
+  actor: MarketplaceActorSchema.default("operator"),
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema.optional(),
+  expiresAt: TimestampSchema.optional(),
+})
+
+export const OutreachStopControlSchema = z
+  .object(OutreachStopControlShape.shape)
+  .superRefine((control, ctx) => {
+    if (control.scope === "global" && control.scopeId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["scopeId"],
+        message: "global outreach stop control must not include scopeId",
+      })
+    }
+    if (control.scope === "outreach_batch" && !control.scopeId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["scopeId"],
+        message: "outreach_batch stop control requires scopeId",
+      })
+    }
+    if (control.paused && !control.reason?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["reason"],
+        message: "paused outreach stop control requires a reason",
+      })
+    }
+    if (containsEvalArtifactUnsafeValue({
+      reason: control.reason,
+      scopeId: control.scopeId,
+    })) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [],
+        message: "OutreachStopControl must not contain raw PII or storage locators",
+      })
+    }
+  })
+export type OutreachStopControl = z.infer<typeof OutreachStopControlSchema>
+
 export const RawJobSnapshotSchema = z.object({
   source: z.enum(["ats", "admin", "crawler", "employer", "system"]),
   capturedAt: TimestampSchema,
@@ -1487,6 +1657,30 @@ export function createEvalArtifactId(kind: EvalArtifactKind, sourceId: string): 
   const kindPart = safeInternalIdPart(kind, "kind")
   const sourcePart = safeInternalIdPart(sourceId, "sourceId")
   return `eval_artifact_${kindPart}__${stableIdHash(sourcePart)}`
+}
+
+export function createPrivacyRequestId(input: {
+  candidateId: string
+  kind: PrivacyRequestKind
+  createdAt: string
+}): string {
+  const candidatePart = safeInternalIdPart(input.candidateId, "candidateId")
+  const kindPart = safeInternalIdPart(input.kind, "kind")
+  return `privacy_request_${kindPart}__${stableIdHash(`${candidatePart}:${input.createdAt}`)}`
+}
+
+export function createLaunchReadinessSnapshotId(generatedAt: string, runRef = "manual"): string {
+  const runPart = safeInternalIdPart(runRef, "runRef")
+  return `launch_readiness_${stableIdHash(`${runPart}:${generatedAt}`)}`
+}
+
+export function createOutreachStopControlId(input: {
+  scope: OutreachStopControlScope
+  scopeId?: string
+}): string {
+  if (input.scope === "global") return "outreach_stop_global"
+  const scopePart = safeInternalIdPart(input.scopeId ?? "", "scopeId")
+  return `outreach_stop_batch__${stableIdHash(scopePart)}`
 }
 
 function normalizeOutreachKeyPart(value: string, fieldName: string): string {

@@ -1,0 +1,11 @@
+{
+  "name": "@pa/eval-s9-production-hardening-scale",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --import tsx --test *.test.ts && node static-guards.mjs"
+  },
+  "devDependencies": {
+    "tsx": "^4.7.0"
+  }
+}

@@ -7,6 +7,10 @@ import {
   createCandidateProfileCorrectionSubmitter,
   type CandidateSelfProfile,
 } from "../lib/candidate-profile-correction.js"
+import {
+  createCandidatePrivacyRequestSubmitter,
+  type CandidatePrivacyRequestKind,
+} from "../lib/candidate-privacy-request.js"
 import { CandidateShell } from "./CandidateLogin.js"
 
 const GLOBAL_UID_KEY = "wkr_uid"
@@ -170,6 +174,7 @@ function ProfileDetails({ profile }: { profile: CandidateSelfProfile }) {
         </div>
       ) : null}
       <ProfileCorrectionPanel onProfileUpdated={setCurrentProfile} />
+      <PrivacyRequestPanel />
     </>
   )
 }
@@ -217,6 +222,71 @@ function ProfileCorrectionPanel({
         </label>
         <button type="submit" disabled={status === "submitting" || correctionText.trim().length === 0}>
           {status === "submitting" ? "Submitting" : "Submit correction"}
+        </button>
+      </form>
+      {status === "success" && message ? <p className="candidate-success">{message}</p> : null}
+      {status === "error" && message ? <p className="candidate-error">{message}</p> : null}
+    </section>
+  )
+}
+
+const PRIVACY_REQUEST_OPTIONS: Array<{ kind: CandidatePrivacyRequestKind; label: string }> = [
+  { kind: "export", label: "Export my data" },
+  { kind: "delete", label: "Delete my profile" },
+  { kind: "stop_outreach", label: "Stop outreach" },
+  { kind: "privacy_question", label: "Privacy question" },
+]
+
+function PrivacyRequestPanel() {
+  const [kind, setKind] = useState<CandidatePrivacyRequestKind>("export")
+  const [detailText, setDetailText] = useState("")
+  const [status, setStatus] = useState<"idle" | "submitting" | "success" | "error">("idle")
+  const [message, setMessage] = useState<string | null>(null)
+
+  async function onSubmit(event: FormEvent) {
+    event.preventDefault()
+    setMessage(null)
+    setStatus("submitting")
+    try {
+      const submitPrivacyRequest = createCandidatePrivacyRequestSubmitter(functions())
+      const result = await submitPrivacyRequest({ kind, detailText })
+      setDetailText("")
+      setMessage(result.existingOpen ? "Open request already exists." : "Request submitted for review.")
+      setStatus("success")
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : String(err))
+      setStatus("error")
+    }
+  }
+
+  return (
+    <section className="candidate-correction-panel" aria-labelledby="candidate-privacy-title">
+      <h2 id="candidate-privacy-title">Privacy requests</h2>
+      <form onSubmit={onSubmit} className="candidate-correction-form">
+        <label>
+          Request
+          <select
+            value={kind}
+            onChange={(event) => setKind(event.target.value as CandidatePrivacyRequestKind)}
+            disabled={status === "submitting"}
+          >
+            {PRIVACY_REQUEST_OPTIONS.map((option) => (
+              <option key={option.kind} value={option.kind}>{option.label}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Details
+          <textarea
+            value={detailText}
+            onChange={(event) => setDetailText(event.target.value)}
+            disabled={status === "submitting"}
+            rows={3}
+            placeholder="Add context for the operator review."
+          />
+        </label>
+        <button type="submit" disabled={status === "submitting"}>
+          {status === "submitting" ? "Submitting" : "Submit request"}
         </button>
       </form>
       {status === "success" && message ? <p className="candidate-success">{message}</p> : null}
@@ -284,7 +354,20 @@ const CANDIDATE_PROFILE_STYLES = `
   background: #fff;
   color: #18211a;
 }
+.candidate-correction-form select {
+  width: min(100%, 320px);
+  min-height: 42px;
+  border: 1px solid #cfc3ae;
+  border-radius: 8px;
+  padding: 0 12px;
+  font: inherit;
+  background: #fff;
+  color: #18211a;
+}
 .candidate-correction-form textarea:disabled {
+  opacity: 0.7;
+}
+.candidate-correction-form select:disabled {
   opacity: 0.7;
 }
 .candidate-correction-form button {

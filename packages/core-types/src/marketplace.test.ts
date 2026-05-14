@@ -22,10 +22,13 @@ import {
   JobOpportunityDraftSchema,
   JobOpportunitySchema,
   JobOpportunityPublicSchema,
+  LaunchReadinessSnapshotSchema,
+  OutreachStopControlSchema,
   OutreachDecisionSchema,
   OutboundInviteSchema,
   PA_JOB_ENRICHMENT_EVAL_FIXTURES_SUBCOLLECTION,
   PA_JOB_ENRICHMENT_SUBCOLLECTION,
+  PrivacyRequestSchema,
   ResumeArtifactSchema,
   candidateHandleHashMaterial,
   canTransitionBulkResumeItemStatus,
@@ -41,9 +44,12 @@ import {
   createJobEnrichmentEvalFixtureId,
   createJobEnrichmentDraftId,
   createJobOpportunityDraftId,
+  createLaunchReadinessSnapshotId,
   createOutreachDuplicateSuppressionKey,
   createOutreachIdempotencyKey,
+  createOutreachStopControlId,
   createOutboundInviteId,
+  createPrivacyRequestId,
   normalizeCandidateHandleValue,
   reduceBulkResumeItemStatus,
   reduceCandidateJobState,
@@ -297,6 +303,141 @@ test("marketplace document schemas parse the S1 primitives", () => {
       createdAt: now,
     },
   })
+})
+
+test("privacy request schema captures request-only redacted records", () => {
+  const requestId = createPrivacyRequestId({
+    candidateId: "cand-1",
+    kind: "delete",
+    createdAt: now,
+  })
+  const request = PrivacyRequestSchema.parse({
+    requestId,
+    kind: "delete",
+    status: "submitted",
+    candidateId: "cand-1",
+    sourceSurface: "me_profile",
+    requestedBy: "candidate",
+    detailRedacted: { note: "candidate requested account deletion", channel: "profile" },
+    evidence: [{ source: "system", summary: "submitted from self-serve profile page" }],
+    createdAt: now,
+  })
+
+  assert.equal(request.requestId, requestId)
+  assert.equal(request.kind, "delete")
+  assert.equal(request.status, "submitted")
+  assert.equal(request.detailRedacted.note, "candidate requested account deletion")
+  assert.throws(() =>
+    PrivacyRequestSchema.parse({
+      ...request,
+      detailRedacted: { rawText: "delete me, candidate@example.com" },
+    })
+  )
+  assert.throws(() =>
+    PrivacyRequestSchema.parse({
+      ...request,
+      evidence: [{ source: "profile", summary: "see gs://resume-bucket/raw.pdf" }],
+    })
+  )
+  assert.throws(() =>
+    PrivacyRequestSchema.parse({
+      ...request,
+      resolutionSummary: "Candidate reached at +1 555 555 0100",
+    })
+  )
+})
+
+test("launch readiness snapshots stay redacted and summarize S9 safety state", () => {
+  const snapshot = LaunchReadinessSnapshotSchema.parse({
+    snapshotId: createLaunchReadinessSnapshotId(now, "s9-test"),
+    generatedAt: now,
+    status: "yellow",
+    counts: {
+      privacyOpen: 1,
+      pausedControls: 0,
+      outboundQueued: 0,
+    },
+    sections: [
+      {
+        key: "privacy_requests",
+        label: "Privacy requests",
+        status: "yellow",
+        count: 1,
+        summary: "One open request awaiting operator review",
+        sourceRoute: "/admin/launch-readiness",
+        updatedAt: now,
+      },
+    ],
+    privacyRequests: [
+      {
+        requestId: createPrivacyRequestId({ candidateId: "cand-1", kind: "export", createdAt: now }),
+        kind: "export",
+        status: "submitted",
+        candidateId: "cand-1",
+        sourceSurface: "me_profile",
+        createdAt: now,
+      },
+    ],
+    stopControls: [
+      {
+        controlId: createOutreachStopControlId({ scope: "global" }),
+        scope: "global",
+        paused: false,
+        updatedAt: now,
+      },
+    ],
+    evidence: [{ source: "admin", summary: "redacted aggregate snapshot" }],
+  })
+
+  assert.equal(snapshot.status, "yellow")
+  assert.equal(snapshot.counts.privacyOpen, 1)
+  assert.throws(() =>
+    LaunchReadinessSnapshotSchema.parse({
+      ...snapshot,
+      evidence: [{ source: "admin", summary: "raw resume at https://storage.googleapis.com/raw.pdf" }],
+    })
+  )
+})
+
+test("outreach stop controls enforce explicit scope and pause reason", () => {
+  assert.equal(createOutreachStopControlId({ scope: "global" }), "outreach_stop_global")
+  assert.equal(
+    createOutreachStopControlId({ scope: "outreach_batch", scopeId: "batch-1" }),
+    createOutreachStopControlId({ scope: "outreach_batch", scopeId: "batch-1" })
+  )
+
+  const global = OutreachStopControlSchema.parse({
+    controlId: createOutreachStopControlId({ scope: "global" }),
+    scope: "global",
+    paused: true,
+    reason: "launch readiness pause",
+    actor: "operator",
+    createdAt: now,
+  })
+  assert.equal(global.paused, true)
+
+  assert.throws(() =>
+    OutreachStopControlSchema.parse({
+      ...global,
+      scopeId: "batch-1",
+    })
+  )
+  assert.throws(() =>
+    OutreachStopControlSchema.parse({
+      controlId: createOutreachStopControlId({ scope: "outreach_batch", scopeId: "batch-1" }),
+      scope: "outreach_batch",
+      paused: false,
+      actor: "operator",
+      createdAt: now,
+    })
+  )
+  assert.throws(() =>
+    OutreachStopControlSchema.parse({
+      ...global,
+      paused: true,
+      reason: "",
+    })
+  )
 })
 
 test("candidate-job match schema requires S5 versioned evidence", () => {
