@@ -23,9 +23,30 @@ import {
   normalizeEmail,
   normalizePhoneE164,
   phoneHash,
+  type AdapterSignature,
 } from "@pa/external-supply"
 
 export const JUICEBOX_ADAPTER_VERSION = "juicebox-2026-05-A"
+
+/**
+ * Detection fingerprint for {@link detectAdapter}. JSON-shape; required keys
+ * are Juicebox's flat top-level fields.
+ */
+export const JUICEBOX_SIGNATURE: AdapterSignature = {
+  source: "juicebox",
+  requiredKeys: ["linkedin_url", "email_primary", "full_name"],
+  bonusKeys: [
+    "current_position",
+    "current_company_name",
+    "location_string",
+    "experience_array",
+    "education_array",
+    "skills",
+    "enrichment",
+  ],
+  acceptedShapes: ["json"],
+  adapterVersion: JUICEBOX_ADAPTER_VERSION,
+}
 
 export type NormalizedRecordDraft = Omit<
   ExternalCandidateRecord,

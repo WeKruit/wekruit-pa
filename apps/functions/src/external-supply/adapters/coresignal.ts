@@ -22,9 +22,29 @@ import {
   normalizeEmail,
   normalizePhoneE164,
   phoneHash,
+  type AdapterSignature,
 } from "@pa/external-supply"
 
 export const CORESIGNAL_ADAPTER_VERSION = "coresignal-2026-05-A"
+
+/**
+ * Detection fingerprint for {@link detectAdapter}. JSON-shape; required keys
+ * are dotted paths walked one level deep (L-B2).
+ */
+export const CORESIGNAL_SIGNATURE: AdapterSignature = {
+  source: "coresignal",
+  requiredKeys: ["profile.url", "contact.primary_email", "profile.full_name"],
+  bonusKeys: [
+    "profile.headline",
+    "profile.location.name",
+    "contact.phone",
+    "experience",
+    "education",
+    "skills",
+  ],
+  acceptedShapes: ["json"],
+  adapterVersion: CORESIGNAL_ADAPTER_VERSION,
+}
 
 export type NormalizedRecordDraft = Omit<
   ExternalCandidateRecord,

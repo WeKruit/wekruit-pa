@@ -24,9 +24,22 @@ import {
   normalizeEmail,
   normalizePhoneE164,
   phoneHash,
+  type AdapterSignature,
 } from "@pa/external-supply"
 
 export const LESSIE_ADAPTER_VERSION = "lessie-2026-05-A"
+
+/**
+ * Detection fingerprint for {@link detectAdapter}. CSV/TSV shape; required
+ * keys are Lessie's canonical header names (case-insensitive match).
+ */
+export const LESSIE_SIGNATURE: AdapterSignature = {
+  source: "lessie",
+  requiredKeys: ["linkedin url", "email", "name"],
+  bonusKeys: ["title", "company", "location", "phone", "skills"],
+  acceptedShapes: ["csv", "tsv"],
+  adapterVersion: LESSIE_ADAPTER_VERSION,
+}
 
 export type NormalizedRecordDraft = Omit<
   ExternalCandidateRecord,
