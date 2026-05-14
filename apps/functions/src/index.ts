@@ -2053,6 +2053,11 @@ export {
   paExternalSupplyApproveAgentTier,
   paExternalSupplyOverrideAgentTier,
 } from "./external-supply/agent-rank.js"
+// V2 — preview-batch dry-run callable (Wave B / Executor C). Server-side
+// read-only forecast that powers the dashboard drag-drop preview pane. Wiring
+// deferred from C's commit per L-C7 to avoid parallel-wave conflict; lead
+// merge-integration commit lands it.
+export { paExternalSupplyPreviewBatch } from "./external-supply/preview-batch.js"
 
 // ============================================================
 // External Supply V2 — Wave E (F) flywheel rollup
