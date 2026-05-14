@@ -758,6 +758,21 @@ test("employer-visible profile snapshot rejects raw contact or storage values", 
     () => EmployerVisibleProfileSchema.parse({ ...base, sourceResumeArtifactId: "gs://bucket/resume.pdf" }),
     /raw contact/
   )
+  assert.throws(
+    () =>
+      EmployerVisibleProfileSchema.parse({
+        ...base,
+        matchReason: "Resume artifact https://bucket.storage.googleapis.com/resume.pdf",
+      }),
+    /raw contact/
+  )
+  assert.doesNotThrow(() =>
+    EmployerVisibleProfileSchema.parse({
+      ...base,
+      matchReason:
+        "Lookalike hostnames are not treated as raw profile URLs: https://linkedin.com.evil.test/profile",
+    })
+  )
   assert.doesNotThrow(() =>
     EmployerVisibleProfileSchema.parse({
       ...base,

@@ -586,19 +586,39 @@ export const OutboundInviteSchema = z.object({
 })
 export type OutboundInvite = z.infer<typeof OutboundInviteSchema>
 
+const EMPLOYER_VISIBLE_BLOCKED_HOSTS = [
+  "linkedin.com",
+  "firebasestorage.googleapis.com",
+  "storage.googleapis.com",
+]
+
+function isBlockedEmployerVisibleHost(hostname: string): boolean {
+  const normalized = hostname.toLowerCase().replace(/\.$/, "")
+  return EMPLOYER_VISIBLE_BLOCKED_HOSTS.some(
+    (blocked) => normalized === blocked || normalized.endsWith(`.${blocked}`)
+  )
+}
+
+function containsEmployerVisibleRawLocator(value: string): boolean {
+  if (/\bgs:\/\//i.test(value)) return true
+
+  for (const match of value.matchAll(/\bhttps?:\/\/[^\s<>"'`]+/gi)) {
+    const rawUrl = match[0].replace(/[),.;]+$/g, "")
+    try {
+      if (isBlockedEmployerVisibleHost(new URL(rawUrl).hostname)) return true
+    } catch {
+      // Ignore malformed URL-like text; other raw contact checks still apply.
+    }
+  }
+
+  return false
+}
+
 function containsEmployerVisibleRawContact(value: unknown): boolean {
   if (typeof value === "string") {
-    const normalized = value.toLowerCase()
     if (/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.test(value)) return true
     if (/(?:\+?\d[\s().-]*){9,}/.test(value)) return true
-    if (
-      normalized.includes("linkedin.com") ||
-      normalized.includes("firebasestorage.googleapis.com") ||
-      normalized.includes("storage.googleapis.com") ||
-      normalized.includes("gs://")
-    ) {
-      return true
-    }
+    if (containsEmployerVisibleRawLocator(value)) return true
   }
   if (Array.isArray(value)) return value.some(containsEmployerVisibleRawContact)
   if (value && typeof value === "object") {
