@@ -14,6 +14,7 @@ import {
   onAuthStateChanged,
   sendSignInLinkToEmail,
   signInWithCustomToken,
+  signInWithPopup,
   signInWithRedirect,
   type User,
 } from "firebase/auth"
@@ -274,11 +275,27 @@ export default function PublicJob() {
       return
     }
     const provider = createGoogleProvider()
+    let willRedirect = false
     try {
-      await signInWithRedirect(auth(), provider)
+      const cred = await signInWithPopup(auth(), provider)
+      setUser(cred.user)
+      setLoginStatus("idle")
+      setLoginPromptOpen(false)
+      setLoginPromptDismissed(true)
     } catch (err) {
+      const code =
+        err && typeof err === "object" && "code" in err
+          ? String((err as { code?: string }).code)
+          : ""
+      if (code === "auth/popup-blocked" || code === "auth/operation-not-supported-in-this-environment") {
+        willRedirect = true
+        await signInWithRedirect(auth(), createGoogleProvider())
+        return
+      }
       setLoginStatus("error")
-      setLoginError(err instanceof Error ? err.message : String(err))
+      setLoginError(code === "auth/popup-closed-by-user" ? "Sign-in cancelled." : err instanceof Error ? err.message : String(err))
+    } finally {
+      if (!willRedirect && loginStatus === "google") setLoginStatus("idle")
     }
   }
 
