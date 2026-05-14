@@ -69,6 +69,13 @@ if (existsSync(dashboardEnv)) {
   }
 }
 
+if (existsSync(outPath)) {
+  const existing = parseEnvFile(outPath)
+  for (const k of OPTIONAL) {
+    if (!merged[k] && existing[k]) merged[k] = existing[k]
+  }
+}
+
 for (const k of Object.keys(process.env)) {
   if (
     (k.startsWith("VITE_FIREBASE_") || OPTIONAL.includes(k)) &&

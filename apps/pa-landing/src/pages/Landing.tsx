@@ -1,201 +1,231 @@
-/**
- * Claire CTA landing page — preserves the exact black-gradient look from
- * the prior static apps/pa-landing/public/index.html (iter33 spec 2026-05-05).
- *
- * Lives at `/` of the candidate Vite SPA (apps/pa-landing). Same site also
- * serves `/legal`, `/j/:jobId`, `/j/:jobId/cv`. Default URL:
- * https://wekruit-pa-landing.web.app. Custom domains: candidate.wekruit.com,
- * pa.wekruit.com (both CNAME → wekruit-pa-landing.web.app via Cloudflare).
- */
-import { useEffect } from "react"
+import { useEffect, useState } from "react"
+import { Link } from "react-router-dom"
+import { collection, getDocs, limit, query, where } from "firebase/firestore"
+import { db } from "../lib/firebase.js"
+import { CandidateShell } from "./CandidateLogin.js"
 
-const STYLES = `
-* { margin: 0; padding: 0; box-sizing: border-box; }
-html, body { height: 100%; }
-body.landing-bg {
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  background: linear-gradient(180deg, #0a0a0a 0%, #1a1a1a 100%);
-  color: #fafafa;
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  padding: 24px;
-  -webkit-font-smoothing: antialiased;
-  text-rendering: optimizeLegibility;
+interface PublicJobListDoc {
+  publicVisible?: boolean
+  prescreenConfig?: {
+    jobTitle?: string
+    company?: string
+    jobType?: string
+    region?: string
+    level1Reveal?: {
+      salaryRange?: string
+    }
+  }
+  location?: string
 }
-.landing-wrap {
-  max-width: 480px;
-  width: 100%;
-  text-align: center;
-  animation: landing-fade 0.6s ease;
+
+interface PublicJobListItem {
+  id: string
+  title: string
+  company: string
+  location?: string
+  salary?: string
+  jobType?: string
 }
-@keyframes landing-fade {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-.landing-badge {
-  display: inline-block;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  padding: 6px 12px;
-  border: 1px solid rgba(255,255,255,0.15);
-  border-radius: 999px;
-  color: rgba(255,255,255,0.7);
-  margin-bottom: 24px;
-  text-transform: uppercase;
-}
-.landing-h1 {
-  font-size: clamp(32px, 6vw, 44px);
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  line-height: 1.1;
-  margin-bottom: 16px;
-}
-.landing-accent {
-  background: linear-gradient(135deg, #34d399, #06b6d4);
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-}
-.landing-lede {
-  font-size: 17px;
-  line-height: 1.5;
-  color: rgba(255,255,255,0.72);
-  margin-bottom: 36px;
-}
-.landing-cta {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  padding: 18px 32px;
-  font-size: 17px;
-  font-weight: 600;
-  color: #0a0a0a;
-  background: #fafafa;
-  border: none;
-  border-radius: 14px;
-  cursor: pointer;
-  text-decoration: none;
-  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
-  box-shadow: 0 4px 14px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.05);
-  -webkit-tap-highlight-color: transparent;
-}
-.landing-cta:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.1); }
-.landing-cta:active { transform: translateY(0); background: #e5e5e5; }
-.landing-cta svg { width: 20px; height: 20px; }
-.landing-hint {
-  margin-top: 18px;
-  font-size: 13px;
-  color: rgba(255,255,255,0.4);
-}
-.landing-number {
-  margin-top: 24px;
-  font-size: 13px;
-  color: rgba(255,255,255,0.55);
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
-  letter-spacing: 0.02em;
-}
-.landing-number a {
-  color: rgba(255,255,255,0.85);
-  text-decoration: none;
-  border-bottom: 1px dashed rgba(255,255,255,0.3);
-}
-.landing-footer {
-  position: absolute;
-  bottom: 24px;
-  font-size: 12px;
-  color: rgba(255,255,255,0.35);
-}
-.landing-footer a { color: rgba(255,255,255,0.55); text-decoration: none; }
-.landing-footer a:hover { color: rgba(255,255,255,0.8); }
-@media (prefers-color-scheme: light) {
-  body.landing-bg { background: linear-gradient(180deg, #fafafa 0%, #e5e5e5 100%); color: #0a0a0a; }
-  .landing-badge { border-color: rgba(0,0,0,0.12); color: rgba(0,0,0,0.6); }
-  .landing-lede { color: rgba(0,0,0,0.65); }
-  .landing-cta { color: #fafafa; background: #0a0a0a; box-shadow: 0 4px 14px rgba(0,0,0,0.15); }
-  .landing-cta:active { background: #1a1a1a; }
-  .landing-hint, .landing-number { color: rgba(0,0,0,0.45); }
-  .landing-number a { color: rgba(0,0,0,0.75); border-bottom-color: rgba(0,0,0,0.25); }
-  .landing-footer { color: rgba(0,0,0,0.4); }
-  .landing-footer a { color: rgba(0,0,0,0.6); }
-}
-`
+
+type JobsState =
+  | { status: "loading" }
+  | { status: "ready"; jobs: PublicJobListItem[] }
+  | { status: "error"; message: string }
 
 export default function Landing() {
+  const [state, setState] = useState<JobsState>({ status: "loading" })
+
   useEffect(() => {
-    // Apply landing-specific body background (other routes use default).
-    document.body.classList.add("landing-bg")
-    // iter33 — light analytics breadcrumb.
-    try {
-      const utm = new URLSearchParams(location.search)
-      sessionStorage.setItem(
-        "pa_landing_visit",
-        JSON.stringify({
-          ts: new Date().toISOString(),
-          ref: document.referrer || null,
-          src: utm.get("src") || null,
-          ua: navigator.userAgent.slice(0, 200),
-        })
-      )
-    } catch {
-      // sessionStorage blocked — non-fatal
-    }
+    let cancelled = false
+    void (async () => {
+      try {
+        const snap = await getDocs(query(collection(db(), "pa-jobs"), where("publicVisible", "==", true), limit(24)))
+        const jobs = snap.docs
+          .map((docSnap) => {
+            const data = docSnap.data() as PublicJobListDoc
+            const cfg = data.prescreenConfig ?? {}
+            return {
+              id: docSnap.id,
+              title: cfg.jobTitle ?? "Open role",
+              company: cfg.company ?? "Confidential employer",
+              location: data.location ?? cfg.region,
+              salary: cfg.level1Reveal?.salaryRange,
+              jobType: cfg.jobType,
+            }
+          })
+          .sort((a, b) => `${a.company} ${a.title}`.localeCompare(`${b.company} ${b.title}`))
+        if (!cancelled) setState({ status: "ready", jobs })
+      } catch (err) {
+        if (!cancelled) {
+          setState({ status: "error", message: err instanceof Error ? err.message : String(err) })
+        }
+      }
+    })()
     return () => {
-      document.body.classList.remove("landing-bg")
+      cancelled = true
     }
   }, [])
 
   return (
-    <>
-      <style>{STYLES}</style>
-      <main className="landing-wrap">
-        <span className="landing-badge">Beta · iMessage only</span>
-        <h1 className="landing-h1">
-          Text <span className="landing-accent">Claire</span>.<br />
-          Land your next job.
-        </h1>
-        <p className="landing-lede">
-          Skip the apply-and-pray. Claire finds matches, drafts intros, surfaces referrals — over
-          iMessage. Like texting a friend who knows the market.
-        </p>
-        <a
-          className="landing-cta"
-          href="sms:+13054507715&body=hi"
-          onClick={(e) => {
-            const el = e.currentTarget
-            el.style.transform = "translateY(0)"
-            el.style.background = "#34d399"
-            setTimeout(() => {
-              el.style.background = ""
-            }, 200)
-          }}
-        >
-          <svg
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth={2}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-          </svg>
-          Text Claire on iMessage
-        </a>
-        <div className="landing-hint">Tap from your iPhone — opens the Messages app prefilled with "hi"</div>
-        <div className="landing-number">
-          or text{" "}
-          <a href="sms:+13054507715&body=hi">+1 (305) 450-7715</a>
-        </div>
+    <CandidateShell>
+      <style>{LANDING_STYLES}</style>
+      <main className="landing-app">
+        <section className="landing-hero">
+          <div>
+            <p className="candidate-kicker">Candidate marketplace</p>
+            <h1>Open jobs that start with Claire</h1>
+            <p>
+              Browse active WeKruit roles, sign in once, and start the first screen over iMessage.
+            </p>
+          </div>
+          <Link className="candidate-secondary-button" to="/me">View profile</Link>
+        </section>
+
+        <section className="landing-jobs-section" aria-labelledby="landing-jobs-title">
+          <div className="landing-section-heading">
+            <h2 id="landing-jobs-title">Open roles</h2>
+            <span>{state.status === "ready" ? `${state.jobs.length} live` : "Loading"}</span>
+          </div>
+          {state.status === "loading" ? <p className="landing-muted">Loading jobs.</p> : null}
+          {state.status === "error" ? <p className="candidate-error">{state.message}</p> : null}
+          {state.status === "ready" && state.jobs.length === 0 ? (
+            <p className="landing-muted">No public roles are open right now.</p>
+          ) : null}
+          {state.status === "ready" && state.jobs.length > 0 ? (
+            <div className="landing-job-list">
+              {state.jobs.map((job) => (
+                <article className="landing-job-card" key={job.id}>
+                  <div>
+                    <div className="landing-job-badges">
+                      <span>Open role</span>
+                      <span>WeKruit collaborated</span>
+                    </div>
+                    <h3>{job.title}</h3>
+                    <p>{job.company}{job.location ? ` · ${job.location}` : ""}</p>
+                  </div>
+                  {job.salary || job.jobType ? (
+                    <p className="landing-job-meta">{[job.jobType, job.salary].filter(Boolean).join(" · ")}</p>
+                  ) : null}
+                  <Link className="candidate-primary-link" to={`/j/${job.id}`}>View role</Link>
+                </article>
+              ))}
+            </div>
+          ) : null}
+        </section>
       </main>
-      <footer className="landing-footer">
-        Built by <a href="https://wekruit.com" target="_blank" rel="noopener noreferrer">WeKruit</a>
-        {" · "}
-        <a href="/legal">Privacy &amp; Terms</a>
-      </footer>
-    </>
+    </CandidateShell>
   )
 }
+
+const LANDING_STYLES = `
+.landing-app {
+  max-width: 980px;
+  margin: 0 auto;
+  display: grid;
+  gap: 24px;
+}
+.landing-hero {
+  display: flex;
+  gap: 20px;
+  align-items: flex-end;
+  justify-content: space-between;
+  border-bottom: 1px solid #ddd3c2;
+  padding-bottom: 22px;
+}
+.landing-hero h1 {
+  max-width: 660px;
+  margin: 0;
+  font-size: clamp(38px, 7vw, 64px);
+  line-height: 1;
+  letter-spacing: 0;
+}
+.landing-hero p:not(.candidate-kicker) {
+  max-width: 620px;
+  margin: 14px 0 0;
+  color: #364233;
+  font-size: 18px;
+  line-height: 1.45;
+}
+.landing-jobs-section {
+  display: grid;
+  gap: 14px;
+}
+.landing-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.landing-section-heading h2 {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+.landing-section-heading span {
+  color: #5f665b;
+  font-weight: 800;
+}
+.landing-job-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+.landing-job-card {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+  background: #fffdf8;
+  border: 1px solid #ddd3c2;
+  border-radius: 8px;
+  padding: 18px;
+}
+.landing-job-card h3 {
+  margin: 12px 0 6px;
+  font-size: 22px;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+.landing-job-card p {
+  margin: 0;
+  color: #364233;
+  line-height: 1.45;
+}
+.landing-job-badges {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.landing-job-badges span {
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 9px;
+  border-radius: 8px;
+  background: #f0eee8;
+  color: #364233;
+  font-size: 12px;
+  font-weight: 900;
+}
+.landing-job-badges span:last-child {
+  background: #dff4eb;
+  border: 1px solid #b8dfd1;
+  color: #24543c;
+}
+.landing-job-meta {
+  color: #16643b;
+  font-weight: 800;
+}
+.landing-muted {
+  color: #5f665b;
+}
+@media (max-width: 760px) {
+  .landing-hero {
+    display: grid;
+    align-items: start;
+  }
+  .landing-job-list {
+    grid-template-columns: 1fr;
+  }
+}
+`

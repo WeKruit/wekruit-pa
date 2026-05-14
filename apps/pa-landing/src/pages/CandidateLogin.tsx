@@ -1,23 +1,48 @@
 import { useEffect, useMemo, useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
 import {
+  GoogleAuthProvider,
+  OAuthProvider,
   isSignInWithEmailLink,
   sendSignInLinkToEmail,
   signInWithEmailLink,
+  signInWithPopup,
+  signInWithRedirect,
 } from "firebase/auth"
 import { auth } from "../lib/firebase.js"
 
 const EMAIL_STORAGE_KEY = "wkr_claim_email"
+const LINKEDIN_PROVIDER_ID = import.meta.env.VITE_LINKEDIN_PROVIDER_ID ?? "oidc.linkedin"
 
 function cleanEmail(value: string): string {
   return value.trim().toLowerCase()
 }
 
+function createGoogleProvider(): GoogleAuthProvider {
+  const provider = new GoogleAuthProvider()
+  provider.setCustomParameters({ prompt: "select_account" })
+  return provider
+}
+
+function createLinkedInProvider(): OAuthProvider {
+  const provider = new OAuthProvider(LINKEDIN_PROVIDER_ID)
+  provider.addScope("openid")
+  provider.addScope("profile")
+  provider.addScope("email")
+  return provider
+}
+
 export default function CandidateLogin() {
   const navigate = useNavigate()
   const isCompletingLink = useMemo(() => isSignInWithEmailLink(auth(), window.location.href), [])
+  const nextPath = useMemo(() => {
+    const raw = new URLSearchParams(window.location.search).get("next")
+    return raw && raw.startsWith("/") && !raw.startsWith("//") ? raw : "/me"
+  }, [])
   const [email, setEmail] = useState(() => window.localStorage.getItem(EMAIL_STORAGE_KEY) ?? "")
-  const [status, setStatus] = useState<"idle" | "sending" | "sent" | "signing_in" | "error">(
+  const [status, setStatus] = useState<
+    "idle" | "google" | "linkedin" | "sending" | "sent" | "signing_in" | "error"
+  >(
     isCompletingLink ? "signing_in" : "idle"
   )
   const [error, setError] = useState<string | null>(null)
@@ -34,7 +59,7 @@ export default function CandidateLogin() {
       try {
         await signInWithEmailLink(auth(), stored, window.location.href)
         window.localStorage.removeItem(EMAIL_STORAGE_KEY)
-        if (!cancelled) navigate("/me", { replace: true })
+        if (!cancelled) navigate(nextPath, { replace: true })
       } catch (err) {
         if (!cancelled) {
           setStatus("error")
@@ -45,7 +70,29 @@ export default function CandidateLogin() {
     return () => {
       cancelled = true
     }
-  }, [isCompletingLink, navigate])
+  }, [isCompletingLink, navigate, nextPath])
+
+  async function startProviderSignIn(kind: "google" | "linkedin") {
+    const provider = kind === "google" ? createGoogleProvider() : createLinkedInProvider()
+    setStatus(kind)
+    setError(null)
+    try {
+      await signInWithPopup(auth(), provider)
+      navigate(nextPath, { replace: true })
+    } catch (err) {
+      const code = typeof err === "object" && err && "code" in err ? String(err.code) : ""
+      if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") {
+        setStatus("idle")
+        return
+      }
+      try {
+        await signInWithRedirect(auth(), provider)
+      } catch (redirectErr) {
+        setStatus("error")
+        setError(redirectErr instanceof Error ? redirectErr.message : String(redirectErr))
+      }
+    }
+  }
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -57,12 +104,12 @@ export default function CandidateLogin() {
         setStatus("signing_in")
         await signInWithEmailLink(auth(), nextEmail, window.location.href)
         window.localStorage.removeItem(EMAIL_STORAGE_KEY)
-        navigate("/me", { replace: true })
+        navigate(nextPath, { replace: true })
         return
       }
       setStatus("sending")
       await sendSignInLinkToEmail(auth(), nextEmail, {
-        url: `${window.location.origin}/login`,
+        url: `${window.location.origin}/login?next=${encodeURIComponent(nextPath)}`,
         handleCodeInApp: true,
       })
       window.localStorage.setItem(EMAIL_STORAGE_KEY, nextEmail)
@@ -78,6 +125,27 @@ export default function CandidateLogin() {
       <main className="candidate-panel">
         <p className="candidate-kicker">Candidate profile</p>
         <h1>{isCompletingLink ? "Finish sign in" : "Sign in"}</h1>
+        {!isCompletingLink ? (
+          <div className="candidate-provider-actions">
+            <button
+              type="button"
+              className="candidate-primary-link"
+              onClick={() => void startProviderSignIn("google")}
+              disabled={status === "google" || status === "linkedin" || status === "sending" || status === "signing_in"}
+            >
+              {status === "google" ? "Opening Google" : "Continue with Google"}
+            </button>
+            <button
+              type="button"
+              className="candidate-primary-link candidate-linkedin-link"
+              onClick={() => void startProviderSignIn("linkedin")}
+              disabled={status === "google" || status === "linkedin" || status === "sending" || status === "signing_in"}
+            >
+              {status === "linkedin" ? "Opening LinkedIn" : "Continue with LinkedIn"}
+            </button>
+            <div className="candidate-divider">or</div>
+          </div>
+        ) : null}
         <form onSubmit={onSubmit} className="candidate-form">
           <label>
             Email
@@ -116,7 +184,11 @@ export function CandidateShell({ children }: { children: React.ReactNode }) {
       <style>{CANDIDATE_STYLES}</style>
       <header className="candidate-header">
         <Link to="/" className="candidate-brand">WeKruit</Link>
-        <Link to="/me" className="candidate-header-link">Profile</Link>
+        <nav className="candidate-nav" aria-label="Candidate navigation">
+          <Link to="/" className="candidate-header-link">Jobs</Link>
+          <Link to="/me/matches" className="candidate-header-link">Matches</Link>
+          <Link to="/me" className="candidate-header-link">Profile</Link>
+        </nav>
       </header>
       {children}
     </div>
@@ -134,11 +206,12 @@ body {
   padding: 24px;
 }
 .candidate-header {
-  max-width: 760px;
+  max-width: 980px;
   margin: 0 auto 28px;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 16px;
 }
 .candidate-brand {
   color: #18211a;
@@ -151,6 +224,32 @@ body {
   color: #46624c;
   font-weight: 700;
   text-decoration: none;
+}
+.candidate-nav,
+.candidate-provider-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.candidate-provider-actions {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.candidate-provider-actions .candidate-primary-link {
+  width: 100%;
+  font: inherit;
+}
+.candidate-linkedin-link {
+  background: #0a66c2;
+  border-color: #0a66c2;
+}
+.candidate-divider {
+  color: #7a6f5d;
+  font-size: 13px;
+  font-weight: 800;
+  text-align: center;
 }
 .candidate-panel {
   max-width: 520px;
@@ -186,6 +285,7 @@ body {
 }
 .candidate-form input {
   width: 100%;
+  box-sizing: border-box;
   border: 1px solid #cfc3ae;
   border-radius: 8px;
   padding: 12px;
