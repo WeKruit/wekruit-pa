@@ -59,8 +59,22 @@ const ACCEPT = ".csv,.json,.xlsx,.tsv,application/json,text/csv,text/tab-separat
 interface UploadedFileState {
   file: File
   sha256: string
+  /** Legacy GCS path — empty when using inline base64 flow. */
   storageUri: string
   mime: string
+  /** v2.2: kept around between preview and commit so we don't re-read the file. */
+  base64Bytes: string
+}
+
+function arrayBufferToBase64(buf: ArrayBuffer): string {
+  // Chunk to avoid call-stack overflow on multi-MB files.
+  const bytes = new Uint8Array(buf)
+  const CHUNK = 0x8000
+  let bin = ""
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK))
+  }
+  return btoa(bin)
 }
 
 export function BatchNew() {
@@ -101,26 +115,22 @@ export function BatchNew() {
       const buf = await file.arrayBuffer()
       const sha256 = await sha256Hex(buf)
       const mime = file.type || (finalSource === "coresignal" ? "application/json" : "text/csv")
-      const upload = await createBatchUploadUrl({
-        sha256,
-        mime,
-        sizeBytes: file.size,
-        source: finalSource,
-      })
-      await putToSignedUrl(upload.signedUrl, buf, mime)
+      const base64Bytes = arrayBufferToBase64(buf)
+      // v2.2 (2026-05-14): skip the signed-URL detour entirely. Files are KB-
+      // sized (Lessie exports ~30 KB); inline base64 is one round-trip + no
+      // CORS preflight required.
       const result = await previewBatch({
-        source: finalSource,
-        storageUri: upload.storageUri,
-        sha256,
+        filename: file.name,
         mime,
-        sizeBytes: file.size,
-        ...(companyId.trim() ? { companyId: companyId.trim() } : {}),
-        ...(jobId.trim() ? { jobId: jobId.trim() } : {}),
+        base64Bytes,
+        ...(companyId.trim() && jobId.trim()
+          ? { forecastEvaluationFor: { companyId: companyId.trim(), jobId: jobId.trim() } }
+          : {}),
         ...(finalSource === "manual_csv" ? { columnMapping } : {}),
-        ...(adapterOverride ? { adapterOverride: adapterOverride as ExternalSource } : {}),
+        ...(adapterOverride ? { overrideSource: adapterOverride as ExternalSource } : {}),
       })
       setPreview(result)
-      setUploaded({ file, sha256, storageUri: upload.storageUri, mime })
+      setUploaded({ file, sha256, storageUri: "", mime, base64Bytes })
       // Seed the override columnMapping with the auto-detected mapping when
       // the operator hasn't typed anything yet. Lets them commit immediately
       // for the common Lessie / Juicebox case without filling in fields.
@@ -147,7 +157,8 @@ export function BatchNew() {
     try {
       const result = await createBatch({
         source: finalSource,
-        storageUri: uploaded.storageUri,
+        inlineBase64: uploaded.base64Bytes,
+        filename: uploaded.file.name,
         sha256: uploaded.sha256,
         mime: uploaded.mime,
         sizeBytes: uploaded.file.size,

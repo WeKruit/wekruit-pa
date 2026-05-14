@@ -368,28 +368,38 @@ export const paExternalSupplyCreateBatchUploadUrl = onCall(
 // Callable: paExternalSupplyCreateBatch
 // ---------------------------------------------------------------------------
 
-const CreateBatchInputSchema = z.object({
-  source: ExternalSourceSchema,
-  storageUri: z.string().min(1),
-  sha256: z.string().min(32),
-  mime: z.string().min(1),
-  sizeBytes: z.number().int().nonnegative(),
-  companyId: z.string().min(1).optional(),
-  jobId: z.string().min(1).optional(),
-  columnMapping: z
-    .object({
-      linkedinUrl: z.string().optional(),
-      email: z.string().optional(),
-      phone: z.string().optional(),
-      name: z.string().optional(),
-      currentTitle: z.string().optional(),
-      currentCompany: z.string().optional(),
-      location: z.string().optional(),
-      skills: z.string().optional(),
-    })
-    .optional(),
-  adminToken: z.string().optional(),
-})
+const CreateBatchInputSchema = z
+  .object({
+    source: ExternalSourceSchema,
+    // v2.2 (2026-05-14): operator may either pre-upload to GCS (legacy) OR
+    // send inline base64. Small Lessie xlsx exports (~30 KB) don't justify
+    // the signed-URL round-trip — inline is one fewer hop + no CORS dance.
+    storageUri: z.string().min(1).optional(),
+    inlineBase64: z.string().min(1).optional(),
+    /** Required when inlineBase64 is used so the loose adapter can sniff sheet kind. */
+    filename: z.string().min(1).optional(),
+    sha256: z.string().min(32),
+    mime: z.string().min(1),
+    sizeBytes: z.number().int().nonnegative(),
+    companyId: z.string().min(1).optional(),
+    jobId: z.string().min(1).optional(),
+    columnMapping: z
+      .object({
+        linkedinUrl: z.string().optional(),
+        email: z.string().optional(),
+        phone: z.string().optional(),
+        name: z.string().optional(),
+        currentTitle: z.string().optional(),
+        currentCompany: z.string().optional(),
+        location: z.string().optional(),
+        skills: z.string().optional(),
+      })
+      .optional(),
+    adminToken: z.string().optional(),
+  })
+  .refine((v) => Boolean(v.storageUri) || Boolean(v.inlineBase64), {
+    message: "either_storageUri_or_inlineBase64_required",
+  })
 
 /**
  * Downloads the uploaded file from Storage, dispatches to the right adapter,
@@ -413,10 +423,18 @@ export const paExternalSupplyCreateBatch = onCall(
     const db = getFirestore()
     const firestoreDeps = makeFirestoreDeps(db)
 
+    // Inline path: skip storage download — file lands as base64 in the
+    // callable. `storageUri` is synthesized so existing downstream code that
+    // reads it (audit logging, idempotency on sha256) keeps working.
+    const inlineBase64 = parsed.data.inlineBase64
+    const effectiveStorageUri =
+      parsed.data.storageUri ??
+      `inline://${parsed.data.source}/${parsed.data.sha256}/${parsed.data.filename ?? "upload.csv"}`
+
     const out = await runCreateBatch(
       {
         source: parsed.data.source,
-        storageUri: parsed.data.storageUri,
+        storageUri: effectiveStorageUri,
         sha256: parsed.data.sha256,
         mime: parsed.data.mime,
         sizeBytes: parsed.data.sizeBytes,
@@ -428,6 +446,9 @@ export const paExternalSupplyCreateBatch = onCall(
       {
         ...firestoreDeps,
         downloadFile: async (storageUri) => {
+          if (inlineBase64) {
+            return Buffer.from(inlineBase64, "base64")
+          }
           // gs://<bucket>/<path>
           const m = /^gs:\/\/([^/]+)\/(.+)$/.exec(storageUri)
           if (!m) throw new HttpsError("invalid-argument", "storage_uri_invalid")

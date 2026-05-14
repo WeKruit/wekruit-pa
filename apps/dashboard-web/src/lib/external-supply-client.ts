@@ -84,7 +84,12 @@ export interface CreateBatchUploadUrlResult {
 
 export interface CreateBatchInput {
   source: ExternalSource
-  storageUri: string
+  /** Legacy path — pre-uploaded GCS object. Either this or inlineBase64 must be set. */
+  storageUri?: string
+  /** v2.2: inline upload for tiny xlsx (≤5 MB) — skips signed-URL + CORS. */
+  inlineBase64?: string
+  /** Required when using inlineBase64 so the adapter can sniff sheet kind. */
+  filename?: string
   sha256: string
   mime: string
   sizeBytes: number
@@ -460,14 +465,20 @@ export interface PreviewBatchTagEnrichmentForecast {
 }
 
 export interface PreviewBatchInput {
-  source: ExternalSource
-  storageUri: string
-  sha256: string
+  /** Server signature: { filename, mime, base64Bytes, overrideSource?, forecastEvaluationFor?, columnMapping? } */
+  filename: string
   mime: string
-  sizeBytes: number
+  base64Bytes: string
+  overrideSource?: ExternalSource
+  forecastEvaluationFor?: { companyId: string; jobId: string }
+  columnMapping?: ManualCsvColumnMapping
+  /** Unused by server (kept for backwards-compat with callers that pass them). */
+  source?: ExternalSource
+  storageUri?: string
+  sha256?: string
+  sizeBytes?: number
   companyId?: string
   jobId?: string
-  columnMapping?: ManualCsvColumnMapping
   /** Optional operator-pinned adapter (forces override of auto-detect). */
   adapterOverride?: ExternalSource
 }
