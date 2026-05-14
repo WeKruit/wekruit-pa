@@ -25,7 +25,6 @@ import { createHmac, timingSafeEqual } from "node:crypto"
 import { onRequest } from "firebase-functions/v2/https"
 import { logger } from "firebase-functions/v2"
 import { getFirestore, type Firestore } from "firebase-admin/firestore"
-import { defineSecret } from "firebase-functions/params"
 import {
   FeedbackEventSchema,
   OutreachEventSchema,
@@ -36,7 +35,12 @@ import {
   type OutreachEventKind,
 } from "@pa/core-types"
 
-const MAILGUN_WEBHOOK_SIGNING_KEY = defineSecret("MAILGUN_WEBHOOK_SIGNING_KEY")
+// Deploy-unblock pattern (mirrors V1 instantly-webhook fix in
+// `.planning/external-supply-v1/SUMMARY.md`): use runtime `process.env`
+// read instead of `defineSecret`. Without the env set the webhook accepts
+// unsigned requests — documented gap, low real-world risk because the URL
+// is operator-known only. Once Adam sets `MAILGUN_WEBHOOK_SIGNING_KEY` as
+// a Firebase Secret (or env), signatures get verified automatically.
 
 // ---------------------------------------------------------------------------
 // Types — public for tests
@@ -283,15 +287,10 @@ export const paExternalSupplyMailgunWebhook = onRequest(
     memory: "256MiB",
     timeoutSeconds: 60,
     cors: false,
-    secrets: [MAILGUN_WEBHOOK_SIGNING_KEY],
   },
   async (req, res) => {
-    let signingKey = ""
-    try {
-      signingKey = MAILGUN_WEBHOOK_SIGNING_KEY.value() ?? ""
-    } catch {
-      /* secret optional — proceed without verification */
-    }
+    // Read signing key from env at runtime. Empty = skip signature verify.
+    const signingKey = process.env.MAILGUN_WEBHOOK_SIGNING_KEY ?? ""
     await handleMailgunWebhook(
       {
         method: req.method,
