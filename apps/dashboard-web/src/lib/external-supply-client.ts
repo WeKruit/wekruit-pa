@@ -326,10 +326,150 @@ export interface ListBatchCandidatesResult {
   companyId?: string
 }
 
-export const listBatchCandidates = callable<
-  { batchId: string },
-  ListBatchCandidatesResult
->("paExternalSupplyListBatchCandidates")
+/**
+ * Direct Firestore reader — no Cloud Function. The admin dashboard is gated
+ * by `isPaOperator()` in `firestore.rules` across every collection we touch
+ * (pa-external-candidate-records / pa-candidate-source-links /
+ * pa-candidate-company-job-evaluations), so we skip the callable and pay
+ * one cold-start + 256MiB OOM less per page load.
+ *
+ * N+1 protection: bulk `where("externalRecordId", "in", chunk-of-10)` for
+ * source-link resolution and the same shape for evaluations.
+ */
+export async function listBatchCandidates(
+  input: { batchId: string },
+): Promise<ListBatchCandidatesResult> {
+  const { batchId } = input
+  const fs = db()
+
+  const batchSnap = await getDoc(doc(fs, PA_COLLECTIONS.externalSourcingBatches, batchId))
+  const batchData = batchSnap.exists() ? (batchSnap.data() as Record<string, unknown>) : {}
+  const jobId = typeof batchData.jobId === "string" ? batchData.jobId : undefined
+  const companyId = typeof batchData.companyId === "string" ? batchData.companyId : undefined
+
+  const recSnap = await getDocs(
+    query(
+      collection(fs, PA_COLLECTIONS.externalCandidateRecords),
+      where("batchId", "==", batchId),
+      fsLimit(500),
+    ),
+  )
+
+  // Bulk resolve candidateId via pa-candidate-source-links — `in` query
+  // capped at 10, so we chunk.
+  const candidateIdByRecord = new Map<string, string>()
+  const needsResolve: string[] = []
+  for (const d of recSnap.docs) {
+    const r = d.data() as Record<string, unknown>
+    const recordId = (typeof r.recordId === "string" ? r.recordId : null) ?? d.id
+    if (typeof r.resolvedCandidateId === "string" && r.resolvedCandidateId) {
+      candidateIdByRecord.set(recordId, r.resolvedCandidateId)
+    } else {
+      needsResolve.push(recordId)
+    }
+  }
+  for (let i = 0; i < needsResolve.length; i += 10) {
+    const chunk = needsResolve.slice(i, i + 10)
+    try {
+      const linksSnap = await getDocs(
+        query(
+          collection(fs, PA_COLLECTIONS.candidateSourceLinks),
+          where("externalRecordId", "in", chunk),
+        ),
+      )
+      for (const ld of linksSnap.docs) {
+        const data = ld.data() as { candidateId?: string; externalRecordId?: string }
+        if (data.candidateId && data.externalRecordId) {
+          candidateIdByRecord.set(data.externalRecordId, data.candidateId)
+        }
+      }
+    } catch {
+      // Rules / index error — surface zero links rather than throw the whole list.
+    }
+  }
+
+  // Bulk evaluation lookup — only when batch has a bound job. Pick most-recent
+  // per candidate.
+  const evaluationByCandidate = new Map<string, Record<string, unknown> & { createdAt?: string }>()
+  if (jobId && candidateIdByRecord.size > 0) {
+    const ids = [...new Set(candidateIdByRecord.values())]
+    for (let i = 0; i < ids.length; i += 10) {
+      const chunk = ids.slice(i, i + 10)
+      try {
+        const evSnap = await getDocs(
+          query(
+            collection(fs, PA_COLLECTIONS.candidateCompanyJobEvaluations),
+            where("candidateId", "in", chunk),
+            where("jobId", "==", jobId),
+          ),
+        )
+        for (const ed of evSnap.docs) {
+          const data = ed.data() as Record<string, unknown> & {
+            candidateId?: string
+            createdAt?: string
+          }
+          if (!data.candidateId) continue
+          const existing = evaluationByCandidate.get(data.candidateId)
+          if (!existing || (data.createdAt ?? "") > (existing.createdAt ?? "")) {
+            evaluationByCandidate.set(data.candidateId, data)
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  const rows: BatchCandidateRow[] = []
+  for (const d of recSnap.docs) {
+    const r = d.data() as Record<string, unknown>
+    const recordId = (typeof r.recordId === "string" ? r.recordId : null) ?? d.id
+    const candidateId = candidateIdByRecord.get(recordId)
+    const enrichment = (r.enrichment ?? {}) as Record<string, unknown>
+    const emails = Array.isArray(r.emails) ? (r.emails as Array<{ value?: string }>) : []
+    const row: BatchCandidateRow = { recordId, batchId }
+    if (candidateId) row.candidateId = candidateId
+    if (typeof r.name === "string") row.name = r.name
+    if (typeof r.canonicalLinkedInUrl === "string") row.linkedinUrl = r.canonicalLinkedInUrl
+    if (typeof r.currentTitle === "string") row.currentTitle = r.currentTitle
+    if (typeof r.currentCompany === "string") row.currentCompany = r.currentCompany
+    if (typeof r.location === "string") row.location = r.location
+    if (emails[0]?.value) row.email = emails[0].value
+    if (typeof r.identityResolutionStatus === "string") row.identityResolutionStatus = r.identityResolutionStatus
+    if (typeof r.normalizationStatus === "string") row.normalizationStatus = r.normalizationStatus
+    if (enrichment.rubric) row.rubric = enrichment.rubric as Record<string, { value: string; passed: boolean | null }>
+    if (typeof enrichment.matchScore === "string") row.matchScore = enrichment.matchScore
+    if (typeof enrichment.headline === "string") row.headline = enrichment.headline
+    const ev = candidateId ? evaluationByCandidate.get(candidateId) : undefined
+    if (ev) {
+      const evalOut: BatchCandidateRow["evaluation"] = {}
+      if (typeof ev.proposedTier === "string") evalOut.tier = ev.proposedTier
+      if (typeof ev.generalRubricScore === "number") evalOut.score = ev.generalRubricScore
+      if (typeof ev.explanation === "string") evalOut.explanation = ev.explanation
+      row.evaluation = evalOut
+    }
+    rows.push(row)
+  }
+
+  rows.sort((a, b) => {
+    const ma = parseFloat(a.matchScore ?? "")
+    const mb = parseFloat(b.matchScore ?? "")
+    const maOk = Number.isFinite(ma)
+    const mbOk = Number.isFinite(mb)
+    if (maOk && mbOk && ma !== mb) return mb - ma
+    if (maOk && !mbOk) return -1
+    if (!maOk && mbOk) return 1
+    const ea = a.evaluation?.score ?? -1
+    const eb = b.evaluation?.score ?? -1
+    if (ea !== eb) return eb - ea
+    return (a.name ?? "").localeCompare(b.name ?? "")
+  })
+
+  const result: ListBatchCandidatesResult = { ok: true, batchId, rows }
+  if (jobId) result.jobId = jobId
+  if (companyId) result.companyId = companyId
+  return result
+}
 
 export interface CandidateDetail {
   recordId: string
@@ -352,9 +492,139 @@ export interface CandidateDetail {
   handles?: Array<{ kind: string; redactedValue: string }>
 }
 
-export const getCandidateDetail = callable<{ recordId: string }, CandidateDetail>(
-  "paExternalSupplyGetCandidateDetail",
-)
+function redactHandleValue(kind: string, raw: string): string {
+  if (kind === "email") {
+    const [local, domain] = raw.split("@")
+    if (!local || !domain) return raw
+    return `${local.slice(0, 2)}***@${domain}`
+  }
+  if (kind === "phone") return `***${raw.slice(-4)}`
+  if (kind === "linkedin") {
+    const m = /\/in\/([^/]+)/.exec(raw)
+    return m ? `linkedin.com/in/${m[1]}` : raw
+  }
+  return raw
+}
+
+export async function getCandidateDetail(input: { recordId: string }): Promise<CandidateDetail> {
+  const { recordId } = input
+  const fs = db()
+  const recSnap = await getDoc(doc(fs, PA_COLLECTIONS.externalCandidateRecords, recordId))
+  if (!recSnap.exists()) throw new Error(`record_not_found:${recordId}`)
+  const record = recSnap.data() as Record<string, unknown>
+  const batchId = typeof record.batchId === "string" ? record.batchId : ""
+
+  // Resolve candidateId
+  let candidateId: string | undefined
+  if (typeof record.resolvedCandidateId === "string" && record.resolvedCandidateId) {
+    candidateId = record.resolvedCandidateId
+  } else {
+    const linkSnap = await getDocs(
+      query(
+        collection(fs, PA_COLLECTIONS.candidateSourceLinks),
+        where("externalRecordId", "==", recordId),
+        fsLimit(1),
+      ),
+    )
+    if (!linkSnap.empty) {
+      const data = linkSnap.docs[0]!.data() as { candidateId?: string }
+      candidateId = data.candidateId
+    }
+  }
+
+  const detail: CandidateDetail = { recordId, batchId, record }
+  if (candidateId) detail.candidateId = candidateId
+
+  if (candidateId) {
+    const userSnap = await getDoc(doc(fs, PA_COLLECTIONS.users, candidateId))
+    if (userSnap.exists()) detail.candidate = userSnap.data() as Record<string, unknown>
+
+    try {
+      const resumeSnap = await getDocs(
+        query(
+          collection(fs, PA_COLLECTIONS.resumeArtifacts),
+          where("candidateId", "==", candidateId),
+          orderBy("createdAt", "desc"),
+          fsLimit(1),
+        ),
+      )
+      if (!resumeSnap.empty) {
+        const rd = resumeSnap.docs[0]!
+        const data = rd.data() as {
+          candidateProfileSummary?: string
+          storagePath?: string
+          parsedCandidateResumeId?: string
+        }
+        detail.resume = {
+          artifactId: rd.id,
+          ...(data.candidateProfileSummary ? { candidateProfileSummary: data.candidateProfileSummary } : {}),
+          ...(data.storagePath ? { storagePath: data.storagePath } : {}),
+          ...(data.parsedCandidateResumeId ? { parsedCandidateResumeId: data.parsedCandidateResumeId } : {}),
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    // Evaluation
+    if (batchId) {
+      const batchSnap = await getDoc(doc(fs, PA_COLLECTIONS.externalSourcingBatches, batchId))
+      const jobId = batchSnap.exists() ? (batchSnap.data() as { jobId?: string }).jobId : undefined
+      if (jobId) {
+        try {
+          const evSnap = await getDocs(
+            query(
+              collection(fs, PA_COLLECTIONS.candidateCompanyJobEvaluations),
+              where("candidateId", "==", candidateId),
+              where("jobId", "==", jobId),
+              orderBy("createdAt", "desc"),
+              fsLimit(1),
+            ),
+          )
+          if (!evSnap.empty) {
+            const ev = evSnap.docs[0]!
+            const data = ev.data() as Record<string, unknown> & {
+              proposedTier?: string
+              generalRubricScore?: number
+              explanation?: string
+            }
+            detail.evaluation = {
+              evaluationId: ev.id,
+              ...(data.proposedTier ? { proposedTier: data.proposedTier } : {}),
+              ...(typeof data.generalRubricScore === "number" ? { generalRubricScore: data.generalRubricScore } : {}),
+              ...(data.explanation ? { explanation: data.explanation } : {}),
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    // Handles (redacted)
+    try {
+      const handlesSnap = await getDocs(
+        query(
+          collection(fs, PA_COLLECTIONS.candidateHandles),
+          where("candidateId", "==", candidateId),
+          fsLimit(8),
+        ),
+      )
+      const handles: Array<{ kind: string; redactedValue: string }> = []
+      for (const h of handlesSnap.docs) {
+        const d = h.data() as { kind?: string; normalizedValue?: string; rawValue?: string }
+        const kind = d.kind ?? "unknown"
+        const raw = d.normalizedValue ?? d.rawValue ?? ""
+        if (raw) handles.push({ kind, redactedValue: redactHandleValue(kind, raw) })
+      }
+      if (handles.length > 0) detail.handles = handles
+    } catch {
+      // ignore
+    }
+  }
+
+  return detail
+}
 
 export const runEvaluation = callable<RunEvaluationInput, RunEvaluationResult>(
   "paExternalSupplyRunEvaluation",
