@@ -110,13 +110,17 @@ export default function CandidateLogin() {
   )
 }
 
-export function CandidateShell({ children }: { children: React.ReactNode }) {
+export function CandidateShell({ children, wide = false }: { children: React.ReactNode; wide?: boolean }) {
   return (
     <div className="candidate-shell">
       <style>{CANDIDATE_STYLES}</style>
-      <header className="candidate-header">
+      <header className={wide ? "candidate-header candidate-header-wide" : "candidate-header"}>
         <Link to="/" className="candidate-brand">WeKruit</Link>
-        <Link to="/me" className="candidate-header-link">Profile</Link>
+        <nav className="candidate-header-nav" aria-label="Candidate navigation">
+          <Link to="/" className="candidate-header-link">Jobs</Link>
+          <Link to="/me/matches" className="candidate-header-link">Matches</Link>
+          <Link to="/me" className="candidate-header-link">Profile</Link>
+        </nav>
       </header>
       {children}
     </div>
@@ -124,7 +128,14 @@ export function CandidateShell({ children }: { children: React.ReactNode }) {
 }
 
 const CANDIDATE_STYLES = `
+* {
+  box-sizing: border-box;
+}
+html {
+  background: #f6f2ea;
+}
 body {
+  margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Arial, sans-serif;
   background: #f6f2ea;
   color: #18211a;
@@ -139,12 +150,23 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 18px;
+}
+.candidate-header-wide {
+  max-width: 1040px;
 }
 .candidate-brand {
   color: #18211a;
   font-weight: 800;
   text-decoration: none;
   letter-spacing: 0;
+}
+.candidate-header-nav {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 16px;
+  flex-wrap: wrap;
 }
 .candidate-header-link,
 .candidate-muted-link {
@@ -285,7 +307,16 @@ body {
   font-weight: 800;
 }
 @media (max-width: 560px) {
-  .candidate-shell { padding: 16px; }
+  .candidate-shell { padding: 18px; }
+  .candidate-header {
+    align-items: flex-start;
+    flex-direction: column;
+    margin-bottom: 22px;
+  }
+  .candidate-header-nav {
+    justify-content: flex-start;
+    gap: 14px;
+  }
   .candidate-panel { padding: 18px; }
   .candidate-profile-list div { grid-template-columns: 1fr; gap: 4px; }
 }
