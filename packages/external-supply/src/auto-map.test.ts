@@ -137,12 +137,24 @@ test("inferColumnMapping — Android headers leave rubric columns verbatim", () 
   for (const h of expected) assert.ok(r.rubricColumns.includes(h), `missing ${h}`)
 })
 
-test("classifyRubricCell — recognizes ✅ / ❌ / Pass / Fail prefixes", () => {
+test("classifyRubricCell — Lessie reasoning-as-evidence + explicit prefixes", () => {
   assert.equal(classifyRubricCell("✅ Strong Rust 5+yrs").passed, true)
   assert.equal(classifyRubricCell("❌ No production Solana").passed, false)
   assert.equal(classifyRubricCell("Pass — has 4 years Android").passed, true)
   assert.equal(classifyRubricCell("Fail: not in US").passed, false)
-  assert.equal(classifyRubricCell("Some reasoning prose").passed, null)
-  assert.equal(classifyRubricCell("0.82").passed, null)
+  // Lessie convention: explanatory text without a prefix = criterion satisfied.
+  assert.equal(
+    classifyRubricCell(
+      "The candidate currently serves as a Full-Stack Engineer at Codementor.",
+    ).passed,
+    true,
+  )
+  // No / explicit fail still wins.
+  assert.equal(classifyRubricCell("No prior Solana experience").passed, false)
+  // Empty / dash / n/a → no signal.
   assert.equal(classifyRubricCell("").passed, null)
+  assert.equal(classifyRubricCell("—").passed, null)
+  assert.equal(classifyRubricCell("n/a").passed, null)
+  // Numeric-only stays null (raw score, not pass/fail).
+  assert.equal(classifyRubricCell("0.82").passed, null)
 })

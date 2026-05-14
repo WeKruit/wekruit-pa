@@ -293,9 +293,18 @@ export function parseLinkCell(rawCell: string | undefined | null): ClassifiedLin
 }
 
 /**
- * Classify a rubric cell as `passed=true/false/null`. PASS markers include
- * ✅ / ✓ / "pass" / "yes" / "true" / "✔"; FAIL markers ❌ / ✗ / "fail" / "no"
- * / "false". Anything else (e.g. reasoning prose) → `null`.
+ * Classify a rubric cell as `passed=true/false/null`.
+ *
+ * Lessie convention (observed across the export corpus): the rubric column
+ * contains REASONING TEXT when the criterion is satisfied, and is empty/
+ * dash when the criterion is missing. Explicit pass/fail prefixes (✅ ❌
+ * "Pass" "Fail" etc.) appear only on a small minority of exports.
+ *
+ *   Empty / "-" / "—" / "n/a"          → passed=null  (no signal)
+ *   Starts with ❌ / ✗ / "Fail" / "No"  → passed=false (explicit fail)
+ *   Starts with ✅ / ✓ / "Pass" / etc   → passed=true  (explicit pass)
+ *   Numeric only (e.g. "0.82")          → passed=null  (preserved verbatim)
+ *   Any other non-empty text            → passed=true  (Lessie reasoning)
  *
  * Cell value is preserved verbatim regardless — `passed` is purely a hint
  * for UI tinting + weak-tag merge filtering.
@@ -307,7 +316,7 @@ export function classifyRubricCell(value: string | undefined | null): {
   const v = (value ?? "").toString()
   const trimmed = v.trim()
   if (trimmed.length === 0) return { value: "", passed: null }
-  const lower = trimmed.toLowerCase()
+  if (/^[-—–]+$/.test(trimmed) || /^n\/?a$/i.test(trimmed)) return { value: v, passed: null }
   const PASS = [
     /^✅/,
     /^✔/,
@@ -319,11 +328,11 @@ export function classifyRubricCell(value: string | undefined | null): {
     /^match\b/i,
   ]
   const FAIL = [/^❌/, /^✗/, /^✘/, /^fail\b/i, /^no\b/i, /^false\b/i, /^weak\b/i, /^missing\b/i]
-  if (PASS.some((re) => re.test(trimmed))) return { value: v, passed: true }
   if (FAIL.some((re) => re.test(trimmed))) return { value: v, passed: false }
-  // Some Lessie cells start with the criterion verdict followed by reasoning,
-  // e.g. "Pass — 4+ yrs Solana ...". The /^pass\b/i regex above catches that.
-  // Numeric score-like cells (e.g. "0.82") → null (preserved verbatim).
-  if (/^-?\d+(\.\d+)?$/.test(lower)) return { value: v, passed: null }
-  return { value: v, passed: null }
+  if (PASS.some((re) => re.test(trimmed))) return { value: v, passed: true }
+  // Numeric-only cells (raw match scores) carry no pass/fail semantics.
+  if (/^-?\d+(\.\d+)?$/.test(trimmed)) return { value: v, passed: null }
+  // Default: Lessie's reasoning-text-as-evidence convention. A cell with
+  // explanatory prose means the criterion was satisfied.
+  return { value: v, passed: true }
 }
