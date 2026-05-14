@@ -204,6 +204,95 @@ export function inferColumnMapping(headers: readonly string[]): InferColumnMappi
 }
 
 /**
+ * Recognized social/portfolio link kinds. Order matters — `classifyLink`
+ * matches in this order, so list more specific hostnames first.
+ */
+export type LinkKind =
+  | "linkedin"
+  | "github"
+  | "twitter"
+  | "facebook"
+  | "instagram"
+  | "medium"
+  | "youtube"
+  | "tiktok"
+  | "dribbble"
+  | "behance"
+  | "stackoverflow"
+  | "personal"
+  | "other"
+
+export interface ClassifiedLink {
+  url: string
+  kind: LinkKind
+  /** Hostname for grouping/display (e.g. "linkedin.com", "github.com"). */
+  hostname: string
+}
+
+const LINK_HOST_PATTERNS: Array<{ kind: LinkKind; re: RegExp }> = [
+  { kind: "linkedin", re: /^(www\.|m\.)?linkedin\.com$/i },
+  { kind: "github", re: /^(www\.)?github\.com$/i },
+  { kind: "twitter", re: /^(www\.)?(twitter|x)\.com$/i },
+  { kind: "facebook", re: /^(www\.|m\.)?(facebook|fb)\.com$/i },
+  { kind: "instagram", re: /^(www\.)?instagram\.com$/i },
+  { kind: "medium", re: /^(www\.)?medium\.com$/i },
+  { kind: "youtube", re: /^(www\.|m\.)?youtube\.com$/i },
+  { kind: "tiktok", re: /^(www\.)?tiktok\.com$/i },
+  { kind: "dribbble", re: /^(www\.)?dribbble\.com$/i },
+  { kind: "behance", re: /^(www\.)?behance\.net$/i },
+  { kind: "stackoverflow", re: /^(www\.)?stackoverflow\.com$/i },
+]
+
+/**
+ * Classify a single URL into a LinkKind by hostname. Returns `other` /
+ * `personal` when no social host matches; "personal" reserved for short
+ * vanity domains (e.g. `alice.dev`), "other" for everything else.
+ */
+export function classifyLink(rawUrl: string): ClassifiedLink | null {
+  const trimmed = (rawUrl ?? "").trim()
+  if (!trimmed) return null
+  let url: URL
+  try {
+    url = new URL(trimmed.match(/^https?:\/\//i) ? trimmed : `https://${trimmed}`)
+  } catch {
+    return null
+  }
+  const host = url.hostname.toLowerCase()
+  for (const { kind, re } of LINK_HOST_PATTERNS) {
+    if (re.test(host)) {
+      return { url: url.toString(), kind, hostname: host }
+    }
+  }
+  // Heuristic — short vanity hosts (<= 30 chars, single dot) look like
+  // personal portfolios. Anything else gets bucketed as "other".
+  const isVanity = host.split(".").length <= 2 && host.length <= 30
+  return { url: url.toString(), kind: isVanity ? "personal" : "other", hostname: host }
+}
+
+/**
+ * Split a Lessie-style Link cell (which often packs multiple URLs separated
+ * by newlines) into a deduped array of classified links. Order preserved:
+ * the first link is the primary identity signal.
+ */
+export function parseLinkCell(rawCell: string | undefined | null): ClassifiedLink[] {
+  if (!rawCell) return []
+  const candidates = String(rawCell)
+    .split(/[\r\n]+|\s{2,}/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0 && /https?:\/\//i.test(s.length < 200 ? s : ""))
+  const out: ClassifiedLink[] = []
+  const seen = new Set<string>()
+  for (const c of candidates) {
+    const cls = classifyLink(c)
+    if (!cls) continue
+    if (seen.has(cls.url)) continue
+    seen.add(cls.url)
+    out.push(cls)
+  }
+  return out
+}
+
+/**
  * Classify a rubric cell as `passed=true/false/null`. PASS markers include
  * ✅ / ✓ / "pass" / "yes" / "true" / "✔"; FAIL markers ❌ / ✗ / "fail" / "no"
  * / "false". Anything else (e.g. reasoning prose) → `null`.

@@ -29,11 +29,13 @@ import {
   linkedinHash,
   normalizeEmail,
   normalizePhoneE164,
+  parseLinkCell,
   parseSheetToRows,
   phoneHash,
   sniffSheetKind,
   VIRTUAL_LOCATION_PARTS_HEADER,
   type AdapterSignature,
+  type ClassifiedLink,
   type InferColumnMappingResult,
   type ManualCsvColumnMappingShape,
   type RubricCellValue,
@@ -209,9 +211,16 @@ function normalizeRow(
 ): NormalizedRecordDraft {
   const errors: string[] = []
 
+  // Lessie packs multiple URLs into the Link cell (linkedin + github + x +
+  // medium etc, one per line). Parse all of them, classify by hostname,
+  // store as enrichment.links. First linkedin entry still drives identity.
   const linkedinRaw = readCol(row, columnMapping.linkedinUrl)
-  const canonical = linkedinRaw ? canonicalizeLinkedInUrl(linkedinRaw) : null
-  if (linkedinRaw && !canonical) errors.push("linkedin_url_invalid")
+  const classifiedLinks: ClassifiedLink[] = linkedinRaw ? parseLinkCell(linkedinRaw) : []
+  const primaryLinkedIn =
+    classifiedLinks.find((l) => l.kind === "linkedin")?.url ?? linkedinRaw
+  const canonical = primaryLinkedIn ? canonicalizeLinkedInUrl(primaryLinkedIn) : null
+  if (linkedinRaw && !canonical && classifiedLinks.length === 0)
+    errors.push("linkedin_url_invalid")
 
   const emailRaw = readCol(row, columnMapping.email)
   const normalizedEmail = emailRaw ? normalizeEmail(emailRaw) : null
@@ -256,6 +265,10 @@ function normalizeRow(
   // rubric chips.
   const headline = readCol(row, "Headline")
   if (headline) enrichment.headline = headline
+  // Multi-link support — every classified URL survives so the candidate
+  // browser can render github / x / instagram / medium chips alongside
+  // the primary linkedin link.
+  if (classifiedLinks.length > 0) enrichment.links = classifiedLinks
 
   const draft: NormalizedRecordDraft = {
     source: "manual_csv",
