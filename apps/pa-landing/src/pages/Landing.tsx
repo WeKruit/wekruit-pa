@@ -93,7 +93,10 @@ function JobList({ jobs }: { jobs: PublicJobOpening[] }) {
       {jobs.map((job) => (
         <Link className="home-job-card" key={job.id} to={`/j/${job.id}`} aria-label={`Open ${job.title}`}>
           <div>
-            <p className="home-job-company">{job.company}</p>
+            <div className="home-job-topline">
+              <p className="home-job-company">{job.company}</p>
+              <span className="wekruit-collab-badge">WeKruit collaborated</span>
+            </div>
             <h3>{job.title}</h3>
             <p className="home-job-meta">
               {[job.location, job.salaryRange, job.jobType].filter(Boolean).join(" · ")}
@@ -201,9 +204,30 @@ const LANDING_STYLES = `
   margin: 0;
   color: #5f665b;
 }
+.home-job-topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
 .home-job-company {
   color: #46624c;
   font-weight: 800;
+}
+.wekruit-collab-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 8px;
+  border: 1px solid #c6e6ce;
+  border-radius: 8px;
+  background: #e8f5ec;
+  color: #24543c;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1;
+  white-space: nowrap;
 }
 .home-job-card h3 {
   margin: 6px 0;

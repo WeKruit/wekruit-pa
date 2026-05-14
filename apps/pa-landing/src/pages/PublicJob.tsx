@@ -387,7 +387,10 @@ export default function PublicJob() {
       <main className="public-job-shell">
         <Link className="public-job-back" to="/">Back to jobs</Link>
         <section className="public-job-hero">
-          <p className="candidate-kicker">Open role</p>
+          <div className="public-job-kicker-row">
+            <p className="candidate-kicker">Open role</p>
+            <span className="public-job-collab-badge">WeKruit collaborated</span>
+          </div>
           <h1>{jobTitle}</h1>
           <p>{company}{job.location ? ` · ${job.location}` : ""}</p>
           <div className="public-job-facts">
@@ -505,6 +508,30 @@ const PUBLIC_JOB_STYLES = `
 }
 .public-job-hero {
   max-width: 780px;
+}
+.public-job-kicker-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.public-job-kicker-row .candidate-kicker {
+  margin: 0;
+}
+.public-job-collab-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 8px;
+  border: 1px solid #c6e6ce;
+  border-radius: 8px;
+  background: #e8f5ec;
+  color: #24543c;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1;
+  white-space: nowrap;
 }
 .public-job-hero h1 {
   margin: 0;
