@@ -47,6 +47,11 @@ interface PaJobDoc {
   prescreenConfig?: PrescreenConfig
   descriptionMd?: string
   location?: string
+  /** Top-level title used by rain / external-supply jobs without prescreenConfig. */
+  title?: string
+  companyId?: string
+  companyName?: string
+  rawLocation?: string
 }
 
 interface PoolNumber {
@@ -147,6 +152,7 @@ export default function PublicJob() {
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
   const [job, setJob] = useState<PaJobDoc | null>(null)
+  const [resolvedCompanyName, setResolvedCompanyName] = useState<string | null>(null)
   const [pool, setPool] = useState<PoolNumber[] | null>(null)
   const [smsClicked, setSmsClicked] = useState(false)
   const [user, setUser] = useState<User | null | undefined>(undefined)
@@ -229,6 +235,20 @@ export default function PublicJob() {
           return
         }
         setJob(data)
+        // Resolve company display name from pa-companies/{companyId} when the
+        // job doc lacks prescreenConfig.company / companyName denormalization
+        // (true for rain / external-supply seeded jobs).
+        if (!data.prescreenConfig?.company && !data.companyName && data.companyId) {
+          try {
+            const companySnap = await getDoc(doc(db(), "pa-companies", data.companyId))
+            if (companySnap.exists()) {
+              const cd = companySnap.data() as { name?: string }
+              if (typeof cd.name === "string") setResolvedCompanyName(cd.name)
+            }
+          } catch {
+            // ignore — fallback to "Confidential employer" below
+          }
+        }
         try {
           const poolSnap = await getDoc(doc(db(), "pa-config", "sendblue-pool"))
           if (poolSnap.exists()) {
@@ -394,9 +414,10 @@ export default function PublicJob() {
   }
 
   const cfg = job.prescreenConfig ?? {}
-  const jobTitle = cfg.jobTitle ?? "Open role"
-  const company = cfg.company ?? "Confidential employer"
-  const location = job.location ?? cfg.region
+  const jobTitle = cfg.jobTitle ?? job.title ?? "Open role"
+  const company =
+    cfg.company ?? job.companyName ?? resolvedCompanyName ?? "Confidential employer"
+  const location = job.location ?? job.rawLocation ?? cfg.region
   const salary = cfg.level1Reveal?.salaryRange
   const sendNumber = pickPoolNumber(pool, requestedUserId)
   const smsBody = `WeKruit_${jobId}_${requestedUserId}_Job`
