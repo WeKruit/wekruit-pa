@@ -10,10 +10,10 @@ import { useEffect, useMemo, useState, type FormEvent } from "react"
 import { Link, useParams } from "react-router-dom"
 import {
   GoogleAuthProvider,
-  OAuthProvider,
   getRedirectResult,
   onAuthStateChanged,
   sendSignInLinkToEmail,
+  signInWithCustomToken,
   signInWithRedirect,
   type User,
 } from "firebase/auth"
@@ -25,7 +25,9 @@ const CV_INGEST_URL = import.meta.env.VITE_CV_INGEST_URL ?? ""
 const GLOBAL_UID_KEY = "wkr_uid"
 const HAS_CV_KEY = "wkr_has_cv"
 const EMAIL_STORAGE_KEY = "wkr_claim_email"
-const LINKEDIN_PROVIDER_ID = import.meta.env.VITE_LINKEDIN_PROVIDER_ID ?? "oidc.linkedin"
+const LINKEDIN_AUTH_START_URL =
+  import.meta.env.VITE_LINKEDIN_AUTH_START_URL ??
+  "https://us-central1-wekruit-5f89b.cloudfunctions.net/paLinkedinAuthStart"
 
 interface PrescreenConfig {
   jobTitle?: string
@@ -105,12 +107,23 @@ function createGoogleProvider(): GoogleAuthProvider {
   return provider
 }
 
-function createLinkedInProvider(): OAuthProvider {
-  const provider = new OAuthProvider(LINKEDIN_PROVIDER_ID)
-  provider.addScope("openid")
-  provider.addScope("profile")
-  provider.addScope("email")
-  return provider
+function takeLinkedinAuthPayload(): { ok: true; customToken: string } | { ok: false; error: string } | null {
+  const prefix = "pa_linkedin_auth:"
+  if (!window.name.startsWith(prefix)) return null
+  const raw = window.name.slice(prefix.length)
+  window.name = ""
+  try {
+    const payload = JSON.parse(raw) as Record<string, unknown>
+    if (payload.ok === true && typeof payload.customToken === "string") {
+      return { ok: true, customToken: payload.customToken }
+    }
+    return {
+      ok: false,
+      error: typeof payload.error === "string" ? payload.error : "linkedin_auth_failed",
+    }
+  } catch {
+    return { ok: false, error: "linkedin_auth_payload_invalid" }
+  }
 }
 
 async function fileToBase64(file: File): Promise<string> {
@@ -147,6 +160,20 @@ export default function PublicJob() {
     let cancelled = false
     void (async () => {
       try {
+        const linkedinPayload = takeLinkedinAuthPayload()
+        if (linkedinPayload?.ok) {
+          const cred = await signInWithCustomToken(auth(), linkedinPayload.customToken)
+          if (!cancelled) {
+            setUser(cred.user)
+            setLoginStatus("idle")
+            setLoginPromptOpen(false)
+            setLoginPromptDismissed(true)
+          }
+          return
+        }
+        if (linkedinPayload && !linkedinPayload.ok) {
+          throw new Error(linkedinPayload.error)
+        }
         const result = await getRedirectResult(auth())
         if (!cancelled && result?.user) {
           setUser(result.user)
@@ -239,9 +266,14 @@ export default function PublicJob() {
   }, [job, loading, loginPromptDismissed, user])
 
   async function startProviderSignIn(kind: "google" | "linkedin") {
-    const provider = kind === "google" ? createGoogleProvider() : createLinkedInProvider()
     setLoginStatus(kind)
     setLoginError(null)
+    if (kind === "linkedin") {
+      const returnTo = `${window.location.origin}${nextPath}`
+      window.location.assign(`${LINKEDIN_AUTH_START_URL}?returnTo=${encodeURIComponent(returnTo)}`)
+      return
+    }
+    const provider = createGoogleProvider()
     try {
       await signInWithRedirect(auth(), provider)
     } catch (err) {

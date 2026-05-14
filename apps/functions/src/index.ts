@@ -190,6 +190,10 @@ export { paAtsInboundWebhook } from "./ats-inbound-webhook.js"
 // Frontend (PublicJobCv.tsx) POSTs base64 to this endpoint. ATS inbound
 // webhook (paAtsInboundWebhook) also targets this via PA_CV_INGEST_URL env.
 export { paPublicCvIngest } from "./public-cv-ingest.js"
+// Candidate LinkedIn auth cannot use Firebase generic OIDC because LinkedIn
+// rejects token exchange without client_secret. These HTTP functions own the
+// OAuth exchange server-side and return a Firebase custom token.
+export { paLinkedinAuthStart, paLinkedinCallback } from "./linkedin-auth.js"
 // v2.0 S2 — candidate email-link claim callable. Authenticated candidates
 // receive only the redacted candidate self-profile projection.
 export { paCandidateClaimProfile } from "./identity/claim-api.js"
@@ -2066,6 +2070,13 @@ export {
 // deferred from C's commit per L-C7 to avoid parallel-wave conflict; lead
 // merge-integration commit lands it.
 export { paExternalSupplyPreviewBatch } from "./external-supply/preview-batch.js"
+// V2.1 — candidates browser (loose-CSV + Lessie-style list/drawer).
+// Pure read-only joins, gated by requireExternalSupplyAdmin. Powers
+// /admin/external-supply/batches/:batchId/candidates.
+export {
+  paExternalSupplyListBatchCandidates,
+  paExternalSupplyGetCandidateDetail,
+} from "./external-supply/candidates-browser.js"
 
 // ============================================================
 // External Supply V2 — Wave E (F) flywheel rollup
