@@ -114,8 +114,13 @@ async function getCandidateIdForAuth(db: Firestore, firebaseUid: string): Promis
 }
 
 function projectStatus(stateValue: string | undefined, hasInvite: boolean): CandidateMatchCard["status"] {
+  if (stateValue === "candidate_matched") return "recommended"
+  if (stateValue === "outbound_queued") return "invited"
+  if (stateValue === "outbound_sent") return "invited"
+  if (stateValue === "candidate_interested") return "invited"
   if (stateValue === "prescreen_started") return "interview_started"
   if (stateValue === "passed") return "passed"
+  if (stateValue === "employer_visible") return "passed"
   if (stateValue === "not_passed") return "not_passed"
   if (stateValue === "paused") return "paused"
   return hasInvite ? "invited" : "recommended"
@@ -158,12 +163,16 @@ export async function runCandidateListMatches(
 
   const candidateId = await getCandidateIdForAuth(deps.db, firebaseUid)
   const limit = parseLimit(data)
-  const [matchSnap, inviteSnap] = await Promise.all([
+  const [matchSnap, inviteSnap, stateSnap] = await Promise.all([
     deps.db.collection(COLLECTIONS.candidateJobMatches).where("candidateId", "==", candidateId).limit(limit).get(),
     deps.db.collection(COLLECTIONS.outboundInvites).where("candidateId", "==", candidateId).limit(limit).get(),
+    deps.db.collection(COLLECTIONS.candidateJobStates).where("candidateId", "==", candidateId).limit(limit).get(),
   ])
 
-  const byJobId = new Map<string, { matchId?: string; match?: Record<string, unknown>; invite?: Record<string, unknown> }>()
+  const byJobId = new Map<
+    string,
+    { matchId?: string; match?: Record<string, unknown>; invite?: Record<string, unknown>; state?: Record<string, unknown> }
+  >()
   for (const doc of matchSnap.docs) {
     const row = doc.data() as Record<string, unknown>
     const jobId = cleanString(row.jobId, 200)
@@ -180,23 +189,35 @@ export async function runCandidateListMatches(
     if (!jobId || rowCandidateId !== candidateId) continue
     byJobId.set(jobId, { ...(byJobId.get(jobId) ?? {}), invite: row })
   }
+  for (const doc of stateSnap.docs) {
+    const row = doc.data() as Record<string, unknown>
+    const jobId = cleanString(row.jobId, 200)
+    const rowCandidateId = cleanString(row.candidateId, 200)
+    const state = cleanString(row.state, 80)
+    if (!jobId || rowCandidateId !== candidateId) continue
+    if (state === "archived") continue
+    byJobId.set(jobId, { ...(byJobId.get(jobId) ?? {}), state: row })
+  }
 
   const rows = await Promise.all(
     Array.from(byJobId.entries()).map(async ([jobId, row]) => {
-      const [jobSnap, stateSnap] = await Promise.all([
+      const [jobSnap, fallbackStateSnap] = await Promise.all([
         deps.db.collection(COLLECTIONS.jobs).doc(jobId).get(),
-        deps.db.collection(COLLECTIONS.candidateJobStates).doc(createCandidateJobStateId(candidateId, jobId)).get(),
+        row.state
+          ? Promise.resolve(null)
+          : deps.db.collection(COLLECTIONS.candidateJobStates).doc(createCandidateJobStateId(candidateId, jobId)).get(),
       ])
       if (!jobSnap.exists) return null
       const job = jobSnap.data() as Record<string, unknown>
       if (job.publicVisible !== true) return null
+      const state = row.state ?? (fallbackStateSnap?.exists ? (fallbackStateSnap.data() as Record<string, unknown>) : undefined)
       return projectMatchCard({
         jobId,
         matchId: row.matchId ?? createCandidateJobStateId(candidateId, jobId),
         match: row.match,
         invite: row.invite,
         job,
-        state: stateSnap.exists ? (stateSnap.data() as Record<string, unknown>) : undefined,
+        state,
       })
     })
   )

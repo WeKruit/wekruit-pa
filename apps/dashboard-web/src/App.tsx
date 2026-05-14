@@ -50,6 +50,8 @@ import { IdentityConflicts } from "./pages/IdentityConflicts.js"
 import SendbluePool from "./pages/SendbluePool.js"
 // v2.0 S6 - admin outreach readiness snapshot.
 import OutreachOps from "./pages/OutreachOps.js"
+// v2.0 S7 - job-scoped passed candidate snapshots.
+import PassedCandidates from "./pages/PassedCandidates.js"
 // v1.9 Phase 89 — pre-screen feedback aggregate.
 import PrescreenFeedback from "./pages/PrescreenFeedback.js"
 // v2.0 External Supply V1 — Wave D admin surfaces (Landing, BatchNew,
@@ -189,6 +191,7 @@ export default function App() {
         <NavSection id="match" label="Match" defaultOpen={false}>
           <NavLink to="/admin/match-debug">Match Debug</NavLink>
           <NavLink to="/match/candidates">Candidates</NavLink>
+          <NavLink to="/admin/passed-candidates">Passed Candidates</NavLink>
           <NavLink to="/admin/identity-conflicts">Identity Conflicts</NavLink>
         </NavSection>
         <NavSection id="eval" label="Eval" defaultOpen={false}>
@@ -281,6 +284,7 @@ export default function App() {
           <Route path="/match/explainer-test" element={<MatchExplainerTest />} />
           {/* v1.7 Phase 70 (MATCHDEBUG-01..04) — V16 live debugger. */}
           <Route path="/admin/match-debug" element={<MatchDebug />} />
+          <Route path="/admin/passed-candidates" element={<PassedCandidates />} />
           {/* v1.8 Phase 78 — Job pre-screen config editor. */}
           <Route path="/admin/jobs/:jobId/prescreen" element={<JobPrescreen />} />
           <Route path="/admin/job-prescreen" element={<JobPrescreen />} />

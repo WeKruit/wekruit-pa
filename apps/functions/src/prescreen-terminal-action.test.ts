@@ -6,7 +6,7 @@
  */
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { runPrescreenTerminalAction } from "./prescreen-terminal-action.js"
+import { runPrescreenTerminalAction, type RunPrescreenTerminalActionArgs } from "./prescreen-terminal-action.js"
 
 interface FakeDocState {
   exists: boolean
@@ -73,6 +73,8 @@ function fakePiiStart(captures: Array<{ source: string; userId: string }>) {
   }
 }
 
+const noopMarkOutcome: NonNullable<RunPrescreenTerminalActionArgs["markOutcome"]> = async () => undefined
+
 describe("runPrescreenTerminalAction — PASS branch (v1.9 hotfix)", () => {
   it("sends Level 1 reveal then starts PII pipeline (source=pass)", async () => {
     const docs = setupSession({
@@ -96,6 +98,7 @@ describe("runPrescreenTerminalAction — PASS branch (v1.9 hotfix)", () => {
       jobId: "j1",
       toE164: "+1",
       lang: "en",
+      markOutcome: noopMarkOutcome,
       sendSms: async (a) => {
         sent.push(a.content)
       },
@@ -134,6 +137,7 @@ describe("runPrescreenTerminalAction — FAIL branch (v1.9 hotfix)", () => {
       jobId: "j3",
       toE164: "+1",
       lang: "en",
+      markOutcome: noopMarkOutcome,
       sendSms: async (a) => {
         sent.push(a.content)
       },
@@ -169,6 +173,7 @@ describe("runPrescreenTerminalAction — HARD_STOP branch (v1.9 hotfix)", () => 
       jobId: "j4",
       toE164: "+1",
       lang: "en",
+      markOutcome: noopMarkOutcome,
       sendSms: async (a) => {
         sent.push(a.content)
       },
@@ -203,6 +208,7 @@ describe("runPrescreenTerminalAction — PAUSE branch", () => {
       jobId: "j5",
       toE164: "+1",
       lang: "en",
+      markOutcome: noopMarkOutcome,
       sendSms: async () => undefined,
       startPii: fakePiiStart(piiCaptures),
       generateJobRecs: async () => {
@@ -238,6 +244,7 @@ describe("runPrescreenTerminalAction — idempotency", () => {
       jobId: "j6",
       toE164: "+1",
       lang: "en",
+      markOutcome: noopMarkOutcome,
       sendSms: async () => undefined,
       startPii: fakePiiStart(piiCaptures),
       generateJobRecs: async () => ({ ok: true, jobCount: 0 }),
@@ -263,6 +270,7 @@ describe("runPrescreenTerminalAction — fail-open", () => {
       jobId: "j7",
       toE164: "+1",
       lang: "en",
+      markOutcome: noopMarkOutcome,
       sendSms: async () => undefined,
       startPii: async () => {
         throw new Error("pii boom")

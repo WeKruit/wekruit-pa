@@ -1,0 +1,10 @@
+name: "S7 outbound candidate PASS creates passed snapshot without new outbound"
+entry: "outbound"
+candidateId: "cand-s7-outbound"
+jobId: "job-s7-product-engineer"
+sessionId: "ps-s7-outbound-pass"
+terminal: "PASS"
+expected:
+  state: "employer_visible"
+  snapshotCount: 1
+  outboundWrites: 0

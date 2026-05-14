@@ -76,6 +76,18 @@ function lifecycle(type: CandidateLifecycleEvent["type"], over: Partial<Candidat
 }
 
 function job(type: CandidateJobEvent["type"], over: Partial<CandidateJobEvent> = {}): CandidateJobEvent {
+  const prescreenFields = [
+    "prescreen_started",
+    "prescreen_passed",
+    "prescreen_not_passed",
+    "manual_pause",
+  ].includes(type)
+    ? { prescreenSessionId: "ps-job-1-cand-1" }
+    : {}
+  const employerFields =
+    type === "employer_snapshot_created"
+      ? { employerVisibleProfileId: createEmployerVisibleProfileId("job-1", "cand-1") }
+      : {}
   return {
     eventId: `evt-${type}`,
     candidateId: "cand-1",
@@ -84,6 +96,8 @@ function job(type: CandidateJobEvent["type"], over: Partial<CandidateJobEvent> =
     occurredAt: now,
     evidence: [{ source: "system", summary: "test" }],
     type,
+    ...prescreenFields,
+    ...employerFields,
     ...(over as Record<string, unknown>),
   } as CandidateJobEvent
 }
@@ -613,6 +627,39 @@ test("candidate-job reducer preserves first-interview and NOT_PASS locks", () =>
   assert.equal(global.state, "retained", "NOT_PASS is not a global exit")
 })
 
+test("candidate-job prescreen events carry session evidence", () => {
+  assert.throws(
+    () =>
+      CandidateJobEventSchema.parse({
+        eventId: "evt-pass-missing-session",
+        candidateId: "cand-1",
+        jobId: "job-1",
+        actor: "system",
+        occurredAt: now,
+        evidence: [{ source: "prescreen", summary: "passed" }],
+        type: "prescreen_passed",
+      }),
+    /prescreenSessionId/
+  )
+  assert.equal(
+    CandidateJobEventSchema.parse(job("prescreen_passed")).prescreenSessionId,
+    "ps-job-1-cand-1"
+  )
+  assert.throws(
+    () =>
+      CandidateJobEventSchema.parse({
+        eventId: "evt-snapshot-missing-id",
+        candidateId: "cand-1",
+        jobId: "job-1",
+        actor: "system",
+        occurredAt: now,
+        evidence: [{ source: "prescreen", summary: "visible" }],
+        type: "employer_snapshot_created",
+      }),
+    /employerVisibleProfileId/
+  )
+})
+
 test("candidate-job outbound events require invite and delivery evidence", () => {
   assert.throws(() => CandidateJobEventSchema.parse(job("outbound_queued")), /outboundInviteId/)
   assert.throws(
@@ -684,6 +731,64 @@ test("candidate-job reducer requires passed state before employer visibility", (
   const passed = reduceCandidateJobState("prescreen_started", job("prescreen_passed")).state
   const visible = reduceCandidateJobState(passed, job("employer_snapshot_created"))
   assert.equal(visible.state, "employer_visible")
+})
+
+test("employer-visible profile snapshot rejects raw contact or storage values", () => {
+  const base = {
+    snapshotId: createEmployerVisibleProfileId("job-1", "cand-1"),
+    candidateId: "cand-1",
+    jobId: "job-1",
+    candidateJobStateId: createCandidateJobStateId("cand-1", "job-1"),
+    createdFromState: "passed",
+    createdAt: now,
+  }
+  assert.throws(
+    () => EmployerVisibleProfileSchema.parse({ ...base, resumeSummary: "Email me at alice@example.com" }),
+    /raw contact/
+  )
+  assert.throws(
+    () => EmployerVisibleProfileSchema.parse({ ...base, profileSummary: "Call +1 415 555 0100" }),
+    /raw contact/
+  )
+  assert.throws(
+    () => EmployerVisibleProfileSchema.parse({ ...base, matchReason: "See https://linkedin.com/in/alice" }),
+    /raw contact/
+  )
+  assert.throws(
+    () => EmployerVisibleProfileSchema.parse({ ...base, sourceResumeArtifactId: "gs://bucket/resume.pdf" }),
+    /raw contact/
+  )
+  assert.throws(
+    () =>
+      EmployerVisibleProfileSchema.parse({
+        ...base,
+        matchReason: "Resume artifact https://bucket.storage.googleapis.com/resume.pdf",
+      }),
+    /raw contact/
+  )
+  assert.doesNotThrow(() =>
+    EmployerVisibleProfileSchema.parse({
+      ...base,
+      matchReason:
+        "Lookalike hostnames are not treated as raw profile URLs: https://linkedin.com.evil.test/profile",
+    })
+  )
+  assert.doesNotThrow(() =>
+    EmployerVisibleProfileSchema.parse({
+      ...base,
+      profileSummary: "Frontend engineer with React and hiring-platform experience.",
+      passReason: "Strong structured interview responses.",
+    })
+  )
+  assert.doesNotThrow(() =>
+    EmployerVisibleProfileSchema.parse({
+      ...base,
+      snapshotId: createEmployerVisibleProfileId("5063962007", "cand-1"),
+      jobId: "5063962007",
+      candidateJobStateId: createCandidateJobStateId("cand-1", "5063962007"),
+      profileSummary: "Numeric ATS job ids are internal identifiers, not employer-visible contact text.",
+    })
+  )
 })
 
 test("document id helpers do not require raw PII", () => {

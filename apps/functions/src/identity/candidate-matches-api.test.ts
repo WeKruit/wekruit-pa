@@ -67,12 +67,18 @@ test("runCandidateListMatches returns public-safe candidate-owned match cards on
     candidateId: "cand-1",
     jobId: "job-1",
     state: "prescreen_started",
+    rawTranscript: "internal transcript should not leak",
+    employerSnapshot: { passReason: "internal employer snapshot should not leak" },
+    email: "candidate@example.com",
+    phone: "+15555550123",
   })
   await mfs.collection("pa-outbound-invites").doc("invite-1").set({
     inviteId: "invite-1",
     candidateId: "cand-1",
     jobId: "job-1",
     status: "queued",
+    providerMessageId: "provider-secret",
+    toE164: "+15555550123",
   })
   const writesBefore = mfs.writeLog.length
 
@@ -95,7 +101,65 @@ test("runCandidateListMatches returns public-safe candidate-owned match cards on
   assert.deepEqual(result.matches[0]!.whyMatched, ["React and TypeScript match the role."])
 
   const serialized = JSON.stringify(result)
-  assert.doesNotMatch(serialized, /scoreBreakdown|evidence|recommendedAction|internal risk/)
+  assert.doesNotMatch(
+    serialized,
+    /scoreBreakdown|evidence|recommendedAction|internal risk|rawTranscript|employerSnapshot|providerMessageId|toE164|candidate@example\.com|\+15555550123/
+  )
+})
+
+test("runCandidateListMatches includes direct state-only candidate job rows", async () => {
+  const mfs = new MockFirestore()
+  await mfs.collection("pa-candidate-auth").doc("firebase-1").set({
+    firebaseUid: "firebase-1",
+    candidateId: "cand-1",
+  })
+  await mfs.collection("pa-candidate-job-states").doc("cand-1__job-direct").set({
+    id: "cand-1__job-direct",
+    candidateId: "cand-1",
+    jobId: "job-direct",
+    state: "candidate_matched",
+    rawTranscript: "direct transcript should not leak",
+  })
+  await mfs.collection("pa-jobs").doc("job-direct").set({
+    publicVisible: true,
+    prescreenConfig: { jobTitle: "Backend Engineer", company: "Direct Co" },
+  })
+
+  const result = await runCandidateListMatches({}, { uid: "firebase-1" }, { db: asFirestore(mfs) })
+
+  assert.equal(result.matches.length, 1)
+  assert.equal(result.matches[0]!.matchId, "cand-1__job-direct")
+  assert.equal(result.matches[0]!.jobId, "job-direct")
+  assert.equal(result.matches[0]!.bucket, "recommended")
+  assert.equal(result.matches[0]!.status, "recommended")
+  assert.deepEqual(result.matches[0]!.whyMatched, ["This role matches your saved profile."])
+  assert.doesNotMatch(JSON.stringify(result), /rawTranscript/)
+})
+
+test("runCandidateListMatches maps employer visible state to candidate passed", async () => {
+  const mfs = new MockFirestore()
+  await mfs.collection("pa-candidate-auth").doc("firebase-1").set({
+    firebaseUid: "firebase-1",
+    candidateId: "cand-1",
+  })
+  await mfs.collection("pa-candidate-job-states").doc("cand-1__job-pass").set({
+    id: "cand-1__job-pass",
+    candidateId: "cand-1",
+    jobId: "job-pass",
+    state: "employer_visible",
+    employerVisibleProfileId: "evp-cand-1-job-pass",
+  })
+  await mfs.collection("pa-jobs").doc("job-pass").set({
+    publicVisible: true,
+    prescreenConfig: { jobTitle: "Product Engineer", company: "Pass Co" },
+  })
+
+  const result = await runCandidateListMatches({}, { uid: "firebase-1" }, { db: asFirestore(mfs) })
+
+  assert.equal(result.matches.length, 1)
+  assert.equal(result.matches[0]!.bucket, "invited")
+  assert.equal(result.matches[0]!.status, "passed")
+  assert.doesNotMatch(JSON.stringify(result), /employerVisibleProfileId|evp-cand-1-job-pass/)
 })
 
 test("runCandidateListMatches suppresses non-public jobs", async () => {

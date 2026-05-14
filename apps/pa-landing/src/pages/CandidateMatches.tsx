@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 import { Link } from "react-router-dom"
 import { httpsCallable } from "firebase/functions"
 import { functions } from "../lib/firebase.js"
+import { getCandidateJobStatusDisplay, type CandidateJobStatus } from "../lib/candidate-job-status.js"
 import { CandidateShell } from "./CandidateLogin.js"
 import { useClaimedProfile } from "./CandidatePortal.js"
 
@@ -9,7 +10,7 @@ type CandidateMatchCard = {
   matchId: string
   jobId: string
   bucket: "recommended" | "invited"
-  status: "recommended" | "invited" | "interview_started" | "passed" | "not_passed" | "paused"
+  status: CandidateJobStatus
   job: {
     title: string
     company: string
@@ -136,6 +137,7 @@ function MatchSection({ title, matches }: { title: string; matches: CandidateMat
 }
 
 function MatchCard({ match }: { match: CandidateMatchCard }) {
+  const status = getCandidateJobStatusDisplay(match.status, match.job.title)
   return (
     <article className="candidate-match-card">
       <div className="candidate-match-heading">
@@ -143,12 +145,13 @@ function MatchCard({ match }: { match: CandidateMatchCard }) {
           <h3>{match.job.title}</h3>
           <p>{match.job.company}{match.job.location ? ` · ${match.job.location}` : ""}</p>
         </div>
-        <span>{formatToken(match.status)}</span>
+        <span data-tone={status.tone}>{status.label}</span>
       </div>
       {match.job.salaryRange ? <p className="candidate-match-salary">{match.job.salaryRange}</p> : null}
+      <p className="candidate-match-next-step">{status.nextStep}</p>
       <ReasonList values={match.whyMatched} />
       <div className="candidate-actions">
-        <Link className="candidate-primary-link" to={match.job.href}>Open job</Link>
+        <Link className="candidate-primary-link" to={match.job.href}>{status.ctaLabel}</Link>
       </div>
     </article>
   )
@@ -166,10 +169,6 @@ function ReasonList({ values }: { values: string[] }) {
       </ul>
     </section>
   )
-}
-
-function formatToken(value: string): string {
-  return value.replaceAll("_", " ")
 }
 
 const CANDIDATE_MATCHES_STYLES = `
@@ -235,10 +234,27 @@ const CANDIDATE_MATCHES_STYLES = `
   text-transform: capitalize;
   white-space: nowrap;
 }
+.candidate-match-heading span[data-tone="active"] {
+  background: #eef2ff;
+  color: #2f427f;
+}
+.candidate-match-heading span[data-tone="positive"] {
+  background: #e8f5ec;
+  color: #16643b;
+}
+.candidate-match-heading span[data-tone="muted"] {
+  background: #f0eee8;
+  color: #5f665b;
+}
 .candidate-match-salary {
   margin: 0;
   color: #16643b;
   font-weight: 800;
+}
+.candidate-match-next-step {
+  margin: 0;
+  color: #364233;
+  line-height: 1.45;
 }
 .candidate-match-reasons h4 {
   margin: 0 0 6px;

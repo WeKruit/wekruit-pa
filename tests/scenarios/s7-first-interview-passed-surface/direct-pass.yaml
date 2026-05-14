@@ -1,0 +1,10 @@
+name: "S7 direct candidate PASS creates passed snapshot"
+entry: "direct"
+candidateId: "cand-s7-direct"
+jobId: "job-s7-product-engineer"
+sessionId: "ps-s7-direct-pass"
+terminal: "PASS"
+expected:
+  state: "employer_visible"
+  snapshotCount: 1
+  outboundWrites: 0

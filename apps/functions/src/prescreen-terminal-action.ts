@@ -29,6 +29,7 @@ import type { Firestore, Timestamp } from "firebase-admin/firestore"
 import { composeLevel1Reveal, composeFailJobRecsPreamble, type Level1RevealFields } from "@pa/pa-orchestrator"
 import { sendImessage } from "./sendblue/sendblue-client.js"
 import { runPiiConfirmForUser } from "./pii-confirm-start.js"
+import { markPrescreenTerminalOutcome } from "./prescreen-outcome-service.js"
 
 export type PrescreenTerminalKind = "PASS" | "FAIL" | "HARD_STOP" | "PAUSE"
 
@@ -63,6 +64,15 @@ export interface RunPrescreenTerminalActionArgs {
     userId?: string
     db?: import("firebase-admin/firestore").Firestore
   }) => Promise<void>
+  /** Optional injected marketplace outcome marker for tests. */
+  markOutcome?: (args: {
+    db: Firestore
+    sessionId: string
+    userId: string
+    jobId: string
+    terminal: PrescreenTerminalKind
+    occurredAt: string
+  }) => Promise<unknown>
   /** Optional clock for tests. */
   now?: () => Date
   log?: (event: string, payload: Record<string, unknown>) => void
@@ -240,6 +250,10 @@ export async function runPrescreenTerminalAction(
   const now = args.now ?? (() => new Date())
   const send = args.sendSms ?? defaultSendSms
   const genJobRecs = args.generateJobRecs ?? defaultGenerateJobRecs
+  const markOutcome =
+    args.markOutcome ??
+    ((input: Parameters<NonNullable<RunPrescreenTerminalActionArgs["markOutcome"]>>[0]) =>
+      markPrescreenTerminalOutcome(input))
 
   const sessRef = args.db.collection("pa-prescreen-sessions").doc(args.sessionId)
 
@@ -258,6 +272,16 @@ export async function runPrescreenTerminalAction(
   let level1Sent = false
   let jobRecsFired = false
   let jobRecsResult: { ok: boolean; jobCount: number; reason?: string } | undefined
+  const outcomeAt = now().toISOString()
+
+  await markOutcome({
+    db: args.db,
+    sessionId: args.sessionId,
+    userId: args.userId,
+    jobId: args.jobId,
+    terminal: args.terminal,
+    occurredAt: outcomeAt,
+  })
 
   // v1.9 hotfix flow:
   //   PASS:        Level 1 reveal → start PII confirm → (onComplete) job recs

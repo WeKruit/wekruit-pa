@@ -1,0 +1,22 @@
+{
+  "commands": [
+    "node --import tsx --test tests/eval/s7-first-interview-passed-surface/*.test.ts",
+    "Firestore count(pa-outbound) before and after non-sending production curl smokes"
+  ],
+  "mode": "offline-fake-firestore-and-production-readonly",
+  "liveOutboundApproved": false,
+  "offlineBefore": {
+    "pa-outbound": 0
+  },
+  "offlineAfter": {
+    "pa-outbound": 0
+  },
+  "productionBefore": {
+    "pa-outbound": 190
+  },
+  "productionAfter": {
+    "pa-outbound": 190
+  },
+  "result": "PASS",
+  "notes": "S7 verification did not use live Sendblue or real candidate contact. Production reads used the repo Firebase service account for aggregate count only."
+}

@@ -1,0 +1,52 @@
+{
+  "generatedAt": "2026-05-13T12:00:00.000Z",
+  "command": "node --import tsx --test tests/eval/s7-first-interview-passed-surface/*.test.ts",
+  "result": "PASS",
+  "tests": 6,
+  "scenarios": [
+    {
+      "name": "direct-pass-low-score",
+      "entry": "direct",
+      "terminal": "PASS",
+      "candidateJobState": "employer_visible",
+      "snapshotCount": 1,
+      "hiddenNonPassedCount": 0,
+      "outboundWriteCount": 0
+    },
+    {
+      "name": "outbound-pass-no-new-outbound",
+      "entry": "outbound",
+      "terminal": "PASS",
+      "candidateJobState": "employer_visible",
+      "snapshotCount": 1,
+      "hiddenNonPassedCount": 0,
+      "outboundWriteCount": 0
+    },
+    {
+      "name": "passed-only-admin-query",
+      "terminal": "mixed",
+      "candidateJobState": "employer_visible",
+      "snapshotCount": 1,
+      "hiddenNonPassedCount": 4,
+      "outboundWriteCount": 0
+    },
+    {
+      "name": "consent-missing-redaction",
+      "terminal": "PASS",
+      "candidateJobState": "employer_visible",
+      "snapshotCount": 1,
+      "hiddenNonPassedCount": 0,
+      "outboundWriteCount": 0
+    },
+    {
+      "name": "domain-regression",
+      "candidateJobRoute": "candidate-hosted",
+      "adminPassedRoute": "admin-only",
+      "result": "PASS"
+    },
+    {
+      "name": "static-guards",
+      "result": "PASS"
+    }
+  ]
+}

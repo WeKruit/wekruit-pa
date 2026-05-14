@@ -25,6 +25,7 @@ import {
   type PrescreenConfig,
 } from "@pa/pa-orchestrator"
 import { sendImessage } from "./sendblue/sendblue-client.js"
+import { markFirstInterviewStarted } from "./prescreen-outcome-service.js"
 
 export interface RunPreScreenArgs {
   db: Firestore
@@ -41,6 +42,13 @@ export interface RunPreScreenArgs {
    * consumed at the trigger level — do NOT re-consume here.
    */
   sourceRequestedUserId?: string
+  markStarted?: (args: {
+    db: Firestore
+    sessionId: string
+    userId: string
+    jobId: string
+    occurredAt: string
+  }) => Promise<unknown>
   log?: (event: string, payload: Record<string, unknown>) => void
 }
 
@@ -58,6 +66,7 @@ function deriveSessionId(jobId: string, userId: string, nowIso: string): string 
 
 export async function runPreScreenForUser(args: RunPreScreenArgs): Promise<RunPreScreenResult> {
   const log = args.log ?? (() => {})
+  const markStarted = args.markStarted ?? markFirstInterviewStarted
   const nowIso = new Date().toISOString()
   const sessionId = deriveSessionId(args.jobId, args.userId, nowIso)
 
@@ -162,6 +171,15 @@ export async function runPreScreenForUser(args: RunPreScreenArgs): Promise<RunPr
   }
 
   try {
+    if (!existing.exists || isResume) {
+      await markStarted({
+        db: args.db,
+        sessionId,
+        userId: args.userId,
+        jobId: args.jobId,
+        occurredAt: nowIso,
+      })
+    }
     await sendImessage({ to: args.toE164, content: opener, userId: args.userId, db: args.db })
     log("prescreen.session_started", {
       sessionId,

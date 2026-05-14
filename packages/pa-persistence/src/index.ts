@@ -239,6 +239,7 @@ export {
   approveJobOpportunityDraft,
   applyCandidateJobEvent,
   applyCandidateLifecycleEvent,
+  applyPassedCandidateSnapshot,
   markOutboundInviteDelivery,
   markOutboundInviteQueued,
   rejectJobOpportunityDraft,
@@ -252,6 +253,8 @@ export {
 } from "./marketplace.js"
 export type {
   ApproveJobOpportunityDraftInput,
+  ApplyPassedCandidateSnapshotInput,
+  ApplyPassedCandidateSnapshotResult,
   MarkOutboundInviteDeliveryInput,
   MarkOutboundInviteQueuedInput,
   MarketplaceTransitionResult,

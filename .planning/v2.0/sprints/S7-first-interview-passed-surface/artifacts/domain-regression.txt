@@ -1,0 +1,11 @@
+PASS
+
+Command:
+node --import tsx --test tests/eval/s7-first-interview-passed-surface/s7-domain-regression.test.ts
+
+Verified:
+- `pa-dashboard` redirects `/j/:rest*` to `https://candidate.wekruit.com/j/:rest*` with HTTP 301.
+- `pa-landing` owns wildcard SPA rewrites for candidate routes.
+- Dashboard app contains `/admin/passed-candidates`.
+- Dashboard app does not define candidate `/j/...` routes.
+- Candidate domain does not host admin route strings in dashboard routing.
