@@ -312,6 +312,12 @@ export const runLinkedInEnrich = callable<
   RunLinkedInEnrichResult
 >("paExternalSupplyRunLinkedInEnrich")
 
+// V2 P3.3 — poll outstanding BrightData snapshot for ready data
+export const pollLinkedInEnrich = callable<
+  RunLinkedInEnrichInput,
+  RunLinkedInEnrichResult
+>("paExternalSupplyPollLinkedInEnrich")
+
 // V2 P3.2 — GitHub public-profile enrich (no key needed, free GitHub REST API)
 export interface RunGitHubEnrichInput {
   recordId?: string
