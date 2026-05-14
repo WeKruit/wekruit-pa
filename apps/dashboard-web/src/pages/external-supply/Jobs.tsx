@@ -23,6 +23,7 @@ import {
   Panel,
 } from "../../components/ui.js"
 import {
+  listBatches,
   listCompanies,
   listJobs,
   listJobsByCompany,
@@ -135,6 +136,12 @@ function AllCompanies() {
 function CompanyJobs({ companyId }: { companyId: string }) {
   const [company, setCompany] = useState<CompanyRow | null>(null)
   const [jobs, setJobs] = useState<JobRow[]>([])
+  // Map jobId → latest batch summary so we can render "Browse N candidates →"
+  // when a job already has a sourced batch, instead of pushing every click to
+  // the new-batch wizard.
+  const [batchesByJob, setBatchesByJob] = useState<Map<string, { batchId: string; rowCount: number }>>(
+    new Map(),
+  )
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -144,10 +151,23 @@ function CompanyJobs({ companyId }: { companyId: string }) {
     setError(null)
     void (async () => {
       try {
-        const [co, js] = await Promise.all([getCompany(companyId), listJobsByCompany(companyId, 500)])
+        const [co, js, batchPage] = await Promise.all([
+          getCompany(companyId),
+          listJobsByCompany(companyId, 500),
+          listBatches({ limit: 200 }),
+        ])
         if (cancelled) return
         setCompany(co)
         setJobs(js)
+        // Pick the most-recent batch per jobId (listBatches already orders by
+        // createdAt desc).
+        const byJob = new Map<string, { batchId: string; rowCount: number }>()
+        for (const b of batchPage.rows) {
+          if (!b.jobId) continue
+          if (byJob.has(b.jobId)) continue
+          byJob.set(b.jobId, { batchId: b.batchId, rowCount: b.rowCount ?? 0 })
+        }
+        setBatchesByJob(byJob)
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err))
       } finally {
@@ -216,13 +236,40 @@ function CompanyJobs({ companyId }: { companyId: string }) {
                       : "—"}
                   </td>
                   <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>
-                    <Link
-                      to={`/admin/external-supply/batches/new?companyId=${encodeURIComponent(
-                        companyId,
-                      )}&jobId=${encodeURIComponent(j.jobId)}`}
-                    >
-                      Source candidates →
-                    </Link>
+                    {(() => {
+                      const existing = batchesByJob.get(j.jobId)
+                      if (existing) {
+                        return (
+                          <>
+                            <Link
+                              to={`/admin/external-supply/batches/${encodeURIComponent(
+                                existing.batchId,
+                              )}/candidates`}
+                            >
+                              Browse {existing.rowCount} candidates →
+                            </Link>
+                            {" · "}
+                            <Link
+                              to={`/admin/external-supply/batches/new?companyId=${encodeURIComponent(
+                                companyId,
+                              )}&jobId=${encodeURIComponent(j.jobId)}`}
+                              style={{ color: "#64748b" }}
+                            >
+                              +upload more
+                            </Link>
+                          </>
+                        )
+                      }
+                      return (
+                        <Link
+                          to={`/admin/external-supply/batches/new?companyId=${encodeURIComponent(
+                            companyId,
+                          )}&jobId=${encodeURIComponent(j.jobId)}`}
+                        >
+                          Source candidates →
+                        </Link>
+                      )
+                    })()}
                     {j.atsApplyUrl ? (
                       <>
                         {" · "}

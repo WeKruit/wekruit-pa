@@ -301,43 +301,11 @@ function PickPanel({
   onPreview: () => void
 }) {
   return (
-    <Panel
-      title="1. Pick source + file"
-      eyebrow={SOURCES.find((s) => s.value === finalSource)?.label ?? finalSource}
-    >
+    <Panel title="Drop the export" eyebrow={finalSource === "manual_csv" ? "auto-detected (xlsx/csv)" : finalSource}>
       <div style={{ display: "flex", flexDirection: "column", gap: 12, maxWidth: 760 }}>
         <Dropzone file={file} onFile={onFile} accept={ACCEPT} error={null} />
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-          <label style={fieldStyle}>
-            <span style={labelTextStyle}>Source adapter (initial guess)</span>
-            <select
-              value={source}
-              onChange={(e) => setSource(e.target.value as ExternalSource)}
-              style={inputStyle}
-            >
-              {SOURCES.map((s) => (
-                <option key={s.value} value={s.value}>
-                  {s.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label style={fieldStyle}>
-            <span style={labelTextStyle}>Adapter override (optional)</span>
-            <select
-              value={adapterOverride}
-              onChange={(e) => setAdapterOverride(e.target.value as ExternalSource | "")}
-              style={inputStyle}
-            >
-              <option value="">— no override —</option>
-              {SOURCES.map((s) => (
-                <option key={s.value} value={s.value}>
-                  {s.label}
-                </option>
-              ))}
-            </select>
-          </label>
           <label style={fieldStyle}>
             <span style={labelTextStyle}>Company ID (optional, for tier forecast)</span>
             <input
@@ -359,10 +327,6 @@ function PickPanel({
             />
           </label>
         </div>
-
-        {finalSource === "manual_csv" && (
-          <ManualMappingEditor mapping={columnMapping} onChange={setColumnMapping} />
-        )}
 
         {error && <ErrorState message={error} />}
 
@@ -461,9 +425,10 @@ function PreviewPanelWithActions({
   )
 }
 
-const FIELD_OPTIONS: Array<{ value: keyof ManualCsvColumnMapping | "rubric" | "ignore"; label: string }> = [
+const FIELD_OPTIONS: Array<{ value: keyof ManualCsvColumnMapping | "rubric" | "ignore" | "matchScore"; label: string }> = [
   { value: "ignore", label: "— ignore —" },
   { value: "rubric", label: "Rubric criterion" },
+  { value: "matchScore", label: "Match score (preserved)" },
   { value: "linkedinUrl", label: "LinkedIn URL" },
   { value: "email", label: "Email" },
   { value: "phone", label: "Phone" },
@@ -478,10 +443,12 @@ function currentFieldForHeader(
   header: string,
   mapping: ManualCsvColumnMapping,
   rubricColumns: string[],
+  matchScoreColumn: string | undefined,
 ): (typeof FIELD_OPTIONS)[number]["value"] {
   for (const [field, mapped] of Object.entries(mapping) as [keyof ManualCsvColumnMapping, string | undefined][]) {
     if (mapped === header) return field
   }
+  if (matchScoreColumn === header) return "matchScore"
   if (rubricColumns.includes(header)) return "rubric"
   return "ignore"
 }
@@ -516,7 +483,7 @@ function AutoMappingTable({
     for (const [k, v] of Object.entries(next) as [keyof ManualCsvColumnMapping, string | undefined][]) {
       if (v === header) delete next[k]
     }
-    if (field !== "ignore" && field !== "rubric") {
+    if (field !== "ignore" && field !== "rubric" && field !== "matchScore") {
       next[field] = header
     }
     onChange(next)
@@ -551,7 +518,7 @@ function AutoMappingTable({
             {headers.map((h) => {
               const sample = sampleRows[0]?.[h] ?? ""
               const truncated = sample.length > 80 ? `${sample.slice(0, 80)}…` : sample
-              const current = currentFieldForHeader(h, mapping, inferred.rubricColumns)
+              const current = currentFieldForHeader(h, mapping, inferred.rubricColumns, inferred.matchScoreColumn)
               return (
                 <tr key={h} style={{ borderBottom: "1px solid #f1f5f9" }}>
                   <td style={{ ...cellStyle, fontWeight: 500 }}>{h}</td>
