@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import { Link } from "react-router-dom"
-import { collection, getDocs, limit, query, where } from "firebase/firestore"
+import { collection, doc, getDoc, getDocs, limit, query, where } from "firebase/firestore"
 import { db } from "../lib/firebase.js"
 import { CandidateShell } from "./CandidateLogin.js"
 
@@ -10,6 +10,11 @@ interface PublicJobListDoc {
    *  collaborated" badge. Inferred-from-publicVisible is forbidden per
    *  the job-lifecycle contract. */
   wekruitCollaborationStatus?: "collaborated" | "not_collaborated"
+  /** Top-level title — set on rain / external-supply jobs that don't use prescreenConfig. */
+  title?: string
+  companyId?: string
+  companyName?: string
+  rawLocation?: string
   prescreenConfig?: {
     jobTitle?: string
     company?: string
@@ -44,16 +49,46 @@ export default function Landing() {
     let cancelled = false
     void (async () => {
       try {
-        const snap = await getDocs(query(collection(db(), "pa-jobs"), where("publicVisible", "==", true), limit(24)))
-        const jobs = snap.docs
-          .map((docSnap) => {
-            const data = docSnap.data() as PublicJobListDoc
+        const snap = await getDocs(query(collection(db(), "pa-jobs"), where("publicVisible", "==", true), limit(48)))
+        // Resolve company display name: prescreenConfig.company → top-level
+        // companyName → pa-companies/{companyId}.name lookup → "Confidential
+        // employer" fallback. Cache pa-companies fetches across rows.
+        const docs = snap.docs.map((d) => ({ id: d.id, data: d.data() as PublicJobListDoc }))
+        const companyIds = Array.from(
+          new Set(
+            docs
+              .filter((d) => !d.data.prescreenConfig?.company && !d.data.companyName && d.data.companyId)
+              .map((d) => d.data.companyId!),
+          ),
+        )
+        const companyNameById = new Map<string, string>()
+        await Promise.all(
+          companyIds.map(async (cid) => {
+            try {
+              const cs = await getDoc(doc(db(), "pa-companies", cid))
+              if (cs.exists()) {
+                const cd = cs.data() as { name?: string }
+                if (typeof cd.name === "string") companyNameById.set(cid, cd.name)
+              }
+            } catch {
+              // ignore — falls through to fallback
+            }
+          }),
+        )
+        const jobs = docs
+          .map(({ id, data }) => {
             const cfg = data.prescreenConfig ?? {}
+            const title = cfg.jobTitle ?? data.title ?? "Open role"
+            const companyName =
+              cfg.company ??
+              data.companyName ??
+              (data.companyId ? companyNameById.get(data.companyId) : undefined) ??
+              "Confidential employer"
             return {
-              id: docSnap.id,
-              title: cfg.jobTitle ?? "Open role",
-              company: cfg.company ?? "Confidential employer",
-              location: data.location ?? cfg.region,
+              id,
+              title,
+              company: companyName,
+              location: data.location ?? data.rawLocation ?? cfg.region,
               salary: cfg.level1Reveal?.salaryRange,
               jobType: cfg.jobType,
               collaborated: data.wekruitCollaborationStatus === "collaborated",
