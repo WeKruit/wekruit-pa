@@ -74,6 +74,7 @@ import { Audit as ExternalSupplyAudit } from "./pages/external-supply/Audit.js"
 import { EvaluationAgentRanking as ExternalSupplyEvaluationAgentRanking } from "./pages/external-supply/EvaluationAgentRanking.js"
 // Post-V2 hotfix 2026-05-14 — per-company / per-job sourcing entry surface.
 import { Jobs as ExternalSupplyJobs } from "./pages/external-supply/Jobs.js"
+import { JobWorkspace } from "./pages/admin/JobWorkspace.js"
 
 // v1.8 — collapsible sidebar section. Persists open/closed to localStorage.
 function NavSection({
@@ -318,6 +319,7 @@ export default function App() {
           <Route path="/admin/external-supply" element={<ExternalSupplyLanding />} />
           <Route path="/admin/external-supply/jobs" element={<ExternalSupplyJobs />} />
           <Route path="/admin/external-supply/jobs/:companyId" element={<ExternalSupplyJobs />} />
+          <Route path="/admin/jobs/:jobId" element={<JobWorkspace />} />
           <Route path="/admin/external-supply/batches/new" element={<ExternalSupplyBatchNew />} />
           <Route path="/admin/external-supply/batches/:batchId" element={<ExternalSupplyBatchDetail />} />
           <Route

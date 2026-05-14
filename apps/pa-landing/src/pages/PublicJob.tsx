@@ -42,6 +42,8 @@ interface PrescreenConfig {
 
 interface PaJobDoc {
   publicVisible?: boolean
+  /** v2.4: collaboration flag — gates the "WeKruit collaborated" badge. */
+  wekruitCollaborationStatus?: "collaborated" | "not_collaborated"
   prescreenConfig?: PrescreenConfig
   descriptionMd?: string
   location?: string
@@ -409,7 +411,9 @@ export default function PublicJob() {
           <div className="public-job-title-block">
             <div className="public-job-badges">
               <span>Open role</span>
-              <span className="public-job-collab-badge">WeKruit collaborated</span>
+              {job.wekruitCollaborationStatus === "collaborated" ? (
+                <span className="public-job-collab-badge">WeKruit collaborated</span>
+              ) : null}
             </div>
             <h1>{jobTitle}</h1>
             <p>{company}{location ? ` · ${location}` : ""}</p>

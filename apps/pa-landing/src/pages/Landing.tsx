@@ -6,6 +6,10 @@ import { CandidateShell } from "./CandidateLogin.js"
 
 interface PublicJobListDoc {
   publicVisible?: boolean
+  /** v2.4 (2026-05-14): explicit collaboration flag — drives the "WeKruit
+   *  collaborated" badge. Inferred-from-publicVisible is forbidden per
+   *  the job-lifecycle contract. */
+  wekruitCollaborationStatus?: "collaborated" | "not_collaborated"
   prescreenConfig?: {
     jobTitle?: string
     company?: string
@@ -25,6 +29,7 @@ interface PublicJobListItem {
   location?: string
   salary?: string
   jobType?: string
+  collaborated: boolean
 }
 
 type JobsState =
@@ -51,6 +56,7 @@ export default function Landing() {
               location: data.location ?? cfg.region,
               salary: cfg.level1Reveal?.salaryRange,
               jobType: cfg.jobType,
+              collaborated: data.wekruitCollaborationStatus === "collaborated",
             }
           })
           .sort((a, b) => `${a.company} ${a.title}`.localeCompare(`${b.company} ${b.title}`))
@@ -98,7 +104,7 @@ export default function Landing() {
                   <div>
                     <div className="landing-job-badges">
                       <span>Open role</span>
-                      <span>WeKruit collaborated</span>
+                      {job.collaborated ? <span>WeKruit collaborated</span> : null}
                     </div>
                     <h3>{job.title}</h3>
                     <p>{job.company}{job.location ? ` · ${job.location}` : ""}</p>
