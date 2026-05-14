@@ -62,8 +62,12 @@ import {
   composeEvaluation,
   dedupeWithinBatch,
   detectAdapter,
+  inferColumnMapping,
+  parseSheetToRows,
+  sniffSheetKind,
   type AdapterDetection,
   type CompanyContext,
+  type InferColumnMappingResult,
   type JobContext,
 } from "@pa/external-supply"
 import { resolveExternalSupplyIdentity } from "@pa/pa-persistence"
@@ -127,6 +131,34 @@ const TierForecastSchema = z.object({
   blocked: z.number().int().nonnegative(),
 })
 
+const InferredMappingSchema = z.object({
+  mapping: z.object({
+    linkedinUrl: z.string().optional(),
+    email: z.string().optional(),
+    phone: z.string().optional(),
+    name: z.string().optional(),
+    currentTitle: z.string().optional(),
+    currentCompany: z.string().optional(),
+    location: z.string().optional(),
+    skills: z.string().optional(),
+  }),
+  rubricColumns: z.array(z.string()),
+  ambiguous: z.array(
+    z.object({
+      field: z.string(),
+      candidates: z.array(z.string()),
+    }),
+  ),
+  matchScoreColumn: z.string().optional(),
+  locationParts: z
+    .object({
+      country: z.string().optional(),
+      state: z.string().optional(),
+      city: z.string().optional(),
+    })
+    .optional(),
+})
+
 const PreviewBatchResponseSchema = z.object({
   detection: z.array(z.unknown()), // serialized AdapterDetection (top-level array of candidate ranks)
   chosenSource: ExternalSourceSchema,
@@ -134,6 +166,10 @@ const PreviewBatchResponseSchema = z.object({
   validLinkedInCount: z.number().int().nonnegative(),
   validEmailCount: z.number().int().nonnegative(),
   withinBatchDuplicates: z.number().int().nonnegative(),
+  /** v2 — header auto-detect output so the dashboard can render an override UI. */
+  inferredMapping: InferredMappingSchema.optional(),
+  /** First N rows (verbatim header-keyed cells, max 5) so operator can sanity-check. */
+  sampleRows: z.array(z.record(z.string(), z.string())).optional(),
   identityForecast: z.object({
     createNew: z.number().int().nonnegative(),
     mergeExisting: z.number().int().nonnegative(),
@@ -235,17 +271,22 @@ export async function runPreviewBatch(
   //    confidence above lock threshold) > manual_csv fallback.
   const chosenSource: ExternalSource = pickChosenSource(input.overrideSource, detection)
 
-  // 6. xlsx fallback: if shape is xlsx and operator did not provide a
-  //    columnMapping (and chose / was routed to a CSV/JSON adapter), we
-  //    can't parse. Return empty preview with the warning.
-  const isXlsxNoMapping =
-    detection.shapeHint === "xlsx" && !input.columnMapping
-  if (isXlsxNoMapping) {
-    return makeEmptyPreview({
-      detection,
-      chosenSource: "manual_csv",
-      warnings,
-    })
+  // 6. Header inference + sample rows — runs for all CSV/TSV/XLSX inputs
+  //    routed to manual_csv. Provides the dashboard with an auto-detected
+  //    column mapping the operator can override before commit.
+  let inferredMapping: InferColumnMappingResult | undefined
+  let sampleRows: Record<string, string>[] | undefined
+  if (chosenSource === "manual_csv") {
+    try {
+      const sheetKind = detection.shapeHint === "xlsx" ? "xlsx" : sniffSheetKind(input.filename, raw)
+      const parsed = parseSheetToRows(raw, sheetKind)
+      inferredMapping = inferColumnMapping(parsed.headers)
+      sampleRows = parsed.rows.slice(0, 5)
+    } catch (err) {
+      warnings.push(
+        `header_inference_failed:${err instanceof Error ? err.message : String(err)}`,
+      )
+    }
   }
 
   // 7. Adapter dispatch — drafts.
@@ -420,6 +461,22 @@ export async function runPreviewBatch(
       perCandidatePreview,
     },
     ...(tierForecast ? { tierForecast } : {}),
+    ...(inferredMapping
+      ? {
+          inferredMapping: {
+            mapping: inferredMapping.mapping,
+            rubricColumns: inferredMapping.rubricColumns,
+            ambiguous: inferredMapping.ambiguous,
+            ...(inferredMapping.matchScoreColumn
+              ? { matchScoreColumn: inferredMapping.matchScoreColumn }
+              : {}),
+            ...(inferredMapping.locationParts
+              ? { locationParts: inferredMapping.locationParts }
+              : {}),
+          },
+        }
+      : {}),
+    ...(sampleRows ? { sampleRows } : {}),
     warnings,
   }
 

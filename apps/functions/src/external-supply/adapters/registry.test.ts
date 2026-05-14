@@ -93,14 +93,32 @@ test("registry.manual_csv.parse(buf, mapping) === parseManualCsvExport(toString,
 })
 
 // ---------------------------------------------------------------------------
-// manual_csv requires column mapping — V1 error string preserved verbatim
+// manual_csv v2 — auto-infers mapping from headers, throws only when neither
+// linkedinUrl nor email can be resolved.
 // ---------------------------------------------------------------------------
 
-test("registry.manual_csv.parse(buf) without mapping throws V1 error string", () => {
+test("registry.manual_csv.parse(buf) auto-infers when headers match canonical patterns", () => {
+  // Lessie-shaped — Link + Email present, no operator mapping needed.
+  const csv = [
+    "Name,Link,Email,Match,Company,Headline",
+    "Ada Lovelace,https://linkedin.com/in/ada,ada@example.com,0.9,Acme,Senior SWE",
+  ].join("\n")
+  const drafts = getAdapter("manual_csv").parse(Buffer.from(csv))
+  assert.equal(drafts.length, 1)
+  assert.ok(drafts[0]!.canonicalLinkedInUrl?.includes("linkedin.com/in/ada"))
+  assert.equal(drafts[0]!.emails[0]!.value, "ada@example.com")
+  assert.equal(drafts[0]!.name, "Ada Lovelace")
+  assert.equal(drafts[0]!.currentCompany, "Acme")
+  // Rubric — Headline + Match are non-canonical, get preserved.
+  assert.ok(drafts[0]!.enrichment?.headline)
+  assert.equal(drafts[0]!.enrichment?.matchScore, "0.9")
+})
+
+test("registry.manual_csv.parse(buf) without identity columns throws", () => {
   const buf = Buffer.from("a,b,c\n1,2,3")
   assert.throws(
     () => getAdapter("manual_csv").parse(buf),
-    /^Error: manual_csv_requires_columnMapping$/,
+    /manual_csv_requires_linkedin_or_email_mapping/,
   )
 })
 

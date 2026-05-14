@@ -283,19 +283,45 @@ test("runCreateBatch — manual_csv routes through manual adapter with operator 
   assert.equal(out.readyToProfileCount, 5)
 
   const batch = store.batches.get(out.batchId)
-  assert.equal(batch!.meta!.adapterVersion, "manual-csv-2026-05-A")
+  assert.equal(batch!.meta!.adapterVersion, "manual-csv-2026-05-B")
   const persistedMapping = batch!.meta!.columnMapping as Record<string, string>
   assert.equal(persistedMapping.linkedinUrl, "LinkedIn URL")
 })
 
 // ---------------------------------------------------------------------------
-// Adapter dispatch — manual_csv without columnMapping rejects
+// Adapter dispatch — manual_csv v2 auto-infers columnMapping from headers
 // ---------------------------------------------------------------------------
 
-test("runCreateBatch — manual_csv without columnMapping throws", async () => {
+test("runCreateBatch — manual_csv auto-infers mapping when caller omits it", async () => {
+  // v2 (2026-05-14): the loose adapter auto-detects 6 stable Lessie headers
+  // from the row, so omitting columnMapping is no longer a hard failure.
+  // The fixture's `LinkedIn URL` / `Email` headers should resolve via the
+  // inference path and yield a normalized batch.
   const store = makeStore()
   const fixture = loadFixture("lessie-sample.csv")
   const { storageUri, sha256, sizeBytes } = stageBlob(store, "manual_csv", fixture, "text/csv")
+  const deps = makeInMemoryDeps({ store })
+
+  const out = await runCreateBatch(
+    {
+      source: "manual_csv",
+      storageUri,
+      sha256,
+      mime: "text/csv",
+      sizeBytes,
+      importedBy: "op",
+    },
+    deps,
+  )
+  assert.ok(out.rowCount >= 1, "auto-inferred batch should normalize at least one row")
+  assert.equal(store.batches.size, 1)
+})
+
+test("runCreateBatch — manual_csv throws when neither linkedin nor email is resolvable", async () => {
+  // Header set with no canonical identity column should still fail loudly.
+  const store = makeStore()
+  const csv = Buffer.from("a,b,c\n1,2,3")
+  const { storageUri, sha256, sizeBytes } = stageBlob(store, "manual_csv", csv, "text/csv")
   const deps = makeInMemoryDeps({ store })
 
   await assert.rejects(
@@ -310,7 +336,7 @@ test("runCreateBatch — manual_csv without columnMapping throws", async () => {
       },
       deps,
     ),
-    /manual_csv_requires_columnMapping/,
+    /manual_csv_requires_linkedin_or_email_mapping/,
   )
   assert.equal(store.batches.size, 0, "failed batch must not be persisted")
 })

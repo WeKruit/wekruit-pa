@@ -92,9 +92,10 @@ export function dispatchAdapter(
   source: ExternalSource,
   raw: Buffer,
   columnMapping: ManualCsvColumnMapping | undefined,
+  filename?: string,
 ): AdapterResult {
   const descriptor = getAdapter(source)
-  const drafts = descriptor.parse(raw, columnMapping)
+  const drafts = descriptor.parse(raw, columnMapping, filename)
   const rawHeaderSample = descriptor.signature.acceptedShapes.includes("csv")
     ? raw.toString("utf8").split(/\r?\n/, 1)[0]
     : undefined

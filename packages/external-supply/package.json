@@ -17,12 +17,13 @@
     "pretypecheck": "npm run build --workspace=@wekruit/shared-tags && npm run build --workspace=@pa/core-types",
     "typecheck": "tsc --noEmit",
     "pretest": "npm run build --workspace=@wekruit/shared-tags && npm run build --workspace=@pa/core-types",
-    "test": "node --import tsx --test src/normalize.test.ts src/rubric.test.ts src/agent-prompt.test.ts src/agent-parse.test.ts src/outreach.test.ts src/instantly-client.test.ts src/adapter-detect.test.ts src/agent-rank-prompt.test.ts"
+    "test": "node --import tsx --test src/normalize.test.ts src/rubric.test.ts src/agent-prompt.test.ts src/agent-parse.test.ts src/outreach.test.ts src/instantly-client.test.ts src/adapter-detect.test.ts src/agent-rank-prompt.test.ts src/auto-map.test.ts src/sheet.test.ts"
   },
   "dependencies": {
     "@pa/core-types": "0.0.1",
     "@wekruit/shared-tags": "0.1.0",
     "csv-parse": "^5.5.6",
+    "xlsx": "^0.18.5",
     "zod": "^3.24.0"
   },
   "devDependencies": {
