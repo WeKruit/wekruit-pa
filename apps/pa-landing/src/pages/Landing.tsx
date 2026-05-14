@@ -1,41 +1,64 @@
 import { useEffect, useState } from "react"
 import { Link } from "react-router-dom"
-import { listPublicJobOpenings, type PublicJobOpening } from "../lib/public-jobs.js"
+import { collection, getDocs, limit, query, where } from "firebase/firestore"
+import { db } from "../lib/firebase.js"
 import { CandidateShell } from "./CandidateLogin.js"
+
+interface PublicJobListDoc {
+  publicVisible?: boolean
+  prescreenConfig?: {
+    jobTitle?: string
+    company?: string
+    jobType?: string
+    region?: string
+    level1Reveal?: {
+      salaryRange?: string
+    }
+  }
+  location?: string
+}
+
+interface PublicJobListItem {
+  id: string
+  title: string
+  company: string
+  location?: string
+  salary?: string
+  jobType?: string
+}
 
 type JobsState =
   | { status: "loading" }
-  | { status: "ready"; jobs: PublicJobOpening[] }
+  | { status: "ready"; jobs: PublicJobListItem[] }
   | { status: "error"; message: string }
 
 export default function Landing() {
   const [state, setState] = useState<JobsState>({ status: "loading" })
 
   useEffect(() => {
-    try {
-      const utm = new URLSearchParams(location.search)
-      sessionStorage.setItem(
-        "pa_landing_visit",
-        JSON.stringify({
-          ts: new Date().toISOString(),
-          ref: document.referrer || null,
-          src: utm.get("src") || null,
-          ua: navigator.userAgent.slice(0, 200),
-        })
-      )
-    } catch {
-      // sessionStorage blocked; non-fatal.
-    }
-  }, [])
-
-  useEffect(() => {
     let cancelled = false
     void (async () => {
       try {
-        const jobs = await listPublicJobOpenings()
+        const snap = await getDocs(query(collection(db(), "pa-jobs"), where("publicVisible", "==", true), limit(24)))
+        const jobs = snap.docs
+          .map((docSnap) => {
+            const data = docSnap.data() as PublicJobListDoc
+            const cfg = data.prescreenConfig ?? {}
+            return {
+              id: docSnap.id,
+              title: cfg.jobTitle ?? "Open role",
+              company: cfg.company ?? "Confidential employer",
+              location: data.location ?? cfg.region,
+              salary: cfg.level1Reveal?.salaryRange,
+              jobType: cfg.jobType,
+            }
+          })
+          .sort((a, b) => `${a.company} ${a.title}`.localeCompare(`${b.company} ${b.title}`))
         if (!cancelled) setState({ status: "ready", jobs })
       } catch (err) {
-        if (!cancelled) setState({ status: "error", message: err instanceof Error ? err.message : String(err) })
+        if (!cancelled) {
+          setState({ status: "error", message: err instanceof Error ? err.message : String(err) })
+        }
       }
     })()
     return () => {
@@ -44,259 +67,165 @@ export default function Landing() {
   }, [])
 
   return (
-    <CandidateShell wide>
+    <CandidateShell>
       <style>{LANDING_STYLES}</style>
-      <main className="home-shell" aria-labelledby="home-title">
-        <section className="home-hero">
-          <p className="candidate-kicker">Candidate marketplace</p>
-          <h1 id="home-title">Find the next role Claire can help you interview for.</h1>
-          <p>
-            Browse open roles, upload your resume once, and start the first interview over iMessage
-            from the job page.
-          </p>
+      <main className="landing-app">
+        <section className="landing-hero">
+          <div>
+            <p className="candidate-kicker">Candidate marketplace</p>
+            <h1>Open jobs that start with Claire</h1>
+            <p>
+              Browse active WeKruit roles, sign in once, and start the first screen over iMessage.
+            </p>
+          </div>
+          <Link className="candidate-secondary-button" to="/me">View profile</Link>
         </section>
 
-        <section className="home-jobs" aria-labelledby="home-jobs-title">
-          <div className="home-section-heading">
-            <div>
-              <p className="candidate-kicker">Open roles</p>
-              <h2 id="home-jobs-title">Available jobs</h2>
-            </div>
-            <Link className="candidate-secondary-button" to="/me/matches">My matches</Link>
+        <section className="landing-jobs-section" aria-labelledby="landing-jobs-title">
+          <div className="landing-section-heading">
+            <h2 id="landing-jobs-title">Open roles</h2>
+            <span>{state.status === "ready" ? `${state.jobs.length} live` : "Loading"}</span>
           </div>
-          {state.status === "loading" ? <JobListSkeleton /> : null}
-          {state.status === "error" ? (
-            <div className="home-empty">
-              <h3>Jobs unavailable</h3>
-              <p>{state.message}</p>
+          {state.status === "loading" ? <p className="landing-muted">Loading jobs.</p> : null}
+          {state.status === "error" ? <p className="candidate-error">{state.message}</p> : null}
+          {state.status === "ready" && state.jobs.length === 0 ? (
+            <p className="landing-muted">No public roles are open right now.</p>
+          ) : null}
+          {state.status === "ready" && state.jobs.length > 0 ? (
+            <div className="landing-job-list">
+              {state.jobs.map((job) => (
+                <article className="landing-job-card" key={job.id}>
+                  <div>
+                    <div className="landing-job-badges">
+                      <span>Open role</span>
+                      <span>WeKruit collaborated</span>
+                    </div>
+                    <h3>{job.title}</h3>
+                    <p>{job.company}{job.location ? ` · ${job.location}` : ""}</p>
+                  </div>
+                  {job.salary || job.jobType ? (
+                    <p className="landing-job-meta">{[job.jobType, job.salary].filter(Boolean).join(" · ")}</p>
+                  ) : null}
+                  <Link className="candidate-primary-link" to={`/j/${job.id}`}>View role</Link>
+                </article>
+              ))}
             </div>
           ) : null}
-          {state.status === "ready" ? <JobList jobs={state.jobs} /> : null}
         </section>
       </main>
     </CandidateShell>
   )
 }
 
-function JobList({ jobs }: { jobs: PublicJobOpening[] }) {
-  if (jobs.length === 0) {
-    return (
-      <div className="home-empty">
-        <h3>No public jobs are open right now</h3>
-        <p>Check your matches from your candidate profile when new roles are published.</p>
-        <Link className="candidate-primary-link" to="/me/matches">View matches</Link>
-      </div>
-    )
-  }
-  return (
-    <div className="home-job-grid">
-      {jobs.map((job) => (
-        <Link className="home-job-card" key={job.id} to={`/j/${job.id}`} aria-label={`Open ${job.title}`}>
-          <div>
-            <div className="home-job-topline">
-              <p className="home-job-company">{job.company}</p>
-              <span className="wekruit-collab-badge">WeKruit collaborated</span>
-            </div>
-            <h3>{job.title}</h3>
-            <p className="home-job-meta">
-              {[job.location, job.salaryRange, job.jobType].filter(Boolean).join(" · ")}
-            </p>
-          </div>
-          {job.description ? <p className="home-job-description">{job.description}</p> : null}
-          <TagRow values={[...job.roleFunction, ...job.industrySector, ...job.requiredSkills].slice(0, 4)} />
-          <span className="home-job-action">View job</span>
-        </Link>
-      ))}
-    </div>
-  )
-}
-
-function TagRow({ values }: { values: string[] }) {
-  if (values.length === 0) return null
-  return (
-    <div className="home-job-tags">
-      {values.map((value) => (
-        <span key={value}>{value}</span>
-      ))}
-    </div>
-  )
-}
-
-function JobListSkeleton() {
-  return (
-    <div className="home-job-grid" aria-label="Loading jobs">
-      {[0, 1, 2].map((idx) => (
-        <div className="home-job-card home-job-card-loading" key={idx}>
-          <span />
-          <span />
-          <span />
-        </div>
-      ))}
-    </div>
-  )
-}
-
 const LANDING_STYLES = `
-.home-shell {
-  max-width: 1040px;
+.landing-app {
+  max-width: 980px;
   margin: 0 auto;
   display: grid;
-  gap: 28px;
+  gap: 24px;
 }
-.home-hero {
-  max-width: 760px;
-  padding: 28px 0 8px;
-}
-.home-hero h1 {
-  margin: 0;
-  max-width: 720px;
-  font-size: clamp(34px, 7vw, 64px);
-  line-height: 0.98;
-  letter-spacing: 0;
-}
-.home-hero p:last-child {
-  max-width: 650px;
-  margin: 18px 0 0;
-  color: #364233;
-  font-size: 18px;
-  line-height: 1.55;
-}
-.home-jobs {
-  display: grid;
-  gap: 16px;
-}
-.home-section-heading {
+.landing-hero {
   display: flex;
+  gap: 20px;
   align-items: flex-end;
   justify-content: space-between;
-  gap: 16px;
+  border-bottom: 1px solid #ddd3c2;
+  padding-bottom: 22px;
 }
-.home-section-heading h2 {
+.landing-hero h1 {
+  max-width: 660px;
   margin: 0;
-  font-size: 28px;
+  font-size: clamp(38px, 7vw, 64px);
+  line-height: 1;
   letter-spacing: 0;
 }
-.home-job-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 12px;
+.landing-hero p:not(.candidate-kicker) {
+  max-width: 620px;
+  margin: 14px 0 0;
+  color: #364233;
+  font-size: 18px;
+  line-height: 1.45;
 }
-.home-job-card {
-  min-height: 248px;
+.landing-jobs-section {
   display: grid;
-  grid-template-rows: auto 1fr auto auto;
   gap: 14px;
-  padding: 18px;
-  border: 1px solid #ddd3c2;
-  border-radius: 8px;
-  background: #fffdf8;
-  color: #18211a;
-  text-decoration: none;
 }
-.home-job-card:hover,
-.home-job-card:focus-visible {
-  border-color: #2f6f4f;
-  outline: none;
-}
-.home-job-company,
-.home-job-meta,
-.home-job-description {
-  margin: 0;
-  color: #5f665b;
-}
-.home-job-topline {
+.landing-section-heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  flex-wrap: wrap;
+  gap: 16px;
 }
-.home-job-company {
-  color: #46624c;
+.landing-section-heading h2 {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+.landing-section-heading span {
+  color: #5f665b;
   font-weight: 800;
 }
-.wekruit-collab-badge {
-  display: inline-flex;
-  align-items: center;
-  min-height: 26px;
-  padding: 0 8px;
-  border: 1px solid #c6e6ce;
-  border-radius: 8px;
-  background: #e8f5ec;
-  color: #24543c;
-  font-size: 12px;
-  font-weight: 900;
-  line-height: 1;
-  white-space: nowrap;
+.landing-job-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
 }
-.home-job-card h3 {
-  margin: 6px 0;
+.landing-job-card {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+  background: #fffdf8;
+  border: 1px solid #ddd3c2;
+  border-radius: 8px;
+  padding: 18px;
+}
+.landing-job-card h3 {
+  margin: 12px 0 6px;
   font-size: 22px;
   line-height: 1.2;
   letter-spacing: 0;
 }
-.home-job-meta,
-.home-job-description {
+.landing-job-card p {
+  margin: 0;
+  color: #364233;
   line-height: 1.45;
 }
-.home-job-tags {
+.landing-job-badges {
   display: flex;
+  gap: 8px;
   flex-wrap: wrap;
-  gap: 6px;
-  min-height: 28px;
 }
-.home-job-tags span {
+.landing-job-badges span {
+  min-height: 28px;
   display: inline-flex;
   align-items: center;
-  min-height: 28px;
   padding: 0 9px;
   border-radius: 8px;
-  background: #edf5ee;
-  color: #24543c;
+  background: #f0eee8;
+  color: #364233;
   font-size: 12px;
-  font-weight: 800;
-}
-.home-job-action {
-  color: #2f6f4f;
   font-weight: 900;
 }
-.home-empty {
-  display: grid;
-  gap: 10px;
-  padding: 22px;
-  border: 1px solid #ddd3c2;
-  border-radius: 8px;
-  background: #fffdf8;
+.landing-job-badges span:last-child {
+  background: #dff4eb;
+  border: 1px solid #b8dfd1;
+  color: #24543c;
 }
-.home-empty h3,
-.home-empty p {
-  margin: 0;
+.landing-job-meta {
+  color: #16643b;
+  font-weight: 800;
 }
-.home-empty p {
+.landing-muted {
   color: #5f665b;
 }
-.home-job-card-loading {
-  min-height: 180px;
-}
-.home-job-card-loading span {
-  display: block;
-  height: 16px;
-  border-radius: 8px;
-  background: #eee6d8;
-}
-.home-job-card-loading span:nth-child(1) { width: 46%; }
-.home-job-card-loading span:nth-child(2) { width: 78%; height: 28px; }
-.home-job-card-loading span:nth-child(3) { width: 62%; }
-@media (max-width: 680px) {
-  .home-section-heading {
-    align-items: flex-start;
-    flex-direction: column;
+@media (max-width: 760px) {
+  .landing-hero {
+    display: grid;
+    align-items: start;
   }
-  .home-hero {
-    padding-top: 10px;
-  }
-  .home-hero p:last-child {
-    font-size: 16px;
+  .landing-job-list {
+    grid-template-columns: 1fr;
   }
 }
 `

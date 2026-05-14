@@ -1,31 +1,37 @@
 /**
- * v1.9 Phase 87 — Public candidate-facing job page.
+ * Candidate-facing public job page.
  *
- * Route: /j/:jobId (no auth)
+ * Route: /j/:jobId
  *
- * Reads pa-jobs/{jobId}.prescreenConfig + .publicVisible.
- * Renders JD + "Start pre-screen" SMS deep link + QR code + INLINE CV upload
- * (no back-and-forth navigation to /j/:jobId/cv).
- *
- * Generates a `requestedUserId` UUID cookie per visit. CF webhook resolves
- * it on first inbound SMS via pa-prescreen-pending-invites/{requestedUserId}.
- *
- * v1.9 hotfix 2026-05-13 — Adam directive "这些应该都在一个地方来回".
- * Upload UI now lives directly on the job page instead of routing to a
- * separate /cv page. Single-page flow: see job → upload → tap iMessage.
+ * Contract: a signed-out candidate can inspect the role, but starting Claire
+ * must first attach the job flow to a durable WeKruit candidate profile.
  */
-import { useEffect, useId, useMemo, useState } from "react"
+import { useEffect, useMemo, useState, type FormEvent } from "react"
 import { Link, useParams } from "react-router-dom"
-import { onAuthStateChanged, type User } from "firebase/auth"
+import {
+  GoogleAuthProvider,
+  OAuthProvider,
+  getRedirectResult,
+  onAuthStateChanged,
+  sendSignInLinkToEmail,
+  signInWithRedirect,
+  type User,
+} from "firebase/auth"
 import { doc, getDoc, setDoc } from "firebase/firestore"
-
-const CV_INGEST_URL = import.meta.env.VITE_CV_INGEST_URL ?? ""
 import { auth, db } from "../lib/firebase.js"
 import { CandidateShell } from "./CandidateLogin.js"
+
+const CV_INGEST_URL = import.meta.env.VITE_CV_INGEST_URL ?? ""
+const GLOBAL_UID_KEY = "wkr_uid"
+const HAS_CV_KEY = "wkr_has_cv"
+const EMAIL_STORAGE_KEY = "wkr_claim_email"
+const LINKEDIN_PROVIDER_ID = import.meta.env.VITE_LINKEDIN_PROVIDER_ID ?? "oidc.linkedin"
 
 interface PrescreenConfig {
   jobTitle?: string
   company?: string
+  jobType?: string
+  region?: string
   level1Reveal?: {
     salaryRange?: string
   }
@@ -33,38 +39,24 @@ interface PrescreenConfig {
 
 interface PaJobDoc {
   publicVisible?: boolean
-  jobTitle?: string
-  company?: string
   prescreenConfig?: PrescreenConfig
   descriptionMd?: string
   location?: string
-  salaryRange?: string
-  roleFunction?: string[]
-  industrySector?: string[]
-  requiredSkills?: string[]
-  seniorityLevel?: string
-  jobType?: string
 }
 
-type CandidateAuthState =
-  | { status: "loading" }
-  | { status: "signed_out" }
-  | { status: "signed_in"; user: User }
+interface PoolNumber {
+  number: string
+  status: "active" | "paused"
+}
 
-// v1.9 P88 — same djb2 hash as apps/functions/src/sendblue/pool.ts so
-// candidate's pre-PII outbound first message lands on the SAME pool number
-// that the server will use for replies (thread continuity).
+type LoginStatus = "idle" | "google" | "linkedin" | "email" | "sent" | "error"
+
 function hashStringToUint(s: string): number {
   let h = 5381 >>> 0
   for (let i = 0; i < s.length; i++) {
     h = (Math.imul(h, 33) + s.charCodeAt(i)) >>> 0
   }
   return h
-}
-
-interface PoolNumber {
-  number: string
-  status: "active" | "paused"
 }
 
 function pickPoolNumber(pool: PoolNumber[] | null, key: string): string | null {
@@ -75,28 +67,15 @@ function pickPoolNumber(pool: PoolNumber[] | null, key: string): string | null {
 }
 
 function uuidV4(): string {
-  // RFC 4122 v4-ish, sufficient for tracking
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
     const r = (Math.random() * 16) | 0
     return (c === "x" ? r : (r & 0x3) | 0x8).toString(16)
   })
 }
 
-/**
- * v1.9 hotfix (Adam directive 2026-05-12) — single global per-browser tempUserId
- * so a returning visitor across different /j/:jobId pages is recognized as
- * the SAME pa-user. Replaces the per-job `wkr_rid_${jobId}` scheme.
- *
- * Backwards compat: if any legacy `wkr_rid_*` key exists, hoist the first
- * one we find as the new `wkr_uid` so existing visitors keep their identity.
- */
-const GLOBAL_UID_KEY = "wkr_uid"
-const HAS_CV_KEY = "wkr_has_cv"
-
 function getOrCreateRequestedUserId(_jobId: string): string {
   const existingGlobal = window.localStorage.getItem(GLOBAL_UID_KEY)
   if (existingGlobal) return existingGlobal
-  // Legacy migration — find any old wkr_rid_* key and hoist.
   for (let i = 0; i < window.localStorage.length; i++) {
     const k = window.localStorage.key(i)
     if (k && k.startsWith("wkr_rid_")) {
@@ -116,8 +95,22 @@ function hasCvOnFile(): boolean {
   return window.localStorage.getItem(HAS_CV_KEY) === "true"
 }
 
-function loginPathForJob(jobId: string): string {
-  return `/login?next=${encodeURIComponent(`/j/${jobId}`)}`
+function cleanEmail(value: string): string {
+  return value.trim().toLowerCase()
+}
+
+function createGoogleProvider(): GoogleAuthProvider {
+  const provider = new GoogleAuthProvider()
+  provider.setCustomParameters({ prompt: "select_account" })
+  return provider
+}
+
+function createLinkedInProvider(): OAuthProvider {
+  const provider = new OAuthProvider(LINKEDIN_PROVIDER_ID)
+  provider.addScope("openid")
+  provider.addScope("profile")
+  provider.addScope("email")
+  return provider
 }
 
 async function fileToBase64(file: File): Promise<string> {
@@ -133,6 +126,345 @@ async function fileToBase64(file: File): Promise<string> {
   })
 }
 
+export default function PublicJob() {
+  const { jobId } = useParams<{ jobId: string }>()
+  const [loading, setLoading] = useState(true)
+  const [err, setErr] = useState<string | null>(null)
+  const [job, setJob] = useState<PaJobDoc | null>(null)
+  const [pool, setPool] = useState<PoolNumber[] | null>(null)
+  const [smsClicked, setSmsClicked] = useState(false)
+  const [user, setUser] = useState<User | null | undefined>(undefined)
+  const [loginPromptOpen, setLoginPromptOpen] = useState(false)
+  const [loginPromptDismissed, setLoginPromptDismissed] = useState(false)
+  const [loginEmail, setLoginEmail] = useState("")
+  const [loginStatus, setLoginStatus] = useState<LoginStatus>("idle")
+  const [loginError, setLoginError] = useState<string | null>(null)
+
+  const requestedUserId = useMemo(() => (jobId ? getOrCreateRequestedUserId(jobId) : ""), [jobId])
+  const nextPath = useMemo(() => (jobId ? `/j/${jobId}` : "/"), [jobId])
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const result = await getRedirectResult(auth())
+        if (!cancelled && result?.user) {
+          setUser(result.user)
+          setLoginStatus("idle")
+          setLoginPromptOpen(false)
+          setLoginPromptDismissed(true)
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setLoginStatus("error")
+          setLoginError(err instanceof Error ? err.message : String(err))
+        }
+      }
+    })()
+    const unsubscribe = onAuthStateChanged(auth(), (nextUser) => {
+      setUser(nextUser)
+      if (nextUser) {
+        setLoginStatus("idle")
+        setLoginPromptOpen(false)
+        setLoginPromptDismissed(true)
+      }
+    })
+    return () => {
+      cancelled = true
+      unsubscribe()
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      if (!jobId) {
+        setErr("Missing job id")
+        setLoading(false)
+        return
+      }
+      try {
+        setLoading(true)
+        const snap = await getDoc(doc(db(), "pa-jobs", jobId))
+        if (cancelled) return
+        if (!snap.exists()) {
+          setErr("Job not found")
+          setLoading(false)
+          return
+        }
+        const data = snap.data() as PaJobDoc
+        if (!data.publicVisible) {
+          setErr("This job is not publicly visible.")
+          setLoading(false)
+          return
+        }
+        setJob(data)
+        try {
+          const poolSnap = await getDoc(doc(db(), "pa-config", "sendblue-pool"))
+          if (poolSnap.exists()) {
+            const raw = poolSnap.data() as { numbers?: PoolNumber[] }
+            if (Array.isArray(raw.numbers)) setPool(raw.numbers)
+          }
+        } catch {
+          // Non-fatal: the page can still render the role and login gate.
+        }
+        try {
+          await setDoc(doc(db(), "pa-prescreen-pending-invites", requestedUserId), {
+            jobId,
+            requestedUserId,
+            createdAt: new Date().toISOString(),
+          })
+        } catch {
+          // Pre-auth users may not write this doc; webhook-side resolution is still server-owned.
+        }
+      } catch (e) {
+        if (!cancelled) setErr(e instanceof Error ? e.message : String(e))
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [jobId, requestedUserId])
+
+  useEffect(() => {
+    if (user) {
+      setLoginPromptOpen(false)
+      return
+    }
+    if (loading || !job || user !== null || loginPromptDismissed) return
+    const timer = window.setTimeout(() => setLoginPromptOpen(true), 650)
+    return () => window.clearTimeout(timer)
+  }, [job, loading, loginPromptDismissed, user])
+
+  async function startProviderSignIn(kind: "google" | "linkedin") {
+    const provider = kind === "google" ? createGoogleProvider() : createLinkedInProvider()
+    setLoginStatus(kind)
+    setLoginError(null)
+    try {
+      await signInWithRedirect(auth(), provider)
+    } catch (err) {
+      setLoginStatus("error")
+      setLoginError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  async function sendEmailLink(e: FormEvent) {
+    e.preventDefault()
+    const email = cleanEmail(loginEmail)
+    if (!email) {
+      setLoginStatus("error")
+      setLoginError("Enter your email first.")
+      return
+    }
+    setLoginStatus("email")
+    setLoginError(null)
+    try {
+      await sendSignInLinkToEmail(auth(), email, {
+        url: `${window.location.origin}/login?next=${encodeURIComponent(nextPath)}`,
+        handleCodeInApp: true,
+      })
+      window.localStorage.setItem(EMAIL_STORAGE_KEY, email)
+      setLoginStatus("sent")
+    } catch (err) {
+      setLoginStatus("error")
+      setLoginError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  function renderLoginControls(location: "panel" | "modal") {
+    return (
+      <div className={`public-job-login-controls public-job-login-controls-${location}`}>
+        <button
+          type="button"
+          className="public-job-provider-button"
+          onClick={() => void startProviderSignIn("google")}
+          disabled={loginStatus === "google" || loginStatus === "linkedin" || loginStatus === "email"}
+        >
+          {loginStatus === "google" ? "Opening Google" : "Continue with Google"}
+        </button>
+        <button
+          type="button"
+          className="public-job-provider-button public-job-linkedin-button"
+          onClick={() => void startProviderSignIn("linkedin")}
+          disabled={loginStatus === "google" || loginStatus === "linkedin" || loginStatus === "email"}
+        >
+          {loginStatus === "linkedin" ? "Opening LinkedIn" : "Continue with LinkedIn"}
+        </button>
+        <div className="public-job-login-divider">or</div>
+        <form className="public-job-login-email" onSubmit={(e) => void sendEmailLink(e)}>
+          <label htmlFor={`job-login-email-${location}`}>Email magic link</label>
+          <div>
+            <input
+              id={`job-login-email-${location}`}
+              type="email"
+              autoComplete="email"
+              value={loginEmail}
+              onChange={(e) => setLoginEmail(e.target.value)}
+              placeholder="you@example.com"
+              disabled={loginStatus === "email"}
+            />
+            <button type="submit" disabled={loginStatus === "email"}>
+              {loginStatus === "email" ? "Sending" : "Send"}
+            </button>
+          </div>
+        </form>
+        {loginStatus === "sent" ? (
+          <p className="candidate-success">Check {cleanEmail(loginEmail)} for your sign-in link.</p>
+        ) : null}
+        {loginError ? <p className="candidate-error">{loginError}</p> : null}
+      </div>
+    )
+  }
+
+  if (loading || user === undefined) {
+    return (
+      <CandidateShell>
+        <main className="candidate-panel">
+          <p className="candidate-kicker">Open role</p>
+          <h1>Loading</h1>
+        </main>
+      </CandidateShell>
+    )
+  }
+
+  if (err || !job) {
+    return (
+      <CandidateShell>
+        <main className="candidate-panel">
+          <p className="candidate-kicker">Open role</p>
+          <h1>404</h1>
+          <p className="public-job-muted">{err ?? "Not found"}</p>
+          <Link className="candidate-primary-link" to="/">Back to jobs</Link>
+        </main>
+      </CandidateShell>
+    )
+  }
+
+  const cfg = job.prescreenConfig ?? {}
+  const jobTitle = cfg.jobTitle ?? "Open role"
+  const company = cfg.company ?? "Confidential employer"
+  const location = job.location ?? cfg.region
+  const salary = cfg.level1Reveal?.salaryRange
+  const sendNumber = pickPoolNumber(pool, requestedUserId)
+  const smsBody = `WeKruit_${jobId}_${requestedUserId}_Job`
+  const smsHref = sendNumber ? `sms:${sendNumber}?body=${encodeURIComponent(smsBody)}` : null
+
+  return (
+    <CandidateShell>
+      <style>{PUBLIC_JOB_STYLES}</style>
+      <main className="public-job-layout">
+        <section className="public-job-main">
+          <Link className="candidate-muted-link" to="/">Back to jobs</Link>
+          <div className="public-job-title-block">
+            <div className="public-job-badges">
+              <span>Open role</span>
+              <span className="public-job-collab-badge">WeKruit collaborated</span>
+            </div>
+            <h1>{jobTitle}</h1>
+            <p>{company}{location ? ` · ${location}` : ""}</p>
+            {salary ? <strong>{salary}</strong> : null}
+          </div>
+          <article className="public-job-card public-job-description">
+            <h2>Role details</h2>
+            {cfg.jobType || location || salary ? (
+              <p className="public-job-meta">
+                {[cfg.jobType, location, salary].filter(Boolean).join(" · ")}
+              </p>
+            ) : null}
+            {job.descriptionMd ? <div className="public-job-copy">{job.descriptionMd}</div> : null}
+          </article>
+        </section>
+        <aside className="public-job-sidebar">
+          <section className="public-job-card public-job-start-card">
+            <h2>Start the 5-minute screen</h2>
+            {user ? (
+              <>
+                <p>
+                  Claire will ask a few quick role-fit questions over iMessage, attached to your
+                  WeKruit candidate profile.
+                </p>
+                {smsHref ? (
+                  <a
+                    className="candidate-primary-link public-job-sms-link"
+                    href={smsHref}
+                    onClick={() => setSmsClicked(true)}
+                  >
+                    Open in iMessage
+                  </a>
+                ) : (
+                  <p className="candidate-error">WeKruit messaging is temporarily unavailable.</p>
+                )}
+                {smsClicked ? (
+                  <p className="candidate-success">Continue in iMessage to answer Claire.</p>
+                ) : null}
+              </>
+            ) : (
+              <>
+                <p>
+                  Sign in first so this interview attaches to your WeKruit candidate profile. Then
+                  this page unlocks iMessage for Claire.
+                </p>
+                {renderLoginControls("panel")}
+              </>
+            )}
+          </section>
+          <section className="public-job-card">
+            <InlineCvSection
+              jobId={jobId!}
+              requestedUserId={requestedUserId}
+              initialHasCv={hasCvOnFile()}
+            />
+          </section>
+          <p className="public-job-terms">
+            By starting, you agree to our <a href="/legal">privacy &amp; terms</a>.
+            {sendNumber ? ` WeKruit will text you from ${sendNumber}.` : ""}
+          </p>
+        </aside>
+      </main>
+      {loginPromptOpen && !user ? (
+        <div className="public-job-login-modal-wrap" role="presentation">
+          <button
+            className="public-job-login-modal-scrim"
+            type="button"
+            aria-label="Close sign-in prompt"
+            onClick={() => {
+              setLoginPromptDismissed(true)
+              setLoginPromptOpen(false)
+            }}
+          />
+          <aside
+            className="public-job-login-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="public-job-login-modal-title"
+          >
+            <button
+              className="public-job-login-modal-close"
+              type="button"
+              aria-label="Close"
+              onClick={() => {
+                setLoginPromptDismissed(true)
+                setLoginPromptOpen(false)
+              }}
+            >
+              x
+            </button>
+            <p className="candidate-kicker">WeKruit candidate profile</p>
+            <h2 id="public-job-login-modal-title">Sign in to start this role with Claire</h2>
+            <p>
+              We attach this interview to your candidate profile first, then unlock iMessage for
+              this job.
+            </p>
+            {renderLoginControls("modal")}
+          </aside>
+        </div>
+      ) : null}
+    </CandidateShell>
+  )
+}
+
 interface InlineCvSectionProps {
   jobId: string
   requestedUserId: string
@@ -142,18 +474,12 @@ interface InlineCvSectionProps {
 function InlineCvSection({ jobId, requestedUserId, initialHasCv }: InlineCvSectionProps) {
   const [hasCv, setHasCv] = useState<boolean>(initialHasCv)
   if (hasCv) {
-    return (
-      <p className="public-job-cv-ready">
-        We have your resume on file. Tap <span>Open in iMessage</span> above to start.
-      </p>
-    )
+    return <p className="candidate-success">We have your resume on file.</p>
   }
   return (
-    <div className="public-job-card public-job-cv">
+    <div className="public-job-cv-section">
       <h2>Resume</h2>
-      <p>
-        PDF or DOCX, under 5 MB. We&rsquo;ll use it to tailor the pre-screen.
-      </p>
+      <p>PDF or DOCX, under 5 MB. We will use it to tailor the pre-screen.</p>
       <InlineCvUpload
         jobId={jobId}
         requestedUserId={requestedUserId}
@@ -170,7 +496,6 @@ interface InlineCvUploadProps {
 }
 
 function InlineCvUpload({ jobId, requestedUserId, onUploaded }: InlineCvUploadProps) {
-  const fileInputId = useId()
   const [file, setFile] = useState<File | null>(null)
   const [status, setStatus] = useState<"idle" | "uploading" | "ok" | "err">("idle")
   const [errMsg, setErrMsg] = useState<string | null>(null)
@@ -180,7 +505,7 @@ function InlineCvUpload({ jobId, requestedUserId, onUploaded }: InlineCvUploadPr
     setErrMsg(null)
   }, [file])
 
-  async function onSubmit(e: React.FormEvent) {
+  async function onSubmit(e: FormEvent) {
     e.preventDefault()
     if (!file) return
     if (file.size > 5 * 1024 * 1024) {
@@ -190,7 +515,7 @@ function InlineCvUpload({ jobId, requestedUserId, onUploaded }: InlineCvUploadPr
     }
     if (!CV_INGEST_URL) {
       setStatus("err")
-      setErrMsg("CV ingest endpoint not configured. Please reach out to support.")
+      setErrMsg("CV ingest endpoint is not configured.")
       return
     }
     try {
@@ -213,11 +538,7 @@ function InlineCvUpload({ jobId, requestedUserId, onUploaded }: InlineCvUploadPr
         setErrMsg(`Upload failed (${res.status})`)
         return
       }
-      try {
-        window.localStorage.setItem(HAS_CV_KEY, "true")
-      } catch {
-        // localStorage disabled — non-fatal
-      }
+      window.localStorage.setItem(HAS_CV_KEY, "true")
       setStatus("ok")
       onUploaded()
     } catch (err) {
@@ -227,566 +548,261 @@ function InlineCvUpload({ jobId, requestedUserId, onUploaded }: InlineCvUploadPr
   }
 
   return (
-    <form onSubmit={onSubmit} className="public-job-upload">
-      <div>
-        <label className="public-job-file-button" htmlFor={fileInputId}>
-          Choose file
-        </label>
-        <input
-          id={fileInputId}
-          className="public-job-file-input"
-          type="file"
-          accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-          onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-          disabled={status === "uploading"}
-        />
-        <span className="public-job-file-name">{file?.name ?? "No file selected"}</span>
-        <button
-          type="submit"
-          disabled={!file || status === "uploading"}
-        >
-          {status === "uploading" ? "Parsing resume…" : "Upload"}
-        </button>
-      </div>
-      {status === "uploading" ? (
-        <p className="public-job-muted">
-          Reading your CV — takes 10-30 seconds.
-        </p>
-      ) : null}
-      {status === "err" && errMsg ? (
-        <p className="public-job-error">{errMsg}</p>
-      ) : null}
+    <form onSubmit={onSubmit} className="public-job-cv-upload">
+      <input
+        type="file"
+        accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+        disabled={status === "uploading"}
+      />
+      <button type="submit" disabled={!file || status === "uploading"}>
+        {status === "uploading" ? "Uploading" : "Upload"}
+      </button>
+      {status === "err" && errMsg ? <p className="candidate-error">{errMsg}</p> : null}
     </form>
   )
 }
 
-function renderJobDescription(markdown: string, title: string, company: string): React.ReactNode[] {
-  const nodes: React.ReactNode[] = []
-  let bullets: string[] = []
-  const titleLower = title.toLowerCase()
-  const companyLower = company.toLowerCase()
-  const flushBullets = () => {
-    if (bullets.length === 0) return
-    const list = bullets
-    bullets = []
-    nodes.push(
-      <ul key={`list-${nodes.length}`}>
-        {list.map((item) => (
-          <li key={item}>{item.replace(/\*\*/g, "")}</li>
-        ))}
-      </ul>
-    )
-  }
-
-  for (const rawLine of markdown.split("\n")) {
-    const line = rawLine.trim()
-    if (!line) {
-      flushBullets()
-      continue
-    }
-    const cleanedLine = line.replace(/\*\*/g, "")
-    const lowerLine = cleanedLine.toLowerCase()
-    if (nodes.length === 0 && lowerLine.includes(titleLower) && lowerLine.includes(companyLower)) {
-      continue
-    }
-    if (line.startsWith("- ")) {
-      bullets.push(line.slice(2).trim())
-      continue
-    }
-    flushBullets()
-    const heading = line.match(/^\*\*(.+)\*\*$/)
-    if (heading) {
-      nodes.push(<h3 key={`heading-${nodes.length}`}>{heading[1]}</h3>)
-      continue
-    }
-    nodes.push(<p key={`p-${nodes.length}`}>{cleanedLine}</p>)
-  }
-  flushBullets()
-  return nodes
-}
-
-export default function PublicJob() {
-  const { jobId } = useParams<{ jobId: string }>()
-  const [loading, setLoading] = useState(true)
-  const [err, setErr] = useState<string | null>(null)
-  const [job, setJob] = useState<PaJobDoc | null>(null)
-  const [pool, setPool] = useState<PoolNumber[] | null>(null)
-  const [smsClicked, setSmsClicked] = useState(false)
-  const [candidateAuth, setCandidateAuth] = useState<CandidateAuthState>({ status: "loading" })
-
-  const requestedUserId = useMemo(() => (jobId ? getOrCreateRequestedUserId(jobId) : ""), [jobId])
-
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth(), (user) => {
-      setCandidateAuth(user ? { status: "signed_in", user } : { status: "signed_out" })
-    })
-    return unsubscribe
-  }, [])
-
-  useEffect(() => {
-    let cancelled = false
-    void (async () => {
-      if (!jobId) {
-        setErr("missing job id")
-        setLoading(false)
-        return
-      }
-      try {
-        setLoading(true)
-        const snap = await getDoc(doc(db(), "pa-jobs", jobId))
-        if (cancelled) return
-        if (!snap.exists()) {
-          setErr("Job not found")
-          setLoading(false)
-          return
-        }
-        const data = snap.data() as PaJobDoc
-        if (!data.publicVisible) {
-          setErr("This job is not publicly visible.")
-          setLoading(false)
-          return
-        }
-        setJob(data)
-        // v1.9 P88 — load active pool numbers (public read on pa-config/sendblue-pool).
-        try {
-          const poolSnap = await getDoc(doc(db(), "pa-config", "sendblue-pool"))
-          if (poolSnap.exists()) {
-            const raw = poolSnap.data() as { numbers?: PoolNumber[] }
-            if (Array.isArray(raw.numbers)) setPool(raw.numbers)
-          }
-        } catch {
-          // non-fatal — falls back to "text Claire directly" copy
-        }
-        // Stamp pending-invite (best effort).
-        try {
-          await setDoc(doc(db(), "pa-prescreen-pending-invites", requestedUserId), {
-            jobId,
-            requestedUserId,
-            createdAt: new Date().toISOString(),
-          })
-        } catch {
-          // pre-auth users can't write — operator-only rule. Pending invite
-          // resolution still works on the inbound SMS side via webhook
-          // server-side claim (uses temp doc only if pre-created). Non-fatal.
-        }
-      } catch (e) {
-        if (!cancelled) setErr(e instanceof Error ? e.message : String(e))
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [jobId, requestedUserId])
-
-  if (loading) return <Page><p>Loading…</p></Page>
-  if (err || !job) return <Page><h1>404</h1><p>{err ?? "Not found"}</p></Page>
-
-  const cfg = job.prescreenConfig ?? {}
-  const jobTitle = job.jobTitle ?? cfg.jobTitle ?? "Open role"
-  const company = job.company ?? cfg.company ?? "Confidential employer"
-  const salary = job.salaryRange ?? cfg.level1Reveal?.salaryRange
-
-  const smsBody = `WeKruit_${jobId}_${requestedUserId}_Job`
-  // v1.9 P88 — pool hash-by-requestedUserId; mirrors server-side selector
-  // so candidate's outbound first message lands on the SAME pool number the
-  // server will use for replies.
-  const sendNumber = pickPoolNumber(pool, requestedUserId)
-  const smsHref = sendNumber
-    ? `sms:${sendNumber}?body=${encodeURIComponent(smsBody)}`
-    : null
-  const qrSrc = smsHref
-    ? `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(smsHref)}`
-    : null
-
-  return (
-    <Page>
-      <main className="public-job-shell">
-        <Link className="public-job-back" to="/">Back to jobs</Link>
-        <section className="public-job-hero">
-          <div className="public-job-kicker-row">
-            <p className="candidate-kicker">Open role</p>
-            <span className="public-job-collab-badge">WeKruit collaborated</span>
-          </div>
-          <h1>{jobTitle}</h1>
-          <p>{company}{job.location ? ` · ${job.location}` : ""}</p>
-          <div className="public-job-facts">
-            {salary ? <span>{salary}</span> : null}
-            {job.jobType ? <span>{job.jobType}</span> : null}
-            {job.seniorityLevel ? <span>{job.seniorityLevel}</span> : null}
-          </div>
-        </section>
-
-        <section className="public-job-layout">
-          <div className="public-job-main">
-            {job.descriptionMd ? (
-              <article className="public-job-card public-job-description">
-                <h2>Role details</h2>
-                <div>{renderJobDescription(job.descriptionMd, jobTitle, company)}</div>
-              </article>
-            ) : null}
-            <JobTags job={job} />
-          </div>
-
-          <aside className="public-job-side">
-            <div className="public-job-card public-job-start">
-              <h2>Start the 5-minute screen</h2>
-              <p>
-                Sign in first so this interview attaches to your WeKruit candidate profile, then text Claire on iMessage.
-              </p>
-              {candidateAuth.status === "loading" ? (
-                <p className="public-job-muted">Checking your sign-in status...</p>
-              ) : null}
-              {candidateAuth.status === "signed_out" ? (
-                <div className="public-job-login-required">
-                  <Link className="candidate-primary-link" to={loginPathForJob(jobId!)}>
-                    Sign in to start
-                  </Link>
-                  <p>After sign in, we&rsquo;ll bring you back here to open iMessage.</p>
-                </div>
-              ) : null}
-              {candidateAuth.status === "signed_in" && smsHref ? (
-                <a className="candidate-primary-link" href={smsHref} onClick={() => setSmsClicked(true)}>
-                  Open in iMessage
-                </a>
-              ) : null}
-              {candidateAuth.status === "signed_in" && !smsHref ? (
-                <p className="public-job-error">
-                  WeKruit messaging temporarily unavailable. Please check back shortly.
-                </p>
-              ) : null}
-              {candidateAuth.status === "signed_in" && smsClicked ? (
-                <p className="public-job-success">
-                  Continue in iMessage to answer Claire. Your job status will stay attached to this profile.
-                </p>
-              ) : null}
-              {candidateAuth.status === "signed_in" && qrSrc ? (
-                <div className="public-job-qr">
-                  <img src={qrSrc} width={180} height={180} alt="QR code to start pre-screen" />
-                  <p>Scan on iPhone</p>
-                </div>
-              ) : null}
-            </div>
-            <InlineCvSection
-              jobId={jobId!}
-              requestedUserId={requestedUserId}
-              initialHasCv={hasCvOnFile()}
-            />
-            {sendNumber ? (
-              <p className="public-job-terms">
-                By starting, you agree to our{" "}
-                <a href="/legal">privacy &amp; terms</a>. WeKruit will text you from {sendNumber}.
-              </p>
-            ) : (
-              <p className="public-job-terms">
-                By starting, you agree to our <a href="/legal">privacy &amp; terms</a>.
-              </p>
-            )}
-          </aside>
-        </section>
-      </main>
-    </Page>
-  )
-}
-
-function JobTags({ job }: { job: PaJobDoc }) {
-  const groups = [
-    { label: "Roles", values: job.roleFunction ?? [] },
-    { label: "Industries", values: job.industrySector ?? [] },
-    { label: "Skills", values: job.requiredSkills ?? [] },
-  ].filter((group) => group.values.length > 0)
-  if (groups.length === 0) return null
-  return (
-    <section className="public-job-card public-job-tags">
-      <h2>What this role is looking for</h2>
-      {groups.map((group) => (
-        <div key={group.label}>
-          <h3>{group.label}</h3>
-          <p>
-            {group.values.map((value) => (
-              <span key={value}>{value}</span>
-            ))}
-          </p>
-        </div>
-      ))}
-    </section>
-  )
-}
-
-function Page({ children }: { children: React.ReactNode }) {
-  return (
-    <CandidateShell wide>
-      <style>{PUBLIC_JOB_STYLES}</style>
-      {children}
-    </CandidateShell>
-  )
-}
-
 const PUBLIC_JOB_STYLES = `
-.public-job-shell {
-  max-width: 1040px;
+.public-job-layout {
+  max-width: 980px;
   margin: 0 auto;
   display: grid;
-  gap: 18px;
-}
-.public-job-back {
-  justify-self: flex-start;
-  color: #46624c;
-  font-weight: 800;
-  text-decoration: none;
-}
-.public-job-hero {
-  max-width: 780px;
-}
-.public-job-kicker-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-bottom: 8px;
-}
-.public-job-kicker-row .candidate-kicker {
-  margin: 0;
-}
-.public-job-collab-badge {
-  display: inline-flex;
-  align-items: center;
-  min-height: 26px;
-  padding: 0 8px;
-  border: 1px solid #c6e6ce;
-  border-radius: 8px;
-  background: #e8f5ec;
-  color: #24543c;
-  font-size: 12px;
-  font-weight: 900;
-  line-height: 1;
-  white-space: nowrap;
-}
-.public-job-hero h1 {
-  margin: 0;
-  font-size: clamp(36px, 6vw, 58px);
-  line-height: 1;
-  letter-spacing: 0;
-}
-.public-job-hero p {
-  margin: 12px 0 0;
-  color: #364233;
-  font-size: 18px;
-  line-height: 1.45;
-}
-.public-job-facts {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-top: 16px;
-}
-.public-job-facts span {
-  display: inline-flex;
-  align-items: center;
-  min-height: 32px;
-  padding: 0 10px;
-  border-radius: 8px;
-  background: #edf5ee;
-  color: #24543c;
-  font-weight: 900;
-}
-.public-job-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
-  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 20px;
   align-items: start;
 }
 .public-job-main,
-.public-job-side {
+.public-job-sidebar {
   display: grid;
-  gap: 12px;
+  gap: 16px;
+}
+.public-job-title-block {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+.public-job-title-block h1 {
+  margin: 0;
+  font-size: clamp(36px, 6vw, 56px);
+  line-height: 1.02;
+  letter-spacing: 0;
+}
+.public-job-title-block p {
+  margin: 0;
+  color: #364233;
+  font-size: 18px;
+  line-height: 1.35;
+}
+.public-job-title-block strong {
+  justify-self: start;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: #edf5ee;
+  color: #16643b;
+  font-size: 18px;
+}
+.public-job-badges {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.public-job-badges span {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+  border-radius: 8px;
+  background: #f0eee8;
+  color: #364233;
+  font-size: 13px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+.public-job-badges .public-job-collab-badge {
+  background: #dff4eb;
+  border: 1px solid #b8dfd1;
+  color: #24543c;
+  text-transform: none;
 }
 .public-job-card {
+  background: #fffdf8;
   border: 1px solid #ddd3c2;
   border-radius: 8px;
-  background: #fffdf8;
-  padding: 18px;
+  padding: 20px;
 }
 .public-job-card h2 {
   margin: 0 0 12px;
-  font-size: 21px;
+  font-size: 22px;
+  line-height: 1.2;
   letter-spacing: 0;
 }
-.public-job-description div {
+.public-job-card p {
   color: #364233;
-  font-size: 15px;
-  line-height: 1.58;
+  line-height: 1.5;
 }
-.public-job-description h3 {
-  margin: 18px 0 8px;
-  font-size: 17px;
-  letter-spacing: 0;
+.public-job-meta {
+  margin: 0 0 16px;
+  color: #5f665b;
+  font-weight: 700;
+}
+.public-job-copy {
+  white-space: pre-wrap;
+  line-height: 1.55;
+  color: #364233;
+}
+.public-job-start-card {
+  display: grid;
+  gap: 12px;
+}
+.public-job-start-card p {
+  margin: 0;
+}
+.public-job-sms-link {
+  width: 100%;
+}
+.public-job-login-controls {
+  display: grid;
+  gap: 10px;
+}
+.public-job-provider-button,
+.public-job-login-email button,
+.public-job-cv-upload button {
+  min-height: 42px;
+  border-radius: 8px;
+  border: 1px solid #2f6f4f;
+  background: #2f6f4f;
+  color: #fffdf8;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+.public-job-provider-button {
+  width: 100%;
+}
+.public-job-linkedin-button {
+  background: #0a66c2;
+  border-color: #0a66c2;
+}
+.public-job-provider-button:disabled,
+.public-job-login-email button:disabled,
+.public-job-cv-upload button:disabled {
+  opacity: 0.62;
+  cursor: not-allowed;
+}
+.public-job-login-divider {
+  color: #7a6f5d;
+  font-size: 13px;
+  font-weight: 800;
+  text-align: center;
+}
+.public-job-login-email {
+  display: grid;
+  gap: 6px;
+}
+.public-job-login-email label {
+  color: #364233;
+  font-size: 13px;
+  font-weight: 800;
+}
+.public-job-login-email div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 72px;
+  gap: 8px;
+}
+.public-job-login-email input {
+  min-width: 0;
+  border: 1px solid #cfc3ae;
+  border-radius: 8px;
+  padding: 0 10px;
+  font: inherit;
   color: #18211a;
 }
-.public-job-description h3:first-child {
-  margin-top: 0;
-}
-.public-job-description p,
-.public-job-description ul {
-  margin: 0 0 12px;
-}
-.public-job-description ul {
-  padding-left: 20px;
-}
-.public-job-description li {
-  margin: 6px 0;
-}
-.public-job-start {
-  gap: 12px;
+.public-job-cv-section {
   display: grid;
+  gap: 12px;
 }
-.public-job-start p {
+.public-job-cv-section h2 {
+  margin-bottom: 0;
+}
+.public-job-cv-section p {
+  margin: 0;
+}
+.public-job-cv-upload {
+  display: grid;
+  gap: 10px;
+}
+.public-job-cv-upload input {
+  width: 100%;
+  min-width: 0;
+}
+.public-job-terms {
+  margin: 0;
+  color: #7a6f5d;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.public-job-muted {
+  color: #5f665b;
+}
+.public-job-login-modal-wrap {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+.public-job-login-modal-scrim {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: rgba(24, 33, 26, 0.48);
+}
+.public-job-login-modal {
+  position: relative;
+  box-sizing: border-box;
+  width: min(440px, calc(100vw - 24px));
+  display: grid;
+  gap: 14px;
+  background: #fffdf8;
+  border: 1px solid #ddd3c2;
+  border-radius: 8px;
+  padding: 24px;
+  box-shadow: 0 24px 80px rgba(24, 33, 26, 0.28);
+}
+.public-job-login-modal h2 {
+  margin: 0;
+  font-size: 28px;
+  line-height: 1.1;
+  letter-spacing: 0;
+}
+.public-job-login-modal p {
   margin: 0;
   color: #364233;
   line-height: 1.5;
 }
-.public-job-login-required {
-  display: grid;
-  gap: 10px;
-}
-.public-job-login-required p,
-.public-job-muted {
-  margin: 0;
-  color: #5f665b;
-  line-height: 1.45;
-}
-.public-job-cv {
-  display: grid;
-  gap: 10px;
-}
-.public-job-cv p {
-  margin: 0;
-  color: #364233;
-  line-height: 1.45;
-}
-.public-job-cv-ready {
-  margin: 0;
-  padding: 12px;
-  border: 1px solid #c6e6ce;
-  border-radius: 8px;
-  background: #e8f5ec;
-  color: #24543c;
-  font-weight: 800;
-}
-.public-job-cv-ready span {
-  white-space: nowrap;
-}
-.public-job-upload {
-  display: grid;
-  gap: 8px;
-}
-.public-job-upload > div {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-.public-job-file-input {
+.public-job-login-modal-close {
   position: absolute;
-  width: 1px;
-  height: 1px;
-  opacity: 0;
-  pointer-events: none;
-}
-.public-job-file-button {
-  display: inline-flex;
-  align-items: center;
-  min-height: 40px;
-  padding: 0 12px;
-  border: 1px solid #cfc3ae;
+  top: 12px;
+  right: 12px;
+  width: 32px;
+  height: 32px;
+  border: 1px solid #ddd3c2;
   border-radius: 8px;
   background: #fffdf8;
-  color: #2f6f4f;
-  font-weight: 800;
+  color: #364233;
+  font: inherit;
+  font-weight: 900;
   cursor: pointer;
 }
-.public-job-file-name {
-  min-width: 0;
-  max-width: 100%;
-  color: #5f665b;
-  overflow-wrap: anywhere;
-}
-.public-job-upload button {
-  min-height: 40px;
-  padding: 0 14px;
-  border: 1px solid #2f6f4f;
-  border-radius: 8px;
-  background: #2f6f4f;
-  color: #fffdf8;
-  font-weight: 800;
-  cursor: pointer;
-}
-.public-job-upload button:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-.public-job-success {
-  padding: 12px;
-  border: 1px solid #c6e6ce;
-  border-radius: 8px;
-  background: #e8f5ec;
-  color: #24543c !important;
-  font-weight: 800;
-}
-.public-job-error {
-  color: #9c2b24 !important;
-  font-weight: 800;
-}
-.public-job-qr {
-  display: grid;
-  justify-items: center;
-  gap: 4px;
-  padding-top: 4px;
-}
-.public-job-qr img {
-  width: 180px;
-  height: 180px;
-}
-.public-job-qr p,
-.public-job-terms,
-.public-job-muted {
-  color: #7a6f5d;
-  font-size: 13px;
-}
-.public-job-tags {
-  display: grid;
-  gap: 12px;
-}
-.public-job-tags h3 {
-  margin: 0 0 8px;
-  font-size: 15px;
-  letter-spacing: 0;
-}
-.public-job-tags p {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  margin: 0;
-}
-.public-job-tags span {
-  display: inline-flex;
-  align-items: center;
-  min-height: 28px;
-  padding: 0 9px;
-  border-radius: 8px;
-  background: #edf5ee;
-  color: #24543c;
-  font-size: 12px;
-  font-weight: 800;
-}
-.public-job-terms {
-  margin: 0;
-  line-height: 1.45;
-}
-@media (max-width: 860px) {
+@media (max-width: 820px) {
   .public-job-layout {
     grid-template-columns: 1fr;
+  }
+  .public-job-title-block h1 {
+    font-size: 42px;
   }
 }
 `
