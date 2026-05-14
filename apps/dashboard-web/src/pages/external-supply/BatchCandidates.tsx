@@ -198,13 +198,25 @@ function CandidateListRow({
         ...(selected ? rowSelectedStyle : {}),
       }}
     >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
         <span style={{ fontWeight: 600, color: "#0f172a" }}>{row.name ?? "—"}</span>
-        {row.matchScore && (
-          <span style={{ fontSize: "0.7em", color: "#64748b" }}>
-            score {row.matchScore}
-          </span>
-        )}
+        <div style={{ display: "flex", gap: 4, alignItems: "baseline" }}>
+          {row.matchScore && (
+            <span
+              style={{
+                fontSize: "0.7em",
+                fontWeight: 600,
+                color: row.matchScore === "1" ? "#16a34a" : "#475569",
+                background: row.matchScore === "1" ? "#dcfce7" : "#f1f5f9",
+                padding: "1px 6px",
+                borderRadius: 4,
+              }}
+              title="Lessie Match column — 1 = passed all rubric gates"
+            >
+              {row.matchScore === "1" ? "✓ Match" : `Match ${row.matchScore}`}
+            </span>
+          )}
+        </div>
       </div>
       <div style={{ fontSize: "0.8em", color: "#475569", marginTop: 2 }}>
         {row.currentTitle ?? "—"}
