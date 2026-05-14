@@ -70,10 +70,20 @@ function mapRecord(r, runId, batch) {
       name: r.name ?? null,
       linkedinUrl: r.canonicalLinkedInUrl ?? null,
       emails: r.emails ?? [],
+      phoneHash: r.phoneHash ?? null,
       currentTitle: r.currentTitle ?? null,
       currentCompany: r.currentCompany ?? null,
       location: r.location ?? null,
+      experience: r.experience ?? [],
+      education: r.education ?? [],
       sourceTags: r.sourceTags ?? [],
+      // CRITICAL — enrichment.links[] is the only place v2.3-parsed records
+      // store linkedin/github URLs when canonicalLinkedInUrl is absent. The
+      // vendor-profile-lookup pickers fall back to this.
+      enrichment: r.enrichment ?? null,
+      identityResolutionStatus: r.identityResolutionStatus ?? null,
+      resolvedUserId: r.resolvedUserId ?? null,
+      reviewReasons: r.reviewReasons ?? [],
     },
   }
   if (r.name) out.displayName = r.name
