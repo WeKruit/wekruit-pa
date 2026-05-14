@@ -4,7 +4,8 @@
  * Reads /tmp/rain-seed/jobs.json (produced by the Python parse of
  * rain_open_roles.xlsx) and writes:
  *   - pa-companies/rain-xyz
- *   - pa-jobs/{jobId} for each row
+ *   - matching-jobs/{jobId} as the canonical raw job input for enrichment
+ *   - pa-jobs/{jobId} for admin/job workspace metadata
  *
  * Idempotent: uses set({...}, { merge: true }). Re-running updates without
  * dropping unrelated fields.
@@ -92,15 +93,22 @@ async function main() {
     const slice = raw.jobs.slice(i, i + 100)
     const batch = db.batch()
     for (const job of slice) {
-      const ref = db.collection("pa-jobs").doc(job.jobId)
+      const paJobRef = db.collection("pa-jobs").doc(job.jobId)
+      const matchingJobRef = db.collection("matching-jobs").doc(job.jobId)
       batch.set(
-        ref,
+        matchingJobRef,
+        matchingJobFromRainJob(job, raw.company.name),
+        { merge: true },
+      )
+      batch.set(
+        paJobRef,
         {
           ...job,
           // Mirror v1.6 matching schema field names where they differ from
           // our parsed shape — keeps both sides happy.
           firstSeenAt: job.firstSeenAt,
           updatedAt: nowIso(),
+          wekruitCollaborationStatus: "not_collaborated",
           // Matching pipeline reads `dead != true`. Explicit false.
           dead: false,
           // External-supply evaluation reads roleFunction + industrySector.
@@ -125,6 +133,40 @@ async function main() {
     `[seed-rain] DONE — company exists=${companySnap.exists}, jobs for ${raw.company.companyId}=${jobsSnap.size}`,
   )
   process.exit(0)
+}
+
+function matchingJobFromRainJob(job: JobDoc, companyName: string): Record<string, unknown> {
+  const salaryRange =
+    typeof job.salaryMin === "number" && typeof job.salaryMax === "number"
+      ? `$${job.salaryMin}-${job.salaryMax}/yr`
+      : null
+  return {
+    jobId: job.jobId,
+    roleTitle: job.title,
+    title: job.title,
+    companyName,
+    companyId: job.companyId,
+    jobDescription: job.jdRaw ?? "",
+    description: job.jdRaw ?? "",
+    locationRaw: job.rawLocation ?? "",
+    salaryMin: job.salaryMin ?? null,
+    salaryMax: job.salaryMax ?? null,
+    ...(salaryRange ? { salaryRange } : {}),
+    atsApplyUrl: job.atsApplyUrl ?? null,
+    applyUrl: job.atsApplyUrl ?? null,
+    status: job.status,
+    dead: false,
+    source: job.source,
+    sourceRepo: "rain_seed",
+    contentHash: `${job.jobId}:${job.ashbyJid ?? ""}`,
+    roleFunction: job.roleFunction,
+    industrySector: job.industrySector,
+    seniorityLevel: job.seniorityLevel,
+    locationBuckets: job.locationBuckets,
+    jobType: job.jobType,
+    sponsorship: job.sponsorship,
+    updatedAt: nowIso(),
+  }
 }
 
 main().catch((err) => {

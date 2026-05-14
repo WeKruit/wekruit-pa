@@ -164,6 +164,73 @@ test("runJobEnrichmentRefreshDraft keeps sponsorship silence unknown and title-o
   assert.equal(draft.hitlFlags.some((flag) => flag.kind === "seniority_title_only"), true)
 })
 
+test("runJobEnrichmentRefreshDraft carries structured source tags into approval readiness", async () => {
+  let captured: JobOpportunityDraft | null = null
+  const result = await runJobEnrichmentRefreshDraft(
+    { jobId: "job-structured" },
+    {
+      db,
+      nowIso: () => now,
+      readJob: async () => ({
+        roleTitle: "Android Engineer",
+        companyName: "Rain",
+        jobDescription: "Build Android card issuing and payment flows with Kotlin and Jetpack Compose.",
+        locationRaw: "New York, NY",
+        salaryRange: "$150k-$190k",
+        source: "admin",
+        roleFunction: ["software_engineering"],
+        industrySector: ["financial_technology"],
+        seniorityLevel: "mid_level",
+        locationBuckets: ["new_york_metro"],
+        jobType: "full_time",
+      }),
+      enrich: async () => ({
+        tags: {
+          roleFunction: ["software_engineering", "engineering_and_development"],
+          industrySector: ["technology_general"],
+          relevantTags: ["android"],
+          skills: [
+            { name: "kotlin", bucket: "programming_languages", proficiency: "advanced", evidenceCount: 2, baseWeight: 0.8 },
+            { name: "ai", bucket: "data_and_ml", proficiency: "intermediate", evidenceCount: 1, baseWeight: 0.5 },
+          ],
+          seniorityLevel: "staff",
+          sponsorshipHint: null,
+          locationBuckets: ["new_york_metro"],
+          jobType: "full_time",
+          confidence: {
+            overall: 0.78,
+            fields: {
+              roleFunction: 0.78,
+              industrySector: 0.72,
+              relevantTags: 0.7,
+              skills: 0.88,
+              seniorityLevel: 0.55,
+              locationBuckets: 0.9,
+              jobType: 0.95,
+            },
+          },
+        },
+        modelUsed: "test-model",
+        usedTier: "primary",
+        fallbackChain: [],
+      }),
+      writeDraft: async (_db, draft) => {
+        captured = draft
+        return { draft, created: true }
+      },
+    },
+  )
+
+  assert.equal(result.approvalReady, true)
+  const draft = captured as unknown as JobOpportunityDraft
+  assert.deepEqual(draft.opportunity.roleFunction, ["software_engineering"])
+  assert.ok(draft.opportunity.skills.some((skill) => skill.name === "artificial_intelligence"))
+  assert.deepEqual(draft.opportunity.industrySector, ["financial_technology"])
+  assert.equal(draft.opportunity.seniority.label, "mid_level")
+  assert.deepEqual(draft.opportunity.hardFilters.locations, ["new_york_metro"])
+  assert.equal(draft.coverage.sponsorshipSignal, "silent")
+})
+
 test("runJobEnrichmentApproveDraft approves and publishes matching plus prescreen-ready job fields", async () => {
   const calls: Array<{ jobId: string; draftId: string; approvedBy: string; approvedAt: string }> = []
   const writes: Array<{ collection: string; docId: string; payload: Record<string, unknown>; options: unknown }> = []
@@ -258,6 +325,7 @@ test("runJobEnrichmentApproveDraft approves and publishes matching plus prescree
   assert.equal(publicJobWrite?.docId, "job-1")
   assert.deepEqual(publicJobWrite?.options, { merge: true })
   assert.equal(publicJobWrite?.payload.publicVisible, true)
+  assert.equal(publicJobWrite?.payload.candidatePageStatus, "published")
   const prescreenConfig = publicJobWrite?.payload.prescreenConfig as Record<string, unknown>
   assert.equal(prescreenConfig.jobTitle, "Frontend Engineer")
   assert.equal((prescreenConfig.questions as Array<Record<string, unknown>>)[0]?.qId, "q_react")

@@ -830,12 +830,12 @@ export async function approveJobOpportunityDraft(
     tx.set(draftRef, approved, { merge: false })
     tx.set(
       rootRef,
-      {
+      firestorePayload({
         jobOpportunity: toPublicJobOpportunity(approved.opportunity),
         enrichmentVersion: approved.enrichmentVersion,
         enrichmentApprovedAt: input.approvedAt,
         updatedAt: input.approvedAt,
-      },
+      }),
       { merge: true }
     )
     tx.set(auditRef, {

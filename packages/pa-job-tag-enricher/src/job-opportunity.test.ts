@@ -30,6 +30,10 @@ describe("deriveJobOpportunityDraft", () => {
     assert.equal(draft.confidence.overall, 0.91)
     assert.deepEqual(draft.hitlFlags, [])
     assert.deepEqual(draft.hardFilters.roleFunction, ["software_engineering"])
+    assert.equal(
+      draft.prescreenConfigDraft.questions[0]?.prompt,
+      "What recent work best matches this software engineering role?",
+    )
     assert.deepEqual(draft.softScoringWeights.industrySector, [
       { token: "financial_technology", weight: 0.85 },
       { token: "software_and_saas", weight: 0.75 },
@@ -58,13 +62,52 @@ describe("deriveJobOpportunityDraft", () => {
     assert.ok(draft.hitlFlags.includes("WEAK_SENIORITY_COVERAGE"))
   })
 
-  it("keeps sponsorship silence as null plus a HITL flag, never false", () => {
+  it("keeps sparse sponsorship-silent jobs in review for their critical gaps", () => {
     const draft = deriveJobOpportunityDraft(loadFixture("sponsorship_silent_sparse_jd"))
 
     assert.equal(draft.hardFilters.sponsorship, null)
     assert.equal(draft.coverage.fields.sponsorship.state, "hitl")
     assert.ok(draft.hitlFlags.includes("SPONSORSHIP_SILENT"))
     assert.equal(draft.approvalReady, false)
+  })
+
+  it("does not let sponsorship silence alone block approval-ready jobs", () => {
+    const fixture = loadFixture("strong")
+    const draft = deriveJobOpportunityDraft({
+      ...fixture,
+      enrichedJobTags: {
+        ...fixture.enrichedJobTags,
+        sponsorshipHint: null,
+      },
+    })
+
+    assert.equal(draft.hardFilters.sponsorship, null)
+    assert.equal(draft.coverage.fields.sponsorship.state, "hitl")
+    assert.ok(draft.hitlFlags.includes("SPONSORSHIP_SILENT"))
+    assert.equal(draft.coverage.criticalPass, true)
+    assert.equal(draft.approvalReady, true)
+  })
+
+  it("does not block first-screen approval only because skills need review", () => {
+    const fixture = loadFixture("strong")
+    const draft = deriveJobOpportunityDraft({
+      ...fixture,
+      enrichedJobTags: {
+        ...fixture.enrichedJobTags,
+        skills: [],
+        confidence: {
+          ...fixture.enrichedJobTags.confidence,
+          fields: {
+            ...fixture.enrichedJobTags.confidence.fields,
+            skills: 0.2,
+          },
+        },
+      },
+    })
+
+    assert.ok(draft.hitlFlags.includes("MISSING_SKILLS_COVERAGE"))
+    assert.equal(draft.coverage.criticalPass, true)
+    assert.equal(draft.approvalReady, true)
   })
 
   it("creates eval fixture summaries for visa, location, and salary mismatch cases", () => {

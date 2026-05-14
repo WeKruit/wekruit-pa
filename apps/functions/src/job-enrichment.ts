@@ -143,13 +143,14 @@ export async function runJobEnrichmentRefreshDraft(
   if (!rawJob) throw new HttpsError("not-found", `job_missing:${input.jobId}`)
 
   const snapshot = rawSnapshotFromJob(input.jobId, rawJob, now, input.draftId)
-  const enriched = await (deps.enrich ?? defaultEnrichJobTags)({
+  const llmEnriched = await (deps.enrich ?? defaultEnrichJobTags)({
     title: snapshot.title,
     companyName: snapshot.companyName ?? null,
     jobDescription: snapshot.description ?? null,
     locationRaw: snapshot.locationText ?? null,
     sourceRepo: stringOrNull(rawJob.sourceRepo),
   })
+  const enriched = mergeStructuredJobTags(llmEnriched, rawJob)
   const draftId =
     createJobEnrichmentDraftId(
       input.jobId,
@@ -180,6 +181,140 @@ export async function runJobEnrichmentRefreshDraft(
     approvalReady: written.draft.approvalReady,
     created: written.created,
   }
+}
+
+function mergeStructuredJobTags(enriched: EnrichJobTagsResult, rawJob: RawJobDoc): EnrichJobTagsResult {
+  const tags = enriched.tags
+  const roleFunction = normalizeRoleFunctions(rawJob.roleFunction)
+  const industrySector = stringArray(rawJob.industrySector) as EnrichJobTagsResult["tags"]["industrySector"]
+  const locationBuckets = normalizeLocationBuckets(rawJob.locationBuckets)
+  const seniorityLevel = normalizeSeniorityLevel(rawJob.seniorityLevel)
+  const jobType = stringOrNull(rawJob.jobType) as EnrichJobTagsResult["tags"]["jobType"] | null
+  const sponsorshipHint = typeof rawJob.sponsorship === "boolean" ? rawJob.sponsorship : tags.sponsorshipHint
+  const fields = {
+    ...tags.confidence.fields,
+    ...(roleFunction.length ? { roleFunction: Math.max(tags.confidence.fields.roleFunction, 0.95) } : {}),
+    ...(industrySector.length ? { industrySector: Math.max(tags.confidence.fields.industrySector, 0.95) } : {}),
+    ...(locationBuckets.length ? { locationBuckets: Math.max(tags.confidence.fields.locationBuckets, 0.95) } : {}),
+    ...(seniorityLevel ? { seniorityLevel: Math.max(tags.confidence.fields.seniorityLevel, 0.9) } : {}),
+    ...(jobType ? { jobType: Math.max(tags.confidence.fields.jobType, 0.95) } : {}),
+  }
+  const hasCriticalStructuredFields = roleFunction.length > 0 && locationBuckets.length > 0 && Boolean(seniorityLevel || tags.seniorityLevel)
+  return {
+    ...enriched,
+    tags: {
+      ...tags,
+      skills: normalizeOpportunitySkills(tags.skills),
+      relevantTags: normalizeOpenTags(tags.relevantTags),
+      ...(roleFunction.length ? { roleFunction } : {}),
+      ...(industrySector.length ? { industrySector } : {}),
+      ...(locationBuckets.length ? { locationBuckets } : {}),
+      ...(seniorityLevel ? { seniorityLevel } : {}),
+      ...(jobType ? { jobType } : {}),
+      sponsorshipHint,
+      confidence: {
+        ...tags.confidence,
+        overall: hasCriticalStructuredFields ? Math.max(tags.confidence.overall, 0.9) : tags.confidence.overall,
+        fields,
+      },
+    },
+  }
+}
+
+function normalizeOpportunitySkills(
+  skills: EnrichJobTagsResult["tags"]["skills"],
+): EnrichJobTagsResult["tags"]["skills"] {
+  const replacements: Record<string, string> = {
+    ai: "artificial_intelligence",
+    ml: "machine_learning",
+    api: "apis",
+    ci: "continuous_integration",
+    cd: "continuous_delivery",
+    db: "databases",
+    ui: "user_interface_design",
+    ux: "user_experience_design",
+  }
+  const rejected = knownAbbreviations()
+  return skills
+    .map((skill) => {
+      const name = replacements[skill.name] ?? skill.name
+      return { ...skill, name }
+    })
+    .filter((skill) => !rejected.has(skill.name))
+}
+
+function normalizeOpenTags(tags: string[]): string[] {
+  const rejected = knownAbbreviations()
+  return tags.filter((tag) => !rejected.has(tag))
+}
+
+function knownAbbreviations(): Set<string> {
+  return new Set([
+    "swe", "pm", "tpm", "epm", "sde", "qa", "sre", "ds", "fe", "be",
+    "sf", "nyc", "la", "dc", "uk", "us", "usa", "eu",
+    "js", "ts", "py", "k8s", "ml", "ai", "ux", "ui", "oss", "pr", "cd", "ci", "db", "vm", "iam", "ide", "cli", "api",
+    "svp", "evp", "ceo", "cto", "cfo", "coo", "cmo", "cpo", "ciso",
+    "hr", "rfp", "kpi", "saas",
+  ])
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0).map((item) => item.trim())
+    : []
+}
+
+function normalizeLocationBuckets(value: unknown): EnrichJobTagsResult["tags"]["locationBuckets"] {
+  const legacyToCanonical: Record<string, string> = {
+    new_york: "new_york_metro",
+    remote: "remote_united_states",
+  }
+  return stringArray(value).map((item) => legacyToCanonical[item] ?? item) as EnrichJobTagsResult["tags"]["locationBuckets"]
+}
+
+function normalizeRoleFunctions(value: unknown): EnrichJobTagsResult["tags"]["roleFunction"] {
+  const valid = new Set([
+    "software_engineering",
+    "engineering_and_development",
+    "data_analysis",
+    "product_management",
+    "business_analyst",
+    "creatives_and_design",
+    "consultant",
+    "accounting_and_finance",
+    "marketing",
+    "management_and_executive",
+    "sales",
+    "human_resources",
+    "legal_and_compliance",
+    "arts_and_entertainment",
+    "education_and_training",
+    "public_sector_and_government",
+    "customer_service_and_support",
+  ])
+  return stringArray(value).filter((item) => valid.has(item)) as EnrichJobTagsResult["tags"]["roleFunction"]
+}
+
+function normalizeSeniorityLevel(value: unknown): EnrichJobTagsResult["tags"]["seniorityLevel"] | null {
+  const seniority = stringOrNull(value)
+  if (!seniority) return null
+  if (seniority === "executive") return "c_level"
+  const valid = new Set([
+    "student",
+    "intern",
+    "entry_level",
+    "junior",
+    "mid_level",
+    "senior",
+    "staff",
+    "principal",
+    "manager",
+    "director",
+    "vp",
+    "c_level",
+    "founder",
+  ])
+  return (valid.has(seniority) ? seniority : null) as EnrichJobTagsResult["tags"]["seniorityLevel"] | null
 }
 
 export async function runJobEnrichmentApproveDraft(
@@ -395,6 +530,7 @@ export async function publishApprovedJobOpportunityDraft(
     title: opportunity.title,
     descriptionMd: descriptionMdFromDraft(approved),
     publicVisible: true,
+    candidatePageStatus: "published",
     prescreenConfig,
     jobOpportunity: {
       title: opportunity.title,
@@ -535,7 +671,12 @@ function toMarketplaceDraft(input: {
   const hitlFlags = derived.hitlFlags.map((flag, index) => ({
     flagId: `${input.draftId}_flag_${index + 1}`,
     kind: flag === "WEAK_SENIORITY_COVERAGE" ? "seniority_title_only" as const : "low_coverage" as const,
-    severity: flag === "MISSING_SALARY_COVERAGE" || flag === "SPONSORSHIP_SILENT" ? "review" as const : "blocking" as const,
+    severity:
+      flag === "MISSING_SALARY_COVERAGE" ||
+      flag === "SPONSORSHIP_SILENT" ||
+      flag === "MISSING_SKILLS_COVERAGE"
+        ? "review" as const
+        : "blocking" as const,
     reason: flag.toLowerCase().replace(/_/g, " "),
     evidence: [{ source: "llm_infer" as const, summary: flag, confidence: tags.confidence.overall }],
   }))

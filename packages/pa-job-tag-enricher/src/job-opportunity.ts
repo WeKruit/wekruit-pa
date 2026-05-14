@@ -132,7 +132,10 @@ export function deriveJobOpportunityDraft(input: JobOpportunityDraftInput): JobO
   const locationBuckets = tags.locationBuckets ?? []
 
   const coverage = {
-    roleFunction: coverageField(tags.confidence.fields.roleFunction, tags.roleFunction.length === 1),
+    roleFunction: coverageField(
+      tags.confidence.fields.roleFunction,
+      tags.roleFunction.length >= 1 && tags.roleFunction.length <= 2,
+    ),
     skills: coverageField(tags.confidence.fields.skills, skills.length > 0),
     seniority: coverageField(tags.confidence.fields.seniorityLevel, true),
     location: coverageField(tags.confidence.fields.locationBuckets, locationBuckets.length > 0),
@@ -143,8 +146,12 @@ export function deriveJobOpportunityDraft(input: JobOpportunityDraftInput): JobO
   if (tags.confidence.overall < APPROVAL_CONFIDENCE_THRESHOLD) {
     hitlFlags.push("LOW_OVERALL_CONFIDENCE")
   }
-  if (tags.roleFunction.length !== 1 || tags.confidence.fields.roleFunction < 0.75) {
-    hitlFlags.push(tags.roleFunction.length > 1 ? "AMBIGUOUS_ROLE_FUNCTION" : "WEAK_ROLE_FUNCTION_COVERAGE")
+  if (tags.roleFunction.length < 1 || tags.roleFunction.length > 2 || tags.confidence.fields.roleFunction < 0.75) {
+    hitlFlags.push(
+      tags.roleFunction.length > 2 || (tags.roleFunction.length > 1 && tags.confidence.fields.roleFunction < 0.75)
+        ? "AMBIGUOUS_ROLE_FUNCTION"
+        : "WEAK_ROLE_FUNCTION_COVERAGE",
+    )
   }
   if (skills.length === 0 || tags.confidence.fields.skills < 0.7) {
     hitlFlags.push("MISSING_SKILLS_COVERAGE")
@@ -162,7 +169,11 @@ export function deriveJobOpportunityDraft(input: JobOpportunityDraftInput): JobO
     hitlFlags.push("SPONSORSHIP_SILENT")
   }
 
-  const criticalPass = Object.values(coverage).every((field) => field.state === "pass")
+  const criticalPass = [
+    coverage.roleFunction,
+    coverage.seniority,
+    coverage.location,
+  ].every((field) => field.state === "pass")
   const approvalReady = tags.confidence.overall >= APPROVAL_CONFIDENCE_THRESHOLD && criticalPass
 
   return {
@@ -230,10 +241,11 @@ function buildQuestions(
   tags: JobOpportunityDraftInput["enrichedJobTags"],
   salaryRange: JobOpportunityDraftInput["rawJob"]["salaryRange"] | null,
 ): JobOpportunityDraft["prescreenConfigDraft"]["questions"] {
+  const roleLabel = humanizeRoleFunctions(tags.roleFunction)
   const questions: JobOpportunityDraft["prescreenConfigDraft"]["questions"] = [
     {
       id: "role_fit",
-      prompt: `What recent work best matches this ${tags.roleFunction.join(" or ")} role?`,
+      prompt: `What recent work best matches this ${roleLabel} role?`,
       required: true,
       rubricDimensionId: "role_fit",
     },
@@ -274,6 +286,35 @@ function buildQuestions(
   })
 
   return questions
+}
+
+const ROLE_FUNCTION_LABELS: Record<string, string> = {
+  software_engineering: "software engineering",
+  engineering_and_development: "engineering",
+  data_analysis: "data or analytics",
+  product_management: "product management",
+  business_analyst: "business analysis",
+  creatives_and_design: "design",
+  consultant: "consulting",
+  accounting_and_finance: "finance",
+  marketing: "marketing",
+  management_and_executive: "leadership",
+  sales: "sales",
+  human_resources: "people or recruiting",
+  legal_and_compliance: "legal or compliance",
+  arts_and_entertainment: "creative",
+  education_and_training: "education",
+  public_sector_and_government: "public sector",
+  customer_service_and_support: "customer support",
+}
+
+function humanizeRoleFunctions(roleFunctions: string[]): string {
+  const labels = roleFunctions
+    .map((role) => ROLE_FUNCTION_LABELS[role] ?? role.replace(/_/g, " "))
+    .filter((role) => role.trim().length > 0)
+  if (labels.length === 0) return "job"
+  if (labels.length === 1) return labels[0]!
+  return labels.slice(0, 2).join(" or ")
 }
 
 function buildScoringRubric(tags: JobOpportunityDraftInput["enrichedJobTags"]): JobOpportunityDraft["scoringRubric"] {
