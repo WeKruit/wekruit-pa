@@ -61,5 +61,6 @@ and merged in PR #33.
 
 ## Next Gate
 
-S9 has started from updated `main` on branch
-`codex/v2-S9-production-hardening-scale`.
+S9 landed on `main` as
+`fcfea33 feat(v2): add S9 production hardening controls` through PR #36. The
+roadmap defines no S10.

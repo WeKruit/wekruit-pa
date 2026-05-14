@@ -70,7 +70,9 @@ not a side effect in S5.
 - Run package tests, functions tests/typecheck, dashboard tests/build, landing
   tests/build if touched, and route/domain regressions.
 - Deploy directly if code changes affect Firebase Functions or Hosting.
-- Open PR, wait for remote checks, merge, then start S6 from updated `main`.
+- PR checks and merge completed; S5 landed as
+  `16705a5 feat(v2): add S5 two-way matching` through PR #28. S6 has already
+  landed after S5.
 
 ## Executor Split
 

@@ -1,6 +1,6 @@
 # S9 Summary
 
-**Status:** Implemented, deployed, and live no-contact smoke passed.
+**Status:** Landed in PR #36, deployed, and live no-contact smoke passed.
 **Date:** 2026-05-14.
 
 ## Current State
@@ -31,5 +31,7 @@
 
 ## Next Gate
 
-Create the PR from `codex/v2-S9-production-hardening-scale`, then merge after
-review/checks if no new issues appear.
+S9 landed on `main` as
+`fcfea33 feat(v2): add S9 production hardening controls` after PR #36 checks
+passed. The v2.0 roadmap defines no S10; future work should start from a new
+explicit roadmap or initiative doc.

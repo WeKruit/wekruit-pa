@@ -1,6 +1,6 @@
 # S7 Summary
 
-**Status:** Deployed and live-smoked; PR/merge pending.
+**Status:** Landed, deployed, and live-smoked.
 **Date:** 2026-05-14.
 
 ## Current State
@@ -35,5 +35,6 @@
 
 ## Next Gate
 
-Open the S7 PR, wait for GitHub checks, merge to `main`, then continue to the
-next unblocked v2 sprint from updated `main`.
+S7 landed on `main` as
+`2c48792 feat(v2): add S7 first-interview passed surface (#32)`. S8 and S9 have
+already landed after S7.

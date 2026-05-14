@@ -64,7 +64,9 @@ prescreen ready.
 - Run package tests, functions tests, dashboard tests/typecheck/build, rules
   dry-run, route regressions, and live admin/candidate smoke as needed.
 - Deploy directly if code changes touch Firebase-hosted or functions behavior.
-- Open PR, wait for remote checks, merge, then start S5 from updated `main`.
+- PR checks and merge completed; S4 landed as
+  `e27edf6 feat(v2): add job enrichment review pipeline` through PR #27. S5
+  has already landed after S4.
 
 ## Executor Split
 
