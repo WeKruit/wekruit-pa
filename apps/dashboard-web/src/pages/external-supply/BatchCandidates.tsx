@@ -27,6 +27,7 @@ import {
   getJob,
   listBatchCandidates,
   listBatchCandidatesCanonical,
+  pollLinkedInEnrich,
   runGitHubEnrich,
   runLinkedInEnrich,
   type BatchCandidateRow,
@@ -619,6 +620,17 @@ function CandidateDetailPanel({ detail }: { detail: CandidateDetail }) {
     setEnrichError(null)
     setEnrichResult(null)
     try {
+      // Optimistic poll first — if a recent snapshot already exists in
+      // ready state we surface it without burning another BrightData call.
+      try {
+        const polled = await pollLinkedInEnrich({ recordId })
+        if (polled.status === "ready" || polled.status === "building") {
+          setEnrichResult(polled)
+          if (polled.status === "ready") return
+        }
+      } catch {
+        /* no prior match — fall through to trigger fresh */
+      }
       const out = await runLinkedInEnrich({ recordId })
       setEnrichResult(out)
     } catch (err) {
@@ -632,6 +644,42 @@ function CandidateDetailPanel({ detail }: { detail: CandidateDetail }) {
       }
     } finally {
       setEnrichLoading(false)
+    }
+  }
+  // Auto-poll: when enrichResult.status === 'building', recheck every 20s
+  // up to 15 minutes. BrightData LinkedIn dataset takes 5-15 min cold.
+  useEffect(() => {
+    if (!enrichResult || enrichResult.status !== "building") return
+    let cancelled = false
+    let tries = 0
+    const t = setInterval(async () => {
+      if (cancelled) return
+      tries += 1
+      if (tries > 45) {
+        clearInterval(t)
+        return
+      }
+      try {
+        const polled = await pollLinkedInEnrich({ recordId })
+        if (!cancelled) {
+          setEnrichResult(polled)
+          if (polled.status !== "building") clearInterval(t)
+        }
+      } catch {
+        /* continue polling */
+      }
+    }, 20_000)
+    return () => {
+      cancelled = true
+      clearInterval(t)
+    }
+  }, [enrichResult, recordId])
+  const refetchEnrich = async () => {
+    try {
+      const polled = await pollLinkedInEnrich({ recordId })
+      setEnrichResult(polled)
+    } catch (err) {
+      setEnrichError(err instanceof Error ? err.message : String(err))
     }
   }
   const runGhEnrich = async () => {
@@ -764,8 +812,22 @@ function CandidateDetailPanel({ detail }: { detail: CandidateDetail }) {
                       {JSON.stringify(enrichResult.profile, null, 2)}
                     </pre>
                   ) : (
-                    <div style={{ marginTop: 6, color: "#64748b" }}>
-                      Snapshot still building — re-click in ~60s to fetch.
+                    <div style={{ marginTop: 6, color: "#64748b", display: "flex", gap: 8, alignItems: "center" }}>
+                      <span>Snapshot building — auto-polling every 20s (BrightData typically 5-15 min).</span>
+                      <button
+                        type="button"
+                        onClick={refetchEnrich}
+                        style={{
+                          fontSize: "0.78em",
+                          padding: "2px 8px",
+                          background: "#e2e8f0",
+                          border: "1px solid #cbd5e1",
+                          borderRadius: 4,
+                          cursor: "pointer",
+                        }}
+                      >
+                        Refetch now
+                      </button>
                     </div>
                   )}
                 </details>

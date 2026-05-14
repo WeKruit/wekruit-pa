@@ -2043,6 +2043,7 @@ export {
 export { paExternalSupplyResolveBatchIdentity } from "./external-supply/resolve-identity.js"
 export { paExternalSupplyRunLinkedInEnrich } from "./external-supply/run-linkedin-enrich.js"
 export { paExternalSupplyRunGitHubEnrich } from "./external-supply/run-github-enrich.js"
+export { paExternalSupplyPollLinkedInEnrich } from "./external-supply/poll-linkedin-enrich.js"
 export { paExternalSupplyRunEvaluation } from "./external-supply/evaluate.js"
 export {
   paExternalSupplyGenerateAgentResearchPrompt,
