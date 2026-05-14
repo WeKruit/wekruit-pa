@@ -7,6 +7,7 @@ const COLLECTIONS = {
   candidateJobStates: "pa-candidate-job-states",
   jobs: "pa-jobs",
   outboundInvites: ["pa", "outbound-invites"].join("-"),
+  users: "pa-users",
 } as const
 
 type CallableAuth = {
@@ -41,6 +42,7 @@ export type CandidateListMatchesResult = {
 
 export interface CandidateListMatchesDeps {
   db: Firestore
+  now?: () => Date
 }
 
 function cleanString(value: unknown, max: number): string | undefined {
@@ -83,6 +85,7 @@ function projectJobDisplay(jobId: string, job: Record<string, unknown>): Candida
   return {
     title:
       cleanString(prescreenConfig.jobTitle, 300) ??
+      cleanString(job.title, 300) ??
       cleanString(job.jobTitle, 300) ??
       cleanString(job.roleTitle, 300) ??
       "Open role",
@@ -151,6 +154,167 @@ function projectMatchCard(args: {
   }
 }
 
+function cleanStringSet(value: unknown): Set<string> {
+  const out = new Set<string>()
+  const ingest = (item: unknown) => {
+    if (typeof item === "string") {
+      const cleaned = item.trim().toLowerCase()
+      if (cleaned) out.add(cleaned)
+    } else if (item && typeof item === "object") {
+      const name = cleanString((item as Record<string, unknown>).name, 120)
+      if (name) out.add(name.toLowerCase())
+    }
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) ingest(item)
+  } else {
+    ingest(value)
+  }
+  return out
+}
+
+function unionSets(...sets: Set<string>[]): Set<string> {
+  const out = new Set<string>()
+  for (const set of sets) {
+    for (const value of set) out.add(value)
+  }
+  return out
+}
+
+function intersection(a: Set<string>, b: Set<string>): string[] {
+  const out: string[] = []
+  for (const value of a) {
+    if (b.has(value)) out.push(value)
+  }
+  return out
+}
+
+function jobSearchText(job: Record<string, unknown>): string {
+  return [
+    cleanString(job.title, 300),
+    cleanString(job.jobTitle, 300),
+    cleanString(job.roleTitle, 300),
+    cleanString(job.companyName, 300),
+    cleanString(job.company, 300),
+    cleanString(job.location, 300),
+    cleanString(job.descriptionMd, 4_000),
+    cleanString(job.jdRaw, 4_000),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase()
+}
+
+function publicRecommendationScore(args: {
+  candidateTags: Record<string, unknown>
+  jobId: string
+  job: Record<string, unknown>
+  nowMs: number
+}): { score: number; reasons: string[] } {
+  const candidateSkills = cleanStringSet(args.candidateTags.skills)
+  const candidateIndustries = unionSets(
+    cleanStringSet(args.candidateTags.industrySector),
+    cleanStringSet(args.candidateTags.relevantIndustry),
+    cleanStringSet(args.candidateTags.industryEnum)
+  )
+  const candidateRoles = unionSets(
+    cleanStringSet(args.candidateTags.roleFunction),
+    cleanStringSet(args.candidateTags.targetRoleFunction),
+    cleanStringSet(args.candidateTags.targetRole)
+  )
+  const candidateRelevant = cleanStringSet(args.candidateTags.relevantTags)
+  const jobIndustries = unionSets(cleanStringSet(args.job.industrySector), cleanStringSet(args.job.industryEnum))
+  const jobRoles = cleanStringSet(args.job.roleFunction)
+  const jobRelevant = cleanStringSet(args.job.relevantTags)
+  const searchText = jobSearchText(args.job)
+
+  const skillMatches = [...candidateSkills].filter((skill) => searchText.includes(skill.replace(/_/g, " ")) || searchText.includes(skill))
+  const roleMatches = intersection(candidateRoles, jobRoles)
+  const industryMatches = intersection(candidateIndustries, jobIndustries)
+  const relevantMatches = intersection(candidateRelevant, jobRelevant)
+
+  let score = 0
+  score += Math.min(skillMatches.length, 6) * 3
+  score += roleMatches.length * 5
+  score += industryMatches.length * 4
+  score += relevantMatches.length * 2
+
+  const firstSeenAt = cleanString(args.job.firstSeenAt, 80)
+  if (firstSeenAt) {
+    const ageDays = (args.nowMs - Date.parse(firstSeenAt)) / (24 * 3600 * 1000)
+    if (Number.isFinite(ageDays) && ageDays <= 30) score += 1
+  }
+
+  const reasons: string[] = []
+  if (skillMatches.length > 0) {
+    reasons.push(`Matches your resume skills: ${skillMatches.slice(0, 3).join(", ")}.`)
+  }
+  if (roleMatches.length > 0) {
+    reasons.push(`Aligned with your target role area: ${roleMatches.slice(0, 2).join(", ")}.`)
+  }
+  if (industryMatches.length > 0) {
+    reasons.push(`Fits your industry signal: ${industryMatches.slice(0, 2).join(", ")}.`)
+  }
+  if (reasons.length === 0) {
+    reasons.push("This published role is available for Claire's first screen.")
+  }
+
+  return { score, reasons }
+}
+
+async function buildPublicRecommendedRows(args: {
+  db: Firestore
+  candidateId: string
+  existingJobIds: Set<string>
+  limit: number
+  now: string
+}): Promise<CandidateMatchCard[]> {
+  const [userSnap, publicJobsSnap] = await Promise.all([
+    args.db.collection(COLLECTIONS.users).doc(args.candidateId).get(),
+    args.db.collection(COLLECTIONS.jobs).where("publicVisible", "==", true).limit(100).get(),
+  ])
+  const user = userSnap.data() as Record<string, unknown> | undefined
+  const candidateTags =
+    user?.tags && typeof user.tags === "object"
+      ? (user.tags as Record<string, unknown>)
+      : user?.globalTags && typeof user.globalTags === "object"
+        ? (user.globalTags as Record<string, unknown>)
+        : undefined
+  if (!candidateTags) return []
+  const nowMs = Date.parse(args.now)
+
+  const ranked = publicJobsSnap.docs
+    .map((doc) => {
+      const job = doc.data() as Record<string, unknown>
+      if (args.existingJobIds.has(doc.id)) return null
+      if (job.publicVisible !== true) return null
+      if (job.status && cleanString(job.status, 80) !== "active") return null
+      if (job.dead === true) return null
+      const scored = publicRecommendationScore({
+        candidateTags,
+        jobId: doc.id,
+        job,
+        nowMs: Number.isFinite(nowMs) ? nowMs : Date.now(),
+      })
+      if (scored.score <= 0) return null
+      return { docId: doc.id, job, ...scored }
+    })
+    .filter((row): row is { docId: string; job: Record<string, unknown>; score: number; reasons: string[] } => row !== null)
+    .sort((a, b) => b.score - a.score || a.docId.localeCompare(b.docId))
+    .slice(0, args.limit)
+
+  return ranked.map((row, index) => ({
+    matchId: `${args.candidateId}__${row.docId}__public_recommendation`,
+    jobId: row.docId,
+    bucket: "recommended",
+    status: "recommended",
+    job: projectJobDisplay(row.docId, row.job),
+    whyMatched: row.reasons,
+    rank: index + 1,
+    computedAt: args.now,
+  }))
+}
+
 export async function runCandidateListMatches(
   data: unknown,
   auth: CallableAuth | undefined,
@@ -163,6 +327,7 @@ export async function runCandidateListMatches(
 
   const candidateId = await getCandidateIdForAuth(deps.db, firebaseUid)
   const limit = parseLimit(data)
+  const generatedAt = (deps.now ?? (() => new Date()))().toISOString()
   const [matchSnap, inviteSnap, stateSnap] = await Promise.all([
     deps.db.collection(COLLECTIONS.candidateJobMatches).where("candidateId", "==", candidateId).limit(limit).get(),
     deps.db.collection(COLLECTIONS.outboundInvites).where("candidateId", "==", candidateId).limit(limit).get(),
@@ -223,6 +388,17 @@ export async function runCandidateListMatches(
   )
 
   const visibleRows = rows.filter((row): row is CandidateMatchCard => row !== null)
+  if (visibleRows.length < limit) {
+    visibleRows.push(
+      ...(await buildPublicRecommendedRows({
+        db: deps.db,
+        candidateId,
+        existingJobIds: new Set(visibleRows.map((row) => row.jobId)),
+        limit: limit - visibleRows.length,
+        now: generatedAt,
+      }))
+    )
+  }
   visibleRows.sort((a, b) => {
     if (a.bucket !== b.bucket) return a.bucket === "invited" ? -1 : 1
     const aRank = a.rank ?? Number.MAX_SAFE_INTEGER
@@ -234,7 +410,7 @@ export async function runCandidateListMatches(
   return {
     ok: true,
     candidateId,
-    generatedAt: new Date().toISOString(),
+    generatedAt,
     matches: visibleRows,
   }
 }

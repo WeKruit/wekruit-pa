@@ -136,6 +136,72 @@ test("runCandidateListMatches includes direct state-only candidate job rows", as
   assert.doesNotMatch(JSON.stringify(result), /rawTranscript/)
 })
 
+test("runCandidateListMatches recommends published jobs from parsed candidate tags when no match rows exist", async () => {
+  const mfs = new MockFirestore()
+  await mfs.collection("pa-candidate-auth").doc("firebase-1").set({
+    firebaseUid: "firebase-1",
+    candidateId: "cand-1",
+  })
+  await mfs.collection("pa-users").doc("cand-1").set({
+    tags: {
+      roleFunction: ["software_engineering"],
+      industrySector: ["financial_technology"],
+      skills: [{ name: "python" }, { name: "sql" }],
+    },
+  })
+  await mfs.collection("pa-jobs").doc("job-fit").set({
+    publicVisible: true,
+    status: "active",
+    title: "Backend Engineer",
+    companyName: "Rain",
+    location: "New York",
+    descriptionMd: "Build payment APIs with Python and SQL.",
+    roleFunction: ["software_engineering"],
+    industrySector: ["financial_technology"],
+    prescreenConfig: {
+      jobTitle: "Backend Engineer",
+      company: "Rain",
+      level1Reveal: { salaryRange: "$150k-$220k" },
+    },
+  })
+  await mfs.collection("pa-jobs").doc("job-weak").set({
+    publicVisible: true,
+    status: "active",
+    title: "Growth Marketer",
+    companyName: "Market Co",
+    descriptionMd: "Run campaigns and social channels.",
+    roleFunction: ["marketing"],
+    industrySector: ["education"],
+  })
+  await mfs.collection("pa-jobs").doc("job-hidden").set({
+    publicVisible: false,
+    status: "active",
+    title: "Hidden Python Role",
+    descriptionMd: "Python SQL",
+  })
+  const writesBefore = mfs.writeLog.length
+
+  const result = await runCandidateListMatches(
+    { limit: 2 },
+    { uid: "firebase-1" },
+    {
+      db: asFirestore(mfs),
+      now: () => new Date("2026-05-14T18:30:00.000Z"),
+    }
+  )
+
+  assert.equal(mfs.writeLog.length, writesBefore)
+  assert.equal(result.matches.length, 1)
+  assert.equal(result.matches[0]!.jobId, "job-fit")
+  assert.equal(result.matches[0]!.bucket, "recommended")
+  assert.equal(result.matches[0]!.status, "recommended")
+  assert.equal(result.matches[0]!.job.title, "Backend Engineer")
+  assert.equal(result.matches[0]!.job.href, "/j/job-fit")
+  assert.equal(result.matches[0]!.job.salaryRange, "$150k-$220k")
+  assert.match(result.matches[0]!.whyMatched.join(" "), /python|sql|software_engineering|financial_technology/)
+  assert.equal(result.matches.some((match) => match.jobId === "job-hidden"), false)
+})
+
 test("runCandidateListMatches maps employer visible state to candidate passed", async () => {
   const mfs = new MockFirestore()
   await mfs.collection("pa-candidate-auth").doc("firebase-1").set({
