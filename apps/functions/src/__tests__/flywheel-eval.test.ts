@@ -1,0 +1,158 @@
+import { describe, it } from "node:test"
+import assert from "node:assert/strict"
+import { PA_COLLECTIONS, createEvalArtifactId } from "@pa/core-types"
+import { MockFirestore, asFirestore } from "../job-rec/__tests__/mock-firestore.js"
+import {
+  buildFlywheelFeedbackEvent,
+  materializeEvalArtifactForCorrection,
+  runAdminFlywheelEvalSnapshot,
+  runFlywheelMarketplaceSimulation,
+  type FlywheelSimulationInput,
+} from "../flywheel-eval.js"
+
+const now = "2026-05-14T12:00:00.000Z"
+
+function json(value: unknown): string {
+  return JSON.stringify(value)
+}
+
+describe("flywheel eval builders", () => {
+  it("builds redacted candidate behavior feedback without raw payload leakage", () => {
+    const event = buildFlywheelFeedbackEvent({
+      eventId: "feedback-prescreen-1",
+      behavior: "prescreen_pass",
+      candidateId: "cand-1",
+      jobId: "job-1",
+      candidateJobStateId: "cand-1__job-1",
+      outcome: "passed",
+      signals: {
+        scoreBucket: "high",
+        transcriptText: "email candidate@example.com transcript raw",
+        storageUri: "gs://bucket/resume.pdf",
+      },
+      createdAt: now,
+    })
+
+    assert.equal(event.kind, "candidate_behavior")
+    assert.equal(event.actor, "system")
+    assert.deepEqual(event.payloadRedacted, {
+      behavior: "prescreen_pass",
+      scoreBucket: "high",
+    })
+    assert.doesNotMatch(json(event), /candidate@example\.com|gs:\/\/|transcript raw/)
+  })
+
+  it("materializes correction artifacts with deterministic ids and no raw free text", () => {
+    const artifact = materializeEvalArtifactForCorrection({
+      correction: {
+        eventId: "corr-1",
+        targetType: "candidate_profile",
+        targetId: "cand-1",
+        actor: "candidate",
+        candidateId: "cand-1",
+        reason: "My email is candidate@example.com and the transcript says raw text",
+        beforeRedacted: { targetRoleFunction: ["sales"] },
+        afterRedacted: { targetRoleFunction: ["software_engineering"] },
+        evidence: [],
+        createdAt: now,
+      },
+      createdAt: now,
+    })
+
+    assert.equal(artifact.artifactId, createEvalArtifactId("candidate_profile_correction", "corr-1"))
+    assert.equal(artifact.kind, "candidate_profile_correction")
+    assert.equal(artifact.createdBy, "candidate")
+    assert.deepEqual(artifact.sourceCorrectionEventIds, ["corr-1"])
+    assert.doesNotMatch(json(artifact), /candidate@example\.com|transcript says raw text|reason/)
+  })
+})
+
+describe("runFlywheelMarketplaceSimulation", () => {
+  it("is deterministic and never writes outbound rows", () => {
+    const input: FlywheelSimulationInput = {
+      scenarioRef: "sim-basic",
+      candidates: [
+        { candidateId: "cand-a", tags: ["react", "ai"] },
+        { candidateId: "cand-b", tags: ["sales"] },
+      ],
+      jobs: [
+        { jobId: "job-a", tags: ["react"], active: true },
+        { jobId: "job-b", tags: ["sales"], active: false },
+      ],
+      events: [
+        { kind: "prescreen_pass", candidateId: "cand-a", jobId: "job-a" },
+        { kind: "outbound_delivery", candidateId: "cand-b", jobId: "job-b" },
+      ],
+    }
+
+    const first = runFlywheelMarketplaceSimulation(input)
+    const second = runFlywheelMarketplaceSimulation(input)
+
+    assert.deepEqual(first, second)
+    assert.equal(first.dryRun, true)
+    assert.equal(first.counts.outboundWrites, 0)
+    assert.equal(first.counts.candidates, 2)
+    assert.equal(first.counts.jobs, 2)
+    assert.equal(first.counts.generatedArtifactSummaries, 2)
+    assert.deepEqual(first.artifacts.map((artifact) => artifact.artifactId), [
+      "sim_marketplace_simulation__sim-basic__000",
+      "sim_marketplace_simulation__sim-basic__001",
+    ])
+  })
+})
+
+describe("runAdminFlywheelEvalSnapshot", () => {
+  it("aggregates recent eval artifacts, feedback, and corrections", async () => {
+    const mfs = new MockFirestore()
+    await mfs.collection(PA_COLLECTIONS.evalArtifacts).doc("artifact-1").set({
+      artifactId: "artifact-1",
+      kind: "marketplace_simulation",
+      status: "ready",
+      sourceFeedbackEventIds: ["feedback-1"],
+      scenarioRef: "sim",
+      payloadRedacted: { ok: true },
+      createdBy: "system",
+      createdAt: "2026-05-14T10:00:00.000Z",
+    })
+    await mfs.collection(PA_COLLECTIONS.feedbackEvents).doc("feedback-1").set({
+      eventId: "feedback-1",
+      kind: "candidate_behavior",
+      actor: "system",
+      candidateId: "cand-1",
+      outcome: "passed",
+      payloadRedacted: { behavior: "prescreen_pass" },
+      createdAt: "2026-05-14T10:01:00.000Z",
+    })
+    await mfs.collection(PA_COLLECTIONS.correctionEvents).doc("corr-1").set({
+      eventId: "corr-1",
+      targetType: "candidate_profile",
+      targetId: "cand-1",
+      actor: "candidate",
+      candidateId: "cand-1",
+      reason: "raw text can stay in correction",
+      beforeRedacted: {},
+      afterRedacted: { skills: ["typescript"] },
+      createdAt: "2026-05-14T10:02:00.000Z",
+    })
+
+    const result = await runAdminFlywheelEvalSnapshot(
+      { limit: 10 },
+      { db: asFirestore(mfs), now: () => now },
+    )
+
+    assert.equal(result.generatedAt, now)
+    assert.deepEqual(result.counts, {
+      evalArtifacts: 1,
+      feedbackEvents: 1,
+      correctionEvents: 1,
+      artifactsByKind: { marketplace_simulation: 1 },
+      artifactsByStatus: { ready: 1 },
+      correctionsByActor: { candidate: 1 },
+      feedbackByKind: { candidate_behavior: 1 },
+    })
+    assert.equal(result.recentArtifacts[0]!.artifactId, "artifact-1")
+    assert.equal(result.recentCorrections[0]!.eventId, "corr-1")
+    assert.equal(result.recentFeedback[0]!.eventId, "feedback-1")
+    assert.deepEqual(result.recentFeedback[0]!.payloadRedacted, { behavior: "prescreen_pass" })
+  })
+})

@@ -245,6 +245,8 @@ export {
   rejectJobOpportunityDraft,
   writeCorrectionEvent,
   writeCandidateJobMatch,
+  writeEvalArtifact,
+  writeEvalArtifactForCorrection,
   writeEmployerVisibleProfile,
   writeFeedbackEvent,
   writeJobEnrichmentEvalFixture,
@@ -260,6 +262,7 @@ export type {
   MarketplaceTransitionResult,
   RejectJobOpportunityDraftInput,
   WriteCandidateJobMatchResult,
+  WriteEvalArtifactForCorrectionInput,
   WriteOutboundInviteDecisionResult,
 } from "./marketplace.js"
 

@@ -1,31 +1,15 @@
-import { useEffect, useState } from "react"
+import { useEffect, useState, type FormEvent } from "react"
 import { Link } from "react-router-dom"
 import { onAuthStateChanged, signOut, type User } from "firebase/auth"
 import { httpsCallable } from "firebase/functions"
 import { auth, functions } from "../lib/firebase.js"
+import {
+  createCandidateProfileCorrectionSubmitter,
+  type CandidateSelfProfile,
+} from "../lib/candidate-profile-correction.js"
 import { CandidateShell } from "./CandidateLogin.js"
 
 const GLOBAL_UID_KEY = "wkr_uid"
-
-interface CandidateSelfProfile {
-  candidateId: string
-  lifecycleState: string
-  displayName?: string
-  emailMasked?: string
-  phoneMasked?: string
-  latestResumeArtifactId?: string
-  profileSummary?: string
-  linkedinUrl?: string
-  handles?: Array<{ kind: string; verifiedAt?: string | null; source?: string }>
-  globalTags?: {
-    roleFunction?: string[]
-    skills?: string[]
-    industrySector?: string[]
-    targetLocations?: string[]
-    targetJobType?: string[]
-    relevantTags?: string[]
-  }
-}
 
 interface CandidateClaimResult {
   ok: true
@@ -155,19 +139,26 @@ export function CandidateProfile() {
 }
 
 function ProfileDetails({ profile }: { profile: CandidateSelfProfile }) {
-  const tags = profile.globalTags
+  const [currentProfile, setCurrentProfile] = useState(profile)
+  const tags = currentProfile.globalTags
+
+  useEffect(() => {
+    setCurrentProfile(profile)
+  }, [profile])
+
   return (
     <>
-      <h1>{profile.displayName ?? "Your profile"}</h1>
+      <style>{CANDIDATE_PROFILE_STYLES}</style>
+      <h1>{currentProfile.displayName ?? "Your profile"}</h1>
       <dl className="candidate-profile-list">
-        <ProfileRow label="Candidate ID" value={profile.candidateId} />
-        <ProfileRow label="Lifecycle" value={profile.lifecycleState} />
-        <ProfileRow label="Email" value={profile.emailMasked ?? "Not set"} />
-        <ProfileRow label="Phone" value={profile.phoneMasked ?? "Not set"} />
-        <ProfileRow label="Resume" value={profile.latestResumeArtifactId ?? "Not set"} />
-        <ProfileRow label="LinkedIn" value={profile.linkedinUrl ?? "Not set"} />
+        <ProfileRow label="Candidate ID" value={currentProfile.candidateId} />
+        <ProfileRow label="Lifecycle" value={currentProfile.lifecycleState} />
+        <ProfileRow label="Email" value={currentProfile.emailMasked ?? "Not set"} />
+        <ProfileRow label="Phone" value={currentProfile.phoneMasked ?? "Not set"} />
+        <ProfileRow label="Resume" value={currentProfile.latestResumeArtifactId ?? "Not set"} />
+        <ProfileRow label="LinkedIn" value={currentProfile.linkedinUrl ?? "Not set"} />
       </dl>
-      {profile.profileSummary ? <p className="candidate-summary">{profile.profileSummary}</p> : null}
+      {currentProfile.profileSummary ? <p className="candidate-summary">{currentProfile.profileSummary}</p> : null}
       {tags ? (
         <div className="candidate-tag-groups">
           <TagGroup label="Roles" values={tags.roleFunction} />
@@ -178,7 +169,59 @@ function ProfileDetails({ profile }: { profile: CandidateSelfProfile }) {
           <TagGroup label="Tags" values={tags.relevantTags} />
         </div>
       ) : null}
+      <ProfileCorrectionPanel onProfileUpdated={setCurrentProfile} />
     </>
+  )
+}
+
+function ProfileCorrectionPanel({
+  onProfileUpdated,
+}: {
+  onProfileUpdated: (profile: CandidateSelfProfile) => void
+}) {
+  const [correctionText, setCorrectionText] = useState("")
+  const [status, setStatus] = useState<"idle" | "submitting" | "success" | "error">("idle")
+  const [message, setMessage] = useState<string | null>(null)
+
+  async function onSubmit(event: FormEvent) {
+    event.preventDefault()
+    setMessage(null)
+    setStatus("submitting")
+    try {
+      const submitCorrection = createCandidateProfileCorrectionSubmitter(functions())
+      const result = await submitCorrection({ correctionText })
+      onProfileUpdated(result.selfProfile)
+      setCorrectionText("")
+      const applied = result.appliedKeys?.length ? ` Updated: ${result.appliedKeys.join(", ")}.` : ""
+      setMessage(`Correction submitted.${applied}`)
+      setStatus("success")
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : String(err))
+      setStatus("error")
+    }
+  }
+
+  return (
+    <section className="candidate-correction-panel" aria-labelledby="candidate-correction-title">
+      <h2 id="candidate-correction-title">Update profile preferences</h2>
+      <form onSubmit={onSubmit} className="candidate-correction-form">
+        <label>
+          Correction
+          <textarea
+            value={correctionText}
+            onChange={(event) => setCorrectionText(event.target.value)}
+            disabled={status === "submitting"}
+            rows={4}
+            placeholder="Example: I prefer product roles in New York or remote, and I want to avoid early-stage startups."
+          />
+        </label>
+        <button type="submit" disabled={status === "submitting" || correctionText.trim().length === 0}>
+          {status === "submitting" ? "Submitting" : "Submit correction"}
+        </button>
+      </form>
+      {status === "success" && message ? <p className="candidate-success">{message}</p> : null}
+      {status === "error" && message ? <p className="candidate-error">{message}</p> : null}
+    </section>
   )
 }
 
@@ -204,3 +247,60 @@ function TagGroup({ label, values }: { label: string; values?: string[] }) {
     </section>
   )
 }
+
+const CANDIDATE_PROFILE_STYLES = `
+.candidate-correction-panel {
+  display: grid;
+  gap: 12px;
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid #e5dccd;
+}
+.candidate-correction-panel h2 {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.25;
+  letter-spacing: 0;
+}
+.candidate-correction-form {
+  display: grid;
+  gap: 12px;
+}
+.candidate-correction-form label {
+  display: grid;
+  gap: 6px;
+  color: #364233;
+  font-weight: 800;
+}
+.candidate-correction-form textarea {
+  width: 100%;
+  min-height: 110px;
+  resize: vertical;
+  border: 1px solid #cfc3ae;
+  border-radius: 8px;
+  padding: 12px;
+  font: inherit;
+  line-height: 1.45;
+  background: #fff;
+  color: #18211a;
+}
+.candidate-correction-form textarea:disabled {
+  opacity: 0.7;
+}
+.candidate-correction-form button {
+  justify-self: start;
+  min-height: 42px;
+  padding: 0 16px;
+  border-radius: 8px;
+  border: 1px solid #2f6f4f;
+  background: #2f6f4f;
+  color: #fffdf8;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+.candidate-correction-form button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+`

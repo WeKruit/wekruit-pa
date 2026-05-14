@@ -32,6 +32,7 @@ import { MatchExplainerTest } from "./pages/MatchExplainerTest.js"
 // QA evaluator weekly run viewer.
 import { CanonicalTags } from "./pages/CanonicalTags.js"
 import { QaEvaluator } from "./pages/QaEvaluator.js"
+import FlywheelEval from "./pages/FlywheelEval.js"
 // v1.7 Phase 70 (MATCHDEBUG-01..04) — admin live debugger for the V16 cascade
 // with score-weight sandbox sliders. Backed by paAdminMatchDebug callable.
 import { MatchDebug } from "./pages/MatchDebug.js"
@@ -197,6 +198,7 @@ export default function App() {
         <NavSection id="eval" label="Eval" defaultOpen={false}>
           <NavLink to="/eval/voice-review">Voice Review</NavLink>
           <NavLink to="/eval/n-round-sim">N-Round Sim</NavLink>
+          <NavLink to="/admin/flywheel-eval">Flywheel Eval</NavLink>
         </NavSection>
         <NavSection id="external-supply" label="External Supply" defaultOpen={false}>
           <NavLink to="/admin/external-supply" end>Landing</NavLink>
@@ -269,6 +271,7 @@ export default function App() {
           <Route path="/voice" element={<Navigate to="/eval/voice-review" replace />} />
           <Route path="/eval/voice-review" element={<VoiceReview />} />
           <Route path="/eval/n-round-sim" element={<NRoundSim />} />
+          <Route path="/admin/flywheel-eval" element={<FlywheelEval />} />
           {/* Phase 49 (v1.5 Stream-H D9) — operator reverse-match dashboard. Admin-only;
               CF gates on paReverseMatchEnabled flag (default OFF). */}
           <Route path="/match/candidates" element={<MatchCandidates />} />

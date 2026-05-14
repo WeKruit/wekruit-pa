@@ -72,6 +72,8 @@ export const PA_COLLECTIONS = {
   feedbackEvents: "pa-feedback-events",
   /** v2.0 S1 — append-only HITL correction events. */
   correctionEvents: "pa-correction-events",
+  /** v2.0 S8 — redacted eval/regression artifacts generated from flywheel events. */
+  evalArtifacts: "pa-eval-artifacts",
   /** Public job docs. Draft enrichment internals must live only in subcollections. */
   jobs: "pa-jobs",
   /** v2.0 external-supply — operator-uploaded sourcing batches (Juicebox/Lessie/Coresignal/manual-csv). */

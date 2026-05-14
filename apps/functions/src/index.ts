@@ -212,6 +212,13 @@ export {
   paJobEnrichmentRejectDraft,
   paJobEnrichmentSaveCorrections,
 } from "./job-enrichment.js"
+// v2.0 S8 — backend flywheel/HITL/eval slice. Admin snapshot is read-only;
+// candidate correction writes only correction/eval artifacts and never outbound.
+export {
+  paAdminFlywheelEvalSnapshot,
+  paFlywheelCorrectionEvalArtifact,
+} from "./flywheel-eval.js"
+export { paCandidateProfileCorrection } from "./flywheel-candidate-correction.js"
 
 // Phase 27 T2 — public /health endpoints (one per existing CF). Returns
 // {ok, name, version, ts, deps:{firestore, secrets}}. No auth (probes

@@ -1,0 +1,15 @@
+name: "S8 candidate self-correction creates reviewable artifact"
+entry: "candidate_self_correction"
+candidateId: "cand-s8-redacted"
+jobId: "job-s8-product-designer"
+correctionEventId: "corr-s8-candidate-self-1"
+sourceSurface: "me_profile"
+expected:
+  actor: "candidate"
+  artifactKind: "candidate_profile_correction"
+  status: "needs_review"
+  appliedKeys:
+    - "roleFocus"
+    - "locationPreference"
+  outboundWrites: 0
+  rawPayloadAllowed: false

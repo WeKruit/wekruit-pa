@@ -7,6 +7,7 @@ import {
   CandidateProfileMarketplaceFieldsSchema,
   CorrectionEventSchema,
   EmployerVisibleProfileSchema,
+  EvalArtifactSchema,
   FeedbackEventSchema,
   JobEnrichmentEvalFixtureSchema,
   JobOpportunityDraftSchema,
@@ -26,6 +27,7 @@ import {
   type CandidateLifecycleState,
   type CorrectionEvent,
   type EmployerVisibleProfile,
+  type EvalArtifact,
   type FeedbackEvent,
   type JobEnrichmentEvalFixture,
   type JobOpportunityDraft,
@@ -35,6 +37,7 @@ import {
   type StateReductionResult,
   createCandidateJobStateId,
   createCandidateJobMatchId,
+  createEvalArtifactId,
   createOutboundInviteId,
 } from "@pa/core-types"
 
@@ -944,6 +947,90 @@ export async function writeCorrectionEvent(
     })
   }
   return result
+}
+
+export async function writeEvalArtifact(
+  db: Firestore,
+  rawArtifact: EvalArtifact
+): Promise<{ artifact: EvalArtifact; created: boolean }> {
+  const artifact = EvalArtifactSchema.parse(rawArtifact)
+  const result = await writeAppendOnlyDoc(
+    db,
+    PA_COLLECTIONS.evalArtifacts,
+    artifact.artifactId,
+    artifact
+  )
+  if (result.created) {
+    await db.collection(AUDIT_COLLECTION).doc(auditId("marketplace_eval_artifact", artifact.artifactId)).set({
+      id: auditId("marketplace_eval_artifact", artifact.artifactId),
+      action: "marketplace.eval_artifact.write",
+      artifactId: artifact.artifactId,
+      kind: artifact.kind,
+      status: artifact.status,
+      candidateId: artifact.candidateId ?? null,
+      jobId: artifact.jobId ?? null,
+      createdBy: artifact.createdBy,
+      createdAt: artifact.createdAt,
+    })
+  }
+  return { artifact: result.event, created: result.created }
+}
+
+export type WriteEvalArtifactForCorrectionInput = {
+  correction: CorrectionEvent
+  artifactKind?: EvalArtifact["kind"]
+  status?: EvalArtifact["status"]
+  payloadRedacted?: Record<string, unknown>
+  latestRunResult?: EvalArtifact["latestRunResult"]
+  evidence?: MarketplaceEvidence[]
+  scenarioRef?: string
+  runRef?: string
+  createdAt?: string
+  updatedAt?: string
+}
+
+export async function writeEvalArtifactForCorrection(
+  db: Firestore,
+  input: WriteEvalArtifactForCorrectionInput
+): Promise<{
+  correction: CorrectionEvent
+  correctionCreated: boolean
+  artifact: EvalArtifact
+  artifactCreated: boolean
+}> {
+  const correction = CorrectionEventSchema.parse(input.correction)
+  const kind = input.artifactKind ?? "correction_regression_fixture"
+  const artifact = EvalArtifactSchema.parse({
+    artifactId: createEvalArtifactId(kind, correction.eventId),
+    kind,
+    status: input.status ?? "ready",
+    sourceCorrectionEventIds: [correction.eventId],
+    scenarioRef: input.scenarioRef,
+    runRef: input.runRef,
+    candidateId: correction.candidateId,
+    jobId: correction.jobId,
+    payloadRedacted: input.payloadRedacted ?? {
+      targetType: correction.targetType,
+      targetId: correction.targetId,
+      beforeRedacted: correction.beforeRedacted,
+      afterRedacted: correction.afterRedacted,
+      reason: correction.reason,
+    },
+    latestRunResult: input.latestRunResult,
+    evidence: input.evidence ?? correction.evidence,
+    createdBy: correction.actor,
+    createdAt: input.createdAt ?? correction.createdAt,
+    updatedAt: input.updatedAt,
+  })
+
+  const correctionWrite = await writeCorrectionEvent(db, correction)
+  const artifactWrite = await writeEvalArtifact(db, artifact)
+  return {
+    correction: correctionWrite.event,
+    correctionCreated: correctionWrite.created,
+    artifact: artifactWrite.artifact,
+    artifactCreated: artifactWrite.created,
+  }
 }
 
 export async function writeEmployerVisibleProfile(
