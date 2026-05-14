@@ -292,6 +292,26 @@ export const resolveBatchIdentity = callable<
   ResolveBatchIdentityResult
 >("paExternalSupplyResolveBatchIdentity")
 
+// V2 P3 — BrightData LinkedIn enrich (graceful 503 when secret unset)
+export interface RunLinkedInEnrichInput {
+  recordId?: string
+  linkedinUrl?: string
+  approvedEntityId?: string
+}
+export interface RunLinkedInEnrichResult {
+  matchId: string
+  runId: string
+  vendor: "brightdata"
+  linkedinUrl: string
+  snapshotId: string
+  status: "ready" | "building" | "failed"
+  profile: Record<string, unknown> | null
+}
+export const runLinkedInEnrich = callable<
+  RunLinkedInEnrichInput,
+  RunLinkedInEnrichResult
+>("paExternalSupplyRunLinkedInEnrich")
+
 // ---------------------------------------------------------------------------
 // V2.1 — candidates browser (list + drawer detail)
 // ---------------------------------------------------------------------------

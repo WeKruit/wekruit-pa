@@ -26,9 +26,11 @@ import {
   getCandidateDetail,
   listBatchCandidates,
   listBatchCandidatesCanonical,
+  runLinkedInEnrich,
   type BatchCandidateRow,
   type CandidateDetail,
   type ListBatchCandidatesResult,
+  type RunLinkedInEnrichResult,
 } from "../../lib/external-supply-client.js"
 
 type CanonicalAwareResult = ListBatchCandidatesResult & {
@@ -482,6 +484,37 @@ function CandidateDetailPanel({ detail }: { detail: CandidateDetail }) {
   const skills = Array.isArray(tags.skills)
     ? (tags.skills as Array<{ value?: string } | string>)
     : []
+  const linkedinUrl = typeof record.canonicalLinkedInUrl === "string"
+    ? record.canonicalLinkedInUrl
+    : undefined
+
+  // P3 — BrightData LinkedIn enrichment state.
+  const [enrichLoading, setEnrichLoading] = useState(false)
+  const [enrichResult, setEnrichResult] = useState<RunLinkedInEnrichResult | null>(null)
+  const [enrichError, setEnrichError] = useState<string | null>(null)
+  const recordId = detail.recordId
+  const runEnrich = async () => {
+    setEnrichLoading(true)
+    setEnrichError(null)
+    setEnrichResult(null)
+    try {
+      const out = await runLinkedInEnrich({ recordId })
+      setEnrichResult(out)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      // Surface the friendly "key not configured" case rather than the raw
+      // HttpsError string.
+      if (/bright_data_key_missing|failed-precondition/i.test(message)) {
+        setEnrichError(
+          "BrightData key not configured on prod yet — Adam needs to rotate + secret-set BRIGHT_DATA_API_KEY",
+        )
+      } else {
+        setEnrichError(message)
+      }
+    } finally {
+      setEnrichLoading(false)
+    }
+  }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -532,6 +565,81 @@ function CandidateDetailPanel({ detail }: { detail: CandidateDetail }) {
               Lessie match score: <strong>{matchScore}</strong>
             </div>
           )}
+          {linkedinUrl ? (
+            <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+              <button
+                type="button"
+                onClick={runEnrich}
+                disabled={enrichLoading}
+                style={{
+                  alignSelf: "flex-start",
+                  padding: "6px 12px",
+                  border: "1px solid #1e3a8a",
+                  background: enrichLoading ? "#cbd5e1" : "#1e3a8a",
+                  color: enrichLoading ? "#475569" : "#fff",
+                  borderRadius: 6,
+                  fontSize: "0.85em",
+                  fontWeight: 700,
+                  cursor: enrichLoading ? "wait" : "pointer",
+                }}
+              >
+                {enrichLoading ? "Calling BrightData…" : "Run LinkedIn enrich (BrightData)"}
+              </button>
+              {enrichError && (
+                <div
+                  style={{
+                    fontSize: "0.78em",
+                    color: "#991b1b",
+                    background: "#fef2f2",
+                    border: "1px solid #fecaca",
+                    padding: 6,
+                    borderRadius: 4,
+                  }}
+                >
+                  {enrichError}
+                </div>
+              )}
+              {enrichResult && (
+                <details
+                  open
+                  style={{
+                    fontSize: "0.78em",
+                    padding: 8,
+                    background: "#f0fdf4",
+                    border: "1px solid #bbf7d0",
+                    borderRadius: 4,
+                  }}
+                >
+                  <summary style={{ cursor: "pointer", fontWeight: 700 }}>
+                    BrightData snapshot — status: {enrichResult.status}
+                    {enrichResult.snapshotId ? ` · ${enrichResult.snapshotId.slice(0, 12)}…` : ""}
+                  </summary>
+                  <div style={{ marginTop: 6, color: "#475569" }}>
+                    runId: <code>{enrichResult.runId.slice(0, 8)}…</code> · matchId:{" "}
+                    <code>{enrichResult.matchId.slice(0, 18)}…</code>
+                  </div>
+                  {enrichResult.profile ? (
+                    <pre
+                      style={{
+                        maxHeight: 240,
+                        overflow: "auto",
+                        background: "#f8fafc",
+                        padding: 6,
+                        marginTop: 6,
+                        fontSize: "0.85em",
+                      }}
+                    >
+                      {JSON.stringify(enrichResult.profile, null, 2)}
+                    </pre>
+                  ) : (
+                    <div style={{ marginTop: 6, color: "#64748b" }}>
+                      Snapshot still building — re-click in ~60s to fetch.
+                    </div>
+                  )}
+                </details>
+              )}
+            </div>
+          ) : null}
         </div>
       </Panel>
 
