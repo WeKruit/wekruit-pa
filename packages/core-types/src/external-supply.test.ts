@@ -512,7 +512,9 @@ test("OutreachEventSchema parses an Instantly reply event", () => {
     occurredAt: now,
     recordedAt: now,
   })
-  assert.equal(parsed.eventId, "instantly__evt_abc")
+  // eventId is `${provider}__${sha256(provider:providerEventId)}` to keep
+  // doc ids deterministic + free of any raw provider identifier.
+  assert.match(parsed.eventId, /^instantly__[0-9a-f]{64}$/)
   assert.equal(parsed.kind, "email_replied")
 })
 
@@ -576,8 +578,18 @@ test("createExternalEvaluationId is the composite of candidate/job/run", () => {
   assert.equal(createExternalEvaluationId("c1", "j1", "r1"), "c1__j1__r1")
 })
 
-test("createOutreachEventId composes provider + providerEventId when present", () => {
-  assert.equal(createOutreachEventId("instantly", "evt_123"), "instantly__evt_123")
+test("createOutreachEventId hashes providerEventId deterministically when present", () => {
+  const id1 = createOutreachEventId("instantly", "evt_123")
+  const id2 = createOutreachEventId("instantly", "evt_123")
+  // Shape: `${provider}__${sha256-hex}` — 64 lowercase hex chars after sep.
+  assert.match(id1, /^instantly__[0-9a-f]{64}$/)
+  // Idempotency: same (provider, providerEventId) -> same id.
+  assert.equal(id1, id2)
+  // No raw providerEventId leak into the doc id.
+  assert.equal(id1.includes("evt_123"), false)
+  // Different providerEventId -> different id.
+  const id3 = createOutreachEventId("instantly", "evt_999")
+  assert.notEqual(id1, id3)
 })
 
 const UUID_V4_REGEX =

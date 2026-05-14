@@ -2,3 +2,4 @@ packages:
   - "apps/*"
   - "apps/eval/*"
   - "packages/*"
+  - "tests/*"

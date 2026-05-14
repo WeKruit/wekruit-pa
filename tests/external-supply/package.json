@@ -2,5 +2,20 @@
   "name": "@pa/external-supply-e2e-tests",
   "version": "0.0.1",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "scripts": {
+    "pretest": "npm --prefix ../../ run build --workspace=@pa/core-types --workspace=@pa/external-supply --workspace=@pa/pa-persistence --workspace=@pa/pa-orchestrator",
+    "test": "node --import tsx --test end-to-end.test.ts"
+  },
+  "dependencies": {
+    "@pa/core-types": "0.0.1",
+    "@pa/external-supply": "0.0.1",
+    "@pa/pa-persistence": "0.0.1",
+    "firebase-admin": "^13.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.0"
+  }
 }
