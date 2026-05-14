@@ -223,8 +223,26 @@ function CompanyJobs({ companyId }: { companyId: string }) {
                 <tr key={j.jobId} style={{ borderBottom: "1px solid #f0f0f0" }}>
                   <td style={{ padding: "8px 6px" }}>{j.department ?? "—"}</td>
                   <td style={{ padding: "8px 6px" }}>
-                    <strong>{j.title ?? j.jobId}</strong>
+                    <Link to={`/admin/jobs/${encodeURIComponent(j.jobId)}`}>
+                      <strong>{j.title ?? j.jobId}</strong>
+                    </Link>
                     <div style={{ fontSize: 12, color: "#666" }}>{j.jobId}</div>
+                    <div style={{ fontSize: 11, marginTop: 2, display: "flex", gap: 4 }}>
+                      {j.publicVisible ? (
+                        <span style={{ background: "#dcfce7", color: "#166534", padding: "0 6px", borderRadius: 3, fontWeight: 600 }}>
+                          public
+                        </span>
+                      ) : (
+                        <span style={{ background: "#fef3c7", color: "#92400e", padding: "0 6px", borderRadius: 3, fontWeight: 600 }}>
+                          draft
+                        </span>
+                      )}
+                      {j.wekruitCollaborationStatus === "collaborated" ? (
+                        <span style={{ background: "#dbeafe", color: "#1e3a8a", padding: "0 6px", borderRadius: 3, fontWeight: 600 }}>
+                          collab
+                        </span>
+                      ) : null}
+                    </div>
                   </td>
                   <td style={{ padding: "8px 6px" }}>
                     {j.rawLocation ?? ((j.locationBuckets ?? []).join(", ") || "—")}

@@ -1055,6 +1055,11 @@ export interface JobRow {
   status?: string
   source?: string
   firstSeenAt?: string
+  descriptionMd?: string
+  /** v2.4 unified job lifecycle. */
+  publicVisible?: boolean
+  wekruitCollaborationStatus?: "collaborated" | "not_collaborated"
+  candidatePageStatus?: "draft" | "ready" | "published"
 }
 
 function coerceCompanyRow(id: string, raw: unknown): CompanyRow {
@@ -1105,7 +1110,38 @@ function coerceJobRow(id: string, raw: unknown): JobRow {
     status: typeof o.status === "string" ? o.status : undefined,
     source: typeof o.source === "string" ? o.source : undefined,
     firstSeenAt: typeof o.firstSeenAt === "string" ? o.firstSeenAt : undefined,
+    descriptionMd: typeof o.descriptionMd === "string" ? o.descriptionMd : undefined,
+    publicVisible: typeof o.publicVisible === "boolean" ? o.publicVisible : undefined,
+    wekruitCollaborationStatus:
+      o.wekruitCollaborationStatus === "collaborated" || o.wekruitCollaborationStatus === "not_collaborated"
+        ? o.wekruitCollaborationStatus
+        : undefined,
+    candidatePageStatus:
+      o.candidatePageStatus === "draft" || o.candidatePageStatus === "ready" || o.candidatePageStatus === "published"
+        ? o.candidatePageStatus
+        : undefined,
   }
+}
+
+export async function getJob(jobId: string): Promise<JobRow | null> {
+  const snap = await getDoc(doc(db(), PA_COLLECTIONS.jobs, jobId))
+  if (!snap.exists()) return null
+  return coerceJobRow(snap.id, snap.data())
+}
+
+export interface JobLifecycleUpdate {
+  publicVisible?: boolean
+  wekruitCollaborationStatus?: "collaborated" | "not_collaborated"
+  candidatePageStatus?: "draft" | "ready" | "published"
+  title?: string
+  descriptionMd?: string
+  atsApplyUrl?: string
+  rawLocation?: string
+}
+
+export async function updateJob(jobId: string, patch: JobLifecycleUpdate): Promise<void> {
+  const { setDoc } = await import("firebase/firestore")
+  await setDoc(doc(db(), PA_COLLECTIONS.jobs, jobId), patch, { merge: true })
 }
 
 export async function listCompanies(limit = 100): Promise<CompanyRow[]> {
