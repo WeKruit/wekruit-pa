@@ -180,6 +180,7 @@ test("claimCandidateProfile writes auth mapping, claimed lifecycle, and redacted
 
   const user = store.get(PA_COLLECTIONS.users)!.get(claimed.candidateId)!
   assert.equal(user.candidateLifecycleState, "claimed")
+  user.phoneE164 = "+14155550100"
   assert.equal(store.get(PA_COLLECTIONS.candidateAuth)!.get("firebase-1")!.candidateId, claimed.candidateId)
   assert.equal(store.get(PA_COLLECTIONS.candidateSelfProfiles)!.get(claimed.candidateId)!.emailMasked, "a***@example.com")
   assert.equal(store.get(PA_COLLECTIONS.candidateIdentityEvents)!.size > 0, true)
@@ -193,6 +194,7 @@ test("claimCandidateProfile writes auth mapping, claimed lifecycle, and redacted
   })
   assert.equal(again.idempotent, true)
   assert.equal(again.candidateId, claimed.candidateId)
+  assert.equal(again.selfProfile.phoneMasked, "+14***00")
   assert.equal(
     store.get(PA_COLLECTIONS.candidateIdentityEvents)!.get(claimed.claimedEventId)!.createdAt,
     now

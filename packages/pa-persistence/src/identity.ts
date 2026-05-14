@@ -570,6 +570,7 @@ export async function claimCandidateProfile(
   const selfProfile = await writeCandidateSelfProfile(db, {
     candidateId,
     email: input.email,
+    phoneE164: typeof user.phoneE164 === "string" ? user.phoneE164 : null,
     displayName: input.displayName ?? (typeof user.legalName === "string" ? user.legalName : null),
     marketplaceFields: user as CandidateProfileMarketplaceFields,
     handles: [{ kind: "email", verifiedAt: ts, source: "candidate" }],
