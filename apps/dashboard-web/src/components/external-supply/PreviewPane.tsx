@@ -34,24 +34,24 @@ export function PreviewPane({ preview }: { preview: PreviewBatchResult }) {
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <Panel
         title="Detection"
-        eyebrow={`shape=${preview.detection.shapeHint} · rowCountPreview=${preview.rowCountPreview}`}
+        eyebrow={`shape=${preview.detection?.shapeHint ?? "unknown"} · rowCountPreview=${preview.rowCountPreview ?? 0}`}
       >
-        <DetectionList candidates={preview.detection.candidates} />
+        <DetectionList candidates={Array.isArray(preview.detection?.candidates) ? preview.detection.candidates : []} />
       </Panel>
 
       <Panel title="Identity forecast" eyebrow="expected rows per identity-resolution bucket">
         <ForecastGrid
           items={[
-            { label: "Create new", value: preview.identityForecast.expectedCreateNew, tone: "good" },
-            { label: "Merge existing", value: preview.identityForecast.expectedMergeExisting, tone: "good" },
-            { label: "Needs review", value: preview.identityForecast.expectedNeedsReview, tone: "warn" },
-            { label: "Blocked", value: preview.identityForecast.expectedBlocked, tone: "bad" },
+            { label: "Create new", value: preview.identityForecast?.expectedCreateNew ?? 0, tone: "good" },
+            { label: "Merge existing", value: preview.identityForecast?.expectedMergeExisting ?? 0, tone: "good" },
+            { label: "Needs review", value: preview.identityForecast?.expectedNeedsReview ?? 0, tone: "warn" },
+            { label: "Blocked", value: preview.identityForecast?.expectedBlocked ?? 0, tone: "bad" },
           ]}
         />
       </Panel>
 
       <Panel title="Tag-enrichment forecast" eyebrow="canonical-tag axes from this batch">
-        {Object.keys(preview.tagEnrichmentForecast.perAxisCoverage).length === 0 ? (
+        {Object.keys(preview.tagEnrichmentForecast?.perAxisCoverage ?? {}).length === 0 ? (
           <EmptyState
             title="No tag coverage"
             body="The preview parser did not surface any canonical-tag axes for this batch sample. Check the adapter override."
@@ -59,11 +59,12 @@ export function PreviewPane({ preview }: { preview: PreviewBatchResult }) {
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: "0.86em" }}>
             <div>
-              <strong>avgSkillsPerRow:</strong> {preview.tagEnrichmentForecast.avgSkillsPerRow.toFixed(2)}
+              <strong>avgSkillsPerRow:</strong>{" "}
+              {(preview.tagEnrichmentForecast?.avgSkillsPerRow ?? 0).toFixed(2)}
             </div>
             <div>
               <strong>missingRoleFunctionRows:</strong>{" "}
-              {preview.tagEnrichmentForecast.missingRoleFunctionRows}
+              {preview.tagEnrichmentForecast?.missingRoleFunctionRows ?? 0}
             </div>
             <table style={tagTableStyle}>
               <thead>
@@ -73,7 +74,7 @@ export function PreviewPane({ preview }: { preview: PreviewBatchResult }) {
                 </tr>
               </thead>
               <tbody>
-                {Object.entries(preview.tagEnrichmentForecast.perAxisCoverage).map(
+                {Object.entries(preview.tagEnrichmentForecast?.perAxisCoverage ?? {}).map(
                   ([axis, n]) => (
                     <tr key={axis} style={{ borderBottom: "1px solid #f1f5f9" }}>
                       <td style={tdStyle}>{axis}</td>
@@ -115,8 +116,11 @@ export function PreviewPane({ preview }: { preview: PreviewBatchResult }) {
         )}
       </Panel>
 
-      <Panel title="Warnings" eyebrow={`${preview.warnings.length} warning(s)`}>
-        {preview.warnings.length === 0 ? (
+      <Panel
+        title="Warnings"
+        eyebrow={`${Array.isArray(preview.warnings) ? preview.warnings.length : 0} warning(s)`}
+      >
+        {!Array.isArray(preview.warnings) || preview.warnings.length === 0 ? (
           <EmptyState title="No warnings" body="Adapter detection looks clean for this file." />
         ) : (
           <ul style={{ margin: 0, paddingLeft: 18, fontSize: "0.86em" }}>

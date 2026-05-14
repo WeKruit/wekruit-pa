@@ -402,7 +402,13 @@ function PreviewPanelWithActions({
   onReset: () => void
   error: string | null
 }) {
-  const top3 = preview.detection.candidates.slice(0, 3)
+  // Defensive: even with the wire-boundary normalizer, treat detection +
+  // candidates as possibly-undefined so a stale bundle or unexpected server
+  // payload never crashes the whole preview render.
+  const detection = preview.detection ?? { top: undefined, candidates: [] }
+  const candidates = Array.isArray(detection.candidates) ? detection.candidates : []
+  const top3 = candidates.slice(0, 3)
+  const detectedSource = detection.top?.source ?? "manual_csv"
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div
@@ -420,7 +426,7 @@ function PreviewPanelWithActions({
           onChange={(e) => setAdapterOverride(e.target.value as ExternalSource | "")}
           style={inputStyle}
         >
-          <option value="">use detected ({preview.detection.top.source})</option>
+          <option value="">use detected ({detectedSource})</option>
           {top3.map((c) => (
             <option key={c.source} value={c.source}>
               {c.source} · {(c.confidence * 100).toFixed(0)}%
