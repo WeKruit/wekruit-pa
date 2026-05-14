@@ -227,6 +227,31 @@ function CandidateListRow({
           {row.location}
         </div>
       )}
+      {Array.isArray(row.links) && row.links.length > 0 && (
+        <div style={{ display: "flex", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
+          {row.links.map((l, i) => (
+            <a
+              key={`${l.url}-${i}`}
+              href={l.url}
+              target="_blank"
+              rel="noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              title={l.url}
+              style={{
+                fontSize: "0.65em",
+                fontWeight: 600,
+                padding: "1px 6px",
+                borderRadius: 4,
+                background: LINK_KIND_BG[l.kind] ?? "#f1f5f9",
+                color: LINK_KIND_FG[l.kind] ?? "#475569",
+                textDecoration: "none",
+              }}
+            >
+              {LINK_KIND_LABEL[l.kind] ?? l.hostname}
+            </a>
+          ))}
+        </div>
+      )}
       <div style={chipRowStyle}>
         {row.evaluation?.tier && (
           <span
@@ -439,6 +464,52 @@ function CandidateDetailPanel({ detail }: { detail: CandidateDetail }) {
       )}
     </div>
   )
+}
+
+const LINK_KIND_LABEL: Record<string, string> = {
+  linkedin: "in",
+  github: "GH",
+  twitter: "X",
+  facebook: "fb",
+  instagram: "IG",
+  medium: "M",
+  youtube: "YT",
+  tiktok: "TT",
+  dribbble: "Drbl",
+  behance: "Bhnc",
+  stackoverflow: "SO",
+  personal: "site",
+  other: "link",
+}
+const LINK_KIND_BG: Record<string, string> = {
+  linkedin: "#dbeafe",
+  github: "#1f2937",
+  twitter: "#0f172a",
+  facebook: "#dbeafe",
+  instagram: "#fce7f3",
+  medium: "#dcfce7",
+  youtube: "#fee2e2",
+  tiktok: "#0f172a",
+  dribbble: "#fce7f3",
+  behance: "#dbeafe",
+  stackoverflow: "#fef3c7",
+  personal: "#f1f5f9",
+  other: "#f1f5f9",
+}
+const LINK_KIND_FG: Record<string, string> = {
+  linkedin: "#1e3a8a",
+  github: "#f8fafc",
+  twitter: "#f8fafc",
+  facebook: "#1e3a8a",
+  instagram: "#9d174d",
+  medium: "#166534",
+  youtube: "#991b1b",
+  tiktok: "#f8fafc",
+  dribbble: "#9d174d",
+  behance: "#1e3a8a",
+  stackoverflow: "#92400e",
+  personal: "#475569",
+  other: "#475569",
 }
 
 const twoColStyle: React.CSSProperties = {

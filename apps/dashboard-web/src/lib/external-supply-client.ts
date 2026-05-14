@@ -296,12 +296,20 @@ export const resolveBatchIdentity = callable<
 // V2.1 — candidates browser (list + drawer detail)
 // ---------------------------------------------------------------------------
 
+export interface ClassifiedLinkUI {
+  url: string
+  kind: "linkedin" | "github" | "twitter" | "facebook" | "instagram" | "medium" | "youtube" | "tiktok" | "dribbble" | "behance" | "stackoverflow" | "personal" | "other"
+  hostname: string
+}
+
 export interface BatchCandidateRow {
   recordId: string
   batchId: string
   candidateId?: string
   name?: string
   linkedinUrl?: string
+  /** v2.3: multi-URL Link cell support (linkedin + github + x + …). */
+  links?: ClassifiedLinkUI[]
   currentTitle?: string
   currentCompany?: string
   location?: string
@@ -440,6 +448,7 @@ export async function listBatchCandidates(
     if (enrichment.rubric) row.rubric = enrichment.rubric as Record<string, { value: string; passed: boolean | null }>
     if (typeof enrichment.matchScore === "string") row.matchScore = enrichment.matchScore
     if (typeof enrichment.headline === "string") row.headline = enrichment.headline
+    if (Array.isArray(enrichment.links)) row.links = enrichment.links as ClassifiedLinkUI[]
     const ev = candidateId ? evaluationByCandidate.get(candidateId) : undefined
     if (ev) {
       const evalOut: BatchCandidateRow["evaluation"] = {}
