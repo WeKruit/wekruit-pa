@@ -30,7 +30,7 @@
  * used. No Tailwind / Radix / MUI primitives are introduced.
  */
 import { useState } from "react"
-import { useNavigate } from "react-router-dom"
+import { useNavigate, useSearchParams } from "react-router-dom"
 import type { ExternalSource } from "@pa/core-types"
 import { ErrorState, LoadingState, PageHeader, Panel } from "../../components/ui.js"
 import { Dropzone, DROPZONE_MAX_BYTES } from "../../components/external-supply/Dropzone.js"
@@ -64,12 +64,18 @@ interface UploadedFileState {
 
 export function BatchNew() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  // Per-job upload entry: a JobsList row links here with
+  // `?companyId=rain-xyz&jobId=rain-...` so the tier forecast + downstream
+  // evaluation run pre-bind to the job without operator re-typing.
+  const prefillCompanyId = (searchParams.get("companyId") ?? "").trim()
+  const prefillJobId = (searchParams.get("jobId") ?? "").trim()
   const [step, setStep] = useState<BatchNewStep>("pick")
   const [source, setSource] = useState<ExternalSource>("juicebox")
   const [adapterOverride, setAdapterOverride] = useState<ExternalSource | "">("")
   const [file, setFile] = useState<File | null>(null)
-  const [companyId, setCompanyId] = useState("")
-  const [jobId, setJobId] = useState("")
+  const [companyId, setCompanyId] = useState(prefillCompanyId)
+  const [jobId, setJobId] = useState(prefillJobId)
   const [columnMapping, setColumnMapping] = useState<ManualCsvColumnMapping>({})
   const [error, setError] = useState<string | null>(null)
   const [preview, setPreview] = useState<PreviewBatchResult | null>(null)

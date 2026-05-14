@@ -570,6 +570,131 @@ export async function getBatch(batchId: string): Promise<ExternalSourcingBatch |
 }
 
 // ---------------------------------------------------------------------------
+// Companies + Jobs — loose readers (no strict Zod schema; pa-jobs is a
+// public + matching-side polyglot). Used by the per-company / per-job upload
+// entry surface added 2026-05-14.
+// ---------------------------------------------------------------------------
+
+export interface CompanyRow {
+  companyId: string
+  name?: string
+  domain?: string
+  industrySector?: string[]
+  size?: string
+  websiteUrl?: string
+  careersUrl?: string
+  description?: string
+}
+
+export interface JobRow {
+  jobId: string
+  companyId?: string
+  title?: string
+  department?: string
+  roleFunction?: string[]
+  seniorityLevel?: string
+  locationBuckets?: string[]
+  rawLocation?: string
+  jobType?: string
+  industrySector?: string[]
+  atsApplyUrl?: string
+  salaryMin?: number | null
+  salaryMax?: number | null
+  sponsorship?: boolean | null
+  status?: string
+  source?: string
+  firstSeenAt?: string
+}
+
+function coerceCompanyRow(id: string, raw: unknown): CompanyRow {
+  const o = (raw ?? {}) as Record<string, unknown>
+  const strArr = (v: unknown) =>
+    Array.isArray(v) ? (v.filter((x) => typeof x === "string") as string[]) : undefined
+  return {
+    companyId: id,
+    name: typeof o.name === "string" ? o.name : undefined,
+    domain: typeof o.domain === "string" ? o.domain : undefined,
+    industrySector: strArr(o.industrySector),
+    size: typeof o.size === "string" ? o.size : undefined,
+    websiteUrl: typeof o.websiteUrl === "string" ? o.websiteUrl : undefined,
+    careersUrl: typeof o.careersUrl === "string" ? o.careersUrl : undefined,
+    description: typeof o.description === "string" ? o.description : undefined,
+  }
+}
+
+function coerceJobRow(id: string, raw: unknown): JobRow {
+  const o = (raw ?? {}) as Record<string, unknown>
+  const strArr = (v: unknown) =>
+    Array.isArray(v) ? (v.filter((x) => typeof x === "string") as string[]) : undefined
+  const numOrNull = (v: unknown): number | null | undefined => {
+    if (v === null) return null
+    if (typeof v === "number") return v
+    return undefined
+  }
+  const boolOrNull = (v: unknown): boolean | null | undefined => {
+    if (v === null) return null
+    if (typeof v === "boolean") return v
+    return undefined
+  }
+  return {
+    jobId: id,
+    companyId: typeof o.companyId === "string" ? o.companyId : undefined,
+    title: typeof o.title === "string" ? o.title : undefined,
+    department: typeof o.department === "string" ? o.department : undefined,
+    roleFunction: strArr(o.roleFunction),
+    seniorityLevel: typeof o.seniorityLevel === "string" ? o.seniorityLevel : undefined,
+    locationBuckets: strArr(o.locationBuckets),
+    rawLocation: typeof o.rawLocation === "string" ? o.rawLocation : undefined,
+    jobType: typeof o.jobType === "string" ? o.jobType : undefined,
+    industrySector: strArr(o.industrySector),
+    atsApplyUrl: typeof o.atsApplyUrl === "string" ? o.atsApplyUrl : undefined,
+    salaryMin: numOrNull(o.salaryMin),
+    salaryMax: numOrNull(o.salaryMax),
+    sponsorship: boolOrNull(o.sponsorship),
+    status: typeof o.status === "string" ? o.status : undefined,
+    source: typeof o.source === "string" ? o.source : undefined,
+    firstSeenAt: typeof o.firstSeenAt === "string" ? o.firstSeenAt : undefined,
+  }
+}
+
+export async function listCompanies(limit = 100): Promise<CompanyRow[]> {
+  const snap = await getDocs(
+    query(collection(db(), "pa-companies"), fsLimit(limit)),
+  )
+  return snap.docs.map((d) => coerceCompanyRow(d.id, d.data()))
+}
+
+export async function getCompany(companyId: string): Promise<CompanyRow | null> {
+  const snap = await getDoc(doc(db(), "pa-companies", companyId))
+  if (!snap.exists()) return null
+  return coerceCompanyRow(snap.id, snap.data())
+}
+
+export async function listJobsByCompany(
+  companyId: string,
+  limit = 200,
+): Promise<JobRow[]> {
+  const snap = await getDocs(
+    query(
+      collection(db(), PA_COLLECTIONS.jobs),
+      where("companyId", "==", companyId),
+      fsLimit(limit),
+    ),
+  )
+  return snap.docs.map((d) => coerceJobRow(d.id, d.data()))
+}
+
+export async function listJobs(limit = 200): Promise<JobRow[]> {
+  // Best-effort: order by `firstSeenAt` desc when present; the loose schema
+  // means some docs may lack it — getDocs without orderBy returns
+  // doc-id order which is still useful.
+  const snap = await getDocs(
+    query(collection(db(), PA_COLLECTIONS.jobs), fsLimit(limit)),
+  )
+  return snap.docs.map((d) => coerceJobRow(d.id, d.data()))
+}
+
+// ---------------------------------------------------------------------------
 // Records
 // ---------------------------------------------------------------------------
 
