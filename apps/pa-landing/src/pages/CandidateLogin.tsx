@@ -348,9 +348,11 @@ body {
 .candidate-form button,
 .candidate-primary-link,
 .candidate-secondary-button {
+  box-sizing: border-box;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  max-width: 100%;
   min-height: 42px;
   padding: 0 16px;
   border-radius: 8px;

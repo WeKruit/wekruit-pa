@@ -999,9 +999,13 @@ const PUBLIC_JOB_STYLES = `
 }
 .public-job-sms-link {
   width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 .public-job-disabled-action,
 .public-job-secondary-action {
+  box-sizing: border-box;
+  max-width: 100%;
   min-height: 42px;
   border-radius: 8px;
   display: inline-flex;
