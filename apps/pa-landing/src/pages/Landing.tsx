@@ -1,134 +1,17 @@
-/**
- * Claire CTA landing page — preserves the exact black-gradient look from
- * the prior static apps/pa-landing/public/index.html (iter33 spec 2026-05-05).
- *
- * Lives at `/` of the candidate Vite SPA (apps/pa-landing). Same site also
- * serves `/legal`, `/j/:jobId`, `/j/:jobId/cv`. Default URL:
- * https://wekruit-pa-landing.web.app. Custom domains: candidate.wekruit.com,
- * pa.wekruit.com (both CNAME → wekruit-pa-landing.web.app via Cloudflare).
- */
-import { useEffect } from "react"
+import { useEffect, useState } from "react"
+import { Link } from "react-router-dom"
+import { listPublicJobOpenings, type PublicJobOpening } from "../lib/public-jobs.js"
+import { CandidateShell } from "./CandidateLogin.js"
 
-const STYLES = `
-* { margin: 0; padding: 0; box-sizing: border-box; }
-html, body { height: 100%; }
-body.landing-bg {
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  background: linear-gradient(180deg, #0a0a0a 0%, #1a1a1a 100%);
-  color: #fafafa;
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  padding: 24px;
-  -webkit-font-smoothing: antialiased;
-  text-rendering: optimizeLegibility;
-}
-.landing-wrap {
-  max-width: 480px;
-  width: 100%;
-  text-align: center;
-  animation: landing-fade 0.6s ease;
-}
-@keyframes landing-fade {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-.landing-badge {
-  display: inline-block;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  padding: 6px 12px;
-  border: 1px solid rgba(255,255,255,0.15);
-  border-radius: 999px;
-  color: rgba(255,255,255,0.7);
-  margin-bottom: 24px;
-  text-transform: uppercase;
-}
-.landing-h1 {
-  font-size: clamp(32px, 6vw, 44px);
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  line-height: 1.1;
-  margin-bottom: 16px;
-}
-.landing-accent {
-  background: linear-gradient(135deg, #34d399, #06b6d4);
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-}
-.landing-lede {
-  font-size: 17px;
-  line-height: 1.5;
-  color: rgba(255,255,255,0.72);
-  margin-bottom: 36px;
-}
-.landing-cta {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  padding: 18px 32px;
-  font-size: 17px;
-  font-weight: 600;
-  color: #0a0a0a;
-  background: #fafafa;
-  border: none;
-  border-radius: 14px;
-  cursor: pointer;
-  text-decoration: none;
-  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
-  box-shadow: 0 4px 14px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.05);
-  -webkit-tap-highlight-color: transparent;
-}
-.landing-cta:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.1); }
-.landing-cta:active { transform: translateY(0); background: #e5e5e5; }
-.landing-cta svg { width: 20px; height: 20px; }
-.landing-hint {
-  margin-top: 18px;
-  font-size: 13px;
-  color: rgba(255,255,255,0.4);
-}
-.landing-number {
-  margin-top: 24px;
-  font-size: 13px;
-  color: rgba(255,255,255,0.55);
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
-  letter-spacing: 0.02em;
-}
-.landing-number a {
-  color: rgba(255,255,255,0.85);
-  text-decoration: none;
-  border-bottom: 1px dashed rgba(255,255,255,0.3);
-}
-.landing-footer {
-  position: absolute;
-  bottom: 24px;
-  font-size: 12px;
-  color: rgba(255,255,255,0.35);
-}
-.landing-footer a { color: rgba(255,255,255,0.55); text-decoration: none; }
-.landing-footer a:hover { color: rgba(255,255,255,0.8); }
-@media (prefers-color-scheme: light) {
-  body.landing-bg { background: linear-gradient(180deg, #fafafa 0%, #e5e5e5 100%); color: #0a0a0a; }
-  .landing-badge { border-color: rgba(0,0,0,0.12); color: rgba(0,0,0,0.6); }
-  .landing-lede { color: rgba(0,0,0,0.65); }
-  .landing-cta { color: #fafafa; background: #0a0a0a; box-shadow: 0 4px 14px rgba(0,0,0,0.15); }
-  .landing-cta:active { background: #1a1a1a; }
-  .landing-hint, .landing-number { color: rgba(0,0,0,0.45); }
-  .landing-number a { color: rgba(0,0,0,0.75); border-bottom-color: rgba(0,0,0,0.25); }
-  .landing-footer { color: rgba(0,0,0,0.4); }
-  .landing-footer a { color: rgba(0,0,0,0.6); }
-}
-`
+type JobsState =
+  | { status: "loading" }
+  | { status: "ready"; jobs: PublicJobOpening[] }
+  | { status: "error"; message: string }
 
 export default function Landing() {
+  const [state, setState] = useState<JobsState>({ status: "loading" })
+
   useEffect(() => {
-    // Apply landing-specific body background (other routes use default).
-    document.body.classList.add("landing-bg")
-    // iter33 — light analytics breadcrumb.
     try {
       const utm = new URLSearchParams(location.search)
       sessionStorage.setItem(
@@ -141,61 +24,255 @@ export default function Landing() {
         })
       )
     } catch {
-      // sessionStorage blocked — non-fatal
+      // sessionStorage blocked; non-fatal.
     }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const jobs = await listPublicJobOpenings()
+        if (!cancelled) setState({ status: "ready", jobs })
+      } catch (err) {
+        if (!cancelled) setState({ status: "error", message: err instanceof Error ? err.message : String(err) })
+      }
+    })()
     return () => {
-      document.body.classList.remove("landing-bg")
+      cancelled = true
     }
   }, [])
 
   return (
-    <>
-      <style>{STYLES}</style>
-      <main className="landing-wrap">
-        <span className="landing-badge">Beta · iMessage only</span>
-        <h1 className="landing-h1">
-          Text <span className="landing-accent">Claire</span>.<br />
-          Land your next job.
-        </h1>
-        <p className="landing-lede">
-          Skip the apply-and-pray. Claire finds matches, drafts intros, surfaces referrals — over
-          iMessage. Like texting a friend who knows the market.
-        </p>
-        <a
-          className="landing-cta"
-          href="sms:+13054507715&body=hi"
-          onClick={(e) => {
-            const el = e.currentTarget
-            el.style.transform = "translateY(0)"
-            el.style.background = "#34d399"
-            setTimeout(() => {
-              el.style.background = ""
-            }, 200)
-          }}
-        >
-          <svg
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth={2}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-          </svg>
-          Text Claire on iMessage
-        </a>
-        <div className="landing-hint">Tap from your iPhone — opens the Messages app prefilled with "hi"</div>
-        <div className="landing-number">
-          or text{" "}
-          <a href="sms:+13054507715&body=hi">+1 (305) 450-7715</a>
-        </div>
+    <CandidateShell wide>
+      <style>{LANDING_STYLES}</style>
+      <main className="home-shell" aria-labelledby="home-title">
+        <section className="home-hero">
+          <p className="candidate-kicker">Candidate marketplace</p>
+          <h1 id="home-title">Find the next role Claire can help you interview for.</h1>
+          <p>
+            Browse open roles, upload your resume once, and start the first interview over iMessage
+            from the job page.
+          </p>
+        </section>
+
+        <section className="home-jobs" aria-labelledby="home-jobs-title">
+          <div className="home-section-heading">
+            <div>
+              <p className="candidate-kicker">Open roles</p>
+              <h2 id="home-jobs-title">Available jobs</h2>
+            </div>
+            <Link className="candidate-secondary-button" to="/me/matches">My matches</Link>
+          </div>
+          {state.status === "loading" ? <JobListSkeleton /> : null}
+          {state.status === "error" ? (
+            <div className="home-empty">
+              <h3>Jobs unavailable</h3>
+              <p>{state.message}</p>
+            </div>
+          ) : null}
+          {state.status === "ready" ? <JobList jobs={state.jobs} /> : null}
+        </section>
       </main>
-      <footer className="landing-footer">
-        Built by <a href="https://wekruit.com" target="_blank" rel="noopener noreferrer">WeKruit</a>
-        {" · "}
-        <a href="/legal">Privacy &amp; Terms</a>
-      </footer>
-    </>
+    </CandidateShell>
   )
 }
+
+function JobList({ jobs }: { jobs: PublicJobOpening[] }) {
+  if (jobs.length === 0) {
+    return (
+      <div className="home-empty">
+        <h3>No public jobs are open right now</h3>
+        <p>Check your matches from your candidate profile when new roles are published.</p>
+        <Link className="candidate-primary-link" to="/me/matches">View matches</Link>
+      </div>
+    )
+  }
+  return (
+    <div className="home-job-grid">
+      {jobs.map((job) => (
+        <Link className="home-job-card" key={job.id} to={`/j/${job.id}`} aria-label={`Open ${job.title}`}>
+          <div>
+            <p className="home-job-company">{job.company}</p>
+            <h3>{job.title}</h3>
+            <p className="home-job-meta">
+              {[job.location, job.salaryRange, job.jobType].filter(Boolean).join(" · ")}
+            </p>
+          </div>
+          {job.description ? <p className="home-job-description">{job.description}</p> : null}
+          <TagRow values={[...job.roleFunction, ...job.industrySector, ...job.requiredSkills].slice(0, 4)} />
+          <span className="home-job-action">View job</span>
+        </Link>
+      ))}
+    </div>
+  )
+}
+
+function TagRow({ values }: { values: string[] }) {
+  if (values.length === 0) return null
+  return (
+    <div className="home-job-tags">
+      {values.map((value) => (
+        <span key={value}>{value}</span>
+      ))}
+    </div>
+  )
+}
+
+function JobListSkeleton() {
+  return (
+    <div className="home-job-grid" aria-label="Loading jobs">
+      {[0, 1, 2].map((idx) => (
+        <div className="home-job-card home-job-card-loading" key={idx}>
+          <span />
+          <span />
+          <span />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+const LANDING_STYLES = `
+.home-shell {
+  max-width: 1040px;
+  margin: 0 auto;
+  display: grid;
+  gap: 28px;
+}
+.home-hero {
+  max-width: 760px;
+  padding: 28px 0 8px;
+}
+.home-hero h1 {
+  margin: 0;
+  max-width: 720px;
+  font-size: clamp(34px, 7vw, 64px);
+  line-height: 0.98;
+  letter-spacing: 0;
+}
+.home-hero p:last-child {
+  max-width: 650px;
+  margin: 18px 0 0;
+  color: #364233;
+  font-size: 18px;
+  line-height: 1.55;
+}
+.home-jobs {
+  display: grid;
+  gap: 16px;
+}
+.home-section-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+.home-section-heading h2 {
+  margin: 0;
+  font-size: 28px;
+  letter-spacing: 0;
+}
+.home-job-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+}
+.home-job-card {
+  min-height: 248px;
+  display: grid;
+  grid-template-rows: auto 1fr auto auto;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid #ddd3c2;
+  border-radius: 8px;
+  background: #fffdf8;
+  color: #18211a;
+  text-decoration: none;
+}
+.home-job-card:hover,
+.home-job-card:focus-visible {
+  border-color: #2f6f4f;
+  outline: none;
+}
+.home-job-company,
+.home-job-meta,
+.home-job-description {
+  margin: 0;
+  color: #5f665b;
+}
+.home-job-company {
+  color: #46624c;
+  font-weight: 800;
+}
+.home-job-card h3 {
+  margin: 6px 0;
+  font-size: 22px;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+.home-job-meta,
+.home-job-description {
+  line-height: 1.45;
+}
+.home-job-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 28px;
+}
+.home-job-tags span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 9px;
+  border-radius: 8px;
+  background: #edf5ee;
+  color: #24543c;
+  font-size: 12px;
+  font-weight: 800;
+}
+.home-job-action {
+  color: #2f6f4f;
+  font-weight: 900;
+}
+.home-empty {
+  display: grid;
+  gap: 10px;
+  padding: 22px;
+  border: 1px solid #ddd3c2;
+  border-radius: 8px;
+  background: #fffdf8;
+}
+.home-empty h3,
+.home-empty p {
+  margin: 0;
+}
+.home-empty p {
+  color: #5f665b;
+}
+.home-job-card-loading {
+  min-height: 180px;
+}
+.home-job-card-loading span {
+  display: block;
+  height: 16px;
+  border-radius: 8px;
+  background: #eee6d8;
+}
+.home-job-card-loading span:nth-child(1) { width: 46%; }
+.home-job-card-loading span:nth-child(2) { width: 78%; height: 28px; }
+.home-job-card-loading span:nth-child(3) { width: 62%; }
+@media (max-width: 680px) {
+  .home-section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .home-hero {
+    padding-top: 10px;
+  }
+  .home-hero p:last-child {
+    font-size: 16px;
+  }
+}
+`
