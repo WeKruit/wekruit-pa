@@ -31,7 +31,7 @@ import {
   CORESIGNAL_SIGNATURE,
 } from "./coresignal.js"
 import {
-  parseManualCsvExport,
+  parseManualSheetBuffer,
   MANUAL_CSV_ADAPTER_VERSION,
   MANUAL_CSV_SIGNATURE,
   type ManualCsvColumnMapping,
@@ -41,7 +41,11 @@ export interface AdapterDescriptor {
   source: ExternalSource
   adapterVersion: string
   signature: AdapterSignature
-  parse: (raw: Buffer, columnMapping?: ManualCsvColumnMapping) => NormalizedRecordDraft[]
+  parse: (
+    raw: Buffer,
+    columnMapping?: ManualCsvColumnMapping,
+    filename?: string,
+  ) => NormalizedRecordDraft[]
 }
 
 /**
@@ -71,13 +75,12 @@ export const ADAPTER_REGISTRY: Record<ExternalSource, AdapterDescriptor> = {
     source: "manual_csv",
     adapterVersion: MANUAL_CSV_ADAPTER_VERSION,
     signature: MANUAL_CSV_SIGNATURE,
-    parse: (raw, columnMapping) => {
-      if (!columnMapping) {
-        // Preserve the V1 error string exactly so existing import.test.ts
-        // and operator UX stay green.
-        throw new Error("manual_csv_requires_columnMapping")
-      }
-      return parseManualCsvExport(raw.toString("utf8"), columnMapping)
+    // v2 (2026-05-14): columnMapping is now optional. The adapter infers
+    // mapping from the header row when absent. Filename is used to sniff
+    // csv / tsv / xlsx so xlsx Lessie exports parse losslessly.
+    parse: (raw, columnMapping, filename) => {
+      const fname = filename ?? "upload.csv"
+      return parseManualSheetBuffer(raw, fname, columnMapping).drafts
     },
   },
 }

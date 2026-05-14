@@ -287,6 +287,70 @@ export const resolveBatchIdentity = callable<
   ResolveBatchIdentityResult
 >("paExternalSupplyResolveBatchIdentity")
 
+// ---------------------------------------------------------------------------
+// V2.1 — candidates browser (list + drawer detail)
+// ---------------------------------------------------------------------------
+
+export interface BatchCandidateRow {
+  recordId: string
+  batchId: string
+  candidateId?: string
+  name?: string
+  linkedinUrl?: string
+  currentTitle?: string
+  currentCompany?: string
+  location?: string
+  email?: string
+  headline?: string
+  matchScore?: string
+  rubric?: Record<string, { value: string; passed: boolean | null }>
+  identityResolutionStatus?: string
+  normalizationStatus?: string
+  evaluation?: {
+    tier?: string
+    score?: number
+    explanation?: string
+  }
+}
+
+export interface ListBatchCandidatesResult {
+  ok: true
+  batchId: string
+  rows: BatchCandidateRow[]
+  jobId?: string
+  companyId?: string
+}
+
+export const listBatchCandidates = callable<
+  { batchId: string },
+  ListBatchCandidatesResult
+>("paExternalSupplyListBatchCandidates")
+
+export interface CandidateDetail {
+  recordId: string
+  batchId: string
+  candidateId?: string
+  record: Record<string, unknown>
+  candidate?: Record<string, unknown>
+  resume?: {
+    artifactId: string
+    candidateProfileSummary?: string
+    storagePath?: string
+    parsedCandidateResumeId?: string
+  }
+  evaluation?: {
+    evaluationId: string
+    proposedTier?: string
+    generalRubricScore?: number
+    explanation?: string
+  }
+  handles?: Array<{ kind: string; redactedValue: string }>
+}
+
+export const getCandidateDetail = callable<{ recordId: string }, CandidateDetail>(
+  "paExternalSupplyGetCandidateDetail",
+)
+
 export const runEvaluation = callable<RunEvaluationInput, RunEvaluationResult>(
   "paExternalSupplyRunEvaluation",
 )
@@ -408,6 +472,14 @@ export interface PreviewBatchInput {
   adapterOverride?: ExternalSource
 }
 
+export interface PreviewInferredMapping {
+  mapping: ManualCsvColumnMapping
+  rubricColumns: string[]
+  ambiguous: { field: string; candidates: string[] }[]
+  matchScoreColumn?: string
+  locationParts?: { country?: string; state?: string; city?: string }
+}
+
 export interface PreviewBatchResult {
   ok: true
   detection: AdapterDetectionUI
@@ -416,6 +488,10 @@ export interface PreviewBatchResult {
   /** Only present when (companyId, jobId) provided. */
   tierForecast?: PreviewBatchTierForecast
   rowCountPreview: number
+  /** v2 — header-driven auto-mapping the operator can override pre-commit. */
+  inferredMapping?: PreviewInferredMapping
+  /** v2 — first N rows verbatim so operator can sanity-check before commit. */
+  sampleRows?: Record<string, string>[]
   warnings: string[]
 }
 

@@ -44,6 +44,7 @@ import {
   sha256Hex,
   type ManualCsvColumnMapping,
   type PreviewBatchResult,
+  type PreviewInferredMapping,
 } from "../../lib/external-supply-client.js"
 
 const SOURCES: Array<{ value: ExternalSource; label: string }> = [
@@ -120,6 +121,15 @@ export function BatchNew() {
       })
       setPreview(result)
       setUploaded({ file, sha256, storageUri: upload.storageUri, mime })
+      // Seed the override columnMapping with the auto-detected mapping when
+      // the operator hasn't typed anything yet. Lets them commit immediately
+      // for the common Lessie / Juicebox case without filling in fields.
+      if (
+        result.inferredMapping &&
+        Object.keys(columnMapping).filter((k) => columnMapping[k as keyof ManualCsvColumnMapping]).length === 0
+      ) {
+        setColumnMapping({ ...result.inferredMapping.mapping })
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
       setStep("error")
@@ -201,6 +211,8 @@ export function BatchNew() {
               finalSource={finalSource}
               adapterOverride={adapterOverride}
               setAdapterOverride={setAdapterOverride}
+              columnMapping={columnMapping}
+              setColumnMapping={setColumnMapping}
               onCommit={handleCommit}
               onReset={handleReset}
               error={error}
@@ -356,6 +368,8 @@ function PreviewPanelWithActions({
   finalSource,
   adapterOverride,
   setAdapterOverride,
+  columnMapping,
+  setColumnMapping,
   onCommit,
   onReset,
   error,
@@ -364,6 +378,8 @@ function PreviewPanelWithActions({
   finalSource: ExternalSource
   adapterOverride: ExternalSource | ""
   setAdapterOverride: (s: ExternalSource | "") => void
+  columnMapping: ManualCsvColumnMapping
+  setColumnMapping: (m: ManualCsvColumnMapping) => void
   onCommit: () => void
   onReset: () => void
   error: string | null
@@ -396,6 +412,15 @@ function PreviewPanelWithActions({
         <span style={{ color: "#64748b" }}>final adapter: {finalSource}</span>
       </div>
 
+      {preview.inferredMapping && finalSource === "manual_csv" && (
+        <AutoMappingTable
+          inferred={preview.inferredMapping}
+          sampleRows={preview.sampleRows ?? []}
+          mapping={columnMapping}
+          onChange={setColumnMapping}
+        />
+      )}
+
       <PreviewPane preview={preview} />
 
       {error && <ErrorState message={error} />}
@@ -410,6 +435,134 @@ function PreviewPanelWithActions({
       </div>
     </div>
   )
+}
+
+const FIELD_OPTIONS: Array<{ value: keyof ManualCsvColumnMapping | "rubric" | "ignore"; label: string }> = [
+  { value: "ignore", label: "— ignore —" },
+  { value: "rubric", label: "Rubric criterion" },
+  { value: "linkedinUrl", label: "LinkedIn URL" },
+  { value: "email", label: "Email" },
+  { value: "phone", label: "Phone" },
+  { value: "name", label: "Name" },
+  { value: "currentTitle", label: "Title" },
+  { value: "currentCompany", label: "Company" },
+  { value: "location", label: "Location" },
+  { value: "skills", label: "Skills" },
+]
+
+function currentFieldForHeader(
+  header: string,
+  mapping: ManualCsvColumnMapping,
+  rubricColumns: string[],
+): (typeof FIELD_OPTIONS)[number]["value"] {
+  for (const [field, mapped] of Object.entries(mapping) as [keyof ManualCsvColumnMapping, string | undefined][]) {
+    if (mapped === header) return field
+  }
+  if (rubricColumns.includes(header)) return "rubric"
+  return "ignore"
+}
+
+/**
+ * Post-preview override surface. Each source column gets a dropdown to
+ * remap to a canonical field, mark as rubric (preserved verbatim), or
+ * ignore. Sample-row values stay visible so the operator can sanity-check.
+ */
+function AutoMappingTable({
+  inferred,
+  sampleRows,
+  mapping,
+  onChange,
+}: {
+  inferred: PreviewInferredMapping
+  sampleRows: Record<string, string>[]
+  mapping: ManualCsvColumnMapping
+  onChange: (next: ManualCsvColumnMapping) => void
+}) {
+  const headers = [
+    ...new Set([
+      ...Object.values(inferred.mapping).filter((v): v is string => Boolean(v)),
+      ...inferred.rubricColumns,
+      ...(inferred.matchScoreColumn ? [inferred.matchScoreColumn] : []),
+      ...sampleRows.flatMap((r) => Object.keys(r)),
+    ]),
+  ]
+  function setField(header: string, field: (typeof FIELD_OPTIONS)[number]["value"]) {
+    const next: ManualCsvColumnMapping = { ...mapping }
+    // Clear any previous assignment to this header.
+    for (const [k, v] of Object.entries(next) as [keyof ManualCsvColumnMapping, string | undefined][]) {
+      if (v === header) delete next[k]
+    }
+    if (field !== "ignore" && field !== "rubric") {
+      next[field] = header
+    }
+    onChange(next)
+  }
+  return (
+    <fieldset
+      style={{
+        border: "1px solid #e2e8f0",
+        borderRadius: 6,
+        padding: 12,
+        background: "#fafbfc",
+      }}
+    >
+      <legend style={{ fontSize: "0.85em", fontWeight: 600 }}>
+        Detected column mapping ({headers.length} columns)
+      </legend>
+      <p style={{ fontSize: "0.75em", color: "#64748b", margin: "0 0 8px 0" }}>
+        Auto-detected from headers. Override any column below before committing.
+        Columns marked "Rubric criterion" are preserved verbatim and shown as
+        candidate badges in the browser.
+      </p>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.8em" }}>
+          <thead>
+            <tr style={{ borderBottom: "1px solid #cbd5e1" }}>
+              <th style={cellStyle}>Source column</th>
+              <th style={cellStyle}>Mapped to</th>
+              <th style={cellStyle}>Sample value</th>
+            </tr>
+          </thead>
+          <tbody>
+            {headers.map((h) => {
+              const sample = sampleRows[0]?.[h] ?? ""
+              const truncated = sample.length > 80 ? `${sample.slice(0, 80)}…` : sample
+              const current = currentFieldForHeader(h, mapping, inferred.rubricColumns)
+              return (
+                <tr key={h} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                  <td style={{ ...cellStyle, fontWeight: 500 }}>{h}</td>
+                  <td style={cellStyle}>
+                    <select
+                      value={current}
+                      onChange={(e) =>
+                        setField(h, e.target.value as (typeof FIELD_OPTIONS)[number]["value"])
+                      }
+                      style={{ ...inputStyle, padding: "0.2rem 0.4rem", fontSize: "0.85em" }}
+                    >
+                      {FIELD_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td style={{ ...cellStyle, color: "#64748b", fontFamily: "monospace" }}>
+                    {truncated}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </fieldset>
+  )
+}
+
+const cellStyle: React.CSSProperties = {
+  padding: "0.35rem 0.5rem",
+  textAlign: "left",
+  verticalAlign: "top",
 }
 
 function ManualMappingEditor({

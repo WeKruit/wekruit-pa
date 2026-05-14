@@ -1,0 +1,502 @@
+/**
+ * v2.0 External Supply V2.1 — Per-batch candidate browser.
+ *
+ * Lessie-style list (left) + detail drawer (right) for a single
+ * `pa-external-sourcing-batches/{batchId}`. Powers the
+ * "Browse candidates →" link on BatchDetail.
+ *
+ * Reads:
+ *   - `paExternalSupplyListBatchCandidates({ batchId })`
+ *   - `paExternalSupplyGetCandidateDetail({ recordId })`
+ *
+ * Layout mirrors `Outreach.tsx`'s `320px 1fr` grid. List rows show the
+ * candidate's verbatim Lessie rubric labels as colored chips (green =
+ * passed, red = failed, grey = neutral). Click a row → right panel
+ * loads detail (record / candidate profile / resume / handles).
+ */
+import { useEffect, useMemo, useState } from "react"
+import { Link, useParams, useSearchParams } from "react-router-dom"
+import {
+  ErrorState,
+  LoadingState,
+  PageHeader,
+  Panel,
+} from "../../components/ui.js"
+import {
+  getCandidateDetail,
+  listBatchCandidates,
+  type BatchCandidateRow,
+  type CandidateDetail,
+  type ListBatchCandidatesResult,
+} from "../../lib/external-supply-client.js"
+
+export function BatchCandidates() {
+  const { batchId = "" } = useParams<{ batchId: string }>()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const selectedRecordId = searchParams.get("record") ?? ""
+
+  const [result, setResult] = useState<ListBatchCandidatesResult | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  const [detail, setDetail] = useState<CandidateDetail | null>(null)
+  const [detailLoading, setDetailLoading] = useState(false)
+  const [detailError, setDetailError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!batchId) return
+    let cancelled = false
+    setLoading(true)
+    setError(null)
+    listBatchCandidates({ batchId })
+      .then((r) => {
+        if (cancelled) return
+        setResult(r)
+      })
+      .catch((err) => {
+        if (cancelled) return
+        setError(err instanceof Error ? err.message : String(err))
+      })
+      .finally(() => {
+        if (cancelled) return
+        setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [batchId])
+
+  useEffect(() => {
+    if (!selectedRecordId) {
+      setDetail(null)
+      return
+    }
+    let cancelled = false
+    setDetailLoading(true)
+    setDetailError(null)
+    getCandidateDetail({ recordId: selectedRecordId })
+      .then((d) => {
+        if (cancelled) return
+        setDetail(d)
+      })
+      .catch((err) => {
+        if (cancelled) return
+        setDetailError(err instanceof Error ? err.message : String(err))
+      })
+      .finally(() => {
+        if (cancelled) return
+        setDetailLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [selectedRecordId])
+
+  const rows = result?.rows ?? []
+  const [filter, setFilter] = useState("")
+  const filteredRows = useMemo(() => {
+    if (!filter.trim()) return rows
+    const q = filter.trim().toLowerCase()
+    return rows.filter((r) =>
+      [
+        r.name,
+        r.currentTitle,
+        r.currentCompany,
+        r.location,
+        r.linkedinUrl,
+        r.email,
+        r.headline,
+      ]
+        .filter(Boolean)
+        .some((v) => v!.toLowerCase().includes(q)),
+    )
+  }, [rows, filter])
+
+  function selectRecord(recordId: string) {
+    const next = new URLSearchParams(searchParams)
+    next.set("record", recordId)
+    setSearchParams(next, { replace: false })
+  }
+
+  return (
+    <div className="page-stack">
+      <PageHeader
+        eyebrow="External Supply / Batch"
+        title="Candidates"
+        description={`Batch ${batchId} — click a row to open detail`}
+      />
+      <div style={{ fontSize: "0.85em" }}>
+        <Link to={`/admin/external-supply/batches/${batchId}`}>← back to batch detail</Link>
+      </div>
+
+      {error && <ErrorState message={error} />}
+      {loading && !result && <LoadingState label="Loading candidates…" />}
+
+      {result && (
+        <div style={twoColStyle}>
+          <div>
+            <Panel
+              title={`Matches (${filteredRows.length})`}
+              eyebrow={result.jobId ? `job ${result.jobId.slice(0, 12)}…` : "no bound job"}
+            >
+              <input
+                type="text"
+                placeholder="Filter by name / company / role…"
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                style={filterStyle}
+              />
+              <div style={listStyle}>
+                {filteredRows.map((row) => (
+                  <CandidateListRow
+                    key={row.recordId}
+                    row={row}
+                    selected={row.recordId === selectedRecordId}
+                    onClick={() => selectRecord(row.recordId)}
+                  />
+                ))}
+                {filteredRows.length === 0 && (
+                  <p style={{ color: "#94a3b8", fontSize: "0.85em" }}>No candidates yet.</p>
+                )}
+              </div>
+            </Panel>
+          </div>
+
+          <div>
+            {!selectedRecordId && (
+              <Panel title="Pick a candidate" eyebrow="left list">
+                <p style={{ color: "#64748b", fontSize: "0.9em" }}>
+                  Click a row on the left to see resume / rubric reasoning / contact handles.
+                </p>
+              </Panel>
+            )}
+            {selectedRecordId && detailLoading && <LoadingState label="Loading detail…" />}
+            {selectedRecordId && detailError && <ErrorState message={detailError} />}
+            {selectedRecordId && detail && <CandidateDetailPanel detail={detail} />}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function CandidateListRow({
+  row,
+  selected,
+  onClick,
+}: {
+  row: BatchCandidateRow
+  selected: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        ...rowStyle,
+        ...(selected ? rowSelectedStyle : {}),
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+        <span style={{ fontWeight: 600, color: "#0f172a" }}>{row.name ?? "—"}</span>
+        {row.matchScore && (
+          <span style={{ fontSize: "0.7em", color: "#64748b" }}>
+            score {row.matchScore}
+          </span>
+        )}
+      </div>
+      <div style={{ fontSize: "0.8em", color: "#475569", marginTop: 2 }}>
+        {row.currentTitle ?? "—"}
+        {row.currentCompany ? ` @ ${row.currentCompany}` : ""}
+      </div>
+      {row.location && (
+        <div style={{ fontSize: "0.75em", color: "#64748b", marginTop: 2 }}>
+          {row.location}
+        </div>
+      )}
+      <div style={chipRowStyle}>
+        {row.evaluation?.tier && (
+          <span
+            style={{
+              ...chipStyle,
+              background: "#dbeafe",
+              color: "#1e3a8a",
+              fontWeight: 600,
+            }}
+          >
+            {row.evaluation.tier.replace(/^tier_/, "T")}
+          </span>
+        )}
+        {row.rubric &&
+          Object.entries(row.rubric)
+            .slice(0, 5)
+            .map(([label, cell]) => (
+              <span
+                key={label}
+                title={cell.value}
+                style={{
+                  ...chipStyle,
+                  background:
+                    cell.passed === true
+                      ? "#dcfce7"
+                      : cell.passed === false
+                        ? "#fee2e2"
+                        : "#f1f5f9",
+                  color:
+                    cell.passed === true
+                      ? "#166534"
+                      : cell.passed === false
+                        ? "#991b1b"
+                        : "#475569",
+                }}
+              >
+                {label}
+              </span>
+            ))}
+      </div>
+    </button>
+  )
+}
+
+function CandidateDetailPanel({ detail }: { detail: CandidateDetail }) {
+  const record = detail.record as Record<string, unknown>
+  const candidate = detail.candidate ?? null
+  const enrichment = (record.enrichment ?? {}) as Record<string, unknown>
+  const rubric = (enrichment.rubric ?? {}) as Record<string, { value: string; passed: boolean | null }>
+  const headline = enrichment.headline as string | undefined
+  const matchScore = enrichment.matchScore as string | undefined
+  const tags = ((candidate as Record<string, unknown> | null)?.tags ?? {}) as Record<string, unknown>
+  const skills = Array.isArray(tags.skills)
+    ? (tags.skills as Array<{ value?: string } | string>)
+    : []
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <Panel
+        title={(record.name as string) ?? "Candidate"}
+        eyebrow={
+          detail.candidateId
+            ? `pa-users/${detail.candidateId.slice(0, 12)}…`
+            : "no resolved candidate"
+        }
+      >
+        <div style={detailHeaderStyle}>
+          {typeof record.canonicalLinkedInUrl === "string" && (
+            <a
+              href={record.canonicalLinkedInUrl}
+              target="_blank"
+              rel="noreferrer"
+              style={{ fontSize: "0.85em" }}
+            >
+              {record.canonicalLinkedInUrl}
+            </a>
+          )}
+          <div style={{ fontSize: "0.85em", color: "#475569" }}>
+            {typeof record.currentTitle === "string" ? record.currentTitle : ""}
+            {typeof record.currentCompany === "string" ? ` · ${record.currentCompany}` : ""}
+          </div>
+          {typeof record.location === "string" && (
+            <div style={{ fontSize: "0.8em", color: "#64748b" }}>
+              {record.location}
+            </div>
+          )}
+          {headline && (
+            <div
+              style={{
+                fontSize: "0.85em",
+                marginTop: 6,
+                padding: 8,
+                background: "#f8fafc",
+                borderLeft: "3px solid #94a3b8",
+                fontStyle: "italic",
+              }}
+            >
+              {headline}
+            </div>
+          )}
+          {matchScore && (
+            <div style={{ fontSize: "0.8em", color: "#475569" }}>
+              Lessie match score: <strong>{matchScore}</strong>
+            </div>
+          )}
+        </div>
+      </Panel>
+
+      {Object.keys(rubric).length > 0 && (
+        <Panel title="Rubric reasoning" eyebrow="source-of-truth, verbatim">
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {Object.entries(rubric).map(([label, cell]) => (
+              <div
+                key={label}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "180px 1fr",
+                  gap: 12,
+                  alignItems: "start",
+                  fontSize: "0.85em",
+                }}
+              >
+                <span
+                  style={{
+                    ...chipStyle,
+                    background:
+                      cell.passed === true
+                        ? "#dcfce7"
+                        : cell.passed === false
+                          ? "#fee2e2"
+                          : "#f1f5f9",
+                    color:
+                      cell.passed === true
+                        ? "#166534"
+                        : cell.passed === false
+                          ? "#991b1b"
+                          : "#475569",
+                    fontWeight: 600,
+                    height: "fit-content",
+                  }}
+                >
+                  {label}
+                </span>
+                <span style={{ color: "#0f172a" }}>{cell.value}</span>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      )}
+
+      {detail.evaluation && (
+        <Panel title="Evaluation" eyebrow={detail.evaluation.evaluationId.slice(0, 16)}>
+          <dl style={{ fontSize: "0.85em", margin: 0 }}>
+            <dt style={dtStyle}>Tier</dt>
+            <dd style={ddStyle}>{detail.evaluation.proposedTier ?? "—"}</dd>
+            {typeof detail.evaluation.generalRubricScore === "number" && (
+              <>
+                <dt style={dtStyle}>Score</dt>
+                <dd style={ddStyle}>{detail.evaluation.generalRubricScore.toFixed(2)}</dd>
+              </>
+            )}
+            {detail.evaluation.explanation && (
+              <>
+                <dt style={dtStyle}>Explanation</dt>
+                <dd style={ddStyle}>{detail.evaluation.explanation}</dd>
+              </>
+            )}
+          </dl>
+        </Panel>
+      )}
+
+      {(detail.resume || skills.length > 0) && (
+        <Panel title="Profile" eyebrow={detail.candidateId ? "from pa-users" : "no resolved profile"}>
+          {detail.resume?.candidateProfileSummary && (
+            <div style={{ fontSize: "0.85em", whiteSpace: "pre-wrap" }}>
+              {detail.resume.candidateProfileSummary}
+            </div>
+          )}
+          {skills.length > 0 && (
+            <div style={{ marginTop: 8 }}>
+              <div style={{ fontSize: "0.75em", color: "#64748b", marginBottom: 4 }}>
+                Skills
+              </div>
+              <div style={chipRowStyle}>
+                {skills.slice(0, 30).map((s, i) => {
+                  const label = typeof s === "string" ? s : (s.value ?? "")
+                  if (!label) return null
+                  return (
+                    <span key={`${label}-${i}`} style={chipStyle}>
+                      {label}
+                    </span>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+        </Panel>
+      )}
+
+      {detail.handles && detail.handles.length > 0 && (
+        <Panel title="Contact handles" eyebrow="redacted">
+          <ul style={{ fontSize: "0.85em", paddingLeft: 18 }}>
+            {detail.handles.map((h, i) => (
+              <li key={`${h.kind}-${i}`}>
+                <strong>{h.kind}:</strong> {h.redactedValue}
+              </li>
+            ))}
+          </ul>
+        </Panel>
+      )}
+    </div>
+  )
+}
+
+const twoColStyle: React.CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "360px 1fr",
+  gap: 16,
+  alignItems: "start",
+}
+
+const listStyle: React.CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 6,
+  maxHeight: "calc(100vh - 280px)",
+  overflowY: "auto",
+}
+
+const rowStyle: React.CSSProperties = {
+  textAlign: "left",
+  background: "white",
+  border: "1px solid #e2e8f0",
+  borderRadius: 6,
+  padding: 10,
+  cursor: "pointer",
+  font: "inherit",
+}
+
+const rowSelectedStyle: React.CSSProperties = {
+  borderColor: "#1a73e8",
+  background: "#eff6ff",
+}
+
+const chipStyle: React.CSSProperties = {
+  display: "inline-block",
+  padding: "2px 8px",
+  borderRadius: 12,
+  fontSize: "0.7em",
+  background: "#f1f5f9",
+  color: "#475569",
+}
+
+const chipRowStyle: React.CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  gap: 4,
+  marginTop: 6,
+}
+
+const filterStyle: React.CSSProperties = {
+  width: "100%",
+  padding: "0.4rem 0.6rem",
+  marginBottom: 8,
+  border: "1px solid #cbd5e1",
+  borderRadius: 4,
+  fontSize: "0.85em",
+}
+
+const detailHeaderStyle: React.CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 4,
+}
+
+const dtStyle: React.CSSProperties = {
+  fontWeight: 600,
+  marginTop: 6,
+  color: "#475569",
+}
+
+const ddStyle: React.CSSProperties = {
+  margin: "2px 0 0 0",
+  color: "#0f172a",
+}

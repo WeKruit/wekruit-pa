@@ -62,6 +62,7 @@ import PrescreenFeedback from "./pages/PrescreenFeedback.js"
 import { Landing as ExternalSupplyLanding } from "./pages/external-supply/Landing.js"
 import { BatchNew as ExternalSupplyBatchNew } from "./pages/external-supply/BatchNew.js"
 import { BatchDetail as ExternalSupplyBatchDetail } from "./pages/external-supply/BatchDetail.js"
+import { BatchCandidates as ExternalSupplyBatchCandidates } from "./pages/external-supply/BatchCandidates.js"
 import { Review as ExternalSupplyReview } from "./pages/external-supply/Review.js"
 import { Evaluations as ExternalSupplyEvaluations } from "./pages/external-supply/Evaluations.js"
 import { EvaluationDetail as ExternalSupplyEvaluationDetail } from "./pages/external-supply/EvaluationDetail.js"
@@ -319,6 +320,10 @@ export default function App() {
           <Route path="/admin/external-supply/jobs/:companyId" element={<ExternalSupplyJobs />} />
           <Route path="/admin/external-supply/batches/new" element={<ExternalSupplyBatchNew />} />
           <Route path="/admin/external-supply/batches/:batchId" element={<ExternalSupplyBatchDetail />} />
+          <Route
+            path="/admin/external-supply/batches/:batchId/candidates"
+            element={<ExternalSupplyBatchCandidates />}
+          />
           <Route path="/admin/external-supply/review" element={<ExternalSupplyReview />} />
           <Route path="/admin/external-supply/evaluations" element={<ExternalSupplyEvaluations />} />
           <Route path="/admin/external-supply/evaluations/:runId" element={<ExternalSupplyEvaluationDetail />} />

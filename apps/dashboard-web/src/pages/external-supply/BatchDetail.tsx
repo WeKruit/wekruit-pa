@@ -10,7 +10,7 @@
  * conflict).
  */
 import { useEffect, useMemo, useState } from "react"
-import { useParams, useNavigate } from "react-router-dom"
+import { Link, useParams, useNavigate } from "react-router-dom"
 import type { ExternalCandidateRecord, ExternalSourcingBatch } from "@pa/core-types"
 import { ErrorState, LoadingState, PageHeader, Panel } from "../../components/ui.js"
 import { BatchTable } from "../../components/external-supply/BatchTable.js"
@@ -110,6 +110,12 @@ export function BatchDetail() {
         description={batch ? `${batch.source} · status=${batch.status} · imported by ${batch.importedBy}` : ""}
         actions={
           <div style={{ display: "flex", gap: 8 }}>
+            <Link
+              to={`/admin/external-supply/batches/${batchId}/candidates`}
+              style={{ ...secondaryBtnStyle, textDecoration: "none" } as React.CSSProperties}
+            >
+              Browse candidates →
+            </Link>
             <button
               type="button"
               disabled={actionBusy !== null}
