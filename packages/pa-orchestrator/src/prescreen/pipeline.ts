@@ -353,8 +353,8 @@ export function terminalText(
   switch (terminal) {
     case "PASS":
       return lang === "zh"
-        ? "感谢回答！初步评估通过，招聘方会在 2-3 个工作日内联系你下一步。"
-        : "Thanks for your answers! You've passed the initial screen — the employer will follow up within 2-3 business days."
+        ? "感谢回答，岗位匹配信息已经收齐。接下来我会发送下一步。"
+        : "Thanks for your answers — I have enough for the role-fit screen. Sending the next step now."
     case "FAIL":
       return lang === "zh"
         ? "感谢花时间。本次初筛暂未匹配，我们会留意更合适的机会推给你。"

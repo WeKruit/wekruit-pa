@@ -18,6 +18,7 @@ import {
   setTerminal,
 } from "../transitions.js"
 import { emptyPreScreenState } from "../state.js"
+import { terminalText } from "../pipeline.js"
 import type { ScoredJudgeResult } from "../../onboarding/question.js"
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -247,4 +248,11 @@ test("Phase 76: setTerminal clears currentQId and stamps reason", () => {
   assert.equal(out.updatedAt, "2026-05-12T01:00:00Z")
   // original state untouched (pure)
   assert.equal(state.terminal, null)
+})
+
+test("PASS terminal text does not duplicate employer follow-up timing", () => {
+  const text = terminalText("PASS", "passed", "en")
+  assert.match(text, /role-fit screen/i)
+  assert.doesNotMatch(text, /business days/i)
+  assert.doesNotMatch(text, /employer will follow/i)
 })

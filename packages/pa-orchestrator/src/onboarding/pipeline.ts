@@ -399,6 +399,7 @@ export class OnboardingPipeline {
     completionMsg: string
   ): Promise<RunTurnResult> {
     state.completed = true
+    state.currentQId = null
     await this.opts.state.save(input.userId, state)
     await this.opts.emit(completionMsg, { qId: null, kind: "completion" })
     if (this.opts.postCollect) {

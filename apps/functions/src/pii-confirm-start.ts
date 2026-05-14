@@ -293,6 +293,7 @@ export async function runPiiConfirmTurnIfActive(
     | { source?: "pass" | "fail"; jobId?: string; sourceSessionId?: string; toE164?: string }
     | undefined
   if (!meta) return { handled: false }
+  const source = meta.source ?? "pass"
 
   // Default onComplete fires generateJobRecs ("matching" link per Adam).
   const onComplete = async (a: { userId: string; toE164: string; jobId: string }) => {
@@ -306,6 +307,10 @@ export async function runPiiConfirmTurnIfActive(
         { db, log: () => undefined }
       )
       if (!result.jobs || result.jobs.length === 0) {
+        if (source === "pass") {
+          log("pii_confirm.recs_no_matches_suppressed_after_pass", { userId: a.userId })
+          return
+        }
         await sendImessage({
           to: a.toE164,
           content:
@@ -315,7 +320,11 @@ export async function runPiiConfirmTurnIfActive(
         })
         return
       }
-      const lines: string[] = ["Here are roles I think fit better:"]
+      const lines: string[] = [
+        source === "pass"
+          ? "I’ll also keep these roles on your radar:"
+          : "Here are roles I think fit better:",
+      ]
       for (const job of result.jobs) {
         const tag = job.companyName ? ` @ ${job.companyName}` : ""
         const url = job.atsApplyUrl
@@ -345,7 +354,7 @@ export async function runPiiConfirmTurnIfActive(
     toE164: args.toE164,
     jobId: meta.jobId ?? "",
     sourceSessionId: meta.sourceSessionId ?? "",
-    source: meta.source ?? "pass",
+    source,
     onComplete,
     log,
   })

@@ -18,6 +18,7 @@ import test from "node:test"
 import assert from "node:assert/strict"
 
 import { buildPipeline, TEST_USER } from "./_helpers.js"
+import type { Question } from "../../question.js"
 
 test("sim/cold-start: first turn emits q_lang prompt + sets state.currentQId", async () => {
   const { send, peekState, emitted } = buildPipeline()
@@ -87,4 +88,26 @@ test("sim/cold-start: lang preserved through cold-start (zh user pre-seeded)", a
   assert.equal(built.emitted.length, 1)
   // q_lang ZH prompt — match a stable Chinese substring.
   assert.match(built.emitted[0]!.text, /中文|英文|聊比较顺/, "zh prompt emitted")
+})
+
+test("sim/completion: final accepted answer clears currentQId", async () => {
+  const q: Question<unknown> = {
+    id: "q_one",
+    prompt: { en: "Question one?", zh: "问题一?" },
+    judge: {
+      kind: "test_accept",
+      judge: async () => ({ accept: true, value: "accepted" }),
+    },
+    rephraser: {
+      rephrase: async () => "try again",
+    },
+  }
+  const built = buildPipeline({ questionsOverride: [q] })
+
+  await built.send("start")
+  await built.send("answer")
+
+  const s = built.peekState(TEST_USER)
+  assert.equal(s?.completed, true)
+  assert.equal(s?.currentQId, null)
 })
