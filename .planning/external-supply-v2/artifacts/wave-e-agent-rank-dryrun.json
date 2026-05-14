@@ -1,0 +1,42 @@
+{
+  "out": {
+    "ok": true,
+    "evaluationRunId": "v2-e2e-run-1",
+    "processedCount": 5,
+    "rankedCount": 0,
+    "skippedCount": 0,
+    "totalCostUsd": 0,
+    "projectedCostUsd": 0.00195,
+    "abortedReason": "dry_run",
+    "promptVersion": "agent-rank-2026-05-A",
+    "costTableVersion": "pricing-2026-05-A",
+    "prompts": [
+      {
+        "candidateRecordId": "v2-e2e-cand-0001",
+        "promptCharCount": 2279,
+        "estimatedInputTokens": 570
+      },
+      {
+        "candidateRecordId": "v2-e2e-cand-0002",
+        "promptCharCount": 2279,
+        "estimatedInputTokens": 570
+      },
+      {
+        "candidateRecordId": "v2-e2e-cand-0003",
+        "promptCharCount": 2279,
+        "estimatedInputTokens": 570
+      },
+      {
+        "candidateRecordId": "v2-e2e-cand-0004",
+        "promptCharCount": 2279,
+        "estimatedInputTokens": 570
+      },
+      {
+        "candidateRecordId": "v2-e2e-cand-0005",
+        "promptCharCount": 2279,
+        "estimatedInputTokens": 570
+      }
+    ]
+  },
+  "generatedAt": "2026-05-14T12:00:00.000Z"
+}

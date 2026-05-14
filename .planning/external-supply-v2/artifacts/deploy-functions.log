@@ -1,0 +1,2922 @@
+ WARN  Unsupported engine: wanted: {"node":"22"} (current: {"node":"v24.3.0","pnpm":"10.31.0"})
+
+> @pa/functions@0.0.1 deploy /Users/adam/Desktop/WeKruit/wekruit-pa/.claude/worktrees/v2-external-supply-v2/apps/functions
+> firebase deploy --only functions --project wekruit-5f89b
+
+
+=== Deploying to 'wekruit-5f89b'...
+
+i  deploying functions
+Running command: rm -rf "$RESOURCE_DIR/../../packages/pa-orchestrator/dist"
+Running command: npm --prefix "$RESOURCE_DIR/../.." run build --workspace=@pa/core-types --workspace=@pa/firebase-admin --workspace=@pa/agent-runtime --workspace=@pa/memory --workspace=@pa/agent-registry --workspace=@pa/external-supply --workspace=@pa/pa-orchestrator
+⚠  Warning: Your command contains '=', it may result in the command not running. Please consider removing it.
+Running command: node "$RESOURCE_DIR/../scripts/predeploy-smoke.mjs"
+[predeploy-smoke] OK — appendCvContextToSystemPrompt is a function (dist mtime: 2026-05-14T03:45:10.528Z)
+Running command: npm --prefix "$RESOURCE_DIR/.." run build
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+
+> @pa/functions@0.0.1 build
+> node build.mjs
+
+
+  lib/index.js      15.8mb ⚠️
+  lib/index.js.map  31.8mb
+
+⚡ Done in 741ms
+[functions] no .env file found at /Users/adam/Desktop/WeKruit/wekruit-pa/.claude/worktrees/v2-external-supply-v2/apps/functions/.env (skipping admin allowlist)
+[functions] bundled to /Users/adam/Desktop/WeKruit/wekruit-pa/.claude/worktrees/v2-external-supply-v2/apps/functions/lib
+Running command: npm --prefix "$RESOURCE_DIR/.." run typecheck
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+
+> @pa/functions@0.0.1 typecheck
+> tsc --noEmit
+
+Running command: npm --prefix "$RESOURCE_DIR/.." test
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+
+> @pa/functions@0.0.1 pretest
+> npm run build --workspace=@wekruit/shared-tags && npm run build --workspace=@pa/core-types && npm run build --workspace=@pa/external-supply && npm run build --workspace=@pa/firebase-admin && npm run build --workspace=@pa/pa-broker && npm run build --workspace=@pa/pa-safety && npm run build --workspace=@pa/agent-runtime && npm run build --workspace=@pa/memory && npm run build --workspace=@pa/pa-persistence && npm run build --workspace=@pa/pa-connectors && npm run build --workspace=@pa/agent-registry && npm run build --workspace=@pa/pa-resume-parser && npm run build --workspace=@pa/pa-orchestrator && npm run build --workspace=@pa/job-tag-enricher && npm run build --workspace=@pa/job-rec
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @wekruit/shared-tags@0.1.0 build
+> tsc
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @pa/core-types@0.0.1 prebuild
+> npm run build --workspace=@wekruit/shared-tags
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @wekruit/shared-tags@0.1.0 build
+> tsc
+
+
+> @pa/core-types@0.0.1 build
+> tsc
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @pa/external-supply@0.0.1 prebuild
+> npm run build --workspace=@wekruit/shared-tags && npm run build --workspace=@pa/core-types
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @wekruit/shared-tags@0.1.0 build
+> tsc
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @pa/core-types@0.0.1 prebuild
+> npm run build --workspace=@wekruit/shared-tags
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @wekruit/shared-tags@0.1.0 build
+> tsc
+
+
+> @pa/core-types@0.0.1 build
+> tsc
+
+
+> @pa/external-supply@0.0.1 build
+> tsc
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @pa/firebase-admin@0.0.1 build
+> tsc
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @pa/pa-broker@0.0.1 build
+> tsc
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @pa/pa-safety@0.0.1 build
+> tsc
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @pa/agent-runtime@0.0.1 build
+> tsc
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @pa/memory@0.0.1 build
+> tsc
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @pa/pa-persistence@0.0.1 prebuild
+> npm run build --workspace=@pa/core-types
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @pa/core-types@0.0.1 prebuild
+> npm run build --workspace=@wekruit/shared-tags
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @wekruit/shared-tags@0.1.0 build
+> tsc
+
+
+> @pa/core-types@0.0.1 build
+> tsc
+
+
+> @pa/pa-persistence@0.0.1 build
+> tsc
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @pa/pa-connectors@0.0.1 build
+> tsc
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @pa/agent-registry@0.0.1 build
+> tsc
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @pa/pa-resume-parser@0.0.1 build
+> tsc
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @pa/pa-orchestrator@0.0.1 build
+> tsc
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @pa/job-tag-enricher@0.0.1 build
+> tsc
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @pa/job-rec@0.0.1 prebuild
+> npm run build --workspace=@wekruit/shared-tags && npm run build --workspace=@pa/core-types && npm run build --workspace=@pa/firebase-admin && npm run build --workspace=@pa/pa-broker && npm run build --workspace=@pa/pa-safety && npm run build --workspace=@pa/agent-runtime && npm run build --workspace=@pa/memory && npm run build --workspace=@pa/pa-persistence && npm run build --workspace=@pa/pa-connectors && npm run build --workspace=@pa/agent-registry && npm run build --workspace=@pa/pa-orchestrator
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @wekruit/shared-tags@0.1.0 build
+> tsc
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @pa/core-types@0.0.1 prebuild
+> npm run build --workspace=@wekruit/shared-tags
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @wekruit/shared-tags@0.1.0 build
+> tsc
+
+
+> @pa/core-types@0.0.1 build
+> tsc
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @pa/firebase-admin@0.0.1 build
+> tsc
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @pa/pa-broker@0.0.1 build
+> tsc
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @pa/pa-safety@0.0.1 build
+> tsc
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @pa/agent-runtime@0.0.1 build
+> tsc
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @pa/memory@0.0.1 build
+> tsc
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @pa/pa-persistence@0.0.1 prebuild
+> npm run build --workspace=@pa/core-types
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @pa/core-types@0.0.1 prebuild
+> npm run build --workspace=@wekruit/shared-tags
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @wekruit/shared-tags@0.1.0 build
+> tsc
+
+
+> @pa/core-types@0.0.1 build
+> tsc
+
+
+> @pa/pa-persistence@0.0.1 build
+> tsc
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @pa/pa-connectors@0.0.1 build
+> tsc
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @pa/agent-registry@0.0.1 build
+> tsc
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn Unknown project config "auto-install-peers". This will stop working in the next major version of npm.
+
+> @pa/pa-orchestrator@0.0.1 build
+> tsc
+
+
+> @pa/job-rec@0.0.1 build
+> tsc
+
+
+> @pa/functions@0.0.1 test
+> node --import tsx --test src/sendblue/__tests__/*.test.ts src/sendblue/triggers/*.test.ts src/sendblue/triggers/__tests__/*.test.ts src/sendblue/pool.test.ts src/sendblue/pool-integration.test.ts src/outreach/__tests__/*.test.ts src/cv-ingest/__tests__/*.test.ts src/identity/*.test.ts src/job-rec/__tests__/*.test.ts src/__tests__/*.test.ts src/coalesce/__tests__/*.test.ts src/tag-worker/__tests__/*.test.ts src/lib/*.test.ts src/lib/__tests__/*.test.ts src/proactive-sweep.test.ts src/admin-bootstrap.test.ts src/health.test.ts src/orchestrator-deps.test.ts src/backfill-ats-urls.test.ts src/prescreen-terminal-action.test.ts src/bulk-resume-intake.test.ts src/ats-adapters/*.test.ts src/ats-inbound-handler.test.ts src/external-supply/*.test.ts src/external-supply/adapters/*.test.ts scripts/__tests__/*.test.ts scripts/__tests__/fill-tag-gaps.test.mjs scripts/__tests__/backfill-empty-required-skills.test.mjs scripts/__tests__/normalize-seniority-outliers.test.mjs
+
+✔ planJob: empty/null doc → not eligible (empty-doc) (0.864083ms)
+✔ planJob: status != active → not-active (0.137833ms)
+✔ planJob: status missing → not-active (0.053042ms)
+✔ planJob: requiredSkills already populated → has-skills (0.106584ms)
+✔ planJob: enricherVersion stale → version-mismatch (force-reenrich's job) (0.128375ms)
+✔ planJob: enricherVersion missing entirely → version-mismatch (0.083667ms)
+✔ planJob: missing roleTitle (and no jobTitle/title fallback) → no-title (0.055333ms)
+✔ planJob: empty roleTitle string → no-title (0.048959ms)
+✔ planJob: roleTitle fallback to jobTitle field (0.0585ms)
+✔ planJob: roleTitle fallback to title field (0.088125ms)
+✔ planJob: jdSignal=jd when jobDescription has content (0.059416ms)
+✔ planJob: jdSignal=aux when only coreResponsibilities array populated (0.05975ms)
+✔ planJob: jdSignal=aux when only qualifications array populated (0.045458ms)
+✔ planJob: jdSignal=aux when only benefits array populated (0.068375ms)
+✔ planJob: empty arrays do not count as aux signal (0.286833ms)
+✔ planJob: title-only doc (no JD/aux) blocked by default (0.056125ms)
+✔ planJob: title-only doc allowed when includeTitleOnly=true (0.0485ms)
+✔ planJob: requiredSkills missing field (not just empty array) is treated like empty (0.041167ms)
+✔ planJob: requiredSkills as non-array (defensive) treated like empty (0.032625ms)
+✔ planJob: jobDescription whitespace-only → no JD signal, falls to title (0.029666ms)
+✔ buildReenrichUpdate: clears enricherContentHash to null (0.056417ms)
+✔ buildReenrichUpdate: stamps sentinel pending-reenrich version (0.037459ms)
+✔ buildReenrichUpdate: records previous version for forensic trail (0.029375ms)
+✔ buildReenrichUpdate: stamps reason='empty-required-skills' for forensic distinguishability vs force-reenrich (0.027833ms)
+✔ buildReenrichUpdate: includes _reenrichRequestedAt ISO timestamp (0.138209ms)
+✔ buildReenrichUpdate: handles missing enricherVersion (sets previousVersion=null) (0.029458ms)
+✔ buildReenrichUpdate: shape is stable across re-runs (0.05675ms)
+▶ backfill-job-profiles-from-cv :: parseArgs
+  ✔ no args → defaults to --from-allowlist (0.546042ms)
+  ✔ --user=X --user=Y --dry-run --force parses cleanly (0.098541ms)
+  ✔ --all-with-cv overrides default (0.050042ms)
+✔ backfill-job-profiles-from-cv :: parseArgs (1.100792ms)
+▶ backfill-job-profiles-from-cv :: deriveJobProfileFromCv
+  ✔ preserves canonical industry tags 1..3 in resume order (0.139792ms)
+  ✔ falls back to ['other'] when no canonical tags present (0.052625ms)
+  ✔ uses 'anywhere' when CV location empty (0.048167ms)
+  ✔ defaults sponsorshipNeeded='H1B', sizePreference='any', salaryMin=null (0.053917ms)
+  ✔ dedupes industryTags preserving first-seen order (0.057709ms)
+✔ backfill-job-profiles-from-cv :: deriveJobProfileFromCv (0.476375ms)
+▶ backfill-job-profiles-from-cv :: runBackfill scenarios (H1 brief)
+  ✔ test 1 — userId WITH parsedCandidateResumes → 1 write with NEW shape (0.315291ms)
+  ✔ test 2 — userId WITHOUT parsedCandidateResumes → skipped, 0 writes (0.088333ms)
+  ✔ test 3 — 3 userIds, 2 with resume + 1 without → 2 writes, 1 skip (1.391042ms)
+  ✔ idempotency — existing profile + no --force → skipped, no write (0.115375ms)
+  ✔ --from-allowlist sources users from FsPort.loadAllowlist (0.185542ms)
+  ✔ --dry-run derives + reports but writes nothing (0.225959ms)
+✔ backfill-job-profiles-from-cv :: runBackfill scenarios (H1 brief) (2.469583ms)
+▶ Stream H6 — backfill-user-embeddings
+  ✔ parseArgs: --user repeats accumulate; defaults to --from-allowlist (0.629083ms)
+  ✔ synthesizeResumeText: covers name + skills + recent role + education + tags; bilingual location ok (0.22675ms)
+  ✔ synthesizeResumeText: returns null on empty doc + handles missing endDate as 'present' (0.061833ms)
+  ✔ runBackfill: dry-run skips embedder + skips existing 1536-d; allowlist resolution works (0.250875ms)
+  ✔ runBackfill: live path writes 5-field payload + reports embedded count (0.171833ms)
+  ✔ runBackfill: skips users with no resume row (skip_no_resume) without error (0.06275ms)
+✔ Stream H6 — backfill-user-embeddings (1.868833ms)
+▶ enrich-matching-jobs CLI parser
+  ✔ defaults to dry-run when neither --dry-run nor --live passed (0.345333ms)
+  ✔ --live --max-jobs=200 --batch=100 parses cleanly (0.067416ms)
+  ✔ H8 — --apply alias maps to LIVE, --threshold=0.70 parses (0.052083ms)
+  ✔ H8 — bad --threshold=-1 clamps back to default 0.6 (0.061458ms)
+✔ enrich-matching-jobs CLI parser (0.946416ms)
+▶ decideEnrichment (pure)
+  ✔ doc already has industryEnum → action=skip reason=already_enriched (0.121334ms)
+  ✔ doc with no industry/industryKey → action=skip reason=no_industry (0.04125ms)
+  ✔ doc with industryKey='fintech' → action=update industryEnum=fintech_finance (0.1485ms)
+  ✔ doc with unknown industryKey='space_exploration' → action=update industryEnum=other (0.087834ms)
+  ✔ idempotent: re-decision after a previous run leaves doc untouched (already_enriched) (0.061875ms)
+✔ decideEnrichment (pure) (0.586541ms)
+▶ summarizeDecision + formatSummary
+  ✔ counts by tag and surfaces 'other' samples (0.306167ms)
+  ✔ H8 — decideEnrichment skips when industryEnum is already an array (idempotent across F2 string + H8 array shapes) (0.050625ms)
+  ✔ H8 — decideEnrichment uses companyName when industryKey is a job-function ('engineering' → other) and lifts to 'fintech_finance' via Stripe (0.327542ms)
+  ✔ H8 — decideEnrichment falls through to roleTitle when industryKey + companyName both miss (0.121417ms)
+✔ summarizeDecision + formatSummary (0.88875ms)
+▶ H11 — --re-enrich-all flag
+  ✔ --re-enrich-all parses to reenrichAll=true (0.074458ms)
+  ✔ --re-enrich-other still parses (backward compat with H10) (0.0405ms)
+  ✔ decideEnrichment with reenrichAll re-evaluates an already-tagged 'tech_software' row (1.146375ms)
+  ✔ decideEnrichment with reenrichAll keeps a correct tech_software lift (Amazon SDE) (0.057041ms)
+✔ H11 — --re-enrich-all flag (1.388833ms)
+▶ isAxisMissing
+  ✔ missing key → true (0.412334ms)
+  ✔ null tags → true (0.077292ms)
+  ✔ undefined value → true (0.061708ms)
+  ✔ empty array → true (0.05225ms)
+  ✔ non-empty array → false (0.042584ms)
+  ✔ string present → false (0.039292ms)
+  ✔ empty string → true (0.037958ms)
+✔ isAxisMissing (1.268833ms)
+▶ computeTagGapFill
+  ✔ fills targetRoleFunction when missing + 4 SE skills (0.634875ms)
+  ✔ DOES NOT overwrite admin-set targetRoleFunction (ONLY-MISSING-AXES) (0.0795ms)
+  ✔ fills careerStage from yoeRange tuple (0.381ms)
+  ✔ DOES NOT overwrite admin-set careerStage (0.238875ms)
+  ✔ returns empty proposed when no signal (0.084417ms)
+  ✔ recovers role from resumeDoc workHistory[0].title (0.310042ms)
+  ✔ falls back to parsedCandidateResumes.candidateProfile.skills when tags.skills empty (auto-bucket) (0.916583ms)
+  ✔ falls back to statedPreferences.targetRole when no CV signals at all (chat-only user) (0.09375ms)
+  ✔ statedPreferences DOES NOT override skill-bucket vote (precedence) (0.068834ms)
+✔ computeTagGapFill (3.336584ms)
+▶ processUser
+  ✔ dry-run writes audit only, NO pa-users mutation (1.984917ms)
+  ✔ apply mode mutates pa-users.tags + writes audit (0.550208ms)
+  ✔ idempotency: re-processing user with auto-derived target produces no proposed changes (0.982292ms)
+  ✔ apply-noop when no changes needed (0.172375ms)
+  ✔ apply error path returns mode=error (0.189125ms)
+✔ processUser (4.021333ms)
+▶ migrate-bible-v7.6-probe argParser
+  ✔ defaults to dry-run (0.3415ms)
+  ✔ --live --slug=foo (0.058875ms)
+✔ migrate-bible-v7.6-probe argParser (0.858792ms)
+▶ appendProbeHardRule (pure)
+  ✔ appends JOB-PREF PROBE rule when not present (0.144709ms)
+  ✔ idempotent: re-running on already-updated sections is a no-op (0.050875ms)
+  ✔ preserves other sections verbatim (0.184541ms)
+  ✔ rule includes all 4 probe categories: SPONSORSHIP, LOCATION, SIZE, INDUSTRY (0.049459ms)
+✔ appendProbeHardRule (pure) (0.528458ms)
+✔ planDoc: missing seniorityLevel → skip-empty (out of scope) (0.597125ms)
+✔ planDoc: empty string seniorityLevel → skip-empty (0.066292ms)
+✔ planDoc: whitespace-only seniorityLevel → skip-empty (0.060083ms)
+✔ planDoc: already-canonical lowercase → skip-canonical (0.073791ms)
+✔ planDoc: 'New Grad, Entry Level' → entry_level (live outlier #1) (0.210458ms)
+✔ planDoc: 'Entry Level' → entry_level (live outlier #2) (0.132792ms)
+✔ planDoc: case mismatch 'Senior' → senior via canonical-map (lowercase) (0.0495ms)
+✔ planDoc: 'ENTRY_LEVEL' uppercase canonical → rewrite to lowercase (0.046166ms)
+✔ planDoc: comma-separated 'Senior, Lead' → senior (0.243666ms)
+✔ planDoc: bare alias 'Lead' → manager (0.271709ms)
+✔ planDoc: bare alias 'Founder' → founder (canonical) (0.051625ms)
+✔ planDoc: unknown raw + roleTitle present → title-infer fallback (0.294458ms)
+✔ planDoc: unknown raw + plain title falls back to mid_level via inferSeniority (0.473791ms)
+✔ planDoc: title fallback uses jobTitle field (0.072459ms)
+✔ planDoc: unknown raw + no title → skip-no-mapping (0.04575ms)
+✔ planDoc: unknown raw + empty title → skip-no-mapping (0.043416ms)
+✔ buildUpdate: rewrite plan produces seniorityLevel + audit trail (1.708292ms)
+✔ buildUpdate: throws on non-rewrite plan (defensive) (0.368917ms)
+✔ planDoc + buildUpdate is idempotent: re-running on canonicalized doc yields skip-canonical (0.063ms)
+▶ Stream H9 TD4 — predeploy-smoke.mjs
+  ✔ PASS when dist exists, mtime >= src, and exports appendCvContextToSystemPrompt (191.040583ms)
+  ✔ FAIL when dist file is missing (regression: deploy without build) (141.138875ms)
+  ✔ FAIL when src is newer than dist (regression: stale dist after edit) (144.404584ms)
+  ✔ FAIL when dist exists but appendCvContextToSystemPrompt is missing (137.859416ms)
+✔ Stream H9 TD4 — predeploy-smoke.mjs (615.12475ms)
+▶ AdminMatchDebugInputSchema
+  ✔ accepts a minimal payload — userId only, defaults limit=10 (3.915917ms)
+  ✔ rejects userId shorter than 8 chars (0.456958ms)
+  ✔ accepts partial weight overrides — missing keys allowed (0.329208ms)
+  ✔ rejects weight override outside 0..1 (0.184625ms)
+  ✔ clamps limit to 1..50 and accepts defaults (0.119625ms)
+  ✔ rejects non-integer limit (0.232334ms)
+✔ AdminMatchDebugInputSchema (6.638208ms)
+▶ paAdminMatchDebug auth gate (via authorizeAdminCallable)
+  ✔ accepts auth.token.admin === true (0.123291ms)
+  ✔ rejects when neither claim nor token (0.260583ms)
+  ✔ accepts admin token fallback for scripted callers (0.415125ms)
+✔ paAdminMatchDebug auth gate (via authorizeAdminCallable) (0.943042ms)
+▶ AdminJobMatchDebugInputSchema
+  ✔ accepts jobId and defaults limit (0.173375ms)
+  ✔ rejects empty jobId and out-of-range limit (0.142ms)
+✔ AdminJobMatchDebugInputSchema (0.373ms)
+▶ paAdminJobMatchDebug auth gate (via authorizeAdminCallable)
+  ✔ accepts auth.token.admin === true (0.059959ms)
+  ✔ rejects non-admin callers (0.513875ms)
+✔ paAdminJobMatchDebug auth gate (via authorizeAdminCallable) (0.679ms)
+▶ runAdminJobMatchDebug
+  ✔ throws not-found when matching job is missing (2.7025ms)
+  ✔ returns ranked retained/profile-ready candidates with debug projection (1.312333ms)
+✔ runAdminJobMatchDebug (4.132834ms)
+▶ S5 admin match debug import safety
+  ✔ does not import sender or legacy notify paths (0.280666ms)
+✔ S5 admin match debug import safety (0.319375ms)
+▶ runAdminPassedCandidatesSnapshot
+  ✔ rejects blank jobId input (1.385708ms)
+  ✔ lists only passed employer-visible snapshots for the requested job (1.859125ms)
+  ✔ drops snapshots whose linked candidate-job state is not passed for the same candidate and job (0.215125ms)
+  ✔ projects transcript turns through linked prescreenSessionId and redacts contact/resume text (0.38ms)
+✔ runAdminPassedCandidatesSnapshot (4.3045ms)
+▶ paMatchingJobsAutoEnrich — needsEnrichment
+  ✔ returns false when doc is undefined (0.328542ms)
+  ✔ returns false when status !== 'active' (0.0525ms)
+  ✔ returns false when enricherVersion + contentHash both match current (0.04975ms)
+  ✔ returns true when enricherVersion is stale (v1.8.1 → v1.9.0 bump) (0.043708ms)
+  ✔ returns false when roleTitle is missing/empty (0.04975ms)
+  ✔ returns true on first enrichment (no enricherVersion stamped) (0.039833ms)
+✔ paMatchingJobsAutoEnrich — needsEnrichment (1.027792ms)
+▶ paMatchingJobsAutoEnrich — needsSponsorshipInference (P64 wiring)
+  ✔ returns false when sponsorship=true AND backfill stamped (idempotency) (0.091042ms)
+  ✔ returns false when sponsorship=false AND backfill stamped (0.042917ms)
+  ✔ returns true when sponsorship is null (re-attempt allowed) (0.045292ms)
+  ✔ returns true when sponsorship is undefined (never inferred) (0.054166ms)
+  ✔ returns true when sponsorship=true but no backfill stamp (legacy data) (0.050166ms)
+  ✔ returns false on undefined doc (defensive) (0.033084ms)
+✔ paMatchingJobsAutoEnrich — needsSponsorshipInference (P64 wiring) (0.437458ms)
+▶ isLinkedinJobsUrl
+  ✔ matches valid LinkedIn jobs URLs (0.330708ms)
+  ✔ rejects non-LinkedIn URLs (0.066166ms)
+✔ isLinkedinJobsUrl (0.804125ms)
+▶ processOneJob
+  ✔ pass 1: primaryUrl is greenhouse → returns pass1, no Serper call (0.31225ms)
+  ✔ pass 3: Serper returns ATS host → returns pass3 + cost-ledger logged success (14.032791ms)
+  ✔ miss: Serper returns nothing AND no LinkedIn extractor → miss(serper_miss) + cost-ledger failure (0.19775ms)
+  ✔ miss: no companyName / jobTitle → miss(no_anchors) without Serper hit (0.087833ms)
+  ✔ linkedin fallback: Serper miss + extractor returns linkedin → returns linkedin (0.126417ms)
+  ✔ linkedin fallback rejects non-linkedin URLs from extractor (0.120709ms)
+✔ processOneJob (15.100834ms)
+▶ runBackfillBatch
+  ✔ processes priority queue first, then fresh candidates, capped at batchSize (0.810292ms)
+  ✔ retry queue: miss bumps attempts; subsequent run finds it as priority (0.683ms)
+  ✔ retry queue TTL: entries older than 7d cleaned up at run start (0.233833ms)
+  ✔ concurrency cap: serperConcurrency=2 → peak parallel <=2 (211.810917ms)
+  ✔ cost-ledger: every Serper call logs an entry (success + failure) (3.716458ms)
+  ✔ priority queue entry pointing at deleted job → entry cleared (2.240917ms)
+  ✔ audit row contains runId + counters (0.394541ms)
+✔ runBackfillBatch (220.130625ms)
+▶ chaos: cv-onboarding failure injection
+  ✔ S1 cv-ingest LLM throws → ingestCv returns {ok:false, reason} + NO partial Firestore write (6.1375ms)
+{"severity":"WARNING","message":"[cv-embedding] no_api_key"}
+  ✔ S2 mem0Add throws → fact write skipped + logged, but parsedCandidateResumes + cv-findings unaffected (20.3515ms)
+  ✔ S3 Sendblue breaker OPEN → outbox marks pending + retry-after, no infinite cascade (0.242958ms)
+{"severity":"WARNING","message":"[cv-embedding] no_api_key"}
+  ✔ S4 cv-findings docId already exists → idempotent skip (logged), no error propagation (11.282833ms)
+  ✔ S5 OpenAI 429 on llmExtract → ingestCv returns {ok:false, reason} + NO partial parsedCandidateResumes row (3.019334ms)
+✔ chaos: cv-onboarding failure injection (43.103667ms)
+{"error":"simulated transport failure","severity":"WARNING","message":"pa.spend.daily.emit_failed"}
+▶ cost-logger / chat (backward-compat)
+  ✔ computes usd from token counts using the gpt-4o-mini default table (0.549083ms)
+  ✔ emits pa.spend.daily with kind=chat and usd field (0.181959ms)
+✔ cost-logger / chat (backward-compat) (1.235667ms)
+▶ cost-logger / embedding (Backlog #23 — job-rec-daily + paReverseMatch)
+  ✔ prices text-embedding-3-small at $0.02 / 1M input tokens (0.083083ms)
+  ✔ emits with kind=embedding, count=1, service tag passed through (0.16425ms)
+  ✔ respects pre-computed costUsd when caller provides it (0.108917ms)
+✔ cost-logger / embedding (Backlog #23 — job-rec-daily + paReverseMatch) (0.444667ms)
+▶ cost-logger / mem0 (Backlog #24 — internal extractor)
+  ✔ returns usd=0 for kind=mem0 (no client-visible token counts) (0.097583ms)
+  ✔ emits with kind=mem0 and count=1 even when input/output tokens are zero (0.082083ms)
+✔ cost-logger / mem0 (Backlog #24 — internal extractor) (0.289459ms)
+▶ cost-logger / fail-open guard
+  ✔ does not throw when the underlying logger throws (0.527041ms)
+✔ cost-logger / fail-open guard (0.570542ms)
+{"pa.metric":"pa.spend.daily","kind":"embedding","service":"openai","model":"text-embedding-3-small","inputTokens":39,"outputTokens":0,"count":1,"usd":0.000001,"severity":"INFO","message":"pa.spend.daily"}
+{"error":"rate_limited","severity":"WARNING","message":"[cv-embedding] api_call_failed"}
+{"vectorLength":0,"severity":"WARNING","message":"[cv-embedding] empty_response"}
+▶ synthesizeCvSummaryText
+  ✔ happy path → non-empty string with name + role + skills + tags (0.445625ms)
+  ✔ returns null when input has no signal (empty profile, no skills, no exp) (0.070416ms)
+  ✔ caps skills at 25 (no infinite list bloat) (3.121375ms)
+  ✔ trims to MAX_EMBED_INPUT_CHARS (8000) (0.312167ms)
+✔ synthesizeCvSummaryText (4.515291ms)
+▶ computeCvEmbedding
+  ✔ happy path → returns vector + model + dim + computedAt (3.400292ms)
+  ✔ OpenAI throws → returns null (no propagation) (0.216541ms)
+  ✔ empty response (data[0].embedding empty array) → returns null (0.110792ms)
+  ✔ input with no usable signal → returns null without calling OpenAI (0.082166ms)
+{"severity":"WARNING","message":"[cv-embedding] no_api_key"}
+{"pa.metric":"pa.spend.daily","kind":"embedding","service":"openai","model":"text-embedding-3-small","inputTokens":2000,"outputTokens":0,"count":1,"usd":0.00004,"severity":"INFO","message":"pa.spend.daily"}
+  ✔ no API key + no client → returns null + warn (env keys cleared) (7.792792ms)
+  ✔ trims input to 8000 chars before calling OpenAI (4.238833ms)
+✔ computeCvEmbedding (16.119916ms)
+▶ runCandidateFlywheelCorrection
+  ✔ requires candidate auth (0.599875ms)
+  ✔ writes candidate actor correction and eval artifact without artifact raw free text (3.34775ms)
+✔ runCandidateFlywheelCorrection (4.443792ms)
+▶ flywheel eval builders
+  ✔ builds redacted candidate behavior feedback without raw payload leakage (1.954083ms)
+  ✔ materializes correction artifacts with deterministic ids and no raw free text (1.746209ms)
+✔ flywheel eval builders (4.180667ms)
+▶ runFlywheelMarketplaceSimulation
+  ✔ is deterministic and never writes outbound rows (10.04975ms)
+✔ runFlywheelMarketplaceSimulation (10.130125ms)
+▶ runAdminFlywheelEvalSnapshot
+  ✔ aggregates recent eval artifacts, feedback, and corrections (0.828666ms)
+✔ runAdminFlywheelEvalSnapshot (0.886833ms)
+✔ authorizeJobEnrichmentAdmin rejects non-admin callers and accepts existing admin identities (0.612125ms)
+✔ runJobEnrichmentRefreshDraft writes a marketplace draft under the job enrichment path contract (2.875917ms)
+✔ runJobEnrichmentRefreshDraft keeps sponsorship silence unknown and title-only seniority in review (0.575791ms)
+✔ runJobEnrichmentApproveDraft approves and publishes matching plus prescreen-ready job fields (0.889958ms)
+✔ prescreenConfigFromApprovedDraft leaves unknown sponsorship out of publication-only concerns (0.291334ms)
+✔ runJobEnrichmentSaveCorrections appends an operator correction event (0.159541ms)
+✔ paJobRecClusterRebuild handler: filters eventKind, gates on flag, rebuilds when both pass (3.385375ms)
+▶ headCheck
+  ✔ returns alive for HTTP 200 (1.029833ms)
+  ✔ returns alive for HTTP 301 (redirect followed) (0.117667ms)
+  ✔ returns alive for HTTP 405 (method-not-allowed but URL exists) (0.085708ms)
+  ✔ returns dead with reason http_404 for HTTP 404 (0.099916ms)
+  ✔ returns dead with reason http_503 for HTTP 503 (0.076042ms)
+  ✔ returns dead with reason timeout when fetch is aborted (9.881458ms)
+  ✔ returns dead with network_error reason for fetch throw (0.295292ms)
+  ✔ truncates very long network error messages to 80 chars (0.177375ms)
+✔ headCheck (12.516625ms)
+▶ makeLimiter
+  ✔ runs tasks concurrently up to the limit (39.240875ms)
+✔ makeLimiter (40.799583ms)
+▶ processOneJob
+  ✔ alive job with atsApplyUrl + not dead → noop (0.296584ms)
+  ✔ alive→dead: marks dead with reason and deadCheckedAt (15.552292ms)
+  ✔ dead→alive (recovery): clears dead flag (0.169375ms)
+  ✔ dead but inside 7d re-check window → noop (skipped) (0.057125ms)
+  ✔ dead >30d → hard delete (0.043167ms)
+  ✔ missing atsApplyUrl + missing primaryUrl → skip + skipped_no_url counter (0.051542ms)
+  ✔ v1.7 Phase 65: missing atsApplyUrl is now skipped (no inline backfill, batch CF handles) (0.042ms)
+  ✔ v1.7 Phase 65: missing atsApplyUrl skipped regardless of allowBackfill flag (0.042167ms)
+  ✔ HEAD throw → errors counter increments, no update (0.084625ms)
+  ✔ dead and still dead after re-check (>7d, HEAD still 404) → bumps deadCheckedAt + reason but does NOT re-mark (0.056917ms)
+✔ processOneJob (16.560542ms)
+▶ runLivenessSweep
+  ✔ processes mixed corpus: alive, alive→dead, dead→alive, hard-delete, no-url (0.365416ms)
+  ✔ v1.7 Phase 65: jobs missing atsApplyUrl are all skipped (delegated to paBackfillAtsUrlsBatch) (0.112834ms)
+  ✔ error in one job does not abort the sweep; counters.errors increments (0.094417ms)
+  ✔ respects deadCheckedAt as Firestore-Timestamp-like object (toMillis) (0.07875ms)
+✔ runLivenessSweep (0.700583ms)
+▶ toMillis
+  ✔ returns null for null/undefined (0.35175ms)
+  ✔ parses ISO string (0.073125ms)
+  ✔ returns null for unparseable string (0.049583ms)
+  ✔ calls toMillis() on Timestamp-like object (0.0595ms)
+  ✔ returns null when toMillis() throws (0.05925ms)
+✔ toMillis (1.051959ms)
+▶ resolveAnchorMs
+  ✔ inactive: prefers lastSeenAt over firstSeenAt (2.25625ms)
+  ✔ inactive: falls back to firstSeenAt when lastSeenAt missing (0.147667ms)
+  ✔ inactive: returns null when both missing (0.064291ms)
+  ✔ dead: prefers deadCheckedAt over lastSeenAt (0.06475ms)
+  ✔ dead: falls back to lastSeenAt when deadCheckedAt missing (0.081166ms)
+  ✔ dead: does NOT fall back to firstSeenAt (firstSeenAt is ingestion, not liveness) (0.049959ms)
+  ✔ dead: returns null when no usable timestamp (0.037458ms)
+  ✔ accepts Timestamp-like with toMillis() (0.095458ms)
+✔ resolveAnchorMs (3.06975ms)
+▶ classifyPage — Option D thresholds
+  ✔ inactive 100d old: DELETE (>90d) (0.710958ms)
+  ✔ inactive 80d old: KEEP (<90d) (0.065209ms)
+  ✔ OPTION D KEY: dead 100d old: KEEP (<365d, NOT 90d threshold) (0.0575ms)
+  ✔ OPTION D KEY: dead 400d old: DELETE (>365d) (0.045834ms)
+  ✔ OPTION D KEY: dead 360d old: KEEP (just inside 365d window) (0.035667ms)
+  ✔ dead+inactive doc: classified as DEAD (longer threshold = more conservative) (0.069042ms)
+  ✔ defensive: refuses to delete status=active && dead!==true (0.041ms)
+  ✔ inactive doc with no timestamps: skip with skipped_no_timestamp counter (0.03575ms)
+  ✔ dead doc with no timestamps: skip (0.037791ms)
+  ✔ scanned counter increments for every doc regardless of outcome (0.043209ms)
+✔ classifyPage — Option D thresholds (1.310125ms)
+▶ runTtlDelete — end-to-end
+  ✔ deletes only docs older than their kind-specific TTL (0.52325ms)
+  ✔ dry-run mode: counts deletions but does NOT call batchDelete (0.114375ms)
+  ✔ dedupes docs that appear in both streams (0.091083ms)
+  ✔ batches delete at batchSize=500 (4.579875ms)
+  ✔ throttle invoked between batches (≤10 batches/sec target) (1.185458ms)
+  ✔ respects maxDocsPerRun cap and stops streaming (0.816417ms)
+  ✔ batch failure isolated: errors counter bumps, run continues (1.137334ms)
+  ✔ uses default thresholds 90d/365d when not specified (0.113834ms)
+  ✔ custom thresholds override defaults (0.071417ms)
+  ✔ audit row written with dryRun flag and counters (0.069667ms)
+  ✔ constants: defaults match Option D (90d inactive, 365d dead) (0.042917ms)
+  ✔ empty collections: zero deletes, zero errors (0.056041ms)
+  ✔ structured log key 'pa.matching_jobs.ttl_delete' format (0.095584ms)
+✔ runTtlDelete — end-to-end (9.066083ms)
+[matching-pipeline-complete] HMAC verify failed { hasHeader: true }
+[matching-pipeline-complete] stale timestamp { tsMs: 1776999640000, nowMs: 1777000000000 }
+[matching-pipeline-complete] rate-limited { sourceKey: 'SimplifyJobs', dayCount: 24, dayBucket: 'day-20260424' }
+[matching-pipeline-complete] failure_alert_email_sent { runId: 'run-failed-1', status: 'failed' }
+[matching-pipeline-complete] failure_alert_email_sent { runId: 'run-partial-7', status: 'partial' }
+[matching-pipeline-complete] failure_alert_email_threw mailgun 502
+✔ HMAC valid → 200 + writes pa-matching-pipeline-runs doc (44.447ms)
+✔ HMAC invalid → 401 invalid_signature (2.669834ms)
+✔ Stale timestamp (>5min) → 401 stale_timestamp (0.272667ms)
+✔ Missing required fields → 400 (0.174ms)
+✔ Flag off → 503 feature_disabled (no run doc written) (0.12725ms)
+✔ Rate limit hit (>24/day) → 429 (0.255125ms)
+✔ Success + jobsNew > 0 → emits pa-events 'matching:pipeline:completed' (0.173208ms)
+✔ Success but jobsNew === 0 → does NOT emit pa-events (0.149833ms)
+✔ Failed status → 200 + run doc + no event emitted (0.167375ms)
+✔ status=failed + alert hooks → 200, alert email + slack invoked with FAILED subject (2.25425ms)
+✔ status=partial + alert hooks → 200, alert email + slack invoked with PARTIAL subject (21.032167ms)
+✔ status=failed + email hook throws → 200 still returned, run doc still written (0.305542ms)
+✔ status=success → alert hooks NOT invoked (success path unaffected) (0.16175ms)
+▶ extractSkillNames
+  ✔ returns empty when input is undefined or non-array (3.87775ms)
+  ✔ handles string skills (0.130375ms)
+  ✔ handles object skills via .name (0.061417ms)
+  ✔ handles mixed string + object input (0.050833ms)
+  ✔ dedupes (case-insensitive) (0.045583ms)
+  ✔ drops whitespace-only and empty (0.044625ms)
+✔ extractSkillNames (4.838792ms)
+▶ parseYoeRange
+  ✔ returns tuple unchanged when valid (0.191792ms)
+  ✔ parses "3-5" (0.109209ms)
+  ✔ parses "10+" → [10, 30] (0.123709ms)
+  ✔ parses "5+" → [5, 25] (0.2985ms)
+  ✔ returns undefined for invalid strings (0.142417ms)
+  ✔ returns undefined for invalid tuples (0.06325ms)
+  ✔ returns undefined for undefined input (0.0365ms)
+✔ parseYoeRange (1.176875ms)
+▶ composeRerankInput
+  ✔ composes basic shape with required fields (0.214625ms)
+  ✔ truncates cvSummary at 200 chars (0.0495ms)
+  ✔ truncates jobDescription at 400 chars (0.067333ms)
+  ✔ truncates topSkills at 12 (0.0585ms)
+  ✔ omits optional fields when missing (0.040042ms)
+  ✔ falls back to jobTitle when roleTitle missing (0.038791ms)
+✔ composeRerankInput (0.573375ms)
+▶ processOneUser
+  ✔ skips when rerank cache <23h old (1.344583ms)
+  ✔ processes when cache stale (>23h) (0.358833ms)
+  ✔ skips when no targetRoleFunction (0.209334ms)
+  ✔ skips when candidate pool is empty (0.088375ms)
+  ✔ writes rerank cache with correct shape (0.208917ms)
+  ✔ writes JD-rel cache for top-N only (limited by topNForJdrel) (0.289375ms)
+  ✔ skips JD-rel when user has no skills (0.079708ms)
+  ✔ JD-rel error → counter bumped, other JDs continue (0.191166ms)
+  ✔ rerank impl error → counter bumped, no cache write (0.081834ms)
+  ✔ candidate fetch error → counter bumped (0.073833ms)
+✔ processOneUser (3.0555ms)
+▶ runNightlyRerank
+  ✔ iterates only users with non-empty targetRoleFunction (delegated to fetchActiveUsers) (0.253542ms)
+  ✔ one user errors → other users still complete (0.1795ms)
+  ✔ writes audit row even when partial users fail (0.079333ms)
+  ✔ respects user concurrency limit (28.636667ms)
+  ✔ idempotent on retry: skip-fresh prevents double work (1.184083ms)
+  ✔ fetchActiveUsers throws → propagates (caller logs) (0.288917ms)
+  ✔ getRerankCache throws → falls through to processing (non-fatal) (0.115375ms)
+✔ runNightlyRerank (30.950292ms)
+▶ paReverseMatch — D4 test 1: ranks correctly
+  ✔ rerank score order beats cosine; top survivor first (1.137125ms)
+✔ paReverseMatch — D4 test 1: ranks correctly (1.537459ms)
+▶ paReverseMatch — D4 test 2: hard-filter drops mismatch
+  ✔ user with targetLocations:[nyc] dropped when synth job locationRaw=san francisco (1.478209ms)
+✔ paReverseMatch — D4 test 2: hard-filter drops mismatch (1.541459ms)
+▶ paReverseMatch — D4 test 3: opted-in flag surfaced
+  ✔ hasOptedIn round-trips to candidate row without implicit gating (0.170792ms)
+✔ paReverseMatch — D4 test 3: opted-in flag surfaced (0.227542ms)
+▶ paReverseMatch — D4 test 4: topK respected
+  ✔ default 20 caps to pool size; custom honored; reasons populated (0.368209ms)
+✔ paReverseMatch — D4 test 4: topK respected (0.421958ms)
+▶ paReverseMatch — D4 test 5: admin-only auth
+  ✔ checkAdminToken rejects empty/missing/wrong tokens; accepts on exact match (0.131584ms)
+✔ paReverseMatch — D4 test 5: admin-only auth (0.202083ms)
+▶ paReverseMatch — D4 test 6: outbound enqueue path
+  ✔ writes pa-outbound row with source=reverse-match + bilingual body; honors no-phone guard (1.659584ms)
+✔ paReverseMatch — D4 test 6: outbound enqueue path (1.726375ms)
+▶ authorizeAdminCallable
+  ✔ accepts auth.token.admin === true (0.358083ms)
+  ✔ accepts admin token fallback when claim missing (0.076541ms)
+  ✔ rejects when neither claim nor token (0.217708ms)
+  ✔ rejects mismatched admin token (0.084084ms)
+✔ authorizeAdminCallable (1.192084ms)
+▶ runPromoteSandboxTag — token validation
+  ✔ rejects abbreviations (D5) (0.263208ms)
+  ✔ rejects whitespace tokens (0.103125ms)
+  ✔ rejects uppercase (0.077167ms)
+✔ runPromoteSandboxTag — token validation (0.528ms)
+▶ runPromoteSandboxTag — promote
+  ✔ writes overlay + audit on promote (0.453083ms)
+  ✔ returns already_canonical and skips write when token already in static vocab (0.075459ms)
+✔ runPromoteSandboxTag — promote (0.608833ms)
+▶ runPromoteSandboxTag — reject
+  ✔ writes overlay + audit on reject (0.110333ms)
+✔ runPromoteSandboxTag — reject (0.144666ms)
+▶ extractSkillNames
+  ✔ returns empty for non-array (0.623ms)
+  ✔ handles strings + objects + dedupe (0.167333ms)
+  ✔ drops empty + whitespace (0.05375ms)
+✔ extractSkillNames (1.272833ms)
+▶ shuffle
+  ✔ preserves length (0.125333ms)
+  ✔ preserves all elements (0.083667ms)
+  ✔ does not mutate input (0.054917ms)
+  ✔ deterministic with seeded random (0.065125ms)
+✔ shuffle (0.4365ms)
+▶ buildSample
+  ✔ priority users come first (0.192708ms)
+  ✔ respects sampleSize cap (0.061417ms)
+  ✔ priority larger than cap → truncates priority, no random fill (0.107291ms)
+  ✔ returns all users if fewer than sampleSize (0.057042ms)
+  ✔ empty eligible users → empty sample (0.033459ms)
+✔ buildSample (0.557542ms)
+▶ projectJobForJudge
+  ✔ uses roleTitle when present (48.949625ms)
+  ✔ falls back to jobTitle when roleTitle missing (26.671208ms)
+  ✔ truncates jobDescription at 600 chars (0.268667ms)
+  ✔ omits empty arrays and undefined (0.127833ms)
+  ✔ includes sponsorship even when false (1.773458ms)
+✔ projectJobForJudge (78.003125ms)
+▶ projectUserForJudge
+  ✔ extracts skills (0.193583ms)
+  ✔ truncates skills at 12 (20.905417ms)
+  ✔ omits optional empty fields (0.1195ms)
+  ✔ includes optional populated fields (0.080667ms)
+✔ projectUserForJudge (21.478833ms)
+▶ runQaEvaluator
+  ✔ end-to-end happy path: passing thresholds, no alert, milestone=pass (3.20125ms)
+  ✔ threshold fail → alert sent, milestone=fail, failing users in priority queue (0.720292ms)
+  ✔ priority users sampled first (0.411625ms)
+  ✔ respects sampleSize cap (e.g. 100) (1.443333ms)
+  ✔ per-pair judge throw → conservative pair, run continues (0.697416ms)
+  ✔ Slack fails but Mailgun succeeds → alertSent=true (1.157667ms)
+  ✔ both alerts fail → alertSent=false but run still persists (0.202042ms)
+  ✔ user with no targetRoleFunction skipped silently (0.122792ms)
+  ✔ user with no jobs skipped silently (0.102041ms)
+  ✔ fetchTopJobsForUser throw → user skipped, run continues (0.166833ms)
+  ✔ priority queue write failure non-fatal (0.128208ms)
+  ✔ clearExpiredPriorityQueue throw is non-fatal (0.093167ms)
+  ✔ fetchEligibleUsers throws → propagates (caller logs) (0.226542ms)
+  ✔ priority queue read failure → falls through with empty priority (0.108333ms)
+  ✔ run doc shape: includes pairs + failingUserIds + rates + alertSent (0.103291ms)
+  ✔ priority users sampled first when sampleSize < total eligible (0.109125ms)
+  ✔ sampleSize 0 → no evaluations, run still persists (0.064958ms)
+✔ runQaEvaluator (9.446041ms)
+▶ isoWeekKey
+  ✔ returns deterministic ISO 8601 key (0.429625ms)
+  ✔ year boundary uses ISO year, not calendar year (0.329167ms)
+  ✔ same week → same key across days (0.208084ms)
+✔ isoWeekKey (1.107041ms)
+▶ makeSeededRng
+  ✔ deterministic with same seed (0.277667ms)
+  ✔ different seeds diverge (0.046416ms)
+  ✔ output range in [0, 1) (0.332417ms)
+✔ makeSeededRng (0.755333ms)
+▶ sampleAgentRankingRows
+  ✔ deterministic — same weekKey + pool produces same order (0.599416ms)
+  ✔ different weekKey → different ordering (0.273291ms)
+  ✔ filters out proposed + ignored statuses (0.159791ms)
+  ✔ empty input → empty output (0.095292ms)
+✔ sampleAgentRankingRows (1.31075ms)
+▶ computeAgentOverrideMetrics
+  ✔ 30 approved + 20 overridden → rate 0.4, flag=true (0.313708ms)
+  ✔ 17 approved + 3 overridden → 0.15 exact → flag=false (strict >) (0.127959ms)
+  ✔ 17 approved + 4 overridden → just above 0.15 → flag=true (0.129208ms)
+  ✔ empty sample → sampled=0, flag=false (0.080125ms)
+✔ computeAgentOverrideMetrics (0.787958ms)
+▶ runQaEvaluator — agent-override sampler integration
+  ✔ back-compat: store without fetchRecentAgentRankingRows runs unchanged (0.374542ms)
+  ✔ with fetchRecentAgentRankingRows: flags > 0.15 and persists agentRanking block (0.6345ms)
+  ✔ fetchRecentAgentRankingRows throws → run continues, no agentRanking block (0.486042ms)
+✔ runQaEvaluator — agent-override sampler integration (1.630667ms)
+[upstream-webhook] HMAC verify failed { hasHeader: false }
+[upstream-webhook] HMAC verify failed { hasHeader: true }
+✔ rejects request without HMAC signature → 401 (9.277125ms)
+✔ rejects bad signature → 401 (0.5465ms)
+✔ rejects malformed JSON body → 400 (0.147834ms)
+✔ rejects missing eventKind → 400 (0.0905ms)
+✔ returns 404 when no template matches eventKind (3.077375ms)
+✔ returns 404 when matching template is disabled (0.53725ms)
+✔ returns 503 when upstreamConnectorEnabled flag is false (0.380041ms)
+✔ happy path: enqueues pa-outbound row with rendered body and returns 200 (0.52575ms)
+✔ rate limit: second call within same hour bucket → 429 (0.550542ms)
+✔ returns 422 when target user has no phone (0.270584ms)
+✔ custom resolveUserPhone is honored (0.48225ms)
+✔ verifyUpstreamSignature accepts a valid signature (5.519125ms)
+✔ verifyUpstreamSignature accepts sha256= prefix (0.175375ms)
+✔ verifyUpstreamSignature rejects wrong secret (0.073792ms)
+✔ verifyUpstreamSignature rejects empty header (0.048875ms)
+✔ verifyUpstreamSignature rejects non-hex header (0.044084ms)
+✔ verifyUpstreamSignature rejects empty secret (0.051ms)
+✔ verifyUpstreamSignature rejects body tamper (0.062ms)
+✔ verifyUpstreamSignature handles Buffer body identically to string (0.079584ms)
+✔ computeUpstreamSignature is deterministic and matches verify path (0.077041ms)
+✔ extractUpstreamSignatureHeader picks first known alias (0.106ms)
+✔ extractUpstreamSignatureHeader prefers x-pa-upstream-signature over fallbacks (0.047084ms)
+▶ checkAdminToken
+  ✔ 503 when env unset (0.377625ms)
+  ✔ 200 when match (with whitespace tolerance) (0.112375ms)
+✔ checkAdminToken (1.017833ms)
+▶ extractUserMessageFromLine
+  ✔ skips // comments and # comments (0.117875ms)
+  ✔ extracts from {messages:[...]} (0.061167ms)
+  ✔ extracts from {user: '...'} (0.044125ms)
+  ✔ treats bare string as user msg (0.047833ms)
+✔ extractUserMessageFromLine (0.385958ms)
+▶ replayFixtures — dry run
+  ✔ counts processed but does NOT write (2.940667ms)
+✔ replayFixtures — dry run (3.014084ms)
+▶ replayFixtures — real replay with mocked orchestrator
+  ✔ calls orchestrator and writes user+assistant docs to pa_messages (1.172833ms)
+  ✔ skips empty / __SKIP__ / # lines without invoking orchestrator (1.784459ms)
+  ✔ orchestrator timeout is recorded as error but doesn't crash batch (55.8005ms)
+  ✔ rejects unknown fixture name (0.124167ms)
+  ✔ hard-caps limit at 200 even if caller asks for more (0.1765ms)
+✔ replayFixtures — real replay with mocked orchestrator (59.358833ms)
+▶ simulateConversation — inline persona fallback (Firestore empty)
+  ✔ works with built-in anxious_grad when pa-personas is empty (180.079583ms)
+✔ simulateConversation — inline persona fallback (Firestore empty) (180.185166ms)
+▶ simulateConversation — Firestore persona path
+  ✔ uses composed soul/style/examples prompt when persona doc exists (5.654125ms)
+✔ simulateConversation — Firestore persona path (5.831125ms)
+▶ migrateCollections — pair list
+  ✔ includes a representative subset of expected pairs (0.105959ms)
+✔ migrateCollections — pair list (0.147541ms)
+▶ migrateCollections — dry run
+  ✔ counts source rows but writes NO destination docs (0.523584ms)
+✔ migrateCollections — dry run (0.551875ms)
+▶ migrateCollections — live run
+  ✔ upserts each source doc to pa-<name> with same id and data (0.250292ms)
+✔ migrateCollections — live run (0.273625ms)
+▶ classifyDrift
+  ✔ ≤ 0.5% → ok (0.05125ms)
+  ✔ 0.5% < x ≤ 1% → warn (0.02375ms)
+  ✔ > 1% → alert (0.023917ms)
+✔ classifyDrift (0.143625ms)
+▶ driftCheck
+  ✔ zero-zero counts → ok status, 0 drift (0.139917ms)
+  ✔ perfectly aligned → ok (0.043625ms)
+  ✔ 0.4% drift → ok (0.042541ms)
+  ✔ 0.7% drift → warn (0.038166ms)
+  ✔ 2% drift → alert (0.03525ms)
+  ✔ Qdrant fails → records warning, falls through to status=alert if drift big (0.071708ms)
+  ✔ returns expected metadata fields (0.039209ms)
+✔ driftCheck (0.472167ms)
+▶ handshakeAdapter.parse — happy path
+  ✔ parses full payload (1.877041ms)
+  ✔ derives name from email when first/last missing (0.472042ms)
+✔ handshakeAdapter.parse — happy path (3.784584ms)
+▶ handshakeAdapter.parse — failures
+  ✔ rejects unsupported event (0.192459ms)
+  ✔ rejects missing applicant_id (0.568625ms)
+  ✔ rejects missing email (0.17425ms)
+  ✔ rejects non-object (0.109833ms)
+✔ handshakeAdapter.parse — failures (1.531666ms)
+▶ getAdapter registry
+  ✔ returns handshake (implemented) (0.274542ms)
+  ✔ returns stubs for GH/Lever/LinkedIn (not implemented) (0.112917ms)
+  ✔ returns null for unknown source (2.3715ms)
+✔ getAdapter registry (2.976041ms)
+▶ handleAtsInbound — happy path (new user)
+  ✔ creates user, resolves jobId, sends invite, stamps idempotency (2.396042ms)
+✔ handleAtsInbound — happy path (new user) (2.804792ms)
+▶ handleAtsInbound — 7d idempotency
+  ✔ dedupes when prior invite within 7d (0.147291ms)
+✔ handleAtsInbound — 7d idempotency (0.202417ms)
+▶ handleAtsInbound — missing mapping
+  ✔ returns no_internal_job when external→internal mapping absent (0.0875ms)
+✔ handleAtsInbound — missing mapping (0.1445ms)
+▶ handleAtsInbound — no phone
+  ✔ rejects when phone is missing (0.13325ms)
+✔ handleAtsInbound — no phone (0.1735ms)
+▶ handleAtsInbound — S2 identity-gated resume binding
+  ✔ does not send invite when CV identity binding reports a conflict (0.192125ms)
+  ✔ uses canonical candidate id returned by CV identity binding (0.561458ms)
+✔ handleAtsInbound — S2 identity-gated resume binding (0.847458ms)
+▶ isAtsHost
+  ✔ returns true for known ATS hosts (and subdomains) (0.399125ms)
+  ✔ returns false for non-ATS hosts (0.073833ms)
+  ✔ returns false for malformed / empty input (0.065791ms)
+  ✔ ATS_HOSTS exposes the canonical suffix list (0.064834ms)
+✔ isAtsHost (1.038042ms)
+▶ resolveAtsUrl
+  ✔ pass 1: primaryUrl is greenhouse → returns primaryUrl as pass1 (0.115416ms)
+  ✔ pass 3: jobright primaryUrl, Serper returns greenhouse → pass3 (0.063ms)
+  ✔ miss: no primaryUrl, Serper miss → miss (0.062708ms)
+  ✔ miss: serper returns non-ATS URL → miss (0.061291ms)
+  ✔ miss: missing companyName/jobTitle → skip serper call (0.127125ms)
+  ✔ falls back to roleTitle when jobTitle absent (0.08075ms)
+✔ resolveAtsUrl (0.658375ms)
+▶ createSerperSearch
+  ✔ returns first ATS hit in organic results (precise query) (0.230417ms)
+  ✔ falls back to broader query when first miss (0.307291ms)
+  ✔ returns null when both queries miss ATS hosts (0.6525ms)
+  ✔ returns null when serper API errors out (0.195583ms)
+  ✔ sets X-API-KEY header on each request (1.558208ms)
+✔ createSerperSearch (3.1335ms)
+▶ checkLiveness
+  ✔ returns dead=false on 200 (0.497625ms)
+  ✔ returns dead=true reason='404' on 404 (0.06025ms)
+  ✔ returns dead=true reason='410' on 410 (0.047ms)
+  ✔ returns dead=true reason='500' on 500 (0.041ms)
+  ✔ treats 405 (method not allowed) as alive (0.040875ms)
+  ✔ returns dead=true reason='timeout' on AbortError (0.073625ms)
+  ✔ returns dead=true reason='network' on generic fetch errors (0.079125ms)
+✔ checkLiveness (0.937375ms)
+▶ runBackfill
+  ✔ mode=all: pass1 + pass3 + liveness all wire correctly (0.358375ms)
+  ✔ mode=pass1-only: skips Serper and liveness (0.096125ms)
+  ✔ mode=liveness-only: skips resolve, runs HEAD on docs that already have atsApplyUrl (0.091583ms)
+  ✔ respects limit (0.195209ms)
+  ✔ captures errors but continues processing (0.109ms)
+✔ runBackfill (0.911833ms)
+▶ LivenessResult union
+  ✔ alive shape (0.04ms)
+  ✔ dead shape carries reason (1.95025ms)
+✔ LivenessResult union (2.040917ms)
+✔ authorizeBulkResumeAdmin rejects non-admin callable callers (0.702084ms)
+✔ add items uploads PDF bytes to default bucket and stores item metadata (40.294167ms)
+✔ add items rejects invalid base64 and non-PDF payloads (0.417667ms)
+✔ process batch marks missing PDF email for review without candidate identity (3.606625ms)
+✔ process batch marks employer/PDF mismatch as identity conflict and keeps conflict id (20.215ms)
+✔ process batch marks successful parse and creates employer bulk artifact (14.247208ms)
+✔ retry item only requeues review or failed statuses and recomputes counts (0.779375ms)
+▶ paMessageCoalescer — case 1: single message creates buffer
+  ✔ first message creates a turn buffer and enqueues at default delay (16.890542ms)
+✔ paMessageCoalescer — case 1: single message creates buffer (17.369542ms)
+▶ paMessageCoalescer — case 2: 3 quick messages coalesce
+  ✔ cancels prior task and re-enqueues with combined body each time, then fires once (49.216625ms)
+✔ paMessageCoalescer — case 2: 3 quick messages coalesce (49.435708ms)
+▶ paMessageCoalescer — case 3: 6 messages soft-cap force-fires
+  ✔ recommends delay=0 when messageCount exceeds soft cap (0.357083ms)
+✔ paMessageCoalescer — case 3: 6 messages soft-cap force-fires (0.410875ms)
+▶ paMessageCoalescer — case 4: hard 12s cap force-fires
+  ✔ recommends delay=0 when buffer is older than HARD_CAP_MS (0.168834ms)
+✔ paMessageCoalescer — case 4: hard 12s cap force-fires (0.207583ms)
+▶ paMessageCoalescer — case 5: duplicate fire is idempotent
+  ✔ second processCoalescedTurn returns already_fired and does NOT call orchestrator twice (1.223ms)
+✔ paMessageCoalescer — case 5: duplicate fire is idempotent (1.3055ms)
+▶ paMessageCoalescer — case 6: webhook bypasses coalesce when flag=false
+  ✔ when paMessageCoalesceEnabled=false, webhook never calls enqueueOrCoalesce (320.816792ms)
+✔ paMessageCoalescer — case 6: webhook bypasses coalesce when flag=false (320.9325ms)
+▶ paMessageCoalescer — case 7: synthesized inbound stamps sessionId
+  ✔ processCoalescedTurn populates BOTH userId and sessionId on the synthesized inbound row (1.795667ms)
+✔ paMessageCoalescer — case 7: synthesized inbound stamps sessionId (1.891375ms)
+▶ paMessageCoalescer — case 8: session reused across turns
+  ✔ a second coalesced turn for the same user reuses the existing session row (3.361ms)
+✔ paMessageCoalescer — case 8: session reused across turns (3.448292ms)
+▶ paMessageCoalescer — case 9: R1 sweep path stamps sessionId
+  ✔ processCoalescedTurn invoked from buffer-sweep path also populates sessionId (16.666667ms)
+✔ paMessageCoalescer — case 9: R1 sweep path stamps sessionId (16.75575ms)
+▶ paMessageCoalescer — case 10: deterministic sessionId across calls
+  ✔ two calls with the same (userId, fromNumber) produce the same sessionId hash (2.874542ms)
+✔ paMessageCoalescer — case 10: deterministic sessionId across calls (2.963792ms)
+▶ paMessageCoalescer — case 11: synthesized inbound stamps body (Bug 5 fix)
+  ✔ processCoalescedTurn populates `body` (and `from`/`externalChatId`) on the synthesized inbound row (1.379375ms)
+✔ paMessageCoalescer — case 11: synthesized inbound stamps body (Bug 5 fix) (1.467708ms)
+▶ paMessageCoalescer — case 12: rapid-gap heuristic extends delay
+  ✔ when gap < RAPID_MESSAGE_THRESHOLD_MS, the next-task delay is bumped to defaultDelay+RAPID_BUMP_MS (clamped to remaining cap) (1.606667ms)
+  ✔ when gap >= RAPID_MESSAGE_THRESHOLD_MS AND no continuation marker, delay stays default (no bump) (1.169ms)
+  ✔ HARD_CAP_MS = 30_000 (Adam 2026-05-03 02:01 amendment 长一点) (0.184291ms)
+  ✔ RAPID_MESSAGE_THRESHOLD_MS = 5_000 (Adam 2026-05-03 02:30 spec) (0.788875ms)
+✔ paMessageCoalescer — case 12: rapid-gap heuristic extends delay (3.983041ms)
+▶ paMessageCoalescer — case 13: continuation-marker bumps delay regardless of gap timing
+  ✔ zh msg starting with continuation marker ("还是") bumps delay even when gap > rapid threshold (1.839416ms)
+  ✔ en msg starting with "or " continuation marker bumps delay across slow gap (0.908292ms)
+  ✔ non-continuation slow message body "can you help me" does NOT bump (0.942708ms)
+  ✔ HARD_CAP clamps continuation-marker bump (anti-troll invariant) (0.372833ms)
+  ✔ isContinuationMessage unit cases — Adam実測 strings + edge cases (1.226917ms)
+✔ paMessageCoalescer — case 13: continuation-marker bumps delay regardless of gap timing (5.548125ms)
+▶ iter33 Bug 9: love-tapback rate gate
+  ✔ rng=0.0 + p=0.35 → tapback FIRES (2.724542ms)
+  ✔ rng=0.99 + p=0.35 → tapback SKIPPED (0.414833ms)
+  ✔ 100 trials at p=0.35 → fires within [25%, 45%] band (229.958292ms)
+  ✔ default probability = 0.40 when not specified (0.974459ms)
+✔ iter33 Bug 9: love-tapback rate gate (234.292833ms)
+▶ iter33 Bug 8: orchestratorDeps passed through claimAndProcessInboundEvent
+  ✔ passes orchestratorDeps as 4th arg (NOT empty default) (1.188542ms)
+  ✔ falls back to {} when orchestratorDeps not provided (1.223791ms)
+✔ iter33 Bug 8: orchestratorDeps passed through claimAndProcessInboundEvent (2.625958ms)
+▶ iter33 Bug 8 REGRESSION: buildCoalescerDeps wires Mailgun in orchestratorDeps
+  ✔ orchestratorDeps.sendVerificationEmail is non-null when MAILGUN_* env is set (185.260083ms)
+{"severity":"WARNING","message":"No value found for secret parameter \"MAILGUN_API_KEY\". A function can only access a secret if you include the secret in the function's dependency array."}
+{"severity":"WARNING","message":"No value found for secret parameter \"MAILGUN_DOMAIN\". A function can only access a secret if you include the secret in the function's dependency array."}
+{"severity":"WARNING","message":"No value found for secret parameter \"MAILGUN_FROM\". A function can only access a secret if you include the secret in the function's dependency array."}
+{"severity":"WARNING","message":"No value found for secret parameter \"MAILGUN_REGION\". A function can only access a secret if you include the secret in the function's dependency array."}
+  ✔ orchestratorDeps still defined (with sendVerificationEmail=undefined) when MAILGUN_* missing — graceful degrade (1.290791ms)
+✔ iter33 Bug 8 REGRESSION: buildCoalescerDeps wires Mailgun in orchestratorDeps (186.786875ms)
+▶ typing-event — case 1: bump during open buffer extends delay
+  ✔ typing-started after first inbound: cancels prior task, re-enqueues at TYPING_BUMP_DELAY_MS (3.570791ms)
+✔ typing-event — case 1: bump during open buffer extends delay (4.826ms)
+▶ typing-event — case 2: bump with no active buffer is no-op
+  ✔ typing event arriving before any inbound message yields action=no-buffer (0.145542ms)
+✔ typing-event — case 2: bump with no active buffer is no-op (0.200208ms)
+▶ typing-event — case 3: typing_stopped fires soon (short tail)
+  ✔ is_typing=false re-enqueues at TYPING_STOPPED_TAIL_MS instead of full window (0.186167ms)
+✔ typing-event — case 3: typing_stopped fires soon (short tail) (0.238792ms)
+▶ typing-event — case 4: hard cap respected even with continuous typing
+  ✔ typing AFTER HARD_CAP_MS elapsed → action=hard-capped, no Cloud Tasks side effects (0.166583ms)
+✔ typing-event — case 4: hard cap respected even with continuous typing (0.214375ms)
+▶ typing-event — case 5: fired buffer is ignored by bump
+  ✔ late typing event for a fired turn returns action=fired (no-op) (85.39675ms)
+✔ typing-event — case 5: fired buffer is ignored by bump (85.669542ms)
+▶ typing-event — case 6: webhook integration calls bumpCoalesceBuffer
+  ✔ handleSendblueWebhook receives typing_indicator → audit + bumpCoalesceBuffer (flag on) (263.450916ms)
+✔ typing-event — case 6: webhook integration calls bumpCoalesceBuffer (263.616333ms)
+▶ buildCvConfirmBody
+  ✔ zh template: roles + skills + industries (1.913458ms)
+  ✔ en template: roles + skills + industries (0.259625ms)
+  ✔ falls back to experiences when workHistory empty (legacy v1) (0.076666ms)
+  ✔ filters 'other' from industries display (0.087291ms)
+  ✔ graceful fallback when nothing extracted (0.067792ms)
+  ✔ graceful fallback (zh) (0.121958ms)
+  ✔ dedupes industries (1.932125ms)
+✔ buildCvConfirmBody (7.001375ms)
+▶ enqueueCvConfirmMessage
+  ✔ happy path (zh): writes outbound doc with idempotent docId (1.956625ms)
+  ✔ happy path (en): respects preferredLang from pa-users.tags (6.504584ms)
+  ✔ idempotent: second call with same resumeId surfaces ALREADY_EXISTS, no double-write (0.358292ms)
+  ✔ no phone in pa-users → skipped, no outbound (0.111334ms)
+  ✔ kill switch (PA_CV_CONFIRM_DISABLED=true) → no enqueue (0.085667ms)
+  ✔ uses prefilled user object to skip pa-users read (0.096333ms)
+✔ enqueueCvConfirmMessage (10.043708ms)
+✔ handleCvConfirmReply: 对 → confirmed, no merge call (2.438875ms)
+✔ handleCvConfirmReply: yes → confirmed, no merge call (0.118958ms)
+✔ handleCvConfirmReply: skill correction → applyPartialUserTags called (1.826459ms)
+✔ handleCvConfirmReply: industry correction populates industrySector (0.122167ms)
+✔ handleCvConfirmReply: role correction populates targetRoleFunction (0.105ms)
+✔ handleCvConfirmReply: parse throw → fail-open, no write (0.088625ms)
+✔ handleCvConfirmReply: empty reply → ok:false skip (0.0565ms)
+✔ handleCvConfirmReply: no userId → ok:false skip (0.050708ms)
+✔ handleCvConfirmReply: non-confirm with no extractable tags → no_corrections log, no write (0.074375ms)
+✔ handleCvConfirmReply: resolveResumeId injected when resumeId not provided (0.109208ms)
+✔ detectCvConfirmReply: empty userId → no match (0.1ms)
+✔ parseUserCorrection: empty reply → fail-open (0.12175ms)
+✔ parseUserCorrection: missing api key → fail-open (0.044ms)
+✔ parseUserCorrection: LLM stub returns confirm-accepted (0.650375ms)
+✔ parseUserCorrection: LLM stub returns skill correction (validates + dedupes) (9.619292ms)
+✔ parseUserCorrection: LLM stub returns malformed JSON → fail-open (0.118416ms)
+✔ parseUserCorrection: LLM stub returns invalid schema → fail-open (0.342875ms)
+✔ parseUserCorrection: LLM stub throws → fail-open (0.073875ms)
+▶ cv-gate.isGateOpen
+  ✔ returns true when expiresAt is in the future (0.302959ms)
+  ✔ returns false when expired (0.050084ms)
+  ✔ returns false when null (0.038625ms)
+✔ cv-gate.isGateOpen (0.805458ms)
+▶ cv-gate.withinGraceWindow
+  ✔ returns true when ask flag set and within 5s (0.08525ms)
+  ✔ returns false when ask flag is false (0.035167ms)
+  ✔ returns false when stale (>5s) (0.033958ms)
+  ✔ returns false when lastAt missing (0.032875ms)
+✔ cv-gate.withinGraceWindow (0.278459ms)
+▶ cv-gate.checkResumeGate
+  ✔ returns kill_switch=open when env disabled (0.2515ms)
+  ✔ returns gate_open when flag present + future (0.194125ms)
+  ✔ returns not_set when no flag and no recent turn (0.120916ms)
+  ✔ returns expired when flag present but past (0.092791ms)
+  ✔ opens via grace_window when null flag + recent ask-turn (0.094167ms)
+✔ cv-gate.checkResumeGate (0.863ms)
+▶ gateKillSwitchOn
+  ✔ respects truthy values (0.048666ms)
+✔ gateKillSwitchOn (0.077042ms)
+▶ ingestCv — iter30 WS1 4-limit stack
+  ✔ gate closed → returns not_invited and enqueues rejection (1.159792ms)
+  ✔ quota exhausted (count=2) → returns quota_exhausted and enqueues rejection (0.19875ms)
+  ✔ size cap → returns pdf_too_large and enqueues rejection (0.2095ms)
+  ✔ parser v2 ON: uses parserV2Extract and writes inferredAnswers/parserVersion=v2 (54.6405ms)
+{"severity":"WARNING","message":"[cv-embedding] no_api_key"}
+  ✔ kill-switch via skipLimitEnforcement bypasses gate+quota even when closed (41.055916ms)
+✔ ingestCv — iter30 WS1 4-limit stack (97.947334ms)
+{"severity":"WARNING","message":"[cv-embedding] no_api_key"}
+▶ ingestCv
+  ✔ happy path: writes parsedCandidateResumes with full schema match (52.886375ms)
+  ✔ download fail → returns ok:false reason:download_failed and writes nothing (0.176917ms)
+  ✔ pdf-parse throws → returns ok:false reason:pdf_parse_failed (0.142583ms)
+  ✔ LLM extract returns malformed shape → returns ok:false reason:llm_parse_failed (8.565667ms)
+  ✔ empty mediaUrl → returns ok:false reason:invalid_input (no fetch attempted) (0.798959ms)
+{"severity":"WARNING","message":"[cv-embedding] no_api_key"}
+  ✔ happy path emits pa.cv_ingest.cost telemetry with input/output token counts (38.551875ms)
+{"severity":"WARNING","message":"[cv-embedding] no_api_key"}
+  ✔ E1 happy: cv-findings LLM called → outbound enqueued with idempotent docId out-cvfindings-{resumeId} (4.427666ms)
+{"severity":"WARNING","message":"[cv-embedding] no_api_key"}
+  ✔ E1 LLM throws → ingestCv still ok:true, NO outbound enqueued (23.292584ms)
+{"severity":"WARNING","message":"[cv-embedding] no_api_key"}
+  ✔ E1 kill switch (PA_CV_FINDINGS_FOLLOWUP_DISABLED=true) → no LLM call, no outbound (13.237ms)
+{"severity":"WARNING","message":"[cv-embedding] no_api_key"}
+  ✔ E1 idempotency: re-running on same resumeId via default enqueue path → second enqueue ALREADY_EXISTS, no double-write (13.059459ms)
+{"severity":"WARNING","message":"[cv-embedding] no_api_key"}
+  ✔ E2 happy: mem0Add called with fact body + correct partition key (7.204541ms)
+{"severity":"WARNING","message":"[cv-embedding] no_api_key"}
+  ✔ E2 mem0Add throws → ingestCv still ok:true, error logged, no propagation (13.4095ms)
+{"severity":"WARNING","message":"[cv-embedding] no_api_key"}
+  ✔ E2 kill switch (PA_CV_MEM0_WRITE_DISABLED=true) → mem0Add NOT called (14.635583ms)
+✔ ingestCv (192.992583ms)
+{"severity":"WARNING","message":"[cv-embedding] no_api_key"}
+✔ F1 happy path: writes industryTags to parsedCandidateResumes (22.26125ms)
+{"severity":"WARNING","message":"[cv-embedding] no_api_key"}
+✔ F1 unknown industry → no tech skill → falls back to ['other'] (no throw, doc still written) (10.599292ms)
+▶ buildCvFactBody / detectCvLang
+  ✔ English CV → English fact body (0.142583ms)
+  ✔ Chinese-heavy CV → Chinese fact body (0.109209ms)
+✔ buildCvFactBody / detectCvLang (0.330583ms)
+▶ computeTopSkills (iter34 A.1)
+  ✔ only candidateProfile.skills → output is normalized + deduped list (0.075125ms)
+  ✔ v2 workHistory[].skills + candidateProfile.skills → merged with frequency-rank (0.061958ms)
+  ✔ empty input → returns [] (0.038292ms)
+  ✔ duplicates + case mixing → single normalized entry with summed count (0.03325ms)
+  ✔ frequency wins over insertion order (A 3x, B 1x → A first) (0.035709ms)
+  ✔ caps at 12 (0.070709ms)
+  ✔ filters single-char and pure-numeric tokens (0.026ms)
+  ✔ tolerates malformed v2 workHistory entries (missing/wrong-typed skills) (0.045208ms)
+✔ computeTopSkills (iter34 A.1) (0.524791ms)
+{"severity":"WARNING","message":"[cv-embedding] no_api_key"}
+▶ ingestCv writes topSkills (iter34 A.1)
+  ✔ legacy v1 path: topSkills present on parsedCandidateResumes doc (24.806542ms)
+  ✔ empty candidateProfile.skills → topSkills is [] (not missing) (7.761083ms)
+✔ ingestCv writes topSkills (iter34 A.1) (35.147833ms)
+▶ ingestCv writes embedding sync (iter34 B.9)
+  ✔ happy path: embedding fields written to parsedCandidateResumes doc (6.803833ms)
+  ✔ computeEmbedding returns null (OpenAI down) → doc still written, embedding fields absent (24.480125ms)
+  ✔ computeEmbedding throws (defensive) → doc still written, embedding_error logged (11.621458ms)
+  ✔ embedding compute is invoked with parsed CV fields (sanity) (25.616375ms)
+  ✔ happy path emits pa.cv_ingest.embedding_computed log with dim + model (11.069125ms)
+✔ ingestCv writes embedding sync (iter34 B.9) (80.180083ms)
+{"severity":"WARNING","message":"[cv-embedding] no_api_key"}
+▶ ingestCv writes pa-users.tags via mergeUserTags (iter34 H.3b)
+  ✔ happy path: pa-users/{userId}.set is called with tags object containing skills + industryEnum (5.734ms)
+{"severity":"WARNING","message":"[cv-embedding] no_api_key"}
+  ✔ skills written FULLY (not truncated to 12) — Adam directive (10.1745ms)
+{"severity":"WARNING","message":"[cv-embedding] no_api_key"}
+  ✔ statedPreferences (chat-side) is read from pa-users + passed to mergeUserTags (17.840083ms)
+{"severity":"WARNING","message":"[cv-embedding] no_api_key"}
+  ✔ missing pa-users doc → still writes tags from CV-only signals (statedPreferences omitted) (8.34625ms)
+{"severity":"WARNING","message":"[cv-embedding] no_api_key"}
+  ✔ writeUserTags throws → ingestCv still ok:true, error logged, parsedCandidateResumes intact (10.0395ms)
+{"severity":"WARNING","message":"[cv-embedding] no_api_key"}
+  ✔ mergeUserTags throws → ingestCv still ok:true, error logged, no write attempted (7.176542ms)
+  ✔ CV with embedding → embedding fields propagate to mergeUserTags input (4.102125ms)
+  ✔ CV without embedding → mergeUserTags called without embedding fields (4.518041ms)
+{"severity":"WARNING","message":"[cv-embedding] no_api_key"}
+  ✔ cvUpdatedAt timestamp passed through to mergeUserTags (7.241833ms)
+✔ ingestCv writes pa-users.tags via mergeUserTags (iter34 H.3b) (75.825625ms)
+▶ ingestCv sha256 idempotency (Phase 53 PARSE-09)
+  ✔ idempotent hit: existing resumeId returned, no re-parse, no duplicate write (0.236541ms)
+{"severity":"WARNING","message":"[cv-embedding] no_api_key"}
+  ✔ idempotent miss: parses fresh + writes sha256 to doc (4.316583ms)
+{"severity":"WARNING","message":"[cv-embedding] no_api_key"}
+  ✔ findResumeBySha256 throws → fail-open, parses + writes anyway (4.806125ms)
+✔ ingestCv sha256 idempotency (Phase 53 PARSE-09) (9.539792ms)
+▶ ingestCv candidate identity resolution (v2.0 S2)
+  ✔ public browser upload resolves canonical user before sha256 dedupe or writes (3.83925ms)
+  ✔ identity conflict stops before resume, tags, memory, or follow-up writes (3.258542ms)
+  ✔ bulk intake can require PDF-extracted email before identity or permanent writes (1.875416ms)
+✔ ingestCv candidate identity resolution (v2.0 S2) (9.438583ms)
+{"severity":"WARNING","message":"[cv-embedding] no_api_key"}
+▶ ingestCv industry second-pass (Phase 53 PARSE-08, D15)
+  ✔ triggers when LLM emits ['other'] and writes overridden industries (7.899375ms)
+{"severity":"WARNING","message":"[cv-embedding] no_api_key"}
+  ✔ does NOT trigger when LLM gave non-['other'] industries (4.234709ms)
+{"severity":"WARNING","message":"[cv-embedding] no_api_key"}
+  ✔ second pass returns [] (LLM gave up) → original ['other'] preserved (4.697584ms)
+{"severity":"WARNING","message":"[cv-embedding] no_api_key"}
+  ✔ second pass throws → fail-open, parsed CV still written (9.836416ms)
+✔ ingestCv industry second-pass (Phase 53 PARSE-08, D15) (27.48025ms)
+{"severity":"WARNING","message":"[cv-embedding] no_api_key"}
+▶ ingestCv Claire confirm enqueue (Phase 53 PARSE-07, D12)
+  ✔ happy path: enqueueCvConfirmFn called with parsed + user (5.641791ms)
+{"severity":"WARNING","message":"[cv-embedding] no_api_key"}
+  ✔ enqueueCvConfirmFn throws → ingestCv still ok:true (3.443167ms)
+{"severity":"WARNING","message":"[cv-embedding] no_api_key"}
+  ✔ no user phone → confirm not invoked (Stream E branch skipped) (1.481084ms)
+✔ ingestCv Claire confirm enqueue (Phase 53 PARSE-07, D12) (10.78725ms)
+{"severity":"WARNING","message":"[cv-embedding] no_api_key"}
+▶ Stream H3 — cv-overwrite UX
+  ✔ test 1: flag OFF + 1 existing resume → writes new parsedCandidateResumes directly (backward compat) (53.070375ms)
+{"severity":"WARNING","message":"[cv-embedding] no_api_key"}
+  ✔ test 2: flag ON + 0 existing → writes new parsedCandidateResumes directly (first-time user) (9.579958ms)
+{"severity":"WARNING","message":"[cv-embedding] no_api_key"}
+  ✔ test 3: flag ON + 1 existing → stages in pa-cv-pending + enqueues out-cv-overwrite (no parsedCandidateResumes write) (8.769583ms)
+  ✔ test 4: tapback love (replace) → archives previous + promotes new + sends confirmation (0.909959ms)
+  ✔ test 5: tapback question (supplement) → keeps both rows, marks new with additionalCv:true (0.201125ms)
+  ✔ test 6: TTL fallback — expired pending auto-promotes (replace, silent) (0.22975ms)
+✔ Stream H3 — cv-overwrite UX (79.487917ms)
+▶ cv-quota.isQuotaExhausted
+  ✔ returns false at count=0 (0.753709ms)
+  ✔ returns false at count=1 (0.136875ms)
+  ✔ returns true at count=QUOTA_LIMIT (0.116292ms)
+  ✔ returns true at count > QUOTA_LIMIT (0.127125ms)
+  ✔ returns false when kill-switch ON regardless of count (0.113167ms)
+✔ cv-quota.isQuotaExhausted (2.479792ms)
+▶ quotaKillSwitchOn
+  ✔ matches truthy values (0.157084ms)
+  ✔ returns false on falsy / unset (0.102083ms)
+✔ quotaKillSwitchOn (0.322291ms)
+▶ fetchPdfWithSizeCap
+  ✔ returns bytes for small PDF (HEAD path) (48.153541ms)
+  ✔ rejects with PdfSizeError when HEAD reports oversize (0.297583ms)
+  ✔ falls through HEAD-405 to bounded GET (0.23725ms)
+  ✔ rejects when body content-length exceeds cap (0.16725ms)
+  ✔ rejects when actual body bytes exceed cap (post-buffer check) (2.381166ms)
+  ✔ throws on non-2xx GET response (0.140792ms)
+✔ fetchPdfWithSizeCap (52.916083ms)
+▶ runIndustrySecondPass
+  ✔ Anthropic key missing + no OpenAI key → returns [] (6.346125ms)
+  ✔ Anthropic returns canonical industries → result (0.271375ms)
+  ✔ Anthropic returns non-canonical token → filtered out (0.115208ms)
+  ✔ Anthropic throws → falls back to OpenAI (3.990542ms)
+  ✔ both Anthropic and OpenAI fail → returns [] (3.338542ms)
+  ✔ Anthropic empty tool_use → falls back to OpenAI (16.843709ms)
+✔ runIndustrySecondPass (31.63375ms)
+▶ mapToCanonicalIndustry — H8 INDUSTRY_KEY_MAP additions
+  ✔ 'technology' → tech_software (was 'other' before H8) (0.413541ms)
+  ✔ 'consumer_electronics' → tech_hardware (0.052667ms)
+  ✔ 'ai_infrastructure' → ai_ml (0.043916ms)
+  ✔ 'aerospace_defense' → manufacturing_industrial (0.047125ms)
+  ✔ legacy identity short-circuit still works (0.038666ms)
+  ✔ unknown free-text still falls through to other (0.037459ms)
+✔ mapToCanonicalIndustry — H8 INDUSTRY_KEY_MAP additions (1.101292ms)
+▶ normalizeCompanyName
+  ✔ strips legal suffixes case-insensitively (1.661334ms)
+  ✔ collapses punctuation + whitespace into single underscores (0.134583ms)
+  ✔ returns empty string for null/empty (0.362084ms)
+✔ normalizeCompanyName (2.387833ms)
+▶ mapToCanonicalIndustryFromSignals — cascade ordering
+  ✔ industryKey wins when set + mappable (0.453958ms)
+  ✔ falls through to companyName when industryKey is 'engineering' (job-function) (0.201542ms)
+  ✔ falls through to roleTitle when industryKey + companyName both miss (0.174ms)
+  ✔ returns 'other' when all three signals miss (0.874458ms)
+  ✔ handles missing fields without throwing (0.34025ms)
+  ✔ hardware roleTitle wins over generic 'engineer' (0.049792ms)
+  ✔ companyName matches by first-word fallback (e.g. 'Stripe Payments') (0.354125ms)
+  ✔ known company defies mismatched industryKey via cascade — but cascade is industryKey-first when industryKey IS mappable (0.290834ms)
+  ✔ Anthropic/OpenAI overrides generic role-title 'software engineer' (0.034875ms)
+✔ mapToCanonicalIndustryFromSignals — cascade ordering (2.907208ms)
+▶ mapToCanonicalIndustryFromSignals — H10 long-tail company entries
+  ✔ Pearson → education (textbook + ed-tech publisher) (0.063666ms)
+  ✔ Rural King / Cintas / Dollar Tree / 7-Eleven → consumer_retail (0.042125ms)
+  ✔ PNC / BMO / USAA / Edward Jones → fintech_finance (0.042375ms)
+  ✔ Humana / Cedars-Sinai / Banfield Pet Hospital → healthcare_biotech (0.039959ms)
+  ✔ Spectrum / Rippling / Toast / Samsara → tech_software (telecom + B2B SaaS) (0.036667ms)
+  ✔ RTX / Westinghouse Electric / UPS / PepsiCo → manufacturing_industrial (0.035167ms)
+  ✔ legal-suffix variants resolve via normalizeCompanyName (0.036291ms)
+✔ mapToCanonicalIndustryFromSignals — H10 long-tail company entries (0.363917ms)
+▶ mapToCanonicalIndustryFromSignals — H11 companyName × roleTitle compound check
+  ✔ Amazon SDE → tech_software (companyName + tech-positive role keeps lift) (0.064959ms)
+  ✔ Amazon Lead Fulfillment Associate → does NOT lift to tech_software (NON_TECH_ROLE blocks) (0.271167ms)
+  ✔ Amazon Robotics Engineer → tech_software (TECH_POSITIVE overrides NON_TECH suffix) (0.027625ms)
+  ✔ Snowflake Marketing Specialist → does NOT lift (NON_TECH_FUNCTION blocks) (0.033541ms)
+  ✔ Snowflake Senior Data Scientist → tech_software (TECH_POSITIVE keeps lift) (0.025333ms)
+  ✔ Snowflake SDE with no industryKey → tech_software via companyName (TECH_POSITIVE) (0.02425ms)
+  ✔ JPMorgan Software Engineer → fintech_finance (companyName lift OK, no role conflict) (0.036709ms)
+  ✔ JPMorgan Tax Consultant → fintech_finance (FINANCE_FUNCTION exception keeps lift) (0.130833ms)
+  ✔ Deloitte Tax Consultant → fintech_finance (Deloitte mapped to fintech bucket; finance role allowed) (0.118125ms)
+  ✔ Walmart Cashier → consumer_retail (verify NON_TECH_ROLE doesn't double-block consumer_retail employers) (0.024875ms)
+  ✔ Software Engineer Associate → tech-positive overrides 'associate' negative-lookahead (0.025167ms)
+  ✔ Amazon EHS Specialist → does NOT lift (workplace safety blocked) (0.027709ms)
+✔ mapToCanonicalIndustryFromSignals — H11 companyName × roleTitle compound check (0.913958ms)
+▶ mapToCanonicalIndustryFromSignals — H11 gate scope (only tech-bias buckets)
+  ✔ Walmart Cashier with industryKey=customer_service → consumer_retail (gate does not fire) (0.042084ms)
+  ✔ Caterpillar Forklift Operator → manufacturing_industrial (gate does not fire on industrial bucket) (0.032417ms)
+  ✔ Kaiser Permanente Patient Care Tech → healthcare_biotech (gate does not fire on healthcare bucket) (0.032083ms)
+  ✔ Starbucks Barista → consumer_retail (NON_TECH_ROLE.barista doesn't gate non-tech-bias bucket) (0.037083ms)
+  ✔ Disney HR Specialist → media_entertainment (gate doesn't fire — media is not tech-bias) (0.024333ms)
+  ✔ Microsoft Workplace Safety Specialist → does NOT lift (tech_software bucket gated) (0.029ms)
+✔ mapToCanonicalIndustryFromSignals — H11 gate scope (only tech-bias buckets) (0.252458ms)
+▶ mapToCanonicalIndustryFromSignals — H11 step-1 gate (industryKey lift also blocked)
+  ✔ Amazon EHS Specialist with industryKey=enterprise_saas → does NOT lift to tech_software (0.049375ms)
+  ✔ Amazon Software Engineer with industryKey=enterprise_saas → tech_software (TECH_POSITIVE keeps step-1) (0.0245ms)
+  ✔ Amazon IT Support Associate with industryKey=enterprise_saas → does NOT lift (0.028708ms)
+  ✔ Random non-tech-bias industryKey lift not affected by gate (0.023583ms)
+  ✔ industryKey lift to fintech_finance with tax role keeps lift via FINANCE_FUNCTION exception (0.026542ms)
+✔ mapToCanonicalIndustryFromSignals — H11 step-1 gate (industryKey lift also blocked) (0.198209ms)
+▶ mapToCanonicalIndustryFromSignals — H11 regex extension (driving / valet ops / operations coord)
+  ✔ Metropolis Technologies Supervisor Driving → does NOT lift to tech_software (0.037792ms)
+  ✔ Metropolis Assistant Manager Valet Operations → does NOT lift (0.036125ms)
+  ✔ Spectrum (tech_software bucket) Operations Coordinator → does NOT lift (0.031667ms)
+✔ mapToCanonicalIndustryFromSignals — H11 regex extension (driving / valet ops / operations coord) (0.141542ms)
+▶ applyIndustryTagsFallback (iter34 H.3a)
+  ✔ LLM ['other'] + react skill → ['tech_software'] (0.459875ms)
+  ✔ LLM ['other'] + python skill → ['tech_software'] (0.030959ms)
+  ✔ LLM ['tech_software'] + tensorflow skill → ['tech_software', 'ai_ml'] (0.026709ms)
+  ✔ LLM ['healthcare_biotech'] + medical skills → unchanged (no false tech promotion) (0.031667ms)
+  ✔ LLM ['other'] + non-tech skills → ['other'] (no fallback fires) (0.026042ms)
+  ✔ LLM ['other'] + AWS skill → ['tech_software'] (0.022958ms)
+  ✔ LLM ['other'] + 'tensorflow.js' substring → ['ai_ml'] (substring match) (0.0285ms)
+  ✔ LLM ['other'] + langchain → ['ai_ml'] (AI tokens fire even when tech doesn't) (0.056333ms)
+  ✔ LLM ['other'] + python + openai → ['tech_software', 'ai_ml'] (0.029209ms)
+  ✔ LLM tag preserved + new tech tag from skills (additive, not replace) (0.029042ms)
+  ✔ respects ≤3 cap from StructuredCv contract (0.0285ms)
+  ✔ empty skills array → ['other'] (0.0225ms)
+  ✔ malformed skills (non-string) → safe (filtered out) (0.021958ms)
+✔ applyIndustryTagsFallback (iter34 H.3a) (0.912167ms)
+✔ registry.juicebox.parse === parseJuiceboxExport(toString) (1.449625ms)
+✔ registry.lessie.parse === parseLessieExport(toString) (10.037292ms)
+✔ registry.coresignal.parse === parseCoresignalExport(toString) (0.264209ms)
+✔ registry.manual_csv.parse(buf, mapping) === parseManualCsvExport(toString, mapping) (0.421667ms)
+✔ registry.manual_csv.parse(buf) without mapping throws V1 error string (0.218917ms)
+✔ getRegistrySignatures has 4 entries in canonical order (0.092416ms)
+✔ ADAPTER_REGISTRY exposes all four sources with version + signature (0.054708ms)
+✔ getAdapter('juicebox').signature.acceptedShapes is ['json'] (0.042917ms)
+✔ runAgentRanking — non-admin rejected with permission-denied (2.761416ms)
+✔ runApproveAgentTier — unauthenticated rejected (0.332458ms)
+✔ runAgentRanking — happy path writes one ranking row + one ledger row (ensembleSize=1) (3.204292ms)
+✔ runAgentRanking — dryRun=true populates projectedCostUsd and writes nothing (0.268334ms)
+✔ runAgentRanking — budget_exceeded aborts with zero writes (10.514791ms)
+✔ runAgentRanking — budgetUsd override allows previously-aborted run (0.875125ms)
+✔ runAgentRanking — ensemble majority 2-of-3 wins (0.24275ms)
+✔ runAgentRanking — ensemble tie falls back to deterministic + outreach_after_research (0.233333ms)
+✔ runAgentRanking — deterministicTier=blocked clamps proposedAgentTier to blocked (0.162209ms)
+✔ runAgentRanking — candidateRecordIds scopes the run (0.177459ms)
+✔ runApproveAgentTier — approves and stamps approvedTier from proposedAgentTier (0.142209ms)
+✔ runApproveAgentTier — idempotent on already-approved (0.111791ms)
+✔ runOverrideAgentTier — writes status + correctionEventId + correction-event doc (0.506459ms)
+✔ runOverrideAgentTier — already-approved throws failed-precondition (0.156291ms)
+✔ runOverrideAgentTier — idempotent on already-overridden row (0.109167ms)
+✔ runAgentRanking — re-run on approved row is SKIP, not overwrite (0.119458ms)
+✔ runAgentRanking — parse failure writes ledger row with error + skips candidate (0.206625ms)
+✔ runGenerateAgentResearchPrompt — unauthenticated rejected (0.823125ms)
+✔ runImportAgentResearchResult — non-wekruit email rejected (0.188084ms)
+✔ runApproveAgentResearchFinding — admin claim short-circuits (3.351417ms)
+✔ runGenerateAgentResearchPrompt — missing recordIds and candidateIds rejects (0.152584ms)
+✔ runGenerateAgentResearchPrompt — recordIds resolve to absent records → not-found (0.154583ms)
+✔ runGenerateAgentResearchPrompt — happy path persists task in draft_prompt (11.423584ms)
+✔ runGenerateAgentResearchPrompt — candidateIds path resolves records by resolvedUserId (0.388042ms)
+✔ runImportAgentResearchResult — missing taskId rejects (0.15875ms)
+✔ runImportAgentResearchResult — missing rawResult rejects (0.125125ms)
+✔ runImportAgentResearchResult — not-found when taskId absent (0.146916ms)
+✔ runImportAgentResearchResult — failed-precondition when status=approved (0.14975ms)
+✔ runImportAgentResearchResult — happy path persists parsedFindings + flips status (1.566792ms)
+✔ runImportAgentResearchResult — partial findings: valid persist + errors collected (0.833083ms)
+✔ runImportAgentResearchResult — re-import overwrites parsedFindings (0.22425ms)
+✔ runApproveAgentResearchFinding — missing approved (boolean) rejects (0.09075ms)
+✔ runApproveAgentResearchFinding — not-found when finding absent (0.119208ms)
+✔ runApproveAgentResearchFinding — approve flips flag + appends agent_research evidence (0.143917ms)
+✔ runApproveAgentResearchFinding — reject does NOT append evidence (0.092417ms)
+✔ runApproveAgentResearchFinding — all approved → reviewStatus=approved (20.820083ms)
+✔ runApproveAgentResearchFinding — all rejected → reviewStatus=rejected (0.31325ms)
+✔ runApproveAgentResearchFinding — mixed approve+reject → reviewStatus=approved (at least one approved) (0.403375ms)
+✔ getExternalSupplyConfig rejects unauthenticated (0.6035ms)
+✔ getExternalSupplyConfig rejects non-wekruit email (0.103416ms)
+✔ getExternalSupplyConfig — fully configured (live + both providers) (0.441333ms)
+✔ getExternalSupplyConfig — nothing configured (0.057542ms)
+✔ getExternalSupplyConfig — mixed env states (0.10825ms)
+✔ runEvaluation — rejects unauthenticated callers (0.9085ms)
+✔ runEvaluation — rejects non-wekruit email (0.535709ms)
+✔ runEvaluation — admin claim short-circuits domain check (0.983792ms)
+✔ runEvaluation — invalid argument when neither batchId nor recordIds (0.11975ms)
+✔ runEvaluation — invalid argument when companyId missing (0.09075ms)
+✔ runEvaluation — happy path: 3 records → 3 evaluations + run doc updated (4.072292ms)
+✔ runEvaluation — record without resolvedUserId is skipped (0.236958ms)
+✔ runEvaluation — needs_review records are excluded from scope (0.490166ms)
+✔ runEvaluation — missing pa-users profile is skipped (0.305708ms)
+✔ runEvaluation — visa mismatch → hard_block → blocked tier (0.367917ms)
+✔ runEvaluation — competitor adjacency lands tier 1 (0.241375ms)
+✔ runEvaluation — same runId overwrites evaluation doc cleanly (2.117791ms)
+✔ runEvaluation — missing pa-companies still produces evaluations (0.244208ms)
+✔ runEvaluation — missing pa-jobs degrades to soft_block at most (0.236333ms)
+✔ runEvaluation — recordIds[] overrides batchId scope (0.303208ms)
+✔ runEvaluation — generates runId when caller omits it (0.084625ms)
+✔ runCreateBatch — Juicebox fixture lands batch + records with correct stats (6.7255ms)
+✔ runCreateBatch — idempotent on (sha256, source) (0.561917ms)
+✔ runCreateBatch — Lessie CSV fixture (4.091625ms)
+✔ runCreateBatch — Coresignal JSON fixture (0.867833ms)
+✔ runCreateBatch — manual_csv routes through manual adapter with operator columnMapping (0.862375ms)
+✔ runCreateBatch — manual_csv without columnMapping throws (0.318084ms)
+✔ batchStoragePath — picks extension by mime and namespaces by source (0.056167ms)
+✔ PA_COLLECTIONS — external-supply collections present (0.885ms)
+{"syncId":"sync-fail","planId":"plan-1","mode":"live","err":"instantly_request_failed:500","severity":"ERROR","message":"Error: external_supply.instantly_sync.failed\n    at entryFromArgs (/Users/adam/Desktop/WeKruit/wekruit-pa/.claude/worktrees/v2-external-supply-v2/node_modules/.pnpm/firebase-functions@6.6.0_firebase-admin@13.8.0/node_modules/firebase-functions/lib/logger/index.js:144:19)\n    at Object.error (/Users/adam/Desktop/WeKruit/wekruit-pa/.claude/worktrees/v2-external-supply-v2/node_modules/.pnpm/firebase-functions@6.6.0_firebase-admin@13.8.0/node_modules/firebase-functions/lib/logger/index.js:131:11)\n    at runSyncPlanToInstantly (/Users/adam/Desktop/WeKruit/wekruit-pa/.claude/worktrees/v2-external-supply-v2/apps/functions/src/external-supply/instantly-sync.ts:273:12)\n    at async TestContext.<anonymous> (/Users/adam/Desktop/WeKruit/wekruit-pa/.claude/worktrees/v2-external-supply-v2/apps/functions/src/external-supply/instantly-sync.test.ts:393:15)\n    at async Test.run (node:internal/test_runner/test:1069:7)\n    at async Test.processPendingSubtests (node:internal/test_runner/test:752:7)"}
+✔ syncPlanToInstantly — rejects unauthenticated (2.129667ms)
+✔ syncPlanToInstantly — invalid mode rejected (0.353959ms)
+✔ syncPlanToInstantly — plan in draft rejects with failed-precondition (0.991875ms)
+✔ syncPlanToInstantly — dry_run persists payload + status, plan unchanged (0.739292ms)
+✔ syncPlanToInstantly — live happy path bumps plan to sent + persists synced record (0.290416ms)
+✔ syncPlanToInstantly — live mode without env flag silently downgrades to dry_run (0.218959ms)
+✔ syncPlanToInstantly — live mode without API key silently downgrades (0.196083ms)
+✔ syncPlanToInstantly — fresh opt_out suppresses at entry; Instantly never called (0.199ms)
+✔ syncPlanToInstantly — live throw is captured as sync_failed + plan bumped to failed (13.910417ms)
+{"eventId":"instantly__dcdf78cf4ccae6c5c736391554ed07ee5c9a5a26b1dce9e24a5a82b834668346","kind":"email_sent","emailLen":20,"severity":"WARNING","message":"external_supply.instantly_webhook.plan_not_found_for_email"}
+{"err":"Unexpected token 'o', \"not-json\" is not valid JSON","severity":"WARNING","message":"external_supply.instantly_webhook.body_parse_failed"}
+✔ webhook — non-POST returns 405 (0.728416ms)
+✔ verifyInstantlySignature — happy path returns true (0.29025ms)
+✔ verifyInstantlySignature — wrong secret returns false (0.094292ms)
+✔ verifyInstantlySignature — missing header returns false (0.04125ms)
+✔ webhook — HMAC reject returns 401 (0.132375ms)
+✔ webhook — HMAC accept persists event (3.878833ms)
+✔ webhook — same event_id posted twice writes one event (0.828417ms)
+✔ webhook — maps all known event_types to OutreachEventKind (1.998ms)
+✔ webhook — unknown event_type returns 200 ignored (0.109625ms)
+✔ webhook — reply event resolves planId via email hash + emits candidate_reply feedback (0.228791ms)
+✔ webhook — bounce event emits outreach_delivery feedback (0.153416ms)
+✔ webhook — missing plan still persists event with planId=unknown (0.575667ms)
+✔ webhook — malformed body returns 400 (0.133084ms)
+✔ bridge fills tags on a fresh candidate (no existing pa-users.tags) (1.301208ms)
+✔ bridge preserves existing populated tag fields and reports skips (0.166166ms)
+✔ bridge on a record with no useful signal fills only the canonical 'other' industry sentinel (1.377291ms)
+✔ rejects unauthenticated callers (1.591875ms)
+✔ rejects when plan is not approved (2.171708ms)
+✔ dry-run records the exact send payload + skips network (3.161167ms)
+✔ live mode downgrades to dry-run when env not configured (1.874125ms)
+✔ live mode sends via mailgun + flips plan to sent on success (0.399209ms)
+✔ live mode failure records sync_failed + flips plan to failed (0.356625ms)
+{"severity":"WARNING","message":"external_supply.mailgun_webhook.bad_signature"}
+✔ rejects non-POST requests with 405 (10.112875ms)
+✔ returns 200 ignored for unmapped event types (1.2335ms)
+✔ delivered event maps to email_sent + writes outreach + feedback rows (7.4905ms)
+✔ bounced event maps to email_bounced (0.7115ms)
+✔ replaying same event id is idempotent (0.683916ms)
+✔ invalid signature rejected with 401 when signing key configured (1.755459ms)
+✔ valid signature is accepted + verifyMailgunSignature is hmac-sha256 (0.119125ms)
+✔ draftOutreachPlan — rejects unauthenticated (0.843584ms)
+✔ draftOutreachPlan — rejects non-wekruit (0.139167ms)
+✔ draftOutreachPlan — happy path writes plan with draft status + tier (1.853708ms)
+✔ draftOutreachPlan — suppression block path still produces draft (for operator review) (0.313292ms)
+✔ draftOutreachPlan — missing evaluation throws not-found (0.109416ms)
+✔ draftOutreachPlan — generateCopy override is honored (0.243084ms)
+✔ approveOutreachPlan — admin gate (0.150583ms)
+✔ approveOutreachPlan — happy path sets approved + writes correction event when edits present (0.418125ms)
+✔ approveOutreachPlan — no correction event when no edits change (0.31ms)
+✔ approveOutreachPlan — rejects plan already sent (0.267541ms)
+✔ rejectOutreachPlan — happy path sets rejected + reason (0.345834ms)
+✔ rejectOutreachPlan — invalid args (0.085458ms)
+✔ assignManualLinkedInTask — only valid on tier_1 approved plans (0.269541ms)
+✔ assignManualLinkedInTask — happy path on tier_1 approved plan (0.360041ms)
+✔ markManualLinkedInTaskStatus — validates enum (0.304333ms)
+✔ markManualLinkedInTaskStatus — happy path (0.212208ms)
+✔ emailLookupHash — case + whitespace insensitive deterministic sha256 hex (0.0415ms)
+✔ runPreviewBatch — zero Firestore writes against the big-batch fixture (8.090917ms)
+✔ runPreviewBatch — counter parity with V1 runCreateBatch on big-batch fixture (95.634792ms)
+✔ runPreviewBatch — tag forecast: existing 'recentRoleTitle' is preserved, missing 'recentRoleTitle' is filled (0.758958ms)
+✔ runPreviewBatch — tier forecast keys match EvaluationTierSchema; totals == valid rows (3.783209ms)
+✔ runPreviewBatch — overrideSource short-circuits detection (0.900042ms)
+✔ runPreviewBatch — emits 'base64_size_warning_over_3mb' when payload exceeds 3 MB (403.832791ms)
+✔ runPreviewBatch — emits 'row_count_warning_over_1000' when rowCount > 1000 (159.155ms)
+✔ runPreviewBatch — rejects unauthenticated callers (0.682459ms)
+✔ runPreviewBatch — rejects non-wekruit email (0.47325ms)
+✔ runPreviewBatch — wekruit.com email passes auth gate (0.584792ms)
+✔ runPreviewBatch — xlsx without columnMapping returns 0 rows + xlsx_not_yet_supported warning (0.3795ms)
+{"userId":"230782c9-0b0a-4963-8490-0cba87fff916","source":"migration","mergedKeys":["industryEnum"],"severity":"INFO","message":"external_supply.legacy_tags.pa.user_tags.apply_partial_ok"}
+{"candidateId":"230782c9-0b0a-4963-8490-0cba87fff916","recordId":"r1","mergedKeys":["industryEnum"],"skippedKeys":[],"severity":"INFO","message":"external_supply.legacy_tags.dual_write_ok"}
+{"userId":"cand-existing","source":"migration","mergedKeys":["industryEnum"],"severity":"INFO","message":"external_supply.legacy_tags.pa.user_tags.apply_partial_ok"}
+{"candidateId":"cand-existing","recordId":"r2","mergedKeys":["industryEnum"],"skippedKeys":[],"severity":"INFO","message":"external_supply.legacy_tags.dual_write_ok"}
+{"userId":"cand-idem","source":"migration","mergedKeys":["industryEnum"],"severity":"INFO","message":"external_supply.legacy_tags.pa.user_tags.apply_partial_ok"}
+{"candidateId":"cand-idem","recordId":"r-idem","mergedKeys":["industryEnum"],"skippedKeys":[],"severity":"INFO","message":"external_supply.legacy_tags.dual_write_ok"}
+✔ runResolveBatchIdentity rejects when auth is missing (1.039208ms)
+✔ runResolveBatchIdentity rejects non-wekruit email (0.376167ms)
+✔ runResolveBatchIdentity throws when batchId missing (0.132459ms)
+✔ runResolveBatchIdentity throws when batch not found (0.15125ms)
+✔ runResolveBatchIdentity throws when batch is not in normalized state (0.823166ms)
+✔ end-to-end: mixed batch resolves into create/merge/pending/blocked (3.931708ms)
+✔ runResolveBatchIdentity is idempotent on re-run (0.734916ms)
+✔ computeMonthlyRollup — 8 approved + 2 overridden for juicebox (0.744917ms)
+✔ computeMonthlyRollup — zero approvals + 3 overrides → row still emitted (0.481667ms)
+✔ computeMonthlyRollup — zero ranking rows for a source → row not emitted (0.3225ms)
+✔ computeMonthlyRollup — missing batch lookup → row skipped (0.182875ms)
+✔ computeMonthlyRollup — costTableVersion copied from first stamped row (0.190708ms)
+✔ createSourceQualityMetricId — deterministic doc id (0.863958ms)
+✔ priorMonthWindow — May 1 → April window (8.483875ms)
+✔ priorMonthWindow — January wraps to prior December (0.255459ms)
+✔ writeMonthlyRollup — idempotent overwrite preserves V1 fields (0.684083ms)
+▶ probeSecrets
+  ✔ returns ok when every required key is set (0.344625ms)
+  ✔ returns missing when any key is unset (0.065666ms)
+  ✔ returns missing when key is set to empty string (0.053167ms)
+  ✔ returns ok when no required keys (empty list) (0.044791ms)
+✔ probeSecrets (0.946042ms)
+▶ computeHealthBody
+  ✔ ok=true when all probes pass (0.205125ms)
+  ✔ ok=false when firestore probe fails (0.988542ms)
+  ✔ ok=false when secrets probe says missing (0.229208ms)
+  ✔ includes a non-empty version string (0.104958ms)
+  ✔ uses K_REVISION env var as version when present (0.096916ms)
+✔ computeHealthBody (1.797125ms)
+✔ runCandidateListMatches requires authenticated mapped candidate (0.822625ms)
+✔ runCandidateListMatches returns public-safe candidate-owned match cards only (3.398459ms)
+✔ runCandidateListMatches includes direct state-only candidate job rows (0.262875ms)
+✔ runCandidateListMatches maps employer visible state to candidate passed (0.191208ms)
+✔ runCandidateListMatches suppresses non-public jobs (0.34325ms)
+✔ runCandidateClaimProfile requires authenticated verified email (0.93275ms)
+✔ runCandidateClaimProfile delegates to claim helper and returns redacted self profile (0.447209ms)
+✔ runCandidateClaimProfile maps identity conflicts to failed-precondition (0.110541ms)
+▶ recordTapbackFeedback
+  ✔ writes one matching-feedback row per jobId (3.1425ms)
+  ✔ attaches companyName + jobTitle from jobMeta when present (0.1295ms)
+  ✔ no-op when jobIds empty (avoid polluting matching dataset) (0.071417ms)
+  ✔ filters out empty/non-string jobIds (0.070167ms)
+✔ recordTapbackFeedback (3.899625ms)
+▶ extractJobIdsFromOutbound
+  ✔ PRIMARY: extracts from rawMeta.jobIds with jobMeta (0.133084ms)
+  ✔ FALLBACK: extracts from /jobs/{id} URL pattern in body (0.414459ms)
+  ✔ returns empty when no jobIds anywhere (0.089708ms)
+✔ extractJobIdsFromOutbound (0.938125ms)
+▶ selectMatchingOutbound
+  ✔ returns rows whose body contains the quoted excerpt (case-insensitive) (0.583084ms)
+  ✔ strips trailing ellipsis from iMessage truncation (0.119708ms)
+  ✔ excludes rows older than 5 minutes (0.102875ms)
+  ✔ returns empty for empty quotedText (0.061125ms)
+✔ selectMatchingOutbound (0.978875ms)
+▶ processTapbackForFeedback (integration: 1 outbound mentions 3 jobs → 3 matching-feedback rows)
+  ✔ end-to-end: tapback Loved → finds outbound → extracts 3 jobIds → writes 3 rows (0.328667ms)
+  ✔ no recent outbound match → 0 rows written (don't pollute matching dataset) (0.066458ms)
+✔ processTapbackForFeedback (integration: 1 outbound mentions 3 jobs → 3 matching-feedback rows) (0.43525ms)
+✔ Test 1: routes when mediaUrl + flag-on → runRecruiterTurn called, pa-messages + pa-outbound written, event succeeded (7.047875ms)
+✔ Test 2: when mediaUrl absent in dispatcher → runRecruiterFlow never called (verified by simulating dispatcher gate) (0.164458ms)
+✔ Test 3: flag OFF → dispatcher does not invoke runRecruiterFlow (event stays pending for default Claire) (0.085417ms)
+✔ Test 4: claim is atomic — second invocation on same event no-ops (status already running/succeeded) (2.2415ms)
+✔ Test 5: error in runRecruiterTurn → event marked failed, error re-thrown (not swallowed) (0.261792ms)
+✔ Test 6: assistant text is normalized (markdown stripped + UTM cleaned) before pa-outbound enqueue (0.663709ms)
+✔ Test 7 (defensive): user has no phoneE164 → event marked failed with errorCode=no_phone, no outbound, no throw (0.163208ms)
+▶ autoDeriveTargetRoleFunction
+  ✔ 4 SE skills → software_engineering with skill-bucket source (3.200167ms)
+  ✔ 2 data_and_ml skills → data_analysis (0.084667ms)
+  ✔ 2 design_and_ux skills → creatives_and_design (0.069125ms)
+  ✔ multi-pick: 3 SE + 2 DA → both software_engineering AND data_analysis (0.061291ms)
+  ✔ title regex SE fallback when no skill buckets (0.201792ms)
+  ✔ title regex data analyst fallback (0.108791ms)
+  ✔ title regex PM fallback (0.083541ms)
+  ✔ title regex designer fallback (0.086375ms)
+  ✔ empty input → no roles, fallback source, confidence 0 (0.055958ms)
+  ✔ skills as raw strings (no bucket) → falls through to title regex (0.139583ms)
+  ✔ confidence caps at 1.0 with many bucket hits (0.079375ms)
+  ✔ title regex priority — data analyst beats SE pattern when both ambiguous (0.045875ms)
+  ✔ only 2 SE skills → does NOT cross threshold (need 3+) (1.059333ms)
+  ✔ workHistory with empty/null title → still fallback (0.534625ms)
+✔ autoDeriveTargetRoleFunction (7.002584ms)
+▶ autoDeriveCareerStage
+  ✔ 12+ years → principal (0.4865ms)
+  ✔ 8 years → staff (1.506417ms)
+  ✔ 5 years → senior (0.245166ms)
+  ✔ 2 years → mid_level (0.11875ms)
+  ✔ 1 year → junior (0.094916ms)
+  ✔ 0.5 years → entry_level (0.040416ms)
+  ✔ 0 / null / undefined → null (0.028291ms)
+  ✔ tuple uses max (0.0315ms)
+  ✔ string parse — '3-5 years' → mid_level (first int 3) (0.07725ms)
+  ✔ string with no number → null (0.02675ms)
+  ✔ tuple with min only (no max) falls back to min (0.02825ms)
+✔ autoDeriveCareerStage (3.853792ms)
+{"error":"Anthropic 500","severity":"WARNING","message":"[jd-rel] sonnet_failed"}
+{"error":"OpenAI 503","severity":"WARNING","message":"[jd-rel] openai_failed"}
+{"error":"a","severity":"WARNING","message":"[jd-rel] sonnet_failed"}
+{"error":"o","severity":"WARNING","message":"[jd-rel] openai_failed"}
+{"error":"o","severity":"WARNING","message":"[jd-rel] qwen_failed"}
+▶ skillKey
+  ✔ lowercases (0.970666ms)
+  ✔ collapses internal whitespace to underscore (0.378125ms)
+  ✔ trims leading/trailing whitespace (0.083542ms)
+  ✔ preserves non-letter chars (e.g. C++, .NET) (0.129792ms)
+✔ skillKey (3.707ms)
+▶ sanitize
+  ✔ returns 0.5 for every missing key when parsed is empty (0.49475ms)
+  ✔ returns 0.5 for every key when parsed is non-object (string, number, null) (0.066917ms)
+  ✔ clamps values out of [0, 1] (0.063209ms)
+  ✔ coerces numeric strings (0.063417ms)
+  ✔ non-finite or non-numeric → 0.5 (0.079875ms)
+  ✔ returns ONLY the requested keys (no extras) (0.078292ms)
+  ✔ case-insensitive lookup tolerates upper-cased LLM keys (0.0545ms)
+  ✔ array as parsed → 0.5 for all keys (0.041375ms)
+✔ sanitize (1.112625ms)
+▶ computeJdRelativeWeights — empty skills
+  ✔ returns empty weights + modelUsed=fallback when skills array is empty (0.173208ms)
+  ✔ returns empty weights when all skills are whitespace-only (0.065333ms)
+✔ computeJdRelativeWeights — empty skills (0.290375ms)
+▶ computeJdRelativeWeights — provider chain
+  ✔ Sonnet success: returns sonnet-4-6 + parsed weights (0.243791ms)
+  ✔ Sonnet error → falls through to gpt-5.4-nano (OpenAI) (0.591334ms)
+  ✔ OpenAI error → falls through to Qwen-7B (0.142166ms)
+  ✔ only siliconflowApiKey present → uses Qwen path directly (no Sonnet/OpenAI) (0.072667ms)
+  ✔ all tiers fail → uniform 0.5 fallback (0.165292ms)
+  ✔ no keys at all → fallback uniform 0.5 (0.04025ms)
+  ✔ Sonnet emits markdown-fenced JSON → parser strips fence (0.098041ms)
+  ✔ Sonnet emits non-JSON text → falls back through to next tier (0.074583ms)
+  ✔ Sonnet returns content with no text block → fills 0.5 (0.050334ms)
+  ✔ dedupes input skills (case-insensitive) (0.069666ms)
+  ✔ Sonnet response with valid JSON missing some keys → fills missing with 0.5 (0.060292ms)
+  ✔ clamps Sonnet output values out of [0, 1] (0.067209ms)
+✔ computeJdRelativeWeights — provider chain (1.79875ms)
+{"pa.metric":"pa.spend.daily","kind":"chat","service":"siliconflow","model":"Qwen/Qwen2.5-7B-Instruct","inputTokens":0,"outputTokens":0,"count":1,"usd":0,"severity":"INFO","message":"pa.spend.daily"}
+{"previewLen":29,"severity":"WARNING","message":"[llm-rerank] invalid_json"}
+{"pa.metric":"pa.spend.daily","kind":"chat","service":"siliconflow","model":"Qwen/Qwen2.5-7B-Instruct","inputTokens":0,"outputTokens":0,"count":1,"usd":0,"severity":"INFO","message":"pa.spend.daily"}
+{"pa.metric":"pa.spend.daily","kind":"chat","service":"siliconflow","model":"Qwen/Qwen2.5-7B-Instruct","inputTokens":0,"outputTokens":0,"count":1,"usd":0,"severity":"INFO","message":"pa.spend.daily"}
+{"pa.metric":"pa.spend.daily","kind":"chat","service":"siliconflow","model":"Qwen/Qwen2.5-7B-Instruct","inputTokens":0,"outputTokens":0,"count":1,"usd":0,"severity":"INFO","message":"pa.spend.daily"}
+{"pa.metric":"pa.spend.daily","kind":"chat","service":"siliconflow","model":"Qwen/Qwen2.5-7B-Instruct","inputTokens":0,"outputTokens":0,"count":1,"usd":0,"severity":"INFO","message":"pa.spend.daily"}
+{"pa.metric":"pa.spend.daily","kind":"chat","service":"siliconflow","model":"Qwen/Qwen2.5-7B-Instruct","inputTokens":0,"outputTokens":0,"count":1,"usd":0,"severity":"INFO","message":"pa.spend.daily"}
+▶ llmRerank
+  ✔ happy path: 4-job input → ranked 1..4 with reasoning passthrough (4.148416ms)
+  ✔ invalid JSON from LLM → ranked = [] (0.484208ms)
+  ✔ LLM returns jobIds not in input → hallucinated entries filtered out (0.190292ms)
+  ✔ duplicate ranks + reverse order → sanitize re-sequences 1..N by emitted rank (0.160375ms)
+  ✔ empty input.jobs → ranked = [] and NO LLM call (short-circuit) (0.074166ms)
+  ✔ score out of [0, 1] → clamped (0.117708ms)
+  ✔ reasoning > 200 chars → truncated to exactly 200 (0.128084ms)
+{"severity":"WARNING","message":"[llm-rerank] no_api_key"}
+{"error":"siliconflow 429","jobCount":3,"severity":"WARNING","message":"[llm-rerank] api_call_failed"}
+{"pa.metric":"pa.spend.daily","kind":"chat","service":"siliconflow","model":"Qwen/Qwen2.5-7B-Instruct","inputTokens":0,"outputTokens":0,"count":1,"usd":0,"severity":"INFO","message":"pa.spend.daily"}
+{"pa.metric":"pa.spend.daily","kind":"chat","service":"siliconflow","model":"Qwen/Qwen2.5-7B-Instruct","inputTokens":0,"outputTokens":0,"count":1,"usd":0,"severity":"INFO","message":"pa.spend.daily"}
+{"pa.metric":"pa.spend.daily","kind":"chat","service":"siliconflow","model":"Qwen/Qwen2.5-7B-Instruct","inputTokens":0,"outputTokens":0,"count":1,"usd":0,"severity":"INFO","message":"pa.spend.daily"}
+{"pa.metric":"pa.spend.daily","kind":"chat","service":"siliconflow","model":"Qwen/Qwen2.5-7B-Instruct","inputTokens":0,"outputTokens":0,"count":1,"usd":0,"severity":"INFO","message":"pa.spend.daily"}
+{"pa.metric":"pa.spend.daily","kind":"chat","service":"siliconflow","model":"Qwen/Qwen2.5-7B-Instruct","inputTokens":0,"outputTokens":0,"count":1,"usd":0,"severity":"INFO","message":"pa.spend.daily"}
+{"pa.metric":"pa.spend.daily","kind":"chat","service":"siliconflow","model":"Qwen/Qwen2.5-7B-Instruct","inputTokens":0,"outputTokens":0,"count":1,"usd":0,"severity":"INFO","message":"pa.spend.daily"}
+{"pa.metric":"pa.spend.daily","kind":"chat","service":"siliconflow","model":"Qwen/Qwen2.5-7B-Instruct","inputTokens":0,"outputTokens":0,"count":1,"usd":0,"severity":"INFO","message":"pa.spend.daily"}
+  ✔ missing API key (no client + no env) → ranked = [] (graceful) (134.721166ms)
+  ✔ LLM throws → ranked = [] (caught, never propagates) (0.241041ms)
+  ✔ non-numeric score string → coerced via Number() (0.162959ms)
+  ✔ non-string reasoning → coerced to empty string (0.093959ms)
+  ✔ duplicate jobIds in LLM output → keep first occurrence (0.085125ms)
+  ✔ malformed `ranked` (missing key / not array) → ranked = [] (0.09725ms)
+  ✔ entry without jobId / non-string jobId → dropped (0.061417ms)
+  ✔ latencyMs reflects injected clock (0.065625ms)
+✔ llmRerank (141.472666ms)
+▶ formatJobMatchReason
+  ✔ missing matchScore → empty string (0.427334ms)
+  ✔ high skill + skills ∩ found → lists 2 matches (zh) (0.20625ms)
+  ✔ high skill + skills ∩ found (en) (0.067958ms)
+  ✔ high skill + skills ∩ (mixed lang) (0.059291ms)
+  ✔ high embedding only → vibe phrase (zh, no targetRole) (0.079375ms)
+  ✔ high embedding + targetRole=['swe'] → SWE-aligned phrase (en) (0.058791ms)
+  ✔ user needs sponsor + job offers sponsor + sponsorship score 1.0 → mentions sponsor (zh) (0.065291ms)
+  ✔ user does NOT need sponsor → sponsorship suppressed even if score=1 (0.051458ms)
+  ✔ high location + user has location pref → mentions location (zh) (0.069375ms)
+  ✔ high location + no location pref → location suppressed (0.064958ms)
+  ✔ multi-dim → top 2 by weighted contribution (skill 1.0 wins over location 1.0) (0.088333ms)
+  ✔ only weak signals + total ≥ 0.4 → conservative fallback phrase (0.051625ms)
+  ✔ low total + nothing strong → empty (graceful fallback) (0.034666ms)
+  ✔ output respects zh length cap (≤50) (0.0645ms)
+  ✔ output respects en length cap (≤70) (0.042459ms)
+  ✔ skill score high but no actual ∩ in surfaced lists → renders empty for that dim, falls back (0.105ms)
+✔ formatJobMatchReason (2.138833ms)
+▶ matching-jobs-mappers: vocab integrity
+  ✔ every JOBRIGHT_CATEGORY_TO_ROLE_FUNCTION value is valid RoleFunction (0.671792ms)
+  ✔ every LEGACY_INDUSTRY_TO_CANONICAL value is valid IndustrySector (0.210209ms)
+  ✔ category map covers 17 mapped + general (18 entries) (0.087708ms)
+  ✔ industry map covers 38+ legacy keys (0.069042ms)
+✔ matching-jobs-mappers: vocab integrity (1.851125ms)
+▶ mapJobrightCategoryToRoleFunction: direct category hits
+  ✔ tech → software_engineering (0.96525ms)
+  ✔ data_analytics → data_analysis (0.105ms)
+  ✔ engineering → engineering_and_development (0.055667ms)
+  ✔ product → product_management (0.050417ms)
+  ✔ business → business_analyst (0.051ms)
+  ✔ design → creatives_and_design (0.05325ms)
+  ✔ consulting → consultant (0.036959ms)
+  ✔ accounting_finance → accounting_and_finance (0.03125ms)
+  ✔ marketing → marketing (0.028167ms)
+  ✔ management → management_and_executive (0.027417ms)
+  ✔ sales → sales (0.025375ms)
+  ✔ human_resources → human_resources (0.03425ms)
+  ✔ legal → legal_and_compliance (0.025584ms)
+  ✔ arts_entertainment → arts_and_entertainment (0.023792ms)
+  ✔ education → education_and_training (0.02525ms)
+  ✔ government → public_sector_and_government (0.030167ms)
+  ✔ customer_service → customer_service_and_support (0.023167ms)
+  ✔ uppercase + whitespace tolerated (0.03475ms)
+✔ mapJobrightCategoryToRoleFunction: direct category hits (2.415ms)
+▶ mapJobrightCategoryToRoleFunction: general/unknown fallback
+  ✔ general + SWE title → software_engineering via regex (0.905625ms)
+  ✔ general + no title → [] (0.034625ms)
+  ✔ unknown category + PM title → includes product_management (0.605292ms)
+  ✔ missing category + DS title → data_analysis (0.035958ms)
+  ✔ multi-role title: SWE / Tech Lead → both functions (0.037125ms)
+  ✔ ML title spans SWE + data_analysis (1.09225ms)
+✔ mapJobrightCategoryToRoleFunction: general/unknown fallback (2.883916ms)
+▶ inferRoleFromTitle: regex matches
+  ✔ "Software Engineer" includes software_engineering (0.224208ms)
+  ✔ "Backend Developer" includes software_engineering (0.039625ms)
+  ✔ "iOS Developer" includes software_engineering (0.027ms)
+  ✔ "Data Analyst" includes data_analysis (0.024375ms)
+  ✔ "Business Intelligence Analyst" includes data_analysis (0.023417ms)
+  ✔ "Product Manager" includes product_management (0.03675ms)
+  ✔ "Business Analyst" includes business_analyst (0.023167ms)
+  ✔ "UX Designer" includes creatives_and_design (0.028708ms)
+  ✔ "Senior Consultant" includes consultant (0.026583ms)
+  ✔ "Staff Accountant" includes accounting_and_finance (0.0315ms)
+  ✔ "Marketing Manager" includes marketing (0.022584ms)
+  ✔ "Sales Director" includes sales (0.023333ms)
+  ✔ "Human Resources Manager" includes human_resources (0.025875ms)
+  ✔ "Compliance Counsel" includes legal_and_compliance (0.0235ms)
+  ✔ "Performing Artist" includes arts_and_entertainment (0.022417ms)
+  ✔ "Math Teacher" includes education_and_training (0.039417ms)
+  ✔ "Federal Policy Analyst" includes public_sector_and_government (0.022916ms)
+  ✔ "Customer Success Manager" includes customer_service_and_support (0.02325ms)
+  ✔ Tech Lead by itself → management_and_executive (0.04525ms)
+  ✔ nonsense title → [] (0.033666ms)
+  ✔ empty title → [] (0.031459ms)
+✔ inferRoleFromTitle: regex matches (1.034542ms)
+▶ mapLegacyIndustryToCanonical: direct hits
+  ✔ tech → [technology_general] (0.171834ms)
+  ✔ fintech → [financial_technology] (0.017875ms)
+  ✔ healthtech → [healthcare_and_life_sciences] (0.017459ms)
+  ✔ healthcare → [healthcare_and_life_sciences] (0.027459ms)
+  ✔ ecommerce → [e_commerce_and_retail] (0.01775ms)
+  ✔ enterprise_saas → [software_and_saas] (0.019708ms)
+  ✔ ai_ml → [artificial_intelligence_and_machine_learning] (0.015333ms)
+  ✔ cybersecurity → [cybersecurity] (0.053958ms)
+  ✔ gaming → [gaming_and_esports] (0.077541ms)
+  ✔ social_media → [media_and_entertainment] (1.490708ms)
+  ✔ hardware → [hardware_and_semiconductors] (0.033125ms)
+  ✔ consulting → [management_consulting] (0.022625ms)
+  ✔ telecom → [telecommunications] (0.018958ms)
+  ✔ automotive → [automotive_and_mobility] (0.018667ms)
+  ✔ aerospace_defense → [aerospace_and_defense] (0.017292ms)
+  ✔ construction → [construction_and_built_environment] (0.137333ms)
+  ✔ defense → [aerospace_and_defense] (0.022375ms)
+  ✔ security → [cybersecurity] (0.042708ms)
+  ✔ manufacturing → [manufacturing_and_industrial] (0.024042ms)
+  ✔ retail → [e_commerce_and_retail] (0.017959ms)
+  ✔ media → [media_and_entertainment] (0.016708ms)
+  ✔ education → [education_technology] (0.019042ms)
+  ✔ government → [public_sector_and_government] (0.016875ms)
+  ✔ energy → [energy_and_utilities] (0.0165ms)
+  ✔ transportation → [transportation_and_logistics] (0.791792ms)
+  ✔ hospitality → [hospitality_and_travel] (0.227083ms)
+  ✔ real_estate → [real_estate_and_proptech] (0.158458ms)
+  ✔ nonprofit → [non_profit_and_social_impact] (1.811167ms)
+  ✔ legal → [legal_services] (0.031667ms)
+  ✔ pharma → [biotechnology_and_pharmaceuticals] (0.02175ms)
+  ✔ banking → [financial_technology] (0.234417ms)
+  ✔ finance → [financial_technology] (0.117917ms)
+  ✔ insurance → [financial_technology] (0.040583ms)
+  ✔ logistics → [transportation_and_logistics] (0.024541ms)
+  ✔ food_service → [hospitality_and_travel] (0.021917ms)
+  ✔ agriculture → [agriculture_and_foodtech] (0.021208ms)
+  ✔ mining → [manufacturing_and_industrial] (0.050125ms)
+  ✔ utilities → [energy_and_utilities] (0.019417ms)
+  ✔ other → [] (0.041041ms)
+  ✔ unknown → [] (0.023459ms)
+  ✔ empty / null / undefined → [] (0.025083ms)
+  ✔ uppercase + whitespace tolerated (0.025625ms)
+  ✔ unmapped key → [] (no fallback) (0.02375ms)
+✔ mapLegacyIndustryToCanonical: direct hits (10.947917ms)
+▶ computeMatchingJobV16Fields: live-data shape (production)
+  ✔ typical jobright doc: industryKey='engineering' + roleTitle='Optical Manufacturing Technician' (0.14275ms)
+  ✔ industryKey is industry-style: 'fintech' → industrySector (0.051583ms)
+  ✔ industryEnum array: ['healthcare_biotech'] → healthcare_and_life_sciences (0.062166ms)
+  ✔ industryKey 'human_resources' → category match (0.031292ms)
+  ✔ industryKey 'sales' → sales category (0.027709ms)
+  ✔ industryKey 'tech' resolves via category map (tech → software_engineering) (0.028292ms)
+  ✔ falls through to no_mapping if nothing matches (0.0365ms)
+  ✔ uses jobTitle when roleTitle missing (0.036875ms)
+  ✔ explicit category beats industryKey (0.035208ms)
+✔ computeMatchingJobV16Fields: live-data shape (production) (0.564ms)
+▶ idempotency: deterministic for same input
+  ✔ same category twice → same output (0.091ms)
+  ✔ same general+title twice → same output (0.034ms)
+  ✔ same legacy industry key twice → same output (0.022083ms)
+✔ idempotency: deterministic for same input (0.181833ms)
+{"previewLen":18,"severity":"WARNING","message":"pa.qa_judge.invalid_json"}
+{"err":"Error: rate-limit boom","severity":"WARNING","message":"pa.qa_judge.api_call_failed"}
+▶ evaluateQaPair
+  ✔ happy path: valid JSON → both flags + reasoning passthrough (2.717375ms)
+  ✔ mixed verdict: hardFilter true, top3 false (0.367ms)
+  ✔ both false verdict (0.1385ms)
+  ✔ empty content → conservative-fail (false, false) (0.101125ms)
+  ✔ invalid JSON → conservative-fail (0.494375ms)
+  ✔ missing API key → conservative-fail without LLM call (0.096458ms)
+  ✔ LLM throws → conservative-fail (judge_error) (0.121ms)
+  ✔ reasoning > 500 chars → truncated (0.068125ms)
+  ✔ non-string reasoning → empty string (0.065542ms)
+  ✔ array instead of object → conservative-fail (malformed_object) (0.083334ms)
+  ✔ boolean strings (e.g. "true") → coerced to false (strict === true) (0.074917ms)
+  ✔ null content → conservative-fail (empty_response) (0.061042ms)
+  ✔ missing reasoning field → empty string, flags still parsed (0.055791ms)
+✔ evaluateQaPair (5.295708ms)
+{"reason":"no_webhook_env","title":"T","severity":"INFO","message":"pa.slack.alert_skipped"}
+{"reason":"no_webhook_env","title":"T","severity":"INFO","message":"pa.slack.alert_skipped"}
+{"status":503,"title":"Down","severity":"WARNING","message":"pa.slack.alert_failed"}
+{"err":"network down","title":"Net","severity":"WARNING","message":"pa.slack.alert_error"}
+▶ postSlackAlert
+  ✔ skips silently when webhook URL is not set (0.852291ms)
+  ✔ treats __UNSET__ Adam-placeholder as not set (0.095583ms)
+  ✔ returns posted=true on HTTP 200 (0.792209ms)
+  ✔ returns posted=false with http_<status> reason on non-OK (0.168167ms)
+  ✔ returns posted=false with fetch_error reason when fetch throws (3.848583ms)
+  ✔ emits 🚨 emoji for level=error (0.22525ms)
+  ✔ emits ⚠️ emoji for level=warn (0.135916ms)
+  ✔ emits ℹ️ emoji for level=info (0.107584ms)
+  ✔ includes a fields block when fields are provided (0.186916ms)
+  ✔ includes a link block when link is provided (0.139125ms)
+✔ postSlackAlert (7.144041ms)
+{"error":"firestore error","severity":"WARNING","message":"[sponsorship] allowlist_override_failed"}
+{"preview":"I refuse to comply.","severity":"WARNING","message":"[sponsorship] sonnet_unparseable"}
+{"error":"Anthropic 500","severity":"WARNING","message":"[sponsorship] sonnet_failed"}
+{"error":"OpenAI 503","severity":"WARNING","message":"[sponsorship] openai_failed"}
+{"error":"a","severity":"WARNING","message":"[sponsorship] sonnet_failed"}
+{"error":"o","severity":"WARNING","message":"[sponsorship] openai_failed"}
+{"error":"o","severity":"WARNING","message":"[sponsorship] qwen_failed"}
+{"preview":"not json","severity":"WARNING","message":"[sponsorship] sonnet_unparseable"}
+{"preview":"not json at all","severity":"WARNING","message":"[sponsorship] openai_unparseable"}
+{"preview":"not json at all","severity":"WARNING","message":"[sponsorship] qwen_unparseable"}
+▶ companySlug
+  ✔ lowercases (0.558083ms)
+  ✔ trims whitespace (0.238792ms)
+  ✔ collapses internal whitespace to single space (0.129958ms)
+  ✔ preserves punctuation (j.p. morgan != jpmorgan) (0.104333ms)
+  ✔ empty / null / undefined → empty string (0.099583ms)
+  ✔ non-string → empty string (0.211667ms)
+✔ companySlug (3.054042ms)
+▶ inferSponsorship — invalid input
+  ✔ missing jobTitle → null + 'no_input' (0.5185ms)
+  ✔ non-string jobTitle → null + 'no_input' (0.16425ms)
+  ✔ undefined input → null + 'no_input' (0.161959ms)
+✔ inferSponsorship — invalid input (1.089667ms)
+▶ inferSponsorship — allowlist tier
+  ✔ allowlist hit (sponsor) → true + source='allowlist' + confidence ≥ 0.95 (0.334083ms)
+  ✔ allowlist hit (non-sponsor defense contractor) → false (0.090292ms)
+  ✔ allowlist hit defaults confidence to 1.0 when entry omits it (0.084917ms)
+  ✔ allowlist override throws → falls through to LLM (graceful) (0.629667ms)
+  ✔ allowlist takes precedence — LLM NEVER called when allowlist hits (0.070125ms)
+  ✔ missing companyName → skip allowlist → fall to LLM (0.089791ms)
+  ✔ default Firestore path: missing doc → falls through (no override) (0.104875ms)
+  ✔ default Firestore path: doc present → returns from allowlist (0.053583ms)
+✔ inferSponsorship — allowlist tier (1.601416ms)
+▶ inferSponsorship — Sonnet tier
+  ✔ 'H-1B sponsorship available' → true (0.107834ms)
+  ✔ 'no visa sponsorship' → false (0.065334ms)
+  ✔ ambiguous → null + confidence forced to 0 (0.068792ms)
+  ✔ string 'true' is NOT a true (strict bool only) (0.06725ms)
+  ✔ number 1 is NOT true (strict bool only) (0.06625ms)
+  ✔ markdown-fenced JSON is parsed (0.094208ms)
+  ✔ confidence > 1 clamped to 1 (0.070083ms)
+  ✔ reasoning > 200 chars truncated (0.100833ms)
+  ✔ Sonnet returns garbage (non-JSON) → falls through to OpenAI (0.20975ms)
+  ✔ Sonnet throws → falls through to OpenAI (0.134958ms)
+✔ inferSponsorship — Sonnet tier (1.075667ms)
+▶ inferSponsorship — Qwen fallback
+  ✔ OpenAI fail → Qwen-7B success returns 'jd_inference_fallback' (0.151083ms)
+  ✔ only siliconflow key → Qwen path direct (0.069125ms)
+✔ inferSponsorship — Qwen fallback (0.256333ms)
+▶ inferSponsorship — all failed
+  ✔ no API keys at all → null + 'all_failed' + 0 confidence (0.054417ms)
+  ✔ all providers throw → null + 'all_failed' (0.151167ms)
+  ✔ all providers return unparseable text → null + 'all_failed' (0.884666ms)
+✔ inferSponsorship — all failed (1.15675ms)
+{"userId":"u-1","ranked":2,"latencyMs":1234,"severity":"INFO","message":"[job-recs] llmRerank cache written"}
+▶ orchestrator-deps targetRole → industryEnum wire-through
+  ✔ ['swe'] expands to tech_software bucket (SWE doesn't get Warehouse) (0.458209ms)
+  ✔ ['founder'] returns undefined → caller omits targetRoleIndustryEnum filter (0.089625ms)
+  ✔ undefined input returns undefined → no filter applied (0.045709ms)
+  ✔ empty array returns undefined → no filter applied (0.040916ms)
+  ✔ filter shape: when buckets undefined, spread omits the field (0.049042ms)
+  ✔ filter shape: when buckets defined, spread injects the field (0.182333ms)
+✔ orchestrator-deps targetRole → industryEnum wire-through (1.463125ms)
+▶ generateJobRecs compose: per-job line shape (iter34 B.11)
+  ✔ includes 为啥推 line when matchScore present + signal strong (zh) (0.404709ms)
+  ✔ legacy fallback: no matchScore → reason line dropped (2 lines) (0.085792ms)
+  ✔ en path renders 'why:' label (0.091083ms)
+  ✔ preserves atsApplyUrl preference (iter34 sprint A.2 — no regression) (0.08075ms)
+✔ generateJobRecs compose: per-job line shape (iter34 B.11) (0.792083ms)
+▶ isDegenerateLLMOutput (iter34 H.2 CR1)
+  ✔ trips on 'Docker, Docker, Docker...' x60 (G5 sim regression) (0.165041ms)
+  ✔ trips when ANY single token >= threshold (default 10) (0.060208ms)
+  ✔ does NOT trip on a healthy diverse summary (0.067917ms)
+  ✔ does NOT trip on legitimate skill repetition (each token < threshold) (0.031667ms)
+  ✔ trips on the cyclical-attention pathology with comma separators (0.028041ms)
+  ✔ returns false on empty / non-string (0.025333ms)
+✔ isDegenerateLLMOutput (iter34 H.2 CR1) (0.456792ms)
+▶ buildCvAnalysisFallback (iter34 H.2 CR1)
+  ✔ composes top-5 skills + recent role@company in zh (0.102583ms)
+  ✔ composes top-5 skills + recent role@company in en (0.034625ms)
+  ✔ falls back gracefully when only skills present (no role) (0.028834ms)
+  ✔ returns generic line when no signal at all (0.028459ms)
+  ✔ ignores empty/non-string skills entries (defensive) (0.028666ms)
+✔ buildCvAnalysisFallback (iter34 H.2 CR1) (0.275917ms)
+{"userId":"u-2","latencyMs":100,"severity":"INFO","message":"[job-recs] llmRerank empty — skipping cache write"}
+▶ fireAndForgetLlmRerank (iter34 H.2 CR4)
+  ✔ calls llmRerank with mapped candidate + top5 jobs and writes pa-user-rerank-cache (6.131166ms)
+{"userId":"u-3","err":"network error","severity":"WARNING","message":"[job-recs] fireAndForgetLlmRerank failed"}
+  ✔ when llmRerank returns empty ranked → does NOT write cache (0.513583ms)
+{"userId":"u-4","ranked":1,"latencyMs":50,"severity":"INFO","message":"[job-recs] llmRerank cache written"}
+  ✔ when llmRerank rejects → caller is not affected (errors swallowed) (0.615125ms)
+{"userId":"u-5","ranked":1,"latencyMs":50,"severity":"INFO","message":"[job-recs] llmRerank cache written"}
+  ✔ maps sponsorship null → false in rerank input (defensive) (0.900083ms)
+  ✔ composes salaryRange when both salaryMin + salaryMax provided (0.465666ms)
+✔ fireAndForgetLlmRerank (iter34 H.2 CR4) (8.890375ms)
+▶ makeGenerateJobRecs filters: cvEmbedding wire-through (iter34 H.2 CR5)
+  ✔ filter shape: cvEmbedding from CV doc → spread injects (0.084792ms)
+  ✔ filter shape: undefined cvEmbedding → spread omits the field (0.033ms)
+  ✔ priority: pa-users.tags.embedding > parsedCandidateResumes.embedding (0.06125ms)
+  ✔ priority: pa-users.tags missing → falls back to CV embedding (0.031458ms)
+  ✔ priority: both missing → undefined → no filter injected (0.036958ms)
+  ✔ validation: empty array does NOT short-circuit ?? — treated as defined (0.028541ms)
+  ✔ validation: non-numeric entries should be filtered before the wire (0.032541ms)
+✔ makeGenerateJobRecs filters: cvEmbedding wire-through (iter34 H.2 CR5) (0.479542ms)
+▶ runAdminOutreachOpsSnapshot
+  ✔ projects typed invite rows with summary and capacity evidence (1.820375ms)
+  ✔ filters by status and approval state after reading S6 rows (0.303209ms)
+✔ runAdminOutreachOpsSnapshot (2.575416ms)
+▶ evaluateOutreachPolicy
+  ✔ allows live queueing for an approved auto_outbound retained candidate (1.898167ms)
+  ✔ keeps dry-run as a persisted decision without allowing queueing (1.787583ms)
+  ✔ routes hitl_review to pending approval without queueing (0.751166ms)
+  ✔ blocks S5 do_not_contact and hard filters (0.21375ms)
+  ✔ blocks opted-out paused deleted and do-not-contact candidates (0.732958ms)
+  ✔ blocks live queueing without a reachable phone (0.687292ms)
+  ✔ blocks active cooldown with a concrete cooldownUntil or recent last outbound (4.664041ms)
+  ✔ suppresses existing non-terminal invites and already advanced candidate-job states (0.173792ms)
+  ✔ blocks recent decline and same company role duplicate windows (0.283334ms)
+  ✔ blocks capacity-full and review-gates warmup groups (0.133125ms)
+✔ evaluateOutreachPolicy (15.778083ms)
+▶ planJobOutreach
+  ✔ dry-run persists invite decisions without enqueueing outbound rows (0.937208ms)
+  ✔ live approved path writes invite, enqueues outbound, and marks queued (0.260083ms)
+  ✔ live approved path blocks before enqueue when transactional capacity reservation fails (0.173208ms)
+  ✔ blocked and HITL decisions write evidence but do not queue (0.1775ms)
+  ✔ uses existing invite history to keep reruns idempotent (0.150375ms)
+✔ planJobOutreach (2.195833ms)
+▶ renderOutreachInviteBody
+  ✔ renders deterministic candidate-facing copy with the public job URL (0.090834ms)
+✔ renderOutreachInviteBody (0.160417ms)
+▶ runPrescreenTerminalAction — PASS branch (v1.9 hotfix)
+  ✔ sends Level 1 reveal then starts PII pipeline (source=pass) (2.698292ms)
+✔ runPrescreenTerminalAction — PASS branch (v1.9 hotfix) (3.146833ms)
+▶ runPrescreenTerminalAction — FAIL branch (v1.9 hotfix)
+  ✔ sends preamble + starts PII pipeline (source=fail) + onComplete fires job recs (0.266834ms)
+✔ runPrescreenTerminalAction — FAIL branch (v1.9 hotfix) (0.335916ms)
+▶ runPrescreenTerminalAction — HARD_STOP branch (v1.9 hotfix)
+  ✔ same as FAIL: preamble + PII (source=fail) + job recs (0.200209ms)
+✔ runPrescreenTerminalAction — HARD_STOP branch (v1.9 hotfix) (0.252041ms)
+▶ runPrescreenTerminalAction — PAUSE branch
+  ✔ writes pausedAt; no PII start, no recs (0.13525ms)
+✔ runPrescreenTerminalAction — PAUSE branch (0.182458ms)
+▶ runPrescreenTerminalAction — idempotency
+  ✔ second call no-ops when terminalActionFiredAt already stamped (0.275625ms)
+✔ runPrescreenTerminalAction — idempotency (0.514125ms)
+▶ runPrescreenTerminalAction — fail-open
+  ✔ PII start failure does NOT block stamp/audit (0.826541ms)
+✔ runPrescreenTerminalAction — fail-open (1.058666ms)
+▶ runSweep — kill switch
+  ✔ Test 4: returns immediately when PA_PROACTIVE_DISABLED=1, no Firestore reads (1.505ms)
+✔ runSweep — kill switch (2.032166ms)
+▶ runSweep — basic dispatch
+  ✔ Test 1: dispatches due pending jobs via runProactiveTurn (4.558041ms)
+✔ runSweep — basic dispatch (4.6545ms)
+▶ runSweep — idempotency
+  ✔ Test 2/3: same job fired twice → exactly one runProactiveTurn (1.10275ms)
+✔ runSweep — idempotency (1.190417ms)
+▶ runSweep — failure handling
+  ✔ Test 5: dispatch failure increments attempts, then dead_letter at maxAttempts (0.182958ms)
+✔ runSweep — failure handling (0.237209ms)
+▶ checkAdminToken — admin gate (Phase 22 trigger plan)
+  ✔ returns 503 when PA_ADMIN_TOKEN env is unset (no accidental open access) (0.122041ms)
+  ✔ returns 401 when x-admin-token header is missing (0.060625ms)
+  ✔ returns 401 when x-admin-token header is wrong (0.054042ms)
+  ✔ returns ok when x-admin-token header matches (0.0555ms)
+✔ checkAdminToken — admin gate (Phase 22 trigger plan) (0.431167ms)
+▶ runSweep — cap at 50 jobs
+  ✔ Test 6: bounded at 50 jobs per invocation (1.443375ms)
+✔ runSweep — cap at 50 jobs (1.477458ms)
+▶ useDmAllowlist (fail-closed default)
+  ✔ returns true when env unset (fail-closed default per 17-CONTEXT) (0.495458ms)
+  ✔ returns false ONLY when IMESSAGE_DM_ALLOWLIST=0 (0.125708ms)
+  ✔ stays true for any other value (1, true, foo, empty string) (0.128542ms)
+✔ useDmAllowlist (fail-closed default) (1.184084ms)
+▶ getPeerAllowlist parsing + normalization
+  ✔ returns empty array when no env set (9.703042ms)
+  ✔ parses CSV from IMESSAGE_PEERS, normalizes to E.164 (0.787583ms)
+  ✔ parses semicolon and newline separators (0.175291ms)
+  ✔ merges IMESSAGE_PEER + IMESSAGE_PEERS + IMESSAGE_DEFAULT_PEER (0.102125ms)
+  ✔ lowercases email peers (0.096708ms)
+✔ getPeerAllowlist parsing + normalization (12.5055ms)
+▶ isSamePeer (E.164 last-10 match + email case-insensitive)
+  ✔ returns true for last-10-digit match across E.164 forms (0.089333ms)
+  ✔ returns false on null `a` (0.053209ms)
+  ✔ returns false on email vs phone mismatch (0.0465ms)
+  ✔ compares email peers case-insensitively (0.033ms)
+  ✔ returns false when digits < 10 and forms differ (no last-10 fallback) (0.037375ms)
+✔ isSamePeer (E.164 last-10 match + email case-insensitive) (0.345583ms)
+▶ normalizePeer
+  ✔ normalizes US 10-digit to +1XXXXXXXXXX (0.049541ms)
+  ✔ preserves leading + and strips formatting (0.032959ms)
+  ✔ lowercases email (0.024ms)
+  ✔ returns empty string on empty/whitespace (0.0225ms)
+✔ normalizePeer (0.17925ms)
+✔ breaker starts CLOSED (0.411125ms)
+✔ 4 failures stay CLOSED, 5th opens (0.090916ms)
+✔ success resets failure count (0.066708ms)
+✔ OPEN transitions to HALF_OPEN after 60s (0.060375ms)
+✔ recordSuccess in HALF_OPEN closes breaker (0.05125ms)
+✔ named keys are independent (0.045459ms)
+▶ verifySendblueSignature
+  ✔ returns true when HMAC of raw body + secret matches header (hex SHA-256) (0.616834ms)
+  ✔ returns false when body is tampered after signing (0.111916ms)
+  ✔ returns false when secret is wrong (0.063084ms)
+  ✔ returns false when header is missing or empty (0.046208ms)
+  ✔ returns false on equal-length-but-wrong-byte (timing-safe equality, not string ===) (0.066875ms)
+  ✔ accepts hex encoding (per 21-CONTRACT-NOTES.md §2) (0.126333ms)
+  ✔ accepts Buffer raw body (Firebase Functions onRequest exposes req.rawBody as Buffer) (0.06ms)
+  ✔ does not throw on malformed inputs (0.082042ms)
+✔ verifySendblueSignature (1.699042ms)
+▶ isInboundReceiveEvent
+  ✔ returns true for well-formed receive payload (0.338042ms)
+  ✔ returns false when is_outbound=true (outbound mirror, not receive) (0.053042ms)
+  ✔ returns false when message_handle missing (0.04725ms)
+  ✔ returns false when from_number missing (0.040334ms)
+  ✔ returns false on null / non-object inputs (0.05ms)
+✔ isInboundReceiveEvent (0.963375ms)
+▶ normalizeSendblueInbound
+  ✔ extracts canonical fields with sendblue- idempotency key prefix (D-02) (0.165208ms)
+  ✔ synthesizes 1:1 chatId in iMessage;-;${from_number} form (0.043125ms)
+  ✔ returns null for outbound mirror events (0.049417ms)
+  ✔ flags isGroup=true when group_id is non-empty (0.056541ms)
+  ✔ treats empty string group_id as 1:1 (not group) (0.060083ms)
+  ✔ returns null for empty content (matches macOS worker '[dm] empty; skip') (0.051625ms)
+  ✔ returns null for whitespace-only content (0.037875ms)
+  ✔ throws when message_handle is missing (cannot enqueue without idempotency key) (0.183458ms)
+  ✔ trims content whitespace (0.04575ms)
+✔ normalizeSendblueInbound (0.856875ms)
+▶ pa.outbound.failed structured log (Stream H4 D4)
+  ✔ user-not-found path emits pa.outbound.failed with required fields (3.328917ms)
+✔ pa.outbound.failed structured log (Stream H4 D4) (4.108291ms)
+▶ paSendblueOutboxRetrySweepHandler (Stream H9 TD2)
+  ✔ test 1: 3 orphans (>60s old) + 2 fresh (<60s) → 3 reprocessed (18.690667ms)
+  ✔ test 2: concurrency cap = 2 → never more than 2 sendImessage in flight (136.455417ms)
+  ✔ test 3: second sweep on already-sent rows → idempotent (no re-send) (25.595ms)
+✔ paSendblueOutboxRetrySweepHandler (Stream H9 TD2) (181.894833ms)
+▶ sweepStaleOutbound (Stream H4 D2)
+  ✔ test 1: stuck sending >10min → swept to pending + log emitted (2.731084ms)
+  ✔ test 2: fresh sending <10min → untouched (idempotency under fast retries) (0.129917ms)
+  ✔ test 3: pending attempts>=5 → moved to dead_letter + log emitted (0.20425ms)
+✔ sweepStaleOutbound (Stream H4 D2) (3.56725ms)
+▶ paSendblueOutboxHandler
+  ✔ Test 1: pending row + allowlisted toE164 → fetch called once → status=sent (6.806166ms)
+  ✔ Test 2: non-allowlisted toE164 → status=failed with allowlist error (mirror macOS worker) (0.410167ms)
+  ✔ Test 3: SendblueClientError (4xx) → status=failed with parsed Sendblue error (0.71275ms)
+  ✔ Test 4: SendblueServerError (5xx) → status=pending + attempt incremented (0.892541ms)
+  ✔ Test 5: claim transaction prevents double-send (status != pending) (0.456292ms)
+  ✔ Test 6: PA_TYPING_INDICATOR=1 → typing called BEFORE send; =0 → skipped (D-06) (1002.642416ms)
+  ✔ Test 7: PA_CHANNEL_LEGACY=1 → CF returns early, NO send (D-08) (0.223292ms)
+  ✔ Test 8: idempotency — same docId triggered twice → only ONE Sendblue POST (0.425917ms)
+  ✔ Test 9: shouldAppendOutboundTranscript skips out-imessage-in- AND out-sendblue- prefixes (0.153ms)
+  ✔ Test 10 (Phase 26 T2): existing count at 80% → soft-warn audit, send still proceeds (1.272667ms)
+  ✔ Test 11 (Phase 26 T2): existing count at 100% → hard-block, NO send, audit emitted (0.649209ms)
+✔ paSendblueOutboxHandler (1015.587916ms)
+▶ selectSendblueCapacityGroup
+  ✔ selects an active group below daily cap (0.612042ms)
+  ✔ does not select full groups for new candidates (0.090791ms)
+  ✔ filters paused throttled and degraded groups (0.05925ms)
+  ✔ requires explicit warmup allowance (0.084416ms)
+  ✔ preserves sticky assignment when routable and below cap (0.056834ms)
+  ✔ blocks sticky assignment when full instead of silently reassigning (0.0635ms)
+  ✔ blocks missing capacity rather than treating it as unlimited (0.057625ms)
+✔ selectSendblueCapacityGroup (1.520917ms)
+▶ sendReaction
+  ✔ success path: 2xx → returns parsed body, posts correct shape to send-reaction endpoint (17.420333ms)
+  ✔ 4xx path: throws SendblueClientError with status + message; does NOT count toward breaker (1.643167ms)
+  ✔ 5xx path: throws SendblueServerError; counts toward breaker (1.983167ms)
+  ✔ breaker OPEN: fail-fast 503 without hitting network (0.253292ms)
+  ✔ guard: missing messageHandle throws SendblueClientError(400) before fetch (11.900042ms)
+✔ sendReaction (34.87775ms)
+▶ parseInboundTapback
+  ✔ parses love (Loved “Career check-in tomorrow?”) (0.51475ms)
+  ✔ parses love (Loved "Career check-in tomorrow?") (0.100959ms)
+  ✔ parses like (Liked “Here are 3 jobs”) (0.102416ms)
+  ✔ parses like (Liked 'Here are 3 jobs') (0.05675ms)
+  ✔ parses dislike (Disliked “noisy update”) (0.036666ms)
+  ✔ parses dislike (Disliked "noisy update") (0.03425ms)
+  ✔ parses laugh (Laughed at “see you then”) (0.044416ms)
+  ✔ parses laugh (Laughed at "see you then") (0.033125ms)
+  ✔ parses emphasize (Emphasized “test”) (0.0405ms)
+  ✔ parses emphasize (Emphasized "test") (0.068541ms)
+  ✔ parses question (Questioned “draft attached”) (0.04625ms)
+  ✔ parses question (Questioned "draft attached") (0.028666ms)
+  ✔ returns null for regular text (negative case) (0.0385ms)
+  ✔ returns null for unsupported verbs (0.03675ms)
+  ✔ returns null for non-string input (0.034333ms)
+  ✔ trims whitespace before parsing (0.037625ms)
+  ✔ rejects multi-line content (anchored regex) (0.029917ms)
+  ✔ respects 200-char quoted-text ceiling (0.043334ms)
+✔ parseInboundTapback (1.93325ms)
+▶ Stream H9 TD1 — expiresAtTs Timestamp writes
+  ✔ computeExpiresAtTs returns a Timestamp N days in the future (16.26075ms)
+  ✔ per-collection helpers use the brief's retention window (0.150833ms)
+  ✔ outbox handler writes Timestamp-typed expiresAtTs on the SENT row (4.556084ms)
+✔ Stream H9 TD1 — expiresAtTs Timestamp writes (21.839042ms)
+▶ computeTypingDwellMs
+  ✔ returns 1000 for 0 chars (empty reply) (1.559625ms)
+  ✔ returns 1000 for 15 chars (mid band 1) (0.250042ms)
+  ✔ returns 1000 for 30 chars (upper boundary, inclusive) (0.12875ms)
+  ✔ returns 2000 for 31 chars (lower boundary of band 2) (0.125708ms)
+  ✔ returns 2000 for 75 chars (mid band 2) (0.153834ms)
+  ✔ returns 2000 for 100 chars (upper boundary, inclusive) (0.236041ms)
+  ✔ returns 3000 for 101 chars (lower boundary of band 3) (0.310375ms)
+  ✔ returns 3000 for 150 chars (mid band 3) (0.186625ms)
+  ✔ returns 3000 for 200 chars (upper boundary, inclusive) (0.14425ms)
+  ✔ returns 4000 for 201 chars (lower boundary of band 4) (0.207125ms)
+  ✔ returns 4000 for 500 chars (long technical reply) (0.09825ms)
+  ✔ returns 1000 for -1 (negative input → minimum tier) (0.08125ms)
+✔ computeTypingDwellMs (5.786917ms)
+[sendblue][webhook] ats-pending-trigger check failed (non-fatal) {
+  fromNumber: '+15551234567',
+  err: 'unexpected collection: pa-ats-pending-trigger'
+}
+pa.dev_trigger.find_match {
+  userId: 'admin-user-uuid',
+  fromNumber: '+15551234567',
+  handle: 'msg-1778730416175-0.2972121423332208'
+}
+[sendblue][webhook] find_match completed { userId: 'admin-user-uuid', jobCount: 5, ok: true, reason: undefined }
+[sendblue][webhook] ats-pending-trigger check failed (non-fatal) {
+  fromNumber: '+15551234567',
+  err: 'unexpected collection: pa-ats-pending-trigger'
+}
+pa.dev_trigger.find_match.unauthorized { fromNumber: '+15551234567', userId: 'non-admin-uuid', adminCount: 1 }
+[sendblue][webhook] ats-pending-trigger check failed (non-fatal) {
+  fromNumber: '+15551234567',
+  err: 'unexpected collection: pa-ats-pending-trigger'
+}
+pa.dev_trigger.find_match.unauthorized {
+  fromNumber: '+15551234567',
+  userId: 'admin-user-uuid',
+  adminCount: 0
+}
+[sendblue][webhook] ats-pending-trigger check failed (non-fatal) {
+  fromNumber: '+15551234567',
+  err: 'unexpected collection: pa-ats-pending-trigger'
+}
+pa.dev_trigger.find_match.unauthorized { fromNumber: '+15551234567', userId: null, adminCount: 1 }
+[sendblue][webhook] ats-pending-trigger check failed (non-fatal) {
+  fromNumber: '+15551234567',
+  err: 'unexpected collection: pa-ats-pending-trigger'
+}
+[sendblue][webhook] enqueued {
+  eventId: 'inb_fc8aaa6a4a866086d9514afb0b269dd8c7604a69',
+  created: true,
+  handle: 'msg-1778730416182-0.1552373765198155',
+  hasAttachment: false
+}
+[cv-confirm-reply][detect] pa.cv_confirm_reply.detect_error {
+  userId: 'admin-user-uuid',
+  error: 'unexpected collection: pa-outbound'
+}
+[sendblue][webhook] ats-pending-trigger check failed (non-fatal) {
+  fromNumber: '+15551234567',
+  err: 'unexpected collection: pa-ats-pending-trigger'
+}
+pa.dev_trigger.find_match {
+  userId: 'admin-user-uuid',
+  fromNumber: '+15551234567',
+  handle: 'msg-1778730416183-0.08964187284913827'
+}
+[sendblue][webhook] find_match completed { userId: 'admin-user-uuid', jobCount: 3, ok: true, reason: undefined }
+▶ __PA_FIND_MATCH__ admin trigger (Phase 60 DEV-01)
+  ✔ Test 1: admin user → trigger fires, audit dev_trigger_find_match, NO broker enqueue (4.644334ms)
+  ✔ Test 2: non-admin user → trigger DOES NOT fire, audit find_match_unauthorized (0.615667ms)
+  ✔ Test 3: PA_ADMIN_USER_IDS unset → trigger blocked, no handler called (1.178417ms)
+  ✔ Test 4: phone has no userId mapping → unauthorized (0.646292ms)
+  ✔ Test 5: regular text (no token) → trigger does NOT short-circuit (0.935041ms)
+[sendblue][webhook] ats-pending-trigger check failed (non-fatal) {
+  fromNumber: '+15551234567',
+  err: 'unexpected collection: pa-ats-pending-trigger'
+}
+pa.dev_trigger.find_match {
+  userId: 'admin-user-uuid',
+  fromNumber: '+15551234567',
+  handle: 'msg-1778730416185-0.257634573025212'
+}
+[sendblue][webhook] find_match completed { userId: 'admin-user-uuid', jobCount: 1, ok: true, reason: undefined }
+  ✔ Test 6: token with surrounding text → still triggers (1.4155ms)
+  ✔ Test 7: comma-separated PA_ADMIN_USER_IDS → all listed admins authorized (0.375375ms)
+✔ __PA_FIND_MATCH__ admin trigger (Phase 60 DEV-01) (10.390541ms)
+[sendblue][webhook] outbound_status_tracked { handle: 'msg-h9-d3-1', sendblueStatus: 'SENT', docId: 'out-doc-1' }
+[sendblue][webhook] outbound_status_tracked {
+  handle: 'msg-h9-d3-1',
+  sendblueStatus: 'DELIVERED',
+  docId: 'out-doc-1'
+}
+[sendblue][webhook] outbound_status_tracked { handle: 'msg-h9-d3-2', sendblueStatus: 'FAILED', docId: 'out-doc-2' }
+[sendblue][webhook] outbound_status_no_row { handle: 'msg-orphan', sendblueStatus: 'DELIVERED' }
+▶ Stream H9 TD3 — webhook updates pa-outbound on delivery confirmation
+  ✔ test 1: SENT → DELIVERED on same handle → SAME row updated, monotonic state (3.846291ms)
+  ✔ test 2: FAILED on outbound_mirror → sendblueFailedAt recorded (0.360458ms)
+  ✔ test 3: handle has no matching pa-outbound row → 200 + audit, no throw (0.307875ms)
+✔ Stream H9 TD3 — webhook updates pa-outbound on delivery confirmation (4.993167ms)
+[sendblue][webhook] HMAC verify failed {
+  hasHeader: true,
+  bodyLen: 195,
+  candidateHeaders: [ 'sendblue-signature' ],
+  allHeaderNames: [ 'content-type', 'sendblue-signature' ]
+}
+[sendblue][webhook] ats-pending-trigger check failed (non-fatal) {
+  fromNumber: '+15551234567',
+  err: 'unexpected collection: pa-ats-pending-trigger'
+}
+[sendblue][webhook] enqueued {
+  eventId: 'inb_8a566c4e75c4f6fee5e417b5a635084db3523333',
+  created: true,
+  handle: 'msg-abc-123',
+  hasAttachment: false
+}
+[sendblue][webhook] ats-pending-trigger check failed (non-fatal) {
+  fromNumber: '+15551234567',
+  err: 'unexpected collection: pa-ats-pending-trigger'
+}
+[sendblue][webhook] enqueued {
+  eventId: 'inb_8a566c4e75c4f6fee5e417b5a635084db3523333',
+  created: true,
+  handle: 'msg-abc-123',
+  hasAttachment: false
+}
+[sendblue][webhook] ats-pending-trigger check failed (non-fatal) {
+  fromNumber: '+15551234567',
+  err: 'unexpected collection: pa-ats-pending-trigger'
+}
+[sendblue][webhook] enqueued {
+  eventId: 'inb_8a566c4e75c4f6fee5e417b5a635084db3523333',
+  created: false,
+  handle: 'msg-abc-123',
+  hasAttachment: false
+}
+[sendblue][webhook] outbound_status_track_failed (non-fatal) unexpected collection: pa-outbound
+[sendblue][webhook] enqueued {
+  eventId: 'inb_8a566c4e75c4f6fee5e417b5a635084db3523333',
+  created: true,
+  handle: 'msg-abc-123',
+  hasAttachment: true
+}
+[sendblue][cv-ingest] skipped — no userId for phone { phone: '+15551234567' }
+[sendblue][cv-ingest] done { ok: false, reason: 'no_user' }
+[sendblue][reaction] failed Sendblue credentials missing — SENDBLUE_API_KEY_ID / SENDBLUE_API_SECRET_KEY not set
+[sendblue][webhook] enqueued {
+  eventId: 'inb_8a566c4e75c4f6fee5e417b5a635084db3523333',
+  created: true,
+  handle: 'msg-abc-123',
+  hasAttachment: true
+}
+[sendblue][reaction] love sent { handle: 'msg-abc-123', to: '+15551234567' }
+[sendblue][cv-ingest] done { ok: true, resumeId: 'rsm_test_1', userId: 'user_adam_test' }
+▶ handleSendblueWebhook
+  ✔ Test 1: invalid HMAC → 401, no inbound event, no audit record (2.74425ms)
+  ✔ Test 2: valid HMAC + non-allowlisted from_number → 200, NO inbound, ONE audit allowlist_deny (0.603792ms)
+  ✔ Test 3: valid HMAC + allowlisted + receive → 200, ONE inbound row keyed sendblue-${message_handle} (0.974459ms)
+  ✔ Test 4: same message_handle posted twice → exactly ONE inbound row (broker idempotency) (0.733375ms)
+  ✔ Test 5: outbound event (is_outbound=true) → 200, NO inbound, audit outbound_mirror (0.206417ms)
+  ✔ Test 6: typing_indicator / line_blocked event → 200, NO inbound, audit log only (0.187208ms)
+  ✔ Test 7: group_id non-empty → 200, NO inbound, audit group_chat_rejected (Q-03 lock) (0.144333ms)
+  ✔ Test 8: empty content AND no media_url → 200, NO inbound (matches macOS worker [dm] empty; skip) (0.116417ms)
+  ✔ Test 8b (BUG #6): empty content + media_url → 200, ONE inbound row with mediaUrl + attachmentReceived in rawPayload (0.527583ms)
+[sendblue][webhook] ats-pending-trigger check failed (non-fatal) {
+  fromNumber: '+15551234567',
+  err: 'unexpected collection: pa-ats-pending-trigger'
+}
+[sendblue][webhook] enqueued {
+  eventId: 'inb_8a566c4e75c4f6fee5e417b5a635084db3523333',
+  created: true,
+  handle: 'msg-abc-123',
+  hasAttachment: false
+}
+[cv-confirm-reply][detect] pa.cv_confirm_reply.detect_error {
+  userId: 'user_adam_test',
+  error: 'unexpected collection: pa-outbound'
+}
+  ✔ Test 8d (Stream D): media_url → 200 + inbound enqueued + sendReaction(love) called once + ingestCv called once with resolved userId (21.786292ms)
+[sendblue][webhook] ats-pending-trigger check failed (non-fatal) {
+  fromNumber: '+15551234567',
+  err: 'unexpected collection: pa-ats-pending-trigger'
+}
+[sendblue][webhook] tapback recorded { kind: 'love', handle: 'msg-abc-123' }
+[sendblue][webhook] enqueued {
+  eventId: 'inb_8a566c4e75c4f6fee5e417b5a635084db3523333',
+  created: true,
+  handle: 'msg-abc-123',
+  hasAttachment: false
+}
+[sendblue][webhook] malformed JSON Expected property name or '}' in JSON at position 1 (line 1 column 2)
+[sendblue][webhook] ats-pending-trigger check failed (non-fatal) {
+  fromNumber: '+15551234567',
+  err: 'unexpected collection: pa-ats-pending-trigger'
+}
+[sendblue][webhook] enqueued {
+  eventId: 'inb_be6e96e5fe1195de6a80f6ffc00d1d801b988712',
+  created: true,
+  handle: 'msg-rl-0',
+  hasAttachment: false
+}
+[sendblue][webhook] ats-pending-trigger check failed (non-fatal) {
+  fromNumber: '+15551234567',
+  err: 'unexpected collection: pa-ats-pending-trigger'
+}
+[sendblue][webhook] enqueued {
+  eventId: 'inb_1c0acb03b43bbf91cce26ed43fa1b7626618bc0b',
+  created: true,
+  handle: 'msg-rl-1',
+  hasAttachment: false
+}
+[sendblue][webhook] ats-pending-trigger check failed (non-fatal) {
+  fromNumber: '+15551234567',
+  err: 'unexpected collection: pa-ats-pending-trigger'
+}
+[sendblue][webhook] enqueued {
+  eventId: 'inb_89da1cdb1d8a0862289be9c548d74976c86250f1',
+  created: true,
+  handle: 'msg-rl-2',
+  hasAttachment: false
+}
+[sendblue][webhook] ats-pending-trigger check failed (non-fatal) {
+  fromNumber: '+15551234567',
+  err: 'unexpected collection: pa-ats-pending-trigger'
+}
+[sendblue][webhook] enqueued {
+  eventId: 'inb_a6dde2de1b49ddbad35fb2cd18061bf9f3f063ea',
+  created: true,
+  handle: 'msg-rl-3',
+  hasAttachment: false
+}
+[sendblue][webhook] ats-pending-trigger check failed (non-fatal) {
+  fromNumber: '+15551234567',
+  err: 'unexpected collection: pa-ats-pending-trigger'
+}
+[sendblue][webhook] enqueued {
+  eventId: 'inb_064295c53a2c780d01ddc1c429600a07905dc2c8',
+  created: true,
+  handle: 'msg-rl-4',
+  hasAttachment: false
+}
+[sendblue][webhook] ats-pending-trigger check failed (non-fatal) {
+  fromNumber: '+15551234567',
+  err: 'unexpected collection: pa-ats-pending-trigger'
+}
+[sendblue][webhook] enqueued {
+  eventId: 'inb_7a4892d33856d7378366ab1076ba93a0f77f4911',
+  created: true,
+  handle: 'msg-rl-5',
+  hasAttachment: false
+}
+[sendblue][webhook] ats-pending-trigger check failed (non-fatal) {
+  fromNumber: '+15551234567',
+  err: 'unexpected collection: pa-ats-pending-trigger'
+}
+[sendblue][webhook] enqueued {
+  eventId: 'inb_ad5065fb8802e9acd6539f5a0b01c51f20cb0f58',
+  created: true,
+  handle: 'msg-rl-6',
+  hasAttachment: false
+}
+[sendblue][webhook] ats-pending-trigger check failed (non-fatal) {
+  fromNumber: '+15551234567',
+  err: 'unexpected collection: pa-ats-pending-trigger'
+}
+[sendblue][webhook] enqueued {
+  eventId: 'inb_604f741726aa736ed3dfc701a4681d38ab42a200',
+  created: true,
+  handle: 'msg-rl-7',
+  hasAttachment: false
+}
+[sendblue][webhook] ats-pending-trigger check failed (non-fatal) {
+  fromNumber: '+15551234567',
+  err: 'unexpected collection: pa-ats-pending-trigger'
+}
+[sendblue][webhook] enqueued {
+  eventId: 'inb_7a2ffe03c2a0c72661366b1041c63183e03de659',
+  created: true,
+  handle: 'msg-rl-8',
+  hasAttachment: false
+}
+[sendblue][webhook] ats-pending-trigger check failed (non-fatal) {
+  fromNumber: '+15551234567',
+  err: 'unexpected collection: pa-ats-pending-trigger'
+}
+[sendblue][webhook] enqueued {
+  eventId: 'inb_c1a0a45a015b95945ca3e7d5362882186992b6f0',
+  created: true,
+  handle: 'msg-rl-9',
+  hasAttachment: false
+}
+[sendblue][webhook] ats-pending-trigger check failed (non-fatal) {
+  fromNumber: '+15551234567',
+  err: 'unexpected collection: pa-ats-pending-trigger'
+}
+[sendblue][webhook] enqueued {
+  eventId: 'inb_cd2bb83a018ea8176bd844b5fdbe1c43adbd873b',
+  created: true,
+  handle: 'msg-rl-10',
+  hasAttachment: false
+}
+[sendblue][webhook] ats-pending-trigger check failed (non-fatal) {
+  fromNumber: '+15551234567',
+  err: 'unexpected collection: pa-ats-pending-trigger'
+}
+[sendblue][webhook] enqueued {
+  eventId: 'inb_a70d394d15a7e9315b4c75527ce5a335c1ea6dec',
+  created: true,
+  handle: 'msg-rl-11',
+  hasAttachment: false
+}
+[sendblue][webhook] ats-pending-trigger check failed (non-fatal) {
+  fromNumber: '+15551234567',
+  err: 'unexpected collection: pa-ats-pending-trigger'
+}
+[sendblue][webhook] enqueued {
+  eventId: 'inb_3e265162963d60a098924d047df0b73d88d9464d',
+  created: true,
+  handle: 'msg-rl-12',
+  hasAttachment: false
+}
+[sendblue][webhook] ats-pending-trigger check failed (non-fatal) {
+  fromNumber: '+15551234567',
+  err: 'unexpected collection: pa-ats-pending-trigger'
+}
+[sendblue][webhook] enqueued {
+  eventId: 'inb_eaf81b60207d17907b50fb50654a758880334325',
+  created: true,
+  handle: 'msg-rl-13',
+  hasAttachment: false
+}
+[sendblue][webhook] ats-pending-trigger check failed (non-fatal) {
+  fromNumber: '+15551234567',
+  err: 'unexpected collection: pa-ats-pending-trigger'
+}
+[sendblue][webhook] enqueued {
+  eventId: 'inb_918cbc9b2bd2e7d4b3b16ad8b734a7378c1eff67',
+  created: true,
+  handle: 'msg-rl-14',
+  hasAttachment: false
+}
+[sendblue][webhook] ats-pending-trigger check failed (non-fatal) {
+  fromNumber: '+15551234567',
+  err: 'unexpected collection: pa-ats-pending-trigger'
+}
+[sendblue][webhook] enqueued {
+  eventId: 'inb_ac01485d85fd06b050122194adcefb94a9cb3ccc',
+  created: true,
+  handle: 'msg-rl-15',
+  hasAttachment: false
+}
+[sendblue][webhook] ats-pending-trigger check failed (non-fatal) {
+  fromNumber: '+15551234567',
+  err: 'unexpected collection: pa-ats-pending-trigger'
+}
+[sendblue][webhook] enqueued {
+  eventId: 'inb_e4be1101d350488afae5bcbdf8097410d6c96739',
+  created: true,
+  handle: 'msg-rl-16',
+  hasAttachment: false
+}
+[sendblue][webhook] ats-pending-trigger check failed (non-fatal) {
+  fromNumber: '+15551234567',
+  err: 'unexpected collection: pa-ats-pending-trigger'
+}
+[sendblue][webhook] enqueued {
+  eventId: 'inb_1e431ed7617b0382c3521c8155296109df45e9c9',
+  created: true,
+  handle: 'msg-rl-17',
+  hasAttachment: false
+}
+[sendblue][webhook] ats-pending-trigger check failed (non-fatal) {
+  fromNumber: '+15551234567',
+  err: 'unexpected collection: pa-ats-pending-trigger'
+}
+[sendblue][webhook] enqueued {
+  eventId: 'inb_f07a589d365020bc494eb8811cba53a111fadc95',
+  created: true,
+  handle: 'msg-rl-18',
+  hasAttachment: false
+}
+[sendblue][webhook] ats-pending-trigger check failed (non-fatal) {
+  fromNumber: '+15551234567',
+  err: 'unexpected collection: pa-ats-pending-trigger'
+}
+[sendblue][webhook] enqueued {
+  eventId: 'inb_c18b83f11de3a0b922ef8bc7f0d4e71e88bdd84e',
+  created: true,
+  handle: 'msg-rl-19',
+  hasAttachment: false
+}
+[sendblue][webhook] ats-pending-trigger check failed (non-fatal) {
+  fromNumber: '+15551234567',
+  err: 'unexpected collection: pa-ats-pending-trigger'
+}
+[sendblue][webhook] enqueued {
+  eventId: 'inb_8a566c4e75c4f6fee5e417b5a635084db3523333',
+  created: true,
+  handle: 'msg-abc-123',
+  hasAttachment: false
+}
+[sendblue][webhook] ats-pending-trigger check failed (non-fatal) {
+  fromNumber: '+15551234567',
+  err: 'unexpected collection: pa-ats-pending-trigger'
+}
+[sendblue][webhook] enqueued {
+  eventId: 'inb_82587d8c02b5a5150f2c2b8fec7c9ec8dd93dfcc',
+  created: true,
+  handle: 'msg-real-sendblue',
+  hasAttachment: false
+}
+[sendblue][webhook] HMAC verify failed {
+  hasHeader: true,
+  bodyLen: 195,
+  candidateHeaders: [ 'sb-signing-secret' ],
+  allHeaderNames: [ 'content-type', 'sb-signing-secret' ]
+}
+  ✔ Test 8e (Stream D): text-only inbound (no media_url) → no sendReaction, no ingestCv (21.982875ms)
+  ✔ Test 8c (tapback inbound): Loved "..." → still enqueues inbound + writes pa-tapback-events row (0.917584ms)
+  ✔ Test 9: malformed JSON body (with valid HMAC) → 400 Bad Request (0.232166ms)
+  ✔ Test 11 (Phase 26 T1): rate-limit flag enabled → 21st message in window returns 429 (2.508ms)
+  ✔ Test 10: signature header alias sb-signature also accepted (0.191417ms)
+  ✔ Test 12 (Phase 33 regression lock): real Sendblue sb-signing-secret header → 200 + enqueued (0.1585ms)
+[sendblue][webhook] ats-pending-trigger check failed (non-fatal) {
+  fromNumber: '+15551234567',
+  err: 'unexpected collection: pa-ats-pending-trigger'
+}
+[sendblue][webhook] enqueued {
+  eventId: 'inb_a1b7da78f48fedd01938d056378f3c432b48cfc7',
+  created: true,
+  handle: 'msg-e2e-1',
+  hasAttachment: false
+}
+  ✔ Test 13 (Phase 33): raw-payload log written even when HMAC verify fails (21.91275ms)
+[sendblue][webhook] ats-pending-trigger check failed (non-fatal) {
+  fromNumber: '+15551234567',
+  err: 'unexpected collection: pa-ats-pending-trigger'
+}
+[sendblue][webhook] enqueued {
+  eventId: 'inb_22a3361f02711ef24f5ce2858b888be86bfb95b5',
+  created: true,
+  handle: 'msg-organic-1',
+  hasAttachment: false
+}
+  ✔ Test 14 (Stream G4a): X-E2E-Test:1 → rawMeta.e2eTest=true on raw row + rawPayload.e2eTest=true on inbound + allowlist bypassed for non-allowlisted from_number (21.911375ms)
+  ✔ Test 15 (Stream G4a): no X-E2E-Test header → no e2eTest field anywhere (regression lock) (22.148375ms)
+  ✔ Test TD-A.1: willCoalesce=true → broker writes coalescing:true on the SAME create() call (race window closed) (1.144833ms)
+  ✔ Test TD-A.2: willCoalesce=false (flag off) → broker omits coalescing field (legacy path keeps onPaInbound processing) (0.351834ms)
+  ✔ Test TD-A.2b: onboarding incomplete → coalescer is bypassed even when flag is on (0.441959ms)
+  ✔ Test TD-A.3: enqueue failure post-create → fallback driver invoked, coalescing reverted to false (0.423583ms)
+✔ handleSendblueWebhook (123.441667ms)
+▶ production pool routing (P88 integration)
+  ✔ distributes 100 users across both numbers (0.483042ms)
+  ✔ same userId → same number across 1000 calls (sticky routing) (0.254541ms)
+  ✔ paused number filtered out (0.058291ms)
+  ✔ empty pool returns null (caller env fallback) (0.054042ms)
+  ✔ re-adding a paused number resumes routing to it (0.064875ms)
+✔ production pool routing (P88 integration) (1.364708ms)
+▶ hashStringToUint
+  ✔ is deterministic (0.327584ms)
+  ✔ differs for different inputs (0.067375ms)
+  ✔ returns uint32 (0.075ms)
+✔ hashStringToUint (0.882459ms)
+▶ pickFromNumber
+  ✔ returns null when pool null (0.11125ms)
+  ✔ returns null when pool empty (0.040875ms)
+  ✔ returns null when all paused (0.0455ms)
+  ✔ single active number always returns that number (0.042333ms)
+  ✔ same userId → same number across calls (0.051083ms)
+  ✔ paused numbers filtered out (0.050167ms)
+  ✔ distributes across multiple users (0.152834ms)
+✔ pickFromNumber (0.638416ms)
+▶ normalizeSendbluePoolGroups
+  ✔ normalizes legacy number configs into one group per number (0.487125ms)
+  ✔ normalizes grouped configs with dailySendCap (0.114708ms)
+✔ normalizeSendbluePoolGroups (0.654041ms)
+▶ computeSendblueCapacitySnapshot
+  ✔ computes remaining daily capacity (0.963916ms)
+✔ computeSendblueCapacitySnapshot (1.007042ms)
+▶ selectCapacityAwareFromNumber
+  ✔ selects from legacy active pool when capacity remains (0.326875ms)
+  ✔ preserves sticky group and does not reroute when that group is full (0.088167ms)
+  ✔ blocks warmup groups from automatic routing (0.055291ms)
+  ✔ blocks groups with missing capacity (0.050958ms)
+✔ selectCapacityAwareFromNumber (0.594667ms)
+✔ Phase 77: router returns handled=false when no trigger matches (3.420666ms)
+✔ Phase 77: router fires first-match-wins (priority order) (0.167292ms)
+✔ Phase 77: router catches handle() throws and routes to error outcome (0.114ms)
+✔ Phase 77: router swallows match() throw and tries next trigger (0.088292ms)
+✔ Phase 77: PrescreenTrigger.match matches valid pattern (0.170625ms)
+✔ Phase 77: PrescreenTrigger.match rejects non-matching tokens (0.05025ms)
+✔ Phase 77: PrescreenTrigger refuses media-attached messages (0.160875ms)
+✔ Phase 77: PrescreenTrigger unauthorized when phone unresolved (0.091209ms)
+✔ Phase 77: PrescreenTrigger unauthorized when sender is neither self nor admin (0.092084ms)
+✔ Phase 77: PrescreenTrigger fires for self (sender matches target userId) (3.106209ms)
+✔ Phase 77: PrescreenTrigger fires for admin (sender != target but is admin) (0.645041ms)
+✔ Phase 77: PrescreenTrigger idempotency dedupes within 60-min window (2.098416ms)
+✔ Phase 77: PrescreenTrigger fires after window expires (0.964542ms)
+✔ Phase 77: PrescreenTrigger stamps idempotency BEFORE dispatch (anti-double-fire) (0.312792ms)
+✔ Phase 77: CompactTrigger.match detects token (0.096459ms)
+✔ Phase 77: CompactTrigger unauthorized for non-admin (0.112542ms)
+✔ Phase 77: CompactTrigger fires for admin sender's own memory by default (2.03625ms)
+✔ Phase 77: CompactTrigger fires with target= override (2.797167ms)
+✔ Phase 77: CompactTrigger refuses media attachments (0.218667ms)
+✔ v1.9 hotfix: pending-invite binds session to phone-resolved real userId (not wkr_uid) (3.20025ms)
+✔ v1.9 hotfix: pending-invite rejected when TTL expired (0.114083ms)
+✔ v1.9 hotfix: pending-invite rejected when jobId mismatches (0.198542ms)
+✔ v1.9 hotfix: admin sender with public-page pending-invite uses phone-resolved (not body) userId (1.692ms)
+✔ v1.9 hotfix: admin testing other user (no pending-invite) uses body userId (legacy admin path) (0.679083ms)
+✔ v1.9 hotfix: self path unchanged when body userId matches phone-resolved userId (0.439083ms)
+▶ ApplyTrigger.match
+  ✔ matches WeKruit_<jobId>_<userId>_Apply (0.442625ms)
+  ✔ rejects _Job variant (0.064333ms)
+  ✔ rejects garbage (0.057917ms)
+✔ ApplyTrigger.match (0.970583ms)
+▶ ApplyTrigger.handle — verified PASS branch
+  ✔ fires PII confirm when recent PASS found (2.258792ms)
+✔ ApplyTrigger.handle — verified PASS branch (2.340208ms)
+▶ ApplyTrigger.handle — fallback branch
+  ✔ falls back to prescreen when no PASS within 30d (1.322208ms)
+✔ ApplyTrigger.handle — fallback branch (1.694375ms)
+▶ ApplyTrigger.handle — auth
+  ✔ rejects when sender userId mismatch (0.368ms)
+  ✔ rejects when sender unknown (0.583ms)
+✔ ApplyTrigger.handle — auth (1.142125ms)
+▶ ApplyTrigger.handle — idempotency
+  ✔ dedupes within 60-min window (0.289167ms)
+✔ ApplyTrigger.handle — idempotency (0.38225ms)
+▶ ApplyTrigger.handle — media
+  ✔ rejects media-attached (0.231041ms)
+✔ ApplyTrigger.handle — media (0.302083ms)
+▶ computeConfidence
+  ✔ human-approved + 50 obs + 5 sources = 1.0 (0.3815ms)
+  ✔ proposed + 0 obs + 0 sources = 0.16 (0.090708ms)
+  ✔ auto-approved + 10 obs + 2 sources = 0.4*0.2 + 0.4*0.7 + 0.2*0.4 (0.050125ms)
+  ✔ rejected = 0 approval component (0.042125ms)
+  ✔ saturates at 1.0 when overloaded (0.040292ms)
+✔ computeConfidence (1.06875ms)
+▶ computeEntityTagConfidence
+  ✔ passes through clamped value (0.061417ms)
+  ✔ null defaults to 0.5 (0.035375ms)
+  ✔ clamps to 0..1 (0.044666ms)
+✔ computeEntityTagConfidence (0.244875ms)
+▶ buildIdempotencyInput
+  ✔ produces stable key for same inputs (0.097292ms)
+  ✔ lowercases rawText (ML == ml) (0.085792ms)
+  ✔ different entity → different key (0.065917ms)
+✔ buildIdempotencyInput (0.319375ms)
+▶ computeEventId
+  ✔ is 32 lowercase hex chars (0.254792ms)
+  ✔ same inputs → same id (determinism) (0.05625ms)
+✔ computeEventId (0.359917ms)
+▶ llmNormalize JSON shapes
+  ✔ expected match shape parses to action=match (0.048042ms)
+  ✔ expected create shape has valid canonicalKey pattern (0.046292ms)
+✔ llmNormalize JSON shapes (0.133333ms)
+▶ mutex enforcement (unit logic)
+  ✔ same canonicalKey → count increments, no duplicate doc (0.106666ms)
+  ✔ different mutexGroup → two separate entity-tag items (0.051458ms)
+✔ mutex enforcement (unit logic) (0.193416ms)
+ℹ tests 1417
+ℹ suites 237
+ℹ pass 1417
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 13863.477875
+Running command: npm --prefix "$RESOURCE_DIR" install --no-package-lock --production
+npm warn config production Use `--omit=dev` instead.
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "auto-install-peers". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "link-workspace-packages". This will stop working in the next major version of npm.
+npm warn EBADENGINE Unsupported engine {
+npm warn EBADENGINE   package: 'pa-functions-runtime@0.0.1',
+npm warn EBADENGINE   required: { node: '20' },
+npm warn EBADENGINE   current: { node: 'v24.3.0', npm: '11.4.2' }
+npm warn EBADENGINE }
+npm warn deprecated node-domexception@1.0.0: Use your platform's native DOMException instead
+npm warn deprecated uuid@8.3.2: uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).
+npm warn deprecated uuid@9.0.1: uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).
+npm warn deprecated uuid@9.0.1: uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).
+npm warn deprecated uuid@9.0.1: uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).
+
+added 270 packages, and audited 271 packages in 6s
+
+39 packages are looking for funding
+  run `npm fund` for details
+
+9 low severity vulnerabilities
+
+To address all issues (including breaking changes), run:
+  npm audit fix --force
+
+Run `npm audit` for details.
+✔  functions: Finished running predeploy script.
+i  functions: preparing codebase pa-orchestrator for deployment
+i  functions: ensuring required API cloudfunctions.googleapis.com is enabled...
+i  functions: ensuring required API cloudbuild.googleapis.com is enabled...
+i  artifactregistry: ensuring required API artifactregistry.googleapis.com is enabled...
+⚠  functions: package.json indicates an outdated version of firebase-functions. Please upgrade using npm install --save firebase-functions@latest in your functions directory.
+⚠  functions: Please note that there will be breaking changes when you upgrade.
+i  functions: Loading and analyzing source code for codebase pa-orchestrator to determine what to deploy
+Serving at port 8768
+
+i  extensions: ensuring required API firebaseextensions.googleapis.com is enabled...
+
+Error: In non-interactive mode but have no value for the secret: MAILGUN_WEBHOOK_SIGNING_KEY
+
+Set this secret before deploying:
+	firebase functions:secrets:set MAILGUN_WEBHOOK_SIGNING_KEY
+ ELIFECYCLE  Command failed with exit code 1.

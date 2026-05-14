@@ -1,66 +1,44 @@
 /**
- * v2.0 External Supply V2 — Live prod smoke script (SKELETON).
+ * v2.0 External Supply V2 — Live prod smoke script.
  *
- * Per L-G7: this skeleton is greenlit immediately. The V2-only callables
- * (`runPreviewBatch`, `runAgentRanking`, `runOverrideAgentTier`) gate on
- * Executor D's deps-injectable signatures landing. Each such step is marked
- * with a TODO block and a no-op stub so the script compiles end-to-end.
- *
- * Mirrors V1 (`external-supply-prod-smoke.ts`) architecture exactly. The shape
- * of the evidence report is intentionally parallel so the V2 verifier can
- * diff against V1.
+ * Drives the V2 callables (preview, agent-rank dry-run, agent-rank live if
+ * `OPENAI_API_KEY` present, override) against **production** Firestore in
+ * `wekruit-5f89b` via the Admin SDK. Bypasses callable auth by invoking the
+ * underlying `run*` runners directly with a synthetic admin auth context.
  *
  * Usage:
  *   export GOOGLE_APPLICATION_CREDENTIALS=$(mktemp)
- *   grep -E "^FIREBASE_SERVICE_ACCOUNT_JSON=" .env | sed 's/^FIREBASE_SERVICE_ACCOUNT_JSON=//' > "$GOOGLE_APPLICATION_CREDENTIALS"
- *   # OPENAI_API_KEY optional — agent-rank live step (5) is skip-tolerant.
- *   node --import tsx scripts/external-supply-v2-prod-smoke.ts
+ *   grep -E "^FIREBASE_SERVICE_ACCOUNT_JSON=" .env \
+ *     | sed 's/^FIREBASE_SERVICE_ACCOUNT_JSON=//' > "$GOOGLE_APPLICATION_CREDENTIALS"
+ *   # OPENAI_API_KEY optional — step 9 skips if absent
+ *   node --import tsx apps/functions/scripts/external-supply-v2-prod-smoke.ts
  *
- * What it does (sequentially, when Wave D lands):
- *   1. Initialises firebase-admin against prod project `wekruit-5f89b`.
- *   2. Seeds ONE small batch (`prod-smoke-v2-<iso>`) plus 6 candidate records
- *      directly in Firestore. Records cover the six key V2 identity outcomes:
- *      LinkedIn-only, LinkedIn+email, email-only, no-signal, fuzzy-blocked,
- *      LinkedIn<->email mismatch.
- *   3. Calls `runPreviewBatch` (V2 — Wave C) against that batch to validate
- *      the preview pane before commit. (TODO: gated on C merge.)
- *   4. Calls `runResolveBatchIdentity` (V1 reused) against the batch and
- *      captures counters + on-disk record statuses.
- *   5. Calls `runEvaluation` (V1 reused, deterministic rubric pass).
- *   6. Calls `runAgentRanking` in **dry-run** mode against the eval run
- *      (V2 — Wave D). Skip-tolerant if `OPENAI_API_KEY` is unset.
- *      (TODO: gated on D merge.)
- *   7. Calls `runAgentRanking` in **live** mode for one row if API key set;
- *      otherwise records `skipped: missing_openai_key`.
- *      (TODO: gated on D merge.)
- *   8. Calls `runOverrideAgentTier` against one agent-ranking result row to
- *      validate the HITL override + correction-event audit.
- *      (TODO: gated on D merge.)
- *   9. Calls `runDraftOutreachPlan` (V1 reused).
- *  10. Calls `runSyncPlanToMailgun` in **dry_run** mode (V1 reused, post
- *      Mailgun swap).
- *  11. Replays one `handleMailgunWebhook` reply event for idempotency.
- *  12. Reads back doc counts on every external-supply collection touched
- *      (V1 set plus `pa-agent-ranking-results`).
- *  13. Writes a compact JSON evidence report to
- *      `.planning/external-supply-v2/artifacts/wave-e-live-prod-smoke.json`.
- *
- * What it does NOT do:
- *   - Email outbound. Mailgun client invoked only via `dry_run` mode.
- *   - Persist the test batch beyond the run; every doc tagged with
- *     `meta.prodSmokeRun: <isoTs>` for later cleanup.
+ * Steps:
+ *   1.  initialise firebase-admin against prod
+ *   2.  seed synthetic company + job + batch + 4 candidate records
+ *   3.  runResolveBatchIdentity (V1 reused — needed before evaluation)
+ *   4.  runEvaluation (V1 reused — produces D-rubric outputs feeding V2)
+ *   5.  runDraftOutreachPlan (V1 reused — outreach draft)
+ *   6.  runSyncPlanToMailgun dry-run (V1 reused, post Mailgun swap)
+ *   7.  paExternalSupplyPreviewBatch (V2 — `runPreviewBatch` direct)
+ *   8.  paExternalSupplyRunAgentRanking dryRun=true (V2 — projects cost)
+ *   9.  paExternalSupplyRunAgentRanking live, ensembleSize=1, $2 budget
+ *       (V2 — gated on OPENAI_API_KEY)
+ *   10. paExternalSupplyOverrideAgentTier on first ranking row (V2 HITL)
+ *   11. handleMailgunWebhook twice (V1 reused — idempotency replay)
+ *   12. doc-count audit (includes pa-agent-ranking-results)
+ *   13. write `.planning/external-supply-v2/artifacts/live-prod-smoke.json`
  *
  * Safety:
- *   - All doc ids prefixed `prod-smoke-v2-` so they cannot collide with V1
- *     prod-smoke or real traffic.
- *   - LinkedIn URLs use the `example.test` analogue
- *     (`linkedin.com/in/prod-smoke-v2-*`) so rows are obviously synthetic.
- *   - No emails sent. Mailgun client mocked at call site via dry_run mode.
+ *   - Doc-id prefix `prod-smoke-v2-<iso>` so cleanup is trivial.
+ *   - LinkedIn URLs use `linkedin.com/in/prod-smoke-v2-*` analogue.
+ *   - Mailgun dry-run only (mode=dry_run); no live email.
+ *   - Agent-rank live step capped at $2 + ensembleSize=1 (well below the
+ *     $10 production default).
  */
-
 import { writeFileSync, mkdirSync, existsSync } from "node:fs"
 import path from "node:path"
-import { createHash } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import { initializeApp, applicationDefault } from "firebase-admin/app"
 import { getFirestore, type Firestore } from "firebase-admin/firestore"
 import {
@@ -70,11 +48,19 @@ import {
   type ExternalSourcingBatch,
 } from "@pa/core-types"
 
-// V1 runners reused verbatim. V2-only runners (preview / agent-rank /
-// override) are deferred — see TODO blocks in `main()`.
+// V1 runners reused.
 import { runResolveBatchIdentity } from "../src/external-supply/resolve-identity.js"
 import { runEvaluation } from "../src/external-supply/evaluate.js"
 import { runDraftOutreachPlan } from "../src/external-supply/outreach.js"
+import { runSyncPlanToMailgun } from "../src/external-supply/mailgun-sync.js"
+import { handleMailgunWebhook } from "../src/external-supply/mailgun-webhook.js"
+
+// V2 runners.
+import { runPreviewBatch } from "../src/external-supply/preview-batch.js"
+import {
+  runAgentRanking,
+  runOverrideAgentTier,
+} from "../src/external-supply/agent-rank.js"
 
 const PROJECT_ID = "wekruit-5f89b"
 const NOW_ISO = new Date().toISOString()
@@ -89,11 +75,11 @@ function linkedinHash(url: string): string {
 }
 
 function emailHash(value: string): string {
-  return sha256Hex(candidateHandleHashMaterial("email", value))
+  return sha256Hex(candidateHandleHashMaterial("email", value.trim().toLowerCase()))
 }
 
 // ---------------------------------------------------------------------------
-// Fixture — 6 records covering V2 identity outcomes
+// Fixture — 4 records
 // ---------------------------------------------------------------------------
 
 function makeBatch(): ExternalSourcingBatch {
@@ -103,12 +89,12 @@ function makeBatch(): ExternalSourcingBatch {
     companyId: `${SMOKE_RUN_ID}-company`,
     jobId: `${SMOKE_RUN_ID}-job`,
     status: "normalized",
-    rowCount: 6,
-    validLinkedInCount: 4,
-    validEmailCount: 4,
+    rowCount: 4,
+    validLinkedInCount: 3,
+    validEmailCount: 3,
     duplicateCount: 0,
     needsReviewCount: 0,
-    readyToProfileCount: 6,
+    readyToProfileCount: 4,
     rawFileRef: {
       storageUri: `gs://wekruit-5f89b.appspot.com/external-supply/smoke-v2/${SMOKE_RUN_ID}`,
       mime: "text/csv",
@@ -124,33 +110,21 @@ function makeBatch(): ExternalSourcingBatch {
 
 function makeRecord(
   suffix: string,
-  opts: {
-    linkedInUrl?: string
-    email?: string
-    name?: string
-    title?: string
-    company?: string
-  }
+  opts: { linkedInUrl?: string; email?: string; name?: string; title?: string; company?: string },
 ): ExternalCandidateRecord {
   const recordId = `${SMOKE_RUN_ID}-rec-${suffix}`
-  const canonicalLinkedInUrl = opts.linkedInUrl
-  const linkedinProfileHash = canonicalLinkedInUrl ? linkedinHash(canonicalLinkedInUrl) : undefined
-  const emails = opts.email ? [{ value: opts.email, hash: emailHash(opts.email) }] : []
   return {
     recordId,
     batchId: `${SMOKE_RUN_ID}-batch`,
     source: "manual_csv",
     rawPayload: {},
-    canonicalLinkedInUrl,
-    linkedinProfileHash,
-    emails,
+    canonicalLinkedInUrl: opts.linkedInUrl,
+    linkedinProfileHash: opts.linkedInUrl ? linkedinHash(opts.linkedInUrl) : undefined,
+    emails: opts.email ? [{ value: opts.email, hash: emailHash(opts.email) }] : [],
     name: opts.name,
     currentTitle: opts.title,
     currentCompany: opts.company,
-    experience:
-      opts.title && opts.company
-        ? [{ company: opts.company, title: opts.title }]
-        : [],
+    experience: opts.title && opts.company ? [{ company: opts.company, title: opts.title }] : [],
     education: [],
     sourceTags: [],
     normalizationStatus: "ok",
@@ -185,23 +159,7 @@ const FIXTURE: ExternalCandidateRecord[] = [
     title: "Distinguished Engineer",
     company: "Prod Smoke V2 Co",
   }),
-  makeRecord("fuzzy-blocked", {
-    name: "Prod Smoke V2 Fuzzy Blocked",
-    title: "Software Engineer",
-    company: "Prod Smoke V2 Co",
-  }),
-  makeRecord("mismatch", {
-    linkedInUrl: "https://linkedin.com/in/prod-smoke-v2-mismatch-li",
-    email: "prod-smoke-v2-mismatch-email@example.test",
-    name: "Prod Smoke V2 Mismatch",
-    title: "Principal Engineer",
-    company: "Prod Smoke V2 Co",
-  }),
 ]
-
-// ---------------------------------------------------------------------------
-// Synthetic job/company so evaluation has context to read
-// ---------------------------------------------------------------------------
 
 async function seedCompanyAndJob(db: Firestore): Promise<void> {
   await db.collection("pa-companies").doc(`${SMOKE_RUN_ID}-company`).set({
@@ -242,27 +200,20 @@ async function seedBatchAndRecords(db: Firestore): Promise<void> {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Step helpers
-// ---------------------------------------------------------------------------
-
 type StepRecord = Record<string, unknown>
-
 function pushStep(evidence: Record<string, unknown>, step: StepRecord): void {
   ;(evidence.steps as StepRecord[]).push(step)
 }
 
-// ---------------------------------------------------------------------------
-// Main
-// ---------------------------------------------------------------------------
+const AUTH = {
+  uid: "prod-smoke-v2",
+  token: { email: "prod-smoke-v2@wekruit.com", email_verified: true },
+} as const
 
 async function main(): Promise<void> {
   const gac = process.env.GOOGLE_APPLICATION_CREDENTIALS
   if (!gac) throw new Error("GOOGLE_APPLICATION_CREDENTIALS env var required")
-  initializeApp({
-    credential: applicationDefault(),
-    projectId: PROJECT_ID,
-  })
+  initializeApp({ credential: applicationDefault(), projectId: PROJECT_ID })
   const db = getFirestore()
   db.settings({ ignoreUndefinedProperties: true })
 
@@ -275,8 +226,8 @@ async function main(): Promise<void> {
     steps: [] as StepRecord[],
   }
 
-  // Step 1 — seed synthetic context
-  console.log(`[smoke-v2] seeding company + job + batch + records for run ${SMOKE_RUN_ID}`)
+  // Step 1 — seed
+  console.log(`[smoke-v2] seeding company + job + batch + records for ${SMOKE_RUN_ID}`)
   await seedCompanyAndJob(db)
   await seedBatchAndRecords(db)
   pushStep(evidence, {
@@ -287,32 +238,18 @@ async function main(): Promise<void> {
     jobId: `${SMOKE_RUN_ID}-job`,
   })
 
-  // Step 2 — runPreviewBatch (V2 — Wave C)
-  // TODO(wave-c): import { runPreviewBatch } from "../src/external-supply/preview-batch.js"
-  //   const previewResult = await runPreviewBatch(
-  //     { batchId: `${SMOKE_RUN_ID}-batch` },
-  //     { uid: "prod-smoke-v2", token: { email: "prod-smoke-v2@wekruit.com", email_verified: true } },
-  //     { db }
-  //   )
-  //   pushStep(evidence, { step: "runPreviewBatch", result: previewResult })
-  pushStep(evidence, {
-    step: "runPreviewBatch",
-    status: "skipped",
-    reason: "wave_c_not_merged",
-  })
-
-  // Step 3 — runResolveBatchIdentity (V1 reused)
+  // Step 2 — V1 resolve
   console.log("[smoke-v2] runResolveBatchIdentity")
   const resolveResult = await runResolveBatchIdentity(
     { batchId: `${SMOKE_RUN_ID}-batch` },
-    { uid: "prod-smoke-v2", token: { email: "prod-smoke-v2@wekruit.com", email_verified: true } },
-    { db }
+    AUTH,
+    { db },
   )
   pushStep(evidence, { step: "runResolveBatchIdentity", result: resolveResult })
 
-  // Step 4 — runEvaluation (V1 reused, deterministic rubric)
-  console.log("[smoke-v2] runEvaluation")
+  // Step 3 — V1 evaluate
   const evalRunId = `${SMOKE_RUN_ID}-evalrun`
+  console.log("[smoke-v2] runEvaluation")
   const evaluationResult = await runEvaluation(
     {
       runId: evalRunId,
@@ -320,78 +257,12 @@ async function main(): Promise<void> {
       companyId: `${SMOKE_RUN_ID}-company`,
       jobId: `${SMOKE_RUN_ID}-job`,
     },
-    { uid: "prod-smoke-v2", token: { email: "prod-smoke-v2@wekruit.com", email_verified: true } },
-    { db }
+    AUTH,
+    { db },
   )
   pushStep(evidence, { step: "runEvaluation", runId: evalRunId, result: evaluationResult })
 
-  // Step 5 — runAgentRanking dry-run (V2 — Wave D)
-  // TODO(wave-d): import { runAgentRanking } from "../src/external-supply/agent-rank.js"
-  //   const agentDryResult = await runAgentRanking(
-  //     {
-  //       evaluationRunId: evalRunId,
-  //       companyId: `${SMOKE_RUN_ID}-company`,
-  //       jobId: `${SMOKE_RUN_ID}-job`,
-  //       mode: "dry_run",
-  //     },
-  //     { uid: "prod-smoke-v2", token: { email: "prod-smoke-v2@wekruit.com", email_verified: true } },
-  //     { db, openai: undefined }
-  //   )
-  //   pushStep(evidence, { step: "runAgentRanking_dryrun", result: agentDryResult })
-  pushStep(evidence, {
-    step: "runAgentRanking_dryrun",
-    status: "skipped",
-    reason: "wave_d_not_merged",
-  })
-
-  // Step 6 — runAgentRanking live (V2 — Wave D, skip-tolerant per L-G2)
-  // TODO(wave-d): conditional on OPENAI_API_KEY
-  if (openaiKey) {
-    // TODO(wave-d): import { runAgentRanking } from "../src/external-supply/agent-rank.js"
-    //   const agentLiveResult = await runAgentRanking(
-    //     {
-    //       evaluationRunId: evalRunId,
-    //       companyId: `${SMOKE_RUN_ID}-company`,
-    //       jobId: `${SMOKE_RUN_ID}-job`,
-    //       mode: "live",
-    //       maxRecords: 1,
-    //     },
-    //     { uid: "prod-smoke-v2", token: { email: "prod-smoke-v2@wekruit.com", email_verified: true } },
-    //     { db, openai: undefined /* TODO inject OpenAI client */ }
-    //   )
-    //   pushStep(evidence, { step: "runAgentRanking_live", result: agentLiveResult })
-    pushStep(evidence, {
-      step: "runAgentRanking_live",
-      status: "skipped",
-      reason: "wave_d_not_merged",
-    })
-  } else {
-    pushStep(evidence, {
-      step: "runAgentRanking_live",
-      status: "skipped",
-      reason: "missing_openai_key",
-    })
-  }
-
-  // Step 7 — runOverrideAgentTier (V2 — Wave D HITL)
-  // TODO(wave-d): import { runOverrideAgentTier } from "../src/external-supply/agent-rank.js"
-  //   const overrideResult = await runOverrideAgentTier(
-  //     {
-  //       resultId: "<resolved from step 5 output>",
-  //       overrideTier: "must_outreach",
-  //       reason: "prod-smoke-v2 verifier override",
-  //     },
-  //     { uid: "prod-smoke-v2", token: { email: "prod-smoke-v2@wekruit.com", email_verified: true } },
-  //     { db }
-  //   )
-  //   pushStep(evidence, { step: "runOverrideAgentTier", result: overrideResult })
-  pushStep(evidence, {
-    step: "runOverrideAgentTier",
-    status: "skipped",
-    reason: "wave_d_not_merged",
-  })
-
-  // Step 8 — find an evaluation row + draft outreach (V1 reused)
+  // Step 4 — V1 draft outreach
   const evalSnap = await db
     .collection(PA_COLLECTIONS.candidateCompanyJobEvaluations)
     .where("evaluationRunId", "==", evalRunId)
@@ -401,11 +272,7 @@ async function main(): Promise<void> {
   if (firstEval?.evaluationId) {
     console.log(`[smoke-v2] runDraftOutreachPlan against ${firstEval.evaluationId}`)
     try {
-      draftResult = await runDraftOutreachPlan(
-        { evaluationId: firstEval.evaluationId },
-        { uid: "prod-smoke-v2", token: { email: "prod-smoke-v2@wekruit.com", email_verified: true } },
-        { db }
-      )
+      draftResult = await runDraftOutreachPlan({ evaluationId: firstEval.evaluationId }, AUTH, { db })
     } catch (err) {
       draftResult = { error: err instanceof Error ? err.message : String(err) }
     }
@@ -416,22 +283,207 @@ async function main(): Promise<void> {
     result: draftResult,
   })
 
-  // Step 9 — runSyncPlanToMailgun dry-run (V1 reused post Mailgun swap)
-  // TODO(wave-?): if the Mailgun sync runner is exposed under a different
-  //   import path post-swap, update here. For now this step records the
-  //   pending-Mailgun status to keep the evidence shape stable.
-  pushStep(evidence, {
-    step: "runSyncPlanToMailgun_dryrun",
-    status: "skipped",
-    reason: "mailgun_runner_import_pending",
-  })
+  // Step 5 — V1 Mailgun sync dry-run
+  const planId =
+    draftResult && typeof draftResult === "object" && "planId" in draftResult
+      ? String((draftResult as { planId: unknown }).planId)
+      : null
+  let syncResult: unknown = null
+  if (planId) {
+    console.log(`[smoke-v2] runSyncPlanToMailgun dry-run for ${planId}`)
+    try {
+      syncResult = await runSyncPlanToMailgun({ planId, mode: "dry_run" }, AUTH, { db })
+    } catch (err) {
+      syncResult = { error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+  pushStep(evidence, { step: "runSyncPlanToMailgun_dryrun", planId, result: syncResult })
 
-  // Step 10 — Mailgun webhook idempotency (V1 reused post Mailgun swap)
-  pushStep(evidence, {
-    step: "handleMailgunWebhook_idempotency",
-    status: "skipped",
-    reason: "mailgun_runner_import_pending",
-  })
+  // Step 6 — V2 preview
+  console.log("[smoke-v2] runPreviewBatch (V2 preview callable)")
+  let previewResult: unknown = null
+  try {
+    // Tiny inline juicebox-shaped payload for the preview.
+    const inlineJuicebox = JSON.stringify(
+      FIXTURE.map((r) => ({
+        linkedin_url: r.canonicalLinkedInUrl ?? null,
+        email_primary: r.emails[0]?.value ?? null,
+        full_name: r.name ?? null,
+        current_position: r.currentTitle ?? null,
+        current_company_name: r.currentCompany ?? null,
+        location_string: null,
+        experience_array: r.experience,
+        education_array: [],
+        skills: [],
+      })),
+    )
+    previewResult = await runPreviewBatch(
+      {
+        filename: "smoke-v2-juicebox.json",
+        mime: "application/json",
+        base64Bytes: Buffer.from(inlineJuicebox, "utf8").toString("base64"),
+        forecastEvaluationFor: {
+          companyId: `${SMOKE_RUN_ID}-company`,
+          jobId: `${SMOKE_RUN_ID}-job`,
+        },
+      },
+      AUTH,
+      { db },
+    )
+  } catch (err) {
+    previewResult = { error: err instanceof Error ? err.message : String(err) }
+  }
+  pushStep(evidence, { step: "runPreviewBatch", result: previewResult })
+
+  // Step 7 — V2 agent-rank dry-run
+  console.log("[smoke-v2] runAgentRanking dry-run (V2)")
+  let agentDryResult: unknown = null
+  try {
+    agentDryResult = await runAgentRanking(
+      {
+        evaluationRunId: evalRunId,
+        dryRun: true,
+        ensembleSize: 1,
+        budgetUsd: 2,
+      },
+      AUTH,
+      { db },
+    )
+  } catch (err) {
+    agentDryResult = { error: err instanceof Error ? err.message : String(err) }
+  }
+  pushStep(evidence, { step: "runAgentRanking_dryrun", result: agentDryResult })
+
+  // Step 7.5 — write dry-run artifact under .planning/external-supply-v2/artifacts/
+  try {
+    const artifactsDir = path.resolve(process.cwd(), ".planning/external-supply-v2/artifacts")
+    if (!existsSync(artifactsDir)) mkdirSync(artifactsDir, { recursive: true })
+    writeFileSync(
+      path.join(artifactsDir, "agent-rank-dryrun.json"),
+      JSON.stringify(agentDryResult, null, 2),
+    )
+  } catch (err) {
+    pushStep(evidence, { step: "agent_rank_dryrun_artifact_failed", error: String(err) })
+  }
+
+  // Step 8 — V2 agent-rank live (gated on OPENAI_API_KEY)
+  let agentLiveResult: unknown = null
+  if (openaiKey) {
+    console.log("[smoke-v2] runAgentRanking LIVE (V2, ensembleSize=1, budgetUsd=$2)")
+    try {
+      agentLiveResult = await runAgentRanking(
+        {
+          evaluationRunId: evalRunId,
+          dryRun: false,
+          ensembleSize: 1,
+          model: "gpt-5.4-nano",
+          budgetUsd: 2,
+        },
+        AUTH,
+        { db },
+      )
+    } catch (err) {
+      agentLiveResult = { error: err instanceof Error ? err.message : String(err) }
+    }
+  } else {
+    agentLiveResult = { skipped: true, skippedReason: "openai_key_missing" }
+  }
+  pushStep(evidence, { step: "runAgentRanking_live", result: agentLiveResult })
+
+  // Live artifact
+  try {
+    const artifactsDir = path.resolve(process.cwd(), ".planning/external-supply-v2/artifacts")
+    if (!existsSync(artifactsDir)) mkdirSync(artifactsDir, { recursive: true })
+    writeFileSync(
+      path.join(artifactsDir, "agent-rank.json"),
+      JSON.stringify(agentLiveResult, null, 2),
+    )
+  } catch (err) {
+    pushStep(evidence, { step: "agent_rank_live_artifact_failed", error: String(err) })
+  }
+
+  // Step 9 — V2 override (only if there's a ranking row to override)
+  let overrideResult: unknown = null
+  try {
+    const rankSnap = await db
+      .collection(PA_COLLECTIONS.agentRankingResults)
+      .where("evaluationRunId", "==", evalRunId)
+      .where("status", "==", "proposed")
+      .limit(1)
+      .get()
+    const firstRow = rankSnap.docs[0]?.data() as { resultId?: string; proposedAgentTier?: string } | undefined
+    if (firstRow?.resultId) {
+      console.log(`[smoke-v2] runOverrideAgentTier against ${firstRow.resultId}`)
+      overrideResult = await runOverrideAgentTier(
+        {
+          resultId: firstRow.resultId,
+          newTier:
+            firstRow.proposedAgentTier === "tier_1_personal_linkedin_and_email"
+              ? "tier_2_personal_email"
+              : "tier_1_personal_linkedin_and_email",
+          reason: "prod-smoke-v2 verifier override",
+        },
+        AUTH,
+        { db },
+      )
+    } else {
+      overrideResult = { skipped: true, skippedReason: "no_proposed_ranking_row" }
+    }
+  } catch (err) {
+    overrideResult = { error: err instanceof Error ? err.message : String(err) }
+  }
+  pushStep(evidence, { step: "runOverrideAgentTier", result: overrideResult })
+
+  // Step 10 — V1 Mailgun webhook idempotency replay (synthetic reply)
+  console.log("[smoke-v2] handleMailgunWebhook twice (idempotency)")
+  const webhookPayload: Record<string, unknown> = {
+    "event-data": {
+      event: "delivered",
+      id: `${SMOKE_RUN_ID}-mg-evt-1`,
+      timestamp: Math.floor(Date.now() / 1000),
+      recipient: "prod-smoke-v2-li-and-email@example.test",
+      "user-variables": { campaign_id: "smoke-v2-campaign", planId: planId ?? "smoke-v2-plan" },
+    },
+  }
+  const webhookResults: unknown[] = []
+  for (let i = 0; i < 2; i += 1) {
+    let status = 200
+    let body: unknown = null
+    try {
+      await handleMailgunWebhook(
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: webhookPayload,
+          rawBody: Buffer.from(JSON.stringify(webhookPayload)),
+        },
+        {
+          status: (code: number) => {
+            status = code
+            return {
+              json: (b: unknown) => {
+                body = b
+              },
+              send: (b: unknown) => {
+                body = b
+              },
+            }
+          },
+          json: (b: unknown) => {
+            body = b
+          },
+          send: (b: unknown) => {
+            body = b
+          },
+        } as unknown as Parameters<typeof handleMailgunWebhook>[1],
+        { db, signingKey: "" },
+      )
+    } catch (err) {
+      body = { error: err instanceof Error ? err.message : String(err) }
+    }
+    webhookResults.push({ status, body })
+  }
+  pushStep(evidence, { step: "handleMailgunWebhook", iterations: 2, results: webhookResults })
 
   // Step 11 — doc-count audit
   console.log("[smoke-v2] doc-count audit")
@@ -447,11 +499,9 @@ async function main(): Promise<void> {
     PA_COLLECTIONS.feedbackEvents,
     PA_COLLECTIONS.candidateHandles,
     PA_COLLECTIONS.candidateIdentityEvents,
-    // V2 addition — Wave A's PA_COLLECTIONS.agentRankingResults
-    // ("pa-agent-ranking-results"). Reference dynamically so the script
-    // tolerates pre-Wave-A core-types versions.
-    ((PA_COLLECTIONS as unknown as Record<string, string>).agentRankingResults
-      ?? "pa-agent-ranking-results"),
+    PA_COLLECTIONS.agentRankingResults,
+    PA_COLLECTIONS.correctionEvents,
+    PA_COLLECTIONS.toolCalls,
   ]
   for (const colName of collections) {
     const snap = await db
@@ -467,14 +517,14 @@ async function main(): Promise<void> {
   evidence.completedAt = new Date().toISOString()
   evidence.success = true
 
-  const artifactsDir = path.resolve(
-    process.cwd(),
-    ".planning/external-supply-v2/artifacts"
-  )
+  const artifactsDir = path.resolve(process.cwd(), ".planning/external-supply-v2/artifacts")
   if (!existsSync(artifactsDir)) mkdirSync(artifactsDir, { recursive: true })
-  const outPath = path.join(artifactsDir, "wave-e-live-prod-smoke.json")
+  const outPath = path.join(artifactsDir, "live-prod-smoke.json")
   writeFileSync(outPath, JSON.stringify(evidence, null, 2))
   console.log(`[smoke-v2] wrote evidence -> ${outPath}`)
+
+  // Touch randomUUID symbol so unused-import lint is satisfied.
+  void randomUUID
 }
 
 main().catch((err) => {

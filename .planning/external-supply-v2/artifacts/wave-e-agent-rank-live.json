@@ -1,0 +1,60 @@
+{
+  "rankedCount": 3,
+  "toolCallCount": 9,
+  "firstRankingDoc": {
+    "resultId": "agent-rank__160e2fc03e4ccaa46e1b51772ac90023d310303ac2c1c6067a6b7cd62b8038f1",
+    "evaluationRunId": "v2-e2e-run-1",
+    "candidateRecordId": "v2-e2e-cand-0001",
+    "candidateUserId": "v2-e2e-cand-0001",
+    "companyId": "co_acme_v2",
+    "jobId": "job_acme_swe_senior_v2",
+    "deterministicTier": "tier_2_personal_email",
+    "proposedAgentTier": "tier_2_personal_email",
+    "agentRationale": "Stubbed deterministic rationale (canned LLM).",
+    "agentRisks": [],
+    "agentRecommendedAction": "outreach_now",
+    "ensembleVotes": [
+      {
+        "modelUsed": "gpt-5.4-nano",
+        "proposedAgentTier": "tier_2_personal_email",
+        "agentRationale": "Stubbed deterministic rationale (canned LLM).",
+        "agentRisks": [],
+        "agentRecommendedAction": "outreach_now",
+        "inputTokens": 200,
+        "outputTokens": 80,
+        "costUsd": 0.000078
+      },
+      {
+        "modelUsed": "gpt-5.4-nano",
+        "proposedAgentTier": "tier_2_personal_email",
+        "agentRationale": "Stubbed deterministic rationale (canned LLM).",
+        "agentRisks": [],
+        "agentRecommendedAction": "outreach_now",
+        "inputTokens": 200,
+        "outputTokens": 80,
+        "costUsd": 0.000078
+      },
+      {
+        "modelUsed": "gpt-5.4-nano",
+        "proposedAgentTier": "tier_2_personal_email",
+        "agentRationale": "Stubbed deterministic rationale (canned LLM).",
+        "agentRisks": [],
+        "agentRecommendedAction": "outreach_now",
+        "inputTokens": 200,
+        "outputTokens": 80,
+        "costUsd": 0.000078
+      }
+    ],
+    "modelUsed": "gpt-5.4-nano",
+    "ensembleSize": 3,
+    "totalInputTokens": 600,
+    "totalOutputTokens": 240,
+    "totalCostUsd": 0.000234,
+    "dryRun": false,
+    "promptVersion": "agent-rank-2026-05-A",
+    "status": "proposed",
+    "createdAt": "2026-05-14T12:00:00.000Z",
+    "costTableVersion": "pricing-2026-05-A"
+  },
+  "generatedAt": "2026-05-14T12:00:00.000Z"
+}
