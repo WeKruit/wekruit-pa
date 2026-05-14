@@ -104,6 +104,19 @@ export function BatchDetail() {
 
   return (
     <div className="page-stack">
+      {batch?.companyId && (
+        <div style={{ fontSize: "0.85em", marginBottom: 4 }}>
+          <Link to={`/admin/external-supply/jobs/${encodeURIComponent(batch.companyId)}`}>
+            ← back to {batch.companyId} jobs
+          </Link>
+          <Link
+            to={`/admin/external-supply/batches/${batchId}/candidates`}
+            style={{ marginLeft: 12, color: "#1a73e8" }}
+          >
+            Browse candidates →
+          </Link>
+        </div>
+      )}
       <PageHeader
         eyebrow="v2.0 External Supply V1 / Admin"
         title={batch ? `Batch ${batchId.slice(0, 8)}…` : "Batch"}

@@ -152,8 +152,19 @@ export function BatchCandidates() {
         title="Candidates"
         description={`Batch ${batchId} — ${view === "table" ? "table view" : "click a row to open detail"}${result?.source ? ` · reader: ${result.source}${result.source === "canonical" && result.runId ? ` (run ${result.runId.slice(0, 8)}…)` : ""}` : ""}`}
       />
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "0.85em" }}>
-        <Link to={`/admin/external-supply/batches/${batchId}`}>← back to batch detail</Link>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "0.85em", flexWrap: "wrap", gap: 8 }}>
+        <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+          {result?.companyId ? (
+            <Link to={`/admin/external-supply/jobs/${encodeURIComponent(result.companyId)}`}>
+              ← back to {result.companyId} jobs
+            </Link>
+          ) : (
+            <Link to="/admin/external-supply/jobs">← back to companies</Link>
+          )}
+          <Link to={`/admin/external-supply/batches/${batchId}`} style={{ fontSize: "0.85em", color: "#64748b" }}>
+            (batch detail)
+          </Link>
+        </div>
         <a
           href={`?${new URLSearchParams({
             ...(view ? { view } : {}),
@@ -366,6 +377,22 @@ function CandidateListRow({
   selected: boolean
   onClick: () => void
 }) {
+  const [enrichBusy, setEnrichBusy] = useState(false)
+  const [enrichErr, setEnrichErr] = useState<string | null>(null)
+  const onEnrich = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    setEnrichBusy(true)
+    setEnrichErr(null)
+    try {
+      const out = await runLinkedInEnrich({ recordId: row.recordId })
+      setEnrichErr(`✓ ${out.status} — open drawer to see payload`)
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err)
+      setEnrichErr(/bright_data_key_missing|failed-precondition/i.test(m) ? "BrightData key pending — see drawer" : m)
+    } finally {
+      setEnrichBusy(false)
+    }
+  }
   return (
     <button
       type="button"
@@ -393,8 +420,29 @@ function CandidateListRow({
               {row.matchScore === "1" ? "✓ Match" : `Match ${row.matchScore}`}
             </span>
           )}
+          {row.linkedinUrl && (
+            <span
+              role="button"
+              onClick={onEnrich}
+              title={enrichBusy ? "Calling BrightData…" : "Run LinkedIn enrich via BrightData"}
+              style={{
+                fontSize: "0.65em",
+                fontWeight: 700,
+                padding: "1px 6px",
+                borderRadius: 4,
+                background: enrichBusy ? "#fef3c7" : "#dbeafe",
+                color: enrichBusy ? "#92400e" : "#1e3a8a",
+                cursor: enrichBusy ? "wait" : "pointer",
+              }}
+            >
+              {enrichBusy ? "…" : "⚡ Enrich"}
+            </span>
+          )}
         </div>
       </div>
+      {enrichErr && (
+        <div style={{ fontSize: "0.7em", marginTop: 2, color: enrichErr.startsWith("✓") ? "#16a34a" : "#991b1b" }}>{enrichErr}</div>
+      )}
       <div style={{ fontSize: "0.8em", color: "#475569", marginTop: 2 }}>
         {row.currentTitle ?? "—"}
         {row.currentCompany ? ` @ ${row.currentCompany}` : ""}
