@@ -2041,4 +2041,8 @@ export {
 } from "./external-supply/outreach.js"
 export { paExternalSupplySyncPlanToInstantly } from "./external-supply/instantly-sync.js"
 export { paExternalSupplyInstantlyWebhook } from "./external-supply/instantly-webhook.js"
+// v2.0 External Supply V1.1 — Mailgun is the active email-delivery channel
+// (Adam directive 2026-05-14). Instantly above stays for an easy switch back.
+export { paExternalSupplySyncPlanToMailgun } from "./external-supply/mailgun-sync.js"
+export { paExternalSupplyMailgunWebhook } from "./external-supply/mailgun-webhook.js"
 export { paExternalSupplyGetConfig } from "./external-supply/config.js"

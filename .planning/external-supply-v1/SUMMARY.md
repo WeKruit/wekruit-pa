@@ -46,11 +46,42 @@ These three fixes were discovered during the first live deploy attempt and appli
 2. `apps/functions/src/external-supply/instantly-webhook.ts` — drop `defineSecret("INSTANTLY_WEBHOOK_SECRET")` + `secrets: [...]` declaration in favour of runtime `process.env.INSTANTLY_WEBHOOK_SECRET` read. The secret stays OPTIONAL per PLAN §11 F (webhook accepts unsigned requests until Adam sets the secret).
 3. `config/firebase/firestore.rules` — operator-only read rules for all 10 external-supply collections so the dashboard direct Firestore queries don't 403 (mutations go through Admin SDK / Cloud Functions, which bypass rules).
 
+### V1.1 follow-up (2026-05-14): Mailgun is the active email channel
+
+Adam directive 2026-05-14 ("let's not use instantly for now on the pipeline, mailgun if enough, we can switch it"): the external-supply pipeline now dispatches approved outreach via the existing `apps/functions/src/email/mailgun.ts` `sendMailgun` transport rather than Instantly's lead/campaign API. The Instantly client + callable + webhook stay in the codebase for an easy switch back; the Mailgun path is the new primary.
+
+New surfaces:
+- `paExternalSupplySyncPlanToMailgun` callable (parallel to the Instantly version, same lifecycle + suppression + live-mode env gate + dry-run-records-the-payload semantics).
+- `paExternalSupplyMailgunWebhook` HTTP endpoint with optional HMAC verify via `MAILGUN_WEBHOOK_SIGNING_KEY`. Maps Mailgun events `delivered / opened / clicked / complained / unsubscribed / failed / bounced` onto the existing `OutreachEventKind` enum. Idempotent on `(provider="mailgun", event-data.id)` via `createOutreachEventId`.
+- New collection `pa-mailgun-sync-records` (operator-only read in firestore.rules — wired alongside the existing `pa-instantly-sync-records` block).
+- `OutreachEventSchema.provider` enum extended additively with `"mailgun"`.
+- `paExternalSupplyGetConfig` now returns `{ liveOutreachEnabled, instantlyConfigured, mailgunConfigured, defaultEmailProvider: "mailgun" }` so the dashboard renders the Mailgun sync button as primary.
+
+Live-mode env gate (forced dry-run when ANY are missing):
+- `EXTERNAL_SUPPLY_LIVE_OUTREACH_ENABLED=true`
+- `MAILGUN_API_KEY` (Firebase Secret — already provisioned project-wide)
+- `MAILGUN_DOMAIN` (Firebase Secret — already provisioned)
+- `MAILGUN_FROM` (Firebase Secret — already provisioned)
+- `MAILGUN_WEBHOOK_SIGNING_KEY` (Firebase Secret — optional; absent disables signature verify on inbound webhook events)
+
+Tests added: 6 mailgun-sync (auth gate, draft-plan reject, dry-run records payload, live-mode env downgrade, live success flips plan to `sent`, live failure flips plan to `failed`) + 7 mailgun-webhook (method gate, unmapped-event ignore, `delivered`→`email_sent` mapping, `bounced`→`email_bounced` mapping, idempotent replay, bad-signature reject, valid-signature accept). `pnpm --filter functions test` now reports **1355/1355 pass**.
+
+### Competitor-companies design note (clarified 2026-05-14)
+
+Adam clarification ("this competitor companies is in rubric we ask the agent to search right.. not us doing in runtime.."): D's rubric reads `company.competitorCompanies[]` as an INPUT to the company-rubric scoring path. The list itself is **NOT** a `pa-companies/{id}.competitorCompanies` field we maintain by hand. It is surfaced per-evaluation by **Executor E's agent research flow** (`paExternalSupplyGenerateAgentResearchPrompt` → operator pastes ChatGPT Agent Mode output → `paExternalSupplyImportAgentResearchResult` parses → operator approves the per-candidate `AgentResearchFinding{ field: "competitorCompanies", value: ["Stripe","Plaid"] }`).
+
+Concretely:
+- When `runEvaluation` first executes against a job with no prior agent research, `evaluateCompanyRubric` returns `missingInfo.push("competitor_companies_unknown")` and the candidate-evaluation surface flags this as an unresolved enrichment slot.
+- The operator generates an agent research prompt that EXPLICITLY asks ChatGPT Agent for the company's competitor list. The prompt builder (`agent-prompt.ts`) already includes a `companyJobContext.competitorCompanies?: string[]` field that gets rendered into the agent's brief; that field is populated by approved findings, not a static Firestore record.
+- Approved findings are persisted on the `AgentResearchTask.parsedFindings[]` array. The operator triggers a fresh `runEvaluation` pass after approval; the next pass reads the approved findings + recomputes the rubric with competitor adjacency now scored.
+
+This removes the previously-listed Adam-action "decide on data source for `pa-companies.competitorCompanies[]`" — there is no static data source we maintain.
+
 ### Adam-action items (still required for live email outreach, not blocking V1 dry-run)
 
-1. Set Firebase Secret `INSTANTLY_API_KEY` + env `EXTERNAL_SUPPLY_LIVE_OUTREACH_ENABLED=true` → enables live email sync. Without these, `syncPlanToInstantly` silently downgrades to dry-run.
-2. Set Firebase Secret `INSTANTLY_WEBHOOK_SECRET` + redeploy with `--update-secrets` → enables HMAC verification on incoming Instantly webhooks. Without it the webhook accepts unsigned requests (documented gap, low real-world risk since URL is operator-known only).
-3. Decide on data source for `pa-companies.competitorCompanies[]` → unlocks D's rubric tier_1 promotion on competitor-adjacency signal.
+1. ~~Set Firebase Secret `INSTANTLY_API_KEY` + env `EXTERNAL_SUPPLY_LIVE_OUTREACH_ENABLED=true`~~ — **superseded.** Mailgun is now the active path. Set env `EXTERNAL_SUPPLY_LIVE_OUTREACH_ENABLED=true` AND verify `MAILGUN_API_KEY` / `MAILGUN_DOMAIN` / `MAILGUN_FROM` Firebase Secrets are populated (they already exist project-wide for qa-evaluator + backfill-ats-urls) to enable live email send. Without these, `syncPlanToMailgun` silently downgrades to dry-run.
+2. ~~Set Firebase Secret `INSTANTLY_WEBHOOK_SECRET`~~ — **superseded.** Set `MAILGUN_WEBHOOK_SIGNING_KEY` Firebase Secret + redeploy to enable HMAC verify on the new Mailgun webhook. Without it the webhook accepts unsigned requests (documented gap, low real-world risk since URL is operator-known only).
+3. ~~Decide on data source for `pa-companies.competitorCompanies[]`~~ — **superseded.** Competitor lists come from ChatGPT Agent Mode findings (Executor E flow), not a maintained data source. See "Competitor-companies design note" above. The only Adam-action here is to actually run the Agent Mode flow once for a target job and approve the findings; D's rubric then picks them up on the next `runEvaluation`.
 
 ## Outcome
 
