@@ -71,6 +71,8 @@ import { Sync as ExternalSupplySync } from "./pages/external-supply/Sync.js"
 import { Audit as ExternalSupplyAudit } from "./pages/external-supply/Audit.js"
 // v2.0 External Supply V2 — Wave D dashboard UX — agent-ranking review surface.
 import { EvaluationAgentRanking as ExternalSupplyEvaluationAgentRanking } from "./pages/external-supply/EvaluationAgentRanking.js"
+// Post-V2 hotfix 2026-05-14 — per-company / per-job sourcing entry surface.
+import { Jobs as ExternalSupplyJobs } from "./pages/external-supply/Jobs.js"
 
 // v1.8 — collapsible sidebar section. Persists open/closed to localStorage.
 function NavSection({
@@ -205,6 +207,7 @@ export default function App() {
         </NavSection>
         <NavSection id="external-supply" label="External Supply" defaultOpen={false}>
           <NavLink to="/admin/external-supply" end>Landing</NavLink>
+          <NavLink to="/admin/external-supply/jobs">Jobs by company</NavLink>
           <NavLink to="/admin/external-supply/batches/new">New batch</NavLink>
           <NavLink to="/admin/external-supply/review">Review queue</NavLink>
           <NavLink to="/admin/external-supply/evaluations">Evaluations</NavLink>
@@ -312,6 +315,8 @@ export default function App() {
           <Route path="/admin/prescreen-feedback" element={<PrescreenFeedback />} />
           {/* v2.0 External Supply V1 — Wave D admin surfaces. */}
           <Route path="/admin/external-supply" element={<ExternalSupplyLanding />} />
+          <Route path="/admin/external-supply/jobs" element={<ExternalSupplyJobs />} />
+          <Route path="/admin/external-supply/jobs/:companyId" element={<ExternalSupplyJobs />} />
           <Route path="/admin/external-supply/batches/new" element={<ExternalSupplyBatchNew />} />
           <Route path="/admin/external-supply/batches/:batchId" element={<ExternalSupplyBatchDetail />} />
           <Route path="/admin/external-supply/review" element={<ExternalSupplyReview />} />
