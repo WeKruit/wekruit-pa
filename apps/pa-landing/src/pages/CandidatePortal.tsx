@@ -113,7 +113,7 @@ export function CandidateMe() {
               </div>
               <div>
                 <dt>Status</dt>
-                <dd>{state.profile.lifecycleState}</dd>
+                <dd>{formatProfileStatus(state.profile.lifecycleState)}</dd>
               </div>
               <div>
                 <dt>Phone</dt>
@@ -167,6 +167,8 @@ export function CandidateProfile() {
 function ProfileDetails({ profile }: { profile: CandidateSelfProfile }) {
   const [currentProfile, setCurrentProfile] = useState(profile)
   const tags = currentProfile.globalTags
+  const resumeLabel = currentProfile.latestResumeArtifactId ? "Resume parsed and attached" : "Add a resume to unlock better matches"
+  const linkedinLabel = currentProfile.linkedinUrl ? "Connected" : "Not connected"
 
   useEffect(() => {
     setCurrentProfile(profile)
@@ -177,12 +179,11 @@ function ProfileDetails({ profile }: { profile: CandidateSelfProfile }) {
       <style>{CANDIDATE_PROFILE_STYLES}</style>
       <h1>{currentProfile.displayName ?? "Your profile"}</h1>
       <dl className="candidate-profile-list">
-        <ProfileRow label="Candidate ID" value={currentProfile.candidateId} />
-        <ProfileRow label="Lifecycle" value={currentProfile.lifecycleState} />
+        <ProfileRow label="Profile status" value={formatProfileStatus(currentProfile.lifecycleState)} />
         <ProfileRow label="Email" value={currentProfile.emailMasked ?? "Not set"} />
         <ProfileRow label="Phone" value={currentProfile.phoneMasked ?? "Not set"} />
-        <ProfileRow label="Resume" value={currentProfile.latestResumeArtifactId ?? "Not set"} />
-        <ProfileRow label="LinkedIn" value={currentProfile.linkedinUrl ?? "Not set"} />
+        <ProfileRow label="Resume" value={resumeLabel} />
+        <ProfileRow label="LinkedIn" value={linkedinLabel} />
       </dl>
       {currentProfile.profileSummary ? <p className="candidate-summary">{currentProfile.profileSummary}</p> : null}
       {tags ? (
@@ -326,6 +327,20 @@ function ProfileRow({ label, value }: { label: string; value: string }) {
   )
 }
 
+export function formatProfileStatus(value: string) {
+  if (value === "claimed") return "Signed in and verified"
+  if (value === "prospect") return "Profile created"
+  return formatProfileValue(value)
+}
+
+export function formatProfileValue(value: string) {
+  return value
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase())
+}
+
 function TagGroup({ label, values }: { label: string; values?: string[] }) {
   if (!values || values.length === 0) return null
   return (
@@ -333,7 +348,7 @@ function TagGroup({ label, values }: { label: string; values?: string[] }) {
       <h2>{label}</h2>
       <div>
         {values.slice(0, 24).map((value) => (
-          <span key={value}>{value}</span>
+          <span key={value}>{formatProfileValue(value)}</span>
         ))}
       </div>
     </section>
