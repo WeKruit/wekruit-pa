@@ -76,6 +76,20 @@ export async function runPreScreenForUser(args: RunPreScreenArgs): Promise<RunPr
   const rawCfg = data?.prescreenConfig
   if (!rawCfg) {
     log("prescreen.config_missing", { jobId: args.jobId })
+    const title = typeof data?.title === "string" && data.title.trim() ? data.title.trim() : "this role"
+    try {
+      await sendImessage({
+        to: args.toE164,
+        content: `Claire's screen for ${title} is still being prepared. WeKruit has the role listed, but the employer-specific questions are not approved yet. We will unlock this screen when it is ready.`,
+        userId: args.userId,
+        db: args.db,
+      })
+    } catch (err) {
+      log("prescreen.config_missing_notice_failed", {
+        jobId: args.jobId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
     return { ok: false, reason: "config_missing", sessionId }
   }
   const parsed = safeParsePrescreenConfig(rawCfg)
