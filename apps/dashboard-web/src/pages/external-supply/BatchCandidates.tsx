@@ -25,17 +25,33 @@ import {
 import {
   getCandidateDetail,
   listBatchCandidates,
+  listBatchCandidatesCanonical,
+  runLinkedInEnrich,
   type BatchCandidateRow,
   type CandidateDetail,
   type ListBatchCandidatesResult,
+  type RunLinkedInEnrichResult,
 } from "../../lib/external-supply-client.js"
+
+type CanonicalAwareResult = ListBatchCandidatesResult & {
+  source?: "canonical" | "legacy"
+  runId?: string
+}
 
 export function BatchCandidates() {
   const { batchId = "" } = useParams<{ batchId: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
   const selectedRecordId = searchParams.get("record") ?? ""
 
-  const [result, setResult] = useState<ListBatchCandidatesResult | null>(null)
+  // P5 feature flag — `?canonical=1` routes the list through the V2 sourcing
+  // pipeline (core-service `sourcing-source-records` joined via
+  // `pa-external-sourcing-batches/{batchId}.sourcing.runId`). Default stays
+  // on the legacy direct-Firestore reader until enrichment ships and starts
+  // adding canonical-only data. Falls back transparently when a batch has
+  // not been bridged yet (no sourcing.runId).
+  const useCanonical = searchParams.get("canonical") === "1"
+
+  const [result, setResult] = useState<CanonicalAwareResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
@@ -48,10 +64,13 @@ export function BatchCandidates() {
     let cancelled = false
     setLoading(true)
     setError(null)
-    listBatchCandidates({ batchId })
+    const reader = useCanonical
+      ? listBatchCandidatesCanonical({ batchId })
+      : listBatchCandidates({ batchId })
+    reader
       .then((r) => {
         if (cancelled) return
-        setResult(r)
+        setResult(r as CanonicalAwareResult)
       })
       .catch((err) => {
         if (cancelled) return
@@ -64,7 +83,7 @@ export function BatchCandidates() {
     return () => {
       cancelled = true
     }
-  }, [batchId])
+  }, [batchId, useCanonical])
 
   useEffect(() => {
     if (!selectedRecordId) {
@@ -131,10 +150,20 @@ export function BatchCandidates() {
       <PageHeader
         eyebrow="External Supply / Batch"
         title="Candidates"
-        description={`Batch ${batchId} — ${view === "table" ? "table view" : "click a row to open detail"}`}
+        description={`Batch ${batchId} — ${view === "table" ? "table view" : "click a row to open detail"}${result?.source ? ` · reader: ${result.source}${result.source === "canonical" && result.runId ? ` (run ${result.runId.slice(0, 8)}…)` : ""}` : ""}`}
       />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "0.85em" }}>
         <Link to={`/admin/external-supply/batches/${batchId}`}>← back to batch detail</Link>
+        <a
+          href={`?${new URLSearchParams({
+            ...(view ? { view } : {}),
+            ...(selectedRecordId ? { record: selectedRecordId } : {}),
+            ...(useCanonical ? {} : { canonical: "1" }),
+          }).toString()}`}
+          style={{ marginLeft: 12, fontSize: "0.85em", color: useCanonical ? "#16643b" : "#888" }}
+        >
+          {useCanonical ? "✓ canonical reader (V2 sourcing)" : "switch to canonical reader →"}
+        </a>
         <div role="tablist" style={{ display: "flex", gap: 4 }}>
           <button
             type="button"
@@ -455,6 +484,37 @@ function CandidateDetailPanel({ detail }: { detail: CandidateDetail }) {
   const skills = Array.isArray(tags.skills)
     ? (tags.skills as Array<{ value?: string } | string>)
     : []
+  const linkedinUrl = typeof record.canonicalLinkedInUrl === "string"
+    ? record.canonicalLinkedInUrl
+    : undefined
+
+  // P3 — BrightData LinkedIn enrichment state.
+  const [enrichLoading, setEnrichLoading] = useState(false)
+  const [enrichResult, setEnrichResult] = useState<RunLinkedInEnrichResult | null>(null)
+  const [enrichError, setEnrichError] = useState<string | null>(null)
+  const recordId = detail.recordId
+  const runEnrich = async () => {
+    setEnrichLoading(true)
+    setEnrichError(null)
+    setEnrichResult(null)
+    try {
+      const out = await runLinkedInEnrich({ recordId })
+      setEnrichResult(out)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      // Surface the friendly "key not configured" case rather than the raw
+      // HttpsError string.
+      if (/bright_data_key_missing|failed-precondition/i.test(message)) {
+        setEnrichError(
+          "BrightData key not configured on prod yet — Adam needs to rotate + secret-set BRIGHT_DATA_API_KEY",
+        )
+      } else {
+        setEnrichError(message)
+      }
+    } finally {
+      setEnrichLoading(false)
+    }
+  }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -505,6 +565,81 @@ function CandidateDetailPanel({ detail }: { detail: CandidateDetail }) {
               Lessie match score: <strong>{matchScore}</strong>
             </div>
           )}
+          {linkedinUrl ? (
+            <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+              <button
+                type="button"
+                onClick={runEnrich}
+                disabled={enrichLoading}
+                style={{
+                  alignSelf: "flex-start",
+                  padding: "6px 12px",
+                  border: "1px solid #1e3a8a",
+                  background: enrichLoading ? "#cbd5e1" : "#1e3a8a",
+                  color: enrichLoading ? "#475569" : "#fff",
+                  borderRadius: 6,
+                  fontSize: "0.85em",
+                  fontWeight: 700,
+                  cursor: enrichLoading ? "wait" : "pointer",
+                }}
+              >
+                {enrichLoading ? "Calling BrightData…" : "Run LinkedIn enrich (BrightData)"}
+              </button>
+              {enrichError && (
+                <div
+                  style={{
+                    fontSize: "0.78em",
+                    color: "#991b1b",
+                    background: "#fef2f2",
+                    border: "1px solid #fecaca",
+                    padding: 6,
+                    borderRadius: 4,
+                  }}
+                >
+                  {enrichError}
+                </div>
+              )}
+              {enrichResult && (
+                <details
+                  open
+                  style={{
+                    fontSize: "0.78em",
+                    padding: 8,
+                    background: "#f0fdf4",
+                    border: "1px solid #bbf7d0",
+                    borderRadius: 4,
+                  }}
+                >
+                  <summary style={{ cursor: "pointer", fontWeight: 700 }}>
+                    BrightData snapshot — status: {enrichResult.status}
+                    {enrichResult.snapshotId ? ` · ${enrichResult.snapshotId.slice(0, 12)}…` : ""}
+                  </summary>
+                  <div style={{ marginTop: 6, color: "#475569" }}>
+                    runId: <code>{enrichResult.runId.slice(0, 8)}…</code> · matchId:{" "}
+                    <code>{enrichResult.matchId.slice(0, 18)}…</code>
+                  </div>
+                  {enrichResult.profile ? (
+                    <pre
+                      style={{
+                        maxHeight: 240,
+                        overflow: "auto",
+                        background: "#f8fafc",
+                        padding: 6,
+                        marginTop: 6,
+                        fontSize: "0.85em",
+                      }}
+                    >
+                      {JSON.stringify(enrichResult.profile, null, 2)}
+                    </pre>
+                  ) : (
+                    <div style={{ marginTop: 6, color: "#64748b" }}>
+                      Snapshot still building — re-click in ~60s to fetch.
+                    </div>
+                  )}
+                </details>
+              )}
+            </div>
+          ) : null}
         </div>
       </Panel>
 

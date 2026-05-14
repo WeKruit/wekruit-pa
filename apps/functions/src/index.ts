@@ -2041,6 +2041,7 @@ export {
   paExternalSupplyCreateBatch,
 } from "./external-supply/import.js"
 export { paExternalSupplyResolveBatchIdentity } from "./external-supply/resolve-identity.js"
+export { paExternalSupplyRunLinkedInEnrich } from "./external-supply/run-linkedin-enrich.js"
 export { paExternalSupplyRunEvaluation } from "./external-supply/evaluate.js"
 export {
   paExternalSupplyGenerateAgentResearchPrompt,

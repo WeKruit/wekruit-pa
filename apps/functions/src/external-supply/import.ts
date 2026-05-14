@@ -39,6 +39,11 @@ import { dedupeWithinBatch } from "@pa/external-supply"
 import { requireExternalSupplyAdmin } from "./resolve-identity.js"
 import { getAdapter } from "./adapters/registry.js"
 import type { ManualCsvColumnMapping } from "./adapters/manual-csv.js"
+import {
+  makeSourcingBridgeIo,
+  resolveSourcingBaseUrl,
+  runSourcingSync,
+} from "./sourcing-bridge.js"
 
 const PA_ADMIN_TOKEN = defineSecret("PA_ADMIN_TOKEN")
 
@@ -474,6 +479,26 @@ export const paExternalSupplyCreateBatch = onCall(
         log: (...args) => logger.info("[external-supply]", ...args),
       },
     )
+
+    // V2 sourcing bridge — fan out batch + records to core-service sourcing-api.
+    // Synchronous (we await) so failures land in the function log instead of
+    // disappearing into a fire-and-forget. The operator-facing callable still
+    // succeeds even if the bridge fails — the wekruit-pa batch is already
+    // persisted, and the bridge is idempotent on re-run.
+    try {
+      const result = await runSourcingSync(out.batchId, makeSourcingBridgeIo(db), {
+        baseUrl: resolveSourcingBaseUrl(),
+        fetcher: fetch,
+        now: () => new Date().toISOString(),
+        log: (...args) => logger.info("[external-supply.sourcing_bridge]", ...args),
+      })
+      logger.info("[external-supply.sourcing_bridge.done]", { batchId: out.batchId, ...result })
+    } catch (err) {
+      logger.error("[external-supply.sourcing_bridge.threw]", {
+        batchId: out.batchId,
+        err: err instanceof Error ? err.message : String(err),
+      })
+    }
 
     return out
   },
