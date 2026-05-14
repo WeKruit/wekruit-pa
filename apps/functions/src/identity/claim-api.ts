@@ -82,7 +82,7 @@ export async function runCandidateClaimProfile(
 export const paCandidateClaimProfile = onCall(
   {
     region: "us-central1",
-    memory: "256MiB",
+    memory: "512MiB",
     timeoutSeconds: 30,
   },
   async (req): Promise<CandidateClaimCallableResult> => {
