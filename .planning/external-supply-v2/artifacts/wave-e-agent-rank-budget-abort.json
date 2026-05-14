@@ -1,0 +1,15 @@
+{
+  "out": {
+    "ok": true,
+    "evaluationRunId": "v2-e2e-run-1",
+    "processedCount": 200,
+    "rankedCount": 0,
+    "skippedCount": 0,
+    "totalCostUsd": 0,
+    "projectedCostUsd": 0.2339999999999995,
+    "abortedReason": "budget_exceeded",
+    "promptVersion": "agent-rank-2026-05-A",
+    "costTableVersion": "pricing-2026-05-A"
+  },
+  "generatedAt": "2026-05-14T12:00:00.000Z"
+}

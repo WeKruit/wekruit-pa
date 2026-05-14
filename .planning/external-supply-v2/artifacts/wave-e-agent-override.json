@@ -1,0 +1,27 @@
+{
+  "override": {
+    "ok": true,
+    "resultId": "agent-rank__160e2fc03e4ccaa46e1b51772ac90023d310303ac2c1c6067a6b7cd62b8038f1",
+    "approvedTier": "tier_1_personal_linkedin_and_email",
+    "correctionEventId": "test-correction-event-id-001"
+  },
+  "correctionEvent": {
+    "eventId": "test-correction-event-id-001",
+    "targetType": "agent_ranking_result",
+    "targetId": "agent-rank__160e2fc03e4ccaa46e1b51772ac90023d310303ac2c1c6067a6b7cd62b8038f1",
+    "actor": "operator",
+    "candidateId": "v2-e2e-cand-0001",
+    "jobId": "job_acme_swe_senior_v2",
+    "reason": "operator-disagrees-with-stub-rationale",
+    "beforeRedacted": {
+      "proposedAgentTier": "tier_2_personal_email",
+      "deterministicTier": "tier_2_personal_email"
+    },
+    "afterRedacted": {
+      "approvedTier": "tier_1_personal_linkedin_and_email"
+    },
+    "evidence": [],
+    "createdAt": "2026-05-14T12:00:00.000Z"
+  },
+  "generatedAt": "2026-05-14T12:00:00.000Z"
+}

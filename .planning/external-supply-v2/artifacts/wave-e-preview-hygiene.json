@@ -1,0 +1,330 @@
+{
+  "writes": [],
+  "preview": {
+    "detection": [
+      {
+        "source": "juicebox",
+        "confidence": 1,
+        "requiredMatched": 3,
+        "requiredCount": 3,
+        "bonusMatched": 6,
+        "reasons": [
+          "required_matched:3/3",
+          "bonus_matched:6",
+          "extension_hint:json"
+        ]
+      },
+      {
+        "source": "manual_csv",
+        "confidence": 0.5,
+        "requiredMatched": 0,
+        "requiredCount": 0,
+        "bonusMatched": 0,
+        "reasons": [
+          "fallback_floor:0.5"
+        ]
+      },
+      {
+        "source": "coresignal",
+        "confidence": 0.1,
+        "requiredMatched": 0,
+        "requiredCount": 3,
+        "bonusMatched": 1,
+        "reasons": [
+          "required_matched:0/3",
+          "bonus_matched:1",
+          "extension_hint:json"
+        ]
+      },
+      {
+        "source": "lessie",
+        "confidence": 0,
+        "requiredMatched": 0,
+        "requiredCount": 3,
+        "bonusMatched": 1,
+        "reasons": [
+          "required_matched:0/3",
+          "bonus_matched:1",
+          "shape_penalty:json_not_in_csv|tsv"
+        ]
+      }
+    ],
+    "chosenSource": "juicebox",
+    "rowCount": 35,
+    "validLinkedInCount": 25,
+    "validEmailCount": 30,
+    "withinBatchDuplicates": 0,
+    "identityForecast": {
+      "createNew": 20,
+      "mergeExisting": 5,
+      "needsReview": 5,
+      "blocked": 5,
+      "perReviewReason": {
+        "email_only_external_row": 5
+      }
+    },
+    "tagEnrichmentForecast": {
+      "perFieldFillCount": {
+        "industryEnum": 35,
+        "recentRoleTitle": 25,
+        "recentCompany": 25,
+        "workHistorySummary": 25
+      },
+      "perFieldPreservedCount": {},
+      "perCandidatePreview": [
+        {
+          "candidateKey": "f7e17c5ed9042a4c",
+          "willFill": [
+            "industryEnum",
+            "recentRoleTitle",
+            "recentCompany",
+            "workHistorySummary"
+          ],
+          "willPreserve": []
+        },
+        {
+          "candidateKey": "8fc6811c395e01c2",
+          "willFill": [
+            "industryEnum",
+            "recentRoleTitle",
+            "recentCompany",
+            "workHistorySummary"
+          ],
+          "willPreserve": []
+        },
+        {
+          "candidateKey": "67881f5cb53f4771",
+          "willFill": [
+            "industryEnum",
+            "recentRoleTitle",
+            "recentCompany",
+            "workHistorySummary"
+          ],
+          "willPreserve": []
+        },
+        {
+          "candidateKey": "b3ae3abbf619da0b",
+          "willFill": [
+            "industryEnum",
+            "recentRoleTitle",
+            "recentCompany",
+            "workHistorySummary"
+          ],
+          "willPreserve": []
+        },
+        {
+          "candidateKey": "1be9c817a8765e38",
+          "willFill": [
+            "industryEnum",
+            "recentRoleTitle",
+            "recentCompany",
+            "workHistorySummary"
+          ],
+          "willPreserve": []
+        },
+        {
+          "candidateKey": "2b57bf3cb473778d",
+          "willFill": [
+            "industryEnum",
+            "recentRoleTitle",
+            "recentCompany",
+            "workHistorySummary"
+          ],
+          "willPreserve": []
+        },
+        {
+          "candidateKey": "72a930de5a918112",
+          "willFill": [
+            "industryEnum",
+            "recentRoleTitle",
+            "recentCompany",
+            "workHistorySummary"
+          ],
+          "willPreserve": []
+        },
+        {
+          "candidateKey": "6c882a02c8394e7b",
+          "willFill": [
+            "industryEnum",
+            "recentRoleTitle",
+            "recentCompany",
+            "workHistorySummary"
+          ],
+          "willPreserve": []
+        },
+        {
+          "candidateKey": "18bacdbc5a5c5e0c",
+          "willFill": [
+            "industryEnum",
+            "recentRoleTitle",
+            "recentCompany",
+            "workHistorySummary"
+          ],
+          "willPreserve": []
+        },
+        {
+          "candidateKey": "4df5f84d914a9234",
+          "willFill": [
+            "industryEnum",
+            "recentRoleTitle",
+            "recentCompany",
+            "workHistorySummary"
+          ],
+          "willPreserve": []
+        },
+        {
+          "candidateKey": "816f6dd0523f2bb8",
+          "willFill": [
+            "industryEnum",
+            "recentRoleTitle",
+            "recentCompany",
+            "workHistorySummary"
+          ],
+          "willPreserve": []
+        },
+        {
+          "candidateKey": "9da4c3bd14584da3",
+          "willFill": [
+            "industryEnum",
+            "recentRoleTitle",
+            "recentCompany",
+            "workHistorySummary"
+          ],
+          "willPreserve": []
+        },
+        {
+          "candidateKey": "70e9e3b095448dbc",
+          "willFill": [
+            "industryEnum",
+            "recentRoleTitle",
+            "recentCompany",
+            "workHistorySummary"
+          ],
+          "willPreserve": []
+        },
+        {
+          "candidateKey": "01abbad3de0cc8c8",
+          "willFill": [
+            "industryEnum",
+            "recentRoleTitle",
+            "recentCompany",
+            "workHistorySummary"
+          ],
+          "willPreserve": []
+        },
+        {
+          "candidateKey": "508f65182c05236c",
+          "willFill": [
+            "industryEnum",
+            "recentRoleTitle",
+            "recentCompany",
+            "workHistorySummary"
+          ],
+          "willPreserve": []
+        },
+        {
+          "candidateKey": "027ec170fc006b76",
+          "willFill": [
+            "industryEnum",
+            "recentRoleTitle",
+            "recentCompany",
+            "workHistorySummary"
+          ],
+          "willPreserve": []
+        },
+        {
+          "candidateKey": "e72baee13611a541",
+          "willFill": [
+            "industryEnum",
+            "recentRoleTitle",
+            "recentCompany",
+            "workHistorySummary"
+          ],
+          "willPreserve": []
+        },
+        {
+          "candidateKey": "6460e2d1f5c61b4c",
+          "willFill": [
+            "industryEnum",
+            "recentRoleTitle",
+            "recentCompany",
+            "workHistorySummary"
+          ],
+          "willPreserve": []
+        },
+        {
+          "candidateKey": "f19c20ddbc15a295",
+          "willFill": [
+            "industryEnum",
+            "recentRoleTitle",
+            "recentCompany",
+            "workHistorySummary"
+          ],
+          "willPreserve": []
+        },
+        {
+          "candidateKey": "0b507aec9f62e23c",
+          "willFill": [
+            "industryEnum",
+            "recentRoleTitle",
+            "recentCompany",
+            "workHistorySummary"
+          ],
+          "willPreserve": []
+        },
+        {
+          "candidateKey": "f6712cfa1004727f",
+          "willFill": [
+            "industryEnum",
+            "recentRoleTitle",
+            "recentCompany",
+            "workHistorySummary"
+          ],
+          "willPreserve": []
+        },
+        {
+          "candidateKey": "2d9c91086ebbdd16",
+          "willFill": [
+            "industryEnum",
+            "recentRoleTitle",
+            "recentCompany",
+            "workHistorySummary"
+          ],
+          "willPreserve": []
+        },
+        {
+          "candidateKey": "7103fef987e25a2d",
+          "willFill": [
+            "industryEnum",
+            "recentRoleTitle",
+            "recentCompany",
+            "workHistorySummary"
+          ],
+          "willPreserve": []
+        },
+        {
+          "candidateKey": "f02462f682d28602",
+          "willFill": [
+            "industryEnum",
+            "recentRoleTitle",
+            "recentCompany",
+            "workHistorySummary"
+          ],
+          "willPreserve": []
+        },
+        {
+          "candidateKey": "2f5bdcb993781605",
+          "willFill": [
+            "industryEnum",
+            "recentRoleTitle",
+            "recentCompany",
+            "workHistorySummary"
+          ],
+          "willPreserve": []
+        }
+      ]
+    },
+    "warnings": []
+  },
+  "generatedAt": "2026-05-14T12:00:00.000Z"
+}

@@ -37,23 +37,8 @@ import {
 } from "@pa/core-types"
 import { dedupeWithinBatch } from "@pa/external-supply"
 import { authorizeAdminCallable } from "../promote-sandbox-tag.js"
-import {
-  parseJuiceboxExport,
-  JUICEBOX_ADAPTER_VERSION,
-} from "./adapters/juicebox.js"
-import {
-  parseLessieExport,
-  LESSIE_ADAPTER_VERSION,
-} from "./adapters/lessie.js"
-import {
-  parseCoresignalExport,
-  CORESIGNAL_ADAPTER_VERSION,
-} from "./adapters/coresignal.js"
-import {
-  parseManualCsvExport,
-  MANUAL_CSV_ADAPTER_VERSION,
-  type ManualCsvColumnMapping,
-} from "./adapters/manual-csv.js"
+import { getAdapter } from "./adapters/registry.js"
+import type { ManualCsvColumnMapping } from "./adapters/manual-csv.js"
 
 const PA_ADMIN_TOKEN = defineSecret("PA_ADMIN_TOKEN")
 
@@ -91,45 +76,29 @@ export function batchStoragePath(source: ExternalSource, sha256: string, mime: s
 // Adapter dispatch
 // ---------------------------------------------------------------------------
 
-interface AdapterResult {
+export interface AdapterResult {
   drafts: Array<Omit<ExternalCandidateRecord, "recordId" | "batchId" | "createdAt">>
   adapterVersion: string
   rawHeaderSample?: string
 }
 
-function dispatchAdapter(
+/**
+ * Adapter dispatch — looks up the adapter descriptor by source and runs its
+ * `parse()` against the raw buffer. Exported (additive) so the preview
+ * callable can reuse the exact same dispatch path without re-implementing.
+ * No behaviour change vs the prior private function.
+ */
+export function dispatchAdapter(
   source: ExternalSource,
   raw: Buffer,
   columnMapping: ManualCsvColumnMapping | undefined,
 ): AdapterResult {
-  const text = raw.toString("utf8")
-  switch (source) {
-    case "juicebox": {
-      const drafts = parseJuiceboxExport(text)
-      return { drafts, adapterVersion: JUICEBOX_ADAPTER_VERSION }
-    }
-    case "lessie": {
-      const drafts = parseLessieExport(text)
-      const headerSample = text.split(/\r?\n/, 1)[0]
-      return { drafts, adapterVersion: LESSIE_ADAPTER_VERSION, rawHeaderSample: headerSample }
-    }
-    case "coresignal": {
-      const drafts = parseCoresignalExport(text)
-      return { drafts, adapterVersion: CORESIGNAL_ADAPTER_VERSION }
-    }
-    case "manual_csv": {
-      if (!columnMapping) {
-        throw new Error("manual_csv_requires_columnMapping")
-      }
-      const drafts = parseManualCsvExport(text, columnMapping)
-      const headerSample = text.split(/\r?\n/, 1)[0]
-      return {
-        drafts,
-        adapterVersion: MANUAL_CSV_ADAPTER_VERSION,
-        rawHeaderSample: headerSample,
-      }
-    }
-  }
+  const descriptor = getAdapter(source)
+  const drafts = descriptor.parse(raw, columnMapping)
+  const rawHeaderSample = descriptor.signature.acceptedShapes.includes("csv")
+    ? raw.toString("utf8").split(/\r?\n/, 1)[0]
+    : undefined
+  return { drafts, adapterVersion: descriptor.adapterVersion, rawHeaderSample }
 }
 
 // ---------------------------------------------------------------------------

@@ -199,11 +199,18 @@ export function EvaluationDetail() {
             : ""
         }
         actions={
-          <Link to="/admin/external-supply/evaluations">
-            <button type="button" style={secondaryBtnStyle}>
-              All runs
-            </button>
-          </Link>
+          <div style={{ display: "flex", gap: 8 }}>
+            <Link to={`/admin/external-supply/evaluations/${runId}/agent-ranking`}>
+              <button type="button" style={primaryBtnStyle}>
+                Run agent ranking
+              </button>
+            </Link>
+            <Link to="/admin/external-supply/evaluations">
+              <button type="button" style={secondaryBtnStyle}>
+                All runs
+              </button>
+            </Link>
+          </div>
         }
       />
 

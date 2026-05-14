@@ -1,0 +1,788 @@
+[
+  {
+    "candidateId": "seed_u001",
+    "linkedinUrl": "https://linkedin.com/in/seed-user-001",
+    "email": "seed-user-001@seed.example.test",
+    "extraEmailHandles": [
+      {
+        "email": "v2-mismatch-001@conflict.example.test",
+        "candidateId": "cand_other_v2_001"
+      }
+    ]
+  },
+  {
+    "candidateId": "seed_u002",
+    "linkedinUrl": "https://linkedin.com/in/seed-user-002",
+    "email": "seed-user-002@seed.example.test",
+    "extraEmailHandles": [
+      {
+        "email": "v2-mismatch-002@conflict.example.test",
+        "candidateId": "cand_other_v2_002"
+      }
+    ]
+  },
+  {
+    "candidateId": "seed_u003",
+    "linkedinUrl": "https://linkedin.com/in/seed-user-003",
+    "email": "seed-user-003@seed.example.test",
+    "extraEmailHandles": [
+      {
+        "email": "v2-mismatch-003@conflict.example.test",
+        "candidateId": "cand_other_v2_003"
+      }
+    ]
+  },
+  {
+    "candidateId": "seed_u004",
+    "linkedinUrl": "https://linkedin.com/in/seed-user-004",
+    "email": "seed-user-004@seed.example.test",
+    "extraEmailHandles": [
+      {
+        "email": "v2-mismatch-004@conflict.example.test",
+        "candidateId": "cand_other_v2_004"
+      }
+    ]
+  },
+  {
+    "candidateId": "seed_u005",
+    "linkedinUrl": "https://linkedin.com/in/seed-user-005",
+    "email": "seed-user-005@seed.example.test",
+    "extraEmailHandles": [
+      {
+        "email": "mismatch-005@conflict.example.test",
+        "candidateId": "cand_other_005"
+      }
+    ]
+  },
+  {
+    "candidateId": "seed_u006",
+    "linkedinUrl": "https://linkedin.com/in/seed-user-006",
+    "email": "seed-user-006@seed.example.test",
+    "extraEmailHandles": [
+      {
+        "email": "mismatch-006@conflict.example.test",
+        "candidateId": "cand_other_006"
+      }
+    ]
+  },
+  {
+    "candidateId": "seed_u007",
+    "linkedinUrl": "https://linkedin.com/in/seed-user-007",
+    "email": "seed-user-007@seed.example.test",
+    "extraEmailHandles": [
+      {
+        "email": "mismatch-007@conflict.example.test",
+        "candidateId": "cand_other_007"
+      }
+    ]
+  },
+  {
+    "candidateId": "seed_u008",
+    "linkedinUrl": "https://linkedin.com/in/seed-user-008",
+    "email": "seed-user-008@seed.example.test",
+    "extraEmailHandles": [
+      {
+        "email": "mismatch-008@conflict.example.test",
+        "candidateId": "cand_other_008"
+      }
+    ]
+  },
+  {
+    "candidateId": "seed_u009",
+    "linkedinUrl": "https://linkedin.com/in/seed-user-009",
+    "email": "seed-user-009@seed.example.test",
+    "extraEmailHandles": [
+      {
+        "email": "mismatch-009@conflict.example.test",
+        "candidateId": "cand_other_009"
+      }
+    ]
+  },
+  {
+    "candidateId": "seed_u010",
+    "linkedinUrl": "https://linkedin.com/in/seed-user-010",
+    "email": "seed-user-010@seed.example.test",
+    "extraEmailHandles": [
+      {
+        "email": "mismatch-010@conflict.example.test",
+        "candidateId": "cand_other_010"
+      }
+    ]
+  },
+  {
+    "candidateId": "seed_u011",
+    "linkedinUrl": "https://linkedin.com/in/seed-user-011",
+    "email": "seed-user-011@seed.example.test",
+    "extraEmailHandles": [
+      {
+        "email": "mismatch-011@conflict.example.test",
+        "candidateId": "cand_other_011"
+      }
+    ]
+  },
+  {
+    "candidateId": "seed_u012",
+    "linkedinUrl": "https://linkedin.com/in/seed-user-012",
+    "email": "seed-user-012@seed.example.test",
+    "extraEmailHandles": [
+      {
+        "email": "mismatch-012@conflict.example.test",
+        "candidateId": "cand_other_012"
+      }
+    ]
+  },
+  {
+    "candidateId": "seed_u013",
+    "linkedinUrl": "https://linkedin.com/in/seed-user-013",
+    "email": "seed-user-013@seed.example.test",
+    "extraEmailHandles": [
+      {
+        "email": "mismatch-013@conflict.example.test",
+        "candidateId": "cand_other_013"
+      }
+    ]
+  },
+  {
+    "candidateId": "seed_u014",
+    "linkedinUrl": "https://linkedin.com/in/seed-user-014",
+    "email": "seed-user-014@seed.example.test",
+    "extraEmailHandles": [
+      {
+        "email": "mismatch-014@conflict.example.test",
+        "candidateId": "cand_other_014"
+      }
+    ]
+  },
+  {
+    "candidateId": "seed_u015",
+    "linkedinUrl": "https://linkedin.com/in/seed-user-015",
+    "email": "seed-user-015@seed.example.test",
+    "strongGlobalTags": {
+      "skills": [
+        {
+          "name": "python",
+          "bucket": "programming_languages",
+          "proficiency": "expert",
+          "evidenceCount": 5,
+          "baseWeight": 0.95
+        },
+        {
+          "name": "typescript",
+          "bucket": "programming_languages",
+          "proficiency": "expert",
+          "evidenceCount": 7,
+          "baseWeight": 0.95
+        },
+        {
+          "name": "kubernetes",
+          "bucket": "cloud_and_infrastructure",
+          "proficiency": "advanced",
+          "evidenceCount": 3,
+          "baseWeight": 0.9
+        },
+        {
+          "name": "react",
+          "bucket": "frameworks_and_libraries",
+          "proficiency": "expert",
+          "evidenceCount": 6,
+          "baseWeight": 0.95
+        },
+        {
+          "name": "system_design",
+          "bucket": "soft_skills",
+          "proficiency": "advanced",
+          "evidenceCount": 4,
+          "baseWeight": 0.9
+        },
+        {
+          "name": "graphql",
+          "bucket": "frameworks_and_libraries",
+          "proficiency": "advanced",
+          "evidenceCount": 3,
+          "baseWeight": 0.85
+        },
+        {
+          "name": "node_js",
+          "bucket": "frameworks_and_libraries",
+          "proficiency": "expert",
+          "evidenceCount": 5,
+          "baseWeight": 0.9
+        },
+        {
+          "name": "postgres",
+          "bucket": "databases",
+          "proficiency": "advanced",
+          "evidenceCount": 4,
+          "baseWeight": 0.85
+        },
+        {
+          "name": "machine_learning",
+          "bucket": "data_and_ml",
+          "proficiency": "intermediate",
+          "evidenceCount": 2,
+          "baseWeight": 0.7
+        },
+        {
+          "name": "redis",
+          "bucket": "databases",
+          "proficiency": "intermediate",
+          "evidenceCount": 2,
+          "baseWeight": 0.7
+        }
+      ],
+      "relevantTags": [
+        "tesla",
+        "openai",
+        "anthropic",
+        "fintech_industry",
+        "ai_infrastructure"
+      ]
+    }
+  },
+  {
+    "candidateId": "seed_u016",
+    "linkedinUrl": "https://linkedin.com/in/seed-user-016",
+    "email": "seed-user-016@seed.example.test",
+    "strongGlobalTags": {
+      "skills": [
+        {
+          "name": "python",
+          "bucket": "programming_languages",
+          "proficiency": "expert",
+          "evidenceCount": 5,
+          "baseWeight": 0.95
+        },
+        {
+          "name": "typescript",
+          "bucket": "programming_languages",
+          "proficiency": "expert",
+          "evidenceCount": 7,
+          "baseWeight": 0.95
+        },
+        {
+          "name": "kubernetes",
+          "bucket": "cloud_and_infrastructure",
+          "proficiency": "advanced",
+          "evidenceCount": 3,
+          "baseWeight": 0.9
+        },
+        {
+          "name": "react",
+          "bucket": "frameworks_and_libraries",
+          "proficiency": "expert",
+          "evidenceCount": 6,
+          "baseWeight": 0.95
+        },
+        {
+          "name": "system_design",
+          "bucket": "soft_skills",
+          "proficiency": "advanced",
+          "evidenceCount": 4,
+          "baseWeight": 0.9
+        },
+        {
+          "name": "graphql",
+          "bucket": "frameworks_and_libraries",
+          "proficiency": "advanced",
+          "evidenceCount": 3,
+          "baseWeight": 0.85
+        },
+        {
+          "name": "node_js",
+          "bucket": "frameworks_and_libraries",
+          "proficiency": "expert",
+          "evidenceCount": 5,
+          "baseWeight": 0.9
+        },
+        {
+          "name": "postgres",
+          "bucket": "databases",
+          "proficiency": "advanced",
+          "evidenceCount": 4,
+          "baseWeight": 0.85
+        },
+        {
+          "name": "machine_learning",
+          "bucket": "data_and_ml",
+          "proficiency": "intermediate",
+          "evidenceCount": 2,
+          "baseWeight": 0.7
+        },
+        {
+          "name": "redis",
+          "bucket": "databases",
+          "proficiency": "intermediate",
+          "evidenceCount": 2,
+          "baseWeight": 0.7
+        }
+      ],
+      "relevantTags": [
+        "tesla",
+        "openai",
+        "anthropic",
+        "fintech_industry",
+        "ai_infrastructure"
+      ]
+    },
+    "plantBounceEvent": {
+      "occurredAt": "2026-05-10T00:00:00.000Z",
+      "companyId": "co_acme_ai",
+      "jobId": "job_acme_swe_senior",
+      "planId": "plan_bounced_seed_u016"
+    }
+  },
+  {
+    "candidateId": "seed_u017",
+    "linkedinUrl": "https://linkedin.com/in/seed-user-017",
+    "email": "seed-user-017@seed.example.test",
+    "strongGlobalTags": {
+      "skills": [
+        {
+          "name": "python",
+          "bucket": "programming_languages",
+          "proficiency": "expert",
+          "evidenceCount": 5,
+          "baseWeight": 0.95
+        },
+        {
+          "name": "typescript",
+          "bucket": "programming_languages",
+          "proficiency": "expert",
+          "evidenceCount": 7,
+          "baseWeight": 0.95
+        },
+        {
+          "name": "kubernetes",
+          "bucket": "cloud_and_infrastructure",
+          "proficiency": "advanced",
+          "evidenceCount": 3,
+          "baseWeight": 0.9
+        },
+        {
+          "name": "react",
+          "bucket": "frameworks_and_libraries",
+          "proficiency": "expert",
+          "evidenceCount": 6,
+          "baseWeight": 0.95
+        },
+        {
+          "name": "system_design",
+          "bucket": "soft_skills",
+          "proficiency": "advanced",
+          "evidenceCount": 4,
+          "baseWeight": 0.9
+        },
+        {
+          "name": "graphql",
+          "bucket": "frameworks_and_libraries",
+          "proficiency": "advanced",
+          "evidenceCount": 3,
+          "baseWeight": 0.85
+        },
+        {
+          "name": "node_js",
+          "bucket": "frameworks_and_libraries",
+          "proficiency": "expert",
+          "evidenceCount": 5,
+          "baseWeight": 0.9
+        },
+        {
+          "name": "postgres",
+          "bucket": "databases",
+          "proficiency": "advanced",
+          "evidenceCount": 4,
+          "baseWeight": 0.85
+        },
+        {
+          "name": "machine_learning",
+          "bucket": "data_and_ml",
+          "proficiency": "intermediate",
+          "evidenceCount": 2,
+          "baseWeight": 0.7
+        },
+        {
+          "name": "redis",
+          "bucket": "databases",
+          "proficiency": "intermediate",
+          "evidenceCount": 2,
+          "baseWeight": 0.7
+        }
+      ],
+      "relevantTags": [
+        "tesla",
+        "openai",
+        "anthropic",
+        "fintech_industry",
+        "ai_infrastructure"
+      ]
+    },
+    "outreach": {
+      "status": "cooldown",
+      "cooldownUntil": "2026-07-15T00:00:00.000Z"
+    }
+  },
+  {
+    "candidateId": "seed_u018",
+    "linkedinUrl": "https://linkedin.com/in/seed-user-018",
+    "email": "seed-user-018@seed.example.test",
+    "strongGlobalTags": {
+      "skills": [
+        {
+          "name": "python",
+          "bucket": "programming_languages",
+          "proficiency": "expert",
+          "evidenceCount": 5,
+          "baseWeight": 0.95
+        },
+        {
+          "name": "typescript",
+          "bucket": "programming_languages",
+          "proficiency": "expert",
+          "evidenceCount": 7,
+          "baseWeight": 0.95
+        },
+        {
+          "name": "kubernetes",
+          "bucket": "cloud_and_infrastructure",
+          "proficiency": "advanced",
+          "evidenceCount": 3,
+          "baseWeight": 0.9
+        },
+        {
+          "name": "react",
+          "bucket": "frameworks_and_libraries",
+          "proficiency": "expert",
+          "evidenceCount": 6,
+          "baseWeight": 0.95
+        },
+        {
+          "name": "system_design",
+          "bucket": "soft_skills",
+          "proficiency": "advanced",
+          "evidenceCount": 4,
+          "baseWeight": 0.9
+        },
+        {
+          "name": "graphql",
+          "bucket": "frameworks_and_libraries",
+          "proficiency": "advanced",
+          "evidenceCount": 3,
+          "baseWeight": 0.85
+        },
+        {
+          "name": "node_js",
+          "bucket": "frameworks_and_libraries",
+          "proficiency": "expert",
+          "evidenceCount": 5,
+          "baseWeight": 0.9
+        },
+        {
+          "name": "postgres",
+          "bucket": "databases",
+          "proficiency": "advanced",
+          "evidenceCount": 4,
+          "baseWeight": 0.85
+        },
+        {
+          "name": "machine_learning",
+          "bucket": "data_and_ml",
+          "proficiency": "intermediate",
+          "evidenceCount": 2,
+          "baseWeight": 0.7
+        },
+        {
+          "name": "redis",
+          "bucket": "databases",
+          "proficiency": "intermediate",
+          "evidenceCount": 2,
+          "baseWeight": 0.7
+        }
+      ],
+      "relevantTags": [
+        "tesla",
+        "openai",
+        "anthropic",
+        "fintech_industry",
+        "ai_infrastructure"
+      ]
+    },
+    "plantBounceEvent": {
+      "occurredAt": "2026-05-12T00:00:00.000Z",
+      "companyId": "co_acme_ai",
+      "jobId": "job_acme_swe_senior",
+      "planId": "plan_bounced_seed_u018"
+    }
+  },
+  {
+    "candidateId": "seed_u019",
+    "linkedinUrl": "https://linkedin.com/in/seed-user-019",
+    "email": "seed-user-019@seed.example.test",
+    "strongGlobalTags": {
+      "skills": [
+        {
+          "name": "python",
+          "bucket": "programming_languages",
+          "proficiency": "expert",
+          "evidenceCount": 5,
+          "baseWeight": 0.95
+        },
+        {
+          "name": "typescript",
+          "bucket": "programming_languages",
+          "proficiency": "expert",
+          "evidenceCount": 7,
+          "baseWeight": 0.95
+        },
+        {
+          "name": "kubernetes",
+          "bucket": "cloud_and_infrastructure",
+          "proficiency": "advanced",
+          "evidenceCount": 3,
+          "baseWeight": 0.9
+        },
+        {
+          "name": "react",
+          "bucket": "frameworks_and_libraries",
+          "proficiency": "expert",
+          "evidenceCount": 6,
+          "baseWeight": 0.95
+        },
+        {
+          "name": "system_design",
+          "bucket": "soft_skills",
+          "proficiency": "advanced",
+          "evidenceCount": 4,
+          "baseWeight": 0.9
+        },
+        {
+          "name": "graphql",
+          "bucket": "frameworks_and_libraries",
+          "proficiency": "advanced",
+          "evidenceCount": 3,
+          "baseWeight": 0.85
+        },
+        {
+          "name": "node_js",
+          "bucket": "frameworks_and_libraries",
+          "proficiency": "expert",
+          "evidenceCount": 5,
+          "baseWeight": 0.9
+        },
+        {
+          "name": "postgres",
+          "bucket": "databases",
+          "proficiency": "advanced",
+          "evidenceCount": 4,
+          "baseWeight": 0.85
+        },
+        {
+          "name": "machine_learning",
+          "bucket": "data_and_ml",
+          "proficiency": "intermediate",
+          "evidenceCount": 2,
+          "baseWeight": 0.7
+        },
+        {
+          "name": "redis",
+          "bucket": "databases",
+          "proficiency": "intermediate",
+          "evidenceCount": 2,
+          "baseWeight": 0.7
+        }
+      ],
+      "relevantTags": [
+        "tesla",
+        "openai",
+        "anthropic",
+        "fintech_industry",
+        "ai_infrastructure"
+      ]
+    },
+    "outreach": {
+      "status": "cooldown",
+      "cooldownUntil": "2026-06-30T00:00:00.000Z"
+    }
+  },
+  {
+    "candidateId": "seed_u020",
+    "linkedinUrl": "https://linkedin.com/in/seed-user-020",
+    "email": "seed-user-020@seed.example.test",
+    "outreach": {
+      "status": "opted_out"
+    }
+  },
+  {
+    "candidateId": "v2_u021",
+    "linkedinUrl": "https://linkedin.com/in/v2-fixture-edge-optedout-001",
+    "email": "v2-edge-optedout-001@v2.example.test",
+    "outreach": {
+      "status": "opted_out"
+    }
+  },
+  {
+    "candidateId": "v2_u022",
+    "linkedinUrl": "https://linkedin.com/in/v2-fixture-edge-optedout-002",
+    "email": "v2-edge-optedout-002@v2.example.test",
+    "outreach": {
+      "status": "opted_out"
+    }
+  },
+  {
+    "candidateId": "v2_u023",
+    "linkedinUrl": "https://linkedin.com/in/v2-fixture-edge-bounce-003",
+    "email": "v2-edge-bounce-003@v2.example.test",
+    "plantBounceEvent": {
+      "occurredAt": "2026-05-12T00:00:00.000Z",
+      "companyId": "co_acme_v2",
+      "jobId": "job_acme_swe_senior_v2",
+      "planId": "plan_bounced_v2_u023"
+    }
+  },
+  {
+    "candidateId": "v2_u024",
+    "linkedinUrl": "https://linkedin.com/in/v2-fixture-edge-bounce-004",
+    "email": "v2-edge-bounce-004@v2.example.test",
+    "plantBounceEvent": {
+      "occurredAt": "2026-05-12T00:00:00.000Z",
+      "companyId": "co_acme_v2",
+      "jobId": "job_acme_swe_senior_v2",
+      "planId": "plan_bounced_v2_u024"
+    }
+  },
+  {
+    "candidateId": "v2_u025",
+    "linkedinUrl": "https://linkedin.com/in/v2-fixture-strong-005",
+    "email": "v2-edge-strong-005@v2.example.test",
+    "strongGlobalTags": {
+      "skills": [
+        {
+          "name": "python",
+          "bucket": "programming_languages",
+          "proficiency": "expert",
+          "evidenceCount": 8,
+          "baseWeight": 0.95
+        },
+        {
+          "name": "typescript",
+          "bucket": "programming_languages",
+          "proficiency": "expert",
+          "evidenceCount": 7,
+          "baseWeight": 0.95
+        },
+        {
+          "name": "rust",
+          "bucket": "programming_languages",
+          "proficiency": "advanced",
+          "evidenceCount": 4,
+          "baseWeight": 0.9
+        },
+        {
+          "name": "kubernetes",
+          "bucket": "cloud_and_infrastructure",
+          "proficiency": "expert",
+          "evidenceCount": 6,
+          "baseWeight": 0.95
+        },
+        {
+          "name": "system_design",
+          "bucket": "soft_skills",
+          "proficiency": "expert",
+          "evidenceCount": 5,
+          "baseWeight": 0.95
+        },
+        {
+          "name": "machine_learning",
+          "bucket": "data_and_ml",
+          "proficiency": "advanced",
+          "evidenceCount": 4,
+          "baseWeight": 0.9
+        }
+      ],
+      "relevantTags": [
+        "stripe",
+        "openai",
+        "anthropic",
+        "ai_infrastructure",
+        "distributed_systems"
+      ]
+    }
+  },
+  {
+    "candidateId": "v2_u026",
+    "linkedinUrl": "https://linkedin.com/in/v2-fixture-strong-006",
+    "email": "v2-edge-strong-006@v2.example.test",
+    "strongGlobalTags": {
+      "skills": [
+        {
+          "name": "python",
+          "bucket": "programming_languages",
+          "proficiency": "expert",
+          "evidenceCount": 8,
+          "baseWeight": 0.95
+        },
+        {
+          "name": "typescript",
+          "bucket": "programming_languages",
+          "proficiency": "expert",
+          "evidenceCount": 7,
+          "baseWeight": 0.95
+        },
+        {
+          "name": "rust",
+          "bucket": "programming_languages",
+          "proficiency": "advanced",
+          "evidenceCount": 4,
+          "baseWeight": 0.9
+        },
+        {
+          "name": "kubernetes",
+          "bucket": "cloud_and_infrastructure",
+          "proficiency": "expert",
+          "evidenceCount": 6,
+          "baseWeight": 0.95
+        },
+        {
+          "name": "system_design",
+          "bucket": "soft_skills",
+          "proficiency": "expert",
+          "evidenceCount": 5,
+          "baseWeight": 0.95
+        },
+        {
+          "name": "machine_learning",
+          "bucket": "data_and_ml",
+          "proficiency": "advanced",
+          "evidenceCount": 4,
+          "baseWeight": 0.9
+        }
+      ],
+      "relevantTags": [
+        "stripe",
+        "openai",
+        "anthropic",
+        "ai_infrastructure",
+        "distributed_systems"
+      ]
+    }
+  },
+  {
+    "candidateId": "v2_u027",
+    "linkedinUrl": "https://linkedin.com/in/v2-fixture-fresh-007",
+    "email": "v2-edge-fresh-007@v2.example.test"
+  },
+  {
+    "candidateId": "v2_u028",
+    "linkedinUrl": "https://linkedin.com/in/v2-fixture-fresh-008",
+    "email": "v2-edge-fresh-008@v2.example.test"
+  },
+  {
+    "candidateId": "v2_u029",
+    "linkedinUrl": "https://linkedin.com/in/v2-fixture-fresh-009",
+    "email": "v2-edge-fresh-009@v2.example.test"
+  },
+  {
+    "candidateId": "v2_u030",
+    "linkedinUrl": "https://linkedin.com/in/v2-fixture-fresh-010",
+    "email": "v2-edge-fresh-010@v2.example.test"
+  }
+]

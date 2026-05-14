@@ -1,0 +1,2430 @@
+{
+  "juicebox": [
+    {
+      "linkedin_url": "https://linkedin.com/in/v2-fixture-jb-create-001",
+      "email_primary": "v2-jb-create-001@example.test",
+      "full_name": "V2 Juicebox Create 001",
+      "current_position": "Senior Software Engineer",
+      "current_company_name": "OpenAI",
+      "location_string": "San Francisco, CA",
+      "experience_array": [
+        {
+          "company": "OpenAI",
+          "title": "Senior Software Engineer",
+          "startDate": "2022-01",
+          "endDate": null,
+          "durationMonths": 40
+        },
+        {
+          "company": "Plaid",
+          "title": "Software Engineer",
+          "startDate": "2019-06",
+          "endDate": "2022-01",
+          "durationMonths": 31
+        }
+      ],
+      "education_array": [
+        {
+          "school": "Stanford",
+          "degree": "BS",
+          "field": "Computer Science",
+          "endYear": 2019
+        }
+      ],
+      "skills": [
+        "python",
+        "rust",
+        "kubernetes",
+        "terraform",
+        "distributed_systems"
+      ]
+    },
+    {
+      "linkedin_url": "https://linkedin.com/in/v2-fixture-jb-create-002",
+      "email_primary": "v2-jb-create-002@example.test",
+      "full_name": "V2 Juicebox Create 002",
+      "current_position": "Staff Engineer",
+      "current_company_name": "Anthropic",
+      "location_string": "Remote",
+      "experience_array": [
+        {
+          "company": "Anthropic",
+          "title": "Staff Engineer",
+          "startDate": "2022-01",
+          "endDate": null,
+          "durationMonths": 40
+        },
+        {
+          "company": "Notion",
+          "title": "Software Engineer",
+          "startDate": "2019-06",
+          "endDate": "2022-01",
+          "durationMonths": 31
+        }
+      ],
+      "education_array": [
+        {
+          "school": "UC Berkeley",
+          "degree": "BS",
+          "field": "Computer Science",
+          "endYear": 2019
+        }
+      ],
+      "skills": [
+        "typescript",
+        "react",
+        "node_js",
+        "graphql",
+        "postgres"
+      ]
+    },
+    {
+      "linkedin_url": "https://linkedin.com/in/v2-fixture-jb-create-003",
+      "email_primary": "v2-jb-create-003@example.test",
+      "full_name": "V2 Juicebox Create 003",
+      "current_position": "Engineering Manager",
+      "current_company_name": "Databricks",
+      "location_string": "Brooklyn, NY",
+      "experience_array": [
+        {
+          "company": "Databricks",
+          "title": "Engineering Manager",
+          "startDate": "2022-01",
+          "endDate": null,
+          "durationMonths": 40
+        },
+        {
+          "company": "Linear",
+          "title": "Software Engineer",
+          "startDate": "2019-06",
+          "endDate": "2022-01",
+          "durationMonths": 31
+        }
+      ],
+      "education_array": [
+        {
+          "school": "Carnegie Mellon",
+          "degree": "BS",
+          "field": "Computer Science",
+          "endYear": 2019
+        }
+      ],
+      "skills": [
+        "python",
+        "sql",
+        "spark",
+        "airflow",
+        "dbt"
+      ]
+    },
+    {
+      "linkedin_url": "https://linkedin.com/in/v2-fixture-jb-create-004",
+      "email_primary": "v2-jb-create-004@example.test",
+      "full_name": "V2 Juicebox Create 004",
+      "current_position": "Backend Engineer",
+      "current_company_name": "Datadog",
+      "location_string": "Manhattan, NY",
+      "experience_array": [
+        {
+          "company": "Datadog",
+          "title": "Backend Engineer",
+          "startDate": "2022-01",
+          "endDate": null,
+          "durationMonths": 40
+        },
+        {
+          "company": "Vercel",
+          "title": "Software Engineer",
+          "startDate": "2019-06",
+          "endDate": "2022-01",
+          "durationMonths": 31
+        }
+      ],
+      "education_array": [
+        {
+          "school": "Cornell",
+          "degree": "BS",
+          "field": "Computer Science",
+          "endYear": 2019
+        }
+      ],
+      "skills": [
+        "python",
+        "typescript",
+        "kubernetes",
+        "system_design",
+        "machine_learning"
+      ]
+    },
+    {
+      "linkedin_url": "https://linkedin.com/in/v2-fixture-jb-create-005",
+      "email_primary": "v2-jb-create-005@example.test",
+      "full_name": "V2 Juicebox Create 005",
+      "current_position": "Full-Stack Engineer",
+      "current_company_name": "Snowflake",
+      "location_string": "Seattle, WA",
+      "experience_array": [
+        {
+          "company": "Snowflake",
+          "title": "Full-Stack Engineer",
+          "startDate": "2022-01",
+          "endDate": null,
+          "durationMonths": 40
+        },
+        {
+          "company": "Cloudflare",
+          "title": "Software Engineer",
+          "startDate": "2019-06",
+          "endDate": "2022-01",
+          "durationMonths": 31
+        }
+      ],
+      "education_array": [
+        {
+          "school": "Princeton",
+          "degree": "BS",
+          "field": "Computer Science",
+          "endYear": 2019
+        }
+      ],
+      "skills": [
+        "python",
+        "rust",
+        "kubernetes",
+        "terraform",
+        "distributed_systems"
+      ]
+    },
+    {
+      "linkedin_url": "https://linkedin.com/in/v2-fixture-jb-create-006",
+      "email_primary": "v2-jb-create-006@example.test",
+      "full_name": "V2 Juicebox Create 006",
+      "current_position": "Platform Engineer",
+      "current_company_name": "Plaid",
+      "location_string": "Austin, TX",
+      "experience_array": [
+        {
+          "company": "Plaid",
+          "title": "Platform Engineer",
+          "startDate": "2022-01",
+          "endDate": null,
+          "durationMonths": 40
+        },
+        {
+          "company": "Figma",
+          "title": "Software Engineer",
+          "startDate": "2019-06",
+          "endDate": "2022-01",
+          "durationMonths": 31
+        }
+      ],
+      "education_array": [
+        {
+          "school": "Columbia",
+          "degree": "BS",
+          "field": "Computer Science",
+          "endYear": 2019
+        }
+      ],
+      "skills": [
+        "typescript",
+        "react",
+        "node_js",
+        "graphql",
+        "postgres"
+      ]
+    },
+    {
+      "linkedin_url": "https://linkedin.com/in/v2-fixture-jb-create-007",
+      "email_primary": "v2-jb-create-007@example.test",
+      "full_name": "V2 Juicebox Create 007",
+      "current_position": "ML Engineer",
+      "current_company_name": "Notion",
+      "location_string": "New York, NY",
+      "experience_array": [
+        {
+          "company": "Notion",
+          "title": "ML Engineer",
+          "startDate": "2022-01",
+          "endDate": null,
+          "durationMonths": 40
+        },
+        {
+          "company": "Stripe",
+          "title": "Software Engineer",
+          "startDate": "2019-06",
+          "endDate": "2022-01",
+          "durationMonths": 31
+        }
+      ],
+      "education_array": [
+        {
+          "school": "NYU",
+          "degree": "BS",
+          "field": "Computer Science",
+          "endYear": 2019
+        }
+      ],
+      "skills": [
+        "python",
+        "sql",
+        "spark",
+        "airflow",
+        "dbt"
+      ]
+    },
+    {
+      "linkedin_url": "https://linkedin.com/in/v2-fixture-jb-create-008",
+      "email_primary": "v2-jb-create-008@example.test",
+      "full_name": "V2 Juicebox Create 008",
+      "current_position": "Infrastructure Engineer",
+      "current_company_name": "Linear",
+      "location_string": "San Francisco, CA",
+      "experience_array": [
+        {
+          "company": "Linear",
+          "title": "Infrastructure Engineer",
+          "startDate": "2022-01",
+          "endDate": null,
+          "durationMonths": 40
+        },
+        {
+          "company": "OpenAI",
+          "title": "Software Engineer",
+          "startDate": "2019-06",
+          "endDate": "2022-01",
+          "durationMonths": 31
+        }
+      ],
+      "education_array": [
+        {
+          "school": "MIT",
+          "degree": "BS",
+          "field": "Computer Science",
+          "endYear": 2019
+        }
+      ],
+      "skills": [
+        "python",
+        "typescript",
+        "kubernetes",
+        "system_design",
+        "machine_learning"
+      ]
+    },
+    {
+      "linkedin_url": "https://linkedin.com/in/v2-fixture-jb-create-009",
+      "email_primary": "v2-jb-create-009@example.test",
+      "full_name": "V2 Juicebox Create 009",
+      "current_position": "Software Engineer",
+      "current_company_name": "Vercel",
+      "location_string": "Remote",
+      "experience_array": [
+        {
+          "company": "Vercel",
+          "title": "Software Engineer",
+          "startDate": "2022-01",
+          "endDate": null,
+          "durationMonths": 40
+        },
+        {
+          "company": "Anthropic",
+          "title": "Software Engineer",
+          "startDate": "2019-06",
+          "endDate": "2022-01",
+          "durationMonths": 31
+        }
+      ],
+      "education_array": [
+        {
+          "school": "Stanford",
+          "degree": "BS",
+          "field": "Computer Science",
+          "endYear": 2019
+        }
+      ],
+      "skills": [
+        "python",
+        "rust",
+        "kubernetes",
+        "terraform",
+        "distributed_systems"
+      ]
+    },
+    {
+      "linkedin_url": "https://linkedin.com/in/v2-fixture-jb-create-010",
+      "email_primary": "v2-jb-create-010@example.test",
+      "full_name": "V2 Juicebox Create 010",
+      "current_position": "Senior Software Engineer",
+      "current_company_name": "Cloudflare",
+      "location_string": "Brooklyn, NY",
+      "experience_array": [
+        {
+          "company": "Cloudflare",
+          "title": "Senior Software Engineer",
+          "startDate": "2022-01",
+          "endDate": null,
+          "durationMonths": 40
+        },
+        {
+          "company": "Databricks",
+          "title": "Software Engineer",
+          "startDate": "2019-06",
+          "endDate": "2022-01",
+          "durationMonths": 31
+        }
+      ],
+      "education_array": [
+        {
+          "school": "UC Berkeley",
+          "degree": "BS",
+          "field": "Computer Science",
+          "endYear": 2019
+        }
+      ],
+      "skills": [
+        "typescript",
+        "react",
+        "node_js",
+        "graphql",
+        "postgres"
+      ]
+    },
+    {
+      "linkedin_url": "https://linkedin.com/in/v2-fixture-jb-create-011",
+      "email_primary": "v2-jb-create-011@example.test",
+      "full_name": "V2 Juicebox Create 011",
+      "current_position": "Staff Engineer",
+      "current_company_name": "Figma",
+      "location_string": "Manhattan, NY",
+      "experience_array": [
+        {
+          "company": "Figma",
+          "title": "Staff Engineer",
+          "startDate": "2022-01",
+          "endDate": null,
+          "durationMonths": 40
+        },
+        {
+          "company": "Datadog",
+          "title": "Software Engineer",
+          "startDate": "2019-06",
+          "endDate": "2022-01",
+          "durationMonths": 31
+        }
+      ],
+      "education_array": [
+        {
+          "school": "Carnegie Mellon",
+          "degree": "BS",
+          "field": "Computer Science",
+          "endYear": 2019
+        }
+      ],
+      "skills": [
+        "python",
+        "sql",
+        "spark",
+        "airflow",
+        "dbt"
+      ]
+    },
+    {
+      "linkedin_url": "https://linkedin.com/in/v2-fixture-jb-create-012",
+      "email_primary": "v2-jb-create-012@example.test",
+      "full_name": "V2 Juicebox Create 012",
+      "current_position": "Engineering Manager",
+      "current_company_name": "Stripe",
+      "location_string": "Seattle, WA",
+      "experience_array": [
+        {
+          "company": "Stripe",
+          "title": "Engineering Manager",
+          "startDate": "2022-01",
+          "endDate": null,
+          "durationMonths": 40
+        },
+        {
+          "company": "Snowflake",
+          "title": "Software Engineer",
+          "startDate": "2019-06",
+          "endDate": "2022-01",
+          "durationMonths": 31
+        }
+      ],
+      "education_array": [
+        {
+          "school": "Cornell",
+          "degree": "BS",
+          "field": "Computer Science",
+          "endYear": 2019
+        }
+      ],
+      "skills": [
+        "python",
+        "typescript",
+        "kubernetes",
+        "system_design",
+        "machine_learning"
+      ]
+    },
+    {
+      "linkedin_url": "https://linkedin.com/in/v2-fixture-jb-create-013",
+      "email_primary": "v2-jb-create-013@example.test",
+      "full_name": "V2 Juicebox Create 013",
+      "current_position": "Backend Engineer",
+      "current_company_name": "OpenAI",
+      "location_string": "Austin, TX",
+      "experience_array": [
+        {
+          "company": "OpenAI",
+          "title": "Backend Engineer",
+          "startDate": "2022-01",
+          "endDate": null,
+          "durationMonths": 40
+        },
+        {
+          "company": "Plaid",
+          "title": "Software Engineer",
+          "startDate": "2019-06",
+          "endDate": "2022-01",
+          "durationMonths": 31
+        }
+      ],
+      "education_array": [
+        {
+          "school": "Princeton",
+          "degree": "BS",
+          "field": "Computer Science",
+          "endYear": 2019
+        }
+      ],
+      "skills": [
+        "python",
+        "rust",
+        "kubernetes",
+        "terraform",
+        "distributed_systems"
+      ]
+    },
+    {
+      "linkedin_url": "https://linkedin.com/in/v2-fixture-jb-create-014",
+      "email_primary": "v2-jb-create-014@example.test",
+      "full_name": "V2 Juicebox Create 014",
+      "current_position": "Full-Stack Engineer",
+      "current_company_name": "Anthropic",
+      "location_string": "New York, NY",
+      "experience_array": [
+        {
+          "company": "Anthropic",
+          "title": "Full-Stack Engineer",
+          "startDate": "2022-01",
+          "endDate": null,
+          "durationMonths": 40
+        },
+        {
+          "company": "Notion",
+          "title": "Software Engineer",
+          "startDate": "2019-06",
+          "endDate": "2022-01",
+          "durationMonths": 31
+        }
+      ],
+      "education_array": [
+        {
+          "school": "Columbia",
+          "degree": "BS",
+          "field": "Computer Science",
+          "endYear": 2019
+        }
+      ],
+      "skills": [
+        "typescript",
+        "react",
+        "node_js",
+        "graphql",
+        "postgres"
+      ]
+    },
+    {
+      "linkedin_url": "https://linkedin.com/in/v2-fixture-jb-create-015",
+      "email_primary": "v2-jb-create-015@example.test",
+      "full_name": "V2 Juicebox Create 015",
+      "current_position": "Platform Engineer",
+      "current_company_name": "Databricks",
+      "location_string": "San Francisco, CA",
+      "experience_array": [
+        {
+          "company": "Databricks",
+          "title": "Platform Engineer",
+          "startDate": "2022-01",
+          "endDate": null,
+          "durationMonths": 40
+        },
+        {
+          "company": "Linear",
+          "title": "Software Engineer",
+          "startDate": "2019-06",
+          "endDate": "2022-01",
+          "durationMonths": 31
+        }
+      ],
+      "education_array": [
+        {
+          "school": "NYU",
+          "degree": "BS",
+          "field": "Computer Science",
+          "endYear": 2019
+        }
+      ],
+      "skills": [
+        "python",
+        "sql",
+        "spark",
+        "airflow",
+        "dbt"
+      ]
+    },
+    {
+      "linkedin_url": "https://linkedin.com/in/v2-fixture-jb-create-016",
+      "email_primary": "v2-jb-create-016@example.test",
+      "full_name": "V2 Juicebox Create 016",
+      "current_position": "ML Engineer",
+      "current_company_name": "Datadog",
+      "location_string": "Remote",
+      "experience_array": [
+        {
+          "company": "Datadog",
+          "title": "ML Engineer",
+          "startDate": "2022-01",
+          "endDate": null,
+          "durationMonths": 40
+        },
+        {
+          "company": "Vercel",
+          "title": "Software Engineer",
+          "startDate": "2019-06",
+          "endDate": "2022-01",
+          "durationMonths": 31
+        }
+      ],
+      "education_array": [
+        {
+          "school": "MIT",
+          "degree": "BS",
+          "field": "Computer Science",
+          "endYear": 2019
+        }
+      ],
+      "skills": [
+        "python",
+        "typescript",
+        "kubernetes",
+        "system_design",
+        "machine_learning"
+      ]
+    },
+    {
+      "linkedin_url": "https://linkedin.com/in/v2-fixture-jb-create-017",
+      "email_primary": "v2-jb-create-017@example.test",
+      "full_name": "V2 Juicebox Create 017",
+      "current_position": "Infrastructure Engineer",
+      "current_company_name": "Snowflake",
+      "location_string": "Brooklyn, NY",
+      "experience_array": [
+        {
+          "company": "Snowflake",
+          "title": "Infrastructure Engineer",
+          "startDate": "2022-01",
+          "endDate": null,
+          "durationMonths": 40
+        },
+        {
+          "company": "Cloudflare",
+          "title": "Software Engineer",
+          "startDate": "2019-06",
+          "endDate": "2022-01",
+          "durationMonths": 31
+        }
+      ],
+      "education_array": [
+        {
+          "school": "Stanford",
+          "degree": "BS",
+          "field": "Computer Science",
+          "endYear": 2019
+        }
+      ],
+      "skills": [
+        "python",
+        "rust",
+        "kubernetes",
+        "terraform",
+        "distributed_systems"
+      ]
+    },
+    {
+      "linkedin_url": "https://linkedin.com/in/v2-fixture-jb-create-018",
+      "email_primary": "v2-jb-create-018@example.test",
+      "full_name": "V2 Juicebox Create 018",
+      "current_position": "Software Engineer",
+      "current_company_name": "Plaid",
+      "location_string": "Manhattan, NY",
+      "experience_array": [
+        {
+          "company": "Plaid",
+          "title": "Software Engineer",
+          "startDate": "2022-01",
+          "endDate": null,
+          "durationMonths": 40
+        },
+        {
+          "company": "Figma",
+          "title": "Software Engineer",
+          "startDate": "2019-06",
+          "endDate": "2022-01",
+          "durationMonths": 31
+        }
+      ],
+      "education_array": [
+        {
+          "school": "UC Berkeley",
+          "degree": "BS",
+          "field": "Computer Science",
+          "endYear": 2019
+        }
+      ],
+      "skills": [
+        "typescript",
+        "react",
+        "node_js",
+        "graphql",
+        "postgres"
+      ]
+    },
+    {
+      "linkedin_url": "https://linkedin.com/in/v2-fixture-jb-create-019",
+      "email_primary": "v2-jb-create-019@example.test",
+      "full_name": "V2 Juicebox Create 019",
+      "current_position": "Senior Software Engineer",
+      "current_company_name": "Notion",
+      "location_string": "Seattle, WA",
+      "experience_array": [
+        {
+          "company": "Notion",
+          "title": "Senior Software Engineer",
+          "startDate": "2022-01",
+          "endDate": null,
+          "durationMonths": 40
+        },
+        {
+          "company": "Stripe",
+          "title": "Software Engineer",
+          "startDate": "2019-06",
+          "endDate": "2022-01",
+          "durationMonths": 31
+        }
+      ],
+      "education_array": [
+        {
+          "school": "Carnegie Mellon",
+          "degree": "BS",
+          "field": "Computer Science",
+          "endYear": 2019
+        }
+      ],
+      "skills": [
+        "python",
+        "sql",
+        "spark",
+        "airflow",
+        "dbt"
+      ]
+    },
+    {
+      "linkedin_url": "https://linkedin.com/in/v2-fixture-jb-create-020",
+      "email_primary": "v2-jb-create-020@example.test",
+      "full_name": "V2 Juicebox Create 020",
+      "current_position": "Staff Engineer",
+      "current_company_name": "Linear",
+      "location_string": "Austin, TX",
+      "experience_array": [
+        {
+          "company": "Linear",
+          "title": "Staff Engineer",
+          "startDate": "2022-01",
+          "endDate": null,
+          "durationMonths": 40
+        },
+        {
+          "company": "OpenAI",
+          "title": "Software Engineer",
+          "startDate": "2019-06",
+          "endDate": "2022-01",
+          "durationMonths": 31
+        }
+      ],
+      "education_array": [
+        {
+          "school": "Cornell",
+          "degree": "BS",
+          "field": "Computer Science",
+          "endYear": 2019
+        }
+      ],
+      "skills": [
+        "python",
+        "typescript",
+        "kubernetes",
+        "system_design",
+        "machine_learning"
+      ]
+    },
+    {
+      "linkedin_url": "https://linkedin.com/in/seed-user-015",
+      "email_primary": "v2-jb-merge-001-fresh@example.test",
+      "full_name": "V2 Juicebox Merge 001 (matches seed_u015)",
+      "current_position": "Platform Engineer",
+      "current_company_name": "Datadog",
+      "location_string": "San Francisco, CA",
+      "experience_array": [
+        {
+          "company": "Datadog",
+          "title": "Platform Engineer",
+          "startDate": "2021-03",
+          "endDate": null,
+          "durationMonths": 50
+        }
+      ],
+      "education_array": [
+        {
+          "school": "UC Berkeley",
+          "degree": "BS",
+          "field": "Computer Science",
+          "endYear": 2018
+        }
+      ],
+      "skills": [
+        "python",
+        "typescript",
+        "kubernetes",
+        "system_design",
+        "machine_learning"
+      ]
+    },
+    {
+      "linkedin_url": "https://linkedin.com/in/seed-user-016",
+      "email_primary": "v2-jb-merge-002-fresh@example.test",
+      "full_name": "V2 Juicebox Merge 002 (matches seed_u016)",
+      "current_position": "ML Engineer",
+      "current_company_name": "Snowflake",
+      "location_string": "Remote",
+      "experience_array": [
+        {
+          "company": "Snowflake",
+          "title": "ML Engineer",
+          "startDate": "2021-03",
+          "endDate": null,
+          "durationMonths": 50
+        }
+      ],
+      "education_array": [
+        {
+          "school": "Carnegie Mellon",
+          "degree": "BS",
+          "field": "Computer Science",
+          "endYear": 2018
+        }
+      ],
+      "skills": [
+        "python",
+        "typescript",
+        "kubernetes",
+        "system_design",
+        "machine_learning"
+      ]
+    },
+    {
+      "linkedin_url": "https://linkedin.com/in/seed-user-017",
+      "email_primary": "v2-jb-merge-003-fresh@example.test",
+      "full_name": "V2 Juicebox Merge 003 (matches seed_u017)",
+      "current_position": "Infrastructure Engineer",
+      "current_company_name": "Plaid",
+      "location_string": "Brooklyn, NY",
+      "experience_array": [
+        {
+          "company": "Plaid",
+          "title": "Infrastructure Engineer",
+          "startDate": "2021-03",
+          "endDate": null,
+          "durationMonths": 50
+        }
+      ],
+      "education_array": [
+        {
+          "school": "Cornell",
+          "degree": "BS",
+          "field": "Computer Science",
+          "endYear": 2018
+        }
+      ],
+      "skills": [
+        "python",
+        "typescript",
+        "kubernetes",
+        "system_design",
+        "machine_learning"
+      ]
+    },
+    {
+      "linkedin_url": "https://linkedin.com/in/seed-user-018",
+      "email_primary": "v2-jb-merge-004-fresh@example.test",
+      "full_name": "V2 Juicebox Merge 004 (matches seed_u018)",
+      "current_position": "Software Engineer",
+      "current_company_name": "Notion",
+      "location_string": "Manhattan, NY",
+      "experience_array": [
+        {
+          "company": "Notion",
+          "title": "Software Engineer",
+          "startDate": "2021-03",
+          "endDate": null,
+          "durationMonths": 50
+        }
+      ],
+      "education_array": [
+        {
+          "school": "Princeton",
+          "degree": "BS",
+          "field": "Computer Science",
+          "endYear": 2018
+        }
+      ],
+      "skills": [
+        "python",
+        "typescript",
+        "kubernetes",
+        "system_design",
+        "machine_learning"
+      ]
+    },
+    {
+      "linkedin_url": "https://linkedin.com/in/seed-user-019",
+      "email_primary": "v2-jb-merge-005-fresh@example.test",
+      "full_name": "V2 Juicebox Merge 005 (matches seed_u019)",
+      "current_position": "Senior Software Engineer",
+      "current_company_name": "Linear",
+      "location_string": "Seattle, WA",
+      "experience_array": [
+        {
+          "company": "Linear",
+          "title": "Senior Software Engineer",
+          "startDate": "2021-03",
+          "endDate": null,
+          "durationMonths": 50
+        }
+      ],
+      "education_array": [
+        {
+          "school": "Columbia",
+          "degree": "BS",
+          "field": "Computer Science",
+          "endYear": 2018
+        }
+      ],
+      "skills": [
+        "python",
+        "typescript",
+        "kubernetes",
+        "system_design",
+        "machine_learning"
+      ]
+    },
+    {
+      "linkedin_url": null,
+      "email_primary": "v2-jb-emailonly-001@example.test",
+      "full_name": "V2 Juicebox EmailOnly 001",
+      "current_position": "Engineering Manager",
+      "current_company_name": "Snowflake",
+      "location_string": "San Francisco, CA",
+      "experience_array": [],
+      "education_array": [],
+      "skills": [
+        "python",
+        "rust",
+        "kubernetes",
+        "terraform",
+        "distributed_systems"
+      ]
+    },
+    {
+      "linkedin_url": null,
+      "email_primary": "v2-jb-emailonly-002@example.test",
+      "full_name": "V2 Juicebox EmailOnly 002",
+      "current_position": "Backend Engineer",
+      "current_company_name": "Plaid",
+      "location_string": "Remote",
+      "experience_array": [],
+      "education_array": [],
+      "skills": [
+        "python",
+        "typescript",
+        "kubernetes",
+        "system_design",
+        "machine_learning"
+      ]
+    },
+    {
+      "linkedin_url": null,
+      "email_primary": "v2-jb-emailonly-003@example.test",
+      "full_name": "V2 Juicebox EmailOnly 003",
+      "current_position": "Full-Stack Engineer",
+      "current_company_name": "Notion",
+      "location_string": "Brooklyn, NY",
+      "experience_array": [],
+      "education_array": [],
+      "skills": [
+        "python",
+        "rust",
+        "kubernetes",
+        "terraform",
+        "distributed_systems"
+      ]
+    },
+    {
+      "linkedin_url": null,
+      "email_primary": "v2-jb-emailonly-004@example.test",
+      "full_name": "V2 Juicebox EmailOnly 004",
+      "current_position": "Platform Engineer",
+      "current_company_name": "Linear",
+      "location_string": "Manhattan, NY",
+      "experience_array": [],
+      "education_array": [],
+      "skills": [
+        "python",
+        "typescript",
+        "kubernetes",
+        "system_design",
+        "machine_learning"
+      ]
+    },
+    {
+      "linkedin_url": null,
+      "email_primary": "v2-jb-emailonly-005@example.test",
+      "full_name": "V2 Juicebox EmailOnly 005",
+      "current_position": "ML Engineer",
+      "current_company_name": "Vercel",
+      "location_string": "Seattle, WA",
+      "experience_array": [],
+      "education_array": [],
+      "skills": [
+        "python",
+        "rust",
+        "kubernetes",
+        "terraform",
+        "distributed_systems"
+      ]
+    },
+    {
+      "linkedin_url": null,
+      "email_primary": null,
+      "full_name": "V2 Juicebox Fuzzy Blocked 001",
+      "current_position": "Staff Engineer",
+      "current_company_name": "Databricks",
+      "location_string": "San Francisco, CA",
+      "experience_array": [],
+      "education_array": [],
+      "skills": []
+    },
+    {
+      "linkedin_url": null,
+      "email_primary": null,
+      "full_name": "V2 Juicebox Fuzzy Blocked 002",
+      "current_position": "Engineering Manager",
+      "current_company_name": "Datadog",
+      "location_string": "Remote",
+      "experience_array": [],
+      "education_array": [],
+      "skills": []
+    },
+    {
+      "linkedin_url": null,
+      "email_primary": null,
+      "full_name": "V2 Juicebox Fuzzy Blocked 003",
+      "current_position": "Backend Engineer",
+      "current_company_name": "Snowflake",
+      "location_string": "Brooklyn, NY",
+      "experience_array": [],
+      "education_array": [],
+      "skills": []
+    },
+    {
+      "linkedin_url": null,
+      "email_primary": null,
+      "full_name": "V2 Juicebox Fuzzy Blocked 004",
+      "current_position": "Full-Stack Engineer",
+      "current_company_name": "Plaid",
+      "location_string": "Manhattan, NY",
+      "experience_array": [],
+      "education_array": [],
+      "skills": []
+    },
+    {
+      "linkedin_url": null,
+      "email_primary": null,
+      "full_name": "V2 Juicebox Fuzzy Blocked 005",
+      "current_position": "Platform Engineer",
+      "current_company_name": "Notion",
+      "location_string": "Seattle, WA",
+      "experience_array": [],
+      "education_array": [],
+      "skills": []
+    }
+  ],
+  "lessie": [
+    {
+      "LinkedIn URL": "https://linkedin.com/in/v2-fixture-le-create-001",
+      "Email": "v2-le-create-001@example.test",
+      "Name": "V2 Lessie Create 001",
+      "Title": "Staff Engineer",
+      "Company": "OpenAI",
+      "Location": "San Francisco, CA"
+    },
+    {
+      "LinkedIn URL": "https://linkedin.com/in/v2-fixture-le-create-002",
+      "Email": "v2-le-create-002@example.test",
+      "Name": "V2 Lessie Create 002",
+      "Title": "Engineering Manager",
+      "Company": "Anthropic",
+      "Location": "Remote"
+    },
+    {
+      "LinkedIn URL": "https://linkedin.com/in/v2-fixture-le-create-003",
+      "Email": "v2-le-create-003@example.test",
+      "Name": "V2 Lessie Create 003",
+      "Title": "Backend Engineer",
+      "Company": "Databricks",
+      "Location": "Brooklyn, NY"
+    },
+    {
+      "LinkedIn URL": "https://linkedin.com/in/v2-fixture-le-create-004",
+      "Email": "v2-le-create-004@example.test",
+      "Name": "V2 Lessie Create 004",
+      "Title": "Full-Stack Engineer",
+      "Company": "Datadog",
+      "Location": "Manhattan, NY"
+    },
+    {
+      "LinkedIn URL": "https://linkedin.com/in/v2-fixture-le-create-005",
+      "Email": "v2-le-create-005@example.test",
+      "Name": "V2 Lessie Create 005",
+      "Title": "Platform Engineer",
+      "Company": "Snowflake",
+      "Location": "Seattle, WA"
+    },
+    {
+      "LinkedIn URL": "https://linkedin.com/in/v2-fixture-le-create-006",
+      "Email": "v2-le-create-006@example.test",
+      "Name": "V2 Lessie Create 006",
+      "Title": "ML Engineer",
+      "Company": "Plaid",
+      "Location": "Austin, TX"
+    },
+    {
+      "LinkedIn URL": "https://linkedin.com/in/v2-fixture-le-create-007",
+      "Email": "v2-le-create-007@example.test",
+      "Name": "V2 Lessie Create 007",
+      "Title": "Infrastructure Engineer",
+      "Company": "Notion",
+      "Location": "New York, NY"
+    },
+    {
+      "LinkedIn URL": "https://linkedin.com/in/v2-fixture-le-create-008",
+      "Email": "v2-le-create-008@example.test",
+      "Name": "V2 Lessie Create 008",
+      "Title": "Software Engineer",
+      "Company": "Linear",
+      "Location": "San Francisco, CA"
+    },
+    {
+      "LinkedIn URL": "https://linkedin.com/in/v2-fixture-le-create-009",
+      "Email": "v2-le-create-009@example.test",
+      "Name": "V2 Lessie Create 009",
+      "Title": "Senior Software Engineer",
+      "Company": "Vercel",
+      "Location": "Remote"
+    },
+    {
+      "LinkedIn URL": "https://linkedin.com/in/v2-fixture-le-create-010",
+      "Email": "v2-le-create-010@example.test",
+      "Name": "V2 Lessie Create 010",
+      "Title": "Staff Engineer",
+      "Company": "Cloudflare",
+      "Location": "Brooklyn, NY"
+    },
+    {
+      "LinkedIn URL": "https://linkedin.com/in/v2-fixture-le-create-011",
+      "Email": "v2-le-create-011@example.test",
+      "Name": "V2 Lessie Create 011",
+      "Title": "Engineering Manager",
+      "Company": "Figma",
+      "Location": "Manhattan, NY"
+    },
+    {
+      "LinkedIn URL": "https://linkedin.com/in/v2-fixture-le-create-012",
+      "Email": "v2-le-create-012@example.test",
+      "Name": "V2 Lessie Create 012",
+      "Title": "Backend Engineer",
+      "Company": "Stripe",
+      "Location": "Seattle, WA"
+    },
+    {
+      "LinkedIn URL": "https://linkedin.com/in/v2-fixture-le-create-013",
+      "Email": "v2-le-create-013@example.test",
+      "Name": "V2 Lessie Create 013",
+      "Title": "Full-Stack Engineer",
+      "Company": "OpenAI",
+      "Location": "Austin, TX"
+    },
+    {
+      "LinkedIn URL": "https://linkedin.com/in/v2-fixture-le-create-014",
+      "Email": "v2-le-create-014@example.test",
+      "Name": "V2 Lessie Create 014",
+      "Title": "Platform Engineer",
+      "Company": "Anthropic",
+      "Location": "New York, NY"
+    },
+    {
+      "LinkedIn URL": "https://linkedin.com/in/v2-fixture-le-create-015",
+      "Email": "v2-le-create-015@example.test",
+      "Name": "V2 Lessie Create 015",
+      "Title": "ML Engineer",
+      "Company": "Databricks",
+      "Location": "San Francisco, CA"
+    },
+    {
+      "LinkedIn URL": "https://linkedin.com/in/v2-fixture-le-create-016",
+      "Email": "v2-le-create-016@example.test",
+      "Name": "V2 Lessie Create 016",
+      "Title": "Infrastructure Engineer",
+      "Company": "Datadog",
+      "Location": "Remote"
+    },
+    {
+      "LinkedIn URL": "https://linkedin.com/in/v2-fixture-le-create-017",
+      "Email": "v2-le-create-017@example.test",
+      "Name": "V2 Lessie Create 017",
+      "Title": "Software Engineer",
+      "Company": "Snowflake",
+      "Location": "Brooklyn, NY"
+    },
+    {
+      "LinkedIn URL": "https://linkedin.com/in/v2-fixture-le-create-018",
+      "Email": "v2-le-create-018@example.test",
+      "Name": "V2 Lessie Create 018",
+      "Title": "Senior Software Engineer",
+      "Company": "Plaid",
+      "Location": "Manhattan, NY"
+    },
+    {
+      "LinkedIn URL": "https://linkedin.com/in/v2-fixture-le-create-019",
+      "Email": "v2-le-create-019@example.test",
+      "Name": "V2 Lessie Create 019",
+      "Title": "Staff Engineer",
+      "Company": "Notion",
+      "Location": "Seattle, WA"
+    },
+    {
+      "LinkedIn URL": "https://linkedin.com/in/v2-fixture-le-create-020",
+      "Email": "v2-le-create-020@example.test",
+      "Name": "V2 Lessie Create 020",
+      "Title": "Engineering Manager",
+      "Company": "Linear",
+      "Location": "Austin, TX"
+    },
+    {
+      "LinkedIn URL": "https://linkedin.com/in/seed-user-012",
+      "Email": "v2-le-merge-001-fresh@example.test",
+      "Name": "V2 Lessie Merge 001 (seed_u012)",
+      "Title": "Engineering Manager",
+      "Company": "Anthropic",
+      "Location": "San Francisco, CA"
+    },
+    {
+      "LinkedIn URL": "https://linkedin.com/in/seed-user-013",
+      "Email": "v2-le-merge-002-fresh@example.test",
+      "Name": "V2 Lessie Merge 002 (seed_u013)",
+      "Title": "Backend Engineer",
+      "Company": "Databricks",
+      "Location": "Remote"
+    },
+    {
+      "LinkedIn URL": "https://linkedin.com/in/seed-user-014",
+      "Email": "v2-le-merge-003-fresh@example.test",
+      "Name": "V2 Lessie Merge 003 (seed_u014)",
+      "Title": "Full-Stack Engineer",
+      "Company": "Datadog",
+      "Location": "Brooklyn, NY"
+    },
+    {
+      "LinkedIn URL": "https://linkedin.com/in/seed-user-020",
+      "Email": "v2-le-merge-004-fresh@example.test",
+      "Name": "V2 Lessie Merge 004 (seed_u020)",
+      "Title": "Platform Engineer",
+      "Company": "Snowflake",
+      "Location": "Manhattan, NY"
+    },
+    {
+      "LinkedIn URL": "https://linkedin.com/in/v2-fixture-fresh-007",
+      "Email": "v2-le-merge-005-fresh@example.test",
+      "Name": "V2 Lessie Merge 005 (v2_u027)",
+      "Title": "ML Engineer",
+      "Company": "Plaid",
+      "Location": "Seattle, WA"
+    },
+    {
+      "LinkedIn URL": "https://linkedin.com/in/v2-fixture-fresh-008",
+      "Email": "v2-le-merge-006-fresh@example.test",
+      "Name": "V2 Lessie Merge 006 (v2_u028)",
+      "Title": "Infrastructure Engineer",
+      "Company": "Notion",
+      "Location": "Austin, TX"
+    },
+    {
+      "LinkedIn URL": "https://linkedin.com/in/v2-fixture-fresh-009",
+      "Email": "v2-le-merge-007-fresh@example.test",
+      "Name": "V2 Lessie Merge 007 (v2_u029)",
+      "Title": "Software Engineer",
+      "Company": "Linear",
+      "Location": "New York, NY"
+    },
+    {
+      "LinkedIn URL": "https://linkedin.com/in/v2-fixture-fresh-010",
+      "Email": "v2-le-merge-008-fresh@example.test",
+      "Name": "V2 Lessie Merge 008 (v2_u030)",
+      "Title": "Senior Software Engineer",
+      "Company": "Vercel",
+      "Location": "San Francisco, CA"
+    },
+    {
+      "LinkedIn URL": "https://linkedin.com/in/seed-user-001",
+      "Email": "v2-mismatch-001@conflict.example.test",
+      "Name": "V2 Lessie Mismatch 001 (LI=seed_u001, email=cand_other_v2_001)",
+      "Title": "Backend Engineer",
+      "Company": "Databricks",
+      "Location": "San Francisco, CA"
+    },
+    {
+      "LinkedIn URL": "https://linkedin.com/in/seed-user-002",
+      "Email": "v2-mismatch-002@conflict.example.test",
+      "Name": "V2 Lessie Mismatch 002 (LI=seed_u002, email=cand_other_v2_002)",
+      "Title": "Full-Stack Engineer",
+      "Company": "Datadog",
+      "Location": "Remote"
+    },
+    {
+      "LinkedIn URL": "https://linkedin.com/in/seed-user-003",
+      "Email": "v2-mismatch-003@conflict.example.test",
+      "Name": "V2 Lessie Mismatch 003 (LI=seed_u003, email=cand_other_v2_003)",
+      "Title": "Platform Engineer",
+      "Company": "Snowflake",
+      "Location": "Brooklyn, NY"
+    },
+    {
+      "LinkedIn URL": "https://linkedin.com/in/seed-user-004",
+      "Email": "v2-mismatch-004@conflict.example.test",
+      "Name": "V2 Lessie Mismatch 004 (LI=seed_u004, email=cand_other_v2_004)",
+      "Title": "ML Engineer",
+      "Company": "Plaid",
+      "Location": "Manhattan, NY"
+    },
+    {
+      "LinkedIn URL": "https://linkedin.com/in/v2-fixture-le-create-001",
+      "Email": "v2-le-dup-001-b@example.test",
+      "Name": "V2 Lessie Dup-of-Create 001",
+      "Title": "Senior Software Engineer",
+      "Company": "OpenAI",
+      "Location": "San Francisco, CA"
+    },
+    {
+      "LinkedIn URL": "https://linkedin.com/in/v2-fixture-le-create-002",
+      "Email": "v2-le-dup-002-b@example.test",
+      "Name": "V2 Lessie Dup-of-Create 002",
+      "Title": "Staff Engineer",
+      "Company": "Anthropic",
+      "Location": "Remote"
+    },
+    {
+      "LinkedIn URL": "https://linkedin.com/in/v2-fixture-le-create-003",
+      "Email": "v2-le-dup-003-b@example.test",
+      "Name": "V2 Lessie Dup-of-Create 003",
+      "Title": "Engineering Manager",
+      "Company": "Databricks",
+      "Location": "Brooklyn, NY"
+    }
+  ],
+  "coresignal": [
+    {
+      "profile": {
+        "url": "https://linkedin.com/in/v2-fixture-cs-linkedinonly-001",
+        "full_name": "V2 Coresignal LinkedIn-Only 001",
+        "headline": "Senior Software Engineer",
+        "location": {
+          "name": "San Francisco, CA"
+        }
+      },
+      "contact": {
+        "primary_email": null,
+        "phone": null
+      },
+      "experience": [
+        {
+          "company_name": "OpenAI",
+          "title": "Senior Software Engineer",
+          "date_from": "2021-03",
+          "date_to": null
+        }
+      ],
+      "education": [
+        {
+          "school": "Stanford",
+          "degree": "BS",
+          "field_of_study": "Computer Science",
+          "date_to": "2020"
+        }
+      ],
+      "skills": [
+        "python",
+        "rust",
+        "kubernetes",
+        "terraform",
+        "distributed_systems"
+      ]
+    },
+    {
+      "profile": {
+        "url": "https://linkedin.com/in/v2-fixture-cs-linkedinonly-002",
+        "full_name": "V2 Coresignal LinkedIn-Only 002",
+        "headline": "Staff Engineer",
+        "location": {
+          "name": "Remote"
+        }
+      },
+      "contact": {
+        "primary_email": null,
+        "phone": null
+      },
+      "experience": [
+        {
+          "company_name": "Anthropic",
+          "title": "Staff Engineer",
+          "date_from": "2021-03",
+          "date_to": null
+        }
+      ],
+      "education": [
+        {
+          "school": "UC Berkeley",
+          "degree": "BS",
+          "field_of_study": "Computer Science",
+          "date_to": "2020"
+        }
+      ],
+      "skills": [
+        "typescript",
+        "react",
+        "node_js",
+        "graphql",
+        "postgres"
+      ]
+    },
+    {
+      "profile": {
+        "url": "https://linkedin.com/in/v2-fixture-cs-linkedinonly-003",
+        "full_name": "V2 Coresignal LinkedIn-Only 003",
+        "headline": "Engineering Manager",
+        "location": {
+          "name": "Brooklyn, NY"
+        }
+      },
+      "contact": {
+        "primary_email": null,
+        "phone": null
+      },
+      "experience": [
+        {
+          "company_name": "Databricks",
+          "title": "Engineering Manager",
+          "date_from": "2021-03",
+          "date_to": null
+        }
+      ],
+      "education": [
+        {
+          "school": "Carnegie Mellon",
+          "degree": "BS",
+          "field_of_study": "Computer Science",
+          "date_to": "2020"
+        }
+      ],
+      "skills": [
+        "python",
+        "sql",
+        "spark",
+        "airflow",
+        "dbt"
+      ]
+    },
+    {
+      "profile": {
+        "url": "https://linkedin.com/in/v2-fixture-cs-linkedinonly-004",
+        "full_name": "V2 Coresignal LinkedIn-Only 004",
+        "headline": "Backend Engineer",
+        "location": {
+          "name": "Manhattan, NY"
+        }
+      },
+      "contact": {
+        "primary_email": null,
+        "phone": null
+      },
+      "experience": [
+        {
+          "company_name": "Datadog",
+          "title": "Backend Engineer",
+          "date_from": "2021-03",
+          "date_to": null
+        }
+      ],
+      "education": [
+        {
+          "school": "Cornell",
+          "degree": "BS",
+          "field_of_study": "Computer Science",
+          "date_to": "2020"
+        }
+      ],
+      "skills": [
+        "python",
+        "typescript",
+        "kubernetes",
+        "system_design",
+        "machine_learning"
+      ]
+    },
+    {
+      "profile": {
+        "url": "https://linkedin.com/in/v2-fixture-cs-linkedinonly-005",
+        "full_name": "V2 Coresignal LinkedIn-Only 005",
+        "headline": "Full-Stack Engineer",
+        "location": {
+          "name": "Seattle, WA"
+        }
+      },
+      "contact": {
+        "primary_email": null,
+        "phone": null
+      },
+      "experience": [
+        {
+          "company_name": "Snowflake",
+          "title": "Full-Stack Engineer",
+          "date_from": "2021-03",
+          "date_to": null
+        }
+      ],
+      "education": [
+        {
+          "school": "Princeton",
+          "degree": "BS",
+          "field_of_study": "Computer Science",
+          "date_to": "2020"
+        }
+      ],
+      "skills": [
+        "python",
+        "rust",
+        "kubernetes",
+        "terraform",
+        "distributed_systems"
+      ]
+    },
+    {
+      "profile": {
+        "url": "https://linkedin.com/in/v2-fixture-cs-linkedinonly-006",
+        "full_name": "V2 Coresignal LinkedIn-Only 006",
+        "headline": "Platform Engineer",
+        "location": {
+          "name": "Austin, TX"
+        }
+      },
+      "contact": {
+        "primary_email": null,
+        "phone": null
+      },
+      "experience": [
+        {
+          "company_name": "Plaid",
+          "title": "Platform Engineer",
+          "date_from": "2021-03",
+          "date_to": null
+        }
+      ],
+      "education": [
+        {
+          "school": "Columbia",
+          "degree": "BS",
+          "field_of_study": "Computer Science",
+          "date_to": "2020"
+        }
+      ],
+      "skills": [
+        "typescript",
+        "react",
+        "node_js",
+        "graphql",
+        "postgres"
+      ]
+    },
+    {
+      "profile": {
+        "url": "https://linkedin.com/in/v2-fixture-cs-linkedinonly-007",
+        "full_name": "V2 Coresignal LinkedIn-Only 007",
+        "headline": "ML Engineer",
+        "location": {
+          "name": "New York, NY"
+        }
+      },
+      "contact": {
+        "primary_email": null,
+        "phone": null
+      },
+      "experience": [
+        {
+          "company_name": "Notion",
+          "title": "ML Engineer",
+          "date_from": "2021-03",
+          "date_to": null
+        }
+      ],
+      "education": [
+        {
+          "school": "NYU",
+          "degree": "BS",
+          "field_of_study": "Computer Science",
+          "date_to": "2020"
+        }
+      ],
+      "skills": [
+        "python",
+        "sql",
+        "spark",
+        "airflow",
+        "dbt"
+      ]
+    },
+    {
+      "profile": {
+        "url": "https://linkedin.com/in/v2-fixture-cs-linkedinonly-008",
+        "full_name": "V2 Coresignal LinkedIn-Only 008",
+        "headline": "Infrastructure Engineer",
+        "location": {
+          "name": "San Francisco, CA"
+        }
+      },
+      "contact": {
+        "primary_email": null,
+        "phone": null
+      },
+      "experience": [
+        {
+          "company_name": "Linear",
+          "title": "Infrastructure Engineer",
+          "date_from": "2021-03",
+          "date_to": null
+        }
+      ],
+      "education": [
+        {
+          "school": "MIT",
+          "degree": "BS",
+          "field_of_study": "Computer Science",
+          "date_to": "2020"
+        }
+      ],
+      "skills": [
+        "python",
+        "typescript",
+        "kubernetes",
+        "system_design",
+        "machine_learning"
+      ]
+    },
+    {
+      "profile": {
+        "url": "https://linkedin.com/in/v2-fixture-cs-linkedinonly-009",
+        "full_name": "V2 Coresignal LinkedIn-Only 009",
+        "headline": "Software Engineer",
+        "location": {
+          "name": "Remote"
+        }
+      },
+      "contact": {
+        "primary_email": null,
+        "phone": null
+      },
+      "experience": [
+        {
+          "company_name": "Vercel",
+          "title": "Software Engineer",
+          "date_from": "2021-03",
+          "date_to": null
+        }
+      ],
+      "education": [
+        {
+          "school": "Stanford",
+          "degree": "BS",
+          "field_of_study": "Computer Science",
+          "date_to": "2020"
+        }
+      ],
+      "skills": [
+        "python",
+        "rust",
+        "kubernetes",
+        "terraform",
+        "distributed_systems"
+      ]
+    },
+    {
+      "profile": {
+        "url": "https://linkedin.com/in/v2-fixture-cs-linkedinonly-010",
+        "full_name": "V2 Coresignal LinkedIn-Only 010",
+        "headline": "Senior Software Engineer",
+        "location": {
+          "name": "Brooklyn, NY"
+        }
+      },
+      "contact": {
+        "primary_email": null,
+        "phone": null
+      },
+      "experience": [
+        {
+          "company_name": "Cloudflare",
+          "title": "Senior Software Engineer",
+          "date_from": "2021-03",
+          "date_to": null
+        }
+      ],
+      "education": [
+        {
+          "school": "UC Berkeley",
+          "degree": "BS",
+          "field_of_study": "Computer Science",
+          "date_to": "2020"
+        }
+      ],
+      "skills": [
+        "typescript",
+        "react",
+        "node_js",
+        "graphql",
+        "postgres"
+      ]
+    },
+    {
+      "profile": {
+        "url": "https://linkedin.com/in/v2-fixture-edge-optedout-001",
+        "full_name": "V2 Coresignal Merge 001 (v2_u021)",
+        "headline": "Staff Engineer",
+        "location": {
+          "name": "San Francisco, CA"
+        }
+      },
+      "contact": {
+        "primary_email": "v2-cs-merge-001-fresh@example.test",
+        "phone": "+12125551001"
+      },
+      "experience": [
+        {
+          "company_name": "OpenAI",
+          "title": "Staff Engineer",
+          "date_from": "2020-08",
+          "date_to": null
+        }
+      ],
+      "education": [
+        {
+          "school": "Stanford",
+          "degree": "MS",
+          "field_of_study": "Computer Science",
+          "date_to": "2019"
+        }
+      ],
+      "skills": [
+        "python",
+        "typescript",
+        "kubernetes",
+        "system_design",
+        "machine_learning"
+      ]
+    },
+    {
+      "profile": {
+        "url": "https://linkedin.com/in/v2-fixture-edge-optedout-002",
+        "full_name": "V2 Coresignal Merge 002 (v2_u022)",
+        "headline": "Engineering Manager",
+        "location": {
+          "name": "Remote"
+        }
+      },
+      "contact": {
+        "primary_email": "v2-cs-merge-002-fresh@example.test",
+        "phone": "+12125551002"
+      },
+      "experience": [
+        {
+          "company_name": "Anthropic",
+          "title": "Engineering Manager",
+          "date_from": "2020-08",
+          "date_to": null
+        }
+      ],
+      "education": [
+        {
+          "school": "UC Berkeley",
+          "degree": "MS",
+          "field_of_study": "Computer Science",
+          "date_to": "2019"
+        }
+      ],
+      "skills": [
+        "python",
+        "typescript",
+        "kubernetes",
+        "system_design",
+        "machine_learning"
+      ]
+    },
+    {
+      "profile": {
+        "url": "https://linkedin.com/in/v2-fixture-edge-bounce-003",
+        "full_name": "V2 Coresignal Merge 003 (v2_u023)",
+        "headline": "Backend Engineer",
+        "location": {
+          "name": "Brooklyn, NY"
+        }
+      },
+      "contact": {
+        "primary_email": "v2-cs-merge-003-fresh@example.test",
+        "phone": "+12125551003"
+      },
+      "experience": [
+        {
+          "company_name": "Databricks",
+          "title": "Backend Engineer",
+          "date_from": "2020-08",
+          "date_to": null
+        }
+      ],
+      "education": [
+        {
+          "school": "Carnegie Mellon",
+          "degree": "MS",
+          "field_of_study": "Computer Science",
+          "date_to": "2019"
+        }
+      ],
+      "skills": [
+        "python",
+        "typescript",
+        "kubernetes",
+        "system_design",
+        "machine_learning"
+      ]
+    },
+    {
+      "profile": {
+        "url": "https://linkedin.com/in/v2-fixture-edge-bounce-004",
+        "full_name": "V2 Coresignal Merge 004 (v2_u024)",
+        "headline": "Full-Stack Engineer",
+        "location": {
+          "name": "Manhattan, NY"
+        }
+      },
+      "contact": {
+        "primary_email": "v2-cs-merge-004-fresh@example.test",
+        "phone": "+12125551004"
+      },
+      "experience": [
+        {
+          "company_name": "Datadog",
+          "title": "Full-Stack Engineer",
+          "date_from": "2020-08",
+          "date_to": null
+        }
+      ],
+      "education": [
+        {
+          "school": "Cornell",
+          "degree": "MS",
+          "field_of_study": "Computer Science",
+          "date_to": "2019"
+        }
+      ],
+      "skills": [
+        "python",
+        "typescript",
+        "kubernetes",
+        "system_design",
+        "machine_learning"
+      ]
+    },
+    {
+      "profile": {
+        "url": "https://linkedin.com/in/v2-fixture-strong-005",
+        "full_name": "V2 Coresignal Merge 005 (v2_u025)",
+        "headline": "Platform Engineer",
+        "location": {
+          "name": "Seattle, WA"
+        }
+      },
+      "contact": {
+        "primary_email": "v2-cs-merge-005-fresh@example.test",
+        "phone": "+12125551005"
+      },
+      "experience": [
+        {
+          "company_name": "Snowflake",
+          "title": "Platform Engineer",
+          "date_from": "2020-08",
+          "date_to": null
+        }
+      ],
+      "education": [
+        {
+          "school": "Princeton",
+          "degree": "MS",
+          "field_of_study": "Computer Science",
+          "date_to": "2019"
+        }
+      ],
+      "skills": [
+        "python",
+        "typescript",
+        "kubernetes",
+        "system_design",
+        "machine_learning"
+      ]
+    },
+    {
+      "profile": {
+        "url": "https://linkedin.com/in/v2-fixture-strong-006",
+        "full_name": "V2 Coresignal Merge 006 (v2_u026)",
+        "headline": "ML Engineer",
+        "location": {
+          "name": "Austin, TX"
+        }
+      },
+      "contact": {
+        "primary_email": "v2-cs-merge-006-fresh@example.test",
+        "phone": "+12125551006"
+      },
+      "experience": [
+        {
+          "company_name": "Plaid",
+          "title": "ML Engineer",
+          "date_from": "2020-08",
+          "date_to": null
+        }
+      ],
+      "education": [
+        {
+          "school": "Columbia",
+          "degree": "MS",
+          "field_of_study": "Computer Science",
+          "date_to": "2019"
+        }
+      ],
+      "skills": [
+        "python",
+        "typescript",
+        "kubernetes",
+        "system_design",
+        "machine_learning"
+      ]
+    },
+    {
+      "profile": {
+        "url": "https://linkedin.com/in/seed-user-011",
+        "full_name": "V2 Coresignal Merge 007 (seed_u011)",
+        "headline": "Infrastructure Engineer",
+        "location": {
+          "name": "New York, NY"
+        }
+      },
+      "contact": {
+        "primary_email": "v2-cs-merge-007-fresh@example.test",
+        "phone": "+12125551007"
+      },
+      "experience": [
+        {
+          "company_name": "Notion",
+          "title": "Infrastructure Engineer",
+          "date_from": "2020-08",
+          "date_to": null
+        }
+      ],
+      "education": [
+        {
+          "school": "NYU",
+          "degree": "MS",
+          "field_of_study": "Computer Science",
+          "date_to": "2019"
+        }
+      ],
+      "skills": [
+        "python",
+        "typescript",
+        "kubernetes",
+        "system_design",
+        "machine_learning"
+      ]
+    },
+    {
+      "profile": {
+        "url": null,
+        "full_name": "V2 Coresignal EmailOnly 001",
+        "headline": "Senior Software Engineer",
+        "location": {
+          "name": "San Francisco, CA"
+        }
+      },
+      "contact": {
+        "primary_email": "v2-cs-emailonly-001@example.test",
+        "phone": null
+      },
+      "experience": [],
+      "education": [],
+      "skills": [
+        "python",
+        "rust",
+        "kubernetes",
+        "terraform",
+        "distributed_systems"
+      ]
+    },
+    {
+      "profile": {
+        "url": null,
+        "full_name": "V2 Coresignal EmailOnly 002",
+        "headline": "Staff Engineer",
+        "location": {
+          "name": "Remote"
+        }
+      },
+      "contact": {
+        "primary_email": "v2-cs-emailonly-002@example.test",
+        "phone": null
+      },
+      "experience": [],
+      "education": [],
+      "skills": [
+        "python",
+        "typescript",
+        "kubernetes",
+        "system_design",
+        "machine_learning"
+      ]
+    },
+    {
+      "profile": {
+        "url": null,
+        "full_name": "V2 Coresignal EmailOnly 003",
+        "headline": "Engineering Manager",
+        "location": {
+          "name": "Brooklyn, NY"
+        }
+      },
+      "contact": {
+        "primary_email": "v2-cs-emailonly-003@example.test",
+        "phone": null
+      },
+      "experience": [],
+      "education": [],
+      "skills": [
+        "python",
+        "rust",
+        "kubernetes",
+        "terraform",
+        "distributed_systems"
+      ]
+    },
+    {
+      "profile": {
+        "url": null,
+        "full_name": "V2 Coresignal EmailOnly 004",
+        "headline": "Backend Engineer",
+        "location": {
+          "name": "Manhattan, NY"
+        }
+      },
+      "contact": {
+        "primary_email": "v2-cs-emailonly-004@example.test",
+        "phone": null
+      },
+      "experience": [],
+      "education": [],
+      "skills": [
+        "python",
+        "typescript",
+        "kubernetes",
+        "system_design",
+        "machine_learning"
+      ]
+    },
+    {
+      "profile": {
+        "url": null,
+        "full_name": "V2 Coresignal EmailOnly 005",
+        "headline": "Full-Stack Engineer",
+        "location": {
+          "name": "Seattle, WA"
+        }
+      },
+      "contact": {
+        "primary_email": "v2-cs-emailonly-005@example.test",
+        "phone": null
+      },
+      "experience": [],
+      "education": [],
+      "skills": [
+        "python",
+        "rust",
+        "kubernetes",
+        "terraform",
+        "distributed_systems"
+      ]
+    },
+    {
+      "profile": {
+        "url": null,
+        "full_name": "V2 Coresignal EmailOnly 006",
+        "headline": "Platform Engineer",
+        "location": {
+          "name": "Austin, TX"
+        }
+      },
+      "contact": {
+        "primary_email": "v2-cs-emailonly-006@example.test",
+        "phone": null
+      },
+      "experience": [],
+      "education": [],
+      "skills": [
+        "python",
+        "typescript",
+        "kubernetes",
+        "system_design",
+        "machine_learning"
+      ]
+    },
+    {
+      "profile": {
+        "url": "https://linkedin.com/in/seed-user-005",
+        "full_name": "V2 Coresignal Mismatch 005 (LI=seed_u005, email=cand_other_005)",
+        "headline": "Full-Stack Engineer",
+        "location": {
+          "name": "Seattle, WA"
+        }
+      },
+      "contact": {
+        "primary_email": "mismatch-005@conflict.example.test",
+        "phone": null
+      },
+      "experience": [
+        {
+          "company_name": "Snowflake",
+          "title": "Full-Stack Engineer",
+          "date_from": "2022-01",
+          "date_to": null
+        }
+      ],
+      "education": [],
+      "skills": [
+        "typescript",
+        "react",
+        "node_js",
+        "graphql",
+        "postgres"
+      ]
+    },
+    {
+      "profile": {
+        "url": "https://linkedin.com/in/seed-user-006",
+        "full_name": "V2 Coresignal Mismatch 006 (LI=seed_u006, email=cand_other_006)",
+        "headline": "Platform Engineer",
+        "location": {
+          "name": "Austin, TX"
+        }
+      },
+      "contact": {
+        "primary_email": "mismatch-006@conflict.example.test",
+        "phone": null
+      },
+      "experience": [
+        {
+          "company_name": "Plaid",
+          "title": "Platform Engineer",
+          "date_from": "2022-01",
+          "date_to": null
+        }
+      ],
+      "education": [],
+      "skills": [
+        "python",
+        "typescript",
+        "kubernetes",
+        "system_design",
+        "machine_learning"
+      ]
+    },
+    {
+      "profile": {
+        "url": "https://linkedin.com/in/seed-user-007",
+        "full_name": "V2 Coresignal Mismatch 007 (LI=seed_u007, email=cand_other_007)",
+        "headline": "ML Engineer",
+        "location": {
+          "name": "New York, NY"
+        }
+      },
+      "contact": {
+        "primary_email": "mismatch-007@conflict.example.test",
+        "phone": null
+      },
+      "experience": [
+        {
+          "company_name": "Notion",
+          "title": "ML Engineer",
+          "date_from": "2022-01",
+          "date_to": null
+        }
+      ],
+      "education": [],
+      "skills": [
+        "typescript",
+        "react",
+        "node_js",
+        "graphql",
+        "postgres"
+      ]
+    },
+    {
+      "profile": {
+        "url": "https://linkedin.com/in/seed-user-008",
+        "full_name": "V2 Coresignal Mismatch 008 (LI=seed_u008, email=cand_other_008)",
+        "headline": "Infrastructure Engineer",
+        "location": {
+          "name": "San Francisco, CA"
+        }
+      },
+      "contact": {
+        "primary_email": "mismatch-008@conflict.example.test",
+        "phone": null
+      },
+      "experience": [
+        {
+          "company_name": "Linear",
+          "title": "Infrastructure Engineer",
+          "date_from": "2022-01",
+          "date_to": null
+        }
+      ],
+      "education": [],
+      "skills": [
+        "python",
+        "typescript",
+        "kubernetes",
+        "system_design",
+        "machine_learning"
+      ]
+    },
+    {
+      "profile": {
+        "url": "https://linkedin.com/in/seed-user-009",
+        "full_name": "V2 Coresignal Mismatch 009 (LI=seed_u009, email=cand_other_009)",
+        "headline": "Software Engineer",
+        "location": {
+          "name": "Remote"
+        }
+      },
+      "contact": {
+        "primary_email": "mismatch-009@conflict.example.test",
+        "phone": null
+      },
+      "experience": [
+        {
+          "company_name": "Vercel",
+          "title": "Software Engineer",
+          "date_from": "2022-01",
+          "date_to": null
+        }
+      ],
+      "education": [],
+      "skills": [
+        "typescript",
+        "react",
+        "node_js",
+        "graphql",
+        "postgres"
+      ]
+    },
+    {
+      "profile": {
+        "url": "https://linkedin.com/in/seed-user-010",
+        "full_name": "V2 Coresignal Mismatch 010 (LI=seed_u010, email=cand_other_010)",
+        "headline": "Senior Software Engineer",
+        "location": {
+          "name": "Brooklyn, NY"
+        }
+      },
+      "contact": {
+        "primary_email": "mismatch-010@conflict.example.test",
+        "phone": null
+      },
+      "experience": [
+        {
+          "company_name": "Cloudflare",
+          "title": "Senior Software Engineer",
+          "date_from": "2022-01",
+          "date_to": null
+        }
+      ],
+      "education": [],
+      "skills": [
+        "python",
+        "typescript",
+        "kubernetes",
+        "system_design",
+        "machine_learning"
+      ]
+    },
+    {
+      "profile": {
+        "url": "https://linkedin.com/in/seed-user-011",
+        "full_name": "V2 Coresignal Mismatch 011 (LI=seed_u011, email=cand_other_011)",
+        "headline": "Staff Engineer",
+        "location": {
+          "name": "Manhattan, NY"
+        }
+      },
+      "contact": {
+        "primary_email": "mismatch-011@conflict.example.test",
+        "phone": null
+      },
+      "experience": [
+        {
+          "company_name": "Figma",
+          "title": "Staff Engineer",
+          "date_from": "2022-01",
+          "date_to": null
+        }
+      ],
+      "education": [],
+      "skills": [
+        "typescript",
+        "react",
+        "node_js",
+        "graphql",
+        "postgres"
+      ]
+    },
+    {
+      "profile": {
+        "url": null,
+        "full_name": "V2 Coresignal Fuzzy Blocked 001",
+        "headline": "Senior Software Engineer",
+        "location": {
+          "name": "San Francisco, CA"
+        }
+      },
+      "contact": {
+        "primary_email": null,
+        "phone": null
+      },
+      "experience": [],
+      "education": [],
+      "skills": []
+    },
+    {
+      "profile": {
+        "url": null,
+        "full_name": "V2 Coresignal Fuzzy Blocked 002",
+        "headline": "Staff Engineer",
+        "location": {
+          "name": "Remote"
+        }
+      },
+      "contact": {
+        "primary_email": null,
+        "phone": null
+      },
+      "experience": [],
+      "education": [],
+      "skills": []
+    },
+    {
+      "profile": {
+        "url": null,
+        "full_name": "V2 Coresignal Fuzzy Blocked 003",
+        "headline": "Engineering Manager",
+        "location": {
+          "name": "Brooklyn, NY"
+        }
+      },
+      "contact": {
+        "primary_email": null,
+        "phone": null
+      },
+      "experience": [],
+      "education": [],
+      "skills": []
+    },
+    {
+      "profile": {
+        "url": null,
+        "full_name": "V2 Coresignal Fuzzy Blocked 004",
+        "headline": "Backend Engineer",
+        "location": {
+          "name": "Manhattan, NY"
+        }
+      },
+      "contact": {
+        "primary_email": null,
+        "phone": null
+      },
+      "experience": [],
+      "education": [],
+      "skills": []
+    },
+    {
+      "profile": {
+        "url": null,
+        "full_name": "V2 Coresignal Fuzzy Blocked 005",
+        "headline": "Full-Stack Engineer",
+        "location": {
+          "name": "Seattle, WA"
+        }
+      },
+      "contact": {
+        "primary_email": null,
+        "phone": null
+      },
+      "experience": [],
+      "education": [],
+      "skills": []
+    }
+  ]
+}

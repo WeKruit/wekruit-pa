@@ -645,6 +645,31 @@ importers:
         specifier: ^5.3.0
         version: 5.9.3
 
+  tests/external-supply-v2:
+    dependencies:
+      '@pa/core-types':
+        specifier: 0.0.1
+        version: link:../../packages/core-types
+      '@pa/external-supply':
+        specifier: 0.0.1
+        version: link:../../packages/external-supply
+      '@pa/pa-persistence':
+        specifier: 0.0.1
+        version: link:../../packages/pa-persistence
+      firebase-admin:
+        specifier: ^13.0.0
+        version: 13.8.0
+    devDependencies:
+      '@types/node':
+        specifier: ^20.19.0
+        version: 20.19.39
+      tsx:
+        specifier: ^4.7.0
+        version: 4.21.0
+      typescript:
+        specifier: ^5.3.0
+        version: 5.9.3
+
 packages:
 
   '@alloc/quick-lru@5.2.0':

@@ -17,9 +17,23 @@ import {
   normalizeEmail,
   normalizePhoneE164,
   phoneHash,
+  type AdapterSignature,
 } from "@pa/external-supply"
 
 export const MANUAL_CSV_ADAPTER_VERSION = "manual-csv-2026-05-A"
+
+/**
+ * Detection fingerprint for {@link detectAdapter}. Fallback adapter — empty
+ * `requiredKeys` means it always wins the floor when nothing else clears
+ * the 0.6 lock threshold (L-B4).
+ */
+export const MANUAL_CSV_SIGNATURE: AdapterSignature = {
+  source: "manual_csv",
+  requiredKeys: [],
+  bonusKeys: [],
+  acceptedShapes: ["csv", "tsv"],
+  adapterVersion: MANUAL_CSV_ADAPTER_VERSION,
+}
 
 export type NormalizedRecordDraft = Omit<
   ExternalCandidateRecord,

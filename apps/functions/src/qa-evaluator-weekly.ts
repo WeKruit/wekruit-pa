@@ -51,6 +51,8 @@ import {
   type QueryDocumentSnapshot,
 } from "firebase-admin/firestore"
 
+import { createHash } from "node:crypto"
+
 import {
   evaluateQaPair,
   type QaJudgeInput,
@@ -59,6 +61,7 @@ import {
 import { sendMailgun, type MailgunConfig } from "./email/mailgun.js"
 import { makeLimiter } from "./liveness-sweep.js"
 import { postSlackAlert } from "./lib/slack-alert.js"
+import type { AgentRankingResult } from "@pa/core-types"
 
 // ---------------------------------------------------------------------------
 // Secrets
@@ -203,6 +206,16 @@ export type QaEvaluatorStore = {
   writeMilestoneState: (
     payload: Record<string, unknown>
   ) => Promise<void>
+  /**
+   * V2 External Supply Wave E (F) additive seam — fetch up to `cap` recent
+   * `pa-agent-ranking-results` rows (createdAt >= sinceMs). When this method is
+   * not provided, the agent-override sampler step is silently skipped (back-compat
+   * with V1 callers / tests). Lead resolution L-F1 / L-F3.
+   */
+  fetchRecentAgentRankingRows?: (
+    sinceMs: number,
+    cap: number
+  ) => Promise<AgentRankingResult[]>
 }
 
 /** External integrations — production wires Mailgun + fetch. */
@@ -346,6 +359,119 @@ export function projectUserForJudge(tags: UserTagsLike): QaJudgeInput["user"] {
     out.yoeRange = tags.yoeRange
   }
   return out
+}
+
+// ---------------------------------------------------------------------------
+// V2 External Supply Wave E (F) — agent-override sampler helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Agent-ranking sampler — pool / pick / threshold per L-F1.
+ * 200 rows pulled, 50 sampled deterministically per ISO week.
+ */
+export const AGENT_RANKING_SAMPLE_POOL = 200
+export const AGENT_RANKING_SAMPLE_PICK = 50
+/** Strict-greater-than threshold for the operator-override flag. */
+export const AGENT_RANKING_OVERRIDE_THRESHOLD = 0.15
+/** Lookback window for pulling ranking rows — 7d so a weekly cron sees a full week. */
+export const AGENT_RANKING_LOOKBACK_MS = 7 * 24 * 3600 * 1000
+
+/**
+ * ISO 8601 week key — e.g. `"2026-W19"`. Pure, timezone-stable (uses UTC).
+ *
+ * Algorithm: shift the date to the Thursday in the same ISO week, then compute
+ * week number from the year's first Thursday. No external deps.
+ */
+export function isoWeekKey(d: Date): string {
+  const ms = d.getTime()
+  if (!Number.isFinite(ms)) {
+    throw new Error("isoWeekKey: invalid date")
+  }
+  // Copy as UTC date — strip time-of-day so DST/zone never affects the bucket.
+  const utc = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()))
+  // ISO: Mon=1 .. Sun=7. JS UTC: Sun=0 .. Sat=6.
+  const dow = utc.getUTCDay() || 7
+  // Shift to the Thursday of the current ISO week.
+  utc.setUTCDate(utc.getUTCDate() + 4 - dow)
+  const isoYear = utc.getUTCFullYear()
+  const jan1 = Date.UTC(isoYear, 0, 1)
+  const dayOfYear = Math.floor((utc.getTime() - jan1) / (24 * 3600 * 1000)) + 1
+  const weekNum = Math.ceil(dayOfYear / 7)
+  return `${isoYear}-W${String(weekNum).padStart(2, "0")}`
+}
+
+/**
+ * Deterministic seeded RNG (mulberry32) over the first 32 bits of sha256(seed).
+ * Stable across Node versions (no Math.random dependence).
+ */
+export function makeSeededRng(seed: string): () => number {
+  const hash = createHash("sha256").update(seed).digest()
+  // mulberry32 wants a uint32 seed.
+  let a =
+    ((hash[0]! << 24) | (hash[1]! << 16) | (hash[2]! << 8) | hash[3]!) >>> 0
+  return function () {
+    a = (a + 0x6d2b79f5) >>> 0
+    let t = a
+    t = Math.imul(t ^ (t >>> 15), t | 1)
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+/**
+ * Pure sampler — filters to `approved` | `overridden` status, then takes a
+ * deterministic shuffled prefix of size `opts.pick` from the first `opts.pool`
+ * eligible rows.
+ *
+ * The seed is `"qa-agent-rank:" + weekKey` so a given ISO week always picks
+ * the same sample (reproducible audit, L-F1).
+ */
+export function sampleAgentRankingRows(
+  rows: ReadonlyArray<AgentRankingResult>,
+  weekKey: string,
+  opts: { pool?: number; pick?: number } = {}
+): AgentRankingResult[] {
+  const pool = opts.pool ?? AGENT_RANKING_SAMPLE_POOL
+  const pick = opts.pick ?? AGENT_RANKING_SAMPLE_PICK
+  const eligible = rows.filter(
+    (r) => r.status === "approved" || r.status === "overridden"
+  )
+  const head = eligible.slice(0, pool)
+  const rng = makeSeededRng(`qa-agent-rank:${weekKey}`)
+  return shuffle(head, rng).slice(0, pick)
+}
+
+/**
+ * Pure aggregate — operator-override rate over a sample, plus flag.
+ *
+ * `flag` is **strict** `> 0.15` (L-F1) so the exact-equal-threshold case
+ * does not page anyone. Empty samples never flag.
+ */
+export function computeAgentOverrideMetrics(
+  sample: ReadonlyArray<AgentRankingResult>,
+  opts: { weekKey: string; threshold?: number }
+): {
+  sampled: number
+  approvals: number
+  overrides: number
+  operatorOverrideRate: number
+  flag: boolean
+  weekKey: string
+} {
+  const threshold = opts.threshold ?? AGENT_RANKING_OVERRIDE_THRESHOLD
+  const approvals = sample.filter((r) => r.status === "approved").length
+  const overrides = sample.filter((r) => r.status === "overridden").length
+  const denom = approvals + overrides
+  const operatorOverrideRate = denom > 0 ? overrides / denom : 0
+  const flag = denom > 0 && operatorOverrideRate > threshold
+  return {
+    sampled: sample.length,
+    approvals,
+    overrides,
+    operatorOverrideRate,
+    flag,
+    weekKey: opts.weekKey,
+  }
 }
 
 /** Build a fresh runId — millisecond ISO + short random suffix. */
@@ -601,6 +727,91 @@ export async function runQaEvaluator(
     })
   }
 
+  // 7.5 V2 External Supply Wave E (F) — agent-override sampler.
+  // Lead resolution L-F1 / L-F3: store the flag on the run doc, NOT on
+  // pa-source-quality-metrics (that's the monthly rollup's job). Sampler is
+  // a no-op when `store.fetchRecentAgentRankingRows` is absent (back-compat
+  // with V1 callers and tests). All failures are non-fatal — the QA run
+  // continues even if the sampler throws.
+  let agentRankingBlock:
+    | {
+        weekKey: string
+        sampled: number
+        approvals: number
+        overrides: number
+        operatorOverrideRate: number
+        flag: boolean
+        threshold: number
+      }
+    | undefined
+  if (typeof deps.store.fetchRecentAgentRankingRows === "function") {
+    try {
+      const startedAt = new Date(startMs)
+      const weekKey = isoWeekKey(startedAt)
+      const sinceMs = startMs - AGENT_RANKING_LOOKBACK_MS
+      const recent = await deps.store.fetchRecentAgentRankingRows(
+        sinceMs,
+        AGENT_RANKING_SAMPLE_POOL
+      )
+      const sample = sampleAgentRankingRows(recent, weekKey, {
+        pool: AGENT_RANKING_SAMPLE_POOL,
+        pick: AGENT_RANKING_SAMPLE_PICK,
+      })
+      const metrics = computeAgentOverrideMetrics(sample, { weekKey })
+      agentRankingBlock = {
+        weekKey: metrics.weekKey,
+        sampled: metrics.sampled,
+        approvals: metrics.approvals,
+        overrides: metrics.overrides,
+        operatorOverrideRate: metrics.operatorOverrideRate,
+        flag: metrics.flag,
+        threshold: AGENT_RANKING_OVERRIDE_THRESHOLD,
+      }
+      log("qa_eval.agent_ranking_sampled", {
+        runId,
+        weekKey,
+        sampled: metrics.sampled,
+        operatorOverrideRate: metrics.operatorOverrideRate,
+        flag: metrics.flag,
+      })
+      if (metrics.flag) {
+        const flagMessage =
+          `⚠ Agent-override rate ${(metrics.operatorOverrideRate * 100).toFixed(1)}% ` +
+          `(> ${(AGENT_RANKING_OVERRIDE_THRESHOLD * 100).toFixed(0)}%) over ` +
+          `${metrics.sampled} sampled rows in ${weekKey}. ` +
+          `Runs at ${RUNS_COLLECTION}/${runId}.`
+        if (deps.integrations.sendSlack) {
+          try {
+            await deps.integrations.sendSlack(flagMessage)
+          } catch (err) {
+            errorLog("qa_eval.agent_ranking_slack_failed", {
+              runId,
+              err: String(err).slice(0, 200),
+            })
+          }
+        }
+        if (deps.integrations.sendEmail) {
+          try {
+            await deps.integrations.sendEmail(
+              `[external-supply] agent-override flag ${weekKey}`,
+              flagMessage
+            )
+          } catch (err) {
+            errorLog("qa_eval.agent_ranking_email_failed", {
+              runId,
+              err: String(err).slice(0, 200),
+            })
+          }
+        }
+      }
+    } catch (err) {
+      errorLog("qa_eval.agent_ranking_failed", {
+        runId,
+        err: String(err).slice(0, 200),
+      })
+    }
+  }
+
   const durationMs = now() - startMs
 
   // 8. Run audit.
@@ -616,6 +827,9 @@ export async function runQaEvaluator(
     durationMs,
     passes,
     insufficientSample,
+  }
+  if (agentRankingBlock) {
+    runDoc.agentRanking = agentRankingBlock
   }
   try {
     await deps.store.writeRun(runId, runDoc)
@@ -815,6 +1029,39 @@ export function makeFirestoreStore(db: Firestore = getFirestore()): QaEvaluatorS
         .collection(MILESTONE_STATE_COLLECTION)
         .doc(MILESTONE_VERSION)
         .set(payload, { merge: true })
+    },
+
+    /**
+     * V2 External Supply Wave E (F) — read recent agent-ranking rows for the
+     * weekly operator-override sampler. Bounded by `cap` to keep memory + query
+     * cost predictable. Falls back to a status-bound query if the composite
+     * createdAt index is missing.
+     */
+    fetchRecentAgentRankingRows: async (sinceMs, cap) => {
+      const sinceIso = new Date(sinceMs).toISOString()
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let q: any = db
+        .collection("pa-agent-ranking-results")
+        .where("createdAt", ">=", sinceIso)
+        .orderBy("createdAt", "desc")
+        .limit(cap)
+      let snap
+      try {
+        snap = await q.get()
+      } catch {
+        // Composite-index miss → fall back to in-status filter on the latest cap.
+        q = db.collection("pa-agent-ranking-results").limit(cap)
+        snap = await q.get()
+      }
+      const out: AgentRankingResult[] = []
+      for (const doc of snap.docs as Array<QueryDocumentSnapshot>) {
+        const data = doc.data() as DocumentData
+        // We don't re-validate full Zod here (hot read path); we trust the
+        // writer (D) to have schema-checked. The sampler only reads `.status`
+        // and counts, both string/length-checked downstream.
+        out.push(data as unknown as AgentRankingResult)
+      }
+      return out
     },
   }
 }

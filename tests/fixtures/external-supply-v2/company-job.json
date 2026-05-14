@@ -1,0 +1,50 @@
+{
+  "company": {
+    "companyId": "co_acme_v2",
+    "name": "Acme V2 (External Supply V2 fixture)",
+    "industrySector": [
+      "artificial_intelligence_and_machine_learning",
+      "cloud_and_infrastructure"
+    ],
+    "competitorCompanies": [
+      "OpenAI",
+      "Anthropic",
+      "Stripe"
+    ],
+    "size": "scale_up",
+    "schoolPreferences": [
+      "mit",
+      "stanford",
+      "carnegie_mellon",
+      "uc_berkeley"
+    ]
+  },
+  "job": {
+    "jobId": "job_acme_swe_senior_v2",
+    "companyId": "co_acme_v2",
+    "title": "Senior Software Engineer (AI Infra) — V2",
+    "roleFunction": [
+      "software_engineering"
+    ],
+    "requiredSkills": [
+      "python",
+      "typescript",
+      "kubernetes",
+      "system_design",
+      "machine_learning"
+    ],
+    "seniorityLevel": "senior",
+    "locationBuckets": [
+      "new_york",
+      "remote"
+    ],
+    "sponsorship": false,
+    "jobType": "full_time",
+    "industrySector": [
+      "artificial_intelligence_and_machine_learning"
+    ],
+    "firstSeenAt": "2026-05-13T12:00:00.000Z",
+    "salaryMin": 180000,
+    "salaryMax": 260000
+  }
+}

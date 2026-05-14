@@ -306,7 +306,13 @@ async function loadCandidateProfile(
   return coerceCandidateProfile(candidateId, data)
 }
 
-function coerceCandidateProfile(
+/**
+ * Coerce a raw `pa-users` doc into the minimum `CandidateProfile` shape the
+ * rubric reads. Exported (additive) so the preview callable can run the
+ * deterministic tier forecast without going through `runEvaluation` (which
+ * writes Firestore docs). No behaviour change vs the prior private fn.
+ */
+export function coerceCandidateProfile(
   candidateId: string,
   raw: Record<string, unknown>,
 ): CandidateProfile {
@@ -337,7 +343,13 @@ function coerceCandidateProfile(
   }
 }
 
-async function loadJobContext(db: Firestore, jobId: string): Promise<JobContext> {
+/**
+ * Read-only load of `pa-jobs/{jobId}` coerced to a {@link JobContext}.
+ * Exported (additive) so the preview callable can fetch job context for the
+ * tier forecast without writing Firestore. Falls back to a `{ jobId }` stub
+ * on missing/erroring docs. No behaviour change vs the prior private fn.
+ */
+export async function loadJobContext(db: Firestore, jobId: string): Promise<JobContext> {
   // The spec's source-of-truth is `pa-jobs` for marketplace job context.
   // When the doc is absent or sparse, we still produce a JobContext stub —
   // the rubric will surface `missingInfo` for every empty axis.
@@ -386,7 +398,14 @@ function coerceJobContext(jobId: string, raw: Record<string, unknown>): JobConte
   return ctx
 }
 
-async function loadCompanyContext(
+/**
+ * Read-only load of `pa-companies/{companyId}` coerced to a
+ * {@link CompanyContext}. Exported (additive) so the preview callable can
+ * read company context for the tier forecast without writes. Falls back to
+ * a `{ companyId, name: companyId }` stub on missing/erroring docs. No
+ * behaviour change vs the prior private fn.
+ */
+export async function loadCompanyContext(
   db: Firestore,
   companyId: string,
 ): Promise<CompanyContext> {

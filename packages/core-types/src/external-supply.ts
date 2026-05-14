@@ -422,7 +422,7 @@ export type InstantlySyncRecord = z.infer<typeof InstantlySyncRecordSchema>
 
 export const OutreachEventSchema = z.object({
   eventId: IdSchema,
-  provider: z.enum(["instantly", "manual_linkedin", "system"]),
+  provider: z.enum(["instantly", "mailgun", "manual_linkedin", "system"]),
   providerEventId: z.string().min(1).optional(),
   candidateId: IdSchema,
   planId: IdSchema,
@@ -447,10 +447,62 @@ export const SourceQualityMetricSchema = z.object({
   replyRate: ConfidenceSchema,
   bounceRate: ConfidenceSchema,
   conversionToFirstInterview: ConfidenceSchema,
+  /**
+   * V2 additive — Executor F monthly rollup writes these alongside V1 rates.
+   * Lead resolution L-A4 (EXECUTOR-PLANS.md §A): A lands the optional fields
+   * here so F never has to fork core-types. All optional, additive only.
+   */
+  agentTierAcceptanceRate: ConfidenceSchema.optional(),
+  agentOperatorOverrideRate: ConfidenceSchema.optional(),
+  agentRankedTotal: z.number().int().nonnegative().optional(),
+  agentApprovedUnchangedTotal: z.number().int().nonnegative().optional(),
+  agentOverriddenTotal: z.number().int().nonnegative().optional(),
+  /** Mirror D's per-ledger COST_TABLE_VERSION stamp on rollup rows. */
+  costTableVersion: z.string().min(1).optional(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema.optional(),
 })
 export type SourceQualityMetric = z.infer<typeof SourceQualityMetricSchema>
+
+/**
+ * v2.0 External Supply V1.1 — Mailgun is the active email-delivery channel.
+ *
+ * Adam directive 2026-05-14 ("let's not use instantly for now on the
+ * pipeline, mailgun if enough, we can switch it"): outreach plans dispatch
+ * via the existing `sendMailgun` transport. The Instantly client + sync
+ * record schema stay in the codebase for an easy switch back but are no
+ * longer wired into the default operator path. Mailgun has a one-shot
+ * direct-send model (no campaign / lead concept) so the record shape
+ * stamps the actual mailgun message id rather than a campaign+list pair.
+ */
+export const MailgunSyncRecordSchema = z.object({
+  syncId: IdSchema,
+  planId: IdSchema,
+  candidateId: IdSchema,
+  jobId: IdSchema,
+  companyId: IdSchema,
+  mailgunMessageId: z.string().min(1).optional(),
+  syncStatus: InstantlySyncStatusSchema, // reused — same lifecycle vocabulary
+  mode: z.enum(["dry_run", "live"]),
+  /** Operator-pinned `from` (defaults to MAILGUN_FROM secret when absent). */
+  fromOverride: z.string().min(1).optional(),
+  /** When dry_run: the exact RFC-2822 fields we'd POST to Mailgun. */
+  dryRunPayload: z
+    .object({
+      from: z.string().min(1),
+      to: z.string().min(1),
+      subject: z.string().min(1),
+      text: z.string().min(1),
+      html: z.string().min(1).optional(),
+    })
+    .optional(),
+  liveSyncedAt: TimestampSchema.optional(),
+  lastEventAt: TimestampSchema.optional(),
+  error: z.string().max(4_000).optional(),
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema.optional(),
+})
+export type MailgunSyncRecord = z.infer<typeof MailgunSyncRecordSchema>
 
 // ---------------------------------------------------------------------------
 // §5.5 Deterministic doc-id helpers
@@ -497,4 +549,104 @@ export function createOutreachEventId(provider: string, providerEventId?: string
  */
 export function createSourceQualityMetricId(source: string, yyyyMm: string): string {
   return `${source}__${yyyyMm}`
+}
+
+// ---------------------------------------------------------------------------
+// V2 — Agent Ranking contracts (Wave A, EXECUTOR-PLANS.md §A)
+// ---------------------------------------------------------------------------
+
+/**
+ * Recommended action the agent emits per candidate. The set is closed so the
+ * downstream policy / dashboard can render a finite badge set.
+ *
+ *  - `outreach_now`             — high-fit; queue for immediate outreach.
+ *  - `outreach_after_research`  — strong signal but missing context; defer to
+ *    agent-research workflow first.
+ *  - `retain_warm`              — keep in pool for future jobs; no outreach
+ *    today.
+ *  - `do_not_contact`           — terminal; suppress outreach for this job.
+ */
+export const AgentRankingActionSchema = z.enum([
+  "outreach_now",
+  "outreach_after_research",
+  "retain_warm",
+  "do_not_contact",
+])
+export type AgentRankingAction = z.infer<typeof AgentRankingActionSchema>
+
+/**
+ * Per-LLM-call vote inside an ensemble run. `ensembleSize=1` collapses to a
+ * single vote = the result. Token + cost are stamped per vote so the cost
+ * ledger can reconcile against the rollup on the parent
+ * `AgentRankingResultSchema` row.
+ */
+export const AgentRankingEnsembleVoteSchema = z.object({
+  modelUsed: z.string().min(1),
+  proposedAgentTier: EvaluationTierSchema,
+  agentRationale: z.string().min(1).max(4_000),
+  agentRisks: z.array(z.string().min(1)).default([]),
+  agentRecommendedAction: AgentRankingActionSchema,
+  inputTokens: z.number().int().nonnegative(),
+  outputTokens: z.number().int().nonnegative(),
+  costUsd: z.number().nonnegative(),
+})
+export type AgentRankingEnsembleVote = z.infer<typeof AgentRankingEnsembleVoteSchema>
+
+/**
+ * Per-candidate ranking result. Combines the deterministic tier (from the
+ * evaluation pipeline) with the LLM-proposed tier, an ensemble of supporting
+ * votes, and a HITL approval surface (status / approvedTier / approvedBy /
+ * correctionEventId).
+ *
+ * Lead resolution L-A2 (EXECUTOR-PLANS.md §A): `ensembleSize` schema cap is 5
+ * even though V2 runtime caps at 3 — so V2.1 can lift the runtime cap without
+ * a schema rewrite.
+ */
+export const AgentRankingResultSchema = z.object({
+  resultId: IdSchema,
+  evaluationRunId: IdSchema,
+  candidateRecordId: IdSchema,
+  candidateUserId: IdSchema.optional(),
+  companyId: IdSchema,
+  jobId: IdSchema,
+  deterministicTier: EvaluationTierSchema,
+  proposedAgentTier: EvaluationTierSchema,
+  agentRationale: z.string().min(1).max(4_000),
+  agentRisks: z.array(z.string().min(1)).default([]),
+  agentRecommendedAction: AgentRankingActionSchema,
+  ensembleVotes: z.array(AgentRankingEnsembleVoteSchema).default([]),
+  modelUsed: z.string().min(1),
+  ensembleSize: z.number().int().min(1).max(5).default(1),
+  totalInputTokens: z.number().int().nonnegative(),
+  totalOutputTokens: z.number().int().nonnegative(),
+  totalCostUsd: z.number().nonnegative(),
+  dryRun: z.boolean().default(false),
+  promptVersion: z.string().min(1),
+  status: z.enum(["proposed", "approved", "overridden", "ignored"]).default("proposed"),
+  approvedTier: EvaluationTierSchema.optional(),
+  approvedBy: IdSchema.optional(),
+  approvedAt: TimestampSchema.optional(),
+  correctionEventId: IdSchema.optional(),
+  createdAt: TimestampSchema,
+})
+export type AgentRankingResult = z.infer<typeof AgentRankingResultSchema>
+
+/**
+ * `pa-agent-ranking-results` doc id is `agent-rank__${sha256(material)}`
+ * where material = `agent-rank:${evaluationRunId}:${candidateRecordId}`.
+ *
+ * Same (evaluationRunId, candidateRecordId) -> same id, so a re-run on the
+ * same scope idempotently overwrites; different (run, record) pairs produce
+ * deterministically different ids. Empty inputs throw — guards against the
+ * "empty id wins" footgun.
+ */
+export function createAgentRankingResultId(input: {
+  evaluationRunId: string
+  candidateRecordId: string
+}): string {
+  if (!input.evaluationRunId || !input.candidateRecordId) {
+    throw new Error("createAgentRankingResultId: evaluationRunId and candidateRecordId required")
+  }
+  const material = `agent-rank:${input.evaluationRunId}:${input.candidateRecordId}`
+  return `agent-rank__${createHash("sha256").update(material).digest("hex")}`
 }

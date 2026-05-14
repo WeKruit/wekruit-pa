@@ -248,6 +248,19 @@ test("marketplace document schemas parse the S1 primitives", () => {
     afterRedacted: { targetLocations: ["sf_bay_area"] },
     createdAt: now,
   })
+  // V2 external-supply Wave A — operator HITL override on an agent ranking row.
+  CorrectionEventSchema.parse({
+    eventId: "corr-agent-rank-1",
+    targetType: "agent_ranking_result",
+    targetId: "agent-rank__" + "a".repeat(64),
+    actor: "operator",
+    candidateId: "cand-1",
+    jobId: "job-1",
+    reason: "operator downgraded proposed tier_2 to retain_only",
+    beforeRedacted: { proposedAgentTier: "tier_2_personal_email" },
+    afterRedacted: { approvedTier: "retain_only" },
+    createdAt: now,
+  })
   EvalArtifactSchema.parse({
     artifactId: createEvalArtifactId("candidate_profile_correction", "corr-candidate-1"),
     kind: "candidate_profile_correction",

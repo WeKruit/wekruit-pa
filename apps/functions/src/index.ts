@@ -2049,4 +2049,29 @@ export {
 } from "./external-supply/outreach.js"
 export { paExternalSupplySyncPlanToInstantly } from "./external-supply/instantly-sync.js"
 export { paExternalSupplyInstantlyWebhook } from "./external-supply/instantly-webhook.js"
+// v2.0 External Supply V1.1 — Mailgun is the active email-delivery channel
+// (Adam directive 2026-05-14). Instantly above stays for an easy switch back.
+export { paExternalSupplySyncPlanToMailgun } from "./external-supply/mailgun-sync.js"
+export { paExternalSupplyMailgunWebhook } from "./external-supply/mailgun-webhook.js"
 export { paExternalSupplyGetConfig } from "./external-supply/config.js"
+// V2 — agent-ranking layer (Wave C / Executor D). Three admin-gated callables
+// per .planning/external-supply-v2/EXECUTOR-PLANS.md §D.
+export {
+  paExternalSupplyRunAgentRanking,
+  paExternalSupplyApproveAgentTier,
+  paExternalSupplyOverrideAgentTier,
+} from "./external-supply/agent-rank.js"
+// V2 — preview-batch dry-run callable (Wave B / Executor C). Server-side
+// read-only forecast that powers the dashboard drag-drop preview pane. Wiring
+// deferred from C's commit per L-C7 to avoid parallel-wave conflict; lead
+// merge-integration commit lands it.
+export { paExternalSupplyPreviewBatch } from "./external-supply/preview-batch.js"
+
+// ============================================================
+// External Supply V2 — Wave E (F) flywheel rollup
+// ------------------------------------------------------------
+// Fenced into its own export block at the bottom of the file so it stays
+// out of Wave D's parallel commit on the V2 callable export block above.
+// Lead resolution L-F7. Do not interleave with any other export above.
+// ============================================================
+export { paExternalSupplyRollupSourceQualityMonthly } from "./external-supply/source-quality.js"

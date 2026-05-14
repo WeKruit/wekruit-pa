@@ -20,6 +20,7 @@
  * use the same Firestore client as the rest of the dashboard.
  */
 import {
+  AgentRankingResultSchema,
   AgentResearchTaskSchema,
   CandidateCompanyJobEvaluationSchema,
   CandidateEvaluationRunSchema,
@@ -29,8 +30,11 @@ import {
   InstantlySyncRecordSchema,
   OutreachEventSchema,
   OutreachPlanSchema,
+  PA_AGENT_RANKING_RESULTS,
   PA_COLLECTIONS,
   SourceQualityMetricSchema,
+  type AgentRankingAction,
+  type AgentRankingResult,
   type AgentResearchTask,
   type CandidateCompanyJobEvaluation,
   type CandidateEvaluationRun,
@@ -336,6 +340,160 @@ export const getExternalSupplyConfig = callable<
   Record<string, never>,
   ExternalSupplyConfig
 >("paExternalSupplyGetConfig")
+
+// ===========================================================================
+// V2 — Preview batch + Agent ranking callables (Wave D dashboard surface)
+// ===========================================================================
+
+/**
+ * Local mirror of the adapter detection shape exposed by
+ * `@pa/external-supply` (`AdapterDetection`). The dashboard package does NOT
+ * depend on `@pa/external-supply` (server-side package), so we keep a small
+ * structural copy here. Align if the package becomes a UI dep.
+ */
+export interface AdapterDetectionCandidateUI {
+  source: string
+  confidence: number
+  requiredMatched: number
+  requiredCount: number
+  bonusMatched: number
+  reasons: string[]
+}
+
+export interface AdapterDetectionUI {
+  top: AdapterDetectionCandidateUI
+  candidates: AdapterDetectionCandidateUI[]
+  shapeHint: "json" | "csv" | "tsv" | "xlsx" | "unknown"
+  warnings: string[]
+}
+
+/**
+ * Tier forecast: enum-keyed projected counts (L-C5). Optional — only present
+ * when (companyId, jobId) supplied to `previewBatch`.
+ */
+export interface PreviewBatchTierForecast {
+  tier_1_personal_linkedin_and_email?: number
+  tier_2_personal_email?: number
+  tier_3_general_email?: number
+  retain_only?: number
+  blocked?: number
+}
+
+export interface PreviewBatchIdentityForecast {
+  expectedCreateNew: number
+  expectedMergeExisting: number
+  expectedNeedsReview: number
+  expectedBlocked: number
+}
+
+export interface PreviewBatchTagEnrichmentForecast {
+  /** Number of rows where each canonical-tag axis was extractable. */
+  perAxisCoverage: Record<string, number>
+  /** Approximate average # of canonical skills tokens per row. */
+  avgSkillsPerRow: number
+  /** Rows missing the candidate's `roleFunction` axis after enrichment. */
+  missingRoleFunctionRows: number
+}
+
+export interface PreviewBatchInput {
+  source: ExternalSource
+  storageUri: string
+  sha256: string
+  mime: string
+  sizeBytes: number
+  companyId?: string
+  jobId?: string
+  columnMapping?: ManualCsvColumnMapping
+  /** Optional operator-pinned adapter (forces override of auto-detect). */
+  adapterOverride?: ExternalSource
+}
+
+export interface PreviewBatchResult {
+  ok: true
+  detection: AdapterDetectionUI
+  identityForecast: PreviewBatchIdentityForecast
+  tagEnrichmentForecast: PreviewBatchTagEnrichmentForecast
+  /** Only present when (companyId, jobId) provided. */
+  tierForecast?: PreviewBatchTierForecast
+  rowCountPreview: number
+  warnings: string[]
+}
+
+/**
+ * NOTE: `paExternalSupplyPreviewBatch` is owned by Executor C (still running
+ * at the time this file was authored). The shape above mirrors PLAN §3.5 +
+ * lead resolution L-C5. If C lands with a stricter contract, align here.
+ */
+export const previewBatch = callable<PreviewBatchInput, PreviewBatchResult>(
+  "paExternalSupplyPreviewBatch",
+)
+
+export interface RunAgentRankingInput {
+  evaluationRunId: string
+  candidateRecordIds?: string[]
+  model?: string
+  ensembleSize?: number
+  dryRun?: boolean
+  budgetUsd?: number
+}
+
+export interface RunAgentRankingResult {
+  ok: true
+  evaluationRunId: string
+  processedCount: number
+  rankedCount: number
+  skippedCount: number
+  totalCostUsd: number
+  projectedCostUsd: number
+  abortedReason?: "budget_exceeded" | "dry_run"
+  promptVersion: string
+  costTableVersion: string
+  prompts?: Array<{
+    candidateRecordId: string
+    promptCharCount: number
+    estimatedInputTokens: number
+  }>
+}
+
+export const runAgentRanking = callable<RunAgentRankingInput, RunAgentRankingResult>(
+  "paExternalSupplyRunAgentRanking",
+)
+
+export interface ApproveAgentTierInput {
+  resultId: string
+  reason?: string
+}
+
+export interface ApproveAgentTierResult {
+  ok: true
+  resultId: string
+  approvedTier: EvaluationTier
+}
+
+export const approveAgentTier = callable<ApproveAgentTierInput, ApproveAgentTierResult>(
+  "paExternalSupplyApproveAgentTier",
+)
+
+export interface OverrideAgentTierInput {
+  resultId: string
+  newTier: EvaluationTier
+  reason: string
+}
+
+export interface OverrideAgentTierResult {
+  ok: true
+  resultId: string
+  approvedTier: EvaluationTier
+  correctionEventId: string
+}
+
+export const overrideAgentTier = callable<OverrideAgentTierInput, OverrideAgentTierResult>(
+  "paExternalSupplyOverrideAgentTier",
+)
+
+// Re-export the agent-ranking action / result types so pages don't have to
+// re-import from `@pa/core-types` separately.
+export type { AgentRankingAction, AgentRankingResult }
 
 // ===========================================================================
 // Firestore reads — defensive parsing
@@ -857,4 +1015,85 @@ export async function putToSignedUrl(
   if (!res.ok) {
     throw new Error(`signed_upload_failed: HTTP ${res.status} ${res.statusText}`)
   }
+}
+
+// ---------------------------------------------------------------------------
+// V2 — Agent ranking results (Wave D reader; collection `pa-agent-ranking-results`)
+// ---------------------------------------------------------------------------
+
+export interface ListAgentRankingResultsOptions {
+  evaluationRunId?: string
+  evaluationRunIds?: string[]
+  candidateRecordId?: string
+  status?: AgentRankingResult["status"]
+  limit?: number
+}
+
+/**
+ * Paginated reader over `pa-agent-ranking-results`. Supports filtering by
+ * (a) a single `evaluationRunId`, (b) a list `evaluationRunIds` (fanned out
+ * client-side so the Firestore query stays single-axis), (c)
+ * `candidateRecordId` for the Audit trace sub-panel, and (d) `status` for
+ * the review queue. `safeParse` drops mis-shaped rows so a schema drift
+ * never blanks the UI.
+ */
+export async function listAgentRankingResults(
+  opts: ListAgentRankingResultsOptions = {},
+): Promise<PagedResult<AgentRankingResult>> {
+  const limit = opts.limit ?? 200
+
+  // Helper: run one query (Firestore can't OR-filter across a single field).
+  async function runQuery(
+    constraints: QueryConstraint[],
+  ): Promise<{ rows: AgentRankingResult[]; unparsedCount: number }> {
+    const q = query(collection(db(), PA_AGENT_RANKING_RESULTS), ...constraints)
+    const snap = await getDocs(q)
+    const { parsed, unparsedCount } = parseRows(
+      snap.docs,
+      (raw) => AgentRankingResultSchema.safeParse(raw),
+      "agent-ranking-results",
+    )
+    return { rows: parsed, unparsedCount }
+  }
+
+  if (opts.evaluationRunIds && opts.evaluationRunIds.length > 0) {
+    // Fan out: one query per runId; concat + dedupe by resultId.
+    const seen = new Set<string>()
+    const rows: AgentRankingResult[] = []
+    let unparsedCount = 0
+    for (const runId of opts.evaluationRunIds) {
+      const constraints: QueryConstraint[] = [
+        where("evaluationRunId", "==", runId),
+        fsLimit(limit),
+      ]
+      if (opts.status) constraints.unshift(where("status", "==", opts.status))
+      const partial = await runQuery(constraints)
+      unparsedCount += partial.unparsedCount
+      for (const r of partial.rows) {
+        if (seen.has(r.resultId)) continue
+        seen.add(r.resultId)
+        rows.push(r)
+      }
+    }
+    return { rows, unparsedCount }
+  }
+
+  const constraints: QueryConstraint[] = [fsLimit(limit)]
+  if (opts.evaluationRunId) {
+    constraints.unshift(where("evaluationRunId", "==", opts.evaluationRunId))
+  }
+  if (opts.candidateRecordId) {
+    constraints.unshift(where("candidateRecordId", "==", opts.candidateRecordId))
+  }
+  if (opts.status) {
+    constraints.unshift(where("status", "==", opts.status))
+  }
+  return runQuery(constraints)
+}
+
+export async function getAgentRankingResult(resultId: string): Promise<AgentRankingResult | null> {
+  const snap = await getDoc(doc(db(), PA_AGENT_RANKING_RESULTS, resultId))
+  if (!snap.exists()) return null
+  const parsed = AgentRankingResultSchema.safeParse(snap.data())
+  return parsed.success ? parsed.data : null
 }

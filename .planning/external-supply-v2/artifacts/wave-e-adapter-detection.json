@@ -1,0 +1,29 @@
+{
+  "records": [
+    {
+      "adapter": "juicebox",
+      "top": "juicebox",
+      "conf": 1,
+      "warnings": []
+    },
+    {
+      "adapter": "lessie",
+      "top": "lessie",
+      "conf": 1,
+      "warnings": []
+    },
+    {
+      "adapter": "coresignal",
+      "top": "coresignal",
+      "conf": 1,
+      "warnings": []
+    },
+    {
+      "adapter": "unknown",
+      "top": "manual_csv",
+      "conf": 0.55,
+      "warnings": []
+    }
+  ],
+  "generatedAt": "2026-05-14T12:00:00.000Z"
+}

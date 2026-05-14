@@ -737,3 +737,252 @@ describe("runQaEvaluator", () => {
     assert.equal(fake.runWrites.length, 1)
   })
 })
+
+// ---------------------------------------------------------------------------
+// V2 External Supply Wave E (F) — agent-override sampler
+// ---------------------------------------------------------------------------
+
+import {
+  isoWeekKey,
+  makeSeededRng,
+  sampleAgentRankingRows,
+  computeAgentOverrideMetrics,
+} from "../qa-evaluator-weekly.js"
+import type { AgentRankingResult } from "@pa/core-types"
+
+function mkRankingRow(
+  id: string,
+  status: AgentRankingResult["status"]
+): AgentRankingResult {
+  return {
+    resultId: `r-${id}`,
+    evaluationRunId: "run-1",
+    candidateRecordId: `rec-${id}`,
+    candidateUserId: undefined,
+    companyId: "co-1",
+    jobId: "job-1",
+    deterministicTier: "tier_2_personal_email",
+    proposedAgentTier: "tier_2_personal_email",
+    agentRationale: "stub",
+    agentRisks: [],
+    agentRecommendedAction: "retain_warm",
+    ensembleVotes: [],
+    modelUsed: "stub",
+    ensembleSize: 1,
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
+    totalCostUsd: 0,
+    dryRun: false,
+    promptVersion: "p-1",
+    status,
+    createdAt: "2026-05-01T00:00:00.000Z",
+  } as AgentRankingResult
+}
+
+describe("isoWeekKey", () => {
+  it("returns deterministic ISO 8601 key", () => {
+    // 2026-05-04 (Mon) is in week 19.
+    assert.equal(isoWeekKey(new Date("2026-05-04T00:00:00Z")), "2026-W19")
+  })
+  it("year boundary uses ISO year, not calendar year", () => {
+    // 2025-12-29 (Mon) belongs to ISO week 2026-W01.
+    assert.equal(isoWeekKey(new Date("2025-12-29T00:00:00Z")), "2026-W01")
+  })
+  it("same week → same key across days", () => {
+    const mon = isoWeekKey(new Date("2026-05-04T00:00:00Z"))
+    const fri = isoWeekKey(new Date("2026-05-08T23:59:59Z"))
+    assert.equal(mon, fri)
+  })
+})
+
+describe("makeSeededRng", () => {
+  it("deterministic with same seed", () => {
+    const a = makeSeededRng("seed-A")
+    const b = makeSeededRng("seed-A")
+    for (let i = 0; i < 5; i++) {
+      assert.equal(a(), b())
+    }
+  })
+  it("different seeds diverge", () => {
+    const a = makeSeededRng("seed-A")
+    const b = makeSeededRng("seed-B")
+    let differ = false
+    for (let i = 0; i < 5; i++) {
+      if (a() !== b()) differ = true
+    }
+    assert.ok(differ)
+  })
+  it("output range in [0, 1)", () => {
+    const r = makeSeededRng("range-check")
+    for (let i = 0; i < 50; i++) {
+      const v = r()
+      assert.ok(v >= 0 && v < 1, `value ${v} out of range`)
+    }
+  })
+})
+
+describe("sampleAgentRankingRows", () => {
+  function mkPool(n: number): AgentRankingResult[] {
+    return Array.from({ length: n }, (_, i) =>
+      mkRankingRow(String(i), i % 2 === 0 ? "approved" : "overridden"),
+    )
+  }
+  it("deterministic — same weekKey + pool produces same order", () => {
+    const pool = mkPool(30)
+    const a = sampleAgentRankingRows(pool, "2026-W19", { pool: 200, pick: 10 })
+    const b = sampleAgentRankingRows(pool, "2026-W19", { pool: 200, pick: 10 })
+    assert.deepEqual(
+      a.map((r) => r.resultId),
+      b.map((r) => r.resultId),
+    )
+  })
+  it("different weekKey → different ordering", () => {
+    const pool = mkPool(30)
+    const a = sampleAgentRankingRows(pool, "2026-W19", { pool: 200, pick: 10 })
+    const b = sampleAgentRankingRows(pool, "2026-W20", { pool: 200, pick: 10 })
+    const ids = (rs: AgentRankingResult[]) => rs.map((r) => r.resultId).join(",")
+    assert.notEqual(ids(a), ids(b), "different week keys must shuffle differently")
+  })
+  it("filters out proposed + ignored statuses", () => {
+    const pool: AgentRankingResult[] = [
+      mkRankingRow("a1", "approved"),
+      mkRankingRow("p1", "proposed"),
+      mkRankingRow("i1", "ignored"),
+      mkRankingRow("o1", "overridden"),
+    ]
+    const sample = sampleAgentRankingRows(pool, "2026-W19", { pool: 100, pick: 100 })
+    assert.equal(sample.length, 2)
+    const statuses = sample.map((r) => r.status).sort()
+    assert.deepEqual(statuses, ["approved", "overridden"])
+  })
+  it("empty input → empty output", () => {
+    assert.equal(
+      sampleAgentRankingRows([], "2026-W19", { pool: 200, pick: 50 }).length,
+      0,
+    )
+  })
+})
+
+describe("computeAgentOverrideMetrics", () => {
+  it("30 approved + 20 overridden → rate 0.4, flag=true", () => {
+    const sample = [
+      ...Array.from({ length: 30 }, (_, i) => mkRankingRow(`a${i}`, "approved")),
+      ...Array.from({ length: 20 }, (_, i) => mkRankingRow(`o${i}`, "overridden")),
+    ]
+    const m = computeAgentOverrideMetrics(sample, { weekKey: "2026-W19" })
+    assert.equal(m.sampled, 50)
+    assert.equal(m.approvals, 30)
+    assert.equal(m.overrides, 20)
+    assert.equal(m.operatorOverrideRate, 0.4)
+    assert.equal(m.flag, true)
+    assert.equal(m.weekKey, "2026-W19")
+  })
+  it("17 approved + 3 overridden → 0.15 exact → flag=false (strict >)", () => {
+    const sample = [
+      ...Array.from({ length: 17 }, (_, i) => mkRankingRow(`a${i}`, "approved")),
+      ...Array.from({ length: 3 }, (_, i) => mkRankingRow(`o${i}`, "overridden")),
+    ]
+    const m = computeAgentOverrideMetrics(sample, { weekKey: "2026-W19" })
+    assert.equal(m.operatorOverrideRate, 0.15)
+    assert.equal(m.flag, false, "exact threshold must not flag")
+  })
+  it("17 approved + 4 overridden → just above 0.15 → flag=true", () => {
+    const sample = [
+      ...Array.from({ length: 17 }, (_, i) => mkRankingRow(`a${i}`, "approved")),
+      ...Array.from({ length: 4 }, (_, i) => mkRankingRow(`o${i}`, "overridden")),
+    ]
+    const m = computeAgentOverrideMetrics(sample, { weekKey: "2026-W19" })
+    assert.ok(m.operatorOverrideRate > 0.15)
+    assert.equal(m.flag, true)
+  })
+  it("empty sample → sampled=0, flag=false", () => {
+    const m = computeAgentOverrideMetrics([], { weekKey: "2026-W19" })
+    assert.equal(m.sampled, 0)
+    assert.equal(m.approvals, 0)
+    assert.equal(m.overrides, 0)
+    assert.equal(m.operatorOverrideRate, 0)
+    assert.equal(m.flag, false)
+  })
+})
+
+describe("runQaEvaluator — agent-override sampler integration", () => {
+  it("back-compat: store without fetchRecentAgentRankingRows runs unchanged", async () => {
+    const fake = makeFakeStore({
+      users: [{ id: "u1", tags: { targetRoleFunction: ["x"], skills: [] } }],
+      jobsByRole: () => [{ id: "j1", roleTitle: "r1", companyName: "c1" }],
+    })
+    // Explicitly delete the optional method to simulate V1 stores.
+    delete (fake.store as { fetchRecentAgentRankingRows?: unknown })
+      .fetchRecentAgentRankingRows
+    const integrations = makeIntegrations(async () => passingVerdict)
+    const result = await runQaEvaluator({
+      store: fake.store,
+      integrations,
+      now: constNow,
+      random: constRandom,
+    })
+    assert.equal(result.sampleSize, 1)
+    // No agentRanking block on the run doc.
+    const doc = fake.runWrites[0]!.doc as Record<string, unknown>
+    assert.equal(doc.agentRanking, undefined)
+  })
+
+  it("with fetchRecentAgentRankingRows: flags > 0.15 and persists agentRanking block", async () => {
+    const fake = makeFakeStore({
+      users: [{ id: "u1", tags: { targetRoleFunction: ["x"], skills: [] } }],
+      jobsByRole: () => [{ id: "j1", roleTitle: "r1", companyName: "c1" }],
+    })
+    const rankingRows = [
+      ...Array.from({ length: 30 }, (_, i) => mkRankingRow(`a${i}`, "approved")),
+      ...Array.from({ length: 20 }, (_, i) => mkRankingRow(`o${i}`, "overridden")),
+    ]
+    ;(fake.store as QaEvaluatorStore).fetchRecentAgentRankingRows = async () =>
+      rankingRows
+    let slackCalled = false
+    const integrations = makeIntegrations(async () => passingVerdict, {
+      sendSlack: async () => {
+        slackCalled = true
+        return true
+      },
+    })
+    await runQaEvaluator({
+      store: fake.store,
+      integrations,
+      now: constNow,
+      random: constRandom,
+    })
+    const doc = fake.runWrites[0]!.doc as Record<string, unknown>
+    const block = doc.agentRanking as {
+      sampled: number
+      flag: boolean
+      operatorOverrideRate: number
+      weekKey: string
+    }
+    assert.ok(block, "agentRanking block must be persisted")
+    assert.equal(block.sampled, 50)
+    assert.equal(block.operatorOverrideRate, 0.4)
+    assert.equal(block.flag, true)
+    assert.ok(/^\d{4}-W\d{2}$/.test(block.weekKey))
+    assert.equal(slackCalled, true, "flag should fire slack alert path")
+  })
+
+  it("fetchRecentAgentRankingRows throws → run continues, no agentRanking block", async () => {
+    const fake = makeFakeStore({
+      users: [{ id: "u1", tags: { targetRoleFunction: ["x"], skills: [] } }],
+      jobsByRole: () => [{ id: "j1", roleTitle: "r1", companyName: "c1" }],
+    })
+    ;(fake.store as QaEvaluatorStore).fetchRecentAgentRankingRows = async () => {
+      throw new Error("boom")
+    }
+    const integrations = makeIntegrations(async () => passingVerdict)
+    const result = await runQaEvaluator({
+      store: fake.store,
+      integrations,
+      now: constNow,
+      random: constRandom,
+    })
+    assert.equal(result.sampleSize, 1)
+    const doc = fake.runWrites[0]!.doc as Record<string, unknown>
+    assert.equal(doc.agentRanking, undefined)
+  })
+})

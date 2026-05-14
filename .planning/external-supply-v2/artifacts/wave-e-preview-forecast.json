@@ -1,0 +1,67 @@
+{
+  "aggregate": {
+    "rowCount": 105,
+    "createNew": 50,
+    "merge": 30,
+    "needsReview": 11,
+    "blocked": 10,
+    "perAdapter": {
+      "juicebox": {
+        "rowCount": 35,
+        "chosenSource": "juicebox",
+        "topConfidence": 1,
+        "identity": {
+          "createNew": 20,
+          "mergeExisting": 5,
+          "needsReview": 5,
+          "blocked": 5,
+          "perReviewReason": {
+            "email_only_external_row": 5
+          }
+        },
+        "tagFillFields": [
+          "industryEnum",
+          "recentRoleTitle",
+          "recentCompany",
+          "workHistorySummary"
+        ]
+      },
+      "lessie": {
+        "rowCount": 35,
+        "chosenSource": "lessie",
+        "topConfidence": 1,
+        "identity": {
+          "createNew": 20,
+          "mergeExisting": 12,
+          "needsReview": 0,
+          "blocked": 0,
+          "perReviewReason": {}
+        },
+        "tagFillFields": [
+          "industryEnum"
+        ]
+      },
+      "coresignal": {
+        "rowCount": 35,
+        "chosenSource": "coresignal",
+        "topConfidence": 1,
+        "identity": {
+          "createNew": 10,
+          "mergeExisting": 13,
+          "needsReview": 6,
+          "blocked": 5,
+          "perReviewReason": {
+            "email_only_external_row": 6
+          }
+        },
+        "tagFillFields": [
+          "industryEnum",
+          "recentRoleTitle",
+          "recentCompany",
+          "workHistorySummary"
+        ]
+      }
+    }
+  },
+  "generatedAt": "2026-05-14T12:00:00.000Z"
+}
