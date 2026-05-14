@@ -248,7 +248,13 @@ export const paHealthSendblueOutbox = makeHealthHandler({
 })
 export const paHealthOnPaInbound = makeHealthHandler({
   name: "onPaInbound",
-  requiredSecrets: ["SILICONFLOW_API_KEY", "QDRANT_URL", "QDRANT_API_KEY"],
+  requiredSecrets: [
+    "SILICONFLOW_API_KEY",
+    "QDRANT_URL",
+    "QDRANT_API_KEY",
+    "SENDBLUE_API_KEY_ID",
+    "SENDBLUE_API_SECRET_KEY",
+  ],
 })
 export const paHealthProactiveSweep = makeHealthHandler({
   name: "paProactiveSweep",
@@ -780,6 +786,12 @@ export const onPaInbound = onDocumentCreated(
       // moment Adam provisions the secret it auto-activates without redeploy
       // beyond the one Phase 69 rollout.
       ANTHROPIC_API_KEY,
+      // Prescreen and PII-confirm turns can short-circuit Claire and send
+      // directly from onPaInbound, so this function needs the same Sendblue
+      // credentials as the webhook/outbox send paths.
+      SENDBLUE_API_KEY_ID,
+      SENDBLUE_API_SECRET_KEY,
+      SENDBLUE_FROM_NUMBER,
     ],
     memory: "1GiB",
     timeoutSeconds: 300,
@@ -823,6 +835,18 @@ export const onPaInbound = onDocumentCreated(
     process.env.SILICONFLOW_API_KEY = SILICONFLOW_API_KEY.value()
     process.env.QDRANT_URL = QDRANT_URL.value()
     process.env.QDRANT_API_KEY = QDRANT_API_KEY.value()
+    process.env.SENDBLUE_API_KEY_ID = SENDBLUE_API_KEY_ID.value()
+    process.env.SENDBLUE_API_SECRET_KEY = SENDBLUE_API_SECRET_KEY.value()
+    try {
+      const fromNumber = SENDBLUE_FROM_NUMBER.value().trim()
+      if (fromNumber) {
+        process.env.SENDBLUE_FROM_NUMBER = fromNumber
+      } else {
+        delete process.env.SENDBLUE_FROM_NUMBER
+      }
+    } catch {
+      delete process.env.SENDBLUE_FROM_NUMBER
+    }
     try {
       const openAiAgentKey = PA_OPENAI_AGENT_API_KEY.value().trim()
       if (openAiAgentKey) {
