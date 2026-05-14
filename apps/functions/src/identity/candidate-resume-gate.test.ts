@@ -31,6 +31,7 @@ function baseDeps(overrides: Partial<Parameters<typeof runCandidateResumeGateSta
         createdAt: "2026-05-14T00:00:00.000Z",
       },
     }),
+    loadCandidateAuthMapping: async () => null,
     loadCandidateUser: async () => ({}),
     loadCandidateSelfProfile: async () => ({}),
     loadLatestResumeArtifact: async () => null,
@@ -125,6 +126,32 @@ test("runCandidateResumeGateStatus accepts LinkedIn custom-token email claims", 
 
   assert.equal(calls[0]?.email, "liuser@example.com")
   assert.equal(calls[0]?.displayName, "LinkedIn User")
+})
+
+test("runCandidateResumeGateStatus reuses existing auth mapping instead of reclaiming profile", async () => {
+  let claimCalled = false
+  const result = await runCandidateResumeGateStatus(
+    {},
+    { uid: "firebase-1", token: { email: "person@example.com", email_verified: true } },
+    baseDeps({
+      loadCandidateAuthMapping: async () => ({ candidateId: "cand-existing" }),
+      claimCandidateProfile: async () => {
+        claimCalled = true
+        return baseDeps().claimCandidateProfile({} as Firestore, {
+          firebaseUid: "firebase-1",
+          email: "person@example.com",
+        })
+      },
+      loadLatestParsedResume: async () => ({
+        id: "resume-1",
+        data: { topSkills: ["react"], industryTags: ["tech_software"] },
+      }),
+    })
+  )
+
+  assert.equal(claimCalled, false)
+  assert.equal(result.candidateId, "cand-existing")
+  assert.equal(result.status, "ready")
 })
 
 test("runCandidateResumeGateStatus requires auth", async () => {

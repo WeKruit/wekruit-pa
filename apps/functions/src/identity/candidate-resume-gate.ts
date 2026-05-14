@@ -41,6 +41,7 @@ export interface CandidateResumeGateResult {
 export interface CandidateResumeGateDeps {
   db: Firestore
   claimCandidateProfile?: typeof defaultClaimCandidateProfile
+  loadCandidateAuthMapping?: (db: Firestore, firebaseUid: string) => Promise<{ candidateId: string } | null>
   loadCandidateUser?: (db: Firestore, candidateId: string) => Promise<Record<string, unknown> | null>
   loadCandidateSelfProfile?: (db: Firestore, candidateId: string) => Promise<Record<string, unknown> | null>
   loadLatestResumeArtifact?: (
@@ -85,6 +86,16 @@ async function defaultLoadCandidateUser(
 ): Promise<Record<string, unknown> | null> {
   const snap = await db.collection(PA_COLLECTIONS.users).doc(candidateId).get()
   return snap.exists ? (snap.data() ?? null) : null
+}
+
+async function defaultLoadCandidateAuthMapping(
+  db: Firestore,
+  firebaseUid: string
+): Promise<{ candidateId: string } | null> {
+  const snap = await db.collection(PA_COLLECTIONS.candidateAuth).doc(firebaseUid).get()
+  if (!snap.exists) return null
+  const candidateId = cleanString(snap.data()?.candidateId, 160)
+  return candidateId ? { candidateId } : null
 }
 
 async function defaultLoadCandidateSelfProfile(
@@ -193,13 +204,18 @@ export async function runCandidateResumeGateStatus(
     throw new HttpsError("failed-precondition", "Signed-in email is not verified.")
   }
 
-  const claim = await (deps.claimCandidateProfile ?? defaultClaimCandidateProfile)(deps.db, {
-    firebaseUid,
-    email,
-    browserUid: requestBrowserUid(data),
-    displayName: authDisplayName(auth),
-  })
-  const candidateId = claim.candidateId
+  const existingAuth = await (deps.loadCandidateAuthMapping ?? defaultLoadCandidateAuthMapping)(
+    deps.db,
+    firebaseUid
+  )
+  const candidateId = existingAuth?.candidateId ?? (
+    await (deps.claimCandidateProfile ?? defaultClaimCandidateProfile)(deps.db, {
+      firebaseUid,
+      email,
+      browserUid: requestBrowserUid(data),
+      displayName: authDisplayName(auth),
+    })
+  ).candidateId
   const [user, selfProfile] = await Promise.all([
     (deps.loadCandidateUser ?? defaultLoadCandidateUser)(deps.db, candidateId),
     (deps.loadCandidateSelfProfile ?? defaultLoadCandidateSelfProfile)(deps.db, candidateId),
