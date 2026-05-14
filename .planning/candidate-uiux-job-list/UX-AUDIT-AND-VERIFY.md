@@ -78,12 +78,32 @@ Artifacts:
 - `artifacts/local-job-mobile.png`
 - `artifacts/local-browser-console.log`
 
-## Pending Production Steps
+## Production Verification
 
-- Create PR and wait for checks.
-- Merge.
-- Deploy `hosting:pa-landing`.
-- Verify live `https://candidate.wekruit.com/` shows the same job list.
-- Verify live click to `https://candidate.wekruit.com/j/hs-11005382-invoko-product-designer`.
-- Verify admin `/j/:jobId` remains redirected away from admin candidate hosting.
-- Recheck passive `pa-outbound` count remains unchanged.
+PR:
+
+- PR `#41` merged into `main` at `32ffc5426e015f6509790bdb791486a8f39aa704`.
+- Required checks passed: CodeQL, Analyze actions, Analyze javascript-typescript, Analyze python, typecheck + unit tests, v1.5 QA team.
+
+Deploy:
+
+- Deployed `hosting:pa-landing` to Firebase project `wekruit-5f89b`.
+- First deploy surfaced a real stale-dist issue: live home still showed the old SMS-only landing.
+- Rebuilt `@pa/landing` in the updated main worktree and redeployed `hosting:pa-landing`.
+
+Live browser verification:
+
+- `https://candidate.wekruit.com/?t=20260514-uiux2` showed the new candidate marketplace home and 5 public job cards.
+- Clicking Product Designer navigated to `https://candidate.wekruit.com/j/hs-11005382-invoko-product-designer`.
+- Live job detail showed the unified nav, Product Designer title, company/location/salary, rendered role details, Open in iMessage, QR, resume upload, and terms.
+- Mobile live home and job detail rendered at `390x844` without broken navigation or text overlap.
+- Live browser console: `0` errors, `0` warnings.
+- Admin stale route check: `https://wekruit-pa.web.app/j/hs-11005382-invoko-product-designer` returns `301` to `https://candidate.wekruit.com/j/hs-11005382-invoko-product-designer`.
+- Passive outbound check: `pa-outbound` count stayed `190` before deploy and after live browsing.
+
+Live artifacts:
+
+- `artifacts/live-home-desktop.png`
+- `artifacts/live-job-desktop.png`
+- `artifacts/live-home-mobile.png`
+- `artifacts/live-job-mobile.png`
