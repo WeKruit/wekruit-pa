@@ -76,13 +76,19 @@ export function batchStoragePath(source: ExternalSource, sha256: string, mime: s
 // Adapter dispatch
 // ---------------------------------------------------------------------------
 
-interface AdapterResult {
+export interface AdapterResult {
   drafts: Array<Omit<ExternalCandidateRecord, "recordId" | "batchId" | "createdAt">>
   adapterVersion: string
   rawHeaderSample?: string
 }
 
-function dispatchAdapter(
+/**
+ * Adapter dispatch — looks up the adapter descriptor by source and runs its
+ * `parse()` against the raw buffer. Exported (additive) so the preview
+ * callable can reuse the exact same dispatch path without re-implementing.
+ * No behaviour change vs the prior private function.
+ */
+export function dispatchAdapter(
   source: ExternalSource,
   raw: Buffer,
   columnMapping: ManualCsvColumnMapping | undefined,

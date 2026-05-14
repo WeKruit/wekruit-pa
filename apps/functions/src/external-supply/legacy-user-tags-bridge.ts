@@ -42,6 +42,21 @@ import {
 import type { ExternalCandidateRecord } from "@pa/core-types"
 
 /**
+ * Fields the bridge will weakly fill from an external-sourcing record.
+ * Anything beyond this list should come from a real CV parse or chat
+ * exchange. Kept as a `readonly` const so `forecastTagWrites` and
+ * `dualWriteLegacyUserTagsFromExternal` stay in lock-step.
+ */
+const WEAK_FILL_FIELDS = [
+  "skills",
+  "industryEnum",
+  "industrySector",
+  "recentRoleTitle",
+  "recentCompany",
+  "workHistorySummary",
+] as const satisfies ReadonlyArray<keyof UserTags>
+
+/**
  * Translate an `ExternalCandidateRecord` into a minimal `UserTagsInput`
  * shape that `mergeUserTags` understands. External sources (Juicebox /
  * Lessie / Coresignal) ship raw experience + education + name. They do
@@ -85,6 +100,56 @@ export interface DualWriteLegacyUserTagsResult {
 }
 
 /**
+ * Forecast outcome — what `dualWriteLegacyUserTagsFromExternal` *would* do
+ * given a precomputed `existingTags` snapshot. Pure (no I/O). Used by the
+ * preview callable to forecast the legacy-tag bridge without touching
+ * Firestore.
+ */
+export interface ForecastTagWritesResult {
+  /** Fields that would be filled (existing empty → external supplies value). */
+  willFill: string[]
+  /** Fields skipped because existing tags already carry a stronger signal. */
+  willPreserve: string[]
+  /** The exact `PartialUserTags` delta that would be passed to `applyPartialUserTags`. */
+  delta: PartialUserTags
+}
+
+/**
+ * Pure forecast of the legacy-tag bridge decision. Mirrors the same
+ * "existing wins / weak-fill" rules used by
+ * `dualWriteLegacyUserTagsFromExternal` so the preview is byte-equivalent to
+ * the production write decision.
+ *
+ * Determinism: same `(existingTags, record)` → same output. No date/uuid
+ * involved.
+ */
+export function forecastTagWrites(
+  existingTags: Partial<UserTags>,
+  record: ExternalCandidateRecord
+): ForecastTagWritesResult {
+  const proposed: UserTags = mergeUserTags(externalRecordToUserTagsInput(record))
+
+  const delta: PartialUserTags = {}
+  const willFill: string[] = []
+  const willPreserve: string[] = []
+
+  for (const key of WEAK_FILL_FIELDS) {
+    const existingVal = existingTags[key]
+    const proposedVal = proposed[key]
+    if (POPULATED(existingVal)) {
+      if (proposedVal !== undefined) willPreserve.push(String(key))
+      continue
+    }
+    if (POPULATED(proposedVal)) {
+      ;(delta as Record<string, unknown>)[key] = proposedVal
+      willFill.push(String(key))
+    }
+  }
+
+  return { willFill, willPreserve, delta }
+}
+
+/**
  * Weak-merge external record → `pa-users.tags`. Returns the keys actually
  * written and the keys deliberately skipped because existing tags already
  * carried stronger evidence. Safe to call on every create/merge pass —
@@ -96,36 +161,15 @@ export async function dualWriteLegacyUserTagsFromExternal(
   record: ExternalCandidateRecord,
   opts: { nowIso: string; log?: (event: string, payload?: Record<string, unknown>) => void }
 ): Promise<DualWriteLegacyUserTagsResult> {
-  const proposed: UserTags = mergeUserTags(externalRecordToUserTagsInput(record))
-
   const snap = await db.collection("pa-users").doc(candidateId).get()
   const existing = (snap.exists ? ((snap.data() as Record<string, unknown>).tags ?? {}) : {}) as Partial<UserTags>
 
-  const delta: PartialUserTags = {}
-  const skippedKeys: string[] = []
-
-  const considerField = <K extends keyof UserTags>(key: K): void => {
-    const existingVal = existing[key]
-    const proposedVal = proposed[key]
-    if (POPULATED(existingVal)) {
-      // existing is stronger — leave alone
-      if (proposedVal !== undefined) skippedKeys.push(String(key))
-      return
-    }
-    if (POPULATED(proposedVal)) {
-      ;(delta as Record<string, unknown>)[key] = proposedVal
-    }
-  }
-
-  // Fields we will weakly fill from external sourcing. NOTE: deliberately
-  // narrow — anything that should come from a real CV parse or chat
-  // exchange is left to those richer signals.
-  considerField("skills")
-  considerField("industryEnum")
-  considerField("industrySector")
-  considerField("recentRoleTitle")
-  considerField("recentCompany")
-  considerField("workHistorySummary")
+  // Delegate the pure decision to `forecastTagWrites` so the preview
+  // callable and the production writer always agree on what would be
+  // written. Net behaviour identical to the prior inline implementation.
+  const forecast = forecastTagWrites(existing, record)
+  const skippedKeys = forecast.willPreserve
+  const delta = forecast.delta
 
   if (Object.keys(delta).length === 0) {
     return { wrote: false, mergedKeys: [], skippedKeys }
