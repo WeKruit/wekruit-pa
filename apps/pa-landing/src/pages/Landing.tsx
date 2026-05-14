@@ -31,6 +31,7 @@ interface PublicJobListItem {
   salary?: string
   jobType?: string
   collaborated: boolean
+  screenReady: boolean
 }
 
 type JobsState =
@@ -62,6 +63,7 @@ export default function Landing() {
               salary: data.prescreenConfig?.level1Reveal?.salaryRange,
               jobType: data.jobType ?? data.prescreenConfig?.jobType,
               collaborated: data.wekruitCollaborationStatus === "collaborated",
+              screenReady: Boolean(data.prescreenConfig),
             }
           })
           .sort((a, b) => `${a.company} ${a.title}`.localeCompare(`${b.company} ${b.title}`))
@@ -84,9 +86,9 @@ export default function Landing() {
         <section className="landing-hero">
           <div>
             <p className="candidate-kicker">Candidate marketplace</p>
-            <h1>Open jobs that start with Claire</h1>
+            <h1>Open jobs on WeKruit</h1>
             <p>
-              Browse active WeKruit roles, sign in once, and start the first screen over iMessage.
+              Browse active WeKruit roles, sign in once, and start Claire when the employer screen is ready.
             </p>
           </div>
           <Link className="candidate-secondary-button" to="/me">View profile</Link>
@@ -110,6 +112,7 @@ export default function Landing() {
                     <div className="landing-job-badges">
                       <span>Open role</span>
                       {job.collaborated ? <span>WeKruit collaborated</span> : null}
+                      <span>{job.screenReady ? "Screen ready" : "Preparing screen"}</span>
                     </div>
                     <h3>{job.title}</h3>
                     <p>{job.company}{job.location ? ` · ${job.location}` : ""}</p>

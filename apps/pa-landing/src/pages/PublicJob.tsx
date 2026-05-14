@@ -487,12 +487,13 @@ export default function PublicJob() {
   const company = job.companyName ?? resolvedCompanyName ?? "Confidential employer"
   const location = job.location ?? cfg.region
   const salary = cfg.level1Reveal?.salaryRange
+  const hasPrescreenConfig = Boolean(job.prescreenConfig)
   const resumeGateValue = resumeGate.status === "ready" ? resumeGate.gate : null
   const uploadUserId = resumeGateValue?.candidateId
   const smsUserId = resumeGateValue?.candidateId ?? requestedUserId
   const sendNumber = pickPoolNumber(pool, smsUserId)
   const smsBody = `WeKruit_${jobId}_${smsUserId}_Job`
-  const smsHref = sendNumber ? `sms:${sendNumber}?body=${encodeURIComponent(smsBody)}` : null
+  const smsHref = hasPrescreenConfig && sendNumber ? `sms:${sendNumber}?body=${encodeURIComponent(smsBody)}` : null
 
   return (
     <CandidateShell>
@@ -523,8 +524,16 @@ export default function PublicJob() {
         </section>
         <aside className="public-job-sidebar">
           <section className="public-job-card public-job-start-card">
-            <h2>Start the 5-minute screen</h2>
-            {user ? (
+            <h2>{hasPrescreenConfig ? "Start the 5-minute screen" : "Claire screen coming soon"}</h2>
+            {!hasPrescreenConfig ? (
+              <>
+                <p>
+                  WeKruit has this role listed, but the employer-specific Claire questions are
+                  still being prepared. We will unlock iMessage after the screen is approved.
+                </p>
+                <div className="public-job-disabled-action">Screen not ready yet</div>
+              </>
+            ) : user ? (
               <>
                 <PrescreenStartGate
                   gateState={resumeGate}
@@ -555,8 +564,9 @@ export default function PublicJob() {
             />
           </section>
           <p className="public-job-terms">
-            By starting, you agree to our <a href="/legal">privacy &amp; terms</a>.
-            {sendNumber ? ` WeKruit will text you from ${sendNumber}.` : ""}
+            {hasPrescreenConfig ? "By starting, you agree to our " : "This public listing follows our "}
+            <a href="/legal">privacy &amp; terms</a>.
+            {hasPrescreenConfig && sendNumber ? ` WeKruit will text you from ${sendNumber}.` : ""}
           </p>
         </aside>
       </main>
