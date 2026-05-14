@@ -635,11 +635,14 @@ function PrescreenStartGate({
   if (gateState.status === "error") {
     return (
       <>
-        <p>We could not verify your candidate profile yet.</p>
+        <p>
+          We hit a temporary profile check issue. Your interview is still locked until your
+          profile and resume are verified.
+        </p>
         <button className="public-job-secondary-action" type="button" onClick={onRefresh}>
-          Try again
+          Check profile again
         </button>
-        <p className="candidate-error">{gateState.message}</p>
+        <p className="public-job-gate-note">If you have not uploaded a resume yet, add it below first.</p>
       </>
     )
   }
@@ -648,15 +651,21 @@ function PrescreenStartGate({
   if (gate.status === "needs_resume_upload") {
     return (
       <>
-        <p>Upload your resume first so WeKruit can parse and label your candidate profile for this role.</p>
-        <div className="public-job-disabled-action">Resume required</div>
+        <p>
+          Add your resume first. We will parse it, label your profile, then unlock Claire's
+          5-minute screen for this role.
+        </p>
+        <div className="public-job-disabled-action">Upload resume to continue</div>
       </>
     )
   }
   if (gate.status === "resume_processing") {
     return (
       <>
-        <p>We are parsing and labeling your resume. The employer screen unlocks after that finishes.</p>
+        <p>
+          Your resume is being parsed and labeled. Claire's 5-minute screen unlocks after that
+          finishes.
+        </p>
         <button className="public-job-secondary-action" type="button" onClick={onRefresh}>
           Check again
         </button>
@@ -902,6 +911,10 @@ const PUBLIC_JOB_STYLES = `
 }
 .public-job-start-card p {
   margin: 0;
+}
+.public-job-gate-note {
+  font-size: 14px;
+  color: #6f6658;
 }
 .public-job-sms-link {
   width: 100%;
