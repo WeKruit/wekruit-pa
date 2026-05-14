@@ -36,7 +36,7 @@ import {
   type ExternalCandidateRecord,
 } from "@pa/core-types"
 import { dedupeWithinBatch } from "@pa/external-supply"
-import { authorizeAdminCallable } from "../promote-sandbox-tag.js"
+import { requireExternalSupplyAdmin } from "./resolve-identity.js"
 import { getAdapter } from "./adapters/registry.js"
 import type { ManualCsvColumnMapping } from "./adapters/manual-csv.js"
 
@@ -337,7 +337,10 @@ export const paExternalSupplyCreateBatchUploadUrl = onCall(
     secrets: [PA_ADMIN_TOKEN],
   },
   async (req) => {
-    authorizeAdminCallable(req as { auth?: { token?: { admin?: unknown } }; data?: unknown })
+    // 2026-05-14 hotfix: switched from `authorizeAdminCallable` (custom claim
+    // + PA_ADMIN_TOKEN) to `requireExternalSupplyAdmin` (@wekruit.com email
+    // check) so the auth is consistent with every other external-supply CF.
+    requireExternalSupplyAdmin(req.auth)
     const parsed = CreateUploadUrlInputSchema.safeParse(req.data)
     if (!parsed.success) {
       throw new HttpsError("invalid-argument", parsed.error.message)
@@ -399,9 +402,8 @@ export const paExternalSupplyCreateBatch = onCall(
     secrets: [PA_ADMIN_TOKEN],
   },
   async (req): Promise<CreateBatchResult> => {
-    const { uid } = authorizeAdminCallable(
-      req as { auth?: { token?: { admin?: unknown } }; data?: unknown },
-    )
+    // 2026-05-14 hotfix: same auth alignment as createBatchUploadUrl above.
+    const { uid } = requireExternalSupplyAdmin(req.auth)
     const parsed = CreateBatchInputSchema.safeParse(req.data)
     if (!parsed.success) {
       throw new HttpsError("invalid-argument", parsed.error.message)
