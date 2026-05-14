@@ -113,6 +113,12 @@ export type HealthHandlerInput = {
   name: string
   /** Required env vars for this CF — used by the secrets probe. */
   requiredSecrets: readonly string[]
+  /**
+   * Secrets to bind to this health function runtime. Defaults to
+   * `requiredSecrets` so the probe checks the same runtime visibility the
+   * target function depends on.
+   */
+  boundSecrets?: readonly string[]
   /** Optional override for tests. */
   now?: () => string
   /** Optional probe overrides (tests inject fakes). */
@@ -158,11 +164,7 @@ export function makeHealthHandler(input: HealthHandlerInput) {
       memory: "256MiB",
       timeoutSeconds: 30,
       cors: false,
-      // No secrets bound — probeSecrets reads process.env. The PRESENCE
-      // probe still works because Cloud Run propagates secret-bound vars to
-      // env when the *parent* CF has them, but the /health CF itself does
-      // not need secret access — it only checks that env keys are set on
-      // its own runtime. See T2 plan §3.
+      secrets: [...(input.boundSecrets ?? input.requiredSecrets)],
     },
     async (req: Request, res: Response) => {
       try {
