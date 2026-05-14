@@ -789,11 +789,13 @@ const PUBLIC_JOB_STYLES = `
 .public-job-login-modal-scrim {
   position: absolute;
   inset: 0;
+  z-index: 0;
   border: 0;
   background: rgba(24, 33, 26, 0.48);
 }
 .public-job-login-modal {
   position: relative;
+  z-index: 1;
   box-sizing: border-box;
   width: min(440px, calc(100vw - 24px));
   display: grid;
