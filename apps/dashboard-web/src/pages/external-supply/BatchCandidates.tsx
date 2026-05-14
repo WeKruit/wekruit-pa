@@ -24,12 +24,16 @@ import {
 } from "../../components/ui.js"
 import {
   getCandidateDetail,
+  getJob,
   listBatchCandidates,
   listBatchCandidatesCanonical,
+  runGitHubEnrich,
   runLinkedInEnrich,
   type BatchCandidateRow,
   type CandidateDetail,
+  type JobRow,
   type ListBatchCandidatesResult,
+  type RunGitHubEnrichResult,
   type RunLinkedInEnrichResult,
 } from "../../lib/external-supply-client.js"
 
@@ -52,6 +56,7 @@ export function BatchCandidates() {
   const useCanonical = searchParams.get("canonical") === "1"
 
   const [result, setResult] = useState<CanonicalAwareResult | null>(null)
+  const [job, setJob] = useState<JobRow | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
@@ -68,9 +73,20 @@ export function BatchCandidates() {
       ? listBatchCandidatesCanonical({ batchId })
       : listBatchCandidates({ batchId })
     reader
-      .then((r) => {
+      .then(async (r) => {
         if (cancelled) return
-        setResult(r as CanonicalAwareResult)
+        const typed = r as CanonicalAwareResult
+        setResult(typed)
+        // Resolve jobId → job title so the panel eyebrow + page header can
+        // show "Backend Engineer @ Rain" instead of an opaque sliced jobId.
+        if (typed.jobId) {
+          try {
+            const j = await getJob(typed.jobId)
+            if (!cancelled) setJob(j)
+          } catch {
+            /* non-fatal — keep raw jobId fallback in render */
+          }
+        }
       })
       .catch((err) => {
         if (cancelled) return
@@ -149,8 +165,8 @@ export function BatchCandidates() {
     <div className="page-stack">
       <PageHeader
         eyebrow="External Supply / Batch"
-        title="Candidates"
-        description={`Batch ${batchId} — ${view === "table" ? "table view" : "click a row to open detail"}${result?.source ? ` · reader: ${result.source}${result.source === "canonical" && result.runId ? ` (run ${result.runId.slice(0, 8)}…)` : ""}` : ""}`}
+        title={job?.title ? `${job.title} candidates` : "Candidates"}
+        description={`${job ? `${job.title ?? job.jobId}${job.rawLocation ? ` · ${job.rawLocation}` : ""} · jobId=${job.jobId.slice(0, 12)}… · ` : ""}Batch ${batchId.slice(0, 8)}… — ${view === "table" ? "table view" : "click a row to open detail"}${result?.source ? ` · reader: ${result.source}` : ""}`}
       />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "0.85em", flexWrap: "wrap", gap: 8 }}>
         <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
@@ -201,7 +217,7 @@ export function BatchCandidates() {
           <div>
             <Panel
               title={`Matches (${filteredRows.length})`}
-              eyebrow={result.jobId ? `job ${result.jobId.slice(0, 12)}…` : "no bound job"}
+              eyebrow={job?.title ? `for: ${job.title}${job.companyId ? ` @ ${job.companyId}` : ""}` : result.jobId ? `job ${result.jobId.slice(0, 12)}…` : "no bound job"}
             >
               <input
                 type="text"
@@ -377,20 +393,34 @@ function CandidateListRow({
   selected: boolean
   onClick: () => void
 }) {
-  const [enrichBusy, setEnrichBusy] = useState(false)
+  const [enrichBusy, setEnrichBusy] = useState<"li" | "gh" | null>(null)
   const [enrichErr, setEnrichErr] = useState<string | null>(null)
-  const onEnrich = async (e: React.MouseEvent) => {
+  const onEnrichLinkedIn = async (e: React.MouseEvent) => {
     e.stopPropagation()
-    setEnrichBusy(true)
+    setEnrichBusy("li")
     setEnrichErr(null)
     try {
       const out = await runLinkedInEnrich({ recordId: row.recordId })
-      setEnrichErr(`✓ ${out.status} — open drawer to see payload`)
+      setEnrichErr(`✓ LinkedIn ${out.status} — open drawer`)
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err)
-      setEnrichErr(/bright_data_key_missing|failed-precondition/i.test(m) ? "BrightData key pending — see drawer" : m)
+      setEnrichErr(/bright_data_key_missing|failed-precondition/i.test(m) ? "LinkedIn: BrightData key pending" : `LinkedIn: ${m}`)
     } finally {
-      setEnrichBusy(false)
+      setEnrichBusy(null)
+    }
+  }
+  const onEnrichGitHub = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    setEnrichBusy("gh")
+    setEnrichErr(null)
+    try {
+      const out = await runGitHubEnrich({ recordId: row.recordId })
+      setEnrichErr(`✓ GitHub @${out.username} (${(out.profile as { followers?: number } | null)?.followers ?? "?"} followers) — drawer`)
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err)
+      setEnrichErr(`GitHub: ${m}`)
+    } finally {
+      setEnrichBusy(null)
     }
   }
   return (
@@ -423,19 +453,37 @@ function CandidateListRow({
           {row.linkedinUrl && (
             <span
               role="button"
-              onClick={onEnrich}
-              title={enrichBusy ? "Calling BrightData…" : "Run LinkedIn enrich via BrightData"}
+              onClick={onEnrichLinkedIn}
+              title={enrichBusy === "li" ? "Calling BrightData…" : "Run LinkedIn enrich via BrightData"}
               style={{
                 fontSize: "0.65em",
                 fontWeight: 700,
                 padding: "1px 6px",
                 borderRadius: 4,
-                background: enrichBusy ? "#fef3c7" : "#dbeafe",
-                color: enrichBusy ? "#92400e" : "#1e3a8a",
+                background: enrichBusy === "li" ? "#fef3c7" : "#dbeafe",
+                color: enrichBusy === "li" ? "#92400e" : "#1e3a8a",
                 cursor: enrichBusy ? "wait" : "pointer",
               }}
             >
-              {enrichBusy ? "…" : "⚡ Enrich"}
+              {enrichBusy === "li" ? "…" : "⚡ in"}
+            </span>
+          )}
+          {row.githubUrl && (
+            <span
+              role="button"
+              onClick={onEnrichGitHub}
+              title={enrichBusy === "gh" ? "Calling GitHub API…" : "Run GitHub public-profile enrich"}
+              style={{
+                fontSize: "0.65em",
+                fontWeight: 700,
+                padding: "1px 6px",
+                borderRadius: 4,
+                background: enrichBusy === "gh" ? "#fef3c7" : "#f3f4f6",
+                color: enrichBusy === "gh" ? "#92400e" : "#0f172a",
+                cursor: enrichBusy ? "wait" : "pointer",
+              }}
+            >
+              {enrichBusy === "gh" ? "…" : "⚡ GH"}
             </span>
           )}
         </div>
@@ -532,14 +580,24 @@ function CandidateDetailPanel({ detail }: { detail: CandidateDetail }) {
   const skills = Array.isArray(tags.skills)
     ? (tags.skills as Array<{ value?: string } | string>)
     : []
-  const linkedinUrl = typeof record.canonicalLinkedInUrl === "string"
-    ? record.canonicalLinkedInUrl
-    : undefined
+  // Derive both handles from canonical fields OR multi-link enrichment.links
+  // — same pattern as the list-row Enrich chips.
+  const enrichmentLinks = Array.isArray((enrichment as { links?: unknown }).links)
+    ? ((enrichment as { links: Array<{ url: string; kind: string }> }).links)
+    : []
+  const linkedinUrl =
+    (typeof record.canonicalLinkedInUrl === "string" ? record.canonicalLinkedInUrl : undefined) ??
+    enrichmentLinks.find((l) => l.kind === "linkedin")?.url
+  const githubUrl = enrichmentLinks.find((l) => l.kind === "github")?.url
 
   // P3 — BrightData LinkedIn enrichment state.
   const [enrichLoading, setEnrichLoading] = useState(false)
   const [enrichResult, setEnrichResult] = useState<RunLinkedInEnrichResult | null>(null)
   const [enrichError, setEnrichError] = useState<string | null>(null)
+  // P3.2 — GitHub enrichment state.
+  const [ghLoading, setGhLoading] = useState(false)
+  const [ghResult, setGhResult] = useState<RunGitHubEnrichResult | null>(null)
+  const [ghError, setGhError] = useState<string | null>(null)
   const recordId = detail.recordId
   const runEnrich = async () => {
     setEnrichLoading(true)
@@ -550,8 +608,6 @@ function CandidateDetailPanel({ detail }: { detail: CandidateDetail }) {
       setEnrichResult(out)
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      // Surface the friendly "key not configured" case rather than the raw
-      // HttpsError string.
       if (/bright_data_key_missing|failed-precondition/i.test(message)) {
         setEnrichError(
           "BrightData key not configured on prod yet — Adam needs to rotate + secret-set BRIGHT_DATA_API_KEY",
@@ -561,6 +617,19 @@ function CandidateDetailPanel({ detail }: { detail: CandidateDetail }) {
       }
     } finally {
       setEnrichLoading(false)
+    }
+  }
+  const runGhEnrich = async () => {
+    setGhLoading(true)
+    setGhError(null)
+    setGhResult(null)
+    try {
+      const out = await runGitHubEnrich({ recordId })
+      setGhResult(out)
+    } catch (err) {
+      setGhError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setGhLoading(false)
     }
   }
 
@@ -688,6 +757,103 @@ function CandidateDetailPanel({ detail }: { detail: CandidateDetail }) {
               )}
             </div>
           ) : null}
+          {githubUrl ? (
+            <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+              <button
+                type="button"
+                onClick={runGhEnrich}
+                disabled={ghLoading}
+                style={{
+                  alignSelf: "flex-start",
+                  padding: "6px 12px",
+                  border: "1px solid #0f172a",
+                  background: ghLoading ? "#cbd5e1" : "#0f172a",
+                  color: ghLoading ? "#475569" : "#fff",
+                  borderRadius: 6,
+                  fontSize: "0.85em",
+                  fontWeight: 700,
+                  cursor: ghLoading ? "wait" : "pointer",
+                }}
+              >
+                {ghLoading ? "Calling GitHub API…" : "Run GitHub enrich (public profile)"}
+              </button>
+              {ghError && (
+                <div
+                  style={{
+                    fontSize: "0.78em",
+                    color: "#991b1b",
+                    background: "#fef2f2",
+                    border: "1px solid #fecaca",
+                    padding: 6,
+                    borderRadius: 4,
+                  }}
+                >
+                  {ghError}
+                </div>
+              )}
+              {ghResult && (
+                <details
+                  open
+                  style={{
+                    fontSize: "0.78em",
+                    padding: 8,
+                    background: "#f0fdf4",
+                    border: "1px solid #bbf7d0",
+                    borderRadius: 4,
+                  }}
+                >
+                  <summary style={{ cursor: "pointer", fontWeight: 700 }}>
+                    GitHub @{ghResult.username} — status: {ghResult.status}
+                    {ghResult.rateLimit ? ` · rate ${ghResult.rateLimit.remaining}/hr left` : ""}
+                  </summary>
+                  <div style={{ marginTop: 6, color: "#475569" }}>
+                    runId: <code>{ghResult.runId.slice(0, 8)}…</code> · matchId:{" "}
+                    <code>{ghResult.matchId.slice(0, 8)}…</code>
+                  </div>
+                  {ghResult.profile ? (
+                    <pre
+                      style={{
+                        maxHeight: 240,
+                        overflow: "auto",
+                        background: "#f8fafc",
+                        padding: 6,
+                        marginTop: 6,
+                        fontSize: "0.85em",
+                      }}
+                    >
+                      {JSON.stringify(ghResult.profile, null, 2)}
+                    </pre>
+                  ) : (
+                    <div style={{ marginTop: 6, color: "#64748b" }}>
+                      GitHub returned 404 — username doesn't exist or profile deleted.
+                    </div>
+                  )}
+                </details>
+              )}
+            </div>
+          ) : null}
+          {/* Status panel — what enrichment platforms exist + state */}
+          <details style={{ marginTop: 10, fontSize: "0.75em", color: "#64748b" }}>
+            <summary style={{ cursor: "pointer" }}>Enrichment sources status</summary>
+            <ul style={{ margin: "6px 0 0 16px", padding: 0 }}>
+              <li>
+                <strong>LinkedIn</strong> — BrightData dataset gd_l1viktl…
+                {" · "}
+                <span style={{ color: "#92400e" }}>key pending</span>
+                {" "} (returns 503 graceful until Adam rotates + secret-set BRIGHT_DATA_API_KEY)
+              </li>
+              <li>
+                <strong>GitHub</strong> — public REST API (unauthenticated, 60 req/hr/IP)
+                {" · "}
+                <span style={{ color: "#16a34a" }}>live</span>
+              </li>
+              <li>
+                <strong>Twitter / Instagram / Medium / Stack Overflow / personal site</strong>
+                {" · "}
+                <span style={{ color: "#94a3b8" }}>not wired — future sprint</span>
+              </li>
+            </ul>
+          </details>
         </div>
       </Panel>
 

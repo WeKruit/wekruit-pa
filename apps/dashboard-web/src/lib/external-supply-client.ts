@@ -312,6 +312,27 @@ export const runLinkedInEnrich = callable<
   RunLinkedInEnrichResult
 >("paExternalSupplyRunLinkedInEnrich")
 
+// V2 P3.2 — GitHub public-profile enrich (no key needed, free GitHub REST API)
+export interface RunGitHubEnrichInput {
+  recordId?: string
+  githubUrl?: string
+  approvedEntityId?: string
+}
+export interface RunGitHubEnrichResult {
+  matchId: string
+  runId: string
+  vendor: "github"
+  githubUrl: string
+  username: string
+  status: "ready" | "failed"
+  profile: Record<string, unknown> | null
+  rateLimit?: { remaining: number; reset: number }
+}
+export const runGitHubEnrich = callable<
+  RunGitHubEnrichInput,
+  RunGitHubEnrichResult
+>("paExternalSupplyRunGitHubEnrich")
+
 // ---------------------------------------------------------------------------
 // V2.1 — candidates browser (list + drawer detail)
 // ---------------------------------------------------------------------------
@@ -330,6 +351,8 @@ export interface BatchCandidateRow {
   linkedinUrl?: string
   /** v2.3: multi-URL Link cell support (linkedin + github + x + …). */
   links?: ClassifiedLinkUI[]
+  /** Derived from links[] (kind=github). Drives Run GitHub enrich button. */
+  githubUrl?: string
   currentTitle?: string
   currentCompany?: string
   location?: string
@@ -343,6 +366,26 @@ export interface BatchCandidateRow {
     tier?: string
     score?: number
     explanation?: string
+  }
+}
+
+/**
+ * When the upstream parser put a candidate's LinkedIn URL in the multi-link
+ * `enrichment.links[]` cell rather than as a standalone `canonicalLinkedInUrl`,
+ * derive it back out so the Enrich button can fire. Same for github.
+ */
+function deriveHandleUrls(
+  row: BatchCandidateRow,
+  links: ClassifiedLinkUI[] | undefined,
+): void {
+  if (!Array.isArray(links)) return
+  if (!row.linkedinUrl) {
+    const li = links.find((l) => l.kind === "linkedin")
+    if (li?.url) row.linkedinUrl = li.url
+  }
+  if (!row.githubUrl) {
+    const gh = links.find((l) => l.kind === "github")
+    if (gh?.url) row.githubUrl = gh.url
   }
 }
 
@@ -469,6 +512,9 @@ export async function listBatchCandidates(
     if (typeof enrichment.matchScore === "string") row.matchScore = enrichment.matchScore
     if (typeof enrichment.headline === "string") row.headline = enrichment.headline
     if (Array.isArray(enrichment.links)) row.links = enrichment.links as ClassifiedLinkUI[]
+    // Backfill linkedinUrl / githubUrl from multi-link cell when the parser
+    // didn't emit a standalone canonicalLinkedInUrl (common for v2.3 records).
+    deriveHandleUrls(row, row.links)
     const ev = candidateId ? evaluationByCandidate.get(candidateId) : undefined
     if (ev) {
       const evalOut: BatchCandidateRow["evaluation"] = {}
@@ -593,6 +639,7 @@ export async function listBatchCandidatesCanonical(input: {
     if (typeof enrichment.matchScore === "string") row.matchScore = enrichment.matchScore
     if (typeof enrichment.headline === "string") row.headline = enrichment.headline
     if (Array.isArray(enrichment.links)) row.links = enrichment.links as ClassifiedLinkUI[]
+    deriveHandleUrls(row, row.links)
     return row
   })
 
