@@ -68,6 +68,8 @@ import { Research as ExternalSupplyResearch } from "./pages/external-supply/Rese
 import { Outreach as ExternalSupplyOutreach } from "./pages/external-supply/Outreach.js"
 import { Sync as ExternalSupplySync } from "./pages/external-supply/Sync.js"
 import { Audit as ExternalSupplyAudit } from "./pages/external-supply/Audit.js"
+// v2.0 External Supply V2 — Wave D dashboard UX — agent-ranking review surface.
+import { EvaluationAgentRanking as ExternalSupplyEvaluationAgentRanking } from "./pages/external-supply/EvaluationAgentRanking.js"
 
 // v1.8 — collapsible sidebar section. Persists open/closed to localStorage.
 function NavSection({
@@ -312,6 +314,11 @@ export default function App() {
           <Route path="/admin/external-supply/review" element={<ExternalSupplyReview />} />
           <Route path="/admin/external-supply/evaluations" element={<ExternalSupplyEvaluations />} />
           <Route path="/admin/external-supply/evaluations/:runId" element={<ExternalSupplyEvaluationDetail />} />
+          {/* v2.0 External Supply V2 — agent-ranking review surface. */}
+          <Route
+            path="/admin/external-supply/evaluations/:runId/agent-ranking"
+            element={<ExternalSupplyEvaluationAgentRanking />}
+          />
           <Route path="/admin/external-supply/research" element={<ExternalSupplyResearch />} />
           <Route path="/admin/external-supply/outreach" element={<ExternalSupplyOutreach />} />
           <Route path="/admin/external-supply/sync" element={<ExternalSupplySync />} />

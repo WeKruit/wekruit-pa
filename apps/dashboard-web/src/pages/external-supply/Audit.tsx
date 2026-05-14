@@ -13,9 +13,11 @@ import { EmptyState, ErrorState, LoadingState, PageHeader, Panel } from "../../c
 import { EvaluationTierBadge } from "../../components/external-supply/EvaluationTierBadge.js"
 import {
   findEvaluationByCandidateAndJob,
+  listAgentRankingResults,
   listCorrectionEvents,
   listOutreachEvents,
   listSourceQualityMetrics,
+  type AgentRankingResult,
   type CorrectionEventRow,
 } from "../../lib/external-supply-client.js"
 
@@ -29,6 +31,7 @@ export function Audit() {
   const [lookupBusy, setLookupBusy] = useState(false)
   const [lookupEvals, setLookupEvals] = useState<CandidateCompanyJobEvaluation[] | null>(null)
   const [lookupEvents, setLookupEvents] = useState<OutreachEvent[]>([])
+  const [lookupRanking, setLookupRanking] = useState<AgentRankingResult[]>([])
 
   useEffect(() => {
     let cancelled = false
@@ -75,6 +78,7 @@ export function Audit() {
     setError(null)
     setLookupEvals(null)
     setLookupEvents([])
+    setLookupRanking([])
     try {
       const [evals, events] = await Promise.all([
         findEvaluationByCandidateAndJob(lookupCandidateId.trim(), lookupJobId.trim()),
@@ -82,6 +86,35 @@ export function Audit() {
       ])
       setLookupEvals(evals)
       setLookupEvents(events.rows.filter((e) => e.jobId === lookupJobId.trim()))
+
+      // V2 agent-ranking trace: for each evaluation run touching this
+      // (candidate, job) pair, fetch the corresponding `pa-agent-ranking-results`
+      // rows so the operator sees the LLM-proposed tier alongside the
+      // deterministic one. We pass `evaluationRunIds` so the helper can
+      // fan-out one query per run.
+      const runIds = Array.from(
+        new Set(
+          evals
+            .map((e) => e.evaluationRunId)
+            .filter((id): id is string => typeof id === "string" && id.length > 0),
+        ),
+      )
+      if (runIds.length > 0) {
+        const ranking = await listAgentRankingResults({
+          evaluationRunIds: runIds,
+          limit: 100,
+        })
+        // Filter to ranking rows that match the candidate. AgentRankingResult
+        // is keyed by `candidateRecordId`, but for the audit trace we also
+        // try matching on `candidateUserId` (set once the record resolves
+        // into a `pa-users` row).
+        const cand = lookupCandidateId.trim()
+        setLookupRanking(
+          ranking.rows.filter(
+            (r) => r.candidateRecordId === cand || r.candidateUserId === cand,
+          ),
+        )
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -210,6 +243,66 @@ export function Audit() {
                     </li>
                   ))}
                 </ul>
+              </Panel>
+            )}
+
+            {lookupRanking.length > 0 && (
+              <Panel
+                title={`Agent ranking trace (${lookupRanking.length})`}
+                eyebrow="pa-agent-ranking-results · per evaluation run"
+              >
+                <table style={tableStyle}>
+                  <thead>
+                    <tr style={{ borderBottom: "1px solid #e2e8f0", textAlign: "left" }}>
+                      <th style={thStyle}>Model used</th>
+                      <th style={thStyle}>Proposed tier</th>
+                      <th style={thStyle}>Approved tier</th>
+                      <th style={thStyle}>Rationale</th>
+                      <th style={thStyle}>Status</th>
+                      <th style={thStyle}>Approved by</th>
+                      <th style={thStyle}>Correction event</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lookupRanking.map((r) => (
+                      <tr key={r.resultId} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                        <td style={{ ...tdStyle, fontFamily: "monospace", fontSize: "0.78em" }}>
+                          {r.modelUsed}
+                        </td>
+                        <td style={tdStyle}>
+                          <EvaluationTierBadge tier={r.proposedAgentTier} />
+                        </td>
+                        <td style={tdStyle}>
+                          {r.approvedTier ? (
+                            <EvaluationTierBadge tier={r.approvedTier} />
+                          ) : (
+                            <span style={{ color: "#94a3b8" }}>—</span>
+                          )}
+                        </td>
+                        <td style={{ ...tdStyle, fontSize: "0.78em", maxWidth: 280 }}>
+                          {r.agentRationale.length > 180
+                            ? `${r.agentRationale.slice(0, 179)}…`
+                            : r.agentRationale}
+                        </td>
+                        <td style={tdStyle}>
+                          <span className="status-badge muted">{r.status}</span>
+                        </td>
+                        <td style={{ ...tdStyle, fontSize: "0.78em" }}>
+                          {r.approvedBy ?? "—"}
+                        </td>
+                        <td
+                          style={{
+                            ...tdStyle,
+                            fontFamily: "monospace",
+                            fontSize: "0.72em",
+                          }}
+                        >
+                          {r.correctionEventId ? `${r.correctionEventId.slice(0, 12)}…` : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </Panel>
             )}
           </div>
