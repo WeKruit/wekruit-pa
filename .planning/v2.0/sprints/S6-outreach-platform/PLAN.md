@@ -2,8 +2,8 @@
 
 ## Status
 
-Implementation, local verification, deploy, and non-sending smoke checks are
-complete. PR checks and merge are pending.
+Implementation, local verification, deploy, non-sending smoke checks, PR checks,
+and merge are complete.
 
 ## Target Outcome
 

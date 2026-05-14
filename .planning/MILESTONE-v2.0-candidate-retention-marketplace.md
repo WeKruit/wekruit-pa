@@ -1,6 +1,6 @@
 # Milestone v2.0 - Candidate Retention Marketplace Roadmap
 
-**Status:** Planning baseline, 2026-05-13.
+**Status:** Completed through S9 and closeout-audited, 2026-05-14.
 **Canonical product memory:** `README.md` -> "Product Blueprint: Candidate Retention Marketplace".
 **Autonomous execution harness:** `.planning/AUTONOMOUS-SPRINT-HARNESS.md`.
 **Operating lock:** This milestone extends v1.9 candidate journey closure into the final C-end candidate retention marketplace. Do not reduce it back to a job page, pre-screen bot, or employer ATS.
@@ -19,7 +19,9 @@ Build WeKruit into a C-end candidate retention marketplace:
 
 ## 1. Current Baseline
 
-The active baseline is the v1.9 worktree:
+The closeout baseline is current `main` at
+`fcfea33 feat(v2): add S9 production hardening controls`. The original v1.9
+planning baseline was:
 
 `/Users/adam/Desktop/WeKruit/wekruit-pa/.claude/worktrees/frosty-wozniak-84b965`
 
@@ -38,7 +40,9 @@ Relevant shipped or near-shipped capabilities:
 
 Known planning constraints:
 
-- v1.9 branch is ahead of `origin/main`; use it as the marketplace planning base until merged.
+- S0 through S9 have landed on `main`; this roadmap defines no S10.
+- Future marketplace work must start from updated `main` and a new explicit
+  roadmap or initiative doc.
 - Candidate routes must not return to the admin domain.
 - v1.6 match/tag decisions are locked and should not be re-litigated.
 - User durable facts are global; job outcomes are per-job.
@@ -150,6 +154,11 @@ The lead should split execution by disjoint ownership:
 | S7 | First Interview + Passed Surface | Activated candidates get first interview; passed profiles become employer-visible. |
 | S8 | Flywheel + HITL + Eval | Human corrections and outcomes feed regression, ranking, tags, and QA loops. |
 | S9 | Production Hardening + Scale | Privacy, observability, live smoke, account scaling, and launch readiness are complete. |
+
+Closeout evidence: all S0-S9 sprint directories contain the required context,
+plan, executor-plan, acceptance, and summary artifacts, and their acceptance
+ledgers record PASS for the required checks. See
+`.planning/v2.0/COMPLETION-AUDIT.md`.
 
 ## 6. Sprint Details
 
@@ -747,19 +756,35 @@ Acceptance:
 | Eval covers marketplace paths | S5, S8, S9 |
 | C-end stays on candidate domain | S0, S2, S7, S9 |
 
-## 8. What The Lead Should Do First
+## 8. Closeout State
 
-The next lead should start with S0 and S1, not by writing isolated implementation prompts.
+The v2.0 roadmap in this file has been executed through S9. The next lead
+should not restart S0/S1 from this milestone doc.
 
-Immediate sequence:
+Landed mainline evidence:
 
-1. Reconfirm v1.9 worktree branch and dirty state.
-2. Re-run v1.9 sanity checks.
-3. Decide whether to merge/rebase v1.9 into the canonical branch before v2.0 execution.
-4. Create a concise data model map for S1.
-5. Assign executors by write scope.
-6. Build reducer/schema tests before UI work.
-7. Only then start implementation slices.
+| Sprint | Main evidence |
+|---|---|
+| S0 | `5decc7f chore(v2): close S0 baseline integration` |
+| S1 | `c153c9a feat(v2): add marketplace data foundation (#24)` and `7afe2e7 docs(v2): record S1 deploy evidence` |
+| S2 | `0a8b794 feat(v2): add candidate identity claim layer (#25)` |
+| S3 | `8484a36 feat(v2): add bulk resume intake (#26)` |
+| S4 | `e27edf6 feat(v2): add job enrichment review pipeline` and PR #27 |
+| S5 | `16705a5 feat(v2): add S5 two-way matching` and PR #28 |
+| S6 | `16ab52b feat(v2): add S6 outreach platform (#30)` |
+| S7 | `2c48792 feat(v2): add S7 first-interview passed surface (#32)` |
+| S8 | `90aaf29 feat(v2): add S8 flywheel HITL eval (#33)` |
+| S9 | `fcfea33 feat(v2): add S9 production hardening controls` and PR #36 |
+
+Completion boundaries:
+
+1. S0-S9 are the complete sprint set for this roadmap; no S10 is defined here.
+2. Each sprint has a dedicated sprint directory under `.planning/v2.0/sprints/`.
+3. Each sprint records executor-plan handoff, acceptance evidence, and summary.
+4. S9 deployed functions and both hosting targets, then passed live no-contact
+   route/auth/count smoke.
+5. The open questions below remain future product questions, not blockers for
+   the S0-S9 roadmap.
 
 ## 9. Open Product Questions To Revisit Later
 

@@ -1,6 +1,6 @@
 # S6 Summary
 
-**Status:** Implemented, deployed, and non-sending smoke verified. PR/checks/merge pending.
+**Status:** Landed, deployed, and non-sending smoke verified.
 **Date:** 2026-05-13.
 
 ## Current State
@@ -34,4 +34,6 @@
 
 ## Next Gate
 
-Open PR from `codex/v2-S6-outreach-platform`, verify PR checks, then merge.
+S6 landed on `main` as
+`16ab52b feat(v2): add S6 outreach platform (#30)`. S7 has already landed after
+S6.

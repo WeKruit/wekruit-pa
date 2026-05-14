@@ -1,6 +1,6 @@
 # S3 Summary
 
-**Status:** Deployed and live-smoke verified; ready for PR.
+**Status:** Landed, deployed, and live-smoke verified.
 **Date:** 2026-05-13.
 
 ## Outcome
@@ -117,5 +117,6 @@ required at this lane.
 
 ## Next Sprint Trigger
 
-S4 can begin after S3 lands on `main`. S3 is deployed and acceptance has passed;
-the remaining packaging step is PR creation/merge from this branch.
+S3 landed on `main` as
+`8484a36 feat(v2): add bulk resume intake (#26)`. S4 has already landed after
+S3.

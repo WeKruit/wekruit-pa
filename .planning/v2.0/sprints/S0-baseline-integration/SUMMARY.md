@@ -112,9 +112,9 @@ PII-printing action was performed.
 
 ## S1 Trigger
 
-S1 can begin after this branch lands on `main`. Start S1 from updated `main` in
-`.claude/worktrees/v2-S1-marketplace-data-foundation` on branch
-`codex/v2-S1-marketplace-data-foundation`.
+S0 landed on `main` as
+`5decc7f chore(v2): close S0 baseline integration`. S1 has already landed after
+S0.
 
 ## Known Gaps
 
