@@ -50,7 +50,7 @@ function stripAnsi(s) {
 function parseAppsListListOutput(text) {
   const clean = stripAnsi(text)
   const rows = []
-  const idRe = /1:\d+:\d+:\w+/
+  const idRe = /1:\d+:[a-z]+:[a-z0-9]+/i
   for (const line of clean.split("\n")) {
     if (!idRe.test(line) || !/\bWEB\b/i.test(line)) continue
     const m = line.match(idRe)
@@ -211,7 +211,9 @@ function main() {
   console.log(`[fetch-pa-dashboard-vite-from-firebase] wrote ${rel} (from web app ${appId})`)
 }
 
-main().catch((err) => {
+try {
+  main()
+} catch (err) {
   console.error(err)
   process.exit(1)
-})
+}
