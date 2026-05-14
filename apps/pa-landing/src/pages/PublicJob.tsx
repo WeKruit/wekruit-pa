@@ -460,11 +460,48 @@ export default function PublicJob() {
 
 function Page({ children }: { children: React.ReactNode }) {
   return (
-    <div style={{ maxWidth: "640px", margin: "0 auto", padding: "2rem 1.25rem" }}>
-      <header style={{ marginBottom: "1.5rem" }}>
-        <strong style={{ fontSize: "1.1rem", letterSpacing: "-0.02em" }}>WeKruit</strong>
-      </header>
-      {children}
+    <div
+      style={{
+        minHeight: "100vh",
+        background: "#f6f2ea",
+        color: "#1f2a23",
+        fontFamily:
+          '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+      }}
+    >
+      <div style={{ maxWidth: "760px", margin: "0 auto", padding: "1.75rem 1.25rem 2.5rem" }}>
+        <header
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: "1rem",
+            marginBottom: "2rem",
+          }}
+        >
+          <a
+            href="/"
+            style={{
+              color: "#1f2a23",
+              fontSize: "1.1rem",
+              fontWeight: 800,
+              letterSpacing: 0,
+              textDecoration: "none",
+            }}
+          >
+            WeKruit
+          </a>
+          <nav style={{ display: "flex", gap: "0.875rem", fontSize: "0.92rem" }} aria-label="Candidate navigation">
+            <a href="/me/matches" style={{ color: "#5f665b", textDecoration: "none" }}>
+              Matches
+            </a>
+            <a href="/me/profile" style={{ color: "#5f665b", textDecoration: "none" }}>
+              Profile
+            </a>
+          </nav>
+        </header>
+        {children}
+      </div>
     </div>
   )
 }
