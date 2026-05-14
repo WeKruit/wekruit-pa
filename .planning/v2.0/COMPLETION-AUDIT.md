@@ -2,8 +2,7 @@
 
 **Date:** 2026-05-14.
 **Audited branch:** `codex/v2-milestone-closeout`.
-**Merged closeout head:** `main` / `origin/main` at
-`3e2c7ab docs(v2): close out milestone roadmap`.
+**Closeout scope:** docs-only evidence for the completed S0-S9 roadmap.
 **Implementation baseline audited:** S9 landed immediately before closeout at
 `fcfea33 feat(v2): add S9 production hardening controls`.
 
@@ -68,8 +67,7 @@ Success means:
 
 - `git status --short --branch` on the main worktree reported
   `## main...origin/main`.
-- `git log --oneline -14` shows main ending at closeout, immediately followed
-  by S9:
+- `git log --oneline` shows docs-only closeout commits above S9, including:
   `3e2c7ab docs(v2): close out milestone roadmap`;
   `fcfea33 feat(v2): add S9 production hardening controls`.
 - `find .planning/v2.0/sprints -maxdepth 2` shows all required planning,
