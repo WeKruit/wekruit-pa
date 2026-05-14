@@ -1,26 +1,73 @@
 import { useEffect, useMemo, useState } from "react"
-import { Link, useNavigate } from "react-router-dom"
+import { Link, useLocation, useNavigate } from "react-router-dom"
 import {
+  getRedirectResult,
   isSignInWithEmailLink,
+  OAuthProvider,
   sendSignInLinkToEmail,
   signInWithEmailLink,
+  signInWithPopup,
+  signInWithRedirect,
 } from "firebase/auth"
 import { auth } from "../lib/firebase.js"
 
 const EMAIL_STORAGE_KEY = "wkr_claim_email"
+const NEXT_STORAGE_KEY = "wkr_claim_next"
+const LINKEDIN_PROVIDER_ID = import.meta.env.VITE_LINKEDIN_PROVIDER_ID ?? "oidc.linkedin"
 
 function cleanEmail(value: string): string {
   return value.trim().toLowerCase()
 }
 
+function cleanNextPath(value: string | null): string {
+  if (!value) return "/me"
+  if (!value.startsWith("/") || value.startsWith("//") || value.includes("://")) return "/me"
+  return value
+}
+
+function createLinkedInProvider(): OAuthProvider {
+  const provider = new OAuthProvider(LINKEDIN_PROVIDER_ID)
+  provider.addScope("openid")
+  provider.addScope("profile")
+  provider.addScope("email")
+  return provider
+}
+
 export default function CandidateLogin() {
   const navigate = useNavigate()
+  const location = useLocation()
   const isCompletingLink = useMemo(() => isSignInWithEmailLink(auth(), window.location.href), [])
+  const nextPath = useMemo(
+    () => cleanNextPath(new URLSearchParams(location.search).get("next") ?? window.localStorage.getItem(NEXT_STORAGE_KEY)),
+    [location.search]
+  )
   const [email, setEmail] = useState(() => window.localStorage.getItem(EMAIL_STORAGE_KEY) ?? "")
   const [status, setStatus] = useState<"idle" | "sending" | "sent" | "signing_in" | "error">(
     isCompletingLink ? "signing_in" : "idle"
   )
   const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (isCompletingLink) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const result = await getRedirectResult(auth())
+        if (result?.user && !cancelled) {
+          window.localStorage.removeItem(NEXT_STORAGE_KEY)
+          navigate(nextPath, { replace: true })
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setStatus("error")
+          setError(err instanceof Error ? err.message : String(err))
+        }
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [isCompletingLink, navigate, nextPath])
 
   useEffect(() => {
     if (!isCompletingLink) return
@@ -34,7 +81,8 @@ export default function CandidateLogin() {
       try {
         await signInWithEmailLink(auth(), stored, window.location.href)
         window.localStorage.removeItem(EMAIL_STORAGE_KEY)
-        if (!cancelled) navigate("/me", { replace: true })
+        window.localStorage.removeItem(NEXT_STORAGE_KEY)
+        if (!cancelled) navigate(nextPath, { replace: true })
       } catch (err) {
         if (!cancelled) {
           setStatus("error")
@@ -45,7 +93,26 @@ export default function CandidateLogin() {
     return () => {
       cancelled = true
     }
-  }, [isCompletingLink, navigate])
+  }, [isCompletingLink, navigate, nextPath])
+
+  async function onLinkedInSignIn() {
+    setError(null)
+    setStatus("signing_in")
+    window.localStorage.setItem(NEXT_STORAGE_KEY, nextPath)
+    try {
+      await signInWithPopup(auth(), createLinkedInProvider())
+      window.localStorage.removeItem(NEXT_STORAGE_KEY)
+      navigate(nextPath, { replace: true })
+    } catch (err) {
+      const code = err && typeof err === "object" && "code" in err ? String((err as { code?: string }).code) : ""
+      if (code === "auth/popup-blocked" || code === "auth/operation-not-supported-in-this-environment") {
+        await signInWithRedirect(auth(), createLinkedInProvider())
+        return
+      }
+      setStatus("error")
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -57,15 +124,17 @@ export default function CandidateLogin() {
         setStatus("signing_in")
         await signInWithEmailLink(auth(), nextEmail, window.location.href)
         window.localStorage.removeItem(EMAIL_STORAGE_KEY)
-        navigate("/me", { replace: true })
+        window.localStorage.removeItem(NEXT_STORAGE_KEY)
+        navigate(nextPath, { replace: true })
         return
       }
       setStatus("sending")
       await sendSignInLinkToEmail(auth(), nextEmail, {
-        url: `${window.location.origin}/login`,
+        url: `${window.location.origin}/login?next=${encodeURIComponent(nextPath)}`,
         handleCodeInApp: true,
       })
       window.localStorage.setItem(EMAIL_STORAGE_KEY, nextEmail)
+      window.localStorage.setItem(NEXT_STORAGE_KEY, nextPath)
       setStatus("sent")
     } catch (err) {
       setStatus("error")
@@ -78,6 +147,19 @@ export default function CandidateLogin() {
       <main className="candidate-panel">
         <p className="candidate-kicker">Candidate profile</p>
         <h1>{isCompletingLink ? "Finish sign in" : "Sign in"}</h1>
+        {!isCompletingLink ? (
+          <>
+            <button
+              className="candidate-linkedin-button"
+              type="button"
+              disabled={status === "sending" || status === "signing_in"}
+              onClick={() => void onLinkedInSignIn()}
+            >
+              {status === "signing_in" ? "Opening LinkedIn" : "Continue with LinkedIn"}
+            </button>
+            <div className="candidate-login-divider">or</div>
+          </>
+        ) : null}
         <form onSubmit={onSubmit} className="candidate-form">
           <label>
             Email
@@ -101,10 +183,10 @@ export default function CandidateLogin() {
           </button>
         </form>
         {status === "sent" ? (
-          <p className="candidate-success">Magic link sent to {cleanEmail(email)}.</p>
+          <p className="candidate-success">Magic link sent to {cleanEmail(email)}. It will bring you back to continue.</p>
         ) : null}
         {error ? <p className="candidate-error">{error}</p> : null}
-        <Link className="candidate-muted-link" to="/">Back to WeKruit</Link>
+        <Link className="candidate-muted-link" to={nextPath === "/me" ? "/" : nextPath}>Back to WeKruit</Link>
       </main>
     </CandidateShell>
   )
@@ -199,6 +281,43 @@ body {
 .candidate-form {
   display: grid;
   gap: 14px;
+}
+.candidate-linkedin-button {
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  margin-bottom: 14px;
+  padding: 0 16px;
+  border: 1px solid #0a66c2;
+  border-radius: 8px;
+  background: #0a66c2;
+  color: #fff;
+  font: inherit;
+  font-weight: 850;
+  cursor: pointer;
+}
+.candidate-linkedin-button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+.candidate-login-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 14px;
+  color: #63705d;
+  font-size: 13px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+.candidate-login-divider::before,
+.candidate-login-divider::after {
+  content: "";
+  height: 1px;
+  flex: 1;
+  background: #ddd3c2;
 }
 .candidate-form label {
   display: grid;

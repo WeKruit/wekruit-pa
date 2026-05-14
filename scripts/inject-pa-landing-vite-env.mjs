@@ -26,6 +26,7 @@ const REQUIRED = [
 
 const OPTIONAL = [
   "VITE_CV_INGEST_URL", // paPublicCvIngest CF URL for /j/:jobId CV upload
+  "VITE_LINKEDIN_PROVIDER_ID", // Firebase OIDC provider id for candidate LinkedIn login
 ]
 
 function parseEnvFile(path) {

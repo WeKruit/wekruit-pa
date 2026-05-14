@@ -16,10 +16,11 @@
  */
 import { useEffect, useId, useMemo, useState } from "react"
 import { Link, useParams } from "react-router-dom"
+import { onAuthStateChanged, type User } from "firebase/auth"
 import { doc, getDoc, setDoc } from "firebase/firestore"
 
 const CV_INGEST_URL = import.meta.env.VITE_CV_INGEST_URL ?? ""
-import { db } from "../lib/firebase.js"
+import { auth, db } from "../lib/firebase.js"
 import { CandidateShell } from "./CandidateLogin.js"
 
 interface PrescreenConfig {
@@ -44,6 +45,11 @@ interface PaJobDoc {
   seniorityLevel?: string
   jobType?: string
 }
+
+type CandidateAuthState =
+  | { status: "loading" }
+  | { status: "signed_out" }
+  | { status: "signed_in"; user: User }
 
 // v1.9 P88 — same djb2 hash as apps/functions/src/sendblue/pool.ts so
 // candidate's pre-PII outbound first message lands on the SAME pool number
@@ -108,6 +114,10 @@ function getOrCreateRequestedUserId(_jobId: string): string {
 
 function hasCvOnFile(): boolean {
   return window.localStorage.getItem(HAS_CV_KEY) === "true"
+}
+
+function loginPathForJob(jobId: string): string {
+  return `/login?next=${encodeURIComponent(`/j/${jobId}`)}`
 }
 
 async function fileToBase64(file: File): Promise<string> {
@@ -302,8 +312,16 @@ export default function PublicJob() {
   const [job, setJob] = useState<PaJobDoc | null>(null)
   const [pool, setPool] = useState<PoolNumber[] | null>(null)
   const [smsClicked, setSmsClicked] = useState(false)
+  const [candidateAuth, setCandidateAuth] = useState<CandidateAuthState>({ status: "loading" })
 
   const requestedUserId = useMemo(() => (jobId ? getOrCreateRequestedUserId(jobId) : ""), [jobId])
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth(), (user) => {
+      setCandidateAuth(user ? { status: "signed_in", user } : { status: "signed_out" })
+    })
+    return unsubscribe
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -415,23 +433,35 @@ export default function PublicJob() {
             <div className="public-job-card public-job-start">
               <h2>Start the 5-minute screen</h2>
               <p>
-            Reply to WeKruit on iMessage. We&rsquo;ll ask a few quick role-fit questions and let you know if you&rsquo;ve passed the initial screen.
+                Sign in first so this interview attaches to your WeKruit candidate profile, then text Claire on iMessage.
               </p>
-              {smsHref ? (
+              {candidateAuth.status === "loading" ? (
+                <p className="public-job-muted">Checking your sign-in status...</p>
+              ) : null}
+              {candidateAuth.status === "signed_out" ? (
+                <div className="public-job-login-required">
+                  <Link className="candidate-primary-link" to={loginPathForJob(jobId!)}>
+                    Sign in to start
+                  </Link>
+                  <p>After sign in, we&rsquo;ll bring you back here to open iMessage.</p>
+                </div>
+              ) : null}
+              {candidateAuth.status === "signed_in" && smsHref ? (
                 <a className="candidate-primary-link" href={smsHref} onClick={() => setSmsClicked(true)}>
                   Open in iMessage
                 </a>
-              ) : (
+              ) : null}
+              {candidateAuth.status === "signed_in" && !smsHref ? (
                 <p className="public-job-error">
                   WeKruit messaging temporarily unavailable. Please check back shortly.
                 </p>
-              )}
-              {smsClicked ? (
+              ) : null}
+              {candidateAuth.status === "signed_in" && smsClicked ? (
                 <p className="public-job-success">
-                  Continue in iMessage to answer Claire. Sign in to see your status after you start.
+                  Continue in iMessage to answer Claire. Your job status will stay attached to this profile.
                 </p>
               ) : null}
-              {qrSrc ? (
+              {candidateAuth.status === "signed_in" && qrSrc ? (
                 <div className="public-job-qr">
                   <img src={qrSrc} width={180} height={180} alt="QR code to start pre-screen" />
                   <p>Scan on iPhone</p>
@@ -615,6 +645,16 @@ const PUBLIC_JOB_STYLES = `
   margin: 0;
   color: #364233;
   line-height: 1.5;
+}
+.public-job-login-required {
+  display: grid;
+  gap: 10px;
+}
+.public-job-login-required p,
+.public-job-muted {
+  margin: 0;
+  color: #5f665b;
+  line-height: 1.45;
 }
 .public-job-cv {
   display: grid;
