@@ -118,21 +118,45 @@ export function BatchCandidates() {
     setSearchParams(next, { replace: false })
   }
 
+  const view = (searchParams.get("view") === "table" ? "table" : "list") as "list" | "table"
+  function setView(v: "list" | "table") {
+    const next = new URLSearchParams(searchParams)
+    next.set("view", v)
+    if (v === "table") next.delete("record")
+    setSearchParams(next, { replace: false })
+  }
+
   return (
     <div className="page-stack">
       <PageHeader
         eyebrow="External Supply / Batch"
         title="Candidates"
-        description={`Batch ${batchId} — click a row to open detail`}
+        description={`Batch ${batchId} — ${view === "table" ? "table view" : "click a row to open detail"}`}
       />
-      <div style={{ fontSize: "0.85em" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "0.85em" }}>
         <Link to={`/admin/external-supply/batches/${batchId}`}>← back to batch detail</Link>
+        <div role="tablist" style={{ display: "flex", gap: 4 }}>
+          <button
+            type="button"
+            onClick={() => setView("list")}
+            style={{ ...viewToggleStyle, ...(view === "list" ? viewToggleActiveStyle : {}) }}
+          >
+            List + drawer
+          </button>
+          <button
+            type="button"
+            onClick={() => setView("table")}
+            style={{ ...viewToggleStyle, ...(view === "table" ? viewToggleActiveStyle : {}) }}
+          >
+            Table view
+          </button>
+        </div>
       </div>
 
       {error && <ErrorState message={error} />}
       {loading && !result && <LoadingState label="Loading candidates…" />}
 
-      {result && (
+      {result && view === "list" && (
         <div style={twoColStyle}>
           <div>
             <Panel
@@ -176,6 +200,130 @@ export function BatchCandidates() {
           </div>
         </div>
       )}
+
+      {result && view === "table" && (
+        <Panel
+          title={`Matches (${filteredRows.length})`}
+          eyebrow={result.jobId ? `job ${result.jobId.slice(0, 12)}…` : "no bound job"}
+        >
+          <input
+            type="text"
+            placeholder="Filter by name / company / role…"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            style={{ ...filterStyle, marginBottom: 12 }}
+          />
+          <CandidateTable rows={filteredRows} onSelect={(id) => { setView("list"); selectRecord(id) }} />
+        </Panel>
+      )}
+    </div>
+  )
+}
+
+function CandidateTable({
+  rows,
+  onSelect,
+}: {
+  rows: BatchCandidateRow[]
+  onSelect: (recordId: string) => void
+}) {
+  // Build the union of rubric column labels so the table has consistent
+  // columns even when individual candidates differ.
+  const rubricLabels = useMemo(() => {
+    const set = new Set<string>()
+    for (const r of rows) {
+      if (r.rubric) for (const k of Object.keys(r.rubric)) set.add(k)
+    }
+    return Array.from(set).slice(0, 12)
+  }, [rows])
+
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82em" }}>
+        <thead>
+          <tr style={{ borderBottom: "1px solid #cbd5e1", textAlign: "left" }}>
+            <th style={tableTh}>Name</th>
+            <th style={tableTh}>Title @ Company</th>
+            <th style={tableTh}>Location</th>
+            <th style={tableTh}>Links</th>
+            <th style={tableTh}>Match</th>
+            <th style={tableTh}>Rubric</th>
+            {rubricLabels.map((l) => (
+              <th key={l} style={{ ...tableTh, fontSize: "0.7em", color: "#475569" }}>{l}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => {
+            const rubricEntries = r.rubric ? Object.entries(r.rubric) : []
+            const passed = rubricEntries.filter(([, c]) => c.passed === true).length
+            const total = rubricEntries.length
+            return (
+              <tr
+                key={r.recordId}
+                style={{ borderBottom: "1px solid #f1f5f9", cursor: "pointer" }}
+                onClick={() => onSelect(r.recordId)}
+              >
+                <td style={tableTd}><strong>{r.name ?? "—"}</strong></td>
+                <td style={tableTd}>
+                  {r.currentTitle ?? "—"}
+                  {r.currentCompany ? <span style={{ color: "#64748b" }}> @ {r.currentCompany}</span> : null}
+                </td>
+                <td style={tableTd}>{r.location ?? "—"}</td>
+                <td style={tableTd}>
+                  {Array.isArray(r.links) && r.links.length > 0 ? (
+                    <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>
+                      {r.links.map((l, i) => (
+                        <a
+                          key={`${l.url}-${i}`}
+                          href={l.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          title={l.url}
+                          style={{
+                            fontSize: "0.7em",
+                            padding: "1px 5px",
+                            borderRadius: 3,
+                            background: LINK_KIND_BG[l.kind] ?? "#f1f5f9",
+                            color: LINK_KIND_FG[l.kind] ?? "#475569",
+                            textDecoration: "none",
+                            fontWeight: 600,
+                          }}
+                        >
+                          {LINK_KIND_LABEL[l.kind] ?? l.hostname}
+                        </a>
+                      ))}
+                    </div>
+                  ) : (
+                    "—"
+                  )}
+                </td>
+                <td style={tableTd}>
+                  {r.matchScore === "1" ? (
+                    <span style={{ color: "#16a34a", fontWeight: 600 }}>✓</span>
+                  ) : (
+                    r.matchScore ?? "—"
+                  )}
+                </td>
+                <td style={tableTd}>
+                  {total > 0 ? `${passed}/${total}` : "—"}
+                </td>
+                {rubricLabels.map((label) => {
+                  const cell = r.rubric?.[label]
+                  if (!cell) return <td key={label} style={{ ...tableTd, color: "#cbd5e1" }}>—</td>
+                  const tone = cell.passed === true ? "#16a34a" : cell.passed === false ? "#dc2626" : "#64748b"
+                  return (
+                    <td key={label} style={{ ...tableTd, color: tone }} title={cell.value}>
+                      {cell.passed === true ? "✓" : cell.passed === false ? "✗" : "·"}
+                    </td>
+                  )
+                })}
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
     </div>
   )
 }
@@ -464,6 +612,33 @@ function CandidateDetailPanel({ detail }: { detail: CandidateDetail }) {
       )}
     </div>
   )
+}
+
+const viewToggleStyle: React.CSSProperties = {
+  padding: "4px 12px",
+  fontSize: "0.8em",
+  background: "white",
+  border: "1px solid #cbd5e1",
+  borderRadius: 4,
+  cursor: "pointer",
+  fontWeight: 500,
+  color: "#475569",
+}
+const viewToggleActiveStyle: React.CSSProperties = {
+  background: "#1a73e8",
+  borderColor: "#1a73e8",
+  color: "white",
+}
+const tableTh: React.CSSProperties = {
+  padding: "6px 8px",
+  fontWeight: 600,
+  whiteSpace: "nowrap",
+  fontSize: "0.78em",
+  color: "#0f172a",
+}
+const tableTd: React.CSSProperties = {
+  padding: "6px 8px",
+  verticalAlign: "top",
 }
 
 const LINK_KIND_LABEL: Record<string, string> = {
