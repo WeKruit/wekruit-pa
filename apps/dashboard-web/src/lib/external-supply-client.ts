@@ -511,9 +511,94 @@ export interface PreviewBatchResult {
  * at the time this file was authored). The shape above mirrors PLAN §3.5 +
  * lead resolution L-C5. If C lands with a stricter contract, align here.
  */
-export const previewBatch = callable<PreviewBatchInput, PreviewBatchResult>(
+/**
+ * Server-side response from `paExternalSupplyPreviewBatch` (preview-batch.ts).
+ * Differs from {@link PreviewBatchResult} (the V1 client shape) — we adapt at
+ * the wire boundary so existing UI consumers keep working.
+ */
+interface PreviewBatchServerResponse {
+  detection: AdapterDetectionCandidateUI[]
+  chosenSource: ExternalSource
+  rowCount: number
+  validLinkedInCount: number
+  validEmailCount: number
+  withinBatchDuplicates: number
+  identityForecast: {
+    createNew: number
+    mergeExisting: number
+    needsReview: number
+    blocked: number
+    perReviewReason: Record<string, number>
+  }
+  tagEnrichmentForecast: {
+    perFieldFillCount: Record<string, number>
+    perFieldPreservedCount: Record<string, number>
+    perCandidatePreview: Array<{ candidateKey: string; willFill: string[]; willPreserve: string[] }>
+  }
+  tierForecast?: PreviewBatchTierForecast
+  inferredMapping?: PreviewInferredMapping
+  sampleRows?: Record<string, string>[]
+  warnings: string[]
+}
+
+const previewBatchRaw = callable<PreviewBatchInput, PreviewBatchServerResponse>(
   "paExternalSupplyPreviewBatch",
 )
+
+/**
+ * Wire-boundary adapter that closes the V1 contract drift between server
+ * (preview-batch.ts) and the dashboard components (PreviewPane / BatchNew).
+ *
+ *  - Server returns `detection: Candidate[]` → client needs `{top, candidates}`
+ *  - Server `rowCount` → client `rowCountPreview`
+ *  - Server `identityForecast.{createNew,...}` → client `expected{CreateNew,...}`
+ *  - Server `tagEnrichmentForecast.perFieldFillCount` → client `perAxisCoverage`
+ */
+export async function previewBatch(input: PreviewBatchInput): Promise<PreviewBatchResult> {
+  const raw = await previewBatchRaw(input)
+  const candidates = Array.isArray(raw.detection) ? raw.detection : []
+  const top = candidates[0] ?? {
+    source: raw.chosenSource ?? "manual_csv",
+    confidence: 0,
+    requiredMatched: 0,
+    requiredCount: 0,
+    bonusMatched: 0,
+    reasons: [],
+  }
+  const tagF = raw.tagEnrichmentForecast ?? {
+    perFieldFillCount: {},
+    perFieldPreservedCount: {},
+    perCandidatePreview: [],
+  }
+  const idF = raw.identityForecast ?? {
+    createNew: 0,
+    mergeExisting: 0,
+    needsReview: 0,
+    blocked: 0,
+    perReviewReason: {},
+  }
+  const result: PreviewBatchResult = {
+    ok: true,
+    detection: { top, candidates, shapeHint: "unknown", warnings: [] },
+    identityForecast: {
+      expectedCreateNew: idF.createNew ?? 0,
+      expectedMergeExisting: idF.mergeExisting ?? 0,
+      expectedNeedsReview: idF.needsReview ?? 0,
+      expectedBlocked: idF.blocked ?? 0,
+    },
+    tagEnrichmentForecast: {
+      perAxisCoverage: tagF.perFieldFillCount ?? {},
+      avgSkillsPerRow: 0,
+      missingRoleFunctionRows: 0,
+    },
+    rowCountPreview: raw.rowCount ?? 0,
+    warnings: Array.isArray(raw.warnings) ? raw.warnings : [],
+    ...(raw.tierForecast ? { tierForecast: raw.tierForecast } : {}),
+    ...(raw.inferredMapping ? { inferredMapping: raw.inferredMapping } : {}),
+    ...(raw.sampleRows ? { sampleRows: raw.sampleRows } : {}),
+  }
+  return result
+}
 
 export interface RunAgentRankingInput {
   evaluationRunId: string
