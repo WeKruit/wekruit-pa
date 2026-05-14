@@ -219,6 +219,12 @@ export {
   paFlywheelCorrectionEvalArtifact,
 } from "./flywheel-eval.js"
 export { paCandidateProfileCorrection } from "./flywheel-candidate-correction.js"
+// v2.0 S9 — production hardening and launch readiness controls.
+export {
+  paAdminLaunchReadinessSnapshot,
+  paAdminOutreachStopControl,
+  paCandidatePrivacyRequest,
+} from "./production-hardening.js"
 
 // Phase 27 T2 — public /health endpoints (one per existing CF). Returns
 // {ok, name, version, ts, deps:{firestore, secrets}}. No auth (probes
@@ -1562,7 +1568,7 @@ export const paSendblueOutbox = onDocumentCreated(
 
     const { sendImessage } = await import("./sendblue/sendblue-client.js")
     const { sendTypingIndicator } = await import("./sendblue/typing-indicator.js")
-    const { appendMessage, getOrCreateSession, getUser } = await import("@pa/pa-persistence")
+    const { appendMessage, getOrCreateSession, getUser, readOutreachStopControl } = await import("@pa/pa-persistence")
 
     const data = event.data?.data() as Record<string, unknown> | undefined
     if (!data) {
@@ -1582,6 +1588,7 @@ export const paSendblueOutbox = onDocumentCreated(
         appendMessage,
         getOrCreateSession,
         getUser,
+        readOutreachStopControl,
       }
     )
   }
@@ -1619,7 +1626,7 @@ export const paSendblueOutboxRetrySweep = onSchedule(
 
     const { sendImessage } = await import("./sendblue/sendblue-client.js")
     const { sendTypingIndicator } = await import("./sendblue/typing-indicator.js")
-    const { appendMessage, getOrCreateSession, getUser } = await import("@pa/pa-persistence")
+    const { appendMessage, getOrCreateSession, getUser, readOutreachStopControl } = await import("@pa/pa-persistence")
     const { paSendblueOutboxRetrySweepHandler } = await import("./sendblue/outbox-retry-sweep.js")
 
     try {
@@ -1630,6 +1637,7 @@ export const paSendblueOutboxRetrySweep = onSchedule(
         appendMessage,
         getOrCreateSession,
         getUser,
+        readOutreachStopControl,
       })
       logger.info("paSendblueOutboxRetrySweep done", result)
     } catch (err) {

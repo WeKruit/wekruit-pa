@@ -1,7 +1,7 @@
 # S8 Summary
 
-**Status:** Implementation integrated, deployed, and live non-sending smoke
-passed. PR/merge remains.
+**Status:** Implementation integrated, deployed, live non-sending smoke passed,
+and merged in PR #33.
 **Date:** 2026-05-14.
 
 ## Current State
@@ -61,5 +61,6 @@ passed. PR/merge remains.
 
 ## Next Gate
 
-Commit, open PR, watch checks, merge when green, then advance to the next
-roadmap sprint.
+S9 landed on `main` as
+`fcfea33 feat(v2): add S9 production hardening controls` through PR #36. The
+roadmap defines no S10.

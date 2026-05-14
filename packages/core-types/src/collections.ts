@@ -74,6 +74,12 @@ export const PA_COLLECTIONS = {
   correctionEvents: "pa-correction-events",
   /** v2.0 S8 — redacted eval/regression artifacts generated from flywheel events. */
   evalArtifacts: "pa-eval-artifacts",
+  /** v2.0 S9 — candidate privacy/export/delete/stop request intake queue. */
+  privacyRequests: "pa-privacy-requests",
+  /** v2.0 S9 — redacted launch-readiness snapshots for production hardening. */
+  launchReadinessSnapshots: "pa-launch-readiness-snapshots",
+  /** v2.0 S9 — manual outreach stop controls. */
+  outreachStopControls: "pa-outreach-stop-controls",
   /** Public job docs. Draft enrichment internals must live only in subcollections. */
   jobs: "pa-jobs",
   /** v2.0 external-supply — operator-uploaded sourcing batches (Juicebox/Lessie/Coresignal/manual-csv). */

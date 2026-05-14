@@ -1,7 +1,7 @@
 import { describe, it, beforeEach, afterEach } from "node:test"
 import assert from "node:assert/strict"
 
-import { paSendblueOutboxHandler, shouldAppendOutboundTranscript } from "../outbox.js"
+import { isMarketplaceOutreachOutbound, paSendblueOutboxHandler, shouldAppendOutboundTranscript } from "../outbox.js"
 import { SendblueClientError, SendblueServerError } from "../sendblue-client.js"
 
 // ---------- Fake Firestore + sendblue client ----------
@@ -449,6 +449,45 @@ describe("paSendblueOutboxHandler", () => {
     assert.equal(shouldAppendOutboundTranscript({ idempotencyKey: "out-sendblue-abc" }), false)
     assert.equal(shouldAppendOutboundTranscript({ idempotencyKey: "outbox-msg-doc-1" }), true)
     assert.equal(shouldAppendOutboundTranscript({ idempotencyKey: "any-other" }), true)
+    assert.equal(isMarketplaceOutreachOutbound({ idempotencyKey: "outreach_idempotency_outinvite-1" }), true)
+    assert.equal(isMarketplaceOutreachOutbound({ idempotencyKey: "out-test-1" }), false)
+  })
+
+  it("Test 9b: marketplace outreach stop gate blocks before transcript, quota, typing, or Sendblue", async () => {
+    const baseRow: DocData = {
+      status: "pending",
+      userId: USER.id,
+      toE164: ALLOWED_PEER,
+      body: "hello",
+      idempotencyKey: "outreach_idempotency_outinvite-1",
+      createdAt: new Date().toISOString(),
+    }
+    const { db, outbound, messages } = makeFakeDb({ "doc-paused": baseRow }, { [USER.id]: USER })
+    const sb = makeSendblueMock()
+    let appended = 0
+    await paSendblueOutboxHandler(makeEvent("doc-paused", baseRow) as never, {
+      db: db as never,
+      sendblueClient: sb,
+      now: () => new Date(),
+      log: () => {},
+      appendMessage: async () => {
+        appended++
+      },
+      getUser: async () => USER as never,
+      getOrCreateSession: async () => ({ id: "s-1" } as never),
+      readOutreachStopControl: async () => ({
+        paused: true,
+        reason: "launch readiness pause",
+      }),
+    })
+
+    assert.equal(sb.calls, 0)
+    assert.equal(appended, 0)
+    assert.equal(messages.size, 0)
+    const finalDoc = outbound.get("doc-paused")!
+    assert.equal(finalDoc.status, "failed")
+    assert.equal(finalDoc.blockedByOutreachStopControl, true)
+    assert.match(String(finalDoc.error), /marketplace outreach paused/)
   })
 
   it("Test 10 (Phase 26 T2): existing count at 80% → soft-warn audit, send still proceeds", async () => {

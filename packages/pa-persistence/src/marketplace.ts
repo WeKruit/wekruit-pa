@@ -11,6 +11,9 @@ import {
   FeedbackEventSchema,
   JobEnrichmentEvalFixtureSchema,
   JobOpportunityDraftSchema,
+  LaunchReadinessSnapshotSchema,
+  OutreachStopControlSchema,
+  PrivacyRequestSchema,
   OutboundInviteSchema,
   PA_COLLECTIONS,
   PA_JOB_ENRICHMENT_EVAL_FIXTURES_SUBCOLLECTION,
@@ -31,13 +34,18 @@ import {
   type FeedbackEvent,
   type JobEnrichmentEvalFixture,
   type JobOpportunityDraft,
+  type LaunchReadinessSnapshot,
   type MarketplaceEvidence,
   type MarketplaceActor,
+  type OutreachStopControl,
+  type OutreachStopControlScope,
   type OutboundInvite,
+  type PrivacyRequest,
   type StateReductionResult,
   createCandidateJobStateId,
   createCandidateJobMatchId,
   createEvalArtifactId,
+  createOutreachStopControlId,
   createOutboundInviteId,
 } from "@pa/core-types"
 
@@ -1031,6 +1039,143 @@ export async function writeEvalArtifactForCorrection(
     artifact: artifactWrite.artifact,
     artifactCreated: artifactWrite.created,
   }
+}
+
+export async function writePrivacyRequest(
+  db: Firestore,
+  rawRequest: PrivacyRequest
+): Promise<{ request: PrivacyRequest; created: boolean; existingOpen: boolean }> {
+  const request = PrivacyRequestSchema.parse(rawRequest)
+  const existingOpen = await db
+    .collection(PA_COLLECTIONS.privacyRequests)
+    .where("candidateId", "==", request.candidateId)
+    .where("kind", "==", request.kind)
+    .where("status", "in", ["submitted", "in_review"])
+    .limit(1)
+    .get()
+
+  if (!existingOpen.empty) {
+    return {
+      request: PrivacyRequestSchema.parse(existingOpen.docs[0]!.data()),
+      created: false,
+      existingOpen: true,
+    }
+  }
+
+  const result = await writeAppendOnlyRefDoc(
+    db.collection(PA_COLLECTIONS.privacyRequests).doc(request.requestId),
+    PA_COLLECTIONS.privacyRequests,
+    request.requestId,
+    request
+  )
+  if (result.created) {
+    await db.collection(AUDIT_COLLECTION).doc(auditId("marketplace_privacy_request", request.requestId)).set({
+      id: auditId("marketplace_privacy_request", request.requestId),
+      action: "marketplace.privacy_request.create",
+      requestId: request.requestId,
+      kind: request.kind,
+      status: request.status,
+      candidateId: request.candidateId,
+      sourceSurface: request.sourceSurface,
+      requestedBy: request.requestedBy,
+      createdAt: request.createdAt,
+    })
+  }
+  return { request: result.event, created: result.created, existingOpen: false }
+}
+
+export async function writeLaunchReadinessSnapshot(
+  db: Firestore,
+  rawSnapshot: LaunchReadinessSnapshot
+): Promise<{ snapshot: LaunchReadinessSnapshot; created: boolean }> {
+  const snapshot = LaunchReadinessSnapshotSchema.parse(rawSnapshot)
+  const result = await writeAppendOnlyRefDoc(
+    db.collection(PA_COLLECTIONS.launchReadinessSnapshots).doc(snapshot.snapshotId),
+    PA_COLLECTIONS.launchReadinessSnapshots,
+    snapshot.snapshotId,
+    snapshot
+  )
+  return { snapshot: result.event, created: result.created }
+}
+
+export type WriteOutreachStopControlInput = {
+  scope: OutreachStopControlScope
+  scopeId?: string
+  paused: boolean
+  reason?: string
+  actor: MarketplaceActor
+  now: string
+  expiresAt?: string
+}
+
+export async function writeOutreachStopControl(
+  db: Firestore,
+  input: WriteOutreachStopControlInput
+): Promise<{
+  control: OutreachStopControl
+  previous: OutreachStopControl | null
+  changed: boolean
+  auditEventId: string
+}> {
+  const controlId = createOutreachStopControlId({ scope: input.scope, scopeId: input.scopeId })
+  const ref = db.collection(PA_COLLECTIONS.outreachStopControls).doc(controlId)
+  const auditRef = db
+    .collection(AUDIT_COLLECTION)
+    .doc(auditId("marketplace_outreach_stop_control", `${controlId}_${input.now}`))
+
+  return await db.runTransaction(async (tx) => {
+    const currentSnap = await tx.get(ref)
+    const previous = currentSnap.exists ? OutreachStopControlSchema.parse(currentSnap.data()) : null
+    const control = OutreachStopControlSchema.parse({
+      controlId,
+      scope: input.scope,
+      scopeId: input.scopeId,
+      paused: input.paused,
+      reason: input.reason,
+      actor: input.actor,
+      createdAt: previous?.createdAt ?? input.now,
+      updatedAt: input.now,
+      expiresAt: input.expiresAt,
+    })
+    const changed = !previous || stableJson(previous) !== stableJson(control)
+    tx.set(ref, firestorePayload(control as Record<string, unknown>), { merge: false })
+    tx.set(auditRef, {
+      id: auditRef.id,
+      action: "marketplace.outreach_stop_control.write",
+      controlId,
+      scope: input.scope,
+      scopeId: input.scopeId ?? null,
+      paused: control.paused,
+      changed,
+      actor: input.actor,
+      createdAt: input.now,
+    })
+    return {
+      control,
+      previous,
+      changed,
+      auditEventId: auditRef.id,
+    }
+  })
+}
+
+export async function readOutreachStopControl(
+  db: Firestore,
+  input: { scope: OutreachStopControlScope; scopeId?: string }
+): Promise<OutreachStopControl> {
+  const controlId = createOutreachStopControlId(input)
+  const snap = await db.collection(PA_COLLECTIONS.outreachStopControls).doc(controlId).get()
+  if (!snap.exists) {
+    return OutreachStopControlSchema.parse({
+      controlId,
+      scope: input.scope,
+      scopeId: input.scopeId,
+      paused: false,
+      actor: "system",
+      createdAt: "1970-01-01T00:00:00.000Z",
+    })
+  }
+  return OutreachStopControlSchema.parse(snap.data())
 }
 
 export async function writeEmployerVisibleProfile(

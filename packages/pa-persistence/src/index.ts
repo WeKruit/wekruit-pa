@@ -242,6 +242,7 @@ export {
   applyPassedCandidateSnapshot,
   markOutboundInviteDelivery,
   markOutboundInviteQueued,
+  readOutreachStopControl,
   rejectJobOpportunityDraft,
   writeCorrectionEvent,
   writeCandidateJobMatch,
@@ -251,7 +252,10 @@ export {
   writeFeedbackEvent,
   writeJobEnrichmentEvalFixture,
   writeJobOpportunityDraft,
+  writeLaunchReadinessSnapshot,
+  writeOutreachStopControl,
   writeOutboundInviteDecision,
+  writePrivacyRequest,
 } from "./marketplace.js"
 export type {
   ApproveJobOpportunityDraftInput,
@@ -263,6 +267,7 @@ export type {
   RejectJobOpportunityDraftInput,
   WriteCandidateJobMatchResult,
   WriteEvalArtifactForCorrectionInput,
+  WriteOutreachStopControlInput,
   WriteOutboundInviteDecisionResult,
 } from "./marketplace.js"
 

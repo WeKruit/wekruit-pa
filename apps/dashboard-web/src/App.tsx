@@ -33,6 +33,7 @@ import { MatchExplainerTest } from "./pages/MatchExplainerTest.js"
 import { CanonicalTags } from "./pages/CanonicalTags.js"
 import { QaEvaluator } from "./pages/QaEvaluator.js"
 import FlywheelEval from "./pages/FlywheelEval.js"
+import LaunchReadiness from "./pages/LaunchReadiness.js"
 // v1.7 Phase 70 (MATCHDEBUG-01..04) — admin live debugger for the V16 cascade
 // with score-weight sandbox sliders. Backed by paAdminMatchDebug callable.
 import { MatchDebug } from "./pages/MatchDebug.js"
@@ -227,6 +228,7 @@ export default function App() {
           <NavLink to="/admin/flags">Flags</NavLink>
           <NavLink to="/admin/canonical-tags">Canonical Tags</NavLink>
           <NavLink to="/admin/qa-evaluator">QA Evaluator</NavLink>
+          <NavLink to="/admin/launch-readiness">Launch Readiness</NavLink>
         </NavSection>
         <NavSection id="legacy" label="Legacy / advanced" defaultOpen={false} dim>
           <NavLink to="/admin/onboarding">Onboarding (legacy)</NavLink>
@@ -263,6 +265,7 @@ export default function App() {
           {/* v1.6 Phase 59 (DASH-01..03) — canonical-tags + QA evaluator. */}
           <Route path="/admin/canonical-tags" element={<CanonicalTags />} />
           <Route path="/admin/qa-evaluator" element={<QaEvaluator />} />
+          <Route path="/admin/launch-readiness" element={<LaunchReadiness />} />
           <Route path="/admin/handbook" element={<Handbook />} />
           <Route path="/admin/onboarding" element={<Onboarding />} />
           <Route

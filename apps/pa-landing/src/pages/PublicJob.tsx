@@ -14,12 +14,14 @@
  * Upload UI now lives directly on the job page instead of routing to a
  * separate /cv page. Single-page flow: see job → upload → tap iMessage.
  */
-import { useEffect, useMemo, useState } from "react"
-import { useParams } from "react-router-dom"
+import { useEffect, useId, useMemo, useState } from "react"
+import { Link, useParams } from "react-router-dom"
+import { onAuthStateChanged, type User } from "firebase/auth"
 import { doc, getDoc, setDoc } from "firebase/firestore"
 
 const CV_INGEST_URL = import.meta.env.VITE_CV_INGEST_URL ?? ""
-import { db } from "../lib/firebase.js"
+import { auth, db } from "../lib/firebase.js"
+import { CandidateShell } from "./CandidateLogin.js"
 
 interface PrescreenConfig {
   jobTitle?: string
@@ -31,10 +33,23 @@ interface PrescreenConfig {
 
 interface PaJobDoc {
   publicVisible?: boolean
+  jobTitle?: string
+  company?: string
   prescreenConfig?: PrescreenConfig
   descriptionMd?: string
   location?: string
+  salaryRange?: string
+  roleFunction?: string[]
+  industrySector?: string[]
+  requiredSkills?: string[]
+  seniorityLevel?: string
+  jobType?: string
 }
+
+type CandidateAuthState =
+  | { status: "loading" }
+  | { status: "signed_out" }
+  | { status: "signed_in"; user: User }
 
 // v1.9 P88 — same djb2 hash as apps/functions/src/sendblue/pool.ts so
 // candidate's pre-PII outbound first message lands on the SAME pool number
@@ -101,6 +116,10 @@ function hasCvOnFile(): boolean {
   return window.localStorage.getItem(HAS_CV_KEY) === "true"
 }
 
+function loginPathForJob(jobId: string): string {
+  return `/login?next=${encodeURIComponent(`/j/${jobId}`)}`
+}
+
 async function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const r = new FileReader()
@@ -124,37 +143,15 @@ function InlineCvSection({ jobId, requestedUserId, initialHasCv }: InlineCvSecti
   const [hasCv, setHasCv] = useState<boolean>(initialHasCv)
   if (hasCv) {
     return (
-      <p
-        style={{
-          marginTop: "1rem",
-          fontSize: "0.9em",
-          color: "#16643b",
-          fontWeight: 700,
-          background: "#e8f5ec",
-          padding: "0.75rem 1rem",
-          borderRadius: 12,
-          border: "1px solid #c6e6ce",
-        }}
-      >
-        ✓ We have your resume on file — tap{" "}
-        <span style={{ whiteSpace: "nowrap" }}>"Open in iMessage"</span> above to start.
+      <p className="public-job-cv-ready">
+        We have your resume on file. Tap <span>Open in iMessage</span> above to start.
       </p>
     )
   }
   return (
-    <div
-      style={{
-        marginTop: "1rem",
-        padding: "1rem",
-        background: "#fff",
-        border: "1px solid #e3dccd",
-        borderRadius: 18,
-      }}
-    >
-      <h3 style={{ marginTop: 0, marginBottom: "0.25rem", fontSize: "1rem" }}>
-        Have a resume? Upload it here (optional)
-      </h3>
-      <p style={{ margin: "0 0 0.5rem", color: "#5f665b", fontSize: "0.85em" }}>
+    <div className="public-job-card public-job-cv">
+      <h2>Resume</h2>
+      <p>
         PDF or DOCX, under 5 MB. We&rsquo;ll use it to tailor the pre-screen.
       </p>
       <InlineCvUpload
@@ -173,6 +170,7 @@ interface InlineCvUploadProps {
 }
 
 function InlineCvUpload({ jobId, requestedUserId, onUploaded }: InlineCvUploadProps) {
+  const fileInputId = useId()
   const [file, setFile] = useState<File | null>(null)
   const [status, setStatus] = useState<"idle" | "uploading" | "ok" | "err">("idle")
   const [errMsg, setErrMsg] = useState<string | null>(null)
@@ -229,41 +227,82 @@ function InlineCvUpload({ jobId, requestedUserId, onUploaded }: InlineCvUploadPr
   }
 
   return (
-    <form onSubmit={onSubmit} style={{ marginTop: "0.5rem" }}>
-      <div style={{ display: "flex", gap: "0.75rem", alignItems: "center", flexWrap: "wrap" }}>
+    <form onSubmit={onSubmit} className="public-job-upload">
+      <div>
+        <label className="public-job-file-button" htmlFor={fileInputId}>
+          Choose file
+        </label>
         <input
+          id={fileInputId}
+          className="public-job-file-input"
           type="file"
           accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
           onChange={(e) => setFile(e.target.files?.[0] ?? null)}
           disabled={status === "uploading"}
         />
+        <span className="public-job-file-name">{file?.name ?? "No file selected"}</span>
         <button
           type="submit"
           disabled={!file || status === "uploading"}
-          style={{
-            padding: "0.55rem 1.25rem",
-            background: file && status !== "uploading" ? "#2f6f4f" : "#cbd5e1",
-            color: "#fff7df",
-            borderRadius: 999,
-            border: "none",
-            fontWeight: 700,
-            cursor: file && status !== "uploading" ? "pointer" : "not-allowed",
-            whiteSpace: "nowrap",
-          }}
         >
           {status === "uploading" ? "Parsing resume…" : "Upload"}
         </button>
       </div>
       {status === "uploading" ? (
-        <p style={{ marginTop: "0.5rem", fontSize: "0.85em", color: "#7a6f5d" }}>
+        <p className="public-job-muted">
           Reading your CV — takes 10-30 seconds.
         </p>
       ) : null}
       {status === "err" && errMsg ? (
-        <p style={{ marginTop: "0.5rem", color: "#9c2b24", fontWeight: 700 }}>{errMsg}</p>
+        <p className="public-job-error">{errMsg}</p>
       ) : null}
     </form>
   )
+}
+
+function renderJobDescription(markdown: string, title: string, company: string): React.ReactNode[] {
+  const nodes: React.ReactNode[] = []
+  let bullets: string[] = []
+  const titleLower = title.toLowerCase()
+  const companyLower = company.toLowerCase()
+  const flushBullets = () => {
+    if (bullets.length === 0) return
+    const list = bullets
+    bullets = []
+    nodes.push(
+      <ul key={`list-${nodes.length}`}>
+        {list.map((item) => (
+          <li key={item}>{item.replace(/\*\*/g, "")}</li>
+        ))}
+      </ul>
+    )
+  }
+
+  for (const rawLine of markdown.split("\n")) {
+    const line = rawLine.trim()
+    if (!line) {
+      flushBullets()
+      continue
+    }
+    const cleanedLine = line.replace(/\*\*/g, "")
+    const lowerLine = cleanedLine.toLowerCase()
+    if (nodes.length === 0 && lowerLine.includes(titleLower) && lowerLine.includes(companyLower)) {
+      continue
+    }
+    if (line.startsWith("- ")) {
+      bullets.push(line.slice(2).trim())
+      continue
+    }
+    flushBullets()
+    const heading = line.match(/^\*\*(.+)\*\*$/)
+    if (heading) {
+      nodes.push(<h3 key={`heading-${nodes.length}`}>{heading[1]}</h3>)
+      continue
+    }
+    nodes.push(<p key={`p-${nodes.length}`}>{cleanedLine}</p>)
+  }
+  flushBullets()
+  return nodes
 }
 
 export default function PublicJob() {
@@ -273,8 +312,16 @@ export default function PublicJob() {
   const [job, setJob] = useState<PaJobDoc | null>(null)
   const [pool, setPool] = useState<PoolNumber[] | null>(null)
   const [smsClicked, setSmsClicked] = useState(false)
+  const [candidateAuth, setCandidateAuth] = useState<CandidateAuthState>({ status: "loading" })
 
   const requestedUserId = useMemo(() => (jobId ? getOrCreateRequestedUserId(jobId) : ""), [jobId])
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth(), (user) => {
+      setCandidateAuth(user ? { status: "signed_in", user } : { status: "signed_out" })
+    })
+    return unsubscribe
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -337,9 +384,9 @@ export default function PublicJob() {
   if (err || !job) return <Page><h1>404</h1><p>{err ?? "Not found"}</p></Page>
 
   const cfg = job.prescreenConfig ?? {}
-  const jobTitle = cfg.jobTitle ?? "Open role"
-  const company = cfg.company ?? "Confidential employer"
-  const salary = cfg.level1Reveal?.salaryRange
+  const jobTitle = job.jobTitle ?? cfg.jobTitle ?? "Open role"
+  const company = job.company ?? cfg.company ?? "Confidential employer"
+  const salary = job.salaryRange ?? cfg.level1Reveal?.salaryRange
 
   const smsBody = `WeKruit_${jobId}_${requestedUserId}_Job`
   // v1.9 P88 — pool hash-by-requestedUserId; mirrors server-side selector
@@ -355,116 +402,391 @@ export default function PublicJob() {
 
   return (
     <Page>
-      <h1 style={{ marginBottom: "0.25rem" }}>{jobTitle}</h1>
-      <p style={{ color: "#5f665b", marginTop: 0 }}>{company}{job.location ? ` · ${job.location}` : ""}</p>
-      {salary ? <p style={{ color: "#16643b", fontWeight: 700 }}>{salary}</p> : null}
-      {job.descriptionMd ? (
-        <article
-          style={{
-            background: "#fffaf0",
-            padding: "1rem",
-            border: "1px solid #e3dccd",
-            borderRadius: 18,
-            margin: "1rem 0",
-            whiteSpace: "pre-wrap",
-            fontSize: "0.95rem",
-            lineHeight: 1.5,
-          }}
-        >
-          {job.descriptionMd}
-        </article>
-      ) : null}
-      <div
-        style={{
-          display: "flex",
-          gap: "1.5rem",
-          alignItems: "center",
-          flexWrap: "wrap",
-          padding: "1rem",
-          background: "#fff",
-          border: "1px solid #e3dccd",
-          borderRadius: 18,
-        }}
-      >
-        <div>
-          <h3 style={{ marginTop: 0 }}>Start the 5-minute screen</h3>
-          <p style={{ margin: "0.25rem 0", color: "#5f665b" }}>
-            Reply to WeKruit on iMessage. We&rsquo;ll ask a few quick role-fit questions and let you know if you&rsquo;ve passed the initial screen.
-          </p>
-          {smsHref ? (
-            <a
-              href={smsHref}
-              onClick={() => setSmsClicked(true)}
-              style={{
-                display: "inline-block",
-                marginTop: "0.5rem",
-                padding: "0.75rem 1.25rem",
-                background: "#2f6f4f",
-                color: "#fff7df",
-                borderRadius: 999,
-                textDecoration: "none",
-                fontWeight: 700,
-              }}
-            >
-              Open in iMessage →
-            </a>
-          ) : (
-            <p style={{ color: "#9c2b24", fontWeight: 700, marginTop: "0.5rem" }}>
-              WeKruit messaging temporarily unavailable. Please check back shortly.
-            </p>
-          )}
-          {smsClicked ? (
-            <p
-              style={{
-                margin: "0.75rem 0 0",
-                padding: "0.75rem 1rem",
-                border: "1px solid #c6e6ce",
-                borderRadius: 12,
-                background: "#e8f5ec",
-                color: "#24543c",
-                fontWeight: 700,
-              }}
-            >
-              Continue in iMessage to answer Claire. Sign in to see your status after you start.
-            </p>
-          ) : null}
-        </div>
-        {qrSrc ? (
-          <div style={{ textAlign: "center" }}>
-            <img src={qrSrc} width={180} height={180} alt="QR code to start pre-screen" />
-            <p style={{ margin: "0.25rem 0", fontSize: "0.8em", color: "#7a6f5d" }}>
-              Scan on iPhone
-            </p>
+      <main className="public-job-shell">
+        <Link className="public-job-back" to="/">Back to jobs</Link>
+        <section className="public-job-hero">
+          <div className="public-job-kicker-row">
+            <p className="candidate-kicker">Open role</p>
+            <span className="public-job-collab-badge">WeKruit collaborated</span>
           </div>
-        ) : null}
-      </div>
-      {/* v1.9 hotfix 2026-05-13 — inline upload UI (no /cv route). */}
-      <InlineCvSection
-        jobId={jobId!}
-        requestedUserId={requestedUserId}
-        initialHasCv={hasCvOnFile()}
-      />
-      {sendNumber ? (
-        <p style={{ fontSize: "0.75em", color: "#a59781", marginTop: "2rem" }}>
-          By starting, you agree to our{" "}
-          <a href="/legal">privacy &amp; terms</a>. WeKruit will text you from {sendNumber}.
-        </p>
-      ) : (
-        <p style={{ fontSize: "0.75em", color: "#a59781", marginTop: "2rem" }}>
-          By starting, you agree to our <a href="/legal">privacy &amp; terms</a>.
-        </p>
-      )}
+          <h1>{jobTitle}</h1>
+          <p>{company}{job.location ? ` · ${job.location}` : ""}</p>
+          <div className="public-job-facts">
+            {salary ? <span>{salary}</span> : null}
+            {job.jobType ? <span>{job.jobType}</span> : null}
+            {job.seniorityLevel ? <span>{job.seniorityLevel}</span> : null}
+          </div>
+        </section>
+
+        <section className="public-job-layout">
+          <div className="public-job-main">
+            {job.descriptionMd ? (
+              <article className="public-job-card public-job-description">
+                <h2>Role details</h2>
+                <div>{renderJobDescription(job.descriptionMd, jobTitle, company)}</div>
+              </article>
+            ) : null}
+            <JobTags job={job} />
+          </div>
+
+          <aside className="public-job-side">
+            <div className="public-job-card public-job-start">
+              <h2>Start the 5-minute screen</h2>
+              <p>
+                Sign in first so this interview attaches to your WeKruit candidate profile, then text Claire on iMessage.
+              </p>
+              {candidateAuth.status === "loading" ? (
+                <p className="public-job-muted">Checking your sign-in status...</p>
+              ) : null}
+              {candidateAuth.status === "signed_out" ? (
+                <div className="public-job-login-required">
+                  <Link className="candidate-primary-link" to={loginPathForJob(jobId!)}>
+                    Sign in to start
+                  </Link>
+                  <p>After sign in, we&rsquo;ll bring you back here to open iMessage.</p>
+                </div>
+              ) : null}
+              {candidateAuth.status === "signed_in" && smsHref ? (
+                <a className="candidate-primary-link" href={smsHref} onClick={() => setSmsClicked(true)}>
+                  Open in iMessage
+                </a>
+              ) : null}
+              {candidateAuth.status === "signed_in" && !smsHref ? (
+                <p className="public-job-error">
+                  WeKruit messaging temporarily unavailable. Please check back shortly.
+                </p>
+              ) : null}
+              {candidateAuth.status === "signed_in" && smsClicked ? (
+                <p className="public-job-success">
+                  Continue in iMessage to answer Claire. Your job status will stay attached to this profile.
+                </p>
+              ) : null}
+              {candidateAuth.status === "signed_in" && qrSrc ? (
+                <div className="public-job-qr">
+                  <img src={qrSrc} width={180} height={180} alt="QR code to start pre-screen" />
+                  <p>Scan on iPhone</p>
+                </div>
+              ) : null}
+            </div>
+            <InlineCvSection
+              jobId={jobId!}
+              requestedUserId={requestedUserId}
+              initialHasCv={hasCvOnFile()}
+            />
+            {sendNumber ? (
+              <p className="public-job-terms">
+                By starting, you agree to our{" "}
+                <a href="/legal">privacy &amp; terms</a>. WeKruit will text you from {sendNumber}.
+              </p>
+            ) : (
+              <p className="public-job-terms">
+                By starting, you agree to our <a href="/legal">privacy &amp; terms</a>.
+              </p>
+            )}
+          </aside>
+        </section>
+      </main>
     </Page>
+  )
+}
+
+function JobTags({ job }: { job: PaJobDoc }) {
+  const groups = [
+    { label: "Roles", values: job.roleFunction ?? [] },
+    { label: "Industries", values: job.industrySector ?? [] },
+    { label: "Skills", values: job.requiredSkills ?? [] },
+  ].filter((group) => group.values.length > 0)
+  if (groups.length === 0) return null
+  return (
+    <section className="public-job-card public-job-tags">
+      <h2>What this role is looking for</h2>
+      {groups.map((group) => (
+        <div key={group.label}>
+          <h3>{group.label}</h3>
+          <p>
+            {group.values.map((value) => (
+              <span key={value}>{value}</span>
+            ))}
+          </p>
+        </div>
+      ))}
+    </section>
   )
 }
 
 function Page({ children }: { children: React.ReactNode }) {
   return (
-    <div style={{ maxWidth: "640px", margin: "0 auto", padding: "2rem 1.25rem" }}>
-      <header style={{ marginBottom: "1.5rem" }}>
-        <strong style={{ fontSize: "1.1rem", letterSpacing: "-0.02em" }}>WeKruit</strong>
-      </header>
+    <CandidateShell wide>
+      <style>{PUBLIC_JOB_STYLES}</style>
       {children}
-    </div>
+    </CandidateShell>
   )
 }
+
+const PUBLIC_JOB_STYLES = `
+.public-job-shell {
+  max-width: 1040px;
+  margin: 0 auto;
+  display: grid;
+  gap: 18px;
+}
+.public-job-back {
+  justify-self: flex-start;
+  color: #46624c;
+  font-weight: 800;
+  text-decoration: none;
+}
+.public-job-hero {
+  max-width: 780px;
+}
+.public-job-kicker-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.public-job-kicker-row .candidate-kicker {
+  margin: 0;
+}
+.public-job-collab-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 8px;
+  border: 1px solid #c6e6ce;
+  border-radius: 8px;
+  background: #e8f5ec;
+  color: #24543c;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1;
+  white-space: nowrap;
+}
+.public-job-hero h1 {
+  margin: 0;
+  font-size: clamp(36px, 6vw, 58px);
+  line-height: 1;
+  letter-spacing: 0;
+}
+.public-job-hero p {
+  margin: 12px 0 0;
+  color: #364233;
+  font-size: 18px;
+  line-height: 1.45;
+}
+.public-job-facts {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+}
+.public-job-facts span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: 8px;
+  background: #edf5ee;
+  color: #24543c;
+  font-weight: 900;
+}
+.public-job-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
+  gap: 16px;
+  align-items: start;
+}
+.public-job-main,
+.public-job-side {
+  display: grid;
+  gap: 12px;
+}
+.public-job-card {
+  border: 1px solid #ddd3c2;
+  border-radius: 8px;
+  background: #fffdf8;
+  padding: 18px;
+}
+.public-job-card h2 {
+  margin: 0 0 12px;
+  font-size: 21px;
+  letter-spacing: 0;
+}
+.public-job-description div {
+  color: #364233;
+  font-size: 15px;
+  line-height: 1.58;
+}
+.public-job-description h3 {
+  margin: 18px 0 8px;
+  font-size: 17px;
+  letter-spacing: 0;
+  color: #18211a;
+}
+.public-job-description h3:first-child {
+  margin-top: 0;
+}
+.public-job-description p,
+.public-job-description ul {
+  margin: 0 0 12px;
+}
+.public-job-description ul {
+  padding-left: 20px;
+}
+.public-job-description li {
+  margin: 6px 0;
+}
+.public-job-start {
+  gap: 12px;
+  display: grid;
+}
+.public-job-start p {
+  margin: 0;
+  color: #364233;
+  line-height: 1.5;
+}
+.public-job-login-required {
+  display: grid;
+  gap: 10px;
+}
+.public-job-login-required p,
+.public-job-muted {
+  margin: 0;
+  color: #5f665b;
+  line-height: 1.45;
+}
+.public-job-cv {
+  display: grid;
+  gap: 10px;
+}
+.public-job-cv p {
+  margin: 0;
+  color: #364233;
+  line-height: 1.45;
+}
+.public-job-cv-ready {
+  margin: 0;
+  padding: 12px;
+  border: 1px solid #c6e6ce;
+  border-radius: 8px;
+  background: #e8f5ec;
+  color: #24543c;
+  font-weight: 800;
+}
+.public-job-cv-ready span {
+  white-space: nowrap;
+}
+.public-job-upload {
+  display: grid;
+  gap: 8px;
+}
+.public-job-upload > div {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.public-job-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.public-job-file-button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid #cfc3ae;
+  border-radius: 8px;
+  background: #fffdf8;
+  color: #2f6f4f;
+  font-weight: 800;
+  cursor: pointer;
+}
+.public-job-file-name {
+  min-width: 0;
+  max-width: 100%;
+  color: #5f665b;
+  overflow-wrap: anywhere;
+}
+.public-job-upload button {
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid #2f6f4f;
+  border-radius: 8px;
+  background: #2f6f4f;
+  color: #fffdf8;
+  font-weight: 800;
+  cursor: pointer;
+}
+.public-job-upload button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.public-job-success {
+  padding: 12px;
+  border: 1px solid #c6e6ce;
+  border-radius: 8px;
+  background: #e8f5ec;
+  color: #24543c !important;
+  font-weight: 800;
+}
+.public-job-error {
+  color: #9c2b24 !important;
+  font-weight: 800;
+}
+.public-job-qr {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  padding-top: 4px;
+}
+.public-job-qr img {
+  width: 180px;
+  height: 180px;
+}
+.public-job-qr p,
+.public-job-terms,
+.public-job-muted {
+  color: #7a6f5d;
+  font-size: 13px;
+}
+.public-job-tags {
+  display: grid;
+  gap: 12px;
+}
+.public-job-tags h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+  letter-spacing: 0;
+}
+.public-job-tags p {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 0;
+}
+.public-job-tags span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 9px;
+  border-radius: 8px;
+  background: #edf5ee;
+  color: #24543c;
+  font-size: 12px;
+  font-weight: 800;
+}
+.public-job-terms {
+  margin: 0;
+  line-height: 1.45;
+}
+@media (max-width: 860px) {
+  .public-job-layout {
+    grid-template-columns: 1fr;
+  }
+}
+`

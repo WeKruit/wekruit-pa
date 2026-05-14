@@ -1,0 +1,57 @@
+{
+  "ok": true,
+  "checkedAt": "2026-05-14T02:28:31.369Z",
+  "noLiveSendApproved": true,
+  "noDestructivePrivacyApproved": true,
+  "before": {
+    "pa-outbound": 190,
+    "pa-privacy-requests": 0,
+    "pa-launch-readiness-snapshots": 0,
+    "pa-outreach-stop-controls": 0
+  },
+  "after": {
+    "pa-outbound": 190,
+    "pa-privacy-requests": 0,
+    "pa-launch-readiness-snapshots": 0,
+    "pa-outreach-stop-controls": 0
+  },
+  "routes": [
+    {
+      "url": "https://candidate.wekruit.com/",
+      "status": 200,
+      "bodyPrefix": "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"UTF-8\" />\n    <meta http-equiv=\"Cache-Control\" content=\"no-cache, no-store, must-revalidate\" />\n   "
+    },
+    {
+      "url": "https://candidate.wekruit.com/j/s9-smoke-route-only",
+      "status": 200,
+      "bodyPrefix": "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"UTF-8\" />\n    <meta http-equiv=\"Cache-Control\" content=\"no-cache, no-store, must-revalidate\" />\n   "
+    },
+    {
+      "url": "https://candidate.wekruit.com/me/profile",
+      "status": 200,
+      "bodyPrefix": "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"UTF-8\" />\n    <meta http-equiv=\"Cache-Control\" content=\"no-cache, no-store, must-revalidate\" />\n   "
+    },
+    {
+      "url": "https://wekruit-pa.web.app/admin/launch-readiness",
+      "status": 200,
+      "bodyPrefix": "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"UTF-8\" />\n    <meta\n      http-equiv=\"Cache-Control\"\n      content=\"no-cache, no-store, must-revali"
+    }
+  ],
+  "callables": [
+    {
+      "url": "https://us-central1-wekruit-5f89b.cloudfunctions.net/paCandidatePrivacyRequest",
+      "status": 401,
+      "bodyPrefix": "{\"error\":{\"message\":\"Sign in before submitting privacy requests.\",\"status\":\"UNAUTHENTICATED\"}}"
+    },
+    {
+      "url": "https://us-central1-wekruit-5f89b.cloudfunctions.net/paAdminLaunchReadinessSnapshot",
+      "status": 403,
+      "bodyPrefix": "{\"error\":{\"message\":\"admin only\",\"status\":\"PERMISSION_DENIED\"}}"
+    },
+    {
+      "url": "https://us-central1-wekruit-5f89b.cloudfunctions.net/paAdminOutreachStopControl",
+      "status": 403,
+      "bodyPrefix": "{\"error\":{\"message\":\"admin only\",\"status\":\"PERMISSION_DENIED\"}}"
+    }
+  ]
+}

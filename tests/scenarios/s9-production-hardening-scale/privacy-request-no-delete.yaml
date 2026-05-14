@@ -1,0 +1,14 @@
+id: s9-privacy-request-no-delete
+mode: dry_run
+surface: candidate_profile
+route: https://candidate.wekruit.com/me/profile
+action: submit_privacy_request
+request_kind: delete
+expected:
+  writes:
+    - collection: pa-privacy-requests
+      status: submitted
+  forbidden:
+    - destructive_profile_delete
+    - export_file_materialization
+    - provider_send

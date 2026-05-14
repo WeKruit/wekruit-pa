@@ -93,5 +93,6 @@ Primary implementation files:
 
 ## Next Sprint Trigger
 
-S3 can begin only after S2 lands on `main`, is deployed, and the identity claim
-and merge acceptance checks pass.
+S2 landed on `main` as
+`0a8b794 feat(v2): add candidate identity claim layer (#25)`. S3 has already
+landed after S2.

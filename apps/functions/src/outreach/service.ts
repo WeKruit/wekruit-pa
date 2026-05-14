@@ -67,6 +67,10 @@ export type PlanJobOutreachDeps = {
     queuedAt: string
     actor: "system"
   }) => Promise<unknown>
+  readOutreachStopControl?: (input: { scope: "global" }) => Promise<{
+    paused: boolean
+    reason?: string
+  }>
 }
 
 export type PlanJobOutreachRow = {
@@ -197,12 +201,38 @@ function blockForCapacityReservation(
   }
 }
 
+function blockForOutreachStopControl(
+  decision: OutreachPolicyDecision,
+  reason: string,
+  signal = "global_outreach_stop"
+): OutreachPolicyDecision {
+  return {
+    ...decision,
+    queueEligible: false,
+    allowQueue: false,
+    policyDecision: "blocked",
+    approvalState: "rejected",
+    status: "blocked",
+    decisionReason: reason,
+    blockedSignals: [...new Set([...decision.blockedSignals, signal])],
+  }
+}
+
 export async function planJobOutreach(
   input: PlanJobOutreachInput,
   deps: PlanJobOutreachDeps = {}
 ): Promise<PlanJobOutreachResult> {
   const rows: PlanJobOutreachRow[] = []
   const summary = emptySummary()
+  let globalStopControl: { paused: boolean; reason?: string } | null = null
+  let globalStopControlError: string | null = null
+  if (!input.dryRun && deps.readOutreachStopControl) {
+    try {
+      globalStopControl = await deps.readOutreachStopControl({ scope: "global" })
+    } catch (err) {
+      globalStopControlError = err instanceof Error ? err.message : String(err)
+    }
+  }
 
   for (const match of input.matches) {
     const candidate = input.candidatesById[match.candidateId]
@@ -224,7 +254,20 @@ export async function planJobOutreach(
       batchSize: input.batchSize ?? input.matches.length,
     })
     let finalDecision = decision
-    if (decision.allowQueue) {
+    if (decision.allowQueue && globalStopControlError) {
+      finalDecision = blockForOutreachStopControl(
+        decision,
+        "Global outreach stop control check failed",
+        "outreach_stop_control_check_failed"
+      )
+    } else if (decision.allowQueue && globalStopControl?.paused) {
+      finalDecision = blockForOutreachStopControl(
+        decision,
+        globalStopControl.reason
+          ? `Global marketplace outreach paused: ${globalStopControl.reason}`
+          : "Global marketplace outreach paused"
+      )
+    } else if (decision.allowQueue) {
       if (!deps.reserveCapacity) throw new Error("reserveCapacity dependency required")
       if (!capacity.ok) throw new Error(`capacity_not_reservable:${capacity.reason}`)
       const reservation = await deps.reserveCapacity({

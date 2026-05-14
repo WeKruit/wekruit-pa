@@ -1,0 +1,17 @@
+id: s9-launch-readiness-route-split
+mode: dry_run
+candidate_hosting:
+  allowed:
+    - https://candidate.wekruit.com
+    - https://pa.wekruit.com
+    - https://wekruit-pa-landing.web.app
+  forbidden:
+    - https://wekruit-pa.web.app/j/
+admin_hosting:
+  allowed:
+    - https://wekruit-pa.web.app/admin/launch-readiness
+  forbidden:
+    - https://candidate.wekruit.com/admin
+expected:
+  readiness_route: /admin/launch-readiness
+  candidate_job_route: /j/:jobId

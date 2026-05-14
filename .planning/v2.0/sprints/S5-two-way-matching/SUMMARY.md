@@ -1,6 +1,6 @@
 # S5 Summary
 
-**Status:** Deployed and smoke-verified.
+**Status:** Landed, deployed, and smoke-verified.
 **Date:** 2026-05-13.
 
 ## Current State
@@ -31,4 +31,5 @@
 
 ## Next Gate
 
-Open a PR from `codex/v2-S5-two-way-matching` after reviewing the diff.
+S5 landed on `main` as
+`16705a5 feat(v2): add S5 two-way matching`. S6 has already landed after S5.
