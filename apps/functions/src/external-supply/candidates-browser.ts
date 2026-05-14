@@ -154,14 +154,77 @@ export async function runListBatchCandidates(
     .limit(500)
     .get()
 
+  // 1. Bulk identity-resolution lookup — replace per-row N+1 `where externalRecordId ==`
+  //    with one `where in (...)` chunked at 10 (Firestore limit). 49 rows used
+  //    to fire 49 queries + 49 evaluations + filled memory; now 5 + 1 = 6.
+  const recordIds = recordsSnap.docs.map((d) => {
+    const r = d.data() as CandidateRecordDoc
+    return r.recordId ?? d.id
+  })
+  const candidateIdByRecord = new Map<string, string>()
+  // Records may already carry `resolvedCandidateId` — short-circuit before
+  // the network call.
+  const recordsNeedingResolve: string[] = []
+  for (let i = 0; i < recordsSnap.docs.length; i += 1) {
+    const r = recordsSnap.docs[i]!.data() as CandidateRecordDoc
+    const recordId = recordIds[i]!
+    if (r.resolvedCandidateId) {
+      candidateIdByRecord.set(recordId, r.resolvedCandidateId)
+    } else {
+      recordsNeedingResolve.push(recordId)
+    }
+  }
+  for (let i = 0; i < recordsNeedingResolve.length; i += 10) {
+    const chunk = recordsNeedingResolve.slice(i, i + 10)
+    const snap = await db
+      .collection(PA_COLLECTIONS.candidateSourceLinks)
+      .where("externalRecordId", "in", chunk)
+      .get()
+      .catch(() => null)
+    if (!snap) continue
+    for (const d of snap.docs) {
+      const data = d.data() as { candidateId?: string; externalRecordId?: string }
+      if (data.candidateId && data.externalRecordId) {
+        candidateIdByRecord.set(data.externalRecordId, data.candidateId)
+      }
+    }
+  }
+
+  // 2. Bulk evaluation lookup — `where candidateId in (...) and jobId == X`
+  //    in chunks of 10, only when the batch has a bound job.
+  const evaluationByCandidate = new Map<string, EvaluationDoc>()
+  if (batchData.jobId && candidateIdByRecord.size > 0) {
+    const ids = [...new Set(candidateIdByRecord.values())]
+    for (let i = 0; i < ids.length; i += 10) {
+      const chunk = ids.slice(i, i + 10)
+      const snap = await db
+        .collection(PA_COLLECTIONS.candidateCompanyJobEvaluations)
+        .where("candidateId", "in", chunk)
+        .where("jobId", "==", batchData.jobId)
+        .get()
+        .catch(() => null)
+      if (!snap) continue
+      // Pick most recent per candidate.
+      for (const d of snap.docs) {
+        const data = d.data() as EvaluationDoc & { candidateId?: string; createdAt?: string }
+        if (!data.candidateId) continue
+        const existing = evaluationByCandidate.get(data.candidateId) as
+          | (EvaluationDoc & { createdAt?: string })
+          | undefined
+        if (!existing || (data.createdAt ?? "") > (existing.createdAt ?? "")) {
+          evaluationByCandidate.set(data.candidateId, data)
+        }
+      }
+    }
+  }
+
   const rows: BatchCandidateRow[] = []
-  for (const doc of recordsSnap.docs) {
+  for (let i = 0; i < recordsSnap.docs.length; i += 1) {
+    const doc = recordsSnap.docs[i]!
     const r = doc.data() as CandidateRecordDoc
-    const recordId = r.recordId ?? doc.id
-    const candidateId = await loadResolvedCandidateId(db, recordId, r)
-    const evaluation = candidateId
-      ? await loadLatestEvaluationForCandidate(db, candidateId, batchData.jobId)
-      : null
+    const recordId = recordIds[i]!
+    const candidateId = candidateIdByRecord.get(recordId)
+    const evaluation = candidateId ? evaluationByCandidate.get(candidateId) ?? null : null
     const row: BatchCandidateRow = {
       recordId,
       batchId,
@@ -214,7 +277,10 @@ export async function runListBatchCandidates(
 export const paExternalSupplyListBatchCandidates = onCall(
   {
     region: "us-central1",
-    memory: "256MiB",
+    // 512 MiB — 256 OOMed on a 49-row batch with rubric blobs + per-row joins.
+    // Combined with the N+1 → bulk `where in` refactor below 512 is safe up to
+    // the 500-record limit() cap.
+    memory: "512MiB",
     timeoutSeconds: 60,
   },
   async (req): Promise<ListBatchCandidatesResult> => {
