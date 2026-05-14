@@ -413,11 +413,12 @@ export default function PublicJob() {
     )
   }
 
+  // Canonical pa-jobs shape (normalize-pa-jobs.ts) — display reads
+  // top-level fields only; prescreenConfig keeps the screening salary range.
   const cfg = job.prescreenConfig ?? {}
-  const jobTitle = cfg.jobTitle ?? job.title ?? "Open role"
-  const company =
-    cfg.company ?? job.companyName ?? resolvedCompanyName ?? "Confidential employer"
-  const location = job.location ?? job.rawLocation ?? cfg.region
+  const jobTitle = job.title ?? cfg.jobTitle ?? "Open role"
+  const company = job.companyName ?? resolvedCompanyName ?? "Confidential employer"
+  const location = job.location ?? cfg.region
   const salary = cfg.level1Reveal?.salaryRange
   const sendNumber = pickPoolNumber(pool, requestedUserId)
   const smsBody = `WeKruit_${jobId}_${requestedUserId}_Job`

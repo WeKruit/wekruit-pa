@@ -1,30 +1,26 @@
 import { useEffect, useState } from "react"
 import { Link } from "react-router-dom"
-import { collection, doc, getDoc, getDocs, limit, query, where } from "firebase/firestore"
+import { collection, getDocs, limit, query, where } from "firebase/firestore"
 import { db } from "../lib/firebase.js"
 import { CandidateShell } from "./CandidateLogin.js"
 
+/**
+ * Canonical pa-jobs shape (post-normalize-pa-jobs.ts). Every job in
+ * pa-jobs carries these top-level fields. `prescreenConfig` only
+ * provides the screening-flow salary range and remains optional.
+ */
 interface PublicJobListDoc {
   publicVisible?: boolean
-  /** v2.4 (2026-05-14): explicit collaboration flag — drives the "WeKruit
-   *  collaborated" badge. Inferred-from-publicVisible is forbidden per
-   *  the job-lifecycle contract. */
   wekruitCollaborationStatus?: "collaborated" | "not_collaborated"
-  /** Top-level title — set on rain / external-supply jobs that don't use prescreenConfig. */
   title?: string
   companyId?: string
   companyName?: string
-  rawLocation?: string
-  prescreenConfig?: {
-    jobTitle?: string
-    company?: string
-    jobType?: string
-    region?: string
-    level1Reveal?: {
-      salaryRange?: string
-    }
-  }
   location?: string
+  jobType?: string
+  prescreenConfig?: {
+    level1Reveal?: { salaryRange?: string }
+    jobType?: string
+  }
 }
 
 interface PublicJobListItem {
@@ -49,48 +45,22 @@ export default function Landing() {
     let cancelled = false
     void (async () => {
       try {
-        const snap = await getDocs(query(collection(db(), "pa-jobs"), where("publicVisible", "==", true), limit(48)))
-        // Resolve company display name: prescreenConfig.company → top-level
-        // companyName → pa-companies/{companyId}.name lookup → "Confidential
-        // employer" fallback. Cache pa-companies fetches across rows.
-        const docs = snap.docs.map((d) => ({ id: d.id, data: d.data() as PublicJobListDoc }))
-        const companyIds = Array.from(
-          new Set(
-            docs
-              .filter((d) => !d.data.prescreenConfig?.company && !d.data.companyName && d.data.companyId)
-              .map((d) => d.data.companyId!),
-          ),
+        const snap = await getDocs(
+          query(collection(db(), "pa-jobs"), where("publicVisible", "==", true), limit(48)),
         )
-        const companyNameById = new Map<string, string>()
-        await Promise.all(
-          companyIds.map(async (cid) => {
-            try {
-              const cs = await getDoc(doc(db(), "pa-companies", cid))
-              if (cs.exists()) {
-                const cd = cs.data() as { name?: string }
-                if (typeof cd.name === "string") companyNameById.set(cid, cd.name)
-              }
-            } catch {
-              // ignore — falls through to fallback
-            }
-          }),
-        )
-        const jobs = docs
-          .map(({ id, data }) => {
-            const cfg = data.prescreenConfig ?? {}
-            const title = cfg.jobTitle ?? data.title ?? "Open role"
-            const companyName =
-              cfg.company ??
-              data.companyName ??
-              (data.companyId ? companyNameById.get(data.companyId) : undefined) ??
-              "Confidential employer"
+        // Canonical pa-jobs shape (normalize-pa-jobs.ts seeded denormalized
+        // companyName + top-level title/location/jobType). Display reads
+        // only top-level fields now — no prescreenConfig fallback.
+        const jobs: PublicJobListItem[] = snap.docs
+          .map((docSnap) => {
+            const data = docSnap.data() as PublicJobListDoc
             return {
-              id,
-              title,
-              company: companyName,
-              location: data.location ?? data.rawLocation ?? cfg.region,
-              salary: cfg.level1Reveal?.salaryRange,
-              jobType: cfg.jobType,
+              id: docSnap.id,
+              title: data.title ?? "Open role",
+              company: data.companyName ?? "Confidential employer",
+              location: data.location,
+              salary: data.prescreenConfig?.level1Reveal?.salaryRange,
+              jobType: data.jobType ?? data.prescreenConfig?.jobType,
               collaborated: data.wekruitCollaborationStatus === "collaborated",
             }
           })
