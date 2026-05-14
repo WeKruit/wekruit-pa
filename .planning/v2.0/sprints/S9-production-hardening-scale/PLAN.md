@@ -138,6 +138,57 @@ Before implementation, collect `AGENT_PLAN` outputs from A-E and append them to
 `EXECUTOR-PLANS.md`. Implementation must not start until an integration note is
 added here.
 
+## 9.1 Integration Note
+
+1. File write scopes are disjoint.
+   - A owns `packages/core-types/src/**` and `packages/pa-persistence/src/**`.
+   - B owns S9 function modules, outreach/sendblue stop-gate changes, focused
+     function tests, and `apps/functions/src/index.ts`.
+   - C owns admin launch readiness page/client/tests and minimal
+     `apps/dashboard-web/src/App.tsx` route/nav wiring.
+   - D owns landing candidate privacy request wrapper/UI/tests.
+   - E owns S9 eval/scenario/static-guard files and artifacts.
+2. Shared files are sequenced.
+   - A lands contracts/exports first.
+   - B consumes A contracts and owns callable/export shape.
+   - C/D consume B callable names and result contracts.
+   - E scans and tests final A-D surfaces.
+3. Data contracts are consistent.
+   - S9 adds first-class `PrivacyRequest`, `LaunchReadinessSnapshot`, and
+     `OutreachStopControl` contracts.
+   - Privacy `export`, `delete`, and `stop_outreach` are request-only actions.
+     No export materialization or destructive delete fulfillment is in scope.
+   - Duplicate open privacy requests dedupe by `candidateId + kind`; resolved
+     or rejected requests do not block later new requests.
+   - Stop scopes are `global` and `outreach_batch`. The global gate is required
+     for the S9 cut; batch scope is represented and checked when a batch id is
+     available.
+4. Backend primitives have UI/operator state.
+   - `paAdminLaunchReadinessSnapshot` feeds `/admin/launch-readiness`.
+   - `paAdminOutreachStopControl` exposes current stop state and audited
+     updates to the admin surface.
+   - `paCandidatePrivacyRequest` feeds the admin privacy request queue.
+5. LLM behavior has eval/trace coverage.
+   - S9 introduces no new LLM-owned state transition. Evals are static/dry-run
+     and count/safety oriented.
+6. HITL edits produce flywheel/audit data.
+   - Privacy requests are HITL queue records.
+   - Stop-control changes write auditable before/after state.
+7. Product invariants are preserved.
+   - No broad employer browsing, no live outbound, no destructive delete,
+     no raw PII readiness artifacts, no candidate route on admin hosting.
+   - Stop-control delivery gate applies to marketplace outreach rows identified
+     by `outreach_idempotency_` keys so transactional candidate/interview
+     messages are not accidentally blocked.
+   - Missing/malformed stop-control config defaults to unpaused after schema
+     defaulting; Firestore read errors fail closed.
+8. Execution wave order.
+   - Wave A: A contracts/persistence.
+   - Wave B: B callables and stop gates.
+   - Wave C: C admin UI and D candidate UI.
+   - Wave D: E eval/static/scenario harness and regression subset.
+   - Wave E: docs, deploy, live no-contact smoke, PR, merge.
+
 ## 10. Milestones
 
 1. Create S9 docs and executor scopes.
@@ -224,11 +275,21 @@ Minimum expected commands:
   `90aaf29`.
 - Initial context, plan, acceptance ledger, executor plan ledger, and artifacts
   directory created.
+- Executor A/B plans collected with subagents; C/D/E plans integrated locally
+  from existing code patterns.
+- Integration note written; Wave A can begin.
 
 ## 17. Decision Log
 
 - Start S9 with non-destructive production readiness. Actual delete/export
   fulfillment and live outbound load smoke are approval-gated.
+- Duplicate privacy requests dedupe while open by `candidateId + kind`.
+- Stop controls cover global and outreach-batch scopes; global is mandatory for
+  S9 launch readiness.
+- S9 stop controls apply to marketplace outreach, not unrelated transactional
+  candidate messages.
+- Explicit paused stop-control state fails closed; read errors fail closed;
+  absent/malformed config is parsed through defaults as unpaused.
 
 ## 18. Surprises And Discoveries
 
