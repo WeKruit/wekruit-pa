@@ -16,6 +16,7 @@ import {
   CandidateSelfProfileSchema,
   CorrectionEventSchema,
   EmployerVisibleProfileSchema,
+  EvalArtifactSchema,
   FeedbackEventSchema,
   JobEnrichmentEvalFixtureSchema,
   JobOpportunityDraftSchema,
@@ -36,6 +37,7 @@ import {
   createBulkResumeItemId,
   createBulkResumeItemIdempotencyKey,
   createEmployerVisibleProfileId,
+  createEvalArtifactId,
   createJobEnrichmentEvalFixtureId,
   createJobEnrichmentDraftId,
   createJobOpportunityDraftId,
@@ -202,12 +204,56 @@ test("marketplace document schemas parse the S1 primitives", () => {
     jobId: "job-1",
     createdAt: now,
   })
+  FeedbackEventSchema.parse({
+    eventId: "fb-candidate-behavior-1",
+    kind: "candidate_behavior",
+    actor: "candidate",
+    candidateId: "cand-1",
+    jobId: "job-1",
+    outcome: "profile_correction_requested",
+    createdAt: now,
+  })
   CorrectionEventSchema.parse({
     eventId: "corr-1",
     targetType: "candidate_profile",
     targetId: "cand-1",
     actor: "operator",
     reason: "wrong visa tag",
+    createdAt: now,
+  })
+  CorrectionEventSchema.parse({
+    eventId: "corr-outbound-copy-1",
+    targetType: "outbound_copy",
+    targetId: "outinvite-cand-1-job-1",
+    actor: "system",
+    candidateId: "cand-1",
+    jobId: "job-1",
+    reason: "copy caused candidate decline",
+    createdAt: now,
+  })
+  CorrectionEventSchema.parse({
+    eventId: "corr-candidate-1",
+    targetType: "user_tags",
+    targetId: "cand-1",
+    actor: "candidate",
+    candidateId: "cand-1",
+    reason: "candidate corrected location preference",
+    beforeRedacted: { targetLocations: ["remote_anywhere"] },
+    afterRedacted: { targetLocations: ["sf_bay_area"] },
+    createdAt: now,
+  })
+  EvalArtifactSchema.parse({
+    artifactId: createEvalArtifactId("candidate_profile_correction", "corr-candidate-1"),
+    kind: "candidate_profile_correction",
+    status: "ready",
+    sourceCorrectionEventIds: ["corr-candidate-1"],
+    candidateId: "cand-1",
+    payloadRedacted: {
+      field: "targetLocations",
+      before: ["remote_anywhere"],
+      after: ["sf_bay_area"],
+    },
+    createdBy: "candidate",
     createdAt: now,
   })
   CandidateAuthMappingSchema.parse({
@@ -791,10 +837,79 @@ test("employer-visible profile snapshot rejects raw contact or storage values", 
   )
 })
 
+test("eval artifacts require a source and reject unsafe raw payload values", () => {
+  assert.equal(PA_COLLECTIONS.evalArtifacts, "pa-eval-artifacts")
+
+  const base = {
+    artifactId: createEvalArtifactId("correction_regression_fixture", "corr-1"),
+    kind: "correction_regression_fixture",
+    status: "ready",
+    sourceCorrectionEventIds: ["corr-1"],
+    candidateId: "cand-1",
+    jobId: "job-1",
+    payloadRedacted: {
+      targetType: "job_tags",
+      before: ["general_software"],
+      after: ["ai_infra"],
+    },
+    latestRunResult: {
+      status: "not_run",
+      metrics: {},
+    },
+    evidence: [{ source: "admin", summary: "Operator changed a redacted job tag" }],
+    createdBy: "operator",
+    createdAt: now,
+  }
+
+  assert.doesNotThrow(() => EvalArtifactSchema.parse(base))
+  assert.throws(
+    () => EvalArtifactSchema.parse({ ...base, sourceCorrectionEventIds: [], scenarioRef: undefined, runRef: undefined }),
+    /must reference/
+  )
+  assert.throws(
+    () =>
+      EvalArtifactSchema.parse({
+        ...base,
+        payloadRedacted: { candidateEmail: "alice@example.com" },
+      }),
+    /must not contain raw PII/
+  )
+  assert.throws(
+    () =>
+      EvalArtifactSchema.parse({
+        ...base,
+        payloadRedacted: { storage: "gs://bucket/resume.pdf" },
+      }),
+    /must not contain raw PII/
+  )
+  assert.throws(
+    () =>
+      EvalArtifactSchema.parse({
+        ...base,
+        payloadRedacted: { rawTranscript: "candidate said hello" },
+      }),
+    /must not contain raw PII/
+  )
+  assert.throws(
+    () =>
+      EvalArtifactSchema.parse({
+        ...base,
+        evidence: [{ source: "system", summary: "See https://linkedin.com/in/alice" }],
+      }),
+    /must not contain raw PII/
+  )
+})
+
 test("document id helpers do not require raw PII", () => {
   assert.equal(createCandidateJobStateId("cand-1", "job-1"), "cand-1__job-1")
   assert.equal(createEmployerVisibleProfileId("job-1", "cand-1"), "job-1__cand-1")
   assert.equal(createCandidateHandleId("email", "f".repeat(64)), `email__${"f".repeat(64)}`)
+  assert.equal(
+    createEvalArtifactId("correction_regression_fixture", "corr-1"),
+    createEvalArtifactId("correction_regression_fixture", "corr-1")
+  )
+  assert.equal(createEvalArtifactId("correction_regression_fixture", "corr-1").includes("corr-1"), false)
+  assert.throws(() => createEvalArtifactId("correction_regression_fixture", "alice@example.com"), /internal_id/)
 })
 
 test("candidate handle normalizers keep matching identity material stable", () => {

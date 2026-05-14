@@ -1,0 +1,69 @@
+{
+  "date": "2026-05-14",
+  "deploy": {
+    "project": "wekruit-5f89b",
+    "targets": [
+      "functions",
+      "hosting:pa-dashboard",
+      "hosting:pa-landing"
+    ],
+    "status": "pass",
+    "createdFunctions": [
+      "paAdminFlywheelEvalSnapshot",
+      "paCandidateProfileCorrection",
+      "paFlywheelCorrectionEvalArtifact"
+    ],
+    "hostingUrls": [
+      "https://wekruit-pa.web.app",
+      "https://wekruit-pa-landing.web.app"
+    ]
+  },
+  "routes": [
+    {
+      "name": "candidate_job",
+      "url": "https://candidate.wekruit.com/j/5063962007",
+      "httpStatus": 200
+    },
+    {
+      "name": "candidate_profile",
+      "url": "https://candidate.wekruit.com/me/profile",
+      "httpStatus": 200
+    },
+    {
+      "name": "admin_flywheel",
+      "url": "https://wekruit-pa.web.app/admin/flywheel-eval",
+      "httpStatus": 200
+    },
+    {
+      "name": "admin_j_redirect",
+      "url": "https://wekruit-pa.web.app/j/5063962007",
+      "httpStatus": 301,
+      "redirectUrl": "https://candidate.wekruit.com/j/5063962007"
+    },
+    {
+      "name": "admin_callable_unauth",
+      "url": "https://us-central1-wekruit-5f89b.cloudfunctions.net/paAdminFlywheelEvalSnapshot",
+      "httpStatus": 403
+    },
+    {
+      "name": "candidate_callable_unauth",
+      "url": "https://us-central1-wekruit-5f89b.cloudfunctions.net/paCandidateProfileCorrection",
+      "httpStatus": 401
+    }
+  ],
+  "countsBefore": {
+    "pa-outbound": 190,
+    "pa-outbound-invites": 0,
+    "pa-eval-artifacts": 0,
+    "pa-correction-events": 0,
+    "pa-feedback-events": 0
+  },
+  "countsAfter": {
+    "pa-outbound": 190,
+    "pa-outbound-invites": 0,
+    "pa-eval-artifacts": 0,
+    "pa-correction-events": 0,
+    "pa-feedback-events": 0
+  },
+  "verdict": "PASS: route/auth smoke created no outbound, correction, feedback, or eval-artifact rows"
+}

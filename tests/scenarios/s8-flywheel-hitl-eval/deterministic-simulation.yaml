@@ -1,0 +1,14 @@
+name: "S8 deterministic marketplace simulation is no-contact"
+entry: "marketplace_simulation"
+scenarioId: "s8-deterministic-pass-no-contact"
+seed: "s8-fixed-seed"
+dryRun: true
+candidateId: "cand-s8-redacted"
+jobId: "job-s8-product-designer"
+expected:
+  deterministic: true
+  finalState: "employer_visible"
+  artifactKind: "marketplace_simulation"
+  outboundWrites: 0
+  sendblueCalls: 0
+  manualLinkedInTasksSent: 0

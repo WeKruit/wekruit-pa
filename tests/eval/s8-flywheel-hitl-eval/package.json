@@ -1,0 +1,11 @@
+{
+  "name": "@pa/eval-s8-flywheel-hitl-eval",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --import tsx --test *.test.ts && node static-guards.mjs"
+  },
+  "devDependencies": {
+    "tsx": "^4.7.0"
+  }
+}

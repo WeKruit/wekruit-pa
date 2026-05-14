@@ -8,6 +8,7 @@ import {
   createCandidateJobMatchId,
   createCandidateJobStateId,
   createEmployerVisibleProfileId,
+  createEvalArtifactId,
   createJobEnrichmentEvalFixtureId,
   createOutboundInviteId,
   type CandidateJobEvent,
@@ -15,6 +16,7 @@ import {
   type CandidateLifecycleEvent,
   type CorrectionEvent,
   type EmployerVisibleProfile,
+  type EvalArtifact,
   type FeedbackEvent,
   type JobEnrichmentEvalFixture,
   type JobOpportunityDraft,
@@ -30,6 +32,8 @@ import {
   rejectJobOpportunityDraft,
   writeCorrectionEvent,
   writeCandidateJobMatch,
+  writeEvalArtifact,
+  writeEvalArtifactForCorrection,
   writeEmployerVisibleProfile,
   writeFeedbackEvent,
   writeJobEnrichmentEvalFixture,
@@ -496,6 +500,117 @@ test("feedback and correction events are append-only with conflict detection", a
     () => writeCorrectionEvent(db, { ...correction, reason: "different" }),
     /conflicting_duplicate_event/
   )
+})
+
+test("eval artifacts are append-only and audited in their own collection", async () => {
+  const { db, store } = makeFakeFirestore()
+  const artifact: EvalArtifact = {
+    artifactId: createEvalArtifactId("correction_regression_fixture", "corr-1"),
+    kind: "correction_regression_fixture",
+    status: "ready",
+    sourceCorrectionEventIds: ["corr-1"],
+    sourceFeedbackEventIds: [],
+    candidateId: "cand-1",
+    jobId: "job-1",
+    payloadRedacted: {
+      targetType: "job_tags",
+      before: ["general_software"],
+      after: ["ai_infra"],
+    },
+    latestRunResult: {
+      status: "not_run",
+      metrics: {},
+    },
+    evidence: [{ source: "admin", summary: "Operator changed a redacted job tag" }],
+    createdBy: "operator",
+    createdAt: now,
+  }
+
+  const result = await writeEvalArtifact(db, artifact)
+  assert.equal(result.created, true)
+  assert.equal(store.get(PA_COLLECTIONS.evalArtifacts)!.get(artifact.artifactId)!.kind, "correction_regression_fixture")
+  assert.equal(store.get(PA_COLLECTIONS.auditEvents)!.has(`marketplace_eval_artifact_${artifact.artifactId}`), true)
+
+  assert.equal((await writeEvalArtifact(db, artifact)).created, false)
+  await assert.rejects(
+    () => writeEvalArtifact(db, { ...artifact, status: "needs_review" }),
+    /conflicting_duplicate_event/
+  )
+})
+
+test("writeEvalArtifactForCorrection writes correction and redacted artifact together", async () => {
+  const { db, store } = makeFakeFirestore()
+  const correction: CorrectionEvent = {
+    eventId: "corr-candidate-profile-1",
+    targetType: "user_tags",
+    targetId: "cand-1",
+    actor: "candidate",
+    candidateId: "cand-1",
+    reason: "candidate corrected location preference",
+    beforeRedacted: { targetLocations: ["remote_anywhere"] },
+    afterRedacted: { targetLocations: ["sf_bay_area"] },
+    evidence: [{ source: "conversation", summary: "Candidate submitted profile correction" }],
+    createdAt: now,
+  }
+
+  const result = await writeEvalArtifactForCorrection(db, {
+    correction,
+    artifactKind: "candidate_profile_correction",
+    payloadRedacted: {
+      field: "targetLocations",
+      before: ["remote_anywhere"],
+      after: ["sf_bay_area"],
+    },
+    evidence: [{ source: "conversation", summary: "Correction captured without raw transcript" }],
+  })
+
+  assert.equal(result.correctionCreated, true)
+  assert.equal(result.artifactCreated, true)
+  assert.equal(result.artifact.artifactId, createEvalArtifactId("candidate_profile_correction", correction.eventId))
+  assert.deepEqual(result.artifact.sourceCorrectionEventIds, [correction.eventId])
+  assert.equal(result.artifact.createdBy, "candidate")
+  assert.equal(store.get(PA_COLLECTIONS.correctionEvents)!.size, 1)
+  assert.equal(store.get(PA_COLLECTIONS.evalArtifacts)!.size, 1)
+
+  const duplicate = await writeEvalArtifactForCorrection(db, {
+    correction,
+    artifactKind: "candidate_profile_correction",
+    payloadRedacted: {
+      field: "targetLocations",
+      before: ["remote_anywhere"],
+      after: ["sf_bay_area"],
+    },
+    evidence: [{ source: "conversation", summary: "Correction captured without raw transcript" }],
+  })
+  assert.equal(duplicate.correctionCreated, false)
+  assert.equal(duplicate.artifactCreated, false)
+})
+
+test("writeEvalArtifactForCorrection rejects unsafe artifacts before writing correction", async () => {
+  const { db, store } = makeFakeFirestore()
+  const correction: CorrectionEvent = {
+    eventId: "corr-unsafe-1",
+    targetType: "candidate_profile",
+    targetId: "cand-1",
+    actor: "operator",
+    candidateId: "cand-1",
+    reason: "operator correction",
+    beforeRedacted: {},
+    afterRedacted: {},
+    evidence: [],
+    createdAt: now,
+  }
+
+  await assert.rejects(
+    () =>
+      writeEvalArtifactForCorrection(db, {
+        correction,
+        payloadRedacted: { rawTranscript: "Candidate email is alice@example.com" },
+      }),
+    /must not contain raw PII/
+  )
+  assert.equal(store.get(PA_COLLECTIONS.correctionEvents)!.size, 0)
+  assert.equal(store.get(PA_COLLECTIONS.evalArtifacts)!.size, 0)
 })
 
 test("employer-visible snapshot requires passed candidate-job state", async () => {

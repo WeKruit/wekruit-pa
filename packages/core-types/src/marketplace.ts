@@ -591,6 +591,24 @@ const EMPLOYER_VISIBLE_BLOCKED_HOSTS = [
   "firebasestorage.googleapis.com",
   "storage.googleapis.com",
 ]
+const EVAL_ARTIFACT_FORBIDDEN_KEYS = new Set([
+  "correctiontext",
+  "freeform",
+  "messagebody",
+  "prompt",
+  "prompttext",
+  "rawcorrectiontext",
+  "rawmessage",
+  "rawprompt",
+  "rawtext",
+  "rawtranscript",
+  "resumestorageuri",
+  "storageuri",
+  "systemprompt",
+  "transcript",
+  "transcripttext",
+  "userprompt",
+])
 
 function isBlockedEmployerVisibleHost(hostname: string): boolean {
   const normalized = hostname.toLowerCase().replace(/\.$/, "")
@@ -623,6 +641,22 @@ function containsEmployerVisibleRawContact(value: unknown): boolean {
   if (Array.isArray(value)) return value.some(containsEmployerVisibleRawContact)
   if (value && typeof value === "object") {
     return Object.values(value as Record<string, unknown>).some(containsEmployerVisibleRawContact)
+  }
+  return false
+}
+
+function containsEvalArtifactUnsafeValue(value: unknown): boolean {
+  if (typeof value === "string") {
+    if (/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.test(value)) return true
+    if (/(?:\+?\d[\s().-]*){9,}/.test(value)) return true
+    if (containsEmployerVisibleRawLocator(value)) return true
+  }
+  if (Array.isArray(value)) return value.some(containsEvalArtifactUnsafeValue)
+  if (value && typeof value === "object") {
+    return Object.entries(value as Record<string, unknown>).some(([key, nested]) => {
+      if (EVAL_ARTIFACT_FORBIDDEN_KEYS.has(key.toLowerCase())) return true
+      return containsEvalArtifactUnsafeValue(nested)
+    })
   }
   return false
 }
@@ -695,6 +729,7 @@ export const FeedbackEventSchema = z.object({
     "match_feedback",
     "outreach_delivery",
     "manual_note",
+    "candidate_behavior",
   ]),
   actor: MarketplaceActorSchema,
   candidateId: IdSchema.optional(),
@@ -721,9 +756,10 @@ export const CorrectionEventSchema = z.object({
     "user_tags",
     "employer_visible_profile",
     "feedback_event",
+    "outbound_copy",
   ]),
   targetId: IdSchema,
-  actor: z.enum(["operator", "system"]),
+  actor: z.enum(["operator", "system", "candidate"]),
   candidateId: IdSchema.optional(),
   jobId: IdSchema.optional(),
   reason: z.string().min(1).max(2_000),
@@ -733,6 +769,85 @@ export const CorrectionEventSchema = z.object({
   createdAt: TimestampSchema,
 })
 export type CorrectionEvent = z.infer<typeof CorrectionEventSchema>
+
+export const EvalArtifactKindSchema = z.enum([
+  "correction_regression_fixture",
+  "marketplace_simulation",
+  "ranking_eval",
+  "job_intake_eval",
+  "safety_eval",
+  "live_smoke",
+  "candidate_profile_correction",
+])
+export type EvalArtifactKind = z.infer<typeof EvalArtifactKindSchema>
+
+export const EvalArtifactStatusSchema = z.enum([
+  "draft",
+  "ready",
+  "running",
+  "passed",
+  "failed",
+  "needs_review",
+  "archived",
+])
+export type EvalArtifactStatus = z.infer<typeof EvalArtifactStatusSchema>
+
+export const EvalArtifactRunResultSchema = z.object({
+  status: z.enum(["not_run", "pass", "fail", "error"]).default("not_run"),
+  runId: IdSchema.optional(),
+  runAt: TimestampSchema.optional(),
+  command: z.string().min(1).max(1_000).optional(),
+  summary: z.string().max(2_000).optional(),
+  metrics: z.record(z.unknown()).default({}),
+  artifactPath: z.string().min(1).max(1_000).optional(),
+})
+export type EvalArtifactRunResult = z.infer<typeof EvalArtifactRunResultSchema>
+
+const EvalArtifactShape = z.object({
+  artifactId: IdSchema,
+  kind: EvalArtifactKindSchema,
+  status: EvalArtifactStatusSchema.default("draft"),
+  sourceCorrectionEventIds: z.array(IdSchema).default([]),
+  sourceFeedbackEventIds: z.array(IdSchema).default([]),
+  scenarioRef: z.string().min(1).max(300).optional(),
+  runRef: z.string().min(1).max(300).optional(),
+  candidateId: IdSchema.optional(),
+  jobId: IdSchema.optional(),
+  candidateJobStateId: IdSchema.optional(),
+  payloadRedacted: z.record(z.unknown()).default({}),
+  latestRunResult: EvalArtifactRunResultSchema.optional(),
+  evidence: z.array(MarketplaceEvidenceSchema).default([]),
+  createdBy: MarketplaceActorSchema.default("system"),
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema.optional(),
+})
+
+export const EvalArtifactSchema = z.object(EvalArtifactShape.shape).superRefine((artifact, ctx) => {
+  const hasSource =
+    artifact.sourceCorrectionEventIds.length > 0 ||
+    artifact.sourceFeedbackEventIds.length > 0 ||
+    Boolean(artifact.scenarioRef) ||
+    Boolean(artifact.runRef)
+  if (!hasSource) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["sourceCorrectionEventIds"],
+      message: "EvalArtifact must reference a correction event, feedback event, scenario, or run",
+    })
+  }
+  if (containsEvalArtifactUnsafeValue({
+    payloadRedacted: artifact.payloadRedacted,
+    latestRunResult: artifact.latestRunResult,
+    evidence: artifact.evidence,
+  })) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: [],
+      message: "EvalArtifact must not contain raw PII, storage locators, prompts, or transcripts",
+    })
+  }
+})
+export type EvalArtifact = z.infer<typeof EvalArtifactSchema>
 
 export const RawJobSnapshotSchema = z.object({
   source: z.enum(["ats", "admin", "crawler", "employer", "system"]),
@@ -1366,6 +1481,12 @@ export function createOutboundInviteId(
 
 export function createOutreachIdempotencyKey(inviteId: string): string {
   return `outreach_idempotency_${safeInternalIdPart(inviteId, "inviteId")}`
+}
+
+export function createEvalArtifactId(kind: EvalArtifactKind, sourceId: string): string {
+  const kindPart = safeInternalIdPart(kind, "kind")
+  const sourcePart = safeInternalIdPart(sourceId, "sourceId")
+  return `eval_artifact_${kindPart}__${stableIdHash(sourcePart)}`
 }
 
 function normalizeOutreachKeyPart(value: string, fieldName: string): string {

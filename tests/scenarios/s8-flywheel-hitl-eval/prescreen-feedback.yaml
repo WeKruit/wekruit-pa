@@ -1,0 +1,12 @@
+name: "S8 prescreen PASS creates feedback event for flywheel"
+entry: "prescreen_terminal_feedback"
+candidateId: "cand-s8-redacted"
+jobId: "job-s8-product-designer"
+sessionId: "ps-s8-pass"
+terminal: "PASS"
+expected:
+  feedbackKind: "prescreen_outcome"
+  finalState: "employer_visible"
+  employerVisibleRequiresPassed: true
+  rawTurnsAllowed: false
+  outboundWrites: 0
