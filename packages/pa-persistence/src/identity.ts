@@ -567,11 +567,24 @@ export async function claimCandidateProfile(
 
   const userSnap = await db.collection(PA_COLLECTIONS.users).doc(candidateId).get()
   const user = (userSnap.data() ?? {}) as Record<string, unknown>
+  const candidateUserPatch: Record<string, unknown> = {
+    email: input.email.trim().toLowerCase(),
+    updatedAt: ts,
+  }
+  const displayName =
+    input.displayName ??
+    (typeof user.displayName === "string" ? user.displayName : null) ??
+    (typeof user.legalName === "string" ? user.legalName : null)
+  if (displayName) {
+    candidateUserPatch.displayName = displayName
+  }
+  await db.collection(PA_COLLECTIONS.users).doc(candidateId).set(candidateUserPatch, { merge: true })
+
   const selfProfile = await writeCandidateSelfProfile(db, {
     candidateId,
     email: input.email,
     phoneE164: typeof user.phoneE164 === "string" ? user.phoneE164 : null,
-    displayName: input.displayName ?? (typeof user.legalName === "string" ? user.legalName : null),
+    displayName,
     marketplaceFields: user as CandidateProfileMarketplaceFields,
     handles: [{ kind: "email", verifiedAt: ts, source: "candidate" }],
     now: ts,
