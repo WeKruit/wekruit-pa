@@ -480,6 +480,125 @@ export async function listBatchCandidates(
   return result
 }
 
+// ---------------------------------------------------------------------------
+// V2 canonical reader — reads from core-service sourcing-source-records via
+// the wekruit-pa batch's sourcing.runId pointer (written by the sourcing
+// bridge in apps/functions/src/external-supply/sourcing-bridge.ts). Falls
+// back to the legacy reader when the batch hasn't been bridged yet.
+//
+// Lossless: the bridge mirrors the full wekruit-pa record into the sourcing
+// payload's `raw` object, so every UI field (rubric, links, headline,
+// matchScore, etc.) is reconstructible.
+//
+// Why HTTP not Firestore: sourcing-* collections live under core-service's
+// service-account scope; firestore.rules in wekruit-pa don't admit operators
+// to read them directly. The CF answers public GET (no auth) over CORS.
+// ---------------------------------------------------------------------------
+
+const DEFAULT_SOURCING_BASE =
+  "https://us-central1-wekruit-5f89b.cloudfunctions.net/sourcing-api"
+
+interface SourcingSourceRecord {
+  id: string
+  sourceRecordId?: string
+  displayName?: string
+  sourceUrl?: string
+  institution?: string
+  raw?: Record<string, unknown>
+}
+
+interface SourcingSourceRecordsResponse {
+  data?: SourcingSourceRecord[]
+}
+
+export async function listBatchCandidatesCanonical(input: {
+  batchId: string
+  sourcingBaseUrl?: string
+}): Promise<ListBatchCandidatesResult & { source: "canonical" | "legacy"; runId?: string }> {
+  const { batchId } = input
+  const fs = db()
+
+  const batchSnap = await getDoc(doc(fs, PA_COLLECTIONS.externalSourcingBatches, batchId))
+  const batchData = batchSnap.exists() ? (batchSnap.data() as Record<string, unknown>) : {}
+  const sourcing = (batchData.sourcing ?? {}) as { runId?: string }
+  const runId = typeof sourcing.runId === "string" ? sourcing.runId : undefined
+
+  if (!runId) {
+    const legacy = await listBatchCandidates({ batchId })
+    return { ...legacy, source: "legacy" }
+  }
+
+  const jobId = typeof batchData.jobId === "string" ? batchData.jobId : undefined
+  const companyId = typeof batchData.companyId === "string" ? batchData.companyId : undefined
+  const base = input.sourcingBaseUrl ?? DEFAULT_SOURCING_BASE
+
+  const res = await fetch(
+    `${base}/api/sourcing/source-runs/${encodeURIComponent(runId)}/source-records?limit=500`,
+  )
+  if (!res.ok) {
+    // Fall back to legacy on transport failure rather than blank the page.
+    const legacy = await listBatchCandidates({ batchId })
+    return { ...legacy, source: "legacy" }
+  }
+  const json = (await res.json()) as SourcingSourceRecordsResponse
+  const records = json.data ?? []
+
+  const rows: BatchCandidateRow[] = records.map((rec) => {
+    const raw = (rec.raw ?? {}) as Record<string, unknown>
+    const enrichment = (raw.enrichment ?? {}) as Record<string, unknown>
+    const emails = Array.isArray(raw.emails) ? (raw.emails as Array<{ value?: string }>) : []
+    const recordId =
+      (typeof raw.recordId === "string" ? raw.recordId : undefined) ??
+      rec.sourceRecordId ??
+      rec.id
+    const row: BatchCandidateRow = { recordId, batchId }
+    if (typeof raw.name === "string") row.name = raw.name
+    else if (rec.displayName) row.name = rec.displayName
+    if (typeof raw.linkedinUrl === "string") row.linkedinUrl = raw.linkedinUrl
+    else if (rec.sourceUrl && /linkedin\.com/i.test(rec.sourceUrl)) row.linkedinUrl = rec.sourceUrl
+    if (typeof raw.currentTitle === "string") row.currentTitle = raw.currentTitle
+    if (typeof raw.currentCompany === "string") row.currentCompany = raw.currentCompany
+    else if (rec.institution) row.currentCompany = rec.institution
+    if (typeof raw.location === "string") row.location = raw.location
+    if (emails[0]?.value) row.email = emails[0].value
+    if (typeof raw.identityResolutionStatus === "string") {
+      row.identityResolutionStatus = raw.identityResolutionStatus
+    }
+    if (typeof raw.normalizationStatus === "string") {
+      row.normalizationStatus = raw.normalizationStatus
+    }
+    if (enrichment.rubric) {
+      row.rubric = enrichment.rubric as Record<string, { value: string; passed: boolean | null }>
+    }
+    if (typeof enrichment.matchScore === "string") row.matchScore = enrichment.matchScore
+    if (typeof enrichment.headline === "string") row.headline = enrichment.headline
+    if (Array.isArray(enrichment.links)) row.links = enrichment.links as ClassifiedLinkUI[]
+    return row
+  })
+
+  rows.sort((a, b) => {
+    const ma = parseFloat(a.matchScore ?? "")
+    const mb = parseFloat(b.matchScore ?? "")
+    const maOk = Number.isFinite(ma)
+    const mbOk = Number.isFinite(mb)
+    if (maOk && mbOk && ma !== mb) return mb - ma
+    if (maOk && !mbOk) return -1
+    if (!maOk && mbOk) return 1
+    return (a.name ?? "").localeCompare(b.name ?? "")
+  })
+
+  const result: ListBatchCandidatesResult & { source: "canonical"; runId: string } = {
+    ok: true,
+    batchId,
+    rows,
+    source: "canonical",
+    runId,
+  }
+  if (jobId) result.jobId = jobId
+  if (companyId) result.companyId = companyId
+  return result
+}
+
 export interface CandidateDetail {
   recordId: string
   batchId: string

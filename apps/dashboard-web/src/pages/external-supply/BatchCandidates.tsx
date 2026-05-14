@@ -25,17 +25,31 @@ import {
 import {
   getCandidateDetail,
   listBatchCandidates,
+  listBatchCandidatesCanonical,
   type BatchCandidateRow,
   type CandidateDetail,
   type ListBatchCandidatesResult,
 } from "../../lib/external-supply-client.js"
+
+type CanonicalAwareResult = ListBatchCandidatesResult & {
+  source?: "canonical" | "legacy"
+  runId?: string
+}
 
 export function BatchCandidates() {
   const { batchId = "" } = useParams<{ batchId: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
   const selectedRecordId = searchParams.get("record") ?? ""
 
-  const [result, setResult] = useState<ListBatchCandidatesResult | null>(null)
+  // P5 feature flag — `?canonical=1` routes the list through the V2 sourcing
+  // pipeline (core-service `sourcing-source-records` joined via
+  // `pa-external-sourcing-batches/{batchId}.sourcing.runId`). Default stays
+  // on the legacy direct-Firestore reader until enrichment ships and starts
+  // adding canonical-only data. Falls back transparently when a batch has
+  // not been bridged yet (no sourcing.runId).
+  const useCanonical = searchParams.get("canonical") === "1"
+
+  const [result, setResult] = useState<CanonicalAwareResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
@@ -48,10 +62,13 @@ export function BatchCandidates() {
     let cancelled = false
     setLoading(true)
     setError(null)
-    listBatchCandidates({ batchId })
+    const reader = useCanonical
+      ? listBatchCandidatesCanonical({ batchId })
+      : listBatchCandidates({ batchId })
+    reader
       .then((r) => {
         if (cancelled) return
-        setResult(r)
+        setResult(r as CanonicalAwareResult)
       })
       .catch((err) => {
         if (cancelled) return
@@ -64,7 +81,7 @@ export function BatchCandidates() {
     return () => {
       cancelled = true
     }
-  }, [batchId])
+  }, [batchId, useCanonical])
 
   useEffect(() => {
     if (!selectedRecordId) {
@@ -131,10 +148,20 @@ export function BatchCandidates() {
       <PageHeader
         eyebrow="External Supply / Batch"
         title="Candidates"
-        description={`Batch ${batchId} — ${view === "table" ? "table view" : "click a row to open detail"}`}
+        description={`Batch ${batchId} — ${view === "table" ? "table view" : "click a row to open detail"}${result?.source ? ` · reader: ${result.source}${result.source === "canonical" && result.runId ? ` (run ${result.runId.slice(0, 8)}…)` : ""}` : ""}`}
       />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "0.85em" }}>
         <Link to={`/admin/external-supply/batches/${batchId}`}>← back to batch detail</Link>
+        <a
+          href={`?${new URLSearchParams({
+            ...(view ? { view } : {}),
+            ...(selectedRecordId ? { record: selectedRecordId } : {}),
+            ...(useCanonical ? {} : { canonical: "1" }),
+          }).toString()}`}
+          style={{ marginLeft: 12, fontSize: "0.85em", color: useCanonical ? "#16643b" : "#888" }}
+        >
+          {useCanonical ? "✓ canonical reader (V2 sourcing)" : "switch to canonical reader →"}
+        </a>
         <div role="tablist" style={{ display: "flex", gap: 4 }}>
           <button
             type="button"
