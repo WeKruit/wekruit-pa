@@ -203,6 +203,14 @@ service cloud.firestore {
       allow read, write: if isPaOperator();
     }
 
+    // ─── pa-companies (employer org docs) ───
+    // Operator R/W for editing; CFs bypass via Admin SDK. Read powers
+    // /admin/external-supply/jobs company browser; write is admin-only.
+    match /pa-companies/{companyId} {
+      allow read: if isPaOperator();
+      allow write: if isPaOperator();
+    }
+
     // ─── v1.8 Phase 78 / v1.9 Phase 87 — pa-jobs (employer-authored config) ─
     // Operator R/W for editor; CFs bypass via Admin SDK.
     // v1.9 P87: public read when resource.data.publicVisible === true so
