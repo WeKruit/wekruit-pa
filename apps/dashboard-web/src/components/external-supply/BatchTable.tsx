@@ -38,7 +38,7 @@ export function BatchTable({
           <th style={{ padding: "0.5rem 0" }}>Name</th>
           <th style={{ padding: "0.5rem 0" }}>Current</th>
           <th style={{ padding: "0.5rem 0" }}>Email</th>
-          <th style={{ padding: "0.5rem 0" }}>LinkedIn</th>
+          <th style={{ padding: "0.5rem 0" }}>Links</th>
           <th style={{ padding: "0.5rem 0" }}>Status</th>
           <th style={{ padding: "0.5rem 0" }}>Candidate</th>
           <th style={{ padding: "0.5rem 0" }} />
