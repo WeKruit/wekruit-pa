@@ -2046,3 +2046,19 @@ export { paExternalSupplyInstantlyWebhook } from "./external-supply/instantly-we
 export { paExternalSupplySyncPlanToMailgun } from "./external-supply/mailgun-sync.js"
 export { paExternalSupplyMailgunWebhook } from "./external-supply/mailgun-webhook.js"
 export { paExternalSupplyGetConfig } from "./external-supply/config.js"
+// V2 — agent-ranking layer (Wave C / Executor D). Three admin-gated callables
+// per .planning/external-supply-v2/EXECUTOR-PLANS.md §D.
+export {
+  paExternalSupplyRunAgentRanking,
+  paExternalSupplyApproveAgentTier,
+  paExternalSupplyOverrideAgentTier,
+} from "./external-supply/agent-rank.js"
+
+// ============================================================
+// External Supply V2 — Wave E (F) flywheel rollup
+// ------------------------------------------------------------
+// Fenced into its own export block at the bottom of the file so it stays
+// out of Wave D's parallel commit on the V2 callable export block above.
+// Lead resolution L-F7. Do not interleave with any other export above.
+// ============================================================
+export { paExternalSupplyRollupSourceQualityMonthly } from "./external-supply/source-quality.js"
