@@ -488,9 +488,6 @@ function CandidateListRow({
           )}
         </div>
       </div>
-      {enrichErr && (
-        <div style={{ fontSize: "0.7em", marginTop: 2, color: enrichErr.startsWith("✓") ? "#16a34a" : "#991b1b" }}>{enrichErr}</div>
-      )}
       <div style={{ fontSize: "0.8em", color: "#475569", marginTop: 2 }}>
         {row.currentTitle ?? "—"}
         {row.currentCompany ? ` @ ${row.currentCompany}` : ""}
@@ -565,6 +562,24 @@ function CandidateListRow({
               </span>
             ))}
       </div>
+      {enrichErr && (
+        <div
+          style={{
+            fontSize: "0.65em",
+            marginTop: 4,
+            padding: "2px 6px",
+            borderRadius: 3,
+            background: enrichErr.startsWith("✓") ? "#f0fdf4" : "#fef2f2",
+            color: enrichErr.startsWith("✓") ? "#166534" : "#991b1b",
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}
+          title={enrichErr}
+        >
+          {enrichErr}
+        </div>
+      )}
     </button>
   )
 }
