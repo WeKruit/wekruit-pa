@@ -179,17 +179,20 @@ export async function applyCandidateJobEvent(
     }
 
     const reduced = reduceCandidateJobState(currentState, event)
+    const shouldApplyTransitionToStateDoc = reduced.changed || !currentDoc
+    const shouldAdoptPrescreenSession =
+      "prescreenSessionId" in event && (shouldApplyTransitionToStateDoc || !currentDoc?.prescreenSessionId)
     const nextDoc: CandidateJobStateDoc = CandidateJobStateDocSchema.parse({
       ...(currentDoc ?? {}),
       id: stateDocId,
       candidateId: event.candidateId,
       jobId: event.jobId,
-      state: reduced.state,
-      previousState: currentState,
-      stateUpdatedAt: event.occurredAt,
-      reason: reduced.reason,
+      state: shouldApplyTransitionToStateDoc ? reduced.state : currentDoc.state,
+      previousState: shouldApplyTransitionToStateDoc ? currentState : currentDoc.previousState,
+      stateUpdatedAt: shouldApplyTransitionToStateDoc ? event.occurredAt : currentDoc.stateUpdatedAt,
+      reason: shouldApplyTransitionToStateDoc ? reduced.reason : currentDoc.reason,
       prescreenSessionId:
-        "prescreenSessionId" in event
+        shouldAdoptPrescreenSession
           ? event.prescreenSessionId ?? currentDoc?.prescreenSessionId
           : currentDoc?.prescreenSessionId,
       employerVisibleProfileId:

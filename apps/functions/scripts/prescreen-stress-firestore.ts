@@ -21,7 +21,8 @@ import {
   runPrescreenTerminalAction,
   type PrescreenTerminalKind,
 } from "../src/prescreen-terminal-action.js"
-import { requireExistingPaUserForProductionTest } from "./lib/prod-test-user-guard.mjs"
+import { acquireProductionTestRunLock, productionTestRunLockId } from "./lib/prod-test-run-lock.mjs"
+import { requireExistingPaUserWithAllowedPhoneForProductionTest } from "./lib/prod-test-user-guard.mjs"
 
 for (const envPath of [
   path.resolve(process.cwd(), ".env"),
@@ -34,8 +35,8 @@ for (const envPath of [
 
 const PROJECT_ID = "wekruit-5f89b"
 const JOB_ID = process.env.PRESCREEN_STRESS_JOB_ID ?? "rain-software-engineer-fullstack-8849f6ef"
-const STRESS_USER_ID = process.env.PRESCREEN_STRESS_USER_ID ?? "verify-prescreen-stress-user"
-const STRESS_PHONE = process.env.PRESCREEN_STRESS_PHONE ?? "+19995550000"
+const STRESS_USER_ID = process.env.PRESCREEN_STRESS_USER_ID ?? "U7AwKT8nLDRa35DkuBxq"
+const STRESS_PHONE = process.env.PRESCREEN_STRESS_PHONE ?? "+14243201960"
 const ARTIFACT_DIR = path.resolve(".planning/prescreen-stress/artifacts")
 
 type Scenario = {
@@ -77,8 +78,8 @@ const scenarios: Scenario[] = [
     label: "Adjacent candidate starts weak, then Claire should probe and recover instead of abrupt rejection",
     expected: {
       terminal: "PASS",
-      minClarifies: 2,
-      terminalMustNotBeforeTurn: 3,
+      minClarifies: 4,
+      terminalMustNotBeforeTurn: 7,
       candidateState: "employer_visible",
       employerVisibleProfile: true,
       workSessionBoundary: "terminal",
@@ -89,6 +90,29 @@ const scenarios: Scenario[] = [
       "I personally built JavaScript screens, SQL reports, and debugging scripts to trace failed orders; then worked with engineers to fix onboarding and pricing edge cases. It touched merchant dashboards, order data, dispatch workflows, and ops support queues.",
       "For technical depth, my strongest part was SQL plus JavaScript dashboards. I wrote queries for failed-order patterns, built the UI to surface them, and added scripts ops used during merchant onboarding.",
       "The dashboard frontend was React and TypeScript. I built filters, order detail views, error states, and debugging panels, connected them to Node endpoints and Postgres query results, and used them to cut repeated failed-order triage.",
+      "A concrete React and TypeScript example: I built typed order status filters, order detail views, error queues, and debugging panels against Node endpoints and Postgres-backed failure reasons. Operators used it daily to triage failed orders without pulling engineers into every case.",
+      "New York hybrid works for me.",
+      "$90k to $140k works.",
+      "I do not need visa sponsorship now or in the future.",
+    ],
+  },
+  {
+    slug: "fragmented_multimessage_pass",
+    label: "Fragmented multi-message style answer should be understood as one coherent strong answer",
+    expected: {
+      terminal: "PASS",
+      maxClarifies: 1,
+      candidateState: "employer_visible",
+      employerVisibleProfile: true,
+      workSessionBoundary: "terminal",
+    },
+    replies: [
+      [
+        "For OFO Delivery, I owned the merchant order dashboard.",
+        "I built React and TypeScript screens plus SQL reports.",
+        "It touched Node endpoints and Postgres order data, and it reduced repeated failed-order triage for ops.",
+      ].join("\n"),
+      "Technical depth: I built the React filters and order detail panels, wired them into Node endpoints, wrote Postgres queries for failed order reasons, and added scripts for ops to trace merchant onboarding issues.",
       "New York hybrid works for me.",
       "$90k to $140k works.",
       "I do not need visa sponsorship now or in the future.",
@@ -141,32 +165,14 @@ function nowStamp(): string {
   return new Date().toISOString().replace(/[:.]/g, "-")
 }
 
-async function ensureTestUser(db: Firestore, userId: string, phone: string, runId: string, scenario: Scenario) {
-  const now = new Date().toISOString()
-  const existing = await requireExistingPaUserForProductionTest(db, {
+async function requireStressUser(db: Firestore, userId: string, phone: string) {
+  const found = await requireExistingPaUserWithAllowedPhoneForProductionTest(db, {
     projectId: PROJECT_ID,
     scriptName: "prescreen-stress-firestore.ts",
     userId,
+    phoneE164: phone,
   })
-  const existingCreatedAt = existing?.data?.createdAt ?? null
-  await db.collection("pa-users").doc(userId).set(
-    {
-      id: userId,
-      phoneE164: phone,
-      testMode: true,
-      synthetic: true,
-      signupSource: "test:prescreen_stress",
-      candidateLifecycleState: "synthetic_test",
-      createdAt: existingCreatedAt ?? now,
-      updatedAt: now,
-      stressRun: {
-        runId,
-        scenario: scenario.slug,
-        label: scenario.label,
-      },
-    },
-    { merge: true },
-  )
+  return found.phoneE164
 }
 
 async function readSession(db: Firestore, sessionId: string) {
@@ -217,6 +223,31 @@ async function resetScenarioState(db: Firestore, userId: string) {
   const batch = db.batch()
   batch.delete(db.collection("pa-candidate-job-states").doc(`${userId}__${JOB_ID}`))
   batch.delete(db.collection("pa-employer-visible-profiles").doc(`${JOB_ID}__${userId}`))
+  await batch.commit()
+}
+
+async function snapshotScenarioState(db: Firestore, userId: string) {
+  const refs = [
+    db.collection("pa-candidate-job-states").doc(`${userId}__${JOB_ID}`),
+    db.collection("pa-employer-visible-profiles").doc(`${JOB_ID}__${userId}`),
+  ]
+  return Promise.all(
+    refs.map(async (ref) => {
+      const snap = await ref.get()
+      return { ref, exists: snap.exists, data: snap.exists ? snap.data() ?? {} : null }
+    }),
+  )
+}
+
+async function restoreScenarioState(
+  db: Firestore,
+  backup: Awaited<ReturnType<typeof snapshotScenarioState>>,
+) {
+  const batch = db.batch()
+  for (const item of backup) {
+    if (item.exists && item.data) batch.set(item.ref, item.data, { merge: false })
+    else batch.delete(item.ref)
+  }
   await batch.commit()
 }
 
@@ -277,13 +308,13 @@ async function runScenario(db: Firestore, runId: string, scenario: Scenario) {
     logs.push({ event, payload })
   }
 
-  await ensureTestUser(db, userId, phone, runId, scenario)
+  const allowedPhone = await requireStressUser(db, userId, phone)
   await resetScenarioState(db, userId)
   const started = await runPreScreenForUser({
     db,
     jobId: JOB_ID,
     userId,
-    toE164: phone,
+    toE164: allowedPhone,
     sendSms: captureSend("start"),
     log,
   })
@@ -291,7 +322,7 @@ async function runScenario(db: Firestore, runId: string, scenario: Scenario) {
     return {
       slug: scenario.slug,
       userId,
-      phone,
+      phone: allowedPhone,
       started,
       sent,
       logs,
@@ -304,7 +335,7 @@ async function runScenario(db: Firestore, runId: string, scenario: Scenario) {
     const result = await runPrescreenTurnIfActive({
       db,
       userId,
-      toE164: phone,
+      toE164: allowedPhone,
       replyText: reply,
       lang: "en",
       sendSms: captureSend("turn"),
@@ -382,7 +413,7 @@ async function runScenario(db: Firestore, runId: string, scenario: Scenario) {
     slug: scenario.slug,
     label: scenario.label,
     userId,
-    phone,
+    phone: allowedPhone,
     started,
     sessionId: started.sessionId,
     finalTerminal,
@@ -421,13 +452,13 @@ async function runSupersedeProbe(db: Firestore, runId: string) {
     replies: [],
   }
 
-  await ensureTestUser(db, userId, phone, runId, scenario)
+  const allowedPhone = await requireStressUser(db, userId, phone)
   await resetScenarioState(db, userId)
   const first = await runPreScreenForUser({
     db,
     jobId: JOB_ID,
     userId,
-    toE164: phone,
+    toE164: allowedPhone,
     sendSms: captureSend("start"),
     log,
   })
@@ -435,7 +466,7 @@ async function runSupersedeProbe(db: Firestore, runId: string) {
     db,
     jobId: JOB_ID,
     userId,
-    toE164: phone,
+    toE164: allowedPhone,
     sendSms: captureSend("start"),
     log,
   })
@@ -491,7 +522,7 @@ async function runSupersedeProbe(db: Firestore, runId: string) {
     slug: scenario.slug,
     label: scenario.label,
     userId,
-    phone,
+    phone: allowedPhone,
     firstSessionId: first.sessionId,
     secondSessionId: second.sessionId,
     firstTerminal: firstSession.data.terminal ?? null,
@@ -516,42 +547,58 @@ async function main() {
   const runId = `stress-${nowStamp()}`
   const results = []
   const userCountBefore = await countPaUsers(db)
-  for (let i = 0; i < scenarios.length; i += 1) {
-    const result = await runScenario(db, runId, scenarios[i])
-    results.push(result)
-    const status = "failures" in result && Array.isArray(result.failures) && result.failures.length > 0
-      ? `FAIL ${result.failures.join("; ")}`
-      : "PASS"
-    console.log(`[${status}] ${result.slug} session=${"sessionId" in result ? result.sessionId : "n/a"} terminal=${"finalTerminal" in result ? result.finalTerminal : "n/a"}`)
-  }
-  const supersede = await runSupersedeProbe(db, runId)
-  results.push(supersede)
-  const supersedeStatus = supersede.failures.length > 0 ? `FAIL ${supersede.failures.join("; ")}` : "PASS"
-  console.log(`[${supersedeStatus}] ${supersede.slug} first=${supersede.firstSessionId} second=${supersede.secondSessionId}`)
-  const userCountAfter = await countPaUsers(db)
-  const collectionFailures = userCountAfter === userCountBefore
-    ? []
-    : [`pa-users count changed from ${userCountBefore} to ${userCountAfter}`]
-
-  const summary = {
+  const releaseLock = await acquireProductionTestRunLock(db, {
+    lockId: productionTestRunLockId({
+      scope: "sendblue-prescreen-stress",
+      userId: STRESS_USER_ID,
+      jobId: JOB_ID,
+    }),
     runId,
-    jobId: JOB_ID,
-    createdAt: new Date().toISOString(),
-    userCountBefore,
-    userCountAfter,
-    results,
-    failedScenarios: results
-      .filter((r) => "failures" in r && Array.isArray(r.failures) && r.failures.length > 0)
-      .map((r) => ({ slug: r.slug, failures: "failures" in r ? r.failures : [] })),
-    collectionFailures,
-  }
-  mkdirSync(ARTIFACT_DIR, { recursive: true })
-  const artifactPath = path.join(ARTIFACT_DIR, `${runId}.json`)
-  writeFileSync(artifactPath, `${JSON.stringify(summary, null, 2)}\n`)
-  await db.collection("pa-prescreen-stress-runs").doc(runId).set(stripUndefined(summary), { merge: true })
-  console.log(`[artifact] ${artifactPath}`)
-  if (summary.failedScenarios.length > 0 || summary.collectionFailures.length > 0) {
-    process.exitCode = 1
+    scriptName: "prescreen-stress-firestore.ts",
+    projectId: PROJECT_ID,
+  })
+  const stateBackup = await snapshotScenarioState(db, STRESS_USER_ID)
+  try {
+    for (let i = 0; i < scenarios.length; i += 1) {
+      const result = await runScenario(db, runId, scenarios[i])
+      results.push(result)
+      const status = "failures" in result && Array.isArray(result.failures) && result.failures.length > 0
+        ? `FAIL ${result.failures.join("; ")}`
+        : "PASS"
+      console.log(`[${status}] ${result.slug} session=${"sessionId" in result ? result.sessionId : "n/a"} terminal=${"finalTerminal" in result ? result.finalTerminal : "n/a"}`)
+    }
+    const supersede = await runSupersedeProbe(db, runId)
+    results.push(supersede)
+    const supersedeStatus = supersede.failures.length > 0 ? `FAIL ${supersede.failures.join("; ")}` : "PASS"
+    console.log(`[${supersedeStatus}] ${supersede.slug} first=${supersede.firstSessionId} second=${supersede.secondSessionId}`)
+    const userCountAfter = await countPaUsers(db)
+    const collectionFailures = userCountAfter === userCountBefore
+      ? []
+      : [`pa-users count changed from ${userCountBefore} to ${userCountAfter}`]
+
+    const summary = {
+      runId,
+      jobId: JOB_ID,
+      createdAt: new Date().toISOString(),
+      userCountBefore,
+      userCountAfter,
+      results,
+      failedScenarios: results
+        .filter((r) => "failures" in r && Array.isArray(r.failures) && r.failures.length > 0)
+        .map((r) => ({ slug: r.slug, failures: "failures" in r ? r.failures : [] })),
+      collectionFailures,
+    }
+    mkdirSync(ARTIFACT_DIR, { recursive: true })
+    const artifactPath = path.join(ARTIFACT_DIR, `${runId}.json`)
+    writeFileSync(artifactPath, `${JSON.stringify(summary, null, 2)}\n`)
+    await db.collection("pa-prescreen-stress-runs").doc(runId).set(stripUndefined(summary), { merge: true })
+    console.log(`[artifact] ${artifactPath}`)
+    if (summary.failedScenarios.length > 0 || summary.collectionFailures.length > 0) {
+      process.exitCode = 1
+    }
+  } finally {
+    await restoreScenarioState(db, stateBackup)
+    await releaseLock()
   }
 }
 
