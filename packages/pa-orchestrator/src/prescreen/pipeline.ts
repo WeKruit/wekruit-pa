@@ -181,7 +181,7 @@ export class PreScreenPipeline {
       state.updatedAt = input.nowIso
       await this.opts.store.save(state)
       return {
-        text: question.clarifyPrompt[input.lang],
+        text: probingClarifyText(input.lang),
         action: { kind: "clarify", qId: state.currentQId, kAfter: confGate.kAfter },
         state,
       }
@@ -199,6 +199,24 @@ export class PreScreenPipeline {
       ...(qState.matchThreshold !== undefined ? { matchThreshold: qState.matchThreshold } : {}),
     })
     if (typeGate.action === "hard_stop") {
+      if (qState.clarifyRounds < state.maxClarifyRounds) {
+        qState.clarifyRounds += 1
+        state.updatedAt = input.nowIso
+        await this.opts.store.save(state)
+        log("prescreen.pipeline.type_gate_clarify", {
+          sessionId: input.sessionId,
+          qId: state.currentQId,
+          type: qState.type,
+          s,
+          c,
+          clarifyRounds: qState.clarifyRounds,
+        })
+        return {
+          text: probingClarifyText(input.lang),
+          action: { kind: "clarify", qId: state.currentQId, kAfter: qState.clarifyRounds },
+          state,
+        }
+      }
       qState.finalS = s
       qState.finalC = c
       qState.answeredAt = input.nowIso
@@ -368,4 +386,10 @@ export function terminalText(
         ? "感谢回答。目前看综合匹配度不够高，先停在这儿，下次有更合适的我直接推。"
         : "Thanks. Overall fit looks low for this role; pausing here. I'll surface better-aligned roles next time."
   }
+}
+
+function probingClarifyText(lang: Lang): string {
+  return lang === "zh"
+    ? "没关系，不一定要完全同名经验。我想先理解你最接近的经历：你做过哪个相关项目、你具体负责什么、最后有什么结果？粗略讲也可以。"
+    : "No worries if it was not exactly that. I am trying to understand the closest overlap. Can you share the nearest project you owned: the context, what you personally did, and what changed because of it? A rough example is fine."
 }
