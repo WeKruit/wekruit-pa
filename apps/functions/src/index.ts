@@ -127,6 +127,14 @@ export { paBackfillAtsUrlsBatch, paCostSummaryWeekly } from "./backfill-ats-urls
 // resolver from paBackfillMatchingJobsAtsUrl (cap 1000/run).
 export { paLivenessSweepDaily } from "./liveness-sweep.js"
 
+// Phase A5 (post-v1.7) — `pa-companies` enrichment cascade (YC → Wikidata →
+// Clearbit → LLM). Scheduled Tue 04:00 UTC + admin-only ad-hoc callable.
+// Never overwrites docs where `lastReviewedBy != null`.
+export {
+  paEnrichCompaniesNightly,
+  paEnrichCompaniesAdHoc,
+} from "./enrich-companies-nightly.js"
+
 // v1.7+ TTL — Weekly hybrid GC for matching-jobs collection. Adam Option D
 // (2026-05-08): inactive >90d AND dead >365d are deleted Mon 04:00 UTC.
 // Postgres tombstone (P7-K, alembic 0007) preserves dead flag after Firestore
