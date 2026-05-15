@@ -323,9 +323,41 @@ Required fix boundary:
   - `hosting:pa-dashboard` released to `https://wekruit-pa.web.app`.
   - Deployed JS contains `Open candidate page`, `Publish in job workspace`, and `Live candidate page`.
 
+## 2026-05-15 External Supply Existing-Batch Verification
+
+- Root cause fixed:
+  - Existing production external records from `runResolveBatchIdentity` had optional fields persisted as `null` (`resolvedUserId`, `resolutionConflictId`, `reviewReasons`).
+  - `runEvaluation` and agent research prompt generation parsed those docs with `ExternalCandidateRecordSchema.safeParse` and silently skipped the entire record when optional fields were `null`.
+  - `apps/functions/src/external-supply/record-doc.ts` now canonicalizes those Firestore docs at read boundaries.
+  - `runResolveBatchIdentity` no longer writes new `null` values for those fields; empty review reasons write as `[]`, and absent optional ids are omitted.
+- Test lock:
+  - `runEvaluation` now has a regression test proving a production-shaped resolved record with nullable optional fields still evaluates.
+  - `runGenerateAgentResearchPrompt` now has a regression test proving the same production-shaped record still renders into an agent research task.
+  - `runResolveBatchIdentity` now asserts newly resolved records do not write nullable optional fields.
+- Node 24 verification:
+  - `node --import tsx --test apps/functions/src/external-supply/evaluate.test.ts apps/functions/src/external-supply/resolve-identity.test.ts apps/functions/src/external-supply/agent-task.test.ts` passed 46/46.
+  - `npm run typecheck --workspace=@pa/functions` passed.
+  - Firebase deploy predeploy ran the full functions test suite: 1520 passed, 0 failed.
+- Live-equivalent production Firestore verification:
+  - Script: `apps/functions/scripts/external-supply-existing-batch-verify.ts`.
+  - Artifact: `.planning/external-supply-existing-batch/artifacts/verify-ext-rain-backend-engineer-482b165f-2026-05-15T20-01-14-849Z.json`.
+  - Existing batch: `pa-external-sourcing-batches/81395d47-3da9-4485-8025-fcdc79a4aa93`.
+  - Batch source/job/company: `manual_csv`, `rain-backend-engineer-482b165f`, `rain-xyz`.
+  - Records loaded: 45 total, 26 resolved, 19 blocked.
+  - Evaluation run: `verify-ext-rain-backend-engineer-482b165f-2026-05-15T20-01-14-849Z`.
+  - Evaluation result: processed 26, completed 26, skipped 0.
+  - Tier result: 26 `retain_only`, 0 blocked.
+  - Outreach plan: `9525c81b-7eb2-40d5-aa99-a525a423b70d`, approved, channel decision `no_outreach`.
+  - Mailgun dry-run was blocked because the selected retain-only candidate had no resolvable email recipient.
+  - `pa-users` count stayed `602 -> 602`; the script hard-fails if production user count changes.
+- Deployment:
+  - `paExternalSupplyResolveBatchIdentity` deployed as Node.js 24, `ACTIVE`, update time `2026-05-15T20:05:02Z`.
+  - `paExternalSupplyRunEvaluation` deployed as Node.js 24, `ACTIVE`, update time `2026-05-15T20:05:03Z`.
+  - `paExternalSupplyGenerateAgentResearchPrompt` deployed as Node.js 24, `ACTIVE`, update time `2026-05-15T20:05:05Z`.
+
 ## Remaining Completion Gaps
 
 - WeKruit Open web chat now merges each answer into shared `pa-users` evidence/context and refuses missing/non-layoff profiles. It is still not a full Claire state machine/mem0 conversational path; that remains a separate product integration gap.
-- External supply prospects are in the shared `pa-users` pool, but the end-to-end operator path from imported prospect to candidate profile, match/eval, approved outreach, reply, and unified evidence is not yet reverified in this goal.
+- External supply prospects are in the shared `pa-users` pool, and an existing resolved batch is now reverified through candidate-profile evaluation, outreach draft, approval, and `pa-users` no-growth guards. The reply/import-back evidence loop after outreach remains unverified because the selected production-safe plan was `retain_only` / `no_outreach`.
 - Job creation/import still appears split across enrichment approval, seeding scripts, and external-supply job surfaces. The single job creation/publication flow is not yet audited or unified.
 - Manual Apple Messages UI testing is still not fully repeated after the stress-runner fixes. The production Firestore prescreen matrix and Sendblue entrypoint matrix are verified with outbound SMS stubbed; one live signed deployed-webhook user-boundary canary and one allowlist-deny canary were verified.
