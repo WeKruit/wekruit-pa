@@ -127,9 +127,10 @@ brain.
 
 - **Owner**: P8 sub-agent
 - **Worktree**: `.claude/worktrees/v21-S2-voice-bridge`
-- **Mandate**: LiveKit Agents worker. Subscribes to room, uses Deepgram Nova-3 STT + Aura-2 TTS + Silero VAD + MultilingualModel. Each user_speech_committed → call `PreScreenPipeline.runTurn` (via context loaders + shim). NO new scoring logic.
+- **Mandate**: LiveKit Agents worker, **deployed to LiveKit Cloud managed agent hosting (L12)**. Subscribes to room, uses Deepgram Nova-3 STT + Aura-2 TTS + Silero VAD + MultilingualModel. Each `user_speech_committed` → call `PreScreenPipeline.runTurn` (via context loaders + shim). NO new scoring logic. NO self-host / k8s / docker-compose.
 - **Acceptance**:
-  - voice agent boots locally, joins room, hears mock SIP participant
+  - voice agent boots locally (dev), joins room, hears mock SIP participant
+  - voice agent deploys to LiveKit Cloud, accepts dispatched job, completes round-trip
   - turn round-trip: user audio → STT → runTurn → shim → TTS audio out
   - registered all 7 mandated event handlers
   - no `minEndpointingDelay` hardcoded — adaptive turn model active
@@ -223,9 +224,15 @@ Any red → merge BLOCKED. Investigate root cause. NO `--no-verify`.
 | TCPA misconfiguration sends to consumer numbers | CRITICAL | Internal-only numbers in v2.1 allowlist `TWILIO_OUTBOUND_CALLER_IDS` recipients; gate enforced in prod | S5 |
 | Cartesia eval introduces TTS regression | LOW | Aura-2 default; Cartesia behind separate per-profile flag; no in-cycle swap | S2 / S6 |
 
+## Adam-confirmed Locks (2026-05-15)
+
+- **L8** Recording storage `wekruit-voice-recordings` GCS bucket; consent prompt at call start; retention 90d default until S5 sets per-TCPA.
+- **L9** Hangup webhook idempotent via `voiceCallSid` CAS + metrics idempotency marker.
+- **L10** `outbound-bookings` state machine: `queued → dialing → connected → completed → failed → reconciled`, deterministic only.
+- **L11** $1/call hard stop via `session_usage_updated` aggregation; ceiling event → graceful hangup + `failed:cost_ceiling`.
+- **L12** LiveKit deployment = **LiveKit Cloud managed agent hosting**. Adam directive 2026-05-15. NO self-hosted infra.
+
 ## Adam-action Outstanding
 
 1. Paste literal values for `LIVEKIT_API_SECRET`, `TWILIO_SIP_PASSWORD`, `DEEPGRAM_API_KEY` into `.env` (P10 pre-staged placeholder lines).
-2. Confirm or override the 4 candidate locks L8–L11 listed in GOAL-PROMPT.md.
-3. Confirm or override sprint owner topology (currently all P8 sub-agents spawned by P10).
-4. Approve research-file strategy (see S0 SUMMARY.md once written).
+2. Approve research-file strategy: S1 agents may web-fetch official LiveKit / Deepgram / Twilio docs as needed; research files in `.planning/v2.1/research/` will be populated by sub-agents during their sprints, not as a S0 prerequisite.

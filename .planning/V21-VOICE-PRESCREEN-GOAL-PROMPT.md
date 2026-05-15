@@ -88,12 +88,14 @@ Full regression list lives in MILESTONE.
    - `session_usage_updated`
    - `close`
 
-> Locks 8–11: `[NEEDS-ADAM-LOCK]` — Adam to fill before S2 begins. Best-guess
-> candidates (do NOT execute until Adam confirms):
-> - L8 candidate: recording storage policy (`WEKRUIT_VOICE_RECORDINGS_BUCKET` lifecycle, consent capture)
-> - L9 candidate: hangup reconciliation idempotency contract
-> - L10 candidate: outbound-bookings state machine (queued → dialing → connected → completed → failed → reconciled)
-> - L11 candidate: cost ceiling enforcement ($1/call hard stop + observable)
+**Locks 8–11 (Adam-confirmed 2026-05-15):**
+
+8. **Recording storage policy** — bucket `WEKRUIT_VOICE_RECORDINGS_BUCKET=wekruit-voice-recordings`. Recording consent prompt at call start. Retention TBD by S5 owner per TCPA; default 90 days until set.
+9. **Hangup reconciliation idempotency contract** — webhook keyed by `voiceCallSid`; reconcile via CAS on `outbound-bookings/{id}` row + idempotency marker in `voice-call-metrics/{callSid}`. Replay-safe; double-scoring impossible.
+10. **`outbound-bookings` state machine** — `queued → dialing → connected → completed → failed → reconciled`. Transitions deterministic; LLM never controls state. Voice agent only writes via CAS.
+11. **Cost ceiling enforcement** — $1/call hard stop, observable. `session_usage_updated` aggregates per-turn cost; ceiling-crossed event triggers graceful hangup + booking marked `failed:cost_ceiling`.
+
+**Lock 12 (Adam directive 2026-05-15, post-confirmation):** LiveKit deployment = LiveKit Cloud (managed agent hosting). NO self-hosted / k8s / docker-compose. S2 voice bridge ships as a Cloud-hosted LiveKit Agent.
 
 ## Done Criteria (S7 ship-gate)
 
