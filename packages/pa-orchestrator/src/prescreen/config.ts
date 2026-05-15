@@ -55,7 +55,8 @@ export const PrescreenQuestionConfigSchema = z.object({
   /**
    * v1.9 hotfix — per-Q τ_m match threshold override. Defaults to type's
    * baseline:
-   *   MUST_HAVE → 1.0 (any mismatch fails — PS2 lock)
+   *   MUST_HAVE → 1.0 (blocks only after the pipeline exhausts configured
+   *   clarify/probe rounds)
    *   PROBING   → 0.7
    *   GOOD_TO_HAVE → 0 (never blocks)
    *

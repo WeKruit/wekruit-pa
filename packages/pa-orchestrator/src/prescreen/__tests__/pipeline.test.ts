@@ -6,8 +6,8 @@
  *
  * Coverage:
  *   - Happy path: 2 MUST_HAVE Qs accepted → PASS
- *   - MUST_HAVE mismatch → clarify once before HARD_STOP
- *   - PROBING s<τ_m → clarify once before HARD_STOP
+ *   - MUST_HAVE mismatch → probe up to maxClarifyRounds before HARD_STOP
+ *   - PROBING s<τ_m → probe up to maxClarifyRounds before HARD_STOP
  *   - GOOD_TO_HAVE s=0 → keeps going
  *   - Low confidence triggers clarify (k bumps)
  *   - max_clarify_exhausted falls through to Type Gate
@@ -113,7 +113,7 @@ test("Phase 76: PreScreenPipeline happy path 2 MUST_HAVE → PASS", async () => 
 })
 
 // ════════════════════════════════════════════════════════════════════════════
-// MUST_HAVE hard-stop
+// MUST_HAVE hard-stop after probing
 // ════════════════════════════════════════════════════════════════════════════
 
 test("Phase 76: PreScreenPipeline MUST_HAVE mismatch probes before HARD_STOP", async () => {

@@ -11,7 +11,8 @@
  *   ┌─────────────────────┐
  *   │  Confidence Gate    │  → clarify (k < 2) OR proceed
  *   ├─────────────────────┤
- *   │  Type Gate          │  → HARD_STOP (MUST_HAVE/PROBING fail) OR proceed
+ *   │  Type Gate          │  → HARD_STOP after probe rounds are exhausted
+ *   │                     │    (MUST_HAVE/PROBING fail) OR proceed
  *   ├─────────────────────┤
  *   │  Update score S     │
  *   ├─────────────────────┤
@@ -55,12 +56,12 @@ export function evalConfidenceGate(args: {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Type Gate (PS6 — MUST_HAVE / PROBING hard-stop)
+// Type Gate (PS6 — MUST_HAVE / PROBING hard-stop after probing)
 // ────────────────────────────────────────────────────────────────────────────
 
 /** Per-type τ_m match-threshold defaults. */
 export const DEFAULT_TYPE_THRESHOLDS: Record<QuestionType, number> = {
-  MUST_HAVE: 1.0, // any mismatch fails (s < 1.0)
+  MUST_HAVE: 1.0, // failing score blocks only after caller exhausts probe rounds
   PROBING: 0.7,
   GOOD_TO_HAVE: 0, // never blocks
 }
@@ -73,9 +74,10 @@ export type TypeGateOutcome =
  * Type gate. MUST_HAVE: s < 1.0 → hard stop. PROBING: s < τ_m OR c < τ_c
  * → hard stop. GOOD_TO_HAVE: never blocks (low scores still accumulate).
  *
- * Note: confidence shortfall on PROBING ONLY triggers hard-stop after the
- * confidence gate has exhausted clarification rounds — caller is
- * responsible for that ordering.
+ * Note: the caller is responsible for exhausting clarification/probe rounds
+ * before invoking this as a terminal blocker. The product behavior is to
+ * probe for nearest-overlap evidence before concluding a required area is
+ * missing.
  */
 export function evalTypeGate(args: {
   type: QuestionType
