@@ -34,6 +34,13 @@ import {
   SectionHead,
   StatusPill,
 } from "../components/console/primitives.js"
+import {
+  classifyCandidateProfile,
+  deriveCandidateSource,
+  type CandidateClass,
+  type ExternalSource,
+  type SourceKind,
+} from "./Candidates.helpers.js"
 
 type Tone = "live" | "hitl" | "blocked" | "info" | "neutral"
 
@@ -84,10 +91,6 @@ const LIFECYCLE_ORDER: LifecycleState[] = [
   "deleted",
 ]
 
-type ExternalSource = "juicebox" | "lessie" | "coresignal" | "manual_csv"
-type SourceKind = ExternalSource | "imessage" | "public_job" | "ats" | "bulk_resume" | "synthetic_test" | "unknown"
-type CandidateClass = "candidate_account" | "external_supply_prospect" | "synthetic_test_profile"
-
 const SOURCE_LABEL: Record<SourceKind, string> = {
   juicebox: "Juicebox",
   lessie: "Lessie",
@@ -97,6 +100,7 @@ const SOURCE_LABEL: Record<SourceKind, string> = {
   public_job: "Public job page",
   ats: "ATS inbound",
   bulk_resume: "Bulk resume",
+  layoff: "WeKruit Open",
   synthetic_test: "Synthetic test",
   unknown: "Unknown",
 }
@@ -110,6 +114,7 @@ const SOURCE_ORDER: SourceKind[] = [
   "public_job",
   "ats",
   "bulk_resume",
+  "layoff",
   "synthetic_test",
   "unknown",
 ]
@@ -131,6 +136,9 @@ type UserDoc = {
   piiConsentAt?: string
   latestResumeArtifactId?: string
   mem0UserId?: string
+  testMode?: boolean
+  signupSource?: string
+  source?: string
   createdAt?: string
   updatedAt?: string
   lifecycleUpdatedAt?: string
@@ -276,56 +284,17 @@ async function loadSourceLinks(): Promise<Map<string, ExternalSource>> {
   return out
 }
 
-function deriveSource(doc: UserDoc, fromLinks: Map<string, ExternalSource>): SourceKind {
-  if (isSyntheticTestProfile(doc)) return "synthetic_test"
-  const linked = fromLinks.get(doc.id)
-  if (linked) return linked
-  if (doc.latestResumeArtifactId && !doc.phoneE164 && !doc.linkedinUrl) return "bulk_resume"
-  if (doc.linkedinUrl && !doc.phoneE164) return "ats"
-  if (doc.phoneE164) return "imessage"
-  if (doc.email) return "public_job"
-  return "unknown"
-}
-
-function isSyntheticTestProfile(doc: UserDoc): boolean {
-  const id = doc.id.toLowerCase()
-  const phone = doc.phoneE164 ?? ""
-  const email = doc.email?.toLowerCase() ?? ""
-  return id.startsWith("e2e-") ||
-    id.startsWith("p9-") ||
-    id.startsWith("qa") ||
-    id.startsWith("recheck-") ||
-    id.startsWith("synthetic") ||
-    id.includes("reset") ||
-    id.includes("smoke") ||
-    id.includes("test") ||
-    phone.startsWith("+19999") ||
-    phone.startsWith("+1888") ||
-    phone.includes("@") ||
-    email.includes("test") ||
-    email.endsWith("@example.com") ||
-    email.endsWith("@local")
-}
-
-function classifyCandidate(source: SourceKind): CandidateClass {
-  if (source === "synthetic_test") return "synthetic_test_profile"
-  return source === "juicebox" ||
-    source === "lessie" ||
-    source === "coresignal" ||
-    source === "manual_csv"
-    ? "external_supply_prospect"
-    : "candidate_account"
-}
-
 function candidateClassLabel(candidateClass: CandidateClass): string {
   if (candidateClass === "external_supply_prospect") return "External prospect"
+  if (candidateClass === "legacy_sms_profile") return "Legacy SMS"
   if (candidateClass === "synthetic_test_profile") return "Synthetic test"
+  if (candidateClass === "incomplete_identity_artifact") return "Incomplete identity"
   return "Candidate account"
 }
 
 function buildRow(doc: UserDoc, sourceMap: Map<string, ExternalSource>): Row {
   const { handle, kind } = buildHandle(doc)
-  const source = deriveSource(doc, sourceMap)
+  const source = deriveCandidateSource(doc, sourceMap.get(doc.id))
   return {
     id: doc.id,
     doc,
@@ -333,7 +302,7 @@ function buildRow(doc: UserDoc, sourceMap: Map<string, ExternalSource>): Row {
     handleKind: kind,
     lifecycle: deriveLifecycle(doc),
     source,
-    candidateClass: classifyCandidate(source),
+    candidateClass: classifyCandidateProfile(source, doc),
     profilePct: computeProfilePct(doc),
     skills: skillsFromTags(doc.globalTags),
     lastActiveIso: doc.lifecycleUpdatedAt || doc.updatedAt || doc.createdAt,
@@ -394,7 +363,9 @@ export function Candidates() {
     let withReachable = 0
     let accountCandidates = 0
     let externalProspects = 0
+    let legacySmsProfiles = 0
     let syntheticTests = 0
+    let identityArtifacts = 0
     for (const r of rows) {
       byState.set(r.lifecycle, (byState.get(r.lifecycle) ?? 0) + 1)
       bySource.set(r.source, (bySource.get(r.source) ?? 0) + 1)
@@ -402,9 +373,21 @@ export function Candidates() {
       if (r.doc.email || r.doc.phoneE164 || r.doc.linkedinUrl) withReachable++
       if (r.candidateClass === "candidate_account") accountCandidates++
       else if (r.candidateClass === "external_supply_prospect") externalProspects++
-      else syntheticTests++
+      else if (r.candidateClass === "legacy_sms_profile") legacySmsProfiles++
+      else if (r.candidateClass === "synthetic_test_profile") syntheticTests++
+      else identityArtifacts++
     }
-    return { byState, bySource, withProfile, withReachable, accountCandidates, externalProspects, syntheticTests }
+    return {
+      byState,
+      bySource,
+      withProfile,
+      withReachable,
+      accountCandidates,
+      externalProspects,
+      legacySmsProfiles,
+      syntheticTests,
+      identityArtifacts,
+    }
   }, [rows])
 
   const filtered = useMemo(() => {
@@ -496,10 +479,22 @@ export function Candidates() {
             sub: "operator-imported sourcing",
           },
           {
+            label: "Legacy SMS",
+            value: counts.legacySmsProfiles,
+            tone: counts.legacySmsProfiles > 0 ? "neutral" : "neutral",
+            sub: "old phone-only rows",
+          },
+          {
             label: "Synthetic tests",
             value: counts.syntheticTests,
             tone: counts.syntheticTests > 0 ? "neutral" : "neutral",
             sub: "excluded from account view",
+          },
+          {
+            label: "Identity artifacts",
+            value: counts.identityArtifacts,
+            tone: counts.identityArtifacts > 0 ? "neutral" : "neutral",
+            sub: "no reachable handle yet",
           },
           {
             label: "Reachable",

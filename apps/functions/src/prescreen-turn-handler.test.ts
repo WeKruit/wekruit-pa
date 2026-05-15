@@ -1,6 +1,7 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 import { prescreenTurnRecordQId, runPrescreenTurnIfActive } from "./prescreen-turn-handler.js"
+import type { KeywordSetLlmCaller, PreScreenClarifyComposer } from "@pa/pa-orchestrator"
 
 type FakeDoc = { exists: boolean; data: Record<string, unknown> }
 
@@ -202,5 +203,108 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     assert.equal((session?.workSession as { status?: string }).status, "ended")
     assert.equal((session?.workSession as { boundary?: string }).boundary, "user_exit")
     assert.ok([...docs.keys()].some((path) => path.startsWith("pa-prescreen-sessions/ps_active/turns/")))
+  })
+
+  it("handles a coalesced multi-message role-fit reply as one probe turn", async () => {
+    const now = new Date().toISOString()
+    const { db, docs } = makeFakeDb({
+      "pa-prescreen-sessions/ps_active": {
+        sessionId: "ps_active",
+        userId: "u1",
+        jobId: "rain-software-engineer-fullstack-8849f6ef",
+        terminal: null,
+        currentQId: "role_fit",
+        createdAt: now,
+        updatedAt: now,
+        score: 0,
+        scoreMax: 1,
+        threshold: 0.65,
+        confidenceThreshold: 0.7,
+        maxClarifyRounds: 4,
+        qOrder: ["role_fit"],
+        questions: {
+          role_fit: {
+            qId: "role_fit",
+            type: "MUST_HAVE",
+            weight: 1,
+            clarifyRounds: 0,
+          },
+        },
+        workSession: { kind: "job_prescreen", status: "active", startedAt: now, boundary: "trigger" },
+        cfgSnapshot: {
+          questions: [
+            {
+              qId: "role_fit",
+              prompt: { en: "What recent work best matches this software engineering role?", zh: "What recent work best matches this software engineering role?" },
+              clarifyPrompt: { en: "Tell me more.", zh: "Tell me more." },
+              keywords: [
+                { keyword: "fullstack ownership", weight: 1 },
+                { keyword: "API or data-system debugging", weight: 1 },
+              ],
+            },
+          ],
+        },
+      },
+    })
+
+    const replyText = [
+      "For OFO Delivery, I owned the merchant order dashboard and dispatch tooling.",
+      "I built JavaScript screens, SQL reports, and scripts to trace failed orders.",
+    ].join("\n")
+    const caller: KeywordSetLlmCaller = {
+      async score() {
+        return {
+          perKeyword: [
+            { keyword: "fullstack ownership", match: 0.72, confidence: 0.74, evidence: "owned dashboard", reasoning: "adjacent ownership" },
+            { keyword: "API or data-system debugging", match: 0.7, confidence: 0.74, evidence: "SQL reports", reasoning: "data debugging" },
+          ],
+          summary: "Adjacent dashboard/data ownership; needs one deeper systems example.",
+          answered: true,
+        }
+      },
+    }
+    const clarifyComposer: PreScreenClarifyComposer = async (input) => {
+      assert.equal(input.reply, replyText)
+      assert.equal(input.clarifyRound, 1)
+      return "That helps. What systems did that dashboard touch, and what changed after it shipped?"
+    }
+    const sent: string[] = []
+    const terminalCalls: Array<Record<string, unknown>> = []
+
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u1",
+      toE164: "+13054507715",
+      replyText,
+      keywordSetCaller: caller,
+      clarifyComposer,
+      runTerminalAction: async (args) => {
+        terminalCalls.push(args as unknown as Record<string, unknown>)
+        return { alreadyFired: false, level1Sent: false, jobRecsFired: false }
+      },
+      sendSms: async (args) => {
+        sent.push(args.content)
+        return {
+          status: "queued",
+          from_number: null,
+          number: args.to,
+          content: args.content,
+          service: "iMessage",
+          is_outbound: true,
+        }
+      },
+    })
+
+    assert.equal(result.handled, true)
+    assert.equal(result.terminal, null)
+    assert.deepEqual(terminalCalls, [])
+    assert.deepEqual(sent, ["That helps. What systems did that dashboard touch, and what changed after it shipped?"])
+    const session = docs.get("pa-prescreen-sessions/ps_active")?.data
+    assert.equal(session?.terminal, null)
+    assert.equal((session?.questions as Record<string, { clarifyRounds?: number }>).role_fit.clarifyRounds, 1)
+    const turnEntries = [...docs.entries()].filter(([path]) => path.startsWith("pa-prescreen-sessions/ps_active/turns/"))
+    assert.equal(turnEntries.length, 1)
+    assert.equal(turnEntries[0][1].data.reply, replyText)
+    assert.equal((turnEntries[0][1].data.action as { kind?: string }).kind, "clarify")
   })
 })

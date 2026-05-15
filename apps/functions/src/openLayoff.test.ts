@@ -1,0 +1,364 @@
+import assert from "node:assert/strict"
+import test from "node:test"
+import { HttpsError } from "firebase-functions/v2/https"
+import type { Firestore } from "firebase-admin/firestore"
+import { PA_COLLECTIONS } from "@pa/core-types"
+import {
+  LAYOFF_SOURCE_TAG,
+  phoneIndexId,
+  runInitiateSmsPrescreen,
+  runListLayoffCandidates,
+  runRegisterEmployer,
+  runRegisterLayoffCandidate,
+  type EmployerInput,
+  type RegisterInput,
+} from "./openLayoff.js"
+
+type DocData = Record<string, unknown>
+type Store = Map<string, Map<string, DocData>>
+type Filter = { field: string; op: "==" | ">=" | "in"; value: unknown }
+
+function getNested(data: DocData, path: string): unknown {
+  return path.split(".").reduce<unknown>((acc, part) => {
+    if (!acc || typeof acc !== "object") return undefined
+    return (acc as Record<string, unknown>)[part]
+  }, data)
+}
+
+function matchesFilter(data: DocData, filter: Filter): boolean {
+  const got = getNested(data, filter.field)
+  if (filter.op === "==") return got === filter.value
+  if (filter.op === "in") return Array.isArray(filter.value) && filter.value.includes(got)
+  if (filter.op === ">=") {
+    if (got instanceof Date && filter.value instanceof Date) return got.getTime() >= filter.value.getTime()
+    if (typeof got === "string" && typeof filter.value === "string") return got >= filter.value
+  }
+  return false
+}
+
+class FakeDocRef {
+  constructor(
+    private readonly db: FakeFirestore,
+    readonly collectionPath: string,
+    readonly id: string
+  ) {}
+
+  async get() {
+    const data = this.db.collectionStore(this.collectionPath).get(this.id)
+    return {
+      id: this.id,
+      exists: data !== undefined,
+      data: () => data,
+    }
+  }
+
+  async set(data: DocData, opts?: { merge?: boolean }) {
+    this.db.write(this.collectionPath, this.id, data, opts)
+  }
+}
+
+class FakeQuery {
+  constructor(
+    protected readonly db: FakeFirestore,
+    protected readonly collectionPath: string,
+    protected readonly filters: Filter[] = [],
+    protected readonly max = 0
+  ) {}
+
+  where(field: string, op: "==" | ">=" | "in", value: unknown) {
+    return new FakeQuery(this.db, this.collectionPath, [...this.filters, { field, op, value }], this.max)
+  }
+
+  limit(max: number) {
+    return new FakeQuery(this.db, this.collectionPath, this.filters, max)
+  }
+
+  async get() {
+    let docs = [...this.db.collectionStore(this.collectionPath).entries()]
+      .filter(([, data]) => this.filters.every((f) => matchesFilter(data, f)))
+      .map(([id, data]) => ({ id, exists: true, data: () => data }))
+    if (this.max > 0) docs = docs.slice(0, this.max)
+    return { empty: docs.length === 0, size: docs.length, docs }
+  }
+}
+
+class FakeCollection extends FakeQuery {
+  doc(id?: string) {
+    return new FakeDocRef(this.db, this.collectionPath, id ?? this.db.nextId())
+  }
+}
+
+class FakeBatch {
+  private writes: Array<{ ref: FakeDocRef; data: DocData; opts?: { merge?: boolean } }> = []
+
+  constructor(private readonly db: FakeFirestore) {}
+
+  set(ref: FakeDocRef, data: DocData, opts?: { merge?: boolean }) {
+    this.writes.push({ ref, data, opts })
+  }
+
+  async commit() {
+    for (const write of this.writes) {
+      this.db.write(write.ref.collectionPath, write.ref.id, write.data, write.opts)
+    }
+  }
+}
+
+class FakeFirestore {
+  readonly store: Store = new Map()
+  readonly writes: Array<{ path: string; data: DocData; mode: "set" | "merge" }> = []
+  private auto = 1
+
+  asFirestore(): Firestore {
+    return this as unknown as Firestore
+  }
+
+  nextId(): string {
+    return `auto_${this.auto++}`
+  }
+
+  collectionStore(path: string): Map<string, DocData> {
+    let coll = this.store.get(path)
+    if (!coll) {
+      coll = new Map()
+      this.store.set(path, coll)
+    }
+    return coll
+  }
+
+  collection(path: string) {
+    return new FakeCollection(this, path)
+  }
+
+  doc(path: string) {
+    const parts = path.split("/")
+    const id = parts.pop()
+    if (!id || parts.length === 0) throw new Error(`bad_doc_path:${path}`)
+    return new FakeDocRef(this, parts.join("/"), id)
+  }
+
+  batch() {
+    return new FakeBatch(this)
+  }
+
+  seed(path: string, data: DocData) {
+    const ref = this.doc(path)
+    this.collectionStore(ref.collectionPath).set(ref.id, data)
+  }
+
+  read(path: string): DocData | undefined {
+    const ref = this.doc(path)
+    return this.collectionStore(ref.collectionPath).get(ref.id)
+  }
+
+  write(collectionPath: string, id: string, data: DocData, opts?: { merge?: boolean }) {
+    const coll = this.collectionStore(collectionPath)
+    const current = coll.get(id)
+    coll.set(id, opts?.merge && current ? { ...current, ...data } : { ...data })
+    this.writes.push({
+      path: `${collectionPath}/${id}`,
+      data: { ...data },
+      mode: opts?.merge ? "merge" : "set",
+    })
+  }
+}
+
+const fixedNow = "2026-05-15T12:00:00.000Z"
+const fixedTimestamp = new Date(fixedNow)
+
+function deps(fake: FakeFirestore, extra: Partial<Parameters<typeof runRegisterLayoffCandidate>[1]> = {}) {
+  return {
+    db: fake.asFirestore(),
+    serverTimestamp: () => fixedTimestamp,
+    nowIso: () => fixedNow,
+    loadSendbluePool: async () => ({
+      numbers: [{ number: "+13054507715", status: "active" as const }],
+    }),
+    ...extra,
+  }
+}
+
+function registration(overrides: Partial<RegisterInput> = {}): RegisterInput {
+  return {
+    firstName: "Ada",
+    lastName: "Lovelace",
+    email: "ada@example.com",
+    linkedin: "https://linkedin.com/in/ada",
+    lastCompany: "Rain",
+    jobTitle: "Software Engineer",
+    location: "New York, NY",
+    phone: "(424) 320-1960",
+    consent: true,
+    resumeFileName: "ada.pdf",
+    ...overrides,
+  }
+}
+
+function employer(overrides: Partial<EmployerInput> = {}): EmployerInput {
+  return {
+    companyName: "Hiring Co",
+    companyLinkedin: "https://linkedin.com/company/hiring-co",
+    workEmail: "Hiring@Company.com",
+    stage: "seed",
+    roleAtCompany: "Founder",
+    rolesHiring: ["Engineer"],
+    ...overrides,
+  }
+}
+
+test("runRegisterLayoffCandidate writes fresh layoff profiles only to pa-users plus phone index", async () => {
+  const fake = new FakeFirestore()
+  const result = await runRegisterLayoffCandidate(registration(), deps(fake))
+
+  assert.equal(result.candidateId, "auto_1")
+  assert.equal(result.senderNumber, "+13054507715")
+
+  const user = fake.read(`${PA_COLLECTIONS.users}/auto_1`)!
+  assert.equal(user.source, LAYOFF_SOURCE_TAG)
+  assert.equal(user.phoneE164, "+14243201960")
+  assert.equal(user.onboardingStatus, "invited")
+  assert.equal(user.createdAt, fixedNow)
+  assert.equal((user.layoffContext as DocData).lastCompany, "Rain")
+  assert.equal(fake.collectionStore("layoff_candidates").size, 0)
+
+  const index = fake.read(`layoff_phone_index/${phoneIndexId("+14243201960")}`)!
+  assert.equal(index.candidateId, "auto_1")
+})
+
+test("runRegisterLayoffCandidate duplicate auto mode returns existing profile without writes", async () => {
+  const fake = new FakeFirestore()
+  fake.seed(`layoff_phone_index/${phoneIndexId("+14243201960")}`, { candidateId: "cand_existing" })
+  fake.seed(`${PA_COLLECTIONS.users}/cand_existing`, {
+    id: "cand_existing",
+    displayName: "Ada Lovelace",
+    source: LAYOFF_SOURCE_TAG,
+    lastLaidOffAt: fixedNow,
+    layoffContext: {
+      lastCompany: "Rain",
+      jobTitle: "Software Engineer",
+      location: "New York",
+    },
+  })
+
+  const result = await runRegisterLayoffCandidate(registration(), deps(fake))
+
+  assert.equal(result.duplicate, true)
+  assert.equal(result.candidateId, "cand_existing")
+  assert.deepEqual((result.existing as DocData).lastCompany, "Rain")
+  assert.equal(fake.writes.length, 0)
+})
+
+test("runRegisterLayoffCandidate refresh mode reuses the phone-index candidateId", async () => {
+  const fake = new FakeFirestore()
+  fake.seed(`layoff_phone_index/${phoneIndexId("+14243201960")}`, { candidateId: "cand_existing" })
+  fake.seed(`${PA_COLLECTIONS.users}/cand_existing`, {
+    id: "cand_existing",
+    phoneE164: "+14243201960",
+    source: LAYOFF_SOURCE_TAG,
+    createdAt: "2026-05-01T00:00:00.000Z",
+    layoffContext: { lastCompany: "OldCo" },
+  })
+
+  const result = await runRegisterLayoffCandidate(
+    registration({ mode: "refresh", lastCompany: "NewCo" }),
+    deps(fake)
+  )
+
+  assert.equal(result.candidateId, "cand_existing")
+  assert.equal(result.isReregistration, true)
+  const user = fake.read(`${PA_COLLECTIONS.users}/cand_existing`)!
+  assert.equal((user.layoffContext as DocData).lastCompany, "NewCo")
+  assert.equal(user.createdAt, "2026-05-01T00:00:00.000Z")
+})
+
+test("runInitiateSmsPrescreen enqueues one idempotent kickoff for the layoff candidate", async () => {
+  const fake = new FakeFirestore()
+  fake.seed(`${PA_COLLECTIONS.users}/cand_1`, {
+    id: "cand_1",
+    source: LAYOFF_SOURCE_TAG,
+    phoneE164: "+14243201960",
+    displayName: "Ada Lovelace",
+    layoffContext: { lastCompany: "Rain" },
+  })
+  const outboundCalls: DocData[] = []
+
+  const result = await runInitiateSmsPrescreen("cand_1", deps(fake, {
+    enqueueOutbound: async (_db, input) => {
+      outboundCalls.push(input as unknown as DocData)
+      return { id: "out_1", created: true }
+    },
+  }))
+
+  assert.equal(result.kickoffOutboundId, "out_1")
+  assert.equal(outboundCalls[0]!.userId, "cand_1")
+  assert.equal(outboundCalls[0]!.toE164, "+14243201960")
+  assert.equal(outboundCalls[0]!.idempotencyKey, "wekruit_open_layoff:cand_1:kickoff")
+  assert.match(String(outboundCalls[0]!.body), /Claire from WeKruit/)
+  assert.equal(fake.read(`${PA_COLLECTIONS.users}/cand_1`)!.kickoffOutboundId, "out_1")
+})
+
+test("runListLayoffCandidates requires a verified employer and returns redacted layoff cards only", async () => {
+  const fake = new FakeFirestore()
+  fake.seed("layoff_employers/emp_pending", {
+    workEmailLower: "hiring@company.com",
+    verificationStatus: "pending",
+  })
+  fake.seed("layoff_employers/emp_verified", {
+    workEmailLower: "verified@company.com",
+    verificationStatus: "verified",
+  })
+  fake.seed(`${PA_COLLECTIONS.users}/layoff_1`, {
+    id: "layoff_1",
+    source: LAYOFF_SOURCE_TAG,
+    displayName: "Ada Lovelace",
+    phoneE164: "+14243201960",
+    email: "ada@example.com",
+    onboardingStatus: "active",
+    lastLaidOffAt: new Date(),
+    layoffContext: {
+      lastCompany: "Rain",
+      jobTitle: "Software Engineer",
+      location: "New York",
+      email: "ada@example.com",
+    },
+  })
+  fake.seed(`${PA_COLLECTIONS.users}/regular_1`, {
+    id: "regular_1",
+    source: "public_job",
+    displayName: "Regular Candidate",
+    lastLaidOffAt: new Date(),
+  })
+
+  await assert.rejects(
+    () =>
+      runListLayoffCandidates(
+        {},
+        { uid: "employer_1", token: { email: "hiring@company.com" } },
+        deps(fake)
+      ),
+    (err) => err instanceof HttpsError && err.code === "failed-precondition"
+  )
+
+  const result = await runListLayoffCandidates(
+    {},
+    { uid: "employer_2", token: { email: "verified@company.com" } },
+    deps(fake)
+  )
+
+  assert.equal(result.data.length, 1)
+  assert.equal(result.data[0]!.id, "layoff_1")
+  assert.equal(result.data[0]!.firstName, "Ada")
+  assert.equal(result.data[0]!.lastInitial, "L")
+  assert.equal("email" in result.data[0]!, false)
+  assert.equal("phoneE164" in result.data[0]!, false)
+})
+
+test("runRegisterEmployer stores normalized workEmailLower for verification lookup", async () => {
+  const fake = new FakeFirestore()
+  const result = await runRegisterEmployer(employer(), deps(fake))
+  const doc = fake.read(`layoff_employers/${result.employerId}`)!
+
+  assert.equal(doc.workEmailLower, "hiring@company.com")
+  assert.equal(doc.verificationStatus, "pending")
+  assert.equal(doc.registeredAt, fixedTimestamp)
+})

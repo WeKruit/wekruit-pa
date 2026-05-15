@@ -82,6 +82,7 @@ Required fix boundary:
 ## 2026-05-15 Fix Verification
 
 - `apps/dashboard-web/src/pages/Candidates.tsx` now defaults to "Candidate accounts only" and separately counts candidate accounts, external prospects, and synthetic tests.
+- `apps/dashboard-web/src/pages/Candidates.helpers.ts` now treats old phone-only SMS rows as `legacy_sms_profile`, not `candidate_account`. A real dashboard candidate account requires current candidate/profile signal such as claimed auth identity, resume/profile evidence, mem0, PII consent, or the explicit layoff source tag.
 - `paCandidateClaimProfile` and `paCandidateResumeGateStatus` now reject `@wekruit.com` operator emails on the candidate app, so admin logins cannot create new candidate profiles.
 - Node 24 verification:
   - `node --import tsx --test apps/functions/src/identity/claim-api.test.ts apps/functions/src/identity/candidate-resume-gate.test.ts` passed 11/11.
@@ -96,3 +97,21 @@ Required fix boundary:
   - `indolencorlol@gmail.com` still resolves to exactly `pa-users/U7AwKT8nLDRa35DkuBxq`.
   - `pa-config/sendblue-pool` active number is `+13054507715`.
   - Latest 500 `pa-users` classify as 5 candidate accounts, 28 external prospects, and 467 synthetic tests.
+
+## 2026-05-15 Follow-Up Verification
+
+- Sendblue inbound allowlist:
+  - Deployed `paSendblueWebhook` is Node.js 24.
+  - Deployed `IMESSAGE_PEERS` contains one allowed candidate peer: Adam's `+1424...1960` test phone.
+  - A signed webhook canary from the previously allowed `...4668` phone returned `{ ok: true, ignored: "allowlist_deny" }`.
+  - Firestore wrote an audit event with `type = allowlist_deny` and did not create a `pa-inbound-events` row for that denied canary.
+- Dashboard candidate-pool classification:
+  - `node --import tsx --test apps/dashboard-web/src/pages/__tests__/Candidates.test.ts` passed 6/6.
+  - `npm run typecheck --workspace=@pa/dashboard-web` passed under Node 24.
+  - Live Firestore latest-500 recheck through the same dashboard helper classified:
+    - `candidate_account = 1`
+    - `external_supply_prospect = 28`
+    - `legacy_sms_profile = 0`
+    - `synthetic_test_profile = 467`
+    - `incomplete_identity_artifact = 4`
+  - The only default dashboard `candidate_account` row is `pa-users/U7AwKT8nLDRa35DkuBxq`.

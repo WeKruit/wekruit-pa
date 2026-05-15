@@ -564,6 +564,25 @@
         { "fieldPath": "enrichmentSource", "order": "ASCENDING" },
         { "fieldPath": "enrichedAt", "order": "ASCENDING" }
       ]
+    },
+    {
+      "_comment": "WeKruit Open Layoff marketplace listing — filter pa-users by layoff source tag + recency window.",
+      "collectionGroup": "pa-users",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "source", "order": "ASCENDING" },
+        { "fieldPath": "lastLaidOffAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "_comment": "WeKruit Open Layoff marketplace listing — function-filtered variant.",
+      "collectionGroup": "pa-users",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "source", "order": "ASCENDING" },
+        { "fieldPath": "layoffContext.function", "order": "ASCENDING" },
+        { "fieldPath": "lastLaidOffAt", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []
