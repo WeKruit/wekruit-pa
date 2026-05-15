@@ -1,0 +1,1550 @@
+{
+  "runId": "stress-2026-05-15T18-04-36-947Z",
+  "jobId": "rain-software-engineer-fullstack-8849f6ef",
+  "createdAt": "2026-05-15T18:05:43.757Z",
+  "results": [
+    {
+      "slug": "strong_fullstack_pass",
+      "label": "Strong fullstack candidate should progress through all questions and pass",
+      "userId": "verify-prescreen-stress-user",
+      "phone": "+19995550000",
+      "started": {
+        "ok": true,
+        "reason": "started",
+        "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180437560Z",
+        "firstQuestionSent": true
+      },
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180437560Z",
+      "finalTerminal": "PASS",
+      "terminalReason": "ratio=0.944 threshold=0.65",
+      "workSession": {
+        "kind": "job_prescreen",
+        "status": "ended",
+        "startedAt": "2026-05-15T18:04:37.560Z",
+        "boundary": "terminal",
+        "endedAt": "2026-05-15T18:04:50.597Z"
+      },
+      "clarifies": 0,
+      "terminalTurnIndex": 5,
+      "turnCount": 5,
+      "currentQId": null,
+      "score": 4.72,
+      "scoreMax": 5,
+      "questions": {
+        "role_fit": {
+          "qId": "role_fit",
+          "type": "MUST_HAVE",
+          "weight": 1,
+          "matchThreshold": 0.7,
+          "clarifyRounds": 0,
+          "scored": {
+            "kind": "scored",
+            "answered": true,
+            "value": {
+              "answered": true
+            },
+            "perKeyword": [
+              {
+                "keyword": "role_fit_software_engineer",
+                "match": 0.86,
+                "confidence": 0.78,
+                "evidence": "owned a production merchant order dashboard and dispatch too",
+                "reasoning": "Fullstack ownership: React/Node/Postgres, production impact, debugging."
+              }
+            ],
+            "aggregate": {
+              "s": 0.86,
+              "c": 0.78,
+              "summary": "Strong fullstack ownership with React/Node/Postgres and production impact."
+            }
+          },
+          "finalS": 0.86,
+          "finalC": 0.78,
+          "answeredAt": "2026-05-15T18:04:38.751Z"
+        },
+        "technical_depth": {
+          "qId": "technical_depth",
+          "type": "PROBING",
+          "weight": 1,
+          "matchThreshold": 0.65,
+          "clarifyRounds": 0,
+          "scored": {
+            "kind": "scored",
+            "answered": true,
+            "value": {
+              "answered": true
+            },
+            "perKeyword": [
+              {
+                "keyword": "technical_depth_react_typescript",
+                "match": 0.86,
+                "confidence": 0.78,
+                "evidence": "built React admin flows, Node endpoints, SQL queries",
+                "reasoning": "Mentions React + TypeScript and concrete implementation details"
+              }
+            ],
+            "aggregate": {
+              "s": 0.86,
+              "c": 0.78,
+              "summary": "Strong React/TypeScript full-stack example with debugging and ownership impact."
+            }
+          },
+          "finalS": 0.86,
+          "finalC": 0.78,
+          "answeredAt": "2026-05-15T18:04:41.897Z"
+        },
+        "location_alignment": {
+          "qId": "location_alignment",
+          "type": "PROBING",
+          "weight": 1,
+          "matchThreshold": 0.65,
+          "clarifyRounds": 0,
+          "scored": {
+            "kind": "scored",
+            "answered": true,
+            "value": {
+              "answered": true
+            },
+            "perKeyword": [
+              {
+                "keyword": "location_alignment",
+                "match": 1,
+                "confidence": 0.95,
+                "evidence": "New York hybrid works for me",
+                "reasoning": "Explicitly confirms New York hybrid/remote-flexible works"
+              }
+            ],
+            "aggregate": {
+              "s": 1,
+              "c": 0.95,
+              "summary": "Confirms New York hybrid works; remote-flexible also fine."
+            }
+          },
+          "finalS": 1,
+          "finalC": 0.95,
+          "answeredAt": "2026-05-15T18:04:44.709Z"
+        },
+        "compensation_alignment": {
+          "qId": "compensation_alignment",
+          "type": "PROBING",
+          "weight": 1,
+          "matchThreshold": 0.65,
+          "clarifyRounds": 0,
+          "scored": {
+            "kind": "scored",
+            "answered": true,
+            "value": {
+              "answered": true
+            },
+            "perKeyword": [
+              {
+                "keyword": "compensation_alignment",
+                "match": 1,
+                "confidence": 0.95,
+                "evidence": "$90k to $140k is aligned with what I am targeting.",
+                "reasoning": "Explicitly states compensation range is aligned with target."
+              }
+            ],
+            "aggregate": {
+              "s": 1,
+              "c": 0.95,
+              "summary": "Candidate confirms $90k–$140k aligns with their compensation target."
+            }
+          },
+          "finalS": 1,
+          "finalC": 0.95,
+          "answeredAt": "2026-05-15T18:04:46.926Z"
+        },
+        "sponsorship_status": {
+          "qId": "sponsorship_status",
+          "type": "PROBING",
+          "weight": 1,
+          "matchThreshold": 0.65,
+          "clarifyRounds": 0,
+          "scored": {
+            "kind": "scored",
+            "answered": true,
+            "value": {
+              "answered": true
+            },
+            "perKeyword": [
+              {
+                "keyword": "sponsorship_alignment",
+                "match": 1,
+                "confidence": 0.98,
+                "evidence": "I do not need current or future visa sponsorship",
+                "reasoning": "Explicitly states no current or future visa sponsorship needed."
+              }
+            ],
+            "aggregate": {
+              "s": 1,
+              "c": 0.98,
+              "summary": "Candidate states no current or future visa sponsorship is needed."
+            }
+          },
+          "finalS": 1,
+          "finalC": 0.98,
+          "answeredAt": "2026-05-15T18:04:50.597Z"
+        }
+      },
+      "sent": [
+        {
+          "phase": "start",
+          "to": "+19995550000",
+          "content": "Hi — Claire from Rain. Quick screen for Software Engineer - Fullstack. What recent work best matches this software engineering role?"
+        },
+        {
+          "phase": "turn",
+          "to": "+19995550000",
+          "content": "Which required skill are you strongest in, and what is a concrete example of using it?"
+        },
+        {
+          "phase": "turn",
+          "to": "+19995550000",
+          "content": "Does this location or remote setup work for you?"
+        },
+        {
+          "phase": "turn",
+          "to": "+19995550000",
+          "content": "Is this compensation range aligned with what you are targeting?"
+        },
+        {
+          "phase": "turn",
+          "to": "+19995550000",
+          "content": "Will you need current or future visa sponsorship for this role?"
+        },
+        {
+          "phase": "turn",
+          "to": "+19995550000",
+          "content": "Thanks for your answers — I have enough for the role-fit screen. Sending the next step now."
+        },
+        {
+          "phase": "terminal",
+          "to": "+19995550000",
+          "content": "Congrats — you've passed the initial screen for Software Engineer - Fullstack.\nEmployer: Rain\nSalary range: $50000-999000/yr\nJob details: https://www.rain.xyz/careers?ashby_jid=8849f6ef-86e6-464d-9f40-62f8355d40fb#open-roles\nThe employer will follow up within 2-3 business days — please watch for an SMS."
+        }
+      ],
+      "turns": [
+        {
+          "reply": "I owned a production merchant order dashboard and dispatch tooling for OFO Delivery. I built React and Node screens, Postgres SQL reports, and scripts that traced failed orders. Those fixes reduced merchant support triage from hours to minutes and improved onboarding and pricing edge cases.",
+          "handled": true,
+          "terminal": null,
+          "textSent": "Which required skill are you strongest in, and what is a concrete example of using it?",
+          "sessionTerminal": null,
+          "currentQId": "technical_depth",
+          "actionKinds": [
+            "advance"
+          ]
+        },
+        {
+          "reply": "My strongest skill is full-stack TypeScript. I built React admin flows, Node endpoints, SQL queries, validation, auth checks, and order-state debugging. The hardest part was making failed-order states explainable enough that ops could self-serve instead of asking engineering.",
+          "handled": true,
+          "terminal": null,
+          "textSent": "Does this location or remote setup work for you?",
+          "sessionTerminal": null,
+          "currentQId": "location_alignment",
+          "actionKinds": [
+            "advance",
+            "advance"
+          ]
+        },
+        {
+          "reply": "New York hybrid works for me. I can be in New York and remote-flexible is also fine.",
+          "handled": true,
+          "terminal": null,
+          "textSent": "Is this compensation range aligned with what you are targeting?",
+          "sessionTerminal": null,
+          "currentQId": "compensation_alignment",
+          "actionKinds": [
+            "advance",
+            "advance",
+            "advance"
+          ]
+        },
+        {
+          "reply": "$90k to $140k is aligned with what I am targeting.",
+          "handled": true,
+          "terminal": null,
+          "textSent": "Will you need current or future visa sponsorship for this role?",
+          "sessionTerminal": null,
+          "currentQId": "sponsorship_status",
+          "actionKinds": [
+            "advance",
+            "advance",
+            "advance",
+            "advance"
+          ]
+        },
+        {
+          "reply": "I do not need current or future visa sponsorship for this role.",
+          "handled": true,
+          "terminal": "PASS",
+          "textSent": "Thanks for your answers — I have enough for the role-fit screen. Sending the next step now.",
+          "sessionTerminal": "PASS",
+          "currentQId": null,
+          "actionKinds": [
+            "advance",
+            "advance",
+            "advance",
+            "advance",
+            "terminal"
+          ]
+        }
+      ],
+      "memoryEventExists": true,
+      "candidateJobState": {
+        "jobId": "rain-software-engineer-fullstack-8849f6ef",
+        "id": "verify-prescreen-stress-user__rain-software-engineer-fullstack-8849f6ef",
+        "candidateId": "verify-prescreen-stress-user",
+        "prescreenSessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180437560Z",
+        "reason": "passed_snapshot_created",
+        "stateUpdatedAt": "2026-05-15T18:04:52.684Z",
+        "employerVisibleProfileId": "rain-software-engineer-fullstack-8849f6ef__verify-prescreen-stress-user",
+        "state": "employer_visible",
+        "previousState": "passed"
+      },
+      "employerVisibleProfileExists": true,
+      "logs": [
+        {
+          "event": "prescreen.session_started",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180437560Z",
+            "jobId": "rain-software-engineer-fullstack-8849f6ef",
+            "userId": "verify-prescreen-stress-user"
+          }
+        },
+        {
+          "event": "prescreen.pipeline.evaluated",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180437560Z",
+            "qId": "role_fit",
+            "s": 0.86,
+            "c": 0.78,
+            "clarifyRoundsSoFar": 0
+          }
+        },
+        {
+          "event": "prescreen.turn.handled",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180437560Z",
+            "action": "advance",
+            "terminal": null
+          }
+        },
+        {
+          "event": "prescreen.pipeline.evaluated",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180437560Z",
+            "qId": "technical_depth",
+            "s": 0.86,
+            "c": 0.78,
+            "clarifyRoundsSoFar": 0
+          }
+        },
+        {
+          "event": "prescreen.turn.handled",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180437560Z",
+            "action": "advance",
+            "terminal": null
+          }
+        },
+        {
+          "event": "prescreen.pipeline.evaluated",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180437560Z",
+            "qId": "location_alignment",
+            "s": 1,
+            "c": 0.95,
+            "clarifyRoundsSoFar": 0
+          }
+        },
+        {
+          "event": "prescreen.turn.handled",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180437560Z",
+            "action": "advance",
+            "terminal": null
+          }
+        },
+        {
+          "event": "prescreen.pipeline.evaluated",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180437560Z",
+            "qId": "compensation_alignment",
+            "s": 1,
+            "c": 0.95,
+            "clarifyRoundsSoFar": 0
+          }
+        },
+        {
+          "event": "prescreen.turn.handled",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180437560Z",
+            "action": "advance",
+            "terminal": null
+          }
+        },
+        {
+          "event": "prescreen.pipeline.evaluated",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180437560Z",
+            "qId": "sponsorship_status",
+            "s": 1,
+            "c": 0.98,
+            "clarifyRoundsSoFar": 0
+          }
+        },
+        {
+          "event": "prescreen.pipeline.terminal",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180437560Z",
+            "terminal": "PASS",
+            "reason": "ratio=0.944 threshold=0.65",
+            "score": 4.72,
+            "scoreMax": 5
+          }
+        },
+        {
+          "event": "prescreen.turn.handled",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180437560Z",
+            "action": "terminal",
+            "terminal": "PASS"
+          }
+        },
+        {
+          "event": "pa.user_tags.apply_partial_ok",
+          "payload": {
+            "userId": "verify-prescreen-stress-user",
+            "source": "chat",
+            "mergedKeys": [
+              "proposedTags"
+            ]
+          }
+        },
+        {
+          "event": "prescreen.terminal_action.memory_updated",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180437560Z",
+            "userId": "verify-prescreen-stress-user",
+            "terminal": "PASS"
+          }
+        },
+        {
+          "event": "prescreen.terminal_action.pii_skipped_firing_recs_directly",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180437560Z"
+          }
+        },
+        {
+          "event": "prescreen.terminal_action.fired",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180437560Z",
+            "terminal": "PASS",
+            "level1Sent": true,
+            "jobRecsFired": true
+          }
+        }
+      ],
+      "failures": []
+    },
+    {
+      "slug": "adjacent_probe_recovery",
+      "label": "Adjacent candidate starts weak, then Claire should probe and recover instead of abrupt rejection",
+      "userId": "verify-prescreen-stress-user",
+      "phone": "+19995550000",
+      "started": {
+        "ok": true,
+        "reason": "started",
+        "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180456308Z",
+        "firstQuestionSent": true
+      },
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180456308Z",
+      "finalTerminal": "PASS",
+      "terminalReason": "ratio=0.928 threshold=0.65",
+      "workSession": {
+        "kind": "job_prescreen",
+        "status": "ended",
+        "startedAt": "2026-05-15T18:04:56.308Z",
+        "boundary": "terminal",
+        "endedAt": "2026-05-15T18:05:15.624Z"
+      },
+      "clarifies": 3,
+      "terminalTurnIndex": 8,
+      "turnCount": 8,
+      "currentQId": null,
+      "score": 4.640000000000001,
+      "scoreMax": 5,
+      "questions": {
+        "role_fit": {
+          "qId": "role_fit",
+          "type": "MUST_HAVE",
+          "weight": 1,
+          "matchThreshold": 0.7,
+          "clarifyRounds": 2,
+          "scored": {
+            "kind": "scored",
+            "answered": true,
+            "value": {
+              "answered": true
+            },
+            "perKeyword": [
+              {
+                "keyword": "role_fit_software_engineer",
+                "match": 0.72,
+                "confidence": 0.74,
+                "evidence": "built JavaScript screens, SQL reports, debugging scripts",
+                "reasoning": "Shows JS + SQL + debugging + cross-team fixes; lacks React/TS/Next specifics"
+              }
+            ],
+            "aggregate": {
+              "s": 0.72,
+              "c": 0.74,
+              "summary": "Strong JS/SQL engineering ownership and debugging; missing explicit React/TS/Next/Tailwind/Node details."
+            }
+          },
+          "finalS": 0.72,
+          "finalC": 0.74,
+          "answeredAt": "2026-05-15T18:05:04.019Z"
+        },
+        "technical_depth": {
+          "qId": "technical_depth",
+          "type": "PROBING",
+          "weight": 1,
+          "matchThreshold": 0.65,
+          "clarifyRounds": 1,
+          "scored": {
+            "kind": "scored",
+            "answered": true,
+            "value": {
+              "answered": true
+            },
+            "perKeyword": [
+              {
+                "keyword": "technical_depth_react_typescript",
+                "match": 0.92,
+                "confidence": 0.86,
+                "evidence": "dashboard frontend was React and TypeScript",
+                "reasoning": "Mentions React+TS and concrete UI features and integration."
+              }
+            ],
+            "aggregate": {
+              "s": 0.92,
+              "c": 0.86,
+              "summary": "Strong React+TypeScript example with concrete UI features and backend integration."
+            }
+          },
+          "finalS": 0.92,
+          "finalC": 0.86,
+          "answeredAt": "2026-05-15T18:05:09.336Z"
+        },
+        "location_alignment": {
+          "qId": "location_alignment",
+          "type": "PROBING",
+          "weight": 1,
+          "matchThreshold": 0.65,
+          "clarifyRounds": 0,
+          "scored": {
+            "kind": "scored",
+            "answered": true,
+            "value": {
+              "answered": true
+            },
+            "perKeyword": [
+              {
+                "keyword": "location_alignment",
+                "match": 1,
+                "confidence": 0.9,
+                "evidence": "New York hybrid works for me.",
+                "reasoning": "Candidate confirms New York hybrid works."
+              }
+            ],
+            "aggregate": {
+              "s": 1,
+              "c": 0.9,
+              "summary": "Confirms New York hybrid works."
+            }
+          },
+          "finalS": 1,
+          "finalC": 0.9,
+          "answeredAt": "2026-05-15T18:05:11.374Z"
+        },
+        "compensation_alignment": {
+          "qId": "compensation_alignment",
+          "type": "PROBING",
+          "weight": 1,
+          "matchThreshold": 0.65,
+          "clarifyRounds": 0,
+          "scored": {
+            "kind": "scored",
+            "answered": true,
+            "value": {
+              "answered": true
+            },
+            "perKeyword": [
+              {
+                "keyword": "compensation_alignment",
+                "match": 1,
+                "confidence": 0.9,
+                "evidence": "$90k to $140k works.",
+                "reasoning": "States target range works; within 50k-999k band."
+              }
+            ],
+            "aggregate": {
+              "s": 1,
+              "c": 0.9,
+              "summary": "Candidate says $90k-$140k works; aligned with target band."
+            }
+          },
+          "finalS": 1,
+          "finalC": 0.9,
+          "answeredAt": "2026-05-15T18:05:13.016Z"
+        },
+        "sponsorship_status": {
+          "qId": "sponsorship_status",
+          "type": "PROBING",
+          "weight": 1,
+          "matchThreshold": 0.65,
+          "clarifyRounds": 0,
+          "scored": {
+            "kind": "scored",
+            "answered": true,
+            "value": {
+              "answered": true
+            },
+            "perKeyword": [
+              {
+                "keyword": "sponsorship_alignment",
+                "match": 1,
+                "confidence": 0.98,
+                "evidence": "I do not need visa sponsorship now or in the future.",
+                "reasoning": "Explicitly states no current or future visa sponsorship needed."
+              }
+            ],
+            "aggregate": {
+              "s": 1,
+              "c": 0.98,
+              "summary": "Candidate states no current or future visa sponsorship needed."
+            }
+          },
+          "finalS": 1,
+          "finalC": 0.98,
+          "answeredAt": "2026-05-15T18:05:15.624Z"
+        }
+      },
+      "sent": [
+        {
+          "phase": "start",
+          "to": "+19995550000",
+          "content": "Hi — Claire from Rain. Quick screen for Software Engineer - Fullstack. What recent work best matches this software engineering role?"
+        },
+        {
+          "phase": "turn",
+          "to": "+19995550000",
+          "content": "That sounds like you’ve been close to data + user-facing reporting. Can you tell me about one dashboard/report you built end-to-end—what stack you used, what you personally implemented, and how it changed a decision or outcome for the users?"
+        },
+        {
+          "phase": "turn",
+          "to": "+19995550000",
+          "content": "Nice—owning the merchant order dashboard + dispatch tooling is a strong thread. What was the hardest part you personally built (e.g., routing logic, state sync, reliability), and how did it change outcomes for merchants or dispatchers after launch?"
+        },
+        {
+          "phase": "turn",
+          "to": "+19995550000",
+          "content": "Which required skill are you strongest in, and what is a concrete example of using it?"
+        },
+        {
+          "phase": "turn",
+          "to": "+19995550000",
+          "content": "That failed-order pattern work sounds really concrete—what was the exact data source/schema and the key SQL logic you wrote, and how did the dashboard change merchant onboarding (e.g., fewer failures, faster time-to-approve)?"
+        },
+        {
+          "phase": "turn",
+          "to": "+19995550000",
+          "content": "Does this location or remote setup work for you?"
+        },
+        {
+          "phase": "turn",
+          "to": "+19995550000",
+          "content": "Is this compensation range aligned with what you are targeting?"
+        },
+        {
+          "phase": "turn",
+          "to": "+19995550000",
+          "content": "Will you need current or future visa sponsorship for this role?"
+        },
+        {
+          "phase": "turn",
+          "to": "+19995550000",
+          "content": "Thanks for your answers — I have enough for the role-fit screen. Sending the next step now."
+        },
+        {
+          "phase": "terminal",
+          "to": "+19995550000",
+          "content": "Congrats — you've passed the initial screen for Software Engineer - Fullstack.\nEmployer: Rain\nSalary range: $50000-999000/yr\nJob details: https://www.rain.xyz/careers?ashby_jid=8849f6ef-86e6-464d-9f40-62f8355d40fb#open-roles\nThe employer will follow up within 2-3 business days — please watch for an SMS."
+        }
+      ],
+      "turns": [
+        {
+          "reply": "I have not owned a fullstack system professionally. Most of my work was product ops, campus delivery dashboards, SQL reports, and small scripts.",
+          "handled": true,
+          "terminal": null,
+          "textSent": "That sounds like you’ve been close to data + user-facing reporting. Can you tell me about one dashboard/report you built end-to-end—what stack you used, what you personally implemented, and how it changed a decision or outcome for the users?",
+          "sessionTerminal": null,
+          "currentQId": "role_fit",
+          "actionKinds": [
+            "clarify"
+          ]
+        },
+        {
+          "reply": "Closest was OFO Delivery. I owned the merchant order dashboard and dispatch tooling.",
+          "handled": true,
+          "terminal": null,
+          "textSent": "Nice—owning the merchant order dashboard + dispatch tooling is a strong thread. What was the hardest part you personally built (e.g., routing logic, state sync, reliability), and how did it change outcomes for merchants or dispatchers after launch?",
+          "sessionTerminal": null,
+          "currentQId": "role_fit",
+          "actionKinds": [
+            "clarify",
+            "clarify"
+          ]
+        },
+        {
+          "reply": "I personally built JavaScript screens, SQL reports, and debugging scripts to trace failed orders; then worked with engineers to fix onboarding and pricing edge cases. It touched merchant dashboards, order data, dispatch workflows, and ops support queues.",
+          "handled": true,
+          "terminal": null,
+          "textSent": "Which required skill are you strongest in, and what is a concrete example of using it?",
+          "sessionTerminal": null,
+          "currentQId": "technical_depth",
+          "actionKinds": [
+            "clarify",
+            "clarify",
+            "advance"
+          ]
+        },
+        {
+          "reply": "For technical depth, my strongest part was SQL plus JavaScript dashboards. I wrote queries for failed-order patterns, built the UI to surface them, and added scripts ops used during merchant onboarding.",
+          "handled": true,
+          "terminal": null,
+          "textSent": "That failed-order pattern work sounds really concrete—what was the exact data source/schema and the key SQL logic you wrote, and how did the dashboard change merchant onboarding (e.g., fewer failures, faster time-to-approve)?",
+          "sessionTerminal": null,
+          "currentQId": "technical_depth",
+          "actionKinds": [
+            "clarify",
+            "clarify",
+            "advance",
+            "clarify"
+          ]
+        },
+        {
+          "reply": "The dashboard frontend was React and TypeScript. I built filters, order detail views, error states, and debugging panels, connected them to Node endpoints and Postgres query results, and used them to cut repeated failed-order triage.",
+          "handled": true,
+          "terminal": null,
+          "textSent": "Does this location or remote setup work for you?",
+          "sessionTerminal": null,
+          "currentQId": "location_alignment",
+          "actionKinds": [
+            "clarify",
+            "clarify",
+            "advance",
+            "clarify",
+            "advance"
+          ]
+        },
+        {
+          "reply": "New York hybrid works for me.",
+          "handled": true,
+          "terminal": null,
+          "textSent": "Is this compensation range aligned with what you are targeting?",
+          "sessionTerminal": null,
+          "currentQId": "compensation_alignment",
+          "actionKinds": [
+            "clarify",
+            "clarify",
+            "advance",
+            "clarify",
+            "advance",
+            "advance"
+          ]
+        },
+        {
+          "reply": "$90k to $140k works.",
+          "handled": true,
+          "terminal": null,
+          "textSent": "Will you need current or future visa sponsorship for this role?",
+          "sessionTerminal": null,
+          "currentQId": "sponsorship_status",
+          "actionKinds": [
+            "clarify",
+            "clarify",
+            "advance",
+            "clarify",
+            "advance",
+            "advance",
+            "advance"
+          ]
+        },
+        {
+          "reply": "I do not need visa sponsorship now or in the future.",
+          "handled": true,
+          "terminal": "PASS",
+          "textSent": "Thanks for your answers — I have enough for the role-fit screen. Sending the next step now.",
+          "sessionTerminal": "PASS",
+          "currentQId": null,
+          "actionKinds": [
+            "clarify",
+            "clarify",
+            "advance",
+            "clarify",
+            "advance",
+            "advance",
+            "advance",
+            "terminal"
+          ]
+        }
+      ],
+      "memoryEventExists": true,
+      "candidateJobState": {
+        "jobId": "rain-software-engineer-fullstack-8849f6ef",
+        "id": "verify-prescreen-stress-user__rain-software-engineer-fullstack-8849f6ef",
+        "candidateId": "verify-prescreen-stress-user",
+        "prescreenSessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180456308Z",
+        "reason": "passed_snapshot_created",
+        "stateUpdatedAt": "2026-05-15T18:05:17.343Z",
+        "employerVisibleProfileId": "rain-software-engineer-fullstack-8849f6ef__verify-prescreen-stress-user",
+        "state": "employer_visible",
+        "previousState": "passed"
+      },
+      "employerVisibleProfileExists": true,
+      "logs": [
+        {
+          "event": "prescreen.session_started",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180456308Z",
+            "jobId": "rain-software-engineer-fullstack-8849f6ef",
+            "userId": "verify-prescreen-stress-user"
+          }
+        },
+        {
+          "event": "prescreen.pipeline.evaluated",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180456308Z",
+            "qId": "role_fit",
+            "s": 0.15,
+            "c": 0.62,
+            "clarifyRoundsSoFar": 0,
+            "abortHint": "low_confidence"
+          }
+        },
+        {
+          "event": "prescreen.turn.handled",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180456308Z",
+            "action": "clarify",
+            "terminal": null
+          }
+        },
+        {
+          "event": "prescreen.pipeline.evaluated",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180456308Z",
+            "qId": "role_fit",
+            "s": 0.45,
+            "c": 0.55,
+            "clarifyRoundsSoFar": 1
+          }
+        },
+        {
+          "event": "prescreen.turn.handled",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180456308Z",
+            "action": "clarify",
+            "terminal": null
+          }
+        },
+        {
+          "event": "prescreen.pipeline.evaluated",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180456308Z",
+            "qId": "role_fit",
+            "s": 0.72,
+            "c": 0.74,
+            "clarifyRoundsSoFar": 2
+          }
+        },
+        {
+          "event": "prescreen.turn.handled",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180456308Z",
+            "action": "advance",
+            "terminal": null
+          }
+        },
+        {
+          "event": "prescreen.pipeline.evaluated",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180456308Z",
+            "qId": "technical_depth",
+            "s": 0.15,
+            "c": 0.35,
+            "clarifyRoundsSoFar": 0,
+            "abortHint": "low_confidence"
+          }
+        },
+        {
+          "event": "prescreen.turn.handled",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180456308Z",
+            "action": "clarify",
+            "terminal": null
+          }
+        },
+        {
+          "event": "prescreen.pipeline.evaluated",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180456308Z",
+            "qId": "technical_depth",
+            "s": 0.92,
+            "c": 0.86,
+            "clarifyRoundsSoFar": 1
+          }
+        },
+        {
+          "event": "prescreen.turn.handled",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180456308Z",
+            "action": "advance",
+            "terminal": null
+          }
+        },
+        {
+          "event": "prescreen.pipeline.evaluated",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180456308Z",
+            "qId": "location_alignment",
+            "s": 1,
+            "c": 0.9,
+            "clarifyRoundsSoFar": 0
+          }
+        },
+        {
+          "event": "prescreen.turn.handled",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180456308Z",
+            "action": "advance",
+            "terminal": null
+          }
+        },
+        {
+          "event": "prescreen.pipeline.evaluated",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180456308Z",
+            "qId": "compensation_alignment",
+            "s": 1,
+            "c": 0.9,
+            "clarifyRoundsSoFar": 0
+          }
+        },
+        {
+          "event": "prescreen.turn.handled",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180456308Z",
+            "action": "advance",
+            "terminal": null
+          }
+        },
+        {
+          "event": "prescreen.pipeline.evaluated",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180456308Z",
+            "qId": "sponsorship_status",
+            "s": 1,
+            "c": 0.98,
+            "clarifyRoundsSoFar": 0
+          }
+        },
+        {
+          "event": "prescreen.pipeline.terminal",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180456308Z",
+            "terminal": "PASS",
+            "reason": "ratio=0.928 threshold=0.65",
+            "score": 4.640000000000001,
+            "scoreMax": 5
+          }
+        },
+        {
+          "event": "prescreen.turn.handled",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180456308Z",
+            "action": "terminal",
+            "terminal": "PASS"
+          }
+        },
+        {
+          "event": "pa.user_tags.apply_partial_ok",
+          "payload": {
+            "userId": "verify-prescreen-stress-user",
+            "source": "chat",
+            "mergedKeys": [
+              "proposedTags"
+            ]
+          }
+        },
+        {
+          "event": "prescreen.terminal_action.memory_updated",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180456308Z",
+            "userId": "verify-prescreen-stress-user",
+            "terminal": "PASS"
+          }
+        },
+        {
+          "event": "prescreen.terminal_action.pii_skipped_firing_recs_directly",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180456308Z"
+          }
+        },
+        {
+          "event": "prescreen.terminal_action.fired",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180456308Z",
+            "terminal": "PASS",
+            "level1Sent": true,
+            "jobRecsFired": true
+          }
+        }
+      ],
+      "failures": []
+    },
+    {
+      "slug": "weak_no_engineering_hard_stop",
+      "label": "Weak non-engineering candidate should get repeated probes before hard stop",
+      "userId": "verify-prescreen-stress-user",
+      "phone": "+19995550000",
+      "started": {
+        "ok": true,
+        "reason": "started",
+        "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180519651Z",
+        "firstQuestionSent": true
+      },
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180519651Z",
+      "finalTerminal": "HARD_STOP",
+      "terminalReason": "MUST_HAVE failed at qId=role_fit s=0.05 c=0.78",
+      "workSession": {
+        "kind": "job_prescreen",
+        "status": "ended",
+        "startedAt": "2026-05-15T18:05:19.651Z",
+        "boundary": "terminal",
+        "endedAt": "2026-05-15T18:05:36.570Z"
+      },
+      "clarifies": 4,
+      "terminalTurnIndex": 5,
+      "turnCount": 5,
+      "currentQId": null,
+      "score": 0,
+      "scoreMax": 5,
+      "questions": {
+        "role_fit": {
+          "qId": "role_fit",
+          "type": "MUST_HAVE",
+          "weight": 1,
+          "matchThreshold": 0.7,
+          "clarifyRounds": 4,
+          "scored": {
+            "kind": "scored",
+            "answered": true,
+            "value": {
+              "answered": true
+            },
+            "perKeyword": [
+              {
+                "keyword": "role_fit_software_engineer",
+                "match": 0.05,
+                "confidence": 0.78,
+                "evidence": "coordinated tickets and customer issues",
+                "reasoning": "No engineering project; mostly coordination/customer support."
+              }
+            ],
+            "aggregate": {
+              "s": 0.05,
+              "c": 0.78,
+              "summary": "No recent software engineering project; mostly ticket/customer coordination."
+            },
+            "abortHint": {
+              "kind": "decline",
+              "reason": "Reply lacks concrete software engineering ownership or shipped technical work."
+            }
+          },
+          "finalS": 0.05,
+          "finalC": 0.78,
+          "answeredAt": "2026-05-15T18:05:36.570Z",
+          "terminalCause": "type_gate_fail"
+        },
+        "technical_depth": {
+          "qId": "technical_depth",
+          "type": "PROBING",
+          "weight": 1,
+          "matchThreshold": 0.65,
+          "clarifyRounds": 0
+        },
+        "location_alignment": {
+          "qId": "location_alignment",
+          "type": "PROBING",
+          "weight": 1,
+          "matchThreshold": 0.65,
+          "clarifyRounds": 0
+        },
+        "compensation_alignment": {
+          "qId": "compensation_alignment",
+          "type": "PROBING",
+          "weight": 1,
+          "matchThreshold": 0.65,
+          "clarifyRounds": 0
+        },
+        "sponsorship_status": {
+          "qId": "sponsorship_status",
+          "type": "PROBING",
+          "weight": 1,
+          "matchThreshold": 0.65,
+          "clarifyRounds": 0
+        }
+      },
+      "sent": [
+        {
+          "phase": "start",
+          "to": "+19995550000",
+          "content": "Hi — Claire from Rain. Quick screen for Software Engineer - Fullstack. What recent work best matches this software engineering role?"
+        },
+        {
+          "phase": "turn",
+          "to": "+19995550000",
+          "content": "Thanks—sounds like your recent work was more on the customer/support + scheduling side. What’s the closest “tech” project you owned there (even if it wasn’t full software): what did you build/configure, and what changed for customers or internal ops?"
+        },
+        {
+          "phase": "turn",
+          "to": "+19995550000",
+          "content": "Thanks—when you were updating spreadsheets and forwarding bug reports, did you ever write any automation/scripts or fix the underlying issue yourself? What system/app was it, and what changed for users or the team after it was resolved?"
+        },
+        {
+          "phase": "turn",
+          "to": "+19995550000",
+          "content": "Thanks—what’s the closest thing you *did* personally build/own recently? Which system did it touch (even if not APIs/DBs), and what changed for users or the team after it shipped?"
+        },
+        {
+          "phase": "turn",
+          "to": "+19995550000",
+          "content": "Thanks—that sounds like you’ve been close to real customer pain. For the closest thing to “engineering” you’ve owned: what system/app were you working in when you coordinated those tickets, and what concrete change did you drive (fix, automation, config, code) and how did it affect customers?"
+        },
+        {
+          "phase": "turn",
+          "to": "+19995550000",
+          "content": "Thanks, that helps. I do not want to force-fit you into this exact role, so I will pause this screen here and use what you shared to look for better-aligned roles."
+        },
+        {
+          "phase": "terminal",
+          "to": "+19995550000",
+          "content": "Let me look for better-aligned roles for you — one moment."
+        }
+      ],
+      "turns": [
+        {
+          "reply": "I mostly did customer support and scheduling. I have not built software.",
+          "handled": true,
+          "terminal": null,
+          "textSent": "Thanks—sounds like your recent work was more on the customer/support + scheduling side. What’s the closest “tech” project you owned there (even if it wasn’t full software): what did you build/configure, and what changed for customers or internal ops?",
+          "sessionTerminal": null,
+          "currentQId": "role_fit",
+          "actionKinds": [
+            "clarify"
+          ]
+        },
+        {
+          "reply": "The closest thing was updating spreadsheets and forwarding bug reports to engineers.",
+          "handled": true,
+          "terminal": null,
+          "textSent": "Thanks—when you were updating spreadsheets and forwarding bug reports, did you ever write any automation/scripts or fix the underlying issue yourself? What system/app was it, and what changed for users or the team after it was resolved?",
+          "sessionTerminal": null,
+          "currentQId": "role_fit",
+          "actionKinds": [
+            "clarify",
+            "clarify"
+          ]
+        },
+        {
+          "reply": "I did not build APIs, databases, dashboards, or production code myself.",
+          "handled": true,
+          "terminal": null,
+          "textSent": "Thanks—what’s the closest thing you *did* personally build/own recently? Which system did it touch (even if not APIs/DBs), and what changed for users or the team after it shipped?",
+          "sessionTerminal": null,
+          "currentQId": "role_fit",
+          "actionKinds": [
+            "clarify",
+            "clarify",
+            "clarify"
+          ]
+        },
+        {
+          "reply": "I do not have an engineering project example. I mainly coordinated tickets and customer issues.",
+          "handled": true,
+          "terminal": null,
+          "textSent": "Thanks—that sounds like you’ve been close to real customer pain. For the closest thing to “engineering” you’ve owned: what system/app were you working in when you coordinated those tickets, and what concrete change did you drive (fix, automation, config, code) and how did it affect customers?",
+          "sessionTerminal": null,
+          "currentQId": "role_fit",
+          "actionKinds": [
+            "clarify",
+            "clarify",
+            "clarify",
+            "clarify"
+          ]
+        },
+        {
+          "reply": "Still no software engineering example from me.",
+          "handled": true,
+          "terminal": "HARD_STOP",
+          "textSent": "Thanks, that helps. I do not want to force-fit you into this exact role, so I will pause this screen here and use what you shared to look for better-aligned roles.",
+          "sessionTerminal": "HARD_STOP",
+          "currentQId": null,
+          "actionKinds": [
+            "clarify",
+            "clarify",
+            "clarify",
+            "clarify",
+            "terminal"
+          ]
+        }
+      ],
+      "memoryEventExists": true,
+      "candidateJobState": {
+        "jobId": "rain-software-engineer-fullstack-8849f6ef",
+        "id": "verify-prescreen-stress-user__rain-software-engineer-fullstack-8849f6ef",
+        "candidateId": "verify-prescreen-stress-user",
+        "prescreenSessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180519651Z",
+        "reason": "candidate_retained_for_other_jobs",
+        "stateUpdatedAt": "2026-05-15T18:05:39.260Z",
+        "state": "not_passed",
+        "previousState": "prescreen_started"
+      },
+      "employerVisibleProfileExists": false,
+      "logs": [
+        {
+          "event": "prescreen.session_started",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180519651Z",
+            "jobId": "rain-software-engineer-fullstack-8849f6ef",
+            "userId": "verify-prescreen-stress-user"
+          }
+        },
+        {
+          "event": "prescreen.pipeline.evaluated",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180519651Z",
+            "qId": "role_fit",
+            "s": 0.05,
+            "c": 0.86,
+            "clarifyRoundsSoFar": 0,
+            "abortHint": "decline"
+          }
+        },
+        {
+          "event": "prescreen.pipeline.type_gate_clarify",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180519651Z",
+            "qId": "role_fit",
+            "type": "MUST_HAVE",
+            "s": 0.05,
+            "c": 0.86,
+            "clarifyRounds": 1
+          }
+        },
+        {
+          "event": "prescreen.turn.handled",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180519651Z",
+            "action": "clarify",
+            "terminal": null
+          }
+        },
+        {
+          "event": "prescreen.pipeline.evaluated",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180519651Z",
+            "qId": "role_fit",
+            "s": 0.05,
+            "c": 0.62,
+            "clarifyRoundsSoFar": 1,
+            "abortHint": "low_confidence"
+          }
+        },
+        {
+          "event": "prescreen.turn.handled",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180519651Z",
+            "action": "clarify",
+            "terminal": null
+          }
+        },
+        {
+          "event": "prescreen.pipeline.evaluated",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180519651Z",
+            "qId": "role_fit",
+            "s": 0.05,
+            "c": 0.62,
+            "clarifyRoundsSoFar": 2,
+            "abortHint": "low_confidence"
+          }
+        },
+        {
+          "event": "prescreen.turn.handled",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180519651Z",
+            "action": "clarify",
+            "terminal": null
+          }
+        },
+        {
+          "event": "prescreen.pipeline.evaluated",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180519651Z",
+            "qId": "role_fit",
+            "s": 0.05,
+            "c": 0.78,
+            "clarifyRoundsSoFar": 3,
+            "abortHint": "decline"
+          }
+        },
+        {
+          "event": "prescreen.pipeline.type_gate_clarify",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180519651Z",
+            "qId": "role_fit",
+            "type": "MUST_HAVE",
+            "s": 0.05,
+            "c": 0.78,
+            "clarifyRounds": 4
+          }
+        },
+        {
+          "event": "prescreen.turn.handled",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180519651Z",
+            "action": "clarify",
+            "terminal": null
+          }
+        },
+        {
+          "event": "prescreen.pipeline.evaluated",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180519651Z",
+            "qId": "role_fit",
+            "s": 0.05,
+            "c": 0.78,
+            "clarifyRoundsSoFar": 4,
+            "abortHint": "decline"
+          }
+        },
+        {
+          "event": "prescreen.pipeline.terminal",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180519651Z",
+            "terminal": "HARD_STOP",
+            "reason": "MUST_HAVE failed at qId=role_fit s=0.05 c=0.78",
+            "score": 0,
+            "scoreMax": 5
+          }
+        },
+        {
+          "event": "prescreen.turn.handled",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180519651Z",
+            "action": "terminal",
+            "terminal": "HARD_STOP"
+          }
+        },
+        {
+          "event": "pa.user_tags.apply_partial_ok",
+          "payload": {
+            "userId": "verify-prescreen-stress-user",
+            "source": "chat",
+            "mergedKeys": [
+              "proposedTags"
+            ]
+          }
+        },
+        {
+          "event": "prescreen.terminal_action.memory_updated",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180519651Z",
+            "userId": "verify-prescreen-stress-user",
+            "terminal": "HARD_STOP"
+          }
+        },
+        {
+          "event": "prescreen.terminal_action.pii_skipped_firing_recs_directly",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180519651Z"
+          }
+        },
+        {
+          "event": "prescreen.terminal_action.fired",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180519651Z",
+            "terminal": "HARD_STOP",
+            "level1Sent": false,
+            "jobRecsFired": true
+          }
+        }
+      ],
+      "failures": []
+    },
+    {
+      "slug": "user_exit_pause",
+      "label": "Candidate can exit cleanly and the work session pauses",
+      "userId": "verify-prescreen-stress-user",
+      "phone": "+19995550000",
+      "started": {
+        "ok": true,
+        "reason": "started",
+        "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180541209Z",
+        "firstQuestionSent": true
+      },
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180541209Z",
+      "finalTerminal": "PAUSE",
+      "terminalReason": "user_exit",
+      "workSession": {
+        "kind": "job_prescreen",
+        "startedAt": "2026-05-15T18:05:41.209Z",
+        "boundary": "user_exit",
+        "endedAt": "2026-05-15T18:05:41.854Z",
+        "status": "ended"
+      },
+      "clarifies": 0,
+      "terminalTurnIndex": 1,
+      "turnCount": 1,
+      "currentQId": null,
+      "score": 0,
+      "scoreMax": 5,
+      "questions": {
+        "role_fit": {
+          "qId": "role_fit",
+          "type": "MUST_HAVE",
+          "weight": 1,
+          "matchThreshold": 0.7,
+          "clarifyRounds": 0
+        },
+        "technical_depth": {
+          "qId": "technical_depth",
+          "type": "PROBING",
+          "weight": 1,
+          "matchThreshold": 0.65,
+          "clarifyRounds": 0
+        },
+        "location_alignment": {
+          "qId": "location_alignment",
+          "type": "PROBING",
+          "weight": 1,
+          "matchThreshold": 0.65,
+          "clarifyRounds": 0
+        },
+        "compensation_alignment": {
+          "qId": "compensation_alignment",
+          "type": "PROBING",
+          "weight": 1,
+          "matchThreshold": 0.65,
+          "clarifyRounds": 0
+        },
+        "sponsorship_status": {
+          "qId": "sponsorship_status",
+          "type": "PROBING",
+          "weight": 1,
+          "matchThreshold": 0.65,
+          "clarifyRounds": 0
+        }
+      },
+      "sent": [
+        {
+          "phase": "start",
+          "to": "+19995550000",
+          "content": "Hi — Claire from Rain. Quick screen for Software Engineer - Fullstack. What recent work best matches this software engineering role?"
+        },
+        {
+          "phase": "turn",
+          "to": "+19995550000",
+          "content": "Got it — I paused this role screen. If you want to continue later, reopen it from the job page; I will keep what you have already shared on your profile."
+        }
+      ],
+      "turns": [
+        {
+          "reply": "stop",
+          "handled": true,
+          "terminal": "PAUSE",
+          "textSent": "Got it — I paused this role screen. If you want to continue later, reopen it from the job page; I will keep what you have already shared on your profile.",
+          "sessionTerminal": "PAUSE",
+          "currentQId": null,
+          "actionKinds": [
+            "terminal"
+          ]
+        }
+      ],
+      "memoryEventExists": true,
+      "candidateJobState": {
+        "jobId": "rain-software-engineer-fullstack-8849f6ef",
+        "id": "verify-prescreen-stress-user__rain-software-engineer-fullstack-8849f6ef",
+        "candidateId": "verify-prescreen-stress-user",
+        "prescreenSessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180541209Z",
+        "reason": "manual_review_required",
+        "stateUpdatedAt": "2026-05-15T18:05:42.180Z",
+        "state": "paused",
+        "previousState": "prescreen_started"
+      },
+      "employerVisibleProfileExists": false,
+      "logs": [
+        {
+          "event": "prescreen.session_started",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180541209Z",
+            "jobId": "rain-software-engineer-fullstack-8849f6ef",
+            "userId": "verify-prescreen-stress-user"
+          }
+        },
+        {
+          "event": "pa.user_tags.apply_partial_ok",
+          "payload": {
+            "userId": "verify-prescreen-stress-user",
+            "source": "chat",
+            "mergedKeys": [
+              "proposedTags"
+            ]
+          }
+        },
+        {
+          "event": "prescreen.terminal_action.memory_updated",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180541209Z",
+            "userId": "verify-prescreen-stress-user",
+            "terminal": "PAUSE"
+          }
+        },
+        {
+          "event": "prescreen.terminal_action.fired",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180541209Z",
+            "terminal": "PAUSE",
+            "level1Sent": false,
+            "jobRecsFired": false
+          }
+        },
+        {
+          "event": "prescreen.turn.user_exit",
+          "payload": {
+            "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T180541209Z",
+            "userId": "verify-prescreen-stress-user"
+          }
+        }
+      ],
+      "failures": []
+    }
+  ],
+  "failedScenarios": []
+}

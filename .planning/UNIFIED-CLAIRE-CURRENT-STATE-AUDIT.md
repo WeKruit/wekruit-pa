@@ -125,6 +125,14 @@ Required fix boundary:
     - `synthetic_test_profile = 559`
     - `incomplete_identity_artifact = 6`
   - The only `candidate_account` row remains `pa-users/U7AwKT8nLDRa35DkuBxq`.
+- After the prescreen stress runner cleanup, live Firestore all-rows recheck through the same dashboard helper classified all 602 `pa-users` rows:
+  - `candidate_account = 1`
+  - `external_supply_prospect = 28`
+  - `legacy_sms_profile = 5`
+  - `synthetic_test_profile = 562`
+  - `incomplete_identity_artifact = 6`
+  - The only `candidate_account` row remains `pa-users/U7AwKT8nLDRa35DkuBxq`.
+  - Old generated `verify-prescreen-stress-*` user docs from early failed stress runs were deleted; one stable synthetic profile remains for repeatable stress testing: `pa-users/verify-prescreen-stress-user`.
 
 ## 2026-05-15 Prescreen Conversation Verification
 
@@ -142,6 +150,28 @@ Required fix boundary:
   - `npm run typecheck --workspace=@pa/functions` passed.
 - Git:
   - `d430da8 test(prescreen): require full weak-candidate probing` is pushed to `main`.
+
+## 2026-05-15 Rain Fullstack Prescreen Stress Verification
+
+- Production job verified and refreshed:
+  - `pa-jobs/rain-software-engineer-fullstack-8849f6ef`.
+  - Old production `prescreenConfig.questions[0]` had `matchThreshold = 0.85` and bare keyword/hint `role_fit`.
+  - Refreshed production config has `role_fit.matchThreshold = 0.70`, keyword `role_fit_software_engineer`, and a role-aware hint that counts adjacent owned engineering/product systems while later questions still check technical depth and logistics.
+- Stress runner:
+  - `apps/functions/scripts/prescreen-stress-firestore.ts`.
+  - Uses real production Firestore and real `runPreScreenForUser`, `runPrescreenTurnIfActive`, and `runPrescreenTerminalAction`.
+  - Stubs outbound SMS, so no test texts are sent while sessions, turns, memory events, candidate-job state, and employer-visible profiles are still written.
+  - Uses one stable synthetic/testMode user: `pa-users/verify-prescreen-stress-user`; each scenario clears only this synthetic user's job state/snapshot before starting.
+- Artifact:
+  - `.planning/prescreen-stress/artifacts/stress-2026-05-15T18-04-36-947Z.json`.
+- Result matrix:
+  - `strong_fullstack_pass`: `PASS`, 0 clarifies, score `4.72/5`, memory event exists, employer-visible profile exists, candidate-job state `employer_visible`.
+  - `adjacent_probe_recovery`: `PASS`, 3 clarifies before recovery, score `4.64/5`, memory event exists, employer-visible profile exists, candidate-job state `employer_visible`.
+  - `weak_no_engineering_hard_stop`: `HARD_STOP`, 4 clarifies before stop, memory event exists, no employer-visible profile, candidate-job state `not_passed`.
+  - `user_exit_pause`: `PAUSE`, memory event exists, no employer-visible profile, candidate-job state `paused`.
+- Node 24 verification:
+  - `node --import tsx --test apps/functions/src/__tests__/job-enrichment.test.ts apps/functions/src/prescreen-terminal-action.test.ts apps/functions/src/__tests__/broker-prescreen-trigger.test.ts packages/pa-orchestrator/src/prescreen/__tests__/pipeline.test.ts` passed 38/38.
+  - `npm run typecheck --workspace=@pa/functions` passed.
 
 ## 2026-05-15 WeKruit Open / Layoff Front Door Verification
 
@@ -167,4 +197,4 @@ Required fix boundary:
 - WeKruit Open still needs a source-aware Claire conversation path after signup. Current backend has `openSubmitChatTurn` writing `layoffChatAnswers`; this is not yet proven to merge into shared evidence/tags/memory.
 - External supply prospects are in the shared `pa-users` pool, but the end-to-end operator path from imported prospect to candidate profile, match/eval, approved outreach, reply, and unified evidence is not yet reverified in this goal.
 - Job creation/import still appears split across enrichment approval, seeding scripts, and external-supply job surfaces. The single job creation/publication flow is not yet audited or unified.
-- Live Sendblue stress testing has one real PASS session and one allowlist-deny canary verified; a full live matrix for good/bad/ambiguous candidates remains incomplete unless run through controlled live webhooks or real iMessage.
+- Real iMessage/manual Sendblue matrix is still not fully repeated after the stress-runner fixes. The production Firestore prescreen matrix is verified with outbound SMS stubbed; one real PASS session and one allowlist-deny canary were previously verified.

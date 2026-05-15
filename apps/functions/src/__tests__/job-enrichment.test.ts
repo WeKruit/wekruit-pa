@@ -439,6 +439,95 @@ test("prescreenConfigFromApprovedDraft writes role-aware probe copy for technica
   assert.match(config.questions[0]?.clarifyPrompt.en ?? "", /customer, partner, API, onboarding, support/)
 })
 
+test("prescreenConfigFromApprovedDraft makes software role-fit scoring probe-aware", () => {
+  const draft = {
+    jobId: "rain-software-engineer-fullstack-8849f6ef",
+    draftId: "draft-fullstack",
+    status: "approved",
+    approvalReady: true,
+    rawSnapshot: {
+      source: "ats",
+      capturedAt: now,
+      title: "Software Engineer - Fullstack",
+      companyName: "Rain",
+      description: "Build full-stack product systems across React, Node, APIs, and databases.",
+      compensationText: "$90-140K/yr",
+      metadata: {},
+    },
+    opportunity: {
+      title: "Software Engineer - Fullstack",
+      companyName: "Rain",
+      roleFunction: ["software_engineering"],
+      industrySector: ["financial_technology"],
+      skills: [
+        { name: "typescript", bucket: "programming_languages", proficiency: "advanced", evidenceCount: 2, baseWeight: 0.8 },
+        { name: "react", bucket: "frameworks_and_libraries", proficiency: "advanced", evidenceCount: 2, baseWeight: 0.8 },
+        { name: "node", bucket: "programming_languages", proficiency: "advanced", evidenceCount: 2, baseWeight: 0.8 },
+        { name: "postgresql", bucket: "databases", proficiency: "advanced", evidenceCount: 2, baseWeight: 0.8 },
+      ],
+      relevantTags: ["full_stack_engineering", "api_development"],
+      seniority: { label: "mid_level", evidence: [] },
+      hardFilters: {
+        sponsorshipAvailable: false,
+        locations: ["san_francisco_bay_area"],
+        jobTypes: ["full_time"],
+      },
+      softScoringWeights: {
+        skills: 0.35,
+        roleFunction: 0.2,
+        industrySector: 0.15,
+        location: 0.1,
+        compensation: 0.05,
+        visa: 0.1,
+        companyPreference: 0.05,
+      },
+      prescreen: {
+        questions: [
+          {
+            questionId: "Role Fit",
+            prompt: "What recent work best matches this software engineering role?",
+            signal: "role_fit",
+            required: true,
+          },
+          {
+            questionId: "technical_depth",
+            prompt: "What technical part did you personally build?",
+            signal: "technical_depth",
+            required: true,
+          },
+          {
+            questionId: "sponsorship_status",
+            prompt: "Do you need current or future visa sponsorship?",
+            signal: "sponsorship_status",
+            required: true,
+          },
+        ],
+        passSignals: ["full-stack ownership"],
+      },
+      scoringRubric: { mustHave: ["Full-stack ownership"], niceToHave: ["Fintech"], disqualifiers: [] },
+    },
+    coverage: { overall: "high", missingSignals: [], seniorityEvidence: "rubric", sponsorshipSignal: "explicit_no" },
+    hitlFlags: [],
+    enrichmentVersion: "test",
+    createdAt: now,
+    approvedAt: now,
+    approvedBy: "operator@wekruit.com",
+  } satisfies JobOpportunityDraft
+
+  const config = prescreenConfigFromApprovedDraft(draft, "operator@wekruit.com", now)
+  const roleFit = config.questions[0]
+  const technicalDepth = config.questions[1]
+  const sponsorship = config.questions[2]
+
+  assert.equal(roleFit?.qId, "role_fit")
+  assert.equal(roleFit?.matchThreshold, 0.7)
+  assert.notEqual(roleFit?.keywords[0]?.hint, "role_fit")
+  assert.match(roleFit?.keywords[0]?.hint ?? "", /APIs\/services\/databases\/dashboards/)
+  assert.match(roleFit?.keywords[0]?.hint ?? "", /Adjacent projects count/)
+  assert.match(technicalDepth?.keywords[0]?.hint ?? "", /typescript, react, node, postgresql/)
+  assert.match(sponsorship?.keywords[0]?.hint ?? "", /do not need current or future visa sponsorship/)
+})
+
 test("runJobEnrichmentSaveCorrections appends an operator correction event", async () => {
   const result = await runJobEnrichmentSaveCorrections(
     { jobId: "job-1", draftId: "draft-1", corrections: "Salary range should be 150k to 170k." },
