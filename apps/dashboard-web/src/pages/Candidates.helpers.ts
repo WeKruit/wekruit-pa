@@ -59,6 +59,9 @@ export function hasReachableIdentity(doc: CandidateListUserDoc): boolean {
 }
 
 function hasCurrentCandidateAccountSignal(doc: CandidateListUserDoc): boolean {
+  const email = doc.email?.trim().toLowerCase() ?? ""
+  if (email.endsWith("@wekruit.com")) return false
+
   const state = doc.candidateLifecycleState
   if (
     state === "claimed" ||

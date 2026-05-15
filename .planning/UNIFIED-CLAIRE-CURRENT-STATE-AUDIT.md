@@ -132,6 +132,7 @@ Required fix boundary:
   - `synthetic_test_profile = 562`
   - `incomplete_identity_artifact = 6`
   - The only `candidate_account` row remains `pa-users/U7AwKT8nLDRa35DkuBxq`.
+  - Existing `@wekruit.com` operator docs, including `admin1@wekruit.com`, are excluded from candidate account counts.
   - Old generated `verify-prescreen-stress-*` user docs from early failed stress runs were deleted; one stable synthetic profile remains for repeatable stress testing: `pa-users/verify-prescreen-stress-user`.
 
 ## 2026-05-15 Prescreen Conversation Verification

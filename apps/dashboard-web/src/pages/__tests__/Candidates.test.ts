@@ -75,6 +75,18 @@ test("Candidates keeps mem0-only SMS rows as legacy profiles", () => {
   assert.equal(classifyCandidateProfile(source, doc), "legacy_sms_profile")
 })
 
+test("Candidates keeps Wekruit operator docs out of candidate account counts", () => {
+  const doc = {
+    id: "itYEwzaJjVPjWbN01fzk",
+    email: "admin1@wekruit.com",
+    candidateLifecycleState: "claimed",
+    latestResumeArtifactId: "operator-upload",
+  }
+  const source = deriveCandidateSource(doc)
+  assert.equal(source, "bulk_resume")
+  assert.equal(classifyCandidateProfile(source, doc), "incomplete_identity_artifact")
+})
+
 test("Candidates keeps external supply prospects out of account counts", () => {
   const doc = {
     id: "d448e164-7d83-4191-812b-b1ec1cbd1f6f",
