@@ -2171,3 +2171,19 @@ export {
 // Lead resolution L-F7. Do not interleave with any other export above.
 // ============================================================
 export { paExternalSupplyRollupSourceQualityMonthly } from "./external-supply/source-quality.js"
+
+// ============================================================
+// WeKruit Open — Layoff product (2026-05-15)
+// ------------------------------------------------------------
+// Co-deployed with pa-orchestrator. Reuses sendblue/pool.ts + allowlist.ts +
+// sendblue-client.ts. Firestore: pa-users (source=WeKruit_Laid_Off tag +
+// lastLaidOffAt timestamp + layoffContext sub-object), layoff_phone_index
+// (dedup), layoff_employers, layoff_meta. Frontend: https://layoff.wekruit.com
+// ============================================================
+export {
+  openRegisterLayoffCandidate,
+  openInitiateSmsPrescreen,
+  openSubmitChatTurn,
+  openListLayoffCandidates,
+  openRegisterEmployer,
+} from "./openLayoff.js"
