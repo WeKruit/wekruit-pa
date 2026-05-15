@@ -90,11 +90,11 @@ brain.
   - Identity bridge schema sketch in S2 CONTEXT.md
 - **Acceptance**: this file + GOAL-PROMPT.md committed on `claude/v21-S0-foundation`, regression gate green (no code touched so all should remain green), Adam approval to advance.
 
-### S1A — runtime stream
+### S1A — runtime stream ✅ SHIPPED 2026-05-15
 
-- **Owner**: P8 sub-agent (P10 spawns)
-- **Worktree**: `.claude/worktrees/v21-S1A-runtime-stream` → `claude/v21-S1A-runtime-stream`
-- **Mandate**: Add `runAgentTurnStream` export to `packages/pa-orchestrator/src/agent-runtime/` that yields token-by-token output via async iterator. Do NOT modify any existing export. Behind feature flag `PA_AGENT_RUNTIME_STREAM_ENABLED=true` opt-in.
+- **Owner**: P8 sub-agent (P10 spawn)
+- **Worktree**: `.claude/worktrees/v21-S1A-runtime-stream` → `claude/v21-S1A-runtime-stream` (pushed)
+- **Mandate (delivered)**: Added `runAgentTurnStream` export to **`packages/agent-runtime/` workspace `@pa/agent-runtime`** (corrected from original `packages/pa-orchestrator/src/agent-runtime/` reference). Async iterator yielding `AgentTurnStreamChunk { delta, finishReason?, usage? }`. Flag-off throws `Error("PA_AGENT_RUNTIME_STREAM_ENABLED=false")`. Existing exports byte-identical (3 golden snapshots).
 - **Acceptance**:
   - `pnpm --filter pa-orchestrator test` green
   - new test: `runAgentTurnStream emits token chunks` (≥3 chunks for a 50-token response)

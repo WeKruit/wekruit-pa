@@ -17,6 +17,7 @@ Build the LiveKit Agents worker that bridges a SIP-connected outbound call to `P
   - L7 Adaptive turn model + register all 7 event handlers — NO `minEndpointingDelay` hardcode.
   - L8 Recording consent prompt at call start; storage `WEKRUIT_VOICE_RECORDINGS_BUCKET=wekruit-voice-recordings`.
   - L12 LiveKit deployment = **LiveKit Cloud only**.
+- S1A shipped (2026-05-15): `runAgentTurnStream` exported from `@pa/agent-runtime` workspace (`packages/agent-runtime/`). S2 must set `PA_AGENT_RUNTIME_STREAM_ENABLED=true` in worker env. Stream pipes through S1C HTTP shim (NOT direct import in S2). Do not buffer chunks pre-TTS.
 - Voice stack (locked): Deepgram Nova-3 STT + Aura-2 TTS, `openai.LLM` plugin → `WEKRUIT_LLM_SHIM_URL`, Silero VAD + MultilingualModel, LiveKit Cloud SIP → Twilio trunk `wekruit-prescreen-outbound`.
 - Identity bridge (S0 → S3): room metadata carries `bookingId`; loaders S1B map `bookingId` → `paUserId` → user profile + `paJobId` → job brief + prescreen config.
 
