@@ -167,6 +167,32 @@ export const UserTagsSchema = z.object({
   targetCountry: z.array(z.string()).optional(),
   preferredLang: z.enum(["zh", "en"]).optional(),
 
+  // ---- Phase B1 — company preference signals --------------------------
+  /**
+   * Phase B1 — open-vocab company-tag tokens user wants to match against.
+   * Drives V16 `tagOverlap * 0.15` soft score (B4). Capped at 30 to keep
+   * Jaccard sets bounded.
+   */
+  targetCompanyTags: z.array(z.string()).max(30).optional(),
+  /**
+   * Phase B1 — actively job-searching flag. Set by onboarding question
+   * (B2) AND by NL detector on laid-off / actively-searching utterances
+   * (B3). Drives V16 urgencyBoost (+0.20 for fresh full-time, -0.10 for
+   * intern/new-grad/contract).
+   */
+  urgentlySeeking: z.boolean().optional(),
+  /**
+   * Phase B1 — hard-filter negative list. Lowercased normalized company
+   * names (see `normalizeCompanyName`). Cap 30; jobs whose company name
+   * matches are dropped in V16 hard filter.
+   */
+  companyNegativeList: z.array(z.string()).max(30).optional(),
+  /**
+   * Phase B1 — soft-boost positive list. Lowercased normalized company
+   * names. Cap 30; +0.15 soft score when V16 scores a matching job.
+   */
+  companyPositiveList: z.array(z.string()).max(30).optional(),
+
   // ---- bookkeeping -----------------------------------------------------
   lastUpdatedFromCv: z.string().optional(),
   lastUpdatedFromChat: z.string().optional(),

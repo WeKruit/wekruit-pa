@@ -546,6 +546,24 @@
           "order": "DESCENDING"
         }
       ]
+    },
+    {
+      "_comment": "Phase A3 — pa-companies admin browse by stage recency.",
+      "collectionGroup": "pa-companies",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "companyStage", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "_comment": "Phase A3 — pa-companies stale-enrichment sweep by source age.",
+      "collectionGroup": "pa-companies",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "enrichmentSource", "order": "ASCENDING" },
+        { "fieldPath": "enrichedAt", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

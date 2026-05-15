@@ -114,6 +114,14 @@ export const PA_COLLECTIONS = {
    * `apps/functions/src/external-supply/firestore-rules.note.md`.
    */
   agentRankingResults: "pa-agent-ranking-results",
+  /**
+   * Phase A3 (post-v1.7) — centralized company directory.
+   * Shared with v2.0 external-supply (employer prefs) AND Phase A5
+   * nightly enricher (stage/tags/funding from YC/Wikidata/Clearbit/LLM).
+   * Operator-only read (sensitive employer competitor lists);
+   * score-time reads in V16 go through Admin SDK via load-companies.ts.
+   */
+  companies: "pa-companies",
 } as const
 
 /**

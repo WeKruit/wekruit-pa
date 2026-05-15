@@ -603,6 +603,13 @@ export {
   PA_REMOTE_CONFIG_DOC,
 } from "./collections.js"
 
+export type {
+  PaCompany,
+  CompanyEnrichmentSource,
+  CompanyFundingRound,
+} from "./pa-company.js"
+export { normalizeCompanyName } from "./pa-company.js"
+
 export {
   BulkResumeBatchCountsSchema,
   BulkResumeBatchSchema,
