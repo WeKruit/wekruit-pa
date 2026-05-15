@@ -30,6 +30,13 @@ const PII_META_COLL = "pa-pii-confirm-meta"
 
 const PII_STATE_COLL = "pa-pii-confirm-state"
 
+export function composePiiSkipExistingText(source: "pass" | "fail" = "pass"): string {
+  if (source === "fail") {
+    return "We already have your contact details on file — I’ll text you when a stronger fit comes through."
+  }
+  return "We already have your contact details on file — the employer will reach out directly."
+}
+
 class FirestorePiiState implements PipelineStateProvider {
   constructor(private readonly db: Firestore) {}
   async load(userId: string): Promise<PipelineState> {
@@ -97,8 +104,7 @@ export async function runPiiConfirmForUser(
     try {
       await sendImessage({
         to: args.toE164,
-        content:
-          "We already have your contact details on file — the employer will reach out directly.",
+        content: composePiiSkipExistingText(args.source ?? "pass"),
         userId: args.userId,
         db: args.db,
       })
