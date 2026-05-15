@@ -72,11 +72,22 @@ export interface PaCompany {
   updatedAt: string
 }
 
-/** Convenience normalizer used by both writers + score-time reader. */
+/**
+ * Convenience normalizer used by both writers + score-time reader.
+ *
+ * Cap input length BEFORE regex passes to bound worst-case work (CodeQL
+ * js/polynomial-redos: `^-+|-+$` on attacker-controlled input could be
+ * slow on pathological repetitions; 100-char cap removes the unbounded
+ * dimension).
+ */
 export function normalizeCompanyName(raw: string): string {
-  return raw
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 100)
+  if (typeof raw !== "string") return ""
+  const bounded = raw.slice(0, 200).toLowerCase()
+  const collapsed = bounded.replace(/[^a-z0-9]+/g, "-")
+  // Manual trim of leading/trailing dashes to avoid backtracking regex.
+  let start = 0
+  let end = collapsed.length
+  while (start < end && collapsed.charCodeAt(start) === 45) start++
+  while (end > start && collapsed.charCodeAt(end - 1) === 45) end--
+  return collapsed.slice(start, end).slice(0, 100)
 }

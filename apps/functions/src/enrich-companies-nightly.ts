@@ -246,7 +246,9 @@ export function ycResultFor(co: YcCachedCompany, now: Date): EnrichmentResult {
 const WIKIDATA_ENDPOINT = "https://query.wikidata.org/sparql"
 
 export function buildWikidataQuery(name: string): string {
-  const safe = name.replace(/"/g, '\\"')
+  // Escape backslashes first, then double-quotes, so SPARQL literal stays safe
+  // even when a company name contains both. CodeQL js/incomplete-sanitization.
+  const safe = name.replace(/\\/g, "\\\\").replace(/"/g, '\\"')
   return `
 SELECT ?co ?coLabel ?employees ?founded ?listed ?website ?industryLabel WHERE {
   ?co rdfs:label "${safe}"@en .
