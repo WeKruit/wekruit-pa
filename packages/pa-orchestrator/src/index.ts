@@ -3933,7 +3933,7 @@ export {
   type PreScreenStateProvider,
   type PreScreenTerminal,
 } from "./prescreen/state.js"
-export { PreScreenPipeline, terminalText } from "./prescreen/pipeline.js"
+export { PreScreenPipeline, hardFilterClarifyText, terminalText } from "./prescreen/pipeline.js"
 export type {
   ComposeClarifyInput,
   PreScreenClarifyComposer,

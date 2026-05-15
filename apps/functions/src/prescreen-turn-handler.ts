@@ -17,6 +17,7 @@ import type { Firestore } from "firebase-admin/firestore"
 import {
   KeywordSetJudge,
   PreScreenPipeline,
+  hardFilterClarifyText,
   type KeywordSetLlmCaller,
   type KeywordSetLlmOutput,
   type KeywordSpec,
@@ -122,6 +123,9 @@ function makeProductionKeywordSetCaller(): KeywordSetLlmCaller {
 
 function makeProductionClarifyComposer(): PreScreenClarifyComposer {
   return async (input) => {
+    const hardFilterText = hardFilterClarifyText(input.question.qId, input.lang)
+    if (hardFilterText) return hardFilterText
+
     const apiKey = process.env.PA_OPENAI_AGENT_API_KEY ?? process.env.OPENAI_API_KEY
     if (!apiKey) throw new Error("missing OpenAI API key")
 

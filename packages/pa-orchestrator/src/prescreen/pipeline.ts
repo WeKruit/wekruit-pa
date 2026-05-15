@@ -600,12 +600,37 @@ function clarifyText(
     reason: "confidence" | "type_gate"
   }
 ): string {
+  const hardFilterText = hardFilterClarifyText(question.qId, lang)
+  if (hardFilterText) return hardFilterText
+
   if (ctx && ctx.clarifyRound > 1) {
     return followUpClarifyText(question, lang, ctx)
   }
   const authored = question.clarifyPrompt[lang]?.trim()
   if (authored && !isPlaceholderClarify(authored)) return authored
   return probingClarifyText(lang)
+}
+
+export function hardFilterClarifyText(qId: string, lang: Lang): string | null {
+  if (qId === "location_alignment") {
+    return lang === "zh"
+      ? "我先确认这个硬条件：这份工作的地点/远程安排你能接受吗？如果需要远程、搬迁或其他城市，请直接说清楚。"
+      : "Got it. I need to confirm the hard location setup for this role: can you work with the listed location/remote arrangement, or would you need remote, relocation, or a different city?"
+  }
+
+  if (qId === "compensation_alignment") {
+    return lang === "zh"
+      ? "我先确认薪资目标：这份工作的薪资范围对你来说可行吗？如果不行，你目标的大概范围是多少？"
+      : "Got it. Quick compensation check: is this role's posted range workable for you? If not, what range are you targeting?"
+  }
+
+  if (qId === "sponsorship_status") {
+    return lang === "zh"
+      ? "我先确认签证情况：你现在或未来会需要公司提供 visa sponsorship 吗？如果情况有细节，可以直接说明。"
+      : "Got it. Quick visa check: will you need current or future sponsorship for this role? If there is nuance, tell me the status directly."
+  }
+
+  return null
 }
 
 function isPlaceholderClarify(text: string): boolean {
