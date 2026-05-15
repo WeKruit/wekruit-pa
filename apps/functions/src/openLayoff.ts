@@ -427,7 +427,7 @@ export async function runListLayoffCandidates(
 
   const withinDays = input.withinDays ?? 180
   const cutoff = new Date(Date.now() - withinDays * 86400_000)
-  q = q.where("lastLaidOffAt", ">=", cutoff)
+  q = q.where("lastLaidOffAt", ">=", cutoff).orderBy("lastLaidOffAt", "desc")
 
   if (input.functions?.length) {
     q = q.where("layoffContext.function", "in", input.functions.slice(0, 10))

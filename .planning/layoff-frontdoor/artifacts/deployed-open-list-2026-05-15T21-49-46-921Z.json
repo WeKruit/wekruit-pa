@@ -1,0 +1,24 @@
+{
+  "runId": "deployed-open-list-2026-05-15T21-49-46-921Z",
+  "passed": true,
+  "failures": [],
+  "callableStatus": 200,
+  "listedTarget": {
+    "id": "U7AwKT8nLDRa35DkuBxq",
+    "firstName": "Shixiang",
+    "lastInitial": "Y",
+    "lastCompany": "Rain",
+    "jobTitle": "Software Engineer - Fullstack",
+    "location": "New York, NY",
+    "lastLaidOffAt": {
+      "_seconds": 1778881787,
+      "_nanoseconds": 892000000
+    },
+    "verified": false
+  },
+  "paUsersCountDuringCheck": 602,
+  "resultShape": [
+    "result"
+  ],
+  "rawBodyPreview": "{\"result\":{\"data\":[{\"id\":\"U7AwKT8nLDRa35DkuBxq\",\"firstName\":\"Shixiang\",\"lastInitial\":\"Y\",\"lastCompany\":\"Rain\",\"jobTitle\":\"Software Engineer - Fullstack\",\"location\":\"New York, NY\",\"lastLaidOffAt\":{\"_seconds\":1778881787,\"_nanoseconds\":892000000},\"verified\":false}]}}"
+}

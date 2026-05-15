@@ -203,6 +203,49 @@ test("claimCandidateProfile writes auth mapping, claimed lifecycle, and redacted
   )
 })
 
+test("claimCandidateProfile adopts a prelinked layoff candidate instead of creating a second profile", async () => {
+  const { db, store } = makeFakeFirestore()
+  store.get(PA_COLLECTIONS.users)!.set("layoff-cand-1", {
+    id: "layoff-cand-1",
+    source: "WeKruit_Laid_Off",
+    phoneE164: "+14155550100",
+    displayName: "Layoff Candidate",
+    layoffContext: {
+      lastCompany: "Rain",
+      jobTitle: "Software Engineer",
+      location: "New York, NY",
+      email: "layoff@example.com",
+    },
+    createdAt: now,
+    updatedAt: now,
+  })
+  await linkCandidateHandle(db, {
+    candidateId: "layoff-cand-1",
+    kind: "email",
+    value: "layoff@example.com",
+    source: "candidate",
+    deliverable: true,
+    now,
+  })
+
+  const claimed = await claimCandidateProfile(db, {
+    firebaseUid: "firebase-layoff-1",
+    email: "Layoff@Example.com",
+    browserUid: "browser-layoff",
+    now,
+  })
+
+  assert.equal(claimed.candidateId, "layoff-cand-1")
+  assert.equal(store.get(PA_COLLECTIONS.users)!.size, 1)
+  assert.equal(store.get(PA_COLLECTIONS.users)!.get("layoff-cand-1")!.source, "WeKruit_Laid_Off")
+  assert.equal(
+    (store.get(PA_COLLECTIONS.users)!.get("layoff-cand-1")!.layoffContext as Record<string, unknown>).lastCompany,
+    "Rain"
+  )
+  assert.equal(store.get(PA_COLLECTIONS.candidateAuth)!.get("firebase-layoff-1")!.candidateId, "layoff-cand-1")
+  assert.equal(store.get(PA_COLLECTIONS.candidateSelfProfiles)!.get("layoff-cand-1")!.phoneMasked, "+14***00")
+})
+
 test("writeCandidateSelfProfile redacts phone and preserves candidate-facing state only", async () => {
   const { db, store } = makeFakeFirestore()
   await writeCandidateSelfProfile(db, {

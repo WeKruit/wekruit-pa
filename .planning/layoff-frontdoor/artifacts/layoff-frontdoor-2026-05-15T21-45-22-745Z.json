@@ -1,0 +1,127 @@
+{
+  "runId": "layoff-frontdoor-2026-05-15T21-45-22-745Z",
+  "projectId": "wekruit-5f89b",
+  "userId": "U7AwKT8nLDRa35DkuBxq",
+  "phone": "+14243201960",
+  "email": "indolencorlol@gmail.com",
+  "userCountBefore": 602,
+  "userCountAfter": 602,
+  "duplicate": {
+    "duplicate": true,
+    "candidateId": "U7AwKT8nLDRa35DkuBxq",
+    "existing": {
+      "firstName": "Shixiang",
+      "lastCompany": null,
+      "jobTitle": null,
+      "location": null,
+      "lastLaidOffAt": "2026-05-15T20:48:52.070Z"
+    }
+  },
+  "refreshed": {
+    "candidateId": "U7AwKT8nLDRa35DkuBxq",
+    "listPosition": 412,
+    "senderNumber": "+13054507715",
+    "senderGroupId": "+13054507715",
+    "isReregistration": true,
+    "mode": "refresh"
+  },
+  "verifiedEmployer": {
+    "ok": true,
+    "employerId": "2Eq6ccE9KrgQ9DHxw9On",
+    "verificationStatus": "verified"
+  },
+  "listedTarget": {
+    "id": "U7AwKT8nLDRa35DkuBxq",
+    "firstName": "Shixiang",
+    "lastInitial": "Y",
+    "lastCompany": "Rain",
+    "jobTitle": "Software Engineer - Fullstack",
+    "location": "New York, NY",
+    "lastLaidOffAt": "2026-05-15T21:45:24.716Z",
+    "verified": false
+  },
+  "authMappings": [
+    {
+      "firebaseUid": "HfGPPD4d4OXNH4SiHRdzYExHXQz2",
+      "createdAt": "2026-05-14T17:34:59.166Z",
+      "emailHandleHash": "273ab0d5e2935d72f5f395da0f949759a43f53814bf78dc0b3d320ebe01cf97d",
+      "emailHandleId": "email__273ab0d5e2935d72f5f395da0f949759a43f53814bf78dc0b3d320ebe01cf97d",
+      "candidateId": "U7AwKT8nLDRa35DkuBxq",
+      "lastClaimedAt": "2026-05-15T02:17:22.370Z",
+      "updatedAt": "2026-05-15T02:17:22.370Z"
+    }
+  ],
+  "resumeArtifactId": "candidate_upload_U7AwKT8nLDRa35DkuBxq_e0f213bf9fcb83c33328e2f133b31c7f",
+  "resumeArtifactExists": true,
+  "refreshedUserEvidence": {
+    "source": "WeKruit_Laid_Off",
+    "lastLaidOffAt": "2026-05-15T21:45:24.716Z",
+    "layoffContext": {
+      "lastCompany": "Rain",
+      "jobTitle": "Software Engineer - Fullstack",
+      "resumeFileName": "Adam-Yang-Resume.pdf",
+      "location": "New York, NY",
+      "linkedin": "https://www.linkedin.com/in/adam-yang-109",
+      "consent": true,
+      "email": "indolencorlol@gmail.com",
+      "roleShape": "I want full-stack product engineering at an early-stage fintech or infrastructure company.",
+      "openTo": "Open to New York hybrid or remote. No sponsorship needed. Targeting $90k to $140k.",
+      "sponsorshipNeeded": false,
+      "logisticsRaw": "Open to New York hybrid or remote. No sponsorship needed. Targeting $90k to $140k.",
+      "pitch": "Built React and TypeScript dashboards over Node and Postgres to reduce failed-order triage."
+    },
+    "conversationDerivedPreferences": {
+      "prescreenEvidenceByJob": {
+        "rain-software-engineer-fullstack-8849f6ef": {
+          "jobId": "rain-software-engineer-fullstack-8849f6ef",
+          "kind": "job_prescreen",
+          "summary": "stop",
+          "recentReplies": [
+            "stop"
+          ],
+          "evidenceTags": [
+            "job_prescreen",
+            "software_engineering",
+            "fullstack_engineering"
+          ],
+          "scored": [],
+          "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260515T213438991Z",
+          "terminal": "PAUSE",
+          "updatedAt": "2026-05-15T21:34:39.933Z"
+        }
+      },
+      "layoff_onboarding": {
+        "next": {
+          "at": "2026-05-15T21:45:25.027Z",
+          "answer": "I want full-stack product engineering at an early-stage fintech or infrastructure company.",
+          "source": "layoff_onboarding",
+          "updatedAt": "2026-05-15T21:45:25.206Z"
+        },
+        "open": {
+          "at": "2026-05-15T21:45:25.322Z",
+          "answer": "Open to New York hybrid or remote. No sponsorship needed. Targeting $90k to $140k.",
+          "source": "layoff_onboarding",
+          "updatedAt": "2026-05-15T21:45:25.441Z"
+        },
+        "pitch": {
+          "at": "2026-05-15T21:45:25.546Z",
+          "answer": "Built React and TypeScript dashboards over Node and Postgres to reduce failed-order triage.",
+          "source": "layoff_onboarding",
+          "updatedAt": "2026-05-15T21:45:25.730Z"
+        }
+      },
+      "updatedAt": "2026-05-15T21:45:25.730Z"
+    },
+    "layoffEvidence": {
+      "latestChatTurn": {
+        "source": "layoff_onboarding",
+        "at": "2026-05-15T21:45:25.546Z",
+        "answer": "Built React and TypeScript dashboards over Node and Postgres to reduce failed-order triage.",
+        "promptId": "pitch",
+        "updatedAt": "2026-05-15T21:45:25.730Z"
+      }
+    }
+  },
+  "failures": [],
+  "passed": true
+}

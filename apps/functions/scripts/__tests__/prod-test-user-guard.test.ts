@@ -161,6 +161,8 @@ test("legacy production E2E scripts that create fresh pa-users are guarded", () 
     "e2e-bug-a-b-verify.mjs",
     "e2e-bug-d-verify.mjs",
     "qa-iter30-v4-reset-multi.mjs",
+    "external-supply-prod-smoke.ts",
+    "external-supply-v2-prod-smoke.ts",
   ]
   for (const script of scripts) {
     const source = readFileSync(new URL(`../${script}`, import.meta.url), "utf8")

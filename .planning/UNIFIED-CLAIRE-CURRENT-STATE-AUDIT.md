@@ -313,6 +313,36 @@ Required fix boundary:
   - Firebase deploy predeploy full functions suite passed 1512/1512.
   - `openSubmitChatTurn` deployed as Node.js 24 callable in `us-central1`.
 
+## 2026-05-15 Layoff Front Door And Verified Marketplace Recheck
+
+- Root cause fixed:
+  - `openListLayoffCandidates` queried `pa-users` with `source == WeKruit_Laid_Off` plus `lastLaidOffAt >= cutoff` but did not explicitly order by `lastLaidOffAt`.
+  - Production Firestore requested an ascending composite index, while the declared contract/index is `pa-users(source asc, lastLaidOffAt desc)`.
+  - `runListLayoffCandidates` now orders by `lastLaidOffAt desc`, matching the deployed index contract and the marketplace "newest first" behavior.
+- Auth/adoption lock:
+  - `packages/pa-persistence/src/identity.test.ts` now proves a prelinked layoff candidate email handle is adopted by `claimCandidateProfile`; no second `pa-users` profile is created, and existing `source = WeKruit_Laid_Off` / `layoffContext` is preserved.
+- Production Firestore live-equivalent verification:
+  - Script: `apps/functions/scripts/layoff-frontdoor-firestore.ts`.
+  - Artifact: `.planning/layoff-frontdoor/artifacts/layoff-frontdoor-2026-05-15T21-45-22-745Z.json`.
+  - Target candidate: `pa-users/U7AwKT8nLDRa35DkuBxq`, phone `+14243201960`, email `indolencorlol@gmail.com`.
+  - Duplicate phone path returned `duplicate: true` and reused `U7AwKT8nLDRa35DkuBxq`.
+  - Refresh path wrote full `layoffContext` to the same candidate only; `pa-users` stayed `602 -> 602`.
+  - `openSubmitChatTurn` wrote `conversationDerivedPreferences.layoff_onboarding` and `layoffEvidence.latestChatTurn` on `pa-users`.
+  - Existing shared resume artifact `candidate_upload_U7AwKT8nLDRa35DkuBxq_e0f213bf9fcb83c33328e2f133b31c7f` exists.
+  - Verified employer listing included the refreshed candidate with redacted fields only.
+  - The script restored the target `pa-users` doc, phone index, and handle docs on exit; follow-up Firestore check confirmed `pa-users = 602` and no temporary employer docs remained.
+- Deployed callable verification:
+  - Artifact: `.planning/layoff-frontdoor/artifacts/deployed-open-list-2026-05-15T21-49-46-921Z.json`.
+  - A temporary verified employer Firebase Auth user called the deployed `openListLayoffCandidates` callable successfully (`HTTP 200`).
+  - The deployed callable listed `U7AwKT8nLDRa35DkuBxq` after a temporary context refresh, proving the deployed query and index work.
+  - Cleanup restored the candidate profile and deleted the temporary employer/Auth user.
+- Deployment:
+  - `openListLayoffCandidates` deployed as Node.js 24, `ACTIVE`, update time `2026-05-15T21:48:42Z`.
+  - Deploy predeploy full functions suite passed `1525/1525`.
+- Node 24 verification:
+  - `node --import tsx --test apps/functions/src/openLayoff.test.ts apps/functions/src/identity/employer-claim-verification.test.ts packages/pa-persistence/src/identity.test.ts` passed `19/19`.
+  - `npm run typecheck --workspace=@pa/functions` passed.
+
 ## 2026-05-15 Job Lifecycle / Candidate Page Link Verification
 
 - Candidate-facing job pages:
@@ -378,6 +408,25 @@ Required fix boundary:
   - `paExternalSupplyResolveBatchIdentity` deployed as Node.js 24, `ACTIVE`, update time `2026-05-15T20:05:02Z`.
   - `paExternalSupplyRunEvaluation` deployed as Node.js 24, `ACTIVE`, update time `2026-05-15T20:05:03Z`.
   - `paExternalSupplyGenerateAgentResearchPrompt` deployed as Node.js 24, `ACTIVE`, update time `2026-05-15T20:05:05Z`.
+
+## 2026-05-15 Production User Boundary Recheck
+
+- Firestore facts:
+  - `pa-users` live count is `602`.
+  - `pa-users where phoneE164 == "+14243201960"` returns exactly one row: `U7AwKT8nLDRa35DkuBxq` / `indolencorlol@gmail.com`.
+  - `pa-users where phoneE164 == "+13054507715"` returns zero rows; this is the Claire/Sendblue test number, not the candidate identity allowlist.
+- Root cause of the "extra users" concern:
+  - The recent UUID `pa-users` rows are not from iMessage or Sendblue allowlist tests.
+  - They came from external supply batch `81395d47-3da9-4485-8025-fcdc79a4aa93`, source `manual_csv`, file `lessie_export (2).xlsx`, company `rain-xyz`, job `rain-backend-engineer-482b165f`.
+  - That batch has 45 records; 25 LinkedIn-resolvable records became `candidateLifecycleState: prospect` users via the external-supply identity resolver.
+  - This follows the locked external-supply model where LinkedIn identity resolves into shared `pa-users`; it is separate from the phone-gated iMessage test path.
+- Guardrail added:
+  - `apps/functions/scripts/external-supply-prod-smoke.ts` and `apps/functions/scripts/external-supply-v2-prod-smoke.ts` now call `assertProductionPaUserCreationAllowed` before seeding or resolving.
+  - These production smoke scripts now refuse to create `pa-users` unless `WEKRUIT_ALLOW_PROD_TEST_USER_CREATE=1` is explicitly set for a cleanup-tracked run.
+  - `apps/functions/scripts/__tests__/prod-test-user-guard.test.ts` now checks those external-supply smoke scripts are guarded.
+- Node 24 verification:
+  - `node --import tsx --test apps/functions/scripts/__tests__/prod-test-user-guard.test.ts` passed 8/8.
+  - `pnpm --filter @pa/functions typecheck` passed.
 
 ## Remaining Completion Gaps
 
