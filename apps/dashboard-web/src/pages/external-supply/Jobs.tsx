@@ -31,6 +31,7 @@ import {
   type CompanyRow,
   type JobRow,
 } from "../../lib/external-supply-client.js"
+import { deriveJobLifecycleDisplay } from "./Jobs.helpers.js"
 
 export function Jobs() {
   const params = useParams<{ companyId?: string }>()
@@ -215,46 +216,54 @@ function CompanyJobs({ companyId }: { companyId: string }) {
                 <th style={{ padding: "8px 6px" }}>Location</th>
                 <th style={{ padding: "8px 6px" }}>Seniority</th>
                 <th style={{ padding: "8px 6px" }}>Salary</th>
+                <th style={{ padding: "8px 6px" }}>Candidate page</th>
                 <th style={{ padding: "8px 6px" }}></th>
               </tr>
             </thead>
             <tbody>
-              {sortedJobs.map((j) => (
-                <tr key={j.jobId} style={{ borderBottom: "1px solid #f0f0f0" }}>
-                  <td style={{ padding: "8px 6px" }}>{j.department ?? "—"}</td>
-                  <td style={{ padding: "8px 6px" }}>
-                    <Link to={`/admin/jobs/${encodeURIComponent(j.jobId)}`}>
-                      <strong>{j.title ?? j.jobId}</strong>
-                    </Link>
-                    <div style={{ fontSize: 12, color: "#666" }}>{j.jobId}</div>
-                    <div style={{ fontSize: 11, marginTop: 2, display: "flex", gap: 4 }}>
-                      {j.publicVisible ? (
-                        <span style={{ background: "#dcfce7", color: "#166534", padding: "0 6px", borderRadius: 3, fontWeight: 600 }}>
-                          public
+              {sortedJobs.map((j) => {
+                const lifecycle = deriveJobLifecycleDisplay(j)
+                return (
+                  <tr key={j.jobId} style={{ borderBottom: "1px solid #f0f0f0" }}>
+                    <td style={{ padding: "8px 6px" }}>{j.department ?? "—"}</td>
+                    <td style={{ padding: "8px 6px" }}>
+                      <Link to={`/admin/jobs/${encodeURIComponent(j.jobId)}`}>
+                        <strong>{j.title ?? j.jobId}</strong>
+                      </Link>
+                      <div style={{ fontSize: 12, color: "#666" }}>{j.jobId}</div>
+                      <div style={{ fontSize: 11, marginTop: 2, display: "flex", gap: 4 }}>
+                        <span style={pageToneStyle(lifecycle.pageTone)}>
+                          {lifecycle.pageLabel}
                         </span>
+                        {lifecycle.collaborationLabel ? (
+                          <span style={{ background: "#dbeafe", color: "#1e3a8a", padding: "0 6px", borderRadius: 3, fontWeight: 600 }}>
+                            collab
+                          </span>
+                        ) : null}
+                      </div>
+                    </td>
+                    <td style={{ padding: "8px 6px" }}>
+                      {j.rawLocation ?? ((j.locationBuckets ?? []).join(", ") || "—")}
+                    </td>
+                    <td style={{ padding: "8px 6px" }}>{j.seniorityLevel ?? "—"}</td>
+                    <td style={{ padding: "8px 6px" }}>
+                      {j.salaryMin && j.salaryMax
+                        ? `$${Math.round(j.salaryMin / 1000)}K – $${Math.round(j.salaryMax / 1000)}K`
+                        : "—"}
+                    </td>
+                    <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>
+                      {lifecycle.candidateHref ? (
+                        <a href={lifecycle.candidateHref} target="_blank" rel="noopener noreferrer">
+                          Open candidate page →
+                        </a>
                       ) : (
-                        <span style={{ background: "#fef3c7", color: "#92400e", padding: "0 6px", borderRadius: 3, fontWeight: 600 }}>
-                          draft
-                        </span>
+                        <Link to={`/admin/jobs/${encodeURIComponent(j.jobId)}`}>
+                          Publish in job workspace
+                        </Link>
                       )}
-                      {j.wekruitCollaborationStatus === "collaborated" ? (
-                        <span style={{ background: "#dbeafe", color: "#1e3a8a", padding: "0 6px", borderRadius: 3, fontWeight: 600 }}>
-                          collab
-                        </span>
-                      ) : null}
-                    </div>
-                  </td>
-                  <td style={{ padding: "8px 6px" }}>
-                    {j.rawLocation ?? ((j.locationBuckets ?? []).join(", ") || "—")}
-                  </td>
-                  <td style={{ padding: "8px 6px" }}>{j.seniorityLevel ?? "—"}</td>
-                  <td style={{ padding: "8px 6px" }}>
-                    {j.salaryMin && j.salaryMax
-                      ? `$${Math.round(j.salaryMin / 1000)}K – $${Math.round(j.salaryMax / 1000)}K`
-                      : "—"}
-                  </td>
-                  <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>
-                    {(() => {
+                    </td>
+                    <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>
+                      {(() => {
                       const existing = batchesByJob.get(j.jobId)
                       if (existing) {
                         return (
@@ -287,22 +296,33 @@ function CompanyJobs({ companyId }: { companyId: string }) {
                           Source candidates →
                         </Link>
                       )
-                    })()}
-                    {j.atsApplyUrl ? (
-                      <>
-                        {" · "}
-                        <a href={j.atsApplyUrl} target="_blank" rel="noopener noreferrer">
-                          JD
-                        </a>
-                      </>
-                    ) : null}
-                  </td>
-                </tr>
-              ))}
+                      })()}
+                      {j.atsApplyUrl ? (
+                        <>
+                          {" · "}
+                          <a href={j.atsApplyUrl} target="_blank" rel="noopener noreferrer">
+                            JD
+                          </a>
+                        </>
+                      ) : null}
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         )}
       </Panel>
     </div>
   )
+}
+
+function pageToneStyle(tone: "public" | "review" | "draft") {
+  if (tone === "public") {
+    return { background: "#dcfce7", color: "#166534", padding: "0 6px", borderRadius: 3, fontWeight: 600 }
+  }
+  if (tone === "review") {
+    return { background: "#e0f2fe", color: "#075985", padding: "0 6px", borderRadius: 3, fontWeight: 600 }
+  }
+  return { background: "#fef3c7", color: "#92400e", padding: "0 6px", borderRadius: 3, fontWeight: 600 }
 }

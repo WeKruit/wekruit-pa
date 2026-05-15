@@ -289,6 +289,40 @@ Required fix boundary:
   - Firebase deploy predeploy full functions suite passed 1512/1512.
   - `openSubmitChatTurn` deployed as Node.js 24 callable in `us-central1`.
 
+## 2026-05-15 Job Lifecycle / Candidate Page Link Verification
+
+- Candidate-facing job pages:
+  - `apps/pa-landing/src/pages/PublicJob.tsx` shows the "WeKruit collaborated" badge only when `pa-jobs/{jobId}.wekruitCollaborationStatus === "collaborated"`.
+  - `apps/pa-landing/src/pages/Landing.tsx` uses the same data field for home-page job cards.
+  - Public page visibility is gated by `pa-jobs/{jobId}.publicVisible`.
+- Admin job source of truth:
+  - `apps/dashboard-web/src/pages/admin/JobWorkspace.tsx` remains the single edit surface for the locked lifecycle fields:
+    - `publicVisible`
+    - `candidatePageStatus`
+    - `wekruitCollaborationStatus`
+  - `apps/dashboard-web/src/pages/external-supply/Jobs.tsx` now exposes a direct "Open candidate page" link for jobs where `publicVisible === true` and `candidatePageStatus === "published"`.
+  - Draft/review jobs show "Publish in job workspace" instead of pretending the candidate page is live.
+  - External-supply job rows now display lifecycle state and collaboration chips from the same `pa-jobs` fields used by the candidate site.
+- Test lock:
+  - `apps/dashboard-web/src/pages/external-supply/Jobs.helpers.ts`
+  - `apps/dashboard-web/src/pages/external-supply/__tests__/Jobs.test.tsx`
+  - `candidateJobPageUrl("rain-software-engineer-fullstack-8849f6ef")` resolves to `https://candidate.wekruit.com/j/rain-software-engineer-fullstack-8849f6ef`.
+  - `deriveJobLifecycleDisplay` only returns a live candidate href for published public jobs and only returns `WeKruit collaborated` from `wekruitCollaborationStatus === "collaborated"`.
+- Node 24 verification:
+  - `node --import tsx --test apps/dashboard-web/src/pages/external-supply/__tests__/Jobs.test.tsx` passed 3/3.
+  - `npm run typecheck --workspace=@pa/dashboard-web` passed.
+  - `npm test --workspace=@pa/dashboard-web` passed 110/110, including the new Jobs helper test.
+  - `npm run build --workspace=@pa/dashboard-web` passed.
+- Live Firestore recheck:
+  - `pa-jobs where companyId == "rain-xyz"` returned 26 jobs.
+  - All 26 Rain jobs have `publicVisible = true`, `candidatePageStatus = "published"`, and `wekruitCollaborationStatus = "not_collaborated"`.
+  - The Rain rows therefore show a candidate-page link but no WeKruit-collaborated badge.
+- Deployment:
+  - First `firebase deploy --only hosting:pa-dashboard` attempt failed at predeploy because the shell lacked `VITE_FIREBASE_*`.
+  - Retried with `PA_DASHBOARD_VITE_ENV_FILE=/Users/adam/Desktop/WeKruit/wekruit-pa/apps/dashboard-web/.env.production.local`.
+  - `hosting:pa-dashboard` released to `https://wekruit-pa.web.app`.
+  - Deployed JS contains `Open candidate page`, `Publish in job workspace`, and `Live candidate page`.
+
 ## Remaining Completion Gaps
 
 - WeKruit Open web chat now merges each answer into shared `pa-users` evidence/context and refuses missing/non-layoff profiles. It is still not a full Claire state machine/mem0 conversational path; that remains a separate product integration gap.
