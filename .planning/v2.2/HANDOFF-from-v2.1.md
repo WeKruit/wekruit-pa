@@ -1,6 +1,6 @@
 # v2.2 Hand-off from v2.1 — Voice Prescreen Outbound
 
-**Status:** SKELETON (filled at S7 ship gate).
+**Status:** FINALIZED (S7 ship gate, code-complete; live smoke pending Adam-secrets).
 **Source milestone:** [`MILESTONE-v2.1-voice-prescreen.md`](../MILESTONE-v2.1-voice-prescreen.md).
 **Owner of v2.2:** Adam + future P10 lead.
 
