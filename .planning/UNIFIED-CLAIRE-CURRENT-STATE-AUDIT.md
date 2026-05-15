@@ -182,6 +182,28 @@ Required fix boundary:
   - `node --import tsx --test apps/functions/src/__tests__/job-enrichment.test.ts apps/functions/src/prescreen-terminal-action.test.ts apps/functions/src/__tests__/broker-prescreen-trigger.test.ts packages/pa-orchestrator/src/prescreen/__tests__/pipeline.test.ts` passed 38/38.
   - `npm run typecheck --workspace=@pa/functions` passed.
 
+## 2026-05-15 Sendblue Entrypoint Matrix Verification
+
+- Script:
+  - `apps/functions/scripts/sendblue-entrypoint-matrix-firestore.ts`.
+  - Uses real production Firestore and the real `handleSendblueWebhook` router.
+  - Sets `X-E2E-Test: 1` and signs requests with a local test secret for direct handler execution.
+  - Stubs outbound Sendblue/pre-screen/layoff sends, so no real SMS/iMessage is sent.
+  - Refuses to create a new matrix user; it requires existing synthetic `pa-users/verify-prescreen-stress-user`.
+  - Restores the synthetic user's pre-run profile after layoff trigger checks.
+- Artifact:
+  - `.planning/sendblue-entrypoint-matrix/artifacts/sbmatrix-2026-05-15T18-38-01-519Z.json`.
+- Result matrix:
+  - `job_prescreen_trigger`: webhook 200, action `prescreen_triggered`, created session `ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T183803145Z`, prescreen outbound was stubbed once.
+  - `layoff_trigger`: webhook 200, action `layoff_triggered`, source temporarily set to `WeKruit_Laid_Off`, layoff outbound was stubbed once, synthetic user restored after the run.
+  - `normal_start_no_pending_invite`: webhook 200, created broker inbound `inb_d303edaeb735de86658b4087c09896eef468019c`, raw text stayed `START`, no trigger action fired.
+  - `start_with_ats_pending_invite`: webhook 200, action `prescreen_triggered`, pending invite consumed, created session `ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T183807739Z`.
+- User-pool safety recheck after the matrix:
+  - `pa-users` count stayed 602.
+  - `candidate_account = 1`.
+  - The only `candidate_account` remains `pa-users/U7AwKT8nLDRa35DkuBxq`.
+  - Matrix user remains `testMode = true`, `candidateLifecycleState = synthetic_test`, `phoneE164 = +19995550000`.
+
 ## 2026-05-15 WeKruit Open / Layoff Front Door Verification
 
 - Separate repo: `/Users/adam/Desktop/WeKruit/wekruit-layoff`.
@@ -202,8 +224,7 @@ Required fix boundary:
 
 ## Remaining Completion Gaps
 
-- The referenced objective file `.planning/V2-CLAIRE-UNIFIED-CANDIDATE-PRODUCT-GOAL.md` is absent from this worktree. Current audit is therefore based on the user-provided objective plus existing v2 goal docs.
 - WeKruit Open still needs a source-aware Claire conversation path after signup. Current backend has `openSubmitChatTurn` writing `layoffChatAnswers`; this is not yet proven to merge into shared evidence/tags/memory.
 - External supply prospects are in the shared `pa-users` pool, but the end-to-end operator path from imported prospect to candidate profile, match/eval, approved outreach, reply, and unified evidence is not yet reverified in this goal.
 - Job creation/import still appears split across enrichment approval, seeding scripts, and external-supply job surfaces. The single job creation/publication flow is not yet audited or unified.
-- Real iMessage/manual Sendblue matrix is still not fully repeated after the stress-runner fixes. The production Firestore prescreen matrix is verified with outbound SMS stubbed; one real PASS session and one allowlist-deny canary were previously verified.
+- Manual Apple Messages UI testing is still not fully repeated after the stress-runner fixes. The production Firestore prescreen matrix and Sendblue entrypoint matrix are verified with outbound SMS stubbed; one live signed deployed-webhook user-boundary canary and one allowlist-deny canary were verified.
