@@ -33,6 +33,7 @@ import {
   type FirePostHookResult,
   type Trigger,
 } from "@pa/pa-persistence"
+import { applyTagSideEffect } from "./tag-side-effects.js"
 
 /**
  * Master kill switch flag key (Phase 24.5 feature-flag system). When the
@@ -207,6 +208,13 @@ export async function runDownstreamConnector(
         status: res.status,
         errorMsg: res.errorMsg,
       })
+
+      // Phase B3 — per-trigger tag-write side effect. Dispatched via the
+      // `TAG_SIDE_EFFECTS` lookup so the generic connector stays free of
+      // per-trigger logic. Unknown trigger IDs are a no-op. The helper
+      // swallows + logs its own errors so a failing tag write never breaks
+      // the chat path.
+      await applyTagSideEffect(db, ctx.userId, m.trigger.triggerId, m.matchedSnippet, log)
     } catch (e) {
       rec.reason = "error"
       rec.errorMsg = e instanceof Error ? e.message : String(e)
