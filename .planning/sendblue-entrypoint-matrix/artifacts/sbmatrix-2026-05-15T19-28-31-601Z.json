@@ -1,5 +1,5 @@
 {
-  "runId": "sbmatrix-2026-05-15T19-25-01-872Z",
+  "runId": "sbmatrix-2026-05-15T19-28-31-601Z",
   "projectId": "wekruit-5f89b",
   "userId": "verify-prescreen-stress-user",
   "phone": "+19995550000",
@@ -7,6 +7,18 @@
   "beforeCount": 602,
   "afterCount": 602,
   "noUserGrowth": true,
+  "cleanup": [
+    {
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T192833253Z",
+      "cleaned": true,
+      "previousTerminal": null
+    },
+    {
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T192839270Z",
+      "cleaned": true,
+      "previousTerminal": null
+    }
+  ],
   "sent": [
     {
       "kind": "prescreen",
@@ -34,7 +46,7 @@
       },
       "passed": true,
       "evidence": {
-        "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T192503633Z",
+        "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T192833253Z",
         "action": "prescreen_triggered",
         "sentPrescreenCount": 1
       },
@@ -51,7 +63,7 @@
       "evidence": {
         "action": "layoff_triggered",
         "source": "WeKruit_Laid_Off",
-        "kickoffOutboundId": "stub-layoff-1778873105944",
+        "kickoffOutboundId": "stub-layoff-1778873316085",
         "sentLayoffCount": 1
       },
       "failures": []
@@ -61,12 +73,12 @@
       "webhookStatus": 200,
       "webhookBody": {
         "ok": true,
-        "eventId": "inb_9c7252a733528c98d59ca2d08cb2c70037eb7f03",
+        "eventId": "inb_c79c84c137869d8a186a923c212a00d57474a5dc",
         "created": true
       },
       "passed": true,
       "evidence": {
-        "eventId": "inb_9c7252a733528c98d59ca2d08cb2c70037eb7f03",
+        "eventId": "inb_c79c84c137869d8a186a923c212a00d57474a5dc",
         "rawText": "START",
         "rawE2e": true
       },
@@ -83,7 +95,7 @@
       "evidence": {
         "action": "prescreen_triggered",
         "pendingConsumed": true,
-        "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T192508280Z"
+        "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T192839270Z"
       },
       "failures": []
     }

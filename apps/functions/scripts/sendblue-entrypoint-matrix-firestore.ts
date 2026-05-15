@@ -168,6 +168,41 @@ async function clearIdempotency(db: Firestore) {
   ])
 }
 
+async function cleanupMatrixPrescreenSessions(db: Firestore, starts: PrescreenStart[]) {
+  const now = new Date().toISOString()
+  const seen = new Set<string>()
+  const out: Array<{ sessionId: string; cleaned: boolean; previousTerminal: unknown }> = []
+  for (const start of starts) {
+    if (!start.sessionId || seen.has(start.sessionId)) continue
+    seen.add(start.sessionId)
+    const ref = db.collection("pa-prescreen-sessions").doc(start.sessionId)
+    const snap = await ref.get()
+    const data = snap.data() ?? {}
+    const previousTerminal = data.terminal ?? null
+    if (!snap.exists || previousTerminal) {
+      out.push({ sessionId: start.sessionId, cleaned: false, previousTerminal })
+      continue
+    }
+    await ref.set(
+      {
+        terminal: "PAUSE",
+        terminalReason: "sendblue_matrix_cleanup",
+        currentQId: null,
+        updatedAt: now,
+        workSession: {
+          kind: "job_prescreen",
+          status: "ended",
+          boundary: "sendblue_matrix_cleanup",
+          endedAt: now,
+        },
+      },
+      { merge: true },
+    )
+    out.push({ sessionId: start.sessionId, cleaned: true, previousTerminal })
+  }
+  return out
+}
+
 async function dispatch(
   db: Firestore,
   runId: string,
@@ -240,6 +275,7 @@ async function runMatrix(db: Firestore) {
   const beforeCount = await countUsers(db)
   const beforeUser = await ensureExistingMatrixUser(db)
   const results: ScenarioResult[] = []
+  let cleanup: Awaited<ReturnType<typeof cleanupMatrixPrescreenSessions>> = []
 
   try {
     await clearIdempotency(db)
@@ -340,6 +376,7 @@ async function runMatrix(db: Firestore) {
       failures: [],
     })
   } finally {
+    cleanup = await cleanupMatrixPrescreenSessions(db, prescreenStarts)
     await restoreMatrixUser(db, beforeUser)
   }
 
@@ -356,6 +393,7 @@ async function runMatrix(db: Firestore) {
     beforeCount,
     afterCount,
     noUserGrowth: beforeCount === afterCount,
+    cleanup,
     sent,
     results,
     passed: beforeCount === afterCount && results.every((r) => r.passed),
