@@ -73,11 +73,16 @@ function isStale(c: CompanyRow): boolean {
   return Date.now() - enriched > STALE_MS
 }
 
+type CollabFilter = "all" | "collab_only" | "non_collab"
+type JobsFilter = "all" | "has_jobs" | "no_jobs"
+
 function matchesFilters(
   row: CompanyRow,
   stageFilter: CompanyStage | "all",
   tagFilters: CompanyTag[],
   needsEnrichment: boolean,
+  collabFilter: CollabFilter,
+  jobsFilter: JobsFilter,
   search: string,
 ): boolean {
   if (stageFilter !== "all" && row.companyStage !== stageFilter) return false
@@ -86,6 +91,10 @@ function matchesFilters(
     if (!tagFilters.every((t) => have.has(t))) return false
   }
   if (needsEnrichment && !isStale(row)) return false
+  if (collabFilter === "collab_only" && row.wekruitCollab !== true) return false
+  if (collabFilter === "non_collab" && row.wekruitCollab === true) return false
+  if (jobsFilter === "has_jobs" && !((row.jobsCount ?? 0) > 0)) return false
+  if (jobsFilter === "no_jobs" && (row.jobsCount ?? 0) > 0) return false
   if (search) {
     const q = search.toLowerCase()
     const name = (row.displayName ?? row.normalizedName ?? row.id).toLowerCase()
@@ -107,6 +116,8 @@ export function Companies() {
   const [stageFilter, setStageFilter] = useState<CompanyStage | "all">("all")
   const [tagFilters, setTagFilters] = useState<CompanyTag[]>([])
   const [needsEnrichment, setNeedsEnrichment] = useState(false)
+  const [collabFilter, setCollabFilter] = useState<CollabFilter>("all")
+  const [jobsFilter, setJobsFilter] = useState<JobsFilter>("all")
   const [search, setSearch] = useState("")
 
   // Selection (bulk re-enrich)
@@ -224,9 +235,17 @@ export function Companies() {
   }
 
   const filtered = useMemo(
-    () => rows.filter((r) => matchesFilters(r, stageFilter, tagFilters, needsEnrichment, search)),
-    [rows, stageFilter, tagFilters, needsEnrichment, search],
+    () =>
+      rows.filter((r) =>
+        matchesFilters(r, stageFilter, tagFilters, needsEnrichment, collabFilter, jobsFilter, search),
+      ),
+    [rows, stageFilter, tagFilters, needsEnrichment, collabFilter, jobsFilter, search],
   )
+
+  function toggleCollab(row: CompanyRow) {
+    const next = !(row.wekruitCollab === true)
+    void persistPatch(row.id, { wekruitCollab: next })
+  }
 
   function toggleSelectAll() {
     if (filtered.every((r) => selected.has(r.id))) {
@@ -349,6 +368,42 @@ export function Companies() {
             </div>
           </div>
 
+          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: "0.78em", color: "#64748b" }}>WeKruit collab</span>
+            <select
+              value={collabFilter}
+              onChange={(e) => setCollabFilter(e.target.value as CollabFilter)}
+              style={{
+                padding: "4px 8px",
+                border: "1px solid #e2e8f0",
+                borderRadius: 4,
+                fontSize: "0.85em",
+              }}
+            >
+              <option value="all">All</option>
+              <option value="collab_only">Collab partners only</option>
+              <option value="non_collab">Non-collab only</option>
+            </select>
+          </label>
+
+          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: "0.78em", color: "#64748b" }}>Jobs</span>
+            <select
+              value={jobsFilter}
+              onChange={(e) => setJobsFilter(e.target.value as JobsFilter)}
+              style={{
+                padding: "4px 8px",
+                border: "1px solid #e2e8f0",
+                borderRadius: 4,
+                fontSize: "0.85em",
+              }}
+            >
+              <option value="all">All</option>
+              <option value="has_jobs">Has open jobs</option>
+              <option value="no_jobs">No jobs (enrich-only)</option>
+            </select>
+          </label>
+
           <label style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 18 }}>
             <input
               type="checkbox"
@@ -420,6 +475,8 @@ export function Companies() {
                   <th style={{ padding: "0.5rem 0" }}>Company</th>
                   <th style={{ padding: "0.5rem 0", minWidth: 140 }}>Stage</th>
                   <th style={{ padding: "0.5rem 0", minWidth: 260 }}>Tags</th>
+                  <th style={{ padding: "0.5rem 0", textAlign: "right", minWidth: 60 }}>Jobs</th>
+                  <th style={{ padding: "0.5rem 0", textAlign: "center", minWidth: 100 }}>Collab</th>
                   <th style={{ padding: "0.5rem 0" }}>Source</th>
                   <th style={{ padding: "0.5rem 0" }}>Enriched</th>
                   <th style={{ padding: "0.5rem 0" }}>Last reviewed</th>
@@ -518,6 +575,51 @@ export function Companies() {
                               </span>
                             ))}
                         </div>
+                      </td>
+                      <td
+                        style={{
+                          padding: "0.4rem 0",
+                          textAlign: "right",
+                          fontFamily: "monospace",
+                          fontSize: "0.85em",
+                          color: (row.jobsCount ?? 0) > 0 ? "#16a34a" : "#94a3b8",
+                        }}
+                        title={
+                          row.jobsCountUpdatedAt
+                            ? `Updated ${fmtTimestamp(row.jobsCountUpdatedAt)}`
+                            : "Never synced — paCompaniesJobCountSync hasn't run for this row"
+                        }
+                      >
+                        {row.jobsCount ?? "—"}
+                      </td>
+                      <td style={{ padding: "0.4rem 0", textAlign: "center" }}>
+                        <button
+                          type="button"
+                          disabled={isSaving}
+                          onClick={() => toggleCollab(row)}
+                          aria-pressed={row.wekruitCollab === true}
+                          title={
+                            row.wekruitCollab === true
+                              ? "Active WeKruit partner — click to revoke"
+                              : "Not a partner — click to mark as collab"
+                          }
+                          style={{
+                            padding: "2px 10px",
+                            fontSize: "0.78em",
+                            fontWeight: 600,
+                            border:
+                              row.wekruitCollab === true
+                                ? "1px solid #16a34a"
+                                : "1px solid #e2e8f0",
+                            background:
+                              row.wekruitCollab === true ? "#dcfce7" : "#ffffff",
+                            color: row.wekruitCollab === true ? "#15803d" : "#64748b",
+                            borderRadius: 999,
+                            cursor: isSaving ? "not-allowed" : "pointer",
+                          }}
+                        >
+                          {row.wekruitCollab === true ? "✓ Collab" : "Mark"}
+                        </button>
                       </td>
                       <td style={{ padding: "0.4rem 0", fontFamily: "monospace", fontSize: "0.78em" }}>
                         {row.enrichmentSource ?? "—"}

@@ -135,6 +135,14 @@ export {
   paEnrichCompaniesAdHoc,
 } from "./enrich-companies-nightly.js"
 
+// Phase A4.1 — pa-companies job-count sync (admin callable + nightly).
+// Surfaces matching-jobs join count on /admin/companies so operators can
+// see at a glance whether a directory row has any open roles.
+export {
+  paCompaniesJobCountSync,
+  paCompaniesJobCountNightly,
+} from "./sync-companies-jobs-count.js"
+
 // v1.7+ TTL — Weekly hybrid GC for matching-jobs collection. Adam Option D
 // (2026-05-08): inactive >90d AND dead >365d are deleted Mon 04:00 UTC.
 // Postgres tombstone (P7-K, alembic 0007) preserves dead flag after Firestore

@@ -67,6 +67,22 @@ export interface PaCompany {
   enrichedAt: string
   /** Adam manual override sentinel. Phase A5 NEVER overwrites when set. */
   lastReviewedBy: string | null
+  /**
+   * WeKruit partnership flag — true when this company has an active
+   * employer collab (paid placement, dedicated ATS webhook, talent-pool
+   * priority). Operator-set via /admin/companies; never inferred by
+   * enrichment. Drives the "WeKruit collab" filter + UI badge.
+   */
+  wekruitCollab?: boolean
+  /**
+   * Optional join hint — count of matching-jobs rows whose
+   * `companyName` normalizes to this `id`. Maintained by
+   * `paCompaniesJobCountSync` (best-effort, may be stale). UI shows it
+   * as a column on /admin/companies + powers the "Has jobs" filter
+   * without a per-row Firestore aggregate query.
+   */
+  jobsCount?: number
+  jobsCountUpdatedAt?: string
   fundingRounds?: CompanyFundingRound[]
   createdAt: string
   updatedAt: string
