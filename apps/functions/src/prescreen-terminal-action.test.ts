@@ -31,6 +31,12 @@ function makeFakeDb(docs: Map<string, FakeDocState>) {
               docs.set(path, { exists: true, data: { ...st.data, ...patch } })
               updates.push({ path, data: patch })
             },
+            async set(patch: Record<string, unknown>, opts?: { merge?: boolean }) {
+              const st = docs.get(path) ?? { exists: true, data: {} }
+              const data = opts?.merge ? { ...st.data, ...patch } : patch
+              docs.set(path, { exists: true, data })
+              updates.push({ path, data: patch })
+            },
           }
         },
         async add(data: Record<string, unknown>) {
@@ -279,5 +285,49 @@ describe("runPrescreenTerminalAction — fail-open", () => {
     })
     assert.ok(updates.some((u) => "terminalActionFiredAt" in u.data))
     assert.equal(audit.length, 1)
+  })
+
+  it("outcome marker failure does NOT block memory update or terminal stamp", async () => {
+    const docs = setupSession({
+      sessionId: "s8",
+      jobId: "j8",
+      prescreenConfig: { jobTitle: "X" },
+    })
+    docs.set("pa-prescreen-sessions/s8", {
+      exists: true,
+      data: {
+        questions: {
+          role_fit: {
+            finalS: 0.78,
+            finalC: 0.74,
+            scored: { aggregate: { summary: "Relevant UI and SQL ownership." } },
+          },
+        },
+      },
+    })
+    const { db, updates, docs: writtenDocs } = makeFakeDb(docs)
+    const logs: Array<{ event: string; payload: Record<string, unknown> }> = []
+    await runPrescreenTerminalAction({
+      db,
+      sessionId: "s8",
+      terminal: "PASS",
+      userId: "u",
+      jobId: "j8",
+      toE164: "+1",
+      lang: "en",
+      markOutcome: async () => {
+        throw new Error("candidate_job_not_passable:invalid_pass_transition")
+      },
+      sendSms: async () => undefined,
+      startPii: async () => ({ ok: true, skipped: false }),
+      generateJobRecs: async () => ({ ok: true, jobCount: 0 }),
+      log: (event, payload) => logs.push({ event, payload }),
+    })
+
+    assert.ok(logs.some((l) => l.event === "prescreen.terminal_action.outcome_mark_failed"))
+    assert.ok(logs.some((l) => l.event === "prescreen.terminal_action.memory_updated"))
+    assert.ok(updates.some((u) => u.path === "pa-users/u" && "lastPrescreenMemoryUpdate" in u.data))
+    assert.ok(writtenDocs.get("pa-prescreen-memory-events/s8")?.exists)
+    assert.ok(updates.some((u) => "terminalActionFiredAt" in u.data))
   })
 })

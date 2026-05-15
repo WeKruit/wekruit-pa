@@ -490,6 +490,10 @@ export async function processCoalescedTurn(
   const created = await broker(deps.db, {
     channel: "imessage",
     idempotencyKey,
+    // The coalescer owns the synthesized row and drives it manually below.
+    // If this is absent, Firestore onCreate also runs onPaInbound against the
+    // synthetic doc, causing duplicate prescreen/Claire replies.
+    coalescing: true,
     // Bug C fix (2026-05-07) — stamp userId on the SAME write that creates
     // the doc, eliminating the race where the post-create merge could fail
     // and leave the doc invisible to userId-based reset wipe.
@@ -543,6 +547,7 @@ export async function processCoalescedTurn(
         body: fired.accumulatedBody,
         from: fired.fromNumber,
         externalChatId: fired.fromNumber,
+        coalescing: true,
         coalesced: true,
       },
       { merge: true }

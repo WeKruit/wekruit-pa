@@ -65,6 +65,8 @@ function deriveSessionId(jobId: string, userId: string, nowIso: string): string 
   return `ps_${jobId}_${userId}_${stamp}`
 }
 
+const MIN_PRESCREEN_PROBE_ROUNDS = 4
+
 export async function runPreScreenForUser(args: RunPreScreenArgs): Promise<RunPreScreenResult> {
   const log = args.log ?? (() => {})
   const markStarted = args.markStarted ?? markFirstInterviewStarted
@@ -125,7 +127,7 @@ export async function runPreScreenForUser(args: RunPreScreenArgs): Promise<RunPr
     questions: configToStateQuestions(cfg),
     threshold: cfg.threshold,
     confidenceThreshold: cfg.confidenceThreshold,
-    maxClarifyRounds: cfg.maxClarifyRounds,
+    maxClarifyRounds: Math.max(cfg.maxClarifyRounds, MIN_PRESCREEN_PROBE_ROUNDS),
     nowIso,
   })
   await sessRef.set({
@@ -230,16 +232,17 @@ async function supersedeOtherActivePrescreens(
         {
           terminal: "PAUSE",
           terminalReason: `superseded_by_new_prescreen_session:${args.newSessionId}`,
+          currentQId: null,
           supersededBySessionId: args.newSessionId,
           supersededAt: args.nowIso,
           updatedAt: args.nowIso,
-            workSession: {
-              kind: "job_prescreen",
-              status: "superseded",
-              endedAt: args.nowIso,
-              boundary: "superseded",
-              supersededBySessionId: args.newSessionId,
-            },
+          workSession: {
+            kind: "job_prescreen",
+            status: "ended",
+            endedAt: args.nowIso,
+            boundary: "superseded",
+            supersededBySessionId: args.newSessionId,
+          },
         },
         { merge: true },
       ),

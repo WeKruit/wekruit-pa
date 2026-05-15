@@ -100,6 +100,11 @@ function makeFakeDb() {
 
   function makeCollection(coll: string) {
     return {
+      async add(data: DocData) {
+        const id = `auto_${bucket(coll).size + 1}`
+        bucket(coll).set(id, { ...data })
+        return { id }
+      },
       doc(id: string) {
         return makeDocRef(coll, id)
       },
@@ -249,10 +254,10 @@ describe("paMessageCoalescer — case 1: single message creates buffer", () => {
     assert.equal(outcome.action, "created")
     assert.equal(outcome.delayMs, DEFAULT_DELAY_MS)
     // Bug 4 (2026-05-03): coalesce window bumped 4s→8s to absorb >4s typing
-    // gaps. Adam 4 inbound msgs in 12s used to wave-split into 3 turns; 8s
-    // catches them inside HARD_CAP_MS (since-bumped to 20s — see Adam
-    // 2026-05-03 01:22 amendment, plus the rapid-gap heuristic below).
-    assert.equal(DEFAULT_DELAY_MS, 8_000, "Bug 4 — coalesce window must be 8s")
+    // gaps. 2026-05-15 prescreen smoke observed Sendblue delivering two
+    // Apple Messages fragments 8.25s apart even though the local send delay
+    // was 1s. 12s keeps a real multi-text answer in one prescreen turn.
+    assert.equal(DEFAULT_DELAY_MS, 12_000, "prescreen coalesce window must absorb >8s Sendblue delivery gaps")
     assert.equal(tasks.enqueued.length, 1)
     assert.equal(tasks.cancelled.length, 0)
     assert.match(tasks.enqueued[0]!.taskName, /^pa-coalesce-u_adam-1-1$/)
@@ -310,6 +315,44 @@ describe("paMessageCoalescer — case 2: 3 quick messages coalesce", () => {
     // Synthetic inbound exists
     const synth = (db as ReturnType<typeof makeFakeDb>)._stores.get("pa-inbound-events")?.get("inb_synth_coalesced-u_adam-1") as DocData | undefined
     assert.ok(synth, "synthetic inbound exists")
+  })
+
+  it("keeps an 8.5s Sendblue delivery gap in the same pending turn", async () => {
+    const t0 = new Date("2026-05-15T05:52:45.800Z")
+    let now = t0.getTime()
+    const { deps, tasks, db } = buildDeps({
+      now: () => new Date(now),
+    })
+
+    await enqueueOrCoalesce(deps, {
+      ...BASE_MSG,
+      messageHandle: "msg-split-1",
+      body: "For OFO Delivery, I owned the merchant order dashboard and dispatch tooling.",
+      inboundEventId: "inb_split_1",
+      receivedAt: new Date(now).toISOString(),
+    })
+
+    now += 8_500
+    const appended = await enqueueOrCoalesce(deps, {
+      ...BASE_MSG,
+      messageHandle: "msg-split-2",
+      body: "I built JavaScript screens, SQL reports, and scripts to trace failed orders.",
+      inboundEventId: "inb_split_2",
+      receivedAt: new Date(now).toISOString(),
+    })
+
+    assert.equal(appended.action, "appended")
+    assert.equal(tasks.enqueued.length, 2)
+    assert.equal(tasks.cancelled.length, 1)
+    assert.equal(tasks.enqueued[0]!.delayMs, DEFAULT_DELAY_MS)
+    assert.equal(tasks.enqueued[1]!.delayMs, DEFAULT_DELAY_MS)
+
+    const buf = (db as ReturnType<typeof makeFakeDb>)._stores
+      .get("pa-message-coalesce-buffer")
+      ?.get("u_adam__1") as DocData
+    assert.equal((buf as { messageCount?: number }).messageCount, 2)
+    assert.match(String((buf as { accumulatedBody?: string }).accumulatedBody), /merchant order dashboard/)
+    assert.match(String((buf as { accumulatedBody?: string }).accumulatedBody), /JavaScript screens/)
   })
 })
 
@@ -464,7 +507,7 @@ describe("paMessageCoalescer — case 6: webhook bypasses coalesce when flag=fal
       {
         rawBody: raw,
         body: payload,
-        headers: { "sendblue-signature": sig } as Record<string, string>,
+        headers: { "sendblue-signature": sig, "x-e2e-test": "1" } as Record<string, string>,
       },
       res,
       {
@@ -484,6 +527,92 @@ describe("paMessageCoalescer — case 6: webhook bypasses coalesce when flag=fal
     )
     assert.equal(status, 200, `expected 200, got ${status}, body=${JSON.stringify(body)}`)
     assert.equal(coalesceWasCalled, false, "coalesce path must not run when flag is off")
+  })
+})
+
+describe("paMessageCoalescer — case 6b: active prescreen uses coalescing before broker create", () => {
+  it("coalesces active job-prescreen replies even when onboarding is not complete", async () => {
+    const { handleSendblueWebhook } = await import("../../sendblue/webhook.js")
+    const { _clearFeatureFlagCache } = await import("@pa/pa-persistence")
+    _clearFeatureFlagCache()
+
+    const db = makeFakeDb()
+    db._stores.set("pa-feature-flags", new Map([
+      ["paMessageCoalesceEnabled", {
+        key: "paMessageCoalesceEnabled", value: true, type: "bool", scope: "perUser",
+        allowlist: [], blocklist: [],
+      }],
+    ]))
+    db._stores.set("pa-users", new Map([
+      ["u_prescreen_active", { onboardingState: "q_email" }],
+    ]))
+    db._stores.set("pa-prescreen-sessions", new Map([
+      ["ps_active", { userId: "u_prescreen_active", terminal: null, currentQId: "role_fit" }],
+    ]))
+
+    type BrokerCreateInput = { coalescing?: boolean } & Record<string, unknown>
+    type CoalesceInput = { userId: string; body: string; inboundEventId: string }
+    const seen: {
+      coalesceInput: CoalesceInput | null
+      brokerInput: BrokerCreateInput | null
+    } = {
+      coalesceInput: null,
+      brokerInput: null,
+    }
+    const logs: unknown[][] = []
+    const SECRET = "test-webhook-secret"
+    const { createHmac } = await import("node:crypto")
+    const payload = {
+      message_handle: "msg-prescreen-1",
+      content: "First part of the answer",
+      from_number: "+15551234567",
+      to_number: "+15559999999",
+      type: "message",
+      service: "iMessage",
+    }
+    const raw = JSON.stringify(payload)
+    const sig = createHmac("sha256", SECRET).update(raw).digest("hex")
+
+    let status = 0
+    let responseBody: unknown = null
+    const res = {
+      status(c: number) { status = c; return this },
+      json(b: unknown) { responseBody = b; return this },
+      send(b: unknown) { responseBody = b; return this },
+    }
+
+    await handleSendblueWebhook(
+      {
+        rawBody: raw,
+        body: payload,
+        headers: { "sendblue-signature": sig, "x-e2e-test": "1" } as Record<string, string>,
+      },
+      res,
+      {
+        db: db as never,
+        secret: SECRET,
+        log: (...args: unknown[]) => { logs.push(args) },
+        lookupUserByPhone: async () => "u_prescreen_active",
+        createInboundEvent: (async (_db: unknown, input: BrokerCreateInput) => {
+          seen.brokerInput = input
+          const id = "inb_prescreen_1"
+          db._stores.set("pa-inbound-events", new Map([[id, { id, ...input } as DocData]]))
+          return { id, created: true, event: { id, ...input } as never }
+        }) as never,
+        enqueueOrCoalesce: (async (_deps: unknown, input: CoalesceInput) => {
+          seen.coalesceInput = input
+          return { action: "created" as const }
+        }) as never,
+        coalescerDeps: {} as never,
+      }
+    )
+
+    assert.equal(status, 200)
+    assert.ok(seen.brokerInput, `broker should be called; body=${JSON.stringify(responseBody)} logs=${JSON.stringify(logs)}`)
+    assert.equal(seen.brokerInput.coalescing, true, "broker create must pre-stamp coalescing before onPaInbound can race")
+    assert.equal(seen.coalesceInput?.userId, "u_prescreen_active")
+    assert.equal(seen.coalesceInput?.body, "First part of the answer")
+    assert.equal(seen.coalesceInput?.inboundEventId, "inb_prescreen_1")
   })
 })
 
@@ -511,6 +640,8 @@ describe("paMessageCoalescer — case 7: synthesized inbound stamps sessionId", 
     const synth = inbounds?.get("inb_synth_coalesced-u_adam-1") as DocData | undefined
     assert.ok(synth, "synthetic inbound must exist")
     assert.equal((synth as { userId?: string }).userId, "u_adam", "userId stamped")
+    assert.equal((synth as { coalescing?: boolean }).coalescing, true, "synthetic inbound must be owned by coalescer")
+    assert.equal((synth as { coalesced?: boolean }).coalesced, true, "synthetic inbound is the coalesced row")
     const sessionId = (synth as { sessionId?: string }).sessionId
     assert.ok(sessionId && typeof sessionId === "string", "sessionId stamped (non-empty string)")
     assert.match(sessionId!, /^ses_[0-9a-f]{32}$/, "sessionId follows ses_<hash> shape")
@@ -748,16 +879,15 @@ describe("paMessageCoalescer — case 12: rapid-gap heuristic extends delay", ()
     assert.equal(HARD_CAP_MS, 30_000, "HARD_CAP_MS must be 30s per Adam 02:01 amendment")
   })
 
-  it("RAPID_MESSAGE_THRESHOLD_MS = 5_000 (Adam 2026-05-03 02:30 spec)", async () => {
-    // Pin the threshold. Adam spec: time range 5-30s. Continuation-marker
-    // heuristic catches semantic case independent of timing, so 5s rapid is
-    // sufficient — slow-typing users will hit continuation marker path or
-    // wait for HARD_CAP=30s.
+  it("RAPID_MESSAGE_THRESHOLD_MS = 8_000", async () => {
+    // Pin the threshold to the value documented in buffer.ts. Slow delivery
+    // still relies on DEFAULT_DELAY_MS; this controls the extra bump for a
+    // clearly rapid follow-up.
     const { RAPID_MESSAGE_THRESHOLD_MS } = await import("../buffer.js")
     assert.equal(
       RAPID_MESSAGE_THRESHOLD_MS,
-      5_000,
-      "RAPID_MESSAGE_THRESHOLD_MS must be 5s per Adam 02:30 spec (5-30s range)"
+      8_000,
+      "RAPID_MESSAGE_THRESHOLD_MS must stay aligned with the 2026-05-15 prescreen batching window"
     )
   })
 })

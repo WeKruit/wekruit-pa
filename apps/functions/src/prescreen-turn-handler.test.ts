@@ -1,6 +1,6 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { runPrescreenTurnIfActive } from "./prescreen-turn-handler.js"
+import { prescreenTurnRecordQId, runPrescreenTurnIfActive } from "./prescreen-turn-handler.js"
 
 type FakeDoc = { exists: boolean; data: Record<string, unknown> }
 
@@ -65,6 +65,19 @@ function makeFakeDb(seed: Record<string, Record<string, unknown>>) {
 }
 
 describe("runPrescreenTurnIfActive session boundaries", () => {
+  it("records a candidate reply against the question that was active before the turn", () => {
+    assert.equal(prescreenTurnRecordQId({ kind: "clarify", qId: "role_fit", kAfter: 1 }, "role_fit"), "role_fit")
+    assert.equal(
+      prescreenTurnRecordQId({ kind: "advance", fromQId: "role_fit", toQId: "technical_depth" }, "role_fit"),
+      "role_fit",
+    )
+    assert.equal(
+      prescreenTurnRecordQId({ kind: "terminal", terminal: "HARD_STOP", reason: "type_gate_fail" }, "role_fit"),
+      "role_fit",
+    )
+    assert.equal(prescreenTurnRecordQId({ kind: "error", reason: "session_not_found" }, null), "terminal")
+  })
+
   it("expires idle prescreen sessions instead of routing a late reply into the old job", async () => {
     const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
     const { db, docs } = makeFakeDb({

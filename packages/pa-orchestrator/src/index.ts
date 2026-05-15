@@ -3934,7 +3934,13 @@ export {
   type PreScreenTerminal,
 } from "./prescreen/state.js"
 export { PreScreenPipeline, terminalText } from "./prescreen/pipeline.js"
-export type { PreScreenQuestion, RunTurnInput, RunTurnResult } from "./prescreen/pipeline.js"
+export type {
+  ComposeClarifyInput,
+  PreScreenClarifyComposer,
+  PreScreenQuestion,
+  RunTurnInput,
+  RunTurnResult,
+} from "./prescreen/pipeline.js"
 export {
   KeywordSetJudge,
   buildKeywordSetPrompt,

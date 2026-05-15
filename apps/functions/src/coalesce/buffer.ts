@@ -80,9 +80,12 @@ export const FORCE_FIRE_MESSAGE_COUNT = 5
  *  PRIMARY merge-driving signals. */
 export const HARD_CAP_MS = 30_000
 /** Default coalesce delay window.
- *  Bug 4 (2026-05-03): bumped 4s→8s — Adam实测 4 msg in 12s 触发 wave-split 3 turns;
- *  人类打字间隔常 >4s, 8s 在 HARD_CAP_MS 内有充裕缓冲. */
-export const DEFAULT_DELAY_MS = 8_000
+ *  Bug 4 (2026-05-03): bumped 4s→8s — Adam实测 4 msg in 12s 触发 wave-split 3 turns.
+ *  2026-05-15 prescreen smoke: Apple Messages sent two answer fragments with
+ *  delay 1s locally, but Sendblue delivered them 8.25s apart, so the first
+ *  8s task fired before the second webhook arrived. 12s keeps real multi-text
+ *  answers together while HARD_CAP_MS still bounds a turn at 30s. */
+export const DEFAULT_DELAY_MS = 12_000
 
 /** Rapid-message gap heuristic — Adam 2026-05-03 amendment ("可以消息间隔 < 5s
  *  自动延长 (heuristic — 连发就是同 thought)").
@@ -99,9 +102,9 @@ export const DEFAULT_DELAY_MS = 8_000
  *  continuing cadence; the continuation-marker heuristic below catches the
  *  semantic-continuation case INDEPENDENT of gap timing.
  *
- *  Why +6s bump: 8s default + 6s = 14s effective, leaving 16s under the 30s
+ *  Why +6s bump: 12s default + 6s = 18s effective, leaving 12s under the 30s
  *  hard cap for additional follow-ups. */
-export const RAPID_MESSAGE_THRESHOLD_MS = 5_000
+export const RAPID_MESSAGE_THRESHOLD_MS = 8_000
 export const RAPID_BUMP_MS = 6_000
 
 /** Continuation-marker heuristic — Adam 2026-05-03 02:01 spec.

@@ -298,6 +298,16 @@ async function defaultLookupUserByPhone(db: Firestore, phoneE164: string): Promi
   }
 }
 
+async function hasActivePrescreenSession(db: Firestore, userId: string): Promise<boolean> {
+  const snap = await db
+    .collection("pa-prescreen-sessions")
+    .where("userId", "==", userId)
+    .where("terminal", "==", null)
+    .limit(1)
+    .get()
+  return !snap.empty
+}
+
 export async function handleSendblueWebhook(
   req: WebhookRequest,
   res: WebhookResponse,
@@ -1037,12 +1047,12 @@ export async function handleSendblueWebhook(
           { userId: resolvedUserIdForCoalesce, env: process.env },
           false
         )
-        // 2026-05-07 onboarding-refactor fix: coalescing is an agent-runtime
-        // feature, not an onboarding feature. Onboarding is a strict
-        // one-answer-per-state machine; merging adjacent replies corrupts the
-        // current question boundary (email + 6-digit code became one inbound
-        // and q_email_verify rejected it). Only enable coalescing after
-        // onboarding is complete. Missing state is treated as onboarding/new.
+        // 2026-05-15 prescreen fix: active job prescreen is also an
+        // agent-runtime conversation. Real candidates often answer one prompt
+        // across several iMessages; without coalescing, each fragment becomes
+        // a separate prescreen turn and can prematurely exhaust clarify/hard
+        // stop. Onboarding remains one-answer-per-state; prescreen does not.
+        let onboardingState: string | null = null
         try {
           const userSnap = await deps.db
             .collection("pa-users")
@@ -1050,15 +1060,20 @@ export async function handleSendblueWebhook(
             .get()
           if (userSnap.exists) {
             const data = userSnap.data() as { onboardingState?: string } | undefined
-            const state = data?.onboardingState
-            willCoalesce = coalesceFlag === true && state === "complete"
-          } else {
-            willCoalesce = false
+            onboardingState = typeof data?.onboardingState === "string" ? data.onboardingState : null
           }
         } catch {
-          // If we cannot prove onboarding is complete, do not coalesce.
-          willCoalesce = false
+          onboardingState = null
         }
+        let activePrescreen = false
+        if (onboardingState !== "complete") {
+          try {
+            activePrescreen = await hasActivePrescreenSession(deps.db, resolvedUserIdForCoalesce)
+          } catch {
+            activePrescreen = false
+          }
+        }
+        willCoalesce = coalesceFlag === true && (onboardingState === "complete" || activePrescreen)
       }
     } catch (preErr) {
       // Pre-decision failure → degrade to legacy path (no flag stamped).

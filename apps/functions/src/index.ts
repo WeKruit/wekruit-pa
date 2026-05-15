@@ -875,7 +875,7 @@ export const onPaInbound = onDocumentCreated(
     // Tasks delayed task. The coalescer fires later, synthesizes ONE merged
     // event, and drives the orchestrator from there. Per-message rows must
     // NOT be processed here — that would defeat the entire coalescer.
-    if ((data as { coalescing?: boolean }).coalescing === true && (data as { coalesced?: boolean }).coalesced !== true) {
+    if ((data as { coalescing?: boolean }).coalescing === true) {
       logger.info("onPaInbound skipping coalescing inbound (handled by paMessageCoalescer)", {
         eventId: data.id,
         coalesceTurnId: (data as { coalesceTurnId?: string }).coalesceTurnId,

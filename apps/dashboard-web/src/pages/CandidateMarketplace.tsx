@@ -1,5 +1,6 @@
 import { collection, getDocs, limit, query, where } from "firebase/firestore"
 import { useEffect, useMemo, useState } from "react"
+import { Link } from "react-router-dom"
 import { DataTable, EmptyState, ErrorState, LoadingState, Panel, StatusBadge, type DataTableColumn } from "../components/ui.js"
 import { db } from "../lib/firebase.js"
 import {
@@ -24,6 +25,9 @@ type CandidateProfile = Record<string, unknown> & {
   linkedinUrl?: string
   piiConsentAt?: string
   level1CollectedAt?: string
+  tags?: Record<string, unknown>
+  globalTags?: Record<string, unknown>
+  conversationDerivedPreferences?: Record<string, unknown>
   outreach?: { status?: string; cooldownUntil?: string; lastOutboundAt?: string; stickyAccountGroupId?: string }
 }
 
@@ -90,6 +94,8 @@ export function CandidateMarketplace({
           <ProfileFact label="PII consent" value={profile.piiConsentAt} />
           <ProfileFact label="Level 1" value={profile.level1CollectedAt} />
           <ProfileFact label="Outreach" value={profile.outreach?.status} />
+          <ProfileFact label="Candidate tags" value={profile.tags ?? profile.globalTags} />
+          <ProfileFact label="Chat preferences" value={profile.conversationDerivedPreferences} />
         </div>
       </Panel>
 
@@ -224,6 +230,16 @@ const jobStateColumns: DataTableColumn<MarketplaceRow>[] = [
   { key: "state", header: "State", render: statusCell("state") },
   { key: "stateUpdatedAt", header: "Updated", render: valueCell("stateUpdatedAt") },
   { key: "reason", header: "Reason", render: valueCell("reason", 260) },
+  {
+    key: "prescreenSessionId",
+    header: "Prescreen",
+    render: (row) =>
+      typeof row.prescreenSessionId === "string" && row.prescreenSessionId ? (
+        <Link to={`/admin/prescreen-sessions/${row.prescreenSessionId}`}>{compactValue(row.prescreenSessionId, 160)}</Link>
+      ) : (
+        "-"
+      ),
+  },
   { key: "latestMatchId", header: "Latest match", render: valueCell("latestMatchId") },
 ]
 

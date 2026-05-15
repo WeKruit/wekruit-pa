@@ -204,6 +204,66 @@ test("Phase 76: PreScreenPipeline type-gate probe can recover and advance", asyn
   assert.equal(r2.state.questions.q1.finalS, 1)
 })
 
+test("Phase 76: PreScreenPipeline soft-accepts credible MUST_HAVE overlap after repeated probing", async () => {
+  const store = new InMemoryPreScreenStore()
+  const pipeline = new PreScreenPipeline({
+    questions: {
+      q1: makeQ("q1", [
+        { perKeyword: [{ keyword: "q1", match: 0.15, confidence: 0.9, evidence: "weak", reasoning: "weak" }] },
+        { perKeyword: [{ keyword: "q1", match: 0.72, confidence: 0.9, evidence: "dashboard", reasoning: "adjacent" }] },
+        { perKeyword: [{ keyword: "q1", match: 0.78, confidence: 0.9, evidence: "sql dashboard", reasoning: "credible overlap" }] },
+      ]),
+      q2: makeQ("q2", [
+        { perKeyword: [{ keyword: "q2", match: 1.0, confidence: 0.9, evidence: "ok", reasoning: "yes" }] },
+      ]),
+    },
+    store,
+  })
+  const state = emptyPreScreenState({
+    sessionId: "s1",
+    userId: "u1",
+    jobId: "j1",
+    questions: [
+      { qId: "q1", type: "MUST_HAVE", weight: 1, matchThreshold: 0.85 },
+      { qId: "q2", type: "PROBING", weight: 1 },
+    ],
+    threshold: 0.65,
+    confidenceThreshold: 0.7,
+    maxClarifyRounds: 4,
+    nowIso: "2026-05-12T00:00:00Z",
+  })
+  await store.save(state)
+
+  const r1 = await pipeline.runTurn({
+    sessionId: "s1",
+    reply: "not exact",
+    lang: "en",
+    nowIso: "2026-05-12T00:01:00Z",
+    judgeCtx: ctx,
+  })
+  assert.equal(r1.action.kind, "clarify")
+
+  const r2 = await pipeline.runTurn({
+    sessionId: "s1",
+    reply: "owned dashboard and SQL reports",
+    lang: "en",
+    nowIso: "2026-05-12T00:02:00Z",
+    judgeCtx: ctx,
+  })
+  assert.equal(r2.action.kind, "clarify")
+
+  const r3 = await pipeline.runTurn({
+    sessionId: "s1",
+    reply: "built the SQL-backed dashboard and used it to fix repeated failures",
+    lang: "en",
+    nowIso: "2026-05-12T00:03:00Z",
+    judgeCtx: ctx,
+  })
+  assert.equal(r3.action.kind, "advance")
+  if (r3.action.kind === "advance") assert.equal(r3.action.toQId, "q2")
+  assert.equal(r3.state.questions.q1.finalS, 0.78)
+})
+
 test("Phase 76: PreScreenPipeline PROBING s<τ_m probes before HARD_STOP", async () => {
   const store = new InMemoryPreScreenStore()
   const pipeline = new PreScreenPipeline({
@@ -390,6 +450,63 @@ test("Phase 76: placeholder clarify copy falls back to probing friend-tone text"
   assert.equal(r.action.kind, "clarify")
   assert.match(r.text, /closest overlap/i)
   assert.doesNotMatch(r.text, /Please add one concrete example/)
+})
+
+test("Phase 76: repeated clarify on the same question asks a new targeted probe", async () => {
+  const store = new InMemoryPreScreenStore()
+  const pipeline = new PreScreenPipeline({
+    questions: {
+      q1: {
+        qId: "q1",
+        prompt: { zh: "讲讲最匹配的经历", en: "What recent work best matches this software engineering role?" },
+        clarifyPrompt: {
+          zh: "Please add one concrete example tied to this job.",
+          en: "Please add one concrete example tied to this job.",
+        },
+        judge: new KeywordSetJudge({
+          questionId: "q1",
+          keywords: [
+            { keyword: "fullstack ownership", weight: 1 },
+            { keyword: "API integration", weight: 1 },
+          ],
+          llmCaller: makeCaller([
+            {
+              perKeyword: [
+                { keyword: "fullstack ownership", match: 0.2, confidence: 0.55, evidence: "dashboards", reasoning: "unclear ownership" },
+                { keyword: "API integration", match: 0.1, confidence: 0.55, evidence: "", reasoning: "not shown" },
+              ],
+            },
+            {
+              perKeyword: [
+                { keyword: "fullstack ownership", match: 0.45, confidence: 0.6, evidence: "merchant dashboard", reasoning: "partial ownership" },
+                { keyword: "API integration", match: 0.2, confidence: 0.6, evidence: "scripts", reasoning: "unclear API work" },
+              ],
+            },
+          ]),
+        }),
+      },
+    },
+    store,
+  })
+  await setupSession(pipeline, store, [{ qId: "q1", type: "MUST_HAVE", weight: 1 }])
+  const r1 = await pipeline.runTurn({
+    sessionId: "s1",
+    reply: "I mostly did dashboards and scripts.",
+    lang: "en",
+    nowIso: "2026-05-12T00:01:00Z",
+    judgeCtx: ctx,
+  })
+  const r2 = await pipeline.runTurn({
+    sessionId: "s1",
+    reply: "I owned the merchant dashboard and dispatch tooling.",
+    lang: "en",
+    nowIso: "2026-05-12T00:02:00Z",
+    judgeCtx: ctx,
+  })
+  assert.equal(r1.action.kind, "clarify")
+  assert.equal(r2.action.kind, "clarify")
+  assert.notEqual(r2.text, r1.text)
+  assert.match(r2.text, /remaining gap|fullstack ownership|API integration/i)
 })
 
 test("Phase 76: PreScreenPipeline 3rd low-conf reply exhausts clarify and falls to Type Gate", async () => {

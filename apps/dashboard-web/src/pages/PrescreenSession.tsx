@@ -11,7 +11,7 @@
  * operator-only read; candidates blocked.
  */
 import { useEffect, useState } from "react"
-import { useParams } from "react-router-dom"
+import { Link, useParams } from "react-router-dom"
 import { collection, doc, getDoc, getDocs, orderBy, query } from "firebase/firestore"
 import { ErrorState, LoadingState, PageHeader, Panel, Badge } from "../components/ui.js"
 import { db } from "../lib/firebase.js"
@@ -142,6 +142,9 @@ export default function PrescreenSession() {
           </Badge>
           <Badge tone="info">threshold = {(session.threshold * 100).toFixed(0)}%</Badge>
         </div>
+        <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap", marginBottom: "1rem", fontSize: "0.9em" }}>
+          <Link to={`/admin/candidates/${session.userId}/profile`}>Open candidate marketplace profile</Link>
+        </div>
         {session.terminalReason && (
           <div
             style={{
@@ -155,6 +158,39 @@ export default function PrescreenSession() {
             <strong>Terminal reason (server-only, NOT shown to candidate):</strong>
             <br />
             {session.terminalReason}
+          </div>
+        )}
+      </Panel>
+
+      <Panel title={`Transcript (${turns.length})`}>
+        {turns.length === 0 ? (
+          <div style={{ color: "#64748b" }}>No candidate replies recorded for this session yet.</div>
+        ) : (
+          <div style={{ display: "grid", gap: "0.75rem" }}>
+            {turns.map((t) => (
+              <div
+                key={t.id}
+                style={{
+                  border: "1px solid rgba(0,0,0,0.1)",
+                  borderRadius: 6,
+                  padding: "0.75rem",
+                  background: "#fff",
+                }}
+              >
+                <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "center" }}>
+                  <Badge tone="info">{t.qId}</Badge>
+                  {t.action?.kind && <Badge tone={t.action.kind === "terminal" ? "warn" : "info"}>{t.action.kind}</Badge>}
+                  <span style={{ color: "#64748b", fontSize: "0.82em" }}>{t.ts}</span>
+                </div>
+                <div style={{ marginTop: "0.5rem", overflowWrap: "anywhere" }}>{t.reply}</div>
+                {t.scored && (
+                  <div style={{ marginTop: "0.5rem", color: "#334155", fontSize: "0.9em" }}>
+                    score {t.scored.aggregate.s.toFixed(2)} / confidence {t.scored.aggregate.c.toFixed(2)} —{" "}
+                    {t.scored.aggregate.summary}
+                  </div>
+                )}
+              </div>
+            ))}
           </div>
         )}
       </Panel>

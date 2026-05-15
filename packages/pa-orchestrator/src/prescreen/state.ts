@@ -82,7 +82,7 @@ export interface PreScreenState {
   /** Product-level session boundary; durable profile data lives elsewhere. */
   workSession?: {
     kind: "job_prescreen"
-    status: "active" | "ended" | "superseded"
+    status: "active" | "ended"
     startedAt?: string
     endedAt?: string
     boundary?: "trigger" | "terminal" | "timeout" | "superseded"

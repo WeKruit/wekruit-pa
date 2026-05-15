@@ -23,7 +23,7 @@ await build({
   outfile: resolve(outDir, "index.js"),
   bundle: true,
   platform: "node",
-  target: "node20",
+  target: "node24",
   format: "esm",
   banner: {
     // Provide CommonJS shims so bundled deps that use `require`/`__dirname`
@@ -75,7 +75,7 @@ const runtimePackage = {
   private: true,
   type: "module",
   main: "index.js",
-  engines: { node: "20" },
+  engines: { node: "24" },
   dependencies: {
     "firebase-admin": "^13.0.0",
     "firebase-functions": "^6.0.0",

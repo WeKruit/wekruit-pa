@@ -7,7 +7,7 @@
     {
       "source": "apps/functions/lib",
       "codebase": "pa-orchestrator",
-      "runtime": "nodejs22",
+      "runtime": "nodejs24",
       "ignore": [
         "node_modules",
         ".git",

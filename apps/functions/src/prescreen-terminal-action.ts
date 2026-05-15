@@ -181,6 +181,92 @@ async function defaultSendSms(args: {
   })
 }
 
+async function writePrescreenMemoryUpdate(args: {
+  db: Firestore
+  sessionId: string
+  userId: string
+  jobId: string
+  terminal: PrescreenTerminalKind
+  occurredAt: string
+  log: NonNullable<RunPrescreenTerminalActionArgs["log"]>
+}): Promise<void> {
+  try {
+    const sessionSnap = await args.db.collection("pa-prescreen-sessions").doc(args.sessionId).get()
+    const session = sessionSnap.data() ?? {}
+    const questions = (session.questions ?? {}) as Record<string, { finalS?: number; finalC?: number; scored?: { aggregate?: { summary?: string } } }>
+    const qIds = Object.keys(questions)
+    const scored = qIds
+      .map((qId) => {
+        const q = questions[qId] ?? {}
+        return {
+          qId,
+          s: typeof q.finalS === "number" ? q.finalS : null,
+          c: typeof q.finalC === "number" ? q.finalC : null,
+          summary: typeof q.scored?.aggregate?.summary === "string" ? q.scored.aggregate.summary : "",
+        }
+      })
+      .filter((q) => q.summary || q.s !== null || q.c !== null)
+
+    let lastReplies: string[] = []
+    try {
+      const turns = await args.db
+        .collection("pa-prescreen-sessions")
+        .doc(args.sessionId)
+        .collection("turns")
+        .orderBy("ts", "desc")
+        .limit(6)
+        .get()
+      lastReplies = turns.docs
+        .map((d) => {
+          const data = d.data()
+          return typeof data.reply === "string" ? data.reply.trim() : ""
+        })
+        .filter(Boolean)
+        .reverse()
+    } catch {
+      lastReplies = []
+    }
+
+    const bestSummary = scored.map((q) => q.summary).filter(Boolean).join(" | ").slice(0, 800)
+    const replySummary = lastReplies.join(" / ").slice(0, 800)
+    const summary = bestSummary || replySummary || `Prescreen ended with ${args.terminal}`
+    const update = {
+      lastPrescreenMemoryUpdate: {
+        kind: "job_prescreen",
+        sessionId: args.sessionId,
+        jobId: args.jobId,
+        terminal: args.terminal,
+        summary,
+        scored,
+        recentReplies: lastReplies,
+        updatedAt: args.occurredAt,
+      },
+      updatedAt: args.occurredAt,
+    }
+    await args.db.collection("pa-users").doc(args.userId).set(update, { merge: true })
+    await args.db.collection("pa-prescreen-memory-events").doc(args.sessionId).set({
+      userId: args.userId,
+      jobId: args.jobId,
+      terminal: args.terminal,
+      summary,
+      scored,
+      recentReplies: lastReplies,
+      createdAt: args.occurredAt,
+    })
+    args.log("prescreen.terminal_action.memory_updated", {
+      sessionId: args.sessionId,
+      userId: args.userId,
+      terminal: args.terminal,
+    })
+  } catch (err) {
+    args.log("prescreen.terminal_action.memory_update_failed", {
+      sessionId: args.sessionId,
+      userId: args.userId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+}
+
 /**
  * Kick off PII confirm pipeline (1st Q emit) with onComplete hook wired to
  * generateJobRecs. Returns true if started successfully.
@@ -274,13 +360,32 @@ export async function runPrescreenTerminalAction(
   let jobRecsResult: { ok: boolean; jobCount: number; reason?: string } | undefined
   const outcomeAt = now().toISOString()
 
-  await markOutcome({
+  try {
+    await markOutcome({
+      db: args.db,
+      sessionId: args.sessionId,
+      userId: args.userId,
+      jobId: args.jobId,
+      terminal: args.terminal,
+      occurredAt: outcomeAt,
+    })
+  } catch (err) {
+    log("prescreen.terminal_action.outcome_mark_failed", {
+      sessionId: args.sessionId,
+      userId: args.userId,
+      jobId: args.jobId,
+      terminal: args.terminal,
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+  await writePrescreenMemoryUpdate({
     db: args.db,
     sessionId: args.sessionId,
     userId: args.userId,
     jobId: args.jobId,
     terminal: args.terminal,
     occurredAt: outcomeAt,
+    log,
   })
 
   // v1.9 hotfix flow:

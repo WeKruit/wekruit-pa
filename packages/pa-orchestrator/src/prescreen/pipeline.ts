@@ -92,6 +92,23 @@ export interface RunTurnResult {
   state: PreScreenState
 }
 
+export interface ComposeClarifyInput {
+  question: PreScreenQuestion
+  lang: Lang
+  reply: string
+  scored: ScoredJudgeResult
+  merged: ScoredJudgeResult
+  clarifyRound: number
+  reason: "confidence" | "type_gate"
+  state: PreScreenState
+  fallbackText: string
+}
+
+export type PreScreenClarifyComposer = (input: ComposeClarifyInput) => Promise<string>
+
+const MIN_SOFT_ACCEPT_CLARIFY_ROUNDS = 2
+const MIN_SOFT_ACCEPT_SCORE = 0.75
+
 // ────────────────────────────────────────────────────────────────────────────
 // Pipeline class
 // ────────────────────────────────────────────────────────────────────────────
@@ -103,6 +120,8 @@ export interface PreScreenPipelineOpts {
   store: PreScreenStateProvider
   /** Optional logger. */
   log?: (event: string, payload: Record<string, unknown>) => void
+  /** Optional production composer for adaptive, non-repeated follow-up probes. */
+  composeClarify?: PreScreenClarifyComposer
 }
 
 export class PreScreenPipeline {
@@ -181,7 +200,17 @@ export class PreScreenPipeline {
       state.updatedAt = input.nowIso
       await this.opts.store.save(state)
       return {
-        text: clarifyText(question, input.lang),
+        text: await this.composeClarify({
+          question,
+          lang: input.lang,
+          reply: input.reply,
+          scored,
+          merged,
+          clarifyRound: confGate.kAfter,
+          reason: "confidence",
+          state,
+          log,
+        }),
         action: { kind: "clarify", qId: state.currentQId, kAfter: confGate.kAfter },
         state,
       }
@@ -199,7 +228,23 @@ export class PreScreenPipeline {
       ...(qState.matchThreshold !== undefined ? { matchThreshold: qState.matchThreshold } : {}),
     })
     if (typeGate.action === "hard_stop") {
-      if (qState.clarifyRounds < state.maxClarifyRounds) {
+      if (shouldSoftAcceptAfterProbing({
+        type: qState.type,
+        s,
+        c,
+        state,
+        clarifyRoundsSoFar: qState.clarifyRounds,
+      })) {
+        log("prescreen.pipeline.type_gate_soft_accept_after_probe", {
+          sessionId: input.sessionId,
+          qId: state.currentQId,
+          type: qState.type,
+          s,
+          c,
+          clarifyRounds: qState.clarifyRounds,
+          threshold: state.threshold,
+        })
+      } else if (qState.clarifyRounds < state.maxClarifyRounds) {
         qState.clarifyRounds += 1
         state.updatedAt = input.nowIso
         await this.opts.store.save(state)
@@ -212,23 +257,34 @@ export class PreScreenPipeline {
           clarifyRounds: qState.clarifyRounds,
         })
         return {
-          text: clarifyText(question, input.lang),
+          text: await this.composeClarify({
+            question,
+            lang: input.lang,
+            reply: input.reply,
+            scored,
+            merged,
+            clarifyRound: qState.clarifyRounds,
+            reason: "type_gate",
+            state,
+            log,
+          }),
           action: { kind: "clarify", qId: state.currentQId, kAfter: qState.clarifyRounds },
           state,
         }
+      } else {
+        qState.finalS = s
+        qState.finalC = c
+        qState.answeredAt = input.nowIso
+        qState.terminalCause = "type_gate_fail"
+        return await this.transitionTerminal(
+          state,
+          "HARD_STOP",
+          `${qState.type} failed at qId=${qState.qId} s=${s.toFixed(2)} c=${c.toFixed(2)}`,
+          input.nowIso,
+          input.lang,
+          log
+        )
       }
-      qState.finalS = s
-      qState.finalC = c
-      qState.answeredAt = input.nowIso
-      qState.terminalCause = "type_gate_fail"
-      return await this.transitionTerminal(
-        state,
-        "HARD_STOP",
-        `${qState.type} failed at qId=${qState.qId} s=${s.toFixed(2)} c=${c.toFixed(2)}`,
-        input.nowIso,
-        input.lang,
-        log
-      )
     }
 
     // ── Update score ─────────────────────────────────────────────────────────
@@ -353,6 +409,53 @@ export class PreScreenPipeline {
       updatedAt: input.nowIso,
     }
   }
+
+  private async composeClarify(args: {
+    question: PreScreenQuestion
+    lang: Lang
+    reply: string
+    scored: ScoredJudgeResult
+    merged: ScoredJudgeResult
+    clarifyRound: number
+    reason: "confidence" | "type_gate"
+    state: PreScreenState
+    log: (event: string, payload: Record<string, unknown>) => void
+  }): Promise<string> {
+    const fallbackText = clarifyText(args.question, args.lang, {
+      scored: args.scored,
+      merged: args.merged,
+      clarifyRound: args.clarifyRound,
+      reason: args.reason,
+    })
+
+    if (!this.opts.composeClarify) return fallbackText
+
+    try {
+      const text = (await this.opts.composeClarify({ ...args, fallbackText })).trim()
+      if (text) return clampClarifyText(text)
+    } catch (err) {
+      args.log("prescreen.pipeline.compose_clarify_failed", {
+        sessionId: args.state.sessionId,
+        qId: args.question.qId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+
+    return fallbackText
+  }
+}
+
+function shouldSoftAcceptAfterProbing(args: {
+  type: string
+  s: number
+  c: number
+  state: PreScreenState
+  clarifyRoundsSoFar: number
+}): boolean {
+  if (args.type !== "MUST_HAVE") return false
+  if (args.clarifyRoundsSoFar < MIN_SOFT_ACCEPT_CLARIFY_ROUNDS) return false
+  if (args.c < args.state.confidenceThreshold) return false
+  return args.s >= Math.max(args.state.threshold, MIN_SOFT_ACCEPT_SCORE)
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -387,7 +490,19 @@ export function terminalText(
   }
 }
 
-function clarifyText(question: PreScreenQuestion, lang: Lang): string {
+function clarifyText(
+  question: PreScreenQuestion,
+  lang: Lang,
+  ctx?: {
+    scored: ScoredJudgeResult
+    merged: ScoredJudgeResult
+    clarifyRound: number
+    reason: "confidence" | "type_gate"
+  }
+): string {
+  if (ctx && ctx.clarifyRound > 1) {
+    return followUpClarifyText(question, lang, ctx)
+  }
   const authored = question.clarifyPrompt[lang]?.trim()
   if (authored && !isPlaceholderClarify(authored)) return authored
   return probingClarifyText(lang)
@@ -402,6 +517,61 @@ function probingClarifyText(lang: Lang): string {
   return lang === "zh"
     ? "没关系，不一定要完全同名经验。我想先理解你最接近的经历：你做过哪个相关项目、你具体负责什么、最后有什么结果？粗略讲也可以。"
     : "No worries if it was not exactly that. I am trying to understand the closest overlap. Can you share the nearest project you owned: the context, what you personally did, and what changed because of it? A rough example is fine."
+}
+
+function followUpClarifyText(
+  question: PreScreenQuestion,
+  lang: Lang,
+  ctx: {
+    scored: ScoredJudgeResult
+    merged: ScoredJudgeResult
+    clarifyRound: number
+    reason: "confidence" | "type_gate"
+  }
+): string {
+  const weak = weakestKeywords(ctx.merged).slice(0, 2)
+  if (lang === "zh") {
+    if (weak.length > 0) {
+      return clampClarifyText(
+        `这段有帮助。还差一点是 ${weak.join("、")}。你能补一个最接近的例子吗：你亲自做了什么、涉及哪些系统或流程、最后带来什么变化？`
+      )
+    }
+    return "这段有帮助。我再确认一个具体点：这个项目里最难、最能代表你能力的部分是什么？你具体做了什么，结果怎样？"
+  }
+
+  if (weak.length > 0) {
+    return clampClarifyText(
+      `That helps. The remaining gap is ${weak.join(" + ")}. Can you give the closest example: what you personally built or owned, what systems it touched, and what changed after it shipped?`
+    )
+  }
+
+  const q = question.prompt.en.toLowerCase()
+  if (q.includes("skill") || q.includes("technical")) {
+    return "That helps. To score the technical part fairly, what was the hardest implementation detail you personally handled, and how did you know it worked?"
+  }
+  return "That helps. I need one sharper detail before scoring this: what was the closest project you personally owned, what did you do, and what changed after it shipped?"
+}
+
+function weakestKeywords(scored: ScoredJudgeResult): string[] {
+  return [...scored.perKeyword]
+    .filter((cell) => Number.isFinite(cell.match) && cell.match < 0.75)
+    .sort((a, b) => a.match - b.match)
+    .map((cell) => sanitizeKeyword(cell.keyword))
+    .filter((keyword, idx, arr) => keyword.length > 0 && arr.indexOf(keyword) === idx)
+}
+
+function sanitizeKeyword(keyword: string): string {
+  return keyword
+    .replace(/[^\p{L}\p{N}\s/+#.-]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 44)
+}
+
+function clampClarifyText(text: string): string {
+  const normalized = text.replace(/\s+/g, " ").trim()
+  if (normalized.length <= 320) return normalized
+  return `${normalized.slice(0, 317).trimEnd()}...`
 }
 
 function terminalHardStopText(lang: Lang): string {

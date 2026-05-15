@@ -20,6 +20,7 @@ import {
   type KeywordSetLlmCaller,
   type KeywordSetLlmOutput,
   type KeywordSpec,
+  type PreScreenClarifyComposer,
   type PreScreenQuestion,
   type PreScreenState,
   type PreScreenStateProvider,
@@ -116,6 +117,67 @@ function makeProductionKeywordSetCaller(): KeywordSetLlmCaller {
       if (!content) throw new Error("OpenAI empty response")
       return JSON.parse(content) as KeywordSetLlmOutput
     },
+  }
+}
+
+function makeProductionClarifyComposer(): PreScreenClarifyComposer {
+  return async (input) => {
+    const apiKey = process.env.PA_OPENAI_AGENT_API_KEY ?? process.env.OPENAI_API_KEY
+    if (!apiKey) throw new Error("missing OpenAI API key")
+
+    const weakCells = [...input.merged.perKeyword]
+      .filter((cell) => Number.isFinite(cell.match) && cell.match < 0.75)
+      .sort((a, b) => a.match - b.match)
+      .slice(0, 4)
+      .map((cell) => ({
+        keyword: cell.keyword,
+        match: Number(cell.match.toFixed(2)),
+        confidence: Number(cell.confidence.toFixed(2)),
+        evidence: cell.evidence,
+        reasoning: cell.reasoning,
+      }))
+
+    const system = [
+      "You are Claire, a candidate prescreening agent.",
+      "Write ONE warm iMessage follow-up that probes like a thoughtful recruiter friend learning the candidate's story.",
+      "Do not reject the candidate. Do not conclude fit. Do not repeat the prior generic clarify wording.",
+      "Use the candidate's latest answer and weak evidence to ask the next most useful detail.",
+      "Do not ask a checklist. Pick one natural angle: their role, technical depth, systems touched, tradeoff, failure, user/customer impact, or measurable outcome.",
+      "Keep it under 360 characters. Output strict JSON only: {\"text\":\"...\"}.",
+    ].join("\n")
+
+    const userMsg = [
+      `Language: ${input.lang}`,
+      `Question id: ${input.question.qId}`,
+      `Original question: ${input.question.prompt[input.lang]}`,
+      `Clarify round for this same question: ${input.clarifyRound}`,
+      `Reason: ${input.reason}`,
+      `Latest candidate reply: """${input.reply}"""`,
+      `Merged score: s=${input.merged.aggregate.s.toFixed(2)} c=${input.merged.aggregate.c.toFixed(2)} summary=${input.merged.aggregate.summary}`,
+      `Weak or missing areas JSON: ${JSON.stringify(weakCells)}`,
+      `If unsure, use this fallback intent without copying it verbatim: ${input.fallbackText}`,
+    ].join("\n")
+
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: "gpt-5.4-nano",
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: userMsg },
+        ],
+        temperature: 0.2,
+        response_format: { type: "json_object" },
+      }),
+    })
+    if (!res.ok) throw new Error(`OpenAI clarify ${res.status}: ${await res.text().catch(() => "?")}`)
+    const json = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> }
+    const content = json.choices?.[0]?.message?.content
+    if (!content) throw new Error("OpenAI clarify empty response")
+    const parsed = JSON.parse(content) as { text?: unknown }
+    if (typeof parsed.text !== "string" || !parsed.text.trim()) throw new Error("OpenAI clarify missing text")
+    return parsed.text
   }
 }
 
@@ -219,6 +281,31 @@ export interface RunPrescreenTurnResult {
   textSent?: string
 }
 
+type PrescreenTurnRecordAction =
+  | { kind: "clarify"; qId: string; kAfter: number }
+  | { kind: "advance"; fromQId: string; toQId: string }
+  | { kind: "terminal"; terminal: "PASS" | "FAIL" | "HARD_STOP" | "PAUSE"; reason: string }
+  | { kind: "error"; reason: string }
+
+export function prescreenTurnRecordQId(
+  action: PrescreenTurnRecordAction,
+  activeQId: string | null | undefined
+): string {
+  if (action.kind === "clarify") return action.qId
+  if (action.kind === "advance") return action.fromQId
+  return activeQId ?? "terminal"
+}
+
+function prescreenTurnRecordScored(state: PreScreenState, qId: string) {
+  const scored = state.questions[qId]?.scored
+  if (!scored) return undefined
+  return {
+    perKeyword: scored.perKeyword,
+    aggregate: scored.aggregate,
+    ...(scored.abortHint ? { abortHint: scored.abortHint } : {}),
+  }
+}
+
 /**
  * Entry called from paMessageCoalescer before Claire dispatch. Returns
  * handled=false when no active prescreen session → coalescer continues
@@ -270,6 +357,8 @@ export async function runPrescreenTurnIfActive(
 
   // Pull cfgSnapshot persisted at session start
   const sessRaw = await args.db.collection("pa-prescreen-sessions").doc(sessionId).get()
+  const activeQIdRaw = sessRaw.data()?.currentQId
+  const activeQId = typeof activeQIdRaw === "string" ? activeQIdRaw : null
   const cfgSnapshot = sessRaw.data()?.cfgSnapshot as
     | { questions: Array<{ qId: string; prompt: { zh: string; en: string }; clarifyPrompt: { zh: string; en: string }; keywords: KeywordSpec[] }> }
     | undefined
@@ -294,7 +383,12 @@ export async function runPrescreenTurnIfActive(
       }),
     }
   }
-  const pipeline = new PreScreenPipeline({ questions, store, log })
+  const pipeline = new PreScreenPipeline({
+    questions,
+    store,
+    log,
+    composeClarify: makeProductionClarifyComposer(),
+  })
   const result = await pipeline.runTurn({
     sessionId,
     reply: args.replyText,
@@ -304,13 +398,16 @@ export async function runPrescreenTurnIfActive(
   })
 
   // Persist a turn record for dashboard observability
+  const turnQId = prescreenTurnRecordQId(result.action, activeQId)
+  const scored = prescreenTurnRecordScored(result.state, turnQId)
   await args.db
     .collection("pa-prescreen-sessions")
     .doc(sessionId)
     .collection("turns")
     .add({
-      qId: result.state.currentQId ?? "terminal",
+      qId: turnQId,
       reply: args.replyText,
+      ...(scored ? { scored } : {}),
       action: result.action,
       ts: new Date().toISOString(),
     })
