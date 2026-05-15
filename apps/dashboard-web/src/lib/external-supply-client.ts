@@ -1227,6 +1227,14 @@ export interface CompanyRow {
   websiteUrl?: string
   careersUrl?: string
   description?: string
+  /** A4.1 — WeKruit partnership flag. Auto-set when pa-jobs has any row
+   *  pointing at this companyId (see unify-pa-companies-with-pa-jobs.mjs). */
+  wekruitCollab?: boolean
+  /** A4.1 — count of matching-jobs OR pa-jobs entries for this company.
+   *  Maintained by paCompaniesJobCountSync + the unify migration. */
+  jobsCount?: number
+  /** A4.1 — canonical display name (prefer over `name` for new docs). */
+  displayName?: string
 }
 
 export interface JobRow {
@@ -1261,12 +1269,15 @@ function coerceCompanyRow(id: string, raw: unknown): CompanyRow {
   return {
     companyId: id,
     name: typeof o.name === "string" ? o.name : undefined,
+    displayName: typeof o.displayName === "string" ? o.displayName : undefined,
     domain: typeof o.domain === "string" ? o.domain : undefined,
     industrySector: strArr(o.industrySector),
     size: typeof o.size === "string" ? o.size : undefined,
     websiteUrl: typeof o.websiteUrl === "string" ? o.websiteUrl : undefined,
     careersUrl: typeof o.careersUrl === "string" ? o.careersUrl : undefined,
     description: typeof o.description === "string" ? o.description : undefined,
+    wekruitCollab: o.wekruitCollab === true,
+    jobsCount: typeof o.jobsCount === "number" ? o.jobsCount : undefined,
   }
 }
 
@@ -1337,10 +1348,28 @@ export async function updateJob(jobId: string, patch: JobLifecycleUpdate): Promi
 }
 
 export async function listCompanies(limit = 100): Promise<CompanyRow[]> {
-  const snap = await getDocs(
+  // Two-pass read so WeKruit collab partners (pa-jobs-backed employers like
+  // Rain / Invoko / Paradigm) ALWAYS surface above the LLM-enriched
+  // directory long tail. Without this, alphabetic doc-id order pushes
+  // collab partners off the first page.
+  const collabSnap = await getDocs(
+    query(
+      collection(db(), "pa-companies"),
+      where("wekruitCollab", "==", true),
+      fsLimit(100),
+    ),
+  ).catch(() => null)
+  const collabRows: CompanyRow[] = collabSnap
+    ? collabSnap.docs.map((d) => coerceCompanyRow(d.id, d.data()))
+    : []
+  const collabIds = new Set(collabRows.map((r) => r.companyId))
+  const rest = await getDocs(
     query(collection(db(), "pa-companies"), fsLimit(limit)),
   )
-  return snap.docs.map((d) => coerceCompanyRow(d.id, d.data()))
+  const restRows = rest.docs
+    .map((d) => coerceCompanyRow(d.id, d.data()))
+    .filter((r) => !collabIds.has(r.companyId))
+  return [...collabRows, ...restRows].slice(0, limit + collabRows.length)
 }
 
 export async function getCompany(companyId: string): Promise<CompanyRow | null> {
