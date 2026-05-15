@@ -8,6 +8,7 @@ import CandidateMatches from "./pages/CandidateMatches.js"
 import { CandidateMe, CandidateProfile } from "./pages/CandidatePortal.js"
 import PublicJob from "./pages/PublicJob.js"
 import PublicJobCv from "./pages/PublicJobCv.js"
+import OpenJobs from "./pages/OpenJobs.js"
 
 const root = document.getElementById("root")
 if (!root) throw new Error("Missing #root element")
@@ -24,6 +25,7 @@ ReactDOM.createRoot(root).render(
         <Route path="/me/profile" element={<CandidateProfile />} />
         <Route path="/j/:jobId" element={<PublicJob />} />
         <Route path="/j/:jobId/cv" element={<PublicJobCv />} />
+        <Route path="/open" element={<OpenJobs />} />
         <Route path="*" element={<Landing />} />
       </Routes>
     </BrowserRouter>
