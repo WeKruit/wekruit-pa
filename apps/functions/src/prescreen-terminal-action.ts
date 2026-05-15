@@ -25,7 +25,7 @@
  *   4. write terminalActionFiredAt stamp + audit event
  */
 
-import type { Firestore, Timestamp } from "firebase-admin/firestore"
+import { FieldValue, type Firestore, type Timestamp } from "firebase-admin/firestore"
 import { composeLevel1Reveal, composeFailJobRecsPreamble, type Level1RevealFields } from "@pa/pa-orchestrator"
 import { sendImessage } from "./sendblue/sendblue-client.js"
 import { runPiiConfirmForUser } from "./pii-confirm-start.js"
@@ -95,6 +95,30 @@ interface PaJobLevel1Fields {
   applyUrl?: string
   salaryRange?: string
   nextStepEta?: string
+}
+
+function deriveWeakPrescreenTags(args: {
+  jobId: string
+  scored: Array<{ qId: string; s: number | null; c: number | null; summary: string }>
+  recentReplies: string[]
+}): string[] {
+  const haystack = [
+    args.jobId,
+    ...args.scored.map((q) => `${q.qId} ${q.summary}`),
+    ...args.recentReplies,
+  ].join(" ").toLowerCase()
+  const tags = new Set<string>(["job_prescreen"])
+  if (haystack.includes("software")) tags.add("software_engineering")
+  if (haystack.includes("fullstack") || haystack.includes("full-stack")) tags.add("fullstack_engineering")
+  if (haystack.includes("javascript") || haystack.includes("react") || haystack.includes("ui")) tags.add("frontend_development")
+  if (haystack.includes("sql") || haystack.includes("database") || haystack.includes("db")) tags.add("data_workflows")
+  if (haystack.includes("debug") || haystack.includes("failure") || haystack.includes("triage")) tags.add("debugging_workflows")
+  if (haystack.includes("operator") || haystack.includes("ops") || haystack.includes("dashboard")) tags.add("operator_tools")
+  if (haystack.includes("san francisco")) tags.add("san_francisco")
+  if (haystack.includes("no current or future visa sponsorship") || haystack.includes("do not need current or future visa")) {
+    tags.add("no_visa_sponsorship")
+  }
+  return Array.from(tags).slice(0, 10)
 }
 
 async function readLevel1Fields(
@@ -230,15 +254,32 @@ async function writePrescreenMemoryUpdate(args: {
     const bestSummary = scored.map((q) => q.summary).filter(Boolean).join(" | ").slice(0, 800)
     const replySummary = lastReplies.join(" / ").slice(0, 800)
     const summary = bestSummary || replySummary || `Prescreen ended with ${args.terminal}`
+    const evidenceTags = deriveWeakPrescreenTags({
+      jobId: args.jobId,
+      scored,
+      recentReplies: lastReplies,
+    })
+    const profileEvidence = {
+      kind: "job_prescreen",
+      sessionId: args.sessionId,
+      jobId: args.jobId,
+      terminal: args.terminal,
+      summary,
+      scored,
+      recentReplies: lastReplies,
+      evidenceTags,
+      updatedAt: args.occurredAt,
+    }
     const update = {
-      lastPrescreenMemoryUpdate: {
-        kind: "job_prescreen",
-        sessionId: args.sessionId,
-        jobId: args.jobId,
-        terminal: args.terminal,
-        summary,
-        scored,
-        recentReplies: lastReplies,
+      lastPrescreenMemoryUpdate: profileEvidence,
+      conversationDerivedPreferences: {
+        prescreenEvidenceByJob: {
+          [args.jobId]: profileEvidence,
+        },
+        updatedAt: args.occurredAt,
+      },
+      globalTags: {
+        relevantTags: FieldValue.arrayUnion(...evidenceTags),
         updatedAt: args.occurredAt,
       },
       updatedAt: args.occurredAt,

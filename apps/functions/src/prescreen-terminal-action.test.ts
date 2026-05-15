@@ -326,7 +326,10 @@ describe("runPrescreenTerminalAction — fail-open", () => {
 
     assert.ok(logs.some((l) => l.event === "prescreen.terminal_action.outcome_mark_failed"))
     assert.ok(logs.some((l) => l.event === "prescreen.terminal_action.memory_updated"))
-    assert.ok(updates.some((u) => u.path === "pa-users/u" && "lastPrescreenMemoryUpdate" in u.data))
+    const userUpdate = updates.find((u) => u.path === "pa-users/u" && "lastPrescreenMemoryUpdate" in u.data)
+    assert.ok(userUpdate)
+    assert.ok("conversationDerivedPreferences" in userUpdate.data)
+    assert.ok("globalTags" in userUpdate.data)
     assert.ok(writtenDocs.get("pa-prescreen-memory-events/s8")?.exists)
     assert.ok(updates.some((u) => "terminalActionFiredAt" in u.data))
   })

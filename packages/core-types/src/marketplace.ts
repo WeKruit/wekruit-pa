@@ -1582,7 +1582,8 @@ export function reduceCandidateJobState(
         current === "outbound_queued" ||
         current === "outbound_sent" ||
         current === "candidate_interested" ||
-        current === "paused"
+        current === "paused" ||
+        current === "not_passed"
       ) {
         return reduction(current, "prescreen_started", event.type, event.occurredAt, "first_interview_started")
       }

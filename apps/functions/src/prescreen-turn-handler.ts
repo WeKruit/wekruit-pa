@@ -439,7 +439,7 @@ export async function runPrescreenTurnIfActive(
       result.action.terminal === "PAUSE")
   ) {
     try {
-      await runPrescreenTerminalAction({
+      await terminalAction({
         db: args.db,
         sessionId,
         terminal: result.action.terminal,

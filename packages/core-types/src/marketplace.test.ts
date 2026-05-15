@@ -816,12 +816,15 @@ test("low-confidence opportunity signal is evidence, not direct lifecycle mutati
   assert.equal(result.changed, false)
 })
 
-test("candidate-job reducer preserves first-interview and NOT_PASS locks", () => {
+test("candidate-job reducer preserves first-interview and lets a fresh screen retry NOT_PASS", () => {
   let state = reduceCandidateJobState("candidate_matched", job("prescreen_started", { matchScore: 0.01 })).state
   assert.equal(state, "prescreen_started", "match score must not block first interview")
 
   state = reduceCandidateJobState(state, job("prescreen_not_passed")).state
   assert.equal(state, "not_passed")
+
+  state = reduceCandidateJobState(state, job("prescreen_started")).state
+  assert.equal(state, "prescreen_started", "a new job prescreen session may retry after NOT_PASS")
 
   const global = reduceCandidateLifecycleState("active_job_seeker", lifecycle("retention_allowed"))
   assert.equal(global.state, "retained", "NOT_PASS is not a global exit")
@@ -916,7 +919,7 @@ test("candidate-job outbound events require invite and delivery evidence", () =>
   )
   assert.equal(sent.state, "outbound_sent")
 
-  for (const from of ["candidate_matched", "outbound_queued", "outbound_sent"] as const) {
+  for (const from of ["candidate_matched", "outbound_queued", "outbound_sent", "not_passed"] as const) {
     const started = reduceCandidateJobState(from, job("prescreen_started", { matchScore: 0.01 }))
     assert.equal(started.state, "prescreen_started")
   }
