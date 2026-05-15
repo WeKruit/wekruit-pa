@@ -42,6 +42,7 @@ import {
   type RegisterSinks,
 } from "./event-handlers.js"
 import { buildConsentPrompt } from "./consent-prompt.js"
+import { startRecordingEgress } from "./egress.js"
 import type { VoiceCallContext } from "./voice-context-types.js"
 
 export interface StartWorkerOpts {
@@ -227,6 +228,21 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
 
       // ── Start the session ────────────────────────────────────────────────
       await session.start?.({ agent, room: ctx.room })
+
+      // ── S6 recording archive — kick off LiveKit Egress → GCS ─────────────
+      // Fires-and-forgets behind WEKRUIT_VOICE_RECORDINGS_BUCKET env. Any
+      // failure (missing bucket, missing GCP creds, transient API error)
+      // is caught inside startRecordingEgress; the call continues either
+      // way. Per L12 we never self-host — egress is LK Cloud managed.
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const roomName = (ctx.room as any).name ?? bookingId
+        await startRecordingEgress({ roomName, bookingId }, { log })
+      } catch (err) {
+        log("voice.egress.unexpected", {
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
 
       // ── L8 recording consent — first utterance ──────────────────────────
       const consentLine = buildConsentPrompt(callContext)
