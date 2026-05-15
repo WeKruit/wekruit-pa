@@ -15,10 +15,13 @@
  */
 import { onCall, HttpsError } from "firebase-functions/v2/https"
 import { onSchedule } from "firebase-functions/v2/scheduler"
+import { defineSecret } from "firebase-functions/params"
 import { getFirestore } from "firebase-admin/firestore"
 import { logger } from "firebase-functions/v2"
 import { normalizeCompanyName, PA_COLLECTIONS } from "@pa/core-types"
 import { authorizeAdminCallable } from "./promote-sandbox-tag.js"
+
+const PA_ADMIN_TOKEN = defineSecret("PA_ADMIN_TOKEN")
 
 const MATCHING_JOBS = "matching-jobs"
 const PAGE_LIMIT = 5000
@@ -128,8 +131,12 @@ export async function runCompaniesJobCountSync(
 export const paCompaniesJobCountSync = onCall(
   {
     region: "us-central1",
-    memory: "512MiB",
+    // matching-jobs is 120K+ rows; 5000/page = 24+ pages. Each page parses
+    // job docs and aggregates into the counts Map — 1 GiB needed to avoid
+    // OOM at the full-pool scan tier (observed 525 MiB on first deploy).
+    memory: "1GiB",
     timeoutSeconds: 540,
+    secrets: [PA_ADMIN_TOKEN],
   },
   async (req): Promise<SyncResult> => {
     authorizeAdminCallable(req as { auth?: { token?: { admin?: unknown } }; data?: unknown })
@@ -155,7 +162,8 @@ export const paCompaniesJobCountNightly = onSchedule(
     schedule: "0 3 * * 3",
     timeZone: "UTC",
     region: "us-central1",
-    memory: "512MiB",
+    // See sibling onCall for the 1 GiB justification.
+    memory: "1GiB",
     timeoutSeconds: 540,
     retryCount: 0,
   },
