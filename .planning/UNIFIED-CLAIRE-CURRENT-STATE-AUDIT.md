@@ -171,16 +171,21 @@ Required fix boundary:
   - Uses real production Firestore and real `runPreScreenForUser`, `runPrescreenTurnIfActive`, and `runPrescreenTerminalAction`.
   - Stubs outbound SMS, so no test texts are sent while sessions, turns, memory events, candidate-job state, and employer-visible profiles are still written.
   - Uses one stable synthetic/testMode user: `pa-users/verify-prescreen-stress-user`; each scenario clears only this synthetic user's job state/snapshot before starting.
+  - Now hard-fails if terminal memory events, candidate-job state, employer-visible snapshots, work-session boundaries, or `pa-users` no-growth checks do not match expectations.
 - Artifact:
-  - `.planning/prescreen-stress/artifacts/stress-2026-05-15T18-04-36-947Z.json`.
+  - `.planning/prescreen-stress/artifacts/stress-2026-05-15T19-23-01-297Z.json`.
 - Result matrix:
-  - `strong_fullstack_pass`: `PASS`, 0 clarifies, score `4.72/5`, memory event exists, employer-visible profile exists, candidate-job state `employer_visible`.
-  - `adjacent_probe_recovery`: `PASS`, 3 clarifies before recovery, score `4.64/5`, memory event exists, employer-visible profile exists, candidate-job state `employer_visible`.
+  - `pa-users` count stayed `602 -> 602`.
+  - `strong_fullstack_pass`: `PASS`, 0 clarifies, terminal turn 5, memory event exists, employer-visible profile exists, candidate-job state `employer_visible`, work session ended with `boundary = terminal`.
+  - `adjacent_probe_recovery`: `PASS`, 3 clarifies before recovery, terminal turn 8, memory event exists, employer-visible profile exists, candidate-job state `employer_visible`, work session ended with `boundary = terminal`.
   - `weak_no_engineering_hard_stop`: `HARD_STOP`, 4 clarifies before stop, memory event exists, no employer-visible profile, candidate-job state `not_passed`.
   - `user_exit_pause`: `PAUSE`, memory event exists, no employer-visible profile, candidate-job state `paused`.
+  - `new_trigger_supersedes_active_prescreen`: a fresh trigger superseded the older active prescreen with `terminal = PAUSE`, `terminalReason = superseded_by_new_prescreen_session:*`, and `workSession.boundary = superseded`; the new active session was then cleanup-ended.
 - Node 24 verification:
   - `node --import tsx --test apps/functions/src/__tests__/job-enrichment.test.ts apps/functions/src/prescreen-terminal-action.test.ts apps/functions/src/__tests__/broker-prescreen-trigger.test.ts packages/pa-orchestrator/src/prescreen/__tests__/pipeline.test.ts` passed 38/38.
   - `npm run typecheck --workspace=@pa/functions` passed.
+  - `node --import tsx --test apps/functions/src/prescreen-session-start.test.ts apps/functions/src/prescreen-turn-handler.test.ts apps/functions/src/coalesce/__tests__/paMessageCoalescer.test.ts apps/functions/src/prescreen-terminal-action.test.ts apps/functions/src/prescreen-outcome-service.test.ts` passed 46/46.
+  - `npm test --workspace=@pa/functions` passed 1518/1518 after the hardened stress runner change.
 
 ## 2026-05-15 Sendblue Entrypoint Matrix Verification
 
@@ -192,17 +197,20 @@ Required fix boundary:
   - Refuses to create a new matrix user; it requires existing synthetic `pa-users/verify-prescreen-stress-user`.
   - Restores the synthetic user's pre-run profile after layoff trigger checks.
 - Artifact:
-  - `.planning/sendblue-entrypoint-matrix/artifacts/sbmatrix-2026-05-15T18-38-01-519Z.json`.
+  - `.planning/sendblue-entrypoint-matrix/artifacts/sbmatrix-2026-05-15T19-28-31-601Z.json`.
 - Result matrix:
-  - `job_prescreen_trigger`: webhook 200, action `prescreen_triggered`, created session `ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T183803145Z`, prescreen outbound was stubbed once.
+  - `job_prescreen_trigger`: webhook 200, action `prescreen_triggered`, created session `ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T192833253Z`, prescreen outbound was stubbed once.
   - `layoff_trigger`: webhook 200, action `layoff_triggered`, source temporarily set to `WeKruit_Laid_Off`, layoff outbound was stubbed once, synthetic user restored after the run.
-  - `normal_start_no_pending_invite`: webhook 200, created broker inbound `inb_d303edaeb735de86658b4087c09896eef468019c`, raw text stayed `START`, no trigger action fired.
-  - `start_with_ats_pending_invite`: webhook 200, action `prescreen_triggered`, pending invite consumed, created session `ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T183807739Z`.
+  - `normal_start_no_pending_invite`: webhook 200, created broker inbound `inb_c79c84c137869d8a186a923c212a00d57474a5dc`, raw text stayed `START`, no trigger action fired.
+  - `start_with_ats_pending_invite`: webhook 200, action `prescreen_triggered`, pending invite consumed, created session `ps_rain-software-engineer-fullstack-8849f6ef_verify-prescreen-stress-user_20260515T192839270Z`.
 - User-pool safety recheck after the matrix:
   - `pa-users` count stayed 602.
   - `candidate_account = 1`.
   - The only `candidate_account` remains `pa-users/U7AwKT8nLDRa35DkuBxq`.
   - Matrix user remains `testMode = true`, `candidateLifecycleState = synthetic_test`, `phoneE164 = +19995550000`.
+  - Matrix cleanup ended both sessions it created with `terminal = PAUSE` and `terminalReason = sendblue_matrix_cleanup`.
+  - Live Firestore recheck after cleanup: `pa-prescreen-sessions` where `userId = verify-prescreen-stress-user` and `terminal = null` returned 0 active sessions.
+  - Node 24 verification after cleanup change: `npm run typecheck --workspace=@pa/functions` passed; rerunning the matrix passed with `pa-users 602 -> 602`.
 
 ## 2026-05-15 Current User-Pool Diagnosis
 
