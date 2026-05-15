@@ -42,6 +42,7 @@ export function isSyntheticTestProfile(doc: CandidateListUserDoc): boolean {
     id.startsWith("qa") ||
     id.startsWith("recheck-") ||
     id.startsWith("synthetic") ||
+    id.startsWith("verify-") ||
     id.includes("reset") ||
     id.includes("smoke") ||
     id.includes("test") ||
@@ -58,6 +59,9 @@ export function hasReachableIdentity(doc: CandidateListUserDoc): boolean {
 }
 
 function hasCurrentCandidateAccountSignal(doc: CandidateListUserDoc): boolean {
+  const email = doc.email?.trim().toLowerCase() ?? ""
+  if (email.endsWith("@wekruit.com")) return false
+
   const state = doc.candidateLifecycleState
   if (
     state === "claimed" ||
@@ -73,7 +77,7 @@ function hasCurrentCandidateAccountSignal(doc: CandidateListUserDoc): boolean {
   if (doc.signupSource === "identity:candidate") {
     return hasReachableIdentity(doc) || Boolean(doc.latestResumeArtifactId || doc.mem0UserId)
   }
-  return Boolean(doc.latestResumeArtifactId || doc.piiConsentAt || doc.mem0UserId)
+  return Boolean(doc.latestResumeArtifactId || doc.piiConsentAt)
 }
 
 export function deriveCandidateSource(

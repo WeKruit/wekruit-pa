@@ -19,6 +19,12 @@ export {
   type PrescreenTriggerDeps,
 } from "./prescreen.js"
 
+export {
+  LayoffTrigger,
+  LAYOFF_TRIGGER_IDEMPOTENCY_WINDOW_MS,
+  type LayoffTriggerDeps,
+} from "./layoff.js"
+
 export { CompactTrigger, type CompactTriggerDeps } from "./compact.js"
 
 // v1.9 Phase 85 — Apply trigger (PASS-verified candidates skip prescreen).

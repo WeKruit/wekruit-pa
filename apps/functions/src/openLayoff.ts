@@ -3,7 +3,7 @@
 // Co-located with pa-orchestrator. Reuses existing PA modules:
 //   - sendblue/pool.ts        — pickFromNumber load-balancer
 //   - sendblue/allowlist.ts   — normalizePeer (E.164)
-//   - @pa/pa-broker           — enqueueOutbound (pa-outbound queue)
+//   - layoff-sms-start.ts     — shared Claire kickoff into pa-outbound
 //
 // SINGLE candidate collection (alignment with user instruction 2026-05-15):
 //   pa-users/{candidateId}
@@ -27,9 +27,12 @@ import { loadSendbluePool, pickFromNumber, sendblueGroupId, hashStringToUint } f
 import { normalizePeer } from "./sendblue/allowlist.js"
 import { enqueueOutbound } from "@pa/pa-broker"
 import { PA_COLLECTIONS } from "@pa/core-types"
+import { hashCandidateHandle, linkCandidateHandle } from "@pa/pa-persistence"
+import { WEKRUIT_LAYOFF_SOURCE } from "@pa/pa-orchestrator"
+import { runLayoffSmsStart } from "./layoff-sms-start.js"
 
 /** Source tag — drives Claire's opener variant + listing filter + analytics. */
-export const LAYOFF_SOURCE_TAG = "WeKruit_Laid_Off"
+export const LAYOFF_SOURCE_TAG = WEKRUIT_LAYOFF_SOURCE
 
 if (!getApps().length) initializeApp()
 
@@ -52,12 +55,16 @@ export function phoneIndexId(e164: string): string {
   return `p_${hashStringToUint(e164).toString(36)}`
 }
 
-// ---------- Layoff opener body ----------
-
-export function renderLayoffOpenerBody(input: { firstName: string; lastCompany: string }): string {
-  const first = input.firstName?.trim() || "there"
-  const company = input.lastCompany?.trim() || "your last company"
-  return `Hey ${first}, Claire from WeKruit. Saw you signed up after the ${company} layoff — glad you found us. Got a sec to chat about what you want next?`
+async function candidateIdForHandle(
+  db: Firestore,
+  kind: "email" | "phone",
+  value: string,
+): Promise<string | null> {
+  const { handleId } = hashCandidateHandle(kind, value)
+  const snap = await db.collection(PA_COLLECTIONS.candidateHandles).doc(handleId).get()
+  if (!snap.exists) return null
+  const candidateId = snap.data()?.candidateId
+  return typeof candidateId === "string" && candidateId.trim() ? candidateId : null
 }
 
 // ---------- Registration ----------
@@ -151,44 +158,57 @@ export async function runRegisterLayoffCandidate(
   const phoneE164 = phoneCheck.e164
   const indexId = phoneIndexId(phoneE164)
   const now = serverTimestamp(deps)
+  const isoNow = (deps.nowIso ?? nowIso)()
 
   // Phone dedup index — controls reuse path.
   const indexRef = deps.db.doc(`layoff_phone_index/${indexId}`)
   const indexSnap = await indexRef.get()
+  const phoneHandleCandidateId = await candidateIdForHandle(deps.db, "phone", phoneE164)
   let candidateId: string
   let isReregistration = false
   if (indexSnap.exists) {
     candidateId = indexSnap.data()!.candidateId as string
     isReregistration = true
-
-    // Auto mode → return duplicate signal so the UI can show the
-    // "reuse / start fresh" prompt. No writes performed.
-    if (mode === "auto") {
-      const userRef = deps.db.collection(PA_COLLECTIONS.users).doc(candidateId)
-      const userSnap = await userRef.get()
-      const u = userSnap.data() ?? {}
-      const ctx = (u.layoffContext ?? {}) as Record<string, string | null>
-      const ts = u.lastLaidOffAt
-      const lastLaidOffAt =
-        ts && typeof (ts as { toDate?: unknown }).toDate === "function"
-          ? (ts as { toDate: () => Date }).toDate().toISOString()
-          : typeof ts === "string"
-            ? ts
-            : null
-      return {
-        duplicate: true,
-        candidateId,
-        existing: {
-          firstName: ((u.displayName as string | undefined) ?? "").split(" ")[0] ?? null,
-          lastCompany: ctx.lastCompany ?? null,
-          jobTitle: ctx.jobTitle ?? null,
-          location: ctx.location ?? null,
-          lastLaidOffAt,
-        },
-      }
+    if (phoneHandleCandidateId && phoneHandleCandidateId !== candidateId) {
+      throw new HttpsError("failed-precondition", "identity_conflict:phone_belongs_to_another_candidate")
     }
+  } else if (phoneHandleCandidateId) {
+    candidateId = phoneHandleCandidateId
+    isReregistration = true
   } else {
     candidateId = deps.db.collection(PA_COLLECTIONS.users).doc().id
+  }
+
+  // Auto mode → return duplicate signal so the UI can show the
+  // "reuse / start fresh" prompt. No writes performed.
+  if (isReregistration && mode === "auto") {
+    const userRef = deps.db.collection(PA_COLLECTIONS.users).doc(candidateId)
+    const userSnap = await userRef.get()
+    const u = userSnap.data() ?? {}
+    const ctx = (u.layoffContext ?? {}) as Record<string, string | null>
+    const ts = u.lastLaidOffAt
+    const lastLaidOffAt =
+      ts && typeof (ts as { toDate?: unknown }).toDate === "function"
+        ? (ts as { toDate: () => Date }).toDate().toISOString()
+        : typeof ts === "string"
+          ? ts
+          : null
+    return {
+      duplicate: true,
+      candidateId,
+      existing: {
+        firstName: ((u.displayName as string | undefined) ?? "").split(" ")[0] ?? null,
+        lastCompany: ctx.lastCompany ?? null,
+        jobTitle: ctx.jobTitle ?? null,
+        location: ctx.location ?? null,
+        lastLaidOffAt,
+      },
+    }
+  }
+
+  const emailCandidateId = await candidateIdForHandle(deps.db, "email", v.email)
+  if (emailCandidateId && emailCandidateId !== candidateId) {
+    throw new HttpsError("failed-precondition", "identity_conflict:email_belongs_to_another_candidate")
   }
 
   // Sticky from-number — deterministic hash by candidateId.
@@ -206,7 +226,7 @@ export async function runRegisterLayoffCandidate(
   const writePayload: Record<string, unknown> = {
     id: candidateId,
     phoneE164,
-    source: LAYOFF_SOURCE_TAG,
+    source: WEKRUIT_LAYOFF_SOURCE,
     lastLaidOffAt: now,
     senderNumber: fromNumber,
     senderGroupId: groupId,
@@ -225,7 +245,7 @@ export async function runRegisterLayoffCandidate(
   }
   if (!isReregistration) {
     writePayload.onboardingStatus = "invited"
-    writePayload.createdAt = (deps.nowIso ?? nowIso)()
+    writePayload.createdAt = isoNow
   }
 
   const batch = deps.db.batch()
@@ -239,6 +259,24 @@ export async function runRegisterLayoffCandidate(
   if (!isReregistration) batch.set(counterRef, { candidateCount: listPosition }, { merge: true })
 
   await batch.commit()
+  await linkCandidateHandle(deps.db, {
+    candidateId,
+    kind: "phone",
+    value: phoneE164,
+    source: "candidate",
+    deliverable: true,
+    now: isoNow,
+    evidence: [{ source: "system", summary: "Layoff registration phone handle" }],
+  })
+  await linkCandidateHandle(deps.db, {
+    candidateId,
+    kind: "email",
+    value: v.email,
+    source: "candidate",
+    deliverable: true,
+    now: isoNow,
+    evidence: [{ source: "system", summary: "Layoff registration email handle" }],
+  })
 
   return {
     candidateId,
@@ -267,39 +305,24 @@ export async function runInitiateSmsPrescreen(
   const doc = await userRef.get()
   if (!doc.exists) throw new HttpsError("not-found", "User not found")
   const u = doc.data()!
-  if (u.source !== LAYOFF_SOURCE_TAG) {
+  if (u.source !== WEKRUIT_LAYOFF_SOURCE) {
     throw new HttpsError("failed-precondition", "user_not_tagged_layoff")
   }
 
-  const ctx = (u.layoffContext ?? {}) as Record<string, string>
   const phoneE164 = u.phoneE164 as string
-  const firstName = (u.displayName?.split(" ")[0] as string) ?? "there"
-
-  const body = renderLayoffOpenerBody({ firstName, lastCompany: ctx.lastCompany ?? "your last company" })
-  const idempotencyKey = `wekruit_open_layoff:${candidateId}:kickoff`
-  const enqueueResult = await (deps.enqueueOutbound ?? enqueueOutbound)(deps.db, {
+  const result = await runLayoffSmsStart({
+    db: deps.db,
     userId: candidateId,
     toE164: phoneE164,
-    imessageChatId: `iMessage;-;${phoneE164}`,
-    body,
-    idempotencyKey,
+    enqueueOutbound: deps.enqueueOutbound,
   })
-
-  await userRef.set(
-    {
-      smsState: "kickoff-enqueued",
-      smsKickoffAt: serverTimestamp(deps),
-      smsThreadId: `iMessage;-;${phoneE164}`,
-      kickoffOutboundId: enqueueResult.id,
-    },
-    { merge: true },
-  )
+  if (!result.ok) throw new HttpsError("failed-precondition", result.reason)
 
   return {
     ok: true,
-    kickoffOutboundId: enqueueResult.id,
-    kickoffCreated: enqueueResult.created,
-    sourceTag: LAYOFF_SOURCE_TAG,
+    kickoffOutboundId: result.kickoffOutboundId,
+    kickoffCreated: result.kickoffCreated,
+    sourceTag: result.sourceTag,
   }
 }
 
@@ -317,13 +340,59 @@ export async function runSubmitChatTurn(
   deps: OpenLayoffDeps
 ): Promise<{ ok: true }> {
   const { candidateId, turn } = input
+  const promptId = cleanString(turn.promptId, 80)
+  const text = cleanString(turn.text, 4000)
+  if (!candidateId || !promptId || !text) {
+    throw new HttpsError("invalid-argument", "candidateId, promptId, and text are required")
+  }
   const userRef = deps.db.collection(PA_COLLECTIONS.users).doc(candidateId)
+  const userSnap = await userRef.get()
+  if (!userSnap.exists) throw new HttpsError("not-found", "User not found")
+  if (userSnap.data()?.source !== WEKRUIT_LAYOFF_SOURCE) {
+    throw new HttpsError("failed-precondition", "user_not_tagged_layoff")
+  }
+  const isoNow = (deps.nowIso ?? nowIso)()
+  const submittedAt = cleanString(turn.at, 80) ?? isoNow
+  const layoffContextPatch: Record<string, unknown> = {}
+  if (promptId === "next") layoffContextPatch.roleShape = text
+  if (promptId === "open") {
+    layoffContextPatch.openTo = text
+    layoffContextPatch.sponsorshipNeeded =
+      /\b(sponsor|sponsorship|h-?1b|visa|opt|cpt)\b/i.test(text) &&
+      !/\b(no|not|don't|do not|without|none|citizen|green card|gc)\b/i.test(text)
+    layoffContextPatch.logisticsRaw = text
+  }
+  if (promptId === "pitch") layoffContextPatch.pitch = text
   await userRef.set(
     {
       layoffChatAnswers: {
-        [turn.promptId]: turn.text,
+        [promptId]: text,
       },
+      conversationDerivedPreferences: {
+        layoff_onboarding: {
+          [promptId]: {
+            answer: text,
+            source: "layoff_onboarding",
+            at: submittedAt,
+            updatedAt: isoNow,
+          },
+        },
+        updatedAt: isoNow,
+      },
+      layoffEvidence: {
+        latestChatTurn: {
+          promptId,
+          answer: text.slice(0, 1000),
+          source: "layoff_onboarding",
+          at: submittedAt,
+          updatedAt: isoNow,
+        },
+      },
+      ...(Object.keys(layoffContextPatch).length > 0
+        ? { layoffContext: layoffContextPatch }
+        : {}),
       smsLastTurnAt: serverTimestamp(deps),
+      updatedAt: isoNow,
     },
     { merge: true },
   )
@@ -354,7 +423,7 @@ export async function runListLayoffCandidates(
   // (e.g., regular PA candidates from pa-landing) into the layoff list.
   let q: Query = deps.db
     .collection(PA_COLLECTIONS.users)
-    .where("source", "==", LAYOFF_SOURCE_TAG)
+    .where("source", "==", WEKRUIT_LAYOFF_SOURCE)
 
   const withinDays = input.withinDays ?? 180
   const cutoff = new Date(Date.now() - withinDays * 86400_000)
@@ -406,7 +475,8 @@ export type EmployerInput = {
 
 export async function runRegisterEmployer(
   v: EmployerInput,
-  deps: OpenLayoffDeps
+  deps: OpenLayoffDeps,
+  auth?: CallableAuth
 ): Promise<{ employerId: string }> {
   if (!v.companyName || !v.workEmail) throw new HttpsError("invalid-argument", "Missing required fields")
   const workEmailLower = cleanEmail(v.workEmail)
@@ -416,6 +486,7 @@ export async function runRegisterEmployer(
     ...v,
     workEmailLower,
     verificationStatus: "pending",
+    registeredByUid: auth?.uid ?? null,
     registeredAt: serverTimestamp(deps),
   })
   return { employerId: ref.id }
@@ -424,6 +495,6 @@ export async function runRegisterEmployer(
 export const openRegisterEmployer = onCall<EmployerInput>(
   { region: "us-central1", cors: true },
   async (req) => {
-    return runRegisterEmployer(req.data, { db: getFirestore() })
+    return runRegisterEmployer(req.data, { db: getFirestore() }, req.auth)
   },
 )

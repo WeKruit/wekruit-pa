@@ -10,6 +10,7 @@ import {
   runListLayoffCandidates,
   runRegisterEmployer,
   runRegisterLayoffCandidate,
+  runSubmitChatTurn,
   type EmployerInput,
   type RegisterInput,
 } from "./openLayoff.js"
@@ -17,6 +18,28 @@ import {
 type DocData = Record<string, unknown>
 type Store = Map<string, Map<string, DocData>>
 type Filter = { field: string; op: "==" | ">=" | "in"; value: unknown }
+
+function deepMerge(base: DocData, patch: DocData): DocData {
+  const out: DocData = { ...base }
+  for (const [key, value] of Object.entries(patch)) {
+    const cur = out[key]
+    if (
+      cur &&
+      value &&
+      typeof cur === "object" &&
+      typeof value === "object" &&
+      !Array.isArray(cur) &&
+      !Array.isArray(value) &&
+      !(cur instanceof Date) &&
+      !(value instanceof Date)
+    ) {
+      out[key] = deepMerge(cur as DocData, value as DocData)
+    } else {
+      out[key] = value
+    }
+  }
+  return out
+}
 
 function getNested(data: DocData, path: string): unknown {
   return path.split(".").reduce<unknown>((acc, part) => {
@@ -154,7 +177,7 @@ class FakeFirestore {
   write(collectionPath: string, id: string, data: DocData, opts?: { merge?: boolean }) {
     const coll = this.collectionStore(collectionPath)
     const current = coll.get(id)
-    coll.set(id, opts?.merge && current ? { ...current, ...data } : { ...data })
+    coll.set(id, opts?.merge && current ? deepMerge(current, data) : { ...data })
     this.writes.push({
       path: `${collectionPath}/${id}`,
       data: { ...data },
@@ -295,6 +318,54 @@ test("runInitiateSmsPrescreen enqueues one idempotent kickoff for the layoff can
   assert.equal(outboundCalls[0]!.idempotencyKey, "wekruit_open_layoff:cand_1:kickoff")
   assert.match(String(outboundCalls[0]!.body), /Claire from WeKruit/)
   assert.equal(fake.read(`${PA_COLLECTIONS.users}/cand_1`)!.kickoffOutboundId, "out_1")
+})
+
+test("runSubmitChatTurn refuses to create missing pa-users docs", async () => {
+  const fake = new FakeFirestore()
+
+  await assert.rejects(
+    () =>
+      runSubmitChatTurn(
+        { candidateId: "missing", turn: { promptId: "next", text: "Product roles" } },
+        deps(fake),
+      ),
+    (err) => err instanceof HttpsError && err.code === "not-found",
+  )
+  assert.equal(fake.read(`${PA_COLLECTIONS.users}/missing`), undefined)
+})
+
+test("runSubmitChatTurn writes layoff chat into shared profile evidence", async () => {
+  const fake = new FakeFirestore()
+  fake.seed(`${PA_COLLECTIONS.users}/cand_1`, {
+    id: "cand_1",
+    source: LAYOFF_SOURCE_TAG,
+    phoneE164: "+14243201960",
+    layoffContext: {
+      lastCompany: "Rain",
+      jobTitle: "Software Engineer",
+    },
+  })
+
+  await runSubmitChatTurn(
+    {
+      candidateId: "cand_1",
+      turn: {
+        promptId: "next",
+        text: "I want full-stack product engineering at an early-stage startup.",
+        at: fixedNow,
+      },
+    },
+    deps(fake),
+  )
+
+  const user = fake.read(`${PA_COLLECTIONS.users}/cand_1`)!
+  assert.equal((user.layoffChatAnswers as DocData).next, "I want full-stack product engineering at an early-stage startup.")
+  const prefs = user.conversationDerivedPreferences as DocData
+  const layoffPrefs = prefs.layoff_onboarding as DocData
+  assert.equal(((layoffPrefs.next as DocData).answer), "I want full-stack product engineering at an early-stage startup.")
+  assert.equal((user.layoffContext as DocData).lastCompany, "Rain")
+  assert.equal((user.layoffContext as DocData).roleShape, "I want full-stack product engineering at an early-stage startup.")
+  assert.equal(((user.layoffEvidence as DocData).latestChatTurn as DocData).source, "layoff_onboarding")
 })
 
 test("runListLayoffCandidates requires a verified employer and returns redacted layoff cards only", async () => {

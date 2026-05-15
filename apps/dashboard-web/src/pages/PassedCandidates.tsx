@@ -1,5 +1,5 @@
 import * as React from "react"
-import { useState, type CSSProperties, type FormEvent, type ReactNode } from "react"
+import { useEffect, useMemo, useState, type CSSProperties, type FormEvent, type ReactNode } from "react"
 
 import { Badge, EmptyState, ErrorState, LoadingState, PageHeader, Panel } from "../components/ui.js"
 import {
@@ -36,7 +36,11 @@ export default function PassedCandidates({
 }: {
   loadSnapshot?: SnapshotLoader
 }) {
-  const [draft, setDraft] = useState<PassedCandidatesFilters>({ jobId: "", limit: PASSED_CANDIDATES_DEFAULT_LIMIT })
+  const queryJobId = useMemo(() => readJobIdFromHref(), [])
+  const [draft, setDraft] = useState<PassedCandidatesFilters>({
+    jobId: queryJobId,
+    limit: PASSED_CANDIDATES_DEFAULT_LIMIT,
+  })
   const [snapshot, setSnapshot] = useState<PassedCandidatesSnapshot | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -63,6 +67,13 @@ export default function PassedCandidates({
     event.preventDefault()
     void refresh(draft)
   }
+
+  useEffect(() => {
+    if (!queryJobId) return
+    const next = { jobId: queryJobId, limit: PASSED_CANDIDATES_DEFAULT_LIMIT }
+    setDraft(next)
+    void refresh(next)
+  }, [queryJobId])
 
   return (
     <div className="page-stack">
@@ -115,6 +126,17 @@ export default function PassedCandidates({
       {snapshot ? <PassedCandidatesSnapshotView snapshot={snapshot} /> : null}
     </div>
   )
+}
+
+function readJobIdFromHref(): string {
+  if (typeof window === "undefined") return ""
+  const [, raw = ""] = window.location.href.split("?")
+  const qs = raw.split("#")[0] ?? ""
+  for (const part of qs.split("&")) {
+    const [key, value = ""] = part.split("=")
+    if (decodeURIComponent(key ?? "") === "jobId") return decodeURIComponent(value).trim()
+  }
+  return ""
 }
 
 export function PassedCandidatesSnapshotView({ snapshot }: { snapshot: PassedCandidatesSnapshot }) {

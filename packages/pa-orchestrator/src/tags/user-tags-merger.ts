@@ -166,6 +166,10 @@ export const UserTagsSchema = z.object({
   /** Country/region targets from chat, e.g. ["usa"], ["china"], ["anywhere"]. */
   targetCountry: z.array(z.string()).optional(),
   preferredLang: z.enum(["zh", "en"]).optional(),
+  /** Minimum acceptable salary collected from Level 1 follow-up; read by V16 salary fit. */
+  minSalary: z.number().int().nonnegative().optional(),
+  /** Company-size preference collected from Level 1 follow-up. */
+  companySize: z.enum(["seed", "early_startup", "scale_up", "mid_market", "enterprise", "open"]).optional(),
 
   // ---- Phase B1 — company preference signals --------------------------
   /**

@@ -493,6 +493,17 @@ test("UserTagsSchema parses output of a fully-populated mergeUserTags call", () 
   assert.equal(parsed.skills.length, 2)
 })
 
+test("UserTagsSchema accepts Level 1 salary and company-size tags written after prescreen", () => {
+  const parsed = UserTagsSchema.safeParse({
+    skills: [],
+    industryEnum: ["other"],
+    minSalary: 150000,
+    companySize: "early_startup",
+    schemaVersion: USER_TAGS_SCHEMA_VERSION,
+  })
+  assert.equal(parsed.success, true)
+})
+
 test("UserTagsSchema parses empty-input output (defaults shape)", () => {
   const out = mergeUserTags({})
   const parsed = UserTagsSchema.parse(out)

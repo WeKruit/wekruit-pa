@@ -50,7 +50,7 @@ const LINK_KIND_FG: Record<string, string> = {
   personal: "#166534",
 }
 const LINK_KIND_LABEL: Record<string, string> = {
-  linkedin: "in",
+  linkedin: "LinkedIn",
   github: "GH",
   twitter: "X",
   facebook: "FB",

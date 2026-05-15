@@ -36,6 +36,7 @@
 import { initializeApp, cert, getApps } from "firebase-admin/app"
 import { getFirestore } from "firebase-admin/firestore"
 import { readFileSync } from "node:fs"
+import { assertProductionPaUserCreationAllowed } from "./lib/prod-test-user-guard.mjs"
 
 const PROJECT = "wekruit-5f89b"
 
@@ -132,6 +133,12 @@ async function main() {
   const db = getFirestore()
   const phoneTail = Math.floor(1000000 + Math.random() * 9000000)
   const phone = `+1888${phoneTail}`
+  assertProductionPaUserCreationAllowed({
+    projectId: PROJECT,
+    scriptName: "apps/functions/scripts/e2e-onboarding-sim.mjs",
+    phoneE164: phone,
+    reason: "legacy fresh-phone onboarding simulator creates a new pa-users row through broker processing",
+  })
   console.log(`\n=== E2E onboarding sim — phone ${phone} ===\n`)
 
   let userId = null

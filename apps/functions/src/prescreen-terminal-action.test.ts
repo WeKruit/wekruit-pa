@@ -305,6 +305,14 @@ describe("runPrescreenTerminalAction — fail-open", () => {
         },
       },
     })
+    docs.set("pa-users/u", {
+      exists: true,
+      data: {
+        tags: {
+          proposedTags: ["existing_signal"],
+        },
+      },
+    })
     const { db, updates, docs: writtenDocs } = makeFakeDb(docs)
     const logs: Array<{ event: string; payload: Record<string, unknown> }> = []
     await runPrescreenTerminalAction({
@@ -329,7 +337,14 @@ describe("runPrescreenTerminalAction — fail-open", () => {
     const userUpdate = updates.find((u) => u.path === "pa-users/u" && "lastPrescreenMemoryUpdate" in u.data)
     assert.ok(userUpdate)
     assert.ok("conversationDerivedPreferences" in userUpdate.data)
-    assert.ok("globalTags" in userUpdate.data)
+    const tagUpdate = updates.find((u) => u.path === "pa-users/u" && "tags" in u.data)
+    assert.ok(tagUpdate)
+    assert.deepEqual((tagUpdate.data.tags as Record<string, unknown>).proposedTags, [
+      "existing_signal",
+      "job_prescreen",
+      "frontend_development",
+      "data_workflows",
+    ])
     assert.ok(writtenDocs.get("pa-prescreen-memory-events/s8")?.exists)
     assert.ok(updates.some((u) => "terminalActionFiredAt" in u.data))
   })

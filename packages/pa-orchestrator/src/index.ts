@@ -3994,6 +3994,10 @@ export {
   type FeedbackHooks,
   type FeedbackSurveyOpts,
 } from "./prescreen/feedback-survey.js"
+export {
+  WEKRUIT_LAYOFF_SOURCE,
+  composeLayoffFirstMessage,
+} from "./onboarding.js"
 // v1.9 P85 — top-level re-exports for OnboardingPipeline state types used
 // by apps/functions pii-confirm-start.ts.
 export { OnboardingPipeline } from "./onboarding/pipeline.js"

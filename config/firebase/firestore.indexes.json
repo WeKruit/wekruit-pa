@@ -371,6 +371,25 @@
       ]
     },
     {
+      "_comment": "Unified Claire audit/dashboard lookup: fetch a candidate's recent work sessions for one job.",
+      "collectionGroup": "pa-prescreen-sessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "jobId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "userId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "updatedAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
       "_comment": "v2.0 S1 — admin candidate inspector: handles by candidate recency.",
       "collectionGroup": "pa-candidate-handles",
       "queryScope": "COLLECTION",

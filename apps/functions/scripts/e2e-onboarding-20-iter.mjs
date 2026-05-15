@@ -21,6 +21,7 @@
 import { initializeApp, cert, getApps } from "firebase-admin/app"
 import { getFirestore } from "firebase-admin/firestore"
 import { readFileSync } from "node:fs"
+import { assertProductionPaUserCreationAllowed } from "./lib/prod-test-user-guard.mjs"
 
 const PROJECT = "wekruit-5f89b"
 const ITERATIONS = parseInt(process.env.E2E_ITER ?? "20", 10)
@@ -82,6 +83,12 @@ async function cleanup(db, userId) {
 async function runIteration(db, iterIdx) {
   const phoneTail = String(Math.floor(2000000 + Math.random() * 7000000))
   const phone = `+1888${phoneTail}`
+  assertProductionPaUserCreationAllowed({
+    projectId: PROJECT,
+    scriptName: "apps/functions/scripts/e2e-onboarding-20-iter.mjs",
+    phoneE164: phone,
+    reason: "legacy 20-iteration onboarding simulator creates a fresh pa-users row each iteration",
+  })
   const result = { iter: iterIdx, phone, turns: [], pass: false, error: null, recsCount: 0, finalState: null }
 
   // Decide which step gets an "invalid first reply" (to test re-ask graceful)

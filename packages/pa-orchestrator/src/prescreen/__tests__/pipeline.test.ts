@@ -329,6 +329,67 @@ test("Phase 76: max-probed adjacent engineering evidence advances instead of har
   assert.equal(finalProbe.state.terminal, null)
 })
 
+test("Phase 76: weak engineering evidence gets four probes before HARD_STOP", async () => {
+  const store = new InMemoryPreScreenStore()
+  const pipeline = new PreScreenPipeline({
+    questions: {
+      q1: makeQ("q1", [
+        { perKeyword: [{ keyword: "q1", match: 0.1, confidence: 0.9, evidence: "no direct experience", reasoning: "not aligned" }] },
+        { perKeyword: [{ keyword: "q1", match: 0.12, confidence: 0.9, evidence: "no project", reasoning: "not aligned" }] },
+        { perKeyword: [{ keyword: "q1", match: 0.12, confidence: 0.9, evidence: "still no project", reasoning: "not aligned" }] },
+        { perKeyword: [{ keyword: "q1", match: 0.12, confidence: 0.9, evidence: "unrelated", reasoning: "not aligned" }] },
+        { perKeyword: [{ keyword: "q1", match: 0.12, confidence: 0.9, evidence: "unrelated", reasoning: "not aligned" }] },
+      ]),
+    },
+    store,
+  })
+  const state = emptyPreScreenState({
+    sessionId: "s1",
+    userId: "u1",
+    jobId: "rain-software-engineer-fullstack-8849f6ef",
+    questions: [{ qId: "q1", type: "MUST_HAVE", weight: 1, matchThreshold: 0.85 }],
+    threshold: 0.65,
+    confidenceThreshold: 0.7,
+    maxClarifyRounds: 4,
+    nowIso: "2026-05-12T00:00:00Z",
+  })
+  await store.save(state)
+
+  const replies = [
+    "I have not done software engineering work.",
+    "I do not have a related project.",
+    "I mainly did customer service and scheduling.",
+    "No engineering system, just spreadsheets.",
+    "I cannot think of a closer example.",
+  ]
+
+  for (let i = 0; i < 4; i++) {
+    const r = await pipeline.runTurn({
+      sessionId: "s1",
+      reply: replies[i],
+      lang: "en",
+      nowIso: `2026-05-12T00:0${i + 1}:00Z`,
+      judgeCtx: ctx,
+    })
+    assert.equal(r.action.kind, "clarify")
+    assert.equal(r.state.terminal, null)
+    assert.equal(r.state.questions.q1.clarifyRounds, i + 1)
+  }
+
+  const terminal = await pipeline.runTurn({
+    sessionId: "s1",
+    reply: replies[4],
+    lang: "en",
+    nowIso: "2026-05-12T00:05:00Z",
+    judgeCtx: ctx,
+  })
+
+  assert.equal(terminal.action.kind, "terminal")
+  if (terminal.action.kind === "terminal") assert.equal(terminal.action.terminal, "HARD_STOP")
+  assert.equal(terminal.state.questions.q1.terminalCause, "type_gate_fail")
+  assert.equal(terminal.state.questions.q1.clarifyRounds, 4)
+})
+
 test("Phase 76: PreScreenPipeline PROBING s<τ_m probes before HARD_STOP", async () => {
   const store = new InMemoryPreScreenStore()
   const pipeline = new PreScreenPipeline({
@@ -688,7 +749,7 @@ test("Phase 76: PreScreenPipeline pauses on viability after hysteresis", async (
 // FAIL on final ratio
 // ════════════════════════════════════════════════════════════════════════════
 
-test("Phase 76: PreScreenPipeline FAILs when final ratio < threshold", async () => {
+test("Phase 76: PreScreenPipeline probes before final FAIL when ratio < threshold", async () => {
   const store = new InMemoryPreScreenStore()
   // 2 GOOD_TO_HAVE Qs with s=0.5 each → ratio = 0.5 < 0.65 → FAIL
   const pipeline = new PreScreenPipeline({
@@ -707,8 +768,19 @@ test("Phase 76: PreScreenPipeline FAILs when final ratio < threshold", async () 
     { qId: "q2", type: "GOOD_TO_HAVE", weight: 1 },
   ])
   await pipeline.runTurn({ sessionId: "s1", reply: "a", lang: "en", nowIso: "2026-05-12T00:01:00Z", judgeCtx: ctx })
-  const r = await pipeline.runTurn({
+  const firstLowFinal = await pipeline.runTurn({
     sessionId: "s1", reply: "b", lang: "en", nowIso: "2026-05-12T00:02:00Z", judgeCtx: ctx,
+  })
+  assert.equal(firstLowFinal.action.kind, "clarify")
+  assert.match(firstLowFinal.text, /That helps|specific/i)
+
+  const secondLowFinal = await pipeline.runTurn({
+    sessionId: "s1", reply: "more detail", lang: "en", nowIso: "2026-05-12T00:03:00Z", judgeCtx: ctx,
+  })
+  assert.equal(secondLowFinal.action.kind, "clarify")
+
+  const r = await pipeline.runTurn({
+    sessionId: "s1", reply: "still thin", lang: "en", nowIso: "2026-05-12T00:04:00Z", judgeCtx: ctx,
   })
   assert.equal(r.action.kind, "terminal")
   if (r.action.kind === "terminal") assert.equal(r.action.terminal, "FAIL")

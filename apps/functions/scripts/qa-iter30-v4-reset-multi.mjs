@@ -7,6 +7,7 @@
 // Pattern follows e2e-reset-cold-start.mjs + qa-iter30-v5-edges.mjs.
 import admin from 'firebase-admin'
 import { randomUUID } from 'node:crypto'
+import { assertProductionPaUserCreationAllowed } from './lib/prod-test-user-guard.mjs'
 
 const sa = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON)
 admin.initializeApp({ credential: admin.credential.cert(sa) })
@@ -303,6 +304,13 @@ async function findOrCreateIsolatedUser() {
   const snap = await db.collection('pa-users').where('phoneE164', '==', ISOLATED_TEST_PHONE).limit(1).get()
   if (!snap.empty) return snap.docs[0].id
   const id = `qa30v4-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  assertProductionPaUserCreationAllowed({
+    projectId: 'wekruit-5f89b',
+    scriptName: 'apps/functions/scripts/qa-iter30-v4-reset-multi.mjs',
+    userId: id,
+    phoneE164: ISOLATED_TEST_PHONE,
+    reason: 'reset QA driver creates a fallback synthetic pa-users row when the fixed test phone is missing',
+  })
   await db.collection('pa-users').doc(id).set({
     id,
     phoneE164: ISOLATED_TEST_PHONE,

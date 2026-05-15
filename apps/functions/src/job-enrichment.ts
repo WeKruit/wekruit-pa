@@ -562,16 +562,15 @@ export function prescreenConfigFromApprovedDraft(
 ): PrescreenConfig {
   const questions = draft.opportunity.prescreen.questions.map((question, index) => {
     const qId = qIdFromQuestion(question.questionId, question.signal, index)
-    const keyword = keywordFromSignal(question.signal, qId)
     const type = !question.required ? "GOOD_TO_HAVE" : index === 0 ? "MUST_HAVE" : "PROBING"
     return {
       qId,
       type,
       weight: question.required ? 1 : 0.5,
-      matchThreshold: type === "MUST_HAVE" ? 0.85 : type === "PROBING" ? 0.65 : 0,
+      matchThreshold: matchThresholdForQuestion(qId, type),
       prompt: bilingual(clampText(question.prompt, 800)),
       clarifyPrompt: bilingual(clarifyPromptForQuestion(question, draft.opportunity.title)),
-      keywords: [{ keyword, weight: 1, hint: clampText(question.signal, 600) }],
+      keywords: keywordSpecsForQuestion(question, draft, qId),
     }
   })
 
@@ -620,6 +619,108 @@ function keywordFromSignal(signal: string, fallback: string): string {
   const words = signal.toLowerCase().match(/[a-z0-9]+/g) ?? []
   const compact = words.slice(0, 4).join("_")
   return (compact || fallback).slice(0, 60)
+}
+
+function matchThresholdForQuestion(questionId: string, type: "MUST_HAVE" | "PROBING" | "GOOD_TO_HAVE"): number {
+  if (type === "GOOD_TO_HAVE") return 0
+  if (type === "PROBING") return 0.65
+  // Role fit is a nearest-overlap story question. Production LLM scoring on
+  // strong adjacent engineering work can cluster around 0.70-0.85. The
+  // opener should find nearest relevant ownership, then later questions check
+  // depth, logistics, and hard filters.
+  if (questionId === "role_fit") return 0.7
+  return 0.85
+}
+
+function keywordSpecsForQuestion(
+  question: MarketplaceJobOpportunityDraft["opportunity"]["prescreen"]["questions"][number],
+  draft: MarketplaceJobOpportunityDraft,
+  fallbackQId: string,
+): Array<{ keyword: string; weight: number; hint: string }> {
+  const opportunity = draft.opportunity
+  const skills = opportunity.skills.map((skill) => skill.name).filter(Boolean).slice(0, 8)
+  const roleFunctions = opportunity.roleFunction.map((role) => role.replace(/_/g, " ")).slice(0, 4)
+  const title = opportunity.title
+  const roleContext = [title, ...roleFunctions, ...skills].filter(Boolean).join("; ")
+
+  if (fallbackQId === "role_fit") {
+    return [
+      {
+        keyword: keywordFromSignal(`${question.signal} ${title} ${roleFunctions.join(" ")}`, "recent_role_fit"),
+        weight: 1,
+        hint: clampText(
+          [
+            `Score recent work that is genuinely aligned with ${roleContext || title}.`,
+            "Count concrete personal ownership, systems touched, APIs/services/databases/dashboards, debugging, production impact, customer/user impact, and shipped outcomes.",
+            "Adjacent projects count when the candidate personally built or owned relevant engineering/product systems; do not require the exact same title.",
+          ].join(" "),
+          600,
+        ),
+      },
+    ]
+  }
+
+  if (fallbackQId === "technical_depth") {
+    return [
+      {
+        keyword: keywordFromSignal(`${question.signal} ${skills.join(" ")}`, "technical_depth"),
+        weight: 1,
+        hint: clampText(
+          [
+            `Score concrete depth in required skills${skills.length ? `: ${skills.join(", ")}` : ""}.`,
+            "Look for implementation details, technical tradeoffs, data models, APIs, debugging, reliability, ownership boundaries, and how the candidate knew the work succeeded.",
+          ].join(" "),
+          600,
+        ),
+      },
+    ]
+  }
+
+  if (fallbackQId === "location_alignment") {
+    const locations = opportunity.hardFilters.locations.join(", ")
+    return [
+      {
+        keyword: "location_alignment",
+        weight: 1,
+        hint: clampText(
+          `Score whether the candidate confirms they can work with the role location or remote setup${locations ? `: ${locations}` : ""}.`,
+          600,
+        ),
+      },
+    ]
+  }
+
+  if (fallbackQId === "compensation_alignment") {
+    const salary = draft.rawSnapshot.compensationText
+    return [
+      {
+        keyword: "compensation_alignment",
+        weight: 1,
+        hint: clampText(
+          `Score whether the candidate says the compensation target is aligned${salary ? ` with ${salary}` : ""}.`,
+          600,
+        ),
+      },
+    ]
+  }
+
+  if (fallbackQId === "sponsorship_status") {
+    const sponsorshipAvailable = opportunity.hardFilters.sponsorshipAvailable
+    return [
+      {
+        keyword: "sponsorship_alignment",
+        weight: 1,
+        hint: clampText(
+          sponsorshipAvailable === false
+            ? "Score high only when the candidate says they do not need current or future visa sponsorship."
+            : "Score whether the candidate clearly states their current or future visa sponsorship need.",
+          600,
+        ),
+      },
+    ]
+  }
+
+  return [{ keyword: keywordFromSignal(question.signal, fallbackQId), weight: 1, hint: clampText(question.signal, 600) }]
 }
 
 function clarifyPromptForQuestion(
