@@ -26,12 +26,16 @@ test("LaunchReadiness API helpers target the S9 admin callables", () => {
 
 test("LaunchReadiness route and nav are wired under admin platform only", () => {
   const appSource = readFileSync(new URL("../../App.tsx", import.meta.url), "utf8")
+  const sidebarSource = readFileSync(
+    new URL("../../components/console/Sidebar.tsx", import.meta.url),
+    "utf8",
+  )
 
   assert.match(appSource, /import LaunchReadiness from "\.\/pages\/LaunchReadiness\.js"/)
-  assert.match(appSource, /<NavLink to="\/admin\/launch-readiness">Launch Readiness<\/NavLink>/)
+  assert.match(sidebarSource, /to: "\/admin\/launch-readiness"/)
   assert.match(appSource, /<Route path="\/admin\/launch-readiness" element={<LaunchReadiness \/>} \/>/)
   assert.doesNotMatch(appSource, /<Route path="\/j\/:jobId"/)
-  assert.doesNotMatch(appSource, /<NavLink to="\/j\//)
+  assert.doesNotMatch(sidebarSource, /to: "\/j\//)
 })
 
 test("LaunchReadiness page renders readiness status request queue and stop controls", () => {

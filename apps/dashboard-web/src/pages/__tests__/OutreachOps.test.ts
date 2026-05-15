@@ -37,9 +37,13 @@ test("OutreachOps helpers target the admin snapshot callable", () => {
 
 test("OutreachOps route and nav are wired in App", () => {
   const appSource = readFileSync(new URL("../../App.tsx", import.meta.url), "utf8")
+  const sidebarSource = readFileSync(
+    new URL("../../components/console/Sidebar.tsx", import.meta.url),
+    "utf8",
+  )
   assert.equal(OUTREACH_OPS_ROUTE, "/admin/outreach-ops")
   assert.match(appSource, /import OutreachOps from "\.\/pages\/OutreachOps\.js"/)
-  assert.match(appSource, /<NavLink to="\/admin\/outreach-ops">Outreach Ops<\/NavLink>/)
+  assert.match(sidebarSource, /to: "\/admin\/outreach-ops"/)
   assert.match(appSource, /<Route path="\/admin\/outreach-ops" element={<OutreachOps \/>} \/>/)
   assert.doesNotMatch(appSource, /<Route path="\/j\/:jobId"/)
   assert.doesNotMatch(appSource, /PublicJob/)

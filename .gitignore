@@ -21,3 +21,4 @@ apps/eval/external-benchmarks/logs/
 
 # Phase 50 v1.5 QA team — runtime results (transient, per-run)
 tests/qa/.results/
+.design-bundle/

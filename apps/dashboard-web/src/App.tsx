@@ -1,6 +1,7 @@
 import { getRedirectResult, onAuthStateChanged, signOut } from "firebase/auth"
 import { useEffect, useState } from "react"
-import { Navigate, NavLink, Route, Routes } from "react-router-dom"
+import { Navigate, Route, Routes } from "react-router-dom"
+import { AppShell } from "./components/console/AppShell.js"
 import { AgentBuilder } from "./pages/AgentBuilder.js"
 import Legal from "./pages/Legal.js"
 import { Login } from "./pages/Login.js"
@@ -76,58 +77,6 @@ import { EvaluationAgentRanking as ExternalSupplyEvaluationAgentRanking } from "
 import { Jobs as ExternalSupplyJobs } from "./pages/external-supply/Jobs.js"
 import { JobWorkspace } from "./pages/admin/JobWorkspace.js"
 
-// v1.8 — collapsible sidebar section. Persists open/closed to localStorage.
-function NavSection({
-  id,
-  label,
-  children,
-  defaultOpen,
-  dim,
-}: {
-  id: string
-  label: string
-  children: React.ReactNode
-  defaultOpen?: boolean
-  dim?: boolean
-}) {
-  const storageKey = `nav-section-${id}`
-  const stored = typeof window !== "undefined" ? window.localStorage.getItem(storageKey) : null
-  const initial = stored === null ? !!defaultOpen : stored === "open"
-  const [open, setOpen] = useState(initial)
-  const handleToggle = (e: React.SyntheticEvent<HTMLDetailsElement>) => {
-    const next = (e.currentTarget as HTMLDetailsElement).open
-    setOpen(next)
-    try {
-      window.localStorage.setItem(storageKey, next ? "open" : "closed")
-    } catch { /* ignore */ }
-  }
-  return (
-    <details
-      className="nav-section"
-      open={open}
-      onToggle={handleToggle}
-      style={dim ? { opacity: 0.65 } : undefined}
-    >
-      <summary
-        className="nav-section-label"
-        style={{
-          cursor: "pointer",
-          userSelect: "none",
-          listStyle: "none",
-          display: "flex",
-          alignItems: "center",
-          gap: "0.4em",
-        }}
-      >
-        <span style={{ fontSize: "0.7em", opacity: 0.6, transition: "transform 0.15s", transform: open ? "rotate(90deg)" : "none" }}>▶</span>
-        {label}
-      </summary>
-      <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 4 }}>
-        {children}
-      </div>
-    </details>
-  )
-}
 import { auth } from "./lib/firebase.js"
 
 export default function App() {
@@ -165,90 +114,11 @@ export default function App() {
     )
   }
 
+  const email =
+    (user && typeof user === "object" && (user as { email?: string }).email) || "operator"
+
   return (
-    <div className="layout">
-      <nav className="side-nav">
-        <div className="brand-lockup">
-          <span>WK</span>
-          <strong>PA Console</strong>
-        </div>
-
-        {/* v1.8 — collapsible sidebar via <details>/<summary>. Persists
-            open/closed state to localStorage so it survives reloads. Each
-            section's `open` attribute is read on mount + toggle saves. */}
-        <NavSection id="prescreen" label="Pre-Screen" defaultOpen={true}>
-          <NavLink to="/admin/job-prescreen">Jobs · Config</NavLink>
-          <NavLink to="/admin/job-enrichment">Job Enrichment</NavLink>
-          <NavLink to="/admin/prescreen-sessions">Sessions</NavLink>
-          <NavLink to="/admin/ats-inbound">ATS Inbound</NavLink>
-          <NavLink to="/admin/bulk-resumes">Bulk Resumes</NavLink>
-          <NavLink to="/admin/prescreen-feedback">Feedback</NavLink>
-        </NavSection>
-        <NavSection id="monitor" label="Monitor" defaultOpen={true}>
-          <NavLink to="/" end>Overview</NavLink>
-          <NavLink to="/conversations">Conversations</NavLink>
-          <NavLink to="/abuse">Abuse</NavLink>
-        </NavSection>
-        <NavSection id="agent" label="Agent" defaultOpen={false}>
-          <NavLink to="/agents">Agents</NavLink>
-          <NavLink to="/admin/handbook">Handbook</NavLink>
-          <NavLink to="/admin/onboarding-questions">Onboarding Qs</NavLink>
-          <NavLink to="/agent/playbooks">Playbooks</NavLink>
-          <NavLink to="/agent/personas">Personas</NavLink>
-        </NavSection>
-        <NavSection id="match" label="Match" defaultOpen={false}>
-          <NavLink to="/admin/match-debug">Match Debug</NavLink>
-          <NavLink to="/match/candidates">Candidates</NavLink>
-          <NavLink to="/admin/passed-candidates">Passed Candidates</NavLink>
-          <NavLink to="/admin/identity-conflicts">Identity Conflicts</NavLink>
-        </NavSection>
-        <NavSection id="eval" label="Eval" defaultOpen={false}>
-          <NavLink to="/eval/voice-review">Voice Review</NavLink>
-          <NavLink to="/eval/n-round-sim">N-Round Sim</NavLink>
-          <NavLink to="/admin/flywheel-eval">Flywheel Eval</NavLink>
-        </NavSection>
-        <NavSection id="external-supply" label="External Supply" defaultOpen={false}>
-          <NavLink to="/admin/external-supply" end>Landing</NavLink>
-          <NavLink to="/admin/external-supply/jobs">Jobs by company</NavLink>
-          <NavLink to="/admin/external-supply/batches/new">New batch</NavLink>
-          <NavLink to="/admin/external-supply/review">Review queue</NavLink>
-          <NavLink to="/admin/external-supply/evaluations">Evaluations</NavLink>
-          <NavLink to="/admin/external-supply/research">Agent research</NavLink>
-          <NavLink to="/admin/external-supply/outreach">Outreach</NavLink>
-          <NavLink to="/admin/external-supply/sync">Instantly sync</NavLink>
-          <NavLink to="/admin/external-supply/audit">Audit</NavLink>
-        </NavSection>
-        <NavSection id="integrations" label="Integrations" defaultOpen={false}>
-          <NavLink to="/admin/upstream-templates">Upstream Templates</NavLink>
-          <NavLink to="/admin/downstream-triggers">Downstream Triggers</NavLink>
-          <NavLink to="/beta">Beta Allowlist</NavLink>
-          <NavLink to="/triggers">Triggers</NavLink>
-          <NavLink to="/admin/outreach-ops">Outreach Ops</NavLink>
-          <NavLink to="/admin/sendblue-pool">Sendblue Pool</NavLink>
-        </NavSection>
-        <NavSection id="platform" label="Platform" defaultOpen={false}>
-          <NavLink to="/admin/flags">Flags</NavLink>
-          <NavLink to="/admin/canonical-tags">Canonical Tags</NavLink>
-          <NavLink to="/admin/qa-evaluator">QA Evaluator</NavLink>
-          <NavLink to="/admin/launch-readiness">Launch Readiness</NavLink>
-        </NavSection>
-        <NavSection id="legacy" label="Legacy / advanced" defaultOpen={false} dim>
-          <NavLink to="/admin/onboarding">Onboarding (legacy)</NavLink>
-          <NavLink to="/match/weights">Match Weights</NavLink>
-          <NavLink to="/match/weights/test">Weights · Dry Run</NavLink>
-          <NavLink to="/match/explainer-history">Explainer History</NavLink>
-          <NavLink to="/match/explainer-test">Explainer Test</NavLink>
-        </NavSection>
-
-        <button
-          type="button"
-          onClick={() => signOut(auth())}
-          className="sign-out"
-        >
-          Sign out
-        </button>
-      </nav>
-      <main>
+    <AppShell userEmail={email} onSignOut={() => signOut(auth())}>
         <Routes>
           <Route path="/" element={<Overview />} />
           <Route path="/conversations" element={<Users />} />
@@ -349,7 +219,6 @@ export default function App() {
           <Route path="/legal" element={<Legal />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
-      </main>
-    </div>
+    </AppShell>
   )
 }

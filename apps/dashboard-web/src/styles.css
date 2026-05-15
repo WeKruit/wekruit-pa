@@ -1,3 +1,11 @@
+/* 2026-05-15 console redesign — WeKruit Console tokens + shell.
+   Tokens FIRST (CSS vars), shell SECOND (chrome + primitives). Both
+   must precede the Tailwind directives per CSS @import rules.
+   Legacy page-internal rules below (.panel/.metric-card/.hero-panel)
+   still render so unmigrated pages keep working. */
+@import "./console-tokens.css";
+@import "./console-shell.css";
+
 /* iter30/WS8 — Tailwind directives + shadcn (slate) CSS variables.
    Legacy app-shell styles below this block remain untouched (sidebar,
    .panel, .page-header, .layout etc.). Shadcn primitives consume the
@@ -52,23 +60,10 @@
   }
 }
 
-:root {
-  font-family:
-    ui-sans-serif,
-    system-ui,
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    sans-serif;
-  line-height: 1.5;
-  color: #172018;
-  background: #f5f2ea;
-}
+/* Legacy :root color/font block intentionally removed — console-tokens.css
+   now drives base typography, color, and background. */
 * {
   box-sizing: border-box;
-}
-body {
-  margin: 0;
 }
 a {
   color: #2f6f4f;

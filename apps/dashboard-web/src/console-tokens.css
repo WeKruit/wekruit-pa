@@ -1,0 +1,394 @@
+/* ==========================================================================
+   WeKruit — colors_and_type.css
+   Design tokens: colors, type, spacing, radii, shadows, motion.
+   Link this file FIRST in any WeKruit page.
+   ========================================================================== */
+
+/* ---- Fonts ---------------------------------------------------------------
+   Substitutions (see README.md "Font substitutions"):
+     - Display serif: Newsreader   (substitutes Tiempos Headline / Editorial New)
+     - Body sans:     Hanken Grotesk (substitutes Söhne / Inter)
+   If licensed Tiempos / Söhne files are dropped into ./fonts/, swap the
+   --font-serif / --font-sans values below.
+--------------------------------------------------------------------------- */
+@import url('https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300..700;1,6..72,300..700&family=Hanken+Grotesk:wght@300..800&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+  /* ---- Color: brand anchors ---- */
+  --cream:           #F5EDE3;   /* the page */
+  --cream-2:         #EFE4D4;   /* warmer/deeper cream for bands */
+  --cream-3:         #FAF5EC;   /* lifted card surface on cream */
+  --ink:             #2D1A0A;   /* primary text, buttons, ink */
+  --ink-2:           #5A4636;   /* secondary text */
+  --ink-3:           #897462;   /* tertiary text, captions */
+  --ink-4:           #B5A595;   /* placeholder, disabled text */
+
+  /* ---- Color: warm neutrals (borders & dividers — never cool grays) ---- */
+  --border:          #E3D6C3;   /* hairline borders, dividers */
+  --border-strong:   #C9B69E;   /* hover/focus border */
+  --border-ink:      var(--ink);
+
+  /* ---- Color: peach halo accent (gradients framing hero / CTA bands) ---- */
+  --peach-50:        #FBE8DA;   /* lightest, near-cream */
+  --peach-100:       #F6D6BE;
+  --peach-200:       #F0BFA0;
+  --peach-300:       #E8A988;
+  --peach-glow:      rgba(232, 169, 136, 0.55);  /* halo color w/ alpha */
+
+  /* ---- Color: semantic ---- */
+  --success:         #4F6B3C;   /* moss — warm, brand-safe green */
+  --success-bg:      #E6E9D9;
+  --warning:         #B57826;   /* amber-brown */
+  --warning-bg:      #F4E1C4;
+  --danger:          #9A3B2A;   /* deep rust */
+  --danger-bg:       #F2D5CC;
+  --info:            #4A5D6E;   /* slate teal (used sparingly) */
+  --info-bg:         #DDE3E5;
+
+  /* ---- Color: signature gradients ---- */
+  --halo-hero:
+    radial-gradient(ellipse 80% 70% at 50% 30%,   var(--peach-glow) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 50% at 0%  50%,   rgba(246,214,190,.45) 0%, transparent 55%),
+    radial-gradient(ellipse 60% 50% at 100% 50%,  rgba(246,214,190,.45) 0%, transparent 55%),
+    var(--cream);
+  --halo-cta:
+    radial-gradient(ellipse 90% 70% at 50% 100%,  var(--peach-glow) 0%, transparent 60%),
+    var(--cream);
+
+  /* ---- Type: families ---- */
+  --font-serif:      'Newsreader', 'Tiempos Headline', 'Editorial New', Georgia, 'Times New Roman', serif;
+  --font-sans:       'Hanken Grotesk', 'Söhne', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono:       'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* ---- Type: scale (fluid clamps for marketing; fixed for product) ---- */
+  --fs-display:      clamp(56px, 7vw, 96px);   /* hero H1 */
+  --fs-h1:           clamp(40px, 5vw, 64px);   /* section H1 */
+  --fs-h2:           clamp(32px, 4vw, 48px);   /* section H2 */
+  --fs-h3:           clamp(24px, 2.6vw, 32px); /* subsection */
+  --fs-h4:           20px;
+  --fs-lead:         clamp(18px, 1.6vw, 22px); /* hero subhead */
+  --fs-body:         17px;
+  --fs-body-sm:      15px;
+  --fs-ui:           14px;
+  --fs-caption:      13px;
+  --fs-overline:     12px;
+
+  /* ---- Type: line-height ---- */
+  --lh-display:      1.02;
+  --lh-heading:      1.08;
+  --lh-subhead:      1.25;
+  --lh-body:         1.55;
+  --lh-ui:           1.4;
+
+  /* ---- Type: weight ---- */
+  --fw-light:        300;
+  --fw-regular:      400;
+  --fw-medium:       500;
+  --fw-semibold:     600;
+  --fw-bold:         700;
+
+  /* ---- Type: letter-spacing ---- */
+  --ls-display:      -0.025em;   /* serif headlines, tight */
+  --ls-heading:      -0.015em;
+  --ls-body:          0;
+  --ls-ui:           -0.005em;
+  --ls-overline:      0.12em;    /* uppercase eyebrows */
+
+  /* ---- Spacing scale ---- */
+  --sp-1:            4px;
+  --sp-2:            8px;
+  --sp-3:            12px;
+  --sp-4:            16px;
+  --sp-5:            24px;
+  --sp-6:            32px;
+  --sp-7:            48px;
+  --sp-8:            64px;
+  --sp-9:            96px;
+  --sp-10:           128px;
+  --sp-11:           160px;
+
+  /* ---- Layout ---- */
+  --container:       1200px;
+  --container-narrow: 960px;
+  --container-prose:  680px;
+
+  /* ---- Radii ---- */
+  --r-sm:            8px;
+  --r-md:            14px;        /* default cards, inputs */
+  --r-lg:            20px;        /* feature cards, hero containers */
+  --r-pill:          999px;       /* buttons, chips, tags */
+
+  /* ---- Shadows (warm, low-lift — never default Material) ---- */
+  --shadow-sm:       0 1px 2px rgba(45,26,10,.06);
+  --shadow-md:       0 8px 24px -8px rgba(45,26,10,.10);
+  --shadow-lg:       0 24px 60px -20px rgba(45,26,10,.18);
+  --shadow-xl:       0 40px 96px -32px rgba(45,26,10,.22);
+  --shadow-inset:    inset 0 0 0 1px var(--border);
+
+  /* ---- Motion ---- */
+  --ease:            cubic-bezier(0.22, 1, 0.36, 1);
+  --dur-micro:       120ms;
+  --dur-fast:        200ms;
+  --dur-base:        320ms;
+  --dur-slow:        600ms;
+
+  /* ---- Focus ring ---- */
+  --focus-ring:      0 0 0 2px var(--cream), 0 0 0 4px var(--ink);
+
+  /* ---- Z-index ---- */
+  --z-base:          1;
+  --z-sticky:        10;
+  --z-popover:       50;
+  --z-modal:         100;
+  --z-toast:         200;
+}
+
+/* =====================================================================
+   Base — applied when this file is the global stylesheet
+   ===================================================================== */
+html, body {
+  background: var(--cream);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  letter-spacing: var(--ls-body);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection { background: var(--peach-200); color: var(--ink); }
+
+/* =====================================================================
+   Semantic type — drop-in element styles
+   ===================================================================== */
+h1, .h-display {
+  font-family: var(--font-serif);
+  font-weight: var(--fw-regular);
+  font-size: var(--fs-display);
+  line-height: var(--lh-display);
+  letter-spacing: var(--ls-display);
+  color: var(--ink);
+  margin: 0;
+  text-wrap: balance;
+}
+h2, .h1 {
+  font-family: var(--font-serif);
+  font-weight: var(--fw-regular);
+  font-size: var(--fs-h1);
+  line-height: var(--lh-heading);
+  letter-spacing: var(--ls-heading);
+  color: var(--ink);
+  margin: 0;
+  text-wrap: balance;
+}
+h3, .h2 {
+  font-family: var(--font-serif);
+  font-weight: var(--fw-regular);
+  font-size: var(--fs-h2);
+  line-height: var(--lh-heading);
+  letter-spacing: var(--ls-heading);
+  color: var(--ink);
+  margin: 0;
+  text-wrap: balance;
+}
+h4, .h3 {
+  font-family: var(--font-sans);
+  font-weight: var(--fw-semibold);
+  font-size: var(--fs-h3);
+  line-height: var(--lh-subhead);
+  letter-spacing: var(--ls-heading);
+  color: var(--ink);
+  margin: 0;
+}
+h5, .h4 {
+  font-family: var(--font-sans);
+  font-weight: var(--fw-semibold);
+  font-size: var(--fs-h4);
+  line-height: var(--lh-subhead);
+  color: var(--ink);
+  margin: 0;
+}
+p, .body {
+  font-family: var(--font-sans);
+  font-weight: var(--fw-regular);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  color: var(--ink-2);
+  margin: 0;
+  text-wrap: pretty;
+}
+.lead {
+  font-family: var(--font-sans);
+  font-weight: var(--fw-regular);
+  font-size: var(--fs-lead);
+  line-height: var(--lh-subhead);
+  color: var(--ink-2);
+  text-wrap: pretty;
+}
+.eyebrow, .overline {
+  font-family: var(--font-sans);
+  font-weight: var(--fw-medium);
+  font-size: var(--fs-overline);
+  letter-spacing: var(--ls-overline);
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.caption {
+  font-family: var(--font-sans);
+  font-size: var(--fs-caption);
+  color: var(--ink-3);
+  line-height: var(--lh-ui);
+}
+code, kbd, samp, .mono {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  background: var(--cream-2);
+  padding: 2px 6px;
+  border-radius: 6px;
+  color: var(--ink);
+}
+a {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+  text-decoration-color: var(--ink-3);
+  transition: text-decoration-color var(--dur-fast) var(--ease);
+}
+a:hover { text-decoration-color: var(--ink); }
+
+/* The "editorial italic word" trick — wrap one word in <em class="accent"> */
+em.accent, .accent-italic {
+  font-style: italic;
+  font-feature-settings: 'ss01' on;
+  font-weight: var(--fw-regular);
+}
+
+/* =====================================================================
+   Utility containers
+   ===================================================================== */
+.container         { max-width: var(--container); margin: 0 auto; padding: 0 var(--sp-5); }
+.container-narrow  { max-width: var(--container-narrow); margin: 0 auto; padding: 0 var(--sp-5); }
+.container-prose   { max-width: var(--container-prose); margin: 0 auto; padding: 0 var(--sp-5); }
+
+/* =====================================================================
+   Buttons (canonical styles — UI kit components import these)
+   ===================================================================== */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  font-family: var(--font-sans);
+  font-weight: var(--fw-medium);
+  font-size: var(--fs-ui);
+  letter-spacing: var(--ls-ui);
+  line-height: 1;
+  padding: 14px 22px;
+  border-radius: var(--r-pill);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease),
+              color var(--dur-fast) var(--ease),
+              border-color var(--dur-fast) var(--ease),
+              box-shadow var(--dur-fast) var(--ease),
+              transform var(--dur-fast) var(--ease);
+  white-space: nowrap;
+  text-decoration: none;
+}
+.btn:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.btn--primary {
+  background: var(--ink);
+  color: var(--cream);
+  box-shadow: var(--shadow-sm);
+}
+.btn--primary:hover  { background: #1c0f04; box-shadow: var(--shadow-md); }
+.btn--primary:active { transform: translateY(0); box-shadow: var(--shadow-sm); }
+
+.btn--secondary {
+  background: transparent;
+  color: var(--ink);
+  border-color: var(--ink);
+}
+.btn--secondary:hover  { background: var(--ink); color: var(--cream); }
+
+.btn--ghost {
+  background: transparent;
+  color: var(--ink);
+  border-color: transparent;
+}
+.btn--ghost:hover { background: rgba(45,26,10,.06); }
+
+.btn--sm { padding: 10px 16px; font-size: 13px; }
+.btn--lg { padding: 18px 28px; font-size: 15px; }
+
+/* =====================================================================
+   Cards
+   ===================================================================== */
+.card {
+  background: var(--cream-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: var(--sp-6);
+  transition: border-color var(--dur-fast) var(--ease),
+              box-shadow var(--dur-fast) var(--ease),
+              transform var(--dur-fast) var(--ease);
+}
+.card--interactive:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+.card--feature {
+  border-radius: var(--r-lg);
+  padding: var(--sp-7);
+}
+
+/* =====================================================================
+   Inputs
+   ===================================================================== */
+.input, .textarea, .select {
+  width: 100%;
+  font-family: var(--font-sans);
+  font-size: var(--fs-body-sm);
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 12px 14px;
+  line-height: var(--lh-ui);
+  transition: border-color var(--dur-fast) var(--ease),
+              box-shadow var(--dur-fast) var(--ease);
+}
+.input::placeholder, .textarea::placeholder { color: var(--ink-4); }
+.input:hover, .textarea:hover, .select:hover { border-color: var(--border-strong); }
+.input:focus, .textarea:focus, .select:focus {
+  outline: none;
+  border-color: var(--ink);
+  box-shadow: 0 0 0 3px rgba(45,26,10,.08);
+}
+
+/* =====================================================================
+   Badges / chips
+   ===================================================================== */
+.badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--font-sans);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-medium);
+  padding: 4px 10px;
+  border-radius: var(--r-pill);
+  background: var(--cream-2);
+  color: var(--ink-2);
+  border: 1px solid var(--border);
+  line-height: 1.4;
+}
+.badge--success { background: var(--success-bg); color: var(--success); border-color: transparent; }
+.badge--warning { background: var(--warning-bg); color: var(--warning); border-color: transparent; }
+.badge--danger  { background: var(--danger-bg);  color: var(--danger);  border-color: transparent; }
+.badge--ink     { background: var(--ink);        color: var(--cream);   border-color: transparent; }
+
+/* =====================================================================
+   Divider
+   ===================================================================== */
+.divider { height: 1px; background: var(--border); border: 0; }
