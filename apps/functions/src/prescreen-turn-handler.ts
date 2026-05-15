@@ -27,6 +27,8 @@ import {
 import { sendImessage } from "./sendblue/sendblue-client.js"
 import { runPrescreenTerminalAction } from "./prescreen-terminal-action.js"
 
+const ACTIVE_PRESCREEN_TIMEOUT_MS = 60 * 60 * 1000
+
 /** Firestore-backed PreScreenStateProvider. */
 class FirestorePreScreenStore implements PreScreenStateProvider {
   constructor(private readonly db: Firestore) {}
@@ -121,7 +123,14 @@ function makeProductionKeywordSetCaller(): KeywordSetLlmCaller {
  * Find active prescreen session for a user (terminal=null). Returns
  * sessionId or null if none.
  */
-async function findActiveSessionId(db: Firestore, userId: string): Promise<string | null> {
+async function findActiveSessionId(
+  db: Firestore,
+  userId: string,
+  opts: {
+    nowMs?: number
+    log?: (event: string, payload: Record<string, unknown>) => void
+  } = {},
+): Promise<string | null> {
   const snap = await db
     .collection("pa-prescreen-sessions")
     .where("userId", "==", userId)
@@ -130,7 +139,56 @@ async function findActiveSessionId(db: Firestore, userId: string): Promise<strin
     .limit(1)
     .get()
   if (snap.empty) return null
-  return snap.docs[0].id
+  const doc = snap.docs[0]
+  const data = doc.data() as Record<string, unknown>
+  const lastActiveMs = timestampMs(data.updatedAt) ?? timestampMs(data.createdAt)
+  const nowMs = opts.nowMs ?? Date.now()
+  if (lastActiveMs !== null && nowMs - lastActiveMs > ACTIVE_PRESCREEN_TIMEOUT_MS) {
+    const nowIso = new Date(nowMs).toISOString()
+    await doc.ref.set(
+      {
+        terminal: "PAUSE",
+        terminalReason: "expired_inactive_prescreen_session",
+        currentQId: null,
+        updatedAt: nowIso,
+        workSession: {
+          kind: "job_prescreen",
+          status: "ended",
+          endedAt: nowIso,
+          boundary: "timeout",
+        },
+      },
+      { merge: true },
+    )
+    opts.log?.("prescreen.turn.expired_inactive_session", {
+      userId,
+      sessionId: doc.id,
+      lastActiveAt: new Date(lastActiveMs).toISOString(),
+      timeoutMinutes: ACTIVE_PRESCREEN_TIMEOUT_MS / 60_000,
+    })
+    return null
+  }
+  return doc.id
+}
+
+function timestampMs(value: unknown): number | null {
+  if (typeof value === "string") {
+    const parsed = Date.parse(value)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  if (typeof value === "number" && Number.isFinite(value)) return value
+  if (value && typeof value === "object") {
+    const maybe = value as { toMillis?: () => number; toDate?: () => Date }
+    if (typeof maybe.toMillis === "function") {
+      const ms = maybe.toMillis()
+      return Number.isFinite(ms) ? ms : null
+    }
+    if (typeof maybe.toDate === "function") {
+      const ms = maybe.toDate().getTime()
+      return Number.isFinite(ms) ? ms : null
+    }
+  }
+  return null
 }
 
 export interface RunPrescreenTurnArgs {
@@ -159,7 +217,7 @@ export async function runPrescreenTurnIfActive(
   args: RunPrescreenTurnArgs
 ): Promise<RunPrescreenTurnResult> {
   const log = args.log ?? (() => {})
-  const sessionId = await findActiveSessionId(args.db, args.userId)
+  const sessionId = await findActiveSessionId(args.db, args.userId, { log })
   if (!sessionId) return { handled: false }
 
   const store = new FirestorePreScreenStore(args.db)

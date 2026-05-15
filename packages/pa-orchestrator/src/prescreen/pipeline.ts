@@ -317,7 +317,7 @@ export class PreScreenPipeline {
     next.questions = state.questions
     next.score = state.score
     if (next.workSession) {
-      next.workSession = { ...next.workSession, status: "ended", endedAt: nowIso }
+      next.workSession = { ...next.workSession, status: "ended", endedAt: nowIso, boundary: "terminal" }
     }
     await this.opts.store.save(next)
     log("prescreen.pipeline.terminal", {

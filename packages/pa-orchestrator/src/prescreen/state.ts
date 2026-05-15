@@ -85,7 +85,7 @@ export interface PreScreenState {
     status: "active" | "ended" | "superseded"
     startedAt?: string
     endedAt?: string
-    boundary?: "trigger"
+    boundary?: "trigger" | "terminal" | "timeout" | "superseded"
     supersededBySessionId?: string
   }
   /** ISO created/updated timestamps. */
