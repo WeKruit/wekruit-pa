@@ -43,7 +43,7 @@ export class RoundRobinCallerIdStrategy implements CallerIdStrategy {
     }
   }
 
-  pick(input: { bookingId: string }): string {
+  pick(input: { bookingId: string; paUserId: string }): string {
     const idx = hashTo(this.callerIds.length, input.bookingId)
     return this.callerIds[idx]!
   }
@@ -68,7 +68,7 @@ export class StickyByUserIdCallerIdStrategy implements CallerIdStrategy {
     }
   }
 
-  pick(input: { paUserId: string }): string {
+  pick(input: { bookingId: string; paUserId: string }): string {
     const idx = hashTo(this.callerIds.length, input.paUserId)
     return this.callerIds[idx]!
   }
