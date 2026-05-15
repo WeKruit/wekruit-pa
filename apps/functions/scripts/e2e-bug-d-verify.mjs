@@ -10,6 +10,7 @@
 // Fail:  pa.match.nuanced_reason_failed with 401
 import admin from "firebase-admin"
 import { randomUUID } from "node:crypto"
+import { assertProductionPaUserCreationAllowed } from "./lib/prod-test-user-guard.mjs"
 
 const sa = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON)
 admin.initializeApp({ credential: admin.credential.cert(sa) })
@@ -51,6 +52,13 @@ async function pollInbound(eventId) {
 async function main() {
   console.log("═══ Bug D live verify (post 7419dff) ═══")
   const userId = `e2e-bugd-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+  assertProductionPaUserCreationAllowed({
+    projectId: "wekruit-5f89b",
+    scriptName: "apps/functions/scripts/e2e-bug-d-verify.mjs",
+    userId,
+    phoneE164: TEST_PHONE,
+    reason: "legacy bug D verifier creates a fresh pa-users row",
+  })
 
   console.log("[1] seed test user (complete, English) + parsedCandidateResumes")
   await db.collection("pa-users").doc(userId).set({

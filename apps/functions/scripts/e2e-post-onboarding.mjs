@@ -9,6 +9,9 @@
 import { initializeApp, cert, getApps } from "firebase-admin/app"
 import { getFirestore } from "firebase-admin/firestore"
 import { readFileSync } from "node:fs"
+import { assertProductionPaUserCreationAllowed } from "./lib/prod-test-user-guard.mjs"
+
+const PROJECT = "wekruit-5f89b"
 
 function init() {
   if (getApps().length > 0) return
@@ -55,6 +58,12 @@ async function main() {
   const db = getFirestore()
   const phoneTail = String(Math.floor(2000000 + Math.random() * 7000000))
   const phone = `+1888${phoneTail}`
+  assertProductionPaUserCreationAllowed({
+    projectId: PROJECT,
+    scriptName: "apps/functions/scripts/e2e-post-onboarding.mjs",
+    phoneE164: phone,
+    reason: "legacy fresh-phone post-onboarding probe creates a new pa-users row through broker processing",
+  })
   console.log(`Phone ${phone}`)
 
   // ── Walk full onboarding (abbreviated)

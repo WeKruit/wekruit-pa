@@ -12,6 +12,7 @@
 // Reads pa-messages assistant rows + pa-users doc + pa-orchestrator-logs.
 import admin from 'firebase-admin'
 import { randomUUID } from 'node:crypto'
+import { assertProductionPaUserCreationAllowed } from './lib/prod-test-user-guard.mjs'
 
 const sa = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON)
 admin.initializeApp({ credential: admin.credential.cert(sa) })
@@ -67,6 +68,13 @@ async function send(text) {
 async function findOrSeed(phone) {
   // Always create fresh; phones are randomized per run.
   const id = `e2e-bugab-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+  assertProductionPaUserCreationAllowed({
+    projectId: 'wekruit-5f89b',
+    scriptName: 'apps/functions/scripts/e2e-bug-a-b-verify.mjs',
+    userId: id,
+    phoneE164: phone,
+    reason: 'legacy bug A/B verifier always creates a fresh pa-users row',
+  })
   await db.collection('pa-users').doc(id).set({
     id, phoneE164: phone, channels: { imessageHandle: phone },
     onboardingStatus: 'beta_participant', onboardingState: 'pending', testMode: true,

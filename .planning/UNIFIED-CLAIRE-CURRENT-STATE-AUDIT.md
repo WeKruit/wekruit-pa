@@ -232,6 +232,29 @@ Required fix boundary:
   - `paCandidateClaimProfile` and `paCandidateResumeGateStatus` reject `@wekruit.com` operator accounts.
   - `/admin/candidates` defaults to candidate accounts only and excludes external prospects, synthetic tests, old SMS profiles, and incomplete identity artifacts.
 
+## 2026-05-15 Production E2E User-Creation Guard
+
+- New shared guard:
+  - `apps/functions/scripts/lib/prod-test-user-guard.mjs`.
+  - In production project `wekruit-5f89b`, scripts refuse to create fresh `pa-users` rows unless `WEKRUIT_ALLOW_PROD_TEST_USER_CREATE=1` is explicitly set.
+  - This is intentionally not a Sendblue phone allowlist; it protects non-webhook production validation scripts that write Firestore directly or create users indirectly through broker events.
+- Guarded legacy scripts:
+  - `e2e-single-no-cleanup.mjs`
+  - `e2e-memory-verify.mjs`
+  - `e2e-post-onboarding.mjs`
+  - `e2e-onboarding-sim.mjs`
+  - `e2e-onboarding-20-iter.mjs`
+  - `e2e-onboarding-20-iter-v3.mjs`
+  - `e2e-reset-cold-start.mjs`
+  - `e2e-bug-a-b-verify.mjs`
+  - `e2e-bug-d-verify.mjs`
+  - `qa-iter30-v4-reset-multi.mjs`
+- Verification:
+  - `node --import tsx --test apps/functions/scripts/__tests__/prod-test-user-guard.test.ts` passed 5/5.
+  - `npm run typecheck --workspace=@pa/functions` passed under Node 24.
+  - `npm test --workspace=@pa/functions` passed 1517/1517; the guard regression test is part of the normal functions test command.
+  - Live Firestore recheck after the test run: `pa-users` stayed at 602; `pa-users/U7AwKT8nLDRa35DkuBxq` still exists with `email = indolencorlol@gmail.com`, `phoneE164 = +14243201960`; stable stress user remains `testMode = true`.
+
 ## 2026-05-15 WeKruit Open / Layoff Front Door Verification
 
 - Separate repo: `/Users/adam/Desktop/WeKruit/wekruit-layoff`.

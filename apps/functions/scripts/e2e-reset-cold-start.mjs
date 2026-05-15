@@ -5,6 +5,7 @@
 // (rawPayload.kind=imessage + harness:{suppressOutbound}).
 import admin from 'firebase-admin'
 import { randomUUID } from 'node:crypto'
+import { assertProductionPaUserCreationAllowed } from './lib/prod-test-user-guard.mjs'
 
 const sa = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON)
 admin.initializeApp({ credential: admin.credential.cert(sa) })
@@ -90,6 +91,13 @@ async function findOrCreateTestUser(phone) {
     return id
   }
   const id = `e2e-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  assertProductionPaUserCreationAllowed({
+    projectId: 'wekruit-5f89b',
+    scriptName: 'apps/functions/scripts/e2e-reset-cold-start.mjs',
+    userId: id,
+    phoneE164: phone,
+    reason: 'reset cold-start probe creates a fallback synthetic pa-users row when the fixed test phone is missing',
+  })
   await db.collection('pa-users').doc(id).set({
     id,
     phoneE164: phone,
