@@ -257,11 +257,35 @@ Required fix boundary:
   - `e2e-bug-a-b-verify.mjs`
   - `e2e-bug-d-verify.mjs`
   - `qa-iter30-v4-reset-multi.mjs`
+- Guarded root verification scripts:
+  - `scripts/e2e-downstream-tag-side-effect.mjs` now refuses fresh production `pa-users` creation by default.
+  - `scripts/verify-match-company-tags.mjs` now requires the target synthetic `pa-users` row to already exist in production.
+  - `scripts/verify-nl-judge-urgently-seeking.mjs` now requires the target synthetic `pa-users` row to already exist in production.
 - Verification:
-  - `node --import tsx --test apps/functions/scripts/__tests__/prod-test-user-guard.test.ts` passed 5/5.
+  - `node --import tsx --test apps/functions/scripts/__tests__/prod-test-user-guard.test.ts` passed 6/6.
+  - Direct production-credential run of `scripts/e2e-downstream-tag-side-effect.mjs` failed before any write with `refused to create a production pa-users row`.
   - `npm run typecheck --workspace=@pa/functions` passed under Node 24.
   - `npm test --workspace=@pa/functions` passed 1517/1517; the guard regression test is part of the normal functions test command.
   - Live Firestore recheck after the test run: `pa-users` stayed at 602; `pa-users/U7AwKT8nLDRa35DkuBxq` still exists with `email = indolencorlol@gmail.com`, `phoneE164 = +14243201960`; stable stress user remains `testMode = true`.
+
+## 2026-05-15 Rain Fullstack Live Prescreen Verification
+
+- Test identity:
+  - Candidate: `pa-users/U7AwKT8nLDRa35DkuBxq`.
+  - Email: `indolencorlol@gmail.com`.
+  - Phone: `+14243201960`.
+  - Job trigger: `WeKruit_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_Job`.
+- Live iMessage result:
+  - New same-job trigger created a fresh work session instead of deduping against an old ended session.
+  - Session: `pa-prescreen-sessions/ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260515T202128136Z`.
+  - The candidate gave partial and then multi-message answers; coalescing preserved the two quick messages as one turn.
+  - Claire probed role fit twice and technical depth once before moving through location, compensation, and sponsorship.
+  - Terminal: `PASS`, score `4.41/5.00`, ratio `0.882`, threshold `0.65`.
+- Firestore result:
+  - `pa-users` count stayed `602`.
+  - `pa-candidate-job-states/U7AwKT8nLDRa35DkuBxq__rain-software-engineer-fullstack-8849f6ef` is `employer_visible`.
+  - `pa-employer-visible-profiles/rain-software-engineer-fullstack-8849f6ef__U7AwKT8nLDRa35DkuBxq` points to the latest session.
+  - `pa-users/U7AwKT8nLDRa35DkuBxq.lastPrescreenMemoryUpdate` and `conversationDerivedPreferences.prescreenEvidenceByJob.rain-software-engineer-fullstack-8849f6ef` were updated with reusable engineering evidence.
 
 ## 2026-05-15 WeKruit Open / Layoff Front Door Verification
 

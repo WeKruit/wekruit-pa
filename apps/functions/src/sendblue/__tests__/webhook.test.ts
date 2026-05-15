@@ -680,7 +680,7 @@ describe("handleSendblueWebhook", () => {
     assert.equal(prescreenCalls[0]!.jobId, "rain-software-engineer-fullstack-8849f6ef")
     assert.equal(prescreenCalls[0]!.userId, "uJob1")
     assert.equal(prescreenCalls[0]!.toE164, "+15551234567")
-    assert.ok(prescreenIdempotency.has("rain-software-engineer-fullstack-8849f6ef_uJob1"))
+    assert.ok(prescreenIdempotency.has("rain-software-engineer-fullstack-8849f6ef_uJob1_msg-entry-job-1"))
     assert.ok(audit.some((row) =>
       row.type === "trigger_fired" &&
       (row.payload as { trigger?: string } | undefined)?.trigger === "prescreen"
@@ -719,7 +719,7 @@ describe("handleSendblueWebhook", () => {
     assert.equal(prescreenCalls[0]!.userId, "u_real_candidate_1")
     assert.equal(prescreenCalls[0]!.sourceRequestedUserId, "11111111-2222-4333-8444-555555555555")
     assert.equal(pendingInvites.has("11111111-2222-4333-8444-555555555555"), false, "pending public invite is consumed after binding")
-    assert.ok(prescreenIdempotency.has("rain-software-engineer-fullstack-8849f6ef_u_real_candidate_1"))
+    assert.ok(prescreenIdempotency.has("rain-software-engineer-fullstack-8849f6ef_u_real_candidate_1_msg-entry-public-1"))
   })
 
   it("Test 18 (entrypoints): WeKruit_LAID_OFF triggers layoff onboarding once, then dedupes within the window", async () => {

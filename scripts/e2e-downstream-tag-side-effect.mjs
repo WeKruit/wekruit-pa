@@ -15,6 +15,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { applicationDefault, cert, getApps, initializeApp } from "firebase-admin/app"
 import { getFirestore } from "firebase-admin/firestore"
+import { assertProductionPaUserCreationAllowed } from "../apps/functions/scripts/lib/prod-test-user-guard.mjs"
 
 function bootstrapCreds() {
   if (process.env.GOOGLE_APPLICATION_CREDENTIALS) return
@@ -42,6 +43,12 @@ const db = getFirestore()
 
 const USER_ID = `e2e-downstream-${Date.now()}`
 const TRIGGER_ID = "mentioned_layoff"
+
+assertProductionPaUserCreationAllowed({
+  scriptName: "scripts/e2e-downstream-tag-side-effect.mjs",
+  userId: USER_ID,
+  reason: "downstream connector E2E creates a fresh synthetic pa-users row",
+})
 
 const { runDownstreamConnector } = await import(
   "../packages/pa-orchestrator/dist/downstream.js"

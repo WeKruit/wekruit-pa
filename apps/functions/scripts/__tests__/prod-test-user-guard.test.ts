@@ -94,3 +94,20 @@ test("legacy production E2E scripts that create fresh pa-users are guarded", () 
     assert.match(source, /assertProductionPaUserCreationAllowed/, `${script} must check before creating users`)
   }
 })
+
+test("root production verification scripts that touch pa-users are guarded", () => {
+  const scripts = [
+    "../../../../scripts/e2e-downstream-tag-side-effect.mjs",
+    "../../../../scripts/verify-match-company-tags.mjs",
+    "../../../../scripts/verify-nl-judge-urgently-seeking.mjs",
+  ]
+  for (const script of scripts) {
+    const source = readFileSync(new URL(script, import.meta.url), "utf8")
+    assert.match(source, /prod-test-user-guard\.mjs/, `${script} must import the production pa-users guard`)
+    assert.match(
+      source,
+      /assertProductionPaUserCreationAllowed|requireExistingPaUserForProductionTest/,
+      `${script} must check before creating or mutating test users`,
+    )
+  }
+})
