@@ -26,9 +26,13 @@ test("FlywheelEval API helpers target the S8 admin snapshot callable", () => {
 
 test("FlywheelEval route and nav are wired under admin eval", () => {
   const appSource = readFileSync(new URL("../../App.tsx", import.meta.url), "utf8")
+  const sidebarSource = readFileSync(
+    new URL("../../components/console/Sidebar.tsx", import.meta.url),
+    "utf8",
+  )
 
   assert.match(appSource, /import FlywheelEval from "\.\/pages\/FlywheelEval\.js"/)
-  assert.match(appSource, /<NavLink to="\/admin\/flywheel-eval">Flywheel Eval<\/NavLink>/)
+  assert.match(sidebarSource, /to: "\/admin\/flywheel-eval"/)
   assert.match(appSource, /<Route path="\/admin\/flywheel-eval" element={<FlywheelEval \/>} \/>/)
   assert.doesNotMatch(appSource, /<Route path="\/j\/:jobId"/)
 })
