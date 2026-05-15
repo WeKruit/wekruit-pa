@@ -176,7 +176,7 @@ window.location.replace(${returnToJson});
 export const paLinkedinAuthStart = onRequest(
   {
     region: "us-central1",
-    memory: "256MiB",
+    memory: "512MiB",
     timeoutSeconds: 30,
     secrets: [LINKEDIN_CLIENT_ID, LINKEDIN_CLIENT_SECRET],
   },
@@ -207,7 +207,7 @@ export const paLinkedinAuthStart = onRequest(
 export const paLinkedinCallback = onRequest(
   {
     region: "us-central1",
-    memory: "256MiB",
+    memory: "512MiB",
     timeoutSeconds: 30,
     secrets: [LINKEDIN_CLIENT_ID, LINKEDIN_CLIENT_SECRET],
   },
