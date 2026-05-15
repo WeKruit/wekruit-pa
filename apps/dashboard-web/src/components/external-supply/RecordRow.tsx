@@ -64,6 +64,21 @@ const LINK_KIND_LABEL: Record<string, string> = {
   personal: "site",
 }
 
+const LINK_KIND_FULL_NAME: Record<string, string> = {
+  linkedin: "LinkedIn",
+  github: "GitHub",
+  twitter: "X (Twitter)",
+  facebook: "Facebook",
+  instagram: "Instagram",
+  medium: "Medium",
+  youtube: "YouTube",
+  tiktok: "TikTok",
+  dribbble: "Dribbble",
+  behance: "Behance",
+  stackoverflow: "Stack Overflow",
+  personal: "Personal site",
+}
+
 function deriveLinks(record: ExternalCandidateRecord): LinkChip[] {
   const enrichment = (record.enrichment ?? {}) as { links?: LinkChip[] }
   if (Array.isArray(enrichment.links) && enrichment.links.length > 0) {
@@ -119,6 +134,7 @@ export function RecordRow({
                 target="_blank"
                 rel="noopener noreferrer"
                 title={l.url}
+                aria-label={`${LINK_KIND_FULL_NAME[l.kind] ?? l.hostname} profile`}
                 style={{
                   fontSize: "0.7em",
                   fontWeight: 700,
