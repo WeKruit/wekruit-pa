@@ -376,7 +376,13 @@ export const V16ScoreBreakdownSchema = z.object({
   cvEmbCosine: z.number(),
   /** Salary fit: 1.0 when job.salaryMin >= user.minSalary; degrades linearly. */
   salaryFit: z.number(),
-  /** Weighted total per V16_SCORE_WEIGHTS. */
+  /** Phase B4 — Jaccard(user.targetCompanyTags, company.tags) × 0.15. */
+  tagOverlap: z.number(),
+  /** Phase B4 — +0.15 when companyPositiveList hits this job. */
+  positiveHit: z.number(),
+  /** Phase B4 — +0.20 fresh full_time / -0.10 intern/new_grad/contract. */
+  urgencyBoost: z.number(),
+  /** Weighted total per V16_SCORE_WEIGHTS + B4 additive boosts. */
   total: z.number(),
 })
 export type V16ScoreBreakdown = z.infer<typeof V16ScoreBreakdownSchema>
@@ -406,6 +412,8 @@ export type V16HardFilterCounters = {
   freshness: number
   atsApplyUrl: number
   dead: number
+  /** Phase B4 — dropped because job.companyName ∈ user.companyNegativeList. */
+  negativeListDrop: number
 }
 
 /**

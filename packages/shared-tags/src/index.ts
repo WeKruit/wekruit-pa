@@ -30,3 +30,7 @@ export * from "./canonical/skills.js"
 export * from "./canonical/validation.js"
 export * from "./canonical/overlay.js"
 export * from "./canonical/registry.js"
+
+// ─── Phase A2 (post-v1.7) company axes ────────────────────────────
+export * from "./canonical/company-stage.js"
+export * from "./canonical/company-tag.js"

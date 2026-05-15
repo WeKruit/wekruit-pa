@@ -30,6 +30,15 @@ import {
   SKILL_BUCKET_VOCAB,
   SkillBucketSchema,
 } from "./skills.js"
+import {
+  COMPANY_STAGE_VOCAB,
+  CompanyStageSchema,
+} from "./company-stage.js"
+import {
+  COMPANY_TAG_VOCAB,
+  COMPANY_TAG_PATTERN,
+  CompanyTagSchema,
+} from "./company-tag.js"
 
 export interface CanonicalVocabEntry {
   /** Human-readable vocab name (e.g., `"roleFunction"`). */
@@ -121,6 +130,23 @@ export const ALL_CANONICAL_VOCABS: Record<string, CanonicalVocabEntry> = {
     supportsOverlay: false,
     isOpenVocab: false,
     matchSemantics: "soft_score", // bucket × name combined
+  },
+  companyStage: {
+    name: "companyStage",
+    values: COMPANY_STAGE_VOCAB,
+    schema: CompanyStageSchema,
+    supportsOverlay: false,
+    isOpenVocab: false,
+    matchSemantics: "soft_score", // informational only (weight 0)
+  },
+  companyTag: {
+    name: "companyTag",
+    values: COMPANY_TAG_VOCAB,
+    schema: CompanyTagSchema,
+    supportsOverlay: true, // admin promote via overlay collection
+    isOpenVocab: true,
+    pattern: COMPANY_TAG_PATTERN,
+    matchSemantics: "soft_score",
   },
 }
 

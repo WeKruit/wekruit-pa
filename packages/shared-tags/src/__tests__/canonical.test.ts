@@ -60,6 +60,16 @@ import {
   ALL_CANONICAL_VOCABS,
   CANONICAL_VOCAB_NAMES,
 } from "../canonical/registry.js"
+import {
+  COMPANY_STAGE_VOCAB,
+  CompanyStageSchema,
+} from "../canonical/company-stage.js"
+import {
+  COMPANY_TAG_VOCAB,
+  COMPANY_TAG_PATTERN,
+  CompanyTagSchema,
+  CompanyTagListSchema,
+} from "../canonical/company-tag.js"
 
 // ─────────────────────────────────────────────────────────────────
 // TAG-01 — roleFunction (17 jobright utm_campaign verbatim)
@@ -418,7 +428,7 @@ describe("TAG-09: skills bucketed vocab", () => {
 // ─────────────────────────────────────────────────────────────────
 
 describe("TAG-10: ALL_CANONICAL_VOCABS registry", () => {
-  it("covers 9 canonical axes", () => {
+  it("covers 11 canonical axes", () => {
     const expected = [
       "roleFunction",
       "industrySector",
@@ -429,6 +439,8 @@ describe("TAG-10: ALL_CANONICAL_VOCABS registry", () => {
       "location",
       "relevantTags",
       "skillBucket",
+      "companyStage",
+      "companyTag",
     ]
     for (const name of expected) {
       assert.ok(
@@ -436,7 +448,7 @@ describe("TAG-10: ALL_CANONICAL_VOCABS registry", () => {
         `registry missing ${name}`,
       )
     }
-    assert.equal(CANONICAL_VOCAB_NAMES.length, 9)
+    assert.equal(CANONICAL_VOCAB_NAMES.length, 11)
   })
 
   it("each entry has values + schema + matchSemantics", () => {
@@ -759,5 +771,106 @@ describe("TAG-12: validateCanonicalToken", () => {
 
   it("assertValidCanonicalToken does not throw on good input", () => {
     assertValidCanonicalToken("software_engineering", "roleFunction")
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────
+// Phase A2 — companyStage (11 closed) + companyTag (open seed)
+// ─────────────────────────────────────────────────────────────────
+
+describe("A2: companyStage vocab", () => {
+  it("has exactly 11 values", () => {
+    assert.equal(COMPANY_STAGE_VOCAB.length, 11)
+  })
+
+  it("includes the locked enum tokens", () => {
+    const set = new Set(COMPANY_STAGE_VOCAB)
+    for (const t of [
+      "pre_seed",
+      "seed",
+      "series_a",
+      "series_b",
+      "series_c",
+      "series_d_plus",
+      "ipo_public",
+      "private_mature",
+      "bootstrapped",
+      "non_profit",
+      "unknown",
+    ]) {
+      assert.ok(set.has(t as never), `missing ${t}`)
+    }
+  })
+
+  it("CompanyStageSchema accepts canonical and rejects unknown", () => {
+    assert.equal(CompanyStageSchema.safeParse("series_a").success, true)
+    assert.equal(CompanyStageSchema.safeParse("unknown").success, true)
+    assert.equal(CompanyStageSchema.safeParse("Series A").success, false)
+    assert.equal(CompanyStageSchema.safeParse("late_stage").success, false)
+  })
+})
+
+describe("A2: companyTag open-vocab", () => {
+  it("seed list has at least 11 tokens", () => {
+    assert.ok(COMPANY_TAG_VOCAB.length >= 11)
+  })
+
+  it("seed list includes the locked tokens", () => {
+    const set = new Set(COMPANY_TAG_VOCAB)
+    for (const t of [
+      "big_tech",
+      "mag_7",
+      "yc_active",
+      "yc_alumni",
+      "unicorn",
+      "ai_native",
+      "fintech_unicorn",
+    ]) {
+      assert.ok(set.has(t as never), `missing seed token ${t}`)
+    }
+  })
+
+  it("pattern accepts canonical-form tokens incl. promoted additions", () => {
+    assert.ok(COMPANY_TAG_PATTERN.test("ai_native"))
+    assert.ok(COMPANY_TAG_PATTERN.test("yc_alumni"))
+    assert.ok(COMPANY_TAG_PATTERN.test("developer_tools_native"))
+  })
+
+  it("pattern rejects spaces, uppercase, leading digit", () => {
+    assert.ok(!COMPANY_TAG_PATTERN.test("Big Tech"))
+    assert.ok(!COMPANY_TAG_PATTERN.test("Big_Tech"))
+    assert.ok(!COMPANY_TAG_PATTERN.test("7_eleven"))
+  })
+
+  it("CompanyTagSchema accepts seed + admin-promoted style tokens", () => {
+    assert.equal(CompanyTagSchema.safeParse("big_tech").success, true)
+    assert.equal(CompanyTagSchema.safeParse("emerging_robotics").success, true)
+  })
+
+  it("CompanyTagSchema rejects malformed tokens", () => {
+    assert.equal(CompanyTagSchema.safeParse("Big Tech").success, false)
+    assert.equal(CompanyTagSchema.safeParse("AI").success, false)
+    assert.equal(CompanyTagSchema.safeParse("7eleven").success, false)
+  })
+
+  it("CompanyTagListSchema accepts arrays of valid tags", () => {
+    assert.equal(
+      CompanyTagListSchema.safeParse(["big_tech", "ai_native"]).success,
+      true,
+    )
+  })
+
+  it("registry entry has supportsOverlay=true and isOpenVocab=true", () => {
+    assert.equal(ALL_CANONICAL_VOCABS.companyTag.supportsOverlay, true)
+    assert.equal(ALL_CANONICAL_VOCABS.companyTag.isOpenVocab, true)
+    assert.ok(ALL_CANONICAL_VOCABS.companyTag.pattern instanceof RegExp)
+  })
+
+  it("companyStage registry entry is closed-vocab soft_score", () => {
+    assert.equal(ALL_CANONICAL_VOCABS.companyStage.isOpenVocab, false)
+    assert.equal(
+      ALL_CANONICAL_VOCABS.companyStage.matchSemantics,
+      "soft_score",
+    )
   })
 })

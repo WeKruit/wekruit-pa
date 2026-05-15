@@ -33,6 +33,8 @@ import { MatchExplainerTest } from "./pages/MatchExplainerTest.js"
 // v1.6 Phase 59 (DASH-01..04) — canonical-tags vocab browser/promote +
 // QA evaluator weekly run viewer.
 import { CanonicalTags } from "./pages/CanonicalTags.js"
+// Phase A4 (WEK-yc) — /admin/companies CRUD over pa-companies collection.
+import { Companies } from "./pages/Companies.js"
 import { QaEvaluator } from "./pages/QaEvaluator.js"
 import FlywheelEval from "./pages/FlywheelEval.js"
 import LaunchReadiness from "./pages/LaunchReadiness.js"
@@ -143,6 +145,8 @@ export default function App() {
           <Route path="/admin/flags" element={<Flags />} />
           {/* v1.6 Phase 59 (DASH-01..03) — canonical-tags + QA evaluator. */}
           <Route path="/admin/canonical-tags" element={<CanonicalTags />} />
+          {/* Phase A4 (WEK-yc) — centralized company directory CRUD. */}
+          <Route path="/admin/companies" element={<Companies />} />
           <Route path="/admin/qa-evaluator" element={<QaEvaluator />} />
           <Route path="/admin/launch-readiness" element={<LaunchReadiness />} />
           <Route path="/admin/handbook" element={<Handbook />} />

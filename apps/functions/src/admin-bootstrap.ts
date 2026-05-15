@@ -812,6 +812,56 @@ const SEED_DOWNSTREAM_TRIGGERS = [
       '{"event":"mentioned_salary_research","userId":"{{userId}}","conversationId":"{{conversationId}}","userTurn":"{{lastUserTurn}}"}',
     cooldownSec: 86400,
   },
+  // Phase B3 — company-preference NL detectors. Both ship DISABLED; flipping
+  // `enabled:true` via the dashboard activates the corresponding tag write
+  // (handled by `TAG_SIDE_EFFECTS` in pa-orchestrator/tag-side-effects.ts):
+  //  - `mentioned_negative_company` → append `tags.companyNegativeList`
+  //  - `mentioned_positive_company` → append `tags.companyPositiveList` +
+  //                                   seed `tags.targetCompanyTags`
+  {
+    triggerId: "mentioned_negative_company",
+    name: "Mentioned negative company",
+    description:
+      "Detects when the user explicitly says they do NOT want to work at a specific company or category (e.g. 'I don't want Walgreens', 'no agencies'). Side effect: appends to pa-users.tags.companyNegativeList.",
+    enabled: false,
+    condition: {
+      kind: "llm-judge" as const,
+      config: {
+        judgePrompt:
+          "Did the user explicitly say they do NOT want to work at a specific company or category (e.g., 'I don't want Walgreens', 'no agencies')? Answer yes or no.",
+      },
+    },
+    endpoint: {
+      url: "https://example.invalid/negative-company",
+      method: "POST" as const,
+      hmacSecretRef: "PA_TRIGGER_HMAC_NEGATIVE_COMPANY",
+    },
+    payloadTemplate:
+      '{"event":"mentioned_negative_company","userId":"{{userId}}","conversationId":"{{conversationId}}","userTurn":"{{lastUserTurn}}"}',
+    cooldownSec: 60,
+  },
+  {
+    triggerId: "mentioned_positive_company",
+    name: "Mentioned positive company",
+    description:
+      "Detects when the user expresses strong interest in a specific company or industry category (e.g. 'I love Anthropic', 'interested in fintech'). Side effect: appends to pa-users.tags.companyPositiveList and seeds targetCompanyTags.",
+    enabled: false,
+    condition: {
+      kind: "llm-judge" as const,
+      config: {
+        judgePrompt:
+          "Did the user express strong interest in a specific company or industry category (e.g., 'I love Anthropic', 'interested in fintech')? Answer yes or no.",
+      },
+    },
+    endpoint: {
+      url: "https://example.invalid/positive-company",
+      method: "POST" as const,
+      hmacSecretRef: "PA_TRIGGER_HMAC_POSITIVE_COMPANY",
+    },
+    payloadTemplate:
+      '{"event":"mentioned_positive_company","userId":"{{userId}}","conversationId":"{{conversationId}}","userTurn":"{{lastUserTurn}}"}',
+    cooldownSec: 60,
+  },
 ] as const
 
 async function seedDownstreamTriggers(
