@@ -1,0 +1,27 @@
+id: "02-not-pass-low-score"
+description: "NOT_PASS — candidate's skills don't meet must-have rubric."
+seed: 43
+
+voice:
+  toNumber: "${PA_TEAM_NUMBER_BOB}"
+  fromCallerId: "+16468594057"
+  expectedOutcome: "NOT_PASS"
+  expectedTerminalReasonContains: "score_below_threshold"
+
+context:
+  paUserId: "smoke-user-02-bob-junior"
+  paJobId: "smoke-job-staff-eng"
+  preferredLang: "en"
+
+thresholds:
+  ttfaMaxMs: 1500
+  costMaxUsd: 1.00
+
+mock:
+  outcome: "NOT_PASS"
+  metrics:
+    ttfaMs: 920
+    costUsd: 0.48
+    falseCommit: false
+    falseInterrupt: false
+    agentTalkRatio: 0.58
