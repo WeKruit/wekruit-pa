@@ -82,3 +82,30 @@ export type RunAgentTurnResult = {
   text: string
   usage?: RunAgentTurnUsage
 }
+
+/**
+ * v2.1 S1A — streaming chunk shape for `runAgentTurnStream`.
+ *
+ * This type is ADDITIVE. `runAgentTurn` and its existing types are frozen
+ * (Lock L1 in V21-VOICE-PRESCREEN-GOAL-PROMPT.md). The voice path consumes
+ * an async iterator of these chunks via the S1C LLM shim, which forwards
+ * them as OpenAI-compatible SSE to the LiveKit `openai.LLM` plugin.
+ *
+ * Contract:
+ *  - `delta` is the incremental token text. Concatenating all `delta`s in
+ *    order reproduces the full assistant text byte-identical to what the
+ *    non-stream path would have returned in `text`.
+ *  - `delta` MAY be the empty string on heartbeat / role-only chunks.
+ *  - `finishReason` is present ONLY on the terminal chunk. Intermediate
+ *    chunks omit it. `"stop"` = clean finish, `"length"` = max_tokens
+ *    truncation, `"error"` = upstream error mid-stream (the generator will
+ *    also throw after yielding this terminal error chunk so callers using
+ *    `for await` see the error).
+ *  - `usage` is best-effort, present only on the terminal chunk when the
+ *    provider surfaces stream usage statistics.
+ */
+export type AgentTurnStreamChunk = {
+  delta: string
+  finishReason?: "stop" | "length" | "error"
+  usage?: RunAgentTurnUsage
+}
