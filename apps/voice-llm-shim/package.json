@@ -19,9 +19,12 @@
     "typecheck": "tsc --noEmit",
     "start": "node dist/server.js",
     "dev": "tsx src/server.ts",
-    "test": "node --import tsx --test src/__tests__/sse.test.ts src/__tests__/handler-non-stream.test.ts src/__tests__/handler-stream.test.ts src/__tests__/finish-reason.test.ts src/__tests__/openai-sdk-roundtrip.test.ts"
+    "test": "node --import tsx --test src/__tests__/sse.test.ts src/__tests__/handler-non-stream.test.ts src/__tests__/handler-stream.test.ts src/__tests__/finish-reason.test.ts src/__tests__/openai-sdk-roundtrip.test.ts src/__tests__/orchestrator-backend.test.ts src/__tests__/resolve.test.ts"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@pa/agent-runtime": "0.0.1",
+    "@pa/core-types": "0.0.1"
+  },
   "devDependencies": {
     "@types/node": "^20.0.0",
     "openai": "^4.80.0",

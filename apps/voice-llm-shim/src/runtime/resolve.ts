@@ -1,5 +1,6 @@
 import type { RunAgentTurnStream } from "./contract.js";
 import { createFakeRunAgentTurnStream } from "./fake.js";
+import { createOrchestratorBackend } from "./orchestrator-backend.js";
 
 export type ResolveLogger = {
   warn: (msg: string, meta?: Record<string, unknown>) => void;
@@ -33,18 +34,15 @@ export async function resolveRunAgentTurnStream(opts?: {
   }
 
   if (backend === "orchestrator") {
+    // v2.1 S2 task #12 — use the S1A↔S1C adapter rather than the raw
+    // runAgentTurnStream (signatures don't line up; see
+    // orchestrator-backend.ts header).
     try {
-      const mod = (await import("@pa/pa-orchestrator")) as Record<string, unknown>;
-      const fn = mod.runAgentTurnStream;
-      if (typeof fn === "function") {
-        log.info("backend=orchestrator (runAgentTurnStream resolved)");
-        return fn as RunAgentTurnStream;
-      }
-      log.warn(
-        "backend=orchestrator requested but runAgentTurnStream export is missing; falling back to fake",
-      );
+      const backendFn = createOrchestratorBackend({ logger: log });
+      log.info("backend=orchestrator (S1A adapter wired)");
+      return backendFn;
     } catch (err) {
-      log.warn("failed to import @pa/pa-orchestrator; falling back to fake", {
+      log.warn("failed to build orchestrator backend; falling back to fake", {
         error: err instanceof Error ? err.message : String(err),
       });
     }
