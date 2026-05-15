@@ -18,6 +18,15 @@ test("Candidates classifies explicit testMode users as synthetic", () => {
   )
 })
 
+test("Candidates classifies production verification docs as synthetic", () => {
+  assert.equal(
+    isSyntheticTestProfile({
+      id: "verify-nl-judge-laid-off",
+    }),
+    true
+  )
+})
+
 test("Candidates does not classify a normal candidate phone as synthetic", () => {
   assert.equal(
     isSyntheticTestProfile({
@@ -48,6 +57,18 @@ test("Candidates excludes old phone-only SMS rows from candidate accounts", () =
     id: "1cf453d9-de4d-4ea6-a33c-4c59ea229ad2",
     phoneE164: "+14245552001",
     onboardingStatus: "active",
+  }
+  const source = deriveCandidateSource(doc)
+  assert.equal(source, "imessage")
+  assert.equal(classifyCandidateProfile(source, doc), "legacy_sms_profile")
+})
+
+test("Candidates keeps mem0-only SMS rows as legacy profiles", () => {
+  const doc = {
+    id: "0afac25f-5a96-4527-8349-790b3adf82c4",
+    phoneE164: "+19209739917",
+    onboardingStatus: "active",
+    mem0UserId: "0afac25f-5a96-4527-8349-790b3adf82c4",
   }
   const source = deriveCandidateSource(doc)
   assert.equal(source, "imessage")

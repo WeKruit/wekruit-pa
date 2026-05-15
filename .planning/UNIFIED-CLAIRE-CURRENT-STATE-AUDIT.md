@@ -69,8 +69,8 @@ Required fix boundary:
 
 ## Immediate Gaps
 
-- Dashboard language still encourages reading `pa-users` as "users" instead of a candidate pool with source classes.
-- User-wise test acceptance must filter to the canonical candidate id or a real candidate account subset.
+- Dashboard language still encourages reading `pa-users` as "users" instead of a candidate pool with source classes. Status: partly fixed on `/admin/candidates`; other admin pages still need audit.
+- User-wise test acceptance must filter to the canonical candidate id or a real candidate account subset. Status: fixed for `/admin/candidates` default view and documented for live prescreen checks.
 - The unified candidate product needs an explicit source taxonomy in dashboard and test scripts:
   - `candidate_account`
   - `sms_candidate`
@@ -82,7 +82,7 @@ Required fix boundary:
 ## 2026-05-15 Fix Verification
 
 - `apps/dashboard-web/src/pages/Candidates.tsx` now defaults to "Candidate accounts only" and separately counts candidate accounts, external prospects, and synthetic tests.
-- `apps/dashboard-web/src/pages/Candidates.helpers.ts` now treats old phone-only SMS rows as `legacy_sms_profile`, not `candidate_account`. A real dashboard candidate account requires current candidate/profile signal such as claimed auth identity, resume/profile evidence, mem0, PII consent, or the explicit layoff source tag.
+- `apps/dashboard-web/src/pages/Candidates.helpers.ts` now treats old phone-only SMS rows as `legacy_sms_profile`, not `candidate_account`. A real dashboard candidate account requires current candidate/profile signal such as claimed auth identity, resume/profile evidence, PII consent, or the explicit layoff source tag; `mem0UserId` alone is not enough.
 - `paCandidateClaimProfile` and `paCandidateResumeGateStatus` now reject `@wekruit.com` operator emails on the candidate app, so admin logins cannot create new candidate profiles.
 - Node 24 verification:
   - `node --import tsx --test apps/functions/src/identity/claim-api.test.ts apps/functions/src/identity/candidate-resume-gate.test.ts` passed 11/11.
@@ -115,3 +115,56 @@ Required fix boundary:
     - `synthetic_test_profile = 467`
     - `incomplete_identity_artifact = 4`
   - The only default dashboard `candidate_account` row is `pa-users/U7AwKT8nLDRa35DkuBxq`.
+- Dashboard candidate-pool correction:
+  - `verify-*` production verification docs are classified as `synthetic_test_profile`.
+  - `mem0UserId` alone no longer promotes old phone-only SMS rows to `candidate_account`.
+  - Live Firestore all-rows recheck through the same dashboard helper classified all 599 `pa-users` rows:
+    - `candidate_account = 1`
+    - `external_supply_prospect = 28`
+    - `legacy_sms_profile = 5`
+    - `synthetic_test_profile = 559`
+    - `incomplete_identity_artifact = 6`
+  - The only `candidate_account` row remains `pa-users/U7AwKT8nLDRa35DkuBxq`.
+
+## 2026-05-15 Prescreen Conversation Verification
+
+- Code locks:
+  - New trigger starts a new `workSession` and supersedes older active prescreens for that user with `terminal = PAUSE`, `boundary = superseded`.
+  - Idle active sessions expire instead of routing late replies into the wrong job.
+  - Explicit user exit pauses the work session with `boundary = user_exit`.
+  - Coalesced multi-message role-fit replies are scored as one probe turn and persisted as one turn.
+  - Weak engineering evidence now has a regression test requiring four probe turns before `HARD_STOP`.
+  - Adjacent but credible engineering evidence after repeated probing advances instead of abrupt hard-stop.
+  - Terminal actions write terminal stamps, memory update events, and candidate-job state; PAUSE does not start PII or job recs.
+- Node 24 verification:
+  - `node --import tsx --test packages/pa-orchestrator/src/prescreen/__tests__/pipeline.test.ts apps/functions/src/prescreen-turn-handler.test.ts apps/functions/src/prescreen-session-start.test.ts apps/functions/src/prescreen-terminal-action.test.ts` passed 31/31.
+  - `npm run typecheck --workspace=@pa/pa-orchestrator` passed.
+  - `npm run typecheck --workspace=@pa/functions` passed.
+- Git:
+  - `d430da8 test(prescreen): require full weak-candidate probing` is pushed to `main`.
+
+## 2026-05-15 WeKruit Open / Layoff Front Door Verification
+
+- Separate repo: `/Users/adam/Desktop/WeKruit/wekruit-layoff`.
+- Backend already writes layoff candidates into `pa-users` via `openRegisterLayoffCandidate`.
+- Frontend fix:
+  - Signup no longer treats `resumeFileName` as enough.
+  - After `openRegisterLayoffCandidate` returns `candidateId`, signup uploads the selected PDF to `paPublicCvIngest` with `userId = candidateId`.
+  - Duplicate/reuse path also uploads the pending resume to the reused `candidateId`.
+  - Registration/upload/SMS failures now show an error instead of falling back to fake `local-*` candidate ids.
+  - File picker now only advertises PDF, matching current `paPublicCvIngest` PDF sniffing.
+- Node 24 verification:
+  - `npm run typecheck` passed.
+  - `npm run build` passed.
+- Deployment:
+  - `hosting:open` released to `https://layoff-wekruit.web.app`.
+- Git:
+  - `wekruit-layoff/main` has `2429fd3 fix(signup): parse resumes into pa users`.
+
+## Remaining Completion Gaps
+
+- The referenced objective file `.planning/V2-CLAIRE-UNIFIED-CANDIDATE-PRODUCT-GOAL.md` is absent from this worktree. Current audit is therefore based on the user-provided objective plus existing v2 goal docs.
+- WeKruit Open still needs a source-aware Claire conversation path after signup. Current backend has `openSubmitChatTurn` writing `layoffChatAnswers`; this is not yet proven to merge into shared evidence/tags/memory.
+- External supply prospects are in the shared `pa-users` pool, but the end-to-end operator path from imported prospect to candidate profile, match/eval, approved outreach, reply, and unified evidence is not yet reverified in this goal.
+- Job creation/import still appears split across enrichment approval, seeding scripts, and external-supply job surfaces. The single job creation/publication flow is not yet audited or unified.
+- Live Sendblue stress testing has one real PASS session and one allowlist-deny canary verified; a full live matrix for good/bad/ambiguous candidates remains incomplete unless run through controlled live webhooks or real iMessage.

@@ -42,6 +42,7 @@ export function isSyntheticTestProfile(doc: CandidateListUserDoc): boolean {
     id.startsWith("qa") ||
     id.startsWith("recheck-") ||
     id.startsWith("synthetic") ||
+    id.startsWith("verify-") ||
     id.includes("reset") ||
     id.includes("smoke") ||
     id.includes("test") ||
@@ -73,7 +74,7 @@ function hasCurrentCandidateAccountSignal(doc: CandidateListUserDoc): boolean {
   if (doc.signupSource === "identity:candidate") {
     return hasReachableIdentity(doc) || Boolean(doc.latestResumeArtifactId || doc.mem0UserId)
   }
-  return Boolean(doc.latestResumeArtifactId || doc.piiConsentAt || doc.mem0UserId)
+  return Boolean(doc.latestResumeArtifactId || doc.piiConsentAt)
 }
 
 export function deriveCandidateSource(
