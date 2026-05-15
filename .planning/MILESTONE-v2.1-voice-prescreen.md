@@ -28,6 +28,17 @@ brain.
 | Hangup reconciliation idempotent | Multi-leg / transfer support |
 | v2.2 hand-off doc | Production launch |
 
+## Merge / Integration Strategy (locked 2026-05-15 by P10 after main-divergence observation)
+
+`origin/main` advances independently during the v2.1 cycle (v2.0 follow-up commits land continuously). Per-sprint FF-to-main is therefore brittle. **Locked pattern:**
+
+1. Each sprint lives on `claude/v21-S<N>-<slug>` branched from a base that contains its declared upstream deps.
+2. P10 maintains a rolling integration branch `claude/v21-integration` that accumulates merged sprints in dep order.
+3. S2's "updated main" base = `claude/v21-integration` containing {S0, S1A, S1B, S1C}. S3/S4 branched earlier from `claude/v21-S0-foundation` get rebased onto integration when they land (P10 does the rebase, no force-push to others' branches).
+4. S7 = final merge of `claude/v21-integration` into `main`. **One** merge into main per cycle (or one PR per sprint at S7's discretion).
+5. Regression gate runs at each integration-merge AND at the final main-merge.
+6. Pre-existing red scenarios (`fail.yaml` + `hard-stop.yaml` per backlog task #11) excluded from v2.1 gate until v2.0 follow-up clears them. v2.1 gate = `pass.yaml` + `pause.yaml` + full pa-orchestrator + pa-functions test suites.
+
 ## Sprint Topology (S0–S7)
 
 ```
