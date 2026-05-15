@@ -86,15 +86,15 @@ const { queryMatchingJobsV16 } = await import("../apps/job-rec/dist/tools/query-
     process.exit(2)
   })
 
-const result = await queryMatchingJobsV16({ db, userId: USER_ID, fetchLimit: 50 })
-const top3 = (result.matches ?? []).slice(0, 3)
+const result = await queryMatchingJobsV16({ userId: USER_ID, limit: 10 }, { db })
+const top3 = (result.jobs ?? []).slice(0, 3)
 console.log("\ntop-3 V16 matches:")
 let aiNativeHits = 0
 for (const m of top3) {
-  const norm = (m.job?.companyName ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")
+  const norm = (m.companyName ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")
   const hit = aiNativeNames.has(norm)
   if (hit) aiNativeHits++
-  console.log(`  ${hit ? "✓" : " "} ${m.job?.companyName ?? "?"} — ${m.job?.title ?? "?"} (score ${m.score?.toFixed(3) ?? "?"})`)
+  console.log(`  ${hit ? "✓" : " "} ${m.companyName ?? "?"} — ${m.jobTitle ?? "?"} (score ${m.v16Score?.total?.toFixed(3) ?? "?"} tagOverlap=${m.v16Score?.tagOverlap?.toFixed(3) ?? "?"})`)
 }
 
 console.log(`\nai_native hits in top-3: ${aiNativeHits}/3`)
