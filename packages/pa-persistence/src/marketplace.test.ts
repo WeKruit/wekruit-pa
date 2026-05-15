@@ -162,6 +162,15 @@ function makeFakeFirestore(store: Store = makeStore()): { db: Firestore; store: 
   return { db: db as unknown as Firestore, store }
 }
 
+function hasUndefined(value: unknown): boolean {
+  if (value === undefined) return true
+  if (Array.isArray(value)) return value.some(hasUndefined)
+  if (value && typeof value === "object") {
+    return Object.values(value as Record<string, unknown>).some(hasUndefined)
+  }
+  return false
+}
+
 function lifecycle(type: CandidateLifecycleEvent["type"], over: Partial<CandidateLifecycleEvent> = {}): CandidateLifecycleEvent {
   return {
     eventId: `lc-${type}`,
@@ -928,7 +937,9 @@ test("NOT_PASS and PAUSE create no employer-visible snapshots", async () => {
   const paused = makeFakeFirestore()
   await applyCandidateJobEvent(paused.db, job("prescreen_started"))
   await applyCandidateJobEvent(paused.db, job("manual_pause"))
-  assert.equal(paused.store.get(PA_COLLECTIONS.candidateJobStates)!.get(createCandidateJobStateId("cand-1", "job-1"))!.state, "paused")
+  const pausedState = paused.store.get(PA_COLLECTIONS.candidateJobStates)!.get(createCandidateJobStateId("cand-1", "job-1"))!
+  assert.equal(pausedState.state, "paused")
+  assert.equal(hasUndefined(pausedState), false)
   assert.equal(paused.store.get(PA_COLLECTIONS.employerVisibleProfiles)!.size, 0)
   assert.equal(paused.store.get(PA_COLLECTIONS.users)!.size, 0)
 })

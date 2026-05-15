@@ -381,24 +381,37 @@ export function terminalText(
         ? "感谢花时间。本次初筛暂未匹配，我们会留意更合适的机会推给你。"
         : "Thanks for your time. This role isn't a match right now, but I'll keep an eye out for better fits."
     case "HARD_STOP":
-      return lang === "zh"
-        ? "感谢回答。这个岗位的某个硬性条件暂时对不齐，我们换个方向找。"
-        : "Thanks for the reply. One required area didn't align for this role — let's look at other options."
+      return terminalHardStopText(lang)
     case "PAUSE":
-      return lang === "zh"
-        ? "感谢回答。目前看综合匹配度不够高，先停在这儿，下次有更合适的我直接推。"
-        : "Thanks. Overall fit looks low for this role; pausing here. I'll surface better-aligned roles next time."
+      return terminalPauseText(lang)
   }
 }
 
 function clarifyText(question: PreScreenQuestion, lang: Lang): string {
   const authored = question.clarifyPrompt[lang]?.trim()
-  if (authored) return authored
+  if (authored && !isPlaceholderClarify(authored)) return authored
   return probingClarifyText(lang)
+}
+
+function isPlaceholderClarify(text: string): boolean {
+  const normalized = text.toLowerCase().replace(/\s+/g, " ").trim()
+  return normalized === "please add one concrete example tied to this job."
 }
 
 function probingClarifyText(lang: Lang): string {
   return lang === "zh"
     ? "没关系，不一定要完全同名经验。我想先理解你最接近的经历：你做过哪个相关项目、你具体负责什么、最后有什么结果？粗略讲也可以。"
     : "No worries if it was not exactly that. I am trying to understand the closest overlap. Can you share the nearest project you owned: the context, what you personally did, and what changed because of it? A rough example is fine."
+}
+
+function terminalHardStopText(lang: Lang): string {
+  return lang === "zh"
+    ? "谢谢，这些信息有帮助。我不想硬把你往这个岗位上套；这个 screen 先停在这里，我会用你刚补充的经历继续匹配更合适的机会。"
+    : "Thanks, that helps. I do not want to force-fit you into this exact role, so I will pause this screen here and use what you shared to look for better-aligned roles."
+}
+
+function terminalPauseText(lang: Lang): string {
+  return lang === "zh"
+    ? "谢谢，这些信息有帮助。目前这个岗位的综合匹配度不够高，我先暂停这次 screen，并继续用你补充的经历找更合适的机会。"
+    : "Thanks, that helps. Overall fit for this role still looks low, so I will pause this screen and keep using what you shared for better-aligned roles."
 }

@@ -691,6 +691,61 @@ async function processBrokerImessageEvent(
     { merge: true }
   )
 
+  // Direct broker path can receive the same candidate trigger token as
+  // Sendblue. Treat it as control-plane input here; never let it fall into
+  // onboarding, where it would produce the q_lang prompt instead of starting
+  // the job prescreen.
+  try {
+    const { decideBrokerPrescreenTrigger } = await import("./broker-prescreen-trigger.js")
+    const triggerDecision = decideBrokerPrescreenTrigger(payload.text.trim(), user.id)
+    if (triggerDecision.kind === "authorized") {
+      const { runPreScreenForUser } = await import("./prescreen-session-start.js")
+      const result = await runPreScreenForUser({
+        db,
+        jobId: triggerDecision.jobId,
+        userId: triggerDecision.userId,
+        toE164: payload.participant,
+        log: (event, payload) => logger.info(`[prescreen][onPaInbound][trigger] ${event}`, payload ?? {}),
+      })
+      await db.collection(PA_COLLECTIONS.inboundEvents).doc(claimed.id).set(
+        {
+          status: result.ok ? "completed" : "failed",
+          completedAt: nowIso(),
+          updatedAt: nowIso(),
+          routedTo: "prescreen_trigger",
+          prescreenSessionId: result.sessionId,
+          ...(result.reason ? { prescreenReason: result.reason } : {}),
+        },
+        { merge: true }
+      )
+      return 1
+    }
+    if (triggerDecision.kind === "unauthorized") {
+      logger.warn("[prescreen][onPaInbound][trigger] unauthorized", {
+        userId: user.id,
+        targetUserId: triggerDecision.targetUserId,
+        jobId: triggerDecision.jobId,
+        reason: triggerDecision.reason,
+      })
+      await db.collection(PA_COLLECTIONS.inboundEvents).doc(claimed.id).set(
+        {
+          status: "completed",
+          completedAt: nowIso(),
+          updatedAt: nowIso(),
+          routedTo: "prescreen_trigger_unauthorized",
+          errorCode: "PRESCREEN_TRIGGER_UNAUTHORIZED",
+        },
+        { merge: true }
+      )
+      return 1
+    }
+  } catch (err) {
+    logger.warn("[prescreen][onPaInbound][trigger] check FAILED — falling through to active-session routing", {
+      userId: user.id,
+      err: err instanceof Error ? err.message : String(err),
+    })
+  }
+
   // v1.9 P85 hotfix — pre-screen routing for non-coalesced path.
   // If user has an active pre-screen session (terminal=null), route this
   // turn through PreScreenPipeline BEFORE Claire orchestrator. Mirrors the

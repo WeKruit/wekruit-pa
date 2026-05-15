@@ -357,6 +357,41 @@ test("Phase 76: PreScreenPipeline low confidence triggers clarify and bumps k", 
   assert.equal(r.state.currentQId, "q1")
 })
 
+test("Phase 76: placeholder clarify copy falls back to probing friend-tone text", async () => {
+  const store = new InMemoryPreScreenStore()
+  const pipeline = new PreScreenPipeline({
+    questions: {
+      q1: {
+        qId: "q1",
+        prompt: { zh: "讲讲最匹配的经历", en: "Tell me about the closest fit." },
+        clarifyPrompt: {
+          zh: "Please add one concrete example tied to this job.",
+          en: "Please add one concrete example tied to this job.",
+        },
+        judge: new KeywordSetJudge({
+          questionId: "q1",
+          keywords: [{ keyword: "q1", weight: 1 }],
+          llmCaller: makeCaller([
+            { perKeyword: [{ keyword: "q1", match: 0.9, confidence: 0.3, evidence: "", reasoning: "" }] },
+          ]),
+        }),
+      },
+    },
+    store,
+  })
+  await setupSession(pipeline, store, [{ qId: "q1", type: "MUST_HAVE", weight: 1 }])
+  const r = await pipeline.runTurn({
+    sessionId: "s1",
+    reply: "closest project maybe dashboards",
+    lang: "en",
+    nowIso: "2026-05-12T00:01:00Z",
+    judgeCtx: ctx,
+  })
+  assert.equal(r.action.kind, "clarify")
+  assert.match(r.text, /closest overlap/i)
+  assert.doesNotMatch(r.text, /Please add one concrete example/)
+})
+
 test("Phase 76: PreScreenPipeline 3rd low-conf reply exhausts clarify and falls to Type Gate", async () => {
   const store = new InMemoryPreScreenStore()
   const pipeline = new PreScreenPipeline({

@@ -210,7 +210,7 @@ export async function applyCandidateJobEvent(
           : currentDoc?.latestMatchId,
       archivedAt: reduced.state === "archived" ? event.occurredAt : currentDoc?.archivedAt,
     })
-    tx.set(stateRef, nextDoc, { merge: true })
+    tx.set(stateRef, firestorePayload(nextDoc as Record<string, unknown>), { merge: true })
     tx.set(auditRef, {
       id: auditRef.id,
       action: "marketplace.candidate_job.transition",
@@ -333,7 +333,7 @@ export async function writeCandidateJobMatch(
     })
 
     tx.set(matchRef, match as Record<string, unknown>)
-    tx.set(stateRef, nextDoc, { merge: true })
+    tx.set(stateRef, firestorePayload(nextDoc as Record<string, unknown>), { merge: true })
     if (!auditSnap.exists) {
       tx.set(auditRef, {
         id: auditRef.id,

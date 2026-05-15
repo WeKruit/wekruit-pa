@@ -123,14 +123,19 @@ function makeProductionKeywordSetCaller(): KeywordSetLlmCaller {
  * Find active prescreen session for a user (terminal=null). Returns
  * sessionId or null if none.
  */
-async function findActiveSessionId(
+type ActivePrescreenLookup =
+  | { kind: "none" }
+  | { kind: "active"; sessionId: string }
+  | { kind: "expired"; sessionId: string; jobId: string }
+
+async function findActiveSession(
   db: Firestore,
   userId: string,
   opts: {
     nowMs?: number
     log?: (event: string, payload: Record<string, unknown>) => void
   } = {},
-): Promise<string | null> {
+): Promise<ActivePrescreenLookup> {
   const snap = await db
     .collection("pa-prescreen-sessions")
     .where("userId", "==", userId)
@@ -138,7 +143,7 @@ async function findActiveSessionId(
     .orderBy("createdAt", "desc")
     .limit(1)
     .get()
-  if (snap.empty) return null
+  if (snap.empty) return { kind: "none" }
   const doc = snap.docs[0]
   const data = doc.data() as Record<string, unknown>
   const lastActiveMs = timestampMs(data.updatedAt) ?? timestampMs(data.createdAt)
@@ -166,9 +171,13 @@ async function findActiveSessionId(
       lastActiveAt: new Date(lastActiveMs).toISOString(),
       timeoutMinutes: ACTIVE_PRESCREEN_TIMEOUT_MS / 60_000,
     })
-    return null
+    return {
+      kind: "expired",
+      sessionId: doc.id,
+      jobId: typeof data.jobId === "string" ? data.jobId : "",
+    }
   }
-  return doc.id
+  return { kind: "active", sessionId: doc.id }
 }
 
 function timestampMs(value: unknown): number | null {
@@ -197,6 +206,8 @@ export interface RunPrescreenTurnArgs {
   toE164: string
   replyText: string
   lang?: "zh" | "en"
+  sendSms?: typeof sendImessage
+  runTerminalAction?: typeof runPrescreenTerminalAction
   log?: (event: string, payload: Record<string, unknown>) => void
 }
 
@@ -217,8 +228,41 @@ export async function runPrescreenTurnIfActive(
   args: RunPrescreenTurnArgs
 ): Promise<RunPrescreenTurnResult> {
   const log = args.log ?? (() => {})
-  const sessionId = await findActiveSessionId(args.db, args.userId, { log })
-  if (!sessionId) return { handled: false }
+  const sendSms = args.sendSms ?? sendImessage
+  const terminalAction = args.runTerminalAction ?? runPrescreenTerminalAction
+  const lookup = await findActiveSession(args.db, args.userId, { log })
+  if (lookup.kind === "none") return { handled: false }
+  if (lookup.kind === "expired") {
+    try {
+      await terminalAction({
+        db: args.db,
+        sessionId: lookup.sessionId,
+        terminal: "PAUSE",
+        userId: args.userId,
+        jobId: lookup.jobId,
+        toE164: args.toE164,
+        lang: args.lang ?? "en",
+        log,
+      })
+    } catch (err) {
+      log("prescreen.turn.expired_terminal_action_failed", {
+        sessionId: lookup.sessionId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+    const text = expiredSessionText(args.lang ?? "en")
+    try {
+      await sendSms({ to: args.toE164, content: text, userId: args.userId, db: args.db })
+    } catch (err) {
+      log("prescreen.turn.expired_notice_send_failed", {
+        sessionId: lookup.sessionId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+    return { handled: true, sessionId: lookup.sessionId, terminal: "PAUSE", textSent: text }
+  }
+
+  const sessionId = lookup.sessionId
 
   const store = new FirestorePreScreenStore(args.db)
   const state = await store.load(sessionId)
@@ -273,7 +317,7 @@ export async function runPrescreenTurnIfActive(
 
   if (result.text) {
     try {
-      await sendImessage({ to: args.toE164, content: result.text, userId: args.userId, db: args.db })
+      await sendSms({ to: args.toE164, content: result.text, userId: args.userId, db: args.db })
     } catch (err) {
       log("prescreen.turn.send_failed", {
         sessionId,
@@ -322,4 +366,10 @@ export async function runPrescreenTurnIfActive(
     terminal: result.state.terminal,
     textSent: result.text,
   }
+}
+
+function expiredSessionText(lang: "zh" | "en"): string {
+  return lang === "zh"
+    ? "这次岗位初筛我先暂停了，避免把旧对话和新的经历混在一起。想继续这个岗位的话，从岗位页面重新开始，我会开一个新的 screen。"
+    : "I paused this role screen so I do not mix an old conversation with a new one. If you want to continue this role, reopen it from the job page and I will start a fresh screen."
 }

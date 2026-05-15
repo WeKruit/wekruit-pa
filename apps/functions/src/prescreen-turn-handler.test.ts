@@ -80,14 +80,38 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
       },
     })
 
+    const terminalCalls: Array<Record<string, unknown>> = []
+    const sent: string[] = []
+
     const result = await runPrescreenTurnIfActive({
       db,
       userId: "u1",
       toE164: "+13054507715",
       replyText: "following up later",
+      runTerminalAction: async (args) => {
+        terminalCalls.push(args as unknown as Record<string, unknown>)
+        return { alreadyFired: false, level1Sent: false, jobRecsFired: false }
+      },
+      sendSms: async (args) => {
+        sent.push(args.content)
+        return {
+          status: "queued",
+          from_number: null,
+          number: args.to,
+          content: args.content,
+          service: "iMessage",
+          is_outbound: true,
+        }
+      },
     })
 
-    assert.equal(result.handled, false)
+    assert.equal(result.handled, true)
+    assert.equal(result.terminal, "PAUSE")
+    assert.equal(terminalCalls.length, 1)
+    assert.equal(terminalCalls[0].terminal, "PAUSE")
+    assert.equal(terminalCalls[0].jobId, "job-old")
+    assert.equal(sent.length, 1)
+    assert.match(sent[0], /paused this role screen/)
     const session = docs.get("pa-prescreen-sessions/ps_old")?.data
     assert.equal(session?.terminal, "PAUSE")
     assert.equal(session?.terminalReason, "expired_inactive_prescreen_session")

@@ -256,3 +256,10 @@ test("PASS terminal text does not duplicate employer follow-up timing", () => {
   assert.doesNotMatch(text, /business days/i)
   assert.doesNotMatch(text, /employer will follow/i)
 })
+
+test("HARD_STOP terminal text is a soft pause, not an abrupt rejection", () => {
+  const text = terminalText("HARD_STOP", "must-have failed", "en")
+  assert.match(text, /do not want to force-fit/i)
+  assert.match(text, /use what you shared/i)
+  assert.doesNotMatch(text, /didn't align/i)
+})
