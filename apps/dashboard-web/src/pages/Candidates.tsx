@@ -34,7 +34,13 @@ import {
   SectionHead,
   StatusPill,
 } from "../components/console/primitives.js"
-import { isSyntheticTestProfile } from "./Candidates.helpers.js"
+import {
+  classifyCandidateProfile,
+  deriveCandidateSource,
+  type CandidateClass,
+  type ExternalSource,
+  type SourceKind,
+} from "./Candidates.helpers.js"
 
 type Tone = "live" | "hitl" | "blocked" | "info" | "neutral"
 
@@ -85,14 +91,6 @@ const LIFECYCLE_ORDER: LifecycleState[] = [
   "deleted",
 ]
 
-type ExternalSource = "juicebox" | "lessie" | "coresignal" | "manual_csv"
-type SourceKind = ExternalSource | "imessage" | "public_job" | "ats" | "bulk_resume" | "synthetic_test" | "unknown"
-type CandidateClass =
-  | "candidate_account"
-  | "external_supply_prospect"
-  | "synthetic_test_profile"
-  | "incomplete_identity_artifact"
-
 const SOURCE_LABEL: Record<SourceKind, string> = {
   juicebox: "Juicebox",
   lessie: "Lessie",
@@ -102,6 +100,7 @@ const SOURCE_LABEL: Record<SourceKind, string> = {
   public_job: "Public job page",
   ats: "ATS inbound",
   bulk_resume: "Bulk resume",
+  layoff: "WeKruit Open",
   synthetic_test: "Synthetic test",
   unknown: "Unknown",
 }
@@ -115,6 +114,7 @@ const SOURCE_ORDER: SourceKind[] = [
   "public_job",
   "ats",
   "bulk_resume",
+  "layoff",
   "synthetic_test",
   "unknown",
 ]
@@ -137,6 +137,8 @@ type UserDoc = {
   latestResumeArtifactId?: string
   mem0UserId?: string
   testMode?: boolean
+  signupSource?: string
+  source?: string
   createdAt?: string
   updatedAt?: string
   lifecycleUpdatedAt?: string
@@ -282,44 +284,9 @@ async function loadSourceLinks(): Promise<Map<string, ExternalSource>> {
   return out
 }
 
-function deriveSource(doc: UserDoc, fromLinks: Map<string, ExternalSource>): SourceKind {
-  if (isSyntheticTestProfile(doc)) return "synthetic_test"
-  const linked = fromLinks.get(doc.id)
-  if (linked) return linked
-  if (doc.latestResumeArtifactId && !doc.phoneE164 && !doc.linkedinUrl) return "bulk_resume"
-  if (doc.linkedinUrl && !doc.phoneE164) return "ats"
-  if (doc.phoneE164) return "imessage"
-  if (doc.email) return "public_job"
-  return "unknown"
-}
-
-function hasReachableIdentity(doc: UserDoc): boolean {
-  return Boolean(doc.email || doc.phoneE164 || doc.linkedinUrl)
-}
-
-function hasCurrentCandidateAccountSignal(doc: UserDoc): boolean {
-  return Boolean(doc.candidateLifecycleState || doc.phoneE164)
-}
-
-function classifyCandidate(source: SourceKind, doc: UserDoc): CandidateClass {
-  if (source === "synthetic_test") return "synthetic_test_profile"
-  if (
-    source === "juicebox" ||
-    source === "lessie" ||
-    source === "coresignal" ||
-    source === "manual_csv"
-  ) {
-    return "external_supply_prospect"
-  }
-  if (source === "unknown" && !hasReachableIdentity(doc)) return "incomplete_identity_artifact"
-  if ((source === "public_job" || source === "bulk_resume") && !hasCurrentCandidateAccountSignal(doc)) {
-    return "incomplete_identity_artifact"
-  }
-  return "candidate_account"
-}
-
 function candidateClassLabel(candidateClass: CandidateClass): string {
   if (candidateClass === "external_supply_prospect") return "External prospect"
+  if (candidateClass === "legacy_sms_profile") return "Legacy SMS"
   if (candidateClass === "synthetic_test_profile") return "Synthetic test"
   if (candidateClass === "incomplete_identity_artifact") return "Incomplete identity"
   return "Candidate account"
@@ -327,7 +294,7 @@ function candidateClassLabel(candidateClass: CandidateClass): string {
 
 function buildRow(doc: UserDoc, sourceMap: Map<string, ExternalSource>): Row {
   const { handle, kind } = buildHandle(doc)
-  const source = deriveSource(doc, sourceMap)
+  const source = deriveCandidateSource(doc, sourceMap.get(doc.id))
   return {
     id: doc.id,
     doc,
@@ -335,7 +302,7 @@ function buildRow(doc: UserDoc, sourceMap: Map<string, ExternalSource>): Row {
     handleKind: kind,
     lifecycle: deriveLifecycle(doc),
     source,
-    candidateClass: classifyCandidate(source, doc),
+    candidateClass: classifyCandidateProfile(source, doc),
     profilePct: computeProfilePct(doc),
     skills: skillsFromTags(doc.globalTags),
     lastActiveIso: doc.lifecycleUpdatedAt || doc.updatedAt || doc.createdAt,
@@ -396,6 +363,7 @@ export function Candidates() {
     let withReachable = 0
     let accountCandidates = 0
     let externalProspects = 0
+    let legacySmsProfiles = 0
     let syntheticTests = 0
     let identityArtifacts = 0
     for (const r of rows) {
@@ -405,6 +373,7 @@ export function Candidates() {
       if (r.doc.email || r.doc.phoneE164 || r.doc.linkedinUrl) withReachable++
       if (r.candidateClass === "candidate_account") accountCandidates++
       else if (r.candidateClass === "external_supply_prospect") externalProspects++
+      else if (r.candidateClass === "legacy_sms_profile") legacySmsProfiles++
       else if (r.candidateClass === "synthetic_test_profile") syntheticTests++
       else identityArtifacts++
     }
@@ -415,6 +384,7 @@ export function Candidates() {
       withReachable,
       accountCandidates,
       externalProspects,
+      legacySmsProfiles,
       syntheticTests,
       identityArtifacts,
     }
@@ -507,6 +477,12 @@ export function Candidates() {
             value: counts.externalProspects,
             tone: counts.externalProspects > 0 ? "hitl" : "neutral",
             sub: "operator-imported sourcing",
+          },
+          {
+            label: "Legacy SMS",
+            value: counts.legacySmsProfiles,
+            tone: counts.legacySmsProfiles > 0 ? "neutral" : "neutral",
+            sub: "old phone-only rows",
           },
           {
             label: "Synthetic tests",
