@@ -859,11 +859,14 @@ export const paEnrichCompaniesNightly = onSchedule(
     region: "us-central1",
     memory: "512MiB",
     timeoutSeconds: 540,
-    secrets: [CLEARBIT_KEY, ANTHROPIC_API_KEY],
+    // CLEARBIT_KEY intentionally omitted — secret isn't set in this project
+    // (Clearbit free tier optional). Runtime falls back to env var lookup;
+    // when neither resolves the cascade skips the Clearbit tier entirely.
+    secrets: [ANTHROPIC_API_KEY],
     retryCount: 0,
   },
   async () => {
-    const clearbitKey = readSecret(CLEARBIT_KEY) ?? (process.env.CLEARBIT_KEY?.trim() || null)
+    const clearbitKey = process.env.CLEARBIT_KEY?.trim() || null
     const anthropicKey = readSecret(ANTHROPIC_API_KEY) ?? (process.env.ANTHROPIC_API_KEY?.trim() || null)
     const deps = makeFirestoreDeps({
       db: getFirestore(),
@@ -881,7 +884,8 @@ export const paEnrichCompaniesAdHoc = onCall(
     region: "us-central1",
     memory: "512MiB",
     timeoutSeconds: 540,
-    secrets: [PA_ADMIN_TOKEN, CLEARBIT_KEY, ANTHROPIC_API_KEY],
+    // CLEARBIT_KEY intentionally omitted (see paEnrichCompaniesNightly).
+    secrets: [PA_ADMIN_TOKEN, ANTHROPIC_API_KEY],
   },
   async (req): Promise<{ ok: true; counters: EnrichmentCounters }> => {
     authorizeAdminCallable(
@@ -905,7 +909,7 @@ export const paEnrichCompaniesAdHoc = onCall(
       throw new HttpsError("invalid-argument", "companyNames must be string[] | 'all_stale' | undefined")
     }
 
-    const clearbitKey = readSecret(CLEARBIT_KEY) ?? (process.env.CLEARBIT_KEY?.trim() || null)
+    const clearbitKey = process.env.CLEARBIT_KEY?.trim() || null
     const anthropicKey = readSecret(ANTHROPIC_API_KEY) ?? (process.env.ANTHROPIC_API_KEY?.trim() || null)
     const deps = makeFirestoreDeps({
       db: getFirestore(),
