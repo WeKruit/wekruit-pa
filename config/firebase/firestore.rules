@@ -203,12 +203,26 @@ service cloud.firestore {
       allow read, write: if isPaOperator();
     }
 
-    // ─── pa-companies (employer org docs) ───
+    // ─── pa-companies (employer org docs + Phase A3 directory) ───
     // Operator R/W for editing; CFs bypass via Admin SDK. Read powers
-    // /admin/external-supply/jobs company browser; write is admin-only.
+    // /admin/external-supply/jobs company browser + /admin/companies (A4);
+    // write is admin-only. Phase A3 NOTE: spec called for public read but
+    // collection contains sensitive employer competitor lists / school
+    // prefs from v2.0 external-supply — keep operator-only. Score-time
+    // V16 reads (apps/job-rec/src/lib/load-companies.ts B5) go through
+    // Admin SDK which bypasses rules.
     match /pa-companies/{companyId} {
       allow read: if isPaOperator();
       allow write: if isPaOperator();
+    }
+
+    // ─── Phase A5 — enrichment cascade source caches ───────────────
+    // YC company directory snapshot + Clearbit quota counter. Written
+    // exclusively by paEnrichCompaniesNightly / paEnrichCompaniesAdHoc
+    // (Admin SDK, bypasses rules); operator read only for debugging.
+    match /pa-companies-source/{docId} {
+      allow read: if isPaOperator();
+      allow write: if false;
     }
 
     // ─── v1.8 Phase 78 / v1.9 Phase 87 — pa-jobs (employer-authored config) ─
