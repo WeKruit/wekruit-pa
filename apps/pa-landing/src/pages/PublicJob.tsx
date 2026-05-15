@@ -58,7 +58,7 @@ interface PaJobDoc {
   prescreenConfig?: PrescreenConfig
   descriptionMd?: string
   location?: string
-  /** Top-level title used by rain / external-supply jobs without prescreenConfig. */
+  /** Top-level title used by rain / externally seeded jobs without prescreenConfig. */
   title?: string
   companyId?: string
   companyName?: string
@@ -272,7 +272,7 @@ export default function PublicJob() {
         setJob(data)
         // Resolve company display name from pa-companies/{companyId} when the
         // job doc lacks prescreenConfig.company / companyName denormalization
-        // (true for rain / external-supply seeded jobs).
+        // (true for rain / externally seeded seeded jobs).
         if (!data.prescreenConfig?.company && !data.companyName && data.companyId) {
           try {
             const companySnap = await getDoc(doc(db(), "pa-companies", data.companyId))
