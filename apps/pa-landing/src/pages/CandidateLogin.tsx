@@ -311,7 +311,6 @@ export function CandidateShell({ children, hero = false }: { children: ReactNode
           <nav className="wk-nav" aria-label="Candidate navigation">
             <Link to="/" className="wk-nav__link">Open interviews</Link>
             <Link to="/me" className="wk-nav__link">Pipeline</Link>
-            <Link to="/me/matches" className="wk-nav__link">Matches</Link>
             <Link to="/me/profile" className="wk-nav__link">Profile</Link>
           </nav>
           <div className="wk-header__cta">
@@ -587,6 +586,14 @@ const CANDIDATE_STYLES = `
 .wk-shell--hero { background: var(--wk-halo-hero); }
 .wk-shell *, .wk-shell *::before, .wk-shell *::after { box-sizing: border-box; }
 .wk-shell a { color: inherit; }
+/* Restore button text colors on anchors (Link renders <a>, which the rule
+   above otherwise resets to inherit and produces invisible CTA text). */
+.wk-shell a.wk-btn--primary,
+.wk-shell a.wk-btn--ink { color: var(--wk-cream); }
+.wk-shell a.wk-btn--secondary { color: var(--wk-ink); }
+.wk-shell a.wk-btn--linkedin { color: #fff; }
+.wk-shell a.wk-btn--ghost { color: var(--wk-ink-2); }
+.wk-shell a.wk-btn--ghost:hover { color: var(--wk-ink); }
 
 /* Logo ------------------------------------------------------------------ */
 .wk-logo {
