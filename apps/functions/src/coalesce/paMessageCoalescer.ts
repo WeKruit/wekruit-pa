@@ -409,7 +409,8 @@ export async function processCoalescedTurn(
     : 0.40
   const rng = deps.rng ?? Math.random
   const rngRoll = rng()
-  const shouldLove = rngRoll < loveProbability
+  const loveEligible = isLoveTapbackEligible(fired.accumulatedBody)
+  const shouldLove = loveEligible && rngRoll < loveProbability
   if (deps.sendReaction && fired.lastMessageId && shouldLove) {
     try {
       await deps.sendReaction({
@@ -438,6 +439,7 @@ export async function processCoalescedTurn(
       lastMessageId: fired.lastMessageId,
       probability: loveProbability,
       rngRoll: rngRoll.toFixed(4),
+      reason: loveEligible ? "rng_gate" : "ineligible_body",
     })
   }
 
@@ -691,4 +693,13 @@ export async function processCoalescedTurn(
   })
 
   return { status: "fired", buffer: fired }
+}
+
+const LOVE_TAPBACK_INELIGIBLE_RE =
+  /\b(no|cannot|can't|cant|not able|unable|won't|would not|not a fit|not aligned|too low|need remote|remote only|only remote|relocat(?:e|ion)?|onsite|weekly travel|sponsorship|visa|h-?1b)\b/i
+
+function isLoveTapbackEligible(body: string): boolean {
+  const text = typeof body === "string" ? body.trim() : ""
+  if (!text) return false
+  return !LOVE_TAPBACK_INELIGIBLE_RE.test(text)
 }

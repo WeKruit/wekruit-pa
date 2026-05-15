@@ -667,6 +667,87 @@ test("Phase 76: hard-filter mismatch abortHint overrides a noisy high score", as
   assert.match(r.state.questions.location_alignment.scored?.aggregate.summary ?? "", /different location/)
 })
 
+test("Phase 76: confirmed hard-filter mismatch stops after one direct clarify", async () => {
+  const store = new InMemoryPreScreenStore()
+  const pipeline = new PreScreenPipeline({
+    questions: {
+      location_alignment: {
+        qId: "location_alignment",
+        prompt: { zh: "Does this location or remote setup work for you?", en: "Does this location or remote setup work for you?" },
+        clarifyPrompt: {
+          zh: "Please answer directly whether the listed setup works.",
+          en: "Please answer directly whether the listed setup works.",
+        },
+        judge: new KeywordSetJudge({
+          questionId: "location_alignment",
+          keywords: [{ keyword: "location_alignment", weight: 1 }],
+          llmCaller: makeCaller([
+            {
+              perKeyword: [
+                {
+                  keyword: "location_alignment",
+                  match: 0.85,
+                  confidence: 0.78,
+                  evidence: "cannot relocate to New York",
+                  reasoning: "noisy high score despite mismatch",
+                },
+              ],
+              summary: "Remote from LA works; cannot relocate to New York or be there weekly.",
+              abortHint: { kind: "low_confidence", reason: "candidate declines NYC weekly" },
+            },
+            {
+              perKeyword: [
+                {
+                  keyword: "location_alignment",
+                  match: 0.8,
+                  confidence: 0.82,
+                  evidence: "can only do remote from Los Angeles",
+                  reasoning: "noisy high score despite confirmed mismatch",
+                },
+              ],
+              summary: "Candidate can only do remote from Los Angeles and cannot do NYC onsite.",
+            },
+          ]),
+        }),
+      },
+      compensation_alignment: makeQ("compensation_alignment", [
+        { perKeyword: [{ keyword: "compensation_alignment", match: 1, confidence: 1, evidence: "", reasoning: "" }] },
+      ]),
+    },
+    store,
+  })
+  await setupSession(pipeline, store, [
+    { qId: "location_alignment", type: "PROBING", weight: 1 },
+    { qId: "compensation_alignment", type: "PROBING", weight: 1 },
+  ])
+  const first = await pipeline.runTurn({
+    sessionId: "s1",
+    reply: "I cannot relocate to New York or be in NYC weekly. I need remote from Los Angeles.",
+    lang: "en",
+    nowIso: "2026-05-12T00:01:00Z",
+    judgeCtx: ctx,
+  })
+  assert.equal(first.action.kind, "clarify")
+  assert.equal(first.state.currentQId, "location_alignment")
+
+  const second = await pipeline.runTurn({
+    sessionId: "s1",
+    reply: "No. I can only do remote from Los Angeles and cannot do New York onsite or relocation.",
+    lang: "en",
+    nowIso: "2026-05-12T00:02:00Z",
+    judgeCtx: ctx,
+  })
+  assert.deepEqual(second.action, {
+    kind: "terminal",
+    terminal: "HARD_STOP",
+    reason: "hard_filter_mismatch at qId=location_alignment s=0.25 c=0.85: Candidate needs a different location or remote setup than this role requires.",
+  })
+  assert.equal(second.state.currentQId, null)
+  assert.equal(second.state.questions.location_alignment.finalS, 0.25)
+  assert.equal(second.state.questions.location_alignment.finalC, 0.85)
+  assert.match(second.text, /do not want to force-fit/i)
+})
+
 test("Phase 76: repeated clarify on the same question asks a new targeted probe", async () => {
   const store = new InMemoryPreScreenStore()
   const pipeline = new PreScreenPipeline({

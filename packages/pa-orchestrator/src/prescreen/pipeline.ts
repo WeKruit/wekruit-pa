@@ -177,6 +177,11 @@ export class PreScreenPipeline {
     // ── Evaluate via KeywordSetJudge ─────────────────────────────────────────
     const rawScored = await question.judge.judgeScored(scoringReply, input.lang, input.judgeCtx)
     const scored = applyHardFilterScoreOverride(state.currentQId, scoringReply, rawScored)
+    const confirmedHardFilterMismatch =
+      isHardFilterQId(state.currentQId) &&
+      hasHardFilterMismatch(state.currentQId, scoringReply, scored) &&
+      qState.clarifyRounds > 0 &&
+      scored.aggregate.c >= state.confidenceThreshold
     const merged = mergeScored(qState.scored, scored)
     qState.scored = merged
     qState.evidenceReplies = appendEvidenceReply(priorEvidenceReplies, input.reply)
@@ -249,6 +254,19 @@ export class PreScreenPipeline {
           clarifyRounds: qState.clarifyRounds,
           threshold: state.threshold,
         })
+      } else if (confirmedHardFilterMismatch) {
+        qState.finalS = s
+        qState.finalC = c
+        qState.answeredAt = input.nowIso
+        qState.terminalCause = "type_gate_fail"
+        return await this.transitionTerminal(
+          state,
+          "HARD_STOP",
+          `hard_filter_mismatch at qId=${qState.qId} s=${s.toFixed(2)} c=${c.toFixed(2)}: ${hardFilterMismatchReason(qState.qId)}`,
+          input.nowIso,
+          input.lang,
+          log
+        )
       } else if (qState.clarifyRounds < state.maxClarifyRounds) {
         qState.clarifyRounds += 1
         state.updatedAt = input.nowIso

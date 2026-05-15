@@ -30,6 +30,7 @@ import { sendImessage } from "./sendblue/sendblue-client.js"
 import { runPrescreenTerminalAction } from "./prescreen-terminal-action.js"
 
 const ACTIVE_PRESCREEN_TIMEOUT_MS = 60 * 60 * 1000
+const RECENT_TERMINAL_PRESCREEN_GUARD_MS = 60 * 60 * 1000
 
 /** Firestore-backed PreScreenStateProvider. */
 class FirestorePreScreenStore implements PreScreenStateProvider {
@@ -193,6 +194,7 @@ type ActivePrescreenLookup =
   | { kind: "none" }
   | { kind: "active"; sessionId: string }
   | { kind: "expired"; sessionId: string; jobId: string }
+  | { kind: "recent_terminal"; sessionId: string; jobId: string; terminal: string }
 
 async function findActiveSession(
   db: Firestore,
@@ -244,6 +246,70 @@ async function findActiveSession(
     }
   }
   return { kind: "active", sessionId: doc.id }
+}
+
+async function findRecentTerminalSession(
+  db: Firestore,
+  userId: string,
+  opts: {
+    nowMs?: number
+    log?: (event: string, payload: Record<string, unknown>) => void
+  } = {},
+): Promise<ActivePrescreenLookup> {
+  const nowMs = opts.nowMs ?? Date.now()
+  const snap = await db
+    .collection("pa-prescreen-sessions")
+    .where("userId", "==", userId)
+    .limit(50)
+    .get()
+
+  let latest:
+    | {
+        id: string
+        jobId: string
+        terminal: string
+        atMs: number
+      }
+    | null = null
+
+  for (const doc of snap.docs) {
+    const data = doc.data() as Record<string, unknown>
+    const terminal = typeof data.terminal === "string" ? data.terminal : null
+    if (!terminal) continue
+    const workSession = data.workSession as Record<string, unknown> | undefined
+    if (workSession && workSession.kind !== "job_prescreen") continue
+
+    const endedAtMs =
+      timestampMs(workSession?.endedAt) ??
+      timestampMs(data.updatedAt) ??
+      timestampMs(data.completedAt) ??
+      timestampMs(data.createdAt)
+    if (endedAtMs === null) continue
+    if (nowMs - endedAtMs > RECENT_TERMINAL_PRESCREEN_GUARD_MS) continue
+    if (latest && endedAtMs <= latest.atMs) continue
+
+    latest = {
+      id: doc.id,
+      jobId: typeof data.jobId === "string" ? data.jobId : "",
+      terminal,
+      atMs: endedAtMs,
+    }
+  }
+
+  if (!latest) return { kind: "none" }
+  opts.log?.("prescreen.turn.recent_terminal_guard_found", {
+    userId,
+    sessionId: latest.id,
+    jobId: latest.jobId,
+    terminal: latest.terminal,
+    endedAt: new Date(latest.atMs).toISOString(),
+  })
+  return {
+    kind: "recent_terminal",
+    sessionId: latest.id,
+    jobId: latest.jobId,
+    terminal: latest.terminal,
+  }
 }
 
 function timestampMs(value: unknown): number | null {
@@ -329,8 +395,56 @@ export async function runPrescreenTurnIfActive(
   const log = args.log ?? (() => {})
   const sendSms = args.sendSms ?? sendImessage
   const terminalAction = args.runTerminalAction ?? runPrescreenTerminalAction
-  const lookup = await findActiveSession(args.db, args.userId, { log })
+  let lookup = await findActiveSession(args.db, args.userId, { log })
+  if (lookup.kind === "none") {
+    lookup = await findRecentTerminalSession(args.db, args.userId, { log })
+  }
   if (lookup.kind === "none") return { handled: false }
+  if (lookup.kind === "recent_terminal") {
+    const sessionRef = args.db.collection("pa-prescreen-sessions").doc(lookup.sessionId)
+    const sessSnap = await sessionRef.get()
+    const sessData = (sessSnap.data() ?? {}) as Record<string, unknown>
+    const alreadyAcked = typeof sessData.postTerminalFollowupAckAt === "string"
+    const nowIso = new Date().toISOString()
+
+    await sessionRef.collection("turns").add({
+      qId: "terminal",
+      reply: args.replyText,
+      action: {
+        kind: "post_terminal_followup",
+        terminal: lookup.terminal,
+        reason: "recent_ended_prescreen_session",
+      },
+      ts: nowIso,
+    })
+
+    let text: string | undefined
+    if (!alreadyAcked) {
+      text = recentTerminalSessionText(args.lang ?? "en")
+      try {
+        await sendSms({ to: args.toE164, content: text, userId: args.userId, db: args.db })
+        await sessionRef.set({ postTerminalFollowupAckAt: nowIso, updatedAt: nowIso }, { merge: true })
+      } catch (err) {
+        log("prescreen.turn.recent_terminal_ack_send_failed", {
+          sessionId: lookup.sessionId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    }
+
+    log("prescreen.turn.recent_terminal_guard_handled", {
+      sessionId: lookup.sessionId,
+      userId: args.userId,
+      terminal: lookup.terminal,
+      acked: Boolean(text),
+    })
+    return {
+      handled: true,
+      sessionId: lookup.sessionId,
+      terminal: lookup.terminal,
+      textSent: text,
+    }
+  }
   if (lookup.kind === "expired") {
     try {
       await terminalAction({
@@ -548,4 +662,10 @@ function userExitSessionText(lang: "zh" | "en"): string {
   return lang === "zh"
     ? "好的，我先暂停这个岗位 screen。你之后想继续的话，从岗位页面重新开始就行；你已经分享过的经历我会保留在你的全局 profile 里。"
     : "Got it — I paused this role screen. If you want to continue later, reopen it from the job page; I will keep what you have already shared on your profile."
+}
+
+function recentTerminalSessionText(lang: "zh" | "en"): string {
+  return lang === "zh"
+    ? "收到。这个岗位 screen 已经暂停了；我会把这个约束记到你的 profile 里，后面只看更匹配的机会。"
+    : "Got it. This role screen is already paused; I will keep that constraint on your profile and use it for better-matched roles."
 }

@@ -205,6 +205,74 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     assert.ok([...docs.keys()].some((path) => path.startsWith("pa-prescreen-sessions/ps_active/turns/")))
   })
 
+  it("guards a recent terminal prescreen so follow-up texts do not fall into normal onboarding", async () => {
+    const now = new Date().toISOString()
+    const { db, docs } = makeFakeDb({
+      "pa-prescreen-sessions/ps_done": {
+        sessionId: "ps_done",
+        userId: "u1",
+        jobId: "rain-software-engineer-fullstack-8849f6ef",
+        terminal: "HARD_STOP",
+        currentQId: null,
+        createdAt: now,
+        updatedAt: now,
+        workSession: { kind: "job_prescreen", status: "ended", startedAt: now, endedAt: now, boundary: "terminal" },
+      },
+    })
+
+    const sent: string[] = []
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u1",
+      toE164: "+13054507715",
+      replyText: "I still cannot relocate to New York.",
+      sendSms: async (args) => {
+        sent.push(args.content)
+        return {
+          status: "queued",
+          from_number: null,
+          number: args.to,
+          content: args.content,
+          service: "iMessage",
+          is_outbound: true,
+        }
+      },
+    })
+
+    assert.equal(result.handled, true)
+    assert.equal(result.sessionId, "ps_done")
+    assert.equal(result.terminal, "HARD_STOP")
+    assert.deepEqual(sent, [
+      "Got it. This role screen is already paused; I will keep that constraint on your profile and use it for better-matched roles.",
+    ])
+    const session = docs.get("pa-prescreen-sessions/ps_done")?.data
+    assert.equal(typeof session?.postTerminalFollowupAckAt, "string")
+    const turnEntries = [...docs.entries()].filter(([path]) => path.startsWith("pa-prescreen-sessions/ps_done/turns/"))
+    assert.equal(turnEntries.length, 1)
+    assert.equal((turnEntries[0][1].data.action as { kind?: string }).kind, "post_terminal_followup")
+
+    const second = await runPrescreenTurnIfActive({
+      db,
+      userId: "u1",
+      toE164: "+13054507715",
+      replyText: "Remote Los Angeles only.",
+      sendSms: async (args) => {
+        sent.push(args.content)
+        return {
+          status: "queued",
+          from_number: null,
+          number: args.to,
+          content: args.content,
+          service: "iMessage",
+          is_outbound: true,
+        }
+      },
+    })
+
+    assert.equal(second.handled, true)
+    assert.equal(sent.length, 1, "second post-terminal follow-up should be handled silently")
+  })
+
   it("handles a coalesced multi-message role-fit reply as one probe turn", async () => {
     const now = new Date().toISOString()
     const { db, docs } = makeFakeDb({
