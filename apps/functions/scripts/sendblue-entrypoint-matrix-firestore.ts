@@ -11,7 +11,7 @@
  *   node --import tsx apps/functions/scripts/sendblue-entrypoint-matrix-firestore.ts
  */
 import { createHmac } from "node:crypto"
-import { mkdirSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { config as loadDotenv } from "dotenv"
 import { applicationDefault, getApps, initializeApp } from "firebase-admin/app"
@@ -21,8 +21,14 @@ import { handleSendblueWebhook, type WebhookRequest, type WebhookResponse } from
 import { runLayoffSmsStart } from "../src/layoff-sms-start.js"
 import { runPreScreenForUser } from "../src/prescreen-session-start.js"
 
-loadDotenv({ path: ".env" })
-loadDotenv({ path: "apps/functions/.env", override: false })
+for (const envPath of [
+  path.resolve(process.cwd(), ".env"),
+  path.resolve(process.cwd(), "apps/functions/.env"),
+  path.resolve(process.cwd(), "../..", ".env"),
+  path.resolve(process.cwd(), "../..", "apps/functions/.env"),
+]) {
+  if (existsSync(envPath)) loadDotenv({ path: envPath, override: false })
+}
 
 const PROJECT_ID = "wekruit-5f89b"
 const JOB_ID = process.env.SENDBLUE_MATRIX_JOB_ID ?? "rain-software-engineer-fullstack-8849f6ef"

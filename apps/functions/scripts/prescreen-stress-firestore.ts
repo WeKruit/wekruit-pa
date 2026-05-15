@@ -10,7 +10,7 @@
  *   GOOGLE_APPLICATION_CREDENTIALS=/Users/adam/Downloads/service_account_key.json \
  *   node --import tsx apps/functions/scripts/prescreen-stress-firestore.ts
  */
-import { mkdirSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { config as loadDotenv } from "dotenv"
 import { initializeApp, applicationDefault, getApps } from "firebase-admin/app"
@@ -23,8 +23,14 @@ import {
 } from "../src/prescreen-terminal-action.js"
 import { requireExistingPaUserForProductionTest } from "./lib/prod-test-user-guard.mjs"
 
-loadDotenv({ path: ".env" })
-loadDotenv({ path: "apps/functions/.env", override: false })
+for (const envPath of [
+  path.resolve(process.cwd(), ".env"),
+  path.resolve(process.cwd(), "apps/functions/.env"),
+  path.resolve(process.cwd(), "../..", ".env"),
+  path.resolve(process.cwd(), "../..", "apps/functions/.env"),
+]) {
+  if (existsSync(envPath)) loadDotenv({ path: envPath, override: false })
+}
 
 const PROJECT_ID = "wekruit-5f89b"
 const JOB_ID = process.env.PRESCREEN_STRESS_JOB_ID ?? "rain-software-engineer-fullstack-8849f6ef"
@@ -40,6 +46,9 @@ type Scenario = {
     minClarifies?: number
     maxClarifies?: number
     terminalMustNotBeforeTurn?: number
+    candidateState?: string
+    employerVisibleProfile?: boolean
+    workSessionBoundary?: string
   }
   replies: string[]
 }
@@ -48,7 +57,13 @@ const scenarios: Scenario[] = [
   {
     slug: "strong_fullstack_pass",
     label: "Strong fullstack candidate should progress through all questions and pass",
-    expected: { terminal: "PASS", maxClarifies: 1 },
+    expected: {
+      terminal: "PASS",
+      maxClarifies: 1,
+      candidateState: "employer_visible",
+      employerVisibleProfile: true,
+      workSessionBoundary: "terminal",
+    },
     replies: [
       "I owned a production merchant order dashboard and dispatch tooling for OFO Delivery. I built React and Node screens, Postgres SQL reports, and scripts that traced failed orders. Those fixes reduced merchant support triage from hours to minutes and improved onboarding and pricing edge cases.",
       "My strongest skill is full-stack TypeScript. I built React admin flows, Node endpoints, SQL queries, validation, auth checks, and order-state debugging. The hardest part was making failed-order states explainable enough that ops could self-serve instead of asking engineering.",
@@ -60,7 +75,14 @@ const scenarios: Scenario[] = [
   {
     slug: "adjacent_probe_recovery",
     label: "Adjacent candidate starts weak, then Claire should probe and recover instead of abrupt rejection",
-    expected: { terminal: "PASS", minClarifies: 2, terminalMustNotBeforeTurn: 3 },
+    expected: {
+      terminal: "PASS",
+      minClarifies: 2,
+      terminalMustNotBeforeTurn: 3,
+      candidateState: "employer_visible",
+      employerVisibleProfile: true,
+      workSessionBoundary: "terminal",
+    },
     replies: [
       "I have not owned a fullstack system professionally. Most of my work was product ops, campus delivery dashboards, SQL reports, and small scripts.",
       "Closest was OFO Delivery. I owned the merchant order dashboard and dispatch tooling.",
@@ -75,7 +97,14 @@ const scenarios: Scenario[] = [
   {
     slug: "weak_no_engineering_hard_stop",
     label: "Weak non-engineering candidate should get repeated probes before hard stop",
-    expected: { terminal: "HARD_STOP", minClarifies: 4, terminalMustNotBeforeTurn: 5 },
+    expected: {
+      terminal: "HARD_STOP",
+      minClarifies: 4,
+      terminalMustNotBeforeTurn: 5,
+      candidateState: "not_passed",
+      employerVisibleProfile: false,
+      workSessionBoundary: "terminal",
+    },
     replies: [
       "I mostly did customer support and scheduling. I have not built software.",
       "The closest thing was updating spreadsheets and forwarding bug reports to engineers.",
@@ -87,7 +116,12 @@ const scenarios: Scenario[] = [
   {
     slug: "user_exit_pause",
     label: "Candidate can exit cleanly and the work session pauses",
-    expected: { terminal: "PAUSE" },
+    expected: {
+      terminal: "PAUSE",
+      candidateState: "paused",
+      employerVisibleProfile: false,
+      workSessionBoundary: "user_exit",
+    },
     replies: ["stop"],
   },
 ]
@@ -186,6 +220,51 @@ async function resetScenarioState(db: Firestore, userId: string) {
   await batch.commit()
 }
 
+async function countPaUsers(db: Firestore): Promise<number> {
+  const snap = await db.collection("pa-users").count().get()
+  return snap.data().count
+}
+
+function assertTerminalPersistence(args: {
+  scenario: Scenario
+  sessionId: string
+  sessionData: Record<string, unknown>
+  memoryEventExists: boolean
+  candidateJobState: Record<string, unknown> | null | undefined
+  employerVisibleProfileExists: boolean
+  failures: string[]
+}) {
+  const { scenario, sessionId, sessionData, memoryEventExists, candidateJobState, employerVisibleProfileExists, failures } = args
+  const workSession = sessionData.workSession as { status?: string; boundary?: string } | undefined
+  if (scenario.expected.terminal) {
+    if (!memoryEventExists) failures.push("expected pa-prescreen-memory-events row, got missing")
+    if (!candidateJobState) {
+      failures.push("expected pa-candidate-job-states row, got missing")
+    } else {
+      if (candidateJobState.prescreenSessionId !== sessionId) {
+        failures.push(`candidate job state points to ${String(candidateJobState.prescreenSessionId)}, expected ${sessionId}`)
+      }
+      if (scenario.expected.candidateState && candidateJobState.state !== scenario.expected.candidateState) {
+        failures.push(`expected candidate job state ${scenario.expected.candidateState}, got ${String(candidateJobState.state)}`)
+      }
+    }
+    if (workSession?.status !== "ended") {
+      failures.push(`expected workSession.status ended, got ${String(workSession?.status)}`)
+    }
+    if (scenario.expected.workSessionBoundary && workSession?.boundary !== scenario.expected.workSessionBoundary) {
+      failures.push(`expected workSession.boundary ${scenario.expected.workSessionBoundary}, got ${String(workSession?.boundary)}`)
+    }
+  }
+  if (
+    scenario.expected.employerVisibleProfile !== undefined &&
+    employerVisibleProfileExists !== scenario.expected.employerVisibleProfile
+  ) {
+    failures.push(
+      `expected employerVisibleProfileExists=${scenario.expected.employerVisibleProfile}, got ${employerVisibleProfileExists}`,
+    )
+  }
+}
+
 async function runScenario(db: Firestore, runId: string, scenario: Scenario) {
   const userId = STRESS_USER_ID
   const phone = STRESS_PHONE
@@ -260,6 +339,7 @@ async function runScenario(db: Firestore, runId: string, scenario: Scenario) {
   const stateSnap = await db.collection("pa-candidate-job-states").doc(`${userId}__${JOB_ID}`).get()
   const employerSnap = await db.collection("pa-employer-visible-profiles").doc(`${JOB_ID}__${userId}`).get()
   const finalTerminal = (session.data.terminal as string | null | undefined) ?? null
+  const candidateJobState = stateSnap.exists ? stateSnap.data() : null
 
   const failures: string[] = []
   if (scenario.expected.terminal && finalTerminal !== scenario.expected.terminal) {
@@ -278,6 +358,15 @@ async function runScenario(db: Firestore, runId: string, scenario: Scenario) {
   ) {
     failures.push(`terminal happened on turn ${terminalTurnIndex}, before ${scenario.expected.terminalMustNotBeforeTurn}`)
   }
+  assertTerminalPersistence({
+    scenario,
+    sessionId: started.sessionId,
+    sessionData: session.data,
+    memoryEventExists: memorySnap.exists,
+    candidateJobState,
+    employerVisibleProfileExists: employerSnap.exists,
+    failures,
+  })
 
   await db.collection("pa-prescreen-stress-runs").doc(runId).set(
     {
@@ -309,8 +398,108 @@ async function runScenario(db: Firestore, runId: string, scenario: Scenario) {
     sent,
     turns,
     memoryEventExists: memorySnap.exists,
-    candidateJobState: stateSnap.exists ? stateSnap.data() : null,
+    candidateJobState,
     employerVisibleProfileExists: employerSnap.exists,
+    logs,
+    failures,
+  }
+}
+
+async function runSupersedeProbe(db: Firestore, runId: string) {
+  const userId = STRESS_USER_ID
+  const phone = STRESS_PHONE
+  const sent: SentMessage[] = []
+  const logs: Array<{ event: string; payload: Record<string, unknown> }> = []
+  const captureSend = (phase: SentMessage["phase"]) => async (args: { to: string; content: string }) => {
+    sent.push({ phase, to: args.to, content: args.content })
+  }
+  const log = (event: string, payload: Record<string, unknown>) => logs.push({ event, payload })
+  const scenario: Scenario = {
+    slug: "new_trigger_supersedes_active_prescreen",
+    label: "A fresh prescreen trigger must end the previous active job work-session",
+    expected: { terminal: "PAUSE", workSessionBoundary: "superseded" },
+    replies: [],
+  }
+
+  await ensureTestUser(db, userId, phone, runId, scenario)
+  await resetScenarioState(db, userId)
+  const first = await runPreScreenForUser({
+    db,
+    jobId: JOB_ID,
+    userId,
+    toE164: phone,
+    sendSms: captureSend("start"),
+    log,
+  })
+  const second = await runPreScreenForUser({
+    db,
+    jobId: JOB_ID,
+    userId,
+    toE164: phone,
+    sendSms: captureSend("start"),
+    log,
+  })
+
+  const failures: string[] = []
+  if (!first.ok) failures.push(`first session start failed:${first.reason}`)
+  if (!second.ok) failures.push(`second session start failed:${second.reason}`)
+
+  const firstSession = first.ok ? await readSession(db, first.sessionId) : { data: {}, turns: [] }
+  const secondSession = second.ok ? await readSession(db, second.sessionId) : { data: {}, turns: [] }
+  if ((firstSession.data.terminal as string | undefined) !== "PAUSE") {
+    failures.push(`expected first session terminal PAUSE, got ${String(firstSession.data.terminal)}`)
+  }
+  if (!String(firstSession.data.terminalReason ?? "").startsWith("superseded_by_new_prescreen_session:")) {
+    failures.push(`expected superseded terminalReason, got ${String(firstSession.data.terminalReason)}`)
+  }
+  const firstWork = firstSession.data.workSession as { status?: string; boundary?: string; supersededBySessionId?: string } | undefined
+  if (firstWork?.status !== "ended") failures.push(`expected first workSession.status ended, got ${String(firstWork?.status)}`)
+  if (firstWork?.boundary !== "superseded") {
+    failures.push(`expected first workSession.boundary superseded, got ${String(firstWork?.boundary)}`)
+  }
+  if (firstWork?.supersededBySessionId !== second.sessionId) {
+    failures.push(`expected supersededBySessionId ${second.sessionId}, got ${String(firstWork?.supersededBySessionId)}`)
+  }
+  const secondWork = secondSession.data.workSession as { status?: string; boundary?: string } | undefined
+  if ((secondSession.data.terminal as string | null | undefined) !== null) {
+    failures.push(`expected second session active terminal null, got ${String(secondSession.data.terminal)}`)
+  }
+  if (secondWork?.status !== "active") failures.push(`expected second workSession.status active, got ${String(secondWork?.status)}`)
+  if (secondWork?.boundary !== "trigger") {
+    failures.push(`expected second workSession.boundary trigger, got ${String(secondWork?.boundary)}`)
+  }
+
+  if (second.ok) {
+    await db.collection("pa-prescreen-sessions").doc(second.sessionId).set(
+      {
+        terminal: "PAUSE",
+        terminalReason: "stress_cleanup",
+        currentQId: null,
+        updatedAt: new Date().toISOString(),
+        workSession: {
+          kind: "job_prescreen",
+          status: "ended",
+          boundary: "stress_cleanup",
+          endedAt: new Date().toISOString(),
+        },
+      },
+      { merge: true },
+    )
+  }
+
+  return {
+    slug: scenario.slug,
+    label: scenario.label,
+    userId,
+    phone,
+    firstSessionId: first.sessionId,
+    secondSessionId: second.sessionId,
+    firstTerminal: firstSession.data.terminal ?? null,
+    firstTerminalReason: firstSession.data.terminalReason ?? null,
+    firstWorkSession: firstSession.data.workSession ?? null,
+    secondTerminalBeforeCleanup: secondSession.data.terminal ?? null,
+    secondWorkSessionBeforeCleanup: secondSession.data.workSession ?? null,
+    sent,
     logs,
     failures,
   }
@@ -326,6 +515,7 @@ async function main() {
   const db = getFirestore()
   const runId = `stress-${nowStamp()}`
   const results = []
+  const userCountBefore = await countPaUsers(db)
   for (let i = 0; i < scenarios.length; i += 1) {
     const result = await runScenario(db, runId, scenarios[i])
     results.push(result)
@@ -334,22 +524,33 @@ async function main() {
       : "PASS"
     console.log(`[${status}] ${result.slug} session=${"sessionId" in result ? result.sessionId : "n/a"} terminal=${"finalTerminal" in result ? result.finalTerminal : "n/a"}`)
   }
+  const supersede = await runSupersedeProbe(db, runId)
+  results.push(supersede)
+  const supersedeStatus = supersede.failures.length > 0 ? `FAIL ${supersede.failures.join("; ")}` : "PASS"
+  console.log(`[${supersedeStatus}] ${supersede.slug} first=${supersede.firstSessionId} second=${supersede.secondSessionId}`)
+  const userCountAfter = await countPaUsers(db)
+  const collectionFailures = userCountAfter === userCountBefore
+    ? []
+    : [`pa-users count changed from ${userCountBefore} to ${userCountAfter}`]
 
   const summary = {
     runId,
     jobId: JOB_ID,
     createdAt: new Date().toISOString(),
+    userCountBefore,
+    userCountAfter,
     results,
     failedScenarios: results
       .filter((r) => "failures" in r && Array.isArray(r.failures) && r.failures.length > 0)
       .map((r) => ({ slug: r.slug, failures: "failures" in r ? r.failures : [] })),
+    collectionFailures,
   }
   mkdirSync(ARTIFACT_DIR, { recursive: true })
   const artifactPath = path.join(ARTIFACT_DIR, `${runId}.json`)
   writeFileSync(artifactPath, `${JSON.stringify(summary, null, 2)}\n`)
   await db.collection("pa-prescreen-stress-runs").doc(runId).set(stripUndefined(summary), { merge: true })
   console.log(`[artifact] ${artifactPath}`)
-  if (summary.failedScenarios.length > 0) {
+  if (summary.failedScenarios.length > 0 || summary.collectionFailures.length > 0) {
     process.exitCode = 1
   }
 }
