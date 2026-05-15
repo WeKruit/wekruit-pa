@@ -204,8 +204,69 @@ const QUESTIONS = [
     llmStep: "ask_q_location",
   },
   {
-    id: "q_resume",
+    // Phase B2 — captured at onboarding so V16 can apply tagOverlap soft-score.
+    // Multi-pick from COMPANY_TAG_VOCAB (big_tech, mag_7, yc_active, yc_alumni,
+    // unicorn, ai_native, fintech_unicorn, crypto_web3, retail_ops,
+    // gov_contract, agency_consulting). Writes statedPreferences.targetCompanyTags;
+    // mergeUserTags copies through to pa-users.{uid}.tags.targetCompanyTags.
+    id: "q_company_tag_pref",
     order: 9,
+    prompt: {
+      zh: "Which company types interest you most? (e.g. big_tech / ai_native / yc_active / unicorn — 多选)",
+      en: "Which company types interest you most? Pick any: big_tech / mag_7 / yc_active / yc_alumni / unicorn / ai_native / fintech_unicorn / crypto_web3 / retail_ops / gov_contract / agency_consulting",
+    },
+    variants: [
+      {
+        zh: "公司类型偏好选一两个就行: big_tech / ai_native / yc_active / unicorn — 都行就回 'any'",
+        en: "pick one or two company types — big_tech / ai_native / yc_active / unicorn — 'any' if you don't care",
+      },
+      {
+        zh: "你更看哪种公司? 大厂 (big_tech)、AI 原生、YC active、独角兽 — 多选",
+        en: "which kind of company? big tech / ai native / yc active / unicorn — multi is fine",
+      },
+      {
+        zh: "举几个标签就行 — big_tech / mag_7 / ai_native / fintech_unicorn / agency_consulting",
+        en: "list any tags — big_tech / mag_7 / ai_native / fintech_unicorn / agency_consulting",
+      },
+      {
+        zh: "一个词就行, 比如 'big_tech' / 'ai_native' / 'any'",
+        en: "one word works: 'big_tech' / 'ai_native' / 'any'",
+      },
+    ],
+    judgeKind: "llm-relevance",
+    rephraserKind: "hybrid",
+    maxAttempts: 5,
+    haltMessage: HALT_DEFAULT,
+    enabled: true,
+    llmStep: "ask_q_company_tag_pref",
+  },
+  {
+    // Phase B2 — yes/no urgency flag. Writes statedPreferences.urgentlySeeking;
+    // mergeUserTags copies through to pa-users.{uid}.tags.urgentlySeeking,
+    // driving V16 urgencyBoost (+0.20 fresh full-time / -0.10 intern/new-grad).
+    // ALSO writable by the laid-off NL detector (B3) — onboarding is the
+    // explicit capture path.
+    id: "q_urgently_seeking",
+    order: 10,
+    prompt: {
+      zh: "Are you actively job searching right now? 现在是不是急着找工作? — yes / no",
+      en: "Are you actively job searching right now? yes / no",
+    },
+    variants: [
+      { zh: "急不急? 一个 'yes' 或 'no' 就行", en: "urgent or not? just 'yes' or 'no'" },
+      { zh: "你现在还在职 + 慢慢看, 还是想尽快换? 'yes' = 急, 'no' = 慢慢来", en: "still employed + browsing, or trying to move soon? 'yes' = urgent, 'no' = chill" },
+      { zh: "再问一遍 — 是不是 actively searching? yes / no", en: "asking again — actively searching right now? yes / no" },
+      { zh: "yes / no 就行哦", en: "yes / no works" },
+    ],
+    judgeKind: "yesno",
+    rephraserKind: "variants",
+    maxAttempts: 5,
+    haltMessage: HALT_DEFAULT,
+    enabled: true,
+  },
+  {
+    id: "q_resume",
+    order: 11,
     prompt: { zh: "对了, 简历方便发我一份不? 后面帮你看 JD / 内推都准多了", en: "btw — can you send me your resume? makes JD review and referrals way more on-point" },
     variants: [
       { zh: "等你发简历过来哦, iMessage 里直接附件就行", en: "just waiting on the resume — send it as an iMessage attachment whenever" },

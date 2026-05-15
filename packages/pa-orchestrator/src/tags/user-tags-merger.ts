@@ -810,6 +810,14 @@ export function mergeUserTags(input: UserTagsInput): UserTags {
     : undefined
   const preferredLang = mapPreferredLang(input.preferredLang, statedPreferences?.preferredLang)
 
+  // ---- Phase B2 — company preference pass-through ---------------------
+  // targetCompanyTags: dedupe + lowercase, cap at 30 to mirror UserTagsSchema.
+  // urgentlySeeking: strict boolean pass-through (drop non-booleans).
+  const urgentlySeeking =
+    typeof statedPreferences?.urgentlySeeking === "boolean"
+      ? statedPreferences.urgentlySeeking
+      : undefined
+
   // ---- Phase 53 — canonical Phase 52 fields pass-through --------------
   // Each field defensively normalized: lowercase + trimmed strings, dedupe.
   const dedupedStrings = (
@@ -833,6 +841,8 @@ export function mergeUserTags(input: UserTagsInput): UserTags {
   const relevantIndustry = dedupedStrings(cv?.relevantIndustry, 6)
   const relevantSpecialization = dedupedStrings(cv?.relevantSpecialization, 6)
   const proposedTags = dedupedStrings(cv?.proposedTags, 12)
+  // Phase B2 — company-tag pref. Cap=30 mirrors UserTagsSchema.max(30).
+  const targetCompanyTags = dedupedStrings(statedPreferences?.targetCompanyTags, 30)
 
   // ---- assemble + omit-undefined --------------------------------------
   // We deliberately avoid placing `undefined` keys on the output so the
@@ -861,6 +871,8 @@ export function mergeUserTags(input: UserTagsInput): UserTags {
   if (relevantIndustry) out.relevantIndustry = relevantIndustry
   if (relevantSpecialization) out.relevantSpecialization = relevantSpecialization
   if (proposedTags) out.proposedTags = proposedTags
+  if (targetCompanyTags) out.targetCompanyTags = targetCompanyTags
+  if (urgentlySeeking !== undefined) out.urgentlySeeking = urgentlySeeking
   if (cv && cvUpdatedAt) out.lastUpdatedFromCv = cvUpdatedAt
   if (statedPreferences && chatUpdatedAt) out.lastUpdatedFromChat = chatUpdatedAt
 
