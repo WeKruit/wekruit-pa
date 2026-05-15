@@ -34,6 +34,9 @@ describe("deriveJobOpportunityDraft", () => {
       draft.prescreenConfigDraft.questions[0]?.prompt,
       "What recent work best matches this software engineering role?",
     )
+    assert.ok(draft.candidateBrief.body.includes("senior software engineering opportunity"))
+    assert.ok(!draft.candidateBrief.body.includes("mid_level"))
+    assert.ok(!draft.candidateBrief.body.includes("software_engineering"))
     assert.deepEqual(draft.softScoringWeights.industrySector, [
       { token: "financial_technology", weight: 0.85 },
       { token: "software_and_saas", weight: 0.75 },

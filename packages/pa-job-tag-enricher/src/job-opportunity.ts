@@ -367,13 +367,15 @@ function buildCandidateBrief(input: JobOpportunityDraftInput): JobOpportunityDra
   const rawJob = input.rawJob
   const tags = input.enrichedJobTags
   const title = [rawJob.title, rawJob.companyName].filter(Boolean).join(" at ")
-  const skills = (tags.skills ?? []).slice(0, 3).map((skill) => skill.name).join(", ")
+  const skills = (tags.skills ?? []).slice(0, 3).map((skill) => humanizeToken(skill.name)).join(", ")
   const location = rawJob.locationRaw ? ` The location listed is ${rawJob.locationRaw}.` : ""
   const skillSentence = skills ? ` Claire will focus on your experience with ${skills}.` : " Claire will focus on your closest relevant experience."
+  const seniorityLabel = humanizeToken(tags.seniorityLevel)
+  const roleLabel = humanizeRoleFunctions(tags.roleFunction)
 
   return {
     title: title || "Job opportunity",
-    body: `${title || "This role"} is a ${tags.seniorityLevel} ${tags.roleFunction.join(" or ")} opportunity.${skillSentence}${location}`,
+    body: `${title || "This role"} is a ${seniorityLabel} ${roleLabel} opportunity.${skillSentence}${location}`,
   }
 }
 
@@ -394,4 +396,8 @@ function buildEvalFixtures(input: JobOpportunityDraftInput): JobOpportunityDraft
 
 function dedupe(values: string[]): string[] {
   return [...new Set(values)]
+}
+
+function humanizeToken(token: string): string {
+  return token.replace(/_/g, " ")
 }
