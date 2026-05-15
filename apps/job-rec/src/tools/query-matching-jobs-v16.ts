@@ -48,6 +48,8 @@ import {
 } from "../types.js"
 import { V16_SCORE_WEIGHTS } from "../match-weights.js"
 import { projectMatchingJobRow } from "./query-matching-jobs.js"
+import { normalizeCompanyName } from "@pa/core-types"
+import { loadCompaniesByName, type LoadedCompanyInfo } from "../lib/load-companies.js"
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -331,6 +333,7 @@ export function applyV16HardFilters(
     freshness: 0,
     atsApplyUrl: 0,
     dead: 0,
+    negativeListDrop: 0,
   }
   if (!Array.isArray(jobs) || jobs.length === 0) {
     return { kept: [], counters }
@@ -356,7 +359,14 @@ export function applyV16HardFilters(
     relevantTags?: string[]
     targetCountry?: string[]
     minSalary?: number
+    companyNegativeList?: string[]
   }
+  // Phase B4 — pre-build hard-filter negative-name lookup once.
+  const negativeSet = new Set<string>(
+    Array.isArray(tagsExt.companyNegativeList)
+      ? tagsExt.companyNegativeList.filter((s): s is string => typeof s === "string")
+      : []
+  )
   const careerStage = tagsExt.careerStage
   const careerStageValid =
     typeof careerStage === "string" && (CAREER_STAGE_VOCAB as readonly string[]).includes(careerStage)
@@ -509,6 +519,17 @@ export function applyV16HardFilters(
       continue
     }
 
+    // 8. Phase B4 — companyNegativeList hard-drop. Last in the chain so we
+    //    don't waste score-time on jobs that pass other gates but are
+    //    user-rejected. `normalizeCompanyName` matches `pa-companies` doc ids.
+    if (negativeSet.size > 0) {
+      const norm = normalizeCompanyName(job.companyName ?? "")
+      if (norm.length > 0 && negativeSet.has(norm)) {
+        counters.negativeListDrop++
+        continue
+      }
+    }
+
     kept.push(job)
   }
   return { kept, counters }
@@ -601,6 +622,41 @@ export function computeWeightedSkillJaccard(
   return { score: Math.max(0, Math.min(1, score)), matched }
 }
 
+/**
+ * Phase B4 — set Jaccard intersection / union ∈ [0, 1]. Returns 0 when either
+ * side is empty/missing. Case-insensitive (tags are open-vocab — guard drift).
+ */
+export function jaccard(a: string[] | undefined, b: string[] | undefined): number {
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length === 0 || b.length === 0) return 0
+  const A = new Set(a.map((s) => String(s).trim().toLowerCase()).filter(Boolean))
+  const B = new Set(b.map((s) => String(s).trim().toLowerCase()).filter(Boolean))
+  if (A.size === 0 || B.size === 0) return 0
+  let inter = 0
+  for (const x of A) if (B.has(x)) inter++
+  const union = A.size + B.size - inter
+  return union > 0 ? inter / union : 0
+}
+
+/**
+ * Phase B4 — case-insensitive intersection that returns original-case tokens
+ * from `a`. Used by `composeReason` to surface matched chips.
+ */
+function intersectTokens(a: string[] | undefined, b: string[] | undefined): string[] {
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length === 0 || b.length === 0) return []
+  const B = new Set(b.map((s) => String(s).trim().toLowerCase()))
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const x of a) {
+    const k = String(x).trim().toLowerCase()
+    if (!k || seen.has(k)) continue
+    if (B.has(k)) {
+      out.push(x)
+      seen.add(k)
+    }
+  }
+  return out
+}
+
 /** Set-overlap ratio — shared(a, b) / max(|a|, |b|) ∈ [0, 1]. */
 export function computeOverlap(a: string[] | undefined, b: string[] | undefined): number {
   if (!Array.isArray(a) || !Array.isArray(b) || a.length === 0 || b.length === 0) return 0
@@ -670,12 +726,27 @@ export type V16ScoreWeightOverrides = {
  *   each, clamped). Missing keys fall back to canonical V16_SCORE_WEIGHTS.
  *   Default (undefined) preserves canonical behaviour byte-identically.
  */
+/** Phase B4 — additive boost constants (do NOT redistribute V16_SCORE_WEIGHTS). */
+export const V16_TAG_OVERLAP_WEIGHT = 0.15
+export const V16_POSITIVE_HIT_WEIGHT = 0.15
+export const V16_URGENCY_BOOST_FRESH_FT = 0.20
+export const V16_URGENCY_BOOST_OFF_TARGET = -0.10
+export const V16_URGENCY_FRESH_WINDOW_MS = 14 * 24 * 3600 * 1000
+const URGENCY_OFF_TARGET_JOB_TYPES = new Set(["internship", "new_graduate", "contract"])
+
 export function scoreV16Job(
   user: UserTags,
   job: MatchingJob & { embedding?: number[] | null },
   jdRelative?: Record<string, number>,
   llmRerankScore?: number,
-  weightOverrides?: V16ScoreWeightOverrides
+  weightOverrides?: V16ScoreWeightOverrides,
+  /**
+   * Phase B4 — optional company info from `loadCompaniesByName`. Drives
+   * `tagOverlap` Jaccard. Stage is informational only (not in score).
+   */
+  companyInfo?: LoadedCompanyInfo | undefined,
+  /** Phase B4 — pinned `now` for deterministic urgency age compute. */
+  nowMs?: number,
 ): { breakdown: V16ScoreBreakdown; matched: MatchedSkillContribution[] } {
   const llm = typeof llmRerankScore === "number" && Number.isFinite(llmRerankScore)
     ? Math.max(0, Math.min(1, llmRerankScore))
@@ -717,13 +788,41 @@ export function scoreV16Job(
       }
     : V16_SCORE_WEIGHTS
 
-  const total =
+  const baseScore =
     llm * W.llmMatch +
     skill.score * W.skillJaccard +
     relTags * W.relevantTags +
     indSector * W.industrySector +
     cvEmb * W.cvEmbCosine +
     salary * W.salaryFit
+
+  // ---- Phase B4 — additive boosts on top of the unit-score blend ---------
+  const userB4 = user as unknown as {
+    targetCompanyTags?: string[]
+    companyPositiveList?: string[]
+    urgentlySeeking?: boolean
+  }
+  const tagOverlapScore = jaccard(userB4.targetCompanyTags, companyInfo?.tags) * V16_TAG_OVERLAP_WEIGHT
+  const normCompany = normalizeCompanyName(job.companyName ?? "")
+  const positiveHitBoost =
+    normCompany.length > 0 &&
+    Array.isArray(userB4.companyPositiveList) &&
+    userB4.companyPositiveList.includes(normCompany)
+      ? V16_POSITIVE_HIT_WEIGHT
+      : 0
+  let urgencyBoost = 0
+  if (userB4.urgentlySeeking === true) {
+    const now = typeof nowMs === "number" && Number.isFinite(nowMs) ? nowMs : Date.now()
+    const firstSeenMs = timestampToMs(job.firstSeenAt)
+    const ageMs = firstSeenMs > 0 ? now - firstSeenMs : Number.POSITIVE_INFINITY
+    const jt = typeof job.jobType === "string" ? job.jobType.trim().toLowerCase() : ""
+    if (jt === "full_time" && ageMs < V16_URGENCY_FRESH_WINDOW_MS) {
+      urgencyBoost = V16_URGENCY_BOOST_FRESH_FT
+    } else if (jt && URGENCY_OFF_TARGET_JOB_TYPES.has(jt)) {
+      urgencyBoost = V16_URGENCY_BOOST_OFF_TARGET
+    }
+  }
+  const total = baseScore + tagOverlapScore + positiveHitBoost + urgencyBoost
   return {
     breakdown: {
       llmMatch: llm,
@@ -732,6 +831,9 @@ export function scoreV16Job(
       industrySector: indSector,
       cvEmbCosine: cvEmb,
       salaryFit: salary,
+      tagOverlap: tagOverlapScore,
+      positiveHit: positiveHitBoost,
+      urgencyBoost,
       total,
     },
     matched: skill.matched,
@@ -753,30 +855,57 @@ export function composeReason(
   user: UserTags,
   job: MatchingJob,
   matched: MatchedSkillContribution[],
-  breakdown: V16ScoreBreakdown
+  breakdown: V16ScoreBreakdown,
+  /** Phase B4 — optional company info for chip composition. */
+  companyInfo?: LoadedCompanyInfo | undefined,
 ): string {
   const lang = user.preferredLang === "en" ? "en" : "zh"
   const top = matched.slice(0, 2)
 
+  // Build the primary reason first; B4 chips appended.
+  let primary: string
   if (top.length > 0) {
     const segs = top.map((m) => `${m.name}(${m.proficiency})`).join(" + ")
-    if (lang === "zh") {
-      return `为啥推: 你的 ${segs} 跟 JD 核心技能对得上`
-    }
-    return `Why match: your ${segs} aligns with JD core skills`
+    primary = lang === "zh"
+      ? `为啥推: 你的 ${segs} 跟 JD 核心技能对得上`
+      : `Why match: your ${segs} aligns with JD core skills`
+  } else if (breakdown.industrySector >= 0.4 || breakdown.cvEmbCosine >= 0.5) {
+    primary = lang === "zh"
+      ? `为啥推: 行业方向 + 经历跟你简历对得上`
+      : `Why match: industry + experience align with your resume`
+  } else {
+    primary = lang === "zh" ? "为啥推: 行业大方向匹配" : "Why match: industry direction matches"
   }
 
-  // Skill miss but industry / cv-emb covers — fall back to softer reason.
-  if (breakdown.industrySector >= 0.4 || breakdown.cvEmbCosine >= 0.5) {
-    if (lang === "zh") {
-      return `为啥推: 行业方向 + 经历跟你简历对得上`
-    }
-    return `Why match: industry + experience align with your resume`
+  // ---- Phase B4 — chips for company-pref + urgency signals ---------------
+  const userB4 = user as unknown as {
+    targetCompanyTags?: string[]
   }
+  const chips: string[] = []
+  if (breakdown.tagOverlap > 0) {
+    const hits = intersectTokens(userB4.targetCompanyTags, companyInfo?.tags)
+    const segs = hits.join(", ")
+    if (segs.length > 0) {
+      chips.push(
+        lang === "zh"
+          ? `公司类型对得上：${segs}`
+          : `Matches your company-type preference: ${segs}`,
+      )
+    }
+  }
+  if (breakdown.positiveHit > 0) {
+    const display = job.companyName ?? ""
+    if (display.length > 0) {
+      chips.push(lang === "zh" ? `你关注的公司：${display}` : `Saved company: ${display}`)
+    }
+  }
+  if (breakdown.urgencyBoost > 0) {
+    chips.push(lang === "zh" ? "新发布的全职机会" : "Fresh full-time fit")
+  }
+  // Negative urgency NOT surfaced to user (spec — don't show negative signals).
 
-  // Last resort.
-  void job
-  return lang === "zh" ? "为啥推: 行业大方向匹配" : "Why match: industry direction matches"
+  if (chips.length === 0) return primary
+  return `${primary} · ${chips.join(" · ")}`
 }
 
 // ---------------------------------------------------------------------------
@@ -805,6 +934,15 @@ export type QueryMatchingJobsV16Deps = {
    * component). Default true; set false in tests where embeddings are absent.
    */
   includeEmbedding?: boolean
+  /**
+   * Phase B4 — optional override for the `pa-companies` lookup. Tests inject
+   * a fake to avoid seeding the companies collection. Default: production
+   * `loadCompaniesByName`.
+   */
+  loadCompaniesByNameImpl?: (
+    db: Firestore,
+    names: string[],
+  ) => Promise<Map<string, LoadedCompanyInfo>>
 }
 
 const DEFAULT_LIMIT = 10
@@ -926,7 +1064,7 @@ export async function queryMatchingJobsV16(
       jobs: [],
       total: 0,
       dropped: 0,
-      hardFilter: { visa: 0, location: 0, careerStage: 0, jobType: 0, freshness: 0, atsApplyUrl: 0, dead: 0 },
+      hardFilter: { visa: 0, location: 0, careerStage: 0, jobType: 0, freshness: 0, atsApplyUrl: 0, dead: 0, negativeListDrop: 0 },
       noUserTags: true,
     }
   }
@@ -945,7 +1083,7 @@ export async function queryMatchingJobsV16(
   ]
   let filteredJobs: MatchingJob[] = []
   let counters: V16HardFilterCounters = {
-    visa: 0, location: 0, careerStage: 0, jobType: 0, freshness: 0, atsApplyUrl: 0, dead: 0,
+    visa: 0, location: 0, careerStage: 0, jobType: 0, freshness: 0, atsApplyUrl: 0, dead: 0, negativeListDrop: 0,
   }
   let appliedFreshnessMs = FRESHNESS_RELAX_LADDER[0]!
   for (const win of FRESHNESS_RELAX_LADDER) {
@@ -977,12 +1115,35 @@ export async function queryMatchingJobsV16(
     loadLlmRerankCache(deps.db, args.userId, log),
   ])
 
-  // 4. Soft score (Phase 70 — passes optional weightOverrides through).
+  // Phase B4 — one-shot pa-companies lookup for the surviving candidate set.
+  // Missing/un-enriched companies are omitted from the Map; scoreV16Job
+  // handles absent entries with neutral (0) tagOverlap.
+  const loadCompaniesImpl = deps.loadCompaniesByNameImpl ?? loadCompaniesByName
+  let companyInfoMap = new Map<string, LoadedCompanyInfo>()
+  try {
+    const names = filteredJobs.map((j) => j.companyName ?? "").filter((s) => s.length > 0)
+    if (names.length > 0) companyInfoMap = await loadCompaniesImpl(deps.db, names)
+  } catch (err) {
+    log("pa.match.load_companies_failed", {
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+
+  // 4. Soft score (Phase 70 weightOverrides + Phase B4 companyInfo/nowMs).
   const scored = filteredJobs.map((job) => {
     const jdRel = jdRelCache.get(job.id)
     const llmScore = rerankCache.map.get(job.id)
-    const { breakdown, matched } = scoreV16Job(userTags, job, jdRel, llmScore, args.weightOverrides)
-    return { job, breakdown, matched }
+    const companyInfo = companyInfoMap.get(normalizeCompanyName(job.companyName ?? ""))
+    const { breakdown, matched } = scoreV16Job(
+      userTags,
+      job,
+      jdRel,
+      llmScore,
+      args.weightOverrides,
+      companyInfo,
+      nowMs,
+    )
+    return { job, breakdown, matched, companyInfo }
   })
 
   // Sort by total score desc; tie-break by firstSeenAt newer first.
@@ -1006,8 +1167,8 @@ export async function queryMatchingJobsV16(
     dedupedTop.push(s)
     if (dedupedTop.length >= limit) break
   }
-  const top = dedupedTop.map(({ job, breakdown, matched }) => {
-    const reason = composeReason(userTags, job, matched, breakdown)
+  const top = dedupedTop.map(({ job, breakdown, matched, companyInfo }) => {
+    const reason = composeReason(userTags, job, matched, breakdown, companyInfo)
     return {
       ...job,
       v16Score: breakdown,

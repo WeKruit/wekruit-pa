@@ -171,6 +171,32 @@ export const UserTagsSchema = z.object({
   /** Company-size preference collected from Level 1 follow-up. */
   companySize: z.enum(["seed", "early_startup", "scale_up", "mid_market", "enterprise", "open"]).optional(),
 
+  // ---- Phase B1 — company preference signals --------------------------
+  /**
+   * Phase B1 — open-vocab company-tag tokens user wants to match against.
+   * Drives V16 `tagOverlap * 0.15` soft score (B4). Capped at 30 to keep
+   * Jaccard sets bounded.
+   */
+  targetCompanyTags: z.array(z.string()).max(30).optional(),
+  /**
+   * Phase B1 — actively job-searching flag. Set by onboarding question
+   * (B2) AND by NL detector on laid-off / actively-searching utterances
+   * (B3). Drives V16 urgencyBoost (+0.20 for fresh full-time, -0.10 for
+   * intern/new-grad/contract).
+   */
+  urgentlySeeking: z.boolean().optional(),
+  /**
+   * Phase B1 — hard-filter negative list. Lowercased normalized company
+   * names (see `normalizeCompanyName`). Cap 30; jobs whose company name
+   * matches are dropped in V16 hard filter.
+   */
+  companyNegativeList: z.array(z.string()).max(30).optional(),
+  /**
+   * Phase B1 — soft-boost positive list. Lowercased normalized company
+   * names. Cap 30; +0.15 soft score when V16 scores a matching job.
+   */
+  companyPositiveList: z.array(z.string()).max(30).optional(),
+
   // ---- bookkeeping -----------------------------------------------------
   lastUpdatedFromCv: z.string().optional(),
   lastUpdatedFromChat: z.string().optional(),
@@ -788,6 +814,14 @@ export function mergeUserTags(input: UserTagsInput): UserTags {
     : undefined
   const preferredLang = mapPreferredLang(input.preferredLang, statedPreferences?.preferredLang)
 
+  // ---- Phase B2 — company preference pass-through ---------------------
+  // targetCompanyTags: dedupe + lowercase, cap at 30 to mirror UserTagsSchema.
+  // urgentlySeeking: strict boolean pass-through (drop non-booleans).
+  const urgentlySeeking =
+    typeof statedPreferences?.urgentlySeeking === "boolean"
+      ? statedPreferences.urgentlySeeking
+      : undefined
+
   // ---- Phase 53 — canonical Phase 52 fields pass-through --------------
   // Each field defensively normalized: lowercase + trimmed strings, dedupe.
   const dedupedStrings = (
@@ -811,6 +845,8 @@ export function mergeUserTags(input: UserTagsInput): UserTags {
   const relevantIndustry = dedupedStrings(cv?.relevantIndustry, 6)
   const relevantSpecialization = dedupedStrings(cv?.relevantSpecialization, 6)
   const proposedTags = dedupedStrings(cv?.proposedTags, 12)
+  // Phase B2 — company-tag pref. Cap=30 mirrors UserTagsSchema.max(30).
+  const targetCompanyTags = dedupedStrings(statedPreferences?.targetCompanyTags, 30)
 
   // ---- assemble + omit-undefined --------------------------------------
   // We deliberately avoid placing `undefined` keys on the output so the
@@ -839,6 +875,8 @@ export function mergeUserTags(input: UserTagsInput): UserTags {
   if (relevantIndustry) out.relevantIndustry = relevantIndustry
   if (relevantSpecialization) out.relevantSpecialization = relevantSpecialization
   if (proposedTags) out.proposedTags = proposedTags
+  if (targetCompanyTags) out.targetCompanyTags = targetCompanyTags
+  if (urgentlySeeking !== undefined) out.urgentlySeeking = urgentlySeeking
   if (cv && cvUpdatedAt) out.lastUpdatedFromCv = cvUpdatedAt
   if (statedPreferences && chatUpdatedAt) out.lastUpdatedFromChat = chatUpdatedAt
 

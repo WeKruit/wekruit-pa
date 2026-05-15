@@ -367,6 +367,22 @@ test("mergeUserTags: targetCountry pass-through", () => {
   assert.deepEqual(out.targetCountry, ["usa"])
 })
 
+// Phase B2 — company-tag pref + urgentlySeeking pass-through from
+// onboarding-question answers. Confirms `mergeUserTags` is the single
+// write path for both new fields per the spec (B1/B2 plumbing).
+test("mergeUserTags: targetCompanyTags + urgentlySeeking pass-through", () => {
+  const out = mergeUserTags({
+    statedPreferences: {
+      targetCompanyTags: ["big_tech", "ai_native"],
+      urgentlySeeking: true,
+    },
+    chatUpdatedAt: "2026-05-15T00:00:00Z",
+  })
+  assert.deepEqual(out.targetCompanyTags, ["big_tech", "ai_native"])
+  assert.equal(out.urgentlySeeking, true)
+  assert.equal(out.lastUpdatedFromChat, "2026-05-15T00:00:00Z")
+})
+
 // ---------------------------------------------------------------------------
 // bookkeeping
 // ---------------------------------------------------------------------------

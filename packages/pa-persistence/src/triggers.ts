@@ -262,7 +262,9 @@ export async function evaluateTriggers(
 
 function fireDocId(triggerId: string, userId: string): string {
   // Doc id MUST be filesystem-safe — hash userId in case it has weird chars.
-  const u = createHash("sha1").update(userId).digest("hex").slice(0, 16)
+  // sha256 (not sha1) to satisfy CodeQL js/weak-cryptographic-algorithm; the
+  // 16-char prefix slice retains the same id length + collision profile.
+  const u = createHash("sha256").update(userId).digest("hex").slice(0, 16)
   return `${triggerId}_${u}`
 }
 

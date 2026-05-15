@@ -364,6 +364,9 @@ test("composeReason: top-2 weighted matched skills surface zh by default", () =>
     industrySector: 0,
     cvEmbCosine: 0,
     salaryFit: 0,
+    tagOverlap: 0,
+    positiveHit: 0,
+    urgencyBoost: 0,
     total: 0.1,
   })
   // top-2: python + typescript only
@@ -381,7 +384,7 @@ test("composeReason: en lang switch when preferredLang='en'", () => {
     tags,
     job,
     [{ name: "python", proficiency: "advanced", weight: 1 }],
-    { llmMatch: 0, skillJaccard: 0.5, relevantTags: 0, industrySector: 0, cvEmbCosine: 0, salaryFit: 0, total: 0.1 }
+    { llmMatch: 0, skillJaccard: 0.5, relevantTags: 0, industrySector: 0, cvEmbCosine: 0, salaryFit: 0, tagOverlap: 0, positiveHit: 0, urgencyBoost: 0, total: 0.1 }
   )
   assert.match(reason, /Why match/)
   assert.match(reason, /python/)
@@ -397,6 +400,9 @@ test("composeReason: empty matched falls back to industry-only message when indu
     industrySector: 0.5,
     cvEmbCosine: 0,
     salaryFit: 0,
+    tagOverlap: 0,
+    positiveHit: 0,
+    urgencyBoost: 0,
     total: 0.05,
   })
   assert.match(reason, /行业方向/)
@@ -911,4 +917,80 @@ test("queryMatchingJobsV16: stale llm cache surfaces flag, score still produced"
   assert.equal(r.jobs.length, 1)
   // llmMatch component should be 0 (stale → ignored)
   assert.equal(r.jobs[0]!.v16Score.llmMatch, 0)
+})
+
+// ---------------------------------------------------------------------------
+// Phase B4 — company-pref hard filter + soft boosts
+// ---------------------------------------------------------------------------
+
+test("B4 hard filter: companyNegativeList drops matching company", () => {
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "ok", companyName: "Anthropic" }),
+    mkJob({ id: "no", companyName: "Walgreens" }),
+    mkJob({ id: "no2", companyName: "WALGREENS  " }),
+  ]
+  const tags = {
+    skills: [],
+    industryEnum: [],
+    schemaVersion: 1,
+    companyNegativeList: ["walgreens"],
+  } as never
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  assert.equal(r.counters.negativeListDrop, 2)
+  assert.equal(r.kept.length, 1)
+  assert.equal(r.kept[0]!.id, "ok")
+})
+
+test("B4 soft: targetCompanyTags ∩ companyInfo.tags adds tagOverlap*0.15", () => {
+  const tags = {
+    skills: [],
+    industryEnum: [],
+    schemaVersion: 1,
+    targetCompanyTags: ["ai_native", "big_tech"],
+  } as never
+  const job = mkJob({ id: "j", companyName: "Anthropic" })
+  const baseline = scoreV16Job(tags, job)
+  const boosted = scoreV16Job(tags, job, undefined, undefined, undefined, {
+    stage: "series_c",
+    tags: ["ai_native"],
+  })
+  // Jaccard({ai_native,big_tech} ∩ {ai_native}) = 1/2 = 0.5; × 0.15 = 0.075
+  assert.ok(Math.abs(boosted.breakdown.tagOverlap - 0.075) < 1e-9)
+  assert.ok(Math.abs(boosted.breakdown.total - (baseline.breakdown.total + 0.075)) < 1e-9)
+})
+
+test("B4 soft: companyPositiveList hit adds +0.15 positiveHit", () => {
+  const tags = {
+    skills: [],
+    industryEnum: [],
+    schemaVersion: 1,
+    companyPositiveList: ["anthropic"],
+  } as never
+  const job = mkJob({ id: "j", companyName: "Anthropic" })
+  const r = scoreV16Job(tags, job)
+  assert.equal(r.breakdown.positiveHit, 0.15)
+})
+
+test("B4 soft: urgentlySeeking boosts fresh full_time +0.20, penalizes intern -0.10", () => {
+  const tags = {
+    skills: [],
+    industryEnum: [],
+    schemaVersion: 1,
+    urgentlySeeking: true,
+  } as never
+  const freshFt = mkJob({
+    id: "ft",
+    companyName: "Acme",
+    jobType: "full_time",
+    firstSeenAt: new Date(NOW - 3 * 24 * 3600 * 1000).toISOString(),
+  } as never)
+  const intern = mkJob({
+    id: "intern",
+    companyName: "Acme",
+    jobType: "internship",
+  } as never)
+  const ftScore = scoreV16Job(tags, freshFt, undefined, undefined, undefined, undefined, NOW)
+  const internScore = scoreV16Job(tags, intern, undefined, undefined, undefined, undefined, NOW)
+  assert.equal(ftScore.breakdown.urgencyBoost, 0.20)
+  assert.equal(internScore.breakdown.urgencyBoost, -0.10)
 })

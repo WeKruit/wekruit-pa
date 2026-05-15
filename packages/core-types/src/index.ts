@@ -126,6 +126,20 @@ export const StatedPreferencesSchema = z.object({
   targetLocations: z.array(z.string()).optional(),
   /** Country/region targets captured before city, e.g. ["usa"], ["china"], ["anywhere"]. */
   targetCountry: z.array(z.string()).optional(),
+  /**
+   * Phase B2 — multi-pick company-type tokens captured by the
+   * `companyTagPref` onboarding question (CompanyTag vocab in
+   * `@wekruit/shared-tags`). Pass-through into `tags.targetCompanyTags`
+   * by mergeUserTags; drives V16 `tagOverlap * 0.15` soft score (B4).
+   */
+  targetCompanyTags: z.array(z.string()).optional(),
+  /**
+   * Phase B2 — actively job-searching flag captured by the
+   * `urgentlySeeking` onboarding question. Mirrored into
+   * `tags.urgentlySeeking` so V16 can apply urgencyBoost (+0.20 for
+   * fresh full-time, -0.10 for intern/new-grad/contract).
+   */
+  urgentlySeeking: z.boolean().optional(),
   /** true = leans research-oriented; null = no signal. */
   researchOriented: z.boolean().nullable().optional(),
   /** Annual USD floor; null = no signal. */
@@ -602,6 +616,13 @@ export {
   PA_JOB_ENRICHMENT_SUBCOLLECTION,
   PA_REMOTE_CONFIG_DOC,
 } from "./collections.js"
+
+export type {
+  PaCompany,
+  CompanyEnrichmentSource,
+  CompanyFundingRound,
+} from "./pa-company.js"
+export { normalizeCompanyName } from "./pa-company.js"
 
 export {
   BulkResumeBatchCountsSchema,

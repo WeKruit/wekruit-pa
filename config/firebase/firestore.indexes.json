@@ -567,6 +567,24 @@
       ]
     },
     {
+      "_comment": "Phase A3 — pa-companies admin browse by stage recency.",
+      "collectionGroup": "pa-companies",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "companyStage", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "_comment": "Phase A3 — pa-companies stale-enrichment sweep by source age.",
+      "collectionGroup": "pa-companies",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "enrichmentSource", "order": "ASCENDING" },
+        { "fieldPath": "enrichedAt", "order": "ASCENDING" }
+      ]
+    },
+    {
       "_comment": "WeKruit Open Layoff marketplace listing — filter pa-users by layoff source tag + recency window.",
       "collectionGroup": "pa-users",
       "queryScope": "COLLECTION",

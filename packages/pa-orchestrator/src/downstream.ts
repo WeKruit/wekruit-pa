@@ -33,6 +33,7 @@ import {
   type FirePostHookResult,
   type Trigger,
 } from "@pa/pa-persistence"
+import { applyTagSideEffect } from "./tag-side-effects.js"
 
 /**
  * Master kill switch flag key (Phase 24.5 feature-flag system). When the
@@ -192,21 +193,37 @@ export async function runDownstreamConnector(
       result.fired += 1
 
       // Always record a fire row — even on http error — so the cooldown
-      // window opens and the dashboard surfaces the failure.
-      await recordFire(db, {
-        triggerId: m.trigger.triggerId,
-        userId: ctx.userId,
-        firedAt: new Date().toISOString(),
-        httpStatus: res.status,
-        errorMsg: res.errorMsg,
-        conversationId: ctx.conversationId,
-      })
+      // window opens and the dashboard surfaces the failure. Isolated
+      // try/catch so a recordFire failure (e.g. Timestamp dual-package
+      // hazard in test harnesses) does not block downstream side-effects.
+      try {
+        await recordFire(db, {
+          triggerId: m.trigger.triggerId,
+          userId: ctx.userId,
+          firedAt: new Date().toISOString(),
+          httpStatus: res.status,
+          errorMsg: res.errorMsg,
+          conversationId: ctx.conversationId,
+        })
+      } catch (recErr) {
+        log("recordFire failed (non-fatal)", {
+          triggerId: m.trigger.triggerId,
+          error: recErr instanceof Error ? recErr.message : String(recErr),
+        })
+      }
       log("trigger fired", {
         triggerId: m.trigger.triggerId,
         userId: ctx.userId,
         status: res.status,
         errorMsg: res.errorMsg,
       })
+
+      // Phase B3 — per-trigger tag-write side effect. Dispatched via the
+      // `TAG_SIDE_EFFECTS` lookup so the generic connector stays free of
+      // per-trigger logic. Unknown trigger IDs are a no-op. The helper
+      // swallows + logs its own errors so a failing tag write never breaks
+      // the chat path. Independent of recordFire above.
+      await applyTagSideEffect(db, ctx.userId, m.trigger.triggerId, m.matchedSnippet, log)
     } catch (e) {
       rec.reason = "error"
       rec.errorMsg = e instanceof Error ? e.message : String(e)

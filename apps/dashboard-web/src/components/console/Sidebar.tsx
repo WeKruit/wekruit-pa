@@ -96,6 +96,7 @@ export const CONSOLE_NAV: NavSectionDef[] = [
       { to: "/admin/prescreen-sessions", label: "Prescreen sessions" },
       { to: "/admin/flags", label: "Flags" },
       { to: "/admin/canonical-tags", label: "Canonical tags" },
+      { to: "/admin/companies", label: "Companies (pa-companies)" },
       { to: "/agents", label: "Agents" },
       { to: "/agent/playbooks", label: "Playbooks" },
       { to: "/agent/personas", label: "Personas" },
