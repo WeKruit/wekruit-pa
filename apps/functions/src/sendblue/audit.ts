@@ -22,6 +22,9 @@ export type AuditEventType =
   | "rate_limit_exceeded"
   | "quota_soft"
   | "quota_hardblock"
+  | "trigger_fired"
+  | "trigger_deduped"
+  | "trigger_unauthorized"
   // Phase 60 (DEV-01) — admin-only iMessage trigger that force-fires v1.6
   // match cascade. Audited so dashboards can surface "Adam ran __PA_FIND_MATCH__"
   // events alongside normal traffic.
@@ -34,14 +37,14 @@ export type AuditChannel =
 
 export type AuditEventInput = {
   type: AuditEventType
-  channel: AuditChannel
+  channel?: AuditChannel
   fromNumber?: string
   toNumber?: string
   reason?: string
   payload?: Record<string, unknown>
   /** Optional correlation id (e.g. message_handle). */
   correlationId?: string
-}
+} & Record<string, unknown>
 
 export async function recordAuditEvent(
   db: Firestore,
@@ -49,13 +52,21 @@ export async function recordAuditEvent(
   now: Date = new Date()
 ): Promise<void> {
   const ts = now.toISOString()
+  const reserved = new Set(["type", "channel", "fromNumber", "toNumber", "reason", "payload", "correlationId"])
+  const extraPayload = Object.fromEntries(
+    Object.entries(input).filter(([key, value]) => !reserved.has(key) && value !== undefined)
+  )
+  const payload =
+    input.payload || Object.keys(extraPayload).length > 0
+      ? { ...extraPayload, ...(input.payload ?? {}) }
+      : undefined
   await db.collection(PA_COLLECTIONS.auditEvents).add({
     type: input.type,
     channel: input.channel,
     ...(input.fromNumber ? { fromNumber: input.fromNumber } : {}),
     ...(input.toNumber ? { toNumber: input.toNumber } : {}),
     ...(input.reason ? { reason: input.reason } : {}),
-    ...(input.payload ? { payload: input.payload } : {}),
+    ...(payload ? { payload } : {}),
     ...(input.correlationId ? { correlationId: input.correlationId } : {}),
     createdAt: ts,
   })

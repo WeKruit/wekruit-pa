@@ -16,10 +16,12 @@
 import type { Firestore } from "firebase-admin/firestore"
 import { FieldValue } from "firebase-admin/firestore"
 import {
+  applyPartialUserTags,
   createPiiConfirmPipeline,
   type PiiConfirmAnswers,
 } from "@pa/pa-orchestrator"
 import type {
+  PartialUserTags,
   PipelineState,
   PipelineStateProvider,
 } from "@pa/pa-orchestrator"
@@ -35,6 +37,20 @@ export function composePiiSkipExistingText(source: "pass" | "fail" = "pass"): st
     return "We already have your contact details on file — I’ll text you when a stronger fit comes through."
   }
   return "We already have your contact details on file — the employer will reach out directly."
+}
+
+export function buildLevel1TagPatch(level1: PiiConfirmAnswers["level1"] | undefined): PartialUserTags {
+  if (!level1) return {}
+  const tagPatch: PartialUserTags = {}
+  if (level1.yoeRange) tagPatch.yoeRange = level1.yoeRange
+  if (level1.visaStatus) {
+    tagPatch.visaStatus = level1.visaStatus === "permanent_resident" ? "gc" : level1.visaStatus
+  }
+  if (level1.targetLocations) tagPatch.targetLocations = level1.targetLocations
+  if (level1.minSalaryUsd !== undefined) tagPatch.minSalary = level1.minSalaryUsd
+  if (level1.industrySector) tagPatch.industrySector = level1.industrySector
+  if (level1.companySize) tagPatch.companySize = level1.companySize
+  return tagPatch
 }
 
 class FirestorePiiState implements PipelineStateProvider {
@@ -185,33 +201,27 @@ function buildPipeline(args: {
             source: args.source === "fail" ? "prescreen_fail_followup" : "prescreen_pass",
             sourceSessionId: args.sourceSessionId,
           },
+          level1CollectedAt: consentedAt,
+          level1CompletedAt: consentedAt,
+          level1Status: "complete",
+          level1Source: args.source ?? "pass",
           updatedAt: FieldValue.serverTimestamp(),
         }
+        let tagPatch: PartialUserTags = {}
         // v1.9 — merge Level 1 onboarding answers into pa-users.tags so
         // generateJobRecs picks them up. Each field merged independently
-        // (preserve any previously-set tags via dot-path semantics).
+        // through the canonical tag writer.
         if (answers.level1) {
-          const tagPatch: Record<string, unknown> = {}
-          if (answers.level1.yoeRange) {
-            tagPatch.yoeRange = {
-              lowYears: answers.level1.yoeRange[0],
-              highYears: answers.level1.yoeRange[1],
-            }
-          }
-          if (answers.level1.visaStatus) tagPatch.visaStatus = answers.level1.visaStatus
-          if (answers.level1.targetLocations) tagPatch.targetLocations = answers.level1.targetLocations
-          // v1.9 G5 fix — write to `tags.minSalary` not `minSalaryUsd` so
-          // v16 cascade's computeSalaryFit reads it (already wired since v1.6).
-          if (answers.level1.minSalaryUsd !== undefined) tagPatch.minSalary = answers.level1.minSalaryUsd
-          if (answers.level1.industrySector) tagPatch.industrySector = answers.level1.industrySector
-          if (answers.level1.companySize) tagPatch.companySize = answers.level1.companySize
-          tagPatch.level1CollectedAt = consentedAt
-          tagPatch.level1Source = args.source ?? "pass"
-          if (Object.keys(tagPatch).length > 0) {
-            userDoc.tags = tagPatch
-          }
+          tagPatch = buildLevel1TagPatch(answers.level1)
         }
         await args.db.collection("pa-users").doc(args.userId).set(userDoc, { merge: true })
+        if (Object.keys(tagPatch).length > 0) {
+          await applyPartialUserTags(args.db, args.userId, tagPatch, {
+            source: "chat",
+            nowIso: consentedAt,
+            log: (event, payload) => args.log(event, payload ?? {}),
+          })
+        }
         await args.db.collection("pa-audit-events").add({
           kind: "pii_confirm.collected",
           userId: args.userId,

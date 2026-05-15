@@ -119,6 +119,12 @@ export function JobWorkspace() {
             >
               Source candidates
             </Link>
+            <Link
+              to={`/admin/passed-candidates?jobId=${encodeURIComponent(jobId)}`}
+              style={secondaryBtnStyle}
+            >
+              Passed candidates
+            </Link>
           </div>
         }
       />
@@ -201,6 +207,20 @@ export function JobWorkspace() {
           ) : null}
         </div>
         {error ? <ErrorState message={error} /> : null}
+      </Panel>
+
+      <Panel title="Candidate pipeline" eyebrow="job-scoped evidence">
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          <Link to={`/admin/passed-candidates?jobId=${encodeURIComponent(jobId)}`} style={secondaryBtnStyle}>
+            View passed prescreen snapshots
+          </Link>
+          <Link to={`/admin/match-debug?jobId=${encodeURIComponent(jobId)}`} style={secondaryBtnStyle}>
+            Run job-to-candidates match debug
+          </Link>
+          <Link to={`/admin/jobs/${encodeURIComponent(jobId)}/prescreen`} style={secondaryBtnStyle}>
+            Edit Claire prescreen
+          </Link>
+        </div>
       </Panel>
 
       <Panel title="Job fields" eyebrow="content shown on candidate page + matching">

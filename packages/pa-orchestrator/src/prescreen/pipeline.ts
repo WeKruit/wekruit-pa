@@ -352,9 +352,71 @@ export class PreScreenPipeline {
       scoreMax: state.scoreMax,
       threshold: state.threshold,
     })
+    if (final.action === "fail") {
+      const probe = await this.tryFinalFailProbe(state, nowIso, lang, log)
+      if (probe) return probe
+    }
     const terminal: Exclude<PreScreenTerminal, null> = final.action === "pass" ? "PASS" : "FAIL"
     const reason = `ratio=${final.ratio.toFixed(3)} threshold=${state.threshold.toFixed(2)}`
     return await this.transitionTerminal(state, terminal, reason, nowIso, lang, log)
+  }
+
+  /**
+   * A low final ratio means "not enough fit evidence", not "instantly reject".
+   * Before FAIL, reuse the active/last question's clarify budget so Claire
+   * probes for a sharper closest-overlap example. We roll back that question's
+   * score contribution so the next reply re-scores it once with merged evidence.
+   */
+  private async tryFinalFailProbe(
+    state: PreScreenState,
+    nowIso: string,
+    lang: Lang,
+    log: (event: string, payload: Record<string, unknown>) => void
+  ): Promise<RunTurnResult | null> {
+    const qId = state.currentQId ?? state.qOrder[state.qOrder.length - 1]
+    if (!qId) return null
+    const qState = state.questions[qId]
+    const question = this.opts.questions[qId]
+    if (!qState || !question || !qState.scored) return null
+    if (qState.clarifyRounds >= state.maxClarifyRounds) return null
+
+    if (typeof qState.finalS === "number") {
+      state.score = Math.max(0, state.score - qState.finalS * qState.weight)
+    }
+    delete qState.finalS
+    delete qState.finalC
+    delete qState.answeredAt
+    delete qState.terminalCause
+
+    qState.clarifyRounds += 1
+    state.currentQId = qId
+    state.updatedAt = nowIso
+    await this.opts.store.save(state)
+
+    log("prescreen.pipeline.final_fail_probe", {
+      sessionId: state.sessionId,
+      qId,
+      clarifyRounds: qState.clarifyRounds,
+      score: state.score,
+      scoreMax: state.scoreMax,
+      threshold: state.threshold,
+    })
+
+    return {
+      text: await this.composeClarify({
+        question,
+        lang,
+        reply: "",
+        scored: qState.scored,
+        merged: qState.scored,
+        clarifyRound: qState.clarifyRounds,
+        reason: "type_gate",
+        state,
+        log,
+      }),
+      action: { kind: "clarify", qId, kAfter: qState.clarifyRounds },
+      state,
+    }
   }
 
   /**

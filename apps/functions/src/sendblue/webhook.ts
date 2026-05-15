@@ -56,14 +56,16 @@ import { parseInboundTapback } from "./tapback-parser.js"
 import {
   ApplyTrigger,
   CompactTrigger,
+  LayoffTrigger,
   PrescreenTrigger,
   TriggerRouter,
 } from "./triggers/index.js"
 // v1.8 Phase 77.3 — real prescreen session bootstrap (replaces log placeholder).
-import { runPreScreenForUser } from "../prescreen-session-start.js"
+import { runPreScreenForUser as defaultRunPreScreenForUser } from "../prescreen-session-start.js"
+import { runLayoffSmsStart as defaultRunLayoffSmsStart } from "../layoff-sms-start.js"
 import { runCompactionForUser } from "../compaction-run.js"
 // v1.9 Phase 85 — PII confirm bootstrap (Apply trigger).
-import { runPiiConfirmForUser } from "../pii-confirm-start.js"
+import { runPiiConfirmForUser as defaultRunPiiConfirmForUser } from "../pii-confirm-start.js"
 import type { SendblueInboundPayload } from "./types.js"
 import { inboundEventExpiresAtTs, outboundExpiresAtTs } from "./ttl.js"
 // v1.5 Stream-D — message coalescer dispatch (flag-gated; default off).
@@ -121,6 +123,12 @@ export type WebhookDeps = {
   ingestCv?: (input: IngestCvInput) => Promise<IngestCvResult>
   /** Stream D — phone→userId resolver. Inject for tests. */
   lookupUserByPhone?: (db: Firestore, phoneE164: string) => Promise<string | null>
+  /** WeKruit_LAID_OFF inbound trigger handler. Inject for tests. */
+  runLayoffSmsStart?: typeof defaultRunLayoffSmsStart
+  /** Job prescreen trigger handler. Inject for live-equivalent Sendblue entrypoint tests. */
+  runPreScreenForUser?: typeof defaultRunPreScreenForUser
+  /** Apply trigger PII-confirm handler. Inject for live-equivalent Sendblue entrypoint tests. */
+  runPiiConfirmForUser?: typeof defaultRunPiiConfirmForUser
   /**
    * Phase 60 (DEV-01) — `__PA_FIND_MATCH__` dev trigger handler. When the
    * inbound text contains the trigger token AND the resolved user is in
@@ -199,7 +207,8 @@ function safeAudit(
   log: (...args: unknown[]) => void
 ): Promise<void> {
   const fn = deps.recordAuditEvent ?? recordAuditEvent
-  return Promise.resolve(fn(deps.db, input)).catch((err) => {
+  const normalized = { channel: "imessage_sendblue" as const, ...input }
+  return Promise.resolve(fn(deps.db, normalized)).catch((err) => {
     log("[sendblue][audit] failed", err instanceof Error ? err.message : String(err))
   })
 }
@@ -703,8 +712,50 @@ export async function handleSendblueWebhook(
       .map((s) => s.trim())
       .filter(Boolean)
     const lookupFnRouter = deps.lookupUserByPhone ?? defaultLookupUserByPhone
+    const runLayoffSmsStart = deps.runLayoffSmsStart ?? defaultRunLayoffSmsStart
+    const runPreScreenForUser = deps.runPreScreenForUser ?? defaultRunPreScreenForUser
+    const runPiiConfirmForUser = deps.runPiiConfirmForUser ?? defaultRunPiiConfirmForUser
     const router = new TriggerRouter({
       triggers: [
+        new LayoffTrigger({
+          lookupUserByPhone: (phone) => lookupFnRouter(deps.db, phone),
+          getLastFiredMs: async (userId) => {
+            try {
+              const snap = await deps.db
+                .collection("pa-layoff-trigger-idempotency")
+                .doc(userId)
+                .get()
+              const data = snap.data()
+              return typeof data?.lastFiredMs === "number" ? data.lastFiredMs : null
+            } catch {
+              return null
+            }
+          },
+          setLastFiredMs: async (userId, ms) => {
+            await deps.db
+              .collection("pa-layoff-trigger-idempotency")
+              .doc(userId)
+              .set({ lastFiredMs: ms, userId, updatedAt: new Date().toISOString() })
+          },
+          runLayoffStart: async ({ userId, toE164 }) => {
+            const result = await runLayoffSmsStart({
+              db: deps.db,
+              userId,
+              toE164,
+              log: (event, payload) => log(`pa.layoff.${event}`, payload),
+            })
+            log("[sendblue][webhook] layoff_start", {
+              userId,
+              ok: result.ok,
+              ...(result.ok
+                ? { kickoffOutboundId: result.kickoffOutboundId, created: result.kickoffCreated }
+                : { reason: result.reason }),
+            })
+          },
+          audit: async (evt) => {
+            await safeAudit(deps, evt as AuditEventInput, log)
+          },
+        }),
         new PrescreenTrigger({
           lookupUserByPhone: (phone) => lookupFnRouter(deps.db, phone),
           isAdmin: async (uid) => adminUidsRouter.includes(uid),

@@ -280,6 +280,18 @@ const Q_PROMPTS: Record<
   },
 }
 
+export const WEKRUIT_LAYOFF_SOURCE = "WeKruit_Laid_Off"
+
+export function composeLayoffFirstMessage(input: {
+  firstName?: string | null
+  lastCompany?: string | null
+} = {}): string {
+  const first = input.firstName?.trim() || "there"
+  const company = input.lastCompany?.trim() || "your last company"
+  const layoffPhrase = company === "your last company" ? "a layoff" : `the ${company} layoff`
+  return `Hey ${first}, Claire from WeKruit. I saw you signed up after ${layoffPhrase}. I can help you sort out what you want next — got a minute?`
+}
+
 /**
  * Compose the synthetic system input hint for the current onboarding step.
  *

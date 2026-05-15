@@ -19,6 +19,11 @@ function makeFakeDb(opts: { rateLimitFlag?: boolean } = {}) {
   const rateLimit = new Map<string, DocData>()
   const tapbacks: DocData[] = []
   const users = new Map<string, DocData>()
+  const prescreenIdempotency = new Map<string, DocData>()
+  const layoffIdempotency = new Map<string, DocData>()
+  const applyIdempotency = new Map<string, DocData>()
+  const pendingInvites = new Map<string, DocData>()
+  const atsPendingTriggers = new Map<string, DocData>()
 
   if (opts.rateLimitFlag) {
     flags.set("paRateLimitPerUserEnabled", {
@@ -44,6 +49,9 @@ function makeFakeDb(opts: { rateLimitFlag?: boolean } = {}) {
       },
       async update(data: DocData) {
         store.set(id, { ...(store.get(id) ?? {}), ...data })
+      },
+      async delete() {
+        store.delete(id)
       },
     }
   }
@@ -103,6 +111,11 @@ function makeFakeDb(opts: { rateLimitFlag?: boolean } = {}) {
     "pa-feature-flags": flagsCollection,
     "pa-rate-limits": rateLimitCollection,
     "pa-users": { doc(id: string) { return genericDocRef(users, id) } },
+    "pa-prescreen-trigger-idempotency": { doc(id: string) { return genericDocRef(prescreenIdempotency, id) } },
+    "pa-layoff-trigger-idempotency": { doc(id: string) { return genericDocRef(layoffIdempotency, id) } },
+    "pa-apply-trigger-idempotency": { doc(id: string) { return genericDocRef(applyIdempotency, id) } },
+    "pa-prescreen-pending-invites": { doc(id: string) { return genericDocRef(pendingInvites, id) } },
+    "pa-ats-pending-trigger": { doc(id: string) { return genericDocRef(atsPendingTriggers, id) } },
     "pa-rate-limit": rateLimitCollection,
     "pa-sendblue-webhook-raw": rawWebhookCollection,
     "pa-tapback-events": tapbackCollection,
@@ -134,7 +147,20 @@ function makeFakeDb(opts: { rateLimitFlag?: boolean } = {}) {
     },
   } as unknown as Parameters<typeof handleSendblueWebhook>[2]["db"]
 
-  return { db, inbound, audit, flags, rateLimit, tapbacks, users }
+  return {
+    db,
+    inbound,
+    audit,
+    flags,
+    rateLimit,
+    tapbacks,
+    users,
+    prescreenIdempotency,
+    layoffIdempotency,
+    applyIdempotency,
+    pendingInvites,
+    atsPendingTriggers,
+  }
 }
 
 function sign(body: string, secret = SECRET): string {
@@ -624,6 +650,202 @@ describe("handleSendblueWebhook", () => {
     const raw = inboundDoc.rawPayload as Record<string, unknown>
     assert.equal(raw.e2eTest, undefined,
       "organic traffic must NOT have rawPayload.e2eTest field")
+  })
+
+  it("Test 16 (entrypoints): job prescreen token starts a prescreen session and skips normal onboarding", async () => {
+    const { db, inbound, audit, prescreenIdempotency } = makeFakeDb()
+    const prescreenCalls: Array<{ jobId: string; userId: string; toE164: string; sourceRequestedUserId?: string }> = []
+    const body = JSON.stringify(basePayload({
+      content: "WeKruit_rain-software-engineer-fullstack-8849f6ef_uJob1_Job",
+      message_handle: "msg-entry-job-1",
+    }))
+    const req = makeReq({ body, signature: SECRET })
+    const res = makeRes()
+
+    await handleSendblueWebhook(req, res, {
+      db,
+      secret: SECRET,
+      lookupUserByPhone: async () => "uJob1",
+      runPreScreenForUser: async (args) => {
+        prescreenCalls.push(args)
+        return { ok: true, sessionId: "ps_job_1" }
+      },
+    })
+    await new Promise((r) => setTimeout(r, 20))
+
+    assert.equal(res.statusCode, 200)
+    assert.deepEqual(res.bodyOut, { ok: true, action: "prescreen_triggered" })
+    assert.equal(inbound.size, 0, "trigger token must not enter normal onboarding as user text")
+    assert.equal(prescreenCalls.length, 1)
+    assert.equal(prescreenCalls[0]!.jobId, "rain-software-engineer-fullstack-8849f6ef")
+    assert.equal(prescreenCalls[0]!.userId, "uJob1")
+    assert.equal(prescreenCalls[0]!.toE164, "+15551234567")
+    assert.ok(prescreenIdempotency.has("rain-software-engineer-fullstack-8849f6ef_uJob1"))
+    assert.ok(audit.some((row) =>
+      row.type === "trigger_fired" &&
+      (row.payload as { trigger?: string } | undefined)?.trigger === "prescreen"
+    ))
+  })
+
+  it("Test 17 (entrypoints): public-page random uid token binds to phone-resolved pa-user through pending invite", async () => {
+    const { db, inbound, pendingInvites, prescreenIdempotency } = makeFakeDb()
+    pendingInvites.set("11111111-2222-4333-8444-555555555555", {
+      jobId: "rain-software-engineer-fullstack-8849f6ef",
+      createdAt: new Date().toISOString(),
+    })
+    const prescreenCalls: Array<{ jobId: string; userId: string; toE164: string; sourceRequestedUserId?: string }> = []
+    const body = JSON.stringify(basePayload({
+      content: "WeKruit_rain-software-engineer-fullstack-8849f6ef_11111111-2222-4333-8444-555555555555_Job",
+      message_handle: "msg-entry-public-1",
+    }))
+    const req = makeReq({ body, signature: SECRET })
+    const res = makeRes()
+
+    await handleSendblueWebhook(req, res, {
+      db,
+      secret: SECRET,
+      lookupUserByPhone: async () => "u_real_candidate_1",
+      runPreScreenForUser: async (args) => {
+        prescreenCalls.push(args)
+        return { ok: true, sessionId: "ps_public_1" }
+      },
+    })
+    await new Promise((r) => setTimeout(r, 20))
+
+    assert.equal(res.statusCode, 200)
+    assert.deepEqual(res.bodyOut, { ok: true, action: "prescreen_triggered" })
+    assert.equal(inbound.size, 0)
+    assert.equal(prescreenCalls.length, 1)
+    assert.equal(prescreenCalls[0]!.userId, "u_real_candidate_1")
+    assert.equal(prescreenCalls[0]!.sourceRequestedUserId, "11111111-2222-4333-8444-555555555555")
+    assert.equal(pendingInvites.has("11111111-2222-4333-8444-555555555555"), false, "pending public invite is consumed after binding")
+    assert.ok(prescreenIdempotency.has("rain-software-engineer-fullstack-8849f6ef_u_real_candidate_1"))
+  })
+
+  it("Test 18 (entrypoints): WeKruit_LAID_OFF triggers layoff onboarding once, then dedupes within the window", async () => {
+    const { db, inbound, audit, layoffIdempotency } = makeFakeDb()
+    const layoffCalls: Array<{ userId: string; toE164: string }> = []
+    const body1 = JSON.stringify(basePayload({
+      content: "WeKruit_LAID_OFF",
+      message_handle: "msg-entry-layoff-1",
+    }))
+    const req1 = makeReq({ body: body1, signature: SECRET })
+    const res1 = makeRes()
+
+    await handleSendblueWebhook(req1, res1, {
+      db,
+      secret: SECRET,
+      lookupUserByPhone: async () => "u_layoff_1",
+      runLayoffSmsStart: async ({ userId, toE164 }) => {
+        layoffCalls.push({ userId, toE164 })
+        return { ok: true, kickoffOutboundId: "out_layoff_1", kickoffCreated: true, sourceTag: "WeKruit_Laid_Off" }
+      },
+    })
+    await new Promise((r) => setTimeout(r, 20))
+
+    const body2 = JSON.stringify(basePayload({
+      content: "WeKruit_LAID_OFF",
+      message_handle: "msg-entry-layoff-2",
+    }))
+    const req2 = makeReq({ body: body2, signature: SECRET })
+    const res2 = makeRes()
+    await handleSendblueWebhook(req2, res2, {
+      db,
+      secret: SECRET,
+      lookupUserByPhone: async () => "u_layoff_1",
+      runLayoffSmsStart: async ({ userId, toE164 }) => {
+        layoffCalls.push({ userId, toE164 })
+        return { ok: true, kickoffOutboundId: "out_layoff_duplicate", kickoffCreated: true, sourceTag: "WeKruit_Laid_Off" }
+      },
+    })
+    await new Promise((r) => setTimeout(r, 20))
+
+    assert.equal(res1.statusCode, 200)
+    assert.deepEqual(res1.bodyOut, { ok: true, action: "layoff_triggered" })
+    assert.equal(res2.statusCode, 200)
+    assert.deepEqual(res2.bodyOut, { ok: true, action: "layoff_deduped" })
+    assert.equal(inbound.size, 0, "layoff trigger must not enter normal onboarding as text")
+    assert.deepEqual(layoffCalls, [{ userId: "u_layoff_1", toE164: "+15551234567" }])
+    assert.ok(layoffIdempotency.has("u_layoff_1"))
+    assert.ok(audit.some((row) =>
+      row.type === "trigger_fired" &&
+      (row.payload as { trigger?: string } | undefined)?.trigger === "layoff"
+    ))
+    assert.ok(audit.some((row) =>
+      row.type === "trigger_deduped" &&
+      (row.payload as { trigger?: string } | undefined)?.trigger === "layoff"
+    ))
+  })
+
+  it("Test 19 (entrypoints): normal START from a random candidate stays on the regular onboarding path when no pending invite exists", async () => {
+    const { db, inbound } = makeFakeDb()
+    let prescreenCalls = 0
+    let layoffCalls = 0
+    const body = JSON.stringify(basePayload({
+      content: "START",
+      message_handle: "msg-entry-normal-start",
+    }))
+    const req = makeReq({ body, signature: SECRET })
+    const res = makeRes()
+
+    await handleSendblueWebhook(req, res, {
+      db,
+      secret: SECRET,
+      lookupUserByPhone: async () => "u_normal_1",
+      runPreScreenForUser: async () => {
+        prescreenCalls += 1
+        return { ok: true, sessionId: "should_not_happen" }
+      },
+      runLayoffSmsStart: async () => {
+        layoffCalls += 1
+        return { ok: true, kickoffOutboundId: "should_not_happen", kickoffCreated: true, sourceTag: "WeKruit_Laid_Off" }
+      },
+    })
+
+    assert.equal(res.statusCode, 200)
+    assert.equal(prescreenCalls, 0)
+    assert.equal(layoffCalls, 0)
+    assert.equal(inbound.size, 1, "normal START must enqueue one regular onboarding inbound row")
+    const inboundDoc = [...inbound.values()][0]!
+    const raw = inboundDoc.rawPayload as Record<string, unknown>
+    assert.equal(raw.text, "START")
+    assert.equal(raw.kind, "imessage")
+    assert.equal(raw.source, "sendblue")
+  })
+
+  it("Test 20 (entrypoints): START activates a recent ATS pending invite as job prescreen instead of normal onboarding", async () => {
+    const { db, inbound, atsPendingTriggers } = makeFakeDb()
+    atsPendingTriggers.set("+15551234567", {
+      jobId: "rain-software-engineer-fullstack-8849f6ef",
+      userId: "uAts1",
+      expiresAtMs: Date.now() + 60_000,
+    })
+    const prescreenCalls: Array<{ jobId: string; userId: string; toE164: string }> = []
+    const body = JSON.stringify(basePayload({
+      content: "START",
+      message_handle: "msg-entry-ats-start",
+    }))
+    const req = makeReq({ body, signature: SECRET })
+    const res = makeRes()
+
+    await handleSendblueWebhook(req, res, {
+      db,
+      secret: SECRET,
+      lookupUserByPhone: async () => "uAts1",
+      runPreScreenForUser: async (args) => {
+        prescreenCalls.push(args)
+        return { ok: true, sessionId: "ps_ats_1" }
+      },
+    })
+    await new Promise((r) => setTimeout(r, 20))
+
+    assert.equal(res.statusCode, 200)
+    assert.deepEqual(res.bodyOut, { ok: true, action: "prescreen_triggered" })
+    assert.equal(inbound.size, 0, "pending-invite START must be control-plane input, not normal onboarding text")
+    assert.equal(prescreenCalls.length, 1)
+    assert.equal(prescreenCalls[0]!.jobId, "rain-software-engineer-fullstack-8849f6ef")
+    assert.equal(prescreenCalls[0]!.userId, "uAts1")
+    assert.equal(atsPendingTriggers.has("+15551234567"), false, "pending ATS trigger is consumed")
   })
 
 

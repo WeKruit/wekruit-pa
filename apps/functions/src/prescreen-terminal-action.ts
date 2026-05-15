@@ -25,8 +25,13 @@
  *   4. write terminalActionFiredAt stamp + audit event
  */
 
-import { FieldValue, type Firestore, type Timestamp } from "firebase-admin/firestore"
-import { composeLevel1Reveal, composeFailJobRecsPreamble, type Level1RevealFields } from "@pa/pa-orchestrator"
+import { type Firestore, type Timestamp } from "firebase-admin/firestore"
+import {
+  applyPartialUserTags,
+  composeLevel1Reveal,
+  composeFailJobRecsPreamble,
+  type Level1RevealFields,
+} from "@pa/pa-orchestrator"
 import { sendImessage } from "./sendblue/sendblue-client.js"
 import { runPiiConfirmForUser } from "./pii-confirm-start.js"
 import { markPrescreenTerminalOutcome } from "./prescreen-outcome-service.js"
@@ -119,6 +124,24 @@ function deriveWeakPrescreenTags(args: {
     tags.add("no_visa_sponsorship")
   }
   return Array.from(tags).slice(0, 10)
+}
+
+function mergeStringTags(existing: unknown, next: string[], maxItems: number): string[] {
+  const merged = new Set<string>()
+  if (Array.isArray(existing)) {
+    for (const value of existing) {
+      if (typeof value !== "string") continue
+      const normalized = value.trim()
+      if (normalized) merged.add(normalized)
+      if (merged.size >= maxItems) return Array.from(merged)
+    }
+  }
+  for (const value of next) {
+    const normalized = value.trim()
+    if (normalized) merged.add(normalized)
+    if (merged.size >= maxItems) break
+  }
+  return Array.from(merged)
 }
 
 async function readLevel1Fields(
@@ -270,6 +293,9 @@ async function writePrescreenMemoryUpdate(args: {
       evidenceTags,
       updatedAt: args.occurredAt,
     }
+    const userSnap = await args.db.collection("pa-users").doc(args.userId).get()
+    const existingTags = ((userSnap.data()?.tags ?? {}) as Record<string, unknown>) || {}
+    const proposedTags = mergeStringTags(existingTags.proposedTags, evidenceTags, 12)
     const update = {
       lastPrescreenMemoryUpdate: profileEvidence,
       conversationDerivedPreferences: {
@@ -278,13 +304,19 @@ async function writePrescreenMemoryUpdate(args: {
         },
         updatedAt: args.occurredAt,
       },
-      globalTags: {
-        relevantTags: FieldValue.arrayUnion(...evidenceTags),
-        updatedAt: args.occurredAt,
-      },
       updatedAt: args.occurredAt,
     }
     await args.db.collection("pa-users").doc(args.userId).set(update, { merge: true })
+    await applyPartialUserTags(
+      args.db,
+      args.userId,
+      { proposedTags },
+      {
+        source: "chat",
+        nowIso: args.occurredAt,
+        log: (event, payload) => args.log(event, payload ?? {}),
+      },
+    )
     await args.db.collection("pa-prescreen-memory-events").doc(args.sessionId).set({
       userId: args.userId,
       jobId: args.jobId,

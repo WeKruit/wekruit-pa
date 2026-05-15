@@ -749,7 +749,7 @@ test("Phase 76: PreScreenPipeline pauses on viability after hysteresis", async (
 // FAIL on final ratio
 // ════════════════════════════════════════════════════════════════════════════
 
-test("Phase 76: PreScreenPipeline FAILs when final ratio < threshold", async () => {
+test("Phase 76: PreScreenPipeline probes before final FAIL when ratio < threshold", async () => {
   const store = new InMemoryPreScreenStore()
   // 2 GOOD_TO_HAVE Qs with s=0.5 each → ratio = 0.5 < 0.65 → FAIL
   const pipeline = new PreScreenPipeline({
@@ -768,8 +768,19 @@ test("Phase 76: PreScreenPipeline FAILs when final ratio < threshold", async () 
     { qId: "q2", type: "GOOD_TO_HAVE", weight: 1 },
   ])
   await pipeline.runTurn({ sessionId: "s1", reply: "a", lang: "en", nowIso: "2026-05-12T00:01:00Z", judgeCtx: ctx })
-  const r = await pipeline.runTurn({
+  const firstLowFinal = await pipeline.runTurn({
     sessionId: "s1", reply: "b", lang: "en", nowIso: "2026-05-12T00:02:00Z", judgeCtx: ctx,
+  })
+  assert.equal(firstLowFinal.action.kind, "clarify")
+  assert.match(firstLowFinal.text, /That helps|specific/i)
+
+  const secondLowFinal = await pipeline.runTurn({
+    sessionId: "s1", reply: "more detail", lang: "en", nowIso: "2026-05-12T00:03:00Z", judgeCtx: ctx,
+  })
+  assert.equal(secondLowFinal.action.kind, "clarify")
+
+  const r = await pipeline.runTurn({
+    sessionId: "s1", reply: "still thin", lang: "en", nowIso: "2026-05-12T00:04:00Z", judgeCtx: ctx,
   })
   assert.equal(r.action.kind, "terminal")
   if (r.action.kind === "terminal") assert.equal(r.action.terminal, "FAIL")
