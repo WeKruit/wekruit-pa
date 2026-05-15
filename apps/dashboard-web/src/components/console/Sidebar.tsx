@@ -30,9 +30,10 @@ export const CONSOLE_NAV: NavSectionDef[] = [
     icon: "users",
     defaultOpen: true,
     items: [
-      { to: "/conversations", label: "All candidates" },
+      { to: "/admin/candidates", label: "All candidates", end: true },
       { to: "/admin/passed-candidates", label: "Passed candidates" },
       { to: "/admin/identity-conflicts", label: "Identity conflicts", hitl: true },
+      { to: "/conversations", label: "iMessage conversations" },
       { to: "/match/candidates", label: "Reverse match" },
       { to: "/admin/bulk-resumes", label: "Bulk resumes" },
     ],

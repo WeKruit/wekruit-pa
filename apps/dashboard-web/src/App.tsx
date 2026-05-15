@@ -9,6 +9,7 @@ import { Operations } from "./pages/Operations.js"
 import { Overview } from "./pages/Overview.js"
 import { UserDetail } from "./pages/UserDetail.js"
 import { Users } from "./pages/Users.js"
+import { Candidates } from "./pages/Candidates.js"
 import { Abuse } from "./pages/Abuse.js"
 import { Beta } from "./pages/Beta.js"
 import { Flags } from "./pages/Flags.js"
@@ -122,6 +123,12 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Overview />} />
           <Route path="/conversations" element={<Users />} />
+          {/* v2.0 marketplace candidate browser — replaces /conversations
+              as the canonical "All candidates" surface. Reads pa-users +
+              pa-candidate-source-links; renders lifecycle state, source,
+              profile completeness, top tags. Drawer links out to existing
+              detail surfaces. */}
+          <Route path="/admin/candidates" element={<Candidates />} />
           <Route path="/users/:id" element={<UserDetail />} />
           <Route path="/agents" element={<AgentBuilder />} />
           {/* Phase 32 Wave 1 — Operations no longer in sidebar; reachable via
