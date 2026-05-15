@@ -306,6 +306,12 @@ function prescreenTurnRecordScored(state: PreScreenState, qId: string) {
   }
 }
 
+function isUserExitPrescreenReply(reply: string): boolean {
+  const normalized = reply.trim().toLowerCase()
+  if (!normalized) return false
+  return /^(stop|cancel|pause|quit|exit|end|not now|later|nevermind|never mind|退出|停止|暂停|先不|不用了|算了)[.!。！\s]*$/i.test(normalized)
+}
+
 /**
  * Entry called from paMessageCoalescer before Claire dispatch. Returns
  * handled=false when no active prescreen session → coalescer continues
@@ -365,6 +371,67 @@ export async function runPrescreenTurnIfActive(
   if (!cfgSnapshot?.questions) {
     log("prescreen.turn.no_config", { sessionId })
     return { handled: false }
+  }
+
+  if (isUserExitPrescreenReply(args.replyText)) {
+    const nowIso = new Date().toISOString()
+    await args.db
+      .collection("pa-prescreen-sessions")
+      .doc(sessionId)
+      .set(
+        {
+          terminal: "PAUSE",
+          terminalReason: "user_exit",
+          currentQId: null,
+          updatedAt: nowIso,
+          workSession: {
+            ...(state.workSession ?? { kind: "job_prescreen" }),
+            kind: "job_prescreen",
+            status: "ended",
+            endedAt: nowIso,
+            boundary: "user_exit",
+          },
+        },
+        { merge: true },
+      )
+    await args.db
+      .collection("pa-prescreen-sessions")
+      .doc(sessionId)
+      .collection("turns")
+      .add({
+        qId: activeQId ?? "terminal",
+        reply: args.replyText,
+        action: { kind: "terminal", terminal: "PAUSE", reason: "user_exit" },
+        ts: nowIso,
+      })
+    try {
+      await terminalAction({
+        db: args.db,
+        sessionId,
+        terminal: "PAUSE",
+        userId: args.userId,
+        jobId: state.jobId,
+        toE164: args.toE164,
+        lang: args.lang ?? "en",
+        log,
+      })
+    } catch (err) {
+      log("prescreen.user_exit_terminal_action_failed", {
+        sessionId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+    const text = userExitSessionText(args.lang ?? "en")
+    try {
+      await sendSms({ to: args.toE164, content: text, userId: args.userId, db: args.db })
+    } catch (err) {
+      log("prescreen.user_exit_notice_send_failed", {
+        sessionId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+    log("prescreen.turn.user_exit", { sessionId, userId: args.userId })
+    return { handled: true, sessionId, terminal: "PAUSE", textSent: text }
   }
 
   // Build PreScreenQuestion bindings with production LLM caller
@@ -469,4 +536,10 @@ function expiredSessionText(lang: "zh" | "en"): string {
   return lang === "zh"
     ? "这次岗位初筛我先暂停了，避免把旧对话和新的经历混在一起。想继续这个岗位的话，从岗位页面重新开始，我会开一个新的 screen。"
     : "I paused this role screen so I do not mix an old conversation with a new one. If you want to continue this role, reopen it from the job page and I will start a fresh screen."
+}
+
+function userExitSessionText(lang: "zh" | "en"): string {
+  return lang === "zh"
+    ? "好的，我先暂停这个岗位 screen。你之后想继续的话，从岗位页面重新开始就行；你已经分享过的经历我会保留在你的全局 profile 里。"
+    : "Got it — I paused this role screen. If you want to continue later, reopen it from the job page; I will keep what you have already shared on your profile."
 }

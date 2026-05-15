@@ -21,6 +21,15 @@ function makeFakeDb(seed: Record<string, Record<string, unknown>>) {
         const merge = Boolean((options as { merge?: boolean } | undefined)?.merge)
         docs.set(path, { exists: true, data: merge ? { ...(prev?.data ?? {}), ...data } : data })
       },
+      collection(subcollection: string) {
+        return {
+          async add(data: Record<string, unknown>) {
+            const childId = `auto_${docs.size + 1}`
+            docs.set(`${path}/${subcollection}/${childId}`, { exists: true, data })
+            return { id: childId }
+          },
+        }
+      },
     }
   }
 
@@ -129,5 +138,69 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     assert.equal(session?.terminal, "PAUSE")
     assert.equal(session?.terminalReason, "expired_inactive_prescreen_session")
     assert.equal((session?.workSession as { boundary?: string }).boundary, "timeout")
+  })
+
+  it("treats explicit user exit as a routing pause, not a business outcome", async () => {
+    const now = new Date().toISOString()
+    const { db, docs } = makeFakeDb({
+      "pa-prescreen-sessions/ps_active": {
+        sessionId: "ps_active",
+        userId: "u1",
+        jobId: "job-1",
+        terminal: null,
+        currentQId: "role_fit",
+        createdAt: now,
+        updatedAt: now,
+        workSession: { kind: "job_prescreen", status: "active", startedAt: now, boundary: "trigger" },
+        cfgSnapshot: {
+          questions: [
+            {
+              qId: "role_fit",
+              prompt: { en: "What matches?", zh: "What matches?" },
+              clarifyPrompt: { en: "Tell me more.", zh: "Tell me more." },
+              keywords: [],
+            },
+          ],
+        },
+      },
+    })
+
+    const terminalCalls: Array<Record<string, unknown>> = []
+    const sent: string[] = []
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u1",
+      toE164: "+13054507715",
+      replyText: "stop",
+      runTerminalAction: async (args) => {
+        terminalCalls.push(args as unknown as Record<string, unknown>)
+        return { alreadyFired: false, level1Sent: false, jobRecsFired: false }
+      },
+      sendSms: async (args) => {
+        sent.push(args.content)
+        return {
+          status: "queued",
+          from_number: null,
+          number: args.to,
+          content: args.content,
+          service: "iMessage",
+          is_outbound: true,
+        }
+      },
+    })
+
+    assert.equal(result.handled, true)
+    assert.equal(result.terminal, "PAUSE")
+    assert.equal(terminalCalls.length, 1)
+    assert.equal(terminalCalls[0].terminal, "PAUSE")
+    assert.equal(sent.length, 1)
+    assert.match(sent[0], /paused this role screen/)
+    const session = docs.get("pa-prescreen-sessions/ps_active")?.data
+    assert.equal(session?.terminal, "PAUSE")
+    assert.equal(session?.terminalReason, "user_exit")
+    assert.equal(session?.currentQId, null)
+    assert.equal((session?.workSession as { status?: string }).status, "ended")
+    assert.equal((session?.workSession as { boundary?: string }).boundary, "user_exit")
+    assert.ok([...docs.keys()].some((path) => path.startsWith("pa-prescreen-sessions/ps_active/turns/")))
   })
 })
