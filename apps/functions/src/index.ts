@@ -185,6 +185,13 @@ export { paAdminJobMatchDebug, paAdminMatchDebug } from "./admin-match-debug.js"
 export { paAdminOutreachOpsSnapshot } from "./outreach/admin.js"
 export { paAdminPassedCandidatesSnapshot } from "./admin-passed-candidates.js"
 
+// v2.1 S4 — Voice turn telemetry aggregate (admin-gated). Reads the
+// voice-call-metrics collection (written by the S4 metricsWriter that
+// S2 wires into LiveKit Cloud Agents) and returns the four S6-smoke-gate
+// thresholds: false-commit %, false-interrupt %, p50/p95 TTFA, avg
+// cost/call. Plus cost-ceiling-hit count (L11).
+export { paAdminVoiceTelemetryAggregate } from "./voice/telemetry/aggregateQuery.js"
+
 // v1.8 ENRICHER-04 — `paEnrichJobTags` HTTP CF wraps the unified
 // @pa/job-tag-enricher service (mirror of pa-resume-parser, job-side).
 // Replaces scattered regex tag-derivation in the macmini matching pipeline
