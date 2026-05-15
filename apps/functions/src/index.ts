@@ -345,6 +345,7 @@ type BrokerImessageEvent = {
     cvParsedTrigger?: boolean
     messageHandle?: string
     source?: string
+    e2eTest?: boolean
     harness?: {
       runner?: string
       suppressOutbound?: boolean
@@ -570,6 +571,10 @@ async function createProvisionalUser(db: Firestore, participant: string): Promis
   return u
 }
 
+export function shouldCreateProvisionalUserForBrokerPayload(rawPayload: BrokerImessageEvent["rawPayload"] | undefined): boolean {
+  return rawPayload?.e2eTest !== true
+}
+
 async function getOrCreateSession(
   db: Firestore,
   userId: string,
@@ -661,6 +666,28 @@ async function processBrokerImessageEvent(
   }
   let user = await findUserByParticipant(db, payload.participant)
   if (!user) {
+    if (!shouldCreateProvisionalUserForBrokerPayload(payload)) {
+      const externalChatId = normalizeImessageParticipant(payload.participant)
+      logger.warn("[onPaInbound] e2e inbound skipped without bound pa-users profile", {
+        eventId: claimed.id,
+        participant: payload.participant,
+        externalChatId,
+      })
+      await db.collection(PA_COLLECTIONS.inboundEvents).doc(claimed.id).set(
+        {
+          status: "completed",
+          completedAt: nowIso(),
+          updatedAt: nowIso(),
+          routedTo: "e2e_unbound_user",
+          errorCode: "E2E_UNBOUND_USER",
+          externalChatId,
+          from: payload.participant,
+          body: payload.text.trim(),
+        },
+        { merge: true }
+      )
+      return 1
+    }
     user = await createProvisionalUser(db, payload.participant)
   }
   if (user.onboardingStatus === "provisional") {

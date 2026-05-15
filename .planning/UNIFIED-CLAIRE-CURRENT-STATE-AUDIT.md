@@ -134,6 +134,14 @@ Required fix boundary:
   - The only `candidate_account` row remains `pa-users/U7AwKT8nLDRa35DkuBxq`.
   - Existing `@wekruit.com` operator docs, including `admin1@wekruit.com`, are excluded from candidate account counts.
   - Old generated `verify-prescreen-stress-*` user docs from early failed stress runs were deleted; one stable synthetic profile remains for repeatable stress testing: `pa-users/verify-prescreen-stress-user`.
+- E2E/test webhook user-creation boundary:
+  - `onPaInbound` now treats `rawPayload.e2eTest === true` as test traffic that must already be bound to an existing `pa-users` row.
+  - If an E2E Sendblue webhook reaches broker processing from an unbound phone, it marks the inbound row completed with `routedTo = e2e_unbound_user` and `errorCode = E2E_UNBOUND_USER`; it does not call `createProvisionalUser`.
+  - Node 24 targeted test passed: `node --import tsx --test apps/functions/src/__tests__/broker-e2e-user-boundary.test.ts` (2/2).
+  - Node 24 functions typecheck passed: `npm run typecheck --workspace=@pa/functions`.
+  - Full functions predeploy test during deploy passed 1512/1512.
+  - Deployed `onPaInbound` to production as Node.js 24.
+  - Live signed deployed-webhook verification used an unbound `+1999555...` test phone with `X-E2E-Test: 1`; result: webhook 200, `pa-users` count stayed 602 -> 602, no row matched that phone, and `pa-inbound-events/inb_e5204c1943abb55a5173b83cb8e2fd72c2871ff8` completed with `E2E_UNBOUND_USER`.
 
 ## 2026-05-15 Prescreen Conversation Verification
 
