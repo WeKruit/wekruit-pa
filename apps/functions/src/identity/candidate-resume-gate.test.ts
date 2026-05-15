@@ -160,3 +160,15 @@ test("runCandidateResumeGateStatus requires auth", async () => {
     (err) => err instanceof HttpsError && err.code === "unauthenticated"
   )
 })
+
+test("runCandidateResumeGateStatus rejects internal operator emails", async () => {
+  await assert.rejects(
+    () =>
+      runCandidateResumeGateStatus(
+        {},
+        { uid: "firebase-1", token: { email: "admin@wekruit.com", email_verified: true } },
+        baseDeps()
+      ),
+    (err) => err instanceof HttpsError && err.code === "failed-precondition"
+  )
+})

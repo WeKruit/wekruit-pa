@@ -20,6 +20,18 @@ test("runCandidateClaimProfile requires authenticated verified email", async () 
   )
 })
 
+test("runCandidateClaimProfile rejects internal operator emails", async () => {
+  await assert.rejects(
+    () =>
+      runCandidateClaimProfile(
+        {},
+        { uid: "firebase-1", token: { email: "admin@wekruit.com", email_verified: true } },
+        { db: {} as Firestore }
+      ),
+    (err) => err instanceof HttpsError && err.code === "failed-precondition"
+  )
+})
+
 test("runCandidateClaimProfile delegates to claim helper and returns redacted self profile", async () => {
   const calls: Array<Record<string, unknown>> = []
   const result = await runCandidateClaimProfile(

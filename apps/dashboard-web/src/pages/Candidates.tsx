@@ -85,7 +85,8 @@ const LIFECYCLE_ORDER: LifecycleState[] = [
 ]
 
 type ExternalSource = "juicebox" | "lessie" | "coresignal" | "manual_csv"
-type SourceKind = ExternalSource | "imessage" | "public_job" | "ats" | "bulk_resume" | "unknown"
+type SourceKind = ExternalSource | "imessage" | "public_job" | "ats" | "bulk_resume" | "synthetic_test" | "unknown"
+type CandidateClass = "candidate_account" | "external_supply_prospect" | "synthetic_test_profile"
 
 const SOURCE_LABEL: Record<SourceKind, string> = {
   juicebox: "Juicebox",
@@ -96,6 +97,7 @@ const SOURCE_LABEL: Record<SourceKind, string> = {
   public_job: "Public job page",
   ats: "ATS inbound",
   bulk_resume: "Bulk resume",
+  synthetic_test: "Synthetic test",
   unknown: "Unknown",
 }
 
@@ -108,6 +110,7 @@ const SOURCE_ORDER: SourceKind[] = [
   "public_job",
   "ats",
   "bulk_resume",
+  "synthetic_test",
   "unknown",
 ]
 
@@ -146,6 +149,7 @@ type Row = {
   handleKind: "name" | "email" | "linkedin" | "phone" | "uid"
   lifecycle: LifecycleState
   source: SourceKind
+  candidateClass: CandidateClass
   profilePct: number
   skills: string[]
   lastActiveIso?: string
@@ -273,6 +277,7 @@ async function loadSourceLinks(): Promise<Map<string, ExternalSource>> {
 }
 
 function deriveSource(doc: UserDoc, fromLinks: Map<string, ExternalSource>): SourceKind {
+  if (isSyntheticTestProfile(doc)) return "synthetic_test"
   const linked = fromLinks.get(doc.id)
   if (linked) return linked
   if (doc.latestResumeArtifactId && !doc.phoneE164 && !doc.linkedinUrl) return "bulk_resume"
@@ -282,15 +287,53 @@ function deriveSource(doc: UserDoc, fromLinks: Map<string, ExternalSource>): Sou
   return "unknown"
 }
 
+function isSyntheticTestProfile(doc: UserDoc): boolean {
+  const id = doc.id.toLowerCase()
+  const phone = doc.phoneE164 ?? ""
+  const email = doc.email?.toLowerCase() ?? ""
+  return id.startsWith("e2e-") ||
+    id.startsWith("p9-") ||
+    id.startsWith("qa") ||
+    id.startsWith("recheck-") ||
+    id.startsWith("synthetic") ||
+    id.includes("reset") ||
+    id.includes("smoke") ||
+    id.includes("test") ||
+    phone.startsWith("+19999") ||
+    phone.startsWith("+1888") ||
+    phone.includes("@") ||
+    email.includes("test") ||
+    email.endsWith("@example.com") ||
+    email.endsWith("@local")
+}
+
+function classifyCandidate(source: SourceKind): CandidateClass {
+  if (source === "synthetic_test") return "synthetic_test_profile"
+  return source === "juicebox" ||
+    source === "lessie" ||
+    source === "coresignal" ||
+    source === "manual_csv"
+    ? "external_supply_prospect"
+    : "candidate_account"
+}
+
+function candidateClassLabel(candidateClass: CandidateClass): string {
+  if (candidateClass === "external_supply_prospect") return "External prospect"
+  if (candidateClass === "synthetic_test_profile") return "Synthetic test"
+  return "Candidate account"
+}
+
 function buildRow(doc: UserDoc, sourceMap: Map<string, ExternalSource>): Row {
   const { handle, kind } = buildHandle(doc)
+  const source = deriveSource(doc, sourceMap)
   return {
     id: doc.id,
     doc,
     handle,
     handleKind: kind,
     lifecycle: deriveLifecycle(doc),
-    source: deriveSource(doc, sourceMap),
+    source,
+    candidateClass: classifyCandidate(source),
     profilePct: computeProfilePct(doc),
     skills: skillsFromTags(doc.globalTags),
     lastActiveIso: doc.lifecycleUpdatedAt || doc.updatedAt || doc.createdAt,
@@ -324,6 +367,7 @@ export function Candidates() {
   const [stateFilter, setStateFilter] = useState<Set<LifecycleState>>(new Set())
   const [sourceFilter, setSourceFilter] = useState<Set<SourceKind>>(new Set())
   const [hasReachable, setHasReachable] = useState(false)
+  const [accountOnly, setAccountOnly] = useState(true)
   const [drawer, setDrawer] = useState<Row | null>(null)
 
   async function refresh() {
@@ -348,18 +392,25 @@ export function Candidates() {
     const bySource = new Map<SourceKind, number>()
     let withProfile = 0
     let withReachable = 0
+    let accountCandidates = 0
+    let externalProspects = 0
+    let syntheticTests = 0
     for (const r of rows) {
       byState.set(r.lifecycle, (byState.get(r.lifecycle) ?? 0) + 1)
       bySource.set(r.source, (bySource.get(r.source) ?? 0) + 1)
       if (r.profilePct >= 50) withProfile++
       if (r.doc.email || r.doc.phoneE164 || r.doc.linkedinUrl) withReachable++
+      if (r.candidateClass === "candidate_account") accountCandidates++
+      else if (r.candidateClass === "external_supply_prospect") externalProspects++
+      else syntheticTests++
     }
-    return { byState, bySource, withProfile, withReachable }
+    return { byState, bySource, withProfile, withReachable, accountCandidates, externalProspects, syntheticTests }
   }, [rows])
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
     return rows.filter((r) => {
+      if (accountOnly && r.candidateClass !== "candidate_account") return false
       if (stateFilter.size > 0 && !stateFilter.has(r.lifecycle)) return false
       if (sourceFilter.size > 0 && !sourceFilter.has(r.source)) return false
       if (hasReachable && !(r.doc.email || r.doc.phoneE164 || r.doc.linkedinUrl)) return false
@@ -378,7 +429,7 @@ export function Candidates() {
         .toLowerCase()
       return hay.includes(q)
     })
-  }, [rows, search, stateFilter, sourceFilter, hasReachable])
+  }, [rows, search, stateFilter, sourceFilter, hasReachable, accountOnly])
 
   const toggleState = (s: LifecycleState) => {
     const next = new Set(stateFilter)
@@ -396,6 +447,7 @@ export function Candidates() {
     setStateFilter(new Set())
     setSourceFilter(new Set())
     setHasReachable(false)
+    setAccountOnly(false)
     setSearch("")
   }
 
@@ -403,8 +455,8 @@ export function Candidates() {
     <>
       <PageHeader
         eyebrow="Marketplace pool"
-        title="All candidates"
-        subtitle="Every pa-users record — global supply. Filter by lifecycle state or source. Click a row to open the management drawer."
+        title="Candidate pool"
+        subtitle="pa-users is the shared candidate pool, not just logged-in users. This view defaults to real candidate accounts; external supply prospects stay available by filter."
         actions={
           <>
             <button
@@ -431,6 +483,24 @@ export function Candidates() {
       <MetricStrip
         items={[
           { label: "Total", value: rows.length, tone: "info", sub: "in last 500 by createdAt" },
+          {
+            label: "Accounts",
+            value: counts.accountCandidates,
+            tone: counts.accountCandidates > 0 ? "live" : "neutral",
+            sub: "auth / SMS / candidate intake",
+          },
+          {
+            label: "External prospects",
+            value: counts.externalProspects,
+            tone: counts.externalProspects > 0 ? "hitl" : "neutral",
+            sub: "operator-imported sourcing",
+          },
+          {
+            label: "Synthetic tests",
+            value: counts.syntheticTests,
+            tone: counts.syntheticTests > 0 ? "neutral" : "neutral",
+            sub: "excluded from account view",
+          },
           {
             label: "Reachable",
             value: counts.withReachable,
@@ -503,13 +573,20 @@ export function Candidates() {
           </FilterRow>
           <FilterRow label="Modifiers">
             <Chip
+              active={accountOnly}
+              tone="live"
+              onClick={() => setAccountOnly((v) => !v)}
+            >
+              Candidate accounts only
+            </Chip>
+            <Chip
               active={hasReachable}
               tone="live"
               onClick={() => setHasReachable((v) => !v)}
             >
               Has reachable handle
             </Chip>
-            {(stateFilter.size + sourceFilter.size > 0 || hasReachable || search) && (
+            {(stateFilter.size + sourceFilter.size > 0 || hasReachable || accountOnly || search) && (
               <button
                 type="button"
                 className="btn btn--ghost btn--sm"
@@ -581,9 +658,14 @@ export function Candidates() {
               key: "source",
               label: "Source",
               render: (r) => (
-                <span style={{ fontSize: 12, color: "var(--ink-2)" }}>
-                  {SOURCE_LABEL[(r as Row).source]}
-                </span>
+                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                  <span style={{ fontSize: 12, color: "var(--ink-2)" }}>
+                    {SOURCE_LABEL[(r as Row).source]}
+                  </span>
+                  <span style={{ fontSize: 10, color: "var(--ink-4)" }}>
+                    {candidateClassLabel((r as Row).candidateClass)}
+                  </span>
+                </div>
               ),
             },
             {
@@ -756,7 +838,7 @@ function CandidateDrawer({ row, onClose }: { row: Row; onClose: () => void }) {
                 marginBottom: 6,
               }}
             >
-              Candidate · {SOURCE_LABEL[row.source]}
+              {candidateClassLabel(row.candidateClass)} · {SOURCE_LABEL[row.source]}
             </div>
             <div
               style={{
