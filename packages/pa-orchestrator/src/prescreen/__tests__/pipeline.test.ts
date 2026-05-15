@@ -329,6 +329,67 @@ test("Phase 76: max-probed adjacent engineering evidence advances instead of har
   assert.equal(finalProbe.state.terminal, null)
 })
 
+test("Phase 76: weak engineering evidence gets four probes before HARD_STOP", async () => {
+  const store = new InMemoryPreScreenStore()
+  const pipeline = new PreScreenPipeline({
+    questions: {
+      q1: makeQ("q1", [
+        { perKeyword: [{ keyword: "q1", match: 0.1, confidence: 0.9, evidence: "no direct experience", reasoning: "not aligned" }] },
+        { perKeyword: [{ keyword: "q1", match: 0.12, confidence: 0.9, evidence: "no project", reasoning: "not aligned" }] },
+        { perKeyword: [{ keyword: "q1", match: 0.12, confidence: 0.9, evidence: "still no project", reasoning: "not aligned" }] },
+        { perKeyword: [{ keyword: "q1", match: 0.12, confidence: 0.9, evidence: "unrelated", reasoning: "not aligned" }] },
+        { perKeyword: [{ keyword: "q1", match: 0.12, confidence: 0.9, evidence: "unrelated", reasoning: "not aligned" }] },
+      ]),
+    },
+    store,
+  })
+  const state = emptyPreScreenState({
+    sessionId: "s1",
+    userId: "u1",
+    jobId: "rain-software-engineer-fullstack-8849f6ef",
+    questions: [{ qId: "q1", type: "MUST_HAVE", weight: 1, matchThreshold: 0.85 }],
+    threshold: 0.65,
+    confidenceThreshold: 0.7,
+    maxClarifyRounds: 4,
+    nowIso: "2026-05-12T00:00:00Z",
+  })
+  await store.save(state)
+
+  const replies = [
+    "I have not done software engineering work.",
+    "I do not have a related project.",
+    "I mainly did customer service and scheduling.",
+    "No engineering system, just spreadsheets.",
+    "I cannot think of a closer example.",
+  ]
+
+  for (let i = 0; i < 4; i++) {
+    const r = await pipeline.runTurn({
+      sessionId: "s1",
+      reply: replies[i],
+      lang: "en",
+      nowIso: `2026-05-12T00:0${i + 1}:00Z`,
+      judgeCtx: ctx,
+    })
+    assert.equal(r.action.kind, "clarify")
+    assert.equal(r.state.terminal, null)
+    assert.equal(r.state.questions.q1.clarifyRounds, i + 1)
+  }
+
+  const terminal = await pipeline.runTurn({
+    sessionId: "s1",
+    reply: replies[4],
+    lang: "en",
+    nowIso: "2026-05-12T00:05:00Z",
+    judgeCtx: ctx,
+  })
+
+  assert.equal(terminal.action.kind, "terminal")
+  if (terminal.action.kind === "terminal") assert.equal(terminal.action.terminal, "HARD_STOP")
+  assert.equal(terminal.state.questions.q1.terminalCause, "type_gate_fail")
+  assert.equal(terminal.state.questions.q1.clarifyRounds, 4)
+})
+
 test("Phase 76: PreScreenPipeline PROBING s<τ_m probes before HARD_STOP", async () => {
   const store = new InMemoryPreScreenStore()
   const pipeline = new PreScreenPipeline({
