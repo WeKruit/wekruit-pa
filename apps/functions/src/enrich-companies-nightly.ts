@@ -42,7 +42,10 @@ import { ANTHROPIC_API_KEY } from "./orchestrator-deps.js"
 // ---------------------------------------------------------------------------
 
 const PA_ADMIN_TOKEN = defineSecret("PA_ADMIN_TOKEN")
-const CLEARBIT_KEY = defineSecret("CLEARBIT_KEY")
+// CLEARBIT_KEY: NOT declared via defineSecret() because the secret isn't
+// set in wekruit-5f89b and declaring it triggers a deploy-time validation
+// even when it's removed from per-function secrets[] arrays. Runtime path
+// reads process.env.CLEARBIT_KEY only.
 
 // ---------------------------------------------------------------------------
 // Tunables
