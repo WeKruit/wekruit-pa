@@ -264,6 +264,71 @@ test("Phase 76: PreScreenPipeline soft-accepts credible MUST_HAVE overlap after 
   assert.equal(r3.state.questions.q1.finalS, 0.78)
 })
 
+test("Phase 76: max-probed adjacent engineering evidence advances instead of hard-stopping", async () => {
+  const store = new InMemoryPreScreenStore()
+  const pipeline = new PreScreenPipeline({
+    questions: {
+      q1: makeQ("q1", [
+        { perKeyword: [{ keyword: "q1", match: 0.15, confidence: 0.62, evidence: "not owned production fullstack", reasoning: "not exact" }] },
+        { perKeyword: [{ keyword: "q1", match: 0.72, confidence: 0.74, evidence: "dashboard and SQL", reasoning: "adjacent ownership" }] },
+        { perKeyword: [{ keyword: "q1", match: 0.72, confidence: 0.66, evidence: "failure tracing", reasoning: "needs systems detail" }] },
+        { perKeyword: [{ keyword: "q1", match: 0.78, confidence: 0.74, evidence: "order DB plus dispatch events", reasoning: "credible adjacent system ownership" }] },
+        { perKeyword: [{ keyword: "q1", match: 0.78, confidence: 0.74, evidence: "operator workflow end to end", reasoning: "credible adjacent system ownership" }] },
+      ]),
+      q2: makeQ("q2", [
+        { perKeyword: [{ keyword: "q2", match: 1.0, confidence: 0.9, evidence: "ok", reasoning: "yes" }] },
+      ]),
+    },
+    store,
+  })
+  const state = emptyPreScreenState({
+    sessionId: "s1",
+    userId: "u1",
+    jobId: "rain-software-engineer-fullstack-8849f6ef",
+    questions: [
+      { qId: "q1", type: "MUST_HAVE", weight: 1, matchThreshold: 0.85 },
+      { qId: "q2", type: "PROBING", weight: 1 },
+    ],
+    threshold: 0.65,
+    confidenceThreshold: 0.7,
+    maxClarifyRounds: 4,
+    nowIso: "2026-05-12T00:00:00Z",
+  })
+  await store.save(state)
+
+  const replies = [
+    "I have not owned a production fullstack system. Most of my work was product ops, dashboards, SQL reports, and scripts.",
+    "For OFO Delivery, I owned the merchant order dashboard and dispatch tooling.",
+    "The hardest part was failure tracing across merchant order states.",
+    "The data came from our order DB plus courier dispatch events and merchant config tables.",
+  ]
+
+  for (let i = 0; i < replies.length - 1; i++) {
+    const r = await pipeline.runTurn({
+      sessionId: "s1",
+      reply: replies[i],
+      lang: "en",
+      nowIso: `2026-05-12T00:0${i + 1}:00Z`,
+      judgeCtx: ctx,
+    })
+    assert.equal(r.action.kind, "clarify")
+    assert.equal(r.state.terminal, null)
+  }
+
+  const finalProbe = await pipeline.runTurn({
+    sessionId: "s1",
+    reply: replies[3],
+    lang: "en",
+    nowIso: "2026-05-12T00:04:00Z",
+    judgeCtx: ctx,
+  })
+
+  assert.equal(finalProbe.action.kind, "advance")
+  if (finalProbe.action.kind === "advance") assert.equal(finalProbe.action.toQId, "q2")
+  assert.equal(finalProbe.state.questions.q1.finalS, 0.78)
+  assert.equal(finalProbe.state.terminal, null)
+})
+
 test("Phase 76: PreScreenPipeline PROBING s<τ_m probes before HARD_STOP", async () => {
   const store = new InMemoryPreScreenStore()
   const pipeline = new PreScreenPipeline({

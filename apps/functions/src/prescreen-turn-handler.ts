@@ -270,6 +270,8 @@ export interface RunPrescreenTurnArgs {
   lang?: "zh" | "en"
   sendSms?: typeof sendImessage
   runTerminalAction?: typeof runPrescreenTerminalAction
+  keywordSetCaller?: KeywordSetLlmCaller
+  clarifyComposer?: PreScreenClarifyComposer
   log?: (event: string, payload: Record<string, unknown>) => void
 }
 
@@ -435,7 +437,7 @@ export async function runPrescreenTurnIfActive(
   }
 
   // Build PreScreenQuestion bindings with production LLM caller
-  const caller = makeProductionKeywordSetCaller()
+  const caller = args.keywordSetCaller ?? makeProductionKeywordSetCaller()
   const questions: Record<string, PreScreenQuestion> = {}
   for (const q of cfgSnapshot.questions) {
     questions[q.qId] = {
@@ -454,7 +456,7 @@ export async function runPrescreenTurnIfActive(
     questions,
     store,
     log,
-    composeClarify: makeProductionClarifyComposer(),
+    composeClarify: args.clarifyComposer ?? makeProductionClarifyComposer(),
   })
   const result = await pipeline.runTurn({
     sessionId,
