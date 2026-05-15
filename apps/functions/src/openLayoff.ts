@@ -20,7 +20,7 @@
 //   2. enqueueOutbound() drops one row; Claire takes over on candidate reply
 
 import { onCall, HttpsError } from "firebase-functions/v2/https"
-import { getFirestore, FieldValue } from "firebase-admin/firestore"
+import { getFirestore, FieldValue, type Firestore, type Query } from "firebase-admin/firestore"
 import { getApps, initializeApp } from "firebase-admin/app"
 
 import { loadSendbluePool, pickFromNumber, sendblueGroupId, hashStringToUint } from "./sendblue/pool.js"
@@ -29,7 +29,7 @@ import { enqueueOutbound } from "@pa/pa-broker"
 import { PA_COLLECTIONS } from "@pa/core-types"
 
 /** Source tag — drives Claire's opener variant + listing filter + analytics. */
-const LAYOFF_SOURCE_TAG = "WeKruit_Laid_Off"
+export const LAYOFF_SOURCE_TAG = "WeKruit_Laid_Off"
 
 if (!getApps().length) initializeApp()
 
@@ -48,13 +48,13 @@ export function normalizeAndValidatePhone(raw: string): { ok: true; e164: string
   return { ok: true, e164 }
 }
 
-function phoneIndexId(e164: string): string {
+export function phoneIndexId(e164: string): string {
   return `p_${hashStringToUint(e164).toString(36)}`
 }
 
 // ---------- Layoff opener body ----------
 
-function renderLayoffOpenerBody(input: { firstName: string; lastCompany: string }): string {
+export function renderLayoffOpenerBody(input: { firstName: string; lastCompany: string }): string {
   const first = input.firstName?.trim() || "there"
   const company = input.lastCompany?.trim() || "your last company"
   return `Hey ${first}, Claire from WeKruit. Saw you signed up after the ${company} layoff — glad you found us. Got a sec to chat about what you want next?`
@@ -62,7 +62,7 @@ function renderLayoffOpenerBody(input: { firstName: string; lastCompany: string 
 
 // ---------- Registration ----------
 
-type RegisterInput = {
+export type RegisterInput = {
   firstName: string
   lastName: string
   email: string
@@ -82,211 +82,286 @@ type RegisterInput = {
   mode?: "auto" | "reuse" | "refresh"
 }
 
+type CallableAuth = {
+  uid?: string
+  token?: Record<string, unknown>
+}
+
+export interface OpenLayoffDeps {
+  db: Firestore
+  serverTimestamp?: () => unknown
+  nowIso?: () => string
+  loadSendbluePool?: typeof loadSendbluePool
+  enqueueOutbound?: typeof enqueueOutbound
+}
+
+function nowIso(): string {
+  return new Date().toISOString()
+}
+
+function serverTimestamp(deps: OpenLayoffDeps): unknown {
+  return deps.serverTimestamp ? deps.serverTimestamp() : FieldValue.serverTimestamp()
+}
+
+function cleanString(value: unknown, max = 320): string | undefined {
+  if (typeof value !== "string") return undefined
+  const trimmed = value.trim()
+  if (!trimmed || trimmed.length > max) return undefined
+  return trimmed
+}
+
+function cleanEmail(value: unknown): string | undefined {
+  const email = cleanString(value)?.toLowerCase()
+  return email && email.includes("@") ? email : undefined
+}
+
+async function requireVerifiedEmployer(
+  db: Firestore,
+  auth: CallableAuth | undefined
+): Promise<{ employerId: string; workEmailLower: string }> {
+  if (!auth?.uid) throw new HttpsError("unauthenticated", "Sign in required")
+  const workEmailLower = cleanEmail(auth.token?.email)
+  if (!workEmailLower) {
+    throw new HttpsError("failed-precondition", "signed_in_work_email_required")
+  }
+
+  const snap = await db
+    .collection("layoff_employers")
+    .where("workEmailLower", "==", workEmailLower)
+    .limit(10)
+    .get()
+  const verified = snap.docs.find((d) => d.data()?.verificationStatus === "verified")
+  if (!verified) {
+    throw new HttpsError("failed-precondition", "employer_not_verified")
+  }
+  return { employerId: verified.id, workEmailLower }
+}
+
+export async function runRegisterLayoffCandidate(
+  v: RegisterInput,
+  deps: OpenLayoffDeps
+): Promise<Record<string, unknown>> {
+  if (!v.firstName || !v.email || !v.phone || !v.consent) {
+    throw new HttpsError("invalid-argument", "Missing required fields")
+  }
+  const mode = v.mode ?? "auto"
+
+  const phoneCheck = normalizeAndValidatePhone(v.phone)
+  if (!phoneCheck.ok) throw new HttpsError("invalid-argument", `phone_invalid:${phoneCheck.reason}`)
+  const phoneE164 = phoneCheck.e164
+  const indexId = phoneIndexId(phoneE164)
+  const now = serverTimestamp(deps)
+
+  // Phone dedup index — controls reuse path.
+  const indexRef = deps.db.doc(`layoff_phone_index/${indexId}`)
+  const indexSnap = await indexRef.get()
+  let candidateId: string
+  let isReregistration = false
+  if (indexSnap.exists) {
+    candidateId = indexSnap.data()!.candidateId as string
+    isReregistration = true
+
+    // Auto mode → return duplicate signal so the UI can show the
+    // "reuse / start fresh" prompt. No writes performed.
+    if (mode === "auto") {
+      const userRef = deps.db.collection(PA_COLLECTIONS.users).doc(candidateId)
+      const userSnap = await userRef.get()
+      const u = userSnap.data() ?? {}
+      const ctx = (u.layoffContext ?? {}) as Record<string, string | null>
+      const ts = u.lastLaidOffAt
+      const lastLaidOffAt =
+        ts && typeof (ts as { toDate?: unknown }).toDate === "function"
+          ? (ts as { toDate: () => Date }).toDate().toISOString()
+          : typeof ts === "string"
+            ? ts
+            : null
+      return {
+        duplicate: true,
+        candidateId,
+        existing: {
+          firstName: ((u.displayName as string | undefined) ?? "").split(" ")[0] ?? null,
+          lastCompany: ctx.lastCompany ?? null,
+          jobTitle: ctx.jobTitle ?? null,
+          location: ctx.location ?? null,
+          lastLaidOffAt,
+        },
+      }
+    }
+  } else {
+    candidateId = deps.db.collection(PA_COLLECTIONS.users).doc().id
+  }
+
+  // Sticky from-number — deterministic hash by candidateId.
+  const pool = await (deps.loadSendbluePool ?? loadSendbluePool)(deps.db)
+  const fromNumber = pickFromNumber(pool, candidateId) ?? process.env.SENDBLUE_FROM_NUMBER ?? ""
+  const groupId = fromNumber ? sendblueGroupId({ number: fromNumber, status: "active" }) : "unassigned"
+
+  // Single source of truth — pa-users.
+  //   reuse   → only refresh lastLaidOffAt + source tag (no field overwrite)
+  //   refresh → also overwrite layoffContext with newly submitted fields
+  //   (fresh new registration) → write everything
+  const userRef = deps.db.collection(PA_COLLECTIONS.users).doc(candidateId)
+  const writeLayoffContext = !isReregistration || mode === "refresh"
+
+  const writePayload: Record<string, unknown> = {
+    id: candidateId,
+    phoneE164,
+    source: LAYOFF_SOURCE_TAG,
+    lastLaidOffAt: now,
+    senderNumber: fromNumber,
+    senderGroupId: groupId,
+  }
+  if (writeLayoffContext) {
+    writePayload.displayName = `${v.firstName} ${v.lastName}`.trim() || v.firstName
+    writePayload.layoffContext = {
+      lastCompany: v.lastCompany,
+      jobTitle: v.jobTitle,
+      location: v.location,
+      email: v.email,
+      linkedin: v.linkedin ?? null,
+      resumeFileName: v.resumeFileName ?? null,
+      consent: v.consent,
+    }
+  }
+  if (!isReregistration) {
+    writePayload.onboardingStatus = "invited"
+    writePayload.createdAt = (deps.nowIso ?? nowIso)()
+  }
+
+  const batch = deps.db.batch()
+  batch.set(userRef, writePayload, { merge: true })
+  batch.set(indexRef, { candidateId, lastLaidOffAt: now, phoneHash: indexId }, { merge: true })
+
+  // List-position counter (for the success screen)
+  const counterRef = deps.db.doc("layoff_meta/counters")
+  const counterSnap = await counterRef.get()
+  const listPosition = (counterSnap.exists ? (counterSnap.data()?.candidateCount ?? 412) : 412) + (isReregistration ? 0 : 1)
+  if (!isReregistration) batch.set(counterRef, { candidateCount: listPosition }, { merge: true })
+
+  await batch.commit()
+
+  return {
+    candidateId,
+    listPosition,
+    senderNumber: fromNumber,
+    senderGroupId: groupId,
+    isReregistration,
+    mode,
+  }
+}
+
 export const openRegisterLayoffCandidate = onCall<RegisterInput>(
   { region: "us-central1", cors: true },
   async (req) => {
-    const v = req.data
-    if (!v.firstName || !v.email || !v.phone || !v.consent) {
-      throw new HttpsError("invalid-argument", "Missing required fields")
-    }
-    const mode = v.mode ?? "auto"
-
-    const phoneCheck = normalizeAndValidatePhone(v.phone)
-    if (!phoneCheck.ok) throw new HttpsError("invalid-argument", `phone_invalid:${phoneCheck.reason}`)
-    const phoneE164 = phoneCheck.e164
-    const indexId = phoneIndexId(phoneE164)
-
-    const db = getFirestore()
-    const now = FieldValue.serverTimestamp()
-
-    // Phone dedup index — controls reuse path.
-    const indexRef = db.doc(`layoff_phone_index/${indexId}`)
-    const indexSnap = await indexRef.get()
-    let candidateId: string
-    let isReregistration = false
-    if (indexSnap.exists) {
-      candidateId = indexSnap.data()!.candidateId as string
-      isReregistration = true
-
-      // Auto mode → return duplicate signal so the UI can show the
-      // "reuse / start fresh" prompt. No writes performed.
-      if (mode === "auto") {
-        const userRef = db.collection(PA_COLLECTIONS.users).doc(candidateId)
-        const userSnap = await userRef.get()
-        const u = userSnap.data() ?? {}
-        const ctx = (u.layoffContext ?? {}) as Record<string, string | null>
-        const ts = u.lastLaidOffAt
-        const lastLaidOffAt =
-          ts && typeof (ts as { toDate?: unknown }).toDate === "function"
-            ? (ts as { toDate: () => Date }).toDate().toISOString()
-            : typeof ts === "string"
-              ? ts
-              : null
-        return {
-          duplicate: true,
-          candidateId,
-          existing: {
-            firstName: ((u.displayName as string | undefined) ?? "").split(" ")[0] ?? null,
-            lastCompany: ctx.lastCompany ?? null,
-            jobTitle: ctx.jobTitle ?? null,
-            location: ctx.location ?? null,
-            lastLaidOffAt,
-          },
-        }
-      }
-    } else {
-      candidateId = db.collection(PA_COLLECTIONS.users).doc().id
-    }
-
-    // Sticky from-number — deterministic hash by candidateId.
-    const pool = await loadSendbluePool(db)
-    const fromNumber = pickFromNumber(pool, candidateId) ?? process.env.SENDBLUE_FROM_NUMBER ?? ""
-    const groupId = fromNumber ? sendblueGroupId({ number: fromNumber, status: "active" }) : "unassigned"
-
-    // Single source of truth — pa-users.
-    //   reuse   → only refresh lastLaidOffAt + source tag (no field overwrite)
-    //   refresh → also overwrite layoffContext with newly submitted fields
-    //   (fresh new registration) → write everything
-    const userRef = db.collection(PA_COLLECTIONS.users).doc(candidateId)
-    const writeLayoffContext = !isReregistration || mode === "refresh"
-
-    const writePayload: Record<string, unknown> = {
-      id: candidateId,
-      phoneE164,
-      source: LAYOFF_SOURCE_TAG,
-      lastLaidOffAt: now,
-      senderNumber: fromNumber,
-      senderGroupId: groupId,
-    }
-    if (writeLayoffContext) {
-      writePayload.displayName = `${v.firstName} ${v.lastName}`.trim() || v.firstName
-      writePayload.layoffContext = {
-        lastCompany: v.lastCompany,
-        jobTitle: v.jobTitle,
-        location: v.location,
-        email: v.email,
-        linkedin: v.linkedin ?? null,
-        resumeFileName: v.resumeFileName ?? null,
-        consent: v.consent,
-      }
-    }
-    if (!isReregistration) {
-      writePayload.onboardingStatus = "invited"
-      writePayload.createdAt = new Date().toISOString()
-    }
-
-    const batch = db.batch()
-    batch.set(userRef, writePayload, { merge: true })
-    batch.set(indexRef, { candidateId, lastLaidOffAt: now, phoneHash: indexId }, { merge: true })
-
-    // List-position counter (for the success screen)
-    const counterRef = db.doc("layoff_meta/counters")
-    const counterSnap = await counterRef.get()
-    const listPosition = (counterSnap.exists ? (counterSnap.data()?.candidateCount ?? 412) : 412) + (isReregistration ? 0 : 1)
-    if (!isReregistration) batch.set(counterRef, { candidateCount: listPosition }, { merge: true })
-
-    await batch.commit()
-
-    return {
-      candidateId,
-      listPosition,
-      senderNumber: fromNumber,
-      senderGroupId: groupId,
-      isReregistration,
-      mode,
-    }
+    return runRegisterLayoffCandidate(req.data, { db: getFirestore() })
   },
 )
 
 // ---------- SMS kickoff (Claire opener via pa-outbound) ----------
 
+export async function runInitiateSmsPrescreen(
+  candidateId: string,
+  deps: OpenLayoffDeps
+): Promise<Record<string, unknown>> {
+  const userRef = deps.db.collection(PA_COLLECTIONS.users).doc(candidateId)
+  const doc = await userRef.get()
+  if (!doc.exists) throw new HttpsError("not-found", "User not found")
+  const u = doc.data()!
+  if (u.source !== LAYOFF_SOURCE_TAG) {
+    throw new HttpsError("failed-precondition", "user_not_tagged_layoff")
+  }
+
+  const ctx = (u.layoffContext ?? {}) as Record<string, string>
+  const phoneE164 = u.phoneE164 as string
+  const firstName = (u.displayName?.split(" ")[0] as string) ?? "there"
+
+  const body = renderLayoffOpenerBody({ firstName, lastCompany: ctx.lastCompany ?? "your last company" })
+  const idempotencyKey = `wekruit_open_layoff:${candidateId}:kickoff`
+  const enqueueResult = await (deps.enqueueOutbound ?? enqueueOutbound)(deps.db, {
+    userId: candidateId,
+    toE164: phoneE164,
+    imessageChatId: `iMessage;-;${phoneE164}`,
+    body,
+    idempotencyKey,
+  })
+
+  await userRef.set(
+    {
+      smsState: "kickoff-enqueued",
+      smsKickoffAt: serverTimestamp(deps),
+      smsThreadId: `iMessage;-;${phoneE164}`,
+      kickoffOutboundId: enqueueResult.id,
+    },
+    { merge: true },
+  )
+
+  return {
+    ok: true,
+    kickoffOutboundId: enqueueResult.id,
+    kickoffCreated: enqueueResult.created,
+    sourceTag: LAYOFF_SOURCE_TAG,
+  }
+}
+
 export const openInitiateSmsPrescreen = onCall<{ candidateId: string }>(
   { region: "us-central1", cors: true },
   async (req) => {
-    const { candidateId } = req.data
-    const db = getFirestore()
-    const userRef = db.collection(PA_COLLECTIONS.users).doc(candidateId)
-    const doc = await userRef.get()
-    if (!doc.exists) throw new HttpsError("not-found", "User not found")
-    const u = doc.data()!
-    if (u.source !== LAYOFF_SOURCE_TAG) {
-      throw new HttpsError("failed-precondition", "user_not_tagged_layoff")
-    }
-
-    const ctx = (u.layoffContext ?? {}) as Record<string, string>
-    const phoneE164 = u.phoneE164 as string
-    const firstName = (u.displayName?.split(" ")[0] as string) ?? "there"
-
-    const body = renderLayoffOpenerBody({ firstName, lastCompany: ctx.lastCompany ?? "your last company" })
-    const idempotencyKey = `wekruit_open_layoff:${candidateId}:kickoff`
-    const enqueueResult = await enqueueOutbound(db, {
-      userId: candidateId,
-      toE164: phoneE164,
-      imessageChatId: `iMessage;-;${phoneE164}`,
-      body,
-      idempotencyKey,
-    })
-
-    await userRef.set(
-      {
-        smsState: "kickoff-enqueued",
-        smsKickoffAt: FieldValue.serverTimestamp(),
-        smsThreadId: `iMessage;-;${phoneE164}`,
-        kickoffOutboundId: enqueueResult.id,
-      },
-      { merge: true },
-    )
-
-    return {
-      ok: true,
-      kickoffOutboundId: enqueueResult.id,
-      kickoffCreated: enqueueResult.created,
-      sourceTag: LAYOFF_SOURCE_TAG,
-    }
+    return runInitiateSmsPrescreen(req.data.candidateId, { db: getFirestore() })
   },
 )
 
 // ---------- Chat turn capture (web SMS-bubble UI; SMS turns go through PA broker) ----------
 
-export const openSubmitChatTurn = onCall<{
-  candidateId: string
-  turn: { promptId: string; text: string; at?: string }
-}>({ region: "us-central1", cors: true }, async (req) => {
-  const { candidateId, turn } = req.data
-  const db = getFirestore()
-  const userRef = db.collection(PA_COLLECTIONS.users).doc(candidateId)
+export async function runSubmitChatTurn(
+  input: { candidateId: string; turn: { promptId: string; text: string; at?: string } },
+  deps: OpenLayoffDeps
+): Promise<{ ok: true }> {
+  const { candidateId, turn } = input
+  const userRef = deps.db.collection(PA_COLLECTIONS.users).doc(candidateId)
   await userRef.set(
     {
-      [`layoffChatAnswers.${turn.promptId}`]: turn.text,
-      smsLastTurnAt: FieldValue.serverTimestamp(),
+      layoffChatAnswers: {
+        [turn.promptId]: turn.text,
+      },
+      smsLastTurnAt: serverTimestamp(deps),
     },
     { merge: true },
   )
   return { ok: true }
+}
+
+export const openSubmitChatTurn = onCall<{
+  candidateId: string
+  turn: { promptId: string; text: string; at?: string }
+}>({ region: "us-central1", cors: true }, async (req) => {
+  return runSubmitChatTurn(req.data, { db: getFirestore() })
 })
 
 // ---------- Verified-marketplace listing (layoff-tagged users only) ----------
 
-export const openListLayoffCandidates = onCall<{
-  functions?: string[]
-  verifiedOnly?: boolean
-  /** Max age (days) for lastLaidOffAt — defaults to 180. */
-  withinDays?: number
-}>({ region: "us-central1", cors: true }, async (req) => {
-  if (!req.auth) throw new HttpsError("unauthenticated", "Sign in required")
-  const db = getFirestore()
+export async function runListLayoffCandidates(
+  input: {
+    functions?: string[]
+    verifiedOnly?: boolean
+    withinDays?: number
+  },
+  auth: CallableAuth | undefined,
+  deps: OpenLayoffDeps
+): Promise<{ data: Record<string, unknown>[] }> {
+  await requireVerifiedEmployer(deps.db, auth)
+
   // Filter by source tag — guarantees we never spill non-layoff pa-users
   // (e.g., regular PA candidates from pa-landing) into the layoff list.
-  let q: FirebaseFirestore.Query = db
+  let q: Query = deps.db
     .collection(PA_COLLECTIONS.users)
     .where("source", "==", LAYOFF_SOURCE_TAG)
 
-  const withinDays = req.data.withinDays ?? 180
+  const withinDays = input.withinDays ?? 180
   const cutoff = new Date(Date.now() - withinDays * 86400_000)
   q = q.where("lastLaidOffAt", ">=", cutoff)
 
-  if (req.data.functions?.length) {
-    q = q.where("layoffContext.function", "in", req.data.functions.slice(0, 10))
+  if (input.functions?.length) {
+    q = q.where("layoffContext.function", "in", input.functions.slice(0, 10))
   }
 
   const snap = await q.limit(200).get()
@@ -307,11 +382,20 @@ export const openListLayoffCandidates = onCall<{
       }
     }),
   }
+}
+
+export const openListLayoffCandidates = onCall<{
+  functions?: string[]
+  verifiedOnly?: boolean
+  /** Max age (days) for lastLaidOffAt — defaults to 180. */
+  withinDays?: number
+}>({ region: "us-central1", cors: true }, async (req) => {
+  return runListLayoffCandidates(req.data, req.auth, { db: getFirestore() })
 })
 
 // ---------- Employer registration ----------
 
-type EmployerInput = {
+export type EmployerInput = {
   companyName: string
   companyLinkedin: string
   workEmail: string
@@ -320,18 +404,26 @@ type EmployerInput = {
   rolesHiring: string[]
 }
 
+export async function runRegisterEmployer(
+  v: EmployerInput,
+  deps: OpenLayoffDeps
+): Promise<{ employerId: string }> {
+  if (!v.companyName || !v.workEmail) throw new HttpsError("invalid-argument", "Missing required fields")
+  const workEmailLower = cleanEmail(v.workEmail)
+  if (!workEmailLower) throw new HttpsError("invalid-argument", "work_email_invalid")
+  const ref = deps.db.collection("layoff_employers").doc()
+  await ref.set({
+    ...v,
+    workEmailLower,
+    verificationStatus: "pending",
+    registeredAt: serverTimestamp(deps),
+  })
+  return { employerId: ref.id }
+}
+
 export const openRegisterEmployer = onCall<EmployerInput>(
   { region: "us-central1", cors: true },
   async (req) => {
-    const v = req.data
-    if (!v.companyName || !v.workEmail) throw new HttpsError("invalid-argument", "Missing required fields")
-    const db = getFirestore()
-    const ref = db.collection("layoff_employers").doc()
-    await ref.set({
-      ...v,
-      verificationStatus: "pending",
-      registeredAt: FieldValue.serverTimestamp(),
-    })
-    return { employerId: ref.id }
+    return runRegisterEmployer(req.data, { db: getFirestore() })
   },
 )
