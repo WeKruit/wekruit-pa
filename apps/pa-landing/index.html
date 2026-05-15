@@ -4,9 +4,38 @@
     <meta charset="UTF-8" />
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>WeKruit</title>
-    <meta name="theme-color" content="#f6f2ea" />
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='80' font-size='80'%3E%E2%9C%89%EF%B8%8F%3C/text%3E%3C/svg%3E" />
+    <title>WeKruit — interview, don't apply.</title>
+    <meta
+      name="description"
+      content="Upload your résumé once. Claire, your WeKruit recruiter on iMessage, gets to know you. When a job matches, you skip the application and interview directly with the hiring manager."
+    />
+    <meta name="theme-color" content="#F5EDE3" />
+
+    <!-- Open Graph / social -->
+    <meta property="og:title" content="WeKruit — interview, don't apply." />
+    <meta
+      property="og:description"
+      content="Skip the application. Claire screens you over iMessage, then books you with the hiring manager."
+    />
+    <meta property="og:type" content="website" />
+
+    <!-- Preconnect for the editorial type system (Newsreader + Hanken Grotesk) imported by CandidateShell -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%23F5EDE3'/%3E%3Ctext x='50%25' y='66%25' text-anchor='middle' font-family='Georgia, serif' font-size='62' font-style='italic' fill='%232D1A0A'%3EW%3C/text%3E%3C/svg%3E"
+    />
+
+    <style>
+      /* Cream background fallback before React + CandidateShell mount, so the
+         hero halo never flashes white. Mirrors the design prototype's index.html. */
+      html { background: #F5EDE3; scroll-behavior: smooth; }
+      body { margin: 0; background: #F5EDE3; color: #2D1A0A;
+        font-family: 'Hanken Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        -webkit-font-smoothing: antialiased; }
+    </style>
   </head>
   <body>
     <div id="root"></div>
