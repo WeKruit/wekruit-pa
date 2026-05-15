@@ -137,8 +137,7 @@ test("Phase 76: PreScreenPipeline MUST_HAVE mismatch probes before HARD_STOP", a
     judgeCtx: ctx,
   })
   assert.equal(r1.action.kind, "clarify")
-  assert.match(r1.text, /closest overlap/i)
-  assert.match(r1.text, /rough example is fine/i)
+  assert.match(r1.text, /more specific/i)
   assert.equal(r1.state.currentQId, "q1")
   assert.equal(r1.state.terminal, null)
 
@@ -352,8 +351,7 @@ test("Phase 76: PreScreenPipeline low confidence triggers clarify and bumps k", 
   if (r.action.kind === "clarify") {
     assert.equal(r.action.kAfter, 1)
   }
-  assert.match(r.text, /closest overlap/i)
-  assert.match(r.text, /rough example is fine/i)
+  assert.match(r.text, /more specific/i)
   assert.equal(r.state.questions.q1.clarifyRounds, 1)
   // currentQId NOT advanced
   assert.equal(r.state.currentQId, "q1")

@@ -199,7 +199,7 @@ export function deriveJobOpportunityDraft(input: JobOpportunityDraftInput): JobO
       status: "draft",
       approved: false,
       approvalReady,
-      questions: buildQuestions(tags, salaryRange),
+      questions: buildQuestions(tags, salaryRange, input.rawJob.title),
     },
     scoringRubric: buildScoringRubric(tags),
     candidateBrief: buildCandidateBrief(input),
@@ -240,8 +240,9 @@ function roundWeight(value: number): number {
 function buildQuestions(
   tags: JobOpportunityDraftInput["enrichedJobTags"],
   salaryRange: JobOpportunityDraftInput["rawJob"]["salaryRange"] | null,
+  title?: string,
 ): JobOpportunityDraft["prescreenConfigDraft"]["questions"] {
-  const roleLabel = humanizeRoleFunctions(tags.roleFunction)
+  const roleLabel = humanizeRoleContext(title, tags.roleFunction)
   const questions: JobOpportunityDraft["prescreenConfigDraft"]["questions"] = [
     {
       id: "role_fit",
@@ -315,6 +316,14 @@ function humanizeRoleFunctions(roleFunctions: string[]): string {
   if (labels.length === 0) return "job"
   if (labels.length === 1) return labels[0]!
   return labels.slice(0, 2).join(" or ")
+}
+
+function humanizeRoleContext(title: string | undefined, roleFunctions: string[]): string {
+  const normalizedTitle = (title ?? "").toLowerCase()
+  if (/\btechnical account manager\b|\btechnical account\b|\bsolutions?\s+(engineer|consultant)\b/.test(normalizedTitle)) {
+    return "technical account management"
+  }
+  return humanizeRoleFunctions(roleFunctions)
 }
 
 function buildScoringRubric(tags: JobOpportunityDraftInput["enrichedJobTags"]): JobOpportunityDraft["scoringRubric"] {

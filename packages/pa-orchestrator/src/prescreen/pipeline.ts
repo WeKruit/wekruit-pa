@@ -181,7 +181,7 @@ export class PreScreenPipeline {
       state.updatedAt = input.nowIso
       await this.opts.store.save(state)
       return {
-        text: probingClarifyText(input.lang),
+        text: clarifyText(question, input.lang),
         action: { kind: "clarify", qId: state.currentQId, kAfter: confGate.kAfter },
         state,
       }
@@ -212,7 +212,7 @@ export class PreScreenPipeline {
           clarifyRounds: qState.clarifyRounds,
         })
         return {
-          text: probingClarifyText(input.lang),
+          text: clarifyText(question, input.lang),
           action: { kind: "clarify", qId: state.currentQId, kAfter: qState.clarifyRounds },
           state,
         }
@@ -316,6 +316,9 @@ export class PreScreenPipeline {
     // Preserve mutations to per-Q state that happened on this turn.
     next.questions = state.questions
     next.score = state.score
+    if (next.workSession) {
+      next.workSession = { ...next.workSession, status: "ended", endedAt: nowIso }
+    }
     await this.opts.store.save(next)
     log("prescreen.pipeline.terminal", {
       sessionId: state.sessionId,
@@ -386,6 +389,12 @@ export function terminalText(
         ? "感谢回答。目前看综合匹配度不够高，先停在这儿，下次有更合适的我直接推。"
         : "Thanks. Overall fit looks low for this role; pausing here. I'll surface better-aligned roles next time."
   }
+}
+
+function clarifyText(question: PreScreenQuestion, lang: Lang): string {
+  const authored = question.clarifyPrompt[lang]?.trim()
+  if (authored) return authored
+  return probingClarifyText(lang)
 }
 
 function probingClarifyText(lang: Lang): string {

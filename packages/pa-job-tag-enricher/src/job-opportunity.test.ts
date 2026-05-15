@@ -134,4 +134,20 @@ describe("deriveJobOpportunityDraft", () => {
     assert.ok(!draft.hardFilters.roleFunction.includes("financial_technology" as never))
     assert.ok(!draft.softScoringWeights.industrySector.some((signal) => signal.token === "sales"))
   })
+
+  it("uses the job title to keep technical account prescreens out of generic SWE wording", () => {
+    const fixture = loadFixture("strong")
+    const draft = deriveJobOpportunityDraft({
+      ...fixture,
+      rawJob: {
+        ...fixture.rawJob,
+        title: "Technical Account Manager",
+      },
+    })
+
+    assert.equal(
+      draft.prescreenConfigDraft.questions[0]?.prompt,
+      "What recent work best matches this technical account management role?",
+    )
+  })
 })

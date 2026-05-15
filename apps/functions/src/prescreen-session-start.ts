@@ -8,8 +8,8 @@
  * Responsibilities:
  *   1. Load pa-jobs/{jobId}.prescreenConfig — refuse on missing/invalid
  *   2. Build initial PreScreenState from config
- *   3. Persist pa-prescreen-sessions/{sessionId} (sessionId derived from
- *      jobId + userId + UTC date so a same-day re-trigger reuses)
+ *   3. Supersede any other active prescreen session for this candidate, then
+ *      persist a fresh pa-prescreen-sessions/{sessionId}
  *   4. Emit the first question via Sendblue
  *   5. Audit
  *
@@ -49,6 +49,7 @@ export interface RunPreScreenArgs {
     jobId: string
     occurredAt: string
   }) => Promise<unknown>
+  sendSms?: typeof sendImessage
   log?: (event: string, payload: Record<string, unknown>) => void
 }
 
@@ -60,13 +61,14 @@ export interface RunPreScreenResult {
 }
 
 function deriveSessionId(jobId: string, userId: string, nowIso: string): string {
-  const dateStamp = nowIso.slice(0, 10).replace(/-/g, "") // YYYYMMDD
-  return `ps_${jobId}_${userId}_${dateStamp}`
+  const stamp = nowIso.replace(/[^0-9A-Za-z]/g, "")
+  return `ps_${jobId}_${userId}_${stamp}`
 }
 
 export async function runPreScreenForUser(args: RunPreScreenArgs): Promise<RunPreScreenResult> {
   const log = args.log ?? (() => {})
   const markStarted = args.markStarted ?? markFirstInterviewStarted
+  const sendSms = args.sendSms ?? sendImessage
   const nowIso = new Date().toISOString()
   const sessionId = deriveSessionId(args.jobId, args.userId, nowIso)
 
@@ -78,7 +80,7 @@ export async function runPreScreenForUser(args: RunPreScreenArgs): Promise<RunPr
     log("prescreen.config_missing", { jobId: args.jobId })
     const title = typeof data?.title === "string" && data.title.trim() ? data.title.trim() : "this role"
     try {
-      await sendImessage({
+      await sendSms({
         to: args.toE164,
         content: `Claire's screen for ${title} is still being prepared. WeKruit has the role listed, but the employer-specific questions are not approved yet. We will unlock this screen when it is ready.`,
         userId: args.userId,
@@ -102,50 +104,44 @@ export async function runPreScreenForUser(args: RunPreScreenArgs): Promise<RunPr
   }
   const cfg: PrescreenConfig = parsed.config
 
-  // 2-3. Check if session already exists today (idempotent re-trigger)
+  // 2. A new trigger starts a new job work-session. Durable candidate profile
+  // stays global, but active prescreen conversation state must not leak across
+  // jobs or repeated starts.
+  await supersedeOtherActivePrescreens(args.db, {
+    userId: args.userId,
+    newSessionId: sessionId,
+    nowIso,
+    log,
+  })
+
+  // 3. Persist fresh session state.
   const sessRef = args.db.collection("pa-prescreen-sessions").doc(sessionId)
-  const existing = await sessRef.get()
-  let isResume = false
-  let firstQText: string
+  const firstQText = cfg.questions[0].prompt.en
 
-  if (existing.exists) {
-    const sdata = existing.data()
-    if (sdata?.terminal === null && sdata.currentQId) {
-      // In-progress — re-emit the active question (resume after disconnect)
-      const activeQ = cfg.questions.find((q) => q.qId === sdata.currentQId)
-      if (activeQ) {
-        isResume = true
-        firstQText = activeQ.prompt.en // TODO lang resolution from user doc
-      } else {
-        firstQText = cfg.questions[0].prompt.en
-      }
-    } else {
-      // Already terminal — surface a "you've already completed" message.
-      firstQText = `You've already completed pre-screening for ${cfg.jobTitle}. The employer will reach out if it's a fit.`
-    }
-  } else {
-    const state = emptyPreScreenState({
-      sessionId,
-      userId: args.userId,
-      jobId: args.jobId,
-      questions: configToStateQuestions(cfg),
-      threshold: cfg.threshold,
-      confidenceThreshold: cfg.confidenceThreshold,
-      maxClarifyRounds: cfg.maxClarifyRounds,
-      nowIso,
-    })
-    await sessRef.set({
-      ...state,
-      cfgSnapshot: cfg, // snapshot of config at session start
-      e164: args.toE164,
-    })
-    firstQText = cfg.questions[0].prompt.en
-  }
+  const state = emptyPreScreenState({
+    sessionId,
+    userId: args.userId,
+    jobId: args.jobId,
+    questions: configToStateQuestions(cfg),
+    threshold: cfg.threshold,
+    confidenceThreshold: cfg.confidenceThreshold,
+    maxClarifyRounds: cfg.maxClarifyRounds,
+    nowIso,
+  })
+  await sessRef.set({
+    ...state,
+    cfgSnapshot: cfg, // snapshot of config at session start
+    e164: args.toE164,
+    workSession: {
+      kind: "job_prescreen",
+      status: "active",
+      startedAt: nowIso,
+      boundary: "trigger",
+    },
+  })
 
-  // 4. Send first question (or re-emit)
-  const opener = isResume
-    ? `Resuming pre-screen for ${cfg.jobTitle}. ${firstQText}`
-    : `Hi — Claire from ${cfg.company ?? "WeKruit"}. Quick screen for ${cfg.jobTitle}. ${firstQText}`
+  // 4. Send first question.
+  const opener = `Hi — Claire from ${cfg.company ?? "WeKruit"}. Quick screen for ${cfg.jobTitle}. ${firstQText}`
 
   // v1.9 hotfix 2026-05-13 — when the trigger was authorized via a
   // public-job-page pending-invite, attribute the session to the candidate's
@@ -185,25 +181,22 @@ export async function runPreScreenForUser(args: RunPreScreenArgs): Promise<RunPr
   }
 
   try {
-    if (!existing.exists || isResume) {
-      await markStarted({
-        db: args.db,
-        sessionId,
-        userId: args.userId,
-        jobId: args.jobId,
-        occurredAt: nowIso,
-      })
-    }
-    await sendImessage({ to: args.toE164, content: opener, userId: args.userId, db: args.db })
+    await markStarted({
+      db: args.db,
+      sessionId,
+      userId: args.userId,
+      jobId: args.jobId,
+      occurredAt: nowIso,
+    })
+    await sendSms({ to: args.toE164, content: opener, userId: args.userId, db: args.db })
     log("prescreen.session_started", {
       sessionId,
       jobId: args.jobId,
       userId: args.userId,
-      isResume,
     })
     return {
       ok: true,
-      reason: isResume ? "resumed" : "started",
+      reason: "started",
       sessionId,
       firstQuestionSent: true,
     }
@@ -213,5 +206,49 @@ export async function runPreScreenForUser(args: RunPreScreenArgs): Promise<RunPr
       error: err instanceof Error ? err.message : String(err),
     })
     return { ok: false, reason: "send_failed", sessionId }
+  }
+}
+
+async function supersedeOtherActivePrescreens(
+  db: Firestore,
+  args: {
+    userId: string
+    newSessionId: string
+    nowIso: string
+    log: (event: string, payload: Record<string, unknown>) => void
+  },
+): Promise<void> {
+  const snap = await db
+    .collection("pa-prescreen-sessions")
+    .where("userId", "==", args.userId)
+    .where("terminal", "==", null)
+    .get()
+  const updates = snap.docs
+    .filter((doc) => doc.id !== args.newSessionId)
+    .map((doc) =>
+      doc.ref.set(
+        {
+          terminal: "PAUSE",
+          terminalReason: `superseded_by_new_prescreen_session:${args.newSessionId}`,
+          supersededBySessionId: args.newSessionId,
+          supersededAt: args.nowIso,
+          updatedAt: args.nowIso,
+          workSession: {
+            kind: "job_prescreen",
+            status: "superseded",
+            endedAt: args.nowIso,
+            supersededBySessionId: args.newSessionId,
+          },
+        },
+        { merge: true },
+      ),
+    )
+  await Promise.all(updates)
+  if (updates.length > 0) {
+    args.log("prescreen.session_start.superseded_active_sessions", {
+      userId: args.userId,
+      newSessionId: args.newSessionId,
+      count: updates.length,
+    })
   }
 }

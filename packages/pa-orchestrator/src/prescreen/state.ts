@@ -79,6 +79,15 @@ export interface PreScreenState {
   terminal: PreScreenTerminal
   /** Human-readable reason set on terminal transition. */
   terminalReason?: string
+  /** Product-level session boundary; durable profile data lives elsewhere. */
+  workSession?: {
+    kind: "job_prescreen"
+    status: "active" | "ended" | "superseded"
+    startedAt?: string
+    endedAt?: string
+    boundary?: "trigger"
+    supersededBySessionId?: string
+  }
   /** ISO created/updated timestamps. */
   createdAt: string
   updatedAt: string

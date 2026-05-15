@@ -570,7 +570,7 @@ export function prescreenConfigFromApprovedDraft(
       weight: question.required ? 1 : 0.5,
       matchThreshold: type === "MUST_HAVE" ? 0.85 : type === "PROBING" ? 0.65 : 0,
       prompt: bilingual(clampText(question.prompt, 800)),
-      clarifyPrompt: bilingual("Please add one concrete example tied to this job."),
+      clarifyPrompt: bilingual(clarifyPromptForQuestion(question, draft.opportunity.title)),
       keywords: [{ keyword, weight: 1, hint: clampText(question.signal, 600) }],
     }
   })
@@ -620,6 +620,24 @@ function keywordFromSignal(signal: string, fallback: string): string {
   const words = signal.toLowerCase().match(/[a-z0-9]+/g) ?? []
   const compact = words.slice(0, 4).join("_")
   return (compact || fallback).slice(0, 60)
+}
+
+function clarifyPromptForQuestion(
+  question: MarketplaceJobOpportunityDraft["opportunity"]["prescreen"]["questions"][number],
+  title: string,
+): string {
+  const titleLower = title.toLowerCase()
+  const promptLower = question.prompt.toLowerCase()
+  if (
+    question.questionId === "role_fit" &&
+    /\btechnical account manager\b|\btechnical account\b|\bsolutions?\s+(engineer|consultant)\b/.test(titleLower)
+  ) {
+    return "It does not need to be the exact same title. Share the closest customer, partner, API, onboarding, support, or technical project you owned: what was the issue, what did you do, and what changed?"
+  }
+  if (question.questionId === "role_fit" || promptLower.includes("best matches")) {
+    return "It does not need to be an exact title match. Share the closest project you owned: the context, what you personally did, and what changed because of it."
+  }
+  return "Please add one concrete example from your own work: the context, what you personally did, and the result."
 }
 
 function bilingual(text: string): { en: string; zh: string } {

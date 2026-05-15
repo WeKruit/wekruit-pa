@@ -382,6 +382,63 @@ test("prescreenConfigFromApprovedDraft leaves unknown sponsorship out of publica
   assert.equal(config.questions[0]?.type, "MUST_HAVE")
 })
 
+test("prescreenConfigFromApprovedDraft writes role-aware probe copy for technical account roles", () => {
+  const draft = {
+    jobId: "job-3",
+    draftId: "draft-3",
+    status: "approved",
+    approvalReady: true,
+    rawSnapshot: {
+      source: "ats",
+      capturedAt: now,
+      title: "Technical Account Manager",
+      companyName: "Rain",
+      description: "Own partner onboarding and API support.",
+      metadata: {},
+    },
+    opportunity: {
+      title: "Technical Account Manager",
+      companyName: "Rain",
+      roleFunction: ["software_engineering"],
+      industrySector: ["financial_technology"],
+      skills: [],
+      relevantTags: ["api_support"],
+      seniority: { label: "mid_level", evidence: [] },
+      hardFilters: { sponsorshipAvailable: true, locations: ["remote_united_states"], jobTypes: ["full_time"] },
+      softScoringWeights: {
+        skills: 0.35,
+        roleFunction: 0.2,
+        industrySector: 0.15,
+        location: 0.1,
+        compensation: 0,
+        visa: 0.05,
+        companyPreference: 0.05,
+      },
+      prescreen: {
+        questions: [
+          {
+            questionId: "role_fit",
+            prompt: "What recent work best matches this technical account management role?",
+            signal: "role_fit",
+            required: true,
+          },
+        ],
+        passSignals: ["partner onboarding"],
+      },
+      scoringRubric: { mustHave: ["API support"], niceToHave: [], disqualifiers: [] },
+    },
+    coverage: { overall: "high", missingSignals: [], seniorityEvidence: "rubric", sponsorshipSignal: "explicit_yes" },
+    hitlFlags: [],
+    enrichmentVersion: "test",
+    createdAt: now,
+    approvedAt: now,
+    approvedBy: "operator@wekruit.com",
+  } satisfies JobOpportunityDraft
+
+  const config = prescreenConfigFromApprovedDraft(draft, "operator@wekruit.com", now)
+  assert.match(config.questions[0]?.clarifyPrompt.en ?? "", /customer, partner, API, onboarding, support/)
+})
+
 test("runJobEnrichmentSaveCorrections appends an operator correction event", async () => {
   const result = await runJobEnrichmentSaveCorrections(
     { jobId: "job-1", draftId: "draft-1", corrections: "Salary range should be 150k to 170k." },
