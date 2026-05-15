@@ -57,7 +57,7 @@ function makeQ(qId: string, scored: KeywordSetLlmOutput[]): PreScreenQuestion {
 async function setupSession(
   pipeline: PreScreenPipeline,
   store: InMemoryPreScreenStore,
-  qs: Array<{ qId: string; type: QuestionType; weight: number }>,
+  qs: Array<{ qId: string; type: QuestionType; weight: number; matchThreshold?: number }>,
   threshold = 0.65
 ) {
   const state = emptyPreScreenState({
@@ -708,6 +708,88 @@ test("Phase 76: PreScreenPipeline keeps best s across clarification rounds", asy
   // mergedS = max(0.9, 0.5, 0.7) = 0.9 < 1.0 (MUST_HAVE) → HARD_STOP
   assert.equal(r3.action.kind, "terminal")
   if (r3.action.kind === "terminal") assert.equal(r3.action.terminal, "HARD_STOP")
+})
+
+test("Phase 76: PreScreenPipeline scores clarifications with accumulated same-question evidence", async () => {
+  const store = new InMemoryPreScreenStore()
+  const scoredInputs: string[] = []
+  const caller: KeywordSetLlmCaller = {
+    async score({ reply }) {
+      scoredInputs.push(reply)
+      const hasAccumulatedEvidence =
+        reply.includes("Answer 1:") &&
+        reply.includes("Answer 2:") &&
+        reply.includes("campus delivery dashboards") &&
+        reply.includes("DB rows, dispatch event logs")
+      return {
+        perKeyword: [
+          {
+            keyword: "q1",
+            match: hasAccumulatedEvidence ? 0.78 : 0.42,
+            confidence: 0.9,
+            evidence: hasAccumulatedEvidence ? "DB rows, dispatch event logs" : "dashboards",
+            reasoning: hasAccumulatedEvidence ? "combined ownership story" : "too thin alone",
+          },
+        ],
+        summary: hasAccumulatedEvidence
+          ? "Accumulated evidence shows UI, DB, events, and tradeoff ownership."
+          : "Initial answer is too thin.",
+        answered: true,
+      }
+    },
+  }
+  const pipeline = new PreScreenPipeline({
+    questions: {
+      q1: {
+        qId: "q1",
+        prompt: { zh: "What matches?", en: "What matches?" },
+        clarifyPrompt: { zh: "Tell me more.", en: "Tell me more." },
+        judge: new KeywordSetJudge({
+          questionId: "q1",
+          keywords: [{ keyword: "q1", weight: 1 }],
+          llmCaller: caller,
+        }),
+      },
+      q2: makeQ("q2", [
+        { perKeyword: [{ keyword: "q2", match: 1, confidence: 0.9, evidence: "ok", reasoning: "ok" }] },
+      ]),
+    },
+    store,
+  })
+  await setupSession(pipeline, store, [
+    { qId: "q1", type: "MUST_HAVE", weight: 1, matchThreshold: 0.7 },
+    { qId: "q2", type: "PROBING", weight: 1 },
+  ])
+
+  const r1 = await pipeline.runTurn({
+    sessionId: "s1",
+    reply: "I mostly did product ops and campus delivery dashboards.",
+    lang: "en",
+    nowIso: "2026-05-12T00:01:00Z",
+    judgeCtx: ctx,
+  })
+  assert.equal(r1.action.kind, "clarify")
+
+  const r2 = await pipeline.runTurn({
+    sessionId: "s1",
+    reply: "The dashboard touched admin UI, DB rows, dispatch event logs, and merchant config.",
+    lang: "en",
+    nowIso: "2026-05-12T00:02:00Z",
+    judgeCtx: ctx,
+  })
+  assert.equal(r2.action.kind, "advance")
+  if (r2.action.kind === "advance") assert.equal(r2.action.toQId, "q2")
+  assert.equal(scoredInputs.length, 2)
+  assert.match(scoredInputs[1]!, /Answer 1: I mostly did product ops/)
+  assert.match(scoredInputs[1]!, /Answer 2: The dashboard touched admin UI/)
+
+  const state = await store.load("s1")
+  assert.deepEqual(state?.questions.q1.evidenceReplies, [
+    "I mostly did product ops and campus delivery dashboards.",
+    "The dashboard touched admin UI, DB rows, dispatch event logs, and merchant config.",
+  ])
+  assert.equal(state?.questions.q1.finalS, 0.78)
+  assert.equal(state?.currentQId, "q2")
 })
 
 // ════════════════════════════════════════════════════════════════════════════

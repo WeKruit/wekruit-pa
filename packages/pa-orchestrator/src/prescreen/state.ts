@@ -42,6 +42,12 @@ export interface PreScreenQuestionState {
   clarifyRounds: number
   /** Best-so-far scored result across clarification rounds (max-by-s). */
   scored?: ScoredJudgeResult
+  /**
+   * Candidate replies collected for this question. Scoring uses the bounded
+   * accumulated answer so later clarifications are evaluated with the story
+   * the candidate has already shared, not as isolated fragments.
+   */
+  evidenceReplies?: string[]
   /** Final s_i fed into aggregation. */
   finalS?: number
   /** Final c_i fed into aggregation. */

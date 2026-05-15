@@ -170,11 +170,15 @@ export class PreScreenPipeline {
       )
     }
 
-    // ── Evaluate via KeywordSetJudge ─────────────────────────────────────────
-    const scored = await question.judge.judgeScored(input.reply, input.lang, input.judgeCtx)
     const qState = state.questions[state.currentQId]
+    const priorEvidenceReplies = normalizeEvidenceReplies(qState.evidenceReplies)
+    const scoringReply = composeQuestionEvidenceReply(priorEvidenceReplies, input.reply)
+
+    // ── Evaluate via KeywordSetJudge ─────────────────────────────────────────
+    const scored = await question.judge.judgeScored(scoringReply, input.lang, input.judgeCtx)
     const merged = mergeScored(qState.scored, scored)
     qState.scored = merged
+    qState.evidenceReplies = appendEvidenceReply(priorEvidenceReplies, input.reply)
     const s = merged.aggregate.s
     const c = merged.aggregate.c
 
@@ -505,6 +509,40 @@ export class PreScreenPipeline {
 
     return fallbackText
   }
+}
+
+const MAX_EVIDENCE_REPLIES = 8
+const MAX_EVIDENCE_REPLY_CHARS = 900
+const MAX_EVIDENCE_TOTAL_CHARS = 4200
+
+function normalizeEvidenceReplies(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .filter((v): v is string => typeof v === "string")
+    .map((v) => v.trim())
+    .filter(Boolean)
+    .slice(-MAX_EVIDENCE_REPLIES)
+}
+
+function appendEvidenceReply(priorReplies: string[], reply: string): string[] {
+  const trimmed = reply.trim()
+  if (!trimmed) return priorReplies
+  const clipped = trimmed.slice(0, MAX_EVIDENCE_REPLY_CHARS)
+  return [...priorReplies, clipped].slice(-MAX_EVIDENCE_REPLIES)
+}
+
+function composeQuestionEvidenceReply(priorReplies: string[], latestReply: string): string {
+  const replies = appendEvidenceReply(priorReplies, latestReply)
+  if (replies.length <= 1) return replies[0] ?? latestReply
+  const chunks: string[] = []
+  let total = 0
+  for (const [idx, reply] of replies.entries()) {
+    const chunk = `Answer ${idx + 1}: ${reply}`
+    total += chunk.length
+    if (total > MAX_EVIDENCE_TOTAL_CHARS) break
+    chunks.push(chunk)
+  }
+  return chunks.join("\n")
 }
 
 function shouldSoftAcceptAfterProbing(args: {
