@@ -53,14 +53,19 @@ type LayoutId = "table" | "cards" | "grid"
 
 // ----------------------------------------------------------------- filters
 
+// Token values mirror what actually lands in matching-jobs.roleFunction
+// after macmini scrape + auto-enrich. The canonical shared-tags vocab is
+// a slightly different superset; we align to data-on-the-ground here so
+// the sidebar produces non-empty results out of the box.
 const FUNCTION_OPTIONS = [
-  { value: "software_engineering", label: "Engineering" },
-  { value: "product", label: "Product" },
+  { value: "software_engineering", label: "Software engineering" },
+  { value: "engineering_and_development", label: "Engineering (other)" },
+  { value: "product_management", label: "Product" },
   { value: "design", label: "Design" },
   { value: "sales", label: "Sales" },
   { value: "marketing", label: "Marketing" },
-  { value: "operations", label: "Operations" },
-  { value: "data_and_analytics", label: "Data" },
+  { value: "data_analysis", label: "Data / analytics" },
+  { value: "customer_service_and_support", label: "Customer success" },
 ]
 const LEVEL_OPTIONS = [
   { value: "ic", label: "IC" },

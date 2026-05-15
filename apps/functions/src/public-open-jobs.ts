@@ -282,7 +282,9 @@ export const paPublicOpenJobs = onRequest(
   {
     region: "us-central1",
     cors: false, // handled manually for symmetry with paPublicCvIngest
-    memory: "256MiB",
+    // 512MiB needed: firebase-admin SDK + 800-doc snapshot + projection +
+    // sort + JSON serialize at limit=80 hits ~280MiB peak; 256MiB OOMs.
+    memory: "512MiB",
     timeoutSeconds: 30,
     concurrency: 40,
   },
