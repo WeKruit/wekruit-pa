@@ -204,6 +204,34 @@ Required fix boundary:
   - The only `candidate_account` remains `pa-users/U7AwKT8nLDRa35DkuBxq`.
   - Matrix user remains `testMode = true`, `candidateLifecycleState = synthetic_test`, `phoneE164 = +19995550000`.
 
+## 2026-05-15 Current User-Pool Diagnosis
+
+- Live `pa-users` total: 602.
+- Source breakdown:
+  - `external_sourcing:manual_csv = 28`.
+  - `identity:candidate = 3`.
+  - `identity:resume = 1`.
+  - `ats:handshake = 1`.
+  - `test:prescreen_stress = 1`.
+  - no `signupSource = 568`, mostly old synthetic onboarding/test rows.
+- Real candidate-account boundary:
+  - Only `pa-users/U7AwKT8nLDRa35DkuBxq` is the active real candidate account for this test environment.
+  - It is tied to `indolencorlol@gmail.com`, parsed resume phone `+14243201960`, and the current candidate profile/resume/prescreen data.
+- Pollution/artifact examples:
+  - `pa-users/itYEwzaJjVPjWbN01fzk` has `email = admin1@wekruit.com`; this is a historical operator-created candidate-app artifact and is excluded by current dashboard classification and current candidate-claim code.
+  - `pa-users/REmvNNz52scHkfGZqxfp` is an empty historical `identity:candidate` shell with no reachable identity; it is excluded as `incomplete_identity_artifact`.
+  - `pa-users/cBg4UzOJKv3S2PyUc4vM` is an old `identity:resume` duplicate marked `duplicateOfCandidateId = U7AwKT8nLDRa35DkuBxq`.
+  - `pa-users/a980354d-725f-4b10-a9ce-f96e48788913` is an old ATS/Handshake test row with `@example.com` email and is not a real candidate account.
+- Root cause:
+  - The Sendblue/iMessage path is phone allowlisted.
+  - Candidate auth/resume, external supply, ATS/import, and old production Firestore E2E scripts are not phone-allowlist paths.
+  - Therefore "phone allowlist" was not sufficient as a global `pa-users` creation policy.
+- Current guard status:
+  - `paSendblueWebhook` is allowlist-gated by phone.
+  - `onPaInbound` now refuses to create production users from unbound `X-E2E-Test` traffic.
+  - `paCandidateClaimProfile` and `paCandidateResumeGateStatus` reject `@wekruit.com` operator accounts.
+  - `/admin/candidates` defaults to candidate accounts only and excludes external prospects, synthetic tests, old SMS profiles, and incomplete identity artifacts.
+
 ## 2026-05-15 WeKruit Open / Layoff Front Door Verification
 
 - Separate repo: `/Users/adam/Desktop/WeKruit/wekruit-layoff`.
@@ -221,10 +249,18 @@ Required fix boundary:
   - `hosting:open` released to `https://layoff-wekruit.web.app`.
 - Git:
   - `wekruit-layoff/main` has `2429fd3 fix(signup): parse resumes into pa users`.
+- Shared-profile chat fix:
+  - `openSubmitChatTurn` now refuses to create missing `pa-users` docs.
+  - It requires the candidate profile to already have `source = WeKruit_Laid_Off`.
+  - Layoff chat answers now merge into `pa-users.conversationDerivedPreferences.layoff_onboarding`, `pa-users.layoffEvidence.latestChatTurn`, and `pa-users.layoffContext`, rather than writing only an isolated `layoffChatAnswers` map.
+  - Node 24 targeted test passed: `node --import tsx --test apps/functions/src/openLayoff.test.ts` (8/8).
+  - Node 24 functions typecheck passed: `npm run typecheck --workspace=@pa/functions`.
+  - Firebase deploy predeploy full functions suite passed 1512/1512.
+  - `openSubmitChatTurn` deployed as Node.js 24 callable in `us-central1`.
 
 ## Remaining Completion Gaps
 
-- WeKruit Open still needs a source-aware Claire conversation path after signup. Current backend has `openSubmitChatTurn` writing `layoffChatAnswers`; this is not yet proven to merge into shared evidence/tags/memory.
+- WeKruit Open web chat now merges each answer into shared `pa-users` evidence/context and refuses missing/non-layoff profiles. It is still not a full Claire state machine/mem0 conversational path; that remains a separate product integration gap.
 - External supply prospects are in the shared `pa-users` pool, but the end-to-end operator path from imported prospect to candidate profile, match/eval, approved outreach, reply, and unified evidence is not yet reverified in this goal.
 - Job creation/import still appears split across enrichment approval, seeding scripts, and external-supply job surfaces. The single job creation/publication flow is not yet audited or unified.
 - Manual Apple Messages UI testing is still not fully repeated after the stress-runner fixes. The production Firestore prescreen matrix and Sendblue entrypoint matrix are verified with outbound SMS stubbed; one live signed deployed-webhook user-boundary canary and one allowlist-deny canary were verified.

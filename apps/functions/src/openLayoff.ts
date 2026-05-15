@@ -340,11 +340,59 @@ export async function runSubmitChatTurn(
   deps: OpenLayoffDeps
 ): Promise<{ ok: true }> {
   const { candidateId, turn } = input
+  const promptId = cleanString(turn.promptId, 80)
+  const text = cleanString(turn.text, 4000)
+  if (!candidateId || !promptId || !text) {
+    throw new HttpsError("invalid-argument", "candidateId, promptId, and text are required")
+  }
   const userRef = deps.db.collection(PA_COLLECTIONS.users).doc(candidateId)
+  const userSnap = await userRef.get()
+  if (!userSnap.exists) throw new HttpsError("not-found", "User not found")
+  if (userSnap.data()?.source !== WEKRUIT_LAYOFF_SOURCE) {
+    throw new HttpsError("failed-precondition", "user_not_tagged_layoff")
+  }
+  const isoNow = (deps.nowIso ?? nowIso)()
+  const submittedAt = cleanString(turn.at, 80) ?? isoNow
+  const layoffContextPatch: Record<string, unknown> = {}
+  if (promptId === "next") layoffContextPatch.roleShape = text
+  if (promptId === "open") {
+    layoffContextPatch.openTo = text
+    layoffContextPatch.sponsorshipNeeded =
+      /\b(sponsor|sponsorship|h-?1b|visa|opt|cpt)\b/i.test(text) &&
+      !/\b(no|not|don't|do not|without|none|citizen|green card|gc)\b/i.test(text)
+    layoffContextPatch.logisticsRaw = text
+  }
+  if (promptId === "pitch") layoffContextPatch.pitch = text
   await userRef.set(
     {
-      [`layoffChatAnswers.${turn.promptId}`]: turn.text,
+      layoffChatAnswers: {
+        [promptId]: text,
+      },
+      conversationDerivedPreferences: {
+        layoff_onboarding: {
+          [promptId]: {
+            answer: text,
+            source: "layoff_onboarding",
+            at: submittedAt,
+            updatedAt: isoNow,
+          },
+        },
+        updatedAt: isoNow,
+      },
+      layoffEvidence: {
+        latestChatTurn: {
+          promptId,
+          answer: text.slice(0, 1000),
+          source: "layoff_onboarding",
+          at: submittedAt,
+          updatedAt: isoNow,
+        },
+      },
+      ...(Object.keys(layoffContextPatch).length > 0
+        ? { layoffContext: layoffContextPatch }
+        : {}),
       smsLastTurnAt: serverTimestamp(deps),
+      updatedAt: isoNow,
     },
     { merge: true },
   )
