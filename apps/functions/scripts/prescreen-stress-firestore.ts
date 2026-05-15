@@ -21,6 +21,7 @@ import {
   runPrescreenTerminalAction,
   type PrescreenTerminalKind,
 } from "../src/prescreen-terminal-action.js"
+import { requireExistingPaUserForProductionTest } from "./lib/prod-test-user-guard.mjs"
 
 loadDotenv({ path: ".env" })
 loadDotenv({ path: "apps/functions/.env", override: false })
@@ -108,8 +109,12 @@ function nowStamp(): string {
 
 async function ensureTestUser(db: Firestore, userId: string, phone: string, runId: string, scenario: Scenario) {
   const now = new Date().toISOString()
-  const existing = await db.collection("pa-users").doc(userId).get()
-  const existingCreatedAt = existing.exists ? existing.data()?.createdAt : null
+  const existing = await requireExistingPaUserForProductionTest(db, {
+    projectId: PROJECT_ID,
+    scriptName: "prescreen-stress-firestore.ts",
+    userId,
+  })
+  const existingCreatedAt = existing?.data?.createdAt ?? null
   await db.collection("pa-users").doc(userId).set(
     {
       id: userId,

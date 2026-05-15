@@ -580,7 +580,10 @@ async function createProvisionalUser(db: Firestore, participant: string): Promis
 }
 
 export function shouldCreateProvisionalUserForBrokerPayload(rawPayload: BrokerImessageEvent["rawPayload"] | undefined): boolean {
-  return rawPayload?.e2eTest !== true
+  const payload = (rawPayload ?? {}) as BrokerImessageEvent["rawPayload"] & { source?: unknown }
+  if (payload.e2eTest === true) return false
+  if (payload.source === "sendblue") return false
+  return true
 }
 
 async function getOrCreateSession(
@@ -676,18 +679,21 @@ async function processBrokerImessageEvent(
   if (!user) {
     if (!shouldCreateProvisionalUserForBrokerPayload(payload)) {
       const externalChatId = normalizeImessageParticipant(payload.participant)
-      logger.warn("[onPaInbound] e2e inbound skipped without bound pa-users profile", {
+      const isE2eUnbound = payload.e2eTest === true
+      logger.warn("[onPaInbound] inbound skipped without bound pa-users profile", {
         eventId: claimed.id,
         participant: payload.participant,
         externalChatId,
+        source: (payload as Record<string, unknown>).source ?? null,
+        e2eTest: isE2eUnbound,
       })
       await db.collection(PA_COLLECTIONS.inboundEvents).doc(claimed.id).set(
         {
           status: "completed",
           completedAt: nowIso(),
           updatedAt: nowIso(),
-          routedTo: "e2e_unbound_user",
-          errorCode: "E2E_UNBOUND_USER",
+          routedTo: isE2eUnbound ? "e2e_unbound_user" : "sendblue_unbound_user",
+          errorCode: isE2eUnbound ? "E2E_UNBOUND_USER" : "SENDBLUE_UNBOUND_USER",
           externalChatId,
           from: payload.participant,
           body: payload.text.trim(),
