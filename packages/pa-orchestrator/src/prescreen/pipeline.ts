@@ -175,7 +175,8 @@ export class PreScreenPipeline {
     const scoringReply = composeQuestionEvidenceReply(priorEvidenceReplies, input.reply)
 
     // ── Evaluate via KeywordSetJudge ─────────────────────────────────────────
-    const scored = await question.judge.judgeScored(scoringReply, input.lang, input.judgeCtx)
+    const rawScored = await question.judge.judgeScored(scoringReply, input.lang, input.judgeCtx)
+    const scored = applyHardFilterScoreOverride(state.currentQId, scoringReply, rawScored)
     const merged = mergeScored(qState.scored, scored)
     qState.scored = merged
     qState.evidenceReplies = appendEvidenceReply(priorEvidenceReplies, input.reply)
@@ -543,6 +544,74 @@ function composeQuestionEvidenceReply(priorReplies: string[], latestReply: strin
     chunks.push(chunk)
   }
   return chunks.join("\n")
+}
+
+function applyHardFilterScoreOverride(
+  qId: string,
+  scoringReply: string,
+  scored: ScoredJudgeResult
+): ScoredJudgeResult {
+  if (!isHardFilterQId(qId)) return scored
+  if (!hasHardFilterMismatch(qId, scoringReply, scored)) return scored
+
+  const summary = hardFilterMismatchReason(qId)
+  return {
+    ...scored,
+    perKeyword: scored.perKeyword.map((cell) => ({
+      ...cell,
+      match: Math.min(cell.match, 0.25),
+      confidence: Math.max(cell.confidence, 0.85),
+      reasoning: clampScoredReasoning(summary),
+    })),
+    aggregate: {
+      s: Math.min(scored.aggregate.s, 0.25),
+      c: Math.max(scored.aggregate.c, 0.85),
+      summary,
+    },
+    abortHint: {
+      kind: "low_confidence",
+      reason: summary,
+    },
+  }
+}
+
+function isHardFilterQId(qId: string): boolean {
+  return qId === "location_alignment" || qId === "compensation_alignment" || qId === "sponsorship_status"
+}
+
+function hasHardFilterMismatch(qId: string, scoringReply: string, scored: ScoredJudgeResult): boolean {
+  const text = `${scoringReply}\n${scored.aggregate.summary}\n${scored.abortHint?.reason ?? ""}`.toLowerCase()
+  if (qId === "location_alignment") {
+    return (
+      /\b(can'?t|cannot|not able|unable|won't|would not)\b[\s\S]{0,160}\b(relocat|move|be in|work in|commute|onsite|weekly|new york|nyc|listed location)\b/.test(text) ||
+      /\b(remote only|only remote|different city)\b/.test(text) ||
+      /\b(declines?|mismatch|not .*alignment|not .*listed location)\b/.test(text)
+    )
+  }
+
+  if (qId === "compensation_alignment") {
+    return /\b(not aligned|too low|below my range|need higher|would need more|not workable)\b/.test(text)
+  }
+
+  if (qId === "sponsorship_status") {
+    return /\b(company does not sponsor|sponsorship not available|requires? sponsorship but role does not|need sponsorship but role)\b/.test(text)
+  }
+
+  return false
+}
+
+function hardFilterMismatchReason(qId: string): string {
+  if (qId === "location_alignment") {
+    return "Candidate needs a different location or remote setup than this role requires."
+  }
+  if (qId === "compensation_alignment") {
+    return "Candidate compensation target is not aligned with this role's range."
+  }
+  return "Candidate sponsorship need is not aligned with this role's requirement."
+}
+
+function clampScoredReasoning(text: string): string {
+  return text.length <= 80 ? text : text.slice(0, 79).trimEnd()
 }
 
 function shouldSoftAcceptAfterProbing(args: {
