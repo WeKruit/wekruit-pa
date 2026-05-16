@@ -15,8 +15,9 @@
  * Tokens scoped to `.wk-shell` — all `var(--*)` use the `--wk-` prefix from
  * CandidateShell's CANDIDATE_STYLES.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react"
 import { collection, getDocs, limit as fsLimit, query, where } from "firebase/firestore"
+import { useInfiniteQuery, useQuery, type InfiniteData } from "@tanstack/react-query"
 import { db } from "../lib/firebase.js"
 import {
   Avatar,
@@ -61,9 +62,14 @@ interface OpenJobsResp {
   ok: boolean
   count: number
   scanned: number
+  total: number
+  offset: number
+  limit: number
   rows: OpenJobRow[]
   error?: string
 }
+
+const PAGE_SIZE = 20
 
 // ────────────────────────────────────────────────────────────────────────────
 // Direct line — pa-jobs Firestore doc (employer-authored collab)
@@ -425,9 +431,9 @@ function BatchTicker({ queuedCount }: { queuedCount: number }) {
 // Rows
 // ────────────────────────────────────────────────────────────────────────────
 
-function HuntRow({ r, queued, onPitch }: { r: DisplayJob; queued: boolean; onPitch: () => void }) {
+function HuntRow({ r, onOpen }: { r: DisplayJob; onOpen: () => void }) {
   return (
-    <tr className={`wk-tbl__row${queued ? " is-queued" : ""}`}>
+    <tr className="wk-tbl__row">
       <td className="wk-tbl__cell wk-tbl__cell--company">
         <CompanyMark logo={r.logo} bg={r.logoBg} size={38} />
         <div className="wk-tbl__co">
@@ -444,23 +450,17 @@ function HuntRow({ r, queued, onPitch }: { r: DisplayJob; queued: boolean; onPit
       <td className="wk-tbl__cell wk-tbl__cell--comp">{r.comp}</td>
       <td className="wk-tbl__cell wk-tbl__cell--posted">{r.posted}</td>
       <td className="wk-tbl__cell wk-tbl__cell--cta">
-        {queued ? (
-          <span className="wk-pitchbtn is-queued">
-            <Icon name="check" size={12} stroke={2.4} /> Queued for Tue
-          </span>
-        ) : (
-          <button className="wk-pitchbtn" onClick={onPitch}>
-            Pitch me <Icon name="arrow-right" size={12} stroke={2} />
-          </button>
-        )}
+        <button className="wk-pitchbtn" onClick={onOpen} disabled={!r.applyUrl}>
+          View role <Icon name="arrow-right" size={12} stroke={2} />
+        </button>
       </td>
     </tr>
   )
 }
 
-function HuntCard({ r, queued, onPitch }: { r: DisplayJob; queued: boolean; onPitch: () => void }) {
+function HuntCard({ r, onOpen }: { r: DisplayJob; onOpen: () => void }) {
   return (
-    <article className={`wk-hcard${queued ? " is-queued" : ""}`}>
+    <article className="wk-hcard">
       <header className="wk-hcard__head">
         <CompanyMark logo={r.logo} bg={r.logoBg} size={42} />
         <div>
@@ -477,15 +477,9 @@ function HuntCard({ r, queued, onPitch }: { r: DisplayJob; queued: boolean; onPi
       </p>
       <footer className="wk-hcard__foot">
         <span className="wk-hcard__comp">{r.comp}</span>
-        {queued ? (
-          <span className="wk-pitchbtn wk-pitchbtn--lg is-queued">
-            <Icon name="check" size={13} stroke={2.4} /> Queued for Tue
-          </span>
-        ) : (
-          <button className="wk-pitchbtn wk-pitchbtn--lg" onClick={onPitch}>
-            Pitch me <Icon name="arrow-right" size={13} stroke={2} />
-          </button>
-        )}
+        <button className="wk-pitchbtn wk-pitchbtn--lg" onClick={onOpen} disabled={!r.applyUrl}>
+          View role <Icon name="arrow-right" size={13} stroke={2} />
+        </button>
       </footer>
     </article>
   )
@@ -527,113 +521,91 @@ function DirectRow({ r, onTalk }: { r: DisplayJob; onTalk: () => void }) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Data hooks — Hunting list (CF) + Direct line (pa-jobs Firestore)
+// Data hooks — TanStack Query
+//   · Hunting list  → useInfiniteQuery against paPublicOpenJobs (server-side
+//                     paginated, 20/page, CDN-cached 60s, 5min stale)
+//   · Direct line   → useQuery against pa-jobs (publicVisible)
 // ────────────────────────────────────────────────────────────────────────────
 
-interface HuntingState {
-  status: "idle" | "loading" | "ready" | "error"
-  jobs: DisplayJob[]
-  scanned: number
-  message?: string
-}
-
-function useHuntingList(filters: {
+interface HuntingFilters {
   fn: Set<string>; level: Set<string>; loc: Set<string>; search: string; remoteOnly: boolean
-}): HuntingState {
-  const [state, setState] = useState<HuntingState>({ status: "idle", jobs: [], scanned: 0 })
-  const debounceRef = useRef<number | null>(null)
-
-  // Stable key — only refetch when filters change.
-  const key = useMemo(() => JSON.stringify({
-    fn: [...filters.fn].sort(),
-    lv: [...filters.level].sort(),
-    loc: [...filters.loc].sort(),
-    q: filters.search.trim(),
-    r: filters.remoteOnly,
-  }), [filters.fn, filters.level, filters.loc, filters.search, filters.remoteOnly])
-
-  useEffect(() => {
-    if (debounceRef.current != null) window.clearTimeout(debounceRef.current)
-    setState((s) => ({ ...s, status: "loading" }))
-    const controller = new AbortController()
-
-    debounceRef.current = window.setTimeout(() => {
-      const params = new URLSearchParams()
-      params.set("limit", "120")
-      params.set("freshDays", "45")
-      const fnTokens = [...filters.fn].flatMap((l) => FN_TO_TOKENS[l] ?? [])
-      const lvTokens = [...filters.level].flatMap((l) => LEVEL_TO_TOKENS[l] ?? [])
-      const locTokens = [...filters.loc].flatMap((l) => LOC_TO_TOKENS[l] ?? [])
-      if (fnTokens.length) params.set("function", fnTokens.join(","))
-      if (lvTokens.length) params.set("level", lvTokens.join(","))
-      if (locTokens.length) params.set("location", locTokens.join(","))
-      if (filters.search.trim()) params.set("search", filters.search.trim())
-      if (filters.remoteOnly) params.set("remoteOnly", "true")
-
-      fetch(`${OPEN_JOBS_URL}?${params.toString()}`, { signal: controller.signal })
-        .then(async (resp) => {
-          if (!resp.ok) throw new Error(`paPublicOpenJobs returned HTTP ${resp.status}`)
-          const data = (await resp.json()) as OpenJobsResp
-          if (!data.ok) throw new Error(data.error ?? "Open jobs feed unavailable")
-          setState({
-            status: "ready",
-            jobs: data.rows.map(fromOpenJob),
-            scanned: data.scanned,
-          })
-        })
-        .catch((err: unknown) => {
-          if (err instanceof DOMException && err.name === "AbortError") return
-          setState({
-            status: "error",
-            jobs: [],
-            scanned: 0,
-            message: err instanceof Error ? err.message : String(err),
-          })
-        })
-    }, 200)
-
-    return () => {
-      if (debounceRef.current != null) window.clearTimeout(debounceRef.current)
-      controller.abort()
-    }
-  }, [key, filters.fn, filters.level, filters.loc, filters.search, filters.remoteOnly])
-
-  return state
 }
 
-interface DirectState {
-  status: "loading" | "ready" | "error"
-  jobs: DisplayJob[]
-  message?: string
+function huntingQueryKey(f: HuntingFilters): readonly unknown[] {
+  return [
+    "open-jobs",
+    [...f.fn].sort(),
+    [...f.level].sort(),
+    [...f.loc].sort(),
+    f.search.trim(),
+    f.remoteOnly,
+  ] as const
 }
 
-function useDirectLine(): DirectState {
-  const [state, setState] = useState<DirectState>({ status: "loading", jobs: [] })
+async function fetchOpenJobsPage(f: HuntingFilters, offset: number, signal?: AbortSignal): Promise<OpenJobsResp> {
+  const params = new URLSearchParams()
+  params.set("limit", String(PAGE_SIZE))
+  params.set("offset", String(offset))
+  params.set("freshDays", "45")
+  const fnTokens = [...f.fn].flatMap((l) => FN_TO_TOKENS[l] ?? [])
+  const lvTokens = [...f.level].flatMap((l) => LEVEL_TO_TOKENS[l] ?? [])
+  const locTokens = [...f.loc].flatMap((l) => LOC_TO_TOKENS[l] ?? [])
+  if (fnTokens.length) params.set("function", fnTokens.join(","))
+  if (lvTokens.length) params.set("level", lvTokens.join(","))
+  if (locTokens.length) params.set("location", locTokens.join(","))
+  if (f.search.trim()) params.set("search", f.search.trim())
+  if (f.remoteOnly) params.set("remoteOnly", "true")
+  const resp = await fetch(`${OPEN_JOBS_URL}?${params.toString()}`, { signal })
+  if (!resp.ok) throw new Error(`paPublicOpenJobs HTTP ${resp.status}`)
+  const data = (await resp.json()) as OpenJobsResp
+  if (!data.ok) throw new Error(data.error ?? "Open jobs feed unavailable")
+  return data
+}
+
+// Debounce hook — used so search/filter typing doesn't blast the CF.
+function useDebounced<T>(value: T, delay = 250): T {
+  const [v, setV] = useState(value)
   useEffect(() => {
-    let cancelled = false
-    void (async () => {
-      try {
-        const q = query(
-          collection(db(), "pa-jobs"),
-          where("publicVisible", "==", true),
-          fsLimit(48),
-        )
-        const snap = await getDocs(q)
-        const jobs: DisplayJob[] = []
-        snap.forEach((doc) => {
-          const raw = doc.data() as PaJobDoc
-          jobs.push(fromPaJob(doc.id, raw))
-        })
-        // Surface collaborated first (the Direct line semantic), then any other public.
-        jobs.sort((a, b) => Number(b.via === "Direct line") - Number(a.via === "Direct line"))
-        if (!cancelled) setState({ status: "ready", jobs })
-      } catch (err) {
-        if (!cancelled) setState({ status: "error", jobs: [], message: err instanceof Error ? err.message : String(err) })
-      }
-    })()
-    return () => { cancelled = true }
-  }, [])
-  return state
+    const t = window.setTimeout(() => setV(value), delay)
+    return () => window.clearTimeout(t)
+  }, [value, delay])
+  return v
+}
+
+function useHuntingInfinite(filtersRaw: HuntingFilters) {
+  // Only debounce the search string — toggling filter chips should feel instant.
+  const debouncedSearch = useDebounced(filtersRaw.search, 250)
+  const filters: HuntingFilters = useMemo(
+    () => ({ ...filtersRaw, search: debouncedSearch }),
+    [filtersRaw.fn, filtersRaw.level, filtersRaw.loc, filtersRaw.remoteOnly, debouncedSearch],
+  )
+  return useInfiniteQuery<OpenJobsResp, Error, InfiniteData<OpenJobsResp>, readonly unknown[], number>({
+    queryKey: huntingQueryKey(filters),
+    queryFn: ({ pageParam = 0, signal }) => fetchOpenJobsPage(filters, pageParam, signal),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage) => {
+      const nextOffset = lastPage.offset + lastPage.count
+      return nextOffset < lastPage.total ? nextOffset : undefined
+    },
+  })
+}
+
+function useDirectLine() {
+  return useQuery<DisplayJob[], Error>({
+    queryKey: ["pa-jobs", "publicVisible"],
+    queryFn: async () => {
+      const qy = query(
+        collection(db(), "pa-jobs"),
+        where("publicVisible", "==", true),
+        fsLimit(48),
+      )
+      const snap = await getDocs(qy)
+      const jobs: DisplayJob[] = []
+      snap.forEach((doc) => jobs.push(fromPaJob(doc.id, doc.data() as PaJobDoc)))
+      jobs.sort((a, b) => Number(b.via === "Direct line") - Number(a.via === "Direct line"))
+      return jobs
+    },
+  })
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -643,18 +615,25 @@ function useDirectLine(): DirectState {
 export default function Market(): ReactNode {
   const [tab, setTab] = useState<"hunting" | "direct">("hunting")
   const [view, setView] = useState<"table" | "cards">("table")
-  const [queued, setQueued] = useState<Set<string>>(new Set())
   const [searchQ, setSearchQ] = useState("")
   const [fnSel, setFnSel] = useState<Set<string>>(new Set())
   const [levelSel, setLevelSel] = useState<Set<string>>(new Set())
   const [locSel, setLocSel] = useState<Set<string>>(new Set())
   const remoteOnly = locSel.has("Remote") && locSel.size === 1
 
-  const hunting = useHuntingList({ fn: fnSel, level: levelSel, loc: locSel, search: searchQ, remoteOnly })
+  const hunting = useHuntingInfinite({ fn: fnSel, level: levelSel, loc: locSel, search: searchQ, remoteOnly })
   const direct = useDirectLine()
 
-  const onPitch = useCallback((id: string) => {
-    setQueued((s) => { const n = new Set(s); n.add(id); return n })
+  const huntingJobs: DisplayJob[] = useMemo(
+    () => hunting.data?.pages.flatMap((p) => p.rows.map(fromOpenJob)) ?? [],
+    [hunting.data],
+  )
+  const huntingTotal = hunting.data?.pages[0]?.total ?? 0
+  const directJobs = direct.data ?? []
+
+  const onOpenJob = useCallback((job: DisplayJob) => {
+    if (!job.applyUrl) return
+    window.open(job.applyUrl, "_blank", "noopener,noreferrer")
   }, [])
   const onTalkToClaire = useCallback((job: DisplayJob) => {
     window.location.assign(`/j/${job.id}`)
@@ -673,14 +652,14 @@ export default function Market(): ReactNode {
               active={tab === "direct"}
               onClick={() => setTab("direct")}
               label="Direct line"
-              count={direct.status === "ready" ? direct.jobs.length : "—"}
+              count={direct.isSuccess ? directJobs.length : "—"}
               sub="Companies talking to us"
             />
             <MarketTab
               active={tab === "hunting"}
               onClick={() => setTab("hunting")}
               label="Hunting list"
-              count={hunting.status === "ready" ? hunting.jobs.length : "—"}
+              count={hunting.isSuccess ? huntingTotal : "—"}
               sub="We pitch them on your behalf"
             />
           </div>
@@ -692,15 +671,14 @@ export default function Market(): ReactNode {
               <header className="wk-market__head">
                 <p className="wk-eyebrow">Outbound · We pitch them anyway</p>
                 <h1 className="wk-market__h1">
-                  <em className="wk-accent">{hunting.status === "ready" ? hunting.jobs.length : "…"}</em> roles we're <em className="wk-accent">hunting</em> for.
+                  <em className="wk-accent">{hunting.isSuccess ? huntingTotal : "…"}</em> roles we're <em className="wk-accent">hunting</em> for.
                 </h1>
                 <p className="wk-market__lede">
-                  Live from the macmini scrape — fresh in the last 45 days. We email a tight shortlist every Tuesday.
-                  You don't have to do anything.
+                  Live from the macmini scrape — fresh in the last 45 days. Click any role to see the full posting.
                 </p>
               </header>
 
-              <BatchTicker queuedCount={queued.size} />
+              <BatchTicker queuedCount={0} />
 
               <div className="wk-market__layout">
                 <FilterRail
@@ -735,17 +713,18 @@ export default function Market(): ReactNode {
                     </div>
                   </div>
 
-                  {hunting.status === "loading" ? (
+                  {hunting.isPending ? (
                     <div className="wk-tbl__empty wk-tbl__empty--block">
                       <strong>Loading roles…</strong>
                       Pulling fresh listings from the macmini scrape.
                     </div>
-                  ) : hunting.status === "error" ? (
+                  ) : hunting.isError ? (
                     <div className="wk-tbl__empty wk-tbl__empty--block">
                       <strong>Couldn't load roles.</strong>
-                      {hunting.message}
+                      {hunting.error.message}
                     </div>
                   ) : view === "table" ? (
+                    <>
                     <div className="wk-tbl-wrap">
                       <table className="wk-tbl">
                         <thead>
@@ -756,30 +735,55 @@ export default function Market(): ReactNode {
                             <th className="wk-tbl__h">Location</th>
                             <th className="wk-tbl__h">Comp</th>
                             <th className="wk-tbl__h">Posted</th>
-                            <th className="wk-tbl__h wk-tbl__h--cta">Pitch</th>
+                            <th className="wk-tbl__h wk-tbl__h--cta">Apply</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {hunting.jobs.length === 0 ? (
+                          {huntingJobs.length === 0 ? (
                             <tr><td colSpan={7} className="wk-tbl__empty">
                               <strong>No roles match.</strong> Try clearing filters or your search.
                             </td></tr>
-                          ) : hunting.jobs.map((r) => (
-                            <HuntRow key={r.id} r={r} queued={queued.has(r.id)} onPitch={() => onPitch(r.id)} />
+                          ) : huntingJobs.map((r) => (
+                            <HuntRow key={r.id} r={r} onOpen={() => onOpenJob(r)} />
                           ))}
                         </tbody>
                       </table>
                     </div>
+                    {hunting.hasNextPage ? (
+                      <div className="wk-loadmore">
+                        <button
+                          className="wk-btn wk-btn--secondary"
+                          disabled={hunting.isFetchingNextPage}
+                          onClick={() => { void hunting.fetchNextPage() }}
+                        >
+                          {hunting.isFetchingNextPage ? "Loading…" : `Load more (${huntingTotal - huntingJobs.length} left)`}
+                        </button>
+                      </div>
+                    ) : null}
+                    </>
                   ) : (
+                    <>
                     <div className="wk-hcards">
-                      {hunting.jobs.length === 0 ? (
+                      {huntingJobs.length === 0 ? (
                         <div className="wk-tbl__empty wk-tbl__empty--block">
                           <strong>No roles match.</strong> Try clearing filters or your search.
                         </div>
-                      ) : hunting.jobs.map((r) => (
-                        <HuntCard key={r.id} r={r} queued={queued.has(r.id)} onPitch={() => onPitch(r.id)} />
+                      ) : huntingJobs.map((r) => (
+                        <HuntCard key={r.id} r={r} onOpen={() => onOpenJob(r)} />
                       ))}
                     </div>
+                    {hunting.hasNextPage ? (
+                      <div className="wk-loadmore">
+                        <button
+                          className="wk-btn wk-btn--secondary"
+                          disabled={hunting.isFetchingNextPage}
+                          onClick={() => { void hunting.fetchNextPage() }}
+                        >
+                          {hunting.isFetchingNextPage ? "Loading…" : `Load more (${huntingTotal - huntingJobs.length} left)`}
+                        </button>
+                      </div>
+                    ) : null}
+                    </>
                   )}
                 </div>
               </div>
@@ -791,7 +795,7 @@ export default function Market(): ReactNode {
               <header className="wk-market__head">
                 <p className="wk-eyebrow"><PulseDot size={6} /> Inbound · Collaborated with WeKruit</p>
                 <h1 className="wk-market__h1">
-                  <em className="wk-accent">{direct.status === "ready" ? direct.jobs.length : "…"}</em> hiring managers <em className="wk-accent">ready</em> to meet you.
+                  <em className="wk-accent">{direct.isSuccess ? directJobs.length : "…"}</em> hiring managers <em className="wk-accent">ready</em> to meet you.
                 </h1>
                 <p className="wk-market__lede">
                   These companies set us up to find people like you. Tap a row to talk to Claire —
@@ -799,14 +803,14 @@ export default function Market(): ReactNode {
                 </p>
               </header>
 
-              {direct.status === "loading" ? (
+              {direct.isPending ? (
                 <div className="wk-tbl__empty wk-tbl__empty--block">
                   <strong>Loading collaborated roles…</strong>
                 </div>
-              ) : direct.status === "error" ? (
+              ) : direct.isError ? (
                 <div className="wk-tbl__empty wk-tbl__empty--block">
                   <strong>Couldn't load direct line.</strong>
-                  {direct.message}
+                  {direct.error.message}
                 </div>
               ) : (
                 <div className="wk-tbl-wrap wk-tbl-wrap--solo">
@@ -822,11 +826,11 @@ export default function Market(): ReactNode {
                       </tr>
                     </thead>
                     <tbody>
-                      {direct.jobs.length === 0 ? (
+                      {directJobs.length === 0 ? (
                         <tr><td colSpan={6} className="wk-tbl__empty">
                           <strong>No collaborated roles yet.</strong> Switch to the Hunting list — we'll pitch them for you.
                         </td></tr>
-                      ) : direct.jobs.map((r) => (
+                      ) : directJobs.map((r) => (
                         <DirectRow key={r.id} r={r} onTalk={() => onTalkToClaire(r)} />
                       ))}
                     </tbody>
@@ -1065,6 +1069,9 @@ const MARKET_STYLES = String.raw`
 .wk-shell .wk-pitchbtn--ink { background: var(--wk-ink); border-color: var(--wk-ink); color: var(--wk-cream); }
 .wk-shell .wk-pitchbtn--ink:hover { background: #1a0f06; }
 .wk-shell .wk-pitchbtn--lg { height: 38px; padding: 0 16px; font-size: 13.5px; }
+
+.wk-shell .wk-loadmore { display: flex; justify-content: center; padding: 24px 0 8px; }
+.wk-shell .wk-loadmore .wk-btn:disabled { opacity: 0.65; cursor: progress; }
 
 .wk-shell .wk-hcards { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; }
 .wk-shell .wk-hcard {

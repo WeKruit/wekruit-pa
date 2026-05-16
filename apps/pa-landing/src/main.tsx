@@ -1,6 +1,7 @@
 import React from "react"
 import ReactDOM from "react-dom/client"
 import { BrowserRouter, Routes, Route } from "react-router-dom"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import Landing from "./pages/Landing.js"
 import LayoffLanding from "./pages/LayoffLanding.js"
 import Legal from "./pages/Legal.js"
@@ -24,8 +25,20 @@ const host = typeof window !== "undefined" ? window.location.hostname.toLowerCas
 const IS_LAYOFF_HOST = host.startsWith("layoff.") || host === "layoff-wekruit.web.app"
 const HomeLanding = IS_LAYOFF_HOST ? LayoffLanding : Landing
 
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 5 * 60 * 1000, // 5min — tab switches don't refetch
+      gcTime: 30 * 60 * 1000,   // keep 30min after unmount for back-nav warmth
+      refetchOnWindowFocus: false,
+      retry: 1,
+    },
+  },
+})
+
 ReactDOM.createRoot(root).render(
   <React.StrictMode>
+    <QueryClientProvider client={queryClient}>
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<HomeLanding />} />
@@ -42,5 +55,6 @@ ReactDOM.createRoot(root).render(
         <Route path="*" element={<HomeLanding />} />
       </Routes>
     </BrowserRouter>
+    </QueryClientProvider>
   </React.StrictMode>
 )

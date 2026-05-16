@@ -53,6 +53,7 @@ export interface OpenJobRow {
 
 interface QueryParams {
   limit: number
+  offset: number
   freshDays: number
   function?: string[]
   level?: string[]
@@ -142,10 +143,12 @@ function parseList(raw: string | string[] | undefined): string[] {
 
 export function parseQuery(q: Record<string, unknown>): QueryParams {
   const limit = Math.max(1, Math.min(200, Number(q.limit) || 60))
+  const offset = Math.max(0, Math.min(2000, Number(q.offset) || 0))
   const freshDays = Math.max(1, Math.min(180, Number(q.freshDays) || 45))
   const search = asString(q.search)?.toLowerCase()
   return {
     limit,
+    offset,
     freshDays,
     function: parseList(q.function as string | string[] | undefined),
     level: parseList(q.level as string | string[] | undefined),
@@ -226,7 +229,7 @@ interface RunDeps {
   now?: number
 }
 
-export async function runOpenJobs(params: QueryParams, deps: RunDeps = {}): Promise<{ rows: OpenJobRow[]; scanned: number }> {
+export async function runOpenJobs(params: QueryParams, deps: RunDeps = {}): Promise<{ rows: OpenJobRow[]; scanned: number; total: number }> {
   const db = deps.db ?? getFirestore()
   const now = deps.now ?? Date.now()
   const freshThresholdMs = now - params.freshDays * 24 * 60 * 60 * 1000
@@ -236,7 +239,12 @@ export async function runOpenJobs(params: QueryParams, deps: RunDeps = {}): Prom
   // composite query that would force a new index. Floor at 300 so even
   // tight limits (e.g. limit=3 with filters) still see enough rows to find
   // matches; ceiling at 800 to keep p95 under the 30s timeout.
-  const SCAN_CAP = Math.min(800, Math.max(300, params.limit * 6))
+  //
+  // Pagination: client may request a page (offset, limit) of the filtered
+  // sorted set. We need to filter the full scan window first, THEN slice,
+  // so the scan cap is based on the page's far edge.
+  const window = params.offset + params.limit
+  const SCAN_CAP = Math.min(800, Math.max(300, window * 6))
 
   // Match v16 queryMatchingJobs (apps/job-rec/.../query-matching-jobs-v16.ts):
   // orderBy firstSeenAt desc so the scan window is the freshest set —
@@ -267,7 +275,12 @@ export async function runOpenJobs(params: QueryParams, deps: RunDeps = {}): Prom
     return bm - am
   })
 
-  return { rows: rows.slice(0, params.limit), scanned: snap.size }
+  const total = rows.length
+  return {
+    rows: rows.slice(params.offset, params.offset + params.limit),
+    scanned: snap.size,
+    total,
+  }
 }
 
 // --------------------------------------------------------- CF export -----
@@ -305,8 +318,18 @@ export const paPublicOpenJobs = onRequest(
 
     try {
       const params = parseQuery(req.query as Record<string, unknown>)
-      const { rows, scanned } = await runOpenJobs(params)
-      res.status(200).json({ ok: true, count: rows.length, scanned, rows })
+      const { rows, scanned, total } = await runOpenJobs(params)
+      // Cache hot at the CDN/browser for 60s — same filter+offset → same response
+      res.set("Cache-Control", "public, max-age=60, s-maxage=120, stale-while-revalidate=300")
+      res.status(200).json({
+        ok: true,
+        count: rows.length,
+        scanned,
+        total,
+        offset: params.offset,
+        limit: params.limit,
+        rows,
+      })
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err)
       res.status(500).json({ ok: false, reason })
