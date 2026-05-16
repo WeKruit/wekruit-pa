@@ -310,6 +310,7 @@ export async function runOnboardingPipelineTurn(
         db: deps.db,
         log: deps.log,
         cvPollOpts: deps.cvPollOpts,
+        preferredLang: ctx.lang,
       })
     },
   })
@@ -380,16 +381,28 @@ export interface RunResumeAcceptedFlowInput {
   db?: unknown
   log: PipelineLogFn
   cvPollOpts?: PipelineEmitDeps["cvPollOpts"]
+  preferredLang?: "zh" | "en" | "mixed"
 }
 
 export async function runResumeAcceptedFlow(
   input: RunResumeAcceptedFlowInput
 ): Promise<void> {
-  const { userId, phoneE164, getOnboardingUser, applyOnboarding, emit, db, log, cvPollOpts } = input
+  const {
+    userId,
+    phoneE164,
+    getOnboardingUser,
+    applyOnboarding,
+    emit,
+    db,
+    log,
+    cvPollOpts,
+    preferredLang,
+  } = input
 
-  // Step 1 — resolve user lang. Default zh when unset.
-  let userLang: "zh" | "en" | "mixed" = "zh"
-  if (getOnboardingUser) {
+  // Step 1 — resolve user lang. The active pipeline turn wins; stored
+  // preference is a fallback for non-pipeline callers.
+  let userLang: "zh" | "en" | "mixed" = preferredLang ?? "zh"
+  if (!preferredLang && getOnboardingUser) {
     try {
       const u = await getOnboardingUser(userId)
       const pref = u?.statedPreferences?.preferredLang

@@ -14,6 +14,20 @@ import { mkdirSync, writeFileSync, existsSync, rmSync, copyFileSync } from "node
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const outDir = resolve(__dirname, "lib")
+const repoRoot = resolve(__dirname, "../..")
+const localPaOrchestratorEntry = resolve(
+  repoRoot,
+  "packages/pa-orchestrator/dist/index.js",
+)
+
+const forceLocalWorkspacePackages = {
+  name: "force-local-workspace-packages",
+  setup(build) {
+    build.onResolve({ filter: /^@pa\/pa-orchestrator$/ }, () => ({
+      path: localPaOrchestratorEntry,
+    }))
+  },
+}
 
 if (existsSync(outDir)) rmSync(outDir, { recursive: true, force: true })
 mkdirSync(outDir, { recursive: true })
@@ -64,6 +78,7 @@ await build({
   ],
   legalComments: "none",
   logLevel: "info",
+  plugins: [forceLocalWorkspacePackages],
 })
 
 // Emit a minimal package.json next to the bundle so firebase-tools knows the
@@ -99,7 +114,7 @@ writeFileSync(
 // Copy the agent-registry seed.json alongside the bundle so that
 // `loadSeedAgents()` (which resolves it via `dirname(import.meta.url)`) finds
 // it when the function cold-starts an empty Firestore.
-const seedSrc = resolve(__dirname, "../../packages/agent-registry/src/seed.json")
+const seedSrc = resolve(repoRoot, "packages/agent-registry/src/seed.json")
 copyFileSync(seedSrc, resolve(outDir, "seed.json"))
 
 // Copy `.env` into the deploy bundle so Firebase Gen2 picks up

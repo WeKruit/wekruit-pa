@@ -443,6 +443,53 @@ function isUserExitPrescreenReply(reply: string): boolean {
   return /^(please\s+)?(stop|cancel|pause|quit|exit|end)\b(?=.*\b(this|screen|role|interview|prescreen|pre-screen|for now|now|please)\b)[a-z0-9\s'’.-]*[.!?。！？\s]*$/i.test(normalized)
 }
 
+function hasIncompleteOnboardingQuestion(user: Record<string, unknown> | undefined): boolean {
+  if (!user) return false
+  if (user.onboardingState === "complete" || user.onboardingStatus === "complete") return false
+  const pipeline = user.pipelineState && typeof user.pipelineState === "object"
+    ? user.pipelineState as Record<string, unknown>
+    : null
+  if (pipeline?.completed === true) return false
+  return typeof pipeline?.currentQId === "string" || /^q_[a-z0-9_]+_asked$/.test(String(user.onboardingState ?? ""))
+}
+
+function isLikelyPrescreenContinuationReply(reply: string): boolean {
+  const normalized = reply.trim().toLowerCase()
+  if (!normalized) return false
+  if (/\b(prescreen|pre-screen|role screen|job screen|screen|interview)\b/.test(normalized)) return true
+  if (/\b(this|that|same)\s+(role|job|screen|interview)\b/.test(normalized)) return true
+  if (/\b(reopen|continue|resume|restart|start over|try again)\b(?=.*\b(role|job|screen|interview|prescreen|pre-screen)\b)/.test(normalized)) {
+    return true
+  }
+  return /\b(rain|software engineer|fullstack|full-stack|technical account manager|product manager|product designer)\b/.test(normalized)
+}
+
+async function shouldHandleRecentTerminalSession(args: {
+  db: Firestore
+  userId: string
+  replyText: string
+  log: (event: string, payload: Record<string, unknown>) => void
+}): Promise<boolean> {
+  let user: Record<string, unknown> | undefined
+  try {
+    const snap = await args.db.collection("pa-users").doc(args.userId).get()
+    user = snap.data() as Record<string, unknown> | undefined
+  } catch (err) {
+    args.log("prescreen.turn.recent_terminal_user_lookup_failed", {
+      userId: args.userId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+  if (!hasIncompleteOnboardingQuestion(user)) return true
+  if (isLikelyPrescreenContinuationReply(args.replyText)) return true
+  args.log("prescreen.turn.recent_terminal_guard_yielded_to_onboarding", {
+    userId: args.userId,
+    onboardingState: user?.onboardingState ?? null,
+    currentQId: (user?.pipelineState as Record<string, unknown> | undefined)?.currentQId ?? null,
+  })
+  return false
+}
+
 /**
  * Entry called from paMessageCoalescer before Claire dispatch. Returns
  * handled=false when no active prescreen session → coalescer continues
@@ -460,6 +507,13 @@ export async function runPrescreenTurnIfActive(
   }
   if (lookup.kind === "none") return { handled: false }
   if (lookup.kind === "recent_terminal") {
+    const shouldGuard = await shouldHandleRecentTerminalSession({
+      db: args.db,
+      userId: args.userId,
+      replyText: args.replyText,
+      log,
+    })
+    if (!shouldGuard) return { handled: false }
     const sessionRef = args.db.collection("pa-prescreen-sessions").doc(lookup.sessionId)
     const sessSnap = await sessionRef.get()
     const sessData = (sessSnap.data() ?? {}) as Record<string, unknown>

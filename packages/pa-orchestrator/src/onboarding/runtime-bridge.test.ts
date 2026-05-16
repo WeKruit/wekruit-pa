@@ -311,6 +311,37 @@ describe("runResumeAcceptedFlow — happy path (CV available immediately)", () =
     assert.match(emits[1]!.text, /pulling matches/)
   })
 
+  it("active turn language overrides stale stored preference", async () => {
+    const { db } = makeFakeDb([{ docs: [FULL_CV] }])
+    const clock = makeClock()
+    const emits: EmitRecord[] = []
+
+    await runResumeAcceptedFlow({
+      userId: "user_turn_lang",
+      phoneE164: "+15551234",
+      getOnboardingUser: async () => ({
+        id: "user_turn_lang",
+        phoneE164: "+15551234",
+        statedPreferences: { preferredLang: "zh" },
+      }),
+      preferredLang: "en",
+      applyOnboarding: async () => {},
+      emit: async (text, meta) => {
+        emits.push({ text, meta })
+      },
+      db,
+      log: () => {},
+      cvPollOpts: { sleep: clock.sleep, now: clock.now },
+    })
+
+    assert.equal(emits.length, 2)
+    assert.ok(
+      emits.every((e) => !/[一-鿿]/.test(e.text)),
+      `expected active EN turn to avoid stale ZH copy: ${emits.map((e) => e.text).join(" | ")}`
+    )
+    assert.match(emits[1]!.text, /@ WeKruit/)
+  })
+
   it("mixed-pref user → mixed-language messages (both ZH + EN tokens)", async () => {
     const { db } = makeFakeDb([{ docs: [FULL_CV] }])
     const clock = makeClock()

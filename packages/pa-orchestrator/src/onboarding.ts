@@ -306,6 +306,50 @@ const Q_PROMPTS: Record<
 
 export const WEKRUIT_LAYOFF_SOURCE = "WeKruit_Laid_Off"
 
+type OnboardingSessionKind = "normal_onboarding" | "layoff_onboarding"
+
+type OnboardingUserContext = Pick<User, "id" | "phoneE164" | "onboardingState"> & {
+  source?: string | null
+  workSession?: Record<string, unknown> | null
+}
+
+function onboardingSessionKind(user: OnboardingUserContext): OnboardingSessionKind {
+  if (user.source === WEKRUIT_LAYOFF_SOURCE) return "layoff_onboarding"
+  const current = user.workSession
+  if (current?.kind === "layoff_onboarding") return "layoff_onboarding"
+  return "normal_onboarding"
+}
+
+function onboardingWorkSession(
+  user: OnboardingUserContext,
+  nextState: OnboardingState,
+  now: string
+): Record<string, unknown> {
+  const kind = onboardingSessionKind(user)
+  const current = user.workSession
+  const startedAt =
+    current?.kind === kind && typeof current.startedAt === "string" ? current.startedAt : now
+
+  if (nextState === "complete") {
+    return {
+      kind,
+      status: "ended",
+      startedAt,
+      endedAt: now,
+      boundary: "complete",
+      currentState: "complete",
+    }
+  }
+
+  return {
+    kind,
+    status: "active",
+    startedAt,
+    boundary: "onboarding",
+    currentState: nextState,
+  }
+}
+
 export function composeLayoffFirstMessage(input: {
   firstName?: string | null
   lastCompany?: string | null
@@ -1047,7 +1091,7 @@ export async function writeOnboardingTags(
  */
 export async function applyOnboardingStep(
   db: Firestore,
-  user: Pick<User, "id" | "phoneE164" | "onboardingState">,
+  user: OnboardingUserContext,
   step: OnboardingStep,
   opts: {
     now?: string
@@ -1188,9 +1232,11 @@ export async function applyOnboardingStep(
   if (nextState === "complete") {
     const completePayload: Record<string, unknown> = {
       onboardingState: "complete",
+      onboardingStatus: "active",
       onboardedAt: now,
       updatedAt: now,
       metadata: { cohort: "beta-v1" },
+      workSession: onboardingWorkSession(user, "complete", now),
     }
     if (statedPreferencesWrite) completePayload.statedPreferences = statedPreferencesWrite
     // iter31 — verified email transition: clear the verification challenge
@@ -1205,6 +1251,7 @@ export async function applyOnboardingStep(
       completePayload.statedPreferences = merged
     }
     await userRef.set(completePayload, { merge: true })
+    await userRef.update({ workSession: completePayload.workSession })
     // Auto-promote beta participant: find by userId = user.id and status in (invited, active)
     const snap = await db
       .collection(PA_COLLECTIONS.betaParticipants)
@@ -1238,6 +1285,7 @@ export async function applyOnboardingStep(
     const payload: Record<string, unknown> = {
       onboardingState: nextState,
       updatedAt: now,
+      workSession: onboardingWorkSession(user, nextState, now),
     }
     if (statedPreferencesWrite) payload.statedPreferences = statedPreferencesWrite
     // iter30 closure (Adam directive 2026-05-03 "不要一直用这些 fking regex,
@@ -1313,6 +1361,7 @@ export async function applyOnboardingStep(
       payload.statedPreferences = merged
     }
     await userRef.set(payload, { merge: true })
+    await userRef.update({ workSession: payload.workSession })
   }
 
   // Phase 54 (USER-TAG-03) — Mirror the freshly-persisted statedPreferences

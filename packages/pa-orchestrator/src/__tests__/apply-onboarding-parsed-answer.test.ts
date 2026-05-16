@@ -48,17 +48,25 @@ interface CapturedSet {
  * onboardingState" so applyOnboardingStep treats this as a fresh advance
  * (idempotency guard passes).
  */
-function makeCapturingDb(): { db: Firestore; sets: CapturedSet[] } {
+function makeCapturingDb(
+  initialDocs: Record<string, Record<string, unknown>> = {}
+): { db: Firestore; sets: CapturedSet[] } {
   const sets: CapturedSet[] = []
+  const docs = new Map<string, Record<string, unknown>>(Object.entries(initialDocs))
   const empty = { empty: true, size: 0, docs: [] } as unknown
   const where = () => ({ get: async () => empty, limit: () => ({ get: async () => empty }) })
   const makeDocRef = (docPath: string) => ({
-    get: async () => ({ exists: false, data: () => undefined }),
+    get: async () => {
+      const data = docs.get(docPath)
+      return { exists: Boolean(data), data: () => data }
+    },
     set: async (payload: Record<string, unknown>) => {
       sets.push({ docPath, payload })
+      docs.set(docPath, { ...(docs.get(docPath) ?? {}), ...payload })
     },
     update: async (payload: Record<string, unknown>) => {
       sets.push({ docPath, payload })
+      docs.set(docPath, { ...(docs.get(docPath) ?? {}), ...payload })
     },
     delete: async () => undefined,
     collection: () => ({ get: async () => empty }),
@@ -163,4 +171,152 @@ test("P9 — applyOnboarding wrapper still works WITHOUT parsedAnswer (regressio
     undefined,
     "no parsedAnswer + no priorAskedStep = no statedPreferences write"
   )
+})
+
+test("onboarding writes a normal_onboarding workSession while advancing", async () => {
+  const { db, sets } = makeCapturingDb({
+    "pa-users/u_normal_session": {
+      onboardingState: "q_location_asked",
+      workSession: {
+        kind: "job_prescreen",
+        status: "ended",
+        startedAt: "2026-05-16T18:00:00.000Z",
+        endedAt: "2026-05-16T18:10:00.000Z",
+        boundary: "user_exit",
+        sessionId: "ps_old",
+        jobId: "job_old",
+        terminal: "PAUSE",
+      },
+    },
+  })
+  const store = createFirestoreOrchestratorStore(db)
+
+  await store.applyOnboarding("u_normal_session", "+15551238", "ask_q_resume", {
+    now: "2026-05-16T19:00:00.000Z",
+  })
+
+  const userSet = sets.find((s) => s.docPath === "pa-users/u_normal_session")
+  assert.ok(userSet)
+  assert.equal(userSet!.payload.onboardingState, "q_resume_asked")
+  assert.deepEqual(userSet!.payload.workSession, {
+    kind: "normal_onboarding",
+    status: "active",
+    startedAt: "2026-05-16T19:00:00.000Z",
+    boundary: "onboarding",
+    currentState: "q_resume_asked",
+  })
+})
+
+test("onboarding restores layoff_onboarding session from layoff source without prescreen fields", async () => {
+  const { db, sets } = makeCapturingDb({
+    "pa-users/u_layoff_session": {
+      source: "WeKruit_Laid_Off",
+      onboardingState: "q_location_asked",
+      workSession: {
+        kind: "job_prescreen",
+        status: "ended",
+        startedAt: "2026-05-16T18:00:00.000Z",
+        endedAt: "2026-05-16T18:10:00.000Z",
+        boundary: "user_exit",
+        sessionId: "ps_old",
+        jobId: "job_old",
+        terminal: "PAUSE",
+      },
+    },
+  })
+  const store = createFirestoreOrchestratorStore(db)
+
+  await store.applyOnboarding("u_layoff_session", "+15551239", "ask_q_resume", {
+    now: "2026-05-16T19:01:00.000Z",
+  })
+
+  const userSet = sets.find((s) => s.docPath === "pa-users/u_layoff_session")
+  assert.ok(userSet)
+  const workSession = userSet!.payload.workSession as Record<string, unknown>
+  assert.deepEqual(workSession, {
+    kind: "layoff_onboarding",
+    status: "active",
+    startedAt: "2026-05-16T19:01:00.000Z",
+    boundary: "onboarding",
+    currentState: "q_resume_asked",
+  })
+  assert.equal("sessionId" in workSession, false)
+  assert.equal("jobId" in workSession, false)
+  assert.equal("terminal" in workSession, false)
+})
+
+test("onboarding marks workSession ended when the onboarding chain completes", async () => {
+  const { db, sets } = makeCapturingDb({
+    "pa-users/u_complete_session": {
+      onboardingState: "q_resume_asked",
+      workSession: {
+        kind: "normal_onboarding",
+        status: "active",
+        startedAt: "2026-05-16T18:59:00.000Z",
+        boundary: "onboarding",
+        currentState: "q_resume_asked",
+      },
+    },
+  })
+  const store = createFirestoreOrchestratorStore(db)
+
+  await store.applyOnboarding("u_complete_session", "+15551240", "complete", {
+    now: "2026-05-16T19:02:00.000Z",
+  })
+
+  const userSet = sets.find((s) => s.docPath === "pa-users/u_complete_session")
+  assert.ok(userSet)
+  assert.equal(userSet!.payload.onboardingState, "complete")
+  assert.equal(userSet!.payload.onboardingStatus, "active")
+  assert.deepEqual(userSet!.payload.workSession, {
+    kind: "normal_onboarding",
+    status: "ended",
+    startedAt: "2026-05-16T18:59:00.000Z",
+    endedAt: "2026-05-16T19:02:00.000Z",
+    boundary: "complete",
+    currentState: "complete",
+  })
+})
+
+test("onboarding completion replaces Firestore workSession map so stale prescreen keys are removed", async () => {
+  const { db, sets } = makeCapturingDb({
+    "pa-users/u_complete_stale_session": {
+      source: "WeKruit_Laid_Off",
+      onboardingState: "q_resume_asked",
+      workSession: {
+        kind: "job_prescreen",
+        status: "ended",
+        startedAt: "2026-05-16T18:59:00.000Z",
+        boundary: "user_exit",
+        sessionId: "ps_old",
+        jobId: "job_old",
+        terminal: "PAUSE",
+      },
+    },
+  })
+  const store = createFirestoreOrchestratorStore(db)
+
+  await store.applyOnboarding("u_complete_stale_session", "+15551241", "complete", {
+    now: "2026-05-16T19:03:00.000Z",
+  })
+
+  const replacement = sets.find(
+    (s) =>
+      s.docPath === "pa-users/u_complete_stale_session" &&
+      Object.keys(s.payload).length === 1 &&
+      Boolean(s.payload.workSession)
+  )
+  assert.ok(replacement, "applyOnboarding must replace the whole workSession map after merge")
+  const workSession = replacement!.payload.workSession as Record<string, unknown>
+  assert.deepEqual(workSession, {
+    kind: "layoff_onboarding",
+    status: "ended",
+    startedAt: "2026-05-16T19:03:00.000Z",
+    endedAt: "2026-05-16T19:03:00.000Z",
+    boundary: "complete",
+    currentState: "complete",
+  })
+  assert.equal("sessionId" in workSession, false)
+  assert.equal("jobId" in workSession, false)
+  assert.equal("terminal" in workSession, false)
 })

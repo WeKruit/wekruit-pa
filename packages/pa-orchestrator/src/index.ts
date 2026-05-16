@@ -502,6 +502,7 @@ export type OrchestratorStore = {
     phoneE164: string,
     step: OnboardingStep,
     opts?: {
+      now?: string
       /** Phase 44 — previous step asked (for parsing user reply into statedPreferences). */
       priorAskedStep?: OnboardingStep
       /** Phase 44 — user's reply to that prior step. */
@@ -3732,12 +3733,25 @@ export function createFirestoreOrchestratorStore(
       // (STATE_ORDER) lines up; previously we passed undefined which forced
       // every call to advance from scratch.
       const snap = await db.collection(PA_COLLECTIONS.users).doc(userId).get()
-      const data = snap.exists ? (snap.data() as { onboardingState?: import("@pa/core-types").OnboardingState }) : undefined
+      const data = snap.exists
+        ? (snap.data() as {
+            onboardingState?: import("@pa/core-types").OnboardingState
+            source?: string | null
+            workSession?: Record<string, unknown> | null
+          })
+        : undefined
       await applyOnboardingStep(
         db,
-        { id: userId, phoneE164, onboardingState: data?.onboardingState },
+        {
+          id: userId,
+          phoneE164,
+          onboardingState: data?.onboardingState,
+          source: data?.source,
+          workSession: data?.workSession,
+        },
         step,
         {
+          now: opts?.now,
           priorAskedStep: opts?.priorAskedStep,
           priorUserReply: opts?.priorUserReply,
           intentAcked: opts?.intentAcked,

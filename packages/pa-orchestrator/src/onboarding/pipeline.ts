@@ -303,6 +303,9 @@ export class OnboardingPipeline {
   ): Promise<RunTurnResult> {
     const next = this.nextQ(fromQId)
     if (!next) {
+      if (this.findQ(fromQId)?.suppressTerminalCompletionMessage) {
+        return await this.completeSilently(input, state)
+      }
       // All done — fire postCollect. v1.9: allow caller override of the
       // completion message (PII confirm flow needs "Thanks — you're all
       // set" framing instead of "running the match" framing).
@@ -398,10 +401,27 @@ export class OnboardingPipeline {
     state: PipelineState,
     completionMsg: string
   ): Promise<RunTurnResult> {
+    return await this.complete(input, state, completionMsg)
+  }
+
+  private async completeSilently(
+    input: RunTurnInput,
+    state: PipelineState
+  ): Promise<RunTurnResult> {
+    return await this.complete(input, state)
+  }
+
+  private async complete(
+    input: RunTurnInput,
+    state: PipelineState,
+    completionMsg?: string
+  ): Promise<RunTurnResult> {
     state.completed = true
     state.currentQId = null
     await this.opts.state.save(input.userId, state)
-    await this.opts.emit(completionMsg, { qId: null, kind: "completion" })
+    if (completionMsg) {
+      await this.opts.emit(completionMsg, { qId: null, kind: "completion" })
+    }
     if (this.opts.postCollect) {
       try {
         await this.opts.postCollect(state.collected, {

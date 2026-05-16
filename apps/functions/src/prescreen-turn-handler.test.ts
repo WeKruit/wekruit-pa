@@ -473,6 +473,64 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     assert.equal(sent.length, 1, "second post-terminal follow-up should be handled silently")
   })
 
+  it("yields a recent paused prescreen to an incomplete onboarding location answer", async () => {
+    const now = new Date().toISOString()
+    const { db, docs } = makeFakeDb({
+      "pa-users/u1": {
+        onboardingStatus: "in_progress",
+        onboardingState: "q_location_asked",
+        pipelineState: {
+          completed: false,
+          currentQId: "q_location",
+          collected: { q_country: ["usa"] },
+        },
+        workSession: {
+          kind: "job_prescreen",
+          status: "ended",
+          sessionId: "ps_done",
+          jobId: "rain-software-engineer-fullstack-8849f6ef",
+          endedAt: now,
+          boundary: "user_exit",
+          terminal: "PAUSE",
+        },
+      },
+      "pa-prescreen-sessions/ps_done": {
+        sessionId: "ps_done",
+        userId: "u1",
+        jobId: "rain-software-engineer-fullstack-8849f6ef",
+        terminal: "PAUSE",
+        currentQId: null,
+        createdAt: now,
+        updatedAt: now,
+        workSession: { kind: "job_prescreen", status: "ended", startedAt: now, endedAt: now, boundary: "user_exit" },
+      },
+    })
+
+    const sent: string[] = []
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u1",
+      toE164: "+13054507715",
+      replyText: "For location, I am targeting New York or remote.",
+      sendSms: async (args) => {
+        sent.push(args.content)
+        return {
+          status: "queued",
+          from_number: null,
+          number: args.to,
+          content: args.content,
+          service: "iMessage",
+          is_outbound: true,
+        }
+      },
+    })
+
+    assert.equal(result.handled, false)
+    assert.deepEqual(sent, [])
+    const turnEntries = [...docs.entries()].filter(([path]) => path.startsWith("pa-prescreen-sessions/ps_done/turns/"))
+    assert.equal(turnEntries.length, 0)
+  })
+
   it("still finds the newest recent terminal session when the user has more than 50 historical screens", async () => {
     const seed: Record<string, Record<string, unknown>> = {}
     const baseMs = Date.now() - 55 * 60 * 1000

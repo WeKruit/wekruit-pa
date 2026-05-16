@@ -72,7 +72,7 @@ Important baseline finding:
 
 | Flow | Status | Live iMessage evidence | Firestore evidence | Notes |
 | --- | --- | --- | --- | --- |
-| Normal candidate onboarding | NOT_STARTED | Missing | Baseline shows candidate stuck at `q_location` | Must be tested through real iMessage, not dashboard/browser. |
+| Normal candidate onboarding | LIVE_DONE_FOR_COLLISION_AND_RESUME_COMPLETION | Real iMessage location-answer rerun after prescreen pause advanced to resume ask; real resume-on-file reply completed onboarding | `pa-users.pipelineState.completed=true`, `onboardingStatus=active`, clean ended `workSession` | Found and fixed prescreen recent-terminal guard, existing-resume detection, resume completion language, generic completion noise, and stale workSession merge behavior. |
 | Layoff onboarding | NOT_STARTED | Missing | Baseline shows active layoff workSession | Must verify shared `pa-users` state, `layoffContext`, and session boundaries. |
 | Job prescreen strong candidate | LIVE_DONE | Real iMessage rerun reached `PASS` after repeated probes | Session, memory, user workSession, candidate-job-state verified | See Flow 4 rerun. |
 | Job prescreen adjacent/fragmented | LIVE_DONE | Real iMessage rerun reached PASS after adjacent/fragmented answers | Session, turns, memory, candidate-job-state, user workSession, and prior-session supersede verified | Runtime fixes deployed on Node 24; visible salary-copy defect remains in job data/copy. |
@@ -323,3 +323,122 @@ Code-level memory hygiene fix:
 Remaining known data artifact:
 
 - The pre-fix PAUSE memory event for session `ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260516T183308045Z` was created before the memory hygiene patch and may still contain the old off-topic pause summary. The latest post-deploy event is clean, and PAUSE does not overwrite `pa-users.lastPrescreenMemoryUpdate`.
+
+## Flow 1 Evidence: Normal Onboarding After Prescreen Pause
+
+Verified directly in Messages and Firestore: 2026-05-16T19:22:17.112Z
+
+Runtime:
+
+- Node: `v24.3.0`
+- Candidate: `pa-users/U7AwKT8nLDRa35DkuBxq`
+- Starting state before this test: no active prescreen; latest job prescreen session `ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260516T185719399Z` had already ended with `terminal=PAUSE`, `terminalReason=user_exit`.
+- User onboarding state before this test: `onboardingState=q_location_asked`, `pipelineState.currentQId=q_location`.
+
+Live bug found:
+
+- At 3:13 PM, candidate sent: `For location I am targeting the US mostly New York or remote and I can do SF hybrid for strong startup roles.`
+- Claire incorrectly replied: `Got it. This role screen is already paused; I will keep that constraint on your profile and use it for better-matched roles.`
+- Firestore showed inbound `inb_d88b4256fe0c190c192931632460cc2c48483ad6` with `routedTo=prescreen`.
+- This proved the recent-terminal prescreen guard was stealing a normal onboarding answer after a prescreen pause.
+
+Fix deployed:
+
+- `apps/functions/src/prescreen-turn-handler.ts` now checks the canonical `pa-users/{uid}` state before applying the recent-terminal guard.
+- If onboarding is incomplete and the new reply does not look like a continuation of the just-ended role screen, the prescreen guard yields so onboarding can own the turn.
+- Regression test added: `yields a recent paused prescreen to an incomplete onboarding location answer`.
+- Targeted test result: `91/91` passing.
+- Full Firebase predeploy test result: `1713/1713` passing.
+- Deployed with Node `v24.3.0` to `onPaInbound`, `paMessageCoalescer`, `paCoalesceBufferSweep`, and `paSendblueWebhook`.
+
+Live rerun proof:
+
+- At 3:22 PM, candidate sent: `Still same profile preference New York remote or SF hybrid for strong startup roles.`
+- Claire replied: `btw — can you send me your resume? makes JD review and referrals way more on-point`
+- Firestore inbound `inb_58e92ddffa9a544556e61fb0c2d82e1068e5e070`:
+  - `status=succeeded`
+  - not `routedTo=prescreen`
+  - `completedAt=2026-05-16T19:22:17.112Z`
+- User state after rerun:
+  - `onboardingState=q_resume_asked`
+  - `pipelineState.currentQId=q_resume`
+  - `pipelineState.collected.q_location=["nyc","remote","sf","hybrid"]`
+  - `tags.targetLocations=["new_york_metro","remote_united_states","san_francisco_bay_area"]`
+  - `tags.targetCountry=["usa"]`
+
+Remaining normal-onboarding residuals:
+
+- User-level `workSession` still points to the ended job prescreen (`kind=job_prescreen`, `status=ended`, `boundary=user_exit`) instead of an explicit active/ended normal-onboarding session boundary.
+- `resumeAccepted` was stamped at `2026-05-16T19:22:16.486Z` with `triggerHash=onboarding_ask_q_resume`, but `pa-resume-artifacts` returned no docs for this user while `parsedCandidateResumes/019MaM207IdXVMKlHuGY` exists. Canonical resume-state detection still needs a separate live fix before Flow 1 can be marked `LIVE_DONE`.
+
+## Flow 1 Rerun Evidence: Existing Resume Completion
+
+Verified directly in Messages and Firestore: 2026-05-16T20:26:40.547Z
+
+Runtime:
+
+- Node: `v24.3.0`
+- Candidate: `pa-users/U7AwKT8nLDRa35DkuBxq`
+- Test sender: `+13054507715`
+- Candidate phone: `+14243201960`
+- Deploy target: `onPaInbound`, `paCoalesceBufferSweep`, `paMessageCoalescer`, `paSendblueWebhook`
+- Full Firebase predeploy test result: `1713/1713` passing.
+- Targeted orchestrator regression test result: `38/38` passing.
+- Targeted functions regression test result: `91/91` passing before the completion-status patch; full deploy precheck covered the final bundled code.
+
+Live bugs found before the final fix:
+
+- At 3:36 PM and 3:46 PM, candidate said the resume was already on file (`Adam-Yang-Resume.pdf`), but Claire re-asked for an iMessage attachment. Root cause: `q_resume` did not recognize explicit existing-resume references and only checked one resume artifact collection.
+- At 4:01 PM, after the first recovery patch, Claire accepted the existing resume but sent mixed-language and noisy completion copy:
+  - `嗯 我读一下, 一两分钟的事`
+  - `got everything I need — running the match now ✓`
+  - Chinese summary copy.
+- Firestore after the 4:01 PM run also preserved stale nested job-prescreen keys in `workSession` because the completion update used `set(..., { merge: true })`.
+
+Runtime fixes deployed:
+
+- `packages/pa-orchestrator/src/onboarding/judges/resume.ts`: detects explicit existing-resume phrases and also checks `parsedCandidateResumes.where("userId","==", uid)`.
+- `packages/pa-orchestrator/src/onboarding/runtime-bridge.ts`: resume-accepted copy uses the active turn language first, not stale or missing stored preference.
+- `packages/pa-orchestrator/src/onboarding/questions.ts` and `pipeline.ts`: `q_resume` suppresses generic terminal completion copy while still running the resume post-collect flow.
+- `packages/pa-orchestrator/src/onboarding.ts`: completed onboarding normalizes `onboardingStatus=active` and replaces the whole `workSession` map so stale prescreen `sessionId`, `jobId`, and `terminal` keys are removed.
+- `apps/functions/build.mjs`: Firebase bundle resolves local workspace packages from the current worktree, preventing deploys from accidentally bundling the original repo symlinked package.
+
+Live rerun proof:
+
+- Reset at `2026-05-16T20:25:04.384Z` intentionally put the user back into `onboardingState=q_resume_asked`, `pipelineState.currentQId=q_resume`, `pipelineState.lang=en`, and a stale ended job-prescreen `workSession` with `sessionId=ps_live_reset_stale_work_session`.
+- At 4:25 PM, candidate sent: `The resume is already on file please use the parsed Adam-Yang-Resume.pdf and move my profile forward.`
+- Claire replied with exactly the resume flow and no generic completion:
+  - `ok lemme take a quick look at your resume, brb`
+  - `looks like c++ / java / javascript / python / c# + Software Engineer Intern @ Tesla Inc. — pulling matches in that lane`
+- No Chinese copy appeared in the live transcript.
+- No `got everything I need — running the match now` generic completion appeared in the live transcript.
+- No resume re-ask appeared in the live transcript.
+
+Persisted proof:
+
+- Latest inbound event `pa-inbound-events/inb_69ccd5c0c8c03022846e0f22d3647716fef592d1`:
+  - `status=succeeded`
+  - `fromNumber=+14243201960`
+  - `toNumber=+13054507715`
+  - `completedAt=2026-05-16T20:25:50.297Z`
+- Latest outbounds for that inbound:
+  - `outbound-pipeline-inb_69ccd5c0c8c03022846e0f22d3647716fef592d1-q_resume-cv_interim_ack`
+  - `outbound-pipeline-inb_69ccd5c0c8c03022846e0f22d3647716fef592d1-q_resume-cv_summary_tag`
+  - No `x-completion` outbound was created for the latest inbound.
+- User state after rerun:
+  - `onboardingState=complete`
+  - `onboardingStatus=active`
+  - `pipelineState.currentQId=null`
+  - `pipelineState.completed=true`
+  - `pipelineState.lang=en`
+  - `pipelineState.collected.q_resume=[]`
+- User-level `workSession` after rerun:
+  - `kind=layoff_onboarding`
+  - `status=ended`
+  - `boundary=complete`
+  - `currentState=complete`
+  - No stale `sessionId`, `jobId`, or `terminal` keys from the intentionally seeded prescreen state.
+
+Remaining Flow 1 boundary:
+
+- This proves the collision recovery path and resume-on-file completion path for the canonical user. A full fresh-user normal onboarding from empty state is still a separate live scenario if the broader runtime goal is expanded beyond the current narrowed conversation-runtime slice.

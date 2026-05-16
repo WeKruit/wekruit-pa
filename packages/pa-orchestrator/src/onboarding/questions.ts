@@ -247,6 +247,7 @@ function makeClosedQuestions(deps: ClosedQuestionsDeps): {
       en: "skipping resume for now — drop it whenever",
     },
     onAccepted: deps.onResumeAccepted,
+    suppressTerminalCompletionMessage: true,
     onDeclined: async () => ({ advance: true }),
   })
 
@@ -604,6 +605,7 @@ export function defaultQuestions(deps: DefaultQuestionsDeps): Question<unknown>[
       en: "skipping resume for now — drop it whenever",
     },
     onAccepted: deps.onResumeAccepted,
+    suppressTerminalCompletionMessage: true,
     // resume decline = skip, not halt.
     onDeclined: async () => ({ advance: true }),
   })

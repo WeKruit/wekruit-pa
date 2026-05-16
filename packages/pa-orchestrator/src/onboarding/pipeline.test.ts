@@ -190,6 +190,33 @@ test("OnboardingPipeline: postCollect fires after final Q accepted", async () =>
   assert.ok(emitted.find((e) => e.kind === "completion"))
 })
 
+test("OnboardingPipeline: terminal Q can suppress generic completion when onAccepted owns UX", async () => {
+  let captured: Record<string, unknown> | null = null
+  const terminalQ = makeQuestion({
+    id: "terminal",
+    prompt: { zh: "terminal 中文", en: "terminal EN" },
+    judge: new AcceptOnce("done"),
+    rephraser: new StaticVariantsRephraser([{ zh: "x", en: "x" }]),
+    suppressTerminalCompletionMessage: true,
+  })
+  const { pipeline, emitted, state } = makePipeline({
+    questions: [terminalQ],
+    postCollect: async (c) => {
+      captured = c
+    },
+  })
+
+  await pipeline.startTurn(makeInput("hi"))
+  const final = await pipeline.startTurn(makeInput("done"))
+
+  assert.equal(final.completed, true)
+  assert.deepEqual(captured, { terminal: "done" })
+  assert.equal(emitted.some((e) => e.kind === "completion"), false)
+  const persisted = state.peek("u1")
+  assert.equal(persisted?.completed, true)
+  assert.equal(persisted?.currentQId, null)
+})
+
 test("OnboardingPipeline: declined Q with onDeclined.advance=true skips without storing", async () => {
   const tosLike: Question<boolean> = makeQuestion({
     id: "q_skip",
