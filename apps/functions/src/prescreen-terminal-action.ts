@@ -114,8 +114,6 @@ function deriveWeakPrescreenTags(args: {
     ...(args.terminal === "PASS" || positiveScored.length > 0 ? args.recentReplies : []),
   ]
   const haystack = haystackParts.join(" ").toLowerCase()
-  if (haystack.includes("software")) tags.add("software_engineering")
-  if (haystack.includes("fullstack") || haystack.includes("full-stack")) tags.add("fullstack_engineering")
   if (haystack.includes("javascript") || haystack.includes("react") || haystack.includes("ui")) tags.add("frontend_development")
   if (haystack.includes("sql") || haystack.includes("database") || haystack.includes("db")) tags.add("data_workflows")
   if (haystack.includes("debug") || haystack.includes("failure") || haystack.includes("triage")) tags.add("debugging_workflows")

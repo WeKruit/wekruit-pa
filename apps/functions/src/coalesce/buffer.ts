@@ -87,6 +87,16 @@ export const HARD_CAP_MS = 30_000
  *  answers together while HARD_CAP_MS still bounds a turn at 30s. */
 export const DEFAULT_DELAY_MS = 12_000
 
+/** Prescreen-phase coalesce delay.
+ *
+ * Real candidate prescreen answers often arrive as 2-3 iMessages over a
+ * slower 15-25s thinking window. The generic 12s delay is appropriate for
+ * short chat turns, but it wave-splits prescreen narrative answers into
+ * multiple recruiter follow-ups. Keep this mode-specific so onboarding and
+ * other fast deterministic flows stay responsive.
+ */
+export const PRESCREEN_DELAY_MS = 25_000
+
 /** Rapid-message gap heuristic — Adam 2026-05-03 amendment ("可以消息间隔 < 5s
  *  自动延长 (heuristic — 连发就是同 thought)").
  *
@@ -201,6 +211,12 @@ export type IncomingMessage = {
    * before invoking enqueueOrCoalesce.
    */
   isOnboarding?: boolean
+  /**
+   * Active job prescreen turns are narrative by design: users often send one
+   * answer across several iMessages with pauses while thinking. Use the
+   * longer prescreen coalesce window for this mode.
+   */
+  isPrescreen?: boolean
 }
 
 /** Onboarding-phase coalesce delay — fast turn-around for short
@@ -348,7 +364,11 @@ export async function coalesceTransaction(
   // Explicit opts override (tests) wins over the per-msg flag.
   const defaultDelay =
     opts.defaultDelayMs ??
-    (msg.isOnboarding ? ONBOARDING_DELAY_MS : DEFAULT_DELAY_MS)
+    (msg.isOnboarding
+      ? ONBOARDING_DELAY_MS
+      : msg.isPrescreen
+        ? PRESCREEN_DELAY_MS
+        : DEFAULT_DELAY_MS)
   const hardCap = opts.hardCapMs ?? HARD_CAP_MS
   const forceFireCount = opts.forceFireCount ?? FORCE_FIRE_MESSAGE_COUNT
   const rapidThresholdMs = opts.rapidThresholdMs ?? RAPID_MESSAGE_THRESHOLD_MS

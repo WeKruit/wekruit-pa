@@ -237,6 +237,9 @@ describe("runPrescreenTerminalAction — HARD_STOP branch (v1.9 hotfix)", () => 
     assert.ok(userUpdate)
     const memory = userUpdate.data.lastPrescreenMemoryUpdate as { evidenceTags: string[] }
     assert.deepEqual(memory.evidenceTags, ["job_prescreen"])
+    const tagUpdate = updates.find((u) => u.path === "pa-users/u" && "tags" in u.data)
+    assert.ok(tagUpdate)
+    assert.deepEqual((tagUpdate.data.tags as Record<string, unknown>).proposedTags, ["job_prescreen"])
   })
 })
 

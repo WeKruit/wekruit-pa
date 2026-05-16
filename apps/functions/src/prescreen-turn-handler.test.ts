@@ -413,6 +413,77 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     assert.equal(sent.length, 1, "second post-terminal follow-up should be handled silently")
   })
 
+  it("still finds the newest recent terminal session when the user has more than 50 historical screens", async () => {
+    const seed: Record<string, Record<string, unknown>> = {}
+    const baseMs = Date.now() - 55 * 60 * 1000
+    for (let i = 0; i < 55; i += 1) {
+      const iso = new Date(baseMs + i * 60 * 1000).toISOString()
+      seed[`pa-prescreen-sessions/ps_old_${String(i).padStart(2, "0")}`] = {
+        sessionId: `ps_old_${String(i).padStart(2, "0")}`,
+        userId: "u1",
+        jobId: `job-old-${i}`,
+        terminal: "PAUSE",
+        currentQId: null,
+        createdAt: iso,
+        updatedAt: iso,
+        workSession: {
+          kind: "job_prescreen",
+          status: "ended",
+          startedAt: iso,
+          endedAt: iso,
+          boundary: "user_exit",
+        },
+      }
+    }
+
+    const latestIso = new Date().toISOString()
+    seed["pa-prescreen-sessions/ps_latest"] = {
+      sessionId: "ps_latest",
+      userId: "u1",
+      jobId: "rain-software-engineer-fullstack-8849f6ef",
+      terminal: "PAUSE",
+      currentQId: null,
+      createdAt: latestIso,
+      updatedAt: latestIso,
+      workSession: {
+        kind: "job_prescreen",
+        status: "ended",
+        startedAt: latestIso,
+        endedAt: latestIso,
+        boundary: "user_exit",
+      },
+    }
+
+    const { db, docs } = makeFakeDb(seed)
+    const sent: string[] = []
+
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u1",
+      toE164: "+13054507715",
+      replyText: "Thanks",
+      sendSms: async (args) => {
+        sent.push(args.content)
+        return {
+          status: "queued",
+          from_number: null,
+          number: args.to,
+          content: args.content,
+          service: "iMessage",
+          is_outbound: true,
+        }
+      },
+    })
+
+    assert.equal(result.handled, true)
+    assert.equal(result.sessionId, "ps_latest")
+    assert.deepEqual(sent, [
+      "Got it. This role screen is already paused; I will keep that constraint on your profile and use it for better-matched roles.",
+    ])
+    const latest = docs.get("pa-prescreen-sessions/ps_latest")?.data
+    assert.equal(typeof latest?.postTerminalFollowupAckAt, "string")
+  })
+
   it("routes an active prescreen without relying on a createdAt composite index", async () => {
     const now = new Date().toISOString()
     const { db } = makeFakeDbThatRejectsOrderBy({

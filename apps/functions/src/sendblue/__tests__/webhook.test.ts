@@ -852,6 +852,7 @@ describe("handleSendblueWebhook", () => {
   // ---------- TD-A: Adam P0 race-condition fix (atomic coalescing flag) ----------
 
   it("Test TD-A.1: willCoalesce=true → broker writes coalescing:true on the SAME create() call (race window closed)", async () => {
+    process.env.paMessageCoalesceEnabled = "1"
     // Adam 2026-05-03 实测: post-deploy 4 quick messages still split into 4
     // turns. RCA: webhook used to call broker.createInboundEvent FIRST then
     // coalescer.enqueueOrCoalesce (which merged coalescing:true). In between
@@ -870,6 +871,7 @@ describe("handleSendblueWebhook", () => {
       allowlist: [],
       blocklist: [],
     })
+    users.set("u_adam_test", { onboardingState: "complete" })
     _clearFeatureFlagCache()
 
     let enqueueOrder: string[] = []
@@ -911,6 +913,7 @@ describe("handleSendblueWebhook", () => {
       "TD-A fix: doc has coalescing:true persisted (set on create, race window closed)"
     )
     assert.deepEqual(enqueueOrder, ["coalesce"], "enqueueOrCoalesce was called once")
+    delete process.env.paMessageCoalesceEnabled
   })
 
   it("Test TD-A.2: willCoalesce=false (flag off) → broker omits coalescing field (legacy path keeps onPaInbound processing)", async () => {

@@ -317,7 +317,6 @@ async function findRecentTerminalSession(
   const snap = await db
     .collection("pa-prescreen-sessions")
     .where("userId", "==", userId)
-    .limit(50)
     .get()
 
   let latest:
