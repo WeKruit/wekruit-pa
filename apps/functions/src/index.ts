@@ -90,6 +90,7 @@ import { postSlackAlert } from "./lib/slack-alert.js"
 
 // Phase 22 — proactive check-in sweep
 export { paProactiveSweep } from "./proactive-sweep.js"
+export { paCandidateLifecycleTrigger } from "./candidate-lifecycle-trigger.js"
 
 // Phase 24.5 — admin bootstrap (seed flags via PA_ADMIN_TOKEN, bypass local gcloud ADC)
 export { paAdminBootstrap } from "./admin-bootstrap.js"
