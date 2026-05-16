@@ -1,6 +1,11 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { prescreenTurnRecordQId, runPrescreenTurnIfActive } from "./prescreen-turn-handler.js"
+import {
+  normalizePrescreenClarifyTextForRound,
+  prescreenClarifyRoundGuidance,
+  prescreenTurnRecordQId,
+  runPrescreenTurnIfActive,
+} from "./prescreen-turn-handler.js"
 import type { KeywordSetLlmCaller, PreScreenClarifyComposer } from "@pa/pa-orchestrator"
 
 type FakeDoc = { exists: boolean; data: Record<string, unknown> }
@@ -75,6 +80,28 @@ function makeFakeDb(seed: Record<string, Record<string, unknown>>) {
 }
 
 describe("runPrescreenTurnIfActive session boundaries", () => {
+  it("gives repeated prescreen probes distinct round guidance and non-repeated openers", () => {
+    const guidance = [1, 2, 3, 4].map((round) => prescreenClarifyRoundGuidance(round, "en"))
+    assert.equal(new Set(guidance).size, 4)
+    assert.match(guidance[0], /closest relevant project/)
+    assert.match(guidance[1], /ownership and system boundary/)
+    assert.match(guidance[2], /hardest failure/)
+    assert.match(guidance[3], /Final concrete check/)
+
+    const repeated = [
+      normalizePrescreenClarifyTextForRound("That's helpful — what did you personally build?", 1, "en"),
+      normalizePrescreenClarifyTextForRound("That's helpful — what systems did it touch?", 2, "en"),
+      normalizePrescreenClarifyTextForRound("That helps. What failure did you uncover?", 3, "en"),
+      normalizePrescreenClarifyTextForRound("Thanks — what measurable result changed?", 4, "en"),
+    ]
+    assert.deepEqual(repeated, [
+      "Got it - what did you personally build?",
+      "The ownership piece matters here - what systems did it touch?",
+      "The systems detail is the useful signal - what failure did you uncover?",
+      "One last concrete check before I score it - what measurable result changed?",
+    ])
+  })
+
   it("records a candidate reply against the question that was active before the turn", () => {
     assert.equal(prescreenTurnRecordQId({ kind: "clarify", qId: "role_fit", kAfter: 1 }, "role_fit"), "role_fit")
     assert.equal(

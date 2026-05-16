@@ -268,12 +268,12 @@ test("Phase 76: max-probed adjacent engineering evidence advances instead of har
   const store = new InMemoryPreScreenStore()
   const pipeline = new PreScreenPipeline({
     questions: {
-      q1: makeQ("q1", [
-        { perKeyword: [{ keyword: "q1", match: 0.15, confidence: 0.62, evidence: "not owned production fullstack", reasoning: "not exact" }] },
-        { perKeyword: [{ keyword: "q1", match: 0.72, confidence: 0.74, evidence: "dashboard and SQL", reasoning: "adjacent ownership" }] },
-        { perKeyword: [{ keyword: "q1", match: 0.72, confidence: 0.66, evidence: "failure tracing", reasoning: "needs systems detail" }] },
-        { perKeyword: [{ keyword: "q1", match: 0.78, confidence: 0.74, evidence: "order DB plus dispatch events", reasoning: "credible adjacent system ownership" }] },
-        { perKeyword: [{ keyword: "q1", match: 0.78, confidence: 0.74, evidence: "operator workflow end to end", reasoning: "credible adjacent system ownership" }] },
+      role_fit: makeQ("role_fit", [
+        { perKeyword: [{ keyword: "role_fit", match: 0.15, confidence: 0.62, evidence: "not owned production fullstack", reasoning: "not exact" }] },
+        { perKeyword: [{ keyword: "role_fit", match: 0.62, confidence: 0.7, evidence: "dashboard and SQL", reasoning: "adjacent ownership" }] },
+        { perKeyword: [{ keyword: "role_fit", match: 0.62, confidence: 0.7, evidence: "failure tracing", reasoning: "needs systems detail" }] },
+        { perKeyword: [{ keyword: "role_fit", match: 0.62, confidence: 0.7, evidence: "order DB plus dispatch events", reasoning: "credible adjacent system ownership" }] },
+        { perKeyword: [{ keyword: "role_fit", match: 0.62, confidence: 0.7, evidence: "React TypeScript Node Postgres", reasoning: "credible adjacent system ownership" }] },
       ]),
       q2: makeQ("q2", [
         { perKeyword: [{ keyword: "q2", match: 1.0, confidence: 0.9, evidence: "ok", reasoning: "yes" }] },
@@ -286,7 +286,7 @@ test("Phase 76: max-probed adjacent engineering evidence advances instead of har
     userId: "u1",
     jobId: "rain-software-engineer-fullstack-8849f6ef",
     questions: [
-      { qId: "q1", type: "MUST_HAVE", weight: 1, matchThreshold: 0.85 },
+      { qId: "role_fit", type: "MUST_HAVE", weight: 1, matchThreshold: 0.85 },
       { qId: "q2", type: "PROBING", weight: 1 },
     ],
     threshold: 0.65,
@@ -301,6 +301,7 @@ test("Phase 76: max-probed adjacent engineering evidence advances instead of har
     "For OFO Delivery, I owned the merchant order dashboard and dispatch tooling.",
     "The hardest part was failure tracing across merchant order states.",
     "The data came from our order DB plus courier dispatch events and merchant config tables.",
+    "The dashboard frontend was React and TypeScript, connected to Node endpoints and Postgres query results.",
   ]
 
   for (let i = 0; i < replies.length - 1; i++) {
@@ -325,8 +326,51 @@ test("Phase 76: max-probed adjacent engineering evidence advances instead of har
 
   assert.equal(finalProbe.action.kind, "advance")
   if (finalProbe.action.kind === "advance") assert.equal(finalProbe.action.toQId, "q2")
-  assert.equal(finalProbe.state.questions.q1.finalS, 0.78)
+  assert.equal(finalProbe.state.questions.role_fit.finalS, 0.62)
   assert.equal(finalProbe.state.terminal, null)
+})
+
+test("Phase 76: hard-filter questions do not use role-fit adjacent soft accept", async () => {
+  const store = new InMemoryPreScreenStore()
+  const pipeline = new PreScreenPipeline({
+    questions: {
+      location_alignment: makeQ("location_alignment", [
+        { perKeyword: [{ keyword: "location_alignment", match: 0.62, confidence: 0.9, evidence: "remote only", reasoning: "not aligned" }] },
+        { perKeyword: [{ keyword: "location_alignment", match: 0.62, confidence: 0.9, evidence: "still remote only", reasoning: "not aligned" }] },
+      ]),
+    },
+    store,
+  })
+  const state = emptyPreScreenState({
+    sessionId: "s1",
+    userId: "u1",
+    jobId: "j1",
+    questions: [{ qId: "location_alignment", type: "MUST_HAVE", weight: 1, matchThreshold: 0.7 }],
+    threshold: 0.65,
+    confidenceThreshold: 0.7,
+    maxClarifyRounds: 1,
+    nowIso: "2026-05-12T00:00:00Z",
+  })
+  await store.save(state)
+
+  const r1 = await pipeline.runTurn({
+    sessionId: "s1",
+    reply: "I am remote only.",
+    lang: "en",
+    nowIso: "2026-05-12T00:01:00Z",
+    judgeCtx: ctx,
+  })
+  assert.equal(r1.action.kind, "clarify")
+
+  const r2 = await pipeline.runTurn({
+    sessionId: "s1",
+    reply: "Still remote only.",
+    lang: "en",
+    nowIso: "2026-05-12T00:02:00Z",
+    judgeCtx: ctx,
+  })
+  assert.equal(r2.action.kind, "terminal")
+  if (r2.action.kind === "terminal") assert.equal(r2.action.terminal, "HARD_STOP")
 })
 
 test("Phase 76: weak engineering evidence gets four probes before HARD_STOP", async () => {
@@ -541,6 +585,55 @@ test("Phase 76: PreScreenPipeline low confidence triggers clarify and bumps k", 
   assert.equal(r.state.questions.q1.clarifyRounds, 1)
   // currentQId NOT advanced
   assert.equal(r.state.currentQId, "q1")
+})
+
+test("Phase 76: near-confidence technical evidence proceeds when match clears threshold", async () => {
+  const store = new InMemoryPreScreenStore()
+  const pipeline = new PreScreenPipeline({
+    questions: {
+      technical_depth: makeQ("technical_depth", [
+        {
+          perKeyword: [
+            {
+              keyword: "technical_depth",
+              match: 0.72,
+              confidence: 0.66,
+              evidence: "React panels wired to Node and Postgres",
+              reasoning: "specific technical ownership",
+            },
+          ],
+        },
+      ]),
+      location_alignment: makeQ("location_alignment", [
+        { perKeyword: [{ keyword: "location_alignment", match: 1, confidence: 0.9, evidence: "New York", reasoning: "aligned" }] },
+      ]),
+    },
+    store,
+  })
+  const state = emptyPreScreenState({
+    sessionId: "s1",
+    userId: "u1",
+    jobId: "j1",
+    questions: [
+      { qId: "technical_depth", type: "PROBING", weight: 1, matchThreshold: 0.65 },
+      { qId: "location_alignment", type: "PROBING", weight: 1, matchThreshold: 0.65 },
+    ],
+    threshold: 0.65,
+    confidenceThreshold: 0.7,
+    nowIso: "2026-05-12T00:00:00Z",
+  })
+  await store.save(state)
+
+  const r = await pipeline.runTurn({
+    sessionId: "s1",
+    reply: "I built React panels wired to Node endpoints and Postgres reports.",
+    lang: "en",
+    nowIso: "2026-05-12T00:01:00Z",
+    judgeCtx: ctx,
+  })
+  assert.equal(r.action.kind, "advance")
+  if (r.action.kind === "advance") assert.equal(r.action.toQId, "location_alignment")
+  assert.equal(r.state.questions.technical_depth.finalS, 0.72)
 })
 
 test("Phase 76: placeholder clarify copy falls back to probing friend-tone text", async () => {

@@ -165,6 +165,26 @@ function nowStamp(): string {
   return new Date().toISOString().replace(/[:.]/g, "-")
 }
 
+async function withFirestoreRetries<T>(
+  label: string,
+  fn: () => Promise<T>,
+  attempts = 4,
+): Promise<T> {
+  let lastError: unknown
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await fn()
+    } catch (err) {
+      lastError = err
+      if (attempt >= attempts) break
+      const delayMs = 500 * attempt * attempt
+      console.warn(`[retry] ${label} failed attempt ${attempt}/${attempts}; retrying in ${delayMs}ms`, err)
+      await new Promise((resolve) => setTimeout(resolve, delayMs))
+    }
+  }
+  throw lastError
+}
+
 async function requireStressUser(db: Firestore, userId: string, phone: string) {
   const found = await requireExistingPaUserWithAllowedPhoneForProductionTest(db, {
     projectId: PROJECT_ID,
@@ -220,35 +240,41 @@ function stripUndefined<T>(value: T): T {
 }
 
 async function resetScenarioState(db: Firestore, userId: string) {
-  const batch = db.batch()
-  batch.delete(db.collection("pa-candidate-job-states").doc(`${userId}__${JOB_ID}`))
-  batch.delete(db.collection("pa-employer-visible-profiles").doc(`${JOB_ID}__${userId}`))
-  await batch.commit()
+  await withFirestoreRetries("resetScenarioState", async () => {
+    const batch = db.batch()
+    batch.delete(db.collection("pa-candidate-job-states").doc(`${userId}__${JOB_ID}`))
+    batch.delete(db.collection("pa-employer-visible-profiles").doc(`${JOB_ID}__${userId}`))
+    await batch.commit()
+  })
 }
 
 async function snapshotScenarioState(db: Firestore, userId: string) {
-  const refs = [
-    db.collection("pa-candidate-job-states").doc(`${userId}__${JOB_ID}`),
-    db.collection("pa-employer-visible-profiles").doc(`${JOB_ID}__${userId}`),
-  ]
-  return Promise.all(
-    refs.map(async (ref) => {
-      const snap = await ref.get()
-      return { ref, exists: snap.exists, data: snap.exists ? snap.data() ?? {} : null }
-    }),
-  )
+  return withFirestoreRetries("snapshotScenarioState", async () => {
+    const refs = [
+      db.collection("pa-candidate-job-states").doc(`${userId}__${JOB_ID}`),
+      db.collection("pa-employer-visible-profiles").doc(`${JOB_ID}__${userId}`),
+    ]
+    return Promise.all(
+      refs.map(async (ref) => {
+        const snap = await ref.get()
+        return { ref, exists: snap.exists, data: snap.exists ? snap.data() ?? {} : null }
+      }),
+    )
+  })
 }
 
 async function restoreScenarioState(
   db: Firestore,
   backup: Awaited<ReturnType<typeof snapshotScenarioState>>,
 ) {
-  const batch = db.batch()
-  for (const item of backup) {
-    if (item.exists && item.data) batch.set(item.ref, item.data, { merge: false })
-    else batch.delete(item.ref)
-  }
-  await batch.commit()
+  await withFirestoreRetries("restoreScenarioState", async () => {
+    const batch = db.batch()
+    for (const item of backup) {
+      if (item.exists && item.data) batch.set(item.ref, item.data, { merge: false })
+      else batch.delete(item.ref)
+    }
+    await batch.commit()
+  })
 }
 
 async function countPaUsers(db: Firestore): Promise<number> {
@@ -597,8 +623,20 @@ async function main() {
       process.exitCode = 1
     }
   } finally {
-    await restoreScenarioState(db, stateBackup)
-    await releaseLock()
+    let cleanupError: unknown
+    try {
+      await restoreScenarioState(db, stateBackup)
+    } catch (err) {
+      cleanupError = err
+      console.error("[cleanup] restoreScenarioState failed after retries", err)
+    }
+    try {
+      await withFirestoreRetries("releaseLock", releaseLock)
+    } catch (err) {
+      console.error("[cleanup] releaseLock failed after retries", err)
+      cleanupError ??= err
+    }
+    if (cleanupError) throw cleanupError
   }
 }
 

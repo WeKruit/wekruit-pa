@@ -108,6 +108,8 @@ export type PreScreenClarifyComposer = (input: ComposeClarifyInput) => Promise<s
 
 const MIN_SOFT_ACCEPT_CLARIFY_ROUNDS = 2
 const MIN_SOFT_ACCEPT_SCORE = 0.75
+const ROLE_FIT_MAX_PROBE_SOFT_ACCEPT_SCORE = 0.6
+const MIN_NEAR_CONFIDENCE_PROCEED = 0.6
 
 // ────────────────────────────────────────────────────────────────────────────
 // Pipeline class
@@ -205,7 +207,16 @@ export class PreScreenPipeline {
       maxClarifyRounds: state.maxClarifyRounds,
     })
 
-    if (confGate.action === "clarify") {
+    const confidenceSoftProceed = confGate.action === "clarify" && shouldProceedDespiteLowConfidence({
+      qId: qState.qId,
+      type: qState.type,
+      s,
+      c,
+      confidenceThreshold: state.confidenceThreshold,
+      matchThreshold: qState.matchThreshold,
+    })
+
+    if (confGate.action === "clarify" && !confidenceSoftProceed) {
       qState.clarifyRounds = confGate.kAfter
       state.updatedAt = input.nowIso
       await this.opts.store.save(state)
@@ -225,6 +236,16 @@ export class PreScreenPipeline {
         state,
       }
     }
+    if (confidenceSoftProceed) {
+      log("prescreen.pipeline.confidence_soft_proceed", {
+        sessionId: input.sessionId,
+        qId: state.currentQId,
+        type: qState.type,
+        s,
+        c,
+        confidenceThreshold: state.confidenceThreshold,
+      })
+    }
 
     // max_clarify_exhausted OR proceed → continue to Type Gate
 
@@ -233,12 +254,13 @@ export class PreScreenPipeline {
       type: qState.type,
       s,
       c,
-      confidenceThreshold: state.confidenceThreshold,
+      confidenceThreshold: confidenceSoftProceed ? c : state.confidenceThreshold,
       // v1.9 — per-Q τ_m override (default falls back to type baseline).
       ...(qState.matchThreshold !== undefined ? { matchThreshold: qState.matchThreshold } : {}),
     })
     if (typeGate.action === "hard_stop") {
       if (shouldSoftAcceptAfterProbing({
+        qId: qState.qId,
         type: qState.type,
         s,
         c,
@@ -633,6 +655,7 @@ function clampScoredReasoning(text: string): string {
 }
 
 function shouldSoftAcceptAfterProbing(args: {
+  qId: string
   type: string
   s: number
   c: number
@@ -640,9 +663,39 @@ function shouldSoftAcceptAfterProbing(args: {
   clarifyRoundsSoFar: number
 }): boolean {
   if (args.type !== "MUST_HAVE") return false
+  if (isHardFilterQId(args.qId)) return false
   if (args.clarifyRoundsSoFar < MIN_SOFT_ACCEPT_CLARIFY_ROUNDS) return false
   if (args.c < args.state.confidenceThreshold) return false
+  if (
+    args.qId === "role_fit" &&
+    args.clarifyRoundsSoFar >= args.state.maxClarifyRounds &&
+    args.s >= ROLE_FIT_MAX_PROBE_SOFT_ACCEPT_SCORE
+  ) {
+    return true
+  }
   return args.s >= Math.max(args.state.threshold, MIN_SOFT_ACCEPT_SCORE)
+}
+
+function defaultMatchThresholdForType(type: string): number {
+  if (type === "MUST_HAVE") return 1.0
+  if (type === "PROBING") return 0.7
+  return 0
+}
+
+function shouldProceedDespiteLowConfidence(args: {
+  qId: string
+  type: string
+  s: number
+  c: number
+  confidenceThreshold: number
+  matchThreshold?: number
+}): boolean {
+  if (isHardFilterQId(args.qId)) return false
+  if (args.type !== "MUST_HAVE" && args.type !== "PROBING") return false
+  if (args.c < MIN_NEAR_CONFIDENCE_PROCEED) return false
+  if (args.c >= args.confidenceThreshold) return false
+  const matchThreshold = args.matchThreshold ?? defaultMatchThresholdForType(args.type)
+  return args.s >= matchThreshold
 }
 
 // ────────────────────────────────────────────────────────────────────────────
