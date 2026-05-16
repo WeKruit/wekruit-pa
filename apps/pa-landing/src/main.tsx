@@ -29,14 +29,14 @@ const HomeLanding = IS_LAYOFF_HOST ? LayoffLanding : Landing
 
 // Adam directive 2026-05-16: "tanstack / cache / paginated job load". Single
 // shared QueryClient — 5 min staleTime means revisits to /open and /market
-// paint instantly from cache; 10 min gcTime keeps freed entries around for
+// paint instantly from cache; 30 min gcTime keeps freed entries around for
 // back/forward navigation. Disable refetchOnWindowFocus to avoid burning a
 // Firestore read every time the user tabs back.
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       staleTime: 5 * 60 * 1000,
-      gcTime: 10 * 60 * 1000,
+      gcTime: 30 * 60 * 1000,
       refetchOnWindowFocus: false,
       retry: 1,
     },
