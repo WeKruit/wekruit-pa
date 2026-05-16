@@ -4004,6 +4004,21 @@ export {
   type PrescreenTurnScoredSnapshot,
 } from "./prescreen/turn-recorder.js"
 export {
+  runPrescreenTurn,
+  isUserExitPrescreenReply,
+  prescreenTurnRecordQId,
+  expiredSessionText,
+  userExitSessionText,
+  recentTerminalSessionText,
+  type PrescreenChannel,
+  type PrescreenChannelTextHint,
+  type PrescreenCfgLoader,
+  type PrescreenLifecycle,
+  type PrescreenRunContext,
+  type PrescreenRunResult,
+  type PrescreenRunnerDeps,
+} from "./prescreen/runner.js"
+export {
   KeywordSetJudge,
   buildKeywordSetPrompt,
 } from "./onboarding/judges/keyword-set.js"
