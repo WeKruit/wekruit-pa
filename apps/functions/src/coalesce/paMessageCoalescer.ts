@@ -43,6 +43,7 @@ import type { Firestore } from "firebase-admin/firestore"
 import { createInboundEvent } from "@pa/pa-broker"
 import { claimAndProcessInboundEvent } from "@pa/pa-orchestrator"
 import { PA_COLLECTIONS } from "@pa/core-types"
+import { decidePreClaireTurnOwner } from "../lib/pre-claire-turn-owner.js"
 
 import {
   coalesceTransaction,
@@ -572,29 +573,30 @@ export async function processCoalescedTurn(
   //
   // On no active session OR handler error → fall through to Claire.
   try {
+    const { runPrescreenTurnIfActive } = await import("../prescreen-turn-handler.js")
+    const psResult = await runPrescreenTurnIfActive({
+      db: deps.db,
+      userId,
+      toE164: fired.fromNumber,
+      replyText: fired.accumulatedBody,
+      lang: "en",
+      log: (event, payload) => log(`coalesce.prescreen.${event}`, payload),
+    })
     const { isLayoffIntakeActiveForUser } = await import("../layoff-sms-start.js")
-    const layoffOwnsTurn = await isLayoffIntakeActiveForUser(deps.db, userId)
-    const psResult = layoffOwnsTurn
-      ? { handled: false as const }
-      : await (async () => {
-          const { runPrescreenTurnIfActive } = await import("../prescreen-turn-handler.js")
-          return runPrescreenTurnIfActive({
-            db: deps.db,
-            userId,
-            toE164: fired.fromNumber,
-            replyText: fired.accumulatedBody,
-            lang: "en",
-            log: (event, payload) => log(`coalesce.prescreen.${event}`, payload),
-          })
-        })()
-    if (layoffOwnsTurn) {
+    const layoffOwnsTurn = psResult.handled ? false : await isLayoffIntakeActiveForUser(deps.db, userId)
+    const turnOwner = decidePreClaireTurnOwner({
+      prescreenHandled: psResult.handled,
+      layoffOwnsTurn,
+    })
+
+    if (turnOwner === "layoff_orchestrator") {
       log("[coalesce] prescreen+pii skipped — active layoff intake owns this turn", { userId })
     }
-    if (!psResult.handled) {
+    if (turnOwner !== "prescreen") {
       // v1.9 hotfix — also check active PII confirm session (chained after
       // prescreen terminal). PII pipeline runs multi-turn (3 Qs); route
       // those turns to PII handler before Claire.
-      if (!layoffOwnsTurn) {
+      if (turnOwner !== "layoff_orchestrator") {
         try {
           const { runPiiConfirmTurnIfActive } = await import("../pii-confirm-start.js")
           const piiResult = await runPiiConfirmTurnIfActive({

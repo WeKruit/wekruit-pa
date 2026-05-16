@@ -79,6 +79,74 @@ function makeFakeDb(seed: Record<string, Record<string, unknown>>) {
   return { db: db as never, docs }
 }
 
+function makeFakeDbThatRejectsOrderBy(seed: Record<string, Record<string, unknown>>) {
+  const { docs } = makeFakeDb(seed)
+
+  function docRef(collection: string, id: string) {
+    const path = `${collection}/${id}`
+    return {
+      id,
+      async get() {
+        const doc = docs.get(path) ?? { exists: false, data: {} }
+        return { exists: doc.exists, data: () => (doc.exists ? doc.data : undefined) }
+      },
+      async set(data: Record<string, unknown>, options?: unknown) {
+        const prev = docs.get(path)
+        const merge = Boolean((options as { merge?: boolean } | undefined)?.merge)
+        docs.set(path, { exists: true, data: merge ? { ...(prev?.data ?? {}), ...data } : data })
+      },
+      collection(subcollection: string) {
+        return {
+          async add(data: Record<string, unknown>) {
+            const childId = `auto_${docs.size + 1}`
+            docs.set(`${path}/${subcollection}/${childId}`, { exists: true, data })
+            return { id: childId }
+          },
+        }
+      },
+    }
+  }
+
+  const db = {
+    collection(collection: string) {
+      const filters: Array<{ field: string; value: unknown }> = []
+      let limitCount = Number.POSITIVE_INFINITY
+      const query = {
+        where(field: string, _op: string, value: unknown) {
+          filters.push({ field, value })
+          return query
+        },
+        orderBy() {
+          throw new Error("firestore_index_required_simulation")
+        },
+        limit(value: number) {
+          limitCount = value
+          return query
+        },
+        async get() {
+          const out = []
+          for (const [path, doc] of docs.entries()) {
+            if (!path.startsWith(`${collection}/`) || !doc.exists) continue
+            if (filters.every((f) => doc.data[f.field] === f.value)) {
+              const id = path.slice(collection.length + 1)
+              out.push({ id, data: () => doc.data, ref: docRef(collection, id) })
+            }
+          }
+          return { empty: out.length === 0, docs: out.slice(0, limitCount) }
+        },
+      }
+      return {
+        doc(id: string) {
+          return docRef(collection, id)
+        },
+        where: query.where,
+      }
+    },
+  }
+
+  return { db: db as never, docs }
+}
+
 describe("runPrescreenTurnIfActive session boundaries", () => {
   it("gives repeated prescreen probes distinct round guidance and non-repeated openers", () => {
     const guidance = [1, 2, 3, 4].map((round) => prescreenClarifyRoundGuidance(round, "en"))
@@ -343,6 +411,79 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
 
     assert.equal(second.handled, true)
     assert.equal(sent.length, 1, "second post-terminal follow-up should be handled silently")
+  })
+
+  it("routes an active prescreen without relying on a createdAt composite index", async () => {
+    const now = new Date().toISOString()
+    const { db } = makeFakeDbThatRejectsOrderBy({
+      "pa-prescreen-sessions/ps_active": {
+        sessionId: "ps_active",
+        userId: "u1",
+        jobId: "rain-software-engineer-fullstack-8849f6ef",
+        terminal: null,
+        currentQId: "role_fit",
+        createdAt: now,
+        updatedAt: now,
+        score: 0,
+        scoreMax: 1,
+        threshold: 0.65,
+        confidenceThreshold: 0.7,
+        maxClarifyRounds: 4,
+        qOrder: ["role_fit"],
+        questions: {
+          role_fit: {
+            qId: "role_fit",
+            type: "MUST_HAVE",
+            weight: 1,
+            clarifyRounds: 0,
+          },
+        },
+        workSession: { kind: "job_prescreen", status: "active", startedAt: now, boundary: "trigger" },
+        cfgSnapshot: {
+          questions: [
+            {
+              qId: "role_fit",
+              prompt: { en: "What recent work best matches this software engineering role?", zh: "What recent work best matches this software engineering role?" },
+              clarifyPrompt: { en: "Tell me more.", zh: "Tell me more." },
+              keywords: [{ keyword: "ownership", weight: 1 }],
+            },
+          ],
+        },
+      },
+    })
+
+    const caller: KeywordSetLlmCaller = {
+      async score() {
+        return {
+          perKeyword: [
+            { keyword: "ownership", match: 0.7, confidence: 0.8, evidence: "owned dashboard", reasoning: "clear ownership" },
+          ],
+          summary: "Needs one deeper example.",
+          answered: true,
+        }
+      },
+    }
+
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u1",
+      toE164: "+13054507715",
+      replyText: "I owned the dashboard and debugging workflow.",
+      keywordSetCaller: caller,
+      clarifyComposer: async () => "What systems did it touch end to end?",
+      sendSms: async (args) => ({
+        status: "queued",
+        from_number: null,
+        number: args.to,
+        content: args.content,
+        service: "iMessage",
+        is_outbound: true,
+      }),
+    })
+
+    assert.equal(result.handled, true)
+    assert.equal(result.terminal, null)
+    assert.equal(result.textSent, "What systems did it touch end to end?")
   })
 
   it("handles a coalesced multi-message role-fit reply as one probe turn", async () => {

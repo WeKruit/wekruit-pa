@@ -260,11 +260,16 @@ async function findActiveSession(
     .collection("pa-prescreen-sessions")
     .where("userId", "==", userId)
     .where("terminal", "==", null)
-    .orderBy("createdAt", "desc")
-    .limit(1)
     .get()
   if (snap.empty) return { kind: "none" }
-  const doc = snap.docs[0]
+  const candidates = [...snap.docs].sort((a, b) => {
+    const aData = a.data() as Record<string, unknown>
+    const bData = b.data() as Record<string, unknown>
+    const aMs = timestampMs(aData.updatedAt) ?? timestampMs(aData.createdAt) ?? 0
+    const bMs = timestampMs(bData.updatedAt) ?? timestampMs(bData.createdAt) ?? 0
+    return bMs - aMs
+  })
+  const doc = candidates[0]!
   const data = doc.data() as Record<string, unknown>
   const lastActiveMs = timestampMs(data.updatedAt) ?? timestampMs(data.createdAt)
   const nowMs = opts.nowMs ?? Date.now()

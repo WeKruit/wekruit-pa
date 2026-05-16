@@ -33,6 +33,7 @@ import { createHash, randomUUID } from "node:crypto"
 import { handleSendblueWebhook } from "./sendblue/webhook.js"
 import { paSendblueOutboxHandler } from "./sendblue/outbox.js"
 import { sendReaction as defaultSendReaction } from "./sendblue/send-reaction.js"
+import { decidePreClaireTurnOwner } from "./lib/pre-claire-turn-owner.js"
 
 // iter31 — Mailgun transport for email-verification step in onboarding.
 // iter32 deploy-fix 2026-05-04 — MAILGUN_* defineSecret bindings + the
@@ -807,40 +808,46 @@ async function processBrokerImessageEvent(
   // both honor the prescreen state machine. Fail-open: any error falls
   // through to Claire so users don't get stuck.
   try {
+    const { runPrescreenTurnIfActive } = await import("./prescreen-turn-handler.js")
+    const psResult = await runPrescreenTurnIfActive({
+      db,
+      userId: user.id,
+      toE164: payload.participant,
+      replyText: payload.text.trim(),
+      lang: "en",
+      log: (event, payload) => logger.info(`[prescreen][onPaInbound] ${event}`, payload ?? {}),
+    })
     const { isLayoffIntakeActiveForUser } = await import("./layoff-sms-start.js")
-    const layoffOwnsTurn = await isLayoffIntakeActiveForUser(db, user.id)
-    if (layoffOwnsTurn) {
+    const layoffOwnsTurn = psResult.handled ? false : await isLayoffIntakeActiveForUser(db, user.id)
+    const turnOwner = decidePreClaireTurnOwner({
+      prescreenHandled: psResult.handled,
+      layoffOwnsTurn,
+    })
+
+    if (turnOwner === "prescreen") {
+      logger.info("[prescreen][onPaInbound] handled — short-circuit Claire", {
+        userId: user.id,
+        sessionId: psResult.sessionId,
+        terminal: psResult.terminal,
+      })
+      // Mark inbound as completed so onPaInbound's status-check is happy.
+      await db.collection(PA_COLLECTIONS.inboundEvents).doc(claimed.id).set(
+        {
+          status: "completed",
+          completedAt: nowIso(),
+          updatedAt: nowIso(),
+          routedTo: "prescreen",
+        },
+        { merge: true }
+      )
+      return 1
+    }
+
+    if (turnOwner === "layoff_orchestrator") {
       logger.info("[prescreen+pii][onPaInbound] skipped — active layoff intake owns this turn", {
         userId: user.id,
       })
     } else {
-      const { runPrescreenTurnIfActive } = await import("./prescreen-turn-handler.js")
-      const psResult = await runPrescreenTurnIfActive({
-        db,
-        userId: user.id,
-        toE164: payload.participant,
-        replyText: payload.text.trim(),
-        lang: "en",
-        log: (event, payload) => logger.info(`[prescreen][onPaInbound] ${event}`, payload ?? {}),
-      })
-      if (psResult.handled) {
-        logger.info("[prescreen][onPaInbound] handled — short-circuit Claire", {
-          userId: user.id,
-          sessionId: psResult.sessionId,
-          terminal: psResult.terminal,
-        })
-        // Mark inbound as completed so onPaInbound's status-check is happy.
-        await db.collection(PA_COLLECTIONS.inboundEvents).doc(claimed.id).set(
-          {
-            status: "completed",
-            completedAt: nowIso(),
-            updatedAt: nowIso(),
-            routedTo: "prescreen",
-          },
-          { merge: true }
-        )
-        return 1
-      }
       // v1.9 hotfix — PII confirm pipeline check (chained after prescreen
       // terminal). If active PII session, route turn there before Claire.
       const { runPiiConfirmTurnIfActive } = await import("./pii-confirm-start.js")
