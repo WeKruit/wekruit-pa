@@ -16,6 +16,7 @@
  * CandidateShell's CANDIDATE_STYLES.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import { useQuery } from "@tanstack/react-query"
 import { collection, getDocs, limit as fsLimit, query, where } from "firebase/firestore"
 import { db } from "../lib/firebase.js"
 import {
@@ -425,9 +426,13 @@ function BatchTicker({ queuedCount }: { queuedCount: number }) {
 // Rows
 // ────────────────────────────────────────────────────────────────────────────
 
-function HuntRow({ r, queued, onPitch }: { r: DisplayJob; queued: boolean; onPitch: () => void }) {
+// Adam directive 2026-05-16 — matching-jobs hunting rows go straight to the
+// source ATS link. No "Pitch me" queue, no Tuesday batch. The queued/onPitch
+// signature stays on the row so existing wiring compiles, but neither is
+// actually surfaced in the new CTA.
+function HuntRow({ r }: { r: DisplayJob; queued?: boolean; onPitch?: () => void }) {
   return (
-    <tr className={`wk-tbl__row${queued ? " is-queued" : ""}`}>
+    <tr className="wk-tbl__row">
       <td className="wk-tbl__cell wk-tbl__cell--company">
         <CompanyMark logo={r.logo} bg={r.logoBg} size={38} />
         <div className="wk-tbl__co">
@@ -441,26 +446,26 @@ function HuntRow({ r, queued, onPitch }: { r: DisplayJob; queued: boolean; onPit
       </td>
       <td className="wk-tbl__cell"><span className="wk-tbl__muted">{r.fnLabel}</span></td>
       <td className="wk-tbl__cell"><span className="wk-tbl__muted">{r.location}</span></td>
-      <td className="wk-tbl__cell wk-tbl__cell--comp">{r.comp}</td>
+      <td className="wk-tbl__cell wk-tbl__cell--comp">
+        {r.comp ? r.comp : <span className="wk-tbl__muted" style={{ opacity: 0.45 }}>—</span>}
+      </td>
       <td className="wk-tbl__cell wk-tbl__cell--posted">{r.posted}</td>
       <td className="wk-tbl__cell wk-tbl__cell--cta">
-        {queued ? (
-          <span className="wk-pitchbtn is-queued">
-            <Icon name="check" size={12} stroke={2.4} /> Queued for Tue
-          </span>
+        {r.applyUrl ? (
+          <a className="wk-pitchbtn" href={r.applyUrl} target="_blank" rel="noopener noreferrer">
+            Open job <Icon name="arrow-right" size={12} stroke={2} />
+          </a>
         ) : (
-          <button className="wk-pitchbtn" onClick={onPitch}>
-            Pitch me <Icon name="arrow-right" size={12} stroke={2} />
-          </button>
+          <span className="wk-tbl__muted" style={{ fontSize: 12 }}>No link</span>
         )}
       </td>
     </tr>
   )
 }
 
-function HuntCard({ r, queued, onPitch }: { r: DisplayJob; queued: boolean; onPitch: () => void }) {
+function HuntCard({ r }: { r: DisplayJob; queued?: boolean; onPitch?: () => void }) {
   return (
-    <article className={`wk-hcard${queued ? " is-queued" : ""}`}>
+    <article className="wk-hcard">
       <header className="wk-hcard__head">
         <CompanyMark logo={r.logo} bg={r.logoBg} size={42} />
         <div>
@@ -476,15 +481,13 @@ function HuntCard({ r, queued, onPitch }: { r: DisplayJob; queued: boolean; onPi
         <span>{r.location}</span>
       </p>
       <footer className="wk-hcard__foot">
-        <span className="wk-hcard__comp">{r.comp}</span>
-        {queued ? (
-          <span className="wk-pitchbtn wk-pitchbtn--lg is-queued">
-            <Icon name="check" size={13} stroke={2.4} /> Queued for Tue
-          </span>
+        <span className="wk-hcard__comp">{r.comp ? r.comp : "—"}</span>
+        {r.applyUrl ? (
+          <a className="wk-pitchbtn wk-pitchbtn--lg" href={r.applyUrl} target="_blank" rel="noopener noreferrer">
+            Open job <Icon name="arrow-right" size={13} stroke={2} />
+          </a>
         ) : (
-          <button className="wk-pitchbtn wk-pitchbtn--lg" onClick={onPitch}>
-            Pitch me <Icon name="arrow-right" size={13} stroke={2} />
-          </button>
+          <span className="wk-tbl__muted" style={{ fontSize: 12 }}>No link</span>
         )}
       </footer>
     </article>
@@ -540,65 +543,59 @@ interface HuntingState {
 function useHuntingList(filters: {
   fn: Set<string>; level: Set<string>; loc: Set<string>; search: string; remoteOnly: boolean
 }): HuntingState {
-  const [state, setState] = useState<HuntingState>({ status: "idle", jobs: [], scanned: 0 })
+  // Adam directive 2026-05-16 — TanStack Query replaces the homegrown
+  // debounce/fetch/AbortController combo. Tab flips and back-button now
+  // paint from the QueryClient cache instantly (staleTime=5min lives in
+  // main.tsx's root QueryClient). Search keystrokes are still debounced
+  // locally so we don't fire a CF request per character.
+  const [debouncedSearch, setDebouncedSearch] = useState(filters.search.trim())
   const debounceRef = useRef<number | null>(null)
-
-  // Stable key — only refetch when filters change.
-  const key = useMemo(() => JSON.stringify({
-    fn: [...filters.fn].sort(),
-    lv: [...filters.level].sort(),
-    loc: [...filters.loc].sort(),
-    q: filters.search.trim(),
-    r: filters.remoteOnly,
-  }), [filters.fn, filters.level, filters.loc, filters.search, filters.remoteOnly])
-
   useEffect(() => {
     if (debounceRef.current != null) window.clearTimeout(debounceRef.current)
-    setState((s) => ({ ...s, status: "loading" }))
-    const controller = new AbortController()
+    debounceRef.current = window.setTimeout(() => setDebouncedSearch(filters.search.trim()), 200)
+    return () => {
+      if (debounceRef.current != null) window.clearTimeout(debounceRef.current)
+    }
+  }, [filters.search])
 
-    debounceRef.current = window.setTimeout(() => {
+  const fnTokens = useMemo(() => [...filters.fn].flatMap((l) => FN_TO_TOKENS[l] ?? []), [filters.fn])
+  const lvTokens = useMemo(() => [...filters.level].flatMap((l) => LEVEL_TO_TOKENS[l] ?? []), [filters.level])
+  const locTokens = useMemo(() => [...filters.loc].flatMap((l) => LOC_TO_TOKENS[l] ?? []), [filters.loc])
+
+  const queryKey = useMemo(() => [
+    "market-hunting",
+    {
+      fn: [...fnTokens].sort(),
+      level: [...lvTokens].sort(),
+      loc: [...locTokens].sort(),
+      search: debouncedSearch,
+      remoteOnly: filters.remoteOnly,
+    },
+  ], [fnTokens, lvTokens, locTokens, debouncedSearch, filters.remoteOnly])
+
+  const q = useQuery({
+    queryKey,
+    queryFn: async ({ signal }) => {
       const params = new URLSearchParams()
       params.set("limit", "120")
       params.set("freshDays", "45")
-      const fnTokens = [...filters.fn].flatMap((l) => FN_TO_TOKENS[l] ?? [])
-      const lvTokens = [...filters.level].flatMap((l) => LEVEL_TO_TOKENS[l] ?? [])
-      const locTokens = [...filters.loc].flatMap((l) => LOC_TO_TOKENS[l] ?? [])
       if (fnTokens.length) params.set("function", fnTokens.join(","))
       if (lvTokens.length) params.set("level", lvTokens.join(","))
       if (locTokens.length) params.set("location", locTokens.join(","))
-      if (filters.search.trim()) params.set("search", filters.search.trim())
+      if (debouncedSearch) params.set("search", debouncedSearch)
       if (filters.remoteOnly) params.set("remoteOnly", "true")
+      const resp = await fetch(`${OPEN_JOBS_URL}?${params.toString()}`, { signal })
+      if (!resp.ok) throw new Error(`paPublicOpenJobs returned HTTP ${resp.status}`)
+      const data = (await resp.json()) as OpenJobsResp
+      if (!data.ok) throw new Error(data.error ?? "Open jobs feed unavailable")
+      return { jobs: data.rows.map(fromOpenJob), scanned: data.scanned }
+    },
+    placeholderData: (previous) => previous,
+  })
 
-      fetch(`${OPEN_JOBS_URL}?${params.toString()}`, { signal: controller.signal })
-        .then(async (resp) => {
-          if (!resp.ok) throw new Error(`paPublicOpenJobs returned HTTP ${resp.status}`)
-          const data = (await resp.json()) as OpenJobsResp
-          if (!data.ok) throw new Error(data.error ?? "Open jobs feed unavailable")
-          setState({
-            status: "ready",
-            jobs: data.rows.map(fromOpenJob),
-            scanned: data.scanned,
-          })
-        })
-        .catch((err: unknown) => {
-          if (err instanceof DOMException && err.name === "AbortError") return
-          setState({
-            status: "error",
-            jobs: [],
-            scanned: 0,
-            message: err instanceof Error ? err.message : String(err),
-          })
-        })
-    }, 200)
-
-    return () => {
-      if (debounceRef.current != null) window.clearTimeout(debounceRef.current)
-      controller.abort()
-    }
-  }, [key, filters.fn, filters.level, filters.loc, filters.search, filters.remoteOnly])
-
-  return state
+  if (q.isLoading && !q.data) return { status: "loading", jobs: [], scanned: 0 }
+  if (q.isError) return { status: "error", jobs: [], scanned: 0, message: q.error instanceof Error ? q.error.message : String(q.error) }
+  return { status: "ready", jobs: q.data?.jobs ?? [], scanned: q.data?.scanned ?? 0 }
 }
 
 interface DirectState {
@@ -608,32 +605,20 @@ interface DirectState {
 }
 
 function useDirectLine(): DirectState {
-  const [state, setState] = useState<DirectState>({ status: "loading", jobs: [] })
-  useEffect(() => {
-    let cancelled = false
-    void (async () => {
-      try {
-        const q = query(
-          collection(db(), "pa-jobs"),
-          where("publicVisible", "==", true),
-          fsLimit(48),
-        )
-        const snap = await getDocs(q)
-        const jobs: DisplayJob[] = []
-        snap.forEach((doc) => {
-          const raw = doc.data() as PaJobDoc
-          jobs.push(fromPaJob(doc.id, raw))
-        })
-        // Surface collaborated first (the Direct line semantic), then any other public.
-        jobs.sort((a, b) => Number(b.via === "Direct line") - Number(a.via === "Direct line"))
-        if (!cancelled) setState({ status: "ready", jobs })
-      } catch (err) {
-        if (!cancelled) setState({ status: "error", jobs: [], message: err instanceof Error ? err.message : String(err) })
-      }
-    })()
-    return () => { cancelled = true }
-  }, [])
-  return state
+  const q = useQuery({
+    queryKey: ["market-direct-line", 48],
+    queryFn: async () => {
+      const fsQ = query(collection(db(), "pa-jobs"), where("publicVisible", "==", true), fsLimit(48))
+      const snap = await getDocs(fsQ)
+      const jobs: DisplayJob[] = []
+      snap.forEach((doc) => jobs.push(fromPaJob(doc.id, doc.data() as PaJobDoc)))
+      jobs.sort((a, b) => Number(b.via === "Direct line") - Number(a.via === "Direct line"))
+      return jobs
+    },
+  })
+  if (q.isLoading) return { status: "loading", jobs: [] }
+  if (q.isError) return { status: "error", jobs: [], message: q.error instanceof Error ? q.error.message : String(q.error) }
+  return { status: "ready", jobs: q.data ?? [] }
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -652,6 +637,15 @@ export default function Market(): ReactNode {
 
   const hunting = useHuntingList({ fn: fnSel, level: levelSel, loc: locSel, search: searchQ, remoteOnly })
   const direct = useDirectLine()
+
+  // Adam directive 2026-05-16 — paginated reveal on hunting list. Reset
+  // back to the first page whenever filters/search change so the user
+  // doesn't have to scroll past stale offsets.
+  const HUNT_PAGE_SIZE = 20
+  const [huntVisible, setHuntVisible] = useState(HUNT_PAGE_SIZE)
+  useEffect(() => {
+    setHuntVisible(HUNT_PAGE_SIZE)
+  }, [fnSel, levelSel, locSel, searchQ, remoteOnly])
 
   const onPitch = useCallback((id: string) => {
     setQueued((s) => { const n = new Set(s); n.add(id); return n })
@@ -700,6 +694,10 @@ export default function Market(): ReactNode {
                 </p>
               </header>
 
+              {/* Outbound batch ticker — pitch queue is now superseded by
+                  direct Apply ↗ links per Adam directive 2026-05-16, but
+                  the Tuesday batch is still real ops, so keep the ticker
+                  visible (count = 0 until we re-introduce a queue UI). */}
               <BatchTicker queuedCount={queued.size} />
 
               <div className="wk-market__layout">
@@ -756,7 +754,7 @@ export default function Market(): ReactNode {
                             <th className="wk-tbl__h">Location</th>
                             <th className="wk-tbl__h">Comp</th>
                             <th className="wk-tbl__h">Posted</th>
-                            <th className="wk-tbl__h wk-tbl__h--cta">Pitch</th>
+                            <th className="wk-tbl__h wk-tbl__h--cta">Apply</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -764,8 +762,8 @@ export default function Market(): ReactNode {
                             <tr><td colSpan={7} className="wk-tbl__empty">
                               <strong>No roles match.</strong> Try clearing filters or your search.
                             </td></tr>
-                          ) : hunting.jobs.map((r) => (
-                            <HuntRow key={r.id} r={r} queued={queued.has(r.id)} onPitch={() => onPitch(r.id)} />
+                          ) : hunting.jobs.slice(0, huntVisible).map((r) => (
+                            <HuntRow key={r.id} r={r} />
                           ))}
                         </tbody>
                       </table>
@@ -776,9 +774,20 @@ export default function Market(): ReactNode {
                         <div className="wk-tbl__empty wk-tbl__empty--block">
                           <strong>No roles match.</strong> Try clearing filters or your search.
                         </div>
-                      ) : hunting.jobs.map((r) => (
-                        <HuntCard key={r.id} r={r} queued={queued.has(r.id)} onPitch={() => onPitch(r.id)} />
+                      ) : hunting.jobs.slice(0, huntVisible).map((r) => (
+                        <HuntCard key={r.id} r={r} />
                       ))}
+                    </div>
+                  )}
+                  {hunting.status === "ready" && huntVisible < hunting.jobs.length && (
+                    <div style={{ display: "flex", justifyContent: "center", padding: "24px 0" }}>
+                      <button
+                        type="button"
+                        className="wk-pitchbtn wk-pitchbtn--lg"
+                        onClick={() => setHuntVisible((n) => Math.min(n + HUNT_PAGE_SIZE, hunting.jobs.length))}
+                      >
+                        Show {Math.min(HUNT_PAGE_SIZE, hunting.jobs.length - huntVisible)} more · {hunting.jobs.length - huntVisible} left
+                      </button>
                     </div>
                   )}
                 </div>
