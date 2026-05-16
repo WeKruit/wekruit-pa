@@ -11,7 +11,7 @@
  *   node --import tsx apps/functions/scripts/sendblue-entrypoint-matrix-firestore.ts
  */
 import { createHmac } from "node:crypto"
-import { mkdirSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { config as loadDotenv } from "dotenv"
 import { applicationDefault, getApps, initializeApp } from "firebase-admin/app"
@@ -20,14 +20,22 @@ import { getFirestore, type Firestore } from "firebase-admin/firestore"
 import { handleSendblueWebhook, type WebhookRequest, type WebhookResponse } from "../src/sendblue/webhook.js"
 import { runLayoffSmsStart } from "../src/layoff-sms-start.js"
 import { runPreScreenForUser } from "../src/prescreen-session-start.js"
+import { acquireProductionTestRunLock, productionTestRunLockId } from "./lib/prod-test-run-lock.mjs"
+import { requireExistingPaUserWithAllowedPhoneForProductionTest } from "./lib/prod-test-user-guard.mjs"
 
-loadDotenv({ path: ".env" })
-loadDotenv({ path: "apps/functions/.env", override: false })
+for (const envPath of [
+  path.resolve(process.cwd(), ".env"),
+  path.resolve(process.cwd(), "apps/functions/.env"),
+  path.resolve(process.cwd(), "../..", ".env"),
+  path.resolve(process.cwd(), "../..", "apps/functions/.env"),
+]) {
+  if (existsSync(envPath)) loadDotenv({ path: envPath, override: false })
+}
 
 const PROJECT_ID = "wekruit-5f89b"
 const JOB_ID = process.env.SENDBLUE_MATRIX_JOB_ID ?? "rain-software-engineer-fullstack-8849f6ef"
-const USER_ID = process.env.SENDBLUE_MATRIX_USER_ID ?? "verify-prescreen-stress-user"
-const PHONE = process.env.SENDBLUE_MATRIX_PHONE ?? "+19995550000"
+const USER_ID = process.env.SENDBLUE_MATRIX_USER_ID ?? "U7AwKT8nLDRa35DkuBxq"
+const PHONE = process.env.SENDBLUE_MATRIX_PHONE ?? "+14243201960"
 const ARTIFACT_DIR = path.resolve(".planning/sendblue-entrypoint-matrix/artifacts")
 const SECRET = "local-entrypoint-matrix-secret"
 
@@ -68,7 +76,6 @@ function makeReq(body: string): WebhookRequest {
   const headers = {
     "content-type": "application/json",
     "sendblue-signature": sign(body),
-    "x-e2e-test": "1",
   }
   return {
     rawBody: Buffer.from(body, "utf8"),
@@ -120,36 +127,19 @@ async function countUsers(db: Firestore): Promise<number> {
 }
 
 async function ensureExistingMatrixUser(db: Firestore) {
-  const snap = await db.collection("pa-users").doc(USER_ID).get()
-  if (!snap.exists) {
-    throw new Error(`Matrix user ${USER_ID} is missing; refusing to create a production pa-users row`)
-  }
-  const data = snap.data() ?? {}
-  await db.collection("pa-users").doc(USER_ID).set(
-    {
-      id: USER_ID,
-      phoneE164: PHONE,
-      testMode: true,
-      synthetic: true,
-      candidateLifecycleState: "synthetic_test",
-      signupSource: data.signupSource ?? "test:prescreen_stress",
-      updatedAt: new Date().toISOString(),
-    },
-    { merge: true },
-  )
-  return data
+  const found = await requireExistingPaUserWithAllowedPhoneForProductionTest(db, {
+    projectId: PROJECT_ID,
+    scriptName: "sendblue-entrypoint-matrix-firestore.ts",
+    userId: USER_ID,
+    phoneE164: PHONE,
+  })
+  return found.data
 }
 
 async function restoreMatrixUser(db: Firestore, before: FirebaseFirestore.DocumentData) {
   await db.collection("pa-users").doc(USER_ID).set(
     {
       ...before,
-      id: USER_ID,
-      phoneE164: PHONE,
-      testMode: true,
-      synthetic: true,
-      candidateLifecycleState: "synthetic_test",
-      updatedAt: new Date().toISOString(),
     },
     { merge: false },
   )
@@ -160,6 +150,41 @@ async function clearIdempotency(db: Firestore) {
     db.collection("pa-prescreen-trigger-idempotency").doc(`${JOB_ID}_${USER_ID}`).delete().catch(() => undefined),
     db.collection("pa-layoff-trigger-idempotency").doc(USER_ID).delete().catch(() => undefined),
   ])
+}
+
+async function cleanupMatrixPrescreenSessions(db: Firestore, starts: PrescreenStart[]) {
+  const now = new Date().toISOString()
+  const seen = new Set<string>()
+  const out: Array<{ sessionId: string; cleaned: boolean; previousTerminal: unknown }> = []
+  for (const start of starts) {
+    if (!start.sessionId || seen.has(start.sessionId)) continue
+    seen.add(start.sessionId)
+    const ref = db.collection("pa-prescreen-sessions").doc(start.sessionId)
+    const snap = await ref.get()
+    const data = snap.data() ?? {}
+    const previousTerminal = data.terminal ?? null
+    if (!snap.exists || previousTerminal) {
+      out.push({ sessionId: start.sessionId, cleaned: false, previousTerminal })
+      continue
+    }
+    await ref.set(
+      {
+        terminal: "PAUSE",
+        terminalReason: "sendblue_matrix_cleanup",
+        currentQId: null,
+        updatedAt: now,
+        workSession: {
+          kind: "job_prescreen",
+          status: "ended",
+          boundary: "sendblue_matrix_cleanup",
+          endedAt: now,
+        },
+      },
+      { merge: true },
+    )
+    out.push({ sessionId: start.sessionId, cleaned: true, previousTerminal })
+  }
+  return out
 }
 
 async function dispatch(
@@ -234,6 +259,17 @@ async function runMatrix(db: Firestore) {
   const beforeCount = await countUsers(db)
   const beforeUser = await ensureExistingMatrixUser(db)
   const results: ScenarioResult[] = []
+  let cleanup: Awaited<ReturnType<typeof cleanupMatrixPrescreenSessions>> = []
+  const releaseLock = await acquireProductionTestRunLock(db, {
+    lockId: productionTestRunLockId({
+      scope: "sendblue-prescreen-stress",
+      userId: USER_ID,
+      jobId: JOB_ID,
+    }),
+    runId,
+    scriptName: "sendblue-entrypoint-matrix-firestore.ts",
+    projectId: PROJECT_ID,
+  })
 
   try {
     await clearIdempotency(db)
@@ -334,7 +370,9 @@ async function runMatrix(db: Firestore) {
       failures: [],
     })
   } finally {
+    cleanup = await cleanupMatrixPrescreenSessions(db, prescreenStarts)
     await restoreMatrixUser(db, beforeUser)
+    await releaseLock()
   }
 
   const afterCount = await countUsers(db)
@@ -350,6 +388,7 @@ async function runMatrix(db: Firestore) {
     beforeCount,
     afterCount,
     noUserGrowth: beforeCount === afterCount,
+    cleanup,
     sent,
     results,
     passed: beforeCount === afterCount && results.every((r) => r.passed),

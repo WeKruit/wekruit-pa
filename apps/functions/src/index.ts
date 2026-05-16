@@ -90,6 +90,7 @@ import { postSlackAlert } from "./lib/slack-alert.js"
 
 // Phase 22 — proactive check-in sweep
 export { paProactiveSweep } from "./proactive-sweep.js"
+export { paCandidateLifecycleTrigger } from "./candidate-lifecycle-trigger.js"
 
 // Phase 24.5 — admin bootstrap (seed flags via PA_ADMIN_TOKEN, bypass local gcloud ADC)
 export { paAdminBootstrap } from "./admin-bootstrap.js"
@@ -222,6 +223,10 @@ export { paVoiceDialOutbound, paVoiceSipWebhook } from "./voice/index.js"
 // Frontend (PublicJobCv.tsx) POSTs base64 to this endpoint. ATS inbound
 // webhook (paAtsInboundWebhook) also targets this via PA_CV_INGEST_URL env.
 export { paPublicCvIngest } from "./public-cv-ingest.js"
+// WeKruit Open — public job board at layoff.wekruit.com/open. Reads from
+// matching-jobs (scraped/non-collab) with hard filters mirroring v16's
+// query (status==active, dead!=true, atsApplyUrl present, firstSeenAt fresh).
+export { paPublicOpenJobs } from "./public-open-jobs.js"
 // Candidate LinkedIn auth cannot use Firebase generic OIDC because LinkedIn
 // rejects token exchange without client_secret. These HTTP functions own the
 // OAuth exchange server-side and return a Firebase custom token.
@@ -818,58 +823,66 @@ async function processBrokerImessageEvent(
   // both honor the prescreen state machine. Fail-open: any error falls
   // through to Claire so users don't get stuck.
   try {
-    const { runPrescreenTurnIfActive } = await import("./prescreen-turn-handler.js")
-    const psResult = await runPrescreenTurnIfActive({
-      db,
-      userId: user.id,
-      toE164: payload.participant,
-      replyText: payload.text.trim(),
-      lang: "en",
-      log: (event, payload) => logger.info(`[prescreen][onPaInbound] ${event}`, payload ?? {}),
-    })
-    if (psResult.handled) {
-      logger.info("[prescreen][onPaInbound] handled — short-circuit Claire", {
+    const { isLayoffIntakeActiveForUser } = await import("./layoff-sms-start.js")
+    const layoffOwnsTurn = await isLayoffIntakeActiveForUser(db, user.id)
+    if (layoffOwnsTurn) {
+      logger.info("[prescreen+pii][onPaInbound] skipped — active layoff intake owns this turn", {
         userId: user.id,
-        sessionId: psResult.sessionId,
-        terminal: psResult.terminal,
       })
-      // Mark inbound as completed so onPaInbound's status-check is happy.
-      await db.collection(PA_COLLECTIONS.inboundEvents).doc(claimed.id).set(
-        {
-          status: "completed",
-          completedAt: nowIso(),
-          updatedAt: nowIso(),
-          routedTo: "prescreen",
-        },
-        { merge: true }
-      )
-      return 1
-    }
-    // v1.9 hotfix — PII confirm pipeline check (chained after prescreen
-    // terminal). If active PII session, route turn there before Claire.
-    const { runPiiConfirmTurnIfActive } = await import("./pii-confirm-start.js")
-    const piiResult = await runPiiConfirmTurnIfActive({
-      db,
-      userId: user.id,
-      toE164: payload.participant,
-      replyText: payload.text.trim(),
-      log: (event, payload) => logger.info(`[pii][onPaInbound] ${event}`, payload ?? {}),
-    })
-    if (piiResult.handled) {
-      logger.info("[pii][onPaInbound] handled — short-circuit Claire", {
+    } else {
+      const { runPrescreenTurnIfActive } = await import("./prescreen-turn-handler.js")
+      const psResult = await runPrescreenTurnIfActive({
+        db,
         userId: user.id,
-        completed: piiResult.completed,
+        toE164: payload.participant,
+        replyText: payload.text.trim(),
+        lang: "en",
+        log: (event, payload) => logger.info(`[prescreen][onPaInbound] ${event}`, payload ?? {}),
       })
-      await db.collection(PA_COLLECTIONS.inboundEvents).doc(claimed.id).set(
-        {
-          status: "completed",
-          completedAt: nowIso(),
-          updatedAt: nowIso(),
-          routedTo: "pii_confirm",
-        },
-        { merge: true }
-      )
-      return 1
+      if (psResult.handled) {
+        logger.info("[prescreen][onPaInbound] handled — short-circuit Claire", {
+          userId: user.id,
+          sessionId: psResult.sessionId,
+          terminal: psResult.terminal,
+        })
+        // Mark inbound as completed so onPaInbound's status-check is happy.
+        await db.collection(PA_COLLECTIONS.inboundEvents).doc(claimed.id).set(
+          {
+            status: "completed",
+            completedAt: nowIso(),
+            updatedAt: nowIso(),
+            routedTo: "prescreen",
+          },
+          { merge: true }
+        )
+        return 1
+      }
+      // v1.9 hotfix — PII confirm pipeline check (chained after prescreen
+      // terminal). If active PII session, route turn there before Claire.
+      const { runPiiConfirmTurnIfActive } = await import("./pii-confirm-start.js")
+      const piiResult = await runPiiConfirmTurnIfActive({
+        db,
+        userId: user.id,
+        toE164: payload.participant,
+        replyText: payload.text.trim(),
+        log: (event, payload) => logger.info(`[pii][onPaInbound] ${event}`, payload ?? {}),
+      })
+      if (piiResult.handled) {
+        logger.info("[pii][onPaInbound] handled — short-circuit Claire", {
+          userId: user.id,
+          completed: piiResult.completed,
+        })
+        await db.collection(PA_COLLECTIONS.inboundEvents).doc(claimed.id).set(
+          {
+            status: "completed",
+            completedAt: nowIso(),
+            updatedAt: nowIso(),
+            routedTo: "pii_confirm",
+          },
+          { merge: true }
+        )
+        return 1
+      }
     }
   } catch (err) {
     logger.warn("[prescreen+pii][onPaInbound] check FAILED — falling through to Claire", {

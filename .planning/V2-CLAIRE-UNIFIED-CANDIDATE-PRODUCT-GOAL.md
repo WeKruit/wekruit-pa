@@ -8,6 +8,29 @@ Short command:
 /goal Execute .planning/V2-CLAIRE-UNIFIED-CANDIDATE-PRODUCT-GOAL.md. Build Claire as one unified candidate product across candidate.wekruit.com, job prescreen, layoff.wekruit.com, external supply, matching, tagging, scoring, dashboard visibility, and controlled outbound. Multiple front doors, one pa-users profile/evidence/tagging/scoring system. Use Node 24, verify with Firestore + dashboard + live/live-equivalent flows, deploy and merge to main.
 ```
 
+## 2026-05-16 Added Scope: Production-Ready Claire Runtime
+
+This goal now includes production readiness for the actual Claire agent runtime, not only candidate web pages or dashboard state.
+
+Test four core prescreen situations with the real production Firestore shape and Sendblue/live-equivalent routing:
+
+1. Strong aligned candidate: should pass after concise but real probing, write terminal session state, memory event, candidate-job state, employer-visible profile, global reusable evidence, tags, and dashboard-visible reasons.
+2. Adjacent or fragmented candidate: should probe like a friend, accept multi-message answers, carry early answers for location/comp/visa forward, avoid repeated questions, and recover to pass when evidence becomes strong enough.
+3. Weak or clearly unqualified candidate: should probe several times before stopping, then hard-stop gracefully, keep the candidate in the global pool, write memory/tag evidence, and not create an employer-visible profile.
+4. Runtime safety and off-path conversation: privacy-sensitive, abusive, security/guardian, rate-limit, job-matching, client/job-question, everyday catchup, and automated outbound cases must route safely with explicit send/do-not-send reasons, suppression/cooldown, and no unauthorized disclosure or outbound.
+
+Acceptance for every scenario:
+
+- Use Node 24 for commands, tests, and deploys.
+- Use canonical candidate identity for user-wise tests: `pa-users/U7AwKT8nLDRa35DkuBxq`, email `indolencorlol@gmail.com`, phone `+14243201960`.
+- Treat `+13054507715` as the only active Claire/Sendblue sender number for this environment.
+- Assert `pa-users` count does not grow unless the test explicitly covers a controlled import/create path with cleanup approval.
+- Verify Firestore directly, not dashboard-only: `pa-prescreen-sessions`, linked turns, work session boundary, `pa-prescreen-memory-events`, `pa-candidate-job-states`, `pa-employer-visible-profiles`, `pa-users` evidence/tag fields, outbound/suppression/rate-limit docs.
+- Verify long-term memory and short-term session memory are separated: new prescreen trigger supersedes or ends the old active session; ended sessions do not catch future replies; terminal sessions update reusable profile memory.
+- Verify tagging and profile document updates: global reusable tags/evidence are written without overwriting stronger resume/profile facts, and job-specific evidence stays scoped by job id.
+- Verify production safety gates: privacy, abuse, security/guardian, rate limit, opt-out/suppression, outbound cooldown, active-session blocking, and explainable job-matching decision.
+- Include exact session ids, job ids, candidate id, state doc ids, memory event ids, tag/evidence fields, and dashboard routes in the final report.
+
 ## Core Product Principle
 
 WeKruit has multiple front doors, not multiple candidate products.
@@ -17,10 +40,6 @@ WeKruit has multiple front doors, not multiple candidate products.
 - iMessage/SMS `WeKruit_<jobId>_<userId>_Job` = job prescreen trigger.
 - `layoff.wekruit.com` = layoff-specific entry.
 - iMessage/SMS `WeKruit_LAID_OFF` = layoff source-aware onboarding trigger.
-- iMessage/SMS `START`, `hi`, or another normal candidate reply with no active
-  job/layoff trigger = regular Claire candidate onboarding. If a recent ATS
-  pending invite exists, that same `START` reply must virtualize into the
-  matching job prescreen; otherwise it must stay in general onboarding.
 - external supply/admin uploads = operator-side candidate acquisition.
 
 Underlying truth must be shared:
@@ -370,25 +389,44 @@ Rules:
 - Never use emoji in rejection, hard stop, layoff distress, visa/sponsorship, consent, privacy, or compliance-sensitive messages.
 - Avoid slang, exaggerated praise, and robotic repeated phrasing.
 
-### 12. Verification
+### 12. Friendly Lifecycle And Event Triggers
+
+Outside job prescreens, Claire should behave like a durable candidate-side agent that remembers the person and checks in when there is a real reason.
+
+Add a source-aware lifecycle layer for:
+
+- laid-off candidate check-ins after a fresh layoff signal or meaningful time gap
+- “how are things going” follow-ups when the candidate has not updated status recently
+- matching notifications when a role becomes newly relevant to their profile
+- post-job-change updates when the candidate says they found a role or changed direction
+- profile freshness nudges when resume, location, visa, target role, or availability may be stale
+
+Rules:
+
+- Prescreen remains professional and job-specific.
+- Non-prescreen messages must be friendly, contextual, and candidate-first.
+- Every proactive message needs an explicit event reason, cooldown, frequency cap, and opt-out/suppression path.
+- Do not send a check-in just because a cron ran; only send when there is candidate value.
+- Do not pretend to have checked on someone if the system only has stale data.
+- Use recent session memory and `pa-users` evidence so messages reference real context.
+- Persist every lifecycle touch as a session/event with source, reason, cooldown key, outbound id, candidate reply, and resulting evidence/tag updates.
+- Avoid annoying users: cap repeats, avoid stacking messages, respect no-response behavior, and suppress during active prescreen/intake unless explicitly relevant.
+
+Acceptance:
+
+- Add a lifecycle-trigger decision service with explainable “send / do not send” reasons.
+- Add tests for cooldowns, suppression, active-session blocking, and event-specific copy.
+- Verify at least one laid-off friendly check-in, one match notification, and one no-send case in Firestore without relying on dashboard-only proof.
+
+### 13. Verification
 
 Required verification:
 
 - Node 24 targeted tests.
 - Firestore audit of candidate evidence/tag writes.
-- One job prescreen live or live-equivalent Sendblue flow using
-  `WeKruit_<jobId>_<userId>_Job`.
-- One `WeKruit_LAID_OFF` live or live-equivalent Sendblue flow.
-- One normal/random candidate live or live-equivalent Sendblue flow using
-  `START` or `hi`, proving it stays in regular onboarding when no pending invite
-  exists.
-- One `START` live or live-equivalent Sendblue flow with a recent ATS pending
-  invite, proving it virtualizes into the right job prescreen instead of
-  regular onboarding.
-- Stress cases for at least four candidate characteristics: strong fit,
-  adjacent fit, weak/evasive fit, and multi-message fragmented replies. The
-  transcript/reply quality must be read by the tester; do not rely only on
-  test green.
+- One job prescreen live or live-equivalent flow.
+- One `WeKruit_LAID_OFF` live-equivalent flow.
+- One general onboarding live-equivalent flow.
 - One layoff signup duplicate-phone path check.
 - One layoff auth claim/adoption check.
 - One layoff resume ingest check.

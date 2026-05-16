@@ -29,7 +29,7 @@ import { enqueueOutbound } from "@pa/pa-broker"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import { hashCandidateHandle, linkCandidateHandle } from "@pa/pa-persistence"
 import { WEKRUIT_LAYOFF_SOURCE } from "@pa/pa-orchestrator"
-import { runLayoffSmsStart } from "./layoff-sms-start.js"
+import { runLayoffSmsStart, supersedeActivePrescreensForLayoff } from "./layoff-sms-start.js"
 
 /** Source tag — drives Claire's opener variant + listing filter + analytics. */
 export const LAYOFF_SOURCE_TAG = WEKRUIT_LAYOFF_SOURCE
@@ -251,6 +251,7 @@ export async function runRegisterLayoffCandidate(
   const batch = deps.db.batch()
   batch.set(userRef, writePayload, { merge: true })
   batch.set(indexRef, { candidateId, lastLaidOffAt: now, phoneHash: indexId }, { merge: true })
+  batch.delete(deps.db.collection("pa-ats-pending-trigger").doc(phoneE164))
 
   // List-position counter (for the success screen)
   const counterRef = deps.db.doc("layoff_meta/counters")
@@ -259,6 +260,7 @@ export async function runRegisterLayoffCandidate(
   if (!isReregistration) batch.set(counterRef, { candidateCount: listPosition }, { merge: true })
 
   await batch.commit()
+  await supersedeActivePrescreensForLayoff(deps.db, { candidateId, nowIso: isoNow })
   await linkCandidateHandle(deps.db, {
     candidateId,
     kind: "phone",
@@ -427,7 +429,7 @@ export async function runListLayoffCandidates(
 
   const withinDays = input.withinDays ?? 180
   const cutoff = new Date(Date.now() - withinDays * 86400_000)
-  q = q.where("lastLaidOffAt", ">=", cutoff)
+  q = q.where("lastLaidOffAt", ">=", cutoff).orderBy("lastLaidOffAt", "desc")
 
   if (input.functions?.length) {
     q = q.where("layoffContext.function", "in", input.functions.slice(0, 10))

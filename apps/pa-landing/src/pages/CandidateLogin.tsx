@@ -310,6 +310,7 @@ export function CandidateShell({ children, hero = false }: { children: ReactNode
           </Link>
           <nav className="wk-nav" aria-label="Candidate navigation">
             <Link to="/" className="wk-nav__link">Open interviews</Link>
+            <Link to="/market" className="wk-nav__link">Market</Link>
             <Link to="/me" className="wk-nav__link">Pipeline</Link>
             <Link to="/me/profile" className="wk-nav__link">Profile</Link>
           </nav>

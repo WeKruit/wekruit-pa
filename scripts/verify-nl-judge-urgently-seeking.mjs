@@ -15,6 +15,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { applicationDefault, cert, getApps, initializeApp } from "firebase-admin/app"
 import { getFirestore } from "firebase-admin/firestore"
+import { requireExistingPaUserForProductionTest } from "../apps/functions/scripts/lib/prod-test-user-guard.mjs"
 
 function bootstrapCreds() {
   if (process.env.GOOGLE_APPLICATION_CREDENTIALS) return
@@ -42,6 +43,11 @@ const db = getFirestore()
 
 const USER_ID = process.env.PA_TEST_USER_ID ?? "verify-nl-judge-laid-off"
 const SNIPPET = "I just got laid off from my last job."
+
+await requireExistingPaUserForProductionTest(db, {
+  scriptName: "scripts/verify-nl-judge-urgently-seeking.mjs",
+  userId: USER_ID,
+})
 
 // Reset state.
 await db.collection("pa-users").doc(USER_ID).set(

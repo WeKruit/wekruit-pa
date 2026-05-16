@@ -65,6 +65,7 @@ import { runEvaluation } from "../src/external-supply/evaluate.js"
 import { runDraftOutreachPlan } from "../src/external-supply/outreach.js"
 import { runSyncPlanToInstantly } from "../src/external-supply/instantly-sync.js"
 import { handleInstantlyWebhook } from "../src/external-supply/instantly-webhook.js"
+import { assertProductionPaUserCreationAllowed } from "./lib/prod-test-user-guard.mjs"
 
 const PROJECT_ID = "wekruit-5f89b"
 const NOW_ISO = new Date().toISOString()
@@ -231,6 +232,13 @@ async function main() {
   })
   const db = getFirestore()
   db.settings({ ignoreUndefinedProperties: true })
+
+  assertProductionPaUserCreationAllowed({
+    projectId: PROJECT_ID,
+    scriptName: "external-supply-prod-smoke.ts",
+    reason:
+      "External-supply prod smoke seeds synthetic records and runResolveBatchIdentity creates prospect pa-users.",
+  })
 
   const evidence: Record<string, unknown> = {
     runId: SMOKE_RUN_ID,

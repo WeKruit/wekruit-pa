@@ -1,0 +1,104 @@
+{
+  "runId": "sbmatrix-2026-05-15T21-32-31-663Z",
+  "projectId": "wekruit-5f89b",
+  "userId": "U7AwKT8nLDRa35DkuBxq",
+  "phone": "+14243201960",
+  "jobId": "rain-software-engineer-fullstack-8849f6ef",
+  "beforeCount": 602,
+  "afterCount": 602,
+  "noUserGrowth": true,
+  "cleanup": [
+    {
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260515T213233545Z",
+      "cleaned": false,
+      "previousTerminal": "PAUSE"
+    },
+    {
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260515T213238601Z",
+      "cleaned": true,
+      "previousTerminal": null
+    }
+  ],
+  "sent": [
+    {
+      "kind": "prescreen",
+      "to": "+14243201960",
+      "content": "Hi — Claire from Rain. Quick screen for Software Engineer - Fullstack. What recent work best matches this software engineering role?"
+    },
+    {
+      "kind": "layoff",
+      "to": "+14243201960",
+      "content": "stubbed layoff kickoff"
+    },
+    {
+      "kind": "prescreen",
+      "to": "+14243201960",
+      "content": "Hi — Claire from Rain. Quick screen for Software Engineer - Fullstack. What recent work best matches this software engineering role?"
+    }
+  ],
+  "results": [
+    {
+      "slug": "job_prescreen_trigger",
+      "webhookStatus": 200,
+      "webhookBody": {
+        "ok": true,
+        "action": "prescreen_triggered"
+      },
+      "passed": true,
+      "evidence": {
+        "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260515T213233545Z",
+        "action": "prescreen_triggered",
+        "sentPrescreenCount": 1
+      },
+      "failures": []
+    },
+    {
+      "slug": "layoff_trigger",
+      "webhookStatus": 200,
+      "webhookBody": {
+        "ok": true,
+        "action": "layoff_triggered"
+      },
+      "passed": true,
+      "evidence": {
+        "action": "layoff_triggered",
+        "source": "WeKruit_Laid_Off",
+        "kickoffOutboundId": "stub-layoff-1778880756013",
+        "sentLayoffCount": 1
+      },
+      "failures": []
+    },
+    {
+      "slug": "normal_start_no_pending_invite",
+      "webhookStatus": 200,
+      "webhookBody": {
+        "ok": true,
+        "eventId": "inb_6017f736ae6873c164bee47b33ce567090f388cd",
+        "created": true
+      },
+      "passed": true,
+      "evidence": {
+        "eventId": "inb_6017f736ae6873c164bee47b33ce567090f388cd",
+        "rawText": "START",
+        "rawE2e": false
+      },
+      "failures": []
+    },
+    {
+      "slug": "start_with_ats_pending_invite",
+      "webhookStatus": 200,
+      "webhookBody": {
+        "ok": true,
+        "action": "prescreen_triggered"
+      },
+      "passed": true,
+      "evidence": {
+        "action": "prescreen_triggered",
+        "pendingConsumed": true,
+        "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260515T213238601Z"
+      },
+      "failures": []
+    }
+  ],
+  "passed": true
+}

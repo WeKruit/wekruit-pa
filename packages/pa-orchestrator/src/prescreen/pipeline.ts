@@ -108,6 +108,8 @@ export type PreScreenClarifyComposer = (input: ComposeClarifyInput) => Promise<s
 
 const MIN_SOFT_ACCEPT_CLARIFY_ROUNDS = 2
 const MIN_SOFT_ACCEPT_SCORE = 0.75
+const ROLE_FIT_MAX_PROBE_SOFT_ACCEPT_SCORE = 0.6
+const MIN_NEAR_CONFIDENCE_PROCEED = 0.6
 
 // ────────────────────────────────────────────────────────────────────────────
 // Pipeline class
@@ -170,11 +172,30 @@ export class PreScreenPipeline {
       )
     }
 
-    // ── Evaluate via KeywordSetJudge ─────────────────────────────────────────
-    const scored = await question.judge.judgeScored(input.reply, input.lang, input.judgeCtx)
+    await this.consumeEarlyHardFilterAnswers({
+      state,
+      reply: input.reply,
+      lang: input.lang,
+      judgeCtx: input.judgeCtx,
+      nowIso: input.nowIso,
+      log,
+    })
+
     const qState = state.questions[state.currentQId]
+    const priorEvidenceReplies = normalizeEvidenceReplies(qState.evidenceReplies)
+    const scoringReply = composeQuestionEvidenceReply(priorEvidenceReplies, input.reply)
+
+    // ── Evaluate via KeywordSetJudge ─────────────────────────────────────────
+    const rawScored = await question.judge.judgeScored(scoringReply, input.lang, input.judgeCtx)
+    const scored = applyHardFilterScoreOverride(state.currentQId, scoringReply, rawScored)
+    const confirmedHardFilterMismatch =
+      isHardFilterQId(state.currentQId) &&
+      hasHardFilterMismatch(state.currentQId, scoringReply, scored) &&
+      qState.clarifyRounds > 0 &&
+      scored.aggregate.c >= state.confidenceThreshold
     const merged = mergeScored(qState.scored, scored)
     qState.scored = merged
+    qState.evidenceReplies = appendEvidenceReply(priorEvidenceReplies, input.reply)
     const s = merged.aggregate.s
     const c = merged.aggregate.c
 
@@ -195,7 +216,16 @@ export class PreScreenPipeline {
       maxClarifyRounds: state.maxClarifyRounds,
     })
 
-    if (confGate.action === "clarify") {
+    const confidenceSoftProceed = confGate.action === "clarify" && shouldProceedDespiteLowConfidence({
+      qId: qState.qId,
+      type: qState.type,
+      s,
+      c,
+      confidenceThreshold: state.confidenceThreshold,
+      matchThreshold: qState.matchThreshold,
+    })
+
+    if (confGate.action === "clarify" && !confidenceSoftProceed) {
       qState.clarifyRounds = confGate.kAfter
       state.updatedAt = input.nowIso
       await this.opts.store.save(state)
@@ -215,6 +245,16 @@ export class PreScreenPipeline {
         state,
       }
     }
+    if (confidenceSoftProceed) {
+      log("prescreen.pipeline.confidence_soft_proceed", {
+        sessionId: input.sessionId,
+        qId: state.currentQId,
+        type: qState.type,
+        s,
+        c,
+        confidenceThreshold: state.confidenceThreshold,
+      })
+    }
 
     // max_clarify_exhausted OR proceed → continue to Type Gate
 
@@ -223,12 +263,13 @@ export class PreScreenPipeline {
       type: qState.type,
       s,
       c,
-      confidenceThreshold: state.confidenceThreshold,
+      confidenceThreshold: confidenceSoftProceed ? c : state.confidenceThreshold,
       // v1.9 — per-Q τ_m override (default falls back to type baseline).
       ...(qState.matchThreshold !== undefined ? { matchThreshold: qState.matchThreshold } : {}),
     })
     if (typeGate.action === "hard_stop") {
       if (shouldSoftAcceptAfterProbing({
+        qId: qState.qId,
         type: qState.type,
         s,
         c,
@@ -244,6 +285,19 @@ export class PreScreenPipeline {
           clarifyRounds: qState.clarifyRounds,
           threshold: state.threshold,
         })
+      } else if (confirmedHardFilterMismatch) {
+        qState.finalS = s
+        qState.finalC = c
+        qState.answeredAt = input.nowIso
+        qState.terminalCause = "type_gate_fail"
+        return await this.transitionTerminal(
+          state,
+          "HARD_STOP",
+          `hard_filter_mismatch at qId=${qState.qId} s=${s.toFixed(2)} c=${c.toFixed(2)}: ${hardFilterMismatchReason(qState.qId)}`,
+          input.nowIso,
+          input.lang,
+          log
+        )
       } else if (qState.clarifyRounds < state.maxClarifyRounds) {
         qState.clarifyRounds += 1
         state.updatedAt = input.nowIso
@@ -292,6 +346,14 @@ export class PreScreenPipeline {
     qState.finalC = c
     qState.answeredAt = input.nowIso
     state.score += s * qState.weight
+    await this.consumeEarlyHardFilterAnswers({
+      state,
+      reply: input.reply,
+      lang: input.lang,
+      judgeCtx: input.judgeCtx,
+      nowIso: input.nowIso,
+      log,
+    })
 
     // ── Viability Check ──────────────────────────────────────────────────────
     // Skip viability on the LAST Q — once R_max=0, "S < T·S_max" is just the
@@ -321,9 +383,8 @@ export class PreScreenPipeline {
     }
 
     // ── Advance to next Q OR Final Decision ─────────────────────────────────
-    const nextIdx = state.qOrder.indexOf(state.currentQId) + 1
-    if (nextIdx < state.qOrder.length) {
-      const nextQId = state.qOrder[nextIdx]
+    const nextQId = findNextUnansweredQId(state, state.currentQId)
+    if (nextQId) {
       const fromQId = state.currentQId
       state.currentQId = nextQId
       state.updatedAt = input.nowIso
@@ -336,6 +397,64 @@ export class PreScreenPipeline {
     }
 
     return await this.transitionFinal(state, input.nowIso, input.lang, log)
+  }
+
+  private async consumeEarlyHardFilterAnswers(args: {
+    state: PreScreenState
+    reply: string
+    lang: Lang
+    judgeCtx: JudgeCtx
+    nowIso: string
+    log: (event: string, payload: Record<string, unknown>) => void
+  }): Promise<number> {
+    const currentIdx = args.state.currentQId ? args.state.qOrder.indexOf(args.state.currentQId) : -1
+    if (currentIdx < 0) return 0
+
+    let consumed = 0
+    for (let idx = currentIdx + 1; idx < args.state.qOrder.length; idx += 1) {
+      const qId = args.state.qOrder[idx]
+      if (!isHardFilterQId(qId)) continue
+      const qState = args.state.questions[qId]
+      const question = this.opts.questions[qId]
+      if (!qState || !question || qState.answeredAt) continue
+
+      const signal = extractPositiveHardFilterSignal(qId, args.reply)
+      if (!signal) continue
+
+      const priorEvidenceReplies = normalizeEvidenceReplies(qState.evidenceReplies)
+      const scoringReply = composeQuestionEvidenceReply(priorEvidenceReplies, signal)
+      const rawScored = await question.judge.judgeScored(scoringReply, args.lang, args.judgeCtx)
+      const scored = applyHardFilterScoreOverride(qId, scoringReply, rawScored)
+      const merged = mergeScored(qState.scored, scored)
+      const s = merged.aggregate.s
+      const c = merged.aggregate.c
+      const matchThreshold = qState.matchThreshold ?? defaultMatchThresholdForType(qState.type)
+      if (s < matchThreshold || c < args.state.confidenceThreshold) {
+        args.log("prescreen.pipeline.early_hard_filter_signal_unconfirmed", {
+          sessionId: args.state.sessionId,
+          qId,
+          s,
+          c,
+          matchThreshold,
+        })
+        continue
+      }
+
+      qState.scored = merged
+      qState.evidenceReplies = appendEvidenceReply(priorEvidenceReplies, signal)
+      qState.finalS = s
+      qState.finalC = c
+      qState.answeredAt = args.nowIso
+      args.state.score += s * qState.weight
+      args.log("prescreen.pipeline.early_hard_filter_answer_consumed", {
+        sessionId: args.state.sessionId,
+        qId,
+        s,
+        c,
+      })
+      consumed += 1
+    }
+    return consumed
   }
 
   /**
@@ -507,7 +626,165 @@ export class PreScreenPipeline {
   }
 }
 
+const MAX_EVIDENCE_REPLIES = 8
+const MAX_EVIDENCE_REPLY_CHARS = 900
+const MAX_EVIDENCE_TOTAL_CHARS = 4200
+
+function normalizeEvidenceReplies(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .filter((v): v is string => typeof v === "string")
+    .map((v) => v.trim())
+    .filter(Boolean)
+    .slice(-MAX_EVIDENCE_REPLIES)
+}
+
+function appendEvidenceReply(priorReplies: string[], reply: string): string[] {
+  const trimmed = reply.trim()
+  if (!trimmed) return priorReplies
+  const clipped = trimmed.slice(0, MAX_EVIDENCE_REPLY_CHARS)
+  return [...priorReplies, clipped].slice(-MAX_EVIDENCE_REPLIES)
+}
+
+function composeQuestionEvidenceReply(priorReplies: string[], latestReply: string): string {
+  const replies = appendEvidenceReply(priorReplies, latestReply)
+  if (replies.length <= 1) return replies[0] ?? latestReply
+  const chunks: string[] = []
+  let total = 0
+  for (const [idx, reply] of replies.entries()) {
+    const chunk = `Answer ${idx + 1}: ${reply}`
+    total += chunk.length
+    if (total > MAX_EVIDENCE_TOTAL_CHARS) break
+    chunks.push(chunk)
+  }
+  return chunks.join("\n")
+}
+
+function findNextUnansweredQId(state: PreScreenState, currentQId: string | null): string | null {
+  const currentIdx = currentQId ? state.qOrder.indexOf(currentQId) : -1
+  const startIdx = currentIdx >= 0 ? currentIdx + 1 : 0
+  for (let idx = startIdx; idx < state.qOrder.length; idx += 1) {
+    const qId = state.qOrder[idx]
+    if (!state.questions[qId]?.answeredAt) return qId
+  }
+  return null
+}
+
+function extractPositiveHardFilterSignal(qId: string, reply: string): string | null {
+  const text = reply.trim()
+  if (!text) return null
+  const sentences = splitSignalSentences(text)
+  const matcher = positiveHardFilterMatcher(qId)
+  if (!matcher) return null
+  const picked = sentences.filter((sentence) => matcher(sentence.toLowerCase()))
+  if (picked.length === 0) return null
+  return picked.join(" ").slice(0, MAX_EVIDENCE_REPLY_CHARS)
+}
+
+function splitSignalSentences(text: string): string[] {
+  const normalized = text.replace(/\s+/g, " ").trim()
+  if (!normalized) return []
+  const parts = normalized
+    .split(/(?<=[.!?。！？])\s+|[\n\r]+/g)
+    .map((part) => part.trim())
+    .filter(Boolean)
+  return parts.length > 0 ? parts : [normalized]
+}
+
+function positiveHardFilterMatcher(qId: string): ((text: string) => boolean) | null {
+  if (qId === "location_alignment") {
+    return (text) =>
+      /\b(new york|nyc|listed location|location|hybrid|onsite|in office|remote setup|remote-flexible)\b/.test(text) &&
+      /\b(works?|workable|fine|aligned|ok|okay|yes|can|able|willing|open to|available)\b/.test(text) &&
+      !/\b(can'?t|cannot|unable|not able|won't|would not|only remote|remote only|different city|not workable|not aligned)\b/.test(text)
+  }
+  if (qId === "compensation_alignment") {
+    return (text) =>
+      /(?:\$?\d{2,3}\s?k|\bcomp(?:ensation)?\b|\bsalary\b|\brange\b)/.test(text) &&
+      /\b(works?|workable|fine|aligned|ok|okay|yes|within|open to)\b/.test(text) &&
+      !/\b(too low|below|need higher|would need more|not workable|not aligned)\b/.test(text)
+  }
+  if (qId === "sponsorship_status") {
+    return (text) =>
+      (
+        /\b(do not|don't|dont|no)\b[\s\S]{0,60}\b(need|require)\b[\s\S]{0,80}\b(visa sponsorship|sponsorship|sponsor)\b/.test(text) ||
+        /\b(visa sponsorship|sponsorship|sponsor)\b[\s\S]{0,80}\b(not needed|not required|unneeded)\b/.test(text) ||
+        /\b(us citizen|u\.s\. citizen|green card|permanent resident|work authorized|authorized to work)\b/.test(text)
+      )
+  }
+  return null
+}
+
+function applyHardFilterScoreOverride(
+  qId: string,
+  scoringReply: string,
+  scored: ScoredJudgeResult
+): ScoredJudgeResult {
+  if (!isHardFilterQId(qId)) return scored
+  if (!hasHardFilterMismatch(qId, scoringReply, scored)) return scored
+
+  const summary = hardFilterMismatchReason(qId)
+  return {
+    ...scored,
+    perKeyword: scored.perKeyword.map((cell) => ({
+      ...cell,
+      match: Math.min(cell.match, 0.25),
+      confidence: Math.max(cell.confidence, 0.85),
+      reasoning: clampScoredReasoning(summary),
+    })),
+    aggregate: {
+      s: Math.min(scored.aggregate.s, 0.25),
+      c: Math.max(scored.aggregate.c, 0.85),
+      summary,
+    },
+    abortHint: {
+      kind: "low_confidence",
+      reason: summary,
+    },
+  }
+}
+
+function isHardFilterQId(qId: string): boolean {
+  return qId === "location_alignment" || qId === "compensation_alignment" || qId === "sponsorship_status"
+}
+
+function hasHardFilterMismatch(qId: string, scoringReply: string, scored: ScoredJudgeResult): boolean {
+  const text = `${scoringReply}\n${scored.aggregate.summary}\n${scored.abortHint?.reason ?? ""}`.toLowerCase()
+  if (qId === "location_alignment") {
+    return (
+      /\b(can'?t|cannot|not able|unable|won't|would not)\b[\s\S]{0,160}\b(relocat|move|be in|work in|commute|onsite|weekly|new york|nyc|listed location)\b/.test(text) ||
+      /\b(remote only|only remote|different city)\b/.test(text) ||
+      /\b(declines?|mismatch|not .*alignment|not .*listed location)\b/.test(text)
+    )
+  }
+
+  if (qId === "compensation_alignment") {
+    return /\b(not aligned|too low|below my range|need higher|would need more|not workable)\b/.test(text)
+  }
+
+  if (qId === "sponsorship_status") {
+    return /\b(company does not sponsor|sponsorship not available|requires? sponsorship but role does not|need sponsorship but role)\b/.test(text)
+  }
+
+  return false
+}
+
+function hardFilterMismatchReason(qId: string): string {
+  if (qId === "location_alignment") {
+    return "Candidate needs a different location or remote setup than this role requires."
+  }
+  if (qId === "compensation_alignment") {
+    return "Candidate compensation target is not aligned with this role's range."
+  }
+  return "Candidate sponsorship need is not aligned with this role's requirement."
+}
+
+function clampScoredReasoning(text: string): string {
+  return text.length <= 80 ? text : text.slice(0, 79).trimEnd()
+}
+
 function shouldSoftAcceptAfterProbing(args: {
+  qId: string
   type: string
   s: number
   c: number
@@ -515,9 +792,39 @@ function shouldSoftAcceptAfterProbing(args: {
   clarifyRoundsSoFar: number
 }): boolean {
   if (args.type !== "MUST_HAVE") return false
+  if (isHardFilterQId(args.qId)) return false
   if (args.clarifyRoundsSoFar < MIN_SOFT_ACCEPT_CLARIFY_ROUNDS) return false
   if (args.c < args.state.confidenceThreshold) return false
+  if (
+    args.qId === "role_fit" &&
+    args.clarifyRoundsSoFar >= args.state.maxClarifyRounds &&
+    args.s >= ROLE_FIT_MAX_PROBE_SOFT_ACCEPT_SCORE
+  ) {
+    return true
+  }
   return args.s >= Math.max(args.state.threshold, MIN_SOFT_ACCEPT_SCORE)
+}
+
+function defaultMatchThresholdForType(type: string): number {
+  if (type === "MUST_HAVE") return 1.0
+  if (type === "PROBING") return 0.7
+  return 0
+}
+
+function shouldProceedDespiteLowConfidence(args: {
+  qId: string
+  type: string
+  s: number
+  c: number
+  confidenceThreshold: number
+  matchThreshold?: number
+}): boolean {
+  if (isHardFilterQId(args.qId)) return false
+  if (args.type !== "MUST_HAVE" && args.type !== "PROBING") return false
+  if (args.c < MIN_NEAR_CONFIDENCE_PROCEED) return false
+  if (args.c >= args.confidenceThreshold) return false
+  const matchThreshold = args.matchThreshold ?? defaultMatchThresholdForType(args.type)
+  return args.s >= matchThreshold
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -562,12 +869,37 @@ function clarifyText(
     reason: "confidence" | "type_gate"
   }
 ): string {
+  const hardFilterText = hardFilterClarifyText(question.qId, lang)
+  if (hardFilterText) return hardFilterText
+
   if (ctx && ctx.clarifyRound > 1) {
     return followUpClarifyText(question, lang, ctx)
   }
   const authored = question.clarifyPrompt[lang]?.trim()
   if (authored && !isPlaceholderClarify(authored)) return authored
   return probingClarifyText(lang)
+}
+
+export function hardFilterClarifyText(qId: string, lang: Lang): string | null {
+  if (qId === "location_alignment") {
+    return lang === "zh"
+      ? "我先确认这个硬条件：这份工作的地点/远程安排你能接受吗？如果需要远程、搬迁或其他城市，请直接说清楚。"
+      : "Got it. I need to confirm the hard location setup for this role: can you work with the listed location/remote arrangement, or would you need remote, relocation, or a different city?"
+  }
+
+  if (qId === "compensation_alignment") {
+    return lang === "zh"
+      ? "我先确认薪资目标：这份工作的薪资范围对你来说可行吗？如果不行，你目标的大概范围是多少？"
+      : "Got it. Quick compensation check: is this role's posted range workable for you? If not, what range are you targeting?"
+  }
+
+  if (qId === "sponsorship_status") {
+    return lang === "zh"
+      ? "我先确认签证情况：你现在或未来会需要公司提供 visa sponsorship 吗？如果情况有细节，可以直接说明。"
+      : "Got it. Quick visa check: will you need current or future sponsorship for this role? If there is nuance, tell me the status directly."
+  }
+
+  return null
 }
 
 function isPlaceholderClarify(text: string): boolean {

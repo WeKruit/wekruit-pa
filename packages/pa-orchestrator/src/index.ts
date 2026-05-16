@@ -92,6 +92,11 @@ import {
   parseEmailVerificationCode,
   type OnboardingStep,
 } from "./onboarding.js"
+export {
+  LAYOFF_ONBOARDING_SOURCE,
+  renderLayoffOnboardingOpener,
+} from "./onboarding.js"
+export type { SourceAwareOnboardingContext } from "./onboarding.js"
 // iter32 — deterministic onboarding dispatcher (Adam directive
 // 2026-05-04: pre-runtime onboarding goes through configured phrases,
 // not the LLM). Flag-gated; default OFF for one launch cycle.
@@ -481,6 +486,13 @@ export type OrchestratorStore = {
     runtimeMode?: "auto" | "paused"
     /** v1.6 unified tag system (D8) — canonical user tags incl. preferredLang. */
     tags?: import("./tags/user-tags-merger.js").UserTags
+    displayName?: string
+    source?: string
+    layoffContext?: {
+      lastCompany?: string | null
+      jobTitle?: string | null
+      location?: string | null
+    }
   } | null>
   /**
    * Phase 23 — apply onboarding step to advance user state + promote beta participant.
@@ -1898,6 +1910,25 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
           // suspended-vs-advance decision checks the question we LAST
           // asked, not the one we're about to ask.
           priorAskedStep: priorAskedStepForCompose,
+          sourceAware: {
+            source:
+              typeof (onboardingUser as Record<string, unknown>).source === "string"
+                ? ((onboardingUser as Record<string, unknown>).source as string)
+                : null,
+            displayName:
+              typeof (onboardingUser as Record<string, unknown>).displayName === "string"
+                ? ((onboardingUser as Record<string, unknown>).displayName as string)
+                : null,
+            layoffContext:
+              typeof (onboardingUser as Record<string, unknown>).layoffContext === "object" &&
+              (onboardingUser as Record<string, unknown>).layoffContext !== null
+                ? ((onboardingUser as Record<string, unknown>).layoffContext as {
+                    lastCompany?: string | null
+                    jobTitle?: string | null
+                    location?: string | null
+                  })
+                : null,
+          },
         })
         if (syntheticInput) {
           // Build system inputs for onboarding reply using the normal Voice v1 path.
@@ -3676,6 +3707,13 @@ export function createFirestoreOrchestratorStore(
           | "complete"
         statedPreferences?: import("@pa/core-types").StatedPreferences
         runtimeMode?: "auto" | "paused"
+        displayName?: string
+        source?: string
+        layoffContext?: {
+          lastCompany?: string | null
+          jobTitle?: string | null
+          location?: string | null
+        }
       }
       return {
         id: data.id ?? userId,
@@ -3683,6 +3721,9 @@ export function createFirestoreOrchestratorStore(
         onboardingState: data.onboardingState,
         statedPreferences: data.statedPreferences,
         runtimeMode: data.runtimeMode,
+        displayName: data.displayName,
+        source: data.source,
+        layoffContext: data.layoffContext,
         pipelineState: (snap.data() as { pipelineState?: unknown } | undefined)?.pipelineState,
       }
     },
@@ -3933,7 +3974,7 @@ export {
   type PreScreenStateProvider,
   type PreScreenTerminal,
 } from "./prescreen/state.js"
-export { PreScreenPipeline, terminalText } from "./prescreen/pipeline.js"
+export { PreScreenPipeline, hardFilterClarifyText, terminalText } from "./prescreen/pipeline.js"
 export type {
   ComposeClarifyInput,
   PreScreenClarifyComposer,

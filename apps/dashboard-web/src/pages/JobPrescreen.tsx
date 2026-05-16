@@ -2,14 +2,17 @@
  * v1.8 Phase 78 — Job pre-screen config editor (structured form).
  *
  * Real authoring UI:
- *   - "Create new job" entry → prompts for jobId + jobTitle + company
  *   - Per-question accordion: type radio / weight slider / bilingual
  *     prompt+clarifyPrompt / keyword set list with add/remove
  *   - Threshold + confidenceThreshold + maxClarifyRounds inputs
  *   - Live validation + score preview
  *   - Save → pa-jobs/{jobId}.prescreenConfig
+ *
+ * Job creation, publishing, and collaboration status live only in
+ * `/admin/jobs/:jobId` so there is one lifecycle source of truth.
  */
 import { useEffect, useMemo, useState } from "react"
+import { Link, useParams } from "react-router-dom"
 import { collection, doc, getDoc, getDocs, limit, query, setDoc } from "firebase/firestore"
 import {
   ErrorState,
@@ -352,20 +355,21 @@ function makeBlankConfig(jobTitle: string, company?: string): PrescreenConfig {
 // ────────────────────────────────────────────────────────────────────────────
 
 export default function JobPrescreen() {
+  const { jobId: routeJobId } = useParams<{ jobId?: string }>()
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
   const [jobs, setJobs] = useState<JobDoc[]>([])
-  const [activeJobId, setActiveJobId] = useState<string | null>(null)
+  const [activeJobId, setActiveJobId] = useState<string | null>(routeJobId ?? null)
   const [cfg, setCfg] = useState<PrescreenConfig | null>(null)
   const [activeQIdx, setActiveQIdx] = useState(0)
   const [saving, setSaving] = useState(false)
   const [saveMsg, setSaveMsg] = useState<string | null>(null)
-  const [showCreate, setShowCreate] = useState(false)
-  // v1.9 Phase 87 — publicVisible toggle (flips pa-jobs.{jobId}.publicVisible).
-  const [publicVisible, setPublicVisible] = useState(false)
-  const [newJobId, setNewJobId] = useState("")
-  const [newJobTitle, setNewJobTitle] = useState("")
-  const [newJobCompany, setNewJobCompany] = useState("")
+
+  useEffect(() => {
+    if (routeJobId && routeJobId !== activeJobId) {
+      setActiveJobId(routeJobId)
+    }
+  }, [activeJobId, routeJobId])
 
   // Load job list once
   useEffect(() => {
@@ -417,7 +421,6 @@ export default function JobPrescreen() {
           setCfg(makeBlankConfig(data?.title ?? activeJobId, data?.company))
         }
         setActiveQIdx(0)
-        setPublicVisible(!!data?.publicVisible)
       } catch (e) {
         if (!cancelled) setErr(e instanceof Error ? e.message : String(e))
       }
@@ -498,46 +501,17 @@ export default function JobPrescreen() {
         doc(db(), "pa-jobs", activeJobId),
         {
           prescreenConfig: withMeta,
-          title: cfg.jobTitle,
-          company: cfg.company,
-          // v1.9 P87 — public-visibility flag for /j/:jobId page.
-          publicVisible,
         },
         { merge: true }
       )
       setSaveMsg("Saved ✓")
       setJobs((prev) =>
-        prev.map((j) => (j.id === activeJobId ? { ...j, hasPrescreenConfig: true, title: cfg.jobTitle, company: cfg.company } : j))
+        prev.map((j) => (j.id === activeJobId ? { ...j, hasPrescreenConfig: true } : j))
       )
     } catch (e) {
       setSaveMsg(`Save failed: ${e instanceof Error ? e.message : String(e)}`)
     } finally {
       setSaving(false)
-    }
-  }
-
-  const createJob = async () => {
-    const id = newJobId.trim()
-    if (!id || !/^[a-z0-9-_]+$/.test(id)) {
-      alert("jobId required, lowercase a-z 0-9 - _")
-      return
-    }
-    if (!newJobTitle.trim()) {
-      alert("jobTitle required")
-      return
-    }
-    try {
-      await setDoc(
-        doc(db(), "pa-jobs", id),
-        { jobId: id, title: newJobTitle, company: newJobCompany || null, createdAt: new Date().toISOString() },
-        { merge: true }
-      )
-      setJobs((p) => [...p, { id, title: newJobTitle, company: newJobCompany || undefined, hasPrescreenConfig: false }])
-      setActiveJobId(id)
-      setShowCreate(false)
-      setNewJobId(""); setNewJobTitle(""); setNewJobCompany("")
-    } catch (e) {
-      alert(`Create failed: ${e instanceof Error ? e.message : String(e)}`)
     }
   }
 
@@ -550,30 +524,29 @@ export default function JobPrescreen() {
     <div>
       <PageHeader
         title="Pre-Screen"
-        description="Each job has a set of questions Claire asks candidates via SMS."
+        description="Edit Claire's job-specific questions. Publish status and job fields live in the job workspace."
       />
 
       <div style={{ display: "grid", gridTemplateColumns: "320px 1fr", gap: "1rem" }}>
         <Panel title="Jobs">
-          <button
-            onClick={() => setShowCreate(true)}
-            style={{ width: "100%", padding: "0.5rem", marginBottom: "0.5rem" }}
-          >
-            + Create new job
-          </button>
-          {showCreate && (
-            <div style={{ padding: "0.5rem", border: "1px solid rgba(0,0,0,0.15)", borderRadius: 4, marginBottom: "0.5rem" }}>
-              <input placeholder="jobId (lowercase, a-z0-9-_)" value={newJobId} onChange={(e) => setNewJobId(e.target.value)}
-                style={{ width: "100%", marginBottom: "0.25rem", padding: "0.25rem" }} />
-              <input placeholder="Job title" value={newJobTitle} onChange={(e) => setNewJobTitle(e.target.value)}
-                style={{ width: "100%", marginBottom: "0.25rem", padding: "0.25rem" }} />
-              <input placeholder="Company (optional)" value={newJobCompany} onChange={(e) => setNewJobCompany(e.target.value)}
-                style={{ width: "100%", marginBottom: "0.25rem", padding: "0.25rem" }} />
-              <div style={{ display: "flex", gap: "0.25rem" }}>
-                <button onClick={createJob} style={{ flex: 1 }}>Create</button>
-                <button onClick={() => setShowCreate(false)} style={{ flex: 1 }}>Cancel</button>
-              </div>
-            </div>
+          {activeJobId && (
+            <Link
+              to={`/admin/jobs/${encodeURIComponent(activeJobId)}`}
+              style={{
+                display: "block",
+                width: "100%",
+                boxSizing: "border-box",
+                padding: "0.5rem",
+                marginBottom: "0.5rem",
+                textAlign: "center",
+                border: "1px solid rgba(0,0,0,0.15)",
+                borderRadius: 4,
+                textDecoration: "none",
+                color: "inherit",
+              }}
+            >
+              Open job workspace
+            </Link>
           )}
           <ul style={{ listStyle: "none", padding: 0, margin: 0, maxHeight: "70vh", overflow: "auto" }}>
             {jobs.map((j) => (
@@ -600,7 +573,7 @@ export default function JobPrescreen() {
           {!activeJobId && (
             <Panel title="Select a job">
               <p style={{ opacity: 0.7, padding: "1rem 0" }}>
-                Pick a job on the left, or click "+ Create new job".
+                Pick a job on the left. Create and publish jobs from the job workspace.
               </p>
             </Panel>
           )}
@@ -748,19 +721,13 @@ export default function JobPrescreen() {
                     {saveMsg}
                   </span>
                 )}
-                {/* v1.9 P87 — publicVisible toggle + preview link */}
-                <label style={{ display: "flex", gap: "0.4rem", alignItems: "center", fontSize: "0.85em", marginLeft: "0.75rem" }}>
-                  <input
-                    type="checkbox"
-                    checked={publicVisible}
-                    onChange={(e) => setPublicVisible(e.target.checked)}
-                  />
-                  Public
-                </label>
-                {publicVisible && activeJobId && (
-                  <a href={`/j/${activeJobId}`} target="_blank" rel="noreferrer" style={{ fontSize: "0.85em", textDecoration: "underline" }}>
-                    /j/{activeJobId} ↗
-                  </a>
+                {activeJobId && (
+                  <Link
+                    to={`/admin/jobs/${encodeURIComponent(activeJobId)}`}
+                    style={{ fontSize: "0.85em", textDecoration: "underline" }}
+                  >
+                    Publish in job workspace ↗
+                  </Link>
                 )}
                 <div style={{ marginLeft: "auto", fontSize: "0.8em", opacity: 0.65, fontFamily: "monospace" }}>
                   trigger: <code>WeKruit_{activeJobId}_&lt;userId&gt;_Job</code>

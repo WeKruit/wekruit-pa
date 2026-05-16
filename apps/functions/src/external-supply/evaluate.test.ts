@@ -316,6 +316,53 @@ test("runEvaluation — happy path: 3 records → 3 evaluations + run doc update
   assert.equal(runDoc!.triggeredBy, "operator-1")
 })
 
+test("runEvaluation — production-shaped resolved records with nullable optional fields are evaluated", async () => {
+  const { db, store } = makeFakeFirestore()
+  const batchId = "batch-prod-nullables"
+  const jobId = "job-1"
+  const companyId = "co-1"
+  const runId = "run-prod-nullables"
+  const candId = "cand-prod-nullables"
+  seedJob(store, jobId)
+  seedCompany(store, companyId)
+  seedProfile(store, candId)
+
+  const rawRecord: Record<string, unknown> = {
+    source: "manual_csv",
+    rawPayload: {},
+    canonicalLinkedInUrl: "https://linkedin.com/in/prod-nullables",
+    linkedinProfileHash: "p".repeat(64),
+    emails: [],
+    name: "Production Candidate",
+    currentCompany: "Stripe",
+    experience: [{ company: "Stripe", title: "Senior Engineer" }],
+    education: [{ school: "Harvard" }],
+    sourceTags: [],
+    normalizationStatus: "ok",
+    identityResolutionStatus: "merge_existing",
+    resolvedUserId: candId,
+    resolutionConflictId: null,
+    reviewReasons: null,
+    evidence: [],
+    createdAt: NOW,
+    recordId: "r-prod-nullables",
+    batchId,
+  }
+  ensureCol(store, PA_COLLECTIONS.externalCandidateRecords).set("r-prod-nullables", rawRecord)
+
+  const result = await runEvaluation(
+    { batchId, companyId, jobId, runId },
+    ADMIN_AUTH,
+    { db, now: () => NOW },
+  )
+
+  assert.equal(result.processed, 1)
+  assert.equal(result.completed, 1)
+  assert.equal(result.skipped, 0)
+  const evalId = createExternalEvaluationId(candId, jobId, runId)
+  assert.ok(ensureCol(store, PA_COLLECTIONS.candidateCompanyJobEvaluations).has(evalId))
+})
+
 // ---------------------------------------------------------------------------
 // Skip cases
 // ---------------------------------------------------------------------------

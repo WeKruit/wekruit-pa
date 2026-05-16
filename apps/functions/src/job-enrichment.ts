@@ -727,6 +727,16 @@ function clarifyPromptForQuestion(
   question: MarketplaceJobOpportunityDraft["opportunity"]["prescreen"]["questions"][number],
   title: string,
 ): string {
+  if (question.questionId === "location_alignment" || question.signal === "location_alignment") {
+    return "Please answer directly whether the role's listed location or remote setup works for you. If not, share the city, relocation, or remote setup you would need."
+  }
+  if (question.questionId === "compensation_alignment" || question.signal === "compensation_alignment") {
+    return "Please answer directly whether the posted compensation range works for you. If not, share your target range."
+  }
+  if (question.questionId === "sponsorship_status" || question.signal === "sponsorship_status") {
+    return "Please answer directly whether you need current or future visa sponsorship for this role."
+  }
+
   const titleLower = title.toLowerCase()
   const promptLower = question.prompt.toLowerCase()
   if (

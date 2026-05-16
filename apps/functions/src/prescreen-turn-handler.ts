@@ -17,6 +17,7 @@ import type { Firestore } from "firebase-admin/firestore"
 import {
   KeywordSetJudge,
   PreScreenPipeline,
+  hardFilterClarifyText,
   type KeywordSetLlmCaller,
   type KeywordSetLlmOutput,
   type KeywordSpec,
@@ -29,6 +30,7 @@ import { sendImessage } from "./sendblue/sendblue-client.js"
 import { runPrescreenTerminalAction } from "./prescreen-terminal-action.js"
 
 const ACTIVE_PRESCREEN_TIMEOUT_MS = 60 * 60 * 1000
+const RECENT_TERMINAL_PRESCREEN_GUARD_MS = 60 * 60 * 1000
 
 /** Firestore-backed PreScreenStateProvider. */
 class FirestorePreScreenStore implements PreScreenStateProvider {
@@ -88,6 +90,8 @@ function makeProductionKeywordSetCaller(): KeywordSetLlmCaller {
         "  - evidence ≤60 char excerpt from reply",
         "  - reasoning ≤80 char explanation",
         "Also emit: summary ≤120 char, answered bool, abortHint?{kind:low_confidence|off_topic|decline|ambiguous, reason}",
+        "When the reply contains multiple prior answers, score the strongest concrete relevant evidence across the whole merged reply.",
+        "Do not let an early 'not exact' admission dominate if later details show relevant shipped work, systems, tools, or impact.",
         "Output STRICT JSON. No prose. Do NOT invent keywords. Temperature 0.",
       ].join("\n")
       const userMsg = [
@@ -122,6 +126,9 @@ function makeProductionKeywordSetCaller(): KeywordSetLlmCaller {
 
 function makeProductionClarifyComposer(): PreScreenClarifyComposer {
   return async (input) => {
+    const hardFilterText = hardFilterClarifyText(input.question.qId, input.lang)
+    if (hardFilterText) return hardFilterText
+
     const apiKey = process.env.PA_OPENAI_AGENT_API_KEY ?? process.env.OPENAI_API_KEY
     if (!apiKey) throw new Error("missing OpenAI API key")
 
@@ -141,6 +148,7 @@ function makeProductionClarifyComposer(): PreScreenClarifyComposer {
       "You are Claire, a candidate prescreening agent.",
       "Write ONE warm iMessage follow-up that probes like a thoughtful recruiter friend learning the candidate's story.",
       "Do not reject the candidate. Do not conclude fit. Do not repeat the prior generic clarify wording.",
+      "Do not start with the same generic acknowledgment every round; avoid repeated 'That's helpful' / 'That helps' openers.",
       "Use the candidate's latest answer and weak evidence to ask the next most useful detail.",
       "Do not ask a checklist. Pick one natural angle: their role, technical depth, systems touched, tradeoff, failure, user/customer impact, or measurable outcome.",
       "Keep it under 360 characters. Output strict JSON only: {\"text\":\"...\"}.",
@@ -151,8 +159,10 @@ function makeProductionClarifyComposer(): PreScreenClarifyComposer {
       `Question id: ${input.question.qId}`,
       `Original question: ${input.question.prompt[input.lang]}`,
       `Clarify round for this same question: ${input.clarifyRound}`,
+      `Required probe angle for this round: ${prescreenClarifyRoundGuidance(input.clarifyRound, input.lang)}`,
       `Reason: ${input.reason}`,
       `Latest candidate reply: """${input.reply}"""`,
+      `Prior answers for this same question: ${JSON.stringify(input.state.questions[input.question.qId]?.evidenceReplies ?? [])}`,
       `Merged score: s=${input.merged.aggregate.s.toFixed(2)} c=${input.merged.aggregate.c.toFixed(2)} summary=${input.merged.aggregate.summary}`,
       `Weak or missing areas JSON: ${JSON.stringify(weakCells)}`,
       `If unsure, use this fallback intent without copying it verbatim: ${input.fallbackText}`,
@@ -177,8 +187,55 @@ function makeProductionClarifyComposer(): PreScreenClarifyComposer {
     if (!content) throw new Error("OpenAI clarify empty response")
     const parsed = JSON.parse(content) as { text?: unknown }
     if (typeof parsed.text !== "string" || !parsed.text.trim()) throw new Error("OpenAI clarify missing text")
-    return parsed.text
+    return normalizePrescreenClarifyTextForRound(parsed.text, input.clarifyRound, input.lang)
   }
+}
+
+export function prescreenClarifyRoundGuidance(round: number, lang: "zh" | "en"): string {
+  const normalizedRound = Math.max(1, Math.floor(round))
+  if (lang === "zh") {
+    if (normalizedRound === 1) return "找最近的相关项目：背景、候选人亲自负责什么、用户或业务结果。"
+    if (normalizedRound === 2) return "追问 ownership 和系统边界：候选人自己做了哪一块、碰到哪些系统或数据。"
+    if (normalizedRound === 3) return "追问最难的失败/取舍/验证：问题怎么发现、怎么验证修复。"
+    return "最后一次具体确认：最小可证明的 shipped work、指标或明确缺口；不要继续泛泛追问。"
+  }
+  if (normalizedRound === 1) return "Find the closest relevant project: context, personal ownership, and user or business outcome."
+  if (normalizedRound === 2) return "Probe ownership and system boundary: what they personally built, and which systems or data it touched."
+  if (normalizedRound === 3) return "Probe the hardest failure, tradeoff, or validation: what broke, what they changed, and how they knew it worked."
+  return "Final concrete check: smallest provable shipped work, measurable result, or explicit gap; do not keep circling."
+}
+
+export function normalizePrescreenClarifyTextForRound(text: string, round: number, lang: "zh" | "en"): string {
+  const normalized = text.replace(/\s+/g, " ").trim()
+  if (!normalized) return normalized
+
+  const openerByRound =
+    lang === "zh"
+      ? [
+          "明白 - ",
+          "这里 ownership 很关键 - ",
+          "这个系统细节有用 - ",
+          "最后我确认一个具体点 - ",
+        ]
+      : [
+          "Got it - ",
+          "The ownership piece matters here - ",
+          "The systems detail is the useful signal - ",
+          "One last concrete check before I score it - ",
+        ]
+  const idx = Math.min(Math.max(1, Math.floor(round)), openerByRound.length) - 1
+
+  const genericAckPattern =
+    lang === "zh"
+      ? /^(这段有帮助|谢谢|收到|明白|好的|了解)[\s,，。:：;；!！—-]*/i
+      : /^(that'?s helpful|that is helpful|that helps|thanks|thank you|got it|interesting|nice)[\s,.:;!—-]*/i
+
+  if (!genericAckPattern.test(normalized)) return normalized
+
+  const withoutAck = normalized.replace(genericAckPattern, "").trim()
+  if (!withoutAck) return normalized
+  const replacement = `${openerByRound[idx]}${withoutAck.charAt(0).toLowerCase()}${withoutAck.slice(1)}`
+  return replacement
 }
 
 /**
@@ -189,6 +246,7 @@ type ActivePrescreenLookup =
   | { kind: "none" }
   | { kind: "active"; sessionId: string }
   | { kind: "expired"; sessionId: string; jobId: string }
+  | { kind: "recent_terminal"; sessionId: string; jobId: string; terminal: string }
 
 async function findActiveSession(
   db: Firestore,
@@ -240,6 +298,70 @@ async function findActiveSession(
     }
   }
   return { kind: "active", sessionId: doc.id }
+}
+
+async function findRecentTerminalSession(
+  db: Firestore,
+  userId: string,
+  opts: {
+    nowMs?: number
+    log?: (event: string, payload: Record<string, unknown>) => void
+  } = {},
+): Promise<ActivePrescreenLookup> {
+  const nowMs = opts.nowMs ?? Date.now()
+  const snap = await db
+    .collection("pa-prescreen-sessions")
+    .where("userId", "==", userId)
+    .limit(50)
+    .get()
+
+  let latest:
+    | {
+        id: string
+        jobId: string
+        terminal: string
+        atMs: number
+      }
+    | null = null
+
+  for (const doc of snap.docs) {
+    const data = doc.data() as Record<string, unknown>
+    const terminal = typeof data.terminal === "string" ? data.terminal : null
+    if (!terminal) continue
+    const workSession = data.workSession as Record<string, unknown> | undefined
+    if (workSession && workSession.kind !== "job_prescreen") continue
+
+    const endedAtMs =
+      timestampMs(workSession?.endedAt) ??
+      timestampMs(data.updatedAt) ??
+      timestampMs(data.completedAt) ??
+      timestampMs(data.createdAt)
+    if (endedAtMs === null) continue
+    if (nowMs - endedAtMs > RECENT_TERMINAL_PRESCREEN_GUARD_MS) continue
+    if (latest && endedAtMs <= latest.atMs) continue
+
+    latest = {
+      id: doc.id,
+      jobId: typeof data.jobId === "string" ? data.jobId : "",
+      terminal,
+      atMs: endedAtMs,
+    }
+  }
+
+  if (!latest) return { kind: "none" }
+  opts.log?.("prescreen.turn.recent_terminal_guard_found", {
+    userId,
+    sessionId: latest.id,
+    jobId: latest.jobId,
+    terminal: latest.terminal,
+    endedAt: new Date(latest.atMs).toISOString(),
+  })
+  return {
+    kind: "recent_terminal",
+    sessionId: latest.id,
+    jobId: latest.jobId,
+    terminal: latest.terminal,
+  }
 }
 
 function timestampMs(value: unknown): number | null {
@@ -325,8 +447,56 @@ export async function runPrescreenTurnIfActive(
   const log = args.log ?? (() => {})
   const sendSms = args.sendSms ?? sendImessage
   const terminalAction = args.runTerminalAction ?? runPrescreenTerminalAction
-  const lookup = await findActiveSession(args.db, args.userId, { log })
+  let lookup = await findActiveSession(args.db, args.userId, { log })
+  if (lookup.kind === "none") {
+    lookup = await findRecentTerminalSession(args.db, args.userId, { log })
+  }
   if (lookup.kind === "none") return { handled: false }
+  if (lookup.kind === "recent_terminal") {
+    const sessionRef = args.db.collection("pa-prescreen-sessions").doc(lookup.sessionId)
+    const sessSnap = await sessionRef.get()
+    const sessData = (sessSnap.data() ?? {}) as Record<string, unknown>
+    const alreadyAcked = typeof sessData.postTerminalFollowupAckAt === "string"
+    const nowIso = new Date().toISOString()
+
+    await sessionRef.collection("turns").add({
+      qId: "terminal",
+      reply: args.replyText,
+      action: {
+        kind: "post_terminal_followup",
+        terminal: lookup.terminal,
+        reason: "recent_ended_prescreen_session",
+      },
+      ts: nowIso,
+    })
+
+    let text: string | undefined
+    if (!alreadyAcked) {
+      text = recentTerminalSessionText(args.lang ?? "en")
+      try {
+        await sendSms({ to: args.toE164, content: text, userId: args.userId, db: args.db })
+        await sessionRef.set({ postTerminalFollowupAckAt: nowIso, updatedAt: nowIso }, { merge: true })
+      } catch (err) {
+        log("prescreen.turn.recent_terminal_ack_send_failed", {
+          sessionId: lookup.sessionId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    }
+
+    log("prescreen.turn.recent_terminal_guard_handled", {
+      sessionId: lookup.sessionId,
+      userId: args.userId,
+      terminal: lookup.terminal,
+      acked: Boolean(text),
+    })
+    return {
+      handled: true,
+      sessionId: lookup.sessionId,
+      terminal: lookup.terminal,
+      textSent: text,
+    }
+  }
   if (lookup.kind === "expired") {
     try {
       await terminalAction({
@@ -367,6 +537,16 @@ export async function runPrescreenTurnIfActive(
   const sessRaw = await args.db.collection("pa-prescreen-sessions").doc(sessionId).get()
   const activeQIdRaw = sessRaw.data()?.currentQId
   const activeQId = typeof activeQIdRaw === "string" ? activeQIdRaw : null
+  const loadedTerminal = state.terminal ?? null
+  if (loadedTerminal !== null || !activeQId) {
+    log("prescreen.turn.stale_terminal_session_ignored", {
+      userId: args.userId,
+      sessionId,
+      terminal: loadedTerminal,
+      currentQId: activeQId,
+    })
+    return { handled: false, sessionId, terminal: loadedTerminal }
+  }
   const cfgSnapshot = sessRaw.data()?.cfgSnapshot as
     | { questions: Array<{ qId: string; prompt: { zh: string; en: string }; clarifyPrompt: { zh: string; en: string }; keywords: KeywordSpec[] }> }
     | undefined
@@ -544,4 +724,10 @@ function userExitSessionText(lang: "zh" | "en"): string {
   return lang === "zh"
     ? "好的，我先暂停这个岗位 screen。你之后想继续的话，从岗位页面重新开始就行；你已经分享过的经历我会保留在你的全局 profile 里。"
     : "Got it — I paused this role screen. If you want to continue later, reopen it from the job page; I will keep what you have already shared on your profile."
+}
+
+function recentTerminalSessionText(lang: "zh" | "en"): string {
+  return lang === "zh"
+    ? "收到。这个岗位 screen 已经暂停了；我会把这个约束记到你的 profile 里，后面只看更匹配的机会。"
+    : "Got it. This role screen is already paused; I will keep that constraint on your profile and use it for better-matched roles."
 }

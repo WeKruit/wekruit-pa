@@ -34,7 +34,6 @@ import { logger } from "firebase-functions/v2"
 import { getFirestore, type Firestore } from "firebase-admin/firestore"
 import {
   ExternalSourcingBatchSchema,
-  ExternalCandidateRecordSchema,
   PA_COLLECTIONS,
   type ExternalSourcingBatch,
   type ExternalCandidateRecord,
@@ -44,6 +43,7 @@ import {
   upsertCandidateFromExternalRecord,
 } from "@pa/pa-persistence"
 import { dualWriteLegacyUserTagsFromExternal } from "./legacy-user-tags-bridge.js"
+import { parseExternalCandidateRecordDoc } from "./record-doc.js"
 
 const PAGE_SIZE = 200
 
@@ -165,12 +165,11 @@ export async function runResolveBatchIdentity(
   const recordsRef = db.collection(PA_COLLECTIONS.externalCandidateRecords)
   const snap = await recordsRef.where("batchId", "==", batchId).get()
   for (const doc of snap.docs) {
-    const recordParsed = ExternalCandidateRecordSchema.safeParse(doc.data())
-    if (!recordParsed.success) {
+    const record = parseExternalCandidateRecordDoc(doc.data())
+    if (!record) {
       counters.skipped += 1
       continue
     }
-    const record = recordParsed.data
     if (record.identityResolutionStatus !== "pending") {
       counters.skipped += 1
       continue
@@ -229,16 +228,19 @@ export async function runResolveBatchIdentity(
           })
         }
       }
+      const recordUpdate: Record<string, unknown> = {
+        identityResolutionStatus: resolution.status,
+        reviewReasons: resolution.reviewReasons,
+        updatedAt: now(),
+      }
+      if (upsertResult.candidateId) {
+        recordUpdate.resolvedUserId = upsertResult.candidateId
+      }
+      if (resolution.conflictId) {
+        recordUpdate.resolutionConflictId = resolution.conflictId
+      }
       await recordsRef.doc(record.recordId).set(
-        {
-          identityResolutionStatus: resolution.status,
-          resolvedUserId: upsertResult.candidateId ?? null,
-          resolutionConflictId: resolution.conflictId ?? null,
-          reviewReasons: resolution.reviewReasons.length > 0
-            ? resolution.reviewReasons
-            : null,
-          updatedAt: now(),
-        },
+        recordUpdate,
         { merge: true }
       )
     } catch (err) {

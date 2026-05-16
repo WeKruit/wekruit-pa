@@ -1,6 +1,11 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { prescreenTurnRecordQId, runPrescreenTurnIfActive } from "./prescreen-turn-handler.js"
+import {
+  normalizePrescreenClarifyTextForRound,
+  prescreenClarifyRoundGuidance,
+  prescreenTurnRecordQId,
+  runPrescreenTurnIfActive,
+} from "./prescreen-turn-handler.js"
 import type { KeywordSetLlmCaller, PreScreenClarifyComposer } from "@pa/pa-orchestrator"
 
 type FakeDoc = { exists: boolean; data: Record<string, unknown> }
@@ -75,6 +80,28 @@ function makeFakeDb(seed: Record<string, Record<string, unknown>>) {
 }
 
 describe("runPrescreenTurnIfActive session boundaries", () => {
+  it("gives repeated prescreen probes distinct round guidance and non-repeated openers", () => {
+    const guidance = [1, 2, 3, 4].map((round) => prescreenClarifyRoundGuidance(round, "en"))
+    assert.equal(new Set(guidance).size, 4)
+    assert.match(guidance[0], /closest relevant project/)
+    assert.match(guidance[1], /ownership and system boundary/)
+    assert.match(guidance[2], /hardest failure/)
+    assert.match(guidance[3], /Final concrete check/)
+
+    const repeated = [
+      normalizePrescreenClarifyTextForRound("That's helpful — what did you personally build?", 1, "en"),
+      normalizePrescreenClarifyTextForRound("That's helpful — what systems did it touch?", 2, "en"),
+      normalizePrescreenClarifyTextForRound("That helps. What failure did you uncover?", 3, "en"),
+      normalizePrescreenClarifyTextForRound("Thanks — what measurable result changed?", 4, "en"),
+    ]
+    assert.deepEqual(repeated, [
+      "Got it - what did you personally build?",
+      "The ownership piece matters here - what systems did it touch?",
+      "The systems detail is the useful signal - what failure did you uncover?",
+      "One last concrete check before I score it - what measurable result changed?",
+    ])
+  })
+
   it("records a candidate reply against the question that was active before the turn", () => {
     assert.equal(prescreenTurnRecordQId({ kind: "clarify", qId: "role_fit", kAfter: 1 }, "role_fit"), "role_fit")
     assert.equal(
@@ -141,6 +168,51 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     assert.equal((session?.workSession as { boundary?: string }).boundary, "timeout")
   })
 
+  it("ignores stale prescreen docs whose active question is already cleared", async () => {
+    const now = new Date().toISOString()
+    const { db } = makeFakeDb({
+      "pa-prescreen-sessions/ps_stale": {
+        sessionId: "ps_stale",
+        userId: "u1",
+        jobId: "job-ended",
+        terminal: null,
+        currentQId: null,
+        createdAt: now,
+        updatedAt: now,
+        workSession: { kind: "job_prescreen", status: "ended", startedAt: now, boundary: "terminal" },
+      },
+    })
+
+    const terminalCalls: Array<Record<string, unknown>> = []
+    const sent: string[] = []
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u1",
+      toE164: "+13054507715",
+      replyText: "new layoff onboarding reply",
+      runTerminalAction: async (args) => {
+        terminalCalls.push(args as unknown as Record<string, unknown>)
+        return { alreadyFired: false, level1Sent: false, jobRecsFired: false }
+      },
+      sendSms: async (args) => {
+        sent.push(args.content)
+        return {
+          status: "queued",
+          from_number: null,
+          number: args.to,
+          content: args.content,
+          service: "iMessage",
+          is_outbound: true,
+        }
+      },
+    })
+
+    assert.equal(result.handled, false)
+    assert.equal(result.sessionId, "ps_stale")
+    assert.equal(terminalCalls.length, 0)
+    assert.equal(sent.length, 0)
+  })
+
   it("treats explicit user exit as a routing pause, not a business outcome", async () => {
     const now = new Date().toISOString()
     const { db, docs } = makeFakeDb({
@@ -203,6 +275,74 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     assert.equal((session?.workSession as { status?: string }).status, "ended")
     assert.equal((session?.workSession as { boundary?: string }).boundary, "user_exit")
     assert.ok([...docs.keys()].some((path) => path.startsWith("pa-prescreen-sessions/ps_active/turns/")))
+  })
+
+  it("guards a recent terminal prescreen so follow-up texts do not fall into normal onboarding", async () => {
+    const now = new Date().toISOString()
+    const { db, docs } = makeFakeDb({
+      "pa-prescreen-sessions/ps_done": {
+        sessionId: "ps_done",
+        userId: "u1",
+        jobId: "rain-software-engineer-fullstack-8849f6ef",
+        terminal: "HARD_STOP",
+        currentQId: null,
+        createdAt: now,
+        updatedAt: now,
+        workSession: { kind: "job_prescreen", status: "ended", startedAt: now, endedAt: now, boundary: "terminal" },
+      },
+    })
+
+    const sent: string[] = []
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u1",
+      toE164: "+13054507715",
+      replyText: "I still cannot relocate to New York.",
+      sendSms: async (args) => {
+        sent.push(args.content)
+        return {
+          status: "queued",
+          from_number: null,
+          number: args.to,
+          content: args.content,
+          service: "iMessage",
+          is_outbound: true,
+        }
+      },
+    })
+
+    assert.equal(result.handled, true)
+    assert.equal(result.sessionId, "ps_done")
+    assert.equal(result.terminal, "HARD_STOP")
+    assert.deepEqual(sent, [
+      "Got it. This role screen is already paused; I will keep that constraint on your profile and use it for better-matched roles.",
+    ])
+    const session = docs.get("pa-prescreen-sessions/ps_done")?.data
+    assert.equal(typeof session?.postTerminalFollowupAckAt, "string")
+    const turnEntries = [...docs.entries()].filter(([path]) => path.startsWith("pa-prescreen-sessions/ps_done/turns/"))
+    assert.equal(turnEntries.length, 1)
+    assert.equal((turnEntries[0][1].data.action as { kind?: string }).kind, "post_terminal_followup")
+
+    const second = await runPrescreenTurnIfActive({
+      db,
+      userId: "u1",
+      toE164: "+13054507715",
+      replyText: "Remote Los Angeles only.",
+      sendSms: async (args) => {
+        sent.push(args.content)
+        return {
+          status: "queued",
+          from_number: null,
+          number: args.to,
+          content: args.content,
+          service: "iMessage",
+          is_outbound: true,
+        }
+      },
+    })
+
+    assert.equal(second.handled, true)
+    assert.equal(sent.length, 1, "second post-terminal follow-up should be handled silently")
   })
 
   it("handles a coalesced multi-message role-fit reply as one probe turn", async () => {

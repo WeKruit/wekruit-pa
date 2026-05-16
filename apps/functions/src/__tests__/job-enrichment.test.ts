@@ -526,6 +526,8 @@ test("prescreenConfigFromApprovedDraft makes software role-fit scoring probe-awa
   assert.match(roleFit?.keywords[0]?.hint ?? "", /Adjacent projects count/)
   assert.match(technicalDepth?.keywords[0]?.hint ?? "", /typescript, react, node, postgresql/)
   assert.match(sponsorship?.keywords[0]?.hint ?? "", /do not need current or future visa sponsorship/)
+  assert.match(sponsorship?.clarifyPrompt.en ?? "", /answer directly/i)
+  assert.doesNotMatch(sponsorship?.clarifyPrompt.en ?? "", /concrete example from your own work/i)
 })
 
 test("runJobEnrichmentSaveCorrections appends an operator correction event", async () => {
