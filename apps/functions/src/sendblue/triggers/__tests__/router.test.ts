@@ -134,11 +134,11 @@ function makePrescreenDeps(opts: {
 } = {}): PrescreenTriggerDeps & {
   runs: Array<{ jobId: string; userId: string; toE164: string }>
   audits: Record<string, unknown>[]
-  setLastCalls: Array<{ jobId: string; userId: string; ms: number }>
+  setLastCalls: Array<{ jobId: string; userId: string; messageHandle: string; ms: number }>
 } {
   const runs: Array<{ jobId: string; userId: string; toE164: string }> = []
   const audits: Record<string, unknown>[] = []
-  const setLastCalls: Array<{ jobId: string; userId: string; ms: number }> = []
+  const setLastCalls: Array<{ jobId: string; userId: string; messageHandle: string; ms: number }> = []
   const lastFired: Record<string, number> = { ...(opts.lastFired ?? {}) }
   return {
     runs,
@@ -150,12 +150,12 @@ function makePrescreenDeps(opts: {
     async isAdmin(uid) {
       return (opts.adminIds ?? []).includes(uid)
     },
-    async getLastFiredMs(jobId, userId) {
-      return lastFired[`${jobId}:${userId}`] ?? null
+    async getLastFiredMs(jobId, userId, messageHandle) {
+      return lastFired[`${jobId}:${userId}:${messageHandle}`] ?? null
     },
-    async setLastFiredMs(jobId, userId, ms) {
-      lastFired[`${jobId}:${userId}`] = ms
-      setLastCalls.push({ jobId, userId, ms })
+    async setLastFiredMs(jobId, userId, messageHandle, ms) {
+      lastFired[`${jobId}:${userId}:${messageHandle}`] = ms
+      setLastCalls.push({ jobId, userId, messageHandle, ms })
     },
     async runPreScreen(args) {
       runs.push(args)
@@ -237,7 +237,7 @@ test("Phase 77: PrescreenTrigger idempotency dedupes within 60-min window", asyn
   const now = 1_000_000_000
   const deps = makePrescreenDeps({
     phoneToUser: { "+15551234": "user123" },
-    lastFired: { "j1:user123": now - 30 * 60 * 1000 }, // 30 min ago
+    lastFired: { "j1:user123:h1": now - 30 * 60 * 1000 }, // 30 min ago
     now,
   })
   const trig = new PrescreenTrigger(deps)
@@ -249,11 +249,26 @@ test("Phase 77: PrescreenTrigger idempotency dedupes within 60-min window", asyn
   assert.equal(deps.audits[0].type, "trigger_deduped")
 })
 
+test("Phase 77: PrescreenTrigger starts a new work session for a new message handle inside the old job window", async () => {
+  const now = 1_000_000_000
+  const deps = makePrescreenDeps({
+    phoneToUser: { "+15551234": "user123" },
+    lastFired: { "j1:user123": now - 30 * 60 * 1000 },
+    now,
+  })
+  const trig = new PrescreenTrigger(deps)
+  const r = await trig.handle(makeCtx("WeKruit_j1_user123_Job", { messageHandle: "h-new" }))
+  assert.equal(r.kind, "handled")
+  if (r.kind === "handled") assert.equal(r.action, "prescreen_triggered")
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(deps.runs.length, 1)
+})
+
 test("Phase 77: PrescreenTrigger fires after window expires", async () => {
   const now = 1_000_000_000
   const deps = makePrescreenDeps({
     phoneToUser: { "+15551234": "user123" },
-    lastFired: { "j1:user123": now - (PRESCREEN_IDEMPOTENCY_WINDOW_MS + 1) },
+    lastFired: { "j1:user123:h1": now - (PRESCREEN_IDEMPOTENCY_WINDOW_MS + 1) },
     now,
   })
   const trig = new PrescreenTrigger(deps)

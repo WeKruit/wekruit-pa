@@ -336,6 +336,16 @@ service cloud.firestore {
       allow write: if isPaOperator();
     }
 
+    // ─── matching-jobs — macmini-scraped marketplace pool ───────────
+    // Powers candidate.wekruit.com/market (Direct line + Hunting list).
+    // Public read constrained to status=="active"; client further filters
+    // dead/missing-url. Writes go through CFs (Admin SDK) only.
+    // No PII in these docs — only public job postings + company metadata.
+    match /matching-jobs/{jobId} {
+      allow read: if resource.data.status == "active" || isPaOperator();
+      allow write: if false;
+    }
+
     // ─── pa-public-jobs — marketing site (wekruit.com) "Open jobs Claire
     // can fast-track" list. Reads filter where active==true. Public listing
     // is the entire purpose of the collection. Write operator-only.

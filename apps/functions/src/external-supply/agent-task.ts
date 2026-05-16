@@ -41,7 +41,6 @@ import { logger } from "firebase-functions/v2"
 import { getFirestore, type Firestore } from "firebase-admin/firestore"
 import {
   AgentResearchTaskSchema,
-  ExternalCandidateRecordSchema,
   PA_COLLECTIONS,
   type AgentResearchFinding,
   type AgentResearchTask,
@@ -57,6 +56,7 @@ import {
   type AgentResearchPromptCompanyJobContext,
 } from "@pa/external-supply"
 import { requireExternalSupplyAdmin } from "./resolve-identity.js"
+import { parseExternalCandidateRecordDoc } from "./record-doc.js"
 
 // ---------------------------------------------------------------------------
 // Shared deps
@@ -145,8 +145,8 @@ async function loadRecordsForPrompt(
     for (const id of input.recordIds) {
       const snap = await col.doc(id).get()
       if (!snap.exists) continue
-      const parsed = ExternalCandidateRecordSchema.safeParse(snap.data())
-      if (parsed.success) out.push(parsed.data)
+      const record = parseExternalCandidateRecordDoc(snap.data())
+      if (record) out.push(record)
     }
   }
 
@@ -156,8 +156,8 @@ async function loadRecordsForPrompt(
     for (const cid of input.candidateIds) {
       const snap = await col.where("resolvedUserId", "==", cid).get()
       for (const doc of snap.docs) {
-        const parsed = ExternalCandidateRecordSchema.safeParse(doc.data())
-        if (parsed.success) out.push(parsed.data)
+        const record = parseExternalCandidateRecordDoc(doc.data())
+        if (record) out.push(record)
       }
     }
   }

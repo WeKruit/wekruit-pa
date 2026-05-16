@@ -29,6 +29,26 @@ test("q-startup-pref: 'startup' → startup", async () => {
   if (r.accept) assert.equal(r.value, "startup")
 })
 
+test("q-startup-pref: natural startup preference skips LLM and accepts", async () => {
+  const { judge, calls } = makeJudge(JSON.stringify({ intent: "unclear" }))
+  const r = await judge.judge(
+    "I lean startup or fast-moving early-stage teams, especially fintech or AI tools, but I still care about a solid manager and clear ownership.",
+    "en",
+    ctx(),
+  )
+  assert.equal(r.accept, true)
+  if (r.accept) assert.equal(r.value, "startup")
+  assert.equal(calls(), 0)
+})
+
+test("q-startup-pref: flexible natural wording skips LLM and accepts either", async () => {
+  const { judge, calls } = makeJudge(JSON.stringify({ intent: "unclear" }))
+  const r = await judge.judge("I am flexible; depends on the team and ownership.", "en", ctx())
+  assert.equal(r.accept, true)
+  if (r.accept) assert.equal(r.value, "either")
+  assert.equal(calls(), 0)
+})
+
 test("q-startup-pref: 'stable big company' → bigtech", async () => {
   const { judge } = makeJudge(JSON.stringify({ intent: "provided", value: "bigtech", confidence: 0.95 }))
   const r = await judge.judge("stable big company", "en", ctx())

@@ -62,19 +62,25 @@ import {
 } from "./triggers/index.js"
 // v1.8 Phase 77.3 — real prescreen session bootstrap (replaces log placeholder).
 import { runPreScreenForUser as defaultRunPreScreenForUser } from "../prescreen-session-start.js"
-import { runLayoffSmsStart as defaultRunLayoffSmsStart } from "../layoff-sms-start.js"
+import {
+  isLayoffIntakeActiveForUser,
+  runLayoffSmsStart as defaultRunLayoffSmsStart,
+} from "../layoff-sms-start.js"
 import { runCompactionForUser } from "../compaction-run.js"
 // v1.9 Phase 85 — PII confirm bootstrap (Apply trigger).
 import { runPiiConfirmForUser as defaultRunPiiConfirmForUser } from "../pii-confirm-start.js"
 import type { SendblueInboundPayload } from "./types.js"
 import { inboundEventExpiresAtTs, outboundExpiresAtTs } from "./ttl.js"
+
+function prescreenTriggerIdempotencyDocId(jobId: string, userId: string, messageHandle: string): string {
+  return `${jobId}_${userId}_${encodeURIComponent(messageHandle || "missing_message_handle")}`
+}
 // v1.5 Stream-D — message coalescer dispatch (flag-gated; default off).
 import {
   enqueueOrCoalesce as defaultEnqueueOrCoalesce,
   bumpCoalesceBuffer as defaultBumpCoalesceBuffer,
   type CoalescerDeps,
 } from "../coalesce/paMessageCoalescer.js"
-
 export type WebhookRequest = {
   rawBody?: Buffer | string
   body?: unknown
@@ -675,18 +681,27 @@ export async function handleSendblueWebhook(
           typeof pendingData.expiresAtMs === "number" &&
           pendingData.expiresAtMs > nowMs
         ) {
-          const virtualTrigger = `WeKruit_${pendingData.jobId}_${pendingData.userId}_Job`
-          log("[sendblue][webhook] ats-pending-trigger virtualized", {
-            fromNumber: normalized.fromNumber,
-            jobId: pendingData.jobId,
-            userId: pendingData.userId,
-            origText: normalized.text.slice(0, 40),
-          })
-          // Mutate normalized.text so the downstream TriggerRouter sees the
-          // synthesized trigger pattern. Consume the pending doc to prevent
-          // replay on subsequent inbounds.
-          ;(normalized as { text: string }).text = virtualTrigger
-          await pendingRef.delete().catch(() => undefined)
+          if (await isLayoffIntakeActiveForUser(deps.db, pendingData.userId)) {
+            log("[sendblue][webhook] ats-pending-trigger consumed during active layoff intake", {
+              fromNumber: normalized.fromNumber,
+              jobId: pendingData.jobId,
+              userId: pendingData.userId,
+            })
+            await pendingRef.delete().catch(() => undefined)
+          } else {
+            const virtualTrigger = `WeKruit_${pendingData.jobId}_${pendingData.userId}_Job`
+            log("[sendblue][webhook] ats-pending-trigger virtualized", {
+              fromNumber: normalized.fromNumber,
+              jobId: pendingData.jobId,
+              userId: pendingData.userId,
+              origText: normalized.text.slice(0, 40),
+            })
+            // Mutate normalized.text so the downstream TriggerRouter sees the
+            // synthesized trigger pattern. Consume the pending doc to prevent
+            // replay on subsequent inbounds.
+            ;(normalized as { text: string }).text = virtualTrigger
+            await pendingRef.delete().catch(() => undefined)
+          }
         }
       } catch (err) {
         log("[sendblue][webhook] ats-pending-trigger check failed (non-fatal)", {
@@ -759,11 +774,11 @@ export async function handleSendblueWebhook(
         new PrescreenTrigger({
           lookupUserByPhone: (phone) => lookupFnRouter(deps.db, phone),
           isAdmin: async (uid) => adminUidsRouter.includes(uid),
-          getLastFiredMs: async (jobId, userId) => {
+          getLastFiredMs: async (jobId, userId, messageHandle) => {
             try {
               const snap = await deps.db
                 .collection("pa-prescreen-trigger-idempotency")
-                .doc(`${jobId}_${userId}`)
+                .doc(prescreenTriggerIdempotencyDocId(jobId, userId, messageHandle))
                 .get()
               const data = snap.data()
               return typeof data?.lastFiredMs === "number" ? data.lastFiredMs : null
@@ -771,11 +786,11 @@ export async function handleSendblueWebhook(
               return null
             }
           },
-          setLastFiredMs: async (jobId, userId, ms) => {
+          setLastFiredMs: async (jobId, userId, messageHandle, ms) => {
             await deps.db
               .collection("pa-prescreen-trigger-idempotency")
-              .doc(`${jobId}_${userId}`)
-              .set({ lastFiredMs: ms, jobId, userId, updatedAt: new Date().toISOString() })
+              .doc(prescreenTriggerIdempotencyDocId(jobId, userId, messageHandle))
+              .set({ lastFiredMs: ms, jobId, userId, messageHandle, updatedAt: new Date().toISOString() })
           },
           runPreScreen: async ({ jobId, userId, toE164, sourceRequestedUserId }) => {
             // Phase 77.3 — real handler: load config, build state, send 1st Q.

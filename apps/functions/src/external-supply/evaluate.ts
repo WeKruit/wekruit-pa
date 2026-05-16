@@ -37,7 +37,6 @@ import { onCall, HttpsError } from "firebase-functions/v2/https"
 import { logger } from "firebase-functions/v2"
 import { getFirestore, type Firestore } from "firebase-admin/firestore"
 import {
-  ExternalCandidateRecordSchema,
   PA_COLLECTIONS,
   createExternalEvaluationId,
   type CandidateCompanyJobEvaluation,
@@ -53,6 +52,7 @@ import {
   type JobContext,
 } from "@pa/external-supply"
 import { requireExternalSupplyAdmin } from "./resolve-identity.js"
+import { parseExternalCandidateRecordDoc } from "./record-doc.js"
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -273,10 +273,10 @@ async function loadRecords(
     for (const recordId of input.recordIds) {
       const snap = await col.doc(recordId).get()
       if (!snap.exists) continue
-      const parsed = ExternalCandidateRecordSchema.safeParse(snap.data())
-      if (!parsed.success) continue
-      if (!STATUSES_IN_SCOPE.has(parsed.data.identityResolutionStatus)) continue
-      out.push(parsed.data)
+      const record = parseExternalCandidateRecordDoc(snap.data())
+      if (!record) continue
+      if (!STATUSES_IN_SCOPE.has(record.identityResolutionStatus)) continue
+      out.push(record)
     }
     return out
   }
@@ -284,10 +284,10 @@ async function loadRecords(
   // batchId path.
   const snap = await col.where("batchId", "==", input.batchId).get()
   for (const doc of snap.docs) {
-    const parsed = ExternalCandidateRecordSchema.safeParse(doc.data())
-    if (!parsed.success) continue
-    if (!STATUSES_IN_SCOPE.has(parsed.data.identityResolutionStatus)) continue
-    out.push(parsed.data)
+    const record = parseExternalCandidateRecordDoc(doc.data())
+    if (!record) continue
+    if (!STATUSES_IN_SCOPE.has(record.identityResolutionStatus)) continue
+    out.push(record)
   }
   return out
 }

@@ -61,6 +61,7 @@ import {
   runAgentRanking,
   runOverrideAgentTier,
 } from "../src/external-supply/agent-rank.js"
+import { assertProductionPaUserCreationAllowed } from "./lib/prod-test-user-guard.mjs"
 
 const PROJECT_ID = "wekruit-5f89b"
 const NOW_ISO = new Date().toISOString()
@@ -216,6 +217,13 @@ async function main(): Promise<void> {
   initializeApp({ credential: applicationDefault(), projectId: PROJECT_ID })
   const db = getFirestore()
   db.settings({ ignoreUndefinedProperties: true })
+
+  assertProductionPaUserCreationAllowed({
+    projectId: PROJECT_ID,
+    scriptName: "external-supply-v2-prod-smoke.ts",
+    reason:
+      "External-supply V2 prod smoke seeds synthetic records and runResolveBatchIdentity creates prospect pa-users.",
+  })
 
   const openaiKey = process.env.OPENAI_API_KEY
   const evidence: Record<string, unknown> = {

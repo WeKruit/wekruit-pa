@@ -19,6 +19,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { applicationDefault, cert, getApps, initializeApp } from "firebase-admin/app"
 import { getFirestore } from "firebase-admin/firestore"
+import { requireExistingPaUserForProductionTest } from "../apps/functions/scripts/lib/prod-test-user-guard.mjs"
 
 function bootstrapCreds() {
   if (process.env.GOOGLE_APPLICATION_CREDENTIALS) return
@@ -45,6 +46,11 @@ if (!getApps().length) {
 const db = getFirestore()
 
 const USER_ID = process.env.PA_TEST_USER_ID ?? "verify-match-company-tags"
+
+await requireExistingPaUserForProductionTest(db, {
+  scriptName: "scripts/verify-match-company-tags.mjs",
+  userId: USER_ID,
+})
 
 // Seed synthetic user with minimal canonical tags + targetCompanyTags=ai_native.
 const tags = {

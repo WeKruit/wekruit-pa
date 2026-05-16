@@ -860,6 +860,8 @@ function parseStartupPrefValue(raw: unknown): StartupPrefAnswer | null {
     t.includes("either") ||
     t.includes("both") ||
     t.includes("any") ||
+    t.includes("flexible") ||
+    t.includes("open to either") ||
     (t.includes("startup") && (t.includes("bigtech") || t.includes("big tech") || t.includes("big-co"))) ||
     t.includes("都行") ||
     t.includes("都可以") ||
@@ -867,13 +869,23 @@ function parseStartupPrefValue(raw: unknown): StartupPrefAnswer | null {
     t.includes("看具体")
   ) return "either"
   if (t === "startup") return "startup"
-  if (t.includes("startup") || t.includes("start-up")) return "startup"
+  if (
+    t.includes("startup") ||
+    t.includes("start-up") ||
+    t.includes("early-stage") ||
+    t.includes("early stage") ||
+    t.includes("fast-moving") ||
+    t.includes("fast moving") ||
+    t.includes("创业")
+  ) return "startup"
   if (
     t === "bigtech" ||
     t === "big_tech" ||
     t === "big tech" ||
     t.includes("big company") ||
     t.includes("big-co") ||
+    t.includes("large company") ||
+    t.includes("enterprise") ||
     t.includes("stable") ||
     t.includes("大厂")
   ) return "bigtech"
@@ -895,10 +907,29 @@ export function makeStartupPrefQuestion(
       hints: ["startup", "bigtech", "either"],
       examples: [
         { reply: "startup", value: "startup", confidence: 1.0 },
+        {
+          reply: "I lean startup or fast-moving early-stage teams, but still care about a solid manager",
+          value: "startup",
+          confidence: 0.95,
+        },
         { reply: "big company stable", value: "bigtech", confidence: 0.9 },
         { reply: "都行", value: "either", confidence: 0.95 },
         { reply: "Either", value: "either", confidence: 1.0 },
         { reply: "看具体团队", value: "either", confidence: 0.8 },
+      ],
+      bloomRegex: [
+        {
+          pattern: /\b(either|both|any|flexible|open to either|depends|team-dependent)\b|(\bstartup\b|\bstart-up\b|\bearly[-\s]?stage\b|\bfast[-\s]?moving\b|创业).*(\bbigtech\b|\bbig tech\b|\bbig[-\s]?company\b|\blarge company\b|\benterprise\b|\bstable\b|大厂)|(\bbigtech\b|\bbig tech\b|\bbig[-\s]?company\b|\blarge company\b|\benterprise\b|\bstable\b|大厂).*(\bstartup\b|\bstart-up\b|\bearly[-\s]?stage\b|\bfast[-\s]?moving\b|创业)|都行|都可以|无所谓|看具体/i,
+          value: "either",
+        },
+        {
+          pattern: /\bstartup\b|\bstart-up\b|\bearly[-\s]?stage\b|\bfast[-\s]?moving\b|\bfounding\b|创业/i,
+          value: "startup",
+        },
+        {
+          pattern: /\bbigtech\b|\bbig tech\b|\bbig[-\s]?company\b|\blarge company\b|\benterprise\b|\bstable\b|大厂/i,
+          value: "bigtech",
+        },
       ],
       parseValue: parseStartupPrefValue,
       ...(llmCallFactory ? { llmCallFactory } : {}),
@@ -906,12 +937,12 @@ export function makeStartupPrefQuestion(
     rephraser: new HybridRephraser({
       variants: [
         {
-          zh: "startup / 大厂 / 都行 三选一",
-          en: "startup / bigtech / either — pick one",
+          zh: "我想给你打个偏好标签: 更偏 startup, 大厂, 还是都可以?",
+          en: "I just need the preference tag: more startup, big-company, or flexible?",
         },
         {
-          zh: "硬要选一个? startup / 大厂 / 都行 — 都可以的话回'都行'就好",
-          en: "if you had to pick — startup / bigtech / either? 'either' is fine",
+          zh: "可以讲细一点, 但结论帮我带上: startup / 大厂 / 都行 哪个更接近?",
+          en: "You can add nuance, just include the closest label: startup / big-company / flexible.",
         },
         {
           zh: "你想要那种快节奏 startup 体验, 还是更看重稳定大厂?",

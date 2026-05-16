@@ -290,13 +290,19 @@ test("end-to-end: mixed batch resolves into create/merge/pending/blocked", async
   // Each record updated with its outcome.
   const r1Doc = store.get(PA_COLLECTIONS.externalCandidateRecords)!.get("r1")!
   assert.equal(r1Doc.identityResolutionStatus, "create_new")
+  assert.deepEqual(r1Doc.reviewReasons, [])
+  assert.equal("resolutionConflictId" in r1Doc, false)
   const r2Doc = store.get(PA_COLLECTIONS.externalCandidateRecords)!.get("r2")!
   assert.equal(r2Doc.identityResolutionStatus, "merge_existing")
   assert.equal(r2Doc.resolvedUserId, "cand-existing")
+  assert.deepEqual(r2Doc.reviewReasons, [])
+  assert.equal("resolutionConflictId" in r2Doc, false)
   const r3Doc = store.get(PA_COLLECTIONS.externalCandidateRecords)!.get("r3")!
   assert.equal(r3Doc.identityResolutionStatus, "needs_review")
+  assert.ok(Array.isArray(r3Doc.reviewReasons))
   const r4Doc = store.get(PA_COLLECTIONS.externalCandidateRecords)!.get("r4")!
   assert.equal(r4Doc.identityResolutionStatus, "blocked")
+  assert.ok(Array.isArray(r4Doc.reviewReasons))
 })
 
 test("runResolveBatchIdentity is idempotent on re-run", async () => {

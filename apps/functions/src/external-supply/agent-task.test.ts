@@ -285,6 +285,48 @@ test("runGenerateAgentResearchPrompt — happy path persists task in draft_promp
   assert.deepEqual(task!.candidateIds, ["cand-1"])
 })
 
+test("runGenerateAgentResearchPrompt — production-shaped nullable record still renders prompt", async () => {
+  const { db, store } = makeFakeFirestore()
+  const rawRecord: Record<string, unknown> = {
+    batchId: "batch-1",
+    source: "manual_csv",
+    rawPayload: {},
+    canonicalLinkedInUrl: "https://linkedin.com/in/prod-nullable-agent",
+    linkedinProfileHash: "a".repeat(64),
+    emails: [],
+    name: "Production Nullable",
+    currentTitle: "Senior Engineer",
+    currentCompany: "Acme",
+    experience: [{ company: "Acme", title: "Engineer" }],
+    education: [{ school: "Harvard" }],
+    sourceTags: [],
+    normalizationStatus: "ok",
+    identityResolutionStatus: "merge_existing",
+    resolvedUserId: "cand-prod-nullable-agent",
+    resolutionConflictId: null,
+    reviewReasons: null,
+    evidence: [],
+    createdAt: NOW,
+    recordId: "rec-prod-nullable-agent",
+  }
+  ensureCol(store, PA_COLLECTIONS.externalCandidateRecords).set("rec-prod-nullable-agent", rawRecord)
+
+  const out = await runGenerateAgentResearchPrompt(
+    {
+      recordIds: ["rec-prod-nullable-agent"],
+      companyId: "co-1",
+      jobId: "job-1",
+    },
+    ADMIN_AUTH,
+    { db, now: () => NOW, newId: () => "task_prod_nullable" },
+  )
+
+  assert.equal(out.ok, true)
+  assert.ok(out.prompt.includes("rec-prod-nullable-agent"))
+  const task = ensureCol(store, PA_COLLECTIONS.agentResearchTasks).get("task_prod_nullable")
+  assert.deepEqual(task!.candidateIds, ["cand-prod-nullable-agent"])
+})
+
 test("runGenerateAgentResearchPrompt — candidateIds path resolves records by resolvedUserId", async () => {
   const { db, store } = makeFakeFirestore()
   seedRecord(store, { recordId: "rec-c1", resolvedUserId: "cand-1" })

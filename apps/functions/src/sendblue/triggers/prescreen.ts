@@ -9,8 +9,9 @@
  *   - Regex: ^.*WeKruit_([A-Za-z0-9_-]+)_([A-Za-z0-9_-]+)_Job.*$
  *   - jobId / userId char-class is closed (alnum + _ + -). Defends against
  *     injection of `/` `\n` `?` etc.
- *   - Idempotency: (jobId, userId) one trigger per 60 minutes — wait helper
- *     reads an idempotency store the caller supplies.
+ *   - Idempotency: (jobId, userId, messageHandle) one trigger per 60 minutes
+ *     so Sendblue retries are safe without blocking a fresh work session for
+ *     the same job.
  *
  * Authorization (PS7 + PS15):
  *   - Trigger sender phone must resolve to a userId that EITHER matches the
@@ -36,9 +37,9 @@ export interface PrescreenTriggerDeps {
   /** Optional admin allowlist; pre-screen sender doesn't need to be admin. */
   isAdmin?(userId: string): Promise<boolean>
   /** Read idempotency timestamp ms (null = never fired). */
-  getLastFiredMs(jobId: string, userId: string): Promise<number | null>
+  getLastFiredMs(jobId: string, userId: string, messageHandle: string): Promise<number | null>
   /** Write idempotency timestamp. */
-  setLastFiredMs(jobId: string, userId: string, ms: number): Promise<void>
+  setLastFiredMs(jobId: string, userId: string, messageHandle: string, ms: number): Promise<void>
   /** Fire the actual pre-screening session bootstrap. Fire-and-forget. */
   runPreScreen(args: {
     jobId: string
@@ -103,26 +104,7 @@ export class PrescreenTrigger implements Trigger {
     if (!m) return { kind: "unauthorized", reason: "regex_no_match" }
     const [, jobId, userId] = m
 
-    // Idempotency guard
     const now = (this.deps.now ?? Date.now)()
-    const last = await this.deps.getLastFiredMs(jobId, userId)
-    if (last !== null && now - last < PRESCREEN_IDEMPOTENCY_WINDOW_MS) {
-      ctx.log("trigger.prescreen.deduped", {
-        jobId,
-        userId,
-        sinceMs: now - last,
-        windowMs: PRESCREEN_IDEMPOTENCY_WINDOW_MS,
-      })
-      await this.deps.audit({
-        type: "trigger_deduped",
-        trigger: "prescreen",
-        jobId,
-        userId,
-        sinceMs: now - last,
-        correlationId: ctx.messageHandle,
-      })
-      return { kind: "handled", action: "prescreen_deduped" }
-    }
 
     // Authorization
     const resolvedUserId = await this.deps.lookupUserByPhone(ctx.fromNumber)
@@ -195,11 +177,37 @@ export class PrescreenTrigger implements Trigger {
         ? "self"
         : "admin"
 
+    // Idempotency guards only webhook retries of the SAME Sendblue message.
+    // A candidate sending a fresh trigger for the same job is a new work
+    // session; `runPreScreenForUser` will supersede any still-active session.
+    const messageHandle = ctx.messageHandle.trim() || "missing_message_handle"
+    const last = await this.deps.getLastFiredMs(jobId, sessionUserId, messageHandle)
+    if (last !== null && now - last < PRESCREEN_IDEMPOTENCY_WINDOW_MS) {
+      ctx.log("trigger.prescreen.deduped", {
+        jobId,
+        userId: sessionUserId,
+        messageHandle,
+        sinceMs: now - last,
+        windowMs: PRESCREEN_IDEMPOTENCY_WINDOW_MS,
+      })
+      await this.deps.audit({
+        type: "trigger_deduped",
+        trigger: "prescreen",
+        jobId,
+        userId: sessionUserId,
+        messageHandle,
+        sinceMs: now - last,
+        correlationId: ctx.messageHandle,
+      })
+      return { kind: "handled", action: "prescreen_deduped" }
+    }
+
     // Stamp idempotency BEFORE dispatching so a concurrent retry from
     // Sendblue (HMAC may double-deliver) doesn't double-fire. Idempotency
-    // is keyed by the SESSION userId so a public-page candidate doesn't
-    // get throttled by a stale wkr_uid stamp.
-    await this.deps.setLastFiredMs(jobId, sessionUserId, now)
+    // is keyed by the SESSION userId + message handle so a public-page
+    // candidate doesn't get throttled by a stale wkr_uid stamp or older
+    // same-job work session.
+    await this.deps.setLastFiredMs(jobId, sessionUserId, messageHandle, now)
 
     // Fire-and-forget. Errors here would otherwise reject the HTTP reply.
     void Promise.resolve()

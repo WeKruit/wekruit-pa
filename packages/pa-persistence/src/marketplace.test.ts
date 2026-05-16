@@ -926,6 +926,105 @@ test("applyPassedCandidateSnapshot creates one snapshot and advances state to em
   )
 })
 
+test("applyPassedCandidateSnapshot refreshes employer-visible snapshot for a fresh prescreen session", async () => {
+  const { db, store } = makeFakeFirestore()
+  const stateId = createCandidateJobStateId("cand-1", "job-1")
+  const snapshotId = createEmployerVisibleProfileId("job-1", "cand-1")
+
+  await applyCandidateJobEvent(db, job("prescreen_started", { eventId: "start-old", prescreenSessionId: "ps-old" }))
+  const oldSnapshot: EmployerVisibleProfile = {
+    snapshotId,
+    candidateId: "cand-1",
+    jobId: "job-1",
+    candidateJobStateId: stateId,
+    createdFromState: "passed",
+    sourcePrescreenSessionId: "ps-old",
+    profileSummary: "Earlier profile summary.",
+    passReason: "Earlier pass reason.",
+    createdBy: "system",
+    createdAt: now,
+  }
+  await applyPassedCandidateSnapshot(db, {
+    eventId: "pass-old",
+    candidateId: "cand-1",
+    jobId: "job-1",
+    prescreenSessionId: "ps-old",
+    occurredAt: now,
+    actor: "system",
+    snapshot: oldSnapshot,
+  })
+
+  const later = "2026-05-13T13:00:00.000Z"
+  const newSnapshot: EmployerVisibleProfile = {
+    ...oldSnapshot,
+    sourcePrescreenSessionId: "ps-new",
+    transcriptSummary: "Fresh session transcript.",
+    passReason: "Fresh pass reason.",
+    createdAt: later,
+  }
+  const refreshed = await applyPassedCandidateSnapshot(db, {
+    eventId: "pass-new",
+    candidateId: "cand-1",
+    jobId: "job-1",
+    prescreenSessionId: "ps-new",
+    occurredAt: later,
+    actor: "system",
+    snapshot: newSnapshot,
+  })
+
+  assert.equal(refreshed.state, "employer_visible")
+  assert.equal(refreshed.snapshotCreated, false)
+  assert.equal(refreshed.idempotent, false)
+  const savedSnapshot = store.get(PA_COLLECTIONS.employerVisibleProfiles)!.get(snapshotId)!
+  assert.equal(savedSnapshot.sourcePrescreenSessionId, "ps-new")
+  assert.equal(savedSnapshot.passReason, "Fresh pass reason.")
+  const stateDoc = store.get(PA_COLLECTIONS.candidateJobStates)!.get(stateId)!
+  assert.equal(stateDoc.state, "employer_visible")
+  assert.equal(stateDoc.prescreenSessionId, "ps-new")
+  assert.equal(stateDoc.reason, "passed_snapshot_refreshed")
+})
+
+test("applyCandidateJobEvent does not replace passed session link on invalid prescreen restart", async () => {
+  const { db, store } = makeFakeFirestore()
+  const stateId = createCandidateJobStateId("cand-1", "job-1")
+
+  await applyCandidateJobEvent(db, job("prescreen_started", { eventId: "start-old", prescreenSessionId: "ps-old" }))
+  await applyPassedCandidateSnapshot(db, {
+    eventId: "pass-old",
+    candidateId: "cand-1",
+    jobId: "job-1",
+    prescreenSessionId: "ps-old",
+    occurredAt: now,
+    actor: "system",
+    snapshot: {
+      snapshotId: createEmployerVisibleProfileId("job-1", "cand-1"),
+      candidateId: "cand-1",
+      jobId: "job-1",
+      candidateJobStateId: stateId,
+      createdFromState: "passed",
+      sourcePrescreenSessionId: "ps-old",
+      passReason: "Earlier pass reason.",
+      createdBy: "system",
+      createdAt: now,
+    },
+  })
+
+  const later = "2026-05-13T13:00:00.000Z"
+  const restarted = await applyCandidateJobEvent(db, job("prescreen_started", {
+    eventId: "start-new",
+    prescreenSessionId: "ps-new",
+    occurredAt: later,
+  }))
+
+  assert.equal(restarted.state, "employer_visible")
+  assert.equal(restarted.changed, false)
+  assert.equal(restarted.reason, "invalid_prescreen_start_transition")
+  const stateDoc = store.get(PA_COLLECTIONS.candidateJobStates)!.get(stateId)!
+  assert.equal(stateDoc.state, "employer_visible")
+  assert.equal(stateDoc.reason, "passed_snapshot_created")
+  assert.equal(stateDoc.prescreenSessionId, "ps-old")
+})
+
 test("NOT_PASS and PAUSE create no employer-visible snapshots", async () => {
   const notPass = makeFakeFirestore()
   await applyCandidateJobEvent(notPass.db, job("prescreen_started"))

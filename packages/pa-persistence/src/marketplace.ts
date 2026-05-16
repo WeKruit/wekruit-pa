@@ -179,17 +179,20 @@ export async function applyCandidateJobEvent(
     }
 
     const reduced = reduceCandidateJobState(currentState, event)
+    const shouldApplyTransitionToStateDoc = reduced.changed || !currentDoc
+    const shouldAdoptPrescreenSession =
+      "prescreenSessionId" in event && (shouldApplyTransitionToStateDoc || !currentDoc?.prescreenSessionId)
     const nextDoc: CandidateJobStateDoc = CandidateJobStateDocSchema.parse({
       ...(currentDoc ?? {}),
       id: stateDocId,
       candidateId: event.candidateId,
       jobId: event.jobId,
-      state: reduced.state,
-      previousState: currentState,
-      stateUpdatedAt: event.occurredAt,
-      reason: reduced.reason,
+      state: shouldApplyTransitionToStateDoc ? reduced.state : currentDoc.state,
+      previousState: shouldApplyTransitionToStateDoc ? currentState : currentDoc.previousState,
+      stateUpdatedAt: shouldApplyTransitionToStateDoc ? event.occurredAt : currentDoc.stateUpdatedAt,
+      reason: shouldApplyTransitionToStateDoc ? reduced.reason : currentDoc.reason,
       prescreenSessionId:
-        "prescreenSessionId" in event
+        shouldAdoptPrescreenSession
           ? event.prescreenSessionId ?? currentDoc?.prescreenSessionId
           : currentDoc?.prescreenSessionId,
       employerVisibleProfileId:
@@ -1308,24 +1311,88 @@ export async function applyPassedCandidateSnapshot(
       : null
     const currentState = currentDoc?.state ?? "candidate_matched"
 
+    let existingSnapshot: EmployerVisibleProfile | null = null
+    let refreshExistingSnapshot = false
     if (snapshotSnap.exists) {
-      const existingSnapshot = EmployerVisibleProfileSchema.parse(snapshotSnap.data())
+      existingSnapshot = EmployerVisibleProfileSchema.parse(snapshotSnap.data())
       if (stableJson(pruneUndefined(existingSnapshot)) !== stableJson(pruneUndefined(snapshot))) {
-        throw new Error(`conflicting_duplicate_event:${PA_COLLECTIONS.employerVisibleProfiles}/${snapshot.snapshotId}`)
-      }
-      if (
-        passAuditSnap.exists ||
-        employerAuditSnap.exists ||
-        currentState === "employer_visible"
-      ) {
-        return {
-          snapshot: existingSnapshot,
-          snapshotCreated: false,
-          state: currentState,
-          stateDocId,
-          idempotent: true,
-          auditEventIds: [passAuditRef.id, employerAuditRef.id, snapshotAuditRef.id],
+        refreshExistingSnapshot =
+          existingSnapshot.candidateId === input.candidateId &&
+          existingSnapshot.jobId === input.jobId &&
+          existingSnapshot.candidateJobStateId === stateDocId &&
+          existingSnapshot.sourcePrescreenSessionId !== input.prescreenSessionId
+        if (!refreshExistingSnapshot) {
+          throw new Error(`conflicting_duplicate_event:${PA_COLLECTIONS.employerVisibleProfiles}/${snapshot.snapshotId}`)
         }
+      }
+      if (!refreshExistingSnapshot) {
+        if (
+          passAuditSnap.exists ||
+          employerAuditSnap.exists ||
+          currentState === "employer_visible"
+        ) {
+          return {
+            snapshot: existingSnapshot,
+            snapshotCreated: false,
+            state: currentState,
+            stateDocId,
+            idempotent: true,
+            auditEventIds: [passAuditRef.id, employerAuditRef.id, snapshotAuditRef.id],
+          }
+        }
+      }
+    }
+
+    if (refreshExistingSnapshot && currentState === "employer_visible") {
+      const nextDoc: CandidateJobStateDoc = CandidateJobStateDocSchema.parse({
+        ...(currentDoc ?? {}),
+        id: stateDocId,
+        candidateId: input.candidateId,
+        jobId: input.jobId,
+        state: "employer_visible",
+        previousState: currentState,
+        stateUpdatedAt: input.occurredAt,
+        reason: "passed_snapshot_refreshed",
+        prescreenSessionId: input.prescreenSessionId,
+        employerVisibleProfileId: snapshot.snapshotId,
+        outboundInviteId: currentDoc?.outboundInviteId,
+        outboundId: currentDoc?.outboundId,
+        latestMatchId: currentDoc?.latestMatchId,
+        archivedAt: currentDoc?.archivedAt,
+      })
+
+      tx.set(stateRef, firestorePayload(nextDoc as Record<string, unknown>), { merge: true })
+      tx.set(snapshotRef, firestorePayload(snapshot as Record<string, unknown>))
+      if (!passAuditSnap.exists) {
+        tx.set(passAuditRef, firestorePayload({
+          id: passAuditRef.id,
+          action: "marketplace.candidate_job.transition",
+          candidateId: input.candidateId,
+          jobId: input.jobId,
+          eventId: passedEvent.eventId,
+          eventType: passedEvent.type,
+          from: currentState,
+          to: currentState,
+          changed: true,
+          reason: "passed_snapshot_refreshed",
+          actor: passedEvent.actor,
+          createdAt: passedEvent.occurredAt,
+        }))
+      }
+
+      return {
+        snapshot,
+        snapshotCreated: false,
+        state: "employer_visible",
+        stateDocId,
+        idempotent: false,
+        auditEventIds: [passAuditRef.id, employerAuditRef.id, snapshotAuditRef.id],
+      }
+    }
+
+    if (snapshotSnap.exists) {
+      if (refreshExistingSnapshot) {
+        throw new Error(`conflicting_duplicate_event:${PA_COLLECTIONS.employerVisibleProfiles}/${snapshot.snapshotId}`)
       }
     }
 

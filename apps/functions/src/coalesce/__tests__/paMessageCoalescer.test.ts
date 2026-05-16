@@ -1046,7 +1046,8 @@ describe("paMessageCoalescer — case 13: continuation-marker bumps delay regard
 // markFiredTransaction (pending→fired flip) actually executes.
 async function setupAndProcess(
   configure: (deps: CoalescerDeps) => void,
-  msgHandle = "msg-last"
+  msgHandle = "msg-last",
+  body = "hi"
 ): Promise<{
   reactionCalls: Array<{ messageHandle: string; reaction: string }>
   status: string
@@ -1058,7 +1059,7 @@ async function setupAndProcess(
   await enqueueOrCoalesce(deps, {
     ...BASE_MSG,
     messageHandle: msgHandle,
-    body: "hi",
+    body,
     inboundEventId: "inb-1",
     receivedAt: t0.toISOString(),
   })
@@ -1084,6 +1085,19 @@ describe("iter33 Bug 9: love-tapback rate gate", () => {
     })
     assert.equal(status, "fired")
     assert.equal(reactionCalls.length, 0, "reaction MUST NOT fire when rng >= probability")
+  })
+
+  it("hard-filter negative answer skips tapback even when rng would fire", async () => {
+    const { reactionCalls, status } = await setupAndProcess(
+      (deps) => {
+        deps.loveTapbackProbability = 1
+        deps.rng = () => 0.0
+      },
+      "msg-negative-location",
+      "Correct. I cannot do the New York setup for this role. Remote from Los Angeles only."
+    )
+    assert.equal(status, "fired")
+    assert.equal(reactionCalls.length, 0, "negative hard-filter answers must not receive a love tapback")
   })
 
   it("100 trials at p=0.35 → fires within [25%, 45%] band", async () => {

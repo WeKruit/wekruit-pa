@@ -1,0 +1,103 @@
+{
+  "runId": "verify-ext-rain-backend-engineer-482b165f-2026-05-15T20-01-14-849Z",
+  "startedAt": "2026-05-15T20:01:14.849Z",
+  "projectId": "wekruit-5f89b",
+  "batchId": "81395d47-3da9-4485-8025-fcdc79a4aa93",
+  "companyId": "rain-xyz",
+  "jobId": "rain-backend-engineer-482b165f",
+  "steps": [
+    {
+      "step": "pa_users_before",
+      "count": 602
+    },
+    {
+      "step": "batch_loaded",
+      "status": "ready_for_review",
+      "rowCount": 45,
+      "readyToProfileCount": 1,
+      "source": "manual_csv",
+      "batchJobId": "rain-backend-engineer-482b165f",
+      "batchCompanyId": "rain-xyz"
+    },
+    {
+      "step": "records_loaded",
+      "count": 45,
+      "resolvedRecordCount": 26,
+      "identityResolutionStatus": {
+        "create_new": 26,
+        "blocked": 19
+      }
+    },
+    {
+      "step": "run_evaluation",
+      "result": {
+        "ok": true,
+        "runId": "verify-ext-rain-backend-engineer-482b165f-2026-05-15T20-01-14-849Z",
+        "processed": 26,
+        "completed": 26,
+        "skipped": 0,
+        "tierBreakdown": {
+          "tier_1_personal_linkedin_and_email": 0,
+          "tier_2_personal_email": 0,
+          "tier_3_general_email": 0,
+          "retain_only": 26,
+          "blocked": 0
+        }
+      }
+    },
+    {
+      "step": "evaluations_loaded",
+      "count": 26,
+      "tierBreakdown": {
+        "retain_only": 26
+      }
+    },
+    {
+      "step": "selected_evaluation",
+      "evaluationId": "d448e164-7d83-4191-812b-b1ec1cbd1f6f__rain-backend-engineer-482b165f__verify-ext-rain-backend-engineer-482b165f-2026-05-15T20-01-14-849Z",
+      "candidateId": "d448e164-7d83-4191-812b-b1ec1cbd1f6f",
+      "proposedTier": "retain_only",
+      "softScore": 0.1625
+    },
+    {
+      "step": "draft_outreach_plan",
+      "result": {
+        "ok": true,
+        "planId": "9525c81b-7eb2-40d5-aa99-a525a423b70d",
+        "tier": "retain_only",
+        "channelDecision": "no_outreach",
+        "suppression": {
+          "allow": true,
+          "blockedReasons": []
+        }
+      }
+    },
+    {
+      "step": "approve_outreach_plan",
+      "result": {
+        "ok": true,
+        "planId": "9525c81b-7eb2-40d5-aa99-a525a423b70d",
+        "approvalStatus": "approved"
+      }
+    },
+    {
+      "step": "manual_linkedin_task",
+      "result": {
+        "skipped": true,
+        "reason": "plan tier is not tier_1"
+      }
+    },
+    {
+      "step": "mailgun_dry_run_or_suppression",
+      "result": {
+        "error": "Plan 9525c81b-7eb2-40d5-aa99-a525a423b70d has no resolvable email recipient on the candidate."
+      }
+    },
+    {
+      "step": "pa_users_after",
+      "count": 602
+    }
+  ],
+  "completedAt": "2026-05-15T20:01:25.093Z",
+  "success": true
+}

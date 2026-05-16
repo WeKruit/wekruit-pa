@@ -96,6 +96,10 @@ class FakeQuery {
     return new FakeQuery(this.db, this.collectionPath, this.filters, max)
   }
 
+  orderBy() {
+    return new FakeQuery(this.db, this.collectionPath, this.filters, this.max)
+  }
+
   async get() {
     let docs = [...this.db.collectionStore(this.collectionPath).entries()]
       .filter(([, data]) => this.filters.every((f) => matchesFilter(data, f)))

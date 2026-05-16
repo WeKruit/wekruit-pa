@@ -75,6 +75,80 @@ test("requireExistingPaUserForProductionTest allows existing docs and blocks mis
   )
 })
 
+test("production pa-users test access is constrained by phone allowlist", () => {
+  assert.doesNotThrow(() =>
+    guard.assertProductionTestPhoneAllowed({
+      projectId: "wekruit-5f89b",
+      scriptName: "script",
+      phoneE164: "(424) 320-1960",
+      env: { IMESSAGE_PEERS: "+14243201960" },
+    }),
+  )
+
+  assert.throws(
+    () =>
+      guard.assertProductionTestPhoneAllowed({
+        projectId: "wekruit-5f89b",
+        scriptName: "script",
+        phoneE164: "+19995550000",
+        env: { IMESSAGE_PEERS: "+14243201960" },
+      }),
+    /non-allowlisted phone \+19995550000/,
+  )
+})
+
+test("requireExistingPaUserWithAllowedPhoneForProductionTest requires existing user phone to match allowlist", async () => {
+  const db = {
+    collection() {
+      return {
+        doc(id: string) {
+          return {
+            async get() {
+              return {
+                exists: id === "adam" || id === "missing-phone",
+                id,
+                data: () => (id === "missing-phone" ? { id } : { id, phoneE164: "+14243201960" }),
+              }
+            },
+          }
+        },
+      }
+    },
+  }
+
+  const found = await guard.requireExistingPaUserWithAllowedPhoneForProductionTest(db, {
+    projectId: "wekruit-5f89b",
+    scriptName: "script",
+    userId: "adam",
+    env: { IMESSAGE_PEERS: "+14243201960" },
+  })
+  assert.equal(found.phoneE164, "+14243201960")
+
+  await assert.rejects(
+    () =>
+      guard.requireExistingPaUserWithAllowedPhoneForProductionTest(db, {
+        projectId: "wekruit-5f89b",
+        scriptName: "script",
+        userId: "adam",
+        phoneE164: "+19995550000",
+        env: { IMESSAGE_PEERS: "+14243201960" },
+      }),
+    /phone mismatch/,
+  )
+
+  await assert.rejects(
+    () =>
+      guard.requireExistingPaUserWithAllowedPhoneForProductionTest(db, {
+        projectId: "wekruit-5f89b",
+        scriptName: "script",
+        userId: "missing-phone",
+        phoneE164: "+14243201960",
+        env: { IMESSAGE_PEERS: "+14243201960" },
+      }),
+    /expected pa-users\/missing-phone to have phoneE164/,
+  )
+})
+
 test("legacy production E2E scripts that create fresh pa-users are guarded", () => {
   const scripts = [
     "e2e-single-no-cleanup.mjs",
@@ -87,10 +161,29 @@ test("legacy production E2E scripts that create fresh pa-users are guarded", () 
     "e2e-bug-a-b-verify.mjs",
     "e2e-bug-d-verify.mjs",
     "qa-iter30-v4-reset-multi.mjs",
+    "external-supply-prod-smoke.ts",
+    "external-supply-v2-prod-smoke.ts",
   ]
   for (const script of scripts) {
     const source = readFileSync(new URL(`../${script}`, import.meta.url), "utf8")
     assert.match(source, /prod-test-user-guard\.mjs/, `${script} must import the production pa-users guard`)
     assert.match(source, /assertProductionPaUserCreationAllowed/, `${script} must check before creating users`)
+  }
+})
+
+test("root production verification scripts that touch pa-users are guarded", () => {
+  const scripts = [
+    "../../../../scripts/e2e-downstream-tag-side-effect.mjs",
+    "../../../../scripts/verify-match-company-tags.mjs",
+    "../../../../scripts/verify-nl-judge-urgently-seeking.mjs",
+  ]
+  for (const script of scripts) {
+    const source = readFileSync(new URL(script, import.meta.url), "utf8")
+    assert.match(source, /prod-test-user-guard\.mjs/, `${script} must import the production pa-users guard`)
+    assert.match(
+      source,
+      /assertProductionPaUserCreationAllowed|requireExistingPaUserForProductionTest/,
+      `${script} must check before creating or mutating test users`,
+    )
   }
 })

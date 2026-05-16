@@ -17,10 +17,6 @@ WeKruit has multiple front doors, not multiple candidate products.
 - iMessage/SMS `WeKruit_<jobId>_<userId>_Job` = job prescreen trigger.
 - `layoff.wekruit.com` = layoff-specific entry.
 - iMessage/SMS `WeKruit_LAID_OFF` = layoff source-aware onboarding trigger.
-- iMessage/SMS `START`, `hi`, or another normal candidate reply with no active
-  job/layoff trigger = regular Claire candidate onboarding. If a recent ATS
-  pending invite exists, that same `START` reply must virtualize into the
-  matching job prescreen; otherwise it must stay in general onboarding.
 - external supply/admin uploads = operator-side candidate acquisition.
 
 Underlying truth must be shared:
@@ -370,25 +366,44 @@ Rules:
 - Never use emoji in rejection, hard stop, layoff distress, visa/sponsorship, consent, privacy, or compliance-sensitive messages.
 - Avoid slang, exaggerated praise, and robotic repeated phrasing.
 
-### 12. Verification
+### 12. Friendly Lifecycle And Event Triggers
+
+Outside job prescreens, Claire should behave like a durable candidate-side agent that remembers the person and checks in when there is a real reason.
+
+Add a source-aware lifecycle layer for:
+
+- laid-off candidate check-ins after a fresh layoff signal or meaningful time gap
+- “how are things going” follow-ups when the candidate has not updated status recently
+- matching notifications when a role becomes newly relevant to their profile
+- post-job-change updates when the candidate says they found a role or changed direction
+- profile freshness nudges when resume, location, visa, target role, or availability may be stale
+
+Rules:
+
+- Prescreen remains professional and job-specific.
+- Non-prescreen messages must be friendly, contextual, and candidate-first.
+- Every proactive message needs an explicit event reason, cooldown, frequency cap, and opt-out/suppression path.
+- Do not send a check-in just because a cron ran; only send when there is candidate value.
+- Do not pretend to have checked on someone if the system only has stale data.
+- Use recent session memory and `pa-users` evidence so messages reference real context.
+- Persist every lifecycle touch as a session/event with source, reason, cooldown key, outbound id, candidate reply, and resulting evidence/tag updates.
+- Avoid annoying users: cap repeats, avoid stacking messages, respect no-response behavior, and suppress during active prescreen/intake unless explicitly relevant.
+
+Acceptance:
+
+- Add a lifecycle-trigger decision service with explainable “send / do not send” reasons.
+- Add tests for cooldowns, suppression, active-session blocking, and event-specific copy.
+- Verify at least one laid-off friendly check-in, one match notification, and one no-send case in Firestore without relying on dashboard-only proof.
+
+### 13. Verification
 
 Required verification:
 
 - Node 24 targeted tests.
 - Firestore audit of candidate evidence/tag writes.
-- One job prescreen live or live-equivalent Sendblue flow using
-  `WeKruit_<jobId>_<userId>_Job`.
-- One `WeKruit_LAID_OFF` live or live-equivalent Sendblue flow.
-- One normal/random candidate live or live-equivalent Sendblue flow using
-  `START` or `hi`, proving it stays in regular onboarding when no pending invite
-  exists.
-- One `START` live or live-equivalent Sendblue flow with a recent ATS pending
-  invite, proving it virtualizes into the right job prescreen instead of
-  regular onboarding.
-- Stress cases for at least four candidate characteristics: strong fit,
-  adjacent fit, weak/evasive fit, and multi-message fragmented replies. The
-  transcript/reply quality must be read by the tester; do not rely only on
-  test green.
+- One job prescreen live or live-equivalent flow.
+- One `WeKruit_LAID_OFF` live-equivalent flow.
+- One general onboarding live-equivalent flow.
 - One layoff signup duplicate-phone path check.
 - One layoff auth claim/adoption check.
 - One layoff resume ingest check.
