@@ -226,7 +226,54 @@ interface RunDeps {
   now?: number
 }
 
-export async function runOpenJobs(params: QueryParams, deps: RunDeps = {}): Promise<{ rows: OpenJobRow[]; scanned: number }> {
+// ---------------------------------------------------------- snapshot cache
+// Module-scope LRU keyed by (scanCap) — the inner firestore read scans the
+// freshest N matching-jobs docs and projects them. Filters/limit run in
+// memory below from this cached snapshot. Multiple concurrent requests on
+// the same warm CF instance reuse the snapshot instead of hitting Firestore.
+//
+// 60s TTL is the same staleness the CDN already permits (s-maxage=60). With
+// concurrency=40 a hot instance can serve ~40 req/inst-min from a single
+// Firestore scan — caching across instances comes from the CDN, not here.
+interface SnapshotCacheEntry {
+  rows: OpenJobRow[]
+  scanned: number
+  builtAt: number
+}
+const SNAPSHOT_TTL_MS = 60_000
+const snapshotCache = new Map<number, SnapshotCacheEntry>()
+
+export function _resetSnapshotCacheForTest(): void {
+  snapshotCache.clear()
+}
+
+async function loadSnapshot(scanCap: number, db: ReturnType<typeof getFirestore>, now: number): Promise<SnapshotCacheEntry> {
+  const cached = snapshotCache.get(scanCap)
+  if (cached && now - cached.builtAt < SNAPSHOT_TTL_MS) return cached
+
+  const q: Query = db
+    .collection("matching-jobs")
+    .where("status", "==", "active")
+    .orderBy("firstSeenAt", "desc")
+    .limit(scanCap)
+  const snap = await q.get()
+  const rows: OpenJobRow[] = []
+  for (const doc of snap.docs) {
+    const row = toOpenJobRow(doc.id, doc.data() as Record<string, unknown>, now)
+    if (row) rows.push(row)
+  }
+  rows.sort((a, b) => {
+    const am = a.firstSeenAt ? Date.parse(a.firstSeenAt) : 0
+    const bm = b.firstSeenAt ? Date.parse(b.firstSeenAt) : 0
+    return bm - am
+  })
+
+  const entry: SnapshotCacheEntry = { rows, scanned: snap.size, builtAt: now }
+  snapshotCache.set(scanCap, entry)
+  return entry
+}
+
+export async function runOpenJobs(params: QueryParams, deps: RunDeps = {}): Promise<{ rows: OpenJobRow[]; scanned: number; cached: boolean }> {
   const db = deps.db ?? getFirestore()
   const now = deps.now ?? Date.now()
   const freshThresholdMs = now - params.freshDays * 24 * 60 * 60 * 1000
@@ -237,37 +284,23 @@ export async function runOpenJobs(params: QueryParams, deps: RunDeps = {}): Prom
   // tight limits (e.g. limit=3 with filters) still see enough rows to find
   // matches; ceiling at 800 to keep p95 under the 30s timeout.
   const SCAN_CAP = Math.min(800, Math.max(300, params.limit * 6))
+  const cacheBefore = snapshotCache.get(SCAN_CAP)
+  const cached = !!cacheBefore && now - cacheBefore.builtAt < SNAPSHOT_TTL_MS
 
-  // Match v16 queryMatchingJobs (apps/job-rec/.../query-matching-jobs-v16.ts):
-  // orderBy firstSeenAt desc so the scan window is the freshest set —
-  // not a random doc-id slice. Composite index already exists for this
-  // pattern (status==active + firstSeenAt desc).
-  const q: Query = db
-    .collection("matching-jobs")
-    .where("status", "==", "active")
-    .orderBy("firstSeenAt", "desc")
-    .limit(SCAN_CAP)
+  const snapshot = await loadSnapshot(SCAN_CAP, db, now)
 
-  const snap = await q.get()
   const rows: OpenJobRow[] = []
-  for (const doc of snap.docs) {
-    const row = toOpenJobRow(doc.id, doc.data() as Record<string, unknown>, now)
-    if (!row) continue
+  for (const row of snapshot.rows) {
     if (row.firstSeenAt) {
       const ms = Date.parse(row.firstSeenAt)
       if (Number.isFinite(ms) && ms < freshThresholdMs) continue
     }
     if (!matchesFilters(row, params)) continue
     rows.push(row)
+    if (rows.length >= params.limit) break
   }
 
-  rows.sort((a, b) => {
-    const am = a.firstSeenAt ? Date.parse(a.firstSeenAt) : 0
-    const bm = b.firstSeenAt ? Date.parse(b.firstSeenAt) : 0
-    return bm - am
-  })
-
-  return { rows: rows.slice(0, params.limit), scanned: snap.size }
+  return { rows, scanned: snapshot.scanned, cached }
 }
 
 // --------------------------------------------------------- CF export -----
@@ -277,9 +310,16 @@ function setCors(res: { set: (k: string, v: string) => void }): void {
   res.set("Access-Control-Allow-Methods", "GET,OPTIONS")
   res.set("Access-Control-Allow-Headers", "Content-Type")
   res.set("Access-Control-Max-Age", "3600")
-  // 60s edge cache — list mutates nightly + matching-jobs auto-enrich
-  // bursts, but a minute of staleness is fine for a public job board.
-  res.set("Cache-Control", "public, max-age=60, s-maxage=60")
+  // Tiered caching to keep Firestore reads bounded under load:
+  //   - browser holds 60s (max-age)
+  //   - CDN (Cloud Run + Fastly fronting Firebase Hosting CFs) holds 5m
+  //     (s-maxage) and serves stale-while-revalidate for another 10m so a
+  //     cold instance never blocks user paint
+  //   - in-memory snapshot inside the CF instance (loadSnapshot, 60s TTL)
+  //     deduplicates Firestore reads across concurrent requests on the
+  //     same warm instance
+  res.set("Cache-Control", "public, max-age=60, s-maxage=300, stale-while-revalidate=600")
+  res.set("Vary", "Accept-Encoding")
 }
 
 export const paPublicOpenJobs = onRequest(
@@ -305,8 +345,9 @@ export const paPublicOpenJobs = onRequest(
 
     try {
       const params = parseQuery(req.query as Record<string, unknown>)
-      const { rows, scanned } = await runOpenJobs(params)
-      res.status(200).json({ ok: true, count: rows.length, scanned, rows })
+      const { rows, scanned, cached } = await runOpenJobs(params)
+      res.set("X-Cache", cached ? "HIT" : "MISS")
+      res.status(200).json({ ok: true, count: rows.length, scanned, cached, rows })
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err)
       res.status(500).json({ ok: false, reason })

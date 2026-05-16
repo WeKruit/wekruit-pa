@@ -178,12 +178,13 @@ function Nav() {
         <Wordmark />
         <nav style={{ display: "flex", gap: 36, alignItems: "center" }}>
           <Link to="/open" style={linkStyle}>Open interviews</Link>
+          <Link to="/market" style={linkStyle}>Open market</Link>
           <Link to="/me" style={linkStyle}>Pipeline</Link>
           <Link to="/me/profile" style={linkStyle}>Profile</Link>
         </nav>
         <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
           <Link to="/login" style={linkStyle}>Sign in</Link>
-          <Link to="/login" className="btn btn--primary btn--sm">Add your name</Link>
+          <Link to="/login" className="btn btn--primary btn--sm">Start with Claire</Link>
         </div>
       </div>
     </header>
@@ -464,6 +465,129 @@ function Step({
   )
 }
 
+function ClaireMessageCard() {
+  return (
+    <div
+      style={{
+        background: "linear-gradient(180deg, var(--cream-3) 0%, var(--cream-2) 100%)",
+        border: "1px solid var(--border)",
+        borderRadius: 32,
+        boxShadow: "var(--shadow-lg)",
+        padding: 28,
+        width: "100%",
+        maxWidth: 360,
+        marginLeft: "auto",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          fontSize: 13,
+          color: "var(--ink-3)",
+          fontFamily: "var(--font-mono)",
+          marginBottom: 24,
+        }}
+      >
+        <span>9:24</span>
+        <span style={{ display: "inline-block", width: 70, height: 18, borderRadius: 9, background: "var(--ink)" }} />
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 24 }}>
+        <span
+          style={{
+            width: 48,
+            height: 48,
+            borderRadius: "50%",
+            background: "var(--peach-200)",
+            border: "1px solid var(--border)",
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontFamily: "var(--font-serif)",
+            fontSize: 22,
+            color: "var(--ink)",
+          }}
+        >
+          C
+        </span>
+        <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.25 }}>
+          <span style={{ fontWeight: 600, fontSize: 17, color: "var(--ink)" }}>Claire</span>
+          <span style={{ fontSize: 13, color: "var(--ink-3)" }}>WeKruit recruiter</span>
+        </div>
+      </div>
+      <div style={{ borderTop: "1px solid var(--border)", paddingTop: 18 }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "center",
+            gap: 12,
+            fontSize: 12,
+            color: "var(--ink-3)",
+            marginBottom: 14,
+          }}
+        >
+          <span style={{ fontWeight: 600, color: "var(--ink)" }}>iMessage</span>
+          <span>· Today 9:24 AM</span>
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
+          <span
+            style={{
+              background: "#3478f6",
+              color: "white",
+              padding: "10px 14px",
+              borderRadius: 18,
+              borderBottomRightRadius: 4,
+              fontSize: 15,
+              maxWidth: 240,
+              animation: "wko-bubble-in var(--dur-base) var(--ease)",
+            }}
+          >
+            Claire
+          </span>
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-start", marginBottom: 10 }}>
+          <span
+            style={{
+              background: "var(--cream)",
+              color: "var(--ink)",
+              padding: "10px 14px",
+              borderRadius: 18,
+              borderBottomLeftRadius: 4,
+              fontSize: 15,
+              maxWidth: 260,
+              border: "1px solid var(--border)",
+            }}
+          >
+            Hey — Claire from WeKruit. Saw your résumé. Quick chat?
+          </span>
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-start" }}>
+          <span
+            style={{
+              background: "var(--cream)",
+              color: "var(--ink-3)",
+              padding: "10px 14px",
+              borderRadius: 18,
+              borderBottomLeftRadius: 4,
+              fontSize: 13,
+              border: "1px solid var(--border)",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
+            }}
+            aria-label="Claire is typing"
+          >
+            <span style={{ width: 4, height: 4, borderRadius: 999, background: "var(--ink-3)", animation: "wko-typing 1.2s infinite", animationDelay: "0ms" }} />
+            <span style={{ width: 4, height: 4, borderRadius: 999, background: "var(--ink-3)", animation: "wko-typing 1.2s infinite", animationDelay: "200ms" }} />
+            <span style={{ width: 4, height: 4, borderRadius: 999, background: "var(--ink-3)", animation: "wko-typing 1.2s infinite", animationDelay: "400ms" }} />
+          </span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function FAQ({ q, a }: { q: string; a: string }) {
   return (
     <div>
@@ -489,48 +613,57 @@ export default function LayoffLanding() {
           background: "var(--halo-hero)",
           marginTop: -72,
           paddingTop: 64 + 72,
-          paddingBottom: 56,
+          paddingBottom: 72,
           overflow: "hidden",
         }}
       >
-        <div className="container-narrow" style={{ textAlign: "center", position: "relative", zIndex: 1 }}>
-          <div className="eyebrow" style={{ marginBottom: 18 }}>From WeKruit</div>
-          <h1
-            style={{
-              fontFamily: "var(--font-serif)",
-              fontWeight: 400,
-              fontSize: "clamp(48px, 6vw, 84px)",
-              lineHeight: 1.02,
-              letterSpacing: "-0.025em",
-              color: "var(--ink)",
-              margin: 0,
-            }}
-          >
-            Laid off? We&apos;ve <em style={{ fontStyle: "italic" }}>got</em> you.
-          </h1>
-          <p
-            style={{
-              marginTop: 22,
-              marginInline: "auto",
-              maxWidth: 560,
-              fontSize: "clamp(17px, 1.4vw, 20px)",
-              lineHeight: 1.45,
-              color: "var(--ink-2)",
-            }}
-          >
-            A small, verified list of operators ready for what&apos;s next.{" "}
-            <strong style={{ color: "var(--ink)", fontWeight: 500 }}>We make the intros by hand.</strong>
-          </p>
-          <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 28, flexWrap: "wrap" }}>
-            <Link to="/login" className="btn btn--primary btn--lg">Add your name — 60 sec</Link>
-            <Link to="/open" className="btn btn--secondary btn--lg">Browse open interviews</Link>
-          </div>
-          <div style={{ marginTop: 18, display: "inline-flex", alignItems: "center", gap: 8, color: "var(--ink-3)" }}>
-            <Dot color="var(--success)" />
-            <span className="caption">412 verified operators · 18 joined this week</span>
+        <div className="container" style={{ position: "relative", zIndex: 1 }}>
+          <div className="hero-grid">
+            <div className="hero-copy">
+              <div className="eyebrow" style={{ marginBottom: 22, display: "inline-flex", alignItems: "center", gap: 10 }}>
+                <Dot color="var(--peach-300)" /> Skip the application. Interview.
+              </div>
+              <h1
+                style={{
+                  fontFamily: "var(--font-serif)",
+                  fontWeight: 400,
+                  fontSize: "clamp(52px, 7vw, 104px)",
+                  lineHeight: 0.98,
+                  letterSpacing: "-0.03em",
+                  color: "var(--ink)",
+                  margin: 0,
+                }}
+              >
+                You don&apos;t <em style={{ fontStyle: "italic" }}>apply</em>.<br />
+                You interview.
+              </h1>
+              <p
+                style={{
+                  marginTop: 28,
+                  maxWidth: 560,
+                  fontSize: "clamp(17px, 1.4vw, 20px)",
+                  lineHeight: 1.5,
+                  color: "var(--ink-2)",
+                }}
+              >
+                Sign in. Upload your résumé. Claire — your WeKruit recruiter on iMessage — gets to know you. When a role matches,
+                you skip the form and interview the hiring manager directly.
+              </p>
+              <div style={{ display: "flex", gap: 12, marginTop: 32, flexWrap: "wrap" }}>
+                <Link to="/login" className="btn btn--primary btn--lg">Start with Claire</Link>
+                <Link to="/open" className="btn btn--secondary btn--lg">See open interviews</Link>
+              </div>
+              <div style={{ marginTop: 22, display: "inline-flex", alignItems: "center", gap: 8, color: "var(--ink-3)" }}>
+                <Dot color="var(--success)" pulse />
+                <span className="caption">412 verified operators · 18 joined this week</span>
+              </div>
+            </div>
+            <div className="hero-card-wrap">
+              <ClaireMessageCard />
+            </div>
           </div>
 
-          <div style={{ marginTop: 48, paddingTop: 28, borderTop: "1px solid rgba(45,26,10,0.08)" }}>
+          <div style={{ marginTop: 64, paddingTop: 28, borderTop: "1px solid rgba(45,26,10,0.08)" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 16, justifyContent: "center", marginBottom: 18 }}>
               <span className="eyebrow" style={{ whiteSpace: "nowrap", opacity: 0.7 }}>From recent layoffs at</span>
             </div>
@@ -650,11 +783,37 @@ export default function LayoffLanding() {
       <Footer />
 
       <style>{`
+        .hero-grid {
+          display: grid;
+          grid-template-columns: 1.4fr 0.9fr;
+          gap: 64px;
+          align-items: center;
+        }
+        .hero-copy { min-width: 0; }
+        .hero-card-wrap { display: flex; justify-content: flex-end; }
         .how-grid { grid-template-columns: 1fr 1.4fr; }
         .how-sticky { position: sticky; top: 96px; }
         @media (max-width: 900px) {
+          .hero-grid { grid-template-columns: 1fr; gap: 40px; }
+          .hero-card-wrap { justify-content: center; }
           .how-grid { grid-template-columns: 1fr; }
           .how-sticky { position: static; }
+        }
+        @keyframes wko-bubble-in {
+          from { opacity: 0; transform: translateY(6px) scale(0.96); }
+          to   { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        @keyframes wko-typing {
+          0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+          30%           { transform: translateY(-3px); opacity: 1; }
+        }
+        @keyframes wko-pulse {
+          0%, 100% { transform: scale(0.9); opacity: 0.25; }
+          50%      { transform: scale(1.6); opacity: 0; }
+        }
+        @keyframes wko-marquee {
+          from { transform: translateX(0); }
+          to   { transform: translateX(-50%); }
         }
       `}</style>
     </main>

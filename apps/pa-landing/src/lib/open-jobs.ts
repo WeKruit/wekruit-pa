@@ -66,13 +66,103 @@ function buildQuery(f: OpenJobsFilters): string {
   return p.toString()
 }
 
-export async function fetchOpenJobs(filters: OpenJobsFilters = {}): Promise<OpenJobRow[]> {
-  const url = `${endpoint()}?${buildQuery(filters)}`
+// ---- sessionStorage stale-while-revalidate cache ------------------------
+//
+// Adam directive 2026-05-16 — "caching要做好, 不然每个用户过来打开都要重新read".
+// Bookend the CF-side snapshot cache + CDN s-maxage with a client cache so
+// repeat /open or /market visits within a single session paint instantly
+// and we only re-hit the CF when the cached payload is older than 5 min.
+//
+// Strategy: sessionStorage keyed by the full query URL. Each entry stores
+// {rows, fetchedAt}. On read:
+//   - <5 min stale: return cached rows immediately and skip the network
+//   - 5-30 min stale: return cached rows AND kick off a background refresh
+//                     (stale-while-revalidate so a slow CF cold-start never
+//                     blocks the user)
+//   - >30 min stale: ignore the cache, await a fresh fetch
+//
+// Set window.__WEKRUIT_DISABLE_OPEN_CACHE = true to force-bypass during QA.
+
+const CACHE_TTL_MS = 5 * 60 * 1000
+const SWR_TTL_MS = 30 * 60 * 1000
+
+interface CacheEntry {
+  rows: OpenJobRow[]
+  fetchedAt: number
+}
+
+function getStorage(): Storage | null {
+  try {
+    if (typeof window === "undefined") return null
+    return window.sessionStorage
+  } catch {
+    return null
+  }
+}
+
+function cacheKey(url: string): string {
+  return `wkr.open-jobs.v1:${url}`
+}
+
+function readCache(url: string): CacheEntry | null {
+  const store = getStorage()
+  if (!store) return null
+  try {
+    const raw = store.getItem(cacheKey(url))
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as Partial<CacheEntry>
+    if (!parsed.rows || typeof parsed.fetchedAt !== "number") return null
+    return { rows: parsed.rows, fetchedAt: parsed.fetchedAt }
+  } catch {
+    return null
+  }
+}
+
+function writeCache(url: string, entry: CacheEntry): void {
+  const store = getStorage()
+  if (!store) return
+  try {
+    store.setItem(cacheKey(url), JSON.stringify(entry))
+  } catch {
+    // Quota / private mode → soft-fail, network path still works.
+  }
+}
+
+async function networkFetch(url: string): Promise<OpenJobRow[]> {
   const r = await fetch(url, { method: "GET" })
   if (!r.ok) throw new Error(`open-jobs ${r.status}`)
   const body = (await r.json()) as OpenJobsResponse
   if (!body.ok) throw new Error(body.reason ?? "open-jobs failed")
   return body.rows
+}
+
+declare global {
+  interface Window {
+    __WEKRUIT_DISABLE_OPEN_CACHE?: boolean
+  }
+}
+
+export async function fetchOpenJobs(filters: OpenJobsFilters = {}): Promise<OpenJobRow[]> {
+  const url = `${endpoint()}?${buildQuery(filters)}`
+  const bypass = typeof window !== "undefined" && window.__WEKRUIT_DISABLE_OPEN_CACHE === true
+  const now = Date.now()
+  const cached = bypass ? null : readCache(url)
+
+  if (cached && now - cached.fetchedAt < CACHE_TTL_MS) {
+    return cached.rows
+  }
+
+  if (cached && now - cached.fetchedAt < SWR_TTL_MS) {
+    // Stale-while-revalidate — surface cached payload now, refresh in bg.
+    void networkFetch(url)
+      .then((rows) => writeCache(url, { rows, fetchedAt: Date.now() }))
+      .catch(() => undefined)
+    return cached.rows
+  }
+
+  const rows = await networkFetch(url)
+  writeCache(url, { rows, fetchedAt: Date.now() })
+  return rows
 }
 
 /** Pretty-print a canonical-tag token: `software_engineering` → `Software Engineering`. */

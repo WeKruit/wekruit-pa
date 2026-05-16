@@ -225,7 +225,11 @@ function Footer() {
 // --------------------------------------------------------------- main ----
 
 export default function OpenJobs() {
-  const [tab, setTab] = useState<TabId>("hunt")
+  // Default tab = "direct" — this page is reached via the "Open interviews"
+  // nav link on layoff.wekruit.com, which means candidates expect collab
+  // companies (direct line) first. Hunting list is now the canonical home of
+  // /market (Open market) and still reachable here as the second tab.
+  const [tab, setTab] = useState<TabId>("direct")
   const [filters, setFilters] = useState<FiltersState>(EMPTY_FILTERS)
   const [search, setSearch] = useState("")
   const [layout, setLayout] = useState<LayoutId>("table")
