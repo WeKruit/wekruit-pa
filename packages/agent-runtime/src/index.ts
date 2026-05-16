@@ -8,8 +8,16 @@ import type { ChatMessage } from "@pa/core-types"
 export { runWithOpenAI, runOpenAITurn } from "./openai-provider.js"
 export { toOpenAIMessages, stripLeadingIsoTimestamp } from "./messages.js"
 export { assertProviderKey, hasOpenAICompatKey } from "./env.js"
-export type { AgentTurnContext, AgentTurnTool, RunAgentTurnResult, RunAgentTurnUsage } from "./types.js"
+export type {
+  AgentTurnContext,
+  AgentTurnTool,
+  RunAgentTurnResult,
+  RunAgentTurnUsage,
+  AgentTurnStreamChunk,
+} from "./types.js"
 export { runAgentTurn } from "./run.js"
+// v2.1 S1A — additive streaming export. Behind PA_AGENT_RUNTIME_STREAM_ENABLED.
+export { runAgentTurnStream } from "./stream.js"
 export { buildAgentsInput, runOpenAIAgentsTurn } from "./openai-agents-adapter.js"
 export { hydrateOpenAiFromAtm, getAtmBearerToken } from "./atm-llm-runtime.js"
 export { FirestoreSession, deriveSessionMessageIdempotencyKey } from "./firestore-session.js"

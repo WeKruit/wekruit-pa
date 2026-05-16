@@ -1,0 +1,30 @@
+# LiveKit Cloud managed agent hosting config (v2.1 Lock L12).
+#
+# This file is read by `lk agent deploy` to build + register the WeKruit
+# voice prescreen worker. NO Dockerfile, NO k8s manifest, NO
+# docker-compose.yml — LiveKit Cloud builds the container from `runtime` +
+# `entry` below.
+
+[project]
+# LK Cloud project subdomain — Adam sets the real value during S6 smoke.
+subdomain = "wekruit-prescreen"
+
+[agent]
+name = "voice-prescreen"
+# Node 20 runtime (LiveKit Cloud-supported).
+runtime = "node20"
+# Entrypoint produced by `pnpm --filter voice-agent build`.
+entry = "dist/cli.js"
+# Single-instance concurrency default. Revisit after S6 smoke + capacity
+# planning (S5/S6 own this).
+max_concurrent_jobs = 1
+
+[agent.env]
+# Set at deploy time via `lk agent env set …`. The worker reads these.
+LIVEKIT_URL = ""
+LIVEKIT_API_KEY = ""
+LIVEKIT_API_SECRET = ""
+DEEPGRAM_API_KEY = ""
+WEKRUIT_LLM_SHIM_URL = ""
+WEKRUIT_VOICE_RECORDINGS_BUCKET = "wekruit-voice-recordings"
+PA_AGENT_RUNTIME_STREAM_ENABLED = "true"

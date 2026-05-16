@@ -1,0 +1,27 @@
+id: "09-long-pause"
+description: "Candidate pauses 4-5s mid-answer — adaptive endpointing must wait, not interrupt."
+seed: 50
+
+voice:
+  toNumber: "${PA_TEAM_NUMBER_IRENE}"
+  fromCallerId: "+14157075057"
+  expectedOutcome: "PASS"
+  expectedTerminalReasonContains: "score_met"
+
+context:
+  paUserId: "smoke-user-09-irene-pause"
+  paJobId: "smoke-job-swe-mid"
+  preferredLang: "en"
+
+thresholds:
+  ttfaMaxMs: 1500
+  costMaxUsd: 1.00
+
+mock:
+  outcome: "PASS"
+  metrics:
+    ttfaMs: 1310
+    costUsd: 0.71
+    falseCommit: false
+    falseInterrupt: false
+    agentTalkRatio: 0.50

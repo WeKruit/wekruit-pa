@@ -187,6 +187,13 @@ export { paAdminJobMatchDebug, paAdminMatchDebug } from "./admin-match-debug.js"
 export { paAdminOutreachOpsSnapshot } from "./outreach/admin.js"
 export { paAdminPassedCandidatesSnapshot } from "./admin-passed-candidates.js"
 
+// v2.1 S4 — Voice turn telemetry aggregate (admin-gated). Reads the
+// voice-call-metrics collection (written by the S4 metricsWriter that
+// S2 wires into LiveKit Cloud Agents) and returns the four S6-smoke-gate
+// thresholds: false-commit %, false-interrupt %, p50/p95 TTFA, avg
+// cost/call. Plus cost-ceiling-hit count (L11).
+export { paAdminVoiceTelemetryAggregate } from "./voice/telemetry/aggregateQuery.js"
+
 // v1.8 ENRICHER-04 — `paEnrichJobTags` HTTP CF wraps the unified
 // @pa/job-tag-enricher service (mirror of pa-resume-parser, job-side).
 // Replaces scattered regex tag-derivation in the macmini matching pipeline
@@ -204,6 +211,15 @@ export { paMatchingJobsAutoEnrich } from "./auto-enrich-matching-jobs.js"
 // v1.9 Phase 86 — Generic ATS inbound adapter webhook.
 // Handshake fully implemented; GH/Lever/LinkedIn return 501 stubs.
 export { paAtsInboundWebhook } from "./ats-inbound-webhook.js"
+
+// v2.1 S3 — outbound voice prescreen dispatch + status callback reconciliation.
+// `paVoiceDialOutbound`: Firestore trigger on `outbound-bookings/{id}` writes;
+//   reacts to `→ dialing` and creates a LiveKit Cloud SIP participant routed
+//   through the Twilio trunk. Lock L5 short-circuits on missing identity.
+// `paVoiceSipWebhook`: HTTP endpoint receiving Twilio status callbacks +
+//   LiveKit room webhooks. Idempotent reconciliation against the
+//   `outbound-bookings/{id}` state machine (Locks L9 + L10).
+export { paVoiceDialOutbound, paVoiceSipWebhook } from "./voice/index.js"
 // v1.9 hotfix (2026-05-12 live test STOP) — public /j/:jobId CV upload backend.
 // Frontend (PublicJobCv.tsx) POSTs base64 to this endpoint. ATS inbound
 // webhook (paAtsInboundWebhook) also targets this via PA_CV_INGEST_URL env.

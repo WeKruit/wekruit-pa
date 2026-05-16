@@ -1,0 +1,28 @@
+id: "01-happy-path-pass"
+description: "Happy-path PASS — affirmative SWE answers across all required Qs."
+seed: 42
+
+voice:
+  toNumber: "${PA_TEAM_NUMBER_ALICE}"
+  fromCallerId: "+14157075057"
+  expectedOutcome: "PASS"
+  expectedTerminalReasonContains: "score_met"
+
+context:
+  paUserId: "smoke-user-01-alice-swe"
+  paJobId: "smoke-job-swe-mid"
+  preferredLang: "en"
+
+thresholds:
+  ttfaMaxMs: 1500
+  costMaxUsd: 1.00
+
+# Used only when runner is invoked with --mock.
+mock:
+  outcome: "PASS"
+  metrics:
+    ttfaMs: 850
+    costUsd: 0.42
+    falseCommit: false
+    falseInterrupt: false
+    agentTalkRatio: 0.55
