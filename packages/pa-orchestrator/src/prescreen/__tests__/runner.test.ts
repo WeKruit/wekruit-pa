@@ -23,7 +23,6 @@ import {
 
 function makeConfig(): PrescreenConfig {
   return {
-    jobId: "j1",
     version: 1,
     jobTitle: "Test Role",
     company: "TestCo",

@@ -1,40 +1,47 @@
 /**
  * v1.8 Phase 77.4 — paPrescreenTurn (subsequent reply handler).
  *
- * Inbound coalescer calls `runPrescreenTurnIfActive(db, userId, reply, lang)`
- * BEFORE claimer → Claire orchestrator. If there's an active (terminal=null)
- * prescreen session for the user, we route the reply through
- * PreScreenPipeline.runTurn and short-circuit. Otherwise return ok:false
- * so the coalescer falls through to Claire as normal.
+ * v2.2 — thin SMS adapter over @pa/pa-orchestrator's `runPrescreenTurn`.
+ * Voice path uses the same runner via apps/voice-agent's worker, so any
+ * change to prescreen agent behavior (questions, clarify wording, LLM
+ * model, user-exit detection, lifecycle reducer) lands in pa-orchestrator
+ * and propagates to both channels automatically.
  *
- * Wires:
- *   - FirestorePreScreenStore (reads + writes pa-prescreen-sessions)
- *   - PreScreenQuestion bindings from session.cfgSnapshot
- *   - KeywordSetLlmCaller (production gpt-5.4-nano + Sonnet fallback)
- *   - sendImessage for outbound text
+ * Local responsibilities kept here (SMS-specific only):
+ *   - Production LLM wirings (gpt-5.4-nano keyword scorer + clarify composer)
+ *   - FirestorePreScreenStore (uses merge:true so cfgSnapshot survives writes)
+ *   - sendImessage transport
+ *   - runPrescreenTerminalAction dispatch (Adam-locked CF in
+ *     prescreen-terminal-action.ts)
  */
 import type { Firestore } from "firebase-admin/firestore"
 import {
-  KeywordSetJudge,
-  PreScreenPipeline,
+  FirestoreSessionFinder,
+  FirestoreTurnRecorder,
   hardFilterClarifyText,
+  prescreenTurnRecordQId as orchestratorPrescreenTurnRecordQId,
+  runPrescreenTurn,
   type KeywordSetLlmCaller,
   type KeywordSetLlmOutput,
-  type KeywordSpec,
   type PreScreenClarifyComposer,
-  type PreScreenQuestion,
   type PreScreenState,
   type PreScreenStateProvider,
+  type PrescreenChannelTextHint,
+  type PrescreenConfig,
+  type PrescreenRunnerDeps,
+  type PrescreenTurnAction,
 } from "@pa/pa-orchestrator"
 import { sendImessage } from "./sendblue/sendblue-client.js"
 import { runPrescreenTerminalAction } from "./prescreen-terminal-action.js"
 
-const ACTIVE_PRESCREEN_TIMEOUT_MS = 60 * 60 * 1000
-const RECENT_TERMINAL_PRESCREEN_GUARD_MS = 60 * 60 * 1000
+/* ────────────────────────────────────────────────────────────────────────── */
+/* Firestore PreScreenStateProvider (kept inline; merge:true preserves        */
+/* sibling fields like cfgSnapshot + e164 + workSession metadata).            */
+/* ────────────────────────────────────────────────────────────────────────── */
 
-/** Firestore-backed PreScreenStateProvider. */
 class FirestorePreScreenStore implements PreScreenStateProvider {
   constructor(private readonly db: Firestore) {}
+
   async load(sessionId: string): Promise<PreScreenState | null> {
     const snap = await this.db.collection("pa-prescreen-sessions").doc(sessionId).get()
     if (!snap.exists) return null
@@ -42,25 +49,25 @@ class FirestorePreScreenStore implements PreScreenStateProvider {
     if (!data) return null
     return data as PreScreenState
   }
+
   async save(state: PreScreenState): Promise<void> {
-    // v1.9 hotfix — Firestore Admin SDK rejects `undefined` field values
-    // unless ignoreUndefinedProperties is set. KeywordSetJudge omits
-    // optional fields (abortHint, etc.) as undefined, which then propagate
-    // into state.questions[qId].scored.abortHint. Strip undefined recursively
-    // before write so save never throws "Cannot use \"undefined\"".
+    // Firestore Admin SDK rejects `undefined` field values unless
+    // ignoreUndefinedProperties is set. KeywordSetJudge omits optional
+    // fields (abortHint, etc.) as undefined; strip recursively first.
+    //
+    // v2.2 — switched to merge:true so the runner's state writes do not
+    // wipe sibling fields the SMS handler used to set inline (cfgSnapshot,
+    // e164, postTerminalFollowupAckAt).
     await this.db
       .collection("pa-prescreen-sessions")
       .doc(state.sessionId)
-      .set(stripUndefined(state) as PreScreenState, { merge: false })
+      .set(stripUndefined(state) as PreScreenState, { merge: true })
   }
 }
 
-/** Recursively drop keys whose value is `undefined`. Preserves null. */
 function stripUndefined<T>(v: T): T {
   if (v === null || v === undefined) return v
-  if (Array.isArray(v)) {
-    return v.map((x) => stripUndefined(x)) as unknown as T
-  }
+  if (Array.isArray(v)) return v.map((x) => stripUndefined(x)) as unknown as T
   if (typeof v === "object") {
     const out: Record<string, unknown> = {}
     for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
@@ -72,14 +79,20 @@ function stripUndefined<T>(v: T): T {
   return v
 }
 
-/** Production LLM caller — gpt-5.4-nano JSON-mode. */
+/* ────────────────────────────────────────────────────────────────────────── */
+/* Production LLM wirings — gpt-5.4-nano                                      */
+/* ────────────────────────────────────────────────────────────────────────── */
+
 function makeProductionKeywordSetCaller(): KeywordSetLlmCaller {
   return {
     async score({ reply, lang, keywords, questionPrompt }) {
       const apiKey = process.env.PA_OPENAI_AGENT_API_KEY ?? process.env.OPENAI_API_KEY
       if (!apiKey) throw new Error("missing OpenAI API key")
       const keywordList = keywords
-        .map((k, i) => `${i + 1}. "${k.keyword}" (weight ${(k.weight ?? 1).toFixed(2)})${k.hint ? ` hint: ${k.hint}` : ""}`)
+        .map(
+          (k, i) =>
+            `${i + 1}. "${k.keyword}" (weight ${(k.weight ?? 1).toFixed(2)})${k.hint ? ` hint: ${k.hint}` : ""}`,
+        )
         .join("\n")
       const system = [
         "You are a recruiting screener evaluating candidate replies against a JD keyword set.",
@@ -199,9 +212,12 @@ export function prescreenClarifyRoundGuidance(round: number, lang: "zh" | "en"):
     if (normalizedRound === 3) return "追问最难的失败/取舍/验证：问题怎么发现、怎么验证修复。"
     return "最后一次具体确认：最小可证明的 shipped work、指标或明确缺口；不要继续泛泛追问。"
   }
-  if (normalizedRound === 1) return "Find the closest relevant project: context, personal ownership, and user or business outcome."
-  if (normalizedRound === 2) return "Probe ownership and system boundary: what they personally built, and which systems or data it touched."
-  if (normalizedRound === 3) return "Probe the hardest failure, tradeoff, or validation: what broke, what they changed, and how they knew it worked."
+  if (normalizedRound === 1)
+    return "Find the closest relevant project: context, personal ownership, and user or business outcome."
+  if (normalizedRound === 2)
+    return "Probe ownership and system boundary: what they personally built, and which systems or data it touched."
+  if (normalizedRound === 3)
+    return "Probe the hardest failure, tradeoff, or validation: what broke, what they changed, and how they knew it worked."
   return "Final concrete check: smallest provable shipped work, measurable result, or explicit gap; do not keep circling."
 }
 
@@ -211,12 +227,7 @@ export function normalizePrescreenClarifyTextForRound(text: string, round: numbe
 
   const openerByRound =
     lang === "zh"
-      ? [
-          "明白 - ",
-          "这里 ownership 很关键 - ",
-          "这个系统细节有用 - ",
-          "最后我确认一个具体点 - ",
-        ]
+      ? ["明白 - ", "这里 ownership 很关键 - ", "这个系统细节有用 - ", "最后我确认一个具体点 - "]
       : [
           "Got it - ",
           "The ownership piece matters here - ",
@@ -238,155 +249,26 @@ export function normalizePrescreenClarifyTextForRound(text: string, round: numbe
   return replacement
 }
 
+/* ────────────────────────────────────────────────────────────────────────── */
+/* Re-export back-compat                                                      */
+/* ────────────────────────────────────────────────────────────────────────── */
+
 /**
- * Find active prescreen session for a user (terminal=null). Returns
- * sessionId or null if none.
+ * @deprecated import directly from `@pa/pa-orchestrator`. Retained so the
+ * existing prescreen-turn-handler test suite still has a stable import path.
  */
-type ActivePrescreenLookup =
-  | { kind: "none" }
-  | { kind: "active"; sessionId: string }
-  | { kind: "expired"; sessionId: string; jobId: string }
-  | { kind: "recent_terminal"; sessionId: string; jobId: string; terminal: string }
+export const prescreenTurnRecordQId = orchestratorPrescreenTurnRecordQId
 
-async function findActiveSession(
-  db: Firestore,
-  userId: string,
-  opts: {
-    nowMs?: number
-    log?: (event: string, payload: Record<string, unknown>) => void
-  } = {},
-): Promise<ActivePrescreenLookup> {
-  const snap = await db
-    .collection("pa-prescreen-sessions")
-    .where("userId", "==", userId)
-    .where("terminal", "==", null)
-    .get()
-  if (snap.empty) return { kind: "none" }
-  const candidates = [...snap.docs].sort((a, b) => {
-    const aData = a.data() as Record<string, unknown>
-    const bData = b.data() as Record<string, unknown>
-    const aMs = timestampMs(aData.updatedAt) ?? timestampMs(aData.createdAt) ?? 0
-    const bMs = timestampMs(bData.updatedAt) ?? timestampMs(bData.createdAt) ?? 0
-    return bMs - aMs
-  })
-  const doc = candidates[0]!
-  const data = doc.data() as Record<string, unknown>
-  const lastActiveMs = timestampMs(data.updatedAt) ?? timestampMs(data.createdAt)
-  const nowMs = opts.nowMs ?? Date.now()
-  if (lastActiveMs !== null && nowMs - lastActiveMs > ACTIVE_PRESCREEN_TIMEOUT_MS) {
-    const nowIso = new Date(nowMs).toISOString()
-    await doc.ref.set(
-      {
-        terminal: "PAUSE",
-        terminalReason: "expired_inactive_prescreen_session",
-        currentQId: null,
-        updatedAt: nowIso,
-        workSession: {
-          kind: "job_prescreen",
-          status: "ended",
-          endedAt: nowIso,
-          boundary: "timeout",
-        },
-      },
-      { merge: true },
-    )
-    opts.log?.("prescreen.turn.expired_inactive_session", {
-      userId,
-      sessionId: doc.id,
-      lastActiveAt: new Date(lastActiveMs).toISOString(),
-      timeoutMinutes: ACTIVE_PRESCREEN_TIMEOUT_MS / 60_000,
-    })
-    return {
-      kind: "expired",
-      sessionId: doc.id,
-      jobId: typeof data.jobId === "string" ? data.jobId : "",
-    }
-  }
-  return { kind: "active", sessionId: doc.id }
-}
+/* ────────────────────────────────────────────────────────────────────────── */
+/* Channel hint — SMS                                                         */
+/* ────────────────────────────────────────────────────────────────────────── */
 
-async function findRecentTerminalSession(
-  db: Firestore,
-  userId: string,
-  opts: {
-    nowMs?: number
-    log?: (event: string, payload: Record<string, unknown>) => void
-  } = {},
-): Promise<ActivePrescreenLookup> {
-  const nowMs = opts.nowMs ?? Date.now()
-  const snap = await db
-    .collection("pa-prescreen-sessions")
-    .where("userId", "==", userId)
-    .get()
+/** SMS post-processor is a no-op today; clarify composer already caps text. */
+const smsChannelTextHint: PrescreenChannelTextHint = ({ text }) => text
 
-  let latest:
-    | {
-        id: string
-        jobId: string
-        terminal: string
-        atMs: number
-      }
-    | null = null
-
-  for (const doc of snap.docs) {
-    const data = doc.data() as Record<string, unknown>
-    const terminal = typeof data.terminal === "string" ? data.terminal : null
-    if (!terminal) continue
-    const workSession = data.workSession as Record<string, unknown> | undefined
-    if (workSession && workSession.kind !== "job_prescreen") continue
-
-    const endedAtMs =
-      timestampMs(workSession?.endedAt) ??
-      timestampMs(data.updatedAt) ??
-      timestampMs(data.completedAt) ??
-      timestampMs(data.createdAt)
-    if (endedAtMs === null) continue
-    if (nowMs - endedAtMs > RECENT_TERMINAL_PRESCREEN_GUARD_MS) continue
-    if (latest && endedAtMs <= latest.atMs) continue
-
-    latest = {
-      id: doc.id,
-      jobId: typeof data.jobId === "string" ? data.jobId : "",
-      terminal,
-      atMs: endedAtMs,
-    }
-  }
-
-  if (!latest) return { kind: "none" }
-  opts.log?.("prescreen.turn.recent_terminal_guard_found", {
-    userId,
-    sessionId: latest.id,
-    jobId: latest.jobId,
-    terminal: latest.terminal,
-    endedAt: new Date(latest.atMs).toISOString(),
-  })
-  return {
-    kind: "recent_terminal",
-    sessionId: latest.id,
-    jobId: latest.jobId,
-    terminal: latest.terminal,
-  }
-}
-
-function timestampMs(value: unknown): number | null {
-  if (typeof value === "string") {
-    const parsed = Date.parse(value)
-    return Number.isFinite(parsed) ? parsed : null
-  }
-  if (typeof value === "number" && Number.isFinite(value)) return value
-  if (value && typeof value === "object") {
-    const maybe = value as { toMillis?: () => number; toDate?: () => Date }
-    if (typeof maybe.toMillis === "function") {
-      const ms = maybe.toMillis()
-      return Number.isFinite(ms) ? ms : null
-    }
-    if (typeof maybe.toDate === "function") {
-      const ms = maybe.toDate().getTime()
-      return Number.isFinite(ms) ? ms : null
-    }
-  }
-  return null
-}
+/* ────────────────────────────────────────────────────────────────────────── */
+/* Public entry — runPrescreenTurnIfActive                                    */
+/* ────────────────────────────────────────────────────────────────────────── */
 
 export interface RunPrescreenTurnArgs {
   db: Firestore
@@ -402,42 +284,10 @@ export interface RunPrescreenTurnArgs {
 }
 
 export interface RunPrescreenTurnResult {
-  /** True when an active session was found and the reply was handled. */
   handled: boolean
   sessionId?: string
   terminal?: string | null
   textSent?: string
-}
-
-type PrescreenTurnRecordAction =
-  | { kind: "clarify"; qId: string; kAfter: number }
-  | { kind: "advance"; fromQId: string; toQId: string }
-  | { kind: "terminal"; terminal: "PASS" | "FAIL" | "HARD_STOP" | "PAUSE"; reason: string }
-  | { kind: "error"; reason: string }
-
-export function prescreenTurnRecordQId(
-  action: PrescreenTurnRecordAction,
-  activeQId: string | null | undefined
-): string {
-  if (action.kind === "clarify") return action.qId
-  if (action.kind === "advance") return action.fromQId
-  return activeQId ?? "terminal"
-}
-
-function prescreenTurnRecordScored(state: PreScreenState, qId: string) {
-  const scored = state.questions[qId]?.scored
-  if (!scored) return undefined
-  return {
-    perKeyword: scored.perKeyword,
-    aggregate: scored.aggregate,
-    ...(scored.abortHint ? { abortHint: scored.abortHint } : {}),
-  }
-}
-
-function isUserExitPrescreenReply(reply: string): boolean {
-  const normalized = reply.trim().toLowerCase()
-  if (!normalized) return false
-  return /^(stop|cancel|pause|quit|exit|end|not now|later|nevermind|never mind|退出|停止|暂停|先不|不用了|算了)[.!。！\s]*$/i.test(normalized)
 }
 
 /**
@@ -446,228 +296,73 @@ function isUserExitPrescreenReply(reply: string): boolean {
  * to Claire.
  */
 export async function runPrescreenTurnIfActive(
-  args: RunPrescreenTurnArgs
+  args: RunPrescreenTurnArgs,
 ): Promise<RunPrescreenTurnResult> {
   const log = args.log ?? (() => {})
   const sendSms = args.sendSms ?? sendImessage
   const terminalAction = args.runTerminalAction ?? runPrescreenTerminalAction
-  let lookup = await findActiveSession(args.db, args.userId, { log })
-  if (lookup.kind === "none") {
-    lookup = await findRecentTerminalSession(args.db, args.userId, { log })
-  }
-  if (lookup.kind === "none") return { handled: false }
-  if (lookup.kind === "recent_terminal") {
-    const sessionRef = args.db.collection("pa-prescreen-sessions").doc(lookup.sessionId)
-    const sessSnap = await sessionRef.get()
-    const sessData = (sessSnap.data() ?? {}) as Record<string, unknown>
-    const alreadyAcked = typeof sessData.postTerminalFollowupAckAt === "string"
-    const nowIso = new Date().toISOString()
-
-    await sessionRef.collection("turns").add({
-      qId: "terminal",
-      reply: args.replyText,
-      action: {
-        kind: "post_terminal_followup",
-        terminal: lookup.terminal,
-        reason: "recent_ended_prescreen_session",
-      },
-      ts: nowIso,
-    })
-
-    let text: string | undefined
-    if (!alreadyAcked) {
-      text = recentTerminalSessionText(args.lang ?? "en")
-      try {
-        await sendSms({ to: args.toE164, content: text, userId: args.userId, db: args.db })
-        await sessionRef.set({ postTerminalFollowupAckAt: nowIso, updatedAt: nowIso }, { merge: true })
-      } catch (err) {
-        log("prescreen.turn.recent_terminal_ack_send_failed", {
-          sessionId: lookup.sessionId,
-          error: err instanceof Error ? err.message : String(err),
-        })
-      }
-    }
-
-    log("prescreen.turn.recent_terminal_guard_handled", {
-      sessionId: lookup.sessionId,
-      userId: args.userId,
-      terminal: lookup.terminal,
-      acked: Boolean(text),
-    })
-    return {
-      handled: true,
-      sessionId: lookup.sessionId,
-      terminal: lookup.terminal,
-      textSent: text,
-    }
-  }
-  if (lookup.kind === "expired") {
-    try {
-      await terminalAction({
-        db: args.db,
-        sessionId: lookup.sessionId,
-        terminal: "PAUSE",
-        userId: args.userId,
-        jobId: lookup.jobId,
-        toE164: args.toE164,
-        lang: args.lang ?? "en",
-        log,
-      })
-    } catch (err) {
-      log("prescreen.turn.expired_terminal_action_failed", {
-        sessionId: lookup.sessionId,
-        error: err instanceof Error ? err.message : String(err),
-      })
-    }
-    const text = expiredSessionText(args.lang ?? "en")
-    try {
-      await sendSms({ to: args.toE164, content: text, userId: args.userId, db: args.db })
-    } catch (err) {
-      log("prescreen.turn.expired_notice_send_failed", {
-        sessionId: lookup.sessionId,
-        error: err instanceof Error ? err.message : String(err),
-      })
-    }
-    return { handled: true, sessionId: lookup.sessionId, terminal: "PAUSE", textSent: text }
-  }
-
-  const sessionId = lookup.sessionId
 
   const store = new FirestorePreScreenStore(args.db)
-  const state = await store.load(sessionId)
-  if (!state) return { handled: false }
+  const sessionFinder = new FirestoreSessionFinder(args.db)
+  const turnRecorder = new FirestoreTurnRecorder(args.db)
 
-  // Pull cfgSnapshot persisted at session start
-  const sessRaw = await args.db.collection("pa-prescreen-sessions").doc(sessionId).get()
-  const activeQIdRaw = sessRaw.data()?.currentQId
-  const activeQId = typeof activeQIdRaw === "string" ? activeQIdRaw : null
-  const loadedTerminal = state.terminal ?? null
-  if (loadedTerminal !== null || !activeQId) {
-    log("prescreen.turn.stale_terminal_session_ignored", {
-      userId: args.userId,
-      sessionId,
-      terminal: loadedTerminal,
-      currentQId: activeQId,
-    })
-    return { handled: false, sessionId, terminal: loadedTerminal }
+  const cfgLoader = async (sessionId: string): Promise<PrescreenConfig | null> => {
+    const snap = await args.db.collection("pa-prescreen-sessions").doc(sessionId).get()
+    const cfg = snap.data()?.cfgSnapshot as PrescreenConfig | undefined
+    return cfg ?? null
   }
-  const cfgSnapshot = sessRaw.data()?.cfgSnapshot as
-    | { questions: Array<{ qId: string; prompt: { zh: string; en: string }; clarifyPrompt: { zh: string; en: string }; keywords: KeywordSpec[] }> }
-    | undefined
-  if (!cfgSnapshot?.questions) {
-    log("prescreen.turn.no_config", { sessionId })
+
+  const deps: PrescreenRunnerDeps = {
+    store,
+    sessionFinder,
+    cfgLoader,
+    llmCaller: args.keywordSetCaller ?? makeProductionKeywordSetCaller(),
+    composeClarify: args.clarifyComposer ?? makeProductionClarifyComposer(),
+    turnRecorder,
+    channelTextHint: smsChannelTextHint,
+  }
+
+  const result = await runPrescreenTurn(
+    {
+      userId: args.userId,
+      reply: args.replyText,
+      lang: args.lang ?? "en",
+      nowIso: new Date().toISOString(),
+      channel: "sms",
+      log,
+    },
+    deps,
+  )
+
+  // Map lifecycle → legacy result shape.
+  if (result.lifecycle.kind === "no_active_session") {
     return { handled: false }
   }
-
-  if (isUserExitPrescreenReply(args.replyText)) {
-    const nowIso = new Date().toISOString()
-    await args.db
-      .collection("pa-prescreen-sessions")
-      .doc(sessionId)
-      .set(
-        {
-          terminal: "PAUSE",
-          terminalReason: "user_exit",
-          currentQId: null,
-          updatedAt: nowIso,
-          workSession: {
-            ...(state.workSession ?? { kind: "job_prescreen" }),
-            kind: "job_prescreen",
-            status: "ended",
-            endedAt: nowIso,
-            boundary: "user_exit",
-          },
-        },
-        { merge: true },
-      )
-    await args.db
-      .collection("pa-prescreen-sessions")
-      .doc(sessionId)
-      .collection("turns")
-      .add({
-        qId: activeQId ?? "terminal",
-        reply: args.replyText,
-        action: { kind: "terminal", terminal: "PAUSE", reason: "user_exit" },
-        ts: nowIso,
-      })
-    try {
-      await terminalAction({
-        db: args.db,
-        sessionId,
-        terminal: "PAUSE",
-        userId: args.userId,
-        jobId: state.jobId,
-        toE164: args.toE164,
-        lang: args.lang ?? "en",
-        log,
-      })
-    } catch (err) {
-      log("prescreen.user_exit_terminal_action_failed", {
-        sessionId,
-        error: err instanceof Error ? err.message : String(err),
-      })
-    }
-    const text = userExitSessionText(args.lang ?? "en")
-    try {
-      await sendSms({ to: args.toE164, content: text, userId: args.userId, db: args.db })
-    } catch (err) {
-      log("prescreen.user_exit_notice_send_failed", {
-        sessionId,
-        error: err instanceof Error ? err.message : String(err),
-      })
-    }
-    log("prescreen.turn.user_exit", { sessionId, userId: args.userId })
-    return { handled: true, sessionId, terminal: "PAUSE", textSent: text }
-  }
-
-  // Build PreScreenQuestion bindings with production LLM caller
-  const caller = args.keywordSetCaller ?? makeProductionKeywordSetCaller()
-  const questions: Record<string, PreScreenQuestion> = {}
-  for (const q of cfgSnapshot.questions) {
-    questions[q.qId] = {
-      qId: q.qId,
-      prompt: q.prompt,
-      clarifyPrompt: q.clarifyPrompt,
-      judge: new KeywordSetJudge({
-        questionId: q.qId,
-        keywords: q.keywords,
-        questionPrompt: q.prompt.en,
-        llmCaller: caller,
-      }),
-    }
-  }
-  const pipeline = new PreScreenPipeline({
-    questions,
-    store,
-    log,
-    composeClarify: args.clarifyComposer ?? makeProductionClarifyComposer(),
-  })
-  const result = await pipeline.runTurn({
-    sessionId,
-    reply: args.replyText,
-    lang: args.lang ?? "en",
-    nowIso: new Date().toISOString(),
-    judgeCtx: { userId: args.userId, turnId: `t_${Date.now()}` },
-  })
-
-  // Persist a turn record for dashboard observability
-  const turnQId = prescreenTurnRecordQId(result.action, activeQId)
-  const scored = prescreenTurnRecordScored(result.state, turnQId)
-  await args.db
-    .collection("pa-prescreen-sessions")
-    .doc(sessionId)
-    .collection("turns")
-    .add({
-      qId: turnQId,
-      reply: args.replyText,
-      ...(scored ? { scored } : {}),
-      action: result.action,
-      ts: new Date().toISOString(),
+  if (result.lifecycle.kind === "stale_terminal") {
+    log("prescreen.turn.stale_terminal_session_ignored", {
+      userId: args.userId,
+      sessionId: result.lifecycle.sessionId,
+      terminal: result.lifecycle.terminal,
     })
+    return { handled: false, sessionId: result.lifecycle.sessionId, terminal: result.lifecycle.terminal }
+  }
 
+  const sessionId = lifecycleSessionId(result.lifecycle)
+  const jobId = lifecycleJobId(result.lifecycle)
+
+  // Send candidate-facing text first (matches pre-v2.2 ordering for
+  // active_turn + recent_terminal). For user_exit + expired the prior
+  // code called terminalAction THEN sendSms — but we keep send-first here
+  // because terminalAction is best-effort and we never want to suppress
+  // the candidate-facing acknowledgment due to a downstream failure.
   if (result.text) {
     try {
-      await sendSms({ to: args.toE164, content: result.text, userId: args.userId, db: args.db })
+      await sendSms({
+        to: args.toE164,
+        content: result.text,
+        userId: args.userId,
+        db: args.db,
+      })
     } catch (err) {
       log("prescreen.turn.send_failed", {
         sessionId,
@@ -676,28 +371,16 @@ export async function runPrescreenTurnIfActive(
     }
   }
 
-  log("prescreen.turn.handled", {
-    sessionId,
-    action: result.action.kind,
-    terminal: result.state.terminal,
-  })
-
-  // v1.9 Phase 84 — post-terminal action (Level 1 reveal + auto job recs).
-  // Fail-open: never roll back the terminal text on action failure.
-  if (
-    result.action.kind === "terminal" &&
-    (result.action.terminal === "PASS" ||
-      result.action.terminal === "FAIL" ||
-      result.action.terminal === "HARD_STOP" ||
-      result.action.terminal === "PAUSE")
-  ) {
+  // Terminal-action dispatch (post-PASS / PAUSE side effects — Level 1
+  // reveal, auto job recs, etc.). Fail-open; never reverse the runner.
+  if (result.terminalAction && sessionId) {
     try {
       await terminalAction({
         db: args.db,
         sessionId,
-        terminal: result.action.terminal,
+        terminal: result.terminalAction.terminal,
         userId: args.userId,
-        jobId: result.state.jobId,
+        jobId,
         toE164: args.toE164,
         lang: args.lang ?? "en",
         log,
@@ -710,28 +393,56 @@ export async function runPrescreenTurnIfActive(
     }
   }
 
+  // Compute terminal field for the legacy return shape.
+  let terminal: string | null | undefined
+  if (result.lifecycle.kind === "active_turn") {
+    terminal = result.lifecycle.pipelineResult.state.terminal ?? null
+  } else if (result.lifecycle.kind === "recent_terminal_guard") {
+    terminal = result.lifecycle.terminal
+  } else if (result.terminalAction) {
+    terminal = result.terminalAction.terminal
+  } else {
+    terminal = null
+  }
+
+  log("prescreen.turn.handled", {
+    sessionId,
+    lifecycle: result.lifecycle.kind,
+    terminal,
+  })
+
   return {
     handled: true,
-    sessionId,
-    terminal: result.state.terminal,
-    textSent: result.text,
+    ...(sessionId ? { sessionId } : {}),
+    terminal: terminal ?? null,
+    ...(result.text ? { textSent: result.text } : {}),
   }
 }
 
-function expiredSessionText(lang: "zh" | "en"): string {
-  return lang === "zh"
-    ? "这次岗位初筛我先暂停了，避免把旧对话和新的经历混在一起。想继续这个岗位的话，从岗位页面重新开始，我会开一个新的 screen。"
-    : "I paused this role screen so I do not mix an old conversation with a new one. If you want to continue this role, reopen it from the job page and I will start a fresh screen."
+function lifecycleSessionId(lifecycle: Awaited<ReturnType<typeof runPrescreenTurn>>["lifecycle"]): string {
+  switch (lifecycle.kind) {
+    case "active_turn":
+    case "session_expired":
+    case "recent_terminal_guard":
+    case "user_exit":
+    case "stale_terminal":
+      return lifecycle.sessionId
+    default:
+      return ""
+  }
 }
 
-function userExitSessionText(lang: "zh" | "en"): string {
-  return lang === "zh"
-    ? "好的，我先暂停这个岗位 screen。你之后想继续的话，从岗位页面重新开始就行；你已经分享过的经历我会保留在你的全局 profile 里。"
-    : "Got it — I paused this role screen. If you want to continue later, reopen it from the job page; I will keep what you have already shared on your profile."
+function lifecycleJobId(lifecycle: Awaited<ReturnType<typeof runPrescreenTurn>>["lifecycle"]): string {
+  switch (lifecycle.kind) {
+    case "active_turn":
+    case "session_expired":
+    case "recent_terminal_guard":
+    case "user_exit":
+      return lifecycle.jobId
+    default:
+      return ""
+  }
 }
 
-function recentTerminalSessionText(lang: "zh" | "en"): string {
-  return lang === "zh"
-    ? "收到。这个岗位 screen 已经暂停了；我会把这个约束记到你的 profile 里，后面只看更匹配的机会。"
-    : "Got it. This role screen is already paused; I will keep that constraint on your profile and use it for better-matched roles."
-}
+/** Action discriminator used by the dashboard observability page. */
+export type { PrescreenTurnAction }
