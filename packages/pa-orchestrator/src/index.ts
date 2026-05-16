@@ -3982,6 +3982,27 @@ export type {
   RunTurnInput,
   RunTurnResult,
 } from "./prescreen/pipeline.js"
+// v2.2 — channel-agnostic prescreen runtime ifaces. SMS + voice both
+// consume `PrescreenSessionFinder` + `PrescreenTurnRecorder` so a future
+// agent-behavior change lands once and propagates everywhere.
+export {
+  ACTIVE_PRESCREEN_TIMEOUT_MS,
+  RECENT_TERMINAL_PRESCREEN_GUARD_MS,
+  FirestoreSessionFinder,
+  InMemorySessionFinder,
+  type InMemorySessionDoc,
+  type PrescreenSessionFinder,
+  type SessionByIdRecord,
+  type SessionFinderResult,
+} from "./prescreen/session-finder.js"
+export {
+  FirestoreTurnRecorder,
+  InMemoryTurnRecorder,
+  type PrescreenTurnAction,
+  type PrescreenTurnRecord,
+  type PrescreenTurnRecorder,
+  type PrescreenTurnScoredSnapshot,
+} from "./prescreen/turn-recorder.js"
 export {
   KeywordSetJudge,
   buildKeywordSetPrompt,
