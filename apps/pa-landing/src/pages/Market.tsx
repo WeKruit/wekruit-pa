@@ -414,13 +414,25 @@ function HuntRow({ r, queued, onPitch }: { r: DisplayJob; queued: boolean; onPit
       </td>
       <td className="wk-tbl__cell"><span className="wk-tbl__muted">{r.fnLabel}</span></td>
       <td className="wk-tbl__cell"><span className="wk-tbl__muted">{r.location}</span></td>
-      <td className="wk-tbl__cell wk-tbl__cell--comp">{r.comp}</td>
+      <td className="wk-tbl__cell wk-tbl__cell--comp">
+        {r.comp ? r.comp : <span className="wk-tbl__muted" style={{ opacity: 0.45 }}>—</span>}
+      </td>
       <td className="wk-tbl__cell wk-tbl__cell--posted">{r.posted}</td>
       <td className="wk-tbl__cell wk-tbl__cell--cta">
         {queued ? (
           <span className="wk-pitchbtn is-queued">
             <Icon name="check" size={12} stroke={2.4} /> Queued for Tue
           </span>
+        ) : r.applyUrl ? (
+          <a
+            className="wk-pitchbtn"
+            href={r.applyUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={onPitch}
+          >
+            Apply <Icon name="arrow-right" size={12} stroke={2} />
+          </a>
         ) : (
           <button className="wk-pitchbtn" onClick={onPitch}>
             Pitch me <Icon name="arrow-right" size={12} stroke={2} />
@@ -454,6 +466,16 @@ function HuntCard({ r, queued, onPitch }: { r: DisplayJob; queued: boolean; onPi
           <span className="wk-pitchbtn wk-pitchbtn--lg is-queued">
             <Icon name="check" size={13} stroke={2.4} /> Queued for Tue
           </span>
+        ) : r.applyUrl ? (
+          <a
+            className="wk-pitchbtn wk-pitchbtn--lg"
+            href={r.applyUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={onPitch}
+          >
+            Apply <Icon name="arrow-right" size={13} stroke={2} />
+          </a>
         ) : (
           <button className="wk-pitchbtn wk-pitchbtn--lg" onClick={onPitch}>
             Pitch me <Icon name="arrow-right" size={13} stroke={2} />
@@ -969,9 +991,15 @@ const MARKET_STYLES = String.raw`
 .wk-shell .wk-viewtog__ico--cards::after  { right: 0; }
 
 .wk-shell .wk-tbl-wrap {
+  /* overflow-x: auto so the right-side CTA column ("Pitch me" / "Open JD")
+     scrolls into view on narrower viewports instead of being clipped flush
+     against the table border — Adam screenshot 2026-05-16 showed the
+     button column truncated to "Pi…" because we previously had overflow:
+     hidden here. */
   background: var(--wk-cream-3); border: 1px solid var(--wk-border);
-  border-radius: var(--wk-r-md); overflow: hidden;
+  border-radius: var(--wk-r-md); overflow-x: auto; overflow-y: hidden;
 }
+.wk-shell .wk-tbl { min-width: 920px; }
 .wk-shell .wk-tbl-wrap--solo { margin-top: 8px; }
 .wk-shell .wk-tbl { width: 100%; border-collapse: collapse; font-family: inherit; }
 .wk-shell .wk-tbl__h {
