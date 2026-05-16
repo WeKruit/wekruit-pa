@@ -138,7 +138,7 @@ const QUESTIONS = [
   {
     id: "q_yoe",
     order: 5,
-    prompt: { zh: "你工作几年了? 还是刚毕业找新人岗?", en: "how many years you been working? or fresh outta school?" },
+    prompt: { zh: "你工作几年了? 还是刚毕业找新人岗?", en: "how many years have you been working? New grad is fine too." },
     variants: [
       { zh: "数字大概多少年就行 — 比如 '3年' / '8年' / 或者 '刚毕业'", en: "roughly a number works — '3 years' / '8 years' / or 'fresh grad'" },
       { zh: "几年就好啦, 不用很精确 — 0 / 1 / 3 / 5 / 10 哪个差不多?", en: "ballpark is fine — 0 / 1 / 3 / 5 / 10 — closest one?" },
@@ -172,11 +172,11 @@ const QUESTIONS = [
   {
     id: "q_startup_pref",
     order: 7,
-    prompt: { zh: "你更想去 startup 那种小而拼的, 还是大厂稳一点?", en: "more into startup hustle vibe or stable big-co?" },
+    prompt: { zh: "你更偏 startup、稳定一点的大公司, 还是都可以?", en: "do you prefer startups, bigger-company stability, or are you flexible?" },
     variants: [
       { zh: "startup / 大厂 / 都行 三选一", en: "startup / bigtech / either — pick one" },
       { zh: "公司规模偏好? 早期 startup / 中型 / 大厂 — 哪个更合你?", en: "company size preference — early startup / mid / bigco — which fits?" },
-      { zh: "你想要那种快节奏 startup 体验, 还是更看重稳定大厂?", en: "you want fast-paced startup energy or stability of a big company?" },
+      { zh: "你更想要 startup 的节奏, 还是更看重大公司的稳定性?", en: "do you prefer startup pace or the stability of a bigger company?" },
       { zh: "一个词就行: 'startup' / 'bigtech' / 'either'", en: "one word works: 'startup' / 'bigtech' / 'either'" },
     ],
     judgeKind: "llm-relevance",

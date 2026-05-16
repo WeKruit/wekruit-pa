@@ -189,7 +189,7 @@ function makeGenerateJobRecs(): NonNullable<
       // limit=10 retains the wider window so we can fire-and-forget
       // llmRerank against the top-5 (next-batch cache).
       const out = await queryMatchingJobsV16(
-        { userId, limit: 10 },
+        { userId, limit: 10, lang },
         {
           db,
           log: (event, payload) =>

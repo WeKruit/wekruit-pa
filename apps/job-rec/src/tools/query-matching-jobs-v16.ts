@@ -916,6 +916,8 @@ export type QueryMatchingJobsV16Args = {
   userId: string
   /** Top-N jobs to return after sort. Default 10. */
   limit?: number
+  /** Runtime message language override for generated user-facing reasons. */
+  lang?: "zh" | "en"
   /** Pinned `now` for deterministic tests. Default `Date.now()`. */
   nowMs?: number
   /**
@@ -1058,8 +1060,8 @@ export async function queryMatchingJobsV16(
   const nowMs = typeof args.nowMs === "number" ? args.nowMs : Date.now()
 
   // 1. loadUserTags — single source.
-  const userTags = await loadUserTags(deps.db, args.userId, log)
-  if (!userTags) {
+  const loadedUserTags = await loadUserTags(deps.db, args.userId, log)
+  if (!loadedUserTags) {
     return {
       jobs: [],
       total: 0,
@@ -1068,6 +1070,7 @@ export async function queryMatchingJobsV16(
       noUserTags: true,
     }
   }
+  const userTags = args.lang ? { ...loadedUserTags, preferredLang: args.lang } : loadedUserTags
 
   // 2. Run query (push role to query layer).
   const { jobs: rawJobs } = await runV16Query(deps.db, userTags, log)

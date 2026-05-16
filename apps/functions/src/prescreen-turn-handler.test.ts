@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 import {
   normalizePrescreenClarifyTextForRound,
   prescreenClarifyRoundGuidance,
+  prescreenSessionEvidenceContext,
   prescreenTurnRecordQId,
   runPrescreenTurnIfActive,
 } from "./prescreen-turn-handler.js"
@@ -168,6 +169,32 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
       "The systems detail is the useful signal - what failure did you uncover?",
       "One last concrete check before I score it - what measurable result changed?",
     ])
+  })
+
+  it("keeps technical-depth probes from circling back to role-fit impact", () => {
+    const guidance = prescreenClarifyRoundGuidance(1, "en", "technical_depth")
+    assert.match(guidance, /weakest required technology/i)
+    assert.match(guidance, /do not repeat role-fit impact\/ownership/i)
+
+    const covered = prescreenSessionEvidenceContext(
+      {
+        questions: {
+          role_fit: {
+            evidenceReplies: [
+              "I owned the dashboard and queries, not the backend service.",
+              "The impact was faster triage and fewer unclear escalations.",
+            ],
+          },
+          technical_depth: {
+            evidenceReplies: ["SQL is strongest."],
+          },
+        },
+      },
+      "technical_depth",
+    )
+    assert.match(covered, /role_fit:/)
+    assert.match(covered, /owned the dashboard/)
+    assert.doesNotMatch(covered, /SQL is strongest/)
   })
 
   it("records a candidate reply against the question that was active before the turn", () => {

@@ -9,7 +9,9 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import { ResumeJudge } from "../judges/resume.js"
-import type { JudgeCtx } from "../question.js"
+import { defaultQuestionsV2 } from "../questions.js"
+import type { JudgeCtx, Question } from "../question.js"
+import type { ResumeAttachment } from "../judges/resume.js"
 
 function ctxWith(rawPayload?: unknown): JudgeCtx {
   return { userId: "u", turnId: "t", rawPayload }
@@ -119,4 +121,19 @@ test("q-resume: user says resume already uploaded but no parsed resume exists â†
   )
   assert.equal(r.accept, false)
   if (!r.accept) assert.equal(r.reason, "irrelevant")
+})
+
+test("q-resume: V2 question auto-accepts on entry when parsed resume exists", async () => {
+  const resumeQ = defaultQuestionsV2({})
+    .find((q) => q.id === "q_resume") as Question<ResumeAttachment[]> | undefined
+  assert.ok(resumeQ?.onEnter, "q_resume should define an onEnter hook")
+
+  const r = await resumeQ.onEnter({
+    ...ctxWithParsedResumeOnFile(true),
+    lang: "en",
+  })
+
+  assert.equal(r?.accept, true)
+  assert.deepEqual(r?.value, [])
+  assert.equal(r?.confidence, 0.95)
 })

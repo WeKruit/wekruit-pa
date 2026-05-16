@@ -619,6 +619,84 @@ describe("paMessageCoalescer — case 6b: eligible user uses coalescing before b
     delete process.env.paMessageCoalesceEnabled
   })
 
+  it("marks an active prescreen as prescreen even after onboarding is complete", async () => {
+    process.env.paMessageCoalesceEnabled = "1"
+    const { handleSendblueWebhook } = await import("../../sendblue/webhook.js")
+    const { _clearFeatureFlagCache } = await import("@pa/pa-persistence")
+    _clearFeatureFlagCache()
+
+    const db = makeFakeDb()
+    db._stores.set("pa-feature-flags", new Map([
+      ["paMessageCoalesceEnabled", {
+        key: "paMessageCoalesceEnabled", value: true, type: "bool", scope: "perUser",
+        allowlist: [], blocklist: [],
+      }],
+    ]))
+    db._stores.set("pa-users", new Map([
+      ["u_prescreen_complete", { onboardingState: "complete" }],
+    ]))
+    db._stores.set("pa-prescreen-sessions", new Map([
+      ["ps_active_complete", { userId: "u_prescreen_complete", terminal: null }],
+    ]))
+
+    type BrokerCreateInput = { coalescing?: boolean } & Record<string, unknown>
+    type CoalesceInput = { userId: string; body: string; inboundEventId: string; isPrescreen?: boolean }
+    const seen: { brokerInput: BrokerCreateInput | null; coalesceInput: CoalesceInput | null } = {
+      brokerInput: null,
+      coalesceInput: null,
+    }
+    const SECRET = "test-webhook-secret"
+    const { createHmac } = await import("node:crypto")
+    const payload = {
+      message_handle: "msg-prescreen-complete-1",
+      content: "Follow-up fragment for the active prescreen answer",
+      from_number: "+15551234567",
+      to_number: "+15559999999",
+      type: "message",
+      service: "iMessage",
+    }
+    const raw = JSON.stringify(payload)
+    const sig = createHmac("sha256", SECRET).update(raw).digest("hex")
+    let status = 0
+    const res = {
+      status(c: number) { status = c; return this },
+      json(_b: unknown) { return this },
+      send(_b: unknown) { return this },
+    }
+
+    await handleSendblueWebhook(
+      {
+        rawBody: raw,
+        body: payload,
+        headers: { "sendblue-signature": sig, "x-e2e-test": "1" } as Record<string, string>,
+      },
+      res,
+      {
+        db: db as never,
+        secret: SECRET,
+        log: () => { /* swallow */ },
+        lookupUserByPhone: async () => "u_prescreen_complete",
+        createInboundEvent: (async (_db: unknown, input: BrokerCreateInput) => {
+          seen.brokerInput = input
+          const id = "inb_prescreen_complete_1"
+          db._stores.set("pa-inbound-events", new Map([[id, { id, ...input } as DocData]]))
+          return { id, created: true, event: { id, ...input } as never }
+        }) as never,
+        enqueueOrCoalesce: (async (_deps: unknown, input: CoalesceInput) => {
+          seen.coalesceInput = input
+          return { action: "created" as const }
+        }) as never,
+        coalescerDeps: {} as never,
+      }
+    )
+
+    assert.equal(status, 200)
+    assert.equal(seen.brokerInput?.coalescing, true)
+    assert.equal(seen.coalesceInput?.userId, "u_prescreen_complete")
+    assert.equal(seen.coalesceInput?.isPrescreen, true)
+    delete process.env.paMessageCoalesceEnabled
+  })
+
   it("coalesces active prescreen even when onboarding is incomplete", async () => {
     process.env.paMessageCoalesceEnabled = "1"
     const { handleSendblueWebhook } = await import("../../sendblue/webhook.js")

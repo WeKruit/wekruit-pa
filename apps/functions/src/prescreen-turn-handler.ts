@@ -144,6 +144,9 @@ function makeProductionClarifyComposer(): PreScreenClarifyComposer {
         reasoning: cell.reasoning,
       }))
 
+    const sessionEvidence = prescreenSessionEvidenceContext(input.state, input.question.qId)
+    const qSpecificGuidance = prescreenClarifyRoundGuidance(input.clarifyRound, input.lang, input.question.qId)
+
     const system = [
       "You are Claire, a candidate prescreening agent.",
       "Write ONE warm iMessage follow-up that probes like a thoughtful recruiter friend learning the candidate's story.",
@@ -151,6 +154,8 @@ function makeProductionClarifyComposer(): PreScreenClarifyComposer {
       "Do not start with the same generic acknowledgment every round; avoid repeated 'That's helpful' / 'That helps' openers.",
       "Use the candidate's latest answer and weak evidence to ask the next most useful detail.",
       "Do not ask a checklist. Pick one natural angle: their role, technical depth, systems touched, tradeoff, failure, user/customer impact, or measurable outcome.",
+      "Do not ask for business impact, ownership, systems touched, or validation again if the session evidence already covers it. Ask for the missing signal instead.",
+      "For technical-depth questions, prefer the weakest required technology or implementation detail; do not drift back to role-fit impact/ownership unless that is the only missing signal.",
       "Keep it under 360 characters. Output strict JSON only: {\"text\":\"...\"}.",
     ].join("\n")
 
@@ -159,10 +164,11 @@ function makeProductionClarifyComposer(): PreScreenClarifyComposer {
       `Question id: ${input.question.qId}`,
       `Original question: ${input.question.prompt[input.lang]}`,
       `Clarify round for this same question: ${input.clarifyRound}`,
-      `Required probe angle for this round: ${prescreenClarifyRoundGuidance(input.clarifyRound, input.lang)}`,
+      `Required probe angle for this round: ${qSpecificGuidance}`,
       `Reason: ${input.reason}`,
       `Latest candidate reply: """${input.reply}"""`,
       `Prior answers for this same question: ${JSON.stringify(input.state.questions[input.question.qId]?.evidenceReplies ?? [])}`,
+      `Already-covered session evidence from other questions: ${sessionEvidence}`,
       `Merged score: s=${input.merged.aggregate.s.toFixed(2)} c=${input.merged.aggregate.c.toFixed(2)} summary=${input.merged.aggregate.summary}`,
       `Weak or missing areas JSON: ${JSON.stringify(weakCells)}`,
       `If unsure, use this fallback intent without copying it verbatim: ${input.fallbackText}`,
@@ -191,8 +197,20 @@ function makeProductionClarifyComposer(): PreScreenClarifyComposer {
   }
 }
 
-export function prescreenClarifyRoundGuidance(round: number, lang: "zh" | "en"): string {
+export function prescreenClarifyRoundGuidance(round: number, lang: "zh" | "en", qId?: string): string {
   const normalizedRound = Math.max(1, Math.floor(round))
+  if (qId === "technical_depth") {
+    if (lang === "zh") {
+      if (normalizedRound === 1) return "追问最弱的必备技术栈或实现细节；不要重复 role-fit 里的 impact/ownership。"
+      if (normalizedRound === 2) return "追问具体工程实现：代码、数据、API、调试或架构取舍；避免重新问业务影响。"
+      if (normalizedRound === 3) return "确认技术深度缺口：候选人是否真的做过该技术、做到什么程度、哪里没做过。"
+      return "最后一次技术确认：最小可证明 shipped technical work 或明确缺口；不要继续绕回项目影响。"
+    }
+    if (normalizedRound === 1) return "Probe the weakest required technology or implementation detail; do not repeat role-fit impact/ownership."
+    if (normalizedRound === 2) return "Probe concrete engineering depth: code, data, APIs, debugging, or architecture tradeoff; avoid re-asking business impact."
+    if (normalizedRound === 3) return "Confirm the technical gap: whether they used the required tech, depth of use, and what they did not own."
+    return "Final technical check: smallest provable shipped technical work or explicit gap; do not circle back to project impact."
+  }
   if (lang === "zh") {
     if (normalizedRound === 1) return "找最近的相关项目：背景、候选人亲自负责什么、用户或业务结果。"
     if (normalizedRound === 2) return "追问 ownership 和系统边界：候选人自己做了哪一块、碰到哪些系统或数据。"
@@ -203,6 +221,25 @@ export function prescreenClarifyRoundGuidance(round: number, lang: "zh" | "en"):
   if (normalizedRound === 2) return "Probe ownership and system boundary: what they personally built, and which systems or data it touched."
   if (normalizedRound === 3) return "Probe the hardest failure, tradeoff, or validation: what broke, what they changed, and how they knew it worked."
   return "Final concrete check: smallest provable shipped work, measurable result, or explicit gap; do not keep circling."
+}
+
+export function prescreenSessionEvidenceContext(
+  state: { questions?: Record<string, { evidenceReplies?: unknown }> },
+  activeQId: string,
+): string {
+  const rows: string[] = []
+  for (const [qId, qState] of Object.entries(state.questions ?? {})) {
+    if (qId === activeQId) continue
+    const replies = Array.isArray(qState?.evidenceReplies) ? qState.evidenceReplies : []
+    const cleanReplies = replies
+      .filter((reply): reply is string => typeof reply === "string")
+      .map((reply) => reply.replace(/\s+/g, " ").trim())
+      .filter(Boolean)
+      .slice(-3)
+    if (!cleanReplies.length) continue
+    rows.push(`${qId}: ${cleanReplies.join(" | ")}`.slice(0, 1200))
+  }
+  return rows.length ? rows.join("\n") : "none"
 }
 
 export function normalizePrescreenClarifyTextForRound(text: string, round: number, lang: "zh" | "en"): string {

@@ -46,7 +46,9 @@ function defaultExtract(rawPayload: unknown): ResumeAttachment[] {
     }))
 }
 
-async function hasParsedResumeOnFile(ctx: JudgeCtx): Promise<boolean> {
+type ResumeLookupCtx = Pick<JudgeCtx, "userId" | "turnId" | "db" | "log">
+
+export async function hasParsedResumeOnFile(ctx: ResumeLookupCtx): Promise<boolean> {
   const db = ctx.db as
     | {
         collection?: (name: string) => {

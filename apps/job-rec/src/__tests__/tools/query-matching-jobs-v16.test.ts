@@ -645,6 +645,35 @@ test("queryMatchingJobsV16: with role-fn filter returns matching jobs", async ()
   )
 })
 
+test("queryMatchingJobsV16: lang arg overrides stored preferredLang for user-facing reasons", async () => {
+  const mfs = new MockFirestore()
+  await mfs
+    .collection("pa-users")
+    .doc("u_lang")
+    .set({
+      tags: {
+        skills: ["typescript"],
+        industryEnum: ["tech_software"],
+        schemaVersion: 1,
+        targetRoleFunction: ["software_engineering"],
+        preferredLang: "zh",
+      },
+    })
+  await seedJob(mfs, "swe-lang", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["typescript"],
+  })
+
+  const r = await queryMatchingJobsV16(
+    { userId: "u_lang", nowMs: NOW, lang: "en" },
+    { db: asFirestore(mfs) },
+  )
+
+  assert.equal(r.jobs.length, 1)
+  assert.match(r.jobs[0]!.reason, /Why match:/)
+  assert.doesNotMatch(r.jobs[0]!.reason, /为啥推/)
+})
+
 test("queryMatchingJobsV16: S4 enriched approved job survives V16 filters and outranks weaker same-role job", async () => {
   const mfs = new MockFirestore()
   await mfs

@@ -50,6 +50,7 @@ export interface RunPrescreenTerminalActionArgs {
   generateJobRecs?: (args: {
     userId: string
     toE164: string
+    lang?: "zh" | "en"
   }) => Promise<{ ok: boolean; jobCount: number; reason?: string }>
   /** Optional injected PII bootstrap (for tests). */
   startPii?: (args: {
@@ -59,6 +60,7 @@ export interface RunPrescreenTerminalActionArgs {
     jobId: string
     sourceSessionId: string
     source: "pass" | "fail"
+    lang?: "zh" | "en"
     onComplete: (a: { userId: string; toE164: string; jobId: string }) => Promise<void>
     log: (event: string, payload: Record<string, unknown>) => void
   }) => Promise<{ ok: boolean; skipped: boolean; reason?: string }>
@@ -146,21 +148,27 @@ function deriveWeakPrescreenTags(args: {
 }
 
 function mergeStringTags(existing: unknown, next: string[], maxItems: number): string[] {
-  const merged = new Set<string>()
+  const existingValues: string[] = []
   if (Array.isArray(existing)) {
     for (const value of existing) {
       if (typeof value !== "string") continue
       const normalized = value.trim()
-      if (normalized) merged.add(normalized)
-      if (merged.size >= maxItems) return Array.from(merged)
+      if (normalized && !existingValues.includes(normalized)) existingValues.push(normalized)
     }
   }
+  const nextValues: string[] = []
   for (const value of next) {
     const normalized = value.trim()
-    if (normalized) merged.add(normalized)
-    if (merged.size >= maxItems) break
+    if (normalized && !nextValues.includes(normalized)) nextValues.push(normalized)
   }
-  return Array.from(merged)
+  const merged = Array.from(new Set([...existingValues, ...nextValues]))
+  if (merged.length <= maxItems) return merged
+  const nextSet = new Set(nextValues)
+  const existingSlots = Math.max(0, maxItems - nextValues.length)
+  return [
+    ...merged.filter((value) => !nextSet.has(value)).slice(0, existingSlots),
+    ...nextValues,
+  ].slice(0, maxItems)
 }
 
 async function readLevel1Fields(
@@ -191,6 +199,7 @@ async function readLevel1Fields(
 async function defaultGenerateJobRecs(args: {
   userId: string
   toE164: string
+  lang?: "zh" | "en"
 }): Promise<{ ok: boolean; jobCount: number; reason?: string }> {
   // Dynamic import keeps test isolation. The deps factory in index.ts
   // builds the same closure; we duplicate the minimal version here to
@@ -200,28 +209,18 @@ async function defaultGenerateJobRecs(args: {
   const { sendImessage: send } = await import("@pa/job-rec")
   const db = getFirestore()
   const result = await queryMatchingJobsV16(
-    { userId: args.userId, limit: 5 },
+    { userId: args.userId, limit: 5, lang: args.lang ?? "en" },
     { db, log: () => undefined }
   )
   if (result.noUserTags) return { ok: false, jobCount: 0, reason: "no_user_tags" }
   if (!result.jobs || result.jobs.length === 0) {
     return { ok: false, jobCount: 0, reason: "no_matches" }
   }
-  const lines: string[] = ["其他可能合适的机会:"]
-  for (const job of result.jobs) {
-    const tag = job.companyName ? ` @ ${job.companyName}` : ""
-    const url = job.atsApplyUrl
-      ? `\n${job.atsApplyUrl}`
-      : job.primaryUrl
-        ? `\n${job.primaryUrl}`
-        : ""
-    const reason = job.reason ? `\n${job.reason}` : ""
-    lines.push(`• ${job.jobTitle}${tag}${url}${reason}`)
-  }
+  const content = composeJobRecsMessage(result.jobs, args.lang ?? "en")
   const sendRes = await send(
     {
       userId: args.userId,
-      content: lines.join("\n\n"),
+      content,
       idempotencyKey: `${args.userId}-${new Date().toISOString().slice(0, 16)}-prescreen-term`,
     },
     { db, log: () => undefined }
@@ -231,6 +230,29 @@ async function defaultGenerateJobRecs(args: {
     jobCount: result.jobs.length,
     ...(sendRes.ok ? {} : { reason: "send_failed" }),
   }
+}
+
+type JobRecMessageJob = {
+  jobTitle?: string | null
+  companyName?: string | null
+  atsApplyUrl?: string | null
+  primaryUrl?: string | null
+  reason?: string | null
+}
+
+export function composeJobRecsMessage(jobs: JobRecMessageJob[], lang: "zh" | "en"): string {
+  const lines: string[] = [lang === "zh" ? "其他可能合适的机会:" : "Other roles that may fit:"]
+  for (const job of jobs) {
+    const tag = job.companyName ? ` @ ${job.companyName}` : ""
+    const url = job.atsApplyUrl
+      ? `\n${job.atsApplyUrl}`
+      : job.primaryUrl
+        ? `\n${job.primaryUrl}`
+        : ""
+    const reason = job.reason ? `\n${job.reason}` : ""
+    lines.push(`• ${job.jobTitle}${tag}${url}${reason}`)
+  }
+  return lines.join("\n\n")
 }
 
 async function defaultSendSms(args: {
@@ -478,9 +500,10 @@ async function startPiiWithRecsChain(
       jobId: args.jobId,
       sourceSessionId: args.sessionId,
       source,
+      lang: args.lang,
       onComplete: async ({ userId, toE164 }) => {
         try {
-          await genJobRecs({ userId, toE164 })
+          await genJobRecs({ userId, toE164, lang: args.lang })
         } catch (err) {
           log("prescreen.terminal_action.pii_recs_failed", {
             sessionId: args.sessionId,
@@ -496,7 +519,7 @@ async function startPiiWithRecsChain(
         sessionId: args.sessionId,
       })
       try {
-        await genJobRecs({ userId: args.userId, toE164: args.toE164 })
+        await genJobRecs({ userId: args.userId, toE164: args.toE164, lang: args.lang })
       } catch (err) {
         log("prescreen.terminal_action.recs_direct_failed", {
           sessionId: args.sessionId,

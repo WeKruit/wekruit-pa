@@ -261,15 +261,15 @@ const Q_PROMPTS: Record<
   },
   ask_q_yoe: {
     zh: "你工作几年了? 还是刚毕业找新人岗?",
-    en: "how many years you been working? or fresh outta school?",
+    en: "how many years have you been working? New grad is fine too.",
   },
   ask_q_visa: {
     zh: "那你有身份不? 公民/绿卡/OPT/还是要 sponsor?",
     en: "got work auth sorted? citizen / GC / OPT / need sponsorship?",
   },
   ask_q_startup_pref: {
-    zh: "你更想去 startup 那种小而拼的, 还是大厂稳一点?",
-    en: "more into startup hustle vibe or stable big-co?",
+    zh: "你更偏 startup、稳定一点的大公司, 还是都可以?",
+    en: "do you prefer startups, bigger-company stability, or are you flexible?",
   },
   ask_q_country: {
     zh: "想找哪个国家/地区的工作? 美国 / 中国 / 加拿大 / 欧洲 / 都行 — 多选也行",

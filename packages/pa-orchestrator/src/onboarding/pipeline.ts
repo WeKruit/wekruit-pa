@@ -317,6 +317,36 @@ export class OnboardingPipeline {
           : "got everything I need — running the match now ✓"
       return await this.completeAndEmit(input, state, completionMsg)
     }
+
+    if (next.onEnter) {
+      const ctx: AcceptedCtx = {
+        userId: input.userId,
+        turnId: input.turnId,
+        lang: state.lang,
+        db: this.opts.db,
+        log: this.opts.log,
+      }
+      try {
+        const enterResult = await next.onEnter(ctx)
+        if (enterResult?.accept) {
+          this.opts.log?.("pa.onboarding.pipeline.on_enter_accept", {
+            userId: input.userId,
+            turnId: input.turnId,
+            qId: next.id,
+            confidence: enterResult.confidence ?? null,
+          })
+          return await this.acceptAndAdvance(input, state, next, enterResult.value)
+        }
+      } catch (err) {
+        this.opts.log?.("pa.onboarding.pipeline.on_enter_error", {
+          userId: input.userId,
+          turnId: input.turnId,
+          qId: next.id,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    }
+
     state.currentQId = next.id
     await this.opts.state.save(input.userId, state)
     const msg = next.prompt[state.lang]

@@ -73,8 +73,8 @@ Important baseline finding:
 | Flow | Status | Live iMessage evidence | Firestore evidence | Notes |
 | --- | --- | --- | --- | --- |
 | Normal candidate onboarding | LIVE_DONE_FOR_COLLISION_AND_RESUME_COMPLETION | Real iMessage location-answer rerun after prescreen pause advanced to resume ask; real resume-on-file reply completed onboarding | `pa-users.pipelineState.completed=true`, `onboardingStatus=active`, clean ended `workSession` | Found and fixed prescreen recent-terminal guard, existing-resume detection, resume completion language, generic completion noise, and stale workSession merge behavior. |
-| Layoff onboarding | NOT_STARTED | Missing | Baseline shows active layoff workSession | Must verify shared `pa-users` state, `layoffContext`, and session boundaries. |
-| Job prescreen strong candidate | LIVE_DONE | Real iMessage rerun reached `PASS` after repeated probes | Session, memory, user workSession, candidate-job-state verified | See Flow 4 rerun. |
+| Layoff onboarding | LIVE_DONE_WITH_RUNTIME_FIXES | Real iMessage layoff onboarding completed through role, YoE, visa, startup preference, country, location, and existing-resume recovery | `pa-users.pipelineState.completed=true`, `workSession.status=ended`, `boundary=complete`, `parsedCandidateResumes` found | Found and fixed stale workSession merge, stale layoff phone index, YoE natural-answer parse, startup wording, and resume-on-entry skip for existing parsed resumes. |
+| Job prescreen strong candidate | LIVE_DONE | Real iMessage rerun reached `PASS` after strong fullstack answers and hard filters | Session, turns, memory, tags, user workSession, candidate-job-state, and employer-visible profile verified | Latest rerun also proved capped proposed-tag merge. |
 | Job prescreen adjacent/fragmented | LIVE_DONE | Real iMessage rerun reached PASS after adjacent/fragmented answers | Session, turns, memory, candidate-job-state, user workSession, and prior-session supersede verified | Runtime fixes deployed on Node 24; visible salary-copy defect remains in job data/copy. |
 | Job prescreen weak candidate | LIVE_DONE | Real iMessage weak run probed repeatedly before `HARD_STOP` | Session, memory tags, and user/candidate state verified | No false positive skill tags were added. |
 | Pause/restart/supersede | LIVE_DONE | Real iMessage restart, opt-out send failure, natural pause, and clean pause rerun verified | User-level `workSession`, session boundary, inbound status, and memory event verified | See Flow 6 and Flow 7. |
@@ -82,7 +82,7 @@ Important baseline finding:
 | Rate limit/opt-out/suppression/cooldown | PRESCREEN_PARTIAL | `Stop` provider opt-out produced real send failure; `START` restored test line | Send-failed session ended with `boundary=send_failed` | Broad rate-limit/cooldown not tested in this narrowed run. |
 | Job matching conversation | NOT_STARTED | Missing | Missing | Must be tested through real iMessage and direct Firestore state. |
 | Everyday catchup | NOT_STARTED | Missing | Missing | Must be tested through real iMessage and direct Firestore state. |
-| Automated outbound | NOT_STARTED | Missing | Missing | Must be tested through real iMessage and direct Firestore state. |
+| Automated outbound | PRESCREEN_TERMINAL_PARTIAL | PASS and HARD_STOP prescreen terminal actions sent real job-recommendation outbound | `pa-outbound` terminal rows verified with sent status and idempotency keys | General scheduled/catchup outbound still not tested in this narrowed prescreen lane. |
 | Firestore runtime observability | LIVE_DONE_FOR_PRESCREEN | Every live prescreen state was checked via Firestore snapshot | `pa-prescreen-sessions`, `pa-users.workSession`, `pa-inbound-events`, `pa-prescreen-memory-events` | Dashboard not used as evidence. |
 
 ## Flow 4 Evidence: Adjacent Or Fragmented Fullstack Prescreen
@@ -442,3 +442,224 @@ Persisted proof:
 Remaining Flow 1 boundary:
 
 - This proves the collision recovery path and resume-on-file completion path for the canonical user. A full fresh-user normal onboarding from empty state is still a separate live scenario if the broader runtime goal is expanded beyond the current narrowed conversation-runtime slice.
+
+## Flow 1 / Layoff Rerun Evidence: Shared Onboarding Runtime Fixes
+
+Verified directly in Messages and Firestore: 2026-05-16T21:42:18.455Z
+
+Runtime:
+
+- Node: `v24.3.0`
+- Candidate: `pa-users/U7AwKT8nLDRa35DkuBxq`
+- Canonical email: `indolencorlol@gmail.com`
+- Candidate phone: `+14243201960`
+- Test Claire sender: `+13054507715`
+- Only allowed live test sender used in this rerun: `+13054507715`; `+13054507716` was not used.
+- Deploy target: `onPaInbound`, `paCoalesceBufferSweep`, `paMessageCoalescer`, `paSendblueWebhook`
+- Full Firebase predeploy test result on the final deploy: `1713/1713` passing.
+- Targeted orchestrator regression tests: `48/48` passing.
+- Targeted functions Sendblue/layoff tests: `35/35` passing.
+
+Runtime bugs found and fixed in this rerun:
+
+- `WeKruit_LAID_OFF` restarted layoff onboarding but preserved stale nested `workSession.endedAt/currentState` from a prior ended flow. Fix: replace the whole nested `workSession` map on layoff start and refresh `layoff_phone_index/{phoneHash}`.
+- Natural YoE reply `About 2 years...` was re-asked because the guided-open judge waited for the LLM result instead of first parsing the raw reply. Fix: add `parseReply` to `GuidedOpenJudge` and wire `q_yoe` to parse direct natural answers before the LLM.
+- Startup preference prompt used unpolished copy: `more into startup hustle vibe or stable big-co?`. Fix: replace with `do you prefer startups, bigger-company stability, or are you flexible?` and aligned variants/seeds/dashboard copy.
+- Existing parsed resume still caused a `q_resume` prompt after `q_location`. Root cause: resume lookup only happened after the user replied to q_resume. Fix: add `Question.onEnter`, run it in `OnboardingPipeline.advanceTo`, and wire `q_resume.onEnter` to `parsedCandidateResumes.where("userId","==", uid)`.
+
+Live iMessage transcript shape:
+
+- Candidate started from layoff: wanted product engineering or technical PM roles, New York or remote, with OFO Delivery ops tooling / JavaScript dashboards / SQL reporting / scripts as strongest overlap.
+- Claire asked YoE, work authorization, startup preference, country, and location.
+- After deploy, candidate replied at 5:41 PM: `The resume is already on file. Please use the parsed Adam-Yang-Resume.pdf and keep going.`
+- Claire replied:
+  - `got it, scanning your resume now`
+  - `looks like c++ / java / javascript / python / c# + Software Engineer Intern @ Tesla Inc. — pulling matches in that lane`
+
+Persisted proof:
+
+- Parsed resume exists: `parsedCandidateResumes/019MaM207IdXVMKlHuGY` with `userId=U7AwKT8nLDRa35DkuBxq`.
+- Latest inbound: `pa-inbound-events/inb_77057fbff8c59d93bf75a8bc78479864aa878e65`, `status=succeeded`, from `+14243201960` to `+13054507715`.
+- Latest outbounds:
+  - `outbound-pipeline-inb_77057fbff8c59d93bf75a8bc78479864aa878e65-q_resume-cv_interim_ack`
+  - `outbound-pipeline-inb_77057fbff8c59d93bf75a8bc78479864aa878e65-q_resume-cv_summary_tag`
+- User state after rerun:
+  - `onboardingState=complete`
+  - `onboardingStatus=active`
+  - `pipelineState.completed=true`
+  - `pipelineState.currentQId=null`
+  - `pipelineState.collected.q_resume=[]`
+  - `pipelineState.collected.q_role=["swe","pm"]`
+  - `pipelineState.collected.q_yoe=2`
+  - `pipelineState.collected.q_visa="sponsorship_needed"`
+  - `pipelineState.collected.q_startup_pref="either"`
+  - `pipelineState.collected.q_country=["usa","canada"]`
+  - `pipelineState.collected.q_location=["nyc","remote","sf"]`
+- User-level `workSession` after rerun:
+  - `kind=layoff_onboarding`
+  - `status=ended`
+  - `boundary=complete`
+  - `currentState=complete`
+  - `endedAt=2026-05-16T21:41:19.677Z`
+
+Important limitation:
+
+- The current live rerun proves existing-resume recovery while already sitting at `q_resume`.
+- The new `q_resume.onEnter` auto-skip path is covered by unit/integration tests and deployed. A fresh live location-to-resume transition should be included in the next clean onboarding run if the goal requires strict live proof for the newly added entry hook itself.
+
+## Flow 3 Rerun Evidence: Strong Prescreen, Tag Cap, Memory, And Employer Snapshot
+
+Verified directly in Messages and Firestore: 2026-05-16T23:25:50.809Z
+
+Runtime:
+
+- Node: `v24.3.0`
+- Candidate: `pa-users/U7AwKT8nLDRa35DkuBxq`
+- Candidate phone: `+14243201960`
+- Test Claire sender: `+13054507715`
+- Job: `rain-software-engineer-fullstack-8849f6ef`
+- Session: `pa-prescreen-sessions/ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260516T231808898Z`
+- Deploy immediately before this live test updated Node.js 24 functions:
+  - `pa-orchestrator:onPaInbound`
+  - `pa-orchestrator:paMessageCoalescer`
+  - `pa-orchestrator:paCoalesceBufferSweep`
+  - `pa-orchestrator:paSendblueWebhook`
+- Full Firebase predeploy test result: `1717/1717` passing.
+- Targeted tag-cap regression test: `apps/functions/src/prescreen-terminal-action.test.ts`, `17/17` passing.
+
+Bug found before this rerun:
+
+- Previous session `ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260516T223913142Z` correctly wrote memory evidence tags:
+  - `job_prescreen`
+  - `frontend_development`
+  - `data_workflows`
+  - `debugging_workflows`
+  - `operator_tools`
+- But `pa-users/U7AwKT8nLDRa35DkuBxq.tags.proposedTags` was already at the 12-tag cap and stayed as old tags:
+  - `distributed_kv_storage`
+  - `paxos_replication`
+  - `linearizability`
+  - `sharding`
+  - `ci_cd_pipeline_design`
+  - `kubernetes_deployment`
+  - `docker_based_release`
+  - `graphql_api_development`
+  - `apollo_server_integration`
+  - `rag_with_llm_apis`
+  - `mobile_app_development`
+  - `voice_audio_pipeline_integration`
+- This meant recent prescreen evidence could update memory while failing to appear in the derived proposed-tag view.
+
+Runtime fix deployed:
+
+- `apps/functions/src/prescreen-terminal-action.ts`: `mergeStringTags(existing, next, maxItems)` now keeps existing order when possible, but if the array is capped it guarantees new evidence tags are included by dropping tail old signals.
+- Regression test added: `keeps latest prescreen evidence tags when proposedTags is already capped`.
+
+Live iMessage transcript summary:
+
+- Trigger sent at 7:18 PM:
+  - `WeKruit_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_Job`
+- Claire opened:
+  - `Hi — Claire from Rain. Quick screen for Software Engineer - Fullstack. What recent work best matches this software engineering role?`
+- Candidate answered with strong role-fit evidence:
+  - Owned an internal OFO Delivery order-triage dashboard end to end.
+  - Built React/TypeScript screens, Node API, and SQL reports.
+  - Claimed repeated dispatch escalations dropped about 30%.
+- Claire advanced to technical depth instead of over-probing.
+- Candidate gave concrete technical depth:
+  - Modeled `OrderIssue` and `CourierAssignment`.
+  - Built React filters/details.
+  - Wired to a Node endpoint over Postgres order events.
+  - Fixed duplicate late status events using latest-event selection, mismatch flags, and sample checks.
+- Claire advanced through hard filters:
+  - Location: US, New York, remote US, or SF hybrid for strong startup role.
+  - Compensation: targeting `100K to 140K`.
+  - Sponsorship: can work now on OPT, needs future H-1B sponsorship.
+- Real Messages transcript showed a random love tapback on the location answer.
+- Terminal visible in Messages:
+  - `Congrats — you’ve passed the initial screen for Software Engineer - Fullstack.`
+  - `We already have your contact details on file — the employer will reach out directly.`
+  - Then an automated `Other roles that may fit:` list.
+
+Persisted proof:
+
+- Session fields:
+  - `terminal=PASS`
+  - `terminalReason=ratio=0.944 threshold=0.65`
+  - `currentQId=null`
+  - `workSession.status=ended`
+  - `workSession.boundary=terminal`
+  - `terminalActionFiredAt=2026-05-16T23:24:37.472Z`
+  - `terminalActionResult.level1Sent=true`
+  - `terminalActionResult.jobRecsFired=true`
+- Turns:
+  - `role_fit`: `s=0.95`, `c=0.90`, action `advance`, summary `Owned end-to-end fullstack order dashboard (React/TS, Node, SQL) with ~30% impact.`
+  - `technical_depth`: `s=0.92`, `c=0.86`, action `advance`, summary `Strong full-stack TypeScript; React filters/details wired to Node endpoint; debugged event duplication.`
+  - `location_alignment`: `s=0.85`, `c=0.78`, action `advance`.
+  - `compensation_alignment`: `s=1`, `c=0.90`, action `advance`.
+  - `sponsorship_status`: `s=1`, `c=0.98`, action `terminal`, terminal `PASS`.
+- User-level work session:
+  - `pa-users/U7AwKT8nLDRa35DkuBxq.workSession.kind=job_prescreen`
+  - `sessionId=ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260516T231808898Z`
+  - `status=ended`
+  - `boundary=terminal`
+  - `terminal=PASS`
+  - `endedAt=2026-05-16T23:24:33.394Z`
+- Memory event:
+  - `pa-prescreen-memory-events/ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260516T231808898Z`
+  - `terminal=PASS`
+  - Summary includes fullstack dashboard ownership, React/TS + Node + SQL technical depth, location, compensation, and sponsorship.
+  - Evidence tags: `job_prescreen`, `frontend_development`, `data_workflows`, `debugging_workflows`, `operator_tools`.
+- User memory:
+  - `pa-users/U7AwKT8nLDRa35DkuBxq.lastPrescreenMemoryUpdate.sessionId=ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260516T231808898Z`
+  - `pa-users/U7AwKT8nLDRa35DkuBxq.conversationDerivedPreferences.prescreenEvidenceByJob.rain-software-engineer-fullstack-8849f6ef.sessionId=ps_...231808898Z`
+- Tag-cap proof:
+  - `pa-users/U7AwKT8nLDRa35DkuBxq.tags.proposedTags` now equals:
+    - `distributed_kv_storage`
+    - `paxos_replication`
+    - `linearizability`
+    - `sharding`
+    - `ci_cd_pipeline_design`
+    - `kubernetes_deployment`
+    - `docker_based_release`
+    - `job_prescreen`
+    - `frontend_development`
+    - `data_workflows`
+    - `debugging_workflows`
+    - `operator_tools`
+  - This proves the deployed cap behavior keeps leading old tags while forcing latest prescreen evidence into the capped derived tag view.
+- Candidate-job state:
+  - `pa-candidate-job-states/U7AwKT8nLDRa35DkuBxq__rain-software-engineer-fullstack-8849f6ef.state=employer_visible`
+  - `reason=passed_snapshot_refreshed`
+  - `stateUpdatedAt=2026-05-16T23:24:33.394Z`
+  - `prescreenSessionId=ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260516T231808898Z`
+- Employer-visible profile:
+  - `pa-employer-visible-profiles/rain-software-engineer-fullstack-8849f6ef__U7AwKT8nLDRa35DkuBxq` exists.
+- Inbound/coalescer rows:
+  - User replies created original rows with `status=coalesced`.
+  - Synthetic processed rows have `status=completed`, `routedTo=prescreen`, and coalesce turn ids `U7AwKT8nLDRa35DkuBxq__129` through `__133`.
+- Automated outbound:
+  - Latest prescreen terminal job-recommendation outbound: `pa-outbound/3f0ed84f-4a82-4f42-9a73-000400a9ec2c`
+  - `status=sent`
+  - `idempotencyKey=U7AwKT8nLDRa35DkuBxq-2026-05-16T23:24-prescreen-term`
+
+Residual product/data defect:
+
+- PASS SMS still renders salary as `$50000-999000/yr`. This is not a session-routing or memory/tag defect, but it is customer-visible and must be fixed in the job data/copy formatting path before production polish can be claimed.
+- PASS currently also sends `Other roles that may fit:` immediately after a passed screen. That may be intentional as marketplace retention, but from a candidate-experience perspective it can feel noisy right after a PASS handoff. Needs product decision before changing.
+
+## Final Post-Review Deploy
+
+Verified from Firebase CLI output: 2026-05-16
+
+- Node used by command: `v24.3.0`
+- Full Firebase functions predeploy test result: `1717/1717` passing.
+- Build completed and bundled `apps/functions/lib`.
+- Deployed Node.js 24 functions successfully:
+  - `pa-orchestrator:onPaInbound`
+  - `pa-orchestrator:paMessageCoalescer`
+  - `pa-orchestrator:paCoalesceBufferSweep`
+  - `pa-orchestrator:paSendblueWebhook`
+  - `pa-orchestrator:openInitiateSmsPrescreen`
+
+This final deploy happened after the code review pass and after the `@pa/job-rec` package engine was corrected to Node 24, so the live function bundle and the branch are aligned for the runtime path.

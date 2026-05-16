@@ -116,6 +116,26 @@ test("OnboardingPipeline: judge accept advances to next Q + emits its prompt", a
   assert.equal(emitted.at(-1)?.kind, "first_prompt")
 })
 
+test("OnboardingPipeline: next Q can auto-accept on entry without emitting prompt", async () => {
+  const q2 = makeQuestion({
+    id: "q2",
+    prompt: { zh: "Q2 中文", en: "Q2 EN" },
+    judge: new AcceptOnce("ans2"),
+    rephraser: new StaticVariantsRephraser([{ zh: "再问 Q2", en: "reask Q2" }]),
+    haltMessage: HALT,
+    onEnter: async () => ({ accept: true, value: "prefilled", confidence: 0.95 }),
+  } as Question<string>)
+  const { pipeline, emitted, state } = makePipeline({ questions: [makeQ1(), q2] })
+
+  await pipeline.startTurn(makeInput("hi"))
+  const final = await pipeline.startTurn(makeInput("ans1"))
+
+  assert.equal(final.completed, true)
+  assert.equal(final.currentQId, null)
+  assert.equal(emitted.some((e) => e.qId === "q2" && e.kind === "first_prompt"), false)
+  assert.deepEqual(state.peek("u1")?.collected, { q1: "ans1", q2: "prefilled" })
+})
+
 test("OnboardingPipeline: irrelevant reply bumps attempt + rotates variants", async () => {
   const { pipeline, emitted } = makePipeline({ questions: [makeQ1()] })
   await pipeline.startTurn(makeInput("hi"))
