@@ -102,6 +102,31 @@
           ]
         }
       ]
+    },
+    {
+      "_comment": "layoff.wekruit.com → layoff-wekruit.web.app (Cloudflare CNAME). Adopts the same pa-landing Vite SPA so /open, /market, /j/:jobId all work from the layoff domain. Prior to 2026-05-16 this site was a phantom deploy from an out-of-band agent run; absorbing it into firebase.json so it stays in sync with pa-landing on every deploy.",
+      "target": "layoff",
+      "public": "apps/pa-landing/dist",
+      "ignore": [
+        "firebase.json",
+        "**/.*",
+        "**/node_modules/**"
+      ],
+      "rewrites": [
+        {
+          "source": "**",
+          "destination": "/index.html"
+        }
+      ],
+      "headers": [
+        {
+          "source": "**",
+          "headers": [
+            { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" },
+            { "key": "X-Content-Type-Options", "value": "nosniff" }
+          ]
+        }
+      ]
     }
   ]
 }
