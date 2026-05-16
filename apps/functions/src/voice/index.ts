@@ -66,17 +66,17 @@ async function makeRealSipClient(opts: {
   const client = new mod.SipClient(opts.livekitUrl, opts.apiKey, opts.apiSecret)
   return {
     async createSipParticipant(args) {
-      const info = await client.createSipParticipant({
-        sipTrunkId: args.sipTrunkId,
-        sipCallTo: args.sipCallTo,
-        roomName: args.roomName,
-        participantIdentity: args.participantIdentity,
-        participantName: args.participantName,
-        // SDK v2 calls it `sipNumber`; v1 calls it `numberOverride`. Pass
-        // both to be safe — the SDK ignores unknown keys.
-        sipNumber: args.fromNumber,
-        numberOverride: args.fromNumber,
-      })
+      // SDK v2.x positional: (sipTrunkId, number, roomName, opts).
+      const info = await client.createSipParticipant(
+        args.sipTrunkId,
+        args.sipCallTo,
+        args.roomName,
+        {
+          participantIdentity: args.participantIdentity,
+          participantName: args.participantName,
+          fromNumber: args.fromNumber,
+        },
+      )
       return {
         sipCallId: info?.sipCallId ?? info?.callId ?? info?.participantIdentity ?? "",
         roomName: info?.roomName ?? args.roomName,
