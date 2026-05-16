@@ -42,6 +42,7 @@ import {
   type RegisterSinks,
 } from "./event-handlers.js"
 import { buildConsentPrompt } from "./consent-prompt.js"
+import { emitConsentSpokenAudit } from "./consent-audit.js"
 import type { VoiceCallContext } from "./voice-context-types.js"
 
 export interface StartWorkerOpts {
@@ -232,6 +233,10 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
       const consentLine = buildConsentPrompt(callContext)
       await session.say?.(consentLine)
       log("voice.consent_prompt_spoken", { bookingId, lang: callContext.userProfile.preferredLang ?? "en" })
+      // S5 — structured TCPA audit log capturing the consent-disclosure
+      // moment (paired with the prior-consent verification in
+      // voice-tcpa-checks/{bookingId}_<runId>).
+      emitConsentSpokenAudit(callContext, consentLine, log)
     },
   })
 
