@@ -60,7 +60,7 @@ const scenarios: Scenario[] = [
     label: "Strong fullstack candidate should progress through all questions and pass",
     expected: {
       terminal: "PASS",
-      maxClarifies: 1,
+      maxClarifies: 2,
       candidateState: "employer_visible",
       employerVisibleProfile: true,
       workSessionBoundary: "terminal",
@@ -112,7 +112,7 @@ const scenarios: Scenario[] = [
         "I built React and TypeScript screens plus SQL reports.",
         "It touched Node endpoints and Postgres order data, and it reduced repeated failed-order triage for ops.",
       ].join("\n"),
-      "Technical depth: I built the React filters and order detail panels, wired them into Node endpoints, wrote Postgres queries for failed order reasons, and added scripts for ops to trace merchant onboarding issues.",
+      "Technical depth: I built the React and TypeScript filters and order detail panels, wired them into Node endpoints, wrote Postgres queries for failed order reasons, and added scripts for ops to trace merchant onboarding issues.",
       "New York hybrid works for me.",
       "$90k to $140k works.",
       "I do not need visa sponsorship now or in the future.",

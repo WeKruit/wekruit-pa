@@ -1,0 +1,248 @@
+{
+  "timestamp": "2026-05-16T06:35:56.294Z",
+  "mode": "mock",
+  "runSummary": {
+    "sampleSize": 10,
+    "passRate": 1,
+    "passed": 10,
+    "aggregate": {
+      "sampleSize": 10,
+      "p50TtfaMs": 1040,
+      "p95TtfaMs": 1310,
+      "falseCommitRate": 0,
+      "falseInterruptRate": 0,
+      "costPerCallUsd": 0.46699999999999997,
+      "agentTalkRatio": 0.5
+    },
+    "thresholdsPass": {
+      "p50TtfaPass": true,
+      "costPerCallPass": true,
+      "falseCommitPass": true,
+      "falseInterruptPass": true,
+      "passRatePass": true
+    },
+    "failedScenarios": []
+  },
+  "piiSummary": {
+    "perCall": [
+      {
+        "scenarioId": "01-happy-path-pass",
+        "leaks": []
+      },
+      {
+        "scenarioId": "02-not-pass-low-score",
+        "leaks": []
+      },
+      {
+        "scenarioId": "03-hangup-mid-call",
+        "leaks": []
+      },
+      {
+        "scenarioId": "04-yes-no-en",
+        "leaks": []
+      },
+      {
+        "scenarioId": "05-yes-no-zh",
+        "leaks": []
+      },
+      {
+        "scenarioId": "06-multilingual-switch",
+        "leaks": []
+      },
+      {
+        "scenarioId": "07-noisy-background",
+        "leaks": []
+      },
+      {
+        "scenarioId": "08-fast-talker",
+        "leaks": []
+      },
+      {
+        "scenarioId": "09-long-pause",
+        "leaks": []
+      },
+      {
+        "scenarioId": "10-edge-late-consent",
+        "leaks": []
+      }
+    ],
+    "totalLeaks": 0
+  },
+  "archiveSummary": {
+    "sampled": 3,
+    "ok": true,
+    "failures": []
+  },
+  "rows": [
+    {
+      "scenarioId": "01-happy-path-pass",
+      "description": "Happy-path PASS — affirmative SWE answers across all required Qs.",
+      "expectedOutcome": "PASS",
+      "actualOutcome": "PASS",
+      "outcomePass": true,
+      "callSid": "CA-e102aed4b3178a93",
+      "bookingId": "smoke-01-happy-path-pass-d335c15e",
+      "ttfaMs": 850,
+      "costUsd": 0.42,
+      "falseCommit": false,
+      "falseInterrupt": false,
+      "ttfaPass": true,
+      "costPass": true,
+      "passOverall": true,
+      "completedAt": "2026-05-16T06:35:55.809Z"
+    },
+    {
+      "scenarioId": "02-not-pass-low-score",
+      "description": "NOT_PASS — candidate's skills don't meet must-have rubric.",
+      "expectedOutcome": "NOT_PASS",
+      "actualOutcome": "NOT_PASS",
+      "outcomePass": true,
+      "callSid": "CA-a031501c52977259",
+      "bookingId": "smoke-02-not-pass-low-score-bda02fed",
+      "ttfaMs": 920,
+      "costUsd": 0.48,
+      "falseCommit": false,
+      "falseInterrupt": false,
+      "ttfaPass": true,
+      "costPass": true,
+      "passOverall": true,
+      "completedAt": "2026-05-16T06:35:55.858Z"
+    },
+    {
+      "scenarioId": "03-hangup-mid-call",
+      "description": "Candidate hangs up after Q2. Booking should terminate as HANGUP cleanly.",
+      "expectedOutcome": "HANGUP",
+      "actualOutcome": "HANGUP",
+      "outcomePass": true,
+      "callSid": "CA-d21ed17f5d8547e0",
+      "bookingId": "smoke-03-hangup-mid-call-d7f72de1",
+      "ttfaMs": 780,
+      "costUsd": 0.18,
+      "falseCommit": false,
+      "falseInterrupt": false,
+      "ttfaPass": true,
+      "costPass": true,
+      "passOverall": true,
+      "completedAt": "2026-05-16T06:35:55.908Z"
+    },
+    {
+      "scenarioId": "04-yes-no-en",
+      "description": "Terse English yes/no answers — STT confidence + scoring resilient to brevity.",
+      "expectedOutcome": "PASS",
+      "actualOutcome": "PASS",
+      "outcomePass": true,
+      "callSid": "CA-10c071c8fe317494",
+      "bookingId": "smoke-04-yes-no-en-690aa8ed",
+      "ttfaMs": 910,
+      "costUsd": 0.37,
+      "falseCommit": false,
+      "falseInterrupt": false,
+      "ttfaPass": true,
+      "costPass": true,
+      "passOverall": true,
+      "completedAt": "2026-05-16T06:35:55.958Z"
+    },
+    {
+      "scenarioId": "05-yes-no-zh",
+      "description": "Mandarin 是/不是 answers — confirms zh consent prompt + multilingual STT path.",
+      "expectedOutcome": "PASS",
+      "actualOutcome": "PASS",
+      "outcomePass": true,
+      "callSid": "CA-d8bf1f25cc294459",
+      "bookingId": "smoke-05-yes-no-zh-3bc77e9d",
+      "ttfaMs": 1050,
+      "costUsd": 0.45,
+      "falseCommit": false,
+      "falseInterrupt": false,
+      "ttfaPass": true,
+      "costPass": true,
+      "passOverall": true,
+      "completedAt": "2026-05-16T06:35:56.007Z"
+    },
+    {
+      "scenarioId": "06-multilingual-switch",
+      "description": "Candidate switches en→zh mid-call; MultilingualModel + agent stays coherent.",
+      "expectedOutcome": "PASS",
+      "actualOutcome": "PASS",
+      "outcomePass": true,
+      "callSid": "CA-2e32222d00468c1c",
+      "bookingId": "smoke-06-multilingual-switch-395bc877",
+      "ttfaMs": 1120,
+      "costUsd": 0.51,
+      "falseCommit": false,
+      "falseInterrupt": false,
+      "ttfaPass": true,
+      "costPass": true,
+      "passOverall": true,
+      "completedAt": "2026-05-16T06:35:56.054Z"
+    },
+    {
+      "scenarioId": "07-noisy-background",
+      "description": "Cafe-noise background — VAD must not falsely commit on coffee-machine bursts.",
+      "expectedOutcome": "PASS",
+      "actualOutcome": "PASS",
+      "outcomePass": true,
+      "callSid": "CA-75113e428f5fd75e",
+      "bookingId": "smoke-07-noisy-background-f48b1297",
+      "ttfaMs": 1280,
+      "costUsd": 0.62,
+      "falseCommit": false,
+      "falseInterrupt": false,
+      "ttfaPass": true,
+      "costPass": true,
+      "passOverall": true,
+      "completedAt": "2026-05-16T06:35:56.104Z"
+    },
+    {
+      "scenarioId": "08-fast-talker",
+      "description": "Rapid-speech candidate — endpointing should not chop mid-sentence (false-interrupt guard).",
+      "expectedOutcome": "PASS",
+      "actualOutcome": "PASS",
+      "outcomePass": true,
+      "callSid": "CA-2e9cbcf53dd0f333",
+      "bookingId": "smoke-08-fast-talker-8b58e6ad",
+      "ttfaMs": 1040,
+      "costUsd": 0.49,
+      "falseCommit": false,
+      "falseInterrupt": false,
+      "ttfaPass": true,
+      "costPass": true,
+      "passOverall": true,
+      "completedAt": "2026-05-16T06:35:56.152Z"
+    },
+    {
+      "scenarioId": "09-long-pause",
+      "description": "Candidate pauses 4-5s mid-answer — adaptive endpointing must wait, not interrupt.",
+      "expectedOutcome": "PASS",
+      "actualOutcome": "PASS",
+      "outcomePass": true,
+      "callSid": "CA-075059f3509c910b",
+      "bookingId": "smoke-09-long-pause-23a67ee1",
+      "ttfaMs": 1310,
+      "costUsd": 0.71,
+      "falseCommit": false,
+      "falseInterrupt": false,
+      "ttfaPass": true,
+      "costPass": true,
+      "passOverall": true,
+      "completedAt": "2026-05-16T06:35:56.200Z"
+    },
+    {
+      "scenarioId": "10-edge-late-consent",
+      "description": "Candidate joins late — answer must wait for L8 consent prompt to complete before turn loop accepts audio.",
+      "expectedOutcome": "PASS",
+      "actualOutcome": "PASS",
+      "outcomePass": true,
+      "callSid": "CA-af12ebd84ff187b0",
+      "bookingId": "smoke-10-edge-late-consent-94714d07",
+      "ttfaMs": 990,
+      "costUsd": 0.44,
+      "falseCommit": false,
+      "falseInterrupt": false,
+      "ttfaPass": true,
+      "costPass": true,
+      "passOverall": true,
+      "completedAt": "2026-05-16T06:35:56.249Z"
+    }
+  ]
+}

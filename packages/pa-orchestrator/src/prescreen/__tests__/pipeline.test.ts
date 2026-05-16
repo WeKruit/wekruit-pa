@@ -636,6 +636,185 @@ test("Phase 76: near-confidence technical evidence proceeds when match clears th
   assert.equal(r.state.questions.technical_depth.finalS, 0.72)
 })
 
+test("Phase 76: hard-filter answers provided early are carried forward and not re-asked", async () => {
+  const store = new InMemoryPreScreenStore()
+  const pipeline = new PreScreenPipeline({
+    questions: {
+      technical_depth: makeQ("technical_depth", [
+        {
+          perKeyword: [
+            {
+              keyword: "technical_depth",
+              match: 1,
+              confidence: 0.9,
+              evidence: "React TypeScript Node Postgres dashboard",
+              reasoning: "specific technical ownership",
+            },
+          ],
+        },
+      ]),
+      location_alignment: makeQ("location_alignment", [
+        {
+          perKeyword: [
+            { keyword: "location_alignment", match: 1, confidence: 0.9, evidence: "New York hybrid works", reasoning: "aligned" },
+          ],
+        },
+      ]),
+      compensation_alignment: makeQ("compensation_alignment", [
+        {
+          perKeyword: [
+            { keyword: "compensation_alignment", match: 1, confidence: 0.9, evidence: "$90k-$140k works", reasoning: "aligned" },
+          ],
+        },
+      ]),
+      sponsorship_status: makeQ("sponsorship_status", [
+        {
+          perKeyword: [
+            { keyword: "sponsorship_status", match: 1, confidence: 0.9, evidence: "no visa sponsorship needed", reasoning: "aligned" },
+          ],
+        },
+      ]),
+    },
+    store,
+  })
+  const state = emptyPreScreenState({
+    sessionId: "s1",
+    userId: "u1",
+    jobId: "rain-software-engineer-fullstack-8849f6ef",
+    questions: [
+      { qId: "technical_depth", type: "PROBING", weight: 1, matchThreshold: 0.65 },
+      { qId: "location_alignment", type: "PROBING", weight: 1, matchThreshold: 0.65 },
+      { qId: "compensation_alignment", type: "PROBING", weight: 1, matchThreshold: 0.65 },
+      { qId: "sponsorship_status", type: "PROBING", weight: 1, matchThreshold: 0.65 },
+    ],
+    threshold: 0.65,
+    confidenceThreshold: 0.7,
+    maxClarifyRounds: 2,
+    nowIso: "2026-05-12T00:00:00Z",
+  })
+  await store.save(state)
+
+  const r = await pipeline.runTurn({
+    sessionId: "s1",
+    reply:
+      "Technical depth: I built React and TypeScript dashboards wired to Node endpoints and Postgres. New York hybrid works for me. $90k to $140k works. I do not need visa sponsorship now or in the future.",
+    lang: "en",
+    nowIso: "2026-05-12T00:01:00Z",
+    judgeCtx: ctx,
+  })
+
+  assert.equal(r.action.kind, "terminal")
+  if (r.action.kind === "terminal") assert.equal(r.action.terminal, "PASS")
+  assert.equal(r.state.questions.location_alignment.answeredAt, "2026-05-12T00:01:00Z")
+  assert.equal(r.state.questions.compensation_alignment.answeredAt, "2026-05-12T00:01:00Z")
+  assert.equal(r.state.questions.sponsorship_status.answeredAt, "2026-05-12T00:01:00Z")
+  assert.match(r.state.questions.location_alignment.evidenceReplies?.[0] ?? "", /New York hybrid works/)
+})
+
+test("Phase 76: hard-filter answers given while current question still probes are retained", async () => {
+  const store = new InMemoryPreScreenStore()
+  const pipeline = new PreScreenPipeline({
+    questions: {
+      technical_depth: makeQ("technical_depth", [
+        {
+          perKeyword: [
+            { keyword: "technical_depth", match: 0.3, confidence: 0.5, evidence: "needs more", reasoning: "not enough" },
+          ],
+        },
+        {
+          perKeyword: [
+            { keyword: "technical_depth", match: 0.3, confidence: 0.5, evidence: "logistics only", reasoning: "not technical" },
+          ],
+        },
+        {
+          perKeyword: [
+            {
+              keyword: "technical_depth",
+              match: 0.86,
+              confidence: 0.82,
+              evidence: "React TypeScript Node Postgres ownership",
+              reasoning: "specific technical ownership",
+            },
+          ],
+        },
+      ]),
+      location_alignment: makeQ("location_alignment", [
+        {
+          perKeyword: [
+            { keyword: "location_alignment", match: 1, confidence: 0.9, evidence: "New York hybrid works", reasoning: "aligned" },
+          ],
+        },
+      ]),
+      compensation_alignment: makeQ("compensation_alignment", [
+        {
+          perKeyword: [
+            { keyword: "compensation_alignment", match: 1, confidence: 0.9, evidence: "$90k-$140k works", reasoning: "aligned" },
+          ],
+        },
+      ]),
+      sponsorship_status: makeQ("sponsorship_status", [
+        {
+          perKeyword: [
+            { keyword: "sponsorship_status", match: 1, confidence: 0.9, evidence: "no visa sponsorship needed", reasoning: "aligned" },
+          ],
+        },
+      ]),
+    },
+    store,
+  })
+  const state = emptyPreScreenState({
+    sessionId: "s1",
+    userId: "u1",
+    jobId: "rain-software-engineer-fullstack-8849f6ef",
+    questions: [
+      { qId: "technical_depth", type: "PROBING", weight: 1, matchThreshold: 0.65 },
+      { qId: "location_alignment", type: "PROBING", weight: 1, matchThreshold: 0.65 },
+      { qId: "compensation_alignment", type: "PROBING", weight: 1, matchThreshold: 0.65 },
+      { qId: "sponsorship_status", type: "PROBING", weight: 1, matchThreshold: 0.65 },
+    ],
+    threshold: 0.65,
+    confidenceThreshold: 0.7,
+    maxClarifyRounds: 3,
+    nowIso: "2026-05-12T00:00:00Z",
+  })
+  await store.save(state)
+
+  const r1 = await pipeline.runTurn({
+    sessionId: "s1",
+    reply: "I built a dashboard but I need to explain the technical pieces.",
+    lang: "en",
+    nowIso: "2026-05-12T00:01:00Z",
+    judgeCtx: ctx,
+  })
+  assert.equal(r1.action.kind, "clarify")
+
+  const r2 = await pipeline.runTurn({
+    sessionId: "s1",
+    reply: "New York hybrid works for me.",
+    lang: "en",
+    nowIso: "2026-05-12T00:02:00Z",
+    judgeCtx: ctx,
+  })
+  assert.equal(r2.action.kind, "clarify")
+  assert.equal(r2.state.currentQId, "technical_depth")
+  assert.equal(r2.state.questions.location_alignment.answeredAt, "2026-05-12T00:02:00Z")
+
+  const r3 = await pipeline.runTurn({
+    sessionId: "s1",
+    reply:
+      "Technical depth: I built React TypeScript dashboards wired to Node endpoints and Postgres. $90k to $140k works. I do not need visa sponsorship now or in the future.",
+    lang: "en",
+    nowIso: "2026-05-12T00:03:00Z",
+    judgeCtx: ctx,
+  })
+
+  assert.equal(r3.action.kind, "terminal")
+  if (r3.action.kind === "terminal") assert.equal(r3.action.terminal, "PASS")
+  assert.equal(r3.state.questions.compensation_alignment.answeredAt, "2026-05-12T00:03:00Z")
+  assert.equal(r3.state.questions.sponsorship_status.answeredAt, "2026-05-12T00:03:00Z")
+  assert.match(r3.state.questions.location_alignment.evidenceReplies?.[0] ?? "", /New York hybrid works/)
+})
+
 test("Phase 76: placeholder clarify copy falls back to probing friend-tone text", async () => {
   const store = new InMemoryPreScreenStore()
   const pipeline = new PreScreenPipeline({

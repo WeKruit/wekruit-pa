@@ -203,6 +203,84 @@ function normalizeJob(id: string, raw: MatchingJobDoc): MarketJob {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// Cached data fetchers
+//
+// sessionStorage TTL — 5 min hard cache + 30 min stale-while-revalidate.
+// Mirrors the strategy in apps/pa-landing/src/lib/open-jobs.ts. Bypass with
+// `window.__WEKRUIT_DISABLE_OPEN_CACHE = true` during QA.
+// ────────────────────────────────────────────────────────────────────────────
+
+const MARKET_CACHE_TTL_MS = 5 * 60 * 1000
+const MARKET_SWR_TTL_MS = 30 * 60 * 1000
+
+function readMarketCache(key: string): { rows: MarketJob[]; fetchedAt: number } | null {
+  try {
+    if (typeof window === "undefined") return null
+    const raw = window.sessionStorage.getItem(`wkr.market.v1:${key}`)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as { rows?: MarketJob[]; fetchedAt?: number }
+    if (!Array.isArray(parsed.rows) || typeof parsed.fetchedAt !== "number") return null
+    return { rows: parsed.rows, fetchedAt: parsed.fetchedAt }
+  } catch {
+    return null
+  }
+}
+function writeMarketCache(key: string, rows: MarketJob[]): void {
+  try {
+    if (typeof window === "undefined") return
+    window.sessionStorage.setItem(`wkr.market.v1:${key}`, JSON.stringify({ rows, fetchedAt: Date.now() }))
+  } catch {
+    // quota / private mode — soft-fail
+  }
+}
+
+async function loadMarketCached(key: string, loader: () => Promise<MarketJob[]>): Promise<MarketJob[]> {
+  const bypass = typeof window !== "undefined" && (window as { __WEKRUIT_DISABLE_OPEN_CACHE?: boolean }).__WEKRUIT_DISABLE_OPEN_CACHE === true
+  const now = Date.now()
+  const cached = bypass ? null : readMarketCache(key)
+  if (cached && now - cached.fetchedAt < MARKET_CACHE_TTL_MS) return cached.rows
+  if (cached && now - cached.fetchedAt < MARKET_SWR_TTL_MS) {
+    void loader().then((rows) => writeMarketCache(key, rows)).catch(() => undefined)
+    return cached.rows
+  }
+  const rows = await loader()
+  writeMarketCache(key, rows)
+  return rows
+}
+
+async function fetchDirectFromPaJobs(): Promise<MarketJob[]> {
+  // pa-jobs.publicVisible=true is the canonical Direct line source —
+  // employer-authored collab roles (Invoko / Rain / Paradigm today, more
+  // as v2.0 candidate retention ramps).
+  const q = query(collection(db(), "pa-jobs"), where("publicVisible", "==", true), fsLimit(60))
+  const snap = await getDocs(q)
+  const out: MarketJob[] = []
+  snap.forEach((doc) => {
+    const raw = doc.data() as MatchingJobDoc
+    if (!raw.atsApplyUrl && !raw.primaryUrl) return
+    out.push(normalizeJob(doc.id, raw))
+  })
+  return out
+}
+
+async function fetchHuntFromMatchingJobs(): Promise<MarketJob[]> {
+  // matching-jobs is the macmini-scraped open-market pool. We hit the
+  // collection directly here (vs going through paPublicOpenJobs) because
+  // Market.tsx uses richer normalize() projections (hiring manager pool,
+  // seats, tone) that the CF doesn't surface today.
+  const q = query(collection(db(), "matching-jobs"), where("status", "==", "active"), fsLimit(300))
+  const snap = await getDocs(q)
+  const out: MarketJob[] = []
+  snap.forEach((doc) => {
+    const raw = doc.data() as MatchingJobDoc
+    if (raw.dead === true) return
+    if (!raw.atsApplyUrl && !raw.primaryUrl) return
+    out.push(normalizeJob(doc.id, raw))
+  })
+  return out
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // Filter rail
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -454,20 +532,21 @@ export default function Market(): ReactNode {
     let cancelled = false
     void (async () => {
       try {
-        const q = query(
-          collection(db(), "matching-jobs"),
-          where("status", "==", "active"),
-          fsLimit(300),
-        )
-        const snap = await getDocs(q)
-        const all: MarketJob[] = []
-        snap.forEach((doc) => {
-          const raw = doc.data() as MatchingJobDoc
-          if (raw.dead === true) return
-          if (!raw.atsApplyUrl && !raw.primaryUrl) return
-          all.push(normalizeJob(doc.id, raw))
-        })
-        if (!cancelled) setState({ status: "ready", jobs: all })
+        // Tiered fetch — same sessionStorage TTL pattern as fetchOpenJobs:
+        //   5-min hard cache, 30-min stale-while-revalidate. Direct line
+        //   pulls from pa-jobs.publicVisible=true (employer-authored collab)
+        //   and Hunting list pulls from matching-jobs (macmini scrape).
+        //   matching-jobs has zero rows with wekruitCollaborationStatus set,
+        //   so partitioning on that field always yielded an empty Direct
+        //   line — pa-jobs is the canonical source for collab roles.
+        const [directRaw, huntRaw] = await Promise.all([
+          loadMarketCached("direct", () => fetchDirectFromPaJobs()),
+          loadMarketCached("hunt", () => fetchHuntFromMatchingJobs()),
+        ])
+        if (cancelled) return
+        const direct = directRaw.map((r) => ({ ...r, collaborated: true }))
+        const hunt = huntRaw.map((r) => ({ ...r, collaborated: false }))
+        setState({ status: "ready", jobs: [...direct, ...hunt] })
       } catch (err) {
         if (!cancelled) {
           setState({

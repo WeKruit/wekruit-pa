@@ -103,18 +103,17 @@ interface PaJobLevel1Fields {
 }
 
 function deriveWeakPrescreenTags(args: {
-  jobId: string
+  terminal: PrescreenTerminalKind
   scored: Array<{ qId: string; s: number | null; c: number | null; summary: string }>
   recentReplies: string[]
 }): string[] {
-  const haystack = [
-    args.jobId,
-    ...args.scored.map((q) => `${q.qId} ${q.summary}`),
-    ...args.recentReplies,
-  ].join(" ").toLowerCase()
   const tags = new Set<string>(["job_prescreen"])
-  if (haystack.includes("software")) tags.add("software_engineering")
-  if (haystack.includes("fullstack") || haystack.includes("full-stack")) tags.add("fullstack_engineering")
+  const positiveScored = args.scored.filter((q) => typeof q.s === "number" && q.s >= 0.5)
+  const haystackParts = [
+    ...positiveScored.map((q) => `${q.qId} ${q.summary}`),
+    ...(args.terminal === "PASS" || positiveScored.length > 0 ? args.recentReplies : []),
+  ]
+  const haystack = haystackParts.join(" ").toLowerCase()
   if (haystack.includes("javascript") || haystack.includes("react") || haystack.includes("ui")) tags.add("frontend_development")
   if (haystack.includes("sql") || haystack.includes("database") || haystack.includes("db")) tags.add("data_workflows")
   if (haystack.includes("debug") || haystack.includes("failure") || haystack.includes("triage")) tags.add("debugging_workflows")
@@ -278,7 +277,7 @@ async function writePrescreenMemoryUpdate(args: {
     const replySummary = lastReplies.join(" / ").slice(0, 800)
     const summary = bestSummary || replySummary || `Prescreen ended with ${args.terminal}`
     const evidenceTags = deriveWeakPrescreenTags({
-      jobId: args.jobId,
+      terminal: args.terminal,
       scored,
       recentReplies: lastReplies,
     })
@@ -293,6 +292,25 @@ async function writePrescreenMemoryUpdate(args: {
       evidenceTags,
       updatedAt: args.occurredAt,
     }
+    await args.db.collection("pa-prescreen-memory-events").doc(args.sessionId).set({
+      userId: args.userId,
+      jobId: args.jobId,
+      terminal: args.terminal,
+      summary,
+      scored,
+      recentReplies: lastReplies,
+      createdAt: args.occurredAt,
+    })
+
+    if (args.terminal === "PAUSE") {
+      args.log("prescreen.terminal_action.memory_archived", {
+        sessionId: args.sessionId,
+        userId: args.userId,
+        terminal: args.terminal,
+      })
+      return
+    }
+
     const userSnap = await args.db.collection("pa-users").doc(args.userId).get()
     const existingTags = ((userSnap.data()?.tags ?? {}) as Record<string, unknown>) || {}
     const proposedTags = mergeStringTags(existingTags.proposedTags, evidenceTags, 12)
@@ -317,15 +335,6 @@ async function writePrescreenMemoryUpdate(args: {
         log: (event, payload) => args.log(event, payload ?? {}),
       },
     )
-    await args.db.collection("pa-prescreen-memory-events").doc(args.sessionId).set({
-      userId: args.userId,
-      jobId: args.jobId,
-      terminal: args.terminal,
-      summary,
-      scored,
-      recentReplies: lastReplies,
-      createdAt: args.occurredAt,
-    })
     args.log("prescreen.terminal_action.memory_updated", {
       sessionId: args.sessionId,
       userId: args.userId,

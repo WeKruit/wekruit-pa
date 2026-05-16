@@ -1,0 +1,27 @@
+id: "03-hangup-mid-call"
+description: "Candidate hangs up after Q2. Booking should terminate as HANGUP cleanly."
+seed: 44
+
+voice:
+  toNumber: "${PA_TEAM_NUMBER_CHARLIE}"
+  fromCallerId: "+14157075057"
+  expectedOutcome: "HANGUP"
+  expectedTerminalReasonContains: "participant_disconnected"
+
+context:
+  paUserId: "smoke-user-03-charlie"
+  paJobId: "smoke-job-swe-mid"
+  preferredLang: "en"
+
+thresholds:
+  ttfaMaxMs: 1500
+  costMaxUsd: 1.00
+
+mock:
+  outcome: "HANGUP"
+  metrics:
+    ttfaMs: 780
+    costUsd: 0.18
+    falseCommit: false
+    falseInterrupt: false
+    agentTalkRatio: 0.61

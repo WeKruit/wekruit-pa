@@ -1,0 +1,4 @@
+# Smoke-driver output directory.
+# Each live run writes a `<timestamp>.json` artifact here.
+# The directory is committed (empty placeholder) so the driver can
+# write to it without mkdir-on-demand surprising operators.

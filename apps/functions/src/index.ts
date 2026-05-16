@@ -33,6 +33,7 @@ import { createHash, randomUUID } from "node:crypto"
 import { handleSendblueWebhook } from "./sendblue/webhook.js"
 import { paSendblueOutboxHandler } from "./sendblue/outbox.js"
 import { sendReaction as defaultSendReaction } from "./sendblue/send-reaction.js"
+import { decidePreClaireTurnOwner } from "./lib/pre-claire-turn-owner.js"
 
 // iter31 — Mailgun transport for email-verification step in onboarding.
 // iter32 deploy-fix 2026-05-04 — MAILGUN_* defineSecret bindings + the
@@ -186,6 +187,13 @@ export { paAdminJobMatchDebug, paAdminMatchDebug } from "./admin-match-debug.js"
 export { paAdminOutreachOpsSnapshot } from "./outreach/admin.js"
 export { paAdminPassedCandidatesSnapshot } from "./admin-passed-candidates.js"
 
+// v2.1 S4 — Voice turn telemetry aggregate (admin-gated). Reads the
+// voice-call-metrics collection (written by the S4 metricsWriter that
+// S2 wires into LiveKit Cloud Agents) and returns the four S6-smoke-gate
+// thresholds: false-commit %, false-interrupt %, p50/p95 TTFA, avg
+// cost/call. Plus cost-ceiling-hit count (L11).
+export { paAdminVoiceTelemetryAggregate } from "./voice/telemetry/aggregateQuery.js"
+
 // v1.8 ENRICHER-04 — `paEnrichJobTags` HTTP CF wraps the unified
 // @pa/job-tag-enricher service (mirror of pa-resume-parser, job-side).
 // Replaces scattered regex tag-derivation in the macmini matching pipeline
@@ -203,6 +211,15 @@ export { paMatchingJobsAutoEnrich } from "./auto-enrich-matching-jobs.js"
 // v1.9 Phase 86 — Generic ATS inbound adapter webhook.
 // Handshake fully implemented; GH/Lever/LinkedIn return 501 stubs.
 export { paAtsInboundWebhook } from "./ats-inbound-webhook.js"
+
+// v2.1 S3 — outbound voice prescreen dispatch + status callback reconciliation.
+// `paVoiceDialOutbound`: Firestore trigger on `outbound-bookings/{id}` writes;
+//   reacts to `→ dialing` and creates a LiveKit Cloud SIP participant routed
+//   through the Twilio trunk. Lock L5 short-circuits on missing identity.
+// `paVoiceSipWebhook`: HTTP endpoint receiving Twilio status callbacks +
+//   LiveKit room webhooks. Idempotent reconciliation against the
+//   `outbound-bookings/{id}` state machine (Locks L9 + L10).
+export { paVoiceDialOutbound, paVoiceSipWebhook } from "./voice/index.js"
 // v1.9 hotfix (2026-05-12 live test STOP) — public /j/:jobId CV upload backend.
 // Frontend (PublicJobCv.tsx) POSTs base64 to this endpoint. ATS inbound
 // webhook (paAtsInboundWebhook) also targets this via PA_CV_INGEST_URL env.
@@ -807,40 +824,46 @@ async function processBrokerImessageEvent(
   // both honor the prescreen state machine. Fail-open: any error falls
   // through to Claire so users don't get stuck.
   try {
+    const { runPrescreenTurnIfActive } = await import("./prescreen-turn-handler.js")
+    const psResult = await runPrescreenTurnIfActive({
+      db,
+      userId: user.id,
+      toE164: payload.participant,
+      replyText: payload.text.trim(),
+      lang: "en",
+      log: (event, payload) => logger.info(`[prescreen][onPaInbound] ${event}`, payload ?? {}),
+    })
     const { isLayoffIntakeActiveForUser } = await import("./layoff-sms-start.js")
-    const layoffOwnsTurn = await isLayoffIntakeActiveForUser(db, user.id)
-    if (layoffOwnsTurn) {
+    const layoffOwnsTurn = psResult.handled ? false : await isLayoffIntakeActiveForUser(db, user.id)
+    const turnOwner = decidePreClaireTurnOwner({
+      prescreenHandled: psResult.handled,
+      layoffOwnsTurn,
+    })
+
+    if (turnOwner === "prescreen") {
+      logger.info("[prescreen][onPaInbound] handled — short-circuit Claire", {
+        userId: user.id,
+        sessionId: psResult.sessionId,
+        terminal: psResult.terminal,
+      })
+      // Mark inbound as completed so onPaInbound's status-check is happy.
+      await db.collection(PA_COLLECTIONS.inboundEvents).doc(claimed.id).set(
+        {
+          status: "completed",
+          completedAt: nowIso(),
+          updatedAt: nowIso(),
+          routedTo: "prescreen",
+        },
+        { merge: true }
+      )
+      return 1
+    }
+
+    if (turnOwner === "layoff_orchestrator") {
       logger.info("[prescreen+pii][onPaInbound] skipped — active layoff intake owns this turn", {
         userId: user.id,
       })
     } else {
-      const { runPrescreenTurnIfActive } = await import("./prescreen-turn-handler.js")
-      const psResult = await runPrescreenTurnIfActive({
-        db,
-        userId: user.id,
-        toE164: payload.participant,
-        replyText: payload.text.trim(),
-        lang: "en",
-        log: (event, payload) => logger.info(`[prescreen][onPaInbound] ${event}`, payload ?? {}),
-      })
-      if (psResult.handled) {
-        logger.info("[prescreen][onPaInbound] handled — short-circuit Claire", {
-          userId: user.id,
-          sessionId: psResult.sessionId,
-          terminal: psResult.terminal,
-        })
-        // Mark inbound as completed so onPaInbound's status-check is happy.
-        await db.collection(PA_COLLECTIONS.inboundEvents).doc(claimed.id).set(
-          {
-            status: "completed",
-            completedAt: nowIso(),
-            updatedAt: nowIso(),
-            routedTo: "prescreen",
-          },
-          { merge: true }
-        )
-        return 1
-      }
       // v1.9 hotfix — PII confirm pipeline check (chained after prescreen
       // terminal). If active PII session, route turn there before Claire.
       const { runPiiConfirmTurnIfActive } = await import("./pii-confirm-start.js")

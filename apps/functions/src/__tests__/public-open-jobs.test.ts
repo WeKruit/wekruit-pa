@@ -5,7 +5,9 @@ import {
   formatPostedAgo,
   matchesFilters,
   parseQuery,
+  runOpenJobs,
   toOpenJobRow,
+  _resetSnapshotCacheForTest,
 } from "../public-open-jobs.js"
 
 const NOW = Date.parse("2026-05-15T00:00:00Z")
@@ -117,6 +119,51 @@ describe("parseQuery", () => {
   })
   it("lowercases search", () => {
     assert.equal(parseQuery({ search: "GRANOLA" }).search, "granola")
+  })
+})
+
+describe("runOpenJobs snapshot cache", () => {
+  function makeFakeDb(
+    docs: Array<{ id: string; data: Record<string, unknown> }>,
+    counter: { reads: number }
+  ): unknown {
+    const q: Record<string, unknown> = {}
+    q.where = () => q
+    q.orderBy = () => q
+    q.limit = () => q
+    q.get = async () => {
+      counter.reads++
+      return { size: docs.length, docs: docs.map((d) => ({ id: d.id, data: () => d.data })) }
+    }
+    return { collection: () => q }
+  }
+
+  it("re-uses the snapshot for repeat reads within TTL", async () => {
+    _resetSnapshotCacheForTest()
+    const counter = { reads: 0 }
+    const docs = [
+      { id: "j1", data: { status: "active", roleTitle: "SWE", companyName: "Acme", atsApplyUrl: "https://acme.co/jobs/1", firstSeenAt: new Date(NOW - 86400000).toISOString() } },
+    ]
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = makeFakeDb(docs, counter) as any
+    const a = await runOpenJobs(parseQuery({}), { db, now: NOW })
+    const b = await runOpenJobs(parseQuery({}), { db, now: NOW + 1000 })
+    assert.equal(counter.reads, 1, "expected only one Firestore read across two calls")
+    assert.equal(a.cached, false)
+    assert.equal(b.cached, true)
+  })
+
+  it("re-fetches after TTL expires", async () => {
+    _resetSnapshotCacheForTest()
+    const counter = { reads: 0 }
+    const docs = [
+      { id: "j1", data: { status: "active", roleTitle: "SWE", companyName: "Acme", atsApplyUrl: "https://acme.co/jobs/1", firstSeenAt: new Date(NOW - 86400000).toISOString() } },
+    ]
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = makeFakeDb(docs, counter) as any
+    await runOpenJobs(parseQuery({}), { db, now: NOW })
+    await runOpenJobs(parseQuery({}), { db, now: NOW + 61_000 })
+    assert.equal(counter.reads, 2, "expected a fresh Firestore read after 60s TTL")
   })
 })
 

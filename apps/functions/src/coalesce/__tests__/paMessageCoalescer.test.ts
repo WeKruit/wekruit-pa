@@ -31,6 +31,7 @@ import {
   HARD_CAP_MS,
   DEFAULT_DELAY_MS,
   FORCE_FIRE_MESSAGE_COUNT,
+  PRESCREEN_DELAY_MS,
 } from "../buffer.js"
 
 // ----------------- fake Cloud Tasks client -----------------
@@ -530,8 +531,9 @@ describe("paMessageCoalescer — case 6: webhook bypasses coalesce when flag=fal
   })
 })
 
-describe("paMessageCoalescer — case 6b: active prescreen uses coalescing before broker create", () => {
-  it("coalesces active job-prescreen replies even when onboarding is not complete", async () => {
+describe("paMessageCoalescer — case 6b: eligible user uses coalescing before broker create", () => {
+  it("coalesces a normal eligible inbound before broker create races onPaInbound", async () => {
+    process.env.paMessageCoalesceEnabled = "1"
     const { handleSendblueWebhook } = await import("../../sendblue/webhook.js")
     const { _clearFeatureFlagCache } = await import("@pa/pa-persistence")
     _clearFeatureFlagCache()
@@ -544,14 +546,11 @@ describe("paMessageCoalescer — case 6b: active prescreen uses coalescing befor
       }],
     ]))
     db._stores.set("pa-users", new Map([
-      ["u_prescreen_active", { onboardingState: "q_email" }],
-    ]))
-    db._stores.set("pa-prescreen-sessions", new Map([
-      ["ps_active", { userId: "u_prescreen_active", terminal: null, currentQId: "role_fit" }],
+      ["u_prescreen_active", { onboardingState: "complete" }],
     ]))
 
     type BrokerCreateInput = { coalescing?: boolean } & Record<string, unknown>
-    type CoalesceInput = { userId: string; body: string; inboundEventId: string }
+    type CoalesceInput = { userId: string; body: string; inboundEventId: string; isPrescreen?: boolean }
     const seen: {
       coalesceInput: CoalesceInput | null
       brokerInput: BrokerCreateInput | null
@@ -613,6 +612,30 @@ describe("paMessageCoalescer — case 6b: active prescreen uses coalescing befor
     assert.equal(seen.coalesceInput?.userId, "u_prescreen_active")
     assert.equal(seen.coalesceInput?.body, "First part of the answer")
     assert.equal(seen.coalesceInput?.inboundEventId, "inb_prescreen_1")
+    assert.equal(seen.coalesceInput?.isPrescreen, false, "non-prescreen eligible inbound should keep the generic chat coalesce window")
+    delete process.env.paMessageCoalesceEnabled
+  })
+})
+
+describe("paMessageCoalescer — case 6c: active prescreen uses longer narrative delay", () => {
+  it("first prescreen fragment enqueues at PRESCREEN_DELAY_MS instead of the generic default", async () => {
+    const { deps, tasks } = buildDeps({ now: () => new Date("2026-05-16T14:33:11.110Z") })
+    const outcome = await enqueueOrCoalesce(deps, {
+      ...BASE_MSG,
+      messageHandle: "msg-prescreen-slower-1",
+      body: "I built JavaScript screens and SQL reports to trace failed orders and dispatch issues.",
+      inboundEventId: "inb_prescreen_slow_1",
+      isPrescreen: true,
+      receivedAt: "2026-05-16T14:33:11.110Z",
+    })
+
+    assert.equal(outcome.action, "created")
+    assert.equal(outcome.delayMs, PRESCREEN_DELAY_MS)
+    assert.equal(tasks.enqueued[0]!.delayMs, PRESCREEN_DELAY_MS)
+    assert.ok(
+      PRESCREEN_DELAY_MS > DEFAULT_DELAY_MS,
+      "prescreen narrative delay must exceed the generic chat delay"
+    )
   })
 })
 

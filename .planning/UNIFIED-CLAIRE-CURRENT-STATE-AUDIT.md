@@ -433,7 +433,175 @@ Required fix boundary:
 - WeKruit Open web chat now merges each answer into shared `pa-users` evidence/context and refuses missing/non-layoff profiles. It is still not a full Claire state machine/mem0 conversational path; that remains a separate product integration gap.
 - External supply prospects are in the shared `pa-users` pool, and an existing resolved batch is now reverified through candidate-profile evaluation, outreach draft, approval, and `pa-users` no-growth guards. The reply/import-back evidence loop after outreach remains unverified because the selected production-safe plan was `retain_only` / `no_outreach`.
 - Job creation/import still appears split across enrichment approval, seeding scripts, and external-supply job surfaces. The old prescreen editor no longer creates jobs or toggles public visibility, but a single canonical job creation/import surface is not yet audited or unified.
-- Manual Apple Messages UI testing is still not fully repeated after the stress-runner fixes. The production Firestore prescreen matrix and Sendblue entrypoint matrix are verified with outbound SMS stubbed; one live signed deployed-webhook user-boundary canary and one allowlist-deny canary were verified.
+- Manual Apple Messages UI retest for the canonical candidate/job prescreen is now re-run and captured below. The remaining gaps are broader product-surface gaps, not the core prescreen runtime boundary.
+
+## 2026-05-16 Current Prescreen Runtime Gap And Fix
+
+Observed regression from live-like fragmented conversation:
+
+- Candidate gave technical evidence and later volunteered logistics such as New York hybrid, compensation range, and no sponsorship need.
+- The prescreen pipeline only scored the current question and lost early answers to future hard filters.
+- Result: Claire repeated already answered questions, especially location, and a fragmented but recoverable candidate could fail the stress run without terminal state.
+
+Code fix completed on branch `codex/unified-claire-session-evidence`:
+
+- `packages/pa-orchestrator/src/prescreen/pipeline.ts` now consumes positive early answers for future hard filters after the current question passes.
+- Only deterministic positive hard-filter signals are consumed: `location_alignment`, `compensation_alignment`, and `sponsorship_status`.
+- The pipeline now advances to the next unanswered question instead of blindly stepping to the next index, so consumed hard-filter questions are not re-asked.
+- `packages/pa-orchestrator/src/prescreen/__tests__/pipeline.test.ts` adds a regression test for early hard-filter answers carried forward in one turn.
+
+Node 24 regression evidence:
+
+- RED before fix: the new pipeline regression test returned `advance` instead of terminal `PASS`.
+- GREEN after fix: `PATH=/Users/adam/.nvm/versions/node/v24.3.0/bin:$PATH pnpm --filter @pa/pa-orchestrator test -- src/prescreen/__tests__/pipeline.test.ts` passed with `1507` tests, `0` failures.
+
+Completion status:
+
+- Production Firestore prescreen stress was re-run across strong pass, adjacent/probed recovery, fragmented multi-message recovery, weak hard-stop, user exit/pause, and new-trigger supersede scenarios.
+- `pa-users` count stayed stable and the run used the canonical real-candidate identity only.
+- Terminal/session/archive/memory/tag/candidate-job-state/employer-visible results were verified directly in Firestore.
+- Runtime safety gates were covered by targeted tests for privacy, abuse, guardian/security, rate limit, job matching, everyday catchup, active-session blocking, suppression/cooldown, and automated outbound send/do-not-send reasoning.
+- Changed functions were deployed as Node.js 24.
+
+## 2026-05-16 Prescreen Runtime Stress Verification
+
+Code fixes verified locally:
+
+- `packages/pa-orchestrator/src/prescreen/pipeline.ts` captures positive future hard-filter answers at the start of every turn, even while the current technical/role question is still probing.
+- `packages/pa-orchestrator/src/prescreen/pipeline.ts` still re-runs future hard-filter capture after the current question passes, then advances to the next unanswered question.
+- `apps/functions/src/prescreen-terminal-action.ts` now archives `PAUSE` sessions to `pa-prescreen-memory-events` without overwriting `pa-users.lastPrescreenMemoryUpdate`, `conversationDerivedPreferences.prescreenEvidenceByJob`, or tags.
+- `apps/functions/src/prescreen-terminal-action.ts` no longer derives positive skill tags from the job id or from low-score hard-stop/negative evidence.
+
+Node 24 verification:
+
+- `node --import tsx --test packages/pa-orchestrator/src/prescreen/__tests__/pipeline.test.ts apps/functions/src/prescreen-session-start.test.ts apps/functions/src/prescreen-turn-handler.test.ts apps/functions/src/prescreen-terminal-action.test.ts apps/functions/src/prescreen-outcome-service.test.ts apps/functions/src/coalesce/__tests__/paMessageCoalescer.test.ts` passed `79/79`.
+- `pnpm --filter @pa/pa-orchestrator typecheck` passed.
+- `pnpm --filter @pa/functions typecheck` passed.
+
+Production Firestore/live-equivalent stress:
+
+- Script: `apps/functions/scripts/prescreen-stress-firestore.ts`.
+- Artifact: `.planning/prescreen-stress/artifacts/stress-2026-05-16T06-47-06-635Z.json`.
+- Candidate: `pa-users/U7AwKT8nLDRa35DkuBxq`, email `indolencorlol@gmail.com`, phone `+14243201960`.
+- Job: `pa-jobs/rain-software-engineer-fullstack-8849f6ef`.
+- `pa-users` count stayed `602 -> 602`.
+- `failedScenarios = []`; `collectionFailures = []`.
+- `activeSessions` for the canonical user after the run: `[]`.
+
+Scenario results:
+
+- `strong_fullstack_pass`: `PASS`, session `ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260516T064707534Z`, 0 clarifies, terminal turn 5, candidate-job state `employer_visible`, employer-visible profile exists, memory event exists, work session `ended/terminal`.
+- `adjacent_probe_recovery`: `PASS`, session `ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260516T064721057Z`, 4 clarifies, terminal turn 9, candidate-job state `employer_visible`, employer-visible profile exists, memory event exists, work session `ended/terminal`.
+- `fragmented_multimessage_pass`: `PASS`, session `ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260516T064747565Z`, 0 clarifies, terminal turn 5, candidate-job state `employer_visible`, employer-visible profile exists, memory event exists, work session `ended/terminal`.
+- `weak_no_engineering_hard_stop`: `HARD_STOP`, session `ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260516T064759254Z`, 4 clarifies before stop, candidate-job state `not_passed`, no employer-visible profile, memory event exists, work session `ended/terminal`.
+- `user_exit_pause`: `PAUSE`, session `ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260516T064818120Z`, candidate-job state `paused`, no employer-visible profile, memory event exists, work session `ended/user_exit`.
+- `new_trigger_supersedes_active_prescreen`: first session `ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260516T064820184Z` ended with `PAUSE`, work session `ended/superseded`, superseded by `ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260516T064820575Z`.
+
+Direct Firestore memory/tag verification after the final stress run:
+
+- `pa-prescreen-memory-events` exists for all five scenario sessions.
+- The PAUSE event stores `summary = "stop"` only in its session memory event and does not overwrite `pa-users.lastPrescreenMemoryUpdate`.
+- `pa-users/U7AwKT8nLDRa35DkuBxq.lastPrescreenMemoryUpdate` points to the latest non-pause terminal session, `weak_no_engineering_hard_stop`, with `evidenceTags = ["job_prescreen"]`.
+- The weak hard-stop no longer writes false positive `software_engineering` or `fullstack_engineering` evidence tags from job id or negative statements.
+
+Broader runtime regression tests:
+
+- Safety/privacy/abuse/guardian/rate-limit:
+  - `node --import tsx --test apps/functions/src/sendblue/__tests__/webhook.test.ts packages/pa-orchestrator/src/allowlist.test.ts packages/pa-orchestrator/src/__tests__/safety-gate-integration.test.ts packages/pa-orchestrator/src/guardrails/__tests__/input.test.ts packages/pa-orchestrator/src/guardrails/__tests__/output.test.ts packages/pa-orchestrator/src/guardrails/__tests__/chain.test.ts` passed `75/75`.
+- Lifecycle/everyday catchup/automated outbound:
+  - `node --import tsx --test apps/functions/src/outreach/__tests__/service.test.ts apps/functions/src/outreach/__tests__/admin.test.ts apps/functions/src/__tests__/candidate-lifecycle-trigger.test.ts apps/functions/src/proactive-sweep.test.ts packages/pa-orchestrator/src/proactive-turn.test.ts` passed `31/31`.
+- Job matching/client-job conversation feedback/admin match debug:
+  - `node --import tsx --test apps/functions/src/job-rec/__tests__/recruiter-flow.test.ts apps/functions/src/job-rec/__tests__/match-feedback.test.ts apps/functions/src/job-rec/__tests__/policy.test.ts apps/functions/src/orchestrator-deps.test.ts apps/functions/src/__tests__/admin-match-debug.test.ts` passed `69/69`.
+
+Deploy verification:
+
+- `firebase deploy --only functions:pa-orchestrator:paSendblueWebhook,functions:pa-orchestrator:onPaInbound,functions:pa-orchestrator:paMessageCoalescer --project wekruit-5f89b` completed successfully.
+- Firebase predeploy full functions test suite passed `1558/1558`.
+- `gcloud functions describe paSendblueWebhook --gen2 --region=us-central1 --project=wekruit-5f89b` returned `state = ACTIVE`, `buildConfig.runtime = nodejs24`, `updateTime = 2026-05-16T06:53:49.781185045Z`.
+
+## 2026-05-16 Live Apple Messages Retest
+
+Runtime fixes deployed on 2026-05-16:
+
+- `apps/functions/src/index.ts` now lets active prescreen routing run before layoff onboarding ownership on the non-coalesced webhook path.
+- `apps/functions/src/coalesce/paMessageCoalescer.ts` now lets active prescreen routing run before layoff onboarding ownership on the coalesced path.
+- `apps/functions/src/lib/pre-claire-turn-owner.ts` centralizes the routing priority contract: active prescreen first, then layoff onboarding, then generic Claire.
+- `apps/functions/src/prescreen-turn-handler.ts` no longer depends on a `createdAt` composite index to find the active session; it sorts matching active sessions by `updatedAt` / `createdAt` in memory.
+
+Node 24 local verification before deploy:
+
+- `node --import tsx --test apps/functions/src/lib/pre-claire-turn-owner.test.ts apps/functions/src/coalesce/__tests__/paMessageCoalescer.test.ts apps/functions/src/prescreen-turn-handler.test.ts` passed `42/42`.
+- `pnpm --filter @pa/functions typecheck` passed.
+
+Targeted deploy/runtime verification:
+
+- `firebase deploy --only functions:pa-orchestrator:paSendblueWebhook,functions:pa-orchestrator:onPaInbound,functions:pa-orchestrator:paMessageCoalescer --project wekruit-5f89b`
+- `gcloud functions describe paSendblueWebhook --gen2 --region=us-central1 --project=wekruit-5f89b` → `ACTIVE`, `nodejs24`, `512Mi`
+- `gcloud functions describe paMessageCoalescer --gen2 --region=us-central1 --project=wekruit-5f89b` → `ACTIVE`, `nodejs24`, `512Mi`
+- `gcloud functions describe onPaInbound --gen2 --region=us-central1 --project=wekruit-5f89b` → `ACTIVE`, `nodejs24`, `1024Mi`
+
+Canonical live test identity:
+
+- Candidate: `pa-users/U7AwKT8nLDRa35DkuBxq`
+- Email: `indolencorlol@gmail.com`
+- Sender thread: `+13054507715`
+- Job: `pa-jobs/rain-software-engineer-fullstack-8849f6ef`
+
+Live sequence and observed evidence:
+
+- Before the fix, the active prescreen session `ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260516T130843997Z` was open on `currentQId = role_fit`, but a real engineering answer in Messages got routed back to layoff onboarding and produced `city / region / or just 'remote' is fine`.
+- After deploy, the same live thread accepted a new real engineering reply:
+  - `Closest fullstack overlap I owned OFO Delivery’s merchant dashboard and dispatch tooling...`
+  - Firestore turn written under `pa-prescreen-sessions/ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260516T130843997Z/turns/tWIWxQvDQAY75sodgIbO`
+  - Action: `clarify`
+  - No layoff/location takeover
+- Claire then replied in Messages with a role-fit probe, not an onboarding/location question:
+  - `Got it - when you say you owned the merchant dashboard + dispatch tooling at OFO Delivery, what was the specific problem you were solving ... and what did you personally build/change ... ?`
+- A second real reply describing the concrete problem, stack, and ops impact advanced the same session:
+  - Firestore turn `K9i2RuL7nnY4PfQnoYn4`
+  - Action: `advance`
+  - Session moved to `currentQId = technical_depth`
+  - Session score reached `0.92`
+- Claire then asked the next real technical question in Messages:
+  - `Which required skill are you strongest in, and what is a concrete example of using it?`
+
+Live session end/archive verification:
+
+- Sending real `PAUSE` in Messages ended the active session:
+  - Session `ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260516T130843997Z`
+  - `terminal = PAUSE`
+  - `currentQId = null`
+  - `workSession.boundary = user_exit`
+  - `workSession.status = ended`
+- Claire sent the pause acknowledgement in Messages:
+  - `Got it — I paused this role screen. If you want to continue later, reopen it from the job page; I will keep what you have already shared on your profile.`
+- The session archive exists in `pa-prescreen-memory-events/{sessionId}`:
+  - `pa-prescreen-memory-events/ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260516T130843997Z`
+  - `terminal = PAUSE`
+  - `summary = "Owned fullstack merchant dashboard/dispatch tooling; built React+TS UI, Node APIs, SQL/debug workflows."`
+  - `recentReplies` contains the real role-fit answer, the real impact/technical answer, and `PAUSE`
+- `pa-users/U7AwKT8nLDRa35DkuBxq.lastPrescreenMemoryUpdate` stayed pointed at the prior non-pause terminal session, which confirms the pause archive did not overwrite long-term profile memory.
+
+Live restart / fresh-session verification:
+
+- Re-sending the exact trigger `WeKruit_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_Job` in the same Messages thread created a fresh session:
+  - New session: `ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260516T133034229Z`
+  - `terminal = null`
+  - `currentQId = role_fit`
+  - `workSession.boundary = trigger`
+  - `workSession.status = active`
+- The old paused session remained paused and did not catch the new trigger.
+- Claire restarted from the correct first prescreen opener in Messages:
+  - `Hi — Claire from Rain. Quick screen for Software Engineer - Fullstack. What recent work best matches this software engineering role?`
+
+Live runtime conclusion:
+
+- The real iMessage path now honors `active prescreen > layoff onboarding > generic Claire`.
+- Real multi-turn prescreen evidence is stored in `pa-prescreen-sessions/{sessionId}/turns`.
+- Real pause/archive behavior works without corrupting long-term candidate profile memory.
+- A fresh trigger after pause creates a new independent prescreen session.
+- `gcloud functions describe onPaInbound --gen2 --region=us-central1 --project=wekruit-5f89b` returned `state = ACTIVE`, `buildConfig.runtime = nodejs24`, `updateTime = 2026-05-16T06:53:47.909174235Z`.
+- `gcloud functions describe paMessageCoalescer --gen2 --region=us-central1 --project=wekruit-5f89b` returned `state = ACTIVE`, `buildConfig.runtime = nodejs24`, `updateTime = 2026-05-16T06:53:48.286404118Z`.
 
 ## 2026-05-16 Job Prescreen Editor Flow Consolidation
 

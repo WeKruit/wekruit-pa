@@ -1102,6 +1102,7 @@ export async function handleSendblueWebhook(
   //   because we don't know turnSeq at create time.
   let willCoalesce = false
   let resolvedUserIdForCoalesce: string | null = null
+  let activePrescreenForCoalesce = false
   if (!mediaUrl && deps.enqueueOrCoalesce && deps.coalescerDeps) {
     try {
       const lookupFn = deps.lookupUserByPhone ?? defaultLookupUserByPhone
@@ -1131,15 +1132,14 @@ export async function handleSendblueWebhook(
         } catch {
           onboardingState = null
         }
-        let activePrescreen = false
         if (onboardingState !== "complete") {
           try {
-            activePrescreen = await hasActivePrescreenSession(deps.db, resolvedUserIdForCoalesce)
+            activePrescreenForCoalesce = await hasActivePrescreenSession(deps.db, resolvedUserIdForCoalesce)
           } catch {
-            activePrescreen = false
+            activePrescreenForCoalesce = false
           }
         }
-        willCoalesce = coalesceFlag === true && (onboardingState === "complete" || activePrescreen)
+        willCoalesce = coalesceFlag === true && (onboardingState === "complete" || activePrescreenForCoalesce)
       }
     } catch (preErr) {
       // Pre-decision failure → degrade to legacy path (no flag stamped).
@@ -1221,6 +1221,7 @@ export async function handleSendblueWebhook(
           body: normalized.text,
           inboundEventId: result.id,
           isOnboarding: false,
+          isPrescreen: activePrescreenForCoalesce,
         })
         log("[coalesce][webhook] enqueued", {
           userId: resolvedUserIdForCoalesce,
