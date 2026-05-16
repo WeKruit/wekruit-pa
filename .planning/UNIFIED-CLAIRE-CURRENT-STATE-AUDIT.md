@@ -432,5 +432,16 @@ Required fix boundary:
 
 - WeKruit Open web chat now merges each answer into shared `pa-users` evidence/context and refuses missing/non-layoff profiles. It is still not a full Claire state machine/mem0 conversational path; that remains a separate product integration gap.
 - External supply prospects are in the shared `pa-users` pool, and an existing resolved batch is now reverified through candidate-profile evaluation, outreach draft, approval, and `pa-users` no-growth guards. The reply/import-back evidence loop after outreach remains unverified because the selected production-safe plan was `retain_only` / `no_outreach`.
-- Job creation/import still appears split across enrichment approval, seeding scripts, and external-supply job surfaces. The single job creation/publication flow is not yet audited or unified.
+- Job creation/import still appears split across enrichment approval, seeding scripts, and external-supply job surfaces. The old prescreen editor no longer creates jobs or toggles public visibility, but a single canonical job creation/import surface is not yet audited or unified.
 - Manual Apple Messages UI testing is still not fully repeated after the stress-runner fixes. The production Firestore prescreen matrix and Sendblue entrypoint matrix are verified with outbound SMS stubbed; one live signed deployed-webhook user-boundary canary and one allowlist-deny canary were verified.
+
+## 2026-05-16 Job Prescreen Editor Flow Consolidation
+
+- `apps/dashboard-web/src/pages/JobPrescreen.tsx` now reads `/admin/jobs/:jobId/prescreen` route params and opens the selected job directly.
+- The prescreen editor no longer shows the legacy `Create new job` form.
+- The prescreen editor no longer writes top-level `pa-jobs.title`, `pa-jobs.company`, or `pa-jobs.publicVisible`.
+- Publishing, unpublishing, candidate page lifecycle, and `wekruitCollaborationStatus` remain owned by `/admin/jobs/:jobId`.
+- Node 24 verification:
+  - `pnpm --filter @pa/dashboard-web typecheck` passed.
+  - `pnpm --filter @pa/dashboard-web test` passed 110/110.
+  - `PA_DASHBOARD_VITE_ENV_FILE=/Users/adam/Desktop/WeKruit/wekruit-pa/apps/dashboard-web/.env.production.local pnpm --filter @pa/dashboard-web build` passed.
