@@ -32,6 +32,7 @@ import {
   DEFAULT_DELAY_MS,
   FORCE_FIRE_MESSAGE_COUNT,
   PRESCREEN_DELAY_MS,
+  PRESCREEN_HARD_CAP_MS,
 } from "../buffer.js"
 
 // ----------------- fake Cloud Tasks client -----------------
@@ -615,6 +616,84 @@ describe("paMessageCoalescer — case 6b: eligible user uses coalescing before b
     assert.equal(seen.coalesceInput?.isPrescreen, false, "non-prescreen eligible inbound should keep the generic chat coalesce window")
     delete process.env.paMessageCoalesceEnabled
   })
+
+  it("coalesces active prescreen even when onboarding is incomplete", async () => {
+    process.env.paMessageCoalesceEnabled = "1"
+    const { handleSendblueWebhook } = await import("../../sendblue/webhook.js")
+    const { _clearFeatureFlagCache } = await import("@pa/pa-persistence")
+    _clearFeatureFlagCache()
+
+    const db = makeFakeDb()
+    db._stores.set("pa-feature-flags", new Map([
+      ["paMessageCoalesceEnabled", {
+        key: "paMessageCoalesceEnabled", value: true, type: "bool", scope: "perUser",
+        allowlist: [], blocklist: [],
+      }],
+    ]))
+    db._stores.set("pa-users", new Map([
+      ["u_prescreen_incomplete", { onboardingState: "q_location_asked" }],
+    ]))
+    db._stores.set("pa-prescreen-sessions", new Map([
+      ["ps_active", { userId: "u_prescreen_incomplete", terminal: null }],
+    ]))
+
+    type BrokerCreateInput = { coalescing?: boolean } & Record<string, unknown>
+    type CoalesceInput = { userId: string; body: string; inboundEventId: string; isPrescreen?: boolean }
+    const seen: { brokerInput: BrokerCreateInput | null; coalesceInput: CoalesceInput | null } = {
+      brokerInput: null,
+      coalesceInput: null,
+    }
+    const SECRET = "test-webhook-secret"
+    const { createHmac } = await import("node:crypto")
+    const payload = {
+      message_handle: "msg-prescreen-incomplete-1",
+      content: "Second fragment of my prescreen answer",
+      from_number: "+15551234567",
+      to_number: "+15559999999",
+      type: "message",
+      service: "iMessage",
+    }
+    const raw = JSON.stringify(payload)
+    const sig = createHmac("sha256", SECRET).update(raw).digest("hex")
+    let status = 0
+    const res = {
+      status(c: number) { status = c; return this },
+      json(_b: unknown) { return this },
+      send(_b: unknown) { return this },
+    }
+
+    await handleSendblueWebhook(
+      {
+        rawBody: raw,
+        body: payload,
+        headers: { "sendblue-signature": sig, "x-e2e-test": "1" } as Record<string, string>,
+      },
+      res,
+      {
+        db: db as never,
+        secret: SECRET,
+        log: () => { /* swallow */ },
+        lookupUserByPhone: async () => "u_prescreen_incomplete",
+        createInboundEvent: (async (_db: unknown, input: BrokerCreateInput) => {
+          seen.brokerInput = input
+          const id = "inb_prescreen_incomplete_1"
+          db._stores.set("pa-inbound-events", new Map([[id, { id, ...input } as DocData]]))
+          return { id, created: true, event: { id, ...input } as never }
+        }) as never,
+        enqueueOrCoalesce: (async (_deps: unknown, input: CoalesceInput) => {
+          seen.coalesceInput = input
+          return { action: "created" as const }
+        }) as never,
+        coalescerDeps: {} as never,
+      }
+    )
+
+    assert.equal(status, 200)
+    assert.equal(seen.brokerInput?.coalescing, true)
+    assert.equal(seen.coalesceInput?.userId, "u_prescreen_incomplete")
+    assert.equal(seen.coalesceInput?.isPrescreen, true)
+    delete process.env.paMessageCoalesceEnabled
+  })
 })
 
 describe("paMessageCoalescer — case 6c: active prescreen uses longer narrative delay", () => {
@@ -636,6 +715,53 @@ describe("paMessageCoalescer — case 6c: active prescreen uses longer narrative
       PRESCREEN_DELAY_MS > DEFAULT_DELAY_MS,
       "prescreen narrative delay must exceed the generic chat delay"
     )
+  })
+
+  it("keeps 3 prescreen fragments over 35s in one bounded turn", async () => {
+    const t0 = new Date("2026-05-16T16:24:11.000Z")
+    let now = t0.getTime()
+    const { deps, tasks, db } = buildDeps({ now: () => new Date(now) })
+
+    await enqueueOrCoalesce(deps, {
+      ...BASE_MSG,
+      messageHandle: "msg-prescreen-live-1",
+      body: "I have not owned a production fullstack product end to end.",
+      inboundEventId: "inb_prescreen_live_1",
+      isPrescreen: true,
+      receivedAt: new Date(now).toISOString(),
+    })
+
+    now += 16_000
+    const second = await enqueueOrCoalesce(deps, {
+      ...BASE_MSG,
+      messageHandle: "msg-prescreen-live-2",
+      body: "Closest project was OFO merchant order tooling and dashboard work.",
+      inboundEventId: "inb_prescreen_live_2",
+      isPrescreen: true,
+      receivedAt: new Date(now).toISOString(),
+    })
+
+    now += 19_000
+    const third = await enqueueOrCoalesce(deps, {
+      ...BASE_MSG,
+      messageHandle: "msg-prescreen-live-3",
+      body: "I wrote JS screens, SQL queries, and scripts that joined order events to dispatch status.",
+      inboundEventId: "inb_prescreen_live_3",
+      isPrescreen: true,
+      receivedAt: new Date(now).toISOString(),
+    })
+
+    assert.equal(PRESCREEN_HARD_CAP_MS, 75_000)
+    assert.ok(PRESCREEN_HARD_CAP_MS > HARD_CAP_MS)
+    assert.equal(second.action, "appended")
+    assert.equal(third.action, "appended", "35s prescreen answer must not hard-cap into a second Claire probe")
+    assert.equal(tasks.enqueued.length, 3)
+    assert.equal(tasks.cancelled.length, 2)
+    assert.ok((tasks.enqueued[2]!.delayMs ?? 0) > 0)
+
+    const buf = (db as ReturnType<typeof makeFakeDb>)._stores.get("pa-message-coalesce-buffer")?.get("u_adam__1") as DocData
+    assert.equal((buf as { messageCount?: number }).messageCount, 3)
+    assert.match(String((buf as { accumulatedBody?: string }).accumulatedBody), /not owned[\s\S]*OFO merchant[\s\S]*joined order events/)
   })
 })
 

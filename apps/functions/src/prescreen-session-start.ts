@@ -141,6 +141,20 @@ export async function runPreScreenForUser(args: RunPreScreenArgs): Promise<RunPr
       boundary: "trigger",
     },
   })
+  await args.db.collection("pa-users").doc(args.userId).set(
+    {
+      workSession: {
+        kind: "job_prescreen",
+        status: "active",
+        startedAt: nowIso,
+        boundary: "trigger",
+        sessionId,
+        jobId: args.jobId,
+      },
+      updatedAt: nowIso,
+    },
+    { merge: true },
+  )
 
   // 4. Send first question.
   const opener = `Hi — Claire from ${cfg.company ?? "WeKruit"}. Quick screen for ${cfg.jobTitle}. ${firstQText}`

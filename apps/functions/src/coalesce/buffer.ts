@@ -96,6 +96,15 @@ export const DEFAULT_DELAY_MS = 12_000
  * other fast deterministic flows stay responsive.
  */
 export const PRESCREEN_DELAY_MS = 25_000
+/** Prescreen-phase hard cap.
+ *
+ * Live Rain SWE prescreen on 2026-05-16 exposed the mismatch: users may send
+ * a single experience answer across 2-4 iMessages over ~35s. The generic 30s
+ * hard cap fired after the second fragment, so Claire asked a follow-up before
+ * the third fragment landed. Keep the global hard cap tight for normal chat,
+ * but give prescreen narrative answers one bounded minute-plus window.
+ */
+export const PRESCREEN_HARD_CAP_MS = 75_000
 
 /** Rapid-message gap heuristic — Adam 2026-05-03 amendment ("可以消息间隔 < 5s
  *  自动延长 (heuristic — 连发就是同 thought)").
@@ -369,7 +378,7 @@ export async function coalesceTransaction(
       : msg.isPrescreen
         ? PRESCREEN_DELAY_MS
         : DEFAULT_DELAY_MS)
-  const hardCap = opts.hardCapMs ?? HARD_CAP_MS
+  const hardCap = opts.hardCapMs ?? (msg.isPrescreen ? PRESCREEN_HARD_CAP_MS : HARD_CAP_MS)
   const forceFireCount = opts.forceFireCount ?? FORCE_FIRE_MESSAGE_COUNT
   const rapidThresholdMs = opts.rapidThresholdMs ?? RAPID_MESSAGE_THRESHOLD_MS
   const rapidBumpMs = opts.rapidBumpMs ?? RAPID_BUMP_MS

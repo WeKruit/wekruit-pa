@@ -124,4 +124,48 @@ describe("runPreScreenForUser session boundaries", () => {
     assert.equal((started[1].data.workSession as { status?: string }).status, "active")
     assert.equal(started[1].data.maxClarifyRounds, 4)
   })
+
+  it("claims the canonical user-level work session when a job prescreen starts", async () => {
+    const { db, docs } = makeFakeDb({
+      "pa-jobs/job-new": { prescreenConfig },
+      "pa-users/u1": {
+        workSession: {
+          kind: "layoff_onboarding",
+          status: "active",
+          boundary: "WeKruit_LAID_OFF",
+          startedAt: "2026-05-16T10:00:00.000Z",
+        },
+      },
+    })
+
+    const result = await runPreScreenForUser({
+      db,
+      jobId: "job-new",
+      userId: "u1",
+      toE164: "+13054507715",
+      markStarted: async () => undefined,
+      sendSms: async ({ content }) => ({
+        status: "queued",
+        from_number: null,
+        number: "+13054507715",
+        content,
+        service: "iMessage",
+        is_outbound: true,
+      }),
+    })
+
+    assert.equal(result.ok, true)
+    const user = docs.get("pa-users/u1")?.data
+    assert.ok(user)
+    assert.deepEqual(user.workSession, {
+      kind: "job_prescreen",
+      status: "active",
+      startedAt: user.workSession && typeof user.workSession === "object"
+        ? (user.workSession as { startedAt?: string }).startedAt
+        : undefined,
+      boundary: "trigger",
+      sessionId: result.sessionId,
+      jobId: "job-new",
+    })
+  })
 })
