@@ -485,6 +485,16 @@ export async function runPrescreenTurnIfActive(
   const sessRaw = await args.db.collection("pa-prescreen-sessions").doc(sessionId).get()
   const activeQIdRaw = sessRaw.data()?.currentQId
   const activeQId = typeof activeQIdRaw === "string" ? activeQIdRaw : null
+  const loadedTerminal = state.terminal ?? null
+  if (loadedTerminal !== null || !activeQId) {
+    log("prescreen.turn.stale_terminal_session_ignored", {
+      userId: args.userId,
+      sessionId,
+      terminal: loadedTerminal,
+      currentQId: activeQId,
+    })
+    return { handled: false, sessionId, terminal: loadedTerminal }
+  }
   const cfgSnapshot = sessRaw.data()?.cfgSnapshot as
     | { questions: Array<{ qId: string; prompt: { zh: string; en: string }; clarifyPrompt: { zh: string; en: string }; keywords: KeywordSpec[] }> }
     | undefined

@@ -39,6 +39,77 @@ function layoffContextFromUser(user: Record<string, unknown>): Record<string, un
     : {}
 }
 
+export function buildLayoffOnboardingStartedFields(nowIso: string): Record<string, unknown> {
+  return {
+    onboardingStatus: "invited",
+    onboardingState: "q_role_asked",
+    pipelineState: {
+      currentQId: "q_role",
+      collected: {},
+      attempts: {},
+      halted: null,
+      lang: "en",
+      completed: false,
+    },
+    layoffOnboardingStartedAt: nowIso,
+    workSession: {
+      kind: "layoff_onboarding",
+      status: "active",
+      startedAt: nowIso,
+      boundary: LAYOFF_SMS_TRIGGER_TEXT,
+    },
+  }
+}
+
+export function isLayoffIntakeActiveDoc(data: unknown): boolean {
+  if (!data || typeof data !== "object") return false
+  const doc = data as Record<string, unknown>
+  const workSession = doc.workSession && typeof doc.workSession === "object"
+    ? doc.workSession as Record<string, unknown>
+    : null
+  if (workSession?.kind === "layoff_onboarding" && workSession.status === "active") return true
+  return doc.source === WEKRUIT_LAYOFF_SOURCE && doc.onboardingState !== "complete"
+}
+
+export async function isLayoffIntakeActiveForUser(db: Firestore, userId: string): Promise<boolean> {
+  if (!userId) return false
+  const snap = await db.collection(PA_COLLECTIONS.users).doc(userId).get()
+  return isLayoffIntakeActiveDoc(snap.data())
+}
+
+export async function supersedeActivePrescreensForLayoff(
+  db: Firestore,
+  input: { candidateId: string; nowIso: string },
+): Promise<void> {
+  const sessionsCollection = db.collection("pa-prescreen-sessions")
+  if (typeof (sessionsCollection as unknown as { where?: unknown }).where !== "function") return
+  const snap = await sessionsCollection
+    .where("userId", "==", input.candidateId)
+    .where("terminal", "==", null)
+    .get()
+  await Promise.all(
+    snap.docs.map((doc) =>
+      doc.ref.set(
+        {
+          terminal: "PAUSE",
+          terminalReason: "superseded_by_layoff_onboarding",
+          currentQId: null,
+          supersededAt: input.nowIso,
+          updatedAt: input.nowIso,
+          workSession: {
+            kind: "job_prescreen",
+            status: "ended",
+            endedAt: input.nowIso,
+            boundary: "superseded",
+            supersededBy: "layoff_onboarding",
+          },
+        },
+        { merge: true },
+      ),
+    ),
+  )
+}
+
 /**
  * Shared layoff kickoff path for both layoff.wekruit.com callables and the
  * inbound SMS trigger. The product invariant is one pa-users row, one source
@@ -60,6 +131,33 @@ export async function runLayoffSmsStart(
   const lastCompany = typeof ctx.lastCompany === "string" ? ctx.lastCompany : undefined
   const body = composeLayoffFirstMessage({ firstName, lastCompany })
   const enqueueOutbound = args.enqueueOutbound ?? defaultEnqueueOutbound
+  const startedAt = new Date().toISOString()
+
+  await userRef.set(
+    {
+      source: WEKRUIT_LAYOFF_SOURCE,
+      lastLaidOffAt: FieldValue.serverTimestamp(),
+      updatedAt: startedAt,
+      smsState: "layoff-onboarding-starting",
+      smsThreadId: `iMessage;-;${phoneE164}`,
+      layoffContext: {
+        phoneE164,
+        smsTriggeredAt: FieldValue.serverTimestamp(),
+      },
+      ...buildLayoffOnboardingStartedFields(startedAt),
+    },
+    { merge: true },
+  )
+  const pendingTriggerRef = args.db.collection("pa-ats-pending-trigger").doc(phoneE164)
+  const deletePendingTrigger = (pendingTriggerRef as unknown as { delete?: () => Promise<unknown> }).delete
+  if (typeof deletePendingTrigger === "function") {
+    await deletePendingTrigger.call(pendingTriggerRef).catch(() => undefined)
+  }
+  await supersedeActivePrescreensForLayoff(args.db, {
+    candidateId: args.userId,
+    nowIso: startedAt,
+  })
+
   const enqueueResult = await enqueueOutbound(args.db, {
     userId: args.userId,
     toE164: phoneE164,
@@ -77,10 +175,6 @@ export async function runLayoffSmsStart(
       smsKickoffAt: FieldValue.serverTimestamp(),
       smsThreadId: `iMessage;-;${phoneE164}`,
       kickoffOutboundId: enqueueResult.id,
-      layoffContext: {
-        phoneE164,
-        smsTriggeredAt: FieldValue.serverTimestamp(),
-      },
     },
     { merge: true },
   )

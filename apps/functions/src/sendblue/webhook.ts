@@ -62,7 +62,10 @@ import {
 } from "./triggers/index.js"
 // v1.8 Phase 77.3 — real prescreen session bootstrap (replaces log placeholder).
 import { runPreScreenForUser as defaultRunPreScreenForUser } from "../prescreen-session-start.js"
-import { runLayoffSmsStart as defaultRunLayoffSmsStart } from "../layoff-sms-start.js"
+import {
+  isLayoffIntakeActiveForUser,
+  runLayoffSmsStart as defaultRunLayoffSmsStart,
+} from "../layoff-sms-start.js"
 import { runCompactionForUser } from "../compaction-run.js"
 // v1.9 Phase 85 — PII confirm bootstrap (Apply trigger).
 import { runPiiConfirmForUser as defaultRunPiiConfirmForUser } from "../pii-confirm-start.js"
@@ -78,7 +81,6 @@ import {
   bumpCoalesceBuffer as defaultBumpCoalesceBuffer,
   type CoalescerDeps,
 } from "../coalesce/paMessageCoalescer.js"
-
 export type WebhookRequest = {
   rawBody?: Buffer | string
   body?: unknown
@@ -679,18 +681,27 @@ export async function handleSendblueWebhook(
           typeof pendingData.expiresAtMs === "number" &&
           pendingData.expiresAtMs > nowMs
         ) {
-          const virtualTrigger = `WeKruit_${pendingData.jobId}_${pendingData.userId}_Job`
-          log("[sendblue][webhook] ats-pending-trigger virtualized", {
-            fromNumber: normalized.fromNumber,
-            jobId: pendingData.jobId,
-            userId: pendingData.userId,
-            origText: normalized.text.slice(0, 40),
-          })
-          // Mutate normalized.text so the downstream TriggerRouter sees the
-          // synthesized trigger pattern. Consume the pending doc to prevent
-          // replay on subsequent inbounds.
-          ;(normalized as { text: string }).text = virtualTrigger
-          await pendingRef.delete().catch(() => undefined)
+          if (await isLayoffIntakeActiveForUser(deps.db, pendingData.userId)) {
+            log("[sendblue][webhook] ats-pending-trigger consumed during active layoff intake", {
+              fromNumber: normalized.fromNumber,
+              jobId: pendingData.jobId,
+              userId: pendingData.userId,
+            })
+            await pendingRef.delete().catch(() => undefined)
+          } else {
+            const virtualTrigger = `WeKruit_${pendingData.jobId}_${pendingData.userId}_Job`
+            log("[sendblue][webhook] ats-pending-trigger virtualized", {
+              fromNumber: normalized.fromNumber,
+              jobId: pendingData.jobId,
+              userId: pendingData.userId,
+              origText: normalized.text.slice(0, 40),
+            })
+            // Mutate normalized.text so the downstream TriggerRouter sees the
+            // synthesized trigger pattern. Consume the pending doc to prevent
+            // replay on subsequent inbounds.
+            ;(normalized as { text: string }).text = virtualTrigger
+            await pendingRef.delete().catch(() => undefined)
+          }
         }
       } catch (err) {
         log("[sendblue][webhook] ats-pending-trigger check failed (non-fatal)", {

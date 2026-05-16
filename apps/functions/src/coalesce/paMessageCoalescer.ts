@@ -572,50 +572,61 @@ export async function processCoalescedTurn(
   //
   // On no active session OR handler error → fall through to Claire.
   try {
-    const { runPrescreenTurnIfActive } = await import("../prescreen-turn-handler.js")
-    const psResult = await runPrescreenTurnIfActive({
-      db: deps.db,
-      userId,
-      toE164: fired.fromNumber,
-      replyText: fired.accumulatedBody,
-      lang: "en",
-      log: (event, payload) => log(`coalesce.prescreen.${event}`, payload),
-    })
+    const { isLayoffIntakeActiveForUser } = await import("../layoff-sms-start.js")
+    const layoffOwnsTurn = await isLayoffIntakeActiveForUser(deps.db, userId)
+    const psResult = layoffOwnsTurn
+      ? { handled: false as const }
+      : await (async () => {
+          const { runPrescreenTurnIfActive } = await import("../prescreen-turn-handler.js")
+          return runPrescreenTurnIfActive({
+            db: deps.db,
+            userId,
+            toE164: fired.fromNumber,
+            replyText: fired.accumulatedBody,
+            lang: "en",
+            log: (event, payload) => log(`coalesce.prescreen.${event}`, payload),
+          })
+        })()
+    if (layoffOwnsTurn) {
+      log("[coalesce] prescreen+pii skipped — active layoff intake owns this turn", { userId })
+    }
     if (!psResult.handled) {
       // v1.9 hotfix — also check active PII confirm session (chained after
       // prescreen terminal). PII pipeline runs multi-turn (3 Qs); route
       // those turns to PII handler before Claire.
-      try {
-        const { runPiiConfirmTurnIfActive } = await import("../pii-confirm-start.js")
-        const piiResult = await runPiiConfirmTurnIfActive({
-          db: deps.db,
-          userId,
-          toE164: fired.fromNumber,
-          replyText: fired.accumulatedBody,
-          log: (event, payload) => log(`coalesce.pii.${event}`, payload),
-        })
-        if (piiResult.handled) {
-          log("[coalesce] pii-routed", { userId, completed: piiResult.completed })
-          await Promise.allSettled(
-            fired.inboundEventIds.map((eventId) =>
-              deps.db.collection("pa-inbound-events").doc(eventId).set(
-                {
-                  status: "coalesced",
-                  coalesceTurnId: `${userId}__${turnSeq}`,
-                  coalesceParentId: created.id,
-                  routedTo: "pii_confirm",
-                },
-                { merge: true }
+      if (!layoffOwnsTurn) {
+        try {
+          const { runPiiConfirmTurnIfActive } = await import("../pii-confirm-start.js")
+          const piiResult = await runPiiConfirmTurnIfActive({
+            db: deps.db,
+            userId,
+            toE164: fired.fromNumber,
+            replyText: fired.accumulatedBody,
+            log: (event, payload) => log(`coalesce.pii.${event}`, payload),
+          })
+          if (piiResult.handled) {
+            log("[coalesce] pii-routed", { userId, completed: piiResult.completed })
+            await Promise.allSettled(
+              fired.inboundEventIds.map((eventId) =>
+                deps.db.collection("pa-inbound-events").doc(eventId).set(
+                  {
+                    status: "coalesced",
+                    coalesceTurnId: `${userId}__${turnSeq}`,
+                    coalesceParentId: created.id,
+                    routedTo: "pii_confirm",
+                  },
+                  { merge: true }
+                )
               )
             )
-          )
-          return { status: "fired", buffer: fired }
+            return { status: "fired", buffer: fired }
+          }
+        } catch (err) {
+          log("[coalesce] pii-route FAILED (falling through to Claire)", {
+            userId,
+            err: err instanceof Error ? err.message : String(err),
+          })
         }
-      } catch (err) {
-        log("[coalesce] pii-route FAILED (falling through to Claire)", {
-          userId,
-          err: err instanceof Error ? err.message : String(err),
-        })
       }
     }
     if (psResult.handled) {

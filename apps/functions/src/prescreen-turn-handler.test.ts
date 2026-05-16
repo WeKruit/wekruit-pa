@@ -141,6 +141,51 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     assert.equal((session?.workSession as { boundary?: string }).boundary, "timeout")
   })
 
+  it("ignores stale prescreen docs whose active question is already cleared", async () => {
+    const now = new Date().toISOString()
+    const { db } = makeFakeDb({
+      "pa-prescreen-sessions/ps_stale": {
+        sessionId: "ps_stale",
+        userId: "u1",
+        jobId: "job-ended",
+        terminal: null,
+        currentQId: null,
+        createdAt: now,
+        updatedAt: now,
+        workSession: { kind: "job_prescreen", status: "ended", startedAt: now, boundary: "terminal" },
+      },
+    })
+
+    const terminalCalls: Array<Record<string, unknown>> = []
+    const sent: string[] = []
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u1",
+      toE164: "+13054507715",
+      replyText: "new layoff onboarding reply",
+      runTerminalAction: async (args) => {
+        terminalCalls.push(args as unknown as Record<string, unknown>)
+        return { alreadyFired: false, level1Sent: false, jobRecsFired: false }
+      },
+      sendSms: async (args) => {
+        sent.push(args.content)
+        return {
+          status: "queued",
+          from_number: null,
+          number: args.to,
+          content: args.content,
+          service: "iMessage",
+          is_outbound: true,
+        }
+      },
+    })
+
+    assert.equal(result.handled, false)
+    assert.equal(result.sessionId, "ps_stale")
+    assert.equal(terminalCalls.length, 0)
+    assert.equal(sent.length, 0)
+  })
+
   it("treats explicit user exit as a routing pause, not a business outcome", async () => {
     const now = new Date().toISOString()
     const { db, docs } = makeFakeDb({
