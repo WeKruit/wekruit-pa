@@ -6,7 +6,7 @@ Completion requires real iMessage conversation evidence, direct Firebase/Firesto
 
 Dashboard, candidate web UI, and admin UI are out of scope for this evidence file. If a state needs verification, read Firebase/Firestore directly.
 
-Scope update, 2026-05-16: Adam narrowed this run to Claire iMessage prescreen runtime only. Normal onboarding, layoff onboarding, dashboard, candidate-web UI, and broad outreach/runtime areas are not completion criteria for this run unless they directly affect prescreen session routing, archive, or memory.
+Scope update, 2026-05-16: Adam narrowed this run to Claire iMessage conversation runtime only. Dashboard, candidate-web UI, admin UI, login, resume upload UI, and browser-based QA are out of scope. Normal onboarding, layoff onboarding, job prescreen, safety/privacy/abuse, job matching conversation, everyday catchup, automated outbound, session lifecycle, memory, tags, and direct Firestore proof remain in scope for the full runtime goal.
 
 ## Baseline Snapshot
 
@@ -72,17 +72,17 @@ Important baseline finding:
 
 | Flow | Status | Live iMessage evidence | Firestore evidence | Notes |
 | --- | --- | --- | --- | --- |
-| Normal candidate onboarding | OUT_OF_SCOPE | Not part of narrowed run | Baseline shows candidate stuck at `q_location` | Do not use this row to claim prescreen runtime complete. |
-| Layoff onboarding | OUT_OF_SCOPE | Not part of narrowed run | Baseline shows active layoff workSession | Do not use this row to claim prescreen runtime complete. |
+| Normal candidate onboarding | NOT_STARTED | Missing | Baseline shows candidate stuck at `q_location` | Must be tested through real iMessage, not dashboard/browser. |
+| Layoff onboarding | NOT_STARTED | Missing | Baseline shows active layoff workSession | Must verify shared `pa-users` state, `layoffContext`, and session boundaries. |
 | Job prescreen strong candidate | LIVE_DONE | Real iMessage rerun reached `PASS` after repeated probes | Session, memory, user workSession, candidate-job-state verified | See Flow 4 rerun. |
 | Job prescreen adjacent/fragmented | LIVE_DONE | Real iMessage rerun reached PASS after adjacent/fragmented answers | Session, turns, memory, candidate-job-state, user workSession, and prior-session supersede verified | Runtime fixes deployed on Node 24; visible salary-copy defect remains in job data/copy. |
 | Job prescreen weak candidate | LIVE_DONE | Real iMessage weak run probed repeatedly before `HARD_STOP` | Session, memory tags, and user/candidate state verified | No false positive skill tags were added. |
 | Pause/restart/supersede | LIVE_DONE | Real iMessage restart, opt-out send failure, natural pause, and clean pause rerun verified | User-level `workSession`, session boundary, inbound status, and memory event verified | See Flow 6 and Flow 7. |
-| Privacy/abuse/security | OUT_OF_SCOPE | Not part of narrowed run | Missing | Separate runtime platform/security workstream. |
+| Privacy/abuse/security | NOT_STARTED | Missing | Missing | Must be tested through real iMessage and direct Firestore state. |
 | Rate limit/opt-out/suppression/cooldown | PRESCREEN_PARTIAL | `Stop` provider opt-out produced real send failure; `START` restored test line | Send-failed session ended with `boundary=send_failed` | Broad rate-limit/cooldown not tested in this narrowed run. |
-| Job matching conversation | OUT_OF_SCOPE | Not part of narrowed run | Missing | Separate workstream. |
-| Everyday catchup | OUT_OF_SCOPE | Not part of narrowed run | Missing | Separate workstream. |
-| Automated outbound | OUT_OF_SCOPE | Not part of narrowed run | Missing | Separate workstream. |
+| Job matching conversation | NOT_STARTED | Missing | Missing | Must be tested through real iMessage and direct Firestore state. |
+| Everyday catchup | NOT_STARTED | Missing | Missing | Must be tested through real iMessage and direct Firestore state. |
+| Automated outbound | NOT_STARTED | Missing | Missing | Must be tested through real iMessage and direct Firestore state. |
 | Firestore runtime observability | LIVE_DONE_FOR_PRESCREEN | Every live prescreen state was checked via Firestore snapshot | `pa-prescreen-sessions`, `pa-users.workSession`, `pa-inbound-events`, `pa-prescreen-memory-events` | Dashboard not used as evidence. |
 
 ## Flow 4 Evidence: Adjacent Or Fragmented Fullstack Prescreen
