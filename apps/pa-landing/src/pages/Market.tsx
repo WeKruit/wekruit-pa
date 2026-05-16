@@ -197,8 +197,35 @@ const LEVEL_TO_TOKENS: Record<string, string[]> = {
   "Director+": ["director", "vp", "head", "executive"],
 }
 
+const COUNTRY_SUFFIX_RX = /,?\s*(?:united states(?: of america)?|usa|us|united kingdom|uk|canada|remote)\s*$/i
+const STATE_FULL_TO_ABBR: Record<string, string> = {
+  alabama: "AL", alaska: "AK", arizona: "AZ", arkansas: "AR", california: "CA",
+  colorado: "CO", connecticut: "CT", delaware: "DE", florida: "FL", georgia: "GA",
+  hawaii: "HI", idaho: "ID", illinois: "IL", indiana: "IN", iowa: "IA",
+  kansas: "KS", kentucky: "KY", louisiana: "LA", maine: "ME", maryland: "MD",
+  massachusetts: "MA", michigan: "MI", minnesota: "MN", mississippi: "MS",
+  missouri: "MO", montana: "MT", nebraska: "NE", nevada: "NV",
+  "new hampshire": "NH", "new jersey": "NJ", "new mexico": "NM", "new york": "NY",
+  "north carolina": "NC", "north dakota": "ND", ohio: "OH", oklahoma: "OK",
+  oregon: "OR", pennsylvania: "PA", "rhode island": "RI", "south carolina": "SC",
+  "south dakota": "SD", tennessee: "TN", texas: "TX", utah: "UT", vermont: "VT",
+  virginia: "VA", washington: "WA", "west virginia": "WV", wisconsin: "WI", wyoming: "WY",
+}
+
+function tightenLocation(s: string): string {
+  // "Bay Area, CA, United States of America" → "Bay Area, CA"
+  // "Miami, FL, United States of America"    → "Miami, FL"
+  // "Remote, United States"                  → "Remote, US"
+  let out = s.replace(COUNTRY_SUFFIX_RX, "").trim().replace(/,\s*$/, "")
+  out = out.replace(/\b([A-Za-z]{4,})\b/g, (m) => {
+    const lower = m.toLowerCase()
+    return STATE_FULL_TO_ABBR[lower] ?? m
+  })
+  return out
+}
+
 function locationDisplay(slug?: string, raw?: string): string {
-  if (raw) return raw
+  if (raw && raw.trim()) return tightenLocation(raw)
   if (!slug) return "—"
   return titleCase(slug)
 }
@@ -970,10 +997,12 @@ const MARKET_STYLES = String.raw`
 
 .wk-shell .wk-tbl-wrap {
   background: var(--wk-cream-3); border: 1px solid var(--wk-border);
-  border-radius: var(--wk-r-md); overflow: hidden;
+  border-radius: var(--wk-r-md);
+  overflow-x: auto; overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
 }
 .wk-shell .wk-tbl-wrap--solo { margin-top: 8px; }
-.wk-shell .wk-tbl { width: 100%; border-collapse: collapse; font-family: inherit; }
+.wk-shell .wk-tbl { width: 100%; border-collapse: collapse; font-family: inherit; min-width: 880px; }
 .wk-shell .wk-tbl__h {
   text-align: left; font-family: inherit; font-size: 11px; font-weight: 600;
   letter-spacing: 0.12em; text-transform: uppercase; color: var(--wk-ink-4);
@@ -988,8 +1017,11 @@ const MARKET_STYLES = String.raw`
 .wk-shell .wk-tbl__row.is-queued { background: var(--wk-live-soft); }
 .wk-shell .wk-tbl__row.is-queued:hover { background: var(--wk-live-soft); }
 
-.wk-shell .wk-tbl__cell { padding: 16px; vertical-align: middle; font-size: 14px; color: var(--wk-ink); line-height: 1.4; }
-.wk-shell .wk-tbl__cell--company { display: flex; align-items: center; gap: 12px; min-width: 200px; }
+.wk-shell .wk-tbl__cell { padding: 14px 12px; vertical-align: middle; font-size: 13.5px; color: var(--wk-ink); line-height: 1.4; }
+.wk-shell .wk-tbl__cell--company { display: flex; align-items: center; gap: 10px; min-width: 180px; max-width: 240px; }
+.wk-shell .wk-tbl__muted { color: var(--wk-ink-2); font-size: 13px; white-space: nowrap; }
+.wk-shell .wk-tbl__cell:nth-child(4) { max-width: 180px; }
+.wk-shell .wk-tbl__cell:nth-child(4) .wk-tbl__muted { white-space: normal; line-height: 1.3; }
 .wk-shell .wk-tbl__co-name { font-weight: 600; font-size: 14.5px; color: var(--wk-ink); letter-spacing: -0.005em; }
 .wk-shell .wk-tbl__co-via { font-size: 12px; color: var(--wk-ink-3); margin-top: 2px; font-feature-settings: "tnum"; }
 .wk-shell .wk-tbl__co-via--live { color: var(--wk-live); font-weight: 600; display: inline-flex; align-items: center; gap: 5px; }
@@ -999,7 +1031,7 @@ const MARKET_STYLES = String.raw`
 .wk-shell .wk-tbl__cell--hm { display: flex; align-items: center; gap: 10px; min-width: 200px; }
 .wk-shell .wk-tbl__hm-name { font-weight: 600; font-size: 13.5px; color: var(--wk-ink); }
 .wk-shell .wk-tbl__hm-title { font-size: 12px; color: var(--wk-ink-3); margin-top: 2px; }
-.wk-shell .wk-tbl__muted { color: var(--wk-ink-2); font-size: 13.5px; }
+/* .wk-tbl__muted defined above with responsive overrides */
 .wk-shell .wk-tbl__cell--comp {
   font-family: 'Newsreader', 'Tiempos Headline', Georgia, serif;
   font-style: italic; font-weight: 500; font-size: 16.5px;
