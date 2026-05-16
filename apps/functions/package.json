@@ -29,7 +29,7 @@
     "@pa/pa-persistence": "0.0.1",
     "@pa/pa-resume-parser": "0.0.1",
     "@pa/job-tag-enricher": "0.0.1",
-    "@wekruit/shared-tags": "0.1.0",
+    "@wekruit/shared-tags": "0.1.1",
     "csv-parse": "^5.5.6",
     "firebase-admin": "^13.0.0",
     "firebase-functions": "^6.0.0",

@@ -1,13 +1,15 @@
 {
   "name": "@wekruit/shared-tags",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": false,
   "description": "iter30 WS2 — shared canonical-tags schema + recordTagEvent() idempotent write contract. Workspace-internal in Wave 1; GH Packages publish in Wave 2.",
   "type": "module",
-  "main": "./dist/index.js",
+  "main": "./dist-cjs/index.js",
+  "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "files": [
     "dist",
+    "dist-cjs",
     "README.md"
   ],
   "repository": {
@@ -23,15 +25,29 @@
     ".": {
       "types": "./dist/index.d.ts",
       "browser": "./dist/index-browser.js",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "require": "./dist-cjs/index.js",
+      "default": "./dist/index.js"
     },
     "./canonical": {
       "types": "./dist/canonical/index-browser.d.ts",
-      "import": "./dist/canonical/index-browser.js"
+      "browser": "./dist/canonical/index-browser.js",
+      "import": "./dist/canonical/index-browser.js",
+      "require": "./dist-cjs/canonical/index-browser.js",
+      "default": "./dist/canonical/index-browser.js"
+    }
+  },
+  "typesVersions": {
+    "*": {
+      "canonical": [
+        "dist/canonical/index-browser.d.ts"
+      ]
     }
   },
   "scripts": {
-    "build": "tsc",
+    "build": "npm run build:esm && npm run build:cjs",
+    "build:esm": "tsc -p tsconfig.json",
+    "build:cjs": "tsc -p tsconfig.cjs.json && node scripts/write-cjs-package.mjs",
     "prepack": "npm run build",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test src/__tests__/*.test.ts"
