@@ -1,0 +1,228 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wekruit.com/schemas/candidate-questions-step.schema.json",
+  "title": "CandidateQuestionsStep",
+  "description": "Config for the in-session candidate Q&A step that fires after a prescreen terminal (default: PASS only). Authored per job at pa-jobs/{jobId}.prescreenConfig.candidateQuestionsStep. Claire answers only from approvedFaqs + level1Reveal + companyCultureDoc; everything else hits a refusalCategory.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "enabled": {
+      "type": "boolean",
+      "description": "Master switch. If false, no candidate Q&A step is offered regardless of trigger."
+    },
+    "trigger": {
+      "type": "string",
+      "enum": ["post_pass_only", "post_last_q_any_terminal", "candidate_initiated"],
+      "description": "When the step fires. v1 default: post_pass_only. candidate_initiated allows mid-conversation invocation but is a runtime-implementation flag."
+    },
+    "maxQuestionsPerSession": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10,
+      "default": 5,
+      "description": "Hard cap on candidate questions answered per session. 0 effectively disables answering while keeping the step structure (rare)."
+    },
+    "companyCultureDoc": {
+      "type": "string",
+      "maxLength": 2000,
+      "description": "Employer-authored bounded blurb about culture / team / working model. One paragraph; no nested structure."
+    },
+    "approvedFaqs": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+            "description": "Stable id for the FAQ entry. Used in transcript classifiedCategory as 'faq:<id>'."
+          },
+          "question": {
+            "type": "string",
+            "minLength": 5,
+            "maxLength": 240,
+            "description": "Canonical phrasing of the question. LLM does semantic match against candidate input."
+          },
+          "answer": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "zh": { "type": "string", "minLength": 1, "maxLength": 600 },
+              "en": { "type": "string", "minLength": 1, "maxLength": 600 }
+            },
+            "required": ["zh", "en"]
+          },
+          "tags": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1, "maxLength": 40 },
+            "maxItems": 8,
+            "description": "Optional topical tags to assist semantic matching (e.g. 'team_size', 'remote_policy')."
+          }
+        },
+        "required": ["id", "question", "answer"]
+      }
+    },
+    "refusalCategories": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "category": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{2,63}$",
+            "description": "Stable category key. Recommended built-ins: comp_specifics_beyond_range, legal_immigration_advice, safety_sensitive, interview_process_unknown, salary_negotiation, competing_offers, out_of_scope_general, unclassifiable_low_confidence."
+          },
+          "refusal": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "zh": { "type": "string", "minLength": 1, "maxLength": 200 },
+              "en": { "type": "string", "minLength": 1, "maxLength": 200 }
+            },
+            "required": ["zh", "en"]
+          },
+          "followUp": {
+            "type": "string",
+            "enum": ["defer_hiring_team", "defer_scheduling", "hard_refuse", "soft_redirect", "log_only"]
+          },
+          "hitlOnHit": {
+            "type": "boolean",
+            "default": false,
+            "description": "If true, every hit on this category writes a pa-prescreen-hitl-flags doc on first occurrence."
+          }
+        },
+        "required": ["category", "refusal", "followUp"]
+      }
+    },
+    "hitlFlagThresholds": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "consecutiveRefusals": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10,
+          "default": 3
+        },
+        "sensitiveCategories": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["legal_immigration_advice", "safety_sensitive"],
+          "description": "Category keys that fire HITL on first hit regardless of count."
+        },
+        "minLlmClassifyConfidence": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "default": 0.55,
+          "description": "If LLM classifier confidence falls below this twice in a row, fire unclassifiable HITL flag."
+        }
+      },
+      "required": ["consecutiveRefusals", "sensitiveCategories", "minLlmClassifyConfidence"]
+    }
+  },
+  "required": ["enabled", "trigger"],
+  "examples": [
+    {
+      "enabled": true,
+      "trigger": "post_pass_only",
+      "maxQuestionsPerSession": 5,
+      "companyCultureDoc": "We're a 35-person Series-B fintech building developer-facing payment rails. Hybrid in SF (Tue/Wed/Thu in office). Engineering organized into squads of 4-6 with strong staff-eng technical leadership. We ship every weekday and on-call rotates ~once per 6 weeks.",
+      "approvedFaqs": [
+        {
+          "id": "remote_policy",
+          "question": "Is this role remote-friendly?",
+          "answer": {
+            "zh": "我们目前是 SF 混合办公，每周二三四到办公室，其他天可以远程。",
+            "en": "We're SF-hybrid: Tue/Wed/Thu in office, other days remote."
+          },
+          "tags": ["remote", "location", "hybrid"]
+        },
+        {
+          "id": "team_size",
+          "question": "How big is the engineering team?",
+          "answer": {
+            "zh": "工程团队大约 35 人，分成 4-6 人的小组。",
+            "en": "Engineering is about 35 people, organized into squads of 4-6."
+          },
+          "tags": ["team_size", "headcount"]
+        },
+        {
+          "id": "interview_process_high_level",
+          "question": "What's the overall interview process?",
+          "answer": {
+            "zh": "这一步之后会有一轮技术深聊、一轮 onsite（含系统设计 + 编码 + 团队对话），整个流程约两周。",
+            "en": "After this step: one technical deep-dive, then onsite (system design + coding + team conversations). Roughly two weeks end to end."
+          },
+          "tags": ["interview", "process", "timeline"]
+        }
+      ],
+      "refusalCategories": [
+        {
+          "category": "comp_specifics_beyond_range",
+          "refusal": {
+            "zh": "我只能分享公开的薪资范围，具体 offer 由招聘团队和你直接谈。",
+            "en": "I can only share the posted range. The full offer band is between you and the hiring team."
+          },
+          "followUp": "defer_hiring_team",
+          "hitlOnHit": false
+        },
+        {
+          "category": "legal_immigration_advice",
+          "refusal": {
+            "zh": "我没法给签证或法律建议，建议咨询专业律师。",
+            "en": "I'm not able to give immigration or legal advice. Please consult a qualified advisor."
+          },
+          "followUp": "hard_refuse",
+          "hitlOnHit": true
+        },
+        {
+          "category": "safety_sensitive",
+          "refusal": {
+            "zh": "这个细节我这边没有，招聘团队会在后续告诉你。",
+            "en": "I don't have that detail; the hiring team will share it in the next step."
+          },
+          "followUp": "defer_hiring_team",
+          "hitlOnHit": true
+        },
+        {
+          "category": "competing_offers",
+          "refusal": {
+            "zh": "了解，我会把这个情况同步给团队。",
+            "en": "Noted — I'll flag this to the team."
+          },
+          "followUp": "log_only",
+          "hitlOnHit": false
+        },
+        {
+          "category": "out_of_scope_general",
+          "refusal": {
+            "zh": "我们只聊这个机会哈。",
+            "en": "Let's keep this about the role."
+          },
+          "followUp": "soft_redirect",
+          "hitlOnHit": false
+        },
+        {
+          "category": "unclassifiable_low_confidence",
+          "refusal": {
+            "zh": "这个问题我没完全 get 到，能换个说法吗？",
+            "en": "I didn't quite get that — could you rephrase?"
+          },
+          "followUp": "soft_redirect",
+          "hitlOnHit": false
+        }
+      ],
+      "hitlFlagThresholds": {
+        "consecutiveRefusals": 3,
+        "sensitiveCategories": ["legal_immigration_advice", "safety_sensitive"],
+        "minLlmClassifyConfidence": 0.55
+      }
+    }
+  ]
+}
