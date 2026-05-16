@@ -66,3 +66,27 @@ try {
 } catch (err) {
   fail(`dist failed to load: ${err.message}`)
 }
+
+// v2.2 — Cross-channel prescreen parity. SMS + voice both call
+// runPrescreenTurn; this gate ensures they don't drift. Any divergence in
+// lifecycle.kind / terminalAction / pipeline-state across the in-memory
+// scenarios → exit 1 → predeploy abort.
+const PARITY_RUNNER = resolve(REPO_ROOT, "tests/scenarios/runner-parity.mjs")
+if (existsSync(PARITY_RUNNER)) {
+  const { spawnSync } = await import("node:child_process")
+  const result = spawnSync(process.execPath, [PARITY_RUNNER], {
+    stdio: "inherit",
+    env: process.env,
+  })
+  if (result.status !== 0) {
+    fail(
+      `cross-channel prescreen parity FAILED (exit ${result.status}). ` +
+      `SMS + voice runPrescreenTurn outcomes diverged on one of the ` +
+      `tests/scenarios/runner-parity.mjs scenarios. Investigate before ` +
+      `shipping — see .planning/VOICE-PRESCREEN-INTERFACE.md.`,
+    )
+  }
+  console.log("[predeploy-smoke] OK — cross-channel prescreen parity green")
+} else {
+  console.warn(`[predeploy-smoke] WARN — parity runner not found at ${PARITY_RUNNER}; skipping`)
+}
