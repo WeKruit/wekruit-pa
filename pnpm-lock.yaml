@@ -30,7 +30,7 @@ importers:
         specifier: ^1.2.4
         version: 1.2.4(@types/react@19.2.14)(react@19.2.5)
       '@wekruit/shared-tags':
-        specifier: 0.1.0
+        specifier: 0.1.1
         version: link:../../packages/shared-tags
       class-variance-authority:
         specifier: ^0.7.1
@@ -149,7 +149,7 @@ importers:
         specifier: 0.0.1
         version: link:../../packages/pa-resume-parser
       '@wekruit/shared-tags':
-        specifier: 0.1.0
+        specifier: 0.1.1
         version: link:../../packages/shared-tags
       csv-parse:
         specifier: ^5.5.6
@@ -207,7 +207,7 @@ importers:
         specifier: 0.0.1
         version: link:../../packages/pa-persistence
       '@wekruit/shared-tags':
-        specifier: 0.1.0
+        specifier: 0.1.1
         version: link:../../packages/shared-tags
       firebase-admin:
         specifier: ^13.0.0
@@ -376,7 +376,7 @@ importers:
   packages/core-types:
     dependencies:
       '@wekruit/shared-tags':
-        specifier: 0.1.0
+        specifier: 0.1.1
         version: link:../shared-tags
       zod:
         specifier: ^3.24.0
@@ -398,7 +398,7 @@ importers:
         specifier: 0.0.1
         version: link:../core-types
       '@wekruit/shared-tags':
-        specifier: 0.1.0
+        specifier: 0.1.1
         version: link:../shared-tags
       csv-parse:
         specifier: ^5.5.6
@@ -517,7 +517,7 @@ importers:
         specifier: ^0.30.1
         version: 0.30.1
       '@wekruit/shared-tags':
-        specifier: 0.1.0
+        specifier: 0.1.1
         version: link:../shared-tags
       openai:
         specifier: ^4.80.0
@@ -566,7 +566,7 @@ importers:
         specifier: 0.0.1
         version: link:../pa-safety
       '@wekruit/shared-tags':
-        specifier: 0.1.0
+        specifier: 0.1.1
         version: link:../shared-tags
       firebase-admin:
         specifier: ^13.0.0
@@ -616,7 +616,7 @@ importers:
         specifier: 0.0.1
         version: link:../memory
       '@wekruit/shared-tags':
-        specifier: 0.1.0
+        specifier: 0.1.1
         version: link:../shared-tags
       openai:
         specifier: ^4.80.0
