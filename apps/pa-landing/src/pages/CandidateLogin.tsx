@@ -307,15 +307,17 @@ export function CandidateShell({ children, hero = false }: { children: ReactNode
         <div className="wk-header__inner">
           <Link to="/" className="wk-header__brand" aria-label="WeKruit home">
             <WekruitLogo size={22} />
+            <span className="wk-header__brand-meta">Open</span>
           </Link>
           <nav className="wk-nav" aria-label="Candidate navigation">
             <Link to="/" className="wk-nav__link">Open interviews</Link>
-            <Link to="/market" className="wk-nav__link">Market</Link>
+            <Link to="/market" className="wk-nav__link">Open market</Link>
             <Link to="/me" className="wk-nav__link">Pipeline</Link>
             <Link to="/me/profile" className="wk-nav__link">Profile</Link>
           </nav>
           <div className="wk-header__cta">
-            <Link to="/login" className="wk-btn wk-btn--ghost wk-btn--sm">Sign in</Link>
+            <Link to="/login" className="wk-header__signin">Sign in</Link>
+            <Link to="/login" className="wk-btn wk-btn--ink wk-btn--sm">Start with Claire</Link>
           </div>
         </div>
       </header>
@@ -537,7 +539,7 @@ export default function CandidateLogin() {
 
 const CANDIDATE_STYLES = `
 /* Fonts ----------------------------------------------------------------- */
-@import url('https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300..700;1,6..72,300..700&family=Hanken+Grotesk:wght@300..800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital,wght@0,400;1,400&family=Newsreader:ital,opsz,wght@0,6..72,300..700;1,6..72,300..700&family=Hanken+Grotesk:wght@300..800&display=swap');
 
 /* Tokens (scoped to .wk-shell so we don't leak into legacy candidate-* CSS) */
 .wk-shell {
@@ -625,23 +627,39 @@ const CANDIDATE_STYLES = `
   gap: 24px;
   padding: 14px 24px;
 }
-.wk-header__brand { text-decoration: none; display: inline-flex; align-items: center; }
-.wk-nav { display: flex; align-items: center; justify-content: center; gap: 6px; }
+.wk-header__brand { text-decoration: none; display: inline-flex; align-items: baseline; gap: 10px; }
+.wk-header__brand-meta {
+  display: inline-flex; align-items: baseline; gap: 10px;
+  font-family: 'Instrument Serif', 'Newsreader', 'Tiempos Headline', Georgia, serif;
+  font-style: italic; font-size: 18px;
+  color: var(--wk-peach-300); letter-spacing: -0.01em;
+}
+.wk-header__brand-meta::before {
+  content: "·"; color: var(--wk-ink-3); font-style: normal; font-size: 14px;
+}
+.wk-nav { display: flex; align-items: center; justify-content: center; gap: 28px; }
 .wk-nav__link {
-  display: inline-flex; align-items: center; height: 34px; padding: 0 12px;
-  border-radius: var(--wk-r-pill);
-  color: var(--wk-ink-2);
-  font-size: 14px;
+  display: inline-flex; align-items: center; height: 34px; padding: 0;
+  background: transparent;
+  color: var(--wk-ink-3);
+  font-size: 14.5px;
   font-weight: 500;
   letter-spacing: -0.005em;
   text-decoration: none;
-  transition: color 200ms var(--wk-ease), background 200ms var(--wk-ease);
+  white-space: nowrap;
+  transition: color 200ms var(--wk-ease);
 }
-.wk-nav__link:hover { color: var(--wk-ink); background: rgba(45,26,10,.05); }
+.wk-nav__link:hover { color: var(--wk-ink); background: transparent; }
 .wk-nav__link[aria-current="page"], .wk-nav__link.is-active {
-  color: var(--wk-ink); background: rgba(45,26,10,.07);
+  color: var(--wk-ink); font-weight: 600; background: transparent;
 }
-.wk-header__cta { justify-self: end; }
+.wk-header__cta { justify-self: end; display: inline-flex; align-items: center; gap: 18px; }
+.wk-header__signin {
+  color: var(--wk-ink-2); text-decoration: none;
+  font-size: 14.5px; font-weight: 500; white-space: nowrap;
+  transition: color 200ms var(--wk-ease);
+}
+.wk-header__signin:hover { color: var(--wk-ink); }
 .wk-main { flex: 1; }
 .wk-footer {
   margin-top: 80px;
