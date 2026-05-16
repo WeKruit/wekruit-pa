@@ -97,6 +97,30 @@ export type ResolveOpts = {
   emailCaptured?: boolean
 }
 
+export const LAYOFF_ONBOARDING_SOURCE = "WeKruit_Laid_Off"
+
+export type SourceAwareOnboardingContext = {
+  source?: string | null
+  displayName?: string | null
+  layoffContext?: {
+    lastCompany?: string | null
+    jobTitle?: string | null
+    location?: string | null
+  } | null
+}
+
+function firstNameFromDisplayName(displayName: string | null | undefined): string {
+  const first = displayName?.trim().split(/\s+/)[0]
+  return first && first.length > 0 ? first : "there"
+}
+
+export function renderLayoffOnboardingOpener(ctx: SourceAwareOnboardingContext): string {
+  const first = firstNameFromDisplayName(ctx.displayName)
+  const company = ctx.layoffContext?.lastCompany?.trim()
+  const situation = company ? `after the ${company} layoff` : "after a layoff"
+  return `Hi ${first}, Claire from WeKruit. I saw you signed up ${situation}. I can help map what you want next and keep track of roles that fit. What kind of role would you like to look for now?`
+}
+
 /**
  * Pure function: derive the next onboarding action from user state.
  * Called before every inbound turn; returns "skip" for active/complete users.
@@ -331,9 +355,14 @@ export function composeOnboardingInput(
      * assert the suspended branch directly with a synthetic step).
      */
     priorAskedStep?: OnboardingStep
+    sourceAware?: SourceAwareOnboardingContext
   } = {}
 ): string {
   if (step === "send_first_mes") {
+    if (ctx.sourceAware?.source === LAYOFF_ONBOARDING_SOURCE) {
+      const opener = renderLayoffOnboardingOpener(ctx.sourceAware)
+      return `[onboarding_step: send_first_mes_layoff | source=${LAYOFF_ONBOARDING_SOURCE}] Reply EXACTLY with this layoff-aware Claire first message: "${opener}". No emoji. No extra sentence.`
+    }
     const match = agent.systemPrompt.match(/[Ff]irst\s+message:\s*(.+?)(?:\n|$)/)
     // iter30 closure — bilingual fallback per user lang. Adam directive
     // 2026-05-04 ("这个柠檬哪里来的? 你没测试英文吗???"): the lemon emoji
