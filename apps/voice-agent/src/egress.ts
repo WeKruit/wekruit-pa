@@ -103,6 +103,9 @@ export async function startRecordingEgress(
     gcp: { bucket },
   }
 
+  if (!client) {
+    return { attempted: false, skipped: "no_credentials" }
+  }
   try {
     log("voice.egress.start", { roomName: args.roomName, bookingId: args.bookingId, filepath })
     const res = await client.startRoomCompositeEgress(args.roomName, output)
