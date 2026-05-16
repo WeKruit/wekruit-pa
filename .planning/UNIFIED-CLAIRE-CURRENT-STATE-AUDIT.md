@@ -435,6 +435,92 @@ Required fix boundary:
 - Job creation/import still appears split across enrichment approval, seeding scripts, and external-supply job surfaces. The old prescreen editor no longer creates jobs or toggles public visibility, but a single canonical job creation/import surface is not yet audited or unified.
 - Manual Apple Messages UI testing is still not fully repeated after the stress-runner fixes. The production Firestore prescreen matrix and Sendblue entrypoint matrix are verified with outbound SMS stubbed; one live signed deployed-webhook user-boundary canary and one allowlist-deny canary were verified.
 
+## 2026-05-16 Current Prescreen Runtime Gap And Fix
+
+Observed regression from live-like fragmented conversation:
+
+- Candidate gave technical evidence and later volunteered logistics such as New York hybrid, compensation range, and no sponsorship need.
+- The prescreen pipeline only scored the current question and lost early answers to future hard filters.
+- Result: Claire repeated already answered questions, especially location, and a fragmented but recoverable candidate could fail the stress run without terminal state.
+
+Code fix completed on branch `codex/unified-claire-session-evidence`:
+
+- `packages/pa-orchestrator/src/prescreen/pipeline.ts` now consumes positive early answers for future hard filters after the current question passes.
+- Only deterministic positive hard-filter signals are consumed: `location_alignment`, `compensation_alignment`, and `sponsorship_status`.
+- The pipeline now advances to the next unanswered question instead of blindly stepping to the next index, so consumed hard-filter questions are not re-asked.
+- `packages/pa-orchestrator/src/prescreen/__tests__/pipeline.test.ts` adds a regression test for early hard-filter answers carried forward in one turn.
+
+Node 24 regression evidence:
+
+- RED before fix: the new pipeline regression test returned `advance` instead of terminal `PASS`.
+- GREEN after fix: `PATH=/Users/adam/.nvm/versions/node/v24.3.0/bin:$PATH pnpm --filter @pa/pa-orchestrator test -- src/prescreen/__tests__/pipeline.test.ts` passed with `1507` tests, `0` failures.
+
+Completion status:
+
+- Production Firestore prescreen stress was re-run across strong pass, adjacent/probed recovery, fragmented multi-message recovery, weak hard-stop, user exit/pause, and new-trigger supersede scenarios.
+- `pa-users` count stayed stable and the run used the canonical real-candidate identity only.
+- Terminal/session/archive/memory/tag/candidate-job-state/employer-visible results were verified directly in Firestore.
+- Runtime safety gates were covered by targeted tests for privacy, abuse, guardian/security, rate limit, job matching, everyday catchup, active-session blocking, suppression/cooldown, and automated outbound send/do-not-send reasoning.
+- Changed functions were deployed as Node.js 24.
+
+## 2026-05-16 Prescreen Runtime Stress Verification
+
+Code fixes verified locally:
+
+- `packages/pa-orchestrator/src/prescreen/pipeline.ts` captures positive future hard-filter answers at the start of every turn, even while the current technical/role question is still probing.
+- `packages/pa-orchestrator/src/prescreen/pipeline.ts` still re-runs future hard-filter capture after the current question passes, then advances to the next unanswered question.
+- `apps/functions/src/prescreen-terminal-action.ts` now archives `PAUSE` sessions to `pa-prescreen-memory-events` without overwriting `pa-users.lastPrescreenMemoryUpdate`, `conversationDerivedPreferences.prescreenEvidenceByJob`, or tags.
+- `apps/functions/src/prescreen-terminal-action.ts` no longer derives positive skill tags from the job id or from low-score hard-stop/negative evidence.
+
+Node 24 verification:
+
+- `node --import tsx --test packages/pa-orchestrator/src/prescreen/__tests__/pipeline.test.ts apps/functions/src/prescreen-session-start.test.ts apps/functions/src/prescreen-turn-handler.test.ts apps/functions/src/prescreen-terminal-action.test.ts apps/functions/src/prescreen-outcome-service.test.ts apps/functions/src/coalesce/__tests__/paMessageCoalescer.test.ts` passed `79/79`.
+- `pnpm --filter @pa/pa-orchestrator typecheck` passed.
+- `pnpm --filter @pa/functions typecheck` passed.
+
+Production Firestore/live-equivalent stress:
+
+- Script: `apps/functions/scripts/prescreen-stress-firestore.ts`.
+- Artifact: `.planning/prescreen-stress/artifacts/stress-2026-05-16T06-47-06-635Z.json`.
+- Candidate: `pa-users/U7AwKT8nLDRa35DkuBxq`, email `indolencorlol@gmail.com`, phone `+14243201960`.
+- Job: `pa-jobs/rain-software-engineer-fullstack-8849f6ef`.
+- `pa-users` count stayed `602 -> 602`.
+- `failedScenarios = []`; `collectionFailures = []`.
+- `activeSessions` for the canonical user after the run: `[]`.
+
+Scenario results:
+
+- `strong_fullstack_pass`: `PASS`, session `ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260516T064707534Z`, 0 clarifies, terminal turn 5, candidate-job state `employer_visible`, employer-visible profile exists, memory event exists, work session `ended/terminal`.
+- `adjacent_probe_recovery`: `PASS`, session `ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260516T064721057Z`, 4 clarifies, terminal turn 9, candidate-job state `employer_visible`, employer-visible profile exists, memory event exists, work session `ended/terminal`.
+- `fragmented_multimessage_pass`: `PASS`, session `ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260516T064747565Z`, 0 clarifies, terminal turn 5, candidate-job state `employer_visible`, employer-visible profile exists, memory event exists, work session `ended/terminal`.
+- `weak_no_engineering_hard_stop`: `HARD_STOP`, session `ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260516T064759254Z`, 4 clarifies before stop, candidate-job state `not_passed`, no employer-visible profile, memory event exists, work session `ended/terminal`.
+- `user_exit_pause`: `PAUSE`, session `ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260516T064818120Z`, candidate-job state `paused`, no employer-visible profile, memory event exists, work session `ended/user_exit`.
+- `new_trigger_supersedes_active_prescreen`: first session `ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260516T064820184Z` ended with `PAUSE`, work session `ended/superseded`, superseded by `ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260516T064820575Z`.
+
+Direct Firestore memory/tag verification after the final stress run:
+
+- `pa-prescreen-memory-events` exists for all five scenario sessions.
+- The PAUSE event stores `summary = "stop"` only in its session memory event and does not overwrite `pa-users.lastPrescreenMemoryUpdate`.
+- `pa-users/U7AwKT8nLDRa35DkuBxq.lastPrescreenMemoryUpdate` points to the latest non-pause terminal session, `weak_no_engineering_hard_stop`, with `evidenceTags = ["job_prescreen"]`.
+- The weak hard-stop no longer writes false positive `software_engineering` or `fullstack_engineering` evidence tags from job id or negative statements.
+
+Broader runtime regression tests:
+
+- Safety/privacy/abuse/guardian/rate-limit:
+  - `node --import tsx --test apps/functions/src/sendblue/__tests__/webhook.test.ts packages/pa-orchestrator/src/allowlist.test.ts packages/pa-orchestrator/src/__tests__/safety-gate-integration.test.ts packages/pa-orchestrator/src/guardrails/__tests__/input.test.ts packages/pa-orchestrator/src/guardrails/__tests__/output.test.ts packages/pa-orchestrator/src/guardrails/__tests__/chain.test.ts` passed `75/75`.
+- Lifecycle/everyday catchup/automated outbound:
+  - `node --import tsx --test apps/functions/src/outreach/__tests__/service.test.ts apps/functions/src/outreach/__tests__/admin.test.ts apps/functions/src/__tests__/candidate-lifecycle-trigger.test.ts apps/functions/src/proactive-sweep.test.ts packages/pa-orchestrator/src/proactive-turn.test.ts` passed `31/31`.
+- Job matching/client-job conversation feedback/admin match debug:
+  - `node --import tsx --test apps/functions/src/job-rec/__tests__/recruiter-flow.test.ts apps/functions/src/job-rec/__tests__/match-feedback.test.ts apps/functions/src/job-rec/__tests__/policy.test.ts apps/functions/src/orchestrator-deps.test.ts apps/functions/src/__tests__/admin-match-debug.test.ts` passed `69/69`.
+
+Deploy verification:
+
+- `firebase deploy --only functions:pa-orchestrator:paSendblueWebhook,functions:pa-orchestrator:onPaInbound,functions:pa-orchestrator:paMessageCoalescer --project wekruit-5f89b` completed successfully.
+- Firebase predeploy full functions test suite passed `1558/1558`.
+- `gcloud functions describe paSendblueWebhook --gen2 --region=us-central1 --project=wekruit-5f89b` returned `state = ACTIVE`, `buildConfig.runtime = nodejs24`, `updateTime = 2026-05-16T06:53:49.781185045Z`.
+- `gcloud functions describe onPaInbound --gen2 --region=us-central1 --project=wekruit-5f89b` returned `state = ACTIVE`, `buildConfig.runtime = nodejs24`, `updateTime = 2026-05-16T06:53:47.909174235Z`.
+- `gcloud functions describe paMessageCoalescer --gen2 --region=us-central1 --project=wekruit-5f89b` returned `state = ACTIVE`, `buildConfig.runtime = nodejs24`, `updateTime = 2026-05-16T06:53:48.286404118Z`.
+
 ## 2026-05-16 Job Prescreen Editor Flow Consolidation
 
 - `apps/dashboard-web/src/pages/JobPrescreen.tsx` now reads `/admin/jobs/:jobId/prescreen` route params and opens the selected job directly.

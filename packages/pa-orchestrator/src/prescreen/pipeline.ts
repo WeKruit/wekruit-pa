@@ -172,6 +172,15 @@ export class PreScreenPipeline {
       )
     }
 
+    await this.consumeEarlyHardFilterAnswers({
+      state,
+      reply: input.reply,
+      lang: input.lang,
+      judgeCtx: input.judgeCtx,
+      nowIso: input.nowIso,
+      log,
+    })
+
     const qState = state.questions[state.currentQId]
     const priorEvidenceReplies = normalizeEvidenceReplies(qState.evidenceReplies)
     const scoringReply = composeQuestionEvidenceReply(priorEvidenceReplies, input.reply)
@@ -337,6 +346,14 @@ export class PreScreenPipeline {
     qState.finalC = c
     qState.answeredAt = input.nowIso
     state.score += s * qState.weight
+    await this.consumeEarlyHardFilterAnswers({
+      state,
+      reply: input.reply,
+      lang: input.lang,
+      judgeCtx: input.judgeCtx,
+      nowIso: input.nowIso,
+      log,
+    })
 
     // ── Viability Check ──────────────────────────────────────────────────────
     // Skip viability on the LAST Q — once R_max=0, "S < T·S_max" is just the
@@ -366,9 +383,8 @@ export class PreScreenPipeline {
     }
 
     // ── Advance to next Q OR Final Decision ─────────────────────────────────
-    const nextIdx = state.qOrder.indexOf(state.currentQId) + 1
-    if (nextIdx < state.qOrder.length) {
-      const nextQId = state.qOrder[nextIdx]
+    const nextQId = findNextUnansweredQId(state, state.currentQId)
+    if (nextQId) {
       const fromQId = state.currentQId
       state.currentQId = nextQId
       state.updatedAt = input.nowIso
@@ -381,6 +397,64 @@ export class PreScreenPipeline {
     }
 
     return await this.transitionFinal(state, input.nowIso, input.lang, log)
+  }
+
+  private async consumeEarlyHardFilterAnswers(args: {
+    state: PreScreenState
+    reply: string
+    lang: Lang
+    judgeCtx: JudgeCtx
+    nowIso: string
+    log: (event: string, payload: Record<string, unknown>) => void
+  }): Promise<number> {
+    const currentIdx = args.state.currentQId ? args.state.qOrder.indexOf(args.state.currentQId) : -1
+    if (currentIdx < 0) return 0
+
+    let consumed = 0
+    for (let idx = currentIdx + 1; idx < args.state.qOrder.length; idx += 1) {
+      const qId = args.state.qOrder[idx]
+      if (!isHardFilterQId(qId)) continue
+      const qState = args.state.questions[qId]
+      const question = this.opts.questions[qId]
+      if (!qState || !question || qState.answeredAt) continue
+
+      const signal = extractPositiveHardFilterSignal(qId, args.reply)
+      if (!signal) continue
+
+      const priorEvidenceReplies = normalizeEvidenceReplies(qState.evidenceReplies)
+      const scoringReply = composeQuestionEvidenceReply(priorEvidenceReplies, signal)
+      const rawScored = await question.judge.judgeScored(scoringReply, args.lang, args.judgeCtx)
+      const scored = applyHardFilterScoreOverride(qId, scoringReply, rawScored)
+      const merged = mergeScored(qState.scored, scored)
+      const s = merged.aggregate.s
+      const c = merged.aggregate.c
+      const matchThreshold = qState.matchThreshold ?? defaultMatchThresholdForType(qState.type)
+      if (s < matchThreshold || c < args.state.confidenceThreshold) {
+        args.log("prescreen.pipeline.early_hard_filter_signal_unconfirmed", {
+          sessionId: args.state.sessionId,
+          qId,
+          s,
+          c,
+          matchThreshold,
+        })
+        continue
+      }
+
+      qState.scored = merged
+      qState.evidenceReplies = appendEvidenceReply(priorEvidenceReplies, signal)
+      qState.finalS = s
+      qState.finalC = c
+      qState.answeredAt = args.nowIso
+      args.state.score += s * qState.weight
+      args.log("prescreen.pipeline.early_hard_filter_answer_consumed", {
+        sessionId: args.state.sessionId,
+        qId,
+        s,
+        c,
+      })
+      consumed += 1
+    }
+    return consumed
   }
 
   /**
@@ -584,6 +658,61 @@ function composeQuestionEvidenceReply(priorReplies: string[], latestReply: strin
     chunks.push(chunk)
   }
   return chunks.join("\n")
+}
+
+function findNextUnansweredQId(state: PreScreenState, currentQId: string | null): string | null {
+  const currentIdx = currentQId ? state.qOrder.indexOf(currentQId) : -1
+  const startIdx = currentIdx >= 0 ? currentIdx + 1 : 0
+  for (let idx = startIdx; idx < state.qOrder.length; idx += 1) {
+    const qId = state.qOrder[idx]
+    if (!state.questions[qId]?.answeredAt) return qId
+  }
+  return null
+}
+
+function extractPositiveHardFilterSignal(qId: string, reply: string): string | null {
+  const text = reply.trim()
+  if (!text) return null
+  const sentences = splitSignalSentences(text)
+  const matcher = positiveHardFilterMatcher(qId)
+  if (!matcher) return null
+  const picked = sentences.filter((sentence) => matcher(sentence.toLowerCase()))
+  if (picked.length === 0) return null
+  return picked.join(" ").slice(0, MAX_EVIDENCE_REPLY_CHARS)
+}
+
+function splitSignalSentences(text: string): string[] {
+  const normalized = text.replace(/\s+/g, " ").trim()
+  if (!normalized) return []
+  const parts = normalized
+    .split(/(?<=[.!?。！？])\s+|[\n\r]+/g)
+    .map((part) => part.trim())
+    .filter(Boolean)
+  return parts.length > 0 ? parts : [normalized]
+}
+
+function positiveHardFilterMatcher(qId: string): ((text: string) => boolean) | null {
+  if (qId === "location_alignment") {
+    return (text) =>
+      /\b(new york|nyc|listed location|location|hybrid|onsite|in office|remote setup|remote-flexible)\b/.test(text) &&
+      /\b(works?|workable|fine|aligned|ok|okay|yes|can|able|willing|open to|available)\b/.test(text) &&
+      !/\b(can'?t|cannot|unable|not able|won't|would not|only remote|remote only|different city|not workable|not aligned)\b/.test(text)
+  }
+  if (qId === "compensation_alignment") {
+    return (text) =>
+      /(?:\$?\d{2,3}\s?k|\bcomp(?:ensation)?\b|\bsalary\b|\brange\b)/.test(text) &&
+      /\b(works?|workable|fine|aligned|ok|okay|yes|within|open to)\b/.test(text) &&
+      !/\b(too low|below|need higher|would need more|not workable|not aligned)\b/.test(text)
+  }
+  if (qId === "sponsorship_status") {
+    return (text) =>
+      (
+        /\b(do not|don't|dont|no)\b[\s\S]{0,60}\b(need|require)\b[\s\S]{0,80}\b(visa sponsorship|sponsorship|sponsor)\b/.test(text) ||
+        /\b(visa sponsorship|sponsorship|sponsor)\b[\s\S]{0,80}\b(not needed|not required|unneeded)\b/.test(text) ||
+        /\b(us citizen|u\.s\. citizen|green card|permanent resident|work authorized|authorized to work)\b/.test(text)
+      )
+  }
+  return null
 }
 
 function applyHardFilterScoreOverride(

@@ -194,6 +194,50 @@ describe("runPrescreenTerminalAction — HARD_STOP branch (v1.9 hotfix)", () => 
     assert.equal(jobRecsCalled, true)
     assert.ok(updates.some((u) => "terminalActionFiredAt" in u.data))
   })
+
+  it("does not derive positive skill tags from a low-score hard-stop or job id", async () => {
+    const docs = setupSession({
+      sessionId: "s4b",
+      jobId: "rain-software-engineer-fullstack-8849f6ef",
+      prescreenConfig: { jobTitle: "Software Engineer - Fullstack" },
+    })
+    docs.set("pa-prescreen-sessions/s4b", {
+      exists: true,
+      data: {
+        questions: {
+          role_fit: {
+            finalS: 0.05,
+            finalC: 0.9,
+            scored: {
+              aggregate: {
+                summary: "Candidate reports no software engineering; only support and spreadsheets.",
+              },
+            },
+          },
+        },
+      },
+    })
+    docs.set("pa-users/u", { exists: true, data: { tags: { proposedTags: [] } } })
+    const { db, updates } = makeFakeDb(docs)
+    await runPrescreenTerminalAction({
+      db,
+      sessionId: "s4b",
+      terminal: "HARD_STOP",
+      userId: "u",
+      jobId: "rain-software-engineer-fullstack-8849f6ef",
+      toE164: "+1",
+      lang: "en",
+      markOutcome: noopMarkOutcome,
+      sendSms: async () => undefined,
+      startPii: async () => ({ ok: true, skipped: false }),
+      generateJobRecs: async () => ({ ok: true, jobCount: 0 }),
+    })
+
+    const userUpdate = updates.find((u) => u.path === "pa-users/u" && "lastPrescreenMemoryUpdate" in u.data)
+    assert.ok(userUpdate)
+    const memory = userUpdate.data.lastPrescreenMemoryUpdate as { evidenceTags: string[] }
+    assert.deepEqual(memory.evidenceTags, ["job_prescreen"])
+  })
 })
 
 describe("runPrescreenTerminalAction — PAUSE branch", () => {
@@ -226,6 +270,53 @@ describe("runPrescreenTerminalAction — PAUSE branch", () => {
     assert.equal(piiCaptures.length, 0)
     assert.equal(jobRecsCalled, false)
     assert.ok(updates.some((u) => "pausedAt" in u.data))
+  })
+
+  it("archives PAUSE memory event without overwriting long-term profile evidence or tags", async () => {
+    const docs = setupSession({
+      sessionId: "s5b",
+      jobId: "j5b",
+      prescreenConfig: { jobTitle: "X" },
+    })
+    docs.set("pa-prescreen-sessions/s5b", {
+      exists: true,
+      data: {
+        questions: {},
+      },
+    })
+    docs.set("pa-users/u", {
+      exists: true,
+      data: {
+        lastPrescreenMemoryUpdate: {
+          terminal: "PASS",
+          summary: "Strong React and SQL evidence.",
+          sessionId: "older-pass-session",
+        },
+        tags: { proposedTags: ["existing_signal"] },
+      },
+    })
+    const { db, updates, docs: writtenDocs } = makeFakeDb(docs)
+    await runPrescreenTerminalAction({
+      db,
+      sessionId: "s5b",
+      terminal: "PAUSE",
+      userId: "u",
+      jobId: "j5b",
+      toE164: "+1",
+      lang: "en",
+      markOutcome: noopMarkOutcome,
+      sendSms: async () => undefined,
+      startPii: fakePiiStart([]),
+      generateJobRecs: async () => ({ ok: true, jobCount: 0 }),
+      now: () => new Date("2026-05-12T10:00:00Z"),
+    })
+
+    assert.ok(writtenDocs.get("pa-prescreen-memory-events/s5b")?.exists)
+    assert.equal(
+      updates.some((u) => u.path === "pa-users/u" && "lastPrescreenMemoryUpdate" in u.data),
+      false,
+    )
+    assert.equal(updates.some((u) => u.path === "pa-users/u" && "tags" in u.data), false)
   })
 })
 

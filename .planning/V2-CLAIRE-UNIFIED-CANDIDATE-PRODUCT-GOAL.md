@@ -8,6 +8,29 @@ Short command:
 /goal Execute .planning/V2-CLAIRE-UNIFIED-CANDIDATE-PRODUCT-GOAL.md. Build Claire as one unified candidate product across candidate.wekruit.com, job prescreen, layoff.wekruit.com, external supply, matching, tagging, scoring, dashboard visibility, and controlled outbound. Multiple front doors, one pa-users profile/evidence/tagging/scoring system. Use Node 24, verify with Firestore + dashboard + live/live-equivalent flows, deploy and merge to main.
 ```
 
+## 2026-05-16 Added Scope: Production-Ready Claire Runtime
+
+This goal now includes production readiness for the actual Claire agent runtime, not only candidate web pages or dashboard state.
+
+Test four core prescreen situations with the real production Firestore shape and Sendblue/live-equivalent routing:
+
+1. Strong aligned candidate: should pass after concise but real probing, write terminal session state, memory event, candidate-job state, employer-visible profile, global reusable evidence, tags, and dashboard-visible reasons.
+2. Adjacent or fragmented candidate: should probe like a friend, accept multi-message answers, carry early answers for location/comp/visa forward, avoid repeated questions, and recover to pass when evidence becomes strong enough.
+3. Weak or clearly unqualified candidate: should probe several times before stopping, then hard-stop gracefully, keep the candidate in the global pool, write memory/tag evidence, and not create an employer-visible profile.
+4. Runtime safety and off-path conversation: privacy-sensitive, abusive, security/guardian, rate-limit, job-matching, client/job-question, everyday catchup, and automated outbound cases must route safely with explicit send/do-not-send reasons, suppression/cooldown, and no unauthorized disclosure or outbound.
+
+Acceptance for every scenario:
+
+- Use Node 24 for commands, tests, and deploys.
+- Use canonical candidate identity for user-wise tests: `pa-users/U7AwKT8nLDRa35DkuBxq`, email `indolencorlol@gmail.com`, phone `+14243201960`.
+- Treat `+13054507715` as the only active Claire/Sendblue sender number for this environment.
+- Assert `pa-users` count does not grow unless the test explicitly covers a controlled import/create path with cleanup approval.
+- Verify Firestore directly, not dashboard-only: `pa-prescreen-sessions`, linked turns, work session boundary, `pa-prescreen-memory-events`, `pa-candidate-job-states`, `pa-employer-visible-profiles`, `pa-users` evidence/tag fields, outbound/suppression/rate-limit docs.
+- Verify long-term memory and short-term session memory are separated: new prescreen trigger supersedes or ends the old active session; ended sessions do not catch future replies; terminal sessions update reusable profile memory.
+- Verify tagging and profile document updates: global reusable tags/evidence are written without overwriting stronger resume/profile facts, and job-specific evidence stays scoped by job id.
+- Verify production safety gates: privacy, abuse, security/guardian, rate limit, opt-out/suppression, outbound cooldown, active-session blocking, and explainable job-matching decision.
+- Include exact session ids, job ids, candidate id, state doc ids, memory event ids, tag/evidence fields, and dashboard routes in the final report.
+
 ## Core Product Principle
 
 WeKruit has multiple front doors, not multiple candidate products.
