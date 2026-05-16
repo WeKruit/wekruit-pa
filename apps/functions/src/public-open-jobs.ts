@@ -25,7 +25,7 @@
  * NOT auth'd — public candidate surface. Returns only sanitized fields.
  */
 import { onRequest } from "firebase-functions/v2/https"
-import { getFirestore, FieldPath, Timestamp, type Query } from "firebase-admin/firestore"
+import { getFirestore, Timestamp, type Query } from "firebase-admin/firestore"
 import { getApps, initializeApp } from "firebase-admin/app"
 
 if (!getApps().length) initializeApp()
@@ -238,11 +238,15 @@ export async function runOpenJobs(params: QueryParams, deps: RunDeps = {}): Prom
   // matches; ceiling at 800 to keep p95 under the 30s timeout.
   const SCAN_CAP = Math.min(800, Math.max(300, params.limit * 6))
 
-  let q: Query = db.collection("matching-jobs").where("status", "==", "active")
-  // Prefer ordering by firstSeenAt desc so we hit fresh jobs first; but
-  // existing data has both Timestamp and string variants. Use __name__
-  // when orderBy on firstSeenAt isn't safe; we sort in memory after.
-  q = q.orderBy(FieldPath.documentId()).limit(SCAN_CAP)
+  // Match v16 queryMatchingJobs (apps/job-rec/.../query-matching-jobs-v16.ts):
+  // orderBy firstSeenAt desc so the scan window is the freshest set —
+  // not a random doc-id slice. Composite index already exists for this
+  // pattern (status==active + firstSeenAt desc).
+  const q: Query = db
+    .collection("matching-jobs")
+    .where("status", "==", "active")
+    .orderBy("firstSeenAt", "desc")
+    .limit(SCAN_CAP)
 
   const snap = await q.get()
   const rows: OpenJobRow[] = []
