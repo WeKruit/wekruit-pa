@@ -88,9 +88,20 @@ export async function runCli(opts: RunCliOpts = {}): Promise<number> {
   }
 
   // Lazy-load the LiveKit-bound worker so `--help` is fast + crash-free.
+  // After startWorker() defines the agent, register with LK Cloud via
+  // `cli.runApp(new WorkerOptions(...))` so the process accepts dispatched
+  // jobs (L12 — managed agent hosting). Tests inject `opts.startWorker`
+  // to short-circuit before the network-bound runApp call.
   const start = opts.startWorker ?? (async () => {
     const { startWorker } = await import("./worker.js")
     await startWorker()
+    const { cli: lkCli, WorkerOptions } = await import("@livekit/agents")
+    const { fileURLToPath } = await import("node:url")
+    lkCli.runApp(
+      new WorkerOptions({
+        agent: fileURLToPath(new URL("./worker.js", import.meta.url)),
+      }),
+    )
   })
   await start()
   return 0

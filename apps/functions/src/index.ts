@@ -220,6 +220,18 @@ export { paAtsInboundWebhook } from "./ats-inbound-webhook.js"
 //   LiveKit room webhooks. Idempotent reconciliation against the
 //   `outbound-bookings/{id}` state machine (Locks L9 + L10).
 export { paVoiceDialOutbound, paVoiceSipWebhook } from "./voice/index.js"
+
+// v2.2 — Voice-side HTTP callable CFs (shared-brain prescreen).
+//   `paVoiceCallContext`   — assembles VoiceCallContext from S1B loaders.
+//   `paVoicePrescreenTurn` — runs the channel-agnostic runPrescreenTurn for
+//                            one voice turn. Same orchestrator brain as the
+//                            SMS handler (prescreen-deps.ts).
+// Auth: bearer header `X-Wekruit-Voice-CF-Secret` = PA_VOICE_CF_SECRET.
+export {
+  paVoiceCallContext,
+  paVoicePrescreenTurn,
+} from "./voice/voice-prescreen-callable.js"
+
 // v1.9 hotfix (2026-05-12 live test STOP) — public /j/:jobId CV upload backend.
 // Frontend (PublicJobCv.tsx) POSTs base64 to this endpoint. ATS inbound
 // webhook (paAtsInboundWebhook) also targets this via PA_CV_INGEST_URL env.
