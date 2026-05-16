@@ -349,6 +349,77 @@ async function writePrescreenMemoryUpdate(args: {
   }
 }
 
+async function endMatchingUserPrescreenWorkSession(args: {
+  db: Firestore
+  sessionId: string
+  userId: string
+  jobId: string
+  terminal: PrescreenTerminalKind
+  occurredAt: string
+  sessionWorkSession: unknown
+  log: NonNullable<RunPrescreenTerminalActionArgs["log"]>
+}): Promise<void> {
+  try {
+    const userRef = args.db.collection("pa-users").doc(args.userId)
+    const userSnap = await userRef.get()
+    const userData = userSnap.data() ?? {}
+    const current = userData.workSession && typeof userData.workSession === "object"
+      ? userData.workSession as Record<string, unknown>
+      : null
+    if (
+      current?.kind !== "job_prescreen" ||
+      current.status !== "active" ||
+      current.sessionId !== args.sessionId
+    ) {
+      args.log("prescreen.terminal_action.user_work_session_skip", {
+        sessionId: args.sessionId,
+        userId: args.userId,
+        currentKind: current?.kind ?? null,
+        currentStatus: current?.status ?? null,
+        currentSessionId: current?.sessionId ?? null,
+      })
+      return
+    }
+    const sessionWorkSession = args.sessionWorkSession && typeof args.sessionWorkSession === "object"
+      ? args.sessionWorkSession as Record<string, unknown>
+      : null
+    const boundary = args.terminal === "PAUSE"
+      ? typeof sessionWorkSession?.boundary === "string" && sessionWorkSession.boundary !== "trigger"
+        ? sessionWorkSession.boundary
+        : "user_exit"
+      : "terminal"
+    await userRef.set(
+      {
+        workSession: {
+          ...current,
+          kind: "job_prescreen",
+          status: "ended",
+          boundary,
+          endedAt: args.occurredAt,
+          sessionId: args.sessionId,
+          jobId: args.jobId,
+          terminal: args.terminal,
+        },
+        updatedAt: args.occurredAt,
+      },
+      { merge: true },
+    )
+    args.log("prescreen.terminal_action.user_work_session_ended", {
+      sessionId: args.sessionId,
+      userId: args.userId,
+      terminal: args.terminal,
+      boundary,
+    })
+  } catch (err) {
+    args.log("prescreen.terminal_action.user_work_session_end_failed", {
+      sessionId: args.sessionId,
+      userId: args.userId,
+      terminal: args.terminal,
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+}
+
 /**
  * Kick off PII confirm pipeline (1st Q emit) with onComplete hook wired to
  * generateJobRecs. Returns true if started successfully.
@@ -467,6 +538,16 @@ export async function runPrescreenTerminalAction(
     jobId: args.jobId,
     terminal: args.terminal,
     occurredAt: outcomeAt,
+    log,
+  })
+  await endMatchingUserPrescreenWorkSession({
+    db: args.db,
+    sessionId: args.sessionId,
+    userId: args.userId,
+    jobId: args.jobId,
+    terminal: args.terminal,
+    occurredAt: outcomeAt,
+    sessionWorkSession: sessData.workSession,
     log,
   })
 

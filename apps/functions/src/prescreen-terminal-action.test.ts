@@ -122,6 +122,108 @@ describe("runPrescreenTerminalAction — PASS branch (v1.9 hotfix)", () => {
     assert.ok(updates.some((u) => "terminalActionFiredAt" in u.data))
     assert.ok(audit.some((a) => a.kind === "prescreen.terminal_action"))
   })
+
+  it("ends the matching canonical user-level job_prescreen work session", async () => {
+    const docs = setupSession({
+      sessionId: "s1b",
+      jobId: "j1",
+      prescreenConfig: {
+        jobTitle: "Senior FE",
+        company: "Acme",
+      },
+    })
+    docs.set("pa-users/u1", {
+      exists: true,
+      data: {
+        workSession: {
+          kind: "job_prescreen",
+          status: "active",
+          boundary: "trigger",
+          startedAt: "2026-05-12T09:00:00.000Z",
+          sessionId: "s1b",
+          jobId: "j1",
+        },
+        tags: { proposedTags: [] },
+      },
+    })
+    const { db, docs: writtenDocs } = makeFakeDb(docs)
+
+    await runPrescreenTerminalAction({
+      db,
+      sessionId: "s1b",
+      terminal: "PASS",
+      userId: "u1",
+      jobId: "j1",
+      toE164: "+1",
+      lang: "en",
+      markOutcome: noopMarkOutcome,
+      sendSms: async () => undefined,
+      startPii: async () => ({ ok: true, skipped: false }),
+      generateJobRecs: async () => ({ ok: true, jobCount: 0 }),
+      now: () => new Date("2026-05-12T10:00:00.000Z"),
+    })
+
+    assert.deepEqual(writtenDocs.get("pa-users/u1")?.data.workSession, {
+      kind: "job_prescreen",
+      status: "ended",
+      boundary: "terminal",
+      startedAt: "2026-05-12T09:00:00.000Z",
+      endedAt: "2026-05-12T10:00:00.000Z",
+      sessionId: "s1b",
+      jobId: "j1",
+      terminal: "PASS",
+    })
+  })
+
+  it("does not end a newer user-level job_prescreen work session from an old terminal action", async () => {
+    const docs = setupSession({
+      sessionId: "old-session",
+      jobId: "j1",
+      prescreenConfig: {
+        jobTitle: "Senior FE",
+        company: "Acme",
+      },
+    })
+    docs.set("pa-users/u1", {
+      exists: true,
+      data: {
+        workSession: {
+          kind: "job_prescreen",
+          status: "active",
+          boundary: "trigger",
+          startedAt: "2026-05-12T09:30:00.000Z",
+          sessionId: "newer-session",
+          jobId: "j2",
+        },
+        tags: { proposedTags: [] },
+      },
+    })
+    const { db, docs: writtenDocs } = makeFakeDb(docs)
+
+    await runPrescreenTerminalAction({
+      db,
+      sessionId: "old-session",
+      terminal: "PASS",
+      userId: "u1",
+      jobId: "j1",
+      toE164: "+1",
+      lang: "en",
+      markOutcome: noopMarkOutcome,
+      sendSms: async () => undefined,
+      startPii: async () => ({ ok: true, skipped: false }),
+      generateJobRecs: async () => ({ ok: true, jobCount: 0 }),
+      now: () => new Date("2026-05-12T10:00:00.000Z"),
+    })
+
+    assert.deepEqual(writtenDocs.get("pa-users/u1")?.data.workSession, {
+      kind: "job_prescreen",
+      status: "active",
+      boundary: "trigger",
+      startedAt: "2026-05-12T09:30:00.000Z",
+      sessionId: "newer-session",
+      jobId: "j2",
+    })
+  })
 })
 
 describe("runPrescreenTerminalAction — FAIL branch (v1.9 hotfix)", () => {
@@ -273,6 +375,55 @@ describe("runPrescreenTerminalAction — PAUSE branch", () => {
     assert.equal(piiCaptures.length, 0)
     assert.equal(jobRecsCalled, false)
     assert.ok(updates.some((u) => "pausedAt" in u.data))
+  })
+
+  it("ends the matching canonical user-level job_prescreen work session on PAUSE", async () => {
+    const docs = setupSession({
+      sessionId: "s5c",
+      jobId: "j5",
+      prescreenConfig: { jobTitle: "X" },
+    })
+    docs.set("pa-users/u", {
+      exists: true,
+      data: {
+        workSession: {
+          kind: "job_prescreen",
+          status: "active",
+          boundary: "trigger",
+          startedAt: "2026-05-12T09:00:00.000Z",
+          sessionId: "s5c",
+          jobId: "j5",
+        },
+        tags: { proposedTags: [] },
+      },
+    })
+    const { db, docs: writtenDocs } = makeFakeDb(docs)
+
+    await runPrescreenTerminalAction({
+      db,
+      sessionId: "s5c",
+      terminal: "PAUSE",
+      userId: "u",
+      jobId: "j5",
+      toE164: "+1",
+      lang: "en",
+      markOutcome: noopMarkOutcome,
+      sendSms: async () => undefined,
+      startPii: fakePiiStart([]),
+      generateJobRecs: async () => ({ ok: true, jobCount: 0 }),
+      now: () => new Date("2026-05-12T10:00:00.000Z"),
+    })
+
+    assert.deepEqual(writtenDocs.get("pa-users/u")?.data.workSession, {
+      kind: "job_prescreen",
+      status: "ended",
+      boundary: "user_exit",
+      startedAt: "2026-05-12T09:00:00.000Z",
+      endedAt: "2026-05-12T10:00:00.000Z",
+      sessionId: "s5c",
+      jobId: "j5",
+      terminal: "PAUSE",
+    })
   })
 
   it("archives PAUSE memory event without overwriting long-term profile evidence or tags", async () => {
