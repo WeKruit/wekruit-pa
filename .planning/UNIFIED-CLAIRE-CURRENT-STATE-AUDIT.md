@@ -443,5 +443,5 @@ Required fix boundary:
 - Publishing, unpublishing, candidate page lifecycle, and `wekruitCollaborationStatus` remain owned by `/admin/jobs/:jobId`.
 - Node 24 verification:
   - `pnpm --filter @pa/dashboard-web typecheck` passed.
-  - `pnpm --filter @pa/dashboard-web test` passed 110/110.
+  - `pnpm --filter @pa/dashboard-web test` passed 111/111, including the prescreen-editor lifecycle boundary regression.
   - `PA_DASHBOARD_VITE_ENV_FILE=/Users/adam/Desktop/WeKruit/wekruit-pa/apps/dashboard-web/.env.production.local pnpm --filter @pa/dashboard-web build` passed.
