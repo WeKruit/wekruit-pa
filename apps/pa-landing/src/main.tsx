@@ -1,6 +1,7 @@
 import React from "react"
 import ReactDOM from "react-dom/client"
 import { BrowserRouter, Routes, Route } from "react-router-dom"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import Landing from "./pages/Landing.js"
 import LayoffLanding from "./pages/LayoffLanding.js"
 import Legal from "./pages/Legal.js"
@@ -24,23 +25,41 @@ const host = typeof window !== "undefined" ? window.location.hostname.toLowerCas
 const IS_LAYOFF_HOST = host.startsWith("layoff.") || host === "layoff-wekruit.web.app"
 const HomeLanding = IS_LAYOFF_HOST ? LayoffLanding : Landing
 
+// Adam directive 2026-05-16: "tanstack / cache / paginated job load". Single
+// shared QueryClient — 5 min staleTime means revisits to /open and /market
+// paint instantly from cache; 10 min gcTime keeps freed entries around for
+// back/forward navigation. Disable refetchOnWindowFocus to avoid burning a
+// Firestore read every time the user tabs back.
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 5 * 60 * 1000,
+      gcTime: 10 * 60 * 1000,
+      refetchOnWindowFocus: false,
+      retry: 1,
+    },
+  },
+})
+
 ReactDOM.createRoot(root).render(
   <React.StrictMode>
-    <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<HomeLanding />} />
-        <Route path="/legal" element={<Legal />} />
-        <Route path="/login" element={<CandidateLogin />} />
-        <Route path="/me" element={<CandidateMe />} />
-        <Route path="/me/matches" element={<CandidateMatches />} />
-        <Route path="/me/profile" element={<CandidateProfile />} />
-        <Route path="/market" element={<Market />} />
-        <Route path="/jobs" element={<Market />} />
-        <Route path="/j/:jobId" element={<PublicJob />} />
-        <Route path="/j/:jobId/cv" element={<PublicJobCv />} />
-        <Route path="/open" element={<OpenJobs />} />
-        <Route path="*" element={<HomeLanding />} />
-      </Routes>
-    </BrowserRouter>
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/" element={<HomeLanding />} />
+          <Route path="/legal" element={<Legal />} />
+          <Route path="/login" element={<CandidateLogin />} />
+          <Route path="/me" element={<CandidateMe />} />
+          <Route path="/me/matches" element={<CandidateMatches />} />
+          <Route path="/me/profile" element={<CandidateProfile />} />
+          <Route path="/market" element={<Market />} />
+          <Route path="/jobs" element={<Market />} />
+          <Route path="/j/:jobId" element={<PublicJob />} />
+          <Route path="/j/:jobId/cv" element={<PublicJobCv />} />
+          <Route path="/open" element={<OpenJobs />} />
+          <Route path="*" element={<HomeLanding />} />
+        </Routes>
+      </BrowserRouter>
+    </QueryClientProvider>
   </React.StrictMode>
 )

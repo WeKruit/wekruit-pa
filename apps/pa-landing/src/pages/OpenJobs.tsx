@@ -20,11 +20,12 @@
  * Filters/search/layout-switcher all preserve the design contract.
  * No edit-mode "Tweaks" panel — that was a prototype-only artifact.
  */
-import { useEffect, useMemo, useState } from "react"
+import { useMemo, useState, useEffect } from "react"
 import { Link } from "react-router-dom"
+import { useQuery } from "@tanstack/react-query"
 import "../styles/wekruit-tokens.css"
 import { listPublicJobOpenings, type PublicJobOpening } from "../lib/public-jobs.js"
-import { fetchOpenJobs, humanizeToken, type OpenJobRow } from "../lib/open-jobs.js"
+import { useOpenJobs, humanizeToken, type OpenJobRow } from "../lib/open-jobs.js"
 
 // ----------------------------------------------------------------- types --
 
@@ -234,38 +235,34 @@ export default function OpenJobs() {
   const [search, setSearch] = useState("")
   const [layout, setLayout] = useState<LayoutId>("table")
 
-  const [huntJobs, setHuntJobs] = useState<UnifiedJob[] | null>(null)
-  const [directJobs, setDirectJobs] = useState<UnifiedJob[] | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  // Adam directive 2026-05-16 — TanStack Query replaces the old sessionStorage
+  // cache. Both tabs read through the shared QueryClient so a tab flip is a
+  // zero-network repaint when both queries are already warm.
+  const huntQuery = useOpenJobs({ limit: 80, freshDays: 45 })
+  const directQuery = useQuery({
+    queryKey: ["pa-jobs-public-openings", 24],
+    queryFn: () => listPublicJobOpenings(24),
+  })
+  const error =
+    huntQuery.isError ? (huntQuery.error instanceof Error ? huntQuery.error.message : String(huntQuery.error)) : null
 
-  // Load both tabs in parallel on mount. Filters apply client-side over the
-  // bounded result set so the sidebar feels instant.
-  useEffect(() => {
-    let cancelled = false
-    setError(null)
-    void Promise.allSettled([
-      fetchOpenJobs({ limit: 80, freshDays: 45 }),
-      listPublicJobOpenings(24),
-    ]).then(([huntRes, directRes]) => {
-      if (cancelled) return
-      if (huntRes.status === "fulfilled") {
-        setHuntJobs(huntRes.value.map((r, i) => fromOpenJobRow(r, i)))
-      } else {
-        setError(huntRes.reason instanceof Error ? huntRes.reason.message : String(huntRes.reason))
-        setHuntJobs([])
-      }
-      if (directRes.status === "fulfilled") {
-        setDirectJobs(directRes.value.map((j, i) => fromPublicOpening(j, i)))
-      } else {
-        setDirectJobs([])
-      }
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [])
+  const huntJobs = useMemo<UnifiedJob[] | null>(
+    () => (huntQuery.data ? huntQuery.data.map((r, i) => fromOpenJobRow(r, i)) : null),
+    [huntQuery.data]
+  )
+  const directJobs = useMemo<UnifiedJob[] | null>(
+    () => (directQuery.data ? directQuery.data.map((j, i) => fromPublicOpening(j, i)) : null),
+    [directQuery.data]
+  )
 
   const allForTab = tab === "hunt" ? huntJobs : directJobs
+
+  // Reveal-on-demand pagination — start at 24 visible, +24 per click. Resets
+  // when the user switches tabs or changes a filter so the new tab/filter
+  // isn't pre-scrolled past the top.
+  const PAGE_SIZE = 24
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
+  useEffect(() => { setVisibleCount(PAGE_SIZE) }, [tab, filters, search])
 
   const filtered = useMemo(() => {
     if (!allForTab) return null
@@ -329,11 +326,24 @@ export default function OpenJobs() {
               ) : filtered.length === 0 ? (
                 <EmptyState onReset={() => { setFilters(EMPTY_FILTERS); setSearch("") }} />
               ) : (
-                <List jobs={filtered} tab={tab} layout={layout} />
+                <>
+                  <List jobs={filtered.slice(0, visibleCount)} tab={tab} layout={layout} />
+                  {visibleCount < filtered.length && (
+                    <div style={{ marginTop: 24, display: "flex", justifyContent: "center" }}>
+                      <button
+                        type="button"
+                        className="btn btn--secondary"
+                        onClick={() => setVisibleCount((n) => Math.min(n + PAGE_SIZE, filtered.length))}
+                      >
+                        Show {Math.min(PAGE_SIZE, filtered.length - visibleCount)} more · {filtered.length - visibleCount} left
+                      </button>
+                    </div>
+                  )}
+                </>
               )}
               <div style={{ marginTop: 24, paddingTop: 20, borderTop: "1px solid var(--border)", display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
                 <span className="caption" style={{ color: "var(--ink-3)" }}>
-                  Showing {filtered?.length ?? 0} of {totalForTab} · {tab === "hunt" ? "scraped roles we found in the wild" : "companies in active collab"}
+                  Showing {Math.min(visibleCount, filtered?.length ?? 0)} of {filtered?.length ?? 0} matching · {totalForTab} total {tab === "hunt" ? "scraped roles" : "collab companies"}
                 </span>
                 <span className="caption" style={{ color: "var(--ink-3)" }}>
                   {tab === "hunt" ? "Refreshed nightly by the WeKruit pipeline." : "Refreshed by the hiring team daily."}
@@ -734,15 +744,17 @@ function RowCta({ j, tab }: { j: UnifiedJob; tab: TabId }) {
     }
     return <Link to="/" className="btn btn--secondary btn--sm">Apply via WeKruit</Link>
   }
-  // Hunt tab — apply directly to the source ATS.
+  // Adam directive 2026-05-16 — matching-jobs are scraped, not collab; the
+  // candidate clicks straight through to the source ATS. No "Pitch me"
+  // queue, no Tuesday batch — that copy was design-prototype residue.
   if (j.apply) {
     return (
-      <a className="btn btn--secondary btn--sm" href={j.apply} target="_blank" rel="noopener noreferrer">
-        Open posting ↗
+      <a className="btn btn--primary btn--sm" href={j.apply} target="_blank" rel="noopener noreferrer">
+        Open job ↗
       </a>
     )
   }
-  return <Link to="/" className="btn btn--primary btn--sm">Pitch me →</Link>
+  return <span className="caption" style={{ color: "var(--ink-3)" }}>No apply link</span>
 }
 
 function StatusPill({ j, tab }: { j: UnifiedJob; tab: TabId }) {
@@ -754,12 +766,16 @@ function StatusPill({ j, tab }: { j: UnifiedJob; tab: TabId }) {
       </span>
     )
   }
-  const s = j.pitchStatus ?? "queued"
-  return (
-    <span style={{ fontSize: 11, fontFamily: "var(--font-mono)", textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--ink-3)" }}>
-      {s === "replied" ? "● Replied · talking now" : s === "pitched" ? "● Pitched · awaiting reply" : "○ Queued for Tuesday"}
-    </span>
-  )
+  // Hunt tab — pill mirrors the row's apply state, no longer the
+  // "Pitched / Queued" outbound pipeline copy.
+  if (j.source) {
+    return (
+      <span style={{ fontSize: 11, fontFamily: "var(--font-mono)", textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--ink-3)" }}>
+        ● via {j.source}
+      </span>
+    )
+  }
+  return null
 }
 
 function CompanyTile({ name }: { name: string }) {

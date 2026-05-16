@@ -1,13 +1,26 @@
 /**
  * Client wrapper for the `paPublicOpenJobs` HTTP CF.
  *
- * Reads from `VITE_OPEN_JOBS_URL` (set by `scripts/inject-pa-landing-vite-env.mjs`
- * + apps/pa-landing/.env.production.local). Falls back to the canonical
- * us-central1 deployment URL so the page still works locally without env.
+ * Adam directive 2026-05-16 — switched from a homegrown sessionStorage
+ * stale-while-revalidate cache to TanStack Query. The QueryClient lives
+ * at the root of pa-landing (`main.tsx`) with staleTime=5min + gcTime=10min,
+ * which gives us:
+ *   - dedup of concurrent identical requests (Tabs flipping between
+ *     "Direct line" and "Hunting list" no longer double-fetch)
+ *   - instant repaint on revisit during the same session
+ *   - first-class refetch / invalidation primitives we can call from
+ *     other surfaces (e.g. when a candidate marks "Apply" we can bump
+ *     the queryClient cache without rerunning the CF)
+ *   - automatic garbage collection when no component is observing
  *
- * Shape mirrors the server projection. Keep this type the single source of
- * truth for the WeKruit Open page table/cards renderer.
+ * Pagination is client-side reveal-on-demand: the CF returns up to 200
+ * rows in one network round-trip (already cached by `loadSnapshot` +
+ * CDN s-maxage=300); `useOpenJobsPage` slices that down to a windowed
+ * view so the page paints fast and "Load more" is instant.
  */
+
+import { useMemo, useState } from "react"
+import { useQuery, type UseQueryResult } from "@tanstack/react-query"
 
 const FALLBACK_URL = "https://us-central1-wekruit-5f89b.cloudfunctions.net/paPublicOpenJobs"
 
@@ -40,6 +53,7 @@ export interface OpenJobsResponse {
   ok: boolean
   count: number
   scanned: number
+  cached?: boolean
   rows: OpenJobRow[]
   reason?: string
 }
@@ -66,69 +80,8 @@ function buildQuery(f: OpenJobsFilters): string {
   return p.toString()
 }
 
-// ---- sessionStorage stale-while-revalidate cache ------------------------
-//
-// Adam directive 2026-05-16 — "caching要做好, 不然每个用户过来打开都要重新read".
-// Bookend the CF-side snapshot cache + CDN s-maxage with a client cache so
-// repeat /open or /market visits within a single session paint instantly
-// and we only re-hit the CF when the cached payload is older than 5 min.
-//
-// Strategy: sessionStorage keyed by the full query URL. Each entry stores
-// {rows, fetchedAt}. On read:
-//   - <5 min stale: return cached rows immediately and skip the network
-//   - 5-30 min stale: return cached rows AND kick off a background refresh
-//                     (stale-while-revalidate so a slow CF cold-start never
-//                     blocks the user)
-//   - >30 min stale: ignore the cache, await a fresh fetch
-//
-// Set window.__WEKRUIT_DISABLE_OPEN_CACHE = true to force-bypass during QA.
-
-const CACHE_TTL_MS = 5 * 60 * 1000
-const SWR_TTL_MS = 30 * 60 * 1000
-
-interface CacheEntry {
-  rows: OpenJobRow[]
-  fetchedAt: number
-}
-
-function getStorage(): Storage | null {
-  try {
-    if (typeof window === "undefined") return null
-    return window.sessionStorage
-  } catch {
-    return null
-  }
-}
-
-function cacheKey(url: string): string {
-  return `wkr.open-jobs.v1:${url}`
-}
-
-function readCache(url: string): CacheEntry | null {
-  const store = getStorage()
-  if (!store) return null
-  try {
-    const raw = store.getItem(cacheKey(url))
-    if (!raw) return null
-    const parsed = JSON.parse(raw) as Partial<CacheEntry>
-    if (!parsed.rows || typeof parsed.fetchedAt !== "number") return null
-    return { rows: parsed.rows, fetchedAt: parsed.fetchedAt }
-  } catch {
-    return null
-  }
-}
-
-function writeCache(url: string, entry: CacheEntry): void {
-  const store = getStorage()
-  if (!store) return
-  try {
-    store.setItem(cacheKey(url), JSON.stringify(entry))
-  } catch {
-    // Quota / private mode → soft-fail, network path still works.
-  }
-}
-
-async function networkFetch(url: string): Promise<OpenJobRow[]> {
+async function fetchOpenJobsNetwork(filters: OpenJobsFilters): Promise<OpenJobRow[]> {
+  const url = `${endpoint()}?${buildQuery(filters)}`
   const r = await fetch(url, { method: "GET" })
   if (!r.ok) throw new Error(`open-jobs ${r.status}`)
   const body = (await r.json()) as OpenJobsResponse
@@ -136,33 +89,81 @@ async function networkFetch(url: string): Promise<OpenJobRow[]> {
   return body.rows
 }
 
-declare global {
-  interface Window {
-    __WEKRUIT_DISABLE_OPEN_CACHE?: boolean
-  }
+/**
+ * Backwards-compatible raw fetcher — kept so non-React callers (e.g.
+ * pre-hydration server-render snapshots if we ever add them) can still
+ * invoke the CF. New code should prefer `useOpenJobs` so it participates
+ * in the QueryClient cache.
+ */
+export async function fetchOpenJobs(filters: OpenJobsFilters = {}): Promise<OpenJobRow[]> {
+  return fetchOpenJobsNetwork(filters)
 }
 
-export async function fetchOpenJobs(filters: OpenJobsFilters = {}): Promise<OpenJobRow[]> {
-  const url = `${endpoint()}?${buildQuery(filters)}`
-  const bypass = typeof window !== "undefined" && window.__WEKRUIT_DISABLE_OPEN_CACHE === true
-  const now = Date.now()
-  const cached = bypass ? null : readCache(url)
+/** Stable, normalized query key from filters — order-independent. */
+function queryKeyForFilters(filters: OpenJobsFilters): unknown[] {
+  return [
+    "open-jobs",
+    {
+      limit: filters.limit ?? 80,
+      freshDays: filters.freshDays ?? 45,
+      function: filters.function ? [...filters.function].sort() : [],
+      level: filters.level ? [...filters.level].sort() : [],
+      location: filters.location ? [...filters.location].sort() : [],
+      remoteOnly: filters.remoteOnly ?? false,
+      search: filters.search ?? "",
+    },
+  ]
+}
 
-  if (cached && now - cached.fetchedAt < CACHE_TTL_MS) {
-    return cached.rows
+/**
+ * Primary React hook — returns the full TanStack Query result so the
+ * caller can render loading / error states without re-creating them.
+ */
+export function useOpenJobs(filters: OpenJobsFilters = {}): UseQueryResult<OpenJobRow[]> {
+  return useQuery({
+    queryKey: queryKeyForFilters(filters),
+    queryFn: () => fetchOpenJobsNetwork({ limit: 80, freshDays: 45, ...filters }),
+  })
+}
+
+/**
+ * Pagination wrapper — same fetch as `useOpenJobs`, but slices the result
+ * to a windowed view that grows by `pageSize` rows whenever
+ * `showMore()` is called. Caps at the total fetched length (no infinite
+ * recursion past what the CF returned).
+ *
+ * Default `pageSize=24` lines up roughly with one viewport on desktop,
+ * which keeps the DOM weight bounded and "Load more" interaction snappy.
+ */
+export function useOpenJobsPage(
+  filters: OpenJobsFilters = {},
+  pageSize = 24,
+): {
+  rows: OpenJobRow[]
+  totalLoaded: number
+  visibleCount: number
+  isLoading: boolean
+  isError: boolean
+  error: unknown
+  hasMore: boolean
+  showMore: () => void
+  reset: () => void
+} {
+  const q = useOpenJobs(filters)
+  const [visibleCount, setVisibleCount] = useState(pageSize)
+  const all = q.data ?? []
+  const visible = useMemo(() => all.slice(0, visibleCount), [all, visibleCount])
+  return {
+    rows: visible,
+    totalLoaded: all.length,
+    visibleCount: visible.length,
+    isLoading: q.isLoading,
+    isError: q.isError,
+    error: q.error,
+    hasMore: visibleCount < all.length,
+    showMore: () => setVisibleCount((n) => Math.min(n + pageSize, all.length)),
+    reset: () => setVisibleCount(pageSize),
   }
-
-  if (cached && now - cached.fetchedAt < SWR_TTL_MS) {
-    // Stale-while-revalidate — surface cached payload now, refresh in bg.
-    void networkFetch(url)
-      .then((rows) => writeCache(url, { rows, fetchedAt: Date.now() }))
-      .catch(() => undefined)
-    return cached.rows
-  }
-
-  const rows = await networkFetch(url)
-  writeCache(url, { rows, fetchedAt: Date.now() })
-  return rows
 }
 
 /** Pretty-print a canonical-tag token: `software_engineering` → `Software Engineering`. */
