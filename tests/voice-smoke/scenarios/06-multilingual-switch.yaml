@@ -1,0 +1,27 @@
+id: "06-multilingual-switch"
+description: "Candidate switches en→zh mid-call; MultilingualModel + agent stays coherent."
+seed: 47
+
+voice:
+  toNumber: "${PA_TEAM_NUMBER_FIONA}"
+  fromCallerId: "+16468594057"
+  expectedOutcome: "PASS"
+  expectedTerminalReasonContains: "score_met"
+
+context:
+  paUserId: "smoke-user-06-fiona-bil"
+  paJobId: "smoke-job-swe-mid"
+  preferredLang: "en"
+
+thresholds:
+  ttfaMaxMs: 1500
+  costMaxUsd: 1.00
+
+mock:
+  outcome: "PASS"
+  metrics:
+    ttfaMs: 1120
+    costUsd: 0.51
+    falseCommit: false
+    falseInterrupt: false
+    agentTalkRatio: 0.57

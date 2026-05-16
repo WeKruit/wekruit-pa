@@ -1,0 +1,27 @@
+id: "08-fast-talker"
+description: "Rapid-speech candidate — endpointing should not chop mid-sentence (false-interrupt guard)."
+seed: 49
+
+voice:
+  toNumber: "${PA_TEAM_NUMBER_HARRY}"
+  fromCallerId: "+16468594057"
+  expectedOutcome: "PASS"
+  expectedTerminalReasonContains: "score_met"
+
+context:
+  paUserId: "smoke-user-08-harry-fast"
+  paJobId: "smoke-job-swe-mid"
+  preferredLang: "en"
+
+thresholds:
+  ttfaMaxMs: 1500
+  costMaxUsd: 1.00
+
+mock:
+  outcome: "PASS"
+  metrics:
+    ttfaMs: 1040
+    costUsd: 0.49
+    falseCommit: false
+    falseInterrupt: false
+    agentTalkRatio: 0.52
