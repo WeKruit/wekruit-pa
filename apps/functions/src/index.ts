@@ -206,6 +206,10 @@ export { paAtsInboundWebhook } from "./ats-inbound-webhook.js"
 // Frontend (PublicJobCv.tsx) POSTs base64 to this endpoint. ATS inbound
 // webhook (paAtsInboundWebhook) also targets this via PA_CV_INGEST_URL env.
 export { paPublicCvIngest } from "./public-cv-ingest.js"
+// WeKruit Open — public job board at layoff.wekruit.com/open. Reads from
+// matching-jobs (scraped/non-collab) with hard filters mirroring v16's
+// query (status==active, dead!=true, atsApplyUrl present, firstSeenAt fresh).
+export { paPublicOpenJobs } from "./public-open-jobs.js"
 // Candidate LinkedIn auth cannot use Firebase generic OIDC because LinkedIn
 // rejects token exchange without client_secret. These HTTP functions own the
 // OAuth exchange server-side and return a Firebase custom token.

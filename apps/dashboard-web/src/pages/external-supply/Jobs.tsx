@@ -97,6 +97,7 @@ function AllCompanies() {
             <thead>
               <tr style={{ textAlign: "left", borderBottom: "1px solid #ddd" }}>
                 <th style={{ padding: "8px 6px" }}>Company</th>
+                <th style={{ padding: "8px 6px", textAlign: "center", width: 90 }}>Collab</th>
                 <th style={{ padding: "8px 6px" }}>Domain</th>
                 <th style={{ padding: "8px 6px" }}>Industry</th>
                 <th style={{ padding: "8px 6px", textAlign: "right" }}>Open jobs</th>
@@ -104,28 +105,44 @@ function AllCompanies() {
               </tr>
             </thead>
             <tbody>
-              {companies.map((c) => (
-                <tr key={c.companyId} style={{ borderBottom: "1px solid #f0f0f0" }}>
-                  <td style={{ padding: "8px 6px" }}>
-                    <strong>{c.name ?? c.companyId}</strong>
-                    <div style={{ fontSize: 12, color: "#666" }}>{c.companyId}</div>
-                  </td>
-                  <td style={{ padding: "8px 6px" }}>{c.domain ?? "—"}</td>
-                  <td style={{ padding: "8px 6px" }}>
-                    {(c.industrySector ?? []).map((s) => (
-                      <Badge key={s} tone="info">
-                        {s}
-                      </Badge>
-                    ))}
-                  </td>
-                  <td style={{ padding: "8px 6px", textAlign: "right" }}>
-                    {jobsByCompany[c.companyId] ?? 0}
-                  </td>
-                  <td style={{ padding: "8px 6px" }}>
-                    <Link to={`/admin/external-supply/jobs/${c.companyId}`}>View jobs →</Link>
-                  </td>
-                </tr>
-              ))}
+              {companies.map((c) => {
+                const isCollab = c.wekruitCollab === true
+                return (
+                  <tr
+                    key={c.companyId}
+                    style={{
+                      borderBottom: "1px solid #f0f0f0",
+                      background: isCollab ? "#f0fdf4" : "transparent",
+                    }}
+                  >
+                    <td style={{ padding: "8px 6px" }}>
+                      <strong>{c.displayName ?? c.name ?? c.companyId}</strong>
+                      <div style={{ fontSize: 12, color: "#666" }}>{c.companyId}</div>
+                    </td>
+                    <td style={{ padding: "8px 6px", textAlign: "center" }}>
+                      {isCollab ? (
+                        <Badge tone="ok">✓ Collab</Badge>
+                      ) : (
+                        <span style={{ color: "#cbd5e1", fontSize: 12 }}>—</span>
+                      )}
+                    </td>
+                    <td style={{ padding: "8px 6px" }}>{c.domain ?? "—"}</td>
+                    <td style={{ padding: "8px 6px" }}>
+                      {(c.industrySector ?? []).map((s) => (
+                        <Badge key={s} tone="info">
+                          {s}
+                        </Badge>
+                      ))}
+                    </td>
+                    <td style={{ padding: "8px 6px", textAlign: "right" }}>
+                      {jobsByCompany[c.companyId] ?? c.jobsCount ?? 0}
+                    </td>
+                    <td style={{ padding: "8px 6px" }}>
+                      <Link to={`/admin/external-supply/jobs/${c.companyId}`}>View jobs →</Link>
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         )}

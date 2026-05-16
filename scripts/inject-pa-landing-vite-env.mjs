@@ -27,6 +27,7 @@ const REQUIRED = [
 const OPTIONAL = [
   "VITE_CV_INGEST_URL", // paPublicCvIngest CF URL for /j/:jobId CV upload
   "VITE_LINKEDIN_AUTH_START_URL", // custom LinkedIn OAuth start CF URL
+  "VITE_OPEN_JOBS_URL", // paPublicOpenJobs CF URL for /open scraped-jobs board
 ]
 
 function parseEnvFile(path) {
