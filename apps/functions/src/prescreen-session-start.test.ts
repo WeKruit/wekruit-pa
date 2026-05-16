@@ -9,6 +9,22 @@ function makeFakeDb(seed: Record<string, Record<string, unknown>>) {
   for (const [path, data] of Object.entries(seed)) docs.set(path, { exists: true, data })
   const sets: Array<{ path: string; data: Record<string, unknown>; options?: unknown }> = []
 
+  function isPlainObject(value: unknown): value is Record<string, unknown> {
+    return Boolean(value) && typeof value === "object" && !Array.isArray(value)
+  }
+
+  function deepMerge(prev: Record<string, unknown>, next: Record<string, unknown>) {
+    const out: Record<string, unknown> = { ...prev }
+    for (const [key, value] of Object.entries(next)) {
+      if (isPlainObject(value) && isPlainObject(out[key])) {
+        out[key] = deepMerge(out[key], value)
+      } else {
+        out[key] = value
+      }
+    }
+    return out
+  }
+
   function docRef(collection: string, id: string) {
     const path = `${collection}/${id}`
     return {
@@ -17,10 +33,25 @@ function makeFakeDb(seed: Record<string, Record<string, unknown>>) {
         const doc = docs.get(path) ?? { exists: false, data: {} }
         return { exists: doc.exists, data: () => (doc.exists ? doc.data : undefined) }
       },
+      async update(data: Record<string, unknown>) {
+        const prev = docs.get(path)
+        if (!prev?.exists) throw new Error(`not-found:${path}`)
+        docs.set(path, { exists: true, data: { ...prev.data, ...data } })
+        sets.push({ path, data, options: { update: true } })
+      },
       async set(data: Record<string, unknown>, options?: unknown) {
         const prev = docs.get(path)
-        const merge = Boolean((options as { merge?: boolean } | undefined)?.merge)
-        docs.set(path, { exists: true, data: merge ? { ...(prev?.data ?? {}), ...data } : data })
+        const opts = options as { merge?: boolean; mergeFields?: string[] } | undefined
+        let next = data
+        if (opts?.mergeFields) {
+          next = { ...(prev?.data ?? {}) }
+          for (const field of opts.mergeFields) {
+            next[field] = data[field]
+          }
+        } else if (opts?.merge) {
+          next = deepMerge(prev?.data ?? {}, data)
+        }
+        docs.set(path, { exists: true, data: next })
         sets.push({ path, data, options })
       },
     }
@@ -167,5 +198,94 @@ describe("runPreScreenForUser session boundaries", () => {
       sessionId: result.sessionId,
       jobId: "job-new",
     })
+  })
+
+  it("replaces stale user-level terminal fields when a new prescreen starts", async () => {
+    const { db, docs } = makeFakeDb({
+      "pa-jobs/job-new": { prescreenConfig },
+      "pa-users/u1": {
+        workSession: {
+          kind: "job_prescreen",
+          status: "ended",
+          boundary: "terminal",
+          terminal: "PASS",
+          endedAt: "2026-05-16T10:00:00.000Z",
+          sessionId: "ps_old",
+          jobId: "job-old",
+        },
+      },
+    })
+
+    const result = await runPreScreenForUser({
+      db,
+      jobId: "job-new",
+      userId: "u1",
+      toE164: "+13054507715",
+      markStarted: async () => undefined,
+      sendSms: async ({ content }) => ({
+        status: "queued",
+        from_number: null,
+        number: "+13054507715",
+        content,
+        service: "iMessage",
+        is_outbound: true,
+      }),
+    })
+
+    assert.equal(result.ok, true)
+    const workSession = docs.get("pa-users/u1")?.data.workSession as Record<string, unknown>
+    assert.equal(workSession.status, "active")
+    assert.equal(workSession.boundary, "trigger")
+    assert.equal(workSession.sessionId, result.sessionId)
+    assert.equal(workSession.jobId, "job-new")
+    assert.equal("terminal" in workSession, false)
+    assert.equal("endedAt" in workSession, false)
+  })
+
+  it("ends the fresh work session when the first question cannot be sent", async () => {
+    const { db, docs } = makeFakeDb({
+      "pa-jobs/job-new": { prescreenConfig },
+      "pa-users/u1": {
+        workSession: {
+          kind: "layoff_onboarding",
+          status: "active",
+          boundary: "WeKruit_LAID_OFF",
+          startedAt: "2026-05-16T10:00:00.000Z",
+        },
+      },
+    })
+    let markStartedCalled = false
+
+    const result = await runPreScreenForUser({
+      db,
+      jobId: "job-new",
+      userId: "u1",
+      toE164: "+13054507715",
+      markStarted: async () => {
+        markStartedCalled = true
+      },
+      sendSms: async () => {
+        throw new Error("OPTED_OUT")
+      },
+    })
+
+    assert.equal(result.ok, false)
+    assert.equal(result.reason, "send_failed")
+    assert.equal(markStartedCalled, false)
+    const started = docs.get(`pa-prescreen-sessions/${result.sessionId}`)?.data
+    assert.ok(started)
+    assert.equal(started.terminal, "PAUSE")
+    assert.equal(started.currentQId, null)
+    assert.match(String(started.terminalReason), /send_failed: OPTED_OUT/)
+    assert.equal(started.firstQuestionSent, false)
+    assert.equal(started.firstQuestionSendError, "OPTED_OUT")
+    assert.equal((started.workSession as { status?: string }).status, "ended")
+    assert.equal((started.workSession as { boundary?: string }).boundary, "send_failed")
+
+    const userWorkSession = docs.get("pa-users/u1")?.data.workSession as Record<string, unknown>
+    assert.equal(userWorkSession.status, "ended")
+    assert.equal(userWorkSession.boundary, "send_failed")
+    assert.equal(userWorkSession.sessionId, result.sessionId)
+    assert.equal(userWorkSession.jobId, "job-new")
   })
 })

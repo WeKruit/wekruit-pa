@@ -345,6 +345,66 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     assert.ok([...docs.keys()].some((path) => path.startsWith("pa-prescreen-sessions/ps_active/turns/")))
   })
 
+  it("treats a natural pause request as a routing pause", async () => {
+    const now = new Date().toISOString()
+    const { db, docs } = makeFakeDb({
+      "pa-prescreen-sessions/ps_active": {
+        sessionId: "ps_active",
+        userId: "u1",
+        jobId: "job-1",
+        terminal: null,
+        currentQId: "technical_depth",
+        createdAt: now,
+        updatedAt: now,
+        workSession: { kind: "job_prescreen", status: "active", startedAt: now, boundary: "trigger" },
+        cfgSnapshot: {
+          questions: [
+            {
+              qId: "technical_depth",
+              prompt: { en: "Which skill?", zh: "Which skill?" },
+              clarifyPrompt: { en: "Tell me more.", zh: "Tell me more." },
+              keywords: [],
+            },
+          ],
+        },
+      },
+    })
+
+    const terminalCalls: Array<Record<string, unknown>> = []
+    const sent: string[] = []
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u1",
+      toE164: "+13054507715",
+      replyText: "Pause this screen for now please.",
+      runTerminalAction: async (args) => {
+        terminalCalls.push(args as unknown as Record<string, unknown>)
+        return { alreadyFired: false, level1Sent: false, jobRecsFired: false }
+      },
+      sendSms: async (args) => {
+        sent.push(args.content)
+        return {
+          status: "queued",
+          from_number: null,
+          number: args.to,
+          content: args.content,
+          service: "iMessage",
+          is_outbound: true,
+        }
+      },
+    })
+
+    assert.equal(result.handled, true)
+    assert.equal(result.terminal, "PAUSE")
+    assert.equal(terminalCalls.length, 1)
+    assert.equal(sent.length, 1)
+    const session = docs.get("pa-prescreen-sessions/ps_active")?.data
+    assert.equal(session?.terminal, "PAUSE")
+    assert.equal(session?.terminalReason, "user_exit")
+    assert.equal(session?.currentQId, null)
+    assert.equal((session?.workSession as { boundary?: string }).boundary, "user_exit")
+  })
+
   it("guards a recent terminal prescreen so follow-up texts do not fall into normal onboarding", async () => {
     const now = new Date().toISOString()
     const { db, docs } = makeFakeDb({

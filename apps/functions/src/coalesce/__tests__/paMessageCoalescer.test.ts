@@ -317,6 +317,8 @@ describe("paMessageCoalescer — case 2: 3 quick messages coalesce", () => {
     // Synthetic inbound exists
     const synth = (db as ReturnType<typeof makeFakeDb>)._stores.get("pa-inbound-events")?.get("inb_synth_coalesced-u_adam-1") as DocData | undefined
     assert.ok(synth, "synthetic inbound exists")
+    assert.equal((synth as { status?: string }).status, "completed", "synthetic inbound is not left pending after coalescer-owned processing")
+    assert.equal((synth as { routedTo?: string }).routedTo, "claire_orchestrator")
   })
 
   it("keeps an 8.5s Sendblue delivery gap in the same pending turn", async () => {

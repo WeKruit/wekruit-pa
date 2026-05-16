@@ -248,6 +248,39 @@ async function resolveOrCreateImessageSession(
   return sessionId
 }
 
+async function markSyntheticInboundCompleted(
+  deps: CoalescerDeps,
+  eventId: string,
+  input: {
+    routedTo: "prescreen" | "pii_confirm" | "claire_orchestrator"
+    userId: string
+    turnSeq: number
+  }
+): Promise<void> {
+  const log = deps.log ?? console.log
+  const completedAt = (deps.now ? deps.now() : new Date()).toISOString()
+  try {
+    await deps.db.collection("pa-inbound-events").doc(eventId).set(
+      {
+        status: "completed",
+        completedAt,
+        updatedAt: completedAt,
+        routedTo: input.routedTo,
+        coalescing: true,
+        coalesced: true,
+        coalesceTurnId: `${input.userId}__${input.turnSeq}`,
+      },
+      { merge: true }
+    )
+  } catch (err) {
+    log("[coalesce] synthetic-inbound-complete FAILED (non-fatal)", {
+      eventId,
+      routedTo: input.routedTo,
+      err: err instanceof Error ? err.message : String(err),
+    })
+  }
+}
+
 export type BumpEnqueueOutcome = {
   action: BumpOutcome["action"]
   taskName?: string
@@ -608,6 +641,11 @@ export async function processCoalescedTurn(
           })
           if (piiResult.handled) {
             log("[coalesce] pii-routed", { userId, completed: piiResult.completed })
+            await markSyntheticInboundCompleted(deps, created.id, {
+              routedTo: "pii_confirm",
+              userId,
+              turnSeq,
+            })
             await Promise.allSettled(
               fired.inboundEventIds.map((eventId) =>
                 deps.db.collection("pa-inbound-events").doc(eventId).set(
@@ -636,6 +674,11 @@ export async function processCoalescedTurn(
         userId,
         sessionId: psResult.sessionId,
         terminal: psResult.terminal,
+      })
+      await markSyntheticInboundCompleted(deps, created.id, {
+        routedTo: "prescreen",
+        userId,
+        turnSeq,
       })
       // Mark original inbounds as coalesced (housekeeping).
       await Promise.allSettled(
@@ -672,6 +715,11 @@ export async function processCoalescedTurn(
   const claimer = deps.claimAndProcessInboundEvent ?? claimAndProcessInboundEvent
   const orchLog = (...a: unknown[]) => log("[coalesce/orchestrator]", ...a)
   await claimer(deps.db, created.id, orchLog, deps.orchestratorDeps ?? {})
+  await markSyntheticInboundCompleted(deps, created.id, {
+    routedTo: "claire_orchestrator",
+    userId,
+    turnSeq,
+  })
 
   // 5. Mark all original per-message inbound rows as "coalesced" — purely
   //    for housekeeping (status visible in dashboards). Best-effort.

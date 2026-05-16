@@ -102,6 +102,26 @@ interface PaJobLevel1Fields {
   nextStepEta?: string
 }
 
+function isUserExitLikePrescreenReply(reply: string): boolean {
+  const normalized = reply.trim().toLowerCase()
+  if (!normalized) return false
+  if (/^(stop|cancel|pause|quit|exit|end|not now|later|nevermind|never mind|退出|停止|暂停|先不|不用了|算了)[.!。！\s]*$/i.test(normalized)) {
+    return true
+  }
+  return /^(please\s+)?(stop|cancel|pause|quit|exit|end)\b(?=.*\b(this|screen|role|interview|prescreen|pre-screen|for now|now|please)\b)[a-z0-9\s'’.-]*[.!?。！？\s]*$/i.test(normalized)
+}
+
+function isMemoryEligiblePrescreenScore(q: {
+  s: number | null
+  summary: string
+  answered?: boolean
+  abortHintKind?: string
+}): boolean {
+  if (q.abortHintKind === "off_topic" || q.abortHintKind === "decline") return false
+  if (q.answered === false && !q.summary.trim()) return false
+  return q.summary.trim().length > 0 || q.s !== null
+}
+
 function deriveWeakPrescreenTags(args: {
   terminal: PrescreenTerminalKind
   scored: Array<{ qId: string; s: number | null; c: number | null; summary: string }>
@@ -239,7 +259,15 @@ async function writePrescreenMemoryUpdate(args: {
   try {
     const sessionSnap = await args.db.collection("pa-prescreen-sessions").doc(args.sessionId).get()
     const session = sessionSnap.data() ?? {}
-    const questions = (session.questions ?? {}) as Record<string, { finalS?: number; finalC?: number; scored?: { aggregate?: { summary?: string } } }>
+    const questions = (session.questions ?? {}) as Record<string, {
+      finalS?: number
+      finalC?: number
+      scored?: {
+        aggregate?: { summary?: string }
+        answered?: boolean
+        abortHint?: { kind?: string }
+      }
+    }>
     const qIds = Object.keys(questions)
     const scored = qIds
       .map((qId) => {
@@ -249,9 +277,12 @@ async function writePrescreenMemoryUpdate(args: {
           s: typeof q.finalS === "number" ? q.finalS : null,
           c: typeof q.finalC === "number" ? q.finalC : null,
           summary: typeof q.scored?.aggregate?.summary === "string" ? q.scored.aggregate.summary : "",
+          answered: typeof q.scored?.answered === "boolean" ? q.scored.answered : undefined,
+          abortHintKind: typeof q.scored?.abortHint?.kind === "string" ? q.scored.abortHint.kind : undefined,
         }
       })
-      .filter((q) => q.summary || q.s !== null || q.c !== null)
+      .filter(isMemoryEligiblePrescreenScore)
+      .map(({ answered: _answered, abortHintKind: _abortHintKind, ...q }) => q)
 
     let lastReplies: string[] = []
     try {
@@ -268,6 +299,7 @@ async function writePrescreenMemoryUpdate(args: {
           return typeof data.reply === "string" ? data.reply.trim() : ""
         })
         .filter(Boolean)
+        .filter((reply) => !isUserExitLikePrescreenReply(reply))
         .reverse()
     } catch {
       lastReplies = []
@@ -275,7 +307,7 @@ async function writePrescreenMemoryUpdate(args: {
 
     const bestSummary = scored.map((q) => q.summary).filter(Boolean).join(" | ").slice(0, 800)
     const replySummary = lastReplies.join(" / ").slice(0, 800)
-    const summary = bestSummary || replySummary || `Prescreen ended with ${args.terminal}`
+    const summary = bestSummary || replySummary || (args.terminal === "PAUSE" ? "Prescreen paused by candidate" : `Prescreen ended with ${args.terminal}`)
     const evidenceTags = deriveWeakPrescreenTags({
       terminal: args.terminal,
       scored,
@@ -367,8 +399,9 @@ async function endMatchingUserPrescreenWorkSession(args: {
       ? userData.workSession as Record<string, unknown>
       : null
     if (
-      current?.kind !== "job_prescreen" ||
-      current.status !== "active" ||
+      current?.kind === "job_prescreen" &&
+      current.status === "active" &&
+      current.sessionId &&
       current.sessionId !== args.sessionId
     ) {
       args.log("prescreen.terminal_action.user_work_session_skip", {
@@ -383,6 +416,9 @@ async function endMatchingUserPrescreenWorkSession(args: {
     const sessionWorkSession = args.sessionWorkSession && typeof args.sessionWorkSession === "object"
       ? args.sessionWorkSession as Record<string, unknown>
       : null
+    const baseWorkSession = current?.sessionId === args.sessionId
+      ? current
+      : sessionWorkSession ?? {}
     const boundary = args.terminal === "PAUSE"
       ? typeof sessionWorkSession?.boundary === "string" && sessionWorkSession.boundary !== "trigger"
         ? sessionWorkSession.boundary
@@ -391,7 +427,7 @@ async function endMatchingUserPrescreenWorkSession(args: {
     await userRef.set(
       {
         workSession: {
-          ...current,
+          ...baseWorkSession,
           kind: "job_prescreen",
           status: "ended",
           boundary,
