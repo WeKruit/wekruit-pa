@@ -197,8 +197,35 @@ const LEVEL_TO_TOKENS: Record<string, string[]> = {
   "Director+": ["director", "vp", "head", "executive"],
 }
 
+const COUNTRY_SUFFIX_RX = /,?\s*(?:united states(?: of america)?|usa|us|united kingdom|uk|canada|remote)\s*$/i
+const STATE_FULL_TO_ABBR: Record<string, string> = {
+  alabama: "AL", alaska: "AK", arizona: "AZ", arkansas: "AR", california: "CA",
+  colorado: "CO", connecticut: "CT", delaware: "DE", florida: "FL", georgia: "GA",
+  hawaii: "HI", idaho: "ID", illinois: "IL", indiana: "IN", iowa: "IA",
+  kansas: "KS", kentucky: "KY", louisiana: "LA", maine: "ME", maryland: "MD",
+  massachusetts: "MA", michigan: "MI", minnesota: "MN", mississippi: "MS",
+  missouri: "MO", montana: "MT", nebraska: "NE", nevada: "NV",
+  "new hampshire": "NH", "new jersey": "NJ", "new mexico": "NM", "new york": "NY",
+  "north carolina": "NC", "north dakota": "ND", ohio: "OH", oklahoma: "OK",
+  oregon: "OR", pennsylvania: "PA", "rhode island": "RI", "south carolina": "SC",
+  "south dakota": "SD", tennessee: "TN", texas: "TX", utah: "UT", vermont: "VT",
+  virginia: "VA", washington: "WA", "west virginia": "WV", wisconsin: "WI", wyoming: "WY",
+}
+
+function tightenLocation(s: string): string {
+  // "Bay Area, CA, United States of America" → "Bay Area, CA"
+  // "Miami, FL, United States of America"    → "Miami, FL"
+  // "Remote, United States"                  → "Remote, US"
+  let out = s.replace(COUNTRY_SUFFIX_RX, "").trim().replace(/,\s*$/, "")
+  out = out.replace(/\b([A-Za-z]{4,})\b/g, (m) => {
+    const lower = m.toLowerCase()
+    return STATE_FULL_TO_ABBR[lower] ?? m
+  })
+  return out
+}
+
 function locationDisplay(slug?: string, raw?: string): string {
-  if (raw) return raw
+  if (raw && raw.trim()) return tightenLocation(raw)
   if (!slug) return "—"
   return titleCase(slug)
 }
@@ -414,25 +441,13 @@ function HuntRow({ r, queued, onPitch }: { r: DisplayJob; queued: boolean; onPit
       </td>
       <td className="wk-tbl__cell"><span className="wk-tbl__muted">{r.fnLabel}</span></td>
       <td className="wk-tbl__cell"><span className="wk-tbl__muted">{r.location}</span></td>
-      <td className="wk-tbl__cell wk-tbl__cell--comp">
-        {r.comp ? r.comp : <span className="wk-tbl__muted" style={{ opacity: 0.45 }}>—</span>}
-      </td>
+      <td className="wk-tbl__cell wk-tbl__cell--comp">{r.comp}</td>
       <td className="wk-tbl__cell wk-tbl__cell--posted">{r.posted}</td>
       <td className="wk-tbl__cell wk-tbl__cell--cta">
         {queued ? (
           <span className="wk-pitchbtn is-queued">
             <Icon name="check" size={12} stroke={2.4} /> Queued for Tue
           </span>
-        ) : r.applyUrl ? (
-          <a
-            className="wk-pitchbtn"
-            href={r.applyUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={onPitch}
-          >
-            Apply <Icon name="arrow-right" size={12} stroke={2} />
-          </a>
         ) : (
           <button className="wk-pitchbtn" onClick={onPitch}>
             Pitch me <Icon name="arrow-right" size={12} stroke={2} />
@@ -466,16 +481,6 @@ function HuntCard({ r, queued, onPitch }: { r: DisplayJob; queued: boolean; onPi
           <span className="wk-pitchbtn wk-pitchbtn--lg is-queued">
             <Icon name="check" size={13} stroke={2.4} /> Queued for Tue
           </span>
-        ) : r.applyUrl ? (
-          <a
-            className="wk-pitchbtn wk-pitchbtn--lg"
-            href={r.applyUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={onPitch}
-          >
-            Apply <Icon name="arrow-right" size={13} stroke={2} />
-          </a>
         ) : (
           <button className="wk-pitchbtn wk-pitchbtn--lg" onClick={onPitch}>
             Pitch me <Icon name="arrow-right" size={13} stroke={2} />
@@ -991,17 +996,13 @@ const MARKET_STYLES = String.raw`
 .wk-shell .wk-viewtog__ico--cards::after  { right: 0; }
 
 .wk-shell .wk-tbl-wrap {
-  /* overflow-x: auto so the right-side CTA column ("Pitch me" / "Open JD")
-     scrolls into view on narrower viewports instead of being clipped flush
-     against the table border — Adam screenshot 2026-05-16 showed the
-     button column truncated to "Pi…" because we previously had overflow:
-     hidden here. */
   background: var(--wk-cream-3); border: 1px solid var(--wk-border);
-  border-radius: var(--wk-r-md); overflow-x: auto; overflow-y: hidden;
+  border-radius: var(--wk-r-md);
+  overflow-x: auto; overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
 }
-.wk-shell .wk-tbl { min-width: 920px; }
 .wk-shell .wk-tbl-wrap--solo { margin-top: 8px; }
-.wk-shell .wk-tbl { width: 100%; border-collapse: collapse; font-family: inherit; }
+.wk-shell .wk-tbl { width: 100%; border-collapse: collapse; font-family: inherit; min-width: 880px; }
 .wk-shell .wk-tbl__h {
   text-align: left; font-family: inherit; font-size: 11px; font-weight: 600;
   letter-spacing: 0.12em; text-transform: uppercase; color: var(--wk-ink-4);
@@ -1016,8 +1017,11 @@ const MARKET_STYLES = String.raw`
 .wk-shell .wk-tbl__row.is-queued { background: var(--wk-live-soft); }
 .wk-shell .wk-tbl__row.is-queued:hover { background: var(--wk-live-soft); }
 
-.wk-shell .wk-tbl__cell { padding: 16px; vertical-align: middle; font-size: 14px; color: var(--wk-ink); line-height: 1.4; }
-.wk-shell .wk-tbl__cell--company { display: flex; align-items: center; gap: 12px; min-width: 200px; }
+.wk-shell .wk-tbl__cell { padding: 14px 12px; vertical-align: middle; font-size: 13.5px; color: var(--wk-ink); line-height: 1.4; }
+.wk-shell .wk-tbl__cell--company { display: flex; align-items: center; gap: 10px; min-width: 180px; max-width: 240px; }
+.wk-shell .wk-tbl__muted { color: var(--wk-ink-2); font-size: 13px; white-space: nowrap; }
+.wk-shell .wk-tbl__cell:nth-child(4) { max-width: 180px; }
+.wk-shell .wk-tbl__cell:nth-child(4) .wk-tbl__muted { white-space: normal; line-height: 1.3; }
 .wk-shell .wk-tbl__co-name { font-weight: 600; font-size: 14.5px; color: var(--wk-ink); letter-spacing: -0.005em; }
 .wk-shell .wk-tbl__co-via { font-size: 12px; color: var(--wk-ink-3); margin-top: 2px; font-feature-settings: "tnum"; }
 .wk-shell .wk-tbl__co-via--live { color: var(--wk-live); font-weight: 600; display: inline-flex; align-items: center; gap: 5px; }
@@ -1027,7 +1031,7 @@ const MARKET_STYLES = String.raw`
 .wk-shell .wk-tbl__cell--hm { display: flex; align-items: center; gap: 10px; min-width: 200px; }
 .wk-shell .wk-tbl__hm-name { font-weight: 600; font-size: 13.5px; color: var(--wk-ink); }
 .wk-shell .wk-tbl__hm-title { font-size: 12px; color: var(--wk-ink-3); margin-top: 2px; }
-.wk-shell .wk-tbl__muted { color: var(--wk-ink-2); font-size: 13.5px; }
+/* .wk-tbl__muted defined above with responsive overrides */
 .wk-shell .wk-tbl__cell--comp {
   font-family: 'Newsreader', 'Tiempos Headline', Georgia, serif;
   font-style: italic; font-weight: 500; font-size: 16.5px;
