@@ -533,6 +533,101 @@ Verdict:
 
 - Prompt-injection safety prompts now produce a clear customer-facing boundary answer, write hashed abuse/audit records without raw text, and do not receive a positive tapback.
 
+## Flow 8 - Job Matching Conversation Request Count
+
+Status: `UX_DONE`
+
+Live thread:
+
+- Candidate: `pa-users/U7AwKT8nLDRa35DkuBxq`
+- Session: `ses_62990f32ce66925df13ae2accc126a22`
+- Messages thread: `+1 (305) 450-7715`
+- Approved Claire sender: `+13054507715`
+
+Pre-fix live defects:
+
+1. A direct job-search request was swallowed by the lifecycle profile-update path:
+   - User: `Can you find me three realistic fullstack or frontend roles for NYC or remote, and tell me one short reason each fits?`
+   - Claire: `Got it - I'll keep matches focused on fullstack/frontend roles, NYC or remote.`
+2. After the direct-request routing fix, the live reply still returned only two roles even though the user explicitly asked for three:
+   - User: `Can you find me 3 realistic fullstack or frontend roles for NYC or remote now, with one short fit reason each?`
+   - Claire first line: `two roles that line up for you:`
+3. Direct production Firestore/job-rec query showed the corpus had enough matches:
+   - `total`: `19`
+   - `jobsLength`: `10`
+   - Top roles included Constant Contact, Liquid, Realm, Affirm, Haize Labs, Kira, Ether.fi, Blackbird Labs, Socure, and Vantage.
+
+Fixes applied:
+
+- `packages/pa-orchestrator/src/index.ts`
+  - Explicit job-search requests now bypass lifecycle profile reply handling.
+  - Direct job-search handling extracts requested counts such as `3`, `three`, `三个`, `3个`.
+  - `generateJobRecs` receives `{ force: true, requestedCount }` for explicit requests.
+- `apps/functions/src/orchestrator-deps.ts`
+  - Job-rec visible count now defaults to two for normal daily/onboarding pushes.
+  - Explicit requests can show up to three visible roles.
+  - The intro line reflects the actual visible count.
+- Regression tests added in:
+  - `packages/pa-orchestrator/src/index.test.ts`
+  - `apps/functions/src/orchestrator-deps.test.ts`
+
+Deploy packaging defect found and fixed:
+
+- The first deploy rebuilt package `dist` correctly, but `apps/functions/lib/index.js` still contained the stale bundled call:
+  - `store.generateJobRecs(event.userId, lang, { force: true })`
+- Rebuilding `@pa/functions` produced the corrected deploy bundle:
+  - `requestedCount = requestedJobRecCount(event.body)`
+  - `store.generateJobRecs(event.userId, lang, { force: true, requestedCount })`
+
+Final live transcript:
+
+- User:
+  - `Please pull 3 fresh fullstack or frontend job matches for NYC or remote. Keep each fit reason to one short sentence.`
+- Claire:
+  - `three roles that line up for you:`
+  - `Software Engineer Co-op @ constant contact`
+  - `Member of Technical Staff @ liquid`
+  - `Software Engineer - New Grad @ realm`
+
+Visible Messages proof:
+
+- The final 06:10 user message received a positive love tapback.
+- The final assistant reply starts with `three roles that line up for you:` and contains three job bullets with ATS URLs and fit reasons.
+- The earlier two-role replies remain in the transcript as pre-fix defect evidence.
+
+Firestore proof:
+
+- `pa-inbound-events/inb_9b6304584c2a4eec957a2bd8b2c4c32b91c537e9`
+  - `createdAt`: `2026-05-17T10:10:26.166Z`
+  - `sessionId`: `ses_62990f32ce66925df13ae2accc126a22`
+  - `body`: `Please pull 3 fresh fullstack or frontend job matches for NYC or remote. Keep each fit reason to one short sentence.`
+- `pa-messages/out-inb_9b6304584c2a4eec957a2bd8b2c4c32b91c537e9`
+  - `createdAt`: `2026-05-17T10:10:34.969Z`
+  - `sessionId`: `ses_62990f32ce66925df13ae2accc126a22`
+  - `body`: exact three-role Claire reply above.
+- `pa-outbound/df7db435-2302-4bad-88eb-286b6ba7f9a5`
+  - `createdAt`: `2026-05-17T10:10:35.135Z`
+  - `status`: `sent`
+
+Verification:
+
+- Direct production job-rec check:
+  - `queryMatchingJobsV16({ userId: "U7AwKT8nLDRa35DkuBxq", limit: 10, lang: "en" })`
+  - Result: `jobsLength=10`, so the two-role defect was not caused by missing matches.
+- Targeted Node 24 tests:
+  - `node --import ./apps/functions/node_modules/tsx/dist/esm/index.mjs --test apps/functions/src/orchestrator-deps.test.ts packages/pa-orchestrator/src/index.test.ts`
+  - Result: `92` tests passed.
+- Full Firebase predeploy suite:
+  - Result: `1723` tests passed, `316` suites passed.
+- Deployed functions:
+  - `pa-orchestrator:onPaInbound`
+  - `pa-orchestrator:paMessageCoalescer`
+  - `pa-orchestrator:paCoalesceBufferSweep`
+
+Verdict:
+
+- A direct candidate job-matching request now returns real role recommendations, honors an explicit request for three roles, uses production matching data, and records the same visible reply in Firestore/outbound.
+
 ## Remaining Matrix Status
 
 The narrowed work completed the live job-prescreen lane that blocked this goal:
@@ -549,6 +644,7 @@ The narrowed work completed the live job-prescreen lane that blocked this goal:
 - Privacy/memory summary: fixed, deployed, and live verified against Messages + Firestore.
 - Privacy export duplicate path: live verified against Messages + Firestore.
 - Prompt-injection safety boundary: fixed, deployed, and live verified against Messages + Firestore.
+- Job matching conversation: fixed, deployed, and live verified against Messages + Firestore.
 
 The broader customer-visible matrix in `.planning/CLAIRE-CUSTOMER-VISIBLE-IMESSAGE-QA-GOAL.md` still lists other flows as future test work unless separately executed:
 
@@ -556,6 +652,5 @@ The broader customer-visible matrix in `.planning/CLAIRE-CUSTOMER-VISIBLE-IMESSA
 - Layoff onboarding
 - Pause/restart/supersede
 - Privacy delete and remaining abuse/security cases
-- Job matching conversation
 - Everyday catchup and automated outbound
 - Isolated rate-limit/opt-out/suppression UX

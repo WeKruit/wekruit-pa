@@ -672,7 +672,7 @@ export type OrchestratorStore = {
   generateJobRecs?(
     userId: string,
     lang: "zh" | "en",
-    opts?: { force?: boolean }
+    opts?: { force?: boolean; requestedCount?: number }
   ): Promise<{ message: string; recCount: number } | null>
 
   /**
@@ -1062,6 +1062,7 @@ async function handleLifecycleProfileReply(
   turnId: string
 ): Promise<boolean> {
   if (isJobRecommendationExplanationRequest(event.body)) return false
+  if (isExplicitJobSearchRequest(event.body)) return false
   if (!store.getRecentLifecycleEventForReply || !store.recordLifecycleReply) return false
   const lifecycle = await store.getRecentLifecycleEventForReply(event.userId)
   if (!lifecycle) return false
@@ -1261,6 +1262,15 @@ function isExplicitJobSearchRequest(text: string | undefined | null): boolean {
     return true
   }
   return /\b(?:find|get|show|send|pull|recommend|match|search|look\s+for|help\s+me\s+find)\b[^.!?]{0,90}\b(?:jobs?|roles?|positions?|opportunities|openings|listings|matches|swe|software\s+engineering|software\s+engineer)\b/i.test(normalized)
+}
+
+function requestedJobRecCount(text: string | undefined | null): number | undefined {
+  const body = (text ?? "").trim()
+  if (!body) return undefined
+  if (/\b(?:3|three)\b/i.test(body) || /(?:三个|三份|三条|3个|3份|3条)/.test(body)) {
+    return 3
+  }
+  return undefined
 }
 
 function isJobRecommendationExplanationRequest(text: string | undefined | null): boolean {
@@ -1537,7 +1547,11 @@ async function handleCompletedUserJobSearchRequest(
     turnId,
     lang,
   })
-  const recs = await store.generateJobRecs(event.userId, lang, { force: true })
+  const requestedCount = requestedJobRecCount(event.body)
+  const recs = await store.generateJobRecs(event.userId, lang, {
+    force: true,
+    ...(requestedCount ? { requestedCount } : {}),
+  })
   const reply =
     recs && recs.recCount > 0
       ? recs.message

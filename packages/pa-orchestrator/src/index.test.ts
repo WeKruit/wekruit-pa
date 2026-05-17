@@ -755,6 +755,59 @@ test("processInboundEvent lifecycle: profile freshness reply updates profile det
   assert.match(createdFacts[0]!, /Candidate profile update/)
 })
 
+test("processInboundEvent lifecycle: explicit job request is not swallowed as profile update", async () => {
+  let llmCalls = 0
+  let recCalls = 0
+  let lifecycleWrites = 0
+  let outbound = ""
+  const store = makeStore({
+    getOnboardingUser: async () => ({
+      id: "u1",
+      phoneE164: "+13125550123",
+      onboardingState: "complete",
+    }),
+    getRecentLifecycleEventForReply: async () => ({
+      eventId: "lifecycle_1",
+      eventType: "profile_freshness_nudge",
+      lastTouchAt: "2026-04-25T12:00:00.000Z",
+    }),
+    recordLifecycleReply: async () => {
+      lifecycleWrites++
+    },
+    generateJobRecs: async (_userId, _lang, opts) => {
+      recCalls++
+      assert.equal(opts?.force, true)
+      assert.equal(opts?.requestedCount, 3)
+      return {
+        recCount: 3,
+        message:
+          "Three roles that line up:\n" +
+          "- Frontend Engineer @ Rain - NYC/remote and React-heavy.\n" +
+          "- Fullstack Engineer @ Constant Contact - JS plus backend workflow fit.\n" +
+          "- Product Engineer @ Invoko - early-stage product tooling fit.",
+      }
+    },
+    runAgentTurn: async () => {
+      llmCalls++
+      return { text: "should-not-be-called" }
+    },
+    enqueueOutbound: async (_u, _t, body) => {
+      outbound = body
+    },
+  })
+
+  await processInboundEvent({
+    ...baseEvent,
+    body: "Can you find me three realistic fullstack or frontend roles for NYC or remote, and tell me one short reason each fits?",
+  }, store)
+
+  assert.equal(lifecycleWrites, 0)
+  assert.equal(llmCalls, 0)
+  assert.equal(recCalls, 1)
+  assert.match(outbound, /Three roles/)
+  assert.match(outbound, /Rain/)
+})
+
 test("processInboundEvent lifecycle: no recent lifecycle event falls through to normal agent", async () => {
   let llmCalls = 0
   const store = makeStore({

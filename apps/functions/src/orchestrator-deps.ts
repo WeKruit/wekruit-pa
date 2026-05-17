@@ -61,6 +61,22 @@ export const CV_ANALYSIS_SECRETS: SecretParamHandle[] = [SILICONFLOW_API_KEY]
 
 const nowIso = () => new Date().toISOString()
 
+export function resolveJobRecVisibleCount(requestedCount: unknown): number {
+  const requested = typeof requestedCount === "number" && Number.isFinite(requestedCount)
+    ? Math.trunc(requestedCount)
+    : 2
+  return Math.max(1, Math.min(3, requested || 2))
+}
+
+export function formatJobRecIntro(lang: "zh" | "en", visibleCount: number): string {
+  if (lang === "zh") {
+    const count = visibleCount === 3 ? "三个" : visibleCount === 1 ? "一个" : "两个"
+    return `先给你看${count}对得上的岗位:`
+  }
+  const count = visibleCount === 3 ? "three" : visibleCount === 1 ? "one" : "two"
+  return `${count} ${visibleCount === 1 ? "role" : "roles"} that line up for you:`
+}
+
 /**
  * Build orchestrator callbacks. Mailgun only gates email verification; it
  * must not disable unrelated runtime capabilities like CV analysis, answer
@@ -155,7 +171,7 @@ export function makeOrchestratorDeps(): import("@pa/pa-orchestrator").Orchestrat
 function makeGenerateJobRecs(): NonNullable<
   import("@pa/pa-orchestrator").OrchestratorStoreDeps["generateJobRecs"]
 > {
-  return async (userId: string, lang: "zh" | "en", opts?: { force?: boolean }) => {
+  return async (userId: string, lang: "zh" | "en", opts?: { force?: boolean; requestedCount?: number }) => {
     if (!getApps().length) initializeApp()
     const db = getFirestore()
 
@@ -210,7 +226,8 @@ function makeGenerateJobRecs(): NonNullable<
         })
         return null
       }
-      const visibleJobs = jobs.slice(0, 2)
+      const visibleCount = resolveJobRecVisibleCount(opts?.requestedCount)
+      const visibleJobs = jobs.slice(0, visibleCount)
 
       // v1.7 hotfix — LLM-composed nuanced reasoning for top-2.
       // Replaces V16 template "为啥推: skill X+Y 跟 JD 核心技能对得上"
@@ -308,7 +325,7 @@ function makeGenerateJobRecs(): NonNullable<
       }
 
       const lines: string[] = []
-      lines.push(lang === "zh" ? "先给你看两个对得上的岗位:" : "two roles that line up for you:")
+      lines.push(formatJobRecIntro(lang, visibleJobs.length))
       for (let i = 0; i < visibleJobs.length; i++) {
         const j = visibleJobs[i]!
         const tag = j.companyName ? ` @ ${j.companyName}` : ""

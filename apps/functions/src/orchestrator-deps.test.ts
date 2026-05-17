@@ -31,6 +31,8 @@ import {
   isDegenerateLLMOutput,
   buildCvAnalysisFallback,
   fireAndForgetLlmRerank,
+  formatJobRecIntro,
+  resolveJobRecVisibleCount,
 } from "./orchestrator-deps.js"
 import type { RerankInput, RerankOutput } from "./lib/llm-rerank.js"
 
@@ -244,6 +246,21 @@ describe("generateJobRecs compose: per-job line shape (iter34 B.11)", () => {
     const out = composeJobLine(j, "en", { topSkills: ["Go"] })
     assert.ok(out.includes("delta.greenhouse.io"), "must use atsApplyUrl not primaryUrl")
     assert.ok(!out.includes("jobright.ai"), "must NOT regress to jobright.ai mirror")
+  })
+})
+
+describe("generateJobRecs visible count", () => {
+  it("defaults to two jobs for the daily/onboarding push", () => {
+    assert.equal(resolveJobRecVisibleCount(undefined), 2)
+    assert.equal(formatJobRecIntro("en", 2), "two roles that line up for you:")
+    assert.equal(formatJobRecIntro("zh", 2), "先给你看两个对得上的岗位:")
+  })
+
+  it("honors explicit three-role requests but caps the visible batch at three", () => {
+    assert.equal(resolveJobRecVisibleCount(3), 3)
+    assert.equal(resolveJobRecVisibleCount(10), 3)
+    assert.equal(formatJobRecIntro("en", 3), "three roles that line up for you:")
+    assert.equal(formatJobRecIntro("zh", 3), "先给你看三个对得上的岗位:")
   })
 })
 
