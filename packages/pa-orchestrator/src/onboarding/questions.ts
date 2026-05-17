@@ -1344,6 +1344,32 @@ function parseVisaValue(raw: unknown): VisaAnswer | null {
   return null
 }
 
+function parseVisaReply(reply: string): VisaAnswer | null {
+  const t = reply
+    .toLowerCase()
+    .replace(/[’‘]/g, "'")
+    .replace(/\s+/g, " ")
+    .trim()
+  if (!t) return null
+
+  if (/\b(us|u\.s\.|american)?\s*citizen\b/.test(t) || /公民/.test(t)) {
+    return "citizen"
+  }
+  if (/\b(gc|green card|permanent resident)\b/.test(t) || /绿卡|永久居民/.test(t)) {
+    return "permanent_resident"
+  }
+  if (
+    /\b(f-?1|opt|cpt|h-?1b)\b/.test(t) ||
+    /\b(would|will|do|does|did|i|we)?\s*(need|require|requires|required|needing)\b.{0,60}\b(sponsor|sponsorship)\b/.test(t) ||
+    /\b(sponsor|sponsorship)\b.{0,60}\b(needed|required|future|h-?1b|transfer)\b/.test(t) ||
+    /需要.{0,20}(sponsor|赞助|签证|h-?1b)/i.test(t)
+  ) {
+    return "sponsorship_needed"
+  }
+
+  return null
+}
+
 /**
  * Q_VISA — V2 prompt drops "OPT" listing per D4. Internally OPT/CPT/H1B
  * all canonicalize to `sponsorship_needed`, but the prompt asks the
@@ -1361,6 +1387,7 @@ export const Q_VISA: Question<VisaAnswer> = makeQuestion<VisaAnswer>({
     hints: VISA_HINTS,
     examples: VISA_EXAMPLES,
     parseValue: parseVisaValue,
+    parseReply: parseVisaReply,
   }),
   rephraser: new HybridRephraser({
     variants: [

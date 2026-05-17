@@ -1055,3 +1055,82 @@ Deploy/test evidence:
   - `pa-orchestrator:paCoalesceBufferSweep`
   - `pa-orchestrator:paSendblueWebhook`
   - `pa-orchestrator:onPaInbound`
+
+## 2026-05-17 — layoff onboarding route isolation and visa parser live rerun
+
+First-principles route issue:
+
+- Inbound iMessage turns must have exactly one owner.
+- Bad behavior before fix: active layoff onboarding replies could be intercepted by lifecycle profile update or prescreen/recent-terminal routing.
+- Bad visible symptom before fix: candidate layoff/onboarding reply received lifecycle-style copy such as `Got it - I’ll keep matches focused...` instead of staying in the onboarding state machine.
+- Separate deploy bug found during fix verification: the isolated temp worktree had `node_modules` symlinked to the original checkout, so Firebase deployed a bundle that did not include the new `Q_VISA.parseReply` parser even though local source and tests had it.
+
+Code fixes:
+
+- `packages/pa-orchestrator/src/index.ts`
+  - incomplete onboarding is checked before lifecycle profile-update handling.
+  - onboarding process/legit questions are answered inside onboarding without advancing the current question.
+- `apps/functions/src/lib/pre-claire-turn-owner.ts`
+  - active layoff onboarding now owns before prescreen.
+- `apps/functions/src/prescreen-turn-handler.ts`
+  - active layoff onboarding causes prescreen turn handling to yield.
+- `packages/pa-orchestrator/src/onboarding/questions.ts`
+  - natural OPT/CPT/H1B/sponsorship answers now parse directly to `sponsorship_needed`.
+
+Local bundle/deploy isolation proof:
+
+- Rebuilt with Node `v24.3.0`.
+- Verified `apps/functions/lib/index.js` contains:
+  - `parseVisaReply`
+  - `parseReply: parseVisaReply`
+  - `US work authorization status`
+- Firebase deploy used Node.js 24 and updated:
+  - `pa-orchestrator:onPaInbound`
+  - `pa-orchestrator:paMessageCoalescer`
+  - `pa-orchestrator:paCoalesceBufferSweep`
+  - `pa-orchestrator:paSendblueWebhook`
+
+Live iMessage rerun after correct deploy:
+
+- Candidate iMessage at 2026-05-17 13:25 ET:
+  - `Need sponsorship. I am on F-1 OPT and will need future H-1B.`
+- Correct visible reply:
+  - `do you prefer startups, bigger-company stability, or are you flexible?`
+- This proves the visa answer advanced onboarding instead of re-asking `q_visa`.
+
+Firestore proof:
+
+- `pa-users/U7AwKT8nLDRa35DkuBxq`
+  - `onboardingState=q_startup_pref_asked`
+  - `workSession.kind=layoff_onboarding`
+  - `workSession.status=active`
+  - `workSession.boundary=onboarding`
+  - `workSession.currentState=q_startup_pref_asked`
+  - `pipelineState.currentQId=q_startup_pref`
+  - `pipelineState.completed=false`
+  - `pipelineState.collected.q_visa=sponsorship_needed`
+  - `pipelineState.attempts.q_visa=0` after successful parse/advance
+- Latest inbound:
+  - `pa-messages/3a45da98-007c-4aa1-8c22-1a4fe4356acc`
+  - body: `Need sponsorship. I am on F-1 OPT and will need future H-1B.`
+  - `eventId=inb_be5b219ae52dcd4446ee86e9f72a7d963d47e6b8`
+  - `turnId=05d31eab-dbfc-477c-8911-c1cf8fcafbbe`
+  - `messageHandle=B4381AA2-5B39-47DF-9169-C6A8F9A71891`
+- Latest onboarding outbound:
+  - `pa-messages/47d2d067-be1b-4662-87d1-dcc1e4b3c8f0`
+  - body: `do you prefer startups, bigger-company stability, or are you flexible?`
+  - `rawMeta.source=pa_orchestrator`
+  - `rawMeta.onboarding=pipeline`
+  - `rawMeta.qId=q_startup_pref`
+  - `rawMeta.kind=first_prompt`
+
+Test evidence:
+
+- Targeted Node 24 route/parser tests:
+  - `packages/pa-orchestrator/src/onboarding/__tests__/q-visa.test.ts`
+  - `packages/pa-orchestrator/src/index.test.ts`
+  - `apps/functions/src/prescreen-turn-handler.test.ts`
+  - `apps/functions/src/lib/pre-claire-turn-owner.test.ts`
+  - Result: `96/96` passing.
+- Full Firebase functions predeploy during final deploy:
+  - Result: `1726/1726` passing.

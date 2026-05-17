@@ -13,7 +13,7 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { GuidedOpenJudge, type LlmCallFn } from "../judges/guided-open.js"
 import type { JudgeCtx } from "../question.js"
-import type { VisaAnswer } from "../questions.js"
+import { Q_VISA, type VisaAnswer } from "../questions.js"
 
 function ctx(): JudgeCtx {
   return { userId: "u", turnId: "t" }
@@ -154,6 +154,16 @@ test("q-visa: 'I'm on F1 OPT this year' (LLM path) → sponsorship_needed", asyn
   assert.equal(r.accept, true)
   if (r.accept) assert.equal(r.value, "sponsorship_needed")
   assert.equal(calls(), 1, "non-bloom phrase must hit LLM")
+})
+
+test("q-visa: natural OPT + future H-1B answer parses without re-ask", async () => {
+  const r = await Q_VISA.judge.judge(
+    "I’m on F-1 OPT right now and would need future H-1B sponsorship. I’m eligible to work in the US.",
+    "en",
+    ctx()
+  )
+  assert.equal(r.accept, true)
+  if (r.accept) assert.equal(r.value, "sponsorship_needed")
 })
 
 test("q-visa: 'declined to share' (LLM path) → declined", async () => {

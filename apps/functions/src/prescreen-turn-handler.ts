@@ -29,6 +29,7 @@ import {
 import { SAFETY_CANNED_REPLIES, pickLangForSafety, runSafetyCheck } from "@pa/pa-safety"
 import { sendImessage } from "./sendblue/sendblue-client.js"
 import { runPrescreenTerminalAction } from "./prescreen-terminal-action.js"
+import { isLayoffIntakeActiveForUser } from "./layoff-sms-start.js"
 
 const ACTIVE_PRESCREEN_TIMEOUT_MS = 60 * 60 * 1000
 const RECENT_TERMINAL_PRESCREEN_GUARD_MS = 60 * 60 * 1000
@@ -673,6 +674,10 @@ export async function runPrescreenTurnIfActive(
   const log = args.log ?? (() => {})
   const sendSms = args.sendSms ?? sendImessage
   const terminalAction = args.runTerminalAction ?? runPrescreenTerminalAction
+  if (await isLayoffIntakeActiveForUser(args.db, args.userId)) {
+    log("prescreen.turn.yielded_to_layoff_onboarding", { userId: args.userId })
+    return { handled: false }
+  }
   let lookup = await findActiveSession(args.db, args.userId, { log })
   if (lookup.kind === "none") {
     lookup = await findRecentTerminalSession(args.db, args.userId, { log })

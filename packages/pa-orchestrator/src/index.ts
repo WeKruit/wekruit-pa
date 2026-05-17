@@ -1112,6 +1112,44 @@ async function handleLifecycleProfileReply(
   return true
 }
 
+function detectOnboardingProcessQuestion(body: string): boolean {
+  const t = body.toLowerCase()
+  return /\b(legit|real|scam|who are you|what is this|how does this work|what happens next|why do you need|hiring manager|pre[-\s]?screen|prescreen)\b/.test(t)
+}
+
+function currentOnboardingAskForProcessReply(state: string | undefined): string {
+  if (state === "q_role_asked") {
+    return "To keep going, what kinds of roles should I focus on for you?"
+  }
+  if (state === "q_yoe_asked") {
+    return "To keep going, roughly how many years of work experience should I put on your profile?"
+  }
+  if (state === "q_visa_asked") {
+    return "To keep going, what should I put for your US work authorization?"
+  }
+  if (state === "q_startup_pref_asked") {
+    return "To keep going, do you prefer startups, larger companies, or either?"
+  }
+  if (state === "q_location_asked") {
+    return "To keep going, what country and locations or remote setup should I use for matching?"
+  }
+  if (state === "q_resume_asked" || state === "q_resume_processing") {
+    return "To keep going, I need your resume so we can parse it and tailor the next screen."
+  }
+  if (state === "q_email_asked" || state === "q_email_verifying") {
+    return "To keep going, I need the email step finished so the profile is attached to you."
+  }
+  return "To keep going, answer the last profile question in your own words."
+}
+
+function composeOnboardingProcessReply(onboardingState: string | undefined): string {
+  return [
+    "Yes - this is WeKruit. Claire collects the basics for your candidate profile so we can match you to roles and, for partnered roles, route the pre-screen directly to the hiring manager instead of making you start from scratch.",
+    "I will keep the flow focused on recruiting and use what you share for your WeKruit profile, matching, and role screens.",
+    currentOnboardingAskForProcessReply(onboardingState),
+  ].join("\n\n")
+}
+
 /**
  * Phase 44 — flag check for v1.5 Stream-B onboarding probe v2.
  * Default OFF. Env override: `PA_ONBOARDING_PROBE_V2_DISABLED=true` short-circuits to false.
@@ -2027,7 +2065,11 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       return
     }
 
-    if (await handleLifecycleProfileReply(event, store, turnId)) {
+    const onboardingUser = await store.getOnboardingUser(event.userId)
+    const onboardingIncomplete = Boolean(
+      onboardingUser && onboardingUser.onboardingState !== "complete"
+    )
+    if (!onboardingIncomplete && await handleLifecycleProfileReply(event, store, turnId)) {
       await store.updateTurn(turnId, { status: "succeeded", stage: "succeeded", completedAt: store.nowIso() })
       await store.markEventSucceeded(event.id)
       return
@@ -2036,12 +2078,27 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     const agent = await store.getAgentForUser(event.userId)
     if (!agent) throw Object.assign(new Error("No agent configured"), { code: "NO_AGENT" })
 
+    if (onboardingIncomplete && detectOnboardingProcessQuestion(event.body)) {
+      await sendMemoryReply(
+        store,
+        event,
+        turnId,
+        composeOnboardingProcessReply(onboardingUser?.onboardingState)
+      )
+      await store.updateTurn(turnId, {
+        status: "succeeded",
+        stage: "succeeded",
+        directIntent: "onboarding_process_question",
+        completedAt: store.nowIso(),
+      })
+      await store.markEventSucceeded(event.id)
+      return
+    }
+
     // Phase 23 — Onboarding state machine (D-03, D-04, D-08).
     // Run before normal LLM dispatch. For invited/new users, route through
     // onboarding steps using Voice v1 system prompt (D-04: no separate utility
     // prompt). On "complete", auto-promotes beta participant status.
-    const onboardingUser = await store.getOnboardingUser(event.userId)
-
     // ════════════════════════════════════════════════════════════════
     // iter32 — Deterministic onboarding dispatcher. Adam directive
     // 2026-05-04 ("we should have resume parsed before we start agent

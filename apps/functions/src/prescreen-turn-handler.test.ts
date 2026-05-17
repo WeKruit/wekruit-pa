@@ -1083,4 +1083,67 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     assert.equal(turnEntries[0][1].data.reply, replyText)
     assert.equal((turnEntries[0][1].data.action as { kind?: string }).kind, "clarify")
   })
+
+  it("yields an active prescreen when layoff onboarding owns the user turn", async () => {
+    const now = new Date().toISOString()
+    const { db } = makeFakeDb({
+      "pa-users/u1": {
+        source: "WeKruit_Laid_Off",
+        onboardingState: "q_role_asked",
+        workSession: {
+          kind: "layoff_onboarding",
+          status: "active",
+          boundary: "WeKruit_LAID_OFF",
+          startedAt: now,
+        },
+      },
+      "pa-prescreen-sessions/ps_active": {
+        sessionId: "ps_active",
+        userId: "u1",
+        jobId: "rain-software-engineer-fullstack-8849f6ef",
+        terminal: null,
+        currentQId: "role_fit",
+        createdAt: now,
+        updatedAt: now,
+        score: 0,
+        scoreMax: 1,
+        threshold: 0.65,
+        confidenceThreshold: 0.7,
+        maxClarifyRounds: 4,
+        qOrder: ["role_fit"],
+        questions: {
+          role_fit: {
+            qId: "role_fit",
+            prompt: "What recent work best matches this role?",
+            required: true,
+            weight: 1,
+            keywords: {
+              must: ["react"],
+              nice: [],
+              negative: [],
+            },
+            scored: {
+              attempts: 0,
+              clarifyCount: 0,
+              bestScore: 0,
+              bestConfidence: 0,
+              evidence: [],
+            },
+          },
+        },
+      },
+    })
+
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u1",
+      toE164: "+13054507715",
+      replyText: "React TypeScript and Node dashboards.",
+      sendSms: async () => {
+        throw new Error("should not send from prescreen")
+      },
+    })
+
+    assert.equal(result.handled, false)
+  })
 })

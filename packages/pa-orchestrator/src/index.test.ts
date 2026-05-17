@@ -755,6 +755,123 @@ test("processInboundEvent lifecycle: profile freshness reply updates profile det
   assert.match(createdFacts[0]!, /Candidate profile update/)
 })
 
+test("processInboundEvent onboarding: incomplete onboarding owns reply before lifecycle profile updater", async () => {
+  let lifecycleWrites = 0
+  let onboardingComposeCalls = 0
+  let outbound = ""
+  const applied: Array<{
+    step: string
+    opts?: { priorAskedStep?: string; priorUserReply?: string }
+  }> = []
+  const body =
+    "I want frontend or fullstack product engineering roles, ideally early-stage startup, NYC or remote."
+  const emptyFlagDb = {
+    collection() {
+      return {
+        doc() {
+          return {
+            async get() {
+              return { exists: false, data: () => undefined }
+            },
+          }
+        },
+      }
+    },
+  }
+  const store = makeStore({
+    db: emptyFlagDb as never,
+    getOnboardingUser: async () => ({
+      id: "u1",
+      phoneE164: "+13125550123",
+      onboardingState: "q_role_asked",
+      source: "WeKruit_Laid_Off",
+    }),
+    getRecentLifecycleEventForReply: async () => ({
+      eventId: "lifecycle_1",
+      eventType: "profile_freshness_nudge",
+      lastTouchAt: "2026-04-25T12:00:00.000Z",
+    }),
+    recordLifecycleReply: async () => {
+      lifecycleWrites++
+    },
+    runAgentTurn: async () => {
+      onboardingComposeCalls++
+      return { text: "Got it. About how many years of work experience should I put on your profile?" }
+    },
+    enqueueOutbound: async (_u, _t, text) => {
+      outbound = text
+    },
+    applyOnboarding: async (_userId, _phoneE164, step, opts) => {
+      applied.push({ step, opts })
+    },
+  })
+
+  const priorProbeFlag = process.env.paOnboardingProbeV2Enabled
+  process.env.paOnboardingProbeV2Enabled = "true"
+  try {
+    await processInboundEvent({ ...baseEvent, body }, store)
+  } finally {
+    if (priorProbeFlag === undefined) {
+      delete process.env.paOnboardingProbeV2Enabled
+    } else {
+      process.env.paOnboardingProbeV2Enabled = priorProbeFlag
+    }
+  }
+
+  assert.equal(lifecycleWrites, 0, "active onboarding reply must not be recorded as lifecycle reply")
+  assert.equal(onboardingComposeCalls, 1, "onboarding compose path should own the reply")
+  assert.match(outbound, /years of work experience/)
+  assert.equal(applied.length, 1)
+  assert.equal(applied[0]!.step, "ask_q_yoe")
+  assert.equal(applied[0]!.opts?.priorAskedStep, "ask_q_role")
+  assert.equal(applied[0]!.opts?.priorUserReply, body)
+})
+
+test("processInboundEvent onboarding: process questions get a clear answer without advancing state", async () => {
+  let lifecycleWrites = 0
+  let llmCalls = 0
+  let applyCalls = 0
+  let outbound = ""
+  const store = makeStore({
+    getOnboardingUser: async () => ({
+      id: "u1",
+      phoneE164: "+13125550123",
+      onboardingState: "q_role_asked",
+      source: "WeKruit_Laid_Off",
+    }),
+    getRecentLifecycleEventForReply: async () => ({
+      eventId: "lifecycle_1",
+      eventType: "profile_freshness_nudge",
+      lastTouchAt: "2026-04-25T12:00:00.000Z",
+    }),
+    recordLifecycleReply: async () => {
+      lifecycleWrites++
+    },
+    runAgentTurn: async () => {
+      llmCalls++
+      return { text: "should-not-call-llm" }
+    },
+    enqueueOutbound: async (_u, _t, text) => {
+      outbound = text
+    },
+    applyOnboarding: async () => {
+      applyCalls++
+    },
+  })
+
+  await processInboundEvent({
+    ...baseEvent,
+    body: "Is this legit? How does this pre-screen work with the hiring manager?",
+  }, store)
+
+  assert.equal(lifecycleWrites, 0)
+  assert.equal(llmCalls, 0)
+  assert.equal(applyCalls, 0)
+  assert.match(outbound, /this is WeKruit/)
+  assert.match(outbound, /hiring manager/)
+  assert.match(outbound, /what kinds of roles/)
+})
+
 test("processInboundEvent lifecycle: explicit job request is not swallowed as profile update", async () => {
   let llmCalls = 0
   let recCalls = 0

@@ -3,17 +3,17 @@ import test from "node:test"
 
 import { decidePreClaireTurnOwner } from "./pre-claire-turn-owner.js"
 
-test("active prescreen owns the turn even if layoff onboarding is still active", () => {
+test("active layoff onboarding owns the turn even if a prescreen handler also matched", () => {
   assert.equal(
     decidePreClaireTurnOwner({
       prescreenHandled: true,
       layoffOwnsTurn: true,
     }),
-    "prescreen",
+    "layoff_orchestrator",
   )
 })
 
-test("layoff onboarding owns the turn only when prescreen did not handle it", () => {
+test("layoff onboarding owns the turn when prescreen did not handle it", () => {
   assert.equal(
     decidePreClaireTurnOwner({
       prescreenHandled: false,

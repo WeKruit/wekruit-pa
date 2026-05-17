@@ -4,7 +4,7 @@ export function decidePreClaireTurnOwner(args: {
   prescreenHandled: boolean
   layoffOwnsTurn: boolean
 }): PreClaireTurnOwner {
-  if (args.prescreenHandled) return "prescreen"
   if (args.layoffOwnsTurn) return "layoff_orchestrator"
+  if (args.prescreenHandled) return "prescreen"
   return "generic"
 }
