@@ -391,7 +391,7 @@ Required Firestore checks:
 - send/do-not-send reason
 - active session state
 
-Current status: `LIVE_PARTIAL`
+Current status: `LIVE_DONE`
 
 ## Flow 9: Job Matching Conversation
 

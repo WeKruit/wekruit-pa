@@ -79,7 +79,7 @@ Important baseline finding:
 | Job prescreen weak candidate | LIVE_DONE | Real iMessage weak run probed repeatedly before `HARD_STOP` | Session, memory tags, and user/candidate state verified | No false positive skill tags were added. |
 | Pause/restart/supersede | LIVE_DONE | Real iMessage restart, opt-out send failure, natural pause, and clean pause rerun verified | User-level `workSession`, session boundary, inbound status, and memory event verified | See Flow 6 and Flow 7. |
 | Privacy/abuse/security | LIVE_DONE | Prompt injection blocked; privacy summary and export request verified through real iMessage | Abuse events, deterministic privacy outbound, `pa-privacy-requests`, and audit rows verified | Found and fixed prompt-injection tapback and privacy LLM fallback defects. |
-| Rate limit/opt-out/suppression/cooldown | PRESCREEN_PARTIAL | `Stop` provider opt-out produced real send failure; `START` restored test line | Send-failed session ended with `boundary=send_failed` | Broad rate-limit/cooldown not tested in this narrowed run. |
+| Rate limit/opt-out/suppression/cooldown | LIVE_DONE | `Stop` provider opt-out produced real send failure; `START` restored test line; live rate-limit canary returned clear iMessage copy | Send-failed session ended with `boundary=send_failed`; rate-limit, abuse, audit, and lifecycle suppression rows verified | Production canaries covered cooldown, active-session, and opt-out suppression without sending outbound. |
 | Job matching conversation | LIVE_DONE | Real iMessage post-terminal match explanation and fresh job-search requests verified | `pa-inbound-events`, `pa-turns`, `pa-outbound`, and completed `pa-users.workSession` verified | Found and fixed lifecycle swallow, terminal guard swallow, missing explanation context, and F2 numbered-list truncation. |
 | Everyday catchup | LIVE_DONE | Real lifecycle profile check-in outbound was replied to over iMessage, then retested after fix | Lifecycle event, turn, outbound, memory fact, tags, and user preference writes verified | Found and fixed lifecycle replies falling into generic LLM without profile/tag updates. |
 | Automated outbound | LIVE_DONE | PASS/HARD_STOP prescreen terminal actions and lifecycle profile-check outbound both sent real iMessages | `pa-outbound` terminal rows and lifecycle reply outbound verified with sent/delivered status | Broad daily scheduler cadence is not load-tested in this narrowed live lane. |
@@ -411,6 +411,52 @@ Code-level memory hygiene fix:
 Remaining known data artifact:
 
 - The pre-fix PAUSE memory event for session `ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260516T183308045Z` was created before the memory hygiene patch and may still contain the old off-topic pause summary. The latest post-deploy event is clean, and PAUSE does not overwrite `pa-users.lastPrescreenMemoryUpdate`.
+
+## Flow 8 Evidence: Rate Limit, Opt-Out, Suppression, And Cooldown
+
+Verified directly in Messages and Firestore: 2026-05-17T03:34:21.430Z
+
+Runtime:
+
+- Node: `v24.3.0`
+- Candidate: `pa-users/U7AwKT8nLDRa35DkuBxq`
+- Candidate phone: `+14243201960`
+- Active Claire sender: `+13054507715`
+- Prescreen token used for adjacent live flows: `WeKruit_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_Job`
+
+Opt-out and resume proof:
+
+- In Flow 6, literal `Stop` caused the provider to reject the next opener with `OPTED_OUT`.
+- The failed opener session ended cleanly with `terminal=PAUSE`, `terminalReason=send_failed: OPTED_OUT`, `workSession.status=ended`, and `boundary=send_failed`.
+- After `START`, the same line accepted new inbound and outbound messages again.
+
+Live rate-limit proof:
+
+- Seeded the current rate-limit window with canary id `flow8_rate_limit_1778988473088`, then sent one real iMessage: `Flow 8 rate limit canary. Please ignore this test message.`
+- Claire replied in Messages: `You’re sending a bit too fast. Give it a few seconds and try again.`
+- Firestore proof:
+  - `pa-rate-limits/imessage_U7AwKT8nLDRa35DkuBxq_1778988480000`: `count=21`, `channel=imessage`, `windowStartedAt=2026-05-17T03:28:00.000Z`, `canaryId=flow8_rate_limit_1778988473088`.
+  - `pa-inbound-events/inb_fe91cdcb1e9049252c5c79527879bf41e2b1eb2d`: `status=completed`, `routedTo=claire_orchestrator`, `sessionId=ses_62990f32ce66925df13ae2accc126a22`.
+  - `pa-turns/75763f4a-ad64-4f17-b741-bd993c1b72cb`: `status=succeeded`, `stage=succeeded`, `errorCode=rate_limited`, `error=inbound_safety_block`.
+  - `pa-outbound/d7d37417-0dad-49c2-864c-820918196a5d`: `status=sent`, `sendblueStatus=DELIVERED`, body matched the visible rate-limit reply.
+  - `pa-abuse-events/98874418-4f42-4377-be3e-75c977eedf26`: `kind=rate_limited`, `message=Rate limit exceeded (20/60000ms)`, `channel=imessage`.
+  - `pa-audit-events/ca03dfbf-db82-4329-baf7-a4126a57be4d`: `kind=rate_limit`, `message=Inbound blocked: rate limit`, linked to inbound `inb_fe91cdcb1e9049252c5c79527879bf41e2b1eb2d`.
+  - `pa-audit-events/b576285c-3f19-40f5-afc9-c5ba36e80fcb`: `kind=rate_limit`, `message=Rate limit blocked inbound event`.
+- Duplicate check: querying all `pa-outbound` rows for the canonical user and filtering `2026-05-17T03:28:00.000Z` to `2026-05-17T03:30:00.000Z` returned exactly one outbound row, `d7d37417-0dad-49c2-864c-820918196a5d`.
+- Cleanup: unused seeded canary docs `imessage_U7AwKT8nLDRa35DkuBxq_1778988420000` and `imessage_U7AwKT8nLDRa35DkuBxq_1778988540000` were deleted. The real `count=21` evidence row was kept.
+
+Lifecycle suppression canaries:
+
+- `pa-candidate-lifecycle-events/lifecycle_5bc1cc4957168907383f48a8cf30337f`: `status=suppressed`, `dryRun=true`, `decision=do_not_send`, `blockedSignals=["cooldown_active"]`, `decisionReason=candidate has recent outbound outreach`, `outboundId=null`, `workSession.boundary=suppressed`.
+- `pa-candidate-lifecycle-events/lifecycle_c4325165170935f1475b403d57c0acea`: `status=suppressed`, `dryRun=true`, `decision=do_not_send`, `blockedSignals=["active_session"]`, `decisionReason=candidate has an active work session; lifecycle message would interrupt it`, `outboundId=null`, `workSession.boundary=suppressed`.
+- `pa-candidate-lifecycle-events/lifecycle_56130c49ec34f64771e30a6ff29a233b`: `status=suppressed`, `dryRun=true`, `decision=do_not_send`, `blockedSignals=["opted_out"]`, `decisionReason=candidate opted out or is marked do-not-contact`, `outboundId=null`, `workSession.boundary=suppressed`.
+- These canaries temporarily mutated `workSession` or `outreach` only for the dry-run check. Final canonical user state was re-read after cleanup:
+  - `workSession.kind=job_prescreen`
+  - `workSession.status=ended`
+  - `workSession.terminal=PASS`
+  - `workSession.sessionId=ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260517T020903710Z`
+  - `outreach={ lastOutboundAt: "2026-05-17T01:38:26.875Z" }`
+  - `doNotContact` absent.
 
 ## Flow 1 Evidence: Normal Onboarding After Prescreen Pause
 
