@@ -772,7 +772,7 @@ test("processInboundEvent lifecycle: job recommendation explanation is not swall
 
   await processInboundEvent({
     ...baseEvent,
-    body: "Why did you recommend the Constant Contact co-op, and for the Rain fullstack role what part of my OFO experience matched best? I prefer early-stage fullstack roles over internships.",
+    body: "Please answer the three-part job-fit question directly: 1) best current match, 2) whether Rain fullstack still makes sense given what I shared, and 3) whether internships or co-op roles should be lower priority for me.",
   }, store)
 
   assert.equal(lifecycleWrites, 0)
@@ -864,7 +864,8 @@ test("processInboundEvent job explanation injects multi-part answer contract and
 
   await processInboundEvent({
     ...baseEvent,
-    body: "Can you answer the match reason now why Constant Contact what part of my OFO work matched Rain and should internships be lower priority for me",
+    body:
+      "Please answer the three-part job-fit question directly: 1) best current match, 2) whether Rain fullstack still makes sense given what I shared, and 3) whether internships or co-op roles should be lower priority for me.",
   }, store)
 
   if (!captured) throw new Error("runAgentTurn was not called")
@@ -876,6 +877,118 @@ test("processInboundEvent job explanation injects multi-part answer contract and
   assert.match(directive, /rain-software-engineer-fullstack-8849f6ef/)
   assert.match(directive, /Built OFO merchant\/order dashboards/)
   assert.match(directive, /data_workflows/)
+})
+
+test("processInboundEvent job explanation replies atomically so ordered reasoning is not reversed in iMessage", async () => {
+  const bodies: string[] = []
+  const idempotencyKeys: Array<string | undefined> = []
+  const splitReasons: unknown[] = []
+  const store = makeStore({
+    runAgentTurn: async () => ({
+      text:
+        "strongest evidence is troubleshooting end-to-end customer-impact workflows plus web/frontend-adjacent exposure (React/TypeScript), which maps better to full-stack product work than support-only execution.\n" +
+        "2) Rain fullstack still only makes adjacent sense after the support-only prescreen, because the evidence is lighter on production APIs, database ownership, and backend systems.\n\n" +
+        "3) Internship/co-op priority: No, internships/co-ops should not be automatically lower priority, but prioritize roles that value early fullstack ownership and product-facing systems.",
+    }),
+    enqueueOutbound: async (_u, _t, body, input) => {
+      bodies.push(body)
+      idempotencyKeys.push(input?.idempotencyKey)
+    },
+    log: (evt, payload) => {
+      if (evt === "pa.voice.reply_split.decided") {
+        splitReasons.push((payload as { reason?: unknown } | undefined)?.reason)
+      }
+    },
+  })
+
+  await processInboundEvent({
+    ...baseEvent,
+    body:
+      "Please answer all three parts clearly: 1) best current match for me, 2) whether Rain fullstack still makes sense after my support-only prescreen, 3) whether internships/co-ops should be lower priority.",
+  }, store)
+
+  assert.equal(bodies.length, 1)
+  assert.deepEqual(idempotencyKeys, ["outbound-evt1"])
+  assert.deepEqual(splitReasons, ["job_explanation_force_1"])
+  assert.match(bodies[0]!, /^Best current match:/)
+  assert.match(bodies[0]!, /Rain fullstack:/)
+  assert.match(bodies[0]!, /Internship\/co-op priority:/)
+  assert.doesNotMatch(bodies[0]!, /· match for you/)
+  assert.doesNotMatch(bodies[0]!, /^match:/i)
+  assert.doesNotMatch(bodies[0]!, /priority:\s*priority:/i)
+})
+
+test("processInboundEvent job explanation preserves the concrete best-match role from recent visible context", async () => {
+  let outbound = ""
+  const fakeDb = {
+    collection(name: string) {
+      return {
+        doc() {
+          return {
+            async get() {
+              return { exists: false, data: () => undefined }
+            },
+          }
+        },
+        where() {
+          const query = {
+            where() {
+              return query
+            },
+            limit() {
+              return {
+                async get() {
+                  if (name !== "pa-messages") return { docs: [] }
+                  const rows = [
+                    {
+                      role: "assistant",
+                      body:
+                        "Best current match: evidence is strongest in end-to-end troubleshooting and validating customer-impact workflows.",
+                      createdAt: "2026-05-17T08:05:40.589Z",
+                    },
+                    {
+                      role: "assistant",
+                      body:
+                        "Best current match: Software Engineer 1 – Full-Stack at affirm, because your strongest signal is troubleshooting end-to-end customer-impact workflows.",
+                      createdAt: "2026-05-17T07:48:50.502Z",
+                    },
+                  ]
+                  return { docs: rows.map((row) => ({ data: () => row })) }
+                },
+              }
+            },
+          }
+          return query
+        },
+      }
+    },
+  }
+  const store = makeStore({
+    db: fakeDb as unknown as OrchestratorStore["db"],
+    runAgentTurn: async () => ({
+      text:
+        "evidence is strongest in end-to-end troubleshooting and validating customer-impact workflows, with web/frontend-adjacent exposure (React/TypeScript) that fits full-stack product work better than support-only execution.\n" +
+        "Rain fullstack: After your support-only prescreen, it still makes sense only as a weak/adjacent fit.\n" +
+        "Internship/co-op priority: No, internships/co-ops should not be lower priority for you.",
+    }),
+    enqueueOutbound: async (_u, _t, body) => {
+      outbound = body
+    },
+  })
+
+  await processInboundEvent({
+    ...baseEvent,
+    body:
+      "Final copy check v4: please answer in one message: 1) best current match for me, 2) whether Rain fullstack still makes sense after my support-only prescreen, 3) whether internships/co-ops should be lower priority.",
+  }, store)
+
+  assert.match(
+    outbound,
+    /^Best current match: Software Engineer 1 – Full-Stack at affirm, because evidence is strongest/
+  )
+  assert.doesNotMatch(outbound, /^Best current match: evidence is/i)
+  assert.match(outbound, /Rain fullstack:/)
+  assert.match(outbound, /Internship\/co-op priority:/)
 })
 
 test("processInboundEvent T5: __PA_RESET__ still short-circuits BEFORE the LLM (A6 lock)", async () => {

@@ -148,7 +148,9 @@ function stripEmphasis(input: string): string {
   let s = input
   s = s.replace(/＊＊([^＊]+)＊＊/g, "$1")
   s = s.replace(/(?<![＊\w])＊([^＊\n]+)＊(?![＊\w])/g, "$1")
+  s = s.replace(/\*\*([^*]+)\*\*(?=[A-Za-z0-9])/g, "$1 ")
   s = s.replace(/\*\*([^*]+)\*\*/g, "$1")
+  s = s.replace(/__([^_]+)__(?=[A-Za-z0-9])/g, "$1 ")
   s = s.replace(/__([^_]+)__/g, "$1")
   s = s.replace(/(?<![*\w])\*([^*\n]+)\*(?![*\w])/g, "$1")
   s = s.replace(/(?<![_\w])_([^_\n]+)_(?![_\w])/g, "$1")
@@ -416,4 +418,3 @@ export function stripABProbeFromTail(text: string): StripABResult {
   if (bestStart === -1 || bestLabel === "") return { stripped: text, hits: [] }
   return stripFromX(text, bestStart, bestLabel as "zh_X_还是_Y_question" | "en_X_or_Y_question")
 }
-

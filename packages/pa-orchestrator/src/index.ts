@@ -1264,7 +1264,7 @@ function isJobRecommendationExplanationRequest(text: string | undefined | null):
   const lower = body.toLowerCase()
   const asksQuestion =
     /[?？]/.test(body) ||
-    /\b(?:why|what|which|how|can\s+you|tell\s+me|explain)\b/i.test(body) ||
+    /\b(?:why|what|which|how|can\s+you|tell\s+me|explain|answer)\b/i.test(body) ||
     /(?:为什么|为啥|哪里|哪点|怎么|解释|推荐理由|匹配原因)/.test(body)
   if (!asksQuestion) return false
   const hasJobContext =
@@ -1272,6 +1272,11 @@ function isJobRecommendationExplanationRequest(text: string | undefined | null):
     /(?:推荐|匹配|岗位|职位|工作|机会|实习|公司)/.test(body)
   if (!hasJobContext) return false
   return (
+    /\bwhich\s+(?:jobs?|roles?|positions?|opportunities|matches)\b[\s\S]{0,120}\b(?:fit|fits|match|matches|best|make\s+sense)\b/i.test(body) ||
+    /\bbest\s+(?:current\s+)?(?:match|fit|role|job|opportunity)\b/i.test(body) ||
+    /\bwhether\b[\s\S]{0,140}\b(?:rain|fullstack|role|job)\b[\s\S]{0,140}\b(?:still\s+)?(?:makes?\s+sense|fits?|matches?)\b/i.test(body) ||
+    /\blower\s+priority\b[\s\S]{0,120}\b(?:jobs?|roles?|internships?|co-?ops?)\b/i.test(lower) ||
+    /\b(?:jobs?|roles?|internships?|co-?ops?)\b[\s\S]{0,120}\blower\s+priority\b/i.test(lower) ||
     /\bwhy\s+(?:did\s+you\s+)?recommend\b/i.test(body) ||
     /\bwhat\s+part\b[\s\S]{0,120}\bmatch(?:ed|es)?\b/i.test(body) ||
     /\bwhy\s+(?:is|was|did|does)?\s*.*\bmatch(?:ed|es|ing)?\b/i.test(body) ||
@@ -1294,14 +1299,121 @@ async function buildJobRecommendationExplanationDirective(
     "- Do not send a fresh job list unless the user explicitly asks for new jobs in this same turn.",
     "- Do not only say you updated preferences. Give the concrete match reasoning.",
     "- Be honest when a role is only an adjacent/weak match.",
+    "- Use plain text only: no Markdown bold/italic and no numbered list markers.",
+    "- When these parts apply, use exactly these labels: Best current match:, Rain fullstack:, Internship/co-op priority:.",
+    "- If the user asks for the best current match, the first line must be `Best current match: <role/title/company>, because ...`; do not start with an unlabeled rationale like `strongest evidence is`.",
   ]
 
   const prescreenContext = await loadRecentPrescreenExplanationContext(store, event.userId)
   if (prescreenContext) {
     lines.push("", prescreenContext)
   }
+  const bestCurrentMatchHint = await loadRecentBestCurrentMatchHint(store, event.userId, event.sessionId)
+  if (bestCurrentMatchHint) {
+    lines.push(
+      "",
+      "Recent visible recommendation context:",
+      `- best current match to name if asked: ${bestCurrentMatchHint}`,
+      "- If the user asks for best current match, use that role/company in the first line before giving the rationale."
+    )
+  }
 
   return lines.join("\n")
+}
+
+function timestampMs(value: unknown): number {
+  if (value && typeof value === "object" && "toDate" in value && typeof value.toDate === "function") {
+    const date = value.toDate()
+    return date instanceof Date ? date.getTime() : 0
+  }
+  if (typeof value === "string") {
+    const parsed = Date.parse(value)
+    return Number.isFinite(parsed) ? parsed : 0
+  }
+  return 0
+}
+
+function firstLine(value: string): string {
+  return value.split(/\r?\n/)[0]?.trim() ?? ""
+}
+
+function isRationaleOnlyBestMatch(value: string): boolean {
+  const normalized = value.trim()
+  if (!normalized) return true
+  return /^(?:because|evidence|strongest\s+evidence|the\s+strongest\s+evidence|your\s+strongest\s+(?:signal|evidence)|signal|signals?|support-only|after\s+your|it\b|that\b|there\b)/i.test(normalized)
+}
+
+function extractBestCurrentMatchHintFromText(text: string | undefined | null): string | null {
+  if (!text) return null
+  const patterns = [
+    /^\s*[·\-*]?\s*best\s+current\s+match(?:\s+for\s+you)?\s*:\s*([^\n]+)/im,
+    /^\s*[·\-*]?\s*best\s+current\s*for\s+you\s*:\s*([^\n]+)/im,
+    /^\s*[·\-*]?\s*(?:best\s+current\s*)?match(?:\s+for\s+you)?\s*:\s*([^\n]+)/im,
+  ]
+  for (const pattern of patterns) {
+    const match = text.match(pattern)
+    const raw = match?.[1]?.trim()
+    if (!raw) continue
+    const candidate = raw
+      .split(/,\s*because\b|\sbecause\b|\.\s+/i)[0]
+      ?.trim()
+      .replace(/\s+@\s+/g, " at ")
+      .replace(/[.。,:;，；]+$/g, "")
+    if (!candidate || candidate.length < 4 || candidate.length > 180) continue
+    if (isRationaleOnlyBestMatch(candidate)) continue
+    return candidate
+  }
+  return null
+}
+
+function extractBestCurrentMatchHintFromDirective(text: string | undefined | null): string | null {
+  if (!text) return null
+  const match = text.match(/best current match to name if asked:\s*([^\n]+)/i)
+  return extractBestCurrentMatchHintFromText(`Best current match: ${match?.[1] ?? ""}`)
+}
+
+async function loadRecentBestCurrentMatchHint(
+  store: OrchestratorStore,
+  userId: string,
+  sessionId?: string | null
+): Promise<string | null> {
+  if (!store.db) return null
+  try {
+    const queries = []
+    if (sessionId) {
+      queries.push(
+        store.db
+          .collection(PA_COLLECTIONS.messages)
+          .where("userId", "==", userId)
+          .where("sessionId", "==", sessionId)
+      )
+    }
+    queries.push(store.db.collection(PA_COLLECTIONS.messages).where("userId", "==", userId))
+    for (const query of queries) {
+      const snap = await query.limit(500).get()
+      const rows = snap.docs
+        .map((doc) => {
+          const data = doc.data() as Record<string, unknown>
+          return {
+            body: typeof data.body === "string" ? data.body : "",
+            role: typeof data.role === "string" ? data.role : "",
+            createdAtMs: timestampMs(data.createdAt),
+          }
+        })
+        .filter((row) => row.role === "assistant" && row.body.trim())
+        .sort((a, b) => b.createdAtMs - a.createdAtMs)
+      for (const row of rows) {
+        const hint = extractBestCurrentMatchHintFromText(row.body)
+        if (hint) return hint
+      }
+    }
+  } catch (err) {
+    store.log("pa.runtime.job_explanation_match_hint_failed", {
+      userId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+  return null
 }
 
 async function loadRecentPrescreenExplanationContext(
@@ -1354,6 +1466,53 @@ async function loadRecentPrescreenExplanationContext(
     })
     return null
   }
+}
+
+function asksBestCurrentMatch(text: string | undefined | null): boolean {
+  return /\bbest\s+(?:current\s+)?(?:match|fit|role|job|opportunity)\b/i.test(text ?? "")
+}
+
+function normalizeJobExplanationVisibleReply(
+  text: string,
+  userText?: string | null,
+  bestCurrentMatchHint?: string | null
+): string {
+  if (!text.trim()) return text
+  let normalized = text
+    .replace(
+      /^\s*[·\-*]?\s*(?:best\s+current\s*)?match(?:\s+for\s+you)?\s*:/im,
+      "Best current match:"
+    )
+    .replace(
+      /^\s*[·\-*]?\s*best\s+current\s*(?:match\s*)?(?:for\s+you)?\s*:/im,
+      "Best current match:"
+    )
+    .replace(/^\s*[·\-*]?\s*rain\s+fullstack\s*:?\s*/im, "Rain fullstack: ")
+    .replace(
+      /^\s*[·\-*]?\s*(?:internships?\/co-ops?|internship\/co-op|internships?|co-ops?)(?:\s+priority)?\s*:?\s*/im,
+      "Internship/co-op priority: "
+    )
+    .replace(/(Internship\/co-op priority:\s*)priority:\s*/i, "$1")
+  if (asksBestCurrentMatch(userText)) {
+    const first = firstLine(normalized)
+    const hasBestLabel = /^\s*Best current match:/im.test(normalized)
+    const firstReason = hasBestLabel
+      ? first.replace(/^\s*Best current match:\s*/i, "").trim()
+      : first
+    const hint = bestCurrentMatchHint?.trim()
+    if (hint && isRationaleOnlyBestMatch(firstReason)) {
+      const reason = firstReason.replace(/^(?:because|as|since)\s+/i, "").trim()
+      const replacement = `Best current match: ${hint}${reason ? `, because ${reason}` : "."}`
+      if (hasBestLabel) {
+        normalized = normalized.replace(/^\s*Best current match:\s*[^\n]*/im, replacement)
+      } else {
+        normalized = normalized.replace(/^\s*[^\n]*/m, replacement)
+      }
+    } else if (!hasBestLabel) {
+      normalized = normalized.replace(/^\s*/, "Best current match: ")
+    }
+  }
+  return normalized
 }
 
 async function handleCompletedUserJobSearchRequest(
@@ -3575,13 +3734,18 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // user-asked or P0-safety content; let prob-split + normalizer multi-
     // bubble handle delivery.
     const replyIsStructured = isStructuredReply(replyAfterRewrite)
-    const skipF2Caps = replyIsStructured || crisisInjected
+    const skipF2Caps =
+      replyIsStructured || crisisInjected || jobRecommendationExplanationDirective != null
     if (skipF2Caps) {
       store.log("pa.voice.f2_cap.bypassed", {
         userId: event.userId,
         turnId,
         len: replyAfterRewrite.length,
-        reason: crisisInjected ? "crisis_injected" : "structured_reply",
+        reason: crisisInjected
+          ? "crisis_injected"
+          : jobRecommendationExplanationDirective != null
+            ? "job_explanation"
+            : "structured_reply",
       })
     }
     if (!skipF2Caps) {
@@ -3672,7 +3836,14 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       }
     }
     const norm = normalizeForIMessage(rawVisible, { maxLength: 600 })
-    const visibleReply = norm.text
+    let visibleReply = norm.text
+    if (jobRecommendationExplanationDirective) {
+      visibleReply = normalizeJobExplanationVisibleReply(
+        visibleReply,
+        event.body,
+        extractBestCurrentMatchHintFromDirective(jobRecommendationExplanationDirective)
+      )
+    }
     // Bug 4 (2026-05-03 commit ea59897) shipped a single-send-per-turn
     // invariant after Adam observed 4 inbound msgs → 6 outbound bubbles
     // (norm.chunks length-based splitting). We keep that fix in spirit:
@@ -3684,7 +3855,13 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // weighted_random (turnId is the seed → replay-deterministic). Short
     // replies, single-sentence replies, crisis-hotline trailers and
     // mem0Degraded notices all force count=1. See probabilistic-split.ts.
-    const splitDecision = decideReplySplit(visibleReply, { seed: turnId })
+    const splitDecision = jobRecommendationExplanationDirective
+      ? {
+          count: 1 as const,
+          parts: [visibleReply],
+          reason: "job_explanation_force_1" as const,
+        }
+      : decideReplySplit(visibleReply, { seed: turnId })
     const outboundParts = splitDecision.parts
     store.log("pa.voice.reply_split.decided", {
       userId: event.userId,

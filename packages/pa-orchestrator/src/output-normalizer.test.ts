@@ -63,6 +63,12 @@ test("fullwidth bold markers stripped", () => {
   assert.doesNotMatch(r.text, /＊/)
 })
 
+test("bold markers stripped without gluing adjacent words", () => {
+  const r = normalizeForIMessage("**Best current**for you: x", { maxLength: 600 })
+  assert.equal(r.text, "Best current for you: x")
+  assert.doesNotMatch(r.text, /\*\*/)
+})
+
 test("numbered list lines lose digit prefix", () => {
   const r = normalizeForIMessage("1. 第一步\n2. 第二步", { maxLength: 600 })
   assert.match(r.text, /· 第一步/)
@@ -186,4 +192,3 @@ test("Stream H5 — no strip when no A/B pattern present", () => {
   assert.equal(stripped, input)
   assert.equal(hits.length, 0)
 })
-

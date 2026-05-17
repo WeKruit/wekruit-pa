@@ -50,6 +50,7 @@ export type SplitReason =
   | "single_sentence_force_1"
   | "hotline_trailer_force_1"
   | "mem0_marker_force_1"
+  | "job_explanation_force_1"
   | "long_high_prob_2"
   | "weighted_random_1"
   | "weighted_random_2"

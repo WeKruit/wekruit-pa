@@ -642,6 +642,51 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     assert.equal(turnEntries.length, 0)
   })
 
+  it("yields a recent terminal prescreen for the live multi-part job-fit wording", async () => {
+    const now = new Date().toISOString()
+    const { db, docs } = makeFakeDb({
+      "pa-users/u1": {
+        onboardingState: "complete",
+        onboardingStatus: "active",
+        pipelineState: { completed: true },
+        workSession: {
+          kind: "job_prescreen",
+          status: "ended",
+          sessionId: "ps_done",
+          jobId: "rain-software-engineer-fullstack-8849f6ef",
+          endedAt: now,
+          boundary: "terminal",
+          terminal: "HARD_STOP",
+        },
+      },
+      "pa-prescreen-sessions/ps_done": {
+        sessionId: "ps_done",
+        userId: "u1",
+        jobId: "rain-software-engineer-fullstack-8849f6ef",
+        terminal: "HARD_STOP",
+        currentQId: null,
+        createdAt: now,
+        updatedAt: now,
+        workSession: { kind: "job_prescreen", status: "ended", startedAt: now, endedAt: now, boundary: "terminal" },
+      },
+    })
+
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u1",
+      toE164: "+13054507715",
+      replyText:
+        "Please answer the three-part job-fit question directly: 1) best current match, 2) whether Rain fullstack still makes sense given what I shared, and 3) whether internships or co-op roles should be lower priority for me.",
+      sendSms: async () => {
+        throw new Error("should not send from prescreen")
+      },
+    })
+
+    assert.equal(result.handled, false)
+    const turnEntries = [...docs.entries()].filter(([path]) => path.startsWith("pa-prescreen-sessions/ps_done/turns/"))
+    assert.equal(turnEntries.length, 0)
+  })
+
   it("yields a recent paused prescreen to an incomplete onboarding location answer", async () => {
     const now = new Date().toISOString()
     const { db, docs } = makeFakeDb({

@@ -245,6 +245,70 @@ Deploy result:
 
 - All three functions updated successfully as Node.js 24 second-generation Firebase functions.
 
+## Flow 4 - Job-Fit Explanation Copy
+
+Status: `UX_DONE`
+
+Live thread:
+
+- Candidate: `pa-users/U7AwKT8nLDRa35DkuBxq`
+- Session: `ses_62990f32ce66925df13ae2accc126a22`
+- Messages thread: `+1 (305) 450-7715`
+- Visible passing prompt sent: 2026-05-17 04:26 ET
+
+Pre-fix live defects:
+
+1. `Final copy check v5` returned one assistant bubble, but the first line was still rationale-only:
+   - `Best current match: strongest evidence is end-to-end troubleshooting...`
+2. Firestore confirmed the raw model chunk also lacked a concrete role/company, so this was not only a Sendblue/iMessage rendering issue.
+3. The user-visible answer therefore did not clearly tell the candidate which role was the best current match.
+
+Fixes applied after this run:
+
+- `packages/pa-orchestrator/src/index.ts`
+  - Detects explicit job-fit explanation requests.
+  - Loads recent visible best-match context from the current session first, then the user-level message history.
+  - Uses that role/company as the first-line anchor when the model returns rationale-only text.
+- `packages/pa-orchestrator/src/index.test.ts`
+  - Adds regression coverage for preserving the concrete best-match role from recent visible context.
+
+Post-fix live transcript:
+
+- User:
+  - `Final copy check v6: please answer in one message: 1) best current match for me, 2) whether Rain fullstack still makes sense after my support-only prescreen, 3) whether internships/co-ops should be lower priority.`
+- Claire:
+  - `Best current match: Software Engineer 1 – Full-Stack at affirm, because strongest evidence is end-to-end troubleshooting of customer-impact issues plus web/frontend-adjacent exposure (React/TypeScript), which is a closer fit for product full-stack work than support-only execution.`
+  - `Rain fullstack: After your support-only prescreen, it still makes sense only as a weak/adjacent fit, since your evidence is centered on reproducing and manually validating fixes via support tools (repro steps, screenshots, order IDs) rather than building production full-stack features with APIs/DB/logs.`
+  - `Internship/co-op priority: No, internships/co-ops should not be lower priority; keep them in the mix, but prioritize roles that explicitly expect real ownership of web/frontend surfaces or full-stack product features rather than primarily support-to-engineering ticketing.`
+
+Firestore proof:
+
+- `pa-inbound-events/inb_0d0c5ef46cb6dcaa2b087b2244fad8e6038deab0`
+  - `createdAt`: `2026-05-17T08:26:39.577Z`
+  - `sessionId`: `ses_62990f32ce66925df13ae2accc126a22`
+- `pa-messages/msg_02edd8a910fa07c0006a097bc44eb88197876389c14d09b1bb`
+  - `createdAt`: `2026-05-17T08:26:46.035Z`
+  - `body`: exact passing Claire reply above.
+- `pa-outbound/2fc37cc4-c403-4074-971a-48ea2b3fd1a6`
+  - `createdAt`: `2026-05-17T08:26:48.251Z`
+  - `status`: `sent`
+
+Verification:
+
+- Targeted Node 24 tests:
+  - `node --import ./apps/functions/node_modules/tsx/dist/esm/index.mjs --test packages/pa-orchestrator/src/index.test.ts packages/pa-orchestrator/src/output-normalizer.test.ts`
+  - Result: `78` tests passed.
+- Full Firebase predeploy suite:
+  - Result: `1719` tests passed, `315` suites passed.
+- Deployed functions:
+  - `pa-orchestrator:onPaInbound`
+  - `pa-orchestrator:paMessageCoalescer`
+  - `pa-orchestrator:paCoalesceBufferSweep`
+
+Verdict:
+
+- The candidate-visible answer now names the role/company first, answers all three user questions in one bubble, and avoids the previous malformed `currentfor`/rationale-only first line.
+
 ## Remaining Matrix Status
 
 The narrowed work completed the live job-prescreen lane that blocked this goal:
@@ -257,6 +321,7 @@ The narrowed work completed the live job-prescreen lane that blocked this goal:
 - Post-HARD_STOP immediate job recommendations: fixed and Firestore verified as `jobRecsFired:false`.
 - Love tapback on explicit no-code weak answer: fixed and live verified absent.
 - Rain compensation sentinel in prescreen: repaired and live transcript verified clean.
+- Job-fit explanation after prescreen: fixed, deployed, and live verified against Messages + Firestore.
 
 The broader customer-visible matrix in `.planning/CLAIRE-CUSTOMER-VISIBLE-IMESSAGE-QA-GOAL.md` still lists other flows as future test work unless separately executed:
 

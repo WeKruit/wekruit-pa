@@ -516,7 +516,7 @@ function isJobRecommendationExplanationRequest(reply: string): boolean {
   const lower = body.toLowerCase()
   const asksQuestion =
     /[?？]/.test(body) ||
-    /\b(?:why|what|which|how|can\s+you|tell\s+me|explain)\b/i.test(body) ||
+    /\b(?:why|what|which|how|can\s+you|tell\s+me|explain|answer)\b/i.test(body) ||
     /(?:为什么|为啥|哪里|哪点|怎么|解释|推荐理由|匹配原因)/.test(body)
   if (!asksQuestion) return false
   const hasJobContext =
@@ -524,6 +524,11 @@ function isJobRecommendationExplanationRequest(reply: string): boolean {
     /(?:推荐|匹配|岗位|职位|工作|机会|实习|公司)/.test(body)
   if (!hasJobContext) return false
   return (
+    /\bwhich\s+(?:jobs?|roles?|positions?|opportunities|matches)\b[\s\S]{0,120}\b(?:fit|fits|match|matches|best|make\s+sense)\b/i.test(body) ||
+    /\bbest\s+(?:current\s+)?(?:match|fit|role|job|opportunity)\b/i.test(body) ||
+    /\bwhether\b[\s\S]{0,140}\b(?:rain|fullstack|role|job)\b[\s\S]{0,140}\b(?:still\s+)?(?:makes?\s+sense|fits?|matches?)\b/i.test(body) ||
+    /\blower\s+priority\b[\s\S]{0,120}\b(?:jobs?|roles?|internships?|co-?ops?)\b/i.test(lower) ||
+    /\b(?:jobs?|roles?|internships?|co-?ops?)\b[\s\S]{0,120}\blower\s+priority\b/i.test(lower) ||
     /\bwhy\s+(?:did\s+you\s+)?recommend\b/i.test(body) ||
     /\bwhat\s+part\b[\s\S]{0,120}\bmatch(?:ed|es)?\b/i.test(body) ||
     /\bwhy\s+(?:is|was|did|does)?\s*.*\bmatch(?:ed|es|ing)?\b/i.test(body) ||
