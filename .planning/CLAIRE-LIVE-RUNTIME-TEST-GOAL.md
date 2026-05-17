@@ -60,6 +60,13 @@ Known bug fixed in the latest live run:
 - Verified final user work session: `kind=job_prescreen`, `status=ended`, `boundary=terminal`, `terminal=PASS`.
 - Treat this as a regression check in future runs, not the first unresolved blocker.
 
+Latest salary-sentinel and URL reveal live proof:
+
+- Latest verified live PASS session: `ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260517T215442235Z`.
+- Visible iMessage PASS reveal rendered the Rain job details URL: `https://www.rain.xyz/careers?ashby_jid=8849f6ef-86e6-464d-9f40-62f8355d40fb#open-roles`.
+- Visible iMessage PASS reveal did not include the old open-ended salary sentinel `$50000-999000/yr`, `999000`, or `999k`.
+- Firestore verified `terminal=PASS`, user work session ended, memory event exists, candidate job state is `employer_visible`, and employer-visible profile points to this session.
+
 Required execution style:
 
 - Stop at the first customer-visible or Firestore-state divergence, debug root cause, fix, deploy, and rerun that live path.

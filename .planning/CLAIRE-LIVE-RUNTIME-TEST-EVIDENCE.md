@@ -75,7 +75,7 @@ Important baseline finding:
 | Normal candidate onboarding | LIVE_DONE_FOR_COLLISION_AND_RESUME_COMPLETION | Real iMessage location-answer rerun after prescreen pause advanced to resume ask; real resume-on-file reply completed onboarding | `pa-users.pipelineState.completed=true`, `onboardingStatus=active`, clean ended `workSession` | Found and fixed prescreen recent-terminal guard, existing-resume detection, resume completion language, generic completion noise, and stale workSession merge behavior. |
 | Layoff onboarding | LIVE_DONE_WITH_RUNTIME_FIXES | Real iMessage layoff onboarding completed through role, YoE, visa, startup preference, country, location, and existing-resume recovery | `pa-users.pipelineState.completed=true`, `workSession.status=ended`, `boundary=complete`, `parsedCandidateResumes` found | Found and fixed stale workSession merge, stale layoff phone index, YoE natural-answer parse, startup wording, and resume-on-entry skip for existing parsed resumes. |
 | Job prescreen strong candidate | LIVE_DONE | Real iMessage rerun reached `PASS` after strong fullstack answers and hard filters | Session, turns, memory, tags, user workSession, candidate-job-state, and employer-visible profile verified | Latest rerun also proved capped proposed-tag merge. |
-| Job prescreen adjacent/fragmented | LIVE_DONE | Real iMessage reruns reached PASS after adjacent/fragmented answers | Session, turns, memory, candidate-job-state, employer-visible profile, user workSession, and prior-session supersede verified | Latest 2026-05-17 rerun proved four role-fit probes, multi-message coalescing, love tapbacks, terminal archive, memory/tag writes, and post-terminal rec outbound. Salary sentinel suppression is code/test/deploy verified; live PASS retest still needed before final completion. |
+| Job prescreen adjacent/fragmented | LIVE_DONE | Real iMessage reruns reached PASS after adjacent/fragmented answers | Session, turns, memory, candidate-job-state, employer-visible profile, user workSession, and prior-session supersede verified | Latest 2026-05-17 17:54 ET rerun proved repeated probing, love tapbacks, terminal archive, memory/tag writes, employer-visible state, and live Level 1 reveal without the salary sentinel. |
 | Job prescreen weak candidate | LIVE_DONE | Real iMessage weak run probed repeatedly before `HARD_STOP` | Session, memory tags, and user/candidate state verified | No false positive skill tags were added. |
 | Pause/restart/supersede | LIVE_DONE | Real iMessage restart, opt-out send failure, natural pause, and clean pause rerun verified | User-level `workSession`, session boundary, inbound status, and memory event verified | See Flow 6 and Flow 7. |
 | Privacy/abuse/security | LIVE_DONE | Prompt injection blocked; privacy summary and export request verified through real iMessage | Abuse events, deterministic privacy outbound, `pa-privacy-requests`, and audit rows verified | Found and fixed prompt-injection tapback and privacy LLM fallback defects. |
@@ -778,10 +778,65 @@ Persisted proof:
   - `status=sent`
   - `idempotencyKey=U7AwKT8nLDRa35DkuBxq-2026-05-16T23:24-prescreen-term`
 
-Resolved product/data defect / remaining live-proof gap:
+Resolved product/data defect / live-proof status:
 
-- PASS SMS previously rendered salary as `$50000-999000/yr`. The level-1 reveal template now drops open-ended sentinel salary ranges and has a regression test for this exact value. Before final completion, run one fresh live PASS and verify the visible transcript no longer includes `999000`.
+- PASS SMS previously rendered salary as `$50000-999000/yr`. The level-1 reveal template now drops open-ended sentinel salary ranges and has a regression test for this exact value. Fresh live PASS retest on 2026-05-17 17:54 ET verified the visible transcript no longer includes `999000`; it rendered the Rain job details URL only.
 - PASS currently also sends `Other roles that may fit:` immediately after a passed screen. That may be intentional as marketplace retention, but from a candidate-experience perspective it can feel noisy right after a PASS handoff. Needs product decision before changing.
+
+## Flow 4 Live Rerun Evidence: Salary Sentinel Suppression And URL Reveal
+
+Verified from real iMessage + direct Firestore reads on 2026-05-17.
+
+Runtime:
+
+- Node: `v24.3.0`
+- Claire sender: `+13054507715`
+- Candidate: `pa-users/U7AwKT8nLDRa35DkuBxq`
+- Candidate phone: `+14243201960`
+- Job: `rain-software-engineer-fullstack-8849f6ef`
+- Trigger token: `WeKruit_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_Job`
+- Session: `pa-prescreen-sessions/ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260517T215442235Z`
+- Memory event: `pa-prescreen-memory-events/ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260517T215442235Z`
+- Candidate-job state: `pa-candidate-job-states/U7AwKT8nLDRa35DkuBxq__rain-software-engineer-fullstack-8849f6ef`
+- Employer-visible snapshot: `pa-employer-visible-profiles/rain-software-engineer-fullstack-8849f6ef__U7AwKT8nLDRa35DkuBxq`
+
+Live iMessage transcript summary:
+
+- Claire opened with: `Hi — Claire from Rain. Quick screen for Software Engineer - Fullstack. What recent work best matches this software engineering role?`
+- Candidate started adjacent: OFO merchant order dashboard and dispatch tooling, not exact fullstack ownership.
+- Claire probed instead of rejecting:
+  - asked for the specific problem, personal build/change, and improved flow.
+  - asked which required skill was strongest and requested a concrete example.
+  - asked for exact React/TypeScript data flow, query params, result shape/cache, state management, pagination, and polling.
+- Candidate replied with React/TypeScript queue views, SQL CTEs, Node endpoint, cursor params, typed bucket counts, TTL cache, URL-param filters, local row selection, cursor pagination, and 30-second polling.
+- Random love tapbacks appeared on strong evidence answers.
+- Claire then asked location and sponsorship, reached PASS, and sent:
+  - `Thanks for your answers — I have enough for the role-fit screen. Sending the next step now.`
+  - `Congrats — you’ve passed the initial screen for Software Engineer - Fullstack.`
+  - `Employer: Rain`
+  - `Job details: https://www.rain.xyz/careers?ashby_jid=8849f6ef-86e6-464d-9f40-62f8355d40fb#open-roles`
+  - `The employer will follow up within 2-3 business days — please watch for an SMS.`
+- Customer-visible salary sentinel check: PASS reveal did not include `$50000-999000/yr`, `999000`, or `999k`.
+
+Turn proof:
+
+- `role_fit` first answer: `s=0.55`, `c=0.62`, action `clarify`.
+- `role_fit` detailed OFO answer: `s=0.95`, `c=0.90`, action `advance`.
+- `technical_depth` first answer: `s=0.55`, `c=0.62`, action `clarify`.
+- `technical_depth` React/Node/SQL data-flow answer: `s=0.78`, `c=0.74`, action `advance`.
+- `location_alignment`: `s=0.95`, `c=0.90`, action `advance`.
+- `sponsorship_status`: `s=1`, `c=0.98`, action `terminal`, terminal `PASS`, reason `ratio=0.920 threshold=0.65`.
+
+Persisted proof:
+
+- Session has `terminal=PASS`, `currentQId=null`, `score=3.68`, `scoreMax=4`, `workSession.status=ended`, `workSession.boundary=terminal`.
+- `pa-users/U7AwKT8nLDRa35DkuBxq.workSession` ended with `kind=job_prescreen`, `boundary=terminal`, `terminal=PASS`, and this session id.
+- `pa-users/U7AwKT8nLDRa35DkuBxq.lastPrescreenMemoryUpdate` contains summary: React/TS, SQL, Node, reduced stuck orders; typed Node endpoint and SQL-backed buckets; US remote/NYC/hybrid; OPT now and future H-1B sponsorship.
+- Memory event exists with `terminal=PASS` and the same summary plus recent replies.
+- Candidate-job state has `state=employer_visible`, `reason=passed_snapshot_refreshed`, `stateUpdatedAt=2026-05-17T22:10:22.815Z`, and the latest session id.
+- Employer-visible profile exists with `sourcePrescreenSessionId=ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260517T215442235Z`.
+- Recent inbound rows for all candidate answers have `status=completed`, `routedTo=prescreen`, and coalesce turn ids `U7AwKT8nLDRa35DkuBxq__226` through `__231`.
+- No active `pa-message-buffers` remained after the run.
 
 ## Final Post-Review Deploy
 
