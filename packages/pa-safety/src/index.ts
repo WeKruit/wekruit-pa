@@ -328,6 +328,9 @@ export const INJECTION_PATTERNS_V2: readonly PatternEntry[] = [
   { id: "en_pretend_v2", regex: /\bpretend\s+(?:you\s+are|to\s+be)\s+(?:a\s+|an\s+|the\s+)?(?:DAN|admin|root|jailbroken|unrestricted|evil|uncensored|liberated|no[\s-]?limits?|no[\s-]?rules?)/i, addedAt: "2026-05-02" },
   // EN — "disable/bypass safety|content|filter|policy|guidelines"
   { id: "en_disable_filter", regex: /(?:disable|bypass|remove|turn\s+off|jailbreak|override)\s+(?:your\s+|all\s+|the\s+)?(?:safety|content|moderation|filter|guidelines?|policy|rules?|restrictions?|limits?)/i, addedAt: "2026-05-02" },
+  // EN — requests to reveal another person's candidate data. This is privacy exfiltration,
+  // routed through the same sanitized safety boundary as prompt/internal-instruction probes.
+  { id: "en_other_candidate_data", regex: /\b(?:show|send|share|give|pull|open|export)\s+(?:me\s+|us\s+)?(?:another|other|someone\s+else(?:'s|’s)?|somebody\s+else(?:'s|’s)?|a\s+different)\s+(?:(?:[a-z0-9&.-]+)\s+){0,3}(?:candidate|applicant|user|person)(?:'s|’s)?\s+(?:resume|cv|profile|notes?|data|information|contact|email|phone)\b/i, addedAt: "2026-05-17" },
 ] as const
 
 /**

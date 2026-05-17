@@ -26,6 +26,7 @@ import {
   type PreScreenState,
   type PreScreenStateProvider,
 } from "@pa/pa-orchestrator"
+import { SAFETY_CANNED_REPLIES, pickLangForSafety, runSafetyCheck } from "@pa/pa-safety"
 import { sendImessage } from "./sendblue/sendblue-client.js"
 import { runPrescreenTerminalAction } from "./prescreen-terminal-action.js"
 
@@ -450,6 +451,7 @@ type PrescreenTurnRecordAction =
   | { kind: "clarify"; qId: string; kAfter: number }
   | { kind: "advance"; fromQId: string; toQId: string }
   | { kind: "terminal"; terminal: "PASS" | "FAIL" | "HARD_STOP" | "PAUSE"; reason: string }
+  | { kind: "safety_block"; reason: string; signals?: string[] }
   | { kind: "error"; reason: string }
 
 export function prescreenTurnRecordQId(
@@ -469,6 +471,63 @@ function prescreenTurnRecordScored(state: PreScreenState, qId: string) {
     aggregate: scored.aggregate,
     ...(scored.abortHint ? { abortHint: scored.abortHint } : {}),
   }
+}
+
+async function maybeHandlePrescreenSafetyBlock(args: {
+  db: Firestore
+  userId: string
+  toE164: string
+  replyText: string
+  sessionId: string
+  sendSms: typeof sendImessage
+  log: (event: string, payload: Record<string, unknown>) => void
+}): Promise<RunPrescreenTurnResult | null> {
+  const verdict = await runSafetyCheck(
+    args.db,
+    { userId: args.userId, channel: "imessage", text: args.replyText },
+    { promptInjection: true },
+  )
+  if (verdict.verdict !== "block") return null
+
+  const lang = pickLangForSafety(args.replyText)
+  let text: string | null
+  if (verdict.action === "silent_drop") {
+    text = null
+  } else if (verdict.action === "escalate") {
+    text = SAFETY_CANNED_REPLIES.escalate[lang]
+  } else if (verdict.action === "respond_sanitized") {
+    text = SAFETY_CANNED_REPLIES.respond_sanitized[lang]
+  } else {
+    text = "I can’t work with that message. Try rephrasing."
+  }
+
+  const nowIso = new Date().toISOString()
+  const sessionRef = args.db.collection("pa-prescreen-sessions").doc(args.sessionId)
+  await sessionRef.collection("turns").add({
+    qId: "safety",
+    reply: args.replyText,
+    action: {
+      kind: "safety_block",
+      reason: verdict.layer ?? verdict.reasons[0] ?? "safety_block",
+      signals: verdict.signals,
+    },
+    ts: nowIso,
+  })
+  await sessionRef.set({ updatedAt: nowIso }, { merge: true })
+
+  if (text !== null) {
+    await args.sendSms({ to: args.toE164, content: text, userId: args.userId, db: args.db })
+  }
+
+  args.log("prescreen.turn.safety_blocked", {
+    userId: args.userId,
+    sessionId: args.sessionId,
+    action: verdict.action,
+    layer: verdict.layer,
+    signals: verdict.signals,
+    replied: text !== null,
+  })
+  return { handled: true, sessionId: args.sessionId, textSent: text ?? undefined }
 }
 
 function isUserExitPrescreenReply(reply: string): boolean {
@@ -619,6 +678,18 @@ export async function runPrescreenTurnIfActive(
     lookup = await findRecentTerminalSession(args.db, args.userId, { log })
   }
   if (lookup.kind === "none") return { handled: false }
+
+  const safetyBlock = await maybeHandlePrescreenSafetyBlock({
+    db: args.db,
+    userId: args.userId,
+    toE164: args.toE164,
+    replyText: args.replyText,
+    sessionId: lookup.sessionId,
+    sendSms,
+    log,
+  })
+  if (safetyBlock) return safetyBlock
+
   if (lookup.kind === "recent_terminal") {
     const shouldGuard = await shouldHandleRecentTerminalSession({
       db: args.db,

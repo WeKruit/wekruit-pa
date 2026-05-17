@@ -148,6 +148,9 @@ importers:
       '@pa/pa-resume-parser':
         specifier: 0.0.1
         version: link:../../packages/pa-resume-parser
+      '@pa/pa-safety':
+        specifier: 0.0.1
+        version: link:../../packages/pa-safety
       '@wekruit/shared-tags':
         specifier: 0.1.1
         version: link:../../packages/shared-tags
