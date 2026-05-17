@@ -389,6 +389,60 @@ Verdict:
 
 - The privacy/memory summary now reads consistently in English, records the memory-list action, avoids creating a privacy request for a summary question, and does not add a positive tapback to the user's privacy-control message.
 
+## Flow 6 - Privacy Export Request Duplicate UX
+
+Status: `UX_DONE`
+
+Live thread:
+
+- Candidate: `pa-users/U7AwKT8nLDRa35DkuBxq`
+- Session: `ses_62990f32ce66925df13ae2accc126a22`
+- Messages thread: `+1 (305) 450-7715`
+- Visible passing prompt sent: 2026-05-17 04:58 ET
+
+Reason this was safe to live-test:
+
+- Firestore already had an open export request for this candidate:
+  - `pa-privacy-requests/privacy_request_export__7230ece8`
+  - `status`: `submitted`
+  - `createdAt`: `2026-05-17T01:28:24.972Z`
+- The live test therefore exercised the duplicate/open-request path, not a new destructive request.
+
+Post-fix live transcript:
+
+- User:
+  - `Export my data`
+- Claire:
+  - `Got it. I submitted a data export request. You already had one open, so I did not create a duplicate.`
+
+Visible Messages proof:
+
+- The latest export user message has no tapback attached.
+- The assistant reply is one short bubble, confirms the export request path, and explicitly says no duplicate was created.
+
+Firestore proof:
+
+- `pa-inbound-events/inb_e18ff812d61082a4c56d67b076529a37f3bf25d7`
+  - `createdAt`: `2026-05-17T08:59:10.359Z`
+  - `sessionId`: `ses_62990f32ce66925df13ae2accc126a22`
+  - `body`: `Export my data`
+- `pa-messages/out-inb_e18ff812d61082a4c56d67b076529a37f3bf25d7`
+  - `createdAt`: `2026-05-17T08:59:12.585Z`
+  - `sessionId`: `ses_62990f32ce66925df13ae2accc126a22`
+  - `body`: exact passing Claire reply above.
+- `pa-outbound/0fc25955-ccd1-485a-bd32-b1f32d8b4f5c`
+  - `createdAt`: `2026-05-17T08:59:12.763Z`
+  - `status`: `sent`
+- `pa-memory-actions`
+  - No rows for `eventId`: `inb_e18ff812d61082a4c56d67b076529a37f3bf25d7`
+- `pa-privacy-requests`
+  - The only export request for the candidate remains `privacy_request_export__7230ece8`.
+  - No duplicate export request was created by the 04:58 live message.
+
+Verdict:
+
+- The export request duplicate path works live: candidate receives a concise confirmation, no positive tapback is attached, and Firestore keeps one open export request.
+
 ## Remaining Matrix Status
 
 The narrowed work completed the live job-prescreen lane that blocked this goal:
@@ -403,13 +457,14 @@ The narrowed work completed the live job-prescreen lane that blocked this goal:
 - Rain compensation sentinel in prescreen: repaired and live transcript verified clean.
 - Job-fit explanation after prescreen: fixed, deployed, and live verified against Messages + Firestore.
 - Privacy/memory summary: fixed, deployed, and live verified against Messages + Firestore.
+- Privacy export duplicate path: live verified against Messages + Firestore.
 
 The broader customer-visible matrix in `.planning/CLAIRE-CUSTOMER-VISIBLE-IMESSAGE-QA-GOAL.md` still lists other flows as future test work unless separately executed:
 
 - Normal candidate onboarding
 - Layoff onboarding
 - Pause/restart/supersede
-- Privacy export/delete, safety, and abuse
+- Privacy delete, safety, and abuse
 - Job matching conversation
 - Everyday catchup and automated outbound
 - Isolated rate-limit/opt-out/suppression UX
