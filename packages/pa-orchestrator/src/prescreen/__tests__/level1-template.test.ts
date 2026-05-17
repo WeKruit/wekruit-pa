@@ -49,6 +49,22 @@ describe("composeLevel1Reveal", () => {
     assert.doesNotMatch(text, /Job details:/)
   })
 
+  it("does not expose open-ended salary sentinels to candidates", () => {
+    const text = composeLevel1Reveal(
+      {
+        jobTitle: "Software Engineer - Fullstack",
+        company: "Rain",
+        salaryRange: "$50000-999000/yr",
+      },
+      "en"
+    )
+
+    assert.match(text, /Software Engineer - Fullstack/)
+    assert.match(text, /Employer: Rain/)
+    assert.doesNotMatch(text, /Salary range:/)
+    assert.doesNotMatch(text, /999000/)
+  })
+
   it("never returns empty string", () => {
     const text = composeLevel1Reveal({ jobTitle: "X" }, "en")
     assert.ok(text.length > 0)

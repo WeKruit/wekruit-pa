@@ -944,23 +944,44 @@ function snapshotSource(value: unknown): "ats" | "admin" | "crawler" | "employer
 }
 
 function compensationTextFromJob(job: RawJobDoc): string | undefined {
-  const direct = firstString(job.compensationText, job.salaryRange)
+  const direct = candidateVisibleCompensationText(firstString(job.compensationText, job.salaryRange))
   if (direct) return direct
   const min = typeof job.salaryMin === "number" ? job.salaryMin : typeof job.salaryMinUsd === "number" ? job.salaryMinUsd : undefined
   const max = typeof job.salaryMax === "number" ? job.salaryMax : typeof job.salaryMaxUsd === "number" ? job.salaryMaxUsd : undefined
+  if (isOpenEndedCompensationSentinel(min, max)) return undefined
   if (min !== undefined && max !== undefined) return `${min}-${max} USD`
   if (min !== undefined) return `from ${min} USD`
   if (max !== undefined) return `up to ${max} USD`
   return undefined
 }
 
+function candidateVisibleCompensationText(value: string | undefined): string | undefined {
+  if (!value) return undefined
+  const trimmed = value.trim()
+  if (!trimmed) return undefined
+  const compact = trimmed.toLowerCase().replace(/[\s,]/g, "")
+  if (/\b999000\b|\b999k\b/.test(compact)) return undefined
+  return trimmed
+}
+
+function isOpenEndedCompensationSentinel(min: number | undefined, max: number | undefined): boolean {
+  return min !== undefined && max !== undefined && min <= 60_000 && max >= 900_000
+}
+
 function parseSalaryRange(value: string | undefined): { min?: number; max?: number; currency?: string } | null {
   if (!value) return null
-  const numbers = [...value.matchAll(/\$?\s*(\d{2,3})(?:,\d{3})?\s*(k)?/gi)].map((match) => {
-    const n = Number(match[1])
-    return match[2] ? n * 1000 : n >= 1000 ? n : n * 1000
-  })
+  const visible = candidateVisibleCompensationText(value)
+  if (!visible) return null
+  const numbers = [...visible.matchAll(/\$?\s*(\d{2,6})(?:,\d{3})?\s*(k)?/gi)]
+    .map((match) => {
+      const n = Number(match[1])
+      if (!Number.isFinite(n)) return null
+      if (match[2]) return n * 1000
+      return n >= 1000 ? n : n * 1000
+    })
+    .filter((n): n is number => typeof n === "number" && Number.isFinite(n) && n > 0)
   if (numbers.length === 0) return null
+  if (isOpenEndedCompensationSentinel(Math.min(...numbers), Math.max(...numbers))) return null
   return {
     min: Math.min(...numbers),
     max: Math.max(...numbers),

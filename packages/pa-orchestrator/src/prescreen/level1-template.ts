@@ -29,6 +29,17 @@ export interface Level1RevealFields {
   nextStepEta?: string
 }
 
+function visibleSalaryRange(value: string | undefined): string | undefined {
+  if (!value) return undefined
+  const trimmed = value.trim()
+  if (!trimmed) return undefined
+
+  const compact = trimmed.toLowerCase().replace(/[\s,]/g, "")
+  if (/\b999000\b|\b999k\b/.test(compact)) return undefined
+
+  return trimmed
+}
+
 /**
  * Compose Level 1 reveal text for a PASSED candidate. Always returns a
  * non-empty string. Bilingual (zh/en). Caller sends via sendImessage AFTER
@@ -36,15 +47,16 @@ export interface Level1RevealFields {
  */
 export function composeLevel1Reveal(fields: Level1RevealFields, lang: Lang): string {
   const eta = fields.nextStepEta ?? (lang === "zh" ? "2-3 个工作日内" : "within 2-3 business days")
+  const salaryRange = visibleSalaryRange(fields.salaryRange)
   const companyLine = fields.company
     ? lang === "zh"
       ? `招聘方: ${fields.company}`
       : `Employer: ${fields.company}`
     : ""
-  const salaryLine = fields.salaryRange
+  const salaryLine = salaryRange
     ? lang === "zh"
-      ? `薪资范围: ${fields.salaryRange}`
-      : `Salary range: ${fields.salaryRange}`
+      ? `薪资范围: ${salaryRange}`
+      : `Salary range: ${salaryRange}`
     : ""
   const linkLine = fields.applyUrl
     ? lang === "zh"

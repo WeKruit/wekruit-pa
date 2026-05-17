@@ -4,7 +4,7 @@
  * Called by `prescreen-turn-handler.ts` AFTER `pipeline.runTurn` reaches a
  * terminal state and the terminal text has been sent. Implements:
  *
- *   - TERMINAL-01: PASS → fire generateJobRecs(userId) async
+ *   - TERMINAL-01: PASS → reveal employer next step; do not push unrelated recs
  *   - TERMINAL-02: FAIL → fire generateJobRecs(userId) with "match other jobs?"
  *   - TERMINAL-03 (v1.9 hotfix 2026-05-12): HARD_STOP → SAME as FAIL.
  *     Type-gate-fail (the dominant HARD_STOP cause in production — candidate
@@ -16,13 +16,12 @@
  *   - TERMINAL-04: PAUSE → write pausedAt + no auto-action
  *   - TERMINAL-05: fail-open + audit event for each fire
  *   - TERMINAL-06: idempotency keyed (sessionId, terminal)
- *   - LEVEL1-01..03: PASS Level 1 reveal SMS sequenced BEFORE generateJobRecs
+ *   - LEVEL1-01..03: PASS Level 1 reveal SMS sequenced after terminal copy
  *
  * Sequence on PASS:
  *   1. terminal text (already sent by caller)
  *   2. Level 1 reveal SMS (this module)
- *   3. generateJobRecs → its own follow-up SMS list (this module)
- *   4. write terminalActionFiredAt stamp + audit event
+ *   3. write terminalActionFiredAt stamp + audit event
  */
 
 import { type Firestore, type Timestamp } from "firebase-admin/firestore"
@@ -489,7 +488,8 @@ async function startPiiWithRecsChain(
   args: RunPrescreenTerminalActionArgs,
   source: "pass" | "fail",
   genJobRecs: NonNullable<RunPrescreenTerminalActionArgs["generateJobRecs"]>,
-  log: NonNullable<RunPrescreenTerminalActionArgs["log"]>
+  log: NonNullable<RunPrescreenTerminalActionArgs["log"]>,
+  opts: { fireJobRecs: boolean } = { fireJobRecs: true },
 ): Promise<boolean> {
   const startFn = args.startPii ?? runPiiConfirmForUser
   try {
@@ -502,6 +502,7 @@ async function startPiiWithRecsChain(
       source,
       lang: args.lang,
       onComplete: async ({ userId, toE164 }) => {
+        if (!opts.fireJobRecs) return
         try {
           await genJobRecs({ userId, toE164, lang: args.lang })
         } catch (err) {
@@ -514,7 +515,7 @@ async function startPiiWithRecsChain(
       log: (event, payload) => log(`pii.${event}`, payload),
     })
     // Skip-if-present → user already consented. Fire recs immediately.
-    if (startResult.skipped) {
+    if (startResult.skipped && opts.fireJobRecs) {
       log("prescreen.terminal_action.pii_skipped_firing_recs_directly", {
         sessionId: args.sessionId,
       })
@@ -640,8 +641,9 @@ export async function runPrescreenTerminalAction(
         })
       }
     }
-    // Kick off PII confirm (pass source); onComplete fires generateJobRecs
-    piiStarted = await startPiiWithRecsChain(args, "pass", genJobRecs, log)
+    // Kick off PII confirm for contact capture. PASS already hands off to the
+    // employer, so do not immediately push unrelated job recommendations.
+    piiStarted = await startPiiWithRecsChain(args, "pass", genJobRecs, log, { fireJobRecs: false })
   } else if (args.terminal === "FAIL" || args.terminal === "HARD_STOP") {
     // TERMINAL-02 + TERMINAL-03 — preamble first, then PII collect, then recs.
     try {
@@ -658,7 +660,7 @@ export async function runPrescreenTerminalAction(
   }
   // jobRecsFired/Result are stamped by the PII onComplete chain (async).
   // We log piiStarted here for observability.
-  jobRecsFired = piiStarted // proxy — actual recs fire after PII completes
+  jobRecsFired = piiStarted && (args.terminal === "FAIL" || args.terminal === "HARD_STOP")
 
   // ── Stamp idempotency + audit ──────────────────────────────────────────
   const stampIso = now().toISOString()
