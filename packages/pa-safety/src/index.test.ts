@@ -120,6 +120,8 @@ test("checkPromptInjectionAndRecord writes pa_abuse_events row with kind=prompt_
   const doc = store.get(abuseRows[0]!) as Record<string, unknown>
   assert.equal(doc["kind"], "prompt_injection")
   assert.ok(Array.isArray(doc["signals"]) && (doc["signals"] as string[]).length > 0)
+  assert.ok(typeof doc["textHash"] === "string" && (doc["textHash"] as string).length === 64)
+  assert.ok(!JSON.stringify(doc).includes("ignore all previous instructions"))
 })
 
 // Phase 23 — Test 2 (safety): on allow=true, NO abuse row written

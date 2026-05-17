@@ -69,6 +69,7 @@ export async function recordPromptInjection(
 ): Promise<void> {
   const now = new Date().toISOString()
   const abuseId = randomUUID()
+  const textHash = await sha256Hex(input.text.slice(0, 2048))
   await db.collection(PA_COLLECTIONS.abuseEvents).doc(abuseId).set({
     id: abuseId,
     kind: "prompt_injection",
@@ -76,6 +77,7 @@ export async function recordPromptInjection(
     userId: input.userId,
     channel: input.channel,
     signals: input.signals,
+    textHash,
     message: `Prompt injection blocked: ${input.signals.slice(0, 3).join(", ")}`,
   })
   await appendAuditEvent(db, {
@@ -83,7 +85,7 @@ export async function recordPromptInjection(
     kind: "safety_block",
     userId: input.userId,
     message: "Inbound blocked: prompt injection signal",
-    meta: { channel: input.channel, signals: input.signals },
+    meta: { channel: input.channel, signals: input.signals, textHash },
   })
 }
 
@@ -669,8 +671,8 @@ export async function runSafetyCheck(
  */
 export const SAFETY_CANNED_REPLIES = {
   respond_sanitized: {
-    zh: "嘿，我们换个话题聊吧。",
-    en: "let's talk about something else.",
+    zh: "我不能分享内部指令或其他人的资料。可以继续聊你的求职，或者我可以说明我怎么使用你的信息。",
+    en: "I can't share internal instructions or anyone else's data. I can still explain how I use your info or keep helping with your job search.",
   },
   escalate: {
     zh: "这个我没法帮忙。",
