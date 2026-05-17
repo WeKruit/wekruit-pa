@@ -6,8 +6,8 @@
 # `entry` below.
 
 [project]
-# LK Cloud project subdomain — Adam sets the real value during S6 smoke.
-subdomain = "wekruit-prescreen"
+# LK Cloud project subdomain (matches wss://wekruit-7v74qbl3.livekit.cloud).
+subdomain = "wekruit-7v74qbl3"
 
 [agent]
 name = "voice-prescreen"
@@ -28,3 +28,8 @@ DEEPGRAM_API_KEY = ""
 WEKRUIT_LLM_SHIM_URL = ""
 WEKRUIT_VOICE_RECORDINGS_BUCKET = "wekruit-voice-recordings"
 PA_AGENT_RUNTIME_STREAM_ENABLED = "true"
+# v2.2 — voice → orchestrator brain bridge (paVoiceCallContext +
+# paVoicePrescreenTurn callable CFs).
+WEKRUIT_VOICE_CONTEXT_URL = "https://us-central1-wekruit-5f89b.cloudfunctions.net/paVoiceCallContext"
+WEKRUIT_VOICE_PRESCREEN_TURN_URL = "https://us-central1-wekruit-5f89b.cloudfunctions.net/paVoicePrescreenTurn"
+PA_VOICE_CF_SECRET = ""
