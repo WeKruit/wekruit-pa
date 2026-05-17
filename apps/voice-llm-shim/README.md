@@ -1,5 +1,12 @@
 # @pa/voice-llm-shim
 
+> **Status (W3, 2026-05-17): DEV-ONLY.** Production voice-agent uses the
+> in-process `WekruitLLM` (`apps/voice-agent/src/wekruit-llm.ts`) to call
+> `runAgentTurnStream` directly — zero HTTP boundary. This shim is retained
+> for local CLI smoke (`apps/voice-agent/src/live-smoke-agent.ts`) and as a
+> reference adapter for any future OpenAI-protocol consumer. Do not deploy
+> it in v2.2+ production stacks.
+
 OpenAI-compatible HTTP shim that lets the LiveKit Agents `openai.LLM` plugin
 call WeKruit's `runAgentTurnStream` (S1A export) as if it were OpenAI's
 streaming chat-completions API.
