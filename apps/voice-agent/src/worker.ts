@@ -23,9 +23,8 @@
  *     vad: silero.VAD.load(),
  *     turnDetection: new MultilingualModel(),   // adaptive endpointing (Lock L7)
  *     stt: deepgram.STT({ model: "nova-3" }),
- *     llm: openai.LLM({ base_url: WEKRUIT_LLM_SHIM_URL + "/v1",
- *                       model: "wekruit-prescreen-v1",
- *                       api_key: "unused-localhost" }),
+ *     llm: new WekruitLLM(),                    // W2 — in-process bridge to
+ *                                                //  @pa/agent-runtime.runAgentTurnStream
  *     tts: deepgram.TTS({ model: "aura-2" }),
  *   })
  *     ↓
@@ -45,6 +44,28 @@ import { buildConsentPrompt } from "./consent-prompt.js"
 import { emitConsentSpokenAudit } from "./consent-audit.js"
 import { startRecordingEgress } from "./egress.js"
 import type { VoiceCallContext } from "./voice-context-types.js"
+import { WekruitLLM } from "./wekruit-llm.js"
+
+/**
+ * W2: production env requirements after the WekruitLLM swap. Note the
+ * absence of `WEKRUIT_LLM_SHIM_URL` — the in-process WekruitLLM speaks
+ * directly to OpenAI via runAgentTurnStream, so the shim service is no
+ * longer required. `OPENAI_API_KEY` IS required (runAgentTurnStream's
+ * `assertProviderKey` checks at first call); we leave it implicit here
+ * because @pa/agent-runtime owns the assertion and a missing key throws
+ * an actionable error from there.
+ */
+export const REQUIRED_PROD_ENV = [
+  "LIVEKIT_URL",
+  "LIVEKIT_API_KEY",
+  "LIVEKIT_API_SECRET",
+  "DEEPGRAM_API_KEY",
+] as const
+
+/** Default factory for the LK LLM. Test seam: `opts.buildLLM` overrides. */
+export function buildDefaultLLM(): WekruitLLM {
+  return new WekruitLLM()
+}
 
 export interface StartWorkerOpts {
   /** Test seam — supply an alternative `defineAgent` impl. */
@@ -53,6 +74,8 @@ export interface StartWorkerOpts {
   loadContext?: (bookingId: string) => Promise<VoiceCallContext>
   /** Test seam — pipeline factory. */
   buildPipeline?: () => Promise<VoicePipelineLite>
+  /** Test seam — LLM factory. Defaults to `buildDefaultLLM` (WekruitLLM). */
+  buildLLM?: () => WekruitLLM
   /** Optional logger. */
   log?: (event: string, payload: Record<string, unknown>) => void
 }
@@ -81,13 +104,7 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
 
   // ── Validate env (fail fast in prod; tests inject `defineAgent`) ────────
   if (!opts.defineAgent) {
-    requireEnv([
-      "LIVEKIT_URL",
-      "LIVEKIT_API_KEY",
-      "LIVEKIT_API_SECRET",
-      "DEEPGRAM_API_KEY",
-      "WEKRUIT_LLM_SHIM_URL",
-    ])
+    requireEnv([...REQUIRED_PROD_ENV])
   }
 
   // S1A flag-flip — voice bridge always streams via the shim when the
@@ -104,14 +121,13 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
   let sileroMod: any
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let deepgramMod: any
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let openaiPluginMod: any
 
   if (!opts.defineAgent) {
     livekitMod = await import("@livekit/agents")
     sileroMod = await import("@livekit/agents-plugin-silero")
     deepgramMod = await import("@livekit/agents-plugin-deepgram")
-    openaiPluginMod = await import("@livekit/agents-plugin-openai")
+    // W2: openai plugin no longer needed — WekruitLLM bridges directly to
+    // runAgentTurnStream. W3 will remove the dep from package.json.
   }
 
   const defineAgent =
@@ -159,13 +175,11 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
         const turnDetection = new voice.MultilingualModel()
         const stt = new deepgramMod.STT({ model: "nova-3" })
         const tts = new deepgramMod.TTS({ model: "aura-2" })
-        const llm = new openaiPluginMod.LLM({
-          base_url: `${process.env.WEKRUIT_LLM_SHIM_URL}/v1`,
-          model: "wekruit-prescreen-v1",
-          api_key: "unused-localhost",
-        })
-        // inference fallback (LK Cloud-managed) — kept inert; we use our
-        // shim-routed LLM as canonical.
+        // W2: in-process WekruitLLM speaks directly to runAgentTurnStream.
+        // No HTTP shim, no openai plugin, no WEKRUIT_LLM_SHIM_URL.
+        const llm = (opts.buildLLM ?? buildDefaultLLM)()
+        // inference fallback (LK Cloud-managed) — kept inert; WekruitLLM is
+        // canonical.
         void inference
         session = new voice.AgentSession({ vad, turnDetection, stt, llm, tts })
       } else {

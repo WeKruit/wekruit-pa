@@ -12,7 +12,7 @@
     "typecheck": "tsc --noEmit",
     "start": "node dist/cli.js",
     "dev": "tsx src/cli.ts",
-    "test": "node --import tsx --test src/__tests__/pii-handler.test.ts src/__tests__/turn-loop.test.ts src/__tests__/event-handlers.test.ts src/__tests__/no-min-endpointing.test.ts src/__tests__/graceful-close.test.ts src/__tests__/consent-prompt.test.ts src/__tests__/consent-audit.test.ts src/__tests__/agent-help.test.ts src/__tests__/no-self-host.test.ts src/__tests__/egress.test.ts src/__tests__/worker-defaults.test.ts src/__tests__/wekruit-llm.test.ts"
+    "test": "node --import tsx --test src/__tests__/pii-handler.test.ts src/__tests__/turn-loop.test.ts src/__tests__/event-handlers.test.ts src/__tests__/no-min-endpointing.test.ts src/__tests__/graceful-close.test.ts src/__tests__/consent-prompt.test.ts src/__tests__/consent-audit.test.ts src/__tests__/agent-help.test.ts src/__tests__/no-self-host.test.ts src/__tests__/egress.test.ts src/__tests__/worker-defaults.test.ts src/__tests__/wekruit-llm.test.ts src/__tests__/worker-llm-wiring.test.ts"
   },
   "dependencies": {
     "@livekit/agents": "^1.4.2",
