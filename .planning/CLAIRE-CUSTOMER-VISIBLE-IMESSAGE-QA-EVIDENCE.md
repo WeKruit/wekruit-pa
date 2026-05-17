@@ -628,6 +628,100 @@ Verdict:
 
 - A direct candidate job-matching request now returns real role recommendations, honors an explicit request for three roles, uses production matching data, and records the same visible reply in Firestore/outbound.
 
+## Flow 9 - Pause / Restart / Supersede
+
+Status: `UX_DONE`
+
+Live thread:
+
+- Candidate: `pa-users/U7AwKT8nLDRa35DkuBxq`
+- Messages thread: `+1 (305) 450-7715`
+- Approved Claire sender: `+13054507715`
+- Trigger token: `WeKruit_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_Job`
+
+Pre-fix live defects:
+
+1. User asked to pause:
+   - `Can we pause this for now? I’ll come back to the screen later.`
+2. Claire acknowledged but continued probing:
+   - `No worries—when you’re ready, what’s the closest recent project you worked on...`
+3. Firestore showed the reply was scored as normal `clarify`; the session stayed active:
+   - Session: `ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260517T101753099Z`
+   - `workSession.status`: `active`
+   - Latest turn action: `{ kind: "clarify", qId: "role_fit", kAfter: 1 }`
+4. A later restart/pause run also produced an inappropriate love tapback on a pause request.
+
+Fixes applied:
+
+- `apps/functions/src/prescreen-turn-handler.ts`
+  - Natural user-exit requests like `Can we pause this for now? I’ll come back to the screen later.` now route to `PAUSE/user_exit` instead of the keyword judge.
+- `apps/functions/src/coalesce/paMessageCoalescer.ts`
+  - Pause/user-exit messages are ineligible for love tapbacks.
+- Regression tests updated/added in:
+  - `apps/functions/src/prescreen-turn-handler.test.ts`
+  - `apps/functions/src/coalesce/__tests__/paMessageCoalescer.test.ts`
+
+Post-fix live transcript:
+
+1. User sent:
+   - `Actually, please pause this role screen for now.`
+2. Claire replied only:
+   - `Got it — I paused this role screen. If you want to continue later, reopen it from the job page; I will keep what you have already shared on your profile.`
+3. User restarted with the same job token.
+4. Claire opened a fresh screen:
+   - `Hi — Claire from Rain. Quick screen for Software Engineer - Fullstack. What recent work best matches this software engineering role?`
+5. User sent the original failed phrase again:
+   - `Can we pause this for now? I’ll come back to the screen later.`
+6. Claire paused instead of probing.
+7. Final post-tapback-guard canary repeated the restart/pause sequence after deploy:
+   - New opener appeared at 06:38 ET.
+   - Same pause phrase sent at 06:39 ET.
+   - Claire sent the pause confirmation at 06:39 ET.
+   - No new love tapback appeared on the latest pause bubble.
+
+Firestore proof:
+
+- Latest final canary session:
+  - `pa-prescreen-sessions/ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260517T103824548Z`
+  - `terminal`: `PAUSE`
+  - `terminalReason`: `user_exit`
+  - `currentQId`: `null`
+  - `workSession.status`: `ended`
+  - `workSession.boundary`: `user_exit`
+  - `workSession.endedAt`: `2026-05-17T10:39:43.946Z`
+  - Latest turn action: `{ kind: "terminal", terminal: "PAUSE", reason: "user_exit" }`
+- User top-level work session:
+  - `pa-users/U7AwKT8nLDRa35DkuBxq.workSession.sessionId`: `ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260517T103824548Z`
+  - `status`: `ended`
+  - `terminal`: `PAUSE`
+  - `boundary`: `user_exit`
+- Prior restarted session:
+  - `pa-prescreen-sessions/ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260517T103026384Z`
+  - Also ended as `PAUSE/user_exit` on the exact original pause phrase.
+
+Verification:
+
+- Targeted Node 24 failing-then-passing regression:
+  - `node --import ./apps/functions/node_modules/tsx/dist/esm/index.mjs --test apps/functions/src/prescreen-turn-handler.test.ts`
+  - Pre-fix exact phrase fell through to `KeywordSetJudge`; post-fix result: `16` tests passed.
+- Targeted Node 24 coalescer/prescreen tests:
+  - `node --import ./apps/functions/node_modules/tsx/dist/esm/index.mjs --test apps/functions/src/coalesce/__tests__/paMessageCoalescer.test.ts apps/functions/src/prescreen-turn-handler.test.ts`
+  - Result: `56` tests passed.
+- Full Firebase predeploy suites:
+  - Pause routing deploy: `1723` tests passed, `316` suites passed.
+  - Tapback guard deploy: `1724` tests passed, `316` suites passed.
+- Deployed functions:
+  - `pa-orchestrator:onPaInbound`
+  - `pa-orchestrator:paMessageCoalescer`
+  - `pa-orchestrator:paCoalesceBufferSweep`
+
+Verdict:
+
+- Natural pause requests now end the active prescreen as a routing pause, not a business outcome.
+- Restarting the same job after pause creates a fresh prescreen session.
+- The previous paused sessions remain ended, and the user top-level `workSession` points to the latest ended session after the final canary.
+- Pause/user-exit messages no longer receive positive tapbacks.
+
 ## Remaining Matrix Status
 
 The narrowed work completed the live job-prescreen lane that blocked this goal:
@@ -645,12 +739,12 @@ The narrowed work completed the live job-prescreen lane that blocked this goal:
 - Privacy export duplicate path: live verified against Messages + Firestore.
 - Prompt-injection safety boundary: fixed, deployed, and live verified against Messages + Firestore.
 - Job matching conversation: fixed, deployed, and live verified against Messages + Firestore.
+- Pause/restart/supersede: fixed, deployed, and live verified against Messages + Firestore.
 
 The broader customer-visible matrix in `.planning/CLAIRE-CUSTOMER-VISIBLE-IMESSAGE-QA-GOAL.md` still lists other flows as future test work unless separately executed:
 
 - Normal candidate onboarding
 - Layoff onboarding
-- Pause/restart/supersede
 - Privacy delete and remaining abuse/security cases
 - Everyday catchup and automated outbound
 - Isolated rate-limit/opt-out/suppression UX

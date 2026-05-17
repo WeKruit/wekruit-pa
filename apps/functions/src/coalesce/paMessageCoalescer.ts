@@ -762,5 +762,8 @@ const LOVE_TAPBACK_INELIGIBLE_RE =
 function isLoveTapbackEligible(body: string): boolean {
   const text = typeof body === "string" ? body.trim() : ""
   if (!text) return false
+  const hasExitVerb = /\b(stop|cancel|pause|quit|exit|end)\b/i.test(text)
+  const hasExitContext = /\b(this|screen|role|interview|prescreen|pre-screen|job|for now|not now|later|come back)\b/i.test(text)
+  if (hasExitVerb && hasExitContext) return false
   return !LOVE_TAPBACK_INELIGIBLE_RE.test(text)
 }

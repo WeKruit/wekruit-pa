@@ -403,7 +403,7 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
       db,
       userId: "u1",
       toE164: "+13054507715",
-      replyText: "Pause this screen for now please.",
+      replyText: "Can we pause this for now? I’ll come back to the screen later.",
       runTerminalAction: async (args) => {
         terminalCalls.push(args as unknown as Record<string, unknown>)
         return { alreadyFired: false, level1Sent: false, jobRecsFired: false }

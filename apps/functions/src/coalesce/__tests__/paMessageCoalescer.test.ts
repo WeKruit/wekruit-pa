@@ -1381,6 +1381,19 @@ describe("iter33 Bug 9: love-tapback rate gate", () => {
     assert.equal(reactionCalls.length, 0, "privacy/control input must not receive a love tapback")
   })
 
+  it("user-exit pause requests skip tapback even when rng would fire", async () => {
+    const { reactionCalls, status } = await setupAndProcess(
+      (deps) => {
+        deps.loveTapbackProbability = 1
+        deps.rng = () => 0.0
+      },
+      "msg-pause-screen",
+      "Can we pause this for now? I’ll come back to the screen later."
+    )
+    assert.equal(status, "fired")
+    assert.equal(reactionCalls.length, 0, "pause/user-exit input must not receive a love tapback")
+  })
+
   it("100 trials at p=0.35 → fires within [25%, 45%] band", async () => {
     const trials = 100
     const probability = 0.35

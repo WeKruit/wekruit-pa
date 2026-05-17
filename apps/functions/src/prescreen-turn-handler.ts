@@ -477,6 +477,13 @@ function isUserExitPrescreenReply(reply: string): boolean {
   if (/^(stop|cancel|pause|quit|exit|end|not now|later|nevermind|never mind|退出|停止|暂停|先不|不用了|算了)[.!。！\s]*$/i.test(normalized)) {
     return true
   }
+  const hasExitVerb = /\b(stop|cancel|pause|quit|exit|end)\b/i.test(normalized)
+  const hasScreenContext = /\b(this|screen|role|interview|prescreen|pre-screen|job)\b/i.test(normalized)
+  const hasDeferralContext = /\b(for now|not now|later|come back|continue later|resume later)\b/i.test(normalized)
+  const startsLikeRequest = /^(can|could|may)\s+(we|i)\b/i.test(normalized) || /^let[’']?s\b/i.test(normalized) || /\bplease\b/i.test(normalized)
+  if (hasExitVerb && hasScreenContext && (hasDeferralContext || startsLikeRequest)) {
+    return true
+  }
   return /^(please\s+)?(stop|cancel|pause|quit|exit|end)\b(?=.*\b(this|screen|role|interview|prescreen|pre-screen|for now|now|please)\b)[a-z0-9\s'’.-]*[.!?。！？\s]*$/i.test(normalized)
 }
 
