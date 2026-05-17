@@ -763,10 +763,15 @@ export function isInboundLeaseExpired(leaseUntil: string | undefined, now = new 
   return !Number.isFinite(t) || t <= now.getTime()
 }
 
-function memoryReplyForList(facts: { content: string }[]) {
+function memoryReplyForList(facts: { content: string }[], lang: "zh" | "en" = "zh") {
   const unique = uniqueFactsByContent(facts)
-  if (unique.length === 0) return "我现在还没有保存你的长期记忆。你可以说：记住 我喜欢..."
-  return `我记得这些：\n${unique.map((f, i) => `${i + 1}. ${f.content}`).join("\n")}`
+  if (unique.length === 0) {
+    return lang === "zh"
+      ? "我现在还没有保存你的长期记忆。你可以说：记住 我喜欢..."
+      : "I do not have saved long-term notes for you yet. You can say: remember I like..."
+  }
+  const heading = lang === "zh" ? "我记得这些：" : "Here is what I remember:"
+  return `${heading}\n${unique.map((f, i) => `${i + 1}. ${f.content}`).join("\n")}`
 }
 
 /**
@@ -1612,7 +1617,7 @@ async function handlePrivacyIntent(
           ]
     if (intent.includeMemory) {
       const facts = await store.listMemoryFacts(event.userId)
-      lines.push(memoryReplyForList(facts))
+      lines.push(memoryReplyForList(facts, lang))
       await store.recordMemoryAction({ userId: event.userId, eventId: event.id, action: "list", status: "succeeded" })
     }
     await sendMemoryReply(store, event, turnId, lines.join("\n\n"))
@@ -1658,10 +1663,11 @@ async function handleMemoryCommand(
   command: NonNullable<ReturnType<typeof parseMemoryCommand>>
 ): Promise<boolean> {
   await store.updateTurn(turnId, { stage: "memory_command", updatedAt: store.nowIso() })
+  const lang = detectUserLang(event.body) === "zh" ? "zh" : "en"
   if (command.kind === "list") {
     const facts = await store.listMemoryFacts(event.userId)
     await store.recordMemoryAction({ userId: event.userId, eventId: event.id, action: "list", status: "succeeded" })
-    await sendMemoryReply(store, event, turnId, memoryReplyForList(facts))
+    await sendMemoryReply(store, event, turnId, memoryReplyForList(facts, lang))
     return true
   }
 
@@ -1673,7 +1679,10 @@ async function handleMemoryCommand(
       return true
     }
     if (matches.length > 1) {
-      await sendMemoryReply(store, event, turnId, `我找到多条匹配记忆，请说得更具体：\n${memoryReplyForList(matches)}`)
+      const prefix = lang === "zh"
+        ? "我找到多条匹配记忆，请说得更具体："
+        : "I found multiple matching memories. Be more specific:"
+      await sendMemoryReply(store, event, turnId, `${prefix}\n${memoryReplyForList(matches, lang)}`)
       return true
     }
     await store.deleteMemoryFacts(event.userId, [matches[0]!.id], event.id)

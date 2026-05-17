@@ -309,6 +309,86 @@ Verdict:
 
 - The candidate-visible answer now names the role/company first, answers all three user questions in one bubble, and avoids the previous malformed `currentfor`/rationale-only first line.
 
+## Flow 5 - Privacy + Memory Summary UX
+
+Status: `UX_DONE`
+
+Live thread:
+
+- Candidate: `pa-users/U7AwKT8nLDRa35DkuBxq`
+- Session: `ses_62990f32ce66925df13ae2accc126a22`
+- Messages thread: `+1 (305) 450-7715`
+- Visible passing prompt sent: 2026-05-17 04:51 ET
+
+Pre-fix live defects:
+
+1. The first live privacy/memory question returned an English privacy summary followed by the Chinese memory heading `我记得这些：`.
+2. After the language fix, the visible thread still showed a `loved this` tapback on the user's privacy-control question. That made the response feel wrong for a privacy/data-control interaction.
+
+Fixes applied after this run:
+
+- `packages/pa-orchestrator/src/index.ts`
+  - `memoryReplyForList` now accepts the detected user language.
+  - Privacy summaries that include memory now pass the same language into the memory-list reply.
+  - Direct memory-list commands like `my memory` now answer in English instead of Chinese.
+- `apps/functions/src/coalesce/paMessageCoalescer.ts`
+  - Privacy and memory-control requests are excluded from love-tapback eligibility.
+- Regression tests added for both behaviors.
+
+Post-fix live transcript:
+
+- User:
+  - `Can you show me what data you store about me and what you remember?`
+- Claire:
+  - `I store job-search info you have shared with WeKruit: parsed resume details, contact info, work preferences, visa/work authorization, location and comp preferences, confirmed experience notes, and role-screen outcomes.`
+  - `Reply “my memory” to see saved long-term notes. Reply “export my data” or “delete my data” and I will file that privacy request for review.`
+  - `Here is what I remember:`
+  - `· Candidate profile update: targeting fullstack/frontend roles; prefers NYC or remote; prefers early-stage startups; OPT now with future H-1B sponsorship.`
+  - `· Candidate profile update: targeting fullstack roles; prefers early-stage startups.`
+  - `· Candidate profile update: targeting fullstack roles.`
+
+Visible Messages proof:
+
+- The latest 04:51 user message has no tapback attached.
+- The old 04:43 message still shows `loved this`, which is the pre-fix defect retained in the transcript.
+- The latest assistant reply is English throughout and includes the data categories, `my memory`, `export my data`, `delete my data`, and `Here is what I remember:`.
+
+Firestore proof:
+
+- `pa-inbound-events/inb_6d60893b01d6d594644562d731a0a7f6b116883f`
+  - `createdAt`: `2026-05-17T08:51:44.935Z`
+  - `sessionId`: `ses_62990f32ce66925df13ae2accc126a22`
+  - `body`: `Can you show me what data you store about me and what you remember?`
+- `pa-messages/out-inb_6d60893b01d6d594644562d731a0a7f6b116883f`
+  - `createdAt`: `2026-05-17T08:51:48.232Z`
+  - `sessionId`: `ses_62990f32ce66925df13ae2accc126a22`
+  - `body`: exact passing Claire reply above.
+- `pa-outbound/6088621c-2c46-40b1-b88b-97d5a7f8c500`
+  - `createdAt`: `2026-05-17T08:51:48.527Z`
+  - `status`: `sent`
+- `pa-memory-actions/8ff05b6f-8c21-4325-90cc-04e1aef1456b`
+  - `createdAt`: `2026-05-17T08:51:48.158Z`
+  - `eventId`: `inb_6d60893b01d6d594644562d731a0a7f6b116883f`
+  - `action`: `list`
+  - `status`: `succeeded`
+- Latest `pa-privacy-requests` row remained the older export request from `2026-05-17T01:28:24.972Z`; the summary question did not create a duplicate privacy request.
+
+Verification:
+
+- Targeted Node 24 tests:
+  - `node --import ./apps/functions/node_modules/tsx/dist/esm/index.mjs --test apps/functions/src/coalesce/__tests__/paMessageCoalescer.test.ts packages/pa-orchestrator/src/index.test.ts packages/pa-orchestrator/src/output-normalizer.test.ts`
+  - Result: `117` tests passed.
+- Full Firebase predeploy suite:
+  - Result: `1720` tests passed, `315` suites passed.
+- Deployed functions:
+  - `pa-orchestrator:onPaInbound`
+  - `pa-orchestrator:paMessageCoalescer`
+  - `pa-orchestrator:paCoalesceBufferSweep`
+
+Verdict:
+
+- The privacy/memory summary now reads consistently in English, records the memory-list action, avoids creating a privacy request for a summary question, and does not add a positive tapback to the user's privacy-control message.
+
 ## Remaining Matrix Status
 
 The narrowed work completed the live job-prescreen lane that blocked this goal:
@@ -322,13 +402,14 @@ The narrowed work completed the live job-prescreen lane that blocked this goal:
 - Love tapback on explicit no-code weak answer: fixed and live verified absent.
 - Rain compensation sentinel in prescreen: repaired and live transcript verified clean.
 - Job-fit explanation after prescreen: fixed, deployed, and live verified against Messages + Firestore.
+- Privacy/memory summary: fixed, deployed, and live verified against Messages + Firestore.
 
 The broader customer-visible matrix in `.planning/CLAIRE-CUSTOMER-VISIBLE-IMESSAGE-QA-GOAL.md` still lists other flows as future test work unless separately executed:
 
 - Normal candidate onboarding
 - Layoff onboarding
 - Pause/restart/supersede
-- Privacy/safety/abuse
+- Privacy export/delete, safety, and abuse
 - Job matching conversation
 - Everyday catchup and automated outbound
 - Isolated rate-limit/opt-out/suppression UX

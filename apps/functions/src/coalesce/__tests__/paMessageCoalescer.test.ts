@@ -1355,6 +1355,19 @@ describe("iter33 Bug 9: love-tapback rate gate", () => {
     assert.equal(reactionCalls.length, 0, "prompt-injection input must not receive a love tapback")
   })
 
+  it("privacy and memory-control requests skip tapback even when rng would fire", async () => {
+    const { reactionCalls, status } = await setupAndProcess(
+      (deps) => {
+        deps.loveTapbackProbability = 1
+        deps.rng = () => 0.0
+      },
+      "msg-privacy-memory",
+      "What data do you store about me, and can I see what you remember?"
+    )
+    assert.equal(status, "fired")
+    assert.equal(reactionCalls.length, 0, "privacy/control input must not receive a love tapback")
+  })
+
   it("100 trials at p=0.35 → fires within [25%, 45%] band", async () => {
     const trials = 100
     const probability = 0.35

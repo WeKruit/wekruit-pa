@@ -550,6 +550,29 @@ test("processInboundEvent T5: parseMemoryCommand 'list' still routes through orc
   assert.match(outbound, /我住在上海/)
 })
 
+test("processInboundEvent T5: parseMemoryCommand 'my memory' responds in English", async () => {
+  let llmCalls = 0
+  let outbound = ""
+  const store = makeStore({
+    listMemoryFacts: async () => [
+      mf({ id: "f1", content: "prefers New York or remote roles" }),
+      mf({ id: "f2", content: "has React and Node dashboard experience" }),
+    ],
+    runAgentTurn: async () => {
+      llmCalls++
+      return { text: "should-not-be-called" }
+    },
+    enqueueOutbound: async (_u, _t, body) => {
+      outbound = body
+    },
+  })
+  await processInboundEvent({ ...baseEvent, body: "my memory" }, store)
+  assert.equal(llmCalls, 0, "list command must not reach the LLM")
+  assert.match(outbound, /Here is what I remember:/)
+  assert.match(outbound, /prefers New York or remote roles/)
+  assert.doesNotMatch(outbound, /我记得这些/)
+})
+
 test("processInboundEvent T5: parseMemoryCommand 'forget' still routes through orchestrator (admin command)", async () => {
   let llmCalls = 0
   let outbound = ""
@@ -645,8 +668,10 @@ test("processInboundEvent privacy: fuzzy data/memory question gets deterministic
   assert.equal(llmCalls, 0, "privacy data question must not reach the LLM")
   assert.equal(memoryAction, "list")
   assert.match(outbound, /parsed resume details/)
+  assert.match(outbound, /Here is what I remember:/)
   assert.match(outbound, /prefers New York or remote roles/)
   assert.doesNotMatch(outbound, /thingsyou/)
+  assert.doesNotMatch(outbound, /我记得这些/)
 })
 
 test("processInboundEvent privacy: delete data creates privacy request without LLM", async () => {
