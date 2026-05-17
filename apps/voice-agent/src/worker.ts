@@ -286,20 +286,88 @@ function readBookingId(metadata?: string): string {
 }
 
 /**
- * Default context loader — placeholder that throws until S3 wires the
- * Firestore-backed loader. Tests inject `opts.loadContext` directly. The
- * production path will route through a Cloud-Function callable that fans
- * out to S1B's `loadUserProfileForVoice` / `loadJobBriefForVoice` /
- * `loadPrescreenConfigForVoice` and returns the assembled `VoiceCallContext`.
+ * v2.2 — default context loader fetches from paVoiceCallContext CF.
+ * Worker stays free of firebase-admin + @pa/pa-orchestrator bundles so the
+ * LK Cloud deploy artifact stays slim. Tests inject `opts.loadContext` to
+ * skip the HTTP round-trip.
  */
-async function defaultLoadContext(_bookingId: string): Promise<VoiceCallContext> {
-  throw new Error(
-    "voice-agent: default loadContext not implemented — S3 will wire context-callable; tests must inject opts.loadContext"
-  )
+export async function defaultLoadContext(bookingId: string): Promise<VoiceCallContext> {
+  const baseUrl = process.env.WEKRUIT_VOICE_CONTEXT_URL
+  if (!baseUrl) {
+    throw new Error("voice-agent: WEKRUIT_VOICE_CONTEXT_URL not set")
+  }
+  const res = await fetch(baseUrl, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...(process.env.PA_VOICE_CF_SECRET
+        ? { "X-Wekruit-Voice-CF-Secret": process.env.PA_VOICE_CF_SECRET }
+        : {}),
+    },
+    body: JSON.stringify({ bookingId }),
+  })
+  if (!res.ok) {
+    throw new Error(`voice-agent: paVoiceCallContext ${res.status}: ${await res.text().catch(() => "?")}`)
+  }
+  const data = (await res.json()) as {
+    bookingId: string
+    userProfile: VoiceCallContext["userProfile"]
+    jobBrief: VoiceCallContext["jobBrief"]
+    prescreenConfig: VoiceCallContext["prescreenConfig"]
+  }
+  return {
+    bookingId: data.bookingId,
+    userProfile: data.userProfile,
+    jobBrief: data.jobBrief,
+    prescreenConfig: data.prescreenConfig,
+  }
 }
 
-async function defaultBuildPipeline(): Promise<VoicePipelineLite> {
-  throw new Error(
-    "voice-agent: default buildPipeline not implemented — S3/S5 will wire PreScreenPipeline via @pa/pa-orchestrator; tests inject opts.buildPipeline"
-  )
+/**
+ * v2.2 — default pipeline that wraps paVoicePrescreenTurn (the
+ * channel-agnostic runner). The voice worker is a thin transport; the
+ * orchestrator brain (lifecycle reducer + PreScreenPipeline + KeywordSet
+ * judge + clarify composer) runs server-side and returns text + action
+ * over HTTPS.
+ */
+export async function defaultBuildPipeline(): Promise<VoicePipelineLite> {
+  const baseUrl = process.env.WEKRUIT_VOICE_PRESCREEN_TURN_URL
+  if (!baseUrl) {
+    throw new Error("voice-agent: WEKRUIT_VOICE_PRESCREEN_TURN_URL not set")
+  }
+  return {
+    async runTurn(input) {
+      const res = await fetch(baseUrl, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...(process.env.PA_VOICE_CF_SECRET
+            ? { "X-Wekruit-Voice-CF-Secret": process.env.PA_VOICE_CF_SECRET }
+            : {}),
+        },
+        body: JSON.stringify({
+          sessionId: input.sessionId,
+          userId: input.judgeCtx.userId,
+          reply: input.reply,
+          lang: input.lang,
+          nowIso: input.nowIso,
+        }),
+      })
+      if (!res.ok) {
+        throw new Error(
+          `voice-agent: paVoicePrescreenTurn ${res.status}: ${await res.text().catch(() => "?")}`,
+        )
+      }
+      const data = (await res.json()) as {
+        text: string | null
+        action: { kind: string; [k: string]: unknown }
+        terminalAction?: { terminal: string; reason: string }
+        lifecycleKind: string
+      }
+      return {
+        text: data.text ?? "",
+        action: data.action as never,
+      }
+    },
+  }
 }
