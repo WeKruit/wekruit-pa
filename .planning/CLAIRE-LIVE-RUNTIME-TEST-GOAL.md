@@ -258,8 +258,7 @@ Current status: `LIVE_DONE`
 
 Known live evidence:
 
-- Real iMessage verified routing, one clarify, one advance from `role_fit` to `technical_depth`, and transcript quality for the Rain fullstack job.
-- Not yet live-verified through terminal `PASS`.
+- Real iMessage reruns verified routing, repeated non-identical probes, multi-message coalescing, terminal `PASS`, memory/tag writes, candidate-job state, employer-visible snapshot, and transcript quality for the Rain fullstack job.
 
 ## Flow 5: Job Prescreen - Weak Or Clearly Unqualified Candidate
 
@@ -330,7 +329,7 @@ Current status: `LIVE_DONE`
 Known live evidence:
 
 - `PAUSE` and restart after pause are live-verified.
-- Active-session supersede is Firestore-stress verified, not live-verified.
+- Active-session supersede is live-verified through a later real prescreen trigger that superseded the previous active session and wrote `boundary=superseded`.
 
 ## Flow 7: Privacy, Abuse, Security, Guardian
 

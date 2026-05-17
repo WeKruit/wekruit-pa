@@ -44,9 +44,10 @@ export function formatJobRecIntro(
   }
   const count = visibleCount === 3 ? "three" : visibleCount === 1 ? "one" : "two"
   const plural = visibleCount === 1 ? "role" : "roles"
-  if (context?.role) return `I remember you mentioned the ${context.role} direction; I found ${count} ${plural} that line up:`
-  if (context?.skills?.length) return `I remember you mentioned ${context.skills.slice(0, 3).join(" / ")} experience; I found ${count} ${plural} that line up:`
-  return `Based on the profile details you've shared so far, I found ${count} ${plural} that line up:`
+  const verb = visibleCount === 1 ? "lines" : "line"
+  if (context?.role) return `I remember you mentioned the ${context.role} direction; I found ${count} ${plural} that ${verb} up:`
+  if (context?.skills?.length) return `I remember you mentioned ${context.skills.slice(0, 3).join(" / ")} experience; I found ${count} ${plural} that ${verb} up:`
+  return `Based on the profile details you've shared so far, I found ${count} ${plural} that ${verb} up:`
 }
 
 export function formatJobRequirementsLine(lang: JobRecLang, requiredSkills: unknown): string {

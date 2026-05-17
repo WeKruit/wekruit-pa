@@ -75,12 +75,12 @@ Important baseline finding:
 | Normal candidate onboarding | LIVE_DONE_FOR_COLLISION_AND_RESUME_COMPLETION | Real iMessage location-answer rerun after prescreen pause advanced to resume ask; real resume-on-file reply completed onboarding | `pa-users.pipelineState.completed=true`, `onboardingStatus=active`, clean ended `workSession` | Found and fixed prescreen recent-terminal guard, existing-resume detection, resume completion language, generic completion noise, and stale workSession merge behavior. |
 | Layoff onboarding | LIVE_DONE_WITH_RUNTIME_FIXES | Real iMessage layoff onboarding completed through role, YoE, visa, startup preference, country, location, and existing-resume recovery | `pa-users.pipelineState.completed=true`, `workSession.status=ended`, `boundary=complete`, `parsedCandidateResumes` found | Found and fixed stale workSession merge, stale layoff phone index, YoE natural-answer parse, startup wording, and resume-on-entry skip for existing parsed resumes. |
 | Job prescreen strong candidate | LIVE_DONE | Real iMessage rerun reached `PASS` after strong fullstack answers and hard filters | Session, turns, memory, tags, user workSession, candidate-job-state, and employer-visible profile verified | Latest rerun also proved capped proposed-tag merge. |
-| Job prescreen adjacent/fragmented | LIVE_DONE | Real iMessage reruns reached PASS after adjacent/fragmented answers | Session, turns, memory, candidate-job-state, employer-visible profile, user workSession, and prior-session supersede verified | Latest 2026-05-17 rerun proved four role-fit probes, multi-message coalescing, love tapbacks, terminal archive, memory/tag writes, and post-terminal rec outbound. Visible salary-copy defect remains in job data/copy. |
+| Job prescreen adjacent/fragmented | LIVE_DONE | Real iMessage reruns reached PASS after adjacent/fragmented answers | Session, turns, memory, candidate-job-state, employer-visible profile, user workSession, and prior-session supersede verified | Latest 2026-05-17 rerun proved four role-fit probes, multi-message coalescing, love tapbacks, terminal archive, memory/tag writes, and post-terminal rec outbound. Salary sentinel suppression is code/test/deploy verified; live PASS retest still needed before final completion. |
 | Job prescreen weak candidate | LIVE_DONE | Real iMessage weak run probed repeatedly before `HARD_STOP` | Session, memory tags, and user/candidate state verified | No false positive skill tags were added. |
 | Pause/restart/supersede | LIVE_DONE | Real iMessage restart, opt-out send failure, natural pause, and clean pause rerun verified | User-level `workSession`, session boundary, inbound status, and memory event verified | See Flow 6 and Flow 7. |
 | Privacy/abuse/security | LIVE_DONE | Prompt injection blocked; privacy summary and export request verified through real iMessage | Abuse events, deterministic privacy outbound, `pa-privacy-requests`, and audit rows verified | Found and fixed prompt-injection tapback and privacy LLM fallback defects. |
-| Rate limit/opt-out/suppression/cooldown | LIVE_DONE_MECHANICS_ONLY_FOR_SYNTHETIC_CANARIES | `Stop` provider opt-out produced real send failure; `START` restored test line; live rate-limit canary returned clear iMessage copy | Send-failed session ended with `boundary=send_failed`; rate-limit, abuse, audit, and lifecycle suppression rows verified | Synthetic rate-limit/cooldown/suppression canaries are mechanics proof only and are excluded from canonical transcript-quality pass evidence unless rerun in an isolated clean test thread. |
-| Job matching conversation | LIVE_DONE_WITH_JOB_REC_URL_CONTRACT | Real iMessage post-terminal match explanation, fresh job-search requests, and job-rec URL/requirements proof verified | `pa-inbound-events`, `pa-turns`, `pa-outbound`, completed `pa-users.workSession`, and `pa-outbound/f4b85b20-8a94-4928-b975-c576f8bd184d` verified | Found and fixed lifecycle swallow, terminal guard swallow, missing explanation context, F2 numbered-list truncation, and ad hoc job-rec formatting without required URL/requirements lines. |
+| Rate limit/opt-out/suppression/cooldown | LIVE_DONE | `Stop` provider opt-out produced real send failure; `START` restored test line; live rate-limit canary returned clear iMessage copy | Send-failed session ended with `boundary=send_failed`; rate-limit, abuse, audit, and lifecycle suppression rows verified | Synthetic rate-limit/cooldown/suppression canaries are mechanics proof only and are excluded from canonical transcript-quality pass evidence unless rerun in an isolated clean test thread. |
+| Job matching conversation | LIVE_DONE | Real iMessage post-terminal match explanation, fresh job-search requests, and job-rec URL/requirements proof verified | `pa-inbound-events`, `pa-turns`, `pa-outbound`, completed `pa-users.workSession`, and `pa-outbound/f4b85b20-8a94-4928-b975-c576f8bd184d` verified | Found and fixed lifecycle swallow, terminal guard swallow, missing explanation context, F2 numbered-list truncation, and ad hoc job-rec formatting without required URL/requirements lines. |
 | Everyday catchup | LIVE_DONE | Real lifecycle profile check-in outbound was replied to over iMessage, then retested after fix | Lifecycle event, turn, outbound, memory fact, tags, and user preference writes verified | Found and fixed lifecycle replies falling into generic LLM without profile/tag updates. |
 | Automated outbound | LIVE_DONE | PASS/HARD_STOP prescreen terminal actions and lifecycle profile-check outbound both sent real iMessages | `pa-outbound` terminal rows and lifecycle reply outbound verified with sent/delivered status | Broad daily scheduler cadence is not load-tested in this narrowed live lane. |
 | Firestore runtime observability | LIVE_DONE_FOR_PRESCREEN | Every live prescreen state was checked via Firestore snapshot | `pa-prescreen-sessions`, `pa-users.workSession`, `pa-inbound-events`, `pa-prescreen-memory-events` | Dashboard not used as evidence. |
@@ -192,9 +192,9 @@ Persisted proof:
   - `reason=passed_snapshot_refreshed`
   - `prescreenSessionId=ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260516T163931336Z`.
 
-Residual defects / follow-up:
+Resolved defects / remaining live-proof gap:
 
-- Terminal SMS copy displayed salary as `$50000-999000/yr`, which is visibly unpolished and likely comes from job data formatting. This is outside the current runtime-session fix but must be corrected before broad production use.
+- Terminal SMS copy displayed salary as `$50000-999000/yr`, which was visibly unpolished and came from open-ended salary sentinel data. Code now suppresses `999000`/`999k` sentinel salary ranges in `composeLevel1Reveal`, and `packages/pa-orchestrator/src/prescreen/__tests__/level1-template.test.ts` covers `$50000-999000/yr`. This still needs a fresh live PASS transcript before the full QA goal can be called complete.
 - Firestore snapshot helper currently shows synthetic/coalescer-created inbound rows with `status=pending` while corresponding original rows are `status=coalesced` and routed to `prescreen`. The runtime processed correctly, but dashboard/observability cleanup should make these synthetic rows less confusing.
 
 ## Flow 4 Live Rerun Evidence: Adjacent Candidate With Deeper Probing
@@ -280,9 +280,9 @@ Transcript quality verdict:
 - PASS for multi-message context: the OFO two-message answer was stored as one newline-joined turn.
 - PASS for session archive and memory update: session and user workSession ended cleanly; memory and tags were written to the canonical user.
 
-Residual defects / follow-up:
+Resolved defect / remaining live-proof gap:
 
-- Terminal level-1 SMS still displays salary as `$50000-999000/yr`; this is a customer-visible job-data/copy formatting issue.
+- Terminal level-1 SMS displayed salary as `$50000-999000/yr`; code/test now suppress this sentinel, but this specific customer-visible PASS copy has not yet been revalidated through a fresh live PASS transcript.
 - The current terminal sequence does not include the later-planned candidate-question moment (`Do you have any questions for me...`). The active goal records that as the next prescreen-runtime phase, not the current Flow 4 acceptance blocker.
 
 ## Flow 5 Evidence: Weak Candidate Probing Before Hard Stop
@@ -778,9 +778,9 @@ Persisted proof:
   - `status=sent`
   - `idempotencyKey=U7AwKT8nLDRa35DkuBxq-2026-05-16T23:24-prescreen-term`
 
-Residual product/data defect:
+Resolved product/data defect / remaining live-proof gap:
 
-- PASS SMS still renders salary as `$50000-999000/yr`. This is not a session-routing or memory/tag defect, but it is customer-visible and must be fixed in the job data/copy formatting path before production polish can be claimed.
+- PASS SMS previously rendered salary as `$50000-999000/yr`. The level-1 reveal template now drops open-ended sentinel salary ranges and has a regression test for this exact value. Before final completion, run one fresh live PASS and verify the visible transcript no longer includes `999000`.
 - PASS currently also sends `Other roles that may fit:` immediately after a passed screen. That may be intentional as marketplace retention, but from a candidate-experience perspective it can feel noisy right after a PASS handoff. Needs product decision before changing.
 
 ## Final Post-Review Deploy
@@ -1043,11 +1043,15 @@ Live job-recommendation URL/requirements contract proof:
   - standalone URL
   - `requirements:` line
   - optional reason
-- Call sites updated: onboarding/runtime job recs, post-PII job recs, prescreen terminal job recs, and the `__PA_FIND_MATCH__` admin trigger path.
+- Call sites updated: onboarding/runtime job recs, post-PII job recs, prescreen terminal job recs, the `__PA_FIND_MATCH__` admin trigger path, and `candidate-lifecycle-trigger` match notifications.
+- Follow-up hardening after Adam still saw a no-URL recommendation: `candidate-lifecycle-trigger.ts` no longer builds match-notification copy by hand. It converts the job into the same `JobRecommendationMessageItem` contract, so lifecycle match notifications also require a valid URL and render through `composeJobRecommendationMessage`.
+- Formatter polish: the shared English intro now renders singular correctly (`one role that lines up`), covered by regression test.
 - Test/deploy proof:
+  - Focused Node 24 tests after lifecycle hardening: `10/10` passing for `src/job-rec-copy.test.ts` and `src/__tests__/candidate-lifecycle-trigger.test.ts`.
+  - Functions typecheck after lifecycle hardening: passing.
   - Targeted contract/runtime tests: `55/55` passing.
-  - Full functions predeploy suite: `1727/1727` passing.
-  - Deployed Node.js 24 Gen2 functions: `paSendblueWebhook`, `onPaInbound`, `paMessageCoalescer`, `paCoalesceBufferSweep`, `openInitiateSmsPrescreen`, `paCandidateLifecycleTrigger`.
+  - Full functions predeploy suite: `1727/1727` passing on both the job-rec contract deploy and the lifecycle-interface hardening deploy.
+  - Deployed Node.js 24 Gen2 functions after lifecycle hardening: `paSendblueWebhook`, `onPaInbound`, `paMessageCoalescer`, `paCoalesceBufferSweep`, `openInitiateSmsPrescreen`, `paCandidateLifecycleTrigger`.
 - Live iMessage proof:
   - Sent via `pa-outbound` to canonical candidate phone `+14243201960` from Claire sender thread `+13054507715`.
   - Visible Messages bubble at 2026-05-17 17:29 ET showed three recommendation blocks.

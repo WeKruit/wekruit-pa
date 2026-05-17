@@ -6,6 +6,10 @@ import { getFirestore } from "firebase-admin/firestore"
 import { z } from "zod"
 import { enqueueOutbound as defaultEnqueueOutbound } from "@pa/pa-broker"
 import { authorizeAdminCallable } from "./promote-sandbox-tag.js"
+import {
+  composeJobRecommendationMessage,
+  toJobRecommendationMessageItem,
+} from "./job-rec-copy.js"
 
 const PA_ADMIN_TOKEN = defineSecret("PA_ADMIN_TOKEN")
 
@@ -189,15 +193,27 @@ function renderLifecycleBody(input: {
     case "laid_off_checkin":
       return `${prefix} Checking in because you shared the layoff update. How are things going this week, and has what you want next changed?`
     case "match_notification": {
-      const company = job?.companyName ? ` at ${job.companyName}` : ""
-      const requirements = job?.requirements?.length
-        ? ` Requirements: ${job.requirements.slice(0, 5).join(", ")}.`
-        : ""
-      const reason = job?.matchReason
-        ? ` I remember the context you shared: ${job.matchReason}`
-        : " I matched this from the profile details you shared."
-      const url = job?.jobUrl ? ` Link: ${job.jobUrl}.` : ""
-      return `${prefix} I found a role based on what you shared: ${job?.jobTitle}${company}.${requirements}${reason}${url} Want me to start the quick screen for it?`
+      const item = job
+        ? toJobRecommendationMessageItem(
+            {
+              jobTitle: job.jobTitle,
+              companyName: job.companyName,
+              atsApplyUrl: job.jobUrl,
+              requiredSkills: job.requirements,
+              reason: job.matchReason ?? "why: I matched this from the profile details you shared.",
+            },
+            "en",
+          )
+        : null
+      if (!item) {
+        throw new Error("match_notification job failed the linkable recommendation message contract")
+      }
+      return [
+        prefix,
+        composeJobRecommendationMessage([item], "en", undefined, {
+          footer: "Want me to start the quick screen for it?",
+        }),
+      ].join("\n\n")
     }
     case "profile_freshness_nudge":
       return `${prefix} Quick profile check-in: are your target roles, location, visa/work authorization, and availability still accurate? A short update is enough.`

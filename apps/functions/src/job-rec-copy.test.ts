@@ -57,4 +57,22 @@ describe("job recommendation visible-message contract", () => {
     assert.match(body, /requirements: Java, SQL/)
     assert.match(body, /why: your SQL dashboard work maps to this backend role/)
   })
+
+  it("uses singular grammar when rendering exactly one recommended role", () => {
+    const item = toJobRecommendationMessageItem(
+      {
+        jobTitle: "Frontend Engineer",
+        companyName: "Acme",
+        atsApplyUrl: "https://jobs.ashbyhq.com/acme/frontend",
+        requiredSkills: ["React"],
+      },
+      "en",
+    )
+    assert.ok(item, "expected a linkable message item")
+
+    const body = composeJobRecommendationMessage([item], "en")
+
+    assert.match(body, /I found one role that lines up:/)
+    assert.doesNotMatch(body, /one role that line up/)
+  })
 })
