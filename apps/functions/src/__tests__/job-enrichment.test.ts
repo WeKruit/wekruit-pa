@@ -105,6 +105,71 @@ test("runJobEnrichmentRefreshDraft writes a marketplace draft under the job enri
   assert.equal(draft.status, "draft")
 })
 
+test("runJobEnrichmentRefreshDraft treats open-ended salary sentinels as missing compensation", async () => {
+  let captured: JobOpportunityDraft | null = null
+  const result = await runJobEnrichmentRefreshDraft(
+    { jobId: "rain-fullstack" },
+    {
+      db,
+      nowIso: () => now,
+      readJob: async () => ({
+        roleTitle: "Software Engineer - Fullstack",
+        companyName: "Rain",
+        jobDescription: "Build React, TypeScript, and Node products.",
+        locationRaw: "New York, NY",
+        salaryMin: 50000,
+        salaryMax: 999000,
+        source: "ats",
+      }),
+      enrich: async () => ({
+        tags: {
+          roleFunction: ["software_engineering"],
+          industrySector: ["financial_technology"],
+          relevantTags: ["full_stack_engineering"],
+          skills: [{ name: "typescript", bucket: "programming_languages", proficiency: "advanced", evidenceCount: 2, baseWeight: 0.8 }],
+          seniorityLevel: "mid_level",
+          sponsorshipHint: null,
+          locationBuckets: ["new_york_metro"],
+          jobType: "full_time",
+          confidence: {
+            overall: 0.9,
+            fields: {
+              roleFunction: 0.96,
+              industrySector: 0.92,
+              relevantTags: 0.9,
+              skills: 0.93,
+              seniorityLevel: 0.91,
+              locationBuckets: 0.9,
+              jobType: 0.94,
+            },
+          },
+        },
+        modelUsed: "test-model",
+        usedTier: "primary",
+        fallbackChain: [],
+      }),
+      writeDraft: async (_db, draft) => {
+        captured = draft
+        return { draft, created: true }
+      },
+    },
+  )
+
+  assert.equal(result.ok, true)
+  const draft = captured as unknown as JobOpportunityDraft
+  assert.equal(draft.rawSnapshot.compensationText, undefined)
+  assert.equal(draft.opportunity.hardFilters.salaryMinUsd, undefined)
+  assert.equal(draft.opportunity.hardFilters.salaryMaxUsd, undefined)
+  assert.equal(
+    draft.opportunity.prescreen.questions.some((question) => question.questionId === "compensation_alignment"),
+    false,
+  )
+  assert.match(
+    draft.opportunity.prescreen.questions.find((question) => question.questionId === "location_alignment")?.prompt ?? "",
+    /New York, NY/,
+  )
+})
+
 test("runJobEnrichmentRefreshDraft keeps sponsorship silence unknown and title-only seniority in review", async () => {
   let captured: JobOpportunityDraft | null = null
   const result = await runJobEnrichmentRefreshDraft(
