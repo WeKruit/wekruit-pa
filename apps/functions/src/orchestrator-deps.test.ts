@@ -28,10 +28,12 @@ import { roleToIndustryBuckets } from "@pa/pa-orchestrator"
 import { formatJobMatchReason } from "./lib/match-reason.js"
 import type { ScoreBreakdown } from "@pa/job-rec"
 import {
+  cleanJobRecUrl,
   isDegenerateLLMOutput,
   buildCvAnalysisFallback,
   fireAndForgetLlmRerank,
   formatJobRecIntro,
+  formatJobRequirementsLine,
   resolveJobRecVisibleCount,
 } from "./orchestrator-deps.js"
 import type { RerankInput, RerankOutput } from "./lib/llm-rerank.js"
@@ -163,7 +165,7 @@ function composeJobLine(
   ctx: { topSkills?: string[]; location?: string; visa?: string; targetRole?: string[] }
 ): string {
   const tag = j.companyName ? ` @ ${j.companyName}` : ""
-  const url = j.atsApplyUrl ? `\n${j.atsApplyUrl}` : j.primaryUrl ? `\n${j.primaryUrl}` : ""
+  const url = `\n${cleanJobRecUrl(j) ?? ""}`
   const reasonText = formatJobMatchReason(
     {
       jobTitle: j.jobTitle,
@@ -184,7 +186,8 @@ function composeJobLine(
   const reasonLine = reasonText
     ? `\n${lang === "zh" ? "为啥推" : "why"}: ${reasonText}`
     : ""
-  return `• ${j.jobTitle}${tag}${url}${reasonLine}`
+  const requirementsLine = `\n${formatJobRequirementsLine(lang, j.requiredSkills)}`
+  return `• ${j.jobTitle}${tag}${url}${requirementsLine}${reasonLine}`
 }
 
 describe("generateJobRecs compose: per-job line shape (iter34 B.11)", () => {
@@ -201,15 +204,16 @@ describe("generateJobRecs compose: per-job line shape (iter34 B.11)", () => {
       targetRole: ["swe"],
     })
     const parts = out.split("\n")
-    // 3 lines: title, url, reason
-    assert.equal(parts.length, 3, `expected 3 lines, got ${parts.length}: ${JSON.stringify(out)}`)
+    // 4 lines: title, url, requirements, reason
+    assert.equal(parts.length, 4, `expected 4 lines, got ${parts.length}: ${JSON.stringify(out)}`)
     assert.match(parts[0]!, /Senior SWE @ Acme/)
     assert.match(parts[1]!, /^https:\/\//)
-    assert.match(parts[2]!, /^为啥推: /)
-    assert.match(parts[2]!, /Node\.js/)
+    assert.equal(parts[2]!, "要求: Node.js, React")
+    assert.match(parts[3]!, /^为啥推: /)
+    assert.match(parts[3]!, /Node\.js/)
   })
 
-  it("legacy fallback: no matchScore → reason line dropped (2 lines)", () => {
+  it("legacy fallback: no matchScore → reason line dropped but requirements stay visible", () => {
     const j: MockJob = {
       jobTitle: "Backend Engineer",
       companyName: "Beta",
@@ -217,9 +221,10 @@ describe("generateJobRecs compose: per-job line shape (iter34 B.11)", () => {
     }
     const out = composeJobLine(j, "en", { topSkills: [] })
     const parts = out.split("\n")
-    assert.equal(parts.length, 2, "legacy must emit 2 lines (title + url)")
+    assert.equal(parts.length, 3, "legacy must emit 3 lines (title + url + requirements fallback)")
     assert.match(parts[0]!, /Backend Engineer @ Beta/)
     assert.match(parts[1]!, /^https:\/\//)
+    assert.equal(parts[2]!, "requirements: see the job post for the full requirements")
   })
 
   it("en path renders 'why:' label", () => {
@@ -231,6 +236,7 @@ describe("generateJobRecs compose: per-job line shape (iter34 B.11)", () => {
       requiredSkills: ["PyTorch"],
     }
     const out = composeJobLine(j, "en", { topSkills: ["PyTorch"] })
+    assert.match(out, /\nrequirements: PyTorch/)
     assert.match(out, /\nwhy: matches PyTorch/)
   })
 
@@ -245,6 +251,7 @@ describe("generateJobRecs compose: per-job line shape (iter34 B.11)", () => {
     }
     const out = composeJobLine(j, "en", { topSkills: ["Go"] })
     assert.ok(out.includes("delta.greenhouse.io"), "must use atsApplyUrl not primaryUrl")
+    assert.match(out, /\nrequirements: Go/)
     assert.ok(!out.includes("jobright.ai"), "must NOT regress to jobright.ai mirror")
   })
 })
@@ -252,15 +259,31 @@ describe("generateJobRecs compose: per-job line shape (iter34 B.11)", () => {
 describe("generateJobRecs visible count", () => {
   it("defaults to two jobs for the daily/onboarding push", () => {
     assert.equal(resolveJobRecVisibleCount(undefined), 2)
-    assert.equal(formatJobRecIntro("en", 2), "two roles that line up for you:")
-    assert.equal(formatJobRecIntro("zh", 2), "先给你看两个对得上的岗位:")
+    assert.equal(
+      formatJobRecIntro("en", 2),
+      "Based on the profile details you've shared so far, I found two roles that line up:",
+    )
+    assert.equal(formatJobRecIntro("zh", 2), "我根据你已经分享的资料, 这里先给你两个对得上的岗位:")
+    assert.equal(
+      formatJobRecIntro("en", 2, { skills: ["React", "SQL"] }),
+      "I remember you mentioned React / SQL experience; I found two roles that line up:",
+    )
   })
 
   it("honors explicit three-role requests but caps the visible batch at three", () => {
     assert.equal(resolveJobRecVisibleCount(3), 3)
     assert.equal(resolveJobRecVisibleCount(10), 3)
-    assert.equal(formatJobRecIntro("en", 3), "three roles that line up for you:")
-    assert.equal(formatJobRecIntro("zh", 3), "先给你看三个对得上的岗位:")
+    assert.equal(
+      formatJobRecIntro("en", 3),
+      "Based on the profile details you've shared so far, I found three roles that line up:",
+    )
+    assert.equal(formatJobRecIntro("zh", 3), "我根据你已经分享的资料, 这里先给你三个对得上的岗位:")
+  })
+
+  it("rejects job recs without a candidate-usable link", () => {
+    assert.equal(cleanJobRecUrl({ primaryUrl: "https://jobright.ai/job/123" }), null)
+    assert.equal(cleanJobRecUrl({ primaryUrl: "" }), null)
+    assert.equal(cleanJobRecUrl({ primaryUrl: "https://company.example/jobs/1" }), "https://company.example/jobs/1")
   })
 })
 
@@ -323,7 +346,7 @@ describe("buildCvAnalysisFallback (iter34 H.2 CR1)", () => {
     )
     assert.match(out, /Node, React, Python, AWS, Docker/)
     assert.match(out, /Founder@WeKruit/)
-    assert.match(out, /推岗位贴这个方向/)
+    assert.match(out, /资料证据/)
   })
 
   it("composes top-5 skills + recent role@company in en", () => {
@@ -337,7 +360,7 @@ describe("buildCvAnalysisFallback (iter34 H.2 CR1)", () => {
     )
     assert.match(out, /TypeScript, React, PostgreSQL/)
     assert.match(out, /Senior SWE@Acme/)
-    assert.match(out, /lean recs/)
+    assert.match(out, /profile evidence/)
   })
 
   it("falls back gracefully when only skills present (no role)", () => {

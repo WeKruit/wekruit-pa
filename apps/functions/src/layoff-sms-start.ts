@@ -179,7 +179,7 @@ export async function runLayoffSmsStart(
     toE164: phoneE164,
     imessageChatId: `iMessage;-;${phoneE164}`,
     body,
-    idempotencyKey: `wekruit_open_layoff:${args.userId}:kickoff`,
+    idempotencyKey: `wekruit_open_layoff:${args.userId}:kickoff:${startedAt}`,
   })
 
   await userRef.set(

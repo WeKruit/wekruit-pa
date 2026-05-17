@@ -100,6 +100,22 @@ describe("evaluateCandidateLifecycleTrigger", () => {
     assert.equal(missing.decision, "do_not_send")
     assert.ok(missing.blockedSignals.includes("missing_job_context"))
 
+    const missingDetails = evaluateCandidateLifecycleTrigger({
+      request: request({
+        eventType: "match_notification",
+        eventReason: "new matching job landed",
+        job: {
+          jobId: "rain-fullstack-1",
+          jobTitle: "Software Engineer - Fullstack",
+          companyName: "Rain",
+        } as CandidateLifecycleTriggerInput["job"],
+      }),
+      candidate: candidate({ source: "candidate" }),
+      now: NOW,
+    })
+    assert.equal(missingDetails.decision, "do_not_send")
+    assert.ok(missingDetails.blockedSignals.includes("missing_job_link_or_requirements"))
+
     const ready = evaluateCandidateLifecycleTrigger({
       request: request({
         eventType: "match_notification",
@@ -108,6 +124,8 @@ describe("evaluateCandidateLifecycleTrigger", () => {
           jobId: "rain-fullstack-1",
           jobTitle: "Software Engineer - Fullstack",
           companyName: "Rain",
+          jobUrl: "https://candidate.wekruit.com/j/rain-fullstack-1",
+          requirements: ["React", "Node.js", "SQL"],
           matchReason: "Your dashboard and SQL ownership are relevant here.",
           matchId: "match-1",
         },
@@ -118,6 +136,9 @@ describe("evaluateCandidateLifecycleTrigger", () => {
     assert.equal(ready.decision, "send")
     if (ready.decision === "send") {
       assert.match(ready.body, /Software Engineer - Fullstack at Rain/)
+      assert.match(ready.body, /https:\/\/candidate\.wekruit\.com\/j\/rain-fullstack-1/)
+      assert.match(ready.body, /Requirements: React, Node\.js, SQL/)
+      assert.match(ready.body, /I remember the context you shared/)
       assert.match(ready.body, /dashboard and SQL ownership/)
       assert.equal(ready.cooldownKey, "match_notification:rain-fullstack-1")
     }
@@ -148,6 +169,8 @@ describe("runCandidateLifecycleTrigger", () => {
         jobId: "rain-fullstack-1",
         jobTitle: "Software Engineer - Fullstack",
         companyName: "Rain",
+        jobUrl: "https://candidate.wekruit.com/j/rain-fullstack-1",
+        requirements: ["React", "Node.js", "SQL"],
         matchReason: "It matches your dashboard and SQL work.",
       },
     }), deps)
@@ -156,6 +179,9 @@ describe("runCandidateLifecycleTrigger", () => {
     assert.equal(result.outboundId, "out-life-1")
     assert.equal(outbound.length, 1)
     assert.match(String(outbound[0]?.body), /Software Engineer - Fullstack at Rain/)
+    assert.match(String(outbound[0]?.body), /https:\/\/candidate\.wekruit\.com\/j\/rain-fullstack-1/)
+    assert.match(String(outbound[0]?.body), /Requirements: React, Node\.js, SQL/)
+    assert.match(String(outbound[0]?.body), /I remember the context you shared/)
     const row = events.get(result.eventId)
     assert.equal(row?.status, "queued")
     assert.equal(row?.outboundId, "out-life-1")

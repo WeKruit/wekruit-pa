@@ -713,6 +713,37 @@ function normalizeRoleToken(raw: string): string | null {
   return t
 }
 
+function parseRoleReply(reply: string): RoleAnswer | null {
+  const t = reply.toLowerCase()
+  const matched: string[] = []
+  const add = (token: string, pattern: RegExp) => {
+    if (pattern.test(t) && !matched.includes(token)) matched.push(token)
+  }
+
+  add("fullstack", /\bfull[-\s]?stack\b|\bfullstack\b|全栈/)
+  add("frontend", /\bfront[-\s]?end\b|\bfrontend\b|\bfe\b|前端/)
+  add("backend", /\bback[-\s]?end\b|\bbackend\b|\bbe\b|后端/)
+  add("data", /\bdata\s+(scientist|analyst|engineer|science|analytics)\b|数据(科学|分析|工程)/)
+  add("ml", /\b(ml|ai)\s+engineer\b|machine\s+learning|deep\s+learning|算法/)
+  add("infra", /\b(platform|infra|infrastructure|devops|sre)\b/)
+  add(
+    "swe",
+    /\b(swe|software\s+(engineer|engineering|developer|development)|product\s+engineer|product\s+engineering|engineer|engineering|developer|web\s+developer|mobile\s+developer|coder|cs)\b|工程师|开发/,
+  )
+  add("pm", /\b(pm|product\s+manager|product\s+management|tpm)\b|产品经理/)
+  add("research", /\b(research|researcher|scientist)\b|研究/)
+  add("design", /\b(designer|product\s+designer|design\s+role|ux\s+designer|ui\s+designer)\b|设计/)
+
+  if (matched.length === 0) return null
+  if (
+    matched.includes("swe") &&
+    matched.some((token) => ["fullstack", "frontend", "backend", "data", "ml", "infra"].includes(token))
+  ) {
+    return matched.filter((token) => token !== "swe")
+  }
+  return matched
+}
+
 function splitOpenListValue(raw: string): string[] {
   return raw
     .split("/")
@@ -760,6 +791,7 @@ export function makeRoleQuestion(
         { reply: "designer", value: ["design"], confidence: 0.95 },
       ],
       parseValue: parseRoleValue,
+      parseReply: parseRoleReply,
       ...(llmCallFactory ? { llmCallFactory } : {}),
     }),
     rephraser: new HybridRephraser({

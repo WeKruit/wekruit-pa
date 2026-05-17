@@ -109,6 +109,7 @@ export interface PipelineOpts {
 export type TurnEmitKind =
   | "first_prompt"     // current Q's initial prompt (advance from previous Q)
   | "reask"            // re-ask after irrelevant/unclear
+  | "side_question_ack" // answer side question before an auto-enter side effect
   | "halt"             // halt message after maxAttempts hit
   | "decline_ack"      // acknowledgment after onDeclined ran
   | "completion"       // final post-all-Qs message
@@ -259,6 +260,26 @@ export class OnboardingPipeline {
       // Fall through: treat as irrelevant.
     }
 
+    // A candidate may ask a side question before answering the active prompt.
+    // Answer it briefly, keep the same prompt active, and do not count it as a
+    // failed attempt.
+    const sideQuestionAck = sideQuestionAckFor({
+      qId: currentQ.id,
+      reply: input.reply,
+      lang: state.lang,
+    })
+    if (sideQuestionAck) {
+      const msg = `${sideQuestionAck}\n\n${currentQ.prompt[state.lang]}`
+      await this.opts.emit(msg, { qId: currentQ.id, kind: "reask" })
+      return {
+        handled: true,
+        emitted: msg,
+        currentQId: currentQ.id,
+        completed: false,
+        halted: false,
+      }
+    }
+
     // irrelevant / unclear / declined-without-hook → bump attempt + rephrase.
     return await this.bumpAndRephrase(input, state, currentQ, result)
   }
@@ -292,14 +313,21 @@ export class OnboardingPipeline {
       }
     }
 
-    return await this.advanceTo(input, state, currentQ.id, "first_prompt")
+    const acceptedAsideAck = sideQuestionAckFor({
+      qId: currentQ.id,
+      reply: input.reply,
+      value,
+      lang: state.lang,
+    })
+    return await this.advanceTo(input, state, currentQ.id, "first_prompt", acceptedAsideAck)
   }
 
   private async advanceTo(
     input: RunTurnInput,
     state: PipelineState,
     fromQId: string,
-    kind: TurnEmitKind
+    kind: TurnEmitKind,
+    acceptedAsideAck?: string | null
   ): Promise<RunTurnResult> {
     const next = this.nextQ(fromQId)
     if (!next) {
@@ -319,6 +347,10 @@ export class OnboardingPipeline {
     }
 
     if (next.onEnter) {
+      if (acceptedAsideAck) {
+        await this.opts.emit(acceptedAsideAck, { qId: fromQId, kind: "side_question_ack" })
+        acceptedAsideAck = null
+      }
       const ctx: AcceptedCtx = {
         userId: input.userId,
         turnId: input.turnId,
@@ -349,7 +381,8 @@ export class OnboardingPipeline {
 
     state.currentQId = next.id
     await this.opts.state.save(input.userId, state)
-    const msg = next.prompt[state.lang]
+    const nextPrompt = next.prompt[state.lang]
+    const msg = acceptedAsideAck ? `${acceptedAsideAck}\n\n${nextPrompt}` : nextPrompt
     await this.opts.emit(msg, { qId: next.id, kind })
     return {
       handled: true,
@@ -476,4 +509,71 @@ export class OnboardingPipeline {
       halted: false,
     }
   }
+}
+
+function sideQuestionAckFor(args: {
+  qId: string
+  reply: string
+  value?: unknown
+  lang: Lang
+}): string | null {
+  const lower = args.reply.toLowerCase()
+  const hasQuestionOrAside =
+    args.reply.includes("?") ||
+    /\b(quick aside|btw|by the way|also|one question|quick question)\b/i.test(args.reply)
+  if (!hasQuestionOrAside) return null
+
+  if (
+    args.qId === "q_yoe" &&
+    /\b(new[-\s]?grad(?:-ish)?|entry[-\s]?level|early[-\s]?career)\b/i.test(args.reply)
+  ) {
+    const yoe =
+      typeof args.value === "number" && Number.isFinite(args.value)
+        ? `about ${args.value} year${args.value === 1 ? "" : "s"}`
+        : "early-career"
+    return args.lang === "zh"
+      ? `可以, 我会按 ${yoe} / early-career 来理解。`
+      : `Yes — I’ll treat that as ${yoe} / early-career for your profile.`
+  }
+
+  if (
+    args.qId === "q_startup_pref" &&
+    /\b(ats|black holes?|huge[-\s]?company|big[-\s]?company|large[-\s]?company)\b/i.test(args.reply)
+  ) {
+    return args.lang === "zh"
+      ? "明白, 我会把 startup / 小团队作为默认方向；大公司只有在要求和链接都明显值得看时才推。"
+      : "Yes - I’ll treat startups and smaller teams as the default, and only show bigger-company roles when the requirements and link look worth checking."
+  }
+
+  if (
+    (args.qId === "q_country" || args.qId === "q_location") &&
+    /\bremote\b/i.test(args.reply) &&
+    /\b(us|u\.s\.|usa|united states|global|worldwide|international|unless i say global)\b/i.test(args.reply)
+  ) {
+    return args.lang === "zh"
+      ? "明白, 我会先把 remote 理解成美国 remote；只有你明确说 global / worldwide 时才按全球远程处理。"
+      : "Yes - I’ll treat remote as US remote unless you explicitly say global or worldwide."
+  }
+
+  if (/\b(legit|real|scam|hiring manager|how does this work|how will this work|what happens next)\b/i.test(lower)) {
+    return args.lang === "zh"
+      ? "可以问。WeKruit 会用这段对话整理你的候选人资料；合作岗位的 screen 可以直接给到招聘方。"
+      : "Good question. WeKruit uses this chat to build your candidate profile; for partnered roles, the screen can go to the hiring team."
+  }
+
+  if (/\b(job match|job matching|matching|matches|recommend|recommendation|roles?|jobs?)\b/i.test(lower)) {
+    return args.lang === "zh"
+      ? "可以。等我把你的方向记清楚后, 推荐岗位会带岗位链接和核心要求, 不会只丢一个名字。"
+      : "Yes. Once I have your direction clear, any role I recommend will include the job link and core requirements."
+  }
+
+  if (/\b(privacy|delete|data|save|remember|stored)\b/i.test(lower)) {
+    return args.lang === "zh"
+      ? "可以问。我们只把它用于你的 WeKruit 候选人资料和招聘流程；你也可以要求删除或导出。"
+      : "Good question. I use this for your WeKruit candidate profile and recruiting flow; you can ask to delete or export it."
+  }
+
+  return args.lang === "zh"
+    ? "可以问。这个我先保持在求职相关范围里处理, 然后继续把你的资料补齐。"
+    : "Fair question. I’ll keep side questions tied to your search, then keep your profile moving."
 }

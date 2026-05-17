@@ -75,12 +75,12 @@ export function composeLevel1Reveal(fields: Level1RevealFields, lang: Lang): str
 }
 
 /**
- * Compose the FAIL "match other jobs?" preamble SMS (sent BEFORE the
- * generateJobRecs result lands). Reuses existing FAIL terminal text;
- * this is just the bridging line.
+ * Compose the FAIL job-rec bridge SMS (sent BEFORE the generateJobRecs
+ * result lands). Keep it grounded in this screen so it does not feel like
+ * a random match pivot.
  */
 export function composeFailJobRecsPreamble(lang: Lang): string {
   return lang === "zh"
-    ? "我看看有没有其他更合适的机会推给你 — 稍等。"
-    : "Let me look for better-aligned roles for you — one moment."
+    ? "我会用你刚才这段 screen 里讲到的经历, 找带岗位链接和核心要求的机会 — 稍等。"
+    : "I’ll use what you shared in this screen to look for roles with a usable job link and clear requirements — one moment."
 }

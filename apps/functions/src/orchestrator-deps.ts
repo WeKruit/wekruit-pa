@@ -24,6 +24,24 @@ import {
   generateVerificationCode,
   sendVerificationEmail as sendVerificationEmailViaMailgun,
 } from "./email/mailgun.js"
+import {
+  collectJobRecommendationMessageItems,
+  composeJobRecommendationMessage,
+  compactJobRecContext,
+  resolveJobRecVisibleCount,
+  type JobRecIntroContext,
+} from "./job-rec-copy.js"
+
+export {
+  cleanJobRecUrl,
+  collectJobRecommendationMessageItems,
+  composeJobRecommendationMessage,
+  compactJobRecContext,
+  formatJobRecIntro,
+  formatJobRequirementsLine,
+  resolveJobRecVisibleCount,
+  toJobRecommendationMessageItem,
+} from "./job-rec-copy.js"
 
 type SecretParamHandle = ReturnType<typeof defineSecret>
 
@@ -60,22 +78,6 @@ const SILICONFLOW_API_KEY: SecretParamHandle = defineSecret("SILICONFLOW_API_KEY
 export const CV_ANALYSIS_SECRETS: SecretParamHandle[] = [SILICONFLOW_API_KEY]
 
 const nowIso = () => new Date().toISOString()
-
-export function resolveJobRecVisibleCount(requestedCount: unknown): number {
-  const requested = typeof requestedCount === "number" && Number.isFinite(requestedCount)
-    ? Math.trunc(requestedCount)
-    : 2
-  return Math.max(1, Math.min(3, requested || 2))
-}
-
-export function formatJobRecIntro(lang: "zh" | "en", visibleCount: number): string {
-  if (lang === "zh") {
-    const count = visibleCount === 3 ? "三个" : visibleCount === 1 ? "一个" : "两个"
-    return `先给你看${count}对得上的岗位:`
-  }
-  const count = visibleCount === 3 ? "three" : visibleCount === 1 ? "one" : "two"
-  return `${count} ${visibleCount === 1 ? "role" : "roles"} that line up for you:`
-}
 
 /**
  * Build orchestrator callbacks. Mailgun only gates email verification; it
@@ -227,7 +229,25 @@ function makeGenerateJobRecs(): NonNullable<
         return null
       }
       const visibleCount = resolveJobRecVisibleCount(opts?.requestedCount)
-      const visibleJobs = jobs.slice(0, visibleCount)
+      const visibleItems = collectJobRecommendationMessageItems(jobs, lang, { limit: visibleCount })
+      if (visibleItems.length === 0) {
+        logger.warn("[job-recs] no matches with public job links", {
+          userId,
+          total: out.total,
+          dropped: out.dropped,
+        })
+        return null
+      }
+      let introContext: JobRecIntroContext | undefined
+      try {
+        const userDoc = await db.collection("pa-users").doc(userId).get()
+        introContext = compactJobRecContext(userDoc.exists ? userDoc.data()?.tags : undefined)
+      } catch (err) {
+        logger.warn("[job-recs] intro context read failed", {
+          userId,
+          err: err instanceof Error ? err.message : String(err),
+        })
+      }
 
       // v1.7 hotfix — LLM-composed nuanced reasoning for top-2.
       // Replaces V16 template "为啥推: skill X+Y 跟 JD 核心技能对得上"
@@ -288,7 +308,7 @@ function makeGenerateJobRecs(): NonNullable<
             })
           }
           const reasons = await Promise.all(
-            visibleJobs.map((j) =>
+            visibleItems.map((item) =>
               composeNuancedReason(
                 {
                   lang,
@@ -296,14 +316,16 @@ function makeGenerateJobRecs(): NonNullable<
                   projects: projects.slice(0, 2),
                   topSkills: topSkills.slice(0, 12),
                   job: {
-                    title: j.jobTitle,
-                    company: j.companyName ?? null,
-                    requiredSkills: j.requiredSkills ?? null,
-                    seniorityLevel: (j as { seniorityLevel?: string | null }).seniorityLevel ?? null,
-                    jobDescription: (j as { jobDescription?: string | null }).jobDescription ?? null,
+                    title: typeof item.sourceJob.jobTitle === "string" ? item.sourceJob.jobTitle : item.title,
+                    company: typeof item.sourceJob.companyName === "string" ? item.sourceJob.companyName : null,
+                    requiredSkills: Array.isArray(item.sourceJob.requiredSkills)
+                      ? item.sourceJob.requiredSkills
+                      : null,
+                    seniorityLevel: (item.sourceJob as { seniorityLevel?: string | null }).seniorityLevel ?? null,
+                    jobDescription: (item.sourceJob as { jobDescription?: string | null }).jobDescription ?? null,
                   },
                   matchedSkills:
-                    (j as { matchedSkills?: Array<{ name: string; proficiency?: string }> }).matchedSkills ?? [],
+                    (item.sourceJob as { matchedSkills?: Array<{ name: string; proficiency?: string }> }).matchedSkills ?? [],
                 },
                 {
                   openaiApiKey: openaiKey,
@@ -324,28 +346,24 @@ function makeGenerateJobRecs(): NonNullable<
         })
       }
 
-      const lines: string[] = []
-      lines.push(formatJobRecIntro(lang, visibleJobs.length))
-      for (let i = 0; i < visibleJobs.length; i++) {
-        const j = visibleJobs[i]!
-        const tag = j.companyName ? ` @ ${j.companyName}` : ""
-        // V16 hard-filter already drops jobright.ai URLs + jobs without
-        // atsApplyUrl. So `j.atsApplyUrl` is non-empty here. We DROP
-        // the legacy primaryUrl fallback (was the jobright leak source).
-        const url = j.atsApplyUrl ? `\n${j.atsApplyUrl}` : ""
-        // Prefer LLM-composed nuanced reason; fall back to V16 template.
+      const messageItems = visibleItems.map((item, i) => {
         const nuanced = visibleReasons[i]
         const reason = nuanced && nuanced.length > 0
           ? `${lang === "zh" ? "为啥推" : "why"}: ${nuanced}`
-          : j.reason ?? ""
-        const reasonLine = reason ? `\n${reason}` : ""
-        lines.push(`• ${j.jobTitle}${tag}${url}${reasonLine}`)
-      }
-      lines.push(
-        // iter34 hotfix 2026-05-05 — Adam directive on phrasing.
-        lang === "zh"
-          ? "先看看, 不准就告诉我我再找; 之后每天会再给你新的"
-          : "see if these fit — if not lmk, i'll keep digging; daily fresh batch from here"
+          : item.reason
+        return { ...item, ...(reason ? { reason } : {}) }
+      })
+      const message = composeJobRecommendationMessage(
+        messageItems,
+        lang,
+        introContext,
+        {
+          // iter34 hotfix 2026-05-05 — Adam directive on phrasing.
+          footer:
+            lang === "zh"
+              ? "先看看, 不准就告诉我我再找; 之后每天会再给你新的"
+              : "see if these fit — if not lmk, i'll keep digging; daily fresh batch from here",
+        },
       )
 
       // Phase 61 — fire-and-forget llmRerank for the NEXT request, refreshing
@@ -410,12 +428,12 @@ function makeGenerateJobRecs(): NonNullable<
 
       logger.info("[job-recs] v16_ok", {
         userId,
-        visible: visibleJobs.length,
+        visible: messageItems.length,
         total: out.total,
         dropped: out.dropped,
         llmCacheStale: out.llmCacheStale ?? false,
       })
-      return { message: lines.join("\n"), recCount: visibleJobs.length }
+      return { message, recCount: messageItems.length }
     } catch (err) {
       logger.warn("[job-recs] queryMatchingJobsV16 threw", {
         userId,
@@ -609,18 +627,18 @@ export function buildCvAnalysisFallback(
       : ""
   if (lang === "zh") {
     if (skills && trajectory) {
-      return `看下来你: ${skills} + ${trajectory} — 推岗位贴这个方向`
+      return `看下来你: ${skills} + ${trajectory} — 我会把这些作为你的资料证据`
     }
-    if (skills) return `看下来你 hands-on: ${skills} — 推岗位贴这个方向`
-    if (trajectory) return `看下来你最近: ${trajectory} — 推岗位贴这个方向`
-    return "先按你 CV 上的方向给你找几个岗位看看"
+    if (skills) return `看下来你 hands-on: ${skills} — 我会把这些作为你的资料证据`
+    if (trajectory) return `看下来你最近: ${trajectory} — 我会把这个作为你的资料证据`
+    return "我先把 CV 里的信息作为你的资料证据"
   }
   if (skills && trajectory) {
-    return `from your CV: ${skills} + ${trajectory} — i'll lean recs that way`
+    return `From your CV, I see ${skills} + ${trajectory}; I’ll use that as profile evidence.`
   }
-  if (skills) return `from your CV: hands-on with ${skills} — i'll lean recs that way`
-  if (trajectory) return `from your CV: recent ${trajectory} — i'll lean recs that way`
-  return "i'll lean job recs toward what's on your CV"
+  if (skills) return `From your CV, I see hands-on work with ${skills}; I’ll use that as profile evidence.`
+  if (trajectory) return `From your CV, I see recent ${trajectory}; I’ll use that as profile evidence.`
+  return "I’ll use what I can read from your CV as profile evidence."
 }
 
 /** Truncate a summary to MAX_LEN chars on a word boundary, never mid-word. */

@@ -32,6 +32,13 @@ import {
 import { sendImessage } from "./sendblue/sendblue-client.js"
 import { runPiiConfirmForUser } from "./pii-confirm-start.js"
 import { markPrescreenTerminalOutcome } from "./prescreen-outcome-service.js"
+import {
+  collectJobRecommendationMessageItems,
+  composeJobRecommendationMessage,
+  compactJobRecContext,
+  type JobRecIntroContext,
+  type JobRecommendationSource,
+} from "./job-rec-copy.js"
 
 export type PrescreenTerminalKind = "PASS" | "FAIL" | "HARD_STOP" | "PAUSE"
 
@@ -213,7 +220,18 @@ async function defaultGenerateJobRecs(args: {
   if (!result.jobs || result.jobs.length === 0) {
     return { ok: false, jobCount: 0, reason: "no_matches" }
   }
-  const content = composeJobRecsMessage(result.jobs, args.lang ?? "en")
+  const items = collectJobRecommendationMessageItems(result.jobs, args.lang ?? "en", { limit: 3 })
+  if (items.length === 0) {
+    return { ok: false, jobCount: 0, reason: "no_linkable_matches" }
+  }
+  let introContext: JobRecIntroContext | undefined
+  try {
+    const userDoc = await db.collection("pa-users").doc(args.userId).get()
+    introContext = compactJobRecContext(userDoc.exists ? userDoc.data()?.tags : undefined)
+  } catch {
+    introContext = undefined
+  }
+  const content = composeJobRecommendationMessage(items, args.lang ?? "en", introContext)
   const sendRes = await send(
     {
       userId: args.userId,
@@ -224,32 +242,21 @@ async function defaultGenerateJobRecs(args: {
   )
   return {
     ok: sendRes.ok,
-    jobCount: result.jobs.length,
+    jobCount: items.length,
     ...(sendRes.ok ? {} : { reason: "send_failed" }),
   }
 }
 
-type JobRecMessageJob = {
-  jobTitle?: string | null
-  companyName?: string | null
-  atsApplyUrl?: string | null
-  primaryUrl?: string | null
-  reason?: string | null
-}
-
-export function composeJobRecsMessage(jobs: JobRecMessageJob[], lang: "zh" | "en"): string {
-  const lines: string[] = [lang === "zh" ? "其他可能合适的机会:" : "Other roles that may fit:"]
-  for (const job of jobs) {
-    const tag = job.companyName ? ` @ ${job.companyName}` : ""
-    const url = job.atsApplyUrl
-      ? `\n${job.atsApplyUrl}`
-      : job.primaryUrl
-        ? `\n${job.primaryUrl}`
-        : ""
-    const reason = job.reason ? `\n${job.reason}` : ""
-    lines.push(`• ${job.jobTitle}${tag}${url}${reason}`)
-  }
-  return lines.join("\n\n")
+export function composeJobRecsMessage(
+  jobs: JobRecommendationSource[],
+  lang: "zh" | "en",
+  context?: JobRecIntroContext,
+): string {
+  return composeJobRecommendationMessage(
+    collectJobRecommendationMessageItems(jobs, lang, { limit: 3 }),
+    lang,
+    context,
+  )
 }
 
 async function defaultSendSms(args: {

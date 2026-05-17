@@ -116,6 +116,114 @@ test("OnboardingPipeline: judge accept advances to next Q + emits its prompt", a
   assert.equal(emitted.at(-1)?.kind, "first_prompt")
 })
 
+test("OnboardingPipeline: accepted reply with side question answers the aside before next prompt", async () => {
+  const yoeQ = makeQuestion<number>({
+    id: "q_yoe",
+    prompt: { zh: "几年?", en: "how many years?" },
+    judge: {
+      kind: "accept-yoe",
+      judge: async () => ({ accept: true, value: 2, confidence: 1 }),
+    },
+    rephraser: new StaticVariantsRephraser([{ zh: "几年?", en: "how many years?" }]),
+    haltMessage: HALT,
+  })
+  const visaQ = makeQuestion<string>({
+    id: "q_visa",
+    prompt: { zh: "签证?", en: "what's your work auth?" },
+    judge: new AcceptOnce("citizen"),
+    rephraser: new StaticVariantsRephraser([{ zh: "签证?", en: "work auth?" }]),
+    haltMessage: HALT,
+  })
+  const { pipeline, emitted } = makePipeline({ questions: [yoeQ, visaQ] })
+
+  await pipeline.startTurn(makeInput("hi"))
+  await pipeline.startTurn(makeInput("About 2 years. Quick aside: if I say new-grad-ish, is that okay for matching?"))
+
+  assert.equal(emitted.at(-1)?.qId, "q_visa")
+  assert.equal(emitted.at(-1)?.kind, "first_prompt")
+  assert.equal(
+    emitted.at(-1)?.text,
+    "Yes — I’ll treat that as about 2 years / early-career for your profile.\n\nwhat's your work auth?",
+  )
+})
+
+test("OnboardingPipeline: accepted startup preference answers ATS aside before next prompt", async () => {
+  const startupQ = makeQuestion<string>({
+    id: "q_startup_pref",
+    prompt: { zh: "公司偏好?", en: "startup or bigger company?" },
+    judge: {
+      kind: "accept-startup",
+      judge: async () => ({ accept: true, value: "startup", confidence: 1 }),
+    },
+    rephraser: new StaticVariantsRephraser([{ zh: "公司偏好?", en: "startup or bigger company?" }]),
+    haltMessage: HALT,
+  })
+  const countryQ = makeQuestion<string>({
+    id: "q_country",
+    prompt: { zh: "国家?", en: "which country/region?" },
+    judge: new AcceptOnce("usa"),
+    rephraser: new StaticVariantsRephraser([{ zh: "国家?", en: "country?" }]),
+    haltMessage: HALT,
+  })
+  const { pipeline, emitted } = makePipeline({ questions: [startupQ, countryQ] })
+
+  await pipeline.startTurn(makeInput("hi"))
+  await pipeline.startTurn(makeInput("Startups are best. Random question: will you avoid huge-company ATS black holes?"))
+
+  assert.equal(emitted.at(-1)?.qId, "q_country")
+  assert.equal(emitted.at(-1)?.kind, "first_prompt")
+  assert.equal(
+    emitted.at(-1)?.text,
+    "Yes - I’ll treat startups and smaller teams as the default, and only show bigger-company roles when the requirements and link look worth checking.\n\nwhich country/region?",
+  )
+})
+
+test("OnboardingPipeline: accepted country answer answers remote-scope aside before next prompt", async () => {
+  const countryQ = makeQuestion<string>({
+    id: "q_country",
+    prompt: { zh: "国家?", en: "which country/region?" },
+    judge: {
+      kind: "accept-country",
+      judge: async () => ({ accept: true, value: "usa", confidence: 1 }),
+    },
+    rephraser: new StaticVariantsRephraser([{ zh: "国家?", en: "country?" }]),
+    haltMessage: HALT,
+  })
+  const locationQ = makeQuestion<string>({
+    id: "q_location",
+    prompt: { zh: "城市?", en: "which city or remote preference?" },
+    judge: new AcceptOnce("nyc"),
+    rephraser: new StaticVariantsRephraser([{ zh: "城市?", en: "city?" }]),
+    haltMessage: HALT,
+  })
+  const { pipeline, emitted } = makePipeline({ questions: [countryQ, locationQ] })
+
+  await pipeline.startTurn(makeInput("hi"))
+  await pipeline.startTurn(makeInput("USA, mainly NYC or remote. Quick question: when I say remote, do you treat that as US remote unless I say global?"))
+
+  assert.equal(emitted.at(-1)?.qId, "q_location")
+  assert.equal(emitted.at(-1)?.kind, "first_prompt")
+  assert.equal(
+    emitted.at(-1)?.text,
+    "Yes - I’ll treat remote as US remote unless you explicitly say global or worldwide.\n\nwhich city or remote preference?",
+  )
+})
+
+test("OnboardingPipeline: side question without an answer does not count as failed attempt", async () => {
+  const { pipeline, emitted, state } = makePipeline({ questions: [makeQ1()] })
+
+  await pipeline.startTurn(makeInput("hi"))
+  await pipeline.startTurn(makeInput("Quick question: do you store this forever or can I delete it?"))
+
+  assert.equal(emitted.at(-1)?.qId, "q1")
+  assert.equal(emitted.at(-1)?.kind, "reask")
+  assert.equal(
+    emitted.at(-1)?.text,
+    "Good question. I use this for your WeKruit candidate profile and recruiting flow; you can ask to delete or export it.\n\nQ1 EN",
+  )
+  assert.equal(state.peek("u1")?.attempts.q1 ?? 0, 0)
+})
+
 test("OnboardingPipeline: next Q can auto-accept on entry without emitting prompt", async () => {
   const q2 = makeQuestion({
     id: "q2",
@@ -134,6 +242,62 @@ test("OnboardingPipeline: next Q can auto-accept on entry without emitting promp
   assert.equal(final.currentQId, null)
   assert.equal(emitted.some((e) => e.qId === "q2" && e.kind === "first_prompt"), false)
   assert.deepEqual(state.peek("u1")?.collected, { q1: "ans1", q2: "prefilled" })
+})
+
+test("OnboardingPipeline: accepted side question is emitted before next Q auto-accept side effects", async () => {
+  const locationQ = makeQuestion<string>({
+    id: "q_location",
+    prompt: { zh: "城市?", en: "which city or remote preference?" },
+    judge: {
+      kind: "accept-location",
+      judge: async () => ({ accept: true, value: "nyc", confidence: 1 }),
+    },
+    rephraser: new StaticVariantsRephraser([{ zh: "城市?", en: "city?" }]),
+    haltMessage: HALT,
+  })
+  const resumeQ = makeQuestion<string>({
+    id: "q_resume",
+    prompt: { zh: "简历?", en: "resume?" },
+    judge: new AcceptOnce("resume"),
+    rephraser: new StaticVariantsRephraser([{ zh: "简历?", en: "resume?" }]),
+    haltMessage: HALT,
+    onEnter: async () => ({ accept: true, value: "resume-on-file", confidence: 0.95 }),
+    onAccepted: async (_value, ctx) => {
+      await ctx.log?.("resume.accepted", {})
+    },
+    suppressTerminalCompletionMessage: true,
+  } as Question<string>)
+  const emitted: { text: string; qId: string | null; kind: string }[] = []
+  const state = new InMemoryPipelineStateProvider()
+  const pipeline = new OnboardingPipeline({
+    questions: [locationQ as Question<unknown>, resumeQ as Question<unknown>],
+    state,
+    haltMessageDefault: HALT,
+    emit: async (text, meta) => {
+      emitted.push({ text, qId: meta.qId, kind: meta.kind })
+    },
+    log: async (event) => {
+      if (event === "resume.accepted") {
+        emitted.push({ text: "resume side effect", qId: "q_resume", kind: "test_side_effect" })
+      }
+    },
+  })
+
+  await pipeline.startTurn(makeInput("hi"))
+  await pipeline.startTurn(makeInput("NYC or US remote works. Quick question: if I say remote, do you treat that as US remote unless I say global?"))
+
+  assert.deepEqual(
+    emitted.slice(1).map((e) => [e.kind, e.qId, e.text]),
+    [
+      [
+        "side_question_ack",
+        "q_location",
+        "Yes - I’ll treat remote as US remote unless you explicitly say global or worldwide.",
+      ],
+      ["test_side_effect", "q_resume", "resume side effect"],
+    ],
+  )
+  assert.equal(state.peek("u1")?.completed, true)
 })
 
 test("OnboardingPipeline: irrelevant reply bumps attempt + rotates variants", async () => {

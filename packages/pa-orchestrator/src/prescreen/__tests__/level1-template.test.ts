@@ -73,7 +73,9 @@ describe("composeLevel1Reveal", () => {
 
 describe("composeFailJobRecsPreamble", () => {
   it("emits bridging line in both langs", () => {
-    assert.match(composeFailJobRecsPreamble("en"), /better-aligned/i)
-    assert.match(composeFailJobRecsPreamble("zh"), /其他更合适/)
+    assert.match(composeFailJobRecsPreamble("en"), /what you shared in this screen/i)
+    assert.match(composeFailJobRecsPreamble("en"), /job link and clear requirements/i)
+    assert.match(composeFailJobRecsPreamble("zh"), /刚才这段 screen/)
+    assert.match(composeFailJobRecsPreamble("zh"), /岗位链接和核心要求/)
   })
 })

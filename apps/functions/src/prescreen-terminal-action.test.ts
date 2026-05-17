@@ -326,7 +326,8 @@ describe("runPrescreenTerminalAction — FAIL branch (v1.9 hotfix)", () => {
       },
     })
     assert.equal(r.level1Sent, false)
-    assert.match(sent[0], /better-aligned/i)
+    assert.match(sent[0], /what you shared in this screen/i)
+    assert.match(sent[0], /job link and clear requirements/i)
     assert.equal(piiCaptures[0].source, "fail")
     assert.equal(jobRecsCalled, true)
   })
@@ -366,14 +367,18 @@ describe("runPrescreenTerminalAction — FAIL branch (v1.9 hotfix)", () => {
           jobTitle: "Backend Engineer",
           companyName: "Rain",
           atsApplyUrl: "https://example.com/job",
+          requiredSkills: ["TypeScript", "Node.js"],
           reason: "Why match: your TypeScript aligns with JD core skills",
         },
       ],
       "en",
+      { skills: ["TypeScript", "SQL"] },
     )
 
-    assert.match(body, /Other roles that may fit:/)
+    assert.match(body, /I remember you mentioned TypeScript \/ SQL experience/)
     assert.match(body, /Backend Engineer @ Rain/)
+    assert.match(body, /https:\/\/example\.com\/job/)
+    assert.match(body, /requirements: TypeScript, Node\.js/)
     assert.match(body, /Why match:/)
     assert.doesNotMatch(body, /其他可能合适|为啥推/)
   })

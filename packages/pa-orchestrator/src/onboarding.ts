@@ -1205,10 +1205,11 @@ export async function applyOnboardingStep(
   }
 
   const currentState = user.onboardingState
-  // Idempotency: don't regress state
+  // Idempotency: don't regress state. The decision to skip state writes
+  // happens after we compute any fresh preference patch, because returning
+  // users can already be legacy-complete while still giving new answers.
   const currentIdx = STATE_ORDER.indexOf(currentState)
   const nextIdx = STATE_ORDER.indexOf(nextState)
-  if (currentIdx >= 0 && nextIdx >= 0 && currentIdx >= nextIdx) return
 
   const now = opts.now ?? new Date().toISOString()
   const userRef = db.collection(PA_COLLECTIONS.users).doc(user.id)
@@ -1228,6 +1229,39 @@ export async function applyOnboardingStep(
   const statedPreferencesWrite: StatedPreferences | undefined = hasPrefPatch
     ? { ...prefPatch, updatedAt: now }
     : undefined
+
+  const writeProjectedTags = async () => {
+    if (!hasPrefPatch) return
+    try {
+      await writeOnboardingTags(db, user.id, prefPatch, { nowIso: now })
+    } catch {
+      // writeOnboardingTags already swallows + logs; final defensive catch.
+    }
+  }
+
+  // Idempotency should prevent state regression, not discard fresh profile
+  // evidence from a new session. Returning candidates often already have
+  // legacy onboardingState="complete" while the pipeline is collecting a new
+  // preference pass in pipelineState; keep those new answers/tags.
+  if (currentIdx >= 0 && nextIdx >= 0 && currentIdx >= nextIdx && nextState !== "complete") {
+    const payload: Record<string, unknown> = { updatedAt: now }
+    if (statedPreferencesWrite) payload.statedPreferences = statedPreferencesWrite
+    if (step === "ask_q_resume") {
+      const expiresAt = new Date(new Date(now).getTime() + 24 * 60 * 60 * 1000).toISOString()
+      payload.resumeAccepted = {
+        at: now,
+        expiresAt,
+        triggerHash: "onboarding_ask_q_resume",
+      }
+      payload.lastAssistantTurnAt = now
+      payload.lastAssistantTurnAskedResume = true
+    }
+    if (Object.keys(payload).length > 1) {
+      await userRef.set(payload, { merge: true })
+    }
+    await writeProjectedTags()
+    return
+  }
 
   if (nextState === "complete") {
     const completePayload: Record<string, unknown> = {
@@ -1369,10 +1403,6 @@ export async function applyOnboardingStep(
   // tag-store coherence MUST NOT block onboarding state advancement.
   // Skips entirely when there's no patch OR no projectable signal.
   if (hasPrefPatch) {
-    try {
-      await writeOnboardingTags(db, user.id, prefPatch, { nowIso: now })
-    } catch {
-      // writeOnboardingTags already swallows + logs; final defensive catch.
-    }
+    await writeProjectedTags()
   }
 }

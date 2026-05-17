@@ -50,6 +50,12 @@ import {
   PA_SLACK_ALERT_WEBHOOK,
   makeOrchestratorDeps,
 } from "./orchestrator-deps.js"
+import {
+  collectJobRecommendationMessageItems,
+  composeJobRecommendationMessage,
+  compactJobRecContext,
+  resolveJobRecVisibleCount,
+} from "./job-rec-copy.js"
 export {
   MAILGUN_API_KEY,
   MAILGUN_DOMAIN,
@@ -1523,16 +1529,19 @@ function buildSendblueWebhookDeps() {
       if (!result.jobs || result.jobs.length === 0) {
         return { ok: false, jobCount: 0, reason: "no_matches" }
       }
-      // Format per the v1.6 cascade contract — title @ company \n url \n why
-      const lines: string[] = []
-      lines.push("先给你拉了几个 (admin force):")
-      for (const job of result.jobs) {
-        const tag = job.companyName ? ` @ ${job.companyName}` : ""
-        const url = job.atsApplyUrl ? `\n${job.atsApplyUrl}` : job.primaryUrl ? `\n${job.primaryUrl}` : ""
-        const reason = job.reason ? `\n${job.reason}` : ""
-        lines.push(`• ${job.jobTitle}${tag}${url}${reason}`)
+      const visibleCount = resolveJobRecVisibleCount(undefined)
+      const items = collectJobRecommendationMessageItems(result.jobs, "en", { limit: visibleCount })
+      if (items.length === 0) {
+        return { ok: false, jobCount: 0, reason: "no_linkable_matches" }
       }
-      const body = lines.join("\n\n")
+      let introContext: ReturnType<typeof compactJobRecContext> | undefined
+      try {
+        const userDoc = await db.collection("pa-users").doc(args.userId).get()
+        introContext = compactJobRecContext(userDoc.exists ? userDoc.data()?.tags : undefined)
+      } catch {
+        introContext = undefined
+      }
+      const body = composeJobRecommendationMessage(items, "en", introContext)
       const sendRes = await sendImessage(
         {
           userId: args.userId,
@@ -1549,7 +1558,7 @@ function buildSendblueWebhookDeps() {
       )
       return {
         ok: sendRes.ok,
-        jobCount: result.jobs.length,
+        jobCount: items.length,
         ...(sendRes.ok ? {} : { reason: "send_failed" }),
       }
     } catch (err) {

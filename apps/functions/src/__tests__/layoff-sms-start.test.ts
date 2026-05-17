@@ -114,7 +114,11 @@ describe("runLayoffSmsStart", () => {
       sourceTag: WEKRUIT_LAYOFF_SOURCE,
     })
     assert.equal(enqueued[0].userId, "u1")
-    assert.equal(enqueued[0].idempotencyKey, "wekruit_open_layoff:u1:kickoff")
+    assert.match(
+      String(enqueued[0].idempotencyKey),
+      /^wekruit_open_layoff:u1:kickoff:\d{4}-\d{2}-\d{2}T/,
+    )
+    assert.notEqual(enqueued[0].idempotencyKey, "wekruit_open_layoff:u1:kickoff")
     assert.match(String(enqueued[0].body), /Claire from WeKruit/)
     assert.equal(writes[0].path, "pa-users/u1")
     assert.equal(writes[0].data.source, WEKRUIT_LAYOFF_SOURCE)

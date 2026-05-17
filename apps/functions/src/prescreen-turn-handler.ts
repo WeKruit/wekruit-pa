@@ -978,6 +978,6 @@ function userExitSessionText(lang: "zh" | "en"): string {
 
 function recentTerminalSessionText(lang: "zh" | "en"): string {
   return lang === "zh"
-    ? "收到。这个岗位 screen 已经暂停了；我会把这个约束记到你的 profile 里，后面只看更匹配的机会。"
-    : "Got it. This role screen is already paused; I will keep that constraint on your profile and use it for better-matched roles."
+    ? "收到。这个岗位 screen 已经暂停了；我不会把这条新消息混进旧 screen。"
+    : "Got it. This role screen is already paused, so I will not mix this new message into the old screen."
 }

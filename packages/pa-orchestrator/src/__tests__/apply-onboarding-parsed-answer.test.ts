@@ -155,6 +155,70 @@ test("P9 — applyOnboarding wrapper forwards q_country targetCountry", async ()
   assert.deepEqual(tags.targetCountry, ["usa"])
 })
 
+test("returning completed users still persist fresh parsedAnswer and tags", async () => {
+  const { db, sets } = makeCapturingDb({
+    "pa-users/u_returning_visa": {
+      onboardingState: "complete",
+      statedPreferences: { visaStatus: "citizen" },
+      tags: { visaStatus: "citizen" },
+    },
+  })
+  const store = createFirestoreOrchestratorStore(db)
+
+  await store.applyOnboarding("u_returning_visa", "+15551242", "ask_q_startup_pref", {
+    now: "2026-05-17T20:50:00.000Z",
+    parsedAnswer: { visaStatus: "sponsorship_needed" },
+  })
+
+  const prefSet = sets.find(
+    (s) => s.docPath === "pa-users/u_returning_visa" && s.payload.statedPreferences
+  )
+  assert.ok(prefSet, "fresh parsedAnswer must write even when onboardingState is complete")
+  assert.equal(
+    prefSet!.payload.onboardingState,
+    undefined,
+    "completed returning user must not regress legacy onboardingState"
+  )
+  const sp = prefSet!.payload.statedPreferences as { visaStatus?: string } | undefined
+  assert.equal(sp?.visaStatus, "sponsorship_needed")
+
+  const tagSet = sets.find(
+    (s) => s.docPath === "pa-users/u_returning_visa" && s.payload.tags
+  )
+  const tags = tagSet?.payload.tags as { visaStatus?: string } | undefined
+  assert.equal(tags?.visaStatus, "sponsor_needed")
+})
+
+test("returning completed users still open the resume gate when q_resume is reached", async () => {
+  const { db, sets } = makeCapturingDb({
+    "pa-users/u_returning_resume": {
+      onboardingState: "complete",
+    },
+  })
+  const store = createFirestoreOrchestratorStore(db)
+
+  await store.applyOnboarding("u_returning_resume", "+15551243", "ask_q_resume", {
+    now: "2026-05-17T20:51:00.000Z",
+    parsedAnswer: { targetLocations: ["nyc", "remote"] },
+  })
+
+  const prefSet = sets.find(
+    (s) => s.docPath === "pa-users/u_returning_resume" && s.payload.statedPreferences
+  )
+  assert.ok(prefSet)
+  assert.equal(prefSet!.payload.onboardingState, undefined)
+  assert.deepEqual(
+    (prefSet!.payload.statedPreferences as { targetLocations?: string[] }).targetLocations,
+    ["nyc", "remote"]
+  )
+  assert.deepEqual(prefSet!.payload.resumeAccepted, {
+    at: "2026-05-17T20:51:00.000Z",
+    expiresAt: "2026-05-18T20:51:00.000Z",
+    triggerHash: "onboarding_ask_q_resume",
+  })
+  assert.equal(prefSet!.payload.lastAssistantTurnAskedResume, true)
+})
+
 test("P9 — applyOnboarding wrapper still works WITHOUT parsedAnswer (regression guard)", async () => {
   const { db, sets } = makeCapturingDb()
   const store = createFirestoreOrchestratorStore(db)

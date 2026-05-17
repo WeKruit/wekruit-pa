@@ -308,7 +308,7 @@ describe("runResumeAcceptedFlow — happy path (CV available immediately)", () =
     assert.equal(emits.length, 2)
     // Tag-summary EN format: "title @ company"
     assert.match(emits[1]!.text, /@ WeKruit/)
-    assert.match(emits[1]!.text, /pulling matches/)
+    assert.match(emits[1]!.text, /profile evidence/)
   })
 
   it("active turn language overrides stale stored preference", async () => {
@@ -531,6 +531,6 @@ describe("runResumeAcceptedFlow — timeout fallback", () => {
 
     assert.equal(emits.length, 2)
     // Default lang zh — tag-summary should be zh-formatted.
-    assert.match(emits[1]!.text, /推岗位贴这个方向/)
+    assert.match(emits[1]!.text, /资料证据/)
   })
 })

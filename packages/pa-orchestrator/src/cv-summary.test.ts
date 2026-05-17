@@ -31,7 +31,7 @@ describe("formatCvSummaryForUser — full CV", () => {
     const out = formatCvSummaryForUser(FULL_CV, "zh")
     assert.match(out, /Node\.js \/ React \/ Aliyun/)
     assert.match(out, /在 Tesla 做 SWE/)
-    assert.match(out, /推岗位贴这个方向/)
+    assert.match(out, /资料证据/)
     // sanity — we did NOT use candidateProfile.skills (topSkills is preferred)
     assert.ok(!out.includes("should-not-use-this"))
   })
@@ -40,7 +40,7 @@ describe("formatCvSummaryForUser — full CV", () => {
     const out = formatCvSummaryForUser(FULL_CV, "en")
     assert.match(out, /Node\.js \/ React \/ Aliyun/)
     assert.match(out, /SWE @ Tesla/)
-    assert.match(out, /pulling matches in that lane/)
+    assert.match(out, /profile evidence/)
   })
 
   it("mixed — both ZH and EN characters present", () => {
@@ -50,7 +50,7 @@ describe("formatCvSummaryForUser — full CV", () => {
     // CJK character class present
     assert.match(out, /[一-鿿]/, "expected ZH chars in mixed output")
     // EN tech terms present
-    assert.match(out, /this direction/)
+    assert.match(out, /profile evidence/)
   })
 })
 
@@ -71,7 +71,7 @@ describe("formatCvSummaryForUser — fallback paths", () => {
     }
     const out = formatCvSummaryForUser(cv, "zh")
     assert.match(out, /在 Anthropic 做 PM/)
-    assert.match(out, /推岗位贴这个方向/)
+    assert.match(out, /资料证据/)
     // no slash list since no skills
     assert.ok(!out.includes(" / "))
   })
@@ -82,7 +82,7 @@ describe("formatCvSummaryForUser — fallback paths", () => {
     }
     const out = formatCvSummaryForUser(cv, "en")
     assert.match(out, /Rust \/ Go/)
-    assert.match(out, /pulling matches/)
+    assert.match(out, /profile evidence/)
     assert.ok(!out.includes("@"))
   })
 

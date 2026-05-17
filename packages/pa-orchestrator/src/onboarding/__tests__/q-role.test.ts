@@ -48,6 +48,18 @@ test("q-role: 'Swe / pm' accepts multi-role array", async () => {
   if (r.accept) assert.deepEqual(r.value, ["swe", "pm"])
 })
 
+test("q-role: conversational frontend/fullstack answer accepts without LLM", async () => {
+  const { judge, calls } = makeJudge(new Error("network"))
+  const r = await judge.judge(
+    "I’m mainly looking for frontend or fullstack product engineering roles at early-stage startups. US remote or NYC is best. My strongest overlap is React/TypeScript UI, Node APIs, SQL dashboards, and ops tooling from OFO Delivery.",
+    "en",
+    ctx(),
+  )
+  assert.equal(r.accept, true)
+  if (r.accept) assert.deepEqual(r.value, ["fullstack", "frontend"])
+  assert.equal(calls(), 0)
+})
+
 test("q-role: LLM string 'swe / pm' is split into multi-role array", async () => {
   const { judge } = makeJudge(JSON.stringify({
     intent: "provided",
@@ -77,9 +89,9 @@ test("q-role: noise skips LLM", async () => {
   assert.equal(calls(), 0)
 })
 
-test("q-role: LLM throw is non-accept", async () => {
+test("q-role: LLM throw on ambiguous answer is non-accept", async () => {
   const { judge } = makeJudge(new Error("network"))
-  const r = await judge.judge("engineer", "en", ctx())
+  const r = await judge.judge("I want to do something cool", "en", ctx())
   assert.equal(r.accept, false)
   if (!r.accept) assert.equal(r.reason, "irrelevant")
 })

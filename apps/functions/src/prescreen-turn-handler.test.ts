@@ -471,7 +471,7 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     assert.equal(result.sessionId, "ps_done")
     assert.equal(result.terminal, "HARD_STOP")
     assert.deepEqual(sent, [
-      "Got it. This role screen is already paused; I will keep that constraint on your profile and use it for better-matched roles.",
+      "Got it. This role screen is already paused, so I will not mix this new message into the old screen.",
     ])
     const session = docs.get("pa-prescreen-sessions/ps_done")?.data
     assert.equal(typeof session?.postTerminalFollowupAckAt, "string")
@@ -902,7 +902,7 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     assert.equal(result.handled, true)
     assert.equal(result.sessionId, "ps_latest")
     assert.deepEqual(sent, [
-      "Got it. This role screen is already paused; I will keep that constraint on your profile and use it for better-matched roles.",
+      "Got it. This role screen is already paused, so I will not mix this new message into the old screen.",
     ])
     const latest = docs.get("pa-prescreen-sessions/ps_latest")?.data
     assert.equal(typeof latest?.postTerminalFollowupAckAt, "string")

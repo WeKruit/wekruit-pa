@@ -26,6 +26,12 @@ import type {
   PipelineStateProvider,
 } from "@pa/pa-orchestrator"
 import { sendImessage } from "./sendblue/sendblue-client.js"
+import {
+  collectJobRecommendationMessageItems,
+  composeJobRecommendationMessage,
+  compactJobRecContext,
+  resolveJobRecVisibleCount,
+} from "./job-rec-copy.js"
 
 /** v1.9 — extended state stash for tracking what source the PII flow is for. */
 const PII_META_COLL = "pa-pii-confirm-meta"
@@ -341,25 +347,32 @@ export async function runPiiConfirmTurnIfActive(
         })
         return
       }
-      const lines: string[] = [
-        source === "pass"
-          ? "I’ll also keep these roles on your radar:"
-          : "Here are roles I think fit better:",
-      ]
-      for (const job of result.jobs) {
-        const tag = job.companyName ? ` @ ${job.companyName}` : ""
-        const url = job.atsApplyUrl
-          ? `\n${job.atsApplyUrl}`
-          : job.primaryUrl
-            ? `\n${job.primaryUrl}`
-            : ""
-        const reason = job.reason ? `\n${job.reason}` : ""
-        lines.push(`• ${job.jobTitle}${tag}${url}${reason}`)
+      const visibleCount = resolveJobRecVisibleCount(undefined)
+      const items = collectJobRecommendationMessageItems(result.jobs, lang, { limit: visibleCount })
+      if (items.length === 0) {
+        log("pii_confirm.recs_no_linkable_matches", { userId: a.userId })
+        if (source !== "pass") {
+          await sendImessage({
+            to: a.toE164,
+            content:
+              "Thanks for the details — I'll text you when I find roles with a usable job link and clear requirements.",
+            userId: a.userId,
+            db,
+          })
+        }
+        return
+      }
+      let introContext: ReturnType<typeof compactJobRecContext> | undefined
+      try {
+        const userDoc = await db.collection("pa-users").doc(a.userId).get()
+        introContext = compactJobRecContext(userDoc.exists ? userDoc.data()?.tags : undefined)
+      } catch {
+        introContext = undefined
       }
       await send(
         {
           userId: a.userId,
-          content: lines.join("\n\n"),
+          content: composeJobRecommendationMessage(items, lang, introContext),
           idempotencyKey: `${a.userId}-${new Date().toISOString().slice(0, 16)}-pii-postcollect`,
         },
         { db, log: () => undefined }

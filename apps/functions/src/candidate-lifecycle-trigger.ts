@@ -32,6 +32,8 @@ export const CandidateLifecycleTriggerInputSchema = z.object({
       jobId: z.string().trim().min(1),
       jobTitle: z.string().trim().min(1),
       companyName: z.string().trim().optional(),
+      jobUrl: z.string().trim().url(),
+      requirements: z.array(z.string().trim().min(1)).min(1),
       matchReason: z.string().trim().optional(),
       matchId: z.string().trim().optional(),
     })
@@ -188,8 +190,14 @@ function renderLifecycleBody(input: {
       return `${prefix} Checking in because you shared the layoff update. How are things going this week, and has what you want next changed?`
     case "match_notification": {
       const company = job?.companyName ? ` at ${job.companyName}` : ""
-      const reason = job?.matchReason ? ` ${job.matchReason}` : " It lines up with the profile signals you shared."
-      return `${prefix} I found a role that may fit what you told me: ${job?.jobTitle}${company}.${reason} Want me to start the quick screen for it?`
+      const requirements = job?.requirements?.length
+        ? ` Requirements: ${job.requirements.slice(0, 5).join(", ")}.`
+        : ""
+      const reason = job?.matchReason
+        ? ` I remember the context you shared: ${job.matchReason}`
+        : " I matched this from the profile details you shared."
+      const url = job?.jobUrl ? ` Link: ${job.jobUrl}.` : ""
+      return `${prefix} I found a role based on what you shared: ${job?.jobTitle}${company}.${requirements}${reason}${url} Want me to start the quick screen for it?`
     }
     case "profile_freshness_nudge":
       return `${prefix} Quick profile check-in: are your target roles, location, visa/work authorization, and availability still accurate? A short update is enough.`
@@ -322,6 +330,17 @@ export function evaluateCandidateLifecycleTrigger(input: {
       cooldownKey,
       reason: "match notification requires job context",
       blockedSignals: ["missing_job_context"],
+    })
+  }
+  if (
+    request.eventType === "match_notification" &&
+    (!request.job?.jobUrl || !Array.isArray(request.job.requirements) || request.job.requirements.length === 0)
+  ) {
+    return blockDecision({
+      request,
+      cooldownKey,
+      reason: "match notification requires a job link and requirements",
+      blockedSignals: ["missing_job_link_or_requirements"],
     })
   }
 

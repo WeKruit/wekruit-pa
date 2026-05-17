@@ -78,6 +78,10 @@ class FakeDocRef {
   async set(data: DocData, opts?: { merge?: boolean }) {
     this.db.write(this.collectionPath, this.id, data, opts)
   }
+
+  async update(data: DocData) {
+    this.db.write(this.collectionPath, this.id, data, { merge: true })
+  }
 }
 
 class FakeQuery {
@@ -116,17 +120,28 @@ class FakeCollection extends FakeQuery {
 }
 
 class FakeBatch {
-  private writes: Array<{ ref: FakeDocRef; data: DocData; opts?: { merge?: boolean } }> = []
+  private writes: Array<
+    | { kind: "set"; ref: FakeDocRef; data: DocData; opts?: { merge?: boolean } }
+    | { kind: "delete"; ref: FakeDocRef }
+  > = []
 
   constructor(private readonly db: FakeFirestore) {}
 
   set(ref: FakeDocRef, data: DocData, opts?: { merge?: boolean }) {
-    this.writes.push({ ref, data, opts })
+    this.writes.push({ kind: "set", ref, data, opts })
+  }
+
+  delete(ref: FakeDocRef) {
+    this.writes.push({ kind: "delete", ref })
   }
 
   async commit() {
     for (const write of this.writes) {
-      this.db.write(write.ref.collectionPath, write.ref.id, write.data, write.opts)
+      if (write.kind === "delete") {
+        this.db.delete(write.ref.collectionPath, write.ref.id)
+      } else {
+        this.db.write(write.ref.collectionPath, write.ref.id, write.data, write.opts)
+      }
     }
   }
 }
@@ -187,6 +202,10 @@ class FakeFirestore {
       data: { ...data },
       mode: opts?.merge ? "merge" : "set",
     })
+  }
+
+  delete(collectionPath: string, id: string) {
+    this.collectionStore(collectionPath).delete(id)
   }
 }
 
@@ -319,7 +338,11 @@ test("runInitiateSmsPrescreen enqueues one idempotent kickoff for the layoff can
   assert.equal(result.kickoffOutboundId, "out_1")
   assert.equal(outboundCalls[0]!.userId, "cand_1")
   assert.equal(outboundCalls[0]!.toE164, "+14243201960")
-  assert.equal(outboundCalls[0]!.idempotencyKey, "wekruit_open_layoff:cand_1:kickoff")
+  assert.match(
+    String(outboundCalls[0]!.idempotencyKey),
+    /^wekruit_open_layoff:cand_1:kickoff:\d{4}-\d{2}-\d{2}T/,
+  )
+  assert.notEqual(outboundCalls[0]!.idempotencyKey, "wekruit_open_layoff:cand_1:kickoff")
   assert.match(String(outboundCalls[0]!.body), /Claire from WeKruit/)
   assert.equal(fake.read(`${PA_COLLECTIONS.users}/cand_1`)!.kickoffOutboundId, "out_1")
 })

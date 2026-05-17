@@ -3,8 +3,8 @@
  *
  * Adam directive (iter34 P3+P4 follow-up): once cv-ingest finishes parsing the
  * resume, surface what we extracted as a short friend-tone "tag-summary"
- * message before pushing job recs. Lets the user verify Claire actually read
- * the resume + correct misreads before the matching pipeline kicks off.
+ * message before later matching/recommendation work. Lets the user verify
+ * Claire actually read the resume + correct misreads before matches are sent.
  *
  * Inputs come from `parsedCandidateResumes/{userId}` (see cv-ingest.ts):
  *   - `topSkills` — iter 1 added; ranked top skills, prefer this over
@@ -15,9 +15,9 @@
  *
  * Output contract: ONE short line, friend-tone, lowercase-leaning. Three
  * lang variants:
- *   zh: "看下来你 Node.js / React / 阿里云 + 在 Tesla 做 SWE — 推岗位贴这个方向"
- *   en: "looks like Node.js / React / Aliyun + SWE @ Tesla — pulling matches in that lane"
- *   mixed: "你 Node.js / React + Tesla SWE — 我推岗位会贴 this direction"
+ *   zh: "看下来你 Node.js / React / 阿里云 + 在 Tesla 做 SWE — 我会把这些作为你的资料证据"
+ *   en: "I see Node.js / React / Aliyun + SWE @ Tesla; I’ll use that as profile evidence."
+ *   mixed: "你 Node.js / React + Tesla SWE — 我会把这些作为 profile evidence"
  *
  * If the parsed CV is essentially empty (no skills + no experiences) →
  * fallback line that admits we didn't get much and we'll lean on the
@@ -133,29 +133,29 @@ export function formatCvSummaryForUser(
 
   if (lang === "zh") {
     if (skillsList && roleZh) {
-      return `看下来你 ${skillsList} + ${roleZh} — 推岗位贴这个方向`
+      return `看下来你 ${skillsList} + ${roleZh} — 我会把这些作为你的资料证据`
     }
-    if (skillsList) return `看下来你 ${skillsList} — 推岗位贴这个方向`
-    if (roleZh) return `看下来你 ${roleZh} — 推岗位贴这个方向`
+    if (skillsList) return `看下来你 ${skillsList} — 我会把这些作为你的资料证据`
+    if (roleZh) return `看下来你 ${roleZh} — 我会把这个作为你的资料证据`
     // unreachable; safety
     return "看了一下, 信息不多, 我按你聊的方向先推"
   }
 
   if (lang === "en") {
     if (skillsList && roleEn) {
-      return `looks like ${skillsList} + ${roleEn} — pulling matches in that lane`
+      return `I see ${skillsList} + ${roleEn}; I’ll use that as profile evidence.`
     }
-    if (skillsList) return `looks like ${skillsList} — pulling matches in that lane`
-    if (roleEn) return `looks like ${roleEn} — pulling matches in that lane`
-    return "skimmed it — not much in there, i'll lean on what you told me"
+    if (skillsList) return `I see ${skillsList}; I’ll use that as profile evidence.`
+    if (roleEn) return `I see ${roleEn}; I’ll use that as profile evidence.`
+    return "skimmed it — not much in there, I’ll lean on what you told me."
   }
 
   // mixed — keep skills + role in EN (technical terms), connectors in ZH.
   // Adam constraint: 一条短句, 别报菜名 — single line, friend tone.
   if (skillsList && roleMixed) {
-    return `你 ${skillsList} + ${roleMixed} — 我推岗位会贴 this direction`
+    return `你 ${skillsList} + ${roleMixed} — 我会把这些作为 profile evidence`
   }
-  if (skillsList) return `你 ${skillsList} — 我推岗位会贴 this direction`
-  if (roleMixed) return `你 ${roleMixed} — 我推岗位会贴 this direction`
+  if (skillsList) return `你 ${skillsList} — 我会把这些作为 profile evidence`
+  if (roleMixed) return `你 ${roleMixed} — 我会把这个作为 profile evidence`
   return "看了一下 CV, 信息不多, 我按你聊的方向先推"
 }
