@@ -266,7 +266,7 @@ const DEFAULT_CHAR_CAP = 180
  *
  * Heuristic markers (any one trips):
  *   - English ordinal markers ≥2: "First, ... Second,"
- *   - Numbered list ≥2: "1. ... 2."
+ *   - Numbered list ≥2: "1. ... 2." / "1) ... 2)" / "1: ... 2:"
  *   - Chinese ordinal markers ≥2: "一、二、" / "第一，第二，"
  *   - Bullet list ≥2: "- foo\n- bar"
  *
@@ -278,7 +278,7 @@ export function isStructuredReply(text: string): boolean {
   const enOrdinal = /\b(First|Second|Third|Fourth|Fifth)[,\s:]/g
   const enMatches = text.match(enOrdinal)
   if (enMatches && enMatches.length >= 2) return true
-  if (/\b1\.\s.+[\s\S]*?\b2\.\s/.test(text)) return true
+  if (/\b1[\.\):]\s*.+[\s\S]*?\b2[\.\):]\s*/.test(text)) return true
   const zhOrdinal = /(一、|二、|三、|四、|五、|第一[，,]|第二[，,]|第三[，,])/g
   const zhMatches = text.match(zhOrdinal)
   if (zhMatches && zhMatches.length >= 2) return true

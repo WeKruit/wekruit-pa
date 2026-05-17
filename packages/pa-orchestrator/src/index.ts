@@ -33,6 +33,7 @@ import {
 } from "@pa/pa-connectors"
 import {
   PA_COLLECTIONS,
+  createPrivacyRequestId,
   type AgentDef,
   type ChatMessage,
   type InboundEvent,
@@ -40,6 +41,8 @@ import {
   type MemoryFact,
   type OutboundMessage,
   type ProcessingStatus,
+  type PrivacyRequest,
+  type PrivacyRequestKind,
   type TurnStage,
 } from "@pa/core-types"
 import {
@@ -64,7 +67,7 @@ import {
   type LoadContextResult,
 } from "@pa/memory"
 import { appendAuditEvent } from "@pa/pa-broker"
-import { getFlag } from "@pa/pa-persistence"
+import { getFlag, writePrivacyRequest } from "@pa/pa-persistence"
 import {
   checkPromptInjection,
   checkPromptInjectionAndRecord,
@@ -305,6 +308,15 @@ export {
   type StartupPreference,
   type TagsPreferredLang,
 } from "./tags/user-tags-merger.js"
+import {
+  applyPartialUserTags,
+  type PartialUserTags,
+} from "./tags/user-tags-writer.js"
+import {
+  mapAnswerToRoleFunction,
+  mapAnswerToVisa,
+  mapAnswerToLocations,
+} from "./tags/onboarding-mappers.js"
 // Phase 54 — sole-writer for pa-users.tags Firestore I/O. All onboarding
 // chat hooks + cv-confirm reply parser + migration script funnel through
 // this module so the write contract has one auditable code path.
@@ -458,6 +470,35 @@ export type OrchestratorStore = {
     sessionId: string
     inboundEventId: string
     cancelledCount: number
+  }): Promise<void>
+  /**
+   * Candidate privacy intake from trusted conversation channels. Used for
+   * iMessage export/delete/privacy questions after the phone has resolved to a
+   * canonical `pa-users/{uid}` doc.
+   */
+  createPrivacyRequest?(input: {
+    userId: string
+    kind: PrivacyRequestKind
+    detail: string
+    eventId: string
+    sessionId: string
+  }): Promise<{ requestId: string; kind: PrivacyRequestKind; created: boolean; existingOpen: boolean }>
+  getRecentLifecycleEventForReply?(userId: string): Promise<{
+    eventId: string
+    eventType: "laid_off_checkin" | "match_notification" | "profile_freshness_nudge" | "status_followup"
+    createdAt?: string
+    lastTouchAt?: string
+  } | null>
+  recordLifecycleReply?(input: {
+    userId: string
+    sessionId: string
+    eventId: string
+    turnId: string
+    inboundEventId: string
+    eventType: "laid_off_checkin" | "match_notification" | "profile_freshness_nudge" | "status_followup"
+    occurredAt: string
+    sourceText: string
+    update: LifecycleProfileUpdate
   }): Promise<void>
   /**
    * Phase 23 — fetch minimal user fields needed for onboarding state machine.
@@ -791,6 +832,280 @@ function shouldSuppressOutbound(event: InboundEvent): boolean {
   )
 }
 
+const CANDIDATE_LIFECYCLE_EVENT_COLLECTION = "pa-candidate-lifecycle-events"
+const LIFECYCLE_REPLY_RECENCY_MS = 7 * 24 * 60 * 60 * 1000
+
+type LifecycleEventType =
+  | "laid_off_checkin"
+  | "match_notification"
+  | "profile_freshness_nudge"
+  | "status_followup"
+
+type LifecycleSearchStatus = "still_looking" | "interviewing" | "paused" | "not_looking"
+type LifecyclePartialTags = PartialUserTags & { targetRoleFunction?: string[] }
+
+type LifecycleProfileUpdate = {
+  summary: string
+  ack: string
+  memoryFact?: string
+  tags: LifecyclePartialTags
+  statedPreferences: Record<string, unknown>
+  evidence: {
+    searchStatus?: LifecycleSearchStatus
+    roleFocus?: string[]
+    targetRoleFunction?: string[]
+    targetLocations?: string[]
+    locationLabels?: string[]
+    visaStatus?: string
+    visaLabel?: string
+    startupPreference?: "startup" | "bigtech" | "either"
+    rawSignals: string[]
+  }
+}
+
+function uniqStrings(values: Array<string | undefined | null>): string[] {
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const value of values) {
+    const normalized = typeof value === "string" ? value.trim() : ""
+    if (!normalized || seen.has(normalized)) continue
+    seen.add(normalized)
+    out.push(normalized)
+  }
+  return out
+}
+
+function detectLifecycleSearchStatus(text: string): LifecycleSearchStatus | undefined {
+  if (/\b(still\s+looking|looking|open\s+to|actively\s+searching|available|on\s+the\s+market)\b/i.test(text)) {
+    return "still_looking"
+  }
+  if (/\b(interviewing|onsites?|final\s+round|offer\s+stage)\b/i.test(text)) {
+    return "interviewing"
+  }
+  if (/\b(paused|pause|not\s+looking\s+right\s+now|taking\s+a\s+break)\b/i.test(text)) {
+    return "paused"
+  }
+  if (/\b(not\s+looking|accepted\s+an?\s+offer|found\s+a\s+job|started\s+a\s+new\s+role)\b/i.test(text)) {
+    return "not_looking"
+  }
+  return undefined
+}
+
+function detectLifecycleRoleFocus(text: string): string[] {
+  const out: string[] = []
+  if (/\b(full[-\s]?stack|fullstack)\b/i.test(text)) out.push("fullstack")
+  if (/\b(front[-\s]?end|frontend|ui\s+engineer|react)\b/i.test(text)) out.push("frontend")
+  if (/\b(back[-\s]?end|backend|api|server[-\s]?side)\b/i.test(text)) out.push("backend")
+  if (/\b(product\s+ops|ops\s+tooling|dashboard|dashboards)\b/i.test(text)) out.push("product-ops tooling")
+  return uniqStrings(out)
+}
+
+function detectStartupPreferenceForLifecycle(text: string): "startup" | "bigtech" | "either" | undefined {
+  if (/\b(early[-\s]?stage|startup|startups|founding|seed|series\s+[ab]|yc)\b/i.test(text)) return "startup"
+  if (/\b(big\s*tech|faang|fang|mag\s*7|large\s+company|enterprise)\b/i.test(text)) return "bigtech"
+  if (/\b(open\s+to\s+either|either|both|no\s+preference)\b/i.test(text)) return "either"
+  return undefined
+}
+
+function visaTagForLifecycle(text: string): { tag?: "citizen" | "gc" | "opt" | "h1b" | "sponsor_needed" | "other"; stated?: string; label?: string } {
+  const mapped = mapAnswerToVisa(text)
+  if (mapped === "other") return {}
+  if (mapped === "permanent_resident") return { tag: "gc", stated: "gc", label: "green card / permanent resident" }
+  if (mapped === "sponsor_needed") {
+    const hasOpt = /\b(stem\s*)?opt\b/i.test(text)
+    const hasH1b = /\bh[-\s]?1\s*b\b/i.test(text)
+    const label = hasOpt && hasH1b
+      ? "OPT now with future H-1B sponsorship"
+      : hasOpt
+        ? "OPT / sponsorship needs"
+        : hasH1b
+          ? "H-1B sponsorship needs"
+          : "future sponsorship needs"
+    return { tag: "sponsor_needed", stated: "sponsorship_needed", label }
+  }
+  return { tag: mapped, stated: mapped, label: mapped === "citizen" ? "US citizen" : mapped }
+}
+
+function labelLocationToken(token: string): string {
+  const labels: Record<string, string> = {
+    new_york_metro: "NYC",
+    remote_united_states: "remote",
+    remote_anywhere: "remote",
+    remote_global: "remote",
+    san_francisco_bay_area: "SF Bay Area",
+    los_angeles_metro: "Los Angeles",
+    seattle_metro: "Seattle",
+  }
+  return labels[token] ?? token.replace(/_/g, " ")
+}
+
+function locationTokenMentionIndex(text: string, token: string): number {
+  const lower = text.toLowerCase()
+  const rules: Record<string, RegExp[]> = {
+    new_york_metro: [/\bnyc\b/i, /new\s*york/i, /纽约/i],
+    remote_united_states: [/remote/i, /在家/i],
+    remote_anywhere: [/anywhere/i, /remote/i],
+    remote_global: [/remote/i],
+    san_francisco_bay_area: [/\bsf\b/i, /san\s*francisco/i, /bay\s*area/i, /湾区/i],
+    los_angeles_metro: [/\bla\b/i, /los\s*angeles/i, /洛杉矶/i],
+    seattle_metro: [/seattle/i, /西雅图/i],
+  }
+  const matches = rules[token] ?? [new RegExp(token.replace(/_/g, "\\s+"), "i")]
+  let best = Number.POSITIVE_INFINITY
+  for (const rule of matches) {
+    const hit = lower.match(rule)
+    if (hit?.index !== undefined && hit.index < best) best = hit.index
+  }
+  return best
+}
+
+function orderLocationTokensByMention(text: string, tokens: string[]): string[] {
+  return [...tokens].sort((a, b) => {
+    const aIdx = locationTokenMentionIndex(text, a)
+    const bIdx = locationTokenMentionIndex(text, b)
+    if (aIdx !== bIdx) return aIdx - bIdx
+    return 0
+  })
+}
+
+function extractLifecycleProfileUpdate(text: string): LifecycleProfileUpdate | null {
+  const trimmed = text.trim()
+  if (!trimmed) return null
+  const targetRoleFunction = mapAnswerToRoleFunction(trimmed)
+  const roleFocus = detectLifecycleRoleFocus(trimmed)
+  const targetLocations = orderLocationTokensByMention(trimmed, mapAnswerToLocations(trimmed))
+  const locationLabels = targetLocations.map(labelLocationToken)
+  const visa = visaTagForLifecycle(trimmed)
+  const startupPreference = detectStartupPreferenceForLifecycle(trimmed)
+  const searchStatus = detectLifecycleSearchStatus(trimmed)
+
+  const rawSignals = uniqStrings([
+    searchStatus ? `search_status:${searchStatus}` : null,
+    ...roleFocus.map((r) => `role_focus:${r}`),
+    ...targetRoleFunction.map((r) => `role_function:${r}`),
+    ...targetLocations.map((l) => `location:${l}`),
+    visa.tag ? `visa:${visa.tag}` : null,
+    startupPreference ? `company_stage:${startupPreference}` : null,
+  ])
+
+  if (rawSignals.length === 0) return null
+
+  const roleLabels = uniqStrings([
+    ...roleFocus.filter((r) => r !== "product-ops tooling"),
+    targetRoleFunction.includes("software_engineering") && roleFocus.length === 0 ? "software engineering" : null,
+  ])
+  const summaryParts: string[] = []
+  if (searchStatus === "still_looking") summaryParts.push("still looking")
+  if (searchStatus === "interviewing") summaryParts.push("currently interviewing")
+  if (searchStatus === "paused") summaryParts.push("search paused")
+  if (searchStatus === "not_looking") summaryParts.push("not actively looking")
+  if (roleLabels.length > 0) summaryParts.push(`targeting ${roleLabels.join("/")} roles`)
+  if (locationLabels.length > 0) summaryParts.push(`prefers ${locationLabels.join(" or ")}`)
+  if (startupPreference === "startup") summaryParts.push("prefers early-stage startups")
+  if (startupPreference === "bigtech") summaryParts.push("prefers larger companies")
+  if (startupPreference === "either") summaryParts.push("open on company stage")
+  if (visa.label) summaryParts.push(visa.label)
+  const summary = summaryParts.length > 0 ? summaryParts.join("; ") : "shared a profile update"
+
+  const ackFocus: string[] = []
+  if (roleLabels.length > 0) ackFocus.push(`${roleLabels.join("/")} roles`)
+  if (locationLabels.length > 0) ackFocus.push(locationLabels.join(" or "))
+  if (startupPreference === "startup") ackFocus.push("early-stage startups")
+  if (startupPreference === "bigtech") ackFocus.push("larger-company roles")
+  if (visa.label) ackFocus.push(visa.label)
+  const ack = ackFocus.length > 0
+    ? `Got it - I'll keep matches focused on ${ackFocus.join(", ")}.`
+    : "Got it - I updated your profile notes for future matches."
+
+  const tags: LifecyclePartialTags = {}
+  if (targetRoleFunction.length > 0) tags.targetRoleFunction = targetRoleFunction
+  if (targetLocations.length > 0) tags.targetLocations = targetLocations
+  if (visa.tag) tags.visaStatus = visa.tag
+  if (startupPreference) tags.prefersStartup = startupPreference
+  if (searchStatus === "still_looking") tags.urgentlySeeking = true
+
+  const statedPreferences: Record<string, unknown> = {}
+  if (roleLabels.length > 0) statedPreferences.targetRole = roleLabels
+  if (locationLabels.length > 0) statedPreferences.targetLocations = locationLabels
+  if (visa.stated) statedPreferences.visaStatus = visa.stated
+  if (startupPreference) statedPreferences.prefersStartup = startupPreference === "startup" ? true : startupPreference === "bigtech" ? false : null
+  if (searchStatus === "still_looking") statedPreferences.urgentlySeeking = true
+
+  return {
+    summary,
+    ack,
+    memoryFact: `Candidate profile update: ${summary}.`,
+    tags,
+    statedPreferences,
+    evidence: {
+      searchStatus,
+      roleFocus,
+      targetRoleFunction,
+      targetLocations,
+      locationLabels,
+      visaStatus: visa.tag,
+      visaLabel: visa.label,
+      startupPreference,
+      rawSignals,
+    },
+  }
+}
+
+async function handleLifecycleProfileReply(
+  event: InboundEvent,
+  store: OrchestratorStore,
+  turnId: string
+): Promise<boolean> {
+  if (isJobRecommendationExplanationRequest(event.body)) return false
+  if (!store.getRecentLifecycleEventForReply || !store.recordLifecycleReply) return false
+  const lifecycle = await store.getRecentLifecycleEventForReply(event.userId)
+  if (!lifecycle) return false
+  if (lifecycle.eventType !== "profile_freshness_nudge" && lifecycle.eventType !== "status_followup") {
+    return false
+  }
+  const update = extractLifecycleProfileUpdate(event.body)
+  if (!update) return false
+
+  await store.updateTurn(turnId, {
+    stage: "lifecycle_reply",
+    directIntent: "lifecycle_profile_update",
+    lifecycleEventId: lifecycle.eventId,
+    lifecycleEventType: lifecycle.eventType,
+    lifecycleSignals: update.evidence.rawSignals,
+    updatedAt: store.nowIso(),
+  })
+  await store.recordLifecycleReply({
+    userId: event.userId,
+    sessionId: event.sessionId,
+    eventId: lifecycle.eventId,
+    eventType: lifecycle.eventType,
+    turnId,
+    inboundEventId: event.id,
+    occurredAt: store.nowIso(),
+    sourceText: event.body,
+    update,
+  })
+
+  if (update.memoryFact) {
+    try {
+      const facts = await store.listMemoryFacts(event.userId)
+      const exists = facts.some((fact) => normalizedFactContent(fact.content) === normalizedFactContent(update.memoryFact!))
+      if (!exists) {
+        await store.createMemoryFact(event.userId, update.memoryFact)
+      }
+    } catch (err) {
+      store.log("pa.lifecycle_reply.memory_fact_failed", {
+        userId: event.userId,
+        eventId: event.id,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+
+  await sendMemoryReply(store, event, turnId, update.ack)
+  return true
+}
+
 /**
  * Phase 44 — flag check for v1.5 Stream-B onboarding probe v2.
  * Default OFF. Env override: `PA_ONBOARDING_PROBE_V2_DISABLED=true` short-circuits to false.
@@ -943,6 +1258,104 @@ function isExplicitJobSearchRequest(text: string | undefined | null): boolean {
   return /\b(?:find|get|show|send|pull|recommend|match|search|look\s+for|help\s+me\s+find)\b[^.!?]{0,90}\b(?:jobs?|roles?|positions?|opportunities|openings|listings|matches|swe|software\s+engineering|software\s+engineer)\b/i.test(normalized)
 }
 
+function isJobRecommendationExplanationRequest(text: string | undefined | null): boolean {
+  const body = (text ?? "").trim()
+  if (!body) return false
+  const lower = body.toLowerCase()
+  const asksQuestion =
+    /[?？]/.test(body) ||
+    /\b(?:why|what|which|how|can\s+you|tell\s+me|explain)\b/i.test(body) ||
+    /(?:为什么|为啥|哪里|哪点|怎么|解释|推荐理由|匹配原因)/.test(body)
+  if (!asksQuestion) return false
+  const hasJobContext =
+    /\b(?:recommend(?:ed)?|matching?|matched|jobs?|roles?|positions?|opportunities|openings|internships?|co-?ops?|company|rain|constant\s+contact|fullstack)\b/i.test(body) ||
+    /(?:推荐|匹配|岗位|职位|工作|机会|实习|公司)/.test(body)
+  if (!hasJobContext) return false
+  return (
+    /\bwhy\s+(?:did\s+you\s+)?recommend\b/i.test(body) ||
+    /\bwhat\s+part\b[\s\S]{0,120}\bmatch(?:ed|es)?\b/i.test(body) ||
+    /\bwhy\s+(?:is|was|did|does)?\s*.*\bmatch(?:ed|es|ing)?\b/i.test(body) ||
+    /\b(?:prefer|rather|instead\s+of)\b[\s\S]{0,120}\b(?:jobs?|roles?|internships?|co-?ops?|startups?|fullstack)\b/i.test(lower) ||
+    /(?:推荐理由|匹配原因|为什么推荐|为什么匹配)/.test(body)
+  )
+}
+
+async function buildJobRecommendationExplanationDirective(
+  store: OrchestratorStore,
+  event: InboundEvent
+): Promise<string | null> {
+  if (!isJobRecommendationExplanationRequest(event.body)) return null
+
+  const lines = [
+    "JOB / MATCH EXPLANATION TURN:",
+    "- The user is asking why one or more jobs were recommended, what experience matched a role, or how to prioritize future matches.",
+    "- Answer every distinct ask in the latest user message before adding anything else. For multi-role questions, cover each named company/role separately.",
+    "- If the user asks whether internships/co-ops should be lower priority, answer directly and acknowledge the preference; use a memory/profile tool when available.",
+    "- Do not send a fresh job list unless the user explicitly asks for new jobs in this same turn.",
+    "- Do not only say you updated preferences. Give the concrete match reasoning.",
+    "- Be honest when a role is only an adjacent/weak match.",
+  ]
+
+  const prescreenContext = await loadRecentPrescreenExplanationContext(store, event.userId)
+  if (prescreenContext) {
+    lines.push("", prescreenContext)
+  }
+
+  return lines.join("\n")
+}
+
+async function loadRecentPrescreenExplanationContext(
+  store: OrchestratorStore,
+  userId: string
+): Promise<string | null> {
+  if (!store.db) return null
+  try {
+    const userSnap = await store.db.collection("pa-users").doc(userId).get()
+    const user = userSnap.exists ? userSnap.data() : null
+    const workSession = user?.workSession && typeof user.workSession === "object"
+      ? user.workSession as Record<string, unknown>
+      : null
+    const sessionId = typeof workSession?.sessionId === "string" ? workSession.sessionId : null
+    if (!sessionId) return null
+
+    const memorySnap = await store.db
+      .collection("pa-prescreen-memory-events")
+      .doc(sessionId)
+      .get()
+    if (!memorySnap.exists) return null
+    const memory = memorySnap.data() ?? {}
+    const summary = typeof memory.summary === "string" ? memory.summary.trim() : ""
+    const evidenceTags = Array.isArray(memory.evidenceTags)
+      ? memory.evidenceTags.filter((tag): tag is string => typeof tag === "string")
+      : []
+    const jobId = typeof workSession?.jobId === "string"
+      ? workSession.jobId
+      : typeof memory.jobId === "string"
+        ? memory.jobId
+        : ""
+    const terminal = typeof workSession?.terminal === "string"
+      ? workSession.terminal
+      : typeof memory.terminal === "string"
+        ? memory.terminal
+        : ""
+
+    const parts = [
+      "Recent prescreen context to use when answering role-match questions:",
+      jobId ? `- jobId: ${jobId}` : null,
+      terminal ? `- outcome: ${terminal}` : null,
+      summary ? `- summary: ${summary.slice(0, 900)}` : null,
+      evidenceTags.length ? `- evidence tags: ${evidenceTags.slice(0, 12).join(", ")}` : null,
+    ].filter((part): part is string => typeof part === "string")
+    return parts.length > 1 ? parts.join("\n") : null
+  } catch (err) {
+    store.log("pa.runtime.job_explanation_context_failed", {
+      userId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    return null
+  }
+}
+
 async function handleCompletedUserJobSearchRequest(
   event: InboundEvent,
   store: OrchestratorStore,
@@ -951,6 +1364,7 @@ async function handleCompletedUserJobSearchRequest(
 ): Promise<boolean> {
   if (onboardingUser?.onboardingState !== "complete") return false
   if (!store.generateJobRecs) return false
+  if (isJobRecommendationExplanationRequest(event.body)) return false
   if (!isExplicitJobSearchRequest(event.body)) return false
 
   const lang = detectUserLang(event.body) === "zh" ? "zh" : "en"
@@ -976,6 +1390,105 @@ async function handleCompletedUserJobSearchRequest(
     directIntentRecCount: recs?.recCount ?? 0,
   })
   await store.markEventSucceeded(event.id)
+  return true
+}
+
+type PrivacyIntent =
+  | { kind: "summary"; includeMemory: boolean }
+  | { kind: "request"; requestKind: PrivacyRequestKind }
+
+function detectPrivacyIntent(text: string | undefined | null): PrivacyIntent | null {
+  const body = (text ?? "").trim()
+  if (!body) return null
+  const lower = body.toLowerCase()
+  const asksMemory =
+    /\b(?:what\s+do\s+you\s+remember|what\s+you\s+remember|see\s+what\s+you\s+remember|show\s+me\s+(?:my\s+)?memory|my\s+memory)\b/i.test(body) ||
+    /(?:你记得我|我的记忆|你保存了什么|你存了什么)/.test(body)
+  const asksData =
+    /\b(?:what\s+data|which\s+data|what\s+info|what\s+information|data\s+do\s+you\s+store|store\s+about\s+me|saved\s+about\s+me)\b/i.test(body) ||
+    /(?:什么数据|哪些数据|保存.*我|存.*我)/.test(body)
+  if (
+    /\b(?:delete|erase|remove)\s+(?:all\s+)?(?:my\s+)?(?:data|profile|information|account)\b/i.test(body) ||
+    /(?:删除|清除|抹掉).*(?:数据|资料|档案|账号|账户)/.test(body)
+  ) {
+    return { kind: "request", requestKind: "delete" }
+  }
+  if (
+    /\b(?:export|download|send|give)\s+(?:me\s+)?(?:a\s+copy\s+of\s+)?(?:my\s+)?(?:data|profile|information)\b/i.test(body) ||
+    /(?:导出|下载|发给我).*(?:数据|资料|档案)/.test(body)
+  ) {
+    return { kind: "request", requestKind: "export" }
+  }
+  if (
+    /\b(?:stop|pause)\s+(?:texting|outreach|messages|reaching\s+out)\b/i.test(body) ||
+    /(?:停止|暂停).*(?:短信|联系|触达|外呼)/.test(body)
+  ) {
+    return { kind: "request", requestKind: "stop_outreach" }
+  }
+  if (asksData || asksMemory || lower.includes("privacy")) {
+    return { kind: "summary", includeMemory: asksMemory }
+  }
+  return null
+}
+
+async function handlePrivacyIntent(
+  event: InboundEvent,
+  store: OrchestratorStore,
+  turnId: string,
+  intent: PrivacyIntent
+): Promise<boolean> {
+  const lang = detectUserLang(event.body) === "zh" ? "zh" : "en"
+  await store.updateTurn(turnId, { stage: "privacy_intent", updatedAt: store.nowIso() })
+
+  if (intent.kind === "summary") {
+    const lines =
+      lang === "zh"
+        ? [
+            "我会保存几类和求职有关的信息：你的简历解析结果、联系方式、工作偏好、签证/授权、地点/薪资偏好、对话里你确认过的经历，以及每次岗位 screen 的结果。",
+            "你可以回 “我的记忆” 看我保存的长期记忆；要导出或删除资料，直接回 “export my data” 或 “delete my data”。",
+          ]
+        : [
+            "I store job-search info you have shared with WeKruit: parsed resume details, contact info, work preferences, visa/work authorization, location and comp preferences, confirmed experience notes, and role-screen outcomes.",
+            "Reply “my memory” to see saved long-term notes. Reply “export my data” or “delete my data” and I will file that privacy request for review.",
+          ]
+    if (intent.includeMemory) {
+      const facts = await store.listMemoryFacts(event.userId)
+      lines.push(memoryReplyForList(facts))
+      await store.recordMemoryAction({ userId: event.userId, eventId: event.id, action: "list", status: "succeeded" })
+    }
+    await sendMemoryReply(store, event, turnId, lines.join("\n\n"))
+    return true
+  }
+
+  if (!store.createPrivacyRequest) {
+    await sendMemoryReply(
+      store,
+      event,
+      turnId,
+      lang === "zh"
+        ? "我知道了。现在短信里不能直接提交这个隐私请求，请从你的 WeKruit 个人资料页提交，我会避免继续展开敏感信息。"
+        : "Got it. I cannot submit that privacy request from this channel right now, so please use your WeKruit profile page. I will avoid expanding sensitive details here."
+    )
+    return true
+  }
+  const result = await store.createPrivacyRequest({
+    userId: event.userId,
+    kind: intent.requestKind,
+    detail: event.body ?? "",
+    eventId: event.id,
+    sessionId: event.sessionId,
+  })
+  const kindCopy: Record<PrivacyRequestKind, string> = {
+    export: "data export",
+    delete: "data deletion",
+    stop_outreach: "outreach stop",
+    privacy_question: "privacy",
+  }
+  const reply =
+    lang === "zh"
+      ? `收到，我已经提交了${kindCopy[result.kind]}请求。${result.existingOpen ? "你已经有一个同类型请求在处理中，我不会重复创建。" : "我们会从后台处理并保留审计记录。"}`
+      : `Got it. I submitted a ${kindCopy[result.kind]} request.${result.existingOpen ? " You already had one open, so I did not create a duplicate." : " We will review it from the privacy queue and keep an audit trail."}`
+  await sendMemoryReply(store, event, turnId, reply)
   return true
 }
 
@@ -1320,6 +1833,19 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // not tools the LLM should own).
     const command = parseMemoryCommand(event.body)
     if (command && command.kind !== "remember" && await handleMemoryCommand(event, store, turnId, command)) {
+      await store.updateTurn(turnId, { status: "succeeded", stage: "succeeded", completedAt: store.nowIso() })
+      await store.markEventSucceeded(event.id)
+      return
+    }
+
+    const privacyIntent = detectPrivacyIntent(event.body)
+    if (privacyIntent && await handlePrivacyIntent(event, store, turnId, privacyIntent)) {
+      await store.updateTurn(turnId, { status: "succeeded", stage: "succeeded", completedAt: store.nowIso() })
+      await store.markEventSucceeded(event.id)
+      return
+    }
+
+    if (await handleLifecycleProfileReply(event, store, turnId)) {
       await store.updateTurn(turnId, { status: "succeeded", stage: "succeeded", completedAt: store.nowIso() })
       await store.markEventSucceeded(event.id)
       return
@@ -2364,6 +2890,8 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       "'让我再帮你找找看' / '我多看几条更准的再发你' / 'still pulling fresher matches' / " +
       "'lemme dig up a couple more before sending'. Apologize like a friend would " +
       "('稍等下哈'), never like a system status page."
+    const jobRecommendationExplanationDirective =
+      await buildJobRecommendationExplanationDirective(store, event)
     const systemInputs: string[] = [
       personaCard,
       recallEntry,
@@ -2372,6 +2900,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       slangDirective,
       academicIntegrityDirective,
       matchingPrivacyDirective,
+      jobRecommendationExplanationDirective,
       mirror.snippet,
     ].filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
     // Phase 10.5 T7 — bridge agent.allowedConnectors → SDK tools. When the
@@ -3740,6 +4269,172 @@ export function createFirestoreOrchestratorStore(
         inboundEventId,
         actor: "orchestrator",
         meta: { cancelledCount },
+      })
+    },
+    async createPrivacyRequest({ userId, kind, detail, eventId, sessionId }) {
+      const createdAt = nowIso()
+      const request: PrivacyRequest = {
+        requestId: createPrivacyRequestId({
+          candidateId: userId,
+          kind,
+          createdAt,
+        }),
+        kind,
+        status: "submitted",
+        candidateId: userId,
+        sourceSurface: "imessage",
+        requestedBy: "candidate",
+        detailRedacted: {
+          requestKind: kind,
+          sourceSurface: "imessage",
+          channel: "imessage",
+        },
+        evidence: [
+          {
+            source: "conversation",
+            summary: `Candidate submitted ${kind} privacy request via iMessage`,
+            refId: eventId,
+          },
+        ],
+        createdAt,
+      }
+      const result = await writePrivacyRequest(db, request)
+      await appendAuditEvent(db, {
+        kind: "privacy_request",
+        message: `Candidate privacy request submitted via iMessage: ${kind}`,
+        userId,
+        sessionId,
+        inboundEventId: eventId,
+        actor: "orchestrator",
+        meta: {
+          requestId: result.request.requestId,
+          kind,
+          created: result.created,
+          existingOpen: result.existingOpen,
+        },
+      })
+      return {
+        requestId: result.request.requestId,
+        kind: result.request.kind,
+        created: result.created,
+        existingOpen: result.existingOpen,
+      }
+    },
+    async getRecentLifecycleEventForReply(userId) {
+      const userSnap = await db.collection(PA_COLLECTIONS.users).doc(userId).get()
+      const user = userSnap.data() as {
+        lifecycle?: {
+          lastLifecycleEventId?: string
+          lastTouchAt?: string
+          lastTouchType?: string
+        }
+      } | undefined
+      const eventId = user?.lifecycle?.lastLifecycleEventId
+      if (!eventId) return null
+      const lastTouchAt = user?.lifecycle?.lastTouchAt
+      const touchMs = lastTouchAt ? Date.parse(lastTouchAt) : 0
+      if (!Number.isFinite(touchMs) || Date.now() - touchMs > LIFECYCLE_REPLY_RECENCY_MS) {
+        return null
+      }
+      const eventSnap = await db.collection(CANDIDATE_LIFECYCLE_EVENT_COLLECTION).doc(eventId).get()
+      if (!eventSnap.exists) return null
+      const row = eventSnap.data() as {
+        eventType?: string
+        createdAt?: string
+      } | undefined
+      const eventType = row?.eventType
+      if (
+        eventType !== "laid_off_checkin" &&
+        eventType !== "match_notification" &&
+        eventType !== "profile_freshness_nudge" &&
+        eventType !== "status_followup"
+      ) {
+        return null
+      }
+      return {
+        eventId,
+        eventType,
+        createdAt: row?.createdAt,
+        lastTouchAt,
+      }
+    },
+    async recordLifecycleReply({ userId, sessionId, eventId, eventType, turnId, inboundEventId, occurredAt, update }) {
+      const userRef = db.collection(PA_COLLECTIONS.users).doc(userId)
+      const snap = await userRef.get()
+      const existing = snap.data() as {
+        statedPreferences?: Record<string, unknown>
+      } | undefined
+      const existingPrefs = existing?.statedPreferences && typeof existing.statedPreferences === "object"
+        ? existing.statedPreferences
+        : {}
+      const statedPreferences: Record<string, unknown> = { ...existingPrefs }
+      for (const [key, value] of Object.entries(update.statedPreferences)) {
+        if (value === undefined) continue
+        if (Array.isArray(value) && Array.isArray(existingPrefs[key])) {
+          statedPreferences[key] = uniqStrings([...(existingPrefs[key] as string[]), ...value])
+        } else {
+          statedPreferences[key] = value
+        }
+      }
+      if (Object.keys(update.statedPreferences).length > 0) {
+        statedPreferences.updatedAt = occurredAt
+      }
+
+      const userPatch: Record<string, unknown> = {
+        conversationDerivedPreferences: {
+          lifecycleUpdates: {
+            [eventType]: {
+              eventId,
+              turnId,
+              inboundEventId,
+              source: "imessage_lifecycle_reply",
+              summary: update.summary,
+              evidence: update.evidence,
+              updatedAt: occurredAt,
+            },
+          },
+          updatedAt: occurredAt,
+        },
+        updatedAt: occurredAt,
+      }
+      if (Object.keys(update.statedPreferences).length > 0) {
+        userPatch.statedPreferences = statedPreferences
+      }
+      await userRef.set(userPatch, { merge: true })
+
+      if (Object.keys(update.tags).length > 0) {
+        await applyPartialUserTags(db, userId, update.tags, {
+          source: "chat",
+          nowIso: occurredAt,
+          log: (event, payload) => console.log(new Date().toISOString(), event, payload ?? {}),
+        })
+      }
+
+      await db.collection(CANDIDATE_LIFECYCLE_EVENT_COLLECTION).doc(eventId).set(
+        {
+          status: "candidate_replied",
+          reply: {
+            turnId,
+            inboundEventId,
+            sessionId,
+            source: "imessage",
+            summary: update.summary,
+            evidence: update.evidence,
+            at: occurredAt,
+          },
+          updatedAt: occurredAt,
+        },
+        { merge: true }
+      )
+      await appendAuditEvent(db, {
+        kind: "turn_state",
+        message: `Candidate replied to lifecycle ${eventType}`,
+        userId,
+        sessionId,
+        turnId,
+        inboundEventId,
+        actor: "orchestrator",
+        meta: { lifecycleEventId: eventId, lifecycleEventType: eventType, signals: update.evidence.rawSignals },
       })
     },
     // Phase 23 — onboarding state machine

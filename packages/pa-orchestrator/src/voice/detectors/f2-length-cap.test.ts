@@ -18,6 +18,7 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 import {
   countSentences,
   detectLengthCap,
+  isStructuredReply,
   splitSentences,
   stripToSentenceCap,
   stripToCharCap,
@@ -285,4 +286,19 @@ test("stripToCharCap: empty input fail-open", () => {
   const r = stripToCharCap("")
   assert.equal(r.stripped, false)
   assert.equal(r.text, "")
+})
+
+test("isStructuredReply: numbered parenthesis list bypasses caps", () => {
+  const reply =
+    "1)Contact was recommended because your JavaScript background fits backend-plus-web service work. " +
+    "2)Rain matched the OFO dashboard and SQL evidence, especially stuck-order debugging and operator tooling. " +
+    "3)Yes, internships and co-ops should be lower priority than early-stage fullstack roles."
+  assert.equal(isStructuredReply(reply), true)
+})
+
+test("isStructuredReply: numbered colon list bypasses caps", () => {
+  const reply =
+    "1: Constant Contact is adjacent because of JavaScript service work. " +
+    "2: Rain is closer where your OFO dashboard and SQL debugging overlap with internal tools."
+  assert.equal(isStructuredReply(reply), true)
 })

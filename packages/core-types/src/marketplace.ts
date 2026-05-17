@@ -870,6 +870,7 @@ export type PrivacyRequestStatus = z.infer<typeof PrivacyRequestStatusSchema>
 
 export const PrivacyRequestSourceSurfaceSchema = z.enum([
   "me_profile",
+  "imessage",
   "admin",
   "system",
 ])

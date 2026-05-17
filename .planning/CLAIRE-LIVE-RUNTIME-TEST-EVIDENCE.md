@@ -75,14 +75,14 @@ Important baseline finding:
 | Normal candidate onboarding | LIVE_DONE_FOR_COLLISION_AND_RESUME_COMPLETION | Real iMessage location-answer rerun after prescreen pause advanced to resume ask; real resume-on-file reply completed onboarding | `pa-users.pipelineState.completed=true`, `onboardingStatus=active`, clean ended `workSession` | Found and fixed prescreen recent-terminal guard, existing-resume detection, resume completion language, generic completion noise, and stale workSession merge behavior. |
 | Layoff onboarding | LIVE_DONE_WITH_RUNTIME_FIXES | Real iMessage layoff onboarding completed through role, YoE, visa, startup preference, country, location, and existing-resume recovery | `pa-users.pipelineState.completed=true`, `workSession.status=ended`, `boundary=complete`, `parsedCandidateResumes` found | Found and fixed stale workSession merge, stale layoff phone index, YoE natural-answer parse, startup wording, and resume-on-entry skip for existing parsed resumes. |
 | Job prescreen strong candidate | LIVE_DONE | Real iMessage rerun reached `PASS` after strong fullstack answers and hard filters | Session, turns, memory, tags, user workSession, candidate-job-state, and employer-visible profile verified | Latest rerun also proved capped proposed-tag merge. |
-| Job prescreen adjacent/fragmented | LIVE_DONE | Real iMessage rerun reached PASS after adjacent/fragmented answers | Session, turns, memory, candidate-job-state, user workSession, and prior-session supersede verified | Runtime fixes deployed on Node 24; visible salary-copy defect remains in job data/copy. |
+| Job prescreen adjacent/fragmented | LIVE_DONE | Real iMessage reruns reached PASS after adjacent/fragmented answers | Session, turns, memory, candidate-job-state, employer-visible profile, user workSession, and prior-session supersede verified | Latest 2026-05-17 rerun proved four role-fit probes, multi-message coalescing, love tapbacks, terminal archive, memory/tag writes, and post-terminal rec outbound. Visible salary-copy defect remains in job data/copy. |
 | Job prescreen weak candidate | LIVE_DONE | Real iMessage weak run probed repeatedly before `HARD_STOP` | Session, memory tags, and user/candidate state verified | No false positive skill tags were added. |
 | Pause/restart/supersede | LIVE_DONE | Real iMessage restart, opt-out send failure, natural pause, and clean pause rerun verified | User-level `workSession`, session boundary, inbound status, and memory event verified | See Flow 6 and Flow 7. |
-| Privacy/abuse/security | NOT_STARTED | Missing | Missing | Must be tested through real iMessage and direct Firestore state. |
+| Privacy/abuse/security | LIVE_DONE | Prompt injection blocked; privacy summary and export request verified through real iMessage | Abuse events, deterministic privacy outbound, `pa-privacy-requests`, and audit rows verified | Found and fixed prompt-injection tapback and privacy LLM fallback defects. |
 | Rate limit/opt-out/suppression/cooldown | PRESCREEN_PARTIAL | `Stop` provider opt-out produced real send failure; `START` restored test line | Send-failed session ended with `boundary=send_failed` | Broad rate-limit/cooldown not tested in this narrowed run. |
 | Job matching conversation | NOT_STARTED | Missing | Missing | Must be tested through real iMessage and direct Firestore state. |
-| Everyday catchup | NOT_STARTED | Missing | Missing | Must be tested through real iMessage and direct Firestore state. |
-| Automated outbound | PRESCREEN_TERMINAL_PARTIAL | PASS and HARD_STOP prescreen terminal actions sent real job-recommendation outbound | `pa-outbound` terminal rows verified with sent status and idempotency keys | General scheduled/catchup outbound still not tested in this narrowed prescreen lane. |
+| Everyday catchup | LIVE_DONE | Real lifecycle profile check-in outbound was replied to over iMessage, then retested after fix | Lifecycle event, turn, outbound, memory fact, tags, and user preference writes verified | Found and fixed lifecycle replies falling into generic LLM without profile/tag updates. |
+| Automated outbound | LIVE_DONE | PASS/HARD_STOP prescreen terminal actions and lifecycle profile-check outbound both sent real iMessages | `pa-outbound` terminal rows and lifecycle reply outbound verified with sent/delivered status | Broad daily scheduler cadence is not load-tested in this narrowed live lane. |
 | Firestore runtime observability | LIVE_DONE_FOR_PRESCREEN | Every live prescreen state was checked via Firestore snapshot | `pa-prescreen-sessions`, `pa-users.workSession`, `pa-inbound-events`, `pa-prescreen-memory-events` | Dashboard not used as evidence. |
 
 ## Flow 4 Evidence: Adjacent Or Fragmented Fullstack Prescreen
@@ -196,6 +196,94 @@ Residual defects / follow-up:
 
 - Terminal SMS copy displayed salary as `$50000-999000/yr`, which is visibly unpolished and likely comes from job data formatting. This is outside the current runtime-session fix but must be corrected before broad production use.
 - Firestore snapshot helper currently shows synthetic/coalescer-created inbound rows with `status=pending` while corresponding original rows are `status=coalesced` and routed to `prescreen`. The runtime processed correctly, but dashboard/observability cleanup should make these synthetic rows less confusing.
+
+## Flow 4 Live Rerun Evidence: Adjacent Candidate With Deeper Probing
+
+Verified directly in Messages and Firestore: 2026-05-17T02:22:27.112Z
+
+Runtime:
+
+- Node: `v24.3.0`
+- Candidate: `pa-users/U7AwKT8nLDRa35DkuBxq`
+- Job: `rain-software-engineer-fullstack-8849f6ef`
+- Session: `pa-prescreen-sessions/ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260517T020903710Z`
+- Candidate job state: `pa-candidate-job-states/U7AwKT8nLDRa35DkuBxq__rain-software-engineer-fullstack-8849f6ef`
+- Employer-visible snapshot: `pa-employer-visible-profiles/rain-software-engineer-fullstack-8849f6ef__U7AwKT8nLDRa35DkuBxq`
+- Memory event: `pa-prescreen-memory-events/ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260517T020903710Z`
+
+Live iMessage transcript summary:
+
+- Trigger sent to `+13054507715`: `WeKruit_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_Job`.
+- Claire opened: `Hi — Claire from Rain. Quick screen for Software Engineer - Fullstack. What recent work best matches this software engineering role?`
+- Candidate started weak/adjacent: no production fullstack ownership; closest work was product ops, campus delivery dashboards, SQL reports, and small scripts.
+- Claire did not reject. It asked for closest project, exact problem, personal build/change, users, outcome, data flow, failure mode, query/logic change, verification signal, and before/after metric.
+- Candidate answered across multiple iMessages; the OFO context and SQL/dashboard ownership fragments were coalesced into one `role_fit` turn.
+- Random positive feedback was visible: Claire loved useful answers on the technical skill and earlier detailed project evidence.
+- Claire then advanced to required skill, location, compensation, and sponsorship.
+- Terminal messages:
+  - `Thanks for your answers — I have enough for the role-fit screen. Sending the next step now.`
+  - `Congrats — you’ve passed the initial screen for Software Engineer - Fullstack.`
+  - `We already have your contact details on file — the employer will reach out directly.`
+  - Post-terminal rec outbound followed: `Other roles that may fit: ...`
+
+Turn proof:
+
+- `role_fit` first reply: `s=0.05`, `c=0.78`, action `clarify`, summary: limited alignment; no production fullstack ownership.
+- `role_fit` coalesced OFO two-message reply: `s=0.55`, `c=0.62`, action `clarify`, summary: delivery ops dashboards + SQL joins; limited fullstack evidence.
+- `role_fit` data-flow/outcome reply: `s=0.62`, `c=0.66`, action `clarify`, summary: joined order/payment/courier events and improved escalations.
+- `role_fit` duplicate-event bug reply: `s=0.62`, `c=0.66`, action `clarify`, summary: event logic and dashboard work, still missing explicit fullstack evidence.
+- `role_fit` smallest shipped change reply: `s=0.72`, `c=0.74`, action `advance`, summary: SQL CTE, stale-assignment flag, escalation drop from about 18/day to 12/day.
+- `technical_depth`: `s=0.78`, `c=0.74`, action `advance`, summary: React queue filters with TypeScript, Node endpoint, and SQL logic.
+- `location_alignment`: `s=1`, `c=0.95`, action `advance`, summary: NYC or remote works; SF hybrid possible for right role.
+- `compensation_alignment`: `s=1`, `c=0.9`, action `advance`, summary: target $100K-$140K.
+- `sponsorship_status`: `s=1`, `c=0.95`, action `terminal`, terminal `PASS`, reason `ratio=0.900 threshold=0.65`.
+
+Persisted proof:
+
+- Session `ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260517T020903710Z`:
+  - `terminal=PASS`
+  - `terminalReason=ratio=0.900 threshold=0.65`
+  - `currentQId=null`
+  - `score=4.5`
+  - `workSession.status=ended`
+  - `workSession.boundary=terminal`
+  - `workSession.endedAt=2026-05-17T02:22:08.569Z`
+- User `pa-users/U7AwKT8nLDRa35DkuBxq.workSession`:
+  - `kind=job_prescreen`
+  - `sessionId=ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260517T020903710Z`
+  - `status=ended`
+  - `boundary=terminal`
+  - `terminal=PASS`
+  - `endedAt=2026-05-17T02:22:11.298Z`
+- User `lastPrescreenMemoryUpdate`:
+  - Summary: `Built internal ops dashboards and SQL/event logic; reduced escalations ~30%. Limited fullstack/web tech evidence. | React queue filters with TypeScript; Node endpoint + SQL logic for stuck orders. | Candidate confirms NYC or remote works; SF hybrid possible for right role. | Candidate targets $100K–$140K and says it’s aligned. | Needs future H-1B sponsorship (can work now on OPT).`
+  - Evidence tags: `job_prescreen`, `frontend_development`, `data_workflows`, `debugging_workflows`, `operator_tools`
+  - Recent replies preserve the final six substantive answers.
+- Candidate job state:
+  - `state=employer_visible`
+  - `reason=passed_snapshot_refreshed`
+  - `prescreenSessionId=ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260517T020903710Z`
+- Employer-visible snapshot:
+  - `createdFromState=passed`
+  - `sourcePrescreenSessionId=ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260517T020903710Z`
+  - `candidateJobStateId=U7AwKT8nLDRa35DkuBxq__rain-software-engineer-fullstack-8849f6ef`
+- Post-terminal outbound:
+  - `pa-outbound/7a943e75-0f17-48cd-b055-2d8d42bbc943`
+  - `status=sent`
+  - `sendblueStatus=DELIVERED`
+  - content starts `Other roles that may fit:`
+
+Transcript quality verdict:
+
+- PASS for the adjacent/fragmented requirement: Claire probed like a recruiter trying to understand the closest relevant experience, not like a hard form.
+- PASS for no repeated identical prompt: each probe changed angle from project context to data flow to bug/failure to metric.
+- PASS for multi-message context: the OFO two-message answer was stored as one newline-joined turn.
+- PASS for session archive and memory update: session and user workSession ended cleanly; memory and tags were written to the canonical user.
+
+Residual defects / follow-up:
+
+- Terminal level-1 SMS still displays salary as `$50000-999000/yr`; this is a customer-visible job-data/copy formatting issue.
+- The current terminal sequence does not include the later-planned candidate-question moment (`Do you have any questions for me...`). The active goal records that as the next prescreen-runtime phase, not the current Flow 4 acceptance blocker.
 
 ## Flow 5 Evidence: Weak Candidate Probing Before Hard Stop
 
@@ -771,10 +859,153 @@ Live safety retest after tapback fix:
   - `pa-outbound/897be5c7-66a4-4d8e-a1b5-56fee6480b1a`
   - `status=sent`
 
+Live privacy/data-memory defect found:
+
+- Candidate iMessage before fix: `What data do you store about me and can I see what you remember`
+- Bad visible reply before fix: `I store a few thingsyou to keep the conversation useful ...`
+- Firestore proof before fix:
+  - `pa-inbound-events/inb_a92ee4255bbf877e24744af31d4b3b169ab1c072`
+  - `routedTo=claire_orchestrator`
+  - `status=completed`
+  - `pa-turns/8bd9d746-a62f-4816-8a09-0a776ea26015`
+  - `pa-outbound/d6250a9b-8ac4-47fc-a398-0a3c030b0d49`
+  - `pa-privacy-requests`: empty
+- Root cause: privacy/data-memory questions fell through to generic LLM chat, so wording could be malformed and no structured privacy path existed.
+- Fix: deterministic privacy intent routing now handles data-summary and privacy-request messages before LLM routing. Summary requests list stored data categories and memory-list guidance; export/delete/stop-outreach requests create `pa-privacy-requests` docs and audit rows.
+
+Live privacy summary pass after fix and deploy:
+
+- Candidate iMessage: `What data do you store about me and can I see what you remember`
+- Visible reply starts: `I store job-search info you have shared with WeKruit: parsed resume details, contact info, work preferences, visa/work authorization, location and comp preferences, confirmed experience notes, and role-screen outcomes.`
+- Visible reply also tells the candidate to reply `my memory`, `export my data`, or `delete my data`.
+- Firestore proof:
+  - `pa-inbound-events/inb_5214337f258f7c49ffccaba2686e58f8f9a6fbf4`
+  - `createdAt=2026-05-17T01:25:45.973Z`
+  - `routedTo=claire_orchestrator`
+  - `status=completed`
+  - `pa-turns/55f82556-5225-4f7e-9f32-5bf1e4fc962a`
+  - `pa-outbound/b00e3e66-9cf0-4c8e-84d5-6fb99d8c336c`
+  - `status=sent`
+  - `idempotencyKey=outbound-inb_5214337f258f7c49ffccaba2686e58f8f9a6fbf4`
+  - `pa-privacy-requests`: still empty, as expected for read-only summary.
+
+Live privacy export-request pass after fix and deploy:
+
+- Candidate iMessage: `Export my data`
+- Visible reply: `Got it. I submitted a data export request. We will review it from the privacy queue and keep an audit trail.`
+- Firestore proof:
+  - `pa-inbound-events/inb_e2e53867af2bc7a737ec8f893ac4545994c452f1`
+  - `createdAt=2026-05-17T01:28:22.278Z`
+  - `routedTo=claire_orchestrator`
+  - `status=completed`
+  - `pa-turns/39c36996-f7a3-4076-823c-6e4f662bfe01`
+  - `pa-outbound/7badccfb-d345-420d-a3a9-7c63358853ec`
+  - `status=sent`
+  - `pa-privacy-requests/privacy_request_export__7230ece8`
+  - `kind=export`
+  - `status=submitted`
+  - `candidateId=U7AwKT8nLDRa35DkuBxq`
+  - `sourceSurface=imessage`
+  - `requestedBy=candidate`
+  - `detailRedacted.requestKind=export`
+  - `detailRedacted.channel=imessage`
+  - evidence ref points to `inb_e2e53867af2bc7a737ec8f893ac4545994c452f1`
+  - audit row `pa-audit-events/5bc6e853-f029-4164-9538-370a7e0c103c`
+  - `kind=privacy_request`
+
+Live lifecycle/catchup defect found:
+
+- Lifecycle event: `pa-candidate-lifecycle-events/lifecycle_5a39102de0ba5854c784a0183578d167`
+- Lifecycle outbound: `pa-outbound/out_9620e4abb135b6d53fb75e7634ffdd5beecafdcf`
+- Candidate reply before fix: `Still looking. Targeting fullstack or frontend roles in NYC or remote open to early-stage startups OPT now and will need future H-1B sponsorship.`
+- Bad visible reply before fix: `NYC or remoteOPT now with future H-1B sponsorship needed; I’ll keep the matches aligned to early-stage stuff.`
+- Root cause: replies to `profile_freshness_nudge` / `status_followup` lifecycle events fell through to the generic Claire path, so profile preferences, tags, lifecycle event status, and memory facts were not deterministically updated.
+- Fix: lifecycle replies now route before generic LLM handling, parse role/location/visa/startup/search-status signals, update `pa-users` preferences and tags, mark the lifecycle event `candidate_replied`, create an explicit memory fact, and send deterministic acknowledgement copy.
+
+Live lifecycle/catchup pass after fix and deploy:
+
+- Candidate iMessage: `Small correction frontend and fullstack are both good. NYC or remote early-stage preferred OPT now with future H-1B sponsorship.`
+- Visible reply: `Got it - I’ll keep matches focused on fullstack/frontend roles, NYC or remote, early-stage startups, OPT now with future H-1B sponsorship.`
+- Firestore proof:
+  - `pa-turns/8b2ea23d-293e-4959-85c9-9ee0ecb1322e`
+  - `directIntent=lifecycle_profile_update`
+  - `lifecycleEventId=lifecycle_5a39102de0ba5854c784a0183578d167`
+  - `status=succeeded`
+  - `completedAt=2026-05-17T02:01:43.901Z`
+  - `pa-candidate-lifecycle-events/lifecycle_5a39102de0ba5854c784a0183578d167.status=candidate_replied`
+  - reply evidence points to inbound `inb_b70008db1a96056652bcf26a783d2d390f47e243` and session `ses_62990f32ce66925df13ae2accc126a22`
+  - `pa-users/U7AwKT8nLDRa35DkuBxq.tags.targetRoleFunction=["software_engineering"]`
+  - `pa-users/U7AwKT8nLDRa35DkuBxq.tags.targetLocations=["new_york_metro","remote_united_states"]`
+  - `pa-users/U7AwKT8nLDRa35DkuBxq.tags.visaStatus=sponsor_needed`
+  - `pa-users/U7AwKT8nLDRa35DkuBxq.tags.prefersStartup=startup`
+  - `pa-users/U7AwKT8nLDRa35DkuBxq.tags.lastUpdatedFromChat=2026-05-17T02:01:43.157Z`
+  - `pa-memory-facts/33582d28-4e74-4397-87c2-714acd8ea6c0`
+  - memory content: `Candidate profile update: targeting fullstack/frontend roles; prefers NYC or remote; prefers early-stage startups; OPT now with future H-1B sponsorship.`
+  - `pa-outbound/25cdcb4f-8a0c-43b7-b2f1-3e0e64fd0c41`
+  - outbound `status=sent`, `sendblueStatus=DELIVERED`
+
+Live post-terminal match-explanation defects found:
+
+- Candidate iMessage: `Why did you recommend the Constant Contact co-op and for the Rain fullstack role what part of my OFO experience matched best I prefer early-stage fullstack roles over internships.`
+- Bad reply before fix: `Got it - I'll keep matches focused on fullstack roles, early-stage startups.`
+- Root cause 1: lifecycle/profile-update routing treated the message as a preference update and swallowed the actual match-explanation question.
+- Candidate iMessage: `Can you answer the actual question why did you recommend Constant Contact and what part of my OFO work matched Rain Also deprioritize internships.`
+- Bad reply before fix: `Got it. This role screen is already paused; I will keep that constraint on your profile and use it for better-matched roles.`
+- Root cause 2: recent-terminal prescreen guard swallowed post-terminal job-explanation questions.
+- Candidate iMessage: `Can you answer the match reason now why Constant Contact what part of my OFO work matched Rain and should internships be lower priority for me`
+- Bad reply before fix: only answered Constant Contact, not Rain/OFO evidence or internship priority.
+- Root cause 3: explanation turns had no explicit multi-part answer contract and no recent prescreen evidence injected into the system inputs.
+- Candidate iMessage: `Please answer all three parts directly 1 why Constant Contact was recommended 2 what OFO evidence matched the Rain fullstack role and 3 should internships or co-ops be lower priority for me`
+- Bad reply before fix: `1)Contact was recommended...` only.
+- Root cause 4: F2 structured-reply detection only recognized `1. ... 2.`. The model emitted `1)Contact...`, so char-cap trimming cut the reply after the first item.
+
+Live post-terminal match-explanation pass after fixes and deploy:
+
+- Candidate iMessage: `Please answer all three parts again concise 1 why Constant Contact was recommended 2 what OFO evidence matched Rain fullstack 3 should internships/co-ops be lower priority`
+- Visible reply:
+  - `Constant recommended because your Java and JavaScript experience maps to the kind of backend-plus-web work those co-op roles typically expect...`
+  - `For Rain, the strongest OFO evidence is your internal ops work with SQL/event logic and dashboards, plus your React/TypeScript queue filters and Node endpoint + SQL logic for stuck orders...`
+  - `Not necessarily; internships/co-ops should be lower priority only if they're clearly more backend-only or clearly not early-stage/fullstack...`
+- Transcript also shows the user message received a love tapback, which is acceptable for a normal, non-abuse match-explanation message.
+- Firestore proof:
+  - `pa-inbound-events/inb_5511ee12ace9381af8db6f475d7b7094637b8b43`
+  - `createdAt=2026-05-17T03:09:38.980Z`
+  - `routedTo=claire_orchestrator`
+  - `status=completed`
+  - `sessionId=ses_62990f32ce66925df13ae2accc126a22`
+  - `pa-turns/e37bfad1-3249-4313-93f6-f9db58f65d78`
+  - `status=succeeded`
+  - `stage=succeeded`
+  - no `directIntent=lifecycle_profile_update`
+  - `pa-outbound/eb0ce876-233f-49a0-8360-09c1dddd963f`
+  - `status=sent`
+  - `sendblueStatus=DELIVERED`
+  - outbound body covers all three requested topics: Constant Contact, Rain/OFO evidence, and internship/co-op priority.
+- Work-session integrity proof:
+  - `pa-users/U7AwKT8nLDRa35DkuBxq.workSession.sessionId=ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260517T020903710Z`
+  - `status=ended`
+  - `boundary=terminal`
+  - `terminal=PASS`
+  - The explanation turn did not reopen or mutate the completed prescreen session.
+
+Residual non-blocking data note:
+
+- Legacy `pa-users.statedPreferences.targetLocations` still contains older mixed raw labels (`nyc`, `remote`, `sf`, `NYC`), while canonical matching tags are clean (`new_york_metro`, `remote_united_states`). Treat `tags.targetLocations` as the verified matching path; clean legacy presentation fields separately if they surface in UI/copy.
+
 Deploy/test evidence:
 
 - Targeted coalescer test after tapback fix: `36/36` passing.
+- Targeted privacy/orchestrator test after privacy fix: `48/48` passing.
+- Targeted lifecycle/orchestrator test after catchup fix: `50/50` passing.
+- `pnpm --filter @pa/core-types build`: passing.
+- `pnpm --filter @pa/pa-orchestrator build`: passing.
+- `pnpm --filter @pa/functions build`: passing.
+- `pnpm --filter @pa/job-rec build`: passing.
+- Full Firebase functions predeploy during privacy deploy: `1718/1718` passing.
 - Full Firebase functions predeploy during final coalescer deploy: `1718/1718` passing.
 - Node used by deploy command: `v24.3.0`.
 - Deployed Node.js 24 function successfully:
   - `pa-orchestrator:paMessageCoalescer`
+  - `pa-orchestrator:paCoalesceBufferSweep`
+  - `pa-orchestrator:paSendblueWebhook`
+  - `pa-orchestrator:onPaInbound`

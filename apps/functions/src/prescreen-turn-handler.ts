@@ -510,6 +510,28 @@ function isJobSearchRequest(reply: string): boolean {
   return /\b(?:find|get|show|send|pull|recommend|match|search|look\s+for|help\s+me\s+find)\b[^.!?]{0,80}\b(?:jobs?|roles?|positions?|opportunities|openings|listings|matches|swe|software\s+engineering|software\s+engineer)\b/i.test(normalized)
 }
 
+function isJobRecommendationExplanationRequest(reply: string): boolean {
+  const body = reply.trim()
+  if (!body) return false
+  const lower = body.toLowerCase()
+  const asksQuestion =
+    /[?？]/.test(body) ||
+    /\b(?:why|what|which|how|can\s+you|tell\s+me|explain)\b/i.test(body) ||
+    /(?:为什么|为啥|哪里|哪点|怎么|解释|推荐理由|匹配原因)/.test(body)
+  if (!asksQuestion) return false
+  const hasJobContext =
+    /\b(?:recommend(?:ed)?|matching?|matched|jobs?|roles?|positions?|opportunities|openings|internships?|co-?ops?|company|rain|constant\s+contact|fullstack)\b/i.test(body) ||
+    /(?:推荐|匹配|岗位|职位|工作|机会|实习|公司)/.test(body)
+  if (!hasJobContext) return false
+  return (
+    /\bwhy\s+(?:did\s+you\s+)?recommend\b/i.test(body) ||
+    /\bwhat\s+part\b[\s\S]{0,120}\bmatch(?:ed|es)?\b/i.test(body) ||
+    /\bwhy\s+(?:is|was|did|does)?\s*.*\bmatch(?:ed|es|ing)?\b/i.test(body) ||
+    /\b(?:deprioritize|prioritize|prefer|rather|instead\s+of)\b[\s\S]{0,120}\b(?:jobs?|roles?|internships?|co-?ops?|startups?|fullstack)\b/i.test(lower) ||
+    /(?:推荐理由|匹配原因|为什么推荐|为什么匹配)/.test(body)
+  )
+}
+
 function isShortTerminalAck(reply: string): boolean {
   const normalized = reply.trim().toLowerCase()
   return /^(ok|okay|got it|thanks|thank you|sounds good|明白|收到|好的|谢谢|行|可以)[.!。！\s]*$/i.test(normalized)
@@ -528,6 +550,7 @@ function isPostTerminalConstraintUpdate(reply: string): boolean {
 }
 
 function isRecentTerminalFollowupReply(reply: string): boolean {
+  if (isJobRecommendationExplanationRequest(reply)) return false
   if (isJobSearchRequest(reply)) return false
   return (
     isLikelyPrescreenContinuationReply(reply) ||
