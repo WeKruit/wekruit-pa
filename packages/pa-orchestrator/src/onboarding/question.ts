@@ -260,6 +260,20 @@ export interface Question<TAnswer> {
    */
   onAccepted?(value: TAnswer, ctx: AcceptedCtx): Promise<void>
   /**
+   * Optional hook fired before the initial prompt is emitted when the question
+   * becomes active. Use this when durable candidate state can answer a gate
+   * without asking the user again (for example: parsed resume already on file).
+   */
+  onEnter?(
+    ctx: AcceptedCtx
+  ): Promise<{ accept: true; value: TAnswer; confidence?: number } | null | undefined>
+  /**
+   * When this question is the terminal question and onAccepted already owns
+   * the user-facing completion flow, mark pipeline complete without emitting
+   * the generic post-all-Qs completion copy.
+   */
+  suppressTerminalCompletionMessage?: boolean
+  /**
    * Optional hook fired when judge.reason="declined". Lets a Q customize
    * decline UX (e.g. q_tos sends a "fine, won't store memory" message and
    * skips forward instead of halting). Returns:

@@ -3,6 +3,7 @@ import { FieldValue } from "firebase-admin/firestore"
 import { enqueueOutbound as defaultEnqueueOutbound } from "@pa/pa-broker"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import { WEKRUIT_LAYOFF_SOURCE, composeLayoffFirstMessage } from "@pa/pa-orchestrator"
+import { hashStringToUint } from "./sendblue/pool.js"
 
 export const LAYOFF_SMS_TRIGGER_TEXT = "WeKruit_LAID_OFF"
 
@@ -37,6 +38,10 @@ function layoffContextFromUser(user: Record<string, unknown>): Record<string, un
   return ctx && typeof ctx === "object" && !Array.isArray(ctx)
     ? (ctx as Record<string, unknown>)
     : {}
+}
+
+function phoneIndexId(e164: string): string {
+  return `p_${hashStringToUint(e164).toString(36)}`
 }
 
 export function buildLayoffOnboardingStartedFields(nowIso: string): Record<string, unknown> {
@@ -132,6 +137,8 @@ export async function runLayoffSmsStart(
   const body = composeLayoffFirstMessage({ firstName, lastCompany })
   const enqueueOutbound = args.enqueueOutbound ?? defaultEnqueueOutbound
   const startedAt = new Date().toISOString()
+  const startedFields = buildLayoffOnboardingStartedFields(startedAt)
+  const phoneHash = phoneIndexId(phoneE164)
 
   await userRef.set(
     {
@@ -144,7 +151,16 @@ export async function runLayoffSmsStart(
         phoneE164,
         smsTriggeredAt: FieldValue.serverTimestamp(),
       },
-      ...buildLayoffOnboardingStartedFields(startedAt),
+      ...startedFields,
+    },
+    { merge: true },
+  )
+  await userRef.update({ workSession: startedFields.workSession })
+  await args.db.collection("layoff_phone_index").doc(phoneHash).set(
+    {
+      candidateId: args.userId,
+      lastLaidOffAt: FieldValue.serverTimestamp(),
+      phoneHash,
     },
     { merge: true },
   )

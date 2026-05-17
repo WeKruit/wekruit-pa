@@ -18,7 +18,11 @@ import {
   LLMRelevanceJudge,
   type ExtractIntentFn,
 } from "./judges/llm-relevance.js"
-import { ResumeJudge, type ResumeAttachment } from "./judges/resume.js"
+import {
+  hasParsedResumeOnFile,
+  ResumeJudge,
+  type ResumeAttachment,
+} from "./judges/resume.js"
 import { YesNoJudge } from "./judges/yesno.js"
 import { HybridRephraser } from "./rephrasers/hybrid.js"
 import { StaticVariantsRephraser } from "./rephrasers/variants.js"
@@ -246,7 +250,18 @@ function makeClosedQuestions(deps: ClosedQuestionsDeps): {
       zh: "暂时跳过简历, 后面想发再说就行",
       en: "skipping resume for now — drop it whenever",
     },
+    onEnter: async (ctx) => {
+      const hasResume = await hasParsedResumeOnFile(ctx)
+      ctx.log?.("pa.onboarding.resume.existing_on_enter", {
+        userId: ctx.userId,
+        turnId: ctx.turnId,
+        hasResume,
+      })
+      if (!hasResume) return null
+      return { accept: true, value: [], confidence: 0.95 }
+    },
     onAccepted: deps.onResumeAccepted,
+    suppressTerminalCompletionMessage: true,
     onDeclined: async () => ({ advance: true }),
   })
 
@@ -425,7 +440,7 @@ export function defaultQuestions(deps: DefaultQuestionsDeps): Question<unknown>[
     id: "q_yoe",
     prompt: {
       zh: "你工作几年了? 还是刚毕业找新人岗?",
-      en: "how many years you been working? or fresh outta school?",
+      en: "how many years have you been working? New grad is fine too.",
     },
     judge: new LLMRelevanceJudge({
       step: "ask_q_yoe",
@@ -500,8 +515,8 @@ export function defaultQuestions(deps: DefaultQuestionsDeps): Question<unknown>[
   const startupPrefQ: Question<unknown> = makeQuestion({
     id: "q_startup_pref",
     prompt: {
-      zh: "你更想去 startup 那种小而拼的, 还是大厂稳一点?",
-      en: "more into startup hustle vibe or stable big-co?",
+      zh: "你更偏 startup、稳定一点的大公司, 还是都可以?",
+      en: "do you prefer startups, bigger-company stability, or are you flexible?",
     },
     judge: new LLMRelevanceJudge({
       step: "ask_q_startup_pref",
@@ -519,8 +534,8 @@ export function defaultQuestions(deps: DefaultQuestionsDeps): Question<unknown>[
           en: "if you had to pick — startup / bigtech / either? 'either' is fine",
         },
         {
-          zh: "你想要那种快节奏 startup 体验, 还是更看重稳定大厂?",
-          en: "you want fast-paced startup energy or stability of a big company?",
+          zh: "你更想要 startup 的节奏, 还是更看重大公司的稳定性?",
+          en: "do you prefer startup pace or the stability of a bigger company?",
         },
         {
           zh: "一个词就行: 'startup' / 'bigtech' / 'either'",
@@ -603,7 +618,18 @@ export function defaultQuestions(deps: DefaultQuestionsDeps): Question<unknown>[
       zh: "暂时跳过简历, 后面想发再说就行",
       en: "skipping resume for now — drop it whenever",
     },
+    onEnter: async (ctx) => {
+      const hasResume = await hasParsedResumeOnFile(ctx)
+      ctx.log?.("pa.onboarding.resume.existing_on_enter", {
+        userId: ctx.userId,
+        turnId: ctx.turnId,
+        hasResume,
+      })
+      if (!hasResume) return null
+      return { accept: true, value: [], confidence: 0.95 }
+    },
     onAccepted: deps.onResumeAccepted,
+    suppressTerminalCompletionMessage: true,
     // resume decline = skip, not halt.
     onDeclined: async () => ({ advance: true }),
   })
@@ -805,7 +831,7 @@ export function makeYoeQuestion(
     id: "q_yoe",
     prompt: {
       zh: "你工作几年了? 还是刚毕业找新人岗?",
-      en: "how many years you been working? or fresh outta school?",
+      en: "how many years have you been working? New grad is fine too.",
     },
     judge: new GuidedOpenJudge<YoeAnswer>({
       questionLabel: "years of experience",
@@ -820,6 +846,7 @@ export function makeYoeQuestion(
         { reply: "刚毕业", value: "fresh", confidence: 1.0 },
       ],
       parseValue: parseYoeValue,
+      parseReply: parseYoeValue,
       ...(llmCallFactory ? { llmCallFactory } : {}),
     }),
     rephraser: new HybridRephraser({
@@ -899,8 +926,8 @@ export function makeStartupPrefQuestion(
   return makeQuestion<StartupPrefAnswer>({
     id: "q_startup_pref",
     prompt: {
-      zh: "你更想去 startup 那种小而拼的, 还是大厂稳一点?",
-      en: "more into startup hustle vibe or stable big-co?",
+      zh: "你更偏 startup、稳定一点的大公司, 还是都可以?",
+      en: "do you prefer startups, bigger-company stability, or are you flexible?",
     },
     judge: new GuidedOpenJudge<StartupPrefAnswer>({
       questionLabel: "startup vs bigtech preference",
@@ -945,8 +972,8 @@ export function makeStartupPrefQuestion(
           en: "You can add nuance, just include the closest label: startup / big-company / flexible.",
         },
         {
-          zh: "你想要那种快节奏 startup 体验, 还是更看重稳定大厂?",
-          en: "you want fast-paced startup energy or stability of a big company?",
+          zh: "你更想要 startup 的节奏, 还是更看重大公司的稳定性?",
+          en: "do you prefer startup pace or the stability of a bigger company?",
         },
         {
           zh: "一个词就行: 'startup' / 'bigtech' / 'either'",

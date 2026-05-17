@@ -107,6 +107,12 @@ export interface GuidedOpenJudgeSpec<TAnswer> {
    * judge will degrade to `{reason: "unclear"}`.
    */
   parseValue: (raw: unknown) => TAnswer | null
+  /**
+   * Optional deterministic parse of the user's raw reply before the LLM.
+   * Use only for narrow scalar questions where a local parser is safer than
+   * model canonicalization, such as years of experience.
+   */
+  parseReply?: (reply: string) => TAnswer | null
   /** Override the default 0.6 acceptance threshold. */
   confidenceThreshold?: number
   /** Skip LLM when reply has fewer than N alphanumeric/CJK chars. */
@@ -330,7 +336,18 @@ export class GuidedOpenJudge<TAnswer> implements Judge<TAnswer> {
       return { accept: false, reason: "irrelevant" }
     }
 
-    // ── Step 2: bloom regex (optimistic only) ─────────────────────────
+    // ── Step 2: direct deterministic parse (question opt-in only) ─────
+    const directParsed = this.spec.parseReply?.(reply)
+    if (directParsed !== null && directParsed !== undefined) {
+      ctx.log?.("pa.onboarding.judge.guided_open.direct_parse", {
+        userId: ctx.userId,
+        turnId: ctx.turnId,
+        questionLabel: this.spec.questionLabel,
+      })
+      return { accept: true, value: directParsed, confidence: 1.0 }
+    }
+
+    // ── Step 3: bloom regex (optimistic only) ─────────────────────────
     if (this.spec.bloomRegex && this.spec.bloomRegex.length > 0) {
       for (const bloom of this.spec.bloomRegex) {
         if (bloom.pattern.test(reply)) {
@@ -352,7 +369,7 @@ export class GuidedOpenJudge<TAnswer> implements Judge<TAnswer> {
       }
     }
 
-    // ── Step 3: LLM call ──────────────────────────────────────────────
+    // ── Step 4: LLM call ──────────────────────────────────────────────
     const systemPrompt = buildSystemPrompt(this.spec, lang)
     const userPrompt = `User reply: "${reply}"\n\nOutput JSON:`
     let raw: string

@@ -40,6 +40,21 @@ test("q-yoe: '2years' → 2 via GuidedOpen", async () => {
   if (r.accept) assert.equal(r.value, 2)
 })
 
+test("q-yoe: long natural answer with '2 years' parses before LLM", async () => {
+  const { q, calls } = makeQuestionWithJson(JSON.stringify({
+    intent: "unclear",
+    clarifyingQuestion: "roughly how many years?",
+  }))
+  const r = await q.judge.judge(
+    "About 2 years of hands-on work if you count the Tesla internship and startup/operator builds.",
+    "en",
+    ctx()
+  )
+  assert.equal(r.accept, true)
+  if (r.accept) assert.equal(r.value, 2)
+  assert.equal(calls(), 0)
+})
+
 test("q-yoe: LLM string value '2years' is parsed as 2", async () => {
   const r = await judge("2years", "2years" as unknown as YoeAnswer)
   assert.equal(r.accept, true)

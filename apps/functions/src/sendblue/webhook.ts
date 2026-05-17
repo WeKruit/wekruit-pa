@@ -1132,12 +1132,10 @@ export async function handleSendblueWebhook(
         } catch {
           onboardingState = null
         }
-        if (onboardingState !== "complete") {
-          try {
-            activePrescreenForCoalesce = await hasActivePrescreenSession(deps.db, resolvedUserIdForCoalesce)
-          } catch {
-            activePrescreenForCoalesce = false
-          }
+        try {
+          activePrescreenForCoalesce = await hasActivePrescreenSession(deps.db, resolvedUserIdForCoalesce)
+        } catch {
+          activePrescreenForCoalesce = false
         }
         willCoalesce = coalesceFlag === true && (onboardingState === "complete" || activePrescreenForCoalesce)
       }

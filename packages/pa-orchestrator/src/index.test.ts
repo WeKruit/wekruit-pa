@@ -102,6 +102,12 @@ function makeStore(overrides: Partial<OrchestratorStore> = {}): OrchestratorStor
     // Phase 22 — proactive cancellation stubs (non-cancellation tests never trigger these)
     cancelAllPendingProactiveJobs: async () => 0,
     writeProactiveCancelAudit: async () => undefined,
+    createPrivacyRequest: async (_input) => ({
+      requestId: "privacy_request_delete__test",
+      kind: _input.kind,
+      created: true,
+      existingOpen: false,
+    }),
     // Phase 23 — onboarding stubs: return null = already complete, no onboarding intercept
     getOnboardingUser: async () => null,
     applyOnboarding: async () => undefined,
@@ -151,6 +157,40 @@ test("processInboundEvent runs agent for non-memory messages", async () => {
   await processInboundEvent(baseEvent, store)
   assert.equal(llmCalls, 1)
   assert.equal(outbound, "assistant reply")
+})
+
+test("completed user explicit job-search request sends generated matches without LLM", async () => {
+  let llmCalls = 0
+  let outbound = ""
+  let force: boolean | undefined
+  const store = makeStore({
+    getOnboardingUser: async () => ({
+      id: "u1",
+      phoneE164: "+13125550123",
+      onboardingState: "complete",
+    }),
+    generateJobRecs: async (_userId, _lang, opts) => {
+      force = opts?.force
+      return {
+        recCount: 2,
+        message: "two roles that line up for you:\n• Software Engineer @ Rain",
+      }
+    },
+    runAgentTurn: async () => {
+      llmCalls++
+      return { text: "assistant reply" }
+    },
+    enqueueOutbound: async (_userId, _to, body) => {
+      outbound = body
+    },
+  })
+  await processInboundEvent({
+    ...baseEvent,
+    body: "Please pull fresh fullstack software engineer roles that fit me.",
+  }, store)
+  assert.equal(llmCalls, 0)
+  assert.equal(force, true)
+  assert.match(outbound, /Software Engineer @ Rain/)
 })
 
 test("processInboundEvent passes a Session and systemInputs into the default agent turn", async () => {
@@ -576,6 +616,266 @@ test("processInboundEvent T5: parseMemoryCommand 'clear_confirm' still routes th
   assert.equal(llmCalls, 0, "clear_confirm must not reach the LLM")
   assert.deepEqual(deletes, [["f1", "f2"]])
   assert.match(outbound, /已清空 2 条/)
+})
+
+test("processInboundEvent privacy: fuzzy data/memory question gets deterministic answer and memory list", async () => {
+  let llmCalls = 0
+  let outbound = ""
+  let memoryAction = ""
+  const store = makeStore({
+    listMemoryFacts: async () => [
+      mf({ id: "f1", content: "prefers New York or remote roles" }),
+      mf({ id: "f2", content: "has React and Node dashboard experience" }),
+    ],
+    recordMemoryAction: async (action) => {
+      memoryAction = action.action
+    },
+    runAgentTurn: async () => {
+      llmCalls++
+      return { text: "should-not-be-called" }
+    },
+    enqueueOutbound: async (_u, _t, body) => {
+      outbound = body
+    },
+  })
+  await processInboundEvent({
+    ...baseEvent,
+    body: "What data do you store about me, and can I see what you remember?",
+  }, store)
+  assert.equal(llmCalls, 0, "privacy data question must not reach the LLM")
+  assert.equal(memoryAction, "list")
+  assert.match(outbound, /parsed resume details/)
+  assert.match(outbound, /prefers New York or remote roles/)
+  assert.doesNotMatch(outbound, /thingsyou/)
+})
+
+test("processInboundEvent privacy: delete data creates privacy request without LLM", async () => {
+  let llmCalls = 0
+  let outbound = ""
+  const requests: string[] = []
+  const store = makeStore({
+    createPrivacyRequest: async (input) => {
+      requests.push(input.kind)
+      return {
+        requestId: "privacy_request_delete__test",
+        kind: input.kind,
+        created: true,
+        existingOpen: false,
+      }
+    },
+    runAgentTurn: async () => {
+      llmCalls++
+      return { text: "should-not-be-called" }
+    },
+    enqueueOutbound: async (_u, _t, body) => {
+      outbound = body
+    },
+  })
+  await processInboundEvent({ ...baseEvent, body: "Please delete my data from WeKruit." }, store)
+  assert.equal(llmCalls, 0, "delete privacy request must not reach the LLM")
+  assert.deepEqual(requests, ["delete"])
+  assert.match(outbound, /submitted a data deletion request/)
+})
+
+test("processInboundEvent lifecycle: profile freshness reply updates profile deterministically without LLM", async () => {
+  let llmCalls = 0
+  let outbound = ""
+  type RecordedLifecycleReply = Parameters<NonNullable<OrchestratorStore["recordLifecycleReply"]>>[0]
+  const lifecycleUpdates: RecordedLifecycleReply[] = []
+  const createdFacts: string[] = []
+  const store = makeStore({
+    getRecentLifecycleEventForReply: async () => ({
+      eventId: "lifecycle_1",
+      eventType: "profile_freshness_nudge",
+      lastTouchAt: "2026-04-25T12:00:00.000Z",
+    }),
+    recordLifecycleReply: async (input) => {
+      lifecycleUpdates.push(input)
+    },
+    listMemoryFacts: async () => [],
+    createMemoryFact: async (_userId, content) => {
+      createdFacts.push(content)
+      return `fact-${createdFacts.length}`
+    },
+    runAgentTurn: async () => {
+      llmCalls++
+      return { text: "should-not-be-called" }
+    },
+    enqueueOutbound: async (_u, _t, body) => {
+      outbound = body
+    },
+  })
+
+  await processInboundEvent({
+    ...baseEvent,
+    body: "Still looking. Targeting fullstack or frontend roles in NYC or remote, open to early-stage startups. OPT now and will need future H-1B sponsorship.",
+  }, store)
+
+  assert.equal(llmCalls, 0, "lifecycle reply must not reach the general LLM")
+  assert.match(outbound, /fullstack\/frontend roles/)
+  assert.match(outbound, /NYC or remote/)
+  assert.match(outbound, /OPT now with future H-1B sponsorship/)
+  assert.doesNotMatch(outbound, /remoteOPT/)
+  assert.equal(lifecycleUpdates.length, 1)
+  const recorded = lifecycleUpdates[0]!
+  assert.equal(recorded.eventId, "lifecycle_1")
+  assert.deepEqual(recorded.update.tags.targetRoleFunction, ["software_engineering"])
+  assert.deepEqual(recorded.update.tags.targetLocations, ["new_york_metro", "remote_united_states"])
+  assert.equal(recorded.update.tags.visaStatus, "sponsor_needed")
+  assert.equal(recorded.update.tags.prefersStartup, "startup")
+  assert.equal(recorded.update.tags.urgentlySeeking, true)
+  assert.deepEqual(recorded.update.statedPreferences.targetRole, ["fullstack", "frontend"])
+  assert.deepEqual(recorded.update.statedPreferences.targetLocations, ["NYC", "remote"])
+  assert.equal(createdFacts.length, 1)
+  assert.match(createdFacts[0]!, /Candidate profile update/)
+})
+
+test("processInboundEvent lifecycle: no recent lifecycle event falls through to normal agent", async () => {
+  let llmCalls = 0
+  const store = makeStore({
+    getRecentLifecycleEventForReply: async () => null,
+    recordLifecycleReply: async () => {
+      throw new Error("should-not-record")
+    },
+    runAgentTurn: async () => {
+      llmCalls++
+      return { text: "assistant reply" }
+    },
+  })
+
+  await processInboundEvent({ ...baseEvent, body: "Still looking for frontend roles in NYC." }, store)
+
+  assert.equal(llmCalls, 1)
+})
+
+test("processInboundEvent lifecycle: job recommendation explanation is not swallowed as profile update", async () => {
+  let llmCalls = 0
+  let outbound = ""
+  let lifecycleWrites = 0
+  const store = makeStore({
+    getRecentLifecycleEventForReply: async () => ({
+      eventId: "lifecycle_recent",
+      eventType: "profile_freshness_nudge",
+      lastTouchAt: "2026-04-25T12:00:00.000Z",
+    }),
+    recordLifecycleReply: async () => {
+      lifecycleWrites++
+    },
+    runAgentTurn: async () => {
+      llmCalls++
+      return { text: "Constant Contact was a skill-overlap rec; Rain matched the OFO dashboard/data-flow evidence." }
+    },
+    enqueueOutbound: async (_u, _t, body) => {
+      outbound = body
+    },
+  })
+
+  await processInboundEvent({
+    ...baseEvent,
+    body: "Why did you recommend the Constant Contact co-op, and for the Rain fullstack role what part of my OFO experience matched best? I prefer early-stage fullstack roles over internships.",
+  }, store)
+
+  assert.equal(lifecycleWrites, 0)
+  assert.equal(llmCalls, 1)
+  assert.match(outbound, /Constant Contact/)
+  assert.match(outbound, /Rain/)
+})
+
+test("processInboundEvent job search: recommendation explanation is not treated as fresh rec request", async () => {
+  let llmCalls = 0
+  let recCalls = 0
+  let outbound = ""
+  const store = makeStore({
+    getOnboardingUser: async () => ({
+      id: "u1",
+      phoneE164: "+14243201960",
+      onboardingState: "complete",
+    }),
+    generateJobRecs: async () => {
+      recCalls++
+      return { message: "fresh rec list", recCount: 2 }
+    },
+    runAgentTurn: async () => {
+      llmCalls++
+      return { text: "That rec came from Java/JavaScript overlap; I will bias future matches away from internships." }
+    },
+    enqueueOutbound: async (_u, _t, body) => {
+      outbound = body
+    },
+  })
+
+  await processInboundEvent({
+    ...baseEvent,
+    body: "Why did you recommend the Constant Contact co-op? I prefer early-stage fullstack roles over internships.",
+  }, store)
+
+  assert.equal(recCalls, 0)
+  assert.equal(llmCalls, 1)
+  assert.match(outbound, /Java\/JavaScript overlap/)
+})
+
+test("processInboundEvent job explanation injects multi-part answer contract and recent prescreen context", async () => {
+  let captured: string[] | undefined
+  const fakeDb = {
+    collection(name: string) {
+      return {
+        doc(id: string) {
+          return {
+            async get() {
+              if (name === "pa-users" && id === "u1") {
+                return {
+                  exists: true,
+                  data: () => ({
+                    workSession: {
+                      sessionId: "ps_rain-software-engineer-fullstack-8849f6ef_u1_20260517T020903710Z",
+                      jobId: "rain-software-engineer-fullstack-8849f6ef",
+                      status: "ended",
+                      boundary: "terminal",
+                      terminal: "PASS",
+                    },
+                  }),
+                }
+              }
+              if (name === "pa-prescreen-memory-events" && id === "ps_rain-software-engineer-fullstack-8849f6ef_u1_20260517T020903710Z") {
+                return {
+                  exists: true,
+                  data: () => ({
+                    summary: "Built OFO merchant/order dashboards with JavaScript screens, SQL reports, and stuck-order event logic; limited production fullstack evidence.",
+                    evidenceTags: ["frontend_development", "data_workflows", "debugging_workflows"],
+                  }),
+                }
+              }
+              return { exists: false, data: () => undefined }
+            },
+          }
+        },
+      }
+    },
+  }
+  const store = makeStore({
+    db: fakeDb as unknown as OrchestratorStore["db"],
+    runAgentTurn: async (input) => {
+      captured = input.systemInputs
+      return {
+        text: "Constant Contact came from JavaScript overlap; Rain matched your OFO dashboard and SQL/event work; internships should be lower priority.",
+      }
+    },
+  })
+
+  await processInboundEvent({
+    ...baseEvent,
+    body: "Can you answer the match reason now why Constant Contact what part of my OFO work matched Rain and should internships be lower priority for me",
+  }, store)
+
+  if (!captured) throw new Error("runAgentTurn was not called")
+  const directive = captured.find((entry) => entry.startsWith("JOB / MATCH EXPLANATION TURN:"))
+  assert.ok(directive)
+  assert.match(directive, /Answer every distinct ask/)
+  assert.match(directive, /cover each named company\/role separately/)
+  assert.match(directive, /internships\/co-ops should be lower priority/)
+  assert.match(directive, /rain-software-engineer-fullstack-8849f6ef/)
+  assert.match(directive, /Built OFO merchant\/order dashboards/)
+  assert.match(directive, /data_workflows/)
 })
 
 test("processInboundEvent T5: __PA_RESET__ still short-circuits BEFORE the LLM (A6 lock)", async () => {

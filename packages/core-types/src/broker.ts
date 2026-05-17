@@ -133,6 +133,7 @@ export const AuditEventKindSchema = z.enum([
   // Phase 22 — proactive check-in audit events (D-09)
   "proactive_send",
   "proactive_cancel",
+  "privacy_request",
 ])
 export type AuditEventKind = z.infer<typeof AuditEventKindSchema>
 

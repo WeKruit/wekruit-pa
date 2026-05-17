@@ -6,7 +6,11 @@
  */
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { runPrescreenTerminalAction, type RunPrescreenTerminalActionArgs } from "./prescreen-terminal-action.js"
+import {
+  composeJobRecsMessage,
+  runPrescreenTerminalAction,
+  type RunPrescreenTerminalActionArgs,
+} from "./prescreen-terminal-action.js"
 
 interface FakeDocState {
   exists: boolean
@@ -224,6 +228,71 @@ describe("runPrescreenTerminalAction — PASS branch (v1.9 hotfix)", () => {
       jobId: "j2",
     })
   })
+
+  it("repairs a stale ended user-level work session when the current prescreen terminal fires", async () => {
+    const docs = setupSession({
+      sessionId: "s1c",
+      jobId: "j1",
+      prescreenConfig: {
+        jobTitle: "Senior FE",
+        company: "Acme",
+      },
+    })
+    docs.set("pa-prescreen-sessions/s1c", {
+      exists: true,
+      data: {
+        workSession: {
+          kind: "job_prescreen",
+          status: "ended",
+          boundary: "user_exit",
+          startedAt: "2026-05-12T09:50:00.000Z",
+        },
+      },
+    })
+    docs.set("pa-users/u1", {
+      exists: true,
+      data: {
+        workSession: {
+          kind: "job_prescreen",
+          status: "ended",
+          boundary: "terminal",
+          startedAt: "2026-05-12T08:00:00.000Z",
+          endedAt: "2026-05-12T08:10:00.000Z",
+          sessionId: "older-session",
+          jobId: "older-job",
+          terminal: "HARD_STOP",
+        },
+        tags: { proposedTags: [] },
+      },
+    })
+    const { db, docs: writtenDocs } = makeFakeDb(docs)
+
+    await runPrescreenTerminalAction({
+      db,
+      sessionId: "s1c",
+      terminal: "PAUSE",
+      userId: "u1",
+      jobId: "j1",
+      toE164: "+1",
+      lang: "en",
+      markOutcome: noopMarkOutcome,
+      sendSms: async () => undefined,
+      startPii: async () => ({ ok: true, skipped: false }),
+      generateJobRecs: async () => ({ ok: true, jobCount: 0 }),
+      now: () => new Date("2026-05-12T10:00:00.000Z"),
+    })
+
+    assert.deepEqual(writtenDocs.get("pa-users/u1")?.data.workSession, {
+      kind: "job_prescreen",
+      status: "ended",
+      boundary: "user_exit",
+      startedAt: "2026-05-12T09:50:00.000Z",
+      endedAt: "2026-05-12T10:00:00.000Z",
+      sessionId: "s1c",
+      jobId: "j1",
+      terminal: "PAUSE",
+    })
+  })
 })
 
 describe("runPrescreenTerminalAction — FAIL branch (v1.9 hotfix)", () => {
@@ -259,6 +328,53 @@ describe("runPrescreenTerminalAction — FAIL branch (v1.9 hotfix)", () => {
     assert.match(sent[0], /better-aligned/i)
     assert.equal(piiCaptures[0].source, "fail")
     assert.equal(jobRecsCalled, true)
+  })
+
+  it("passes the prescreen language into post-terminal job rec generation", async () => {
+    const docs = setupSession({
+      sessionId: "s3-lang",
+      jobId: "j3",
+      prescreenConfig: { jobTitle: "X" },
+    })
+    const { db } = makeFakeDb(docs)
+    const piiCaptures: Array<{ source: string; userId: string }> = []
+    let observedLang: unknown = null
+    await runPrescreenTerminalAction({
+      db,
+      sessionId: "s3-lang",
+      terminal: "FAIL",
+      userId: "u",
+      jobId: "j3",
+      toE164: "+1",
+      lang: "en",
+      markOutcome: noopMarkOutcome,
+      sendSms: async () => undefined,
+      startPii: fakePiiStart(piiCaptures),
+      generateJobRecs: async (a) => {
+        observedLang = a.lang
+        return { ok: true, jobCount: 1 }
+      },
+    })
+    assert.equal(observedLang, "en")
+  })
+
+  it("formats post-terminal job recommendations in English when prescreen lang is English", () => {
+    const body = composeJobRecsMessage(
+      [
+        {
+          jobTitle: "Backend Engineer",
+          companyName: "Rain",
+          atsApplyUrl: "https://example.com/job",
+          reason: "Why match: your TypeScript aligns with JD core skills",
+        },
+      ],
+      "en",
+    )
+
+    assert.match(body, /Other roles that may fit:/)
+    assert.match(body, /Backend Engineer @ Rain/)
+    assert.match(body, /Why match:/)
+    assert.doesNotMatch(body, /其他可能合适|为啥推/)
   })
 })
 
@@ -342,6 +458,69 @@ describe("runPrescreenTerminalAction — HARD_STOP branch (v1.9 hotfix)", () => 
     const tagUpdate = updates.find((u) => u.path === "pa-users/u" && "tags" in u.data)
     assert.ok(tagUpdate)
     assert.deepEqual((tagUpdate.data.tags as Record<string, unknown>).proposedTags, ["job_prescreen"])
+  })
+
+  it("keeps latest prescreen evidence tags when proposedTags is already capped", async () => {
+    const docs = setupSession({
+      sessionId: "s4c",
+      jobId: "rain-software-engineer-fullstack-8849f6ef",
+      prescreenConfig: { jobTitle: "Software Engineer - Fullstack" },
+    })
+    docs.set("pa-prescreen-sessions/s4c", {
+      exists: true,
+      data: {
+        questions: {
+          role_fit: {
+            finalS: 0.72,
+            finalC: 0.78,
+            scored: {
+              aggregate: {
+                summary: "Owned UI dashboard, SQL data workflows, and debugging workflows for operator tooling.",
+              },
+            },
+          },
+        },
+      },
+    })
+    docs.set("pa-users/u", {
+      exists: true,
+      data: {
+        tags: {
+          proposedTags: Array.from({ length: 12 }, (_, index) => `old_signal_${index + 1}`),
+        },
+      },
+    })
+    const { db, updates } = makeFakeDb(docs)
+    await runPrescreenTerminalAction({
+      db,
+      sessionId: "s4c",
+      terminal: "HARD_STOP",
+      userId: "u",
+      jobId: "rain-software-engineer-fullstack-8849f6ef",
+      toE164: "+1",
+      lang: "en",
+      markOutcome: noopMarkOutcome,
+      sendSms: async () => undefined,
+      startPii: async () => ({ ok: true, skipped: false }),
+      generateJobRecs: async () => ({ ok: true, jobCount: 0 }),
+    })
+
+    const tagUpdate = updates.find((u) => u.path === "pa-users/u" && "tags" in u.data)
+    assert.ok(tagUpdate)
+    assert.deepEqual((tagUpdate.data.tags as Record<string, unknown>).proposedTags, [
+      "old_signal_1",
+      "old_signal_2",
+      "old_signal_3",
+      "old_signal_4",
+      "old_signal_5",
+      "old_signal_6",
+      "old_signal_7",
+      "job_prescreen",
+      "frontend_development",
+      "data_workflows",
+      "debugging_workflows",
+      "operator_tools",
+    ])
   })
 })
 
@@ -471,6 +650,80 @@ describe("runPrescreenTerminalAction — PAUSE branch", () => {
       false,
     )
     assert.equal(updates.some((u) => u.path === "pa-users/u" && "tags" in u.data), false)
+  })
+
+  it("does not archive user-exit off-topic scoring as profile evidence on PAUSE", async () => {
+    const docs = setupSession({
+      sessionId: "s5d",
+      jobId: "j5d",
+      prescreenConfig: { jobTitle: "Software Engineer - Fullstack" },
+    })
+    docs.set("pa-prescreen-sessions/s5d", {
+      exists: true,
+      data: {
+        questions: {
+          role_fit: {
+            finalS: 0.78,
+            finalC: 0.74,
+            scored: {
+              answered: true,
+              aggregate: {
+                summary: "Owned JS/Node + SQL dashboards for ops; reduced escalations ~30%.",
+              },
+            },
+          },
+          technical_depth: {
+            finalS: 0,
+            finalC: 0.95,
+            scored: {
+              answered: false,
+              aggregate: {
+                summary: "No relevant skills or examples; reply is a pause request.",
+              },
+              abortHint: { kind: "off_topic", reason: "Reply is a pause request." },
+            },
+          },
+        },
+      },
+    })
+    docs.set("pa-users/u", {
+      exists: true,
+      data: {
+        lastPrescreenMemoryUpdate: {
+          terminal: "PASS",
+          summary: "Older pass evidence.",
+          sessionId: "older-pass-session",
+        },
+        tags: { proposedTags: ["existing_signal"] },
+      },
+    })
+    const { db, updates, docs: writtenDocs } = makeFakeDb(docs)
+
+    await runPrescreenTerminalAction({
+      db,
+      sessionId: "s5d",
+      terminal: "PAUSE",
+      userId: "u",
+      jobId: "j5d",
+      toE164: "+1",
+      lang: "en",
+      markOutcome: noopMarkOutcome,
+      sendSms: async () => undefined,
+      startPii: fakePiiStart([]),
+      generateJobRecs: async () => ({ ok: true, jobCount: 0 }),
+      now: () => new Date("2026-05-12T10:00:00Z"),
+    })
+
+    const memory = writtenDocs.get("pa-prescreen-memory-events/s5d")?.data as {
+      summary?: string
+      scored?: Array<{ qId: string; summary: string }>
+    }
+    assert.equal(memory.summary, "Owned JS/Node + SQL dashboards for ops; reduced escalations ~30%.")
+    assert.deepEqual(memory.scored?.map((q) => q.qId), ["role_fit"])
+    assert.equal(
+      updates.some((u) => u.path === "pa-users/u" && "lastPrescreenMemoryUpdate" in u.data),
+      false,
+    )
   })
 })
 

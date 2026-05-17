@@ -50,6 +50,7 @@ export interface RunPrescreenTerminalActionArgs {
   generateJobRecs?: (args: {
     userId: string
     toE164: string
+    lang?: "zh" | "en"
   }) => Promise<{ ok: boolean; jobCount: number; reason?: string }>
   /** Optional injected PII bootstrap (for tests). */
   startPii?: (args: {
@@ -59,6 +60,7 @@ export interface RunPrescreenTerminalActionArgs {
     jobId: string
     sourceSessionId: string
     source: "pass" | "fail"
+    lang?: "zh" | "en"
     onComplete: (a: { userId: string; toE164: string; jobId: string }) => Promise<void>
     log: (event: string, payload: Record<string, unknown>) => void
   }) => Promise<{ ok: boolean; skipped: boolean; reason?: string }>
@@ -102,6 +104,26 @@ interface PaJobLevel1Fields {
   nextStepEta?: string
 }
 
+function isUserExitLikePrescreenReply(reply: string): boolean {
+  const normalized = reply.trim().toLowerCase()
+  if (!normalized) return false
+  if (/^(stop|cancel|pause|quit|exit|end|not now|later|nevermind|never mind|退出|停止|暂停|先不|不用了|算了)[.!。！\s]*$/i.test(normalized)) {
+    return true
+  }
+  return /^(please\s+)?(stop|cancel|pause|quit|exit|end)\b(?=.*\b(this|screen|role|interview|prescreen|pre-screen|for now|now|please)\b)[a-z0-9\s'’.-]*[.!?。！？\s]*$/i.test(normalized)
+}
+
+function isMemoryEligiblePrescreenScore(q: {
+  s: number | null
+  summary: string
+  answered?: boolean
+  abortHintKind?: string
+}): boolean {
+  if (q.abortHintKind === "off_topic" || q.abortHintKind === "decline") return false
+  if (q.answered === false && !q.summary.trim()) return false
+  return q.summary.trim().length > 0 || q.s !== null
+}
+
 function deriveWeakPrescreenTags(args: {
   terminal: PrescreenTerminalKind
   scored: Array<{ qId: string; s: number | null; c: number | null; summary: string }>
@@ -126,21 +148,27 @@ function deriveWeakPrescreenTags(args: {
 }
 
 function mergeStringTags(existing: unknown, next: string[], maxItems: number): string[] {
-  const merged = new Set<string>()
+  const existingValues: string[] = []
   if (Array.isArray(existing)) {
     for (const value of existing) {
       if (typeof value !== "string") continue
       const normalized = value.trim()
-      if (normalized) merged.add(normalized)
-      if (merged.size >= maxItems) return Array.from(merged)
+      if (normalized && !existingValues.includes(normalized)) existingValues.push(normalized)
     }
   }
+  const nextValues: string[] = []
   for (const value of next) {
     const normalized = value.trim()
-    if (normalized) merged.add(normalized)
-    if (merged.size >= maxItems) break
+    if (normalized && !nextValues.includes(normalized)) nextValues.push(normalized)
   }
-  return Array.from(merged)
+  const merged = Array.from(new Set([...existingValues, ...nextValues]))
+  if (merged.length <= maxItems) return merged
+  const nextSet = new Set(nextValues)
+  const existingSlots = Math.max(0, maxItems - nextValues.length)
+  return [
+    ...merged.filter((value) => !nextSet.has(value)).slice(0, existingSlots),
+    ...nextValues,
+  ].slice(0, maxItems)
 }
 
 async function readLevel1Fields(
@@ -171,6 +199,7 @@ async function readLevel1Fields(
 async function defaultGenerateJobRecs(args: {
   userId: string
   toE164: string
+  lang?: "zh" | "en"
 }): Promise<{ ok: boolean; jobCount: number; reason?: string }> {
   // Dynamic import keeps test isolation. The deps factory in index.ts
   // builds the same closure; we duplicate the minimal version here to
@@ -180,28 +209,18 @@ async function defaultGenerateJobRecs(args: {
   const { sendImessage: send } = await import("@pa/job-rec")
   const db = getFirestore()
   const result = await queryMatchingJobsV16(
-    { userId: args.userId, limit: 5 },
+    { userId: args.userId, limit: 5, lang: args.lang ?? "en" },
     { db, log: () => undefined }
   )
   if (result.noUserTags) return { ok: false, jobCount: 0, reason: "no_user_tags" }
   if (!result.jobs || result.jobs.length === 0) {
     return { ok: false, jobCount: 0, reason: "no_matches" }
   }
-  const lines: string[] = ["其他可能合适的机会:"]
-  for (const job of result.jobs) {
-    const tag = job.companyName ? ` @ ${job.companyName}` : ""
-    const url = job.atsApplyUrl
-      ? `\n${job.atsApplyUrl}`
-      : job.primaryUrl
-        ? `\n${job.primaryUrl}`
-        : ""
-    const reason = job.reason ? `\n${job.reason}` : ""
-    lines.push(`• ${job.jobTitle}${tag}${url}${reason}`)
-  }
+  const content = composeJobRecsMessage(result.jobs, args.lang ?? "en")
   const sendRes = await send(
     {
       userId: args.userId,
-      content: lines.join("\n\n"),
+      content,
       idempotencyKey: `${args.userId}-${new Date().toISOString().slice(0, 16)}-prescreen-term`,
     },
     { db, log: () => undefined }
@@ -211,6 +230,29 @@ async function defaultGenerateJobRecs(args: {
     jobCount: result.jobs.length,
     ...(sendRes.ok ? {} : { reason: "send_failed" }),
   }
+}
+
+type JobRecMessageJob = {
+  jobTitle?: string | null
+  companyName?: string | null
+  atsApplyUrl?: string | null
+  primaryUrl?: string | null
+  reason?: string | null
+}
+
+export function composeJobRecsMessage(jobs: JobRecMessageJob[], lang: "zh" | "en"): string {
+  const lines: string[] = [lang === "zh" ? "其他可能合适的机会:" : "Other roles that may fit:"]
+  for (const job of jobs) {
+    const tag = job.companyName ? ` @ ${job.companyName}` : ""
+    const url = job.atsApplyUrl
+      ? `\n${job.atsApplyUrl}`
+      : job.primaryUrl
+        ? `\n${job.primaryUrl}`
+        : ""
+    const reason = job.reason ? `\n${job.reason}` : ""
+    lines.push(`• ${job.jobTitle}${tag}${url}${reason}`)
+  }
+  return lines.join("\n\n")
 }
 
 async function defaultSendSms(args: {
@@ -239,7 +281,15 @@ async function writePrescreenMemoryUpdate(args: {
   try {
     const sessionSnap = await args.db.collection("pa-prescreen-sessions").doc(args.sessionId).get()
     const session = sessionSnap.data() ?? {}
-    const questions = (session.questions ?? {}) as Record<string, { finalS?: number; finalC?: number; scored?: { aggregate?: { summary?: string } } }>
+    const questions = (session.questions ?? {}) as Record<string, {
+      finalS?: number
+      finalC?: number
+      scored?: {
+        aggregate?: { summary?: string }
+        answered?: boolean
+        abortHint?: { kind?: string }
+      }
+    }>
     const qIds = Object.keys(questions)
     const scored = qIds
       .map((qId) => {
@@ -249,9 +299,12 @@ async function writePrescreenMemoryUpdate(args: {
           s: typeof q.finalS === "number" ? q.finalS : null,
           c: typeof q.finalC === "number" ? q.finalC : null,
           summary: typeof q.scored?.aggregate?.summary === "string" ? q.scored.aggregate.summary : "",
+          answered: typeof q.scored?.answered === "boolean" ? q.scored.answered : undefined,
+          abortHintKind: typeof q.scored?.abortHint?.kind === "string" ? q.scored.abortHint.kind : undefined,
         }
       })
-      .filter((q) => q.summary || q.s !== null || q.c !== null)
+      .filter(isMemoryEligiblePrescreenScore)
+      .map(({ answered: _answered, abortHintKind: _abortHintKind, ...q }) => q)
 
     let lastReplies: string[] = []
     try {
@@ -268,6 +321,7 @@ async function writePrescreenMemoryUpdate(args: {
           return typeof data.reply === "string" ? data.reply.trim() : ""
         })
         .filter(Boolean)
+        .filter((reply) => !isUserExitLikePrescreenReply(reply))
         .reverse()
     } catch {
       lastReplies = []
@@ -275,7 +329,7 @@ async function writePrescreenMemoryUpdate(args: {
 
     const bestSummary = scored.map((q) => q.summary).filter(Boolean).join(" | ").slice(0, 800)
     const replySummary = lastReplies.join(" / ").slice(0, 800)
-    const summary = bestSummary || replySummary || `Prescreen ended with ${args.terminal}`
+    const summary = bestSummary || replySummary || (args.terminal === "PAUSE" ? "Prescreen paused by candidate" : `Prescreen ended with ${args.terminal}`)
     const evidenceTags = deriveWeakPrescreenTags({
       terminal: args.terminal,
       scored,
@@ -367,8 +421,9 @@ async function endMatchingUserPrescreenWorkSession(args: {
       ? userData.workSession as Record<string, unknown>
       : null
     if (
-      current?.kind !== "job_prescreen" ||
-      current.status !== "active" ||
+      current?.kind === "job_prescreen" &&
+      current.status === "active" &&
+      current.sessionId &&
       current.sessionId !== args.sessionId
     ) {
       args.log("prescreen.terminal_action.user_work_session_skip", {
@@ -383,6 +438,9 @@ async function endMatchingUserPrescreenWorkSession(args: {
     const sessionWorkSession = args.sessionWorkSession && typeof args.sessionWorkSession === "object"
       ? args.sessionWorkSession as Record<string, unknown>
       : null
+    const baseWorkSession = current?.sessionId === args.sessionId
+      ? current
+      : sessionWorkSession ?? {}
     const boundary = args.terminal === "PAUSE"
       ? typeof sessionWorkSession?.boundary === "string" && sessionWorkSession.boundary !== "trigger"
         ? sessionWorkSession.boundary
@@ -391,7 +449,7 @@ async function endMatchingUserPrescreenWorkSession(args: {
     await userRef.set(
       {
         workSession: {
-          ...current,
+          ...baseWorkSession,
           kind: "job_prescreen",
           status: "ended",
           boundary,
@@ -442,9 +500,10 @@ async function startPiiWithRecsChain(
       jobId: args.jobId,
       sourceSessionId: args.sessionId,
       source,
+      lang: args.lang,
       onComplete: async ({ userId, toE164 }) => {
         try {
-          await genJobRecs({ userId, toE164 })
+          await genJobRecs({ userId, toE164, lang: args.lang })
         } catch (err) {
           log("prescreen.terminal_action.pii_recs_failed", {
             sessionId: args.sessionId,
@@ -460,7 +519,7 @@ async function startPiiWithRecsChain(
         sessionId: args.sessionId,
       })
       try {
-        await genJobRecs({ userId: args.userId, toE164: args.toE164 })
+        await genJobRecs({ userId: args.userId, toE164: args.toE164, lang: args.lang })
       } catch (err) {
         log("prescreen.terminal_action.recs_direct_failed", {
           sessionId: args.sessionId,

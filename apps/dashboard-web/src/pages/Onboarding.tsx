@@ -83,7 +83,7 @@ const DEFAULTS: Record<OnboardingStepKey, OnboardingStepConfig> = {
   ask_q_yoe: {
     prompt: {
       zh: "干几年了? 还是刚毕业?",
-      en: "how many years you been working? or fresh outta school?",
+      en: "how many years have you been working? New grad is fine too.",
     },
   },
   ask_q_visa: {
@@ -94,8 +94,8 @@ const DEFAULTS: Record<OnboardingStepKey, OnboardingStepConfig> = {
   },
   ask_q_startup_pref: {
     prompt: {
-      zh: "你喜欢小公司创业氛围, 还是大厂稳定一点的?",
-      en: "you more into startup energy or bigger-company stability?",
+      zh: "你更偏 startup、稳定一点的大公司, 还是都可以?",
+      en: "do you prefer startups, bigger-company stability, or are you flexible?",
     },
   },
   ask_q_location: {

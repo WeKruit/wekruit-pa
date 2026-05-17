@@ -80,6 +80,8 @@ export interface RunPiiConfirmStartArgs {
   toE164: string
   jobId: string
   sourceSessionId: string
+  /** Runtime language for any post-PII copy or job recommendations. */
+  lang?: "zh" | "en"
   /** Frames PII ask copy: "pass" = employer share, "fail" = future matching. */
   source?: "pass" | "fail"
   /**
@@ -136,6 +138,7 @@ export async function runPiiConfirmForUser(
     jobId: args.jobId,
     sourceSessionId: args.sourceSessionId,
     toE164: args.toE164,
+    lang: args.lang ?? "en",
     startedAt: new Date().toISOString(),
   })
 
@@ -306,10 +309,11 @@ export async function runPiiConfirmTurnIfActive(
   // Read meta to recover source + sourceSessionId + onComplete hook target.
   const metaSnap = await args.db.collection(PII_META_COLL).doc(args.userId).get()
   const meta = metaSnap.data() as
-    | { source?: "pass" | "fail"; jobId?: string; sourceSessionId?: string; toE164?: string }
+    | { source?: "pass" | "fail"; jobId?: string; sourceSessionId?: string; toE164?: string; lang?: "zh" | "en" }
     | undefined
   if (!meta) return { handled: false }
   const source = meta.source ?? "pass"
+  const lang = meta.lang ?? "en"
 
   // Default onComplete fires generateJobRecs ("matching" link per Adam).
   const onComplete = async (a: { userId: string; toE164: string; jobId: string }) => {
@@ -319,7 +323,7 @@ export async function runPiiConfirmTurnIfActive(
       const { sendImessage: send } = await import("@pa/job-rec")
       const db = getFirestore()
       const result = await queryMatchingJobsV16(
-        { userId: a.userId, limit: 5 },
+        { userId: a.userId, limit: 5, lang },
         { db, log: () => undefined }
       )
       if (!result.jobs || result.jobs.length === 0) {

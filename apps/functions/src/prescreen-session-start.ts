@@ -67,6 +67,85 @@ function deriveSessionId(jobId: string, userId: string, nowIso: string): string 
 
 const MIN_PRESCREEN_PROBE_ROUNDS = 4
 
+async function replaceUserPrescreenWorkSession(args: {
+  db: Firestore
+  userId: string
+  workSession: Record<string, unknown>
+  updatedAt: string
+}): Promise<void> {
+  const userRef = args.db.collection("pa-users").doc(args.userId)
+  const patch = {
+    workSession: args.workSession,
+    updatedAt: args.updatedAt,
+  }
+  try {
+    await userRef.update(patch)
+  } catch {
+    await userRef.set(patch, { merge: true })
+  }
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
+}
+
+async function markSessionStartSendFailed(args: {
+  db: Firestore
+  sessionId: string
+  userId: string
+  occurredAt: string
+  error: string
+}): Promise<void> {
+  const sessionRef = args.db.collection("pa-prescreen-sessions").doc(args.sessionId)
+  const sessionSnap = await sessionRef.get()
+  const session = sessionSnap.data() ?? {}
+  const currentWorkSession = session.workSession && typeof session.workSession === "object"
+    ? (session.workSession as Record<string, unknown>)
+    : {}
+  await sessionRef.set(
+    {
+      terminal: "PAUSE",
+      terminalReason: `send_failed: ${args.error}`,
+      currentQId: null,
+      firstQuestionSent: false,
+      firstQuestionSendFailedAt: args.occurredAt,
+      firstQuestionSendError: args.error,
+      updatedAt: args.occurredAt,
+      workSession: {
+        kind: "job_prescreen",
+        status: "ended",
+        startedAt: currentWorkSession.startedAt ?? session.createdAt ?? args.occurredAt,
+        endedAt: args.occurredAt,
+        boundary: "send_failed",
+      },
+    },
+    { merge: true },
+  )
+
+  const userRef = args.db.collection("pa-users").doc(args.userId)
+  const userSnap = await userRef.get()
+  const user = userSnap.data() ?? {}
+  const userWorkSession = user.workSession && typeof user.workSession === "object"
+    ? (user.workSession as Record<string, unknown>)
+    : null
+  const isSameActivePrescreen =
+    userWorkSession?.kind === "job_prescreen" &&
+    userWorkSession.status === "active" &&
+    userWorkSession.sessionId === args.sessionId
+  if (!isSameActivePrescreen) return
+  const endedWorkSession = {
+    ...userWorkSession,
+    status: "ended",
+    endedAt: args.occurredAt,
+    boundary: "send_failed",
+  }
+  try {
+    await userRef.update({ workSession: endedWorkSession, updatedAt: args.occurredAt })
+  } catch {
+    await userRef.set({ workSession: endedWorkSession, updatedAt: args.occurredAt }, { merge: true })
+  }
+}
+
 export async function runPreScreenForUser(args: RunPreScreenArgs): Promise<RunPreScreenResult> {
   const log = args.log ?? (() => {})
   const markStarted = args.markStarted ?? markFirstInterviewStarted
@@ -141,20 +220,19 @@ export async function runPreScreenForUser(args: RunPreScreenArgs): Promise<RunPr
       boundary: "trigger",
     },
   })
-  await args.db.collection("pa-users").doc(args.userId).set(
-    {
-      workSession: {
-        kind: "job_prescreen",
-        status: "active",
-        startedAt: nowIso,
-        boundary: "trigger",
-        sessionId,
-        jobId: args.jobId,
-      },
-      updatedAt: nowIso,
+  await replaceUserPrescreenWorkSession({
+    db: args.db,
+    userId: args.userId,
+    updatedAt: nowIso,
+    workSession: {
+      kind: "job_prescreen",
+      status: "active",
+      startedAt: nowIso,
+      boundary: "trigger",
+      sessionId,
+      jobId: args.jobId,
     },
-    { merge: true },
-  )
+  })
 
   // 4. Send first question.
   const opener = `Hi — Claire from ${cfg.company ?? "WeKruit"}. Quick screen for ${cfg.jobTitle}. ${firstQText}`
@@ -197,6 +275,24 @@ export async function runPreScreenForUser(args: RunPreScreenArgs): Promise<RunPr
   }
 
   try {
+    await sendSms({ to: args.toE164, content: opener, userId: args.userId, db: args.db })
+  } catch (err) {
+    const message = errorMessage(err)
+    await markSessionStartSendFailed({
+      db: args.db,
+      sessionId,
+      userId: args.userId,
+      occurredAt: nowIso,
+      error: message,
+    })
+    log("prescreen.send_failed", {
+      sessionId,
+      error: message,
+    })
+    return { ok: false, reason: "send_failed", sessionId }
+  }
+
+  try {
     await markStarted({
       db: args.db,
       sessionId,
@@ -204,24 +300,23 @@ export async function runPreScreenForUser(args: RunPreScreenArgs): Promise<RunPr
       jobId: args.jobId,
       occurredAt: nowIso,
     })
-    await sendSms({ to: args.toE164, content: opener, userId: args.userId, db: args.db })
-    log("prescreen.session_started", {
-      sessionId,
-      jobId: args.jobId,
-      userId: args.userId,
-    })
-    return {
-      ok: true,
-      reason: "started",
-      sessionId,
-      firstQuestionSent: true,
-    }
   } catch (err) {
-    log("prescreen.send_failed", {
+    log("prescreen.mark_started_failed", {
       sessionId,
-      error: err instanceof Error ? err.message : String(err),
+      error: errorMessage(err),
     })
-    return { ok: false, reason: "send_failed", sessionId }
+  }
+
+  log("prescreen.session_started", {
+    sessionId,
+    jobId: args.jobId,
+    userId: args.userId,
+  })
+  return {
+    ok: true,
+    reason: "started",
+    sessionId,
+    firstQuestionSent: true,
   }
 }
 

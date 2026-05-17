@@ -9,12 +9,41 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import { ResumeJudge } from "../judges/resume.js"
-import type { JudgeCtx } from "../question.js"
+import { defaultQuestionsV2 } from "../questions.js"
+import type { JudgeCtx, Question } from "../question.js"
+import type { ResumeAttachment } from "../judges/resume.js"
 
 function ctxWith(rawPayload?: unknown): JudgeCtx {
   return { userId: "u", turnId: "t", rawPayload }
 }
 const J = new ResumeJudge()
+
+function ctxWithParsedResumeOnFile(hasResume: boolean): JudgeCtx {
+  return {
+    userId: "u",
+    turnId: "t",
+    db: {
+      collection: (name: string) => {
+        assert.equal(name, "parsedCandidateResumes")
+        return {
+          where: (field: string, op: string, value: string) => {
+            assert.equal(field, "userId")
+            assert.equal(op, "==")
+            assert.equal(value, "u")
+            return {
+              limit: (_n: number) => ({
+                get: async () => ({
+                  empty: !hasResume,
+                  docs: hasResume ? [{ id: "parsed-1" }] : [],
+                }),
+              }),
+            }
+          },
+        }
+      },
+    },
+  }
+}
 
 test("q-resume: rawPayload.attachments=[pdf] → accept", async () => {
   const ctx = ctxWith({
@@ -56,4 +85,55 @@ test("q-resume: empty rawPayload + empty reply → irrelevant", async () => {
   const r = await J.judge("", "en", ctxWith())
   assert.equal(r.accept, false)
   if (!r.accept) assert.equal(r.reason, "irrelevant")
+})
+
+test("q-resume: user says resume already uploaded + parsed resume exists → accept", async () => {
+  const r = await J.judge(
+    "I already uploaded Adam-Yang-Resume.pdf earlier; use that one for now",
+    "en",
+    ctxWithParsedResumeOnFile(true)
+  )
+  assert.equal(r.accept, true)
+  if (r.accept) {
+    assert.deepEqual(r.value, [])
+    assert.equal(r.confidence, 0.95)
+  }
+})
+
+test("q-resume: user says resume already on file + parsed resume exists → accept", async () => {
+  const r = await J.judge(
+    "Use the resume already on file. I sent it earlier as Adam-Yang-Resume.pdf.",
+    "en",
+    ctxWithParsedResumeOnFile(true)
+  )
+  assert.equal(r.accept, true)
+  if (r.accept) {
+    assert.deepEqual(r.value, [])
+    assert.equal(r.confidence, 0.95)
+  }
+})
+
+test("q-resume: user says resume already uploaded but no parsed resume exists → irrelevant", async () => {
+  const r = await J.judge(
+    "I already uploaded my resume earlier",
+    "en",
+    ctxWithParsedResumeOnFile(false)
+  )
+  assert.equal(r.accept, false)
+  if (!r.accept) assert.equal(r.reason, "irrelevant")
+})
+
+test("q-resume: V2 question auto-accepts on entry when parsed resume exists", async () => {
+  const resumeQ = defaultQuestionsV2({})
+    .find((q) => q.id === "q_resume") as Question<ResumeAttachment[]> | undefined
+  assert.ok(resumeQ?.onEnter, "q_resume should define an onEnter hook")
+
+  const r = await resumeQ.onEnter({
+    ...ctxWithParsedResumeOnFile(true),
+    lang: "en",
+  })
+
+  assert.equal(r?.accept, true)
+  assert.deepEqual(r?.value, [])
+  assert.equal(r?.confidence, 0.95)
 })

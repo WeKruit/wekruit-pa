@@ -62,11 +62,9 @@ export const CV_ANALYSIS_SECRETS: SecretParamHandle[] = [SILICONFLOW_API_KEY]
 const nowIso = () => new Date().toISOString()
 
 /**
- * Build a `sendVerificationEmail` callback for the orchestrator store, or
- * return `{}` when secrets are unset (graceful fallback for biz testers
- * before Mailgun is provisioned). Called per-inbound so secret values are
- * read fresh; cheap because defineSecret().value() is cached by Cloud
- * Functions.
+ * Build orchestrator callbacks. Mailgun only gates email verification; it
+ * must not disable unrelated runtime capabilities like CV analysis, answer
+ * extraction, or explicit job recommendations.
  */
 export function makeOrchestratorDeps(): import("@pa/pa-orchestrator").OrchestratorStoreDeps {
   let mailgunApiKey = ""
@@ -83,17 +81,21 @@ export function makeOrchestratorDeps(): import("@pa/pa-orchestrator").Orchestrat
     // Secret not bound to this function (or unset entirely) → return empty
     // deps so the dispatcher takes the graceful fallback path.
   }
-  if (!mailgunApiKey || !mailgunDomain || !mailgunFrom) {
-    return {}
+  const deps: import("@pa/pa-orchestrator").OrchestratorStoreDeps = {
+    generateCvAnalysis: makeGenerateCvAnalysis(),
+    generateJobRecs: makeGenerateJobRecs(),
+    extractEmailIntent: makeExtractEmailIntent(),
+    extractAnswerIntent: makeExtractAnswerIntent(),
   }
-  const cfg = {
-    apiKey: mailgunApiKey,
-    domain: mailgunDomain,
-    from: mailgunFrom,
-    region: mailgunRegion,
-  }
-  return {
-    sendVerificationEmail: async (email: string) => {
+
+  if (mailgunApiKey && mailgunDomain && mailgunFrom) {
+    const cfg = {
+      apiKey: mailgunApiKey,
+      domain: mailgunDomain,
+      from: mailgunFrom,
+      region: mailgunRegion,
+    }
+    deps.sendVerificationEmail = async (email: string) => {
       const code = generateVerificationCode()
       const sentAt = nowIso()
       const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString()
@@ -123,15 +125,13 @@ export function makeOrchestratorDeps(): import("@pa/pa-orchestrator").Orchestrat
         })
         return null
       }
-    },
-    generateCvAnalysis: makeGenerateCvAnalysis(),
-    generateJobRecs: makeGenerateJobRecs(),
-    extractEmailIntent: makeExtractEmailIntent(),
-    extractAnswerIntent: makeExtractAnswerIntent(),
-    // Note: getUserCvParsed is already implemented in
-    // packages/pa-orchestrator/src/index.ts:3777 inside
-    // createFirestoreOrchestratorStore — no override needed here.
+    }
   }
+
+  // Note: getUserCvParsed is already implemented in
+  // packages/pa-orchestrator/src/index.ts:3777 inside
+  // createFirestoreOrchestratorStore — no override needed here.
+  return deps
 }
 
 /**
@@ -155,7 +155,7 @@ export function makeOrchestratorDeps(): import("@pa/pa-orchestrator").Orchestrat
 function makeGenerateJobRecs(): NonNullable<
   import("@pa/pa-orchestrator").OrchestratorStoreDeps["generateJobRecs"]
 > {
-  return async (userId: string, lang: "zh" | "en") => {
+  return async (userId: string, lang: "zh" | "en", opts?: { force?: boolean }) => {
     if (!getApps().length) initializeApp()
     const db = getFirestore()
 
@@ -165,7 +165,7 @@ function makeGenerateJobRecs(): NonNullable<
       if (profile.exists) {
         const data = profile.data() as { lastJobBatchSentAt?: string }
         const sentAt = data.lastJobBatchSentAt
-        if (sentAt) {
+        if (sentAt && opts?.force !== true) {
           const ageHours = (Date.now() - Date.parse(sentAt)) / (3600 * 1000)
           if (ageHours < 24) {
             logger.info("[job-recs] recent batch already sent — defer", {
@@ -189,7 +189,7 @@ function makeGenerateJobRecs(): NonNullable<
       // limit=10 retains the wider window so we can fire-and-forget
       // llmRerank against the top-5 (next-batch cache).
       const out = await queryMatchingJobsV16(
-        { userId, limit: 10 },
+        { userId, limit: 10, lang },
         {
           db,
           log: (event, payload) =>

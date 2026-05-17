@@ -53,11 +53,12 @@ Known verified live run:
 - It wrote `pa-employer-visible-profiles/rain-software-engineer-fullstack-8849f6ef__U7AwKT8nLDRa35DkuBxq`.
 - Details are recorded in `.planning/CLAIRE-LIVE-RUNTIME-TEST-EVIDENCE.md`.
 
-Known bug to fix first:
+Known bug fixed in the latest live run:
 
-- `pa-users/U7AwKT8nLDRa35DkuBxq.workSession` still shows stale `kind=layoff_onboarding`, `status=active`, `boundary=e2e_resume_after_pending_trigger_fix` after the job prescreen ended with `PASS`.
-- This is wrong because a job prescreen is an independent work session and must own user-level session state while active, then end/archive cleanly.
-- Fix the session ownership model first, deploy with Node 24, then retest with real iMessage.
+- `pa-users/U7AwKT8nLDRa35DkuBxq.workSession` no longer remains stuck on stale layoff onboarding after the Rain fullstack prescreen.
+- Latest verified session: `ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260517T020903710Z`.
+- Verified final user work session: `kind=job_prescreen`, `status=ended`, `boundary=terminal`, `terminal=PASS`.
+- Treat this as a regression check in future runs, not the first unresolved blocker.
 
 Required execution style:
 
@@ -149,7 +150,7 @@ Required Firestore checks:
 - `pa_messages` or active conversation/session collection used by the runtime
 - outbound rows if Claire sends any message
 
-Current status: `NOT_STARTED`
+Current status: `LIVE_DONE`
 
 ## Flow 2: Layoff Onboarding
 
@@ -185,7 +186,7 @@ Required Firestore checks:
 - `pa-outbound`
 - `pa-users/{uid}` direct Firestore verification for layoff candidate state
 
-Current status: `NOT_STARTED`
+Current status: `LIVE_DONE`
 
 ## Flow 3: Job Prescreen - Strong Candidate
 
@@ -218,7 +219,7 @@ Required Firestore checks:
 - `pa-users/{uid}.lastPrescreenMemoryUpdate`
 - `pa-users/{uid}.tags`
 
-Current status: `NOT_STARTED`
+Current status: `LIVE_DONE`
 
 ## Flow 4: Job Prescreen - Adjacent Or Fragmented Candidate
 
@@ -252,7 +253,7 @@ Required Firestore checks:
 - terminal state or explicit reason if not terminal yet
 - `pa-prescreen-sessions/{sessionId}/turns`
 
-Current status: `LIVE_PARTIAL`
+Current status: `LIVE_DONE`
 
 Known live evidence:
 
@@ -291,7 +292,7 @@ Required Firestore checks:
 - `pa-users.lastPrescreenMemoryUpdate`
 - no false positive `software_engineering` / `fullstack_engineering` tags from negative evidence
 
-Current status: `NOT_STARTED`
+Current status: `LIVE_DONE`
 
 ## Flow 6: Job Prescreen Pause, End, Restart, And Supersede
 
@@ -323,7 +324,7 @@ Required Firestore checks:
 - `pa-users.lastPrescreenMemoryUpdate`
 - old/new session transcript turns
 
-Current status: `LIVE_PARTIAL`
+Current status: `LIVE_DONE`
 
 Known live evidence:
 
@@ -360,7 +361,7 @@ Required Firestore checks:
 - active session state before/after
 - no unexpected profile tag mutation
 
-Current status: `NOT_STARTED`
+Current status: `LIVE_DONE`
 
 ## Flow 8: Rate Limit, Opt-Out, Suppression, And Cooldown
 
@@ -390,7 +391,7 @@ Required Firestore checks:
 - send/do-not-send reason
 - active session state
 
-Current status: `NOT_STARTED`
+Current status: `LIVE_DONE`
 
 ## Flow 9: Job Matching Conversation
 
@@ -420,7 +421,7 @@ Required Firestore checks:
 - job rec cache or outbound docs
 - Firestore-visible match reason/evidence
 
-Current status: `NOT_STARTED`
+Current status: `LIVE_DONE`
 
 ## Flow 10: Everyday Catchup
 
@@ -448,7 +449,7 @@ Required Firestore checks:
 - outbound row or no-send audit
 - profile memory/tag fields
 
-Current status: `NOT_STARTED`
+Current status: `LIVE_DONE`
 
 ## Flow 11: Automated Outbound
 
@@ -478,7 +479,7 @@ Required Firestore checks:
 - session routing after reply
 - matching state if outbound is job-related
 
-Current status: `NOT_STARTED`
+Current status: `LIVE_DONE`
 
 ## Flow 12: Firestore Runtime Observability
 
@@ -511,7 +512,7 @@ Required Firestore checks:
 - `pa-employer-visible-profiles`
 - outbound/suppression/cooldown docs if relevant
 
-Current status: `NOT_STARTED`
+Current status: `LIVE_DONE`
 
 ## Required Execution Order
 
