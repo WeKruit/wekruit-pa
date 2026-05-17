@@ -153,6 +153,40 @@ test("processInboundEvent runs agent for non-memory messages", async () => {
   assert.equal(outbound, "assistant reply")
 })
 
+test("completed user explicit job-search request sends generated matches without LLM", async () => {
+  let llmCalls = 0
+  let outbound = ""
+  let force: boolean | undefined
+  const store = makeStore({
+    getOnboardingUser: async () => ({
+      id: "u1",
+      phoneE164: "+13125550123",
+      onboardingState: "complete",
+    }),
+    generateJobRecs: async (_userId, _lang, opts) => {
+      force = opts?.force
+      return {
+        recCount: 2,
+        message: "two roles that line up for you:\n• Software Engineer @ Rain",
+      }
+    },
+    runAgentTurn: async () => {
+      llmCalls++
+      return { text: "assistant reply" }
+    },
+    enqueueOutbound: async (_userId, _to, body) => {
+      outbound = body
+    },
+  })
+  await processInboundEvent({
+    ...baseEvent,
+    body: "Please pull fresh fullstack software engineer roles that fit me.",
+  }, store)
+  assert.equal(llmCalls, 0)
+  assert.equal(force, true)
+  assert.match(outbound, /Software Engineer @ Rain/)
+})
+
 test("processInboundEvent passes a Session and systemInputs into the default agent turn", async () => {
   type Captured = {
     session?: unknown

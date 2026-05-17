@@ -500,6 +500,104 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     assert.equal(sent.length, 1, "second post-terminal follow-up should be handled silently")
   })
 
+  it("yields a recent terminal prescreen when a completed candidate asks for new job matches", async () => {
+    const now = new Date().toISOString()
+    const { db, docs } = makeFakeDb({
+      "pa-users/u1": {
+        onboardingState: "complete",
+        onboardingStatus: "active",
+        pipelineState: { completed: true },
+        workSession: {
+          kind: "job_prescreen",
+          status: "ended",
+          sessionId: "ps_done",
+          jobId: "rain-software-engineer-fullstack-8849f6ef",
+          endedAt: now,
+          boundary: "terminal",
+          terminal: "PASS",
+        },
+      },
+      "pa-prescreen-sessions/ps_done": {
+        sessionId: "ps_done",
+        userId: "u1",
+        jobId: "rain-software-engineer-fullstack-8849f6ef",
+        terminal: "PASS",
+        currentQId: null,
+        createdAt: now,
+        updatedAt: now,
+        workSession: { kind: "job_prescreen", status: "ended", startedAt: now, endedAt: now, boundary: "terminal" },
+      },
+    })
+
+    const sent: string[] = []
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u1",
+      toE164: "+13054507715",
+      replyText: "Can you find me a few software engineering roles that fit my resume?",
+      sendSms: async (args) => {
+        sent.push(args.content)
+        return {
+          status: "queued",
+          from_number: null,
+          number: args.to,
+          content: args.content,
+          service: "iMessage",
+          is_outbound: true,
+        }
+      },
+    })
+
+    assert.equal(result.handled, false)
+    assert.deepEqual(sent, [])
+    const turnEntries = [...docs.entries()].filter(([path]) => path.startsWith("pa-prescreen-sessions/ps_done/turns/"))
+    assert.equal(turnEntries.length, 0)
+  })
+
+  it("yields a recent terminal prescreen when a completed candidate asks to pull role matches", async () => {
+    const now = new Date().toISOString()
+    const { db, docs } = makeFakeDb({
+      "pa-users/u1": {
+        onboardingState: "complete",
+        onboardingStatus: "active",
+        pipelineState: { completed: true },
+        workSession: {
+          kind: "job_prescreen",
+          status: "ended",
+          sessionId: "ps_done",
+          jobId: "rain-software-engineer-fullstack-8849f6ef",
+          endedAt: now,
+          boundary: "terminal",
+          terminal: "PASS",
+        },
+      },
+      "pa-prescreen-sessions/ps_done": {
+        sessionId: "ps_done",
+        userId: "u1",
+        jobId: "rain-software-engineer-fullstack-8849f6ef",
+        terminal: "PASS",
+        currentQId: null,
+        createdAt: now,
+        updatedAt: now,
+        workSession: { kind: "job_prescreen", status: "ended", startedAt: now, endedAt: now, boundary: "terminal" },
+      },
+    })
+
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u1",
+      toE164: "+13054507715",
+      replyText: "Please pull fresh fullstack software engineer roles that fit me.",
+      sendSms: async () => {
+        throw new Error("should not send from prescreen")
+      },
+    })
+
+    assert.equal(result.handled, false)
+    const turnEntries = [...docs.entries()].filter(([path]) => path.startsWith("pa-prescreen-sessions/ps_done/turns/"))
+    assert.equal(turnEntries.length, 0)
+  })
+
   it("yields a recent paused prescreen to an incomplete onboarding location answer", async () => {
     const now = new Date().toISOString()
     const { db, docs } = makeFakeDb({

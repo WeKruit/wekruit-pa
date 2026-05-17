@@ -624,11 +624,14 @@ export type OrchestratorStore = {
    *  - fall back to a deferred-promise line ("first batch lands tomorrow
    *    around 9am") when no live matches exist yet
    * Returns null when LLM/DB lookups fail; deterministic dispatcher then
-   * emits a generic deferred-promise so onboarding always completes.
+   * emits a generic deferred-promise so onboarding always completes. `force`
+   * is reserved for an explicit candidate request and bypasses daily-batch
+   * cooldowns.
    */
   generateJobRecs?(
     userId: string,
-    lang: "zh" | "en"
+    lang: "zh" | "en",
+    opts?: { force?: boolean }
   ): Promise<{ message: string; recCount: number } | null>
 
   /**
@@ -924,6 +927,56 @@ async function sendMemoryReply(store: OrchestratorStore, event: InboundEvent, tu
     role: "assistant",
     idempotencyKey: `outbound-${event.id}`,
   })
+}
+
+function isExplicitJobSearchRequest(text: string | undefined | null): boolean {
+  const body = (text ?? "").trim()
+  if (!body) return false
+  const detected = detectFirstTurnIntent(body)
+  if (detected.intent === "job_search" && detected.confidence === "high") {
+    return true
+  }
+  const normalized = body.toLowerCase()
+  if (/(?:找|推荐|匹配|看看|发)(?:一些|几个|点)?\s*(?:工作|岗位|机会|职位|内推)/.test(normalized)) {
+    return true
+  }
+  return /\b(?:find|get|show|send|pull|recommend|match|search|look\s+for|help\s+me\s+find)\b[^.!?]{0,90}\b(?:jobs?|roles?|positions?|opportunities|openings|listings|matches|swe|software\s+engineering|software\s+engineer)\b/i.test(normalized)
+}
+
+async function handleCompletedUserJobSearchRequest(
+  event: InboundEvent,
+  store: OrchestratorStore,
+  turnId: string,
+  onboardingUser: Awaited<ReturnType<OrchestratorStore["getOnboardingUser"]>>
+): Promise<boolean> {
+  if (onboardingUser?.onboardingState !== "complete") return false
+  if (!store.generateJobRecs) return false
+  if (!isExplicitJobSearchRequest(event.body)) return false
+
+  const lang = detectUserLang(event.body) === "zh" ? "zh" : "en"
+  store.log("pa.runtime.job_search.direct_request", {
+    userId: event.userId,
+    turnId,
+    lang,
+  })
+  const recs = await store.generateJobRecs(event.userId, lang, { force: true })
+  const reply =
+    recs && recs.recCount > 0
+      ? recs.message
+      : lang === "zh"
+        ? "我现在没拉到新的岗位列表。这个请求我记下了, 稍后再试一次。"
+        : "I could not pull fresh roles right now. I saved the request and will try again shortly."
+  await sendMemoryReply(store, event, turnId, reply)
+  await store.updateTurn(turnId, {
+    status: "succeeded",
+    stage: "succeeded",
+    completedAt: store.nowIso(),
+    directIntent: "job_search",
+    directIntentResult: recs && recs.recCount > 0 ? "sent_recs" : "no_recs",
+    directIntentRecCount: recs?.recCount ?? 0,
+  })
+  await store.markEventSucceeded(event.id)
+  return true
 }
 
 async function handleMemoryCommand(
@@ -2089,6 +2142,10 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
             }
           )
       }
+    }
+
+    if (await handleCompletedUserJobSearchRequest(event, store, turnId, onboardingUser)) {
+      return
     }
 
     await store.updateTurn(turnId, {

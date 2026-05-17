@@ -501,6 +501,41 @@ function isLikelyPrescreenContinuationReply(reply: string): boolean {
   return /\b(rain|software engineer|fullstack|full-stack|technical account manager|product manager|product designer)\b/.test(normalized)
 }
 
+function isJobSearchRequest(reply: string): boolean {
+  const normalized = reply.trim().toLowerCase()
+  if (!normalized) return false
+  if (/(?:找|推荐|匹配|看看|发)(?:一些|几个|点)?\s*(?:工作|岗位|机会|职位|内推)/.test(normalized)) {
+    return true
+  }
+  return /\b(?:find|get|show|send|pull|recommend|match|search|look\s+for|help\s+me\s+find)\b[^.!?]{0,80}\b(?:jobs?|roles?|positions?|opportunities|openings|listings|matches|swe|software\s+engineering|software\s+engineer)\b/i.test(normalized)
+}
+
+function isShortTerminalAck(reply: string): boolean {
+  const normalized = reply.trim().toLowerCase()
+  return /^(ok|okay|got it|thanks|thank you|sounds good|明白|收到|好的|谢谢|行|可以)[.!。！\s]*$/i.test(normalized)
+}
+
+function isPostTerminalConstraintUpdate(reply: string): boolean {
+  const normalized = reply.trim().toLowerCase()
+  if (!normalized) return false
+  if (/^(remote|hybrid|onsite|sf|nyc|new york|los angeles|la|bay area|us|usa)\b.{0,80}\b(only|preferred|works|fine|ok|okay)?[.!。！\s]*$/i.test(normalized)) {
+    return true
+  }
+  if (/\b(still|also|actually|for this|about this|constraint|preference|prefer|need|cannot|can't|won't|wouldn'?t)\b(?=.*\b(remote|relocat\w*|location|salary|comp|visa|sponsor|h-?1b|opt|work authorization|authorized|range)\b)/i.test(normalized)) {
+    return true
+  }
+  return false
+}
+
+function isRecentTerminalFollowupReply(reply: string): boolean {
+  if (isJobSearchRequest(reply)) return false
+  return (
+    isLikelyPrescreenContinuationReply(reply) ||
+    isShortTerminalAck(reply) ||
+    isPostTerminalConstraintUpdate(reply)
+  )
+}
+
 async function shouldHandleRecentTerminalSession(args: {
   db: Firestore
   userId: string
@@ -517,8 +552,14 @@ async function shouldHandleRecentTerminalSession(args: {
       error: err instanceof Error ? err.message : String(err),
     })
   }
-  if (!hasIncompleteOnboardingQuestion(user)) return true
-  if (isLikelyPrescreenContinuationReply(args.replyText)) return true
+  if (isRecentTerminalFollowupReply(args.replyText)) return true
+  if (!hasIncompleteOnboardingQuestion(user)) {
+    args.log("prescreen.turn.recent_terminal_guard_yielded_to_runtime", {
+      userId: args.userId,
+      reason: "not_prescreen_followup",
+    })
+    return false
+  }
   args.log("prescreen.turn.recent_terminal_guard_yielded_to_onboarding", {
     userId: args.userId,
     onboardingState: user?.onboardingState ?? null,

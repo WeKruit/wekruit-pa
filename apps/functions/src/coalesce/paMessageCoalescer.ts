@@ -757,7 +757,7 @@ export async function processCoalescedTurn(
 }
 
 const LOVE_TAPBACK_INELIGIBLE_RE =
-  /\b(no|cannot|can't|cant|not able|unable|won't|would not|not a fit|not aligned|too low|need remote|remote only|only remote|relocat(?:e|ion)?|onsite|weekly travel|sponsorship|visa|h-?1b)\b/i
+  /\b(no|cannot|can't|cant|not able|unable|won't|would not|not a fit|not aligned|too low|need remote|remote only|only remote|relocat(?:e|ion)?|onsite|weekly travel|sponsorship|visa|h-?1b|ignore (?:all )?(?:previous|prior) instructions|system prompt|internal instructions|jailbreak|DAN|developer message)\b/i
 
 function isLoveTapbackEligible(body: string): boolean {
   const text = typeof body === "string" ? body.trim() : ""
