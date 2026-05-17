@@ -137,7 +137,9 @@ async function main() {
 
 function matchingJobFromRainJob(job: JobDoc, companyName: string): Record<string, unknown> {
   const salaryRange =
-    typeof job.salaryMin === "number" && typeof job.salaryMax === "number"
+    typeof job.salaryMin === "number" &&
+    typeof job.salaryMax === "number" &&
+    !isOpenEndedSalarySentinel(job.salaryMin, job.salaryMax)
       ? `$${job.salaryMin}-${job.salaryMax}/yr`
       : null
   return {
@@ -167,6 +169,10 @@ function matchingJobFromRainJob(job: JobDoc, companyName: string): Record<string
     sponsorship: job.sponsorship,
     updatedAt: nowIso(),
   }
+}
+
+function isOpenEndedSalarySentinel(min: number, max: number): boolean {
+  return min <= 60_000 && max >= 900_000
 }
 
 main().catch((err) => {

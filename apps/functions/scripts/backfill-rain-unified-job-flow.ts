@@ -120,9 +120,9 @@ function matchingJobFromPaJob(jobId: string, job: JobData): Record<string, unkno
   const salaryMin = num(job.salaryMin)
   const salaryMax = num(job.salaryMax)
   const salaryRange =
-    salaryMin !== null && salaryMax !== null
+    salaryMin !== null && salaryMax !== null && !isOpenEndedSalarySentinel(salaryMin, salaryMax)
       ? `$${salaryMin}-${salaryMax}/yr`
-      : str(job.salaryRange) ?? undefined
+      : visibleSalaryText(str(job.salaryRange)) ?? undefined
 
   return {
     jobId,
@@ -159,6 +159,17 @@ function str(value: unknown): string | undefined {
 
 function num(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null
+}
+
+function isOpenEndedSalarySentinel(min: number, max: number): boolean {
+  return min <= 60_000 && max >= 900_000
+}
+
+function visibleSalaryText(value: string | undefined): string | undefined {
+  if (!value) return undefined
+  const compact = value.toLowerCase().replace(/[\s,]/g, "")
+  if (/\b999000\b|\b999k\b/.test(compact)) return undefined
+  return value
 }
 
 function arr(value: unknown): unknown[] {

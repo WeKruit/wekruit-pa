@@ -199,7 +199,7 @@ export function deriveJobOpportunityDraft(input: JobOpportunityDraftInput): JobO
       status: "draft",
       approved: false,
       approvalReady,
-      questions: buildQuestions(tags, salaryRange, input.rawJob.title),
+      questions: buildQuestions(tags, salaryRange, input.rawJob.title, input.rawJob.locationRaw),
     },
     scoringRubric: buildScoringRubric(tags),
     candidateBrief: buildCandidateBrief(input),
@@ -241,8 +241,13 @@ function buildQuestions(
   tags: JobOpportunityDraftInput["enrichedJobTags"],
   salaryRange: JobOpportunityDraftInput["rawJob"]["salaryRange"] | null,
   title?: string,
+  locationRaw?: string,
 ): JobOpportunityDraft["prescreenConfigDraft"]["questions"] {
   const roleLabel = humanizeRoleContext(title, tags.roleFunction)
+  const locationLabel = typeof locationRaw === "string" && locationRaw.trim()
+    ? locationRaw.trim()
+    : tags.locationBuckets?.map((bucket) => bucket.replace(/_/g, " ")).join(", ")
+  const salaryLabel = salaryRangeLabel(salaryRange)
   const questions: JobOpportunityDraft["prescreenConfigDraft"]["questions"] = [
     {
       id: "role_fit",
@@ -264,7 +269,9 @@ function buildQuestions(
   if ((tags.locationBuckets ?? []).length > 0) {
     questions.push({
       id: "location_alignment",
-      prompt: "Does this location or remote setup work for you?",
+      prompt: locationLabel
+        ? `This role is listed for ${locationLabel}. Does that location or remote setup work for you?`
+        : "Does this location or remote setup work for you?",
       required: true,
       rubricDimensionId: "location_alignment",
     })
@@ -273,7 +280,9 @@ function buildQuestions(
   if (salaryRange) {
     questions.push({
       id: "compensation_alignment",
-      prompt: "Is this compensation range aligned with what you are targeting?",
+      prompt: salaryLabel
+        ? `This role is listed at ${salaryLabel}. Is that aligned with what you are targeting?`
+        : "Is this compensation range aligned with what you are targeting?",
       required: true,
       rubricDimensionId: "compensation_alignment",
     })
@@ -287,6 +296,23 @@ function buildQuestions(
   })
 
   return questions
+}
+
+function salaryRangeLabel(salaryRange: JobOpportunityDraftInput["rawJob"]["salaryRange"] | null): string | null {
+  if (!salaryRange) return null
+  const min = typeof salaryRange.min === "number" && Number.isFinite(salaryRange.min) ? salaryRange.min : null
+  const max = typeof salaryRange.max === "number" && Number.isFinite(salaryRange.max) ? salaryRange.max : null
+  const currency = salaryRange.currency ?? "USD"
+  const unit = currency === "USD" ? "$" : `${currency} `
+  if (min !== null && max !== null) return `${unit}${compactSalary(min)}-${compactSalary(max)}/yr`
+  if (min !== null) return `${unit}${compactSalary(min)}+/yr`
+  if (max !== null) return `up to ${unit}${compactSalary(max)}/yr`
+  return null
+}
+
+function compactSalary(value: number): string {
+  if (value >= 1000) return `${Math.round(value / 1000)}K`
+  return String(value)
 }
 
 const ROLE_FUNCTION_LABELS: Record<string, string> = {
