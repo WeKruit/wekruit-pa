@@ -1164,6 +1164,87 @@ function parseLocationValue(raw: unknown): LocationAnswer | null {
   return null
 }
 
+const LOCATION_REPLY_PATTERNS: { value: string; patterns: RegExp[] }[] = [
+  {
+    value: "nyc",
+    patterns: [/\bnyc\b/i, /\bnew\s+york(?:\s+city)?\b/i],
+  },
+  {
+    value: "sf",
+    patterns: [/\bsf\b/i, /\bs\.?\s*f\.?\b/i, /\bsan\s+francisco\b/i, /\bsfran\b/i],
+  },
+  {
+    value: "bay_area",
+    patterns: [/\bbay\s+area\b/i],
+  },
+  {
+    value: "remote",
+    patterns: [/\bremote\b/i, /\bwork\s+from\s+home\b/i, /远程|远端|线上/i],
+  },
+  {
+    value: "anywhere",
+    patterns: [/\banywhere\b/i, /\beverywhere\b/i, /\bopen\s+to\s+any\b/i, /都行|哪都行|无所谓|都可以/i],
+  },
+  { value: "seattle", patterns: [/\bseattle\b/i] },
+  {
+    value: "los_angeles",
+    patterns: [/\blos\s+angeles\b/i, /\bla\b/i],
+  },
+  { value: "boston", patterns: [/\bboston\b/i] },
+  { value: "chicago", patterns: [/\bchicago\b/i] },
+  { value: "austin", patterns: [/\baustin\b/i] },
+  { value: "toronto", patterns: [/\btoronto\b/i] },
+  { value: "vancouver", patterns: [/\bvancouver\b/i] },
+  { value: "london", patterns: [/\blondon\b/i] },
+  { value: "berlin", patterns: [/\bberlin\b/i] },
+  { value: "paris", patterns: [/\bparis\b/i] },
+  { value: "amsterdam", patterns: [/\bamsterdam\b/i] },
+  { value: "shanghai", patterns: [/\bshanghai\b/i, /上海/i] },
+  { value: "beijing", patterns: [/\bbeijing\b/i, /北京/i] },
+  { value: "hangzhou", patterns: [/\bhangzhou\b/i, /杭州/i] },
+  { value: "shenzhen", patterns: [/\bshenzhen\b/i, /深圳/i] },
+  { value: "guangzhou", patterns: [/\bguangzhou\b/i, /广州/i] },
+]
+
+function parseLocationReply(reply: string): LocationAnswer | null {
+  const text = reply
+    .toLowerCase()
+    .replace(/[’‘]/g, "'")
+    .replace(/\s+/g, " ")
+    .trim()
+  if (!text) return null
+
+  const hits: { value: string; index: number }[] = []
+  for (const entry of LOCATION_REPLY_PATTERNS) {
+    let firstIndex: number | null = null
+    for (const pattern of entry.patterns) {
+      pattern.lastIndex = 0
+      const match = pattern.exec(text)
+      if (!match?.[0]) continue
+      if (
+        entry.value === "remote" &&
+        /\b(no|not|never|don't|do not)\s+remote\b/i.test(text)
+      ) {
+        continue
+      }
+      const index = match.index
+      firstIndex = firstIndex === null ? index : Math.min(firstIndex, index)
+    }
+    if (firstIndex !== null) hits.push({ value: entry.value, index: firstIndex })
+  }
+
+  if (hits.length === 0) return null
+  const seen = new Set<string>()
+  return hits
+    .sort((a, b) => a.index - b.index)
+    .map((hit) => hit.value)
+    .filter((value) => {
+      if (seen.has(value)) return false
+      seen.add(value)
+      return true
+    })
+}
+
 /**
  * Bloom regex for the most common one-word location replies.
  * NEVER blocks — the LLM owns ambiguous cases.
@@ -1265,6 +1346,7 @@ export function makeLocationQuestion(
       hints,
       examples: LOCATION_EXAMPLES,
       parseValue: parseLocationValue,
+      parseReply: parseLocationReply,
     }),
     rephraser: new HybridRephraser({
       variants: promptVariants.reAsks,

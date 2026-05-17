@@ -884,6 +884,102 @@ Verdict:
 - The active prescreen session records the blocked turn for dashboard/session observability.
 - These safety/privacy prompts no longer receive positive tapbacks.
 
+## Layoff Onboarding Route Isolation - q_location Regression
+
+Timestamp: 2026-05-17 14:05 ET
+
+Root cause:
+
+- The visible bug looked like route leakage because the same question repeated after the candidate answered location:
+  - Claire: `ok, within that country/region, any city or remote preference? a city / region / 'remote' / 'anywhere' all work`
+  - Candidate: `NYC or remote is best. I’m also open to San Francisco for the right early-stage role.`
+  - Claire incorrectly re-asked: `city / region / or just 'remote' is fine`
+- Firestore showed route ownership was correct:
+  - `pa-users/U7AwKT8nLDRa35DkuBxq.workSession.kind`: `layoff_onboarding`
+  - `workSession.status`: `active`
+  - `workSession.boundary`: `onboarding`
+  - `pipelineState.currentQId`: `q_location`
+- The actual failure was not cross-route leakage. `q_location` had no deterministic `parseReply`; common explicit location text depended on the LLM judge and was rejected as `unclear`.
+
+Fix:
+
+- Added deterministic `q_location` reply parsing in `packages/pa-orchestrator/src/onboarding/questions.ts`.
+- Covered explicit city/region/remote terms including `NYC`, `remote`, `San Francisco`, Bay Area, and common US/international cities.
+- Wired the parser into `makeLocationQuestion()` before LLM fallback.
+- Added regression coverage in `packages/pa-orchestrator/src/onboarding/__tests__/q-location.test.ts` using the exact live failing phrase.
+
+Automated verification:
+
+- Targeted Node 24 command:
+  - `/Users/adam/.nvm/versions/node/v24.3.0/bin/node --import tsx --test packages/pa-orchestrator/src/onboarding/__tests__/q-location.test.ts packages/pa-orchestrator/src/onboarding/__tests__/sim/sim-country-then-location.test.ts packages/pa-orchestrator/src/__tests__/apply-onboarding-parsed-answer.test.ts`
+  - Result: `31` tests passed.
+- Firebase functions predeploy during deploy:
+  - runtime: `nodejs24`
+  - Result: `1726` tests passed, `316` suites passed, `0` failed.
+- Broader `pnpm --filter @pa/pa-orchestrator test` was also run:
+  - Result: `1592` passed, `3` failed.
+  - Failures were unrelated to this change: `src/__tests__/onboarding-intent-ack.test.ts` with `TypeError: userRef.update is not a function` in the test fake.
+
+Deploy proof:
+
+- First targeted deploy failed because function filters omitted the codebase prefix:
+  - Error: `No function matches given --only filters.`
+- Correct deployed command used codebase-qualified filters:
+  - `functions:pa-orchestrator:onPaInbound`
+  - `functions:pa-orchestrator:paMessageCoalescer`
+  - `functions:pa-orchestrator:paCoalesceBufferSweep`
+  - `functions:pa-orchestrator:paSendblueWebhook`
+- Deploy result: all four Node.js 24 second-gen functions updated successfully.
+
+Live iMessage proof:
+
+- Test number: `+1 (305) 450-7715` only.
+- Candidate sent at 14:05 ET:
+  - `NYC, remote, or San Francisco.`
+- Claire did not repeat the location question.
+- Claire advanced to next processing:
+  - `hold on, reading now — a min or two`
+  - `looks like c++ / java / javascript / python / c# + Software Engineer Intern @ Tesla Inc. — pulling matches in that lane`
+
+Firestore proof:
+
+- `pa-users/U7AwKT8nLDRa35DkuBxq.pipelineState`:
+  - `completed`: `true`
+  - `currentQId`: `null`
+  - `collected.q_location`: `["nyc", "remote", "sf"]`
+  - `attempts.q_location`: `0`
+- `pa-users/U7AwKT8nLDRa35DkuBxq.workSession`:
+  - `kind`: `layoff_onboarding`
+  - `status`: `ended`
+  - `boundary`: `complete`
+  - `currentState`: `complete`
+  - `endedAt`: `2026-05-17T18:05:31.440Z`
+- `pa-users/U7AwKT8nLDRa35DkuBxq.statedPreferences.targetLocations`:
+  - `["nyc", "remote", "sf"]`
+- `pa-users/U7AwKT8nLDRa35DkuBxq.tags.targetLocations`:
+  - `["new_york_metro", "remote_united_states", "san_francisco_bay_area"]`
+- Latest inbound:
+  - `pa-inbound-events/inb_0217240658f063db8fde3f7e6f74db053fb927a4`
+  - `createdAt`: `2026-05-17T18:05:25.826Z`
+  - `status`: `succeeded`
+  - `body`: `NYC, remote, or San Francisco.`
+  - `sessionId`: `ses_62990f32ce66925df13ae2accc126a22`
+- Latest outbound:
+  - `pa-outbound/5de06d1a-ba59-4c36-8524-e38ebbd321b3`
+  - `body`: `hold on, reading now — a min or two`
+  - `status`: `sent`
+  - `sessionId`: `ses_62990f32ce66925df13ae2accc126a22`
+  - `pa-outbound/27e0e46e-9fde-49f5-bd7e-37d24f60b389`
+  - `body`: `looks like c++ / java / javascript / python / c# + Software Engineer Intern @ Tesla Inc. — pulling matches in that lane`
+  - `status`: `sent`
+  - `sessionId`: `ses_62990f32ce66925df13ae2accc126a22`
+
+Verdict:
+
+- Route isolation was not the broken layer.
+- The broken layer was slot acceptance inside the correct `layoff_onboarding` route.
+- `q_location` now accepts clear natural location replies deterministically, writes canonical candidate preferences/tags, and completes the layoff onboarding work session instead of re-asking the same question.
+
 ## Remaining Matrix Status
 
 The narrowed work completed the live job-prescreen lane that blocked this goal:
@@ -907,7 +1003,7 @@ The narrowed work completed the live job-prescreen lane that blocked this goal:
 The broader customer-visible matrix in `.planning/CLAIRE-CUSTOMER-VISIBLE-IMESSAGE-QA-GOAL.md` still lists other flows as future test work unless separately executed:
 
 - Normal candidate onboarding
-- Layoff onboarding
+- Layoff onboarding beyond the verified `q_location` route-isolation regression
 - Privacy delete and remaining abuse/security cases
 - Everyday catchup and automated outbound
 - Isolated rate-limit/opt-out/suppression UX

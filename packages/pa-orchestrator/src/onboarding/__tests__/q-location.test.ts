@@ -16,7 +16,7 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { GuidedOpenJudge, type LlmCallFn } from "../judges/guided-open.js"
 import type { JudgeCtx } from "../question.js"
-import type { LocationAnswer } from "../questions.js"
+import { makeLocationQuestion, type LocationAnswer } from "../questions.js"
 
 function ctx(): JudgeCtx {
   return { userId: "u", turnId: "t" }
@@ -218,6 +218,18 @@ test("q-location: 'pizza' (nonsense) → unclear", async () => {
   const r = await J.judge("pizza", "en", ctx())
   assert.equal(r.accept, false)
   if (!r.accept) assert.equal(r.reason, "unclear")
+})
+
+test("q-location: live layoff answer accepts NYC, remote, and San Francisco without LLM", async () => {
+  const q = makeLocationQuestion(["usa", "canada"])
+  const r = await q.judge.judge(
+    "NYC or remote is best. I’m also open to San Francisco for the right early-stage role.",
+    "en",
+    ctx()
+  )
+
+  assert.equal(r.accept, true)
+  if (r.accept) assert.deepEqual(r.value, ["nyc", "remote", "sf"])
 })
 
 test("q-location: empty → irrelevant (no LLM)", async () => {
