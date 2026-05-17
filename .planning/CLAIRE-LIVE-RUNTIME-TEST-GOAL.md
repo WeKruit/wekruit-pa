@@ -92,6 +92,7 @@ A flow is not complete unless it has all required evidence:
 
 - Real conversation evidence: real iMessage only, not mocked outbound and not browser/candidate-web chat.
 - Firestore evidence: exact docs and fields for session, turns, profile, memory, tags, state, outbound, suppression, or rate-limit records.
+- Synthetic canary evidence: rate-limit, abuse, suppression, cooldown, and similar seeded canaries are mechanics proof only unless they are run in a clean candidate thread and read naturally as a real user conversation. If they are run in the canonical candidate thread with artificial setup text, clearly exclude them from transcript-quality pass evidence.
 - No dashboard/UI evidence requirement: dashboard, candidate web UI, and admin UI are already considered outside this goal.
 - Transcript quality review: Claire must sound like a recruiter friend probing candidate experience, not a rigid form, not an abrupt judge.
 - User identity guard: use canonical test identity unless the scenario explicitly tests controlled user creation.
@@ -409,6 +410,7 @@ Edge cases to verify:
 
 - Matching uses canonical `pa-users` profile/tags.
 - Job recommendations only show public/live eligible jobs.
+- Every visible job recommendation must include a candidate-usable URL and a requirements line; callers must use the shared job-recommendation message item interface rather than ad hoc formatting.
 - Feedback updates matching preference/evidence.
 - Active prescreen blocks or defers unrelated matching conversation appropriately.
 - Matching reason/evidence updates in Firestore where applicable.

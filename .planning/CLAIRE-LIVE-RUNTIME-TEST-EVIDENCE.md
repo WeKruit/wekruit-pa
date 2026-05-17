@@ -79,8 +79,8 @@ Important baseline finding:
 | Job prescreen weak candidate | LIVE_DONE | Real iMessage weak run probed repeatedly before `HARD_STOP` | Session, memory tags, and user/candidate state verified | No false positive skill tags were added. |
 | Pause/restart/supersede | LIVE_DONE | Real iMessage restart, opt-out send failure, natural pause, and clean pause rerun verified | User-level `workSession`, session boundary, inbound status, and memory event verified | See Flow 6 and Flow 7. |
 | Privacy/abuse/security | LIVE_DONE | Prompt injection blocked; privacy summary and export request verified through real iMessage | Abuse events, deterministic privacy outbound, `pa-privacy-requests`, and audit rows verified | Found and fixed prompt-injection tapback and privacy LLM fallback defects. |
-| Rate limit/opt-out/suppression/cooldown | LIVE_DONE | `Stop` provider opt-out produced real send failure; `START` restored test line; live rate-limit canary returned clear iMessage copy | Send-failed session ended with `boundary=send_failed`; rate-limit, abuse, audit, and lifecycle suppression rows verified | Production canaries covered cooldown, active-session, and opt-out suppression without sending outbound. |
-| Job matching conversation | LIVE_DONE | Real iMessage post-terminal match explanation and fresh job-search requests verified | `pa-inbound-events`, `pa-turns`, `pa-outbound`, and completed `pa-users.workSession` verified | Found and fixed lifecycle swallow, terminal guard swallow, missing explanation context, and F2 numbered-list truncation. |
+| Rate limit/opt-out/suppression/cooldown | LIVE_DONE_MECHANICS_ONLY_FOR_SYNTHETIC_CANARIES | `Stop` provider opt-out produced real send failure; `START` restored test line; live rate-limit canary returned clear iMessage copy | Send-failed session ended with `boundary=send_failed`; rate-limit, abuse, audit, and lifecycle suppression rows verified | Synthetic rate-limit/cooldown/suppression canaries are mechanics proof only and are excluded from canonical transcript-quality pass evidence unless rerun in an isolated clean test thread. |
+| Job matching conversation | LIVE_DONE_WITH_JOB_REC_URL_CONTRACT | Real iMessage post-terminal match explanation, fresh job-search requests, and job-rec URL/requirements proof verified | `pa-inbound-events`, `pa-turns`, `pa-outbound`, completed `pa-users.workSession`, and `pa-outbound/f4b85b20-8a94-4928-b975-c576f8bd184d` verified | Found and fixed lifecycle swallow, terminal guard swallow, missing explanation context, F2 numbered-list truncation, and ad hoc job-rec formatting without required URL/requirements lines. |
 | Everyday catchup | LIVE_DONE | Real lifecycle profile check-in outbound was replied to over iMessage, then retested after fix | Lifecycle event, turn, outbound, memory fact, tags, and user preference writes verified | Found and fixed lifecycle replies falling into generic LLM without profile/tag updates. |
 | Automated outbound | LIVE_DONE | PASS/HARD_STOP prescreen terminal actions and lifecycle profile-check outbound both sent real iMessages | `pa-outbound` terminal rows and lifecycle reply outbound verified with sent/delivered status | Broad daily scheduler cadence is not load-tested in this narrowed live lane. |
 | Firestore runtime observability | LIVE_DONE_FOR_PRESCREEN | Every live prescreen state was checked via Firestore snapshot | `pa-prescreen-sessions`, `pa-users.workSession`, `pa-inbound-events`, `pa-prescreen-memory-events` | Dashboard not used as evidence. |
@@ -434,6 +434,7 @@ Live rate-limit proof:
 
 - Seeded the current rate-limit window with canary id `flow8_rate_limit_1778988473088`, then sent one real iMessage: `Flow 8 rate limit canary. Please ignore this test message.`
 - Claire replied in Messages: `You’re sending a bit too fast. Give it a few seconds and try again.`
+- Transcript-quality scope: this rate-limit message was intentionally synthetic and was sent in the canonical candidate thread with explicit test wording. It proves the runtime mechanics and visible safety copy, but it is excluded from customer-conversation UX pass evidence. Future rate-limit/abuse/suppression canaries should use an isolated clean test thread when the goal is transcript-quality acceptance.
 - Firestore proof:
   - `pa-rate-limits/imessage_U7AwKT8nLDRa35DkuBxq_1778988480000`: `count=21`, `channel=imessage`, `windowStartedAt=2026-05-17T03:28:00.000Z`, `canaryId=flow8_rate_limit_1778988473088`.
   - `pa-inbound-events/inb_fe91cdcb1e9049252c5c79527879bf41e2b1eb2d`: `status=completed`, `routedTo=claire_orchestrator`, `sessionId=ses_62990f32ce66925df13ae2accc126a22`.
@@ -1033,6 +1034,36 @@ Live post-terminal match-explanation pass after fixes and deploy:
   - `boundary=terminal`
   - `terminal=PASS`
   - The explanation turn did not reopen or mutate the completed prescreen session.
+
+Live job-recommendation URL/requirements contract proof:
+
+- Customer-visible bug found after the match-conversation pass: a later visible job recommendation did not reliably include a candidate-usable job URL.
+- Fix: all job recommendation send paths now compose through the shared `JobRecommendationMessageItem` interface in `apps/functions/src/job-rec-copy.ts`. A message item cannot be created without a usable URL, and the shared composer always renders:
+  - role title and company
+  - standalone URL
+  - `requirements:` line
+  - optional reason
+- Call sites updated: onboarding/runtime job recs, post-PII job recs, prescreen terminal job recs, and the `__PA_FIND_MATCH__` admin trigger path.
+- Test/deploy proof:
+  - Targeted contract/runtime tests: `55/55` passing.
+  - Full functions predeploy suite: `1727/1727` passing.
+  - Deployed Node.js 24 Gen2 functions: `paSendblueWebhook`, `onPaInbound`, `paMessageCoalescer`, `paCoalesceBufferSweep`, `openInitiateSmsPrescreen`, `paCandidateLifecycleTrigger`.
+- Live iMessage proof:
+  - Sent via `pa-outbound` to canonical candidate phone `+14243201960` from Claire sender thread `+13054507715`.
+  - Visible Messages bubble at 2026-05-17 17:29 ET showed three recommendation blocks.
+  - Each block had a clickable URL and a `requirements:` line:
+    - `Senior Software Engineer, Data Governance & Foundations @ instacart` -> `https://instacart.careers/job/?gh_jid=7776249`, `requirements: sql, python, data modeling`
+    - `Senior Software Engineer, Reputation @ airbnb` -> `https://careers.airbnb.com/positions/7775710?gh_jid=7775710`, `requirements: see the job post for the full requirements`
+    - `Senior Detection Engineer @ instacart` -> `https://instacart.careers/job/?gh_jid=7793661`, `requirements: python, sql, linux, kafka, aws`
+- Direct Firestore proof, re-read after deploy:
+  - `pa-outbound/f4b85b20-8a94-4928-b975-c576f8bd184d`
+  - `userId=U7AwKT8nLDRa35DkuBxq`
+  - `toE164=+14243201960`
+  - `status=sent`
+  - `sendblueStatus=DELIVERED`
+  - `createdAt=2026-05-17T21:29:28.697Z`
+  - `sentAt=2026-05-17T21:29:35.866Z`
+  - verifier result: `bodyHasUrl=true`, `bodyHasRequirements=true`, `blockCount=3`, and every block had `hasUrl=true` plus `hasRequirements=true`.
 
 Residual non-blocking data note:
 
