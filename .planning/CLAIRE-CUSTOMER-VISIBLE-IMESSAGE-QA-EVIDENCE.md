@@ -118,6 +118,83 @@ Verdict:
 - The PASS ending is no longer noisy.
 - The Firestore session state matches the visible conversation.
 
+## Flow 3 - Weak Candidate Hard Stop
+
+Status: `UX_DONE`
+
+Pre-fix live session:
+
+- Firestore doc: `pa-prescreen-sessions/ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260517T061008006Z`
+- Visible start: 2026-05-17 02:10 ET
+- Visible terminal: 2026-05-17 02:22 ET
+
+Pre-fix visible defects:
+
+1. Claire sent a love tapback after the candidate wrote: `I have not done software engineering work... I did not write code for a production system.`
+2. Claire correctly probed across five weak turns before `HARD_STOP`, but then immediately sent `Other roles that may fit:` with engineering jobs based on stale global tags.
+
+Pre-fix Firestore proof:
+
+- `terminal`: `HARD_STOP`
+- `terminalReason`: `MUST_HAVE failed at qId=role_fit s=0.05 c=0.90`
+- `score`: `0`
+- `scoreMax`: `4`
+- `workSession.status`: `ended`
+- `workSession.boundary`: `terminal`
+- `terminalActionResult.level1Sent`: `false`
+- `terminalActionResult.jobRecsFired`: `true`
+- Turn count: `5`
+
+Fixes applied after this run:
+
+- `apps/functions/src/coalesce/paMessageCoalescer.ts`
+  - Expanded the love-tapback hard filter to include explicit no-code/no-experience wording such as `did not`, `have not`, `not done`, `without`, `no experience`, and support-only phrasing.
+- `apps/functions/src/prescreen-terminal-action.ts`
+  - Split `FAIL` and `HARD_STOP`.
+  - `FAIL` still starts the better-fit recommendation chain.
+  - `HARD_STOP` now preserves/contact-captures the candidate but does not send an immediate job recommendation list from stale global tags.
+
+Post-fix live session:
+
+- Firestore doc: `pa-prescreen-sessions/ps_rain-software-engineer-fullstack-8849f6ef_U7AwKT8nLDRa35DkuBxq_20260517T062814683Z`
+- Visible start: 2026-05-17 02:28 ET
+- Visible terminal: 2026-05-17 02:35 ET
+
+Visible transcript summary:
+
+1. Claire asked for recent software engineering work.
+2. Candidate answered explicitly weak: no software engineering work, no code, support tickets, spreadsheets, and escalations.
+3. No love tapback was sent.
+4. Claire did not reject immediately. It probed for the closest tech project, exact support tools, systems/logs/DB exposure, hardest failure mode, repro changes, shipped artifact, and measurable outcome.
+5. Candidate repeatedly clarified that the work was documented repro/support ops, not software shipping.
+6. Claire ended with:
+   - `Thanks, that helps. I do not want to force-fit you into this exact role, so I will pause this screen here and use what you shared to look for better-aligned roles.`
+   - `We already have your contact details on file - I’ll text you when a stronger fit comes through.`
+7. No `Other roles that may fit:` list appeared after the hard stop.
+
+Firestore proof:
+
+- `terminal`: `HARD_STOP`
+- `terminalReason`: `MUST_HAVE failed at qId=role_fit s=0.05 c=0.90`
+- `score`: `0`
+- `scoreMax`: `4`
+- `currentQId`: `null`
+- `workSession.status`: `ended`
+- `workSession.boundary`: `terminal`
+- `workSession.endedAt`: `2026-05-17T06:35:40.524Z`
+- `terminalActionResult.level1Sent`: `false`
+- `terminalActionResult.jobRecsFired`: `false`
+- `terminalActionResult.jobRecsCount`: `0`
+- Turn count: `5`
+- Latest memory event evidence tags on `pa-users/U7AwKT8nLDRa35DkuBxq`: `["job_prescreen"]`
+- Latest memory event `scored`: `[]`
+
+Verdict:
+
+- The hard-stop flow now gives the candidate multiple chances to explain adjacent experience, then stops without over-matching stale engineering roles.
+- The visible transcript is coherent for a weak/no-code candidate.
+- The session, turn, terminal-action, and memory-event state match the visible conversation.
+
 ## Data Repair
 
 Problem:
@@ -148,8 +225,10 @@ Tests:
 
 - `node --import ./apps/functions/node_modules/tsx/dist/esm/index.mjs --test apps/functions/src/__tests__/pii-confirm-start.test.ts`
   - Result: `2` tests passed.
+- `node --import ./apps/functions/node_modules/tsx/dist/esm/index.mjs --test apps/functions/src/coalesce/__tests__/paMessageCoalescer.test.ts apps/functions/src/prescreen-terminal-action.test.ts`
+  - Result: `54` tests passed, `24` suites passed.
 - `npm run test --workspace=@pa/functions`
-  - Result: `1718` tests passed, `315` suites passed.
+  - Result: `1719` tests passed, `315` suites passed.
 
 Build:
 
@@ -172,15 +251,17 @@ The narrowed work completed the live job-prescreen lane that blocked this goal:
 
 - Adjacent/fragmented candidate: `UX_DONE`
 - Strong candidate PASS regression: `UX_DONE`
+- Weak candidate hard-stop: `UX_DONE`
 - PASS duplicate contact-details ending: fixed, deployed, and live verified.
 - Post-PASS job recommendations: fixed and Firestore verified as `jobRecsFired:false`.
+- Post-HARD_STOP immediate job recommendations: fixed and Firestore verified as `jobRecsFired:false`.
+- Love tapback on explicit no-code weak answer: fixed and live verified absent.
 - Rain compensation sentinel in prescreen: repaired and live transcript verified clean.
 
 The broader customer-visible matrix in `.planning/CLAIRE-CUSTOMER-VISIBLE-IMESSAGE-QA-GOAL.md` still lists other flows as future test work unless separately executed:
 
 - Normal candidate onboarding
 - Layoff onboarding
-- Weak candidate hard-stop
 - Pause/restart/supersede
 - Privacy/safety/abuse
 - Job matching conversation

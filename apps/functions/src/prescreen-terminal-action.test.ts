@@ -2,7 +2,7 @@
  * v1.9 Phase 84 + hotfix — terminal action handler tests.
  *
  * Updated for new chain: PASS/FAIL/HARD_STOP → start PII confirm pipeline.
- * generateJobRecs fires async from PII onComplete hook (after 3 Qs).
+ * generateJobRecs fires async from PII onComplete hook for FAIL only.
  */
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
@@ -380,7 +380,7 @@ describe("runPrescreenTerminalAction — FAIL branch (v1.9 hotfix)", () => {
 })
 
 describe("runPrescreenTerminalAction — HARD_STOP branch (v1.9 hotfix)", () => {
-  it("same as FAIL: preamble + PII (source=fail) + job recs", async () => {
+  it("starts PII but does not send preamble or immediate job recs", async () => {
     const docs = setupSession({
       sessionId: "s4",
       jobId: "j4",
@@ -408,10 +408,12 @@ describe("runPrescreenTerminalAction — HARD_STOP branch (v1.9 hotfix)", () => 
         return { ok: true, jobCount: 4 }
       },
     })
-    assert.match(sent[0], /better-aligned/i)
+    assert.deepEqual(sent, [])
     assert.equal(piiCaptures[0].source, "fail")
-    assert.equal(jobRecsCalled, true)
+    assert.equal(jobRecsCalled, false)
     assert.ok(updates.some((u) => "terminalActionFiredAt" in u.data))
+    const terminalUpdate = updates.find((u) => u.path === "pa-prescreen-sessions/s4" && "terminalActionResult" in u.data)
+    assert.equal((terminalUpdate?.data.terminalActionResult as { jobRecsFired?: boolean } | undefined)?.jobRecsFired, false)
   })
 
   it("does not derive positive skill tags from a low-score hard-stop or job id", async () => {

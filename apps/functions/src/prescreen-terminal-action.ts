@@ -6,13 +6,11 @@
  *
  *   - TERMINAL-01: PASS → reveal employer next step; do not push unrelated recs
  *   - TERMINAL-02: FAIL → fire generateJobRecs(userId) with "match other jobs?"
- *   - TERMINAL-03 (v1.9 hotfix 2026-05-12): HARD_STOP → SAME as FAIL.
- *     Type-gate-fail (the dominant HARD_STOP cause in production — candidate
- *     missed a hard requirement) deserves "match other jobs?" follow-up.
- *     Original spec carved out HARD_STOP for "policy violation / abuse" —
- *     but type_gate_fail is NOT abuse, it's just a poor fit for this role.
- *     Reserve no-auto-action for explicit abort_hint = "abuse" / "decline"
- *     (future work).
+ *   - TERMINAL-03: HARD_STOP → retain/contact candidate only, no immediate recs.
+ *     A hard stop means a must-have failed with high confidence. Immediate
+ *     recommendations can over-trust stale global tags and contradict the
+ *     just-finished transcript, so matching should happen later from the
+ *     broader candidate pool.
  *   - TERMINAL-04: PAUSE → write pausedAt + no auto-action
  *   - TERMINAL-05: fail-open + audit event for each fire
  *   - TERMINAL-06: idempotency keyed (sessionId, terminal)
@@ -644,8 +642,8 @@ export async function runPrescreenTerminalAction(
     // Kick off PII confirm for contact capture. PASS already hands off to the
     // employer, so do not immediately push unrelated job recommendations.
     piiStarted = await startPiiWithRecsChain(args, "pass", genJobRecs, log, { fireJobRecs: false })
-  } else if (args.terminal === "FAIL" || args.terminal === "HARD_STOP") {
-    // TERMINAL-02 + TERMINAL-03 — preamble first, then PII collect, then recs.
+  } else if (args.terminal === "FAIL") {
+    // TERMINAL-02 — preamble first, then PII collect, then recs.
     try {
       await send({ to: args.toE164, content: composeFailJobRecsPreamble(args.lang), userId: args.userId, db: args.db })
     } catch (err) {
@@ -655,12 +653,17 @@ export async function runPrescreenTerminalAction(
       })
     }
     piiStarted = await startPiiWithRecsChain(args, "fail", genJobRecs, log)
+  } else if (args.terminal === "HARD_STOP") {
+    // TERMINAL-03 — preserve the candidate in the pool, but do not push
+    // immediate job recommendations from stale global tags after a must-have
+    // failure in the visible transcript.
+    piiStarted = await startPiiWithRecsChain(args, "fail", genJobRecs, log, { fireJobRecs: false })
   } else if (args.terminal === "PAUSE") {
     await sessRef.update({ pausedAt: now().toISOString() })
   }
   // jobRecsFired/Result are stamped by the PII onComplete chain (async).
   // We log piiStarted here for observability.
-  jobRecsFired = piiStarted && (args.terminal === "FAIL" || args.terminal === "HARD_STOP")
+  jobRecsFired = piiStarted && args.terminal === "FAIL"
 
   // ── Stamp idempotency + audit ──────────────────────────────────────────
   const stampIso = now().toISOString()

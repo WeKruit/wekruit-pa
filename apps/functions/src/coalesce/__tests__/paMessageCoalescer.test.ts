@@ -1329,6 +1329,19 @@ describe("iter33 Bug 9: love-tapback rate gate", () => {
     assert.equal(reactionCalls.length, 0, "negative hard-filter answers must not receive a love tapback")
   })
 
+  it("explicit no-code prescreen answer skips tapback even when rng would fire", async () => {
+    const { reactionCalls, status } = await setupAndProcess(
+      (deps) => {
+        deps.loveTapbackProbability = 1
+        deps.rng = () => 0.0
+      },
+      "msg-no-code-prescreen",
+      "I have not done software engineering work. I did not write code for a production system."
+    )
+    assert.equal(status, "fired")
+    assert.equal(reactionCalls.length, 0, "explicit no-code answers must not receive a love tapback")
+  })
+
   it("prompt-injection probes skip tapback even when rng would fire", async () => {
     const { reactionCalls, status } = await setupAndProcess(
       (deps) => {
