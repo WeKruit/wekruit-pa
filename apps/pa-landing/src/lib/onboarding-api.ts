@@ -44,12 +44,6 @@ export type RegisterDuplicate = {
   }
 }
 
-export type ChatTurn = {
-  promptId: string
-  text: string
-  at?: string
-}
-
 export async function registerCandidate(input: RegisterInput): Promise<RegisterOutput | RegisterDuplicate> {
   const fn = httpsCallable<RegisterInput, RegisterOutput | RegisterDuplicate>(functions(), "openRegisterLayoffCandidate")
   const res = await fn(input)
@@ -59,15 +53,6 @@ export async function registerCandidate(input: RegisterInput): Promise<RegisterO
 export async function initiateSmsPrescreen(candidateId: string): Promise<{ ok: boolean }> {
   const fn = httpsCallable<{ candidateId: string }, { ok: boolean }>(functions(), "openInitiateSmsPrescreen")
   const res = await fn({ candidateId })
-  return res.data
-}
-
-export async function submitChatTurn(candidateId: string, turn: ChatTurn): Promise<{ ok: boolean }> {
-  const fn = httpsCallable<{ candidateId: string; turn: ChatTurn }, { ok: boolean }>(
-    functions(),
-    "openSubmitChatTurn",
-  )
-  const res = await fn({ candidateId, turn })
   return res.data
 }
 

@@ -3,10 +3,10 @@
 // ("WeKruit_Laid_Off" | "candidate") is resolved at first paint via
 // resolveSource() and frozen onto the pa-users doc at registration.
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
+import { useMemo, useRef, useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
 import "../styles/wekruit-tokens.css"
-import { deriveFunction, initiateSmsPrescreen, registerCandidate, submitChatTurn } from "../lib/onboarding-api"
+import { deriveFunction, initiateSmsPrescreen, registerCandidate } from "../lib/onboarding-api"
 import { uploadResume } from "../lib/onboarding-cv"
 import { resolveSource, SOURCE_RESOLVER_MARKER, type SignupSource } from "../lib/source"
 
@@ -15,7 +15,7 @@ import { resolveSource, SOURCE_RESOLVER_MARKER, type SignupSource } from "../lib
 const _MARKER: string = SOURCE_RESOLVER_MARKER
 void _MARKER
 
-type Stage = "intake" | "dup-prompt" | "chat" | "done"
+type Stage = "intake" | "dup-prompt" | "done"
 
 type DupExisting = {
   firstName: string | null
@@ -40,42 +40,7 @@ type Profile = {
   candidateId?: string
   listPosition?: number
   isReregistration?: boolean
-  roleShape?: string
-  locationOpen?: string
-  sponsorship?: boolean
-  start?: string
-  compMin?: number
-  compMax?: number
-  pitch?: string
-  answers?: Record<string, string>
 }
-
-const CHAT_PROMPTS = [
-  {
-    id: "next",
-    label: "What's the next role you're built for?",
-    transcript:
-      "I want zero-to-one work at a smaller company — consumer or developer tools. Series A to B. Want to be the second or third PM, not the tenth.",
-    extract: { roleShape: "0→1 PM at Series A–B consumer or devtools" },
-  },
-  {
-    id: "open",
-    label: "What are you open to? Comp, sponsorship, start date.",
-    transcript:
-      "Open to staying in SF or moving to NY. No sponsorship needed. Earliest start April 1. Looking at $220k–$260k base.",
-    extract: { locationOpen: "SF or NY", sponsorship: false, start: "Apr 1", compMin: 220, compMax: 260 },
-  },
-  {
-    id: "pitch",
-    label: "One thing you want hiring managers to know?",
-    transcript:
-      "I took Quest 3 onboarding from 41% to 67% activation in four quarters. I obsess over the first 60 seconds of any product.",
-    extract: {
-      pitch:
-        "Took Quest 3 onboarding from 41% to 67% activation in four quarters. Obsesses over the first 60 seconds of any product.",
-    },
-  },
-] as const
 
 export default function Onboarding() {
   const navigate = useNavigate()
@@ -120,7 +85,7 @@ export default function Onboarding() {
       setBusyText("Starting Claire's SMS chat…")
       await initiateSmsPrescreen(res.candidateId)
       setProfile((p) => ({ ...p, ...withoutResumeFile(formData), ...res }))
-      setStage("chat")
+      setStage("done")
     } catch (err) {
       setSubmitError(messageFromError(err))
     } finally {
@@ -146,7 +111,7 @@ export default function Onboarding() {
         candidateId: dupCandidateId,
         isReregistration: true,
       }))
-      setStage("chat")
+      setStage("done")
     } catch (err) {
       setSubmitError(messageFromError(err))
     } finally {
@@ -158,11 +123,6 @@ export default function Onboarding() {
     if (!pendingForm) return
     setStage("intake")
     await submitRegistration(pendingForm, "refresh")
-  }
-
-  const onChatDone = (chatData: Partial<Profile>) => {
-    setProfile((p) => ({ ...p, ...chatData }))
-    setStage("done")
   }
 
   return (
@@ -190,11 +150,6 @@ export default function Onboarding() {
                 {stage === "intake" && (
                   <>
                     Introduce yourself <em style={{ fontStyle: "italic" }}>once</em>.
-                  </>
-                )}
-                {stage === "chat" && (
-                  <>
-                    Now, let's <em style={{ fontStyle: "italic" }}>chat</em>.
                   </>
                 )}
               </h1>
@@ -225,7 +180,6 @@ export default function Onboarding() {
           {stage === "dup-prompt" && dupExisting && (
             <DuplicatePrompt existing={dupExisting} onReuse={onReuseExisting} onFresh={onStartFresh} />
           )}
-          {stage === "chat" && <SMSChat profile={profile} onDone={onChatDone} />}
           {stage === "done" && <Done profile={profile} onGo={(r) => navigate(r === "dashboard" ? "/me" : "/")} />}
         </div>
       </section>
@@ -417,7 +371,7 @@ function DuplicatePrompt({
 function FlowProgress({ stage }: { stage: Stage }) {
   const steps = [
     { id: "intake", label: "Register + resume" },
-    { id: "chat", label: "Quick SMS chat" },
+    { id: "done", label: "Claire iMessage" },
   ] as const
   const currentIdx = steps.findIndex((s) => s.id === stage)
   return (
@@ -677,9 +631,9 @@ function FormIntake({
       </label>
 
       <div style={{ marginTop: 24, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-        <span className="caption" style={{ color: "var(--ink-3)" }}>Next: we text you right away for a 5-minute SMS chat.</span>
+        <span className="caption" style={{ color: "var(--ink-3)" }}>Next: Claire texts you right away.</span>
         <button className="btn btn--primary btn--lg" onClick={submit} disabled={isBusy}>
-          {isBusy ? "Working…" : "Continue to SMS chat →"}
+          {isBusy ? "Working…" : "Start Claire iMessage →"}
         </button>
       </div>
     </div>
@@ -734,302 +688,6 @@ function Field({
       {hint && <span className="caption" style={{ color: "var(--ink-3)" }}>{hint}</span>}
     </label>
   )
-}
-
-function SMSChat({ profile, onDone }: { profile: Profile; onDone: (p: Partial<Profile>) => void }) {
-  type Msg = { from: "bot" | "user"; text: string }
-  const [messages, setMessages] = useState<Msg[]>([])
-  const [stepIdx, setStepIdx] = useState(0)
-  const [input, setInput] = useState("")
-  const [botTyping, setBotTyping] = useState(false)
-  const [awaitingUser, setAwaitingUser] = useState(false)
-  const [answers, setAnswers] = useState<Record<string, string>>({})
-  const scrollRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
-  }, [messages, botTyping])
-
-  useEffect(() => {
-    const first = profile?.firstName || "there"
-    const company = profile?.lastCompany || "your last company"
-    queueBot([
-      `Hey ${first}, this is WeKruit. We just got your registration.`,
-      `Saw you were at ${company} — glad you found us.`,
-      `Three quick questions so we can match you well.`,
-      CHAT_PROMPTS[0].label,
-    ])
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  function queueBot(texts: string[]) {
-    setBotTyping(true)
-    setAwaitingUser(false)
-    let delay = 500
-    texts.forEach((text, i) => {
-      const typingDelay = 600 + Math.min(text.length * 16, 1100)
-      delay += typingDelay
-      setTimeout(() => {
-        setMessages((m) => [...m, { from: "bot", text }])
-        if (i === texts.length - 1) {
-          setBotTyping(false)
-          setAwaitingUser(true)
-        }
-      }, delay)
-    })
-  }
-
-  function sendUser(text: string) {
-    if (!text.trim() || !awaitingUser) return
-    setMessages((m) => [...m, { from: "user", text }])
-    setInput("")
-    const prompt = CHAT_PROMPTS[stepIdx]
-    const newAnswers = { ...answers, [prompt.id]: text }
-    setAnswers(newAnswers)
-    if (profile.candidateId) {
-      submitChatTurn(profile.candidateId, { promptId: prompt.id, text, at: new Date().toISOString() }).catch(() => {})
-    }
-
-    const nextIdx = stepIdx + 1
-    if (nextIdx < CHAT_PROMPTS.length) {
-      const acks = ["Got it.", "Makes sense.", "Okay.", "Cool."]
-      const ack = acks[stepIdx % acks.length]
-      setStepIdx(nextIdx)
-      setTimeout(() => queueBot([ack, CHAT_PROMPTS[nextIdx].label]), 500)
-    } else {
-      setTimeout(() => {
-        queueBot(["Perfect. That's everything we need.", "Putting your profile together now — take a look."])
-        setTimeout(() => {
-          const extracted: Partial<Profile> = CHAT_PROMPTS.reduce(
-            (acc, p) => ({ ...acc, ...p.extract }),
-            {} as Partial<Profile>,
-          )
-          extracted.answers = newAnswers
-          onDone(extracted)
-        }, 3200)
-      }, 400)
-    }
-  }
-
-  return (
-    <div className="card card--feature" style={{ background: "var(--cream-3)", borderRadius: "var(--r-lg)", padding: 0, overflow: "hidden" }}>
-      <div
-        style={{
-          padding: "16px 24px",
-          borderBottom: "1px solid var(--border)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          background: "var(--cream-2)",
-          gap: 16,
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <span
-            style={{
-              width: 36,
-              height: 36,
-              borderRadius: 999,
-              background: "var(--ink)",
-              color: "var(--cream)",
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontFamily: "var(--font-serif)",
-              fontSize: 16,
-            }}
-          >
-            W
-          </span>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 14, fontWeight: 500 }}>WeKruit</div>
-            <div style={{ fontSize: 11, color: "var(--ink-3)" }}>+1 (415) 555-OPEN · usually replies in 1 min</div>
-          </div>
-        </div>
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
-          <span className="caption" style={{ color: "var(--ink-3)" }}>
-            {Math.min(stepIdx + 1, CHAT_PROMPTS.length)}/{CHAT_PROMPTS.length}
-          </span>
-          <div style={{ display: "flex", gap: 3 }}>
-            {CHAT_PROMPTS.map((p, i) => (
-              <span
-                key={p.id}
-                style={{
-                  width: 16,
-                  height: 3,
-                  borderRadius: 99,
-                  background: i < stepIdx ? "var(--ink)" : i === stepIdx ? "var(--ink-3)" : "var(--border)",
-                }}
-              />
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <div
-        ref={scrollRef}
-        style={{ height: 420, overflowY: "auto", padding: "24px 24px 16px", background: "var(--cream)", display: "flex", flexDirection: "column", gap: 6 }}
-      >
-        <div
-          style={{
-            textAlign: "center",
-            fontSize: 11,
-            color: "var(--ink-3)",
-            fontFamily: "var(--font-mono)",
-            textTransform: "uppercase",
-            letterSpacing: "0.08em",
-            marginBottom: 6,
-          }}
-        >
-          Today · iMessage
-        </div>
-        {messages.map((m, i) => (
-          <Bubble key={i} from={m.from} text={m.text} />
-        ))}
-        {botTyping && <TypingDots />}
-      </div>
-
-      <div
-        style={{
-          padding: "12px 18px 18px",
-          borderTop: "1px solid var(--border)",
-          background: "var(--cream-3)",
-          display: "flex",
-          flexDirection: "column",
-          gap: 10,
-        }}
-      >
-        {awaitingUser && CHAT_PROMPTS[stepIdx]?.transcript && (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-            <button onClick={() => setInput(CHAT_PROMPTS[stepIdx].transcript)} type="button" style={chipReplyStyle}>
-              Use sample reply →
-            </button>
-            <span className="caption" style={{ color: "var(--ink-3)", alignSelf: "center", marginLeft: 4 }}>
-              or type freely below
-            </span>
-          </div>
-        )}
-        <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
-          <textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault()
-                sendUser(input)
-              }
-            }}
-            placeholder={awaitingUser ? "Type your reply…" : "WeKruit is typing…"}
-            disabled={!awaitingUser}
-            rows={1}
-            style={{
-              flex: 1,
-              border: "1px solid var(--border)",
-              borderRadius: "var(--r-pill)",
-              padding: "10px 18px",
-              fontFamily: "var(--font-sans)",
-              fontSize: 14,
-              background: awaitingUser ? "var(--cream)" : "var(--cream-3)",
-              resize: "none",
-              minHeight: 40,
-              maxHeight: 100,
-              color: "var(--ink)",
-              lineHeight: 1.4,
-            }}
-          />
-          <button
-            type="button"
-            onClick={() => sendUser(input)}
-            disabled={!input.trim() || !awaitingUser}
-            style={{
-              border: 0,
-              cursor: input.trim() && awaitingUser ? "pointer" : "not-allowed",
-              width: 40,
-              height: 40,
-              borderRadius: 999,
-              background: input.trim() && awaitingUser ? "var(--ink)" : "var(--border-strong)",
-              color: "var(--cream)",
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              transition: "background var(--dur-fast) var(--ease)",
-            }}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-              <path d="M3 12l18-9-4 9 4 9z" />
-            </svg>
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function Bubble({ from, text }: { from: "bot" | "user"; text: string }) {
-  const isBot = from === "bot"
-  return (
-    <div style={{ display: "flex", justifyContent: isBot ? "flex-start" : "flex-end" }}>
-      <div
-        style={{
-          maxWidth: "78%",
-          padding: "10px 16px",
-          borderRadius: 20,
-          borderBottomLeftRadius: isBot ? 6 : 20,
-          borderBottomRightRadius: isBot ? 20 : 6,
-          background: isBot ? "var(--cream-2)" : "var(--ink)",
-          color: isBot ? "var(--ink)" : "var(--cream)",
-          fontSize: 16,
-          lineHeight: 1.5,
-          fontWeight: 400,
-          wordBreak: "break-word",
-        }}
-      >
-        {text}
-      </div>
-    </div>
-  )
-}
-
-function TypingDots() {
-  return (
-    <div
-      style={{
-        display: "inline-flex",
-        alignSelf: "flex-start",
-        alignItems: "center",
-        gap: 4,
-        padding: "10px 14px",
-        background: "var(--cream-2)",
-        borderRadius: 20,
-        borderBottomLeftRadius: 6,
-        marginTop: 2,
-      }}
-    >
-      {[0, 1, 2].map((i) => (
-        <span
-          key={i}
-          style={{
-            width: 6,
-            height: 6,
-            borderRadius: 999,
-            background: "var(--ink-3)",
-          }}
-        />
-      ))}
-    </div>
-  )
-}
-
-const chipReplyStyle: CSSProperties = {
-  border: "1px solid var(--border)",
-  background: "var(--cream)",
-  color: "var(--ink)",
-  padding: "6px 12px",
-  borderRadius: 999,
-  fontSize: 12,
-  fontFamily: "var(--font-sans)",
-  cursor: "pointer",
-  transition: "all var(--dur-fast) var(--ease)",
 }
 
 function UploadIcon() {
