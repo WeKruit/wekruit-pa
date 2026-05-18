@@ -1,0 +1,10 @@
+# LK Cloud auto-generated build files — never commit these.
+# The W4 build script (scripts/build-lk-deploy.sh) writes its own slim
+# Dockerfile into a /tmp artifact, so we don't need Docker artifacts in
+# the source tree.
+Dockerfile
+.dockerignore
+.lk-deploy/
+
+# Build output (already gitignored at repo root but listed here for clarity).
+dist/

@@ -1,37 +1,34 @@
-# LiveKit Cloud managed agent hosting config (v2.1 Lock L12).
+# LiveKit Cloud managed agent hosting binding (post-W4 deploy 2026-05-17).
 #
-# This file is read by `lk agent deploy` to build + register the WeKruit
-# voice prescreen worker. NO Dockerfile, NO k8s manifest, NO
-# docker-compose.yml — LiveKit Cloud builds the container from `runtime` +
-# `entry` below.
+# After `lk agent create` (agent CA_CyhBjJioxJR9) succeeded, LK Cloud
+# now owns runtime config (entry / env / replicas / region) server-side.
+# This file is the local binding so `lk agent deploy / status / logs /
+# restart` knows which agent to target.
+#
+# Deploy workflow (W4):
+#   1. bash apps/voice-agent/scripts/build-lk-deploy.sh
+#      → writes /tmp/lk-deploy-voice-agent/  (slim Dockerfile + dist/ +
+#                                              workspace-resolved node_modules)
+#   2. cd /tmp/lk-deploy-voice-agent
+#   3. lk agent deploy --project wekruit  (re-build + roll the agent)
+#      or  lk agent update-secrets --project wekruit --secrets-file <file>
+#          (rotate env without rebuild)
+#
+# Required server-side secrets (set via `lk agent update-secrets
+# --secrets-file <file>`):
+#   LIVEKIT_URL / LIVEKIT_API_KEY / LIVEKIT_API_SECRET
+#   DEEPGRAM_API_KEY
+#   OPENAI_API_KEY                — consumed by @pa/agent-runtime via WekruitLLM
+#   PA_VOICE_CF_SECRET             — auth for paVoiceCallContext + paVoicePrescreenTurn CFs
+#   WEKRUIT_VOICE_CONTEXT_URL      — https://us-central1-wekruit-5f89b.cloudfunctions.net/paVoiceCallContext
+#   WEKRUIT_VOICE_PRESCREEN_TURN_URL — https://us-central1-wekruit-5f89b.cloudfunctions.net/paVoicePrescreenTurn
+#   WEKRUIT_VOICE_RECORDINGS_BUCKET = "wekruit-voice-recordings"
+#   PA_AGENT_RUNTIME_STREAM_ENABLED = "true"
+#
+# Region: us-east (set at create-time).
 
 [project]
-# LK Cloud project subdomain (matches wss://wekruit-7v74qbl3.livekit.cloud).
-subdomain = "wekruit-7v74qbl3"
+  subdomain = "wekruit-7v74qbl3"
 
 [agent]
-name = "voice-prescreen"
-# Node 20 runtime (LiveKit Cloud-supported).
-runtime = "node20"
-# Entrypoint produced by `pnpm --filter voice-agent build`.
-entry = "dist/cli.js"
-# Single-instance concurrency default. Revisit after S6 smoke + capacity
-# planning (S5/S6 own this).
-max_concurrent_jobs = 1
-
-[agent.env]
-# Set at deploy time via `lk agent env set …`. The worker reads these.
-LIVEKIT_URL = ""
-LIVEKIT_API_KEY = ""
-LIVEKIT_API_SECRET = ""
-DEEPGRAM_API_KEY = ""
-# W2: voice worker uses in-process WekruitLLM → runAgentTurnStream → OpenAI.
-# `OPENAI_API_KEY` is required for the agent-runtime OpenAI provider.
-OPENAI_API_KEY = ""
-WEKRUIT_VOICE_RECORDINGS_BUCKET = "wekruit-voice-recordings"
-PA_AGENT_RUNTIME_STREAM_ENABLED = "true"
-# v2.2 — voice → orchestrator brain bridge (paVoiceCallContext +
-# paVoicePrescreenTurn callable CFs).
-WEKRUIT_VOICE_CONTEXT_URL = "https://us-central1-wekruit-5f89b.cloudfunctions.net/paVoiceCallContext"
-WEKRUIT_VOICE_PRESCREEN_TURN_URL = "https://us-central1-wekruit-5f89b.cloudfunctions.net/paVoicePrescreenTurn"
-PA_VOICE_CF_SECRET = ""
+  id = "CA_CyhBjJioxJR9"

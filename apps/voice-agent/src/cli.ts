@@ -93,13 +93,20 @@ export async function runCli(opts: RunCliOpts = {}): Promise<number> {
   // jobs (L12 — managed agent hosting). Tests inject `opts.startWorker`
   // to short-circuit before the network-bound runApp call.
   const start = opts.startWorker ?? (async () => {
-    const { startWorker } = await import("./worker.js")
-    await startWorker()
+    // Importing agent.js (or agent.bundle.js in the deploy artifact) runs
+    // startWorker → registers the agent via defineAgent, then default-exports
+    // it. LK's child IPC re-imports the same path and reads module.default.
+    await import("./agent.js")
     const { cli: lkCli, WorkerOptions } = await import("@livekit/agents")
     const { fileURLToPath } = await import("node:url")
+    // Deploy artifact ships as agent.bundle.js next to cli.bundle.js; in dev
+    // / tsc output it's agent.js. Detect from import.meta.url.
+    const agentFile = import.meta.url.endsWith(".bundle.js")
+      ? new URL("./agent.bundle.js", import.meta.url)
+      : new URL("./agent.js", import.meta.url)
     lkCli.runApp(
       new WorkerOptions({
-        agent: fileURLToPath(new URL("./worker.js", import.meta.url)),
+        agent: fileURLToPath(agentFile),
       }),
     )
   })
