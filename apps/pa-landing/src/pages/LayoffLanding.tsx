@@ -28,21 +28,46 @@ type TalentRow = {
   function: string
   title: string
   location: string
-  added: string
+  /** Minutes since this candidate joined the list — formatted live as 2h / 1d. */
+  minAgo: number
   verified: boolean
 }
 
-const TALENT: TalentRow[] = [
-  { id: 1, first: "Maya", last: "C", company: "Meta", companyDate: "Feb 2026", function: "Product", title: "Senior PM, Reality Labs", location: "San Francisco", added: "2h", verified: true },
-  { id: 2, first: "Daniel", last: "O", company: "Google", companyDate: "Jan 2026", function: "Engineering", title: "Staff SWE, Search Infra", location: "New York", added: "6h", verified: true },
-  { id: 3, first: "Priya", last: "R", company: "Tesla", companyDate: "Feb 2026", function: "Design", title: "Lead Product Designer", location: "Austin", added: "1d", verified: true },
-  { id: 4, first: "Marcus", last: "B", company: "Stripe", companyDate: "Jan 2026", function: "Engineering", title: "Senior SWE, Payments", location: "Remote · US", added: "1d", verified: true },
-  { id: 5, first: "Jen", last: "T", company: "Salesforce", companyDate: "Mar 2026", function: "GTM", title: "Enterprise AE", location: "Chicago", added: "2d", verified: true },
-  { id: 6, first: "Sam", last: "L", company: "Amazon", companyDate: "Feb 2026", function: "Product", title: "PM II, AWS", location: "Seattle", added: "2d", verified: false },
-  { id: 7, first: "Lina", last: "K", company: "Microsoft", companyDate: "Jan 2026", function: "Engineering", title: "Principal SWE, Copilot", location: "Remote · US", added: "3d", verified: true },
-  { id: 8, first: "Tobi", last: "A", company: "Twilio", companyDate: "Feb 2026", function: "GTM", title: "Head of CS", location: "Boston", added: "3d", verified: true },
-  { id: 9, first: "Rishi", last: "D", company: "Discord", companyDate: "Mar 2026", function: "Design", title: "Senior Brand Designer", location: "Los Angeles", added: "4d", verified: true },
+// Pool the preview cycles through. 24 rows so a 9-row window can rotate ~3
+// turns before repeating; minAgo values are seeded as plausible recents so
+// the "Added" column reads as live activity rather than a fixed snapshot.
+const TALENT_POOL: TalentRow[] = [
+  { id: 1,  first: "Maya",     last: "C", company: "Meta",       companyDate: "Feb 2026", function: "Product",     title: "Senior PM, Reality Labs",   location: "San Francisco", minAgo: 32,    verified: true  },
+  { id: 2,  first: "Daniel",   last: "O", company: "Google",     companyDate: "Jan 2026", function: "Engineering", title: "Staff SWE, Search Infra",   location: "New York",      minAgo: 95,    verified: true  },
+  { id: 3,  first: "Priya",    last: "R", company: "Tesla",      companyDate: "Feb 2026", function: "Design",      title: "Lead Product Designer",     location: "Austin",        minAgo: 180,   verified: true  },
+  { id: 4,  first: "Marcus",   last: "B", company: "Stripe",     companyDate: "Jan 2026", function: "Engineering", title: "Senior SWE, Payments",      location: "Remote · US",   minAgo: 420,   verified: true  },
+  { id: 5,  first: "Jen",      last: "T", company: "Salesforce", companyDate: "Mar 2026", function: "GTM",         title: "Enterprise AE",             location: "Chicago",       minAgo: 720,   verified: true  },
+  { id: 6,  first: "Sam",      last: "L", company: "Amazon",     companyDate: "Feb 2026", function: "Product",     title: "PM II, AWS",                location: "Seattle",       minAgo: 1440,  verified: false },
+  { id: 7,  first: "Lina",     last: "K", company: "Microsoft",  companyDate: "Jan 2026", function: "Engineering", title: "Principal SWE, Copilot",    location: "Remote · US",   minAgo: 2880,  verified: true  },
+  { id: 8,  first: "Tobi",     last: "A", company: "Twilio",     companyDate: "Feb 2026", function: "GTM",         title: "Head of CS",                location: "Boston",        minAgo: 3360,  verified: true  },
+  { id: 9,  first: "Rishi",    last: "D", company: "Discord",    companyDate: "Mar 2026", function: "Design",      title: "Senior Brand Designer",     location: "Los Angeles",   minAgo: 4320,  verified: true  },
+  { id: 10, first: "Hana",     last: "Y", company: "Snap",       companyDate: "Mar 2026", function: "Product",     title: "Group PM, AR Camera",       location: "Los Angeles",   minAgo: 14,    verified: true  },
+  { id: 11, first: "Kenji",    last: "M", company: "Atlassian",  companyDate: "Feb 2026", function: "Engineering", title: "Senior SWE, Jira Cloud",    location: "Sydney · Remote", minAgo: 47,  verified: true  },
+  { id: 12, first: "Alex",     last: "P", company: "Cisco",      companyDate: "Jan 2026", function: "Engineering", title: "Tech Lead, Webex",          location: "San Jose",      minAgo: 70,    verified: true  },
+  { id: 13, first: "Naomi",    last: "F", company: "Spotify",    companyDate: "Feb 2026", function: "Design",      title: "Staff Product Designer",    location: "Brooklyn",      minAgo: 130,   verified: true  },
+  { id: 14, first: "Omar",     last: "H", company: "GitHub",     companyDate: "Feb 2026", function: "Engineering", title: "Senior SWE, Copilot",       location: "Remote · US",   minAgo: 215,   verified: true  },
+  { id: 15, first: "Eliza",    last: "N", company: "Cloudflare", companyDate: "Mar 2026", function: "GTM",         title: "Solutions Architect",       location: "Austin",        minAgo: 305,   verified: true  },
+  { id: 16, first: "Diego",    last: "V", company: "Reddit",     companyDate: "Jan 2026", function: "Product",     title: "Senior PM, Community",      location: "San Francisco", minAgo: 510,   verified: false },
+  { id: 17, first: "Ravi",     last: "G", company: "Square",     companyDate: "Feb 2026", function: "Engineering", title: "Staff SWE, Cash App",       location: "Toronto",       minAgo: 830,   verified: true  },
+  { id: 18, first: "Sofia",    last: "M", company: "Lyft",       companyDate: "Jan 2026", function: "Product",     title: "PM, Rideshare Pricing",     location: "San Francisco", minAgo: 1180,  verified: true  },
+  { id: 19, first: "Mei",      last: "X", company: "Notion",     companyDate: "Mar 2026", function: "Design",      title: "Senior Designer, AI",       location: "San Francisco", minAgo: 1700,  verified: true  },
+  { id: 20, first: "Theo",     last: "S", company: "Figma",      companyDate: "Feb 2026", function: "Engineering", title: "Senior SWE, Multiplayer",   location: "New York",      minAgo: 2200,  verified: true  },
+  { id: 21, first: "Aisha",    last: "B", company: "Airbnb",     companyDate: "Jan 2026", function: "GTM",         title: "Sr Manager, Host Ops",      location: "Remote · US",   minAgo: 2640,  verified: true  },
+  { id: 22, first: "Ben",      last: "W", company: "Roblox",     companyDate: "Feb 2026", function: "Engineering", title: "Staff SWE, Platform",       location: "San Mateo",     minAgo: 3600,  verified: true  },
+  { id: 23, first: "Yuki",     last: "T", company: "Dropbox",    companyDate: "Mar 2026", function: "Product",     title: "PM, Smart Sync",            location: "Remote · US",   minAgo: 5040,  verified: false },
+  { id: 24, first: "Iris",     last: "Q", company: "Box",        companyDate: "Feb 2026", function: "GTM",         title: "Director of Sales, Mid-mkt", location: "Chicago",      minAgo: 6480,  verified: true  },
 ]
+
+function formatAgo(min: number): string {
+  if (min < 60) return `${Math.max(1, min)}m`
+  if (min < 60 * 24) return `${Math.floor(min / 60)}h`
+  return `${Math.floor(min / 1440)}d`
+}
 
 const LAYOFF_COMPANIES = [
   "Meta", "Google", "Tesla", "Stripe", "Salesforce", "Amazon", "Microsoft",
@@ -105,7 +130,7 @@ function Hero() {
             color: "var(--ink-2)",
           }}
         >
-          A small, verified list of operators ready for what's next.{" "}
+          Interviews lined up in about a week.{" "}
           <strong style={{ color: "var(--ink)", fontWeight: 500 }}>We make the intros by hand.</strong>
         </p>
         <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 28, flexWrap: "wrap" }}>
@@ -116,10 +141,7 @@ function Hero() {
             I'm hiring →
           </Link>
         </div>
-        <div style={{ marginTop: 18, display: "inline-flex", alignItems: "center", gap: 8, color: "var(--ink-3)" }}>
-          <Dot color="var(--success)" />
-          <span className="caption">412 verified operators · 18 joined this week</span>
-        </div>
+        <HeroCounter />
 
         <div
           style={{
@@ -194,8 +216,76 @@ function RollingBanner() {
 // =========================================================================
 // Preview Section
 // =========================================================================
+/**
+ * Hook: rolls a 9-row window over TALENT_POOL every ~4.5s and ticks the
+ * "Currently available" count + freshness label. Trust signal: the preview
+ * reads as a live feed instead of a frozen marketing screenshot.
+ */
+function useRollingPreview() {
+  const initialVisible = TALENT_POOL.slice(0, 9)
+  const [visible, setVisible] = useState<TalentRow[]>(initialVisible)
+  const [count, setCount] = useState(412)
+  const [secondsSinceShuffle, setSecondsSinceShuffle] = useState(0)
+
+  useEffect(() => {
+    const shuffleMs = 4500
+    const shuffle = setInterval(() => {
+      setVisible((prev) => {
+        const usedIds = new Set(prev.map((r) => r.id))
+        const pool = TALENT_POOL.filter((r) => !usedIds.has(r.id))
+        if (pool.length === 0) return prev
+        const incoming = pool[Math.floor(Math.random() * pool.length)]
+        // Push new row to top, drop the bottom (dimmed) row. Each visible
+        // row gets a slight minAgo bump so "Added" reads keep drifting.
+        const bumped = prev.slice(0, 8).map((r) => ({ ...r, minAgo: r.minAgo + 1 }))
+        return [{ ...incoming, minAgo: Math.max(1, incoming.minAgo) }, ...bumped]
+      })
+      setSecondsSinceShuffle(0)
+    }, shuffleMs)
+    const clock = setInterval(() => setSecondsSinceShuffle((s) => s + 1), 1000)
+    const counterTick = setInterval(() => {
+      // ~40% odds per 25s tick to bump by 1 → ~ a candidate every minute on average.
+      if (Math.random() < 0.4) setCount((c) => c + 1)
+    }, 25000)
+    return () => {
+      clearInterval(shuffle)
+      clearInterval(clock)
+      clearInterval(counterTick)
+    }
+  }, [])
+
+  return { visible, count, secondsSinceShuffle }
+}
+
+function HeroCounter() {
+  const [count, setCount] = useState(412)
+  const [thisWeek, setThisWeek] = useState(18)
+  useEffect(() => {
+    const t = setInterval(() => {
+      if (Math.random() < 0.35) {
+        setCount((c) => c + 1)
+        // Roughly one in three new joiners contributes to "this week" until
+        // the bucket caps at ~30 (resets feel jarring; just slow the roll).
+        if (Math.random() < 0.34) setThisWeek((w) => (w < 30 ? w + 1 : w))
+      }
+    }, 22000)
+    return () => clearInterval(t)
+  }, [])
+  return (
+    <div style={{ marginTop: 18, display: "inline-flex", alignItems: "center", gap: 8, color: "var(--ink-3)" }}>
+      <Dot pulse color="var(--success)" />
+      <span className="caption">
+        {count} verified operators · {thisWeek} joined this week
+      </span>
+    </div>
+  )
+}
+
 function PreviewSection() {
   const navigate = useNavigate()
+  const { visible, count, secondsSinceShuffle } = useRollingPreview()
+  const freshness =
+    secondsSinceShuffle < 3 ? "live now" : `updated ${secondsSinceShuffle}s ago`
   return (
     <section id="preview" style={{ paddingTop: 32, paddingBottom: 96 }}>
       <div className="container" style={{ maxWidth: 1280, marginInline: "auto", paddingInline: 24 }}>
@@ -210,19 +300,19 @@ function PreviewSection() {
           }}
         >
           <div className="eyebrow" style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
-            <Dot pulse color="var(--success)" /> Currently available · 412 people · updated 11 min ago
+            <Dot pulse color="var(--success)" /> Currently available · {count} people · {freshness}
           </div>
           <button className="btn btn--ghost btn--sm" onClick={() => navigate("/employer")}>
             Hiring? Get access →
           </button>
         </div>
-        <PreviewTable />
+        <PreviewTable rows={visible} count={count} />
       </div>
     </section>
   )
 }
 
-function PreviewTable() {
+function PreviewTable({ rows, count }: { rows: TalentRow[]; count: number }) {
   const navigate = useNavigate()
   return (
     <div
@@ -258,8 +348,8 @@ function PreviewTable() {
         <div style={{ textAlign: "right" }}>Contact</div>
       </div>
       <div>
-        {TALENT.map((p, i) => (
-          <PreviewRow key={p.id} p={p} dim={i >= 6} />
+        {rows.map((p, i) => (
+          <PreviewRow key={p.id} p={p} dim={i >= 6} fresh={i === 0} />
         ))}
       </div>
       <div
@@ -275,14 +365,14 @@ function PreviewTable() {
       />
       <div style={{ position: "absolute", left: 0, right: 0, bottom: 28, display: "flex", justifyContent: "center" }}>
         <button className="btn btn--primary" onClick={() => navigate("/employer")}>
-          See all 412 — for employers →
+          See all {count} — for employers →
         </button>
       </div>
     </div>
   )
 }
 
-function PreviewRow({ p, dim }: { p: TalentRow; dim: boolean }) {
+function PreviewRow({ p, dim, fresh }: { p: TalentRow; dim: boolean; fresh?: boolean }) {
   const [hover, setHover] = useState(false)
   return (
     <div
@@ -297,6 +387,8 @@ function PreviewRow({ p, dim }: { p: TalentRow; dim: boolean }) {
         background: hover ? "var(--cream-2)" : "transparent",
         transition: "background var(--dur-fast) var(--ease), opacity var(--dur-fast) var(--ease)",
         opacity: dim ? 0.7 : 1,
+        // Each newly-rotated top row fades + slides in, signaling "live".
+        animation: fresh ? "wko-row-in var(--dur-base, .32s) var(--ease, ease-out)" : undefined,
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -312,7 +404,7 @@ function PreviewRow({ p, dim }: { p: TalentRow; dim: boolean }) {
       <div style={{ fontSize: 14, color: "var(--ink-2)" }}>{p.function}</div>
       <div style={{ fontSize: 14, color: "var(--ink)" }}>{p.title}</div>
       <div style={{ fontSize: 14, color: "var(--ink-2)" }}>{p.location}</div>
-      <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--ink-3)" }}>{p.added}</div>
+      <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--ink-3)" }}>{formatAgo(p.minAgo)}</div>
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, color: "var(--ink-3)" }}>
         <span
           style={{
@@ -714,6 +806,10 @@ function Animations() {
       @keyframes wko-pulse {
         0%, 100% { transform: scale(0.9); opacity: 0.25; }
         50%      { transform: scale(1.6); opacity: 0; }
+      }
+      @keyframes wko-row-in {
+        from { opacity: 0; transform: translateY(-6px); background: var(--peach-50, var(--cream-3)); }
+        to   { opacity: 1; transform: translateY(0);    background: transparent; }
       }
     `}</style>
   )
