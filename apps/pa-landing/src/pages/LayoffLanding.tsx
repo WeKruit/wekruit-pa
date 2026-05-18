@@ -217,65 +217,58 @@ function RollingBanner() {
 // Preview Section
 // =========================================================================
 /**
- * Hook: rolls a 9-row window over TALENT_POOL every ~4.5s and ticks the
- * "Currently available" count + freshness label. Trust signal: the preview
- * reads as a live feed instead of a frozen marketing screenshot.
+ * Daily-rotating preview window. Adam directive 2026-05-18: per-second
+ * shuffling reads as fake — a small honest list should "update every 24h"
+ * and start from a modest base count. We pick the visible 9-row slice
+ * deterministically from a day index, and the count grows by ~0.5/day off
+ * a low launch baseline so visitors who reload during the same UTC day
+ * see exactly the same numbers.
  */
-function useRollingPreview() {
-  const initialVisible = TALENT_POOL.slice(0, 9)
-  const [visible, setVisible] = useState<TalentRow[]>(initialVisible)
-  const [count, setCount] = useState(412)
-  const [secondsSinceShuffle, setSecondsSinceShuffle] = useState(0)
+const LAUNCH_DAY_INDEX = Math.floor(Date.parse("2026-05-15T00:00:00Z") / 86400_000)
+const LIST_BASE_COUNT = 12
+const LIST_PER_DAY_GROWTH = 0.5
+const WEEKLY_BASE = 3
 
-  useEffect(() => {
-    const shuffleMs = 4500
-    const shuffle = setInterval(() => {
-      setVisible((prev) => {
-        const usedIds = new Set(prev.map((r) => r.id))
-        const pool = TALENT_POOL.filter((r) => !usedIds.has(r.id))
-        if (pool.length === 0) return prev
-        const incoming = pool[Math.floor(Math.random() * pool.length)]
-        // Push new row to top, drop the bottom (dimmed) row. Each visible
-        // row gets a slight minAgo bump so "Added" reads keep drifting.
-        const bumped = prev.slice(0, 8).map((r) => ({ ...r, minAgo: r.minAgo + 1 }))
-        return [{ ...incoming, minAgo: Math.max(1, incoming.minAgo) }, ...bumped]
-      })
-      setSecondsSinceShuffle(0)
-    }, shuffleMs)
-    const clock = setInterval(() => setSecondsSinceShuffle((s) => s + 1), 1000)
-    const counterTick = setInterval(() => {
-      // ~40% odds per 25s tick to bump by 1 → ~ a candidate every minute on average.
-      if (Math.random() < 0.4) setCount((c) => c + 1)
-    }, 25000)
-    return () => {
-      clearInterval(shuffle)
-      clearInterval(clock)
-      clearInterval(counterTick)
-    }
-  }, [])
+function todayIndex(): number {
+  return Math.floor(Date.now() / 86400_000)
+}
 
-  return { visible, count, secondsSinceShuffle }
+function dayWindow(): TalentRow[] {
+  const start = ((todayIndex() % TALENT_POOL.length) + TALENT_POOL.length) % TALENT_POOL.length
+  const rotated = [...TALENT_POOL.slice(start), ...TALENT_POOL.slice(0, start)]
+  return rotated.slice(0, 9).map((row, i) => {
+    // Spread "added" across the visible window so the preview reads as a
+    // small daily refresh: top rows say minutes, dim rows say a few days.
+    const synthetic = i === 0 ? 30 : i * 240 + Math.floor((todayIndex() * 17 + row.id) % 90)
+    return { ...row, minAgo: Math.max(15, synthetic) }
+  })
+}
+
+function dailyCount(): number {
+  const daysSinceLaunch = Math.max(0, todayIndex() - LAUNCH_DAY_INDEX)
+  return LIST_BASE_COUNT + Math.floor(daysSinceLaunch * LIST_PER_DAY_GROWTH)
+}
+
+function dailyWeeklyAdds(): number {
+  // 3..7 range, deterministic per day so the "joined this week" line is
+  // stable across reloads within the same UTC day.
+  return WEEKLY_BASE + (todayIndex() % 5)
+}
+
+function hoursSinceUtcMidnight(): number {
+  const now = Date.now()
+  const todayStart = todayIndex() * 86400_000
+  return Math.max(0, Math.floor((now - todayStart) / 3600_000))
 }
 
 function HeroCounter() {
-  const [count, setCount] = useState(412)
-  const [thisWeek, setThisWeek] = useState(18)
-  useEffect(() => {
-    const t = setInterval(() => {
-      if (Math.random() < 0.35) {
-        setCount((c) => c + 1)
-        // Roughly one in three new joiners contributes to "this week" until
-        // the bucket caps at ~30 (resets feel jarring; just slow the roll).
-        if (Math.random() < 0.34) setThisWeek((w) => (w < 30 ? w + 1 : w))
-      }
-    }, 22000)
-    return () => clearInterval(t)
-  }, [])
+  const count = dailyCount()
+  const weekly = dailyWeeklyAdds()
   return (
     <div style={{ marginTop: 18, display: "inline-flex", alignItems: "center", gap: 8, color: "var(--ink-3)" }}>
-      <Dot pulse color="var(--success)" />
+      <Dot color="var(--success)" />
       <span className="caption">
-        {count} verified operators · {thisWeek} joined this week
+        {count} verified operators · {weekly} joined this week · updated daily
       </span>
     </div>
   )
@@ -283,9 +276,11 @@ function HeroCounter() {
 
 function PreviewSection() {
   const navigate = useNavigate()
-  const { visible, count, secondsSinceShuffle } = useRollingPreview()
+  const visible = dayWindow()
+  const count = dailyCount()
+  const hoursAgo = hoursSinceUtcMidnight()
   const freshness =
-    secondsSinceShuffle < 3 ? "live now" : `updated ${secondsSinceShuffle}s ago`
+    hoursAgo === 0 ? "refreshed just now" : `refreshed ${hoursAgo}h ago · updates daily`
   return (
     <section id="preview" style={{ paddingTop: 32, paddingBottom: 96 }}>
       <div className="container" style={{ maxWidth: 1280, marginInline: "auto", paddingInline: 24 }}>
@@ -349,7 +344,7 @@ function PreviewTable({ rows, count }: { rows: TalentRow[]; count: number }) {
       </div>
       <div>
         {rows.map((p, i) => (
-          <PreviewRow key={p.id} p={p} dim={i >= 6} fresh={i === 0} />
+          <PreviewRow key={p.id} p={p} dim={i >= 6} />
         ))}
       </div>
       <div
@@ -372,7 +367,7 @@ function PreviewTable({ rows, count }: { rows: TalentRow[]; count: number }) {
   )
 }
 
-function PreviewRow({ p, dim, fresh }: { p: TalentRow; dim: boolean; fresh?: boolean }) {
+function PreviewRow({ p, dim }: { p: TalentRow; dim: boolean }) {
   const [hover, setHover] = useState(false)
   return (
     <div
@@ -387,8 +382,6 @@ function PreviewRow({ p, dim, fresh }: { p: TalentRow; dim: boolean; fresh?: boo
         background: hover ? "var(--cream-2)" : "transparent",
         transition: "background var(--dur-fast) var(--ease), opacity var(--dur-fast) var(--ease)",
         opacity: dim ? 0.7 : 1,
-        // Each newly-rotated top row fades + slides in, signaling "live".
-        animation: fresh ? "wko-row-in var(--dur-base, .32s) var(--ease, ease-out)" : undefined,
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -806,10 +799,6 @@ function Animations() {
       @keyframes wko-pulse {
         0%, 100% { transform: scale(0.9); opacity: 0.25; }
         50%      { transform: scale(1.6); opacity: 0; }
-      }
-      @keyframes wko-row-in {
-        from { opacity: 0; transform: translateY(-6px); background: var(--peach-50, var(--cream-3)); }
-        to   { opacity: 1; transform: translateY(0);    background: transparent; }
       }
     `}</style>
   )
