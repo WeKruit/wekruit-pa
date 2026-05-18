@@ -67,6 +67,7 @@ export const CONSOLE_NAV: NavSectionDef[] = [
     icon: "send",
     items: [
       { to: "/admin/outreach-ops", label: "Outreach ops" },
+      { to: "/admin/voice-test-dial", label: "Voice test dial" },
       { to: "/admin/sendblue-pool", label: "Sendblue pool" },
       { to: "/admin/external-supply", label: "External supply", end: true },
       { to: "/admin/external-supply/outreach", label: "Outreach campaigns" },
