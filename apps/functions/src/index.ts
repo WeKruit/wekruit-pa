@@ -5,8 +5,8 @@
  *   Mac iMessage worker -> Firestore `pa-inbound-events`
  *   onPaInbound (this file) -> processInboundEvent (`@pa/pa-orchestrator`)
  *     -> SiliconFlow LLM + Qdrant via `@pa/memory` mem0 OSS wrapper
- *     -> Firestore `pa-messages` + `pa-outbound`
- *   Mac iMessage worker -> sends from `pa-outbound`
+ *     -> Firestore `pa-messages` + runtime-approved `pa-outbound`
+ *   Sendblue/iMessage transport sends only runtime-approved `pa-outbound`
  *
  * The function is idempotent: pa-orchestrator skips events already in a non-
  * `pending` status, and message writes are guarded by `idempotencyKey`.
@@ -34,6 +34,7 @@ import { handleSendblueWebhook } from "./sendblue/webhook.js"
 import { paSendblueOutboxHandler } from "./sendblue/outbox.js"
 import { sendReaction as defaultSendReaction } from "./sendblue/send-reaction.js"
 import { decidePreClaireTurnOwner } from "./lib/pre-claire-turn-owner.js"
+import { enqueueRuntimeEventHandoff } from "./runtime-event-handoff.js"
 
 // iter31 — Mailgun transport for email-verification step in onboarding.
 // iter32 deploy-fix 2026-05-04 — MAILGUN_* defineSecret bindings + the
@@ -103,7 +104,8 @@ export { paCandidateLifecycleTrigger } from "./candidate-lifecycle-trigger.js"
 export { paAdminBootstrap } from "./admin-bootstrap.js"
 
 // Stream B — Job-rec daily cron (Task B4). Reads pa-job-profiles where status=active,
-// queries matching-jobs, formats per Bible v7.5.2, enqueues pa-outbound.
+// queries matching-jobs, formats per Bible v7.5.2, then hands the proposed
+// candidate message to Claire runtime.
 export { paJobRecDaily } from "./job-rec-daily.js"
 
 // Phase 51 (v1.5 / Stream-G.2) — TS-native tag cluster cache rebuild CF.
@@ -111,7 +113,7 @@ export { paJobRecDaily } from "./job-rec-daily.js"
 export { paJobRecClusterRebuild } from "./job-rec-cluster-rebuild.js"
 
 // Phase 49 (v1.5 / Stream-H / D9) — operator reverse-match dashboard CF.
-// JD + tags + industry → top-K candidates → outbound notify via pa-outbound.
+// JD + tags + industry → top-K candidates → notify via Claire runtime handoff.
 export { paReverseMatch } from "./paReverseMatch.js"
 
 // iter30 WS2 P2 — Canonical tag worker (onDocumentCreated pa-tag-events + retry scheduler)
@@ -1504,7 +1506,7 @@ function buildSendblueWebhookDeps() {
   }
   // Phase 60 (DEV-01) — `__PA_FIND_MATCH__` admin trigger handler.
   // Mirrors what runDailyJobRecBatch does for one user: V16 query against
-  // pa-users.tags + format per CLAUDE.md flow + enqueue pa-outbound. Admin
+  // pa-users.tags + format per CLAUDE.md flow + runtime handoff. Admin
   // gating happens INSIDE webhook.ts before this is called; we trust the
   // caller. Fail-open: any error logs + returns ok:false rather than crashing.
   const generateJobRecsForUser = async (args: {
@@ -1514,7 +1516,6 @@ function buildSendblueWebhookDeps() {
     const db = getFirestore()
     try {
       const { queryMatchingJobsV16 } = await import("@pa/job-rec")
-      const { sendImessage } = await import("@pa/job-rec")
       const result = await queryMatchingJobsV16(
         { userId: args.userId, limit: 5 },
         {
@@ -1542,24 +1543,27 @@ function buildSendblueWebhookDeps() {
         introContext = undefined
       }
       const body = composeJobRecommendationMessage(items, "en", introContext)
-      const sendRes = await sendImessage(
-        {
-          userId: args.userId,
-          content: body,
-          // Idempotency: include hh:mm so the same admin can retrigger within
-          // a day but rapid spamming (same minute) dedups. Mirrors the daily
-          // batch convention without colliding with it.
-          idempotencyKey: `${args.userId}-${new Date().toISOString().slice(0, 16)}-find-match`,
+      const runtime = await enqueueRuntimeEventHandoff(db, {
+        userId: args.userId,
+        toE164: args.toE164,
+        source: "admin_find_match",
+        eventKind: "job_recommendations_requested",
+        // Idempotency: include hh:mm so the same admin can retrigger within
+        // a day but rapid spamming (same minute) dedups. Mirrors the daily
+        // batch convention without colliding with it.
+        idempotencyKey: `${args.userId}-${new Date().toISOString().slice(0, 16)}-find-match`,
+        requireExistingSession: true,
+        context: {
+          requestedCount: visibleCount,
+          jobCount: items.length,
+          composedRecommendationMessage: body,
+          jobs: items,
         },
-        {
-          db,
-          log: (...a: unknown[]) => logger.info("[sendblue][webhook][find-match][send]", ...a),
-        }
-      )
+      })
       return {
-        ok: sendRes.ok,
+        ok: runtime.ok,
         jobCount: items.length,
-        ...(sendRes.ok ? {} : { reason: "send_failed" }),
+        ...(runtime.ok ? {} : { reason: runtime.reason }),
       }
     } catch (err) {
       logger.error("[sendblue][webhook][find-match] threw", {
@@ -1928,8 +1932,8 @@ export const paOnTapbackEvent = onDocumentCreated(
 // External partners POST signed events to /paUpstreamEventWebhook. The
 // handler verifies HMAC, looks up a matching template, gates on the
 // `upstreamConnectorEnabled` flag, applies a per-(template,user) hourly
-// rate limit, renders the template, and enqueues `pa-outbound`. The
-// existing paSendblueOutbox CF then sends the message via Sendblue.
+// rate limit, then hands the event/template context to Claire runtime. The
+// runtime may no-send or create a runtime-approved transport row.
 
 export const paUpstreamEventWebhook = onRequest(
   {

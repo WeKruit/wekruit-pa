@@ -187,7 +187,8 @@ function isUsableArtifact(artifact: ResumeArtifactGateView): boolean {
 }
 
 function isInternalOperatorEmail(email: string): boolean {
-  return email.toLowerCase().endsWith("@wekruit.com")
+  const normalized = email.toLowerCase()
+  return normalized.endsWith("@wekruit.com") && normalized !== "adam.ylol@wekruit.com"
 }
 
 export async function runCandidateResumeGateStatus(

@@ -1883,16 +1883,25 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
   const turnId = await store.createTurn(event)
   const at = store.nowIso()
   try {
+    const runtimeEvent = event.rawMeta?.runtimeEvent === true
+    const runtimeNoSendToken =
+      typeof event.rawMeta?.runtimeNoSendToken === "string"
+        ? event.rawMeta.runtimeNoSendToken.trim()
+        : "__NO_SEND__"
     await store.appendMessage({
       sessionId: event.sessionId,
       userId: event.userId,
-      role: "user",
+      role: runtimeEvent ? "system" : "user",
       body: event.body,
       createdAt: event.createdAt,
       // Use the same hash FirestoreSession derives so the SDK\u2019s addItems()
       // short-circuits on this row instead of double-writing the user turn.
       // Original inbound idempotencyKey is preserved in rawMeta for audit.
-      idempotencyKey: deriveSessionMessageIdempotencyKey(event.sessionId, "user", event.body),
+      idempotencyKey: deriveSessionMessageIdempotencyKey(
+        event.sessionId,
+        runtimeEvent ? "system" : "user",
+        event.body
+      ),
       rawMeta: {
         ...event.rawMeta,
         source: "pa-inbound-event",
@@ -3924,6 +3933,23 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
         extractBestCurrentMatchHintFromDirective(jobRecommendationExplanationDirective)
       )
     }
+    if (runtimeEvent && visibleReply.trim() === runtimeNoSendToken) {
+      store.log("pa.runtime_event.no_send", {
+        userId: event.userId,
+        turnId,
+        eventId: event.id,
+        runtimeEventSource: event.rawMeta?.runtimeEventSource,
+        runtimeEventKind: event.rawMeta?.runtimeEventKind,
+      })
+      await store.updateTurn(turnId, {
+        status: "succeeded",
+        stage: "succeeded",
+        runtimeNoSend: true,
+        completedAt: store.nowIso(),
+      })
+      await store.markEventSucceeded(event.id)
+      return
+    }
     // Bug 4 (2026-05-03 commit ea59897) shipped a single-send-per-turn
     // invariant after Adam observed 4 inbound msgs → 6 outbound bubbles
     // (norm.chunks length-based splitting). We keep that fix in spirit:
@@ -4312,6 +4338,9 @@ export function createFirestoreOrchestratorStore(
         status: "pending",
         createdAt: nowIso(),
         attempts: 0,
+        runtimeApproved: true,
+        runtimeSource: "pa_orchestrator",
+        source: "pa_orchestrator",
         ...(input ?? {}),
       }
       await db.collection(PA_COLLECTIONS.outbound).doc(id).set(doc)

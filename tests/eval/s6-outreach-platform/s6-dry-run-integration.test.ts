@@ -33,9 +33,9 @@ test("dry-run planning may persist pa-outbound-invites but never pa-outbound or 
     },
     {
       ...deps,
-      enqueueOutbound: async (input) => {
+      enqueueRuntimeInvite: async (input) => {
         contactAttempts += 1
-        return deps.enqueueOutbound!(input)
+        return deps.enqueueRuntimeInvite!(input)
       },
     }
   )
@@ -71,8 +71,8 @@ test("dry-run does not contact candidates even when every live gate except dryRu
     },
     {
       ...liveOutreachDeps(db),
-      enqueueOutbound: async () => {
-        throw new Error("dry-run must not enqueue pa-outbound")
+      enqueueRuntimeInvite: async () => {
+        throw new Error("dry-run must not enqueue runtime handoff")
       },
     }
   )

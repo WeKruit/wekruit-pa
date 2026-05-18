@@ -38,6 +38,10 @@ function fakeFirestore() {
               const current = store.get(`${col}/${id}`) ?? {}
               store.set(`${col}/${id}`, opts?.merge ? { ...current, ...data } : data)
             },
+            async update(data: StoredDoc) {
+              const current = store.get(`${col}/${id}`) ?? {}
+              store.set(`${col}/${id}`, { ...current, ...data })
+            },
             async get() {
               const data = store.get(`${col}/${id}`)
               return { exists: data != null, data: () => data ?? {} }

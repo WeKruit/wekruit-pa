@@ -16,10 +16,8 @@
  * Actions (POST body `action` field):
  *   - "match" — run the rank pipeline. Body: {jobDescription, tags,
  *     industry, location?, topK?, companyName?, jobTitle?}.
- *   - "notify" — enqueue a single outbound. Body: {userId, jobTitle,
- *     companyName}. Resolves user phone from pa-users. Writes to
- *     pa-outbound with source="reverse-match" — Sendblue outbox CF
- *     picks it up. NO bypass of the abuse-event chain.
+ *   - "notify" — hand one candidate/event to Claire runtime. Body:
+ *     {userId, jobTitle, companyName}. No direct pa-outbound write.
  *   - "bulkNotify" — loop notify for an explicit userIds[] list, capped
  *     at REVERSE_MATCH_BULK_NOTIFY_CAP (5). Caller MUST pre-filter to
  *     opted-in users.
@@ -41,10 +39,8 @@ import { defineSecret } from "firebase-functions/params"
 import { logger } from "firebase-functions/v2"
 import { getApps, initializeApp } from "firebase-admin/app"
 import { getFirestore, type Firestore } from "firebase-admin/firestore"
-import { randomUUID } from "node:crypto"
 import {
   runReverseMatch,
-  buildNotifyMessage,
   REVERSE_MATCH_FLAG_KEY,
   REVERSE_MATCH_POOL_CAP,
   REVERSE_MATCH_BULK_NOTIFY_CAP,
@@ -57,6 +53,7 @@ import { JOB_REC_FLAG_KEY } from "@pa/job-rec"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import { checkAdminToken } from "./admin-bootstrap.js"
 import { logTokenSpend } from "./instrumentation/cost-logger.js"
+import { enqueueRuntimeEventHandoff } from "./runtime-event-handoff.js"
 
 const PA_ADMIN_TOKEN = defineSecret("PA_ADMIN_TOKEN")
 const SILICONFLOW_API_KEY = defineSecret("SILICONFLOW_API_KEY")
@@ -320,30 +317,30 @@ export async function enqueueReverseMatchNotify(
   }
   if (!phoneE164) return { ok: false, error: "user_missing_phone" }
 
-  const body = buildNotifyMessage({
-    jobTitle: args.jobTitle,
-    companyName: args.companyName,
-    preferredLanguage,
-  })
-  const outboundId = randomUUID()
   try {
-    await db.collection(PA_COLLECTIONS.outbound).doc(outboundId).set({
-      id: outboundId,
+    const runtime = await enqueueRuntimeEventHandoff(db, {
       userId: args.userId,
       toE164: phoneE164,
-      body,
-      status: "pending",
-      createdAt: new Date().toISOString(),
-      attempts: 0,
-      source: "reverse-match",
+      source: "reverse_match",
+      eventKind: "operator_notify",
+      idempotencyKey: `reverse-match:${args.userId}:${args.companyName}:${args.jobTitle}`,
+      requireExistingSession: true,
+      context: {
+        jobTitle: args.jobTitle,
+        companyName: args.companyName,
+        preferredLanguage,
+        suggestedIntent:
+          "Operator found a potentially relevant role. Decide whether to message the candidate, include the role/company, a clear job link only if present in context, and keep language consistent.",
+      },
     })
+    if (!runtime.ok) return { ok: false, error: runtime.reason }
+    return { ok: true, outboundId: runtime.eventId }
   } catch (err) {
     return {
       ok: false,
-      error: `outbound_write_failed: ${err instanceof Error ? err.message : String(err)}`,
+      error: `runtime_handoff_failed: ${err instanceof Error ? err.message : String(err)}`,
     }
   }
-  return { ok: true, outboundId }
 }
 
 export const paReverseMatch = onRequest(

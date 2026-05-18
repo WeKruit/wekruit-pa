@@ -12,6 +12,7 @@
  */
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
+import { createHash } from "node:crypto"
 
 import {
   ingestCv,
@@ -43,10 +44,19 @@ type FakeState = {
   outbound: Map<string, DocData>
   /** pa-users */
   users: Map<string, DocData>
+  /** pa-sessions */
+  sessions: Map<string, DocData>
+  /** pa-inbound-events runtime handoffs */
+  inboundEvents: Map<string, DocData>
   /** pa-cv-pending (.doc(id).create()/.delete()/.get()) */
   pending: Map<string, DocData>
   /** flag values for defaultIsFlagEnabled stub. */
   flags: Map<string, boolean>
+}
+
+function sessionDocId(userId: string, phoneE164: string): string {
+  const h = createHash("sha256").update(`${userId}|imessage|${phoneE164}`).digest("hex")
+  return `ses_${h.slice(0, 32)}`
 }
 
 function makeFakeDb(opts?: {
@@ -60,8 +70,21 @@ function makeFakeDb(opts?: {
     resumesOrder: [],
     outbound: new Map(),
     users: new Map(Object.entries(opts?.users ?? {})),
+    sessions: new Map(),
+    inboundEvents: new Map(),
     pending: new Map(),
     flags: new Map(Object.entries(opts?.flags ?? {})),
+  }
+  for (const [userId, user] of state.users) {
+    const phone = typeof user.phoneE164 === "string" ? user.phoneE164 : ""
+    if (phone) {
+      state.sessions.set(sessionDocId(userId, phone), {
+        id: sessionDocId(userId, phone),
+        userId,
+        channel: "imessage",
+        externalChatId: phone,
+      })
+    }
   }
   for (const r of opts?.resumes ?? []) {
     state.resumes.set(r.id, { ...r.data })
@@ -102,6 +125,8 @@ function makeFakeDb(opts?: {
           pool = [...state.outbound.entries()].map(([id, data]) => ({ id, data }))
         } else if (name === CV_PENDING_COLLECTION) {
           pool = [...state.pending.entries()].map(([id, data]) => ({ id, data }))
+        } else if (name === "pa-inbound-events") {
+          pool = [...state.inboundEvents.entries()].map(([id, data]) => ({ id, data }))
         }
         const filtered = pool.filter((row) =>
           wheres.every((w) => {
@@ -173,6 +198,14 @@ function makeFakeDb(opts?: {
               const data = state.outbound.get(realId)
               return { exists: !!data, data: () => data }
             }
+            if (name === "pa-sessions") {
+              const data = state.sessions.get(realId)
+              return { exists: !!data, data: () => data }
+            }
+            if (name === "pa-inbound-events") {
+              const data = state.inboundEvents.get(realId)
+              return { exists: !!data, data: () => data }
+            }
             return { exists: false, data: () => undefined }
           },
           async create(data: DocData) {
@@ -207,6 +240,16 @@ function makeFakeDb(opts?: {
             if (name === CV_PENDING_COLLECTION) {
               const cur = state.pending.get(realId) ?? {}
               state.pending.set(realId, opts?.merge ? { ...cur, ...data } : { ...data })
+              return
+            }
+            if (name === "pa-inbound-events") {
+              const cur = state.inboundEvents.get(realId) ?? {}
+              state.inboundEvents.set(realId, opts?.merge ? { ...cur, ...data } : { ...data })
+              return
+            }
+            if (name === "pa-sessions") {
+              const cur = state.sessions.get(realId) ?? {}
+              state.sessions.set(realId, opts?.merge ? { ...cur, ...data } : { ...data })
               return
             }
             throw new Error(`fake-db: .set() not supported for ${name}`)
@@ -277,6 +320,7 @@ function makeBaseDeps(args: {
     db: args.db,
     log: args.log,
     nowIso: () => "2026-05-01T12:00:00.000Z",
+    followupDeliveryMode: "direct",
     skipLimitEnforcement: true,
     fetchPdf: async () => ({ bytes: new Uint8Array([1]), contentType: "application/pdf" }),
     parsePdf: async () => ({ text: "resume", numPages: 1 }),
@@ -434,6 +478,43 @@ describe("Stream H3 — cv-overwrite UX", () => {
     )
   })
 
+  it("test 3b: profile-only delivery bypasses overwrite prompt and writes parsed resume", async () => {
+    const { db, state } = makeFakeDb({
+      users: { u3b: { phoneE164: "+14243201960" } },
+      resumes: [
+        {
+          id: "rsm_prior_3b",
+          data: {
+            userId: "u3b",
+            createdAt: new Date("2026-04-01T00:00:00.000Z"),
+            ingestedAt: "2026-04-01T00:00:00.000Z",
+          },
+        },
+      ],
+    })
+    const { log } = captureLog()
+    const deps = makeBaseDeps({
+      db,
+      log,
+      flagOn: true,
+      prior: { id: "rsm_prior_3b", data: state.resumes.get("rsm_prior_3b")! },
+    })
+    deps.followupDeliveryMode = "none"
+
+    const res = await ingestCv(
+      { userId: "u3b", mediaUrl: "inline://public-profile-upload.pdf" },
+      deps
+    )
+
+    assert.equal(res.ok, true)
+    assert.equal(state.resumes.size, 2, "profile-only uploads write a real parsedCandidateResumes row")
+    assert.equal(state.pending.size, 0, "profile-only uploads must not stage a pending overwrite")
+    const overwriteKeys = [...state.outbound.keys()].filter((k) =>
+      k.startsWith(CV_OVERWRITE_OUTBOUND_PREFIX)
+    )
+    assert.equal(overwriteKeys.length, 0, "profile-only uploads must not direct-send overwrite prompts")
+  })
+
   it("test 4: tapback love (replace) → archives previous + promotes new + sends confirmation", async () => {
     // Seed: 1 existing resume + 1 pending row + 1 outbound prompt.
     const newResumeId = "rsm_pending_4"
@@ -515,13 +596,14 @@ describe("Stream H3 — cv-overwrite UX", () => {
     assert.notEqual(newRow.additionalCv, true, "replace path must NOT mark additionalCv")
     // Pending row deleted.
     assert.equal(state.pending.size, 0, "pending row deleted after promote")
-    // Confirmation outbound enqueued.
-    const confirmKey = [...state.outbound.keys()].find((k) =>
-      k.startsWith("out-cv-overwrite-confirm-")
-    )
-    assert.ok(confirmKey, "confirmation outbound enqueued")
-    const confirmDoc = state.outbound.get(confirmKey!)!
-    assert.match(String(confirmDoc.body), /替代/, "confirmation says replaced")
+    // Confirmation context handed to runtime, not direct pa-outbound.
+    const confirmDoc = [...state.inboundEvents.values()].find((row) => {
+      const meta = row.rawMeta as Record<string, unknown> | undefined
+      return meta?.runtimeEventSource === "cv_overwrite"
+    })
+    assert.ok(confirmDoc, "confirmation runtime event enqueued")
+    const context = (confirmDoc!.rawMeta as Record<string, unknown>).context as Record<string, unknown>
+    assert.match(String(context.proposedMessage), /替代/, "confirmation says replaced")
     assert.ok(events.some((e) => e.event === "pa.cv_overwrite.promoted"))
   })
 

@@ -172,3 +172,15 @@ test("runCandidateResumeGateStatus rejects internal operator emails", async () =
     (err) => err instanceof HttpsError && err.code === "failed-precondition"
   )
 })
+
+test("runCandidateResumeGateStatus allows adam.ylol@wekruit.com as the explicit beta candidate user", async () => {
+  const result = await runCandidateResumeGateStatus(
+    { browserUid: "browser-1" },
+    { uid: "firebase-adam-ylol", token: { email: "adam.ylol@wekruit.com", email_verified: true } },
+    baseDeps()
+  )
+
+  assert.equal(result.ok, true)
+  assert.equal(result.candidateId, "cand-1")
+  assert.equal(result.status, "needs_resume_upload")
+})

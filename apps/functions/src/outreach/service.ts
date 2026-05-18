@@ -4,7 +4,6 @@ import {
   type CandidateJobMatch,
   type OutboundInvite,
 } from "@pa/core-types"
-import type { EnqueueOutboundInput } from "@pa/pa-broker"
 import { evaluateOutreachPolicy } from "./policy.js"
 import {
   S6_OUTREACH_POLICY_VERSION,
@@ -44,6 +43,23 @@ export type PlanJobCandidateState =
   | "employer_visible"
   | "archived"
 
+export type EnqueueRuntimeOutreachInviteInput = {
+  userId: string
+  toE164: string
+  imessageChatId?: string
+  proposedMessage: string
+  idempotencyKey: string
+  context: {
+    inviteId: string
+    matchId: string
+    jobId: string
+    jobTitle: string
+    companyName?: string
+    jobUrl: string
+    policyVersion: string
+  }
+}
+
 export type PlanJobOutreachDeps = {
   writeInviteDecision?: (invite: OutboundInvite) => Promise<{
     invite: OutboundInvite
@@ -60,13 +76,7 @@ export type PlanJobOutreachDeps = {
     checkedAt: string
     reservationKey: string
   }) => Promise<SendblueCapacitySelection>
-  enqueueOutbound?: (input: EnqueueOutboundInput) => Promise<{ id: string; created: boolean }>
-  markQueued?: (input: {
-    inviteId: string
-    outboundId: string
-    queuedAt: string
-    actor: "system"
-  }) => Promise<unknown>
+  enqueueRuntimeInvite?: (input: EnqueueRuntimeOutreachInviteInput) => Promise<{ id: string; created: boolean }>
   readOutreachStopControl?: (input: { scope: "global" }) => Promise<{
     paused: boolean
     reason?: string
@@ -78,7 +88,7 @@ export type PlanJobOutreachRow = {
   matchId: string
   invite: OutboundInvite
   decision: OutreachPolicyDecision
-  queuedOutboundId?: string
+  queuedRuntimeEventId?: string
 }
 
 export type PlanJobOutreachSummary = {
@@ -293,28 +303,31 @@ export async function planJobOutreach(
       await deps.writeInviteDecision(invite)
     }
 
-    let queuedOutboundId: string | undefined
+    let queuedRuntimeEventId: string | undefined
     if (finalDecision.allowQueue) {
-      if (!deps.enqueueOutbound) throw new Error("enqueueOutbound dependency required")
-      if (!deps.markQueued) throw new Error("markQueued dependency required")
+      if (!deps.enqueueRuntimeInvite) throw new Error("enqueueRuntimeInvite dependency required")
       if (!candidate.phoneE164) throw new Error("candidate_phone_required_for_live_queue")
-      const enqueueResult = await deps.enqueueOutbound({
+      const jobUrl = `https://candidate.wekruit.com/j/${input.job.jobId}`
+      const enqueueResult = await deps.enqueueRuntimeInvite({
         userId: candidate.candidateId,
         toE164: candidate.phoneE164,
         ...(candidate.imessageChatId ? { imessageChatId: candidate.imessageChatId } : {}),
-        body: renderOutreachInviteBody({
+        proposedMessage: renderOutreachInviteBody({
           job: input.job,
-          jobUrl: `https://candidate.wekruit.com/j/${input.job.jobId}`,
+          jobUrl,
         }),
         idempotencyKey: decision.outboundIdempotencyKey,
+        context: {
+          inviteId: invite.inviteId,
+          matchId: match.matchId,
+          jobId: input.job.jobId,
+          jobTitle: input.job.jobTitle,
+          ...(input.job.companyName ? { companyName: input.job.companyName } : {}),
+          jobUrl,
+          policyVersion: S6_OUTREACH_POLICY_VERSION,
+        },
       })
-      queuedOutboundId = enqueueResult.id
-      await deps.markQueued({
-        inviteId: invite.inviteId,
-        outboundId: enqueueResult.id,
-        queuedAt: input.now,
-        actor: "system",
-      })
+      queuedRuntimeEventId = enqueueResult.id
     }
 
     rows.push({
@@ -322,9 +335,9 @@ export async function planJobOutreach(
       matchId: match.matchId,
       invite,
       decision: finalDecision,
-      ...(queuedOutboundId ? { queuedOutboundId } : {}),
+      ...(queuedRuntimeEventId ? { queuedRuntimeEventId } : {}),
     })
-    updateSummary(summary, finalDecision, Boolean(queuedOutboundId))
+    updateSummary(summary, finalDecision, Boolean(queuedRuntimeEventId))
   }
 
   return { rows, summary }

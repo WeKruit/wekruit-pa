@@ -345,6 +345,7 @@ async function processOneItem(
         nowIso: deps.nowIso,
         log: deps.log,
         checkGate: async () => ({ open: true, reason: "bulk_resume_intake" }),
+        followupDeliveryMode: "none",
         skipLimitEnforcement: true,
         isFlagEnabled: async () => false,
         enqueueCvConfirmFn: async () => undefined,

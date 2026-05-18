@@ -32,6 +32,46 @@ test("runCandidateClaimProfile rejects internal operator emails", async () => {
   )
 })
 
+test("runCandidateClaimProfile allows adam.ylol@wekruit.com as the explicit beta candidate user", async () => {
+  const result = await runCandidateClaimProfile(
+    { browserUid: "browser-1", displayName: "Adam Test" },
+    { uid: "firebase-adam-ylol", token: { email: "adam.ylol@wekruit.com", email_verified: true } },
+    {
+      db: {} as Firestore,
+      claimCandidateProfile: async () => ({
+        candidateId: "cand-adam-ylol",
+        authMapping: {
+          firebaseUid: "firebase-adam-ylol",
+          candidateId: "cand-adam-ylol",
+          createdAt: "2026-05-17T00:00:00.000Z",
+        },
+        emailHandle: {
+          handleId: "email__hash",
+          candidateId: "cand-adam-ylol",
+          kind: "email",
+          handleHash: "hashhashhashhash",
+          source: "candidate",
+          createdAt: "2026-05-17T00:00:00.000Z",
+        },
+        claimedEventId: "ident_claimed",
+        idempotent: false,
+        selfProfile: {
+          candidateId: "cand-adam-ylol",
+          lifecycleState: "claimed",
+          displayName: "Adam Test",
+          emailMasked: "a***@wekruit.com",
+          handles: [{ kind: "email", verifiedAt: "2026-05-17T00:00:00.000Z", source: "candidate" }],
+          createdAt: "2026-05-17T00:00:00.000Z",
+          updatedAt: "2026-05-17T00:00:00.000Z",
+        },
+      }),
+    }
+  )
+
+  assert.equal(result.ok, true)
+  assert.equal(result.candidateId, "cand-adam-ylol")
+})
+
 test("runCandidateClaimProfile delegates to claim helper and returns redacted self profile", async () => {
   const calls: Array<Record<string, unknown>> = []
   const result = await runCandidateClaimProfile(

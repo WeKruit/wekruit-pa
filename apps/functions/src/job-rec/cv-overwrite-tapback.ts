@@ -3,7 +3,7 @@
  *
  * Pipeline (extends the existing paOnTapbackEvent CF):
  *   1. User sends 2nd+ CV → cv-ingest stages it in `pa-cv-pending/{newResumeId}`
- *      and enqueues outbound `pa-outbound/out-cv-overwrite-{newResumeId}`.
+ *      and asks Claire runtime to decide whether/how to prompt.
  *   2. Sendblue delivers the prompt; user reacts ❤️ (love) or 🤔 (question).
  *   3. Inbound webhook → pa-tapback-events row → paOnTapbackEvent CF fires.
  *   4. CF first checks if the tapback's quotedText matches a recent
@@ -27,6 +27,7 @@ import {
   CV_OVERWRITE_OUTBOUND_PREFIX,
   CV_PENDING_COLLECTION,
 } from "../cv-ingest/cv-ingest.js"
+import { enqueueRuntimeEventHandoff } from "../runtime-event-handoff.js"
 
 const PARSED_RESUMES_COLLECTION = "parsedCandidateResumes"
 const OUTBOUND_COLLECTION = "pa-outbound"
@@ -135,8 +136,8 @@ async function readPendingByNewResumeId(
  *   - supplement: keep the previous row as-is, write the new row with
  *     `additionalCv: true`.
  *
- * Both actions write a confirmation outbound (idempotent docId) and delete
- * the pa-cv-pending row.
+ * Both actions hand confirmation context to Claire runtime and delete the
+ * pa-cv-pending row.
  */
 export async function promotePendingCv(
   db: Firestore,
@@ -150,7 +151,7 @@ export async function promotePendingCv(
     action: "replace" | "supplement"
     nowIso: string
     confirmationToE164?: string | null
-    /** When true, skip the confirmation outbound (TTL fallback path). */
+    /** When true, skip the confirmation runtime handoff (TTL fallback path). */
     silent?: boolean
     /** Inject for tests. */
     log?: (event: string, payload?: Record<string, unknown>) => void
@@ -221,7 +222,7 @@ export async function promotePendingCv(
     })
   }
 
-  // 4. Send confirmation followup (idempotent docId).
+  // 4. Hand confirmation context to runtime (idempotent event id).
   if (!args.silent && args.confirmationToE164) {
     const docId = `out-cv-overwrite-confirm-${pending.newResumeId}`
     const body =
@@ -229,17 +230,20 @@ export async function promotePendingCv(
         ? "好嘞 已替代旧版 ✅"
         : "好嘞 当作另一个版本保留了 ✅"
     try {
-      await db.collection(OUTBOUND_COLLECTION).doc(docId).create({
-        id: docId,
+      const runtime = await enqueueRuntimeEventHandoff(db, {
         userId: pending.userId,
         toE164: args.confirmationToE164,
-        body,
-        status: "pending",
-        createdAt: nowIso,
-        createdBy: "cv-overwrite-confirm",
+        source: "cv_overwrite",
+        eventKind: "resume_overwrite_confirmed",
         idempotencyKey: `${pending.newResumeId}-${action}`,
-        attempts: 0,
+        context: {
+          proposedMessage: body,
+          newResumeId: pending.newResumeId,
+          previousResumeId: pending.previousResumeId,
+          action,
+        },
       })
+      if (!runtime.ok) throw new Error(`runtime_handoff_${runtime.reason}`)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       const isDup = /already.?exists|6 ALREADY_EXISTS/i.test(msg)

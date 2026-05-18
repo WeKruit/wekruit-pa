@@ -7,8 +7,8 @@
  *   3. opted-in flag surfaced correctly (no implicit gating)
  *   4. topK respected (default + custom + cap-to-pool)
  *   5. admin-only auth (checkAdminToken contract holds — empty/wrong → reject)
- *   6. outbound enqueue path (enqueueReverseMatchNotify writes pa-outbound
- *      with source="reverse-match", honors bilingual template)
+ *   6. notify handoff path (enqueueReverseMatchNotify writes a runtime
+ *      event, never direct pa-outbound)
  *
  * Tests are pure-function unit tests against the importable cores:
  *   - runReverseMatch (from @pa/job-rec) for tests 1-4
@@ -20,6 +20,7 @@
  */
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
+import { createHash } from "node:crypto"
 import {
   buildMatchedReasons,
   buildNotifyMessage,
@@ -101,6 +102,11 @@ function makeFakeDb(): {
     }),
   }
   return { db: db as unknown as Firestore, collections }
+}
+
+function sessionDocId(userId: string, channel: string, externalChatId: string): string {
+  const h = createHash("sha256").update(`${userId}|${channel}|${externalChatId}`).digest("hex")
+  return `ses_${h.slice(0, 32)}`
 }
 
 // ---------- tests ----------------------------------------------------------
@@ -276,8 +282,8 @@ describe("paReverseMatch — D4 test 5: admin-only auth", () => {
   })
 })
 
-describe("paReverseMatch — D4 test 6: outbound enqueue path", () => {
-  it("writes pa-outbound row with source=reverse-match + bilingual body; honors no-phone guard", async () => {
+describe("paReverseMatch — D4 test 6: runtime handoff notify path", () => {
+  it("writes runtime event instead of pa-outbound; honors no-phone guard", async () => {
     const { db, collections } = makeFakeDb()
     // Seed a user with phone + zh language
     await (db as Firestore)
@@ -287,6 +293,16 @@ describe("paReverseMatch — D4 test 6: outbound enqueue path", () => {
         phoneE164: "+15551234567",
         preferredLanguage: "zh",
       })
+    await (db as Firestore)
+      .collection("pa-sessions")
+      .doc(sessionDocId("user-zh", "imessage", "+15551234567"))
+      .set({
+        id: sessionDocId("user-zh", "imessage", "+15551234567"),
+        userId: "user-zh",
+        channel: "imessage",
+        externalChatId: "+15551234567",
+        createdAt: "2026-05-17T00:00:00.000Z",
+      })
     // Seed an EN user
     await (db as Firestore)
       .collection("pa-users")
@@ -294,6 +310,16 @@ describe("paReverseMatch — D4 test 6: outbound enqueue path", () => {
       .set({
         phoneE164: "+15559999999",
         preferredLanguage: "en",
+      })
+    await (db as Firestore)
+      .collection("pa-sessions")
+      .doc(sessionDocId("user-en", "imessage", "+15559999999"))
+      .set({
+        id: sessionDocId("user-en", "imessage", "+15559999999"),
+        userId: "user-en",
+        channel: "imessage",
+        externalChatId: "+15559999999",
+        createdAt: "2026-05-17T00:00:00.000Z",
       })
     // Seed a phone-less user → must reject with user_missing_phone
     await (db as Firestore)
@@ -307,19 +333,17 @@ describe("paReverseMatch — D4 test 6: outbound enqueue path", () => {
       companyName: "WeKruit",
     })
     assert.equal(ok1.ok, true)
-    assert.ok(ok1.outboundId, "outboundId returned")
-    const outbox = collections.get("pa-outbound")
-    assert.ok(outbox, "pa-outbound collection touched")
-    const row = outbox!.get(ok1.outboundId!) as Record<string, unknown> | undefined
+    assert.ok(ok1.outboundId, "runtime event id returned")
+    assert.equal(collections.get("pa-outbound")?.size ?? 0, 0)
+    const runtimeEvents = collections.get("pa-inbound-events")
+    assert.ok(runtimeEvents, "pa-inbound-events collection touched")
+    const row = runtimeEvents!.get(ok1.outboundId!) as Record<string, unknown> | undefined
     assert.ok(row)
     assert.equal(row!.userId, "user-zh")
-    assert.equal(row!.toE164, "+15551234567")
-    assert.equal(row!.source, "reverse-match")
     assert.equal(row!.status, "pending")
-    assert.equal(row!.attempts, 0)
-    // ZH template content
-    assert.match(String(row!.body), /嘿，看到你简历觉得这个职位跟你挺对得上：Senior Backend Engineer @ WeKruit/)
-    assert.match(String(row!.body), /回个"看看"我把详情发你/)
+    assert.match(String(row!.body), /system-event:reverse_match:operator_notify/)
+    assert.match(String(row!.body), /Senior Backend Engineer/)
+    assert.equal((row!.rawMeta as Record<string, unknown>).runtimeEvent, true)
 
     const ok2 = await enqueueReverseMatchNotify(db, {
       userId: "user-en",
@@ -327,9 +351,8 @@ describe("paReverseMatch — D4 test 6: outbound enqueue path", () => {
       companyName: "WeKruit",
     })
     assert.equal(ok2.ok, true)
-    const enRow = outbox!.get(ok2.outboundId!) as Record<string, unknown>
-    assert.match(String(enRow.body), /Hey — saw your resume/)
-    assert.match(String(enRow.body), /reply "show me"/)
+    const enRow = runtimeEvents!.get(ok2.outboundId!) as Record<string, unknown>
+    assert.match(String(enRow.body), /Senior Backend Engineer/)
 
     // Missing-phone case → ok=false, no row written.
     const fail1 = await enqueueReverseMatchNotify(db, {

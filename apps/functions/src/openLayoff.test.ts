@@ -317,7 +317,7 @@ test("runRegisterLayoffCandidate refresh mode reuses the phone-index candidateId
   assert.equal(user.createdAt, "2026-05-01T00:00:00.000Z")
 })
 
-test("runInitiateSmsPrescreen enqueues one idempotent kickoff for the layoff candidate", async () => {
+test("runInitiateSmsPrescreen hands one kickoff to the Claire runtime for the layoff candidate", async () => {
   const fake = new FakeFirestore()
   fake.seed(`${PA_COLLECTIONS.users}/cand_1`, {
     id: "cand_1",
@@ -326,24 +326,19 @@ test("runInitiateSmsPrescreen enqueues one idempotent kickoff for the layoff can
     displayName: "Ada Lovelace",
     layoffContext: { lastCompany: "Rain" },
   })
-  const outboundCalls: DocData[] = []
+  const runtimeCalls: DocData[] = []
 
   const result = await runInitiateSmsPrescreen("cand_1", deps(fake, {
-    enqueueOutbound: async (_db, input) => {
-      outboundCalls.push(input as unknown as DocData)
-      return { id: "out_1", created: true }
+    runRuntimeKickoff: async (input) => {
+      runtimeCalls.push(input as unknown as DocData)
+      return { eventId: "layoff_runtime_1", outboundId: "out_1" }
     },
   }))
 
   assert.equal(result.kickoffOutboundId, "out_1")
-  assert.equal(outboundCalls[0]!.userId, "cand_1")
-  assert.equal(outboundCalls[0]!.toE164, "+14243201960")
-  assert.match(
-    String(outboundCalls[0]!.idempotencyKey),
-    /^wekruit_open_layoff:cand_1:kickoff:\d{4}-\d{2}-\d{2}T/,
-  )
-  assert.notEqual(outboundCalls[0]!.idempotencyKey, "wekruit_open_layoff:cand_1:kickoff")
-  assert.match(String(outboundCalls[0]!.body), /Claire from WeKruit/)
+  assert.equal(runtimeCalls[0]!.userId, "cand_1")
+  assert.equal(runtimeCalls[0]!.toE164, "+14243201960")
+  assert.match(String(runtimeCalls[0]!.startedAt), /^\d{4}-\d{2}-\d{2}T/)
   assert.equal(fake.read(`${PA_COLLECTIONS.users}/cand_1`)!.kickoffOutboundId, "out_1")
 })
 

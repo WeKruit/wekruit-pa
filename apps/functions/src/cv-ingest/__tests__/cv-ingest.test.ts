@@ -1,5 +1,6 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
+import { createHash } from "node:crypto"
 
 import {
   ingestCv,
@@ -20,16 +21,36 @@ type FakeDbState = {
   resumes: Array<{ collection: string; data: DocData }>
   /** pa-outbound .doc(id).create() writes (idempotent) */
   outbound: Map<string, DocData>
+  /** pa-inbound-events synthetic runtime trigger writes */
+  inboundEvents: Map<string, DocData>
+  /** pa-sessions docs used by runtime handoff gate */
+  sessions: Map<string, DocData>
   /** pa-users docs available for .doc(id).get() lookups */
   users: Map<string, DocData>
   /** pa-users .doc(id).set(data, {merge: true}) writes — H.3b unified tags */
   userSets: Array<{ id: string; data: DocData; merge: boolean }>
 }
 
+function sessionDocId(userId: string, phoneE164: string): string {
+  const h = createHash("sha256").update(`${userId}|imessage|${phoneE164}`).digest("hex")
+  return `ses_${h.slice(0, 32)}`
+}
+
+function seedRuntimeSession(state: FakeDbState, userId = "user_x", phoneE164 = "+14243201960"): void {
+  state.sessions.set(sessionDocId(userId, phoneE164), {
+    id: sessionDocId(userId, phoneE164),
+    userId,
+    channel: "imessage",
+    externalChatId: phoneE164,
+  })
+}
+
 function makeFakeDb(opts?: { users?: Record<string, DocData> }) {
   const state: FakeDbState = {
     resumes: [],
     outbound: new Map(),
+    inboundEvents: new Map(),
+    sessions: new Map(),
     users: new Map(Object.entries(opts?.users ?? {})),
     userSets: [],
   }
@@ -50,6 +71,20 @@ function makeFakeDb(opts?: { users?: Record<string, DocData> }) {
             async get() {
               if (name === "pa-users") {
                 const data = state.users.get(id)
+                return {
+                  exists: !!data,
+                  data: () => data,
+                }
+              }
+              if (name === "pa-sessions") {
+                const data = state.sessions.get(id)
+                return {
+                  exists: !!data,
+                  data: () => data,
+                }
+              }
+              if (name === "pa-inbound-events") {
+                const data = state.inboundEvents.get(id)
                 return {
                   exists: !!data,
                   data: () => data,
@@ -83,6 +118,16 @@ function makeFakeDb(opts?: { users?: Record<string, DocData> }) {
                 // see the layered fields (test assertions can stay terse).
                 const prev = state.users.get(id) ?? {}
                 state.users.set(id, opts?.merge === true ? { ...prev, ...data } : data)
+                return
+              }
+              if (name === "pa-inbound-events") {
+                const prev = state.inboundEvents.get(id) ?? {}
+                state.inboundEvents.set(id, opts?.merge === true ? { ...prev, ...data } : { ...data })
+                return
+              }
+              if (name === "pa-sessions") {
+                const prev = state.sessions.get(id) ?? {}
+                state.sessions.set(id, opts?.merge === true ? { ...prev, ...data } : { ...data })
                 return
               }
               throw new Error(`fake-db: .set() not supported for collection ${name}`)
@@ -155,6 +200,7 @@ function makeStubbedDeps(opts: {
     db: opts.db,
     log: opts.log,
     nowIso: () => "2026-04-30T00:00:00.000Z",
+    followupDeliveryMode: "direct",
     // iter30 WS1 — pre-iter30 fixture stubs don't populate gate / quota
     // Firestore docs; bypass the new limits to preserve test intent.
     skipLimitEnforcement: true,
@@ -422,11 +468,12 @@ describe("ingestCv", () => {
       delete process.env.PA_CV_FINDINGS_FOLLOWUP_DISABLED
     }
   })
-  it("E1 idempotency: re-running on same resumeId via default enqueue path → second enqueue ALREADY_EXISTS, no double-write", async () => {
+  it("E1 default enqueue path writes a runtime event, not direct pa-outbound", async () => {
     const { db, state } = makeFakeDb()
+    seedRuntimeSession(state)
     const { events, log } = captureLog()
     const { deps, llmFollowupCalls } = makeStubbedDeps({ db, log })
-    // Use the default enqueueOutboundFollowup (Firestore .create)
+    // Use the default enqueueOutboundFollowup (runtime-event handoff)
     deps.enqueueOutboundFollowup = undefined
     // Phase 53 — stub Claire confirm to no-op so this test stays focused on E1.
     deps.enqueueCvConfirmFn = async () => {}
@@ -438,34 +485,15 @@ describe("ingestCv", () => {
     )
     assert.equal(res1.ok, true)
     const id1 = (res1 as { ok: true; resumeId: string }).resumeId
-    // Filter to E1 only.
-    const e1Outbound = Array.from(state.outbound.keys()).filter((k) =>
-      k.startsWith("out-cvfindings-")
-    )
-    assert.equal(e1Outbound.length, 1)
-    assert.ok(state.outbound.has(`out-cvfindings-${id1}`))
-
-    // Manually attempt second enqueue with the SAME resumeId — must
-    // surface as ALREADY_EXISTS via the default enqueue path.
-    // Simulate by writing the same docId via a fresh deps.run with
-    // a frozen lookup-injected resumeId fixture.
-    const sameIdDb = state.outbound
-    const before = sameIdDb.size
-    // Re-run ingestCv → fresh resumeId (rsm_2), so a NEW docId is
-    // created. To verify dup-detection, we manually call .create
-    // with the prior docId and confirm it throws ALREADY_EXISTS.
-    let dupErr: unknown = null
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (db as any).collection("pa-outbound").doc(`out-cvfindings-${id1}`).create({ stub: true })
-    } catch (err) {
-      dupErr = err
-    }
-    assert.ok(dupErr instanceof Error)
-    assert.ok(/ALREADY_EXISTS/.test((dupErr as Error).message))
-    assert.equal(sameIdDb.size, before, "dup .create must not mutate state")
-    void llmFollowupCalls
-    void events
+    assert.equal(state.outbound.size, 0)
+    const e1Events = [...state.inboundEvents.values()].filter((row) => {
+      const meta = row.rawMeta as Record<string, unknown> | undefined
+      return meta?.runtimeEventSource === "cv_ingest" && meta?.runtimeEventKind === "candidate_resume_event"
+    })
+    assert.equal(e1Events.length, 1)
+    assert.match(String(e1Events[0]!.idempotencyKey), new RegExp(`out-cvfindings-${id1}`))
+    assert.equal(llmFollowupCalls.length, 1)
+    assert.ok(events.some((e) => e.event === "pa.cv_followup.enqueued"))
   })
 
 
@@ -1540,5 +1568,68 @@ describe("ingestCv Claire confirm enqueue (Phase 53 PARSE-07, D12)", () => {
     )
     assert.equal(res.ok, true)
     assert.equal(invoked, false, "confirm enqueue runs only with valid user phone")
+  })
+
+  it("runtime delivery writes a synthetic inbound event instead of direct outbounds", async () => {
+    const { db, state } = makeFakeDb()
+    seedRuntimeSession(state)
+    const { events, log } = captureLog()
+    const { deps, llmFollowupCalls, enqueueCalls } = makeStubbedDeps({ db, log })
+    deps.followupDeliveryMode = "runtime"
+    let confirmInvoked = false
+    deps.enqueueCvConfirmFn = async () => {
+      confirmInvoked = true
+    }
+
+    const res = await ingestCv(
+      { userId: "user_x", mediaUrl: "https://example.com/cv.pdf" },
+      deps
+    )
+
+    assert.equal(res.ok, true)
+    assert.equal(llmFollowupCalls.length, 0, "runtime mode must not call direct findings LLM")
+    assert.equal(enqueueCalls.length, 0, "runtime mode must not enqueue direct findings outbound")
+    assert.equal(confirmInvoked, false, "runtime mode must not enqueue direct confirm outbound")
+    assert.equal(state.inboundEvents.size, 1, "runtime mode should hand off through pa-inbound-events")
+    const event = [...state.inboundEvents.values()][0]!
+    assert.equal(event.status, "pending")
+    assert.equal(event.channel, "imessage")
+    assert.equal(event.userId, "user_x")
+    const rawMeta = event.rawMeta as Record<string, unknown>
+    assert.equal(rawMeta.runtimeEvent, true)
+    assert.equal(rawMeta.runtimeEventSource, "cv_ingest")
+    assert.equal(rawMeta.runtimeEventKind, "resume_parse_completed")
+    const context = rawMeta.context as Record<string, unknown>
+    assert.equal(context.cvParsedTrigger, true)
+    const skipped = events.find((e) => e.event === "pa.cv_followup.direct_outbound_skipped")
+    assert.equal(skipped?.payload?.reason, "runtime_delivery")
+  })
+
+  it("none delivery updates the profile without direct or runtime messages", async () => {
+    const { db, state } = makeFakeDb()
+    const { events, log } = captureLog()
+    const { deps, llmFollowupCalls, enqueueCalls, mem0Calls } = makeStubbedDeps({ db, log })
+    deps.followupDeliveryMode = "none"
+    let confirmInvoked = false
+    deps.enqueueCvConfirmFn = async () => {
+      confirmInvoked = true
+    }
+
+    const res = await ingestCv(
+      { userId: "user_x", mediaUrl: "https://example.com/cv.pdf" },
+      deps
+    )
+
+    assert.equal(res.ok, true)
+    assert.equal(state.resumes.length, 1, "profile parsing still writes parsedCandidateResumes")
+    assert.equal(mem0Calls.length, 1, "profile parsing still writes long-term memory")
+    assert.equal(llmFollowupCalls.length, 0, "none mode must not call direct findings LLM")
+    assert.equal(enqueueCalls.length, 0, "none mode must not enqueue direct findings outbound")
+    assert.equal(confirmInvoked, false, "none mode must not enqueue direct confirm outbound")
+    assert.equal(state.inboundEvents.size, 0, "none mode must not synthesize an iMessage event")
+    const directSkipped = events.find((e) => e.event === "pa.cv_followup.direct_outbound_skipped")
+    assert.equal(directSkipped?.payload?.reason, "delivery_none")
+    const syntheticSkipped = events.find((e) => e.event === "pa.cv_followup.synthetic_trigger_skipped")
+    assert.equal(syntheticSkipped?.payload?.reason, "delivery_none")
   })
 })

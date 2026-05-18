@@ -1,11 +1,10 @@
 /**
  * Phase 53 (PARSE-07, D12) — Post-parse Claire confirm dialogue.
  *
- * After the parsedCandidateResumes write succeeds, enqueue a Claire-voice
- * iMessage that surfaces what we extracted from the CV and asks the user
- * to confirm. The message is enqueued onto `pa-outbound/out-cvconfirm-{resumeId}`
- * (idempotent via Firestore `.create()`); the existing `paSendblueOutbox`
- * Firestore trigger picks it up + sends.
+ * After the parsedCandidateResumes write succeeds, hand the parsed summary
+ * to Claire runtime. Runtime owns whether to send, language continuity, and
+ * candidate-visible wording. This helper must not create sendable pa-outbound
+ * rows directly.
  *
  * Lang:
  *  - zh: `"看了你的简历——你做过 {roles}, 用过 {skills}, 最近在 {industries}。对吗？"`
@@ -17,9 +16,9 @@
  */
 
 import type { Firestore } from "firebase-admin/firestore"
+import { enqueueRuntimeEventHandoff } from "../runtime-event-handoff.js"
 
 const CV_CONFIRM_OUTBOUND_PREFIX = "out-cvconfirm-"
-const CV_CONFIRM_COLLECTION = "pa-outbound"
 const CV_CONFIRM_KILL_SWITCH = "PA_CV_CONFIRM_DISABLED"
 
 export type CvConfirmParsed = {
@@ -36,7 +35,7 @@ export interface EnqueueCvConfirmArgs {
   userId: string
   resumeId: string
   parsed: CvConfirmParsed
-  /** Test seam — defaults to a Firestore .doc(id).create() on pa-outbound. */
+  /** Test seam — defaults to runtime event handoff, never direct sendable outbound. */
   enqueueOutboundFollowup?: (
     db: Firestore,
     docId: string,
@@ -190,7 +189,22 @@ async function defaultEnqueue(
   docId: string,
   payload: Record<string, unknown>
 ): Promise<void> {
-  await db.collection(CV_CONFIRM_COLLECTION).doc(docId).create(payload)
+  const userId = typeof payload.userId === "string" ? payload.userId : ""
+  const toE164 = typeof payload.toE164 === "string" ? payload.toE164 : undefined
+  const body = typeof payload.body === "string" ? payload.body : ""
+  if (!userId || !body) return
+  const runtime = await enqueueRuntimeEventHandoff(db, {
+    userId,
+    toE164,
+    source: "cv_confirm",
+    eventKind: "resume_parse_confirm",
+    idempotencyKey: docId,
+    context: {
+      proposedMessage: body,
+      rawMeta: payload.rawMeta ?? {},
+    },
+  })
+  if (!runtime.ok) throw new Error(`runtime_handoff_${runtime.reason}`)
 }
 
 /**

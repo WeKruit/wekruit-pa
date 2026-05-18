@@ -76,7 +76,7 @@ const baseApplicant: CanonicalApplicant = {
 }
 
 describe("handleAtsInbound — happy path (new user)", () => {
-  it("creates user, resolves jobId, sends invite, stamps idempotency", async () => {
+  it("creates user, resolves jobId, hands off to runtime, stamps idempotency", async () => {
     const { db, docs, writes } = makeFakeDb()
     docs.set(`pa-jobs-external-mapping/handshake_hs_job_1`, {
       exists: true,
@@ -87,12 +87,12 @@ describe("handleAtsInbound — happy path (new user)", () => {
       data: { prescreenConfig: { jobTitle: "Senior FE", company: "Acme" } },
     })
     const audit: Array<Record<string, unknown>> = []
-    const sent: Array<{ to: string; content: string }> = []
+    const runtime: Array<{ toE164: string; userId: string; context: Record<string, unknown> }> = []
     const r = await handleAtsInbound(baseApplicant, {
       db,
-      sendInvite: async (a) => {
-        sent.push({ to: a.to, content: a.content })
-        return { ok: true }
+      enqueueRuntimeInvite: async (a) => {
+        runtime.push({ toE164: a.toE164, userId: a.userId, context: a.context })
+        return { ok: true, eventId: "runtime-event-1" }
       },
       audit: async (e) => {
         audit.push(e)
@@ -102,12 +102,12 @@ describe("handleAtsInbound — happy path (new user)", () => {
     assert.equal(r.kind, "ok")
     if (r.kind !== "ok") return
     assert.equal(r.jobIdInternal, "job_internal_99")
-    assert.equal(sent.length, 1)
-    assert.match(sent[0].content, /WeKruit/)
-    assert.match(sent[0].content, /Senior FE/)
-    assert.match(sent[0].content, /Acme/)
+    assert.equal(runtime.length, 1)
+    assert.equal(runtime[0].toE164, "+14155550199")
+    assert.equal(runtime[0].context.jobTitle, "Senior FE")
+    assert.equal(runtime[0].context.company, "Acme")
     assert.ok(writes.some((w) => w.path.startsWith("pa-ats-invite-idempotency/")))
-    assert.ok(audit.some((a) => a.kind === "ats_inbound.invited"))
+    assert.ok(audit.some((a) => a.kind === "ats_inbound.runtime_handoff"))
   })
 })
 
@@ -125,7 +125,7 @@ describe("handleAtsInbound — 7d idempotency", () => {
     let sendCalled = false
     const r = await handleAtsInbound(baseApplicant, {
       db,
-      sendInvite: async () => {
+      enqueueRuntimeInvite: async () => {
         sendCalled = true
         return { ok: true }
       },
@@ -142,7 +142,7 @@ describe("handleAtsInbound — missing mapping", () => {
     const { db } = makeFakeDb()
     const r = await handleAtsInbound(baseApplicant, {
       db,
-      sendInvite: async () => ({ ok: true }),
+      enqueueRuntimeInvite: async () => ({ ok: true }),
       audit: async () => undefined,
     })
     assert.equal(r.kind, "no_internal_job")
@@ -161,7 +161,7 @@ describe("handleAtsInbound — no phone", () => {
       { ...baseApplicant, phone: undefined },
       {
         db,
-        sendInvite: async () => ({ ok: true }),
+        enqueueRuntimeInvite: async () => ({ ok: true }),
         audit: async () => undefined,
         now: () => 1_700_000_000_000,
       }
@@ -184,7 +184,7 @@ describe("handleAtsInbound — S2 identity-gated resume binding", () => {
       {
         db,
         bindResume: async () => ({ ok: false, reason: "identity_conflict" }),
-        sendInvite: async () => {
+        enqueueRuntimeInvite: async () => {
           sendCalled = true
           return { ok: true }
         },
@@ -222,9 +222,9 @@ describe("handleAtsInbound — S2 identity-gated resume binding", () => {
           assert.equal(args.atsApplicantId, "handshake:hs_app_1")
           return { ok: true, userId: "cand_canonical" }
         },
-        sendInvite: async (args) => {
-          sent.push({ userId: args.userId, to: args.to })
-          return { ok: true }
+        enqueueRuntimeInvite: async (args) => {
+          sent.push({ userId: args.userId, to: args.toE164 })
+          return { ok: true, eventId: "runtime-event-2" }
         },
         audit: async () => undefined,
         now: () => 1_700_000_000_000,

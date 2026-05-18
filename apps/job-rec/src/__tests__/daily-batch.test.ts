@@ -1,5 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
+import { createHash } from "node:crypto"
 import { MockFirestore, asFirestore } from "./mock-firestore.js"
 import {
   formatJobLine,
@@ -7,6 +8,43 @@ import {
   runDailyJobRecBatch,
 } from "../daily-batch.js"
 import type { MatchingJob } from "../types.js"
+
+function sessionDocId(userId: string, phoneE164: string): string {
+  const h = createHash("sha256").update(`${userId}|imessage|${phoneE164}`).digest("hex")
+  return `ses_${h.slice(0, 32)}`
+}
+
+async function seedUser(
+  mfs: MockFirestore,
+  userId: string,
+  phoneE164: string,
+  extra: Record<string, unknown> = {}
+): Promise<void> {
+  await mfs.collection("pa-users").doc(userId).set({ phoneE164, ...extra })
+  await mfs.collection("pa-sessions").doc(sessionDocId(userId, phoneE164)).set({
+    id: sessionDocId(userId, phoneE164),
+    userId,
+    channel: "imessage",
+    externalChatId: phoneE164,
+    createdAt: "2026-04-30T00:00:00.000Z",
+  })
+}
+
+function jobRecRuntimeWrites(mfs: MockFirestore) {
+  return mfs.writeLog.filter(
+    (w) =>
+      w.path === "pa-inbound-events" &&
+      (w.data.rawMeta as Record<string, unknown> | undefined)?.runtimeEventSource === "job_rec"
+  )
+}
+
+function firstJobRecProposedMessage(mfs: MockFirestore): string {
+  const row = jobRecRuntimeWrites(mfs)[0]?.data
+  const ctx = (row?.rawMeta as Record<string, unknown> | undefined)?.context as
+    | Record<string, unknown>
+    | undefined
+  return String(ctx?.proposedMessage ?? "")
+}
 
 test("formatJobLine: bare URL on its own line (Bible v7.5.2)", () => {
   const j: MatchingJob = {
@@ -148,7 +186,7 @@ test("runDailyJobRecBatch: skips users when feature flag is OFF", async () => {
 
 test("runDailyJobRecBatch: delivers when flag ON + jobs available + writes lastJobBatchSentAt", async () => {
   const mfs = new MockFirestore()
-  await mfs.collection("pa-users").doc("u1").set({ phoneE164: "+15551112222" })
+  await seedUser(mfs, "u1", "+15551112222")
   await mfs.collection("pa-job-profiles").doc("u1").set({
     userId: "u1",
     profile: { industry: "tech", sponsorship: "none", location: "remote", sizePreference: "either" },
@@ -183,14 +221,13 @@ test("runDailyJobRecBatch: delivers when flag ON + jobs available + writes lastJ
   // lastJobBatchSentAt should be merged onto the profile
   const profile = (await mfs.collection("pa-job-profiles").doc("u1").get()).data()
   assert.ok(profile?.lastJobBatchSentAt)
-  // pa-outbound write went out
-  const outboundWrites = mfs.writeLog.filter((w) => w.path === "pa-outbound")
-  assert.equal(outboundWrites.length, 1)
+  // job-rec hands the candidate-visible message to Claire runtime.
+  assert.equal(jobRecRuntimeWrites(mfs).length, 1)
 })
 
 test("runDailyJobRecBatch: skipped_no_jobs when corpus empty for filters", async () => {
   const mfs = new MockFirestore()
-  await mfs.collection("pa-users").doc("u1").set({ phoneE164: "+15551112222" })
+  await seedUser(mfs, "u1", "+15551112222")
   await mfs.collection("pa-job-profiles").doc("u1").set({
     userId: "u1",
     profile: { industry: "fintech", sponsorship: "none", location: "Mars", sizePreference: "either" },
@@ -211,7 +248,7 @@ test("runDailyJobRecBatch: skipped_no_jobs when corpus empty for filters", async
 
 test("runDailyJobRecBatch: idempotency key includes YYYYMMDD", async () => {
   const mfs = new MockFirestore()
-  await mfs.collection("pa-users").doc("u1").set({ phoneE164: "+15551112222" })
+  await seedUser(mfs, "u1", "+15551112222")
   await mfs.collection("pa-job-profiles").doc("u1").set({
     userId: "u1",
     profile: { industry: "tech", sponsorship: "none", location: "Remote", sizePreference: "either" },
@@ -241,8 +278,8 @@ test("runDailyJobRecBatch: idempotency key includes YYYYMMDD", async () => {
     todayYmd: () => "20260430",
     jobsPerUser: 1,
   })
-  const w = mfs.writeLog.filter((w) => w.path === "pa-outbound")[0]
-  assert.equal(w?.data.idempotencyKey, "u1-20260430-batch")
+  const w = jobRecRuntimeWrites(mfs)[0]
+  assert.equal(w?.data.idempotencyKey, "runtime-event:job-rec:u1-20260430-batch")
 })
 
 test("runDailyJobRecBatch: filters out non-active profile statuses", async () => {
@@ -324,7 +361,7 @@ test("Stream F5: cosineSimilarity is 1.0 for identical vectors and 0 for orthogo
 
 test("Stream F5: runDailyJobRecBatch handles new-shape profile end-to-end (delivers)", async () => {
   const mfs = new MockFirestore()
-  await mfs.collection("pa-users").doc("u_new").set({ phoneE164: "+15553334444" })
+  await seedUser(mfs, "u_new", "+15553334444")
   await mfs.collection("pa-job-profiles").doc("u_new").set({
     userId: "u_new",
     profile: {
@@ -361,12 +398,11 @@ test("Stream F5: runDailyJobRecBatch handles new-shape profile end-to-end (deliv
     jobsPerUser: 1,
   })
   assert.equal(out.delivered, 1)
-  const w = mfs.writeLog.filter((w) => w.path === "pa-outbound")[0]
-  assert.ok(w?.data.body)
-  assert.match(String(w!.data.body), /FinCo/)
+  const body = firstJobRecProposedMessage(mfs)
+  assert.match(body, /FinCo/)
   // Bare URL on its own line (Bible v7.5.2). atsApplyUrl is preferred over primaryUrl
   // post-iter34-A.2, so we match the greenhouse ATS link rather than primaryUrl.
-  assert.match(String(w!.data.body), /\nhttps:\/\/greenhouse\.io\/co\/jobs\/6/)
+  assert.match(body, /\nhttps:\/\/greenhouse\.io\/co\/jobs\/6/)
 })
 
 import { rerankByCosine } from "../daily-batch.js"
@@ -422,7 +458,7 @@ test("Stream F5: rerankByCosine sorts by cosine similarity, jobs without embeddi
 
 test("Stream F5: runDailyJobRecBatch with rerank deps applies cosine + still delivers", async () => {
   const mfs = new MockFirestore()
-  await mfs.collection("pa-users").doc("u_re").set({ phoneE164: "+15554445555" })
+  await seedUser(mfs, "u_re", "+15554445555")
   await mfs.collection("pa-job-profiles").doc("u_re").set({
     userId: "u_re",
     profile: {
@@ -480,15 +516,15 @@ test("Stream F5: runDailyJobRecBatch with rerank deps applies cosine + still del
     candidatePoolSize: 50,
   })
   assert.equal(out.delivered, 1)
-  const w = mfs.writeLog.filter((w) => w.path === "pa-outbound")[0]
+  const body = firstJobRecProposedMessage(mfs)
   // HighCo wins because its embedding is identical to user
-  assert.match(String(w!.data.body), /HighCo/)
-  assert.doesNotMatch(String(w!.data.body), /LowCo/)
+  assert.match(body, /HighCo/)
+  assert.doesNotMatch(body, /LowCo/)
 })
 
 test("Stream H10: cross-encoder reranker reorders cosine-ranked jobs by relevance", async () => {
   const mfs = new MockFirestore()
-  await mfs.collection("pa-users").doc("u_x").set({ phoneE164: "+15553336666" })
+  await seedUser(mfs, "u_x", "+15553336666")
   await mfs.collection("pa-job-profiles").doc("u_x").set({
     userId: "u_x",
     profile: {
@@ -565,16 +601,14 @@ test("Stream H10: cross-encoder reranker reorders cosine-ranked jobs by relevanc
     crossEncoderPoolSize: 10,
   })
   assert.equal(out.delivered, 1)
-  const body = String(
-    mfs.writeLog.filter((w) => w.path === "pa-outbound")[0]!.data.body
-  )
+  const body = firstJobRecProposedMessage(mfs)
   assert.match(body, /DataCo/, "cross-encoder picks Data Scientist over QC Analyst")
   assert.doesNotMatch(body, /LabCo/)
 })
 
 test("Stream H10: cross-encoder fail-open (all-null scores) preserves cosine order", async () => {
   const mfs = new MockFirestore()
-  await mfs.collection("pa-users").doc("u_fo").set({ phoneE164: "+15557778888" })
+  await seedUser(mfs, "u_fo", "+15557778888")
   await mfs.collection("pa-job-profiles").doc("u_fo").set({
     userId: "u_fo",
     profile: {
@@ -638,9 +672,7 @@ test("Stream H10: cross-encoder fail-open (all-null scores) preserves cosine ord
     crossEncoderReranker: reranker,
   })
   assert.equal(out.delivered, 1)
-  const body = String(
-    mfs.writeLog.filter((w) => w.path === "pa-outbound")[0]!.data.body
-  )
+  const body = firstJobRecProposedMessage(mfs)
   // Cosine still ranks TopCo > BotCo despite reranker fail-open.
   assert.match(body, /TopCo/)
   assert.doesNotMatch(body, /BotCo/)
@@ -648,7 +680,7 @@ test("Stream H10: cross-encoder fail-open (all-null scores) preserves cosine ord
 
 test("Stream H12: dedupe by (jobTitle|companyName) drops near-identical JDs", async () => {
   const mfs = new MockFirestore()
-  await mfs.collection("pa-users").doc("u1").set({ phoneE164: "+15551112222" })
+  await seedUser(mfs, "u1", "+15551112222")
   await mfs.collection("pa-job-profiles").doc("u1").set({
     userId: "u1",
     profile: { industry: "tech", sponsorship: "none", location: "remote", sizePreference: "either" },
@@ -694,7 +726,7 @@ test("Stream H12: dedupe by (jobTitle|companyName) drops near-identical JDs", as
     jobsPerUser: 4,  // request 4 — dedupe should still leave 2 unique
   })
   assert.equal(out.delivered, 1)
-  const body = String(mfs.writeLog.filter((w) => w.path === "pa-outbound")[0]!.data.body)
+  const body = firstJobRecProposedMessage(mfs)
   // Both unique title-company pairs should appear, but only ONCE each
   assert.match(body, /Tax Consultant/)
   assert.match(body, /Software Engineer/)
@@ -928,10 +960,7 @@ test("H13 formatJobLineWithReason: atsApplyUrl undefined → falls back to prima
 
 test("H13 runDailyJobRecBatch wires friend-tone variant B end-to-end (default flag on)", async () => {
   const mfs = new MockFirestore()
-  await mfs.collection("pa-users").doc("u1").set({
-    phoneE164: "+15551112222",
-    preferredLanguage: "zh",
-  })
+  await seedUser(mfs, "u1", "+15551112222", { preferredLanguage: "zh" })
   // Resume doc with NEUROVA + Python — exercises variant B path
   await mfs.collection("parsedCandidateResumes").doc("r1").set({
     userId: "u1",
@@ -986,7 +1015,7 @@ test("H13 runDailyJobRecBatch wires friend-tone variant B end-to-end (default fl
     jobsPerUser: 1,
   })
   assert.equal(out.delivered, 1)
-  const body = String(mfs.writeLog.filter((w) => w.path === "pa-outbound")[0]!.data.body)
+  const body = firstJobRecProposedMessage(mfs)
   // Friend-tone B applied: NEUROVA + Python referenced in lead-in
   assert.match(body, /NEUROVA/)
   assert.match(body, /Python/)
@@ -1000,7 +1029,7 @@ import type { ChatImpl } from "../match-explainer.js"
 
 test("Phase 42 regression: explainer flag OFF → body bytewise matches H13 (no LLM call)", async () => {
   const mfs = new MockFirestore()
-  await mfs.collection("pa-users").doc("u1").set({ phoneE164: "+15551112222" })
+  await seedUser(mfs, "u1", "+15551112222")
   await mfs.collection("parsedCandidateResumes").doc("r1").set({
     userId: "u1",
     createdAt: "2026-04-30T00:00:00Z",
@@ -1062,7 +1091,7 @@ test("Phase 42 regression: explainer flag OFF → body bytewise matches H13 (no 
   })
   assert.equal(out.delivered, 1)
   assert.equal(chatCallCount, 0, "explainer must NOT run when flag is off")
-  const body = String(mfs.writeLog.filter((w) => w.path === "pa-outbound")[0]!.data.body)
+  const body = firstJobRecProposedMessage(mfs)
   // H13 heuristic still fires (Python skill overlap) — bytewise compatible
   // with pre-Phase-42 because no ctx.reasons map was populated.
   assert.match(body, /Python 经验直接对得上/)
@@ -1072,7 +1101,7 @@ test("Phase 42 regression: explainer flag OFF → body bytewise matches H13 (no 
 
 test("Phase 42: explainer flag ON → LLM reason injected into body + cached", async () => {
   const mfs = new MockFirestore()
-  await mfs.collection("pa-users").doc("u1").set({ phoneE164: "+15551112222" })
+  await seedUser(mfs, "u1", "+15551112222")
   await mfs.collection("parsedCandidateResumes").doc("r1").set({
     userId: "u1",
     createdAt: "2026-04-30T00:00:00Z",
@@ -1136,7 +1165,7 @@ test("Phase 42: explainer flag ON → LLM reason injected into body + cached", a
   })
   assert.equal(out.delivered, 1)
   assert.equal(chatCallCount, 1, "explainer must run exactly once")
-  const body = String(mfs.writeLog.filter((w) => w.path === "pa-outbound")[0]!.data.body)
+  const body = firstJobRecProposedMessage(mfs)
   // LLM-grounded reason replaces the heuristic reason (Stripe job skill
   // overlap on "payments" would have produced "你 payments 经验直接对得上";
   // explainer's grounded reason wins).
@@ -1159,7 +1188,7 @@ test("Phase 42: explainer flag ON → LLM reason injected into body + cached", a
 
 test("Phase 42: explainer flag ON + LLM throws → fail-open keeps H13 heuristic line", async () => {
   const mfs = new MockFirestore()
-  await mfs.collection("pa-users").doc("u1").set({ phoneE164: "+15551112222" })
+  await seedUser(mfs, "u1", "+15551112222")
   await mfs.collection("parsedCandidateResumes").doc("r1").set({
     userId: "u1",
     createdAt: "2026-04-30T00:00:00Z",
@@ -1217,7 +1246,7 @@ test("Phase 42: explainer flag ON + LLM throws → fail-open keeps H13 heuristic
     matchExplainerChatImpl: stubChat,
   })
   assert.equal(out.delivered, 1)
-  const body = String(mfs.writeLog.filter((w) => w.path === "pa-outbound")[0]!.data.body)
+  const body = firstJobRecProposedMessage(mfs)
   // Heuristic reason still appears (Python skill overlap) — fail-open
   // means we degrade to H13 behavior, never break the user.
   assert.match(body, /Python 经验直接对得上/)

@@ -4,6 +4,73 @@ import {
   buildCandidateUploadResumeArtifactWrites,
   buildPublicCvIngestInput,
 } from "./public-cv-ingest.js"
+import {
+  detectResumeUploadKind,
+  extractDocxText,
+} from "./resume-upload-parser.js"
+
+function u16(value: number): Buffer {
+  const b = Buffer.alloc(2)
+  b.writeUInt16LE(value)
+  return b
+}
+
+function u32(value: number): Buffer {
+  const b = Buffer.alloc(4)
+  b.writeUInt32LE(value >>> 0)
+  return b
+}
+
+function makeStoredZip(fileName: string, content: string): Uint8Array {
+  const name = Buffer.from(fileName)
+  const data = Buffer.from(content)
+  const local = Buffer.concat([
+    u32(0x04034b50),
+    u16(20),
+    u16(0),
+    u16(0),
+    u16(0),
+    u16(0),
+    u32(0),
+    u32(data.length),
+    u32(data.length),
+    u16(name.length),
+    u16(0),
+    name,
+    data,
+  ])
+  const central = Buffer.concat([
+    u32(0x02014b50),
+    u16(20),
+    u16(20),
+    u16(0),
+    u16(0),
+    u16(0),
+    u16(0),
+    u32(0),
+    u32(data.length),
+    u32(data.length),
+    u16(name.length),
+    u16(0),
+    u16(0),
+    u16(0),
+    u16(0),
+    u32(0),
+    u32(0),
+    name,
+  ])
+  const eocd = Buffer.concat([
+    u32(0x06054b50),
+    u16(0),
+    u16(0),
+    u16(1),
+    u16(1),
+    u32(central.length),
+    u32(local.length),
+    u16(0),
+  ])
+  return Buffer.concat([local, central, eocd])
+}
 
 test("buildCandidateUploadResumeArtifactWrites creates parsed candidate-upload artifact patches", () => {
   const writes = buildCandidateUploadResumeArtifactWrites({
@@ -63,4 +130,31 @@ test("buildPublicCvIngestInput preserves ATS identity hints for external intake"
   assert.equal(input.identitySource, "ats")
   assert.equal(input.employerEmailHint, "person@example.com")
   assert.equal(input.atsApplicantId, "ats-1")
+})
+
+test("detectResumeUploadKind accepts PDF and DOCX only", () => {
+  assert.equal(detectResumeUploadKind(Buffer.from("%PDF-1.7\n"), "Resume.pdf"), "pdf")
+  assert.equal(
+    detectResumeUploadKind(makeStoredZip("word/document.xml", "<w:document />"), "Resume.docx"),
+    "docx",
+  )
+  assert.equal(
+    detectResumeUploadKind(makeStoredZip("word/document.xml", "<w:document />"), "Resume.zip"),
+    null,
+  )
+  assert.equal(detectResumeUploadKind(Buffer.from("plain text"), "Resume.txt"), null)
+})
+
+test("extractDocxText reads visible text from word/document.xml", () => {
+  const docx = makeStoredZip(
+    "word/document.xml",
+    `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+      <w:body>
+        <w:p><w:r><w:t>Adam Yang</w:t></w:r></w:p>
+        <w:p><w:r><w:t>Built React dashboards &amp; SQL reports</w:t></w:r></w:p>
+      </w:body>
+    </w:document>`,
+  )
+
+  assert.equal(extractDocxText(docx), "Adam Yang\nBuilt React dashboards & SQL reports")
 })

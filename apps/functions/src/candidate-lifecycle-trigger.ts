@@ -4,12 +4,12 @@ import { defineSecret } from "firebase-functions/params"
 import { logger } from "firebase-functions/v2"
 import { getFirestore } from "firebase-admin/firestore"
 import { z } from "zod"
-import { enqueueOutbound as defaultEnqueueOutbound } from "@pa/pa-broker"
 import { authorizeAdminCallable } from "./promote-sandbox-tag.js"
 import {
   composeJobRecommendationMessage,
   toJobRecommendationMessageItem,
 } from "./job-rec-copy.js"
+import { enqueueRuntimeEventHandoff } from "./runtime-event-handoff.js"
 
 const PA_ADMIN_TOKEN = defineSecret("PA_ADMIN_TOKEN")
 
@@ -577,7 +577,24 @@ export const paCandidateLifecycleTrigger = onCall(
       updateLifecycleEvent: async (eventId, patch) => {
         await db.collection(CANDIDATE_LIFECYCLE_EVENT_COLLECTION).doc(eventId).set(patch, { merge: true })
       },
-      enqueueOutbound: (input) => defaultEnqueueOutbound(db, input),
+      enqueueOutbound: async (input) => {
+        const runtime = await enqueueRuntimeEventHandoff(db, {
+          userId: input.userId,
+          toE164: input.toE164,
+          source: "candidate_lifecycle",
+          eventKind: parsed.data.eventType,
+          idempotencyKey: input.idempotencyKey,
+          requireExistingSession: true,
+          context: {
+            eventType: parsed.data.eventType,
+            eventReason: parsed.data.eventReason,
+            proposedMessage: input.body,
+            job: parsed.data.job ?? null,
+          },
+        })
+        if (!runtime.ok) return { id: runtime.reason, created: false }
+        return { id: runtime.eventId, created: runtime.created }
+      },
       updateCandidate: async (candidateId, patch) => {
         await db.collection("pa-users").doc(candidateId).set(patch, { merge: true })
       },

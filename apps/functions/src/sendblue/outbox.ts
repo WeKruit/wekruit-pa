@@ -10,13 +10,14 @@
  *   1. PA_CHANNEL_LEGACY=1 → return early (D-08; macOS worker is authority)
  *   2. Claim transactionally (status pending → sending) — prevents
  *      double-send across CF retries
- *   3. Allowlist gate (mirror outbox.ts:121-137 keyed on toE164 E.164)
- *   4. Append transcript (skip when idempotencyKey starts with
+ *   3. Runtime approval gate (blocks legacy direct pa-outbound producers)
+ *   4. Allowlist gate (mirror outbox.ts:121-137 keyed on toE164 E.164)
+ *   5. Append transcript (skip when idempotencyKey starts with
  *      `out-imessage-in-` OR `out-sendblue-` per D-02)
- *   5. Optional typing indicator (PA_TYPING_INDICATOR=1, D-06)
- *   6. POST Sendblue REST → on 4xx → status=failed; on 5xx → status=pending
+ *   6. Optional typing indicator (PA_TYPING_INDICATOR=1, D-06)
+ *   7. POST Sendblue REST → on 4xx → status=failed; on 5xx → status=pending
  *      with attemptCount bumped (CF re-fires via reclaim or next mutation)
- *   7. On 2xx → status=sent + record uuid/messageHandle for delivery audit
+ *   8. On 2xx → status=sent + record uuid/messageHandle for delivery audit
  */
 
 import { PA_COLLECTIONS } from "@pa/core-types"
@@ -41,6 +42,10 @@ export function shouldAppendOutboundTranscript(raw: { idempotencyKey?: unknown }
 
 export function isMarketplaceOutreachOutbound(raw: { idempotencyKey?: unknown }): boolean {
   return String(raw.idempotencyKey ?? "").startsWith("outreach_idempotency_")
+}
+
+export function isRuntimeApprovedOutbound(raw: { runtimeApproved?: unknown }): boolean {
+  return raw.runtimeApproved === true
 }
 
 /**
@@ -301,6 +306,32 @@ export async function paSendblueOutboxHandler(
   const toPeerRaw = String(data.toE164 ?? "")
   const toPeer = toPeerRaw ? normalizePeer(toPeerRaw) : ""
   const body = String(data.body ?? "").trim()
+
+  // Runtime approval gate: pa-outbound is only the transport outbox. It
+  // must not become an authorization bypass for legacy webhook/upload/event
+  // producers that render their own candidate-facing copy.
+  if (!isRuntimeApprovedOutbound(data)) {
+    await ref.set(
+      {
+        status: "failed",
+        error: "blocked: outbound row was not approved by runtime",
+        blockedByRuntimeGate: true,
+        updatedAt: now().toISOString(),
+        expiresAtTs: outboundExpiresAtTs(now()),
+      },
+      { merge: true }
+    )
+    logOutboundFailure(log, {
+      docId,
+      userId,
+      idempotencyKey: typeof data.idempotencyKey === "string" ? String(data.idempotencyKey) : undefined,
+      lastError: "blocked: outbound row was not approved by runtime",
+      attempts: Number((data as { attemptCount?: unknown }).attemptCount ?? 0),
+      body,
+      terminalStatus: "failed",
+    })
+    return
+  }
 
   // ---- 3. Allowlist gate (mirror macOS outbox.ts:121-137) --------------
   if (useDmAllowlist()) {

@@ -10,6 +10,8 @@ export type EnqueueOutboundInput = {
   imessageChatId?: string
   body: string
   idempotencyKey: string
+  runtimeApproved?: true
+  runtimeSource?: string
 }
 
 export function outboundMessageDocId(idempotencyKey: string): string {
@@ -24,6 +26,9 @@ export async function enqueueOutbound(
   db: Firestore,
   input: EnqueueOutboundInput
 ): Promise<{ id: string; created: boolean }> {
+  if (input.runtimeApproved !== true) {
+    throw new Error("outbound_requires_runtime_approval")
+  }
   const id = outboundMessageDocId(input.idempotencyKey)
   const ref = db.collection(OUT).doc(id)
   const now = new Date().toISOString()
@@ -36,6 +41,9 @@ export async function enqueueOutbound(
     status: "pending",
     createdAt: now,
     idempotencyKey: input.idempotencyKey,
+    runtimeApproved: true,
+    runtimeSource: input.runtimeSource ?? "pa_broker_runtime",
+    source: input.runtimeSource ?? "pa_broker_runtime",
   }
   try {
     await ref.create(doc)

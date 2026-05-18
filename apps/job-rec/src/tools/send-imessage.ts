@@ -1,25 +1,21 @@
 /**
  * Tool: sendImessage
  *
- * Enqueue an outbound iMessage by writing a `pa-outbound` Firestore doc.
- * The existing `paSendblueOutbox` Cloud Function (apps/functions/src/index.ts)
- * picks the doc up via `onDocumentCreated`, talks to Sendblue REST, and
- * marks it sent — we do NOT call Sendblue here. Owner of that path is
- * Stream A; we just produce the same shape the outbox already consumes.
+ * Hand off a candidate-visible message request to Claire runtime by writing
+ * a synthetic `pa-inbound-events` doc. The runtime decides whether/how to
+ * message and is the only path allowed to create sendable `pa-outbound` rows.
  *
- * The OutboundMessageSchema is the contract (packages/core-types). We
- * write only the fields it requires; everything else (chunkPlan,
- * leaseUntil, etc.) is left for the outbox CF to fill in.
+ * This tool never writes sendable transport rows directly.
  *
  * Idempotency: derived from `(userId, content)` so retries of the cron
  * path don't double-send the same job recs. Caller can pass an explicit
  * key (preferred for cron — `${userId}-${YYYYMMDD}-batch`).
  */
 
-import { createHash, randomUUID } from "node:crypto"
+import { createHash } from "node:crypto"
 import type { Firestore } from "firebase-admin/firestore"
 import { tool } from "@openai/agents"
-import { PA_COLLECTIONS, OutboundMessageSchema, type OutboundMessage, type User } from "@pa/core-types"
+import { PA_COLLECTIONS, type Channel, type InboundEvent, type User } from "@pa/core-types"
 import { SendImessageInputSchema, type SendImessageOutput } from "../types.js"
 
 export type SendImessageDeps = {
@@ -68,6 +64,26 @@ function deriveIdempotencyKey(userId: string, content: string): string {
   return createHash("sha1").update(`${userId}|${content}`).digest("hex")
 }
 
+function sessionDocId(userId: string, channel: Channel, externalChatId: string): string {
+  const h = createHash("sha256").update(`${userId}|${channel}|${externalChatId}`).digest("hex")
+  return `ses_${h.slice(0, 32)}`
+}
+
+function runtimeEventDocId(idempotencyKey: string): string {
+  const h = createHash("sha256").update(`job-rec|${idempotencyKey}`, "utf8").digest("hex")
+  return `runtime_${h.slice(0, 40)}`
+}
+
+function buildRuntimeEventBody(content: string): string {
+  return [
+    "[system-event:job_rec:send_imessage]",
+    "A job recommendation/outbound request was produced by a non-runtime job-rec component.",
+    "Decide whether Claire should message the candidate now. If no message should be sent, reply exactly __NO_SEND__.",
+    "If a message should be sent, keep the candidate's established language/context and include job links/requirements when they appear in the proposed message.",
+    `Proposed message/context: ${content.slice(0, 2500)}`,
+  ].join("\n")
+}
+
 export async function sendImessage(
   args: SendImessageArgs,
   deps: SendImessageDeps
@@ -84,51 +100,52 @@ export async function sendImessage(
   }
 
   const idempotencyKey = args.idempotencyKey ?? deriveIdempotencyKey(parsed.userId, parsed.content)
-  // Short-circuit: if a prior write already used this idempotency key,
-  // return ok: true without enqueuing a second copy. This matches the
-  // OutboundMessage idempotency contract (the worker treats matching
-  // keys as duplicates regardless).
-  const existing = await deps.db
-    .collection(PA_COLLECTIONS.outbound)
-    .where("idempotencyKey", "==", idempotencyKey)
-    .limit(1)
-    .get()
-  if (!existing.empty) {
-    const prevId = existing.docs[0]?.id
-    log("[sendImessage] dedup_hit", { userId: parsed.userId, idempotencyKey, prevId })
-    return { ok: true, messageHandle: prevId }
+  const id = runtimeEventDocId(idempotencyKey)
+  const createdAt = nowIso()
+  const sessionId = args.sessionId ?? sessionDocId(parsed.userId, "imessage", user.phoneE164)
+  const sessionSnap = await deps.db.collection(PA_COLLECTIONS.sessions).doc(sessionId).get()
+  if (!sessionSnap.exists) {
+    log("[sendImessage] runtime_handoff_blocked_no_existing_session", {
+      userId: parsed.userId,
+      sessionId,
+    })
+    return { ok: false }
+  }
+  const existing = await deps.db.collection(PA_COLLECTIONS.inboundEvents).doc(id).get()
+  if (existing.exists) {
+    log("[sendImessage] runtime_dedup_hit", { userId: parsed.userId, idempotencyKey, prevId: id })
+    return { ok: true, messageHandle: id }
   }
 
-  const id = randomUUID()
-  const createdAt = nowIso()
-
-  // OutboundMessage.imessageChatId is optional and the live User.channels
-  // shape (packages/core-types) does NOT carry imessageChatId — only
-  // imessageHandle. The outbox CF resolves the chat id via Sendblue
-  // session lookup, so omitting here is correct.
-  const message: OutboundMessage = {
+  const event: InboundEvent = {
     id,
     userId: parsed.userId,
-    toE164: user.phoneE164,
-    body: parsed.content,
+    sessionId,
+    channel: "imessage",
+    externalChatId: user.phoneE164,
+    from: user.phoneE164,
+    body: buildRuntimeEventBody(parsed.content),
     status: "pending",
     createdAt,
-    createdBy: "job-rec@wekruit",
-    idempotencyKey,
-    role: "assistant",
+    idempotencyKey: `runtime-event:job-rec:${idempotencyKey}`,
+    rawMeta: {
+      source: "runtime_event_handoff",
+      runtimeEvent: true,
+      runtimeEventSource: "job_rec",
+      runtimeEventKind: "send_imessage",
+      runtimeNoSendToken: "__NO_SEND__",
+      context: {
+        proposedMessage: parsed.content,
+      },
+    },
   }
-  if (args.sessionId) message.sessionId = args.sessionId
-
-  // Validate against the canonical schema before write — catches contract
-  // drift between job-rec and pa-orchestrator.
-  OutboundMessageSchema.parse(message)
 
   await deps.db
-    .collection(PA_COLLECTIONS.outbound)
+    .collection(PA_COLLECTIONS.inboundEvents)
     .doc(id)
-    .set(message as unknown as Record<string, unknown>)
+    .set(event as unknown as Record<string, unknown>)
 
-  log("[sendImessage] enqueued", { userId: parsed.userId, id, idempotencyKey })
+  log("[sendImessage] runtime_event_enqueued", { userId: parsed.userId, id, idempotencyKey })
   return { ok: true, messageHandle: id }
 }
 
@@ -136,9 +153,8 @@ export function createSendImessageTool(deps: SendImessageDeps) {
   return tool({
     name: "sendImessage",
     description:
-      "Enqueue an outbound iMessage to the candidate. Reuses the production " +
-      "pa-outbound queue; do NOT call Sendblue REST directly. Use this to " +
-      "send a sample job preview during onboarding or daily recs from cron.",
+      "Request a candidate iMessage through Claire runtime. This writes a " +
+      "synthetic pa-inbound-events handoff; it does not create sendable pa-outbound directly.",
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     parameters: SendImessageInputSchema as any,
     execute: async (raw: unknown) => {

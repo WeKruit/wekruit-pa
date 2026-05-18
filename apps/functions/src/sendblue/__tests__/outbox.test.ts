@@ -13,7 +13,12 @@ function makeFakeDb(
   users: Record<string, DocData> = {},
   opts: { quotaLimit?: number; existingDailyCount?: number } = {}
 ) {
-  const outbound = new Map<string, DocData>(Object.entries(initialOutbound))
+  const outbound = new Map<string, DocData>(
+    Object.entries(initialOutbound).map(([id, row]) => [
+      id,
+      { runtimeApproved: true, runtimeSource: "test_runtime", ...row },
+    ])
+  )
   const sessions = new Map<string, DocData>()
   const messages = new Map<string, DocData>()
   const usersMap = new Map<string, DocData>(Object.entries(users))
@@ -156,10 +161,11 @@ const ENV_KEYS = [
 let savedEnv: Record<string, string | undefined>
 
 function makeEvent(docId: string, data: DocData) {
+  const row = { runtimeApproved: true, runtimeSource: "test_runtime", ...data }
   return {
     params: { docId },
     data: {
-      data: () => data,
+      data: () => row,
       id: docId,
     },
   }
@@ -209,6 +215,36 @@ describe("paSendblueOutboxHandler", () => {
     const finalDoc = outbound.get("doc-1")!
     assert.equal(finalDoc.status, "sent")
     assert.equal(finalDoc.messageHandle, "uuid-mock-1")
+  })
+
+  it("Test 1b: unapproved legacy pa-outbound row is blocked before Sendblue", async () => {
+    const baseRow: DocData = {
+      status: "pending",
+      userId: USER.id,
+      toE164: ALLOWED_PEER,
+      body: "legacy direct body",
+      idempotencyKey: "out-legacy-direct",
+      createdAt: new Date().toISOString(),
+      runtimeApproved: false,
+    }
+    const { db, outbound } = makeFakeDb({ "doc-legacy": baseRow }, { [USER.id]: USER })
+    const sb = makeSendblueMock()
+
+    await paSendblueOutboxHandler(makeEvent("doc-legacy", baseRow) as never, {
+      db: db as never,
+      sendblueClient: sb,
+      now: () => new Date("2026-04-27T20:00:00Z"),
+      log: () => {},
+      appendMessage: async () => {},
+      getUser: async () => USER as never,
+      getOrCreateSession: async () => ({ id: "s-1", userId: USER.id, externalChatId: "x", channel: "imessage" } as never),
+    })
+
+    assert.equal(sb.calls, 0)
+    const finalDoc = outbound.get("doc-legacy")!
+    assert.equal(finalDoc.status, "failed")
+    assert.equal(finalDoc.blockedByRuntimeGate, true)
+    assert.match(String(finalDoc.error), /not approved by runtime/)
   })
 
   it("Test 2: non-allowlisted toE164 → status=failed with allowlist error (mirror macOS worker)", async () => {

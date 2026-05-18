@@ -108,6 +108,7 @@ describe("Stream H9 TD1 — expiresAtTs Timestamp writes", () => {
       body: "hello",
       idempotencyKey: "out-ttl-1",
       createdAt: new Date().toISOString(),
+      runtimeApproved: true,
     }
     const { db, outbound } = makeFakeDb({ "doc-ttl-1": baseRow })
     const sb = {

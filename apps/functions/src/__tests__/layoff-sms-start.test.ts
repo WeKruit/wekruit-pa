@@ -74,7 +74,7 @@ function makeFakeDb(docs: Map<string, FakeDocState>) {
 }
 
 describe("runLayoffSmsStart", () => {
-  it("updates the existing pa-user source and enqueues the shared Claire opener", async () => {
+  it("updates the existing pa-user source and hands kickoff to runtime", async () => {
     const docs = new Map<string, FakeDocState>([
       [
         "pa-users/u1",
@@ -95,31 +95,27 @@ describe("runLayoffSmsStart", () => {
       ],
     ])
     const { db, writes } = makeFakeDb(docs)
-    const enqueued: Array<Record<string, unknown>> = []
+    const runtimeKicks: Array<Record<string, unknown>> = []
 
     const result = await runLayoffSmsStart({
       db,
       userId: "u1",
       toE164: "+13054507715",
-      enqueueOutbound: async (_db, input) => {
-        enqueued.push(input)
-        return { id: "out_layoff", created: true }
+      runRuntimeKickoff: async (input) => {
+        runtimeKicks.push(input)
+        return { eventId: "layoff_runtime_test", outboundId: "out_runtime_layoff" }
       },
     })
 
     assert.deepEqual(result, {
       ok: true,
-      kickoffOutboundId: "out_layoff",
+      kickoffOutboundId: "out_runtime_layoff",
       kickoffCreated: true,
       sourceTag: WEKRUIT_LAYOFF_SOURCE,
     })
-    assert.equal(enqueued[0].userId, "u1")
-    assert.match(
-      String(enqueued[0].idempotencyKey),
-      /^wekruit_open_layoff:u1:kickoff:\d{4}-\d{2}-\d{2}T/,
-    )
-    assert.notEqual(enqueued[0].idempotencyKey, "wekruit_open_layoff:u1:kickoff")
-    assert.match(String(enqueued[0].body), /Claire from WeKruit/)
+    assert.equal(runtimeKicks[0].userId, "u1")
+    assert.equal(runtimeKicks[0].toE164, "+13054507715")
+    assert.match(String(runtimeKicks[0].startedAt), /^\d{4}-\d{2}-\d{2}T/)
     assert.equal(writes[0].path, "pa-users/u1")
     assert.equal(writes[0].data.source, WEKRUIT_LAYOFF_SOURCE)
     assert.equal((writes[0].data.layoffContext as Record<string, unknown>).phoneE164, "+13054507715")
@@ -143,8 +139,8 @@ describe("runLayoffSmsStart", () => {
       db,
       userId: "missing",
       toE164: "+13054507715",
-      enqueueOutbound: async () => {
-        throw new Error("must not enqueue")
+      runRuntimeKickoff: async () => {
+        throw new Error("must not run runtime kickoff")
       },
     })
 
