@@ -348,6 +348,10 @@ em.accent, .accent-italic {
    Inputs
    ===================================================================== */
 .input, .textarea, .select {
+  /* box-sizing: padding + border counted inside width (Adam 2026-05-18 fix:
+     without this, 1.5px border + 14px×2 padding pushed each input ~31px
+     past its grid cell → left/right column inputs visually overlapped). */
+  box-sizing: border-box;
   width: 100%;
   font-family: var(--font-sans);
   font-size: var(--fs-body-sm);
