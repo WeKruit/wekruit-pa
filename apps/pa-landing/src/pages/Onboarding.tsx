@@ -426,7 +426,7 @@ function FlowProgress({ stage }: { stage: Stage }) {
         marginTop: 22,
         display: "inline-flex",
         alignItems: "center",
-        gap: 0,
+        gap: 6,
         background: "var(--cream-3)",
         border: "1px solid var(--border)",
         borderRadius: "var(--r-pill)",
@@ -473,7 +473,16 @@ function FlowProgress({ stage }: { stage: Stage }) {
               {s.label}
             </span>
             {i < steps.length - 1 && (
-              <span aria-hidden style={{ width: 16, height: 1, background: "var(--border)" }} />
+              <span
+                aria-hidden
+                style={{
+                  display: "inline-block",
+                  width: 18,
+                  height: 1,
+                  background: "var(--border)",
+                  marginInline: 4,
+                }}
+              />
             )}
           </span>
         )
@@ -721,7 +730,6 @@ function Field({
         onChange={(e) => onChange(e.target.value)}
         className="input"
         autoFocus={autoFocus}
-        style={{ background: "var(--cream)" }}
       />
       {hint && <span className="caption" style={{ color: "var(--ink-3)" }}>{hint}</span>}
     </label>

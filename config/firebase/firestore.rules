@@ -222,6 +222,17 @@ service cloud.firestore {
       allow write: if isPaOperator();
     }
 
+    // ─── layoff_employers (WeKruit Open employer signups) ────────────
+    // Written by openRegisterEmployer (Admin SDK, bypasses rules) when an
+    // employer submits the /employer form on layoff.wekruit.com. Operator
+    // R/W for the /admin/layoff-employers dashboard so ops can review
+    // pending signups and flip verificationStatus → "verified" (which is
+    // what runListLayoffCandidates checks before exposing the talent list).
+    match /layoff_employers/{employerId} {
+      allow read: if isPaOperator();
+      allow write: if isPaOperator();
+    }
+
     // ─── Phase A5 — enrichment cascade source caches ───────────────
     // YC company directory snapshot + Clearbit quota counter. Written
     // exclusively by paEnrichCompaniesNightly / paEnrichCompaniesAdHoc

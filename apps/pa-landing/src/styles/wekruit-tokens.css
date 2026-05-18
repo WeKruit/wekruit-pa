@@ -352,19 +352,32 @@ em.accent, .accent-italic {
   font-family: var(--font-sans);
   font-size: var(--fs-body-sm);
   color: var(--ink);
-  background: transparent;
-  border: 1px solid var(--border);
+  background: #fff;
+  border: 1.5px solid var(--border-strong);
   border-radius: var(--r-md);
   padding: 12px 14px;
   line-height: var(--lh-ui);
-  transition: border-color var(--dur-fast) var(--ease),
+  transition: background var(--dur-fast) var(--ease),
+              border-color var(--dur-fast) var(--ease),
               box-shadow var(--dur-fast) var(--ease);
 }
-.input::placeholder, .textarea::placeholder { color: var(--ink-4); }
-.input:hover, .textarea:hover, .select:hover { border-color: var(--border-strong); }
+/* Empty-state: dashed border + tinted cream so user sees "empty + tappable"
+   instead of "filled in light text". Adam directive 2026-05-18. */
+.input:placeholder-shown, .textarea:placeholder-shown {
+  background: var(--cream-2);
+  border-style: dashed;
+  border-color: var(--border);
+}
+.input::placeholder, .textarea::placeholder {
+  color: var(--ink-4);
+  font-style: italic;
+}
+.input:hover, .textarea:hover, .select:hover { border-color: var(--ink); border-style: solid; }
 .input:focus, .textarea:focus, .select:focus {
   outline: none;
+  background: #fff;
   border-color: var(--ink);
+  border-style: solid;
   box-shadow: 0 0 0 3px rgba(45,26,10,.08);
 }
 

@@ -35,6 +35,8 @@ import { MatchExplainerTest } from "./pages/MatchExplainerTest.js"
 import { CanonicalTags } from "./pages/CanonicalTags.js"
 // Phase A4 (WEK-yc) — /admin/companies CRUD over pa-companies collection.
 import { Companies } from "./pages/Companies.js"
+// WeKruit Open — /admin/layoff-employers reviews layoff.wekruit.com /employer signups.
+import LayoffEmployers from "./pages/LayoffEmployers.js"
 import { QaEvaluator } from "./pages/QaEvaluator.js"
 import FlywheelEval from "./pages/FlywheelEval.js"
 import LaunchReadiness from "./pages/LaunchReadiness.js"
@@ -150,6 +152,8 @@ export default function App() {
           <Route path="/admin/canonical-tags" element={<CanonicalTags />} />
           {/* Phase A4 (WEK-yc) — centralized company directory CRUD. */}
           <Route path="/admin/companies" element={<Companies />} />
+          {/* WeKruit Open — review layoff.wekruit.com /employer signups. */}
+          <Route path="/admin/layoff-employers" element={<LayoffEmployers />} />
           <Route path="/admin/qa-evaluator" element={<QaEvaluator />} />
           <Route path="/admin/launch-readiness" element={<LaunchReadiness />} />
           <Route path="/admin/handbook" element={<Handbook />} />

@@ -71,6 +71,30 @@ export async function submitChatTurn(candidateId: string, turn: ChatTurn): Promi
   return res.data
 }
 
+export type EmployerSignupInput = {
+  companyName: string
+  companyLinkedin: string
+  workEmail: string
+  stage: string
+  roleAtCompany: string
+  rolesHiring: string[]
+  /** Free-form notes shown verbatim in the admin notification email. */
+  notes?: string
+  /** Submitter's name — displayed in the admin notification email. */
+  contactName?: string
+}
+
+export async function registerEmployer(
+  input: EmployerSignupInput,
+): Promise<{ employerId: string }> {
+  const fn = httpsCallable<EmployerSignupInput, { employerId: string }>(
+    functions(),
+    "openRegisterEmployer",
+  )
+  const res = await fn(input)
+  return res.data
+}
+
 export function deriveFunction(title: string): "Design" | "Engineering" | "Product" | "GTM" | "Other" {
   const t = (title || "").toLowerCase()
   if (t.includes("design") || t.includes("ux") || t.includes("brand")) return "Design"
