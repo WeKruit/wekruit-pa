@@ -41,10 +41,15 @@ interface BookingSnapshot {
 }
 
 const DEFAULT_TO_NUMBER = "+14243201960" // Adam dev-phone per CLAUDE.md
+// Pre-filled smoke targets. paUserId resolved from pa-users by phone match
+// (+14243201960 → Shixiang Yang). paJobId picked because it exists in both
+// matching-jobs (sponsorship/role) and pa-jobs (with prescreenConfig).
+const DEFAULT_PA_USER_ID = "U7AwKT8nLDRa35DkuBxq"
+const DEFAULT_PA_JOB_ID = "rain-android-engineer-c1351eb6"
 
 export function VoiceTestDial() {
-  const [paUserId, setPaUserId] = useState("")
-  const [paJobId, setPaJobId] = useState("")
+  const [paUserId, setPaUserId] = useState(DEFAULT_PA_USER_ID)
+  const [paJobId, setPaJobId] = useState(DEFAULT_PA_JOB_ID)
   const [toNumber, setToNumber] = useState(DEFAULT_TO_NUMBER)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
