@@ -132,6 +132,8 @@ export const AuditEventKindSchema = z.enum([
   "memory.identity_drift",
   // Phase 22 — proactive check-in audit events (D-09)
   "proactive_send",
+  "proactive_runtime_handoff",
+  "proactive_runtime_suppressed",
   "proactive_cancel",
   "privacy_request",
 ])

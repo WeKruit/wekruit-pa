@@ -2,7 +2,7 @@
  * Phase 22 — runProactiveTurn unit tests.
  * RED phase: defines contract before implementation.
  */
-import { describe, it, mock } from "node:test"
+import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 
 import { runProactiveTurn, type ProactiveTurnStore } from "./proactive-turn.js"
@@ -33,68 +33,39 @@ function makeJob(overrides?: Partial<ProactiveScheduledJob>): ProactiveScheduled
 
 function makeStore(overrides?: Partial<ProactiveTurnStore>): ProactiveTurnStore {
   return {
-    runTurn: async (_userId: string, _input: { role: string; content: string; meta?: Record<string, unknown> }) => ({
-      text: "好的，明天面试 Acme 记得准备充分哦。",
-      usage: undefined,
-    }),
-    normalizeOutput: (text: string) => ({ text, chunks: [text] }),
-    enqueueOutbound: async (_userId: string, _body: string, _opts?: Record<string, unknown>) => ({
-      outboundId: `outbound-${Date.now()}`,
+    enqueueRuntimeEvent: async () => ({
+      ok: true,
+      runtimeEventId: `runtime-${Date.now()}`,
+      created: true,
     }),
     writeAuditEvent: async (_row: Record<string, unknown>) => {},
     updateJobStatus: async (_jobId: string, _patch: Record<string, unknown>) => {},
     rearmJob: async (_jobId: string, _nextFireAt: string) => {},
-    getUserPhoneE164: async (_userId: string) => "+16505551234",
     log: () => {},
     ...overrides,
   }
 }
 
 describe("runProactiveTurn — happy path", () => {
-  it("Test 2: synthetic input uses user role with system-trigger marker", async () => {
-    let capturedInput: { role: string; content: string; meta?: Record<string, unknown> } | undefined
+  it("Test 2: enqueues a structured runtime event, not candidate-visible copy", async () => {
+    let capturedInput: { eventKind: string; idempotencyKey: string; context: Record<string, unknown> } | undefined
     const store = makeStore({
-      runTurn: async (_userId, input) => {
+      enqueueRuntimeEvent: async (_userId, input) => {
         capturedInput = input
-        return { text: "明天加油！", usage: undefined }
+        return { ok: true, runtimeEventId: "runtime-123", created: true }
       },
     })
     await runProactiveTurn("user-001", makeJob(), store)
-    assert.ok(capturedInput, "runTurn should have been called")
-    assert.equal(capturedInput!.role, "user", "role must stay 'user' to preserve Voice v1 few-shot anchoring")
-    assert.ok(capturedInput!.content.includes("[system-trigger:time_anchor]"), "content must include system-trigger marker")
-    assert.equal(capturedInput!.meta?.source, "proactive")
-    assert.equal(capturedInput!.meta?.triggerType, "time_anchor")
-    assert.equal(capturedInput!.meta?.jobId, "job-test-001")
+    assert.ok(capturedInput, "runtime handoff should have been enqueued")
+    assert.equal(capturedInput!.eventKind, "proactive_time_anchor")
+    assert.ok(capturedInput!.idempotencyKey.startsWith("proactive:job-test-001:"))
+    assert.equal(capturedInput!.context["source"], "proactive_scheduled")
+    assert.equal(capturedInput!.context["scheduledJobId"], "job-test-001")
+    assert.equal(capturedInput!.context["triggerType"], "time_anchor")
+    assert.ok(!("candidateVisibleMessage" in capturedInput!.context), "producer must not pass candidate-visible copy")
   })
 
-  it("Test 3: output passes through normalizer before enqueue", async () => {
-    let normalizeCalled = false
-    const store = makeStore({
-      normalizeOutput: (text) => {
-        normalizeCalled = true
-        return { text, chunks: [text] }
-      },
-    })
-    await runProactiveTurn("user-001", makeJob(), store)
-    assert.ok(normalizeCalled, "normalizer must be called on proactive output")
-  })
-
-  it("Test 4: enqueues to pa_outbound with source=proactive and proactiveJobId", async () => {
-    let enqueuedOpts: Record<string, unknown> | undefined
-    const store = makeStore({
-      enqueueOutbound: async (_userId, _body, opts) => {
-        enqueuedOpts = opts
-        return { outboundId: "out-123" }
-      },
-    })
-    await runProactiveTurn("user-001", makeJob(), store)
-    assert.ok(enqueuedOpts, "enqueueOutbound should have been called")
-    assert.equal(enqueuedOpts!["source"], "proactive")
-    assert.equal(enqueuedOpts!["proactiveJobId"], "job-test-001")
-  })
-
-  it("Test 5: writes pa_audit_events row with kind=proactive_send", async () => {
+  it("Test 3: writes runtime handoff audit", async () => {
     let auditRow: Record<string, unknown> | undefined
     const store = makeStore({
       writeAuditEvent: async (row) => {
@@ -103,12 +74,45 @@ describe("runProactiveTurn — happy path", () => {
     })
     await runProactiveTurn("user-001", makeJob(), store)
     assert.ok(auditRow, "writeAuditEvent must be called")
-    assert.equal(auditRow!["kind"], "proactive_send")
+    assert.equal(auditRow!["kind"], "proactive_runtime_handoff")
+    assert.equal(typeof auditRow!["runtimeEventId"], "string")
+  })
+
+  it("Test 4: updates job status after runtime handoff", async () => {
+    let patch: Record<string, unknown> | undefined
+    const store = makeStore({
+      updateJobStatus: async (_jobId, p) => {
+        patch = p
+      },
+    })
+    await runProactiveTurn("user-001", makeJob(), store)
+    assert.ok(patch, "updateJobStatus should have been called")
+    assert.equal(patch!["status"], "fired")
+  })
+
+  it("Test 5: blocks instead of sending when runtime handoff is not allowed", async () => {
+    let auditRow: Record<string, unknown> | undefined
+    let statusPatch: Record<string, unknown> | undefined
+    const store = makeStore({
+      enqueueRuntimeEvent: async () => ({ ok: false, reason: "no_existing_session" }),
+      writeAuditEvent: async (row) => {
+        auditRow = row
+      },
+      updateJobStatus: async (_jobId, patch) => {
+        statusPatch = patch
+      },
+    })
+    const result = await runProactiveTurn("user-001", makeJob(), store)
+    assert.equal(result.skipped, true)
+    if (!result.skipped) throw new Error("expected runtime handoff to be skipped")
+    assert.equal(result.reason, "runtime_handoff_blocked")
+    assert.equal(result.runtimeReason, "no_existing_session")
+    assert.equal(typeof result.fireWindowHash, "string")
+    assert.ok(auditRow, "writeAuditEvent must be called")
+    assert.equal(auditRow!["kind"], "proactive_runtime_suppressed")
     assert.equal(auditRow!["userId"], "user-001")
     assert.equal(auditRow!["jobId"], "job-test-001")
-    assert.equal(auditRow!["triggerType"], "time_anchor")
-    assert.ok(typeof auditRow!["fireWindowHash"] === "string", "fireWindowHash must be a string")
-    assert.ok(typeof auditRow!["outboundId"] === "string", "outboundId must be a string")
+    assert.equal(statusPatch!["status"], "failed")
   })
 })
 
@@ -119,7 +123,10 @@ describe("runProactiveTurn — kill switch", () => {
     let enqueueCalled = false
     let auditCalled = false
     const store = makeStore({
-      enqueueOutbound: async () => { enqueueCalled = true; return { outboundId: "x" } },
+      enqueueRuntimeEvent: async () => {
+        enqueueCalled = true
+        return { ok: true, runtimeEventId: "runtime-x", created: true }
+      },
       writeAuditEvent: async () => { auditCalled = true },
     })
     try {

@@ -18,7 +18,6 @@ const APPROVED_RUNTIME_SOURCES = new Set([
   "pa_orchestrator",
   "pa_prescreen_runtime",
   "pa_pii_runtime",
-  "pa_proactive_turn",
   "test_runtime",
 ])
 

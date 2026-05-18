@@ -1,18 +1,17 @@
 /**
- * Phase 22 — Proactive-turn orchestrator path (D-02, PROACTIVE-04).
+ * Phase 22 — Proactive-turn runtime handoff path (D-02, PROACTIVE-04).
  *
- * Design principle: proactive ≡ regular turn + synthetic user-role input.
- * This module does NOT define a parallel system prompt. It calls the SAME
- * turn runner the inbound path uses (Voice v1 prompt is already loaded there).
+ * Design principle: proactive ≡ external event, not a parallel message
+ * pipeline. This module never composes candidate-visible copy and never
+ * writes sendable transport rows directly. It creates a structured runtime
+ * event so the normal Claire runtime decides whether/how to message.
  *
  * Flow:
  *   1. Kill-switch check (PA_PROACTIVE_DISABLED=1 → return skipped).
- *   2. Build synthetic user-role input with [system-trigger:<type>] marker.
- *   3. Call store.runTurn() — reuses Voice v1 system prompt pipeline.
- *   4. Normalize output via store.normalizeOutput() (Phase 20).
- *   5. Enqueue runtime-approved transport with source=proactive.
- *   6. Write pa_audit_events kind=proactive_send.
- *   7. Update job status to "fired" + handle silence_rearm re-arm.
+ *   2. Build structured event context for the scheduled trigger.
+ *   3. Enqueue a synthetic pa-inbound-events runtime handoff.
+ *   4. Write pa_audit_events kind=proactive_runtime_handoff.
+ *   5. Update job status to "fired" + handle silence_rearm re-arm.
  */
 import { fireWindowHash } from "@pa/core-types"
 import type { ProactiveScheduledJob, SilenceAnchorContext } from "@pa/core-types"
@@ -39,31 +38,23 @@ function makeNoopFirestoreForFlag(): Firestore {
 
 export type ProactiveTurnResult =
   | { skipped: true; reason: "disabled" }
-  | { skipped: false; outboundId: string; fireWindowHash: string }
+  | { skipped: true; reason: "runtime_handoff_blocked"; runtimeReason: string; fireWindowHash: string }
+  | { skipped: false; runtimeEventId: string; runtimeEventCreated: boolean; fireWindowHash: string }
 
 /**
  * Injectable store for proactive-turn. Tests provide fakes; production
  * provides a Firestore-backed implementation.
  */
 export type ProactiveTurnStore = {
-  /**
-   * Run a turn through the SAME orchestrator entry as inbound events.
-   * Input role must be "user" to preserve Voice v1 few-shot anchoring (D-02).
-   */
-  runTurn(
+  /** Enqueue a synthetic inbound event for Claire runtime to judge. */
+  enqueueRuntimeEvent(
     userId: string,
-    input: { role: "user"; content: string; meta?: Record<string, unknown> }
-  ): Promise<{ text: string; usage?: unknown }>
-
-  /** Phase 20 output normalizer — applied before enqueue. */
-  normalizeOutput(text: string): { text: string; chunks: string[] }
-
-  /** Enqueue a runtime-approved transport row. */
-  enqueueOutbound(
-    userId: string,
-    body: string,
-    opts?: Record<string, unknown>
-  ): Promise<{ outboundId: string }>
+    input: {
+      eventKind: string
+      idempotencyKey: string
+      context: Record<string, unknown>
+    }
+  ): Promise<{ ok: true; runtimeEventId: string; created: boolean } | { ok: false; reason: string }>
 
   /** Write a row to pa_audit_events. */
   writeAuditEvent(row: Record<string, unknown>): Promise<void>
@@ -77,9 +68,6 @@ export type ProactiveTurnStore = {
    */
   rearmJob(jobId: string, nextFireAt: string): Promise<void>
 
-  /** Resolve user's E.164 phone number for outbound routing. */
-  getUserPhoneE164(userId: string): Promise<string>
-
   log(...args: unknown[]): void
 
   /**
@@ -92,23 +80,47 @@ export type ProactiveTurnStore = {
 }
 
 /**
- * Build the human-readable context line injected as the synthetic user input.
- * Keeps the system-trigger marker so the model knows this is a proactive nudge,
- * while the "user" role ensures Voice v1 mes_examples still anchor.
+ * Build structured trigger facts. This is intentionally not candidate-visible
+ * copy; Claire runtime must compose any eventual message from scratch.
  */
-function buildSyntheticContent(job: ProactiveScheduledJob): string {
+function buildRuntimeContext(job: ProactiveScheduledJob): Record<string, unknown> {
   const { context } = job
+  const base = {
+    scheduledJobId: job.jobId,
+    triggerType: job.triggerType,
+    recurrence: job.recurrence,
+    nextFireAt: job.nextFireAt,
+    dueAt: job.dueAt,
+    source: "proactive_scheduled",
+  }
   switch (context.triggerType) {
-    case "time_anchor": {
-      const eventDate = new Date(context.eventAt).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })
-      return `[system-trigger:time_anchor] 你提前设定了一个提醒：「${context.eventLabel}」在 ${eventDate}。现在是提醒时间，请主动联系用户。`
-    }
+    case "time_anchor":
+      return {
+        ...base,
+        timeAnchor: {
+          eventLabel: context.eventLabel,
+          eventAt: context.eventAt,
+          leadTimeSec: context.leadTimeSec,
+        },
+      }
     case "silence_anchor":
-      return `[system-trigger:silence_anchor] 用户已有 ${Math.round(context.windowSec / 3600)} 小时没有消息了。请主动关心一下。`
-    case "application_followup": {
-      const appliedDate = new Date(context.appliedAt).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })
-      return `[system-trigger:application_followup] 用户 ${context.followupAfterSec / 3600 < 48 ? `${Math.round(context.followupAfterSec / 3600)} 小时` : `${Math.round(context.followupAfterSec / 86400)} 天`}前投了 ${context.companyName} 的 ${context.jobTitle} 岗位（${appliedDate}），现在跟进一下进展。`
-    }
+      return {
+        ...base,
+        silenceAnchor: {
+          windowSec: context.windowSec,
+          lastUserMsgAt: context.lastUserMsgAt,
+        },
+      }
+    case "application_followup":
+      return {
+        ...base,
+        applicationFollowup: {
+          companyName: context.companyName,
+          jobTitle: context.jobTitle,
+          appliedAt: context.appliedAt,
+          followupAfterSec: context.followupAfterSec,
+        },
+      }
   }
 }
 
@@ -144,42 +156,46 @@ export async function runProactiveTurn(
   const nextFireAtMs = new Date(job.nextFireAt).getTime()
   const fwHash = fireWindowHash(job.jobId, nextFireAtMs)
 
-  // Build synthetic user-role input (D-02: role stays "user" for Voice v1)
-  const syntheticContent = buildSyntheticContent(job)
-  const syntheticInput = {
-    role: "user" as const,
-    content: syntheticContent,
-    meta: {
-      source: "proactive" as const,
+  const runtime = await store.enqueueRuntimeEvent(userId, {
+    eventKind: `proactive_${job.triggerType}`,
+    idempotencyKey: `proactive:${job.jobId}:${fwHash}`,
+    context: {
+      ...buildRuntimeContext(job),
+      fireWindowHash: fwHash,
+    },
+  })
+  if (!runtime.ok) {
+    await store.writeAuditEvent({
+      kind: "proactive_runtime_suppressed",
+      userId,
       jobId: job.jobId,
       triggerType: job.triggerType,
       fireWindowHash: fwHash,
-    },
+      runtimeReason: runtime.reason,
+      createdAt: now.toISOString(),
+    })
+    await store.updateJobStatus(job.jobId, {
+      status: "failed",
+      lastError: `runtime_handoff_blocked:${runtime.reason}`,
+      updatedAt: now.toISOString(),
+    })
+    store.log("[proactive-turn] runtime handoff blocked", {
+      jobId: job.jobId,
+      triggerType: job.triggerType,
+      reason: runtime.reason,
+      fireWindowHash: fwHash,
+    })
+    return { skipped: true, reason: "runtime_handoff_blocked", runtimeReason: runtime.reason, fireWindowHash: fwHash }
   }
 
-  // Run the turn through the same Voice v1 entry (D-02)
-  const { text } = await store.runTurn(userId, syntheticInput)
-
-  // Phase 20: normalize output before enqueue (D-11)
-  const normalized = store.normalizeOutput(text)
-  const body = normalized.text
-
-  // Enqueue runtime-approved transport with proactive provenance (D-08)
-  const phone = await store.getUserPhoneE164(userId)
-  const { outboundId } = await store.enqueueOutbound(userId, body, {
-    source: "proactive",
-    proactiveJobId: job.jobId,
-    toNumber: phone,
-  })
-
-  // Audit log (D-09)
   await store.writeAuditEvent({
-    kind: "proactive_send",
+    kind: "proactive_runtime_handoff",
     userId,
     jobId: job.jobId,
     triggerType: job.triggerType,
     fireWindowHash: fwHash,
-    outboundId,
+    runtimeEventId: runtime.runtimeEventId,
+    runtimeEventCreated: runtime.created,
     createdAt: now.toISOString(),
   })
 
@@ -200,9 +216,15 @@ export async function runProactiveTurn(
   store.log("[proactive-turn] fired", {
     jobId: job.jobId,
     triggerType: job.triggerType,
-    outboundId,
+    runtimeEventId: runtime.runtimeEventId,
+    runtimeEventCreated: runtime.created,
     fireWindowHash: fwHash,
   })
 
-  return { skipped: false, outboundId, fireWindowHash: fwHash }
+  return {
+    skipped: false,
+    runtimeEventId: runtime.runtimeEventId,
+    runtimeEventCreated: runtime.created,
+    fireWindowHash: fwHash,
+  }
 }

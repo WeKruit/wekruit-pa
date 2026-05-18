@@ -14,7 +14,8 @@
  * Firestore reads (D-10).
  *
  * Idempotency: Before dispatching, sweep checks that no pa_audit_events row
- * with the same fireWindowHash exists (D-06, PROACTIVE-05). Uses a
+ * with the same fireWindowHash exists (D-06, PROACTIVE-05). Legacy
+ * `proactive_send` rows and current runtime-handoff rows both count. Uses a
  * claim-write (status: running) as a distributed mutex against concurrent
  * invocations (Test 3).
  *
@@ -71,8 +72,9 @@ export type SweepStore = {
   claimJob(jobId: string): Promise<ProactiveScheduledJob | null>
 
   /**
-   * Check whether a pa_audit_events row with kind=proactive_send and this
-   * fireWindowHash already exists. Used for idempotency guard.
+   * Check whether a pa_audit_events row with this fireWindowHash already
+   * exists. Used for idempotency guard across retired direct-send rows and
+   * current runtime-handoff rows.
    */
   checkFireWindowExists(fwHash: string): Promise<boolean>
 
@@ -208,13 +210,16 @@ export function createFirestoreSweepStore(): SweepStore {
     },
 
     async checkFireWindowExists(fwHash) {
-      const snap = await db
-        .collection(PA_COLLECTIONS.auditEvents)
-        .where("kind", "==", "proactive_send")
-        .where("fireWindowHash", "==", fwHash)
-        .limit(1)
-        .get()
-      return !snap.empty
+      for (const kind of ["proactive_runtime_handoff", "proactive_runtime_suppressed", "proactive_send"]) {
+        const snap = await db
+          .collection(PA_COLLECTIONS.auditEvents)
+          .where("kind", "==", kind)
+          .where("fireWindowHash", "==", fwHash)
+          .limit(1)
+          .get()
+        if (!snap.empty) return true
+      }
+      return false
     },
 
     async runProactiveTurn(userId, job) {

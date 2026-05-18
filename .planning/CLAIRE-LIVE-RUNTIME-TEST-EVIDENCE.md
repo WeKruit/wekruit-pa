@@ -18,6 +18,11 @@ Changes verified:
 - Rewired prescreen opener/turn handling/terminal actions and PII-confirm candidate-visible text from direct Sendblue calls to runtime-approved `pa-outbound` rows.
 - Added `runtime-approved-outbox.ts` so these runtime-owned emitters use `@pa/pa-broker.enqueueOutbound` with `runtimeApproved: true`, `runtimeSource`, and deterministic idempotency keys.
 - Rewired proactive outbound storage to use `@pa/pa-broker.enqueueOutbound` instead of direct `pa-outbound` writes, then merge only non-send metadata onto the created row.
+- Retired the remaining scheduled proactive direct-send producer:
+  - `paProactiveSweep` / `runProactiveTurn` now builds structured event context only and enqueues a `proactive_scheduled` runtime handoff.
+  - Proactive jobs no longer compose candidate-visible copy, normalize iMessage chunks, resolve phone numbers, or write sendable `pa-outbound` rows.
+  - Proactive audit rows are now `proactive_runtime_handoff` or `proactive_runtime_suppressed`; historical `proactive_send` rows are still recognized only for idempotency so old fire windows do not resend.
+  - `@pa/pa-broker.enqueueOutbound` now rejects the retired `runtimeSource="pa_proactive_turn"` source, so this legacy producer cannot self-stamp runtime approval.
 - Kept non-runtime producers such as CV confirmation, candidate lifecycle, reverse match, and job-rec `sendImessage` as runtime-event handoffs, not sendable `pa-outbound` writers.
 - Removed the webhook-level media-upload love reaction; attachment webhooks now enqueue the inbound/CV-ingest path without sending a candidate-visible reaction before Claire runtime judges the turn.
 - Removed remaining `PA_CHANNEL_LEGACY` and old worker rollback references from active runtime/source docs and comments so there is no advertised rollback channel.
@@ -30,12 +35,28 @@ Repo checks:
 - `pnpm --filter @pa/pa-broker test` on Node `v24.3.0`: `15` pass, `0` fail.
 - `pnpm --filter @pa/job-rec test` on Node `v24.3.0`: `445` pass, `0` fail. A first parallel run had a microbenchmark timeout under load; isolated rerun passed.
 - `pnpm --filter @pa/dashboard-web build` on Node `v24.3.0`: passed.
+- Additional proactive-runtime cleanup checks on Node `v24.3.0`:
+  - `pnpm --filter @pa/pa-orchestrator typecheck`: passed.
+  - `pnpm --filter @pa/functions typecheck`: passed after serial rerun; the earlier failure was a stale generated `dist` race from parallel build/test execution.
+  - `pnpm --filter @pa/pa-broker typecheck`: passed.
+  - `pnpm --filter @pa/pa-broker test`: `17` pass, `0` fail.
+  - `pnpm --filter @pa/pa-orchestrator test -- src/proactive-turn.test.ts`: package script ran the full suite, `1603` pass, `0` fail.
+  - `pnpm --filter @pa/functions test -- src/proactive-sweep.test.ts`: package script ran the full suite, `1692` pass, `0` fail.
+  - `git diff --check`: passed.
+  - `node scripts/canary-outbox-runtime-gate.mjs`: created deployed Firestore canary `pa-outbound/canary-runtime-gate-1779108262765` with `runtimeApproved=true` and retired `runtimeSource="pa_proactive_turn"`; deployed outbox moved it to `status=failed`, `blockedByRuntimeGate=true`, error `blocked: outbound row was not approved by runtime`, with no `messageHandle`, `uuid`, or `sendblueStatus`.
 
 Production deployment and canary evidence:
 
 - Production deploy completed for the runtime-critical functions on Node `v24.3.0`:
   - `firebase deploy --only functions:pa-orchestrator:paSendblueWebhook,functions:pa-orchestrator:onPaInbound,functions:pa-orchestrator:paMessageCoalescer,functions:pa-orchestrator:paCoalesceBufferSweep,functions:pa-orchestrator:paSendblueOutbox,functions:pa-orchestrator:paSendblueOutboxRetrySweep,functions:pa-orchestrator:paProactiveSweep --project wekruit-5f89b`
   - Updated functions: `paSendblueWebhook`, `onPaInbound`, `paMessageCoalescer`, `paCoalesceBufferSweep`, `paSendblueOutbox`, `paSendblueOutboxRetrySweep`, `paProactiveSweep`.
+- Additional proactive-runtime cleanup deploy completed on Node `v24.3.0`:
+  - `firebase deploy --only functions:pa-orchestrator:paProactiveSweep,functions:pa-orchestrator:paSendblueOutbox,functions:pa-orchestrator:paSendblueOutboxRetrySweep --project wekruit-5f89b`
+  - Updated functions: `paProactiveSweep`, `paSendblueOutbox`, `paSendblueOutboxRetrySweep`.
+  - `gcloud functions describe` verified all three are `ACTIVE`, `nodejs24`, updated at:
+    - `paProactiveSweep`: `2026-05-18T12:38:32.053389512Z`
+    - `paSendblueOutbox`: `2026-05-18T12:38:33.143647833Z`
+    - `paSendblueOutboxRetrySweep`: `2026-05-18T12:38:34.241757547Z`
 - Post-deploy Firestore canary verified the deployed outbox gate:
   - Created `pa-outbound/canary-runtime-gate-1779091047332` with `status=pending`, `toE164=+13054507715`, and no runtime approval after the final runtime/outbox unification deploy.
   - Deployed `paSendblueOutbox` changed it to `status=failed`.

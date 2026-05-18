@@ -78,3 +78,18 @@ test("enqueueOutbound blocks callers that self-stamp runtime approval with an un
     /outbound_requires_approved_runtime_source/
   )
 })
+
+test("enqueueOutbound blocks retired proactive direct-send source", async () => {
+  const { db } = fakeFirestore()
+  await assert.rejects(
+    enqueueOutbound(db, {
+      userId: "u_1",
+      toE164: "+15555550123",
+      body: "legacy proactive text",
+      idempotencyKey: "legacy-proactive",
+      runtimeApproved: true,
+      runtimeSource: "pa_proactive_turn",
+    }),
+    /outbound_requires_approved_runtime_source/
+  )
+})
