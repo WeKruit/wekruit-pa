@@ -290,6 +290,12 @@ importers:
       '@livekit/agents-plugin-silero':
         specifier: ^1.4.2
         version: 1.4.2(@livekit/agents@1.4.2(@livekit/rtc-node@0.13.28)(typescript@5.9.3)(zod@4.4.3))(@livekit/rtc-node@0.13.28)
+      '@pa/agent-runtime':
+        specifier: 0.0.1
+        version: link:../../packages/agent-runtime
+      '@pa/core-types':
+        specifier: 0.0.1
+        version: link:../../packages/core-types
       livekit-server-sdk:
         specifier: ^2.13.2
         version: 2.15.3

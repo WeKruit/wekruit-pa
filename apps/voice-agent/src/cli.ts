@@ -15,7 +15,7 @@
  * Env required to actually start the worker:
  *   LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET
  *   DEEPGRAM_API_KEY
- *   WEKRUIT_LLM_SHIM_URL
+ *   OPENAI_API_KEY   (consumed by @pa/agent-runtime via WekruitLLM)
  *
  * `--help` works without any of the above (we never import the LiveKit SDK
  * until the worker actually starts).
@@ -39,7 +39,7 @@ Environment (required at start-time):
   LIVEKIT_API_KEY           LiveKit API key
   LIVEKIT_API_SECRET        LiveKit API secret
   DEEPGRAM_API_KEY          Deepgram Nova-3 STT + Aura-2 TTS
-  WEKRUIT_LLM_SHIM_URL      base URL of voice-llm-shim (S1C)
+  OPENAI_API_KEY            consumed by @pa/agent-runtime via WekruitLLM
 
 Environment (optional):
   WEKRUIT_VOICE_RECORDINGS_BUCKET   default: wekruit-voice-recordings (L8)

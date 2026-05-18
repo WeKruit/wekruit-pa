@@ -25,7 +25,9 @@ LIVEKIT_URL = ""
 LIVEKIT_API_KEY = ""
 LIVEKIT_API_SECRET = ""
 DEEPGRAM_API_KEY = ""
-WEKRUIT_LLM_SHIM_URL = ""
+# W2: voice worker uses in-process WekruitLLM → runAgentTurnStream → OpenAI.
+# `OPENAI_API_KEY` is required for the agent-runtime OpenAI provider.
+OPENAI_API_KEY = ""
 WEKRUIT_VOICE_RECORDINGS_BUCKET = "wekruit-voice-recordings"
 PA_AGENT_RUNTIME_STREAM_ENABLED = "true"
 # v2.2 — voice → orchestrator brain bridge (paVoiceCallContext +
