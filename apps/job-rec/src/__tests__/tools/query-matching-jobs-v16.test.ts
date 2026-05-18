@@ -594,6 +594,73 @@ test("queryMatchingJobsV16: empty user tags → noUserTags=true + empty result",
   assert.equal(r.total, 0)
 })
 
+test("queryMatchingJobsV16: empty targetRoleFunction → needsOnboarding=true + missingAxes lists gaps", async () => {
+  const mfs = new MockFirestore()
+  // User has SOME tags (skills only) but lacks targetRoleFunction + targetLocations + visa.
+  await mfs
+    .collection("pa-users")
+    .doc("u_partial")
+    .set({
+      tags: {
+        skills: ["python"],
+        industryEnum: ["tech_software"],
+        schemaVersion: 1,
+        // explicit empty arrays so loadUserTags returns the doc but V16 still
+        // sees missing axes.
+        targetRoleFunction: [],
+        targetLocations: [],
+      },
+    })
+  await seedJob(mfs, "swe-fallback", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["python"],
+    companyName: "FallbackCo",
+    jobTitle: "SWE",
+  })
+  const r = await queryMatchingJobsV16(
+    { userId: "u_partial", nowMs: NOW },
+    { db: asFirestore(mfs) }
+  )
+  assert.equal(r.needsOnboarding, true)
+  assert.ok(r.missingAxes && r.missingAxes.includes("targetRoleFunction"))
+  assert.ok(r.missingAxes!.includes("targetLocations"))
+  assert.ok(r.missingAxes!.includes("visaStatus"))
+  // Match still produces output via firstSeenAt-desc fallback (not blocked on
+  // onboarding gap — Claire still gets a job to mention).
+  assert.ok(r.jobs.length >= 0)
+})
+
+test("queryMatchingJobsV16: complete tags → needsOnboarding undefined", async () => {
+  const mfs = new MockFirestore()
+  await mfs
+    .collection("pa-users")
+    .doc("u_complete")
+    .set({
+      tags: {
+        skills: ["python"],
+        industryEnum: ["tech_software"],
+        schemaVersion: 1,
+        targetRoleFunction: ["software_engineering"],
+        targetLocations: ["san_francisco_bay_area"],
+        visaStatus: "citizen",
+        careerStage: "ic_engineer_l3",
+        targetJobType: ["full_time"],
+      },
+    })
+  await seedJob(mfs, "swe-good", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["python"],
+    companyName: "GoodCo",
+    jobTitle: "SWE",
+  })
+  const r = await queryMatchingJobsV16(
+    { userId: "u_complete", nowMs: NOW },
+    { db: asFirestore(mfs) }
+  )
+  assert.equal(r.needsOnboarding, undefined)
+  assert.equal(r.missingAxes, undefined)
+})
+
 test("queryMatchingJobsV16: with role-fn filter returns matching jobs", async () => {
   const mfs = new MockFirestore()
   await mfs

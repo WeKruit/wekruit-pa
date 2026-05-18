@@ -1366,6 +1366,25 @@ export async function queryMatchingJobsV16(
     }
   })
 
+  // 2026-05-18 — `needsOnboarding` signal back to Claire. When the user has
+  // not selected a `targetRoleFunction`, V16 silently falls back to firstSeenAt-
+  // ordered retrieval, but Claire never knows to ask. Compute missingAxes
+  // from the loaded tags so the orchestrator can inject "weave these questions
+  // into your next 2-3 replies" into the system prompt.
+  const tagSnap = userTags as unknown as {
+    targetRoleFunction?: string[]
+    targetLocations?: string[]
+    visaStatus?: string
+    careerStage?: string
+    targetJobType?: string[]
+  }
+  const missingAxes: V16QueryResult["missingAxes"] = []
+  if (!tagSnap.targetRoleFunction?.length) missingAxes!.push("targetRoleFunction")
+  if (!tagSnap.targetLocations?.length) missingAxes!.push("targetLocations")
+  if (!tagSnap.visaStatus) missingAxes!.push("visaStatus")
+  if (!tagSnap.careerStage) missingAxes!.push("careerStage")
+  if (!tagSnap.targetJobType?.length) missingAxes!.push("targetJobType")
+
   return {
     jobs: top,
     total: filteredJobs.length,
@@ -1378,6 +1397,9 @@ export async function queryMatchingJobsV16(
     // output. Cast through `unknown` so we can attach without leaking the
     // narrow UserTags type to non-orchestrator consumers.
     userTags: userTags as unknown as Record<string, unknown>,
+    ...(missingAxes!.length > 0
+      ? { needsOnboarding: true as const, missingAxes }
+      : {}),
   }
 }
 

@@ -465,4 +465,24 @@ export type V16QueryResult = {
    * profile alongside the ranked output. Omitted in the recruiter-tool path.
    */
   userTags?: Record<string, unknown>
+  /**
+   * 2026-05-18 — set to true when the role-filter was skipped because the
+   * user has no `targetRoleFunction` selected (or any other required axis
+   * is empty). The Claire conversation runtime reads this flag and weaves
+   * the missing onboarding question(s) back into the next 2-3 replies.
+   */
+  needsOnboarding?: boolean
+  /**
+   * 2026-05-18 — populated alongside `needsOnboarding`. Lists the
+   * `pa-users.tags` fields that are empty/missing so Claire can be
+   * targeted ("ask about visa + location") rather than re-walking the
+   * full onboarding state machine.
+   */
+  missingAxes?: Array<
+    | "targetRoleFunction"
+    | "targetLocations"
+    | "visaStatus"
+    | "careerStage"
+    | "targetJobType"
+  >
 }
