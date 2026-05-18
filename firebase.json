@@ -104,7 +104,7 @@
       ]
     },
     {
-      "_comment": "layoff.wekruit.com → layoff-wekruit.web.app (Cloudflare CNAME). Adopts the same pa-landing Vite SPA so /open, /market, /j/:jobId all work from the layoff domain. Prior to 2026-05-16 this site was a phantom deploy from an out-of-band agent run; absorbing it into firebase.json so it stays in sync with pa-landing on every deploy.",
+      "_comment": "layoff.wekruit.com → layoff-wekruit.web.app (Cloudflare CNAME). Thin shell — only three surfaces live here: / (cream LayoffLanding), /onboarding (candidate resume + SMS intake), /employer (employer signup → Mailgun → admin@wekruit). No cross-host redirects: layoff is intentionally a standalone product, not a funnel into candidate.wekruit.com. Adam directive 2026-05-18.",
       "target": "layoff",
       "public": "apps/pa-landing/dist",
       "ignore": [

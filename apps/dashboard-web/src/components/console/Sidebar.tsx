@@ -23,7 +23,14 @@ export type NavSectionDef = {
   defaultOpen?: boolean
 }
 
+// IA 2026-05-18 — three tiers, ranking top→bottom by daily-touch frequency:
+//   1) OPERATIONS  — run the business (Candidates, Jobs, Employers, Outreach)
+//   2) TRAINING / EVAL — improve Claire (Matching, Eval, Claire content)
+//   3) PLATFORM — rare admin (Flags, Triggers, Launch readiness, Beta, Abuse)
+// Each section caps at ≤8 items; previously the 16-item Platform group bloat
+// hid Layoff employers + Companies + Agents content inside one wall.
 export const CONSOLE_NAV: NavSectionDef[] = [
+  // ───────────── Tier 1: OPERATIONS ─────────────
   {
     id: "candidates",
     label: "Candidates",
@@ -50,8 +57,33 @@ export const CONSOLE_NAV: NavSectionDef[] = [
     ],
   },
   {
-    id: "matches",
-    label: "Matches",
+    id: "employers",
+    label: "Employers",
+    icon: "shield",
+    defaultOpen: true,
+    items: [
+      { to: "/admin/layoff-employers", label: "Layoff signups", hitl: true },
+      { to: "/admin/companies", label: "Companies directory" },
+    ],
+  },
+  {
+    id: "outreach",
+    label: "Outreach",
+    icon: "send",
+    items: [
+      { to: "/admin/outreach-ops", label: "Outreach ops" },
+      { to: "/admin/external-supply", label: "External supply", end: true },
+      { to: "/admin/external-supply/outreach", label: "Outreach campaigns" },
+      { to: "/admin/external-supply/sync", label: "Instantly sync" },
+      { to: "/admin/external-supply/audit", label: "Audit" },
+      { to: "/admin/voice-test-dial", label: "Voice test dial" },
+      { to: "/admin/sendblue-pool", label: "Sendblue pool" },
+    ],
+  },
+  // ───────────── Tier 2: TRAINING / EVAL ─────────────
+  {
+    id: "matching",
+    label: "Matching",
     icon: "zap",
     items: [
       { to: "/admin/match-debug", label: "Match debug" },
@@ -62,22 +94,8 @@ export const CONSOLE_NAV: NavSectionDef[] = [
     ],
   },
   {
-    id: "outreach",
-    label: "Outreach",
-    icon: "send",
-    items: [
-      { to: "/admin/outreach-ops", label: "Outreach ops" },
-      { to: "/admin/voice-test-dial", label: "Voice test dial" },
-      { to: "/admin/sendblue-pool", label: "Sendblue pool" },
-      { to: "/admin/external-supply", label: "External supply", end: true },
-      { to: "/admin/external-supply/outreach", label: "Outreach campaigns" },
-      { to: "/admin/external-supply/sync", label: "Instantly sync" },
-      { to: "/admin/external-supply/audit", label: "Audit" },
-    ],
-  },
-  {
-    id: "quality",
-    label: "Quality",
+    id: "eval",
+    label: "Eval",
     icon: "beaker",
     items: [
       { to: "/eval/voice-review", label: "Voice review" },
@@ -90,23 +108,30 @@ export const CONSOLE_NAV: NavSectionDef[] = [
     ],
   },
   {
-    id: "platform",
-    label: "Platform",
-    icon: "settings",
+    id: "claire",
+    label: "Claire content",
+    icon: "cpu",
     items: [
-      { to: "/admin/prescreen-sessions", label: "Prescreen sessions" },
-      { to: "/admin/flags", label: "Flags" },
-      { to: "/admin/canonical-tags", label: "Canonical tags" },
-      { to: "/admin/companies", label: "Companies (pa-companies)" },
       { to: "/agents", label: "Agents" },
       { to: "/agent/playbooks", label: "Playbooks" },
       { to: "/agent/personas", label: "Personas" },
       { to: "/admin/handbook", label: "Handbook" },
       { to: "/admin/onboarding-questions", label: "Onboarding questions" },
-      { to: "/admin/launch-readiness", label: "Launch readiness" },
       { to: "/admin/upstream-templates", label: "Upstream templates" },
       { to: "/admin/downstream-triggers", label: "Downstream triggers" },
+      { to: "/admin/canonical-tags", label: "Canonical tags" },
+    ],
+  },
+  // ───────────── Tier 3: PLATFORM ─────────────
+  {
+    id: "platform",
+    label: "Platform",
+    icon: "settings",
+    items: [
+      { to: "/admin/flags", label: "Flags" },
       { to: "/triggers", label: "Triggers" },
+      { to: "/admin/prescreen-sessions", label: "Prescreen sessions" },
+      { to: "/admin/launch-readiness", label: "Launch readiness" },
       { to: "/beta", label: "Beta allowlist" },
       { to: "/abuse", label: "Abuse" },
     ],

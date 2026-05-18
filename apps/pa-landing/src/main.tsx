@@ -1,6 +1,6 @@
 import React from "react"
 import ReactDOM from "react-dom/client"
-import { BrowserRouter, Routes, Route } from "react-router-dom"
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import Landing from "./pages/Landing.js"
 import LayoffLanding from "./pages/LayoffLanding.js"
@@ -13,6 +13,7 @@ import PublicJob from "./pages/PublicJob.js"
 import PublicJobCv from "./pages/PublicJobCv.js"
 import OpenJobs from "./pages/OpenJobs.js"
 import Onboarding from "./pages/Onboarding.js"
+import EmployerSignup from "./pages/EmployerSignup.js"
 
 const root = document.getElementById("root")
 if (!root) throw new Error("Missing #root element")
@@ -42,25 +43,44 @@ const queryClient = new QueryClient({
   },
 })
 
+// Layoff host is a standalone three-surface product (Adam directive
+// 2026-05-18): only / (LayoffLanding), /onboarding (candidate intake),
+// /employer (employer signup → Mailgun → admin). Any other path collapses
+// to /. Other hosts (candidate.wekruit.com, pa.wekruit.com, default
+// .web.app) keep the full SPA route set.
+const layoffRoutes = (
+  <Routes>
+    <Route path="/" element={<HomeLanding />} />
+    <Route path="/onboarding" element={<Onboarding />} />
+    <Route path="/employer" element={<EmployerSignup />} />
+    <Route path="*" element={<Navigate to="/" replace />} />
+  </Routes>
+)
+
+const fullRoutes = (
+  <Routes>
+    <Route path="/" element={<HomeLanding />} />
+    <Route path="/legal" element={<Legal />} />
+    <Route path="/login" element={<CandidateLogin />} />
+    <Route path="/me" element={<CandidateMe />} />
+    <Route path="/me/matches" element={<CandidateMatches />} />
+    <Route path="/me/profile" element={<CandidateProfile />} />
+    <Route path="/market" element={<Market />} />
+    <Route path="/jobs" element={<Market />} />
+    <Route path="/j/:jobId" element={<PublicJob />} />
+    <Route path="/j/:jobId/cv" element={<PublicJobCv />} />
+    <Route path="/open" element={<OpenJobs />} />
+    <Route path="/onboarding" element={<Onboarding />} />
+    <Route path="/employer" element={<EmployerSignup />} />
+    <Route path="*" element={<HomeLanding />} />
+  </Routes>
+)
+
 ReactDOM.createRoot(root).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<HomeLanding />} />
-          <Route path="/legal" element={<Legal />} />
-          <Route path="/login" element={<CandidateLogin />} />
-          <Route path="/me" element={<CandidateMe />} />
-          <Route path="/me/matches" element={<CandidateMatches />} />
-          <Route path="/me/profile" element={<CandidateProfile />} />
-          <Route path="/market" element={<Market />} />
-          <Route path="/jobs" element={<Market />} />
-          <Route path="/j/:jobId" element={<PublicJob />} />
-          <Route path="/j/:jobId/cv" element={<PublicJobCv />} />
-          <Route path="/open" element={<OpenJobs />} />
-          <Route path="/onboarding" element={<Onboarding />} />
-          <Route path="*" element={<HomeLanding />} />
-        </Routes>
+        {IS_LAYOFF_HOST ? layoffRoutes : fullRoutes}
       </BrowserRouter>
     </QueryClientProvider>
   </React.StrictMode>

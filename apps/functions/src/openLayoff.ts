@@ -20,6 +20,7 @@
 //   2. layoff-sms-start hands the first message to the Claire runtime
 
 import { onCall, HttpsError } from "firebase-functions/v2/https"
+import { logger } from "firebase-functions/v2"
 import { getFirestore, FieldValue, type Firestore, type Query } from "firebase-admin/firestore"
 import { getApps, initializeApp } from "firebase-admin/app"
 
@@ -34,6 +35,19 @@ import {
   type WekruitSignupSource,
 } from "@pa/pa-orchestrator"
 import { runLayoffSmsStart, supersedeActivePrescreensForLayoff } from "./layoff-sms-start.js"
+import { sendMailgun, type MailgunConfig } from "./email/mailgun.js"
+import {
+  MAILGUN_API_KEY,
+  MAILGUN_DOMAIN,
+  MAILGUN_FROM,
+  MAILGUN_REGION,
+  MAILGUN_SECRETS,
+} from "./orchestrator-deps.js"
+
+/** Inbox that receives the "new employer signup" notification. */
+const EMPLOYER_SIGNUP_ADMIN_INBOX = "admin1@wekruit.com"
+/** Deep link operators get in the notification email to jump straight to review. */
+const EMPLOYER_DASHBOARD_URL = "https://wekruit-pa.web.app/admin/layoff-employers"
 
 /** Source tag — drives Claire's opener variant + listing filter + analytics. */
 export const LAYOFF_SOURCE_TAG = WEKRUIT_LAYOFF_SOURCE
@@ -479,11 +493,19 @@ export type EmployerInput = {
   stage: string
   roleAtCompany: string
   rolesHiring: string[]
+  /** Submitter name — for the admin notification email. */
+  contactName?: string
+  /** Free-form notes — appended verbatim to the admin notification body. */
+  notes?: string
+}
+
+export interface RegisterEmployerDeps extends OpenLayoffDeps {
+  sendMail?: (cfg: MailgunConfig, input: { to: string; subject: string; text: string; html?: string }) => Promise<{ ok: boolean; status: number; messageId?: string; rawResponse?: string }>
 }
 
 export async function runRegisterEmployer(
   v: EmployerInput,
-  deps: OpenLayoffDeps,
+  deps: RegisterEmployerDeps,
   auth?: CallableAuth
 ): Promise<{ employerId: string }> {
   if (!v.companyName || !v.workEmail) throw new HttpsError("invalid-argument", "Missing required fields")
@@ -497,12 +519,121 @@ export async function runRegisterEmployer(
     registeredByUid: auth?.uid ?? null,
     registeredAt: serverTimestamp(deps),
   })
+  await notifyAdminOfEmployerSignup(v, { employerId: ref.id, workEmailLower }, deps.sendMail ?? sendMailgun)
   return { employerId: ref.id }
 }
 
+async function notifyAdminOfEmployerSignup(
+  v: EmployerInput,
+  ctx: { employerId: string; workEmailLower: string },
+  send: (cfg: MailgunConfig, input: { to: string; subject: string; text: string; html?: string }) => Promise<{ ok: boolean; status: number; messageId?: string; rawResponse?: string }>,
+): Promise<void> {
+  logger.info("openRegisterEmployer.notify_admin.starting", {
+    employerId: ctx.employerId,
+    apiKeyPresent: Boolean(process.env.MAILGUN_API_KEY),
+    domainPresent: Boolean(process.env.MAILGUN_DOMAIN),
+    fromPresent: Boolean(process.env.MAILGUN_FROM),
+    regionEnv: process.env.MAILGUN_REGION ?? "(unset)",
+  })
+  const apiKey = process.env.MAILGUN_API_KEY ?? ""
+  const domain = process.env.MAILGUN_DOMAIN ?? ""
+  const from = process.env.MAILGUN_FROM ?? `WeKruit Open <noreply@${domain || "wekruit.com"}>`
+  const region = (process.env.MAILGUN_REGION === "eu" ? "eu" : "us") as "us" | "eu"
+  if (!apiKey || !domain) {
+    logger.warn("openRegisterEmployer.notify_admin.skipped", {
+      reason: "mailgun_not_configured",
+      employerId: ctx.employerId,
+    })
+    return
+  }
+  const reviewUrl = `${EMPLOYER_DASHBOARD_URL}?focus=${ctx.employerId}`
+  const lines: string[] = [
+    `Review: ${reviewUrl}`,
+    ``,
+    `Company: ${v.companyName}`,
+    `Stage: ${v.stage || "—"}`,
+    v.companyLinkedin ? `LinkedIn: ${v.companyLinkedin}` : null,
+    `Contact: ${v.contactName ?? "—"} (${v.roleAtCompany || "no role given"})`,
+    `Work email: ${ctx.workEmailLower}`,
+    `Roles hiring: ${v.rolesHiring?.length ? v.rolesHiring.join(", ") : "—"}`,
+    v.notes ? `\nNotes:\n${v.notes}` : null,
+    `\nFirestore: layoff_employers/${ctx.employerId}`,
+    `Source: layoff.wekruit.com /employer`,
+  ].filter((s): s is string => s !== null)
+  const text = lines.join("\n")
+  const html =
+    `<h2 style="font-family:system-ui;margin:0 0 12px">New employer signup — ${escapeHtml(v.companyName)}</h2>` +
+    `<p style="font-family:system-ui;font-size:14px;margin:0 0 18px">` +
+    `  <a href="${escapeHtmlAttr(reviewUrl)}" style="display:inline-block;background:#2d1a0a;color:#fff;text-decoration:none;padding:10px 16px;border-radius:6px;font-weight:500">` +
+    `    Open in dashboard →` +
+    `  </a>` +
+    `</p>` +
+    `<ul style="font-family:system-ui;font-size:14px;line-height:1.6;padding-left:20px">` +
+    `<li><b>Stage:</b> ${escapeHtml(v.stage || "—")}</li>` +
+    (v.companyLinkedin ? `<li><b>LinkedIn:</b> <a href="${escapeHtmlAttr(v.companyLinkedin)}">${escapeHtml(v.companyLinkedin)}</a></li>` : "") +
+    `<li><b>Contact:</b> ${escapeHtml(v.contactName ?? "—")} (${escapeHtml(v.roleAtCompany || "no role given")})</li>` +
+    `<li><b>Work email:</b> <a href="mailto:${escapeHtmlAttr(ctx.workEmailLower)}">${escapeHtml(ctx.workEmailLower)}</a></li>` +
+    `<li><b>Roles hiring:</b> ${v.rolesHiring?.length ? escapeHtml(v.rolesHiring.join(", ")) : "—"}</li>` +
+    `</ul>` +
+    (v.notes ? `<h3 style="font-family:system-ui;font-size:14px;margin:18px 0 6px">Notes</h3><pre style="font-family:system-ui;font-size:13px;white-space:pre-wrap;background:#f6f3ee;padding:12px;border-radius:6px">${escapeHtml(v.notes)}</pre>` : "") +
+    `<p style="font-family:system-ui;font-size:12px;color:#6b6357;margin-top:24px">Firestore: <code>layoff_employers/${escapeHtml(ctx.employerId)}</code><br>Source: <code>layoff.wekruit.com /employer</code></p>`
+  try {
+    const res = await send(
+      { apiKey, domain, from, region },
+      {
+        to: EMPLOYER_SIGNUP_ADMIN_INBOX,
+        subject: `New employer signup — ${v.companyName}`,
+        text,
+        html,
+      },
+    )
+    if (res.ok) {
+      logger.info("openRegisterEmployer.notify_admin.sent", {
+        employerId: ctx.employerId,
+        messageId: res.messageId,
+      })
+    } else {
+      logger.error("openRegisterEmployer.notify_admin.failed", {
+        employerId: ctx.employerId,
+        status: res.status,
+        rawResponse: res.rawResponse,
+      })
+    }
+  } catch (err) {
+    logger.error("openRegisterEmployer.notify_admin.threw", {
+      employerId: ctx.employerId,
+      err: err instanceof Error ? err.message : String(err),
+    })
+  }
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;")
+}
+
+function escapeHtmlAttr(s: string): string {
+  return escapeHtml(s)
+}
+
 export const openRegisterEmployer = onCall<EmployerInput>(
-  { region: "us-central1", cors: true },
+  { region: "us-central1", cors: true, memory: "512MiB", secrets: MAILGUN_SECRETS },
   async (req) => {
+    logger.info("openRegisterEmployer.entry", {
+      companyName: req.data?.companyName,
+      hasWorkEmail: Boolean(req.data?.workEmail),
+    })
+    // Hydrate Mailgun env so notifyAdminOfEmployerSignup() can read the
+    // secret values without each call site doing defineSecret().value()
+    // gymnastics. Same pattern as paMessageCoalescer (apps/functions/src/index.ts).
+    try { process.env.MAILGUN_API_KEY = MAILGUN_API_KEY.value() } catch {}
+    try { process.env.MAILGUN_DOMAIN = MAILGUN_DOMAIN.value() } catch {}
+    try { process.env.MAILGUN_FROM = MAILGUN_FROM.value() } catch {}
+    try { process.env.MAILGUN_REGION = MAILGUN_REGION.value() } catch {}
     return runRegisterEmployer(req.data, { db: getFirestore() }, req.auth)
   },
 )
