@@ -264,7 +264,8 @@ describe("processOneJob", () => {
     const counters = emptyCounters()
     const job: BatchJobDoc = {
       id: "j1",
-      primaryUrl: "https://example-jobs.com/listing",
+      // jobright primaryUrl forces pass1 fail → Serper → linkedin fallback
+      primaryUrl: "https://jobright.ai/jobs/info/listing-x",
       companyName: "X",
       jobTitle: "Engineer",
     }
@@ -287,7 +288,7 @@ describe("processOneJob", () => {
     const counters = emptyCounters()
     const job: BatchJobDoc = {
       id: "j1",
-      primaryUrl: "https://example-jobs.com/listing",
+      primaryUrl: "https://jobright.ai/jobs/info/listing-y",
       companyName: "X",
       jobTitle: "Engineer",
     }

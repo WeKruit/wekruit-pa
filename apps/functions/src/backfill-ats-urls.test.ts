@@ -1,10 +1,16 @@
 /**
- * iter34 followup G.3 — paBackfillMatchingJobsAtsUrl unit tests.
+ * paBackfillMatchingJobsAtsUrl unit tests.
+ *
+ * 2026-05-18 rewrite — kill the ATS allowlist (Adam directive
+ * `GOAL-apply-url-cleanup.md`). New semantics: any URL that parses and whose
+ * hostname does not contain "jobright" is an acceptable apply URL. No
+ * allowlist of curated ATS providers — Serper's top-1 organic result is
+ * trusted.
  *
  * Covers:
- *   - isAtsHost host classification (allow + reject)
- *   - resolveAtsUrl pass-1 / pass-3 / miss branches
- *   - createSerperSearch returns first ATS hit, falls back to broader query
+ *   - isJobrightUrl / isAcceptableApplyUrl classification
+ *   - resolveAtsUrl pass-1 / pass-3 / miss branches under new semantics
+ *   - createSerperSearch returns first non-jobright hit, falls back to broader query
  *   - checkLiveness 200/404/timeout/network classifications
  *   - runBackfill end-to-end with in-memory store (all modes)
  */
@@ -13,8 +19,8 @@ import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 
 import {
-  ATS_HOSTS,
-  isAtsHost,
+  isJobrightUrl,
+  isAcceptableApplyUrl,
   resolveAtsUrl,
   createSerperSearch,
   checkLiveness,
@@ -28,39 +34,54 @@ import {
 } from "./backfill-ats-urls.js"
 
 // -----------------------------------------------------------------------------
-// isAtsHost
+// isJobrightUrl
 // -----------------------------------------------------------------------------
 
-describe("isAtsHost", () => {
-  it("returns true for known ATS hosts (and subdomains)", () => {
-    assert.equal(isAtsHost("https://job-boards.greenhouse.io/stripe/jobs/123"), true)
-    assert.equal(isAtsHost("https://boards.greenhouse.io/openai"), true)
-    assert.equal(isAtsHost("https://jobs.lever.co/lever/abc-def"), true)
-    assert.equal(isAtsHost("https://jobs.ashbyhq.com/Anthropic/post-id"), true)
-    assert.equal(isAtsHost("https://acme.wd1.myworkdayjobs.com/external/job/123"), true)
-    assert.equal(isAtsHost("https://acme.bamboohr.com/jobs/view.php?id=42"), true)
-    assert.equal(isAtsHost("https://career.teamtailor.com/jobs/abc"), true)
+describe("isJobrightUrl", () => {
+  it("returns true for any jobright hostname", () => {
+    assert.equal(isJobrightUrl("https://jobright.ai/jobs/info/abc"), true)
+    assert.equal(isJobrightUrl("https://www.jobright.ai/jobs/info/abc"), true)
+    assert.equal(isJobrightUrl("https://app.jobright.ai/x"), true)
   })
-
-  it("returns false for non-ATS hosts", () => {
-    assert.equal(isAtsHost("https://google.com/search"), false)
-    assert.equal(isAtsHost("https://jobright.ai/jobs/123"), false)
-    assert.equal(isAtsHost("https://www.jobright.ai/jobs/123"), false)
-    assert.equal(isAtsHost("https://linkedin.com/jobs/view/456"), false)
-    assert.equal(isAtsHost("https://example.com/careers/1"), false)
+  it("returns false for non-jobright hosts", () => {
+    assert.equal(isJobrightUrl("https://boards.greenhouse.io/stripe/jobs/1"), false)
+    assert.equal(isJobrightUrl("https://anthropic.com/careers/jobs"), false)
+    assert.equal(isJobrightUrl("https://google.com/search"), false)
   })
-
   it("returns false for malformed / empty input", () => {
-    assert.equal(isAtsHost(""), false)
-    assert.equal(isAtsHost(undefined), false)
-    assert.equal(isAtsHost(null), false)
-    assert.equal(isAtsHost("not-a-url"), false)
+    assert.equal(isJobrightUrl(""), false)
+    assert.equal(isJobrightUrl(undefined), false)
+    assert.equal(isJobrightUrl(null), false)
+    assert.equal(isJobrightUrl("not-a-url"), false)
   })
+})
 
-  it("ATS_HOSTS exposes the canonical suffix list", () => {
-    assert.ok(ATS_HOSTS.includes("greenhouse.io"))
-    assert.ok(ATS_HOSTS.includes("lever.co"))
-    assert.ok(ATS_HOSTS.includes("ashbyhq.com"))
+// -----------------------------------------------------------------------------
+// isAcceptableApplyUrl — any parseable non-jobright URL is acceptable
+// -----------------------------------------------------------------------------
+
+describe("isAcceptableApplyUrl", () => {
+  it("accepts traditional ATS hosts", () => {
+    assert.equal(isAcceptableApplyUrl("https://job-boards.greenhouse.io/stripe/jobs/123"), true)
+    assert.equal(isAcceptableApplyUrl("https://jobs.lever.co/lever/abc-def"), true)
+    assert.equal(isAcceptableApplyUrl("https://jobs.ashbyhq.com/Anthropic/post-id"), true)
+    assert.equal(isAcceptableApplyUrl("https://acme.wd1.myworkdayjobs.com/external/job/123"), true)
+  })
+  it("accepts company careers pages and aggregators", () => {
+    assert.equal(isAcceptableApplyUrl("https://anthropic.com/careers/jobs"), true)
+    assert.equal(isAcceptableApplyUrl("https://stripe.com/jobs/listing/123"), true)
+    assert.equal(isAcceptableApplyUrl("https://linkedin.com/jobs/view/456"), true)
+    assert.equal(isAcceptableApplyUrl("https://wellfound.com/jobs/789"), true)
+  })
+  it("rejects only jobright hostnames", () => {
+    assert.equal(isAcceptableApplyUrl("https://jobright.ai/jobs/123"), false)
+    assert.equal(isAcceptableApplyUrl("https://www.jobright.ai/jobs/123"), false)
+  })
+  it("rejects malformed / empty input", () => {
+    assert.equal(isAcceptableApplyUrl(""), false)
+    assert.equal(isAcceptableApplyUrl(undefined), false)
+    assert.equal(isAcceptableApplyUrl(null), false)
+    assert.equal(isAcceptableApplyUrl("not-a-url"), false)
   })
 })
 
@@ -86,6 +107,28 @@ describe("resolveAtsUrl", () => {
     }
   })
 
+  it("pass 1: primaryUrl is company careers page (non-jobright) → returns as pass1, no Serper", async () => {
+    let serperCalled = false
+    const out = await resolveAtsUrl(
+      {
+        primaryUrl: "https://anthropic.com/careers/jobs/abc",
+        companyName: "Anthropic",
+        jobTitle: "MLE",
+      },
+      {
+        serper: async () => {
+          serperCalled = true
+          return null
+        },
+      }
+    )
+    assert.equal(serperCalled, false, "serper must NOT be invoked when primaryUrl is acceptable")
+    assert.equal(out.kind, "pass1")
+    if (out.kind === "pass1") {
+      assert.equal(out.url, "https://anthropic.com/careers/jobs/abc")
+    }
+  })
+
   it("pass 3: jobright primaryUrl, Serper returns greenhouse → pass3", async () => {
     let serperCalled = false
     const out = await resolveAtsUrl(
@@ -101,10 +144,25 @@ describe("resolveAtsUrl", () => {
         },
       }
     )
-    assert.equal(serperCalled, true, "serper must be invoked when primaryUrl is not ATS")
+    assert.equal(serperCalled, true, "serper must be invoked when primaryUrl is jobright")
     assert.equal(out.kind, "pass3")
     if (out.kind === "pass3") {
       assert.equal(out.url, "https://boards.greenhouse.io/stripe/jobs/4123")
+    }
+  })
+
+  it("pass 3: jobright primaryUrl, Serper returns company careers page → pass3", async () => {
+    const out = await resolveAtsUrl(
+      {
+        primaryUrl: "https://jobright.ai/jobs/x",
+        companyName: "Anthropic",
+        jobTitle: "MLE",
+      },
+      { serper: makeSerper("https://www.anthropic.com/careers/jobs/abc") }
+    )
+    assert.equal(out.kind, "pass3")
+    if (out.kind === "pass3") {
+      assert.equal(out.url, "https://www.anthropic.com/careers/jobs/abc")
     }
   })
 
@@ -116,15 +174,15 @@ describe("resolveAtsUrl", () => {
     assert.equal(out.kind, "miss")
   })
 
-  it("miss: serper returns non-ATS URL → miss", async () => {
+  it("miss: serper returns jobright URL → miss (only jobright excluded)", async () => {
     const out = await resolveAtsUrl(
       { companyName: "Acme", jobTitle: "Engineer" },
-      { serper: makeSerper("https://google.com/jobs/foo") }
+      { serper: makeSerper("https://jobright.ai/jobs/something") }
     )
     assert.equal(out.kind, "miss")
   })
 
-  it("miss: missing companyName/jobTitle → skip serper call", async () => {
+  it("miss: missing companyName/jobTitle AND jobright primaryUrl → skip serper, miss", async () => {
     let called = false
     const out = await resolveAtsUrl(
       { primaryUrl: "https://jobright.ai/jobs/x" },
@@ -142,6 +200,7 @@ describe("resolveAtsUrl", () => {
   it("falls back to roleTitle when jobTitle absent", async () => {
     const out = await resolveAtsUrl(
       {
+        primaryUrl: "https://jobright.ai/jobs/x",
         roleTitle: "Software Engineer",
         companyName: "Stripe",
       },
@@ -177,13 +236,13 @@ describe("createSerperSearch", () => {
     return { fetch: fetchImpl, calls }
   }
 
-  it("returns first ATS hit in organic results (precise query)", async () => {
+  it("returns first non-jobright hit in organic results (top-1 wins)", async () => {
     const mock = makeMockFetch([
       {
         ok: true,
         json: {
           organic: [
-            { link: "https://google.com/jobs/foo" },
+            { link: "https://anthropic.com/careers/jobs/abc" },
             { link: "https://boards.greenhouse.io/stripe/jobs/4123" },
             { link: "https://jobs.lever.co/something/abc" },
           ],
@@ -191,8 +250,8 @@ describe("createSerperSearch", () => {
       },
     ])
     const search = createSerperSearch({ apiKey: "test", fetchImpl: mock.fetch })
-    const url = await search("Software Engineer", "Stripe")
-    assert.equal(url, "https://boards.greenhouse.io/stripe/jobs/4123")
+    const url = await search("Software Engineer", "Anthropic")
+    assert.equal(url, "https://anthropic.com/careers/jobs/abc")
     assert.equal(mock.calls.length, 1, "second query must NOT fire when first hit found")
     const firstCall = mock.calls[0]!
     assert.equal(firstCall.url, "https://google.serper.dev/search")
@@ -200,9 +259,27 @@ describe("createSerperSearch", () => {
     assert.ok(body.q.includes("careers apply"), "first query should include 'careers apply' tail")
   })
 
-  it("falls back to broader query when first miss", async () => {
+  it("skips jobright hits, picks first non-jobright in organic", async () => {
     const mock = makeMockFetch([
-      { ok: true, json: { organic: [{ link: "https://google.com/foo" }] } },
+      {
+        ok: true,
+        json: {
+          organic: [
+            { link: "https://jobright.ai/jobs/info/xyz" },
+            { link: "https://www.jobright.ai/jobs/info/abc" },
+            { link: "https://stripe.com/jobs/listing/4123" },
+          ],
+        },
+      },
+    ])
+    const search = createSerperSearch({ apiKey: "test", fetchImpl: mock.fetch })
+    const url = await search("Software Engineer", "Stripe")
+    assert.equal(url, "https://stripe.com/jobs/listing/4123")
+  })
+
+  it("falls back to broader query when first query has only jobright hits", async () => {
+    const mock = makeMockFetch([
+      { ok: true, json: { organic: [{ link: "https://jobright.ai/jobs/x" }] } },
       {
         ok: true,
         json: { organic: [{ link: "https://jobs.lever.co/lever/abc" }] },
@@ -211,13 +288,13 @@ describe("createSerperSearch", () => {
     const search = createSerperSearch({ apiKey: "test", fetchImpl: mock.fetch })
     const url = await search("Software Engineer", "Lever")
     assert.equal(url, "https://jobs.lever.co/lever/abc")
-    assert.equal(mock.calls.length, 2, "second query should fire when first misses")
+    assert.equal(mock.calls.length, 2, "second query should fire when first only had jobright")
   })
 
-  it("returns null when both queries miss ATS hosts", async () => {
+  it("returns null when both queries return only jobright hits", async () => {
     const mock = makeMockFetch([
-      { ok: true, json: { organic: [{ link: "https://google.com/x" }] } },
-      { ok: true, json: { organic: [{ link: "https://linkedin.com/y" }] } },
+      { ok: true, json: { organic: [{ link: "https://jobright.ai/x" }] } },
+      { ok: true, json: { organic: [{ link: "https://jobright.ai/y" }] } },
     ])
     const search = createSerperSearch({ apiKey: "test", fetchImpl: mock.fetch })
     const url = await search("Engineer", "Acme")
