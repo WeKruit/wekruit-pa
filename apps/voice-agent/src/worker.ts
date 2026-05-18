@@ -82,9 +82,20 @@ export interface StartWorkerOpts {
 
 interface AgentRuntimeCtx {
   room: {
+    name?: string
     metadata?: string
     on: (event: string, listener: (...args: unknown[]) => void) => unknown
     off?: (event: string, listener: (...args: unknown[]) => void) => unknown
+  }
+  /** LK job-info struct — `ctx.job.room.{name,metadata}` is the dispatch-
+   * time room reference. Available BEFORE the agent connects to the room
+   * (used by LK internals for inference routing). Our `ctx.room.{name,
+   * metadata}` are the Room instance which is empty pre-connect. */
+  job?: {
+    room?: {
+      name?: string
+      metadata?: string
+    }
   }
 }
 
@@ -140,7 +151,12 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
   // ── The actual LiveKit Agent definition ─────────────────────────────────
   const agent = defineAgent({
     entry: async (ctx: AgentRuntimeCtx) => {
-      const bookingId = readBookingId(ctx.room.metadata)
+      // Dispatch-time room info lives on `ctx.job.room` (proto JobInfo);
+      // `ctx.room` is the rtc-node Room instance which is empty until
+      // `connect()`. Read both, prefer ctx.job.room.
+      const dispatchRoomName = ctx.job?.room?.name ?? ctx.room.name
+      const dispatchRoomMetadata = ctx.job?.room?.metadata ?? ctx.room.metadata
+      const bookingId = readBookingId(dispatchRoomMetadata, dispatchRoomName)
       log("voice.worker.entry", { bookingId })
 
       const callContext = await loadContext(bookingId)
@@ -283,20 +299,30 @@ function requireEnv(names: string[]): void {
   }
 }
 
-function readBookingId(metadata?: string): string {
-  if (!metadata) {
-    throw new Error("Room metadata missing — S3 must set bookingId on dial")
-  }
-  try {
-    const parsed = JSON.parse(metadata) as { bookingId?: string }
-    if (typeof parsed.bookingId === "string" && parsed.bookingId.length > 0) {
-      return parsed.bookingId
+/**
+ * Resolve bookingId from the dispatched room.
+ *
+ * S3 dispatch (`apps/functions/src/voice/dialOutbound.ts`) calls
+ * `sipClient.createSipParticipant({ roomName, ...})` where `roomName` is
+ * derived from `bookingId` (default = identity). The SIP path does NOT set
+ * room metadata. So the canonical source for bookingId in production is
+ * `ctx.room.name`. We still honor `ctx.room.metadata` (JSON `{bookingId}`
+ * or raw string) as a fallback for test / synthetic-dispatch paths.
+ */
+function readBookingId(metadata?: string, roomName?: string): string {
+  if (metadata) {
+    try {
+      const parsed = JSON.parse(metadata) as { bookingId?: string }
+      if (typeof parsed.bookingId === "string" && parsed.bookingId.length > 0) {
+        return parsed.bookingId
+      }
+    } catch {
+      // not JSON — treat the whole string as the bookingId
     }
-  } catch {
-    // not JSON — fall through
+    if (metadata.length > 0) return metadata
   }
-  if (metadata.length > 0) return metadata
-  throw new Error("Room metadata does not carry bookingId")
+  if (roomName && roomName.length > 0) return roomName
+  throw new Error("voice-agent: cannot resolve bookingId — neither room.metadata nor room.name is set")
 }
 
 /**
