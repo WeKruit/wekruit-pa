@@ -78,9 +78,15 @@ try {
   const TYPO_TOKEN = "pa" + "_" + "users"
   const escapedToken = TYPO_TOKEN.replace(/_/g, "_")
   const pattern = `collection\\(\\s*[\\"']${escapedToken}[\\"']`
+  // --include limits to source files. Exclusions strip built artifacts
+  // (dist/, lib/, build/), node_modules, and this file itself.
   const cmd = `grep -rEn --include="*.ts" --include="*.mjs" --include="*.js" ` +
     `"${pattern}" "${REPO_ROOT}/packages" "${REPO_ROOT}/apps" ` +
-    `2>/dev/null | grep -v node_modules | grep -v "dist/" ` +
+    `2>/dev/null ` +
+    `| grep -v node_modules ` +
+    `| grep -v "/dist/" ` +
+    `| grep -v "/lib/" ` +
+    `| grep -v "/build/" ` +
     `| grep -v "predeploy-smoke.mjs" || true`
   let hits = ""
   try {
