@@ -54,6 +54,11 @@ export async function createProvisionalUser(db: Firestore, participant: string):
     onboardingStatus: "provisional",
     channels: { imessageHandle: n },
   }
+  // Stamp canonical pa-users.source label (2026-05-18 cleanup goal). All
+  // provisional users created from SMS/iMessage inbound are real candidates
+  // — distinct from layoff (writes WeKruit_Laid_Off in openLayoff.ts) and
+  // QA/E2E/synthetic (which stamp qa_run / e2e_run / dev_test explicitly).
+  ;(u as User & { source?: string }).source = "candidate"
   await db.collection(USERS).doc(id).set(u)
   return u
 }

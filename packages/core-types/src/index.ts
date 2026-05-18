@@ -875,3 +875,11 @@ export {
 // v2.0 External Supply V1 — sourcing batch / record / evaluation / outreach /
 // instantly / agent-research contracts. See ./external-supply.ts.
 export * from "./external-supply.js"
+
+// pa-users canonical `source` label allowlist (2026-05-18 cleanup goal).
+export {
+  PA_USER_SOURCES,
+  PaUserSourceSchema,
+  isPaUserSource,
+  type PaUserSource,
+} from "./sources.js"

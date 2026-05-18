@@ -26,8 +26,25 @@ service cloud.firestore {
     }
 
     // ─── Core entity collections ─────────────────────────────────────
+    // pa-users.source policy (2026-05-18 cleanup goal): every initial create
+    // MUST stamp a canonical source label from the allowlist below. Updates
+    // are not constrained so legacy docs can keep their existing field set.
+    // Cloud Functions write via Admin SDK and bypass these rules — the
+    // guard is defense-in-depth for direct dashboard writes only.
     match /pa-users/{id} {
-      allow read, write: if isPaOperator();
+      allow read: if isPaOperator();
+      allow create: if isPaOperator()
+        && request.resource.data.source is string
+        && request.resource.data.source in [
+          "candidate",
+          "WeKruit_Laid_Off",
+          "admin",
+          "dev_test",
+          "e2e_run",
+          "qa_run",
+          "external_supply"
+        ];
+      allow update, delete: if isPaOperator();
     }
     match /pa-agents/{id} {
       allow read, write: if isPaOperator();

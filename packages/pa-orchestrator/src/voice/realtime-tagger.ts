@@ -143,7 +143,7 @@ export function extractTagsFromUserMessage(message: string): TagExtraction {
  *   { statedPreferences: { visaStatus: "h1b", targetLocations: ["NYC"] } }
  *
  * Caller does:
- *   await db.collection("pa_users").doc(userId).set(payload, { merge: true })
+ *   await db.collection("pa-users").doc(userId).set(payload, { merge: true })
  */
 export function buildTagWriteback(
   extraction: TagExtraction
@@ -189,7 +189,7 @@ export async function applyRealtimeTagWriteback(
     if (extraction.targetLocations) signals.push(`loc:${extraction.targetLocations.join(",")}`)
     if (extraction.prefersStartup !== null) signals.push(`startup:${extraction.prefersStartup}`)
     if (extraction.yoeRange) signals.push(`yoe:${extraction.yoeRange[0]}-${extraction.yoeRange[1]}`)
-    await db.collection("pa_users").doc(userId).set(writeback, { merge: true })
+    await db.collection("pa-users").doc(userId).set(writeback, { merge: true })
     log("pa.realtime_tagger.applied", {
       userId,
       signals,

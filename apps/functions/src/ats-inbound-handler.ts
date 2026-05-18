@@ -159,6 +159,10 @@ export async function handleAtsInbound(
         emailLower,
         legalName: applicant.name,
         phone: applicant.phone ?? null,
+        // Canonical `source` label — required by 2026-05-18 cleanup policy.
+        // `signupSource` carries the granular ATS variant; `source` is the
+        // closed-enum partition used by hygiene audits + dashboard filters.
+        source: "candidate",
         signupSource: `ats:${applicant.source}`,
         createdAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
@@ -175,6 +179,9 @@ export async function handleAtsInbound(
       emailLower,
       legalName: applicant.name,
       phone: applicant.phone ?? null,
+      // Stamp `source` on merge too — if the user pre-existed without a
+      // source (legacy doc), this back-fills it on the first ATS bind.
+      source: "candidate",
       signupSource: `ats:${applicant.source}`,
       updatedAt: FieldValue.serverTimestamp(),
       ...(userSnap.exists ? {} : { createdAt: FieldValue.serverTimestamp() }),
