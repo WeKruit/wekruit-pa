@@ -28,6 +28,7 @@ import {
   collectJobRecommendationMessageItems,
   composeJobRecommendationMessage,
   compactJobRecContext,
+  hasConcreteJobRequirements,
   resolveJobRecVisibleCount,
   type JobRecIntroContext,
 } from "./job-rec-copy.js"
@@ -39,6 +40,7 @@ export {
   compactJobRecContext,
   formatJobRecIntro,
   formatJobRequirementsLine,
+  hasConcreteJobRequirements,
   resolveJobRecVisibleCount,
   toJobRecommendationMessageItem,
 } from "./job-rec-copy.js"
@@ -152,6 +154,29 @@ export function makeOrchestratorDeps(): import("@pa/pa-orchestrator").Orchestrat
   return deps
 }
 
+function normalizeRuntimeRoleFocus(values: unknown): string[] {
+  if (!Array.isArray(values)) return []
+  const out: string[] = []
+  const add = (value: string) => {
+    if (!out.includes(value)) out.push(value)
+  }
+  for (const raw of values) {
+    if (typeof raw !== "string") continue
+    const value = raw.trim().toLowerCase()
+    if (value === "frontend" || value === "front-end" || value === "front end") add("frontend")
+    if (value === "fullstack" || value === "full-stack" || value === "full stack") add("fullstack")
+    if (value === "backend" || value === "back-end" || value === "back end") add("backend")
+  }
+  return out
+}
+
+export function resolveRuntimeJobRecRoleFocus(explicitFocus: unknown, userTags: unknown): string[] {
+  const explicit = normalizeRuntimeRoleFocus(explicitFocus)
+  if (explicit.length > 0) return explicit
+  if (!userTags || typeof userTags !== "object") return []
+  return normalizeRuntimeRoleFocus((userTags as { targetRole?: unknown }).targetRole)
+}
+
 /**
  * Phase 61 hotfix — V16 cutover. Replaces the legacy `queryMatchingJobs`
  * call (which read fragmented sources: parsedCandidateResumes.topSkills +
@@ -173,9 +198,17 @@ export function makeOrchestratorDeps(): import("@pa/pa-orchestrator").Orchestrat
 function makeGenerateJobRecs(): NonNullable<
   import("@pa/pa-orchestrator").OrchestratorStoreDeps["generateJobRecs"]
 > {
-  return async (userId: string, lang: "zh" | "en", opts?: { force?: boolean; requestedCount?: number }) => {
+  return async (
+    userId: string,
+    lang: "zh" | "en",
+    opts?: { force?: boolean; requestedCount?: number; roleFocus?: string[] },
+  ) => {
     if (!getApps().length) initializeApp()
     const db = getFirestore()
+    const outputLang: "en" = "en"
+    void lang
+    let userTagsForJobRec: unknown
+    let introContext: JobRecIntroContext | undefined
 
     // Skip live match when daily batch already sent recs in the last 24h.
     try {
@@ -202,12 +235,31 @@ function makeGenerateJobRecs(): NonNullable<
     }
 
     try {
-      const { queryMatchingJobsV16 } = await import("@pa/job-rec")
+      const userDoc = await db.collection("pa-users").doc(userId).get()
+      userTagsForJobRec = userDoc.exists ? userDoc.data()?.tags : undefined
+      introContext = compactJobRecContext(userTagsForJobRec)
+    } catch (err) {
+      logger.warn("[job-recs] user context read failed", {
+        userId,
+        err: err instanceof Error ? err.message : String(err),
+      })
+    }
+
+    const roleFocus = resolveRuntimeJobRecRoleFocus(opts?.roleFocus, userTagsForJobRec)
+
+    try {
+      const { queryMatchingJobsV16, recordRecommendedJobs } = await import("@pa/job-rec")
       // V16 reads `pa-users/{userId}.tags` directly; no `filters` needed.
       // limit=10 retains the wider window so we can fire-and-forget
       // llmRerank against the top-5 (next-batch cache).
       const out = await queryMatchingJobsV16(
-        { userId, limit: 10, lang },
+        {
+          userId,
+          limit: roleFocus.length ? 20 : 10,
+          lang: outputLang,
+          allowBroadFallback: true,
+          ...(roleFocus.length ? { presentationRoleFocus: roleFocus } : {}),
+        },
         {
           db,
           log: (event, payload) =>
@@ -229,7 +281,7 @@ function makeGenerateJobRecs(): NonNullable<
         return null
       }
       const visibleCount = resolveJobRecVisibleCount(opts?.requestedCount)
-      const visibleItems = collectJobRecommendationMessageItems(jobs, lang, { limit: visibleCount })
+      const visibleItems = collectJobRecommendationMessageItems(jobs, outputLang, { limit: visibleCount })
       if (visibleItems.length === 0) {
         logger.warn("[job-recs] no matches with public job links", {
           userId,
@@ -237,16 +289,6 @@ function makeGenerateJobRecs(): NonNullable<
           dropped: out.dropped,
         })
         return null
-      }
-      let introContext: JobRecIntroContext | undefined
-      try {
-        const userDoc = await db.collection("pa-users").doc(userId).get()
-        introContext = compactJobRecContext(userDoc.exists ? userDoc.data()?.tags : undefined)
-      } catch (err) {
-        logger.warn("[job-recs] intro context read failed", {
-          userId,
-          err: err instanceof Error ? err.message : String(err),
-        })
       }
 
       // v1.7 hotfix — LLM-composed nuanced reasoning for top-2.
@@ -311,7 +353,7 @@ function makeGenerateJobRecs(): NonNullable<
             visibleItems.map((item) =>
               composeNuancedReason(
                 {
-                  lang,
+                  lang: outputLang,
                   workHistory: wh.slice(0, 3),
                   projects: projects.slice(0, 2),
                   topSkills: topSkills.slice(0, 12),
@@ -349,20 +391,17 @@ function makeGenerateJobRecs(): NonNullable<
       const messageItems = visibleItems.map((item, i) => {
         const nuanced = visibleReasons[i]
         const reason = nuanced && nuanced.length > 0
-          ? `${lang === "zh" ? "为啥推" : "why"}: ${nuanced}`
+          ? `why: ${nuanced}`
           : item.reason
         return { ...item, ...(reason ? { reason } : {}) }
       })
       const message = composeJobRecommendationMessage(
         messageItems,
-        lang,
+        outputLang,
         introContext,
         {
           // iter34 hotfix 2026-05-05 — Adam directive on phrasing.
-          footer:
-            lang === "zh"
-              ? "先看看, 不准就告诉我我再找; 之后每天会再给你新的"
-              : "see if these fit — if not lmk, i'll keep digging; daily fresh batch from here",
+          footer: "see if these fit — if not lmk, i'll keep digging; daily fresh batch from here",
         },
       )
 
@@ -433,6 +472,15 @@ function makeGenerateJobRecs(): NonNullable<
         dropped: out.dropped,
         llmCacheStale: out.llmCacheStale ?? false,
       })
+      await recordRecommendedJobs(
+        db,
+        {
+          userId,
+          jobs: messageItems.map((item) => item.sourceJob),
+          source: "runtime_job_search_reply",
+        },
+        (event, payload) => logger.info("[job-recs]", { event, ...(payload ?? {}) }),
+      )
       return { message, recCount: messageItems.length }
     } catch (err) {
       logger.warn("[job-recs] queryMatchingJobsV16 threw", {

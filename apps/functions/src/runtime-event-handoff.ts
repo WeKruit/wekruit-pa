@@ -23,6 +23,9 @@ const NO_SEND_TOKEN = "__NO_SEND__"
 const CANDIDATE_DRAFT_CONTEXT_KEYS = new Set([
   "candidateMessage",
   "candidateVisibleMessage",
+  "content",
+  "composedRecommendationMessage",
+  "sourceNotes",
   "messageBody",
   "messageTemplate",
   "proposedMessage",
@@ -93,8 +96,9 @@ export function buildRuntimeEventBody(input: Pick<RuntimeEventHandoffInput, "sou
     `[system-event:${input.source}:${input.eventKind}]`,
     "An external product event arrived. Decide whether Claire should send the candidate a message now.",
     `If no candidate-facing message should be sent, reply exactly ${NO_SEND_TOKEN}.`,
-    "If a message should be sent, write only that message. Keep the candidate's established language and context; do not expose internal event ids or system wording.",
+    "If a message should be sent, write only that message in English. Beta candidate-visible iMessage output is English-only.",
     "Do not reuse producer-written candidate copy. Use only the structured facts, the recent conversation, and Claire's runtime policy.",
+    "Do not expose internal event ids or system wording.",
     `Context: ${compactContext(input.context)}`,
   ].join("\n")
 }
@@ -148,6 +152,7 @@ export async function enqueueRuntimeEventHandoff(
       runtimeEventSource: input.source,
       runtimeEventKind: input.eventKind,
       runtimeNoSendToken: NO_SEND_TOKEN,
+      preferredLanguage: "en",
       context: sanitized.context,
       ...(sanitized.removedDraftKeys.length > 0
         ? { removedCandidateDraftContextKeys: sanitized.removedDraftKeys }

@@ -88,21 +88,25 @@ export const paAdminVoiceTestDial = onCall(
       )
     }
 
-    // Dupe-suppression — refuse if a voice-test booking exists for this
-    // pair from the last 60s.
-    const sixtyAgo = new Date(Date.now() - 60_000).toISOString()
+    // Dupe-suppression — single-field equality + in-memory time filter
+    // so we don't need a (paUserId, paJobId, createdAt) composite
+    // Firestore index. Refuses if same user+job pair was dialed in last 60s.
+    const sixtyAgoMs = Date.now() - 60_000
     const dupeSnap = await db
       .collection("outbound-bookings")
       .where("paUserId", "==", paUserId)
-      .where("paJobId", "==", paJobId)
-      .where("createdAt", ">=", sixtyAgo)
-      .limit(1)
+      .limit(20)
       .get()
-    if (!dupeSnap.empty) {
-      throw new HttpsError(
-        "already-exists",
-        `recent booking exists for this user+job (id=${dupeSnap.docs[0].id})`,
-      )
+    for (const d of dupeSnap.docs) {
+      const data = d.data() as { paJobId?: string; createdAt?: string }
+      if (data.paJobId !== paJobId) continue
+      const t = data.createdAt ? Date.parse(data.createdAt) : 0
+      if (t >= sixtyAgoMs) {
+        throw new HttpsError(
+          "already-exists",
+          `recent booking exists for this user+job (id=${d.id})`,
+        )
+      }
     }
 
     const bookingId = generateBookingId()

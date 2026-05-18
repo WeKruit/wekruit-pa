@@ -123,9 +123,14 @@ test("SaveJobProfileInputSchema requires non-empty userId", () => {
   )
 })
 
-test("SendImessageInputSchema enforces 2000-char ceiling", () => {
+test("SendImessageInputSchema requires structured context and rejects legacy content", () => {
+  const parsed = SendImessageInputSchema.parse({
+    userId: "u1",
+    context: { eventKind: "job_recommendations_requested" },
+  })
+  assert.deepEqual(parsed.context, { eventKind: "job_recommendations_requested" })
   assert.throws(() =>
-    SendImessageInputSchema.parse({ userId: "u1", content: "x".repeat(2001) })
+    SendImessageInputSchema.parse({ userId: "u1", content: "legacy copy" })
   )
 })
 

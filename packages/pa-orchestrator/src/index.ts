@@ -662,7 +662,7 @@ export type OrchestratorStore = {
   generateJobRecs?(
     userId: string,
     lang: "zh" | "en",
-    opts?: { force?: boolean; requestedCount?: number }
+    opts?: { force?: boolean; requestedCount?: number; roleFocus?: string[] }
   ): Promise<{ message: string; recCount: number } | null>
 
   /**
@@ -1569,23 +1569,24 @@ async function handleCompletedUserJobSearchRequest(
   if (isJobRecommendationExplanationRequest(event.body)) return false
   if (!isExplicitJobSearchRequest(event.body)) return false
 
-  const lang = detectUserLang(event.body) === "zh" ? "zh" : "en"
+  const lang: "en" = "en"
+  const requestedCount = requestedJobRecCount(event.body)
+  const roleFocus = detectLifecycleRoleFocus(event.body)
   store.log("pa.runtime.job_search.direct_request", {
     userId: event.userId,
     turnId,
     lang,
+    roleFocus,
   })
-  const requestedCount = requestedJobRecCount(event.body)
   const recs = await store.generateJobRecs(event.userId, lang, {
     force: true,
     ...(requestedCount ? { requestedCount } : {}),
+    ...(roleFocus.length > 0 ? { roleFocus } : {}),
   })
   const reply =
     recs && recs.recCount > 0
       ? recs.message
-      : lang === "zh"
-        ? "我现在没拉到新的岗位列表。这个请求我记下了, 稍后再试一次。"
-        : "I could not pull fresh roles right now. I saved the request and will try again shortly."
+      : "I could not pull fresh roles right now. I saved the request and will try again shortly."
   await sendMemoryReply(store, event, turnId, reply)
   await store.updateTurn(turnId, {
     status: "succeeded",
@@ -4399,7 +4400,10 @@ export {
 } from "./prescreen/feedback-survey.js"
 export {
   WEKRUIT_LAYOFF_SOURCE,
+  WEKRUIT_CANDIDATE_SOURCE,
+  isWekruitSignupSource,
   composeLayoffFirstMessage,
+  type WekruitSignupSource,
 } from "./onboarding.js"
 // v1.9 P85 — top-level re-exports for OnboardingPipeline state types used
 // by apps/functions pii-confirm-start.ts.

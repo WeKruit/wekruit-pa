@@ -306,15 +306,17 @@ export async function runInitiateSmsPrescreen(
   const doc = await userRef.get()
   if (!doc.exists) throw new HttpsError("not-found", "User not found")
   const u = doc.data()!
-  if (u.source !== WEKRUIT_LAYOFF_SOURCE) {
-    throw new HttpsError("failed-precondition", "user_not_tagged_layoff")
+  if (!isWekruitSignupSource(u.source)) {
+    throw new HttpsError("failed-precondition", "user_source_unsupported")
   }
+  const userSource = u.source as WekruitSignupSource
 
   const phoneE164 = u.phoneE164 as string
   const result = await runLayoffSmsStart({
     db: deps.db,
     userId: candidateId,
     toE164: phoneE164,
+    source: userSource,
     runRuntimeKickoff: deps.runRuntimeKickoff,
   })
   if (!result.ok) throw new HttpsError("failed-precondition", result.reason)

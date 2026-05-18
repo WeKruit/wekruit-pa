@@ -27,8 +27,8 @@ import type {
 } from "@pa/pa-orchestrator"
 import { sendRuntimeApprovedIMessage } from "./runtime-approved-outbox.js"
 import {
+  buildJobRecommendationRuntimeContext,
   collectJobRecommendationMessageItems,
-  composeJobRecommendationMessage,
   compactJobRecContext,
   resolveJobRecVisibleCount,
 } from "./job-rec-copy.js"
@@ -329,17 +329,14 @@ export async function runPiiConfirmTurnIfActive(
     | undefined
   if (!meta) return { handled: false }
   const source = meta.source ?? "pass"
-  const lang = meta.lang ?? "en"
-
   // Default onComplete fires generateJobRecs ("matching" link per Adam).
   const onComplete = async (a: { userId: string; toE164: string; jobId: string }) => {
     try {
       const { getFirestore } = await import("firebase-admin/firestore")
-      const { queryMatchingJobsV16 } = await import("@pa/job-rec")
-      const { sendImessage: send } = await import("@pa/job-rec")
+      const { queryMatchingJobsV16, sendImessage: send, recordRecommendedJobs } = await import("@pa/job-rec")
       const db = getFirestore()
       const result = await queryMatchingJobsV16(
-        { userId: a.userId, limit: 5, lang },
+        { userId: a.userId, limit: 5, lang: "en", allowBroadFallback: true },
         { db, log: () => undefined }
       )
       if (!result.jobs || result.jobs.length === 0) {
@@ -359,7 +356,7 @@ export async function runPiiConfirmTurnIfActive(
         return
       }
       const visibleCount = resolveJobRecVisibleCount(undefined)
-      const items = collectJobRecommendationMessageItems(result.jobs, lang, { limit: visibleCount })
+      const items = collectJobRecommendationMessageItems(result.jobs, "en", { limit: visibleCount })
       if (items.length === 0) {
         log("pii_confirm.recs_no_linkable_matches", { userId: a.userId })
         if (source !== "pass") {
@@ -382,14 +379,29 @@ export async function runPiiConfirmTurnIfActive(
       } catch {
         introContext = undefined
       }
-      await send(
+      const sent = await send(
         {
           userId: a.userId,
-          content: composeJobRecommendationMessage(items, lang, introContext),
+          context: buildJobRecommendationRuntimeContext(items, introContext, {
+            requestedCount: visibleCount,
+            source: "pii_confirm_post_collect",
+            eventKind: "pii_post_collect_job_recommendations",
+          }),
           idempotencyKey: `${a.userId}-${new Date().toISOString().slice(0, 16)}-pii-postcollect`,
         },
         { db, log: () => undefined }
       )
+      if (sent.ok) {
+        await recordRecommendedJobs(
+          db,
+          {
+            userId: a.userId,
+            jobs: items.map((item) => item.sourceJob),
+            source: "pii_confirm_post_collect",
+          },
+          () => undefined,
+        )
+      }
     } catch (err) {
       log("pii_confirm.recs_chain_failed", { error: String(err) })
     }

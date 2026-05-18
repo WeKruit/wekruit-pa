@@ -305,6 +305,13 @@ const Q_PROMPTS: Record<
 }
 
 export const WEKRUIT_LAYOFF_SOURCE = "WeKruit_Laid_Off"
+export const WEKRUIT_CANDIDATE_SOURCE = "candidate"
+
+export type WekruitSignupSource = typeof WEKRUIT_LAYOFF_SOURCE | typeof WEKRUIT_CANDIDATE_SOURCE
+
+export function isWekruitSignupSource(value: unknown): value is WekruitSignupSource {
+  return value === WEKRUIT_LAYOFF_SOURCE || value === WEKRUIT_CANDIDATE_SOURCE
+}
 
 type OnboardingSessionKind = "normal_onboarding" | "layoff_onboarding"
 

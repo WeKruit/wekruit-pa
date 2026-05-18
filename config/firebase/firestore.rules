@@ -171,6 +171,12 @@ service cloud.firestore {
     match /pa-voice-reviews/{id} {
       allow read, write: if isPaOperator();
     }
+    // v2.2 W6 — admin voice-test-dial form subscribes to booking docs
+    // via Firestore onSnapshot to show live voiceState. Server CFs write
+    // these via Admin SDK; dashboard only reads.
+    match /outbound-bookings/{id} {
+      allow read: if isPaOperator();
+    }
 
     // ─── iter30/WS8 — match weights + explainer ──────────────────────
     match /pa-match-weight-tables/{tableKey} {

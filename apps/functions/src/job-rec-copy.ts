@@ -6,6 +6,7 @@ export type JobRecIntroContext = {
 }
 
 export type JobRecommendationSource = {
+  id?: unknown
   jobTitle?: unknown
   title?: unknown
   companyName?: unknown
@@ -13,6 +14,10 @@ export type JobRecommendationSource = {
   primaryUrl?: unknown
   requiredSkills?: unknown
   reason?: unknown
+  matchSourceLabel?: unknown
+  previouslyRecommended?: unknown
+  recommendationCount?: unknown
+  lastRecommendedAt?: unknown
 }
 
 export type JobRecommendationMessageItem = {
@@ -20,8 +25,25 @@ export type JobRecommendationMessageItem = {
   companyName?: string
   url: string
   requirementsLine: string
+  matchSourceLabel: "WeKruit collaborated" | "general match"
+  previouslyRecommended: boolean
+  recommendationCount?: number
+  lastRecommendedAt?: string
   reason?: string
   sourceJob: JobRecommendationSource
+}
+
+function cleanRequiredSkills(requiredSkills: unknown): string[] {
+  return Array.isArray(requiredSkills)
+    ? requiredSkills
+        .filter((skill): skill is string => typeof skill === "string" && skill.trim().length > 0)
+        .map((skill) => skill.trim().replace(/[_-]+/g, " "))
+        .slice(0, 5)
+    : []
+}
+
+export function hasConcreteJobRequirements(requiredSkills: unknown): boolean {
+  return cleanRequiredSkills(requiredSkills).length > 0
 }
 
 export function resolveJobRecVisibleCount(requestedCount: unknown): number {
@@ -51,15 +73,8 @@ export function formatJobRecIntro(
 }
 
 export function formatJobRequirementsLine(lang: JobRecLang, requiredSkills: unknown): string {
-  const skills = Array.isArray(requiredSkills)
-    ? requiredSkills
-        .filter((skill): skill is string => typeof skill === "string" && skill.trim().length > 0)
-        .map((skill) => skill.trim().replace(/[_-]+/g, " "))
-        .slice(0, 5)
-    : []
-  if (skills.length === 0) {
-    return lang === "zh" ? "要求: 点开岗位看完整要求" : "requirements: see the job post for the full requirements"
-  }
+  const skills = cleanRequiredSkills(requiredSkills)
+  if (skills.length === 0) return ""
   return `${lang === "zh" ? "要求" : "requirements"}: ${skills.join(", ")}`
 }
 
@@ -69,6 +84,23 @@ function cleanDisplayString(value: unknown): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined
 }
 
+function cleanMatchSourceLabel(value: unknown): "WeKruit collaborated" | "general match" {
+  return value === "WeKruit collaborated" ? "WeKruit collaborated" : "general match"
+}
+
+function cleanPositiveInt(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.trunc(value)
+    : undefined
+}
+
+function cleanReason(value: unknown, lang: JobRecLang): string | undefined {
+  const reason = cleanDisplayString(value)
+  if (!reason) return undefined
+  if (lang === "en") return reason.replace(/^why\s+match\s*:/i, "why:")
+  return reason
+}
+
 export function toJobRecommendationMessageItem(
   job: JobRecommendationSource,
   lang: JobRecLang,
@@ -76,14 +108,23 @@ export function toJobRecommendationMessageItem(
 ): JobRecommendationMessageItem | null {
   const url = cleanJobRecUrl(job)
   if (!url) return null
+  const requirementsLine = formatJobRequirementsLine(lang, job.requiredSkills)
+  if (!requirementsLine) return null
   const title = cleanDisplayString(job.jobTitle) ?? cleanDisplayString(job.title) ?? "Open role"
   const companyName = cleanDisplayString(job.companyName)
-  const reason = cleanDisplayString(options?.reason) ?? cleanDisplayString(job.reason)
+  const reason = cleanReason(options?.reason, lang) ?? cleanReason(job.reason, lang)
+  const matchSourceLabel = cleanMatchSourceLabel(job.matchSourceLabel)
+  const recommendationCount = cleanPositiveInt(job.recommendationCount)
+  const lastRecommendedAt = cleanDisplayString(job.lastRecommendedAt)
   return {
     title,
     ...(companyName ? { companyName } : {}),
     url,
-    requirementsLine: formatJobRequirementsLine(lang, job.requiredSkills),
+    requirementsLine,
+    matchSourceLabel,
+    previouslyRecommended: job.previouslyRecommended === true || !!recommendationCount,
+    ...(recommendationCount ? { recommendationCount } : {}),
+    ...(lastRecommendedAt ? { lastRecommendedAt } : {}),
     ...(reason ? { reason } : {}),
     sourceJob: job,
   }
@@ -116,10 +157,47 @@ export function composeJobRecommendationMessage(
   for (const item of items) {
     const tag = item.companyName ? ` @ ${item.companyName}` : ""
     const reason = item.reason ? `\n${item.reason}` : ""
-    lines.push(`• ${item.title}${tag}\n${item.url}\n${item.requirementsLine}${reason}`)
+    const repeat =
+      item.previouslyRecommended
+        ? "\nI may have shared this before, but it is worth another look because it still lines up."
+        : ""
+    lines.push(`• ${item.title}${tag}\n${item.matchSourceLabel}${repeat}\n${item.url}\n${item.requirementsLine}${reason}`)
   }
   if (options?.footer) lines.push(options.footer)
   return lines.join("\n\n")
+}
+
+export function buildJobRecommendationRuntimeContext(
+  items: JobRecommendationMessageItem[],
+  context?: JobRecIntroContext,
+  options?: { requestedCount?: number; source?: string; eventKind?: string },
+): Record<string, unknown> {
+  return {
+    eventKind: options?.eventKind ?? "job_recommendations_requested",
+    source: options?.source ?? "job_rec",
+    preferredLanguage: "en",
+    requestedCount: options?.requestedCount ?? items.length,
+    candidateContext: context ?? null,
+    jobs: items.map((item) => ({
+      id: cleanDisplayString(item.sourceJob.id),
+      title: item.title,
+      companyName: item.companyName ?? null,
+      url: item.url,
+      requirements: item.requirementsLine,
+      reason: item.reason ?? null,
+      matchSourceLabel: item.matchSourceLabel,
+      previouslyRecommended: item.previouslyRecommended,
+      recommendationCount: item.recommendationCount ?? 0,
+      lastRecommendedAt: item.lastRecommendedAt ?? null,
+    })),
+    instructions: [
+      "Write candidate-visible copy in English only.",
+      "Use exactly the number of roles requested unless the user asked for a different count.",
+      "For every role include title, company, URL, requirements, reason, and matchSourceLabel.",
+      "If a role has previouslyRecommended=true, say briefly that it may be a repeat and why it is still worth another look.",
+      "If timing is awkward or the request should not send, respond __NO_SEND__.",
+    ],
+  }
 }
 
 export function compactJobRecContext(tags: unknown): JobRecIntroContext | undefined {

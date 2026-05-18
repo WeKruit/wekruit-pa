@@ -221,7 +221,8 @@ export function buildUserCandidateText(p: ReverseMatchUserProfile): string {
  *      since we don't load CV.location in reverse-match (added cost,
  *      minor signal). Skipped intentionally.
  *
- * Bilingual: zh by default; en when user.preferredLanguage === "en".
+ * Beta runtime output is English-only; stored preferredLanguage is ignored
+ * for candidate-visible reverse-match reasoning.
  */
 export function buildMatchedReasons(
   p: ReverseMatchUserProfile,
@@ -233,46 +234,34 @@ export function buildMatchedReasons(
     .map((t) => t.toLowerCase().trim())
     .filter((t) => t.length > 0)
   const skillsLower = new Set(p.topSkills.map((s) => s.toLowerCase().trim()))
-  const lang = p.preferredLanguage
   const hits: string[] = []
   for (const t of tagsLower) {
     if (skillsLower.has(t)) hits.push(t)
     if (hits.length >= 3) break
   }
   for (const h of hits) {
-    reasons.push(lang === "zh" ? `${h} 命中` : `${h} match`)
+    reasons.push(`${h} match`)
   }
   if (reasons.length < 3 && p.profileIndustry === input.industry && input.industry !== "any") {
     reasons.push(
-      lang === "zh"
-        ? `行业对齐 (${input.industry}${p.recentCompany ? ` · 前 ${p.recentCompany}` : ""})`
-        : `industry aligned (${input.industry}${p.recentCompany ? ` · ex-${p.recentCompany}` : ""})`,
+      `industry aligned (${input.industry}${p.recentCompany ? ` · ex-${p.recentCompany}` : ""})`,
     )
   }
   return reasons.slice(0, 3)
 }
 
 /**
- * Bilingual notify-message template. Used by CF action="notify". Returns
- * a single string body (Sendblue 600-char ceiling honored — synth template
- * fits well under).
- *
- * zh template (per Adam directive verbatim):
- *   "嘿，看到你简历觉得这个职位跟你挺对得上：[JOB TITLE] @ [COMPANY]。如果有兴趣回个'看看'我把详情发你。"
- * en template (symmetric):
- *   "Hey — saw your resume and this role looks like a match: [JOB TITLE] @ [COMPANY]. If interested, reply 'show me' and I'll send details."
+ * English-only notify-message template. Runtime-owned notification paths
+ * should use structured context instead; this helper remains for legacy tests.
  */
 export function buildNotifyMessage(args: {
   jobTitle: string
   companyName: string
   preferredLanguage: "zh" | "en"
 }): string {
-  const title = args.jobTitle.trim() || (args.preferredLanguage === "zh" ? "新机会" : "a new role")
-  const co = args.companyName.trim() || (args.preferredLanguage === "zh" ? "（公司未填）" : "(company TBD)")
-  if (args.preferredLanguage === "en") {
-    return `Hey — saw your resume and this role looks like a match: ${title} @ ${co}. If interested, reply "show me" and I'll send details.`
-  }
-  return `嘿，看到你简历觉得这个职位跟你挺对得上：${title} @ ${co}。如果有兴趣回个"看看"我把详情发你。`
+  const title = args.jobTitle.trim() || "a new role"
+  const co = args.companyName.trim() || "(company TBD)"
+  return `Hey — saw your resume and this role looks like a match: ${title} @ ${co}. If interested, reply "show me" and I'll send details.`
 }
 
 /**

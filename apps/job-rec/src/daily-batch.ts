@@ -33,6 +33,7 @@ import {
 // not yet been merged into the v1.6 single-source contract.
 import { queryMatchingJobsV16 } from "./tools/query-matching-jobs-v16.js"
 import { sendImessage } from "./tools/send-imessage.js"
+import { recordRecommendedJobs } from "./recommendation-state.js"
 import {
   buildJobCandidateText,
   buildRerankQuery,
@@ -535,10 +536,75 @@ export function formatDailyPushBody(
   return `${lead}\n\n${blocks}`
 }
 
+function jobRequirementsLine(job: MatchingJob): string {
+  const skills = Array.isArray(job.requiredSkills)
+    ? job.requiredSkills
+        .filter((skill): skill is string => typeof skill === "string" && skill.trim().length > 0)
+        .map((skill) => skill.trim().replace(/[_-]+/g, " "))
+        .slice(0, 5)
+    : []
+  return skills.length > 0 ? `requirements: ${skills.join(", ")}` : ""
+}
+
+function hasConcreteJobRequirements(job: MatchingJob): boolean {
+  return jobRequirementsLine(job).length > 0
+}
+
+function jobUrl(job: MatchingJob): string {
+  return job.atsApplyUrl ?? job.primaryUrl
+}
+
+function jobMatchSourceLabel(job: MatchingJob): "WeKruit collaborated" | "general match" {
+  return job.matchSourceLabel === "WeKruit collaborated" ? "WeKruit collaborated" : "general match"
+}
+
+function buildDailyRuntimeContext(
+  jobs: MatchingJob[],
+  ctx: DailyPushContext,
+  requestedCount: number,
+): Record<string, unknown> {
+  const englishCtx: DailyPushContext = { ...ctx, language: "en" }
+  const visibleJobs = jobs.filter(hasConcreteJobRequirements)
+  return {
+    eventKind: "daily_job_recommendations",
+    source: "job_rec_daily_batch",
+    preferredLanguage: "en",
+    requestedCount,
+    candidateContext: {
+      candidateName: ctx.candidateName ?? null,
+      recentRoleTitle: ctx.recentRoleTitle ?? null,
+      recentCompany: ctx.recentCompany ?? null,
+      topSkills: ctx.topSkills ?? [],
+      industryTags: ctx.industryTags ?? [],
+      statedPreferences: ctx.statedPreferences ?? null,
+      fallbackMode: ctx.fallbackMode === true,
+    },
+    jobs: visibleJobs.map((job) => ({
+      id: job.id,
+      title: job.jobTitle || "Role",
+      companyName: job.companyName || "Company",
+      url: jobUrl(job),
+      requirements: jobRequirementsLine(job),
+      reason: ctx.reasons?.get(job.id) || buildJobReason(job, englishCtx),
+      matchSourceLabel: jobMatchSourceLabel(job),
+      previouslyRecommended: job.previouslyRecommended === true,
+      recommendationCount: job.recommendationCount ?? 0,
+      lastRecommendedAt: job.lastRecommendedAt ?? null,
+    })),
+    instructions: [
+      "Write candidate-visible copy in English only.",
+      "Use exactly the number of roles requested unless the user asked for a different count.",
+      "For every role include title, company, URL, requirements, reason, and matchSourceLabel.",
+      "If a role has previouslyRecommended=true, say briefly that it may be a repeat and why it is still worth another look.",
+      "If timing is awkward or the request should not send, respond __NO_SEND__.",
+    ],
+  }
+}
+
 /**
  * Stream H13 — load DailyPushContext from Firestore. Best-effort: any
  * lookup error silently produces a context with hasUserStatedPreferences=false
- * and language="zh". Pulls:
+ * and language="en". Pulls:
  *   - parsedCandidateResumes (latest by userId,createdAt) → recentRoleTitle,
  *     recentCompany, topSkills, candidateName, industryTags
  *   - pa-users/{userId} → preferredLanguage, statedPreferences (D5/D13;
@@ -558,7 +624,7 @@ export async function loadDailyPushContext(
   const ctx: DailyPushContext = {
     industryTags,
     hasUserStatedPreferences: false,
-    language: "zh",
+    language: "en",
   }
   // 1. Resume — recentRole / recentCompany / topSkills / name.
   try {
@@ -597,12 +663,12 @@ export async function loadDailyPushContext(
       error: err instanceof Error ? err.message : String(err),
     })
   }
-  // 2. pa-users — preferredLanguage + statedPreferences (D5/D13 forward).
+  // 2. pa-users — statedPreferences (D5/D13 forward). Beta iMessage output is
+  // English-only, so preferredLanguage is intentionally not used here.
   try {
     const userDoc = await db.collection("pa-users").doc(userId).get()
     if (userDoc.exists) {
       const ud = userDoc.data() as Record<string, unknown>
-      if (ud.preferredLanguage === "en") ctx.language = "en"
       const sp = ud.statedPreferences
       if (sp && typeof sp === "object") {
         const sprec = sp as Record<string, unknown>
@@ -984,7 +1050,7 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
       let v16Jobs: MatchingJob[] | null = null
       try {
         const v16Result = await queryMatchingJobsV16(
-          { userId, limit: poolSize },
+          { userId, limit: poolSize, lang: "en", allowBroadFallback: true },
           {
             db: deps.db,
             log: (event, payload) =>
@@ -1668,9 +1734,9 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
         rankedJobs = rankedJobs.slice(0, jobsPerUser)
       }
 
-      // Stream H13 — friend-tone CV-aware opener. Default-on flag; falls back
-      // to the legacy formatBatchMessage when explicitly disabled.
-      let body: string
+      // Stream H13 — build structured runtime context only. The producer no
+      // longer composes candidate-visible copy; Claire runtime owns wording.
+      let runtimeContext: Record<string, unknown>
       const friendToneOn = Boolean(
         await deps.getFlag(
           deps.db,
@@ -1756,7 +1822,17 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
         if (boostExplanations.length > 0) {
           pushCtx.boostExplanations = boostExplanations
         }
-        body = formatDailyPushBody(rankedJobs, pushCtx)
+        const visibleRankedJobs = rankedJobs.filter(hasConcreteJobRequirements).slice(0, jobsPerUser)
+        if (visibleRankedJobs.length === 0) {
+          log("[job-rec-daily] skipping_no_jobs_with_concrete_requirements", {
+            userId,
+            rankedJobs: rankedJobs.length,
+          })
+          skippedNoJobs += 1
+          continue
+        }
+        rankedJobs = visibleRankedJobs
+        runtimeContext = buildDailyRuntimeContext(rankedJobs, pushCtx, jobsPerUser)
         log("[job-rec-daily] friend_tone_opener_applied", {
           userId,
           variant: pushCtx.recentCompany
@@ -1767,12 +1843,30 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
           language: pushCtx.language,
         })
       } else {
-        body = formatBatchMessage(rankedJobs)
+        const visibleRankedJobs = rankedJobs.filter(hasConcreteJobRequirements).slice(0, jobsPerUser)
+        if (visibleRankedJobs.length === 0) {
+          log("[job-rec-daily] skipping_no_jobs_with_concrete_requirements", {
+            userId,
+            rankedJobs: rankedJobs.length,
+          })
+          skippedNoJobs += 1
+          continue
+        }
+        rankedJobs = visibleRankedJobs
+        runtimeContext = buildDailyRuntimeContext(
+          rankedJobs,
+          {
+            industryTags: normalized.industryTags,
+            hasUserStatedPreferences: false,
+            language: "en",
+          },
+          jobsPerUser,
+        )
       }
       const sendRes = await sendImessage(
         {
           userId,
-          content: body,
+          context: runtimeContext,
           idempotencyKey: `${userId}-${todayYmd}-batch`,
         },
         { db: deps.db, log }
@@ -1780,6 +1874,16 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
 
       if (sendRes.ok) {
         delivered += 1
+        await recordRecommendedJobs(
+          deps.db,
+          {
+            userId,
+            jobs: rankedJobs,
+            source: "job_rec_daily_batch",
+            nowIso: new Date().toISOString(),
+          },
+          (event, payload) => log("[job-rec-daily]", event, payload ?? {}),
+        )
         await deps.db.collection(JOB_PROFILES_COLLECTION).doc(userId).set(
           { lastJobBatchSentAt: new Date().toISOString() },
           { merge: true }

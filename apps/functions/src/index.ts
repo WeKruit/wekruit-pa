@@ -52,8 +52,8 @@ import {
   makeOrchestratorDeps,
 } from "./orchestrator-deps.js"
 import {
+  buildJobRecommendationRuntimeContext,
   collectJobRecommendationMessageItems,
-  composeJobRecommendationMessage,
   compactJobRecContext,
   resolveJobRecVisibleCount,
 } from "./job-rec-copy.js"
@@ -1470,9 +1470,9 @@ function buildSendblueWebhookDeps() {
   }): Promise<{ ok: boolean; jobCount: number; reason?: string }> => {
     const db = getFirestore()
     try {
-      const { queryMatchingJobsV16 } = await import("@pa/job-rec")
+      const { queryMatchingJobsV16, recordRecommendedJobs } = await import("@pa/job-rec")
       const result = await queryMatchingJobsV16(
-        { userId: args.userId, limit: 5 },
+        { userId: args.userId, limit: 5, lang: "en", allowBroadFallback: true },
         {
           db,
           log: (event, payload) =>
@@ -1497,7 +1497,6 @@ function buildSendblueWebhookDeps() {
       } catch {
         introContext = undefined
       }
-      const body = composeJobRecommendationMessage(items, "en", introContext)
       const runtime = await enqueueRuntimeEventHandoff(db, {
         userId: args.userId,
         toE164: args.toE164,
@@ -1509,12 +1508,26 @@ function buildSendblueWebhookDeps() {
         idempotencyKey: `${args.userId}-${new Date().toISOString().slice(0, 16)}-find-match`,
         requireExistingSession: true,
         context: {
-          requestedCount: visibleCount,
+          ...buildJobRecommendationRuntimeContext(items, introContext, {
+            requestedCount: visibleCount,
+            source: "admin_find_match",
+            eventKind: "job_recommendations_requested",
+          }),
           jobCount: items.length,
-          composedRecommendationMessage: body,
-          jobs: items,
         },
       })
+      if (runtime.ok) {
+        await recordRecommendedJobs(
+          db,
+          {
+            userId: args.userId,
+            jobs: items.map((item) => item.sourceJob),
+            source: "admin_find_match",
+          },
+          (event, payload) =>
+            logger.info(`[sendblue][webhook][find-match] ${event}`, payload ?? {}),
+        )
+      }
       return {
         ok: runtime.ok,
         jobCount: items.length,

@@ -163,6 +163,7 @@ test("completed user explicit job-search request sends generated matches without
   let llmCalls = 0
   let outbound = ""
   let force: boolean | undefined
+  let roleFocus: string[] | undefined
   const store = makeStore({
     getOnboardingUser: async () => ({
       id: "u1",
@@ -171,6 +172,7 @@ test("completed user explicit job-search request sends generated matches without
     }),
     generateJobRecs: async (_userId, _lang, opts) => {
       force = opts?.force
+      roleFocus = opts?.roleFocus
       return {
         recCount: 2,
         message: "two roles that line up for you:\n• Software Engineer @ Rain",
@@ -190,6 +192,7 @@ test("completed user explicit job-search request sends generated matches without
   }, store)
   assert.equal(llmCalls, 0)
   assert.equal(force, true)
+  assert.deepEqual(roleFocus, ["fullstack"])
   assert.match(outbound, /Software Engineer @ Rain/)
 })
 
@@ -901,6 +904,7 @@ test("processInboundEvent lifecycle: explicit job request is not swallowed as pr
       recCalls++
       assert.equal(opts?.force, true)
       assert.equal(opts?.requestedCount, 3)
+      assert.deepEqual(opts?.roleFocus, ["fullstack", "frontend"])
       return {
         recCount: 3,
         message:

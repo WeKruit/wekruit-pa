@@ -1420,6 +1420,19 @@ describe("iter33 Bug 9: love-tapback rate gate", () => {
     assert.equal(reactionCalls.length, 0, "pause/user-exit input must not receive a love tapback")
   })
 
+  it("job-search recommendation canaries skip tapback even when rng would fire", async () => {
+    const { reactionCalls, status } = await setupAndProcess(
+      (deps) => {
+        deps.loveTapbackProbability = 1
+        deps.rng = () => 0.0
+      },
+      "msg-job-search-canary",
+      "Claire, QA canary: recommend two frontend or fullstack roles for me."
+    )
+    assert.equal(status, "fired")
+    assert.equal(reactionCalls.length, 0, "QA/job-search canaries must not receive a love tapback")
+  })
+
   it("100 trials at p=0.35 → fires within [25%, 45%] band", async () => {
     const trials = 100
     const probability = 0.35

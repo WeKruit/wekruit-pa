@@ -674,6 +674,178 @@ test("queryMatchingJobsV16: lang arg overrides stored preferredLang for user-fac
   assert.doesNotMatch(r.jobs[0]!.reason, /为啥推/)
 })
 
+test("queryMatchingJobsV16: broad fallback relaxes exact location only when strict location collapses results", async () => {
+  const mfs = new MockFirestore()
+  await mfs.collection("pa-users").doc("u_location").set({
+    tags: {
+      skills: ["typescript", "react"],
+      industryEnum: ["tech_software"],
+      schemaVersion: 1,
+      targetRoleFunction: ["software_engineering"],
+      targetLocations: ["new_york_city"],
+      targetCountry: ["us"],
+      visaStatus: "citizen",
+    },
+  })
+  await seedJob(mfs, "sf-swe", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["typescript", "react"],
+    locationRaw: "San Francisco, CA",
+    locationBuckets: ["san_francisco_bay_area"],
+    companyName: "FallbackCo",
+    jobTitle: "Frontend Engineer",
+  })
+
+  const strict = await queryMatchingJobsV16({ userId: "u_location", nowMs: NOW }, { db: asFirestore(mfs) })
+  assert.equal(strict.jobs.length, 0)
+  assert.equal(strict.hardFilter.location, 1)
+
+  const broad = await queryMatchingJobsV16(
+    { userId: "u_location", nowMs: NOW, lang: "en", allowBroadFallback: true },
+    { db: asFirestore(mfs) },
+  )
+  assert.equal(broad.jobs.length, 1)
+  assert.equal(broad.jobs[0]!.id, "sf-swe")
+  assert.deepEqual(broad.relaxedHardFilters, ["specific_location"])
+})
+
+test("queryMatchingJobsV16: presentationRoleFocus keeps explicit frontend/fullstack requests on-role", async () => {
+  const mfs = new MockFirestore()
+  await mfs.collection("pa-users").doc("u_role_focus").set({
+    tags: {
+      skills: ["typescript", "react", "node.js", "sql"],
+      industryEnum: ["tech_software"],
+      schemaVersion: 1,
+      targetRoleFunction: ["software_engineering"],
+    },
+  })
+  await seedJob(mfs, "security", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["security engineering", "threat modeling", "iam"],
+    companyName: "SecurityCo",
+    jobTitle: "Senior Security Engineer",
+  })
+  await seedJob(mfs, "frontend", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["React", "TypeScript", "Node.js"],
+    companyName: "FrontendCo",
+    jobTitle: "Frontend Engineer",
+  })
+  await seedJob(mfs, "fullstack", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["React", "Node.js", "SQL"],
+    companyName: "FullstackCo",
+    jobTitle: "Software Engineer",
+  })
+
+  const r = await queryMatchingJobsV16(
+    {
+      userId: "u_role_focus",
+      nowMs: NOW,
+      lang: "en",
+      limit: 3,
+      presentationRoleFocus: ["frontend", "fullstack"],
+    },
+    { db: asFirestore(mfs) },
+  )
+
+  assert.deepEqual(
+    r.jobs.map((job) => job.id).sort(),
+    ["frontend", "fullstack"],
+  )
+  assert.ok(!r.jobs.some((job) => /security/i.test(job.jobTitle)))
+})
+
+test("queryMatchingJobsV16: matchSourceLabel comes only from pa-jobs collaboration status", async () => {
+  const mfs = new MockFirestore()
+  await mfs.collection("pa-users").doc("u_labels").set({
+    tags: {
+      skills: ["typescript"],
+      industryEnum: ["tech_software"],
+      schemaVersion: 1,
+      targetRoleFunction: ["software_engineering"],
+    },
+  })
+  await seedJob(mfs, "collab-job", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["typescript"],
+    companyName: "CollabCo",
+    jobTitle: "Product Engineer",
+  })
+  await seedJob(mfs, "public-non-collab", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["typescript"],
+    companyName: "PublicCo",
+    jobTitle: "Frontend Engineer",
+  })
+  await mfs.collection("pa-jobs").doc("collab-job").set({
+    publicVisible: true,
+    wekruitCollaborationStatus: "collaborated",
+  })
+  await mfs.collection("pa-jobs").doc("public-non-collab").set({
+    publicVisible: true,
+    wekruitCollaborationStatus: "not_collaborated",
+  })
+
+  const r = await queryMatchingJobsV16(
+    { userId: "u_labels", nowMs: NOW, lang: "en" },
+    { db: asFirestore(mfs) },
+  )
+  const labels = new Map(r.jobs.map((job) => [job.id, job.matchSourceLabel]))
+  assert.equal(labels.get("collab-job"), "WeKruit collaborated")
+  assert.equal(labels.get("public-non-collab"), "general match")
+})
+
+test("queryMatchingJobsV16: previously recommended jobs are demoted and surfaced as repeats", async () => {
+  const mfs = new MockFirestore()
+  await mfs.collection("pa-users").doc("u_repeat").set({
+    tags: {
+      skills: ["typescript", "python"],
+      industryEnum: ["tech_software"],
+      schemaVersion: 1,
+      targetRoleFunction: ["software_engineering"],
+    },
+  })
+  await seedJob(mfs, "repeat-strong", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["typescript", "python"],
+    companyName: "RepeatCo",
+    jobTitle: "Fullstack Engineer",
+  })
+  await seedJob(mfs, "fresh-weaker", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["typescript"],
+    companyName: "FreshCo",
+    jobTitle: "Frontend Engineer",
+  })
+  await mfs
+    .collection("pa-user-job-recommendations")
+    .doc("u_repeat")
+    .collection("jobs")
+    .doc("repeat-strong")
+    .set({
+      userId: "u_repeat",
+      jobId: "repeat-strong",
+      recommendationCount: 1,
+      lastRecommendedAt: "2026-05-17T12:00:00.000Z",
+      lastRecommendedSource: "runtime_job_search_reply",
+    })
+
+  const r = await queryMatchingJobsV16(
+    { userId: "u_repeat", nowMs: NOW, lang: "en", limit: 2 },
+    { db: asFirestore(mfs) },
+  )
+
+  assert.equal(r.jobs.length, 2)
+  assert.equal(r.jobs[0]!.id, "fresh-weaker")
+  const repeat = r.jobs.find((job) => job.id === "repeat-strong")
+  assert.ok(repeat, "repeat job should still be eligible")
+  assert.equal(repeat.previouslyRecommended, true)
+  assert.equal(repeat.recommendationCount, 1)
+  assert.equal(repeat.lastRecommendedAt, "2026-05-17T12:00:00.000Z")
+  assert.ok((repeat.v16Score.previousRecommendationPenalty ?? 0) > 0)
+})
+
 test("queryMatchingJobsV16: S4 enriched approved job survives V16 filters and outranks weaker same-role job", async () => {
   const mfs = new MockFirestore()
   await mfs

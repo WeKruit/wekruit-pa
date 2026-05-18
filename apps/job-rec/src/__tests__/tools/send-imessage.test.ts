@@ -32,7 +32,7 @@ test("sendImessage: enqueues a runtime event, not pa-outbound", async () => {
   const mfs = new MockFirestore()
   await seedSession(mfs, "u1", "+15551234567")
   const out = await sendImessage(
-    { userId: "u1", content: "hello world" },
+    { userId: "u1", context: { jobs: [{ title: "Role", url: "https://example.com/job" }] } },
     {
       db: asFirestore(mfs),
       nowIso: () => "2026-04-30T00:00:00Z",
@@ -48,9 +48,11 @@ test("sendImessage: enqueues a runtime event, not pa-outbound", async () => {
   assert.equal(data.userId, "u1")
   assert.equal(data.from, "+15551234567")
   assert.match(String(data.body), /system-event:job_rec:send_imessage/)
-  assert.match(String(data.body), /hello world/)
+  assert.match(String(data.body), /https:\/\/example.com\/job/)
   assert.equal(data.status, "pending")
-  assert.equal((data.rawMeta as Record<string, unknown>).runtimeEvent, true)
+  const meta = data.rawMeta as Record<string, unknown>
+  assert.equal(meta.runtimeEvent, true)
+  assert.equal(meta.preferredLanguage, "en")
   assert.ok(typeof data.idempotencyKey === "string")
 })
 
@@ -59,7 +61,7 @@ test("sendImessage: dedupes by idempotencyKey (returns prev handle)", async () =
   await seedSession(mfs, "u1", "+15551111111")
   const args = {
     userId: "u1",
-    content: "hi",
+    context: { jobs: [{ title: "Role", url: "https://example.com/job" }] },
     idempotencyKey: "u1-20260430-batch",
   }
   const first = await sendImessage(args, {
@@ -81,7 +83,7 @@ test("sendImessage: dedupes by idempotencyKey (returns prev handle)", async () =
 test("sendImessage: returns ok=false when user lookup misses", async () => {
   const mfs = new MockFirestore()
   const out = await sendImessage(
-    { userId: "missing", content: "x" },
+    { userId: "missing", context: { eventKind: "x" } },
     { db: asFirestore(mfs), ...STUB_USER_DEPS("+15550000000") }
   )
   assert.equal(out.ok, false)
@@ -91,7 +93,7 @@ test("sendImessage: returns ok=false when user lookup misses", async () => {
 test("sendImessage: returns ok=false when user has no phone", async () => {
   const mfs = new MockFirestore()
   const out = await sendImessage(
-    { userId: "u1", content: "x" },
+    { userId: "u1", context: { eventKind: "x" } },
     {
       db: asFirestore(mfs),
       getUser: async () => ({ id: "u1", phoneE164: "", channels: undefined }),
@@ -104,7 +106,7 @@ test("sendImessage: passes sessionId through to the runtime event", async () => 
   const mfs = new MockFirestore()
   await seedSession(mfs, "u1", "+15551112222", "s-123")
   await sendImessage(
-    { userId: "u1", content: "hi", sessionId: "s-123" },
+    { userId: "u1", context: { eventKind: "x" }, sessionId: "s-123" },
     { db: asFirestore(mfs), ...STUB_USER_DEPS("+15551112222") }
   )
   const w = mfs.writeLog.filter((w) => w.path === "pa-inbound-events")[0]
@@ -114,7 +116,7 @@ test("sendImessage: passes sessionId through to the runtime event", async () => 
 test("sendImessage: blocks runtime handoff when no prior session exists", async () => {
   const mfs = new MockFirestore()
   const out = await sendImessage(
-    { userId: "u1", content: "hi" },
+    { userId: "u1", context: { eventKind: "x" } },
     { db: asFirestore(mfs), ...STUB_USER_DEPS("+15551112222") }
   )
   assert.equal(out.ok, false)
@@ -122,12 +124,34 @@ test("sendImessage: blocks runtime handoff when no prior session exists", async 
   assert.equal(mfs.writeLog.filter((w) => w.path === "pa-outbound").length, 0)
 })
 
-test("sendImessage: rejects content > 2000 chars (Zod)", async () => {
+test("sendImessage: rejects legacy content input (Zod)", async () => {
   const mfs = new MockFirestore()
   await assert.rejects(
     sendImessage(
-      { userId: "u1", content: "x".repeat(2001) },
+      { userId: "u1", content: "legacy producer copy" } as never,
       { db: asFirestore(mfs), ...STUB_USER_DEPS("+15551112222") }
     )
   )
+})
+
+test("sendImessage: strips producer-written candidate copy from runtime context", async () => {
+  const mfs = new MockFirestore()
+  await seedSession(mfs, "u1", "+15551112222")
+  await sendImessage(
+    {
+      userId: "u1",
+      context: {
+        content: "old composed body",
+        nested: { composedRecommendationMessage: "do not send this", facts: ["React"] },
+      },
+    },
+    { db: asFirestore(mfs), ...STUB_USER_DEPS("+15551112222") }
+  )
+  const w = mfs.writeLog.filter((write) => write.path === "pa-inbound-events")[0]!
+  const meta = w.data.rawMeta as Record<string, unknown>
+  assert.deepEqual(meta.context, { nested: { facts: ["React"] } })
+  assert.deepEqual(meta.removedCandidateDraftContextKeys, [
+    "content",
+    "nested.composedRecommendationMessage",
+  ])
 })
