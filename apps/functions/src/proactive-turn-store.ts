@@ -90,7 +90,7 @@ export function createFirestoreProactiveTurnStore(db: Firestore): ProactiveTurnS
       if (opts?.sessionId || opts?.proactiveJobId) {
         await db.collection(PA_COLLECTIONS.outbound).doc(result.id).set(
           {
-            source: "proactive",
+            runtimeBusinessSource: "proactive",
             ...(opts?.proactiveJobId ? { proactiveJobId: opts.proactiveJobId } : {}),
             ...(opts?.sessionId ? { sessionId: opts.sessionId } : {}),
           },

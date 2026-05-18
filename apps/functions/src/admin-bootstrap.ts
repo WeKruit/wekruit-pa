@@ -696,18 +696,17 @@ async function migrateHandbookFromBible(): Promise<{
 // ---------------------------------------------------------------------------
 //
 // Bootstraps a single example doc in `pa-upstream-templates`. Idempotent:
-// returns `skipped` for any doc that already exists. Templates ship
-// disabled by default; operator flips `enabled` via the dashboard.
+// returns `skipped` for any doc that already exists. These docs are
+// routing/rate-limit policies only; Claire runtime owns candidate-visible
+// wording for any event that passes the policy gate.
 
 const SEED_UPSTREAM_TEMPLATES = [
   {
     templateId: "interview_scheduled",
     name: "Interview scheduled",
     description:
-      "Sent when a partner ATS notifies us that an interview was booked. Confirms time + offers Claire's nudges.",
+      "Allows a partner ATS interview-booked event to hand structured facts to Claire runtime.",
     eventKind: "interview_scheduled",
-    messageTemplate:
-      "Hey {{userName}} — heads up your interview at {{company}} is on {{when}}. Want me to ping you the morning of?",
     channel: "imessage",
     rateLimitPerHour: 1,
     enabled: false,
@@ -910,7 +909,6 @@ async function seedUpstreamTemplates(db: Firestore): Promise<{ created: string[]
       name: t.name,
       description: t.description,
       eventKind: t.eventKind,
-      messageTemplate: t.messageTemplate,
       channel: t.channel,
       rateLimitPerHour: t.rateLimitPerHour,
       enabled: t.enabled,

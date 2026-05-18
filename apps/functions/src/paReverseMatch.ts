@@ -293,8 +293,8 @@ function buildProductionDeps(db: Firestore): ReverseMatchDeps {
 }
 
 /**
- * Single-user notify enqueue. Resolves phone, composes bilingual body,
- * writes pa-outbound. Returns {ok, outboundId, error?}.
+ * Single-user notify enqueue. Resolves phone and hands structured match facts
+ * to Claire runtime; runtime decides whether and how to message.
  */
 export async function enqueueReverseMatchNotify(
   db: Firestore,

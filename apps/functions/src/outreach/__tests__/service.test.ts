@@ -80,9 +80,8 @@ describe("planJobOutreach", () => {
         enqueueRuntimeInvite: async (input) => {
           enqueues.push(input.idempotencyKey)
           assert.equal(input.toE164, "+15555550123")
-          assert.match(input.proposedMessage, /Product Designer/)
-          assert.match(input.proposedMessage, /candidate\.wekruit\.com\/j\/job-1/)
           assert.equal(input.context.inviteId.length > 0, true)
+          assert.equal(input.context.jobTitle, "Product Designer")
           assert.equal(input.context.jobUrl, "https://candidate.wekruit.com/j/job-1")
           return { id: "runtime-1", created: true }
         },

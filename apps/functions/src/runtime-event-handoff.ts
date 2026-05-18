@@ -20,6 +20,14 @@ export type RuntimeEventHandoffResult =
   | { ok: false; reason: "user_not_routable" | "no_existing_session"; eventId?: string; sessionId?: string }
 
 const NO_SEND_TOKEN = "__NO_SEND__"
+const CANDIDATE_DRAFT_CONTEXT_KEYS = new Set([
+  "candidateMessage",
+  "candidateVisibleMessage",
+  "messageBody",
+  "messageTemplate",
+  "proposedMessage",
+  "renderedTemplate",
+])
 
 function normalizeE164(phone: string): string {
   const d = phone.replace(/\D/g, "")
@@ -45,10 +53,36 @@ async function resolveUserPhone(db: Firestore, userId: string): Promise<string> 
   return typeof raw === "string" && raw.trim() ? normalizeE164(raw) : ""
 }
 
+export function sanitizeRuntimeEventContext(
+  context: Record<string, unknown> | undefined
+): { context: Record<string, unknown>; removedDraftKeys: string[] } {
+  if (!context || Object.keys(context).length === 0) return { context: {}, removedDraftKeys: [] }
+  const removedDraftKeys: string[] = []
+  const sanitize = (value: unknown, path: string): unknown => {
+    if (!value || typeof value !== "object") return value
+    if (Array.isArray(value)) return value.map((item, index) => sanitize(item, `${path}[${index}]`))
+    const out: Record<string, unknown> = {}
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      const childPath = path ? `${path}.${key}` : key
+      if (CANDIDATE_DRAFT_CONTEXT_KEYS.has(key)) {
+        removedDraftKeys.push(childPath)
+        continue
+      }
+      out[key] = sanitize(child, childPath)
+    }
+    return out
+  }
+  return {
+    context: sanitize(context, "") as Record<string, unknown>,
+    removedDraftKeys,
+  }
+}
+
 function compactContext(context: Record<string, unknown> | undefined): string {
-  if (!context || Object.keys(context).length === 0) return "{}"
+  const sanitized = sanitizeRuntimeEventContext(context).context
+  if (Object.keys(sanitized).length === 0) return "{}"
   try {
-    return JSON.stringify(context).slice(0, 2500)
+    return JSON.stringify(sanitized).slice(0, 2500)
   } catch {
     return "{}"
   }
@@ -60,6 +94,7 @@ export function buildRuntimeEventBody(input: Pick<RuntimeEventHandoffInput, "sou
     "An external product event arrived. Decide whether Claire should send the candidate a message now.",
     `If no candidate-facing message should be sent, reply exactly ${NO_SEND_TOKEN}.`,
     "If a message should be sent, write only that message. Keep the candidate's established language and context; do not expose internal event ids or system wording.",
+    "Do not reuse producer-written candidate copy. Use only the structured facts, the recent conversation, and Claire's runtime policy.",
     `Context: ${compactContext(input.context)}`,
   ].join("\n")
 }
@@ -94,6 +129,7 @@ export async function enqueueRuntimeEventHandoff(
   const eventRef = db.collection(PA_COLLECTIONS.inboundEvents).doc(eventId)
   const existingEvent = await eventRef.get()
   if (existingEvent.exists) return { ok: true, eventId, sessionId, created: false }
+  const sanitized = sanitizeRuntimeEventContext(input.context)
 
   const event: InboundEvent = {
     id: eventId,
@@ -112,7 +148,10 @@ export async function enqueueRuntimeEventHandoff(
       runtimeEventSource: input.source,
       runtimeEventKind: input.eventKind,
       runtimeNoSendToken: NO_SEND_TOKEN,
-      context: input.context ?? {},
+      context: sanitized.context,
+      ...(sanitized.removedDraftKeys.length > 0
+        ? { removedCandidateDraftContextKeys: sanitized.removedDraftKeys }
+        : {}),
     },
   }
   await eventRef.set(event)

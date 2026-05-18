@@ -6,7 +6,6 @@ import {
   getTemplate,
   getTemplateByEventKind,
   listTemplates,
-  renderTemplate,
   saveTemplate,
   UPSTREAM_FIRES_COLLECTION,
   UPSTREAM_TEMPLATES_COLLECTION,
@@ -107,39 +106,6 @@ function makeFakeFirestore(): Firestore {
 }
 
 // -----------------------------------------------------------------------------
-// renderTemplate (pure)
-// -----------------------------------------------------------------------------
-
-test("renderTemplate substitutes flat vars", () => {
-  const out = renderTemplate("Hi {{userName}}, your interview is at {{when}}.", {
-    userName: "Alex",
-    when: "3pm",
-  })
-  assert.equal(out, "Hi Alex, your interview is at 3pm.")
-})
-
-test("renderTemplate handles missing vars as empty", () => {
-  const out = renderTemplate("Hi {{userName}}!", {})
-  assert.equal(out, "Hi !")
-})
-
-test("renderTemplate caps per-var output at 256 chars", () => {
-  const long = "x".repeat(400)
-  const out = renderTemplate("{{v}}", { v: long })
-  assert.equal(out.length, 256)
-})
-
-test("renderTemplate tolerates whitespace inside braces", () => {
-  const out = renderTemplate("Hi {{ userName }}!", { userName: "Alex" })
-  assert.equal(out, "Hi Alex!")
-})
-
-test("renderTemplate coerces numbers and booleans to strings", () => {
-  const out = renderTemplate("count={{n}} flag={{b}}", { n: 7, b: true })
-  assert.equal(out, "count=7 flag=true")
-})
-
-// -----------------------------------------------------------------------------
 // saveTemplate / getTemplate / listTemplates / getTemplateByEventKind
 // -----------------------------------------------------------------------------
 
@@ -149,7 +115,6 @@ test("saveTemplate creates doc with version=1", async () => {
     templateId: "interview_scheduled",
     name: "Interview scheduled",
     eventKind: "interview_scheduled",
-    messageTemplate: "Hi {{userName}}",
     updatedBy: "test@wekruit.com",
   })
   assert.equal(tpl.version, 1)
@@ -164,14 +129,12 @@ test("saveTemplate bumps version on existing doc", async () => {
     templateId: "x",
     name: "X",
     eventKind: "x",
-    messageTemplate: "a",
     updatedBy: "u",
   })
   const second = await saveTemplate(db, {
     templateId: "x",
     name: "X v2",
     eventKind: "x",
-    messageTemplate: "b",
     updatedBy: "u",
   })
   assert.equal(second.version, 2)
@@ -189,7 +152,6 @@ test("getTemplate returns saved doc", async () => {
     templateId: "x",
     name: "X",
     eventKind: "x",
-    messageTemplate: "hi",
     updatedBy: "u",
   })
   const got = await getTemplate(db, "x")
@@ -203,7 +165,6 @@ test("getTemplateByEventKind returns enabled match", async () => {
     templateId: "tpl-a",
     name: "A",
     eventKind: "interview_scheduled",
-    messageTemplate: "x",
     enabled: true,
     updatedBy: "u",
   })
@@ -218,7 +179,6 @@ test("getTemplateByEventKind skips disabled and returns null", async () => {
     templateId: "tpl-a",
     name: "A",
     eventKind: "k",
-    messageTemplate: "x",
     enabled: false,
     updatedBy: "u",
   })
@@ -232,14 +192,12 @@ test("listTemplates returns all docs", async () => {
     templateId: "a",
     name: "A",
     eventKind: "ka",
-    messageTemplate: "x",
     updatedBy: "u",
   })
   await saveTemplate(db, {
     templateId: "b",
     name: "B",
     eventKind: "kb",
-    messageTemplate: "y",
     updatedBy: "u",
   })
   const list = await listTemplates(db)

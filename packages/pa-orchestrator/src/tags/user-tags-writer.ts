@@ -2,8 +2,8 @@
  * Phase 54 (USER-TAG-05) — Sole-writer for `pa-users/{userId}.tags`.
  *
  * Centralizes ALL Firestore writes that touch the unified user-tags doc.
- * Onboarding chat hooks (Phase 54), CV-confirm reply parser (Phase 54), and
- * the cv-ingest pipeline (Phase 53) all funnel through this module so the
+ * Onboarding chat hooks (Phase 54), CV ingest (Phase 53), and migration
+ * scripts all funnel through this module so the
  * write contract has one auditable code path.
  *
  * Two entry points:
@@ -11,7 +11,7 @@
  *     blob (cv-ingest after `mergeUserTags`). Equivalent to legacy direct
  *     `pa-users/{userId}.set({tags}, {merge: true})`.
  *   - `applyPartialUserTags(db, userId, partial, opts)` — partial update for
- *     onboarding hooks + cv-confirm reply. Reads existing tags, merges with
+ *     onboarding hooks. Reads existing tags, merges with
  *     `partial`, writes back. Tracks `schemaVersion` + `lastUpdatedFromChat`
  *     when the caller indicates a chat-source update.
  *
@@ -110,8 +110,8 @@ export async function writeUserTagsFull(
 }
 
 /**
- * Sole writer entry point for PARTIAL updates (onboarding chat hooks,
- * cv-confirm reply parser, migration script).
+ * Sole writer entry point for PARTIAL updates (onboarding chat hooks and
+ * migration scripts).
  *
  * Behavior:
  *   1. Reads existing `pa-users/{userId}.tags` (best-effort)

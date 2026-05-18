@@ -262,7 +262,6 @@ test("process batch marks employer/PDF mismatch as identity conflict and keeps c
 
 test("process batch marks successful parse and creates employer bulk artifact", async () => {
   const { db, store, batch, item } = await seedQueuedItem({ employerEmailHint: "candidate@example.com" })
-  const suppressionCalls: string[] = []
   const result = await runBulkResumeProcessBatch(
     { batchId: batch.batchId },
     {
@@ -281,9 +280,6 @@ test("process batch marks successful parse and creates employer bulk artifact", 
         })
         assert.equal(await deps.lookupUserForFollowup!(db, "cand-1"), null)
         assert.equal(await deps.isFlagEnabled!(db, "flag", "cand-1"), false)
-        await deps.enqueueCvConfirmFn!(db, { userId: "cand-1", resumeId: "parsed-1", parsed: {} })
-        await deps.enqueueOutboundFollowup!(db, "out-1", {})
-        suppressionCalls.push("checked")
         return {
           ok: true,
           userId: "cand-1",
@@ -296,7 +292,6 @@ test("process batch marks successful parse and creates employer bulk artifact", 
   )
 
   assert.equal(result.processed, 1)
-  assert.deepEqual(suppressionCalls, ["checked"])
   const persisted = store.get(itemPath(batch.batchId))!.get(item.itemId)!
   assert.equal(persisted.status, "parsed")
   assert.equal(persisted.candidateId, "cand-1")

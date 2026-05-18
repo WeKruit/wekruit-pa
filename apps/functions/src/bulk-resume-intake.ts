@@ -348,8 +348,6 @@ async function processOneItem(
         followupDeliveryMode: "none",
         skipLimitEnforcement: true,
         isFlagEnabled: async () => false,
-        enqueueCvConfirmFn: async () => undefined,
-        enqueueOutboundFollowup: async () => undefined,
         lookupUserForFollowup: async () => null,
         resolveCandidateIdentity: async (db, input) => {
           extractedEmail = typeof input.extractedEmail === "string" ? input.extractedEmail.trim() : null

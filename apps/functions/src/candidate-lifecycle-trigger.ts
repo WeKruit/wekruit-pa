@@ -5,10 +5,6 @@ import { logger } from "firebase-functions/v2"
 import { getFirestore } from "firebase-admin/firestore"
 import { z } from "zod"
 import { authorizeAdminCallable } from "./promote-sandbox-tag.js"
-import {
-  composeJobRecommendationMessage,
-  toJobRecommendationMessageItem,
-} from "./job-rec-copy.js"
 import { enqueueRuntimeEventHandoff } from "./runtime-event-handoff.js"
 
 const PA_ADMIN_TOKEN = defineSecret("PA_ADMIN_TOKEN")
@@ -82,7 +78,7 @@ export type LifecycleTriggerDecision =
       reason: string
       reasons: string[]
       blockedSignals: []
-      body: string
+      runtimeContext: Record<string, unknown>
       evidence: Record<string, unknown>
     }
   | {
@@ -112,12 +108,12 @@ export type CandidateLifecycleTriggerDeps = {
   hasActivePrescreenSession?(candidateId: string): Promise<boolean>
   writeLifecycleEvent(eventId: string, row: Record<string, unknown>): Promise<void>
   updateLifecycleEvent?(eventId: string, patch: Record<string, unknown>): Promise<void>
-  enqueueOutbound?(input: {
+  enqueueRuntimeEvent?(input: {
     userId: string
     toE164: string
     imessageChatId?: string
-    body: string
     idempotencyKey: string
+    context: Record<string, unknown>
   }): Promise<{ id: string; created: boolean }>
   updateCandidate?(candidateId: string, patch: Record<string, unknown>): Promise<void>
   now(): string
@@ -150,11 +146,6 @@ function isWithinDays(value: string | undefined, nowIso: string, days: number): 
   return nowMs >= valueMs && nowMs - valueMs < days * 24 * 60 * 60 * 1000
 }
 
-function firstName(displayName: string | undefined): string {
-  const token = (displayName ?? "").trim().split(/\s+/)[0] ?? ""
-  return token.length > 1 ? token : ""
-}
-
 function cooldownDaysFor(eventType: LifecycleTriggerEventType): number {
   switch (eventType) {
     case "laid_off_checkin":
@@ -181,44 +172,28 @@ function activeWorkSessionKind(candidate: CandidateLifecycleSnapshot): string | 
   return session.kind || "unknown"
 }
 
-function renderLifecycleBody(input: {
+function buildLifecycleRuntimeContext(input: {
   candidate: CandidateLifecycleSnapshot
   request: CandidateLifecycleTriggerInput
-}): string {
-  const name = firstName(input.candidate.displayName)
-  const prefix = name ? `Hey ${name}, Claire from WeKruit here.` : "Claire from WeKruit here."
-  const job = input.request.job
-
-  switch (input.request.eventType) {
-    case "laid_off_checkin":
-      return `${prefix} Checking in because you shared the layoff update. How are things going this week, and has what you want next changed?`
-    case "match_notification": {
-      const item = job
-        ? toJobRecommendationMessageItem(
-            {
-              jobTitle: job.jobTitle,
-              companyName: job.companyName,
-              atsApplyUrl: job.jobUrl,
-              requiredSkills: job.requirements,
-              reason: job.matchReason ?? "why: I matched this from the profile details you shared.",
-            },
-            "en",
-          )
-        : null
-      if (!item) {
-        throw new Error("match_notification job failed the linkable recommendation message contract")
-      }
-      return [
-        prefix,
-        composeJobRecommendationMessage([item], "en", undefined, {
-          footer: "Want me to start the quick screen for it?",
-        }),
-      ].join("\n\n")
-    }
-    case "profile_freshness_nudge":
-      return `${prefix} Quick profile check-in: are your target roles, location, visa/work authorization, and availability still accurate? A short update is enough.`
-    case "status_followup":
-      return `${prefix} How is the search going now: still looking, interviewing, or did things change?`
+  cooldownKey: string
+  cooldownUntil: string
+  evidence: Record<string, unknown>
+}): Record<string, unknown> {
+  return {
+    eventType: input.request.eventType,
+    eventReason: input.request.eventReason,
+    candidate: {
+      displayName: input.candidate.displayName ?? null,
+      source: input.candidate.source ?? null,
+      candidateLifecycleState: input.candidate.candidateLifecycleState ?? null,
+      layoffContext: input.candidate.layoffContext ?? null,
+    },
+    job: input.request.job ?? null,
+    cooldown: {
+      key: input.cooldownKey,
+      until: input.cooldownUntil,
+    },
+    evidence: input.evidence,
   }
 }
 
@@ -361,6 +336,11 @@ export function evaluateCandidateLifecycleTrigger(input: {
   }
 
   const cooldownUntil = addDaysIso(now, cooldownDaysFor(request.eventType))
+  const evidence = {
+    source: candidate.source ?? null,
+    jobId: request.job?.jobId ?? null,
+    matchId: request.job?.matchId ?? null,
+  }
   return {
     decision: "send",
     status: "send_ready",
@@ -376,12 +356,8 @@ export function evaluateCandidateLifecycleTrigger(input: {
       "no relevant cooldown or suppression",
     ],
     blockedSignals: [],
-    body: renderLifecycleBody({ candidate, request }),
-    evidence: {
-      source: candidate.source ?? null,
-      jobId: request.job?.jobId ?? null,
-      matchId: request.job?.matchId ?? null,
-    },
+    runtimeContext: buildLifecycleRuntimeContext({ candidate, request, cooldownKey, cooldownUntil, evidence }),
+    evidence,
   }
 }
 
@@ -425,7 +401,7 @@ function eventRow(input: {
     blockedSignals: input.decision.blockedSignals,
     cooldownKey: input.decision.cooldownKey,
     ...(input.decision.cooldownUntil ? { cooldownUntil: input.decision.cooldownUntil } : {}),
-    ...(input.decision.decision === "send" ? { body: input.decision.body } : {}),
+    ...(input.decision.decision === "send" ? { runtimeContext: input.decision.runtimeContext } : {}),
     candidateSnapshot: {
       source: input.candidate.source ?? null,
       candidateLifecycleState: input.candidate.candidateLifecycleState ?? null,
@@ -478,14 +454,14 @@ export async function runCandidateLifecycleTrigger(
 
   let outboundId: string | undefined
   if (decision.decision === "send" && !request.dryRun) {
-    if (!deps.enqueueOutbound) throw new HttpsError("failed-precondition", "enqueue dependency missing")
+    if (!deps.enqueueRuntimeEvent) throw new HttpsError("failed-precondition", "runtime event dependency missing")
     if (!deps.updateCandidate) throw new HttpsError("failed-precondition", "candidate update dependency missing")
-    const queued = await deps.enqueueOutbound({
+    const queued = await deps.enqueueRuntimeEvent({
       userId: candidate.candidateId,
       toE164: candidate.phoneE164!,
       ...(candidate.imessageChatId ? { imessageChatId: candidate.imessageChatId } : {}),
-      body: decision.body,
       idempotencyKey: `candidate_lifecycle:${candidate.candidateId}:${decision.cooldownKey}:${now.slice(0, 10)}`,
+      context: decision.runtimeContext,
     })
     outboundId = queued.id
     await deps.updateLifecycleEvent?.(eventId, {
@@ -577,21 +553,16 @@ export const paCandidateLifecycleTrigger = onCall(
       updateLifecycleEvent: async (eventId, patch) => {
         await db.collection(CANDIDATE_LIFECYCLE_EVENT_COLLECTION).doc(eventId).set(patch, { merge: true })
       },
-      enqueueOutbound: async (input) => {
-        const runtime = await enqueueRuntimeEventHandoff(db, {
-          userId: input.userId,
-          toE164: input.toE164,
+	      enqueueRuntimeEvent: async (input) => {
+	        const runtime = await enqueueRuntimeEventHandoff(db, {
+	          userId: input.userId,
+	          toE164: input.toE164,
           source: "candidate_lifecycle",
           eventKind: parsed.data.eventType,
           idempotencyKey: input.idempotencyKey,
           requireExistingSession: true,
-          context: {
-            eventType: parsed.data.eventType,
-            eventReason: parsed.data.eventReason,
-            proposedMessage: input.body,
-            job: parsed.data.job ?? null,
-          },
-        })
+	          context: input.context,
+	        })
         if (!runtime.ok) return { id: runtime.reason, created: false }
         return { id: runtime.eventId, created: runtime.created }
       },

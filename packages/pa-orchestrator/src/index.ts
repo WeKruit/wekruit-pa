@@ -318,8 +318,8 @@ import {
   mapAnswerToLocations,
 } from "./tags/onboarding-mappers.js"
 // Phase 54 — sole-writer for pa-users.tags Firestore I/O. All onboarding
-// chat hooks + cv-confirm reply parser + migration script funnel through
-// this module so the write contract has one auditable code path.
+// chat hooks, CV ingest, and migration scripts funnel through this module
+// so the write contract has one auditable code path.
 export {
   writeUserTagsFull,
   applyPartialUserTags,
@@ -4062,6 +4062,16 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
           sessionId: event.sessionId,
           role: "assistant",
           idempotencyKey,
+          ...(runtimeEvent
+            ? {
+                rawMeta: {
+                  runtimeEvent: true,
+                  runtimeEventSource: event.rawMeta?.runtimeEventSource,
+                  runtimeEventKind: event.rawMeta?.runtimeEventKind,
+                  runtimeEventContext: event.rawMeta?.context ?? {},
+                },
+              }
+            : {}),
         })
       }
     }
@@ -4330,7 +4340,21 @@ export function createFirestoreOrchestratorStore(
     },
     async enqueueOutbound(userId, toE164, body, input) {
       const id = randomUUID()
+      const {
+        id: _ignoredId,
+        userId: _ignoredUserId,
+        toE164: _ignoredToE164,
+        body: _ignoredBody,
+        status: _ignoredStatus,
+        createdAt: _ignoredCreatedAt,
+        attempts: _ignoredAttempts,
+        runtimeApproved: _ignoredRuntimeApproved,
+        runtimeSource: _ignoredRuntimeSource,
+        source: _ignoredSource,
+        ...auditableInput
+      } = input ?? {}
       const doc: OutboundMessage = {
+        ...auditableInput,
         id,
         userId,
         toE164,
@@ -4341,7 +4365,6 @@ export function createFirestoreOrchestratorStore(
         runtimeApproved: true,
         runtimeSource: "pa_orchestrator",
         source: "pa_orchestrator",
-        ...(input ?? {}),
       }
       await db.collection(PA_COLLECTIONS.outbound).doc(id).set(doc)
     },

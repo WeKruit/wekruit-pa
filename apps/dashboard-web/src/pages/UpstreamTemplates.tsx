@@ -4,7 +4,7 @@
  * CRUD UI for `pa-upstream-templates` docs that drive the Phase 31
  * paUpstreamEventWebhook CF. Operators can:
  *   - List templates with their eventKind, channel, rate limit, enabled state
- *   - Inline-edit (name, description, messageTemplate, rateLimitPerHour, channel)
+ *   - Inline-edit (name, description, eventKind, rateLimitPerHour, channel)
  *   - Toggle enabled
  *   - Send a signed test event to the deployed webhook URL
  *
@@ -30,7 +30,6 @@ type EditState = {
   name: string
   description: string
   eventKind: string
-  messageTemplate: string
   channel: string
   rateLimitPerHour: number
   enabled: boolean
@@ -41,7 +40,6 @@ const NEW_TEMPLATE_DEFAULTS: EditState = {
   name: "",
   description: "",
   eventKind: "",
-  messageTemplate: "Hi {{userName}}, …",
   channel: "imessage",
   rateLimitPerHour: 1,
   enabled: false,
@@ -98,7 +96,6 @@ export function UpstreamTemplates() {
       name: t.name,
       description: t.description,
       eventKind: t.eventKind,
-      messageTemplate: t.messageTemplate,
       channel: t.channel,
       rateLimitPerHour: t.rateLimitPerHour,
       enabled: t.enabled,
@@ -112,8 +109,8 @@ export function UpstreamTemplates() {
 
   async function commitEdit() {
     if (!editing) return
-    if (!editing.templateId.trim() || !editing.eventKind.trim() || !editing.messageTemplate.trim()) {
-      setErr("templateId, eventKind, and messageTemplate are required.")
+    if (!editing.templateId.trim() || !editing.eventKind.trim()) {
+      setErr("templateId and eventKind are required.")
       return
     }
     setBusy(true)
@@ -124,7 +121,6 @@ export function UpstreamTemplates() {
         name: editing.name.trim() || editing.templateId.trim(),
         description: editing.description,
         eventKind: editing.eventKind.trim(),
-        messageTemplate: editing.messageTemplate,
         channel: editing.channel.trim() || "imessage",
         rateLimitPerHour: Math.max(1, Math.floor(editing.rateLimitPerHour) || 1),
         enabled: editing.enabled,
@@ -147,7 +143,6 @@ export function UpstreamTemplates() {
         name: t.name,
         description: t.description,
         eventKind: t.eventKind,
-        messageTemplate: t.messageTemplate,
         channel: t.channel,
         rateLimitPerHour: t.rateLimitPerHour,
         enabled: !t.enabled,
@@ -354,25 +349,6 @@ export function UpstreamTemplates() {
                   placeholder="interview_scheduled"
                 />
               </label>
-            </div>
-            <div className="form-row">
-              <label>
-                messageTemplate
-                <textarea
-                  value={editing.messageTemplate}
-                  onChange={(e) =>
-                    setEditing((s) =>
-                      s ? { ...s, messageTemplate: e.target.value } : s
-                    )
-                  }
-                  rows={4}
-                />
-              </label>
-              <p className="muted" style={{ fontSize: "0.85em" }}>
-                Mustache-lite — supports{" "}
-                <code>{"{{userId}}"}</code>, <code>{"{{eventKind}}"}</code>, and any keys from
-                payload. Per-var output capped at 256 chars.
-              </p>
             </div>
             <div className="form-row">
               <label>

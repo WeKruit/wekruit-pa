@@ -1,16 +1,15 @@
 /**
  * Phase 31 T1 — Upstream Event Connector schema + helpers.
  *
- * Stores `pa-upstream-templates/{templateId}` template docs that the
- * paUpstreamEventWebhook CF (T2) looks up by `eventKind` to render and
- * enqueue proactive outbound messages.
+ * Stores `pa-upstream-templates/{templateId}` policy docs that the
+ * paUpstreamEventWebhook CF (T2) looks up by `eventKind` to decide routing,
+ * rate limits, and runtime handoff eligibility.
  *
  * Schema (LOCKED — change requires P9 review):
  *   templateId         (string, doc id)
  *   name               (string, human label)
  *   description        (string)
  *   eventKind          (string, queryable; e.g. "interview_scheduled")
- *   messageTemplate    (string, Mustache-lite — supports {{var}} only)
  *   channel            (string, "imessage" default)
  *   rateLimitPerHour   (number, max fires per (templateId, userId) per hour)
  *   enabled            (boolean)
@@ -33,7 +32,6 @@ export interface UpstreamTemplate {
   name: string
   description: string
   eventKind: string
-  messageTemplate: string
   channel: string
   rateLimitPerHour: number
   enabled: boolean
@@ -47,7 +45,6 @@ export interface SaveUpstreamTemplateInput {
   name: string
   description?: string
   eventKind: string
-  messageTemplate: string
   channel?: string
   rateLimitPerHour?: number
   enabled?: boolean
@@ -107,7 +104,6 @@ export async function saveTemplate(
     name: input.name,
     description: input.description ?? "",
     eventKind: input.eventKind,
-    messageTemplate: input.messageTemplate,
     channel: input.channel ?? "imessage",
     rateLimitPerHour: input.rateLimitPerHour ?? 1,
     enabled: input.enabled ?? false,
@@ -120,27 +116,6 @@ export async function saveTemplate(
   void _id
   await ref.set(persist, { merge: false })
   return doc
-}
-
-/**
- * Mustache-lite renderer. Supports flat `{{var}}` substitution only — no
- * sections, no nested paths, no helpers. Missing vars render as empty
- * string. Per-var output is capped at 256 chars (truncate, no logging in
- * the SDK — caller can add observability).
- *
- * Plain-text only — does NOT HTML-escape (matches SMS/iMessage output).
- */
-export function renderTemplate(
-  template: string,
-  payload: Record<string, unknown>
-): string {
-  return template.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_match, key: string) => {
-    const raw = payload[key]
-    if (raw == null) return ""
-    const str = String(raw)
-    if (str.length > 256) return str.slice(0, 256)
-    return str
-  })
 }
 
 /**

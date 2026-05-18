@@ -7,7 +7,7 @@
  *   3. Looks up the matching template by `eventKind` (404 if missing/disabled).
  *   4. Checks the `upstreamConnectorEnabled` feature flag (503 if disabled).
  *   5. Per-(template, user) hour-bucket rate-limit (429 if exceeded).
- *   6. Renders the template with payload vars as runtime context only.
+ *   6. Treats the matching template as routing/rate-limit policy only.
  *   7. Creates a synthetic `pa-inbound-events/{eventId}` handoff so Claire's
  *      runtime decides whether/how to message. No direct outbound is written.
  *   8. Audit row to `pa-audit-events` (kind="upstream_inbound").
@@ -23,7 +23,6 @@ import {
   checkUpstreamRateLimit,
   getFlag,
   getUpstreamTemplateByEventKind,
-  renderUpstreamTemplate,
   type UpstreamTemplate,
 } from "@pa/pa-persistence"
 
@@ -219,13 +218,6 @@ export async function handleUpstreamEventWebhook(
     return
   }
 
-  // ---- 6. Render --------------------------------------------------------
-  const messageBody = renderUpstreamTemplate(template.messageTemplate, {
-    userId,
-    eventKind,
-    ...payload,
-  })
-
   // ---- 7. Resolve target phone + hand off to runtime -------------------
   const resolvePhone = deps.resolveUserPhone ?? defaultResolveUserPhone
   let toE164: string | null = null
@@ -258,7 +250,6 @@ export async function handleUpstreamEventWebhook(
     context: {
       eventKind,
       templateId: template.templateId,
-      renderedTemplate: messageBody,
       payload,
       channel: template.channel || "imessage",
     },

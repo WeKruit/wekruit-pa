@@ -20,6 +20,7 @@
  */
 
 import { PA_COLLECTIONS } from "@pa/core-types"
+import { isApprovedRuntimeSource } from "@pa/pa-broker"
 import type { Firestore } from "firebase-admin/firestore"
 
 import { useDmAllowlist, getPeerAllowlist, isSamePeer, normalizePeer } from "./allowlist.js"
@@ -43,8 +44,8 @@ export function isMarketplaceOutreachOutbound(raw: { idempotencyKey?: unknown })
   return String(raw.idempotencyKey ?? "").startsWith("outreach_idempotency_")
 }
 
-export function isRuntimeApprovedOutbound(raw: { runtimeApproved?: unknown }): boolean {
-  return raw.runtimeApproved === true
+export function isRuntimeApprovedOutbound(raw: { runtimeApproved?: unknown; runtimeSource?: unknown }): boolean {
+  return raw.runtimeApproved === true && isApprovedRuntimeSource(raw.runtimeSource)
 }
 
 export function isTypingIndicatorEnabled(): boolean {

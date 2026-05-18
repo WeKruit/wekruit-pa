@@ -155,12 +155,11 @@ function makeRes(): CapturedRes {
   return r
 }
 
-async function bootstrapTemplate(db: Firestore, opts: Partial<{ enabled: boolean; rateLimitPerHour: number; eventKind: string; templateId: string; messageTemplate: string }> = {}) {
+async function bootstrapTemplate(db: Firestore, opts: Partial<{ enabled: boolean; rateLimitPerHour: number; eventKind: string; templateId: string }> = {}) {
   return await saveUpstreamTemplate(db, {
     templateId: opts.templateId ?? "interview_scheduled",
     name: "Interview scheduled",
     eventKind: opts.eventKind ?? "interview_scheduled",
-    messageTemplate: opts.messageTemplate ?? "Hi {{userName}}, your interview is at {{when}}.",
     enabled: opts.enabled ?? true,
     rateLimitPerHour: opts.rateLimitPerHour ?? 1,
     updatedBy: ACTOR,
@@ -300,7 +299,7 @@ test("returns 503 when upstreamConnectorEnabled flag is false", async () => {
   assert.equal(res._status, 503)
 })
 
-test("happy path: hands rendered context to runtime, never direct pa-outbound", async () => {
+test("happy path: hands structured event context to runtime, never direct pa-outbound", async () => {
   const db = makeFakeFirestore()
   await enableFlag(db)
   await bootstrapTemplate(db, { rateLimitPerHour: 5 })
@@ -340,8 +339,14 @@ test("happy path: hands rendered context to runtime, never direct pa-outbound", 
   assert.equal(eventDoc!.status, "pending")
   assert.equal(eventDoc!.userId, "u1")
   assert.match(String(eventDoc!.body), /system-event:upstream_event:interview_scheduled/)
-  assert.match(String(eventDoc!.body), /Hi Alex, your interview is at Friday 3pm\./)
-  assert.equal((eventDoc!.rawMeta as Record<string, unknown>).runtimeEvent, true)
+  assert.doesNotMatch(String(eventDoc!.body), /Hi Alex, your interview is at Friday 3pm\./)
+  const rawMeta = eventDoc!.rawMeta as Record<string, unknown>
+  assert.equal(rawMeta.runtimeEvent, true)
+  const context = rawMeta.context as Record<string, unknown>
+  assert.equal(context.eventKind, "interview_scheduled")
+  assert.equal(context.templateId, "interview_scheduled")
+  assert.deepEqual(context.payload, { userName: "Alex", when: "Friday 3pm" })
+  assert.equal(rawMeta.removedCandidateDraftContextKeys, undefined)
 
   // Audit row written
   const audit = fs._store.get("pa-audit-events")

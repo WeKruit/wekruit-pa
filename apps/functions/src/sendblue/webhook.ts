@@ -32,14 +32,6 @@ import { getFlag, checkAndIncrementRateLimit } from "@pa/pa-persistence"
 import { verifySendblueSignature, extractSendblueSignatureHeader } from "./hmac.js"
 // Stream D — CV ingestion side-effect (fire-and-forget) on attachment receipt.
 import { ingestCv as defaultIngestCv, type IngestCvInput, type IngestCvResult } from "../cv-ingest/cv-ingest.js"
-// Phase 54 — CV-confirm reply parser (fire-and-forget on text reply matching
-// recent out-cvconfirm-* outbound).
-import {
-  handleCvConfirmReply as defaultHandleCvConfirmReply,
-  detectCvConfirmReply as defaultDetectCvConfirmReply,
-  type HandleCvConfirmReplyArgs,
-  type HandleCvConfirmReplyResult,
-} from "../cv-ingest/cv-confirm-reply.js"
 import {
   isInboundReceiveEvent,
   normalizeSendblueInbound,
@@ -141,23 +133,6 @@ export type WebhookDeps = {
    * runtime handoff adapter.
    */
   generateJobRecsForUser?: (args: FindMatchTriggerArgs) => Promise<FindMatchTriggerResult>
-  /**
-   * Phase 54 — CV-confirm reply detector. Inject for tests. Production
-   * defaults to a Firestore lookup for a recent `out-cvconfirm-*` outbound
-   * scoped to userId. When match=true, the webhook fires `handleCvConfirmReply`
-   * fire-and-forget alongside (not instead of) the regular orchestrator turn.
-   */
-  detectCvConfirmReply?: (
-    db: Firestore,
-    userId: string,
-    opts?: { nowMs?: number; log?: (e: string, p?: Record<string, unknown>) => void }
-  ) => Promise<{ matches: boolean; resumeId: string | null }>
-  /**
-   * Phase 54 — CV-confirm reply handler. Inject for tests. Production defaults
-   * to the LLM-backed parser; resolves `pa-users.tags` corrections via
-   * `applyPartialUserTags` (sole writer). NEVER throws.
-   */
-  handleCvConfirmReply?: (args: HandleCvConfirmReplyArgs) => Promise<HandleCvConfirmReplyResult>
   /**
    * v1.5 Stream-D — message coalescer dispatch. Inject for tests; in
    * production the CF wrapper binds CoalescerDeps with a real Cloud Tasks
@@ -1253,51 +1228,6 @@ export async function handleSendblueWebhook(
           })
         }
       }
-    }
-
-    // Phase 54 (USER-TAG-03) — CV-confirm reply detection (fire-and-forget).
-    // When the user replies to a recent `out-cvconfirm-*` outbound (within
-    // 24h) with a text message, run the LLM-backed correction parser and
-    // mirror corrections to `pa-users.tags` via `applyPartialUserTags`.
-    // Runs ALONGSIDE the regular orchestrator turn (not instead) — Claire
-    // still composes a follow-up reply via the standard flow.
-    if (!mediaUrl && normalized.text) {
-      const detectFn = deps.detectCvConfirmReply ?? defaultDetectCvConfirmReply
-      const handleFn = deps.handleCvConfirmReply ?? defaultHandleCvConfirmReply
-      const lookupFn = deps.lookupUserByPhone ?? defaultLookupUserByPhone
-      void Promise.resolve()
-        .then(async () => {
-          const userId = await lookupFn(deps.db, normalized.fromNumber)
-          if (!userId) return null
-          const detection = await detectFn(deps.db, userId, {
-            log: (e, p) => log(`[cv-confirm-reply][detect] ${e}`, p ?? {}),
-          })
-          if (!detection.matches) return null
-          return handleFn({
-            db: deps.db,
-            userId,
-            resumeId: detection.resumeId ?? undefined,
-            replyText: normalized.text,
-            // 2026-05-07 Adam directive — cv-confirm reply is real OpenAI
-            // (gpt-5.4-nano). Drop poisoned OPENAI_API_KEY/_BASE_URL.
-            openaiApiKey: process.env.PA_OPENAI_AGENT_API_KEY?.trim() || "",
-            openaiBaseURL:
-              process.env.PA_OPENAI_AGENT_BASE_URL?.trim() ||
-              "https://api.openai.com/v1",
-            log: (e, p) => log(`[cv-confirm-reply] ${e}`, p ?? {}),
-          })
-        })
-        .then((res) => {
-          if (res) {
-            log("[cv-confirm-reply] handled", res as unknown as Record<string, unknown>)
-          }
-        })
-        .catch((replyErr) => {
-          log(
-            "[cv-confirm-reply] failed",
-            replyErr instanceof Error ? replyErr.message : String(replyErr)
-          )
-        })
     }
 
     // Stream D — CV side-effect (fire-and-forget):

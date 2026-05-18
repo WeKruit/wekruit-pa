@@ -45,7 +45,7 @@ function makeDeps(c: CandidateLifecycleSnapshot, opts: { activePrescreen?: boole
     updateLifecycleEvent: async (eventId, patch) => {
       events.set(eventId, { ...(events.get(eventId) ?? {}), ...patch })
     },
-    enqueueOutbound: async (input) => {
+    enqueueRuntimeEvent: async (input) => {
       outbound.push(input)
       return { id: "out-life-1", created: true }
     },
@@ -66,7 +66,9 @@ describe("evaluateCandidateLifecycleTrigger", () => {
     })
     assert.equal(decision.decision, "send")
     if (decision.decision === "send") {
-      assert.match(decision.body, /Checking in because you shared the layoff update/)
+      assert.equal(decision.runtimeContext.eventType, "laid_off_checkin")
+      assert.equal(decision.runtimeContext.eventReason, "fresh WeKruit_LAID_OFF signal from the candidate")
+      assert.equal((decision.runtimeContext.candidate as Record<string, unknown>)?.displayName, "Adam Yang")
       assert.equal(decision.cooldownKey, "laid_off_checkin")
     }
   })
@@ -91,7 +93,7 @@ describe("evaluateCandidateLifecycleTrigger", () => {
     assert.ok(decision.blockedSignals.includes("cooldown_active"))
   })
 
-  it("requires job context for match notifications and renders the matched role when present", () => {
+  it("requires job context for match notifications and passes structured job facts to runtime", () => {
     const missing = evaluateCandidateLifecycleTrigger({
       request: request({ eventType: "match_notification", eventReason: "new matching job landed" }),
       candidate: candidate({ source: "candidate" }),
@@ -135,10 +137,20 @@ describe("evaluateCandidateLifecycleTrigger", () => {
     })
     assert.equal(ready.decision, "send")
     if (ready.decision === "send") {
-      assert.match(ready.body, /Software Engineer - Fullstack @ Rain/)
-      assert.match(ready.body, /https:\/\/candidate\.wekruit\.com\/j\/rain-fullstack-1/)
-      assert.match(ready.body, /requirements: React, Node\.js, SQL/)
-      assert.match(ready.body, /dashboard and SQL ownership/)
+      assert.equal((ready.runtimeContext.job as Record<string, unknown>)?.jobTitle, "Software Engineer - Fullstack")
+      assert.equal((ready.runtimeContext.job as Record<string, unknown>)?.companyName, "Rain")
+      assert.equal(
+        (ready.runtimeContext.job as Record<string, unknown>)?.jobUrl,
+        "https://candidate.wekruit.com/j/rain-fullstack-1",
+      )
+      assert.deepEqual(
+        (ready.runtimeContext.job as Record<string, unknown>)?.requirements,
+        ["React", "Node.js", "SQL"],
+      )
+      assert.equal(
+        (ready.runtimeContext.job as Record<string, unknown>)?.matchReason,
+        "Your dashboard and SQL ownership are relevant here.",
+      )
       assert.equal(ready.cooldownKey, "match_notification:rain-fullstack-1")
     }
   })
@@ -177,13 +189,25 @@ describe("runCandidateLifecycleTrigger", () => {
     assert.equal(result.decision.decision, "send")
     assert.equal(result.outboundId, "out-life-1")
     assert.equal(outbound.length, 1)
-    assert.match(String(outbound[0]?.body), /Software Engineer - Fullstack @ Rain/)
-    assert.match(String(outbound[0]?.body), /https:\/\/candidate\.wekruit\.com\/j\/rain-fullstack-1/)
-    assert.match(String(outbound[0]?.body), /requirements: React, Node\.js, SQL/)
-    assert.match(String(outbound[0]?.body), /It matches your dashboard and SQL work/)
+    assert.equal(
+      outbound[0]?.idempotencyKey,
+      "candidate_lifecycle:cand-1:match_notification:rain-fullstack-1:2026-05-16",
+    )
+    assert.equal((outbound[0]?.context as Record<string, unknown>)?.eventType, "match_notification")
+    assert.equal(
+      ((outbound[0]?.context as Record<string, unknown>)?.job as Record<string, unknown>)?.jobUrl,
+      "https://candidate.wekruit.com/j/rain-fullstack-1",
+    )
+    assert.deepEqual(
+      ((outbound[0]?.context as Record<string, unknown>)?.job as Record<string, unknown>)?.requirements,
+      ["React", "Node.js", "SQL"],
+    )
+    assert.equal("body" in outbound[0]!, false)
     const row = events.get(result.eventId)
     assert.equal(row?.status, "queued")
     assert.equal(row?.outboundId, "out-life-1")
+    assert.equal("body" in row!, false)
+    assert.equal((row?.runtimeContext as Record<string, unknown>)?.eventType, "match_notification")
     assert.equal(candidateUpdates.length, 1)
     assert.deepEqual(
       (candidateUpdates[0]?.lifecycle as Record<string, unknown>)?.lastTouchType,

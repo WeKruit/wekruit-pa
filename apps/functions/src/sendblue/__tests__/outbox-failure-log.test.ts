@@ -91,6 +91,7 @@ describe("pa.outbound.failed structured log (Stream H4 D4)", () => {
       createdAt: new Date().toISOString(),
       attemptCount: 2,
       runtimeApproved: true,
+      runtimeSource: "test_runtime",
     }
     const { db } = makeFakeDb({ "doc-fail-1": baseRow })
 

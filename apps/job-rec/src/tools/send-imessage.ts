@@ -79,8 +79,9 @@ function buildRuntimeEventBody(content: string): string {
     "[system-event:job_rec:send_imessage]",
     "A job recommendation/outbound request was produced by a non-runtime job-rec component.",
     "Decide whether Claire should message the candidate now. If no message should be sent, reply exactly __NO_SEND__.",
-    "If a message should be sent, keep the candidate's established language/context and include job links/requirements when they appear in the proposed message.",
-    `Proposed message/context: ${content.slice(0, 2500)}`,
+    "If a message should be sent, write it as Claire from scratch. Do not forward or reuse producer-written wording verbatim.",
+    "Keep the candidate's established language/context and include job links/requirements when they appear in the source notes.",
+    `Source notes/context: ${content.slice(0, 2500)}`,
   ].join("\n")
 }
 
@@ -135,7 +136,7 @@ export async function sendImessage(
       runtimeEventKind: "send_imessage",
       runtimeNoSendToken: "__NO_SEND__",
       context: {
-        proposedMessage: parsed.content,
+        sourceNotes: parsed.content,
       },
     },
   }

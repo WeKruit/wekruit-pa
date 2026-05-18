@@ -47,7 +47,6 @@ export type EnqueueRuntimeOutreachInviteInput = {
   userId: string
   toE164: string
   imessageChatId?: string
-  proposedMessage: string
   idempotencyKey: string
   context: {
     inviteId: string
@@ -312,10 +311,6 @@ export async function planJobOutreach(
         userId: candidate.candidateId,
         toE164: candidate.phoneE164,
         ...(candidate.imessageChatId ? { imessageChatId: candidate.imessageChatId } : {}),
-        proposedMessage: renderOutreachInviteBody({
-          job: input.job,
-          jobUrl,
-        }),
         idempotencyKey: decision.outboundIdempotencyKey,
         context: {
           inviteId: invite.inviteId,

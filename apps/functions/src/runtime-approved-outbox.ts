@@ -48,12 +48,13 @@ export async function sendRuntimeApprovedIMessage(args: {
 }): Promise<RuntimeApprovedIMessageResult> {
   if (!args.db) throw new Error("runtime-approved send requires Firestore db")
   if (!args.userId) throw new Error("runtime-approved send requires userId")
+  if (!args.runtimeSource) throw new Error("runtime-approved send requires runtimeSource")
   return enqueueRuntimeApprovedIMessage({
     db: args.db,
     userId: args.userId,
     to: args.to,
     content: args.content,
-    runtimeSource: args.runtimeSource ?? "pa_runtime",
+    runtimeSource: args.runtimeSource,
     idempotencyKey: args.idempotencyKey,
   })
 }

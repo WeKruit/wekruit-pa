@@ -123,7 +123,7 @@ describe("chaos: cv-onboarding failure injection", () => {
     const { log, events } = captureLog()
     const deps: IngestCvDeps = {
       skipLimitEnforcement: true,
-      followupDeliveryMode: "direct",
+      followupDeliveryMode: "none",
       db,
       log,
       fetchPdf: async () => ({ bytes: new Uint8Array([1]), contentType: "application/pdf" }),
@@ -149,28 +149,20 @@ describe("chaos: cv-onboarding failure injection", () => {
   })
 
   // ---- Scenario 2: mem0 add throws ---------------------------------------
-  it("S2 mem0Add throws → fact write skipped + logged, but parsedCandidateResumes + cv-findings unaffected", async () => {
+  it("S2 mem0Add throws → fact write skipped + logged, but parsedCandidateResumes + runtime handoff unaffected", async () => {
     const { db, state } = makeFakeDb({
       users: { u2: { phoneE164: "+14243201960", mem0UserId: null } },
     })
     const { log, events } = captureLog()
     const deps: IngestCvDeps = {
       skipLimitEnforcement: true,
-      followupDeliveryMode: "direct",
+      followupDeliveryMode: "runtime",
       db,
       log,
       nowIso: () => "2026-04-30T00:00:00.000Z",
       fetchPdf: async () => ({ bytes: new Uint8Array([1]), contentType: "application/pdf" }),
       parsePdf: async () => ({ text: "happy resume", numPages: 1 }),
       llmExtract: async () => ({ parsed: happyParsed() }),
-      llmFollowup: async () => "follow-up message",
-      enqueueOutboundFollowup: async (_db, docId, payload) => {
-        // call straight into our fake-db wrapper
-        await (db as unknown as { collection(n: string): { doc(i: string): { create(d: DocData): Promise<void> } } })
-          .collection("pa-outbound")
-          .doc(docId)
-          .create(payload)
-      },
       mem0Add: async () => {
         throw new Error("mem0 connection refused")
       },
@@ -182,10 +174,11 @@ describe("chaos: cv-onboarding failure injection", () => {
     assert.equal(res.ok, true)
     // parsedCandidateResumes row WAS written.
     assert.equal(state.resumes.length, 1, "resume row persisted despite mem0 failure")
-    // cv-findings outbound row WAS enqueued.
+    // direct cv-findings outbound is gone; runtime handoff was attempted.
+    assert.equal(state.outbound.size, 0, "cv ingest must not enqueue direct outbox rows")
     assert.ok(
-      [...state.outbound.keys()].some((k) => k.startsWith("out-cvfindings-")),
-      "cv-findings still enqueued"
+      events.some((e) => e.event === "pa.cv_followup.synthetic_trigger_written"),
+      "runtime handoff attempted"
     )
     // mem0 error was logged at least once.
     assert.ok(
@@ -217,47 +210,34 @@ describe("chaos: cv-onboarding failure injection", () => {
     __resetSendblueBreakerForTests()
   })
 
-  // ---- Scenario 4: Firestore tx contention (ALREADY_EXISTS) on cv-findings -
-  it("S4 cv-findings docId already exists → idempotent skip (logged), no error propagation", async () => {
-    const resumeIdHint = "preExisting" // doesn't actually pre-set; we'll mock enqueue to throw ALREADY_EXISTS
-    void resumeIdHint
+  // ---- Scenario 4: missing runtime session on resume-complete handoff ----
+  it("S4 missing runtime session → no direct outbox and no error propagation", async () => {
     const { db, state } = makeFakeDb({
       users: { u4: { phoneE164: "+14243201960", mem0UserId: null } },
     })
     const { log, events } = captureLog()
     const deps: IngestCvDeps = {
       skipLimitEnforcement: true,
-      followupDeliveryMode: "direct",
+      followupDeliveryMode: "runtime",
       db,
       log,
       nowIso: () => "2026-04-30T00:00:00.000Z",
       fetchPdf: async () => ({ bytes: new Uint8Array([1]), contentType: "application/pdf" }),
       parsePdf: async () => ({ text: "happy resume", numPages: 1 }),
       llmExtract: async () => ({ parsed: happyParsed() }),
-      llmFollowup: async () => "follow-up message",
-      // Simulate concurrent insert: enqueue throws ALREADY_EXISTS.
-      enqueueOutboundFollowup: async () => {
-        const e = new Error(
-          `6 ALREADY_EXISTS: Document already exists: pa-outbound/out-cvfindings-rsm_x`
-        )
-        throw e
-      },
       mem0Add: async () => {},
       lookupUserForFollowup: async () => ({ toE164: "+14243201960", mem0UserId: null }),
     }
     const res = await ingestCv({ userId: "u4", mediaUrl: "https://x/a.pdf" }, deps)
 
-    // Pipeline still succeeds — duplicate enqueue is idempotent.
+    // Pipeline still succeeds; runtime event handoff can decline without
+    // falling back to a direct message producer.
     assert.equal(res.ok, true)
     assert.equal(state.resumes.length, 1, "resume row written")
-    // The error path logged "idempotent_skip" not "error".
+    assert.equal(state.outbound.size, 0, "no direct outbox rows")
     assert.ok(
-      events.some((e) => e.event === "pa.cv_followup.idempotent_skip"),
-      "ALREADY_EXISTS classified as idempotent_skip not error"
-    )
-    assert.ok(
-      !events.some((e) => e.event === "pa.cv_followup.error" && e.payload?.stage === "enqueue"),
-      "no enqueue error log emitted on idempotent dup"
+      events.some((e) => e.event === "pa.cv_followup.synthetic_trigger_written"),
+      "runtime handoff result logged"
     )
   })
 

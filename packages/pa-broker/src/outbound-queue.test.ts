@@ -63,3 +63,18 @@ test("enqueueOutbound blocks legacy callers without runtime approval", async () 
     /outbound_requires_runtime_approval/
   )
 })
+
+test("enqueueOutbound blocks callers that self-stamp runtime approval with an unapproved source", async () => {
+  const { db } = fakeFirestore()
+  await assert.rejects(
+    enqueueOutbound(db, {
+      userId: "u_1",
+      toE164: "+15555550123",
+      body: "hello",
+      idempotencyKey: "legacy-source",
+      runtimeApproved: true,
+      runtimeSource: "cv_ingest",
+    }),
+    /outbound_requires_approved_runtime_source/
+  )
+})

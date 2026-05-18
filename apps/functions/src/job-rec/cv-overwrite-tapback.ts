@@ -4,10 +4,10 @@
  * Pipeline (extends the existing paOnTapbackEvent CF):
  *   1. User sends 2nd+ CV → cv-ingest stages it in `pa-cv-pending/{newResumeId}`
  *      and asks Claire runtime to decide whether/how to prompt.
- *   2. Sendblue delivers the prompt; user reacts ❤️ (love) or 🤔 (question).
+ *   2. Claire runtime authors the prompt; user reacts ❤️ (love) or 🤔 (question).
  *   3. Inbound webhook → pa-tapback-events row → paOnTapbackEvent CF fires.
  *   4. CF first checks if the tapback's quotedText matches a recent
- *      `out-cv-overwrite-*` outbound. If yes → handle here (love =
+ *      runtime-authored overwrite outbound. If yes → handle here (love =
  *      replace / question = supplement) and SHORT-CIRCUIT the existing
  *      job-rec match-feedback flow. Otherwise fall through.
  *
@@ -24,7 +24,6 @@
 
 import type { Firestore } from "firebase-admin/firestore"
 import {
-  CV_OVERWRITE_OUTBOUND_PREFIX,
   CV_PENDING_COLLECTION,
 } from "../cv-ingest/cv-ingest.js"
 import { enqueueRuntimeEventHandoff } from "../runtime-event-handoff.js"
@@ -43,11 +42,12 @@ export type CvOverwriteTapbackResult =
     }
 
 /**
- * Find the most recent `out-cv-overwrite-*` outbound for this user whose
+ * Find the most recent runtime-authored overwrite outbound for this user whose
  * body contains the tapback's quoted excerpt.
  *
  * Strategy: query pa-outbound by toE164 + createdAt range, filter to docIds
- * matching the prefix, then body-includes match against quotedText.
+ * carrying runtimeEventContext.cvOverwrite, then body-includes match against
+ * quotedText.
  */
 async function findCvOverwritePromptForTapback(
   db: Firestore,
@@ -82,8 +82,17 @@ async function findCvOverwritePromptForTapback(
   // Filter to overwrite-prompt docs whose body contains the tapback excerpt.
   const needle = args.quotedText.replace(/[…\.]+$/, "").trim().toLowerCase()
   for (const d of snap.docs) {
-    if (!d.id.startsWith(CV_OVERWRITE_OUTBOUND_PREFIX)) continue
     const data = d.data() ?? {}
+    const rawMeta = (data as { rawMeta?: Record<string, unknown> }).rawMeta
+    const runtimeContext =
+      rawMeta && typeof rawMeta === "object"
+        ? (rawMeta.runtimeEventContext as Record<string, unknown> | undefined)
+        : undefined
+    const cvOverwrite =
+      runtimeContext && typeof runtimeContext === "object"
+        ? (runtimeContext.cvOverwrite as { newResumeId?: string; previousResumeId?: string } | undefined)
+        : undefined
+    if (!cvOverwrite?.newResumeId) continue
     const body = String((data as Record<string, unknown>).body ?? "").toLowerCase()
     if (needle && !body.includes(needle)) continue
     return { id: d.id, ...data }
@@ -222,13 +231,9 @@ export async function promotePendingCv(
     })
   }
 
-  // 4. Hand confirmation context to runtime (idempotent event id).
+  // 4. Hand structured confirmation facts to runtime (idempotent event id).
   if (!args.silent && args.confirmationToE164) {
-    const docId = `out-cv-overwrite-confirm-${pending.newResumeId}`
-    const body =
-      action === "replace"
-        ? "好嘞 已替代旧版 ✅"
-        : "好嘞 当作另一个版本保留了 ✅"
+    const docId = `cv-overwrite-confirm-${pending.newResumeId}`
     try {
       const runtime = await enqueueRuntimeEventHandoff(db, {
         userId: pending.userId,
@@ -237,7 +242,6 @@ export async function promotePendingCv(
         eventKind: "resume_overwrite_confirmed",
         idempotencyKey: `${pending.newResumeId}-${action}`,
         context: {
-          proposedMessage: body,
           newResumeId: pending.newResumeId,
           previousResumeId: pending.previousResumeId,
           action,
@@ -269,10 +273,9 @@ export async function promotePendingCv(
 /**
  * One-shot tapback resolver invoked from paOnTapbackEvent.
  *
- * Returns { handled: true } when the tapback corresponded to an
- * out-cv-overwrite-* prompt and was processed. The CF caller short-circuits
- * the existing match-feedback flow on { handled: true } to avoid double-
- * processing.
+ * Returns { handled: true } when the tapback corresponded to a runtime-authored
+ * CV overwrite prompt and was processed. The CF caller short-circuits the
+ * existing match-feedback flow on { handled: true } to avoid double-processing.
  *
  * Returns { handled: false } in every other case (no overwrite prompt
  * matched, malformed pending, unsupported tapback kind, etc.) so the caller
@@ -311,18 +314,19 @@ export async function processCvOverwriteTapback(
     return { handled: false, reason: "no_overwrite_prompt_match" }
   }
 
-  // Resolve the staged pending row. The prompt id encodes the newResumeId
-  // (`out-cv-overwrite-{id}`); also fall back to rawMeta when set.
-  const promptId = String((promptRow as { id?: unknown }).id ?? "")
-  const fromId = promptId.startsWith(CV_OVERWRITE_OUTBOUND_PREFIX)
-    ? promptId.slice(CV_OVERWRITE_OUTBOUND_PREFIX.length)
-    : null
+  // Resolve the staged pending row from runtime metadata carried on the
+  // outbound row. The visible message was authored by runtime; this metadata
+  // only links the tapback to the staged resume.
   const rawMeta = (promptRow as { rawMeta?: Record<string, unknown> }).rawMeta
-  const cvMeta =
+  const runtimeContext =
     rawMeta && typeof rawMeta === "object"
-      ? (rawMeta["cvOverwrite"] as { newResumeId?: string; previousResumeId?: string } | undefined)
+      ? (rawMeta.runtimeEventContext as Record<string, unknown> | undefined)
       : undefined
-  const newResumeId = cvMeta?.newResumeId ?? fromId
+  const cvMeta =
+    runtimeContext && typeof runtimeContext === "object"
+      ? (runtimeContext.cvOverwrite as { newResumeId?: string; previousResumeId?: string } | undefined)
+      : undefined
+  const newResumeId = cvMeta?.newResumeId ?? null
   if (!newResumeId) {
     return { handled: false, reason: "missing_new_resume_id" }
   }

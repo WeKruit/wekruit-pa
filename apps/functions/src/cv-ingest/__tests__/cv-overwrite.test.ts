@@ -5,7 +5,7 @@
  *   1. flag OFF + 1 existing resume → ingestCv writes new row directly
  *   2. flag ON + 0 existing → ingestCv writes new row directly (1st-time user)
  *   3. flag ON + 1 existing → no parsedCandidateResumes write, pa-cv-pending +
- *      pa-outbound out-cv-overwrite-* enqueued
+ *      runtime handoff enqueued
  *   4. tapback love → archives previous, promotes new
  *   5. tapback question → keeps both (additionalCv: true on new), confirmation sent
  *   6. TTL fallback → expired pending auto-promotes (replace, silent)
@@ -18,7 +18,7 @@ import {
   ingestCv,
   type IngestCvDeps,
   type StructuredCv,
-  CV_OVERWRITE_OUTBOUND_PREFIX,
+  CV_OVERWRITE_RUNTIME_PREFIX,
   CV_PENDING_COLLECTION,
 } from "../cv-ingest.js"
 import {
@@ -320,23 +320,11 @@ function makeBaseDeps(args: {
     db: args.db,
     log: args.log,
     nowIso: () => "2026-05-01T12:00:00.000Z",
-    followupDeliveryMode: "direct",
+    followupDeliveryMode: "runtime",
     skipLimitEnforcement: true,
     fetchPdf: async () => ({ bytes: new Uint8Array([1]), contentType: "application/pdf" }),
     parsePdf: async () => ({ text: "resume", numPages: 1 }),
     llmExtract: async () => ({ parsed: happyParsed() }),
-    llmFollowup: async () => "follow-up text",
-    enqueueOutboundFollowup: async (db, docId, payload) => {
-      // Use the fake db's pa-outbound .create() so we exercise the ALREADY_EXISTS path.
-      await (
-        db as unknown as {
-          collection(n: string): { doc(i: string): { create(d: DocData): Promise<void> } }
-        }
-      )
-        .collection("pa-outbound")
-        .doc(docId)
-        .create(payload)
-    },
     mem0Add: async () => {},
     lookupUserForFollowup: async () => ({
       toE164: "+14243201960",
@@ -389,11 +377,7 @@ describe("Stream H3 — cv-overwrite UX", () => {
     // 2 rows: the pre-seeded existing + the newly-added.
     assert.equal(state.resumes.size, 2, "new resume row written directly when flag OFF")
     assert.equal(state.pending.size, 0, "pending must NOT be populated when flag OFF")
-    // No overwrite prompt outbound enqueued.
-    const overwriteOutbound = [...state.outbound.keys()].filter((k) =>
-      k.startsWith(CV_OVERWRITE_OUTBOUND_PREFIX)
-    )
-    assert.equal(overwriteOutbound.length, 0, "no overwrite prompt when flag OFF")
+    assert.equal(state.outbound.size, 0, "no direct overwrite prompt when flag OFF")
     // Sanity: no error events.
     assert.ok(!events.some((e) => e.event === "pa.cv_overwrite.error"))
   })
@@ -411,13 +395,10 @@ describe("Stream H3 — cv-overwrite UX", () => {
     assert.equal(res.ok, true)
     assert.equal(state.resumes.size, 1, "first-time user writes parsedCandidateResumes directly")
     assert.equal(state.pending.size, 0, "no pending row for first-time user")
-    const overwriteOutbound = [...state.outbound.keys()].filter((k) =>
-      k.startsWith(CV_OVERWRITE_OUTBOUND_PREFIX)
-    )
-    assert.equal(overwriteOutbound.length, 0, "no overwrite prompt for first-time user")
+    assert.equal(state.outbound.size, 0, "no direct overwrite prompt for first-time user")
   })
 
-  it("test 3: flag ON + 1 existing → stages in pa-cv-pending + enqueues out-cv-overwrite (no parsedCandidateResumes write)", async () => {
+  it("test 3: flag ON + 1 existing → stages in pa-cv-pending + hands overwrite prompt to runtime", async () => {
     const { db, state } = makeFakeDb({
       users: { u3: { phoneE164: "+14243201960" } },
       resumes: [
@@ -456,25 +437,25 @@ describe("Stream H3 — cv-overwrite UX", () => {
     assert.equal(pendingDoc.previousResumeId, "rsm_prior_3")
     assert.equal(typeof pendingDoc.expireAt, "string")
     assert.ok(pendingDoc.parsedDoc, "pending row carries parsedDoc")
-    // Outbound prompt enqueued with deterministic docId.
-    const overwriteKeys = [...state.outbound.keys()].filter((k) =>
-      k.startsWith(CV_OVERWRITE_OUTBOUND_PREFIX)
-    )
-    assert.equal(overwriteKeys.length, 1, "exactly 1 out-cv-overwrite-* outbound enqueued")
-    assert.equal(
-      overwriteKeys[0],
-      `${CV_OVERWRITE_OUTBOUND_PREFIX}${pendingId}`,
-      "outbound docId encodes the staged newResumeId"
-    )
-    const outboundDoc = state.outbound.get(overwriteKeys[0]!)!
-    assert.equal(outboundDoc.toE164, "+14243201960")
-    assert.match(String(outboundDoc.body), /替代/, "body asks about overwrite")
+    assert.equal(state.outbound.size, 0, "overwrite prompt must not be direct outbox")
+    const runtimeEvents = [...state.inboundEvents.values()].filter((row) => {
+      const meta = row.rawMeta as Record<string, unknown> | undefined
+      return meta?.runtimeEventSource === "cv_ingest" && meta?.runtimeEventKind === "resume_overwrite_pending"
+    })
+    assert.equal(runtimeEvents.length, 1, "overwrite prompt handed to runtime")
+    assert.match(String(runtimeEvents[0]!.idempotencyKey), new RegExp(`${CV_OVERWRITE_RUNTIME_PREFIX}${pendingId}`))
+    const rawMeta = runtimeEvents[0]!.rawMeta as Record<string, unknown>
+    const context = rawMeta.context as Record<string, unknown>
+    assert.deepEqual(context.cvOverwrite, {
+      newResumeId: pendingId,
+      previousResumeId: "rsm_prior_3",
+    })
     // Result resumeId reflects the staged id (so logs are traceable).
     assert.ok(res.ok && res.resumeId === pendingId)
     // Log emitted.
     assert.ok(
-      events.some((e) => e.event === "pa.cv_overwrite.prompt_enqueued"),
-      "prompt_enqueued logged"
+      events.some((e) => e.event === "pa.cv_overwrite.runtime_handoff"),
+      "runtime_handoff logged"
     )
   })
 
@@ -509,17 +490,14 @@ describe("Stream H3 — cv-overwrite UX", () => {
     assert.equal(res.ok, true)
     assert.equal(state.resumes.size, 2, "profile-only uploads write a real parsedCandidateResumes row")
     assert.equal(state.pending.size, 0, "profile-only uploads must not stage a pending overwrite")
-    const overwriteKeys = [...state.outbound.keys()].filter((k) =>
-      k.startsWith(CV_OVERWRITE_OUTBOUND_PREFIX)
-    )
-    assert.equal(overwriteKeys.length, 0, "profile-only uploads must not direct-send overwrite prompts")
+    assert.equal(state.outbound.size, 0, "profile-only uploads must not direct-send overwrite prompts")
   })
 
   it("test 4: tapback love (replace) → archives previous + promotes new + sends confirmation", async () => {
     // Seed: 1 existing resume + 1 pending row + 1 outbound prompt.
     const newResumeId = "rsm_pending_4"
     const prevResumeId = "rsm_prior_4"
-    const promptDocId = `${CV_OVERWRITE_OUTBOUND_PREFIX}${newResumeId}`
+    const promptDocId = `outbound-runtime-${newResumeId}`
     const promptBody =
       "欸看到你又发了份新简历 — 替代之前那份吗？回复 ❤️ = 替代旧的，🤔 = 当作另一个版本参考 (24 小时后默认替代)"
     const { db, state } = makeFakeDb({
@@ -566,7 +544,12 @@ describe("Stream H3 — cv-overwrite UX", () => {
       status: "pending",
       createdAt: "2026-05-01T12:00:00.000Z",
       rawMeta: {
-        cvOverwrite: { newResumeId, previousResumeId: prevResumeId },
+        runtimeEvent: true,
+        runtimeEventSource: "cv_ingest",
+        runtimeEventKind: "resume_overwrite_pending",
+        runtimeEventContext: {
+          cvOverwrite: { newResumeId, previousResumeId: prevResumeId },
+        },
       },
     })
 
@@ -602,15 +585,17 @@ describe("Stream H3 — cv-overwrite UX", () => {
       return meta?.runtimeEventSource === "cv_overwrite"
     })
     assert.ok(confirmDoc, "confirmation runtime event enqueued")
-    const context = (confirmDoc!.rawMeta as Record<string, unknown>).context as Record<string, unknown>
-    assert.match(String(context.proposedMessage), /替代/, "confirmation says replaced")
+    const rawMeta = confirmDoc!.rawMeta as Record<string, unknown>
+    const context = rawMeta.context as Record<string, unknown>
+    assert.equal(context.action, "replace")
+    assert.equal(rawMeta.removedCandidateDraftContextKeys, undefined)
     assert.ok(events.some((e) => e.event === "pa.cv_overwrite.promoted"))
   })
 
   it("test 5: tapback question (supplement) → keeps both rows, marks new with additionalCv:true", async () => {
     const newResumeId = "rsm_pending_5"
     const prevResumeId = "rsm_prior_5"
-    const promptDocId = `${CV_OVERWRITE_OUTBOUND_PREFIX}${newResumeId}`
+    const promptDocId = `outbound-runtime-${newResumeId}`
     const promptBody =
       "欸看到你又发了份新简历 — 替代之前那份吗？回复 ❤️ = 替代旧的，🤔 = 当作另一个版本参考 (24 小时后默认替代)"
     const { db, state } = makeFakeDb({
@@ -647,7 +632,12 @@ describe("Stream H3 — cv-overwrite UX", () => {
       body: promptBody,
       createdAt: "2026-05-01T12:00:00.000Z",
       rawMeta: {
-        cvOverwrite: { newResumeId, previousResumeId: prevResumeId },
+        runtimeEvent: true,
+        runtimeEventSource: "cv_ingest",
+        runtimeEventKind: "resume_overwrite_pending",
+        runtimeEventContext: {
+          cvOverwrite: { newResumeId, previousResumeId: prevResumeId },
+        },
       },
     })
 
@@ -722,10 +712,7 @@ describe("Stream H3 — cv-overwrite UX", () => {
     assert.equal(prev.replacedBy, newResumeId)
     assert.ok(state.resumes.has(newResumeId))
     // Silent: no confirmation outbound enqueued by TTL path.
-    const confirmKeys = [...state.outbound.keys()].filter((k) =>
-      k.startsWith("out-cv-overwrite-confirm-")
-    )
-    assert.equal(confirmKeys.length, 0, "TTL fallback is silent — no confirmation outbound")
+    assert.equal(state.inboundEvents.size, 0, "TTL fallback is silent — no confirmation runtime event")
     assert.equal(state.pending.size, 0, "pending row deleted after promote")
   })
 })

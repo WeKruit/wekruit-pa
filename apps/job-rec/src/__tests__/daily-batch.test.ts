@@ -38,12 +38,12 @@ function jobRecRuntimeWrites(mfs: MockFirestore) {
   )
 }
 
-function firstJobRecProposedMessage(mfs: MockFirestore): string {
+function firstJobRecSourceNotes(mfs: MockFirestore): string {
   const row = jobRecRuntimeWrites(mfs)[0]?.data
   const ctx = (row?.rawMeta as Record<string, unknown> | undefined)?.context as
     | Record<string, unknown>
     | undefined
-  return String(ctx?.proposedMessage ?? "")
+  return String(ctx?.sourceNotes ?? "")
 }
 
 test("formatJobLine: bare URL on its own line (Bible v7.5.2)", () => {
@@ -398,7 +398,7 @@ test("Stream F5: runDailyJobRecBatch handles new-shape profile end-to-end (deliv
     jobsPerUser: 1,
   })
   assert.equal(out.delivered, 1)
-  const body = firstJobRecProposedMessage(mfs)
+  const body = firstJobRecSourceNotes(mfs)
   assert.match(body, /FinCo/)
   // Bare URL on its own line (Bible v7.5.2). atsApplyUrl is preferred over primaryUrl
   // post-iter34-A.2, so we match the greenhouse ATS link rather than primaryUrl.
@@ -516,7 +516,7 @@ test("Stream F5: runDailyJobRecBatch with rerank deps applies cosine + still del
     candidatePoolSize: 50,
   })
   assert.equal(out.delivered, 1)
-  const body = firstJobRecProposedMessage(mfs)
+  const body = firstJobRecSourceNotes(mfs)
   // HighCo wins because its embedding is identical to user
   assert.match(body, /HighCo/)
   assert.doesNotMatch(body, /LowCo/)
@@ -601,7 +601,7 @@ test("Stream H10: cross-encoder reranker reorders cosine-ranked jobs by relevanc
     crossEncoderPoolSize: 10,
   })
   assert.equal(out.delivered, 1)
-  const body = firstJobRecProposedMessage(mfs)
+  const body = firstJobRecSourceNotes(mfs)
   assert.match(body, /DataCo/, "cross-encoder picks Data Scientist over QC Analyst")
   assert.doesNotMatch(body, /LabCo/)
 })
@@ -672,7 +672,7 @@ test("Stream H10: cross-encoder fail-open (all-null scores) preserves cosine ord
     crossEncoderReranker: reranker,
   })
   assert.equal(out.delivered, 1)
-  const body = firstJobRecProposedMessage(mfs)
+  const body = firstJobRecSourceNotes(mfs)
   // Cosine still ranks TopCo > BotCo despite reranker fail-open.
   assert.match(body, /TopCo/)
   assert.doesNotMatch(body, /BotCo/)
@@ -726,7 +726,7 @@ test("Stream H12: dedupe by (jobTitle|companyName) drops near-identical JDs", as
     jobsPerUser: 4,  // request 4 — dedupe should still leave 2 unique
   })
   assert.equal(out.delivered, 1)
-  const body = firstJobRecProposedMessage(mfs)
+  const body = firstJobRecSourceNotes(mfs)
   // Both unique title-company pairs should appear, but only ONCE each
   assert.match(body, /Tax Consultant/)
   assert.match(body, /Software Engineer/)
@@ -1015,7 +1015,7 @@ test("H13 runDailyJobRecBatch wires friend-tone variant B end-to-end (default fl
     jobsPerUser: 1,
   })
   assert.equal(out.delivered, 1)
-  const body = firstJobRecProposedMessage(mfs)
+  const body = firstJobRecSourceNotes(mfs)
   // Friend-tone B applied: NEUROVA + Python referenced in lead-in
   assert.match(body, /NEUROVA/)
   assert.match(body, /Python/)
@@ -1091,7 +1091,7 @@ test("Phase 42 regression: explainer flag OFF → body bytewise matches H13 (no 
   })
   assert.equal(out.delivered, 1)
   assert.equal(chatCallCount, 0, "explainer must NOT run when flag is off")
-  const body = firstJobRecProposedMessage(mfs)
+  const body = firstJobRecSourceNotes(mfs)
   // H13 heuristic still fires (Python skill overlap) — bytewise compatible
   // with pre-Phase-42 because no ctx.reasons map was populated.
   assert.match(body, /Python 经验直接对得上/)
@@ -1165,7 +1165,7 @@ test("Phase 42: explainer flag ON → LLM reason injected into body + cached", a
   })
   assert.equal(out.delivered, 1)
   assert.equal(chatCallCount, 1, "explainer must run exactly once")
-  const body = firstJobRecProposedMessage(mfs)
+  const body = firstJobRecSourceNotes(mfs)
   // LLM-grounded reason replaces the heuristic reason (Stripe job skill
   // overlap on "payments" would have produced "你 payments 经验直接对得上";
   // explainer's grounded reason wins).
@@ -1246,7 +1246,7 @@ test("Phase 42: explainer flag ON + LLM throws → fail-open keeps H13 heuristic
     matchExplainerChatImpl: stubChat,
   })
   assert.equal(out.delivered, 1)
-  const body = firstJobRecProposedMessage(mfs)
+  const body = firstJobRecSourceNotes(mfs)
   // Heuristic reason still appears (Python skill overlap) — fail-open
   // means we degrade to H13 behavior, never break the user.
   assert.match(body, /Python 经验直接对得上/)

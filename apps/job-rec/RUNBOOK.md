@@ -25,9 +25,9 @@ paSendblueWebhook (us-central1, 512MiB, minInstances=1)
          │   3. OpenAI gpt-5.4-nano structured extract → Zod schema
          │      { candidateProfile, experiences, education, industryTags[] }
          │   4. Write parsedCandidateResumes/{auto-id}
-         │   5. Findings followup (Stream E1):
-         │        gpt-5.4-nano + Bible v7.5.2 inline rules → 3-sentence reply
-         │        → enqueue pa-outbound/out-cvfindings-{resumeId} (idempotent)
+         │   5. Resume event handoff:
+         │        create a structured resume_parse_completed runtime event
+         │        → Claire runtime decides whether/how to message
          │   6. Mem0 fact write (Stream E2):
          │        buildCvFactBody(zh/en) → mem0Add via @pa/memory
          │        partition key resolveMem0PartitionKey(userId)
@@ -154,7 +154,7 @@ SELECT * FROM pa-matching-feedback WHERE userId = '...' ORDER BY createdAt DESC
 
 ## Troubleshooting
 
-### "User uploaded CV but no followup arrived"
+### "User uploaded CV but no runtime followup arrived"
 Checklist (in order):
 1. `pa-sendblue-webhook-raw` has the row with `media_url` ?
    → If NO: Sendblue webhook didn't fire OR HMAC failed. Check Cloud Logging for `[sendblue][webhook]` entries.
@@ -162,10 +162,10 @@ Checklist (in order):
    → If NO: webhook handler bug; likely empty-content skip without media_url branch (Stream A1 fix).
 3. `parsedCandidateResumes` has a doc for userId after webhook receipt ?
    → If NO: cv-ingest pipeline failed. Check `[sendblue][cv-ingest]` logs. Likely culprits: PDF download HTTP fail, pdf-parse threw, OpenAI rate limit. ingestCv NEVER throws — it returns `{ok:false, reason}`. Search log for "cv-ingest done" entries.
-4. `pa-outbound/out-cvfindings-{resumeId}` exists ?
-   → If NO and parsedCandidateResumes IS present: `runFindingsFollowup` failed. Check `PA_CV_FINDINGS_FOLLOWUP_DISABLED` env. Check OpenAI API key. Check pa-users.phoneE164 lookup.
-5. `pa-outbound/out-cvfindings-{resumeId}.status == "sent"` ?
-   → If "pending"/"failed": paSendblueOutbox didn't ship it. Check Sendblue circuit breaker state + REST call logs.
+4. `pa-inbound-events/{runtime-event...}.rawMeta.runtimeEventKind == "resume_parse_completed"` exists ?
+   → If NO and parsedCandidateResumes IS present: the resume event handoff failed. Check pa-users.phoneE164 lookup and cv-ingest runtime-event logs.
+5. If Claire chose to message, the resulting `pa-outbound` row must have `runtimeApproved: true` and an approved `runtimeSource`.
+   → If "failed" with `blockedByRuntimeGate`, a legacy producer attempted direct transport and must be removed.
 
 ### "User getting wrong industry recommendations"
 1. Check `parsedCandidateResumes/{id}.industryTags` — wrong LLM extraction?
@@ -254,7 +254,7 @@ GAC=... node -e '
 | F2 backfill --live (40k matching-jobs) | P9 | Phase 2a 32%-non-other vs 80% threshold — source `industryKey` field semantically mixes industry + function. Better path: rely on cosine embedding rerank as primary signal. Re-evaluate after observing daily-batch quality metrics. |
 | Phase 30 downstream connectors | P9 | HMAC secrets unprovisioned (`PA_TRIGGER_HMAC_LAYOFF/SALARY`); business-side endpoint URLs undefined; out-of-scope for v1 ship |
 | ESCO multilingual taxonomy ingest | P10 | 50MB dump + 30min import. Lightweight 10-tag enum sufficient for MVP; revisit when match quality complaints surface |
-| RecruiterAgent legacy retirement | P10 | apps/job-rec/src/recruiter-agent.ts + apps/functions/src/job-rec/recruiter-flow.ts marked DEPRECATED; not invoked from prod path. Sweep in single retirement commit after one full week of stable Claire-only operation. |
+| RecruiterAgent legacy retirement | P10 | Cloud Functions recruiter-flow retired; future candidate-visible job-rec output must enter through Claire runtime only. |
 | Live E2E test suite (Stream G4) | P9 | Spawned as separate focused P7 |
 
 ---

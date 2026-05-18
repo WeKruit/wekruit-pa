@@ -28,7 +28,6 @@ export type UpstreamTemplate = {
   name: string
   description: string
   eventKind: string
-  messageTemplate: string
   channel: string
   rateLimitPerHour: number
   enabled: boolean
@@ -42,7 +41,6 @@ export type SaveUpstreamTemplateInput = {
   name: string
   description: string
   eventKind: string
-  messageTemplate: string
   channel: string
   rateLimitPerHour: number
   enabled: boolean
@@ -69,7 +67,6 @@ function fromSnap(id: string, raw: Record<string, unknown>): UpstreamTemplate {
     name: typeof raw.name === "string" ? raw.name : "",
     description: typeof raw.description === "string" ? raw.description : "",
     eventKind: typeof raw.eventKind === "string" ? raw.eventKind : "",
-    messageTemplate: typeof raw.messageTemplate === "string" ? raw.messageTemplate : "",
     channel: typeof raw.channel === "string" ? raw.channel : "imessage",
     rateLimitPerHour:
       typeof raw.rateLimitPerHour === "number" ? raw.rateLimitPerHour : 1,
@@ -101,7 +98,6 @@ export async function saveTemplate(input: SaveUpstreamTemplateInput): Promise<vo
     name: input.name,
     description: input.description,
     eventKind: input.eventKind,
-    messageTemplate: input.messageTemplate,
     channel: input.channel,
     rateLimitPerHour: input.rateLimitPerHour,
     enabled: input.enabled,

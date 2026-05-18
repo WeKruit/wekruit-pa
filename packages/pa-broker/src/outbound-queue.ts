@@ -14,9 +14,21 @@ export type EnqueueOutboundInput = {
   runtimeSource?: string
 }
 
+const APPROVED_RUNTIME_SOURCES = new Set([
+  "pa_orchestrator",
+  "pa_prescreen_runtime",
+  "pa_pii_runtime",
+  "pa_proactive_turn",
+  "test_runtime",
+])
+
 export function outboundMessageDocId(idempotencyKey: string): string {
   const h = createHash("sha256").update(idempotencyKey, "utf8").digest("hex")
   return `out_${h.slice(0, 40)}`
+}
+
+export function isApprovedRuntimeSource(source: unknown): boolean {
+  return typeof source === "string" && APPROVED_RUNTIME_SOURCES.has(source)
 }
 
 /**
@@ -28,6 +40,9 @@ export async function enqueueOutbound(
 ): Promise<{ id: string; created: boolean }> {
   if (input.runtimeApproved !== true) {
     throw new Error("outbound_requires_runtime_approval")
+  }
+  if (!isApprovedRuntimeSource(input.runtimeSource)) {
+    throw new Error("outbound_requires_approved_runtime_source")
   }
   const id = outboundMessageDocId(input.idempotencyKey)
   const ref = db.collection(OUT).doc(id)
@@ -42,8 +57,8 @@ export async function enqueueOutbound(
     createdAt: now,
     idempotencyKey: input.idempotencyKey,
     runtimeApproved: true,
-    runtimeSource: input.runtimeSource ?? "pa_broker_runtime",
-    source: input.runtimeSource ?? "pa_broker_runtime",
+    runtimeSource: input.runtimeSource,
+    source: input.runtimeSource,
   }
   try {
     await ref.create(doc)

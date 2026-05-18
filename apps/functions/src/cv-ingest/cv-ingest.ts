@@ -41,7 +41,6 @@ import {
   runIndustrySecondPass,
   type WorkHistorySummary,
 } from "./industry-second-pass.js"
-import { enqueueCvConfirmMessage } from "./cv-confirm-message.js"
 import { checkResumeGate } from "./cv-gate.js"
 import {
   isQuotaExhausted,
@@ -146,7 +145,7 @@ export type CvFollowupUser = {
   mem0UserId: string | null
 }
 
-export type CvFollowupDeliveryMode = "runtime" | "none" | "direct"
+export type CvFollowupDeliveryMode = "runtime" | "none"
 
 export type IngestCvDeps = {
   /** Optional in production (resolved via getFirestore()); inject for tests. */
@@ -176,25 +175,8 @@ export type IngestCvDeps = {
    * - none: update profile/tags/memory only; do not message the candidate.
    *   Public candidate-web uploads use this because the user has not started
    *   an iMessage session yet.
-   * - direct: test seam for legacy helper coverage only. Production callers
-   *   must not use it.
    */
   followupDeliveryMode?: CvFollowupDeliveryMode
-
-  /**
-   * Inject for tests. Defaults to a one-shot OpenAI Responses API call
-   * (gpt-5.4-nano) producing a 2-3 sentence Claire-voice follow-up.
-   */
-  llmFollowup?: (parsed: StructuredCv) => Promise<string>
-  /**
-   * Inject for tests. Defaults to a runtime-event handoff; production must
-   * not create sendable `pa-outbound` rows directly from CV ingestion.
-   */
-  enqueueOutboundFollowup?: (
-    db: Firestore,
-    docId: string,
-    payload: Record<string, unknown>
-  ) => Promise<void>
   /**
    * Inject for tests. Defaults to `mem0Add` from `@pa/memory` with config
    * read from process env at call time.
@@ -332,22 +314,6 @@ export type IngestCvDeps = {
   }) => Promise<string[]>
 
   /**
-   * Phase 53 (PARSE-07, D12) — Post-parse Claire confirm enqueue.
-   * Default: `enqueueCvConfirmMessage` from `./cv-confirm-message.ts`.
-   * NEVER throws — fail-open contract preserved for tests.
-   */
-  enqueueCvConfirmFn?: (
-    db: Firestore,
-    args: {
-      userId: string
-      resumeId: string
-      parsed: Record<string, unknown>
-      user?: { toE164: string | null; preferredLang?: "zh" | "en" | null }
-      log?: (event: string, payload?: Record<string, unknown>) => void
-    }
-  ) => Promise<void>
-
-  /**
    * Phase 53 (PARSE-09) — sha256 idempotency lookup.
    * Default: query `parsedCandidateResumes` where
    * `userId == X AND sha256 == Y`, return existing resumeId if found.
@@ -377,7 +343,6 @@ const MAX_TEXT_BYTES = 100_000 // 100 KB cap to bound LLM cost
 const LLM_MODEL = "gpt-5.4-nano"
 
 // Stream E
-const FOLLOWUP_DOC_PREFIX = "out-cvfindings-"
 const PA_USERS_COLLECTION = "pa-users"
 
 function nonEmptyTrimmed(value: string | null | undefined): string | undefined {
@@ -410,33 +375,16 @@ function normalizeCvPhoneToE164(raw: string | null | undefined): string | null {
 // Stream H3 — second-CV overwrite UX
 export const CV_OVERWRITE_FLAG_KEY = "paCvOverwritePromptEnabled"
 export const CV_PENDING_COLLECTION = "pa-cv-pending"
-export const CV_OVERWRITE_OUTBOUND_PREFIX = "out-cv-overwrite-"
+export const CV_OVERWRITE_RUNTIME_PREFIX = "cv-overwrite-"
 
 // iter30 WS1 — feature flag for parseResume v2 (3-tier retry chain).
 // When ON for this user, we route through @pa/pa-resume-parser instead of
 // the legacy single-shot defaultLlmExtract. Default OFF; ramp staff first.
 export const RESUME_PARSER_V2_FLAG_KEY = "paResumeParserV2"
 
-// iter30 WS1 — Claire-voice rejection bodies for the 3 limit-rejected paths.
-// Idempotent on `out-cv-reject-{userId}-{YYYYMMDD}-{reason}` per detail-plan §5.4.
-export const CV_REJECT_OUTBOUND_PREFIX = "out-cv-reject-"
-const CV_REJECT_TEXTS: Record<"not_invited" | "quota_exhausted" | "pdf_too_large", { zh: string; en: string }> = {
-  not_invited: {
-    zh: "我还没问你要简历呢，先聊聊呗～你想找啥方向?",
-    en: "haven't asked for your resume yet — wanna chat first about what you're looking for?",
-  },
-  quota_exhausted: {
-    zh: "我已经看过你两份简历了😅 这次咱们口头聊聊吧 — 现在卡在哪个环节?",
-    en: "I've read two of your resumes already — let's just talk this time. Where are you stuck?",
-  },
-  pdf_too_large: {
-    zh: "诶，你这简历是不是图片版的? 文件太大了 (>5MB)，发个文字版 PDF 给我看看~",
-    en: "is your resume an image PDF? too big to read (>5MB) — can you send a text-based one?",
-  },
-}
+// iter30 WS1 — limit rejections are runtime events, not prewritten outbox copy.
+export const CV_REJECT_RUNTIME_PREFIX = "cv-reject-"
 const CV_PENDING_TTL_MS = 24 * 60 * 60 * 1000 // 24 hours
-const CV_OVERWRITE_PROMPT_BODY =
-  "欸看到你又发了份新简历 — 替代之前那份吗？回复 ❤️ = 替代旧的，🤔 = 当作另一个版本参考 (24 小时后默认替代)"
 
 // --- Default fetch ---------------------------------------------------------
 
@@ -777,10 +725,6 @@ function envFlagTrue(name: string): boolean {
   return v === "true" || v === "1" || v === "on" || v === "yes"
 }
 
-function followupKillSwitchOn(): boolean {
-  return envFlagTrue("PA_CV_FINDINGS_FOLLOWUP_DISABLED")
-}
-
 function mem0KillSwitchOn(): boolean {
   return envFlagTrue("PA_CV_MEM0_WRITE_DISABLED")
 }
@@ -813,88 +757,8 @@ export function detectCvLang(parsed: StructuredCv): "zh" | "en" {
 }
 
 // ---------------------------------------------------------------------------
-// Stream E1 — findings follow-up LLM + runtime handoff
+// Stream E1 — runtime handoff
 // ---------------------------------------------------------------------------
-
-const FOLLOWUP_SYSTEM_PROMPT =
-  "You are Claire (柯莱儿/小柯) — Bay Area EM, ride-or-die roommate. " +
-  "User just uploaded a resume; you've already sent a quick tapback ❤️. " +
-  "Now reply with ONE short follow-up that:\n" +
-  "1. References 2-3 specific things from their CV (last role, company, or signature project — pick what's most distinctive)\n" +
-  "2. Asks ONE forward question about job direction (大厂/startup, industry, sponsorship — pick ONE)\n" +
-  "3. ≤3 sentences total. Roommate-style, NOT formal. No markdown. No emoji unless natural. " +
-  "Use language matching the resume (zh CV → zh reply, en CV → en reply, mixed → user-language).\n\n" +
-  "HARD RULES (Bible v7.5.2 — apply to ALL output):\n" +
-  "- ≤3 sentences. No markdown headers, no bullet lists, no bold/italic.\n" +
-  "- No parens around URLs. No emoji spam. No formal disclaimers.\n" +
-  "- Never break character. Never include meta commentary about the CV parsing."
-
-async function defaultLlmFollowup(parsed: StructuredCv): Promise<string> {
-  // 2026-05-07 Adam directive — CV parse is real OpenAI. Drop
-  // poisoned OPENAI_API_KEY fallback (which is SF key in prod).
-  const { getOpenAIConfig } = await import("../lib/llm-providers.js")
-  const cfg = getOpenAIConfig()
-  if (!cfg.apiKey) throw new Error("missing_api_key")
-  const apiKey = cfg.apiKey
-  const baseURL = process.env.PA_OPENAI_AGENT_BASE_URL?.trim() || cfg.baseURL
-  const { default: OpenAI } = (await import("openai")) as unknown as {
-    default: new (init: { apiKey: string; baseURL?: string }) => {
-      responses: {
-        create: (req: Record<string, unknown>) => Promise<{
-          output_text?: string
-          output?: Array<{ content?: Array<{ text?: string }> }>
-        }>
-      }
-    }
-  }
-  const client = new OpenAI({ apiKey, baseURL })
-  // Trim experiences to top 3 — most LLM cost + most relevance is at the top.
-  const userPayload = JSON.stringify({
-    candidateProfile: parsed.candidateProfile,
-    experiences: parsed.experiences.slice(0, 3),
-    education: parsed.education,
-  })
-  const resp = await client.responses.create({
-    model: LLM_MODEL,
-    input: [
-      { role: "system", content: FOLLOWUP_SYSTEM_PROMPT },
-      { role: "user", content: userPayload },
-    ],
-  })
-  const outputText =
-    typeof resp.output_text === "string" && resp.output_text.length > 0
-      ? resp.output_text
-      : Array.isArray(resp.output) && resp.output[0]?.content?.[0]?.text
-        ? resp.output[0]!.content![0]!.text!
-        : ""
-  if (!outputText) throw new Error("empty_llm_output")
-  return outputText
-}
-
-async function defaultEnqueueOutboundFollowup(
-  db: Firestore,
-  docId: string,
-  payload: Record<string, unknown>
-): Promise<void> {
-  const userId = typeof payload.userId === "string" ? payload.userId : ""
-  const toE164 = typeof payload.toE164 === "string" ? payload.toE164 : undefined
-  const body = typeof payload.body === "string" ? payload.body : ""
-  if (!userId || !body) return
-  const runtime = await enqueueRuntimeEventHandoff(db, {
-    userId,
-    toE164,
-    source: "cv_ingest",
-    eventKind: "candidate_resume_event",
-    idempotencyKey: docId,
-    context: {
-      proposedMessage: body,
-      createdBy: payload.createdBy,
-      rejectReason: payload.rejectReason,
-      rawMeta: payload.rawMeta ?? {},
-    },
-  })
-  if (!runtime.ok) throw new Error(`runtime_handoff_${runtime.reason}`)
-}
 
 async function defaultLookupUserForFollowup(
   db: Firestore,
@@ -1057,94 +921,6 @@ async function runUserTagsMerge(args: {
     args.log("pa.cv_user_tags.write_error", {
       userId: args.userId,
       error: err instanceof Error ? err.message : String(err),
-    })
-  }
-}
-
-/**
- * E1 runner — fire-and-forget LLM follow-up + runtime handoff.
- * NEVER throws. All error paths log + return.
- */
-async function runFindingsFollowup(args: {
-  db: Firestore
-  userId: string
-  resumeId: string
-  parsed: StructuredCv
-  user: CvFollowupUser
-  llmFollowup: NonNullable<IngestCvDeps["llmFollowup"]>
-  enqueueOutboundFollowup: NonNullable<IngestCvDeps["enqueueOutboundFollowup"]>
-  nowIso: () => string
-  log: (event: string, payload?: Record<string, unknown>) => void
-}): Promise<void> {
-  if (followupKillSwitchOn()) {
-    args.log("pa.cv_followup.skipped", { reason: "kill_switch", userId: args.userId })
-    return
-  }
-  if (!args.user.toE164) {
-    args.log("pa.cv_followup.skipped", { reason: "no_phone", userId: args.userId })
-    return
-  }
-  // 1. LLM call
-  let raw: string
-  try {
-    raw = await args.llmFollowup(args.parsed)
-  } catch (err) {
-    args.log("pa.cv_followup.error", {
-      stage: "llm",
-      error: err instanceof Error ? err.message : String(err),
-      userId: args.userId,
-    })
-    return
-  }
-  // 2. Light normalize via @pa/pa-orchestrator's normalizer (strip markdown,
-  //    UTM, length cap). Lazy import keeps module load cheap.
-  let body: string
-  try {
-    const mod = (await import("@pa/pa-orchestrator")) as {
-      normalizeForIMessage: (
-        input: string,
-        opts?: { maxLength?: number }
-      ) => { text: string }
-    }
-    body = mod.normalizeForIMessage(raw, { maxLength: 600 }).text.trim()
-  } catch (err) {
-    args.log("pa.cv_followup.error", {
-      stage: "normalize",
-      error: err instanceof Error ? err.message : String(err),
-      userId: args.userId,
-    })
-    return
-  }
-  if (!body) {
-    args.log("pa.cv_followup.skipped", { reason: "empty_after_normalize", userId: args.userId })
-    return
-  }
-  // 3. Enqueue (idempotent via .create())
-  const docId = `${FOLLOWUP_DOC_PREFIX}${args.resumeId}`
-  const ts = args.nowIso()
-  const payload: Record<string, unknown> = {
-    id: docId,
-    userId: args.userId,
-    toE164: args.user.toE164,
-    body,
-    status: "pending",
-    createdAt: ts,
-    createdBy: "cv-ingest-followup",
-    idempotencyKey: args.resumeId,
-    attempts: 0,
-  }
-  try {
-    await args.enqueueOutboundFollowup(args.db, docId, payload)
-    args.log("pa.cv_followup.enqueued", { docId, userId: args.userId, resumeId: args.resumeId })
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    // Firestore ALREADY_EXISTS → idempotent skip, not a real error.
-    const isDup = /already.?exists|6 ALREADY_EXISTS/i.test(msg)
-    args.log(isDup ? "pa.cv_followup.idempotent_skip" : "pa.cv_followup.error", {
-      stage: "enqueue",
-      error: msg,
-      userId: args.userId,
-      docId,
     })
   }
 }
@@ -1375,51 +1151,41 @@ function ymdUtc(iso: string): string {
   return iso.slice(0, 10).replace(/-/g, "")
 }
 
-/**
- * Pick rejection language. We don't have access to a stable user-language
- * preference here yet (no resume parsed → no `detectCvLang` path), so we
- * default to bilingual zh/en with `\n` separator. This matches Claire's
- * usual code-switch fallback.
- */
-function buildRejectionBody(reason: "not_invited" | "quota_exhausted" | "pdf_too_large"): string {
-  const t = CV_REJECT_TEXTS[reason]
-  return `${t.zh}\n${t.en}`
-}
-
 async function enqueueLimitRejection(args: {
   db: Firestore
   userId: string
   reason: "not_invited" | "quota_exhausted" | "pdf_too_large"
   toE164: string | null
   nowIso: string
-  enqueueOutboundFollowup: NonNullable<IngestCvDeps["enqueueOutboundFollowup"]>
   log: (event: string, payload?: Record<string, unknown>) => void
 }): Promise<void> {
   if (!args.toE164) {
     args.log("pa.cv_reject.skipped", { reason: "no_phone", userId: args.userId, kind: args.reason })
     return
   }
-  const docId = `${CV_REJECT_OUTBOUND_PREFIX}${args.userId}-${ymdUtc(args.nowIso)}-${args.reason}`
-  const body = buildRejectionBody(args.reason)
+  const idempotencyKey = `${CV_REJECT_RUNTIME_PREFIX}${args.userId}-${ymdUtc(args.nowIso)}-${args.reason}`
   try {
-    await args.enqueueOutboundFollowup(args.db, docId, {
-      id: docId,
+    const runtime = await enqueueRuntimeEventHandoff(args.db, {
       userId: args.userId,
       toE164: args.toE164,
-      body,
-      status: "pending",
-      createdAt: args.nowIso,
-      createdBy: "cv-ingest-reject",
-      idempotencyKey: docId,
-      rejectReason: args.reason,
-      attempts: 0,
+      source: "cv_ingest",
+      eventKind: "resume_ingest_rejected",
+      idempotencyKey,
+      nowIso: () => args.nowIso,
+      context: {
+        rejectReason: args.reason,
+        cvIngestGate: true,
+      },
     })
-    args.log("pa.cv_reject.enqueued", { userId: args.userId, kind: args.reason, docId })
+    args.log("pa.cv_reject.runtime_handoff", {
+      userId: args.userId,
+      kind: args.reason,
+      runtime,
+    })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    const isDup = /already.?exists|6 ALREADY_EXISTS/i.test(msg)
-    args.log(isDup ? "pa.cv_reject.idempotent_skip" : "pa.cv_reject.error", {
-      stage: "enqueue",
+    args.log("pa.cv_reject.error", {
+      stage: "runtime_handoff",
       kind: args.reason,
       userId: args.userId,
       error: msg,
@@ -1588,9 +1354,6 @@ export async function ingestCv(
   const fetchPdf = deps?.fetchPdf ?? defaultFetchPdf
   const parsePdf = deps?.parsePdf ?? defaultParsePdf
   const llmExtract = deps?.llmExtract ?? defaultLlmExtract
-  const llmFollowup = deps?.llmFollowup ?? defaultLlmFollowup
-  const enqueueOutboundFollowup =
-    deps?.enqueueOutboundFollowup ?? defaultEnqueueOutboundFollowup
   const mem0AddFn = deps?.mem0Add ?? defaultMem0Add
   const lookupUserForFollowup =
     deps?.lookupUserForFollowup ?? defaultLookupUserForFollowup
@@ -1637,23 +1400,6 @@ export async function ingestCv(
       })
       return out as string[]
     })
-  const enqueueCvConfirmFn =
-    deps?.enqueueCvConfirmFn ??
-    ((db: Firestore, a: {
-      userId: string
-      resumeId: string
-      parsed: Record<string, unknown>
-      user?: { toE164: string | null; preferredLang?: "zh" | "en" | null }
-      log?: (event: string, payload?: Record<string, unknown>) => void
-    }) =>
-      enqueueCvConfirmMessage(db, {
-        userId: a.userId,
-        resumeId: a.resumeId,
-        parsed: a.parsed,
-        user: a.user,
-        log: a.log,
-        nowIso,
-      }))
   const findResumeBySha256 =
     deps?.findResumeBySha256 ?? defaultFindResumeBySha256
   const resolveCandidateIdentity =
@@ -1698,7 +1444,6 @@ export async function ingestCv(
       reason,
       toE164: user?.toE164 ?? null,
       nowIso: nowIso(),
-      enqueueOutboundFollowup,
       log,
     })
     return { ok: false, reason }
@@ -2098,10 +1843,10 @@ export async function ingestCv(
       prior = null
     }
   }
-  if (h3FlagOn && prior && followupDeliveryMode === "direct") {
-    // Flag ON + existing → legacy stage + direct prompt path. This is now
-    // limited to explicit legacy/test callers; production web/admin uploads
-    // and iMessage runtime paths must not direct-push overwrite prompts.
+  if (h3FlagOn && prior && followupDeliveryMode === "runtime") {
+    // Flag ON + existing resume in an active iMessage path: stage the new
+    // parsed doc and hand structured overwrite facts to runtime. Runtime owns
+    // the actual candidate-visible prompt.
     const ts = nowIso()
     // Reserve a NEW Firestore auto-id for the eventual promoted row. We
     // only allocate the id; we DO NOT write parsedCandidateResumes here.
@@ -2182,14 +1927,12 @@ export async function ingestCv(
         newResumeId,
       })
       if (!isDup) {
-        // Real failure → fall through to legacy write so we don't drop
-        // the CV silently. Legacy path is the safe baseline.
+        // Real failure: do not message. Continue with the normal profile write
+        // so the resume is not dropped.
         h3FlagOn = false
       }
     }
     if (pendingWritten) {
-      // Enqueue runtime prompt context (idempotent docId per newResumeId).
-      const promptDocId = `${CV_OVERWRITE_OUTBOUND_PREFIX}${newResumeId}`
       let userForPrompt: CvFollowupUser | null = null
       try {
         userForPrompt = await lookupUserForFollowup(dbHandle, userId)
@@ -2201,43 +1944,36 @@ export async function ingestCv(
       }
       if (userForPrompt?.toE164) {
         try {
-          await enqueueOutboundFollowup(dbHandle, promptDocId, {
-            id: promptDocId,
+          const runtime = await enqueueRuntimeEventHandoff(dbHandle, {
             userId: userId,
             toE164: userForPrompt.toE164,
-            body: CV_OVERWRITE_PROMPT_BODY,
-            status: "pending",
-            createdAt: ts,
-            createdBy: "cv-overwrite-prompt",
-            idempotencyKey: newResumeId,
-            attempts: 0,
-            // Carry resumeIds in rawMeta so the tapback handler can resolve
-            // the pending row without re-querying by docId pattern.
-            rawMeta: {
+            sessionId: args.sessionId,
+            source: "cv_ingest",
+            eventKind: "resume_overwrite_pending",
+            idempotencyKey: `${CV_OVERWRITE_RUNTIME_PREFIX}${newResumeId}`,
+            nowIso: () => ts,
+            context: {
               cvOverwrite: {
                 newResumeId,
                 previousResumeId: prior.id,
               },
+              pendingTtlHours: 24,
             },
           })
-          log("pa.cv_overwrite.prompt_enqueued", {
+          log("pa.cv_overwrite.runtime_handoff", {
             userId: userId,
             newResumeId,
             previousResumeId: prior.id,
-            docId: promptDocId,
+            runtime,
           })
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err)
-          const isDup = /already.?exists|6 ALREADY_EXISTS/i.test(msg)
-          log(
-            isDup ? "pa.cv_overwrite.prompt_idempotent_skip" : "pa.cv_overwrite.error",
-            {
-              stage: "prompt_enqueue",
-              error: msg,
-              userId: userId,
-              docId: promptDocId,
-            }
-          )
+          log("pa.cv_overwrite.error", {
+            stage: "runtime_handoff",
+            error: msg,
+            userId: userId,
+            newResumeId,
+          })
         }
       } else {
         log("pa.cv_overwrite.prompt_skipped", {
@@ -2258,11 +1994,11 @@ export async function ingestCv(
       }
     }
     // Fell through (pendingWritten === false AND h3FlagOn flipped to false)
-    // → continue to legacy write below. Variables `prior` / `newResumeId`
+    // → continue to normal write below. Variables `prior` / `newResumeId`
     // are local only and not referenced further.
   }
 
-  // 5. Firestore write (legacy single-bucket path — backward compat when
+  // 5. Firestore write (normal parsed-resume profile path when
   //    flag OFF or no prior resume exists).
   let resumeId: string
   try {
@@ -2271,7 +2007,7 @@ export async function ingestCv(
     // read by orchestrator-deps.generateJobRecs). Frequency-ranked + capped
     // at 12 from candidateProfile.skills + (when v2) workHistory[].skills.
     // iter34 sprint B.9 — sharedTopSkills computed once above; reused here
-    // so the legacy + H3 staged rows carry the same field set.
+    // so the normal + H3 staged rows carry the same field set.
     const baseDoc: Record<string, unknown> = {
       userId: userId,
       candidateProfile: parsed.candidateProfile,
@@ -2476,58 +2212,11 @@ export async function ingestCv(
         log,
       }),
     ]
-    if (followupDeliveryMode === "direct") {
-      branches.push(
-        runFindingsFollowup({
-          db: dbHandle,
-          userId: userId,
-          resumeId,
-          parsed,
-          user,
-          llmFollowup,
-          enqueueOutboundFollowup,
-          nowIso,
-          log,
-        }),
-        // Legacy direct confirm is retained only as a test seam. Production
-        // followups must go through runtime so language/session/safety gates
-        // can decide whether anything should be sent.
-        enqueueCvConfirmFn(dbHandle, {
-          userId: userId,
-          resumeId,
-          parsed: {
-            // v2 fields (preferred when v2 ran)
-            ...(v2Output
-              ? {
-                  workHistory: v2Output.parsed.workHistory,
-                  skills: v2Output.parsed.skills,
-                  relevantIndustry: v2Output.parsed.relevantIndustry,
-                }
-              : {}),
-            // legacy v1 fallback fields
-            experiences: parsed.experiences,
-            candidateProfile: { skills: parsed.candidateProfile.skills },
-            industryTags: parsed.industryTags,
-          },
-          user,
-          log,
-        }).catch((err: unknown) => {
-          // enqueueCvConfirmFn is contracted not to throw, but the test seam
-          // may. Defensive catch keeps Promise.allSettled clean.
-          log("pa.cv_confirm.unexpected_throw", {
-            userId: userId,
-            resumeId,
-            error: err instanceof Error ? err.message : String(err),
-          })
-        })
-      )
-    } else {
-      log("pa.cv_followup.direct_outbound_skipped", {
-        reason: followupDeliveryMode === "none" ? "delivery_none" : "runtime_delivery",
-        userId: userId,
-        resumeId,
-      })
-    }
+    log("pa.cv_followup.direct_outbound_removed", {
+      reason: followupDeliveryMode === "none" ? "delivery_none" : "runtime_delivery",
+      userId: userId,
+      resumeId,
+    })
     // iter30 WS1 — Stream E3: qaBank → Mem0 with metadata + tag-event coupling.
     // Only runs when parser v2 produced inferredAnswers. Failure is silent
     // (the Mem0 fact body and outbound followup are already written).
@@ -2584,7 +2273,7 @@ export async function ingestCv(
       log("pa.cv_followup.synthetic_trigger_skipped", {
         userId: userId,
         resumeId,
-        reason: followupDeliveryMode === "none" ? "delivery_none" : "direct_delivery",
+        reason: "delivery_none",
       })
     }
   } else {

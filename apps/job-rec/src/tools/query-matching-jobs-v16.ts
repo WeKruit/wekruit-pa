@@ -1213,7 +1213,7 @@ export type QueryMatchingJobsV16ToolInput = z.infer<typeof QueryMatchingJobsV16T
 
 export type QueryMatchingJobsV16ToolDeps = {
   db: Firestore
-  /** WeKruit user id — injected by the recruiter-flow caller, not the LLM. */
+  /** WeKruit user id — injected by the runtime caller, not the LLM. */
   userId: string
   log?: (event: string, payload?: Record<string, unknown>) => void
 }

@@ -191,8 +191,6 @@ function makeStubbedDeps(opts: {
   log: IngestCvDeps["log"]
   parsed?: StructuredCv
 }) {
-  const llmFollowupCalls: Array<{ parsed: StructuredCv }> = []
-  const enqueueCalls: Array<{ docId: string; payload: Record<string, unknown> }> = []
   const mem0Calls: Array<{ userId: string; partitionKey: string; factBody: string }> = []
   const lookupCalls: Array<{ userId: string }> = []
 
@@ -200,7 +198,7 @@ function makeStubbedDeps(opts: {
     db: opts.db,
     log: opts.log,
     nowIso: () => "2026-04-30T00:00:00.000Z",
-    followupDeliveryMode: "direct",
+    followupDeliveryMode: "runtime",
     // iter30 WS1 — pre-iter30 fixture stubs don't populate gate / quota
     // Firestore docs; bypass the new limits to preserve test intent.
     skipLimitEnforcement: true,
@@ -210,13 +208,6 @@ function makeStubbedDeps(opts: {
       parsed: opts.parsed ?? happyParsed(),
       usage: { input_tokens: 200, output_tokens: 80, total_tokens: 280 },
     }),
-    llmFollowup: async (parsed) => {
-      llmFollowupCalls.push({ parsed })
-      return "saw your founder run at WeKruit — wild. you targeting startup again or thinking 大厂 this round?"
-    },
-    enqueueOutboundFollowup: async (_db, docId, payload) => {
-      enqueueCalls.push({ docId, payload: { ...payload } })
-    },
     mem0Add: async (a) => {
       mem0Calls.push({ ...a })
     },
@@ -225,7 +216,7 @@ function makeStubbedDeps(opts: {
       return { toE164: "+14243201960", mem0UserId: null }
     },
   }
-  return { deps, llmFollowupCalls, enqueueCalls, mem0Calls, lookupCalls }
+  return { deps, mem0Calls, lookupCalls }
 }
 
 // ---------- Tests ------------------------------------------------------------
@@ -354,9 +345,7 @@ describe("ingestCv", () => {
           parsed: happyParsed(),
           usage: { input_tokens: 1234, output_tokens: 567, total_tokens: 1801 },
         }),
-        // Stream E paths also exercised — stub them to no-ops.
-        llmFollowup: async () => "ignore",
-        enqueueOutboundFollowup: async () => {},
+        // Stream E paths also exercised — mem0 stubbed to no-op.
         mem0Add: async () => {},
         lookupUserForFollowup: async () => ({ toE164: "+1555", mem0UserId: null }),
       }
@@ -372,112 +361,14 @@ describe("ingestCv", () => {
     assert.equal(p.model, "gpt-5.4-nano")
   })
 
-  // -------------- Stream E1 — findings follow-up --------------
+  // -------------- Stream E1 — runtime handoff --------------
 
-  it("E1 happy: cv-findings LLM called → outbound enqueued with idempotent docId out-cvfindings-{resumeId}", async () => {
-    const { db, state } = makeFakeDb()
-    const { log } = captureLog()
-    const { deps, llmFollowupCalls, enqueueCalls } = makeStubbedDeps({ db, log })
-    delete process.env.PA_CV_FINDINGS_FOLLOWUP_DISABLED
-    delete process.env.PA_CV_MEM0_WRITE_DISABLED
-
-    const res = await ingestCv(
-      { userId: "user_x", mediaUrl: "https://example.com/path/cv.pdf" },
-      deps
-    )
-    assert.equal(res.ok, true)
-    assert.ok(res.ok && res.resumeId.startsWith("rsm_"))
-
-    assert.equal(llmFollowupCalls.length, 1, "llmFollowup should fire once")
-    assert.equal(llmFollowupCalls[0]!.parsed.candidateProfile.name, "Adam Test")
-
-    assert.equal(enqueueCalls.length, 1, "outbound should be enqueued exactly once")
-    const enq = enqueueCalls[0]!
-    assert.equal(enq.docId, `out-cvfindings-${(res as { ok: true; resumeId: string }).resumeId}`)
-    assert.equal(enq.payload.userId, "user_x")
-    assert.equal(enq.payload.toE164, "+14243201960")
-    assert.equal(enq.payload.status, "pending")
-    assert.equal(enq.payload.attempts, 0)
-    assert.equal(enq.payload.createdBy, "cv-ingest-followup")
-    assert.equal(enq.payload.idempotencyKey, (res as { ok: true; resumeId: string }).resumeId)
-    assert.equal(typeof enq.payload.body, "string")
-    // Body should be the LLM string (light-normalize ≤600 chars, no markdown)
-    assert.ok(((enq.payload.body as string) ?? "").includes("WeKruit"))
-    // Note: state.outbound stays empty here because we stubbed
-    // enqueueOutboundFollowup. Idempotency through the default Firestore
-    // path is exercised in the dedicated idempotency test below.
-  })
-
-  it("E1 LLM throws → ingestCv still ok:true, NO outbound enqueued", async () => {
-    const { db, state } = makeFakeDb()
-    const { events, log } = captureLog()
-    const { deps, enqueueCalls } = makeStubbedDeps({ db, log })
-    deps.llmFollowup = async () => {
-      throw new Error("openai_500")
-    }
-    // Phase 53 — stub Claire confirm to no-op so this test stays focused on E1.
-    deps.enqueueCvConfirmFn = async () => {}
-    delete process.env.PA_CV_FINDINGS_FOLLOWUP_DISABLED
-
-    const res = await ingestCv(
-      { userId: "user_x", mediaUrl: "https://example.com/cv.pdf" },
-      deps
-    )
-    assert.equal(res.ok, true)
-    // Filter to E1 cv-findings enqueue only — Phase 53 adds a separate
-    // cv-confirm enqueue with a different docId prefix.
-    const e1Calls = enqueueCalls.filter((c) =>
-      c.docId.startsWith("out-cvfindings-")
-    )
-    assert.equal(e1Calls.length, 0)
-    const e1Outbound = Array.from(state.outbound.keys()).filter((k) =>
-      k.startsWith("out-cvfindings-")
-    )
-    assert.equal(e1Outbound.length, 0)
-    const errEvt = events.find(
-      (e) => e.event === "pa.cv_followup.error" && e.payload?.stage === "llm"
-    )
-    assert.ok(errEvt, "expected pa.cv_followup.error/llm log event")
-    // parsedCandidateResumes write must have still completed.
-    assert.equal(state.resumes.length, 1)
-  })
-
-  it("E1 kill switch (PA_CV_FINDINGS_FOLLOWUP_DISABLED=true) → no LLM call, no outbound", async () => {
-    const { db, state } = makeFakeDb()
-    const { log } = captureLog()
-    const { deps, llmFollowupCalls, enqueueCalls } = makeStubbedDeps({ db, log })
-    // Phase 53 — stub Claire confirm to no-op so this test stays focused on E1.
-    deps.enqueueCvConfirmFn = async () => {}
-    process.env.PA_CV_FINDINGS_FOLLOWUP_DISABLED = "true"
-    try {
-      const res = await ingestCv(
-        { userId: "user_x", mediaUrl: "https://example.com/cv.pdf" },
-        deps
-      )
-      assert.equal(res.ok, true)
-      assert.equal(llmFollowupCalls.length, 0, "LLM must not be called when kill switch is on")
-      const e1Calls = enqueueCalls.filter((c) =>
-        c.docId.startsWith("out-cvfindings-")
-      )
-      assert.equal(e1Calls.length, 0, "E1 outbound must not be enqueued when kill switch is on")
-      const e1Outbound = Array.from(state.outbound.keys()).filter((k) =>
-        k.startsWith("out-cvfindings-")
-      )
-      assert.equal(e1Outbound.length, 0)
-    } finally {
-      delete process.env.PA_CV_FINDINGS_FOLLOWUP_DISABLED
-    }
-  })
-  it("E1 default enqueue path writes a runtime event, not direct pa-outbound", async () => {
+  it("E1 runtime delivery writes a resume_parse_completed event and no direct pa-outbound", async () => {
     const { db, state } = makeFakeDb()
     seedRuntimeSession(state)
     const { events, log } = captureLog()
-    const { deps, llmFollowupCalls } = makeStubbedDeps({ db, log })
-    // Use the default enqueueOutboundFollowup (runtime-event handoff)
-    deps.enqueueOutboundFollowup = undefined
-    // Phase 53 — stub Claire confirm to no-op so this test stays focused on E1.
-    deps.enqueueCvConfirmFn = async () => {}
-    delete process.env.PA_CV_FINDINGS_FOLLOWUP_DISABLED
+    const { deps } = makeStubbedDeps({ db, log })
+    deps.followupDeliveryMode = "runtime"
 
     const res1 = await ingestCv(
       { userId: "user_x", mediaUrl: "https://example.com/cv.pdf" },
@@ -488,12 +379,11 @@ describe("ingestCv", () => {
     assert.equal(state.outbound.size, 0)
     const e1Events = [...state.inboundEvents.values()].filter((row) => {
       const meta = row.rawMeta as Record<string, unknown> | undefined
-      return meta?.runtimeEventSource === "cv_ingest" && meta?.runtimeEventKind === "candidate_resume_event"
+      return meta?.runtimeEventSource === "cv_ingest" && meta?.runtimeEventKind === "resume_parse_completed"
     })
     assert.equal(e1Events.length, 1)
-    assert.match(String(e1Events[0]!.idempotencyKey), new RegExp(`out-cvfindings-${id1}`))
-    assert.equal(llmFollowupCalls.length, 1)
-    assert.ok(events.some((e) => e.event === "pa.cv_followup.enqueued"))
+    assert.match(String(e1Events[0]!.idempotencyKey), new RegExp(`cv-parsed:user_x:${id1}`))
+    assert.ok(events.some((e) => e.event === "pa.cv_followup.synthetic_trigger_written"))
   })
 
 
@@ -1195,10 +1085,6 @@ describe("ingestCv sha256 idempotency (Phase 53 PARSE-09)", () => {
       parseCount++
       return { parsed: happyParsed() }
     }
-    let confirmCount = 0
-    deps.enqueueCvConfirmFn = async () => {
-      confirmCount++
-    }
     // Simulate "already parsed this PDF" via injected hit.
     deps.findResumeBySha256 = async () => "rsm_pre_existing"
 
@@ -1210,7 +1096,7 @@ describe("ingestCv sha256 idempotency (Phase 53 PARSE-09)", () => {
     assert.ok(res.ok && res.resumeId === "rsm_pre_existing")
     assert.equal(parseCount, 0, "must not re-parse on idempotent hit")
     assert.equal(state.resumes.length, 0, "must not write a new doc")
-    assert.equal(confirmCount, 0, "must not enqueue confirm again")
+    assert.equal(state.outbound.size, 0, "must not enqueue legacy confirm outbound")
     const hit = events.find((e) => e.event === "pa.cv_ingest.idempotent_hit")
     assert.ok(hit, "expected pa.cv_ingest.idempotent_hit log")
   })
@@ -1220,7 +1106,6 @@ describe("ingestCv sha256 idempotency (Phase 53 PARSE-09)", () => {
     const { log } = captureLog()
     const { deps } = makeStubbedDeps({ db, log })
     deps.findResumeBySha256 = async () => null
-    deps.enqueueCvConfirmFn = async () => {}
 
     const res = await ingestCv(
       { userId: "user_x", mediaUrl: "https://example.com/cv.pdf" },
@@ -1241,7 +1126,6 @@ describe("ingestCv sha256 idempotency (Phase 53 PARSE-09)", () => {
     deps.findResumeBySha256 = async () => {
       throw new Error("firestore_unreachable")
     }
-    deps.enqueueCvConfirmFn = async () => {}
     const res = await ingestCv(
       { userId: "user_x", mediaUrl: "https://example.com/cv.pdf" },
       deps
@@ -1290,7 +1174,6 @@ describe("ingestCv candidate identity resolution (v2.0 S2)", () => {
       order.push(`sha:${userId}`)
       return "rsm_existing"
     }
-    deps.enqueueCvConfirmFn = async () => {}
 
     const res = await ingestCv(
       {
@@ -1312,7 +1195,7 @@ describe("ingestCv candidate identity resolution (v2.0 S2)", () => {
   it("identity conflict stops before resume, tags, memory, or follow-up writes", async () => {
     const { db, state } = makeFakeDb()
     const { log } = captureLog()
-    const { deps, mem0Calls, enqueueCalls } = makeStubbedDeps({ db, log })
+    const { deps, mem0Calls } = makeStubbedDeps({ db, log })
     let tagWriteCount = 0
     deps.writeUserTags = async () => {
       tagWriteCount++
@@ -1349,7 +1232,8 @@ describe("ingestCv candidate identity resolution (v2.0 S2)", () => {
     assert.equal(state.resumes.length, 0)
     assert.equal(tagWriteCount, 0)
     assert.equal(mem0Calls.length, 0)
-    assert.equal(enqueueCalls.length, 0)
+    assert.equal(state.outbound.size, 0)
+    assert.equal(state.inboundEvents.size, 0)
   })
 
   it("bulk intake can require PDF-extracted email before identity or permanent writes", async () => {
@@ -1362,7 +1246,7 @@ describe("ingestCv candidate identity resolution (v2.0 S2)", () => {
         email: null,
       },
     }
-    const { deps, mem0Calls, enqueueCalls } = makeStubbedDeps({
+    const { deps, mem0Calls } = makeStubbedDeps({
       db,
       log,
       parsed: missingEmailParsed,
@@ -1398,7 +1282,8 @@ describe("ingestCv candidate identity resolution (v2.0 S2)", () => {
     assert.equal(state.resumes.length, 0)
     assert.equal(tagWriteCount, 0)
     assert.equal(mem0Calls.length, 0)
-    assert.equal(enqueueCalls.length, 0)
+    assert.equal(state.outbound.size, 0)
+    assert.equal(state.inboundEvents.size, 0)
     assert.ok(events.find((e) => e.event === "pa.cv_ingest.missing_extracted_email"))
   })
 })
@@ -1423,7 +1308,6 @@ describe("ingestCv industry second-pass (Phase 53 PARSE-08, D15)", () => {
       secondPassInvoked = true
       return ["financial_technology", "software_and_saas"]
     }
-    deps.enqueueCvConfirmFn = async () => {}
     const res = await ingestCv(
       { userId: "user_x", mediaUrl: "https://example.com/cv.pdf" },
       deps
@@ -1449,7 +1333,6 @@ describe("ingestCv industry second-pass (Phase 53 PARSE-08, D15)", () => {
       secondPassInvoked = true
       return []
     }
-    deps.enqueueCvConfirmFn = async () => {}
     await ingestCv(
       { userId: "user_x", mediaUrl: "https://example.com/cv.pdf" },
       deps
@@ -1471,7 +1354,6 @@ describe("ingestCv industry second-pass (Phase 53 PARSE-08, D15)", () => {
     }
     const { deps } = makeStubbedDeps({ db, log, parsed: otherParsed })
     deps.runIndustrySecondPassFn = async () => []
-    deps.enqueueCvConfirmFn = async () => {}
     const res = await ingestCv(
       { userId: "user_x", mediaUrl: "https://example.com/cv.pdf" },
       deps
@@ -1498,7 +1380,6 @@ describe("ingestCv industry second-pass (Phase 53 PARSE-08, D15)", () => {
     deps.runIndustrySecondPassFn = async () => {
       throw new Error("simulated")
     }
-    deps.enqueueCvConfirmFn = async () => {}
     const res = await ingestCv(
       { userId: "user_x", mediaUrl: "https://example.com/cv.pdf" },
       deps
@@ -1512,74 +1393,30 @@ describe("ingestCv industry second-pass (Phase 53 PARSE-08, D15)", () => {
   })
 })
 
-// ---------- Phase 53 (PARSE-07) post-parse Claire confirm enqueue -----------
+// ---------- Phase 53 (PARSE-07) runtime-only post-parse handoff -----------
 
-describe("ingestCv Claire confirm enqueue (Phase 53 PARSE-07, D12)", () => {
-  it("happy path: enqueueCvConfirmFn called with parsed + user", async () => {
+describe("ingestCv post-parse runtime handoff (Phase 53 PARSE-07, D12)", () => {
+  it("no follow-up user record → writes profile, skips runtime message", async () => {
     const { db, state } = makeFakeDb()
-    const { log } = captureLog()
-    const { deps } = makeStubbedDeps({ db, log })
-    const captured: Array<{ userId: string; resumeId: string }> = []
-    deps.enqueueCvConfirmFn = async (_db, args) => {
-      captured.push({ userId: args.userId, resumeId: args.resumeId })
-    }
-    const res = await ingestCv(
-      { userId: "user_x", mediaUrl: "https://example.com/cv.pdf" },
-      deps
-    )
-    assert.equal(res.ok, true)
-    assert.equal(captured.length, 1, "enqueueCvConfirmFn must be called once")
-    assert.equal(captured[0]!.userId, "user_x")
-    assert.ok(captured[0]!.resumeId.startsWith("rsm_"))
-    void state
-  })
-
-  it("enqueueCvConfirmFn throws → ingestCv still ok:true", async () => {
-    const { db, state } = makeFakeDb()
-    const { events, log } = captureLog()
-    const { deps } = makeStubbedDeps({ db, log })
-    deps.enqueueCvConfirmFn = async () => {
-      throw new Error("simulated")
-    }
-    const res = await ingestCv(
-      { userId: "user_x", mediaUrl: "https://example.com/cv.pdf" },
-      deps
-    )
-    assert.equal(res.ok, true, "confirm enqueue failure must NOT break cv-ingest")
-    assert.equal(state.resumes.length, 1)
-    const unexpected = events.find(
-      (e) => e.event === "pa.cv_confirm.unexpected_throw"
-    )
-    assert.ok(unexpected, "expected pa.cv_confirm.unexpected_throw log")
-  })
-
-  it("no user phone → confirm not invoked (Stream E branch skipped)", async () => {
-    const { db } = makeFakeDb()
     const { log } = captureLog()
     const { deps } = makeStubbedDeps({ db, log })
     deps.lookupUserForFollowup = async () => null
-    let invoked = false
-    deps.enqueueCvConfirmFn = async () => {
-      invoked = true
-    }
     const res = await ingestCv(
       { userId: "user_x", mediaUrl: "https://example.com/cv.pdf" },
       deps
     )
     assert.equal(res.ok, true)
-    assert.equal(invoked, false, "confirm enqueue runs only with valid user phone")
+    assert.equal(state.resumes.length, 1)
+    assert.equal(state.outbound.size, 0, "CV ingest must not write direct outbounds")
+    assert.equal(state.inboundEvents.size, 0, "no routable user means no runtime event")
   })
 
   it("runtime delivery writes a synthetic inbound event instead of direct outbounds", async () => {
     const { db, state } = makeFakeDb()
     seedRuntimeSession(state)
     const { events, log } = captureLog()
-    const { deps, llmFollowupCalls, enqueueCalls } = makeStubbedDeps({ db, log })
+    const { deps } = makeStubbedDeps({ db, log })
     deps.followupDeliveryMode = "runtime"
-    let confirmInvoked = false
-    deps.enqueueCvConfirmFn = async () => {
-      confirmInvoked = true
-    }
 
     const res = await ingestCv(
       { userId: "user_x", mediaUrl: "https://example.com/cv.pdf" },
@@ -1587,9 +1424,7 @@ describe("ingestCv Claire confirm enqueue (Phase 53 PARSE-07, D12)", () => {
     )
 
     assert.equal(res.ok, true)
-    assert.equal(llmFollowupCalls.length, 0, "runtime mode must not call direct findings LLM")
-    assert.equal(enqueueCalls.length, 0, "runtime mode must not enqueue direct findings outbound")
-    assert.equal(confirmInvoked, false, "runtime mode must not enqueue direct confirm outbound")
+    assert.equal(state.outbound.size, 0, "runtime mode must not enqueue direct findings outbound")
     assert.equal(state.inboundEvents.size, 1, "runtime mode should hand off through pa-inbound-events")
     const event = [...state.inboundEvents.values()][0]!
     assert.equal(event.status, "pending")
@@ -1601,19 +1436,15 @@ describe("ingestCv Claire confirm enqueue (Phase 53 PARSE-07, D12)", () => {
     assert.equal(rawMeta.runtimeEventKind, "resume_parse_completed")
     const context = rawMeta.context as Record<string, unknown>
     assert.equal(context.cvParsedTrigger, true)
-    const skipped = events.find((e) => e.event === "pa.cv_followup.direct_outbound_skipped")
+    const skipped = events.find((e) => e.event === "pa.cv_followup.direct_outbound_removed")
     assert.equal(skipped?.payload?.reason, "runtime_delivery")
   })
 
   it("none delivery updates the profile without direct or runtime messages", async () => {
     const { db, state } = makeFakeDb()
     const { events, log } = captureLog()
-    const { deps, llmFollowupCalls, enqueueCalls, mem0Calls } = makeStubbedDeps({ db, log })
+    const { deps, mem0Calls } = makeStubbedDeps({ db, log })
     deps.followupDeliveryMode = "none"
-    let confirmInvoked = false
-    deps.enqueueCvConfirmFn = async () => {
-      confirmInvoked = true
-    }
 
     const res = await ingestCv(
       { userId: "user_x", mediaUrl: "https://example.com/cv.pdf" },
@@ -1623,11 +1454,9 @@ describe("ingestCv Claire confirm enqueue (Phase 53 PARSE-07, D12)", () => {
     assert.equal(res.ok, true)
     assert.equal(state.resumes.length, 1, "profile parsing still writes parsedCandidateResumes")
     assert.equal(mem0Calls.length, 1, "profile parsing still writes long-term memory")
-    assert.equal(llmFollowupCalls.length, 0, "none mode must not call direct findings LLM")
-    assert.equal(enqueueCalls.length, 0, "none mode must not enqueue direct findings outbound")
-    assert.equal(confirmInvoked, false, "none mode must not enqueue direct confirm outbound")
+    assert.equal(state.outbound.size, 0, "none mode must not enqueue direct findings outbound")
     assert.equal(state.inboundEvents.size, 0, "none mode must not synthesize an iMessage event")
-    const directSkipped = events.find((e) => e.event === "pa.cv_followup.direct_outbound_skipped")
+    const directSkipped = events.find((e) => e.event === "pa.cv_followup.direct_outbound_removed")
     assert.equal(directSkipped?.payload?.reason, "delivery_none")
     const syntheticSkipped = events.find((e) => e.event === "pa.cv_followup.synthetic_trigger_skipped")
     assert.equal(syntheticSkipped?.payload?.reason, "delivery_none")

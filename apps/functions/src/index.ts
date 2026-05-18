@@ -1228,6 +1228,7 @@ export const paRuntimeMode = onRequest(
     region: "us-central1",
     memory: "256MiB",
     timeoutSeconds: 30,
+    maxInstances: 1,
     cors: false,
   },
   async (req, res) => {
@@ -1858,6 +1859,7 @@ export const paOnTapbackEvent = onDocumentCreated(
     memory: "256MiB",
     timeoutSeconds: 60,
     concurrency: 1,
+    maxInstances: 1,
   },
   async (event) => {
     const snap = event.data
@@ -1879,8 +1881,8 @@ export const paOnTapbackEvent = onDocumentCreated(
     }
     try {
       // Stream H3 — try the cv-overwrite resolver first. If the tapback was
-      // a love/question reaction on an `out-cv-overwrite-*` prompt, this
-      // promotes the staged CV (replace or supplement) and short-circuits
+      // a love/question reaction on a runtime-authored CV overwrite prompt,
+      // this promotes the staged CV (replace or supplement) and short-circuits
       // the job-rec flow. Otherwise we fall through to the existing
       // match-feedback pipeline.
       const { processCvOverwriteTapback } = await import("./job-rec/cv-overwrite-tapback.js")

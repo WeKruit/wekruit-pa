@@ -391,7 +391,6 @@ export {
   getTemplate as getUpstreamTemplate,
   getTemplateByEventKind as getUpstreamTemplateByEventKind,
   saveTemplate as saveUpstreamTemplate,
-  renderTemplate as renderUpstreamTemplate,
   checkRateLimit as checkUpstreamRateLimit,
 } from "./upstream-events.js"
 export type {
