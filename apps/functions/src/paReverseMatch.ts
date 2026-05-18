@@ -344,7 +344,7 @@ export async function enqueueReverseMatchNotify(
 export const paReverseMatch = onRequest(
   {
     region: "us-central1",
-    memory: "1GiB",
+    memory: "512MiB",
     timeoutSeconds: 60,
     cors: [
       "https://wekruit-pa.web.app",
