@@ -31,9 +31,12 @@
     "node": "24"
   },
   "scripts": {
-    "prebuild": "npm run build --workspace=@wekruit/shared-tags && npm run build --workspace=@pa/core-types && npm run build --workspace=@pa/firebase-admin && npm run build --workspace=@pa/pa-broker && npm run build --workspace=@pa/pa-safety && npm run build --workspace=@pa/agent-runtime && npm run build --workspace=@pa/memory && npm run build --workspace=@pa/pa-persistence && npm run build --workspace=@pa/pa-connectors && npm run build --workspace=@pa/agent-registry && npm run build --workspace=@pa/pa-orchestrator",
+    "ensure:node": "node ../../scripts/ensure-node24.mjs",
+    "prebuild": "npm run ensure:node && npm run build --workspace=@wekruit/shared-tags && npm run build --workspace=@pa/core-types && npm run build --workspace=@pa/firebase-admin && npm run build --workspace=@pa/pa-broker && npm run build --workspace=@pa/pa-safety && npm run build --workspace=@pa/agent-runtime && npm run build --workspace=@pa/memory && npm run build --workspace=@pa/pa-persistence && npm run build --workspace=@pa/pa-connectors && npm run build --workspace=@pa/agent-registry && npm run build --workspace=@pa/pa-orchestrator",
     "build": "tsc",
+    "pretypecheck": "npm run ensure:node",
     "typecheck": "tsc --noEmit",
+    "pretest": "npm run ensure:node",
     "test": "node --import tsx --test src/__tests__/*.test.ts src/__tests__/tools/*.test.ts src/__tests__/lib/*.test.ts"
   },
   "dependencies": {
