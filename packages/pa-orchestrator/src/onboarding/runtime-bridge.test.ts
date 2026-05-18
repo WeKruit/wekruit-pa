@@ -203,6 +203,44 @@ describe("runOnboardingPipelineTurn — q_email verification bridge", () => {
 })
 
 describe("runOnboardingPipelineTurn — [cv-parsed] synthetic", () => {
+  it("rejects runtime events before the deterministic question pipeline", async () => {
+    const calls: string[] = []
+    const result = await runOnboardingPipelineTurn({
+      event: {
+        id: "evt_runtime",
+        userId: "u1",
+        sessionId: "s1",
+        from: "+10000000001",
+        body: "[system-event:layoff_onboarding:layoff_onboarding_started]",
+        createdAt: "2026-05-18T20:00:00.000Z",
+        rawMeta: {
+          runtimeEvent: true,
+          runtimeEventSource: "layoff_onboarding",
+          runtimeEventKind: "layoff_onboarding_started",
+        },
+      } as never,
+      turnId: "turn_runtime",
+      agent: {} as never,
+      suppressOutbound: false,
+      deps: {
+        log: (e) => calls.push(e),
+        nowIso: () => "2026-05-18T20:00:01.000Z",
+        appendMessage: async () => {
+          throw new Error("runtime event must not append a pipeline prompt")
+        },
+        enqueueOutbound: async () => {
+          throw new Error("runtime event must not enqueue a pipeline prompt")
+        },
+        applyOnboarding: async () => {
+          throw new Error("runtime event must not advance onboarding")
+        },
+      },
+    })
+
+    assert.equal(result.handled, false)
+    assert.deepEqual(calls, ["pa.onboarding.pipeline.reject_runtime_event"])
+  })
+
   it("returns handled:false so dispatcher runs deterministic resume completion", async () => {
     let logged = false
     const result = await runOnboardingPipelineTurn({

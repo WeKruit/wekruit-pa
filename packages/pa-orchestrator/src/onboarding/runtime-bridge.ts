@@ -197,6 +197,17 @@ export async function runOnboardingPipelineTurn(
 ): Promise<RunPipelineTurnResult> {
   const { event, turnId, deps, suppressOutbound } = input
 
+  if (event.rawMeta?.runtimeEvent === true) {
+    deps.log("pa.onboarding.pipeline.reject_runtime_event", {
+      userId: event.userId,
+      turnId,
+      eventId: event.id,
+      runtimeEventSource: event.rawMeta.runtimeEventSource,
+      runtimeEventKind: event.rawMeta.runtimeEventKind,
+    })
+    return { handled: false, action: { kind: "pipeline" } }
+  }
+
   // Synthetic cv-ingest completion (`[cv-parsed]`). Not a user answer to
   // q_resume — ResumeJudge would bump/re-ask and swallow the event before
   // `runDeterministicOnboardingTurn` Route 4 (DiscussionPhase + job recs).
