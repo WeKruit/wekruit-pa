@@ -73,41 +73,41 @@ const PA_ADMIN_TOKEN = defineSecret("PA_ADMIN_TOKEN")
 // 2026-05-18 — Adam directive: kill the ATS allowlist. Old design rejected
 // every non-curated host, which caused the hourly Serper backfill to miss
 // 100% of valid hits (anthropic.com/careers, careers.stripe.com, aggregator
-// pages — all bounced). Replaced with single-rule: only `jobright` hostname
-// is excluded. Everything else (real ATS providers, careers pages, aggregators,
+// pages — all bounced). Replaced with single-rule: only `jobright` is
+// excluded. Everything else (real ATS providers, careers pages, aggregators,
 // LinkedIn, anything non-jobright) is considered a valid apply destination.
 //
-// Why: maintaining an allowlist of "real" ATS providers is impossible — new
-// providers appear weekly, aggregators are also valid destinations, careers
-// pages on company.com are perfectly fine. We trust Serper's top-1 organic
-// result on a `"title" "company" careers apply` query to be the right place
-// the candidate would land if they Googled themselves.
+// Why hostname-substring "jobright" is not enough: Serper also returns the
+// SimplifyJobs github mirror at `github.com/jobright-ai/2026-...-New-Grad`
+// for niche jobright-only listings (5/3636 active docs observed leaking).
+// Hostname is `github.com`, so a hostname-only check accepted it. The full
+// URL check below rejects the mirror too. Trade-off: any legitimate URL
+// containing the brand string "jobright" is also blocked — accepted (the
+// brand is the aggregator we're trying to bypass).
 
 export function isJobrightUrl(url: string | undefined | null): boolean {
   if (!url || typeof url !== "string") return false
-  let parsed: URL
   try {
-    parsed = new URL(url)
+    void new URL(url)
   } catch {
     return false
   }
-  return parsed.hostname.toLowerCase().includes("jobright")
+  return url.toLowerCase().includes("jobright")
 }
 
 /**
  * A URL is accepted as an apply destination as long as it is parseable AND
- * its hostname does not contain "jobright". No allowlist, no host-suffix
- * matching, no curated list.
+ * the full URL string does not contain "jobright". Catches both
+ * `jobright.ai/...` redirects and `github.com/jobright-ai/...` mirrors.
  */
 export function isAcceptableApplyUrl(url: string | undefined | null): boolean {
   if (!url || typeof url !== "string") return false
-  let parsed: URL
   try {
-    parsed = new URL(url)
+    void new URL(url)
   } catch {
     return false
   }
-  return !parsed.hostname.toLowerCase().includes("jobright")
+  return !url.toLowerCase().includes("jobright")
 }
 
 // ---------------------------------------------------------------------------

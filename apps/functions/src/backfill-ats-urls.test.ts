@@ -43,6 +43,10 @@ describe("isJobrightUrl", () => {
     assert.equal(isJobrightUrl("https://www.jobright.ai/jobs/info/abc"), true)
     assert.equal(isJobrightUrl("https://app.jobright.ai/x"), true)
   })
+  it("returns true for github.com/jobright-ai/* mirrors (path-level brand match)", () => {
+    assert.equal(isJobrightUrl("https://github.com/jobright-ai/2026-Software-Engineer-New-Grad"), true)
+    assert.equal(isJobrightUrl("https://github.com/jobright-ai/2026-Sales-New-Grad"), true)
+  })
   it("returns false for non-jobright hosts", () => {
     assert.equal(isJobrightUrl("https://boards.greenhouse.io/stripe/jobs/1"), false)
     assert.equal(isJobrightUrl("https://anthropic.com/careers/jobs"), false)
@@ -73,9 +77,10 @@ describe("isAcceptableApplyUrl", () => {
     assert.equal(isAcceptableApplyUrl("https://linkedin.com/jobs/view/456"), true)
     assert.equal(isAcceptableApplyUrl("https://wellfound.com/jobs/789"), true)
   })
-  it("rejects only jobright hostnames", () => {
+  it("rejects jobright.ai redirects + github.com/jobright-ai/* mirrors", () => {
     assert.equal(isAcceptableApplyUrl("https://jobright.ai/jobs/123"), false)
     assert.equal(isAcceptableApplyUrl("https://www.jobright.ai/jobs/123"), false)
+    assert.equal(isAcceptableApplyUrl("https://github.com/jobright-ai/2026-Software-Engineer-New-Grad"), false)
   })
   it("rejects malformed / empty input", () => {
     assert.equal(isAcceptableApplyUrl(""), false)
