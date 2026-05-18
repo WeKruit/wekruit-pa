@@ -253,6 +253,10 @@ export { paPublicCvIngest } from "./public-cv-ingest.js"
 // matching-jobs (scraped/non-collab) with hard filters mirroring v16's
 // query (status==active, dead!=true, atsApplyUrl present, firstSeenAt fresh).
 export { paPublicOpenJobs } from "./public-open-jobs.js"
+// Adam 2026-05-18: rolling preview on layoff.wekruit.com now reads pa-users
+// (mix of demo + real, both filtered by `getHired !== true`) instead of a
+// hardcoded JS pool. Public, no-auth GET. See `public-layoff-preview.ts`.
+export { paPublicLayoffPreview } from "./public-layoff-preview.js"
 // Candidate LinkedIn auth cannot use Firebase generic OIDC because LinkedIn
 // rejects token exchange without client_secret. These HTTP functions own the
 // OAuth exchange server-side and return a Firebase custom token.

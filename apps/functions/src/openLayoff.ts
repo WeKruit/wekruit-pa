@@ -249,6 +249,15 @@ export async function runRegisterLayoffCandidate(
     senderNumber: fromNumber,
     senderGroupId: groupId,
   }
+  // Default canonical flags for the layoff list (Adam directive 2026-05-18):
+  // every pa-users.source=WeKruit_Laid_Off doc should carry `isDemo` and
+  // `getHired` so the public preview endpoint can mix demo + real rows and
+  // the hire-success metric is always derivable. Only set on first registration
+  // — re-registrations preserve whatever state ops already flipped.
+  if (!isReregistration) {
+    writePayload.isDemo = false
+    writePayload.getHired = false
+  }
   if (writeLayoffContext) {
     writePayload.displayName = `${v.firstName} ${v.lastName}`.trim() || v.firstName
     writePayload.layoffContext = {
