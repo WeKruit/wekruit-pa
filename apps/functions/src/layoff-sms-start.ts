@@ -90,8 +90,6 @@ async function runDefaultRuntimeKickoff(args: {
   startedAt: string
   source: WekruitSignupSource
 }): Promise<{ eventId: string; outboundId?: string }> {
-  const { processInboundEvent, createFirestoreOrchestratorStore } = await import("@pa/pa-orchestrator")
-  const { makeOrchestratorDeps } = await import("./orchestrator-deps.js")
   const sessionId = sessionDocId(args.userId, "imessage", args.toE164)
   const eventPrefix = args.source === WEKRUIT_LAYOFF_SOURCE ? "layoff_runtime" : "candidate_runtime"
   const idemPrefix = args.source === WEKRUIT_LAYOFF_SOURCE ? "layoff-runtime" : "candidate-runtime"
@@ -117,20 +115,13 @@ async function runDefaultRuntimeKickoff(args: {
     },
   }
 
-  await processInboundEvent(event, createFirestoreOrchestratorStore(args.db, makeOrchestratorDeps()))
-
-  let outboundId: string | undefined
   try {
-    const snap = await args.db
-      .collection(PA_COLLECTIONS.outbound)
-      .where("idempotencyKey", "==", `outbound-onboarding-${eventId}`)
-      .limit(1)
-      .get()
-    outboundId = snap.docs[0]?.id
-  } catch {
-    outboundId = undefined
+    await args.db.collection(PA_COLLECTIONS.inboundEvents).doc(eventId).create(event)
+  } catch (err) {
+    const code = (err as { code?: number | string })?.code
+    if (code !== 6 && code !== "already-exists") throw err
   }
-  return { eventId, ...(outboundId ? { outboundId } : {}) }
+  return { eventId }
 }
 
 export function isLayoffIntakeActiveDoc(data: unknown): boolean {

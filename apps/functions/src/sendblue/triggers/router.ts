@@ -12,8 +12,8 @@
  *
  * Locked design (PS7 + PS8):
  *   - HTTP/HMAC stays in webhook.ts
- *   - This module owns trigger detection + authorization + fire-and-forget
- *     dispatch + audit emission
+ *   - This module owns trigger detection + authorization + dispatch + audit
+ *     emission
  *   - Each trigger is a separate file under triggers/ implementing the
  *     `Trigger` interface
  *   - Priority + short-circuit: first matching trigger wins; no fall-through
@@ -50,8 +50,8 @@ export type TriggerOutcome =
  * compact.ts, find-match.ts, reset.ts).
  *
  * `match()` is a synchronous predicate over the normalized text. `handle()`
- * fires the (typically fire-and-forget) work and returns an outcome so the
- * router can route an HTTP reply + audit event.
+ * runs bounded trigger work and returns an outcome so the router can route an
+ * HTTP reply + audit event.
  *
  * Returning `kind:"unauthorized"` on `handle()` is the ONLY way a trigger
  * can refuse to run — it must NOT throw. Authorization MUST happen in
@@ -66,10 +66,9 @@ export interface Trigger {
    */
   match(text: string): boolean
   /**
-   * Fire the action. Caller fire-and-forgets; the returned promise SHOULD
-   * resolve quickly enough for the HTTP reply (~1-2s) — the heavy work
-   * inside should detach via `void Promise.resolve().then(...)` per the
-   * existing `__PA_FIND_MATCH__` pattern in webhook.ts.
+   * Fire the action. The returned promise SHOULD resolve quickly enough for
+   * the HTTP reply (~1-2s); heavy runtime work must be handed off to durable
+   * infrastructure such as `pa-inbound-events`, not run inside the webhook.
    */
   handle(ctx: TriggerContext): Promise<TriggerOutcome>
 }

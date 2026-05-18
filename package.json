@@ -15,7 +15,7 @@
   "scripts": {
     "ensure:node": "node scripts/ensure-node24.mjs",
     "prebuild": "npm run ensure:node",
-    "build": "npm run build --workspace=@pa/core-types --workspace=@pa/firebase-admin --workspace=@pa/pa-persistence --workspace=@pa/pa-broker --workspace=@pa/pa-safety --workspace=@pa/agent-runtime --workspace=@pa/pa-connectors --workspace=@pa/memory --workspace=@wekruit/shared-tags --workspace=@pa/pa-resume-parser --workspace=@pa/agent-registry --workspace=@pa/pa-orchestrator",
+    "build": "npm run build --workspace=@pa/core-types --workspace=@pa/firebase-admin --workspace=@pa/pa-persistence --workspace=@pa/pa-broker --workspace=@pa/pa-safety --workspace=@pa/agent-runtime --workspace=@pa/memory --workspace=@pa/pa-connectors --workspace=@wekruit/shared-tags --workspace=@pa/pa-resume-parser --workspace=@pa/agent-registry --workspace=@pa/pa-orchestrator",
     "orchestrator": "npm run start --workspace=@pa/pa-orchestrator",
     "build:all": "npm run build && npm run build --workspace=@pa/dashboard-web",
     "build:dashboard:with-injected-env": "node scripts/inject-pa-dashboard-vite-env.mjs && npm run build --workspace=@pa/dashboard-web",

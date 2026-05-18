@@ -56,14 +56,7 @@ export class LayoffTrigger implements Trigger {
 
     await this.deps.setLastFiredMs(userId, now)
 
-    void Promise.resolve()
-      .then(() => this.deps.runLayoffStart({ userId, toE164: ctx.fromNumber }))
-      .catch((err) => {
-        ctx.log("trigger.layoff.run_threw", {
-          userId,
-          error: err instanceof Error ? err.message : String(err),
-        })
-      })
+    await this.deps.runLayoffStart({ userId, toE164: ctx.fromNumber })
 
     await this.deps.audit({
       type: "trigger_fired",

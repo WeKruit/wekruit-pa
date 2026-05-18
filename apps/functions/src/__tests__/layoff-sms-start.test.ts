@@ -50,6 +50,15 @@ function makeFakeDb(docs: Map<string, FakeDocState>) {
         })
         writes.push({ path, data })
       },
+      async create(data: Record<string, unknown>) {
+        if (docs.get(path)?.exists) {
+          const err = new Error("already exists") as Error & { code?: number }
+          err.code = 6
+          throw err
+        }
+        docs.set(path, { exists: true, data })
+        writes.push({ path, data })
+      },
       async update(data: Record<string, unknown>) {
         const state = docs.get(path) ?? { exists: true, data: {} }
         docs.set(path, {
@@ -146,5 +155,39 @@ describe("runLayoffSmsStart", () => {
 
     assert.deepEqual(result, { ok: false, reason: "user_not_found" })
     assert.equal(writes.length, 0)
+  })
+
+  it("default kickoff enqueues a pending inbound event instead of running runtime inline", async () => {
+    const docs = new Map<string, FakeDocState>([
+      [
+        "pa-users/u1",
+        {
+          exists: true,
+          data: {
+            displayName: "Ada Lovelace",
+            phoneE164: "+13054507715",
+          },
+        },
+      ],
+    ])
+    const { db } = makeFakeDb(docs)
+
+    const result = await runLayoffSmsStart({
+      db,
+      userId: "u1",
+      toE164: "+13054507715",
+    })
+
+    assert.equal(result.ok, true)
+    assert.match(result.ok ? result.kickoffOutboundId : "", /^layoff_runtime_/)
+
+    const inboundRows = [...docs.entries()].filter(([path]) => path.startsWith("pa-inbound-events/"))
+    assert.equal(inboundRows.length, 1)
+    const [path, row] = inboundRows[0]
+    assert.match(path, /^pa-inbound-events\/layoff_runtime_/)
+    assert.equal(row.data.userId, "u1")
+    assert.equal(row.data.body, "WeKruit_LAID_OFF")
+    assert.equal(row.data.status, "pending")
+    assert.equal((row.data.rawMeta as Record<string, unknown>).source, "layoff_runtime_trigger")
   })
 })
