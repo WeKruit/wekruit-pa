@@ -25,7 +25,7 @@ import {
   outboundInvite,
 } from "./fixtures.js"
 
-test("approved live plan queues exactly the eligible outbound rows and persists blocked decisions", async () => {
+test("approved live plan queues exactly the eligible runtime handoff and persists blocked decisions", async () => {
   const { db, store } = makeFakeFirestore()
 
   const result = await planJobOutreach(
@@ -82,16 +82,21 @@ test("approved live plan queues exactly the eligible outbound rows and persists 
   assert.equal(result.summary.queued, 1)
   assert.equal(result.summary.blocked, 3)
   assert.equal(collectionSize(store, PA_COLLECTIONS.outboundInvites), 4)
-  assert.equal(collectionSize(store, PA_COLLECTIONS.outbound), 1)
-  assert.equal(collectionSize(store, PA_COLLECTIONS.users), 1)
+  assert.equal(collectionSize(store, PA_COLLECTIONS.outbound), 0)
+  assert.equal(collectionSize(store, PA_COLLECTIONS.inboundEvents), 1)
+  assert.equal(collectionSize(store, PA_COLLECTIONS.users), 0)
 
-  const [queued] = result.rows.filter((row) => row.queuedOutboundId)
+  const [queued] = result.rows.filter((row) => row.queuedRuntimeEventId)
   assert.equal(queued!.candidateId, "cand-eligible")
-  const [outbound] = collectionDocs(store, PA_COLLECTIONS.outbound)
-  assert.equal(outbound!.userId, "cand-eligible")
-  assert.equal(outbound!.idempotencyKey, queued!.decision.outboundIdempotencyKey)
-  const [user] = collectionDocs(store, PA_COLLECTIONS.users)
-  assert.equal(user!.outreach && typeof user!.outreach === "object" ? (user!.outreach as { lastOutboundAt?: string }).lastOutboundAt : undefined, now)
+  const [runtimeEvent] = collectionDocs(store, PA_COLLECTIONS.inboundEvents)
+  assert.equal(runtimeEvent!.userId, "cand-eligible")
+  assert.equal(runtimeEvent!.idempotencyKey, queued!.decision.outboundIdempotencyKey)
+  assert.equal(
+    runtimeEvent!.rawMeta && typeof runtimeEvent!.rawMeta === "object"
+      ? (runtimeEvent!.rawMeta as { runtimeEvent?: boolean }).runtimeEvent
+      : undefined,
+    true,
+  )
 })
 
 test("outbound_queued and outbound_sent require explicit queue/provider evidence", async () => {

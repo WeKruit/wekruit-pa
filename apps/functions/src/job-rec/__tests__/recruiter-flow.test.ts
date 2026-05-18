@@ -7,7 +7,7 @@
  *
  * Covers:
  *   1. routes when mediaUrl + flag-on: invokes runRecruiterTurn, writes
- *      assistant pa-messages, enqueues pa-outbound, marks succeeded
+ *      hands candidate-visible output to runtime, marks succeeded
  *   2. NO route when mediaUrl absent (handled at dispatcher; here we
  *      assert empty mediaUrl path inside the flow degrades safely)
  *   3. NO route when flag OFF (here we assert: flow not invoked when
@@ -16,7 +16,7 @@
  *      asserting the wrapper short-circuits when caller doesn't call it)
  *   4. claim is atomic: second invocation on same event no-ops
  *   5. error in runRecruiterTurn → event marked failed, error re-thrown
- *   6. assistant text gets normalized before pa-outbound (URL preview /
+ *   6. assistant text gets normalized before runtime handoff (URL preview /
  *      markdown-strip rule from output-normalizer)
  */
 
@@ -39,6 +39,16 @@ function seedAdamUser(mfs: MockFirestore) {
     .collection("pa-users")
     .doc(ADAM_USER_ID)
     .set({ id: ADAM_USER_ID, phoneE164: ADAM_PHONE })
+  void mfs
+    .collection("pa-sessions")
+    .doc(SESSION_ID)
+    .set({
+      id: SESSION_ID,
+      userId: ADAM_USER_ID,
+      channel: "imessage",
+      externalChatId: ADAM_PHONE,
+      createdAt: "2026-04-30T12:00:00.000Z",
+    })
 }
 
 function makeEvent(overrides: Partial<InboundEvent> = {}): InboundEvent {
@@ -83,7 +93,7 @@ const FROZEN_NOW = () => new Date("2026-04-30T12:00:01.000Z")
 
 // ---- Tests ---------------------------------------------------------
 
-test("Test 1: routes when mediaUrl + flag-on → runRecruiterTurn called, pa-messages + pa-outbound written, event succeeded", async () => {
+test("Test 1: routes when mediaUrl + flag-on → runRecruiterTurn called, runtime event written, event succeeded", async () => {
   const mfs = new MockFirestore()
   seedAdamUser(mfs)
   const event = makeEvent()
@@ -102,29 +112,21 @@ test("Test 1: routes when mediaUrl + flag-on → runRecruiterTurn called, pa-mes
   assert.equal(turn.lastArgs?.userId, ADAM_USER_ID)
   assert.equal(turn.lastArgs?.sessionId, SESSION_ID)
 
-  // Assistant message written
-  const messages = mfs.store.get("pa-messages")
-  assert.ok(messages, "pa-messages collection should exist")
-  const msgRows = [...messages!.values()] as Array<Record<string, unknown>>
-  assert.equal(msgRows.length, 1)
-  assert.equal(msgRows[0]?.role, "assistant")
-  assert.equal(msgRows[0]?.idempotencyKey, "recruiter-evt_001-assistant")
-
-  // Outbound enqueued
-  const outbound = mfs.store.get("pa-outbound")
-  assert.ok(outbound, "pa-outbound collection should exist")
-  const outRow = outbound!.get("out-evt_001")
-  assert.ok(outRow, "out-evt_001 doc should exist")
-  assert.equal(outRow?.status, "pending")
-  assert.equal(outRow?.toE164, ADAM_PHONE)
-  assert.equal(outRow?.role, "assistant")
-  assert.equal(outRow?.idempotencyKey, "out-evt_001")
+  assert.equal(mfs.store.get("pa-messages")?.size ?? 0, 0)
+  assert.equal(mfs.store.get("pa-outbound")?.size ?? 0, 0)
+  const runtimeEvents = mfs.store.get("pa-inbound-events")
+  const runtimeRow = [...(runtimeEvents?.values() ?? [])].find(
+    (row) => (row.rawMeta as Record<string, unknown> | undefined)?.runtimeEventSource === "deprecated_recruiter_flow"
+  ) as Record<string, unknown> | undefined
+  assert.ok(runtimeRow, "runtime handoff event should exist")
+  assert.equal((runtimeRow.rawMeta as Record<string, unknown>).runtimeEvent, true)
+  assert.match(String(runtimeRow.body ?? ""), /system-event:deprecated_recruiter_flow:recruiter_agent_output/)
 
   // Event row marked succeeded with recruiterTurnRan flag
   const evt = mfs.store.get("pa-inbound-events")?.get("evt_001")
   assert.equal(evt?.status, "succeeded")
   assert.equal(evt?.recruiterTurnRan, true)
-  assert.equal(evt?.outboundId, "out-evt_001")
+  assert.match(String(evt?.outboundId ?? ""), /^runtime_/)
 })
 
 test("Test 2: when mediaUrl absent in dispatcher → runRecruiterFlow never called (verified by simulating dispatcher gate)", async () => {
@@ -199,9 +201,11 @@ test("Test 4: claim is atomic — second invocation on same event no-ops (status
   assert.deepEqual(r2, { ok: false, reason: "already_processed" })
   assert.equal(turn2.called, 0, "second invocation must not run the LLM turn")
 
-  // Outbound row was not duplicated (still single doc keyed out-evt_001)
-  const outbound = mfs.store.get("pa-outbound")
-  assert.equal(outbound?.size, 1)
+  assert.equal(mfs.store.get("pa-outbound")?.size ?? 0, 0)
+  const runtimeRows = [...(mfs.store.get("pa-inbound-events")?.values() ?? [])].filter(
+    (row) => (row.rawMeta as Record<string, unknown> | undefined)?.runtimeEventSource === "deprecated_recruiter_flow"
+  )
+  assert.equal(runtimeRows.length, 1)
 })
 
 test("Test 5: error in runRecruiterTurn → event marked failed, error re-thrown (not swallowed)", async () => {
@@ -239,7 +243,7 @@ test("Test 5: error in runRecruiterTurn → event marked failed, error re-thrown
   assert.equal(mfs.store.get("pa-outbound")?.size ?? 0, 0)
 })
 
-test("Test 6: assistant text is normalized (markdown stripped + UTM cleaned) before pa-outbound enqueue", async () => {
+test("Test 6: assistant text is normalized (markdown stripped + UTM cleaned) before runtime handoff", async () => {
   const mfs = new MockFirestore()
   seedAdamUser(mfs)
   const event = makeEvent()
@@ -258,8 +262,10 @@ test("Test 6: assistant text is normalized (markdown stripped + UTM cleaned) bef
   })
   assert.equal(res.ok, true)
 
-  const outRow = mfs.store.get("pa-outbound")?.get("out-evt_001") as Record<string, unknown> | undefined
-  const body = String(outRow?.body ?? "")
+  const runtimeRow = [...(mfs.store.get("pa-inbound-events")?.values() ?? [])].find(
+    (row) => (row.rawMeta as Record<string, unknown> | undefined)?.runtimeEventSource === "deprecated_recruiter_flow"
+  ) as Record<string, unknown> | undefined
+  const body = String(((runtimeRow?.rawMeta as Record<string, unknown> | undefined)?.context as Record<string, unknown> | undefined)?.proposedMessage ?? "")
   // Plain text — no markdown link syntax.
   assert.ok(!/\[.*\]\(.*\)/.test(body), `body should not contain markdown link: ${body}`)
   // UTM params stripped.

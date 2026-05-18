@@ -26,7 +26,7 @@ import { getFirestore } from "firebase-admin/firestore"
 import { createHmac, timingSafeEqual } from "node:crypto"
 import { getAdapter } from "./ats-adapters/index.js"
 import { handleAtsInbound } from "./ats-inbound-handler.js"
-import { sendImessage } from "./sendblue/sendblue-client.js"
+import { enqueueRuntimeEventHandoff } from "./runtime-event-handoff.js"
 
 const ATS_HANDSHAKE_HMAC_SECRET = defineSecret("ATS_HANDSHAKE_HMAC_SECRET")
 
@@ -142,17 +142,19 @@ export const paAtsInboundWebhook: HttpsFunction = onRequest(
 
     const outcome = await handleAtsInbound(parsed.applicant, {
       db,
-      sendInvite: async (a) => {
-        try {
-          await sendImessage({ to: a.to, content: a.content })
-          return { ok: true }
-        } catch (err) {
-          log("send_invite_failed", {
-            userId: a.userId,
-            error: err instanceof Error ? err.message : String(err),
-          })
-          return { ok: false }
-        }
+      enqueueRuntimeInvite: async (a) => {
+        const runtime = await enqueueRuntimeEventHandoff(db, {
+          userId: a.userId,
+          toE164: a.toE164,
+          source: "ats_inbound",
+          eventKind: a.eventKind,
+          idempotencyKey: a.idempotencyKey,
+          requireExistingSession: true,
+          context: a.context,
+        })
+        return runtime.ok
+          ? { ok: true, eventId: runtime.eventId }
+          : { ok: false, reason: runtime.reason }
       },
       bindResume,
       audit: async (e) => {
@@ -171,7 +173,7 @@ export const paAtsInboundWebhook: HttpsFunction = onRequest(
     if (outcome.kind === "ok") {
       res.status(200).json({
         ok: true,
-        action: "invited",
+        action: "runtime_queued",
         userId: outcome.userId,
         jobIdInternal: outcome.jobIdInternal,
       })

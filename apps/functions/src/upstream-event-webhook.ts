@@ -7,9 +7,9 @@
  *   3. Looks up the matching template by `eventKind` (404 if missing/disabled).
  *   4. Checks the `upstreamConnectorEnabled` feature flag (503 if disabled).
  *   5. Per-(template, user) hour-bucket rate-limit (429 if exceeded).
- *   6. Renders the template with payload vars.
- *   7. Enqueues a `pa-outbound/{outboundId}` row with status=pending.
- *      The existing paSendblueOutbox CF then sends the message.
+ *   6. Renders the template with payload vars as runtime context only.
+ *   7. Creates a synthetic `pa-inbound-events/{eventId}` handoff so Claire's
+ *      runtime decides whether/how to message. No direct outbound is written.
  *   8. Audit row to `pa-audit-events` (kind="upstream_inbound").
  *   9. Returns `{ ok: true, outboundId }`.
  *
@@ -31,6 +31,7 @@ import {
   extractUpstreamSignatureHeader,
   verifyUpstreamSignature,
 } from "./upstream-hmac.js"
+import { enqueueRuntimeEventHandoff } from "./runtime-event-handoff.js"
 
 export const UPSTREAM_FLAG_KEY = "upstreamConnectorEnabled"
 
@@ -55,7 +56,7 @@ export type UpstreamWebhookDeps = {
   nowIso?: () => string
   /** Epoch ms; injectable for tests (rate-limit bucket). */
   nowMs?: () => number
-  /** Outbound doc id factory; default randomUUID. */
+  /** Runtime event doc id seed factory; default randomUUID. */
   newId?: () => string
   log?: (...args: unknown[]) => void
   /**
@@ -72,7 +73,6 @@ export type UpstreamEventPayload = {
   payload?: unknown
 }
 
-const OUT = PA_COLLECTIONS.outbound
 const AUDIT = PA_COLLECTIONS.auditEvents
 
 function reply(res: WebhookResponse, status: number, body: unknown): void {
@@ -226,7 +226,7 @@ export async function handleUpstreamEventWebhook(
     ...payload,
   })
 
-  // ---- 7. Resolve target phone + enqueue pa-outbound -------------------
+  // ---- 7. Resolve target phone + hand off to runtime -------------------
   const resolvePhone = deps.resolveUserPhone ?? defaultResolveUserPhone
   let toE164: string | null = null
   try {
@@ -245,41 +245,48 @@ export async function handleUpstreamEventWebhook(
     return
   }
 
-  const outboundId = newOutboundId(deps)
+  const runtimeSeed = newOutboundId(deps)
   const at = safeIso(deps)
-  const outboundDoc: Record<string, unknown> = {
-    id: outboundId,
-    status: "pending",
+  const runtime = await enqueueRuntimeEventHandoff(deps.db, {
     userId,
     toE164,
-    body: messageBody,
-    channel: template.channel || "imessage",
     source: "upstream_event",
-    sourceEventKind: eventKind,
-    sourceTemplateId: template.templateId,
-    sourcePayload: payload,
-    idempotencyKey: `upstream-${template.templateId}-${userId}-${rl.bucketId}`,
-    createdAt: at,
-    updatedAt: at,
-  }
-  try {
-    await deps.db.collection(OUT).doc(outboundId).set(outboundDoc)
-  } catch (err) {
-    log("[upstream-webhook] outbound write failed", err instanceof Error ? err.message : String(err))
-    reply(res, 500, { ok: false, error: "outbound_write_failed" })
+    eventKind,
+    idempotencyKey: `upstream-${template.templateId}-${userId}-${rl.bucketId}-${runtimeSeed}`,
+    requireExistingSession: true,
+    nowIso: () => at,
+    context: {
+      eventKind,
+      templateId: template.templateId,
+      renderedTemplate: messageBody,
+      payload,
+      channel: template.channel || "imessage",
+    },
+  })
+  if (!runtime.ok) {
+    await recordAudit(deps, {
+      result: "runtime_handoff_blocked",
+      reason: runtime.reason,
+      eventKind,
+      userId,
+      templateId: template.templateId,
+      bucketId: rl.bucketId,
+    })
+    reply(res, 202, { ok: false, error: runtime.reason })
     return
   }
 
   // ---- 8. Audit ---------------------------------------------------------
   await recordAudit(deps, {
-    result: "enqueued",
+    result: "runtime_handoff",
     eventKind,
     userId,
     templateId: template.templateId,
-    outboundId,
+    runtimeEventId: runtime.eventId,
+    runtimeEventCreated: runtime.created,
     bucketId: rl.bucketId,
   })
 
   // ---- 9. Reply ---------------------------------------------------------
-  reply(res, 200, { ok: true, outboundId })
+  reply(res, 200, { ok: true, runtimeEventId: runtime.eventId })
 }

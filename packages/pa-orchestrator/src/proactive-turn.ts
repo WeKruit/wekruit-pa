@@ -10,7 +10,7 @@
  *   2. Build synthetic user-role input with [system-trigger:<type>] marker.
  *   3. Call store.runTurn() — reuses Voice v1 system prompt pipeline.
  *   4. Normalize output via store.normalizeOutput() (Phase 20).
- *   5. Enqueue to pa_outbound with source=proactive.
+ *   5. Enqueue runtime-approved transport with source=proactive.
  *   6. Write pa_audit_events kind=proactive_send.
  *   7. Update job status to "fired" + handle silence_rearm re-arm.
  */
@@ -58,10 +58,7 @@ export type ProactiveTurnStore = {
   /** Phase 20 output normalizer — applied before enqueue. */
   normalizeOutput(text: string): { text: string; chunks: string[] }
 
-  /**
-   * Enqueue a message to pa_outbound.
-   * Returns the Firestore doc id of the enqueued outbound row.
-   */
+  /** Enqueue a runtime-approved transport row. */
   enqueueOutbound(
     userId: string,
     body: string,
@@ -167,7 +164,7 @@ export async function runProactiveTurn(
   const normalized = store.normalizeOutput(text)
   const body = normalized.text
 
-  // Enqueue to pa_outbound with proactive provenance (D-08)
+  // Enqueue runtime-approved transport with proactive provenance (D-08)
   const phone = await store.getUserPhoneE164(userId)
   const { outboundId } = await store.enqueueOutbound(userId, body, {
     source: "proactive",

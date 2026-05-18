@@ -3,6 +3,7 @@
  */
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
+import { createHash } from "node:crypto"
 import type { Firestore } from "firebase-admin/firestore"
 import {
   buildCvConfirmBody,
@@ -11,9 +12,27 @@ import {
 
 type DocData = Record<string, unknown>
 
+function sessionDocId(userId: string, phoneE164: string): string {
+  const h = createHash("sha256").update(`${userId}|imessage|${phoneE164}`).digest("hex")
+  return `ses_${h.slice(0, 32)}`
+}
+
 function makeFakeDb(opts?: { users?: Record<string, DocData> }) {
   const outbound = new Map<string, DocData>()
+  const inboundEvents = new Map<string, DocData>()
+  const sessions = new Map<string, DocData>()
   const users = new Map<string, DocData>(Object.entries(opts?.users ?? {}))
+  for (const [userId, user] of users) {
+    const phone = typeof user.phoneE164 === "string" ? user.phoneE164 : ""
+    if (phone) {
+      sessions.set(sessionDocId(userId, phone), {
+        id: sessionDocId(userId, phone),
+        userId,
+        channel: "imessage",
+        externalChatId: phone,
+      })
+    }
+  }
   const db = {
     collection(name: string) {
       return {
@@ -22,6 +41,14 @@ function makeFakeDb(opts?: { users?: Record<string, DocData> }) {
             async get() {
               if (name === "pa-users") {
                 const data = users.get(id)
+                return { exists: !!data, data: () => data }
+              }
+              if (name === "pa-sessions") {
+                const data = sessions.get(id)
+                return { exists: !!data, data: () => data }
+              }
+              if (name === "pa-inbound-events") {
+                const data = inboundEvents.get(id)
                 return { exists: !!data, data: () => data }
               }
               return { exists: false, data: () => undefined }
@@ -38,12 +65,23 @@ function makeFakeDb(opts?: { users?: Record<string, DocData> }) {
               }
               throw new Error(`fake-db: .create() not supported for ${name}`)
             },
+            async set(data: DocData) {
+              if (name === "pa-inbound-events") {
+                inboundEvents.set(id, { ...data })
+                return
+              }
+              if (name === "pa-sessions") {
+                sessions.set(id, { ...data })
+                return
+              }
+              throw new Error(`fake-db: .set() not supported for ${name}`)
+            },
           }
         },
       }
     },
   } as unknown as Firestore
-  return { db, outbound, users }
+  return { db, outbound, inboundEvents, sessions, users }
 }
 
 function captureLog() {
@@ -153,8 +191,8 @@ describe("buildCvConfirmBody", () => {
 })
 
 describe("enqueueCvConfirmMessage", () => {
-  it("happy path (zh): writes outbound doc with idempotent docId", async () => {
-    const { db, outbound, users } = makeFakeDb({
+  it("happy path (zh): writes runtime event with idempotent docId", async () => {
+    const { db, outbound, inboundEvents, users } = makeFakeDb({
       users: {
         user_x: { phoneE164: "+14243201960", preferredLang: "zh" },
       },
@@ -173,21 +211,23 @@ describe("enqueueCvConfirmMessage", () => {
       nowIso: () => "2026-05-06T00:00:00.000Z",
     })
     const docId = "out-cvconfirm-rsm_1"
-    assert.equal(outbound.size, 1)
-    assert.ok(outbound.has(docId))
-    const doc = outbound.get(docId)!
+    assert.equal(outbound.size, 0)
+    assert.equal(inboundEvents.size, 1)
+    const doc = [...inboundEvents.values()][0]!
     assert.equal(doc.userId, "user_x")
-    assert.equal(doc.toE164, "+14243201960")
-    assert.match(doc.body as string, /看了你的简历——/)
     assert.equal(doc.status, "pending")
-    assert.equal(doc.idempotencyKey, "rsm_1")
-    assert.equal(doc.createdBy, "cv-ingest-confirm")
+    assert.equal(doc.idempotencyKey, `runtime-event:cv_confirm:${docId}`)
+    const rawMeta = doc.rawMeta as Record<string, unknown>
+    assert.equal(rawMeta.runtimeEvent, true)
+    assert.equal(rawMeta.runtimeEventSource, "cv_confirm")
+    const context = rawMeta.context as Record<string, unknown>
+    assert.match(String(context.proposedMessage), /看了你的简历——/)
     const ok = events.find((e) => e.event === "pa.cv_confirm.enqueued")
     assert.ok(ok, "expected pa.cv_confirm.enqueued log")
   })
 
   it("happy path (en): respects preferredLang from pa-users.tags", async () => {
-    const { db, outbound } = makeFakeDb({
+    const { db, inboundEvents } = makeFakeDb({
       users: {
         user_y: {
           phoneE164: "+15555550100",
@@ -206,12 +246,13 @@ describe("enqueueCvConfirmMessage", () => {
       },
       log,
     })
-    const doc = outbound.get("out-cvconfirm-rsm_2")!
-    assert.match(doc.body as string, /Read your resume/)
+    const doc = [...inboundEvents.values()][0]!
+    const context = (doc.rawMeta as Record<string, unknown>).context as Record<string, unknown>
+    assert.match(String(context.proposedMessage), /Read your resume/)
   })
 
-  it("idempotent: second call with same resumeId surfaces ALREADY_EXISTS, no double-write", async () => {
-    const { db, outbound } = makeFakeDb({
+  it("idempotent: second call with same resumeId reuses the same runtime event", async () => {
+    const { db, inboundEvents } = makeFakeDb({
       users: { user_x: { phoneE164: "+14243201960" } },
     })
     const { events, log } = captureLog()
@@ -227,9 +268,7 @@ describe("enqueueCvConfirmMessage", () => {
     }
     await enqueueCvConfirmMessage(db, args)
     await enqueueCvConfirmMessage(db, args)
-    assert.equal(outbound.size, 1, "second call must not create a 2nd doc")
-    const dup = events.find((e) => e.event === "pa.cv_confirm.idempotent_skip")
-    assert.ok(dup, "expected pa.cv_confirm.idempotent_skip log")
+    assert.equal(inboundEvents.size, 1, "second call must not create a 2nd event")
   })
 
   it("no phone in pa-users → skipped, no outbound", async () => {
@@ -271,8 +310,8 @@ describe("enqueueCvConfirmMessage", () => {
     }
   })
 
-  it("uses prefilled user object to skip pa-users read", async () => {
-    const { db, outbound } = makeFakeDb()
+  it("prefilled phone without an existing session does not cold-start runtime", async () => {
+    const { db, inboundEvents } = makeFakeDb()
     const { log } = captureLog()
     await enqueueCvConfirmMessage(db, {
       userId: "user_x",
@@ -281,8 +320,6 @@ describe("enqueueCvConfirmMessage", () => {
       user: { toE164: "+14243201960", preferredLang: "en" },
       log,
     })
-    const doc = outbound.get("out-cvconfirm-rsm_5")!
-    assert.equal(doc.toE164, "+14243201960")
-    assert.match(doc.body as string, /Read your resume/)
+    assert.equal(inboundEvents.size, 0, "prefilled phone without session must not cold-start a runtime event")
   })
 })

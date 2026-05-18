@@ -37,12 +37,9 @@ describe("planJobOutreach", () => {
           writes.push(outboundInvite.inviteId)
           return { invite: outboundInvite, created: true, idempotent: false, auditEventId: "audit-1" }
         },
-        enqueueOutbound: async () => {
+        enqueueRuntimeInvite: async () => {
           enqueues.push("called")
-          return { id: "outbound-1", created: true }
-        },
-        markQueued: async () => {
-          throw new Error("markQueued should not run in dry-run")
+          return { id: "runtime-1", created: true }
         },
       }
     )
@@ -54,10 +51,9 @@ describe("planJobOutreach", () => {
     assert.equal(enqueues.length, 0)
   })
 
-  it("live approved path writes invite, enqueues outbound, and marks queued", async () => {
+  it("live approved path writes invite and hands the invite to runtime", async () => {
     const writes: string[] = []
     const enqueues: string[] = []
-    const queued: string[] = []
     const result = await planJobOutreach(
       {
         job: job(),
@@ -81,16 +77,14 @@ describe("planJobOutreach", () => {
             remainingToday: 8,
           },
         }),
-        enqueueOutbound: async (input) => {
+        enqueueRuntimeInvite: async (input) => {
           enqueues.push(input.idempotencyKey)
           assert.equal(input.toE164, "+15555550123")
-          assert.match(input.body, /Product Designer/)
-          assert.match(input.body, /candidate\.wekruit\.com\/j\/job-1/)
-          return { id: "outbound-1", created: true }
-        },
-        markQueued: async (input) => {
-          queued.push(`${input.inviteId}:${input.outboundId}`)
-          return undefined
+          assert.match(input.proposedMessage, /Product Designer/)
+          assert.match(input.proposedMessage, /candidate\.wekruit\.com\/j\/job-1/)
+          assert.equal(input.context.inviteId.length > 0, true)
+          assert.equal(input.context.jobUrl, "https://candidate.wekruit.com/j/job-1")
+          return { id: "runtime-1", created: true }
         },
       }
     )
@@ -98,7 +92,7 @@ describe("planJobOutreach", () => {
     assert.equal(result.summary.queued, 1)
     assert.equal(writes.length, 1)
     assert.equal(enqueues.length, 1)
-    assert.equal(queued.length, 1)
+    assert.equal(result.rows[0]!.queuedRuntimeEventId, "runtime-1")
     assert.equal(result.rows[0]!.decision.capacitySnapshot?.usedToday, 2)
   })
 
@@ -137,11 +131,10 @@ describe("planJobOutreach", () => {
           assert.equal(outboundInvite.policyDecision, "blocked")
           return { invite: outboundInvite, created: true, idempotent: false, auditEventId: "audit-1" }
         },
-        enqueueOutbound: async () => {
+        enqueueRuntimeInvite: async () => {
           enqueues.push("called")
-          return { id: "outbound-1", created: true }
+          return { id: "runtime-1", created: true }
         },
-        markQueued: async () => undefined,
       }
     )
 
@@ -181,11 +174,10 @@ describe("planJobOutreach", () => {
           assert.deepEqual(outboundInvite.blockedSignals, ["global_outreach_stop"])
           return { invite: outboundInvite, created: true, idempotent: false, auditEventId: "audit-1" }
         },
-        enqueueOutbound: async () => {
+        enqueueRuntimeInvite: async () => {
           enqueues.push("called")
-          return { id: "outbound-1", created: true }
+          return { id: "runtime-1", created: true }
         },
-        markQueued: async () => undefined,
       }
     )
 
@@ -219,10 +211,9 @@ describe("planJobOutreach", () => {
       },
       {
         writeInviteDecision: async (outboundInvite) => ({ invite: outboundInvite, created: true, idempotent: false, auditEventId: "audit" }),
-        enqueueOutbound: async () => {
+        enqueueRuntimeInvite: async () => {
           throw new Error("blocked decisions must not enqueue")
         },
-        markQueued: async () => undefined,
       }
     )
 
@@ -247,10 +238,9 @@ describe("planJobOutreach", () => {
       },
       {
         writeInviteDecision: async (outboundInvite) => ({ invite: outboundInvite, created: false, idempotent: true, auditEventId: "audit" }),
-        enqueueOutbound: async () => {
+        enqueueRuntimeInvite: async () => {
           throw new Error("duplicate rerun must not enqueue")
         },
-        markQueued: async () => undefined,
       }
     )
 

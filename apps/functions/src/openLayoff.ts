@@ -3,7 +3,7 @@
 // Co-located with pa-orchestrator. Reuses existing PA modules:
 //   - sendblue/pool.ts        — pickFromNumber load-balancer
 //   - sendblue/allowlist.ts   — normalizePeer (E.164)
-//   - layoff-sms-start.ts     — shared Claire kickoff into pa-outbound
+//   - layoff-sms-start.ts     — shared runtime kickoff
 //
 // SINGLE candidate collection (alignment with user instruction 2026-05-15):
 //   pa-users/{candidateId}
@@ -15,9 +15,9 @@
 //   layoff_employers/{employerId}
 //   pa-config/sendblue-pool      — REUSED from PA (same numbers)
 //
-// Kickoff = same pattern as pa-landing outreach:
+// Kickoff:
 //   1. pa-users upsert with `source: "WeKruit_Laid_Off"` + `lastLaidOffAt`
-//   2. enqueueOutbound() drops one row; Claire takes over on candidate reply
+//   2. layoff-sms-start hands the first message to the Claire runtime
 
 import { onCall, HttpsError } from "firebase-functions/v2/https"
 import { getFirestore, FieldValue, type Firestore, type Query } from "firebase-admin/firestore"
@@ -25,7 +25,6 @@ import { getApps, initializeApp } from "firebase-admin/app"
 
 import { loadSendbluePool, pickFromNumber, sendblueGroupId, hashStringToUint } from "./sendblue/pool.js"
 import { normalizePeer } from "./sendblue/allowlist.js"
-import { enqueueOutbound } from "@pa/pa-broker"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import { hashCandidateHandle, linkCandidateHandle } from "@pa/pa-persistence"
 import { WEKRUIT_LAYOFF_SOURCE } from "@pa/pa-orchestrator"
@@ -99,7 +98,7 @@ export interface OpenLayoffDeps {
   serverTimestamp?: () => unknown
   nowIso?: () => string
   loadSendbluePool?: typeof loadSendbluePool
-  enqueueOutbound?: typeof enqueueOutbound
+  runRuntimeKickoff?: Parameters<typeof runLayoffSmsStart>[0]["runRuntimeKickoff"]
 }
 
 function nowIso(): string {
@@ -297,7 +296,7 @@ export const openRegisterLayoffCandidate = onCall<RegisterInput>(
   },
 )
 
-// ---------- SMS kickoff (Claire opener via pa-outbound) ----------
+// ---------- SMS kickoff (Claire opener via runtime) ----------
 
 export async function runInitiateSmsPrescreen(
   candidateId: string,
@@ -316,7 +315,7 @@ export async function runInitiateSmsPrescreen(
     db: deps.db,
     userId: candidateId,
     toE164: phoneE164,
-    enqueueOutbound: deps.enqueueOutbound,
+    runRuntimeKickoff: deps.runRuntimeKickoff,
   })
   if (!result.ok) throw new HttpsError("failed-precondition", result.reason)
 

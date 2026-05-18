@@ -140,6 +140,7 @@ describe("paSendblueOutboxRetrySweepHandler (Stream H9 TD2)", () => {
       body: `msg ${id}`,
       idempotencyKey: `out-${id}`,
       createdAt,
+      runtimeApproved: true,
     })
     const { db, outbound } = makeFakeDb({
       "orph-1": baseRow("orph-1", oldTs),
@@ -191,6 +192,7 @@ describe("paSendblueOutboxRetrySweepHandler (Stream H9 TD2)", () => {
         body: `m${i}`,
         idempotencyKey: `out-o-${i}`,
         createdAt: oldTs,
+        runtimeApproved: true,
       }
     }
     const { db } = makeFakeDb(rows)
@@ -229,6 +231,7 @@ describe("paSendblueOutboxRetrySweepHandler (Stream H9 TD2)", () => {
         body: "once",
         idempotencyKey: "out-once",
         createdAt: oldTs,
+        runtimeApproved: true,
       },
     })
     const sb = makeSendblueMock()

@@ -10,7 +10,7 @@
  *      pa-ats-invite-idempotency/{source}_{externalJobId}_{applicantId}
  *   3. If a resume is present, bind it through cv-ingest identity resolution
  *      before invite. Otherwise find-or-create pa-users by email.
- *   5. Send outbound invite SMS via injected sender
+ *   5. Hand off ATS context to Claire runtime; no direct outbound invite
  *   6. Stamp idempotency + write audit event
  */
 
@@ -22,13 +22,17 @@ const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000
 
 export interface AtsInboundDeps {
   db: Firestore
-  /** Outbound invite SMS sender. */
-  sendInvite: (args: {
-    to: string
-    content: string
+  /** Runtime handoff. Must not send directly; onPaInbound owns candidate text. */
+  enqueueRuntimeInvite: (args: {
+    toE164: string
     userId: string
     jobIdInternal: string
-  }) => Promise<{ ok: boolean }>
+    eventKind: string
+    idempotencyKey: string
+    context: Record<string, unknown>
+  }) => Promise<{ ok: boolean; eventId?: string; reason?: string }>
+  /** @deprecated direct send path is disabled; kept out of deps intentionally. */
+  sendInvite?: never
   /** Resume binder (calls cv-ingest HTTP) before ATS invite is sent. */
   bindResume?: (args: {
     userId: string
@@ -49,7 +53,7 @@ export type AtsInboundOutcome =
   | { kind: "deduped"; reason: string }
   | { kind: "rejected"; reason: string }
   | { kind: "no_internal_job"; jobIdExternal: string }
-  | { kind: "send_failed"; reason: string }
+  | { kind: "runtime_handoff_failed"; reason: string }
 
 export async function handleAtsInbound(
   applicant: CanonicalApplicant,
@@ -178,7 +182,7 @@ export async function handleAtsInbound(
     { merge: true }
   )
 
-  // ── 5. Build + send outbound invite ───────────────────────────────────
+  // ── 5. Build runtime handoff context ──────────────────────────────────
   const jobSnap = await deps.db.collection("pa-jobs").doc(jobIdInternal).get()
   const cfg = (jobSnap.data()?.prescreenConfig ?? {}) as {
     jobTitle?: string
@@ -186,11 +190,7 @@ export async function handleAtsInbound(
   }
   const jobTitle = cfg.jobTitle ?? "the role"
   const company = cfg.company ?? "the employer"
-  const invite = applicant.phone
-    ? `Hi ${applicant.name.split(" ")[0] || "there"}, WeKruit here on behalf of ${company} for ${jobTitle}. Reply START to begin your 5-min screen, or send "stop" to opt out.`
-    : null
-
-  if (!applicant.phone || !invite) {
+  if (!applicant.phone) {
     await deps.audit({
       kind: "ats_inbound.no_phone_skipped",
       source: applicant.source,
@@ -232,17 +232,34 @@ export async function handleAtsInbound(
     })
   }
 
-  let sendOk = false
+  let runtimeOk = false
+  let runtimeEventId: string | undefined
+  let runtimeReason: string | undefined
   try {
-    const r = await deps.sendInvite({
-      to: applicant.phone,
-      content: invite,
+    const r = await deps.enqueueRuntimeInvite({
+      toE164: applicant.phone,
       userId,
       jobIdInternal,
+      eventKind: "ats_applicant_received",
+      idempotencyKey: idemKey,
+      context: {
+        source: applicant.source,
+        applicantId: applicant.applicantId,
+        jobIdExternal: applicant.jobIdExternal,
+        jobIdInternal,
+        candidateName: applicant.name,
+        candidateEmail: applicant.email,
+        jobTitle,
+        company,
+        suggestedIntent:
+          "The candidate applied through an ATS source. Decide whether to invite them into the WeKruit/Claire screen, using their established language and prior conversation context.",
+      },
     })
-    sendOk = r.ok
+    runtimeOk = r.ok
+    runtimeEventId = r.eventId
+    runtimeReason = r.reason
   } catch (err) {
-    log("ats_inbound.send_threw", {
+    log("ats_inbound.runtime_handoff_threw", {
       userId,
       error: err instanceof Error ? err.message : String(err),
     })
@@ -257,22 +274,26 @@ export async function handleAtsInbound(
     applicantId: applicant.applicantId,
     userId,
     jobIdInternal,
-    sendOk,
+    runtimeOk,
+    ...(runtimeEventId ? { runtimeEventId } : {}),
+    ...(runtimeReason ? { runtimeReason } : {}),
     createdUser,
     updatedAt: new Date(now).toISOString(),
   })
   await deps.audit({
-    kind: "ats_inbound.invited",
+    kind: "ats_inbound.runtime_handoff",
     source: applicant.source,
     jobIdExternal: applicant.jobIdExternal,
     applicantId: applicant.applicantId,
     userId,
     jobIdInternal,
-    sendOk,
+    runtimeOk,
+    ...(runtimeEventId ? { runtimeEventId } : {}),
+    ...(runtimeReason ? { runtimeReason } : {}),
     createdUser,
   })
-  log("ats_inbound.invited", { userId, jobIdInternal, sendOk })
+  log("ats_inbound.runtime_handoff", { userId, jobIdInternal, runtimeOk, runtimeEventId, runtimeReason })
 
-  if (!sendOk) return { kind: "send_failed", reason: "sendblue_failed" }
+  if (!runtimeOk) return { kind: "runtime_handoff_failed", reason: runtimeReason ?? "runtime_handoff_failed" }
   return { kind: "ok", userId, jobIdInternal }
 }

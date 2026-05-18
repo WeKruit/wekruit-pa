@@ -863,13 +863,16 @@ function uploadStatusText(
       : "Upload received. Checking whether Claire's screen is ready to unlock."
   }
   if (status === "err") return "Resume upload did not finish."
-  return file ? `${file.name} selected. Upload it to continue.` : "Choose a PDF resume to start."
+  return file ? `${file.name} selected. Upload it to continue.` : "Choose a PDF or DOCX resume to start."
 }
 
 function friendlyUploadError(reason: string, status: number): string {
   switch (reason) {
     case "not_a_pdf":
-      return "Use a text-based PDF resume for now."
+    case "unsupported_resume_format":
+      return "Use a text-based PDF or DOCX resume."
+    case "docx_parse_failed":
+      return "We could not read this DOCX. Try exporting it as a text-based PDF."
     case "resume_too_large":
       return "Use a resume under 5 MB."
     case "llm_parse_failed":

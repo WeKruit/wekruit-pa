@@ -90,6 +90,7 @@ describe("pa.outbound.failed structured log (Stream H4 D4)", () => {
       idempotencyKey: "out-test-failure-log",
       createdAt: new Date().toISOString(),
       attemptCount: 2,
+      runtimeApproved: true,
     }
     const { db } = makeFakeDb({ "doc-fail-1": baseRow })
 

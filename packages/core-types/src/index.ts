@@ -411,6 +411,14 @@ export const OutboundMessageSchema = z.object({
   status: OutboundStatusSchema,
   createdAt: z.string(),
   createdBy: z.string().optional(),
+  /**
+   * Runtime gate: candidate-facing delivery is allowed only when a runtime
+   * path explicitly approved this row. Legacy/event producers may still write
+   * audit rows, but Sendblue outbox must not deliver them without this stamp.
+   */
+  runtimeApproved: z.boolean().optional(),
+  runtimeSource: z.string().optional(),
+  source: z.string().optional(),
   idempotencyKey: z.string().optional(),
   /** pa-orchestrator path: link to source session for analytics + dashboards. */
   sessionId: z.string().optional(),

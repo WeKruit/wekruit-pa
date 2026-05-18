@@ -33,7 +33,8 @@ function cleanString(value: unknown, max: number): string | undefined {
 }
 
 function isInternalOperatorEmail(email: string): boolean {
-  return email.toLowerCase().endsWith("@wekruit.com")
+  const normalized = email.toLowerCase()
+  return normalized.endsWith("@wekruit.com") && normalized !== "adam.ylol@wekruit.com"
 }
 
 export async function runCandidateClaimProfile(

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { createHmac } from "node:crypto"
+import { createHash, createHmac } from "node:crypto"
 import type { Firestore } from "firebase-admin/firestore"
 import {
   saveUpstreamTemplate,
@@ -173,6 +173,22 @@ async function bootstrapUser(db: Firestore, userId: string, phone: string | null
   )
 }
 
+function sessionDocId(userId: string, channel: string, externalChatId: string): string {
+  const h = createHash("sha256").update(`${userId}|${channel}|${externalChatId}`).digest("hex")
+  return `ses_${h.slice(0, 32)}`
+}
+
+async function bootstrapSession(db: Firestore, userId: string, phone: string) {
+  const id = sessionDocId(userId, "imessage", phone)
+  await db.collection("pa-sessions").doc(id).set({
+    id,
+    userId,
+    channel: "imessage",
+    externalChatId: phone,
+    createdAt: "2026-04-28T00:00:00.000Z",
+  })
+}
+
 async function enableFlag(db: Firestore) {
   _clearFeatureFlagCache()
   await setFlag(
@@ -284,11 +300,12 @@ test("returns 503 when upstreamConnectorEnabled flag is false", async () => {
   assert.equal(res._status, 503)
 })
 
-test("happy path: enqueues pa-outbound row with rendered body and returns 200", async () => {
+test("happy path: hands rendered context to runtime, never direct pa-outbound", async () => {
   const db = makeFakeFirestore()
   await enableFlag(db)
   await bootstrapTemplate(db, { rateLimitPerHour: 5 })
   await bootstrapUser(db, "u1", "+15551234567")
+  await bootstrapSession(db, "u1", "+15551234567")
   const body = JSON.stringify({
     eventKind: "interview_scheduled",
     userId: "u1",
@@ -310,32 +327,30 @@ test("happy path: enqueues pa-outbound row with rendered body and returns 200", 
     }
   )
   assert.equal(res._status, 200)
-  const payload = res._json as { ok: boolean; outboundId: string }
+  const payload = res._json as { ok: boolean; runtimeEventId: string }
   assert.equal(payload.ok, true)
-  assert.equal(payload.outboundId, "out-deterministic-1")
+  assert.ok(payload.runtimeEventId.startsWith("runtime_"))
 
-  // Outbound doc was written
   const fs = db as unknown as { _store: Map<string, Map<string, Record<string, unknown>>> }
-  const outDoc = fs._store.get("pa-outbound")?.get("out-deterministic-1") as
+  assert.equal(fs._store.get("pa-outbound")?.size ?? 0, 0)
+  const eventDoc = fs._store.get("pa-inbound-events")?.get(payload.runtimeEventId) as
     | Record<string, unknown>
     | undefined
-  assert.ok(outDoc, "outbound doc missing")
-  assert.equal(outDoc!.status, "pending")
-  assert.equal(outDoc!.userId, "u1")
-  assert.equal(outDoc!.toE164, "+15551234567")
-  assert.equal(outDoc!.body, "Hi Alex, your interview is at Friday 3pm.")
-  assert.equal(outDoc!.source, "upstream_event")
-  assert.equal(outDoc!.sourceEventKind, "interview_scheduled")
-  assert.equal(outDoc!.sourceTemplateId, "interview_scheduled")
+  assert.ok(eventDoc, "runtime event doc missing")
+  assert.equal(eventDoc!.status, "pending")
+  assert.equal(eventDoc!.userId, "u1")
+  assert.match(String(eventDoc!.body), /system-event:upstream_event:interview_scheduled/)
+  assert.match(String(eventDoc!.body), /Hi Alex, your interview is at Friday 3pm\./)
+  assert.equal((eventDoc!.rawMeta as Record<string, unknown>).runtimeEvent, true)
 
   // Audit row written
   const audit = fs._store.get("pa-audit-events")
   const enqueued = audit
-    ? Array.from(audit.values()).find((r) => r.result === "enqueued")
+    ? Array.from(audit.values()).find((r) => r.result === "runtime_handoff")
     : undefined
-  assert.ok(enqueued, "audit enqueued row missing")
+  assert.ok(enqueued, "audit runtime handoff row missing")
   assert.equal(enqueued!.kind, "upstream_inbound")
-  assert.equal(enqueued!.outboundId, "out-deterministic-1")
+  assert.equal(enqueued!.runtimeEventId, payload.runtimeEventId)
 })
 
 test("rate limit: second call within same hour bucket → 429", async () => {
@@ -343,6 +358,7 @@ test("rate limit: second call within same hour bucket → 429", async () => {
   await enableFlag(db)
   await bootstrapTemplate(db, { rateLimitPerHour: 1 })
   await bootstrapUser(db, "u1", "+15551234567")
+  await bootstrapSession(db, "u1", "+15551234567")
   const body = JSON.stringify({
     eventKind: "interview_scheduled",
     userId: "u1",
@@ -389,6 +405,7 @@ test("custom resolveUserPhone is honored", async () => {
   const db = makeFakeFirestore()
   await enableFlag(db)
   await bootstrapTemplate(db, { rateLimitPerHour: 5 })
+  await bootstrapSession(db, "u1", "+19999999999")
   const body = JSON.stringify({
     eventKind: "interview_scheduled",
     userId: "u1",

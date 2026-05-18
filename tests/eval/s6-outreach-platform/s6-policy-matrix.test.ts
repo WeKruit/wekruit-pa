@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { readFile } from "node:fs/promises"
+import { createRequire } from "node:module"
 import test from "node:test"
-import { transform } from "esbuild"
 import type { evaluateOutreachPolicy as evaluateOutreachPolicyType } from "../../../apps/functions/src/outreach/policy.js"
 import type {
   planJobOutreach as planJobOutreachType,
@@ -11,6 +11,8 @@ import { candidate, capacity, defaultCandidateId, defaultJobId, job, match, now,
 
 const repoRoot = new URL("../../../", import.meta.url)
 const coreTypesUrl = new URL("packages/core-types/dist/marketplace.js", repoRoot).href
+const requireFromFunctions = createRequire(new URL("apps/functions/package.json", repoRoot))
+const { transform } = await import(requireFromFunctions.resolve("esbuild"))
 
 type OutreachModules = {
   evaluateOutreachPolicy: typeof evaluateOutreachPolicyType
@@ -71,11 +73,8 @@ for (const fixture of s6Fixtures()) {
         idempotent: false,
         auditEventId: `audit-${fixture.name}`,
       }),
-      enqueueOutbound: async () => {
+      enqueueRuntimeInvite: async () => {
         throw new Error(`${fixture.name} must not enqueue in matrix guard`)
-      },
-      markQueued: async () => {
-        throw new Error(`${fixture.name} must not mark queued in matrix guard`)
       },
     })
 
@@ -112,12 +111,9 @@ test("S6 dry-run high match is eligible evidence but never queueable", async () 
         idempotent: false,
         auditEventId: "audit-dry-run",
       }),
-      enqueueOutbound: async (input) => {
+      enqueueRuntimeInvite: async (input) => {
         enqueued.push(input)
-        return { id: "outbound-should-not-exist", created: true }
-      },
-      markQueued: async () => {
-        throw new Error("dry-run must not mark queued")
+        return { id: "runtime-should-not-exist", created: true }
       },
     }
   )
@@ -130,10 +126,9 @@ test("S6 dry-run high match is eligible evidence but never queueable", async () 
   assert.equal(enqueued.length, 0)
 })
 
-test("S6 live-approved high match enqueues through the dependency seam exactly once", async () => {
+test("S6 live-approved high match hands candidate copy to runtime exactly once", async () => {
   const { planJobOutreach } = await loadOutreachModules()
   const enqueued: unknown[] = []
-  const markedQueued: unknown[] = []
   const deps: PlanJobOutreachDeps = {
     reserveCapacity: async (input) => {
       assert.equal(input.reservationKey.length > 0, true)
@@ -159,20 +154,15 @@ test("S6 live-approved high match enqueues through the dependency seam exactly o
       idempotent: false,
       auditEventId: "audit-live",
     }),
-    enqueueOutbound: async (input) => {
+    enqueueRuntimeInvite: async (input) => {
       enqueued.push(input)
       assert.equal(input.userId, defaultCandidateId)
       assert.equal(input.toE164, "+15555550123")
       assert.equal(input.imessageChatId, `chat-${defaultCandidateId}`)
-      assert.match(input.body, /Product Designer/)
-      assert.match(input.body, new RegExp(`https://candidate\\.wekruit\\.com/j/${defaultJobId}`))
-      return { id: "outbound-live-1", created: true }
-    },
-    markQueued: async (input) => {
-      markedQueued.push(input)
-      assert.equal(input.outboundId, "outbound-live-1")
-      assert.equal(input.actor, "system")
-      return undefined
+      assert.match(input.proposedMessage, /Product Designer/)
+      assert.match(input.proposedMessage, new RegExp(`https://candidate\\.wekruit\\.com/j/${defaultJobId}`))
+      assert.equal(input.context.jobUrl, `https://candidate.wekruit.com/j/${defaultJobId}`)
+      return { id: "runtime-live-1", created: true }
     },
   }
 
@@ -193,8 +183,7 @@ test("S6 live-approved high match enqueues through the dependency seam exactly o
   assert.equal(result.rows[0]!.decision.allowQueue, true)
   assert.equal(result.summary.queued, 1)
   assert.equal(enqueued.length, 1)
-  assert.equal(markedQueued.length, 1)
-  assert.equal(result.rows[0]!.queuedOutboundId, "outbound-live-1")
+  assert.equal(result.rows[0]!.queuedRuntimeEventId, "runtime-live-1")
 })
 
 test("S6 policy direct import keeps approval boundary explicit", async () => {

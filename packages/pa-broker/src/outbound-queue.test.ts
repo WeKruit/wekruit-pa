@@ -35,6 +35,8 @@ test("enqueueOutbound uses deterministic doc id and treats duplicate idempotency
     toE164: "+15555550123",
     body: "hello",
     idempotencyKey: "candidate:u_1:job:j_1:outreach",
+    runtimeApproved: true as const,
+    runtimeSource: "test_runtime",
   }
 
   const expectedId = outboundMessageDocId(input.idempotencyKey)
@@ -46,4 +48,18 @@ test("enqueueOutbound uses deterministic doc id and treats duplicate idempotency
   assert.equal(docs.size, 1)
   assert.equal(docs.get(expectedId)?.id, expectedId)
   assert.equal(docs.get(expectedId)?.idempotencyKey, input.idempotencyKey)
+  assert.equal(docs.get(expectedId)?.runtimeApproved, true)
+})
+
+test("enqueueOutbound blocks legacy callers without runtime approval", async () => {
+  const { db } = fakeFirestore()
+  await assert.rejects(
+    enqueueOutbound(db, {
+      userId: "u_1",
+      toE164: "+15555550123",
+      body: "hello",
+      idempotencyKey: "legacy",
+    }),
+    /outbound_requires_runtime_approval/
+  )
 })

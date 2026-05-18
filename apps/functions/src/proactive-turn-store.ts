@@ -83,6 +83,8 @@ export function createFirestoreProactiveTurnStore(db: Firestore): ProactiveTurnS
         status: "pending",
         createdAt: nowIso(),
         attempts: 0,
+        runtimeApproved: true,
+        runtimeSource: "pa_proactive_turn",
         source: "proactive",
         proactiveJobId: opts?.proactiveJobId,
         ...(opts?.sessionId ? { sessionId: opts.sessionId } : {}),

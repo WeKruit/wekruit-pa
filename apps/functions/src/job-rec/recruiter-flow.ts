@@ -1,7 +1,8 @@
 // DEPRECATED — Stream D pivot (2026-04-30) reverted to Claire-only architecture.
 // This file is NOT loaded by onPaInbound anymore (dispatcher removed in apps/functions/src/index.ts).
-// Kept for reference: `runRecruiterFlow` may be repurposed for the daily batch CF path later.
-// Do NOT import from production code without re-architecting first.
+// Kept for reference: `runRecruiterFlow` may be repurposed later.
+// Do NOT import from production code. It must never create sendable
+// pa-outbound rows directly; non-runtime output is handed to Claire runtime.
 /**
  * Stream C — runRecruiterFlow
  *
@@ -13,7 +14,7 @@
  *
  * Why this lives in apps/functions and not @pa/job-rec: this code
  * binds Cloud-Functions-side concerns (Firestore lifecycle on
- * pa-inbound-events, output normalization, pa-outbound enqueue
+ * pa-inbound-events, output normalization, runtime-event handoff
  * schema). @pa/job-rec stays pure-logic and reusable from cron.
  *
  * Lifecycle (atomic, mirrors claimInboundEvent semantics):
@@ -23,8 +24,7 @@
  *   2. Resolve user phoneE164 (delivery target). Missing → mark failed.
  *   3. Run RecruiterAgent turn (LLM + tools).
  *   4. Normalize text via normalizeForIMessage (Bible v7.5.2 hard rules).
- *   5. appendMessage(role=assistant, idempotencyKey=`recruiter-${id}-assistant`).
- *   6. Write pa-outbound/out-${id} doc (validated against OutboundMessageSchema).
+ *   5. Hand proposed assistant text to Claire runtime as a system event.
  *   7. Mark event status="succeeded", completedAt, recruiterTurnRan=true.
  *   8. On error: mark status="failed" + failureReason; re-throw so the
  *      caller's outer logger surfaces the error. We do NOT fall back to
@@ -34,12 +34,9 @@
 import type { Firestore } from "firebase-admin/firestore"
 import {
   PA_COLLECTIONS,
-  OutboundMessageSchema,
   type InboundEvent,
-  type OutboundMessage,
   type User,
 } from "@pa/core-types"
-import { appendMessage } from "@pa/pa-persistence"
 import { normalizeForIMessage } from "@pa/pa-orchestrator"
 import {
   runRecruiterTurn as defaultRunRecruiterTurn,
@@ -47,6 +44,7 @@ import {
   type RunRecruiterTurnArgs,
   type RunRecruiterTurnResult,
 } from "@pa/job-rec"
+import { enqueueRuntimeEventHandoff } from "../runtime-event-handoff.js"
 
 const DEFAULT_LEASE_MS = Number(process.env.PA_INBOUND_LEASE_MS || "90000")
 
@@ -70,7 +68,7 @@ export type RunRecruiterFlowOptions = {
 
 export type RunRecruiterFlowResult =
   | { ok: true; outboundId: string; assistantTextLen: number }
-  | { ok: false; reason: "already_processed" | "no_phone" | "empty_output" }
+  | { ok: false; reason: "already_processed" | "no_phone" | "empty_output" | "runtime_handoff_blocked" }
 
 function defaultLog(..._args: unknown[]): void {
   /* swallow */
@@ -194,48 +192,43 @@ export async function runRecruiterFlow(
     const normalized = normalize(rawText)
     const assistantText = normalized.text || ""
 
-    // ---- 4. Persist assistant turn (pa-messages) ---------------------
-    const idempotencyKey = `recruiter-${eventId}-assistant`
-    if (assistantText.length > 0) {
-      await appendMessage(db, {
-        sessionId: event.sessionId,
-        userId: event.userId,
-        role: "assistant",
-        body: assistantText,
-        createdAt: now().toISOString(),
-        idempotencyKey,
-        rawMeta: { source: "recruiter_agent", inboundEventId: eventId },
-      })
-    } else {
-      log("[recruiter-flow] empty_output_skipping_message", { eventId })
-    }
-
-    // ---- 5. Enqueue pa-outbound -------------------------------------
+    // ---- 4. Runtime handoff ------------------------------------------
     let outboundId: string | null = null
-    if (assistantText.length > 0) {
-      outboundId = `out-${eventId}`
-      const outbound: OutboundMessage = {
-        id: outboundId,
+    if (assistantText.length === 0) {
+      log("[recruiter-flow] empty_output_skipping_message", { eventId })
+    } else {
+      const runtime = await enqueueRuntimeEventHandoff(db, {
         userId: event.userId,
         toE164,
-        body: assistantText,
-        status: "pending",
-        createdAt: now().toISOString(),
-        createdBy: "recruiter-flow@wekruit",
-        idempotencyKey: outboundId,
         sessionId: event.sessionId,
-        role: "assistant",
-        attempts: 0,
+        source: "deprecated_recruiter_flow",
+        eventKind: "recruiter_agent_output",
+        idempotencyKey: eventId,
+        context: {
+          proposedMessage: assistantText,
+          inboundEventId: eventId,
+          mediaUrl: opts.mediaUrl,
+        },
+      })
+      if (runtime.ok) outboundId = runtime.eventId
+      else {
+        const failedAt = now().toISOString()
+        await ref.set(
+          {
+            status: "failed",
+            errorCode: "runtime_handoff_blocked",
+            error: runtime.reason,
+            completedAt: failedAt,
+            updatedAt: failedAt,
+          },
+          { merge: true }
+        )
+        log("[recruiter-flow] runtime_handoff_blocked", { eventId, reason: runtime.reason })
+        return { ok: false, reason: "runtime_handoff_blocked" }
       }
-      // Validate against canonical schema before write — catches drift.
-      OutboundMessageSchema.parse(outbound)
-      await db
-        .collection(PA_COLLECTIONS.outbound)
-        .doc(outboundId)
-        .set(outbound as unknown as Record<string, unknown>)
     }
 
-    // ---- 6. Mark event succeeded ------------------------------------
+    // ---- 5. Mark event succeeded ------------------------------------
     const completedAt = now().toISOString()
     await ref.set(
       {

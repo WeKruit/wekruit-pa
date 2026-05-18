@@ -19,11 +19,7 @@ import type {
   PlanJobOutreachDeps,
   PlanJobOutreachInput,
 } from "../../../apps/functions/src/outreach/service.js"
-import { enqueueOutbound } from "../../../packages/pa-broker/src/outbound-queue.js"
-import {
-  markOutboundInviteQueued,
-  writeOutboundInviteDecision,
-} from "../../../packages/pa-persistence/src/marketplace.js"
+import { writeOutboundInviteDecision } from "../../../packages/pa-persistence/src/marketplace.js"
 import { reserveOutreachCapacity } from "../../../packages/pa-persistence/src/outreach-capacity.js"
 
 export const now = "2026-05-13T12:00:00.000Z"
@@ -404,8 +400,26 @@ export function liveOutreachDeps(db: Firestore): PlanJobOutreachDeps {
         },
       }
     },
-    enqueueOutbound: (input) => enqueueOutbound(db, input),
-    markQueued: (input) => markOutboundInviteQueued(db, input),
+    enqueueRuntimeInvite: async (input) => {
+      const id = `runtime-${input.context.inviteId}`
+      await db.collection(PA_COLLECTIONS.inboundEvents).doc(id).set({
+        id,
+        userId: input.userId,
+        toE164: input.toE164,
+        proposedMessage: input.proposedMessage,
+        idempotencyKey: input.idempotencyKey,
+        status: "pending",
+        createdAt: now,
+        rawMeta: {
+          source: "runtime_event_handoff",
+          runtimeEvent: true,
+          runtimeEventSource: "s6_outreach",
+          runtimeEventKind: "outreach_invite",
+          context: input.context,
+        },
+      })
+      return { id, created: true }
+    },
   }
 }
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { FirestoreSession } from "./firestore-session.js"
+import { deriveSessionMessageIdempotencyKey, FirestoreSession } from "./firestore-session.js"
 import type { ChatMessage } from "@pa/core-types"
 
 /**
@@ -211,9 +211,8 @@ test("addItems short-circuits on idempotencyKey collision with orchestrator-writ
   // Simulate orchestrator already wrote `out-evt1` for the assistant turn.
   const sessionId = "s-test"
   // Compute the same hash the SDK would use.
-  const { createHash } = await import("node:crypto")
   const body = "pong"
-  const idempotencyKey = createHash("sha1").update(`${sessionId} assistant ${body}`).digest("hex")
+  const idempotencyKey = deriveSessionMessageIdempotencyKey(sessionId, "assistant", body)
   const fake = makeFakeDb([
     row({
       id: "out-evt1",

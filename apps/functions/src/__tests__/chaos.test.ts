@@ -123,6 +123,7 @@ describe("chaos: cv-onboarding failure injection", () => {
     const { log, events } = captureLog()
     const deps: IngestCvDeps = {
       skipLimitEnforcement: true,
+      followupDeliveryMode: "direct",
       db,
       log,
       fetchPdf: async () => ({ bytes: new Uint8Array([1]), contentType: "application/pdf" }),
@@ -155,6 +156,7 @@ describe("chaos: cv-onboarding failure injection", () => {
     const { log, events } = captureLog()
     const deps: IngestCvDeps = {
       skipLimitEnforcement: true,
+      followupDeliveryMode: "direct",
       db,
       log,
       nowIso: () => "2026-04-30T00:00:00.000Z",
@@ -225,6 +227,7 @@ describe("chaos: cv-onboarding failure injection", () => {
     const { log, events } = captureLog()
     const deps: IngestCvDeps = {
       skipLimitEnforcement: true,
+      followupDeliveryMode: "direct",
       db,
       log,
       nowIso: () => "2026-04-30T00:00:00.000Z",

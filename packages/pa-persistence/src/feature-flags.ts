@@ -92,7 +92,7 @@ let cacheStats = { hits: 0, misses: 0 }
 
 function ctxHash(ctx: FlagContext | undefined): string {
   if (!ctx?.userId) return "_"
-  return createHash("sha1").update(ctx.userId).digest("hex").slice(0, 12)
+  return createHash("sha256").update(ctx.userId).digest("hex").slice(0, 12)
 }
 
 function cacheKey(key: string, ctx: FlagContext | undefined): string {

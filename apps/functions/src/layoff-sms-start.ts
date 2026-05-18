@@ -1,19 +1,22 @@
 import type { Firestore } from "firebase-admin/firestore"
 import { FieldValue } from "firebase-admin/firestore"
-import { enqueueOutbound as defaultEnqueueOutbound } from "@pa/pa-broker"
+import { createHash } from "node:crypto"
 import { PA_COLLECTIONS } from "@pa/core-types"
-import { WEKRUIT_LAYOFF_SOURCE, composeLayoffFirstMessage } from "@pa/pa-orchestrator"
+import { WEKRUIT_LAYOFF_SOURCE } from "@pa/pa-orchestrator"
 import { hashStringToUint } from "./sendblue/pool.js"
 
 export const LAYOFF_SMS_TRIGGER_TEXT = "WeKruit_LAID_OFF"
-
-type EnqueueOutbound = typeof defaultEnqueueOutbound
 
 export type RunLayoffSmsStartArgs = {
   db: Firestore
   userId: string
   toE164: string
-  enqueueOutbound?: EnqueueOutbound
+  runRuntimeKickoff?: (args: {
+    db: Firestore
+    userId: string
+    toE164: string
+    startedAt: string
+  }) => Promise<{ eventId: string; outboundId?: string }>
   log?: (event: string, payload?: Record<string, unknown>) => void
 }
 
@@ -26,20 +29,6 @@ export type RunLayoffSmsStartResult =
     }
   | { ok: false; reason: "user_not_found" | "missing_phone" }
 
-function firstNameFromUser(user: Record<string, unknown>): string {
-  const displayName = typeof user.displayName === "string" ? user.displayName.trim() : ""
-  if (displayName) return displayName.split(/\s+/)[0] ?? "there"
-  const firstName = typeof user.firstName === "string" ? user.firstName.trim() : ""
-  return firstName || "there"
-}
-
-function layoffContextFromUser(user: Record<string, unknown>): Record<string, unknown> {
-  const ctx = user.layoffContext
-  return ctx && typeof ctx === "object" && !Array.isArray(ctx)
-    ? (ctx as Record<string, unknown>)
-    : {}
-}
-
 function phoneIndexId(e164: string): string {
   return `p_${hashStringToUint(e164).toString(36)}`
 }
@@ -47,13 +36,12 @@ function phoneIndexId(e164: string): string {
 export function buildLayoffOnboardingStartedFields(nowIso: string): Record<string, unknown> {
   return {
     onboardingStatus: "invited",
-    onboardingState: "q_role_asked",
+    onboardingState: "pending",
     pipelineState: {
-      currentQId: "q_role",
+      currentQId: null,
       collected: {},
       attempts: {},
       halted: null,
-      lang: "en",
       completed: false,
     },
     layoffOnboardingStartedAt: nowIso,
@@ -64,6 +52,55 @@ export function buildLayoffOnboardingStartedFields(nowIso: string): Record<strin
       boundary: LAYOFF_SMS_TRIGGER_TEXT,
     },
   }
+}
+
+function sessionDocId(userId: string, channel: "imessage", externalChatId: string): string {
+  const h = createHash("sha256").update(`${userId}|${channel}|${externalChatId}`).digest("hex")
+  return `ses_${h.slice(0, 32)}`
+}
+
+async function runDefaultRuntimeKickoff(args: {
+  db: Firestore
+  userId: string
+  toE164: string
+  startedAt: string
+}): Promise<{ eventId: string; outboundId?: string }> {
+  const { processInboundEvent, createFirestoreOrchestratorStore } = await import("@pa/pa-orchestrator")
+  const { makeOrchestratorDeps } = await import("./orchestrator-deps.js")
+  const sessionId = sessionDocId(args.userId, "imessage", args.toE164)
+  const eventId = `layoff_runtime_${hashStringToUint(`${args.userId}:${args.startedAt}`).toString(36)}`
+  const idempotencyKey = `layoff-runtime:${args.userId}:${args.startedAt}`
+  const event = {
+    id: eventId,
+    userId: args.userId,
+    sessionId,
+    channel: "imessage" as const,
+    externalChatId: args.toE164,
+    from: args.toE164,
+    body: LAYOFF_SMS_TRIGGER_TEXT,
+    status: "pending" as const,
+    createdAt: args.startedAt,
+    idempotencyKey,
+    rawMeta: {
+      source: "layoff_runtime_trigger",
+      trigger: LAYOFF_SMS_TRIGGER_TEXT,
+    },
+  }
+
+  await processInboundEvent(event, createFirestoreOrchestratorStore(args.db, makeOrchestratorDeps()))
+
+  let outboundId: string | undefined
+  try {
+    const snap = await args.db
+      .collection(PA_COLLECTIONS.outbound)
+      .where("idempotencyKey", "==", `outbound-onboarding-${eventId}`)
+      .limit(1)
+      .get()
+    outboundId = snap.docs[0]?.id
+  } catch {
+    outboundId = undefined
+  }
+  return { eventId, ...(outboundId ? { outboundId } : {}) }
 }
 
 export function isLayoffIntakeActiveDoc(data: unknown): boolean {
@@ -131,11 +168,6 @@ export async function runLayoffSmsStart(
   const phoneE164 = args.toE164 || (typeof user.phoneE164 === "string" ? user.phoneE164 : "")
   if (!phoneE164) return { ok: false, reason: "missing_phone" }
 
-  const ctx = layoffContextFromUser(user)
-  const firstName = firstNameFromUser(user)
-  const lastCompany = typeof ctx.lastCompany === "string" ? ctx.lastCompany : undefined
-  const body = composeLayoffFirstMessage({ firstName, lastCompany })
-  const enqueueOutbound = args.enqueueOutbound ?? defaultEnqueueOutbound
   const startedAt = new Date().toISOString()
   const startedFields = buildLayoffOnboardingStartedFields(startedAt)
   const phoneHash = phoneIndexId(phoneE164)
@@ -174,12 +206,11 @@ export async function runLayoffSmsStart(
     nowIso: startedAt,
   })
 
-  const enqueueResult = await enqueueOutbound(args.db, {
+  const runtimeKickoff = await (args.runRuntimeKickoff ?? runDefaultRuntimeKickoff)({
+    db: args.db,
     userId: args.userId,
     toE164: phoneE164,
-    imessageChatId: `iMessage;-;${phoneE164}`,
-    body,
-    idempotencyKey: `wekruit_open_layoff:${args.userId}:kickoff:${startedAt}`,
+    startedAt,
   })
 
   await userRef.set(
@@ -187,24 +218,26 @@ export async function runLayoffSmsStart(
       source: WEKRUIT_LAYOFF_SOURCE,
       lastLaidOffAt: FieldValue.serverTimestamp(),
       updatedAt: new Date().toISOString(),
-      smsState: "kickoff-enqueued",
+      smsState: "runtime-kickoff-enqueued",
       smsKickoffAt: FieldValue.serverTimestamp(),
       smsThreadId: `iMessage;-;${phoneE164}`,
-      kickoffOutboundId: enqueueResult.id,
+      kickoffRuntimeEventId: runtimeKickoff.eventId,
+      kickoffOutboundId: runtimeKickoff.outboundId ?? runtimeKickoff.eventId,
     },
     { merge: true },
   )
 
   args.log?.("layoff.sms_start.enqueued", {
     userId: args.userId,
-    kickoffOutboundId: enqueueResult.id,
-    created: enqueueResult.created,
+    kickoffRuntimeEventId: runtimeKickoff.eventId,
+    kickoffOutboundId: runtimeKickoff.outboundId ?? null,
+    created: true,
   })
 
   return {
     ok: true,
-    kickoffOutboundId: enqueueResult.id,
-    kickoffCreated: enqueueResult.created,
+    kickoffOutboundId: runtimeKickoff.outboundId ?? runtimeKickoff.eventId,
+    kickoffCreated: true,
     sourceTag: WEKRUIT_LAYOFF_SOURCE,
   }
 }

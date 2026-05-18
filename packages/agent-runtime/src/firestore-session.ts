@@ -55,7 +55,7 @@ export function deriveSessionMessageIdempotencyKey(
   role: string,
   body: string
 ): string {
-  return createHash("sha1").update(`${sessionId} ${role} ${body}`).digest("hex")
+  return createHash("sha256").update(`${sessionId} ${role} ${body}`).digest("hex")
 }
 
 function deriveIdempotencyKey(sessionId: string, role: string, body: string): string {

@@ -12,8 +12,8 @@
  * Responsibilities:
  *   1. Accept POST {tempUserId | userId, resumeBase64, resumeName?, source?,
  *      jobIdContext?} or {userId, resumeUrl, source?}.
- *   2. Decode base64 → bytes (or fetch resumeUrl) → run `ingestCv` with an
- *      injected `fetchPdf` that returns the bytes directly.
+ *   2. Decode base64 → PDF/DOCX bytes (or fetch resumeUrl) → run `ingestCv`
+ *      with injected parser deps that return the upload content directly.
  *   3. Return {ok, resumeId | reason}.
  *
  * Security posture (deliberate trade-offs):
@@ -22,8 +22,8 @@
  *   - tempUserId is a client-generated UUID. Server treats it as
  *     untrusted but uses it as the pa-users doc ID. Same posture as
  *     pa-prescreen-pending-invites public-create rule.
- *   - Size cap 8 MB on the raw POST body (5 MB PDF + b64 overhead ~33%).
- *   - PDF mime sniff: first 4 bytes must be `%PDF`.
+ *   - Size cap 8 MB on the raw POST body (5 MB resume + b64 overhead ~33%).
+ *   - Upload sniffing allows text-based PDF or DOCX only.
  *   - Rate limit: TODO (deferred to v2.0; current threat is low — UUIDs
  *     are not enumerable by attackers).
  *
@@ -38,6 +38,8 @@ import { getFirestore } from "firebase-admin/firestore"
 import { PA_COLLECTIONS, ResumeArtifactSchema } from "@pa/core-types"
 import { ingestCv } from "./cv-ingest/cv-ingest.js"
 import type { IngestCvInput, IngestCvDeps } from "./cv-ingest/cv-ingest.js"
+import { detectResumeUploadKind, extractDocxText } from "./resume-upload-parser.js"
+import type { ResumeUploadKind } from "./resume-upload-parser.js"
 
 // Same-name defineSecret() refs hydrate from the same Firebase Secret. Wired
 // into the CF deploy below so the cv-ingest LLM extract path can read the
@@ -89,16 +91,6 @@ function setCors(res: { set: (k: string, v: string) => unknown }): void {
   res.set("Access-Control-Allow-Methods", "POST,OPTIONS")
   res.set("Access-Control-Allow-Headers", "Content-Type")
   res.set("Access-Control-Max-Age", "3600")
-}
-
-function sniffPdf(bytes: Uint8Array): boolean {
-  if (bytes.length < 5) return false
-  return (
-    bytes[0] === 0x25 && // %
-    bytes[1] === 0x50 && // P
-    bytes[2] === 0x44 && // D
-    bytes[3] === 0x46 // F
-  )
 }
 
 function stripUndefined<T extends Record<string, unknown>>(input: T): T {
@@ -250,10 +242,18 @@ export const paPublicCvIngest = onRequest(
       return
     }
 
+    const db = getFirestore()
+    const log = (event: string, payload?: Record<string, unknown>): void => {
+      // Firebase Functions auto-streams console.log to Cloud Logging.
+      console.log(JSON.stringify({ event, ...(payload ?? {}) }))
+    }
+
     // Decode base64 path — return bytes via injected fetchPdf so cv-ingest
     // doesn't try to network-fetch an "inline://" URL.
     let injectedBytes: Uint8Array | null = null
     let resumeSha256: string | undefined
+    let resumeKind: ResumeUploadKind | null = null
+    let extractedDocxText: string | null = null
     if (body.resumeBase64) {
       try {
         injectedBytes = Buffer.from(body.resumeBase64, "base64")
@@ -265,21 +265,28 @@ export const paPublicCvIngest = onRequest(
           res.status(413).json({ ok: false, reason: "resume_too_large" })
           return
         }
-        if (!sniffPdf(injectedBytes)) {
-          res.status(415).json({ ok: false, reason: "not_a_pdf" })
+        resumeKind = detectResumeUploadKind(injectedBytes, body.resumeName)
+        if (!resumeKind) {
+          res.status(415).json({ ok: false, reason: "unsupported_resume_format" })
           return
+        }
+        if (resumeKind === "docx") {
+          try {
+            extractedDocxText = extractDocxText(injectedBytes)
+          } catch (err) {
+            log("public_cv_ingest.docx_parse_failed", {
+              userId,
+              error: err instanceof Error ? err.message : String(err),
+            })
+            res.status(422).json({ ok: false, reason: "docx_parse_failed" })
+            return
+          }
         }
         resumeSha256 = createHash("sha256").update(injectedBytes).digest("hex")
       } catch {
         res.status(400).json({ ok: false, reason: "base64_decode_failed" })
         return
       }
-    }
-
-    const db = getFirestore()
-    const log = (event: string, payload?: Record<string, unknown>): void => {
-      // Firebase Functions auto-streams console.log to Cloud Logging.
-      console.log(JSON.stringify({ event, ...(payload ?? {}) }))
     }
 
     // For base64 path: inject fetchPdf that returns the bytes regardless
@@ -294,11 +301,21 @@ export const paPublicCvIngest = onRequest(
       db,
       log,
       checkGate: async () => ({ open: true, reason: "public_page_bypass" }),
+      followupDeliveryMode: "none",
       ...(injectedBytes
         ? {
             fetchPdf: async (): Promise<{ bytes: Uint8Array; contentType: string }> => ({
               bytes: injectedBytes!,
-              contentType: "application/pdf",
+              contentType: resumeKind === "docx"
+                ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                : "application/pdf",
+            }),
+          }
+        : {}),
+      ...(extractedDocxText
+        ? {
+            parsePdf: async (): Promise<{ text: string; numPages?: number }> => ({
+              text: extractedDocxText!,
             }),
           }
         : {}),
