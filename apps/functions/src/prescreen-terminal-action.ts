@@ -33,6 +33,7 @@ import { sendRuntimeApprovedIMessage } from "./runtime-approved-outbox.js"
 import { runPiiConfirmForUser } from "./pii-confirm-start.js"
 import { markPrescreenTerminalOutcome } from "./prescreen-outcome-service.js"
 import {
+  buildJobRecommendationRuntimeContext,
   collectJobRecommendationMessageItems,
   composeJobRecommendationMessage,
   compactJobRecContext,
@@ -211,18 +212,17 @@ async function defaultGenerateJobRecs(args: {
   // builds the same closure; we duplicate the minimal version here to
   // avoid circular import.
   const { getFirestore } = await import("firebase-admin/firestore")
-  const { queryMatchingJobsV16 } = await import("@pa/job-rec")
-  const { sendImessage: send } = await import("@pa/job-rec")
+  const { queryMatchingJobsV16, sendImessage: send, recordRecommendedJobs } = await import("@pa/job-rec")
   const db = getFirestore()
   const result = await queryMatchingJobsV16(
-    { userId: args.userId, limit: 5, lang: args.lang ?? "en" },
+    { userId: args.userId, limit: 5, lang: "en", allowBroadFallback: true },
     { db, log: () => undefined }
   )
   if (result.noUserTags) return { ok: false, jobCount: 0, reason: "no_user_tags" }
   if (!result.jobs || result.jobs.length === 0) {
     return { ok: false, jobCount: 0, reason: "no_matches" }
   }
-  const items = collectJobRecommendationMessageItems(result.jobs, args.lang ?? "en", { limit: 3 })
+  const items = collectJobRecommendationMessageItems(result.jobs, "en", { limit: 3 })
   if (items.length === 0) {
     return { ok: false, jobCount: 0, reason: "no_linkable_matches" }
   }
@@ -233,15 +233,29 @@ async function defaultGenerateJobRecs(args: {
   } catch {
     introContext = undefined
   }
-  const content = composeJobRecommendationMessage(items, args.lang ?? "en", introContext)
   const sendRes = await send(
     {
       userId: args.userId,
-      content,
+      context: buildJobRecommendationRuntimeContext(items, introContext, {
+        requestedCount: 3,
+        source: "prescreen_terminal_action",
+        eventKind: "prescreen_terminal_job_recommendations",
+      }),
       idempotencyKey: `${args.userId}-${new Date().toISOString().slice(0, 16)}-prescreen-term`,
     },
     { db, log: () => undefined }
   )
+  if (sendRes.ok) {
+    await recordRecommendedJobs(
+      db,
+      {
+        userId: args.userId,
+        jobs: items.map((item) => item.sourceJob),
+        source: "prescreen_terminal_action",
+      },
+      () => undefined,
+    )
+  }
   return {
     ok: sendRes.ok,
     jobCount: items.length,

@@ -89,8 +89,16 @@ export const paVoiceCallContext: HttpsFunction = onRequest(
       return
     }
     const booking = bookingSnap.data() as Record<string, unknown>
-    const userId = typeof booking.userId === "string" ? booking.userId : ""
-    const jobId = typeof booking.jobId === "string" ? booking.jobId : ""
+    // Canonical fields are paUserId/paJobId (match dialOutbound.ts).
+    // Fall back to legacy userId/jobId for any older docs.
+    const userId =
+      (typeof booking.paUserId === "string" && booking.paUserId) ||
+      (typeof booking.userId === "string" && booking.userId) ||
+      ""
+    const jobId =
+      (typeof booking.paJobId === "string" && booking.paJobId) ||
+      (typeof booking.jobId === "string" && booking.jobId) ||
+      ""
     if (!userId || !jobId) {
       res.status(400).json({ ok: false, reason: "booking_missing_user_or_job" })
       return

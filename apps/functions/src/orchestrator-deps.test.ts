@@ -34,6 +34,7 @@ import {
   fireAndForgetLlmRerank,
   formatJobRecIntro,
   formatJobRequirementsLine,
+  resolveRuntimeJobRecRoleFocus,
   resolveJobRecVisibleCount,
 } from "./orchestrator-deps.js"
 import type { RerankInput, RerankOutput } from "./lib/llm-rerank.js"
@@ -186,7 +187,8 @@ function composeJobLine(
   const reasonLine = reasonText
     ? `\n${lang === "zh" ? "为啥推" : "why"}: ${reasonText}`
     : ""
-  const requirementsLine = `\n${formatJobRequirementsLine(lang, j.requiredSkills)}`
+  const formattedRequirements = formatJobRequirementsLine(lang, j.requiredSkills)
+  const requirementsLine = formattedRequirements ? `\n${formattedRequirements}` : ""
   return `• ${j.jobTitle}${tag}${url}${requirementsLine}${reasonLine}`
 }
 
@@ -213,7 +215,7 @@ describe("generateJobRecs compose: per-job line shape (iter34 B.11)", () => {
     assert.match(parts[3]!, /Node\.js/)
   })
 
-  it("legacy fallback: no matchScore → reason line dropped but requirements stay visible", () => {
+  it("legacy fallback: no concrete requirements → reason and requirements lines are dropped", () => {
     const j: MockJob = {
       jobTitle: "Backend Engineer",
       companyName: "Beta",
@@ -221,10 +223,10 @@ describe("generateJobRecs compose: per-job line shape (iter34 B.11)", () => {
     }
     const out = composeJobLine(j, "en", { topSkills: [] })
     const parts = out.split("\n")
-    assert.equal(parts.length, 3, "legacy must emit 3 lines (title + url + requirements fallback)")
+    assert.equal(parts.length, 2, "legacy must not emit weak requirements fallback copy")
     assert.match(parts[0]!, /Backend Engineer @ Beta/)
     assert.match(parts[1]!, /^https:\/\//)
-    assert.equal(parts[2]!, "requirements: see the job post for the full requirements")
+    assert.equal(formatJobRequirementsLine("en", j.requiredSkills), "")
   })
 
   it("en path renders 'why:' label", () => {
@@ -284,6 +286,29 @@ describe("generateJobRecs visible count", () => {
     assert.equal(cleanJobRecUrl({ primaryUrl: "https://jobright.ai/job/123" }), null)
     assert.equal(cleanJobRecUrl({ primaryUrl: "" }), null)
     assert.equal(cleanJobRecUrl({ primaryUrl: "https://company.example/jobs/1" }), "https://company.example/jobs/1")
+  })
+})
+
+describe("generateJobRecs role focus", () => {
+  it("uses explicit request focus when present", () => {
+    assert.deepEqual(
+      resolveRuntimeJobRecRoleFocus(["frontend"], { targetRole: ["backend", "fullstack"] }),
+      ["frontend"],
+    )
+  })
+
+  it("falls back to canonical profile targetRole", () => {
+    assert.deepEqual(
+      resolveRuntimeJobRecRoleFocus(undefined, { targetRole: ["full-stack", "frontend"] }),
+      ["fullstack", "frontend"],
+    )
+  })
+
+  it("ignores non-presentation targetRole values", () => {
+    assert.deepEqual(
+      resolveRuntimeJobRecRoleFocus(undefined, { targetRole: ["product-ops tooling", "founder"] }),
+      [],
+    )
   })
 })
 

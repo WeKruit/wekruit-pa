@@ -7,7 +7,7 @@
  *
  * This tool never writes sendable transport rows directly.
  *
- * Idempotency: derived from `(userId, content)` so retries of the cron
+ * Idempotency: derived from `(userId, context)` so retries of the cron
  * path don't double-send the same job recs. Caller can pass an explicit
  * key (preferred for cron — `${userId}-${YYYYMMDD}-batch`).
  */
@@ -50,18 +50,61 @@ async function defaultGetUser(
 
 export type SendImessageArgs = {
   userId: string
-  content: string
+  context: Record<string, unknown>
   /**
    * Optional caller-supplied idempotency key — used by the daily cron to
-   * dedupe per-day batches. When omitted we hash content as a fallback.
+   * dedupe per-day batches. When omitted we hash context as a fallback.
    */
   idempotencyKey?: string
   /** Optional sessionId (links to pa-sessions for analytics). */
   sessionId?: string
 }
 
-function deriveIdempotencyKey(userId: string, content: string): string {
-  return createHash("sha1").update(`${userId}|${content}`).digest("hex")
+const CANDIDATE_DRAFT_CONTEXT_KEYS = new Set([
+  "candidateMessage",
+  "candidateVisibleMessage",
+  "content",
+  "composedRecommendationMessage",
+  "messageBody",
+  "messageTemplate",
+  "proposedMessage",
+  "renderedTemplate",
+  "sourceNotes",
+])
+
+function sanitizeRuntimeContext(context: Record<string, unknown>): {
+  context: Record<string, unknown>
+  removedDraftKeys: string[]
+} {
+  const removedDraftKeys: string[] = []
+  const sanitize = (value: unknown, path: string): unknown => {
+    if (!value || typeof value !== "object") return value
+    if (Array.isArray(value)) return value.map((item, index) => sanitize(item, `${path}[${index}]`))
+    const out: Record<string, unknown> = {}
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      const childPath = path ? `${path}.${key}` : key
+      if (CANDIDATE_DRAFT_CONTEXT_KEYS.has(key)) {
+        removedDraftKeys.push(childPath)
+        continue
+      }
+      out[key] = sanitize(child, childPath)
+    }
+    return out
+  }
+  return { context: sanitize(context, "") as Record<string, unknown>, removedDraftKeys }
+}
+
+function compactContext(context: Record<string, unknown>): string {
+  const sanitized = sanitizeRuntimeContext(context).context
+  try {
+    return JSON.stringify(sanitized).slice(0, 2500)
+  } catch {
+    return "{}"
+  }
+}
+
+function deriveIdempotencyKey(userId: string, context: Record<string, unknown>): string {
+  return createHash("sha1").update(`${userId}|${compactContext(context)}`).digest("hex")
 }
 
 function sessionDocId(userId: string, channel: Channel, externalChatId: string): string {
@@ -74,14 +117,14 @@ function runtimeEventDocId(idempotencyKey: string): string {
   return `runtime_${h.slice(0, 40)}`
 }
 
-function buildRuntimeEventBody(content: string): string {
+function buildRuntimeEventBody(context: Record<string, unknown>): string {
   return [
     "[system-event:job_rec:send_imessage]",
     "A job recommendation/outbound request was produced by a non-runtime job-rec component.",
     "Decide whether Claire should message the candidate now. If no message should be sent, reply exactly __NO_SEND__.",
-    "If a message should be sent, write it as Claire from scratch. Do not forward or reuse producer-written wording verbatim.",
-    "Keep the candidate's established language/context and include job links/requirements when they appear in the source notes.",
-    `Source notes/context: ${content.slice(0, 2500)}`,
+    "If a message should be sent, write it as Claire from scratch in English. Do not use Chinese or producer-written wording.",
+    "Include job links and requirements when they appear in the structured context.",
+    `Context: ${compactContext(context)}`,
   ].join("\n")
 }
 
@@ -89,7 +132,7 @@ export async function sendImessage(
   args: SendImessageArgs,
   deps: SendImessageDeps
 ): Promise<SendImessageOutput> {
-  const parsed = SendImessageInputSchema.parse({ userId: args.userId, content: args.content })
+  const parsed = SendImessageInputSchema.parse({ userId: args.userId, context: args.context })
   const log = deps.log ?? defaultLog
   const nowIso = deps.nowIso ?? (() => new Date().toISOString())
   const getUser = deps.getUser ?? defaultGetUser
@@ -100,7 +143,7 @@ export async function sendImessage(
     return { ok: false }
   }
 
-  const idempotencyKey = args.idempotencyKey ?? deriveIdempotencyKey(parsed.userId, parsed.content)
+  const idempotencyKey = args.idempotencyKey ?? deriveIdempotencyKey(parsed.userId, parsed.context)
   const id = runtimeEventDocId(idempotencyKey)
   const createdAt = nowIso()
   const sessionId = args.sessionId ?? sessionDocId(parsed.userId, "imessage", user.phoneE164)
@@ -117,6 +160,7 @@ export async function sendImessage(
     log("[sendImessage] runtime_dedup_hit", { userId: parsed.userId, idempotencyKey, prevId: id })
     return { ok: true, messageHandle: id, runtimeEventId: id }
   }
+  const sanitized = sanitizeRuntimeContext(parsed.context)
 
   const event: InboundEvent = {
     id,
@@ -125,7 +169,7 @@ export async function sendImessage(
     channel: "imessage",
     externalChatId: user.phoneE164,
     from: user.phoneE164,
-    body: buildRuntimeEventBody(parsed.content),
+    body: buildRuntimeEventBody(parsed.context),
     status: "pending",
     createdAt,
     idempotencyKey: `runtime-event:job-rec:${idempotencyKey}`,
@@ -135,9 +179,11 @@ export async function sendImessage(
       runtimeEventSource: "job_rec",
       runtimeEventKind: "send_imessage",
       runtimeNoSendToken: "__NO_SEND__",
-      context: {
-        sourceNotes: parsed.content,
-      },
+      preferredLanguage: "en",
+      context: sanitized.context,
+      ...(sanitized.removedDraftKeys.length > 0
+        ? { removedCandidateDraftContextKeys: sanitized.removedDraftKeys }
+        : {}),
     },
   }
 

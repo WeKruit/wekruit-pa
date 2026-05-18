@@ -27,7 +27,12 @@ import { loadSendbluePool, pickFromNumber, sendblueGroupId, hashStringToUint } f
 import { normalizePeer } from "./sendblue/allowlist.js"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import { hashCandidateHandle, linkCandidateHandle } from "@pa/pa-persistence"
-import { WEKRUIT_LAYOFF_SOURCE } from "@pa/pa-orchestrator"
+import {
+  WEKRUIT_LAYOFF_SOURCE,
+  WEKRUIT_CANDIDATE_SOURCE,
+  isWekruitSignupSource,
+  type WekruitSignupSource,
+} from "@pa/pa-orchestrator"
 import { runLayoffSmsStart, supersedeActivePrescreensForLayoff } from "./layoff-sms-start.js"
 
 /** Source tag — drives Claire's opener variant + listing filter + analytics. */
@@ -290,7 +295,7 @@ export async function runRegisterLayoffCandidate(
 }
 
 export const openRegisterLayoffCandidate = onCall<RegisterInput>(
-  { region: "us-central1", cors: true },
+  { region: "us-central1", cors: true, memory: "512MiB" },
   async (req) => {
     return runRegisterLayoffCandidate(req.data, { db: getFirestore() })
   },
@@ -306,15 +311,17 @@ export async function runInitiateSmsPrescreen(
   const doc = await userRef.get()
   if (!doc.exists) throw new HttpsError("not-found", "User not found")
   const u = doc.data()!
-  if (u.source !== WEKRUIT_LAYOFF_SOURCE) {
-    throw new HttpsError("failed-precondition", "user_not_tagged_layoff")
+  if (!isWekruitSignupSource(u.source)) {
+    throw new HttpsError("failed-precondition", "user_source_unsupported")
   }
+  const userSource = u.source as WekruitSignupSource
 
   const phoneE164 = u.phoneE164 as string
   const result = await runLayoffSmsStart({
     db: deps.db,
     userId: candidateId,
     toE164: phoneE164,
+    source: userSource,
     runRuntimeKickoff: deps.runRuntimeKickoff,
   })
   if (!result.ok) throw new HttpsError("failed-precondition", result.reason)
@@ -328,7 +335,7 @@ export async function runInitiateSmsPrescreen(
 }
 
 export const openInitiateSmsPrescreen = onCall<{ candidateId: string }>(
-  { region: "us-central1", cors: true },
+  { region: "us-central1", cors: true, memory: "512MiB" },
   async (req) => {
     return runInitiateSmsPrescreen(req.data.candidateId, { db: getFirestore() })
   },
@@ -403,7 +410,7 @@ export async function runSubmitChatTurn(
 export const openSubmitChatTurn = onCall<{
   candidateId: string
   turn: { promptId: string; text: string; at?: string }
-}>({ region: "us-central1", cors: true, maxInstances: 1 }, async (req) => {
+}>({ region: "us-central1", cors: true, maxInstances: 1, memory: "512MiB" }, async (req) => {
   return runSubmitChatTurn(req.data, { db: getFirestore() })
 })
 

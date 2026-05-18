@@ -372,10 +372,10 @@ describe("paReverseMatch — D4 test 6: runtime handoff notify path", () => {
     assert.equal(fail2.ok, false)
     assert.equal(fail2.error, "user_not_found")
 
-    // Bilingual sanity at the helper level
+    // Beta helper is English-only even when legacy preferredLanguage is zh.
     assert.match(
       buildNotifyMessage({ jobTitle: "PM", companyName: "WK", preferredLanguage: "zh" }),
-      /嘿/,
+      /Hey/,
     )
     assert.match(
       buildNotifyMessage({ jobTitle: "PM", companyName: "WK", preferredLanguage: "en" }),

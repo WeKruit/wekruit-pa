@@ -228,6 +228,17 @@ export const MatchingJobSchema = z.object({
    * legacy rows fall back to title-regex inference.
    */
   seniorityLevel: z.string().optional(),
+  /**
+   * Candidate-visible source label. This is not inferred from public
+   * visibility: only `pa-jobs/{jobId}.wekruitCollaborationStatus ===
+   * "collaborated"` may produce "WeKruit collaborated"; everything else is
+   * a general match.
+   */
+  matchSourceLabel: z.enum(["WeKruit collaborated", "general match"]).optional(),
+  /** Per-candidate recommendation memory. Used to lower repeat priority. */
+  previouslyRecommended: z.boolean().optional(),
+  recommendationCount: z.number().int().nonnegative().optional(),
+  lastRecommendedAt: z.string().optional(),
 })
 export type MatchingJob = z.infer<typeof MatchingJobSchema>
 
@@ -337,7 +348,7 @@ export type SaveJobProfileOutput = z.infer<typeof SaveJobProfileOutputSchema>
 
 export const SendImessageInputSchema = z.object({
   userId: z.string().min(1),
-  content: z.string().min(1).max(2000),
+  context: z.record(z.string(), z.unknown()),
 })
 export type SendImessageInput = z.infer<typeof SendImessageInputSchema>
 
@@ -383,6 +394,8 @@ export const V16ScoreBreakdownSchema = z.object({
   positiveHit: z.number(),
   /** Phase B4 — +0.20 fresh full_time / -0.10 intern/new_grad/contract. */
   urgencyBoost: z.number(),
+  /** Per-user/job repeat-rec penalty applied to ranking total. */
+  previousRecommendationPenalty: z.number().optional(),
   /** Weighted total per V16_SCORE_WEIGHTS + B4 additive boosts. */
   total: z.number(),
 })
@@ -429,6 +442,10 @@ export type V16QueryResult = {
     v16Score: V16ScoreBreakdown
     matchedSkills: MatchedSkillContribution[]
     reason: string
+    matchSourceLabel: "WeKruit collaborated" | "general match"
+    previouslyRecommended?: boolean
+    recommendationCount?: number
+    lastRecommendedAt?: string
   }>
   /** Total survivors after hard-filter (pre-rank). */
   total: number
@@ -440,6 +457,8 @@ export type V16QueryResult = {
   noUserTags?: boolean
   /** True when the LLM rerank cache was stale (>36h) — llmMatch defaults to 0. */
   llmCacheStale?: boolean
+  /** Hard filters intentionally relaxed after strict retrieval returned zero. */
+  relaxedHardFilters?: string[]
   /**
    * Phase 70 — surfaced when caller is the admin match-debug CF; opaque
    * snapshot of the user's tags doc so the dashboard can render the canonical

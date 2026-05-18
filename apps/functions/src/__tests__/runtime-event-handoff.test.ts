@@ -48,6 +48,9 @@ test("runtime event handoff removes producer-written candidate drafts before Cla
     requireExistingSession: false,
     context: {
       resumeId: "resume-1",
+      content: "legacy content body",
+      composedRecommendationMessage: "producer rec copy",
+      sourceNotes: "producer notes",
       proposedMessage: "send this stale producer draft",
       nested: {
         renderedTemplate: "template copy that must not leak",
@@ -61,13 +64,19 @@ test("runtime event handoff removes producer-written candidate drafts before Cla
   if (!result.ok) return
   const row = store.get(PA_COLLECTIONS.inboundEvents)?.get(result.eventId)
   assert.ok(row)
-  assert.doesNotMatch(String(row!.body), /producer draft|template copy/)
+  assert.doesNotMatch(String(row!.body), /producer draft|template copy|producer rec copy|legacy content body/)
+  assert.doesNotMatch(String(row!.body), /Keep the candidate's established language/)
+  assert.match(String(row!.body), /English-only/)
   const meta = row!.rawMeta as Record<string, unknown>
+  assert.equal(meta.preferredLanguage, "en")
   assert.deepEqual(meta.context, {
     resumeId: "resume-1",
     nested: { facts: ["React", "Node"] },
   })
   assert.deepEqual(meta.removedCandidateDraftContextKeys, [
+    "content",
+    "composedRecommendationMessage",
+    "sourceNotes",
     "proposedMessage",
     "nested.renderedTemplate",
   ])
@@ -76,6 +85,7 @@ test("runtime event handoff removes producer-written candidate drafts before Cla
 test("sanitizeRuntimeEventContext redacts draft-like keys recursively", () => {
   const out = sanitizeRuntimeEventContext({
     eventKind: "x",
+    content: "legacy body",
     messageTemplate: "legacy template",
     items: [{ candidateVisibleMessage: "old copy", title: "Role" }],
   })
@@ -83,5 +93,5 @@ test("sanitizeRuntimeEventContext redacts draft-like keys recursively", () => {
     eventKind: "x",
     items: [{ title: "Role" }],
   })
-  assert.deepEqual(out.removedDraftKeys, ["messageTemplate", "items[0].candidateVisibleMessage"])
+  assert.deepEqual(out.removedDraftKeys, ["content", "messageTemplate", "items[0].candidateVisibleMessage"])
 })

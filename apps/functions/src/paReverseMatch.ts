@@ -202,7 +202,7 @@ async function defaultLoadUserSignals(
 
   // 2. pa-users
   let displayName = userId
-  let preferredLanguage: "zh" | "en" = "zh"
+  let preferredLanguage: "zh" | "en" = "en"
   let phoneE164 = ""
   let statedPreferences: ReverseMatchUserProfile["hardFilterProfile"]["statedPreferences"] | undefined
   let experiences: ReverseMatchUserProfile["hardFilterProfile"]["experiences"] | undefined
@@ -211,7 +211,6 @@ async function defaultLoadUserSignals(
     if (userDoc.exists) {
       const ud = userDoc.data() as Record<string, unknown>
       if (typeof ud.displayName === "string" && ud.displayName.length > 0) displayName = ud.displayName
-      if (ud.preferredLanguage === "en") preferredLanguage = "en"
       if (typeof ud.phoneE164 === "string") phoneE164 = ud.phoneE164
       const sp = ud.statedPreferences
       if (sp && typeof sp === "object") {
@@ -302,13 +301,12 @@ export async function enqueueReverseMatchNotify(
 ): Promise<{ ok: boolean; outboundId?: string; error?: string }> {
   // Resolve user → phone + language.
   let phoneE164 = ""
-  let preferredLanguage: "zh" | "en" = "zh"
+  let preferredLanguage: "zh" | "en" = "en"
   try {
     const userDoc = await db.collection("pa-users").doc(args.userId).get()
     if (!userDoc.exists) return { ok: false, error: "user_not_found" }
     const ud = userDoc.data() as Record<string, unknown>
     if (typeof ud.phoneE164 === "string") phoneE164 = ud.phoneE164
-    if (ud.preferredLanguage === "en") preferredLanguage = "en"
   } catch (err) {
     return {
       ok: false,
@@ -328,9 +326,9 @@ export async function enqueueReverseMatchNotify(
       context: {
         jobTitle: args.jobTitle,
         companyName: args.companyName,
-        preferredLanguage,
+        preferredLanguage: "en",
         suggestedIntent:
-          "Operator found a potentially relevant role. Decide whether to message the candidate, include the role/company, a clear job link only if present in context, and keep language consistent.",
+          "Operator found a potentially relevant role. Decide whether to message the candidate in English, include the role/company, and include a clear job link only if present in context.",
       },
     })
     if (!runtime.ok) return { ok: false, error: runtime.reason }

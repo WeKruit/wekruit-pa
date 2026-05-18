@@ -142,7 +142,7 @@ export default function Landing() {
               interview directly with the hiring manager.
             </p>
             <div className="wk-hero__cta">
-              <Link to="/login" className="wk-btn wk-btn--primary wk-btn--lg">
+              <Link to="/onboarding" className="wk-btn wk-btn--primary wk-btn--lg">
                 Start with Claire
                 <Icon name="arrow-right" size={16} stroke={2} />
               </Link>
@@ -278,7 +278,7 @@ export default function Landing() {
 
           <div className="wk-final-cta">
             <h3 className="wk-final-cta__h">Stop applying. Start interviewing.</h3>
-            <Link to="/login" className="wk-btn wk-btn--primary wk-btn--lg">
+            <Link to="/onboarding" className="wk-btn wk-btn--primary wk-btn--lg">
               Start with Claire
               <Icon name="arrow-right" size={16} stroke={2} />
             </Link>

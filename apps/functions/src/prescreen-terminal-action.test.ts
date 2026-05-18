@@ -379,8 +379,8 @@ describe("runPrescreenTerminalAction — FAIL branch (v1.9 hotfix)", () => {
     assert.match(body, /Backend Engineer @ Rain/)
     assert.match(body, /https:\/\/example\.com\/job/)
     assert.match(body, /requirements: TypeScript, Node\.js/)
-    assert.match(body, /Why match:/)
-    assert.doesNotMatch(body, /其他可能合适|为啥推/)
+    assert.match(body, /why: your TypeScript aligns with JD core skills/)
+    assert.doesNotMatch(body, /其他可能合适|为啥推|Why match:/)
   })
 })
 

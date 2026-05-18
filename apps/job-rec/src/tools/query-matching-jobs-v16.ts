@@ -50,6 +50,7 @@ import { V16_SCORE_WEIGHTS } from "../match-weights.js"
 import { projectMatchingJobRow } from "./query-matching-jobs.js"
 import { normalizeCompanyName } from "@pa/core-types"
 import { loadCompaniesByName, type LoadedCompanyInfo } from "../lib/load-companies.js"
+import { loadRecommendedJobStates, type UserJobRecommendationState } from "../recommendation-state.js"
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -58,6 +59,7 @@ import { loadCompaniesByName, type LoadedCompanyInfo } from "../lib/load-compani
 /** Source-of-truth Firestore collection for the v1.6 single-source read. */
 const PA_USERS_COLLECTION = "pa-users"
 const MATCHING_JOBS_COLLECTION = "matching-jobs"
+const PA_JOBS_COLLECTION = "pa-jobs"
 const ACTIVE_STATUS = "active"
 
 /**
@@ -323,7 +325,8 @@ export function applyV16HardFilters(
   jobs: MatchingJob[],
   userTags: UserTags,
   nowMs: number = Date.now(),
-  freshnessWindowMs: number = FRESHNESS_WINDOW_MS
+  freshnessWindowMs: number = FRESHNESS_WINDOW_MS,
+  options: { relaxSpecificLocation?: boolean } = {},
 ): { kept: MatchingJob[]; counters: V16HardFilterCounters } {
   const counters: V16HardFilterCounters = {
     visa: 0,
@@ -449,7 +452,7 @@ export function applyV16HardFilters(
     }
 
     // 2. location intersect (anywhere bypass).
-    if (!isAnywhere && targetLocations.length > 0) {
+    if (!options.relaxSpecificLocation && !isAnywhere && targetLocations.length > 0) {
       const jobLocs = Array.isArray(job.locationBuckets) ? job.locationBuckets : []
       let hit = false
       for (const l of jobLocs) {
@@ -926,6 +929,20 @@ export type QueryMatchingJobsV16Args = {
    * by `scoreV16Job`. Default (undefined) preserves V16 default behaviour.
    */
   weightOverrides?: V16ScoreWeightOverrides
+  /**
+   * Broad candidate job-rec path only: when strict V16 produces zero jobs
+   * and exact metro/location is the dominant blocker, relax only the exact
+   * location intersection. Country, visa, dead, apply URL, and negative-list
+   * gates remain hard.
+   */
+  allowBroadFallback?: boolean
+  /**
+   * Candidate-visible direct request focus, e.g. "frontend" or "fullstack".
+   * This is a presentation eligibility gate, not a hard business gate:
+   * it prevents "software engineering" requests from drifting into security,
+   * SRE, data, or support roles when the user explicitly asks for a subtype.
+   */
+  presentationRoleFocus?: string[]
 }
 
 export type QueryMatchingJobsV16Deps = {
@@ -948,6 +965,63 @@ export type QueryMatchingJobsV16Deps = {
 }
 
 const DEFAULT_LIMIT = 10
+const PREVIOUS_RECOMMENDATION_BASE_PENALTY = 0.16
+const PREVIOUS_RECOMMENDATION_REPEAT_PENALTY = 0.04
+const PREVIOUS_RECOMMENDATION_MAX_PENALTY = 0.32
+
+function hasConcreteRequirements(job: Pick<MatchingJob, "requiredSkills">): boolean {
+  return Array.isArray(job.requiredSkills) &&
+    job.requiredSkills.some((skill) => typeof skill === "string" && skill.trim().length > 0)
+}
+
+function normalizePresentationRoleFocus(values: string[] | undefined): Array<"frontend" | "fullstack" | "backend"> {
+  const out: Array<"frontend" | "fullstack" | "backend"> = []
+  for (const raw of values ?? []) {
+    const value = raw.trim().toLowerCase()
+    if ((value === "frontend" || value === "front-end" || value === "front end") && !out.includes("frontend")) {
+      out.push("frontend")
+    }
+    if ((value === "fullstack" || value === "full-stack" || value === "full stack") && !out.includes("fullstack")) {
+      out.push("fullstack")
+    }
+    if ((value === "backend" || value === "back-end" || value === "back end") && !out.includes("backend")) {
+      out.push("backend")
+    }
+  }
+  return out
+}
+
+function presentationRoleText(job: MatchingJob): string {
+  const skills = Array.isArray(job.requiredSkills) ? job.requiredSkills.join(" ") : ""
+  const industry = Array.isArray(job.industryEnum) ? job.industryEnum.join(" ") : ""
+  return `${job.jobTitle ?? ""} ${skills} ${industry}`.toLowerCase()
+}
+
+function matchesPresentationRoleFocus(job: MatchingJob, focus: Array<"frontend" | "fullstack" | "backend">): boolean {
+  if (focus.length === 0) return true
+  const text = presentationRoleText(job)
+  const hasFrontend =
+    /\b(frontend|front-end|front end|ui engineer|web frontend|react|next\.?js|typescript|javascript|vue|angular)\b/i.test(text)
+  const hasBackend =
+    /\b(backend|back-end|back end|api|node\.?js|express|server-side|server side|postgres|postgresql|sql|database|java|go|python)\b/i.test(text)
+  for (const item of focus) {
+    if (item === "frontend" && hasFrontend) return true
+    if (item === "backend" && hasBackend) return true
+    if (item === "fullstack" && (/\b(fullstack|full-stack|full stack)\b/i.test(text) || (hasFrontend && hasBackend))) {
+      return true
+    }
+  }
+  return false
+}
+
+function previousRecommendationPenalty(state: UserJobRecommendationState | undefined): number {
+  if (!state || state.recommendationCount <= 0) return 0
+  return Math.min(
+    PREVIOUS_RECOMMENDATION_MAX_PENALTY,
+    PREVIOUS_RECOMMENDATION_BASE_PENALTY +
+      Math.max(0, state.recommendationCount - 1) * PREVIOUS_RECOMMENDATION_REPEAT_PENALTY,
+  )
+}
 
 /**
  * Internal: build the Firestore query from user tags + run it. Handles the
@@ -1041,6 +1115,34 @@ async function runV16Query(
   return { jobs: projected, rawCount: snap.docs.length }
 }
 
+async function loadMatchSourceLabels(
+  db: Firestore,
+  jobIds: string[],
+  log: (event: string, payload?: Record<string, unknown>) => void
+): Promise<Map<string, "WeKruit collaborated" | "general match">> {
+  const labels = new Map<string, "WeKruit collaborated" | "general match">()
+  const uniqueIds = [...new Set(jobIds.filter((id) => typeof id === "string" && id.trim().length > 0))]
+  await Promise.all(
+    uniqueIds.map(async (jobId) => {
+      try {
+        const snap = await db.collection(PA_JOBS_COLLECTION).doc(jobId).get()
+        const data = snap.exists ? (snap.data() as Record<string, unknown> | undefined) : undefined
+        labels.set(
+          jobId,
+          data?.wekruitCollaborationStatus === "collaborated" ? "WeKruit collaborated" : "general match",
+        )
+      } catch (err) {
+        log("pa.match.source_label_read_failed", {
+          jobId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+        labels.set(jobId, "general match")
+      }
+    })
+  )
+  return labels
+}
+
 /**
  * v1.6 entry point. Reads `pa-users/{userId}.tags` + executes the cascade.
  * Pure I/O orchestration on top of the deterministic helpers above.
@@ -1089,18 +1191,69 @@ export async function queryMatchingJobsV16(
     visa: 0, location: 0, careerStage: 0, jobType: 0, freshness: 0, atsApplyUrl: 0, dead: 0, negativeListDrop: 0,
   }
   let appliedFreshnessMs = FRESHNESS_RELAX_LADDER[0]!
-  for (const win of FRESHNESS_RELAX_LADDER) {
-    const result = applyV16HardFilters(rawJobs, userTags, nowMs, win)
-    filteredJobs = result.kept
-    counters = result.counters
-    appliedFreshnessMs = win
-    if (filteredJobs.length > 0) break
-    // Relax only when freshness is the dominant blocker (counters.freshness >> 0).
-    if (counters.freshness === 0) break
-    log("pa.match.freshness_relax", {
-      attemptedWindowMs: win,
-      droppedByFreshness: counters.freshness,
-      total: rawJobs.length,
+  let relaxedHardFilters: string[] = []
+  const runFreshnessLadder = (options: { relaxSpecificLocation?: boolean } = {}) => {
+    let kept: MatchingJob[] = []
+    let lastCounters: V16HardFilterCounters = {
+      visa: 0, location: 0, careerStage: 0, jobType: 0, freshness: 0, atsApplyUrl: 0, dead: 0, negativeListDrop: 0,
+    }
+    let applied = FRESHNESS_RELAX_LADDER[0]!
+    for (const win of FRESHNESS_RELAX_LADDER) {
+      const result = applyV16HardFilters(rawJobs, userTags, nowMs, win, options)
+      kept = result.kept
+      lastCounters = result.counters
+      applied = win
+      if (kept.length > 0) break
+      // Relax only when freshness is the dominant blocker (counters.freshness >> 0).
+      if (lastCounters.freshness === 0) break
+      log("pa.match.freshness_relax", {
+        attemptedWindowMs: win,
+        droppedByFreshness: lastCounters.freshness,
+        total: rawJobs.length,
+        ...options,
+      })
+    }
+    return { kept, counters: lastCounters, appliedFreshnessMs: applied }
+  }
+
+  const strictRun = runFreshnessLadder()
+  filteredJobs = strictRun.kept
+  counters = strictRun.counters
+  appliedFreshnessMs = strictRun.appliedFreshnessMs
+
+  const dominantLocationBlocker =
+    counters.location > 0 &&
+    counters.location >= counters.visa &&
+    counters.location >= counters.careerStage &&
+    counters.location >= counters.jobType &&
+    counters.location >= counters.freshness &&
+    counters.location >= counters.atsApplyUrl &&
+    counters.location >= counters.dead &&
+    counters.location >= counters.negativeListDrop
+
+  if (filteredJobs.length === 0 && args.allowBroadFallback === true && dominantLocationBlocker) {
+    const relaxedRun = runFreshnessLadder({ relaxSpecificLocation: true })
+    if (relaxedRun.kept.length > 0) {
+      filteredJobs = relaxedRun.kept
+      counters = relaxedRun.counters
+      appliedFreshnessMs = relaxedRun.appliedFreshnessMs
+      relaxedHardFilters = ["specific_location"]
+      log("pa.match.broad_fallback_location_relax", {
+        total: rawJobs.length,
+        output: filteredJobs.length,
+        freshnessWindowDays: Math.round(appliedFreshnessMs / (24 * 3600 * 1000)),
+      })
+    }
+  }
+  const presentationRoleFocus = normalizePresentationRoleFocus(args.presentationRoleFocus)
+  if (presentationRoleFocus.length > 0 && filteredJobs.length > 0) {
+    const before = filteredJobs.length
+    filteredJobs = filteredJobs.filter((job) => matchesPresentationRoleFocus(job, presentationRoleFocus))
+    log("pa.match.presentation_role_focus_applied", {
+      focus: presentationRoleFocus,
+      before,
+      after: filteredJobs.length,
+      dropped: before - filteredJobs.length,
     })
   }
   const dropped = rawJobs.length - filteredJobs.length
@@ -1113,9 +1266,10 @@ export async function queryMatchingJobsV16(
   })
 
   // Cache reads run in parallel — both fail-graceful.
-  const [jdRelCache, rerankCache] = await Promise.all([
+  const [jdRelCache, rerankCache, recommendationStates] = await Promise.all([
     loadJdRelCache(deps.db, args.userId, log),
     loadLlmRerankCache(deps.db, args.userId, log),
+    loadRecommendedJobStates(deps.db, args.userId, filteredJobs.map((job) => job.id), log),
   ])
 
   // Phase B4 — one-shot pa-companies lookup for the surviving candidate set.
@@ -1146,7 +1300,14 @@ export async function queryMatchingJobsV16(
       companyInfo,
       nowMs,
     )
-    return { job, breakdown, matched, companyInfo }
+    const recommendedState = recommendationStates.get(job.id)
+    const repeatPenalty = previousRecommendationPenalty(recommendedState)
+    const adjustedBreakdown: V16ScoreBreakdown = {
+      ...breakdown,
+      ...(repeatPenalty > 0 ? { previousRecommendationPenalty: repeatPenalty } : {}),
+      total: breakdown.total - repeatPenalty,
+    }
+    return { job, breakdown: adjustedBreakdown, matched, companyInfo, recommendedState }
   })
 
   // Sort by total score desc; tie-break by firstSeenAt newer first.
@@ -1163,17 +1324,42 @@ export async function queryMatchingJobsV16(
   // appearing twice in a single rec push.
   const seenDedupKeys = new Set<string>()
   const dedupedTop: typeof scored = []
+  let missingRequirementsDrop = 0
   for (const s of scored) {
+    if (!hasConcreteRequirements(s.job)) {
+      missingRequirementsDrop++
+      continue
+    }
     const key = `${(s.job.companyName ?? "").toLowerCase()}|${(s.job.jobTitle ?? "").toLowerCase().trim()}`
     if (seenDedupKeys.has(key)) continue
     seenDedupKeys.add(key)
     dedupedTop.push(s)
     if (dedupedTop.length >= limit) break
   }
-  const top = dedupedTop.map(({ job, breakdown, matched, companyInfo }) => {
+  if (missingRequirementsDrop > 0) {
+    log("pa.match.presentation_requirements_drop", {
+      dropped: missingRequirementsDrop,
+      reason: "missing_requiredSkills",
+    })
+  }
+  const sourceLabels = await loadMatchSourceLabels(
+    deps.db,
+    dedupedTop.map((s) => s.job.id),
+    log,
+  )
+  const top = dedupedTop.map(({ job, breakdown, matched, companyInfo, recommendedState }) => {
     const reason = composeReason(userTags, job, matched, breakdown, companyInfo)
+    const matchSourceLabel = sourceLabels.get(job.id) ?? "general match"
     return {
       ...job,
+      matchSourceLabel,
+      ...(recommendedState
+        ? {
+            previouslyRecommended: true,
+            recommendationCount: recommendedState.recommendationCount,
+            ...(recommendedState.lastRecommendedAt ? { lastRecommendedAt: recommendedState.lastRecommendedAt } : {}),
+          }
+        : {}),
       v16Score: breakdown,
       matchedSkills: matched.slice(0, 2),
       reason,
@@ -1186,6 +1372,7 @@ export async function queryMatchingJobsV16(
     dropped,
     hardFilter: counters,
     ...(rerankCache.stale ? { llmCacheStale: true as const } : {}),
+    ...(relaxedHardFilters.length > 0 ? { relaxedHardFilters } : {}),
     // Phase 70 — surface a snapshot of the user's tags so the admin
     // match-debug page can render the canonical profile alongside ranked
     // output. Cast through `unknown` so we can attach without leaking the
@@ -1242,7 +1429,7 @@ export function createQueryMatchingJobsV16Tool(deps: QueryMatchingJobsV16ToolDep
       const args = QueryMatchingJobsV16ToolInputSchema.parse(raw)
       try {
         const out = await queryMatchingJobsV16(
-          { userId: deps.userId, limit: args.limit },
+          { userId: deps.userId, limit: args.limit, lang: "en", allowBroadFallback: true },
           { db: deps.db, ...(deps.log ? { log: deps.log } : {}) }
         )
         if (out.noUserTags) {

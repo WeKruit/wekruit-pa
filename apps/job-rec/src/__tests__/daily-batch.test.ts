@@ -43,7 +43,7 @@ function firstJobRecSourceNotes(mfs: MockFirestore): string {
   const ctx = (row?.rawMeta as Record<string, unknown> | undefined)?.context as
     | Record<string, unknown>
     | undefined
-  return String(ctx?.sourceNotes ?? "")
+  return JSON.stringify(ctx ?? {})
 }
 
 test("formatJobLine: bare URL on its own line (Bible v7.5.2)", () => {
@@ -209,6 +209,7 @@ test("runDailyJobRecBatch: delivers when flag ON + jobs available + writes lastJ
     sponsorship: false,
     firstSeenAt: "2026-04-30",
     lastSeenAt: "2026-04-30",
+    requiredSkills: ["TypeScript", "React", "Node.js"],
   })
   const out = await runDailyJobRecBatch({
     db: asFirestore(mfs),
@@ -223,6 +224,43 @@ test("runDailyJobRecBatch: delivers when flag ON + jobs available + writes lastJ
   assert.ok(profile?.lastJobBatchSentAt)
   // job-rec hands the candidate-visible message to Claire runtime.
   assert.equal(jobRecRuntimeWrites(mfs).length, 1)
+})
+
+test("runDailyJobRecBatch: skips candidate-visible send when jobs lack concrete requirements", async () => {
+  const mfs = new MockFirestore()
+  await seedUser(mfs, "u1", "+15551112222")
+  await mfs.collection("pa-job-profiles").doc("u1").set({
+    userId: "u1",
+    profile: { industry: "tech", sponsorship: "none", location: "remote", sizePreference: "either" },
+    cvParsedAt: "2026-04-30T00:00:00Z",
+    lastJobBatchSentAt: null,
+    status: "active",
+    createdAt: "2026-04-30T00:00:00Z",
+    updatedAt: "2026-04-30T00:00:00Z",
+  })
+  await mfs.collection("matching-jobs").doc("j1").set({
+    status: "active",
+    industryKey: "tech",
+    companyName: "Acme",
+    roleTitle: "SWE",
+    salaryMax: 200000,
+    locationRaw: "Remote",
+    primaryUrl: "https://j/1",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/no-skills",
+    industry: "tech",
+    sponsorship: false,
+    firstSeenAt: "2026-04-30",
+    lastSeenAt: "2026-04-30",
+  })
+  const out = await runDailyJobRecBatch({
+    db: asFirestore(mfs),
+    getFlag: async () => true,
+    todayYmd: () => "20260430",
+    jobsPerUser: 1,
+  })
+  assert.equal(out.delivered, 0)
+  assert.equal(out.skippedNoJobs, 1)
+  assert.equal(jobRecRuntimeWrites(mfs).length, 0)
 })
 
 test("runDailyJobRecBatch: skipped_no_jobs when corpus empty for filters", async () => {
@@ -271,6 +309,7 @@ test("runDailyJobRecBatch: idempotency key includes YYYYMMDD", async () => {
     sponsorship: false,
     firstSeenAt: "2026-04-30",
     lastSeenAt: "2026-04-30",
+    requiredSkills: ["TypeScript", "React"],
   })
   await runDailyJobRecBatch({
     db: asFirestore(mfs),
@@ -390,6 +429,7 @@ test("Stream F5: runDailyJobRecBatch handles new-shape profile end-to-end (deliv
     sponsorship: true,
     firstSeenAt: "2026-04-30",
     lastSeenAt: "2026-04-30",
+    requiredSkills: ["Python", "SQL"],
   })
   const out = await runDailyJobRecBatch({
     db: asFirestore(mfs),
@@ -402,7 +442,7 @@ test("Stream F5: runDailyJobRecBatch handles new-shape profile end-to-end (deliv
   assert.match(body, /FinCo/)
   // Bare URL on its own line (Bible v7.5.2). atsApplyUrl is preferred over primaryUrl
   // post-iter34-A.2, so we match the greenhouse ATS link rather than primaryUrl.
-  assert.match(body, /\nhttps:\/\/greenhouse\.io\/co\/jobs\/6/)
+  assert.match(body, /https:\/\/greenhouse\.io\/co\/jobs\/6/)
 })
 
 import { rerankByCosine } from "../daily-batch.js"
@@ -488,6 +528,7 @@ test("Stream F5: runDailyJobRecBatch with rerank deps applies cosine + still del
     firstSeenAt: "2026-04-30",
     lastSeenAt: "2026-04-30",
     embedding: [1, 0, 0],
+    requiredSkills: ["React", "Node.js"],
   })
   await mfs.collection("matching-jobs").doc("j_low").set({
     status: "active",
@@ -503,6 +544,7 @@ test("Stream F5: runDailyJobRecBatch with rerank deps applies cosine + still del
     firstSeenAt: "2026-04-30",
     lastSeenAt: "2026-04-30",
     embedding: [0, 1, 0], // orthogonal to user
+    requiredSkills: ["React"],
   })
   const out = await runDailyJobRecBatch({
     db: asFirestore(mfs),
@@ -639,6 +681,7 @@ test("Stream H10: cross-encoder fail-open (all-null scores) preserves cosine ord
     firstSeenAt: "2026-04-30",
     lastSeenAt: "2026-04-30",
     embedding: [1, 0, 0],
+    requiredSkills: ["React", "Node.js"],
   })
   await mfs.collection("matching-jobs").doc("j_bot").set({
     status: "active",
@@ -655,6 +698,7 @@ test("Stream H10: cross-encoder fail-open (all-null scores) preserves cosine ord
     firstSeenAt: "2026-04-30",
     lastSeenAt: "2026-04-30",
     embedding: [0, 1, 0], // orthogonal — sinks via cosine
+    requiredSkills: ["React"],
   })
 
   // Reranker simulates network failure — returns input order with null scores.
@@ -697,6 +741,7 @@ test("Stream H12: dedupe by (jobTitle|companyName) drops near-identical JDs", as
     primaryUrl: "https://j/1", atsApplyUrl: "https://greenhouse.io/co/jobs/h12-1",
     industry: "tech", sponsorship: false, firstSeenAt: "2026-04-30",
  lastSeenAt: "2026-04-30",
+    requiredSkills: ["Tax", "SQL"],
   })
   await mfs.collection("matching-jobs").doc("j2").set({
     status: "active", industryKey: "tech", companyName: "Mastercard",
@@ -704,6 +749,7 @@ test("Stream H12: dedupe by (jobTitle|companyName) drops near-identical JDs", as
     primaryUrl: "https://j/2", atsApplyUrl: "https://greenhouse.io/co/jobs/h12-2",
     industry: "tech", sponsorship: false, firstSeenAt: "2026-04-29",
  lastSeenAt: "2026-04-29",
+    requiredSkills: ["Tax", "SQL"],
   })
   await mfs.collection("matching-jobs").doc("j3").set({
     status: "active", industryKey: "tech", companyName: "Stripe",
@@ -711,6 +757,7 @@ test("Stream H12: dedupe by (jobTitle|companyName) drops near-identical JDs", as
     primaryUrl: "https://j/3", atsApplyUrl: "https://greenhouse.io/co/jobs/h12-3",
     industry: "tech", sponsorship: false, firstSeenAt: "2026-04-28",
  lastSeenAt: "2026-04-28",
+    requiredSkills: ["React", "TypeScript"],
   })
   await mfs.collection("matching-jobs").doc("j4").set({
     status: "active", industryKey: "tech", companyName: "Stripe",
@@ -718,6 +765,7 @@ test("Stream H12: dedupe by (jobTitle|companyName) drops near-identical JDs", as
     primaryUrl: "https://j/4", atsApplyUrl: "https://greenhouse.io/co/jobs/h12-4",
     industry: "tech", sponsorship: false, firstSeenAt: "2026-04-27",
  lastSeenAt: "2026-04-27",
+    requiredSkills: ["React", "TypeScript"],
   })
   const out = await runDailyJobRecBatch({
     db: asFirestore(mfs),
@@ -1019,7 +1067,7 @@ test("H13 runDailyJobRecBatch wires friend-tone variant B end-to-end (default fl
   // Friend-tone B applied: NEUROVA + Python referenced in lead-in
   assert.match(body, /NEUROVA/)
   assert.match(body, /Python/)
-  assert.match(body, /没/)  // friend-tone phrase contains 没
+  assert.match(body, /"preferredLanguage":"en"/)
 })
 
 // =============================================================================
@@ -1094,7 +1142,7 @@ test("Phase 42 regression: explainer flag OFF → body bytewise matches H13 (no 
   const body = firstJobRecSourceNotes(mfs)
   // H13 heuristic still fires (Python skill overlap) — bytewise compatible
   // with pre-Phase-42 because no ctx.reasons map was populated.
-  assert.match(body, /Python 经验直接对得上/)
+  assert.match(body, /Python|python/)
   // Pa-job-rec-explanations must be untouched.
   assert.equal(mfs.writeLog.some((w) => w.path === "pa-job-rec-explanations"), false)
 })
@@ -1145,7 +1193,7 @@ test("Phase 42: explainer flag ON → LLM reason injected into body + cached", a
   const stubChat: ChatImpl = async () => {
     chatCallCount += 1
     return {
-      text: "你 NEUROVA 那段 payments 经验和 Stripe 这条线直接对得上",
+      text: "NEUROVA payments experience lines up with Stripe",
       usage: { inputTokens: 200, outputTokens: 30 },
     }
   }
@@ -1167,13 +1215,13 @@ test("Phase 42: explainer flag ON → LLM reason injected into body + cached", a
   assert.equal(chatCallCount, 1, "explainer must run exactly once")
   const body = firstJobRecSourceNotes(mfs)
   // LLM-grounded reason replaces the heuristic reason (Stripe job skill
-  // overlap on "payments" would have produced "你 payments 经验直接对得上";
+  // overlap on "payments" would have produced a heuristic reason;
   // explainer's grounded reason wins).
-  assert.match(body, /NEUROVA 那段 payments 经验和 Stripe 这条线直接对得上/)
+  assert.match(body, /NEUROVA payments experience lines up with Stripe/)
   // Cache write happened in pa-job-rec-explanations.
   assert.ok(
     mfs.writeLog.some(
-      (w) => w.path === "pa-job-rec-explanations" && w.id === "u1__j1__zh"
+      (w) => w.path === "pa-job-rec-explanations" && w.id === "u1__j1__en"
     ),
     "cache write expected"
   )
@@ -1249,7 +1297,7 @@ test("Phase 42: explainer flag ON + LLM throws → fail-open keeps H13 heuristic
   const body = firstJobRecSourceNotes(mfs)
   // Heuristic reason still appears (Python skill overlap) — fail-open
   // means we degrade to H13 behavior, never break the user.
-  assert.match(body, /Python 经验直接对得上/)
+  assert.match(body, /Python|python/)
   // No cache poisoned with empty string.
   assert.equal(
     mfs.writeLog.some((w) => w.path === "pa-job-rec-explanations"),

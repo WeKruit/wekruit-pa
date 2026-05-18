@@ -133,6 +133,16 @@ export {
 export type { SendImessageDeps, SendImessageArgs } from "./tools/send-imessage.js"
 
 export {
+  USER_JOB_RECOMMENDATIONS_COLLECTION,
+  loadRecommendedJobStates,
+  recordRecommendedJobs,
+} from "./recommendation-state.js"
+export type {
+  RecordRecommendedJobsArgs,
+  UserJobRecommendationState,
+} from "./recommendation-state.js"
+
+export {
   buildRecruiterAgent,
   buildRecruiterSystemPrompt,
   runRecruiterTurn,

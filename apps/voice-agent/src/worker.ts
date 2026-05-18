@@ -97,6 +97,11 @@ interface AgentRuntimeCtx {
       metadata?: string
     }
   }
+  /** LK JobContext.connect — attaches the agent process to the dispatched
+   * room. MUST be awaited before AgentSession.start, otherwise the
+   * session's room operations fail with WS 400 ("Unexpected server
+   * response: 400") and no audio reaches the SIP leg. */
+  connect?: () => Promise<void>
 }
 
 /**
@@ -159,6 +164,24 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
       const bookingId = readBookingId(dispatchRoomMetadata, dispatchRoomName)
       log("voice.worker.entry", { bookingId })
 
+      // LK v1.4.2: JobContext.connect() attaches the agent process to the
+      // dispatched room. MUST be called before AgentSession.start —
+      // otherwise the session's room ops fail WS 400 (no audio reaches
+      // the SIP candidate leg). LK doc: "run this command as early in the
+      // function as possible".
+      if (typeof ctx.connect === "function") {
+        try {
+          await ctx.connect()
+          log("voice.worker.room_connected", { bookingId })
+        } catch (err) {
+          log("voice.worker.room_connect_failed", {
+            bookingId,
+            error: err instanceof Error ? err.message : String(err),
+          })
+          throw err
+        }
+      }
+
       const callContext = await loadContext(bookingId)
       if (callContext.jobBrief.dead === true) {
         log("voice.worker.dead_job_abort", {
@@ -188,9 +211,18 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
       if (!opts.defineAgent) {
         const { voice, inference } = livekitMod
         const vad = await sileroMod.VAD.load()
-        const turnDetection = new voice.MultilingualModel()
+        // LK @livekit/agents v1.4.2 — TurnDetectionMode is now a string
+        // ('vad' | 'stt' | 'realtime_llm' | 'manual') or a _TurnDetector
+        // instance. The old `new voice.MultilingualModel()` class was
+        // removed; pass `'vad'` to rely on Silero EOU detection.
+        const turnDetection = "vad" as const
         const stt = new deepgramMod.STT({ model: "nova-3" })
-        const tts = new deepgramMod.TTS({ model: "aura-2" })
+        // Deepgram TTS model slug must be a concrete voice (aura-1) — passing
+        // the bare family name "aura-2" returns WS handshake 400 from
+        // Deepgram, which AgentSession surfaces as `voice.error: 'Unexpected
+        // server response: 400'` and immediately tears the session down
+        // (no audio reaches the SIP candidate leg).
+        const tts = new deepgramMod.TTS({ model: "aura-asteria-en" })
         // W2: in-process WekruitLLM speaks directly to runAgentTurnStream.
         // No HTTP shim, no openai plugin, no WEKRUIT_LLM_SHIM_URL.
         const llm = (opts.buildLLM ?? buildDefaultLLM)()
@@ -258,7 +290,29 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
       registerEventHandlers(session, ctx.room as never, sinks)
 
       // ── Start the session ────────────────────────────────────────────────
-      await session.start?.({ agent, room: ctx.room })
+      // LK v1.4.2: AgentSession.start({ agent, room }) requires a
+      // `voice.Agent` with instructions, NOT the worker-level defineAgent
+      // return. The worker `agent` registered the entry-point with LK
+      // dispatch; the per-call conversational entity is a separate Agent
+      // instance constructed here with Claire's persona.
+      let conversationalAgent: unknown = agent
+      if (!opts.defineAgent) {
+        const { voice } = livekitMod
+        conversationalAgent = new voice.Agent({
+          instructions:
+            "You are Claire, WeKruit's voice prescreen recruiter. Your job is to conduct a short structured prescreen for the candidate. Speak warmly and concisely. Begin by greeting the candidate, then ask the prescreen questions you've been given. Stay strictly on the prescreen plan — do not free-style about unrelated topics.",
+          // "WeKruit" → "We-Cruit" (we + cruit as in re-cruit). Without the
+          // remap, Deepgram aura pronounces the brand as a single mushed
+          // syllable. Map applies before TTS synthesis to every variant.
+          ttsPronunciationMap: {
+            WeKruit: "We-Cruit",
+            Wekruit: "We-Cruit",
+            wekruit: "we-cruit",
+            WEKRUIT: "We-Cruit",
+          },
+        })
+      }
+      await session.start?.({ agent: conversationalAgent, room: ctx.room })
 
       // ── S6 recording archive — kick off LiveKit Egress → GCS ─────────────
       // Fires-and-forgets behind WEKRUIT_VOICE_RECORDINGS_BUCKET env. Any
