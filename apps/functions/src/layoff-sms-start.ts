@@ -2,20 +2,32 @@ import type { Firestore } from "firebase-admin/firestore"
 import { FieldValue } from "firebase-admin/firestore"
 import { createHash } from "node:crypto"
 import { PA_COLLECTIONS } from "@pa/core-types"
-import { WEKRUIT_LAYOFF_SOURCE } from "@pa/pa-orchestrator"
+import {
+  WEKRUIT_LAYOFF_SOURCE,
+  WEKRUIT_CANDIDATE_SOURCE,
+  type WekruitSignupSource,
+} from "@pa/pa-orchestrator"
 import { hashStringToUint } from "./sendblue/pool.js"
 
 export const LAYOFF_SMS_TRIGGER_TEXT = "WeKruit_LAID_OFF"
+export const CANDIDATE_SMS_TRIGGER_TEXT = "WeKruit_CANDIDATE_HI"
+
+function triggerTextFor(source: WekruitSignupSource): string {
+  return source === WEKRUIT_LAYOFF_SOURCE ? LAYOFF_SMS_TRIGGER_TEXT : CANDIDATE_SMS_TRIGGER_TEXT
+}
 
 export type RunLayoffSmsStartArgs = {
   db: Firestore
   userId: string
   toE164: string
+  /** Defaults to WEKRUIT_LAYOFF_SOURCE for back-compat with existing callers. */
+  source?: WekruitSignupSource
   runRuntimeKickoff?: (args: {
     db: Firestore
     userId: string
     toE164: string
     startedAt: string
+    source: WekruitSignupSource
   }) => Promise<{ eventId: string; outboundId?: string }>
   log?: (event: string, payload?: Record<string, unknown>) => void
 }
@@ -25,7 +37,7 @@ export type RunLayoffSmsStartResult =
       ok: true
       kickoffOutboundId: string
       kickoffCreated: boolean
-      sourceTag: typeof WEKRUIT_LAYOFF_SOURCE
+      sourceTag: WekruitSignupSource
     }
   | { ok: false; reason: "user_not_found" | "missing_phone" }
 
@@ -33,8 +45,13 @@ function phoneIndexId(e164: string): string {
   return `p_${hashStringToUint(e164).toString(36)}`
 }
 
-export function buildLayoffOnboardingStartedFields(nowIso: string): Record<string, unknown> {
-  return {
+export function buildOnboardingStartedFields(
+  nowIso: string,
+  source: WekruitSignupSource = WEKRUIT_LAYOFF_SOURCE,
+): Record<string, unknown> {
+  const isLayoff = source === WEKRUIT_LAYOFF_SOURCE
+  const trigger = triggerTextFor(source)
+  const fields: Record<string, unknown> = {
     onboardingStatus: "invited",
     onboardingState: "pending",
     pipelineState: {
@@ -44,14 +61,21 @@ export function buildLayoffOnboardingStartedFields(nowIso: string): Record<strin
       halted: null,
       completed: false,
     },
-    layoffOnboardingStartedAt: nowIso,
     workSession: {
-      kind: "layoff_onboarding",
+      kind: isLayoff ? "layoff_onboarding" : "normal_onboarding",
       status: "active",
       startedAt: nowIso,
-      boundary: LAYOFF_SMS_TRIGGER_TEXT,
+      boundary: trigger,
     },
   }
+  if (isLayoff) fields.layoffOnboardingStartedAt = nowIso
+  else fields.candidateOnboardingStartedAt = nowIso
+  return fields
+}
+
+/** Back-compat alias — existing callers still want the layoff-flavored fields. */
+export function buildLayoffOnboardingStartedFields(nowIso: string): Record<string, unknown> {
+  return buildOnboardingStartedFields(nowIso, WEKRUIT_LAYOFF_SOURCE)
 }
 
 function sessionDocId(userId: string, channel: "imessage", externalChatId: string): string {
@@ -64,12 +88,18 @@ async function runDefaultRuntimeKickoff(args: {
   userId: string
   toE164: string
   startedAt: string
+  source: WekruitSignupSource
 }): Promise<{ eventId: string; outboundId?: string }> {
   const { processInboundEvent, createFirestoreOrchestratorStore } = await import("@pa/pa-orchestrator")
   const { makeOrchestratorDeps } = await import("./orchestrator-deps.js")
   const sessionId = sessionDocId(args.userId, "imessage", args.toE164)
-  const eventId = `layoff_runtime_${hashStringToUint(`${args.userId}:${args.startedAt}`).toString(36)}`
-  const idempotencyKey = `layoff-runtime:${args.userId}:${args.startedAt}`
+  const eventPrefix = args.source === WEKRUIT_LAYOFF_SOURCE ? "layoff_runtime" : "candidate_runtime"
+  const idemPrefix = args.source === WEKRUIT_LAYOFF_SOURCE ? "layoff-runtime" : "candidate-runtime"
+  const triggerSource =
+    args.source === WEKRUIT_LAYOFF_SOURCE ? "layoff_runtime_trigger" : "candidate_runtime_trigger"
+  const trigger = triggerTextFor(args.source)
+  const eventId = `${eventPrefix}_${hashStringToUint(`${args.userId}:${args.startedAt}`).toString(36)}`
+  const idempotencyKey = `${idemPrefix}:${args.userId}:${args.startedAt}`
   const event = {
     id: eventId,
     userId: args.userId,
@@ -77,13 +107,13 @@ async function runDefaultRuntimeKickoff(args: {
     channel: "imessage" as const,
     externalChatId: args.toE164,
     from: args.toE164,
-    body: LAYOFF_SMS_TRIGGER_TEXT,
+    body: trigger,
     status: "pending" as const,
     createdAt: args.startedAt,
     idempotencyKey,
     rawMeta: {
-      source: "layoff_runtime_trigger",
-      trigger: LAYOFF_SMS_TRIGGER_TEXT,
+      source: triggerSource,
+      trigger,
     },
   }
 
@@ -153,9 +183,8 @@ export async function supersedeActivePrescreensForLayoff(
 }
 
 /**
- * Shared layoff kickoff path for both layoff.wekruit.com callables and the
- * inbound SMS trigger. The product invariant is one pa-users row, one source
- * flag, one Claire opener.
+ * Shared kickoff path for both layoff.wekruit.com and candidate.wekruit.com.
+ * The product invariant is one pa-users row, one source flag, one Claire opener.
  */
 export async function runLayoffSmsStart(
   args: RunLayoffSmsStartArgs,
@@ -168,69 +197,84 @@ export async function runLayoffSmsStart(
   const phoneE164 = args.toE164 || (typeof user.phoneE164 === "string" ? user.phoneE164 : "")
   if (!phoneE164) return { ok: false, reason: "missing_phone" }
 
+  const source: WekruitSignupSource = args.source ?? WEKRUIT_LAYOFF_SOURCE
+  const isLayoff = source === WEKRUIT_LAYOFF_SOURCE
+
   const startedAt = new Date().toISOString()
-  const startedFields = buildLayoffOnboardingStartedFields(startedAt)
+  const startedFields = buildOnboardingStartedFields(startedAt, source)
   const phoneHash = phoneIndexId(phoneE164)
 
-  await userRef.set(
-    {
-      source: WEKRUIT_LAYOFF_SOURCE,
-      lastLaidOffAt: FieldValue.serverTimestamp(),
-      updatedAt: startedAt,
-      smsState: "layoff-onboarding-starting",
-      smsThreadId: `iMessage;-;${phoneE164}`,
-      layoffContext: {
-        phoneE164,
-        smsTriggeredAt: FieldValue.serverTimestamp(),
-      },
-      ...startedFields,
-    },
-    { merge: true },
-  )
+  const initialPayload: Record<string, unknown> = {
+    source,
+    updatedAt: startedAt,
+    smsState: isLayoff ? "layoff-onboarding-starting" : "candidate-onboarding-starting",
+    smsThreadId: `iMessage;-;${phoneE164}`,
+    ...startedFields,
+  }
+  if (isLayoff) {
+    initialPayload.lastLaidOffAt = FieldValue.serverTimestamp()
+    initialPayload.layoffContext = {
+      phoneE164,
+      smsTriggeredAt: FieldValue.serverTimestamp(),
+    }
+  } else {
+    initialPayload.candidateContext = {
+      phoneE164,
+      smsTriggeredAt: FieldValue.serverTimestamp(),
+    }
+  }
+
+  await userRef.set(initialPayload, { merge: true })
   await userRef.update({ workSession: startedFields.workSession })
-  await args.db.collection("layoff_phone_index").doc(phoneHash).set(
-    {
-      candidateId: args.userId,
-      lastLaidOffAt: FieldValue.serverTimestamp(),
-      phoneHash,
-    },
-    { merge: true },
-  )
+
+  if (isLayoff) {
+    await args.db.collection("layoff_phone_index").doc(phoneHash).set(
+      {
+        candidateId: args.userId,
+        lastLaidOffAt: FieldValue.serverTimestamp(),
+        phoneHash,
+      },
+      { merge: true },
+    )
+  }
+
   const pendingTriggerRef = args.db.collection("pa-ats-pending-trigger").doc(phoneE164)
   const deletePendingTrigger = (pendingTriggerRef as unknown as { delete?: () => Promise<unknown> }).delete
   if (typeof deletePendingTrigger === "function") {
     await deletePendingTrigger.call(pendingTriggerRef).catch(() => undefined)
   }
-  await supersedeActivePrescreensForLayoff(args.db, {
-    candidateId: args.userId,
-    nowIso: startedAt,
-  })
+  if (isLayoff) {
+    await supersedeActivePrescreensForLayoff(args.db, {
+      candidateId: args.userId,
+      nowIso: startedAt,
+    })
+  }
 
   const runtimeKickoff = await (args.runRuntimeKickoff ?? runDefaultRuntimeKickoff)({
     db: args.db,
     userId: args.userId,
     toE164: phoneE164,
     startedAt,
+    source,
   })
 
-  await userRef.set(
-    {
-      source: WEKRUIT_LAYOFF_SOURCE,
-      lastLaidOffAt: FieldValue.serverTimestamp(),
-      updatedAt: new Date().toISOString(),
-      smsState: "runtime-kickoff-enqueued",
-      smsKickoffAt: FieldValue.serverTimestamp(),
-      smsThreadId: `iMessage;-;${phoneE164}`,
-      kickoffRuntimeEventId: runtimeKickoff.eventId,
-      kickoffOutboundId: runtimeKickoff.outboundId ?? runtimeKickoff.eventId,
-    },
-    { merge: true },
-  )
+  const followupPayload: Record<string, unknown> = {
+    source,
+    updatedAt: new Date().toISOString(),
+    smsState: "runtime-kickoff-enqueued",
+    smsKickoffAt: FieldValue.serverTimestamp(),
+    smsThreadId: `iMessage;-;${phoneE164}`,
+    kickoffRuntimeEventId: runtimeKickoff.eventId,
+    kickoffOutboundId: runtimeKickoff.outboundId ?? runtimeKickoff.eventId,
+  }
+  if (isLayoff) followupPayload.lastLaidOffAt = FieldValue.serverTimestamp()
+  await userRef.set(followupPayload, { merge: true })
 
-  args.log?.("layoff.sms_start.enqueued", {
+  args.log?.(isLayoff ? "layoff.sms_start.enqueued" : "candidate.sms_start.enqueued", {
     userId: args.userId,
     kickoffRuntimeEventId: runtimeKickoff.eventId,
     kickoffOutboundId: runtimeKickoff.outboundId ?? null,
+    source,
     created: true,
   })
 
@@ -238,6 +282,6 @@ export async function runLayoffSmsStart(
     ok: true,
     kickoffOutboundId: runtimeKickoff.outboundId ?? runtimeKickoff.eventId,
     kickoffCreated: true,
-    sourceTag: WEKRUIT_LAYOFF_SOURCE,
+    sourceTag: source,
   }
 }

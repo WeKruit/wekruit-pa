@@ -12,6 +12,7 @@ import Market from "./pages/Market.js"
 import PublicJob from "./pages/PublicJob.js"
 import PublicJobCv from "./pages/PublicJobCv.js"
 import OpenJobs from "./pages/OpenJobs.js"
+import Onboarding from "./pages/Onboarding.js"
 
 const root = document.getElementById("root")
 if (!root) throw new Error("Missing #root element")
@@ -57,6 +58,7 @@ ReactDOM.createRoot(root).render(
           <Route path="/j/:jobId" element={<PublicJob />} />
           <Route path="/j/:jobId/cv" element={<PublicJobCv />} />
           <Route path="/open" element={<OpenJobs />} />
+          <Route path="/onboarding" element={<Onboarding />} />
           <Route path="*" element={<HomeLanding />} />
         </Routes>
       </BrowserRouter>

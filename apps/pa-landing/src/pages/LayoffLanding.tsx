@@ -177,7 +177,7 @@ function Nav() {
       >
         <Wordmark />
         <nav style={{ display: "flex", gap: 36, alignItems: "center" }}>
-          <Link to="/open" style={linkStyle}>Open interviews</Link>
+          <Link to="/open" style={linkStyle}>Open roles</Link>
           <Link to="/market" style={linkStyle}>Open market</Link>
           <Link to="/me" style={linkStyle}>Pipeline</Link>
           <Link to="/me/profile" style={linkStyle}>Profile</Link>
@@ -650,7 +650,7 @@ export default function LayoffLanding() {
                 you skip the form and interview the hiring manager directly.
               </p>
               <div style={{ display: "flex", gap: 12, marginTop: 32, flexWrap: "wrap" }}>
-                <Link to="/login" className="btn btn--primary btn--lg">Start with Claire</Link>
+                <Link to="/onboarding" className="btn btn--primary btn--lg">Start with Claire</Link>
                 <Link to="/open" className="btn btn--secondary btn--lg">See open interviews</Link>
               </div>
               <div style={{ marginTop: 22, display: "inline-flex", alignItems: "center", gap: 8, color: "var(--ink-3)" }}>
