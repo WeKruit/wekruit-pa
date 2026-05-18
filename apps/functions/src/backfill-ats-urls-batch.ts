@@ -47,7 +47,7 @@ import {
 import {
   resolveAtsUrl,
   createSerperSearch,
-  isAtsHost,
+  isAcceptableApplyUrl,
   type SerperFn,
   type ResolveJobInput,
 } from "./backfill-ats-urls.js"
@@ -272,8 +272,8 @@ export async function processOneJob(
   counters: BatchCounters,
   deps: BackfillBatchDeps
 ): Promise<ProcessOneOutcome> {
-  // Pass 1 (free) — primaryUrl is already an ATS host.
-  if (job.primaryUrl && isAtsHost(job.primaryUrl)) {
+  // Pass 1 (free) — primaryUrl is acceptable (parseable + non-jobright).
+  if (job.primaryUrl && isAcceptableApplyUrl(job.primaryUrl)) {
     counters.pass1Count++
     return { kind: "pass1", url: job.primaryUrl }
   }
@@ -294,7 +294,7 @@ export async function processOneJob(
     let success = false
     try {
       result = await deps.serper(t, c)
-      if (result && isAtsHost(result)) success = true
+      if (result && isAcceptableApplyUrl(result)) success = true
     } catch (err) {
       counters.errors++
       ;(deps.errorLog ?? (() => {}))("serper_threw", {

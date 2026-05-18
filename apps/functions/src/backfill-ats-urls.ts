@@ -67,39 +67,47 @@ const SERPER_API_KEY = defineSecret("SERPER_API_KEY")
 const PA_ADMIN_TOKEN = defineSecret("PA_ADMIN_TOKEN")
 
 // ---------------------------------------------------------------------------
-// ATS host detection
+// URL acceptance — single exclusion only
 // ---------------------------------------------------------------------------
 
-/**
- * Hosts where a job link counts as a "real" ATS apply URL. Suffix-matched
- * against `URL.hostname` so subdomains (e.g.
- * `jobs.lever.co`, `delta.greenhouse.io`, `boards.greenhouse.io`,
- * `boards-api.greenhouse.io`, `myworkdayjobs.com` regional subdomains) all
- * resolve to true.
- */
-export const ATS_HOSTS = [
-  "greenhouse.io",
-  "lever.co",
-  "ashbyhq.com",
-  "myworkdayjobs.com",
-  "bamboohr.com",
-  "teamtailor.com",
-] as const
+// 2026-05-18 — Adam directive: kill the ATS allowlist. Old design rejected
+// every non-curated host, which caused the hourly Serper backfill to miss
+// 100% of valid hits (anthropic.com/careers, careers.stripe.com, aggregator
+// pages — all bounced). Replaced with single-rule: only `jobright` is
+// excluded. Everything else (real ATS providers, careers pages, aggregators,
+// LinkedIn, anything non-jobright) is considered a valid apply destination.
+//
+// Why hostname-substring "jobright" is not enough: Serper also returns the
+// SimplifyJobs github mirror at `github.com/jobright-ai/2026-...-New-Grad`
+// for niche jobright-only listings (5/3636 active docs observed leaking).
+// Hostname is `github.com`, so a hostname-only check accepted it. The full
+// URL check below rejects the mirror too. Trade-off: any legitimate URL
+// containing the brand string "jobright" is also blocked — accepted (the
+// brand is the aggregator we're trying to bypass).
 
-export function isAtsHost(url: string | undefined | null): boolean {
+export function isJobrightUrl(url: string | undefined | null): boolean {
   if (!url || typeof url !== "string") return false
-  let parsed: URL
   try {
-    parsed = new URL(url)
+    void new URL(url)
   } catch {
     return false
   }
-  const host = parsed.hostname.toLowerCase()
-  // Reject jobright.ai mirrors explicitly — D.5 already drops these but
-  // belt-and-suspenders here means a malformed primaryUrl never sneaks
-  // through pass 1.
-  if (host === "jobright.ai" || host.endsWith(".jobright.ai")) return false
-  return ATS_HOSTS.some((suffix) => host === suffix || host.endsWith(`.${suffix}`))
+  return url.toLowerCase().includes("jobright")
+}
+
+/**
+ * A URL is accepted as an apply destination as long as it is parseable AND
+ * the full URL string does not contain "jobright". Catches both
+ * `jobright.ai/...` redirects and `github.com/jobright-ai/...` mirrors.
+ */
+export function isAcceptableApplyUrl(url: string | undefined | null): boolean {
+  if (!url || typeof url !== "string") return false
+  try {
+    void new URL(url)
+  } catch {
+    return false
+  }
+  return !url.toLowerCase().includes("jobright")
 }
 
 // ---------------------------------------------------------------------------
@@ -126,14 +134,23 @@ export type SerperFn = (
 
 /**
  * Pure resolver — no Firestore, no globals. Deps inject Serper.
+ *
+ * Pass 1 (free): if `primaryUrl` is acceptable (parseable + non-jobright),
+ *   trust it directly. Direct-ATS scrapers (greenhouse_direct, lever_direct,
+ *   ashby_direct, wellfound, linkedin, otta) emit real ATS URLs as
+ *   `primaryUrl`, so this is the fast path for them.
+ *
+ * Pass 3 (paid): if Pass 1 missed (primaryUrl absent or jobright redirect),
+ *   ask Serper for `"<title>" "<company>" careers apply` and take the first
+ *   non-jobright organic hit.
  */
 export async function resolveAtsUrl(
   job: ResolveJobInput,
   deps: { serper: SerperFn }
 ): Promise<ResolveOutcome> {
-  // Pass 1 — primaryUrl is already an ATS host.
-  if (job.primaryUrl && isAtsHost(job.primaryUrl)) {
-    return { kind: "pass1", url: job.primaryUrl }
+  // Pass 1 — primaryUrl is already acceptable (any non-jobright URL).
+  if (isAcceptableApplyUrl(job.primaryUrl)) {
+    return { kind: "pass1", url: job.primaryUrl as string }
   }
 
   // Pass 3 — Serper search. Skip when companyName/title missing — the
@@ -143,7 +160,7 @@ export async function resolveAtsUrl(
   if (!title || !company) return { kind: "miss" }
 
   const url = await deps.serper(title, company)
-  if (url && isAtsHost(url)) return { kind: "pass3", url }
+  if (url && isAcceptableApplyUrl(url)) return { kind: "pass3", url }
   return { kind: "miss" }
 }
 
@@ -160,8 +177,11 @@ export type FetchFn = (url: string, init?: RequestInit) => Promise<Response>
  * Construct a Serper-backed SerperFn. Tries up to 2 query variants per
  * job: precise (with "careers apply" tail) → fall back to broader query.
  *
- * Returns the first organic hit URL whose host is an ATS provider, or
- * null when both attempts miss.
+ * Returns the first organic hit whose URL is acceptable (parseable +
+ * hostname does not contain "jobright"). No allowlist filtering. Adam
+ * directive 2026-05-18: "filter是干什么？" — the old allowlist rejected
+ * 100% of valid hits (anthropic.com/careers, etc). Trust Serper's top-1
+ * organic result for the same query a candidate would type.
  */
 export function createSerperSearch(opts: {
   apiKey: string
@@ -196,7 +216,7 @@ export function createSerperSearch(opts: {
         continue
       }
       for (const hit of data.organic ?? []) {
-        if (hit.link && isAtsHost(hit.link)) return hit.link
+        if (hit.link && isAcceptableApplyUrl(hit.link)) return hit.link
       }
     }
     return null
