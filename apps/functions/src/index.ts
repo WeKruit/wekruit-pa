@@ -11,11 +11,12 @@
  * The function is idempotent: pa-orchestrator skips events already in a non-
  * `pending` status, and message writes are guarded by `idempotencyKey`.
  */
+import "./runtime-options.js"
 import { onDocumentCreated } from "firebase-functions/v2/firestore"
 import { onRequest } from "firebase-functions/v2/https"
 import { onSchedule } from "firebase-functions/v2/scheduler"
 import { defineSecret } from "firebase-functions/params"
-import { setGlobalOptions, logger } from "firebase-functions/v2"
+import { logger } from "firebase-functions/v2"
 import { initializeApp, getApps } from "firebase-admin/app"
 import { getAuth } from "firebase-admin/auth"
 import { getFirestore, type Firestore } from "firebase-admin/firestore"
@@ -348,8 +349,6 @@ try {
   // settings() throws once getFirestore() has been used — safe to ignore
   // if a previous handler already initialized it with default settings.
 }
-
-setGlobalOptions({ region: "us-central1", maxInstances: 1 })
 
 // Phase 21 Sendblue secrets — populated via `firebase functions:secrets:set` (D-07)
 const SENDBLUE_API_KEY_ID = defineSecret("SENDBLUE_API_KEY_ID")
