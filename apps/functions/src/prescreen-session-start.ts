@@ -10,12 +10,11 @@
  *   2. Build initial PreScreenState from config
  *   3. Supersede any other active prescreen session for this candidate, then
  *      persist a fresh pa-prescreen-sessions/{sessionId}
- *   4. Emit the first question via Sendblue
+ *   4. Emit the first question through the runtime-approved outbox
  *   5. Audit
  *
- * Subsequent candidate replies are routed by a separate Cloud Function
- * (paPrescreenTurn — added in a follow-up that wires the inbound router
- * to check active session before dispatching to Claire).
+ * Subsequent candidate replies are routed by a separate Cloud Function that
+ * checks active session ownership before dispatching to Claire.
  */
 import type { Firestore } from "firebase-admin/firestore"
 import {
@@ -24,8 +23,17 @@ import {
   emptyPreScreenState,
   type PrescreenConfig,
 } from "@pa/pa-orchestrator"
-import { sendImessage } from "./sendblue/sendblue-client.js"
+import { sendRuntimeApprovedIMessage } from "./runtime-approved-outbox.js"
 import { markFirstInterviewStarted } from "./prescreen-outcome-service.js"
+
+type RuntimeSmsSender = (args: {
+  to: string
+  content: string
+  userId?: string
+  db?: Firestore
+  runtimeSource?: string
+  idempotencyKey?: string
+}) => Promise<unknown>
 
 export interface RunPreScreenArgs {
   db: Firestore
@@ -49,7 +57,7 @@ export interface RunPreScreenArgs {
     jobId: string
     occurredAt: string
   }) => Promise<unknown>
-  sendSms?: typeof sendImessage
+  sendSms?: RuntimeSmsSender
   log?: (event: string, payload: Record<string, unknown>) => void
 }
 
@@ -149,7 +157,7 @@ async function markSessionStartSendFailed(args: {
 export async function runPreScreenForUser(args: RunPreScreenArgs): Promise<RunPreScreenResult> {
   const log = args.log ?? (() => {})
   const markStarted = args.markStarted ?? markFirstInterviewStarted
-  const sendSms = args.sendSms ?? sendImessage
+  const sendSms = args.sendSms ?? sendRuntimeApprovedIMessage
   const nowIso = new Date().toISOString()
   const sessionId = deriveSessionId(args.jobId, args.userId, nowIso)
 
@@ -166,6 +174,8 @@ export async function runPreScreenForUser(args: RunPreScreenArgs): Promise<RunPr
         content: `Claire's screen for ${title} is still being prepared. WeKruit has the role listed, but the employer-specific questions are not approved yet. We will unlock this screen when it is ready.`,
         userId: args.userId,
         db: args.db,
+        runtimeSource: "pa_prescreen_runtime",
+        idempotencyKey: `prescreen_config_missing:${args.jobId}:${args.userId}`,
       })
     } catch (err) {
       log("prescreen.config_missing_notice_failed", {
@@ -275,7 +285,14 @@ export async function runPreScreenForUser(args: RunPreScreenArgs): Promise<RunPr
   }
 
   try {
-    await sendSms({ to: args.toE164, content: opener, userId: args.userId, db: args.db })
+    await sendSms({
+      to: args.toE164,
+      content: opener,
+      userId: args.userId,
+      db: args.db,
+      runtimeSource: "pa_prescreen_runtime",
+      idempotencyKey: `prescreen_start:${sessionId}:opener`,
+    })
   } catch (err) {
     const message = errorMessage(err)
     await markSessionStartSendFailed({

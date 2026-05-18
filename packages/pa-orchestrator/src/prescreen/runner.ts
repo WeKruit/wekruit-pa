@@ -2,7 +2,7 @@
  * v2.2 — runPrescreenTurn (channel-agnostic prescreen runner).
  *
  * One brain for SMS + voice. Both channels call this; the channel adapter
- * (SMS = sendImessage; voice = session.say after PII redact) consumes the
+ * (SMS = runtime-approved outbox; voice = session.say after PII redact) consumes the
  * `PrescreenRunResult` and decides transport + terminal-action dispatch.
  *
  * Lifecycle reducer over Firestore facts. The 6 outcomes:

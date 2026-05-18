@@ -405,7 +405,7 @@ export const OutboundMessageSchema = z.object({
   id: z.string().optional(),
   userId: z.string(),
   toE164: z.string(),
-  /** When set, macOS worker prefers sending to this chat id (Photon). */
+  /** Optional iMessage chat id for transport routing. */
   imessageChatId: z.string().optional(),
   body: z.string(),
   status: OutboundStatusSchema,

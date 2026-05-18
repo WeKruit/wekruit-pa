@@ -9,7 +9,7 @@
 
 - **Node 22** — Cloud Functions runtime is on **Node 22** (`apps/functions/package.json` `engines.node`). The old “Node 20 → 22 before 2026-04-30” upgrade item is **done** from a planning perspective; keep watching Firebase release notes for future bumps.
 - **Phase 2 scenario harness** — **Runs end-to-end** against production stack (Firestore broker → CF → orchestrator → Mem0 / Qdrant / LLM). Scenarios live under `tests/scenarios/scenarios/`.
-- **Outbound suppression** — Harness broker events include `rawPayload.harness.suppressOutbound: true`. Orchestrator still writes **`pa_messages`** (transcript) but **skips `enqueueOutbound`**, so the Mac worker will **not** pick up iMessage sends for harness turns. The runner **asserts** after each turn (unless `verifySuppressOutbound: false`) that **`pa_outbound`** has no row for `outbound-<inbound_event_id>`. Long **`replyTimeoutMs`** (default 120s) reduces LLM flake; directory runs use **sorted** YAML order.
+- **Outbound suppression** — Harness broker events include `rawPayload.harness.suppressOutbound: true`. Orchestrator still writes **`pa_messages`** (transcript) but **skips `enqueueOutbound`**, so `paSendblueOutbox` has nothing to deliver for harness turns. The runner **asserts** after each turn (unless `verifySuppressOutbound: false`) that **`pa_outbound`** has no row for `outbound-<inbound_event_id>`. Long **`replyTimeoutMs`** (default 120s) reduces LLM flake; directory runs use **sorted** YAML order.
 - **`npm test` + scenarios** — Root `npm test` runs `scripts/run-scenarios-if-env.mjs` first. Production scenario runs are **opt-in**: set `PA_RUN_SCENARIOS=1` and valid GCP credentials; otherwise scenarios **skip** and workspace tests run as usual.
 - **Scenario coverage in-tree** — Multilingual **recall** (`memory-recall-zh.yaml`, `memory-recall-en.yaml`, `memory-recall-ja.yaml`, `memory-recall-mixed.yaml`), **`__PA_RESET__` integration** (`reset-integration-zh.yaml`), and **current-info boundary** (`current-info-boundary-zh.yaml`) are present and maintained with the runner.
 - **Phase 3 Memory Admin dashboard** — **Shipped** on hosting (`UserDetail` + memory admin flows, wrapping `packages/memory` admin helpers). Memory views **auto-load** when appropriate (no “dashboard is Phase-1-only shell” state).
@@ -99,7 +99,7 @@ PA_RUN_SCENARIOS=1 GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa.json npm test
 
 - **Firebase project:** `wekruit-5f89b`
 - **CF:** `pa-orchestrator:onPaInbound` Gen2 `us-central1`, **Node 22**
-- **Local dev:** Use a Node version compatible with workspace `engines` / native addons (worker may need specific majors — check `apps/macos-imessage-worker/package.json`).
+- **Local dev:** Use Node 24, matching the Firebase Functions runtime.
 - **Vector / LLM:** Qdrant + SiliconFlow (see deploy secrets); exact model IDs in ops env, not repeated here.
 
 ## 9. Files you will touch for **upcoming** work
@@ -108,7 +108,7 @@ PA_RUN_SCENARIOS=1 GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa.json npm test
 |----------|----------------|
 | P0 | `packages/pa-connectors/`, orchestrator tool/connector wiring, safety boundaries |
 | P1 | `apps/dashboard-web/src/pages/*`, overview metrics |
-| P2 | `apps/macos-imessage-worker/`, broker/orchestrator if signaling changes |
+| P2 | `apps/functions/src/sendblue/`, broker/orchestrator if signaling changes |
 | P3 | `packages/agent-runtime/`, `packages/memory/`, persona providers, orchestrator stacking |
 | P4 | Prompting + eval scenarios |
 

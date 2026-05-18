@@ -485,7 +485,7 @@ export type PiiSource = "pass" | "fail"
 export interface PiiConfirmPipelineOpts {
   state: PipelineStateProvider
   hooks: PiiConfirmHooks
-  /** Outbound emit (caller routes to sendImessage). */
+  /** Outbound emit (caller routes through the runtime-approved transport outbox). */
   emit: (
     text: string,
     meta: { qId: string | null; kind: string }
@@ -597,7 +597,7 @@ export function createPiiConfirmPipeline(opts: PiiConfirmPipelineOpts): Onboardi
     : baseQs
 
   // Caller supplies `emit` — pipeline never sends directly. The CF wrapper
-  // routes emitted text through sendImessage / sendMemoryReply.
+  // routes emitted text through the runtime-approved outbox / memory writer.
   const completionMessage: BilingualText =
     source === "fail"
       ? {

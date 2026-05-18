@@ -118,7 +118,7 @@ describe("isSamePeer (E.164 last-10 match + email case-insensitive)", () => {
 
   it("returns false when digits < 10 and forms differ (no last-10 fallback)", () => {
     // Different digit counts can't satisfy last-10-digit rule; identical short
-    // strings DO match via na===nb (matches macOS worker behavior).
+    // strings DO match via na===nb.
     assert.equal(isSamePeer("12345", "67890"), false)
     assert.equal(isSamePeer("12345", "+1555111234567890"), false)
   })

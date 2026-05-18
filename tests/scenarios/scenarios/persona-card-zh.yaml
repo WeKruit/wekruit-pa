@@ -16,7 +16,7 @@ locale: zh-CN
 agentId: default
 # Reserved test handle (Phase 9 harness convention). The runner writes a
 # synthetic broker iMessage event to pa_inbound_events; CF picks it up
-# exactly as if the macOS worker had written it.
+# exactly as if the iMessage transport had written it.
 participant: "+19999990011"
 chatId: "iMessage;+19999990011"
 testMode: true

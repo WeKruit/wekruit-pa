@@ -573,7 +573,7 @@ Sprint slicing principle:
 
 This repository contains:
 
-- `apps/macos-imessage-worker`: Mac iMessage channel worker
+- `apps/functions/src/sendblue`: Sendblue webhook and runtime-approved outbox transport
 - `apps/dashboard-web`: operator dashboard
 - `packages/agent-runtime`: current LLM provider wrapper, target home for turn orchestration
 - `packages/pa-orchestrator`: independent broker consumer / turn runtime

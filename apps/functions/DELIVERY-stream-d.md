@@ -10,7 +10,7 @@
 |---|---|---|
 | User sends 3 messages 2s apart | Claire replies 3× | Claire taps back ❤️ on the LAST message + 1 reply that addresses all 3 |
 | User sends 1 message | Claire replies immediately | Claire replies ~4s later (single-msg case still pays the coalesce delay) |
-| Cloud Tasks fails to enqueue | n/a | Webhook falls back to legacy direct path — user gets a (non-coalesced) reply |
+| Cloud Tasks fails to enqueue | n/a | Webhook records inbound/audit state; runtime/outbox remains the only user-visible send path |
 | Cloud Tasks fires twice | n/a | Second fire is a no-op (markFiredTransaction is atomic) |
 | Cloud Tasks task gets stuck | n/a | `paCoalesceBufferSweep` force-fires after 30s |
 

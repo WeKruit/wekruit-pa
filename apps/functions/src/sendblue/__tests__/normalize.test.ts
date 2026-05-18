@@ -86,7 +86,7 @@ describe("normalizeSendblueInbound", () => {
     assert.equal(out.isGroup, false)
   })
 
-  it("returns null for empty content (matches macOS worker '[dm] empty; skip')", () => {
+  it("returns null for empty content", () => {
     const out = normalizeSendblueInbound({ ...basePayload(), content: "" })
     assert.equal(out, null)
   })

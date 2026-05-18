@@ -1,21 +1,18 @@
 # Environment variables
 
-**想直接跑通本地？** 步骤与文件位置见 [LOCAL.md](LOCAL.md)（`.env` 已填好 Firebase/ATM 时按该文档开两个终端即可）。
+**想直接跑通本地？** 步骤与文件位置见 [LOCAL.md](LOCAL.md)。真实候选人消息走部署后的 Sendblue webhook/functions，不走本地 Mac worker。
 
-## `apps/macos-imessage-worker`
+## Firebase Functions / Runtime
 
 | Variable | Description |
 |----------|-------------|
-| `GOOGLE_APPLICATION_CREDENTIALS` or `FIREBASE_SERVICE_ACCOUNT_PATH` | Path to service account JSON for project **wekruit-5f89b** (or your override). |
+| `FIREBASE_SERVICE_ACCOUNT_JSON` / `GOOGLE_APPLICATION_CREDENTIALS` | Admin SDK credentials for project **wekruit-5f89b**. |
 | `OPENAI_API_KEY` | OpenAI API key, **or** gateway key (see below). |
 | `OPENAI_BASE_URL` / `LITELLM_BASE_URL` | If set, the OpenAI SDK uses this base URL (LiteLLM, OpenRouter, vLLM, etc.). |
 | `LITELLM_API_KEY` | When using a LiteLLM proxy; used if `OPENAI_API_KEY` is unset. |
 | `MEM0_API_KEY` / `MEM0_BASE_URL` | Optional Mem0 (hosted or self-hosted). |
-| `IMESSAGE_PEER` | Optional E.164 allowlist when `IMESSAGE_DM_ALLOWLIST=1`. |
-| `USE_PLATFORM_FIREBASE=0` | Local echo mode without Firestore. |
-| `PA_BROKER_MODE` | `legacy` (default), `shadow` (write `pa_inbound_events` and keep old direct path), or `primary` (adapter only; orchestrator owns turns). |
-| `PA_IMESSAGE_SESSION_KEY` | Default: **unset** — 1:1 iMessage sessions use **normalized E.164** as `externalChatId` (aligned with console outbound). Set to `chatid` to use Apple’s `chat.db` id per message (legacy; can split history vs `pa_outbound`). |
-| `FIREBASE_SERVICE_ACCOUNT_JSON` | Alternative to a file path: inline JSON string for the service account (useful with Infisical). |
+| `PA_RATE_LIMIT_PER_WINDOW` / `PA_RATE_LIMIT_WINDOW_MS` | Runtime rate-limit controls. |
+| `PA_MATCHING_URL` / `PA_MATCHING_TOKEN` | Matching connector endpoint/token. |
 
 ## `packages/pa-orchestrator`
 
@@ -23,7 +20,7 @@ Run with `npm run orchestrator` from the repo root after `npm run build`, or `np
 
 | Variable | Description |
 |----------|-------------|
-| `FIREBASE_SERVICE_ACCOUNT_JSON` / `GOOGLE_APPLICATION_CREDENTIALS` | Same Admin SDK credentials as worker. |
+| `FIREBASE_SERVICE_ACCOUNT_JSON` / `GOOGLE_APPLICATION_CREDENTIALS` | Same Admin SDK credentials as deployed functions/scripts. |
 | `PA_ORCHESTRATOR_ID` | Optional stable claimer id for leases. |
 | `PA_ORCHESTRATOR_POLL_MS` | Poll interval for `pa_inbound_events` (default `2000`). |
 | `PA_ORCHESTRATOR_ONCE=1` | Process one batch and exit, useful for manual tests. |
@@ -78,8 +75,8 @@ npm run probe:model -- gpt-5.4-nano openai model
 
 Do not invent a separate secrets stack for this repo.
 
-- **Infisical**: run the macOS worker (and optionally inject dashboard `VITE_*` at build time) with `infisical run -- …`, same as other WeKruit services. One-time Infisical setup notes live next to other products, e.g. `../VALET & GH/ATM/infisical/README.md` (relative to this monorepo root when `Jobless` sits beside `VALET & GH`).
-- **Variable names**: reuse `ATM_BASE_URL` / `VALET_ATM_TOKEN` as in VALET’s `.env.example` patterns; worker-side **Firebase** uses `GOOGLE_APPLICATION_CREDENTIALS` or `FIREBASE_SERVICE_ACCOUNT_JSON`.
+- **Infisical**: use the same secrets source as other WeKruit services, and optionally inject dashboard `VITE_*` at build time with `infisical run -- …`. One-time Infisical setup notes live next to other products, e.g. `../VALET & GH/ATM/infisical/README.md` (relative to this monorepo root when `Jobless` sits beside `VALET & GH`).
+- **Variable names**: reuse `ATM_BASE_URL` / `VALET_ATM_TOKEN` as in VALET’s `.env.example` patterns; server-side **Firebase** uses `GOOGLE_APPLICATION_CREDENTIALS` or `FIREBASE_SERVICE_ACCOUNT_JSON`.
 - **Dashboard**: only `VITE_*` is public in the browser — never embed the service account JSON in the client.
 
 ## `apps/dashboard-web` — 两套入口
@@ -155,9 +152,10 @@ firebase deploy --only firestore:indexes --project wekruit-5f89b
 
 (Use your `firebase.json` path; you may add a `Jobless` firebase config or reference `config/firebase/` — adjust paths in your `firebase.json`.)
 
-## Manual E2E checklist (Playground)
+## Manual E2E checklist
 
 1. Operator account email matches the allowlist in `firestore.rules` (e.g. `@wekruit.com`).  
-2. **Mac**: worker running with platform Firestore + Photon; **dashboard** `npm run dev` with valid `VITE_FIREBASE_*`.  
-3. Open **`/playground`**: create or select a user, assign an agent, enqueue an outbound row — status should move `pending` → `sent` when the worker processes it (refresh the page to read Firestore).  
-4. Reply on iMessage — messages appear in **`pa_messages`** after the worker runs; use **Refresh** on Playground to display them.
+2. Dashboard local/dev has valid `VITE_FIREBASE_*`.
+3. Send a real test inbound through the deployed Sendblue path.
+4. Confirm `pa-inbound-events` -> runtime -> `pa-outbound(runtimeApproved:true)` -> Sendblue delivery.
+5. Read the actual candidate-visible transcript before calling the flow healthy.

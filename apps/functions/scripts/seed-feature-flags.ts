@@ -16,7 +16,6 @@
  * (Cloud Shell / GCE / Cloud Run).
  *
  * Initial seeds locked in CONTEXT.md "Initial flag seeds" table:
- *   - PA_CHANNEL_LEGACY        bool   global   true
  *   - PA_PROACTIVE_DISABLED    bool   global   false
  *   - PA_VOICE_MIRROR_DISABLED bool   global   false
  *   - paRateLimitPerUserEnabled bool perUser   true (Adam test number on blocklist)
@@ -47,14 +46,6 @@ interface FlagSpec {
 }
 
 const SEED_FLAGS: FlagSpec[] = [
-  {
-    key: "PA_CHANNEL_LEGACY",
-    value: true,
-    type: "bool",
-    scope: "global",
-    allowlist: [],
-    blocklist: [],
-  },
   {
     key: "PA_PROACTIVE_DISABLED",
     value: false,

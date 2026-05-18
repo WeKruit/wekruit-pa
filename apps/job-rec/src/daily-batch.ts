@@ -10,7 +10,8 @@
  *   4. Format a roommate-style 3-line message + bare URL on its own line
  *      (Bible v7.5.2 hard rule). NO LLM call — keeps the cron path cheap
  *      and deterministic.
- *   5. sendImessage with idempotency key `${userId}-${YYYYMMDD}-batch`
+ *   5. hand the proposed message to Claire runtime with idempotency key
+ *      `${userId}-${YYYYMMDD}-batch`
  *   6. Update lastJobBatchSentAt
  *
  * The cron processes profiles in pages (CF 60s budget). Per-user errors

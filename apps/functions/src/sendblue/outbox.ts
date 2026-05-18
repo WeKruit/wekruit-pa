@@ -6,18 +6,17 @@
  * accepts deps for testability; the CF wrapper in apps/functions/src/index.ts
  * binds the live Firestore + Sendblue client.
  *
- * Flow (port of apps/macos-imessage-worker/src/outbox.ts:99-259):
- *   1. PA_CHANNEL_LEGACY=1 → return early (D-08; macOS worker is authority)
- *   2. Claim transactionally (status pending → sending) — prevents
+ * Flow:
+ *   1. Claim transactionally (status pending → sending) — prevents
  *      double-send across CF retries
- *   3. Runtime approval gate (blocks legacy direct pa-outbound producers)
- *   4. Allowlist gate (mirror outbox.ts:121-137 keyed on toE164 E.164)
- *   5. Append transcript (skip when idempotencyKey starts with
+ *   2. Runtime approval gate (blocks direct pa-outbound producers)
+ *   3. Allowlist gate keyed on toE164 E.164
+ *   4. Append transcript (skip when idempotencyKey starts with
  *      `out-imessage-in-` OR `out-sendblue-` per D-02)
- *   6. Optional typing indicator (PA_TYPING_INDICATOR=1, D-06)
- *   7. POST Sendblue REST → on 4xx → status=failed; on 5xx → status=pending
+ *   5. Optional typing indicator (PA_TYPING_INDICATOR=1, D-06)
+ *   6. POST Sendblue REST → on 4xx → status=failed; on 5xx → status=pending
  *      with attemptCount bumped (CF re-fires via reclaim or next mutation)
- *   8. On 2xx → status=sent + record uuid/messageHandle for delivery audit
+ *   7. On 2xx → status=sent + record uuid/messageHandle for delivery audit
  */
 
 import { PA_COLLECTIONS } from "@pa/core-types"
@@ -46,21 +45,6 @@ export function isMarketplaceOutreachOutbound(raw: { idempotencyKey?: unknown })
 
 export function isRuntimeApprovedOutbound(raw: { runtimeApproved?: unknown }): boolean {
   return raw.runtimeApproved === true
-}
-
-/**
- * Phase 24.5 — flag-backed legacy-channel guard. Reads `PA_CHANNEL_LEGACY` from
- * `pa-feature-flags` via `getFlag()` with the caller's `process.env` injected
- * for emergency-override (env=`1` short-circuits without Firestore read).
- * defaultValue=false matches pre-flag env-var semantics: absent flag +
- * absent env = proceed. Production seed writes value=true (CONTEXT.md
- * initial seeds table); env=1 still short-circuits as emergency override.
- */
-export async function isLegacyChannelEnabledFlag(
-  db: import("firebase-admin/firestore").Firestore
-): Promise<boolean> {
-  const v = await getFlag(db, "PA_CHANNEL_LEGACY", { env: process.env }, false)
-  return Boolean(v)
 }
 
 export function isTypingIndicatorEnabled(): boolean {
@@ -272,14 +256,7 @@ export async function paSendblueOutboxHandler(
     return
   }
 
-  // ---- 1. Legacy guard (D-08; Phase 24.5 flag-backed) ------------------
-  // env-var emergency override is honored inside getFlag (T1 SDK).
-  if (await isLegacyChannelEnabledFlag(deps.db)) {
-    log("[sendblue][outbox] PA_CHANNEL_LEGACY flag=true — releasing to macOS worker", { docId })
-    return
-  }
-
-  // ---- 1b. Stream H4 D2 — top-of-tick stale-row sweep -------------------
+  // ---- 1a. Stream H4 D2 — top-of-tick stale-row sweep -------------------
   // Best-effort piggyback housekeeping. Idempotent under concurrent CF
   // invocations (each row flip uses runTransaction with status re-check).
   try {
@@ -333,7 +310,7 @@ export async function paSendblueOutboxHandler(
     return
   }
 
-  // ---- 3. Allowlist gate (mirror macOS outbox.ts:121-137) --------------
+  // ---- 3. Allowlist gate ------------------------------------------------
   if (useDmAllowlist()) {
     const peers = getPeerAllowlist()
     if (peers.length === 0 || !peers.some((p) => isSamePeer(toPeer, p))) {

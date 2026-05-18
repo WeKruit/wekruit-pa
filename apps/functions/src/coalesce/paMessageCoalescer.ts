@@ -166,8 +166,8 @@ export async function enqueueOrCoalesce(
     })
   } catch (err) {
     // Enqueue failure is the only fatal branch — caller should fall back to
-    // legacy direct path. Throw so the webhook can decide.
-    log("[coalesce] enqueue FAILED — caller should fall back to legacy path", {
+    // normal runtime path. Throw so the webhook can decide.
+    log("[coalesce] enqueue FAILED — caller should fall back to runtime path", {
       taskName: outcome.nextTaskName,
       userId: msg.userId,
       err: err instanceof Error ? err.message : String(err),
@@ -600,8 +600,8 @@ export async function processCoalescedTurn(
   // Before dispatching to Claire, check if the user has an active
   // pre-screen session. If yes, route this turn through
   // PreScreenPipeline.runTurn (which handles the 4-gate state machine,
-  // emits the next question / terminal text via sendImessage, persists
-  // state to pa-prescreen-sessions). Short-circuits Claire so the same
+  // emits the next question / terminal text via the runtime-approved outbox
+  // and persists state to pa-prescreen-sessions). Short-circuits Claire so the same
   // user can't get duplicate replies.
   //
   // On no active session OR handler error → fall through to Claire.

@@ -2,7 +2,7 @@
 
 ## Strategic Direction
 
-Build WeKruit PA as an event-driven assistant platform. The Mac worker is a channel adapter, not the brain. Firebase is the broker and source of truth. Agent runtime owns turn orchestration. Connectors are explicit tools behind policy, schemas, and audit logs.
+Build WeKruit PA as an event-driven assistant platform. Sendblue transport is only a channel adapter, not the brain. Firebase is the broker and source of truth. Agent runtime owns turn orchestration. Connectors are explicit tools behind policy, schemas, and audit logs.
 
 ## Success Criteria
 
@@ -23,7 +23,7 @@ Deliverables:
 
 - push current PA code to `github.com/WeKruit/wekruit-pa`
 - preserve Firebase Hosting target `wekruit-pa`
-- preserve macOS worker and dashboard workspaces
+- preserve dashboard workspaces and runtime/transport boundaries
 - document current architecture and target architecture
 
 Done:
@@ -189,4 +189,3 @@ Done:
 - Mem0 is optional and never the only copy of user history.
 - Connectors are explicit and audited, not raw model plugins.
 - The worker should become thinner over time.
-

@@ -344,6 +344,7 @@ export type SendImessageInput = z.infer<typeof SendImessageInputSchema>
 export const SendImessageOutputSchema = z.object({
   ok: z.boolean(),
   messageHandle: z.string().optional(),
+  runtimeEventId: z.string().optional(),
 })
 export type SendImessageOutput = z.infer<typeof SendImessageOutputSchema>
 

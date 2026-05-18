@@ -1,6 +1,6 @@
-# ATM (on-site) → OpenAI for Jobless (macOS worker)
+# ATM (on-site) → OpenAI for Jobless runtime
 
-The worker matches **VALET’s pattern** for Anthropic/ATM: a bearer-authenticated `GET` to your ATM host returns an LLM runtime profile JSON. Jobless reuses the same `ATM_BASE_URL` and **service token** family as vCode / other WeKruit apps.
+The server runtime matches **VALET’s pattern** for Anthropic/ATM: a bearer-authenticated `GET` to your ATM host returns an LLM runtime profile JSON. Jobless reuses the same `ATM_BASE_URL` and **service token** family as vCode / other WeKruit apps.
 
 ## Required for outbound LLM (prod)
 
@@ -16,7 +16,7 @@ The worker matches **VALET’s pattern** for Anthropic/ATM: a bearer-authenticat
 
 ## Response shape (from ATM / adapter)
 
-The worker expects a JSON object with at least:
+The runtime expects a JSON object with at least:
 
 - `apiKey` (string) → sets `process.env.OPENAI_API_KEY`
 - optional `apiBase` / `api_base` / `baseUrl` / `api_base_url` / `url` / `apiUrl` / `api_url` / `apiEndpoint` / `api_endpoint` → `OPENAI_BASE_URL`
@@ -26,11 +26,11 @@ The worker expects a JSON object with at least:
 
 - Re-fetch is rate-limited to **~5 minutes** in-process after a successful hydration.
 - `PA_ATM_DISABLE=1` (or `ATM_DISABLE=1`): do not call ATM; use only `OPENAI_*` and `FIREBASE_*` from your env (e.g. Infisical on the Mac).
-- If `ATM_BASE_URL` and token are **missing**, the worker leaves existing `OPENAI_API_KEY` (from shell or `apps/macos-imessage-worker/.env`).
+- If `ATM_BASE_URL` and token are **missing**, the runtime leaves existing `OPENAI_API_KEY` from the deployed environment.
 
-## Infisical on the Mac
+## Infisical
 
-Same as other WeKruit workers: run `infisical run -- env` or a LaunchAgent that runs `infisical run -- npx --yes tsx src/index.ts` with paths pointing at the worker. Inject `FIREBASE_SERVICE_ACCOUNT_JSON` (or path), `ATM_BASE_URL` + `VALET_ATM_TOKEN`, and optionally Google/Firebase client vars for other tooling.
+Same as other WeKruit services: use `infisical run -- …` for local server tools and inject `FIREBASE_SERVICE_ACCOUNT_JSON` (or path), `ATM_BASE_URL` + `VALET_ATM_TOKEN`, and optionally Google/Firebase client vars for other tooling.
 
 ## Related
 

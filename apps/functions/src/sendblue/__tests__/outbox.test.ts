@@ -154,7 +154,6 @@ const ENV_KEYS = [
   "IMESSAGE_DM_ALLOWLIST",
   "IMESSAGE_PEERS",
   "IMESSAGE_PEER",
-  "PA_CHANNEL_LEGACY",
   "PA_TYPING_INDICATOR",
 ] as const
 
@@ -247,7 +246,7 @@ describe("paSendblueOutboxHandler", () => {
     assert.match(String(finalDoc.error), /not approved by runtime/)
   })
 
-  it("Test 2: non-allowlisted toE164 → status=failed with allowlist error (mirror macOS worker)", async () => {
+  it("Test 2: non-allowlisted toE164 → status=failed with allowlist error", async () => {
     const baseRow: DocData = {
       status: "pending",
       userId: USER.id,
@@ -423,8 +422,7 @@ describe("paSendblueOutboxHandler", () => {
     assert.deepEqual(callOrderB, ["send"])
   })
 
-  it("Test 7: PA_CHANNEL_LEGACY=1 → CF returns early, NO send (D-08)", async () => {
-    process.env.PA_CHANNEL_LEGACY = "1"
+  it("Test 7: runtime-approved rows send through the Sendblue transport", async () => {
     const baseRow: DocData = {
       status: "pending",
       userId: USER.id,
@@ -446,9 +444,8 @@ describe("paSendblueOutboxHandler", () => {
       getOrCreateSession: async () => ({ id: "s-1" } as never),
     })
 
-    assert.equal(sb.calls, 0)
-    // Row remains pending — macOS worker is canonical authority
-    assert.equal(outbound.get("doc-7")!.status, "pending")
+    assert.equal(sb.calls, 1)
+    assert.equal(outbound.get("doc-7")!.status, "sent")
   })
 
   it("Test 8: idempotency — same docId triggered twice → only ONE Sendblue POST", async () => {

@@ -181,21 +181,25 @@ async function rematchOne(userId) {
     return { userId, before: beforeBody, after, sent: false };
   }
 
-  // Send + tag with rematchReason on the pa-outbound row (post-write merge).
+  // Hand off to runtime, then tag the runtime event. The runtime owns whether
+  // this becomes candidate-visible outbound; scripts must not create pa-outbound.
   const sendRes = await sendImessage(
     { userId, content: body, idempotencyKey },
     { db, log: (...a) => console.log("[send]", ...a) }
   );
-  if (sendRes.ok && sendRes.messageHandle) {
+  const runtimeEventId = sendRes.runtimeEventId ?? sendRes.messageHandle;
+  if (sendRes.ok && runtimeEventId) {
     await db
-      .collection("pa-outbound")
-      .doc(sendRes.messageHandle)
+      .collection("pa-inbound-events")
+      .doc(runtimeEventId)
       .set(
         {
-          rematchReason: "stream-h8-industry-enum-fix-2026-05-01",
-          // Pin to the actual BEFORE row's idempotencyKey (may be a prior
-          // ymd if rematch ran after UTC-midnight rollover).
-          rematchedFrom: beforeKey ?? `${userId}-${ymd}-batch`,
+          rawMeta: {
+            rematchReason: "stream-h8-industry-enum-fix-2026-05-01",
+            // Pin to the actual BEFORE row's idempotencyKey (may be a prior
+            // ymd if rematch ran after UTC-midnight rollover).
+            rematchedFrom: beforeKey ?? `${userId}-${ymd}-batch`,
+          },
         },
         { merge: true }
       );

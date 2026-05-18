@@ -6,7 +6,7 @@ description: |
 locale: zh-CN
 agentId: default
 # Broker identity. The runner writes a synthetic broker iMessage event to
-# pa_inbound_events; CF picks it up exactly as if the macOS worker had
+# pa_inbound_events; CF picks it up exactly as if the iMessage transport had
 # written it. participant must match a known test handle.
 participant: "+19999990001"
 chatId: "iMessage;+19999990001"
