@@ -1875,6 +1875,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
   const at = store.nowIso()
   try {
     const runtimeEvent = event.rawMeta?.runtimeEvent === true
+    const userAuthoredEvent = !runtimeEvent
     const runtimeNoSendToken =
       typeof event.rawMeta?.runtimeNoSendToken === "string"
         ? event.rawMeta.runtimeNoSendToken.trim()
@@ -1933,12 +1934,14 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
 
     // Test-admin magic string. Must run BEFORE parseMemoryCommand so it
     // doesn't get swallowed by an unrelated memory grammar rule.
-    const reset = await store.maybeHandleResetCommand(event)
-    if (reset.handled) {
-      await sendMemoryReply(store, event, turnId, reset.summary ?? "✓ 测试记忆已清空。")
-      await store.updateTurn(turnId, { status: "succeeded", stage: "succeeded", completedAt: store.nowIso() })
-      await store.markEventSucceeded(event.id)
-      return
+    if (userAuthoredEvent) {
+      const reset = await store.maybeHandleResetCommand(event)
+      if (reset.handled) {
+        await sendMemoryReply(store, event, turnId, reset.summary ?? "✓ 测试记忆已清空。")
+        await store.updateTurn(turnId, { status: "succeeded", stage: "succeeded", completedAt: store.nowIso() })
+        await store.markEventSucceeded(event.id)
+        return
+      }
     }
 
     // iter30 WS6 — shadow-mode INPUT guardrail chain. Telemetry-only;
@@ -1949,7 +1952,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // enforcement (SSN/CC/passport/idcard/bankcard) is the load-bearing
     // gap legacy doesn't cover. Disabled by default — env flag
     // `PA_GUARDRAIL_INPUT_CHAIN_SHADOW=true` turns it on.
-    if (process.env.PA_GUARDRAIL_INPUT_CHAIN_SHADOW === "true") {
+    if (userAuthoredEvent && process.env.PA_GUARDRAIL_INPUT_CHAIN_SHADOW === "true") {
       const shadowT0 = Date.now()
       try {
         const shadowLang = pickLangForSafety(event.body)
@@ -1994,44 +1997,46 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       }
     }
 
-    const safety = await store.checkInboundSafety(event)
-    if (!safety.allow) {
-      // Phase 46 (v1.5 Stream-E) — action-aware safety branch with bilingual canned replies.
-      // Backward-compat: if `action` is undefined (legacy callers / test mocks), fall
-      // through to the legacy reason-based message selection.
-      const lang = pickLangForSafety(event.body)
-      let msg: string | null
-      if (safety.action === "silent_drop") {
-        msg = null // no reply at all (cooldown)
-      } else if (safety.action === "respond_sanitized") {
-        msg = SAFETY_CANNED_REPLIES.respond_sanitized[lang]
-      } else if (safety.action === "escalate") {
-        msg = SAFETY_CANNED_REPLIES.escalate[lang]
-      } else {
-        // Legacy path (Phase 23 reason-only). Keep wording bytewise identical for
-        // zero-regression on flag-off + legacy mock callers.
-        msg =
-          safety.reason === "rate_limited"
-            ? "You’re sending a bit too fast. Give it a few seconds and try again."
-            : "I can’t work with that message. Try rephrasing."
+    if (userAuthoredEvent) {
+      const safety = await store.checkInboundSafety(event)
+      if (!safety.allow) {
+        // Phase 46 (v1.5 Stream-E) — action-aware safety branch with bilingual canned replies.
+        // Backward-compat: if `action` is undefined (legacy callers / test mocks), fall
+        // through to the legacy reason-based message selection.
+        const lang = pickLangForSafety(event.body)
+        let msg: string | null
+        if (safety.action === "silent_drop") {
+          msg = null // no reply at all (cooldown)
+        } else if (safety.action === "respond_sanitized") {
+          msg = SAFETY_CANNED_REPLIES.respond_sanitized[lang]
+        } else if (safety.action === "escalate") {
+          msg = SAFETY_CANNED_REPLIES.escalate[lang]
+        } else {
+          // Legacy path (Phase 23 reason-only). Keep wording bytewise identical for
+          // zero-regression on flag-off + legacy mock callers.
+          msg =
+            safety.reason === "rate_limited"
+              ? "You’re sending a bit too fast. Give it a few seconds and try again."
+              : "I can’t work with that message. Try rephrasing."
+        }
+        if (msg !== null) {
+          await sendMemoryReply(store, event, turnId, msg)
+        }
+        await store.updateTurn(turnId, {
+          status: "succeeded",
+          stage: "succeeded",
+          completedAt: store.nowIso(),
+          errorCode: safety.reason,
+          error: "inbound_safety_block",
+        })
+        await store.markEventSucceeded(event.id)
+        return
       }
-      if (msg !== null) {
-        await sendMemoryReply(store, event, turnId, msg)
-      }
-      await store.updateTurn(turnId, {
-        status: "succeeded",
-        stage: "succeeded",
-        completedAt: store.nowIso(),
-        errorCode: safety.reason,
-        error: "inbound_safety_block",
-      })
-      await store.markEventSucceeded(event.id)
-      return
     }
 
     // Phase 22 — proactive cancellation NLU pre-LLM hook (D-07, PROACTIVE-06).
     // Must run before memory commands so "停止提醒" short-circuits cleanly.
-    if (detectProactiveCancellation(event.body)) {
+    if (userAuthoredEvent && detectProactiveCancellation(event.body)) {
       const cancelledCount = await store.cancelAllPendingProactiveJobs(event.userId)
       await store.writeProactiveCancelAudit({
         userId: event.userId,
@@ -2051,14 +2056,14 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // LLM owns memory writes via the `remember-fact` connector tool. We still
     // handle list/forget/clear at the orchestrator (those are admin commands,
     // not tools the LLM should own).
-    const command = parseMemoryCommand(event.body)
+    const command = userAuthoredEvent ? parseMemoryCommand(event.body) : null
     if (command && command.kind !== "remember" && await handleMemoryCommand(event, store, turnId, command)) {
       await store.updateTurn(turnId, { status: "succeeded", stage: "succeeded", completedAt: store.nowIso() })
       await store.markEventSucceeded(event.id)
       return
     }
 
-    const privacyIntent = detectPrivacyIntent(event.body)
+    const privacyIntent = userAuthoredEvent ? detectPrivacyIntent(event.body) : null
     if (privacyIntent && await handlePrivacyIntent(event, store, turnId, privacyIntent)) {
       await store.updateTurn(turnId, { status: "succeeded", stage: "succeeded", completedAt: store.nowIso() })
       await store.markEventSucceeded(event.id)
@@ -2067,9 +2072,9 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
 
     const onboardingUser = await store.getOnboardingUser(event.userId)
     const onboardingIncomplete = Boolean(
-      onboardingUser && onboardingUser.onboardingState !== "complete"
+      userAuthoredEvent && onboardingUser && onboardingUser.onboardingState !== "complete"
     )
-    if (!onboardingIncomplete && await handleLifecycleProfileReply(event, store, turnId)) {
+    if (userAuthoredEvent && !onboardingIncomplete && await handleLifecycleProfileReply(event, store, turnId)) {
       await store.updateTurn(turnId, { status: "succeeded", stage: "succeeded", completedAt: store.nowIso() })
       await store.markEventSucceeded(event.id)
       return
@@ -2121,7 +2126,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // an incomplete onboarding turn must either be handled here or fail
     // loudly instead of drifting into a parallel message producer.
     // ════════════════════════════════════════════════════════════════
-    if (onboardingUser) {
+    if (userAuthoredEvent && onboardingUser) {
       const cvParsedInbound = (event.body ?? "").trim().startsWith("[cv-parsed]")
       const cvParsed = store.getUserCvParsed
         ? await store.getUserCvParsed(event.userId)
@@ -2163,7 +2168,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       })
     }
 
-    if (await handleCompletedUserJobSearchRequest(event, store, turnId, onboardingUser)) {
+    if (userAuthoredEvent && await handleCompletedUserJobSearchRequest(event, store, turnId, onboardingUser)) {
       return
     }
 

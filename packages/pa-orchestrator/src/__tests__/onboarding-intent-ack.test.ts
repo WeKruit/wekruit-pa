@@ -384,6 +384,39 @@ const baseEvent: InboundEvent = {
   idempotencyKey: "imessage-in-onb-1",
 }
 
+test("runtime-event: layoff kickoff bypasses incomplete deterministic onboarding", async () => {
+  const captures: OnboardingCaptures = {
+    systemInputs: [],
+    appliedSteps: [],
+    llmCalls: 0,
+    outboundBodies: [],
+  }
+  const store = makeOnboardingCapturesStore(captures, undefined)
+  await processInboundEvent(
+    {
+      ...baseEvent,
+      id: "evt-runtime-layoff",
+      body: [
+        "[system-event:layoff_onboarding:layoff_onboarding_started]",
+        "An external product event arrived. Decide whether Claire should send the candidate a message now.",
+        "If a message should be sent, write only that message in English.",
+      ].join("\n"),
+      rawMeta: {
+        runtimeEvent: true,
+        runtimeEventSource: "layoff_onboarding",
+        runtimeEventKind: "layoff_onboarding_started",
+        runtimeNoSendToken: "__NO_SEND__",
+        preferredLanguage: "en",
+        context: { trigger: "WeKruit_LAID_OFF" },
+      },
+    },
+    store
+  )
+  assert.equal(captures.llmCalls, 1, "runtime event must reach agent runtime")
+  assert.deepEqual(captures.appliedSteps, [], "runtime event must not advance legacy onboarding")
+  assert.doesNotMatch(captures.outboundBodies[0] ?? "", /What language works|Chinese \/ English/)
+})
+
 test("integration: turn-0 with zh job_search input — synthetic input contains intent-ack + role phrase, applyOnboarding gets intentAcked=true", async () => {
   const captures: OnboardingCaptures = {
     systemInputs: [],
