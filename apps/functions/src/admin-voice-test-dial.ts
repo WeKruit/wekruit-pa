@@ -1,0 +1,136 @@
+/**
+ * v2.2 W6 — admin-only callable that creates an `outbound-bookings/{id}`
+ * doc seeded with `voiceState: "dialing"`, which triggers the existing
+ * `dialOutbound` Firestore CF → Twilio SIP → LiveKit room → voice agent
+ * (CA_CyhBjJioxJR9) with the in-process WekruitLLM.
+ *
+ * Backs the `/admin/voice-test-dial` dashboard form. The CF is the only
+ * dashboard-side way to dial a number; it skips the bulk-resume / public-
+ * application paths so internal smoke can happen with one click.
+ *
+ * Auth: same admin-claim + PA_ADMIN_TOKEN fallback as the other admin
+ * CFs (mirrors `paAdminMatchDebug`).
+ *
+ * Validation:
+ *   - paUserId must exist in pa-users
+ *   - paJobId must exist in matching-jobs
+ *   - toNumber must look like +E.164
+ *   - rate limit: refuse if there's an open booking for the same
+ *     paUserId+paJobId in the last 60s (prevents accidental double-dial)
+ */
+
+import { onCall, HttpsError } from "firebase-functions/v2/https"
+import { defineSecret } from "firebase-functions/params"
+import { getFirestore, FieldValue } from "firebase-admin/firestore"
+import { randomBytes } from "node:crypto"
+import { z } from "zod"
+
+import { authorizeAdminCallable } from "./promote-sandbox-tag.js"
+
+const PA_ADMIN_TOKEN = defineSecret("PA_ADMIN_TOKEN")
+
+const InputSchema = z.object({
+  paUserId: z.string().min(8).max(128),
+  paJobId: z.string().min(1).max(256),
+  toNumber: z.string().regex(/^\+[1-9]\d{6,14}$/, "must be +E.164"),
+  adminToken: z.string().optional(),
+})
+
+export type AdminVoiceTestDialInput = z.infer<typeof InputSchema>
+
+export interface AdminVoiceTestDialResult {
+  ok: true
+  bookingId: string
+  voiceState: "dialing"
+  createdAt: string
+}
+
+/**
+ * 16-char bookingId — short enough to render as a LK room name without
+ * exhausting the 64-char limit, long enough to be collision-resistant.
+ * Prefix `vt-` so the docs are filterable from real outbound bookings.
+ */
+function generateBookingId(): string {
+  return `vt-${randomBytes(8).toString("hex")}`
+}
+
+export const paAdminVoiceTestDial = onCall(
+  {
+    region: "us-central1",
+    cors: true,
+    secrets: [PA_ADMIN_TOKEN],
+  },
+  async (req): Promise<AdminVoiceTestDialResult> => {
+    authorizeAdminCallable(
+      req as { auth?: { token?: { admin?: unknown } }; data?: unknown },
+    )
+    const parsed = InputSchema.safeParse(req.data)
+    if (!parsed.success) {
+      throw new HttpsError("invalid-argument", parsed.error.message)
+    }
+    const { paUserId, paJobId, toNumber } = parsed.data
+
+    const db = getFirestore()
+
+    // Validate the upstream identities exist. Skip the bulk-resume /
+    // anonymous-application paths; this is admin-driven smoke.
+    const [userSnap, jobSnap] = await Promise.all([
+      db.collection("pa-users").doc(paUserId).get(),
+      db.collection("matching-jobs").doc(paJobId).get(),
+    ])
+    if (!userSnap.exists) {
+      throw new HttpsError("not-found", `pa-users/${paUserId} not found`)
+    }
+    if (!jobSnap.exists) {
+      throw new HttpsError(
+        "not-found",
+        `matching-jobs/${paJobId} not found`,
+      )
+    }
+
+    // Dupe-suppression — refuse if a voice-test booking exists for this
+    // pair from the last 60s.
+    const sixtyAgo = new Date(Date.now() - 60_000).toISOString()
+    const dupeSnap = await db
+      .collection("outbound-bookings")
+      .where("paUserId", "==", paUserId)
+      .where("paJobId", "==", paJobId)
+      .where("createdAt", ">=", sixtyAgo)
+      .limit(1)
+      .get()
+    if (!dupeSnap.empty) {
+      throw new HttpsError(
+        "already-exists",
+        `recent booking exists for this user+job (id=${dupeSnap.docs[0].id})`,
+      )
+    }
+
+    const bookingId = generateBookingId()
+    const createdAt = new Date().toISOString()
+
+    // The S3 dial gate fires on transition `before.voiceState !== "dialing"
+    // → after.voiceState === "dialing"`. Creating the doc directly with
+    // "dialing" satisfies that (before is undefined).
+    await db.collection("outbound-bookings").doc(bookingId).set({
+      paUserId,
+      paJobId,
+      phoneE164: toNumber,
+      voiceState: "dialing",
+      voiceCallSid: null,
+      voiceRoomName: null,
+      voiceStartedAt: null,
+      voiceEndedAt: null,
+      voiceOutcome: null,
+      voiceLastError: null,
+      voiceCallerId: null,
+      origin: "admin-voice-test-dial",
+      createdAt,
+      createdBy: "admin",
+      // FieldValue.serverTimestamp() so range-queries on a server-side
+      // timestamp still work for dashboards that filter by `createdAtTs`.
+      createdAtTs: FieldValue.serverTimestamp(),
+    })
+
+    return { ok: true, bookingId, voiceState: "dialing", createdAt }
+  },
+)

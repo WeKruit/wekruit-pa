@@ -41,6 +41,9 @@ import LaunchReadiness from "./pages/LaunchReadiness.js"
 // v1.7 Phase 70 (MATCHDEBUG-01..04) — admin live debugger for the V16 cascade
 // with score-weight sandbox sliders. Backed by paAdminMatchDebug callable.
 import { MatchDebug } from "./pages/MatchDebug.js"
+// v2.2 W6 — One-shot dial form for smoke-testing the deployed LK Cloud
+// voice agent (CA_CyhBjJioxJR9) with the in-process WekruitLLM.
+import { VoiceTestDial } from "./pages/VoiceTestDial.js"
 // v1.8 Phase 78 — Job pre-screen config editor.
 import JobPrescreen from "./pages/JobPrescreen.js"
 import { JobEnrichmentReview } from "./pages/JobEnrichmentReview.js"
@@ -178,6 +181,7 @@ export default function App() {
           <Route path="/match/explainer-test" element={<MatchExplainerTest />} />
           {/* v1.7 Phase 70 (MATCHDEBUG-01..04) — V16 live debugger. */}
           <Route path="/admin/match-debug" element={<MatchDebug />} />
+          <Route path="/admin/voice-test-dial" element={<VoiceTestDial />} />
           <Route path="/admin/passed-candidates" element={<PassedCandidates />} />
           {/* v1.8 Phase 78 — Job pre-screen config editor. */}
           <Route path="/admin/jobs/:jobId/prescreen" element={<JobPrescreen />} />

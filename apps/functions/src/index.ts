@@ -195,6 +195,11 @@ export { paAdminJobMatchDebug, paAdminMatchDebug } from "./admin-match-debug.js"
 export { paAdminOutreachOpsSnapshot } from "./outreach/admin.js"
 export { paAdminPassedCandidatesSnapshot } from "./admin-passed-candidates.js"
 
+// v2.2 W6 — admin-only callable that seeds outbound-bookings/{id} with
+// voiceState=dialing to trigger the existing S3 dial gate. Backs the
+// /admin/voice-test-dial dashboard form (single-shot smoke dial).
+export { paAdminVoiceTestDial } from "./admin-voice-test-dial.js"
+
 // v2.1 S4 — Voice turn telemetry aggregate (admin-gated). Reads the
 // voice-call-metrics collection (written by the S4 metricsWriter that
 // S2 wires into LiveKit Cloud Agents) and returns the four S6-smoke-gate
