@@ -37,6 +37,11 @@ import {
 const PII_META_COLL = "pa-pii-confirm-meta"
 
 const PII_STATE_COLL = "pa-pii-confirm-state"
+const BETA_CANDIDATE_VISIBLE_LANG = "en" as const
+
+function betaEnglishPiiState(state: PipelineState): PipelineState {
+  return { ...state, lang: BETA_CANDIDATE_VISIBLE_LANG }
+}
 
 export function composePiiSkipExistingText(source: "fail"): string {
   return "We already have your contact details on file — I’ll text you when a stronger fit comes through."
@@ -66,14 +71,14 @@ class FirestorePiiState implements PipelineStateProvider {
         collected: {},
         attempts: {},
         halted: null,
-        lang: "en",
+        lang: BETA_CANDIDATE_VISIBLE_LANG,
         completed: false,
       }
     }
-    return snap.data() as PipelineState
+    return betaEnglishPiiState(snap.data() as PipelineState)
   }
   async save(userId: string, state: PipelineState): Promise<void> {
-    await this.db.collection(PII_STATE_COLL).doc(userId).set(state, { merge: false })
+    await this.db.collection(PII_STATE_COLL).doc(userId).set(betaEnglishPiiState(state), { merge: false })
   }
 }
 
@@ -147,7 +152,7 @@ export async function runPiiConfirmForUser(
     jobId: args.jobId,
     sourceSessionId: args.sourceSessionId,
     toE164: args.toE164,
-    lang: args.lang ?? "en",
+    lang: BETA_CANDIDATE_VISIBLE_LANG,
     startedAt: new Date().toISOString(),
   })
 

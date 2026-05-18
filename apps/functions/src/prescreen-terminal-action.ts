@@ -42,6 +42,7 @@ import {
 } from "./job-rec-copy.js"
 
 export type PrescreenTerminalKind = "PASS" | "FAIL" | "HARD_STOP" | "PAUSE"
+const BETA_CANDIDATE_VISIBLE_LANG = "en" as const
 
 export interface RunPrescreenTerminalActionArgs {
   db: Firestore
@@ -525,11 +526,11 @@ async function startPiiWithRecsChain(
       jobId: args.jobId,
       sourceSessionId: args.sessionId,
       source,
-      lang: args.lang,
+      lang: BETA_CANDIDATE_VISIBLE_LANG,
       onComplete: async ({ userId, toE164 }) => {
         if (!opts.fireJobRecs) return
         try {
-          await genJobRecs({ userId, toE164, lang: args.lang })
+          await genJobRecs({ userId, toE164, lang: BETA_CANDIDATE_VISIBLE_LANG })
         } catch (err) {
           log("prescreen.terminal_action.pii_recs_failed", {
             sessionId: args.sessionId,
@@ -545,7 +546,7 @@ async function startPiiWithRecsChain(
         sessionId: args.sessionId,
       })
       try {
-        await genJobRecs({ userId: args.userId, toE164: args.toE164, lang: args.lang })
+        await genJobRecs({ userId: args.userId, toE164: args.toE164, lang: BETA_CANDIDATE_VISIBLE_LANG })
       } catch (err) {
         log("prescreen.terminal_action.recs_direct_failed", {
           sessionId: args.sessionId,
@@ -655,7 +656,7 @@ export async function runPrescreenTerminalAction(
         salaryRange: fields.salaryRange,
         nextStepEta: fields.nextStepEta,
       }
-      const text = composeLevel1Reveal(level1Fields, args.lang)
+      const text = composeLevel1Reveal(level1Fields, BETA_CANDIDATE_VISIBLE_LANG)
       try {
         await send({
           to: args.toE164,
@@ -681,7 +682,7 @@ export async function runPrescreenTerminalAction(
     try {
       await send({
         to: args.toE164,
-        content: composeFailJobRecsPreamble(args.lang),
+        content: composeFailJobRecsPreamble(BETA_CANDIDATE_VISIBLE_LANG),
         userId: args.userId,
         db: args.db,
         runtimeSource: "pa_prescreen_runtime",

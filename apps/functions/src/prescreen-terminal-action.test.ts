@@ -128,6 +128,39 @@ describe("runPrescreenTerminalAction — PASS branch (v1.9 hotfix)", () => {
     assert.ok(audit.some((a) => a.kind === "prescreen.terminal_action"))
   })
 
+  it("keeps beta Level 1 reveal copy English even when the prescreen state is zh", async () => {
+    const docs = setupSession({
+      sessionId: "s1-zh",
+      jobId: "j1",
+      prescreenConfig: {
+        jobTitle: "Senior FE",
+        company: "Acme",
+        level1Reveal: { applyUrl: "https://x.com", salaryRange: "$140k" },
+      },
+    })
+    const { db } = makeFakeDb(docs)
+    const sent: string[] = []
+    await runPrescreenTerminalAction({
+      db,
+      sessionId: "s1-zh",
+      terminal: "PASS",
+      userId: "u1",
+      jobId: "j1",
+      toE164: "+1",
+      lang: "zh",
+      markOutcome: noopMarkOutcome,
+      sendSms: async (a) => {
+        sent.push(a.content)
+      },
+      startPii: async () => ({ ok: true, skipped: false }),
+      generateJobRecs: async () => ({ ok: true, jobCount: 0 }),
+    })
+
+    assert.match(sent[0], /Employer: Acme/)
+    assert.match(sent[0], /Job details: https:\/\/x\.com/)
+    assert.doesNotMatch(sent[0], /招聘方|职位详情|恭喜/)
+  })
+
   it("ends the matching canonical user-level job_prescreen work session", async () => {
     const docs = setupSession({
       sessionId: "s1b",
@@ -314,7 +347,7 @@ describe("runPrescreenTerminalAction — FAIL branch (v1.9 hotfix)", () => {
       userId: "u",
       jobId: "j3",
       toE164: "+1",
-      lang: "en",
+      lang: "zh",
       markOutcome: noopMarkOutcome,
       sendSms: async (a) => {
         sent.push(a.content)
@@ -328,11 +361,12 @@ describe("runPrescreenTerminalAction — FAIL branch (v1.9 hotfix)", () => {
     assert.equal(r.level1Sent, false)
     assert.match(sent[0], /what you shared in this screen/i)
     assert.match(sent[0], /job link and clear requirements/i)
+    assert.doesNotMatch(sent[0], /刚才这段|岗位链接|核心要求/)
     assert.equal(piiCaptures[0].source, "fail")
     assert.equal(jobRecsCalled, true)
   })
 
-  it("passes the prescreen language into post-terminal job rec generation", async () => {
+  it("forces post-terminal job rec generation to English for beta", async () => {
     const docs = setupSession({
       sessionId: "s3-lang",
       jobId: "j3",
@@ -348,7 +382,7 @@ describe("runPrescreenTerminalAction — FAIL branch (v1.9 hotfix)", () => {
       userId: "u",
       jobId: "j3",
       toE164: "+1",
-      lang: "en",
+      lang: "zh",
       markOutcome: noopMarkOutcome,
       sendSms: async () => undefined,
       startPii: fakePiiStart(piiCaptures),
