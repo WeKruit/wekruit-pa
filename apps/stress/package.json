@@ -7,7 +7,8 @@
     "test:inbound": "artillery run scenarios/inbound-burst.yml",
     "test:upstream": "artillery run scenarios/upstream-webhook.yml",
     "test:downstream": "artillery run scenarios/downstream-fire.yml",
-    "report": "artillery report"
+    "report": "artillery report",
+    "ensure:node": "node ../../scripts/ensure-node24.mjs"
   },
   "dependencies": {
     "artillery": "^2.0.21",
@@ -15,5 +16,8 @@
   },
   "optionalDependencies": {
     "@anthropic-ai/sdk": "^0.30.0"
+  },
+  "engines": {
+    "node": "24"
   }
 }

@@ -15,7 +15,11 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test src/__tests__/*.test.ts"
+    "test": "node --import tsx --test src/__tests__/*.test.ts",
+    "ensure:node": "node ../../scripts/ensure-node24.mjs",
+    "prebuild": "npm run ensure:node",
+    "pretypecheck": "npm run ensure:node",
+    "pretest": "npm run ensure:node"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.30.1",
@@ -28,5 +32,8 @@
     "@types/node": "^20.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.3.0"
+  },
+  "engines": {
+    "node": "24"
   }
 }

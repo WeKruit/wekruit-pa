@@ -6,6 +6,10 @@
 
 Full deploy authority. **Never tell Adam "deploy this yourself"** — iter19 + iter22 + iter23 failure mode.
 
+### Runtime version is locked to Node 24
+
+Run `source ~/.zshrc && nvm use 24` before tests, builds, deploys, and workspace scripts. This repo intentionally fails fast through `.nvmrc`, `.node-version`, `.npmrc` `engine-strict=true`, workspace `engines.node=24`, and `npm run ensure:node`. Do not bypass those guards or let nested shells fall back to Homebrew Node 25.
+
 ### Deploy commands (use directly, no ask)
 
 ```bash

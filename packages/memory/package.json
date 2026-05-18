@@ -14,7 +14,11 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test src/stacked.test.ts src/commands.test.ts src/providers.test.ts src/archive.test.ts src/mem0.test.ts src/admin.test.ts src/persona-card.test.ts src/persona-card-ranker.test.ts src/mem0-rerank.test.ts src/identity.test.ts src/voice-style-preference.test.ts src/compaction.test.ts src/__tests__/mem0-metadata.test.ts"
+    "test": "node --import tsx --test src/stacked.test.ts src/commands.test.ts src/providers.test.ts src/archive.test.ts src/mem0.test.ts src/admin.test.ts src/persona-card.test.ts src/persona-card-ranker.test.ts src/mem0-rerank.test.ts src/identity.test.ts src/voice-style-preference.test.ts src/compaction.test.ts src/__tests__/mem0-metadata.test.ts",
+    "ensure:node": "node ../../scripts/ensure-node24.mjs",
+    "prebuild": "npm run ensure:node",
+    "pretypecheck": "npm run ensure:node",
+    "pretest": "npm run ensure:node"
   },
   "dependencies": {
     "@pa/core-types": "0.0.1",
@@ -26,5 +30,8 @@
     "@types/node": "^20.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.3.0"
+  },
+  "engines": {
+    "node": "24"
   }
 }

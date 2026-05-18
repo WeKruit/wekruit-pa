@@ -45,6 +45,7 @@ const db = admin.firestore()
 
 const { queryMatchingJobsV16, sendImessage } = await import("@pa/job-rec")
 const {
+  buildJobRecommendationRuntimeContext,
   collectJobRecommendationMessageItems,
   composeJobRecommendationMessage,
   compactJobRecContext,
@@ -100,7 +101,15 @@ console.log("[live-job-rec] rendered-body-end")
 
 if (send) {
   const sent = await sendImessage(
-    { userId, content: body, idempotencyKey },
+    {
+      userId,
+      context: buildJobRecommendationRuntimeContext(items, context, {
+        requestedCount: items.length,
+        source: "live_job_rec_interface_proof",
+        eventKind: "manual_job_recommendation_canary",
+      }),
+      idempotencyKey,
+    },
     { db, log: (...parts) => console.log("[sendImessage]", ...parts) },
   )
   console.log("[live-job-rec] enqueued", JSON.stringify(sent))

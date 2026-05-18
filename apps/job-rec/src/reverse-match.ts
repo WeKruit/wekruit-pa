@@ -124,7 +124,7 @@ export type ReverseMatchUserProfile = {
   topSkills: string[]
   /** Most-recent experience company (for reason building). */
   recentCompany: string
-  /** preferredLanguage from pa-users. Defaults to "zh". */
+  /** Stored language from pa-users; beta candidate-visible runtime output remains English-only. */
   preferredLanguage: "zh" | "en"
   /** True iff phoneE164 present + flag check OK (set by deps.checkOptIn). */
   hasOptedIn: boolean

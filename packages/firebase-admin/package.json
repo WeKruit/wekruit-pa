@@ -13,7 +13,10 @@
   },
   "scripts": {
     "build": "tsc",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "ensure:node": "node ../../scripts/ensure-node24.mjs",
+    "prebuild": "npm run ensure:node",
+    "pretypecheck": "npm run ensure:node"
   },
   "dependencies": {
     "firebase-admin": "^13.0.0"
@@ -21,5 +24,8 @@
   "devDependencies": {
     "@types/node": "^20.0.0",
     "typescript": "^5.3.0"
+  },
+  "engines": {
+    "node": "24"
   }
 }

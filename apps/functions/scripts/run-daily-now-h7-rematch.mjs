@@ -186,6 +186,7 @@ async function rematchOne(userId) {
       industryKey: j.industryKey,
       salaryMax: j.salaryMax,
       primaryUrl: j.primaryUrl,
+      requiredSkills: j.requiredSkills,
       cosine: cosineScores[i] ?? null,
     })),
     body,
@@ -196,10 +197,27 @@ async function rematchOne(userId) {
     return { userId, before: beforeBody, after, sent: false };
   }
 
-  // Hand off to runtime, then tag the runtime event. The runtime owns whether
-  // this becomes candidate-visible outbound; scripts must not create pa-outbound.
+  // Hand off structured facts to runtime. Keep the rendered body only for
+  // dry-run/operator diff output; runtime must author any candidate copy.
+  const { body: _producerBody, bodyBefore: _producerBodyBefore, ...runtimeAfter } = after;
   const sendRes = await sendImessage(
-    { userId, content: body, idempotencyKey },
+    {
+      userId,
+      context: {
+        source: "manual_rematch_script",
+        eventKind: "manual_job_rematch",
+        preferredLanguage: "en",
+        requestedCount: ranked.length,
+        rematch: runtimeAfter,
+        instructions: [
+          "Write candidate-visible copy in English only.",
+          "Use the structured jobs in rematch.jobs.",
+          "Include role title, company, URL, and concrete requirements when present.",
+          "Reply __NO_SEND__ if this manual rematch should not send now.",
+        ],
+      },
+      idempotencyKey,
+    },
     { db, log: (...a) => console.log("[send]", ...a) }
   );
   const runtimeEventId = sendRes.runtimeEventId ?? sendRes.messageHandle;

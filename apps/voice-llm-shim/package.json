@@ -19,7 +19,13 @@
     "typecheck": "tsc --noEmit",
     "start": "node dist/server.js",
     "dev": "tsx src/server.ts",
-    "test": "node --import tsx --test src/__tests__/sse.test.ts src/__tests__/handler-non-stream.test.ts src/__tests__/handler-stream.test.ts src/__tests__/finish-reason.test.ts src/__tests__/openai-sdk-roundtrip.test.ts src/__tests__/orchestrator-backend.test.ts src/__tests__/resolve.test.ts"
+    "test": "node --import tsx --test src/__tests__/sse.test.ts src/__tests__/handler-non-stream.test.ts src/__tests__/handler-stream.test.ts src/__tests__/finish-reason.test.ts src/__tests__/openai-sdk-roundtrip.test.ts src/__tests__/orchestrator-backend.test.ts src/__tests__/resolve.test.ts",
+    "ensure:node": "node ../../scripts/ensure-node24.mjs",
+    "prebuild": "npm run ensure:node",
+    "pretypecheck": "npm run ensure:node",
+    "pretest": "npm run ensure:node",
+    "prestart": "npm run ensure:node",
+    "predev": "npm run ensure:node"
   },
   "dependencies": {
     "@pa/agent-runtime": "0.0.1",
@@ -32,6 +38,6 @@
     "typescript": "^5.3.0"
   },
   "engines": {
-    "node": ">=20"
+    "node": "24"
   }
 }

@@ -12,12 +12,13 @@
     }
   },
   "scripts": {
-    "prebuild": "npm run build --workspace=@wekruit/shared-tags && npm run build --workspace=@pa/core-types",
+    "prebuild": "npm run ensure:node && npm run build --workspace=@wekruit/shared-tags && npm run build --workspace=@pa/core-types",
     "build": "tsc",
-    "pretypecheck": "npm run build --workspace=@wekruit/shared-tags && npm run build --workspace=@pa/core-types",
+    "pretypecheck": "npm run ensure:node && npm run build --workspace=@wekruit/shared-tags && npm run build --workspace=@pa/core-types",
     "typecheck": "tsc --noEmit",
-    "pretest": "npm run build --workspace=@wekruit/shared-tags && npm run build --workspace=@pa/core-types",
-    "test": "node --import tsx --test src/normalize.test.ts src/rubric.test.ts src/agent-prompt.test.ts src/agent-parse.test.ts src/outreach.test.ts src/instantly-client.test.ts src/adapter-detect.test.ts src/agent-rank-prompt.test.ts src/auto-map.test.ts src/sheet.test.ts"
+    "pretest": "npm run ensure:node && npm run build --workspace=@wekruit/shared-tags && npm run build --workspace=@pa/core-types",
+    "test": "node --import tsx --test src/normalize.test.ts src/rubric.test.ts src/agent-prompt.test.ts src/agent-parse.test.ts src/outreach.test.ts src/instantly-client.test.ts src/adapter-detect.test.ts src/agent-rank-prompt.test.ts src/auto-map.test.ts src/sheet.test.ts",
+    "ensure:node": "node ../../scripts/ensure-node24.mjs"
   },
   "dependencies": {
     "@pa/core-types": "0.0.1",
@@ -30,5 +31,8 @@
     "@types/node": "^20.19.0",
     "tsx": "^4.7.0",
     "typescript": "^5.3.0"
+  },
+  "engines": {
+    "node": "24"
   }
 }

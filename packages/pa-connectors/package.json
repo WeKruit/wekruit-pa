@@ -14,7 +14,11 @@
   "scripts": {
     "build": "tsc",
     "test": "node --import tsx --test src/*.test.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "ensure:node": "node ../../scripts/ensure-node24.mjs",
+    "prebuild": "npm run ensure:node",
+    "pretypecheck": "npm run ensure:node",
+    "pretest": "npm run ensure:node"
   },
   "dependencies": {
     "@pa/agent-runtime": "0.0.1",
@@ -29,5 +33,8 @@
     "@types/node": "^20.19.0",
     "tsx": "^4.19.0",
     "typescript": "^5.3.0"
+  },
+  "engines": {
+    "node": "24"
   }
 }
