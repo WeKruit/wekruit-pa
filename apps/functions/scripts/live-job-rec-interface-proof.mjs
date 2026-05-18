@@ -104,15 +104,22 @@ if (send) {
     { db, log: (...parts) => console.log("[sendImessage]", ...parts) },
   )
   console.log("[live-job-rec] enqueued", JSON.stringify(sent))
-  if (!sent.ok || !sent.messageHandle) throw new Error("sendImessage did not enqueue")
+  const runtimeEventId = sent.runtimeEventId ?? sent.messageHandle
+  if (!sent.ok || !runtimeEventId) throw new Error("sendImessage did not enqueue runtime event")
 
   for (let attempt = 1; attempt <= 12; attempt++) {
     await delay(5000)
-    const outboundSnap = await db.collection("pa-outbound").doc(sent.messageHandle).get()
-    const data = outboundSnap.data() ?? {}
+    const outboundSnap = await db
+      .collection("pa-outbound")
+      .where("idempotencyKey", "==", `outbound-${runtimeEventId}`)
+      .limit(1)
+      .get()
+    const first = outboundSnap.docs[0]
+    const data = first?.data() ?? {}
     console.log("[live-job-rec] outbound", JSON.stringify({
       attempt,
-      id: sent.messageHandle,
+      runtimeEventId,
+      id: first?.id ?? null,
       status: data.status,
       toE164: data.toE164,
       bodyHasUrl: /https?:\/\//.test(data.body ?? ""),

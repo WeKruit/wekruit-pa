@@ -241,10 +241,13 @@ async function rematchOne(userId) {
     { userId, content: body, idempotencyKey },
     { db, log: (...a) => console.log("[send]", ...a) }
   );
-  if (sendRes.ok && sendRes.messageHandle) {
-    await db.collection("pa-outbound").doc(sendRes.messageHandle).set({
-      rematchReason: "stream-h11-companyrole-compound-2026-05-01",
-      rematchedFrom: beforeKey ?? `${userId}-${ymd}-batch`,
+  const runtimeEventId = sendRes.runtimeEventId ?? sendRes.messageHandle;
+  if (sendRes.ok && runtimeEventId) {
+    await db.collection("pa-inbound-events").doc(runtimeEventId).set({
+      rawMeta: {
+        rematchReason: "stream-h11-companyrole-compound-2026-05-01",
+        rematchedFrom: beforeKey ?? `${userId}-${ymd}-batch`,
+      },
     }, { merge: true });
   }
   log("send result", sendRes);

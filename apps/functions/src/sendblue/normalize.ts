@@ -40,7 +40,7 @@ export function isInboundReceiveEvent(
  * Returns:
  *   - NormalizedInbound when payload is a valid receive event with non-empty content
  *   - null when payload is an outbound mirror event OR has empty content
- *     (caller logs as audit + 200 OK; matches macOS worker `[dm] empty; skip`)
+ *     (caller logs as audit + 200 OK; empty typing/transport echo)
  *
  * Throws:
  *   - When message_handle is missing (cannot enqueue without idempotency key —
@@ -68,10 +68,9 @@ export function normalizeSendblueInbound(
   const groupIdRaw = typeof payload.group_id === "string" ? payload.group_id.trim() : ""
   const isGroup = groupIdRaw.length > 0
 
-  // 1:1 chatId convention matches `getImessageSessionExternalId` from the macOS
-  // worker — uses iMessage protocol prefix + peer. Group chats have group_id
-  // in the chatId, but the webhook rejects groups (Q-03 lock) before this is
-  // ever consumed downstream.
+  // 1:1 chatId uses the iMessage protocol prefix + peer. Group chats have
+  // group_id in the chatId, but the webhook rejects groups (Q-03 lock) before
+  // this is ever consumed downstream.
   const chatId = isGroup
     ? `iMessage;+;${groupIdRaw}`
     : `iMessage;-;${fromNumber}`

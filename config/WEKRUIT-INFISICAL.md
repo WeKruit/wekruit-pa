@@ -16,7 +16,7 @@ npm run deploy:hosting:from-firebase
 
 **ATM/Infisical 在这件事里的分工：**
 
-- **ATM**（`ATM_BASE_URL` + token）：给 **iMessage worker** 拉 LLM 配置，和 **Vite 前端里的 `VITE_FIREBASE_*` 无关**。
+- **ATM**（`ATM_BASE_URL` + token）：给 **runtime/functions** 拉 LLM 配置，和 **Vite 前端里的 `VITE_FIREBASE_*` 无关**。
 - **PA Dashboard 生产站** 需要的是 **Firebase Web SDK 的 6 个公开字段**（`VITE_FIREBASE_*`），来源只能是 **Firebase Console**（Project `wekruit-5f89b` → Project settings → Your apps → *Web*）。和 VALET 后端那套 `DATABASE_URL` 不是同一类 secret。
 
 若你们**已经在同一个 Firebase 项目里为其它前端配过 Web 应用**，那 6 个值往往可以直接复用（同一套 Web app 配置）——只要复制到 Infisical 里 **Jobless 专用路径**即可，不需要「重新发明」。

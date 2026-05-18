@@ -364,7 +364,7 @@ describe("handleSendblueWebhook", () => {
     assert.ok(audit.some((a) => a.type === "group_chat_rejected"))
   })
 
-  it("Test 8: empty content AND no media_url → 200, NO inbound (matches macOS worker [dm] empty; skip)", async () => {
+  it("Test 8: empty content AND no media_url → 200, NO inbound", async () => {
     const { db, inbound } = makeFakeDb()
     // Explicit: no media_url. Skip-empty rule still applies.
     const body = JSON.stringify({ ...basePayload(), content: "" })
@@ -398,20 +398,15 @@ describe("handleSendblueWebhook", () => {
     assert.equal(raw.text, "[attachment]")
   })
 
-  it("Test 8d (Stream D): media_url → 200 + inbound enqueued + sendReaction(love) called once + ingestCv called once with resolved userId", async () => {
+  it("Test 8d (Stream D): media_url → 200 + inbound enqueued + no webhook tapback + ingestCv called once with resolved userId", async () => {
     const { db, inbound } = makeFakeDb()
     const mediaUrl = "https://storage.googleapis.com/inbound-file-store/test-cv.pdf"
     const body = JSON.stringify({ ...basePayload(), content: "", media_url: mediaUrl })
     const req = makeReq({ body, signature: SECRET })
     const res = makeRes()
 
-    const reactionCalls: Array<{ to: string; messageHandle: string; reaction: string }> = []
     const ingestCalls: Array<{ userId: string; mediaUrl: string; sessionId?: string }> = []
 
-    const sendReactionMock = async (input: { to: string; messageHandle: string; reaction: string }) => {
-      reactionCalls.push({ to: input.to, messageHandle: input.messageHandle, reaction: input.reaction })
-      return { status: "ok" }
-    }
     const ingestCvMock = async (input: { userId: string; mediaUrl: string; sessionId?: string }) => {
       ingestCalls.push({ userId: input.userId, mediaUrl: input.mediaUrl, sessionId: input.sessionId })
       return { ok: true as const, resumeId: "rsm_test_1", userId: input.userId }
@@ -423,7 +418,6 @@ describe("handleSendblueWebhook", () => {
     await handleSendblueWebhook(req, res, {
       db,
       secret: SECRET,
-      sendReaction: sendReactionMock,
       ingestCv: ingestCvMock,
       lookupUserByPhone: lookupMock,
     })
@@ -436,36 +430,27 @@ describe("handleSendblueWebhook", () => {
     // before asserting on the mock state.
     await new Promise((r) => setTimeout(r, 20))
 
-    // D2: tapback ❤️ fired exactly once.
-    assert.equal(reactionCalls.length, 1, "sendReaction must be called exactly once on media_url receipt")
-    assert.equal(reactionCalls[0]!.to, "+15551234567")
-    assert.equal(reactionCalls[0]!.messageHandle, "msg-abc-123")
-    assert.equal(reactionCalls[0]!.reaction, "love")
-
     // D4: ingestCv fired with resolved userId.
     assert.equal(ingestCalls.length, 1, "ingestCv must be called exactly once on media_url receipt with a resolvable user")
     assert.equal(ingestCalls[0]!.userId, "user_adam_test")
     assert.equal(ingestCalls[0]!.mediaUrl, mediaUrl)
   })
 
-  it("Test 8e (Stream D): text-only inbound (no media_url) → no sendReaction, no ingestCv", async () => {
+  it("Test 8e (Stream D): text-only inbound (no media_url) → no ingestCv", async () => {
     const { db } = makeFakeDb()
     const body = JSON.stringify(basePayload())
     const req = makeReq({ body, signature: SECRET })
     const res = makeRes()
 
-    let reactionCount = 0
     let ingestCount = 0
     await handleSendblueWebhook(req, res, {
       db,
       secret: SECRET,
-      sendReaction: async () => { reactionCount++; return {} },
       ingestCv: async () => { ingestCount++; return { ok: false as const, reason: "test" } },
       lookupUserByPhone: async () => "user_adam_test",
     })
     await new Promise((r) => setTimeout(r, 20))
     assert.equal(res.statusCode, 200)
-    assert.equal(reactionCount, 0, "no media_url → no reaction")
     assert.equal(ingestCount, 0, "no media_url → no ingest")
   })
 

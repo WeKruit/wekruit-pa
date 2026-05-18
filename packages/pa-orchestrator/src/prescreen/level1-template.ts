@@ -42,8 +42,8 @@ function visibleSalaryRange(value: string | undefined): string | undefined {
 
 /**
  * Compose Level 1 reveal text for a PASSED candidate. Always returns a
- * non-empty string. Bilingual (zh/en). Caller sends via sendImessage AFTER
- * the terminal text.
+ * non-empty string. Bilingual (zh/en). Caller sends through the
+ * runtime-approved outbox AFTER the terminal text.
  */
 export function composeLevel1Reveal(fields: Level1RevealFields, lang: Lang): string {
   const eta = fields.nextStepEta ?? (lang === "zh" ? "2-3 个工作日内" : "within 2-3 business days")

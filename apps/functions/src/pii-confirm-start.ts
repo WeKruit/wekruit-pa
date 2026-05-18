@@ -25,7 +25,7 @@ import type {
   PipelineState,
   PipelineStateProvider,
 } from "@pa/pa-orchestrator"
-import { sendImessage } from "./sendblue/sendblue-client.js"
+import { sendRuntimeApprovedIMessage } from "./runtime-approved-outbox.js"
 import {
   collectJobRecommendationMessageItems,
   composeJobRecommendationMessage,
@@ -126,11 +126,13 @@ export async function runPiiConfirmForUser(
     })
     if (source === "fail") {
       try {
-        await sendImessage({
+        await sendRuntimeApprovedIMessage({
           to: args.toE164,
           content: composePiiSkipExistingText("fail"),
           userId: args.userId,
           db: args.db,
+          runtimeSource: "pa_pii_runtime",
+          idempotencyKey: `pii_skip_existing:${args.userId}:${args.jobId}:${args.sourceSessionId}`,
         })
       } catch (err) {
         log("pii_confirm.skip_send_failed", { error: String(err) })
@@ -194,7 +196,14 @@ function buildPipeline(args: {
     includeLevel1: true,
     emit: async (text) => {
       try {
-        await sendImessage({ to: args.toE164, content: text, userId: args.userId, db: args.db })
+        await sendRuntimeApprovedIMessage({
+          to: args.toE164,
+          content: text,
+          userId: args.userId,
+          db: args.db,
+          runtimeSource: "pa_pii_runtime",
+          idempotencyKey: `pii_emit:${args.userId}:${args.sourceSessionId}:${text}`,
+        })
       } catch (err) {
         args.log("pii_confirm.emit_failed", { error: String(err) })
       }
@@ -338,12 +347,14 @@ export async function runPiiConfirmTurnIfActive(
           log("pii_confirm.recs_no_matches_suppressed_after_pass", { userId: a.userId })
           return
         }
-        await sendImessage({
+        await sendRuntimeApprovedIMessage({
           to: a.toE164,
           content:
             "Thanks for the details — I'll text you when a stronger fit comes through.",
           userId: a.userId,
           db,
+          runtimeSource: "pa_pii_runtime",
+          idempotencyKey: `pii_no_matches:${a.userId}:${meta?.sourceSessionId ?? ""}`,
         })
         return
       }
@@ -352,12 +363,14 @@ export async function runPiiConfirmTurnIfActive(
       if (items.length === 0) {
         log("pii_confirm.recs_no_linkable_matches", { userId: a.userId })
         if (source !== "pass") {
-          await sendImessage({
+          await sendRuntimeApprovedIMessage({
             to: a.toE164,
             content:
               "Thanks for the details — I'll text you when I find roles with a usable job link and clear requirements.",
             userId: a.userId,
             db,
+            runtimeSource: "pa_pii_runtime",
+            idempotencyKey: `pii_no_linkable_matches:${a.userId}:${meta?.sourceSessionId ?? ""}`,
           })
         }
         return

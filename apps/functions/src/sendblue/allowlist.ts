@@ -1,12 +1,10 @@
 /**
  * Allowlist port (D-03).
  *
- * Mirrors `apps/macos-imessage-worker/src/config.ts` 1:1. Operator config
- * (env vars IMESSAGE_DM_ALLOWLIST, IMESSAGE_PEERS, IMESSAGE_PEER,
- * IMESSAGE_DEFAULT_PEER) carries over verbatim — no rename needed.
+ * Operator config for Sendblue allowlisting.
  *
- * Difference from worker: keyed against Sendblue `from_number` (E.164 already
- * normalized by Sendblue), so no Apple-ID handle parsing branch.
+ * Keyed against Sendblue `from_number` (E.164 already normalized by Sendblue),
+ * so no Apple-ID handle parsing branch.
  */
 
 export const DEFAULT_PEER = process.env.IMESSAGE_DEFAULT_PEER || ""
@@ -59,7 +57,7 @@ export function isSamePeer(a: string | null, b: string): boolean {
 }
 
 /**
- * Fail-closed by default (matches macOS worker semantics).
+ * Fail-closed by default.
  *
  * Truth table:
  *   IMESSAGE_DM_ALLOWLIST="0"  → DISABLED. All DMs accepted.

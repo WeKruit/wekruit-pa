@@ -834,7 +834,6 @@ function HistorySideDrawer({
 // ---------------------------------------------------------------------------
 
 const SEED_DEFAULTS: SaveFlagInput[] = [
-  { key: "PA_CHANNEL_LEGACY", value: false, type: "bool", scope: "global", allowlist: [], blocklist: [], reason: "Legacy macOS worker channel — true = use macOS worker; false = Sendblue (default)." },
   { key: "PA_PROACTIVE_DISABLED", value: false, type: "bool", scope: "global", allowlist: [], blocklist: [], reason: "Kill-switch for paProactiveSweep CF; true = sweep returns immediately." },
   { key: "PA_VOICE_MIRROR_DISABLED", value: false, type: "bool", scope: "global", allowlist: [], blocklist: [], reason: "Disable Phase 19 adaptive mirror snippet injection in orchestrator." },
   { key: "paRateLimitPerUserEnabled", value: true, type: "bool", scope: "perUser", allowlist: [], blocklist: [], reason: "Per-user rate-limit (≤20 msg/min) at Sendblue webhook. Add Adam test E.164 to blocklist to bypass." },

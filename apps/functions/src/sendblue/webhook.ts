@@ -22,8 +22,7 @@
  * Memory partition keying: this handler does NOT touch mem0 directly. The
  * downstream `onPaInbound` orchestrator path (apps/functions/src/index.ts:322)
  * calls `resolveMem0PartitionKey({id, mem0UserId})` per Phase 11.3 contract;
- * this layer just produces the inbound row, identical to what the macOS
- * worker did.
+ * this layer only produces the inbound row for the shared runtime path.
  */
 
 import type { Firestore } from "firebase-admin/firestore"
@@ -31,7 +30,6 @@ import { createInboundEvent } from "@pa/pa-broker"
 
 import { getFlag, checkAndIncrementRateLimit } from "@pa/pa-persistence"
 import { verifySendblueSignature, extractSendblueSignatureHeader } from "./hmac.js"
-import { sendReaction as defaultSendReaction, type SendReactionInput } from "./send-reaction.js"
 // Stream D — CV ingestion side-effect (fire-and-forget) on attachment receipt.
 import { ingestCv as defaultIngestCv, type IngestCvInput, type IngestCvResult } from "../cv-ingest/cv-ingest.js"
 // Phase 54 — CV-confirm reply parser (fire-and-forget on text reply matching
@@ -123,8 +121,6 @@ export type WebhookDeps = {
   createInboundEvent?: typeof createInboundEvent
   /** Inject for tests; defaults to recordAuditEvent. */
   recordAuditEvent?: typeof recordAuditEvent
-  /** Stream D — Sendblue Reactions API wrapper (tapback ❤️ on CV receipt). Inject for tests. */
-  sendReaction?: (input: SendReactionInput) => Promise<unknown>
   /** Stream D — CV ingest pipeline (fire-and-forget). Inject for tests. */
   ingestCv?: (input: IngestCvInput) => Promise<IngestCvResult>
   /** Stream D — phone→userId resolver. Inject for tests. */
@@ -139,10 +135,10 @@ export type WebhookDeps = {
    * Phase 60 (DEV-01) — `__PA_FIND_MATCH__` dev trigger handler. When the
    * inbound text contains the trigger token AND the resolved user is in
    * `PA_ADMIN_USER_IDS`, the webhook short-circuits the normal orchestrator
-   * path and force-runs the V16 match + iMessage send. Returns immediately
-   * (the trigger itself is fire-and-forget); the user receives the
-   * recommendation message via the normal sendImessage queue. Inject for
-   * tests; production wires the V16 query + send-imessage adapter.
+   * path and force-runs the V16 match + runtime handoff. Returns immediately
+   * (the trigger itself is fire-and-forget); the runtime decides whether to
+   * send a recommendation. Inject for tests; production wires the V16 query +
+   * runtime handoff adapter.
    */
   generateJobRecsForUser?: (args: FindMatchTriggerArgs) => Promise<FindMatchTriggerResult>
   /**
@@ -284,12 +280,10 @@ async function logRawWebhook(
 }
 
 // BUG #6 fix — Sendblue delivers pure-attachment iMessages (PDF, image, etc.)
-// with `content === ""` AND `media_url` populated. The original webhook
-// inherited the macOS worker's "[dm] empty; skip" rule, which silently
-// dropped these. Adam's CV upload on 2026-04-30 surfaced the gap. We now
-// treat empty+media_url as a first-class inbound: thread the media URL into
-// rawPayload so onPaInbound can fetch and ingest the attachment. Empty +
-// no media_url remains a skip (typing aborts, retries with stale handle).
+// with `content === ""` AND `media_url` populated. Treat empty+media_url as
+// a first-class inbound: thread the media URL into rawPayload so onPaInbound
+// can fetch and ingest the attachment. Empty + no media_url remains a skip
+// (typing aborts, retries with stale handle).
 function extractMediaUrl(payload: Record<string, unknown>): string | null {
   const v = payload.media_url
   if (typeof v !== "string") return null
@@ -300,7 +294,7 @@ function extractMediaUrl(payload: Record<string, unknown>): string | null {
 
 // Stream D — phone→userId resolver. Reads pa-users where phoneE164 == n
 // (exact match — webhook only knows the from_number, no normalization needed
-// because the upstream macOS worker + Sendblue both deliver E.164). Returns
+// because Sendblue delivers E.164). Returns
 // null if no row is found; webhook treats null as "ingest skipped".
 async function defaultLookupUserByPhone(db: Firestore, phoneE164: string): Promise<string | null> {
   if (!phoneE164) return null
@@ -600,7 +594,7 @@ export async function handleSendblueWebhook(
         service,
       }
     } else {
-      // Empty content + no media_url — match macOS worker '[dm] empty; skip'
+      // Empty content + no media_url — skip empty typing/transport echoes.
       reply(res, 200, { ok: true, ignored: "empty_content" })
       return
     }
@@ -1140,9 +1134,9 @@ export async function handleSendblueWebhook(
         willCoalesce = coalesceFlag === true && (onboardingState === "complete" || activePrescreenForCoalesce)
       }
     } catch (preErr) {
-      // Pre-decision failure → degrade to legacy path (no flag stamped).
-      // Same semantic as pre-TD-A behavior: onPaInbound handles directly.
-      log("[coalesce][webhook] pre-decision failed (non-fatal — legacy path)",
+      // Pre-decision failure: do not stamp coalescing, so onPaInbound owns
+      // this event through the normal runtime path.
+      log("[coalesce][webhook] pre-decision failed (non-fatal — runtime path)",
         preErr instanceof Error ? preErr.message : String(preErr))
       willCoalesce = false
       resolvedUserIdForCoalesce = null
@@ -1167,8 +1161,7 @@ export async function handleSendblueWebhook(
         chatId: normalized.chatId,
         messageHandle: normalized.messageHandle,
         service: normalized.service,
-        // Mirror legacy macOS worker keys so onPaInbound's
-        // BrokerImessageEvent path keeps working unchanged.
+        // Preserve BrokerImessageEvent's canonical participant field.
         participant: normalized.fromNumber,
         // BUG #6 — surface attachment URL into rawPayload so the orchestrator
         // can fetch + ingest. Absent on text-only messages.
@@ -1207,7 +1200,7 @@ export async function handleSendblueWebhook(
     // willCoalesce=true, the doc was written with `coalescing:true` so
     // onPaInbound's onDocumentCreated trigger has already skipped it. We now
     // just enqueue the Cloud Tasks task. On hard enqueue failure we MUST
-    // actively drive the legacy path because onPaInbound will not re-fire
+    // actively drive the runtime path because onPaInbound will not re-fire
     // (onDocumentCreated is one-shot per row, and the flag is true).
     if (willCoalesce && resolvedUserIdForCoalesce && deps.enqueueOrCoalesce && deps.coalescerDeps) {
       try {
@@ -1230,11 +1223,11 @@ export async function handleSendblueWebhook(
         // Cloud Tasks enqueue failed. Pre-TD-A this would just log and let
         // onPaInbound handle it via onDocumentCreated. POST-TD-A that trigger
         // already saw `coalescing:true` and skipped, so we must drive the
-        // legacy orchestrator path explicitly:
+        // runtime orchestrator path explicitly:
         //   1. revert the flag (cosmetic — for dashboards / forensic reads)
         //   2. invoke the injected processBrokerImessageFallback if wired
         //      (CF wrapper passes processBrokerImessageEvent in production)
-        log("[coalesce][webhook] enqueue failed — invoking legacy fallback", {
+        log("[coalesce][webhook] enqueue failed — invoking runtime fallback", {
           userId: resolvedUserIdForCoalesce,
           err: coalesceErr instanceof Error ? coalesceErr.message : String(coalesceErr),
         })
@@ -1247,9 +1240,9 @@ export async function handleSendblueWebhook(
         if (deps.processBrokerImessageFallback) {
           try {
             await deps.processBrokerImessageFallback(result.id)
-            log("[coalesce][webhook] legacy fallback completed", { eventId: result.id })
+            log("[coalesce][webhook] runtime fallback completed", { eventId: result.id })
           } catch (fallbackErr) {
-            log("[coalesce][webhook] legacy fallback FAILED — user gets no reply this turn", {
+            log("[coalesce][webhook] runtime fallback FAILED — user gets no reply this turn", {
               eventId: result.id,
               err: fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr),
             })
@@ -1307,27 +1300,11 @@ export async function handleSendblueWebhook(
         })
     }
 
-    // Stream D — CV side-effects (fire-and-forget). Both run in parallel:
-    //   1. Tapback ❤️ via Sendblue Reactions API — immediate user ack.
-    //   2. CV ingestion → parsedCandidateResumes — async best-effort.
-    // Either failure is logged but never blocks the 200 OK to Sendblue.
+    // Stream D — CV side-effect (fire-and-forget):
+    //   CV ingestion → parsedCandidateResumes.
+    // Webhook-level tapbacks were removed so candidate-visible reactions are
+    // not produced before the runtime has judged the turn.
     if (mediaUrl) {
-      const sendReactionFn = deps.sendReaction ?? defaultSendReaction
-      void Promise.resolve()
-        .then(() =>
-          sendReactionFn({
-            to: normalized.fromNumber,
-            messageHandle: normalized.messageHandle,
-            reaction: "love",
-          })
-        )
-        .then(() => {
-          log("[sendblue][reaction] love sent", { handle: normalized.messageHandle, to: normalized.fromNumber })
-        })
-        .catch((reactErr) => {
-          log("[sendblue][reaction] failed", reactErr instanceof Error ? reactErr.message : String(reactErr))
-        })
-
       const ingestFn = deps.ingestCv ?? defaultIngestCv
       const lookupFn = deps.lookupUserByPhone ?? defaultLookupUserByPhone
       void Promise.resolve()

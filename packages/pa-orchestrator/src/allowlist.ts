@@ -33,9 +33,7 @@ function normalizeHandle(raw: string): string {
 
 /**
  * Parse the env-based allowlist (IMESSAGE_PEERS / IMESSAGE_PEER) into
- * AllowlistEntry objects. Mirrors the worker's normalizePeer + getPeerAllowlist
- * but lives here as a shared util so the allowlist.ts does not import from
- * apps/macos-imessage-worker (cross-app import forbidden).
+ * AllowlistEntry objects for runtime-owned inbound/outbound processing.
  */
 function parseEnvAllowlist(): AllowlistEntry[] {
   const raw = [process.env.IMESSAGE_PEERS, process.env.IMESSAGE_PEER]

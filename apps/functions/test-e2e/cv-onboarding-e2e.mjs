@@ -258,9 +258,9 @@ async function runLive() {
   })
   log(`  ${results.at(-1).pass ? "PASS" : "FAIL"} ${results.at(-1).detail}`)
 
-  // A3: sendReaction logs
-  log("[A3] checking Cloud Logging for 'sendblue][reaction] love sent'...")
-  // Allow 25s grace for the log to land in Cloud Logging.
+  // A3: webhook must not send candidate-visible tapbacks before runtime.
+  log("[A3] checking Cloud Logging has no webhook reaction send for this media upload...")
+  // Allow 20s grace for any unexpected log to land in Cloud Logging.
   await sleep(20_000)
   const a3logs = searchCloudLogs(
     `resource.labels.service_name="pasendbluewebhook" AND jsonPayload.message:"[sendblue][reaction] love sent"`,
@@ -272,11 +272,11 @@ async function runLive() {
   })
   results.push({
     id: "A3",
-    label: "sendReaction (love) log emitted with our message_handle",
-    pass: a3match,
+    label: "webhook emitted no pre-runtime sendReaction for our message_handle",
+    pass: !a3match,
     detail: a3match
-      ? `found ${a3logs.length} reaction log entries; one matches handle`
-      : `0 entries match handle in last 180s (have ${a3logs.length} unrelated)`,
+      ? `unexpected reaction log found for handle`
+      : `0 reaction entries match handle in last 180s`,
     latencyMs: null,
   })
   log(`  ${results.at(-1).pass ? "PASS" : "FAIL"} ${results.at(-1).detail}`)
@@ -504,7 +504,7 @@ function runDryRun() {
   console.log(`     - pa-inbound-events row with rawPayload.e2eTest=true`)
   console.log(`     - parsedCandidateResumes row for Adam with industryTags`)
   console.log(`     - pa-outbound out-cvfindings-{resumeId} row`)
-  console.log(`  5. gcloud logging read for sendReaction + mem0.ok logs`)
+  console.log(`  5. gcloud logging read for no pre-runtime sendReaction + mem0.ok logs`)
   console.log(`  6. Send follow-up text inbound to verify CV-context injection`)
   console.log(`  7. Write E2E-REPORT.md`)
   console.log(`\n  re-run with --live to actually execute.`)

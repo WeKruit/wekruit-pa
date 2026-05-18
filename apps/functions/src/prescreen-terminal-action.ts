@@ -29,7 +29,7 @@ import {
   composeFailJobRecsPreamble,
   type Level1RevealFields,
 } from "@pa/pa-orchestrator"
-import { sendImessage } from "./sendblue/sendblue-client.js"
+import { sendRuntimeApprovedIMessage } from "./runtime-approved-outbox.js"
 import { runPiiConfirmForUser } from "./pii-confirm-start.js"
 import { markPrescreenTerminalOutcome } from "./prescreen-outcome-service.js"
 import {
@@ -74,6 +74,8 @@ export interface RunPrescreenTerminalActionArgs {
     content: string
     userId?: string
     db?: import("firebase-admin/firestore").Firestore
+    runtimeSource?: string
+    idempotencyKey?: string
   }) => Promise<void>
   /** Optional injected marketplace outcome marker for tests. */
   markOutcome?: (args: {
@@ -264,12 +266,16 @@ async function defaultSendSms(args: {
   content: string
   userId?: string
   db?: import("firebase-admin/firestore").Firestore
+  runtimeSource?: string
+  idempotencyKey?: string
 }): Promise<void> {
-  await sendImessage({
+  await sendRuntimeApprovedIMessage({
     to: args.to,
     content: args.content,
     userId: args.userId,
     db: args.db,
+    runtimeSource: args.runtimeSource ?? "pa_prescreen_runtime",
+    idempotencyKey: args.idempotencyKey,
   })
 }
 
@@ -637,7 +643,14 @@ export async function runPrescreenTerminalAction(
       }
       const text = composeLevel1Reveal(level1Fields, args.lang)
       try {
-        await send({ to: args.toE164, content: text, userId: args.userId, db: args.db })
+        await send({
+          to: args.toE164,
+          content: text,
+          userId: args.userId,
+          db: args.db,
+          runtimeSource: "pa_prescreen_runtime",
+          idempotencyKey: `prescreen_terminal_level1:${args.sessionId}`,
+        })
         level1Sent = true
       } catch (err) {
         log("prescreen.terminal_action.level1_send_failed", {
@@ -652,7 +665,14 @@ export async function runPrescreenTerminalAction(
   } else if (args.terminal === "FAIL") {
     // TERMINAL-02 — preamble first, then PII collect, then recs.
     try {
-      await send({ to: args.toE164, content: composeFailJobRecsPreamble(args.lang), userId: args.userId, db: args.db })
+      await send({
+        to: args.toE164,
+        content: composeFailJobRecsPreamble(args.lang),
+        userId: args.userId,
+        db: args.db,
+        runtimeSource: "pa_prescreen_runtime",
+        idempotencyKey: `prescreen_terminal_fail_preamble:${args.sessionId}`,
+      })
     } catch (err) {
       log("prescreen.terminal_action.preamble_send_failed", {
         sessionId: args.sessionId,

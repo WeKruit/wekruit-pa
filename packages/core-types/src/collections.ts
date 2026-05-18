@@ -9,7 +9,7 @@ export const PA_COLLECTIONS = {
   agents: "pa-agents",
   /** Feature flags / dynamic config (Remote Config pattern on Firestore) */
   remoteConfig: "pa-remote-config",
-  /** Operator-queued iMessage send (consumed by macOS worker) */
+  /** Runtime-approved iMessage transport outbox */
   outbound: "pa-outbound",
   /** Durable inbound queue from channel adapters */
   inboundEvents: "pa-inbound-events",

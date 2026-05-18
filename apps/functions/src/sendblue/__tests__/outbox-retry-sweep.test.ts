@@ -128,7 +128,6 @@ describe("paSendblueOutboxRetrySweepHandler (Stream H9 TD2)", () => {
   it("test 1: 3 orphans (>60s old) + 2 fresh (<60s) → 3 reprocessed", async () => {
     process.env.IMESSAGE_DM_ALLOWLIST = "1"
     process.env.IMESSAGE_PEERS = ALLOWED
-    delete process.env.PA_CHANNEL_LEGACY
 
     const NOW = new Date("2026-05-01T22:00:00.000Z")
     const oldTs = new Date(NOW.getTime() - 5 * 60 * 1000).toISOString() // 5min ago
@@ -179,7 +178,6 @@ describe("paSendblueOutboxRetrySweepHandler (Stream H9 TD2)", () => {
   it("test 2: concurrency cap = 2 → never more than 2 sendImessage in flight", async () => {
     process.env.IMESSAGE_DM_ALLOWLIST = "1"
     process.env.IMESSAGE_PEERS = ALLOWED
-    delete process.env.PA_CHANNEL_LEGACY
 
     const NOW = new Date("2026-05-01T22:00:00.000Z")
     const oldTs = new Date(NOW.getTime() - 5 * 60 * 1000).toISOString()
@@ -219,7 +217,6 @@ describe("paSendblueOutboxRetrySweepHandler (Stream H9 TD2)", () => {
   it("test 3: second sweep on already-sent rows → idempotent (no re-send)", async () => {
     process.env.IMESSAGE_DM_ALLOWLIST = "1"
     process.env.IMESSAGE_PEERS = ALLOWED
-    delete process.env.PA_CHANNEL_LEGACY
 
     const NOW = new Date("2026-05-01T22:00:00.000Z")
     const oldTs = new Date(NOW.getTime() - 5 * 60 * 1000).toISOString()

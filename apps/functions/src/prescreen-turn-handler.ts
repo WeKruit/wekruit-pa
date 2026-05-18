@@ -11,8 +11,9 @@
  *   - FirestorePreScreenStore (reads + writes pa-prescreen-sessions)
  *   - PreScreenQuestion bindings from session.cfgSnapshot
  *   - KeywordSetLlmCaller (production gpt-5.4-nano + Sonnet fallback)
- *   - sendImessage for outbound text
+ *   - runtime-approved outbox for outbound text
  */
+import { createHash } from "node:crypto"
 import type { Firestore } from "firebase-admin/firestore"
 import {
   KeywordSetJudge,
@@ -27,12 +28,25 @@ import {
   type PreScreenStateProvider,
 } from "@pa/pa-orchestrator"
 import { SAFETY_CANNED_REPLIES, pickLangForSafety, runSafetyCheck } from "@pa/pa-safety"
-import { sendImessage } from "./sendblue/sendblue-client.js"
+import { sendRuntimeApprovedIMessage } from "./runtime-approved-outbox.js"
 import { runPrescreenTerminalAction } from "./prescreen-terminal-action.js"
 import { isLayoffIntakeActiveForUser } from "./layoff-sms-start.js"
 
 const ACTIVE_PRESCREEN_TIMEOUT_MS = 60 * 60 * 1000
 const RECENT_TERMINAL_PRESCREEN_GUARD_MS = 60 * 60 * 1000
+
+type RuntimeSmsSender = (args: {
+  to: string
+  content: string
+  userId?: string
+  db?: Firestore
+  runtimeSource?: string
+  idempotencyKey?: string
+}) => Promise<unknown>
+
+function stablePrescreenSendKey(...parts: string[]): string {
+  return createHash("sha256").update(parts.join("|"), "utf8").digest("hex").slice(0, 32)
+}
 
 /** Firestore-backed PreScreenStateProvider. */
 class FirestorePreScreenStore implements PreScreenStateProvider {
@@ -433,7 +447,7 @@ export interface RunPrescreenTurnArgs {
   toE164: string
   replyText: string
   lang?: "zh" | "en"
-  sendSms?: typeof sendImessage
+  sendSms?: RuntimeSmsSender
   runTerminalAction?: typeof runPrescreenTerminalAction
   keywordSetCaller?: KeywordSetLlmCaller
   clarifyComposer?: PreScreenClarifyComposer
@@ -480,7 +494,7 @@ async function maybeHandlePrescreenSafetyBlock(args: {
   toE164: string
   replyText: string
   sessionId: string
-  sendSms: typeof sendImessage
+  sendSms: RuntimeSmsSender
   log: (event: string, payload: Record<string, unknown>) => void
 }): Promise<RunPrescreenTurnResult | null> {
   const verdict = await runSafetyCheck(
@@ -517,7 +531,14 @@ async function maybeHandlePrescreenSafetyBlock(args: {
   await sessionRef.set({ updatedAt: nowIso }, { merge: true })
 
   if (text !== null) {
-    await args.sendSms({ to: args.toE164, content: text, userId: args.userId, db: args.db })
+    await args.sendSms({
+      to: args.toE164,
+      content: text,
+      userId: args.userId,
+      db: args.db,
+      runtimeSource: "pa_prescreen_runtime",
+      idempotencyKey: `prescreen_safety:${args.sessionId}:${stablePrescreenSendKey(args.replyText, text)}`,
+    })
   }
 
   args.log("prescreen.turn.safety_blocked", {
@@ -672,7 +693,7 @@ export async function runPrescreenTurnIfActive(
   args: RunPrescreenTurnArgs
 ): Promise<RunPrescreenTurnResult> {
   const log = args.log ?? (() => {})
-  const sendSms = args.sendSms ?? sendImessage
+  const sendSms = args.sendSms ?? sendRuntimeApprovedIMessage
   const terminalAction = args.runTerminalAction ?? runPrescreenTerminalAction
   if (await isLayoffIntakeActiveForUser(args.db, args.userId)) {
     log("prescreen.turn.yielded_to_layoff_onboarding", { userId: args.userId })
@@ -724,7 +745,14 @@ export async function runPrescreenTurnIfActive(
     if (!alreadyAcked) {
       text = recentTerminalSessionText(args.lang ?? "en")
       try {
-        await sendSms({ to: args.toE164, content: text, userId: args.userId, db: args.db })
+        await sendSms({
+          to: args.toE164,
+          content: text,
+          userId: args.userId,
+          db: args.db,
+          runtimeSource: "pa_prescreen_runtime",
+          idempotencyKey: `prescreen_recent_terminal:${lookup.sessionId}`,
+        })
         await sessionRef.set({ postTerminalFollowupAckAt: nowIso, updatedAt: nowIso }, { merge: true })
       } catch (err) {
         log("prescreen.turn.recent_terminal_ack_send_failed", {
@@ -767,7 +795,14 @@ export async function runPrescreenTurnIfActive(
     }
     const text = expiredSessionText(args.lang ?? "en")
     try {
-      await sendSms({ to: args.toE164, content: text, userId: args.userId, db: args.db })
+      await sendSms({
+        to: args.toE164,
+        content: text,
+        userId: args.userId,
+        db: args.db,
+        runtimeSource: "pa_prescreen_runtime",
+        idempotencyKey: `prescreen_expired:${lookup.sessionId}`,
+      })
     } catch (err) {
       log("prescreen.turn.expired_notice_send_failed", {
         sessionId: lookup.sessionId,
@@ -855,7 +890,14 @@ export async function runPrescreenTurnIfActive(
     }
     const text = userExitSessionText(args.lang ?? "en")
     try {
-      await sendSms({ to: args.toE164, content: text, userId: args.userId, db: args.db })
+      await sendSms({
+        to: args.toE164,
+        content: text,
+        userId: args.userId,
+        db: args.db,
+        runtimeSource: "pa_prescreen_runtime",
+        idempotencyKey: `prescreen_user_exit:${sessionId}`,
+      })
     } catch (err) {
       log("prescreen.user_exit_notice_send_failed", {
         sessionId,
@@ -913,7 +955,14 @@ export async function runPrescreenTurnIfActive(
 
   if (result.text) {
     try {
-      await sendSms({ to: args.toE164, content: result.text, userId: args.userId, db: args.db })
+      await sendSms({
+        to: args.toE164,
+        content: result.text,
+        userId: args.userId,
+        db: args.db,
+        runtimeSource: "pa_prescreen_runtime",
+        idempotencyKey: `prescreen_turn:${sessionId}:${turnQId}:${stablePrescreenSendKey(args.replyText, result.text)}`,
+      })
     } catch (err) {
       log("prescreen.turn.send_failed", {
         sessionId,

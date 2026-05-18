@@ -8,6 +8,43 @@ Dashboard, candidate web UI, and admin UI are out of scope for this evidence fil
 
 Scope update, 2026-05-16: Adam narrowed this run to Claire iMessage conversation runtime only. Dashboard, candidate-web UI, admin UI, login, resume upload UI, and browser-based QA are out of scope. Normal onboarding, layoff onboarding, job prescreen, safety/privacy/abuse, job matching conversation, everyday catchup, automated outbound, session lifecycle, memory, tags, and direct Firestore proof remain in scope for the full runtime goal.
 
+## 2026-05-18 Runtime/Outbox Unification Evidence
+
+Scope of this entry: runtime/outbox architecture only. This is not a claim that full customer-visible beta conversation QA is complete.
+
+Changes verified:
+
+- Removed the `PA_CHANNEL_LEGACY` control path from Sendblue outbox execution, admin flag defaults, feature-flag seed scripts, tests, and docs.
+- Rewired prescreen opener/turn handling/terminal actions and PII-confirm candidate-visible text from direct Sendblue calls to runtime-approved `pa-outbound` rows.
+- Added `runtime-approved-outbox.ts` so these runtime-owned emitters use `@pa/pa-broker.enqueueOutbound` with `runtimeApproved: true`, `runtimeSource`, and deterministic idempotency keys.
+- Rewired proactive outbound storage to use `@pa/pa-broker.enqueueOutbound` instead of direct `pa-outbound` writes, then merge only non-send metadata onto the created row.
+- Kept non-runtime producers such as CV confirmation, candidate lifecycle, reverse match, and job-rec `sendImessage` as runtime-event handoffs, not sendable `pa-outbound` writers.
+- Removed the webhook-level media-upload love reaction; attachment webhooks now enqueue the inbound/CV-ingest path without sending a candidate-visible reaction before Claire runtime judges the turn.
+- Removed remaining `PA_CHANNEL_LEGACY` and old worker rollback references from active runtime/source docs and comments so there is no advertised rollback channel.
+
+Repo checks:
+
+- `rg -n "PA_CHANNEL_LEGACY|macOS worker|Legacy macOS|legacy channel|legacy direct path|PA_BROKER_MODE" README.md config docs apps packages tests --glob '!apps/functions/lib/**'` returned no matches. Old archived phase-planning files under `.planning/phases` and `.planning/v1*` remain historical records, not current runtime docs.
+- `pnpm --filter @pa/functions test` on Node `v24.3.0`: `1733` pass, `0` fail.
+- `pnpm --filter @pa/pa-persistence test` on Node `v24.3.0`: `153` pass, `0` fail.
+- `pnpm --filter @pa/pa-broker test` on Node `v24.3.0`: `15` pass, `0` fail.
+- `pnpm --filter @pa/job-rec test` on Node `v24.3.0`: `445` pass, `0` fail. A first parallel run had a microbenchmark timeout under load; isolated rerun passed.
+- `pnpm --filter @pa/dashboard-web build` on Node `v24.3.0`: passed.
+
+Production deployment and canary evidence:
+
+- Production deploy completed for the runtime-critical functions on Node `v24.3.0`:
+  - `firebase deploy --only functions:pa-orchestrator:paSendblueWebhook,functions:pa-orchestrator:onPaInbound,functions:pa-orchestrator:paMessageCoalescer,functions:pa-orchestrator:paCoalesceBufferSweep,functions:pa-orchestrator:paSendblueOutbox,functions:pa-orchestrator:paSendblueOutboxRetrySweep,functions:pa-orchestrator:paProactiveSweep --project wekruit-5f89b`
+  - Updated functions: `paSendblueWebhook`, `onPaInbound`, `paMessageCoalescer`, `paCoalesceBufferSweep`, `paSendblueOutbox`, `paSendblueOutboxRetrySweep`, `paProactiveSweep`.
+- Post-deploy Firestore canary verified the deployed outbox gate:
+  - Created `pa-outbound/canary-runtime-gate-1779091047332` with `status=pending`, `toE164=+13054507715`, and no runtime approval after the final runtime/outbox unification deploy.
+  - Deployed `paSendblueOutbox` changed it to `status=failed`.
+  - Row has `blockedByRuntimeGate=true`.
+  - Row has `error="blocked: outbound row was not approved by runtime"`.
+  - Row has no Sendblue/message handle, so it did not send.
+- Dashboard hosting deploy completed after fetching Firebase web config with `npm run deploy:hosting:from-firebase` on Node `v24.3.0`; `hosting:pa-dashboard` released to `https://wekruit-pa.web.app`.
+- This entry does not replace live iMessage transcript QA for onboarding, layoff, prescreen, job-matching, privacy, or rate-limit flows.
+
 ## Baseline Snapshot
 
 Captured: 2026-05-16T15:30:05.814Z

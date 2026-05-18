@@ -114,7 +114,7 @@ export async function sendImessage(
   const existing = await deps.db.collection(PA_COLLECTIONS.inboundEvents).doc(id).get()
   if (existing.exists) {
     log("[sendImessage] runtime_dedup_hit", { userId: parsed.userId, idempotencyKey, prevId: id })
-    return { ok: true, messageHandle: id }
+    return { ok: true, messageHandle: id, runtimeEventId: id }
   }
 
   const event: InboundEvent = {
@@ -146,7 +146,7 @@ export async function sendImessage(
     .set(event as unknown as Record<string, unknown>)
 
   log("[sendImessage] runtime_event_enqueued", { userId: parsed.userId, id, idempotencyKey })
-  return { ok: true, messageHandle: id }
+  return { ok: true, messageHandle: id, runtimeEventId: id }
 }
 
 export function createSendImessageTool(deps: SendImessageDeps) {

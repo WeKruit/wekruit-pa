@@ -1,6 +1,6 @@
 rules_version = '2';
 // Personal assistant platform collections — namespaced (pa-*) in shared project wekruit-5f89b.
-// macOS worker / Cloud Functions use Admin SDK and bypass these rules.
+// Server runtimes and Cloud Functions use Admin SDK and bypass these rules.
 // Dashboard: allow any signed-in user whose email is @wekruit.com, or the allowlisted address below.
 service cloud.firestore {
   match /databases/{database}/documents {

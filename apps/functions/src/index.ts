@@ -2,7 +2,7 @@
  * Cloud Functions Gen 2 wrapper for the PA orchestrator.
  *
  * Topology (Sprint-1 prod):
- *   Mac iMessage worker -> Firestore `pa-inbound-events`
+ *   Sendblue webhook -> Firestore `pa-inbound-events`
  *   onPaInbound (this file) -> processInboundEvent (`@pa/pa-orchestrator`)
  *     -> SiliconFlow LLM + Qdrant via `@pa/memory` mem0 OSS wrapper
  *     -> Firestore `pa-messages` + runtime-approved `pa-outbound`
@@ -1330,9 +1330,9 @@ export const paHealthRuntimeMode = makeHealthHandler({
 export const paSendblueWebhook = onRequest(
   {
     region: "us-central1",
-    // Stream D — webhook now also fires-and-forgets sendReaction (needs
-    // Sendblue creds) and ingestCv (needs PA_OPENAI_AGENT_API_KEY for the
-    // CV LLM extraction). All four are required at request time.
+    // Stream D — webhook fires-and-forgets ingestCv (needs
+    // PA_OPENAI_AGENT_API_KEY for the CV LLM extraction). Sendblue creds are
+    // still bound because the coalescer/runtime-owned tapback path uses them.
     secrets: [
       SENDBLUE_WEBHOOK_SIGNING_SECRET,
       SENDBLUE_API_KEY_ID,
@@ -1437,9 +1437,8 @@ export const paSendblueWebhook = onRequest(
  * Re-used by `paSendblueWebhook` (enqueue path) AND `paMessageCoalescer`
  * (the Cloud Tasks→CF receiver) AND the buffer sweep.
  *
- * Returns deps even when env config is missing — but in that case the
- * tasks-client will throw at first use, and the webhook treats that as a
- * "fall back to legacy direct path" signal (zero-regression contract).
+ * Returns deps even when env config is missing. If Cloud Tasks cannot take
+ * ownership, the webhook leaves the event on the normal runtime path.
  */
 // Exported so the coalescer integration test can assert this factory
 // wires `orchestratorDeps.sendVerificationEmail` (iter33 Bug 8 regression
@@ -1464,15 +1463,14 @@ export function buildCoalescerDeps(): CoalescerDeps {
 /**
  * Build the deps object passed to handleSendblueWebhook. Wires the
  * coalescer in BUT only if env config is present — otherwise the webhook
- * runs in legacy mode (flag check inside webhook also gates the call,
- * defense in depth).
+ * leaves inbound ownership with the normal runtime path.
  */
 function buildSendblueWebhookDeps() {
   let coalescerDeps: CoalescerDeps | undefined
   try {
     coalescerDeps = buildCoalescerDeps()
   } catch (err) {
-    logger.warn("[coalesce][webhook] coalescer deps not built (env incomplete) — legacy path only", {
+    logger.warn("[coalesce][webhook] coalescer deps not built (env incomplete) — runtime path only", {
       err: err instanceof Error ? err.message : String(err),
     })
   }
@@ -1480,7 +1478,7 @@ function buildSendblueWebhookDeps() {
   // failure. After TD-A the inbound row is stamped `coalescing:true` AT
   // CREATE so onPaInbound's onDocumentCreated trigger skips it. If the
   // subsequent Cloud Tasks enqueue then errors, nothing else will pick the
-  // row up — we must drive the legacy orchestrator path right here.
+  // row up — we must drive the runtime orchestrator path right here.
   // `processBrokerImessageEvent` is the byte-equivalent of what onPaInbound
   // does for non-coalesced rows (claim → user/session resolve → run
   // orchestrator). Re-using it keeps the fallback path symmetric with the
@@ -1736,8 +1734,8 @@ export const paCoalesceBufferSweep = onSchedule(
 
 /**
  * paSendblueOutbox — Firestore trigger on pa_outbound writes; POSTs to
- * Sendblue REST. Honors PA_CHANNEL_LEGACY=1 early-return (D-08) for
- * parallel-run rollback safety.
+ * Sendblue REST. This is the only production iMessage transport sender and
+ * it requires runtime-approved pa-outbound input.
  */
 export const paSendblueOutbox = onDocumentCreated(
   {

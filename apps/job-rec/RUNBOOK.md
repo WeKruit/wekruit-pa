@@ -18,12 +18,7 @@ paSendblueWebhook (us-central1, 512MiB, minInstances=1)
    ├─ Rate limit (20/min/user via paRateLimitPerUserEnabled)
    ├─ Write pa-sendblue-webhook-raw (audit, 7d TTL)
    ├─ Enqueue pa-inbound-events (rawPayload includes mediaUrl)
-   ├─ Side-effect 1 (when media_url present): sendReaction(love) ❤️
-   │     │ Stream A circuit-breaker (5 fails → OPEN 60s, isolated key sendblue-reaction)
-   │     ↓
-   │   Sendblue REST POST /api/send-reaction
-   │
-   └─ Side-effect 2 (when media_url present): ingestCv() fire-and-forget
+   └─ Side-effect (when media_url present): ingestCv() fire-and-forget
          │ Stream D + E pipeline:
          │   1. Download PDF (30s timeout)
          │   2. pdf-parse → text (capped 50 pages / 100KB)
@@ -50,7 +45,7 @@ onPaInbound (Firestore trigger on pa-inbound-events, 1024MiB, 300s)
    │     ├─ output-normalizer (Bible v7.5.2 — bare URL on own line)
    │     └─ enqueue pa-outbound for assistant reply
    │
-paSendblueOutbox (Firestore trigger on pa-outbound, 512MiB, 120s, concurrency=1)
+paSendblueOutbox (Firestore trigger on runtime-approved pa-outbound, 512MiB, 120s, concurrency=1)
    ├─ Sendblue circuit breaker (Stream A — 5 fails → OPEN 60s)
    └─ POST https://api.sendblue.com/api/send-message → user iPhone
 
@@ -66,7 +61,7 @@ paJobRecDaily (Cloud Scheduler, every day 09:00 PT, 512MiB, 540s)
    │   ├─ queryMatchingJobs (filter sponsorship + location + status=active)
    │   ├─ rerankByCosine(user_emb × job_emb) → top 5
    │   ├─ formatBatchMessage (Bible v7.5.2 — 1-line lead-in + 2-line per job)
-   │   └─ enqueue pa-outbound (idempotent on userId-YYYYMMDD-batch)
+   │   └─ create runtime handoff; Claire runtime decides whether to enqueue approved pa-outbound
 
 External Sendblue (REST + webhooks)
    ├─ Inbound: HMAC-SHA256 signed via SENDBLUE_WEBHOOK_SIGNING_SECRET

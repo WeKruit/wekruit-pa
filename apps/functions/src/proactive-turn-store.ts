@@ -7,7 +7,7 @@
 import { randomUUID } from "node:crypto"
 import { type Firestore } from "firebase-admin/firestore"
 import { PA_COLLECTIONS } from "@pa/core-types"
-import { appendAuditEvent } from "@pa/pa-broker"
+import { enqueueOutbound } from "@pa/pa-broker"
 import { normalizeForIMessage } from "@pa/pa-orchestrator"
 import type { ProactiveTurnStore } from "@pa/pa-orchestrator"
 
@@ -73,23 +73,31 @@ export function createFirestoreProactiveTurnStore(db: Firestore): ProactiveTurnS
     },
 
     async enqueueOutbound(userId, body, opts) {
-      const id = randomUUID()
       const phone = opts?.toNumber as string | undefined
-      await db.collection(PA_COLLECTIONS.outbound).doc(id).set({
-        id,
+      const proactiveJobId = typeof opts?.proactiveJobId === "string" ? opts.proactiveJobId : "unknown"
+      const idempotencyKey =
+        typeof opts?.idempotencyKey === "string"
+          ? opts.idempotencyKey
+          : `proactive:${userId}:${proactiveJobId}:${body}`
+      const result = await enqueueOutbound(db, {
         userId,
         toE164: phone ?? "",
         body,
-        status: "pending",
-        createdAt: nowIso(),
-        attempts: 0,
         runtimeApproved: true,
         runtimeSource: "pa_proactive_turn",
-        source: "proactive",
-        proactiveJobId: opts?.proactiveJobId,
-        ...(opts?.sessionId ? { sessionId: opts.sessionId } : {}),
+        idempotencyKey,
       })
-      return { outboundId: id }
+      if (opts?.sessionId || opts?.proactiveJobId) {
+        await db.collection(PA_COLLECTIONS.outbound).doc(result.id).set(
+          {
+            source: "proactive",
+            ...(opts?.proactiveJobId ? { proactiveJobId: opts.proactiveJobId } : {}),
+            ...(opts?.sessionId ? { sessionId: opts.sessionId } : {}),
+          },
+          { merge: true },
+        )
+      }
+      return { outboundId: result.id }
     },
 
     async writeAuditEvent(row) {

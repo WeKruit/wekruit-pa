@@ -6,7 +6,7 @@ description: |
   Chinese text), the runner sees exactly one reconstructed reply
   through the broker pipeline. Suppression is enforced by the harness
   layer (`rawMeta.harness.suppressOutbound: true`), so no real
-  AppleScript send fires from the macOS worker — this scenario only
+  Sendblue transport fires from the runtime-approved outbox — this scenario only
   validates that the orchestrator produces a long reply and that
   Phase 15 schema/dispatch changes have not regressed the suppressed
   path.

@@ -148,7 +148,7 @@ new revision (compare hash to `main` at deploy time):
    - new `pa-outbound/{docId}` document transitions `pending → sending → sent` within 10s,
    - the `messageHandle` and `sendblueUuid` fields populate,
    - the staging Sendblue dashboard shows the message delivered.
-3. **Logs sanity** — `firebase functions:log --only paSendblueOutbox --limit 20 --project wekruit-5f89b` shows `[sendblue][outbox] sent` for the doc and **no** `[sendblue][outbox] PA_CHANNEL_LEGACY flag=true` (legacy guard must be off on staging).
+3. **Logs sanity** — `firebase functions:log --only paSendblueOutbox --limit 20 --project wekruit-5f89b` shows `[sendblue][outbox] sent` for the doc and no runtime-approval gate block for the same doc.
 4. **Quota gate live** — `firebase functions:log --only paSendblueOutbox --limit 50 | grep -E 'quota_soft|quota_hardblock'` — confirm Phase 26 daily-quota audit lines appear (proves new code is running, not the stale revision).
 
 If any of (1)–(4) fail, roll back by redeploying the previous tag:

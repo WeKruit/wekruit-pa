@@ -135,9 +135,9 @@ test("getFlag: env override short-circuits to true without Firestore read", asyn
   _clearFeatureFlagCache()
   const { db } = seed([])
   // Use a fake env — must not require any Firestore data.
-  const v = await getFlag(db, "PA_CHANNEL_LEGACY", { env: { PA_CHANNEL_LEGACY: "1" } })
+  const v = await getFlag(db, "TEST_ENV_FLAG", { env: { TEST_ENV_FLAG: "1" } })
   assert.equal(v, true)
-  const v2 = await getFlag(db, "PA_CHANNEL_LEGACY", { env: { PA_CHANNEL_LEGACY: "true" } })
+  const v2 = await getFlag(db, "TEST_ENV_FLAG", { env: { TEST_ENV_FLAG: "true" } })
   assert.equal(v2, true)
 })
 

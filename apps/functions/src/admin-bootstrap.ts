@@ -420,7 +420,6 @@ interface FlagSpec {
 }
 
 const SEED_FLAGS: FlagSpec[] = [
-  { key: "PA_CHANNEL_LEGACY", value: false, type: "bool", scope: "global", allowlist: [], blocklist: [] },
   { key: "PA_PROACTIVE_DISABLED", value: false, type: "bool", scope: "global", allowlist: [], blocklist: [] },
   { key: "PA_VOICE_MIRROR_DISABLED", value: false, type: "bool", scope: "global", allowlist: [], blocklist: [] },
   { key: "paRateLimitPerUserEnabled", value: true, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
