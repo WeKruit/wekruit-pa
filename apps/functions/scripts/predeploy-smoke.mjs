@@ -67,6 +67,37 @@ try {
   fail(`dist failed to load: ${err.message}`)
 }
 
+// 2026-05-18 — typo guard for the underscore-vs-dash collection name.
+// `voice/realtime-tagger.ts:192` once wrote to the underscore variant and
+// silently created a 312-doc shadow collection. After the cleanup goal
+// landed, the canonical name is always pa-users (dash). The grep below
+// fails the predeploy chain if a Firestore call resurfaces with the
+// underscore. The pattern itself is kept variable-only to avoid self-match.
+{
+  const { execSync } = await import("node:child_process")
+  const TYPO_TOKEN = "pa" + "_" + "users"
+  const escapedToken = TYPO_TOKEN.replace(/_/g, "_")
+  const pattern = `collection\\(\\s*[\\"']${escapedToken}[\\"']`
+  const cmd = `grep -rEn --include="*.ts" --include="*.mjs" --include="*.js" ` +
+    `"${pattern}" "${REPO_ROOT}/packages" "${REPO_ROOT}/apps" ` +
+    `2>/dev/null | grep -v node_modules | grep -v "dist/" ` +
+    `| grep -v "predeploy-smoke.mjs" || true`
+  let hits = ""
+  try {
+    hits = execSync(cmd, { encoding: "utf-8" }).trim()
+  } catch (err) {
+    fail(`typo grep failed: ${err.message}`)
+  }
+  if (hits.length > 0) {
+    fail(
+      `${TYPO_TOKEN} typo regressed — Firestore collection name MUST be ` +
+      `pa-users (dash). Hits:\n${hits}\n` +
+      `See .planning/GOAL-pa-users-cleanup.md for the 2026-05-18 cleanup policy.`
+    )
+  }
+  console.log(`[predeploy-smoke] OK — no ${TYPO_TOKEN} underscore typo regressions`)
+}
+
 // v2.2 — Cross-channel prescreen parity. SMS + voice both call
 // runPrescreenTurn; this gate ensures they don't drift. Any divergence in
 // lifecycle.kind / terminalAction / pipeline-state across the in-memory

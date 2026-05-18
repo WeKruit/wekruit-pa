@@ -35,7 +35,7 @@ import { createHash } from "node:crypto"
 import { onRequest } from "firebase-functions/v2/https"
 import { defineSecret } from "firebase-functions/params"
 import { getFirestore } from "firebase-admin/firestore"
-import { PA_COLLECTIONS, ResumeArtifactSchema } from "@pa/core-types"
+import { PA_COLLECTIONS, ResumeArtifactSchema, type PaUserSource } from "@pa/core-types"
 import { ingestCv } from "./cv-ingest/cv-ingest.js"
 import type { IngestCvInput, IngestCvDeps } from "./cv-ingest/cv-ingest.js"
 import { detectResumeUploadKind, extractDocxText } from "./resume-upload-parser.js"
@@ -139,6 +139,12 @@ export function buildCandidateUploadResumeArtifactWrites(input: {
     artifact,
     userPatch: {
       latestResumeArtifactId: artifact.resumeId,
+      // Idempotent: stamps `source: 'candidate'` so the cleanup goal's
+      // (2026-05-18) source-label policy is satisfied for the public job-page
+      // entry point. Merge-safe — existing docs that already carry a source
+      // keep theirs because Firestore's `set({merge:true})` overwrites only
+      // the keys we pass, and we always pass the same canonical value.
+      source: "candidate" satisfies PaUserSource,
       updatedAt: input.now,
     },
     selfProfilePatch: stripUndefined({

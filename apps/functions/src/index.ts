@@ -576,6 +576,9 @@ async function createProvisionalUser(db: Firestore, participant: string): Promis
     onboardingStatus: "provisional" as OnboardingStatus,
     channels: { imessageHandle: n },
   }
+  // 2026-05-18 cleanup goal — every pa-users initial create must stamp a
+  // canonical source label. Broker / sendblue inbound = real candidate flow.
+  ;(u as User & { source?: string }).source = "candidate"
   await db.collection(PA_COLLECTIONS.users).doc(id).set(u)
   return u
 }
