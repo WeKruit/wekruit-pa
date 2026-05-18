@@ -373,10 +373,9 @@ export function buildV2QuestionsWithStubs(opts: StubbedV2Opts): Question<unknown
     byId.set("q_visa", visaQ)
   }
 
-  // Preserve the V2 ordering (lang → email → verify → tos → role → yoe →
+  // Preserve the V2 ordering (email → verify → tos → role → yoe →
   // visa → startup_pref → country → location → resume).
   return [
-    byId.get("q_lang")!,
     byId.get("q_email")!,
     byId.get("q_email_verify")!,
     byId.get("q_tos")!,

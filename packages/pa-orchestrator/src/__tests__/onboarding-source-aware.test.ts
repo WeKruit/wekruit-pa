@@ -10,7 +10,7 @@ import type { AgentDef } from "@pa/core-types"
 const agent = {
   id: "claire",
   name: "Claire",
-  systemPrompt: "First message: Here. What language works for you? Chinese / English / both mixed?",
+  systemPrompt: "First message: Deprecated beta language prompt.",
   tools: [],
   memoryMode: "none" as const,
 } as unknown as AgentDef

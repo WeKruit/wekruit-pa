@@ -23,11 +23,9 @@ test("ONBOARDING_WORKFLOW: entry is pending, terminal is complete", () => {
   assert.equal(ONBOARDING_WORKFLOW.terminalState, "complete")
 })
 
-test("ONBOARDING_WORKFLOW: includes iter33 P1 q_lang_asked node", () => {
+test("ONBOARDING_WORKFLOW: beta graph does not include q_lang_asked", () => {
   const node = ONBOARDING_WORKFLOW.nodes.find((n) => n.state === "q_lang_asked")
-  assert.ok(node, "q_lang_asked node must exist")
-  assert.equal(node!.kind, "question")
-  assert.match(node!.origin, /iter33 P1/)
+  assert.equal(node, undefined)
 })
 
 test("ONBOARDING_WORKFLOW: iter33 P3+P4 q_cv_analyzing node is action kind", () => {
@@ -56,14 +54,6 @@ test("ONBOARDING_WORKFLOW: iter33 P2 reorder — q_tos_asked accept lands on q_r
   assert.equal(acceptEdge!.to, "q_role_asked", "iter33 P2: accept → q_role_asked")
 })
 
-test("ONBOARDING_WORKFLOW: iter33 P1 — q_lang_asked → q_email_asked (skips ToS first)", () => {
-  const edges = outgoingEdges(ONBOARDING_WORKFLOW, "q_lang_asked")
-  assert.equal(edges.length, 2, "expected 2 edges from q_lang_asked (default + vent)")
-  const defaultEdge = edges.find((e) => e.condition.kind === "default")
-  assert.ok(defaultEdge, "default edge must exist")
-  assert.equal(defaultEdge!.to, "q_email_asked")
-})
-
 test("ONBOARDING_WORKFLOW: iter33 P3+P4 — q_resume_asked + cvParsed external signal → q_cv_analyzing", () => {
   const edges = outgoingEdges(ONBOARDING_WORKFLOW, "q_resume_asked")
   const cvEdge = edges.find(
@@ -90,7 +80,6 @@ test("ONBOARDING_WORKFLOW: vent self-loop on probe nodes (parser-owned nodes exc
   // an email body / code reply must not trigger detection), and the
   // action / terminal nodes are excluded by design.
   const ventNodes = [
-    "q_lang_asked",
     "q_tos_asked",
     "q_role_asked",
     "q_yoe_asked",
@@ -111,20 +100,20 @@ test("ONBOARDING_WORKFLOW: vent self-loop on probe nodes (parser-owned nodes exc
   }
 })
 
-test("ONBOARDING_WORKFLOW: topologicalStates includes all 13 states in order (iter33 spec collapse)", () => {
+test("ONBOARDING_WORKFLOW: topologicalStates starts at q_email for beta", () => {
   // iter33 spec collapse 2026-05-05 — first_mes_sent removed from graph.
   // Backward-compat for persisted-state users is handled inline in
   // resolveDeterministicAction.
   const states = topologicalStates(ONBOARDING_WORKFLOW)
-  assert.equal(states.length, 13)
+  assert.equal(states.length, 12)
   assert.equal(states[0], "pending")
   assert.equal(states[states.length - 1], "complete")
   // first_mes_sent is no longer a graph node
   assert.ok(!states.includes("first_mes_sent" as never))
-  // pending → q_lang_asked is the new direct entry transition
-  assert.ok(states.indexOf("pending") < states.indexOf("q_lang_asked"))
-  // P1 lang state appears before email
-  assert.ok(states.indexOf("q_lang_asked") < states.indexOf("q_email_asked"))
+  // q_lang_asked is no longer a graph node
+  assert.ok(!states.includes("q_lang_asked" as never))
+  // pending -> q_email_asked is the direct beta entry transition
+  assert.ok(states.indexOf("pending") < states.indexOf("q_email_asked"))
   // P2 reorder: email/verify before ToS
   assert.ok(states.indexOf("q_email_verifying") < states.indexOf("q_tos_asked"))
   // P2 reorder: ToS before role
@@ -133,21 +122,17 @@ test("ONBOARDING_WORKFLOW: topologicalStates includes all 13 states in order (it
   assert.ok(states.indexOf("q_cv_analyzing") < states.indexOf("complete"))
 })
 
-test("ONBOARDING_WORKFLOW iter33 spec collapse: pending → q_lang_asked direct (no first_mes_sent)", () => {
-  // Adam directive 2026-05-05: "reset 后发消息应该上来就是 onboard, 为什么
-  // 还聊点啥". User's first iMessage → Claire's first outbound = q_lang Q
-  // (which now opens with "在呢/Here" greeting in the prompt itself).
+test("ONBOARDING_WORKFLOW beta entry: pending -> q_email_asked direct", () => {
   const edges = outgoingEdges(ONBOARDING_WORKFLOW, "pending")
   assert.equal(edges.length, 1, "pending should have exactly one outgoing edge")
-  assert.equal(edges[0].to, "q_lang_asked")
-  assert.equal(edges[0].action, "ask_q_lang")
+  assert.equal(edges[0].to, "q_email_asked")
+  assert.equal(edges[0].action, "ask_q_email")
   assert.equal(edges[0].condition.kind, "default")
 })
 
 test("ONBOARDING_WORKFLOW: incoming + outgoing edges traverse the entire happy path", () => {
   const happyPath = [
     "pending",
-    "q_lang_asked",
     "q_email_asked",
     "q_email_verifying",
     "q_tos_asked",
@@ -228,7 +213,6 @@ test("DETERMINISM: walkWorkflow is pure — same (state, ctx) × 100 → identic
   }> = [
     { state: "pending", ctx: makeCtx({ userMessage: "你好" }), label: "pending+zh" },
     { state: "pending", ctx: makeCtx({ userMessage: "hello" }), label: "pending+en" },
-    { state: "q_lang_asked", ctx: makeCtx({ userMessage: "中文" }), label: "lang+zh" },
     {
       state: "q_email_asked",
       ctx: makeCtx({ userMessage: "adam@wekruit.com", parsedEmail: "adam@wekruit.com" }),

@@ -88,13 +88,7 @@ export const DEFAULT_ONBOARDING_CONFIG: Record<OnboardingStep, OnboardingStepCon
     },
   },
   ask_grounding_q: undefined,
-  ask_q_lang: {
-    prompt: {
-      zh: "在呢. 用啥语聊比较顺? 中文 / 英文 / 中英混着说都行",
-      en: "Here. What language works for you? Chinese / English / both mixed?",
-      mixed: "在呢. 用啥 lang 顺手聊? 中文 / English / 中英 mixed 都 OK",
-    },
-  },
+  ask_q_lang: undefined,
   ask_q_tos: {
     prompt: {
       zh: "开聊前先说一下: 我会记一些咱聊天的事来给你推工作 / 找内推. 隐私 + 用户协议在这: https://wekruit-pa-landing.web.app/legal — 同意就回个 \"同意\" 我们继续",

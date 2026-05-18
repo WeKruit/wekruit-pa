@@ -3,8 +3,8 @@
  * `parsedAnswer` on the floor.
  *
  * Live bug repro (Adam iter23 testing 2026-05-06):
- *   - User onboarding from cold-start, q_lang asks "Chinese / English /
- *     mixed?". User replies "English". LangJudge accepts → q_lang.
+ *   - Legacy language preference capture produced a parsed preferredLang
+ *     value before advancing to email capture.
  *     onAccepted fires → runtime-bridge calls
  *     `deps.applyOnboarding(userId, phone, "ask_q_email", { parsedAnswer:
  *     { preferredLang: "en" } })`.

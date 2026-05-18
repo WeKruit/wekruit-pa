@@ -87,7 +87,6 @@ function makeStore({ knownVerificationCode = "654321" } = {}) {
       }
       const stateMap = {
         send_first_mes: "first_mes_sent",
-        ask_q_lang: "q_lang_asked",
         ask_q_tos: "q_tos_asked",
         ask_q_email: "q_email_asked",
         ask_q_email_verify_start: "q_email_verifying",

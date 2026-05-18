@@ -414,7 +414,7 @@ test("runtime-event: layoff kickoff bypasses incomplete deterministic onboarding
   )
   assert.equal(captures.llmCalls, 1, "runtime event must reach agent runtime")
   assert.deepEqual(captures.appliedSteps, [], "runtime event must not advance legacy onboarding")
-  assert.doesNotMatch(captures.outboundBodies[0] ?? "", /What language works|Chinese \/ English/)
+  assert.doesNotMatch(captures.outboundBodies[0] ?? "", /language preference|mixed language/i)
 })
 
 test("integration: turn-0 with zh job_search input — synthetic input contains intent-ack + role phrase, applyOnboarding gets intentAcked=true", async () => {
@@ -431,7 +431,7 @@ test("integration: turn-0 with zh job_search input — synthetic input contains 
   )
   assert.equal(captures.llmCalls, 0, "fresh onboarding now uses the runtime pipeline, not LLM compose")
   assert.deepEqual(captures.systemInputs, [])
-  assert.match(captures.outboundBodies[0] ?? "", /用啥语聊|中文/)
+  assert.match(captures.outboundBodies[0] ?? "", /email|邮箱/i)
   assert.deepEqual(captures.appliedSteps, [])
 })
 
@@ -448,7 +448,7 @@ test("integration: turn-0 with en job_search input — en role phrase chained, i
     store
   )
   assert.equal(captures.llmCalls, 0)
-  assert.match(captures.outboundBodies[0] ?? "", /What language works/)
+  assert.match(captures.outboundBodies[0] ?? "", /email/i)
   assert.deepEqual(captures.systemInputs, [])
   assert.deepEqual(captures.appliedSteps, [])
 })
@@ -466,7 +466,7 @@ test("integration: turn-0 with casual greeting — chains role-Q, intentAcked SE
     store
   )
   assert.equal(captures.llmCalls, 0)
-  assert.match(captures.outboundBodies[0] ?? "", /用啥语聊|中文/)
+  assert.match(captures.outboundBodies[0] ?? "", /email/i)
   assert.deepEqual(captures.systemInputs, [])
   assert.deepEqual(captures.appliedSteps, [])
 })
@@ -554,7 +554,7 @@ test("integration: env disable PA_ONBOARDING_INTENT_ACK_DISABLED=true → falls 
       store
     )
     assert.equal(captures.llmCalls, 0)
-    assert.match(captures.outboundBodies[0] ?? "", /用啥语聊|中文/)
+    assert.match(captures.outboundBodies[0] ?? "", /email/i)
   } finally {
     if (prev === undefined) delete process.env.PA_ONBOARDING_INTENT_ACK_DISABLED
     else process.env.PA_ONBOARDING_INTENT_ACK_DISABLED = prev

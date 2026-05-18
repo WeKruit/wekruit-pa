@@ -181,9 +181,9 @@ function emptyCaptures(): ColdStartLangCaptures {
 }
 
 // ============================================================================
-// Test 1 — Cold-start ZH user: runtime pipeline emits ZH prompt without LLM.
+// Test 1 — Cold-start ZH user: beta pipeline still emits EN email prompt without LLM.
 // ============================================================================
-test("coldstart-langlock: ZH user '我想找工作' → pipeline emits ZH prompt without LLM", async () => {
+test("coldstart-langlock: ZH user '我想找工作' → pipeline emits EN email prompt without LLM", async () => {
   const captures = emptyCaptures()
   const store = makeStore(captures, {
     // Already-ZH onboarding greeting — no translate needed.
@@ -195,7 +195,7 @@ test("coldstart-langlock: ZH user '我想找工作' → pipeline emits ZH prompt
   )
   assert.equal(captures.llmCalls, 0)
   assert.equal(captures.outboundBodies.length, 1)
-  assert.match(captures.outboundBodies[0] ?? "", /用啥语聊|中文/)
+  assert.match(captures.outboundBodies[0] ?? "", /email/i)
   assert.deepEqual(captures.systemPrompts, [])
   assert.deepEqual(captures.userMessages, [])
   // No translate event fired — reply was already ZH.
@@ -218,7 +218,7 @@ test("coldstart-langlock: EN user 'I want a job' → pipeline emits EN prompt wi
     store
   )
   assert.equal(captures.llmCalls, 0)
-  assert.match(captures.outboundBodies[0] ?? "", /What language works/)
+  assert.match(captures.outboundBodies[0] ?? "", /email/i)
   assert.deepEqual(captures.systemPrompts, [])
   assert.deepEqual(captures.userMessages, [])
 })
@@ -236,7 +236,7 @@ test("coldstart-langlock: 'swe的' → pipeline direct prompt, no LLM lang-lock 
     store
   )
   assert.equal(captures.llmCalls, 0)
-  assert.match(captures.outboundBodies[0] ?? "", /用啥语聊|中文/)
+  assert.match(captures.outboundBodies[0] ?? "", /email/i)
   assert.deepEqual(captures.systemPrompts, [])
   assert.deepEqual(captures.userMessages, [])
 })
@@ -254,7 +254,7 @@ test("coldstart-langlock: 'yoe1年的' → pipeline direct prompt, no LLM lang-l
     store
   )
   assert.equal(captures.llmCalls, 0)
-  assert.match(captures.outboundBodies[0] ?? "", /用啥语聊|中文/)
+  assert.match(captures.outboundBodies[0] ?? "", /email/i)
   assert.deepEqual(captures.systemPrompts, [])
 })
 

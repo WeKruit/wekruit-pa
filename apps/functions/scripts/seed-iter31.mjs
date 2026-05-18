@@ -41,7 +41,7 @@ async function main() {
       key: "paOnboardingV33Enabled",
       value: true,
       description:
-        "iter33 — explicit q_lang Q + email→verify→ToS reorder + CV " +
+        "iter33 beta flow — email→verify→ToS reorder + CV " +
         "analysis output + 2-job-rec push. Default true (post-merge). " +
         "Operator may set false (or env PA_ONBOARDING_V33_DISABLED=true) " +
         "to fall back to iter32 sequence in an emergency. Wider rollback " +

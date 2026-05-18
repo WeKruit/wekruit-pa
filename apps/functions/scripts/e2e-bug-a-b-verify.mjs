@@ -5,7 +5,7 @@
 //
 // Flow:
 //   1. PA_RESET seeded user
-//   2. Walk q_lang(English) → q_role → q_yoe → q_visa(OPT) → q_startup_pref → q_location → ask_q_resume
+//   2. Walk q_email → verify → ToS → q_role → q_yoe → q_visa(OPT) → q_startup_pref → q_location → ask_q_resume
 //   3. Fire 2 [attachment] events 5s apart → assert exactly 1 'still waiting' prompt
 //   4. After cv-ingest synthesizes [cv-parsed], next turn → assert reply NOT in ZH
 //
@@ -94,8 +94,7 @@ async function main() {
   // dynamic walker: read onboardingState after each send; pick canned reply per state
   const replies = {
     pending: 'Hi I want a job',
-    first_mes_sent: 'English',
-    q_lang_asked: 'English',
+    first_mes_sent: `e2e-bugab+${Date.now()}@wekruit-test.io`,
     q_email_asked: `e2e-bugab+${Date.now()}@wekruit-test.io`,
     q_email_verifying: 'agree',
     q_tos_asked: 'agree',

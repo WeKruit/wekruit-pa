@@ -13,7 +13,6 @@
  * Wiring scope (this commit):
  *   ✓ emit (sendDirect pattern: appendMessage + enqueueOutbound)
  *   ✓ FirestoreStateProvider on pa-users.{id}.pipelineState
- *   ✓ q_lang.onAccepted writes statedPreferences.preferredLang
  *   ✓ q_email.onAccepted delegates to legacy applyOnboarding
  *     "ask_q_email_verify_start" so Mailgun fires
  *   ✓ q_email_verify.onAccepted stamps contactEmailVerifiedAt
@@ -111,7 +110,7 @@ function pipelineQIdFromOnboardingState(state: string | undefined | null): strin
   switch (state) {
     case "q_lang_asked":
     case "first_mes_sent":
-      return "q_lang"
+      return "q_email"
     case "q_email_asked":
       return "q_email"
     case "q_email_verifying":
@@ -146,10 +145,6 @@ function supportsFirestorePipelineState(db: unknown): boolean {
   )
 }
 
-function detectInitialPipelineLang(text: string | undefined): "zh" | "en" {
-  return /[\u3400-\u9fff\uf900-\ufaff]/.test(text ?? "") ? "zh" : "en"
-}
-
 async function seedPipelineStateFromLegacy(input: {
   state: PipelineStateProvider
   userId: string
@@ -161,24 +156,39 @@ async function seedPipelineStateFromLegacy(input: {
 }): Promise<void> {
   const qId = pipelineQIdFromOnboardingState(input.onboardingState)
   const current = await input.state.load(input.userId)
-  if (current.currentQId || current.completed || current.halted) return
+  if (current.currentQId || current.completed || current.halted) {
+    const nextCurrentQId = current.currentQId === "q_lang" ? "q_email" : current.currentQId
+    const nextHalted = current.halted?.qId === "q_lang" ? null : current.halted
+    if (current.lang !== "en" || nextCurrentQId !== current.currentQId || nextHalted !== current.halted) {
+      await input.state.save(input.userId, {
+        ...current,
+        currentQId: nextCurrentQId,
+        halted: nextHalted,
+        lang: "en",
+      })
+      input.log("pa.onboarding.pipeline.beta_english_state_normalized", {
+        userId: input.userId,
+        turnId: input.turnId,
+        previousQId: current.currentQId,
+        nextQId: nextCurrentQId,
+        clearedLangHalt: current.halted?.qId === "q_lang",
+      })
+    }
+    return
+  }
   if (!qId) {
-    const lang = input.preferredLang === "zh" || input.preferredLang === "en"
-      ? input.preferredLang
-      : detectInitialPipelineLang(input.userMessage)
     await input.state.save(input.userId, {
       ...emptyPipelineState(),
       ...current,
-      lang,
+      lang: "en",
     })
     return
   }
-  const lang: "zh" | "en" = input.preferredLang === "zh" ? "zh" : "en"
   const seeded = {
     ...emptyPipelineState(),
     ...current,
     currentQId: qId,
-    lang,
+    lang: "en" as const,
   }
   await input.state.save(input.userId, seeded)
   input.log("pa.onboarding.pipeline.seeded_from_legacy_state", {
@@ -287,22 +297,11 @@ export async function runOnboardingPipelineTurn(
 
   // Build defaultQuestionsV2 with concrete onAccepted hooks that delegate
   // to the legacy applyOnboarding store method so existing state writes
-  // (preferredLang, contactEmail, emailVerification, contactEmailVerifiedAt,
-  // resume request) carry over without re-implementation. This keeps the
+  // (contactEmail, emailVerification, contactEmailVerifiedAt, resume request)
+  // carry over without re-implementation. This keeps the
   // pipeline + legacy paths writing the SAME shape.
   const questions = defaultQuestionsV2({
     extractEmailIntent: deps.extractEmailIntent ?? (async () => null),
-    onLangAccepted: async (lang, ctx) => {
-      ctx.log?.("pa.onboarding.pipeline.q_lang.accepted", { userId: ctx.userId, lang })
-      if (deps.applyOnboarding) {
-        // iter34 hotfix 2026-05-05 — Adam directive "为什么还在用 regex??".
-        // Pass canonical Judge output via `parsedAnswer`, no re-parse.
-        const fsLang: "zh" | "en" | "mixed" = lang === "mixed" ? "mixed" : lang
-        await deps.applyOnboarding(event.userId, phoneE164, "ask_q_email", {
-          parsedAnswer: { preferredLang: fsLang },
-        })
-      }
-    },
     onEmailAccepted: async (email, ctx) => {
       ctx.log?.("pa.onboarding.pipeline.q_email.accepted", { userId: ctx.userId, email })
       if (deps.applyOnboarding) {

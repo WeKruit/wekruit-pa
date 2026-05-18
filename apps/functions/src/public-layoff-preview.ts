@@ -2,7 +2,7 @@
  * Public HTTP CF - paPublicLayoffPreview.
  *
  * Powers the rolling candidate preview on layoff.wekruit.com hero section
- * (the "Currently available · N people · updated daily" table). Returns a
+ * (the "Currently available - N people - updated daily" table). Returns a
  * redacted, demo+real mixed projection of `pa-users` filtered to the
  * layoff list.
  *
@@ -83,7 +83,7 @@ function projectRow(docId: string, data: Record<string, unknown>): PreviewRow | 
   const lastCompany = typeof ctx.lastCompany === "string" ? ctx.lastCompany : ""
   if (!lastCompany) return null
   const [firstRaw, ...rest] = displayName.split(/\s+/)
-  const firstName = firstRaw ?? "—"
+  const firstName = firstRaw ?? "-"
   const lastInitial = rest.length > 0 ? (rest[rest.length - 1] ?? "").slice(0, 1).replace(/[^A-Za-z]/g, "") : ""
   const joinedAtIso = asIsoFromTimestamp(data.lastLaidOffAt) ?? asIsoFromTimestamp(data.createdAt) ?? new Date().toISOString()
   return {

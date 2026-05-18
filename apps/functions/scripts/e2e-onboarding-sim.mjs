@@ -10,21 +10,20 @@
  *
  * What it does:
  *   1. Pick a fresh phone number (random)
- *   2. Trigger orchestrator with "Hi" → expect q_lang_asked
- *   3. "English" → expect q_email_asked
- *   4. Set tags.preferredLang="en" + email verification short-circuit
+ *   2. Trigger orchestrator with "Hi" → expect q_email_asked
+ *   3. Send email, then set email verification short-circuit
  *      (we can't fetch Mailgun code from the test, so we manually stamp
  *       emailVerification.verifiedAt so the orchestrator skips the
  *       q_email_verifying step entirely)
- *   5. "Agree" → expect q_role_asked
- *   6. "Software Engineer" → expect q_yoe_asked
- *   7. "2 years" → expect q_visa_asked
- *   8. "Need sponsorship" → expect q_startup_pref_asked
- *   9. "Either" → expect q_location_asked
- *   10. "Anywhere" → expect q_resume_asked
- *   11. seed parsedCandidateResume + fire synthetic cvParsed trigger →
+ *   4. "Agree" → expect q_role_asked
+ *   5. "Software Engineer" → expect q_yoe_asked
+ *   6. "2 years" → expect q_visa_asked
+ *   7. "Need sponsorship" → expect q_startup_pref_asked
+ *   8. "Either" → expect q_location_asked
+ *   9. "Anywhere" → expect q_resume_asked
+ *   10. seed parsedCandidateResume + fire synthetic cvParsed trigger →
  *       expect state→complete + job recs sent
- *   12. Probe pa-job-profiles for recs delivered
+ *   11. Probe pa-job-profiles for recs delivered
  *
  * Reports per-turn:
  *   - inbound event id
@@ -167,17 +166,9 @@ async function main() {
   }
   userId = user.id
   let evt = await pollEventStatus(db, eventId)
-  record("Hi", eventId, ["q_lang_asked", "first_mes_sent"], Date.now() - t0, user.data.onboardingState, evt?.status)
+  record("Hi", eventId, ["q_email_asked", "first_mes_sent"], Date.now() - t0, user.data.onboardingState, evt?.status)
 
-  // ─── Turn 2: English ───────────────────────────────────────────────
-  t0 = Date.now()
-  eventId = await sendInbound(db, { userId, phone, text: "English", eventTag: "lang" })
-  await sleep(20000)
-  user = await findUserByPhone(db, phone)
-  evt = await pollEventStatus(db, eventId)
-  record("English", eventId, ["q_email_asked", "q_tos_asked", "q_role_asked"], Date.now() - t0, user.data.onboardingState, evt?.status)
-
-  // ─── Turn 3: email (skip Mailgun roundtrip — manually stamp verified) ─
+  // ─── Turn 2: email (skip Mailgun roundtrip — manually stamp verified) ─
   t0 = Date.now()
   eventId = await sendInbound(db, { userId, phone, text: "test@example.com", eventTag: "email" })
   await sleep(20000)
@@ -193,7 +184,7 @@ async function main() {
     console.log("    ↪ test mode: stamped emailVerification verified + advanced to q_tos_asked")
   }
 
-  // ─── Turn 4: Agree ─────────────────────────────────────────────────
+  // ─── Turn 3: Agree ─────────────────────────────────────────────────
   t0 = Date.now()
   eventId = await sendInbound(db, { userId, phone, text: "Agree", eventTag: "agree" })
   await sleep(25000)
@@ -201,7 +192,7 @@ async function main() {
   evt = await pollEventStatus(db, eventId)
   record("Agree", eventId, "q_role_asked", Date.now() - t0, user.data.onboardingState, evt?.status, { tosAcceptance: !!user.data.tosAcceptance })
 
-  // ─── Turn 5: Software Engineer ─────────────────────────────────────
+  // ─── Turn 4: Software Engineer ─────────────────────────────────────
   t0 = Date.now()
   eventId = await sendInbound(db, { userId, phone, text: "Software Engineer", eventTag: "role" })
   await sleep(20000)
@@ -209,7 +200,7 @@ async function main() {
   evt = await pollEventStatus(db, eventId)
   record("Software Engineer", eventId, "q_yoe_asked", Date.now() - t0, user.data.onboardingState, evt?.status, { targetRole: user.data.tags?.targetRole })
 
-  // ─── Turn 6: 2 years ───────────────────────────────────────────────
+  // ─── Turn 5: 2 years ───────────────────────────────────────────────
   t0 = Date.now()
   eventId = await sendInbound(db, { userId, phone, text: "2 years", eventTag: "yoe" })
   await sleep(20000)
@@ -217,7 +208,7 @@ async function main() {
   evt = await pollEventStatus(db, eventId)
   record("2 years", eventId, "q_visa_asked", Date.now() - t0, user.data.onboardingState, evt?.status, { yoeRange: user.data.tags?.yoeRange })
 
-  // ─── Turn 7: Need sponsorship ──────────────────────────────────────
+  // ─── Turn 6: Need sponsorship ──────────────────────────────────────
   t0 = Date.now()
   eventId = await sendInbound(db, { userId, phone, text: "Need sponsorship", eventTag: "visa" })
   await sleep(20000)
@@ -225,7 +216,7 @@ async function main() {
   evt = await pollEventStatus(db, eventId)
   record("Need sponsorship", eventId, "q_startup_pref_asked", Date.now() - t0, user.data.onboardingState, evt?.status, { visaStatus: user.data.tags?.visaStatus })
 
-  // ─── Turn 8: Either ────────────────────────────────────────────────
+  // ─── Turn 7: Either ────────────────────────────────────────────────
   t0 = Date.now()
   eventId = await sendInbound(db, { userId, phone, text: "Either", eventTag: "startup" })
   await sleep(20000)
@@ -233,7 +224,7 @@ async function main() {
   evt = await pollEventStatus(db, eventId)
   record("Either", eventId, "q_location_asked", Date.now() - t0, user.data.onboardingState, evt?.status, { prefersStartup: user.data.statedPreferences?.prefersStartup })
 
-  // ─── Turn 9: Anywhere ──────────────────────────────────────────────
+  // ─── Turn 8: Anywhere ──────────────────────────────────────────────
   t0 = Date.now()
   eventId = await sendInbound(db, { userId, phone, text: "Anywhere", eventTag: "location" })
   await sleep(20000)
@@ -241,7 +232,7 @@ async function main() {
   evt = await pollEventStatus(db, eventId)
   record("Anywhere", eventId, "q_resume_asked", Date.now() - t0, user.data.onboardingState, evt?.status, { targetLocations: user.data.tags?.targetLocations })
 
-  // ─── Turn 10: simulate CV parsed (write parsedCandidateResume + synthetic trigger) ──
+  // ─── Turn 9: simulate CV parsed (write parsedCandidateResume + synthetic trigger) ──
   t0 = Date.now()
   const resumeId = `e2e-resume-${userId.slice(0, 8)}`
   await db.collection("parsedCandidateResumes").doc(resumeId).set({

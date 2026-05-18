@@ -9,7 +9,7 @@
  * What it does:
  *   1. Resets test user state via __PA_RESET__ broker event
  *   2. Walks the iter33 onboarding sequence end-to-end:
- *      hi → q_lang → q_email (with typo edge) → verify → ToS → q_role → ...
+ *      hi → q_email (with typo edge) → verify → ToS → q_role → ...
  *   3. After each inbound, polls Firestore for the orchestrator's outbound
  *      reply, asserts it matches the expected regex
  *   4. Verifies state transitions in pa-users.{userId}.onboardingState
@@ -192,20 +192,12 @@ async function main() {
   const resetOK = !initialState?.onboardingState || initialState.onboardingState === "pending"
   record("reset succeeded", resetOK, `state=${initialState?.onboardingState ?? "none"}`)
 
-  // Step 1: hi → q_lang Q (iter33 spec collapse, no first_mes)
-  await step("[1] hi → q_lang Q (iter33 spec collapse: 1 turn)", "hi", {
-    expect: /Here.*language.*Chinese.*English|在呢.*用啥语聊/i,
+  // Step 1: hi → q_email Q (beta no longer asks for language preference)
+  await step("[1] hi → q_email Q (beta language prompt removed)", "hi", {
+    expect: /email|邮箱/i,
   })
   let state = await readUserState()
-  record("[1.state] onboardingState=q_lang_asked", state?.onboardingState === "q_lang_asked", `actual=${state?.onboardingState}`)
-
-  // Step 2: 中文 → q_email Q (zh)
-  await step("[2] 中文 → zh q_email Q (Bug 14: lang preference stored)", "中文", {
-    expect: /对了.*邮箱用啥/,
-  })
-  state = await readUserState()
-  record("[2.state] preferredLang=zh stored", state?.preferredLang === "zh", `actual=${state?.preferredLang}`)
-  record("[2.state] onboardingState=q_email_asked", state?.onboardingState === "q_email_asked")
+  record("[1.state] onboardingState=q_email_asked", state?.onboardingState === "q_email_asked", `actual=${state?.onboardingState}`)
 
   // Step 3: "哈哈" → q_email re-ask with specific reaskPrompt (Bug 10)
   await step("[3] '哈哈' → email reask (Bug 10: distinct reaskPrompt)", "哈哈", {
@@ -221,8 +213,8 @@ async function main() {
   state = await readUserState()
   record("[4.state] state still q_email_asked (typo'd, no contactEmail saved)", state?.onboardingState === "q_email_asked" && !state?.contactEmail)
 
-  // Step 5: valid email → verify-start (zh template — Bug 14)
-  await step("[5] test@gmail.com → zh verify-start (Bug 8 + Bug 14)", "test@gmail.com", {
+  // Step 5: valid email → verify-start
+  await step("[5] test@gmail.com → verify-start", "test@gmail.com", {
     expect: /已经发了一个 6 位验证码|just sent a 6-digit code/,
   })
   state = await readUserState()
@@ -369,18 +361,17 @@ async function main() {
   await pollUntilStatus(haltResetEid)
   await new Promise((r) => setTimeout(r, 4000))
 
-  await step("[H1] hi → q_lang", "hi", { expect: /[\s\S]+/ })
-  await step("[H2] 中文 → q_email", "中文", { expect: /[\s\S]+/ })
-  await step("[H3] test@gmail.com → verify-start", "test@gmail.com", { expect: /[\s\S]+/ })
+  await step("[H1] hi → q_email", "hi", { expect: /[\s\S]+/ })
+  await step("[H2] test@gmail.com → verify-start", "test@gmail.com", { expect: /[\s\S]+/ })
   await presetVerificationCode(KNOWN_VERIFY_CODE_FOR_TESTING)
-  await step("[H4] 654321 → ToS", KNOWN_VERIFY_CODE_FOR_TESTING, { expect: /[\s\S]+/ })
-  await step("[H5] 同意 → q_role", "同意", { expect: /[\s\S]+/ })
+  await step("[H3] 654321 → ToS", KNOWN_VERIFY_CODE_FOR_TESTING, { expect: /[\s\S]+/ })
+  await step("[H4] agree → q_role", "agree", { expect: /[\s\S]+/ })
 
   state = await readUserState()
   if (state?.onboardingState !== "q_role_asked") {
-    record("[H5.state] reached q_role_asked", false, `actual=${state?.onboardingState}`)
+    record("[H4.state] reached q_role_asked", false, `actual=${state?.onboardingState}`)
   } else {
-    record("[H5.state] reached q_role_asked", true)
+    record("[H4.state] reached q_role_asked", true)
 
     // Send 5 irrelevant messages to q_role.
     // Each should advance attempt counter without changing state.

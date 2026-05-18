@@ -56,7 +56,7 @@ import {
 export type OnboardingStep =
   | "send_first_mes"
   | "ask_grounding_q" // legacy v1 single-question path (kept for backward compat)
-  | "ask_q_lang" // iter33 — explicit zh/en/mixed preference question, fires after first_mes.
+  | "ask_q_lang" // historical only; beta onboarding no longer emits a language question.
   | "send_cv_analysis" // iter33 P3 — Claire reads CV, sends 1-line ack + 2-sentence LLM summary, advances to complete.
   | "ask_q_tos" // iter31 — privacy + terms acceptance gate, before any data probes.
   | "ask_q_role"
@@ -144,6 +144,7 @@ export function resolveOnboardingStep(
     // `opts.enableTosGate` so we can ship the schema first and flip the
     // gate ON for biz testers without disturbing existing in-flight users.
     if (state === "first_mes_sent") return opts.enableTosGate ? "ask_q_tos" : "ask_q_email"
+    if (state === "q_lang_asked") return "ask_q_email"
     if (state === "q_tos_asked") return "ask_q_email"
     if (state === "q_email_asked") {
       return opts.emailCaptured && opts.enableEmailVerification
@@ -641,9 +642,9 @@ const ONBOARDING_NEXT_STATE: Partial<Record<OnboardingStep, OnboardingState>> = 
 // is FORWARD-ONLY for idempotency in applyOnboardingStep — when adding
 // new states or reordering, ensure all in-flight users are at states
 // that still advance monotonically.
-// iter33 P2 reorder — Bug 11 fix 2026-05-05 (Adam reported live: "我发过
+  // iter33 P2 reorder — Bug 11 fix 2026-05-05 (Adam reported live: "我发过
 // code了现在又说waiting wtf"). Sequence is now:
-//   q_lang → q_email → q_email_verifying → q_tos → q_role → ...
+  //   q_email → q_email_verifying → q_tos → q_role → ...
 // Old STATE_ORDER had q_tos_asked BEFORE q_email_asked (iter32 pre-iter33),
 // so the verify_email_code transition q_email_verifying → q_tos_asked was
 // blocked by the FORWARD-ONLY idempotency guard (currentIdx=7 >= nextIdx=5
@@ -659,7 +660,7 @@ const STATE_ORDER: Array<OnboardingState | undefined> = [
   "first_mes_sent",
   // v1 leaf
   "grounding_q1_asked",
-  // iter33 P1 — explicit zh/en/mixed preference
+  // historical beta migration state; active onboarding skips language selection
   "q_lang_asked",
   // iter33 P2 — email + verify FIRST (pre-ToS trust handshake)
   "q_email_asked",

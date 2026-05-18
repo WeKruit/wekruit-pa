@@ -64,7 +64,6 @@ function makeStore({ knownVerificationCode = "654321" } = {}) {
       }
       const TRANSITIONS = {
         send_first_mes: "first_mes_sent",
-        ask_q_lang: "q_lang_asked", // iter33 P1
         ask_q_tos: "q_tos_asked",
         ask_q_email: "q_email_asked",
         ask_q_email_verify: "q_email_verifying",
@@ -281,9 +280,8 @@ async function walkthroughVerifyMissThenCorrect() {
   const store = makeStoreWithCapture()
   let n = 0
   await turn(store, "hi", `T${n++}`)
-  await turn(store, "yes", `T${n++}`) // first_mes_sent → ToS
+  await turn(store, "alex@example.com", `T${n++}`) // -> verify
   await turn(store, "agree", `T${n++}`)
-  await turn(store, "alex@example.com", `T${n++}`) // → verify
   await turn(store, "111111", `T${n++}`) // wrong
   await turn(store, "222222", `T${n++}`) // wrong
   await turn(store, "654321", `T${n++}`) // correct

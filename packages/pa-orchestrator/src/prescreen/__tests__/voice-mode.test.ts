@@ -16,12 +16,13 @@ test("Phase 76: casual_onboarding returns empty prefix (preserves prefix-cache)"
   assert.equal(getVoiceModePrefix("casual_onboarding", "en"), "")
 })
 
-test("Phase 76: professional_prescreen zh prefix includes register rules", () => {
+test("Phase 76: professional_prescreen zh metadata still gets English beta prefix", () => {
   const p = getVoiceModePrefix("professional_prescreen", "zh")
   assert.ok(p.includes("[VOICE MODE: PROFESSIONAL PRE-SCREENING]"))
   assert.ok(p.includes("Claire"))
   assert.ok(p.includes("WeKruit"))
-  assert.ok(p.includes("禁用表情符号"))
+  assert.ok(p.includes("Use English only for beta"))
+  assert.ok(p.includes("No emoji"))
 })
 
 test("Phase 76: professional_prescreen en prefix includes register rules", () => {

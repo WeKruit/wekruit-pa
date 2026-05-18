@@ -40,8 +40,8 @@ const DEFAULTS: Record<OnboardingStepKey, OnboardingStepConfig> = {
   },
   ask_q_lang: {
     prompt: {
-      zh: "在呢. 用啥语聊比较顺? 中文 / 英文 / 中英混着说都行",
-      en: "Here. What language works for you? Chinese / English / both mixed?",
+      zh: "Deprecated. Beta onboarding uses English.",
+      en: "Deprecated. Beta onboarding uses English.",
     },
   },
   ask_q_email: {

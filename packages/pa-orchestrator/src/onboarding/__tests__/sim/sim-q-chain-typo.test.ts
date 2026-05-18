@@ -50,8 +50,7 @@ test("sim/q-chain-typo: q_email typo → recovery", async () => {
 
   const built = buildPipeline({ extractEmailIntent })
 
-  await built.send("hi") // q_lang prompt
-  await built.send("english") // → q_email
+  await built.send("hi") // q_email prompt
   // Typo turn:
   await built.send("alex@gmal")
   let s = built.peekState()

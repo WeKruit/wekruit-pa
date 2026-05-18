@@ -40,25 +40,6 @@ const HALT_DEFAULT = {
 // module reads from this).
 const QUESTIONS = [
   {
-    id: "q_lang",
-    order: 0,
-    prompt: {
-      zh: "在呢. 用啥语聊比较顺? 中文 / 英文 / 中英混着说都行",
-      en: "Here. What language works for you? Chinese / English / both mixed?",
-    },
-    variants: [
-      { zh: "选一种就行: 中文 / 英文 / 还是混着说?", en: "just pick one: Chinese / English / or mixed?" },
-      { zh: "再问一遍 — 你聊起来更顺手的是中文还是英文? '混' 也行", en: "let me ask again — chinese, english, or mixed-ok?" },
-      { zh: "中文 / 英文 / 混 — 三选一", en: "chinese / english / mixed — pick one" },
-      { zh: "一个词就行: zh / en / mixed", en: "one word works: zh / en / mixed" },
-    ],
-    judgeKind: "lang",
-    rephraserKind: "variants",
-    maxAttempts: 5,
-    haltMessage: HALT_DEFAULT,
-    enabled: true,
-  },
-  {
     id: "q_email",
     order: 1,
     prompt: {

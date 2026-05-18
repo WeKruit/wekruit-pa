@@ -13,7 +13,7 @@
 import type { ExtractEmailIntentFn } from "./judges/email.js"
 import { CodeJudge } from "./judges/code.js"
 import { EmailJudge } from "./judges/email.js"
-import { LangJudge, type LangPref } from "./judges/lang.js"
+import type { LangPref } from "./judges/lang.js"
 import {
   LLMRelevanceJudge,
   type ExtractIntentFn,
@@ -54,7 +54,7 @@ export interface DefaultQuestionsDeps {
     attachments: ResumeAttachment[],
     ctx: AcceptedCtx
   ) => Promise<void>
-  /** Hook fired when q_lang accepts (writes preferredLang to user doc + adjusts pipeline state). */
+  /** Deprecated beta hook retained only for historical callers. Active onboarding no longer asks q_lang. */
   onLangAccepted?: (lang: LangPref, ctx: AcceptedCtx) => Promise<void>
   /**
    * iter34 hotfix 2026-05-05 — Adam directive "为什么还在用 regex??".
@@ -90,41 +90,11 @@ const HALT_DEFAULT: BilingualText = {
 }
 
 function makeClosedQuestions(deps: ClosedQuestionsDeps): {
-  langQ: Question<LangPref>
   emailQ: Question<string>
   emailVerifyQ: Question<string>
   tosQ: Question<boolean>
   resumeQ: Question<ResumeAttachment[]>
 } {
-  const langQ: Question<LangPref> = makeQuestion({
-    id: "q_lang",
-    prompt: {
-      zh: "在呢. 用啥语聊比较顺? 中文 / 英文 / 中英混着说都行",
-      en: "Here. What language works for you? Chinese / English / both mixed?",
-    },
-    judge: new LangJudge(),
-    rephraser: new StaticVariantsRephraser([
-      {
-        zh: "选一种就行: 中文 / 英文 / 还是混着说?",
-        en: "just pick one: Chinese / English / or mixed?",
-      },
-      {
-        zh: "再问一遍 — 你聊起来更顺手的是中文还是英文? '混' 也行",
-        en: "let me ask again — chinese, english, or mixed-ok?",
-      },
-      {
-        zh: "中文 / 英文 / 混 — 三选一",
-        en: "chinese / english / mixed — pick one",
-      },
-      {
-        zh: "一个词就行: zh / en / mixed",
-        en: "one word works: zh / en / mixed",
-      },
-    ]),
-    haltMessage: HALT_DEFAULT,
-    onAccepted: deps.onLangAccepted,
-  })
-
   const emailQ: Question<string> = makeQuestion({
     id: "q_email",
     prompt: {
@@ -265,39 +235,10 @@ function makeClosedQuestions(deps: ClosedQuestionsDeps): {
     onDeclined: async () => ({ advance: true }),
   })
 
-  return { langQ, emailQ, emailVerifyQ, tosQ, resumeQ }
+  return { emailQ, emailVerifyQ, tosQ, resumeQ }
 }
 
 export function defaultQuestions(deps: DefaultQuestionsDeps): Question<unknown>[] {
-  const langQ: Question<LangPref> = makeQuestion({
-    id: "q_lang",
-    prompt: {
-      zh: "在呢. 用啥语聊比较顺? 中文 / 英文 / 中英混着说都行",
-      en: "Here. What language works for you? Chinese / English / both mixed?",
-    },
-    judge: new LangJudge(),
-    rephraser: new StaticVariantsRephraser([
-      {
-        zh: "选一种就行: 中文 / 英文 / 还是混着说?",
-        en: "just pick one: Chinese / English / or mixed?",
-      },
-      {
-        zh: "再问一遍 — 你聊起来更顺手的是中文还是英文? '混' 也行",
-        en: "let me ask again — chinese, english, or mixed-ok?",
-      },
-      {
-        zh: "中文 / 英文 / 混 — 三选一",
-        en: "chinese / english / mixed — pick one",
-      },
-      {
-        zh: "一个词就行: zh / en / mixed",
-        en: "one word works: zh / en / mixed",
-      },
-    ]),
-    haltMessage: HALT_DEFAULT,
-    onAccepted: deps.onLangAccepted,
-  })
-
   const emailQ: Question<string> = makeQuestion({
     id: "q_email",
     prompt: {
@@ -635,7 +576,6 @@ export function defaultQuestions(deps: DefaultQuestionsDeps): Question<unknown>[
   })
 
   return [
-    langQ as Question<unknown>,
     emailQ as Question<unknown>,
     emailVerifyQ as Question<unknown>,
     tosQ as Question<unknown>,
@@ -1563,7 +1503,7 @@ export interface DefaultQuestionsV2Deps extends ClosedQuestionsDeps {
  * Use `defaultQuestionsV2(deps)` to get a pipeline-ready list with hooks.
  *
  * Order (Adam directive 2026-05-07):
- *   q_lang → q_email → q_email_verify → q_tos
+ *   q_email → q_email_verify → q_tos
  *   → q_role → q_yoe → q_visa → q_startup_pref
  *   → q_country → q_location  (country BEFORE location)
  *   → q_resume
@@ -1588,7 +1528,7 @@ export const ONBOARDING_QUESTIONS_V2: Question<unknown>[] = [
 export function defaultQuestionsV2(deps: DefaultQuestionsV2Deps): Question<unknown>[] {
   // V2 normal path owns its closed questions directly; it does not call the
   // legacy `defaultQuestions()` factory or require `extractAnswerIntent`.
-  const { langQ, emailQ, emailVerifyQ, tosQ, resumeQ } = makeClosedQuestions(deps)
+  const { emailQ, emailVerifyQ, tosQ, resumeQ } = makeClosedQuestions(deps)
 
   const roleQ: Question<RoleAnswer> = {
     ...makeRoleQuestion(deps.onRoleAccepted),
@@ -1615,7 +1555,6 @@ export function defaultQuestionsV2(deps: DefaultQuestionsV2Deps): Question<unkno
   }
 
   return [
-    langQ,
     emailQ,
     emailVerifyQ,
     tosQ,

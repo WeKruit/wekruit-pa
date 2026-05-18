@@ -89,7 +89,7 @@ export type OnboardingWorkflow = {
 }
 
 // ────────────────────────────────────────────────────────────────────
-// Adam-locked workflow graph (iter33 P1+P2+P3+P4 sequence)
+// Beta onboarding workflow graph.
 // ────────────────────────────────────────────────────────────────────
 
 export const ONBOARDING_WORKFLOW: OnboardingWorkflow = {
@@ -101,12 +101,6 @@ export const ONBOARDING_WORKFLOW: OnboardingWorkflow = {
       kind: "entry",
       origin: "iter32 D-7",
       description: "Fresh user, never seen first_mes",
-    },
-    {
-      state: "q_lang_asked",
-      kind: "question",
-      origin: "iter33 P1 (Adam 2026-05-04)",
-      description: "Claire asked zh/en/mixed; permissive parser, ambiguous → mixed",
     },
     {
       state: "q_email_asked",
@@ -177,29 +171,18 @@ export const ONBOARDING_WORKFLOW: OnboardingWorkflow = {
   ],
   edges: [
     {
-      // iter33 spec collapse (Adam directive 2026-05-05 "reset 后发消息应
-      // 该上来就是 onboard"): kill the redundant first_mes greeting step.
-      // User's first inbound → Claire's first outbound = q_lang Q (which
-      // includes a short "在呢/Here" greeting in its prompt). Saves 1
-      // round-trip, matches spec phrase "1. user → iMessage 'hello'.
-      // 2. q_lang Q (Claire's first response)".
+      // Beta no longer asks for language preference. User's first inbound goes
+      // directly to the email trust step.
       from: "pending",
-      to: "q_lang_asked",
-      action: "ask_q_lang",
+      to: "q_email_asked",
+      action: "ask_q_email",
       condition: { kind: "default" },
-      description: "iter33 spec collapse: first user inbound → q_lang Q (no separate greeting step)",
+      description: "first user inbound -> q_email_asked",
     },
     // first_mes_sent state is removed from the iter33-spec-collapse graph.
     // Backward-compat for users with persisted onboardingState=first_mes_sent
     // is handled inline in resolveDeterministicAction (pre-walker special-case
-    // → ask_q_lang). See onboarding-deterministic.ts.
-    {
-      from: "q_lang_asked",
-      to: "q_email_asked",
-      action: "ask_q_email",
-      condition: { kind: "default" },
-      description: "iter33 P2 reorder: lang captured (preferredLang) → email Q",
-    },
+    // -> ask_q_email). See onboarding-deterministic.ts.
     {
       from: "q_email_asked",
       to: "q_email_verifying",
@@ -354,7 +337,7 @@ export const ONBOARDING_WORKFLOW: OnboardingWorkflow = {
     // turns — vent words may legitimately appear inside an email or as
     // part of a verification code reply, and we don't want the vent
     // detector to short-circuit captured input.
-    ...["q_lang_asked", "q_tos_asked", "q_role_asked", "q_yoe_asked", "q_visa_asked", "q_startup_pref_asked", "q_location_asked", "q_resume_asked"].map((s) => ({
+    ...["q_tos_asked", "q_role_asked", "q_yoe_asked", "q_visa_asked", "q_startup_pref_asked", "q_location_asked", "q_resume_asked"].map((s) => ({
       from: s as OnboardingState,
       to: s as OnboardingState,
       action: "vent_ack",
