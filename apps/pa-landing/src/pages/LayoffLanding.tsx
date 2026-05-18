@@ -7,7 +7,7 @@
  *   - Nav: For candidates / For employers / Browse talent / Open roles
  *   - Hero: "Laid off? We've got you." centered with "Add your name — 60 sec"
  *   - Rolling layoff company marquee
- *   - Preview talent table (9 seed rows, last 3 dimmed under a fade)
+ *   - Preview talent table (Firestore-backed rows, last 3 dimmed under a fade)
  *   - "How this works" 4-step section
  *   - FAQ grid
  *   - Footer
@@ -20,53 +20,79 @@ import { Link, useNavigate } from "react-router-dom"
 import "../styles/wekruit-tokens.css"
 
 type TalentRow = {
-  id: number
-  first: string
-  last: string
-  company: string
-  companyDate: string
-  function: string
-  title: string
+  id: string
+  firstName: string
+  lastInitial: string
+  lastCompany: string
+  function: string | null
+  jobTitle: string
   location: string
-  /** Minutes since this candidate joined the list — formatted live as 2h / 1d. */
-  minAgo: number
+  joinedAtIso: string
   verified: boolean
 }
 
-// Pool the preview cycles through. 24 rows so a 9-row window can rotate ~3
-// turns before repeating; minAgo values are seeded as plausible recents so
-// the "Added" column reads as live activity rather than a fixed snapshot.
-const TALENT_POOL: TalentRow[] = [
-  { id: 1,  first: "Maya",     last: "C", company: "Meta",       companyDate: "Feb 2026", function: "Product",     title: "Senior PM, Reality Labs",   location: "San Francisco", minAgo: 32,    verified: true  },
-  { id: 2,  first: "Daniel",   last: "O", company: "Google",     companyDate: "Jan 2026", function: "Engineering", title: "Staff SWE, Search Infra",   location: "New York",      minAgo: 95,    verified: true  },
-  { id: 3,  first: "Priya",    last: "R", company: "Tesla",      companyDate: "Feb 2026", function: "Design",      title: "Lead Product Designer",     location: "Austin",        minAgo: 180,   verified: true  },
-  { id: 4,  first: "Marcus",   last: "B", company: "Stripe",     companyDate: "Jan 2026", function: "Engineering", title: "Senior SWE, Payments",      location: "Remote · US",   minAgo: 420,   verified: true  },
-  { id: 5,  first: "Jen",      last: "T", company: "Salesforce", companyDate: "Mar 2026", function: "GTM",         title: "Enterprise AE",             location: "Chicago",       minAgo: 720,   verified: true  },
-  { id: 6,  first: "Sam",      last: "L", company: "Amazon",     companyDate: "Feb 2026", function: "Product",     title: "PM II, AWS",                location: "Seattle",       minAgo: 1440,  verified: false },
-  { id: 7,  first: "Lina",     last: "K", company: "Microsoft",  companyDate: "Jan 2026", function: "Engineering", title: "Principal SWE, Copilot",    location: "Remote · US",   minAgo: 2880,  verified: true  },
-  { id: 8,  first: "Tobi",     last: "A", company: "Twilio",     companyDate: "Feb 2026", function: "GTM",         title: "Head of CS",                location: "Boston",        minAgo: 3360,  verified: true  },
-  { id: 9,  first: "Rishi",    last: "D", company: "Discord",    companyDate: "Mar 2026", function: "Design",      title: "Senior Brand Designer",     location: "Los Angeles",   minAgo: 4320,  verified: true  },
-  { id: 10, first: "Hana",     last: "Y", company: "Snap",       companyDate: "Mar 2026", function: "Product",     title: "Group PM, AR Camera",       location: "Los Angeles",   minAgo: 14,    verified: true  },
-  { id: 11, first: "Kenji",    last: "M", company: "Atlassian",  companyDate: "Feb 2026", function: "Engineering", title: "Senior SWE, Jira Cloud",    location: "Sydney · Remote", minAgo: 47,  verified: true  },
-  { id: 12, first: "Alex",     last: "P", company: "Cisco",      companyDate: "Jan 2026", function: "Engineering", title: "Tech Lead, Webex",          location: "San Jose",      minAgo: 70,    verified: true  },
-  { id: 13, first: "Naomi",    last: "F", company: "Spotify",    companyDate: "Feb 2026", function: "Design",      title: "Staff Product Designer",    location: "Brooklyn",      minAgo: 130,   verified: true  },
-  { id: 14, first: "Omar",     last: "H", company: "GitHub",     companyDate: "Feb 2026", function: "Engineering", title: "Senior SWE, Copilot",       location: "Remote · US",   minAgo: 215,   verified: true  },
-  { id: 15, first: "Eliza",    last: "N", company: "Cloudflare", companyDate: "Mar 2026", function: "GTM",         title: "Solutions Architect",       location: "Austin",        minAgo: 305,   verified: true  },
-  { id: 16, first: "Diego",    last: "V", company: "Reddit",     companyDate: "Jan 2026", function: "Product",     title: "Senior PM, Community",      location: "San Francisco", minAgo: 510,   verified: false },
-  { id: 17, first: "Ravi",     last: "G", company: "Square",     companyDate: "Feb 2026", function: "Engineering", title: "Staff SWE, Cash App",       location: "Toronto",       minAgo: 830,   verified: true  },
-  { id: 18, first: "Sofia",    last: "M", company: "Lyft",       companyDate: "Jan 2026", function: "Product",     title: "PM, Rideshare Pricing",     location: "San Francisco", minAgo: 1180,  verified: true  },
-  { id: 19, first: "Mei",      last: "X", company: "Notion",     companyDate: "Mar 2026", function: "Design",      title: "Senior Designer, AI",       location: "San Francisco", minAgo: 1700,  verified: true  },
-  { id: 20, first: "Theo",     last: "S", company: "Figma",      companyDate: "Feb 2026", function: "Engineering", title: "Senior SWE, Multiplayer",   location: "New York",      minAgo: 2200,  verified: true  },
-  { id: 21, first: "Aisha",    last: "B", company: "Airbnb",     companyDate: "Jan 2026", function: "GTM",         title: "Sr Manager, Host Ops",      location: "Remote · US",   minAgo: 2640,  verified: true  },
-  { id: 22, first: "Ben",      last: "W", company: "Roblox",     companyDate: "Feb 2026", function: "Engineering", title: "Staff SWE, Platform",       location: "San Mateo",     minAgo: 3600,  verified: true  },
-  { id: 23, first: "Yuki",     last: "T", company: "Dropbox",    companyDate: "Mar 2026", function: "Product",     title: "PM, Smart Sync",            location: "Remote · US",   minAgo: 5040,  verified: false },
-  { id: 24, first: "Iris",     last: "Q", company: "Box",        companyDate: "Feb 2026", function: "GTM",         title: "Director of Sales, Mid-mkt", location: "Chicago",      minAgo: 6480,  verified: true  },
-]
+type PreviewResponse = {
+  ok: true
+  count: number
+  totalAvailable: number
+  joinedThisWeek: number
+  rows: TalentRow[]
+}
+
+type PreviewState = {
+  data: PreviewResponse | null
+  loading: boolean
+  error: string | null
+}
+
+const LAYOFF_PREVIEW_URL =
+  import.meta.env.VITE_LAYOFF_PREVIEW_URL ||
+  "https://us-central1-wekruit-5f89b.cloudfunctions.net/paPublicLayoffPreview"
+
+function isPreviewResponse(value: unknown): value is PreviewResponse {
+  const v = value as Partial<PreviewResponse> | null
+  return Boolean(v && v.ok === true && Array.isArray(v.rows))
+}
+
+function useLayoffPreview(): PreviewState {
+  const [state, setState] = useState<PreviewState>({ data: null, loading: true, error: null })
+
+  useEffect(() => {
+    const ac = new AbortController()
+    async function load() {
+      try {
+        const resp = await fetch(`${LAYOFF_PREVIEW_URL}?limit=9`, { signal: ac.signal })
+        if (!resp.ok) throw new Error(`preview_http_${resp.status}`)
+        const json = await resp.json()
+        if (!isPreviewResponse(json)) throw new Error("preview_bad_shape")
+        setState({ data: json, loading: false, error: null })
+      } catch (err) {
+        if (ac.signal.aborted) return
+        setState({
+          data: null,
+          loading: false,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    }
+    void load()
+    return () => ac.abort()
+  }, [])
+
+  return state
+}
 
 function formatAgo(min: number): string {
   if (min < 60) return `${Math.max(1, min)}m`
   if (min < 60 * 24) return `${Math.floor(min / 60)}h`
   return `${Math.floor(min / 1440)}d`
+}
+
+function formatJoinedAgo(iso: string): string {
+  const ms = Date.parse(iso)
+  if (!Number.isFinite(ms)) return "today"
+  const min = Math.max(1, Math.floor((Date.now() - ms) / 60_000))
+  return formatAgo(min)
 }
 
 const LAYOFF_COMPANIES = [
@@ -75,11 +101,12 @@ const LAYOFF_COMPANIES = [
 ]
 
 export default function LayoffLanding() {
+  const preview = useLayoffPreview()
   return (
     <main>
       <Nav current="landing" />
-      <Hero />
-      <PreviewSection />
+      <Hero preview={preview} />
+      <PreviewSection preview={preview} />
       <HowItWorks />
       <FAQSection />
       <Footer />
@@ -91,7 +118,7 @@ export default function LayoffLanding() {
 // =========================================================================
 // Hero
 // =========================================================================
-function Hero() {
+function Hero({ preview }: { preview: PreviewState }) {
   return (
     <section
       style={{
@@ -141,7 +168,7 @@ function Hero() {
             I'm hiring →
           </Link>
         </div>
-        <HeroCounter />
+        <HeroCounter preview={preview} />
 
         <div
           style={{
@@ -216,71 +243,33 @@ function RollingBanner() {
 // =========================================================================
 // Preview Section
 // =========================================================================
-/**
- * Daily-rotating preview window. Adam directive 2026-05-18: per-second
- * shuffling reads as fake — a small honest list should "update every 24h"
- * and start from a modest base count. We pick the visible 9-row slice
- * deterministically from a day index, and the count grows by ~0.5/day off
- * a low launch baseline so visitors who reload during the same UTC day
- * see exactly the same numbers.
- */
-const LAUNCH_DAY_INDEX = Math.floor(Date.parse("2026-05-15T00:00:00Z") / 86400_000)
-const LIST_BASE_COUNT = 12
-const LIST_PER_DAY_GROWTH = 0.5
-const WEEKLY_BASE = 3
-
-function todayIndex(): number {
-  return Math.floor(Date.now() / 86400_000)
-}
-
-function dayWindow(): TalentRow[] {
-  const start = ((todayIndex() % TALENT_POOL.length) + TALENT_POOL.length) % TALENT_POOL.length
-  const rotated = [...TALENT_POOL.slice(start), ...TALENT_POOL.slice(0, start)]
-  return rotated.slice(0, 9).map((row, i) => {
-    // Spread "added" across the visible window so the preview reads as a
-    // small daily refresh: top rows say minutes, dim rows say a few days.
-    const synthetic = i === 0 ? 30 : i * 240 + Math.floor((todayIndex() * 17 + row.id) % 90)
-    return { ...row, minAgo: Math.max(15, synthetic) }
-  })
-}
-
-function dailyCount(): number {
-  const daysSinceLaunch = Math.max(0, todayIndex() - LAUNCH_DAY_INDEX)
-  return LIST_BASE_COUNT + Math.floor(daysSinceLaunch * LIST_PER_DAY_GROWTH)
-}
-
-function dailyWeeklyAdds(): number {
-  // 3..7 range, deterministic per day so the "joined this week" line is
-  // stable across reloads within the same UTC day.
-  return WEEKLY_BASE + (todayIndex() % 5)
-}
-
-function hoursSinceUtcMidnight(): number {
-  const now = Date.now()
-  const todayStart = todayIndex() * 86400_000
-  return Math.max(0, Math.floor((now - todayStart) / 3600_000))
-}
-
-function HeroCounter() {
-  const count = dailyCount()
-  const weekly = dailyWeeklyAdds()
+function HeroCounter({ preview }: { preview: PreviewState }) {
+  const count = preview.data?.totalAvailable ?? 0
+  const weekly = preview.data?.joinedThisWeek ?? 0
+  const label = preview.loading
+    ? "Refreshing verified operators"
+    : preview.error
+      ? "Verified operators · updating daily"
+      : `${count} verified operators · ${weekly} joined this week · updated daily`
   return (
     <div style={{ marginTop: 18, display: "inline-flex", alignItems: "center", gap: 8, color: "var(--ink-3)" }}>
       <Dot color="var(--success)" />
       <span className="caption">
-        {count} verified operators · {weekly} joined this week · updated daily
+        {label}
       </span>
     </div>
   )
 }
 
-function PreviewSection() {
+function PreviewSection({ preview }: { preview: PreviewState }) {
   const navigate = useNavigate()
-  const visible = dayWindow()
-  const count = dailyCount()
-  const hoursAgo = hoursSinceUtcMidnight()
-  const freshness =
-    hoursAgo === 0 ? "refreshed just now" : `refreshed ${hoursAgo}h ago · updates daily`
+  const visible = preview.data?.rows ?? []
+  const count = preview.data?.totalAvailable ?? visible.length
+  const freshness = preview.loading
+    ? "refreshing"
+    : preview.error
+      ? "temporarily unavailable"
+      : "refreshed from verified list"
   return (
     <section id="preview" style={{ paddingTop: 32, paddingBottom: 96 }}>
       <div className="container" style={{ maxWidth: 1280, marginInline: "auto", paddingInline: 24 }}>
@@ -301,13 +290,23 @@ function PreviewSection() {
             Hiring? Get access →
           </button>
         </div>
-        <PreviewTable rows={visible} count={count} />
+        <PreviewTable rows={visible} count={count} loading={preview.loading} error={preview.error} />
       </div>
     </section>
   )
 }
 
-function PreviewTable({ rows, count }: { rows: TalentRow[]; count: number }) {
+function PreviewTable({
+  rows,
+  count,
+  loading,
+  error,
+}: {
+  rows: TalentRow[]
+  count: number
+  loading: boolean
+  error: string | null
+}) {
   const navigate = useNavigate()
   return (
     <div
@@ -343,9 +342,15 @@ function PreviewTable({ rows, count }: { rows: TalentRow[]; count: number }) {
         <div style={{ textAlign: "right" }}>Contact</div>
       </div>
       <div>
-        {rows.map((p, i) => (
-          <PreviewRow key={p.id} p={p} dim={i >= 6} />
-        ))}
+        {rows.length > 0 ? (
+          rows.map((p, i) => (
+            <PreviewRow key={p.id} p={p} dim={i >= 6} />
+          ))
+        ) : (
+          <div style={{ padding: "28px 24px", color: "var(--ink-2)", fontSize: 14 }}>
+            {loading ? "Refreshing verified operators..." : error ? "The verified list is updating. Check back shortly." : "No verified operators available yet."}
+          </div>
+        )}
       </div>
       <div
         style={{
@@ -360,7 +365,7 @@ function PreviewTable({ rows, count }: { rows: TalentRow[]; count: number }) {
       />
       <div style={{ position: "absolute", left: 0, right: 0, bottom: 28, display: "flex", justifyContent: "center" }}>
         <button className="btn btn--primary" onClick={() => navigate("/employer")}>
-          See all {count} — for employers →
+          {count > 0 ? `See all ${count}` : "Request access"} — for employers →
         </button>
       </div>
     </div>
@@ -385,19 +390,19 @@ function PreviewRow({ p, dim }: { p: TalentRow; dim: boolean }) {
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <Avatar name={p.first} />
+        <Avatar name={p.firstName} />
         <div style={{ display: "flex", flexDirection: "column" }}>
           <span style={{ fontWeight: 500, color: "var(--ink)", fontSize: 15 }}>
-            {p.first} {p.last}.
+            {p.firstName} {p.lastInitial ? `${p.lastInitial}.` : ""}
           </span>
           {p.verified && <VerifiedBadge small />}
         </div>
       </div>
-      <div style={{ color: "var(--ink)", fontSize: 14 }}>{p.company}</div>
-      <div style={{ fontSize: 14, color: "var(--ink-2)" }}>{p.function}</div>
-      <div style={{ fontSize: 14, color: "var(--ink)" }}>{p.title}</div>
+      <div style={{ color: "var(--ink)", fontSize: 14 }}>{p.lastCompany}</div>
+      <div style={{ fontSize: 14, color: "var(--ink-2)" }}>{p.function ?? "Other"}</div>
+      <div style={{ fontSize: 14, color: "var(--ink)" }}>{p.jobTitle}</div>
       <div style={{ fontSize: 14, color: "var(--ink-2)" }}>{p.location}</div>
-      <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--ink-3)" }}>{formatAgo(p.minAgo)}</div>
+      <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--ink-3)" }}>{formatJoinedAgo(p.joinedAtIso)}</div>
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, color: "var(--ink-3)" }}>
         <span
           style={{
