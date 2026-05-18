@@ -290,7 +290,7 @@ export const paCanonicalTagWorker = onDocumentCreated(
     region: "us-central1",
     timeoutSeconds: 60,
     concurrency: 10,
-    maxInstances: 2,
+    maxInstances: 1,
     memory: "256MiB",
     // retry: false — we drive retry via the scheduled retry fn below
   },
