@@ -157,7 +157,7 @@ describe("runLayoffSmsStart", () => {
     assert.equal(writes.length, 0)
   })
 
-  it("default kickoff enqueues a pending inbound event instead of running runtime inline", async () => {
+  it("default kickoff enqueues a structured runtime event instead of replaying the trigger as user text", async () => {
     const docs = new Map<string, FakeDocState>([
       [
         "pa-users/u1",
@@ -179,15 +179,28 @@ describe("runLayoffSmsStart", () => {
     })
 
     assert.equal(result.ok, true)
-    assert.match(result.ok ? result.kickoffOutboundId : "", /^layoff_runtime_/)
+    assert.match(result.ok ? result.kickoffOutboundId : "", /^runtime_/)
 
     const inboundRows = [...docs.entries()].filter(([path]) => path.startsWith("pa-inbound-events/"))
     assert.equal(inboundRows.length, 1)
     const [path, row] = inboundRows[0]
-    assert.match(path, /^pa-inbound-events\/layoff_runtime_/)
+    assert.match(path, /^pa-inbound-events\/runtime_/)
     assert.equal(row.data.userId, "u1")
-    assert.equal(row.data.body, "WeKruit_LAID_OFF")
+    assert.notEqual(row.data.body, "WeKruit_LAID_OFF")
+    assert.match(String(row.data.body), /^\[system-event:layoff_onboarding:layoff_onboarding_started\]/)
+    assert.match(String(row.data.body), /Beta candidate-visible iMessage output is English-only/)
     assert.equal(row.data.status, "pending")
-    assert.equal((row.data.rawMeta as Record<string, unknown>).source, "layoff_runtime_trigger")
+    const rawMeta = row.data.rawMeta as Record<string, unknown>
+    assert.equal(rawMeta.source, "runtime_event_handoff")
+    assert.equal(rawMeta.runtimeEvent, true)
+    assert.equal(rawMeta.runtimeEventSource, "layoff_onboarding")
+    assert.equal(rawMeta.runtimeEventKind, "layoff_onboarding_started")
+    assert.equal(rawMeta.preferredLanguage, "en")
+    const context = rawMeta.context as Record<string, unknown>
+    assert.equal(context.trigger, "WeKruit_LAID_OFF")
+    assert.equal(context.signupSource, WEKRUIT_LAYOFF_SOURCE)
+    assert.equal(context.workSessionKind, "layoff_onboarding")
+    assert.equal(context.candidateEvent, "fresh_layoff_signal")
+    assert.match(String(context.startedAt), /^\d{4}-\d{2}-\d{2}T/)
   })
 })

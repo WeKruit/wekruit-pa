@@ -1,6 +1,5 @@
 import type { Firestore } from "firebase-admin/firestore"
 import { FieldValue } from "firebase-admin/firestore"
-import { createHash } from "node:crypto"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import {
   WEKRUIT_LAYOFF_SOURCE,
@@ -8,6 +7,7 @@ import {
   type WekruitSignupSource,
 } from "@pa/pa-orchestrator"
 import { hashStringToUint } from "./sendblue/pool.js"
+import { enqueueRuntimeEventHandoff } from "./runtime-event-handoff.js"
 
 export const LAYOFF_SMS_TRIGGER_TEXT = "WeKruit_LAID_OFF"
 export const CANDIDATE_SMS_TRIGGER_TEXT = "WeKruit_CANDIDATE_HI"
@@ -78,11 +78,6 @@ export function buildLayoffOnboardingStartedFields(nowIso: string): Record<strin
   return buildOnboardingStartedFields(nowIso, WEKRUIT_LAYOFF_SOURCE)
 }
 
-function sessionDocId(userId: string, channel: "imessage", externalChatId: string): string {
-  const h = createHash("sha256").update(`${userId}|${channel}|${externalChatId}`).digest("hex")
-  return `ses_${h.slice(0, 32)}`
-}
-
 async function runDefaultRuntimeKickoff(args: {
   db: Firestore
   userId: string
@@ -90,38 +85,32 @@ async function runDefaultRuntimeKickoff(args: {
   startedAt: string
   source: WekruitSignupSource
 }): Promise<{ eventId: string; outboundId?: string }> {
-  const sessionId = sessionDocId(args.userId, "imessage", args.toE164)
-  const eventPrefix = args.source === WEKRUIT_LAYOFF_SOURCE ? "layoff_runtime" : "candidate_runtime"
-  const idemPrefix = args.source === WEKRUIT_LAYOFF_SOURCE ? "layoff-runtime" : "candidate-runtime"
-  const triggerSource =
-    args.source === WEKRUIT_LAYOFF_SOURCE ? "layoff_runtime_trigger" : "candidate_runtime_trigger"
+  const isLayoff = args.source === WEKRUIT_LAYOFF_SOURCE
   const trigger = triggerTextFor(args.source)
-  const eventId = `${eventPrefix}_${hashStringToUint(`${args.userId}:${args.startedAt}`).toString(36)}`
-  const idempotencyKey = `${idemPrefix}:${args.userId}:${args.startedAt}`
-  const event = {
-    id: eventId,
+  const runtimeSource = isLayoff ? "layoff_onboarding" : "candidate_onboarding"
+  const eventKind = isLayoff ? "layoff_onboarding_started" : "candidate_onboarding_started"
+  const idempotencyKey = `${runtimeSource}:${args.userId}:${args.startedAt}`
+  const runtime = await enqueueRuntimeEventHandoff(args.db, {
     userId: args.userId,
-    sessionId,
-    channel: "imessage" as const,
-    externalChatId: args.toE164,
-    from: args.toE164,
-    body: trigger,
-    status: "pending" as const,
-    createdAt: args.startedAt,
+    toE164: args.toE164,
+    channel: "imessage",
+    source: runtimeSource,
+    eventKind,
     idempotencyKey,
-    rawMeta: {
-      source: triggerSource,
+    requireExistingSession: false,
+    nowIso: () => args.startedAt,
+    context: {
       trigger,
+      signupSource: args.source,
+      workSessionKind: isLayoff ? "layoff_onboarding" : "normal_onboarding",
+      startedAt: args.startedAt,
+      candidateEvent: isLayoff ? "fresh_layoff_signal" : "candidate_signup_started",
     },
+  })
+  if (!runtime.ok) {
+    throw new Error(`runtime_kickoff_failed:${runtime.reason}`)
   }
-
-  try {
-    await args.db.collection(PA_COLLECTIONS.inboundEvents).doc(eventId).create(event)
-  } catch (err) {
-    const code = (err as { code?: number | string })?.code
-    if (code !== 6 && code !== "already-exists") throw err
-  }
-  return { eventId }
+  return { eventId: runtime.eventId }
 }
 
 export function isLayoffIntakeActiveDoc(data: unknown): boolean {
