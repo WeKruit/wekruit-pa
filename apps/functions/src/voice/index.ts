@@ -246,6 +246,7 @@ export const paVoiceSipWebhook: HttpsFunction = onRequest(
     secrets: [PA_VOICE_WEBHOOK_SECRET],
     cors: false,
     region: "us-central1",
+    maxInstances: 1,
   },
   async (req, res) => {
     if (req.method !== "POST") {

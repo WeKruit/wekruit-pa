@@ -9,17 +9,9 @@
  *   does not inject the langLock pre-gen sandwich either. Mirror of Bug A
  *   pattern (crisis-hotline cold-start hole).
  *
- * What we verify here (NO real LLM — fakeStore returns deterministic body):
- *   1. Cold-start ZH user "我想找工作" + EN-leaked LLM reply → translate
- *      back to ZH (post-gen guard fires).
- *   2. Cold-start EN user "I want a job" + ZH-leaked LLM reply → translate
- *      back to EN (post-gen guard fires).
- *   3. Cold-start ZH-frame with EN loanword "swe的" (Adam Bug 2 repro) →
- *      systemPrompt receives ZH lang-lock sandwich AND user-message gets
- *      ZH directive (pre-gen path). detectUserLang correctly classifies
- *      'swe的' as ZH despite ASCII majority.
- *   4. Cold-start non-crisis greeting ZH user → if LLM emits ZH reply
- *      already, NO translate fires (already_correct_lang short-circuit).
+ * Current architecture: cold-start onboarding no longer calls the LLM-compose
+ * branch. The runtime pipeline emits its prompt directly, and seeds prompt
+ * language from the user's current message or stored preference.
  *   5. Main-path regression: onboardingState=complete + ZH user → main
  *      path lang-lock still fires (helper extraction did not break main path).
  *   6. Pre-gen sandwich content: systemPrompt passed to runAgentTurn for ZH
@@ -189,10 +181,9 @@ function emptyCaptures(): ColdStartLangCaptures {
 }
 
 // ============================================================================
-// Test 1 — Cold-start ZH user with already-ZH reply: NO translate fires
-// (correct-lang short-circuit). Pre-gen langLock IS injected.
+// Test 1 — Cold-start ZH user: runtime pipeline emits ZH prompt without LLM.
 // ============================================================================
-test("coldstart-langlock: ZH user '我想找工作' + ZH reply → no translate, but langLock pre-gen wired", async () => {
+test("coldstart-langlock: ZH user '我想找工作' → pipeline emits ZH prompt without LLM", async () => {
   const captures = emptyCaptures()
   const store = makeStore(captures, {
     // Already-ZH onboarding greeting — no translate needed.
@@ -202,28 +193,11 @@ test("coldstart-langlock: ZH user '我想找工作' + ZH reply → no translate,
     { ...baseEvent, body: "我想找工作" },
     store
   )
-  assert.equal(captures.llmCalls, 1)
+  assert.equal(captures.llmCalls, 0)
   assert.equal(captures.outboundBodies.length, 1)
-  // Pre-gen sandwich proof: systemPrompt MUST contain ZH langLock directive.
-  const sp = captures.systemPrompts[0]
-  assert.ok(
-    sp.includes("[LANGUAGE-LOCK · TOP-PRIORITY]"),
-    `systemPrompt missing top sandwich, got first 200ch: ${sp.slice(0, 200)}`
-  )
-  assert.ok(
-    sp.includes("user_input_language: zh"),
-    "systemPrompt must declare zh user_input_language"
-  )
-  assert.ok(
-    sp.includes("[FINAL-REMINDER]"),
-    "systemPrompt missing FINAL-REMINDER bottom sandwich"
-  )
-  // user-message directive proof.
-  const um = captures.userMessages[0]
-  assert.ok(
-    um.includes("[SYSTEM-DIRECTIVE: 用中文回复"),
-    `userMessage missing ZH directive, got: ${um}`
-  )
+  assert.match(captures.outboundBodies[0] ?? "", /用啥语聊|中文/)
+  assert.deepEqual(captures.systemPrompts, [])
+  assert.deepEqual(captures.userMessages, [])
   // No translate event fired — reply was already ZH.
   const applied = captures.logs.find(
     (l) => l.event === "pa.voice.lang_translate.applied"
@@ -232,10 +206,9 @@ test("coldstart-langlock: ZH user '我想找工作' + ZH reply → no translate,
 })
 
 // ============================================================================
-// Test 2 — Cold-start EN user "I want a job" → systemPrompt gets EN langLock,
-// user-message gets EN directive. Mirror of Test 1 for opposite lang.
+// Test 2 — Cold-start EN user: runtime pipeline emits EN prompt without LLM.
 // ============================================================================
-test("coldstart-langlock: EN user 'I want a job' → EN langLock pre-gen wired", async () => {
+test("coldstart-langlock: EN user 'I want a job' → pipeline emits EN prompt without LLM", async () => {
   const captures = emptyCaptures()
   const store = makeStore(captures, {
     llmReplyBody: "yo, what kinda role you eyeing?",
@@ -244,26 +217,16 @@ test("coldstart-langlock: EN user 'I want a job' → EN langLock pre-gen wired",
     { ...baseEvent, id: "evt-en-ll", body: "I want a job" },
     store
   )
-  assert.equal(captures.llmCalls, 1)
-  const sp = captures.systemPrompts[0]
-  assert.ok(sp.includes("user_input_language: en (English)"))
-  assert.ok(sp.includes("Do NOT switch to Chinese"))
-  const um = captures.userMessages[0]
-  assert.ok(
-    um.includes("[SYSTEM-DIRECTIVE: Reply in English only"),
-    `userMessage missing EN directive, got: ${um}`
-  )
+  assert.equal(captures.llmCalls, 0)
+  assert.match(captures.outboundBodies[0] ?? "", /What language works/)
+  assert.deepEqual(captures.systemPrompts, [])
+  assert.deepEqual(captures.userMessages, [])
 })
 
 // ============================================================================
-// Test 3 — Adam Bug 2 repro evolved (2026-05-03 01:22 amendment): ZH-frame with
-// EN loanword "swe的" was classified as "zh" under Phase 53 binary detection.
-// New 3-class detectUserLang classifies it as "mixed" (≥1 CJK + ≥1 ASCII word).
-// The langLock sandwich is now a NO-OP for mixed input — Adam directive
-// "lang must mirror user, 不能 hard-lock 单语" — the model should be free to
-// mirror the user's zh-frame + en-token register naturally.
+// Test 3 — ZH-frame with EN loanword "swe的": pipeline stays in direct mode.
 // ============================================================================
-test("coldstart-langlock: 'swe的' → detectUserLang→mixed, NO langLock sandwich (Adam 01:22 spec)", async () => {
+test("coldstart-langlock: 'swe的' → pipeline direct prompt, no LLM lang-lock path", async () => {
   const captures = emptyCaptures()
   const store = makeStore(captures, {
     llmReplyBody: "在呢. 今天找你聊点啥? 🍋",
@@ -272,32 +235,16 @@ test("coldstart-langlock: 'swe的' → detectUserLang→mixed, NO langLock sandw
     { ...baseEvent, id: "evt-bug2", body: "swe的" },
     store
   )
-  const sp = captures.systemPrompts[0]
-  // No language-lock block at all — neither zh nor en sandwich inserted
-  assert.ok(
-    !sp.includes("user_input_language: zh"),
-    `mixed input MUST NOT inject ZH langLock — let reply mirror naturally. systemPrompt: ${sp.slice(0, 300)}`
-  )
-  assert.ok(
-    !sp.includes("user_input_language: en"),
-    `mixed input MUST NOT inject EN langLock either. systemPrompt: ${sp.slice(0, 300)}`
-  )
-  const um = captures.userMessages[0]
-  // The userMessage equals the original event.body (no directive appended)
-  assert.ok(
-    !um.includes("[SYSTEM-DIRECTIVE: 用中文回复"),
-    "mixed input MUST NOT append ZH user-directive"
-  )
-  assert.ok(
-    !um.includes("[SYSTEM-DIRECTIVE: Reply in English"),
-    "mixed input MUST NOT append EN user-directive either"
-  )
+  assert.equal(captures.llmCalls, 0)
+  assert.match(captures.outboundBodies[0] ?? "", /用啥语聊|中文/)
+  assert.deepEqual(captures.systemPrompts, [])
+  assert.deepEqual(captures.userMessages, [])
 })
 
 // ============================================================================
-// Test 4 — Cold-start mixed "yoe1年的" (Adam 01:22 spec) → mixed bypass.
+// Test 4 — Cold-start mixed "yoe1年的" stays in direct prompt mode.
 // ============================================================================
-test("coldstart-langlock: 'yoe1年的' → detectUserLang→mixed, NO langLock sandwich (Adam 01:22 spec)", async () => {
+test("coldstart-langlock: 'yoe1年的' → pipeline direct prompt, no LLM lang-lock path", async () => {
   const captures = emptyCaptures()
   const store = makeStore(captures, {
     llmReplyBody: "在呢. 今天找你聊点啥? 🍋",
@@ -306,15 +253,9 @@ test("coldstart-langlock: 'yoe1年的' → detectUserLang→mixed, NO langLock s
     { ...baseEvent, id: "evt-bug2-yoe", body: "yoe1年的" },
     store
   )
-  const sp = captures.systemPrompts[0]
-  assert.ok(
-    !sp.includes("user_input_language: zh"),
-    `mixed input MUST NOT inject ZH langLock. systemPrompt: ${sp.slice(0, 300)}`
-  )
-  assert.ok(
-    !sp.includes("user_input_language: en"),
-    "mixed input MUST NOT inject EN langLock either."
-  )
+  assert.equal(captures.llmCalls, 0)
+  assert.match(captures.outboundBodies[0] ?? "", /用啥语聊|中文/)
+  assert.deepEqual(captures.systemPrompts, [])
 })
 
 // ============================================================================

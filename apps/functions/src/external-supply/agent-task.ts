@@ -523,6 +523,7 @@ export const paExternalSupplyGenerateAgentResearchPrompt = onCall(
     region: "us-central1",
     memory: "256MiB",
     timeoutSeconds: 120,
+    maxInstances: 1,
   },
   async (req): Promise<GenerateAgentResearchPromptResult> => {
     return runGenerateAgentResearchPrompt(req.data, req.auth, { db: getFirestore() })
@@ -534,6 +535,7 @@ export const paExternalSupplyImportAgentResearchResult = onCall(
     region: "us-central1",
     memory: "256MiB",
     timeoutSeconds: 120,
+    maxInstances: 1,
   },
   async (req): Promise<ImportAgentResearchResultResult> => {
     return runImportAgentResearchResult(req.data, req.auth, { db: getFirestore() })
@@ -545,6 +547,7 @@ export const paExternalSupplyApproveAgentResearchFinding = onCall(
     region: "us-central1",
     memory: "256MiB",
     timeoutSeconds: 60,
+    maxInstances: 1,
   },
   async (req): Promise<ApproveAgentResearchFindingResult> => {
     return runApproveAgentResearchFinding(req.data, req.auth, { db: getFirestore() })

@@ -437,6 +437,7 @@ export const paExternalSupplyGetCandidateDetail = onCall(
     region: "us-central1",
     memory: "256MiB",
     timeoutSeconds: 60,
+    maxInstances: 1,
   },
   async (req): Promise<CandidateDetail> => {
     return runGetCandidateDetail(req.data, req.auth, getFirestore())

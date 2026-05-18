@@ -397,15 +397,13 @@ test("coldstart-defense: abuse-shaped crisis input → safety canned reply, NO L
 })
 
 // ============================================================================
-// Test 6 — Cold-start with actionable intent + crisis: F1 ack composes AND
-// hotline trailer appends. Two safety layers stack cleanly (no override).
+// Test 6 — Cold-start with actionable intent + crisis: the safety runtime
+// takes priority over onboarding/job-search intent, then appends hotline.
 // ============================================================================
-test("coldstart-intent+crisis: 'find me a job, i can't do this anymore' → intent ack composed AND hotline trailer appended", async () => {
+test("coldstart-intent+crisis: 'find me a job, i can't do this anymore' → safety reply + hotline trailer", async () => {
   const captures = emptyCaptures()
-  // The mocked LLM acks the intent but doesn't include a hotline (Bible-non-
-  // compliant) — guard MUST add the trailer. Real LLM behavior is:
-  // detectFirstTurnIntent returns job_search (high) because the regex matches
-  // "find me ... job", and crisis bank fires on "can't do this anymore".
+  // Safety owns this turn. We intentionally do NOT preserve a job-search ack:
+  // crisis language is higher priority than onboarding/probing.
   const llmBody =
     "got you, let's get you sorted on a SWE role. btw — what kinda role you eyeing?"
   const store = makeStore(captures, { llmReplyBody: llmBody })
@@ -419,10 +417,10 @@ test("coldstart-intent+crisis: 'find me a job, i can't do this anymore' → inte
   )
   assert.equal(captures.outboundBodies.length, 1)
   const body = captures.outboundBodies[0]
-  // (a) intent ack body present (LLM body preserved verbatim — guard appends, never replaces).
+  // (a) safety reply present; job-search intent is not allowed to lead.
   assert.ok(
-    body.includes("got you") || body.includes("let's get you sorted"),
-    `LLM intent-ack body must be preserved, got: ${body}`
+    body.includes("safe right now") || body.includes("先保证你现在是安全的"),
+    `safety reply must lead, got: ${body}`
   )
   // (b) hotline trailer appended.
   const hit =
@@ -433,20 +431,9 @@ test("coldstart-intent+crisis: 'find me a job, i can't do this anymore' → inte
     hit,
     `hotline trailer must be appended for intent+crisis input, got: ${body}`
   )
-  // (c) intent-ack synthetic input was used (verifies F1 path engaged).
-  const synthInput = captures.systemInputs[0]?.join("\n") ?? ""
-  assert.ok(
-    synthInput.includes("send_first_mes_with_intent_ack") ||
-      synthInput.includes("intent=job_search"),
-    `intent-ack synthetic input must be used, got: ${synthInput}`
-  )
-  // (d) applyOnboarding got intentAcked=true (state machine compression).
-  assert.ok(
-    captures.appliedSteps.some(
-      (s) => s.step === "send_first_mes" && s.intentAcked === true
-    ),
-    "intent-ack path should jump state past first_mes_sent"
-  )
+  // (c) normal onboarding runtime is bypassed for this turn.
+  assert.equal(captures.llmCalls, 0)
+  assert.equal(captures.appliedSteps.length, 0)
 })
 
 // ============================================================================

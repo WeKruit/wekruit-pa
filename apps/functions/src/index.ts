@@ -18,7 +18,7 @@ import { defineSecret } from "firebase-functions/params"
 import { setGlobalOptions, logger } from "firebase-functions/v2"
 import { initializeApp, getApps } from "firebase-admin/app"
 import { getAuth } from "firebase-admin/auth"
-import { getFirestore, FieldValue, type Firestore } from "firebase-admin/firestore"
+import { getFirestore, type Firestore } from "firebase-admin/firestore"
 import {
   claimAndProcessInboundEvent,
   createFirestoreOrchestratorStore,
@@ -340,7 +340,7 @@ try {
   // if a previous handler already initialized it with default settings.
 }
 
-setGlobalOptions({ region: "us-central1" })
+setGlobalOptions({ region: "us-central1", maxInstances: 1 })
 
 // Phase 21 Sendblue secrets — populated via `firebase functions:secrets:set` (D-07)
 const SENDBLUE_API_KEY_ID = defineSecret("SENDBLUE_API_KEY_ID")
@@ -569,55 +569,6 @@ async function createProvisionalUser(db: Firestore, participant: string): Promis
     channels: { imessageHandle: n },
   }
   await db.collection(PA_COLLECTIONS.users).doc(id).set(u)
-  // iter34 P3 (Adam directive 2026-05-05) — auto-add new user to
-  // paOnboardingPipelineEnabled allowlist. "flag必须开, 只要是reset或者新
-  // 用户都必须开". Best-effort, swallow + log.
-  try {
-    const flagRef = db.collection("pa-feature-flags").doc("paOnboardingPipelineEnabled")
-    const auditRef = db.collection("pa-audit-events").doc()
-    const now = nowIso()
-    await db.runTransaction(async (t) => {
-      const cur = await t.get(flagRef)
-      const action = cur.exists ? "flag.allowlist_add" : "flag.create"
-      if (cur.exists) {
-        t.update(flagRef, {
-          allowlist: FieldValue.arrayUnion(id),
-          updatedAt: now,
-          updatedBy: "auto-newuser",
-          reason: "auto-on-new-user",
-          version: ((cur.data() as { version?: number }).version ?? 0) + 1,
-        })
-      } else {
-        t.set(flagRef, {
-          key: "paOnboardingPipelineEnabled",
-          value: false,
-          type: "bool",
-          scope: "perUser",
-          allowlist: [id],
-          blocklist: [],
-          bucketStrategy: null,
-          updatedAt: now,
-          updatedBy: "auto-newuser",
-          reason: "auto-on-new-user",
-          version: 1,
-        })
-      }
-      t.set(auditRef, {
-        actor: "auto-newuser",
-        action,
-        key: "paOnboardingPipelineEnabled",
-        userId: id,
-        reason: "auto-on-new-user",
-        ts: now,
-      })
-    })
-    logger.info("[provisional-user] paOnboardingPipelineEnabled allowlist += " + id)
-  } catch (err) {
-    logger.warn("[provisional-user] auto-enable flag FAILED", {
-      userId: id,
-      error: err instanceof Error ? err.message : String(err),
-    })
-  }
   return u
 }
 
@@ -1693,6 +1644,7 @@ export const paCoalesceBufferSweep = onSchedule(
     secrets: [SENDBLUE_API_KEY_ID, SENDBLUE_API_SECRET_KEY, SENDBLUE_FROM_NUMBER, SILICONFLOW_API_KEY, PA_OPENAI_AGENT_API_KEY, QDRANT_URL, QDRANT_API_KEY, ...MAILGUN_SECRETS],
     memory: "256MiB",
     timeoutSeconds: 120,
+    maxInstances: 1,
   },
   async () => {
     process.env.SENDBLUE_API_KEY_ID = SENDBLUE_API_KEY_ID.value()
@@ -2180,6 +2132,7 @@ export const paOnboardingShadowDiffSweep = onSchedule(
     region: "us-central1",
     memory: "256MiB",
     timeoutSeconds: 300,
+    maxInstances: 1,
   },
   async () => {
     const { runOnboardingShadowDiffSweep } = await import("./onboarding-shadow-diff-sweep.js")

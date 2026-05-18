@@ -290,7 +290,7 @@ export const paCanonicalTagWorker = onDocumentCreated(
     region: "us-central1",
     timeoutSeconds: 60,
     concurrency: 10,
-    maxInstances: 50,
+    maxInstances: 2,
     memory: "256MiB",
     // retry: false — we drive retry via the scheduled retry fn below
   },
@@ -471,6 +471,7 @@ export const paCanonicalTagWorkerRetry = onSchedule(
     region: "us-central1",
     memory: "256MiB",
     timeoutSeconds: 120,
+    maxInstances: 1,
   },
   async () => {
     if (!isWorkerEnabled()) return

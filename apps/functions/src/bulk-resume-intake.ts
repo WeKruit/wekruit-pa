@@ -491,7 +491,7 @@ export const paBulkResumeProcessBatch = onCall({
   return runBulkResumeProcessBatch(req.data, callableDeps())
 })
 
-export const paBulkResumeRetryItem = onCall({ region: "us-central1", memory: "256MiB", secrets: [PA_ADMIN_TOKEN] }, async (req) => {
+export const paBulkResumeRetryItem = onCall({ region: "us-central1", memory: "256MiB", maxInstances: 1, secrets: [PA_ADMIN_TOKEN] }, async (req) => {
   authorizeBulkResumeAdmin(req as CallableAuthLike)
   return runBulkResumeRetryItem(req.data, callableDeps())
 })

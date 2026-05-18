@@ -322,7 +322,7 @@ export const paCandidatePrivacyRequest = onCall(
 )
 
 export const paAdminLaunchReadinessSnapshot = onCall(
-  { region: "us-central1", memory: "256MiB", timeoutSeconds: 60, secrets: [PA_ADMIN_TOKEN] },
+  { region: "us-central1", memory: "256MiB", timeoutSeconds: 60, maxInstances: 1, secrets: [PA_ADMIN_TOKEN] },
   async (req): Promise<AdminLaunchReadinessResult> => {
     authorizeAdminCallable(req as { auth?: { token?: { admin?: unknown } }; data?: unknown })
     return runAdminLaunchReadinessSnapshot(req.data, { db: getFirestore() })

@@ -529,6 +529,7 @@ export const paCandidateLifecycleTrigger = onCall(
   {
     region: "us-central1",
     memory: "256MiB",
+    maxInstances: 1,
     secrets: [PA_ADMIN_TOKEN],
   },
   async (req): Promise<LifecycleTriggerResult> => {

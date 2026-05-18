@@ -19,8 +19,7 @@
  *     (used by dashboard `/admin/onboarding-questions` for operator edits)
  *   - `loadOnboardingConfig` + `_resetOnboardingConfigCache`
  *   - `composeInterimResumeAck` (used by `runtime-bridge.ts`)
- *   - `pickLang`, `pickPromptText`, `isV33Disabled`,
- *     `isDeterministicOnboardingEnabled`
+ *   - `pickLang`, `pickPromptText`, `isV33Disabled`
  *   - `RunDeterministicTurnInput`, `RunDeterministicTurnResult`,
  *     `DeterministicRunnerStore` types — caller (index.ts) shape unchanged
  *
@@ -48,6 +47,8 @@ import { runOnboardingPipelineTurn } from "./onboarding/runtime-bridge.js"
 import { ResumeDiscussionPhase } from "./onboarding/discussion-resume.js"
 import type { PhaseInput, AsyncResult } from "./onboarding/discussion-phase.js"
 import type { ResumeAttachment } from "./onboarding/judges/resume.js"
+import { runCrisisHotlineGuard } from "./safety/crisis-guard-runner.js"
+import { normalizeForIMessage } from "./output-normalizer.js"
 
 // ---------------------------------------------------------------
 // Config — preserved for dashboard operator editing.
@@ -312,27 +313,6 @@ export async function loadOnboardingConfig(
 export function _resetOnboardingConfigCache() {
   cachedConfig = null
   cachedAt = 0
-}
-
-// ---------------------------------------------------------------
-// Feature flag.
-// ---------------------------------------------------------------
-export async function isDeterministicOnboardingEnabled(
-  db: Firestore | undefined,
-  userId: string | undefined
-): Promise<boolean> {
-  if (process.env.PA_ONBOARDING_DETERMINISTIC_DISABLED === "true") return false
-  if (!db) return false
-  try {
-    const { getFlag } = await import("@pa/pa-persistence")
-    const v = await getFlag(db, "paOnboardingDeterministicEnabled", {
-      userId,
-      env: process.env,
-    })
-    return v === true
-  } catch {
-    return false
-  }
 }
 
 // ---------------------------------------------------------------
@@ -637,6 +617,36 @@ function buildPhaseInput(input: RunDeterministicTurnInput): PhaseInput {
   }
 }
 
+async function sendRuntimeOnboardingReply(
+  input: RunDeterministicTurnInput,
+  body: string,
+  meta: Record<string, unknown>,
+): Promise<void> {
+  const { event, store, turnId } = input
+  const { text } = normalizeForIMessage(body, { maxLength: 600 })
+  await store.appendMessage({
+    sessionId: event.sessionId,
+    userId: event.userId,
+    role: "assistant",
+    body: text,
+    createdAt: store.nowIso(),
+    idempotencyKey: `out-onboarding-runtime-${event.id}-${String(meta.kind ?? "reply")}`,
+    rawMeta: {
+      source: "pa_orchestrator",
+      turnId,
+      eventId: event.id,
+      onboarding: "runtime",
+      ...meta,
+    },
+  })
+  if (input.suppressOutbound) return
+  await store.enqueueOutbound(event.userId, event.from, text, {
+    sessionId: event.sessionId,
+    role: "assistant",
+    idempotencyKey: `outbound-onboarding-runtime-${event.id}-${String(meta.kind ?? "reply")}`,
+  })
+}
+
 // ---------------------------------------------------------------
 // Main dispatcher — REWRITTEN.
 //
@@ -673,6 +683,26 @@ export async function runDeterministicOnboardingTurn(
     hasAttachment: hasAttachment(event),
     isCvParsed: !!detectCvParsedEvent(event),
   })
+
+  const crisisBaseReply = resolveLang(input) === "zh"
+    ? "我听到了。这个先别一个人扛着，先保证你现在是安全的。"
+    : "I hear you. Before anything job-related, let's make sure you're safe right now."
+  const crisisGuard = await runCrisisHotlineGuard({
+    store,
+    event,
+    turnId,
+    userInput: event.body,
+    reply: crisisBaseReply,
+    callSite: "onboarding",
+  })
+  if (crisisGuard.detected) {
+    await sendRuntimeOnboardingReply(input, crisisGuard.reply, {
+      kind: "crisis_guard",
+      detected: crisisGuard.detected,
+      injected: crisisGuard.injected,
+    })
+    return { handled: true, action: { kind: "pipeline" } }
+  }
 
   // Route 4 — synthetic cv-parsed event from cv-ingest worker / E2E.
   // MUST run before the state===complete early-return: production can mark

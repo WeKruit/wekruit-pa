@@ -35,9 +35,8 @@ const TURN_OPTIONS = [4, 8, 16] as const
  * for QA-ing the deterministic-onboarding dispatcher (iter32) without
  * paying for LLM calls.
  *
- * Requires `paOnboardingDeterministicEnabled=true` server-side for the
- * deterministic path to fire; otherwise the legacy LLM-compose onboarding
- * runs and the transcript will look different (LLM-shaped phrasing).
+ * Onboarding now uses the runtime dispatcher directly; there is no
+ * alternate LLM-compose onboarding branch for these presets.
  */
 const ONBOARDING_PRESETS = [
   {
@@ -262,7 +261,7 @@ export function NRoundSim() {
           </select>
           <div style={{ fontSize: "0.75em", color: "#64748b", marginTop: 4 }}>
             {preset
-              ? "Preset: scripted user messages, no LLM cost. Tests the deterministic onboarding dispatcher (paOnboardingDeterministicEnabled must be ON)."
+              ? "Preset: scripted user messages, no LLM cost. Tests the onboarding dispatcher."
               : "Free-form: persona-LLM generates user messages, full agent runtime engages."}
           </div>
         </label>

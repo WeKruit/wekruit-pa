@@ -761,7 +761,11 @@ test("processInboundEvent onboarding: incomplete onboarding owns reply before li
   let outbound = ""
   const applied: Array<{
     step: string
-    opts?: { priorAskedStep?: string; priorUserReply?: string }
+    opts?: {
+      priorAskedStep?: string
+      priorUserReply?: string
+      parsedAnswer?: { targetRole?: unknown }
+    }
   }> = []
   const body =
     "I want frontend or fullstack product engineering roles, ideally early-stage startup, NYC or remote."
@@ -819,12 +823,14 @@ test("processInboundEvent onboarding: incomplete onboarding owns reply before li
   }
 
   assert.equal(lifecycleWrites, 0, "active onboarding reply must not be recorded as lifecycle reply")
-  assert.equal(onboardingComposeCalls, 1, "onboarding compose path should own the reply")
-  assert.match(outbound, /years of work experience/)
+  assert.equal(onboardingComposeCalls, 0, "onboarding runtime pipeline should own the reply without LLM compose")
+  assert.match(outbound, /how many years have you been working|New grad is fine too/)
   assert.equal(applied.length, 1)
   assert.equal(applied[0]!.step, "ask_q_yoe")
-  assert.equal(applied[0]!.opts?.priorAskedStep, "ask_q_role")
-  assert.equal(applied[0]!.opts?.priorUserReply, body)
+  assert.deepEqual(applied[0]!.opts?.parsedAnswer?.targetRole, [
+    "fullstack",
+    "frontend",
+  ])
 })
 
 test("processInboundEvent onboarding: process questions get a clear answer without advancing state", async () => {

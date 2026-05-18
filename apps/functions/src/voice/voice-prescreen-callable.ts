@@ -63,6 +63,7 @@ export const paVoiceCallContext: HttpsFunction = onRequest(
     cors: false,
     region: "us-central1",
     memory: "256MiB",
+    maxInstances: 1,
   },
   async (req, res) => {
     if (req.method !== "POST") {

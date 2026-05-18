@@ -772,7 +772,7 @@ export const paExternalSupplyDraftOutreachPlan = onCall(
 )
 
 export const paExternalSupplyApproveOutreachPlan = onCall(
-  { region: "us-central1", memory: "256MiB", timeoutSeconds: 60 },
+  { region: "us-central1", memory: "256MiB", timeoutSeconds: 60, maxInstances: 1 },
   async (req): Promise<ApproveOutreachPlanResult> => {
     return runApproveOutreachPlan(req.data, req.auth, { db: getFirestore() })
   },
@@ -786,7 +786,7 @@ export const paExternalSupplyRejectOutreachPlan = onCall(
 )
 
 export const paExternalSupplyAssignManualLinkedInTask = onCall(
-  { region: "us-central1", memory: "256MiB", timeoutSeconds: 30 },
+  { region: "us-central1", memory: "256MiB", timeoutSeconds: 30, maxInstances: 1 },
   async (req): Promise<{ ok: true; planId: string }> => {
     return runAssignManualLinkedInTask(req.data, req.auth, { db: getFirestore() })
   },

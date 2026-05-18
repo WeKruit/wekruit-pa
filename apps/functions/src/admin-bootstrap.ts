@@ -321,10 +321,8 @@ export const SIM_PERSONA_IDS = Object.keys(SIM_PERSONAS) as SimPersonaId[]
 
 /**
  * iter32 — Canned onboarding walkthrough scripts. Each preset is a
- * sequence of user messages that exercises the deterministic onboarding
- * dispatcher end-to-end without the persona-LLM. Pair with
- * `paOnboardingDeterministicEnabled=true` so the orchestrator routes
- * through runDeterministicOnboardingTurn instead of the legacy LLM path.
+ * sequence of user messages that exercises the single onboarding dispatcher
+ * end-to-end without the persona-LLM.
  *
  * Persona is required by simulateConversation for system-prompt context
  * (used downstream once agent runtime activates) but the persona-LLM is

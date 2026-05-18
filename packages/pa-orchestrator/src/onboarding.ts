@@ -566,12 +566,10 @@ export function composeOnboardingInput(
         noChainIntents.includes(detected.intent) &&
         detected.confidence === "high"
     )
-    // iter35 P7-4 — the legacy regex parser regex bank deleted. Suspension is
-    // now governed by the GuidedOpenJudge LLM "unclear" verdict in the
-    // pipeline path. For the legacy LLM-compose path (still active behind
-    // the rollback flag), we preserve the venting branch (intent-based)
-    // but drop the word-keyword "userAnswered" gate — the LLM-compose
-    // path handles not-an-answer replies via the agent-runtime layer.
+    // iter35 P7-4 — the legacy regex parser bank was deleted. Suspension is
+    // now governed by GuidedOpenJudge's "unclear" verdict in the pipeline
+    // path; this compose helper only preserves the venting directive for
+    // older dashboard prompt previews.
     if (ventLike) {
       const lang = pickLang(ctx.userMessage)
       if (ventLike && detected) {
@@ -695,10 +693,9 @@ const STATE_ORDER: Array<OnboardingState | undefined> = [
 // applyOnboardingStep — no regex re-parse.
 //
 // Email parsers (parseEmailAnswer / detectEmailDomainTypo / parseTosAnswer /
-// parseLangAnswer / parseEmailVerificationCode) are RETAINED — they are
-// NOT subsumed by the pipeline (the legacy LLM-compose path in index.ts
-// still reads parseTosAnswer, parseEmailVerificationCode is shared utility,
-// and email regex is a structural shape check that LLM cannot improve on).
+// parseLangAnswer / parseEmailVerificationCode) are RETAINED because email,
+// ToS, and verification-code formats are structural checks, while the
+// conversational onboarding path is handled by the Q-as-class pipeline.
 // ============================================================================
 
 export type CanonicalRole =

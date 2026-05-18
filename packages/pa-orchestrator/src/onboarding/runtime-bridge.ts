@@ -5,15 +5,10 @@
  * Adam directive 2026-05-05 ("接近去啊要不然我们做他干嘛?? ... 现在状态
  * 是什么?? 为什么要说下一个回合做而不是直接做"). Bridge IS wired now.
  *
- * Function `runOnboardingPipelineTurn` is a drop-in for the legacy
- * `runDeterministicOnboardingTurn`: same input shape, same `{ handled,
- * action }` return. The CALLER (processInboundEvent) decides which to
- * dispatch based on `paOnboardingPipelineEnabled` flag.
- *
- * Safety net: any throw inside the pipeline (missing hook, judge crash,
- * Firestore tx hiccup) is logged + caught at the boundary. Caller falls
- * back to legacy automatically. This prevents flag-on users from getting
- * stuck if the new pipeline has incomplete coverage.
+ * Function `runOnboardingPipelineTurn` is the onboarding runtime used by
+ * `runDeterministicOnboardingTurn`. The caller does not flag-gate it or
+ * route to any alternate composer; pipeline failures surface as runtime
+ * failures so we do not silently send from a parallel path.
  *
  * Wiring scope (this commit):
  *   ✓ emit (sendDirect pattern: appendMessage + enqueueOutbound)
@@ -31,9 +26,15 @@
  */
 import type { AgentDef, InboundEvent } from "@pa/core-types"
 import { createHash } from "node:crypto"
-import { OnboardingPipeline, type RunTurnResult } from "./pipeline.js"
+import {
+  OnboardingPipeline,
+  emptyPipelineState,
+  type PipelineStateProvider,
+  type RunTurnResult,
+} from "./pipeline.js"
 import { defaultQuestionsV2 } from "./questions.js"
 import { FirestorePipelineStateProvider } from "./state-firestore.js"
+import { InMemoryPipelineStateProvider } from "./state-memory.js"
 import { makePostCollectHook } from "./post-collect.js"
 import type { Lang } from "./question.js"
 import { composeInterimResumeAck } from "../onboarding-deterministic.js"
@@ -72,6 +73,8 @@ export interface PipelineEmitDeps {
   getOnboardingUser?(userId: string): Promise<{
     id: string
     phoneE164: string
+    onboardingState?: string
+    pipelineState?: { currentQId?: string | null }
     statedPreferences?: { preferredLang?: "zh" | "en" | "mixed" }
     [k: string]: unknown
   } | null>
@@ -104,9 +107,90 @@ export interface RunPipelineTurnResult {
   raw?: RunTurnResult
 }
 
+function pipelineQIdFromOnboardingState(state: string | undefined | null): string | null {
+  switch (state) {
+    case "q_lang_asked":
+    case "first_mes_sent":
+      return "q_lang"
+    case "q_email_asked":
+      return "q_email"
+    case "q_email_verifying":
+      return "q_email_verify"
+    case "q_tos_asked":
+      return "q_tos"
+    case "grounding_q1_asked":
+    case "q_role_asked":
+      return "q_role"
+    case "q_yoe_asked":
+      return "q_yoe"
+    case "q_visa_asked":
+      return "q_visa"
+    case "q_startup_pref_asked":
+      return "q_startup_pref"
+    case "q_country_asked":
+      return "q_country"
+    case "q_location_asked":
+      return "q_location"
+    case "q_resume_asked":
+      return "q_resume"
+    default:
+      return null
+  }
+}
+
+function supportsFirestorePipelineState(db: unknown): boolean {
+  return (
+    typeof db === "object" &&
+    db !== null &&
+    typeof (db as { runTransaction?: unknown }).runTransaction === "function"
+  )
+}
+
+function detectInitialPipelineLang(text: string | undefined): "zh" | "en" {
+  return /[\u3400-\u9fff\uf900-\ufaff]/.test(text ?? "") ? "zh" : "en"
+}
+
+async function seedPipelineStateFromLegacy(input: {
+  state: PipelineStateProvider
+  userId: string
+  onboardingState?: string
+  preferredLang?: "zh" | "en" | "mixed"
+  userMessage?: string
+  log: PipelineLogFn
+  turnId: string
+}): Promise<void> {
+  const qId = pipelineQIdFromOnboardingState(input.onboardingState)
+  const current = await input.state.load(input.userId)
+  if (current.currentQId || current.completed || current.halted) return
+  if (!qId) {
+    const lang = input.preferredLang === "zh" || input.preferredLang === "en"
+      ? input.preferredLang
+      : detectInitialPipelineLang(input.userMessage)
+    await input.state.save(input.userId, {
+      ...emptyPipelineState(),
+      ...current,
+      lang,
+    })
+    return
+  }
+  const lang: "zh" | "en" = input.preferredLang === "zh" ? "zh" : "en"
+  const seeded = {
+    ...emptyPipelineState(),
+    ...current,
+    currentQId: qId,
+    lang,
+  }
+  await input.state.save(input.userId, seeded)
+  input.log("pa.onboarding.pipeline.seeded_from_legacy_state", {
+    userId: input.userId,
+    turnId: input.turnId,
+    onboardingState: input.onboardingState ?? null,
+    qId,
+  })
+}
+
 /**
- * The bridged onboarding turn — drop-in for runDeterministicOnboardingTurn
- * for users who have `paOnboardingPipelineEnabled=true`.
+ * The bridged onboarding turn used by the single onboarding dispatcher.
  */
 export async function runOnboardingPipelineTurn(
   input: RunPipelineTurnInput
@@ -129,9 +213,12 @@ export async function runOnboardingPipelineTurn(
   // Resolve user phone for outbound. The pipeline doesn't carry user
   // metadata so we read it once via getOnboardingUser if available.
   let phoneE164: string = event.from
+  let onboardingUser:
+    | Awaited<ReturnType<NonNullable<PipelineEmitDeps["getOnboardingUser"]>>>
+    | null = null
   if (deps.getOnboardingUser) {
-    const u = await deps.getOnboardingUser(event.userId)
-    if (u?.phoneE164) phoneE164 = u.phoneE164
+    onboardingUser = await deps.getOnboardingUser(event.userId)
+    if (onboardingUser?.phoneE164) phoneE164 = onboardingUser.phoneE164
   }
 
   // sendDirect-equivalent emit. Mirrors packages/pa-orchestrator/src/
@@ -170,16 +257,22 @@ export async function runOnboardingPipelineTurn(
     })
   }
 
-  // State lives in Firestore at pa-users/{id}.pipelineState — separate
-  // from legacy `onboardingState` so the cutover is safe-rollback.
-  const state = deps.db
+  // State lives in Firestore at pa-users/{id}.pipelineState in production.
+  // Tests and isolated harnesses without Firestore use the same pipeline
+  // with an in-memory provider; the message-generation path remains identical.
+  const state = supportsFirestorePipelineState(deps.db)
     ? new FirestorePipelineStateProvider({ db: deps.db as never })
-    : null
-  if (!state) {
-    // No db means we can't run pipeline statefully. Bail; caller falls back.
-    deps.log("pa.onboarding.pipeline.no_db_skip", { userId: event.userId, turnId })
-    throw new Error("runOnboardingPipelineTurn: db required for state persistence")
-  }
+    : new InMemoryPipelineStateProvider()
+
+  await seedPipelineStateFromLegacy({
+    state,
+    userId: event.userId,
+    onboardingState: onboardingUser?.onboardingState,
+    preferredLang: onboardingUser?.statedPreferences?.preferredLang,
+    userMessage: event.body,
+    log: deps.log,
+    turnId,
+  })
 
   // Build defaultQuestionsV2 with concrete onAccepted hooks that delegate
   // to the legacy applyOnboarding store method so existing state writes

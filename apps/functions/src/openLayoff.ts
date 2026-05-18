@@ -403,7 +403,7 @@ export async function runSubmitChatTurn(
 export const openSubmitChatTurn = onCall<{
   candidateId: string
   turn: { promptId: string; text: string; at?: string }
-}>({ region: "us-central1", cors: true }, async (req) => {
+}>({ region: "us-central1", cors: true, maxInstances: 1 }, async (req) => {
   return runSubmitChatTurn(req.data, { db: getFirestore() })
 })
 

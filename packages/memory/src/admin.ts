@@ -255,69 +255,6 @@ async function clearEntityTagsForUser(
  *
  * Never throws — wrapped in caller try/catch and logged. Skipped on dryRun.
  */
-/**
- * iter34 P3 (Adam directive 2026-05-05) — auto-add the user to the
- * `paOnboardingPipelineEnabled` flag allowlist whenever they reset.
- * "flag必须开, 只要是reset或者新用户都必须开".
- *
- * Idempotent (arrayUnion ensures no dupes). Best-effort — failures swallow
- * + log. Write directly to pa-feature-flags collection here to avoid a
- * cross-pkg dep into @pa/pa-persistence's `addUserToFlagAllowlist` (memory
- * is a leaf pkg and we keep it light).
- */
-async function autoEnableOnboardingPipelineFlag(
-  db: Firestore,
-  userId: string,
-  reason: string,
-  log: (msg: string) => void
-): Promise<{ enabled: boolean }> {
-  try {
-    const flagRef = db.collection("pa-feature-flags").doc("paOnboardingPipelineEnabled")
-    const auditRef = db.collection("pa-audit-events").doc()
-    const nowIso = new Date().toISOString()
-    await db.runTransaction(async (t) => {
-      const cur = await t.get(flagRef)
-      const action = cur.exists ? "flag.allowlist_add" : "flag.create"
-      if (cur.exists) {
-        t.update(flagRef, {
-          allowlist: FieldValue.arrayUnion(userId),
-          updatedAt: nowIso,
-          updatedBy: "auto-reset",
-          reason,
-          version: ((cur.data() as { version?: number }).version ?? 0) + 1,
-        })
-      } else {
-        t.set(flagRef, {
-          key: "paOnboardingPipelineEnabled",
-          value: false,
-          type: "bool",
-          scope: "perUser",
-          allowlist: [userId],
-          blocklist: [],
-          bucketStrategy: null,
-          updatedAt: nowIso,
-          updatedBy: "auto-reset",
-          reason,
-          version: 1,
-        })
-      }
-      t.set(auditRef, {
-        actor: "auto-reset",
-        action,
-        key: "paOnboardingPipelineEnabled",
-        userId,
-        reason,
-        ts: nowIso,
-      })
-    })
-    log(`[clear-user] paOnboardingPipelineEnabled allowlist += ${userId}`)
-    return { enabled: true }
-  } catch (err) {
-    log(`[clear-user] auto-enable flag FAILED: ${err instanceof Error ? err.message : String(err)}`)
-    return { enabled: false }
-  }
-}
-
 async function resetUserOnboardingState(
   db: Firestore,
   userId: string,
@@ -527,17 +464,6 @@ export async function clearUserMemory(
       }
     } catch (err) {
       log(`[clear-user] user-record reset FAILED: ${err instanceof Error ? err.message : String(err)}`)
-    }
-    // iter34 P3 (Adam directive 2026-05-05) — reset auto-enables
-    // paOnboardingPipelineEnabled for this user. New (Q-as-class) pipeline
-    // takes over on the next inbound. Idempotent + best-effort.
-    if (!dryRun) {
-      await autoEnableOnboardingPipelineFlag(
-        deps.db,
-        userId,
-        "auto-on-reset (Adam: flag必须开, reset或新用户都必须开)",
-        log
-      )
     }
   }
 

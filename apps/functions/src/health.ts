@@ -163,6 +163,7 @@ export function makeHealthHandler(input: HealthHandlerInput) {
       region: "us-central1",
       memory: "256MiB",
       timeoutSeconds: 30,
+      maxInstances: 1,
       cors: false,
       secrets: [...(input.boundSecrets ?? input.requiredSecrets)],
     },

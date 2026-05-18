@@ -286,6 +286,7 @@ export const paExternalSupplyMailgunWebhook = onRequest(
     region: "us-central1",
     memory: "256MiB",
     timeoutSeconds: 60,
+    maxInstances: 1,
     cors: false,
   },
   async (req, res) => {
