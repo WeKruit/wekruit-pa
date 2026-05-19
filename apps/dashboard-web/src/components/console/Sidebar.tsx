@@ -118,6 +118,7 @@ export const CONSOLE_NAV: NavSectionDef[] = [
       { to: "/agent/personas", label: "Personas" },
       { to: "/admin/handbook", label: "Handbook" },
       { to: "/admin/onboarding-questions", label: "Onboarding questions" },
+      { to: "/admin/practice-question-bank", label: "Practice questions" },
       { to: "/admin/upstream-templates", label: "Upstream templates" },
       { to: "/admin/downstream-triggers", label: "Downstream triggers" },
       { to: "/admin/canonical-tags", label: "Canonical tags" },

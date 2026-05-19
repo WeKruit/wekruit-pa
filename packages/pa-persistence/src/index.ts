@@ -219,6 +219,26 @@ export type {
   BilingualText as OnboardingBilingualText,
 } from "./onboarding-questions.js"
 
+export {
+  getPracticeQuestion,
+  listPracticeQuestions,
+} from "./practice-question-bank.js"
+export type { ListPracticeQuestionsInput } from "./practice-question-bank.js"
+
+export {
+  contentFingerprint,
+  dedupeImportCandidates,
+  mapAlgoliaQuestion,
+  mapDataCaseProblem,
+  mapObjectDesignProblem,
+  mapSystemDesignProblem,
+} from "./practice-question-bank-import.js"
+export type {
+  LegacyFirestoreDoc,
+  LegacyRecord,
+  PracticeImportCandidate,
+} from "./practice-question-bank-import.js"
+
 // Phase 25 — pa_voice_reviews helpers (P9-Voice). LOCKED schema; see
 // .planning/phases/25-voice-review-dashboard/CONTEXT.md.
 export {

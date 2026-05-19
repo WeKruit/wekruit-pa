@@ -122,6 +122,8 @@ export const PA_COLLECTIONS = {
    * score-time reads in V16 go through Admin SDK via load-companies.ts.
    */
   companies: "pa-companies",
+  /** Canonical practice interview question bank imported from legacy sources. */
+  practiceQuestionBank: "pa-practice-question-bank",
 } as const
 
 /**
