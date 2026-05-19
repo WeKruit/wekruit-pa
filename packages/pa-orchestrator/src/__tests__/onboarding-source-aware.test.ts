@@ -1,44 +1,31 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import {
-  LAYOFF_ONBOARDING_SOURCE,
-  composeOnboardingInput,
-  renderLayoffOnboardingOpener,
-} from "../onboarding.js"
+import { composeOnboardingInput, WEKRUIT_LAYOFF_SOURCE } from "../onboarding.js"
 import type { AgentDef } from "@pa/core-types"
+
+// 2026-05-19 — layoff-flavored opener bits (renderLayoffOnboardingOpener +
+// SourceAwareOnboardingContext) were deleted. Candidate SMS opener must
+// never leak source provenance. These tests assert send_first_mes stays
+// generic regardless of source.
 
 const agent = {
   id: "claire",
   name: "Claire",
-  systemPrompt: "First message: Deprecated beta language prompt.",
+  systemPrompt: "First message: Hey, Claire from WeKruit.",
   tools: [],
   memoryMode: "none" as const,
 } as unknown as AgentDef
 
-test("source-aware onboarding renders a layoff opener from the shared onboarding module", () => {
-  const opener = renderLayoffOnboardingOpener({
-    source: LAYOFF_ONBOARDING_SOURCE,
-    displayName: "Adam Yang",
-    layoffContext: { lastCompany: "Rain", jobTitle: "Software Engineer" },
+test("composeOnboardingInput never emits a layoff-flavored opener", () => {
+  const input = composeOnboardingInput("send_first_mes", agent, {
+    userMessage: "Hi",
   })
 
-  assert.equal(
-    opener,
-    "Hi Adam, Claire from WeKruit. I saw you signed up after the Rain layoff. I can help map what you want next and keep track of roles that fit. What kind of role would you like to look for now?",
-  )
+  assert.doesNotMatch(input, /send_first_mes_layoff/)
+  assert.doesNotMatch(input, /layoff/i)
+  assert.doesNotMatch(input, /WeKruit_Laid_Off/)
 })
 
-test("composeOnboardingInput uses layoff source instead of the generic cn/en first message", () => {
-  const input = composeOnboardingInput("send_first_mes", agent, {
-    userMessage: "WeKruit_LAID_OFF",
-    sourceAware: {
-      source: LAYOFF_ONBOARDING_SOURCE,
-      displayName: "Adam Yang",
-      layoffContext: { lastCompany: "Rain", jobTitle: "Software Engineer" },
-    },
-  })
-
-  assert.match(input, /send_first_mes_layoff/)
-  assert.match(input, /after the Rain layoff/)
-  assert.doesNotMatch(input, /Chinese \/ English/)
+test("source label stays canonical for DB provenance use", () => {
+  assert.equal(WEKRUIT_LAYOFF_SOURCE, "WeKruit_Laid_Off")
 })

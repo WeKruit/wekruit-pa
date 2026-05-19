@@ -271,7 +271,11 @@ test("onboarding writes a normal_onboarding workSession while advancing", async 
   })
 })
 
-test("onboarding restores layoff_onboarding session from layoff source without prescreen fields", async () => {
+test("onboarding never reuses the layoff_onboarding session kind even when source=WeKruit_Laid_Off", async () => {
+  // 2026-05-19 — layoff_onboarding workSession.kind was removed because
+  // source-driven onboarding restoration leaked the WeKruit_Laid_Off label
+  // into candidate-visible SMS surfaces. Source stays on pa-users.source as
+  // DB provenance only; the runtime always reports normal_onboarding.
   const { db, sets } = makeCapturingDb({
     "pa-users/u_layoff_session": {
       source: "WeKruit_Laid_Off",
@@ -298,7 +302,7 @@ test("onboarding restores layoff_onboarding session from layoff source without p
   assert.ok(userSet)
   const workSession = userSet!.payload.workSession as Record<string, unknown>
   assert.deepEqual(workSession, {
-    kind: "layoff_onboarding",
+    kind: "normal_onboarding",
     status: "active",
     startedAt: "2026-05-16T19:01:00.000Z",
     boundary: "onboarding",
@@ -373,7 +377,7 @@ test("onboarding completion replaces Firestore workSession map so stale prescree
   assert.ok(replacement, "applyOnboarding must replace the whole workSession map after merge")
   const workSession = replacement!.payload.workSession as Record<string, unknown>
   assert.deepEqual(workSession, {
-    kind: "layoff_onboarding",
+    kind: "normal_onboarding",
     status: "ended",
     startedAt: "2026-05-16T19:03:00.000Z",
     endedAt: "2026-05-16T19:03:00.000Z",

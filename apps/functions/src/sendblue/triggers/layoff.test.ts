@@ -42,11 +42,28 @@ function makeDeps(over: Partial<LayoffTriggerDeps> = {}) {
 }
 
 describe("LayoffTrigger.match", () => {
-  it("matches WeKruit_LAID_OFF only so the webhook can suppress the legacy path", () => {
+  it("matches every case-variant of the legacy layoff + candidate source tokens", () => {
+    // 2026-05-19 — Adam mixed-case "WeKruit_Laid_Off" bypassed the original
+    // case-sensitive guard, which let legacy onboarding restore a layoff
+    // session and leak the email Q. Match must be case-insensitive across
+    // both layoff and candidate-hi tokens so no variant escapes suppression.
     const t = new LayoffTrigger(makeDeps().deps)
     assert.equal(t.match("WeKruit_LAID_OFF"), true)
-    assert.equal(t.match("hi WeKruit_LAID_OFF"), true)
+    assert.equal(t.match("WeKruit_Laid_Off"), true)
+    assert.equal(t.match("wekruit_laid_off"), true)
+    assert.equal(t.match("hi WeKruit_LAID_OFF there"), true)
+    assert.equal(t.match("WeKruit_Laid_Off!"), true)
+    assert.equal(t.match("WeKruit_CANDIDATE_HI"), true)
+    assert.equal(t.match("wekruit_candidate_hi"), true)
+  })
+
+  it("does not match unrelated triggers or the generic Hello, WeKruit opener", () => {
+    const t = new LayoffTrigger(makeDeps().deps)
     assert.equal(t.match("WeKruit_job_user_Job"), false)
+    assert.equal(t.match("__PA_FIND_MATCH__"), false)
+    assert.equal(t.match("Hello, WeKruit!"), false)
+    assert.equal(t.match("hello wekruit"), false)
+    assert.equal(t.match("plain text from a candidate"), false)
   })
 })
 

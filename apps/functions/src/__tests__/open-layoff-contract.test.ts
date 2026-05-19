@@ -1,12 +1,15 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { WEKRUIT_LAYOFF_SOURCE, composeLayoffFirstMessage } from "@pa/pa-orchestrator"
+import { WEKRUIT_LAYOFF_SOURCE } from "@pa/pa-orchestrator"
 import { normalizeAndValidatePhone, phoneIndexId } from "../openLayoff.js"
 
 describe("open layoff contract", () => {
-  it("uses the shared orchestrator source tag and opener", () => {
+  it("uses the shared orchestrator source tag for DB provenance only", () => {
+    // 2026-05-19 — candidate-visible openers (composeLayoffFirstMessage,
+    // renderLayoffOnboardingOpener) were deleted because they leaked the
+    // "WeKruit_Laid_Off" provenance into SMS replies. The label survives
+    // only on pa-users.source for analytics + marketplace filtering.
     assert.equal(WEKRUIT_LAYOFF_SOURCE, "WeKruit_Laid_Off")
-    assert.match(composeLayoffFirstMessage({ firstName: "Ada", lastCompany: "Rain" }), /^Hey Ada, Claire from WeKruit\./)
   })
 
   it("normalizes a real test SMS number to E.164", () => {

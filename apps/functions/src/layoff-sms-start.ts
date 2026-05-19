@@ -16,8 +16,10 @@ import {
 import { hashStringToUint } from "./sendblue/pool.js"
 import { enqueueRuntimeEventHandoff } from "./runtime-event-handoff.js"
 
-export const LAYOFF_SMS_TRIGGER_TEXT = "WeKruit_LAID_OFF"
-export const CANDIDATE_SMS_TRIGGER_TEXT = "WeKruit_CANDIDATE_HI"
+// 2026-05-19 — legacy candidate-visible trigger tokens were removed. The
+// website/callable flow owns onboarding kickoff via runLayoffSmsStart →
+// shared_onboarding runtime event; any inbound token resembling the old
+// strings is suppressed at apps/functions/src/sendblue/triggers/layoff.ts.
 
 export type RunLayoffSmsStartArgs = {
   db: Firestore

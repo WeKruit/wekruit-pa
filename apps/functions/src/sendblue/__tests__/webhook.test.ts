@@ -770,6 +770,45 @@ describe("handleSendblueWebhook", () => {
     ), true)
   })
 
+  it("Test 18b (entrypoints): mixed-case + lowercase WeKruit_Laid_Off variants are suppressed and never enqueue inbound", async () => {
+    // 2026-05-19 — root cause of the email-Q live bug. Adam typed mixed-case
+    // "WeKruit_Laid_Off" in Messages; the original case-sensitive guard only
+    // matched WeKruit_LAID_OFF, so the variant fell through to the broker
+    // and the runtime asked for an email. Every legacy variant must be
+    // suppressed before any broker enqueue or runtime turn.
+    for (const variant of ["WeKruit_Laid_Off", "wekruit_laid_off", "WEKRUIT_LAID_OFF"]) {
+      const { db, inbound, audit, layoffIdempotency } = makeFakeDb()
+      const body = JSON.stringify(basePayload({
+        content: variant,
+        message_handle: `msg-entry-variant-${variant}`,
+      }))
+      const req = makeReq({ body, signature: SECRET })
+      const res = makeRes()
+      let layoffStartCalls = 0
+
+      await handleSendblueWebhook(req, res, {
+        db,
+        secret: SECRET,
+        lookupUserByPhone: async () => "u_layoff_variant",
+        runLayoffSmsStart: async () => {
+          layoffStartCalls += 1
+          return { ok: true, kickoffOutboundId: "should_not_happen", kickoffCreated: true, sourceTag: "WeKruit_Laid_Off" }
+        },
+      })
+
+      const bodyOut = res.bodyOut as Record<string, unknown>
+      assert.equal(res.statusCode, 200, `variant=${variant}`)
+      assert.equal(bodyOut.action, "layoff_unauthorized", `variant=${variant}`)
+      assert.equal(inbound.size, 0, `variant=${variant} must not enter broker enqueue`)
+      assert.equal(layoffStartCalls, 0, `variant=${variant} must not start layoff path`)
+      assert.equal(layoffIdempotency.has("u_layoff_variant"), false)
+      assert.equal(audit.some((row) =>
+        row.type === "trigger_unauthorized" &&
+        row.reason === "manual_layoff_trigger_disabled"
+      ), true, `variant=${variant} must audit manual_layoff_trigger_disabled`)
+    }
+  })
+
   it("Test 19 (entrypoints): normal START from a random candidate stays on the regular onboarding path when no pending invite exists", async () => {
     const { db, inbound } = makeFakeDb()
     let prescreenCalls = 0

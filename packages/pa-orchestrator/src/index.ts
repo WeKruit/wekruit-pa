@@ -95,11 +95,6 @@ import {
   type OnboardingStep,
 } from "./onboarding.js"
 export {
-  LAYOFF_ONBOARDING_SOURCE,
-  renderLayoffOnboardingOpener,
-} from "./onboarding.js"
-export type { SourceAwareOnboardingContext } from "./onboarding.js"
-export {
   SHARED_ONBOARDING_BOUNDARY,
   SHARED_ONBOARDING_EVENT_KIND,
   SHARED_ONBOARDING_EVENT_SOURCE,
@@ -4593,7 +4588,6 @@ export {
   WEKRUIT_LAYOFF_SOURCE,
   WEKRUIT_CANDIDATE_SOURCE,
   isWekruitSignupSource,
-  composeLayoffFirstMessage,
   type WekruitSignupSource,
 } from "./onboarding.js"
 // v1.9 P85 — top-level re-exports for OnboardingPipeline state types used

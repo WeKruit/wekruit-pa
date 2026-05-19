@@ -80,29 +80,11 @@ export type ResolveOpts = {
   enableTosGate?: boolean
 }
 
-export const LAYOFF_ONBOARDING_SOURCE = "WeKruit_Laid_Off"
-
-export type SourceAwareOnboardingContext = {
-  source?: string | null
-  displayName?: string | null
-  layoffContext?: {
-    lastCompany?: string | null
-    jobTitle?: string | null
-    location?: string | null
-  } | null
-}
-
-function firstNameFromDisplayName(displayName: string | null | undefined): string {
-  const first = displayName?.trim().split(/\s+/)[0]
-  return first && first.length > 0 ? first : "there"
-}
-
-export function renderLayoffOnboardingOpener(ctx: SourceAwareOnboardingContext): string {
-  const first = firstNameFromDisplayName(ctx.displayName)
-  const company = ctx.layoffContext?.lastCompany?.trim()
-  const situation = company ? `after the ${company} layoff` : "after a layoff"
-  return `Hi ${first}, Claire from WeKruit. I saw you signed up ${situation}. I can help map what you want next and keep track of roles that fit. What kind of role would you like to look for now?`
-}
+// Layoff-specific opener composers were deleted 2026-05-19. Candidate-visible
+// SMS surfaces must never reveal source provenance (see CLAUDE.md v2.0 lock
+// "Candidate flow never returns to the admin domain" + "Hello, WeKruit!"
+// generic opener directive). The runtime shared_onboarding path owns the
+// first message; layoff vs candidate is a DB-side `source` label only.
 
 /**
  * Pure function: derive the next onboarding action from user state.
@@ -267,26 +249,21 @@ export function isWekruitSignupSource(value: unknown): value is WekruitSignupSou
   return value === WEKRUIT_LAYOFF_SOURCE || value === WEKRUIT_CANDIDATE_SOURCE
 }
 
-type OnboardingSessionKind = "normal_onboarding" | "layoff_onboarding"
+type OnboardingSessionKind = "normal_onboarding"
 
 type OnboardingUserContext = Pick<User, "id" | "phoneE164" | "onboardingState"> & {
   source?: string | null
   workSession?: Record<string, unknown> | null
 }
 
-function onboardingSessionKind(user: OnboardingUserContext): OnboardingSessionKind {
-  if (user.source === WEKRUIT_LAYOFF_SOURCE) return "layoff_onboarding"
-  const current = user.workSession
-  if (current?.kind === "layoff_onboarding") return "layoff_onboarding"
-  return "normal_onboarding"
-}
+const LEGACY_ONBOARDING_SESSION_KIND: OnboardingSessionKind = "normal_onboarding"
 
 function onboardingWorkSession(
   user: OnboardingUserContext,
   nextState: OnboardingState,
   now: string
 ): Record<string, unknown> {
-  const kind = onboardingSessionKind(user)
+  const kind = LEGACY_ONBOARDING_SESSION_KIND
   const current = user.workSession
   const startedAt =
     current?.kind === kind && typeof current.startedAt === "string" ? current.startedAt : now
@@ -309,16 +286,6 @@ function onboardingWorkSession(
     boundary: "onboarding",
     currentState: nextState,
   }
-}
-
-export function composeLayoffFirstMessage(input: {
-  firstName?: string | null
-  lastCompany?: string | null
-} = {}): string {
-  const first = input.firstName?.trim() || "there"
-  const company = input.lastCompany?.trim() || "your last company"
-  const layoffPhrase = company === "your last company" ? "a layoff" : `the ${company} layoff`
-  return `Hey ${first}, Claire from WeKruit. I saw you signed up after ${layoffPhrase}. I can help you sort out what you want next — got a minute?`
 }
 
 /**
@@ -360,14 +327,9 @@ export function composeOnboardingInput(
      * assert the suspended branch directly with a synthetic step).
      */
     priorAskedStep?: OnboardingStep
-    sourceAware?: SourceAwareOnboardingContext
   } = {}
 ): string {
   if (step === "send_first_mes") {
-    if (ctx.sourceAware?.source === LAYOFF_ONBOARDING_SOURCE) {
-      const opener = renderLayoffOnboardingOpener(ctx.sourceAware)
-      return `[onboarding_step: send_first_mes_layoff | source=${LAYOFF_ONBOARDING_SOURCE}] Reply EXACTLY with this layoff-aware Claire first message: "${opener}". No emoji. No extra sentence.`
-    }
     const match = agent.systemPrompt.match(/[Ff]irst\s+message:\s*(.+?)(?:\n|$)/)
     // iter30 closure — bilingual fallback per user lang. Adam directive
     // 2026-05-04 ("这个柠檬哪里来的? 你没测试英文吗???"): the lemon emoji
