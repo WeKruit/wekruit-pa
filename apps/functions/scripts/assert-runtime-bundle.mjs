@@ -18,8 +18,13 @@ const required = [
   // must not bypass the shared runtime session gate.
   "const sharedRuntimeSession = isSharedOnboardingActiveUser(onboardingUser);",
   "const onboardingIncomplete = Boolean(userAuthoredEvent && onboardingUser && onboardingUser.onboardingState !== \"complete\" && !sharedRuntimeSession)",
-  "if (userAuthoredEvent && await handleLegacySmsOnboardingBlocked(event, store, turnId, onboardingUser, sharedRuntimeSession))",
-  "directIntentResult: \"legacy_sms_onboarding_blocked\"",
+  // 2026-05-19 — onboarding refactored from `handleLegacySmsOnboardingBlocked`
+  // + `directIntentResult: legacy_sms_onboarding_blocked` to the unified
+  // shared-onboarding runtime path (commits ee9f3d7 / 0a388a5 / cb0cbc4).
+  // Track the new entry points so the gate still proves the runtime-event +
+  // shared-onboarding dispatch survive bundling.
+  "if (await handleSharedOnboardingRuntimeEvent(event, store, turnId, onboardingUser)",
+  "directIntent: \"shared_onboarding\"",
 ]
 
 const missing = required.filter((needle) => !bundle.includes(needle))
