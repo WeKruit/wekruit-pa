@@ -45,7 +45,7 @@ const MODES: PracticeConversationMode[] = [
 const DIFFICULTIES: PracticeQuestionDifficulty[] = ["easy", "medium", "hard"]
 
 type FilterValue<T extends string> = "all" | T
-type SourceFilter = "all" | "firestore" | "algolia" | "manual"
+type SourceFilter = "all" | "firestore" | "algolia" | "research" | "manual"
 
 interface Filters {
   status: FilterValue<PracticeQuestionStatus>
@@ -118,6 +118,7 @@ function joinLines(value: string[] | undefined): string {
 function sourceKind(item: PracticeQuestionBankItem): SourceFilter {
   if (item.sourceRefs.some((ref) => ref.startsWith("firestore:"))) return "firestore"
   if (item.sourceRefs.some((ref) => ref.startsWith("algolia:"))) return "algolia"
+  if (item.sourceRefs.some((ref) => ref.startsWith("web-research:"))) return "research"
   if (item.sourceRefs.some((ref) => ref.startsWith("manual:"))) return "manual"
   return "manual"
 }
@@ -485,6 +486,7 @@ export function PracticeQuestionBank() {
               <option value="all">all</option>
               <option value="firestore">firestore</option>
               <option value="algolia">algolia</option>
+              <option value="research">research</option>
               <option value="manual">manual</option>
             </select>
           </label>

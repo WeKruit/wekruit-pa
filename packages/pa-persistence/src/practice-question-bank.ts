@@ -17,6 +17,7 @@ export interface ListPracticeQuestionsInput {
 }
 
 const COLLECTION = PA_COLLECTIONS.practiceQuestionBank
+const CLIENT_FILTER_SCAN_LIMIT = 1000
 
 function parseQuestion(data: unknown): PracticeQuestionBankItem | null {
   const parsed = PracticeQuestionBankItemSchema.safeParse(data)
@@ -45,7 +46,9 @@ export async function listPracticeQuestions(
     .collection(COLLECTION)
     .where("status", "==", input.status ?? "active")
   if (input.kind) q = q.where("kind", "==", input.kind)
-  const snap = await q.limit(boundedLimit(input.limit)).get()
+  const outputLimit = boundedLimit(input.limit)
+  const needsClientFilter = Boolean(input.conversationMode || (input.tags && input.tags.length > 0))
+  const snap = await q.limit(needsClientFilter ? CLIENT_FILTER_SCAN_LIMIT : outputLimit).get()
   let rows = snap.docs
     .map((doc) => parseQuestion(doc.data()))
     .filter((row): row is PracticeQuestionBankItem => row !== null)
@@ -61,6 +64,5 @@ export async function listPracticeQuestions(
       ),
     )
   }
-  return rows
+  return rows.slice(0, outputLimit)
 }
-
