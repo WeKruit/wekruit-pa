@@ -43,16 +43,14 @@ const queryClient = new QueryClient({
   },
 })
 
-// Layoff host is a standalone three-surface product (Adam directive
-// 2026-05-18): only / (LayoffLanding), /onboarding (candidate intake),
-// /employer (employer signup → Mailgun → admin). Any other path collapses
-// to /. Other hosts (candidate.wekruit.com, pa.wekruit.com, default
-// .web.app) keep the full SPA route set.
+// Layoff host is a standalone two-page product for launch: / (LayoffLanding)
+// and /onboarding (candidate intake). Any other path collapses to /. Other
+// hosts (candidate.wekruit.com, pa.wekruit.com, default .web.app) keep the
+// full SPA route set.
 const layoffRoutes = (
   <Routes>
     <Route path="/" element={<HomeLanding />} />
     <Route path="/onboarding" element={<Onboarding />} />
-    <Route path="/employer" element={<EmployerSignup />} />
     <Route path="*" element={<Navigate to="/" replace />} />
   </Routes>
 )
