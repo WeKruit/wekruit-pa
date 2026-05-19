@@ -1346,14 +1346,16 @@ describe("paMessageCoalescer — case 13: continuation-marker bumps delay regard
 async function setupAndProcess(
   configure: (deps: CoalescerDeps) => void,
   msgHandle = "msg-last",
-  body = "hi"
+  body = "hi",
+  seed?: (db: ReturnType<typeof makeFakeDb>) => Promise<void> | void
 ): Promise<{
   reactionCalls: Array<{ messageHandle: string; reaction: string }>
   status: string
 }> {
   const t0 = new Date("2026-05-05T12:00:00Z")
   const reactionCalls: Array<{ messageHandle: string; reaction: string }> = []
-  const { deps } = buildDeps({ now: () => t0, reactionCalls })
+  const { deps, db } = buildDeps({ now: () => t0, reactionCalls })
+  await seed?.(db)
   configure(deps)
   await enqueueOrCoalesce(deps, {
     ...BASE_MSG,
@@ -1501,6 +1503,32 @@ describe("iter33 Bug 9: love-tapback rate gate", () => {
     )
     assert.equal(status, "fired")
     assert.equal(reactionCalls.length, 0, "QA/job-search canaries must not receive a love tapback")
+  })
+
+  it("active shared onboarding skips tapback under default reaction rate when rng would fire", async () => {
+    const { reactionCalls, status } = await setupAndProcess(
+      (deps) => {
+        deps.rng = () => 0.0
+      },
+      "msg-shared-onboarding",
+      "Scale-up or early startup is best: high ownership and strong engineering culture.",
+      async (db) => {
+        await db.collection("pa-users").doc(BASE_MSG.userId).set({
+          workSession: {
+            kind: "shared_onboarding",
+            status: "active",
+            currentQuestionId: "culture_stage",
+          },
+          sharedOnboarding: {
+            status: "active",
+            completed: false,
+            currentQuestionId: "culture_stage",
+          },
+        })
+      }
+    )
+    assert.equal(status, "fired")
+    assert.equal(reactionCalls.length, 0, "shared onboarding answers must not receive a love tapback")
   })
 
   it("100 trials at p=0.35 → fires within [25%, 45%] band", async () => {

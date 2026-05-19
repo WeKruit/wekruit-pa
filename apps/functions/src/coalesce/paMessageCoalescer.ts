@@ -57,6 +57,9 @@ import {
 import type { TasksClient } from "./tasks-client.js"
 import type { SendReactionInput } from "../sendblue/send-reaction.js"
 
+const DEFAULT_LOVE_TAPBACK_PROBABILITY = 0.40
+const MAX_LOVE_TAPBACK_PROBABILITY = 0.40
+
 export type CoalescerDeps = {
   db: Firestore
   tasks: TasksClient
@@ -74,7 +77,8 @@ export type CoalescerDeps = {
   /**
    * iter33 Bug 9 fix 2026-05-05 (Adam: "we dont need to like all the
    * message, give it a randomized 30-40% percentage"). Probability that
-   * the per-turn ❤️ tapback fires. Injected for tests; default 0.35.
+   * the per-turn ❤️ tapback fires. Injected for tests; default 0.40 and
+   * clamped so no caller can make reactions fire on every message.
    */
   loveTapbackProbability?: number
   /** Inject for tests. Default Math.random. */
@@ -262,6 +266,45 @@ async function resolveOrCreateImessageSession(
   return sessionId
 }
 
+async function getLoveTapbackSuppressionReason(
+  deps: CoalescerDeps,
+  userId: string,
+  log: (...args: unknown[]) => void
+): Promise<string | null> {
+  try {
+    const snap = await deps.db.collection(PA_COLLECTIONS.users).doc(userId).get()
+    if (!snap.exists) return null
+
+    const data = snap.data() as {
+      workSession?: { kind?: string; status?: string; currentQuestionId?: string | null }
+      sharedOnboarding?: {
+        status?: string
+        completed?: boolean
+        currentQuestionId?: string | null
+      }
+    } | undefined
+    if (data?.sharedOnboarding?.completed === true) return null
+
+    const workSession = data?.workSession
+    const sharedOnboarding = data?.sharedOnboarding
+    const hasSharedQuestion =
+      typeof sharedOnboarding?.currentQuestionId === "string" ||
+      typeof workSession?.currentQuestionId === "string"
+    const activeSharedOnboarding =
+      sharedOnboarding?.status === "active" ||
+      (workSession?.kind === "shared_onboarding" && workSession.status === "active") ||
+      (workSession?.kind === "shared_onboarding" && hasSharedQuestion)
+
+    return activeSharedOnboarding ? "shared_onboarding" : null
+  } catch (err) {
+    log("[coalesce] tap-back suppression read FAILED; suppressing tap-back", {
+      userId,
+      err: err instanceof Error ? err.message : String(err),
+    })
+    return "state_read_failed"
+  }
+}
+
 async function markSyntheticInboundCompleted(
   deps: CoalescerDeps,
   eventId: string,
@@ -442,7 +485,9 @@ export async function processCoalescedTurn(
   // 1. Tap-back ❤️ to lastMessageId — Adam directive: anchor reply to LAST
   //    received message, not first. Failure is non-fatal (R5: send-reaction
   //    has its own breaker; 4xx on expired handle is expected for very-old
-  //    messages but doesn't matter for the ~4s coalesce window).
+  //    messages but doesn't matter for the ~4s coalesce window). Shared
+  //    onboarding is a structured capture flow, so a tapback there reads as
+  //    product noise rather than conversational warmth.
   //
   //    iter33 Bug 9 fix 2026-05-05 — Adam ("we dont need to like all the
   //    message, give it a randomized 30-40% percentage is good"). Old
@@ -452,12 +497,17 @@ export async function processCoalescedTurn(
   //    via deps.loveTapbackProbability. Skip-decision now logs the raw
   //    rng roll so prod-log inspection can distinguish "gate skipped"
   //    from "transport down".
-  const loveProbability = typeof deps.loveTapbackProbability === "number"
-    ? Math.max(0, Math.min(1, deps.loveTapbackProbability))
-    : 0.40
+  const configuredLoveProbability = typeof deps.loveTapbackProbability === "number"
+    ? deps.loveTapbackProbability
+    : DEFAULT_LOVE_TAPBACK_PROBABILITY
+  const loveProbability = Math.max(
+    0,
+    Math.min(MAX_LOVE_TAPBACK_PROBABILITY, configuredLoveProbability)
+  )
   const rng = deps.rng ?? Math.random
   const rngRoll = rng()
-  const loveEligible = isLoveTapbackEligible(fired.accumulatedBody)
+  const tapbackSuppressionReason = await getLoveTapbackSuppressionReason(deps, userId, log)
+  const loveEligible = !tapbackSuppressionReason && isLoveTapbackEligible(fired.accumulatedBody)
   const shouldLove = loveEligible && rngRoll < loveProbability
   if (deps.sendReaction && fired.lastMessageId && shouldLove) {
     try {
@@ -481,13 +531,13 @@ export async function processCoalescedTurn(
       })
     }
   } else if (deps.sendReaction && fired.lastMessageId) {
-    log("[coalesce] tap-back SKIPPED (rng gate)", {
+    log("[coalesce] tap-back SKIPPED", {
       userId,
       turnSeq,
       lastMessageId: fired.lastMessageId,
       probability: loveProbability,
       rngRoll: rngRoll.toFixed(4),
-      reason: loveEligible ? "rng_gate" : "ineligible_body",
+      reason: tapbackSuppressionReason ?? (loveEligible ? "rng_gate" : "ineligible_body"),
     })
   }
 

@@ -33,6 +33,7 @@ import { createHash, randomUUID } from "node:crypto"
 // Phase 21 Sendblue migration
 import { handleSendblueWebhook } from "./sendblue/webhook.js"
 import { paSendblueOutboxHandler } from "./sendblue/outbox.js"
+import { sendTypingIndicator as defaultSendTypingIndicator } from "./sendblue/typing-indicator.js"
 import { sendReaction as defaultSendReaction } from "./sendblue/send-reaction.js"
 import { decidePreClaireTurnOwner } from "./lib/pre-claire-turn-owner.js"
 import { enqueueRuntimeEventHandoff } from "./runtime-event-handoff.js"
@@ -1538,6 +1539,7 @@ function buildSendblueWebhookDeps() {
     db: getFirestore(),
     secret: SENDBLUE_WEBHOOK_SIGNING_SECRET.value(),
     log: (...args: unknown[]) => logger.info("[sendblue][webhook]", ...args),
+    sendTypingIndicator: defaultSendTypingIndicator,
     enqueueOrCoalesce: coalescerDeps ? defaultEnqueueOrCoalesce : undefined,
     coalescerDeps,
     processBrokerImessageFallback,

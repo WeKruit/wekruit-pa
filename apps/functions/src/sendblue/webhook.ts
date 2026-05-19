@@ -110,6 +110,8 @@ export type FindMatchTriggerResult = {
 export type WebhookDeps = {
   db: Firestore
   secret: string
+  /** Best-effort bot typing hint for accepted inbound messages. */
+  sendTypingIndicator?: (input: { to: string }) => Promise<void>
   /** Inject for tests; defaults to @pa/pa-broker createInboundEvent. */
   createInboundEvent?: typeof createInboundEvent
   /** Inject for tests; defaults to recordAuditEvent. */
@@ -177,6 +179,30 @@ export type WebhookDeps = {
 
 function reply(res: WebhookResponse, status: number, body: unknown): void {
   res.status(status).json(body)
+}
+
+function isBotTypingHintEnabled(): boolean {
+  return process.env.PA_TYPING_INDICATOR !== "0"
+}
+
+async function sendAcceptedInboundTypingHint(
+  deps: WebhookDeps,
+  input: { to: string; correlationId?: string },
+  log: (...args: unknown[]) => void,
+): Promise<void> {
+  if (!deps.sendTypingIndicator || !isBotTypingHintEnabled()) return
+  try {
+    await deps.sendTypingIndicator({ to: input.to })
+    log("[sendblue][webhook] bot_typing_hint_sent", {
+      toNumber: input.to,
+      correlationId: input.correlationId,
+    })
+  } catch (err) {
+    log(
+      "[sendblue][webhook] bot_typing_hint_failed (non-fatal)",
+      err instanceof Error ? err.message : String(err),
+    )
+  }
 }
 
 function safeAudit(
@@ -639,6 +665,12 @@ export async function handleSendblueWebhook(
       return
     }
   }
+
+  await sendAcceptedInboundTypingHint(
+    deps,
+    { to: normalized.fromNumber, correlationId: normalized.messageHandle },
+    log,
+  )
 
   // ---- 3e0. v1.9 G2 — ATS pending-trigger virtualization --------------
   //

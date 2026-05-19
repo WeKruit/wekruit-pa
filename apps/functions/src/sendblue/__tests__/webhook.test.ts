@@ -222,6 +222,7 @@ const ENV_KEYS = [
   "IMESSAGE_PEERS",
   "IMESSAGE_PEER",
   "IMESSAGE_DEFAULT_PEER",
+  "PA_TYPING_INDICATOR",
 ] as const
 
 let savedEnv: Record<string, string | undefined>
@@ -279,11 +280,19 @@ describe("handleSendblueWebhook", () => {
     const body = JSON.stringify(basePayload())
     const req = makeReq({ body, signature: SECRET })
     const res = makeRes()
+    const typingCalls: string[] = []
 
-    await handleSendblueWebhook(req, res, { db, secret: SECRET })
+    await handleSendblueWebhook(req, res, {
+      db,
+      secret: SECRET,
+      sendTypingIndicator: async ({ to }) => {
+        typingCalls.push(to)
+      },
+    })
 
     assert.equal(res.statusCode, 200)
     assert.equal(inbound.size, 0)
+    assert.deepEqual(typingCalls, [], "rejected/blocked inbound must not show bot typing")
     assert.equal(audit.length, 1)
     assert.equal(audit[0]!.type, "allowlist_deny")
     assert.equal(audit[0]!.channel, "imessage_sendblue")
@@ -295,16 +304,95 @@ describe("handleSendblueWebhook", () => {
     const body = JSON.stringify(basePayload())
     const req = makeReq({ body, signature: SECRET })
     const res = makeRes()
+    const typingCalls: string[] = []
 
-    await handleSendblueWebhook(req, res, { db, secret: SECRET })
+    await handleSendblueWebhook(req, res, {
+      db,
+      secret: SECRET,
+      sendTypingIndicator: async ({ to }) => {
+        typingCalls.push(to)
+      },
+    })
 
     assert.equal(res.statusCode, 200)
+    assert.deepEqual(typingCalls, ["+15551234567"])
     assert.equal(inbound.size, 1)
     const [doc] = [...inbound.values()]
     assert.ok(doc)
     assert.equal(doc!.idempotencyKey, "sendblue-msg-abc-123")
     assert.equal(doc!.channel, "imessage")
     assert.equal(doc!.status, "pending")
+  })
+
+  it("Test 3b: accepted inbound bot typing hint runs before broker enqueue and honors PA_TYPING_INDICATOR=0", async () => {
+    const { db } = makeFakeDb()
+    const body = JSON.stringify(basePayload())
+    const req = makeReq({ body, signature: SECRET })
+    const res = makeRes()
+    const order: string[] = []
+
+    await handleSendblueWebhook(req, res, {
+      db,
+      secret: SECRET,
+      sendTypingIndicator: async ({ to }) => {
+        order.push(`typing:${to}`)
+      },
+      createInboundEvent: async (_db, input) => {
+        order.push(`broker:${input.idempotencyKey}`)
+        const now = new Date().toISOString()
+        return {
+          id: "inb_order_test",
+          created: true,
+          event: {
+            id: "inb_order_test",
+            channel: "imessage",
+            status: "pending",
+            idempotencyKey: input.idempotencyKey,
+            rawPayload: input.rawPayload,
+            createdAt: now,
+            attemptCount: 0,
+            maxAttempts: 8,
+            correlationId: "corr-order-test",
+          },
+        }
+      },
+    })
+
+    assert.equal(res.statusCode, 200)
+    assert.deepEqual(order, ["typing:+15551234567", "broker:sendblue-msg-abc-123"])
+
+    process.env.PA_TYPING_INDICATOR = "0"
+    const disabledRes = makeRes()
+    const disabledOrder: string[] = []
+    await handleSendblueWebhook(makeReq({ body, signature: SECRET }), disabledRes, {
+      db,
+      secret: SECRET,
+      sendTypingIndicator: async ({ to }) => {
+        disabledOrder.push(`typing:${to}`)
+      },
+      createInboundEvent: async (_db, input) => {
+        disabledOrder.push(`broker:${input.idempotencyKey}`)
+        const now = new Date().toISOString()
+        return {
+          id: "inb_order_test_disabled",
+          created: true,
+          event: {
+            id: "inb_order_test_disabled",
+            channel: "imessage",
+            status: "pending",
+            idempotencyKey: input.idempotencyKey,
+            rawPayload: input.rawPayload,
+            createdAt: now,
+            attemptCount: 0,
+            maxAttempts: 8,
+            correlationId: "corr-order-test-disabled",
+          },
+        }
+      },
+    })
+
+    assert.equal(disabledRes.statusCode, 200)
+    assert.deepEqual(disabledOrder, ["broker:sendblue-msg-abc-123"])
   })
 
   it("Test 4: same message_handle posted twice → exactly ONE inbound row (broker idempotency)", async () => {
