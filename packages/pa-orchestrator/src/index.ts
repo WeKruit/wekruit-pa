@@ -1295,8 +1295,15 @@ function isExplicitJobSearchRequest(text: string | undefined | null): boolean {
 function requestedJobRecCount(text: string | undefined | null): number | undefined {
   const body = (text ?? "").trim()
   if (!body) return undefined
-  if (/\b(?:3|three)\b/i.test(body) || /(?:三个|三份|三条|3个|3份|3条)/.test(body)) {
+  const jobNoun = String.raw`(?:jobs?|roles?|positions?|opportunities|openings|listings|matches|swe|software\s+engineering|software\s+engineer)`
+  if (new RegExp(String.raw`\b(?:3|three)\b[^.!?]{0,60}\b${jobNoun}\b`, "i").test(body) || /(?:三个|三份|三条|3个|3份|3条)/.test(body)) {
     return 3
+  }
+  if (new RegExp(String.raw`\b(?:2|two)\b[^.!?]{0,60}\b${jobNoun}\b`, "i").test(body) || /(?:两个|两份|两条|二个|二份|二条|2个|2份|2条)/.test(body)) {
+    return 2
+  }
+  if (new RegExp(String.raw`\b(?:1|one)\b[^.!?]{0,60}\b${jobNoun}\b`, "i").test(body) || /(?:一个|一份|一条|1个|1份|1条)/.test(body)) {
+    return 1
   }
   return undefined
 }
@@ -1564,7 +1571,10 @@ async function handleCompletedUserJobSearchRequest(
   turnId: string,
   onboardingUser: Awaited<ReturnType<OrchestratorStore["getOnboardingUser"]>>
 ): Promise<boolean> {
-  if (onboardingUser?.onboardingState !== "complete") return false
+  const layoffRuntimeSession =
+    onboardingUser?.source === "WeKruit_Laid_Off" &&
+    onboardingUser.onboardingState !== "complete"
+  if (onboardingUser?.onboardingState !== "complete" && !layoffRuntimeSession) return false
   if (!store.generateJobRecs) return false
   if (isJobRecommendationExplanationRequest(event.body)) return false
   if (!isExplicitJobSearchRequest(event.body)) return false
