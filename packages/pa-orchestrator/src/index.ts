@@ -4432,3 +4432,26 @@ export {
 // by apps/functions pii-confirm-start.ts.
 export { OnboardingPipeline } from "./onboarding/pipeline.js"
 export type { PipelineState, PipelineStateProvider, RunTurnInput as OnboardingRunTurnInput, RunTurnResult as OnboardingRunTurnResult } from "./onboarding/pipeline.js"
+
+// 2026-05-18 — chat → tag + memory extractor. Drives the canonical-retention
+// flywheel: post-onboarding free-form chat → pa-users.tags + Qdrant
+// pa_memory_entities. See .planning/GOAL-chat-tag-memory-extraction.md.
+export {
+  shouldRunExtractor,
+  runExtraction,
+  buildExtractorPrompt,
+  ConversationExtractResultSchema,
+  MIN_CONFIDENCE as CONVERSATION_EXTRACTOR_MIN_CONFIDENCE,
+  VISA_STATUS_VOCAB,
+  type ExtractorTriggerState,
+  type ExtractorTriggerKind,
+  type ExtractorTriggerDecision,
+  type ConversationExtractMessage,
+  type ConversationExtractRequest,
+  type ConversationExtractResult,
+  type ConversationExtractorDeps,
+  type ExtractionLlmCall,
+  type MemoryEntity,
+  type RunExtractionOutcome,
+  type VisaStatus,
+} from "./conversation-extractor.js"

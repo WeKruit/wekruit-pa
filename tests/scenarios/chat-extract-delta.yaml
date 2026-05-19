@@ -1,0 +1,84 @@
+id: chat_extract_delta_2026_05_18
+description: |
+  2026-05-18 — conversation-extractor (chat → tag + memory) regression scenario.
+
+  Validates the v2.0 candidate-retention-marketplace gap closure: post-onboarding
+  free-form chat must mirror canonical preference deltas into
+  `pa-users.{uid}.tags` (drives match) AND Qdrant `pa_memory_entities`
+  (drives Claire context recall).
+
+  Goal contract: .planning/GOAL-chat-tag-memory-extraction.md (Done criteria 4-5).
+
+  Run:
+    PA_RUN_EVAL=1 PA_OPENAI_AGENT_API_KEY=... \
+      QDRANT_URL=... QDRANT_API_KEY=... \
+      GOOGLE_APPLICATION_CREDENTIALS=... \
+      node tests/scenarios/runner.mjs tests/scenarios/chat-extract-delta.yaml
+
+  Pre-conditions:
+    - User has completed onboarding (onboardingState=complete)
+    - `pa-users.{uid}.tags.industrySector` does NOT include
+      "financial_technology" at scenario start (deltas-only contract)
+    - PA_CHAT_EXTRACTOR_ENABLED=true (feature flag — defaults off until
+      turn-handler wire-up ships)
+
+  Post-conditions (asserted in tests/scenarios/runner.mjs):
+    - `pa-users.{uid}.tags.industrySector` INCLUDES "financial_technology"
+    - Qdrant `pa_memory_entities` has a new point with payload
+      `{user_id: uid, entity_kind: "industry_preference", value: "financial_technology"}`
+    - `pa-users.{uid}.extractionState.lastExtractedAt` is non-null
+    - `pa-cost-ledger` has at least one row with `api=openai` for this userId
+testMode: true
+locale: en-US
+agentId: default
+participant: "+19999990118"
+chatId: "iMessage;+19999990118"
+turnTimeoutMs: 120000
+# Seed the user as fully-onboarded with NO industrySector. The extractor
+# trigger fires on the 10-turn floor (see `shouldRunExtractor`).
+seedUser:
+  onboardingState: complete
+  source: dev_test
+  tags:
+    schemaVersion: 1
+    targetRoleFunction: ["software_engineering"]
+    targetLocations: ["san_francisco_bay_area"]
+    visaStatus: citizen
+    careerStage: ic_engineer_l4
+    targetJobType: ["full_time"]
+    industrySector: []  # extractor must add `financial_technology` here
+turns:
+  # ---- Turn 1-9: warmup; extractor does NOT fire (turn count < 10) ----
+  - user: "hey"
+    assert: { reply_min_length: 2 }
+  - user: "just thinking about my next job"
+    assert: { reply_min_length: 2 }
+  - user: "still figuring out the direction"
+    assert: { reply_min_length: 2 }
+  - user: "nothing too crazy"
+    assert: { reply_min_length: 2 }
+  - user: "yeah"
+    assert: { reply_min_length: 2 }
+  - user: "ok"
+    assert: { reply_min_length: 2 }
+  - user: "cool"
+    assert: { reply_min_length: 2 }
+  - user: "sure"
+    assert: { reply_min_length: 2 }
+  - user: "yep"
+    assert: { reply_min_length: 2 }
+  # ---- Turn 10: the signal-bearing message — extractor fires post-turn ----
+  - user: "I think I actually want to focus on fintech roles"
+    assert:
+      reply_min_length: 4
+  # ---- Turn 11: post-extraction state check (next turn for the runner to assert) ----
+  - user: "what do you think?"
+    assert:
+      # Runner reads pa-users.{uid}.tags AFTER this turn settles.
+      post_user_tags_includes:
+        path: "industrySector"
+        value: "financial_technology"
+      post_qdrant_memory_entities_includes:
+        entity_kind: "industry_preference"
+        value: "financial_technology"
+      post_extraction_state_non_null: true
