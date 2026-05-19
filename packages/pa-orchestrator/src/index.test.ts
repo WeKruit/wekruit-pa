@@ -791,7 +791,7 @@ test("processInboundEvent onboarding: incomplete onboarding owns reply before li
       id: "u1",
       phoneE164: "+13125550123",
       onboardingState: "q_role_asked",
-      source: "WeKruit_Laid_Off",
+      source: "candidate",
     }),
     getRecentLifecycleEventForReply: async () => ({
       eventId: "lifecycle_1",
@@ -846,7 +846,7 @@ test("processInboundEvent onboarding: process questions get a clear answer witho
       id: "u1",
       phoneE164: "+13125550123",
       onboardingState: "q_role_asked",
-      source: "WeKruit_Laid_Off",
+      source: "candidate",
     }),
     getRecentLifecycleEventForReply: async () => ({
       eventId: "lifecycle_1",
@@ -879,6 +879,46 @@ test("processInboundEvent onboarding: process questions get a clear answer witho
   assert.match(outbound, /this is WeKruit/)
   assert.match(outbound, /hiring manager/)
   assert.match(outbound, /what kinds of roles/)
+})
+
+test("processInboundEvent layoff: incomplete layoff users bypass deterministic onboarding", async () => {
+  let llmCalls = 0
+  let applyCalls = 0
+  let outbound = ""
+  const turnUpdates: Array<Record<string, unknown>> = []
+  const store = makeStore({
+    getOnboardingUser: async () => ({
+      id: "u1",
+      phoneE164: "+13125550123",
+      onboardingState: "pending",
+      source: "WeKruit_Laid_Off",
+    }),
+    getRecentLifecycleEventForReply: async () => null,
+    runAgentTurn: async () => {
+      llmCalls++
+      return { text: "Runtime follow-up about roles and location." }
+    },
+    enqueueOutbound: async (_u, _t, text) => {
+      outbound = text
+    },
+    applyOnboarding: async () => {
+      applyCalls++
+    },
+    updateTurn: async (_turnId, patch) => {
+      turnUpdates.push(patch as Record<string, unknown>)
+    },
+  })
+
+  await processInboundEvent({
+    ...baseEvent,
+    body:
+      "Still shaky, but I want to move fast. I was doing full-stack/backend work with React, Node, Python, and infra.",
+  }, store)
+
+  assert.equal(llmCalls, 1)
+  assert.equal(applyCalls, 0)
+  assert.equal(outbound, "Runtime follow-up about roles and location.")
+  assert.equal(turnUpdates.some((patch) => "onboardingDeterministicAction" in patch), false)
 })
 
 test("processInboundEvent lifecycle: explicit job request is not swallowed as profile update", async () => {
