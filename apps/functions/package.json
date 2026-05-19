@@ -9,7 +9,7 @@
   },
   "scripts": {
     "ensure:node": "node ../../scripts/ensure-node24.mjs",
-    "prebuild": "npm run ensure:node",
+    "prebuild": "npm run ensure:node && npm run build --workspace=@pa/pa-orchestrator",
     "build": "node build.mjs",
     "pretypecheck": "npm run ensure:node",
     "typecheck": "tsc --noEmit",
