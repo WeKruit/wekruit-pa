@@ -921,6 +921,59 @@ test("processInboundEvent layoff: incomplete layoff users bypass deterministic o
   assert.equal(turnUpdates.some((patch) => "onboardingDeterministicAction" in patch), false)
 })
 
+test("processInboundEvent layoff: explicit role requests can generate recommendations before generic onboarding completes", async () => {
+  let recCalls = 0
+  let llmCalls = 0
+  let applyCalls = 0
+  let outbound = ""
+  const turnUpdates: Array<Record<string, unknown>> = []
+  const store = makeStore({
+    getOnboardingUser: async () => ({
+      id: "u1",
+      phoneE164: "+13125550123",
+      onboardingState: "pending",
+      source: "WeKruit_Laid_Off",
+    }),
+    generateJobRecs: async (_userId, _lang, opts) => {
+      recCalls++
+      assert.equal(opts?.force, true)
+      assert.equal(opts?.requestedCount, 2)
+      return {
+        recCount: 2,
+        message:
+          "Two roles:\n" +
+          "- Fullstack Engineer @ Rain https://example.com/rain requirements: React, Node. why: backend + React fit.\n" +
+          "- Backend Engineer @ Cedar https://example.com/cedar requirements: Python, infra. why: backend systems fit.",
+      }
+    },
+    runAgentTurn: async () => {
+      llmCalls++
+      return { text: "should-not-call-llm" }
+    },
+    enqueueOutbound: async (_u, _t, text) => {
+      outbound = text
+    },
+    applyOnboarding: async () => {
+      applyCalls++
+    },
+    updateTurn: async (_turnId, patch) => {
+      turnUpdates.push(patch as Record<string, unknown>)
+    },
+  })
+
+  await processInboundEvent({
+    ...baseEvent,
+    body: "Can you send me two concrete roles now with links, requirements, and one reason each fits?",
+  }, store)
+
+  assert.equal(recCalls, 1)
+  assert.equal(llmCalls, 0)
+  assert.equal(applyCalls, 0)
+  assert.match(outbound, /Fullstack Engineer @ Rain/)
+  assert.equal(turnUpdates.some((patch) => "onboardingDeterministicAction" in patch), false)
+  assert.equal(turnUpdates.some((patch) => patch.directIntent === "job_search"), true)
+})
+
 test("processInboundEvent lifecycle: explicit job request is not swallowed as profile update", async () => {
   let llmCalls = 0
   let recCalls = 0
