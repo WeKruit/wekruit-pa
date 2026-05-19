@@ -4,7 +4,7 @@
  * Faithful TSX port of wekruit-layoff-design/project/landing.jsx (Claude
  * Design bundle 2026-05-18). Renders the cream WeKruit · Open landing:
  *   - "WeKruit · Open" wordmark
- *   - Nav: For candidates / For employers / Browse talent / Open roles
+ *   - Nav: For candidates / Add your name
  *   - Hero: "Laid off? We've got you." centered with "Add your name — 60 sec"
  *   - Rolling layoff company marquee
  *   - Preview talent table (Firestore-backed rows, last 3 dimmed under a fade)
@@ -16,7 +16,7 @@
  * lib/source.ts — see Onboarding.tsx).
  */
 import { useEffect, useState } from "react"
-import { Link, useNavigate } from "react-router-dom"
+import { Link } from "react-router-dom"
 import "../styles/wekruit-tokens.css"
 
 type TalentRow = {
@@ -164,9 +164,6 @@ function Hero({ preview }: { preview: PreviewState }) {
           <Link to="/onboarding" className="btn btn--primary btn--lg" style={{ textDecoration: "none" }}>
             Add your name — 60 sec
           </Link>
-          <Link to="/employer" className="btn btn--ghost btn--lg" style={{ textDecoration: "none" }}>
-            I'm hiring →
-          </Link>
         </div>
         <HeroCounter preview={preview} />
 
@@ -262,7 +259,6 @@ function HeroCounter({ preview }: { preview: PreviewState }) {
 }
 
 function PreviewSection({ preview }: { preview: PreviewState }) {
-  const navigate = useNavigate()
   const visible = preview.data?.rows ?? []
   const count = preview.data?.totalAvailable ?? visible.length
   const freshness = preview.loading
@@ -286,9 +282,6 @@ function PreviewSection({ preview }: { preview: PreviewState }) {
           <div className="eyebrow" style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
             <Dot pulse color="var(--success)" /> Currently available · {count} people · {freshness}
           </div>
-          <button className="btn btn--ghost btn--sm" onClick={() => navigate("/employer")}>
-            Hiring? Get access →
-          </button>
         </div>
         <PreviewTable rows={visible} count={count} loading={preview.loading} error={preview.error} />
       </div>
@@ -307,7 +300,6 @@ function PreviewTable({
   loading: boolean
   error: string | null
 }) {
-  const navigate = useNavigate()
   return (
     <div
       style={{
@@ -363,11 +355,6 @@ function PreviewTable({
           pointerEvents: "none",
         }}
       />
-      <div style={{ position: "absolute", left: 0, right: 0, bottom: 28, display: "flex", justifyContent: "center" }}>
-        <button className="btn btn--primary" onClick={() => navigate("/employer")}>
-          {count > 0 ? `See all ${count}` : "Request access"} — for employers →
-        </button>
-      </div>
     </div>
   )
 }
@@ -652,14 +639,10 @@ function Nav({ current }: { current?: string }) {
     whiteSpace: "nowrap" as const,
   })
 
-  // Layoff site is a two-surface product (Adam directive 2026-05-18):
-  // candidates land at /onboarding (resume + SMS), employers land at
-  // /employer (signup → Mailgun → admin). No cross-host links, no sign-in,
-  // no marketplace browse — those live on candidate.wekruit.com and are
-  // intentionally not exposed from layoff.
+  // Layoff site is a two-page product for launch: landing and onboarding.
+  // No employer signup, marketplace browse, or cross-host links from layoff.
   const navItems: { to: string; label: string; id: string }[] = [
     { to: "/", label: "For candidates", id: "landing" },
-    { to: "/employer", label: "For employers", id: "employer-signup" },
   ]
 
   return (
