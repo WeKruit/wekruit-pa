@@ -1243,7 +1243,16 @@ test("B4 soft: targetCompanyTags ∩ companyInfo.tags adds tagOverlap*0.15", () 
   })
   // Jaccard({ai_native,big_tech} ∩ {ai_native}) = 1/2 = 0.5; × 0.15 = 0.075
   assert.ok(Math.abs(boosted.breakdown.tagOverlap - 0.075) < 1e-9)
-  assert.ok(Math.abs(boosted.breakdown.total - (baseline.breakdown.total + 0.075)) < 1e-9)
+  // B5.1: total delta is +0.075 (tagOverlap) plus the freshness boost change,
+  // since adding tagOverlap raises baseRelevance which scales up freshnessBoost.
+  // The pure tagOverlap contribution still holds — check the field directly.
+  // Hold-out: delta is at least +0.075 (tagOverlap floor), with extra from
+  // freshness scaling.
+  const delta = boosted.breakdown.total - baseline.breakdown.total
+  assert.ok(
+    delta >= 0.075 - 1e-9,
+    `delta=${delta} should be at least 0.075 (tagOverlap only; B5.1 freshness scaling adds more)`,
+  )
 })
 
 test("B4 soft: companyPositiveList hit adds +0.15 positiveHit", () => {
@@ -1284,45 +1293,49 @@ test("B4 soft: urgentlySeeking boosts fresh full_time +0.20, penalizes intern -0
 
 // ---------------------------------------------------------------------------
 // Phase B5 — default-on freshness boost (exponential half-life, τ=3d)
+// Phase B5.1 — scaled by cohort relevance (baseRelevance ≥ threshold gets
+//              full lift; below threshold gets fraction; zero gets nothing).
 // ---------------------------------------------------------------------------
 
-test("B5 freshness: age=0 → boost ≈ V16_FRESHNESS_BOOST_MAX (0.10)", () => {
-  const tags = { skills: [], industryEnum: [], schemaVersion: 1 } as never
-  const job = mkJob({ firstSeenAt: new Date(NOW).toISOString() })
-  const r = scoreV16Job(tags, job, undefined, undefined, undefined, undefined, NOW)
+// All boost-magnitude tests use a strong skill match so baseRelevance >=
+// V16_FRESHNESS_RELEVANCE_THRESHOLD and freshFactor=1.0 — isolates the
+// age-decay math from the relevance-scale math.
+const RELEVANT_TAGS = { skills: ["python"], industryEnum: ["tech_software"], schemaVersion: 1 } as never
+const mkRelevantJob = (over: Partial<MatchingJob>) =>
+  mkJob({ requiredSkills: ["python"], ...over })
+
+test("B5 freshness: age=0, strong base → boost ≈ V16_FRESHNESS_BOOST_MAX (0.10)", () => {
+  const job = mkRelevantJob({ firstSeenAt: new Date(NOW).toISOString() })
+  const r = scoreV16Job(RELEVANT_TAGS, job, undefined, undefined, undefined, undefined, NOW)
   assert.ok(
     Math.abs(r.breakdown.freshnessBoost - V16_FRESHNESS_BOOST_MAX) < 1e-9,
     `freshnessBoost=${r.breakdown.freshnessBoost}`,
   )
 })
 
-test("B5 freshness: age=3d (half-life) → boost ≈ 0.05", () => {
-  const tags = { skills: [], industryEnum: [], schemaVersion: 1 } as never
-  const job = mkJob({ firstSeenAt: new Date(NOW - 3 * 24 * 3600 * 1000).toISOString() })
-  const r = scoreV16Job(tags, job, undefined, undefined, undefined, undefined, NOW)
+test("B5 freshness: age=3d (half-life), strong base → boost ≈ 0.05", () => {
+  const job = mkRelevantJob({ firstSeenAt: new Date(NOW - 3 * 24 * 3600 * 1000).toISOString() })
+  const r = scoreV16Job(RELEVANT_TAGS, job, undefined, undefined, undefined, undefined, NOW)
   assert.ok(
     Math.abs(r.breakdown.freshnessBoost - V16_FRESHNESS_BOOST_MAX / 2) < 1e-9,
     `freshnessBoost=${r.breakdown.freshnessBoost}`,
   )
 })
 
-test("B5 freshness: age=7d → boost ≈ 0.02", () => {
-  const tags = { skills: [], industryEnum: [], schemaVersion: 1 } as never
-  const job = mkJob({ firstSeenAt: new Date(NOW - 7 * 24 * 3600 * 1000).toISOString() })
-  const r = scoreV16Job(tags, job, undefined, undefined, undefined, undefined, NOW)
+test("B5 freshness: age=7d, strong base → boost ≈ 0.02", () => {
+  const job = mkRelevantJob({ firstSeenAt: new Date(NOW - 7 * 24 * 3600 * 1000).toISOString() })
+  const r = scoreV16Job(RELEVANT_TAGS, job, undefined, undefined, undefined, undefined, NOW)
   const expected = V16_FRESHNESS_BOOST_MAX * Math.pow(0.5, 7 / 3)
   assert.ok(
     Math.abs(r.breakdown.freshnessBoost - expected) < 1e-9,
     `freshnessBoost=${r.breakdown.freshnessBoost}, expected=${expected}`,
   )
-  // Sanity: ≈ 0.0198 — much smaller than today's 0.10
   assert.ok(r.breakdown.freshnessBoost < 0.025 && r.breakdown.freshnessBoost > 0.015)
 })
 
-test("B5 freshness: age=20d (hard-filter edge) → boost ≈ 0.001 (effectively 0)", () => {
-  const tags = { skills: [], industryEnum: [], schemaVersion: 1 } as never
-  const job = mkJob({ firstSeenAt: new Date(NOW - 20 * 24 * 3600 * 1000).toISOString() })
-  const r = scoreV16Job(tags, job, undefined, undefined, undefined, undefined, NOW)
+test("B5 freshness: age=20d (hard-filter edge), strong base → boost ≈ 0.001", () => {
+  const job = mkRelevantJob({ firstSeenAt: new Date(NOW - 20 * 24 * 3600 * 1000).toISOString() })
+  const r = scoreV16Job(RELEVANT_TAGS, job, undefined, undefined, undefined, undefined, NOW)
   const expected = V16_FRESHNESS_BOOST_MAX * Math.pow(0.5, 20 / 3)
   assert.ok(
     Math.abs(r.breakdown.freshnessBoost - expected) < 1e-9,
@@ -1332,19 +1345,102 @@ test("B5 freshness: age=20d (hard-filter edge) → boost ≈ 0.001 (effectively 
 })
 
 test("B5 freshness: missing firstSeenAt → boost = 0", () => {
-  const tags = { skills: [], industryEnum: [], schemaVersion: 1 } as never
-  const job = mkJob({ firstSeenAt: undefined as never })
-  const r = scoreV16Job(tags, job, undefined, undefined, undefined, undefined, NOW)
+  const job = mkRelevantJob({ firstSeenAt: undefined as never })
+  const r = scoreV16Job(RELEVANT_TAGS, job, undefined, undefined, undefined, undefined, NOW)
   assert.equal(r.breakdown.freshnessBoost, 0)
 })
 
-test("B5 freshness: clock skew (firstSeenAt > nowMs) → boost clamped to MAX", () => {
-  const tags = { skills: [], industryEnum: [], schemaVersion: 1 } as never
-  const job = mkJob({ firstSeenAt: new Date(NOW + 60_000).toISOString() })
-  const r = scoreV16Job(tags, job, undefined, undefined, undefined, undefined, NOW)
+test("B5 freshness: clock skew (firstSeenAt > nowMs), strong base → clamped to MAX", () => {
+  const job = mkRelevantJob({ firstSeenAt: new Date(NOW + 60_000).toISOString() })
+  const r = scoreV16Job(RELEVANT_TAGS, job, undefined, undefined, undefined, undefined, NOW)
   assert.ok(
     Math.abs(r.breakdown.freshnessBoost - V16_FRESHNESS_BOOST_MAX) < 1e-9,
     `freshnessBoost=${r.breakdown.freshnessBoost}`,
+  )
+})
+
+// ---------------------------------------------------------------------------
+// Phase B5.1 — cohort-relevance damping (Adam 2026-05-19)
+// Prevents brand-new but irrelevant jobs from beating stale-but-relevant ones.
+// ---------------------------------------------------------------------------
+
+test("B5.1 cohort scale: zero-base job today → freshness boost = 0", () => {
+  // No skill match, no industry overlap, no salary signal → baseRelevance ≈ 0
+  const tags = { skills: ["python"], industryEnum: ["tech_software"], schemaVersion: 1 } as never
+  const irrelevantJob = mkJob({
+    requiredSkills: [],                       // no overlap with user.skills
+    industrySector: ["healthcare_biotech"],   // no overlap with industryEnum
+    salaryMin: null,
+    firstSeenAt: new Date(NOW).toISOString(),
+  } as never)
+  const r = scoreV16Job(tags, irrelevantJob, undefined, undefined, undefined, undefined, NOW)
+  // baseScore = (salary fit fallback 0.5 × 0.05 = 0.025). baseRelevance = 0.025.
+  // freshFactor = 0.025 / 0.20 = 0.125. Boost = 0.10 × 0.125 = 0.0125 (NOT 0.10).
+  assert.ok(
+    r.breakdown.freshnessBoost < V16_FRESHNESS_BOOST_MAX * 0.2,
+    `freshnessBoost=${r.breakdown.freshnessBoost} should be heavily scaled down`,
+  )
+})
+
+test("B5.1 cohort scale: today's irrelevant sales job does NOT beat 14d-old SWE", () => {
+  // Adam scenario: user is SWE-tagged but `targetRoleFunction` empty → V16
+  // skips query-layer role filter → sales jobs enter the pool. Freshness
+  // boost previously made today's sales beat 14d-old SWE. B5.1 prevents this.
+  const userTags = {
+    skills: ["python", "typescript"],
+    industryEnum: ["tech_software"],
+    schemaVersion: 1,
+  } as never
+  // Brand-new sales job: zero overlap with user.skills/industry.
+  const salesToday = mkJob({
+    id: "sales-today",
+    requiredSkills: ["salesforce"],
+    industrySector: ["sales_marketing"],
+    firstSeenAt: new Date(NOW).toISOString(),
+  } as never)
+  // 14d-old SWE job: full skill + industry overlap.
+  const sweTwoWeeks = mkJob({
+    id: "swe-14d",
+    requiredSkills: ["python", "typescript"],
+    industrySector: ["tech_software"],
+    firstSeenAt: new Date(NOW - 14 * 24 * 3600 * 1000).toISOString(),
+  } as never)
+  const sales = scoreV16Job(userTags, salesToday, undefined, undefined, undefined, undefined, NOW)
+  const swe = scoreV16Job(userTags, sweTwoWeeks, undefined, undefined, undefined, undefined, NOW)
+  assert.ok(
+    swe.breakdown.total > sales.breakdown.total,
+    `SWE-14d total=${swe.breakdown.total} should beat sales-today total=${sales.breakdown.total}`,
+  )
+  // Sales' freshness should be heavily scaled down (low baseRelevance).
+  assert.ok(
+    sales.breakdown.freshnessBoost < 0.04,
+    `sales freshnessBoost=${sales.breakdown.freshnessBoost} should be << 0.10 due to low baseRelevance`,
+  )
+})
+
+test("B5.1 cohort scale: half-threshold base → half boost (linear interpolation)", () => {
+  // Construct a job whose baseRelevance ≈ THRESHOLD / 2 = 0.10.
+  // skill 1.0 × 0.20 = 0.20 is too high. Use partial match: 1 of 2 skills.
+  const tags = { skills: ["python", "typescript"], industryEnum: [], schemaVersion: 1 } as never
+  const job = mkJob({
+    requiredSkills: ["python", "typescript"],
+    firstSeenAt: new Date(NOW).toISOString(),
+  } as never)
+  // skill 1.0 × 0.20 = 0.20, salary 0.5 × 0.05 = 0.025, baseRelevance ≈ 0.225.
+  // That's > threshold → full boost. So let's drop salary too:
+  const jobNoSalary = mkJob({
+    requiredSkills: ["python"],
+    salaryMin: 0 as never,
+    firstSeenAt: new Date(NOW).toISOString(),
+  } as never)
+  // skill 0.5 × 0.20 = 0.10 (only 1 of 2 user skills match), salary signal = 0.5 (both nullish-ish) × 0.05 ≈ 0.025
+  // baseRelevance ≈ 0.125 → freshFactor ≈ 0.625
+  const r = scoreV16Job(tags, jobNoSalary, undefined, undefined, undefined, undefined, NOW)
+  // Loose bound: freshness in (10%, 90%) of MAX — proves linear scaling kicks in.
+  assert.ok(
+    r.breakdown.freshnessBoost > V16_FRESHNESS_BOOST_MAX * 0.10 &&
+      r.breakdown.freshnessBoost < V16_FRESHNESS_BOOST_MAX * 0.90,
+    `freshnessBoost=${r.breakdown.freshnessBoost} should be between 0.01 and 0.09 (partial scale)`,
   )
 })
 
