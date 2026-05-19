@@ -1090,6 +1090,7 @@ export async function handleSendblueWebhook(
   let willCoalesce = false
   let resolvedUserIdForCoalesce: string | null = null
   let activePrescreenForCoalesce = false
+  let activeSharedOnboardingForCoalesce = false
   if (!mediaUrl && deps.enqueueOrCoalesce && deps.coalescerDeps) {
     try {
       const lookupFn = deps.lookupUserByPhone ?? defaultLookupUserByPhone
@@ -1101,11 +1102,10 @@ export async function handleSendblueWebhook(
           { userId: resolvedUserIdForCoalesce, env: process.env },
           false
         )
-        // 2026-05-15 prescreen fix: active job prescreen is also an
-        // agent-runtime conversation. Real candidates often answer one prompt
-        // across several iMessages; without coalescing, each fragment becomes
-        // a separate prescreen turn and can prematurely exhaust clarify/hard
-        // stop. Onboarding remains one-answer-per-state; prescreen does not.
+        // 2026-05-15 prescreen fix + 2026-05-19 shared-onboarding fix:
+        // these agent-runtime conversations often receive one human answer
+        // split across several iMessages. Coalesce them into one runtime turn
+        // before the orchestrator judges or scores the reply.
         let onboardingState: string | null = null
         try {
           const userSnap = await deps.db
@@ -1113,18 +1113,34 @@ export async function handleSendblueWebhook(
             .doc(resolvedUserIdForCoalesce)
             .get()
           if (userSnap.exists) {
-            const data = userSnap.data() as { onboardingState?: string } | undefined
+            const data = userSnap.data() as {
+              onboardingState?: string
+              workSession?: { kind?: string; status?: string }
+              sharedOnboarding?: { status?: string; completed?: boolean }
+            } | undefined
             onboardingState = typeof data?.onboardingState === "string" ? data.onboardingState : null
+            activeSharedOnboardingForCoalesce = Boolean(
+              data?.sharedOnboarding?.completed !== true &&
+              (
+                (data?.workSession?.kind === "shared_onboarding" && data.workSession.status === "active") ||
+                data?.sharedOnboarding?.status === "active"
+              )
+            )
           }
         } catch {
           onboardingState = null
+          activeSharedOnboardingForCoalesce = false
         }
         try {
           activePrescreenForCoalesce = await hasActivePrescreenSession(deps.db, resolvedUserIdForCoalesce)
         } catch {
           activePrescreenForCoalesce = false
         }
-        willCoalesce = coalesceFlag === true && (onboardingState === "complete" || activePrescreenForCoalesce)
+        willCoalesce = coalesceFlag === true && (
+          onboardingState === "complete" ||
+          activePrescreenForCoalesce ||
+          activeSharedOnboardingForCoalesce
+        )
       }
     } catch (preErr) {
       // Pre-decision failure: do not stamp coalescing, so onPaInbound owns
@@ -1133,6 +1149,7 @@ export async function handleSendblueWebhook(
         preErr instanceof Error ? preErr.message : String(preErr))
       willCoalesce = false
       resolvedUserIdForCoalesce = null
+      activeSharedOnboardingForCoalesce = false
     }
   }
 
@@ -1204,7 +1221,7 @@ export async function handleSendblueWebhook(
           messageHandle: normalized.messageHandle,
           body: normalized.text,
           inboundEventId: result.id,
-          isOnboarding: false,
+          isOnboarding: activeSharedOnboardingForCoalesce,
           isPrescreen: activePrescreenForCoalesce,
         })
         log("[coalesce][webhook] enqueued", {

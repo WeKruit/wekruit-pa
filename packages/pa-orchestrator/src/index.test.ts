@@ -3,6 +3,7 @@ import test from "node:test"
 import type { AgentDef, InboundEvent, MemoryFact } from "@pa/core-types"
 import {
   buildRecallSystemInput,
+  createFirestoreOrchestratorStore,
   isInboundLeaseExpired,
   memoryBlockWithFacts,
   processInboundEvent,
@@ -127,6 +128,48 @@ const baseEvent: InboundEvent = {
   createdAt: "2026-04-25T12:00:00.000Z",
   idempotencyKey: "imessage-in-1",
 }
+
+test("createFirestoreOrchestratorStore getOnboardingUser exposes resume context fields", async () => {
+  const userDoc = {
+    id: "u-resume",
+    phoneE164: "+14243201960",
+    onboardingState: "pending",
+    firstName: "Adam",
+    displayName: "Adam Yang",
+    source: "admin",
+    latestResumeArtifactId: "candidate_upload_u-resume_latest",
+    jobTitle: "Software Engineer Intern",
+    lastCompany: "Tesla Inc",
+    location: "Los Angeles",
+    candidateContext: { location: "New York" },
+    layoffContext: { jobTitle: "Backend Engineer", lastCompany: "ExampleCo", location: "NYC" },
+  }
+  const db = {
+    collection(name: string) {
+      return {
+        doc(id: string) {
+          return {
+            async get() {
+              return {
+                exists: name === "pa-users" && id === "u-resume",
+                data: () => userDoc,
+              }
+            },
+          }
+        },
+      }
+    },
+  } as unknown as FirebaseFirestore.Firestore
+
+  const store = createFirestoreOrchestratorStore(db)
+  const onboardingUser = await store.getOnboardingUser("u-resume")
+
+  assert.equal(onboardingUser?.latestResumeArtifactId, "candidate_upload_u-resume_latest")
+  assert.equal(onboardingUser?.firstName, "Adam")
+  assert.equal(onboardingUser?.jobTitle, "Software Engineer Intern")
+  assert.equal(onboardingUser?.lastCompany, "Tesla Inc")
+  assert.equal(onboardingUser?.location, "Los Angeles")
+})
 
 test("processInboundEvent blocks when checkInboundSafety denies", async () => {
   let llmCalls = 0

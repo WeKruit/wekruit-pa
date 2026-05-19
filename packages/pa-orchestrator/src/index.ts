@@ -103,11 +103,15 @@ export {
   buildSharedOnboardingStartedState,
   buildSharedOnboardingPrompt,
   buildSharedOnboardingPromptContext,
+  buildSharedOnboardingReask,
   cleanSharedOnboardingPromptContext,
   currentSharedOnboardingQuestionId,
   getSharedOnboardingQuestion,
   isSharedOnboardingActiveUser,
+  isSharedOnboardingGreetingOrKickoff,
   isSharedOnboardingRuntimeEvent,
+  judgeSharedOnboardingAnswer,
+  loadSharedOnboardingParsedResumeForPrompt,
   projectSharedOnboardingAnswer,
   resolveNextSharedOnboardingQuestionId,
   sharedOnboardingSignupSource,
@@ -121,9 +125,13 @@ import {
   buildSharedOnboardingPromptContext,
   cleanSharedOnboardingPromptContext,
   currentSharedOnboardingQuestionId,
+  buildSharedOnboardingReask,
   getSharedOnboardingQuestion,
   isSharedOnboardingActiveUser,
+  isSharedOnboardingGreetingOrKickoff,
   isSharedOnboardingRuntimeEvent,
+  judgeSharedOnboardingAnswer,
+  loadSharedOnboardingParsedResumeForPrompt,
   projectSharedOnboardingAnswer,
   resolveNextSharedOnboardingQuestionId,
   type SharedOnboardingQuestionId,
@@ -340,6 +348,7 @@ import {
   mapAnswerToRoleFunction,
   mapAnswerToVisa,
   mapAnswerToLocations,
+  detectLang,
 } from "./tags/onboarding-mappers.js"
 // Phase 54 — sole-writer for pa-users.tags Firestore I/O. All onboarding
 // chat hooks, CV ingest, and migration scripts funnel through this module
@@ -549,8 +558,13 @@ export type OrchestratorStore = {
     runtimeMode?: "auto" | "paused"
     /** v1.6 unified tag system (D8) — canonical user tags incl. preferredLang. */
     tags?: import("./tags/user-tags-merger.js").UserTags
+    firstName?: string
     displayName?: string
     source?: string
+    latestResumeArtifactId?: string
+    jobTitle?: string
+    lastCompany?: string
+    location?: string
     workSession?: Record<string, unknown> | null
     sharedOnboarding?: Record<string, unknown> | null
     candidateContext?: Record<string, unknown> | null
@@ -1621,6 +1635,38 @@ async function handleSharedOnboardingUserReply(
 ): Promise<boolean> {
   if (!onboardingUser || !isSharedOnboardingActiveUser(onboardingUser)) return false
   const questionId = currentSharedOnboardingQuestionId(onboardingUser)
+  const answerJudge = await judgeSharedOnboardingAnswer({
+    questionId,
+    answer: event.body,
+    lang: detectLang([event.body]) === "zh" ? "zh" : "en",
+    userId: event.userId,
+    turnId,
+    log: (name, payload) => store.log(name, payload ?? {}),
+  })
+  if (!answerJudge.accept) {
+    const duplicateGreeting = questionId === "main_goal" && isSharedOnboardingGreetingOrKickoff(event.body)
+    const now = store.nowIso()
+    if (!duplicateGreeting) {
+      const promptContext = sharedPromptContextFrom(onboardingUser)
+      await sendMemoryReply(
+        store,
+        event,
+        turnId,
+        buildSharedOnboardingReask(questionId, promptContext, answerJudge),
+      )
+    }
+    await store.updateTurn(turnId, {
+      status: "succeeded",
+      stage: "succeeded",
+      completedAt: now,
+      directIntent: "shared_onboarding",
+      directIntentResult: duplicateGreeting ? "ignored_non_answer" : "reasked_question",
+      sharedOnboardingQuestionId: questionId,
+      sharedOnboardingJudgeReason: answerJudge.reason,
+    })
+    await store.markEventSucceeded(event.id)
+    return true
+  }
   const projection = projectSharedOnboardingAnswer(questionId, event.body)
   const next = resolveNextSharedOnboardingQuestionId(questionId)
   await writeSharedOnboardingAnswer(store, event, questionId, projection, next)
@@ -1713,32 +1759,14 @@ async function handleSharedOnboardingBootstrap(
   }
 
   const now = store.nowIso()
-  // 2026-05-19 (Adam directive: "the resume info grounded questions ready??
-  // those questions has to be asked by agent along with resume info") — read
-  // the most recent parsedCandidateResumes row inline so Q1's prompt opens
-  // with "I saw from your resume that you've done <recent work>…" instead of
-  // the bare template. Mirrors apps/functions/src/layoff-sms-start.ts
-  // loadLatestParsedResumeForPrompt. Failure is non-fatal: we still bootstrap
-  // with whatever signals onboardingUser already carries.
-  let parsedResume: Record<string, unknown> | null = null
-  if (store.db) {
-    try {
-      const snap = await store.db
-        .collection("parsedCandidateResumes")
-        .where("userId", "==", event.userId)
-        .orderBy("createdAt", "desc")
-        .limit(1)
-        .get()
-      if (!snap.empty) {
-        parsedResume = (snap.docs[0]?.data() ?? null) as Record<string, unknown> | null
-      }
-    } catch (err) {
-      store.log("pa.shared_onboarding.bootstrap_parsed_resume_lookup_failed", {
-        userId: event.userId,
-        error: err instanceof Error ? err.message : String(err),
-      })
-    }
-  }
+  const parsedResume = store.db
+    ? await loadSharedOnboardingParsedResumeForPrompt(
+        store.db,
+        event.userId,
+        onboardingUser as unknown as Record<string, unknown>,
+        (name, payload) => store.log(`pa.${name}`, payload ?? {}),
+      )
+    : null
   const promptContext = buildSharedOnboardingPromptContext({
     user: onboardingUser as unknown as Record<string, unknown>,
     parsedResume,
@@ -4335,8 +4363,13 @@ export function createFirestoreOrchestratorStore(
           | "complete"
         statedPreferences?: import("@pa/core-types").StatedPreferences
         runtimeMode?: "auto" | "paused"
+        firstName?: string
         displayName?: string
         source?: string
+        latestResumeArtifactId?: string
+        jobTitle?: string
+        lastCompany?: string
+        location?: string
         workSession?: Record<string, unknown> | null
         sharedOnboarding?: Record<string, unknown> | null
         candidateContext?: Record<string, unknown> | null
@@ -4348,8 +4381,13 @@ export function createFirestoreOrchestratorStore(
         onboardingState: data.onboardingState,
         statedPreferences: data.statedPreferences,
         runtimeMode: data.runtimeMode,
+        firstName: data.firstName,
         displayName: data.displayName,
         source: data.source,
+        latestResumeArtifactId: data.latestResumeArtifactId,
+        jobTitle: data.jobTitle,
+        lastCompany: data.lastCompany,
+        location: data.location,
         workSession: data.workSession,
         sharedOnboarding: data.sharedOnboarding,
         candidateContext: data.candidateContext,

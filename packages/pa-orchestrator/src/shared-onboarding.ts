@@ -1,5 +1,8 @@
 import type { PartialUserTags } from "./tags/user-tags-writer.js"
 import { mapAnswerToLocations } from "./tags/onboarding-mappers.js"
+import { PA_COLLECTIONS } from "@pa/core-types"
+import type { JudgeResult, Lang } from "./onboarding/question.js"
+import { GuidedOpenJudge, type LlmCallFn } from "./onboarding/judges/guided-open.js"
 import {
   WEKRUIT_CANDIDATE_SOURCE,
   WEKRUIT_LAYOFF_SOURCE,
@@ -32,6 +35,38 @@ export type SharedOnboardingPromptContext = {
   currentLocation?: string
   skills?: string[]
   industryTags?: string[]
+  resumeSummary?: string
+}
+
+export type SharedOnboardingAnswerJudgeArgs = {
+  questionId: SharedOnboardingQuestionId
+  answer: string
+  lang?: Lang
+  userId?: string
+  turnId?: string
+  log?: (event: string, payload: Record<string, unknown>) => void
+  llmCallFactory?: () => LlmCallFn
+}
+
+type FirestoreDocSnapshotLike = {
+  exists?: boolean
+  data?: () => unknown
+}
+
+type FirestoreCollectionLike = {
+  doc?: (id: string) => { get: () => Promise<FirestoreDocSnapshotLike> }
+  where?: (field: string, op: string, value: unknown) => {
+    orderBy?: (field: string, direction?: "asc" | "desc") => {
+      limit?: (count: number) => { get: () => Promise<{ empty?: boolean; docs?: FirestoreDocSnapshotLike[] }> }
+      get?: () => Promise<{ empty?: boolean; docs?: FirestoreDocSnapshotLike[] }>
+    }
+    limit?: (count: number) => { get: () => Promise<{ empty?: boolean; docs?: FirestoreDocSnapshotLike[] }> }
+    get?: () => Promise<{ empty?: boolean; docs?: FirestoreDocSnapshotLike[] }>
+  }
+}
+
+type FirestoreLike = {
+  collection: (name: string) => FirestoreCollectionLike
 }
 
 export const SHARED_ONBOARDING_QUESTIONS: readonly SharedOnboardingQuestion[] = [
@@ -69,6 +104,140 @@ export const SHARED_ONBOARDING_QUESTIONS: readonly SharedOnboardingQuestion[] = 
 
 const QUESTION_IDS = SHARED_ONBOARDING_QUESTIONS.map((q) => q.id)
 const QUESTION_BY_ID = new Map(SHARED_ONBOARDING_QUESTIONS.map((q) => [q.id, q]))
+const PARSED_CANDIDATE_RESUMES = "parsedCandidateResumes"
+
+function normalizeControlText(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, " ")
+    .replace(/[^a-z0-9\u4e00-\u9fff]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
+export function isSharedOnboardingGreetingOrKickoff(value: string): boolean {
+  const normalized = normalizeControlText(value)
+  if (!normalized) return true
+  if (normalized === "pa reset") return true
+  if (/^wekruit\s+(?:candidate\s+hi|laid\s+off|rain\s+software\s+engineer)/i.test(normalized)) return true
+  return /^(?:hello|hi|hey|yo|sup|\u4f60\u597d|\u60a8\u597d|\u54c8\u55bd|\u5728\u5417)(?:\s+(?:wekruit|claire))?$/.test(normalized)
+}
+
+function parseSharedJudgeValue(raw: unknown): string | null {
+  if (typeof raw === "string") {
+    const trimmed = raw.trim().replace(/\s+/g, " ")
+    return trimmed && !isSharedOnboardingGreetingOrKickoff(trimmed) ? trimmed.slice(0, 280) : null
+  }
+  if (Array.isArray(raw)) {
+    const joined = raw
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => item.trim().replace(/\s+/g, " "))
+      .filter(Boolean)
+      .slice(0, 5)
+      .join(", ")
+    return joined && !isSharedOnboardingGreetingOrKickoff(joined) ? joined.slice(0, 280) : null
+  }
+  return null
+}
+
+function sharedJudgeHints(questionId: SharedOnboardingQuestionId): string[] {
+  if (questionId === "main_goal") {
+    return ["career_growth", "compensation", "stability", "mission", "learning", "ownership", "work_life_balance"]
+  }
+  if (questionId === "culture_stage") {
+    return ["early_startup", "scale_up", "larger_company", "high_ownership", "calm_team", "collaborative", "open"]
+  }
+  if (questionId === "industry_interest") {
+    return ["financial_technology", "artificial_intelligence", "crypto_web3_blockchain", "software_saas", "healthcare", "developer_tools", "open"]
+  }
+  if (questionId === "location_relocation") {
+    return ["remote", "onsite", "hybrid", "new_york", "san_francisco", "seattle", "relocation_open", "no_relocation"]
+  }
+  return ["constraints", "strengths", "dealbreakers", "timing", "visa", "none"]
+}
+
+function sharedJudgeExamples(questionId: SharedOnboardingQuestionId): Array<{ reply: string; value: string; confidence: number }> {
+  if (questionId === "main_goal") {
+    return [
+      { reply: "career growth and learning matter most", value: "career growth and learning", confidence: 0.95 },
+      { reply: "compensation and stability, but mission matters too", value: "compensation, stability, and mission", confidence: 0.95 },
+    ]
+  }
+  if (questionId === "culture_stage") {
+    return [
+      { reply: "early startup with high ownership", value: "early startup with high ownership", confidence: 0.95 },
+      { reply: "larger calm team, less chaos", value: "larger calm team", confidence: 0.9 },
+    ]
+  }
+  if (questionId === "industry_interest") {
+    return [
+      { reply: "fintech and AI infrastructure", value: "fintech and AI infrastructure", confidence: 0.95 },
+      { reply: "open, but developer tools are interesting", value: "developer tools, open", confidence: 0.9 },
+    ]
+  }
+  if (questionId === "location_relocation") {
+    return [
+      { reply: "NYC or remote, open to Seattle", value: "NYC, remote, open to Seattle", confidence: 0.95 },
+      { reply: "Bay Area onsite is fine, not relocating", value: "Bay Area onsite, not relocating", confidence: 0.95 },
+    ]
+  }
+  return [
+    { reply: "nothing else, I can start quickly", value: "nothing else, can start quickly", confidence: 0.9 },
+    { reply: "I need sponsorship and want backend-heavy work", value: "needs sponsorship, backend-heavy work", confidence: 0.95 },
+  ]
+}
+
+function sharedJudgeBloom(questionId: SharedOnboardingQuestionId): Array<{ pattern: RegExp; value: string }> {
+  if (questionId === "main_goal") {
+    return [
+      { pattern: /\b(career\s+growth|growth|learning|mentor|compensation|salary|pay|equity|stability|stable|mission|impact|ownership|work[-\s]?life)\b/i, value: "clear main-goal answer" },
+    ]
+  }
+  if (questionId === "culture_stage") {
+    return [
+      { pattern: /\b(startup|early[-\s]?stage|seed|founding|scale[-\s]?up|larger|large\s+company|big\s*tech|enterprise|ownership|autonomy|calm|collaborative|open|no\s+preference)\b/i, value: "clear culture-stage answer" },
+    ]
+  }
+  if (questionId === "industry_interest") {
+    return [
+      { pattern: /\b(fintech|finance|ai|machine\s+learning|ml|crypto|web3|blockchain|saas|software|developer\s+tools?|security|healthcare|edtech|gaming|climate|open|anything)\b/i, value: "clear industry-interest answer" },
+    ]
+  }
+  if (questionId === "location_relocation") {
+    return [
+      { pattern: /\b(remote|onsite|hybrid|relocat|move|nyc|new\s+york|sf|san\s+francisco|bay\s+area|seattle|los\s+angeles|la|austin|boston|chicago|miami|canada|united\s+states|u\.?s\.?)\b/i, value: "clear location-relocation answer" },
+    ]
+  }
+  return [
+    { pattern: /\b(none|nothing|nope|no\s+special|visa|sponsor|h[-\s]?1b|opt|cpt|urgent|asap|timing|dealbreaker|constraint|strength|backend|frontend|full[-\s]?stack|systems?)\b/i, value: "clear special-context answer" },
+  ]
+}
+
+export async function judgeSharedOnboardingAnswer(
+  args: SharedOnboardingAnswerJudgeArgs,
+): Promise<JudgeResult<string>> {
+  const answer = args.answer.trim()
+  if (isSharedOnboardingGreetingOrKickoff(answer)) {
+    return { accept: false, reason: "irrelevant" }
+  }
+  const question = getSharedOnboardingQuestion(args.questionId)
+  const judge = new GuidedOpenJudge<string>({
+    questionLabel: question.label,
+    hints: sharedJudgeHints(args.questionId),
+    examples: sharedJudgeExamples(args.questionId),
+    bloomRegex: sharedJudgeBloom(args.questionId),
+    parseValue: parseSharedJudgeValue,
+    confidenceThreshold: 0.62,
+    minMeaningfulChars: 2,
+    ...(args.llmCallFactory ? { llmCallFactory: args.llmCallFactory } : {}),
+  })
+  return judge.judge(answer, args.lang ?? "en", {
+    userId: args.userId ?? "unknown",
+    turnId: args.turnId ?? "unknown",
+    log: args.log,
+  })
+}
 
 function cleanPromptString(value: unknown, max = 80): string | undefined {
   if (typeof value !== "string") return undefined
@@ -105,6 +274,122 @@ function objectValue(value: unknown): Record<string, unknown> {
     : {}
 }
 
+function summaryTextFrom(value: Record<string, unknown>): string | undefined {
+  const raw =
+    value.candidateProfileSummary ??
+    value.profileSummary ??
+    value.resumeSummary ??
+    value.summary
+  const clean = cleanPromptString(raw, 220)
+  return clean?.replace(/^User resume summary:\s*/i, "").trim()
+}
+
+function experienceFromSummary(summary: string | undefined): Record<string, unknown> | null {
+  if (!summary) return null
+  const match =
+    summary.match(/(?:currently\/last|currently|last)\s+(.+?)\s+at\s+(.+?)(?:\s*\(|[.;]|$)/i) ??
+    summary.match(/[—-]\s*(.+?)\s+at\s+(.+?)(?:\s*\(|[.;]|$)/)
+  const title = cleanPromptString(match?.[1], 80)
+  const company = cleanPromptString(match?.[2], 80)
+  if (!title && !company) return null
+  return {
+    ...(title ? { title } : {}),
+    ...(company ? { company } : {}),
+  }
+}
+
+function skillsFromSummary(summary: string | undefined): string[] {
+  const match = summary?.match(/\bSkills:\s*([^.]+)/i)
+  if (!match?.[1]) return []
+  return cleanPromptList(match[1].split(/[,;/|]+/), 8, 40)
+}
+
+function parsedResumeFromArtifactSummary(artifact: Record<string, unknown>): Record<string, unknown> | null {
+  const summary = summaryTextFrom(artifact)
+  const experience = experienceFromSummary(summary)
+  const skills = skillsFromSummary(summary)
+  if (!summary && !experience && skills.length === 0) return null
+  return {
+    ...(summary ? { candidateProfileSummary: summary } : {}),
+    ...(experience ? { experiences: [experience] } : {}),
+    ...(skills.length > 0 ? { candidateProfile: { skills } } : {}),
+  }
+}
+
+function objectDocData(snap: FirestoreDocSnapshotLike | undefined | null): Record<string, unknown> | null {
+  if (!snap) return null
+  if (snap.exists === false) return null
+  const data = snap.data?.()
+  return data && typeof data === "object" && !Array.isArray(data)
+    ? data as Record<string, unknown>
+    : null
+}
+
+export async function loadSharedOnboardingParsedResumeForPrompt(
+  db: FirestoreLike,
+  userId: string,
+  user?: Record<string, unknown> | null,
+  log?: (event: string, payload?: Record<string, unknown>) => void,
+): Promise<Record<string, unknown> | null> {
+  const latestResumeArtifactId = cleanPromptString(user?.latestResumeArtifactId, 240)
+  if (latestResumeArtifactId) {
+    try {
+      const artifactDoc = db.collection(PA_COLLECTIONS.resumeArtifacts).doc?.(latestResumeArtifactId)
+      const artifact = objectDocData(await artifactDoc?.get())
+      if (!artifact) {
+        log?.("shared_onboarding.resume_prompt_context.artifact_miss", {
+          userId,
+          latestResumeArtifactId,
+        })
+      } else {
+        const parsedCandidateResumeId = cleanPromptString(artifact.parsedCandidateResumeId, 240)
+        if (parsedCandidateResumeId) {
+          const parsedDoc = db.collection(PARSED_CANDIDATE_RESUMES).doc?.(parsedCandidateResumeId)
+          const parsedResume = objectDocData(await parsedDoc?.get())
+          if (parsedResume) return parsedResume
+          const artifactResume = parsedResumeFromArtifactSummary(artifact)
+          if (artifactResume) return artifactResume
+          log?.("shared_onboarding.resume_prompt_context.parsed_resume_miss", {
+            userId,
+            latestResumeArtifactId,
+            parsedCandidateResumeId,
+          })
+        } else {
+          const artifactResume = parsedResumeFromArtifactSummary(artifact)
+          if (artifactResume) return artifactResume
+          log?.("shared_onboarding.resume_prompt_context.artifact_pointer_miss", {
+            userId,
+            latestResumeArtifactId,
+          })
+        }
+      }
+    } catch (err) {
+      log?.("shared_onboarding.resume_prompt_context.artifact_lookup_failed", {
+        userId,
+        latestResumeArtifactId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+
+  try {
+    const collection = db.collection(PARSED_CANDIDATE_RESUMES)
+    if (typeof collection.where !== "function") return null
+    const query = collection.where("userId", "==", userId)
+    const ordered = query.orderBy?.("createdAt", "desc") ?? query
+    const limited = ordered.limit?.(1) ?? ordered
+    const snap = await limited.get?.()
+    if (!snap || snap.empty || !snap.docs || snap.docs.length === 0) return null
+    return objectDocData(snap.docs[0])
+  } catch (err) {
+    log?.("shared_onboarding.resume_prompt_context.lookup_failed", {
+      userId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    return null
+  }
+}
+
 function experiencesFrom(parsedResume: Record<string, unknown>): Array<Record<string, unknown>> {
   return Array.isArray(parsedResume.experiences)
     ? parsedResume.experiences.filter((item): item is Record<string, unknown> => (
@@ -122,22 +407,33 @@ export function buildSharedOnboardingPromptContext(input: {
   const candidateProfile = objectValue(parsedResume.candidateProfile)
   const layoffContext = objectValue(user.layoffContext)
   const candidateContext = objectValue(user.candidateContext)
+  const resumeSummary = summaryTextFrom(parsedResume)
+  const summaryExperience = experienceFromSummary(resumeSummary)
   const experiences = experiencesFrom(parsedResume)
+  const promptExperiences = experiences.length > 0
+    ? experiences
+    : summaryExperience
+      ? [summaryExperience]
+      : []
+  const parsedSkills = [
+    ...cleanPromptList(candidateProfile.skills, 8, 40),
+    ...skillsFromSummary(resumeSummary),
+  ]
   const recentCompanies = cleanPromptList([
     layoffContext.lastCompany,
     user.lastCompany,
-    ...experiences.map((exp) => exp.company),
+    ...promptExperiences.map((exp) => exp.company),
   ])
   const recentTitles = cleanPromptList([
     layoffContext.jobTitle,
     user.jobTitle,
-    ...experiences.map((exp) => exp.title),
+    ...promptExperiences.map((exp) => exp.title),
   ])
   const recentLocations = cleanPromptList([
     layoffContext.location,
     user.location,
     candidateContext.location,
-    ...experiences.map((exp) => exp.location),
+    ...promptExperiences.map((exp) => exp.location),
   ])
   const ctx: SharedOnboardingPromptContext = {
     firstName: firstNameFrom(user.firstName) ?? firstNameFrom(user.displayName) ?? firstNameFrom(candidateProfile.name),
@@ -145,8 +441,9 @@ export function buildSharedOnboardingPromptContext(input: {
     recentTitles,
     recentLocations,
     currentLocation: cleanPromptString(user.location ?? candidateContext.location ?? layoffContext.location, 80),
-    skills: cleanPromptList(candidateProfile.skills, 4, 40),
+    skills: cleanPromptList(parsedSkills, 4, 40),
     industryTags: cleanPromptList(parsedResume.industryTags, 3, 80),
+    resumeSummary,
   }
   return Object.fromEntries(
     Object.entries(ctx).filter(([, value]) => Array.isArray(value) ? value.length > 0 : value !== undefined)
@@ -163,6 +460,7 @@ export function cleanSharedOnboardingPromptContext(value: unknown): SharedOnboar
     currentLocation: cleanPromptString(raw.currentLocation, 80),
     skills: cleanPromptList(raw.skills, 4, 40),
     industryTags: cleanPromptList(raw.industryTags, 3, 80),
+    resumeSummary: cleanPromptString(raw.resumeSummary, 220),
   }
   return Object.fromEntries(
     Object.entries(ctx).filter(([, value]) => Array.isArray(value) ? value.length > 0 : value !== undefined)
@@ -202,7 +500,11 @@ export function buildSharedOnboardingPrompt(
   if (id === "main_goal") {
     const greeting = ctx.firstName ? `Hey ${ctx.firstName}, ` : ""
     const work = workSummary(ctx)
-    const resumeLead = work ? `I saw from your resume that you've done ${work}. ` : ""
+    const resumeLead = work
+      ? `I saw from your resume that you've done ${work}. `
+      : ctx.resumeSummary
+        ? `I saw your resume summary: ${ctx.resumeSummary}. `
+        : ""
     return `${greeting}${resumeLead}For this next phase, what matters most in your next company: career growth, compensation, stability, mission, learning, or something else?`
   }
   if (id === "industry_interest" && (ctx.industryTags?.length ?? 0) > 0) {
@@ -214,6 +516,17 @@ export function buildSharedOnboardingPrompt(
     return `${lead}Where do you want to work next, and are you open to remote, onsite, or relocating to another city?`
   }
   return question.prompt
+}
+
+export function buildSharedOnboardingReask(
+  id: SharedOnboardingQuestionId,
+  context?: SharedOnboardingPromptContext | null,
+  judgeResult?: Extract<JudgeResult<string>, { accept: false }>,
+): string {
+  const clarification = judgeResult?.clarifyingQuestion?.trim()
+  if (clarification) return clarification
+  const prompt = buildSharedOnboardingPrompt(id, context)
+  return `I can help with that, but I need this part first so I can match roles correctly. ${prompt}`
 }
 
 export function getSharedOnboardingQuestion(id: SharedOnboardingQuestionId): SharedOnboardingQuestion {

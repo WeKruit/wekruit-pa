@@ -8,6 +8,7 @@ import {
   buildSharedOnboardingPrompt,
   buildSharedOnboardingPromptContext,
   buildSharedOnboardingStartedState,
+  loadSharedOnboardingParsedResumeForPrompt,
   WEKRUIT_LAYOFF_SOURCE,
   WEKRUIT_CANDIDATE_SOURCE,
   type SharedOnboardingPromptContext,
@@ -117,29 +118,6 @@ export async function isLayoffIntakeActiveForUser(db: Firestore, userId: string)
   return isLayoffIntakeActiveDoc(snap.data())
 }
 
-async function loadLatestParsedResumeForPrompt(
-  db: Firestore,
-  userId: string,
-  log?: (event: string, payload?: Record<string, unknown>) => void,
-): Promise<Record<string, unknown> | null> {
-  try {
-    const snap = await db
-      .collection("parsedCandidateResumes")
-      .where("userId", "==", userId)
-      .orderBy("createdAt", "desc")
-      .limit(1)
-      .get()
-    if (snap.empty) return null
-    return (snap.docs[0]?.data() ?? null) as Record<string, unknown> | null
-  } catch (err) {
-    log?.("shared_onboarding.resume_prompt_context.lookup_failed", {
-      userId,
-      error: err instanceof Error ? err.message : String(err),
-    })
-    return null
-  }
-}
-
 export async function supersedeActivePrescreensForLayoff(
   db: Firestore,
   input: { candidateId: string; nowIso: string },
@@ -192,7 +170,7 @@ export async function runLayoffSmsStart(
   const isLayoff = source === WEKRUIT_LAYOFF_SOURCE
 
   const startedAt = new Date().toISOString()
-  const parsedResume = await loadLatestParsedResumeForPrompt(args.db, args.userId, args.log)
+  const parsedResume = await loadSharedOnboardingParsedResumeForPrompt(args.db, args.userId, user, args.log)
   const promptContext = buildSharedOnboardingPromptContext({ user, parsedResume })
   const startedFields = buildOnboardingStartedFields(startedAt, source, promptContext)
   const phoneHash = phoneIndexId(phoneE164)
