@@ -184,6 +184,11 @@ import { checkAcademicIntegrity } from "@pa/pa-safety"
 // Pure regex (sub-1ms), fire-and-forget Firestore merge-write to pa_users.
 // Spec: "边聊天我们要给用户边打标，这个标记应该是实时变化的但是cost不能高"
 import { applyRealtimeTagWriteback } from "./voice/realtime-tagger.js"
+// 2026-05-18 — chat → tag + memory extractor (post-onboarding free-form
+// preference deltas mirror into pa-users.tags + Qdrant pa_memory_entities).
+// See .planning/GOAL-chat-tag-memory-extraction.md.
+import { maybeRunExtractor } from "./conversation-extractor-runtime.js"
+import type { ConversationExtractMessage } from "./conversation-extractor.js"
 // Adam iter 20 — phrase-repeat stripper. iter-19 10-turn sim found 5
 // consecutive replies opening with "要不要试" — F1 detects user-mirror
 // not Claire-self-mirror; stripRepeatOpener only checks last-2 + first
@@ -2985,6 +2990,64 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
             })
           })
         }
+
+        // ---------------------------------------------------------------
+        // 2026-05-18 — chat → tag + memory extractor. Fire-and-forget on
+        // post-turn so chat-volunteered preferences (e.g. "I want fintech",
+        // "I'm flexible on LA") mirror into pa-users.tags + Qdrant
+        // pa_memory_entities. Match engine reads tags; extractor closes
+        // the post-onboarding feedback gap audited 2026-05-18.
+        //
+        // Skip when onboardingState !== "complete" (deterministic q_*
+        // path owns those answers) OR active prescreen (Claire is screening,
+        // not chatting).
+        //
+        // Feature flag: PA_CHAT_EXTRACTOR_ENABLED=true. Default off; the
+        // trigger evaluator still logs decisions but the LLM call is
+        // short-circuited until the rollout is opt-in.
+        // ---------------------------------------------------------------
+        {
+          const extractorDb = store.db
+          if (extractorDb && event.userId && onboardingUser?.onboardingState === "complete") {
+            void (async () => {
+              try {
+                const existingTags =
+                  (onboardingUser as unknown as { tags?: Record<string, unknown> }).tags ?? {}
+                const recentMessages: ConversationExtractMessage[] = [
+                  ...claireHistoryForDetectors.slice(-9).map(
+                    (text): ConversationExtractMessage => ({
+                      role: "assistant",
+                      body: text,
+                      createdAt: store.nowIso(),
+                    }),
+                  ),
+                  {
+                    role: "user",
+                    body: event.body,
+                    createdAt: event.createdAt ?? store.nowIso(),
+                  },
+                ]
+                await maybeRunExtractor({
+                  db: extractorDb,
+                  userId: event.userId,
+                  recentMessages,
+                  existingTags,
+                  onboardingState: onboardingUser.onboardingState ?? null,
+                  activePrescreenSessionId: null,
+                  userMsgsThisBatch: 1,
+                  log: (evt, payload) => store.log(evt, payload),
+                })
+              } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err)
+                store.log("pa.conversation_extractor.dispatch_error", {
+                  userId: event.userId,
+                  turnId,
+                  error: msg,
+                })
+              }
+            })()
+          }
+        }
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -4433,9 +4496,25 @@ export {
 export { OnboardingPipeline } from "./onboarding/pipeline.js"
 export type { PipelineState, PipelineStateProvider, RunTurnInput as OnboardingRunTurnInput, RunTurnResult as OnboardingRunTurnResult } from "./onboarding/pipeline.js"
 
-// 2026-05-18 — chat → tag + memory extractor. Drives the canonical-retention
-// flywheel: post-onboarding free-form chat → pa-users.tags + Qdrant
-// pa_memory_entities. See .planning/GOAL-chat-tag-memory-extraction.md.
+// 2026-05-18 — chat → tag + memory extractor runtime wrappers (concrete deps
+// for the pure functions in conversation-extractor.ts).
+export {
+  makeExtractorDeps,
+  maybeRunExtractor,
+  buildNeedsOnboardingDirective,
+  readExtractionState,
+  writeExtractionState,
+  writeMemoryEntitiesToQdrant,
+  productionLlmCall,
+  type MakeExtractorDepsOptions,
+  type MaybeRunExtractorArgs,
+  type ExtractionState,
+} from "./conversation-extractor-runtime.js"
+
+// 2026-05-18 — chat → tag + memory extractor pure functions + types. Drives
+// the candidate-retention flywheel: post-onboarding free-form chat →
+// pa-users.tags + Qdrant pa_memory_entities. See
+// .planning/GOAL-chat-tag-memory-extraction.md.
 export {
   shouldRunExtractor,
   runExtraction,

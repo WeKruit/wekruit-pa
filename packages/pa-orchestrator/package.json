@@ -26,6 +26,7 @@
     "prestart": "npm run ensure:node"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.94.0",
     "@pa/agent-registry": "0.0.1",
     "@pa/agent-runtime": "0.0.1",
     "@pa/core-types": "0.0.1",
