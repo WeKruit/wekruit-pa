@@ -901,7 +901,17 @@ export const onPaInbound = onDocumentCreated(
       SENDBLUE_API_SECRET_KEY,
       SENDBLUE_FROM_NUMBER,
     ],
-    memory: "1GiB",
+    // 2026-05-19 — bumped down from 1GiB to 512MiB and pinned maxInstances=1
+    // to keep the per-region memory quota under the project cap. The
+    // orchestrator + mem0 + Sendblue SDK baseline lives around 300-400 MiB;
+    // 512 MiB is the next valid MemoryOption below 1 GiB and is tight but
+    // workable for a single concurrent turn. Bump back to 1 GiB if OOM
+    // shows up under load — bouncing the redeploys at 1 GiB blew the
+    // project-wide GCF memory budget (see CLAUDE.md quota note + the
+    // force-redeploy 06:34 UTC "Quota exceeded for total allowable memory
+    // per project per region").
+    memory: "512MiB",
+    maxInstances: 1,
     timeoutSeconds: 300,
     concurrency: 1,
   },
