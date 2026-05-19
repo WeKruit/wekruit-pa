@@ -46,6 +46,32 @@ Goal: verify production shared onboarding over SMS/iMessage after duplicate gree
 
 Pending explicit operator confirmation before sending scripted iMessage/SMS traffic from Adam's Messages app.
 
+## Final Audit - 2026-05-19 11:58 UTC
+
+- Branch/PR:
+  - Branch: `claude/ecstatic-swartz-954e33`
+  - HEAD: `8e250b1 Verify shared onboarding SMS production path`
+  - PR: `https://github.com/WeKruit/wekruit-pa/pull/114`
+  - PR state: open, ready for review, mergeable.
+- GitHub checks on PR #114:
+  - `typecheck + unit tests`: success.
+  - `v1.5 QA team (4 agents × 8 personas × bilingual)`: success.
+  - CodeQL `Analyze (actions)`: success.
+  - CodeQL `Analyze (javascript-typescript)`: success.
+  - CodeQL `Analyze (python)`: success.
+  - CodeQL aggregate check: success.
+- Production artifact re-read:
+  - Re-read all passed shared-onboarding batch artifacts and validated their internal invariants.
+  - Counted `216` passed onboarding conversations, `10` complete onboarding -> job-rec -> normal-chat conversations, and `1120` unique inbound event IDs.
+  - Re-read all `1120` inbound event IDs from production Firestore; all were `succeeded` or `completed`.
+  - Queried `pa-outbound` for matching `outbound-{eventId}` idempotency keys; found `0`.
+- Production runtime state:
+  - `onPaInbound`: Gen2, us-central1, nodejs24, 1024 MiB, `maxInstances=1`.
+  - `paSendblueWebhook`: Gen2, us-central1, nodejs24, 512 MiB, `maxInstances=1`.
+  - `pa-users/UThMpnAGzjaWnxDsKEMH` cleanup state: `onboardingState=pending`, `onboardingStatus=invited`, `sharedOnboarding=null`, `workSession=null`, `latestResumeArtifactId` preserved as `candidate_upload_UThMpnAGzjaWnxDsKEMH_03ebee96e6371ed72895665d450219ff`.
+- Remaining unproven surface:
+  - Actual local Messages.app transcript is still pending because sending real iMessages from Adam's account requires action-time confirmation under the Computer Use policy.
+
 ## Production Shared-Onboarding SMS Batch
 
 - Script: `apps/functions/scripts/shared-onboarding-sms-batch.ts`
