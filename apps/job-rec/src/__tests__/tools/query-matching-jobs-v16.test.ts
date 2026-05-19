@@ -1473,3 +1473,235 @@ test("B5 freshness: today's job ranks above week-old job (same skill/llm/industr
     `delta=${todayScore.breakdown.total - weekScore.breakdown.total}`,
   )
 })
+
+// ---------------------------------------------------------------------------
+// W5 — typed cast cleanup verification.
+//
+// W5 removes `as unknown as { ... }` casts from V16 in favour of typed
+// `UserTags` field access (now possible because W3 #117 promoted the shadow
+// fields into `UserTagsSchema` + W4 #121 wired them into the registry). This
+// test pins behavior: a `UserTags` fixture populated through every W3-promoted
+// path (`careerStage`, `targetJobType`, `targetRoleFunction`, `relevantTags`,
+// `minSalary`, plus the B1-typed `targetCompanyTags` / `companyPositiveList` /
+// `urgentlySeeking` / `companyNegativeList` / `targetCountry`) must produce
+// the exact same hard-filter and scoring output as the pre-W5 cast-based read
+// path. Hand-computed expected values lock the contract — any future drift
+// (e.g. accidentally swapping the fallback order or dropping a field at the
+// type boundary) fails here.
+// ---------------------------------------------------------------------------
+
+test("W5 cleanup: applyV16HardFilters reads typed UserTags identically to pre-W5 cast path", () => {
+  const tags = {
+    skills: [],
+    industryEnum: [],
+    schemaVersion: 1,
+    // careerStage (typed via W3) — junior user → entry_level/junior/mid_level
+    careerStage: "junior",
+    // targetJobType (typed via W3) — `full_time` keeps full-time, drops contract
+    targetJobType: ["full_time"],
+    // targetCountry (typed pre-W3) — US-only intent
+    targetCountry: ["usa"],
+    // targetLocations — typed pre-W3
+    targetLocations: ["san_francisco_bay_area"],
+    // visaStatus — typed pre-W3
+    visaStatus: "citizen",
+    // companyNegativeList (typed via B1) — drop "BlockedCo"
+    companyNegativeList: ["blockedco"],
+  } as never
+  const jobs: MatchingJob[] = [
+    // Keep: full_time, US bucket, in SF, junior stage, alive, fresh,
+    // company not on negative list.
+    mkJob({
+      id: "keep",
+      companyName: "Acme",
+      jobType: "full_time",
+      seniorityLevel: "junior",
+      locationBuckets: ["san_francisco_bay_area"],
+      sponsorship: true,
+    }),
+    // Drop: jobType=contract — fails targetJobType filter.
+    mkJob({
+      id: "drop-jobtype",
+      companyName: "Acme",
+      jobType: "contract",
+      seniorityLevel: "junior",
+      locationBuckets: ["san_francisco_bay_area"],
+    }),
+    // Drop: seniorityLevel="director" — outside junior window (index 3 vs 7).
+    mkJob({
+      id: "drop-seniority",
+      companyName: "Acme",
+      jobType: "full_time",
+      seniorityLevel: "director",
+      locationBuckets: ["san_francisco_bay_area"],
+    }),
+    // Drop: companyNegativeList match (normalizeCompanyName("BlockedCo") == "blockedco").
+    mkJob({
+      id: "drop-negative",
+      companyName: "BlockedCo",
+      jobType: "full_time",
+      seniorityLevel: "junior",
+      locationBuckets: ["san_francisco_bay_area"],
+    }),
+  ]
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  // Pre-W5 behavior: 1 kept ("keep"), 3 dropped — 1 per counter.
+  assert.deepEqual(r.kept.map((j) => j.id), ["keep"])
+  assert.equal(r.counters.jobType, 1)
+  assert.equal(r.counters.careerStage, 1)
+  assert.equal(r.counters.negativeListDrop, 1)
+})
+
+test("W5 cleanup: applyV16HardFilters tolerates legacy plural targetJobTypes (back-compat fallback intact)", () => {
+  // The plural `targetJobTypes` is intentionally NOT promoted to UserTagsSchema
+  // (see merger doc comment on `targetJobType`). V16 still reads it as a
+  // back-compat fallback when the canonical singular is absent. This test pins
+  // the fallback so a future schema cleanup doesn't silently break old Firestore
+  // docs.
+  const tags = {
+    skills: [],
+    industryEnum: [],
+    schemaVersion: 1,
+    // No singular targetJobType — only legacy plural via cast.
+    targetJobTypes: ["full_time"],
+  } as never
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "ft", jobType: "full_time" }),
+    mkJob({ id: "ct", jobType: "contract" }),
+  ]
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  assert.deepEqual(r.kept.map((j) => j.id), ["ft"])
+  assert.equal(r.counters.jobType, 1)
+})
+
+test("W5 cleanup: scoreV16Job reads typed relevantTags/minSalary/B4 fields identically to pre-W5 cast path", () => {
+  // Lock the per-component score breakdown so a future regression at the
+  // type-boundary surfaces as a numeric drift here.
+  const tags = {
+    skills: [{ name: "python", baseWeight: 1.0 }],
+    industryEnum: ["tech_software"],
+    schemaVersion: 1,
+    // relevantTags (W3-promoted) — primary source for relTags
+    relevantTags: ["frontend_development", "mlops"],
+    // relevantSpecialization should NOT be consulted because relevantTags is non-empty
+    relevantSpecialization: ["should_be_ignored"],
+    // minSalary (typed pre-W3) — > job.salaryMin → salary fit < 1.0
+    minSalary: 200000,
+    // B4 typed fields
+    targetCompanyTags: ["ai_native"],
+    companyPositiveList: ["acme"],
+    urgentlySeeking: true,
+    industrySector: ["artificial_intelligence_and_machine_learning"],
+  } as never
+  const job = mkJob({
+    id: "j",
+    companyName: "Acme",
+    requiredSkills: ["python"],
+    relevantTags: ["frontend_development"],
+    industrySector: ["artificial_intelligence_and_machine_learning"],
+    salaryMin: 150000,
+    jobType: "full_time",
+    firstSeenAt: new Date(NOW - 3 * 24 * 3600 * 1000).toISOString(),
+  } as never)
+  const r = scoreV16Job(tags, job, undefined, 0.5, undefined, { stage: "series_a", tags: ["ai_native"] }, NOW)
+  // Pre-W5 hand-computed expectations:
+  // - llmMatch: 0.5 × 0.40 = 0.20
+  // - skillJaccard: 1/1 = 1.0 × 0.20 = 0.20 (python matched, baseWeight=1)
+  // - relevantTags: 1/2 = 0.5 × 0.15 = 0.075 (frontend overlap; mlops missing)
+  //   Note: relevantSpecialization SHOULD NOT contribute because relevantTags
+  //   is non-empty — locks the W5 fallback order (`user.relevantTags ?? …`).
+  // - industrySector: 1/1 = 1.0 × 0.10 = 0.10
+  // - cvEmbCosine: 0 × 0.10 = 0 (no embeddings)
+  // - salaryFit: linear degrade — user wants 200k, job at 150k → 0
+  //   pre-W5 read user.minSalary via cast; post-W5 reads same field typed.
+  // - tagOverlap: jaccard({ai_native} ∩ {ai_native}) = 1.0 × 0.15 = 0.15
+  // - positiveHit: normalizeCompanyName("Acme") == "acme" ∈ companyPositiveList → 0.15
+  // - urgencyBoost: full_time + 3d old → +0.20
+  assert.equal(r.breakdown.llmMatch, 0.5)
+  assert.equal(r.breakdown.skillJaccard, 1.0)
+  assert.ok(Math.abs(r.breakdown.relevantTags - 0.5) < 1e-9, `relevantTags=${r.breakdown.relevantTags}`)
+  assert.equal(r.breakdown.industrySector, 1.0)
+  assert.equal(r.breakdown.cvEmbCosine, 0)
+  assert.equal(r.breakdown.salaryFit, 0)
+  assert.ok(Math.abs(r.breakdown.tagOverlap - 0.15) < 1e-9, `tagOverlap=${r.breakdown.tagOverlap}`)
+  assert.equal(r.breakdown.positiveHit, 0.15)
+  assert.equal(r.breakdown.urgencyBoost, 0.20)
+})
+
+test("W5 cleanup: scoreV16Job relevantTags falls back to relevantSpecialization when relevantTags empty (order preserved)", () => {
+  // Pins the fallback chain that pre-W5 cast read via `userExt.relevantTags ??
+  // user.relevantSpecialization ?? user.proposedTags ?? []`. Post-W5 reads the
+  // identical chain via typed access. Two fixtures lock both fallback steps.
+  const tagsWithSpec = {
+    skills: [],
+    industryEnum: [],
+    schemaVersion: 1,
+    // No relevantTags → falls back to relevantSpecialization
+    relevantSpecialization: ["mlops"],
+    proposedTags: ["should_be_ignored"],
+  } as never
+  const job = mkJob({ relevantTags: ["mlops"] })
+  const r1 = scoreV16Job(tagsWithSpec, job, undefined, 0, undefined, undefined, NOW)
+  assert.ok(Math.abs(r1.breakdown.relevantTags - 1.0) < 1e-9, `relevantTags=${r1.breakdown.relevantTags} (specialization fallback)`)
+
+  // No relevantTags AND no relevantSpecialization → falls back to proposedTags
+  const tagsWithProposed = {
+    skills: [],
+    industryEnum: [],
+    schemaVersion: 1,
+    proposedTags: ["mlops"],
+  } as never
+  const r2 = scoreV16Job(tagsWithProposed, job, undefined, 0, undefined, undefined, NOW)
+  assert.ok(Math.abs(r2.breakdown.relevantTags - 1.0) < 1e-9, `relevantTags=${r2.breakdown.relevantTags} (proposed fallback)`)
+})
+
+test("W5 cleanup: queryMatchingJobsV16 runV16Query reads typed targetRoleFunction identically (role-filter applies)", async () => {
+  // Pins the role-filter access path on runV16Query — pre-W5 cast read
+  // tagsExt.targetRoleFunction; post-W5 reads userTags.targetRoleFunction.
+  // Behavior pin: when targetRoleFunction is populated, the array-contains-any
+  // gate fires; sales jobs are dropped even though SWE jobs match.
+  const mfs = new MockFirestore()
+  await mfs
+    .collection("pa-users")
+    .doc("u_typed")
+    .set({
+      tags: {
+        skills: [],
+        industryEnum: [],
+        schemaVersion: 1,
+        targetRoleFunction: ["software_engineering"],
+        targetLocations: ["san_francisco_bay_area"],
+        visaStatus: "citizen",
+        // Populate all 5 missingAxes-checked fields so needsOnboarding stays
+        // undefined — pin focused on role-filter pass behavior.
+        careerStage: "junior",
+        targetJobType: ["full_time"],
+      },
+    })
+  await seedJob(mfs, "swe", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["python"],
+    companyName: "SweCo",
+    jobTitle: "SWE",
+    seniorityLevel: "junior",
+    jobType: "full_time",
+    locationBuckets: ["san_francisco_bay_area"],
+  })
+  await seedJob(mfs, "sales", {
+    roleFunction: ["sales"],
+    requiredSkills: ["closing"],
+    companyName: "SalesCo",
+    jobTitle: "AE",
+    seniorityLevel: "junior",
+    jobType: "full_time",
+    locationBuckets: ["san_francisco_bay_area"],
+  })
+  const r = await queryMatchingJobsV16(
+    { userId: "u_typed", nowMs: NOW },
+    { db: asFirestore(mfs) }
+  )
+  // SWE kept (role-filter pass), sales dropped at query layer.
+  assert.equal(r.needsOnboarding, undefined)
+  assert.equal(r.jobs.length, 1)
+  assert.equal(r.jobs[0]!.id, "swe")
+})
