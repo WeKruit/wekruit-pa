@@ -86,6 +86,17 @@ async function postJson(path, body) {
   return r.json()
 }
 
+async function getJson(path) {
+  const r = await fetch(`${QDRANT_URL}${path}`, {
+    method: "GET",
+    headers: { "api-key": headers["api-key"] },
+  })
+  if (!r.ok) {
+    throw new Error(`${path} ${r.status}: ${await r.text()}`)
+  }
+  return r.json()
+}
+
 async function countWithFilter(collection, filter) {
   const j = await postJson(`/collections/${collection}/points/count`, {
     filter,
@@ -112,7 +123,7 @@ async function main() {
   for (const collection of COLLECTIONS) {
     let totalBefore, deletable, keepers
     try {
-      const r = await postJson(`/collections/${collection}`, {})
+      const r = await getJson(`/collections/${collection}`)
       totalBefore = r.result?.points_count ?? null
     } catch (err) {
       console.log(`  ${collection.padEnd(28)}  [collection-not-found / ${err.message}]`)
@@ -140,7 +151,7 @@ async function main() {
 
     await deletePointsByFilter(collection, filterDeletable)
 
-    const totalAfter = (await postJson(`/collections/${collection}`, {})).result?.points_count ?? null
+    const totalAfter = (await getJson(`/collections/${collection}`)).result?.points_count ?? null
     const keepersAfter = await countWithFilter(collection, filterKeep)
     const deleted = totalBefore - totalAfter
 
