@@ -79,7 +79,9 @@ try {
   const escapedToken = TYPO_TOKEN.replace(/_/g, "_")
   const pattern = `collection\\(\\s*[\\"']${escapedToken}[\\"']`
   // --include limits to source files. Exclusions strip built artifacts
-  // (dist/, lib/, build/), node_modules, and this file itself.
+  // (dist/, lib/, build/), node_modules, this file, and the cleanup tools
+  // (which legitimately read the typo collection to count + assert post-
+  // delete state — they are not production writers).
   const cmd = `grep -rEn --include="*.ts" --include="*.mjs" --include="*.js" ` +
     `"${pattern}" "${REPO_ROOT}/packages" "${REPO_ROOT}/apps" ` +
     `2>/dev/null ` +
@@ -87,7 +89,11 @@ try {
     `| grep -v "/dist/" ` +
     `| grep -v "/lib/" ` +
     `| grep -v "/build/" ` +
-    `| grep -v "predeploy-smoke.mjs" || true`
+    `| grep -v "predeploy-smoke.mjs" ` +
+    `| grep -v "cleanup-pa-users-cascade.mjs" ` +
+    `| grep -v "cleanup-qdrant-memory.mjs" ` +
+    `| grep -v "cleanup-smoke-verify.mjs" ` +
+    `| grep -v "cleanup-preservation-audit.mjs" || true`
   let hits = ""
   try {
     hits = execSync(cmd, { encoding: "utf-8" }).trim()
