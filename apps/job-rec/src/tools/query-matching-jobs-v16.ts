@@ -774,6 +774,42 @@ const URGENCY_OFF_TARGET_JOB_TYPES = new Set(["internship", "new_graduate", "con
 export const V16_FRESHNESS_BOOST_MAX = 0.10
 export const V16_FRESHNESS_HALF_LIFE_MS = 3 * 24 * 3600 * 1000  // τ = 3 days
 
+/**
+ * Phase B5.1 (Adam 2026-05-19) — cohort-relevance damping on freshness.
+ *
+ * Why: pure additive `freshnessBoost` could let a brand-new but irrelevant
+ * job (e.g. sales role for a SWE-tagged user with empty `targetRoleFunction`,
+ * which skips the query-layer role filter) beat a stale-but-relevant SWE
+ * job. Adam catch 2026-05-19:
+ *   "aging 应该是 filter 完所有 industry/skill 等, 同一个领域里面的 filter ...
+ *    要不然可能这个 sales 岗位开的很早, 然后 somehow prioritize it over a swe job"
+ *
+ * Fix: scale the freshness boost by `min(1, baseRelevance / THRESHOLD)` so
+ * a job with zero relevance receives zero freshness lift, and only jobs
+ * with reasonable base relevance enjoy the full age-decay curve.
+ *
+ *     baseRelevance  = baseScore + tagOverlapScore + positiveHitBoost
+ *                      (excludes urgencyBoost — that's intent signal,
+ *                       not relevance signal — and the new freshness term
+ *                       itself, to avoid circularity)
+ *     freshFactor    = min(1, baseRelevance / V16_FRESHNESS_RELEVANCE_THRESHOLD)
+ *     freshnessBoost = V16_FRESHNESS_BOOST_MAX × 0.5^(age/τ) × freshFactor
+ *
+ * Threshold = 0.20: matches the magnitude of a single strong soft-score
+ * component (e.g. skillJaccard=1.0 × W.skillJaccard=0.20 = 0.20). A job
+ * with at least one strong signal therefore enjoys the full freshness lift.
+ *
+ * Effect table (B_max=0.10, τ=3d):
+ *
+ *   baseRelevance   freshFactor   today boost   7d boost
+ *   -----------     -----------   -----------   --------
+ *   0.00 (none)         0           0.000         0.000
+ *   0.05 (weak)         0.25        0.025         0.005
+ *   0.10 (mid)          0.50        0.050         0.010
+ *   0.20+ (strong)      1.0         0.100         0.020
+ */
+export const V16_FRESHNESS_RELEVANCE_THRESHOLD = 0.20
+
 export function scoreV16Job(
   user: UserTags,
   job: MatchingJob & { embedding?: number[] | null },
@@ -862,16 +898,28 @@ export function scoreV16Job(
       urgencyBoost = V16_URGENCY_BOOST_OFF_TARGET
     }
   }
-  // Phase B5 — default-on freshness boost (exponential half-life decay).
-  // Applies to ALL users; stacks with urgencyBoost intentionally.
+  // Phase B5 — default-on freshness boost (exponential half-life decay)
+  // scaled by cohort relevance (B5.1, Adam 2026-05-19): a zero-relevance
+  // job gets zero freshness lift, so a brand-new sales role can't outrank
+  // a stale-but-relevant SWE role when the query layer didn't filter role
+  // (under-tagged user).
   let freshnessBoost = 0
   const firstSeenForBoost = timestampToMs(job.firstSeenAt)
   if (firstSeenForBoost > 0) {
     const nowForBoost =
       typeof nowMs === "number" && Number.isFinite(nowMs) ? nowMs : Date.now()
     const ageMs = Math.max(0, nowForBoost - firstSeenForBoost)
-    freshnessBoost =
+    const decay =
       V16_FRESHNESS_BOOST_MAX * Math.pow(0.5, ageMs / V16_FRESHNESS_HALF_LIFE_MS)
+    // baseRelevance excludes urgencyBoost (intent signal) and freshnessBoost
+    // (circularity). Strong jobs (≥0.20 base) get full decay; weaker jobs
+    // get linearly scaled lift; zero-base gets zero.
+    const baseRelevance = baseScore + tagOverlapScore + positiveHitBoost
+    const freshFactor = Math.min(
+      1,
+      Math.max(0, baseRelevance / V16_FRESHNESS_RELEVANCE_THRESHOLD),
+    )
+    freshnessBoost = decay * freshFactor
   }
   const total =
     baseScore + tagOverlapScore + positiveHitBoost + urgencyBoost + freshnessBoost
