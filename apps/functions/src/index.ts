@@ -187,6 +187,9 @@ export { paQaEvaluatorWeekly } from "./qa-evaluator-weekly.js"
 // optional weight-override sandbox values, and returns full per-job score
 // breakdown + counters for the dashboard's live debugger.
 export { paAdminJobMatchDebug, paAdminMatchDebug } from "./admin-match-debug.js"
+// Coresignal Agentic Search proxy — admin-only callable forwarding to
+// /v2/agentic_search/reasoning. Backs the /admin/coresignal-playground page.
+export { paAdminCoresignalAgenticSearch } from "./admin-coresignal-agentic-search.js"
 export { paAdminOutreachOpsSnapshot } from "./outreach/admin.js"
 export { paAdminPassedCandidatesSnapshot } from "./admin-passed-candidates.js"
 
