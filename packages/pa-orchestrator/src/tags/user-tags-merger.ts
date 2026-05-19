@@ -39,6 +39,10 @@ import {
   SkillSchema,
   type Skill,
   type SkillBucket,
+  ROLE_FUNCTION_VOCAB,
+  CAREER_STAGE_VOCAB,
+  JOB_TYPE_VOCAB,
+  INDUSTRY_SECTOR_VOCAB,
 } from "@wekruit/shared-tags"
 import { roleToIndustryBuckets, type IndustryEnumBucket } from "../voice/role-to-industry.js"
 import type { CanonicalRole } from "../onboarding.js"
@@ -119,8 +123,15 @@ export const UserTagsSchema = z.object({
    * `INDUSTRY_SECTOR_VOCAB`). Distinct from `industryEnum` (legacy 10-tag).
    * Populated parse-time by pa-resume-parser v2 + post-parse Sonnet
    * second-pass when the LLM falls through to ["other"] (D15).
+   *
+   * Workstream W3 (pre-launch matching hardening): tightened from
+   * `z.array(z.string())` to the canonical enum so writers (parser v2,
+   * conversation-extractor) commit to the 42-token vocab. The runtime
+   * `dedupedStrings` normalization in `mergeUserTags` only lower-cases/
+   * trims; it does not promote unknown tokens, so any new non-canonical
+   * value would be a writer bug — the enum surfaces it at the type layer.
    */
-  industrySector: z.array(z.string()).optional(),
+  industrySector: z.array(z.enum(INDUSTRY_SECTOR_VOCAB)).optional(),
   /**
    * Phase 53 — derived industries from work-history (≤6). Same canonical
    * 42-token vocab as `industrySector`. Used by Phase 56 match query as
@@ -137,6 +148,20 @@ export const UserTagsSchema = z.object({
    * Promoted to canonical via admin dashboard (Phase 59).
    */
   proposedTags: z.array(z.string()).optional(),
+  /**
+   * Workstream W3 (pre-launch matching hardening) — open-vocab relevant-tags
+   * bag (max 12). Promoted from a shadow field that V16 was already reading
+   * via cast.
+   *
+   * Drives V16 `relevantTags` soft score (0.15 weight) via
+   * `computeOverlap(user.relevantTags, job.relevantTags)`. V16 falls back
+   * to `relevantSpecialization ?? proposedTags` when this is empty
+   * (`apps/job-rec/src/tools/query-matching-jobs-v16.ts:835`). Written by
+   * `conversation-extractor.ts:169` from LLM tag patch. Pattern enforced
+   * separately by `RelevantTagSchema` in `@wekruit/shared-tags`; here we
+   * keep the type bag as `string[]` to mirror existing open-vocab fields.
+   */
+  relevantTags: z.array(z.string()).max(12).optional(),
   /** Most recent role title (workHistory[0].title or experiences[0].title). */
   recentRoleTitle: z.string().optional(),
   /** Most recent company. */
@@ -155,8 +180,34 @@ export const UserTagsSchema = z.object({
   // ---- chat-derived (statedPreferences echo) --------------------------
   /** Canonical role tokens (closed enum from onboarding canon-role). */
   targetRole: z.array(z.string()).optional(),
+  /**
+   * Workstream W3 (pre-launch matching hardening) — Phase 52 canonical
+   * role-function tokens (17 enum from jobright `utm_campaign`). Promoted
+   * from a shadow field that V16 was already reading via cast.
+   *
+   * Drives V16 hard-filter role gate at query layer
+   * (`where('roleFunction', 'array-contains-any', targetRoleFunction)` in
+   * `apps/job-rec/src/tools/query-matching-jobs-v16.ts`). When empty, V16
+   * reports `needsOnboarding=true` and falls back to a non-role-gated
+   * query. Written by `onboarding.ts:741` (deterministic mapper from
+   * CanonicalRole) and `conversation-extractor.ts:162` (LLM tag patch).
+   */
+  targetRoleFunction: z.array(z.enum(ROLE_FUNCTION_VOCAB)).optional(),
   /** [min, max] years-of-experience tuple. */
   yoeRange: z.tuple([z.number(), z.number()]).optional(),
+  /**
+   * Workstream W3 (pre-launch matching hardening) — Phase 52 canonical
+   * career-stage token (13 enum). Promoted from a shadow field that V16
+   * was already reading via cast.
+   *
+   * Drives V16 hard-filter seniority window via
+   * `acceptableCareerStages(careerStage)` (one tier above + below the
+   * user stage). Written by `conversation-extractor.ts:165` from LLM tag
+   * patch. Differs from `yoeRange` — yoeRange is the raw [min,max] tuple
+   * collected during onboarding, careerStage is the canonical seniority
+   * token applied at match time.
+   */
+  careerStage: z.enum(CAREER_STAGE_VOCAB).optional(),
   visaStatus: z
     .enum(["citizen", "gc", "opt", "h1b", "sponsor_needed", "other"])
     .optional(),
@@ -170,6 +221,20 @@ export const UserTagsSchema = z.object({
   minSalary: z.number().int().nonnegative().optional(),
   /** Company-size preference collected from Level 1 follow-up. */
   companySize: z.enum(["seed", "early_startup", "scale_up", "mid_market", "enterprise", "open"]).optional(),
+  /**
+   * Workstream W3 (pre-launch matching hardening) — Phase 52 canonical
+   * job-type tokens (10 enum). Promoted from a shadow field that V16 was
+   * already reading via cast.
+   *
+   * Drives V16 hard-filter `jobType` exact-match gate (drop job when
+   * `job.jobType` is not in the user's `targetJobType` set). Written by
+   * `conversation-extractor.ts:166` from LLM tag patch. The legacy plural
+   * `targetJobTypes` is intentionally NOT promoted to the schema — V16
+   * still falls back to `tagsExt.targetJobTypes` for back-compat with
+   * stale Firestore docs written pre-Phase-54, but new writes use this
+   * singular form.
+   */
+  targetJobType: z.array(z.enum(JOB_TYPE_VOCAB)).optional(),
 
   // ---- Phase B1 — company preference signals --------------------------
   /**
@@ -841,7 +906,18 @@ export function mergeUserTags(input: UserTagsInput): UserTags {
     }
     return out.length > 0 ? out : undefined
   }
-  const industrySector = dedupedStrings(cv?.industrySector, 6)
+  // W3 — `industrySector` field is now typed as `IndustrySector[]`
+  // (canonical 42-token vocab). Narrow the deduped strings to the
+  // canonical set so a non-vocab upstream value is dropped at the merge
+  // boundary rather than silently corrupting the schema. `INDUSTRY_SECTOR_VOCAB`
+  // is bound at module top.
+  const industrySectorRaw = dedupedStrings(cv?.industrySector, 6)
+  const industrySector = industrySectorRaw
+    ? (industrySectorRaw.filter(
+        (t): t is (typeof INDUSTRY_SECTOR_VOCAB)[number] =>
+          (INDUSTRY_SECTOR_VOCAB as readonly string[]).includes(t),
+      ) as Array<(typeof INDUSTRY_SECTOR_VOCAB)[number]>)
+    : undefined
   const relevantIndustry = dedupedStrings(cv?.relevantIndustry, 6)
   const relevantSpecialization = dedupedStrings(cv?.relevantSpecialization, 6)
   const proposedTags = dedupedStrings(cv?.proposedTags, 12)
@@ -871,7 +947,7 @@ export function mergeUserTags(input: UserTagsInput): UserTags {
   if (targetLocations) out.targetLocations = targetLocations
   if (targetCountry) out.targetCountry = targetCountry
   if (preferredLang) out.preferredLang = preferredLang
-  if (industrySector) out.industrySector = industrySector
+  if (industrySector && industrySector.length > 0) out.industrySector = industrySector
   if (relevantIndustry) out.relevantIndustry = relevantIndustry
   if (relevantSpecialization) out.relevantSpecialization = relevantSpecialization
   if (proposedTags) out.proposedTags = proposedTags
