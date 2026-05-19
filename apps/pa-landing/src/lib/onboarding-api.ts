@@ -30,6 +30,9 @@ export type RegisterOutput = {
   isReregistration?: boolean
   mode?: "auto" | "reuse" | "refresh"
   duplicate?: false
+  /** Sticky Sendblue from-number assigned at registration; used to build the sms: deep link on the Done view. */
+  senderNumber?: string
+  senderGroupId?: string
 }
 
 export type RegisterDuplicate = {

@@ -6,10 +6,19 @@
 import { useMemo, useRef, useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
 import "../styles/wekruit-tokens.css"
-import { deriveFunction, initiateSmsPrescreen, registerCandidate } from "../lib/onboarding-api"
+import { deriveFunction, registerCandidate } from "../lib/onboarding-api"
 import { uploadResume } from "../lib/onboarding-cv"
 import { candidateProfileDestination, getBrowserUid, rememberCandidateProfileSession } from "../lib/browser-identity"
 import { resolveSource, SOURCE_RESOLVER_MARKER, type SignupSource } from "../lib/source"
+
+// 2026-05-19 (Adam directive: "这个 onboarding flow 应该发一个 Hello, WeKruit!
+// 这样的消息, 开始 onboard") — every candidate-side onboarding opener uses
+// this single visible phrase. The token carries no routing info; the
+// orchestrator resolves the candidate via pa-users.phoneE164 +
+// pa-candidate-handles fallback, then handleSharedOnboardingBootstrap fires
+// Q1. No source-token leak (legacy "WeKruit_LAID_OFF" / "WeKruit_CANDIDATE_HI"
+// are suppressed at apps/functions/src/sendblue/triggers/layoff.ts).
+const HELLO_WEKRUIT_BODY = "Hello, WeKruit!"
 
 // Keep the marker referenced so tree-shaking can't drop it from the
 // bundle. The acceptance grep relies on this string being present.
@@ -41,6 +50,8 @@ type Profile = {
   candidateId?: string
   listPosition?: number
   isReregistration?: boolean
+  /** Sticky Sendblue from-number assigned by openRegisterLayoffCandidate; powers the sms: deep link on the Done view. */
+  senderNumber?: string
 }
 
 export default function Onboarding() {
@@ -91,8 +102,9 @@ export default function Onboarding() {
         browserUid: getBrowserUid(),
       })
       await uploadResumeForCandidate(res.candidateId, formData, sourceToUploadTag(source))
-      setBusyText("Starting Claire's SMS chat…")
-      await initiateSmsPrescreen(res.candidateId)
+      // 2026-05-19 — no server-side SMS push; the Done view shows an sms:
+      // deep link button so the candidate sends "Hello, WeKruit!" themselves
+      // (Adam directive: explicit user-initiated open message).
       setProfile((p) => ({ ...p, ...withoutResumeFile(formData), ...res }))
       setStage("done")
     } catch (err) {
@@ -698,6 +710,9 @@ function UploadIcon() {
 
 function Done({ profile, onGo }: { profile: Profile; onGo: (r: "dashboard" | "landing") => void }) {
   const number = profile.listPosition ?? 412 + Math.floor(Math.random() * 8) + 1
+  const smsHref = profile.senderNumber
+    ? `sms:${profile.senderNumber}?&body=${encodeURIComponent(HELLO_WEKRUIT_BODY)}`
+    : null
   return (
     <div style={{ paddingTop: 8 }}>
       <div style={{ textAlign: "center", marginBottom: 32 }}>
@@ -730,15 +745,22 @@ function Done({ profile, onGo }: { profile: Profile; onGo: (r: "dashboard" | "la
             margin: 0,
           }}
         >
-          You're on. We've <em style={{ fontStyle: "italic" }}>got</em> it from here.
+          One last step — say <em style={{ fontStyle: "italic" }}>hi</em>.
         </h1>
-        <p className="lead" style={{ marginTop: 16, marginInline: "auto", maxWidth: 500, color: "var(--ink-2)", fontSize: 17 }}>
-          We'll text the SMS chat to your phone any second now. Reply right there — Claire will take it from here.
+        <p className="lead" style={{ marginTop: 16, marginInline: "auto", maxWidth: 540, color: "var(--ink-2)", fontSize: 17 }}>
+          Tap the button below to open iMessage. Send the pre-filled <strong>"{HELLO_WEKRUIT_BODY}"</strong> and Claire will reply with your first question right away.
         </p>
       </div>
 
       <div style={{ display: "flex", justifyContent: "center", gap: 12, flexWrap: "wrap" }}>
-        <button className="btn btn--primary" onClick={() => onGo("dashboard")}>Go to your profile →</button>
+        {smsHref ? (
+          <a className="btn btn--primary btn--lg" href={smsHref}>Open iMessage →</a>
+        ) : (
+          <span className="caption" style={{ color: "var(--ink-3)" }}>
+            We hit a hiccup assigning your Claire line. Text us at hello@wekruit.com and we'll get you started.
+          </span>
+        )}
+        <button className="btn btn--ghost" onClick={() => onGo("dashboard")}>Go to your profile</button>
         <button className="btn btn--ghost" onClick={() => onGo("landing")}>Back home</button>
       </div>
     </div>
