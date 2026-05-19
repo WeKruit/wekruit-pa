@@ -204,6 +204,31 @@ describe("processOneJob", () => {
     assert.equal(counters.dead_marked, 0)
   })
 
+  it("normalizes YC Work at a Startup /jobs URLs before checking liveness", async () => {
+    const counters = emptyCounters()
+    let checkedUrl = ""
+    const job: SweepJobDoc = {
+      id: "j1",
+      atsApplyUrl: "https://www.workatastartup.com/companies/deepgram/jobs",
+      primaryUrl: "https://www.workatastartup.com/companies/deepgram/jobs",
+    }
+    const deps = {
+      ...baseDeps({}),
+      headCheck: async (url: string): Promise<LivenessVerdict> => {
+        checkedUrl = url
+        return { alive: true }
+      },
+    }
+    const plan = await processOneJob(job, counters, deps)
+    assert.equal(checkedUrl, "https://www.workatastartup.com/companies/deepgram")
+    assert.equal(plan.kind, "update")
+    if (plan.kind === "update") {
+      assert.equal(plan.updates.atsApplyUrl, "https://www.workatastartup.com/companies/deepgram")
+      assert.equal(plan.updates.primaryUrl, "https://www.workatastartup.com/companies/deepgram")
+      assert.equal(plan.updates.dead, undefined)
+    }
+  })
+
   it("alive→dead: marks dead with reason and deadCheckedAt", async () => {
     const counters = emptyCounters()
     const job: SweepJobDoc = {

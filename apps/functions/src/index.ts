@@ -50,7 +50,7 @@ import {
 } from "./orchestrator-deps.js"
 import {
   buildJobRecommendationRuntimeContext,
-  collectJobRecommendationMessageItems,
+  collectLiveFirestoreJobRecommendationMessageItems,
   compactJobRecContext,
   resolveJobRecVisibleCount,
 } from "./job-rec-copy.js"
@@ -1479,7 +1479,7 @@ function buildSendblueWebhookDeps() {
         return { ok: false, jobCount: 0, reason: "no_matches" }
       }
       const visibleCount = resolveJobRecVisibleCount(undefined)
-      const items = collectJobRecommendationMessageItems(result.jobs, "en", { limit: visibleCount })
+      const items = await collectLiveFirestoreJobRecommendationMessageItems(db, result.jobs, "en", { limit: visibleCount })
       if (items.length === 0) {
         return { ok: false, jobCount: 0, reason: "no_linkable_matches" }
       }

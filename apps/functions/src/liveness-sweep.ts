@@ -143,6 +143,7 @@ export type SweepUpdates = {
   deadCheckedAt?: string | null
   deadReason?: string | null
   atsApplyUrl?: string
+  primaryUrl?: string
   atsResolvedAt?: string
   atsResolvedBy?: string
 }
@@ -193,6 +194,23 @@ function toMillis(t: string | { toMillis: () => number } | null | undefined): nu
     }
   }
   return null
+}
+
+export function normalizeSweepJobUrl(url: string): string {
+  try {
+    const parsed = new URL(url)
+    const host = parsed.hostname.toLowerCase()
+    if (
+      (host === "workatastartup.com" || host === "www.workatastartup.com") &&
+      /^\/companies\/[^/]+\/jobs\/?$/.test(parsed.pathname)
+    ) {
+      parsed.pathname = parsed.pathname.replace(/\/jobs\/?$/, "")
+      return parsed.toString()
+    }
+  } catch {
+    return url
+  }
+  return url
 }
 
 /**
@@ -273,7 +291,15 @@ export async function processOneJob(
   // v1.7 Phase 65: inline backfill removed. The dedicated
   // `paBackfillAtsUrlsBatch` CF (hourly) handles resolution. Liveness sweep
   // simply skips here so we don't burn HEAD capacity on un-resolvable jobs.
-  const atsUrl = job.atsApplyUrl
+  const atsUrl = job.atsApplyUrl ? normalizeSweepJobUrl(job.atsApplyUrl) : undefined
+  const normalizedUrlUpdates: SweepUpdates = {}
+  if (job.atsApplyUrl && atsUrl && atsUrl !== job.atsApplyUrl) {
+    normalizedUrlUpdates.atsApplyUrl = atsUrl
+  }
+  if (job.primaryUrl) {
+    const normalizedPrimary = normalizeSweepJobUrl(job.primaryUrl)
+    if (normalizedPrimary !== job.primaryUrl) normalizedUrlUpdates.primaryUrl = normalizedPrimary
+  }
   if (!atsUrl) {
     counters.skipped_no_url++
     return { kind: "noop" }
@@ -293,7 +319,7 @@ export async function processOneJob(
     return { kind: "noop" }
   }
 
-  const updates: SweepUpdates = {}
+  const updates: SweepUpdates = { ...normalizedUrlUpdates }
 
   if (verdict.alive) {
     counters.head_alive++

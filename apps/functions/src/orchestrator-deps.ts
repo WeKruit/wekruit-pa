@@ -3,7 +3,7 @@ import { logger } from "firebase-functions/v2"
 import { initializeApp, getApps } from "firebase-admin/app"
 import { getFirestore } from "firebase-admin/firestore"
 import {
-  collectJobRecommendationMessageItems,
+  collectLiveFirestoreJobRecommendationMessageItems,
   composeJobRecommendationMessage,
   compactJobRecContext,
   hasConcreteJobRequirements,
@@ -14,6 +14,7 @@ import {
 export {
   cleanJobRecUrl,
   collectJobRecommendationMessageItems,
+  collectLiveFirestoreJobRecommendationMessageItems,
   composeJobRecommendationMessage,
   compactJobRecContext,
   formatJobRecIntro,
@@ -202,7 +203,11 @@ function makeGenerateJobRecs(): NonNullable<
         return null
       }
       const visibleCount = resolveJobRecVisibleCount(opts?.requestedCount)
-      const visibleItems = collectJobRecommendationMessageItems(jobs, outputLang, { limit: visibleCount })
+      const visibleItems = await collectLiveFirestoreJobRecommendationMessageItems(db, jobs, outputLang, {
+        limit: visibleCount,
+        maxCandidates: Math.min(jobs.length, Math.max(10, visibleCount * 5)),
+        log: (event, payload) => logger.warn(`[job-recs] ${event}`, payload ?? {}),
+      })
       if (visibleItems.length === 0) {
         logger.warn("[job-recs] no matches with public job links", {
           userId,

@@ -28,7 +28,7 @@ import type {
 import { sendRuntimeApprovedIMessage } from "./runtime-approved-outbox.js"
 import {
   buildJobRecommendationRuntimeContext,
-  collectJobRecommendationMessageItems,
+  collectLiveFirestoreJobRecommendationMessageItems,
   compactJobRecContext,
   resolveJobRecVisibleCount,
 } from "./job-rec-copy.js"
@@ -361,7 +361,7 @@ export async function runPiiConfirmTurnIfActive(
         return
       }
       const visibleCount = resolveJobRecVisibleCount(undefined)
-      const items = collectJobRecommendationMessageItems(result.jobs, "en", { limit: visibleCount })
+      const items = await collectLiveFirestoreJobRecommendationMessageItems(db, result.jobs, "en", { limit: visibleCount })
       if (items.length === 0) {
         log("pii_confirm.recs_no_linkable_matches", { userId: a.userId })
         if (source !== "pass") {

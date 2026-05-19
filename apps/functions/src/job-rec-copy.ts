@@ -1,3 +1,5 @@
+import type { Firestore } from "firebase-admin/firestore"
+
 export type JobRecLang = "zh" | "en"
 
 export type JobRecIntroContext = {
@@ -32,6 +34,12 @@ export type JobRecommendationMessageItem = {
   reason?: string
   sourceJob: JobRecommendationSource
 }
+
+export type JobRecUrlLivenessVerdict =
+  | { alive: true }
+  | { alive: false; reason: string }
+
+export type JobRecUrlFetch = (url: string, init?: RequestInit) => Promise<Response>
 
 function cleanRequiredSkills(requiredSkills: unknown): string[] {
   return Array.isArray(requiredSkills)
@@ -147,6 +155,133 @@ export function collectJobRecommendationMessageItems(
   return items
 }
 
+export async function checkJobRecUrlLiveness(
+  url: string,
+  options?: {
+    fetchImpl?: JobRecUrlFetch
+    timeoutMs?: number
+  },
+): Promise<JobRecUrlLivenessVerdict> {
+  const fetchImpl = options?.fetchImpl ?? (globalThis.fetch as JobRecUrlFetch | undefined)
+  if (!fetchImpl) return { alive: false, reason: "fetch_unavailable" }
+  const timeoutMs = options?.timeoutMs ?? 2500
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs)
+  try {
+    const res = await fetchImpl(url, {
+      method: "HEAD",
+      redirect: "follow",
+      signal: ctrl.signal,
+    })
+    if ((res.status >= 200 && res.status < 400) || res.status === 405) {
+      return { alive: true }
+    }
+    return { alive: false, reason: `http_${res.status}` }
+  } catch (err) {
+    const e = err as { name?: string; message?: string }
+    if (e?.name === "AbortError" || (e?.message ?? "").toLowerCase().includes("aborted")) {
+      return { alive: false, reason: "timeout" }
+    }
+    return { alive: false, reason: `network_error:${(e?.message ?? "unknown").slice(0, 80)}` }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+export async function collectLiveJobRecommendationMessageItems(
+  jobs: JobRecommendationSource[] | undefined,
+  lang: JobRecLang,
+  options?: {
+    limit?: number
+    reasons?: Array<string | null | undefined>
+    maxCandidates?: number
+    fetchImpl?: JobRecUrlFetch
+    timeoutMs?: number
+    onDeadJob?: (
+      job: JobRecommendationSource,
+      verdict: Exclude<JobRecUrlLivenessVerdict, { alive: true }>,
+      url: string,
+    ) => Promise<void> | void
+    log?: (event: string, payload?: Record<string, unknown>) => void
+  },
+): Promise<JobRecommendationMessageItem[]> {
+  const limit = resolveJobRecVisibleCount(options?.limit)
+  const maxCandidates = Math.max(limit, Math.min(options?.maxCandidates ?? Math.max(8, limit * 4), jobs?.length ?? 0))
+  const candidates: JobRecommendationMessageItem[] = []
+  for (let i = 0; i < (jobs?.length ?? 0) && candidates.length < maxCandidates; i++) {
+    const job = jobs![i]!
+    const item = toJobRecommendationMessageItem(job, lang, { reason: options?.reasons?.[i] ?? undefined })
+    if (item) candidates.push(item)
+  }
+  if (candidates.length === 0) return []
+
+  const checked = await Promise.all(
+    candidates.map(async (item) => ({
+      item,
+      verdict: await checkJobRecUrlLiveness(item.url, {
+        ...(options?.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+        ...(options?.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
+      }),
+    })),
+  )
+
+  const items: JobRecommendationMessageItem[] = []
+  for (const { item, verdict } of checked) {
+    if (verdict.alive) {
+      items.push(item)
+      if (items.length >= limit) break
+      continue
+    }
+    options?.log?.("pa.job_rec.visible_url_dead", {
+      jobId: cleanDisplayString(item.sourceJob.id),
+      companyName: item.companyName ?? null,
+      url: item.url,
+      reason: verdict.reason,
+    })
+    await options?.onDeadJob?.(item.sourceJob, verdict, item.url)
+  }
+  return items
+}
+
+export async function markDeadJobRecommendationSource(
+  db: Firestore,
+  job: JobRecommendationSource,
+  reason: string,
+): Promise<void> {
+  if (typeof job.id !== "string" || job.id.trim().length === 0) return
+  const now = new Date().toISOString()
+  await db.collection("matching-jobs").doc(job.id).set(
+    {
+      dead: true,
+      deadCheckedAt: now,
+      deadReason: `runtime_${reason}`,
+      updatedAt: now,
+    },
+    { merge: true },
+  )
+}
+
+export async function collectLiveFirestoreJobRecommendationMessageItems(
+  db: Firestore,
+  jobs: JobRecommendationSource[] | undefined,
+  lang: JobRecLang,
+  options?: {
+    limit?: number
+    reasons?: Array<string | null | undefined>
+    maxCandidates?: number
+    fetchImpl?: JobRecUrlFetch
+    timeoutMs?: number
+    log?: (event: string, payload?: Record<string, unknown>) => void
+  },
+): Promise<JobRecommendationMessageItem[]> {
+  return collectLiveJobRecommendationMessageItems(jobs, lang, {
+    ...options,
+    onDeadJob: async (job, verdict) => {
+      await markDeadJobRecommendationSource(db, job, verdict.reason)
+    },
+  })
+}
+
 export function composeJobRecommendationMessage(
   items: JobRecommendationMessageItem[],
   lang: JobRecLang,
@@ -230,7 +365,7 @@ export function compactJobRecContext(tags: unknown): JobRecIntroContext | undefi
 
 export function cleanJobRecUrl(job: { atsApplyUrl?: unknown; primaryUrl?: unknown }): string | null {
   const ats = typeof job.atsApplyUrl === "string" ? job.atsApplyUrl.trim() : ""
-  if (ats) return ats
+  if (ats) return normalizeJobRecUrl(ats)
   const primary = typeof job.primaryUrl === "string" ? job.primaryUrl.trim() : ""
   if (!primary) return null
   try {
@@ -239,5 +374,22 @@ export function cleanJobRecUrl(job: { atsApplyUrl?: unknown; primaryUrl?: unknow
   } catch {
     return null
   }
-  return primary
+  return normalizeJobRecUrl(primary)
+}
+
+export function normalizeJobRecUrl(url: string): string {
+  try {
+    const parsed = new URL(url)
+    const host = parsed.hostname.toLowerCase()
+    if (
+      (host === "workatastartup.com" || host === "www.workatastartup.com") &&
+      /^\/companies\/[^/]+\/jobs\/?$/.test(parsed.pathname)
+    ) {
+      parsed.pathname = parsed.pathname.replace(/\/jobs\/?$/, "")
+      return parsed.toString()
+    }
+  } catch {
+    return url
+  }
+  return url
 }

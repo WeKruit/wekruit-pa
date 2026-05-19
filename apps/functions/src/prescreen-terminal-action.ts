@@ -35,6 +35,7 @@ import { markPrescreenTerminalOutcome } from "./prescreen-outcome-service.js"
 import {
   buildJobRecommendationRuntimeContext,
   collectJobRecommendationMessageItems,
+  collectLiveFirestoreJobRecommendationMessageItems,
   composeJobRecommendationMessage,
   compactJobRecContext,
   type JobRecIntroContext,
@@ -223,7 +224,7 @@ async function defaultGenerateJobRecs(args: {
   if (!result.jobs || result.jobs.length === 0) {
     return { ok: false, jobCount: 0, reason: "no_matches" }
   }
-  const items = collectJobRecommendationMessageItems(result.jobs, "en", { limit: 3 })
+  const items = await collectLiveFirestoreJobRecommendationMessageItems(db, result.jobs, "en", { limit: 3 })
   if (items.length === 0) {
     return { ok: false, jobCount: 0, reason: "no_linkable_matches" }
   }

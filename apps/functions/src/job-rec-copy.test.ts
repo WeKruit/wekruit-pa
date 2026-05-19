@@ -4,7 +4,9 @@ import assert from "node:assert/strict"
 import {
   buildJobRecommendationRuntimeContext,
   collectJobRecommendationMessageItems,
+  collectLiveJobRecommendationMessageItems,
   composeJobRecommendationMessage,
+  cleanJobRecUrl,
   toJobRecommendationMessageItem,
 } from "./job-rec-copy.js"
 
@@ -58,6 +60,15 @@ describe("job recommendation visible-message contract", () => {
     assert.equal(items.length, 1)
     assert.equal(items[0]!.title, "Fullstack Engineer")
     assert.equal(items[0]!.requirementsLine, "requirements: React, Node.js, SQL")
+  })
+
+  it("normalizes YC Work at a Startup company job-list URLs to the live company page", () => {
+    assert.equal(
+      cleanJobRecUrl({
+        atsApplyUrl: "https://www.workatastartup.com/companies/adaptional/jobs",
+      }),
+      "https://www.workatastartup.com/companies/adaptional",
+    )
   })
 
   it("the message composer accepts only already-linkable message items and always renders URL plus requirements", () => {
@@ -146,5 +157,46 @@ describe("job recommendation visible-message contract", () => {
     assert.match(JSON.stringify(context.instructions), /may be a repeat/)
     const body = composeJobRecommendationMessage(items, "en")
     assert.match(body, /may have shared this before/)
+  })
+
+  it("live collection skips and reports candidate-visible dead URLs before composing", async () => {
+    const deadJobs: Array<{ id: string; reason: string; url: string }> = []
+    const items = await collectLiveJobRecommendationMessageItems(
+      [
+        {
+          id: "dead-job",
+          jobTitle: "Backend Engineer",
+          companyName: "DeadCo",
+          atsApplyUrl: "https://dead.example/jobs/1",
+          requiredSkills: ["Python"],
+        },
+        {
+          id: "live-job",
+          jobTitle: "Infrastructure Engineer",
+          companyName: "LiveCo",
+          atsApplyUrl: "https://live.example/jobs/1",
+          requiredSkills: ["Python", "AWS"],
+        },
+      ],
+      "en",
+      {
+        limit: 1,
+        fetchImpl: async (url) =>
+          new Response(null, { status: url.includes("dead.example") ? 404 : 200 }),
+        onDeadJob: async (job, verdict, url) => {
+          deadJobs.push({ id: String(job.id), reason: verdict.reason, url })
+        },
+      },
+    )
+
+    assert.equal(items.length, 1)
+    assert.equal(items[0]!.sourceJob.id, "live-job")
+    assert.deepEqual(deadJobs, [
+      {
+        id: "dead-job",
+        reason: "http_404",
+        url: "https://dead.example/jobs/1",
+      },
+    ])
   })
 })
