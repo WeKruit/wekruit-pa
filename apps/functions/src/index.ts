@@ -159,6 +159,15 @@ export {
   paMatchingJobsTtlDeleteCallable,
 } from "./matching-jobs-ttl-delete.js"
 
+// W6 (pre-launch matching hardening, 2026-05-19) — admin-only on-demand
+// callable that flips bad-active matching-jobs docs to `status: "inactive"`.
+// Predicate (first-match-wins): dead=true / missing jobTitle / firstSeenAt
+// past V16's 20-day window / atsApplyUrl missing or jobright.ai placeholder.
+// Default dryRun=true for canary safety; explicit `false` to actually flip.
+// Safe-because: W1 (core-service upsertJobs status-protection, PR #7) is in
+// main, so the next macmini scrape will not resurrect flipped docs.
+export { paJobPoolHygiene } from "./job-pool-hygiene.js"
+
 // v1.6 Phase 58 (RERANK-01..04) — Nightly LLM rerank batch + per-skill
 // JD-relative weight cache. Cloud Scheduler 04:00 UTC (1h after liveness
 // sweep). For each active user: rerank top-50 candidates via Qwen-7B and
