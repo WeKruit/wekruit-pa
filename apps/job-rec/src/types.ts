@@ -394,6 +394,13 @@ export const V16ScoreBreakdownSchema = z.object({
   positiveHit: z.number(),
   /** Phase B4 — +0.20 fresh full_time / -0.10 intern/new_grad/contract. */
   urgencyBoost: z.number(),
+  /**
+   * Phase B5 (2026-05-19) — default-on freshness boost. Exponential
+   * half-life decay: `V16_FRESHNESS_BOOST_MAX × 0.5^(ageMs/τ)`.
+   * B_max=0.10, τ=3d → today≈0.10, 3d≈0.05, 7d≈0.02, 20d≈0.001.
+   * Always present (≥ 0); missing firstSeenAt → 0.
+   */
+  freshnessBoost: z.number(),
   /** Per-user/job repeat-rec penalty applied to ranking total. */
   previousRecommendationPenalty: z.number().optional(),
   /** Weighted total per V16_SCORE_WEIGHTS + B4 additive boosts. */

@@ -737,6 +737,43 @@ export const V16_URGENCY_BOOST_OFF_TARGET = -0.10
 export const V16_URGENCY_FRESH_WINDOW_MS = 14 * 24 * 3600 * 1000
 const URGENCY_OFF_TARGET_JOB_TYPES = new Set(["internship", "new_graduate", "contract"])
 
+/**
+ * Phase B5 (Adam 2026-05-19) — default-on freshness boost.
+ *
+ * Why: V16 hard filter caps age at 20 d, query orders by `firstSeenAt desc`,
+ * but the soft-score blend itself carries no recency signal. Default
+ * (non-urgent) users therefore see today's freshly-scraped jobs and 19-day-
+ * old jobs at parity once skill/industry/embedding match — sub-decimal LLM
+ * noise can flip ordering. Adam directive: "job match should also prefer
+ * latest recent jobs.. like today's new parsed & matched jobs".
+ *
+ * Shape: exponential half-life decay — industry standard (LinkedIn newness
+ * signal, RecSys time-decay baseline). One parameter (τ), smooth, no step
+ * discontinuities in /admin/match-debug:
+ *
+ *     freshnessBoost = V16_FRESHNESS_BOOST_MAX × 0.5^(ageMs / τ)
+ *
+ * Adam-locked params (2026-05-19):
+ *   B_max = 0.10  (smaller than positiveHit 0.15 and urgencyBoost 0.20)
+ *   τ     = 3 d   ("today" beats 3-d-old 2×, beats 7-d-old 5×)
+ *
+ * Decay table (B_max=0.10, τ=3d):
+ *
+ *   age     boost
+ *   ----    -----
+ *   0 h     0.100
+ *   1 d     0.079
+ *   3 d     0.050   ← half-life
+ *   7 d     0.020
+ *   14 d    0.004
+ *   20 d    0.001   ← hard-filter edge; effectively 0, no manual floor
+ *
+ * Caveat: stacks with urgencyBoost (0.20 fresh full_time) for
+ * `urgentlySeeking=true` users — that's intentional; urgency dominates.
+ */
+export const V16_FRESHNESS_BOOST_MAX = 0.10
+export const V16_FRESHNESS_HALF_LIFE_MS = 3 * 24 * 3600 * 1000  // τ = 3 days
+
 export function scoreV16Job(
   user: UserTags,
   job: MatchingJob & { embedding?: number[] | null },
@@ -825,7 +862,19 @@ export function scoreV16Job(
       urgencyBoost = V16_URGENCY_BOOST_OFF_TARGET
     }
   }
-  const total = baseScore + tagOverlapScore + positiveHitBoost + urgencyBoost
+  // Phase B5 — default-on freshness boost (exponential half-life decay).
+  // Applies to ALL users; stacks with urgencyBoost intentionally.
+  let freshnessBoost = 0
+  const firstSeenForBoost = timestampToMs(job.firstSeenAt)
+  if (firstSeenForBoost > 0) {
+    const nowForBoost =
+      typeof nowMs === "number" && Number.isFinite(nowMs) ? nowMs : Date.now()
+    const ageMs = Math.max(0, nowForBoost - firstSeenForBoost)
+    freshnessBoost =
+      V16_FRESHNESS_BOOST_MAX * Math.pow(0.5, ageMs / V16_FRESHNESS_HALF_LIFE_MS)
+  }
+  const total =
+    baseScore + tagOverlapScore + positiveHitBoost + urgencyBoost + freshnessBoost
   return {
     breakdown: {
       llmMatch: llm,
@@ -837,6 +886,7 @@ export function scoreV16Job(
       tagOverlap: tagOverlapScore,
       positiveHit: positiveHitBoost,
       urgencyBoost,
+      freshnessBoost,
       total,
     },
     matched: skill.matched,
