@@ -76,6 +76,7 @@ export const CONSOLE_NAV: NavSectionDef[] = [
       { to: "/admin/external-supply/outreach", label: "Outreach campaigns" },
       { to: "/admin/external-supply/sync", label: "Instantly sync" },
       { to: "/admin/external-supply/audit", label: "Audit" },
+      { to: "/admin/coresignal-playground", label: "Coresignal · Agentic search" },
       { to: "/admin/voice-test-dial", label: "Voice test dial" },
       { to: "/admin/sendblue-pool", label: "Sendblue pool" },
     ],
