@@ -485,6 +485,43 @@ function workSummary(ctx: SharedOnboardingPromptContext): string | null {
   return null
 }
 
+/**
+ * Pulls a one-line "resume anchor" the LLM can quote when opening a question.
+ * Used by `buildOnboardingSurfaceIntent` to make Q1 (main_goal) and Q2
+ * (culture_stage) feel sexy/personal — Claire references the candidate's
+ * actual title/company before asking the canonical question.
+ *
+ * Returns null when there's nothing useful on file (no companies, no titles,
+ * no skills) so the surface stays generic instead of fabricating a quote.
+ *
+ * Slot-aware so we can phrase differently for Q1 vs Q2; today Q3
+ * (industry_interest) already has resume copy inside `buildSharedOnboardingPrompt`,
+ * so we don't double-anchor it here. Q4 (location) and Q5 (special) stay
+ * generic.
+ */
+export function buildSharedOnboardingResumeAnchor(
+  slot: SharedOnboardingQuestionId,
+  promptContext?: SharedOnboardingPromptContext | null,
+): string | null {
+  if (slot !== "main_goal" && slot !== "culture_stage") return null
+  const ctx = cleanSharedOnboardingPromptContext(promptContext)
+  const work = workSummary(ctx)
+  if (slot === "main_goal") {
+    if (work) return `Saw you've done ${work}.`
+    if (ctx.resumeSummary) return `Quick summary I noted: ${ctx.resumeSummary}.`
+    return null
+  }
+  // culture_stage — bias toward company stage references when we have them
+  const titles = ctx.recentTitles ?? []
+  const companies = ctx.recentCompanies ?? []
+  if (titles.length > 0 && companies.length > 0) {
+    return `Given your ${joinHuman(titles.slice(0, 1))} background at ${joinHuman(companies.slice(0, 2))},`
+  }
+  if (companies.length > 0) return `Given your ${joinHuman(companies.slice(0, 2))} background,`
+  if (titles.length > 0) return `Given your ${joinHuman(titles.slice(0, 2))} background,`
+  return null
+}
+
 function locationSummary(ctx: SharedOnboardingPromptContext): string | null {
   if (ctx.currentLocation) return `you listed ${ctx.currentLocation}`
   const locations = ctx.recentLocations ?? []

@@ -411,6 +411,12 @@ service cloud.firestore {
       allow read: if isPaOperator();
       allow write: if false;
     }
+    // Legacy parsed resume rows are server-written by CV ingest and are the
+    // source of truth for admin-only work-history inspection.
+    match /parsedCandidateResumes/{id} {
+      allow read: if isPaOperator();
+      allow write: if false;
+    }
     match /pa-candidate-job-states/{id} {
       allow read: if isPaOperator();
       allow write: if false;

@@ -434,6 +434,15 @@ const SEED_FLAGS: FlagSpec[] = [
   // WIRE-IN-PATCH.md Section 9 cookbook. Kill switch:
   // PA_HUMANIZE_RUNTIME_DISABLED=true env (CF cold-start required).
   { key: "paHumanizeRuntimeEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
+  // Conversational Surface Platform — connector narration + find-match tool (default OFF).
+  { key: "paConnectorNarrationEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
+  { key: "paFindMatchToolEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
+  { key: "paSharedOnboardingAgenticSurface", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
+  { key: "paBehaviorChoreographerEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
+  { key: "paReactionTapbackEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
+  // Collab prescreen invite: match/copy helpers only; SMS requires HITL approve on dashboard (no ingest hook).
+  { key: "paCollabMatchInviteEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
+  { key: "paResumeUploadAutoInvite", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
   // Stream B — paJobRecDaily gate. perUser scope; default OFF for everyone;
   // Adam adds his id to allowlist via dashboard before live testing. The
   // daily cron consults this flag per user and silently skips when off.

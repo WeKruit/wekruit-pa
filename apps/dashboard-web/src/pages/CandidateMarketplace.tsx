@@ -31,6 +31,26 @@ type CandidateProfile = Record<string, unknown> & {
   outreach?: { status?: string; cooldownUntil?: string; lastOutboundAt?: string; stickyAccountGroupId?: string }
 }
 
+type ParsedResume = MarketplaceRow & {
+  originalFileName?: string
+  parserModel?: string
+  parserVersion?: string
+  experiences?: unknown
+  workHistory?: unknown
+  candidateProfile?: Record<string, unknown>
+}
+
+type ExperienceEntry = {
+  title?: string
+  company?: string
+  location?: string
+  startDate?: string
+  endDate?: string
+  currentRole?: boolean
+  description?: string
+  bullets: string[]
+}
+
 export function CandidateMarketplace({
   candidateId,
   profile,
@@ -39,6 +59,7 @@ export function CandidateMarketplace({
   profile: CandidateProfile
 }) {
   const [rows, setRows] = useState<MarketplaceRowsByKey>(() => emptyMarketplaceRows())
+  const [latestResume, setLatestResume] = useState<ParsedResume | null>(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
 
@@ -48,14 +69,18 @@ export function CandidateMarketplace({
     setErr(null)
     ;(async () => {
       try {
-        const results = await Promise.all(
-          MARKETPLACE_TABLES.map(async (table) => {
-            const data = await readCandidateMarketplaceRows(table, candidateId)
-            return [table.key, data] as const
-          })
-        )
+        const [results, resume] = await Promise.all([
+          Promise.all(
+            MARKETPLACE_TABLES.map(async (table) => {
+              const data = await readCandidateMarketplaceRows(table, candidateId)
+              return [table.key, data] as const
+            })
+          ),
+          readLatestParsedResume(candidateId),
+        ])
         if (cancelled) return
         setRows({ ...emptyMarketplaceRows(), ...Object.fromEntries(results) })
+        setLatestResume(resume)
       } catch (e: unknown) {
         if (!cancelled) setErr(e instanceof Error ? e.message : String(e))
       } finally {
@@ -94,7 +119,8 @@ export function CandidateMarketplace({
           <ProfileFact label="PII consent" value={profile.piiConsentAt} />
           <ProfileFact label="Level 1" value={profile.level1CollectedAt} />
           <ProfileFact label="Outreach" value={profile.outreach?.status} />
-          <ProfileFact label="Candidate tags" value={profile.tags ?? profile.globalTags} />
+          <TagSummary tags={profile.tags ?? profile.globalTags} />
+          <ExperienceSummary resume={latestResume} />
           <ProfileFact label="Chat preferences" value={profile.conversationDerivedPreferences} />
         </div>
       </Panel>
@@ -173,6 +199,15 @@ async function readCandidateMarketplaceRows(
   )
 }
 
+async function readLatestParsedResume(candidateId: string): Promise<ParsedResume | null> {
+  const snap = await getDocs(query(collection(db(), "parsedCandidateResumes"), where("userId", "==", candidateId), limit(20)))
+  const rows = sortRowsByTime(
+    snap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }) as MarketplaceRow),
+    ["createdAt", "updatedAt", "ingestedAt"]
+  )
+  return (rows[0] as ParsedResume | undefined) ?? null
+}
+
 function Metric({ label, value }: { label: string; value: string }) {
   return (
     <div style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: "0.75rem 0.85rem", background: "#fff" }}>
@@ -187,6 +222,161 @@ function ProfileFact({ label, value }: { label: string; value: unknown }) {
     <div style={{ minWidth: 0 }}>
       <div style={{ color: "#64748b", fontSize: "0.76em", textTransform: "uppercase" }}>{label}</div>
       <div style={{ color: "#0f172a", fontSize: "0.9em", overflowWrap: "anywhere" }}>{compactValue(value, 140)}</div>
+    </div>
+  )
+}
+
+function TagSummary({ tags }: { tags: unknown }) {
+  if (!isRecord(tags)) {
+    return <ProfileFact label="Candidate tags" value={tags} />
+  }
+
+  const sections = [
+    { label: "Target locations", values: stringArrayField(tags, ["targetLocations", "locations"]) },
+    { label: "Industry", values: stringArrayField(tags, ["industryEnum", "industries", "industrySector", "industryTags"]) },
+    { label: "Specialization", values: stringArrayField(tags, ["specialization", "specializations", "relevantSpecialization"]) },
+    { label: "Role focus", values: stringArrayField(tags, ["targetRoleFunction", "roleFunction", "roleFunctions"]) },
+    { label: "Skills", values: skillNames(tags.skills) },
+  ].filter((section) => section.values.length > 0)
+
+  return (
+    <div style={{ gridColumn: "1 / -1", minWidth: 0 }}>
+      <div style={{ color: "#64748b", fontSize: "0.76em", textTransform: "uppercase" }}>Candidate tags</div>
+      <div style={{ display: "grid", gap: 12, marginTop: 8 }}>
+        <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
+          <ProfileFact label="Recent role" value={stringField(tags, "recentRoleTitle")} />
+          <ProfileFact label="Recent company" value={stringField(tags, "recentCompany")} />
+          <ProfileFact label="Career stage" value={stringField(tags, "careerStage")} />
+          <ProfileFact label="Updated" value={stringField(tags, "updatedAt") ?? stringField(tags, "lastUpdatedAt")} />
+        </div>
+        {sections.map((section) => (
+          <TagSection key={section.label} label={section.label} values={section.values} />
+        ))}
+        <details>
+          <summary style={{ color: "#475569", cursor: "pointer", fontSize: "0.86em" }}>Raw JSON</summary>
+          <pre
+            style={{
+              background: "#f8fafc",
+              border: "1px solid #e2e8f0",
+              borderRadius: 8,
+              color: "#0f172a",
+              fontSize: "0.78em",
+              lineHeight: 1.45,
+              margin: "8px 0 0",
+              maxHeight: 260,
+              overflow: "auto",
+              padding: 12,
+              whiteSpace: "pre-wrap",
+            }}
+          >
+            {JSON.stringify(tags, null, 2)}
+          </pre>
+        </details>
+      </div>
+    </div>
+  )
+}
+
+function TagSection({ label, values, limit = 18 }: { label: string; values: string[]; limit?: number }) {
+  const [expanded, setExpanded] = useState(false)
+  const uniqueValues = dedupeStrings(values)
+  const visibleValues = expanded ? uniqueValues : uniqueValues.slice(0, limit)
+  const remaining = Math.max(0, uniqueValues.length - visibleValues.length)
+
+  if (uniqueValues.length === 0) return null
+
+  return (
+    <div>
+      <div style={{ color: "#64748b", fontSize: "0.76em", textTransform: "uppercase" }}>{label}</div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 6 }}>
+        {visibleValues.map((value) => (
+          <span
+            key={value}
+            style={{
+              border: "1px solid #cbd5e1",
+              borderRadius: 7,
+              color: "#0f172a",
+              fontSize: "0.86em",
+              padding: "0.28rem 0.55rem",
+            }}
+          >
+            {formatTagText(value)}
+          </span>
+        ))}
+        {uniqueValues.length > limit ? (
+          <button
+            type="button"
+            aria-expanded={expanded}
+            onClick={() => setExpanded((value) => !value)}
+            style={{
+              background: "transparent",
+              border: "none",
+              color: "#475569",
+              cursor: "pointer",
+              font: "inherit",
+              fontSize: "0.86em",
+              padding: "0.28rem 0",
+              textDecoration: "underline",
+            }}
+          >
+            {expanded ? "Show fewer" : `+${remaining} more`}
+          </button>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+function ExperienceSummary({ resume }: { resume: ParsedResume | null }) {
+  const experiences = resume ? resumeExperiences(resume) : []
+
+  return (
+    <div style={{ gridColumn: "1 / -1", minWidth: 0 }}>
+      <div style={{ color: "#64748b", fontSize: "0.76em", textTransform: "uppercase" }}>Past experience</div>
+      {!resume ? (
+        <div style={{ color: "#64748b", fontSize: "0.9em", marginTop: 6 }}>No parsed resume found.</div>
+      ) : experiences.length === 0 ? (
+        <div style={{ color: "#64748b", fontSize: "0.9em", marginTop: 6 }}>
+          Parsed resume found, but no work history entries were extracted.
+        </div>
+      ) : (
+        <div style={{ display: "grid", gap: 10, marginTop: 8 }}>
+          <div style={{ color: "#64748b", fontSize: "0.82em" }}>
+            Source: {resume.originalFileName || resume.id}
+            {resume.parserModel ? ` · ${resume.parserModel}` : ""}
+          </div>
+          {experiences.map((experience, index) => (
+            <ExperienceCard key={`${experience.company ?? "company"}-${experience.title ?? "title"}-${index}`} experience={experience} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ExperienceCard({ experience }: { experience: ExperienceEntry }) {
+  const title = experience.title || "Role"
+  const company = experience.company || "Company"
+  const dateRange = [experience.startDate, experience.currentRole ? "Present" : experience.endDate].filter(Boolean).join(" - ")
+  const meta = [dateRange, experience.location].filter(Boolean).join(" · ")
+  const visibleBullets = experience.bullets.slice(0, 3)
+
+  return (
+    <div style={{ borderLeft: "3px solid #cbd5e1", paddingLeft: 12 }}>
+      <div style={{ color: "#0f172a", fontWeight: 650 }}>
+        {title} @ {company}
+      </div>
+      {meta ? <div style={{ color: "#64748b", fontSize: "0.84em", marginTop: 2 }}>{meta}</div> : null}
+      {experience.description ? (
+        <div style={{ color: "#334155", fontSize: "0.9em", lineHeight: 1.45, marginTop: 6 }}>{experience.description}</div>
+      ) : null}
+      {visibleBullets.length ? (
+        <ul style={{ color: "#334155", fontSize: "0.86em", lineHeight: 1.45, margin: "6px 0 0", paddingLeft: 18 }}>
+          {visibleBullets.map((bullet) => (
+            <li key={bullet}>{bullet}</li>
+          ))}
+        </ul>
+      ) : null}
     </div>
   )
 }
@@ -325,3 +515,79 @@ const correctionColumns: DataTableColumn<MarketplaceRow>[] = [
   { key: "jobId", header: "Job", render: valueCell("jobId") },
   { key: "reason", header: "Reason", render: valueCell("reason", 320) },
 ]
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value))
+}
+
+function stringField(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key]
+  return typeof value === "string" && value.trim() ? value.trim() : undefined
+}
+
+function stringArrayField(record: Record<string, unknown>, keys: string[]): string[] {
+  return keys.flatMap((key) => normalizeStringList(record[key]))
+}
+
+function normalizeStringList(value: unknown): string[] {
+  if (typeof value === "string") return value.trim() ? [value.trim()] : []
+  if (!Array.isArray(value)) return []
+  return value.flatMap((item) => {
+    if (typeof item === "string") return item.trim() ? [item.trim()] : []
+    if (!isRecord(item)) return []
+    const label =
+      stringField(item, "label") ??
+      stringField(item, "name") ??
+      stringField(item, "value") ??
+      stringField(item, "canonical") ??
+      stringField(item, "id")
+    return label ? [label] : []
+  })
+}
+
+function skillNames(value: unknown): string[] {
+  if (isRecord(value)) return Object.keys(value).filter((key) => Boolean(value[key]))
+  return normalizeStringList(value)
+}
+
+function dedupeStrings(values: string[]): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const value of values) {
+    const trimmed = value.trim()
+    if (!trimmed) continue
+    const key = trimmed.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(trimmed)
+  }
+  return out
+}
+
+function formatTagText(value: string): string {
+  return value
+    .replace(/_/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase())
+}
+
+function resumeExperiences(resume: ParsedResume): ExperienceEntry[] {
+  const source =
+    (Array.isArray(resume.workHistory) && resume.workHistory) ||
+    (Array.isArray(resume.experiences) && resume.experiences) ||
+    (Array.isArray(resume.candidateProfile?.workHistory) && resume.candidateProfile.workHistory) ||
+    (Array.isArray(resume.candidateProfile?.experiences) && resume.candidateProfile.experiences) ||
+    []
+
+  return source.filter(isRecord).map((entry) => ({
+    title: stringField(entry, "title") ?? stringField(entry, "role"),
+    company: stringField(entry, "company"),
+    location: stringField(entry, "location"),
+    startDate: stringField(entry, "startDate"),
+    endDate: stringField(entry, "endDate"),
+    currentRole: entry.currentRole === true,
+    description: stringField(entry, "description"),
+    bullets: normalizeStringList(entry.bullets),
+  }))
+}

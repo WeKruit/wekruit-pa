@@ -765,3 +765,10 @@ export {
   type AcademicIntegrityLanguage,
   type AcademicIntegrityResult,
 } from "./academic-integrity.js"
+
+export {
+  assertConnectorCooldown,
+  recordConnectorCooldown,
+  parseCooldownSec,
+  type ConnectorCooldownResult,
+} from "./connector-cooldown.js"

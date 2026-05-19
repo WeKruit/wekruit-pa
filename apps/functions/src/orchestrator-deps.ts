@@ -68,6 +68,26 @@ export function makeOrchestratorDeps(): import("@pa/pa-orchestrator").Orchestrat
     generateCvAnalysis: makeGenerateCvAnalysis(),
     generateJobRecs: makeGenerateJobRecs(),
     extractAnswerIntent: makeExtractAnswerIntent(),
+    startPrescreenForJob: async ({ userId, jobId, toE164 }) => {
+      if (!getApps().length) initializeApp()
+      const db = getFirestore()
+      const { runPreScreenForUser } = await import("./prescreen-session-start.js")
+      const result = await runPreScreenForUser({
+        db,
+        userId,
+        jobId,
+        toE164,
+        log: (event, payload) => logger.info("[collab-prescreen]", { event, ...(payload ?? {}) }),
+      })
+      return {
+        ok: result.ok,
+        reason: result.reason,
+      }
+    },
+    sendReaction: async ({ to, messageHandle, reaction }) => {
+      const { sendReaction } = await import("./sendblue/send-reaction.js")
+      await sendReaction({ to, messageHandle, reaction })
+    },
   }
 
   // Note: getUserCvParsed is already implemented in
@@ -123,7 +143,12 @@ function makeGenerateJobRecs(): NonNullable<
   return async (
     userId: string,
     lang: "zh" | "en",
-    opts?: { force?: boolean; requestedCount?: number; roleFocus?: string[] },
+    opts?: {
+      force?: boolean
+      requestedCount?: number
+      roleFocus?: string[]
+      collabPrescreenOnly?: boolean
+    },
   ) => {
     if (!getApps().length) initializeApp()
     const db = getFirestore()
@@ -177,9 +202,10 @@ function makeGenerateJobRecs(): NonNullable<
       const out = await queryMatchingJobsV16(
         {
           userId,
-          limit: roleFocus.length ? 20 : 10,
+          limit: opts?.collabPrescreenOnly ? 5 : roleFocus.length ? 20 : 10,
           lang: outputLang,
           allowBroadFallback: true,
+          ...(opts?.collabPrescreenOnly ? { collabPrescreenOnly: true } : {}),
           ...(roleFocus.length ? { presentationRoleFocus: roleFocus } : {}),
         },
         {
@@ -199,8 +225,26 @@ function makeGenerateJobRecs(): NonNullable<
           total: out.total,
           dropped: out.dropped,
           hardFilter: out.hardFilter,
+          collabPrescreenOnly: opts?.collabPrescreenOnly ?? false,
         })
         return null
+      }
+      if (opts?.collabPrescreenOnly === true) {
+        const top = jobs[0]!
+        const score =
+          typeof top.v16Score === "object" && top.v16Score && "total" in top.v16Score
+            ? Number((top.v16Score as { total?: number }).total ?? 0)
+            : 0
+        return {
+          message: `${top.jobTitle ?? "Role"} @ ${top.companyName ?? "Company"}\n${top.reason ?? ""}`.trim(),
+          recCount: 1,
+          topJob: {
+            jobId: top.id,
+            title: String(top.jobTitle ?? "Role"),
+            company: String(top.companyName ?? "Company"),
+            score,
+          },
+        }
       }
       const visibleCount = resolveJobRecVisibleCount(opts?.requestedCount)
       const visibleItems = await collectLiveFirestoreJobRecommendationMessageItems(db, jobs, outputLang, {

@@ -126,11 +126,22 @@ export function emptyMarketplaceRows(): MarketplaceRowsByKey {
 export function rowTime(row: MarketplaceRow, fields: readonly string[]): number {
   for (const field of fields) {
     const raw = row[field]
-    if (typeof raw !== "string") continue
-    const value = Date.parse(raw)
+    const value = timeValue(raw)
     if (Number.isFinite(value)) return value
   }
   return 0
+}
+
+function timeValue(raw: unknown): number {
+  if (typeof raw === "string") return Date.parse(raw)
+  if (raw instanceof Date) return raw.getTime()
+  if (raw && typeof raw === "object" && "toMillis" in raw && typeof raw.toMillis === "function") {
+    return raw.toMillis()
+  }
+  if (raw && typeof raw === "object" && "seconds" in raw && typeof raw.seconds === "number") {
+    return raw.seconds * 1000
+  }
+  return Number.NaN
 }
 
 export function sortRowsByTime(rows: readonly MarketplaceRow[], fields: readonly string[]): MarketplaceRow[] {

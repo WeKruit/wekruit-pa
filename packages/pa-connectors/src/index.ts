@@ -11,22 +11,21 @@ import {
 import { appendAuditEvent } from "@pa/pa-broker"
 import { canUseConnector, isUnsafeMemoryContent } from "@pa/pa-safety"
 
-export type ConnectorContext = {
-  db: Firestore
-  agent: AgentDef
-  turnId: string
-  userId: string
-  sessionId: string
-}
+export type {
+  ConnectorContext,
+  ConnectorDef,
+  ConnectorNarrationTemplates,
+  MatchConnectorHooks,
+} from "./connector-types.js"
 
-export type ConnectorDef<I, O> = {
-  name: string
-  version: string
-  description: string
-  inputSchema: z.ZodType<I>
-  outputSchema: z.ZodType<O>
-  execute: (input: I, ctx: ConnectorContext) => Promise<O>
-}
+import type { ConnectorContext, ConnectorDef } from "./connector-types.js"
+import {
+  FIND_MATCH_CONNECTOR,
+  MATCH_COLLAB_CONNECTOR,
+  FIND_MATCH_NARRATION,
+} from "./match-connectors.js"
+
+export { FIND_MATCH_NARRATION, MATCH_COLLAB_NARRATION } from "./match-connectors.js"
 
 const FakeInputSchema = z.object({
   query: z.string().min(1),
@@ -500,6 +499,8 @@ export const connectorRegistry = {
       }
     },
   } satisfies ConnectorDef<SaveJobProfileConnectorInput, SaveJobProfileConnectorOutput>,
+  "find-match": FIND_MATCH_CONNECTOR,
+  "match-against-collab-jobs": MATCH_COLLAB_CONNECTOR,
 }
 
 export type ConnectorName = keyof typeof connectorRegistry

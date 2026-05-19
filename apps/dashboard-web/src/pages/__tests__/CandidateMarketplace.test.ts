@@ -23,6 +23,17 @@ test("sortRowsByTime orders newest valid timestamp first without mutating input"
   assert.deepEqual(rows.map((row) => row.id), ["old", "missing", "new"])
 })
 
+test("sortRowsByTime handles Firestore timestamp-like values", () => {
+  const rows: MarketplaceRow[] = [
+    { id: "old", createdAt: { toMillis: () => 1000 } },
+    { id: "new", createdAt: { seconds: 2 } },
+  ]
+
+  const sorted = sortRowsByTime(rows, ["createdAt"])
+
+  assert.deepEqual(sorted.map((row) => row.id), ["new", "old"])
+})
+
 test("format helpers handle dashboard-null values and numeric values", () => {
   assert.equal(formatScore(0.87321), "0.87")
   assert.equal(formatScore(undefined), "-")

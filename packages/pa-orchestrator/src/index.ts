@@ -137,6 +137,18 @@ import {
   type SharedOnboardingQuestionId,
   type SharedOnboardingPromptContext,
 } from "./shared-onboarding.js"
+import { applyTemplateOutboundHumanize } from "./outbound-template-humanize.js"
+import {
+  composeSharedOnboardingReply,
+  deliverSharedOnboardingJobRecs,
+  buildSharedOnboardingComposeContext,
+  extractRecentSlangPicks,
+  persistSharedOnboardingSlangPicks,
+  type SharedOnboardingOutboundStore,
+} from "./shared-onboarding-outbound.js"
+import { buildMatchConnectorHooks } from "./match-connector-hooks.js"
+import { handleCollabInviteReply, runCollabMatchInviteAfterResumeIngest } from "./collab-match-invite.js"
+import type { MatchConnectorHooks } from "@pa/pa-connectors"
 // Single onboarding runtime entry. It owns the Q-as-class pipeline and resume
 // discussion flow; legacy flag-gated fallbacks are intentionally not wired.
 import { runDeterministicOnboardingTurn } from "./onboarding-deterministic.js"
@@ -261,6 +273,20 @@ import { deflectAmIAiFlatDeny } from "./voice/am-i-ai-deflector.js"
 // for design notes (hotline-trailer guard, sentence/transition tokenizer,
 // 30%-70% position window, mulberry32 RNG keyed by turnId).
 import { decideReplySplit } from "./voice/probabilistic-split.js"
+// Adam 2026-05-19 voice polish §3 — unified outbound delivery plan
+// (tapback / leading emoji SMS / 1-2 text bubbles) keyed off turnId. Gated
+// on paBehaviorChoreographerEnabled (agentic bundle) — when OFF, we keep
+// the legacy decideReplySplit-only path so this stays a pure side-effect
+// upgrade. See voice/outbound-delivery-plan.ts.
+import {
+  planOutboundDelivery,
+  type OutboundDeliveryPlan,
+} from "./voice/outbound-delivery-plan.js"
+import {
+  isBehaviorChoreographerEnabled,
+  isReactionTapbackEnabled,
+} from "./shared-onboarding-outbound.js"
+import { resolveProfileForUser } from "./voice/voice-profiles/index.js"
 // Phase 21 Track 5 — Headhunter playbook addendum (job-search probe rotation).
 import { headhunterAddendum } from "./playbooks/headhunter.js"
 // Phase 32 W3 — Firestore-backed playbook cache (30s TTL). Replaces the
@@ -300,6 +326,14 @@ import { defaultNlJudge } from "./eval-nl-judge.js"
 // Re-export Phase 22 proactive modules for consumers (e.g. apps/functions)
 export { detectProactiveCancellation, CANCELLATION_PATTERNS } from "./cancellation-nlu.js"
 export { runProactiveTurn, type ProactiveTurnStore, type ProactiveTurnResult } from "./proactive-turn.js"
+export {
+  runCollabMatchInviteAfterResumeIngest,
+  handleCollabInviteReply,
+  COLLAB_INVITE_MIN_SCORE,
+  type CollabMatchInviteDeps,
+  type CollabInvitePending,
+} from "./collab-match-invite.js"
+export { detectCollabInviteReplyIntent, buildCollabInviteIntent } from "./collab-invite-surface.js"
 export { normalizeForIMessage } from "./output-normalizer.js"
 // Phase 30 T2 — re-export downstream connector helpers for admin CF wiring.
 export {
@@ -673,8 +707,30 @@ export type OrchestratorStore = {
   generateJobRecs?(
     userId: string,
     lang: "zh" | "en",
-    opts?: { force?: boolean; requestedCount?: number; roleFocus?: string[] }
-  ): Promise<{ message: string; recCount: number } | null>
+    opts?: {
+      force?: boolean
+      requestedCount?: number
+      roleFocus?: string[]
+      collabPrescreenOnly?: boolean
+    }
+  ): Promise<{
+    message: string
+    recCount: number
+    topJob?: { jobId: string; title: string; company: string; score: number }
+  } | null>
+
+  /** Collab funnel — start prescreen after candidate accepts invite. */
+  startPrescreenForJob?: (input: {
+    userId: string
+    jobId: string
+    toE164: string
+  }) => Promise<{ ok: boolean; reason?: string }>
+
+  sendReaction?: (input: {
+    to: string
+    messageHandle: string
+    reaction: "love" | "like" | "dislike" | "laugh" | "emphasize" | "question"
+  }) => Promise<void>
 
   /**
    * iter34 P0.2 — generic LLM-fallback intent extractor for the
@@ -1204,8 +1260,105 @@ function priorOnboardingAskedStep(
 }
 
 
-async function sendMemoryReply(store: OrchestratorStore, event: InboundEvent, turnId: string, body: string) {
-  const { text: safe } = normalizeForIMessage(body, { maxLength: 600 })
+async function requireAgentForUser(store: OrchestratorStore, userId: string): Promise<AgentDef> {
+  const agent = await store.getAgentForUser(userId)
+  if (!agent) throw Object.assign(new Error("No agent configured"), { code: "NO_AGENT" })
+  return agent
+}
+
+function sendblueMessageHandleFromEventId(eventId: string): string | undefined {
+  const prefix = "sendblue-"
+  return eventId.startsWith(prefix) ? eventId.slice(prefix.length) : undefined
+}
+
+/**
+ * Adam 2026-05-19 voice polish §3 — build an outbound delivery plan for a
+ * shared-onboarding composed reply. Returns `null` (legacy single-bubble
+ * path) when the choreographer flag is OFF, the user has reply suppressed,
+ * or anything goes sideways resolving the profile. Tapback is intentionally
+ * disabled at the planner level — `composeSharedOnboardingReply` already
+ * fires the tapback inline using `reaction-policy.ts` during the synthetic
+ * user turn.
+ */
+async function buildSharedOnboardingDeliveryPlan(args: {
+  store: OrchestratorStore
+  event: InboundEvent
+  turnId: string
+  reply: string
+  force1?: boolean
+}): Promise<OutboundDeliveryPlan | null> {
+  const { store, event, turnId, reply } = args
+  if (shouldSuppressOutbound(event)) return null
+  try {
+    const choreoOn = await isBehaviorChoreographerEnabled(store.db, event.userId)
+    if (!choreoOn) return null
+    const profile = await resolveProfileForUser(
+      "friend_onboarding",
+      event.userId
+    )
+    return planOutboundDelivery({
+      reply,
+      turnId,
+      profile,
+      inboundBody: event.body ?? null,
+      force1: args.force1 ?? false,
+      // Shared onboarding compose owns its own tapback fire; planner
+      // tapback would double-fire. We strip tapback modes from the
+      // legal set so the plan never proposes one.
+      hasMessageHandle: false,
+      disableTapback: true,
+    })
+  } catch (err) {
+    store.log("pa.outbound.delivery_plan.shared_onboarding_error", {
+      severity: "WARN",
+      userId: event.userId,
+      turnId,
+      eventId: event.id,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    return null
+  }
+}
+
+function sharedOnboardingOutboundSlice(store: OrchestratorStore): SharedOnboardingOutboundStore {
+  return {
+    db: store.db,
+    log: (name, payload) => store.log(name, payload ?? {}),
+    runAgentTurn: store.runAgentTurn as unknown as SharedOnboardingOutboundStore["runAgentTurn"],
+    createSession: (input) => store.createSession(input),
+    generateJobRecs: store.generateJobRecs,
+    enqueueOutbound: (userId, toE164, body, input) =>
+      store.enqueueOutbound(userId, toE164, body, input),
+    sendReaction: store.sendReaction
+      ? async ({ toE164, messageHandle, reaction }) =>
+          store.sendReaction!({ to: toE164, messageHandle, reaction })
+      : undefined,
+    buildTurnTools: (agent, turn) => store.buildTurnTools(agent, turn),
+  }
+}
+
+async function sendMemoryReply(
+  store: OrchestratorStore,
+  event: InboundEvent,
+  turnId: string,
+  body: string,
+  opts: {
+    /**
+     * Adam 2026-05-19 voice polish §3 — when supplied, the planner output
+     * (emoji + 1-2 text bubbles) replaces the legacy single-bubble enqueue.
+     * Tapback is intentionally NOT re-fired here (caller fires inline).
+     */
+    deliveryPlan?: OutboundDeliveryPlan
+    inboundMessageHandle?: string
+  } = {}
+) {
+  const { text: safe } = await applyTemplateOutboundHumanize({
+    body,
+    userId: event.userId,
+    turnId,
+    db: store.db,
+    maxLength: 600,
+  })
   const at = store.nowIso()
   await store.appendMessage({
     id: `out-${event.id}`,
@@ -1218,11 +1371,177 @@ async function sendMemoryReply(store: OrchestratorStore, event: InboundEvent, tu
     rawMeta: { source: "pa_orchestrator", turnId: turnId, eventId: event.id },
   })
   if (shouldSuppressOutbound(event)) return
+  if (opts.deliveryPlan) {
+    // Repoint planner.textParts onto the post-humanize `safe` body so a
+    // mid-flight humanize transform (URL strip, normalization, char-cap)
+    // doesn't desync planner output from what we actually ship. Split the
+    // safe body using the same fraction the planner picked (so 2-part
+    // plans stay 2-part).
+    const plan = opts.deliveryPlan
+    const repointed: OutboundDeliveryPlan =
+      plan.textParts.length === 1
+        ? { ...plan, textParts: [safe], smsCount: (plan.leadingEmojiSms ? 1 : 0) + 1 }
+        : plan // 2-part: trust planner's earlier split; safe ≈ visible reply
+    await sendPlannedOutbound(store, event, turnId, repointed, {
+      sessionId: event.sessionId,
+      inboundMessageHandle: opts.inboundMessageHandle,
+      // Shared onboarding compose fires tapback inline today; planner
+      // tapback is suppressed at planner level via disableTapback. This
+      // is a belt-and-suspenders skipTapback in case caller forgot.
+      skipTapback: true,
+    })
+    return
+  }
   await store.enqueueOutbound(event.userId, event.from, safe, {
     sessionId: event.sessionId,
     role: "assistant",
     idempotencyKey: `outbound-${event.id}`,
   })
+}
+
+/**
+ * Adam 2026-05-19 voice polish §3 — execute an outbound delivery plan.
+ *
+ * Order is fixed (planner contract):
+ *   1. tapback   — fires before any SMS lands so it visually decorates the
+ *                  inbound bubble. Best-effort: failure logs `tapback_failed`
+ *                  and we still ship the SMS payload.
+ *   2. leading 👍 SMS — short single-emoji bubble, counted toward the
+ *                  ≤2-SMS-per-turn invariant.
+ *   3. text parts — 1 or 2 bubbles per the plan.
+ *
+ * Idempotency keys preserve the historical shape: textParts[0] keeps
+ * `outbound-${eventId}` so replays of single-text turns dedupe against
+ * pre-split pa-outbound docs; emoji uses `outbound-${eventId}-emoji`;
+ * subsequent text parts use `-p2`, `-p3`. Caller is responsible for
+ * `appendMessage` (we don't want to write an assistant row per emoji).
+ */
+async function sendPlannedOutbound(
+  store: OrchestratorStore,
+  event: InboundEvent,
+  turnId: string,
+  plan: OutboundDeliveryPlan,
+  opts: {
+    sessionId?: string
+    inboundMessageHandle?: string
+    /** Skip the tapback step (caller already fired one inline). */
+    skipTapback?: boolean
+  } = {}
+): Promise<void> {
+  const userId = event.userId
+  const sessionId = opts.sessionId ?? event.sessionId
+
+  if (
+    !opts.skipTapback &&
+    plan.tapback &&
+    opts.inboundMessageHandle &&
+    event.from &&
+    store.sendReaction
+  ) {
+    try {
+      await store.sendReaction({
+        to: event.from,
+        messageHandle: opts.inboundMessageHandle,
+        reaction: plan.tapback,
+      })
+      store.log("pa.outbound.delivery_plan.tapback_sent", {
+        userId,
+        turnId,
+        eventId: event.id,
+        reaction: plan.tapback,
+      })
+    } catch (err) {
+      store.log("pa.outbound.delivery_plan.tapback_failed", {
+        userId,
+        turnId,
+        eventId: event.id,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+
+  if (shouldSuppressOutbound(event)) {
+    store.log("pa.outbound.delivery_plan.suppressed", {
+      userId,
+      turnId,
+      eventId: event.id,
+      mode: plan.mode,
+    })
+    return
+  }
+
+  store.log("pa.outbound.delivery_plan", {
+    userId,
+    turnId,
+    eventId: event.id,
+    mode: plan.mode,
+    smsCount: plan.smsCount,
+    leadingEmoji: plan.leadingEmojiSms ?? null,
+    tapback: plan.tapback ?? null,
+    reason: plan.reason,
+  })
+
+  // Defensive — planner guarantees ≤2; log if a future regression breaks it.
+  if (plan.smsCount < 1 || plan.smsCount > 2) {
+    store.log("pa.outbound.invariant_violation", {
+      severity: "ERROR",
+      turnId,
+      userId,
+      eventId: event.id,
+      partsLength: plan.smsCount,
+      source: "delivery_plan",
+    })
+  }
+
+  if (plan.leadingEmojiSms) {
+    await store.enqueueOutbound(userId, event.from, plan.leadingEmojiSms, {
+      sessionId,
+      role: "assistant",
+      idempotencyKey: `outbound-${event.id}-emoji`,
+    })
+  }
+
+  // Adam 2026-05-19 voice polish §4 — when the planner ships a leading emoji
+  // bubble (👍 or whatever profile resolved), strip the same glyph off the
+  // head of the text so we never ship 👍 / 👍 .... Tested cases:
+  //   "👍 got it" + leading 👍 → text becomes "got it"
+  //   "👍👍 stoked"             → "stoked" (collapse all leading thumbs-ups)
+  //   "we good"                 → unchanged
+  // We only strip when leadingEmojiSms is set; the regex matches the exact
+  // glyph plus optional VS16 + whitespace, keeping the test ASCII-safe.
+  const textPartsToShip = plan.textParts.slice()
+  if (plan.leadingEmojiSms && textPartsToShip.length > 0) {
+    const glyph = plan.leadingEmojiSms
+    const head = textPartsToShip[0] ?? ""
+    const escapedGlyph = glyph.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    // Strip leading runs of glyph (with optional VS16 \uFE0F and whitespace).
+    const stripPattern = new RegExp(`^(?:${escapedGlyph}\\uFE0F?\\s*)+`)
+    const stripped = head.replace(stripPattern, "").trim()
+    if (stripped.length > 0 && stripped !== head) {
+      textPartsToShip[0] = stripped
+      store.log("pa.outbound.delivery_plan.stripped_leading_emoji", {
+        userId,
+        turnId,
+        eventId: event.id,
+        glyph,
+      })
+    }
+  }
+
+  for (let i = 0; i < textPartsToShip.length; i++) {
+    const part = textPartsToShip[i]!
+    const idempotencyKey =
+      plan.leadingEmojiSms
+        ? `outbound-${event.id}-p${i + 2}` // emoji is p1, text starts at p2
+        : i === 0
+          ? `outbound-${event.id}`
+          : `outbound-${event.id}-p${i + 1}`
+    await store.enqueueOutbound(userId, event.from, part, {
+      sessionId,
+      role: "assistant",
+      idempotencyKey,
+    })
+  }
 }
 
 function isExplicitJobSearchRequest(text: string | undefined | null): boolean {
@@ -1549,15 +1868,57 @@ async function handleSharedOnboardingRuntimeEvent(
   if (!isSharedOnboardingRuntimeEvent(event.rawMeta)) return false
   const questionId = parseSharedQuestionId(runtimeContext(event.rawMeta).questionId)
   const promptContext = sharedPromptContextFrom(onboardingUser, event.rawMeta)
-  const question = getSharedOnboardingQuestion(questionId)
-  await sendMemoryReply(store, event, turnId, buildSharedOnboardingPrompt(questionId, promptContext))
+  const agent = await requireAgentForUser(store, event.userId)
+  const priorSlangPicks = extractRecentSlangPicks(onboardingUser as { sharedOnboarding?: Record<string, unknown> | null } | null)
+  const composed = await composeSharedOnboardingReply({
+    store: sharedOnboardingOutboundSlice(store),
+    userId: event.userId,
+    sessionId: event.sessionId,
+    turnId,
+    slot: questionId,
+    mode: "ask",
+    promptContext,
+    userMessage: event.body,
+    composeContext: buildSharedOnboardingComposeContext({
+      inboundKind: "runtime_event",
+      routerResult: "asked_question",
+      slot: questionId,
+      mode: "ask",
+    }),
+    agent,
+    inboundMessageHandle: sendblueMessageHandleFromEventId(event.id),
+    toE164: event.from,
+    recentSlangPicks: priorSlangPicks,
+  })
+  const runtimePlan = await buildSharedOnboardingDeliveryPlan({
+    store,
+    event,
+    turnId,
+    reply: composed.text,
+    // Runtime event = system-initiated kickoff (e.g. cv-ingest fires Q1).
+    // There's no user inbound to mirror, so force a single bubble to keep
+    // the kickoff feeling deliberate (matches force1 rule in plan §3).
+    force1: true,
+  })
+  await sendMemoryReply(store, event, turnId, composed.text, {
+    deliveryPlan: runtimePlan ?? undefined,
+    inboundMessageHandle: sendblueMessageHandleFromEventId(event.id),
+  })
+  await persistSharedOnboardingSlangPicks({
+    db: store.db,
+    userId: event.userId,
+    priorPicks: priorSlangPicks,
+    newPicks: composed.slangPicked,
+    nowIso: store.nowIso(),
+    log: (name, payload) => store.log(name, payload ?? {}),
+  })
   await store.updateTurn(turnId, {
     status: "succeeded",
     stage: "succeeded",
     completedAt: store.nowIso(),
     directIntent: "shared_onboarding",
     directIntentResult: "asked_question",
-    sharedOnboardingQuestionId: question.id,
+    sharedOnboardingQuestionId: questionId,
   })
   await store.markEventSucceeded(event.id)
   return true
@@ -1648,12 +2009,49 @@ async function handleSharedOnboardingUserReply(
     const now = store.nowIso()
     if (!duplicateGreeting) {
       const promptContext = sharedPromptContextFrom(onboardingUser)
-      await sendMemoryReply(
+      const agent = await requireAgentForUser(store, event.userId)
+      const priorSlangPicks = extractRecentSlangPicks(onboardingUser as { sharedOnboarding?: Record<string, unknown> | null } | null)
+      const composed = await composeSharedOnboardingReply({
+        store: sharedOnboardingOutboundSlice(store),
+        userId: event.userId,
+        sessionId: event.sessionId,
+        turnId,
+        slot: questionId,
+        mode: "reask",
+        promptContext,
+        userMessage: event.body,
+        composeContext: buildSharedOnboardingComposeContext({
+          inboundKind: "user_answer",
+          routerResult: "reasked_question",
+          slot: questionId,
+          mode: "reask",
+          userMessage: event.body,
+        }),
+        agent,
+        reaskReason: answerJudge.reason,
+        reaskClarifyingQuestion: answerJudge.clarifyingQuestion,
+        inboundMessageHandle: sendblueMessageHandleFromEventId(event.id),
+        toE164: event.from,
+        recentSlangPicks: priorSlangPicks,
+      })
+      const reaskPlan = await buildSharedOnboardingDeliveryPlan({
         store,
         event,
         turnId,
-        buildSharedOnboardingReask(questionId, promptContext, answerJudge),
-      )
+        reply: composed.text,
+      })
+      await sendMemoryReply(store, event, turnId, composed.text, {
+        deliveryPlan: reaskPlan ?? undefined,
+        inboundMessageHandle: sendblueMessageHandleFromEventId(event.id),
+      })
+      await persistSharedOnboardingSlangPicks({
+        db: store.db,
+        userId: event.userId,
+        priorPicks: priorSlangPicks,
+        newPicks: composed.slangPicked,
+        nowIso: store.nowIso(),
+        log: (name, payload) => store.log(name, payload ?? {}),
+      })
     }
     await store.updateTurn(turnId, {
       status: "succeeded",
@@ -1672,9 +2070,52 @@ async function handleSharedOnboardingUserReply(
   await writeSharedOnboardingAnswer(store, event, questionId, projection, next)
 
   if (!next.completed && next.nextQuestionId) {
-    const question = getSharedOnboardingQuestion(next.nextQuestionId)
     const promptContext = sharedPromptContextFrom(onboardingUser)
-    await sendMemoryReply(store, event, turnId, buildSharedOnboardingPrompt(question.id, promptContext))
+    const agent = await requireAgentForUser(store, event.userId)
+    // The doc we cached at the top of handleSharedOnboardingUserReply pre-dates
+    // writeSharedOnboardingAnswer, but recentSlangPicks lives on a separate
+    // sharedOnboarding.voice sub-tree we never touch from writeSharedOnboardingAnswer,
+    // so reusing onboardingUser is safe here.
+    const priorSlangPicks = extractRecentSlangPicks(onboardingUser as { sharedOnboarding?: Record<string, unknown> | null } | null)
+    const composed = await composeSharedOnboardingReply({
+      store: sharedOnboardingOutboundSlice(store),
+      userId: event.userId,
+      sessionId: event.sessionId,
+      turnId,
+      slot: next.nextQuestionId,
+      mode: "ask",
+      promptContext,
+      userMessage: event.body,
+      composeContext: buildSharedOnboardingComposeContext({
+        inboundKind: "user_answer",
+        routerResult: "asked_question",
+        slot: next.nextQuestionId,
+        mode: "ask",
+        userMessage: event.body,
+      }),
+      agent,
+      inboundMessageHandle: sendblueMessageHandleFromEventId(event.id),
+      toE164: event.from,
+      recentSlangPicks: priorSlangPicks,
+    })
+    const nextAskPlan = await buildSharedOnboardingDeliveryPlan({
+      store,
+      event,
+      turnId,
+      reply: composed.text,
+    })
+    await sendMemoryReply(store, event, turnId, composed.text, {
+      deliveryPlan: nextAskPlan ?? undefined,
+      inboundMessageHandle: sendblueMessageHandleFromEventId(event.id),
+    })
+    await persistSharedOnboardingSlangPicks({
+      db: store.db,
+      userId: event.userId,
+      priorPicks: priorSlangPicks,
+      newPicks: composed.slangPicked,
+      nowIso: store.nowIso(),
+      log: (name, payload) => store.log(name, payload ?? {}),
+    })
     await store.updateTurn(turnId, {
       status: "succeeded",
       stage: "succeeded",
@@ -1688,23 +2129,44 @@ async function handleSharedOnboardingUserReply(
     return true
   }
 
-  const recs = store.generateJobRecs
-    ? await store.generateJobRecs(event.userId, "en", { force: true, requestedCount: 2 })
-    : null
-  const reply =
-    recs && recs.recCount > 0
-      ? recs.message
-      : "Got it. I saved that context and will send two concrete roles once I pull a fresh batch."
-  await sendMemoryReply(store, event, turnId, reply)
+  const agent = await requireAgentForUser(store, event.userId)
+  const db = store.db
+  const delivered =
+    db != null
+      ? await deliverSharedOnboardingJobRecs({
+          store: sharedOnboardingOutboundSlice(store),
+          db,
+          event,
+          turnId,
+          agent,
+          userMessage: event.body,
+        })
+      : {
+          recCount: 0,
+          reply:
+            "Got it. I saved that context and will send two concrete roles once I pull a fresh batch.",
+        }
+  const deliveredPlan = await buildSharedOnboardingDeliveryPlan({
+    store,
+    event,
+    turnId,
+    reply: delivered.reply,
+    // Job-rec explanation reply per plan §3 force-1 rule (kickoff / job-rec).
+    force1: true,
+  })
+  await sendMemoryReply(store, event, turnId, delivered.reply, {
+    deliveryPlan: deliveredPlan ?? undefined,
+    inboundMessageHandle: sendblueMessageHandleFromEventId(event.id),
+  })
   await store.updateTurn(turnId, {
     status: "succeeded",
     stage: "succeeded",
     completedAt: store.nowIso(),
     directIntent: "shared_onboarding",
-    directIntentResult: recs && recs.recCount > 0 ? "sent_recs" : "saved_without_recs",
+    directIntentResult: delivered.recCount > 0 ? "sent_recs" : "saved_without_recs",
     sharedOnboardingAnsweredQuestionId: questionId,
     sharedOnboardingCompleted: true,
-    directIntentRecCount: recs?.recCount ?? 0,
+    directIntentRecCount: delivered.recCount,
   })
   await store.markEventSucceeded(event.id)
   return true
@@ -1811,12 +2273,39 @@ async function handleSharedOnboardingBootstrap(
     }
   }
 
-  await sendMemoryReply(
-    store,
-    event,
+  // event.body is the coalesced accumulatedBody when paMessageCoalesceEnabled
+  // stamped the inbound row — bootstrap sees one turn per burst, not per fragment.
+  const agent = await requireAgentForUser(store, event.userId)
+  const priorSlangPicks = extractRecentSlangPicks(onboardingUser as { sharedOnboarding?: Record<string, unknown> | null } | null)
+  const bootstrapComposed = await composeSharedOnboardingReply({
+    store: sharedOnboardingOutboundSlice(store),
+    userId: event.userId,
+    sessionId: event.sessionId,
     turnId,
-    buildSharedOnboardingPrompt(q1, promptContext),
-  )
+    slot: q1,
+    mode: "ask",
+    promptContext,
+    userMessage: event.body,
+    composeContext: buildSharedOnboardingComposeContext({
+      inboundKind: "greeting_kickoff",
+      routerResult: "bootstrapped_q1_inline",
+      slot: q1,
+      mode: "ask",
+    }),
+    agent,
+    inboundMessageHandle: sendblueMessageHandleFromEventId(event.id),
+    toE164: event.from,
+    recentSlangPicks: priorSlangPicks,
+  })
+  await sendMemoryReply(store, event, turnId, bootstrapComposed.text)
+  await persistSharedOnboardingSlangPicks({
+    db: store.db,
+    userId: event.userId,
+    priorPicks: priorSlangPicks,
+    newPicks: bootstrapComposed.slangPicked,
+    nowIso: store.nowIso(),
+    log: (name, payload) => store.log(name, payload ?? {}),
+  })
   await store.updateTurn(turnId, {
     status: "succeeded",
     stage: "succeeded",
@@ -2071,7 +2560,8 @@ async function handleMemoryCommand(
 export function buildTurnTools(
   db: Firestore,
   agent: AgentDef,
-  turn: { turnId: string; userId: string; sessionId: string }
+  turn: { turnId: string; userId: string; sessionId: string },
+  hooks?: MatchConnectorHooks
 ): AgentTurnTool[] {
   if (agent.toolPolicy === "none") return []
   const allowed = agent.allowedConnectors ?? []
@@ -2110,6 +2600,7 @@ export function buildTurnTools(
             userId: turn.userId,
             sessionId: turn.sessionId,
             usedThisTurn: snapshot,
+            hooks,
           })
           return JSON.stringify(result).slice(0, 1024)
         } catch (e) {
@@ -2208,7 +2699,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     if (userAuthoredEvent) {
       const reset = await store.maybeHandleResetCommand(event)
       if (reset.handled) {
-        await sendMemoryReply(store, event, turnId, reset.summary ?? "✓ 测试记忆已清空。")
+        await sendMemoryReply(store, event, turnId, reset.summary ?? "✓ Test memory cleared.")
         await store.updateTurn(turnId, { status: "succeeded", stage: "succeeded", completedAt: store.nowIso() })
         await store.markEventSucceeded(event.id)
         return
@@ -2338,6 +2829,10 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     if (privacyIntent && await handlePrivacyIntent(event, store, turnId, privacyIntent)) {
       await store.updateTurn(turnId, { status: "succeeded", stage: "succeeded", completedAt: store.nowIso() })
       await store.markEventSucceeded(event.id)
+      return
+    }
+
+    if (userAuthoredEvent && (await handleCollabInviteReply(event, store, turnId))) {
       return
     }
 
@@ -3639,42 +4134,84 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       }
     }
     if (!shouldSuppressOutbound(event)) {
-      // ≤2-sends-per-turn invariant (relaxes Bug 4's strict single-send;
-      // see decideReplySplit comment block above). Out-of-bounds counts
-      // (0, or ≥3) still log an ERROR — the splitter contract guarantees
-      // count ∈ {1,2} so this is purely future-regression insurance.
-      if (outboundParts.length < 1 || outboundParts.length > 2) {
-        store.log("pa.outbound.invariant_violation", {
-          severity: "ERROR",
-          turnId,
-          userId: event.userId,
-          eventId: event.id,
-          partsLength: outboundParts.length,
-        })
+      // Adam 2026-05-19 voice polish §3 — unified outbound delivery plan.
+      // When `paBehaviorChoreographerEnabled` is ON, run the seeded
+      // planner (tapback / leading 👍 SMS / 1-2 text bubbles). When OFF,
+      // fall back to the legacy `decideReplySplit`-only loop verbatim.
+      // Either path must respect the ≤2-SMS-per-turn invariant.
+      const choreoOn = await isBehaviorChoreographerEnabled(store.db, event.userId)
+      const tapbackOn = await isReactionTapbackEnabled(store.db, event.userId)
+      const inboundMessageHandle = sendblueMessageHandleFromEventId(event.id)
+      let deliveredViaPlan = false
+      if (choreoOn && !runtimeEvent) {
+        try {
+          const profile = await resolveProfileForUser(
+            "friend_general_chat",
+            event.userId
+          )
+          const plan = planOutboundDelivery({
+            reply: visibleReply,
+            turnId,
+            profile,
+            inboundBody: event.body ?? null,
+            force1: jobRecommendationExplanationDirective != null || crisisInjected,
+            hasMessageHandle: Boolean(inboundMessageHandle) && tapbackOn,
+          })
+          await sendPlannedOutbound(store, event, turnId, plan, {
+            sessionId: event.sessionId,
+            inboundMessageHandle,
+            skipTapback: !tapbackOn,
+          })
+          deliveredViaPlan = true
+        } catch (err) {
+          store.log("pa.outbound.delivery_plan.error", {
+            severity: "WARN",
+            userId: event.userId,
+            turnId,
+            eventId: event.id,
+            error: err instanceof Error ? err.message : String(err),
+          })
+          // fall through to legacy path below
+        }
       }
-      // Per-part idempotency keys: index 0 keeps the historical key shape
-       // (`outbound-${event.id}`) so replays of single-part turns dedup
-      // against pre-split-feature pa-outbound docs. Subsequent parts get
-      // a `-pN` suffix so each (eventId, partIndex) pair is its own row.
-      for (let i = 0; i < outboundParts.length; i++) {
-        const part = outboundParts[i]!
-        const idempotencyKey =
-          i === 0 ? `outbound-${event.id}` : `outbound-${event.id}-p${i + 1}`
-        await store.enqueueOutbound(event.userId, event.from, part, {
-          sessionId: event.sessionId,
-          role: "assistant",
-          idempotencyKey,
-          ...(runtimeEvent
-            ? {
-                rawMeta: {
-                  runtimeEvent: true,
-                  runtimeEventSource: event.rawMeta?.runtimeEventSource,
-                  runtimeEventKind: event.rawMeta?.runtimeEventKind,
-                  runtimeEventContext: event.rawMeta?.context ?? {},
-                },
-              }
-            : {}),
-        })
+      if (!deliveredViaPlan) {
+        // Legacy decideReplySplit path. ≤2-sends-per-turn invariant —
+        // relaxes Bug 4's strict single-send (see decideReplySplit comment
+        // block above). Out-of-bounds counts (0, or ≥3) still log an ERROR;
+        // the splitter contract guarantees count ∈ {1,2}.
+        if (outboundParts.length < 1 || outboundParts.length > 2) {
+          store.log("pa.outbound.invariant_violation", {
+            severity: "ERROR",
+            turnId,
+            userId: event.userId,
+            eventId: event.id,
+            partsLength: outboundParts.length,
+          })
+        }
+        // Per-part idempotency keys: index 0 keeps the historical key
+        // shape (`outbound-${event.id}`) so replays of single-part turns
+        // dedupe against pre-split pa-outbound docs. Subsequent parts get
+        // a `-pN` suffix so each (eventId, partIndex) pair is its own row.
+        for (let i = 0; i < outboundParts.length; i++) {
+          const part = outboundParts[i]!
+          const idempotencyKey =
+            i === 0 ? `outbound-${event.id}` : `outbound-${event.id}-p${i + 1}`
+          await store.enqueueOutbound(event.userId, event.from, part, {
+            sessionId: event.sessionId,
+            role: "assistant",
+            idempotencyKey,
+            ...(runtimeEvent
+              ? {
+                  rawMeta: {
+                    runtimeEvent: true,
+                    runtimeEventSource: event.rawMeta?.runtimeEventSource,
+                    runtimeEventKind: event.rawMeta?.runtimeEventKind,
+                    runtimeEventContext: event.rawMeta?.context ?? {},
+                  },
+                }
+              : {}),
+          })
+        }
       }
     }
     // Phase 30 T2 — Downstream Eval Connector hook (P9-Connectors).
@@ -3800,6 +4337,8 @@ export type OrchestratorStoreDeps = {
    * at q_resume_asked even after parsedCandidateResumes existed.
    */
   getUserCvParsed?: NonNullable<OrchestratorStore["getUserCvParsed"]>
+  startPrescreenForJob?: NonNullable<OrchestratorStore["startPrescreenForJob"]>
+  sendReaction?: NonNullable<OrchestratorStore["sendReaction"]>
 }
 
 export function createFirestoreOrchestratorStore(
@@ -3980,7 +4519,10 @@ export function createFirestoreOrchestratorStore(
       return defaultLoadPersonalizationContext(db, input, history)
     },
     async buildTurnTools(agent, turn) {
-      return buildTurnTools(db, agent, turn)
+      const hooks = deps.generateJobRecs
+        ? buildMatchConnectorHooks({ db, generateJobRecs: deps.generateJobRecs })
+        : undefined
+      return buildTurnTools(db, agent, turn, hooks)
     },
     async recordHostedToolCalls({ turnId, userId, sessionId, calls }) {
       // One synthetic pa_tool_calls row per hosted invocation, mirroring
@@ -4044,7 +4586,10 @@ export function createFirestoreOrchestratorStore(
       const qdrantUrl = process.env.QDRANT_URL
       const qdrantApiKey = process.env.QDRANT_API_KEY
       if (!qdrantUrl || !qdrantApiKey) {
-        return { handled: true, summary: "✗ 测试记忆清空失败：QDRANT_URL/QDRANT_API_KEY 未配置" }
+        return {
+          handled: true,
+          summary: "✗ Test memory clear failed: QDRANT_URL/QDRANT_API_KEY not configured",
+        }
       }
       try {
         // Auto-promote allowlisted admin to testMode so subsequent runs go
@@ -4064,7 +4609,7 @@ export function createFirestoreOrchestratorStore(
         return { handled: true, summary: summarizeClearResult(result) }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
-        return { handled: true, summary: `✗ 测试记忆清空失败：${msg}` }
+        return { handled: true, summary: `✗ Test memory clear failed: ${msg}` }
       }
     },
     async checkInboundSafety(event) {
@@ -4468,6 +5013,10 @@ export function createFirestoreOrchestratorStore(
     ...(deps.generateJobRecs
       ? { generateJobRecs: deps.generateJobRecs }
       : {}),
+    ...(deps.startPrescreenForJob
+      ? { startPrescreenForJob: deps.startPrescreenForJob }
+      : {}),
+    ...(deps.sendReaction ? { sendReaction: deps.sendReaction } : {}),
     // iter34 P0.2 — generic LLM-fallback for q_role / q_yoe / q_visa /
     // q_startup_pref / q_location. Wired from apps/functions; tests omit
     // and dispatcher falls back to deterministic re-ask.
