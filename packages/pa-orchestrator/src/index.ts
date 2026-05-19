@@ -1713,9 +1713,35 @@ async function handleSharedOnboardingBootstrap(
   }
 
   const now = store.nowIso()
+  // 2026-05-19 (Adam directive: "the resume info grounded questions ready??
+  // those questions has to be asked by agent along with resume info") — read
+  // the most recent parsedCandidateResumes row inline so Q1's prompt opens
+  // with "I saw from your resume that you've done <recent work>…" instead of
+  // the bare template. Mirrors apps/functions/src/layoff-sms-start.ts
+  // loadLatestParsedResumeForPrompt. Failure is non-fatal: we still bootstrap
+  // with whatever signals onboardingUser already carries.
+  let parsedResume: Record<string, unknown> | null = null
+  if (store.db) {
+    try {
+      const snap = await store.db
+        .collection("parsedCandidateResumes")
+        .where("userId", "==", event.userId)
+        .orderBy("createdAt", "desc")
+        .limit(1)
+        .get()
+      if (!snap.empty) {
+        parsedResume = (snap.docs[0]?.data() ?? null) as Record<string, unknown> | null
+      }
+    } catch (err) {
+      store.log("pa.shared_onboarding.bootstrap_parsed_resume_lookup_failed", {
+        userId: event.userId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
   const promptContext = buildSharedOnboardingPromptContext({
     user: onboardingUser as unknown as Record<string, unknown>,
-    parsedResume: null,
+    parsedResume,
   })
   const q1: SharedOnboardingQuestionId = "main_goal"
 

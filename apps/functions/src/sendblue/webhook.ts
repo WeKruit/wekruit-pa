@@ -28,7 +28,8 @@
 import type { Firestore } from "firebase-admin/firestore"
 import { createInboundEvent } from "@pa/pa-broker"
 
-import { getFlag, checkAndIncrementRateLimit } from "@pa/pa-persistence"
+import { getFlag, checkAndIncrementRateLimit, hashCandidateHandle } from "@pa/pa-persistence"
+import { PA_COLLECTIONS } from "@pa/core-types"
 import { verifySendblueSignature, extractSendblueSignatureHeader } from "./hmac.js"
 // Stream D — CV ingestion side-effect (fire-and-forget) on attachment receipt.
 import { ingestCv as defaultIngestCv, type IngestCvInput, type IngestCvResult } from "../cv-ingest/cv-ingest.js"
@@ -267,16 +268,33 @@ function extractMediaUrl(payload: Record<string, unknown>): string | null {
   return trimmed
 }
 
-// Stream D — phone→userId resolver. Reads pa-users where phoneE164 == n
-// (exact match — webhook only knows the from_number, no normalization needed
-// because Sendblue delivers E.164). Returns
-// null if no row is found; webhook treats null as "ingest skipped".
+// Phone → userId resolver.
+//
+// 2026-05-19 (Adam directive: "user exist check has to consider more, phone
+// number / email / resume etc. not just from one single point") — multi-handle
+// resolution. Primary path stays `pa-users.phoneE164` for the common case where
+// the website-registered candidate texts from the same number they typed into
+// the form. Fallback checks `pa-candidate-handles` for a hashed phone handle
+// that points at a `candidateId` — this covers candidates whose pa-users row
+// was created by bulk resume upload, ATS inbound, or external supply intake,
+// where phoneE164 may not have been stamped on pa-users yet but the handle
+// link was. Email-side resolution is not reachable from an SMS payload (we
+// only have from_number), so it is intentionally not attempted here.
 async function defaultLookupUserByPhone(db: Firestore, phoneE164: string): Promise<string | null> {
   if (!phoneE164) return null
   try {
     const snap = await db.collection("pa-users").where("phoneE164", "==", phoneE164).limit(1).get()
-    if (snap.empty) return null
-    return snap.docs[0]!.id
+    if (!snap.empty) return snap.docs[0]!.id
+  } catch {
+    // Fall through to handle fallback rather than returning null on transient
+    // pa-users read errors.
+  }
+  try {
+    const { handleId } = hashCandidateHandle("phone", phoneE164)
+    const snap = await db.collection(PA_COLLECTIONS.candidateHandles).doc(handleId).get()
+    if (!snap.exists) return null
+    const candidateId = snap.data()?.candidateId
+    return typeof candidateId === "string" && candidateId.trim() ? candidateId : null
   } catch {
     return null
   }

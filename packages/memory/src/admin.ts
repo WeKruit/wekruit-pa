@@ -324,6 +324,24 @@ async function resetUserOnboardingState(
         coalesceTurnSeq: FieldValue.delete(),
         emailVerification: FieldValue.delete(),
         "emailVerification.attempts": FieldValue.delete(),
+        // 2026-05-19 (Adam directive: shared_onboarding is the only onboarding
+        // runtime). Two leakers that survived prior reset rounds:
+        //   - workSession.kind keeps the user mid-flow (job_prescreen /
+        //     shared_onboarding / legacy layoff_onboarding) → next inbound
+        //     misroutes to handleSharedOnboardingUserReply on stale state
+        //   - sharedOnboarding.{status, currentQuestionId, answers,
+        //     promptContext} keeps Q-cursor + accumulated answers → reset
+        //     user resumes at q4 instead of bootstrap Q1
+        // Full nuke; orchestrator bootstrap rewrites both on the next inbound.
+        workSession: FieldValue.delete(),
+        sharedOnboarding: FieldValue.delete(),
+        // 2026-05-19 — smsState carries the kickoff bookkeeping
+        // (`runtime-kickoff-enqueued`, `shared-onboarding-starting`). Drop so
+        // the next bootstrap stamps fresh values.
+        smsState: FieldValue.delete(),
+        smsKickoffAt: FieldValue.delete(),
+        kickoffRuntimeEventId: FieldValue.delete(),
+        kickoffOutboundId: FieldValue.delete(),
         // 2026-05-07 Bug A fix — bump resetEpoch so any future synthetic
         // inbound event after this reset uses a fresh idempotencyKey
         // namespace (`coalesced-{userId}-e{epoch}-{turnSeq}` vs the old
