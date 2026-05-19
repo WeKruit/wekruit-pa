@@ -11,6 +11,8 @@
 // the same source even if the user lands on candidate.wekruit.com via a
 // /onboarding link from layoff.wekruit.com.
 
+import { cookieDomainForHost } from "./browser-identity"
+
 export type SignupSource = "WeKruit_Laid_Off" | "candidate"
 
 /**
@@ -51,7 +53,9 @@ function cookieSource(): SignupSource | null {
 function writeCookie(value: SignupSource): void {
   if (typeof document === "undefined") return
   const secure = typeof window !== "undefined" && window.location.protocol === "https:" ? "; Secure" : ""
-  document.cookie = `${COOKIE_NAME}=${encodeURIComponent(value)}; Max-Age=${COOKIE_MAX_AGE}; Path=/; SameSite=Lax${secure}`
+  const domain = typeof window !== "undefined" ? cookieDomainForHost(window.location.hostname) : ""
+  const domainPart = domain ? `; Domain=${domain}` : ""
+  document.cookie = `${COOKIE_NAME}=${encodeURIComponent(value)}; Max-Age=${COOKIE_MAX_AGE}; Path=/; SameSite=Lax${secure}${domainPart}`
 }
 
 /** Resolve source once at first paint. Writes back to cookie on every call. */

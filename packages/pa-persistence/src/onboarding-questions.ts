@@ -3,11 +3,11 @@
  *
  * Schema (pa-onboarding-questions/{qId}):
  *   {
- *     id: string,                              // q_lang | q_email | q_role | …
+ *     id: string,                              // q_lang | q_role | q_resume | …
  *     order: number,                            // ordering in pipeline
  *     prompt: { zh: string, en: string },
  *     variants: { zh: string, en: string }[],   // re-ask phrasings, attempt[i] → variants[i]
- *     judgeKind: "lang"|"email"|"code"|"yesno"|"llm-relevance"|"resume",
+ *     judgeKind: "lang"|"yesno"|"llm-relevance"|"resume",
  *     rephraserKind: "variants"|"hybrid"|"llm",
  *     maxAttempts: number,
  *     haltMessage: { zh: string, en: string } | null,

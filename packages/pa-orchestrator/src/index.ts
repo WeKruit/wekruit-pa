@@ -92,7 +92,6 @@ import {
   shouldRunOnboardingProbe,
   parseUserAnswerForStep,
   parseTosAnswer,
-  parseEmailVerificationCode,
   type OnboardingStep,
 } from "./onboarding.js"
 export {
@@ -100,6 +99,39 @@ export {
   renderLayoffOnboardingOpener,
 } from "./onboarding.js"
 export type { SourceAwareOnboardingContext } from "./onboarding.js"
+export {
+  SHARED_ONBOARDING_BOUNDARY,
+  SHARED_ONBOARDING_EVENT_KIND,
+  SHARED_ONBOARDING_EVENT_SOURCE,
+  SHARED_ONBOARDING_WORK_SESSION_KIND,
+  SHARED_ONBOARDING_QUESTIONS,
+  buildSharedOnboardingStartedState,
+  buildSharedOnboardingPrompt,
+  buildSharedOnboardingPromptContext,
+  cleanSharedOnboardingPromptContext,
+  currentSharedOnboardingQuestionId,
+  getSharedOnboardingQuestion,
+  isSharedOnboardingActiveUser,
+  isSharedOnboardingRuntimeEvent,
+  projectSharedOnboardingAnswer,
+  resolveNextSharedOnboardingQuestionId,
+  sharedOnboardingSignupSource,
+  type SharedOnboardingQuestionId,
+  type SharedOnboardingPromptContext,
+} from "./shared-onboarding.js"
+import {
+  SHARED_ONBOARDING_WORK_SESSION_KIND,
+  buildSharedOnboardingPrompt,
+  cleanSharedOnboardingPromptContext,
+  currentSharedOnboardingQuestionId,
+  getSharedOnboardingQuestion,
+  isSharedOnboardingActiveUser,
+  isSharedOnboardingRuntimeEvent,
+  projectSharedOnboardingAnswer,
+  resolveNextSharedOnboardingQuestionId,
+  type SharedOnboardingQuestionId,
+  type SharedOnboardingPromptContext,
+} from "./shared-onboarding.js"
 // Single onboarding runtime entry. It owns the Q-as-class pipeline and resume
 // discussion flow; legacy flag-gated fallbacks are intentionally not wired.
 import { runDeterministicOnboardingTurn } from "./onboarding-deterministic.js"
@@ -513,8 +545,6 @@ export type OrchestratorStore = {
       | "q_startup_pref_asked"
       | "q_location_asked"
       | "q_resume_asked"
-      | "q_email_asked"
-      | "q_email_verifying"
       | "complete"
     /** Phase 44 — read so orchestrator can decide reusable-trigger flow. */
     statedPreferences?: import("@pa/core-types").StatedPreferences
@@ -524,11 +554,14 @@ export type OrchestratorStore = {
     tags?: import("./tags/user-tags-merger.js").UserTags
     displayName?: string
     source?: string
+    workSession?: Record<string, unknown> | null
+    sharedOnboarding?: Record<string, unknown> | null
+    candidateContext?: Record<string, unknown> | null
     layoffContext?: {
       lastCompany?: string | null
       jobTitle?: string | null
       location?: string | null
-    }
+    } | Record<string, unknown> | null
   } | null>
   /**
    * Phase 23 — apply onboarding step to advance user state + promote beta participant.
@@ -559,21 +592,12 @@ export type OrchestratorStore = {
       tosAcceptedVersion?: string
       tosDeclined?: boolean
       intentAckTarget?: "q_role_asked" | "q_tos_asked"
-      emailVerification?: {
-        codeHash: string
-        email: string
-        sentAt: string
-        expiresAt: string
-        providerMessageId?: string
-      }
-      emailVerificationVerified?: boolean
-      emailVerificationFailed?: boolean
       /**
        * iter34 hotfix 2026-05-05 — canonical Judge output bypasses regex.
        * When provided, this REPLACES the regex parse of priorAskedStep+
        * priorUserReply. The Q-as-class pipeline (runtime-bridge) passes
-       * Judge canonical output here for q_lang / q_email / q_role / q_yoe /
-       * q_visa / q_startup_pref / q_location / q_email_verify accepts.
+       * Judge canonical output here for q_lang / q_role / q_yoe /
+       * q_visa / q_startup_pref / q_location accepts.
        *
        * 2026-05-06 P9 fix — was DECLARED in applyOnboardingStep opts but
        * MISSING from this interface AND the production wrapper at
@@ -600,35 +624,6 @@ export type OrchestratorStore = {
    * pa-remote-config/platform.tosVersion; defaults to "v1.0" when unset.
    */
   getTosVersion?(): Promise<string>
-
-  /**
-   * iter31 — read pending email verification challenge for a user. Used by
-   * the q_email_verifying inbound branch to compare sha256(reply-code)
-   * against the stored hash. Returns null when no challenge is pending.
-   */
-  getUserEmailVerification?(userId: string): Promise<{
-    codeHash: string
-    email: string
-    sentAt: string
-    expiresAt: string
-    attempts: number
-  } | null>
-
-  /**
-   * iter31 — Mailgun transport callback. Generates a 6-digit code, sends it
-   * to `email`, and returns the raw code + provider message-id so the
-   * orchestrator can hash + persist before replying. Returns null when
-   * Mailgun is not configured (orchestrator falls through to "complete"
-   * without verification — biz tester not blocked).
-   */
-  sendVerificationEmail?(
-    email: string
-  ): Promise<{
-    rawCode: string
-    sentAt: string
-    expiresAt: string
-    providerMessageId?: string
-  } | null>
 
   /**
    * iter32 — has the user's CV been ingested + parsed? cv-ingest pipeline
@@ -669,40 +664,6 @@ export type OrchestratorStore = {
     lang: "zh" | "en",
     opts?: { force?: boolean; requestedCount?: number; roleFocus?: string[] }
   ): Promise<{ message: string; recCount: number } | null>
-
-  /**
-   * iter34 P0 — LLM-fallback intent extraction for q_email_asked when
-   * the deterministic regex parser failed. Adam directive 2026-05-05
-   * ("edge case 处理应该是能 involve llm啊 ... 一个认证过程").
-   *
-   * Called ONLY when:
-   *   - state === q_email_asked (re-ask path)
-   *   - parseEmailAnswer(reply) returned {} (no contactEmail captured)
-   *   - reply has email-shape intent signal (contains "@" / "邮箱" / "email" / "send to")
-   *
-   * Returns structured intent:
-   *   - intent="provided" + email: confidence-extracted email (we then
-   *     advance state + fire Mailgun)
-   *   - intent="typo" + suggestion: domain looks misspelled (we surface
-   *     the suggestion to user to confirm)
-   *   - intent="declined": user said no/skip (we accept, advance with
-   *     no contactEmail)
-   *   - intent="unclear" + clarifyingQuestion: LLM's clarifying ask
-   *
-   * Returns null when LLM unconfigured / failed → caller falls back to
-   * the deterministic typo map + generic re-ask. Cost: ~$0.0002/edge call
-   * (Qwen2.5-7B SiliconFlow). Latency: <2s p99.
-   */
-  extractEmailIntent?(
-    reply: string,
-    lang: "zh" | "en"
-  ): Promise<
-    | { intent: "provided"; email: string; confidence: number }
-    | { intent: "typo"; suggestion: string; original: string }
-    | { intent: "declined" }
-    | { intent: "unclear"; clarifyingQuestion: string }
-    | null
-  >
 
   /**
    * iter34 P0.2 — generic LLM-fallback intent extractor for the
@@ -1131,9 +1092,6 @@ function currentOnboardingAskForProcessReply(state: string | undefined): string 
   if (state === "q_resume_asked" || state === "q_resume_processing") {
     return "To keep going, I need your resume so we can parse it and tailor the next screen."
   }
-  if (state === "q_email_asked" || state === "q_email_verifying") {
-    return "To keep going, I need the email step finished so the profile is attached to you."
-  }
   return "To keep going, answer the last profile question in your own words."
 }
 
@@ -1216,28 +1174,6 @@ async function isOnboardingTosGateEnabled(
 }
 
 /**
- * iter31 — Mailgun email-verification step. Default OFF; requires the ToS
- * gate AND the contactEmail (statedPreferences.contactEmail) to be present.
- * Flip ON via `paOnboardingEmailVerifyEnabled`.
- */
-async function isOnboardingEmailVerifyEnabled(
-  db: Firestore | undefined,
-  userId: string | undefined
-): Promise<boolean> {
-  if (process.env.PA_ONBOARDING_EMAIL_VERIFY_DISABLED === "true") return false
-  if (!db) return false
-  try {
-    const v = await getFlag(db, "paOnboardingEmailVerifyEnabled", {
-      userId,
-      env: process.env,
-    })
-    return v === true
-  } catch {
-    return false
-  }
-}
-
-/**
  * Phase 44 — given the user's onboardingState BEFORE this turn, return the
  * step that asked the question we're now receiving the reply to. Used to
  * route `event.body` into the right `parseUserAnswerForStep` parser.
@@ -1251,13 +1187,8 @@ function priorOnboardingAskedStep(
   if (state === "q_startup_pref_asked") return "ask_q_startup_pref"
   if (state === "q_location_asked") return "ask_q_location"
   if (state === "q_resume_asked") return "ask_q_resume"
-  // iter30 V6 — q_email_asked routes the user's reply through parseEmailAnswer
-  // so contactEmail is written to statedPreferences when advancing to complete.
-  if (state === "q_email_asked") return "ask_q_email"
-  // iter31 — q_tos_asked / q_email_verifying map to their corresponding ask_*
-  // steps for parser lookups.
+  // q_tos_asked maps to its corresponding ask_* step for parser lookups.
   if (state === "q_tos_asked") return "ask_q_tos"
-  if (state === "q_email_verifying") return "ask_q_email_verify"
   return undefined
 }
 
@@ -1570,16 +1501,225 @@ function normalizeJobExplanationVisibleReply(
   return normalized
 }
 
+function runtimeContext(rawMeta: unknown): Record<string, unknown> {
+  if (!rawMeta || typeof rawMeta !== "object") return {}
+  const context = (rawMeta as Record<string, unknown>).context
+  return context && typeof context === "object" ? context as Record<string, unknown> : {}
+}
+
+function parseSharedQuestionId(value: unknown): SharedOnboardingQuestionId {
+  return value === "culture_stage" ||
+    value === "industry_interest" ||
+    value === "location_relocation" ||
+    value === "special_context"
+    ? value
+    : "main_goal"
+}
+
+function sharedPromptContextFrom(
+  onboardingUser: Awaited<ReturnType<OrchestratorStore["getOnboardingUser"]>>,
+  rawMeta?: unknown,
+): SharedOnboardingPromptContext {
+  const metaContext = runtimeContext(rawMeta)
+  const fromRuntime = cleanSharedOnboardingPromptContext(metaContext.promptContext)
+  if (Object.keys(fromRuntime).length > 0) return fromRuntime
+  const shared = onboardingUser?.sharedOnboarding && typeof onboardingUser.sharedOnboarding === "object"
+    ? onboardingUser.sharedOnboarding as Record<string, unknown>
+    : {}
+  return cleanSharedOnboardingPromptContext(shared.promptContext)
+}
+
+async function handleSharedOnboardingRuntimeEvent(
+  event: InboundEvent,
+  store: OrchestratorStore,
+  turnId: string,
+  onboardingUser: Awaited<ReturnType<OrchestratorStore["getOnboardingUser"]>>,
+): Promise<boolean> {
+  if (!isSharedOnboardingRuntimeEvent(event.rawMeta)) return false
+  const questionId = parseSharedQuestionId(runtimeContext(event.rawMeta).questionId)
+  const promptContext = sharedPromptContextFrom(onboardingUser, event.rawMeta)
+  const question = getSharedOnboardingQuestion(questionId)
+  await sendMemoryReply(store, event, turnId, buildSharedOnboardingPrompt(questionId, promptContext))
+  await store.updateTurn(turnId, {
+    status: "succeeded",
+    stage: "succeeded",
+    completedAt: store.nowIso(),
+    directIntent: "shared_onboarding",
+    directIntentResult: "asked_question",
+    sharedOnboardingQuestionId: question.id,
+  })
+  await store.markEventSucceeded(event.id)
+  return true
+}
+
+function hasObjectKeys(value: Record<string, unknown>): boolean {
+  return Object.keys(value).length > 0
+}
+
+async function writeSharedOnboardingAnswer(
+  store: OrchestratorStore,
+  event: InboundEvent,
+  questionId: SharedOnboardingQuestionId,
+  projection: ReturnType<typeof projectSharedOnboardingAnswer>,
+  next: ReturnType<typeof resolveNextSharedOnboardingQuestionId>,
+): Promise<void> {
+  const now = store.nowIso()
+  await store.createMemoryFact(event.userId, projection.memoryFact).catch((err) => {
+    store.log("pa.shared_onboarding.memory_write_error", {
+      userId: event.userId,
+      eventId: event.id,
+      error: err instanceof Error ? err.message : String(err),
+    })
+  })
+
+  if (store.db && hasObjectKeys(projection.tags as Record<string, unknown>)) {
+    await applyPartialUserTags(store.db, event.userId, projection.tags, {
+      source: "chat",
+      nowIso: now,
+      log: (name, payload) => store.log(name, payload ?? {}),
+    })
+  }
+
+  if (!store.db) return
+  await store.db.collection(PA_COLLECTIONS.users).doc(event.userId).set(
+    {
+      onboardingState: next.completed ? "complete" : "pending",
+      onboardingStatus: next.completed ? "complete" : "invited",
+      updatedAt: now,
+      ...(hasObjectKeys(projection.statedPreferences)
+        ? { statedPreferences: projection.statedPreferences }
+        : {}),
+      sharedOnboarding: {
+        status: next.completed ? "complete" : "active",
+        updatedAt: now,
+        currentQuestionId: next.nextQuestionId,
+        completed: next.completed,
+        ...(next.completed ? { completedAt: now } : {}),
+        answers: {
+          [questionId]: {
+            answer: event.body.trim(),
+            answeredAt: now,
+            questionId,
+            questionLabel: getSharedOnboardingQuestion(questionId).label,
+            evidence: projection.evidence,
+          },
+        },
+      },
+      workSession: {
+        kind: SHARED_ONBOARDING_WORK_SESSION_KIND,
+        status: next.completed ? "ended" : "active",
+        currentQuestionId: next.nextQuestionId,
+        ...(next.completed ? { endedAt: now, boundary: "completed" } : {}),
+      },
+    },
+    { merge: true },
+  )
+}
+
+async function handleSharedOnboardingUserReply(
+  event: InboundEvent,
+  store: OrchestratorStore,
+  turnId: string,
+  onboardingUser: Awaited<ReturnType<OrchestratorStore["getOnboardingUser"]>>,
+): Promise<boolean> {
+  if (!onboardingUser || !isSharedOnboardingActiveUser(onboardingUser)) return false
+  const questionId = currentSharedOnboardingQuestionId(onboardingUser)
+  const projection = projectSharedOnboardingAnswer(questionId, event.body)
+  const next = resolveNextSharedOnboardingQuestionId(questionId)
+  await writeSharedOnboardingAnswer(store, event, questionId, projection, next)
+
+  if (!next.completed && next.nextQuestionId) {
+    const question = getSharedOnboardingQuestion(next.nextQuestionId)
+    const promptContext = sharedPromptContextFrom(onboardingUser)
+    await sendMemoryReply(store, event, turnId, buildSharedOnboardingPrompt(question.id, promptContext))
+    await store.updateTurn(turnId, {
+      status: "succeeded",
+      stage: "succeeded",
+      completedAt: store.nowIso(),
+      directIntent: "shared_onboarding",
+      directIntentResult: "asked_question",
+      sharedOnboardingAnsweredQuestionId: questionId,
+      sharedOnboardingQuestionId: next.nextQuestionId,
+    })
+    await store.markEventSucceeded(event.id)
+    return true
+  }
+
+  const recs = store.generateJobRecs
+    ? await store.generateJobRecs(event.userId, "en", { force: true, requestedCount: 2 })
+    : null
+  const reply =
+    recs && recs.recCount > 0
+      ? recs.message
+      : "Got it. I saved that context and will send two concrete roles once I pull a fresh batch."
+  await sendMemoryReply(store, event, turnId, reply)
+  await store.updateTurn(turnId, {
+    status: "succeeded",
+    stage: "succeeded",
+    completedAt: store.nowIso(),
+    directIntent: "shared_onboarding",
+    directIntentResult: recs && recs.recCount > 0 ? "sent_recs" : "saved_without_recs",
+    sharedOnboardingAnsweredQuestionId: questionId,
+    sharedOnboardingCompleted: true,
+    directIntentRecCount: recs?.recCount ?? 0,
+  })
+  await store.markEventSucceeded(event.id)
+  return true
+}
+
+function isSmsLikeChannel(event: InboundEvent): boolean {
+  return event.channel === "imessage" || event.channel === "sms"
+}
+
+async function handleLegacySmsOnboardingBlocked(
+  event: InboundEvent,
+  store: OrchestratorStore,
+  turnId: string,
+  onboardingUser: Awaited<ReturnType<OrchestratorStore["getOnboardingUser"]>>,
+  sharedRuntimeSession: boolean,
+): Promise<boolean> {
+  if (!onboardingUser) return false
+  if (!isSmsLikeChannel(event)) return false
+  if (onboardingUser.onboardingState === "complete") return false
+  if (sharedRuntimeSession) return false
+  const crisisReply =
+    pickLangForSafety(event.body) === "zh"
+      ? "先保证你现在是安全的。如果你可能会伤害自己，请立刻联系当地紧急服务或身边可信的人。"
+      : "First, are you safe right now? If you might hurt yourself, contact local emergency services or someone you trust right now."
+  const crisisGuard = await runCrisisHotlineGuard({
+    store,
+    event,
+    turnId,
+    userInput: event.body,
+    reply: crisisReply,
+    callSite: "onboarding",
+  })
+  await sendMemoryReply(
+    store,
+    event,
+    turnId,
+    crisisGuard.detected
+      ? crisisGuard.reply
+      : "Start from https://candidate.wekruit.com/onboarding so I can use your resume and keep the profile linked. Once you do that, I can continue here.",
+  )
+  await store.updateTurn(turnId, {
+    status: "succeeded",
+    stage: "succeeded",
+    completedAt: store.nowIso(),
+    directIntent: "website_onboarding_required",
+    directIntentResult: "legacy_sms_onboarding_blocked",
+  })
+  await store.markEventSucceeded(event.id)
+  return true
+}
+
 async function handleCompletedUserJobSearchRequest(
   event: InboundEvent,
   store: OrchestratorStore,
   turnId: string,
   onboardingUser: Awaited<ReturnType<OrchestratorStore["getOnboardingUser"]>>
 ): Promise<boolean> {
-  const layoffRuntimeSession =
-    onboardingUser?.source === "WeKruit_Laid_Off" &&
-    onboardingUser.onboardingState !== "complete"
-  if (onboardingUser?.onboardingState !== "complete" && !layoffRuntimeSession) return false
+  if (onboardingUser?.onboardingState !== "complete") return false
   if (!store.generateJobRecs) return false
   if (isJobRecommendationExplanationRequest(event.body)) return false
   if (!isExplicitJobSearchRequest(event.body)) return false
@@ -2086,17 +2226,34 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     }
 
     const onboardingUser = await store.getOnboardingUser(event.userId)
-    // Layoff is a runtime-led intake. Do not force the generic candidate
-    // q_email/verify/TOS pipeline before Claire can triage and tag context.
-    const layoffRuntimeSession =
-      onboardingUser?.source === "WeKruit_Laid_Off" &&
-      onboardingUser.onboardingState !== "complete"
+    if (await handleSharedOnboardingRuntimeEvent(event, store, turnId, onboardingUser)) {
+      return
+    }
+
+    // Website-started candidate and layoff onboarding use one runtime-led
+    // intake. Do not force the generic deterministic pipeline.
+    const sharedRuntimeSession = isSharedOnboardingActiveUser(onboardingUser)
     const onboardingIncomplete = Boolean(
       userAuthoredEvent &&
       onboardingUser &&
       onboardingUser.onboardingState !== "complete" &&
-      !layoffRuntimeSession
+      !sharedRuntimeSession
     )
+    if (userAuthoredEvent && await handleSharedOnboardingUserReply(event, store, turnId, onboardingUser)) {
+      return
+    }
+    if (
+      userAuthoredEvent &&
+      await handleLegacySmsOnboardingBlocked(
+        event,
+        store,
+        turnId,
+        onboardingUser,
+        sharedRuntimeSession,
+      )
+    ) {
+      return
+    }
     if (userAuthoredEvent && !onboardingIncomplete && await handleLifecycleProfileReply(event, store, turnId)) {
       await store.updateTurn(turnId, { status: "succeeded", stage: "succeeded", completedAt: store.nowIso() })
       await store.markEventSucceeded(event.id)
@@ -2135,12 +2292,10 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // langlock. Same friend-tone surface, zero drift, ~7 LLM calls
     // saved per new user.
     //
-    // Strict gate sequence (Adam directive 2026-05-04 #2 + #3):
-    //   1. Onboarding state must be `complete` (TOS accepted, all 5 q_*
-    //      answered, resume requested, email captured + verified)
-    //   2. parsedCandidateResumes row must exist (CV uploaded + parsed)
-    //   3. statedPreferences.contactEmailVerifiedAt must be set
-    // Until ALL three gates pass, agent runtime does NOT activate. The
+    // Strict gate sequence:
+    //   1. Onboarding state must be `complete`.
+    //   2. parsedCandidateResumes row must exist when the legacy resume gate is active.
+    // Until the active gates pass, agent runtime does NOT activate. The
     // dispatcher emits a deterministic re-prompt at whichever gate
     // hasn't cleared yet.
     //
@@ -2149,7 +2304,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // an incomplete onboarding turn must either be handled here or fail
     // loudly instead of drifting into a parallel message producer.
     // ════════════════════════════════════════════════════════════════
-    if (userAuthoredEvent && onboardingUser && !layoffRuntimeSession) {
+    if (userAuthoredEvent && onboardingUser && !sharedRuntimeSession) {
       const cvParsedInbound = (event.body ?? "").trim().startsWith("[cv-parsed]")
       const cvParsed = store.getUserCvParsed
         ? await store.getUserCvParsed(event.userId)
@@ -3499,15 +3654,8 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
   }
 }
 
-/**
- * iter31 — optional injection points for createFirestoreOrchestratorStore.
- * The Mailgun transport for `sendVerificationEmail` lives in apps/functions
- * (where the secret values are pinned at deploy time). Pass it here so the
- * orchestrator can fire verification mails without the package importing
- * firebase-functions/params or fetch'ing Mailgun directly.
- */
+/** Optional injection points for createFirestoreOrchestratorStore. */
 export type OrchestratorStoreDeps = {
-  sendVerificationEmail?: NonNullable<OrchestratorStore["sendVerificationEmail"]>
   /**
    * iter33 P3 — produce a 1-2 sentence CV analysis blurb in the user's
    * preferred language. Wired from apps/functions where SiliconFlow API
@@ -3521,12 +3669,6 @@ export type OrchestratorStoreDeps = {
    * ledger handles live. Tests pass a stub.
    */
   generateJobRecs?: NonNullable<OrchestratorStore["generateJobRecs"]>
-  /**
-   * iter34 P0 — LLM-fallback email intent extractor. Wired from
-   * apps/functions where SiliconFlow key + Qwen-7B model handle live.
-   * Tests pass a stub OR omit (deterministic-only fallback fires).
-   */
-  extractEmailIntent?: NonNullable<OrchestratorStore["extractEmailIntent"]>
   /**
    * iter34 P0.2 — generic LLM-fallback for q_role / q_yoe / q_visa /
    * q_startup_pref / q_location. Wired from apps/functions.
@@ -4102,18 +4244,15 @@ export function createFirestoreOrchestratorStore(
           | "q_startup_pref_asked"
           | "q_location_asked"
           | "q_resume_asked"
-          | "q_email_asked"
-          | "q_email_verifying"
           | "complete"
         statedPreferences?: import("@pa/core-types").StatedPreferences
         runtimeMode?: "auto" | "paused"
         displayName?: string
         source?: string
-        layoffContext?: {
-          lastCompany?: string | null
-          jobTitle?: string | null
-          location?: string | null
-        }
+        workSession?: Record<string, unknown> | null
+        sharedOnboarding?: Record<string, unknown> | null
+        candidateContext?: Record<string, unknown> | null
+        layoffContext?: Record<string, unknown> | null
       }
       return {
         id: data.id ?? userId,
@@ -4123,6 +4262,9 @@ export function createFirestoreOrchestratorStore(
         runtimeMode: data.runtimeMode,
         displayName: data.displayName,
         source: data.source,
+        workSession: data.workSession,
+        sharedOnboarding: data.sharedOnboarding,
+        candidateContext: data.candidateContext,
         layoffContext: data.layoffContext,
         pipelineState: (snap.data() as { pipelineState?: unknown } | undefined)?.pipelineState,
       }
@@ -4158,9 +4300,6 @@ export function createFirestoreOrchestratorStore(
           tosAcceptedVersion: opts?.tosAcceptedVersion,
           tosDeclined: opts?.tosDeclined,
           intentAckTarget: opts?.intentAckTarget,
-          emailVerification: opts?.emailVerification,
-          emailVerificationVerified: opts?.emailVerificationVerified,
-          emailVerificationFailed: opts?.emailVerificationFailed,
           // 2026-05-06 P9 fix — was MISSING from passthrough, silently
           // dropped every Judge-canonical write. Caused the live bug:
           // q_lang accepted "English" but `tags.preferredLang` stayed on
@@ -4171,7 +4310,7 @@ export function createFirestoreOrchestratorStore(
         }
       )
     },
-    // iter31 — HITL runtime mode + ToS version + email-verification helpers.
+    // iter31 — HITL runtime mode + ToS version helpers.
     async getRuntimeMode(userId) {
       const snap = await db.collection(PA_COLLECTIONS.users).doc(userId).get()
       if (!snap.exists) return "auto"
@@ -4190,34 +4329,6 @@ export function createFirestoreOrchestratorStore(
         return "v1.0"
       }
     },
-    async getUserEmailVerification(userId) {
-      const snap = await db.collection(PA_COLLECTIONS.users).doc(userId).get()
-      if (!snap.exists) return null
-      const data = snap.data() as {
-        emailVerification?: {
-          codeHash?: string
-          email?: string
-          sentAt?: string
-          expiresAt?: string
-          attempts?: number
-        }
-      } | undefined
-      const ev = data?.emailVerification
-      if (!ev || !ev.codeHash || !ev.email || !ev.sentAt || !ev.expiresAt) return null
-      return {
-        codeHash: ev.codeHash,
-        email: ev.email,
-        sentAt: ev.sentAt,
-        expiresAt: ev.expiresAt,
-        attempts: ev.attempts ?? 0,
-      }
-    },
-    // sendVerificationEmail is wired by the apps/functions layer (which has
-    // the Mailgun secrets). Tests omit it; orchestrator falls through to
-    // complete-without-verification when undefined.
-    ...(deps.sendVerificationEmail
-      ? { sendVerificationEmail: deps.sendVerificationEmail }
-      : {}),
     // iter33 P3 — generateCvAnalysis is wired by the apps/functions layer
     // (which has SiliconFlow API key + Qwen-7B model). Tests omit it; the
     // deterministic dispatcher falls back to a generic "skimmed it" line
@@ -4230,12 +4341,6 @@ export function createFirestoreOrchestratorStore(
     // promise so onboarding still completes.
     ...(deps.generateJobRecs
       ? { generateJobRecs: deps.generateJobRecs }
-      : {}),
-    // iter34 P0 — LLM-fallback email intent extractor. Wired from
-    // apps/functions; tests omit and dispatcher falls back to the
-    // deterministic typo map + generic re-ask.
-    ...(deps.extractEmailIntent
-      ? { extractEmailIntent: deps.extractEmailIntent }
       : {}),
     // iter34 P0.2 — generic LLM-fallback for q_role / q_yoe / q_visa /
     // q_startup_pref / q_location. Wired from apps/functions; tests omit

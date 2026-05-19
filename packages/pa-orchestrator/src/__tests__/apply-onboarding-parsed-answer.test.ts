@@ -4,9 +4,9 @@
  *
  * Live bug repro (Adam iter23 testing 2026-05-06):
  *   - Legacy language preference capture produced a parsed preferredLang
- *     value before advancing to email capture.
+ *     value before advancing to the next onboarding step.
  *     onAccepted fires → runtime-bridge calls
- *     `deps.applyOnboarding(userId, phone, "ask_q_email", { parsedAnswer:
+ *     `deps.applyOnboarding(userId, phone, "ask_q_tos", { parsedAnswer:
  *     { preferredLang: "en" } })`.
  *   - Production wrapper at `createFirestoreOrchestratorStore.applyOnboarding`
  *     enumerated each `opts.X` field manually (line 3653-3663) and
@@ -16,8 +16,8 @@
  *     stayed empty → `writeOnboardingTags` skipped → `pa-users.tags.
  *     preferredLang` never updated → next bot reply read the prior session's
  *     "zh" tag and replied in mixed bilingual.
- *   - Mirror impact: every probe-Q canonical-answer write (q_email,
- *     q_role, q_yoe, q_visa, q_startup_pref, q_location, q_email_verify)
+ *   - Mirror impact: every probe-Q canonical-answer write (q_role,
+ *     q_yoe, q_visa, q_startup_pref, q_location)
  *     was equally broken via the same wrapper hole.
  *
  * Fix: forward `parsedAnswer: opts?.parsedAnswer` in the wrapper.
@@ -86,9 +86,9 @@ test("P9 — applyOnboarding wrapper FORWARDS opts.parsedAnswer (q_lang preferre
   const { db, sets } = makeCapturingDb()
   const store = createFirestoreOrchestratorStore(db)
 
-  // Mirror runtime-bridge.q_lang.onAccepted call exactly:
-  //   applyOnboarding(userId, phone, "ask_q_email", { parsedAnswer: { preferredLang: "en" } })
-  await store.applyOnboarding("u_p9_test", "+15551234", "ask_q_email", {
+  // Mirror runtime-bridge.q_lang.onAccepted call shape:
+  //   applyOnboarding(userId, phone, "ask_q_tos", { parsedAnswer: { preferredLang: "en" } })
+  await store.applyOnboarding("u_p9_test", "+15551234", "ask_q_tos", {
     parsedAnswer: { preferredLang: "en" },
   })
 
@@ -101,8 +101,8 @@ test("P9 — applyOnboarding wrapper FORWARDS opts.parsedAnswer (q_lang preferre
   // The state advance should have fired.
   assert.equal(
     payload.onboardingState,
-    "q_email_asked",
-    "ask_q_email step must transition state to q_email_asked"
+    "q_tos_asked",
+    "ask_q_tos step must transition state to q_tos_asked"
   )
   // Critical assertion — without the wrapper fix this would be undefined.
   const sp = payload.statedPreferences as { preferredLang?: string } | undefined

@@ -27,6 +27,7 @@ import {
   getCandidateJobStatusDisplay,
   type CandidateJobStatus,
 } from "../lib/candidate-job-status.js"
+import { GLOBAL_UID_KEY, readStoredValue } from "../lib/browser-identity"
 import {
   CandidateShell,
   Avatar,
@@ -36,7 +37,6 @@ import {
   PulseDot,
 } from "./CandidateLogin.js"
 
-const GLOBAL_UID_KEY = "wkr_uid"
 const LOGO_BG_POOL = ["#2A1812", "#0F1B2D", "#5E6AD2", "#635BFF", "#0D0D0D", "#1A1A1A", "#374151", "#7C2D12"]
 const TONE_POOL: Array<"warm" | "moss" | "slate"> = ["warm", "slate", "moss"]
 
@@ -76,7 +76,7 @@ export function useClaimedProfile(): ClaimState {
             functions(),
             "paCandidateClaimProfile"
           )
-          const browserUid = window.localStorage.getItem(GLOBAL_UID_KEY)
+          const browserUid = readStoredValue(GLOBAL_UID_KEY)
           const result = await claimProfile({ browserUid })
           if (!cancelled) {
             setState({ status: "ready", user, profile: result.data.selfProfile })

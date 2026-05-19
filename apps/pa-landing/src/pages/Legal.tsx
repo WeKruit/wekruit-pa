@@ -121,15 +121,6 @@ export default function Legal() {
       </section>
 
       <section className="legal-section">
-        <h2 className="legal-h2">Email verification</h2>
-        <p>
-          If you share your contact email, we send a 6-digit code via Mailgun. Reply the code over
-          iMessage to verify. The raw code is never persisted — only its sha256 hash, which expires
-          in 30 minutes.
-        </p>
-      </section>
-
-      <section className="legal-section">
         <h2 className="legal-h2">Beta caveats</h2>
         <p>
           You're using a closed beta. The product can change without notice. Replies are generated

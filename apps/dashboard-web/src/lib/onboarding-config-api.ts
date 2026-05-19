@@ -54,8 +54,6 @@ export type OnboardingStepConfig = {
 // still edit prompts per step independent of order.
 export const ONBOARDING_STEP_RENDER_ORDER = [
   "ask_q_lang",
-  "ask_q_email",
-  "ask_q_email_verify",
   "ask_q_tos",
   "ask_q_role",
   "ask_q_yoe",
@@ -87,41 +85,29 @@ export const ONBOARDING_STEP_META: Record<
       "Claire's FIRST outbound (iter33 spec collapse 2026-05-05). Fires on user's first inbound. Reply parsed by parseLangAnswer → preferredLang.",
     supports: { prompt: true },
   },
-  ask_q_email: {
-    label: "Q2 — Email capture",
-    description:
-      "Asks for email so out-of-band updates can land. Valid email triggers Mailgun verify-start.",
-    supports: { prompt: true },
-  },
-  ask_q_email_verify: {
-    label: "Q3 — Email verify code prompt",
-    description:
-      "Confirms Mailgun fired the 6-digit code. Waiting prompt fires on wrong-code retries.",
-    supports: { prompt: true, waiting: true },
-  },
   ask_q_tos: {
-    label: "Q4 — ToS gate",
+    label: "ToS gate",
     description:
       "Privacy + Terms link. Accept → role probe; decline → declinePrompt + state stays; ambiguous → reaskPrompt.",
     supports: { prompt: true, reask: true, decline: true },
   },
   ask_q_role: {
-    label: "Q5 — Target role",
+    label: "Target role",
     description: "eng / pm / research / design",
     supports: { prompt: true },
   },
   ask_q_yoe: {
-    label: "Q6 — Years of experience",
+    label: "Years of experience",
     description: "Numeric YoE or 'fresh out'",
     supports: { prompt: true },
   },
   ask_q_visa: {
-    label: "Q7 — Work authorization",
+    label: "Work authorization",
     description: "citizen / GC / OPT / H1B / sponsorship",
     supports: { prompt: true },
   },
   ask_q_startup_pref: {
-    label: "Q8 — Startup vs bigtech",
+    label: "Startup vs bigtech",
     description: "Maps to QueryMatchingJobs sizePreference.",
     supports: { prompt: true },
   },

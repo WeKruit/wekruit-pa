@@ -2,8 +2,15 @@ import type { Firestore } from "firebase-admin/firestore"
 import { FieldValue } from "firebase-admin/firestore"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import {
+  SHARED_ONBOARDING_EVENT_KIND,
+  SHARED_ONBOARDING_EVENT_SOURCE,
+  SHARED_ONBOARDING_QUESTIONS,
+  buildSharedOnboardingPrompt,
+  buildSharedOnboardingPromptContext,
+  buildSharedOnboardingStartedState,
   WEKRUIT_LAYOFF_SOURCE,
   WEKRUIT_CANDIDATE_SOURCE,
+  type SharedOnboardingPromptContext,
   type WekruitSignupSource,
 } from "@pa/pa-orchestrator"
 import { hashStringToUint } from "./sendblue/pool.js"
@@ -11,10 +18,6 @@ import { enqueueRuntimeEventHandoff } from "./runtime-event-handoff.js"
 
 export const LAYOFF_SMS_TRIGGER_TEXT = "WeKruit_LAID_OFF"
 export const CANDIDATE_SMS_TRIGGER_TEXT = "WeKruit_CANDIDATE_HI"
-
-function triggerTextFor(source: WekruitSignupSource): string {
-  return source === WEKRUIT_LAYOFF_SOURCE ? LAYOFF_SMS_TRIGGER_TEXT : CANDIDATE_SMS_TRIGGER_TEXT
-}
 
 export type RunLayoffSmsStartArgs = {
   db: Firestore
@@ -28,6 +31,7 @@ export type RunLayoffSmsStartArgs = {
     toE164: string
     startedAt: string
     source: WekruitSignupSource
+    promptContext?: SharedOnboardingPromptContext
   }) => Promise<{ eventId: string; outboundId?: string }>
   log?: (event: string, payload?: Record<string, unknown>) => void
 }
@@ -48,29 +52,9 @@ function phoneIndexId(e164: string): string {
 export function buildOnboardingStartedFields(
   nowIso: string,
   source: WekruitSignupSource = WEKRUIT_LAYOFF_SOURCE,
+  promptContext?: SharedOnboardingPromptContext,
 ): Record<string, unknown> {
-  const isLayoff = source === WEKRUIT_LAYOFF_SOURCE
-  const trigger = triggerTextFor(source)
-  const fields: Record<string, unknown> = {
-    onboardingStatus: "invited",
-    onboardingState: "pending",
-    pipelineState: {
-      currentQId: null,
-      collected: {},
-      attempts: {},
-      halted: null,
-      completed: false,
-    },
-    workSession: {
-      kind: isLayoff ? "layoff_onboarding" : "normal_onboarding",
-      status: "active",
-      startedAt: nowIso,
-      boundary: trigger,
-    },
-  }
-  if (isLayoff) fields.layoffOnboardingStartedAt = nowIso
-  else fields.candidateOnboardingStartedAt = nowIso
-  return fields
+  return buildSharedOnboardingStartedState(nowIso, source, promptContext)
 }
 
 /** Back-compat alias — existing callers still want the layoff-flavored fields. */
@@ -84,27 +68,28 @@ async function runDefaultRuntimeKickoff(args: {
   toE164: string
   startedAt: string
   source: WekruitSignupSource
+  promptContext?: SharedOnboardingPromptContext
 }): Promise<{ eventId: string; outboundId?: string }> {
-  const isLayoff = args.source === WEKRUIT_LAYOFF_SOURCE
-  const trigger = triggerTextFor(args.source)
-  const runtimeSource = isLayoff ? "layoff_onboarding" : "candidate_onboarding"
-  const eventKind = isLayoff ? "layoff_onboarding_started" : "candidate_onboarding_started"
-  const idempotencyKey = `${runtimeSource}:${args.userId}:${args.startedAt}`
+  const q1 = SHARED_ONBOARDING_QUESTIONS[0]
+  const idempotencyKey = `${SHARED_ONBOARDING_EVENT_SOURCE}:${args.userId}:${args.startedAt}`
   const runtime = await enqueueRuntimeEventHandoff(args.db, {
     userId: args.userId,
     toE164: args.toE164,
     channel: "imessage",
-    source: runtimeSource,
-    eventKind,
+    source: SHARED_ONBOARDING_EVENT_SOURCE,
+    eventKind: SHARED_ONBOARDING_EVENT_KIND,
     idempotencyKey,
     requireExistingSession: false,
     nowIso: () => args.startedAt,
     context: {
-      trigger,
       signupSource: args.source,
-      workSessionKind: isLayoff ? "layoff_onboarding" : "normal_onboarding",
+      workSessionKind: "shared_onboarding",
       startedAt: args.startedAt,
-      candidateEvent: isLayoff ? "fresh_layoff_signal" : "candidate_signup_started",
+      questionId: q1.id,
+      questionText: buildSharedOnboardingPrompt(q1.id, args.promptContext),
+      ...(args.promptContext && Object.keys(args.promptContext).length > 0
+        ? { promptContext: args.promptContext }
+        : {}),
     },
   })
   if (!runtime.ok) {
@@ -119,14 +104,38 @@ export function isLayoffIntakeActiveDoc(data: unknown): boolean {
   const workSession = doc.workSession && typeof doc.workSession === "object"
     ? doc.workSession as Record<string, unknown>
     : null
+  if (workSession?.kind === "shared_onboarding" && workSession.status === "active") return true
   if (workSession?.kind === "layoff_onboarding" && workSession.status === "active") return true
-  return doc.source === WEKRUIT_LAYOFF_SOURCE && doc.onboardingState !== "complete"
+  return false
 }
 
 export async function isLayoffIntakeActiveForUser(db: Firestore, userId: string): Promise<boolean> {
   if (!userId) return false
   const snap = await db.collection(PA_COLLECTIONS.users).doc(userId).get()
   return isLayoffIntakeActiveDoc(snap.data())
+}
+
+async function loadLatestParsedResumeForPrompt(
+  db: Firestore,
+  userId: string,
+  log?: (event: string, payload?: Record<string, unknown>) => void,
+): Promise<Record<string, unknown> | null> {
+  try {
+    const snap = await db
+      .collection("parsedCandidateResumes")
+      .where("userId", "==", userId)
+      .orderBy("createdAt", "desc")
+      .limit(1)
+      .get()
+    if (snap.empty) return null
+    return (snap.docs[0]?.data() ?? null) as Record<string, unknown> | null
+  } catch (err) {
+    log?.("shared_onboarding.resume_prompt_context.lookup_failed", {
+      userId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    return null
+  }
 }
 
 export async function supersedeActivePrescreensForLayoff(
@@ -181,26 +190,32 @@ export async function runLayoffSmsStart(
   const isLayoff = source === WEKRUIT_LAYOFF_SOURCE
 
   const startedAt = new Date().toISOString()
-  const startedFields = buildOnboardingStartedFields(startedAt, source)
+  const parsedResume = await loadLatestParsedResumeForPrompt(args.db, args.userId, args.log)
+  const promptContext = buildSharedOnboardingPromptContext({ user, parsedResume })
+  const startedFields = buildOnboardingStartedFields(startedAt, source, promptContext)
   const phoneHash = phoneIndexId(phoneE164)
 
   const initialPayload: Record<string, unknown> = {
     source,
     updatedAt: startedAt,
-    smsState: isLayoff ? "layoff-onboarding-starting" : "candidate-onboarding-starting",
+    smsState: "shared-onboarding-starting",
     smsThreadId: `iMessage;-;${phoneE164}`,
     ...startedFields,
   }
   if (isLayoff) {
     initialPayload.lastLaidOffAt = FieldValue.serverTimestamp()
     initialPayload.layoffContext = {
-      phoneE164,
-      smsTriggeredAt: FieldValue.serverTimestamp(),
+      sms: {
+        phoneE164,
+        smsTriggeredAt: FieldValue.serverTimestamp(),
+      },
     }
   } else {
     initialPayload.candidateContext = {
-      phoneE164,
-      smsTriggeredAt: FieldValue.serverTimestamp(),
+      sms: {
+        phoneE164,
+        smsTriggeredAt: FieldValue.serverTimestamp(),
+      },
     }
   }
 
@@ -236,6 +251,7 @@ export async function runLayoffSmsStart(
     toE164: phoneE164,
     startedAt,
     source,
+    promptContext,
   })
 
   const followupPayload: Record<string, unknown> = {

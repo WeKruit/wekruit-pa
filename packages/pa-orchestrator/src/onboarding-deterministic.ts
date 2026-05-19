@@ -4,7 +4,7 @@
  * Adam directive 2026-05-07 ("整体重构 不打补丁"): the legacy 1700-line
  * if/else dispatcher is replaced by:
  *   1. `pipeline.runTurn(ONBOARDING_QUESTIONS_V2, ...)` — handles all the
- *      Q&A turns (lang / email / verify / tos / role / yoe / visa /
+ *      Q&A turns (tos / role / yoe / visa /
  *      startup_pref / country / location / resume).
  *   2. `ResumeDiscussionPhase` — handles the long-running CV ingest:
  *      ack -> state=processing -> mid-process hold -> analysis -> done.
@@ -26,7 +26,7 @@
  * What's deleted (per task spec):
  *   - `resolveDeterministicAction` / `composeDeterministicReply`
  *   - 600+ lines of regex dispatch (4-path fallback chain, probe re-ask,
- *     email-LLM branch, vent-ack branch, etc.) — all subsumed by the
+ *     vent-ack branch, etc.) — all subsumed by the
  *     pipeline + DiscussionPhase abstractions.
  *
  * Bug A v2 dedup is preserved: ResumeDiscussionPhase's `onArtifactReceived`
@@ -148,26 +148,6 @@ export const DEFAULT_ONBOARDING_CONFIG: Record<OnboardingStep, OnboardingStepCon
     waitingPrompt: {
       zh: "等你发简历过来哦, iMessage 里直接附件就行",
       en: "just waiting on the resume — send it as an iMessage attachment whenever",
-    },
-  },
-  ask_q_email: {
-    prompt: {
-      zh: "对了, 平时邮箱用啥? 后面如果你不在线我直接发邮件给你",
-      en: "btw — what email should I send stuff to when you're afk? roughly fine",
-    },
-    reaskPrompt: {
-      zh: "没看到邮箱地址哎, 直接发个 email 给我就行 (像 you@example.com 这种)",
-      en: "didn't catch an email there — just paste the address (like you@example.com)",
-    },
-  },
-  ask_q_email_verify: {
-    prompt: {
-      zh: "已经发了一个 6 位验证码到你邮箱了, 收到回我一下就行 (30 分钟有效)",
-      en: "just sent a 6-digit code to your email — text it back to me and we're set (good for 30 mins)",
-    },
-    waitingPrompt: {
-      zh: "等你把邮箱里的 6 位验证码发我",
-      en: "still waiting on that 6-digit code from your email",
     },
   },
   send_cv_analysis: {
@@ -350,19 +330,6 @@ export type DeterministicRunnerStore = {
     opts?: Record<string, unknown>
   ): Promise<void>
   getTosVersion?(): Promise<string>
-  getUserEmailVerification?(userId: string): Promise<{
-    codeHash: string
-    email: string
-    sentAt: string
-    expiresAt: string
-    attempts: number
-  } | null>
-  sendVerificationEmail?(email: string): Promise<{
-    rawCode: string
-    sentAt: string
-    expiresAt: string
-    providerMessageId?: string
-  } | null>
   generateCvAnalysis?(
     userId: string,
     lang: "zh" | "en"
@@ -371,16 +338,6 @@ export type DeterministicRunnerStore = {
     userId: string,
     lang: "zh" | "en"
   ): Promise<{ message: string; recCount: number } | null>
-  extractEmailIntent?(
-    reply: string,
-    lang: "zh" | "en"
-  ): Promise<
-    | { intent: "provided"; email: string; confidence: number }
-    | { intent: "typo"; suggestion: string; original: string }
-    | { intent: "declined" }
-    | { intent: "unclear"; clarifyingQuestion: string }
-    | null
-  >
   extractAnswerIntent?(
     step:
       | "ask_q_role"
@@ -419,7 +376,6 @@ export type RunDeterministicTurnInput = {
     pipelineState?: { currentQId?: string | null }
     statedPreferences?: {
       contactEmail?: string
-      contactEmailVerifiedAt?: string
       preferredLang?: "zh" | "en" | "mixed"
       targetRole?: string[]
       yoeRange?: [number, number] | null
@@ -812,12 +768,6 @@ export async function runDeterministicOnboardingTurn(
         store.applyOnboarding(uid, phone, step as OnboardingStep, opts),
       ...(store.getOnboardingUser
         ? { getOnboardingUser: (uid: string) => store.getOnboardingUser!(uid) }
-        : {}),
-      ...(store.extractEmailIntent
-        ? { extractEmailIntent: store.extractEmailIntent }
-        : {}),
-      ...(store.sendVerificationEmail
-        ? { sendVerificationEmail: store.sendVerificationEmail }
         : {}),
       nowIso: () => store.nowIso(),
       log: (event2, payload) => store.log(event2, payload),

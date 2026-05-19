@@ -35,13 +35,6 @@ test("ONBOARDING_WORKFLOW: iter33 P3+P4 q_cv_analyzing node is action kind", () 
   assert.match(node!.origin, /iter33 P3\+P4/)
 })
 
-test("ONBOARDING_WORKFLOW: iter33 P2 reorder — verify_email_code lands on q_tos_asked", () => {
-  const edges = outgoingEdges(ONBOARDING_WORKFLOW, "q_email_verifying")
-  const verifyEdge = edges.find((e) => e.action === "verify_email_code")
-  assert.ok(verifyEdge, "verify_email_code edge must exist from q_email_verifying")
-  assert.equal(verifyEdge!.to, "q_tos_asked", "iter33 P2: verify success → q_tos_asked")
-})
-
 test("ONBOARDING_WORKFLOW: iter33 P2 reorder — q_tos_asked accept lands on q_role_asked", () => {
   const edges = outgoingEdges(ONBOARDING_WORKFLOW, "q_tos_asked")
   const acceptEdge = edges.find(
@@ -75,10 +68,8 @@ test("ONBOARDING_WORKFLOW: q_cv_analyzing → complete (terminal transition)", (
 
 test("ONBOARDING_WORKFLOW: vent self-loop on probe nodes (parser-owned nodes excluded)", () => {
   // Vent self-loops on nodes where dispatcher's priorAskedStepFromState
-  // returns a step. first_mes_sent (transitional, no user input expected),
-  // q_email_asked + q_email_verifying (parser-owned — vent strings inside
-  // an email body / code reply must not trigger detection), and the
-  // action / terminal nodes are excluded by design.
+  // returns a step. first_mes_sent (transitional, no user input expected)
+  // and the action / terminal nodes are excluded by design.
   const ventNodes = [
     "q_tos_asked",
     "q_role_asked",
@@ -100,41 +91,37 @@ test("ONBOARDING_WORKFLOW: vent self-loop on probe nodes (parser-owned nodes exc
   }
 })
 
-test("ONBOARDING_WORKFLOW: topologicalStates starts at q_email for beta", () => {
+test("ONBOARDING_WORKFLOW: topologicalStates starts at q_tos for legacy deterministic beta", () => {
   // iter33 spec collapse 2026-05-05 — first_mes_sent removed from graph.
   // Backward-compat for persisted-state users is handled inline in
   // resolveDeterministicAction.
   const states = topologicalStates(ONBOARDING_WORKFLOW)
-  assert.equal(states.length, 12)
+  assert.equal(states.length, 10)
   assert.equal(states[0], "pending")
   assert.equal(states[states.length - 1], "complete")
   // first_mes_sent is no longer a graph node
   assert.ok(!states.includes("first_mes_sent" as never))
   // q_lang_asked is no longer a graph node
   assert.ok(!states.includes("q_lang_asked" as never))
-  // pending -> q_email_asked is the direct beta entry transition
-  assert.ok(states.indexOf("pending") < states.indexOf("q_email_asked"))
-  // P2 reorder: email/verify before ToS
-  assert.ok(states.indexOf("q_email_verifying") < states.indexOf("q_tos_asked"))
+  // pending -> q_tos_asked is the direct beta entry transition
+  assert.ok(states.indexOf("pending") < states.indexOf("q_tos_asked"))
   // P2 reorder: ToS before role
   assert.ok(states.indexOf("q_tos_asked") < states.indexOf("q_role_asked"))
   // P3 cv_analyzing before complete
   assert.ok(states.indexOf("q_cv_analyzing") < states.indexOf("complete"))
 })
 
-test("ONBOARDING_WORKFLOW beta entry: pending -> q_email_asked direct", () => {
+test("ONBOARDING_WORKFLOW beta entry: pending -> q_tos_asked direct", () => {
   const edges = outgoingEdges(ONBOARDING_WORKFLOW, "pending")
   assert.equal(edges.length, 1, "pending should have exactly one outgoing edge")
-  assert.equal(edges[0].to, "q_email_asked")
-  assert.equal(edges[0].action, "ask_q_email")
+  assert.equal(edges[0].to, "q_tos_asked")
+  assert.equal(edges[0].action, "ask_q_tos")
   assert.equal(edges[0].condition.kind, "default")
 })
 
 test("ONBOARDING_WORKFLOW: incoming + outgoing edges traverse the entire happy path", () => {
   const happyPath = [
     "pending",
-    "q_email_asked",
-    "q_email_verifying",
     "q_tos_asked",
     "q_role_asked",
     "q_yoe_asked",
@@ -193,8 +180,6 @@ function makeCtx(overrides: Partial<WorkflowContext> = {}): WorkflowContext {
   return {
     userMessage: "",
     cvParsed: false,
-    emailCaptured: false,
-    emailVerified: false,
     v33Disabled: false,
     isVent: false,
     answered: false,
@@ -213,26 +198,6 @@ test("DETERMINISM: walkWorkflow is pure — same (state, ctx) × 100 → identic
   }> = [
     { state: "pending", ctx: makeCtx({ userMessage: "你好" }), label: "pending+zh" },
     { state: "pending", ctx: makeCtx({ userMessage: "hello" }), label: "pending+en" },
-    {
-      state: "q_email_asked",
-      ctx: makeCtx({ userMessage: "adam@wekruit.com", parsedEmail: "adam@wekruit.com" }),
-      label: "email+valid",
-    },
-    {
-      state: "q_email_asked",
-      ctx: makeCtx({ userMessage: "later" }),
-      label: "email+missing",
-    },
-    {
-      state: "q_email_verifying",
-      ctx: makeCtx({ userMessage: "654321", parsedCode: "654321" }),
-      label: "verify+code",
-    },
-    {
-      state: "q_email_verifying",
-      ctx: makeCtx({ userMessage: "what was the code" }),
-      label: "verify+nocode",
-    },
     {
       state: "q_tos_asked",
       ctx: makeCtx({ userMessage: "同意", tosDecision: "accept" }),
@@ -296,25 +261,13 @@ test("DETERMINISM: edge-array shuffle does not change walker output (mutex prece
     // signal toggles + parser outputs.
     const ctxs: WorkflowContext[] = []
     for (const tos of [undefined, "accept", "decline", "unclear"] as const) {
-      for (const email of [undefined, "x@y.com"] as const) {
-        for (const code of [undefined, "654321"] as const) {
-          for (const cvParsed of [false, true]) {
-            for (const emailCaptured of [false, true]) {
-              for (const emailVerified of [false, true]) {
-                ctxs.push(
-                  makeCtx({
-                    tosDecision: tos,
-                    parsedEmail: email,
-                    parsedCode: code,
-                    cvParsed,
-                    emailCaptured,
-                    emailVerified,
-                  })
-                )
-              }
-            }
-          }
-        }
+      for (const cvParsed of [false, true]) {
+        ctxs.push(
+          makeCtx({
+            tosDecision: tos,
+            cvParsed,
+          })
+        )
       }
     }
     for (const ctx of ctxs) {
@@ -325,14 +278,6 @@ test("DETERMINISM: edge-array shuffle does not change walker output (mutex prece
           if (c.matches === "accept") return ctx.tosDecision === "accept"
           if (c.matches === "decline") return ctx.tosDecision === "decline"
           if (c.matches === "ambiguous") return ctx.tosDecision === "unclear"
-        }
-        if (c.parser === "ask_q_email") {
-          if (c.matches === "valid_email") return Boolean(ctx.parsedEmail)
-          if (c.matches === "no_email") return !ctx.parsedEmail
-        }
-        if (c.parser === "ask_q_email_verify") {
-          if (c.matches === "code_correct") return Boolean(ctx.parsedCode)
-          if (c.matches === "code_wrong_or_missing") return !ctx.parsedCode
         }
         return false
       })
@@ -347,8 +292,6 @@ test("DETERMINISM: edge-array shuffle does not change walker output (mutex prece
         if (e.condition.kind !== "externalSignal") return false
         const sig = e.condition.signal
         if (sig === "cvParsed") return ctx.cvParsed === true
-        if (sig === "emailCaptured") return ctx.emailCaptured === true
-        if (sig === "emailVerified") return ctx.emailVerified === true
         return false
       })
     for (const ctx of ctxs.slice(0, 8)) {

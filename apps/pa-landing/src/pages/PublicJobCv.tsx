@@ -8,37 +8,28 @@
  */
 import { useEffect, useMemo, useState } from "react"
 import { useParams } from "react-router-dom"
+import { GLOBAL_UID_KEY, getBrowserUid, readStoredValue, rememberStoredValue } from "../lib/browser-identity"
 
 const CV_INGEST_URL = import.meta.env.VITE_CV_INGEST_URL ?? ""
 
-function uuidV4(): string {
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0
-    return (c === "x" ? r : (r & 0x3) | 0x8).toString(16)
-  })
-}
-
 // v1.9 hotfix (2026-05-12) — share single global UID across all /j/:jobId
 // pages. Matches the same scheme in PublicJob.tsx.
-const GLOBAL_UID_KEY = "wkr_uid"
 const HAS_CV_KEY = "wkr_has_cv"
 
 function getOrCreateRequestedUserId(_jobId: string): string {
-  const existingGlobal = window.localStorage.getItem(GLOBAL_UID_KEY)
+  const existingGlobal = readStoredValue(GLOBAL_UID_KEY)
   if (existingGlobal) return existingGlobal
   for (let i = 0; i < window.localStorage.length; i++) {
     const k = window.localStorage.key(i)
     if (k && k.startsWith("wkr_rid_")) {
       const v = window.localStorage.getItem(k)
       if (v) {
-        window.localStorage.setItem(GLOBAL_UID_KEY, v)
+        rememberStoredValue(GLOBAL_UID_KEY, v)
         return v
       }
     }
   }
-  const v = uuidV4()
-  window.localStorage.setItem(GLOBAL_UID_KEY, v)
-  return v
+  return getBrowserUid()
 }
 
 async function fileToBase64(file: File): Promise<string> {
@@ -103,7 +94,7 @@ export default function PublicJobCv() {
       // v1.9 hotfix — stamp local "has CV" flag so subsequent /j/:jobId
       // pages can skip the upload prompt for this returning user.
       try {
-        window.localStorage.setItem(HAS_CV_KEY, "true")
+        rememberStoredValue(HAS_CV_KEY, "true")
       } catch {
         // localStorage disabled — non-fatal; upload still succeeded.
       }

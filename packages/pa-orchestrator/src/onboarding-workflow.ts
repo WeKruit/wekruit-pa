@@ -15,8 +15,7 @@
  * OpenAI Agents SDK's `Handoff` + `Agent` primitives are designed for
  * LLM-driven multi-agent orchestration where each step calls a model.
  * iter32+iter33 onboarding has ZERO LLM calls in the deterministic path
- * (verify-mail Mailgun + send-cv-analysis Qwen-7B are the only LLM calls,
- * and those are leaf I/O not control-flow). Wrapping deterministic state
+ * (send-cv-analysis Qwen-7B is a leaf I/O call, not control-flow). Wrapping deterministic state
  * transitions in Agent + Handoff would add overhead (model calls per
  * step) without buying any LLM-routing benefit. The right primitive for
  * deterministic flow is a state graph — which is what this module makes
@@ -103,18 +102,6 @@ export const ONBOARDING_WORKFLOW: OnboardingWorkflow = {
       description: "Fresh user, never seen first_mes",
     },
     {
-      state: "q_email_asked",
-      kind: "question",
-      origin: "iter33 P2 (Adam 2026-05-04)",
-      description: "Claire asked email; valid email triggers Mailgun verify-start",
-    },
-    {
-      state: "q_email_verifying",
-      kind: "waiting",
-      origin: "iter31 (Adam 2026-05-04)",
-      description: "Mailgun fired, awaits user to text back the 6-digit code",
-    },
-    {
       state: "q_tos_asked",
       kind: "question",
       origin: "iter31 → iter33 P2 reorder (Adam 2026-05-04)",
@@ -171,59 +158,20 @@ export const ONBOARDING_WORKFLOW: OnboardingWorkflow = {
   ],
   edges: [
     {
-      // Beta no longer asks for language preference. User's first inbound goes
-      // directly to the email trust step.
+      // Beta no longer asks for language or email over SMS. User's first
+      // inbound goes directly to the consent gate.
       from: "pending",
-      to: "q_email_asked",
-      action: "ask_q_email",
-      condition: { kind: "default" },
-      description: "first user inbound -> q_email_asked",
-    },
-    // first_mes_sent state is removed from the iter33-spec-collapse graph.
-    // Backward-compat for users with persisted onboardingState=first_mes_sent
-    // is handled inline in resolveDeterministicAction (pre-walker special-case
-    // -> ask_q_email). See onboarding-deterministic.ts.
-    {
-      from: "q_email_asked",
-      to: "q_email_verifying",
-      action: "ask_q_email_verify_start",
-      condition: { kind: "parsedAnswer", parser: "ask_q_email", matches: "valid_email" },
-      description: "Valid email → Mailgun fires + state advances to verifying",
-    },
-    {
-      from: "q_email_asked",
-      to: "q_email_asked",
-      action: "ask_q_email",
-      condition: { kind: "parsedAnswer", parser: "ask_q_email", matches: "no_email" },
-      description: "No parseable email → re-ask, stay",
-    },
-    {
-      from: "q_email_verifying",
       to: "q_tos_asked",
-      action: "verify_email_code",
-      condition: { kind: "parsedAnswer", parser: "ask_q_email_verify", matches: "code_correct" },
-      description: "iter33 P2: correct code → ToS gate (was: q_role_asked)",
-    },
-    {
-      from: "q_email_verifying",
-      to: "q_email_verifying",
-      action: "ask_q_email_verify_retry",
-      condition: { kind: "parsedAnswer", parser: "ask_q_email_verify", matches: "code_wrong_or_missing" },
-      description: "Wrong/missing code → bump attempts, stay",
-    },
-    {
-      from: "q_email_verifying",
-      to: "q_email_verifying",
-      action: "ask_q_email_verify_reissue",
-      condition: { kind: "parsedAnswer", parser: "ask_q_email_verify", matches: "code_expired_or_exhausted" },
-      description: "Expired/5-misses → re-fire Mailgun, stay",
+      action: "ask_q_tos",
+      condition: { kind: "default" },
+      description: "first user inbound -> q_tos_asked",
     },
     {
       from: "q_tos_asked",
       to: "q_role_asked",
       action: "ask_q_role",
       condition: { kind: "parsedAnswer", parser: "ask_q_tos", matches: "accept" },
-      description: "iter33 P2: accept → role probe chain (was: ask_q_email)",
+      description: "accept → role probe chain",
     },
     {
       from: "q_tos_asked",
@@ -332,11 +280,7 @@ export const ONBOARDING_WORKFLOW: OnboardingWorkflow = {
     },
     // Vent edges — self-loop on vent at every node where the dispatcher's
     // priorAskedStepFromState() returns a step (i.e. Claire JUST asked
-    // something specific). q_email_asked + q_email_verifying are
-    // intentionally NOT in this list because the parser owns those
-    // turns — vent words may legitimately appear inside an email or as
-    // part of a verification code reply, and we don't want the vent
-    // detector to short-circuit captured input.
+    // something specific).
     ...["q_tos_asked", "q_role_asked", "q_yoe_asked", "q_visa_asked", "q_startup_pref_asked", "q_location_asked", "q_resume_asked"].map((s) => ({
       from: s as OnboardingState,
       to: s as OnboardingState,
@@ -379,17 +323,11 @@ export function incomingEdges(
 export type WorkflowContext = {
   userMessage: string
   cvParsed: boolean
-  emailCaptured: boolean
-  emailVerified: boolean
   v33Disabled: boolean
   /** True when the user message is a vent / distress signal. */
   isVent: boolean
   /** Result of parseTosAnswer(userMessage); undefined when not at q_tos_asked. */
   tosDecision?: "accept" | "decline" | "unclear"
-  /** Captured email when parser succeeded at q_email_asked. */
-  parsedEmail?: string
-  /** Captured 6-digit code at q_email_verifying. */
-  parsedCode?: string
   /** True when the user reply parsed cleanly for the current state. */
   answered: boolean
 }
@@ -403,7 +341,7 @@ export type WorkflowContext = {
  * Edge precedence (matches dispatcher's switch order):
  *   1. ventDetected (when ctx.isVent && state has a vent self-loop)
  *   2. parsedAnswer with specific match
- *   3. externalSignal (cvParsed, emailCaptured, etc.)
+ *   3. externalSignal (cvParsed, etc.)
  *   4. default (always last)
  */
 export function walkWorkflow(
@@ -427,7 +365,7 @@ export function walkWorkflow(
     if (matchParsedAnswer(e.condition, ctx)) return e
   }
 
-  // 3) externalSignal — cvParsed / emailCaptured / etc.
+  // 3) externalSignal — cvParsed / etc.
   for (const e of edges) {
     if (e.condition.kind !== "externalSignal") continue
     if (matchExternalSignal(e.condition, ctx)) return e
@@ -450,19 +388,6 @@ function matchParsedAnswer(
     if (matches === "decline") return ctx.tosDecision === "decline"
     if (matches === "ambiguous") return ctx.tosDecision === "unclear"
   }
-  if (parser === "ask_q_email") {
-    if (matches === "valid_email") return Boolean(ctx.parsedEmail)
-    if (matches === "no_email") return !ctx.parsedEmail
-  }
-  if (parser === "ask_q_email_verify") {
-    if (matches === "code_correct") return Boolean(ctx.parsedCode)
-    if (matches === "code_wrong_or_missing") return !ctx.parsedCode
-    // "code_expired_or_exhausted" is determined by the runner from the
-    // challenge doc; the dispatcher resolver doesn't have that signal,
-    // so it routes to retry and the runner re-routes to reissue when it
-    // discovers expired/exhausted state.
-    if (matches === "code_expired_or_exhausted") return false
-  }
   if (
     parser === "ask_q_role" ||
     parser === "ask_q_yoe" ||
@@ -480,8 +405,6 @@ function matchExternalSignal(
   ctx: WorkflowContext
 ): boolean {
   if (cond.signal === "cvParsed") return ctx.cvParsed
-  if (cond.signal === "emailCaptured") return ctx.emailCaptured
-  if (cond.signal === "emailVerified") return ctx.emailVerified
   return false
 }
 

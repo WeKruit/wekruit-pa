@@ -1,0 +1,110 @@
+import assert from "node:assert/strict"
+import test from "node:test"
+
+import {
+  SHARED_ONBOARDING_QUESTIONS,
+  buildSharedOnboardingPrompt,
+  buildSharedOnboardingPromptContext,
+  buildSharedOnboardingStartedState,
+  getSharedOnboardingQuestion,
+  projectSharedOnboardingAnswer,
+  resolveNextSharedOnboardingQuestionId,
+} from "../shared-onboarding.js"
+import { WEKRUIT_CANDIDATE_SOURCE, WEKRUIT_LAYOFF_SOURCE } from "../onboarding.js"
+
+test("shared onboarding asks the five conversational questions in launch order", () => {
+  assert.deepEqual(SHARED_ONBOARDING_QUESTIONS.map((q) => q.id), [
+    "main_goal",
+    "culture_stage",
+    "industry_interest",
+    "location_relocation",
+    "special_context",
+  ])
+  assert.match(getSharedOnboardingQuestion("main_goal").prompt, /career growth, compensation, stability, mission, learning/i)
+  assert.doesNotMatch(
+    SHARED_ONBOARDING_QUESTIONS.map((q) => q.prompt).join("\n"),
+    /email|e-mail|what email|why are you looking/i,
+  )
+})
+
+test("normal and laid-off website starts create the same shared SMS onboarding state", () => {
+  const layoff = buildSharedOnboardingStartedState("2026-05-18T20:00:00.000Z", WEKRUIT_LAYOFF_SOURCE)
+  const candidate = buildSharedOnboardingStartedState("2026-05-18T20:00:00.000Z", WEKRUIT_CANDIDATE_SOURCE)
+
+  assert.equal((layoff.workSession as Record<string, unknown>).kind, "shared_onboarding")
+  assert.equal((candidate.workSession as Record<string, unknown>).kind, "shared_onboarding")
+  assert.equal((layoff.workSession as Record<string, unknown>).currentQuestionId, "main_goal")
+  assert.equal((candidate.workSession as Record<string, unknown>).currentQuestionId, "main_goal")
+  assert.equal((layoff.sharedOnboarding as Record<string, unknown>).source, WEKRUIT_LAYOFF_SOURCE)
+  assert.equal((candidate.sharedOnboarding as Record<string, unknown>).source, WEKRUIT_CANDIDATE_SOURCE)
+})
+
+test("shared onboarding prompts ground Q1 and Q4 in resume/profile context when available", () => {
+  const promptContext = buildSharedOnboardingPromptContext({
+    user: {
+      displayName: "Ada Lovelace",
+      location: "New York, NY",
+      layoffContext: { lastCompany: "Rain", jobTitle: "Backend Engineer" },
+    },
+    parsedResume: {
+      candidateProfile: { skills: ["TypeScript", "Kubernetes", "Postgres"] },
+      experiences: [
+        { company: "Tesla", title: "Full Stack Engineer", location: "San Francisco" },
+        { company: "Extend", title: "Backend Engineer", location: "New York" },
+      ],
+      industryTags: ["financial_technology", "developer_tools"],
+    },
+  })
+
+  const q1 = buildSharedOnboardingPrompt("main_goal", promptContext)
+  assert.match(q1, /Hey Ada/i)
+  assert.match(q1, /resume/i)
+  assert.match(q1, /Backend Engineer/i)
+  assert.match(q1, /Rain/i)
+  assert.match(q1, /career growth, compensation, stability, mission, learning/i)
+
+  const q3 = buildSharedOnboardingPrompt("industry_interest", promptContext)
+  assert.match(q3, /financial_technology/i)
+  assert.match(q3, /actually most interested/i)
+
+  const q4 = buildSharedOnboardingPrompt("location_relocation", promptContext)
+  assert.match(q4, /New York, NY/i)
+  assert.match(q4, /remote, onsite, or relocating/i)
+})
+
+test("free-form answers produce memory evidence and confident tag patches", () => {
+  const industry = projectSharedOnboardingAnswer(
+    "industry_interest",
+    "Fintech, AI infrastructure, and maybe crypto infra are the sectors I keep coming back to.",
+  )
+  assert.match(industry.memoryFact, /Fintech, AI infrastructure/)
+  assert.deepEqual(industry.tags.industrySector, [
+    "artificial_intelligence_and_machine_learning",
+    "financial_technology",
+    "crypto_web3_blockchain",
+  ])
+
+  const location = projectSharedOnboardingAnswer(
+    "location_relocation",
+    "NYC or remote would be best, but I can relocate to Seattle for the right team.",
+  )
+  assert.deepEqual(location.tags.targetLocations, [
+    "new_york_metro",
+    "remote_united_states",
+    "seattle_metro",
+  ])
+  assert.equal(location.evidence.relocationOpen, true)
+})
+
+test("recommendations become eligible only after Q5 is collected", () => {
+  assert.deepEqual(resolveNextSharedOnboardingQuestionId("main_goal"), {
+    nextQuestionId: "culture_stage",
+    completed: false,
+    shouldRecommend: false,
+  })
+  assert.deepEqual(resolveNextSharedOnboardingQuestionId("special_context"), {
+    nextQuestionId: null,
+    completed: true,
+    shouldRecommend: true,
+  })
+})

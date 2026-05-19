@@ -32,35 +32,18 @@ export type MessageRole = z.infer<typeof MessageRoleSchema>
 /**
  * Phase 23 — onboarding state machine step.
  *
- * Phase 44 (v1.5 Stream-B) extends the original 4-state machine with 5 new
- * question states (q_role_asked → q_location_asked) for the rich friend-tone
- * JOB-PREF probe. Backward compatible: legacy values (`pending`,
- * `first_mes_sent`, `grounding_q1_asked`, `complete`) still resolve via
- * `resolveOnboardingStep` exactly as before; new states only enter the
- * write path when `paOnboardingProbeV2Enabled` is on for the user.
+ * Phase 44 (v1.5 Stream-B) extends the original 4-state machine with
+ * question states for the rich friend-tone JOB-PREF probe. Website
+ * registration owns email capture; SMS onboarding never asks for email.
  */
 export const OnboardingStateSchema = z.enum([
   "pending",
   "first_mes_sent",
-  // iter33 (Adam directive 2026-05-04 "问 你 prefer 中文、英文、中英文混合"):
-  // explicit lang preference question right after first_mes. Replaces the
-  // implicit per-turn pickLang() heuristic for the *captured* preference
-  // (pickLang remains as the realtime detector for unstructured chat).
-  // Sequence: first_mes_sent → q_lang_asked → q_email_asked → ... (P1).
-  // P2 will reorder Email/Verify ahead of ToS per Adam-locked spec.
+  // Historical only; launch SMS onboarding no longer asks language.
   "q_lang_asked",
-  // iter31 (Adam directive 2026-05-04 "1. email verification & privacy + terms"):
+  // ToS + privacy acceptance for legacy deterministic onboarding.
   // ToS + privacy acceptance MUST land before any data-collection probes.
   "q_tos_asked",
-  // iter32 reorder (Adam directive 2026-05-04 "Email & verify should be part
-  // of pre cv in tos.."): email + verify form a trust handshake immediately
-  // after ToS, BEFORE the role/yoe probe sequence and BEFORE resume upload.
-  // Sequence: q_tos_asked → q_email_asked → q_email_verifying → q_role_asked
-  // → q_yoe_asked → q_visa_asked → q_startup_pref_asked → q_location_asked
-  // → q_resume_asked → complete. STATE_ORDER below mirrors this order so
-  // applyOnboardingStep idempotency advances forward only.
-  "q_email_asked",
-  "q_email_verifying",
   "grounding_q1_asked",
   "q_role_asked",
   "q_yoe_asked",
@@ -145,20 +128,10 @@ export const StatedPreferencesSchema = z.object({
   /** Annual USD floor; null = no signal. */
   salaryFloor: z.number().nullable().optional(),
   /**
-   * iter30 V6 — optional contact email captured at onboarding step 7
-   * (`ask_q_email`). Used by post-launch outbound email helper for
-   * proactive checkins (silence-anchor / time-anchor / cv-followup) when
-   * the user is offline on iMessage. Transport (SendGrid/Postmark) is
-   * deferred — today we only store the address.
+   * Optional contact email captured by website registration. SMS onboarding
+   * must not ask for this field.
    */
   contactEmail: z.string().email().optional(),
-  /**
-   * iter31 — ISO timestamp when the user replied with the verification code
-   * sent to `contactEmail`. Unset means email captured but not verified.
-   * Set by `applyOnboardingStep` when transitioning q_email_verifying →
-   * complete with a matching code.
-   */
-  contactEmailVerifiedAt: z.string().optional(),
   /**
    * iter33 — captured at q_lang_asked step. Drives Bible directive
    * language and locks Claire's reply language for the rest of the
@@ -256,26 +229,6 @@ export const UserSchema = z.object({
     channel: z.string(),
     /** Free-text record of the message that constituted acceptance. */
     rawReply: z.string().optional(),
-  }).optional(),
-  /**
-   * iter31 — pending email verification challenge. Issued when q_email_asked
-   * produced a valid email; cleared when user replies with the code (→
-   * q_email_verifying → complete) or when TTL elapses. Code is hashed (sha256)
-   * so the raw never sits at rest in Firestore — code is sent via Mailgun and
-   * never persisted; Firestore stores only the hash + the email it was sent to.
-   */
-  emailVerification: z.object({
-    /** sha256(code) hex. Raw never persisted. */
-    codeHash: z.string(),
-    /** Email the code was dispatched to (lower-cased). */
-    email: z.string().email(),
-    sentAt: z.string(),
-    /** ISO; default issuer = sentAt + 30 minutes. */
-    expiresAt: z.string(),
-    /** Mailgun message-id (when send succeeded). */
-    providerMessageId: z.string().optional(),
-    /** Failed attempts (lockout after 5). */
-    attempts: z.number().int().nonnegative().default(0),
   }).optional(),
   /**
    * iter31 — Human-in-the-loop runtime mode. `auto` (default / unset) = agent

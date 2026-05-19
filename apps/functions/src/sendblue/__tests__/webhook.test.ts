@@ -707,7 +707,7 @@ describe("handleSendblueWebhook", () => {
     assert.ok(prescreenIdempotency.has("rain-software-engineer-fullstack-8849f6ef_u_real_candidate_1_msg-entry-public-1"))
   })
 
-  it("Test 18 (entrypoints): WeKruit_LAID_OFF triggers layoff onboarding once, then dedupes within the window", async () => {
+  it("Test 18 (entrypoints): WeKruit_LAID_OFF no longer starts manual layoff onboarding", async () => {
     const { db, inbound, audit, layoffIdempotency } = makeFakeDb()
     const layoffCalls: Array<{ userId: string; toE164: string }> = []
     const body1 = JSON.stringify(basePayload({
@@ -745,21 +745,29 @@ describe("handleSendblueWebhook", () => {
     })
     await new Promise((r) => setTimeout(r, 20))
 
+    const bodyOut1 = res1.bodyOut as Record<string, unknown>
+    const bodyOut2 = res2.bodyOut as Record<string, unknown>
     assert.equal(res1.statusCode, 200)
-    assert.deepEqual(res1.bodyOut, { ok: true, action: "layoff_triggered" })
+    assert.equal(bodyOut1.ok, true)
+    assert.equal(bodyOut1.action, "layoff_unauthorized")
     assert.equal(res2.statusCode, 200)
-    assert.deepEqual(res2.bodyOut, { ok: true, action: "layoff_deduped" })
-    assert.equal(inbound.size, 0, "layoff trigger must not enter normal onboarding as text")
-    assert.deepEqual(layoffCalls, [{ userId: "u_layoff_1", toE164: "+15551234567" }])
-    assert.ok(layoffIdempotency.has("u_layoff_1"))
-    assert.ok(audit.some((row) =>
+    assert.equal(bodyOut2.ok, true)
+    assert.equal(bodyOut2.action, "layoff_unauthorized")
+    assert.equal(inbound.size, 0, "manual layoff text must not enter legacy onboarding as text")
+    assert.deepEqual(layoffCalls, [])
+    assert.equal(layoffIdempotency.has("u_layoff_1"), false)
+    assert.equal(audit.some((row) =>
       row.type === "trigger_fired" &&
       (row.payload as { trigger?: string } | undefined)?.trigger === "layoff"
-    ))
-    assert.ok(audit.some((row) =>
+    ), false)
+    assert.equal(audit.some((row) =>
       row.type === "trigger_deduped" &&
       (row.payload as { trigger?: string } | undefined)?.trigger === "layoff"
-    ))
+    ), false)
+    assert.equal(audit.some((row) =>
+      row.type === "trigger_unauthorized" &&
+      row.reason === "manual_layoff_trigger_disabled"
+    ), true)
   })
 
   it("Test 19 (entrypoints): normal START from a random candidate stays on the regular onboarding path when no pending invite exists", async () => {
@@ -956,7 +964,7 @@ describe("handleSendblueWebhook", () => {
       allowlist: [],
       blocklist: [],
     })
-    users.set("u_adam_test", { onboardingState: "q_email_asked" })
+    users.set("u_adam_test", { onboardingState: "q_tos_asked" })
     _clearFeatureFlagCache()
 
     let coalesceCalled = false

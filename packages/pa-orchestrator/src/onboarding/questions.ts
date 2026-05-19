@@ -10,9 +10,6 @@
  * Adding a new question = appending one entry to the array. Re-ask UX,
  * attempt counting, halt-at-N, lang preservation — all handled by pipeline.
  */
-import type { ExtractEmailIntentFn } from "./judges/email.js"
-import { CodeJudge } from "./judges/code.js"
-import { EmailJudge } from "./judges/email.js"
 import type { LangPref } from "./judges/lang.js"
 import {
   LLMRelevanceJudge,
@@ -36,19 +33,6 @@ import {
 export interface DefaultQuestionsDeps {
   /** LLM intent extractor for the 5 probe Qs (q_role/yoe/visa/startup_pref/location). */
   extractAnswerIntent: ExtractIntentFn
-  /** LLM email intent extractor (typo / declined / unclear). */
-  extractEmailIntent?: ExtractEmailIntentFn
-  /**
-   * Hook fired when q_email is accepted. Concretely: send Mailgun
-   * verification email + write the codeHash to pa-users/{id}.emailVerification.
-   * Pipeline expects this to be wired by the runtime.
-   */
-  onEmailAccepted?: (
-    email: string,
-    ctx: AcceptedCtx
-  ) => Promise<void>
-  /** Hook fired when q_email_verify accepts (writes contactEmailVerifiedAt). */
-  onEmailCodeVerified?: (code: string, ctx: AcceptedCtx) => Promise<void>
   /** Hook fired when q_resume accepts (kicks cv-ingest worker). */
   onResumeAccepted?: (
     attachments: ResumeAttachment[],
@@ -70,13 +54,6 @@ export interface DefaultQuestionsDeps {
 }
 
 export interface ClosedQuestionsDeps {
-  /** LLM email intent extractor (typo / declined / unclear). */
-  extractEmailIntent?: ExtractEmailIntentFn
-  onEmailAccepted?: (
-    email: string,
-    ctx: AcceptedCtx
-  ) => Promise<void>
-  onEmailCodeVerified?: (code: string, ctx: AcceptedCtx) => Promise<void>
   onResumeAccepted?: (
     attachments: ResumeAttachment[],
     ctx: AcceptedCtx
@@ -90,75 +67,9 @@ const HALT_DEFAULT: BilingualText = {
 }
 
 function makeClosedQuestions(deps: ClosedQuestionsDeps): {
-  emailQ: Question<string>
-  emailVerifyQ: Question<string>
   tosQ: Question<boolean>
   resumeQ: Question<ResumeAttachment[]>
 } {
-  const emailQ: Question<string> = makeQuestion({
-    id: "q_email",
-    prompt: {
-      zh: "对了, 平时邮箱用啥? 后面如果你不在线我直接发邮件给你",
-      en: "btw — what email should I send stuff to when you're afk? roughly fine",
-    },
-    judge: new EmailJudge({ extractEmailIntent: deps.extractEmailIntent }),
-    rephraser: new StaticVariantsRephraser([
-      {
-        zh: "没看到邮箱地址哎, 直接发个 email 给我就行 (像 you@example.com 这种)",
-        en: "didn't catch an email there — just paste the address (like you@example.com)",
-      },
-      {
-        zh: "再发一次邮箱就行 — 我会发 6 位验证码确认是你的",
-        en: "drop your email again — i'll send a 6-digit code to confirm it's yours",
-      },
-      {
-        zh: "邮箱长这样: 用户名@域名.com, 比如 alex@gmail.com",
-        en: "email shape: name@domain.com, like alex@gmail.com",
-      },
-      {
-        zh: "邮箱地址给我就行, 后面验证只要几秒",
-        en: "just need an email address — verify takes a few secs",
-      },
-    ]),
-    haltMessage: HALT_DEFAULT,
-    onAccepted: deps.onEmailAccepted,
-  })
-
-  const emailVerifyQ: Question<string> = makeQuestion({
-    id: "q_email_verify",
-    prompt: {
-      zh: "已经发了一个 6 位验证码到你邮箱了, 收到回我一下就行 (30 分钟有效)",
-      en: "just sent a 6-digit code to your email — text it back to me and we're set (good for 30 mins)",
-    },
-    judge: new CodeJudge(),
-    rephraser: new HybridRephraser({
-      variants: [
-        {
-          zh: "等你把邮箱里的 6 位验证码发我",
-          en: "still waiting on that 6-digit code from your email",
-        },
-        {
-          zh: "看下邮箱 — 6 位数字回我就行",
-          en: "check your inbox — 6 digits back to me",
-        },
-        {
-          zh: "可能在垃圾邮件里? 6 位数字 — 找到回我",
-          en: "maybe in spam? 6-digit code — text it back",
-        },
-        {
-          zh: "实在收不到我重新发, 你回 'resend'",
-          en: "if it never arrived, reply 'resend' and i'll re-issue",
-        },
-      ],
-      fallback: {
-        zh: "6 位验证码 — 看下邮箱回我",
-        en: "6-digit code — check email and text it back",
-      },
-    }),
-    haltMessage: HALT_DEFAULT,
-    onAccepted: deps.onEmailCodeVerified,
-  })
-
   const tosQ: Question<boolean> = makeQuestion({
     id: "q_tos",
     prompt: {
@@ -235,74 +146,10 @@ function makeClosedQuestions(deps: ClosedQuestionsDeps): {
     onDeclined: async () => ({ advance: true }),
   })
 
-  return { emailQ, emailVerifyQ, tosQ, resumeQ }
+  return { tosQ, resumeQ }
 }
 
 export function defaultQuestions(deps: DefaultQuestionsDeps): Question<unknown>[] {
-  const emailQ: Question<string> = makeQuestion({
-    id: "q_email",
-    prompt: {
-      zh: "对了, 平时邮箱用啥? 后面如果你不在线我直接发邮件给你",
-      en: "btw — what email should I send stuff to when you're afk? roughly fine",
-    },
-    judge: new EmailJudge({ extractEmailIntent: deps.extractEmailIntent }),
-    rephraser: new StaticVariantsRephraser([
-      {
-        zh: "没看到邮箱地址哎, 直接发个 email 给我就行 (像 you@example.com 这种)",
-        en: "didn't catch an email there — just paste the address (like you@example.com)",
-      },
-      {
-        zh: "再发一次邮箱就行 — 我会发 6 位验证码确认是你的",
-        en: "drop your email again — i'll send a 6-digit code to confirm it's yours",
-      },
-      {
-        zh: "邮箱长这样: 用户名@域名.com, 比如 alex@gmail.com",
-        en: "email shape: name@domain.com, like alex@gmail.com",
-      },
-      {
-        zh: "邮箱地址给我就行, 后面验证只要几秒",
-        en: "just need an email address — verify takes a few secs",
-      },
-    ]),
-    haltMessage: HALT_DEFAULT,
-    onAccepted: deps.onEmailAccepted,
-  })
-
-  const emailVerifyQ: Question<string> = makeQuestion({
-    id: "q_email_verify",
-    prompt: {
-      zh: "已经发了一个 6 位验证码到你邮箱了, 收到回我一下就行 (30 分钟有效)",
-      en: "just sent a 6-digit code to your email — text it back to me and we're set (good for 30 mins)",
-    },
-    judge: new CodeJudge(),
-    rephraser: new HybridRephraser({
-      variants: [
-        {
-          zh: "等你把邮箱里的 6 位验证码发我",
-          en: "still waiting on that 6-digit code from your email",
-        },
-        {
-          zh: "看下邮箱 — 6 位数字回我就行",
-          en: "check your inbox — 6 digits back to me",
-        },
-        {
-          zh: "可能在垃圾邮件里? 6 位数字 — 找到回我",
-          en: "maybe in spam? 6-digit code — text it back",
-        },
-        {
-          zh: "实在收不到我重新发, 你回 'resend'",
-          en: "if it never arrived, reply 'resend' and i'll re-issue",
-        },
-      ],
-      fallback: {
-        zh: "6 位验证码 — 看下邮箱回我",
-        en: "6-digit code — check email and text it back",
-      },
-    }),
-    haltMessage: HALT_DEFAULT,
-    onAccepted: deps.onEmailCodeVerified,
-  })
-
   const tosQ: Question<boolean> = makeQuestion({
     id: "q_tos",
     prompt: {
@@ -576,8 +423,6 @@ export function defaultQuestions(deps: DefaultQuestionsDeps): Question<unknown>[
   })
 
   return [
-    emailQ as Question<unknown>,
-    emailVerifyQ as Question<unknown>,
     tosQ as Question<unknown>,
     roleQ,
     yoeQ,
@@ -1475,7 +1320,7 @@ export const Q_VISA: Question<VisaAnswer> = makeQuestion<VisaAnswer>({
 /**
  * Deps shape for `defaultQuestionsV2`. Mirrors `DefaultQuestionsDeps` but
  * adds `onCountryAccepted` and reuses the existing accept hooks for
- * email / verify / tos / role / yoe / startup_pref / resume.
+ * tos / role / yoe / startup_pref / resume.
  *
  * Per D8 — every onAccepted is expected to do dual-write
  * (statedPreferences + tags). Runtime owns that; this layer just
@@ -1503,8 +1348,7 @@ export interface DefaultQuestionsV2Deps extends ClosedQuestionsDeps {
  * Use `defaultQuestionsV2(deps)` to get a pipeline-ready list with hooks.
  *
  * Order (Adam directive 2026-05-07):
- *   q_email → q_email_verify → q_tos
- *   → q_role → q_yoe → q_visa → q_startup_pref
+ *   q_tos → q_role → q_yoe → q_visa → q_startup_pref
  *   → q_country → q_location  (country BEFORE location)
  *   → q_resume
  */
@@ -1528,7 +1372,7 @@ export const ONBOARDING_QUESTIONS_V2: Question<unknown>[] = [
 export function defaultQuestionsV2(deps: DefaultQuestionsV2Deps): Question<unknown>[] {
   // V2 normal path owns its closed questions directly; it does not call the
   // legacy `defaultQuestions()` factory or require `extractAnswerIntent`.
-  const { emailQ, emailVerifyQ, tosQ, resumeQ } = makeClosedQuestions(deps)
+  const { tosQ, resumeQ } = makeClosedQuestions(deps)
 
   const roleQ: Question<RoleAnswer> = {
     ...makeRoleQuestion(deps.onRoleAccepted),
@@ -1555,8 +1399,6 @@ export function defaultQuestionsV2(deps: DefaultQuestionsV2Deps): Question<unkno
   }
 
   return [
-    emailQ,
-    emailVerifyQ,
     tosQ,
     roleQ,
     yoeQ,

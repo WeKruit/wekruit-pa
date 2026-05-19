@@ -15,8 +15,8 @@ const bundle = readFileSync(bundlePath, "utf8")
 const required = [
   "const userAuthoredEvent = !runtimeEvent;",
   // Source signature: `Boolean(userAuthoredEvent && onboardingUser && onboardingUser.onboardingState !== "complete" && !layoffRuntimeSession)`.
-  // The `!layoffRuntimeSession` clause was added when the layoff runtime
-  // bypass for q_email/q_tos shipped. Match on the load-bearing prefix.
+  // The session guards were added when website-started onboarding moved to
+  // the shared runtime flow. Match on the load-bearing prefix.
   "const onboardingIncomplete = Boolean(userAuthoredEvent && onboardingUser && onboardingUser.onboardingState !== \"complete\"",
   "if (userAuthoredEvent && onboardingUser && !layoffRuntimeSession)",
   "pa.onboarding.pipeline.reject_runtime_event",

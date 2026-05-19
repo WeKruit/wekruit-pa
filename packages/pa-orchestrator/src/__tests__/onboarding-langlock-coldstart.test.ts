@@ -181,9 +181,9 @@ function emptyCaptures(): ColdStartLangCaptures {
 }
 
 // ============================================================================
-// Test 1 — Cold-start ZH user: beta pipeline still emits EN email prompt without LLM.
+// Test 1 — Cold-start ZH user: manual SMS onboarding is gated to the website.
 // ============================================================================
-test("coldstart-langlock: ZH user '我想找工作' → pipeline emits EN email prompt without LLM", async () => {
+test("coldstart-langlock: ZH user '我想找工作' → website start gate without LLM", async () => {
   const captures = emptyCaptures()
   const store = makeStore(captures, {
     // Already-ZH onboarding greeting — no translate needed.
@@ -195,7 +195,8 @@ test("coldstart-langlock: ZH user '我想找工作' → pipeline emits EN email 
   )
   assert.equal(captures.llmCalls, 0)
   assert.equal(captures.outboundBodies.length, 1)
-  assert.match(captures.outboundBodies[0] ?? "", /email/i)
+  assert.match(captures.outboundBodies[0] ?? "", /candidate\.wekruit\.com\/onboarding/i)
+  assert.doesNotMatch(captures.outboundBodies[0] ?? "", /email/i)
   assert.deepEqual(captures.systemPrompts, [])
   assert.deepEqual(captures.userMessages, [])
   // No translate event fired — reply was already ZH.
@@ -206,9 +207,9 @@ test("coldstart-langlock: ZH user '我想找工作' → pipeline emits EN email 
 })
 
 // ============================================================================
-// Test 2 — Cold-start EN user: runtime pipeline emits EN prompt without LLM.
+// Test 2 — Cold-start EN user: runtime pipeline does not start from manual SMS.
 // ============================================================================
-test("coldstart-langlock: EN user 'I want a job' → pipeline emits EN prompt without LLM", async () => {
+test("coldstart-langlock: EN user 'I want a job' → website start gate without LLM", async () => {
   const captures = emptyCaptures()
   const store = makeStore(captures, {
     llmReplyBody: "yo, what kinda role you eyeing?",
@@ -218,15 +219,16 @@ test("coldstart-langlock: EN user 'I want a job' → pipeline emits EN prompt wi
     store
   )
   assert.equal(captures.llmCalls, 0)
-  assert.match(captures.outboundBodies[0] ?? "", /email/i)
+  assert.match(captures.outboundBodies[0] ?? "", /candidate\.wekruit\.com\/onboarding/i)
+  assert.doesNotMatch(captures.outboundBodies[0] ?? "", /email/i)
   assert.deepEqual(captures.systemPrompts, [])
   assert.deepEqual(captures.userMessages, [])
 })
 
 // ============================================================================
-// Test 3 — ZH-frame with EN loanword "swe的": pipeline stays in direct mode.
+// Test 3 — ZH-frame with EN loanword "swe的": website start gate owns.
 // ============================================================================
-test("coldstart-langlock: 'swe的' → pipeline direct prompt, no LLM lang-lock path", async () => {
+test("coldstart-langlock: 'swe的' → website start gate, no LLM lang-lock path", async () => {
   const captures = emptyCaptures()
   const store = makeStore(captures, {
     llmReplyBody: "在呢. 今天找你聊点啥? 🍋",
@@ -236,15 +238,16 @@ test("coldstart-langlock: 'swe的' → pipeline direct prompt, no LLM lang-lock 
     store
   )
   assert.equal(captures.llmCalls, 0)
-  assert.match(captures.outboundBodies[0] ?? "", /email/i)
+  assert.match(captures.outboundBodies[0] ?? "", /candidate\.wekruit\.com\/onboarding/i)
+  assert.doesNotMatch(captures.outboundBodies[0] ?? "", /email/i)
   assert.deepEqual(captures.systemPrompts, [])
   assert.deepEqual(captures.userMessages, [])
 })
 
 // ============================================================================
-// Test 4 — Cold-start mixed "yoe1年的" stays in direct prompt mode.
+// Test 4 — Cold-start mixed "yoe1年的" stays in website start gate mode.
 // ============================================================================
-test("coldstart-langlock: 'yoe1年的' → pipeline direct prompt, no LLM lang-lock path", async () => {
+test("coldstart-langlock: 'yoe1年的' → website start gate, no LLM lang-lock path", async () => {
   const captures = emptyCaptures()
   const store = makeStore(captures, {
     llmReplyBody: "在呢. 今天找你聊点啥? 🍋",
@@ -254,7 +257,8 @@ test("coldstart-langlock: 'yoe1年的' → pipeline direct prompt, no LLM lang-l
     store
   )
   assert.equal(captures.llmCalls, 0)
-  assert.match(captures.outboundBodies[0] ?? "", /email/i)
+  assert.match(captures.outboundBodies[0] ?? "", /candidate\.wekruit\.com\/onboarding/i)
+  assert.doesNotMatch(captures.outboundBodies[0] ?? "", /email/i)
   assert.deepEqual(captures.systemPrompts, [])
 })
 

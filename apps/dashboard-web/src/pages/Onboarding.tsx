@@ -44,22 +44,6 @@ const DEFAULTS: Record<OnboardingStepKey, OnboardingStepConfig> = {
       en: "Deprecated. Beta onboarding uses English.",
     },
   },
-  ask_q_email: {
-    prompt: {
-      zh: "对了, 平时邮箱用啥? 后面如果你不在线我直接发邮件给你",
-      en: "btw — what email should I send stuff to when you're afk? roughly fine",
-    },
-  },
-  ask_q_email_verify: {
-    prompt: {
-      zh: "已经发了一个 6 位验证码到你邮箱了, 收到回我一下就行 (30 分钟有效)",
-      en: "just sent a 6-digit code to your email — text it back to me and we're set (good for 30 mins)",
-    },
-    waitingPrompt: {
-      zh: "等你把邮箱里的 6 位验证码发我",
-      en: "still waiting on that 6-digit code from your email",
-    },
-  },
   ask_q_tos: {
     prompt: {
       zh: '开聊前先说一下: 我会记一些咱聊天的事来给你推工作 / 找内推. 隐私 + 用户协议在这: https://wekruit-pa-landing.web.app/legal — 同意就回个 "同意" 我们继续',

@@ -13,9 +13,6 @@
  * Wiring scope (this commit):
  *   ✓ emit (sendDirect pattern: appendMessage + enqueueOutbound)
  *   ✓ FirestoreStateProvider on pa-users.{id}.pipelineState
- *   ✓ q_email.onAccepted delegates to legacy applyOnboarding
- *     "ask_q_email_verify_start" so Mailgun fires
- *   ✓ q_email_verify.onAccepted stamps contactEmailVerifiedAt
  *   ✓ q_tos.onAccepted advances state via applyOnboarding
  *   ✓ q_resume.onAccepted enqueues cv-ingest (delegates to legacy hook)
  *
@@ -24,7 +21,6 @@
  *     follow-up commit)
  */
 import type { AgentDef, InboundEvent } from "@pa/core-types"
-import { createHash } from "node:crypto"
 import {
   OnboardingPipeline,
   emptyPipelineState,
@@ -77,8 +73,6 @@ export interface PipelineEmitDeps {
     statedPreferences?: { preferredLang?: "zh" | "en" | "mixed" }
     [k: string]: unknown
   } | null>
-  extractEmailIntent?: import("../index.js").OrchestratorStoreDeps["extractEmailIntent"]
-  sendVerificationEmail?: import("../index.js").OrchestratorStoreDeps["sendVerificationEmail"]
   nowIso(): string
   log: PipelineLogFn
   /** Firestore handle. Optional — pipeline degrades to in-memory state when missing. */
@@ -110,11 +104,7 @@ function pipelineQIdFromOnboardingState(state: string | undefined | null): strin
   switch (state) {
     case "q_lang_asked":
     case "first_mes_sent":
-      return "q_email"
-    case "q_email_asked":
-      return "q_email"
-    case "q_email_verifying":
-      return "q_email_verify"
+      return "q_tos"
     case "q_tos_asked":
       return "q_tos"
     case "grounding_q1_asked":
@@ -157,7 +147,7 @@ async function seedPipelineStateFromLegacy(input: {
   const qId = pipelineQIdFromOnboardingState(input.onboardingState)
   const current = await input.state.load(input.userId)
   if (current.currentQId || current.completed || current.halted) {
-    const nextCurrentQId = current.currentQId === "q_lang" ? "q_email" : current.currentQId
+    const nextCurrentQId = current.currentQId === "q_lang" ? "q_tos" : current.currentQId
     const nextHalted = current.halted?.qId === "q_lang" ? null : current.halted
     if (current.lang !== "en" || nextCurrentQId !== current.currentQId || nextHalted !== current.halted) {
       await input.state.save(input.userId, {
@@ -297,41 +287,9 @@ export async function runOnboardingPipelineTurn(
 
   // Build defaultQuestionsV2 with concrete onAccepted hooks that delegate
   // to the legacy applyOnboarding store method so existing state writes
-  // (contactEmail, emailVerification, contactEmailVerifiedAt, resume request)
-  // carry over without re-implementation. This keeps the
-  // pipeline + legacy paths writing the SAME shape.
+  // carry over without re-implementation. Website registration owns email;
+  // this pipeline never asks for it.
   const questions = defaultQuestionsV2({
-    extractEmailIntent: deps.extractEmailIntent ?? (async () => null),
-    onEmailAccepted: async (email, ctx) => {
-      ctx.log?.("pa.onboarding.pipeline.q_email.accepted", { userId: ctx.userId, email })
-      if (deps.applyOnboarding) {
-        const sent = deps.sendVerificationEmail
-          ? await deps.sendVerificationEmail(email)
-          : null
-        const emailVerification = sent
-          ? {
-              codeHash: createHash("sha256").update(sent.rawCode).digest("hex"),
-              email,
-              sentAt: sent.sentAt,
-              expiresAt: sent.expiresAt,
-              ...(sent.providerMessageId ? { providerMessageId: sent.providerMessageId } : {}),
-            }
-          : undefined
-        await deps.applyOnboarding(event.userId, phoneE164, "ask_q_email_verify", {
-          parsedAnswer: { contactEmail: email },
-          ...(emailVerification ? { emailVerification } : {}),
-        })
-      }
-    },
-    onEmailCodeVerified: async (_code, ctx) => {
-      ctx.log?.("pa.onboarding.pipeline.q_email_verify.accepted", { userId: ctx.userId })
-      if (deps.applyOnboarding) {
-        await deps.applyOnboarding(event.userId, phoneE164, "ask_q_tos", {
-          emailVerificationVerified: true,
-          parsedAnswer: { contactEmailVerifiedAt: deps.nowIso() },
-        })
-      }
-    },
     // iter34 hotfix 2026-05-05 — wire previously-deferred probe Q hooks.
     // VisaJudge / RoleJudge / etc produce canonical values; we pass them
     // via parsedAnswer so applyOnboarding writes statedPreferences without

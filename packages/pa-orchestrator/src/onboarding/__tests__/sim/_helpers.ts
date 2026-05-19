@@ -11,7 +11,6 @@
  *   - `stubGuidedOpenJSON(value)` — emits the JSON shape `GuidedOpenJudge`'s
  *     `llmCall` is contracted to return.
  *   - `stubGuidedOpenUnclear(question)` — same, but degrades to {intent:unclear}.
- *   - `stubExtractEmailIntent(map)` — same pattern for q_email.
  *
  * Re-ask rotation note:
  *   `HybridRephraser.rephrase(args)` returns variants[args.attemptNum-1] for
@@ -36,7 +35,6 @@ import {
   type DefaultQuestionsV2Deps,
 } from "../../questions.js"
 import type { ExtractIntentFn, IntentResult } from "../../judges/llm-relevance.js"
-import type { EmailIntentResult, ExtractEmailIntentFn } from "../../judges/email.js"
 import type { LangPref } from "../../judges/lang.js"
 import type { LlmCallFn, GuidedOpenJudgeSpec } from "../../judges/guided-open.js"
 import type { Question } from "../../question.js"
@@ -48,11 +46,6 @@ export interface EmittedEvent {
 }
 
 export interface BuildPipelineOpts {
-  /**
-   * extractEmailIntent stub used by EmailJudge (q_email) when the regex
-   * misses. Default: returns null → judge maps to "irrelevant".
-   */
-  extractEmailIntent?: ExtractEmailIntentFn
   /**
    * onLangAccepted hook — pipeline writes `state.lang` directly via the
    * default behavior, but the question-level hook is invoked here so tests
@@ -104,15 +97,14 @@ export const TEST_USER = "u_sim"
  * indirectly: tests using V2 chains must instead call
  * `buildPipelineWithGuidedOpenStub` below.
  *
- * For tests that don't traverse V2 GuidedOpen Qs (cold-start, lang/email
- * only), the simpler `buildPipeline` is fine.
+ * For tests that don't traverse V2 GuidedOpen Qs, the simpler
+ * `buildPipeline` is fine.
  */
 export function buildPipeline(opts: BuildPipelineOpts = {}): BuiltPipeline {
   const state = new InMemoryPipelineStateProvider()
   const emitted: EmittedEvent[] = []
 
   const deps: DefaultQuestionsV2Deps = {
-    extractEmailIntent: opts.extractEmailIntent,
     onLangAccepted: opts.onLangAccepted,
     onCountryAccepted: opts.onCountryAccepted,
     onLocationAccepted: opts.onLocationAccepted,
@@ -206,7 +198,7 @@ export function stubGuidedOpenLLM(map: Record<string, string>): LlmCallFn {
 
 /**
  * Wrapper around `defaultQuestionsV2` that swaps Q_COUNTRY / Q_VISA / Q_LOCATION
- * for stubbed-LLM equivalents. Returns a complete 11-Q list ready to feed
+ * for stubbed-LLM equivalents. Returns a complete list ready to feed
  * into `buildPipeline({questionsOverride})`.
  */
 export interface StubbedV2Opts extends BuildPipelineOpts {
@@ -226,7 +218,6 @@ export interface StubbedV2Opts extends BuildPipelineOpts {
 
 export function buildV2QuestionsWithStubs(opts: StubbedV2Opts): Question<unknown>[] {
   const deps: DefaultQuestionsV2Deps = {
-    extractEmailIntent: opts.extractEmailIntent,
     onLangAccepted: opts.onLangAccepted,
     onCountryAccepted: opts.onCountryAccepted,
     onLocationAccepted: opts.onLocationAccepted,
@@ -373,11 +364,9 @@ export function buildV2QuestionsWithStubs(opts: StubbedV2Opts): Question<unknown
     byId.set("q_visa", visaQ)
   }
 
-  // Preserve the V2 ordering (email → verify → tos → role → yoe →
-  // visa → startup_pref → country → location → resume).
+  // Preserve the V2 ordering (tos → role → yoe → visa → startup_pref
+  // → country → location → resume).
   return [
-    byId.get("q_email")!,
-    byId.get("q_email_verify")!,
     byId.get("q_tos")!,
     byId.get("q_role")!,
     byId.get("q_yoe")!,
@@ -447,14 +436,6 @@ export function alwaysUnclear(): ExtractIntentFn {
     intent: "unclear",
     clarifyingQuestion: "could you clarify?",
   })
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// extractEmailIntent stubs — for EmailJudge (q_email)
-// ─────────────────────────────────────────────────────────────────────────────
-
-export function stubExtractEmail(result: EmailIntentResult | null): ExtractEmailIntentFn {
-  return async () => result
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

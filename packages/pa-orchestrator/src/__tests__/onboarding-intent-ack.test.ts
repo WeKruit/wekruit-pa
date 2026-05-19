@@ -20,6 +20,8 @@ import {
 import {
   composeOnboardingInput,
   applyOnboardingStep,
+  WEKRUIT_CANDIDATE_SOURCE,
+  WEKRUIT_LAYOFF_SOURCE,
 } from "../onboarding.js"
 
 // Local fakeFirestore — same shape as onboarding.test.ts (kept self-contained
@@ -384,7 +386,7 @@ const baseEvent: InboundEvent = {
   idempotencyKey: "imessage-in-onb-1",
 }
 
-test("runtime-event: layoff kickoff bypasses incomplete deterministic onboarding", async () => {
+test("runtime-event: shared laid-off kickoff sends Q1 without legacy email onboarding", async () => {
   const captures: OnboardingCaptures = {
     systemInputs: [],
     appliedSteps: [],
@@ -397,27 +399,154 @@ test("runtime-event: layoff kickoff bypasses incomplete deterministic onboarding
       ...baseEvent,
       id: "evt-runtime-layoff",
       body: [
-        "[system-event:layoff_onboarding:layoff_onboarding_started]",
+        "[system-event:shared_onboarding:onboarding_started]",
         "An external product event arrived. Decide whether Claire should send the candidate a message now.",
         "If a message should be sent, write only that message in English.",
       ].join("\n"),
       rawMeta: {
         runtimeEvent: true,
-        runtimeEventSource: "layoff_onboarding",
-        runtimeEventKind: "layoff_onboarding_started",
+        runtimeEventSource: "shared_onboarding",
+        runtimeEventKind: "onboarding_started",
         runtimeNoSendToken: "__NO_SEND__",
         preferredLanguage: "en",
-        context: { trigger: "WeKruit_LAID_OFF" },
+        context: {
+          signupSource: WEKRUIT_LAYOFF_SOURCE,
+          questionId: "main_goal",
+          promptContext: {
+            firstName: "Ada",
+            recentCompanies: ["Rain", "Tesla"],
+            recentTitles: ["Backend Engineer"],
+            currentLocation: "New York",
+          },
+        },
       },
     },
     store
   )
-  assert.equal(captures.llmCalls, 1, "runtime event must reach agent runtime")
+  assert.equal(captures.llmCalls, 0, "website onboarding kickoff must not depend on LLM compose")
   assert.deepEqual(captures.appliedSteps, [], "runtime event must not advance legacy onboarding")
-  assert.doesNotMatch(captures.outboundBodies[0] ?? "", /language preference|mixed language/i)
+  assert.match(captures.outboundBodies[0] ?? "", /Hey Ada/i)
+  assert.match(captures.outboundBodies[0] ?? "", /Rain/i)
+  assert.match(captures.outboundBodies[0] ?? "", /career growth, compensation, stability, mission, learning/i)
+  assert.doesNotMatch(captures.outboundBodies[0] ?? "", /email|e-mail|language preference|mixed language/i)
 })
 
-test("integration: turn-0 with zh job_search input — synthetic input contains intent-ack + role phrase, applyOnboarding gets intentAcked=true", async () => {
+test("runtime-event: normal candidate kickoff sends the same shared Q1", async () => {
+  const layoffCaptures: OnboardingCaptures = {
+    systemInputs: [],
+    appliedSteps: [],
+    llmCalls: 0,
+    outboundBodies: [],
+  }
+  const candidateCaptures: OnboardingCaptures = {
+    systemInputs: [],
+    appliedSteps: [],
+    llmCalls: 0,
+    outboundBodies: [],
+  }
+  await processInboundEvent(
+    {
+      ...baseEvent,
+      id: "evt-runtime-layoff-q1",
+      rawMeta: {
+        runtimeEvent: true,
+        runtimeEventSource: "shared_onboarding",
+        runtimeEventKind: "onboarding_started",
+        runtimeNoSendToken: "__NO_SEND__",
+        preferredLanguage: "en",
+        context: { signupSource: WEKRUIT_LAYOFF_SOURCE, questionId: "main_goal" },
+      },
+    },
+    makeOnboardingCapturesStore(layoffCaptures, undefined)
+  )
+  await processInboundEvent(
+    {
+      ...baseEvent,
+      id: "evt-runtime-candidate-q1",
+      rawMeta: {
+        runtimeEvent: true,
+        runtimeEventSource: "shared_onboarding",
+        runtimeEventKind: "onboarding_started",
+        runtimeNoSendToken: "__NO_SEND__",
+        preferredLanguage: "en",
+        context: { signupSource: WEKRUIT_CANDIDATE_SOURCE, questionId: "main_goal" },
+      },
+    },
+    makeOnboardingCapturesStore(candidateCaptures, undefined)
+  )
+
+  assert.equal(candidateCaptures.outboundBodies[0], layoffCaptures.outboundBodies[0])
+  assert.doesNotMatch(candidateCaptures.outboundBodies[0] ?? "", /email|e-mail/i)
+})
+
+test("shared onboarding answer writes memory/tags and waits until Q5 before job recs", async () => {
+  const captures: OnboardingCaptures = {
+    systemInputs: [],
+    appliedSteps: [],
+    llmCalls: 0,
+    outboundBodies: [],
+  }
+  const { db, store: docs } = fakeFirestore()
+  docs.set("pa-users/u-onb", {
+    id: "u-onb",
+    phoneE164: "+19999991000",
+    onboardingState: "pending",
+    workSession: { kind: "shared_onboarding", status: "active", currentQuestionId: "industry_interest" },
+    sharedOnboarding: {
+      status: "active",
+      currentQuestionId: "industry_interest",
+      completed: false,
+      promptContext: { currentLocation: "New York, NY" },
+    },
+  })
+  const memoryFacts: string[] = []
+  const recCalls: Array<{ userId: string; opts?: { force?: boolean; requestedCount?: number } }> = []
+  const store = makeOnboardingCapturesStore(captures, "pending") as OrchestratorStore
+  store.db = db
+  store.getOnboardingUser = async () => docs.get("pa-users/u-onb") as Awaited<ReturnType<OrchestratorStore["getOnboardingUser"]>>
+  store.createMemoryFact = async (_userId, content) => {
+    memoryFacts.push(content)
+    return "f-shared"
+  }
+  store.generateJobRecs = async (userId, _lang, opts) => {
+    recCalls.push({ userId, opts })
+    return { message: "Role A @ Example\nhttps://example.com/a\nrequirements: backend\nwhy: fits\n\nRole B @ Example\nhttps://example.com/b\nrequirements: full-stack\nwhy: fits", recCount: 2 }
+  }
+
+  await processInboundEvent(
+    { ...baseEvent, id: "evt-shared-q3", body: "Fintech and AI infrastructure are most interesting." },
+    store,
+  )
+
+  assert.match(memoryFacts[0] ?? "", /industry interests.*Fintech and AI infrastructure/i)
+  assert.deepEqual((docs.get("pa-users/u-onb")?.tags as { industrySector?: string[] }).industrySector, [
+    "artificial_intelligence_and_machine_learning",
+    "financial_technology",
+  ])
+  assert.equal(recCalls.length, 0, "job recs must wait until Q5 is collected")
+  assert.match(captures.outboundBodies[0] ?? "", /New York, NY/i)
+  assert.match(captures.outboundBodies[0] ?? "", /Where do you want to work/i)
+
+  docs.set("pa-users/u-onb", {
+    ...(docs.get("pa-users/u-onb") ?? {}),
+    onboardingState: "pending",
+    workSession: { kind: "shared_onboarding", status: "active", currentQuestionId: "special_context" },
+    sharedOnboarding: { status: "active", currentQuestionId: "special_context", completed: false },
+  })
+
+  await processInboundEvent(
+    { ...baseEvent, id: "evt-shared-q5", body: "I need to move fast because severance ends soon, and backend systems are my strongest area." },
+    store,
+  )
+
+  assert.equal(recCalls.length, 1)
+  assert.equal(recCalls[0].userId, "u-onb")
+  assert.deepEqual(recCalls[0].opts, { force: true, requestedCount: 2 })
+  assert.match(captures.outboundBodies[1] ?? "", /Role A @ Example/)
+  assert.match(captures.outboundBodies[1] ?? "", /requirements:/)
+})
+
+test("integration: manual zh job_search before website start is redirected to candidate onboarding", async () => {
   const captures: OnboardingCaptures = {
     systemInputs: [],
     appliedSteps: [],
@@ -431,11 +560,12 @@ test("integration: turn-0 with zh job_search input — synthetic input contains 
   )
   assert.equal(captures.llmCalls, 0, "fresh onboarding now uses the runtime pipeline, not LLM compose")
   assert.deepEqual(captures.systemInputs, [])
-  assert.match(captures.outboundBodies[0] ?? "", /email|邮箱/i)
+  assert.match(captures.outboundBodies[0] ?? "", /candidate\.wekruit\.com\/onboarding/i)
+  assert.doesNotMatch(captures.outboundBodies[0] ?? "", new RegExp(["what " + "email", "send " + "stuff", "验证码", "6-digit"].join("|"), "i"))
   assert.deepEqual(captures.appliedSteps, [])
 })
 
-test("integration: turn-0 with en job_search input — en role phrase chained, intentAcked=true", async () => {
+test("integration: manual en job_search before website start is redirected to candidate onboarding", async () => {
   const captures: OnboardingCaptures = {
     systemInputs: [],
     appliedSteps: [],
@@ -448,12 +578,13 @@ test("integration: turn-0 with en job_search input — en role phrase chained, i
     store
   )
   assert.equal(captures.llmCalls, 0)
-  assert.match(captures.outboundBodies[0] ?? "", /email/i)
+  assert.match(captures.outboundBodies[0] ?? "", /candidate\.wekruit\.com\/onboarding/i)
+  assert.doesNotMatch(captures.outboundBodies[0] ?? "", new RegExp(["what " + "email", "send " + "stuff", "6-digit"].join("|"), "i"))
   assert.deepEqual(captures.systemInputs, [])
   assert.deepEqual(captures.appliedSteps, [])
 })
 
-test("integration: turn-0 with casual greeting — chains role-Q, intentAcked SET (iter30 closure)", async () => {
+test("integration: manual casual greeting before website start is redirected to candidate onboarding", async () => {
   const captures: OnboardingCaptures = {
     systemInputs: [],
     appliedSteps: [],
@@ -466,7 +597,8 @@ test("integration: turn-0 with casual greeting — chains role-Q, intentAcked SE
     store
   )
   assert.equal(captures.llmCalls, 0)
-  assert.match(captures.outboundBodies[0] ?? "", /email/i)
+  assert.match(captures.outboundBodies[0] ?? "", /candidate\.wekruit\.com\/onboarding/i)
+  assert.doesNotMatch(captures.outboundBodies[0] ?? "", new RegExp(["what " + "email", "send " + "stuff", "6-digit"].join("|"), "i"))
   assert.deepEqual(captures.systemInputs, [])
   assert.deepEqual(captures.appliedSteps, [])
 })
@@ -538,7 +670,7 @@ test("integration: turn-0 with abuse-shaped input — defense-in-depth, falls to
   assert.deepEqual(captures.appliedSteps, [])
 })
 
-test("integration: env disable PA_ONBOARDING_INTENT_ACK_DISABLED=true → falls back to bare greeting", async () => {
+test("integration: intent-ack flag cannot bypass website-start redirect", async () => {
   const prev = process.env.PA_ONBOARDING_INTENT_ACK_DISABLED
   process.env.PA_ONBOARDING_INTENT_ACK_DISABLED = "true"
   try {
@@ -554,7 +686,8 @@ test("integration: env disable PA_ONBOARDING_INTENT_ACK_DISABLED=true → falls 
       store
     )
     assert.equal(captures.llmCalls, 0)
-    assert.match(captures.outboundBodies[0] ?? "", /email/i)
+    assert.match(captures.outboundBodies[0] ?? "", /candidate\.wekruit\.com\/onboarding/i)
+    assert.doesNotMatch(captures.outboundBodies[0] ?? "", new RegExp(["what " + "email", "send " + "stuff", "6-digit"].join("|"), "i"))
   } finally {
     if (prev === undefined) delete process.env.PA_ONBOARDING_INTENT_ACK_DISABLED
     else process.env.PA_ONBOARDING_INTENT_ACK_DISABLED = prev

@@ -1,29 +1,7 @@
-/**
- * iter32 deploy-fix 2026-05-04 — shared Mailgun deps + secret bindings.
- *
- * Lifted out of index.ts so both:
- *   - apps/functions/src/index.ts  (production iMessage onPaInbound path)
- *   - apps/functions/src/admin-bootstrap.ts  (paAdminBootstrap simulator)
- *
- * can import the SAME defineSecret() bindings + the SAME makeOrchestratorDeps()
- * factory and both can list MAILGUN_* in their function `secrets:` array.
- *
- * Previously these lived in index.ts and admin-bootstrap.ts had no way to
- * import them without a circular dep (index.ts re-exports paAdminBootstrap).
- * The result was that the simulator's `defaultOrchestrator` ended up with
- * `store.sendVerificationEmail = undefined` even though Mailgun secrets were
- * set in Secret Manager — the dispatcher then took the
- * "Mailgun unconfigured" graceful fallback and advanced state to `complete`
- * without `contactEmailVerifiedAt`.
- */
 import { defineSecret } from "firebase-functions/params"
 import { logger } from "firebase-functions/v2"
 import { initializeApp, getApps } from "firebase-admin/app"
 import { getFirestore } from "firebase-admin/firestore"
-import {
-  generateVerificationCode,
-  sendVerificationEmail as sendVerificationEmailViaMailgun,
-} from "./email/mailgun.js"
 import {
   collectJobRecommendationMessageItems,
   composeJobRecommendationMessage,
@@ -79,73 +57,16 @@ export const PA_SLACK_ALERT_WEBHOOK: SecretParamHandle = defineSecret("PA_SLACK_
 const SILICONFLOW_API_KEY: SecretParamHandle = defineSecret("SILICONFLOW_API_KEY")
 export const CV_ANALYSIS_SECRETS: SecretParamHandle[] = [SILICONFLOW_API_KEY]
 
-const nowIso = () => new Date().toISOString()
-
 /**
- * Build orchestrator callbacks. Mailgun only gates email verification; it
- * must not disable unrelated runtime capabilities like CV analysis, answer
- * extraction, or explicit job recommendations.
+ * Build orchestrator callbacks. SMS onboarding does not ask for email or
+ * run email verification; Mailgun is only exported here for unrelated
+ * alert/admin surfaces that still need the secret handles.
  */
 export function makeOrchestratorDeps(): import("@pa/pa-orchestrator").OrchestratorStoreDeps {
-  let mailgunApiKey = ""
-  let mailgunDomain = ""
-  let mailgunFrom = ""
-  let mailgunRegion: "us" | "eu" | undefined
-  try {
-    mailgunApiKey = MAILGUN_API_KEY.value().trim()
-    mailgunDomain = MAILGUN_DOMAIN.value().trim()
-    mailgunFrom = MAILGUN_FROM.value().trim()
-    const region = MAILGUN_REGION.value().trim().toLowerCase()
-    mailgunRegion = region === "eu" ? "eu" : "us"
-  } catch {
-    // Secret not bound to this function (or unset entirely) → return empty
-    // deps so the dispatcher takes the graceful fallback path.
-  }
   const deps: import("@pa/pa-orchestrator").OrchestratorStoreDeps = {
     generateCvAnalysis: makeGenerateCvAnalysis(),
     generateJobRecs: makeGenerateJobRecs(),
-    extractEmailIntent: makeExtractEmailIntent(),
     extractAnswerIntent: makeExtractAnswerIntent(),
-  }
-
-  if (mailgunApiKey && mailgunDomain && mailgunFrom) {
-    const cfg = {
-      apiKey: mailgunApiKey,
-      domain: mailgunDomain,
-      from: mailgunFrom,
-      region: mailgunRegion,
-    }
-    deps.sendVerificationEmail = async (email: string) => {
-      const code = generateVerificationCode()
-      const sentAt = nowIso()
-      const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString()
-      try {
-        const result = await sendVerificationEmailViaMailgun(cfg, {
-          to: email,
-          code,
-        })
-        if (!result.ok) {
-          logger.warn("[mailgun] send failed", {
-            email,
-            status: result.status,
-            response: result.rawResponse?.slice(0, 200),
-          })
-          return null
-        }
-        return {
-          rawCode: code,
-          sentAt,
-          expiresAt,
-          ...(result.messageId ? { providerMessageId: result.messageId } : {}),
-        }
-      } catch (err) {
-        logger.error("[mailgun] send threw", {
-          email,
-          err: err instanceof Error ? err.message : String(err),
-        })
-        return null
-      }
-    }
   }
 
   // Note: getUserCvParsed is already implemented in
@@ -869,135 +790,6 @@ function makeGenerateCvAnalysis(): NonNullable<
     const clamped = clampCvSummary(summary)
     logger.info("[cv-analysis] ok", { userId, lang, summaryLen: clamped.length })
     return { summary: clamped }
-  }
-}
-
-/**
- * iter34 P0 — LLM-fallback email intent extractor.
- *
- * Adam directive 2026-05-05 ("edge case 处理应该是能 involve llm啊 ...
- * 一个认证过程"): when the regex parser fails on q_email, escalate to
- * Qwen-7B for intent extraction. Returns structured {intent, ...} so the
- * deterministic dispatcher can route precisely.
- *
- * Cost: ~$0.0002 per edge call. Latency: <2s p99. Safe to fail (returns
- * null on any error) — caller falls back to deterministic typo map +
- * generic re-ask, so onboarding always advances.
- */
-function makeExtractEmailIntent(): NonNullable<
-  import("@pa/pa-orchestrator").OrchestratorStoreDeps["extractEmailIntent"]
-> {
-  return async (reply, lang) => {
-    let apiKey = ""
-    try {
-      apiKey = SILICONFLOW_API_KEY.value().trim()
-    } catch {
-      // secret not bound — caller falls back
-    }
-    if (!apiKey) {
-      logger.warn("[email-intent] SILICONFLOW_API_KEY unbound")
-      return null
-    }
-
-    const systemPrompt = `You extract email intent from a user's reply during an onboarding flow.
-
-The user was asked for their email. Their reply might be:
-- A clean valid email → output {"intent":"provided", "email":"...", "confidence":0.0-1.0}
-- A typo'd or non-existent domain (gmal.com, gmial.com, yangoo.com, etc.) → output {"intent":"typo", "original":"<as typed>", "suggestion":"<corrected>"}
-- A decline / skip / "I'd rather not" / "later" → output {"intent":"declined"}
-- Ambiguous / unclear / asking back / random unrelated → output {"intent":"unclear", "clarifyingQuestion":"<short ${lang === "zh" ? "Chinese" : "English"} clarifying question, friend tone, no marketing-speak>"}
-
-Rules:
-- ALWAYS output valid JSON. NO prose, NO markdown, NO commentary.
-- For "provided", confidence 0.0-1.0 reflects how sure you are it's a real address (e.g. "john at gmail dot com" → confidence ~0.85, suggest only if extracted).
-- For "typo", original = what user typed, suggestion = canonical (gmail.com / yahoo.com / outlook.com / hotmail.com / icloud.com).
-- For "unclear", clarifyingQuestion is friendly, short (1 sentence), in ${lang === "zh" ? "Chinese" : "English"}.
-- DO NOT invent emails. If user describes an email without typing one ("send to my work one"), output unclear with clarifying question.`
-
-    const userPrompt = `User reply (after being asked for their email): "${reply}"\n\nOutput JSON:`
-
-    try {
-      const res = await fetch("https://api.siliconflow.cn/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "Qwen/Qwen2.5-7B-Instruct",
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userPrompt },
-          ],
-          temperature: 0.1,
-          max_tokens: 200,
-          response_format: { type: "json_object" },
-        }),
-        signal: AbortSignal.timeout(6000),
-      })
-      if (!res.ok) {
-        logger.warn("[email-intent] siliconflow non-200", { status: res.status })
-        return null
-      }
-      const data = (await res.json()) as {
-        choices?: { message?: { content?: string } }[]
-      }
-      const raw = data.choices?.[0]?.message?.content?.trim() ?? ""
-      let parsed: unknown
-      try {
-        parsed = JSON.parse(raw)
-      } catch {
-        logger.warn("[email-intent] non-JSON output", { raw: raw.slice(0, 200) })
-        return null
-      }
-      if (typeof parsed !== "object" || parsed === null) return null
-      const obj = parsed as Record<string, unknown>
-      // Validate shape per intent
-      if (obj.intent === "provided" && typeof obj.email === "string") {
-        const conf = typeof obj.confidence === "number" ? obj.confidence : 0.5
-        // Sanity-check the LLM didn't hallucinate something non-email.
-        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(obj.email)) return null
-        if (conf < 0.6) {
-          // Low confidence → don't auto-advance, escalate to clarify
-          return {
-            intent: "unclear",
-            clarifyingQuestion:
-              lang === "zh"
-                ? `${obj.email} 这个对吗? 不对的话直接发给我`
-                : `is ${obj.email} right? send the correct one if not`,
-          }
-        }
-        return { intent: "provided", email: obj.email.toLowerCase(), confidence: conf }
-      }
-      if (
-        obj.intent === "typo" &&
-        typeof obj.original === "string" &&
-        typeof obj.suggestion === "string"
-      ) {
-        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(obj.suggestion)) return null
-        return {
-          intent: "typo",
-          original: obj.original,
-          suggestion: obj.suggestion.toLowerCase(),
-        }
-      }
-      if (obj.intent === "declined") {
-        return { intent: "declined" }
-      }
-      if (obj.intent === "unclear" && typeof obj.clarifyingQuestion === "string") {
-        return {
-          intent: "unclear",
-          clarifyingQuestion: obj.clarifyingQuestion.slice(0, 200),
-        }
-      }
-      logger.warn("[email-intent] unrecognized shape", { obj })
-      return null
-    } catch (err) {
-      logger.error("[email-intent] llm call threw", {
-        err: err instanceof Error ? err.message : String(err),
-      })
-      return null
-    }
   }
 }
 

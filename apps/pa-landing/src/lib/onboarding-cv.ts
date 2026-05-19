@@ -4,16 +4,9 @@
 const DEFAULT_CV_INGEST_URL = "https://us-central1-wekruit-5f89b.cloudfunctions.net/paPublicCvIngest"
 const CV_INGEST_URL = import.meta.env.VITE_CV_INGEST_URL || DEFAULT_CV_INGEST_URL
 
-const GLOBAL_UID_KEY = "wkr_uid"
-const HAS_CV_KEY = "wkr_has_cv"
+import { getBrowserUid, rememberStoredValue } from "./browser-identity.js"
 
-export function getBrowserUid(): string {
-  const existing = window.localStorage.getItem(GLOBAL_UID_KEY)
-  if (existing) return existing
-  const v = crypto.randomUUID()
-  window.localStorage.setItem(GLOBAL_UID_KEY, v)
-  return v
-}
+const HAS_CV_KEY = "wkr_has_cv"
 
 async function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -63,7 +56,7 @@ export async function uploadResume(
   if (!res.ok) throw new Error(`Upload failed (${res.status})`)
   const data = await res.json().catch(() => ({ ok: true }))
   try {
-    window.localStorage.setItem(HAS_CV_KEY, "true")
+    rememberStoredValue(HAS_CV_KEY, "true")
   } catch {
     /* localStorage disabled — non-fatal */
   }

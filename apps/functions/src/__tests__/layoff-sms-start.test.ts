@@ -1,7 +1,7 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { WEKRUIT_LAYOFF_SOURCE } from "@pa/pa-orchestrator"
-import { runLayoffSmsStart } from "../layoff-sms-start.js"
+import { WEKRUIT_CANDIDATE_SOURCE, WEKRUIT_LAYOFF_SOURCE } from "@pa/pa-orchestrator"
+import { isLayoffIntakeActiveDoc, runLayoffSmsStart } from "../layoff-sms-start.js"
 
 type FakeDocState = { exists: boolean; data: Record<string, unknown> }
 
@@ -83,7 +83,28 @@ function makeFakeDb(docs: Map<string, FakeDocState>) {
 }
 
 describe("runLayoffSmsStart", () => {
-  it("updates the existing pa-user source and hands kickoff to runtime", async () => {
+  it("treats source as provenance, not an active SMS onboarding switch", () => {
+    assert.equal(
+      isLayoffIntakeActiveDoc({
+        source: WEKRUIT_LAYOFF_SOURCE,
+        onboardingState: "pending",
+      }),
+      false,
+    )
+    assert.equal(
+      isLayoffIntakeActiveDoc({
+        source: WEKRUIT_LAYOFF_SOURCE,
+        onboardingState: "pending",
+        workSession: {
+          kind: "shared_onboarding",
+          status: "active",
+        },
+      }),
+      true,
+    )
+  })
+
+  it("starts the shared website SMS onboarding flow for laid-off candidates", async () => {
     const docs = new Map<string, FakeDocState>([
       [
         "pa-users/u1",
@@ -92,7 +113,7 @@ describe("runLayoffSmsStart", () => {
           data: {
             displayName: "Ada Lovelace",
             phoneE164: "+13054507715",
-            layoffContext: { lastCompany: "Rain" },
+            layoffContext: { lastCompany: "Rain", noticeType: "WARN" },
             workSession: {
               kind: "layoff_onboarding",
               status: "ended",
@@ -124,22 +145,84 @@ describe("runLayoffSmsStart", () => {
     })
     assert.equal(runtimeKicks[0].userId, "u1")
     assert.equal(runtimeKicks[0].toE164, "+13054507715")
+    assert.equal(runtimeKicks[0].source, WEKRUIT_LAYOFF_SOURCE)
+    assert.deepEqual(runtimeKicks[0].promptContext, {
+      firstName: "Ada",
+      recentCompanies: ["Rain"],
+    })
     assert.match(String(runtimeKicks[0].startedAt), /^\d{4}-\d{2}-\d{2}T/)
     assert.equal(writes[0].path, "pa-users/u1")
     assert.equal(writes[0].data.source, WEKRUIT_LAYOFF_SOURCE)
-    assert.equal((writes[0].data.layoffContext as Record<string, unknown>).phoneE164, "+13054507715")
     const user = docs.get("pa-users/u1")!.data
+    const layoffContext = user.layoffContext as Record<string, unknown>
+    assert.equal(layoffContext.lastCompany, "Rain")
+    assert.equal(layoffContext.noticeType, "WARN")
+    assert.equal((layoffContext.sms as Record<string, unknown>).phoneE164, "+13054507715")
     assert.deepEqual(user.workSession, {
-      kind: "layoff_onboarding",
+      kind: "shared_onboarding",
       status: "active",
       startedAt: (user.workSession as Record<string, unknown>).startedAt,
-      boundary: "WeKruit_LAID_OFF",
+      boundary: "website_sms_onboarding",
+      currentQuestionId: "main_goal",
     })
     assert.equal("endedAt" in (user.workSession as Record<string, unknown>), false)
     assert.equal("currentState" in (user.workSession as Record<string, unknown>), false)
+    const shared = user.sharedOnboarding as Record<string, unknown>
+    assert.equal(shared.currentQuestionId, "main_goal")
+    assert.equal(shared.completed, false)
     const phoneIndex = docs.get("layoff_phone_index/p_1juq7qe")?.data
     assert.equal(phoneIndex?.candidateId, "u1")
     assert.equal(phoneIndex?.phoneHash, "p_1juq7qe")
+  })
+
+  it("starts the exact same shared website SMS onboarding flow for normal candidates", async () => {
+    const docs = new Map<string, FakeDocState>([
+      [
+        "pa-users/u2",
+        {
+          exists: true,
+          data: {
+            displayName: "Grace Hopper",
+            phoneE164: "+14243201960",
+            candidateContext: { sourcePage: "candidate.wekruit.com" },
+          },
+        },
+      ],
+    ])
+    const { db } = makeFakeDb(docs)
+    const runtimeKicks: Array<Record<string, unknown>> = []
+
+    const result = await runLayoffSmsStart({
+      db,
+      userId: "u2",
+      toE164: "+14243201960",
+      source: WEKRUIT_CANDIDATE_SOURCE,
+      runRuntimeKickoff: async (input) => {
+        runtimeKicks.push(input)
+        return { eventId: "candidate_runtime_test", outboundId: "out_runtime_candidate" }
+      },
+    })
+
+    assert.deepEqual(result, {
+      ok: true,
+      kickoffOutboundId: "out_runtime_candidate",
+      kickoffCreated: true,
+      sourceTag: WEKRUIT_CANDIDATE_SOURCE,
+    })
+    assert.equal(runtimeKicks[0].source, WEKRUIT_CANDIDATE_SOURCE)
+    const user = docs.get("pa-users/u2")!.data
+    assert.equal(user.source, WEKRUIT_CANDIDATE_SOURCE)
+    assert.deepEqual(user.workSession, {
+      kind: "shared_onboarding",
+      status: "active",
+      startedAt: (user.workSession as Record<string, unknown>).startedAt,
+      boundary: "website_sms_onboarding",
+      currentQuestionId: "main_goal",
+    })
+    assert.equal((user.sharedOnboarding as Record<string, unknown>).currentQuestionId, "main_goal")
+    assert.equal((user.candidateContext as Record<string, unknown>).sourcePage, "candidate.wekruit.com")
+    assert.equal(((user.candidateContext as Record<string, unknown>).sms as Record<string, unknown>).phoneE164, "+14243201960")
+    assert.equal(docs.has("layoff_phone_index/p_1hgmqn0"), false)
   })
 
   it("does not create a user when no pa-user exists for the phone-resolved id", async () => {
@@ -157,7 +240,7 @@ describe("runLayoffSmsStart", () => {
     assert.equal(writes.length, 0)
   })
 
-  it("default kickoff enqueues a structured runtime event instead of replaying the trigger as user text", async () => {
+  it("default kickoff enqueues the shared Q1 runtime event instead of replaying trigger text", async () => {
     const docs = new Map<string, FakeDocState>([
       [
         "pa-users/u1",
@@ -187,20 +270,22 @@ describe("runLayoffSmsStart", () => {
     assert.match(path, /^pa-inbound-events\/runtime_/)
     assert.equal(row.data.userId, "u1")
     assert.notEqual(row.data.body, "WeKruit_LAID_OFF")
-    assert.match(String(row.data.body), /^\[system-event:layoff_onboarding:layoff_onboarding_started\]/)
+    assert.match(String(row.data.body), /^\[system-event:shared_onboarding:onboarding_started\]/)
     assert.match(String(row.data.body), /Beta candidate-visible iMessage output is English-only/)
+    assert.match(String(row.data.body), /career growth, compensation, stability, mission, learning/)
     assert.equal(row.data.status, "pending")
     const rawMeta = row.data.rawMeta as Record<string, unknown>
     assert.equal(rawMeta.source, "runtime_event_handoff")
     assert.equal(rawMeta.runtimeEvent, true)
-    assert.equal(rawMeta.runtimeEventSource, "layoff_onboarding")
-    assert.equal(rawMeta.runtimeEventKind, "layoff_onboarding_started")
+    assert.equal(rawMeta.runtimeEventSource, "shared_onboarding")
+    assert.equal(rawMeta.runtimeEventKind, "onboarding_started")
     assert.equal(rawMeta.preferredLanguage, "en")
     const context = rawMeta.context as Record<string, unknown>
-    assert.equal(context.trigger, "WeKruit_LAID_OFF")
     assert.equal(context.signupSource, WEKRUIT_LAYOFF_SOURCE)
-    assert.equal(context.workSessionKind, "layoff_onboarding")
-    assert.equal(context.candidateEvent, "fresh_layoff_signal")
+    assert.equal(context.workSessionKind, "shared_onboarding")
+    assert.equal(context.questionId, "main_goal")
+    assert.match(String(context.questionText), /Hey Ada/i)
+    assert.match(String(context.questionText), /career growth, compensation, stability, mission, learning/)
     assert.match(String(context.startedAt), /^\d{4}-\d{2}-\d{2}T/)
   })
 })

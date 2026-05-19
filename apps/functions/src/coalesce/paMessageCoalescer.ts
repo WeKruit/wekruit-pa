@@ -64,14 +64,7 @@ export type CoalescerDeps = {
   sendReaction?: (input: SendReactionInput) => Promise<unknown>
   /** Orchestrator entry. Injected for tests; default = pa-orchestrator. */
   claimAndProcessInboundEvent?: typeof claimAndProcessInboundEvent
-  /**
-   * iter33 Bug 8 fix 2026-05-05 — orchestrator-store deps (Mailgun
-   * sendVerificationEmail, etc.). Without this, claimAndProcessInboundEvent
-   * builds a bare FirestoreOrchestratorStore with NO Mailgun callback →
-   * email-verify path skipped entirely → user goes straight to "got it —
-   * email saved" complete state. Wired in apps/functions/src/index.ts via
-   * makeOrchestratorDeps().
-   */
+  /** Orchestrator-store deps. Wired in apps/functions/src/index.ts via makeOrchestratorDeps(). */
   orchestratorDeps?: Parameters<typeof claimAndProcessInboundEvent>[3]
   /** Broker entry for synthetic event creation. Injected for tests. */
   createInboundEvent?: typeof createInboundEvent
@@ -706,12 +699,8 @@ export async function processCoalescedTurn(
   // 4. Drive orchestrator → ONE reply. Use the same path onPaInbound uses
   //    so we get identical lease + claim semantics.
   //
-  //    iter33 Bug 8 fix 2026-05-05 — pass orchestratorDeps so the
-  //    Mailgun sendVerificationEmail callback survives into
-  //    createFirestoreOrchestratorStore. Old call site was
-  //    `claimer(deps.db, created.id)` (2 args) → orchestrator built
-  //    with empty deps → email-verify path no-op → user skipped to
-  //    complete with bare "got it — email saved".
+  //    Pass orchestratorDeps so buffered turns use the same runtime wiring
+  //    as direct inbound turns.
   const claimer = deps.claimAndProcessInboundEvent ?? claimAndProcessInboundEvent
   const orchLog = (...a: unknown[]) => log("[coalesce/orchestrator]", ...a)
   await claimer(deps.db, created.id, orchLog, deps.orchestratorDeps ?? {})

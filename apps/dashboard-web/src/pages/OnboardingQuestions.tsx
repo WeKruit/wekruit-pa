@@ -198,7 +198,7 @@ export function OnboardingQuestions() {
       {docs && docs.length === 0 && (
         <Panel title="Empty">
           <p style={{ margin: 0, color: "#6b7280" }}>
-            No questions seeded. Run apps/functions/scripts/seed-onboarding-questions.mjs.
+            No questions seeded.
           </p>
         </Panel>
       )}

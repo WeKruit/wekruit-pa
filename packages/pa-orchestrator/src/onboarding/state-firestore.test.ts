@@ -88,7 +88,7 @@ test("FirestorePipelineStateProvider: save + load round-trip", async () => {
   const provider = new FirestorePipelineStateProvider({ db: db as any })
   const state: PipelineState = {
     currentQId: "q_role",
-    collected: { q_lang: "zh", q_email: "alex@gmail.com" },
+    collected: { q_lang: "zh", q_role: ["backend"] },
     attempts: { q_role: 2 },
     halted: null,
     lang: "zh",

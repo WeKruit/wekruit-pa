@@ -7,8 +7,8 @@
  *
  * Layers:
  *   1. question.ts — Question / Judge / Rephraser interfaces
- *   2. judges/ — pluggable validators (email, code, llm-relevance, yesno,
- *      lang, resume) — each implements `Judge<TAnswer>`
+ *   2. judges/ — pluggable validators (llm-relevance, yesno, lang, resume)
+ *      — each implements `Judge<TAnswer>`
  *   3. rephrasers/ — pluggable re-ask phrasing (variants, hybrid, llm)
  *   4. pipeline.ts — OnboardingPipeline orchestrator
  *   5. questions.ts — defaultQuestions() registry composing the layers
@@ -32,8 +32,6 @@ export * from "./discussion-phase.js"
 export * from "./discussion-resume.js"
 
 // Judges
-export * from "./judges/email.js"
-export * from "./judges/code.js"
 export * from "./judges/llm-relevance.js"
 export * from "./judges/yesno.js"
 export * from "./judges/lang.js"

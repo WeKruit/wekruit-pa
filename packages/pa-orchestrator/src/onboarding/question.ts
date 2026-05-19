@@ -5,16 +5,15 @@
  * with three pluggable behaviors:
  *
  *   1. **Judge** — decides whether the user's reply ANSWERS the question.
- *      Built-in judges: EmailJudge, CodeJudge, LLMRelevanceJudge, YesNoJudge,
- *      ResumeJudge. Custom judges live alongside in /judges.
+ *      Built-in judges: LLMRelevanceJudge, YesNoJudge, ResumeJudge.
+ *      Custom judges live alongside in /judges.
  *
  *   2. **Rephraser** — generates a re-ask phrasing when judge rejects.
  *      Built-in: StaticVariantsRephraser (rotate from a fixed array),
  *      LLMRephraser (regen via LLM), HybridRephraser (variants → LLM fallback).
  *
  *   3. **onAccepted** (optional) — side effect to fire after a successful
- *      answer is captured. E.g. q_email writes contactEmail to user doc;
- *      q_email_verify stamps contactEmailVerifiedAt.
+ *      answer is captured. E.g. q_resume can kick the resume worker.
  *
  * Pipelines (see pipeline.ts) compose Question instances in a list. Adding
  * a new Q = appending one Question to the list. Re-asks, attempt counting,
@@ -39,7 +38,7 @@ export type BilingualText = { zh: string; en: string }
  *     the Rephraser as a hint. LLM judges typically return this.
  *   - accept=false reason=declined → user explicitly said no/refused. Pipeline
  *     calls Question.onDeclined (if present) and may halt or skip per config.
- *   - accept=false reason=typo → judge identified a near-miss (e.g. gmal.com).
+ *   - accept=false reason=typo → judge identified a near-miss.
  *     The judge populates `suggestion` with the corrected form for the
  *     rephraser to surface as confirmation prompt.
  *
@@ -142,8 +141,6 @@ export function isScoredJudgeResult<T>(
 /**
  * Context handed to a Judge for cases where the decision needs more than
  * the user's text reply. Examples:
- *   - CodeJudge needs Firestore access to fetch the stored hash
- *   - EmailJudge needs Mailgun deps to start a verify challenge
  *   - ResumeJudge needs the inbound rawPayload to inspect attachments
  */
 export interface JudgeCtx {
@@ -182,7 +179,6 @@ export interface RephraseArgs {
   llmClarifyingQuestion?: string
   /**
    * Hint when judge returned reason="typo" — the suggested corrected form.
-   * E.g. EmailJudge: "test@gmal.com" → suggestion "test@gmail.com".
    */
   typoSuggestion?: string
 }
@@ -249,8 +245,7 @@ export interface Question<TAnswer> {
   maxAttempts?: number
   /**
    * Message sent on halt. Default uses the pipeline's haltMessageDefault
-   * if unset. Per-Q override allows custom escalations (e.g. q_email_verify
-   * could route to support flow instead).
+   * if unset. Per-Q override allows custom escalations.
    */
   haltMessage?: BilingualText
   /**

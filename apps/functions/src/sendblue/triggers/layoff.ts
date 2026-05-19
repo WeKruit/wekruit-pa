@@ -25,45 +25,13 @@ export class LayoffTrigger implements Trigger {
   }
 
   async handle(ctx: TriggerContext): Promise<TriggerOutcome> {
-    if (ctx.hasMedia) {
-      return { kind: "unauthorized", reason: "media_attached_layoff_text_only" }
-    }
-
-    const userId = await this.deps.lookupUserByPhone(ctx.fromNumber)
-    if (!userId) {
-      await this.deps.audit({
-        type: "trigger_unauthorized",
-        trigger: "layoff",
-        reason: "phone_not_resolved",
-        fromNumber: ctx.fromNumber,
-        correlationId: ctx.messageHandle,
-      })
-      return { kind: "unauthorized", reason: "phone_not_resolved" }
-    }
-
-    const now = (this.deps.now ?? Date.now)()
-    const last = await this.deps.getLastFiredMs(userId)
-    if (last !== null && now - last < LAYOFF_TRIGGER_IDEMPOTENCY_WINDOW_MS) {
-      await this.deps.audit({
-        type: "trigger_deduped",
-        trigger: "layoff",
-        userId,
-        sinceMs: now - last,
-        correlationId: ctx.messageHandle,
-      })
-      return { kind: "handled", action: "layoff_deduped" }
-    }
-
-    await this.deps.setLastFiredMs(userId, now)
-
-    await this.deps.runLayoffStart({ userId, toE164: ctx.fromNumber })
-
     await this.deps.audit({
-      type: "trigger_fired",
+      type: "trigger_unauthorized",
       trigger: "layoff",
-      userId,
+      reason: "manual_layoff_trigger_disabled",
+      fromNumber: ctx.fromNumber,
       correlationId: ctx.messageHandle,
     })
-    return { kind: "handled", action: "layoff_triggered" }
+    return { kind: "unauthorized", reason: "manual_layoff_trigger_disabled" }
   }
 }

@@ -37,17 +37,12 @@ import { sendReaction as defaultSendReaction } from "./sendblue/send-reaction.js
 import { decidePreClaireTurnOwner } from "./lib/pre-claire-turn-owner.js"
 import { enqueueRuntimeEventHandoff } from "./runtime-event-handoff.js"
 
-// iter31 — Mailgun transport for email-verification step in onboarding.
-// iter32 deploy-fix 2026-05-04 — MAILGUN_* defineSecret bindings + the
-// `makeOrchestratorDeps` factory live in ./orchestrator-deps.js so
-// admin-bootstrap.ts can share them. Re-export below for callers that
-// still reference them on this module.
+// Shared secret bindings + orchestrator callback factory.
 import {
   MAILGUN_API_KEY,
   MAILGUN_DOMAIN,
   MAILGUN_FROM,
   MAILGUN_REGION,
-  MAILGUN_SECRETS,
   ANTHROPIC_API_KEY,
   PA_SLACK_ALERT_WEBHOOK,
   makeOrchestratorDeps,
@@ -63,7 +58,6 @@ export {
   MAILGUN_DOMAIN,
   MAILGUN_FROM,
   MAILGUN_REGION,
-  MAILGUN_SECRETS,
   ANTHROPIC_API_KEY,
   PA_SLACK_ALERT_WEBHOOK,
   makeOrchestratorDeps,
@@ -893,14 +887,6 @@ export const onPaInbound = onDocumentCreated(
       PA_OPENAI_AGENT_API_KEY,
       QDRANT_URL,
       QDRANT_API_KEY,
-      // iter31 — Mailgun for email-verification onboarding step. All
-      // optional at runtime: if any value is empty, sendVerificationEmail
-      // returns null and the orchestrator falls through to complete-without-
-      // verification.
-      MAILGUN_API_KEY,
-      MAILGUN_DOMAIN,
-      MAILGUN_FROM,
-      MAILGUN_REGION,
       // v1.7 Phase 69 — Anthropic Sonnet powers pa-resume-parser fallback
       // tier + sponsorship-inference + industry-second-pass. All paths
       // already gracefully fall through when ANTHROPIC_API_KEY is empty
@@ -1049,9 +1035,6 @@ export const onPaInbound = onDocumentCreated(
     // (apps/functions/src/sendblue/webhook.ts); onPaInbound runs the
     // default Claire orchestrator path UNCONDITIONALLY for every event.
     try {
-      // iter31 — Mailgun transport callback for the email-verification
-      // onboarding step. Returns null when secrets are empty, signaling the
-      // orchestrator to fall through to complete-without-verification.
       const orchestratorDeps = makeOrchestratorDeps()
       const processed = isBrokerImessageEvent(data)
         ? await processBrokerImessageEvent(db, data, orchestratorDeps)
@@ -1403,21 +1386,14 @@ export const paSendblueWebhook = onRequest(
  * Returns deps even when env config is missing. If Cloud Tasks cannot take
  * ownership, the webhook leaves the event on the normal runtime path.
  */
-// Exported so the coalescer integration test can assert this factory
-// wires `orchestratorDeps.sendVerificationEmail` (iter33 Bug 8 regression
-// guard — the bug was that the coalescer path was building this without
-// calling makeOrchestratorDeps(), so Mailgun verify was a silent no-op).
+// Exported so coalescer integration tests can assert the same orchestrator
+// deps are used on buffered and direct inbound paths.
 export function buildCoalescerDeps(): CoalescerDeps {
   const cfg = resolveTasksConfigFromEnv(process.env)
   return {
     db: getFirestore(),
     tasks: new GoogleCloudTasksClient(cfg),
     sendReaction: defaultSendReaction,
-    // iter33 Bug 8 fix 2026-05-05 — pass through Mailgun-wired
-    // orchestrator deps so the coalescer's claimAndProcessInboundEvent
-    // call uses a store with sendVerificationEmail bound (not undefined).
-    // makeOrchestratorDeps reads MAILGUN_* via .value() — the secrets
-    // must be bound to whichever fn invokes this builder.
     orchestratorDeps: makeOrchestratorDeps(),
     log: (...args: unknown[]) => logger.info("[coalesce]", ...args),
   }
@@ -1578,16 +1554,7 @@ function buildSendblueWebhookDeps() {
 export const paMessageCoalescer = onRequest(
   {
     region: "us-central1",
-    // iter33 Bug 8 fix 2026-05-05 (Adam reported live: "i dont see verification
-    // coming after I gave the email"). Coalescer path runs the orchestrator
-    // via claimAndProcessInboundEvent → createFirestoreOrchestratorStore.
-    // makeOrchestratorDeps() reads MAILGUN_* via .value() — those calls
-    // throw if the secrets aren't bound to THIS function. Without them,
-    // sendVerificationEmail = undefined → q_email_asked falls through to
-    // "got it — email saved" (no-transport branch) → user skips verify +
-    // ToS + role probe entirely. Bind MAILGUN_SECRETS so the coalescer
-    // path matches onPaInbound's onboarding behavior.
-    secrets: [SENDBLUE_API_KEY_ID, SENDBLUE_API_SECRET_KEY, SENDBLUE_FROM_NUMBER, SILICONFLOW_API_KEY, PA_OPENAI_AGENT_API_KEY, QDRANT_URL, QDRANT_API_KEY, ...MAILGUN_SECRETS],
+    secrets: [SENDBLUE_API_KEY_ID, SENDBLUE_API_SECRET_KEY, SENDBLUE_FROM_NUMBER, SILICONFLOW_API_KEY, PA_OPENAI_AGENT_API_KEY, QDRANT_URL, QDRANT_API_KEY],
     memory: "512MiB",
     timeoutSeconds: 120,
     cors: false,
@@ -1614,15 +1581,6 @@ export const paMessageCoalescer = onRequest(
     } catch {
       delete process.env.PA_OPENAI_AGENT_API_KEY
     }
-    // iter33 Bug 8 fix — hydrate MAILGUN_* into env so makeOrchestratorDeps()
-    // sees them. Same pattern as SENDBLUE_*. Each .value() throws if the
-    // secret isn't bound; we tolerate that for graceful degradation
-    // (orchestrator falls back to no-transport with a clear log).
-    try { process.env.MAILGUN_API_KEY = MAILGUN_API_KEY.value() } catch {}
-    try { process.env.MAILGUN_DOMAIN = MAILGUN_DOMAIN.value() } catch {}
-    try { process.env.MAILGUN_FROM = MAILGUN_FROM.value() } catch {}
-    try { process.env.MAILGUN_REGION = MAILGUN_REGION.value() } catch {}
-
     try {
       const body = (req.body ?? {}) as { userId?: unknown; turnSeq?: unknown; messageCount?: unknown }
       const userId = typeof body.userId === "string" ? body.userId : ""
@@ -1662,10 +1620,7 @@ export const paCoalesceBufferSweep = onSchedule(
   {
     schedule: "every 1 minutes",
     region: "us-central1",
-    // iter33 Bug 8 fix 2026-05-05 — same MAILGUN_SECRETS rationale as
-    // paMessageCoalescer. Sweep can fire force-flush of a pending buffer
-    // → drives orchestrator → onboarding email-verify path needs Mailgun.
-    secrets: [SENDBLUE_API_KEY_ID, SENDBLUE_API_SECRET_KEY, SENDBLUE_FROM_NUMBER, SILICONFLOW_API_KEY, PA_OPENAI_AGENT_API_KEY, QDRANT_URL, QDRANT_API_KEY, ...MAILGUN_SECRETS],
+    secrets: [SENDBLUE_API_KEY_ID, SENDBLUE_API_SECRET_KEY, SENDBLUE_FROM_NUMBER, SILICONFLOW_API_KEY, PA_OPENAI_AGENT_API_KEY, QDRANT_URL, QDRANT_API_KEY],
     memory: "256MiB",
     timeoutSeconds: 120,
     maxInstances: 1,
@@ -1688,11 +1643,6 @@ export const paCoalesceBufferSweep = onSchedule(
     } catch {
       delete process.env.PA_OPENAI_AGENT_API_KEY
     }
-    // iter33 Bug 8 fix — hydrate MAILGUN_* into env (same as coalescer).
-    try { process.env.MAILGUN_API_KEY = MAILGUN_API_KEY.value() } catch {}
-    try { process.env.MAILGUN_DOMAIN = MAILGUN_DOMAIN.value() } catch {}
-    try { process.env.MAILGUN_FROM = MAILGUN_FROM.value() } catch {}
-    try { process.env.MAILGUN_REGION = MAILGUN_REGION.value() } catch {}
     try {
       const deps = buildCoalescerDeps()
       const result = await runCoalesceBufferSweep(deps)

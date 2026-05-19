@@ -8,6 +8,7 @@ import { Link, useNavigate } from "react-router-dom"
 import "../styles/wekruit-tokens.css"
 import { deriveFunction, initiateSmsPrescreen, registerCandidate } from "../lib/onboarding-api"
 import { uploadResume } from "../lib/onboarding-cv"
+import { candidateProfileDestination, getBrowserUid, rememberCandidateProfileSession } from "../lib/browser-identity"
 import { resolveSource, SOURCE_RESOLVER_MARKER, type SignupSource } from "../lib/source"
 
 // Keep the marker referenced so tree-shaking can't drop it from the
@@ -72,6 +73,11 @@ export default function Onboarding() {
       })
 
       if ("duplicate" in res && res.duplicate) {
+        rememberCandidateProfileSession({
+          candidateId: res.candidateId,
+          email: formData.email,
+          browserUid: getBrowserUid(),
+        })
         setDupExisting(res.existing)
         setPendingForm(formData)
         setBusyText(null)
@@ -79,6 +85,11 @@ export default function Onboarding() {
         return
       }
 
+      rememberCandidateProfileSession({
+        candidateId: res.candidateId,
+        email: formData.email,
+        browserUid: getBrowserUid(),
+      })
       await uploadResumeForCandidate(res.candidateId, formData, sourceToUploadTag(source))
       setBusyText("Starting Claire's SMS chat…")
       await initiateSmsPrescreen(res.candidateId)
@@ -159,7 +170,15 @@ export default function Onboarding() {
           {stage === "dup-prompt" && dupExisting && (
             <DuplicatePrompt existing={dupExisting} onReuse={onReuseExisting} onFresh={onStartFresh} />
           )}
-          {stage === "done" && <Done profile={profile} onGo={(r) => navigate(r === "dashboard" ? "/me" : "/")} />}
+          {stage === "done" && <Done profile={profile} onGo={(r) => {
+            if (r === "dashboard") {
+              const destination = candidateProfileDestination()
+              if (/^https?:\/\//.test(destination)) window.location.assign(destination)
+              else navigate(destination)
+              return
+            }
+            navigate("/")
+          }} />}
         </div>
       </section>
       <MinimalFooter />
@@ -719,7 +738,7 @@ function Done({ profile, onGo }: { profile: Profile; onGo: (r: "dashboard" | "la
       </div>
 
       <div style={{ display: "flex", justifyContent: "center", gap: 12, flexWrap: "wrap" }}>
-        <button className="btn btn--primary" onClick={() => onGo("dashboard")}>Go to your dashboard →</button>
+        <button className="btn btn--primary" onClick={() => onGo("dashboard")}>Go to your profile →</button>
         <button className="btn btn--ghost" onClick={() => onGo("landing")}>Back home</button>
       </div>
     </div>

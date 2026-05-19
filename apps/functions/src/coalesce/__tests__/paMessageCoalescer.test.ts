@@ -1469,9 +1469,7 @@ describe("iter33 Bug 9: love-tapback rate gate", () => {
 })
 
 // ──────────────────────────────────────────────────────────────────
-// iter33 Bug 8 fix 2026-05-05 — orchestratorDeps wiring test.
-// Adam ("i dont see verification coming after I gave the email" — coalescer
-// path was building orchestrator with empty deps → Mailgun no-op).
+  // Orchestrator deps wiring test.
 // ──────────────────────────────────────────────────────────────────
 
 describe("iter33 Bug 8: orchestratorDeps passed through claimAndProcessInboundEvent", () => {
@@ -1481,7 +1479,7 @@ describe("iter33 Bug 8: orchestratorDeps passed through claimAndProcessInboundEv
     const { deps } = buildDeps({ now: () => t0 })
     // Inject a fake orchestratorDeps object that we'll assert on
     const sentinel = {
-      sendVerificationEmail: async () => ({ rawCode: "654321", sentAt: "x", expiresAt: "y" }),
+      generateJobRecs: async () => ({ message: "jobs", recCount: 2 }),
     }
     deps.orchestratorDeps = sentinel as never
     // Replace the claimer to capture what deps it receives
@@ -1522,121 +1520,5 @@ describe("iter33 Bug 8: orchestratorDeps passed through claimAndProcessInboundEv
     })
     await processCoalescedTurn(deps, BASE_MSG.userId, 1)
     assert.deepEqual(capturedDeps, {}, "absent orchestratorDeps falls back to {}")
-  })
-})
-
-// ──────────────────────────────────────────────────────────────────
-// iter33 Bug 8 — REGRESSION GUARD for the actual prod path.
-// Adam 2026-05-05: "why is this not tested..? like just sending email no
-// response, it fking happy path not even the edge cases."
-//
-// Root cause of the gap: prior tests stubbed claimAndProcessInboundEvent
-// AND used a fake makeOrchestratorDeps. Nobody asserted on the SHAPE
-// of what buildCoalescerDeps() actually returns — and that's where the
-// bug lived (it called createFirestoreOrchestratorStore with NO deps,
-// so sendVerificationEmail was undefined → Mailgun no-op → onboarding
-// dropped to "got it — email saved" complete state).
-//
-// This test exercises buildCoalescerDeps() with MAILGUN_* env vars set
-// (matching the prod CF runtime where the secret is bound). Asserts
-// the returned deps.orchestratorDeps has sendVerificationEmail wired.
-// If that ever regresses, this fails immediately — no need to wait for
-// Adam to live-test and find the silent failure.
-// ──────────────────────────────────────────────────────────────────
-
-describe("iter33 Bug 8 REGRESSION: buildCoalescerDeps wires Mailgun in orchestratorDeps", () => {
-  it("orchestratorDeps.sendVerificationEmail is non-null when MAILGUN_* env is set", async () => {
-    // Save + stub env
-    const saved = {
-      MAILGUN_API_KEY: process.env.MAILGUN_API_KEY,
-      MAILGUN_DOMAIN: process.env.MAILGUN_DOMAIN,
-      MAILGUN_FROM: process.env.MAILGUN_FROM,
-      MAILGUN_REGION: process.env.MAILGUN_REGION,
-      CLOUD_TASKS_PROJECT: process.env.CLOUD_TASKS_PROJECT,
-      CLOUD_TASKS_LOCATION: process.env.CLOUD_TASKS_LOCATION,
-      CLOUD_TASKS_QUEUE: process.env.CLOUD_TASKS_QUEUE,
-      CLOUD_TASKS_TARGET_URL: process.env.CLOUD_TASKS_TARGET_URL,
-      CLOUD_TASKS_INVOKER_SA: process.env.CLOUD_TASKS_INVOKER_SA,
-    }
-    process.env.MAILGUN_API_KEY = "test-key-stub"
-    process.env.MAILGUN_DOMAIN = "wekruit.com"
-    process.env.MAILGUN_FROM = "Claire <claire@wekruit.com>"
-    process.env.MAILGUN_REGION = "us"
-    process.env.PA_COALESCE_PROJECT_ID = "wekruit-5f89b"
-    process.env.PA_COALESCE_LOCATION = "us-central1"
-    process.env.PA_COALESCE_QUEUE = "pa-coalesce"
-    process.env.PA_COALESCE_TARGET_URL = "https://example.run.app/x"
-    process.env.PA_COALESCE_INVOKER_SA = "test-sa@example.iam.gserviceaccount.com"
-
-    try {
-      // Import lazily so the env stubbing above takes effect
-      const { buildCoalescerDeps } = await import("../../index.js")
-      const deps = buildCoalescerDeps()
-      assert.ok(deps.orchestratorDeps, "buildCoalescerDeps MUST populate orchestratorDeps")
-      assert.equal(
-        typeof deps.orchestratorDeps.sendVerificationEmail,
-        "function",
-        "orchestratorDeps.sendVerificationEmail MUST be a function (was undefined → Bug 8)"
-      )
-      assert.equal(
-        typeof deps.orchestratorDeps.generateJobRecs,
-        "function",
-        "orchestratorDeps.generateJobRecs MUST be wired independently of Mailgun"
-      )
-    } finally {
-      // Restore env
-      for (const [k, v] of Object.entries(saved)) {
-        if (v === undefined) delete process.env[k]
-        else process.env[k] = v
-      }
-    }
-  })
-
-  it("orchestratorDeps still defined (with sendVerificationEmail=undefined) when MAILGUN_* missing — graceful degrade", async () => {
-    const saved = {
-      MAILGUN_API_KEY: process.env.MAILGUN_API_KEY,
-      MAILGUN_DOMAIN: process.env.MAILGUN_DOMAIN,
-      MAILGUN_FROM: process.env.MAILGUN_FROM,
-      MAILGUN_REGION: process.env.MAILGUN_REGION,
-      CLOUD_TASKS_PROJECT: process.env.CLOUD_TASKS_PROJECT,
-      CLOUD_TASKS_LOCATION: process.env.CLOUD_TASKS_LOCATION,
-      CLOUD_TASKS_QUEUE: process.env.CLOUD_TASKS_QUEUE,
-      CLOUD_TASKS_TARGET_URL: process.env.CLOUD_TASKS_TARGET_URL,
-      CLOUD_TASKS_INVOKER_SA: process.env.CLOUD_TASKS_INVOKER_SA,
-    }
-    delete process.env.MAILGUN_API_KEY
-    delete process.env.MAILGUN_DOMAIN
-    delete process.env.MAILGUN_FROM
-    delete process.env.MAILGUN_REGION
-    process.env.PA_COALESCE_PROJECT_ID = "wekruit-5f89b"
-    process.env.PA_COALESCE_LOCATION = "us-central1"
-    process.env.PA_COALESCE_QUEUE = "pa-coalesce"
-    process.env.PA_COALESCE_TARGET_URL = "https://example.run.app/x"
-    process.env.PA_COALESCE_INVOKER_SA = "test-sa@example.iam.gserviceaccount.com"
-
-    try {
-      const { buildCoalescerDeps } = await import("../../index.js")
-      const deps = buildCoalescerDeps()
-      // Object exists (no throw)
-      assert.ok(deps.orchestratorDeps, "orchestratorDeps must be defined even on Mailgun fallback")
-      // sendVerificationEmail returns undefined (orchestrator falls back to
-      // no-transport branch with "got it — email saved" — same behavior the
-      // bug exhibited, but now it's INTENTIONAL not silent).
-      assert.equal(
-        deps.orchestratorDeps.sendVerificationEmail,
-        undefined,
-        "MAILGUN_* missing → sendVerificationEmail intentionally undefined"
-      )
-      assert.equal(
-        typeof deps.orchestratorDeps.generateJobRecs,
-        "function",
-        "MAILGUN_* missing must not disable explicit job recommendations"
-      )
-    } finally {
-      for (const [k, v] of Object.entries(saved)) {
-        if (v === undefined) delete process.env[k]
-        else process.env[k] = v
-      }
-    }
   })
 })

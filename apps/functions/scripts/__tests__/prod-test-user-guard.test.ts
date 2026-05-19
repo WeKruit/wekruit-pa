@@ -151,16 +151,8 @@ test("requireExistingPaUserWithAllowedPhoneForProductionTest requires existing u
 
 test("legacy production E2E scripts that create fresh pa-users are guarded", () => {
   const scripts = [
-    "e2e-single-no-cleanup.mjs",
-    "e2e-memory-verify.mjs",
-    "e2e-post-onboarding.mjs",
-    "e2e-onboarding-sim.mjs",
-    "e2e-onboarding-20-iter.mjs",
-    "e2e-onboarding-20-iter-v3.mjs",
     "e2e-reset-cold-start.mjs",
-    "e2e-bug-a-b-verify.mjs",
     "e2e-bug-d-verify.mjs",
-    "qa-iter30-v4-reset-multi.mjs",
     "external-supply-prod-smoke.ts",
     "external-supply-v2-prod-smoke.ts",
   ]

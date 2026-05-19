@@ -22,10 +22,12 @@ import {
   signInWithEmailLink,
   signInWithPopup,
   signInWithRedirect,
+  onAuthStateChanged,
 } from "firebase/auth"
 import { auth } from "../lib/firebase.js"
+import { CLAIM_EMAIL_KEY, readStoredValue, rememberStoredValue } from "../lib/browser-identity"
 
-const EMAIL_STORAGE_KEY = "wkr_claim_email"
+const EMAIL_STORAGE_KEY = CLAIM_EMAIL_KEY
 const LINKEDIN_AUTH_START_URL =
   import.meta.env.VITE_LINKEDIN_AUTH_START_URL ??
   "https://us-central1-wekruit-5f89b.cloudfunctions.net/paLinkedinAuthStart"
@@ -351,7 +353,7 @@ export default function CandidateLogin() {
     const raw = new URLSearchParams(window.location.search).get("next")
     return raw && raw.startsWith("/") && !raw.startsWith("//") ? raw : "/me"
   }, [])
-  const [email, setEmail] = useState(() => window.localStorage.getItem(EMAIL_STORAGE_KEY) ?? "")
+  const [email, setEmail] = useState(() => readStoredValue(EMAIL_STORAGE_KEY) ?? "")
   const [status, setStatus] = useState<
     "idle" | "google" | "linkedin" | "sending" | "sent" | "signing_in" | "error"
   >(isCompletingLink ? "signing_in" : "idle")
@@ -360,6 +362,9 @@ export default function CandidateLogin() {
   useEffect(() => {
     if (isCompletingLink) return
     let cancelled = false
+    const unsubscribe = onAuthStateChanged(auth(), (user) => {
+      if (!cancelled && user) navigate(nextPath, { replace: true })
+    })
     void (async () => {
       try {
         const linkedinPayload = takeLinkedinAuthPayload()
@@ -378,12 +383,15 @@ export default function CandidateLogin() {
         }
       }
     })()
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+      unsubscribe()
+    }
   }, [isCompletingLink, navigate, nextPath])
 
   useEffect(() => {
     if (!isCompletingLink) return
-    const stored = cleanEmail(window.localStorage.getItem(EMAIL_STORAGE_KEY) ?? "")
+    const stored = cleanEmail(readStoredValue(EMAIL_STORAGE_KEY) ?? "")
     if (!stored) { setStatus("idle"); return }
     let cancelled = false
     void (async () => {
@@ -445,7 +453,7 @@ export default function CandidateLogin() {
         url: `${window.location.origin}/login?next=${encodeURIComponent(nextPath)}`,
         handleCodeInApp: true,
       })
-      window.localStorage.setItem(EMAIL_STORAGE_KEY, nextEmail)
+      rememberStoredValue(EMAIL_STORAGE_KEY, nextEmail)
       setStatus("sent")
     } catch (err) {
       setStatus("error")

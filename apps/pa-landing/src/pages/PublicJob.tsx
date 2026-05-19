@@ -26,6 +26,13 @@ import { doc, getDoc, setDoc } from "firebase/firestore"
 import { httpsCallable } from "firebase/functions"
 import { auth, db, functions } from "../lib/firebase.js"
 import {
+  CLAIM_EMAIL_KEY,
+  GLOBAL_UID_KEY,
+  getBrowserUid,
+  readStoredValue,
+  rememberStoredValue,
+} from "../lib/browser-identity"
+import {
   CandidateShell,
   PulseDot,
   LiveStatusPill,
@@ -35,8 +42,7 @@ import {
 } from "./CandidateLogin.js"
 
 const CV_INGEST_URL = import.meta.env.VITE_CV_INGEST_URL ?? ""
-const GLOBAL_UID_KEY = "wkr_uid"
-const EMAIL_STORAGE_KEY = "wkr_claim_email"
+const EMAIL_STORAGE_KEY = CLAIM_EMAIL_KEY
 const LINKEDIN_AUTH_START_URL =
   import.meta.env.VITE_LINKEDIN_AUTH_START_URL ??
   "https://us-central1-wekruit-5f89b.cloudfunctions.net/paLinkedinAuthStart"
@@ -114,29 +120,20 @@ function pickPoolNumber(pool: PoolNumber[] | null, key: string): string | null {
   return active[hashStringToUint(key) % active.length].number
 }
 
-function uuidV4(): string {
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0
-    return (c === "x" ? r : (r & 0x3) | 0x8).toString(16)
-  })
-}
-
 function getOrCreateRequestedUserId(_jobId: string): string {
-  const existingGlobal = window.localStorage.getItem(GLOBAL_UID_KEY)
+  const existingGlobal = readStoredValue(GLOBAL_UID_KEY)
   if (existingGlobal) return existingGlobal
   for (let i = 0; i < window.localStorage.length; i++) {
     const k = window.localStorage.key(i)
     if (k && k.startsWith("wkr_rid_")) {
       const v = window.localStorage.getItem(k)
       if (v) {
-        window.localStorage.setItem(GLOBAL_UID_KEY, v)
+        rememberStoredValue(GLOBAL_UID_KEY, v)
         return v
       }
     }
   }
-  const v = uuidV4()
-  window.localStorage.setItem(GLOBAL_UID_KEY, v)
-  return v
+  return getBrowserUid()
 }
 
 function cleanEmail(value: string): string {
@@ -424,7 +421,7 @@ export default function PublicJob() {
         url: `${window.location.origin}/login?next=${encodeURIComponent(nextPath)}`,
         handleCodeInApp: true,
       })
-      window.localStorage.setItem(EMAIL_STORAGE_KEY, email)
+      rememberStoredValue(EMAIL_STORAGE_KEY, email)
       setLoginStatus("sent")
     } catch (err) {
       setLoginStatus("error")

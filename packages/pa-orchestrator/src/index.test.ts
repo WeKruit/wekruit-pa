@@ -758,7 +758,7 @@ test("processInboundEvent lifecycle: profile freshness reply updates profile det
   assert.match(createdFacts[0]!, /Candidate profile update/)
 })
 
-test("processInboundEvent onboarding: incomplete onboarding owns reply before lifecycle profile updater", async () => {
+test("processInboundEvent onboarding: incomplete SMS onboarding is gated before lifecycle profile updater", async () => {
   let lifecycleWrites = 0
   let onboardingComposeCalls = 0
   let outbound = ""
@@ -826,17 +826,13 @@ test("processInboundEvent onboarding: incomplete onboarding owns reply before li
   }
 
   assert.equal(lifecycleWrites, 0, "active onboarding reply must not be recorded as lifecycle reply")
-  assert.equal(onboardingComposeCalls, 0, "onboarding runtime pipeline should own the reply without LLM compose")
-  assert.match(outbound, /how many years have you been working|New grad is fine too/)
-  assert.equal(applied.length, 1)
-  assert.equal(applied[0]!.step, "ask_q_yoe")
-  assert.deepEqual(applied[0]!.opts?.parsedAnswer?.targetRole, [
-    "fullstack",
-    "frontend",
-  ])
+  assert.equal(onboardingComposeCalls, 0, "manual SMS onboarding gate should own the reply without LLM compose")
+  assert.match(outbound, /candidate\.wekruit\.com\/onboarding/)
+  assert.doesNotMatch(outbound, /email/i)
+  assert.equal(applied.length, 0)
 })
 
-test("processInboundEvent onboarding: process questions get a clear answer without advancing state", async () => {
+test("processInboundEvent onboarding: process questions are gated to website start without advancing state", async () => {
   let lifecycleWrites = 0
   let llmCalls = 0
   let applyCalls = 0
@@ -876,12 +872,11 @@ test("processInboundEvent onboarding: process questions get a clear answer witho
   assert.equal(lifecycleWrites, 0)
   assert.equal(llmCalls, 0)
   assert.equal(applyCalls, 0)
-  assert.match(outbound, /this is WeKruit/)
-  assert.match(outbound, /hiring manager/)
-  assert.match(outbound, /what kinds of roles/)
+  assert.match(outbound, /candidate\.wekruit\.com\/onboarding/)
+  assert.doesNotMatch(outbound, /email/i)
 })
 
-test("processInboundEvent layoff: incomplete layoff users bypass deterministic onboarding", async () => {
+test("processInboundEvent layoff: source-only incomplete layoff users are gated to website start", async () => {
   let llmCalls = 0
   let applyCalls = 0
   let outbound = ""
@@ -915,13 +910,15 @@ test("processInboundEvent layoff: incomplete layoff users bypass deterministic o
       "Still shaky, but I want to move fast. I was doing full-stack/backend work with React, Node, Python, and infra.",
   }, store)
 
-  assert.equal(llmCalls, 1)
+  assert.equal(llmCalls, 0)
   assert.equal(applyCalls, 0)
-  assert.equal(outbound, "Runtime follow-up about roles and location.")
+  assert.match(outbound, /candidate\.wekruit\.com\/onboarding/)
+  assert.doesNotMatch(outbound, /email/i)
   assert.equal(turnUpdates.some((patch) => "onboardingDeterministicAction" in patch), false)
+  assert.equal(turnUpdates.some((patch) => patch.directIntent === "website_onboarding_required"), true)
 })
 
-test("processInboundEvent layoff: explicit role requests can generate recommendations before generic onboarding completes", async () => {
+test("processInboundEvent layoff: explicit role requests do not generate recommendations before shared onboarding completes", async () => {
   let recCalls = 0
   let llmCalls = 0
   let applyCalls = 0
@@ -966,12 +963,14 @@ test("processInboundEvent layoff: explicit role requests can generate recommenda
     body: "Can you send me two concrete roles now with links, requirements, and one reason each fits?",
   }, store)
 
-  assert.equal(recCalls, 1)
+  assert.equal(recCalls, 0)
   assert.equal(llmCalls, 0)
   assert.equal(applyCalls, 0)
-  assert.match(outbound, /Fullstack Engineer @ Rain/)
+  assert.match(outbound, /candidate\.wekruit\.com\/onboarding/)
+  assert.doesNotMatch(outbound, /email/i)
   assert.equal(turnUpdates.some((patch) => "onboardingDeterministicAction" in patch), false)
-  assert.equal(turnUpdates.some((patch) => patch.directIntent === "job_search"), true)
+  assert.equal(turnUpdates.some((patch) => patch.directIntent === "job_search"), false)
+  assert.equal(turnUpdates.some((patch) => patch.directIntent === "website_onboarding_required"), true)
 })
 
 test("processInboundEvent lifecycle: explicit job request is not swallowed as profile update", async () => {
