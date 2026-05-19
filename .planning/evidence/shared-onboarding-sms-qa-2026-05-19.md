@@ -46,6 +46,34 @@ Goal: verify production shared onboarding over SMS/iMessage after duplicate gree
 
 Pending explicit operator confirmation before sending scripted iMessage/SMS traffic from Adam's Messages app.
 
+### Pending Messages.app Smoke Script
+
+Status: blocked on action-time confirmation before sending real iMessages from Adam's Mac.
+
+Target user/phone:
+- `pa-users/UThMpnAGzjaWnxDsKEMH`
+- `+14243201960`
+
+Script to run after confirmation:
+1. Send `__PA_RESET__`.
+2. Wait for reset confirmation or verify Firestore cleanup.
+3. Send `Hello, WeKruit!`.
+4. Verify visible Q1 is resume-grounded with `Software Engineer Intern` and `Tesla Inc`.
+5. Send duplicate `Hello, WeKruit!`.
+6. Verify Q2 does not fire and `sharedOnboarding.currentQuestionId` remains `main_goal`.
+7. Send `Career growth and learning matter most, with compensation as a close second.`
+8. Verify Q2 asks the culture/stage question.
+9. Send an irrelevant/greeting-like answer such as `hi` or `what?`.
+10. Verify the current question is re-asked or clarified and no `culture_stage` answer is recorded.
+11. Continue with real answers through Q5.
+12. Verify two job recommendations are returned.
+13. Send one normal post-onboarding chat turn.
+14. Verify Claire replies in normal chat mode without internal tokens and without reviving onboarding.
+15. Verify Firestore: `workSession.kind=shared_onboarding` during onboarding, completed shared-onboarding answers and tags/stated preferences at completion, no legacy `layoff_onboarding`, no `q_email`, no premature advancement.
+
+Confirmation phrase needed before sending:
+- `Yes, send the Messages.app smoke to +14243201960`
+
 ## Final Audit - 2026-05-19 11:58 UTC
 
 - Branch/PR:
@@ -71,6 +99,35 @@ Pending explicit operator confirmation before sending scripted iMessage/SMS traf
   - `pa-users/UThMpnAGzjaWnxDsKEMH` cleanup state: `onboardingState=pending`, `onboardingStatus=invited`, `sharedOnboarding=null`, `workSession=null`, `latestResumeArtifactId` preserved as `candidate_upload_UThMpnAGzjaWnxDsKEMH_03ebee96e6371ed72895665d450219ff`.
 - Remaining unproven surface:
   - Actual local Messages.app transcript is still pending because sending real iMessages from Adam's account requires action-time confirmation under the Computer Use policy.
+
+## Continuation Audit - 2026-05-19 12:17 UTC
+
+- Current repo state:
+  - Worktree: `/Users/adam/Desktop/WeKruit/wekruit-pa/.claude/worktrees/ecstatic-swartz-954e33`
+  - Local branch: `claude/ecstatic-swartz-954e33`
+  - Local HEAD: `0ac3cb2243e4ecb1fbdeb69c211d0ef72d0c7129`
+  - `origin/main`: `9b097a771e764832c5bd6d5ff445f64f7c7636b9`
+  - PR #114 is merged into `main` at `9b097a771e764832c5bd6d5ff445f64f7c7636b9`.
+- Current live function state from `firebase functions:list --project wekruit-5f89b --json` under Node 24:
+  - `onPaInbound`: `nodejs24`, Gen2, us-central1, 1024 MiB, `maxInstances=1`, `state=ACTIVE`, hash `ebbdfc791153300b1ba0627076c657535f3373b4`.
+  - `paSendblueWebhook`: `nodejs24`, Gen2, us-central1, 512 MiB, `maxInstances=1`, `state=ACTIVE`, hash `dc67428d556370dd3eb5013955e0813299bb070f`.
+- Current production user state from Firestore:
+  - `pa-users/UThMpnAGzjaWnxDsKEMH` exists.
+  - `phoneE164=+14243201960`.
+  - `onboardingState=pending`.
+  - `onboardingStatus=invited`.
+  - `latestResumeArtifactId=candidate_upload_UThMpnAGzjaWnxDsKEMH_03ebee96e6371ed72895665d450219ff`.
+  - `sharedOnboarding=null`.
+  - `workSession=null`.
+  - `testMode=true`.
+- Current test rerun:
+  - `source ~/.zshrc && nvm use 24 && pnpm --filter @pa/pa-orchestrator exec node --import tsx --test src/index.test.ts src/__tests__/onboarding-intent-ack.test.ts src/__tests__/shared-onboarding.test.ts` -> 127/127 pass.
+- Current artifact re-read:
+  - Passed shared-onboarding artifacts total `216` conversations, `10` full onboarding -> job rec -> normal chat completions, `1120` turns, `904` assistant replies, `0` failed conversations in the passed artifact set.
+  - `prescreen-batch-2026-05-19T07-56-44-140Z` still shows `sentCount=20`, `userRestored=true`, and cleanup rows with `terminal=PAUSE`, `currentQId=null`.
+  - `sbmatrix-2026-05-19T07-54-05-446Z` still shows all four entrypoint cases passed.
+- Remaining unproven surface:
+  - Actual local Messages.app transcript remains the only blocked acceptance item. It requires action-time confirmation before sending from Adam's Mac.
 
 ## Production Shared-Onboarding SMS Batch
 
