@@ -268,7 +268,7 @@ function makeFakeStore({ scenarioId, lang, sessionId, userId, phoneE164, initial
 
     async maybeHandleResetCommand(event) {
       if (testMode && /^__PA_RESET__$/.test((event.body ?? "").trim())) {
-        return { handled: true, summary: "✓ 测试记忆已清空。" }
+        return { handled: true, summary: "✓ Test memory cleared." }
       }
       return { handled: false }
     },

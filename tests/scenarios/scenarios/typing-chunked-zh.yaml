@@ -24,7 +24,7 @@ turnTimeoutMs: 90000
 turns:
   - user: "__PA_RESET__"
     assert:
-      reply_contains_any: ["测试记忆已清空", "qdrant"]
+      reply_contains_any: ["Test memory cleared", "qdrant"]
       reply_min_length: 1
       reply_not_contains_any: ["error", "failed", "undefined", "[20"]
 

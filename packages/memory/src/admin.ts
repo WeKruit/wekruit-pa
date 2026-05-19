@@ -532,5 +532,5 @@ export function summarizeClearResult(r: ClearUserMemoryResult): string {
   }
   return r.dryRun
     ? `[DRY-RUN] would clear: qdrant ${qd}; firestore ${fsBlock}${userDocBlock}`
-    : `✓ 测试记忆已清空 — qdrant ${qd}; firestore ${fsBlock}${userDocBlock}`
+    : `✓ Test memory cleared — qdrant ${qd}; firestore ${fsBlock}${userDocBlock}`
 }

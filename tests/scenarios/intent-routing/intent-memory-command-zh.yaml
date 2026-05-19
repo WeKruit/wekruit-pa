@@ -19,7 +19,7 @@ turns:
     assert:
       reply_min_length: 1
       reply_contains_any:
-        - "测试记忆已清空"
+        - "Test memory cleared"
   - user: "我的记忆"
     assert:
       reply_min_length: 1

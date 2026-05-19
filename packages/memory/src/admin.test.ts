@@ -33,7 +33,7 @@ test("summarizeClearResult produces a tester-readable line for live runs", () =>
     qdrant: { collection: "pa-memory", matched: 7, deleted: true },
     firestore: { "pa-memory-facts": 2, "pa-messages": 18, "pa-memory-actions": 0 },
   })
-  assert.match(out, /✓ 测试记忆已清空/)
+  assert.match(out, /✓ Test memory cleared/)
   assert.match(out, /pa-memory=7/)
   assert.match(out, /pa-memory-facts=2/)
   assert.match(out, /pa-messages=18/)
