@@ -350,31 +350,26 @@ export function applyV16HardFilters(
   )
   const targetLocationSet = new Set(targetLocations.map((l) => l.trim().toLowerCase()))
   // careerStage window — only enforce when both user + job sides present.
-  // careerStage / targetJobType are stamped via Phase 54 partial-update mappers
-  // (typed `Record<string, unknown>` at write time), so they're not in the
-  // narrow `UserTags` schema yet. Cast through `unknown` to a structural shape
-  // for read-side access.
-  const tagsExt = userTags as unknown as {
-    careerStage?: string
-    targetJobType?: string[]
-    targetJobTypes?: string[]
-    targetRoleFunction?: string[]
-    relevantTags?: string[]
-    targetCountry?: string[]
-    minSalary?: number
-    companyNegativeList?: string[]
-  }
+  // W5 — `careerStage`, `targetJobType`, `targetRoleFunction`, `relevantTags`,
+  // `targetCountry`, `minSalary`, and `companyNegativeList` are typed on
+  // `UserTagsSchema` (W3 #117 + earlier B1/B4 promotions), wired into the
+  // canonical registry by W4 #121. Read them directly. The legacy plural
+  // `targetJobTypes` alias is intentionally NOT promoted to the schema (see
+  // `targetJobType` doc comment in `user-tags-merger.ts`); cast narrowly when
+  // reading it for back-compat with pre-Phase-54 Firestore docs.
   // Phase B4 — pre-build hard-filter negative-name lookup once.
   const negativeSet = new Set<string>(
-    Array.isArray(tagsExt.companyNegativeList)
-      ? tagsExt.companyNegativeList.filter((s): s is string => typeof s === "string")
+    Array.isArray(userTags.companyNegativeList)
+      ? userTags.companyNegativeList.filter((s): s is string => typeof s === "string")
       : []
   )
-  const careerStage = tagsExt.careerStage
+  const careerStage = userTags.careerStage
   const careerStageValid =
     typeof careerStage === "string" && (CAREER_STAGE_VOCAB as readonly string[]).includes(careerStage)
   const acceptableStages = careerStageValid ? new Set(acceptableCareerStages(careerStage as CareerStage)) : null
-  const targetJobTypes = tagsExt.targetJobType ?? tagsExt.targetJobTypes ?? []
+  const targetJobType = userTags.targetJobType
+  const legacyTargetJobTypes = (userTags as unknown as { targetJobTypes?: string[] }).targetJobTypes
+  const targetJobTypes = targetJobType ?? legacyTargetJobTypes ?? []
   const targetJobTypeSet = new Set(
     targetJobTypes.map((t) => (typeof t === "string" ? t.trim().toLowerCase() : ""))
   )
@@ -406,8 +401,8 @@ export function applyV16HardFilters(
   ]
   const userWantsUsOnly =
     sponsorshipNeeded ||
-    (Array.isArray(tagsExt.targetCountry) &&
-      tagsExt.targetCountry.some((c) => {
+    (Array.isArray(userTags.targetCountry) &&
+      userTags.targetCountry.some((c) => {
         const k = typeof c === "string" ? c.trim().toLowerCase() : ""
         return k === "usa" || k === "us" || k === "united_states"
       })) ||
@@ -827,14 +822,15 @@ export function scoreV16Job(
   const llm = typeof llmRerankScore === "number" && Number.isFinite(llmRerankScore)
     ? Math.max(0, Math.min(1, llmRerankScore))
     : 0
-  const userExt = user as unknown as { relevantTags?: string[]; minSalary?: number }
+  // W5 — `relevantTags` is typed on UserTagsSchema (W3 #117); `minSalary` was
+  // already typed on UserTags. Read directly, no cast needed.
   const skill = computeWeightedSkillJaccard(user.skills, job.requiredSkills, jdRelative)
   // user.relevantTags (Phase 54 partial-write field) is the primary source.
   // Fall back to relevantSpecialization / proposedTags so legacy users still
   // contribute to relevantTags axis until Phase 54 hooks fully populate it.
   const userRelTags =
-    (Array.isArray(userExt.relevantTags) && userExt.relevantTags.length > 0
-      ? userExt.relevantTags
+    (Array.isArray(user.relevantTags) && user.relevantTags.length > 0
+      ? user.relevantTags
       : (user.relevantSpecialization ?? user.proposedTags ?? []))
   const relTags = computeOverlap(userRelTags, job.relevantTags)
   // user.industrySector OR user.relevantIndustry (CV-derived) intersect with
@@ -847,7 +843,7 @@ export function scoreV16Job(
   ]
   const indSector = computeOverlap(userIndustryUnion, job.industrySector)
   const cvEmb = cosineSim(user.embedding, job.embedding ?? undefined)
-  const salary = computeSalaryFit(userExt.minSalary, job.salaryMin)
+  const salary = computeSalaryFit(user.minSalary, job.salaryMin)
 
   // Phase 70: resolve effective weights — overrides shadow canonical, missing
   // keys fall back. Each override clamped to [0, 1] for safety.
@@ -873,21 +869,18 @@ export function scoreV16Job(
     salary * W.salaryFit
 
   // ---- Phase B4 — additive boosts on top of the unit-score blend ---------
-  const userB4 = user as unknown as {
-    targetCompanyTags?: string[]
-    companyPositiveList?: string[]
-    urgentlySeeking?: boolean
-  }
-  const tagOverlapScore = jaccard(userB4.targetCompanyTags, companyInfo?.tags) * V16_TAG_OVERLAP_WEIGHT
+  // W5 — `targetCompanyTags`, `companyPositiveList`, `urgentlySeeking` are
+  // typed on UserTagsSchema (Phase B1 promotion). Read directly.
+  const tagOverlapScore = jaccard(user.targetCompanyTags, companyInfo?.tags) * V16_TAG_OVERLAP_WEIGHT
   const normCompany = normalizeCompanyName(job.companyName ?? "")
   const positiveHitBoost =
     normCompany.length > 0 &&
-    Array.isArray(userB4.companyPositiveList) &&
-    userB4.companyPositiveList.includes(normCompany)
+    Array.isArray(user.companyPositiveList) &&
+    user.companyPositiveList.includes(normCompany)
       ? V16_POSITIVE_HIT_WEIGHT
       : 0
   let urgencyBoost = 0
-  if (userB4.urgentlySeeking === true) {
+  if (user.urgentlySeeking === true) {
     const now = typeof nowMs === "number" && Number.isFinite(nowMs) ? nowMs : Date.now()
     const firstSeenMs = timestampToMs(job.firstSeenAt)
     const ageMs = firstSeenMs > 0 ? now - firstSeenMs : Number.POSITIVE_INFINITY
@@ -979,12 +972,10 @@ export function composeReason(
   }
 
   // ---- Phase B4 — chips for company-pref + urgency signals ---------------
-  const userB4 = user as unknown as {
-    targetCompanyTags?: string[]
-  }
+  // W5 — `targetCompanyTags` is typed on UserTagsSchema (Phase B1).
   const chips: string[] = []
   if (breakdown.tagOverlap > 0) {
-    const hits = intersectTokens(userB4.targetCompanyTags, companyInfo?.tags)
+    const hits = intersectTokens(user.targetCompanyTags, companyInfo?.tags)
     const segs = hits.join(", ")
     if (segs.length > 0) {
       chips.push(
@@ -1134,9 +1125,9 @@ async function runV16Query(
   jobs: Array<MatchingJob & { embedding?: number[] | null }>
   rawCount: number
 }> {
-  const tagsExt = userTags as unknown as { targetRoleFunction?: string[] }
-  const targetRoleFunction = Array.isArray(tagsExt.targetRoleFunction)
-    ? tagsExt.targetRoleFunction.slice(0, ROLE_FUNCTION_QUERY_CAP)
+  // W5 — `targetRoleFunction` is typed on UserTagsSchema (W3 #117).
+  const targetRoleFunction = Array.isArray(userTags.targetRoleFunction)
+    ? userTags.targetRoleFunction.slice(0, ROLE_FUNCTION_QUERY_CAP)
     : []
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1469,19 +1460,19 @@ export async function queryMatchingJobsV16(
   // ordered retrieval, but Claire never knows to ask. Compute missingAxes
   // from the loaded tags so the orchestrator can inject "weave these questions
   // into your next 2-3 replies" into the system prompt.
-  const tagSnap = userTags as unknown as {
-    targetRoleFunction?: string[]
-    targetLocations?: string[]
-    visaStatus?: string
-    careerStage?: string
-    targetJobType?: string[]
-  }
+  // W5 — all 5 fields are typed on UserTagsSchema (W3 #117). Read directly.
+  // NOTE: this 5-axis check (3 W4 REQUIRED_AXES + careerStage + targetJobType)
+  // is intentionally broader than `REQUIRED_AXES` from the W4 registry —
+  // Claire surfaces careerStage/targetJobType as onboarding follow-ups even
+  // though V16 degrades gracefully without them. Switching to registry-driven
+  // REQUIRED_AXES would narrow this to 3 axes and is deferred to a follow-up
+  // PR alongside the matching `V16QueryResult["missingAxes"]` enum change.
   const missingAxes: V16QueryResult["missingAxes"] = []
-  if (!tagSnap.targetRoleFunction?.length) missingAxes!.push("targetRoleFunction")
-  if (!tagSnap.targetLocations?.length) missingAxes!.push("targetLocations")
-  if (!tagSnap.visaStatus) missingAxes!.push("visaStatus")
-  if (!tagSnap.careerStage) missingAxes!.push("careerStage")
-  if (!tagSnap.targetJobType?.length) missingAxes!.push("targetJobType")
+  if (!userTags.targetRoleFunction?.length) missingAxes!.push("targetRoleFunction")
+  if (!userTags.targetLocations?.length) missingAxes!.push("targetLocations")
+  if (!userTags.visaStatus) missingAxes!.push("visaStatus")
+  if (!userTags.careerStage) missingAxes!.push("careerStage")
+  if (!userTags.targetJobType?.length) missingAxes!.push("targetJobType")
 
   return {
     jobs: top,
