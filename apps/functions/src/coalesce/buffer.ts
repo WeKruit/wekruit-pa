@@ -391,6 +391,11 @@ export async function coalesceTransaction(
     // 1. Read user doc → current turnSeq counter.
     const userSnap = await tx.get(userRef)
     const userData = (userSnap.exists ? userSnap.data() : {}) as Record<string, unknown>
+    const resetEpoch = userData.resetEpoch
+    const taskUserKey =
+      typeof resetEpoch === "number" || typeof resetEpoch === "string"
+        ? `${msg.userId}-e${resetEpoch}`
+        : msg.userId
     let turnSeq = Number(userData[COALESCE_USER_FIELD] ?? 0)
     // First-ever turn for this user → bump to 1 lazily.
     if (turnSeq === 0) turnSeq = 1
@@ -408,7 +413,7 @@ export async function coalesceTransaction(
       if (bufferSnap.exists) {
         turnSeq += 1
       }
-      const nextTaskName = taskNameFn(msg.userId, turnSeq, 1)
+      const nextTaskName = taskNameFn(taskUserKey, turnSeq, 1)
       const newBuf: BufferDoc = {
         userId: msg.userId,
         turnSeq,
@@ -448,7 +453,7 @@ export async function coalesceTransaction(
     // ---- Branch B: existing pending buffer → append + cancel/re-enqueue ----
     const existing = bufferSnap.data() as BufferDoc
     const newCount = existing.messageCount + 1
-    const nextTaskName = taskNameFn(msg.userId, existing.turnSeq, newCount)
+    const nextTaskName = taskNameFn(taskUserKey, existing.turnSeq, newCount)
 
     // Hard cap: time elapsed since firstReceivedAt
     const firstAtMs = Date.parse(existing.firstReceivedAt)

@@ -158,11 +158,32 @@ export async function enqueueOrCoalesce(
       },
     })
   } catch (err) {
-    // Enqueue failure is the only fatal branch — caller should fall back to
-    // normal runtime path. Throw so the webhook can decide.
+    // Enqueue failure transfers ownership to the webhook's direct runtime
+    // fallback. The buffer must be consumed before that fallback runs; otherwise
+    // the next user answer can append to this stale pending buffer and replay
+    // the already-processed answer into the next question.
+    let consumedBuffer = false
+    try {
+      consumedBuffer = Boolean(await markFiredTransaction(
+        deps.db,
+        msg.userId,
+        outcome.buffer.turnSeq,
+        { now: deps.now }
+      ))
+    } catch (consumeErr) {
+      log("[coalesce] enqueue FAILED and buffer-consume FAILED", {
+        taskName: outcome.nextTaskName,
+        userId: msg.userId,
+        turnSeq: outcome.buffer.turnSeq,
+        err: consumeErr instanceof Error ? consumeErr.message : String(consumeErr),
+      })
+    }
+    // Caller should fall back to normal runtime path. Throw so the webhook can decide.
     log("[coalesce] enqueue FAILED — caller should fall back to runtime path", {
       taskName: outcome.nextTaskName,
       userId: msg.userId,
+      turnSeq: outcome.buffer.turnSeq,
+      consumedBuffer,
       err: err instanceof Error ? err.message : String(err),
     })
     throw err

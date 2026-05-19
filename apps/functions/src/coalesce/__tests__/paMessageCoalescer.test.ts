@@ -272,6 +272,25 @@ describe("paMessageCoalescer — case 1: single message creates buffer", () => {
     const inb = (db as ReturnType<typeof makeFakeDb>)._stores.get("pa-inbound-events")?.get("inb_1") as DocData | undefined
     assert.equal((inb as { coalescing?: boolean })?.coalescing, true)
   })
+
+  it("includes resetEpoch in Cloud Tasks task names to avoid post-reset tombstone collisions", async () => {
+    const t0 = new Date("2026-05-19T15:27:58Z")
+    const { deps, tasks, db } = buildDeps({ now: () => t0 })
+    ;(db as ReturnType<typeof makeFakeDb>)._stores.set(
+      "pa-users",
+      new Map([["u_adam", { resetEpoch: 7 }]])
+    )
+
+    await enqueueOrCoalesce(deps, {
+      ...BASE_MSG,
+      messageHandle: "msg-epoch",
+      body: "hello after reset",
+      inboundEventId: "inb_epoch",
+      receivedAt: t0.toISOString(),
+    })
+
+    assert.equal(tasks.enqueued[0]?.taskName, "pa-coalesce-u_adam-e7-1-1")
+  })
 })
 
 // ----------------- TEST 2: 3 quick messages within window → cancel+re-enqueue → single fire -----------------
@@ -1118,6 +1137,57 @@ describe("paMessageCoalescer — case 12: rapid-gap heuristic extends delay", ()
       8_000,
       "RAPID_MESSAGE_THRESHOLD_MS must stay aligned with the 2026-05-15 prescreen batching window"
     )
+  })
+})
+
+// ----------------- TEST 13: enqueue failure must not leave a stale pending turn -----------------
+
+describe("paMessageCoalescer — case 13: enqueue failure consumes the current turn synchronously", () => {
+  it("does not let a later onboarding answer append to a fallback-processed stale buffer", async () => {
+    const t0 = new Date("2026-05-19T15:27:58Z")
+    let now = t0.getTime()
+    const tasks = new FakeTasks()
+    tasks.failNextEnqueue = true
+    const { deps, db } = buildDeps({ now: () => new Date(now), tasks })
+
+    const q1 = "Career growth and learning matter most."
+    const q2 = "Scale-up or early startup is best."
+
+    await assert.rejects(
+      enqueueOrCoalesce(deps, {
+        ...BASE_MSG,
+        messageHandle: "msg-q1",
+        body: q1,
+        inboundEventId: "inb_q1",
+        receivedAt: new Date(now).toISOString(),
+        isOnboarding: true,
+      }),
+      /fake_enqueue_fail/
+    )
+
+    const buffers = (db as ReturnType<typeof makeFakeDb>)._stores.get("pa-message-coalesce-buffer")!
+    const turn1 = buffers.get("u_adam__1") as DocData
+    assert.equal(turn1.status, "fired")
+    assert.equal(turn1.accumulatedBody, q1)
+
+    now += 55_000
+    const second = await enqueueOrCoalesce(deps, {
+      ...BASE_MSG,
+      messageHandle: "msg-q2",
+      body: q2,
+      inboundEventId: "inb_q2",
+      receivedAt: new Date(now).toISOString(),
+      isOnboarding: true,
+    })
+    assert.equal(second.action, "created")
+    assert.equal(second.turnSeq, 2)
+    const turn2 = buffers.get("u_adam__2") as DocData
+    assert.equal(turn2.accumulatedBody, q2)
+
+    await processCoalescedTurn(deps, "u_adam", 2)
+    const inbounds = (db as ReturnType<typeof makeFakeDb>)._stores.get("pa-inbound-events")!
+    const synth2 = inbounds.get("inb_synth_coalesced-u_adam-2") as DocData
+    assert.equal(synth2.body, q2)
   })
 })
 
