@@ -105,6 +105,8 @@ export type RegisterInput = {
    *   - "refresh" → if phone exists, reuse candidateId + overwrite layoffContext + refresh lastLaidOffAt
    */
   mode?: "auto" | "reuse" | "refresh"
+  /** Source selected by the host funnel: layoff.wekruit.com or candidate.wekruit.com. */
+  source?: WekruitSignupSource
 }
 
 type CallableAuth = {
@@ -170,6 +172,10 @@ export async function runRegisterLayoffCandidate(
     throw new HttpsError("invalid-argument", "Missing required fields")
   }
   const mode = v.mode ?? "auto"
+  const source: WekruitSignupSource = isWekruitSignupSource(v.source)
+    ? v.source
+    : WEKRUIT_LAYOFF_SOURCE
+  const isLayoff = source === WEKRUIT_LAYOFF_SOURCE
 
   const phoneCheck = normalizeAndValidatePhone(v.phone)
   if (!phoneCheck.ok) throw new HttpsError("invalid-argument", `phone_invalid:${phoneCheck.reason}`)
@@ -235,8 +241,8 @@ export async function runRegisterLayoffCandidate(
   const groupId = fromNumber ? sendblueGroupId({ number: fromNumber, status: "active" }) : "unassigned"
 
   // Single source of truth — pa-users.
-  //   reuse   → only refresh lastLaidOffAt + source tag (no field overwrite)
-  //   refresh → also overwrite layoffContext with newly submitted fields
+  //   reuse   → refresh timestamp + source tag (no field overwrite)
+  //   refresh → also overwrite source-specific context with newly submitted fields
   //   (fresh new registration) → write everything
   const userRef = deps.db.collection(PA_COLLECTIONS.users).doc(candidateId)
   const writeLayoffContext = !isReregistration || mode === "refresh"
@@ -244,23 +250,36 @@ export async function runRegisterLayoffCandidate(
   const writePayload: Record<string, unknown> = {
     id: candidateId,
     phoneE164,
-    source: WEKRUIT_LAYOFF_SOURCE,
-    lastLaidOffAt: now,
+    source,
     senderNumber: fromNumber,
     senderGroupId: groupId,
   }
-  // Default canonical flags for the layoff list (Adam directive 2026-05-18):
-  // every pa-users.source=WeKruit_Laid_Off doc should carry `isDemo` and
-  // `getHired` so the public preview endpoint can mix demo + real rows and
-  // the hire-success metric is always derivable. Only set on first registration
-  // — re-registrations preserve whatever state ops already flipped.
-  if (!isReregistration) {
-    writePayload.isDemo = false
-    writePayload.getHired = false
+  if (isLayoff) {
+    writePayload.lastLaidOffAt = now
+    // Default canonical flags for the layoff list (Adam directive 2026-05-18):
+    // every pa-users.source=WeKruit_Laid_Off doc should carry `isDemo` and
+    // `getHired` so the public preview endpoint can mix demo + real rows and
+    // the hire-success metric is always derivable. Only set on first registration
+    // — re-registrations preserve whatever state ops already flipped.
+    if (!isReregistration) {
+      writePayload.isDemo = false
+      writePayload.getHired = false
+    }
   }
-  if (writeLayoffContext) {
+  if (writeLayoffContext && isLayoff) {
     writePayload.displayName = `${v.firstName} ${v.lastName}`.trim() || v.firstName
     writePayload.layoffContext = {
+      lastCompany: v.lastCompany,
+      jobTitle: v.jobTitle,
+      location: v.location,
+      email: v.email,
+      linkedin: v.linkedin ?? null,
+      resumeFileName: v.resumeFileName ?? null,
+      consent: v.consent,
+    }
+  } else if (writeLayoffContext) {
+    writePayload.displayName = `${v.firstName} ${v.lastName}`.trim() || v.firstName
+    writePayload.candidateContext = {
       lastCompany: v.lastCompany,
       jobTitle: v.jobTitle,
       location: v.location,
@@ -277,7 +296,17 @@ export async function runRegisterLayoffCandidate(
 
   const batch = deps.db.batch()
   batch.set(userRef, writePayload, { merge: true })
-  batch.set(indexRef, { candidateId, lastLaidOffAt: now, phoneHash: indexId }, { merge: true })
+  batch.set(
+    indexRef,
+    {
+      candidateId,
+      phoneHash: indexId,
+      ...(isLayoff ? { lastLaidOffAt: now } : {}),
+      lastSeenAt: now,
+      source,
+    },
+    { merge: true },
+  )
   batch.delete(deps.db.collection("pa-ats-pending-trigger").doc(phoneE164))
 
   // List-position counter (for the success screen)
@@ -287,7 +316,9 @@ export async function runRegisterLayoffCandidate(
   if (!isReregistration) batch.set(counterRef, { candidateCount: listPosition }, { merge: true })
 
   await batch.commit()
-  await supersedeActivePrescreensForLayoff(deps.db, { candidateId, nowIso: isoNow })
+  if (isLayoff) {
+    await supersedeActivePrescreensForLayoff(deps.db, { candidateId, nowIso: isoNow })
+  }
   await linkCandidateHandle(deps.db, {
     candidateId,
     kind: "phone",

@@ -49,7 +49,6 @@ export default function Onboarding() {
   const [stage, setStage] = useState<Stage>("intake")
   const [pendingForm, setPendingForm] = useState<Profile | null>(null)
   const [dupExisting, setDupExisting] = useState<DupExisting | null>(null)
-  const [dupCandidateId, setDupCandidateId] = useState<string | null>(null)
   const [busyText, setBusyText] = useState<string | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
 
@@ -74,7 +73,6 @@ export default function Onboarding() {
 
       if ("duplicate" in res && res.duplicate) {
         setDupExisting(res.existing)
-        setDupCandidateId(res.candidateId)
         setPendingForm(formData)
         setBusyText(null)
         setStage("dup-prompt")
@@ -96,27 +94,8 @@ export default function Onboarding() {
   const onFormDone = (formData: Profile) => submitRegistration(formData, "auto")
 
   async function onReuseExisting() {
-    if (!dupCandidateId) return
-    setSubmitError(null)
-    setBusyText("Updating your resume on the existing profile…")
-    try {
-      if (pendingForm) {
-        await uploadResumeForCandidate(dupCandidateId, pendingForm, sourceToUploadTag(source) + "_reuse")
-      }
-      setBusyText("Starting Claire's SMS chat…")
-      await initiateSmsPrescreen(dupCandidateId)
-      setProfile((p) => ({
-        ...p,
-        ...(pendingForm ? withoutResumeFile(pendingForm) : {}),
-        candidateId: dupCandidateId,
-        isReregistration: true,
-      }))
-      setStage("done")
-    } catch (err) {
-      setSubmitError(messageFromError(err))
-    } finally {
-      setBusyText(null)
-    }
+    if (!pendingForm) return
+    await submitRegistration(pendingForm, "reuse")
   }
 
   async function onStartFresh() {
