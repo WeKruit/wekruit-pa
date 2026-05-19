@@ -16,7 +16,8 @@
       "current-info",
       "remember-fact",
       "wekruit-matching",
-      "save-job-profile"
+      "save-job-profile",
+      "find-match"
     ],
     "toolBudgetPerTurn": 3,
     "fewShotMessages": [

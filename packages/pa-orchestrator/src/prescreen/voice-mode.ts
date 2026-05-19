@@ -23,6 +23,12 @@
  */
 
 import type { Lang } from "../onboarding/question.js"
+export {
+  getVoiceProfile,
+  resolveProfileForUser,
+  injectVoiceProfilePrefix,
+  voiceModeToProfileId,
+} from "../voice/voice-profiles/index.js"
 
 export type VoiceMode = "casual_onboarding" | "professional_prescreen"
 

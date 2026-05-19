@@ -137,6 +137,15 @@ import {
   type SharedOnboardingQuestionId,
   type SharedOnboardingPromptContext,
 } from "./shared-onboarding.js"
+import { applyTemplateOutboundHumanize } from "./outbound-template-humanize.js"
+import {
+  composeSharedOnboardingReply,
+  deliverSharedOnboardingJobRecs,
+  type SharedOnboardingOutboundStore,
+} from "./shared-onboarding-outbound.js"
+import { buildMatchConnectorHooks } from "./match-connector-hooks.js"
+import { handleCollabInviteReply, runCollabMatchInviteAfterResumeIngest } from "./collab-match-invite.js"
+import type { MatchConnectorHooks } from "@pa/pa-connectors"
 // Single onboarding runtime entry. It owns the Q-as-class pipeline and resume
 // discussion flow; legacy flag-gated fallbacks are intentionally not wired.
 import { runDeterministicOnboardingTurn } from "./onboarding-deterministic.js"
@@ -300,6 +309,14 @@ import { defaultNlJudge } from "./eval-nl-judge.js"
 // Re-export Phase 22 proactive modules for consumers (e.g. apps/functions)
 export { detectProactiveCancellation, CANCELLATION_PATTERNS } from "./cancellation-nlu.js"
 export { runProactiveTurn, type ProactiveTurnStore, type ProactiveTurnResult } from "./proactive-turn.js"
+export {
+  runCollabMatchInviteAfterResumeIngest,
+  handleCollabInviteReply,
+  COLLAB_INVITE_MIN_SCORE,
+  type CollabMatchInviteDeps,
+  type CollabInvitePending,
+} from "./collab-match-invite.js"
+export { detectCollabInviteReplyIntent, buildCollabInviteIntent } from "./collab-invite-surface.js"
 export { normalizeForIMessage } from "./output-normalizer.js"
 // Phase 30 T2 — re-export downstream connector helpers for admin CF wiring.
 export {
@@ -673,8 +690,30 @@ export type OrchestratorStore = {
   generateJobRecs?(
     userId: string,
     lang: "zh" | "en",
-    opts?: { force?: boolean; requestedCount?: number; roleFocus?: string[] }
-  ): Promise<{ message: string; recCount: number } | null>
+    opts?: {
+      force?: boolean
+      requestedCount?: number
+      roleFocus?: string[]
+      collabPrescreenOnly?: boolean
+    }
+  ): Promise<{
+    message: string
+    recCount: number
+    topJob?: { jobId: string; title: string; company: string; score: number }
+  } | null>
+
+  /** Collab funnel — start prescreen after candidate accepts invite. */
+  startPrescreenForJob?: (input: {
+    userId: string
+    jobId: string
+    toE164: string
+  }) => Promise<{ ok: boolean; reason?: string }>
+
+  sendReaction?: (input: {
+    to: string
+    messageHandle: string
+    reaction: "love" | "like" | "dislike" | "laugh" | "emphasize" | "question"
+  }) => Promise<void>
 
   /**
    * iter34 P0.2 — generic LLM-fallback intent extractor for the
@@ -1204,8 +1243,42 @@ function priorOnboardingAskedStep(
 }
 
 
+async function requireAgentForUser(store: OrchestratorStore, userId: string): Promise<AgentDef> {
+  const agent = await store.getAgentForUser(userId)
+  if (!agent) throw Object.assign(new Error("No agent configured"), { code: "NO_AGENT" })
+  return agent
+}
+
+function sendblueMessageHandleFromEventId(eventId: string): string | undefined {
+  const prefix = "sendblue-"
+  return eventId.startsWith(prefix) ? eventId.slice(prefix.length) : undefined
+}
+
+function sharedOnboardingOutboundSlice(store: OrchestratorStore): SharedOnboardingOutboundStore {
+  return {
+    db: store.db,
+    log: (name, payload) => store.log(name, payload ?? {}),
+    runAgentTurn: store.runAgentTurn as unknown as SharedOnboardingOutboundStore["runAgentTurn"],
+    createSession: (input) => store.createSession(input),
+    generateJobRecs: store.generateJobRecs,
+    enqueueOutbound: (userId, toE164, body, input) =>
+      store.enqueueOutbound(userId, toE164, body, input),
+    sendReaction: store.sendReaction
+      ? async ({ toE164, messageHandle, reaction }) =>
+          store.sendReaction!({ to: toE164, messageHandle, reaction })
+      : undefined,
+    buildTurnTools: (agent, turn) => store.buildTurnTools(agent, turn),
+  }
+}
+
 async function sendMemoryReply(store: OrchestratorStore, event: InboundEvent, turnId: string, body: string) {
-  const { text: safe } = normalizeForIMessage(body, { maxLength: 600 })
+  const { text: safe } = await applyTemplateOutboundHumanize({
+    body,
+    userId: event.userId,
+    turnId,
+    db: store.db,
+    maxLength: 600,
+  })
   const at = store.nowIso()
   await store.appendMessage({
     id: `out-${event.id}`,
@@ -1549,15 +1622,28 @@ async function handleSharedOnboardingRuntimeEvent(
   if (!isSharedOnboardingRuntimeEvent(event.rawMeta)) return false
   const questionId = parseSharedQuestionId(runtimeContext(event.rawMeta).questionId)
   const promptContext = sharedPromptContextFrom(onboardingUser, event.rawMeta)
-  const question = getSharedOnboardingQuestion(questionId)
-  await sendMemoryReply(store, event, turnId, buildSharedOnboardingPrompt(questionId, promptContext))
+  const agent = await requireAgentForUser(store, event.userId)
+  const reply = await composeSharedOnboardingReply({
+    store: sharedOnboardingOutboundSlice(store),
+    userId: event.userId,
+    sessionId: event.sessionId,
+    turnId,
+    slot: questionId,
+    mode: "ask",
+    promptContext,
+    userMessage: event.body,
+    agent,
+    inboundMessageHandle: sendblueMessageHandleFromEventId(event.id),
+    toE164: event.from,
+  })
+  await sendMemoryReply(store, event, turnId, reply)
   await store.updateTurn(turnId, {
     status: "succeeded",
     stage: "succeeded",
     completedAt: store.nowIso(),
     directIntent: "shared_onboarding",
     directIntentResult: "asked_question",
-    sharedOnboardingQuestionId: question.id,
+    sharedOnboardingQuestionId: questionId,
   })
   await store.markEventSucceeded(event.id)
   return true
@@ -1648,12 +1734,23 @@ async function handleSharedOnboardingUserReply(
     const now = store.nowIso()
     if (!duplicateGreeting) {
       const promptContext = sharedPromptContextFrom(onboardingUser)
-      await sendMemoryReply(
-        store,
-        event,
+      const agent = await requireAgentForUser(store, event.userId)
+      const reply = await composeSharedOnboardingReply({
+        store: sharedOnboardingOutboundSlice(store),
+        userId: event.userId,
+        sessionId: event.sessionId,
         turnId,
-        buildSharedOnboardingReask(questionId, promptContext, answerJudge),
-      )
+        slot: questionId,
+        mode: "reask",
+        promptContext,
+        userMessage: event.body,
+        agent,
+        reaskReason: answerJudge.reason,
+        reaskClarifyingQuestion: answerJudge.clarifyingQuestion,
+        inboundMessageHandle: sendblueMessageHandleFromEventId(event.id),
+        toE164: event.from,
+      })
+      await sendMemoryReply(store, event, turnId, reply)
     }
     await store.updateTurn(turnId, {
       status: "succeeded",
@@ -1672,9 +1769,22 @@ async function handleSharedOnboardingUserReply(
   await writeSharedOnboardingAnswer(store, event, questionId, projection, next)
 
   if (!next.completed && next.nextQuestionId) {
-    const question = getSharedOnboardingQuestion(next.nextQuestionId)
     const promptContext = sharedPromptContextFrom(onboardingUser)
-    await sendMemoryReply(store, event, turnId, buildSharedOnboardingPrompt(question.id, promptContext))
+    const agent = await requireAgentForUser(store, event.userId)
+    const reply = await composeSharedOnboardingReply({
+      store: sharedOnboardingOutboundSlice(store),
+      userId: event.userId,
+      sessionId: event.sessionId,
+      turnId,
+      slot: next.nextQuestionId,
+      mode: "ask",
+      promptContext,
+      userMessage: event.body,
+      agent,
+      inboundMessageHandle: sendblueMessageHandleFromEventId(event.id),
+      toE164: event.from,
+    })
+    await sendMemoryReply(store, event, turnId, reply)
     await store.updateTurn(turnId, {
       status: "succeeded",
       stage: "succeeded",
@@ -1688,23 +1798,33 @@ async function handleSharedOnboardingUserReply(
     return true
   }
 
-  const recs = store.generateJobRecs
-    ? await store.generateJobRecs(event.userId, "en", { force: true, requestedCount: 2 })
-    : null
-  const reply =
-    recs && recs.recCount > 0
-      ? recs.message
-      : "Got it. I saved that context and will send two concrete roles once I pull a fresh batch."
-  await sendMemoryReply(store, event, turnId, reply)
+  const agent = await requireAgentForUser(store, event.userId)
+  const db = store.db
+  const delivered =
+    db != null
+      ? await deliverSharedOnboardingJobRecs({
+          store: sharedOnboardingOutboundSlice(store),
+          db,
+          event,
+          turnId,
+          agent,
+          userMessage: event.body,
+        })
+      : {
+          recCount: 0,
+          reply:
+            "Got it. I saved that context and will send two concrete roles once I pull a fresh batch.",
+        }
+  await sendMemoryReply(store, event, turnId, delivered.reply)
   await store.updateTurn(turnId, {
     status: "succeeded",
     stage: "succeeded",
     completedAt: store.nowIso(),
     directIntent: "shared_onboarding",
-    directIntentResult: recs && recs.recCount > 0 ? "sent_recs" : "saved_without_recs",
+    directIntentResult: delivered.recCount > 0 ? "sent_recs" : "saved_without_recs",
     sharedOnboardingAnsweredQuestionId: questionId,
     sharedOnboardingCompleted: true,
-    directIntentRecCount: recs?.recCount ?? 0,
+    directIntentRecCount: delivered.recCount,
   })
   await store.markEventSucceeded(event.id)
   return true
@@ -1811,12 +1931,21 @@ async function handleSharedOnboardingBootstrap(
     }
   }
 
-  await sendMemoryReply(
-    store,
-    event,
+  const agent = await requireAgentForUser(store, event.userId)
+  const bootstrapReply = await composeSharedOnboardingReply({
+    store: sharedOnboardingOutboundSlice(store),
+    userId: event.userId,
+    sessionId: event.sessionId,
     turnId,
-    buildSharedOnboardingPrompt(q1, promptContext),
-  )
+    slot: q1,
+    mode: "ask",
+    promptContext,
+    userMessage: event.body,
+    agent,
+    inboundMessageHandle: sendblueMessageHandleFromEventId(event.id),
+    toE164: event.from,
+  })
+  await sendMemoryReply(store, event, turnId, bootstrapReply)
   await store.updateTurn(turnId, {
     status: "succeeded",
     stage: "succeeded",
@@ -2071,7 +2200,8 @@ async function handleMemoryCommand(
 export function buildTurnTools(
   db: Firestore,
   agent: AgentDef,
-  turn: { turnId: string; userId: string; sessionId: string }
+  turn: { turnId: string; userId: string; sessionId: string },
+  hooks?: MatchConnectorHooks
 ): AgentTurnTool[] {
   if (agent.toolPolicy === "none") return []
   const allowed = agent.allowedConnectors ?? []
@@ -2110,6 +2240,7 @@ export function buildTurnTools(
             userId: turn.userId,
             sessionId: turn.sessionId,
             usedThisTurn: snapshot,
+            hooks,
           })
           return JSON.stringify(result).slice(0, 1024)
         } catch (e) {
@@ -2338,6 +2469,10 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     if (privacyIntent && await handlePrivacyIntent(event, store, turnId, privacyIntent)) {
       await store.updateTurn(turnId, { status: "succeeded", stage: "succeeded", completedAt: store.nowIso() })
       await store.markEventSucceeded(event.id)
+      return
+    }
+
+    if (userAuthoredEvent && (await handleCollabInviteReply(event, store, turnId))) {
       return
     }
 
@@ -3800,6 +3935,8 @@ export type OrchestratorStoreDeps = {
    * at q_resume_asked even after parsedCandidateResumes existed.
    */
   getUserCvParsed?: NonNullable<OrchestratorStore["getUserCvParsed"]>
+  startPrescreenForJob?: NonNullable<OrchestratorStore["startPrescreenForJob"]>
+  sendReaction?: NonNullable<OrchestratorStore["sendReaction"]>
 }
 
 export function createFirestoreOrchestratorStore(
@@ -3980,7 +4117,10 @@ export function createFirestoreOrchestratorStore(
       return defaultLoadPersonalizationContext(db, input, history)
     },
     async buildTurnTools(agent, turn) {
-      return buildTurnTools(db, agent, turn)
+      const hooks = deps.generateJobRecs
+        ? buildMatchConnectorHooks({ db, generateJobRecs: deps.generateJobRecs })
+        : undefined
+      return buildTurnTools(db, agent, turn, hooks)
     },
     async recordHostedToolCalls({ turnId, userId, sessionId, calls }) {
       // One synthetic pa_tool_calls row per hosted invocation, mirroring
@@ -4468,6 +4608,10 @@ export function createFirestoreOrchestratorStore(
     ...(deps.generateJobRecs
       ? { generateJobRecs: deps.generateJobRecs }
       : {}),
+    ...(deps.startPrescreenForJob
+      ? { startPrescreenForJob: deps.startPrescreenForJob }
+      : {}),
+    ...(deps.sendReaction ? { sendReaction: deps.sendReaction } : {}),
     // iter34 P0.2 — generic LLM-fallback for q_role / q_yoe / q_visa /
     // q_startup_pref / q_location. Wired from apps/functions; tests omit
     // and dispatcher falls back to deterministic re-ask.

@@ -1041,6 +1041,11 @@ export type QueryMatchingJobsV16Args = {
    * SRE, data, or support roles when the user explicitly asks for a subtype.
    */
   presentationRoleFocus?: string[]
+  /**
+   * Collab funnel: keep only jobs where pa-jobs has
+   * wekruitCollaborationStatus=collaborated and a non-empty prescreenConfig.
+   */
+  collabPrescreenOnly?: boolean
 }
 
 export type QueryMatchingJobsV16Deps = {
@@ -1211,6 +1216,39 @@ async function runV16Query(
     }
   }
   return { jobs: projected, rawCount: snap.docs.length }
+}
+
+function hasActivePrescreenConfig(data: Record<string, unknown> | undefined): boolean {
+  const cfg = data?.prescreenConfig
+  if (!cfg || typeof cfg !== "object") return false
+  const questions = (cfg as { questions?: unknown }).questions
+  return Array.isArray(questions) && questions.length > 0
+}
+
+async function loadCollabPrescreenEligibleJobIds(
+  db: Firestore,
+  jobIds: string[],
+  log: (event: string, payload?: Record<string, unknown>) => void
+): Promise<Set<string>> {
+  const eligible = new Set<string>()
+  const uniqueIds = [...new Set(jobIds.filter((id) => typeof id === "string" && id.trim().length > 0))]
+  await Promise.all(
+    uniqueIds.map(async (jobId) => {
+      try {
+        const snap = await db.collection(PA_JOBS_COLLECTION).doc(jobId).get()
+        const data = snap.exists ? (snap.data() as Record<string, unknown> | undefined) : undefined
+        if (data?.wekruitCollaborationStatus === "collaborated" && hasActivePrescreenConfig(data)) {
+          eligible.add(jobId)
+        }
+      } catch (err) {
+        log("pa.match.collab_prescreen_read_failed", {
+          jobId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    })
+  )
+  return eligible
 }
 
 async function loadMatchSourceLabels(
@@ -1385,7 +1423,7 @@ export async function queryMatchingJobsV16(
   }
 
   // 4. Soft score (Phase 70 weightOverrides + Phase B4 companyInfo/nowMs).
-  const scored = filteredJobs.map((job) => {
+  let scored = filteredJobs.map((job) => {
     const jdRel = jdRelCache.get(job.id)
     const llmScore = rerankCache.map.get(job.id)
     const companyInfo = companyInfoMap.get(normalizeCompanyName(job.companyName ?? ""))
@@ -1415,6 +1453,21 @@ export async function queryMatchingJobsV16(
     const bf = timestampToMs(b.job.firstSeenAt)
     return bf - af
   })
+
+  if (args.collabPrescreenOnly === true && scored.length > 0) {
+    const eligible = await loadCollabPrescreenEligibleJobIds(
+      deps.db,
+      scored.map((s) => s.job.id),
+      log
+    )
+    const before = scored.length
+    scored = scored.filter((s) => eligible.has(s.job.id))
+    log("pa.match.collab_prescreen_filter_applied", {
+      before,
+      after: scored.length,
+      dropped: before - scored.length,
+    })
+  }
 
   // 5. Compose reasons for top-N. Dedup by (company,role-title) so the
   // same role posted twice (corpus duplicate) doesn't fill both rec slots
