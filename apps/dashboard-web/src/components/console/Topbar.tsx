@@ -42,6 +42,7 @@ const SEG_LABELS: Record<string, string> = {
   flags: "Flags",
   handbook: "Handbook",
   "onboarding-questions": "Onboarding questions",
+  "practice-question-bank": "Practice question bank",
   playbooks: "Playbooks",
   personas: "Personas",
   weights: "Weights",

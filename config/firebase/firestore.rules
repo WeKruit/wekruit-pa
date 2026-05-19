@@ -149,6 +149,11 @@ service cloud.firestore {
     match /pa-onboarding-questions/{qId} {
       allow read, write: if isPaOperator();
     }
+    // Practice interview question bank for Claire-ready cases. Operator-only:
+    // candidates must never read source answers, rubrics, or archived rows.
+    match /pa-practice-question-bank/{questionId} {
+      allow read, write: if isPaOperator();
+    }
     match /pa-playbooks/{key} {
       allow read, write: if isPaOperator();
       match /versions/{v} {

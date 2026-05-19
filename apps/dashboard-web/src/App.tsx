@@ -16,6 +16,7 @@ import { Flags } from "./pages/Flags.js"
 import { Handbook } from "./pages/Handbook.js"
 import { Onboarding } from "./pages/Onboarding.js"
 import { OnboardingQuestions } from "./pages/OnboardingQuestions.js"
+import { PracticeQuestionBank } from "./pages/PracticeQuestionBank.js"
 import { Playbooks } from "./pages/Playbooks.js"
 import { Personas } from "./pages/Personas.js"
 import { Triggers } from "./pages/Triggers.js"
@@ -166,6 +167,7 @@ export default function App() {
             path="/admin/onboarding-questions"
             element={<OnboardingQuestions />}
           />
+          <Route path="/admin/practice-question-bank" element={<PracticeQuestionBank />} />
           <Route path="/admin/upstream-templates" element={<UpstreamTemplates />} />
           <Route path="/admin/downstream-triggers" element={<DownstreamTriggers />} />
           {/* Phase 32 Wave 2c — /voice split into /eval/voice-review +

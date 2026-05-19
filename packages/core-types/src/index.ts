@@ -836,3 +836,20 @@ export {
   isPaUserSource,
   type PaUserSource,
 } from "./sources.js"
+
+export {
+  PracticeConversationModeSchema,
+  PracticeEvaluationSchema,
+  PracticeQuestionBankItemSchema,
+  PracticeQuestionDifficultySchema,
+  PracticeQuestionKindSchema,
+  PracticeQuestionStatusSchema,
+  PracticeRubricItemSchema,
+  type PracticeConversationMode,
+  type PracticeEvaluation,
+  type PracticeQuestionBankItem,
+  type PracticeQuestionDifficulty,
+  type PracticeQuestionKind,
+  type PracticeQuestionStatus,
+  type PracticeRubricItem,
+} from "./practice-question-bank.js"
