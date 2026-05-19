@@ -1,0 +1,843 @@
+{
+  "runId": "prescreen-batch-2026-05-19T07-56-44-140Z",
+  "projectId": "wekruit-5f89b",
+  "count": 20,
+  "userId": "UThMpnAGzjaWnxDsKEMH",
+  "phone": "+14243201960",
+  "jobId": "rain-software-engineer-fullstack-8849f6ef",
+  "exactTrigger": "WeKruit_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_Job",
+  "passed": true,
+  "results": [
+    {
+      "i": 1,
+      "status": 200,
+      "action": "prescreen_triggered",
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075645126Z",
+      "ok": true
+    },
+    {
+      "i": 2,
+      "status": 200,
+      "action": "prescreen_triggered",
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075646871Z",
+      "ok": true
+    },
+    {
+      "i": 3,
+      "status": 200,
+      "action": "prescreen_triggered",
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075648614Z",
+      "ok": true
+    },
+    {
+      "i": 4,
+      "status": 200,
+      "action": "prescreen_triggered",
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075650591Z",
+      "ok": true
+    },
+    {
+      "i": 5,
+      "status": 200,
+      "action": "prescreen_triggered",
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075652171Z",
+      "ok": true
+    },
+    {
+      "i": 6,
+      "status": 200,
+      "action": "prescreen_triggered",
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075653324Z",
+      "ok": true
+    },
+    {
+      "i": 7,
+      "status": 200,
+      "action": "prescreen_triggered",
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075654307Z",
+      "ok": true
+    },
+    {
+      "i": 8,
+      "status": 200,
+      "action": "prescreen_triggered",
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075655541Z",
+      "ok": true
+    },
+    {
+      "i": 9,
+      "status": 200,
+      "action": "prescreen_triggered",
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075656519Z",
+      "ok": true
+    },
+    {
+      "i": 10,
+      "status": 200,
+      "action": "prescreen_triggered",
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075657488Z",
+      "ok": true
+    },
+    {
+      "i": 11,
+      "status": 200,
+      "action": "prescreen_triggered",
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075658454Z",
+      "ok": true
+    },
+    {
+      "i": 12,
+      "status": 200,
+      "action": "prescreen_triggered",
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075659520Z",
+      "ok": true
+    },
+    {
+      "i": 13,
+      "status": 200,
+      "action": "prescreen_triggered",
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075700472Z",
+      "ok": true
+    },
+    {
+      "i": 14,
+      "status": 200,
+      "action": "prescreen_triggered",
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075701428Z",
+      "ok": true
+    },
+    {
+      "i": 15,
+      "status": 200,
+      "action": "prescreen_triggered",
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075702382Z",
+      "ok": true
+    },
+    {
+      "i": 16,
+      "status": 200,
+      "action": "prescreen_triggered",
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075703848Z",
+      "ok": true
+    },
+    {
+      "i": 17,
+      "status": 200,
+      "action": "prescreen_triggered",
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075704800Z",
+      "ok": true
+    },
+    {
+      "i": 18,
+      "status": 200,
+      "action": "prescreen_triggered",
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075705798Z",
+      "ok": true
+    },
+    {
+      "i": 19,
+      "status": 200,
+      "action": "prescreen_triggered",
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075706868Z",
+      "ok": true
+    },
+    {
+      "i": 20,
+      "status": 200,
+      "action": "prescreen_triggered",
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075707819Z",
+      "ok": true
+    }
+  ],
+  "starts": [
+    {
+      "i": 1,
+      "jobId": "rain-software-engineer-fullstack-8849f6ef",
+      "userId": "UThMpnAGzjaWnxDsKEMH",
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075645126Z",
+      "ok": true,
+      "reason": "started"
+    },
+    {
+      "i": 2,
+      "jobId": "rain-software-engineer-fullstack-8849f6ef",
+      "userId": "UThMpnAGzjaWnxDsKEMH",
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075646871Z",
+      "ok": true,
+      "reason": "started"
+    },
+    {
+      "i": 3,
+      "jobId": "rain-software-engineer-fullstack-8849f6ef",
+      "userId": "UThMpnAGzjaWnxDsKEMH",
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075648614Z",
+      "ok": true,
+      "reason": "started"
+    },
+    {
+      "i": 4,
+      "jobId": "rain-software-engineer-fullstack-8849f6ef",
+      "userId": "UThMpnAGzjaWnxDsKEMH",
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075650591Z",
+      "ok": true,
+      "reason": "started"
+    },
+    {
+      "i": 5,
+      "jobId": "rain-software-engineer-fullstack-8849f6ef",
+      "userId": "UThMpnAGzjaWnxDsKEMH",
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075652171Z",
+      "ok": true,
+      "reason": "started"
+    },
+    {
+      "i": 6,
+      "jobId": "rain-software-engineer-fullstack-8849f6ef",
+      "userId": "UThMpnAGzjaWnxDsKEMH",
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075653324Z",
+      "ok": true,
+      "reason": "started"
+    },
+    {
+      "i": 7,
+      "jobId": "rain-software-engineer-fullstack-8849f6ef",
+      "userId": "UThMpnAGzjaWnxDsKEMH",
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075654307Z",
+      "ok": true,
+      "reason": "started"
+    },
+    {
+      "i": 8,
+      "jobId": "rain-software-engineer-fullstack-8849f6ef",
+      "userId": "UThMpnAGzjaWnxDsKEMH",
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075655541Z",
+      "ok": true,
+      "reason": "started"
+    },
+    {
+      "i": 9,
+      "jobId": "rain-software-engineer-fullstack-8849f6ef",
+      "userId": "UThMpnAGzjaWnxDsKEMH",
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075656519Z",
+      "ok": true,
+      "reason": "started"
+    },
+    {
+      "i": 10,
+      "jobId": "rain-software-engineer-fullstack-8849f6ef",
+      "userId": "UThMpnAGzjaWnxDsKEMH",
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075657488Z",
+      "ok": true,
+      "reason": "started"
+    },
+    {
+      "i": 11,
+      "jobId": "rain-software-engineer-fullstack-8849f6ef",
+      "userId": "UThMpnAGzjaWnxDsKEMH",
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075658454Z",
+      "ok": true,
+      "reason": "started"
+    },
+    {
+      "i": 12,
+      "jobId": "rain-software-engineer-fullstack-8849f6ef",
+      "userId": "UThMpnAGzjaWnxDsKEMH",
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075659520Z",
+      "ok": true,
+      "reason": "started"
+    },
+    {
+      "i": 13,
+      "jobId": "rain-software-engineer-fullstack-8849f6ef",
+      "userId": "UThMpnAGzjaWnxDsKEMH",
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075700472Z",
+      "ok": true,
+      "reason": "started"
+    },
+    {
+      "i": 14,
+      "jobId": "rain-software-engineer-fullstack-8849f6ef",
+      "userId": "UThMpnAGzjaWnxDsKEMH",
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075701428Z",
+      "ok": true,
+      "reason": "started"
+    },
+    {
+      "i": 15,
+      "jobId": "rain-software-engineer-fullstack-8849f6ef",
+      "userId": "UThMpnAGzjaWnxDsKEMH",
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075702382Z",
+      "ok": true,
+      "reason": "started"
+    },
+    {
+      "i": 16,
+      "jobId": "rain-software-engineer-fullstack-8849f6ef",
+      "userId": "UThMpnAGzjaWnxDsKEMH",
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075703848Z",
+      "ok": true,
+      "reason": "started"
+    },
+    {
+      "i": 17,
+      "jobId": "rain-software-engineer-fullstack-8849f6ef",
+      "userId": "UThMpnAGzjaWnxDsKEMH",
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075704800Z",
+      "ok": true,
+      "reason": "started"
+    },
+    {
+      "i": 18,
+      "jobId": "rain-software-engineer-fullstack-8849f6ef",
+      "userId": "UThMpnAGzjaWnxDsKEMH",
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075705798Z",
+      "ok": true,
+      "reason": "started"
+    },
+    {
+      "i": 19,
+      "jobId": "rain-software-engineer-fullstack-8849f6ef",
+      "userId": "UThMpnAGzjaWnxDsKEMH",
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075706868Z",
+      "ok": true,
+      "reason": "started"
+    },
+    {
+      "i": 20,
+      "jobId": "rain-software-engineer-fullstack-8849f6ef",
+      "userId": "UThMpnAGzjaWnxDsKEMH",
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075707819Z",
+      "ok": true,
+      "reason": "started"
+    }
+  ],
+  "sentCount": 20,
+  "firstSent": {
+    "i": 1,
+    "to": "+14243201960",
+    "content": "Hi — Claire from Rain. Quick screen for Software Engineer - Fullstack. What recent work best matches this software engineering role?"
+  },
+  "cleanup": [
+    {
+      "pass": 1,
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075645126Z",
+      "before": {
+        "terminal": "PAUSE",
+        "currentQId": null
+      },
+      "after": {
+        "terminal": "PAUSE",
+        "currentQId": null,
+        "terminalReason": "prescreen_start_batch_cleanup"
+      }
+    },
+    {
+      "pass": 1,
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075646871Z",
+      "before": {
+        "terminal": "PAUSE",
+        "currentQId": null
+      },
+      "after": {
+        "terminal": "PAUSE",
+        "currentQId": null,
+        "terminalReason": "prescreen_start_batch_cleanup"
+      }
+    },
+    {
+      "pass": 1,
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075648614Z",
+      "before": {
+        "terminal": "PAUSE",
+        "currentQId": null
+      },
+      "after": {
+        "terminal": "PAUSE",
+        "currentQId": null,
+        "terminalReason": "prescreen_start_batch_cleanup"
+      }
+    },
+    {
+      "pass": 1,
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075650591Z",
+      "before": {
+        "terminal": "PAUSE",
+        "currentQId": null
+      },
+      "after": {
+        "terminal": "PAUSE",
+        "currentQId": null,
+        "terminalReason": "prescreen_start_batch_cleanup"
+      }
+    },
+    {
+      "pass": 1,
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075652171Z",
+      "before": {
+        "terminal": "PAUSE",
+        "currentQId": null
+      },
+      "after": {
+        "terminal": "PAUSE",
+        "currentQId": null,
+        "terminalReason": "prescreen_start_batch_cleanup"
+      }
+    },
+    {
+      "pass": 1,
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075653324Z",
+      "before": {
+        "terminal": "PAUSE",
+        "currentQId": null
+      },
+      "after": {
+        "terminal": "PAUSE",
+        "currentQId": null,
+        "terminalReason": "prescreen_start_batch_cleanup"
+      }
+    },
+    {
+      "pass": 1,
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075654307Z",
+      "before": {
+        "terminal": "PAUSE",
+        "currentQId": null
+      },
+      "after": {
+        "terminal": "PAUSE",
+        "currentQId": null,
+        "terminalReason": "prescreen_start_batch_cleanup"
+      }
+    },
+    {
+      "pass": 1,
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075655541Z",
+      "before": {
+        "terminal": "PAUSE",
+        "currentQId": null
+      },
+      "after": {
+        "terminal": "PAUSE",
+        "currentQId": null,
+        "terminalReason": "prescreen_start_batch_cleanup"
+      }
+    },
+    {
+      "pass": 1,
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075656519Z",
+      "before": {
+        "terminal": "PAUSE",
+        "currentQId": null
+      },
+      "after": {
+        "terminal": "PAUSE",
+        "currentQId": null,
+        "terminalReason": "prescreen_start_batch_cleanup"
+      }
+    },
+    {
+      "pass": 1,
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075657488Z",
+      "before": {
+        "terminal": "PAUSE",
+        "currentQId": null
+      },
+      "after": {
+        "terminal": "PAUSE",
+        "currentQId": null,
+        "terminalReason": "prescreen_start_batch_cleanup"
+      }
+    },
+    {
+      "pass": 1,
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075658454Z",
+      "before": {
+        "terminal": "PAUSE",
+        "currentQId": null
+      },
+      "after": {
+        "terminal": "PAUSE",
+        "currentQId": null,
+        "terminalReason": "prescreen_start_batch_cleanup"
+      }
+    },
+    {
+      "pass": 1,
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075659520Z",
+      "before": {
+        "terminal": "PAUSE",
+        "currentQId": null
+      },
+      "after": {
+        "terminal": "PAUSE",
+        "currentQId": null,
+        "terminalReason": "prescreen_start_batch_cleanup"
+      }
+    },
+    {
+      "pass": 1,
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075700472Z",
+      "before": {
+        "terminal": "PAUSE",
+        "currentQId": null
+      },
+      "after": {
+        "terminal": "PAUSE",
+        "currentQId": null,
+        "terminalReason": "prescreen_start_batch_cleanup"
+      }
+    },
+    {
+      "pass": 1,
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075701428Z",
+      "before": {
+        "terminal": "PAUSE",
+        "currentQId": null
+      },
+      "after": {
+        "terminal": "PAUSE",
+        "currentQId": null,
+        "terminalReason": "prescreen_start_batch_cleanup"
+      }
+    },
+    {
+      "pass": 1,
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075702382Z",
+      "before": {
+        "terminal": "PAUSE",
+        "currentQId": null
+      },
+      "after": {
+        "terminal": "PAUSE",
+        "currentQId": null,
+        "terminalReason": "prescreen_start_batch_cleanup"
+      }
+    },
+    {
+      "pass": 1,
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075703848Z",
+      "before": {
+        "terminal": "PAUSE",
+        "currentQId": null
+      },
+      "after": {
+        "terminal": "PAUSE",
+        "currentQId": null,
+        "terminalReason": "prescreen_start_batch_cleanup"
+      }
+    },
+    {
+      "pass": 1,
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075704800Z",
+      "before": {
+        "terminal": "PAUSE",
+        "currentQId": null
+      },
+      "after": {
+        "terminal": "PAUSE",
+        "currentQId": null,
+        "terminalReason": "prescreen_start_batch_cleanup"
+      }
+    },
+    {
+      "pass": 1,
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075705798Z",
+      "before": {
+        "terminal": "PAUSE",
+        "currentQId": null
+      },
+      "after": {
+        "terminal": "PAUSE",
+        "currentQId": null,
+        "terminalReason": "prescreen_start_batch_cleanup"
+      }
+    },
+    {
+      "pass": 1,
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075706868Z",
+      "before": {
+        "terminal": "PAUSE",
+        "currentQId": null
+      },
+      "after": {
+        "terminal": "PAUSE",
+        "currentQId": null,
+        "terminalReason": "prescreen_start_batch_cleanup"
+      }
+    },
+    {
+      "pass": 1,
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075707819Z",
+      "before": {
+        "terminal": null,
+        "currentQId": "role_fit"
+      },
+      "after": {
+        "terminal": "PAUSE",
+        "currentQId": null,
+        "terminalReason": "prescreen_start_batch_cleanup"
+      }
+    },
+    {
+      "pass": 2,
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075645126Z",
+      "before": {
+        "terminal": "PAUSE",
+        "currentQId": null
+      },
+      "after": {
+        "terminal": "PAUSE",
+        "currentQId": null,
+        "terminalReason": "prescreen_start_batch_cleanup"
+      }
+    },
+    {
+      "pass": 2,
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075646871Z",
+      "before": {
+        "terminal": "PAUSE",
+        "currentQId": null
+      },
+      "after": {
+        "terminal": "PAUSE",
+        "currentQId": null,
+        "terminalReason": "prescreen_start_batch_cleanup"
+      }
+    },
+    {
+      "pass": 2,
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075648614Z",
+      "before": {
+        "terminal": "PAUSE",
+        "currentQId": null
+      },
+      "after": {
+        "terminal": "PAUSE",
+        "currentQId": null,
+        "terminalReason": "prescreen_start_batch_cleanup"
+      }
+    },
+    {
+      "pass": 2,
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075650591Z",
+      "before": {
+        "terminal": "PAUSE",
+        "currentQId": null
+      },
+      "after": {
+        "terminal": "PAUSE",
+        "currentQId": null,
+        "terminalReason": "prescreen_start_batch_cleanup"
+      }
+    },
+    {
+      "pass": 2,
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075652171Z",
+      "before": {
+        "terminal": "PAUSE",
+        "currentQId": null
+      },
+      "after": {
+        "terminal": "PAUSE",
+        "currentQId": null,
+        "terminalReason": "prescreen_start_batch_cleanup"
+      }
+    },
+    {
+      "pass": 2,
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075653324Z",
+      "before": {
+        "terminal": "PAUSE",
+        "currentQId": null
+      },
+      "after": {
+        "terminal": "PAUSE",
+        "currentQId": null,
+        "terminalReason": "prescreen_start_batch_cleanup"
+      }
+    },
+    {
+      "pass": 2,
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075654307Z",
+      "before": {
+        "terminal": "PAUSE",
+        "currentQId": null
+      },
+      "after": {
+        "terminal": "PAUSE",
+        "currentQId": null,
+        "terminalReason": "prescreen_start_batch_cleanup"
+      }
+    },
+    {
+      "pass": 2,
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075655541Z",
+      "before": {
+        "terminal": "PAUSE",
+        "currentQId": null
+      },
+      "after": {
+        "terminal": "PAUSE",
+        "currentQId": null,
+        "terminalReason": "prescreen_start_batch_cleanup"
+      }
+    },
+    {
+      "pass": 2,
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075656519Z",
+      "before": {
+        "terminal": "PAUSE",
+        "currentQId": null
+      },
+      "after": {
+        "terminal": "PAUSE",
+        "currentQId": null,
+        "terminalReason": "prescreen_start_batch_cleanup"
+      }
+    },
+    {
+      "pass": 2,
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075657488Z",
+      "before": {
+        "terminal": "PAUSE",
+        "currentQId": null
+      },
+      "after": {
+        "terminal": "PAUSE",
+        "currentQId": null,
+        "terminalReason": "prescreen_start_batch_cleanup"
+      }
+    },
+    {
+      "pass": 2,
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075658454Z",
+      "before": {
+        "terminal": "PAUSE",
+        "currentQId": null
+      },
+      "after": {
+        "terminal": "PAUSE",
+        "currentQId": null,
+        "terminalReason": "prescreen_start_batch_cleanup"
+      }
+    },
+    {
+      "pass": 2,
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075659520Z",
+      "before": {
+        "terminal": "PAUSE",
+        "currentQId": null
+      },
+      "after": {
+        "terminal": "PAUSE",
+        "currentQId": null,
+        "terminalReason": "prescreen_start_batch_cleanup"
+      }
+    },
+    {
+      "pass": 2,
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075700472Z",
+      "before": {
+        "terminal": "PAUSE",
+        "currentQId": null
+      },
+      "after": {
+        "terminal": "PAUSE",
+        "currentQId": null,
+        "terminalReason": "prescreen_start_batch_cleanup"
+      }
+    },
+    {
+      "pass": 2,
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075701428Z",
+      "before": {
+        "terminal": "PAUSE",
+        "currentQId": null
+      },
+      "after": {
+        "terminal": "PAUSE",
+        "currentQId": null,
+        "terminalReason": "prescreen_start_batch_cleanup"
+      }
+    },
+    {
+      "pass": 2,
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075702382Z",
+      "before": {
+        "terminal": "PAUSE",
+        "currentQId": null
+      },
+      "after": {
+        "terminal": "PAUSE",
+        "currentQId": null,
+        "terminalReason": "prescreen_start_batch_cleanup"
+      }
+    },
+    {
+      "pass": 2,
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075703848Z",
+      "before": {
+        "terminal": "PAUSE",
+        "currentQId": null
+      },
+      "after": {
+        "terminal": "PAUSE",
+        "currentQId": null,
+        "terminalReason": "prescreen_start_batch_cleanup"
+      }
+    },
+    {
+      "pass": 2,
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075704800Z",
+      "before": {
+        "terminal": "PAUSE",
+        "currentQId": null
+      },
+      "after": {
+        "terminal": "PAUSE",
+        "currentQId": null,
+        "terminalReason": "prescreen_start_batch_cleanup"
+      }
+    },
+    {
+      "pass": 2,
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075705798Z",
+      "before": {
+        "terminal": "PAUSE",
+        "currentQId": null
+      },
+      "after": {
+        "terminal": "PAUSE",
+        "currentQId": null,
+        "terminalReason": "prescreen_start_batch_cleanup"
+      }
+    },
+    {
+      "pass": 2,
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075706868Z",
+      "before": {
+        "terminal": "PAUSE",
+        "currentQId": null
+      },
+      "after": {
+        "terminal": "PAUSE",
+        "currentQId": null,
+        "terminalReason": "prescreen_start_batch_cleanup"
+      }
+    },
+    {
+      "pass": 2,
+      "sessionId": "ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075707819Z",
+      "before": {
+        "terminal": "PAUSE",
+        "currentQId": null
+      },
+      "after": {
+        "terminal": "PAUSE",
+        "currentQId": null,
+        "terminalReason": "prescreen_start_batch_cleanup"
+      }
+    }
+  ],
+  "userRestored": true
+}

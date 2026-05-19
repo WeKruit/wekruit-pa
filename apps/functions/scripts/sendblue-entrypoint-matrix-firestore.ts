@@ -16,6 +16,7 @@ import path from "node:path"
 import { config as loadDotenv } from "dotenv"
 import { applicationDefault, getApps, initializeApp } from "firebase-admin/app"
 import { getFirestore, type Firestore } from "firebase-admin/firestore"
+import { createInboundEvent } from "@pa/pa-broker"
 
 import { handleSendblueWebhook, type WebhookRequest, type WebhookResponse } from "../src/sendblue/webhook.js"
 import { runLayoffSmsStart } from "../src/layoff-sms-start.js"
@@ -38,6 +39,7 @@ const USER_ID = process.env.SENDBLUE_MATRIX_USER_ID ?? "U7AwKT8nLDRa35DkuBxq"
 const PHONE = process.env.SENDBLUE_MATRIX_PHONE ?? "+14243201960"
 const ARTIFACT_DIR = path.resolve(".planning/sendblue-entrypoint-matrix/artifacts")
 const SECRET = "local-entrypoint-matrix-secret"
+const SCRIPT_NAME = "sendblue-entrypoint-matrix-firestore.ts"
 
 type SentMessage = { kind: "prescreen" | "layoff"; to: string; content: string }
 type PrescreenStart = { jobId: string; userId: string; sessionId: string; ok: boolean; reason?: string }
@@ -187,6 +189,16 @@ async function cleanupMatrixPrescreenSessions(db: Firestore, starts: PrescreenSt
   return out
 }
 
+async function cleanupMatrixPrescreenSessionsAfterAsyncSettles(
+  db: Firestore,
+  starts: PrescreenStart[],
+) {
+  const first = await cleanupMatrixPrescreenSessions(db, starts)
+  await new Promise((resolve) => setTimeout(resolve, 5000))
+  const second = await cleanupMatrixPrescreenSessions(db, starts)
+  return { first, second }
+}
+
 async function dispatch(
   db: Firestore,
   runId: string,
@@ -202,6 +214,18 @@ async function dispatch(
   await handleSendblueWebhook(req, res, {
     db,
     secret: SECRET,
+    createInboundEvent: async (targetDb, input) => createInboundEvent(targetDb, {
+      ...input,
+      userId: USER_ID,
+      rawPayload: {
+        ...input.rawPayload,
+        e2eTest: true,
+        harness: {
+          runner: SCRIPT_NAME,
+          suppressOutbound: true,
+        },
+      },
+    }),
     runPreScreenForUser: async (args) => {
       const result = await runPreScreenForUser({
         ...args,
@@ -298,22 +322,21 @@ async function runMatrix(db: Firestore) {
     const layoff = await dispatch(db, runId, "layoff-trigger", "WeKruit_LAID_OFF", sent, prescreenStarts, layoffStarts)
     const layoffStart = await waitFor(() => layoffStarts[layoffStartOffset] ?? null)
     const layoffBody = asBody(layoff.body)
-    const userAfterLayoff = await waitFor(async () => {
-      const data = (await db.collection("pa-users").doc(USER_ID).get()).data() ?? {}
-      return data.source === "WeKruit_Laid_Off" ? data : null
-    })
+    const userAfterLayoff = (await db.collection("pa-users").doc(USER_ID).get()).data() ?? {}
     results.push({
-      slug: "layoff_trigger",
+      slug: "raw_layoff_source_token_suppressed",
       webhookStatus: layoff.status,
       webhookBody: layoff.body,
       passed: layoff.status === 200 &&
-        layoffBody.action === "layoff_triggered" &&
-        layoffStart?.ok === true &&
-        userAfterLayoff?.source === "WeKruit_Laid_Off" &&
-        sent.some((m) => m.kind === "layoff"),
+        layoffBody.action === "layoff_unauthorized" &&
+        !layoffStart &&
+        userAfterLayoff?.source === beforeUser.source &&
+        sent.filter((m) => m.kind === "layoff").length === 0,
       evidence: {
         action: layoffBody.action,
         source: userAfterLayoff?.source,
+        expectedSource: beforeUser.source,
+        startAttempted: Boolean(layoffStart),
         kickoffOutboundId: layoffStart?.kickoffOutboundId,
         sentLayoffCount: sent.filter((m) => m.kind === "layoff").length,
       },
@@ -326,17 +349,19 @@ async function runMatrix(db: Firestore) {
       ? (await db.collection("pa-inbound-events").doc(normalBody.eventId).get()).data()
       : null
     results.push({
-      slug: "normal_start_no_pending_invite",
+      slug: "normal_start_no_pending_invite_harness_suppressed",
       webhookStatus: normal.status,
       webhookBody: normal.body,
       passed: normal.status === 200 &&
         Boolean(normalBody.eventId) &&
         !normalBody.action &&
-        normalInbound?.rawPayload?.text === "START",
+        normalInbound?.rawPayload?.text === "START" &&
+        normalInbound?.rawPayload?.harness?.suppressOutbound === true,
       evidence: {
         eventId: normalBody.eventId,
         rawText: normalInbound?.rawPayload?.text,
         rawE2e: normalInbound?.rawPayload?.e2eTest === true,
+        suppressOutbound: normalInbound?.rawPayload?.harness?.suppressOutbound === true,
       },
       failures: [],
     })
@@ -370,7 +395,7 @@ async function runMatrix(db: Firestore) {
       failures: [],
     })
   } finally {
-    cleanup = await cleanupMatrixPrescreenSessions(db, prescreenStarts)
+    cleanup = await cleanupMatrixPrescreenSessionsAfterAsyncSettles(db, prescreenStarts)
     await restoreMatrixUser(db, beforeUser)
     await releaseLock()
   }

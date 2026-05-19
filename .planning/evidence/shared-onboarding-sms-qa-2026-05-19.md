@@ -42,3 +42,33 @@ Goal: verify production shared onboarding over SMS/iMessage after duplicate gree
 ## Live Conversation Runs
 
 Pending explicit operator confirmation before sending scripted iMessage/SMS traffic from Adam's Messages app.
+
+## Production Sendblue Entrypoint Matrix
+
+- Script: `apps/functions/scripts/sendblue-entrypoint-matrix-firestore.ts`
+- Run: `sbmatrix-2026-05-19T07-54-05-446Z`
+- Artifact: `.planning/sendblue-entrypoint-matrix/artifacts/sbmatrix-2026-05-19T07-54-05-446Z.json`
+- User/phone: `pa-users/UThMpnAGzjaWnxDsKEMH`, `+14243201960`
+- Result: pass.
+- Covered:
+  - `WeKruit_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_Job` routed to prescreen start.
+  - Raw `WeKruit_LAID_OFF` source token remained suppressed/unauthorized and did not mutate the user source.
+  - Normal `START` fell through to `pa-inbound-events` with `harness.suppressOutbound=true`.
+  - ATS pending invite `START` routed to prescreen and consumed the invite.
+- Cleanup proof:
+  - Created prescreen sessions `ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075407066Z` and `ps_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_20260519T075415630Z`.
+  - Both are ended with `terminal=PAUSE`, `currentQId=null`, `terminalReason=sendblue_matrix_cleanup`.
+  - The normal `START` inbound has `rawPayload.harness.suppressOutbound=true`; matching `pa-outbound` count is `0`.
+
+## Production Prescreen Start Batch
+
+- Run: `prescreen-batch-2026-05-19T07-56-44-140Z`
+- Artifact: `.planning/sendblue-prescreen-start-batch/artifacts/prescreen-batch-2026-05-19T07-56-44-140Z.json`
+- User/phone: `pa-users/UThMpnAGzjaWnxDsKEMH`, `+14243201960`
+- Exact trigger body: `WeKruit_rain-software-engineer-fullstack-8849f6ef_UThMpnAGzjaWnxDsKEMH_Job`
+- Result: 20/20 prescreen starts passed through production Sendblue webhook routing with outbound SMS sends stubbed.
+- Cleanup proof:
+  - `sentCount=20`, all stubbed.
+  - `userRestored=true`.
+  - All 20 created `pa-prescreen-sessions` were re-read after cleanup; `bad=[]`.
+  - Each checked session has `terminal=PAUSE`, `currentQId=null`, `workSession.status=ended`.
