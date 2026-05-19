@@ -2071,8 +2071,16 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     }
 
     const onboardingUser = await store.getOnboardingUser(event.userId)
+    // Layoff is a runtime-led intake. Do not force the generic candidate
+    // q_email/verify/TOS pipeline before Claire can triage and tag context.
+    const layoffRuntimeSession =
+      onboardingUser?.source === "WeKruit_Laid_Off" &&
+      onboardingUser.onboardingState !== "complete"
     const onboardingIncomplete = Boolean(
-      userAuthoredEvent && onboardingUser && onboardingUser.onboardingState !== "complete"
+      userAuthoredEvent &&
+      onboardingUser &&
+      onboardingUser.onboardingState !== "complete" &&
+      !layoffRuntimeSession
     )
     if (userAuthoredEvent && !onboardingIncomplete && await handleLifecycleProfileReply(event, store, turnId)) {
       await store.updateTurn(turnId, { status: "succeeded", stage: "succeeded", completedAt: store.nowIso() })
