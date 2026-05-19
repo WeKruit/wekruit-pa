@@ -231,12 +231,14 @@ export {
   mapAlgoliaQuestion,
   mapDataCaseProblem,
   mapObjectDesignProblem,
+  mapResearchSeedQuestion,
   mapSystemDesignProblem,
 } from "./practice-question-bank-import.js"
 export type {
   LegacyFirestoreDoc,
   LegacyRecord,
   PracticeImportCandidate,
+  PracticeResearchSeedRecord,
 } from "./practice-question-bank-import.js"
 
 // Phase 25 — pa_voice_reviews helpers (P9-Voice). LOCKED schema; see

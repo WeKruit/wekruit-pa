@@ -17,6 +17,27 @@ export interface PracticeImportCandidate {
   sourcePriority: number
 }
 
+export interface PracticeResearchSeedRecord {
+  slug: string
+  sourceKey: string
+  sourceTitle: string
+  sourceUrl: string
+  status?: PracticeQuestionBankItem["status"]
+  kind: PracticeQuestionKind
+  conversationMode: PracticeQuestionBankItem["conversationMode"]
+  title: string
+  prompt: string
+  context?: string
+  difficulty?: PracticeQuestionDifficulty
+  estimatedMinutes?: number
+  companyStyle?: string[]
+  roleFamilies?: string[]
+  categories?: string[]
+  tags?: string[]
+  keyConcepts?: string[]
+  evaluation?: PracticeQuestionBankItem["evaluation"]
+}
+
 const IMPORT_ACTOR = "practice-question-importer"
 
 function text(value: unknown): string | undefined {
@@ -360,6 +381,94 @@ export function mapAlgoliaQuestion(
   return { item, sourcePriority: indexName === "wekruit-interview-question-bank-behavior-question" ? 30 : 10 }
 }
 
+function defaultResearchEvaluation(seed: PracticeResearchSeedRecord): PracticeQuestionBankItem["evaluation"] {
+  if (seed.kind === "system_design") {
+    return {
+      rubric: [
+        { criterion: "Requirement framing", guidance: "Clarifies users, scale, latency, reliability, privacy, and scope before architecture." },
+        { criterion: "Tradeoff reasoning", guidance: "Explains component choices, data flow, bottlenecks, failure modes, and alternatives." },
+      ],
+      followUps: [
+        "What would you simplify for an MVP?",
+        "What is the first reliability bottleneck you would expect?",
+      ],
+      expectedSignals: ["states assumptions", "balances scale and correctness", "discusses tradeoffs"],
+      redFlags: ["jumps to tools before requirements", "ignores failure modes"],
+    }
+  }
+  if (seed.kind === "object_oriented_design") {
+    return {
+      rubric: [
+        { criterion: "Domain modeling", guidance: "Identifies core entities, responsibilities, relationships, and state transitions." },
+        { criterion: "Extensibility", guidance: "Explains interfaces, invariants, edge cases, and how the design changes with new requirements." },
+      ],
+      followUps: [
+        "Which class owns the most important invariant?",
+        "How would the design change if the system became multi-tenant?",
+      ],
+      expectedSignals: ["clear ownership", "encapsulation", "edge case handling"],
+      redFlags: ["god object design", "unclear state ownership"],
+    }
+  }
+  if (seed.kind === "data_case") {
+    return {
+      rubric: [
+        { criterion: "Problem decomposition", guidance: "Defines the metric, denominator, time window, cohorts, and competing hypotheses." },
+        { criterion: "Decision quality", guidance: "Connects analysis or experiment design to a concrete product or business decision." },
+      ],
+      followUps: [
+        "What is your primary metric and what guardrail would stop the launch?",
+        "How would you distinguish product behavior from instrumentation noise?",
+      ],
+      expectedSignals: ["metric clarity", "segmentation", "causal thinking", "decision framing"],
+      redFlags: ["only checks aggregate metrics", "does not define actionability"],
+    }
+  }
+  return {
+    rubric: [
+      { criterion: "Specific evidence", guidance: "Uses a concrete story with role, constraints, actions, and measurable outcome." },
+      { criterion: "Reflection", guidance: "Explains tradeoffs, what changed after the event, and what the candidate would do differently." },
+    ],
+    followUps: [
+      "What was your personal contribution versus the team's contribution?",
+      "What would a skeptical teammate say about your approach?",
+    ],
+    expectedSignals: ["specific example", "ownership", "communication", "learning"],
+    redFlags: ["generic answer", "no measurable outcome", "blames others"],
+  }
+}
+
+export function mapResearchSeedQuestion(
+  seed: PracticeResearchSeedRecord,
+  nowIso: string,
+): PracticeImportCandidate {
+  const sourceRef = `web-research:${seed.sourceKey}/${seed.slug}`
+  const sourceUrlRef = `web-research-url:${seed.sourceUrl}`
+  const sourceContext = joinSections([
+    ["Research source", `${seed.sourceTitle}\n${seed.sourceUrl}`],
+    ["Practice context", seed.context],
+  ])
+  const item = baseItem({
+    kind: seed.kind,
+    conversationMode: seed.conversationMode,
+    title: seed.title,
+    prompt: seed.prompt,
+    context: sourceContext,
+    status: seed.status ?? "active",
+    difficulty: normalizeDifficulty(seed.difficulty),
+    estimatedMinutes: seed.estimatedMinutes,
+    companyStyle: seed.companyStyle ?? [],
+    roleFamilies: seed.roleFamilies ?? [],
+    categories: seed.categories ?? [],
+    tags: unique(["practice", ...(seed.tags ?? [])]),
+    keyConcepts: seed.keyConcepts ?? [],
+    sourceRefs: unique([sourceRef, sourceUrlRef]),
+    evaluation: seed.evaluation ?? defaultResearchEvaluation(seed),
+    nowIso,
+  })
+  return { item, sourcePriority: 25 }
+}
+
 function unique(values: string[]): string[] {
   return Array.from(new Set(values.filter(Boolean)))
 }
@@ -389,4 +498,3 @@ export function dedupeImportCandidates(
   }
   return Array.from(byFingerprint.values())
 }
-

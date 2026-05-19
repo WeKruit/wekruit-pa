@@ -5,6 +5,7 @@ import {
   mapAlgoliaQuestion,
   mapDataCaseProblem,
   mapObjectDesignProblem,
+  mapResearchSeedQuestion,
   mapSystemDesignProblem,
 } from "./practice-question-bank-import.js"
 
@@ -174,3 +175,53 @@ test("practice import dedupe prefers behavioral Algolia over main index", () => 
   assert.deepEqual(deduped[0]?.item.tags, ["project"])
 })
 
+test("practice import maps web research seed for Claire practice", () => {
+  const candidate = mapResearchSeedQuestion(
+    {
+      slug: "openai-eval-regression-debug",
+      sourceKey: "openai-interview-guide",
+      sourceTitle: "OpenAI interview guide",
+      sourceUrl: "https://openai.com/interview-guide/",
+      kind: "behavioral",
+      conversationMode: "behavioral_screen",
+      title: "Debugging an evaluation regression under ambiguity",
+      prompt:
+        "Tell me about a time a metric or evaluation result moved in the wrong direction and the root cause was unclear. How did you investigate, communicate uncertainty, and decide what to ship?",
+      difficulty: "medium",
+      estimatedMinutes: 12,
+      companyStyle: ["OpenAI", "Anthropic"],
+      roleFamilies: ["software_engineering", "machine_learning", "data_science"],
+      categories: ["behavioral", "ai_evaluation"],
+      tags: ["practice", "prescreen", "eval", "ambiguity", "communication"],
+      keyConcepts: ["evaluation debugging", "uncertainty", "stakeholder communication"],
+      evaluation: {
+        rubric: [
+          {
+            criterion: "Investigation quality",
+            guidance: "Explains the hypotheses, evidence checked, and decision criteria.",
+          },
+        ],
+        followUps: ["What signal would make you rollback immediately?"],
+        expectedSignals: ["Uses evidence before conclusions"],
+        redFlags: ["Claims certainty without validation"],
+      },
+    },
+    NOW,
+  )
+
+  assert.equal(candidate.item.status, "active")
+  assert.equal(candidate.item.kind, "behavioral")
+  assert.equal(candidate.item.conversationMode, "behavioral_screen")
+  assert.equal(candidate.item.difficulty, "medium")
+  assert.equal(candidate.item.estimatedMinutes, 12)
+  assert.deepEqual(candidate.item.companyStyle, ["OpenAI", "Anthropic"])
+  assert.ok(candidate.item.tags.includes("prescreen"))
+  assert.ok(candidate.item.tags.includes("eval"))
+  assert.ok(candidate.item.tags.includes("practice"))
+  assert.deepEqual(candidate.item.sourceRefs, [
+    "web-research:openai-interview-guide/openai-eval-regression-debug",
+    "web-research-url:https://openai.com/interview-guide/",
+  ])
+  assert.match(candidate.item.context ?? "", /OpenAI interview guide/)
+  assert.equal(candidate.sourcePriority, 25)
+})
