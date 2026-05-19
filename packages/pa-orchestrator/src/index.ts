@@ -558,8 +558,13 @@ export type OrchestratorStore = {
     runtimeMode?: "auto" | "paused"
     /** v1.6 unified tag system (D8) — canonical user tags incl. preferredLang. */
     tags?: import("./tags/user-tags-merger.js").UserTags
+    firstName?: string
     displayName?: string
     source?: string
+    latestResumeArtifactId?: string
+    jobTitle?: string
+    lastCompany?: string
+    location?: string
     workSession?: Record<string, unknown> | null
     sharedOnboarding?: Record<string, unknown> | null
     candidateContext?: Record<string, unknown> | null
@@ -4358,8 +4363,13 @@ export function createFirestoreOrchestratorStore(
           | "complete"
         statedPreferences?: import("@pa/core-types").StatedPreferences
         runtimeMode?: "auto" | "paused"
+        firstName?: string
         displayName?: string
         source?: string
+        latestResumeArtifactId?: string
+        jobTitle?: string
+        lastCompany?: string
+        location?: string
         workSession?: Record<string, unknown> | null
         sharedOnboarding?: Record<string, unknown> | null
         candidateContext?: Record<string, unknown> | null
@@ -4371,8 +4381,13 @@ export function createFirestoreOrchestratorStore(
         onboardingState: data.onboardingState,
         statedPreferences: data.statedPreferences,
         runtimeMode: data.runtimeMode,
+        firstName: data.firstName,
         displayName: data.displayName,
         source: data.source,
+        latestResumeArtifactId: data.latestResumeArtifactId,
+        jobTitle: data.jobTitle,
+        lastCompany: data.lastCompany,
+        location: data.location,
         workSession: data.workSession,
         sharedOnboarding: data.sharedOnboarding,
         candidateContext: data.candidateContext,

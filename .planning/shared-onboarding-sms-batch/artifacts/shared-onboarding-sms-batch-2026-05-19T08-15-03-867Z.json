@@ -1,0 +1,663 @@
+{
+  "runId": "shared-onboarding-sms-batch-2026-05-19T08-15-03-867Z",
+  "scriptName": "shared-onboarding-sms-batch.ts",
+  "projectId": "wekruit-5f89b",
+  "userId": "UThMpnAGzjaWnxDsKEMH",
+  "phone": "+14243201960",
+  "count": 1,
+  "completeCount": 1,
+  "passed": true,
+  "userRestored": true,
+  "startedAt": "2026-05-19T08-15-03-867Z",
+  "completedAt": "2026-05-19T08:15:42.888Z",
+  "conversations": [
+    {
+      "id": "shared-onboarding-001",
+      "complete": true,
+      "passed": true,
+      "turns": [
+        {
+          "label": "bootstrap-hello",
+          "eventId": "harness_shared_onboarding_f69b7f79-1b4f-4b58-b3f5-0e48b6a59693",
+          "userText": "Hello, WeKruit!",
+          "assistantReplies": [
+            "Hey Adam, I saw from your resume that you've done Software Engineer Intern work at Tesla Inc. For this next phase, what matters most in your next company: career growth, compensation, stability, mission, learning, or something else?"
+          ],
+          "turnDoc": {
+            "id": "fec11433-663c-4c0e-98fa-1e653980600c",
+            "eventId": "harness_shared_onboarding_f69b7f79-1b4f-4b58-b3f5-0e48b6a59693",
+            "userId": "UThMpnAGzjaWnxDsKEMH",
+            "sessionId": "ses_9eb33a4226be6150d15dd45da5da9e58",
+            "createdAt": "2026-05-19T08:15:07.235Z",
+            "completedAt": "2026-05-19T08:15:08.541Z",
+            "stage": "succeeded",
+            "directIntent": "shared_onboarding",
+            "directIntentResult": "bootstrapped_q1_inline",
+            "sharedOnboardingQuestionId": "main_goal",
+            "status": "succeeded",
+            "updatedAt": "2026-05-19T08:15:08.918Z"
+          },
+          "inboundStatus": "succeeded",
+          "state": {
+            "onboardingState": "pending",
+            "onboardingStatus": "invited",
+            "workSessionKind": "shared_onboarding",
+            "workSessionStatus": "active",
+            "currentQuestionId": "main_goal",
+            "sharedStatus": "active",
+            "completed": false,
+            "answerKeys": [],
+            "promptContext": {
+              "skills": [
+                "c++",
+                "java",
+                "javascript",
+                "python"
+              ],
+              "firstName": "Adam",
+              "recentTitles": [
+                "Software Engineer Intern"
+              ],
+              "resumeSummary": "Adam (Shixiang) Yang — currently/last Software Engineer Intern at Tesla Inc. (May 2024–present). Skills: c++, java, javascript, python, c, c#, sql, go_lang. Education: University of Southern Californ",
+              "recentCompanies": [
+                "Tesla Inc"
+              ]
+            },
+            "tagKeys": []
+          },
+          "failures": []
+        },
+        {
+          "label": "duplicate-hello",
+          "eventId": "harness_shared_onboarding_28b1c227-69cb-4acc-9b6a-bb5b83282a41",
+          "userText": "Hello, WeKruit!",
+          "assistantReplies": [],
+          "turnDoc": {
+            "id": "acdb638e-2aba-4e92-afab-f80276ed60ee",
+            "eventId": "harness_shared_onboarding_28b1c227-69cb-4acc-9b6a-bb5b83282a41",
+            "userId": "UThMpnAGzjaWnxDsKEMH",
+            "sessionId": "ses_9eb33a4226be6150d15dd45da5da9e58",
+            "createdAt": "2026-05-19T08:15:11.134Z",
+            "completedAt": "2026-05-19T08:15:12.518Z",
+            "sharedOnboardingJudgeReason": "irrelevant",
+            "stage": "succeeded",
+            "directIntent": "shared_onboarding",
+            "directIntentResult": "ignored_non_answer",
+            "sharedOnboardingQuestionId": "main_goal",
+            "status": "succeeded",
+            "updatedAt": "2026-05-19T08:15:12.518Z"
+          },
+          "inboundStatus": "succeeded",
+          "state": {
+            "onboardingState": "pending",
+            "onboardingStatus": "invited",
+            "workSessionKind": "shared_onboarding",
+            "workSessionStatus": "active",
+            "currentQuestionId": "main_goal",
+            "sharedStatus": "active",
+            "completed": false,
+            "answerKeys": [],
+            "promptContext": {
+              "skills": [
+                "c++",
+                "java",
+                "javascript",
+                "python"
+              ],
+              "firstName": "Adam",
+              "recentTitles": [
+                "Software Engineer Intern"
+              ],
+              "resumeSummary": "Adam (Shixiang) Yang — currently/last Software Engineer Intern at Tesla Inc. (May 2024–present). Skills: c++, java, javascript, python, c, c#, sql, go_lang. Education: University of Southern Californ",
+              "recentCompanies": [
+                "Tesla Inc"
+              ]
+            },
+            "tagKeys": []
+          },
+          "failures": []
+        },
+        {
+          "label": "answer-main-goal",
+          "eventId": "harness_shared_onboarding_56adbf75-b971-4154-b83b-79905e46d3fb",
+          "userText": "Career growth and stronger mentorship matter most, with compensation as a close second.",
+          "assistantReplies": [
+            "What kind of company culture and size or stage tends to work best for you: early startup, scale-up, larger company, high ownership, calm team, or something else?"
+          ],
+          "turnDoc": {
+            "id": "5fe4f7b8-9505-4af8-bac9-3d0f3b0a5c92",
+            "eventId": "harness_shared_onboarding_56adbf75-b971-4154-b83b-79905e46d3fb",
+            "userId": "UThMpnAGzjaWnxDsKEMH",
+            "sessionId": "ses_9eb33a4226be6150d15dd45da5da9e58",
+            "createdAt": "2026-05-19T08:15:16.843Z",
+            "sharedOnboardingAnsweredQuestionId": "main_goal",
+            "completedAt": "2026-05-19T08:15:18.212Z",
+            "stage": "succeeded",
+            "directIntent": "shared_onboarding",
+            "directIntentResult": "asked_question",
+            "sharedOnboardingQuestionId": "culture_stage",
+            "status": "succeeded",
+            "updatedAt": "2026-05-19T08:15:18.212Z"
+          },
+          "inboundStatus": "succeeded",
+          "state": {
+            "onboardingState": "pending",
+            "onboardingStatus": "invited",
+            "workSessionKind": "shared_onboarding",
+            "workSessionStatus": "active",
+            "currentQuestionId": "culture_stage",
+            "sharedStatus": "active",
+            "completed": false,
+            "answerKeys": [
+              "main_goal"
+            ],
+            "promptContext": {
+              "skills": [
+                "c++",
+                "java",
+                "javascript",
+                "python"
+              ],
+              "firstName": "Adam",
+              "recentTitles": [
+                "Software Engineer Intern"
+              ],
+              "resumeSummary": "Adam (Shixiang) Yang — currently/last Software Engineer Intern at Tesla Inc. (May 2024–present). Skills: c++, java, javascript, python, c, c#, sql, go_lang. Education: University of Southern Californ",
+              "recentCompanies": [
+                "Tesla Inc"
+              ]
+            },
+            "statedPreferences": {
+              "nextCompanyGoals": [
+                "career_growth",
+                "high_compensation",
+                "learning"
+              ]
+            },
+            "tagKeys": [
+              "lastUpdatedFromChat",
+              "schemaVersion",
+              "targetCompanyTags"
+            ]
+          },
+          "failures": []
+        },
+        {
+          "label": "junk-culture-stage",
+          "eventId": "harness_shared_onboarding_0a70e6f0-c934-49a7-8328-491e25e78060",
+          "userText": "hi",
+          "assistantReplies": [
+            "I can help with that, but I need this part first so I can match roles correctly. What kind of company culture and size or stage tends to work best for you: early startup, scale-up, larger company, high ownership, calm team, or something else?"
+          ],
+          "turnDoc": {
+            "id": "e235d7a8-949e-45cf-b57d-d34be706cfdc",
+            "eventId": "harness_shared_onboarding_0a70e6f0-c934-49a7-8328-491e25e78060",
+            "userId": "UThMpnAGzjaWnxDsKEMH",
+            "sessionId": "ses_9eb33a4226be6150d15dd45da5da9e58",
+            "createdAt": "2026-05-19T08:15:20.794Z",
+            "completedAt": "2026-05-19T08:15:21.184Z",
+            "sharedOnboardingJudgeReason": "irrelevant",
+            "stage": "succeeded",
+            "directIntent": "shared_onboarding",
+            "directIntentResult": "reasked_question",
+            "sharedOnboardingQuestionId": "culture_stage",
+            "status": "succeeded",
+            "updatedAt": "2026-05-19T08:15:21.517Z"
+          },
+          "inboundStatus": "succeeded",
+          "state": {
+            "onboardingState": "pending",
+            "onboardingStatus": "invited",
+            "workSessionKind": "shared_onboarding",
+            "workSessionStatus": "active",
+            "currentQuestionId": "culture_stage",
+            "sharedStatus": "active",
+            "completed": false,
+            "answerKeys": [
+              "main_goal"
+            ],
+            "promptContext": {
+              "skills": [
+                "c++",
+                "java",
+                "javascript",
+                "python"
+              ],
+              "firstName": "Adam",
+              "recentTitles": [
+                "Software Engineer Intern"
+              ],
+              "resumeSummary": "Adam (Shixiang) Yang — currently/last Software Engineer Intern at Tesla Inc. (May 2024–present). Skills: c++, java, javascript, python, c, c#, sql, go_lang. Education: University of Southern Californ",
+              "recentCompanies": [
+                "Tesla Inc"
+              ]
+            },
+            "statedPreferences": {
+              "nextCompanyGoals": [
+                "career_growth",
+                "high_compensation",
+                "learning"
+              ]
+            },
+            "tagKeys": [
+              "lastUpdatedFromChat",
+              "schemaVersion",
+              "targetCompanyTags"
+            ]
+          },
+          "failures": []
+        },
+        {
+          "label": "answer-culture-stage",
+          "eventId": "harness_shared_onboarding_9ec39e52-add3-453d-9271-1e6c789258f9",
+          "userText": "A scale-up with high ownership and a calm, collaborative team works best.",
+          "assistantReplies": [
+            "Which industries or domains are you most interested in right now? Free-form is fine."
+          ],
+          "turnDoc": {
+            "id": "997cf7be-8c1c-4bf1-9af4-ec7961d34553",
+            "eventId": "harness_shared_onboarding_9ec39e52-add3-453d-9271-1e6c789258f9",
+            "userId": "UThMpnAGzjaWnxDsKEMH",
+            "sessionId": "ses_9eb33a4226be6150d15dd45da5da9e58",
+            "createdAt": "2026-05-19T08:15:23.419Z",
+            "sharedOnboardingAnsweredQuestionId": "culture_stage",
+            "completedAt": "2026-05-19T08:15:24.560Z",
+            "stage": "succeeded",
+            "directIntent": "shared_onboarding",
+            "directIntentResult": "asked_question",
+            "sharedOnboardingQuestionId": "industry_interest",
+            "status": "succeeded",
+            "updatedAt": "2026-05-19T08:15:24.560Z"
+          },
+          "inboundStatus": "succeeded",
+          "state": {
+            "onboardingState": "pending",
+            "onboardingStatus": "invited",
+            "workSessionKind": "shared_onboarding",
+            "workSessionStatus": "active",
+            "currentQuestionId": "industry_interest",
+            "sharedStatus": "active",
+            "completed": false,
+            "answerKeys": [
+              "culture_stage",
+              "main_goal"
+            ],
+            "promptContext": {
+              "skills": [
+                "c++",
+                "java",
+                "javascript",
+                "python"
+              ],
+              "firstName": "Adam",
+              "recentTitles": [
+                "Software Engineer Intern"
+              ],
+              "resumeSummary": "Adam (Shixiang) Yang — currently/last Software Engineer Intern at Tesla Inc. (May 2024–present). Skills: c++, java, javascript, python, c, c#, sql, go_lang. Education: University of Southern Californ",
+              "recentCompanies": [
+                "Tesla Inc"
+              ]
+            },
+            "statedPreferences": {
+              "nextCompanyGoals": [
+                "career_growth",
+                "high_compensation",
+                "learning"
+              ],
+              "companySize": "scale_up"
+            },
+            "tagKeys": [
+              "companySize",
+              "lastUpdatedFromChat",
+              "schemaVersion",
+              "targetCompanyTags"
+            ]
+          },
+          "failures": []
+        },
+        {
+          "label": "answer-industry-interest",
+          "eventId": "harness_shared_onboarding_66efb712-cf56-47c3-a21d-526a87291f59",
+          "userText": "Fintech and AI infrastructure are most interesting right now.",
+          "assistantReplies": [
+            "Where do you want to work next, and are you open to remote, onsite, or relocating to another city?"
+          ],
+          "turnDoc": {
+            "id": "adc8783e-5634-4763-bbca-52a01b553c4e",
+            "eventId": "harness_shared_onboarding_66efb712-cf56-47c3-a21d-526a87291f59",
+            "userId": "UThMpnAGzjaWnxDsKEMH",
+            "sessionId": "ses_9eb33a4226be6150d15dd45da5da9e58",
+            "createdAt": "2026-05-19T08:15:26.589Z",
+            "sharedOnboardingAnsweredQuestionId": "industry_interest",
+            "completedAt": "2026-05-19T08:15:27.262Z",
+            "stage": "succeeded",
+            "directIntent": "shared_onboarding",
+            "directIntentResult": "asked_question",
+            "sharedOnboardingQuestionId": "location_relocation",
+            "status": "succeeded",
+            "updatedAt": "2026-05-19T08:15:27.263Z"
+          },
+          "inboundStatus": "succeeded",
+          "state": {
+            "onboardingState": "pending",
+            "onboardingStatus": "invited",
+            "workSessionKind": "shared_onboarding",
+            "workSessionStatus": "active",
+            "currentQuestionId": "location_relocation",
+            "sharedStatus": "active",
+            "completed": false,
+            "answerKeys": [
+              "culture_stage",
+              "industry_interest",
+              "main_goal"
+            ],
+            "promptContext": {
+              "skills": [
+                "c++",
+                "java",
+                "javascript",
+                "python"
+              ],
+              "firstName": "Adam",
+              "recentTitles": [
+                "Software Engineer Intern"
+              ],
+              "resumeSummary": "Adam (Shixiang) Yang — currently/last Software Engineer Intern at Tesla Inc. (May 2024–present). Skills: c++, java, javascript, python, c, c#, sql, go_lang. Education: University of Southern Californ",
+              "recentCompanies": [
+                "Tesla Inc"
+              ]
+            },
+            "statedPreferences": {
+              "nextCompanyGoals": [
+                "career_growth",
+                "high_compensation",
+                "learning"
+              ],
+              "companySize": "scale_up",
+              "industrySector": [
+                "artificial_intelligence_and_machine_learning",
+                "financial_technology"
+              ]
+            },
+            "tagKeys": [
+              "companySize",
+              "industrySector",
+              "lastUpdatedFromChat",
+              "schemaVersion",
+              "targetCompanyTags"
+            ]
+          },
+          "failures": []
+        },
+        {
+          "label": "answer-location-relocation",
+          "eventId": "harness_shared_onboarding_200a7d76-b0e6-40e9-bc2e-4964a1ba15e7",
+          "userText": "NYC or remote would be ideal, and I am open to Seattle.",
+          "assistantReplies": [
+            "Anything special I should know before matching you: constraints, strengths, dealbreakers, timing, or context that is not obvious from your resume?"
+          ],
+          "turnDoc": {
+            "id": "3fb8a832-effc-4b9e-a2a4-eb24fcc77ad2",
+            "eventId": "harness_shared_onboarding_200a7d76-b0e6-40e9-bc2e-4964a1ba15e7",
+            "userId": "UThMpnAGzjaWnxDsKEMH",
+            "sessionId": "ses_9eb33a4226be6150d15dd45da5da9e58",
+            "createdAt": "2026-05-19T08:15:28.719Z",
+            "sharedOnboardingAnsweredQuestionId": "location_relocation",
+            "completedAt": "2026-05-19T08:15:29.643Z",
+            "stage": "succeeded",
+            "directIntent": "shared_onboarding",
+            "directIntentResult": "asked_question",
+            "sharedOnboardingQuestionId": "special_context",
+            "status": "succeeded",
+            "updatedAt": "2026-05-19T08:15:29.644Z"
+          },
+          "inboundStatus": "succeeded",
+          "state": {
+            "onboardingState": "pending",
+            "onboardingStatus": "invited",
+            "workSessionKind": "shared_onboarding",
+            "workSessionStatus": "active",
+            "currentQuestionId": "special_context",
+            "sharedStatus": "active",
+            "completed": false,
+            "answerKeys": [
+              "culture_stage",
+              "industry_interest",
+              "location_relocation",
+              "main_goal"
+            ],
+            "promptContext": {
+              "skills": [
+                "c++",
+                "java",
+                "javascript",
+                "python"
+              ],
+              "firstName": "Adam",
+              "recentTitles": [
+                "Software Engineer Intern"
+              ],
+              "resumeSummary": "Adam (Shixiang) Yang — currently/last Software Engineer Intern at Tesla Inc. (May 2024–present). Skills: c++, java, javascript, python, c, c#, sql, go_lang. Education: University of Southern Californ",
+              "recentCompanies": [
+                "Tesla Inc"
+              ]
+            },
+            "statedPreferences": {
+              "nextCompanyGoals": [
+                "career_growth",
+                "high_compensation",
+                "learning"
+              ],
+              "companySize": "scale_up",
+              "industrySector": [
+                "artificial_intelligence_and_machine_learning",
+                "financial_technology"
+              ],
+              "targetLocations": [
+                "new_york_metro",
+                "remote_united_states",
+                "seattle_metro"
+              ]
+            },
+            "tagKeys": [
+              "companySize",
+              "industrySector",
+              "lastUpdatedFromChat",
+              "schemaVersion",
+              "targetCompanyTags",
+              "targetLocations"
+            ]
+          },
+          "failures": []
+        },
+        {
+          "label": "answer-special-context",
+          "eventId": "harness_shared_onboarding_14ac80d5-e6a7-4516-8c41-2a7a5dcab72c",
+          "userText": "Nothing else major. I can start quickly and want full-stack or backend-heavy work.",
+          "assistantReplies": [
+            "Based on the profile details you've shared so far, I found two roles that line up:\n\n• Open Engineering Roles @ Ambral\ngeneral match\nhttps://www.workatastartup.com/companies/ambral/jobs\nrequirements: python, sql, pandas\nwhy: industry + experience align with your resume\n\n• Open Engineering Roles @ CollectWise\ngeneral match\nhttps://www.workatastartup.com/companies/collectwise/jobs\nrequirements: python, sql, rest\nwhy: industry + experience align with your resume\n\nsee if these fit — if not lmk, i'll keep digging; daily fresh batch from here"
+          ],
+          "turnDoc": {
+            "id": "5ff8163a-27e1-4317-9544-0f05762bc6bd",
+            "eventId": "harness_shared_onboarding_14ac80d5-e6a7-4516-8c41-2a7a5dcab72c",
+            "userId": "UThMpnAGzjaWnxDsKEMH",
+            "sessionId": "ses_9eb33a4226be6150d15dd45da5da9e58",
+            "createdAt": "2026-05-19T08:15:31.634Z",
+            "sharedOnboardingAnsweredQuestionId": "special_context",
+            "completedAt": "2026-05-19T08:15:35.514Z",
+            "stage": "succeeded",
+            "directIntent": "shared_onboarding",
+            "sharedOnboardingCompleted": true,
+            "directIntentRecCount": 2,
+            "directIntentResult": "sent_recs",
+            "status": "succeeded",
+            "updatedAt": "2026-05-19T08:15:35.515Z"
+          },
+          "inboundStatus": "succeeded",
+          "state": {
+            "onboardingState": "complete",
+            "onboardingStatus": "complete",
+            "workSessionKind": "shared_onboarding",
+            "workSessionStatus": "ended",
+            "currentQuestionId": null,
+            "sharedStatus": "complete",
+            "completed": true,
+            "answerKeys": [
+              "culture_stage",
+              "industry_interest",
+              "location_relocation",
+              "main_goal",
+              "special_context"
+            ],
+            "promptContext": {
+              "skills": [
+                "c++",
+                "java",
+                "javascript",
+                "python"
+              ],
+              "firstName": "Adam",
+              "recentTitles": [
+                "Software Engineer Intern"
+              ],
+              "resumeSummary": "Adam (Shixiang) Yang — currently/last Software Engineer Intern at Tesla Inc. (May 2024–present). Skills: c++, java, javascript, python, c, c#, sql, go_lang. Education: University of Southern Californ",
+              "recentCompanies": [
+                "Tesla Inc"
+              ]
+            },
+            "statedPreferences": {
+              "nextCompanyGoals": [
+                "career_growth",
+                "high_compensation",
+                "learning"
+              ],
+              "companySize": "scale_up",
+              "industrySector": [
+                "artificial_intelligence_and_machine_learning",
+                "financial_technology"
+              ],
+              "targetLocations": [
+                "new_york_metro",
+                "remote_united_states",
+                "seattle_metro"
+              ],
+              "specialContext": "Nothing else major. I can start quickly and want full-stack or backend-heavy work."
+            },
+            "tagKeys": [
+              "companySize",
+              "industrySector",
+              "lastUpdatedFromChat",
+              "schemaVersion",
+              "targetCompanyTags",
+              "targetLocations"
+            ]
+          },
+          "failures": []
+        },
+        {
+          "label": "normal-chat-after-onboarding",
+          "eventId": "harness_shared_onboarding_08309234-9605-4b7f-8147-18fb8a92d7c8",
+          "userText": "Can you remind me what kinds of roles you would prioritize for me?",
+          "assistantReplies": [
+            "I’d prioritize backend-heavy or full-stack roles at scale-ups, especially in fintech or AI infrastructure, where you’ll have high ownership and strong mentorship."
+          ],
+          "turnDoc": {
+            "id": "a827c994-55d0-4676-b061-b4f507007e08",
+            "eventId": "harness_shared_onboarding_08309234-9605-4b7f-8147-18fb8a92d7c8",
+            "userId": "UThMpnAGzjaWnxDsKEMH",
+            "sessionId": "ses_9eb33a4226be6150d15dd45da5da9e58",
+            "createdAt": "2026-05-19T08:15:37.129Z",
+            "agentId": "default",
+            "memoryMode": "firestore_only",
+            "mem0DegradedReason": null,
+            "mem0SearchResultCount": 0,
+            "mem0Degraded": false,
+            "usage": {
+              "provider": "openai",
+              "inputTokens": 10350,
+              "model": "gpt-5.4-nano",
+              "rewriteApplied": false,
+              "rewriteReason": "disabled",
+              "outputTokens": 53,
+              "totalTokens": 10403
+            },
+            "completedAt": "2026-05-19T08:15:41.725Z",
+            "mem0WritebackSkipReason": "memory_mode",
+            "stage": "succeeded",
+            "mem0WritebackRan": false,
+            "status": "succeeded",
+            "updatedAt": "2026-05-19T08:15:41.725Z"
+          },
+          "inboundStatus": "succeeded",
+          "state": {
+            "onboardingState": "complete",
+            "onboardingStatus": "complete",
+            "workSessionKind": "shared_onboarding",
+            "workSessionStatus": "ended",
+            "currentQuestionId": null,
+            "sharedStatus": "complete",
+            "completed": true,
+            "answerKeys": [
+              "culture_stage",
+              "industry_interest",
+              "location_relocation",
+              "main_goal",
+              "special_context"
+            ],
+            "promptContext": {
+              "skills": [
+                "c++",
+                "java",
+                "javascript",
+                "python"
+              ],
+              "firstName": "Adam",
+              "recentTitles": [
+                "Software Engineer Intern"
+              ],
+              "resumeSummary": "Adam (Shixiang) Yang — currently/last Software Engineer Intern at Tesla Inc. (May 2024–present). Skills: c++, java, javascript, python, c, c#, sql, go_lang. Education: University of Southern Californ",
+              "recentCompanies": [
+                "Tesla Inc"
+              ]
+            },
+            "statedPreferences": {
+              "nextCompanyGoals": [
+                "career_growth",
+                "high_compensation",
+                "learning"
+              ],
+              "companySize": "scale_up",
+              "industrySector": [
+                "artificial_intelligence_and_machine_learning",
+                "financial_technology"
+              ],
+              "targetLocations": [
+                "new_york_metro",
+                "remote_united_states",
+                "seattle_metro"
+              ],
+              "specialContext": "Nothing else major. I can start quickly and want full-stack or backend-heavy work."
+            },
+            "tagKeys": [
+              "companySize",
+              "industrySector",
+              "lastUpdatedFromChat",
+              "schemaVersion",
+              "targetCompanyTags",
+              "targetLocations"
+            ]
+          },
+          "failures": []
+        }
+      ],
+      "failures": []
+    }
+  ],
+  "summary": {
+    "passedConversations": 1,
+    "failedConversations": 0,
+    "totalTurns": 9,
+    "totalAssistantReplies": 8,
+    "failures": []
+  }
+}

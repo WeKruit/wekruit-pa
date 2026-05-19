@@ -1,0 +1,558 @@
+{
+  "runId": "shared-onboarding-sms-batch-2026-05-19T08-07-08-048Z",
+  "scriptName": "shared-onboarding-sms-batch.ts",
+  "projectId": "wekruit-5f89b",
+  "userId": "UThMpnAGzjaWnxDsKEMH",
+  "phone": "+14243201960",
+  "count": 1,
+  "completeCount": 1,
+  "passed": false,
+  "userRestored": true,
+  "startedAt": "2026-05-19T08-07-08-048Z",
+  "completedAt": "2026-05-19T08:07:51.327Z",
+  "conversations": [
+    {
+      "id": "shared-onboarding-001",
+      "complete": true,
+      "passed": false,
+      "turns": [
+        {
+          "label": "bootstrap-hello",
+          "eventId": "harness_shared_onboarding_04d683fa-b0a6-471e-8a24-8d409ce11eda",
+          "userText": "Hello, WeKruit!",
+          "assistantReplies": [
+            "Hey Adam, For this next phase, what matters most in your next company: career growth, compensation, stability, mission, learning, or something else?"
+          ],
+          "turnDoc": {
+            "id": "425379ea-9444-4b42-81c5-601cba30e252",
+            "eventId": "harness_shared_onboarding_04d683fa-b0a6-471e-8a24-8d409ce11eda",
+            "userId": "UThMpnAGzjaWnxDsKEMH",
+            "sessionId": "ses_9eb33a4226be6150d15dd45da5da9e58",
+            "createdAt": "2026-05-19T08:07:10.672Z",
+            "completedAt": "2026-05-19T08:07:12.320Z",
+            "stage": "succeeded",
+            "directIntent": "shared_onboarding",
+            "directIntentResult": "bootstrapped_q1_inline",
+            "sharedOnboardingQuestionId": "main_goal",
+            "status": "succeeded",
+            "updatedAt": "2026-05-19T08:07:12.649Z"
+          },
+          "inboundStatus": "succeeded",
+          "state": {
+            "onboardingState": "pending",
+            "onboardingStatus": "invited",
+            "workSessionKind": "shared_onboarding",
+            "workSessionStatus": "active",
+            "currentQuestionId": "main_goal",
+            "sharedStatus": "active",
+            "completed": false,
+            "answerKeys": [],
+            "promptContext": {
+              "firstName": "Adam"
+            },
+            "tagKeys": []
+          },
+          "failures": []
+        },
+        {
+          "label": "duplicate-hello",
+          "eventId": "harness_shared_onboarding_3f15b85f-2ad7-4085-b03d-a83baa60371c",
+          "userText": "Hello, WeKruit!",
+          "assistantReplies": [],
+          "turnDoc": {
+            "id": "aeca7515-c492-41ad-8179-e7ff60c36563",
+            "eventId": "harness_shared_onboarding_3f15b85f-2ad7-4085-b03d-a83baa60371c",
+            "userId": "UThMpnAGzjaWnxDsKEMH",
+            "sessionId": "ses_9eb33a4226be6150d15dd45da5da9e58",
+            "createdAt": "2026-05-19T08:07:14.531Z",
+            "completedAt": "2026-05-19T08:07:16.078Z",
+            "sharedOnboardingJudgeReason": "irrelevant",
+            "stage": "succeeded",
+            "directIntent": "shared_onboarding",
+            "directIntentResult": "ignored_non_answer",
+            "sharedOnboardingQuestionId": "main_goal",
+            "status": "succeeded",
+            "updatedAt": "2026-05-19T08:07:16.078Z"
+          },
+          "inboundStatus": "succeeded",
+          "state": {
+            "onboardingState": "pending",
+            "onboardingStatus": "invited",
+            "workSessionKind": "shared_onboarding",
+            "workSessionStatus": "active",
+            "currentQuestionId": "main_goal",
+            "sharedStatus": "active",
+            "completed": false,
+            "answerKeys": [],
+            "promptContext": {
+              "firstName": "Adam"
+            },
+            "tagKeys": []
+          },
+          "failures": []
+        },
+        {
+          "label": "answer-main-goal",
+          "eventId": "harness_shared_onboarding_19b5038d-d0e7-4914-8fef-240dbe8e2e65",
+          "userText": "Career growth and stronger mentorship matter most, with compensation as a close second.",
+          "assistantReplies": [
+            "What kind of company culture and size or stage tends to work best for you: early startup, scale-up, larger company, high ownership, calm team, or something else?"
+          ],
+          "turnDoc": {
+            "id": "62d882f9-d823-4163-9285-47e1f6e47b62",
+            "eventId": "harness_shared_onboarding_19b5038d-d0e7-4914-8fef-240dbe8e2e65",
+            "userId": "UThMpnAGzjaWnxDsKEMH",
+            "sessionId": "ses_9eb33a4226be6150d15dd45da5da9e58",
+            "createdAt": "2026-05-19T08:07:19.857Z",
+            "sharedOnboardingAnsweredQuestionId": "main_goal",
+            "completedAt": "2026-05-19T08:07:21.696Z",
+            "stage": "succeeded",
+            "directIntent": "shared_onboarding",
+            "directIntentResult": "asked_question",
+            "sharedOnboardingQuestionId": "culture_stage",
+            "status": "succeeded",
+            "updatedAt": "2026-05-19T08:07:21.696Z"
+          },
+          "inboundStatus": "succeeded",
+          "state": {
+            "onboardingState": "pending",
+            "onboardingStatus": "invited",
+            "workSessionKind": "shared_onboarding",
+            "workSessionStatus": "active",
+            "currentQuestionId": "culture_stage",
+            "sharedStatus": "active",
+            "completed": false,
+            "answerKeys": [
+              "main_goal"
+            ],
+            "promptContext": {
+              "firstName": "Adam"
+            },
+            "statedPreferences": {
+              "nextCompanyGoals": [
+                "career_growth",
+                "high_compensation",
+                "learning"
+              ]
+            },
+            "tagKeys": [
+              "lastUpdatedFromChat",
+              "schemaVersion",
+              "targetCompanyTags"
+            ]
+          },
+          "failures": []
+        },
+        {
+          "label": "junk-culture-stage",
+          "eventId": "harness_shared_onboarding_90ec757d-a28f-460a-b7d8-598a44e453a8",
+          "userText": "hi",
+          "assistantReplies": [
+            "I can help with that, but I need this part first so I can match roles correctly. What kind of company culture and size or stage tends to work best for you: early startup, scale-up, larger company, high ownership, calm team, or something else?"
+          ],
+          "turnDoc": {
+            "id": "b8a9f10e-a4f7-46ea-a124-bc1837408a39",
+            "eventId": "harness_shared_onboarding_90ec757d-a28f-460a-b7d8-598a44e453a8",
+            "userId": "UThMpnAGzjaWnxDsKEMH",
+            "sessionId": "ses_9eb33a4226be6150d15dd45da5da9e58",
+            "createdAt": "2026-05-19T08:07:23.842Z",
+            "completedAt": "2026-05-19T08:07:25.176Z",
+            "sharedOnboardingJudgeReason": "irrelevant",
+            "stage": "succeeded",
+            "directIntent": "shared_onboarding",
+            "directIntentResult": "reasked_question",
+            "sharedOnboardingQuestionId": "culture_stage",
+            "status": "succeeded",
+            "updatedAt": "2026-05-19T08:07:25.330Z"
+          },
+          "inboundStatus": "succeeded",
+          "state": {
+            "onboardingState": "pending",
+            "onboardingStatus": "invited",
+            "workSessionKind": "shared_onboarding",
+            "workSessionStatus": "active",
+            "currentQuestionId": "culture_stage",
+            "sharedStatus": "active",
+            "completed": false,
+            "answerKeys": [
+              "main_goal"
+            ],
+            "promptContext": {
+              "firstName": "Adam"
+            },
+            "statedPreferences": {
+              "nextCompanyGoals": [
+                "career_growth",
+                "high_compensation",
+                "learning"
+              ]
+            },
+            "tagKeys": [
+              "lastUpdatedFromChat",
+              "schemaVersion",
+              "targetCompanyTags"
+            ]
+          },
+          "failures": []
+        },
+        {
+          "label": "answer-culture-stage",
+          "eventId": "harness_shared_onboarding_ee9fbd38-6862-482e-a95f-aa3df3f86e15",
+          "userText": "A scale-up with high ownership and a calm, collaborative team works best.",
+          "assistantReplies": [
+            "Which industries or domains are you most interested in right now? Free-form is fine."
+          ],
+          "turnDoc": {
+            "id": "aba5b678-d554-4d60-9ba1-35fbf5c4847b",
+            "eventId": "harness_shared_onboarding_ee9fbd38-6862-482e-a95f-aa3df3f86e15",
+            "userId": "UThMpnAGzjaWnxDsKEMH",
+            "sessionId": "ses_9eb33a4226be6150d15dd45da5da9e58",
+            "createdAt": "2026-05-19T08:07:27.896Z",
+            "sharedOnboardingAnsweredQuestionId": "culture_stage",
+            "completedAt": "2026-05-19T08:07:29.803Z",
+            "stage": "succeeded",
+            "directIntent": "shared_onboarding",
+            "directIntentResult": "asked_question",
+            "sharedOnboardingQuestionId": "industry_interest",
+            "status": "succeeded",
+            "updatedAt": "2026-05-19T08:07:29.803Z"
+          },
+          "inboundStatus": "succeeded",
+          "state": {
+            "onboardingState": "pending",
+            "onboardingStatus": "invited",
+            "workSessionKind": "shared_onboarding",
+            "workSessionStatus": "active",
+            "currentQuestionId": "industry_interest",
+            "sharedStatus": "active",
+            "completed": false,
+            "answerKeys": [
+              "culture_stage",
+              "main_goal"
+            ],
+            "promptContext": {
+              "firstName": "Adam"
+            },
+            "statedPreferences": {
+              "nextCompanyGoals": [
+                "career_growth",
+                "high_compensation",
+                "learning"
+              ],
+              "companySize": "scale_up"
+            },
+            "tagKeys": [
+              "companySize",
+              "lastUpdatedFromChat",
+              "schemaVersion",
+              "targetCompanyTags"
+            ]
+          },
+          "failures": []
+        },
+        {
+          "label": "answer-industry-interest",
+          "eventId": "harness_shared_onboarding_32f66f12-3eb2-4ff2-8a30-ae8f2de2dc6a",
+          "userText": "Fintech and AI infrastructure are most interesting right now.",
+          "assistantReplies": [
+            "Where do you want to work next, and are you open to remote, onsite, or relocating to another city?"
+          ],
+          "turnDoc": {
+            "id": "3f79a2a9-bccf-4a04-8c1f-5fe9c3210c23",
+            "eventId": "harness_shared_onboarding_32f66f12-3eb2-4ff2-8a30-ae8f2de2dc6a",
+            "userId": "UThMpnAGzjaWnxDsKEMH",
+            "sessionId": "ses_9eb33a4226be6150d15dd45da5da9e58",
+            "createdAt": "2026-05-19T08:07:31.272Z",
+            "sharedOnboardingAnsweredQuestionId": "industry_interest",
+            "completedAt": "2026-05-19T08:07:32.441Z",
+            "stage": "succeeded",
+            "directIntent": "shared_onboarding",
+            "directIntentResult": "asked_question",
+            "sharedOnboardingQuestionId": "location_relocation",
+            "status": "succeeded",
+            "updatedAt": "2026-05-19T08:07:32.441Z"
+          },
+          "inboundStatus": "succeeded",
+          "state": {
+            "onboardingState": "pending",
+            "onboardingStatus": "invited",
+            "workSessionKind": "shared_onboarding",
+            "workSessionStatus": "active",
+            "currentQuestionId": "location_relocation",
+            "sharedStatus": "active",
+            "completed": false,
+            "answerKeys": [
+              "culture_stage",
+              "industry_interest",
+              "main_goal"
+            ],
+            "promptContext": {
+              "firstName": "Adam"
+            },
+            "statedPreferences": {
+              "nextCompanyGoals": [
+                "career_growth",
+                "high_compensation",
+                "learning"
+              ],
+              "companySize": "scale_up",
+              "industrySector": [
+                "artificial_intelligence_and_machine_learning",
+                "financial_technology"
+              ]
+            },
+            "tagKeys": [
+              "companySize",
+              "industrySector",
+              "lastUpdatedFromChat",
+              "schemaVersion",
+              "targetCompanyTags"
+            ]
+          },
+          "failures": []
+        },
+        {
+          "label": "answer-location-relocation",
+          "eventId": "harness_shared_onboarding_d94daf4a-4313-4828-8ee9-a856fd2bee44",
+          "userText": "NYC or remote would be ideal, and I am open to Seattle.",
+          "assistantReplies": [
+            "Anything special I should know before matching you: constraints, strengths, dealbreakers, timing, or context that is not obvious from your resume?"
+          ],
+          "turnDoc": {
+            "id": "03d3256a-15d9-4e88-8b37-512840e77bbd",
+            "eventId": "harness_shared_onboarding_d94daf4a-4313-4828-8ee9-a856fd2bee44",
+            "userId": "UThMpnAGzjaWnxDsKEMH",
+            "sessionId": "ses_9eb33a4226be6150d15dd45da5da9e58",
+            "createdAt": "2026-05-19T08:07:34.442Z",
+            "sharedOnboardingAnsweredQuestionId": "location_relocation",
+            "completedAt": "2026-05-19T08:07:35.332Z",
+            "stage": "succeeded",
+            "directIntent": "shared_onboarding",
+            "directIntentResult": "asked_question",
+            "sharedOnboardingQuestionId": "special_context",
+            "status": "succeeded",
+            "updatedAt": "2026-05-19T08:07:35.332Z"
+          },
+          "inboundStatus": "succeeded",
+          "state": {
+            "onboardingState": "pending",
+            "onboardingStatus": "invited",
+            "workSessionKind": "shared_onboarding",
+            "workSessionStatus": "active",
+            "currentQuestionId": "special_context",
+            "sharedStatus": "active",
+            "completed": false,
+            "answerKeys": [
+              "culture_stage",
+              "industry_interest",
+              "location_relocation",
+              "main_goal"
+            ],
+            "promptContext": {
+              "firstName": "Adam"
+            },
+            "statedPreferences": {
+              "nextCompanyGoals": [
+                "career_growth",
+                "high_compensation",
+                "learning"
+              ],
+              "companySize": "scale_up",
+              "industrySector": [
+                "artificial_intelligence_and_machine_learning",
+                "financial_technology"
+              ],
+              "targetLocations": [
+                "new_york_metro",
+                "remote_united_states",
+                "seattle_metro"
+              ]
+            },
+            "tagKeys": [
+              "companySize",
+              "industrySector",
+              "lastUpdatedFromChat",
+              "schemaVersion",
+              "targetCompanyTags",
+              "targetLocations"
+            ]
+          },
+          "failures": []
+        },
+        {
+          "label": "answer-special-context",
+          "eventId": "harness_shared_onboarding_5b9ff8ed-80ab-47fb-8667-f7adfb7175fe",
+          "userText": "Nothing else major. I can start quickly and want full-stack or backend-heavy work.",
+          "assistantReplies": [
+            "Based on the profile details you've shared so far, I found two roles that line up:\n\n• Open Engineering Roles @ Finosu\ngeneral match\nhttps://www.workatastartup.com/companies/finosu/jobs\nrequirements: python, postgresql, sql, aws, docker\nwhy: industry + experience align with your resume\n\n• Open Engineering Roles @ Avallon AI\ngeneral match\nhttps://www.workatastartup.com/companies/avallon-ai/jobs\nrequirements: python, typescript, rest, postgresql, aws\nwhy: industry + experience align with your resume\n\nsee if these fit — if not lmk, i'll keep digging; daily fresh batch from here"
+          ],
+          "turnDoc": {
+            "id": "22a278e0-5de0-4a97-8f78-9e2a94cef226",
+            "eventId": "harness_shared_onboarding_5b9ff8ed-80ab-47fb-8667-f7adfb7175fe",
+            "userId": "UThMpnAGzjaWnxDsKEMH",
+            "sessionId": "ses_9eb33a4226be6150d15dd45da5da9e58",
+            "createdAt": "2026-05-19T08:07:36.512Z",
+            "sharedOnboardingAnsweredQuestionId": "special_context",
+            "completedAt": "2026-05-19T08:07:42.267Z",
+            "stage": "succeeded",
+            "directIntent": "shared_onboarding",
+            "sharedOnboardingCompleted": true,
+            "directIntentRecCount": 2,
+            "directIntentResult": "sent_recs",
+            "status": "succeeded",
+            "updatedAt": "2026-05-19T08:07:42.267Z"
+          },
+          "inboundStatus": "succeeded",
+          "state": {
+            "onboardingState": "complete",
+            "onboardingStatus": "complete",
+            "workSessionKind": "shared_onboarding",
+            "workSessionStatus": "ended",
+            "currentQuestionId": null,
+            "sharedStatus": "complete",
+            "completed": true,
+            "answerKeys": [
+              "culture_stage",
+              "industry_interest",
+              "location_relocation",
+              "main_goal",
+              "special_context"
+            ],
+            "promptContext": {
+              "firstName": "Adam"
+            },
+            "statedPreferences": {
+              "nextCompanyGoals": [
+                "career_growth",
+                "high_compensation",
+                "learning"
+              ],
+              "companySize": "scale_up",
+              "industrySector": [
+                "artificial_intelligence_and_machine_learning",
+                "financial_technology"
+              ],
+              "targetLocations": [
+                "new_york_metro",
+                "remote_united_states",
+                "seattle_metro"
+              ],
+              "specialContext": "Nothing else major. I can start quickly and want full-stack or backend-heavy work."
+            },
+            "tagKeys": [
+              "companySize",
+              "industrySector",
+              "lastUpdatedFromChat",
+              "schemaVersion",
+              "targetCompanyTags",
+              "targetLocations"
+            ]
+          },
+          "failures": []
+        },
+        {
+          "label": "normal-chat-after-onboarding",
+          "eventId": "harness_shared_onboarding_ac0af728-b455-4604-b8ce-2b9d1fb67131",
+          "userText": "Can you remind me what kinds of roles you would prioritize for me?",
+          "assistantReplies": [
+            "I’d prioritize backend-heavy or full-stack engineering roles at scale-ups, ideally in fintech or AI infrastructure, where you’ll get strong mentorship and room to grow."
+          ],
+          "turnDoc": {
+            "id": "b40dd037-da5b-4c68-862a-7f9a21e11fda",
+            "eventId": "harness_shared_onboarding_ac0af728-b455-4604-b8ce-2b9d1fb67131",
+            "userId": "UThMpnAGzjaWnxDsKEMH",
+            "sessionId": "ses_9eb33a4226be6150d15dd45da5da9e58",
+            "createdAt": "2026-05-19T08:07:43.541Z",
+            "agentId": "default",
+            "memoryMode": "firestore_only",
+            "mem0DegradedReason": null,
+            "mem0SearchResultCount": 0,
+            "mem0Degraded": false,
+            "usage": {
+              "provider": "openai",
+              "inputTokens": 9896,
+              "model": "gpt-5.4-nano",
+              "rewriteApplied": false,
+              "rewriteReason": "disabled",
+              "outputTokens": 52,
+              "totalTokens": 9948
+            },
+            "completedAt": "2026-05-19T08:07:50.200Z",
+            "mem0WritebackSkipReason": "memory_mode",
+            "stage": "succeeded",
+            "mem0WritebackRan": false,
+            "status": "succeeded",
+            "updatedAt": "2026-05-19T08:07:50.200Z"
+          },
+          "inboundStatus": "succeeded",
+          "state": {
+            "onboardingState": "complete",
+            "onboardingStatus": "complete",
+            "workSessionKind": "shared_onboarding",
+            "workSessionStatus": "ended",
+            "currentQuestionId": null,
+            "sharedStatus": "complete",
+            "completed": true,
+            "answerKeys": [
+              "culture_stage",
+              "industry_interest",
+              "location_relocation",
+              "main_goal",
+              "special_context"
+            ],
+            "promptContext": {
+              "firstName": "Adam"
+            },
+            "statedPreferences": {
+              "nextCompanyGoals": [
+                "career_growth",
+                "high_compensation",
+                "learning"
+              ],
+              "companySize": "scale_up",
+              "industrySector": [
+                "artificial_intelligence_and_machine_learning",
+                "financial_technology"
+              ],
+              "targetLocations": [
+                "new_york_metro",
+                "remote_united_states",
+                "seattle_metro"
+              ],
+              "specialContext": "Nothing else major. I can start quickly and want full-stack or backend-heavy work."
+            },
+            "tagKeys": [
+              "companySize",
+              "industrySector",
+              "lastUpdatedFromChat",
+              "schemaVersion",
+              "targetCompanyTags",
+              "targetLocations"
+            ]
+          },
+          "failures": []
+        }
+      ],
+      "failures": [
+        "bootstrap: reply did not match /resume/i",
+        "bootstrap: reply did not match /Software Engineer Intern/i",
+        "bootstrap: reply did not match /Tesla Inc/i",
+        "bootstrap: promptContext missing Software Engineer Intern title",
+        "bootstrap: promptContext missing Tesla Inc company"
+      ]
+    }
+  ],
+  "summary": {
+    "passedConversations": 0,
+    "failedConversations": 1,
+    "totalTurns": 9,
+    "totalAssistantReplies": 8,
+    "failures": [
+      "shared-onboarding-001: bootstrap: reply did not match /resume/i",
+      "shared-onboarding-001: bootstrap: reply did not match /Software Engineer Intern/i",
+      "shared-onboarding-001: bootstrap: reply did not match /Tesla Inc/i",
+      "shared-onboarding-001: bootstrap: promptContext missing Software Engineer Intern title",
+      "shared-onboarding-001: bootstrap: promptContext missing Tesla Inc company"
+    ]
+  }
+}
