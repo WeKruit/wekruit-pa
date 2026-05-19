@@ -2189,6 +2189,7 @@ export { paExternalSupplyInstantlyWebhook } from "./external-supply/instantly-we
 // (Adam directive 2026-05-14). Instantly above stays for an easy switch back.
 export { paExternalSupplySyncPlanToMailgun } from "./external-supply/mailgun-sync.js"
 export { paExternalSupplyMailgunWebhook } from "./external-supply/mailgun-webhook.js"
+export { sendMailgunEmail } from "./send-mailgun-email.js"
 export { paExternalSupplyGetConfig } from "./external-supply/config.js"
 // V2 — agent-ranking layer (Wave C / Executor D). Three admin-gated callables
 // per .planning/external-supply-v2/EXECUTOR-PLANS.md §D.
