@@ -35,7 +35,7 @@ import { createHash } from "node:crypto"
 import { onRequest } from "firebase-functions/v2/https"
 import { defineSecret } from "firebase-functions/params"
 import { getFirestore } from "firebase-admin/firestore"
-import { PA_COLLECTIONS, ResumeArtifactSchema, type PaUserSource } from "@pa/core-types"
+import { PA_COLLECTIONS, ResumeArtifactSchema, isPaUserSource, type PaUserSource } from "@pa/core-types"
 import { ingestCv } from "./cv-ingest/cv-ingest.js"
 import type { IngestCvInput, IngestCvDeps } from "./cv-ingest/cv-ingest.js"
 import { detectResumeUploadKind, extractDocxText } from "./resume-upload-parser.js"
@@ -103,12 +103,18 @@ function idSafe(value: string): string {
   return value.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 80)
 }
 
+function sourceForProfileCreate(uploadSource?: string): PaUserSource {
+  return uploadSource === "layoff_signup" ? "WeKruit_Laid_Off" : "candidate"
+}
+
 export function buildCandidateUploadResumeArtifactWrites(input: {
   candidateId: string
   parsedCandidateResumeId: string
   fileName?: string
   sha256?: string
   candidateProfileSummary?: string
+  existingUserSource?: unknown
+  uploadSource?: string
   now: string
 }): {
   artifact: ReturnType<typeof ResumeArtifactSchema.parse>
@@ -139,12 +145,9 @@ export function buildCandidateUploadResumeArtifactWrites(input: {
     artifact,
     userPatch: {
       latestResumeArtifactId: artifact.resumeId,
-      // Idempotent: stamps `source: 'candidate'` so the cleanup goal's
-      // (2026-05-18) source-label policy is satisfied for the public job-page
-      // entry point. Merge-safe — existing docs that already carry a source
-      // keep theirs because Firestore's `set({merge:true})` overwrites only
-      // the keys we pass, and we always pass the same canonical value.
-      source: "candidate" satisfies PaUserSource,
+      ...(isPaUserSource(input.existingUserSource)
+        ? {}
+        : { source: sourceForProfileCreate(input.uploadSource) }),
       updatedAt: input.now,
     },
     selfProfilePatch: stripUndefined({
@@ -164,13 +167,20 @@ async function recordCandidateUploadResumeArtifact(args: {
   fileName?: string
   sha256?: string
   candidateProfileSummary?: string
+  uploadSource?: string
 }): Promise<string> {
+  const userSnap = await args.db
+    .collection(PA_COLLECTIONS.users)
+    .doc(args.candidateId)
+    .get()
   const writes = buildCandidateUploadResumeArtifactWrites({
     candidateId: args.candidateId,
     parsedCandidateResumeId: args.parsedCandidateResumeId,
     fileName: args.fileName,
     sha256: args.sha256,
     candidateProfileSummary: args.candidateProfileSummary,
+    existingUserSource: userSnap.data()?.source,
+    uploadSource: args.uploadSource,
     now: new Date().toISOString(),
   })
   await Promise.all([
@@ -345,6 +355,7 @@ export const paPublicCvIngest = onRequest(
           fileName: body.resumeName,
           sha256: resumeSha256,
           candidateProfileSummary: result.candidateProfileSummary,
+          uploadSource: body.source,
         })
         log("public_cv_ingest.ok", {
           userId,

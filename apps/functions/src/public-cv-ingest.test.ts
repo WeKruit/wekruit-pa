@@ -88,8 +88,35 @@ test("buildCandidateUploadResumeArtifactWrites creates parsed candidate-upload a
   assert.equal(writes.artifact.source, "candidate_upload")
   assert.equal(writes.artifact.parsedCandidateResumeId, "parsed-1")
   assert.equal(writes.userPatch.latestResumeArtifactId, writes.artifact.resumeId)
+  assert.equal(writes.userPatch.source, "candidate")
   assert.equal(writes.selfProfilePatch.resumeStatus, "parsed")
   assert.equal(writes.selfProfilePatch.profileSummary, "Product designer profile summary")
+})
+
+test("buildCandidateUploadResumeArtifactWrites preserves existing layoff source", () => {
+  const writes = buildCandidateUploadResumeArtifactWrites({
+    candidateId: "cand-1",
+    parsedCandidateResumeId: "parsed-1",
+    fileName: "Resume.pdf",
+    existingUserSource: "WeKruit_Laid_Off",
+    uploadSource: "candidate_signup",
+    now: "2026-05-14T12:00:00.000Z",
+  })
+
+  assert.equal(writes.userPatch.latestResumeArtifactId, writes.artifact.resumeId)
+  assert.equal("source" in writes.userPatch, false)
+})
+
+test("buildCandidateUploadResumeArtifactWrites stamps layoff source only for source-less layoff uploads", () => {
+  const writes = buildCandidateUploadResumeArtifactWrites({
+    candidateId: "cand-1",
+    parsedCandidateResumeId: "parsed-1",
+    fileName: "Resume.pdf",
+    uploadSource: "layoff_signup",
+    now: "2026-05-14T12:00:00.000Z",
+  })
+
+  assert.equal(writes.userPatch.source, "WeKruit_Laid_Off")
 })
 
 test("buildPublicCvIngestInput keeps signed-in public uploads on the profile userId", () => {
