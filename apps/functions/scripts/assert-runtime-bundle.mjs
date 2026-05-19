@@ -25,6 +25,11 @@ const required = [
   // shared-onboarding dispatch survive bundling.
   "if (await handleSharedOnboardingRuntimeEvent(event, store, turnId, onboardingUser)",
   "directIntent: \"shared_onboarding\"",
+  // Duplicate greetings or other non-answers must be judged before advancing
+  // the shared-onboarding question pointer. This prevents a stale bundle from
+  // silently accepting "Hello, WeKruit!" as the answer to Q1.
+  "const answerJudge = await judgeSharedOnboardingAnswer({",
+  "directIntentResult: duplicateGreeting ? \"ignored_non_answer\" : \"reasked_question\"",
 ]
 
 const missing = required.filter((needle) => !bundle.includes(needle))
