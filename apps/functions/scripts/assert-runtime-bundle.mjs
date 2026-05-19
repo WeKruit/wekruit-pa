@@ -7,10 +7,18 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const bundlePath = resolve(__dirname, "../lib/index.js")
 const bundle = readFileSync(bundlePath, "utf8")
 
+// Each entry is a substring that MUST appear in the bundled `lib/index.js`.
+// The assertion is a coarse "did the runtime guard survive bundling?" check;
+// match what the esbuild output actually emits rather than the source's
+// pretty-printed shape. Update both halves of a pair if the source guard
+// changes.
 const required = [
   "const userAuthoredEvent = !runtimeEvent;",
-  "const onboardingIncomplete = Boolean(userAuthoredEvent && onboardingUser && onboardingUser.onboardingState !== \"complete\");",
-  "if (userAuthoredEvent && onboardingUser)",
+  // Source signature: `Boolean(userAuthoredEvent && onboardingUser && onboardingUser.onboardingState !== "complete" && !layoffRuntimeSession)`.
+  // The `!layoffRuntimeSession` clause was added when the layoff runtime
+  // bypass for q_email/q_tos shipped. Match on the load-bearing prefix.
+  "const onboardingIncomplete = Boolean(userAuthoredEvent && onboardingUser && onboardingUser.onboardingState !== \"complete\"",
+  "if (userAuthoredEvent && onboardingUser && !layoffRuntimeSession)",
   "pa.onboarding.pipeline.reject_runtime_event",
 ]
 
