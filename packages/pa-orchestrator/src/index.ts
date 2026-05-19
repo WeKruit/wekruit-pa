@@ -2134,7 +2134,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // an incomplete onboarding turn must either be handled here or fail
     // loudly instead of drifting into a parallel message producer.
     // ════════════════════════════════════════════════════════════════
-    if (userAuthoredEvent && onboardingUser) {
+    if (userAuthoredEvent && onboardingUser && !layoffRuntimeSession) {
       const cvParsedInbound = (event.body ?? "").trim().startsWith("[cv-parsed]")
       const cvParsed = store.getUserCvParsed
         ? await store.getUserCvParsed(event.userId)
