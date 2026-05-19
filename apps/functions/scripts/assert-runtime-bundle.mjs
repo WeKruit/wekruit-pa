@@ -14,12 +14,12 @@ const bundle = readFileSync(bundlePath, "utf8")
 // changes.
 const required = [
   "const userAuthoredEvent = !runtimeEvent;",
-  // Source signature: `Boolean(userAuthoredEvent && onboardingUser && onboardingUser.onboardingState !== "complete" && !layoffRuntimeSession)`.
-  // The session guards were added when website-started onboarding moved to
-  // the shared runtime flow. Match on the load-bearing prefix.
-  "const onboardingIncomplete = Boolean(userAuthoredEvent && onboardingUser && onboardingUser.onboardingState !== \"complete\"",
-  "if (userAuthoredEvent && onboardingUser && !layoffRuntimeSession)",
-  "pa.onboarding.pipeline.reject_runtime_event",
+  // Website-started onboarding is the only SMS intake. Source labels alone
+  // must not bypass the shared runtime session gate.
+  "const sharedRuntimeSession = isSharedOnboardingActiveUser(onboardingUser);",
+  "const onboardingIncomplete = Boolean(userAuthoredEvent && onboardingUser && onboardingUser.onboardingState !== \"complete\" && !sharedRuntimeSession)",
+  "if (userAuthoredEvent && await handleLegacySmsOnboardingBlocked(event, store, turnId, onboardingUser, sharedRuntimeSession))",
+  "directIntentResult: \"legacy_sms_onboarding_blocked\"",
 ]
 
 const missing = required.filter((needle) => !bundle.includes(needle))
