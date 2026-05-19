@@ -114,7 +114,23 @@ export type MatchScore = z.infer<typeof MatchScoreSchema>
 export const MatchingJobSchema = z.object({
   id: z.string(),
   companyName: z.string(),
+  /**
+   * Normalized title surfaced by `projectMatchingJobRow`. macmini scraper
+   * canonically writes the raw doc field `roleTitle` (100% of 16,788 active
+   * docs as of 2026-05-19, 0% have raw `jobTitle`). The projector maps
+   * `roleTitle → jobTitle` so consumers can read one field; the raw
+   * `roleTitle` is ALSO passed through below as defense-in-depth for any
+   * caller that bypasses the projector and reads docs directly.
+   */
   jobTitle: z.string(),
+  /**
+   * 2026-05-19 hotfix — raw `roleTitle` surfaced for defense-in-depth.
+   * V16 reader sites (`presentationRoleText`, dedup key, output mapping)
+   * fall back to this field when `jobTitle` is empty so a future regression
+   * in `projectMatchingJobRow` cannot silently collapse titles to "".
+   * Always treat `(jobTitle || roleTitle)` as the displayable title.
+   */
+  roleTitle: z.string().optional(),
   salaryMax: z.number().nullable(),
   salaryMin: z.number().nullable(),
   locationRaw: z.string(),

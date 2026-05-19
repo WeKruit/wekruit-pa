@@ -1419,8 +1419,14 @@ export function projectMatchingJobRow(id: string, raw: Record<string, unknown>):
 
   // The corpus uses `roleTitle` (per the live sample) — fall back to
   // common alternates so a future schema migration doesn't silently break.
+  // Live audit 2026-05-19: 100% of 16,788 active docs carry `roleTitle`,
+  // 0% carry `jobTitle`. The fallback is therefore load-bearing in prod.
   const jobTitle =
     str(raw.roleTitle) || str(raw.jobTitle) || str(raw.title) || ""
+  // 2026-05-19 hotfix — also pass through the raw `roleTitle` so V16 reader
+  // sites that bypass this projector (debug tools, future call paths) can
+  // fall back to it. See MatchingJobSchema.roleTitle comment.
+  const roleTitleRaw = str(raw.roleTitle)
 
   // P7-C 2026-05-08 (canonical-tags) — Firestore `matching-jobs` docs may
   // store `requiredSkills` as EITHER a flat `string[]` (legacy / scraped)
@@ -1455,6 +1461,7 @@ export function projectMatchingJobRow(id: string, raw: Record<string, unknown>):
     id,
     companyName: str(raw.companyName),
     jobTitle,
+    ...(roleTitleRaw ? { roleTitle: roleTitleRaw } : {}),
     salaryMax: num(raw.salaryMax),
     salaryMin: num(raw.salaryMin),
     locationRaw: str(raw.locationRaw),

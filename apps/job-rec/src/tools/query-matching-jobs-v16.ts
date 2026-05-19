@@ -93,6 +93,31 @@ const RERANK_CACHE_COLLECTION = "pa-user-rerank-cache"
 const SKILL_JDREL_CACHE_COLLECTION = "pa-user-skill-jdrel-cache"
 
 // ---------------------------------------------------------------------------
+// Helpers — title fallback (2026-05-19 hotfix)
+// ---------------------------------------------------------------------------
+
+/**
+ * Schema drift: macmini scraper writes `roleTitle`; legacy / hand-seeded rows
+ * carry `jobTitle`. `projectMatchingJobRow` already normalizes
+ * `roleTitle → jobTitle` so V16's projected `MatchingJob` shape carries
+ * `jobTitle`. This helper exists as defense-in-depth for any consumer that
+ * bypasses the projector (admin debug paths, direct Firestore reads) or
+ * regressions in the projection layer.
+ *
+ * Returns the displayable title, preferring the trimmed `jobTitle`, falling
+ * back to the trimmed `roleTitle`, then to "". Treats null / undefined / ""
+ * as missing — `??` alone would surface `""` and skip the fallback.
+ */
+export const getMatchingJobTitle = (
+  j: { jobTitle?: string | null; roleTitle?: string | null }
+): string => {
+  const a = typeof j.jobTitle === "string" ? j.jobTitle.trim() : ""
+  if (a.length > 0) return a
+  const b = typeof j.roleTitle === "string" ? j.roleTitle.trim() : ""
+  return b
+}
+
+// ---------------------------------------------------------------------------
 // loadUserTags — single-source read (MATCH-01 / D8)
 // ---------------------------------------------------------------------------
 
@@ -1083,7 +1108,10 @@ function normalizePresentationRoleFocus(values: string[] | undefined): Array<"fr
 function presentationRoleText(job: MatchingJob): string {
   const skills = Array.isArray(job.requiredSkills) ? job.requiredSkills.join(" ") : ""
   const industry = Array.isArray(job.industryEnum) ? job.industryEnum.join(" ") : ""
-  return `${job.jobTitle ?? ""} ${skills} ${industry}`.toLowerCase()
+  // Use the title fallback helper — macmini scraper writes `roleTitle`,
+  // legacy rows carry `jobTitle`. Without the chain the role-focus
+  // keyword filter would silently degrade when the projector regressed.
+  return `${getMatchingJobTitle(job)} ${skills} ${industry}`.toLowerCase()
 }
 
 function matchesPresentationRoleFocus(job: MatchingJob, focus: Array<"frontend" | "fullstack" | "backend">): boolean {
@@ -1419,7 +1447,10 @@ export async function queryMatchingJobsV16(
       missingRequirementsDrop++
       continue
     }
-    const key = `${(s.job.companyName ?? "").toLowerCase()}|${(s.job.jobTitle ?? "").toLowerCase().trim()}`
+    // Title fallback (`jobTitle ?? roleTitle ?? ""`) — without it every
+    // macmini-sourced job collapses to `company|` and the dedup set kills
+    // all but the first job per company. See module header.
+    const key = `${(s.job.companyName ?? "").toLowerCase()}|${getMatchingJobTitle(s.job).toLowerCase()}`
     if (seenDedupKeys.has(key)) continue
     seenDedupKeys.add(key)
     dedupedTop.push(s)
@@ -1554,7 +1585,9 @@ export function createQueryMatchingJobsV16Tool(deps: QueryMatchingJobsV16ToolDep
         // breakdowns). The LLM only needs to render a single sample line.
         const jobs = out.jobs.map((j) => ({
           id: j.id,
-          jobTitle: j.jobTitle,
+          // Title fallback — surface `roleTitle` when `jobTitle` is empty
+          // so the LLM-facing payload never has a blank title.
+          jobTitle: getMatchingJobTitle(j),
           companyName: j.companyName,
           atsApplyUrl: j.atsApplyUrl ?? null,
           locationRaw: j.locationRaw ?? "",

@@ -15,6 +15,7 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { MockFirestore, asFirestore } from "../mock-firestore.js"
 import {
+  getMatchingJobTitle,
   loadUserTags,
   loadJdRelCache,
   loadLlmRerankCache,
@@ -46,6 +47,34 @@ const FRESHNESS_BOOST_FRESH_TS =
 
 test("V16_SCORE_WEIGHTS sum to 1.0 (within fp tolerance)", () => {
   assert.ok(Math.abs(V16_SCORE_WEIGHTS_SUM - 1.0) < 1e-9, `sum=${V16_SCORE_WEIGHTS_SUM}`)
+})
+
+// ---------------------------------------------------------------------------
+// getMatchingJobTitle — schema-drift fallback (2026-05-19 hotfix)
+// ---------------------------------------------------------------------------
+
+test("getMatchingJobTitle: prefers jobTitle when both present", () => {
+  assert.equal(
+    getMatchingJobTitle({ jobTitle: "Backend Engineer", roleTitle: "Frontend Engineer" }),
+    "Backend Engineer",
+  )
+})
+
+test("getMatchingJobTitle: falls back to roleTitle when jobTitle empty (macmini canonical shape)", () => {
+  assert.equal(getMatchingJobTitle({ roleTitle: "Senior SWE" }), "Senior SWE")
+  assert.equal(getMatchingJobTitle({ jobTitle: "", roleTitle: "PM" }), "PM")
+  assert.equal(getMatchingJobTitle({ jobTitle: null, roleTitle: "EM" }), "EM")
+})
+
+test("getMatchingJobTitle: returns trimmed empty string when both missing", () => {
+  assert.equal(getMatchingJobTitle({}), "")
+  assert.equal(getMatchingJobTitle({ jobTitle: undefined, roleTitle: undefined }), "")
+  assert.equal(getMatchingJobTitle({ jobTitle: null, roleTitle: null }), "")
+})
+
+test("getMatchingJobTitle: trims whitespace from the surfaced title", () => {
+  assert.equal(getMatchingJobTitle({ jobTitle: "  SWE  " }), "SWE")
+  assert.equal(getMatchingJobTitle({ roleTitle: "\tPM\n" }), "PM")
 })
 
 // ---------------------------------------------------------------------------
@@ -729,6 +758,111 @@ test("queryMatchingJobsV16: with role-fn filter returns matching jobs", async ()
     (r.userTags as Record<string, unknown>).targetRoleFunction,
     ["software_engineering"],
   )
+})
+
+// ---------------------------------------------------------------------------
+// 2026-05-19 schema-drift hotfix — title fallback through full pipeline
+// ---------------------------------------------------------------------------
+//
+// macmini scraper canonically writes `roleTitle`; legacy rows carry `jobTitle`.
+// `projectMatchingJobRow` normalizes `roleTitle → jobTitle`, but V16 also needs
+// to be robust on its own (defense in depth). End-to-end:
+//   1. queryMatchingJobsV16 surfaces a non-empty title for roleTitle-only docs
+//   2. dedup key does NOT collapse multiple roleTitle-only docs to `company|`
+//   3. presentation-role-focus filter still works on `roleTitle` text
+//
+test("queryMatchingJobsV16: roleTitle-only doc surfaces title in output (schema-drift fallback)", async () => {
+  const mfs = new MockFirestore()
+  await mfs.collection("pa-users").doc("u_roleTitle").set({
+    tags: {
+      skills: ["python"],
+      industryEnum: ["tech_software"],
+      schemaVersion: 1,
+      targetRoleFunction: ["software_engineering"],
+    },
+  })
+  // Seed a doc with ONLY roleTitle — no jobTitle. Mirrors live macmini state.
+  await mfs.collection("matching-jobs").doc("macmini-swe").set({
+    id: "macmini-swe",
+    status: "active",
+    companyName: "MacminiCo",
+    roleTitle: "Senior Software Engineer", // NOTE: no jobTitle field
+    atsApplyUrl: "https://greenhouse.io/co/macmini-swe",
+    primaryUrl: "https://example.com/macmini-swe",
+    industry: "tech",
+    industryKey: "tech",
+    sponsorship: null,
+    locationRaw: "San Francisco, CA",
+    firstSeenAt: FRESH_TS,
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["python"],
+  })
+
+  const r = await queryMatchingJobsV16(
+    { userId: "u_roleTitle", nowMs: NOW },
+    { db: asFirestore(mfs) },
+  )
+
+  assert.equal(r.jobs.length, 1)
+  const job = r.jobs[0]!
+  // Title must be non-empty — projectMatchingJobRow maps roleTitle → jobTitle.
+  assert.equal(job.jobTitle, "Senior Software Engineer")
+})
+
+test("queryMatchingJobsV16: dedup key uses title fallback so multiple roleTitle-only docs do NOT collapse", async () => {
+  const mfs = new MockFirestore()
+  await mfs.collection("pa-users").doc("u_dedup").set({
+    tags: {
+      skills: ["python"],
+      industryEnum: ["tech_software"],
+      schemaVersion: 1,
+      targetRoleFunction: ["software_engineering"],
+    },
+  })
+  // Two macmini docs at the SAME company with DIFFERENT roleTitles, both
+  // missing jobTitle. Before the hotfix the dedup key collapsed both to
+  // `acme|` and only one survived. After the fix the helper uses
+  // `(jobTitle || roleTitle)` and the keys differ — both survive.
+  await mfs.collection("matching-jobs").doc("acme-swe").set({
+    id: "acme-swe",
+    status: "active",
+    companyName: "AcmeUnified",
+    roleTitle: "Senior Software Engineer",
+    atsApplyUrl: "https://greenhouse.io/co/acme-swe",
+    primaryUrl: "https://example.com/acme-swe",
+    industry: "tech",
+    industryKey: "tech",
+    sponsorship: null,
+    locationRaw: "San Francisco, CA",
+    firstSeenAt: FRESH_TS,
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["python"],
+  })
+  await mfs.collection("matching-jobs").doc("acme-pm").set({
+    id: "acme-pm",
+    status: "active",
+    companyName: "AcmeUnified",
+    roleTitle: "Staff Software Engineer",
+    atsApplyUrl: "https://greenhouse.io/co/acme-pm",
+    primaryUrl: "https://example.com/acme-pm",
+    industry: "tech",
+    industryKey: "tech",
+    sponsorship: null,
+    locationRaw: "San Francisco, CA",
+    firstSeenAt: FRESH_TS,
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["python"],
+  })
+
+  const r = await queryMatchingJobsV16(
+    { userId: "u_dedup", nowMs: NOW },
+    { db: asFirestore(mfs) },
+  )
+
+  // Both jobs survive — title fallback prevented dedup collapse.
+  assert.equal(r.jobs.length, 2)
+  const ids = r.jobs.map((j) => j.id).sort()
+  assert.deepEqual(ids, ["acme-pm", "acme-swe"])
 })
 
 test("queryMatchingJobsV16: lang arg overrides stored preferredLang for user-facing reasons", async () => {
