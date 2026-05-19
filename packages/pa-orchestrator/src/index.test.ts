@@ -826,9 +826,11 @@ test("processInboundEvent onboarding: incomplete SMS onboarding is gated before 
   }
 
   assert.equal(lifecycleWrites, 0, "active onboarding reply must not be recorded as lifecycle reply")
-  assert.equal(onboardingComposeCalls, 0, "manual SMS onboarding gate should own the reply without LLM compose")
-  assert.match(outbound, /candidate\.wekruit\.com\/onboarding/)
+  assert.equal(onboardingComposeCalls, 0, "shared onboarding bootstrap must own the reply without LLM compose")
+  // 2026-05-19 — bootstrap shared_onboarding inline instead of redirecting to web.
+  assert.doesNotMatch(outbound, /candidate\.wekruit\.com\/onboarding/)
   assert.doesNotMatch(outbound, /email/i)
+  assert.match(outbound, /matters most in your next company/)
   assert.equal(applied.length, 0)
 })
 
@@ -872,11 +874,13 @@ test("processInboundEvent onboarding: process questions are gated to website sta
   assert.equal(lifecycleWrites, 0)
   assert.equal(llmCalls, 0)
   assert.equal(applyCalls, 0)
-  assert.match(outbound, /candidate\.wekruit\.com\/onboarding/)
+  // 2026-05-19 — bootstrap shared_onboarding Q1 inline instead of redirecting.
+  assert.doesNotMatch(outbound, /candidate\.wekruit\.com\/onboarding/)
   assert.doesNotMatch(outbound, /email/i)
+  assert.match(outbound, /matters most in your next company/)
 })
 
-test("processInboundEvent layoff: source-only incomplete layoff users are gated to website start", async () => {
+test("processInboundEvent layoff: source-only incomplete layoff users bootstrap shared_onboarding inline", async () => {
   let llmCalls = 0
   let applyCalls = 0
   let outbound = ""
@@ -912,13 +916,25 @@ test("processInboundEvent layoff: source-only incomplete layoff users are gated 
 
   assert.equal(llmCalls, 0)
   assert.equal(applyCalls, 0)
-  assert.match(outbound, /candidate\.wekruit\.com\/onboarding/)
+  // 2026-05-19 — bootstrap shared_onboarding Q1 inline instead of redirecting.
+  assert.doesNotMatch(outbound, /candidate\.wekruit\.com\/onboarding/)
   assert.doesNotMatch(outbound, /email/i)
+  assert.match(outbound, /matters most in your next company/)
   assert.equal(turnUpdates.some((patch) => "onboardingDeterministicAction" in patch), false)
-  assert.equal(turnUpdates.some((patch) => patch.directIntent === "website_onboarding_required"), true)
+  assert.equal(turnUpdates.some((patch) => patch.directIntent === "shared_onboarding"), true)
+  assert.equal(
+    turnUpdates.some((patch) => patch.directIntentResult === "bootstrapped_q1_inline"),
+    true,
+  )
 })
 
-test("processInboundEvent layoff: explicit role requests do not generate recommendations before shared onboarding completes", async () => {
+test("processInboundEvent layoff: inbound before shared_onboarding active bootstraps Q1 inline instead of recommending jobs", async () => {
+  // 2026-05-19 — replaced the legacy URL-redirect assertion. Adam's
+  // directive: when a registered candidate texts in but their shared
+  // session isn't active yet (e.g. runtime kickoff event never fired or
+  // user replied before it landed), Claire bootstraps shared_onboarding
+  // inline (sends Q1 "main_goal") instead of bouncing them back to the
+  // website. The job-rec request must still be deferred until Q1-Q5 land.
   let recCalls = 0
   let llmCalls = 0
   let applyCalls = 0
@@ -966,11 +982,16 @@ test("processInboundEvent layoff: explicit role requests do not generate recomme
   assert.equal(recCalls, 0)
   assert.equal(llmCalls, 0)
   assert.equal(applyCalls, 0)
-  assert.match(outbound, /candidate\.wekruit\.com\/onboarding/)
+  assert.doesNotMatch(outbound, /candidate\.wekruit\.com\/onboarding/)
   assert.doesNotMatch(outbound, /email/i)
+  assert.match(outbound, /matters most in your next company/)
   assert.equal(turnUpdates.some((patch) => "onboardingDeterministicAction" in patch), false)
   assert.equal(turnUpdates.some((patch) => patch.directIntent === "job_search"), false)
-  assert.equal(turnUpdates.some((patch) => patch.directIntent === "website_onboarding_required"), true)
+  assert.equal(turnUpdates.some((patch) => patch.directIntent === "shared_onboarding"), true)
+  assert.equal(
+    turnUpdates.some((patch) => patch.directIntentResult === "bootstrapped_q1_inline"),
+    true,
+  )
 })
 
 test("processInboundEvent lifecycle: explicit job request is not swallowed as profile update", async () => {

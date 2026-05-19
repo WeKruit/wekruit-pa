@@ -195,7 +195,9 @@ test("coldstart-langlock: ZH user '我想找工作' → website start gate witho
   )
   assert.equal(captures.llmCalls, 0)
   assert.equal(captures.outboundBodies.length, 1)
-  assert.match(captures.outboundBodies[0] ?? "", /candidate\.wekruit\.com\/onboarding/i)
+  // 2026-05-19 — shared_onboarding bootstrap owns cold-start Q1, no URL redirect.
+  assert.doesNotMatch(captures.outboundBodies[0] ?? "", /candidate\.wekruit\.com\/onboarding/i)
+  assert.match(captures.outboundBodies[0] ?? "", /matters most in your next company/)
   assert.doesNotMatch(captures.outboundBodies[0] ?? "", /email/i)
   assert.deepEqual(captures.systemPrompts, [])
   assert.deepEqual(captures.userMessages, [])
@@ -219,7 +221,9 @@ test("coldstart-langlock: EN user 'I want a job' → website start gate without 
     store
   )
   assert.equal(captures.llmCalls, 0)
-  assert.match(captures.outboundBodies[0] ?? "", /candidate\.wekruit\.com\/onboarding/i)
+  // 2026-05-19 — shared_onboarding bootstrap owns cold-start Q1, no URL redirect.
+  assert.doesNotMatch(captures.outboundBodies[0] ?? "", /candidate\.wekruit\.com\/onboarding/i)
+  assert.match(captures.outboundBodies[0] ?? "", /matters most in your next company/)
   assert.doesNotMatch(captures.outboundBodies[0] ?? "", /email/i)
   assert.deepEqual(captures.systemPrompts, [])
   assert.deepEqual(captures.userMessages, [])
@@ -238,7 +242,9 @@ test("coldstart-langlock: 'swe的' → website start gate, no LLM lang-lock path
     store
   )
   assert.equal(captures.llmCalls, 0)
-  assert.match(captures.outboundBodies[0] ?? "", /candidate\.wekruit\.com\/onboarding/i)
+  // 2026-05-19 — shared_onboarding bootstrap owns cold-start Q1, no URL redirect.
+  assert.doesNotMatch(captures.outboundBodies[0] ?? "", /candidate\.wekruit\.com\/onboarding/i)
+  assert.match(captures.outboundBodies[0] ?? "", /matters most in your next company/)
   assert.doesNotMatch(captures.outboundBodies[0] ?? "", /email/i)
   assert.deepEqual(captures.systemPrompts, [])
   assert.deepEqual(captures.userMessages, [])
@@ -257,7 +263,9 @@ test("coldstart-langlock: 'yoe1年的' → website start gate, no LLM lang-lock 
     store
   )
   assert.equal(captures.llmCalls, 0)
-  assert.match(captures.outboundBodies[0] ?? "", /candidate\.wekruit\.com\/onboarding/i)
+  // 2026-05-19 — shared_onboarding bootstrap owns cold-start Q1, no URL redirect.
+  assert.doesNotMatch(captures.outboundBodies[0] ?? "", /candidate\.wekruit\.com\/onboarding/i)
+  assert.match(captures.outboundBodies[0] ?? "", /matters most in your next company/)
   assert.doesNotMatch(captures.outboundBodies[0] ?? "", /email/i)
   assert.deepEqual(captures.systemPrompts, [])
 })

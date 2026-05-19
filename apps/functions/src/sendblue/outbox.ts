@@ -49,7 +49,11 @@ export function isRuntimeApprovedOutbound(raw: { runtimeApproved?: unknown; runt
 }
 
 export function isTypingIndicatorEnabled(): boolean {
-  return process.env.PA_TYPING_INDICATOR === "1"
+  // 2026-05-19 — typing indicator is now always on. Adam's product directive:
+  // SMS replies should always show a typing bubble before content lands, no
+  // env-var gating. Previous PA_TYPING_INDICATOR=1 opt-in had silently
+  // regressed after CF env drift; hardcoding removes that failure mode.
+  return process.env.PA_TYPING_INDICATOR !== "0"
 }
 
 type OutboundEvent = {
@@ -469,30 +473,11 @@ export async function paSendblueOutboxHandler(
     }
   }
 
-  // ---- 5. Optional typing indicator (D-06) -----------------------------
-  // Phase 24 T1E — dynamic dwell scaled by reply length (1-4s by body.length).
-  // PA_TYPING_DWELL_MS env override still honored if set (operator escape hatch).
-  //
-  // KNOWN LIMITATION (24-RESEARCH.md Open Question 4): typing fires here,
-  // immediately before the REST POST — NOT at orchestrator reasoning start.
-  // True "fire on reasoning start" requires an orchestrator→outbox event
-  // (architectural change), deferred from Phase 24. Phase 25 may revisit.
-  if (isTypingIndicatorEnabled()) {
-    try {
-      await deps.sendblueClient.sendTypingIndicator({ to: toPeer })
-      const overrideRaw = process.env.PA_TYPING_DWELL_MS
-      const overrideMs = overrideRaw != null && overrideRaw !== "" ? Number(overrideRaw) : NaN
-      const dwellMs = Number.isFinite(overrideMs) && overrideMs > 0
-        ? overrideMs
-        : computeTypingDwellMs(body.length)
-      // 8000ms safeguard preserved (defensive cap on extreme env values)
-      await new Promise((r) => setTimeout(r, Math.min(dwellMs, 8000)))
-    } catch {
-      // Already best-effort inside the helper; defensive double-swallow.
-    }
-  }
-
-  // ---- 5b. Daily-quota gate (Phase 26 T2, flag-driven limit) -----------
+  // ---- 5. Daily-quota gate (Phase 26 T2, flag-driven limit) -----------
+  // 2026-05-19 — moved BEFORE the typing indicator. With typing default-on
+  // (Adam directive), firing a typing bubble for a send that will be
+  // hard-blocked by quota would leak a phantom typing event to the user.
+  // Quota first, typing second, send third.
   const quotaLimit = Number(await getFlag(deps.db, "sendblueDailyQuota", { env: process.env }, 1000))
   const currentCount = await getDailyOutboundCount(deps.db, now())
   if (currentCount >= quotaLimit) {
@@ -511,6 +496,26 @@ export async function paSendblueOutboxHandler(
   }
   if (currentCount >= Math.floor(quotaLimit * 0.8)) {
     try { await recordAuditEvent(deps.db, { type: "quota_soft", channel: "imessage_sendblue", toNumber: toPeer, reason: `count=${currentCount} limit=${quotaLimit}` }) } catch {}
+  }
+
+  // ---- 5b. Typing indicator (D-06) -----------------------------
+  // Phase 24 T1E — dynamic dwell scaled by reply length (1-4s by body.length).
+  // PA_TYPING_DWELL_MS env override still honored if set (operator escape hatch).
+  // 2026-05-19 — default-on per Adam directive (was opt-in via
+  // PA_TYPING_INDICATOR=1). Opt out via PA_TYPING_INDICATOR=0.
+  if (isTypingIndicatorEnabled()) {
+    try {
+      await deps.sendblueClient.sendTypingIndicator({ to: toPeer })
+      const overrideRaw = process.env.PA_TYPING_DWELL_MS
+      const overrideMs = overrideRaw != null && overrideRaw !== "" ? Number(overrideRaw) : NaN
+      const dwellMs = Number.isFinite(overrideMs) && overrideMs > 0
+        ? overrideMs
+        : computeTypingDwellMs(body.length)
+      // 8000ms safeguard preserved (defensive cap on extreme env values)
+      await new Promise((r) => setTimeout(r, Math.min(dwellMs, 8000)))
+    } catch {
+      // Already best-effort inside the helper; defensive double-swallow.
+    }
   }
 
   // ---- 6. POST Sendblue REST -------------------------------------------

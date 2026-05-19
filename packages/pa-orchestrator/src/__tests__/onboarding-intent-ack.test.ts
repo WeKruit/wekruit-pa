@@ -560,7 +560,9 @@ test("integration: manual zh job_search before website start is redirected to ca
   )
   assert.equal(captures.llmCalls, 0, "fresh onboarding now uses the runtime pipeline, not LLM compose")
   assert.deepEqual(captures.systemInputs, [])
-  assert.match(captures.outboundBodies[0] ?? "", /candidate\.wekruit\.com\/onboarding/i)
+  // 2026-05-19 — shared_onboarding bootstrap owns cold-start Q1, no URL redirect.
+  assert.doesNotMatch(captures.outboundBodies[0] ?? "", /candidate\.wekruit\.com\/onboarding/i)
+  assert.match(captures.outboundBodies[0] ?? "", /matters most in your next company/)
   assert.doesNotMatch(captures.outboundBodies[0] ?? "", new RegExp(["what " + "email", "send " + "stuff", "验证码", "6-digit"].join("|"), "i"))
   assert.deepEqual(captures.appliedSteps, [])
 })
@@ -578,7 +580,9 @@ test("integration: manual en job_search before website start is redirected to ca
     store
   )
   assert.equal(captures.llmCalls, 0)
-  assert.match(captures.outboundBodies[0] ?? "", /candidate\.wekruit\.com\/onboarding/i)
+  // 2026-05-19 — shared_onboarding bootstrap owns cold-start Q1, no URL redirect.
+  assert.doesNotMatch(captures.outboundBodies[0] ?? "", /candidate\.wekruit\.com\/onboarding/i)
+  assert.match(captures.outboundBodies[0] ?? "", /matters most in your next company/)
   assert.doesNotMatch(captures.outboundBodies[0] ?? "", new RegExp(["what " + "email", "send " + "stuff", "6-digit"].join("|"), "i"))
   assert.deepEqual(captures.systemInputs, [])
   assert.deepEqual(captures.appliedSteps, [])
@@ -597,7 +601,9 @@ test("integration: manual casual greeting before website start is redirected to 
     store
   )
   assert.equal(captures.llmCalls, 0)
-  assert.match(captures.outboundBodies[0] ?? "", /candidate\.wekruit\.com\/onboarding/i)
+  // 2026-05-19 — shared_onboarding bootstrap owns cold-start Q1, no URL redirect.
+  assert.doesNotMatch(captures.outboundBodies[0] ?? "", /candidate\.wekruit\.com\/onboarding/i)
+  assert.match(captures.outboundBodies[0] ?? "", /matters most in your next company/)
   assert.doesNotMatch(captures.outboundBodies[0] ?? "", new RegExp(["what " + "email", "send " + "stuff", "6-digit"].join("|"), "i"))
   assert.deepEqual(captures.systemInputs, [])
   assert.deepEqual(captures.appliedSteps, [])
@@ -686,7 +692,9 @@ test("integration: intent-ack flag cannot bypass website-start redirect", async 
       store
     )
     assert.equal(captures.llmCalls, 0)
-    assert.match(captures.outboundBodies[0] ?? "", /candidate\.wekruit\.com\/onboarding/i)
+    // 2026-05-19 — shared_onboarding bootstrap owns cold-start Q1, no URL redirect.
+  assert.doesNotMatch(captures.outboundBodies[0] ?? "", /candidate\.wekruit\.com\/onboarding/i)
+  assert.match(captures.outboundBodies[0] ?? "", /matters most in your next company/)
     assert.doesNotMatch(captures.outboundBodies[0] ?? "", new RegExp(["what " + "email", "send " + "stuff", "6-digit"].join("|"), "i"))
   } finally {
     if (prev === undefined) delete process.env.PA_ONBOARDING_INTENT_ACK_DISABLED

@@ -53,7 +53,9 @@ export async function sendTypingIndicator(
 }
 
 export function isSendblueTypingIndicatorEnabled(): boolean {
-  return process.env.PA_TYPING_INDICATOR === "1"
+  // 2026-05-19 — always on unless explicitly disabled via PA_TYPING_INDICATOR=0.
+  // Mirrors apps/functions/src/sendblue/outbox.ts isTypingIndicatorEnabled().
+  return process.env.PA_TYPING_INDICATOR !== "0"
 }
 
 /**

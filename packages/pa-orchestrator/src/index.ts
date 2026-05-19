@@ -115,8 +115,10 @@ export {
   type SharedOnboardingPromptContext,
 } from "./shared-onboarding.js"
 import {
+  SHARED_ONBOARDING_BOUNDARY,
   SHARED_ONBOARDING_WORK_SESSION_KIND,
   buildSharedOnboardingPrompt,
+  buildSharedOnboardingPromptContext,
   cleanSharedOnboardingPromptContext,
   currentSharedOnboardingQuestionId,
   getSharedOnboardingQuestion,
@@ -1666,43 +1668,108 @@ function isSmsLikeChannel(event: InboundEvent): boolean {
   return event.channel === "imessage" || event.channel === "sms"
 }
 
-async function handleLegacySmsOnboardingBlocked(
+async function handleSharedOnboardingBootstrap(
   event: InboundEvent,
   store: OrchestratorStore,
   turnId: string,
   onboardingUser: Awaited<ReturnType<OrchestratorStore["getOnboardingUser"]>>,
   sharedRuntimeSession: boolean,
 ): Promise<boolean> {
+  // 2026-05-19 — replaced the legacy URL-redirect fallback. When a known
+  // candidate (registered pa-users row with phone + source) texts SMS but
+  // their shared_onboarding session isn't active, inline-bootstrap the
+  // session here so Claire asks Q1 directly instead of bouncing them back
+  // to the website. The website still owns the registration flow; this
+  // path covers the case where the runtime kickoff event never fired or
+  // the user replied before the kickoff landed.
   if (!onboardingUser) return false
   if (!isSmsLikeChannel(event)) return false
   if (onboardingUser.onboardingState === "complete") return false
   if (sharedRuntimeSession) return false
-  const crisisReply =
-    pickLangForSafety(event.body) === "zh"
-      ? "先保证你现在是安全的。如果你可能会伤害自己，请立刻联系当地紧急服务或身边可信的人。"
-      : "First, are you safe right now? If you might hurt yourself, contact local emergency services or someone you trust right now."
+  if (!onboardingUser.phoneE164) return false
+
   const crisisGuard = await runCrisisHotlineGuard({
     store,
     event,
     turnId,
     userInput: event.body,
-    reply: crisisReply,
+    reply:
+      pickLangForSafety(event.body) === "zh"
+        ? "先保证你现在是安全的。如果你可能会伤害自己，请立刻联系当地紧急服务或身边可信的人。"
+        : "First, are you safe right now? If you might hurt yourself, contact local emergency services or someone you trust right now.",
     callSite: "onboarding",
   })
+  if (crisisGuard.detected) {
+    await sendMemoryReply(store, event, turnId, crisisGuard.reply)
+    await store.updateTurn(turnId, {
+      status: "succeeded",
+      stage: "succeeded",
+      completedAt: store.nowIso(),
+      directIntent: "crisis_hotline_guard",
+      directIntentResult: "crisis_reply_sent",
+    })
+    await store.markEventSucceeded(event.id)
+    return true
+  }
+
+  const now = store.nowIso()
+  const promptContext = buildSharedOnboardingPromptContext({
+    user: onboardingUser as unknown as Record<string, unknown>,
+    parsedResume: null,
+  })
+  const q1: SharedOnboardingQuestionId = "main_goal"
+
+  if (store.db) {
+    try {
+      await store.db.collection(PA_COLLECTIONS.users).doc(event.userId).set(
+        {
+          onboardingState: "pending",
+          onboardingStatus: "invited",
+          updatedAt: now,
+          sharedOnboarding: {
+            status: "active",
+            startedAt: now,
+            updatedAt: now,
+            currentQuestionId: q1,
+            completed: false,
+            answers: {},
+            ...(Object.keys(promptContext).length > 0 ? { promptContext } : {}),
+          },
+          workSession: {
+            kind: SHARED_ONBOARDING_WORK_SESSION_KIND,
+            status: "active",
+            startedAt: now,
+            boundary: SHARED_ONBOARDING_BOUNDARY,
+            currentQuestionId: q1,
+          },
+        },
+        { merge: true },
+      )
+    } catch (err) {
+      // Fail-open: never block Q1 delivery on a state-write hiccup. The next
+      // inbound turn re-evaluates and will write again if state is still
+      // missing. handleSharedOnboardingUserReply only requires sharedOnboarding
+      // to be present at answer time, not bootstrap time.
+      store.log("pa.shared_onboarding.bootstrap_state_write_failed", {
+        userId: event.userId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+
   await sendMemoryReply(
     store,
     event,
     turnId,
-    crisisGuard.detected
-      ? crisisGuard.reply
-      : "Start from https://candidate.wekruit.com/onboarding so I can use your resume and keep the profile linked. Once you do that, I can continue here.",
+    buildSharedOnboardingPrompt(q1, promptContext),
   )
   await store.updateTurn(turnId, {
     status: "succeeded",
     stage: "succeeded",
-    completedAt: store.nowIso(),
-    directIntent: "website_onboarding_required",
-    directIntentResult: "legacy_sms_onboarding_blocked",
+    completedAt: now,
+    directIntent: "shared_onboarding",
+    directIntentResult: "bootstrapped_q1_inline",
+    sharedOnboardingQuestionId: q1,
   })
   await store.markEventSucceeded(event.id)
   return true
@@ -2239,7 +2306,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     }
     if (
       userAuthoredEvent &&
-      await handleLegacySmsOnboardingBlocked(
+      await handleSharedOnboardingBootstrap(
         event,
         store,
         turnId,

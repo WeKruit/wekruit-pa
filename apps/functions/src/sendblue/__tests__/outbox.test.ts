@@ -178,6 +178,10 @@ beforeEach(() => {
   for (const k of ENV_KEYS) delete process.env[k]
   process.env.IMESSAGE_DM_ALLOWLIST = "1"
   process.env.IMESSAGE_PEERS = ALLOWED_PEER
+  // 2026-05-19 — production default flipped to typing-on. Tests in this
+  // suite assert calls = 1 (single send), so explicitly disable typing here
+  // and let Test 6 below re-enable it for the dedicated typing assertion.
+  process.env.PA_TYPING_INDICATOR = "0"
 })
 afterEach(() => {
   for (const k of ENV_KEYS) delete process.env[k]
