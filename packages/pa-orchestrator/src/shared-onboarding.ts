@@ -1,6 +1,7 @@
 import type { PartialUserTags } from "./tags/user-tags-writer.js"
 import { mapAnswerToLocations } from "./tags/onboarding-mappers.js"
 import { PA_COLLECTIONS } from "@pa/core-types"
+import type { IndustrySector } from "@wekruit/shared-tags"
 import type { JudgeResult, Lang } from "./onboarding/question.js"
 import { GuidedOpenJudge, type LlmCallFn } from "./onboarding/judges/guided-open.js"
 import {
@@ -638,8 +639,8 @@ function tagToken(raw: string): string {
   return raw.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 80)
 }
 
-function industryTags(text: string): string[] {
-  const rules: Array<{ token: string; pattern: RegExp }> = [
+function industryTags(text: string): IndustrySector[] {
+  const rules: Array<{ token: IndustrySector; pattern: RegExp }> = [
     {
       token: "artificial_intelligence_and_machine_learning",
       pattern: /\b(ai|ml|machine\s+learning|artificial\s+intelligence|llm|deep\s+learning)\b/i,

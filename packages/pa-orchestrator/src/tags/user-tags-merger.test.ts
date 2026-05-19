@@ -510,3 +510,59 @@ test("UserTagsSchema parses empty-input output (defaults shape)", () => {
   assert.deepEqual(parsed.skills, [])
   assert.deepEqual(parsed.industryEnum, ["other"])
 })
+
+// ---------------------------------------------------------------------------
+// Workstream W3 — shadow-field promotion round-trip
+// ---------------------------------------------------------------------------
+
+test("UserTagsSchema round-trips all 5 W3-promoted shadow fields with canonical-vocab values", () => {
+  // These 5 fields are written via Phase 54 partial-update mappers
+  // (onboarding.ts, conversation-extractor.ts, onboarding-mappers.ts) and
+  // read in V16 via `as unknown as { ... }` casts (query-matching-jobs-v16
+  // lines 357, 830, 1142). W3 promotes them to UserTagsSchema so the read
+  // casts can be deleted later (W5).
+  //
+  // Values picked from each canonical vocab to confirm enum constraints:
+  //   - ROLE_FUNCTION_VOCAB (17 tokens)
+  //   - CAREER_STAGE_VOCAB (13 tokens)
+  //   - JOB_TYPE_VOCAB (10 tokens)
+  //   - INDUSTRY_SECTOR_VOCAB (42 tokens) — tightening, not addition
+  //   - relevantTags (open vocab, max 12)
+  const fixture = {
+    skills: [],
+    industryEnum: ["other"],
+    targetRoleFunction: ["software_engineering", "data_analysis"],
+    careerStage: "mid_level",
+    targetJobType: ["full_time", "contract"],
+    industrySector: ["financial_technology", "software_and_saas"],
+    relevantTags: ["payments_compliance", "growth_engineering", "developer_tools"],
+    schemaVersion: USER_TAGS_SCHEMA_VERSION,
+  }
+  const parsed = UserTagsSchema.parse(fixture)
+  assert.deepEqual(parsed.targetRoleFunction, ["software_engineering", "data_analysis"])
+  assert.equal(parsed.careerStage, "mid_level")
+  assert.deepEqual(parsed.targetJobType, ["full_time", "contract"])
+  assert.deepEqual(parsed.industrySector, ["financial_technology", "software_and_saas"])
+  assert.deepEqual(parsed.relevantTags, ["payments_compliance", "growth_engineering", "developer_tools"])
+
+  // Enum violation surfaces: a non-canonical role-function token must fail.
+  const bad = UserTagsSchema.safeParse({
+    ...fixture,
+    targetRoleFunction: ["swe"], // abbreviation rejected by D5
+  })
+  assert.equal(bad.success, false)
+
+  // Enum violation surfaces: invalid career stage token must fail.
+  const bad2 = UserTagsSchema.safeParse({
+    ...fixture,
+    careerStage: "super_senior",
+  })
+  assert.equal(bad2.success, false)
+
+  // relevantTags max(12) is enforced.
+  const bad3 = UserTagsSchema.safeParse({
+    ...fixture,
+    relevantTags: new Array(13).fill("foo"),
+  })
+  assert.equal(bad3.success, false)
+})

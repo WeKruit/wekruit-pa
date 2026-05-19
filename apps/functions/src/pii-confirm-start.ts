@@ -25,6 +25,7 @@ import type {
   PipelineState,
   PipelineStateProvider,
 } from "@pa/pa-orchestrator"
+import { INDUSTRY_SECTOR_VOCAB, type IndustrySector } from "@wekruit/shared-tags"
 import { sendRuntimeApprovedIMessage } from "./runtime-approved-outbox.js"
 import {
   buildJobRecommendationRuntimeContext,
@@ -56,7 +57,17 @@ export function buildLevel1TagPatch(level1: PiiConfirmAnswers["level1"] | undefi
   }
   if (level1.targetLocations) tagPatch.targetLocations = level1.targetLocations
   if (level1.minSalaryUsd !== undefined) tagPatch.minSalary = level1.minSalaryUsd
-  if (level1.industrySector) tagPatch.industrySector = level1.industrySector
+  if (level1.industrySector) {
+    // W3 — UserTagsSchema.industrySector is the canonical 42-token enum.
+    // Level1Answers.industrySector is still string[] (caller payload), so
+    // filter to canonical here to keep non-vocab Level 1 answers from
+    // corrupting the user-tag schema.
+    const filtered = level1.industrySector.filter(
+      (t): t is IndustrySector =>
+        typeof t === "string" && (INDUSTRY_SECTOR_VOCAB as readonly string[]).includes(t),
+    )
+    if (filtered.length > 0) tagPatch.industrySector = filtered
+  }
   if (level1.companySize) tagPatch.companySize = level1.companySize
   return tagPatch
 }
