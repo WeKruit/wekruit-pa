@@ -553,6 +553,9 @@ importers:
 
   packages/pa-orchestrator:
     dependencies:
+      '@anthropic-ai/sdk':
+        specifier: ^0.94.0
+        version: 0.94.0(zod@3.25.76)
       '@pa/agent-registry':
         specifier: 0.0.1
         version: link:../agent-registry
