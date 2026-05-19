@@ -59,6 +59,9 @@ import {
 import {
   ALL_CANONICAL_VOCABS,
   CANONICAL_VOCAB_NAMES,
+  REQUIRED_AXES,
+  HARD_FILTER_AXES,
+  SOFT_SCORE_AXES,
 } from "../canonical/registry.js"
 import {
   COMPANY_STAGE_VOCAB,
@@ -478,6 +481,161 @@ describe("TAG-10: ALL_CANONICAL_VOCABS registry", () => {
 
   it("visa is hard_filter (MATCH-04)", () => {
     assert.equal(ALL_CANONICAL_VOCABS.visa.matchSemantics, "hard_filter")
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────
+// W4 — userField / jobField / required binding metadata
+// (Workstream W4 pre-launch matching hardening, follows W3 #117)
+// ─────────────────────────────────────────────────────────────────
+
+describe("W4: ALL_CANONICAL_VOCABS axis binding metadata", () => {
+  it("every entry has userField OR jobField populated (or both)", () => {
+    // Documented exceptions: `companyTag` (composite — uses
+    // companyPositiveList/companyNegativeList instead of a single key)
+    // and `major` (per-education-entry signal on pa-resume-parser, NOT a
+    // top-level UserTags key). All other 9 axes must bind at least one
+    // side; if not, V16 / downstream consumers will silently read
+    // undefined.
+    const exceptions = new Set(["companyTag", "major"])
+    for (const [name, entry] of Object.entries(ALL_CANONICAL_VOCABS)) {
+      if (exceptions.has(name)) {
+        assert.equal(
+          entry.userField,
+          undefined,
+          `${name}.userField should remain undefined (documented exception)`,
+        )
+        assert.equal(
+          entry.jobField,
+          undefined,
+          `${name}.jobField should remain undefined (documented exception)`,
+        )
+        continue
+      }
+      assert.ok(
+        entry.userField !== undefined || entry.jobField !== undefined,
+        `${name} should have userField or jobField (got neither)`,
+      )
+    }
+  })
+
+  it("major has neither user nor job field — soft CV-nested signal (D3)", () => {
+    // major lives at parsedCandidateResumes.education[i].major, not on
+    // UserTags or matching-jobs; binding to either would create drift.
+    assert.equal(ALL_CANONICAL_VOCABS.major.userField, undefined)
+    assert.equal(ALL_CANONICAL_VOCABS.major.jobField, undefined)
+  })
+
+  it("11-axis binding table matches the W4 spec", () => {
+    type Binding = { userField?: string; jobField?: string; required?: boolean }
+    const expected: Record<string, Binding> = {
+      roleFunction: {
+        userField: "targetRoleFunction",
+        jobField: "roleFunction",
+        required: true,
+      },
+      industrySector: {
+        userField: "industrySector",
+        jobField: "industrySector",
+        required: false,
+      },
+      major: { required: false }, // CV-nested per-education-entry signal
+
+      visa: {
+        userField: "visaStatus",
+        jobField: "sponsorship",
+        required: true,
+      },
+      jobType: {
+        userField: "targetJobType",
+        jobField: "jobType",
+        required: false,
+      },
+      careerStage: {
+        userField: "careerStage",
+        jobField: "seniorityLevel",
+        required: false,
+      },
+      location: {
+        userField: "targetLocations",
+        jobField: "locationBuckets",
+        required: true,
+      },
+      relevantTags: {
+        userField: "relevantTags",
+        jobField: "relevantTags",
+        required: false,
+      },
+      skillBucket: {
+        userField: "skills",
+        jobField: "requiredSkills",
+        required: false,
+      },
+      companyStage: {
+        userField: "targetCompanyTags",
+        jobField: "companyTags",
+        required: false,
+      },
+      companyTag: { required: false }, // composite — neither side bound
+    }
+    for (const [name, want] of Object.entries(expected)) {
+      const got = ALL_CANONICAL_VOCABS[name]
+      assert.ok(got, `registry missing axis ${name}`)
+      assert.equal(got.userField, want.userField, `${name}.userField`)
+      assert.equal(got.jobField, want.jobField, `${name}.jobField`)
+      assert.equal(got.required ?? false, want.required, `${name}.required`)
+    }
+  })
+
+  it("REQUIRED_AXES is exactly [roleFunction, visa, location]", () => {
+    assert.deepEqual(
+      [...REQUIRED_AXES].sort(),
+      ["location", "roleFunction", "visa"],
+    )
+  })
+
+  it("HARD_FILTER_AXES covers the 5 hard-filter axes", () => {
+    const expected = new Set([
+      "roleFunction",
+      "visa",
+      "jobType",
+      "careerStage",
+      "location",
+    ])
+    assert.equal(HARD_FILTER_AXES.length, expected.size)
+    for (const a of HARD_FILTER_AXES) {
+      assert.ok(expected.has(a), `unexpected hard-filter axis ${a}`)
+    }
+  })
+
+  it("SOFT_SCORE_AXES covers the 6 soft-score axes", () => {
+    const expected = new Set([
+      "industrySector",
+      "major",
+      "relevantTags",
+      "skillBucket",
+      "companyStage",
+      "companyTag",
+    ])
+    assert.equal(SOFT_SCORE_AXES.length, expected.size)
+    for (const a of SOFT_SCORE_AXES) {
+      assert.ok(expected.has(a), `unexpected soft-score axis ${a}`)
+    }
+  })
+
+  it("HARD_FILTER_AXES + SOFT_SCORE_AXES partitions all 11 axes", () => {
+    const union = new Set([...HARD_FILTER_AXES, ...SOFT_SCORE_AXES])
+    assert.equal(union.size, CANONICAL_VOCAB_NAMES.length)
+    for (const name of CANONICAL_VOCAB_NAMES) {
+      assert.ok(union.has(name), `axis ${name} missing from union`)
+    }
+  })
+
+  it("REQUIRED_AXES is a subset of HARD_FILTER_AXES", () => {
+    const hard = new Set(HARD_FILTER_AXES)
+    for (const a of REQUIRED_AXES) {
+      assert.ok(hard.has(a), `required axis ${a} should be hard_filter`)
+    }
   })
 })
 

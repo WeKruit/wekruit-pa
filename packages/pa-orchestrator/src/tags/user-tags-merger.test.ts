@@ -566,3 +566,95 @@ test("UserTagsSchema round-trips all 5 W3-promoted shadow fields with canonical-
   })
   assert.equal(bad3.success, false)
 })
+
+// ---------------------------------------------------------------------------
+// Workstream W4 (pre-launch matching hardening, follows W3 #117) — guard
+// the `userField` axis bindings in `ALL_CANONICAL_VOCABS` against drift
+// from `UserTagsSchema`. Each axis whose registry `userField` is non-null
+// must name a real key on `UserTags`, otherwise V16 + downstream consumers
+// will silently read `undefined`.
+// ---------------------------------------------------------------------------
+
+test("W4: ALL_CANONICAL_VOCABS userField paths all exist on UserTags", async () => {
+  const { ALL_CANONICAL_VOCABS } = await import("@wekruit/shared-tags")
+  type UserTagsType = import("./user-tags-merger.js").UserTags
+  // Build a sample UserTags doc with every optional populated so `keyof` at
+  // runtime reflects the schema's keys, not just present ones.
+  const sample: UserTagsType = {
+    skills: [],
+    industryEnum: ["other"],
+    industrySector: [],
+    relevantIndustry: [],
+    relevantSpecialization: [],
+    proposedTags: [],
+    relevantTags: [],
+    recentRoleTitle: "",
+    recentCompany: "",
+    workHistorySummary: "",
+    embedding: [],
+    embeddingModel: "",
+    embeddingComputedAt: "",
+    targetRole: [],
+    targetRoleFunction: [],
+    yoeRange: [0, 0],
+    careerStage: "entry_level",
+    visaStatus: "citizen",
+    prefersStartup: "either",
+    targetLocations: [],
+    targetCountry: [],
+    preferredLang: "en",
+    minSalary: 0,
+    companySize: "open",
+    targetJobType: [],
+    targetCompanyTags: [],
+    urgentlySeeking: false,
+    companyNegativeList: [],
+    companyPositiveList: [],
+    lastUpdatedFromCv: "",
+    lastUpdatedFromChat: "",
+    schemaVersion: USER_TAGS_SCHEMA_VERSION,
+  }
+  const validKeys = new Set<string>(Object.keys(sample))
+
+  for (const [axis, entry] of Object.entries(ALL_CANONICAL_VOCABS)) {
+    if (!entry.userField) continue // composite axes intentionally unbound
+    assert.ok(
+      validKeys.has(entry.userField),
+      `axis ${axis}: userField "${entry.userField}" not a key on UserTags`,
+    )
+  }
+})
+
+// Compile-time guard — ensures each `userField` literal in the registry is
+// assignable to `keyof UserTags | undefined`. If the registry drifts (e.g.
+// W5 renames `targetRoleFunction`), `tsc` errors here at build time, well
+// before V16 silently reads undefined at runtime.
+test("W4: userField type-level compatibility with UserTags keys", async () => {
+  const { ALL_CANONICAL_VOCABS } = await import("@wekruit/shared-tags")
+  type UserTagsType = import("./user-tags-merger.js").UserTags
+  type FieldOk<K extends keyof typeof ALL_CANONICAL_VOCABS> =
+    (typeof ALL_CANONICAL_VOCABS)[K]["userField"] extends
+      | keyof UserTagsType
+      | undefined
+      ? true
+      : "drift"
+  // If any axis name resolves to "drift", `_check` below fails to compile.
+  type CheckAllAxes = {
+    [K in keyof typeof ALL_CANONICAL_VOCABS]: FieldOk<K>
+  }
+  const _check: CheckAllAxes = {
+    roleFunction: true,
+    industrySector: true,
+    major: true,
+    visa: true,
+    jobType: true,
+    careerStage: true,
+    location: true,
+    relevantTags: true,
+    skillBucket: true,
+    companyStage: true,
+    companyTag: true,
+  }
+  // Reference _check so tsc doesn't strip — and assert it stays inhabited.
+  assert.equal(Object.keys(_check).length, 11)
+})
