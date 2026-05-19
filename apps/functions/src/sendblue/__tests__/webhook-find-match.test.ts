@@ -26,10 +26,11 @@ const NON_ADMIN_USER_ID = "non-admin-uuid"
 
 type DocData = Record<string, unknown>
 
-function makeFakeDb(opts: { phoneToUser?: Record<string, string> } = {}) {
+function makeFakeDb(opts: { phoneToUser?: Record<string, string>; users?: Record<string, DocData> } = {}) {
   const inbound = new Map<string, DocData>()
   const audit: DocData[] = []
   const flags = new Map<string, DocData>()
+  const users = new Map<string, DocData>(Object.entries(opts.users ?? {}))
 
   function genericDocRef(store: Map<string, DocData>, id: string) {
     return {
@@ -90,10 +91,14 @@ function makeFakeDb(opts: { phoneToUser?: Record<string, string> } = {}) {
   const rateLimitCollection = {
     doc(id: string) { return genericDocRef(rateLimit, id) },
   }
+  const usersCollection = {
+    doc(id: string) { return genericDocRef(users, id) },
+  }
 
   const collections: Record<string, unknown> = {
     "pa-inbound-events": inboundCollection,
     "pa-audit-events": auditCollection,
+    "pa-users": usersCollection,
     "pa-feature-flags": flagsCollection,
     "pa-rate-limits": rateLimitCollection,
     "pa-rate-limit": rateLimitCollection,
@@ -267,6 +272,38 @@ describe("__PA_FIND_MATCH__ admin trigger (Phase 60 DEV-01)", () => {
       (a) => a.type === "inbound_skipped" && a.reason === "find_match_unauthorized"
     )
     assert.ok(denied, "expected inbound_skipped/find_match_unauthorized audit")
+  })
+
+  it("Test 2b: testMode user can trigger even when PA_ADMIN_USER_IDS does not include them", async () => {
+    process.env.PA_ADMIN_USER_IDS = "some-other-uuid"
+    const { db, inbound, audit, phoneToUser } = makeFakeDb({
+      phoneToUser: { [ADMIN_PHONE]: NON_ADMIN_USER_ID },
+      users: { [NON_ADMIN_USER_ID]: { testMode: true } },
+    })
+    const body = JSON.stringify(basePayload("__PA_FIND_MATCH__"))
+    const req = makeReq(body, sign(body))
+    const res = makeRes()
+
+    let triggerCalled = false
+    let triggerArgs: unknown = null
+    await handleSendblueWebhook(req, res, {
+      db,
+      secret: SECRET,
+      lookupUserByPhone: async (_db, phone) => phoneToUser[phone] ?? null,
+      generateJobRecsForUser: async (args) => {
+        triggerCalled = true
+        triggerArgs = args
+        return { ok: true, jobCount: 2 }
+      },
+    })
+
+    assert.equal(res.statusCode, 200)
+    assert.deepEqual(res.bodyOut, { ok: true, action: "find_match_triggered" })
+    assert.equal(inbound.size, 0)
+    await new Promise((r) => setImmediate(r))
+    assert.equal(triggerCalled, true)
+    assert.deepEqual(triggerArgs, { userId: NON_ADMIN_USER_ID, toE164: ADMIN_PHONE })
+    assert.ok(audit.some((a) => a.type === "dev_trigger_find_match"))
   })
 
   it("Test 3: PA_ADMIN_USER_IDS unset → trigger blocked, no handler called", async () => {

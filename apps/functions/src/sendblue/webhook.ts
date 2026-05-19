@@ -971,13 +971,14 @@ export async function handleSendblueWebhook(
   // for the daily 09:00 cron.
   //
   // Security: GUARDED by `PA_ADMIN_USER_IDS` env (comma-separated userId
-  // allowlist). HMAC verify already ran at line 285 — request came from
-  // Sendblue. Allowlist + HMAC together guarantee a non-admin user typing
+  // allowlist) OR per-user `testMode: true`, matching reset-command auth.
+  // HMAC verify already ran at line 285 — request came from Sendblue.
+  // Admin/test-mode auth + HMAC together guarantee a production user typing
   // the literal token cannot trigger the path.
   //
   // Flow on detect-and-authorized:
   //   1. lookup userId by phone (same resolver as coalesce path)
-  //   2. validate against `PA_ADMIN_USER_IDS`
+  //   2. validate against `PA_ADMIN_USER_IDS` or `pa-users/{id}.testMode`
   //   3. invoke `deps.generateJobRecsForUser` (fire-and-forget)
   //   4. audit `dev_trigger_find_match`
   //   5. SKIP broker enqueue + return 200 OK with action marker
@@ -1001,12 +1002,23 @@ export async function handleSendblueWebhook(
       log("[sendblue][webhook] find_match phone lookup failed",
         err instanceof Error ? err.message : String(err))
     }
-    const authorized = !!triggerUserId && adminUids.includes(triggerUserId)
+    let isTestUser = false
+    if (triggerUserId && !adminUids.includes(triggerUserId)) {
+      try {
+        const userSnap = await deps.db.collection("pa-users").doc(triggerUserId).get()
+        isTestUser = userSnap.exists && userSnap.data()?.testMode === true
+      } catch (err) {
+        log("[sendblue][webhook] find_match testMode lookup failed",
+          err instanceof Error ? err.message : String(err))
+      }
+    }
+    const authorized = !!triggerUserId && (adminUids.includes(triggerUserId) || isTestUser)
     if (!authorized) {
       log("pa.dev_trigger.find_match.unauthorized", {
         fromNumber: normalized.fromNumber,
         userId: triggerUserId,
         adminCount: adminUids.length,
+        testMode: isTestUser,
       })
       await safeAudit(
         deps,
