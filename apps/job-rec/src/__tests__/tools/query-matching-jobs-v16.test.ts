@@ -26,6 +26,8 @@ import {
   scoreV16Job,
   composeReason,
   queryMatchingJobsV16,
+  V16_FRESHNESS_BOOST_MAX,
+  V16_FRESHNESS_HALF_LIFE_MS,
 } from "../../tools/query-matching-jobs-v16.js"
 import { V16_SCORE_WEIGHTS, V16_SCORE_WEIGHTS_SUM } from "../../match-weights.js"
 import type { MatchingJob } from "../../types.js"
@@ -33,6 +35,10 @@ import type { MatchingJob } from "../../types.js"
 const NOW = Date.parse("2026-05-06T12:00:00Z")
 const FRESH_TS = new Date(NOW - 5 * 24 * 3600 * 1000).toISOString()
 const STALE_TS = new Date(NOW - 25 * 24 * 3600 * 1000).toISOString()
+// Phase B5 — freshness boost expected for FRESH_TS (5 d old at NOW) with
+// τ=3 d: 0.10 × 0.5^(5/3) ≈ 0.0314980262... Pinned via `nowMs: NOW` arg.
+const FRESHNESS_BOOST_FRESH_TS =
+  V16_FRESHNESS_BOOST_MAX * Math.pow(0.5, (5 * 24 * 3600 * 1000) / V16_FRESHNESS_HALF_LIFE_MS)
 
 // ---------------------------------------------------------------------------
 // Score weight invariant
@@ -367,6 +373,7 @@ test("composeReason: top-2 weighted matched skills surface zh by default", () =>
     tagOverlap: 0,
     positiveHit: 0,
     urgencyBoost: 0,
+    freshnessBoost: 0,
     total: 0.1,
   })
   // top-2: python + typescript only
@@ -384,7 +391,7 @@ test("composeReason: en lang switch when preferredLang='en'", () => {
     tags,
     job,
     [{ name: "python", proficiency: "advanced", weight: 1 }],
-    { llmMatch: 0, skillJaccard: 0.5, relevantTags: 0, industrySector: 0, cvEmbCosine: 0, salaryFit: 0, tagOverlap: 0, positiveHit: 0, urgencyBoost: 0, total: 0.1 }
+    { llmMatch: 0, skillJaccard: 0.5, relevantTags: 0, industrySector: 0, cvEmbCosine: 0, salaryFit: 0, tagOverlap: 0, positiveHit: 0, urgencyBoost: 0, freshnessBoost: 0, total: 0.1 }
   )
   assert.match(reason, /Why match/)
   assert.match(reason, /python/)
@@ -403,6 +410,7 @@ test("composeReason: empty matched falls back to industry-only message when indu
     tagOverlap: 0,
     positiveHit: 0,
     urgencyBoost: 0,
+    freshnessBoost: 0,
     total: 0.05,
   })
   assert.match(reason, /行业方向/)
@@ -479,27 +487,29 @@ test("loadLlmRerankCache: > 36h stale → returns empty map + stale=true", async
 // scoreV16Job — end-to-end weighted blend
 // ---------------------------------------------------------------------------
 
-test("scoreV16Job: missing jdrel + missing llm → score = sum of skillJaccard + emb + salary only", () => {
+test("scoreV16Job: missing jdrel + missing llm → score = sum of skillJaccard + emb + salary + freshness", () => {
   const tags = {
     skills: ["python"],
     industryEnum: ["tech_software"],
     schemaVersion: 1,
   } as never
   const job = mkJob({ requiredSkills: ["python"] })
-  const r = scoreV16Job(tags, job)
+  // Pin nowMs=NOW so freshness boost on FRESH_TS (5d old) is deterministic.
+  const r = scoreV16Job(tags, job, undefined, undefined, undefined, undefined, NOW)
   // skillJaccard = 1.0 → 0.20 weight
   // salary fit = 0.5 (both missing) → 0.05 * 0.5 = 0.025
-  // others = 0
-  const expected = 0.20 + 0.05 * 0.5
+  // freshness = 0.10 × 0.5^(5/3) at FRESH_TS
+  const expected = 0.20 + 0.05 * 0.5 + FRESHNESS_BOOST_FRESH_TS
   assert.ok(Math.abs(r.breakdown.total - expected) < 1e-6, `total=${r.breakdown.total}`)
 })
 
 test("scoreV16Job: llm cache present applies 0.40 weight", () => {
   const tags = { skills: [], industryEnum: [], schemaVersion: 1 } as never
   const job = mkJob({})
-  const r = scoreV16Job(tags, job, undefined, 0.7)
-  // llmMatch=0.7*0.40 + salary=0.5*0.05 = 0.305
-  const expected = 0.7 * V16_SCORE_WEIGHTS.llmMatch + 0.5 * V16_SCORE_WEIGHTS.salaryFit
+  const r = scoreV16Job(tags, job, undefined, 0.7, undefined, undefined, NOW)
+  // llmMatch=0.7*0.40 + salary=0.5*0.05 + freshness at FRESH_TS
+  const expected =
+    0.7 * V16_SCORE_WEIGHTS.llmMatch + 0.5 * V16_SCORE_WEIGHTS.salaryFit + FRESHNESS_BOOST_FRESH_TS
   assert.ok(Math.abs(r.breakdown.total - expected) < 1e-6)
 })
 
@@ -514,8 +524,8 @@ test("scoreV16Job: undefined overrides → byte-identical to canonical V16", () 
     schemaVersion: 1,
   } as never
   const job = mkJob({ requiredSkills: ["python"] })
-  const a = scoreV16Job(tags, job, undefined, 0.5)
-  const b = scoreV16Job(tags, job, undefined, 0.5, undefined)
+  const a = scoreV16Job(tags, job, undefined, 0.5, undefined, undefined, NOW)
+  const b = scoreV16Job(tags, job, undefined, 0.5, undefined, undefined, NOW)
   assert.equal(a.breakdown.total, b.breakdown.total)
   assert.equal(a.breakdown.skillJaccard, b.breakdown.skillJaccard)
 })
@@ -528,9 +538,9 @@ test("scoreV16Job: weightOverrides replaces only the supplied keys", () => {
   } as never
   const job = mkJob({ requiredSkills: ["python"] })
   // Override skillJaccard from 0.20 → 0.50; leave salaryFit canonical at 0.05.
-  const r = scoreV16Job(tags, job, undefined, 0, { skillJaccard: 0.5 })
-  // skillJaccard=1.0 * 0.5 + salary=0.5 * 0.05 = 0.525
-  const expected = 1.0 * 0.5 + 0.5 * V16_SCORE_WEIGHTS.salaryFit
+  const r = scoreV16Job(tags, job, undefined, 0, { skillJaccard: 0.5 }, undefined, NOW)
+  // skillJaccard=1.0 * 0.5 + salary=0.5 * 0.05 + freshness at FRESH_TS
+  const expected = 1.0 * 0.5 + 0.5 * V16_SCORE_WEIGHTS.salaryFit + FRESHNESS_BOOST_FRESH_TS
   assert.ok(Math.abs(r.breakdown.total - expected) < 1e-6, `total=${r.breakdown.total}`)
 })
 
@@ -541,11 +551,20 @@ test("scoreV16Job: weightOverrides clamps NaN/non-numeric → fallback to canoni
     schemaVersion: 1,
   } as never
   const job = mkJob({ requiredSkills: ["python"] })
-  const r = scoreV16Job(tags, job, undefined, 0, {
-    skillJaccard: NaN as never,
-  })
+  const r = scoreV16Job(
+    tags,
+    job,
+    undefined,
+    0,
+    { skillJaccard: NaN as never },
+    undefined,
+    NOW,
+  )
   // NaN falls back to canonical 0.20.
-  const expected = 1.0 * V16_SCORE_WEIGHTS.skillJaccard + 0.5 * V16_SCORE_WEIGHTS.salaryFit
+  const expected =
+    1.0 * V16_SCORE_WEIGHTS.skillJaccard +
+    0.5 * V16_SCORE_WEIGHTS.salaryFit +
+    FRESHNESS_BOOST_FRESH_TS
   assert.ok(Math.abs(r.breakdown.total - expected) < 1e-6, `total=${r.breakdown.total}`)
 })
 
@@ -553,8 +572,8 @@ test("scoreV16Job: weightOverrides zeroing component drops its contribution", ()
   const tags = { skills: [], industryEnum: [], schemaVersion: 1 } as never
   const job = mkJob({})
   // Zero salaryFit so the only fallback (=0.5 neutral) doesn't contribute.
-  const r = scoreV16Job(tags, job, undefined, 0.7, { salaryFit: 0 })
-  const expected = 0.7 * V16_SCORE_WEIGHTS.llmMatch
+  const r = scoreV16Job(tags, job, undefined, 0.7, { salaryFit: 0 }, undefined, NOW)
+  const expected = 0.7 * V16_SCORE_WEIGHTS.llmMatch + FRESHNESS_BOOST_FRESH_TS
   assert.ok(Math.abs(r.breakdown.total - expected) < 1e-6, `total=${r.breakdown.total}`)
 })
 
@@ -1261,4 +1280,100 @@ test("B4 soft: urgentlySeeking boosts fresh full_time +0.20, penalizes intern -0
   const internScore = scoreV16Job(tags, intern, undefined, undefined, undefined, undefined, NOW)
   assert.equal(ftScore.breakdown.urgencyBoost, 0.20)
   assert.equal(internScore.breakdown.urgencyBoost, -0.10)
+})
+
+// ---------------------------------------------------------------------------
+// Phase B5 — default-on freshness boost (exponential half-life, τ=3d)
+// ---------------------------------------------------------------------------
+
+test("B5 freshness: age=0 → boost ≈ V16_FRESHNESS_BOOST_MAX (0.10)", () => {
+  const tags = { skills: [], industryEnum: [], schemaVersion: 1 } as never
+  const job = mkJob({ firstSeenAt: new Date(NOW).toISOString() })
+  const r = scoreV16Job(tags, job, undefined, undefined, undefined, undefined, NOW)
+  assert.ok(
+    Math.abs(r.breakdown.freshnessBoost - V16_FRESHNESS_BOOST_MAX) < 1e-9,
+    `freshnessBoost=${r.breakdown.freshnessBoost}`,
+  )
+})
+
+test("B5 freshness: age=3d (half-life) → boost ≈ 0.05", () => {
+  const tags = { skills: [], industryEnum: [], schemaVersion: 1 } as never
+  const job = mkJob({ firstSeenAt: new Date(NOW - 3 * 24 * 3600 * 1000).toISOString() })
+  const r = scoreV16Job(tags, job, undefined, undefined, undefined, undefined, NOW)
+  assert.ok(
+    Math.abs(r.breakdown.freshnessBoost - V16_FRESHNESS_BOOST_MAX / 2) < 1e-9,
+    `freshnessBoost=${r.breakdown.freshnessBoost}`,
+  )
+})
+
+test("B5 freshness: age=7d → boost ≈ 0.02", () => {
+  const tags = { skills: [], industryEnum: [], schemaVersion: 1 } as never
+  const job = mkJob({ firstSeenAt: new Date(NOW - 7 * 24 * 3600 * 1000).toISOString() })
+  const r = scoreV16Job(tags, job, undefined, undefined, undefined, undefined, NOW)
+  const expected = V16_FRESHNESS_BOOST_MAX * Math.pow(0.5, 7 / 3)
+  assert.ok(
+    Math.abs(r.breakdown.freshnessBoost - expected) < 1e-9,
+    `freshnessBoost=${r.breakdown.freshnessBoost}, expected=${expected}`,
+  )
+  // Sanity: ≈ 0.0198 — much smaller than today's 0.10
+  assert.ok(r.breakdown.freshnessBoost < 0.025 && r.breakdown.freshnessBoost > 0.015)
+})
+
+test("B5 freshness: age=20d (hard-filter edge) → boost ≈ 0.001 (effectively 0)", () => {
+  const tags = { skills: [], industryEnum: [], schemaVersion: 1 } as never
+  const job = mkJob({ firstSeenAt: new Date(NOW - 20 * 24 * 3600 * 1000).toISOString() })
+  const r = scoreV16Job(tags, job, undefined, undefined, undefined, undefined, NOW)
+  const expected = V16_FRESHNESS_BOOST_MAX * Math.pow(0.5, 20 / 3)
+  assert.ok(
+    Math.abs(r.breakdown.freshnessBoost - expected) < 1e-9,
+    `freshnessBoost=${r.breakdown.freshnessBoost}, expected=${expected}`,
+  )
+  assert.ok(r.breakdown.freshnessBoost < 0.002)
+})
+
+test("B5 freshness: missing firstSeenAt → boost = 0", () => {
+  const tags = { skills: [], industryEnum: [], schemaVersion: 1 } as never
+  const job = mkJob({ firstSeenAt: undefined as never })
+  const r = scoreV16Job(tags, job, undefined, undefined, undefined, undefined, NOW)
+  assert.equal(r.breakdown.freshnessBoost, 0)
+})
+
+test("B5 freshness: clock skew (firstSeenAt > nowMs) → boost clamped to MAX", () => {
+  const tags = { skills: [], industryEnum: [], schemaVersion: 1 } as never
+  const job = mkJob({ firstSeenAt: new Date(NOW + 60_000).toISOString() })
+  const r = scoreV16Job(tags, job, undefined, undefined, undefined, undefined, NOW)
+  assert.ok(
+    Math.abs(r.breakdown.freshnessBoost - V16_FRESHNESS_BOOST_MAX) < 1e-9,
+    `freshnessBoost=${r.breakdown.freshnessBoost}`,
+  )
+})
+
+test("B5 freshness: today's job ranks above week-old job (same skill/llm/industry)", () => {
+  const tags = {
+    skills: ["python"],
+    industryEnum: ["tech_software"],
+    schemaVersion: 1,
+  } as never
+  const today = mkJob({
+    id: "today",
+    requiredSkills: ["python"],
+    firstSeenAt: new Date(NOW).toISOString(),
+  })
+  const weekOld = mkJob({
+    id: "week",
+    requiredSkills: ["python"],
+    firstSeenAt: new Date(NOW - 7 * 24 * 3600 * 1000).toISOString(),
+  })
+  const todayScore = scoreV16Job(tags, today, undefined, 0.5, undefined, undefined, NOW)
+  const weekScore = scoreV16Job(tags, weekOld, undefined, 0.5, undefined, undefined, NOW)
+  // Same skill+llm+industry → only freshness boost differs.
+  // Delta ≈ 0.10 - 0.0198 ≈ 0.0802 (much more than LLM noise).
+  assert.ok(
+    todayScore.breakdown.total > weekScore.breakdown.total,
+    `today=${todayScore.breakdown.total}, week=${weekScore.breakdown.total}`,
+  )
+  assert.ok(
+    todayScore.breakdown.total - weekScore.breakdown.total > 0.05,
+    `delta=${todayScore.breakdown.total - weekScore.breakdown.total}`,
+  )
 })
