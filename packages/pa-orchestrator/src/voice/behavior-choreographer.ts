@@ -7,6 +7,12 @@ export type ChoreographyPlan = {
   reactionPlan: ReactionPlan
   ackHint: string | null
   slangDirective: string | null
+  /**
+   * Terms the slang injector surfaced this turn. Callers should append
+   * these to their per-user `recentSlangPicks` window so subsequent turns
+   * can exclude them and avoid back-to-back identical openers.
+   */
+  slangPicked: string[]
   splitSeed: string
   imperfectionRate: number
 }
@@ -22,7 +28,13 @@ export function buildBehaviorChoreographyPlan(input: {
   turnId: string
   userMessage: string
   recentHistory: ChatMessage[]
-  mode?: "ask" | "reask" | "ack_then_ask" | "deliver"
+  mode?: "ask" | "reask" | "ack_then_ask" | "tangent_then_ask" | "deliver"
+  /**
+   * Slang terms surfaced on recent turns; passed straight to the slang
+   * injector so the palette rotates instead of resurfacing the same
+   * candidates twice in a row.
+   */
+  recentSlangPicks?: readonly string[]
 }): ChoreographyPlan {
   const reactionPlan = planReaction({
     profile: input.profile,
@@ -45,10 +57,14 @@ export function buildBehaviorChoreographyPlan(input: {
     }
   }
 
-  const slang =
+  const slangDecision =
     input.profile.choreography.slangBudget === "off"
-      ? null
-      : buildSlangInjection({ userMessage: input.userMessage, seed: input.turnId }).directive
+      ? { directive: null as string | null, picked: [] as string[] }
+      : buildSlangInjection({
+          userMessage: input.userMessage,
+          seed: input.turnId,
+          excludeTerms: input.recentSlangPicks,
+        })
 
   const imperfectionRate = parseRate(
     process.env.PA_IMPERFECTION_RATE,
@@ -58,7 +74,8 @@ export function buildBehaviorChoreographyPlan(input: {
   return {
     reactionPlan,
     ackHint,
-    slangDirective: slang,
+    slangDirective: slangDecision.directive,
+    slangPicked: slangDecision.picked,
     splitSeed: input.turnId,
     imperfectionRate,
   }

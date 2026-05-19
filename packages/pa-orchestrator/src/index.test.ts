@@ -497,13 +497,13 @@ test("processInboundEvent short-circuits to maybeHandleResetCommand when handled
     maybeHandleResetCommand: async (event) => {
       resetCalls++
       assert.equal(event.body, "__PA_RESET__")
-      return { handled: true, summary: "✓ 测试记忆已清空 — qdrant pa-memory=3; firestore pa-memory-facts=2" }
+      return { handled: true, summary: "✓ Test memory cleared — qdrant pa-memory=3; firestore pa-memory-facts=2" }
     },
   })
   await processInboundEvent({ ...baseEvent, body: "__PA_RESET__" }, store)
   assert.equal(resetCalls, 1)
   assert.equal(llmCalls, 0)
-  assert.match(outbound, /测试记忆已清空/)
+  assert.match(outbound, /Test memory cleared/)
 })
 
 test("processInboundEvent ignores reset command for non-test users (handled=false)", async () => {
@@ -1363,7 +1363,7 @@ test("processInboundEvent T5: __PA_RESET__ still short-circuits BEFORE the LLM (
     maybeHandleResetCommand: async (event) => {
       resetCalls++
       assert.equal(event.body, "__PA_RESET__")
-      return { handled: true, summary: "✓ 测试记忆已清空" }
+      return { handled: true, summary: "✓ Test memory cleared" }
     },
   })
   await processInboundEvent({ ...baseEvent, body: "__PA_RESET__" }, store)

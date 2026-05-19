@@ -1,5 +1,5 @@
 import type { Firestore } from "firebase-admin/firestore"
-import type { AgentDef, InboundEvent } from "@pa/core-types"
+import { PA_COLLECTIONS, type AgentDef, type InboundEvent } from "@pa/core-types"
 import { getFlag } from "@pa/pa-persistence"
 import { detectLang } from "./voice/imperfection-injector/index.js"
 import type { ConnectorName } from "@pa/pa-connectors"
@@ -12,6 +12,7 @@ import {
 import {
   buildSharedOnboardingPrompt,
   buildSharedOnboardingReask,
+  isSharedOnboardingGreetingOrKickoff,
   type SharedOnboardingPromptContext,
   type SharedOnboardingQuestionId,
 } from "./shared-onboarding.js"
@@ -22,6 +23,7 @@ import {
   resolveProfileForUser,
 } from "./voice/voice-profiles/index.js"
 import { buildBehaviorChoreographyPlan } from "./voice/behavior-choreographer.js"
+import { detectOnboardingTangent } from "./voice/tangent-detector.js"
 import type { AgentTurnTool, AgentsSdkSession } from "@pa/agent-runtime"
 
 export type SharedOnboardingRunAgentTurn = (
@@ -110,6 +112,133 @@ export async function isReactionTapbackEnabled(
   }
 }
 
+/** Cap on the FIFO of slang picks we keep on the user doc (Adam 2026-05-19). */
+export const SHARED_ONBOARDING_SLANG_PICK_CAP = 12
+
+/**
+ * Read recent slang picks for cross-turn dedupe. Reads from
+ * `pa-users.sharedOnboarding.voice.recentSlangPicks`. Tolerant of missing
+ * fields (returns []) so we never block compose on a state-read hiccup.
+ */
+export function extractRecentSlangPicks(
+  onboardingUser: { sharedOnboarding?: Record<string, unknown> | null } | null,
+): string[] {
+  if (!onboardingUser?.sharedOnboarding) return []
+  const voice = (onboardingUser.sharedOnboarding as { voice?: unknown }).voice
+  if (!voice || typeof voice !== "object") return []
+  const raw = (voice as { recentSlangPicks?: unknown }).recentSlangPicks
+  if (!Array.isArray(raw)) return []
+  const out: string[] = []
+  for (const entry of raw) {
+    if (typeof entry === "string" && entry.length > 0 && out.length < SHARED_ONBOARDING_SLANG_PICK_CAP) {
+      out.push(entry)
+    }
+  }
+  return out
+}
+
+function dedupAppend(prev: readonly string[], next: readonly string[], cap: number): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const term of [...prev, ...next]) {
+    if (typeof term !== "string" || term.length === 0) continue
+    if (seen.has(term)) continue
+    seen.add(term)
+    out.push(term)
+  }
+  // FIFO cap — newer entries (passed in next, listed last) should stay; drop oldest.
+  if (out.length > cap) return out.slice(out.length - cap)
+  return out
+}
+
+/**
+ * Merge fresh slang picks into the user's `sharedOnboarding.voice.recentSlangPicks`
+ * FIFO. Caller passes the picks surfaced this turn — we read the cached prior
+ * list, dedupe, cap at 12, and merge-write. Never throws; failures emit a log
+ * event so the inbound turn can still succeed.
+ */
+export async function persistSharedOnboardingSlangPicks(input: {
+  db: Firestore | undefined
+  userId: string
+  priorPicks: readonly string[]
+  newPicks: readonly string[]
+  nowIso: string
+  log?: (name: string, payload?: Record<string, unknown>) => void
+}): Promise<string[]> {
+  const next = dedupAppend(input.priorPicks, input.newPicks, SHARED_ONBOARDING_SLANG_PICK_CAP)
+  if (next.length === 0) return next
+  const sameAsPrior =
+    next.length === input.priorPicks.length &&
+    next.every((t, i) => t === input.priorPicks[i])
+  if (sameAsPrior) return next
+  if (!input.db) return next
+  try {
+    await input.db.collection(PA_COLLECTIONS.users).doc(input.userId).set(
+      {
+        sharedOnboarding: {
+          voice: {
+            recentSlangPicks: next,
+            updatedAt: input.nowIso,
+          },
+        },
+      },
+      { merge: true },
+    )
+  } catch (err) {
+    input.log?.("pa.shared_onboarding.voice.persist_failed", {
+      userId: input.userId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+  return next
+}
+
+/** Router-resolved compose contract — single chain from index handlers → agentic surface. */
+export type SharedOnboardingInboundKind =
+  | "greeting_kickoff"
+  | "user_answer"
+  | "runtime_event"
+
+export type SharedOnboardingRouterResult =
+  | "bootstrapped_q1_inline"
+  | "asked_question"
+  | "reasked_question"
+  | "ignored_non_answer"
+  | "sent_recs"
+  | "saved_without_recs"
+
+export type SharedOnboardingComposeContext = {
+  inboundKind: SharedOnboardingInboundKind
+  routerResult: SharedOnboardingRouterResult
+  slot: SharedOnboardingQuestionId
+  mode: OnboardingSurfaceMode
+  /** Router-resolved; compose must not re-infer lang from raw greeting on kickoff. */
+  lang: "en" | "zh"
+}
+
+export function buildSharedOnboardingComposeContext(input: {
+  inboundKind: SharedOnboardingInboundKind
+  routerResult: SharedOnboardingRouterResult
+  slot: SharedOnboardingQuestionId
+  mode: OnboardingSurfaceMode
+  /** Used for lang when inboundKind is user_answer; ignored on kickoff/runtime. */
+  userMessage?: string
+}): SharedOnboardingComposeContext {
+  const lang =
+    input.inboundKind === "greeting_kickoff" || input.inboundKind === "runtime_event"
+      ? "en"
+      : detectLang(input.userMessage ?? "") === "zh"
+        ? "zh"
+        : "en"
+  return {
+    inboundKind: input.inboundKind,
+    routerResult: input.routerResult,
+    slot: input.slot,
+    mode: input.mode,
+    lang,
+  }
+}
+
 export type ComposeSharedOnboardingReplyInput = {
   store: SharedOnboardingOutboundStore
   userId: string
@@ -119,17 +248,67 @@ export type ComposeSharedOnboardingReplyInput = {
   mode: OnboardingSurfaceMode
   promptContext: SharedOnboardingPromptContext
   userMessage: string
+  /** Router decision — authoritative for synthetic user turn + lang lock. */
+  composeContext: SharedOnboardingComposeContext
   agent: AgentDef
   reaskReason?: string
   reaskClarifyingQuestion?: string
   inboundMessageHandle?: string
   toE164?: string
+  /**
+   * Recent slang picks surfaced on prior turns for this user. Threaded
+   * to the slang injector so the palette rotates across turns and the
+   * LLM cannot lead with the same opener twice in a row. Caller is
+   * responsible for persisting the returned `slangPicked` back to the
+   * user doc after compose succeeds.
+   */
+  recentSlangPicks?: readonly string[]
+}
+
+/**
+ * Compose result — `text` is the SMS body to enqueue, `slangPicked` are
+ * the palette terms surfaced this turn (cross-turn dedupe input for the
+ * NEXT turn). Empty array when the slang injector did not run (template
+ * fallback or choreographer disabled).
+ */
+export type ComposedSharedOnboardingReply = {
+  text: string
+  slangPicked: string[]
+}
+
+function isKickoffComposeKind(kind: SharedOnboardingInboundKind): boolean {
+  return kind === "greeting_kickoff" || kind === "runtime_event"
+}
+
+/** Greeting/kickoff must not become the agent user turn — bootstrap should ask canonical Q1. */
+export function effectiveOnboardingComposeUserMessage(input: {
+  mode: OnboardingSurfaceMode
+  userMessage: string
+  composeContext?: SharedOnboardingComposeContext
+}): string {
+  const trimmed = input.userMessage.trim()
+  if (input.composeContext && isKickoffComposeKind(input.composeContext.inboundKind)) {
+    return ""
+  }
+  if (!input.composeContext && input.mode === "ask" && isSharedOnboardingGreetingOrKickoff(trimmed)) {
+    return ""
+  }
+  return trimmed
+}
+
+function buildSyntheticOnboardingUserInstruction(slot: SharedOnboardingQuestionId): string {
+  return `[ONBOARDING] Ask the candidate the ${slot} onboarding question in friend tone. Do not extract tags — only compose the SMS. Do not respond to greetings or kickoff phrases — deliver the slot question only.`
 }
 
 export async function composeSharedOnboardingReply(
   input: ComposeSharedOnboardingReplyInput
-): Promise<string> {
-  const lang = detectLang(input.userMessage) === "zh" ? "zh" : "en"
+): Promise<ComposedSharedOnboardingReply> {
+  const composeUserMessage = effectiveOnboardingComposeUserMessage({
+    mode: input.mode,
+    userMessage: input.userMessage,
+    composeContext: input.composeContext,
+  })
+  const lang = input.composeContext.lang
   const template =
     input.mode === "reask"
       ? buildSharedOnboardingReask(input.slot, input.promptContext, {
@@ -152,18 +331,31 @@ export async function composeSharedOnboardingReply(
       turnId: input.turnId,
       db: input.store.db,
     })
-    return text
+    return { text, slangPicked: [] }
   }
 
   try {
     const profile = await resolveProfileForUser("friend_onboarding", input.userId)
     const choreoOn = await isBehaviorChoreographerEnabled(input.store.db, input.userId)
+    // Upgrade choreographer mode to ack_then_ask for culture_stage when we're
+    // about to ask Q2 right after the user answered Q1 (or any prior slot).
+    // This lets the friend roommate briefly mirror what they volunteered
+    // before pivoting to the next question — Adam 2026-05-19 plan §2 ack_then_ask.
+    // We don't touch reask / runtime_event / kickoff branches; only the
+    // user_answer → ask transition into culture_stage qualifies.
+    const choreoMode: "ask" | "reask" | "ack_then_ask" =
+      input.mode === "ask" &&
+      input.slot === "culture_stage" &&
+      input.composeContext.inboundKind === "user_answer"
+        ? "ack_then_ask"
+        : input.mode
     const choreography = buildBehaviorChoreographyPlan({
       profile,
       turnId: input.turnId,
-      userMessage: input.userMessage,
+      userMessage: composeUserMessage || input.userMessage,
       recentHistory: [],
-      mode: input.mode,
+      mode: choreoMode,
+      recentSlangPicks: input.recentSlangPicks,
     })
     if (choreoOn) {
       const reactionEvent = choreography.reactionPlan.shouldReact
@@ -203,18 +395,61 @@ export async function composeSharedOnboardingReply(
       }
     }
 
+    // Adam 2026-05-19 voice polish §6 — tangent detection.
+    // We only run the detector when the inbound was an actual user_answer
+    // AND we're in reask mode (judge already said the answer wasn't valid
+    // for the slot). That gate prevents the detector from misclassifying
+    // legitimate question-shaped answers on the happy path (e.g. "growth?
+    // probably comp tbh").
+    const tangent =
+      input.mode === "reask" &&
+      input.composeContext.inboundKind === "user_answer"
+        ? detectOnboardingTangent({
+            body: input.userMessage ?? "",
+            lang,
+          })
+        : { isTangent: false, reason: "not_eligible" as const }
+    if (tangent.isTangent) {
+      input.store.log("pa.onboarding.tangent_detected", {
+        userId: input.userId,
+        turnId: input.turnId,
+        slot: input.slot,
+        reason: tangent.reason,
+      })
+    }
+
     const surfaceIntent = buildOnboardingSurfaceIntent({
       slot: input.slot,
       promptContext: input.promptContext,
       mode: input.mode,
       voiceProfile: profile,
       ackHint: choreography.ackHint,
+      lang,
+      tangentDetected: tangent.isTangent,
     })
+
+    // Adam 2026-05-19 voice polish §4 — when the outbound delivery planner
+    // might prepend a 👍 bubble before our SMS lands (emoji not banned +
+    // choreographer on), instruct the LLM NOT to lead with the same glyph
+    // in the body. The defensive strip in sendPlannedOutbound handles slips,
+    // but a clean LLM body avoids the strip + log churn entirely.
+    //
+    // We can't pre-flight the exact mode here (planner needs the final text
+    // for canSplit2), so the hint is bias-toward-no-emoji-opener regardless
+    // of whether emoji actually ships this turn. Bilingual phrasing matches
+    // the active language and follows the existing slangDirective register.
+    const emojiHintCandidate =
+      choreoOn && profile.resolvedEmoji !== "banned"
+        ? lang === "zh"
+          ? "用户可能先收到一个独立的 👍 表情消息——你的正文不要再以 👍 / 大拇指 / 点赞 开头，直接进入问题或确认。"
+          : "User may receive a separate 👍 bubble first — do NOT open your SMS with 👍 / thumbs-up. Lead with the question or a one-beat ack instead."
+        : null
 
     const systemInputs = [
       injectVoiceProfilePrefix("", profile, lang),
       surfaceIntent,
       choreography.slangDirective,
+      emojiHintCandidate,
     ].filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
 
     const findMatchOn = await isFindMatchToolEnabled(input.store.db, input.userId)
@@ -231,8 +466,7 @@ export async function composeSharedOnboardingReply(
 
     const systemPrompt = injectVoiceProfilePrefix(input.agent.systemPrompt, profile, lang)
     const syntheticUser =
-      input.userMessage.trim() ||
-      `[ONBOARDING] Ask the candidate the ${input.slot} question in friend tone. Do not extract tags — only compose the SMS.`
+      composeUserMessage || buildSyntheticOnboardingUserInstruction(input.slot)
 
     const session =
       input.store.createSession?.({
@@ -276,8 +510,11 @@ export async function composeSharedOnboardingReply(
       turnId: input.turnId,
       slot: input.slot,
       mode: input.mode,
+      inboundKind: input.composeContext.inboundKind,
+      routerResult: input.composeContext.routerResult,
+      slangPaletteSize: choreography.slangPicked.length,
     })
-    return safe
+    return { text: safe, slangPicked: choreography.slangPicked }
   } catch (err) {
     input.store.log("pa.shared_onboarding.agentic_surface.fallback", {
       userId: input.userId,
@@ -293,7 +530,7 @@ export async function composeSharedOnboardingReply(
       turnId: input.turnId,
       db: input.store.db,
     })
-    return text
+    return { text, slangPicked: [] }
   }
 }
 
