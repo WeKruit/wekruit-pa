@@ -357,6 +357,21 @@ test("projectMatchingJobRow: maps roleTitle → jobTitle when no jobTitle field"
   })
   assert.equal(out.jobTitle, "SWE II")
   assert.equal(out.companyName, "Co")
+  // 2026-05-19 hotfix — raw roleTitle ALSO surfaced through the projection
+  // so downstream V16 sites with their own fallback chain have something to
+  // fall back to (defense in depth).
+  assert.equal(out.roleTitle, "SWE II")
+})
+
+test("projectMatchingJobRow: omits roleTitle field when raw doc has no roleTitle", () => {
+  const out = projectMatchingJobRow("doc1", {
+    companyName: "Co",
+    jobTitle: "Backend Engineer", // legacy doc shape
+  })
+  assert.equal(out.jobTitle, "Backend Engineer")
+  // Optional — undefined when raw has no roleTitle, so consumers don't see
+  // an empty string masquerading as a real value.
+  assert.equal(out.roleTitle, undefined)
 })
 
 test("projectMatchingJobRow: defends against missing fields", () => {

@@ -3,9 +3,16 @@
  *
  * Adam directive (pre-launch matching hardening W6, 2026-05-19):
  *   Production audit shows ~10k status=="active" matching-jobs docs are
- *   placeholders (no jobTitle), 1,011 are `dead=true` mis-flagged, 1,050 are
- *   missing `atsApplyUrl`, 3,350 are past V16's 20-day hard-filter window
- *   (`firstSeenAt > 20d`). Real healthy active ≈ 940 / 16.5k (~5.7%).
+ *   placeholders (no jobTitle/roleTitle), 1,011 are `dead=true` mis-flagged,
+ *   1,050 are missing `atsApplyUrl`, 3,350 are past V16's 20-day hard-filter
+ *   window (`firstSeenAt > 20d`). Real healthy active ≈ 940 / 16.5k (~5.7%).
+ *
+ * Schema drift (2026-05-19 hotfix): macmini scraper canonically writes
+ * `roleTitle`, NOT `jobTitle` — 100% of 16,788 active docs have `roleTitle`,
+ * 0% have `jobTitle`. Without the fallback the no_title predicate fires for
+ * every doc and this sweep would flip ALL 16,788 active → inactive on first
+ * non-dry-run trigger. Predicate now reads `data.jobTitle || data.roleTitle`
+ * with the same trim+length check.
  *
  *   V16's queryMatchingJobsV16 cascade dropped the `status=="active"` filter
  *   in favour of array-contains-any on `roleFunction`. That means
@@ -116,7 +123,13 @@ export type HygieneJobDoc = {
   id: string
   status?: string | null
   dead?: boolean | null
+  /**
+   * macmini scraper writes `roleTitle`; legacy / hand-seeded rows may carry
+   * `jobTitle`. The `no_title` predicate considers a doc titled iff EITHER
+   * field has non-empty trimmed text.
+   */
   jobTitle?: string | null
+  roleTitle?: string | null
   /** ISO string OR Firestore Timestamp-like. */
   firstSeenAt?: string | { toMillis: () => number } | null
   atsApplyUrl?: string | null
@@ -208,8 +221,14 @@ export function evaluateHygiene(
   if (doc.dead === true) {
     return { flip: true, reason: "dead_flag" }
   }
-  const title = typeof doc.jobTitle === "string" ? doc.jobTitle : ""
-  if (String(title).trim().length === 0) {
+  // Schema drift: macmini canonically writes `roleTitle`; legacy rows may
+  // still carry `jobTitle`. Treat either non-empty trimmed value as titled.
+  // Reading only `jobTitle` here would (and did, pre-hotfix) classify 100%
+  // of macmini-sourced active docs as `no_title` and catastrophically flip
+  // the whole active pool to inactive on first non-dry-run trigger.
+  const titleA = typeof doc.jobTitle === "string" ? doc.jobTitle : ""
+  const titleB = typeof doc.roleTitle === "string" ? doc.roleTitle : ""
+  if (titleA.trim().length === 0 && titleB.trim().length === 0) {
     return { flip: true, reason: "no_title" }
   }
   const firstSeenMs = toMillis(doc.firstSeenAt)
@@ -400,7 +419,10 @@ function projectDoc(snap: QueryDocumentSnapshot<DocumentData>): HygieneJobDoc {
     id: snap.id,
     status: typeof data.status === "string" ? data.status : null,
     dead: typeof data.dead === "boolean" ? data.dead : null,
+    // Surface BOTH title fields — predicate ORs over them. macmini scraper
+    // writes `roleTitle`; legacy rows carry `jobTitle`. See module header.
     jobTitle: typeof data.jobTitle === "string" ? data.jobTitle : null,
+    roleTitle: typeof data.roleTitle === "string" ? data.roleTitle : null,
     firstSeenAt: pickTs(data.firstSeenAt),
     atsApplyUrl: typeof data.atsApplyUrl === "string" ? data.atsApplyUrl : null,
   }

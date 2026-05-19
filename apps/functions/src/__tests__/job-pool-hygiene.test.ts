@@ -77,6 +77,53 @@ describe("evaluateHygiene — predicate", () => {
     assert.deepEqual(ev, { flip: true, reason: "no_title" })
   })
 
+  // ---- 2026-05-19 schema-drift hotfix --------------------------------------
+  // macmini scraper canonically writes `roleTitle` (100% of 16,788 active
+  // docs as of 2026-05-19, 0% have `jobTitle`). The no_title predicate MUST
+  // treat a doc as titled when EITHER `jobTitle` OR `roleTitle` has non-empty
+  // trimmed text. Without this fallback, paJobPoolHygiene would flip ALL
+  // 16,788 active docs → inactive on first non-dry-run trigger.
+
+  it("roleTitle present, jobTitle missing: KEEP (no_title fallback)", () => {
+    const doc: HygieneJobDoc = {
+      ...healthyBase(),
+      jobTitle: null,
+      roleTitle: "Software Engineer",
+    }
+    const ev = evaluateHygiene(doc, NOW, staleCutoffMs)
+    assert.deepEqual(ev, { flip: false })
+  })
+
+  it("both jobTitle and roleTitle missing: flip with reason no_title", () => {
+    const doc: HygieneJobDoc = {
+      ...healthyBase(),
+      jobTitle: null,
+      roleTitle: null,
+    }
+    const ev = evaluateHygiene(doc, NOW, staleCutoffMs)
+    assert.deepEqual(ev, { flip: true, reason: "no_title" })
+  })
+
+  it("both jobTitle and roleTitle whitespace-only: flip with reason no_title", () => {
+    const doc: HygieneJobDoc = {
+      ...healthyBase(),
+      jobTitle: "   ",
+      roleTitle: "\t\n",
+    }
+    const ev = evaluateHygiene(doc, NOW, staleCutoffMs)
+    assert.deepEqual(ev, { flip: true, reason: "no_title" })
+  })
+
+  it("roleTitle whitespace-only with valid jobTitle: KEEP", () => {
+    const doc: HygieneJobDoc = {
+      ...healthyBase(),
+      jobTitle: "Engineer",
+      roleTitle: "   ",
+    }
+    const ev = evaluateHygiene(doc, NOW, staleCutoffMs)
+    assert.deepEqual(ev, { flip: false })
+  })
+
   it("firstSeenAt 21d ago: flip with reason stale_firstseenat (>20d)", () => {
     const doc = { ...healthyBase(), firstSeenAt: dayAgoIso(21) }
     const ev = evaluateHygiene(doc, NOW, staleCutoffMs)
@@ -330,6 +377,39 @@ describe("runJobPoolHygiene — end-to-end", () => {
     assert.equal(byId.get("no_ats_a"), "missing_or_placeholder_ats")
     assert.ok(!byId.has("healthy_a"))
     assert.ok(!byId.has("healthy_b"))
+  })
+
+  // ---- 2026-05-19 schema-drift hotfix regression ---------------------------
+  // Live audit found 100% of macmini-sourced active docs carry `roleTitle`
+  // but no `jobTitle`. End-to-end regression: a corpus of 100% `roleTitle`
+  // docs must produce ZERO no_title flips so we don't nuke the active pool.
+
+  it("regression: 1000 docs with only roleTitle produce ZERO no_title flips", async () => {
+    const active: HygieneJobDoc[] = []
+    for (let i = 0; i < 1000; i++) {
+      active.push({
+        id: `macmini_${i}`,
+        status: "active",
+        dead: false,
+        jobTitle: null,
+        roleTitle: "Software Engineer",
+        firstSeenAt: dayAgoIso(5),
+        atsApplyUrl: "https://boards.greenhouse.io/acme/jobs/1",
+      })
+    }
+    const fixture = inMemoryStore({ active })
+    const counters = await runJobPoolHygiene(
+      baseDeps(fixture.store, { dryRun: false, batchSize: 500, pageSize: 500 }),
+    )
+    assert.equal(counters.scanned, 1000)
+    assert.equal(
+      counters.flipped_no_title,
+      0,
+      "macmini-sourced docs with roleTitle MUST NOT be flipped as no_title",
+    )
+    assert.equal(counters.flipped_total, 0)
+    assert.equal(counters.batches, 0)
+    assert.equal(fixture.flipped.length, 0)
   })
 
   it("empty collection: zero flips, zero errors, single audit row", async () => {
