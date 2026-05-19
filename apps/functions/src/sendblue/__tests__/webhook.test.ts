@@ -993,7 +993,7 @@ describe("handleSendblueWebhook", () => {
     assert.equal(coalesceCalled, false, "coalescer never invoked when flag is off")
   })
 
-  it("Test TD-A.2b: onboarding incomplete → coalescer is bypassed even when flag is on", async () => {
+  it("Test TD-A.2b: legacy incomplete onboarding without shared runtime → coalescer is bypassed even when flag is on", async () => {
     const { db, inbound, flags, users } = makeFakeDb()
     flags.set("paMessageCoalesceEnabled", {
       key: "paMessageCoalesceEnabled",
@@ -1031,9 +1031,56 @@ describe("handleSendblueWebhook", () => {
     assert.equal(
       (doc as { coalescing?: boolean }).coalescing,
       undefined,
-      "onboarding users must not get coalescing:true; onPaInbound must process each answer independently"
+      "legacy deterministic onboarding users must not get coalescing:true"
     )
-    assert.equal(coalesceCalled, false, "coalescer must not run before onboarding is complete")
+    assert.equal(coalesceCalled, false, "coalescer must not run for legacy incomplete onboarding")
+  })
+
+  it("Test TD-A.2c: active shared_onboarding uses coalescer before orchestrator judging", async () => {
+    const { db, inbound, flags, users } = makeFakeDb()
+    flags.set("paMessageCoalesceEnabled", {
+      key: "paMessageCoalesceEnabled",
+      value: true,
+      type: "bool",
+      scope: "perUser",
+      allowlist: [],
+      blocklist: [],
+    })
+    users.set("u_adam_test", {
+      onboardingState: "pending",
+      workSession: { kind: "shared_onboarding", status: "active" },
+      sharedOnboarding: { status: "active", completed: false },
+    })
+    _clearFeatureFlagCache()
+
+    let coalesceCalled = false
+    const coalesceInputs: Array<{ isOnboarding?: boolean; isPrescreen?: boolean }> = []
+    const enqueueOrCoalesceMock = async (_deps: unknown, input: { isOnboarding?: boolean; isPrescreen?: boolean }) => {
+      coalesceCalled = true
+      coalesceInputs.push(input)
+      return { action: "created" as const }
+    }
+
+    const body = JSON.stringify(basePayload({ message_handle: "msg-td-a-2c" }))
+    const req = makeReq({ body, signature: SECRET })
+    const res = makeRes()
+
+    await handleSendblueWebhook(req, res, {
+      db,
+      secret: SECRET,
+      log: () => { /* swallow */ },
+      enqueueOrCoalesce: enqueueOrCoalesceMock as never,
+      coalescerDeps: {} as never,
+      lookupUserByPhone: async () => "u_adam_test",
+    })
+
+    assert.equal(res.statusCode, 200)
+    assert.equal(inbound.size, 1)
+    const [doc] = [...inbound.values()]
+    assert.equal((doc as { coalescing?: boolean }).coalescing, true)
+    assert.equal(coalesceCalled, true, "shared onboarding must coalesce split SMS answers")
+    assert.equal(coalesceInputs[0]?.isOnboarding, true)
+    assert.equal(coalesceInputs[0]?.isPrescreen, false)
   })
 
   it("Test TD-A.3: enqueue failure post-create → fallback driver invoked, coalescing reverted to false", async () => {

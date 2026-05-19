@@ -29,6 +29,31 @@ import {
 type StoredDoc = Record<string, unknown>
 function fakeFirestore() {
   const store = new Map<string, StoredDoc>()
+  const deepMerge = (current: StoredDoc, patch: StoredDoc): StoredDoc => {
+    const out: StoredDoc = { ...current }
+    for (const [key, value] of Object.entries(patch)) {
+      const prev = out[key]
+      if (
+        prev &&
+        typeof prev === "object" &&
+        !Array.isArray(prev) &&
+        value &&
+        typeof value === "object" &&
+        !Array.isArray(value)
+      ) {
+        out[key] = deepMerge(prev as StoredDoc, value as StoredDoc)
+      } else {
+        out[key] = value
+      }
+    }
+    return out
+  }
+  const docsForCollection = (col: string) => {
+    const prefix = `${col}/`
+    return [...store.entries()]
+      .filter(([path]) => path.startsWith(prefix) && !path.slice(prefix.length).includes("/"))
+      .map(([path, data]) => ({ id: path.slice(prefix.length), data }))
+  }
   const db = {
     _store: store,
     collection(col: string) {
@@ -38,11 +63,11 @@ function fakeFirestore() {
             path: `${col}/${id}`,
             async set(data: StoredDoc, opts?: { merge?: boolean }) {
               const current = store.get(`${col}/${id}`) ?? {}
-              store.set(`${col}/${id}`, opts?.merge ? { ...current, ...data } : data)
+              store.set(`${col}/${id}`, opts?.merge ? deepMerge(current, data) : data)
             },
             async update(data: StoredDoc) {
               const current = store.get(`${col}/${id}`) ?? {}
-              store.set(`${col}/${id}`, { ...current, ...data })
+              store.set(`${col}/${id}`, deepMerge(current, data))
             },
             async get() {
               const data = store.get(`${col}/${id}`)
@@ -50,12 +75,73 @@ function fakeFirestore() {
             },
           }
         },
-        where(_field: string, _op: string, _value: unknown) {
+        where(field: string, op: string, value: unknown) {
+          let orderedBy: { field: string; direction: "asc" | "desc" } | null = null
+          let limitedTo: number | null = null
+          const query = {
+            orderBy(orderField: string, direction: "asc" | "desc" = "asc") {
+              orderedBy = { field: orderField, direction }
+              return query
+            },
+            limit(n: number) {
+              limitedTo = n
+              return query
+            },
+            async get() {
+              if (op !== "==") return { empty: true, docs: [] }
+              let rows = docsForCollection(col).filter((row) => row.data[field] === value)
+              if (orderedBy) {
+                rows = rows.sort((a, b) => {
+                  const av = a.data[orderedBy!.field]
+                  const bv = b.data[orderedBy!.field]
+                  const cmp = String(av ?? "").localeCompare(String(bv ?? ""))
+                  return orderedBy!.direction === "desc" ? -cmp : cmp
+                })
+              }
+              if (limitedTo != null) rows = rows.slice(0, limitedTo)
+              return {
+                empty: rows.length === 0,
+                docs: rows.map((row) => ({
+                  id: row.id,
+                  data: () => row.data,
+                  ref: {
+                    async set(d: StoredDoc, o?: { merge?: boolean }) {
+                      const path = `${col}/${row.id}`
+                      const current = store.get(path) ?? {}
+                      store.set(path, o?.merge ? deepMerge(current, d) : d)
+                    },
+                  },
+                })),
+              }
+            },
+          }
           return {
-            limit(_n: number) {
+            limit(n: number) {
+              return query.limit(n)
+            },
+            orderBy(orderField: string, direction: "asc" | "desc" = "asc") {
+              return query.orderBy(orderField, direction)
+            },
+            async get() {
+              return query.get()
+            },
+          }
+        },
+        orderBy(orderField: string, direction: "asc" | "desc" = "asc") {
+          return {
+            limit(n: number) {
               return {
                 async get() {
-                  return { empty: true, docs: [] as Array<{ data(): StoredDoc; ref: { set(d: StoredDoc, o?: { merge?: boolean }): Promise<void> } }> }
+                  const rows = docsForCollection(col)
+                    .sort((a, b) => {
+                      const cmp = String(a.data[orderField] ?? "").localeCompare(String(b.data[orderField] ?? ""))
+                      return direction === "desc" ? -cmp : cmp
+                    })
+                    .slice(0, n)
+                  return {
+                    empty: rows.length === 0,
+                    docs: rows.map((row) => ({ id: row.id, data: () => row.data })),
+                  }
                 },
               }
             },
@@ -544,6 +630,195 @@ test("shared onboarding answer writes memory/tags and waits until Q5 before job 
   assert.deepEqual(recCalls[0].opts, { force: true, requestedCount: 2 })
   assert.match(captures.outboundBodies[1] ?? "", /Role A @ Example/)
   assert.match(captures.outboundBodies[1] ?? "", /requirements:/)
+})
+
+test("shared onboarding rejects duplicate greeting on Q1 without recording an answer", async () => {
+  const captures: OnboardingCaptures = {
+    systemInputs: [],
+    appliedSteps: [],
+    llmCalls: 0,
+    outboundBodies: [],
+  }
+  const { db, store: docs } = fakeFirestore()
+  docs.set("pa-users/u-onb", {
+    id: "u-onb",
+    phoneE164: "+19999991000",
+    onboardingState: "pending",
+    workSession: { kind: "shared_onboarding", status: "active", currentQuestionId: "main_goal" },
+    sharedOnboarding: {
+      status: "active",
+      currentQuestionId: "main_goal",
+      completed: false,
+      promptContext: {
+        firstName: "Adam",
+        recentCompanies: ["Rain"],
+        recentTitles: ["Full Stack Engineer"],
+      },
+      answers: {},
+    },
+  })
+  const memoryFacts: string[] = []
+  const turnUpdates: Array<Record<string, unknown>> = []
+  const store = makeOnboardingCapturesStore(captures, "pending") as OrchestratorStore
+  store.db = db
+  store.getOnboardingUser = async () => docs.get("pa-users/u-onb") as Awaited<ReturnType<OrchestratorStore["getOnboardingUser"]>>
+  store.createMemoryFact = async (_userId, content) => {
+    memoryFacts.push(content)
+    return "f-shared"
+  }
+  store.updateTurn = async (_turnId, patch) => {
+    turnUpdates.push(patch)
+  }
+
+  await processInboundEvent(
+    { ...baseEvent, id: "evt-shared-duplicate-hello", body: "Hello, WeKruit!" },
+    store,
+  )
+
+  const user = docs.get("pa-users/u-onb")
+  const shared = user?.sharedOnboarding as Record<string, unknown>
+  assert.equal(shared.currentQuestionId, "main_goal")
+  assert.deepEqual(shared.answers, {})
+  assert.equal(memoryFacts.length, 0, "duplicate greeting must not become a memory fact")
+  assert.equal(captures.outboundBodies.length, 0, "double-tap greeting should be ignored after Q1 is active")
+  assert.equal(turnUpdates.some((patch) => patch.directIntentResult === "ignored_non_answer"), true)
+})
+
+test("shared onboarding accepts a real Q1 answer and advances to culture_stage", async () => {
+  const captures: OnboardingCaptures = {
+    systemInputs: [],
+    appliedSteps: [],
+    llmCalls: 0,
+    outboundBodies: [],
+  }
+  const { db, store: docs } = fakeFirestore()
+  docs.set("pa-users/u-onb", {
+    id: "u-onb",
+    phoneE164: "+19999991000",
+    onboardingState: "pending",
+    workSession: { kind: "shared_onboarding", status: "active", currentQuestionId: "main_goal" },
+    sharedOnboarding: {
+      status: "active",
+      currentQuestionId: "main_goal",
+      completed: false,
+      promptContext: {
+        firstName: "Adam",
+        recentCompanies: ["Rain"],
+        recentTitles: ["Full Stack Engineer"],
+      },
+      answers: {},
+    },
+  })
+  const memoryFacts: string[] = []
+  const store = makeOnboardingCapturesStore(captures, "pending") as OrchestratorStore
+  store.db = db
+  store.getOnboardingUser = async () => docs.get("pa-users/u-onb") as Awaited<ReturnType<OrchestratorStore["getOnboardingUser"]>>
+  store.createMemoryFact = async (_userId, content) => {
+    memoryFacts.push(content)
+    return "f-shared"
+  }
+
+  await processInboundEvent(
+    { ...baseEvent, id: "evt-shared-q1-real", body: "Career growth and learning matter most right now." },
+    store,
+  )
+
+  const user = docs.get("pa-users/u-onb")
+  const shared = user?.sharedOnboarding as Record<string, unknown>
+  const answers = shared.answers as Record<string, unknown>
+  assert.equal(shared.currentQuestionId, "culture_stage")
+  assert.ok(answers.main_goal, "Q1 answer should be recorded")
+  assert.match(memoryFacts[0] ?? "", /main goal.*Career growth and learning/i)
+  assert.match(captures.outboundBodies[0] ?? "", /company culture and size or stage/i)
+})
+
+test("shared onboarding bootstrap loads parsed resume context before sending Q1", async () => {
+  const captures: OnboardingCaptures = {
+    systemInputs: [],
+    appliedSteps: [],
+    llmCalls: 0,
+    outboundBodies: [],
+  }
+  const { db, store: docs } = fakeFirestore()
+  docs.set("pa-users/u-onb", {
+    id: "u-onb",
+    displayName: "Adam Yang",
+    phoneE164: "+19999991000",
+    latestResumeArtifactId: "artifact-u-onb-latest",
+    onboardingState: "pending",
+    onboardingStatus: "invited",
+    source: "candidate",
+  })
+  docs.set("pa-resume-artifacts/artifact-u-onb-latest", {
+    candidateId: "u-onb",
+    parsedCandidateResumeId: "parsed-resume-from-artifact",
+  })
+  docs.set("parsedCandidateResumes/parsed-resume-from-artifact", {
+    userId: "legacy-other-id",
+    createdAt: "2026-05-19T06:00:00.000Z",
+    candidateProfile: { name: "Adam Yang", skills: ["TypeScript", "React"] },
+    experiences: [
+      { company: "Rain", title: "Software Engineer - Fullstack", location: "New York" },
+    ],
+    industryTags: ["financial_technology"],
+  })
+  const store = makeOnboardingCapturesStore(captures, "pending") as OrchestratorStore
+  store.db = db
+  store.getOnboardingUser = async () => docs.get("pa-users/u-onb") as Awaited<ReturnType<OrchestratorStore["getOnboardingUser"]>>
+
+  await processInboundEvent(
+    { ...baseEvent, id: "evt-shared-bootstrap-resume", body: "Hello, WeKruit!" },
+    store,
+  )
+
+  const shared = docs.get("pa-users/u-onb")?.sharedOnboarding as Record<string, unknown>
+  const promptContext = shared.promptContext as Record<string, unknown>
+  assert.deepEqual(promptContext.recentCompanies, ["Rain"])
+  assert.deepEqual(promptContext.recentTitles, ["Software Engineer - Fullstack"])
+  assert.match(captures.outboundBodies[0] ?? "", /I saw from your resume/i)
+  assert.match(captures.outboundBodies[0] ?? "", /Software Engineer - Fullstack work at Rain/i)
+})
+
+test("shared onboarding bootstrap falls back to resume artifact summary when parsed resume pointer is stale", async () => {
+  const captures: OnboardingCaptures = {
+    systemInputs: [],
+    appliedSteps: [],
+    llmCalls: 0,
+    outboundBodies: [],
+  }
+  const { db, store: docs } = fakeFirestore()
+  docs.set("pa-users/u-onb", {
+    id: "u-onb",
+    displayName: "Adam Yang",
+    phoneE164: "+19999991000",
+    latestResumeArtifactId: "artifact-u-onb-stale",
+    onboardingState: "pending",
+    onboardingStatus: "invited",
+    source: "candidate",
+  })
+  docs.set("pa-resume-artifacts/artifact-u-onb-stale", {
+    candidateId: "u-onb",
+    parsedCandidateResumeId: "missing-parsed-resume",
+    candidateProfileSummary:
+      "User resume summary: Adam Yang — currently/last Software Engineer Intern at Tesla Inc. (May 2024-present). Skills: C++, JavaScript, Python.",
+    status: "parsed",
+  })
+  const store = makeOnboardingCapturesStore(captures, "pending") as OrchestratorStore
+  store.db = db
+  store.getOnboardingUser = async () => docs.get("pa-users/u-onb") as Awaited<ReturnType<OrchestratorStore["getOnboardingUser"]>>
+
+  await processInboundEvent(
+    { ...baseEvent, id: "evt-shared-bootstrap-resume-summary", body: "Hello, WeKruit!" },
+    store,
+  )
+
+  const shared = docs.get("pa-users/u-onb")?.sharedOnboarding as Record<string, unknown>
+  const promptContext = shared.promptContext as Record<string, unknown>
+  assert.deepEqual(promptContext.recentCompanies, ["Tesla Inc"])
+  assert.deepEqual(promptContext.recentTitles, ["Software Engineer Intern"])
+  assert.deepEqual(promptContext.skills, ["C++", "JavaScript", "Python"])
+  assert.match(captures.outboundBodies[0] ?? "", /I saw from your resume/i)
+  assert.match(captures.outboundBodies[0] ?? "", /Software Engineer Intern work at Tesla Inc/i)
 })
 
 test("integration: manual zh job_search before website start is redirected to candidate onboarding", async () => {

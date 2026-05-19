@@ -225,6 +225,130 @@ describe("runLayoffSmsStart", () => {
     assert.equal(docs.has("layoff_phone_index/p_1hgmqn0"), false)
   })
 
+  it("grounds the shared Q1 opener from the user's latest resume artifact pointer", async () => {
+    const docs = new Map<string, FakeDocState>([
+      [
+        "pa-users/u3",
+        {
+          exists: true,
+          data: {
+            displayName: "Adam Yang",
+            phoneE164: "+14243201960",
+            latestResumeArtifactId: "artifact-u3-latest",
+            candidateContext: { sourcePage: "candidate.wekruit.com" },
+          },
+        },
+      ],
+      [
+        "pa-resume-artifacts/artifact-u3-latest",
+        {
+          exists: true,
+          data: {
+            candidateId: "u3",
+            parsedCandidateResumeId: "parsed-u3-latest",
+          },
+        },
+      ],
+      [
+        "parsedCandidateResumes/parsed-u3-latest",
+        {
+          exists: true,
+          data: {
+            userId: "old-import-id",
+            candidateProfile: { name: "Adam Yang", skills: ["TypeScript", "React"] },
+            experiences: [
+              { company: "Rain", title: "Software Engineer - Fullstack", location: "New York" },
+            ],
+            industryTags: ["financial_technology"],
+          },
+        },
+      ],
+    ])
+    const { db } = makeFakeDb(docs)
+    const runtimeKicks: Array<Record<string, unknown>> = []
+
+    const result = await runLayoffSmsStart({
+      db,
+      userId: "u3",
+      toE164: "+14243201960",
+      source: WEKRUIT_CANDIDATE_SOURCE,
+      runRuntimeKickoff: async (input) => {
+        runtimeKicks.push(input)
+        return { eventId: "candidate_runtime_resume_test", outboundId: "out_runtime_candidate_resume" }
+      },
+    })
+
+    assert.equal(result.ok, true)
+    assert.deepEqual(runtimeKicks[0].promptContext, {
+      firstName: "Adam",
+      recentCompanies: ["Rain"],
+      recentTitles: ["Software Engineer - Fullstack"],
+      recentLocations: ["New York"],
+      skills: ["TypeScript", "React"],
+      industryTags: ["financial_technology"],
+    })
+    assert.match(JSON.stringify(runtimeKicks[0].promptContext), /Rain/)
+    const user = docs.get("pa-users/u3")!.data
+    const shared = user.sharedOnboarding as Record<string, unknown>
+    assert.deepEqual(shared.promptContext, runtimeKicks[0].promptContext)
+  })
+
+  it("grounds the shared Q1 opener from artifact summary when the parsed resume pointer is stale", async () => {
+    const docs = new Map<string, FakeDocState>([
+      [
+        "pa-users/u4",
+        {
+          exists: true,
+          data: {
+            displayName: "Adam Yang",
+            phoneE164: "+14243201960",
+            latestResumeArtifactId: "artifact-u4-stale",
+            candidateContext: { sourcePage: "candidate.wekruit.com" },
+          },
+        },
+      ],
+      [
+        "pa-resume-artifacts/artifact-u4-stale",
+        {
+          exists: true,
+          data: {
+            candidateId: "u4",
+            parsedCandidateResumeId: "missing-parsed-u4",
+            status: "parsed",
+            candidateProfileSummary:
+              "User resume summary: Adam Yang — currently/last Software Engineer Intern at Tesla Inc. (May 2024-present). Skills: C++, JavaScript, Python.",
+          },
+        },
+      ],
+    ])
+    const { db } = makeFakeDb(docs)
+    const runtimeKicks: Array<Record<string, unknown>> = []
+
+    const result = await runLayoffSmsStart({
+      db,
+      userId: "u4",
+      toE164: "+14243201960",
+      source: WEKRUIT_CANDIDATE_SOURCE,
+      runRuntimeKickoff: async (input) => {
+        runtimeKicks.push(input)
+        return { eventId: "candidate_runtime_resume_summary_test", outboundId: "out_runtime_candidate_summary" }
+      },
+    })
+
+    assert.equal(result.ok, true)
+    assert.deepEqual(runtimeKicks[0].promptContext, {
+      firstName: "Adam",
+      recentCompanies: ["Tesla Inc"],
+      recentTitles: ["Software Engineer Intern"],
+      skills: ["C++", "JavaScript", "Python"],
+      resumeSummary:
+        "Adam Yang — currently/last Software Engineer Intern at Tesla Inc. (May 2024-present). Skills: C++, JavaScript, Python.",
+    })
+    const user = docs.get("pa-users/u4")!.data
+    const shared = user.sharedOnboarding as Record<string, unknown>
+    assert.deepEqual(shared.promptContext, runtimeKicks[0].promptContext)
+  })
+
   it("does not create a user when no pa-user exists for the phone-resolved id", async () => {
     const { db, writes } = makeFakeDb(new Map())
     const result = await runLayoffSmsStart({
