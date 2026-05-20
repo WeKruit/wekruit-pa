@@ -16,12 +16,12 @@
  *      with injected parser deps that return the upload content directly.
  *   3. Return {ok, resumeId | reason}.
  *
- * Security posture (deliberate trade-offs):
- *   - NO auth required — public candidate flow, same threat model as
- *     PublicJob.tsx which is publicly readable.
- *   - tempUserId is a client-generated UUID. Server treats it as
- *     untrusted but uses it as the pa-users doc ID. Same posture as
- *     pa-prescreen-pending-invites public-create rule.
+ * Security posture:
+ *   - Candidate-facing uploads (public job page, layoff onboarding) require
+ *     a verified Firebase ID token plus a claimed pa-candidate-auth mapping.
+ *   - ATS / employer bulk intake keeps the legacy server-trusted path
+ *     (source=ats:* or employer identity hints) with explicit userId.
+ *   - Anonymous tempUserId uploads are rejected for candidate flows.
  *   - Size cap 8 MB on the raw POST body (5 MB resume + b64 overhead ~33%).
  *   - Upload sniffing allows text-based PDF or DOCX only.
  *   - Rate limit: TODO (deferred to v2.0; current threat is low — UUIDs
@@ -34,8 +34,15 @@
 import { createHash } from "node:crypto"
 import { onRequest } from "firebase-functions/v2/https"
 import { defineSecret } from "firebase-functions/params"
-import { getFirestore } from "firebase-admin/firestore"
-import { PA_COLLECTIONS, ResumeArtifactSchema, isPaUserSource, type PaUserSource } from "@pa/core-types"
+import { getAuth } from "firebase-admin/auth"
+import { getFirestore, type Firestore } from "firebase-admin/firestore"
+import {
+  PA_COLLECTIONS,
+  CandidateAuthMappingSchema,
+  ResumeArtifactSchema,
+  isPaUserSource,
+  type PaUserSource,
+} from "@pa/core-types"
 import { ingestCv } from "./cv-ingest/cv-ingest.js"
 import type { IngestCvInput, IngestCvDeps } from "./cv-ingest/cv-ingest.js"
 import { detectResumeUploadKind, extractDocxText } from "./resume-upload-parser.js"
@@ -47,7 +54,7 @@ import type { ResumeUploadKind } from "./resume-upload-parser.js"
 const PA_OPENAI_AGENT_API_KEY = defineSecret("PA_OPENAI_AGENT_API_KEY")
 const ANTHROPIC_API_KEY = defineSecret("ANTHROPIC_API_KEY")
 
-interface PublicCvIngestRequest {
+export interface PublicCvIngestRequest {
   tempUserId?: string
   userId?: string
   browserUid?: string
@@ -89,8 +96,66 @@ export function buildPublicCvIngestInput(args: {
 function setCors(res: { set: (k: string, v: string) => unknown }): void {
   res.set("Access-Control-Allow-Origin", "*")
   res.set("Access-Control-Allow-Methods", "POST,OPTIONS")
-  res.set("Access-Control-Allow-Headers", "Content-Type")
+  res.set("Access-Control-Allow-Headers", "Content-Type, Authorization")
   res.set("Access-Control-Max-Age", "3600")
+}
+
+export function isServerTrustedCvIntake(body: PublicCvIngestRequest): boolean {
+  const isAtsSource = body.source?.startsWith("ats:") === true
+  const hasEmployerIdentityHint = Boolean(
+    body.employerEmailHint?.trim() || body.atsApplicantId?.trim()
+  )
+  return isAtsSource || hasEmployerIdentityHint
+}
+
+export type ResolveCandidateUploadUserIdResult =
+  | { ok: true; userId: string }
+  | { ok: false; status: number; reason: string }
+
+export async function resolveCandidateUploadUserId(args: {
+  req: { header: (name: string) => string | undefined }
+  body: PublicCvIngestRequest
+  db: Firestore
+  verifyIdToken?: (token: string) => Promise<{ uid: string }>
+}): Promise<ResolveCandidateUploadUserIdResult> {
+  if (isServerTrustedCvIntake(args.body)) {
+    const userId = (args.body.userId ?? args.body.tempUserId ?? "").toString().trim()
+    if (!userId) return { ok: false, status: 400, reason: "missing_userId_or_tempUserId" }
+    return { ok: true, userId }
+  }
+
+  const authz = args.req.header("authorization") ?? args.req.header("Authorization") ?? ""
+  const match = authz.match(/^Bearer\s+(.+)$/i)
+  if (!match?.[1]?.trim()) {
+    return { ok: false, status: 401, reason: "auth_required" }
+  }
+
+  const verifyIdToken =
+    args.verifyIdToken ??
+    (async (token: string) => {
+      const decoded = await getAuth().verifyIdToken(token)
+      return { uid: decoded.uid }
+    })
+
+  let decoded: { uid: string }
+  try {
+    decoded = await verifyIdToken(match[1]!.trim())
+  } catch {
+    return { ok: false, status: 401, reason: "invalid_id_token" }
+  }
+
+  const authSnap = await args.db.collection(PA_COLLECTIONS.candidateAuth).doc(decoded.uid).get()
+  if (!authSnap.exists) {
+    return { ok: false, status: 412, reason: "candidate_not_claimed" }
+  }
+
+  const mapping = CandidateAuthMappingSchema.parse(authSnap.data())
+  const requested = (args.body.userId ?? "").toString().trim()
+  if (requested && requested !== mapping.candidateId) {
+    return { ok: false, status: 403, reason: "userId_mismatch" }
+  }
+
+  return { ok: true, userId: mapping.candidateId }
 }
 
 function stripUndefined<T extends Record<string, unknown>>(input: T): T {
@@ -244,11 +309,13 @@ export const paPublicCvIngest = onRequest(
       return
     }
 
-    const userId = (body.userId ?? body.tempUserId ?? "").toString().trim()
-    if (!userId) {
-      res.status(400).json({ ok: false, reason: "missing_userId_or_tempUserId" })
+    const db = getFirestore()
+    const resolvedUser = await resolveCandidateUploadUserId({ req, body, db })
+    if (!resolvedUser.ok) {
+      res.status(resolvedUser.status).json({ ok: false, reason: resolvedUser.reason })
       return
     }
+    const userId = resolvedUser.userId
     if (!/^[a-zA-Z0-9_-]{6,80}$/.test(userId)) {
       res.status(400).json({ ok: false, reason: "userId_format_invalid" })
       return
@@ -258,7 +325,6 @@ export const paPublicCvIngest = onRequest(
       return
     }
 
-    const db = getFirestore()
     const log = (event: string, payload?: Record<string, unknown>): void => {
       // Firebase Functions auto-streams console.log to Cloud Logging.
       console.log(JSON.stringify({ event, ...(payload ?? {}) }))

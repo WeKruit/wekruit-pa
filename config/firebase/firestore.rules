@@ -33,7 +33,8 @@ service cloud.firestore {
     // guard is defense-in-depth for direct dashboard writes only.
     match /pa-users/{id} {
       allow read: if isPaOperator();
-      allow create: if isPaOperator()
+      allow create: if request.auth != null
+        && isPaOperator()
         && request.resource.data.source is string
         && request.resource.data.source in [
           "candidate",

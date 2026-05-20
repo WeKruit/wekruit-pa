@@ -1,19 +1,16 @@
 /**
- * v1.9 Phase 87 — Public CV upload flow attached to /j/:jobId/cv.
+ * v1.9 Phase 87 — Public CV upload flow attached to /j/:jobId/cv (legacy).
  *
- * No auth. Reads pa-jobs/{jobId} (public-flagged), accepts PDF/DOCX upload,
- * POSTs base64 body to PA_CV_INGEST_URL env (configured at build).
- *
- * tempUserId from localStorage cookie (same key as PublicJob page).
+ * Requires Firebase auth — redirects unsigned users to /login.
  */
 import { useEffect, useMemo, useState } from "react"
-import { useParams } from "react-router-dom"
+import { Link, Navigate, useParams } from "react-router-dom"
+import { onAuthStateChanged, type User } from "firebase/auth"
 import { GLOBAL_UID_KEY, getBrowserUid, readStoredValue, rememberStoredValue } from "../lib/browser-identity"
+import { auth } from "../lib/firebase.js"
+import { readStoredCandidateId } from "../lib/candidate-verify.js"
 
 const CV_INGEST_URL = import.meta.env.VITE_CV_INGEST_URL ?? ""
-
-// v1.9 hotfix (2026-05-12) — share single global UID across all /j/:jobId
-// pages. Matches the same scheme in PublicJob.tsx.
 const HAS_CV_KEY = "wkr_has_cv"
 
 function getOrCreateRequestedUserId(_jobId: string): string {
@@ -37,7 +34,6 @@ async function fileToBase64(file: File): Promise<string> {
     const r = new FileReader()
     r.onload = () => {
       const result = r.result as string
-      // strip data: prefix
       const idx = result.indexOf(",")
       resolve(idx >= 0 ? result.slice(idx + 1) : result)
     }
@@ -49,14 +45,33 @@ async function fileToBase64(file: File): Promise<string> {
 export default function PublicJobCv() {
   const { jobId } = useParams<{ jobId: string }>()
   const requestedUserId = useMemo(() => (jobId ? getOrCreateRequestedUserId(jobId) : ""), [jobId])
+  const nextPath = useMemo(() => (jobId ? `/j/${jobId}/cv` : "/"), [jobId])
+  const [user, setUser] = useState<User | null | undefined>(undefined)
   const [file, setFile] = useState<File | null>(null)
   const [status, setStatus] = useState<"idle" | "uploading" | "ok" | "err">("idle")
   const [errMsg, setErrMsg] = useState<string | null>(null)
 
   useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth(), setUser)
+    return unsubscribe
+  }, [])
+
+  useEffect(() => {
     setStatus("idle")
     setErrMsg(null)
   }, [file])
+
+  if (user === undefined) {
+    return (
+      <div style={{ maxWidth: 540, margin: "0 auto", padding: "2rem 1.25rem" }}>
+        <p style={{ color: "#5f665b" }}>Checking your sign-in…</p>
+      </div>
+    )
+  }
+
+  if (!user) {
+    return <Navigate to={`/login?next=${encodeURIComponent(nextPath)}`} replace />
+  }
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -71,14 +86,24 @@ export default function PublicJobCv() {
       setErrMsg("CV ingest endpoint not configured. Please reach out to support.")
       return
     }
+    const candidateId = readStoredCandidateId()
+    if (!candidateId) {
+      setStatus("err")
+      setErrMsg("Finish sign-in verification before uploading your resume.")
+      return
+    }
     try {
       setStatus("uploading")
+      const idToken = await user!.getIdToken()
       const b64 = await fileToBase64(file)
       const res = await fetch(CV_INGEST_URL, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${idToken}`,
+        },
         body: JSON.stringify({
-          tempUserId: requestedUserId,
+          userId: candidateId,
           browserUid: requestedUserId,
           resumeBase64: b64,
           resumeName: file.name,
@@ -91,12 +116,10 @@ export default function PublicJobCv() {
         setErrMsg(`Upload failed (${res.status})`)
         return
       }
-      // v1.9 hotfix — stamp local "has CV" flag so subsequent /j/:jobId
-      // pages can skip the upload prompt for this returning user.
       try {
         rememberStoredValue(HAS_CV_KEY, "true")
       } catch {
-        // localStorage disabled — non-fatal; upload still succeeded.
+        // localStorage disabled — non-fatal
       }
       setStatus("ok")
     } catch (err) {
@@ -114,38 +137,31 @@ export default function PublicJobCv() {
       <p style={{ color: "#5f665b", marginTop: 0 }}>
         PDF or DOCX, under 5 MB. We&rsquo;ll use it to tailor the pre-screen.
       </p>
+      <p style={{ color: "#5f665b", fontSize: 14 }}>
+        Signed in as {user.email ?? "your account"}.{" "}
+        <Link to={`/j/${jobId}`}>Back to job</Link>
+      </p>
       <form onSubmit={onSubmit} style={{ marginTop: "1.5rem" }}>
         <input
           type="file"
           accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
           onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+          disabled={status === "uploading" || status === "ok"}
         />
         <button
           type="submit"
-          disabled={!file || status === "uploading"}
-          style={{
-            display: "inline-block",
-            marginLeft: "0.75rem",
-            padding: "0.55rem 1rem",
-            background: file ? "#2f6f4f" : "#cbd5e1",
-            color: "#fff7df",
-            borderRadius: 999,
-            border: "none",
-            fontWeight: 700,
-            cursor: file ? "pointer" : "not-allowed",
-          }}
+          disabled={!file || status === "uploading" || status === "ok"}
+          style={{ marginTop: "1rem", padding: "0.6rem 1.2rem", cursor: "pointer" }}
         >
           {status === "uploading" ? "Uploading…" : "Upload"}
         </button>
+        {status === "ok" ? (
+          <p style={{ color: "#2d6a4f", marginTop: "1rem" }}>Resume uploaded. You can close this tab.</p>
+        ) : null}
+        {status === "err" && errMsg ? (
+          <p style={{ color: "#9d3a2d", marginTop: "1rem" }}>{errMsg}</p>
+        ) : null}
       </form>
-      {status === "ok" ? (
-        <p style={{ marginTop: "1rem", color: "#16643b", fontWeight: 700 }}>
-          ✓ Got it. Head back to <a href={`/j/${jobId}`}>the job page</a> and tap "Open in iMessage" to start the screen.
-        </p>
-      ) : null}
-      {status === "err" && errMsg ? (
-        <p style={{ marginTop: "1rem", color: "#9c2b24" }}>{errMsg}</p>
-      ) : null}
     </div>
   )
 }

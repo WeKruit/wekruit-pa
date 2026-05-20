@@ -3,13 +3,16 @@
 // ("WeKruit_Laid_Off" | "candidate") is resolved at first paint via
 // resolveSource() and frozen onto the pa-users doc at registration.
 
-import { useMemo, useRef, useState } from "react"
-import { Link, useNavigate } from "react-router-dom"
+import { useMemo, useRef, useState, useEffect } from "react"
+import { Link, Navigate, useNavigate } from "react-router-dom"
+import { onAuthStateChanged, type User } from "firebase/auth"
 import "../styles/wekruit-tokens.css"
 import { deriveFunction, registerCandidate } from "../lib/onboarding-api"
 import { uploadResume } from "../lib/onboarding-cv"
 import { candidateProfileDestination, getBrowserUid, rememberCandidateProfileSession } from "../lib/browser-identity"
 import { resolveSource, SOURCE_RESOLVER_MARKER, type SignupSource } from "../lib/source"
+import { auth } from "../lib/firebase.js"
+import { CandidateVerifyError, verifyCandidateMagicLinkSession } from "../lib/candidate-verify.js"
 
 // 2026-05-19 (Adam directive: "这个 onboarding flow 应该发一个 Hello, WeKruit!
 // 这样的消息, 开始 onboard") — every candidate-side onboarding opener uses
@@ -57,12 +60,58 @@ type Profile = {
 export default function Onboarding() {
   const navigate = useNavigate()
   const source: SignupSource = useMemo(() => resolveSource(), [])
+  const [authUser, setAuthUser] = useState<User | null | undefined>(undefined)
+  const [verifyError, setVerifyError] = useState<string | null>(null)
   const [profile, setProfile] = useState<Profile>({})
   const [stage, setStage] = useState<Stage>("intake")
   const [pendingForm, setPendingForm] = useState<Profile | null>(null)
   const [dupExisting, setDupExisting] = useState<DupExisting | null>(null)
   const [busyText, setBusyText] = useState<string | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth(), (nextUser) => {
+      setAuthUser(nextUser)
+    })
+    return unsubscribe
+  }, [])
+
+  useEffect(() => {
+    if (!authUser) return
+    let cancelled = false
+    void (async () => {
+      try {
+        await verifyCandidateMagicLinkSession({ source })
+        if (!cancelled) setVerifyError(null)
+      } catch (err) {
+        if (!cancelled) {
+          setVerifyError(
+            err instanceof CandidateVerifyError ? err.message : "Sign-in verification failed. Try again."
+          )
+        }
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [authUser, source])
+
+  if (authUser === undefined) {
+    return (
+      <main>
+        <MinimalNav />
+        <section style={{ paddingTop: 96, paddingBottom: 96 }}>
+          <div className="container-prose" style={{ maxWidth: 760, marginInline: "auto", paddingInline: 24, textAlign: "center" }}>
+            <p style={{ color: "var(--ink-2)" }}>Checking your sign-in…</p>
+          </div>
+        </section>
+      </main>
+    )
+  }
+
+  if (!authUser) {
+    return <Navigate to={`/login?next=${encodeURIComponent("/onboarding")}`} replace />
+  }
 
   async function submitRegistration(formData: Profile, mode: "auto" | "reuse" | "refresh") {
     setSubmitError(null)
@@ -156,6 +205,7 @@ export default function Onboarding() {
                 )}
               </h1>
               {stage !== "dup-prompt" && <FlowProgress stage={stage} />}
+              {verifyError ? <StepNotice tone="error" text={verifyError} /> : null}
               {stage === "intake" && (
                 <p
                   style={{
