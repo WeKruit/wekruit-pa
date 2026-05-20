@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from "node:crypto"
+import { resolveToolFamily } from "./tool-family.js"
+export { resolveToolFamily, PA_TOOL_FAMILIES, type PaToolFamily } from "./tool-family.js"
 import type { Firestore } from "firebase-admin/firestore"
 import { z } from "zod"
 import { PA_COLLECTIONS, type AgentDef, type PaToolCall } from "@pa/core-types"
@@ -531,6 +533,7 @@ export async function runConnector(
     id: toolCallId,
     turnId: ctx.turnId,
     connectorName: name,
+    toolFamily: resolveToolFamily(name),
     connectorVersion: def.version,
     status: policy.allow ? "running" : "denied",
     argsDigest: digest(args),

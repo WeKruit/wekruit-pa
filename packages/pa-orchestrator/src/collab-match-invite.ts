@@ -352,6 +352,89 @@ export async function runCollabMatchInviteAfterResumeIngest(
   return { invited: true }
 }
 
+/**
+ * Candidate explicitly opted into a partner prescreen during post-match retention.
+ * Skips HITL auto-send gate; still requires `generateJobRecs` + a collab match.
+ */
+export async function sendCollabPrescreenOfferFromCandidateOptIn(
+  deps: CollabMatchInviteDeps & { turnId: string }
+): Promise<{ sent: boolean; reason?: string }> {
+  const log = deps.log ?? (() => undefined)
+  if (!deps.generateJobRecs) {
+    return { sent: false, reason: "generate_job_recs_missing" }
+  }
+
+  const existing = await loadCollabInvitePending(deps.db, deps.userId)
+  if (existing) {
+    return { sent: false, reason: "invite_already_pending" }
+  }
+
+  const lang: "en" | "zh" = "en"
+  const hooks = buildMatchConnectorHooks({ db: deps.db, generateJobRecs: deps.generateJobRecs })
+  const matchCollab = hooks.matchCollabJobs
+  if (!matchCollab) {
+    return { sent: false, reason: "match_collab_hook_missing" }
+  }
+
+  const matchResult = await matchCollab({ lang, source: "post_match_retention" }, {
+    db: deps.db,
+    agent: { id: "claire", name: "Claire" } as AgentDef,
+    turnId: deps.turnId,
+    userId: deps.userId,
+    sessionId: deps.sessionId ?? deps.turnId,
+    hooks,
+  })
+
+  if (!matchResult?.ok || !matchResult.topJobId) {
+    log("pa.collab_invite.post_match.skipped", {
+      userId: deps.userId,
+      reason: "no_collab_match",
+    })
+    return { sent: false, reason: "no_collab_match" }
+  }
+
+  const score = matchResult.matchScore ?? 0
+  if (score > 0 && score < COLLAB_INVITE_MIN_SCORE) {
+    log("pa.collab_invite.post_match.skipped", {
+      userId: deps.userId,
+      reason: "below_score_threshold",
+      score,
+    })
+    return { sent: false, reason: "low_score" }
+  }
+
+  const jobTitle = matchResult.topTitle ?? "this role"
+  const company = matchResult.topCompany ?? "a partner company"
+  const inviteBody = await composeCollabInviteMessage(deps, {
+    jobTitle,
+    company,
+    matchSummary: matchResult.summary,
+    turnId: deps.turnId,
+  })
+
+  await writeCollabInvitePending(deps.db, deps.userId, {
+    jobId: matchResult.topJobId,
+    jobTitle,
+    company,
+    invitedAt: new Date().toISOString(),
+    matchScore: score || undefined,
+    sessionId: deps.sessionId,
+  })
+
+  await deps.enqueueOutbound(deps.userId, deps.toE164, inviteBody.trim(), {
+    sessionId: deps.sessionId,
+    idempotencyKey: `collab-invite-post-match:${deps.userId}:${matchResult.topJobId}`,
+    runtimeSource: "collab_match_invite_post_match",
+  })
+
+  log("pa.collab_invite.post_match.sent", {
+    userId: deps.userId,
+    jobId: matchResult.topJobId,
+    score,
+  })
+  return { sent: true }
+}
+
 export async function handleCollabInviteReply(
   event: InboundEvent,
   store: CollabInviteReplyStore,

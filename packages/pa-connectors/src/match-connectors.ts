@@ -64,8 +64,9 @@ export const FIND_MATCH_CONNECTOR: ConnectorDef<
   name: "find-match",
   version: "1",
   description:
-    "Find ranked job matches for this user from the WeKruit catalog (V16 cascade). " +
-    "Use when the user explicitly asks for job recommendations or after onboarding when roles are ready.",
+    "Find ranked job matches for this user from the general WeKruit job catalog (V16 cascade). " +
+    "Use when the user asks for job recommendations, new openings, or 'what fits me' in the open market. " +
+    "Do NOT use for WeKruit partner/collab interview roles — use match-against-collab-jobs instead.",
   inputSchema: FindMatchInputSchema,
   outputSchema: FindMatchOutputSchema,
   expectedLatencyMs: 3500,
@@ -100,8 +101,9 @@ export const MATCH_COLLAB_CONNECTOR: ConnectorDef<
   name: "match-against-collab-jobs",
   version: "1",
   description:
-    "Match the user against WeKruit partner/collab jobs that have an active prescreen config. " +
-    "Use after resume ingest when evaluating collab interview invites.",
+    "Match the user against WeKruit partner/collab jobs (employer interview programs with prescreen). " +
+    "Use when the user asks about partner roles, collab opportunities, interview invites, or jobs WeKruit runs screens for. " +
+    "Do NOT use for general open-market job search — use find-match instead.",
   inputSchema: MatchCollabInputSchema,
   outputSchema: MatchCollabOutputSchema,
   expectedLatencyMs: 4000,

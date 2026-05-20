@@ -300,6 +300,28 @@ Safety placement:
 - memory-level checks before Mem0 writeback
 - outbound-level checks before sending a reply
 
+## Inbound routing (four layers)
+
+Candidate SMS does not follow one pattern. Four layers run in order; only the last layer is Claire + SDK tools.
+
+| Layer | When | Mechanism | Key code |
+|-------|------|-----------|----------|
+| **1. Webhook triggers** | Magic strings on inbound | `TriggerRouter` — first regex match wins | `apps/functions/src/sendblue/triggers/` — e.g. `WeKruit_<jobId>_<userId>_Job` (prescreen start), `_Apply` (post-PASS apply) |
+| **2. Pre-Claire sessions** | Active prescreen / PII confirm | Deterministic turn handlers before orchestrator Claire | `apps/functions/src/prescreen-turn-handler.ts`, coalescer step 3a — `PreScreenPipeline`, not LLM tools |
+| **3. Orchestrator early return** | Shared onboarding, collab invite, memory/privacy | FSMs in `processInboundEvent` before general chat | `packages/pa-orchestrator/src/shared-onboarding.ts` (`Hello, WeKruit!` bootstrap), `collab-match-invite.ts`, `post-match-retention.ts` |
+| **4. Claire turn** | Fall-through after layers 1–3 | Playbooks/skills + `buildTurnTools` + hosted `webSearchTool` | `playbook-routing.ts` (v1 cache or `paSkillRouterV2Enabled`), `packages/pa-connectors`, `packages/agent-registry/src/seed.json` |
+
+**Extension playbook (smallest layer that fits):**
+
+- **Pattern A — connector:** LLM-invoked tools (`find-match`, `match-against-collab-jobs`, `current-info`). Add to `pa-connectors` + agent `allowedConnectors` (+ optional per-user flags).
+- **Pattern B — programmatic:** System calls `runConnectorWithNarration` (onboarding complete, collab invite).
+- **Pattern C — webhook trigger:** One-shot tokens from job pages (`triggers/prescreen.ts`, `apply.ts`).
+- **Pattern D — FSM:** Multi-turn structured flows (`shared-onboarding`, `post-match-retention`).
+
+Valet / auto-apply design: `.planning/VALET-AUTO-APPLY-TOOL-DESIGN.md`.
+
+Audit: `pa_tool_calls.toolFamily` (`match_general`, `match_collab`, `web_search`, `valet`, …) via `resolveToolFamily` in `@pa/pa-connectors`.
+
 ## Current Architecture
 
 Current implementation already has:
