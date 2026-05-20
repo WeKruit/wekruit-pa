@@ -132,8 +132,8 @@ test("guided-open: LLM unclear surfaces clarifyingQuestion", async () => {
   }
 })
 
-// ── Test 5: LLM throws → graceful irrelevant ─────────────────────────────
-test("guided-open: LLM throw → graceful reason=irrelevant", async () => {
+// ── Test 5: LLM throws → default graceful irrelevant; shared opts into fail-open.
+test("guided-open: LLM throw → graceful reason=irrelevant by default", async () => {
   const stub = makeStubLlm({ throws: new Error("network timeout") })
   const judge = new GuidedOpenJudge<string>({
     questionLabel: "target role",
@@ -146,9 +146,42 @@ test("guided-open: LLM throw → graceful reason=irrelevant", async () => {
   const result = await judge.judge("engineer", "en", ctx)
   assert.equal(result.accept, false)
   if (!result.accept) assert.equal(result.reason, "irrelevant")
-  // ensure error event logged
   const errEv = ctx.events.find((e) => e.ev === "pa.onboarding.judge.guided_open.error")
   assert.ok(errEv, "error event must be logged on LLM throw")
+})
+
+test("guided-open: LLM throw → fail-open accept when explicitly enabled", async () => {
+  const stub = makeStubLlm({ throws: new Error("network timeout") })
+  const judge = new GuidedOpenJudge<string>({
+    questionLabel: "target role",
+    hints: [],
+    examples: [],
+    parseValue: (v) => (typeof v === "string" ? v : null),
+    failOpenOnLlmError: true,
+    llmCallFactory: () => stub.fn,
+  })
+  const ctx = makeCtx()
+  const result = await judge.judge("engineer", "en", ctx)
+  assert.equal(result.accept, true)
+  if (result.accept) assert.equal(result.value, "engineer")
+  const failOpenEv = ctx.events.find((e) => e.ev === "pa.onboarding.judge.guided_open.fail_open")
+  assert.ok(failOpenEv, "fail_open event must be logged when accepting despite LLM error")
+})
+
+test("guided-open: LLM throw on noise → irrelevant even with fail-open enabled", async () => {
+  const stub = makeStubLlm({ throws: new Error("network timeout") })
+  const judge = new GuidedOpenJudge<string>({
+    questionLabel: "target role",
+    hints: [],
+    examples: [],
+    parseValue: (v) => (typeof v === "string" ? v : null),
+    minMeaningfulChars: 3,
+    failOpenOnLlmError: true,
+    llmCallFactory: () => stub.fn,
+  })
+  const result = await judge.judge("ok", "en", makeCtx())
+  assert.equal(result.accept, false)
+  if (!result.accept) assert.equal(result.reason, "irrelevant")
 })
 
 // ── Test 6: LLM declined ─────────────────────────────────────────────────
@@ -237,8 +270,8 @@ test("guided-open: parseValue rejects malformed value → unclear", async () => 
   if (!result.accept) assert.equal(result.reason, "unclear")
 })
 
-// ── Test 10: bloom mismatch (parseValue rejects bloom value) → falls to LLM
-test("guided-open: bloom matches but parseValue null → fall through to LLM", async () => {
+// ── Test 10: bloom match but reply cannot parse → falls to LLM
+test("guided-open: bloom matches but reply and bloom label unparseable → fall through to LLM", async () => {
   const stub = makeStubLlm({
     raw: '{"intent":"provided","value":"good","confidence":0.9}',
   })
@@ -246,15 +279,12 @@ test("guided-open: bloom matches but parseValue null → fall through to LLM", a
     questionLabel: "x",
     hints: [],
     examples: [],
-    bloomRegex: [
-      // Bloom returns null-typed value (config bug surface) — must not block.
-      { pattern: /^x$/i, value: null as unknown as string },
-    ],
-    parseValue: (v) => (typeof v === "string" ? v : null),
+    bloomRegex: [{ pattern: /^x$/i, value: "ignored-label" }],
+    parseValue: (v) => (v === "good" ? "good" : null),
     llmCallFactory: () => stub.fn,
   })
   const result = await judge.judge("x", "en", makeCtx())
-  assert.equal(callsOf(stub), 1, "bad bloom value must fall through to LLM")
+  assert.equal(callsOf(stub), 1, "unparseable bloom hit must fall through to LLM")
   assert.equal(result.accept, true)
   if (result.accept) assert.equal(result.value, "good")
 })
@@ -297,8 +327,8 @@ test("guided-open: confidenceThreshold override accepts mid-confidence", async (
   if (result.accept) assert.equal(result.value, "swe")
 })
 
-// ── Test 13: bad JSON from LLM → irrelevant ─────────────────────────────
-test("guided-open: malformed JSON output → irrelevant", async () => {
+// ── Test 13: bad JSON from LLM → default irrelevant; fail-open only when opted in.
+test("guided-open: malformed JSON output → irrelevant by default", async () => {
   const stub = makeStubLlm({ raw: "this is not json {{" })
   const judge = new GuidedOpenJudge<string>({
     questionLabel: "x",
@@ -307,7 +337,37 @@ test("guided-open: malformed JSON output → irrelevant", async () => {
     parseValue: (v) => (typeof v === "string" ? v : null),
     llmCallFactory: () => stub.fn,
   })
-  const result = await judge.judge("anything", "en", makeCtx())
+  const result = await judge.judge("anything substantive", "en", makeCtx())
+  assert.equal(result.accept, false)
+  if (!result.accept) assert.equal(result.reason, "irrelevant")
+})
+
+test("guided-open: malformed JSON output → fail-open when explicitly enabled", async () => {
+  const stub = makeStubLlm({ raw: "this is not json {{" })
+  const judge = new GuidedOpenJudge<string>({
+    questionLabel: "x",
+    hints: [],
+    examples: [],
+    parseValue: (v) => (typeof v === "string" ? v : null),
+    failOpenOnLlmError: true,
+    llmCallFactory: () => stub.fn,
+  })
+  const result = await judge.judge("anything substantive", "en", makeCtx())
+  assert.equal(result.accept, true)
+  if (result.accept) assert.equal(result.value, "anything substantive")
+})
+
+test("guided-open: malformed JSON on noise → irrelevant", async () => {
+  const stub = makeStubLlm({ raw: "this is not json {{" })
+  const judge = new GuidedOpenJudge<string>({
+    questionLabel: "x",
+    hints: [],
+    examples: [],
+    parseValue: (v) => (typeof v === "string" ? v : null),
+    minMeaningfulChars: 4,
+    llmCallFactory: () => stub.fn,
+  })
+  const result = await judge.judge("ok", "en", makeCtx())
   assert.equal(result.accept, false)
   if (!result.accept) assert.equal(result.reason, "irrelevant")
 })

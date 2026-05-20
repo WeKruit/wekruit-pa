@@ -684,6 +684,53 @@ test("shared onboarding rejects duplicate greeting on Q1 without recording an an
   assert.equal(turnUpdates.some((patch) => patch.directIntentResult === "ignored_non_answer"), true)
 })
 
+test("shared onboarding does not re-ask a rejected Q5 answer", async () => {
+  const captures: OnboardingCaptures = {
+    systemInputs: [],
+    appliedSteps: [],
+    llmCalls: 0,
+    outboundBodies: [],
+  }
+  const { db, store: docs } = fakeFirestore()
+  docs.set("pa-users/u-onb", {
+    id: "u-onb",
+    phoneE164: "+19999991000",
+    onboardingState: "pending",
+    workSession: { kind: "shared_onboarding", status: "active", currentQuestionId: "special_context" },
+    sharedOnboarding: {
+      status: "active",
+      currentQuestionId: "special_context",
+      completed: false,
+      answers: {},
+    },
+  })
+  const turnUpdates: Array<Record<string, unknown>> = []
+  const recCalls: Array<{ userId: string; opts?: { force?: boolean; requestedCount?: number } }> = []
+  const store = makeOnboardingCapturesStore(captures, "pending") as OrchestratorStore
+  store.db = db
+  store.getOnboardingUser = async () => docs.get("pa-users/u-onb") as Awaited<ReturnType<OrchestratorStore["getOnboardingUser"]>>
+  store.updateTurn = async (_turnId, patch) => {
+    turnUpdates.push(patch)
+  }
+  store.generateJobRecs = async (userId, _lang, opts) => {
+    recCalls.push({ userId, opts })
+    return { message: "Role A @ Example\nhttps://example.com/a\nrequirements: backend\nwhy: fits", recCount: 1 }
+  }
+
+  await processInboundEvent(
+    { ...baseEvent, id: "evt-shared-q5-rejected-no-repeat", body: "hi" },
+    store,
+  )
+
+  const user = docs.get("pa-users/u-onb")
+  const shared = user?.sharedOnboarding as Record<string, unknown>
+  assert.equal(shared.status, "complete")
+  assert.equal(recCalls.length, 1)
+  assert.match(captures.outboundBodies[0] ?? "", /Role A @ Example/)
+  assert.doesNotMatch(captures.outboundBodies[0] ?? "", /anything special|constraints|dealbreakers/i)
+  assert.equal(turnUpdates.some((patch) => patch.sharedOnboardingFailForward === true), true)
+})
+
 test("shared onboarding accepts a real Q1 answer and advances to culture_stage", async () => {
   const captures: OnboardingCaptures = {
     systemInputs: [],

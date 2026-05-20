@@ -7,8 +7,11 @@ import {
   buildSharedOnboardingPromptContext,
   buildSharedOnboardingStartedState,
   getSharedOnboardingQuestion,
+  judgeSharedOnboardingAnswer,
   projectSharedOnboardingAnswer,
   resolveNextSharedOnboardingQuestionId,
+  shouldIgnoreSharedOnboardingDuplicateKickoff,
+  shouldSharedOnboardingAdvanceDespiteJudge,
 } from "../shared-onboarding.js"
 import { WEKRUIT_CANDIDATE_SOURCE, WEKRUIT_LAYOFF_SOURCE } from "../onboarding.js"
 
@@ -107,4 +110,35 @@ test("recommendations become eligible only after Q5 is collected", () => {
     completed: true,
     shouldRecommend: true,
   })
+})
+
+test("shared onboarding never re-asks — judge rejections still advance except Q1 duplicate hello", () => {
+  assert.equal(shouldIgnoreSharedOnboardingDuplicateKickoff("main_goal", "hey"), true)
+  assert.equal(shouldSharedOnboardingAdvanceDespiteJudge("main_goal", "hey"), false)
+  assert.equal(
+    shouldSharedOnboardingAdvanceDespiteJudge(
+      "special_context",
+      "I've done a lot of realtime communication handling",
+    ),
+    true,
+  )
+})
+
+test("special_context accepts realtime-communication answer without waiting on LLM", async () => {
+  let llmCalls = 0
+  const result = await judgeSharedOnboardingAnswer({
+    questionId: "special_context",
+    answer: "I've done a lot of realtime communication handling. Maybe worthy?",
+    lang: "en",
+    llmCallFactory: () => async () => {
+      llmCalls += 1
+      throw new Error("LLM should not be needed for this answer")
+    },
+  })
+
+  assert.equal(llmCalls, 0)
+  assert.equal(result.accept, true)
+  if (result.accept) {
+    assert.equal(result.value, "I've done a lot of realtime communication handling. Maybe worthy?")
+  }
 })

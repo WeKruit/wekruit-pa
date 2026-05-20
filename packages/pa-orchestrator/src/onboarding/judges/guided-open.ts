@@ -117,6 +117,12 @@ export interface GuidedOpenJudgeSpec<TAnswer> {
   confidenceThreshold?: number
   /** Skip LLM when reply has fewer than N alphanumeric/CJK chars. */
   minMeaningfulChars?: number
+  /**
+   * When true, provider errors or malformed LLM JSON can accept a substantive
+   * raw reply through parseValue. Keep opt-in so strict onboarding questions
+   * do not silently advance on infrastructure failures.
+   */
+  failOpenOnLlmError?: boolean
   /** Test-seam: inject a custom LLM caller. Default uses fetch chain. */
   llmCallFactory?: () => LlmCallFn
   /**
@@ -284,6 +290,18 @@ function isNoiseReply(reply: string, minChars: number): boolean {
   return meaningful.length < minChars
 }
 
+function tryFailOpenAccept<TAnswer>(
+  spec: GuidedOpenJudgeSpec<TAnswer>,
+  reply: string,
+  minChars: number,
+): JudgeResult<TAnswer> | null {
+  if (spec.failOpenOnLlmError !== true) return null
+  if (isNoiseReply(reply, minChars)) return null
+  const parsed = spec.parseValue(reply.trim())
+  if (parsed === null) return null
+  return { accept: true, value: parsed, confidence: 0.55 }
+}
+
 function safeParseJson(raw: string): LlmIntentShape | null {
   let parsed: unknown
   try {
@@ -351,7 +369,7 @@ export class GuidedOpenJudge<TAnswer> implements Judge<TAnswer> {
     if (this.spec.bloomRegex && this.spec.bloomRegex.length > 0) {
       for (const bloom of this.spec.bloomRegex) {
         if (bloom.pattern.test(reply)) {
-          const parsed = this.spec.parseValue(bloom.value)
+          const parsed = this.spec.parseValue(reply) ?? this.spec.parseValue(bloom.value)
           if (parsed !== null) {
             ctx.log?.("pa.onboarding.judge.guided_open.bloom_hit", {
               userId: ctx.userId,
@@ -388,6 +406,16 @@ export class GuidedOpenJudge<TAnswer> implements Judge<TAnswer> {
         questionLabel: this.spec.questionLabel,
         error: err instanceof Error ? err.message : String(err),
       })
+      const failOpen = tryFailOpenAccept(this.spec, reply, this.minChars)
+      if (failOpen) {
+        ctx.log?.("pa.onboarding.judge.guided_open.fail_open", {
+          userId: ctx.userId,
+          turnId: ctx.turnId,
+          questionLabel: this.spec.questionLabel,
+          source: "llm_error",
+        })
+        return failOpen
+      }
       return { accept: false, reason: "irrelevant" }
     }
 
@@ -397,6 +425,16 @@ export class GuidedOpenJudge<TAnswer> implements Judge<TAnswer> {
         questionLabel: this.spec.questionLabel,
         raw: raw.slice(0, 200),
       })
+      const failOpen = tryFailOpenAccept(this.spec, reply, this.minChars)
+      if (failOpen) {
+        ctx.log?.("pa.onboarding.judge.guided_open.fail_open", {
+          userId: ctx.userId,
+          turnId: ctx.turnId,
+          questionLabel: this.spec.questionLabel,
+          source: "bad_json",
+        })
+        return failOpen
+      }
       return { accept: false, reason: "irrelevant" }
     }
 

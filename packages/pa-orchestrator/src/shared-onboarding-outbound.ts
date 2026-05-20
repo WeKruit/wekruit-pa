@@ -203,6 +203,7 @@ export type SharedOnboardingRouterResult =
   | "bootstrapped_q1_inline"
   | "asked_question"
   | "reasked_question"
+  | "advanced_despite_judge"
   | "ignored_non_answer"
   | "sent_recs"
   | "saved_without_recs"
@@ -337,16 +338,11 @@ export async function composeSharedOnboardingReply(
   try {
     const profile = await resolveProfileForUser("friend_onboarding", input.userId)
     const choreoOn = await isBehaviorChoreographerEnabled(input.store.db, input.userId)
-    // Upgrade choreographer mode to ack_then_ask for culture_stage when we're
-    // about to ask Q2 right after the user answered Q1 (or any prior slot).
-    // This lets the friend roommate briefly mirror what they volunteered
-    // before pivoting to the next question — Adam 2026-05-19 plan §2 ack_then_ask.
-    // We don't touch reask / runtime_event / kickoff branches; only the
-    // user_answer → ask transition into culture_stage qualifies.
-    const choreoMode: "ask" | "reask" | "ack_then_ask" =
-      input.mode === "ask" &&
-      input.slot === "culture_stage" &&
-      input.composeContext.inboundKind === "user_answer"
+    // Upgrade every user_answer → ask transition to ack_then_ask. Repeating
+    // the same slot in iMessage feels broken, so shared onboarding moves on
+    // with a short acknowledgement instead of reask copy.
+    const choreoMode: "ask" | "reask" | "ack_then_ask" | "tangent_then_ask" | "deliver" =
+      input.mode === "ask" && input.composeContext.inboundKind === "user_answer"
         ? "ack_then_ask"
         : input.mode
     const choreography = buildBehaviorChoreographyPlan({
@@ -358,41 +354,17 @@ export async function composeSharedOnboardingReply(
       recentSlangPicks: input.recentSlangPicks,
     })
     if (choreoOn) {
-      const reactionEvent = choreography.reactionPlan.shouldReact
-        ? "pa.choreo.reaction.fired"
-        : "pa.choreo.reaction.suppressed"
-      input.store.log(reactionEvent, {
-        userId: input.userId,
-        turnId: input.turnId,
-        reason: choreography.reactionPlan.reason,
-      })
-      if (
-        choreography.reactionPlan.shouldReact &&
-        input.inboundMessageHandle &&
-        input.toE164 &&
-        input.store.sendReaction &&
-        (await isReactionTapbackEnabled(input.store.db, input.userId))
-      ) {
-        const reaction = choreography.reactionPlan.reaction ?? "like"
-        try {
-          await input.store.sendReaction({
-            toE164: input.toE164,
-            messageHandle: input.inboundMessageHandle,
-            reaction,
-          })
-          input.store.log("pa.choreo.reaction.tapback_sent", {
-            userId: input.userId,
-            turnId: input.turnId,
-            reaction,
-          })
-        } catch (err) {
-          input.store.log("pa.choreo.reaction.tapback_failed", {
-            userId: input.userId,
-            turnId: input.turnId,
-            error: err instanceof Error ? err.message : String(err),
-          })
-        }
-      }
+      input.store.log(
+        choreography.reactionPlan.shouldReact
+          ? "pa.choreo.reaction.planned"
+          : "pa.choreo.reaction.suppressed",
+        {
+          userId: input.userId,
+          turnId: input.turnId,
+          reason: choreography.reactionPlan.reason,
+          delivery: "outbound_delivery_plan",
+        },
+      )
     }
 
     // Adam 2026-05-19 voice polish §6 — tangent detection.

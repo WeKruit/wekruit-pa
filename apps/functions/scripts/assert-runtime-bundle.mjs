@@ -29,7 +29,8 @@ const required = [
   // the shared-onboarding question pointer. This prevents a stale bundle from
   // silently accepting "Hello, WeKruit!" as the answer to Q1.
   "const answerJudge = await judgeSharedOnboardingAnswer({",
-  "directIntentResult: duplicateGreeting ? \"ignored_non_answer\" : \"reasked_question\"",
+  "pa.shared_onboarding.fail_forward",
+  "advanced_despite_judge",
 ]
 
 const missing = required.filter((needle) => !bundle.includes(needle))

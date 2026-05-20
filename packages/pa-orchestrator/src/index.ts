@@ -111,6 +111,8 @@ export {
   isSharedOnboardingGreetingOrKickoff,
   isSharedOnboardingRuntimeEvent,
   judgeSharedOnboardingAnswer,
+  shouldIgnoreSharedOnboardingDuplicateKickoff,
+  shouldSharedOnboardingAdvanceDespiteJudge,
   loadSharedOnboardingParsedResumeForPrompt,
   projectSharedOnboardingAnswer,
   resolveNextSharedOnboardingQuestionId,
@@ -131,6 +133,8 @@ import {
   isSharedOnboardingGreetingOrKickoff,
   isSharedOnboardingRuntimeEvent,
   judgeSharedOnboardingAnswer,
+  shouldIgnoreSharedOnboardingDuplicateKickoff,
+  shouldSharedOnboardingAdvanceDespiteJudge,
   loadSharedOnboardingParsedResumeForPrompt,
   projectSharedOnboardingAnswer,
   resolveNextSharedOnboardingQuestionId,
@@ -1275,10 +1279,9 @@ function sendblueMessageHandleFromEventId(eventId: string): string | undefined {
  * Adam 2026-05-19 voice polish §3 — build an outbound delivery plan for a
  * shared-onboarding composed reply. Returns `null` (legacy single-bubble
  * path) when the choreographer flag is OFF, the user has reply suppressed,
- * or anything goes sideways resolving the profile. Tapback is intentionally
- * disabled at the planner level — `composeSharedOnboardingReply` already
- * fires the tapback inline using `reaction-policy.ts` during the synthetic
- * user turn.
+ * or anything goes sideways resolving the profile. Tapback ships via the
+ * same planner path as general chat when `paReactionTapbackEnabled` is on
+ * and Sendblue gave us a messageHandle on the inbound event.
  */
 async function buildSharedOnboardingDeliveryPlan(args: {
   store: OrchestratorStore
@@ -1292,6 +1295,8 @@ async function buildSharedOnboardingDeliveryPlan(args: {
   try {
     const choreoOn = await isBehaviorChoreographerEnabled(store.db, event.userId)
     if (!choreoOn) return null
+    const tapbackOn = await isReactionTapbackEnabled(store.db, event.userId)
+    const inboundMessageHandle = sendblueMessageHandleFromEventId(event.id)
     const profile = await resolveProfileForUser(
       "friend_onboarding",
       event.userId
@@ -1302,11 +1307,7 @@ async function buildSharedOnboardingDeliveryPlan(args: {
       profile,
       inboundBody: event.body ?? null,
       force1: args.force1 ?? false,
-      // Shared onboarding compose owns its own tapback fire; planner
-      // tapback would double-fire. We strip tapback modes from the
-      // legal set so the plan never proposes one.
-      hasMessageHandle: false,
-      disableTapback: true,
+      hasMessageHandle: Boolean(inboundMessageHandle) && tapbackOn,
     })
   } catch (err) {
     store.log("pa.outbound.delivery_plan.shared_onboarding_error", {
@@ -1345,11 +1346,12 @@ async function sendMemoryReply(
   opts: {
     /**
      * Adam 2026-05-19 voice polish §3 — when supplied, the planner output
-     * (emoji + 1-2 text bubbles) replaces the legacy single-bubble enqueue.
-     * Tapback is intentionally NOT re-fired here (caller fires inline).
+     * (tapback + emoji + 1-2 text bubbles) replaces the legacy single-bubble enqueue.
      */
     deliveryPlan?: OutboundDeliveryPlan
     inboundMessageHandle?: string
+    /** Set true only when tapback was already sent earlier in the turn. */
+    skipTapback?: boolean
   } = {}
 ) {
   const { text: safe } = await applyTemplateOutboundHumanize({
@@ -1385,10 +1387,7 @@ async function sendMemoryReply(
     await sendPlannedOutbound(store, event, turnId, repointed, {
       sessionId: event.sessionId,
       inboundMessageHandle: opts.inboundMessageHandle,
-      // Shared onboarding compose fires tapback inline today; planner
-      // tapback is suppressed at planner level via disableTapback. This
-      // is a belt-and-suspenders skipTapback in case caller forgot.
-      skipTapback: true,
+      skipTapback: opts.skipTapback ?? false,
     })
     return
   }
@@ -2004,66 +2003,34 @@ async function handleSharedOnboardingUserReply(
     turnId,
     log: (name, payload) => store.log(name, payload ?? {}),
   })
-  if (!answerJudge.accept) {
-    const duplicateGreeting = questionId === "main_goal" && isSharedOnboardingGreetingOrKickoff(event.body)
+  if (
+    !answerJudge.accept &&
+    shouldIgnoreSharedOnboardingDuplicateKickoff(questionId, event.body)
+  ) {
     const now = store.nowIso()
-    if (!duplicateGreeting) {
-      const promptContext = sharedPromptContextFrom(onboardingUser)
-      const agent = await requireAgentForUser(store, event.userId)
-      const priorSlangPicks = extractRecentSlangPicks(onboardingUser as { sharedOnboarding?: Record<string, unknown> | null } | null)
-      const composed = await composeSharedOnboardingReply({
-        store: sharedOnboardingOutboundSlice(store),
-        userId: event.userId,
-        sessionId: event.sessionId,
-        turnId,
-        slot: questionId,
-        mode: "reask",
-        promptContext,
-        userMessage: event.body,
-        composeContext: buildSharedOnboardingComposeContext({
-          inboundKind: "user_answer",
-          routerResult: "reasked_question",
-          slot: questionId,
-          mode: "reask",
-          userMessage: event.body,
-        }),
-        agent,
-        reaskReason: answerJudge.reason,
-        reaskClarifyingQuestion: answerJudge.clarifyingQuestion,
-        inboundMessageHandle: sendblueMessageHandleFromEventId(event.id),
-        toE164: event.from,
-        recentSlangPicks: priorSlangPicks,
-      })
-      const reaskPlan = await buildSharedOnboardingDeliveryPlan({
-        store,
-        event,
-        turnId,
-        reply: composed.text,
-      })
-      await sendMemoryReply(store, event, turnId, composed.text, {
-        deliveryPlan: reaskPlan ?? undefined,
-        inboundMessageHandle: sendblueMessageHandleFromEventId(event.id),
-      })
-      await persistSharedOnboardingSlangPicks({
-        db: store.db,
-        userId: event.userId,
-        priorPicks: priorSlangPicks,
-        newPicks: composed.slangPicked,
-        nowIso: store.nowIso(),
-        log: (name, payload) => store.log(name, payload ?? {}),
-      })
-    }
     await store.updateTurn(turnId, {
       status: "succeeded",
       stage: "succeeded",
       completedAt: now,
       directIntent: "shared_onboarding",
-      directIntentResult: duplicateGreeting ? "ignored_non_answer" : "reasked_question",
+      directIntentResult: "ignored_non_answer",
       sharedOnboardingQuestionId: questionId,
       sharedOnboardingJudgeReason: answerJudge.reason,
     })
     await store.markEventSucceeded(event.id)
     return true
+  }
+  const advancedDespiteJudge =
+    !answerJudge.accept && shouldSharedOnboardingAdvanceDespiteJudge(questionId, event.body)
+  if (advancedDespiteJudge) {
+    store.log("pa.shared_onboarding.fail_forward", {
+      userId: event.userId,
+      turnId,
+      eventId: event.id,
+      questionId,
+      judgeReason: answerJudge.reason,
+      answerLen: event.body.trim().length,
+    })
   }
   const projection = projectSharedOnboardingAnswer(questionId, event.body)
   const next = resolveNextSharedOnboardingQuestionId(questionId)
@@ -2088,7 +2055,7 @@ async function handleSharedOnboardingUserReply(
       userMessage: event.body,
       composeContext: buildSharedOnboardingComposeContext({
         inboundKind: "user_answer",
-        routerResult: "asked_question",
+        routerResult: advancedDespiteJudge ? "advanced_despite_judge" : "asked_question",
         slot: next.nextQuestionId,
         mode: "ask",
         userMessage: event.body,
@@ -2121,9 +2088,15 @@ async function handleSharedOnboardingUserReply(
       stage: "succeeded",
       completedAt: store.nowIso(),
       directIntent: "shared_onboarding",
-      directIntentResult: "asked_question",
+      directIntentResult: advancedDespiteJudge ? "advanced_despite_judge" : "asked_question",
       sharedOnboardingAnsweredQuestionId: questionId,
       sharedOnboardingQuestionId: next.nextQuestionId,
+      ...(advancedDespiteJudge
+        ? {
+            sharedOnboardingFailForward: true,
+            sharedOnboardingJudgeReason: answerJudge.reason,
+          }
+        : {}),
     })
     await store.markEventSucceeded(event.id)
     return true
@@ -2167,6 +2140,12 @@ async function handleSharedOnboardingUserReply(
     sharedOnboardingAnsweredQuestionId: questionId,
     sharedOnboardingCompleted: true,
     directIntentRecCount: delivered.recCount,
+    ...(advancedDespiteJudge
+      ? {
+          sharedOnboardingFailForward: true,
+          sharedOnboardingJudgeReason: answerJudge.reason,
+        }
+      : {}),
   })
   await store.markEventSucceeded(event.id)
   return true

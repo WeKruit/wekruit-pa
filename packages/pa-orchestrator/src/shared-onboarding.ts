@@ -125,6 +125,29 @@ export function isSharedOnboardingGreetingOrKickoff(value: string): boolean {
   return /^(?:hello|hi|hey|yo|sup|\u4f60\u597d|\u60a8\u597d|\u54c8\u55bd|\u5728\u5417)(?:\s+(?:wekruit|claire))?$/.test(normalized)
 }
 
+/**
+ * Q1-only: duplicate hello/kickoff while still on main_goal — ignore, do not
+ * advance or re-ask (user is not answering the question yet).
+ */
+export function shouldIgnoreSharedOnboardingDuplicateKickoff(
+  questionId: SharedOnboardingQuestionId,
+  answer: string,
+): boolean {
+  return questionId === "main_goal" && isSharedOnboardingGreetingOrKickoff(answer)
+}
+
+/**
+ * Shared onboarding never re-asks the same slot verbatim — judge rejections,
+ * LLM timeouts, and unclear parses still advance with the raw reply stored.
+ * Re-asking the canonical prompt feels glitchy in iMessage (Adam 2026-05-19).
+ */
+export function shouldSharedOnboardingAdvanceDespiteJudge(
+  questionId: SharedOnboardingQuestionId,
+  answer: string,
+): boolean {
+  return !shouldIgnoreSharedOnboardingDuplicateKickoff(questionId, answer)
+}
+
 function parseSharedJudgeValue(raw: unknown): string | null {
   if (typeof raw === "string") {
     const trimmed = raw.trim().replace(/\s+/g, " ")
@@ -211,7 +234,11 @@ function sharedJudgeBloom(questionId: SharedOnboardingQuestionId): Array<{ patte
     ]
   }
   return [
-    { pattern: /\b(none|nothing|nope|no\s+special|visa|sponsor|h[-\s]?1b|opt|cpt|urgent|asap|timing|dealbreaker|constraint|strength|backend|frontend|full[-\s]?stack|systems?)\b/i, value: "clear special-context answer" },
+    {
+      pattern:
+        /\b(none|nothing|nope|no\s+special|visa|sponsor|h[-\s]?1b|opt|cpt|urgent|asap|timing|dealbreaker|constraint|strength|backend|frontend|full[-\s]?stack|systems?|real[-\s]?time|communication|webrtc|infrastructure|distributed|worthy|experience|built|handl\w*)\b/i,
+      value: "clear special-context answer",
+    },
   ]
 }
 
@@ -231,6 +258,7 @@ export async function judgeSharedOnboardingAnswer(
     parseValue: parseSharedJudgeValue,
     confidenceThreshold: 0.62,
     minMeaningfulChars: 2,
+    failOpenOnLlmError: true,
     ...(args.llmCallFactory ? { llmCallFactory: args.llmCallFactory } : {}),
   })
   return judge.judge(answer, args.lang ?? "en", {
