@@ -1041,7 +1041,7 @@ test("processInboundEvent lifecycle: explicit job request is not swallowed as pr
   let llmCalls = 0
   let recCalls = 0
   let lifecycleWrites = 0
-  let outbound = ""
+  const outboundMessages: string[] = []
   const store = makeStore({
     getOnboardingUser: async () => ({
       id: "u1",
@@ -1075,7 +1075,7 @@ test("processInboundEvent lifecycle: explicit job request is not swallowed as pr
       return { text: "should-not-be-called" }
     },
     enqueueOutbound: async (_u, _t, body) => {
-      outbound = body
+      outboundMessages.push(body)
     },
   })
 
@@ -1087,8 +1087,10 @@ test("processInboundEvent lifecycle: explicit job request is not swallowed as pr
   assert.equal(lifecycleWrites, 0)
   assert.equal(llmCalls, 0)
   assert.equal(recCalls, 1)
-  assert.match(outbound, /Three roles/)
-  assert.match(outbound, /Rain/)
+  assert.equal(outboundMessages.length, 2)
+  assert.match(outboundMessages[0]!, /sec|pull|dig|look|hunt|scan/i)
+  assert.match(outboundMessages[1]!, /Three roles/)
+  assert.match(outboundMessages[1]!, /Rain/)
 })
 
 test("processInboundEvent lifecycle: no recent lifecycle event falls through to normal agent", async () => {

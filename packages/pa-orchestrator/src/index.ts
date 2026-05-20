@@ -153,6 +153,8 @@ import {
   type SharedOnboardingOutboundStore,
 } from "./shared-onboarding-outbound.js"
 import { buildMatchConnectorHooks } from "./match-connector-hooks.js"
+import { composeFindMatchPreCall } from "./job-match-narration.js"
+import { frameConnectorResult } from "./run-connector-with-narration.js"
 import { handleCollabInviteReply, runCollabMatchInviteAfterResumeIngest } from "./collab-match-invite.js"
 import type { MatchConnectorHooks } from "@pa/pa-connectors"
 // Single onboarding runtime entry. It owns the Q-as-class pipeline and resume
@@ -2307,6 +2309,42 @@ async function handleSharedOnboardingBootstrap(
   return true
 }
 
+async function sendFindMatchPreCallBubble(
+  store: OrchestratorStore,
+  event: InboundEvent,
+  turnId: string,
+  lang: "en" | "zh",
+): Promise<void> {
+  const pre = composeFindMatchPreCall(lang, `${event.userId}:${event.id}`)
+  const at = store.nowIso()
+  await store.appendMessage({
+    id: `out-precall-${event.id}`,
+    sessionId: event.sessionId,
+    userId: event.userId,
+    role: "assistant",
+    body: pre,
+    createdAt: at,
+    idempotencyKey: `out-precall-${event.id}`,
+    rawMeta: {
+      source: "pa_orchestrator",
+      turnId,
+      eventId: event.id,
+      kind: "find_match_pre_call",
+    },
+  })
+  if (shouldSuppressOutbound(event)) return
+  await store.enqueueOutbound(event.userId, event.from, pre, {
+    sessionId: event.sessionId,
+    role: "assistant",
+    idempotencyKey: `outbound-precall-${event.id}`,
+  })
+  store.log("pa.runtime.job_search.pre_call_sent", {
+    userId: event.userId,
+    turnId,
+    lang,
+  })
+}
+
 async function handleCompletedUserJobSearchRequest(
   event: InboundEvent,
   store: OrchestratorStore,
@@ -2318,7 +2356,7 @@ async function handleCompletedUserJobSearchRequest(
   if (isJobRecommendationExplanationRequest(event.body)) return false
   if (!isExplicitJobSearchRequest(event.body)) return false
 
-  const lang: "en" = "en"
+  const lang: "en" | "zh" = detectLang([event.body]) === "zh" ? "zh" : "en"
   const requestedCount = requestedJobRecCount(event.body)
   const roleFocus = detectLifecycleRoleFocus(event.body)
   store.log("pa.runtime.job_search.direct_request", {
@@ -2327,15 +2365,21 @@ async function handleCompletedUserJobSearchRequest(
     lang,
     roleFocus,
   })
+  await sendFindMatchPreCallBubble(store, event, turnId, lang)
   const recs = await store.generateJobRecs(event.userId, lang, {
     force: true,
     ...(requestedCount ? { requestedCount } : {}),
     ...(roleFocus.length > 0 ? { roleFocus } : {}),
   })
-  const reply =
-    recs && recs.recCount > 0
-      ? recs.message
-      : "I could not pull fresh roles right now. I saved the request and will try again shortly."
+  const recCount = recs?.recCount ?? 0
+  const body =
+    recCount > 0
+      ? recs!.message
+      : lang === "zh"
+        ? "这次没捞到特别合适的，我记下了，晚点再帮你扫一轮。"
+        : "I could not pull fresh roles right now. I saved the request and will try again shortly."
+  const frame = frameConnectorResult("find-match", lang, recCount)
+  const reply = frame ? [frame, body].filter(Boolean).join("\n") : body
   await sendMemoryReply(store, event, turnId, reply)
   if (recs && recs.recCount > 0 && store.db) {
     await startPostMatchRetentionAfterJobRecs({

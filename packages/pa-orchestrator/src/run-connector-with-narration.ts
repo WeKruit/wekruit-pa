@@ -12,6 +12,10 @@ import {
   recordConnectorCooldown,
 } from "@pa/pa-safety"
 import { getFlag } from "@pa/pa-persistence"
+import {
+  composeFindMatchPreCall,
+  composeMatchCollabPreCall,
+} from "./job-match-narration.js"
 
 export type NarrationOutbound = {
   sendPreCallBubble: (text: string) => Promise<void>
@@ -58,6 +62,24 @@ export function frameConnectorResult(
   return frame ? frame({ count }) : null
 }
 
+const ALWAYS_PRE_CALL_CONNECTORS: ConnectorName[] = [
+  "find-match",
+  "match-against-collab-jobs",
+]
+
+function pickConnectorPreCall(
+  connectorName: ConnectorName,
+  lang: "en" | "zh",
+  seed: string,
+  fallback: string,
+): string {
+  if (connectorName === "find-match") return composeFindMatchPreCall(lang, seed)
+  if (connectorName === "match-against-collab-jobs") {
+    return composeMatchCollabPreCall(lang, seed)
+  }
+  return fallback
+}
+
 export async function runConnectorWithNarration(
   input: RunConnectorWithNarrationInput
 ): Promise<RunConnectorWithNarrationResult> {
@@ -83,14 +105,25 @@ export async function runConnectorWithNarration(
     throw new Error(`connector_cooldown:${input.connectorName}`)
   }
 
-  if (narrationOn && def.narration && (def.expectedLatencyMs ?? 0) >= latencyMinMs) {
-    const pre = def.narration.preCall[lang]
+  const alwaysPreCall = ALWAYS_PRE_CALL_CONNECTORS.includes(input.connectorName)
+  const shouldSendPreCall =
+    Boolean(def.narration) &&
+    (alwaysPreCall || (narrationOn && (def.expectedLatencyMs ?? 0) >= latencyMinMs))
+
+  if (shouldSendPreCall && def.narration) {
+    const pre = pickConnectorPreCall(
+      input.connectorName,
+      lang,
+      `${input.ctx.userId}:${input.ctx.turnId}`,
+      def.narration.preCall[lang],
+    )
     try {
       await input.outbound.sendPreCallBubble(pre)
       preCallSent = true
       input.log?.("pa.choreo.pre_call_bubble.fired", {
         connector: input.connectorName,
         source: input.source,
+        alwaysPreCall,
       })
     } catch (err) {
       input.log?.("pa.choreo.pre_call_bubble.skipped", {
@@ -100,15 +133,17 @@ export async function runConnectorWithNarration(
       })
     }
 
-    const pulseMs = Math.min(def.expectedLatencyMs ?? 2000, 8000)
-    const pulses = Math.max(1, Math.ceil(pulseMs / 2000))
-    for (let i = 0; i < pulses; i++) {
-      try {
-        await input.outbound.pulseTyping()
-      } catch {
-        /* typing pulse is best-effort */
+    if (narrationOn && (def.expectedLatencyMs ?? 0) >= latencyMinMs) {
+      const pulseMs = Math.min(def.expectedLatencyMs ?? 2000, 8000)
+      const pulses = Math.max(1, Math.ceil(pulseMs / 2000))
+      for (let i = 0; i < pulses; i++) {
+        try {
+          await input.outbound.pulseTyping()
+        } catch {
+          /* typing pulse is best-effort */
+        }
+        await new Promise((r) => setTimeout(r, 1800))
       }
-      await new Promise((r) => setTimeout(r, 1800))
     }
   }
 
