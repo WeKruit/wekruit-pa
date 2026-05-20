@@ -99,6 +99,8 @@ test("runCandidateMagicLinkVerify claims profile for verified email", async () =
           },
         }
       },
+      claireConversationStarted: async () => false,
+      hasResumeOnFile: async () => false,
     }
   )
 
@@ -108,6 +110,9 @@ test("runCandidateMagicLinkVerify claims profile for verified email", async () =
     assert.equal(result.candidateId, "cand-1")
     assert.equal(result.idempotent, false)
     assert.equal(result.intakeComplete, false)
+    assert.equal(result.claireConversationStarted, false)
+    assert.equal(result.hasResumeOnFile, false)
+    assert.equal(result.portalReady, false)
     assert.equal(result.linkedinLinkedViaOauth, false)
   }
   assert.deepEqual(calls[0], {
@@ -175,6 +180,7 @@ test("runCandidateMagicLinkVerify links LinkedIn OAuth identity for li_* uid", a
           created: true,
         }
       },
+      hasResumeOnFile: async () => false,
     }
   )
 
@@ -228,6 +234,7 @@ test("runCandidateMagicLinkVerify allows wekruit.com workspace emails at public 
           createdAt: "2026-05-20T00:00:00.000Z",
         },
       }),
+      hasResumeOnFile: async () => false,
     }
   )
 
@@ -236,5 +243,167 @@ test("runCandidateMagicLinkVerify allows wekruit.com workspace emails at public 
   if (result.ok) {
     assert.equal(result.candidateId, "cand-admin")
     assert.equal(result.idempotent, true)
+    assert.equal(result.claireConversationStarted, false)
+  }
+})
+
+test("runCandidateMagicLinkVerify reports portalReady when Claire inbound exists", async () => {
+  const db = fakeDb()
+  ;(db as unknown as FakeFirestore).seed(PA_COLLECTIONS.users, "cand-claire", {
+    intakeCompletedAt: "2026-05-19T00:00:00.000Z",
+    phoneE164: "+14155550100",
+    latestResumeArtifactId: "artifact-1",
+  })
+  const { result, status } = await runCandidateMagicLinkVerify(
+    { firebaseIdToken: "token-claire" },
+    undefined,
+    {
+      db,
+      verifyIdToken: async () => ({
+        uid: "firebase-claire",
+        email: "claire@example.com",
+        email_verified: true,
+      }),
+      claimProfile: async () => ({
+        candidateId: "cand-claire",
+        authMapping: {
+          firebaseUid: "firebase-claire",
+          candidateId: "cand-claire",
+          createdAt: "2026-05-20T00:00:00.000Z",
+        },
+        emailHandle: {
+          handleId: "email_hash",
+          candidateId: "cand-claire",
+          kind: "email" as const,
+          handleHash: "hashhashhashhash",
+          source: "candidate" as const,
+          createdAt: "2026-05-20T00:00:00.000Z",
+        },
+        claimedEventId: "ident_claimed",
+        idempotent: true,
+        selfProfile: {
+          candidateId: "cand-claire",
+          lifecycleState: "claimed" as const,
+          handles: [{ kind: "email" as const, source: "candidate" as const }],
+          createdAt: "2026-05-20T00:00:00.000Z",
+        },
+      }),
+      claireConversationStarted: async () => true,
+      hasResumeOnFile: async () => true,
+    },
+  )
+
+  assert.equal(status, 200)
+  assert.equal(result.ok, true)
+  if (result.ok) {
+    assert.equal(result.intakeComplete, true)
+    assert.equal(result.claireConversationStarted, true)
+    assert.equal(result.hasResumeOnFile, true)
+    assert.equal(result.portalReady, true)
+  }
+})
+
+test("runCandidateMagicLinkVerify keeps portalReady false without Claire inbound", async () => {
+  const db = fakeDb()
+  const { result, status } = await runCandidateMagicLinkVerify(
+    { firebaseIdToken: "token-claire" },
+    undefined,
+    {
+      db,
+      verifyIdToken: async () => ({
+        uid: "firebase-claire",
+        email: "claire@example.com",
+        email_verified: true,
+      }),
+      claimProfile: async () => ({
+        candidateId: "cand-claire",
+        authMapping: {
+          firebaseUid: "firebase-claire",
+          candidateId: "cand-claire",
+          createdAt: "2026-05-20T00:00:00.000Z",
+        },
+        emailHandle: {
+          handleId: "email_hash",
+          candidateId: "cand-claire",
+          kind: "email" as const,
+          handleHash: "hashhashhashhash",
+          source: "candidate" as const,
+          createdAt: "2026-05-20T00:00:00.000Z",
+        },
+        claimedEventId: "ident_claimed",
+        idempotent: true,
+        selfProfile: {
+          candidateId: "cand-claire",
+          lifecycleState: "claimed" as const,
+          handles: [{ kind: "email" as const, source: "candidate" as const }],
+          createdAt: "2026-05-20T00:00:00.000Z",
+        },
+      }),
+      claireConversationStarted: async () => false,
+      hasResumeOnFile: async () => true,
+    },
+  )
+
+  assert.equal(status, 200)
+  assert.equal(result.ok, true)
+  if (result.ok) {
+    assert.equal(result.claireConversationStarted, false)
+    assert.equal(result.hasResumeOnFile, true)
+    assert.equal(result.portalReady, false)
+  }
+})
+
+test("runCandidateMagicLinkVerify reports claireConversationStarted from Claire gate", async () => {
+  const db = fakeDb()
+  ;(db as unknown as FakeFirestore).seed(PA_COLLECTIONS.users, "cand-claire", {
+    intakeCompletedAt: "2026-05-19T00:00:00.000Z",
+    phoneE164: "+14155550100",
+  })
+  const { result, status } = await runCandidateMagicLinkVerify(
+    { firebaseIdToken: "token-claire" },
+    undefined,
+    {
+      db,
+      verifyIdToken: async () => ({
+        uid: "firebase-claire",
+        email: "claire@example.com",
+        email_verified: true,
+      }),
+      claimProfile: async () => ({
+        candidateId: "cand-claire",
+        authMapping: {
+          firebaseUid: "firebase-claire",
+          candidateId: "cand-claire",
+          createdAt: "2026-05-20T00:00:00.000Z",
+        },
+        emailHandle: {
+          handleId: "email_hash",
+          candidateId: "cand-claire",
+          kind: "email" as const,
+          handleHash: "hashhashhashhash",
+          source: "candidate" as const,
+          createdAt: "2026-05-20T00:00:00.000Z",
+        },
+        claimedEventId: "ident_claimed",
+        idempotent: true,
+        selfProfile: {
+          candidateId: "cand-claire",
+          lifecycleState: "claimed" as const,
+          handles: [{ kind: "email" as const, source: "candidate" as const }],
+          createdAt: "2026-05-20T00:00:00.000Z",
+        },
+      }),
+      claireConversationStarted: async () => true,
+      hasResumeOnFile: async () => false,
+    },
+  )
+
+  assert.equal(status, 200)
+  assert.equal(result.ok, true)
+  if (result.ok) {
+    assert.equal(result.intakeComplete, true)
+    assert.equal(result.claireConversationStarted, true)
+    assert.equal(result.hasResumeOnFile, false)
+    assert.equal(result.portalReady, true)
   }
 })

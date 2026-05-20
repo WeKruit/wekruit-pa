@@ -203,6 +203,19 @@ test("claimCandidateProfile writes auth mapping, claimed lifecycle, and redacted
   )
 })
 
+test("claimCandidateProfile succeeds without phoneE164 on self profile write", async () => {
+  const { db, store } = makeFakeFirestore()
+  const claimed = await claimCandidateProfile(db, {
+    firebaseUid: "firebase-no-phone",
+    email: "wekruit2024@gmail.com",
+    browserUid: "browser-no-phone",
+    now,
+  })
+  const stored = store.get(PA_COLLECTIONS.candidateSelfProfiles)!.get(claimed.candidateId)!
+  assert.equal(stored.emailMasked, "w***@gmail.com")
+  assert.equal("phoneMasked" in stored, false)
+})
+
 test("claimCandidateProfile adopts a prelinked layoff candidate instead of creating a second profile", async () => {
   const { db, store } = makeFakeFirestore()
   store.get(PA_COLLECTIONS.users)!.set("layoff-cand-1", {

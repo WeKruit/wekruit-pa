@@ -11,7 +11,7 @@
  * Visual system: WeKruit warm-editorial (cream + espresso + peach halo) with
  * a warm terracotta confidence accent for live / match / interview signals.
  */
-import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode, type CSSProperties } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode, type CSSProperties } from "react"
 import { Link, useNavigate } from "react-router-dom"
 import {
   GoogleAuthProvider,
@@ -24,7 +24,16 @@ import {
   onAuthStateChanged,
 } from "firebase/auth"
 import { auth } from "../lib/firebase.js"
-import { CLAIM_EMAIL_KEY, readStoredValue, rememberStoredValue } from "../lib/browser-identity"
+import {
+  CLAIM_EMAIL_KEY,
+  isCandidateHost,
+  parseLoginNextPath,
+  redirectToCandidatePortal,
+  readStoredValue,
+  rememberStoredValue,
+  resolvePostLoginDestination,
+} from "../lib/browser-identity"
+import { peekSource, type SignupSource } from "../lib/source.js"
 import { verifyCandidateMagicLinkSession } from "../lib/candidate-verify.js"
 
 const EMAIL_STORAGE_KEY = CLAIM_EMAIL_KEY
@@ -401,39 +410,58 @@ function AppNavLink({ to, children }: { to: string; children: ReactNode }) {
 // /login page
 // ────────────────────────────────────────────────────────────────────────────
 
+function signupSourceForLoginNext(next: ReturnType<typeof parseLoginNextPath>): SignupSource | undefined {
+  if (!next.isOnboarding) return undefined
+  const params = new URLSearchParams(next.search.replace(/^\?/, ""))
+  const fromQuery = params.get("source")
+  if (fromQuery === "layoff" || fromQuery === "WeKruit_Laid_Off") return "WeKruit_Laid_Off"
+  if (fromQuery === "candidate") return "candidate"
+  const fromCookie = peekSource()
+  return fromCookie === "WeKruit_Laid_Off" ? "WeKruit_Laid_Off" : undefined
+}
+
 export default function CandidateLogin() {
   const navigate = useNavigate()
   const isCompletingLink = useMemo(() => isSignInWithEmailLink(auth(), window.location.href), [])
-  const nextPath = useMemo(() => {
-    const raw = new URLSearchParams(window.location.search).get("next")
-    return raw && raw.startsWith("/") && !raw.startsWith("//") ? raw : "/me"
-  }, [])
+  const nextDest = useMemo(
+    () => parseLoginNextPath(new URLSearchParams(window.location.search).get("next")),
+    [],
+  )
   const [email, setEmail] = useState(() => readStoredValue(EMAIL_STORAGE_KEY) ?? "")
   const [status, setStatus] = useState<
     "idle" | "google" | "linkedin" | "sending" | "sent" | "signing_in" | "error"
   >(isCompletingLink ? "signing_in" : "idle")
   const [error, setError] = useState<string | null>(null)
+  const finishInFlight = useRef(false)
 
   const finishSignedIn = useCallback(async () => {
+    if (finishInFlight.current) return
+    finishInFlight.current = true
     setStatus("signing_in")
     setError(null)
     try {
-      const verified = await verifyCandidateMagicLinkSession()
-      if (nextPath === "/onboarding" && verified.intakeComplete) {
-        navigate("/me", { replace: true })
+      const verifySource = signupSourceForLoginNext(nextDest)
+      const verified = await verifyCandidateMagicLinkSession(
+        verifySource ? { source: verifySource } : undefined,
+      )
+      const destination = resolvePostLoginDestination(
+        nextDest,
+        verified.claireConversationStarted,
+        verifySource,
+      )
+      if (!isCandidateHost()) {
+        redirectToCandidatePortal(destination)
         return
       }
-      navigate(nextPath, { replace: true })
+      const dest = parseLoginNextPath(destination)
+      navigate({ pathname: dest.pathname, search: dest.search }, { replace: true })
     } catch (err) {
       setStatus("error")
       setError(err instanceof Error ? err.message : String(err))
-      try {
-        await auth().signOut()
-      } catch {
-        /* ignore */
-      }
+    } finally {
+      finishInFlight.current = false
     }
-  }, [navigate, nextPath])
+  }, [navigate, nextDest])
 
   useEffect(() => {
     if (isCompletingLink) return
@@ -488,7 +516,7 @@ export default function CandidateLogin() {
   async function startProviderSignIn(kind: "google" | "linkedin") {
     setStatus(kind); setError(null)
     if (kind === "linkedin") {
-      const returnTo = `${window.location.origin}/login?next=${encodeURIComponent(nextPath)}`
+      const returnTo = `${window.location.origin}/login?next=${encodeURIComponent(nextDest.to)}`
       window.location.assign(`${LINKEDIN_AUTH_START_URL}?returnTo=${encodeURIComponent(returnTo)}`)
       return
     }
@@ -510,7 +538,7 @@ export default function CandidateLogin() {
       }
       setStatus("sending")
       await sendSignInLinkToEmail(auth(), nextEmail, {
-        url: `${window.location.origin}/login?next=${encodeURIComponent(nextPath)}`,
+        url: `${window.location.origin}/login?next=${encodeURIComponent(nextDest.to)}`,
         handleCodeInApp: true,
       })
       rememberStoredValue(EMAIL_STORAGE_KEY, nextEmail)

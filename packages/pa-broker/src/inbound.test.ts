@@ -81,13 +81,14 @@ function fakeFirestore(initialDocs: Record<string, PaInboundEvent> = {}) {
           let rows = [...docs.entries()].filter(([, data]) =>
             this.filters.every((f) => {
               if (f.op !== "==") throw new Error(`unsupported op ${f.op}`)
-              return data[f.field as keyof PaInboundEvent] === f.value
+              return (data as Record<string, unknown>)[f.field] === f.value
             })
           )
           if (this.orderField) {
+            const orderField = this.orderField
             rows = rows.sort((a, b) =>
-              String(a[1][this.orderField as keyof PaInboundEvent] ?? "").localeCompare(
-                String(b[1][this.orderField as keyof PaInboundEvent] ?? "")
+              String((a[1] as Record<string, unknown>)[orderField] ?? "").localeCompare(
+                String((b[1] as Record<string, unknown>)[orderField] ?? "")
               )
             )
           }

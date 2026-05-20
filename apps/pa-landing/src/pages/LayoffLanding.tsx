@@ -639,10 +639,9 @@ function Nav({ current }: { current?: string }) {
     whiteSpace: "nowrap" as const,
   })
 
-  // Layoff site is a two-page product for launch: landing and onboarding.
-  // No employer signup, marketplace browse, or cross-host links from layoff.
   const navItems: { to: string; label: string; id: string }[] = [
     { to: "/", label: "For candidates", id: "landing" },
+    { to: "/employer", label: "For employers", id: "employer" },
   ]
 
   return (

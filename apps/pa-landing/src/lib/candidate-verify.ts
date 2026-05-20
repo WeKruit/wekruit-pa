@@ -46,6 +46,9 @@ export async function verifyCandidateMagicLinkSession(options?: {
   candidateId: string
   idempotent: boolean
   intakeComplete: boolean
+  claireConversationStarted: boolean
+  hasResumeOnFile: boolean
+  portalReady: boolean
   linkedinUrl?: string | null
   linkedinLinkedViaOauth?: boolean
 }> {
@@ -73,6 +76,9 @@ export async function verifyCandidateMagicLinkSession(options?: {
     candidateId?: string
     idempotent?: boolean
     intakeComplete?: boolean
+    claireConversationStarted?: boolean
+    hasResumeOnFile?: boolean
+    portalReady?: boolean
     linkedinUrl?: string | null
     linkedinLinkedViaOauth?: boolean
     reason?: string
@@ -82,10 +88,19 @@ export async function verifyCandidateMagicLinkSession(options?: {
     throw new CandidateVerifyError(reason, res.status, candidateVerifyErrorMessage(reason))
   }
   rememberStoredValue(CANDIDATE_ID_KEY, data.candidateId)
+  const claireConversationStarted = Boolean(data.claireConversationStarted)
+  const hasResumeOnFile = Boolean(data.hasResumeOnFile)
+  const portalReady =
+    data.portalReady !== undefined
+      ? Boolean(data.portalReady)
+      : claireConversationStarted
   return {
     candidateId: data.candidateId,
     idempotent: Boolean(data.idempotent),
     intakeComplete: Boolean(data.intakeComplete),
+    claireConversationStarted,
+    hasResumeOnFile,
+    portalReady,
     linkedinUrl: data.linkedinUrl ?? null,
     linkedinLinkedViaOauth: Boolean(data.linkedinLinkedViaOauth),
   }

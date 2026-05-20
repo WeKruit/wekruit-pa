@@ -3,6 +3,10 @@ import { getFirestore, type Firestore } from "firebase-admin/firestore"
 import { onRequest } from "firebase-functions/v2/https"
 import { isPaUserSource, PA_COLLECTIONS } from "@pa/core-types"
 import { claimCandidateProfile, linkCandidateHandle } from "@pa/pa-persistence"
+import {
+  candidateClaireConversationStarted,
+  candidateHasResumeOnFile,
+} from "./candidate-claire-conversation.js"
 
 export interface CandidateMagicLinkVerifyInput {
   firebaseIdToken?: string
@@ -20,6 +24,12 @@ export interface CandidateMagicLinkVerifySuccess {
   idempotent: boolean
   /** True when web onboarding intake was already saved (pa-users.intakeCompletedAt). */
   intakeComplete: boolean
+  /** True when phone is bound and Claire has received an inbound iMessage from this candidate. */
+  claireConversationStarted: boolean
+  /** True when a resume artifact or parsed CV exists for this candidate. */
+  hasResumeOnFile: boolean
+  /** True when candidate has inbound Claire iMessage — required for /me portal. */
+  portalReady: boolean
   linkedinUrl?: string | null
   linkedinLinkedViaOauth?: boolean
 }
@@ -64,6 +74,16 @@ export interface CandidateMagicLinkVerifyDeps {
   }>
   claimProfile?: typeof claimCandidateProfile
   linkLinkedin?: typeof linkCandidateHandle
+  claireConversationStarted?: (
+    db: Firestore,
+    candidateId: string,
+    userData: Record<string, unknown>,
+  ) => Promise<boolean>
+  hasResumeOnFile?: (
+    db: Firestore,
+    candidateId: string,
+    userData: Record<string, unknown>,
+  ) => Promise<boolean>
 }
 
 export async function runCandidateMagicLinkVerify(
@@ -177,6 +197,16 @@ export async function runCandidateMagicLinkVerify(
         ? userData.linkedinUrl.trim()
         : linkedinUrl
     const storedOauthLinked = userData.linkedinOauthLinked === true || linkedinLinkedViaOauth
+    const claireStarted = await (deps.claireConversationStarted ?? candidateClaireConversationStarted)(
+      deps.db,
+      claim.candidateId,
+      userData,
+    )
+    const resumeOnFile = await (deps.hasResumeOnFile ?? candidateHasResumeOnFile)(
+      deps.db,
+      claim.candidateId,
+      userData,
+    )
 
     return {
       result: {
@@ -184,6 +214,9 @@ export async function runCandidateMagicLinkVerify(
         candidateId: claim.candidateId,
         idempotent: claim.idempotent,
         intakeComplete,
+        claireConversationStarted: claireStarted,
+        hasResumeOnFile: resumeOnFile,
+        portalReady: claireStarted,
         linkedinUrl: storedLinkedin,
         linkedinLinkedViaOauth: storedOauthLinked,
       },

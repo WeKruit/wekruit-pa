@@ -1,9 +1,11 @@
+import { peekSource, type SignupSource } from "./source.js"
+
 export const GLOBAL_UID_KEY = "wkr_uid"
 export const CLAIM_EMAIL_KEY = "wkr_claim_email"
 export const ONBOARDING_CANDIDATE_ID_KEY = "wkr_candidate_id"
 
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 180
-const CANDIDATE_ORIGIN = "https://candidate.wekruit.com"
+export const CANDIDATE_ORIGIN = "https://candidate.wekruit.com"
 
 function storage(): Storage | null {
   try {
@@ -84,12 +86,114 @@ export function candidateLoginPath(next = candidateProfilePath()): string {
   return `/login?next=${encodeURIComponent(next)}`
 }
 
+/** Parsed post-login destination from the `?next=` login query param. */
+export type LoginNextDestination = {
+  pathname: string
+  search: string
+  /** Path + query for redirects (e.g. `/onboarding?source=layoff`). */
+  to: string
+  /** True when `next` targets onboarding regardless of query string. */
+  isOnboarding: boolean
+}
+
+/** Candidate portal home and sub-routes — require inbound Claire iMessage before entry. */
+export function isCandidatePortalPath(pathname: string): boolean {
+  return pathname === "/me" || pathname.startsWith("/me/")
+}
+
+/**
+ * Post-login routing (Adam 2026-05-20): only honor `/me*` when Claire inbound
+ * conversation has started; otherwise send to onboarding.
+ */
+export function resolvePostLoginDestination(
+  nextDest: LoginNextDestination,
+  claireConversationStarted: boolean,
+  source: SignupSource = peekSource(),
+): string {
+  if (claireConversationStarted) {
+    if (nextDest.isOnboarding) return "/me"
+    return nextDest.to
+  }
+  if (nextDest.isOnboarding) return nextDest.to
+  if (isCandidatePortalPath(nextDest.pathname)) return onboardingDestination(source)
+  return onboardingDestination(source)
+}
+
+/**
+ * Parse a safe in-app `next` path from `/login?next=...`.
+ * Rejects open redirects (`//evil.com`) and normalizes pathname vs search.
+ */
+export function parseLoginNextPath(
+  raw: string | null | undefined,
+  fallback = onboardingDestination(peekSource()),
+): LoginNextDestination {
+  if (!raw || !raw.startsWith("/") || raw.startsWith("//")) {
+    return {
+      pathname: fallback,
+      search: "",
+      to: fallback,
+      isOnboarding: fallback === "/onboarding",
+    }
+  }
+  try {
+    const url = new URL(raw, CANDIDATE_ORIGIN)
+    const pathname = url.pathname || fallback
+    const search = url.search
+    return {
+      pathname,
+      search,
+      to: `${pathname}${search}`,
+      isOnboarding: pathname === "/onboarding",
+    }
+  } catch {
+    const q = raw.indexOf("?")
+    const pathname = (q >= 0 ? raw.slice(0, q) : raw) || fallback
+    const search = q >= 0 ? raw.slice(q) : ""
+    return {
+      pathname,
+      search,
+      to: `${pathname}${search}`,
+      isOnboarding: pathname === "/onboarding",
+    }
+  }
+}
+
 export function isCandidateHost(hostname = window.location.hostname): boolean {
   const host = hostname.toLowerCase()
   return host.startsWith("candidate.") || host === "wekruit-pa-landing.web.app" || host === "localhost" || host === "127.0.0.1"
 }
 
+export function isLayoffHost(hostname = window.location.hostname): boolean {
+  const host = hostname.toLowerCase()
+  return host.startsWith("layoff.") || host === "layoff-wekruit.web.app"
+}
+
+export function candidatePortalUrl(path: string): string {
+  const normalized = path.startsWith("/") ? path : `/${path}`
+  return `${CANDIDATE_ORIGIN}${normalized}`
+}
+
+/** Full candidate-origin login URL (Firebase session must live on candidate host). */
+export function candidatePortalLoginUrl(next = "/me"): string {
+  const normalized = next.startsWith("/") ? next : `/${next}`
+  return candidatePortalUrl(candidateLoginPath(normalized))
+}
+
+/**
+ * Leave layoff (or any non-candidate host) for the candidate portal.
+ * Always routes through /login on candidate.wekruit.com so auth cookies attach
+ * to the correct Firebase origin before /me or /onboarding.
+ */
+export function redirectToCandidatePortal(next = "/me"): void {
+  window.location.replace(candidatePortalLoginUrl(next))
+}
+
+/** Onboarding path for the current signup source (layoff cookie/query vs candidate). */
+export function onboardingDestination(source: SignupSource = peekSource()): string {
+  return source === "WeKruit_Laid_Off" ? "/onboarding?source=layoff" : "/onboarding"
+}
+
 export function candidateProfileDestination(): string {
   if (isCandidateHost()) return candidateLoginPath(candidateProfilePath())
-  return `${CANDIDATE_ORIGIN}${candidateLoginPath(candidateProfilePath())}`
+  return candidatePortalLoginUrl(candidateProfilePath())
 }

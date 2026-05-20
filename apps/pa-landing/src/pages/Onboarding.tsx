@@ -9,7 +9,14 @@ import { onAuthStateChanged, type User } from "firebase/auth"
 import "../styles/wekruit-tokens.css"
 import { deriveFunction, registerCandidate } from "../lib/onboarding-api"
 import { uploadResume } from "../lib/onboarding-cv"
-import { getBrowserUid, rememberCandidateProfileSession } from "../lib/browser-identity"
+import {
+  candidatePortalLoginUrl,
+  getBrowserUid,
+  isCandidateHost,
+  isLayoffHost,
+  redirectToCandidatePortal,
+  rememberCandidateProfileSession,
+} from "../lib/browser-identity"
 import { resolveSource, SOURCE_RESOLVER_MARKER, type SignupSource } from "../lib/source"
 import { auth } from "../lib/firebase.js"
 import { isLinkedInSignIn } from "../lib/candidate-auth-provider.js"
@@ -65,6 +72,8 @@ export default function Onboarding() {
   const [busyText, setBusyText] = useState<string | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [intakeChecked, setIntakeChecked] = useState(false)
+  const [claireConversationStarted, setClaireConversationStarted] = useState(false)
+  const [portalReady, setPortalReady] = useState(false)
   const [linkedinLinkedViaOauth, setLinkedinLinkedViaOauth] = useState(false)
 
   useEffect(() => {
@@ -85,9 +94,18 @@ export default function Onboarding() {
           setLinkedinLinkedViaOauth(
             Boolean(verified.linkedinLinkedViaOauth) || isLinkedInSignIn(authUser)
           )
-          if (verified.intakeComplete) {
+          setClaireConversationStarted(verified.claireConversationStarted)
+          setPortalReady(verified.claireConversationStarted)
+          if (verified.claireConversationStarted) {
+            if (!isCandidateHost()) {
+              redirectToCandidatePortal("/me")
+              return
+            }
             navigate("/me", { replace: true })
             return
+          }
+          if (verified.intakeComplete) {
+            setStage("done")
           }
           setIntakeChecked(true)
         }
@@ -119,7 +137,11 @@ export default function Onboarding() {
   }
 
   if (!authUser) {
-    return <Navigate to={`/login?next=${encodeURIComponent("/onboarding")}`} replace />
+    const loginNext = isLayoffHost() ? "/onboarding?source=layoff" : "/onboarding"
+    if (!isCandidateHost()) {
+      return <LayoffPortalRedirect next={loginNext} />
+    }
+    return <Navigate to={`/login?next=${encodeURIComponent(loginNext)}`} replace />
   }
 
   async function submitRegistration(formData: Profile, mode: "auto" | "reuse" | "refresh") {
@@ -261,15 +283,40 @@ export default function Onboarding() {
           {stage === "done" && (
             <Done
               profile={profile}
+              showProfileLink={portalReady}
               onGo={(r) => {
-                if (r === "dashboard") navigate("/me")
-                else navigate("/")
+                if (r === "dashboard") {
+                  if (!portalReady) return
+                  if (!isCandidateHost()) {
+                    redirectToCandidatePortal("/me")
+                    return
+                  }
+                  navigate("/me")
+                  return
+                }
+                navigate("/")
               }}
             />
           )}
         </div>
       </section>
       <MinimalFooter />
+    </main>
+  )
+}
+
+function LayoffPortalRedirect({ next }: { next: string }) {
+  useEffect(() => {
+    redirectToCandidatePortal(next)
+  }, [next])
+  return (
+    <main>
+      <MinimalNav />
+      <section style={{ paddingTop: 96, paddingBottom: 96 }}>
+        <div className="container-prose" style={{ maxWidth: 760, marginInline: "auto", paddingInline: 24, textAlign: "center" }}>
+          <p style={{ color: "var(--ink-2)" }}>Redirecting to sign in…</p>
+        </div>
+      </section>
     </main>
   )
 }
@@ -360,9 +407,18 @@ function MinimalNav() {
         <Link to="/" style={{ textDecoration: "none", display: "inline-flex", alignItems: "baseline", gap: 8, color: "var(--ink)" }}>
           <span style={{ fontFamily: "var(--font-serif)", fontSize: 22, letterSpacing: "-0.02em", fontWeight: 500 }}>WeKruit</span>
         </Link>
-        <Link to="/login" style={{ fontSize: 14, color: "var(--ink-2)", textDecoration: "none" }}>
-          Sign in
-        </Link>
+        {isCandidateHost() ? (
+          <Link to="/login" style={{ fontSize: 14, color: "var(--ink-2)", textDecoration: "none" }}>
+            Sign in
+          </Link>
+        ) : (
+          <a
+            href={candidatePortalLoginUrl("/onboarding?source=layoff")}
+            style={{ fontSize: 14, color: "var(--ink-2)", textDecoration: "none" }}
+          >
+            Sign in
+          </a>
+        )}
       </div>
     </header>
   )
@@ -853,7 +909,15 @@ function UploadIcon() {
   )
 }
 
-function Done({ profile, onGo }: { profile: Profile; onGo: (r: "dashboard" | "landing") => void }) {
+function Done({
+  profile,
+  showProfileLink,
+  onGo,
+}: {
+  profile: Profile
+  showProfileLink: boolean
+  onGo: (r: "dashboard" | "landing") => void
+}) {
   const number = profile.listPosition
   const openerBody = profile.candidateId ? buildHelloWekruitOpenerBody(profile.candidateId) : buildHelloWekruitOpenerBody("")
   const imessageAvailable = canOpenImessageDeepLink()
@@ -922,7 +986,9 @@ function Done({ profile, onGo }: { profile: Profile; onGo: (r: "dashboard" | "la
             We hit a hiccup assigning your Claire line. Email hello@wekruit.com and we'll get you started.
           </span>
         )}
-        <button className="btn btn--ghost" onClick={() => onGo("dashboard")}>Go to your profile</button>
+        {showProfileLink ? (
+          <button className="btn btn--ghost" onClick={() => onGo("dashboard")}>Go to your profile</button>
+        ) : null}
         <button className="btn btn--ghost" onClick={() => onGo("landing")}>Back home</button>
       </div>
     </div>

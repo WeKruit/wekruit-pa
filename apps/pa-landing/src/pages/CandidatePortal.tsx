@@ -36,6 +36,7 @@ import {
   type CandidateJobStatus,
 } from "../lib/candidate-job-status.js"
 import { GLOBAL_UID_KEY, readStoredValue } from "../lib/browser-identity"
+import { useCandidatePortalGate } from "../lib/candidate-portal-gate.js"
 import {
   CandidateShell,
   Avatar,
@@ -372,13 +373,26 @@ function linkedinHandleFromUrl(url: string): string {
 // ────────────────────────────────────────────────────────────────────────────
 
 export function CandidateMe() {
+  const gate = useCandidatePortalGate()
   const profileState = useClaimedProfile()
-  const matchesState = useCandidateMatches(profileState.status === "ready")
+
+  if (gate.status !== "ready") {
+    return <PortalGatePending gate={gate} kicker="Your pipeline" />
+  }
 
   if (profileState.status === "signed_out") return <SignInRequired kicker="Your pipeline" />
   if (profileState.status === "loading") return <PortalLoading kicker="Your pipeline" />
   if (profileState.status === "error") return <PortalError kicker="Your pipeline" message={profileState.message} />
 
+  return <CandidateMeReady profileState={profileState} />
+}
+
+function CandidateMeReady({
+  profileState,
+}: {
+  profileState: Extract<ClaimState, { status: "ready" }>
+}) {
+  const matchesState = useCandidateMatches(true)
   const profile = profileState.profile
   const allMatches = matchesState.status === "ready" ? matchesState.matches : []
 
@@ -952,7 +966,13 @@ function SidebarClaireWeekCard({
 // ────────────────────────────────────────────────────────────────────────────
 
 export function CandidateProfile() {
+  const gate = useCandidatePortalGate()
   const state = useClaimedProfile()
+
+  if (gate.status !== "ready") {
+    return <PortalGatePending gate={gate} kicker="Profile" />
+  }
+
   if (state.status === "signed_out") return <SignInRequired kicker="Profile" />
   if (state.status === "loading") return <PortalLoading kicker="Profile" />
   if (state.status === "error") return <PortalError kicker="Profile" message={state.message} />
@@ -1335,6 +1355,40 @@ function PortalCard({ kicker, children }: { kicker: string; children: ReactNode 
         </div>
       </div>
     </CandidateShell>
+  )
+}
+
+function PortalGatePending({
+  gate,
+  kicker,
+}: {
+  gate: ReturnType<typeof useCandidatePortalGate>
+  kicker: string
+}) {
+  if (gate.status === "verify_error") {
+    return (
+      <PortalCard kicker={kicker}>
+        <h1 className="wk-prof__h1">Couldn&apos;t load your profile</h1>
+        <p className="wk-error">{gate.message}</p>
+        <button
+          type="button"
+          className="wk-btn wk-btn--primary"
+          onClick={() => window.location.reload()}
+        >
+          Try again <Icon name="arrow-right" size={14} stroke={2} />
+        </button>
+      </PortalCard>
+    )
+  }
+  const message =
+    gate.status === "redirecting_onboarding"
+      ? "Finish onboarding with Claire first…"
+      : "Checking your WeKruit access…"
+  return (
+    <PortalCard kicker={kicker}>
+      <h1 className="wk-prof__h1">One moment</h1>
+      <p className="wk-prof__sub">{message}</p>
+    </PortalCard>
   )
 }
 

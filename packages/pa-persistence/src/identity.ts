@@ -428,6 +428,12 @@ export interface WriteCandidateSelfProfileInput {
   now?: string
 }
 
+function stripUndefined<T extends Record<string, unknown>>(value: T): T {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, entry]) => entry !== undefined),
+  ) as T
+}
+
 export async function writeCandidateSelfProfile(
   db: Firestore,
   input: WriteCandidateSelfProfileInput
@@ -447,7 +453,10 @@ export async function writeCandidateSelfProfile(
     createdAt: ts,
     updatedAt: ts,
   })
-  await db.collection(PA_COLLECTIONS.candidateSelfProfiles).doc(input.candidateId).set(profile, { merge: true })
+  await db
+    .collection(PA_COLLECTIONS.candidateSelfProfiles)
+    .doc(input.candidateId)
+    .set(stripUndefined(profile as unknown as Record<string, unknown>), { merge: true })
   return profile
 }
 

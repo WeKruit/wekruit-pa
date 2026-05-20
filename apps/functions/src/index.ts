@@ -37,6 +37,8 @@ import { sendTypingIndicator as defaultSendTypingIndicator } from "./sendblue/ty
 import { sendReaction as defaultSendReaction } from "./sendblue/send-reaction.js"
 import { decidePreClaireTurnOwner } from "./lib/pre-claire-turn-owner.js"
 import { enqueueRuntimeEventHandoff } from "./runtime-event-handoff.js"
+import { resolveInboundUserId } from "./candidate-inbound-resolve.js"
+import { markClaireConversationStarted } from "./candidate-claire-conversation.js"
 
 // Shared secret bindings + orchestrator callback factory.
 import {
@@ -690,6 +692,18 @@ async function processBrokerImessageEvent(
   }
   let user = await findUserByParticipant(db, payload.participant)
   if (!user) {
+    const phoneE164 = normalizeImessageParticipant(payload.participant)
+    const resolvedId = phoneE164
+      ? await resolveInboundUserId(db, phoneE164, payload.text)
+      : null
+    if (resolvedId) {
+      const resolvedSnap = await db.collection(PA_COLLECTIONS.users).doc(resolvedId).get()
+      if (resolvedSnap.exists) {
+        user = { id: resolvedSnap.id, ...resolvedSnap.data() } as User
+      }
+    }
+  }
+  if (!user) {
     if (!shouldCreateProvisionalUserForBrokerPayload(payload)) {
       const externalChatId = normalizeImessageParticipant(payload.participant)
       const isE2eUnbound = payload.e2eTest === true
@@ -717,6 +731,12 @@ async function processBrokerImessageEvent(
     }
     user = await createProvisionalUser(db, payload.participant)
   }
+  void markClaireConversationStarted(db, user.id).catch((err: unknown) => {
+    logger.warn("[onPaInbound] claireConversationStarted stamp failed", {
+      userId: user.id,
+      err: err instanceof Error ? err.message : String(err),
+    })
+  })
   if (user.onboardingStatus === "provisional") {
     await db.collection(PA_COLLECTIONS.users).doc(user.id).set({ onboardingStatus: "active", updatedAt: nowIso() }, { merge: true })
   }

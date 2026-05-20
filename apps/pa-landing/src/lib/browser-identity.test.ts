@@ -1,7 +1,16 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { candidateLoginPath, cookieDomainForHost, readCookieValue } from "./browser-identity.js"
+import {
+  candidateLoginPath,
+  candidatePortalLoginUrl,
+  cookieDomainForHost,
+  isLayoffHost,
+  onboardingDestination,
+  parseLoginNextPath,
+  readCookieValue,
+  resolvePostLoginDestination,
+} from "./browser-identity.js"
 
 test("cookieDomainForHost shares candidate identity across wekruit subdomains only", () => {
   assert.equal(cookieDomainForHost("candidate.wekruit.com"), ".wekruit.com")
@@ -18,4 +27,64 @@ test("readCookieValue decodes exact cookie names", () => {
 
 test("candidateLoginPath carries the profile destination through login", () => {
   assert.equal(candidateLoginPath("/me/profile"), "/login?next=%2Fme%2Fprofile")
+})
+
+test("isLayoffHost recognizes layoff Firebase hosting targets", () => {
+  assert.equal(isLayoffHost("layoff.wekruit.com"), true)
+  assert.equal(isLayoffHost("layoff-wekruit.web.app"), true)
+  assert.equal(isLayoffHost("candidate.wekruit.com"), false)
+})
+
+test("candidatePortalLoginUrl targets candidate origin for cross-host auth", () => {
+  assert.equal(
+    candidatePortalLoginUrl("/me"),
+    "https://candidate.wekruit.com/login?next=%2Fme",
+  )
+  assert.equal(
+    candidatePortalLoginUrl("/onboarding?source=layoff"),
+    "https://candidate.wekruit.com/login?next=%2Fonboarding%3Fsource%3Dlayoff",
+  )
+})
+
+test("parseLoginNextPath splits pathname and search for layoff onboarding next", () => {
+  const next = parseLoginNextPath("/onboarding?source=layoff")
+  assert.equal(next.pathname, "/onboarding")
+  assert.equal(next.search, "?source=layoff")
+  assert.equal(next.to, "/onboarding?source=layoff")
+  assert.equal(next.isOnboarding, true)
+})
+
+test("parseLoginNextPath rejects open redirects to onboarding fallback", () => {
+  const next = parseLoginNextPath("//evil.example/phish")
+  assert.equal(next.pathname, "/onboarding")
+  assert.equal(next.isOnboarding, true)
+})
+
+test("parseLoginNextPath defaults bare login to onboarding", () => {
+  const next = parseLoginNextPath(null)
+  assert.equal(next.pathname, "/onboarding")
+  assert.equal(next.isOnboarding, true)
+})
+
+test("resolvePostLoginDestination blocks /me until Claire inbound started", () => {
+  const meNext = parseLoginNextPath("/me")
+  const onboardingNext = parseLoginNextPath("/onboarding?source=layoff")
+  assert.equal(
+    resolvePostLoginDestination(meNext, false, "candidate"),
+    "/onboarding",
+  )
+  assert.equal(
+    resolvePostLoginDestination(onboardingNext, false, "WeKruit_Laid_Off"),
+    "/onboarding?source=layoff",
+  )
+  assert.equal(resolvePostLoginDestination(meNext, true, "candidate"), "/me")
+  assert.equal(
+    resolvePostLoginDestination(onboardingNext, true, "WeKruit_Laid_Off"),
+    "/me",
+  )
+})
+
+test("onboardingDestination routes layoff source to layoff query", () => {
+  assert.equal(onboardingDestination("WeKruit_Laid_Off"), "/onboarding?source=layoff")
+  assert.equal(onboardingDestination("candidate"), "/onboarding")
 })
