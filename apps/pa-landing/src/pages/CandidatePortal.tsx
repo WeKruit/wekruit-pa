@@ -112,12 +112,24 @@ export function useClaimedProfile(): ClaimState {
 }
 
 function profileLoadErrorMessage(err: unknown): string {
+  const code =
+    err && typeof err === "object" && "code" in err
+      ? String((err as { code?: unknown }).code ?? "")
+      : ""
   const raw = err instanceof Error ? err.message : String(err)
-  if (/unauthenticated|sign in/i.test(raw)) {
+  if (code === "functions/unauthenticated" || /unauthenticated|sign in/i.test(raw)) {
     return "Your session expired. Sign in again to load your WeKruit profile."
   }
-  if (/failed-precondition|operator review|conflict/i.test(raw)) {
+  if (code === "functions/failed-precondition" || /failed-precondition|operator review|conflict/i.test(raw)) {
     return "We need to review this profile before showing it here."
+  }
+  if (
+    code === "functions/internal" ||
+    code === "functions/unavailable" ||
+    raw === "internal" ||
+    /network|fetch|cors|503|429/i.test(raw)
+  ) {
+    return "Profile is temporarily unavailable. Refresh in a moment — we'll retry."
   }
   return "We could not load your profile just now. Refresh the page, or sign in again if this keeps happening."
 }
@@ -171,7 +183,7 @@ export function useCandidateMatches(enabled: boolean): MatchesState {
         const result = await listMatches({ limit: 25 })
         if (!cancelled) setState({ status: "ready", matches: result.data.matches })
       } catch (err) {
-        if (!cancelled) setState({ status: "error", message: err instanceof Error ? err.message : String(err) })
+        if (!cancelled) setState({ status: "error", message: matchesLoadErrorMessage(err) })
       }
     })()
     return () => {
@@ -180,6 +192,63 @@ export function useCandidateMatches(enabled: boolean): MatchesState {
   }, [enabled])
 
   return state
+}
+
+// Translate raw Firebase callable errors (FirebaseError.code like
+// "functions/internal", "functions/unauthenticated", network/CORS failures)
+// into copy a candidate can act on. Default leans transient: a brief retry is
+// the most useful prompt for the user, and matches are reloaded on next /me
+// visit anyway.
+function matchesLoadErrorMessage(err: unknown): string {
+  const code =
+    err && typeof err === "object" && "code" in err
+      ? String((err as { code?: unknown }).code ?? "")
+      : ""
+  const rawMessage = err instanceof Error ? err.message : String(err)
+  if (code === "functions/unauthenticated" || /unauthenticated/i.test(rawMessage)) {
+    return "Your session expired. Sign in again to see your matches."
+  }
+  if (code === "functions/failed-precondition" || /failed-precondition/i.test(rawMessage)) {
+    return "We need to finish setting up your profile before matches show. Open Profile to fill in the basics."
+  }
+  if (code === "functions/permission-denied" || /permission-denied/i.test(rawMessage)) {
+    return "This account isn't authorized to view matches."
+  }
+  if (code === "functions/deadline-exceeded" || /timeout|deadline/i.test(rawMessage)) {
+    return "Matches took too long to load. Refresh in a moment."
+  }
+  if (
+    code === "functions/internal" ||
+    code === "functions/unavailable" ||
+    rawMessage === "internal" ||
+    /network|fetch|cors|503|429/i.test(rawMessage)
+  ) {
+    return "Matches are temporarily unavailable. We'll keep retrying — try refreshing in a moment."
+  }
+  return "We couldn't load your matches just now. Refresh the page, or sign in again if this keeps happening."
+}
+
+// Generic translator for callable mutations (corrections, privacy requests).
+// Keeps the validation pre-check messages (server-side throws with specific
+// detail) but humanizes the generic "internal" placeholder.
+function callableSubmitErrorMessage(err: unknown): string {
+  const code =
+    err && typeof err === "object" && "code" in err
+      ? String((err as { code?: unknown }).code ?? "")
+      : ""
+  const raw = err instanceof Error ? err.message : String(err)
+  if (code === "functions/unauthenticated") return "Sign in again to submit this."
+  if (code === "functions/failed-precondition") return raw || "We can't submit this right now."
+  if (code === "functions/invalid-argument") return raw || "Please review the form and try again."
+  if (
+    code === "functions/internal" ||
+    code === "functions/unavailable" ||
+    raw === "internal" ||
+    /network|fetch|cors|503|429/i.test(raw)
+  ) {
+    return "Submit failed — service is briefly unavailable. Try again in a moment."
+  }
+  return raw || "Something went wrong submitting that. Try again."
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -1155,7 +1224,7 @@ function UpdatePreferencesPanel({
       setMessage(`Correction submitted.${applied}`)
       setStatus("success")
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : String(err))
+      setMessage(callableSubmitErrorMessage(err))
       setStatus("error")
     }
   }
@@ -1212,7 +1281,7 @@ function PrivacyRequestPanel() {
       setMessage(result.existingOpen ? "Open request already exists." : "Request submitted for review.")
       setStatus("success")
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : String(err))
+      setMessage(callableSubmitErrorMessage(err))
       setStatus("error")
     }
   }
