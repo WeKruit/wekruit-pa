@@ -106,3 +106,8 @@ export function setActiveSkillsAllowedTools(
   ;(ctx as unknown as { activeSkillsAllowedTools: string[] }).activeSkillsAllowedTools =
     Array.from(new Set(toolUnion))
 }
+
+/** Alias used by playbook-routing when Skill Router v2 is active. */
+export function applySkillToolAllowlist(ctx: ClaireContext, toolUnion: string[]): void {
+  setActiveSkillsAllowedTools(ctx, toolUnion)
+}

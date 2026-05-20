@@ -4,6 +4,7 @@ import { getFlag } from "@pa/pa-persistence"
 import { detectLang } from "./voice/imperfection-injector/index.js"
 import type { ConnectorName } from "@pa/pa-connectors"
 import { buildMatchConnectorHooks, type GenerateJobRecsFn } from "./match-connector-hooks.js"
+import { startPostMatchRetentionAfterJobRecs } from "./post-match-retention.js"
 import {
   frameConnectorResult,
   isConnectorNarrationEnabled,
@@ -85,6 +86,30 @@ export async function isFindMatchToolEnabled(
   } catch {
     return false
   }
+}
+
+export async function isCollabMatchToolEnabled(
+  db: Firestore | undefined,
+  userId: string
+): Promise<boolean> {
+  if (!db) return false
+  try {
+    return (await getFlag(db, "paCollabMatchToolEnabled", { userId, env: process.env })) === true
+  } catch {
+    return false
+  }
+}
+
+/** Agent allowlist with per-user connector flags applied. */
+export async function resolveAgentAllowedConnectors(
+  db: Firestore | undefined,
+  userId: string,
+  allowedConnectors: string[] | undefined
+): Promise<string[]> {
+  const base = allowedConnectors ?? []
+  const collabOn = await isCollabMatchToolEnabled(db, userId)
+  if (collabOn) return [...base]
+  return base.filter((name) => name !== "match-against-collab-jobs")
 }
 
 export async function isBehaviorChoreographerEnabled(
@@ -338,9 +363,12 @@ export async function composeSharedOnboardingReply(
   try {
     const profile = await resolveProfileForUser("friend_onboarding", input.userId)
     const choreoOn = await isBehaviorChoreographerEnabled(input.store.db, input.userId)
-    // Upgrade every user_answer → ask transition to ack_then_ask. Repeating
-    // the same slot in iMessage feels broken, so shared onboarding moves on
-    // with a short acknowledgement instead of reask copy.
+    // Upgrade choreographer mode to ack_then_ask for culture_stage when we're
+    // about to ask Q2 right after the user answered Q1 (or any prior slot).
+    // This lets the friend roommate briefly mirror what they volunteered
+    // before pivoting to the next question — Adam 2026-05-19 plan §2 ack_then_ask.
+    // We don't touch reask / runtime_event / kickoff branches; only the
+    // user_answer → ask transition into culture_stage qualifies.
     const choreoMode: "ask" | "reask" | "ack_then_ask" | "tangent_then_ask" | "deliver" =
       input.mode === "ask" && input.composeContext.inboundKind === "user_answer"
         ? "ack_then_ask"
@@ -432,8 +460,12 @@ export async function composeSharedOnboardingReply(
           sessionId: input.sessionId,
         })
       : []
+    const collabOn = await isCollabMatchToolEnabled(input.store.db, input.userId)
     if (!findMatchOn) {
       tools = tools.filter((t) => t.name !== "find-match")
+    }
+    if (!collabOn) {
+      tools = tools.filter((t) => t.name !== "match-against-collab-jobs")
     }
 
     const systemPrompt = injectVoiceProfilePrefix(input.agent.systemPrompt, profile, lang)
@@ -577,6 +609,15 @@ export async function deliverSharedOnboardingJobRecs(input: {
         turnId: input.turnId,
         db: input.db,
       })
+      await startPostMatchRetentionAfterJobRecs({
+        db: input.db,
+        userId: input.event.userId,
+        recCount: jobCount,
+        sessionId: input.event.sessionId,
+        toE164: input.event.from,
+        lang,
+        enqueueOutbound: input.store.enqueueOutbound,
+      })
       return { recCount: jobCount, reply: text }
     } catch (err) {
       input.store.log("pa.shared_onboarding.find_match.fallback", {
@@ -599,6 +640,15 @@ export async function deliverSharedOnboardingJobRecs(input: {
     userId: input.event.userId,
     turnId: input.turnId,
     db: input.db,
+  })
+  await startPostMatchRetentionAfterJobRecs({
+    db: input.db,
+    userId: input.event.userId,
+    recCount,
+    sessionId: input.event.sessionId,
+    toE164: input.event.from,
+    lang,
+    enqueueOutbound: input.store.enqueueOutbound,
   })
   return { recCount, reply: text }
 }

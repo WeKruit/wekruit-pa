@@ -28,6 +28,7 @@ import {
 } from "@pa/agent-runtime"
 import {
   connectorRegistry,
+  resolveToolFamily,
   runConnector,
   type ConnectorName,
 } from "@pa/pa-connectors"
@@ -145,6 +146,7 @@ import { applyTemplateOutboundHumanize } from "./outbound-template-humanize.js"
 import {
   composeSharedOnboardingReply,
   deliverSharedOnboardingJobRecs,
+  resolveAgentAllowedConnectors,
   buildSharedOnboardingComposeContext,
   extractRecentSlangPicks,
   persistSharedOnboardingSlangPicks,
@@ -296,7 +298,15 @@ import { headhunterAddendum } from "./playbooks/headhunter.js"
 // Phase 32 W3 — Firestore-backed playbook cache (30s TTL). Replaces the
 // inline HEADHUNTER_TRIGGER_RE constant; the regex below is kept as a
 // failsafe when Firestore is empty (zero-downtime cutover).
-import { matchCachedPlaybooks } from "./playbook-cache.js"
+import {
+  filterTurnToolsForSkillAllowlist,
+  resolvePlaybookForTurn,
+  type PlaybookRoutingResult,
+} from "./playbook-routing.js"
+import {
+  handlePostMatchRetentionReply,
+  startPostMatchRetentionAfterJobRecs,
+} from "./post-match-retention.js"
 // iter30 WS6 — guardrail chain (Wave 2 day 3 wire-in). Shadow-mode
 // telemetry by default (`PA_GUARDRAIL_CHAIN_SHADOW=true` flag); the
 // scattered patches at lines 1623-1976 stay in charge of mutating the
@@ -2327,6 +2337,17 @@ async function handleCompletedUserJobSearchRequest(
       ? recs.message
       : "I could not pull fresh roles right now. I saved the request and will try again shortly."
   await sendMemoryReply(store, event, turnId, reply)
+  if (recs && recs.recCount > 0 && store.db) {
+    await startPostMatchRetentionAfterJobRecs({
+      db: store.db,
+      userId: event.userId,
+      recCount: recs.recCount,
+      sessionId: event.sessionId,
+      toE164: event.from,
+      lang,
+      enqueueOutbound: store.enqueueOutbound,
+    })
+  }
   await store.updateTurn(turnId, {
     status: "succeeded",
     stage: "succeeded",
@@ -2850,6 +2871,10 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       return
     }
 
+    if (userAuthoredEvent && (await handlePostMatchRetentionReply(event, store, turnId))) {
+      return
+    }
+
     const agent = await store.getAgentForUser(event.userId)
     if (!agent) throw Object.assign(new Error("No agent configured"), { code: "NO_AGENT" })
 
@@ -3033,23 +3058,24 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // (D-04 ordering intact).
     let playbookAddendum: string | null = null
     let headhunterActive = false
+    let playbookRouting: PlaybookRoutingResult = {
+      addendum: "",
+      allowedTools: [],
+      activeSkillKeys: [],
+      source: "v1_cache",
+    }
     if (store.db != null) {
-      const { matched, addendum } = await matchCachedPlaybooks(store.db, event.body)
-      if (matched.length > 0 && addendum.trim().length > 0) {
-        playbookAddendum = addendum
-        headhunterActive = matched.some((p) => p.playbookKey === HEADHUNTER_PLAYBOOK_ID)
-        // Adam iter 19 — playbook match telemetry. Previously zero log
-        // events; impossible to dashboard which playbooks fire how often.
-        // Each matched playbookKey emits one event. Privacy-safe: keys
-        // only, no user-message body.
-        for (const p of matched) {
-          store.log("pa.playbook.matched", {
-            userId: event.userId,
-            turnId,
-            playbookKey: p.playbookKey,
-            playbookVersion: p.version,
-          })
-        }
+      playbookRouting = await resolvePlaybookForTurn({
+        db: store.db,
+        userId: event.userId,
+        messageBody: event.body,
+        log: (evt, payload) => store.log(evt, payload ?? {}),
+      })
+      if (playbookRouting.addendum.length > 0) {
+        playbookAddendum = playbookRouting.addendum
+        headhunterActive =
+          playbookRouting.activeSkillKeys.includes(HEADHUNTER_PLAYBOOK_ID) ||
+          (event as { playbook?: string }).playbook === HEADHUNTER_PLAYBOOK_ID
       }
     }
     if (!playbookAddendum) {
@@ -3172,7 +3198,8 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // Phase 10.5 T7 — bridge agent.allowedConnectors → SDK tools. When the
     // default agent's toolPolicy is still "none" (pre-T8), this returns []
     // and the SDK gets no custom tools, matching legacy behavior.
-    const turnTools = await store.buildTurnTools(agent, { turnId, userId: event.userId, sessionId: event.sessionId })
+    let turnTools = await store.buildTurnTools(agent, { turnId, userId: event.userId, sessionId: event.sessionId })
+    turnTools = filterTurnToolsForSkillAllowlist(turnTools, playbookRouting)
     // Phase 29 T4 — Bible-as-data v2 (pa-handbooks/{slug} + immutable
     // versions/{v}). When the orchestrator was wired with a Firestore
     // handle, resolve the handbook slug from agent.handbookSlug (default
@@ -4501,7 +4528,13 @@ export function createFirestoreOrchestratorStore(
       const hooks = deps.generateJobRecs
         ? buildMatchConnectorHooks({ db, generateJobRecs: deps.generateJobRecs })
         : undefined
-      return buildTurnTools(db, agent, turn, hooks)
+      const allowedConnectors = await resolveAgentAllowedConnectors(
+        db,
+        turn.userId,
+        agent.allowedConnectors
+      )
+      const agentFiltered = { ...agent, allowedConnectors }
+      return buildTurnTools(db, agentFiltered, turn, hooks)
     },
     async recordHostedToolCalls({ turnId, userId, sessionId, calls }) {
       // One synthetic pa_tool_calls row per hosted invocation, mirroring
@@ -4515,10 +4548,12 @@ export function createFirestoreOrchestratorStore(
       for (const call of calls) {
         for (let i = 0; i < call.count; i += 1) {
           const id = randomUUID()
+          const connectorName = call.name === "web_search" ? "current-info" : call.name
           const row: Record<string, unknown> = {
             id,
             turnId,
-            connectorName: call.name === "web_search" ? "current-info" : call.name,
+            connectorName,
+            toolFamily: resolveToolFamily(connectorName),
             connectorVersion: "sdk-hosted",
             status: "completed",
             argsDigest: "sdk-hosted",

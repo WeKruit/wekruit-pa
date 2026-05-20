@@ -95,10 +95,24 @@ export const ToolCallStatusSchema = z.enum([
 ])
 export type ToolCallStatus = z.infer<typeof ToolCallStatusSchema>
 
+/** Stable family for dashboards / candidate tool history (see @pa/pa-connectors tool-family). */
+export const PaToolFamilySchema = z.enum([
+  "web_search",
+  "memory",
+  "match_general",
+  "match_collab",
+  "job_profile",
+  "legacy_matching",
+  "valet",
+  "other",
+])
+export type PaToolFamily = z.infer<typeof PaToolFamilySchema>
+
 export const PaToolCallSchema = z.object({
   id: z.string(),
   turnId: z.string(),
   connectorName: z.string(),
+  toolFamily: PaToolFamilySchema.optional(),
   connectorVersion: z.string().default("1"),
   status: ToolCallStatusSchema,
   argsDigest: z.string(),
