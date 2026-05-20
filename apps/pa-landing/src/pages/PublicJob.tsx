@@ -33,6 +33,10 @@ import {
   rememberStoredValue,
 } from "../lib/browser-identity"
 import {
+  CandidateVerifyError,
+  verifyCandidateMagicLinkSession,
+} from "../lib/candidate-verify.js"
+import {
   CandidateShell,
   PulseDot,
   LiveStatusPill,
@@ -377,6 +381,37 @@ export default function PublicJob() {
         if (!cancelled) setResumeGate({ status: "ready", gate: result.data })
       } catch (err) {
         if (!cancelled) setResumeGate({ status: "error", message: err instanceof Error ? err.message : String(err) })
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [requestedUserId, user])
+
+  useEffect(() => {
+    if (!user) return
+    let cancelled = false
+    void (async () => {
+      try {
+        await verifyCandidateMagicLinkSession()
+        if (cancelled) return
+        setLoginError(null)
+        const checkGate = httpsCallable<{ browserUid?: string | null }, ResumeGateResult>(
+          functions(),
+          "paCandidateResumeGateStatus"
+        )
+        const result = await checkGate({ browserUid: requestedUserId })
+        if (!cancelled) setResumeGate({ status: "ready", gate: result.data })
+      } catch (err) {
+        if (!cancelled) {
+          const message =
+            err instanceof CandidateVerifyError
+              ? err.message
+              : err instanceof Error
+                ? err.message
+                : String(err)
+          setLoginError(message)
+        }
       }
     })()
     return () => {
@@ -808,10 +843,20 @@ function InlineCvUpload({ jobId, requestedUserId, uploadUserId, onUploaded }: In
     try {
       setStatus("uploading")
       setErrMsg(null)
+      const currentUser = auth().currentUser
+      if (!currentUser) {
+        setStatus("err")
+        setErrMsg("Sign in again before uploading your resume.")
+        return
+      }
+      const idToken = await currentUser.getIdToken()
       const b64 = await fileToBase64(file)
       const res = await fetch(CV_INGEST_URL, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${idToken}`,
+        },
         body: JSON.stringify({
           userId: uploadUserId,
           browserUid: requestedUserId,
@@ -910,6 +955,13 @@ function friendlyUploadError(reason: string, status: number): string {
       return "This resume appears to belong to another profile. Use the resume for this signed-in account."
     case "missing_userId_or_tempUserId":
       return "Sign in again before uploading your resume."
+    case "auth_required":
+    case "invalid_id_token":
+      return "Sign in again before uploading your resume."
+    case "candidate_not_claimed":
+      return "Finish sign-in verification before uploading your resume."
+    case "userId_mismatch":
+      return "This resume must attach to your signed-in WeKruit profile."
     default:
       return `Upload failed (${status}). Try again.`
   }

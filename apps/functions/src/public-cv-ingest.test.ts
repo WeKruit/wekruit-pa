@@ -3,6 +3,9 @@ import test from "node:test"
 import {
   buildCandidateUploadResumeArtifactWrites,
   buildPublicCvIngestInput,
+  isServerTrustedCvIntake,
+  resolveCandidateUploadUserId,
+  type PublicCvIngestRequest,
 } from "./public-cv-ingest.js"
 import {
   detectResumeUploadKind,
@@ -184,4 +187,68 @@ test("extractDocxText reads visible text from word/document.xml", () => {
   )
 
   assert.equal(extractDocxText(docx), "Adam Yang\nBuilt React dashboards & SQL reports")
+})
+
+function mockAuthDb(mapping: { uid: string; candidateId: string } | null) {
+  return {
+    collection: (name: string) => ({
+      doc: (id: string) => ({
+        get: async () => ({
+          exists: mapping !== null && name === "pa-candidate-auth" && id === mapping.uid,
+          data: () =>
+            mapping && id === mapping.uid
+              ? {
+                  firebaseUid: mapping.uid,
+                  candidateId: mapping.candidateId,
+                  createdAt: "2026-05-20T00:00:00.000Z",
+                }
+              : undefined,
+        }),
+      }),
+    }),
+  }
+}
+
+test("isServerTrustedCvIntake accepts ATS and employer-hint intake", () => {
+  assert.equal(isServerTrustedCvIntake({ source: "ats:greenhouse", userId: "u1" }), true)
+  assert.equal(
+    isServerTrustedCvIntake({ employerEmailHint: "a@b.com", userId: "u1" }),
+    true,
+  )
+  assert.equal(isServerTrustedCvIntake({ source: "public_job_page", userId: "u1" }), false)
+})
+
+test("resolveCandidateUploadUserId rejects anonymous public uploads", async () => {
+  const body: PublicCvIngestRequest = { userId: "candidate-1", source: "public_job_page" }
+  const result = await resolveCandidateUploadUserId({
+    req: { header: () => undefined },
+    body,
+    db: mockAuthDb(null) as never,
+  })
+  assert.deepEqual(result, { ok: false, status: 401, reason: "auth_required" })
+})
+
+test("resolveCandidateUploadUserId maps bearer token to claimed candidate", async () => {
+  const body: PublicCvIngestRequest = { userId: "candidate-1", source: "layoff_signup" }
+  const result = await resolveCandidateUploadUserId({
+    req: { header: (name) => (name.toLowerCase() === "authorization" ? "Bearer token-1" : undefined) },
+    body,
+    db: mockAuthDb({ uid: "firebase-1", candidateId: "candidate-1" }) as never,
+    verifyIdToken: async () => ({ uid: "firebase-1" }),
+  })
+  assert.deepEqual(result, { ok: true, userId: "candidate-1" })
+})
+
+test("resolveCandidateUploadUserId keeps ATS uploads on explicit userId", async () => {
+  const body: PublicCvIngestRequest = {
+    tempUserId: "ats-user-1",
+    source: "ats:handshake",
+    employerEmailHint: "person@example.com",
+  }
+  const result = await resolveCandidateUploadUserId({
+    req: { header: () => undefined },
+    body,
+    db: mockAuthDb(null) as never,
+  })
+  assert.deepEqual(result, { ok: true, userId: "ats-user-1" })
 })
