@@ -93,7 +93,7 @@ export async function verifyCandidateMagicLinkSession(options?: {
   const portalReady =
     data.portalReady !== undefined
       ? Boolean(data.portalReady)
-      : claireConversationStarted
+      : claireConversationStarted && hasResumeOnFile
   return {
     candidateId: data.candidateId,
     idempotent: Boolean(data.idempotent),

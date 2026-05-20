@@ -13,8 +13,7 @@ import {
   candidatePortalLoginUrl,
   getBrowserUid,
   isCandidateHost,
-  isLayoffHost,
-  redirectToCandidatePortal,
+  onboardingDestination,
   rememberCandidateProfileSession,
 } from "../lib/browser-identity"
 import { resolveSource, SOURCE_RESOLVER_MARKER, type SignupSource } from "../lib/source"
@@ -95,8 +94,8 @@ export default function Onboarding() {
             Boolean(verified.linkedinLinkedViaOauth) || isLinkedInSignIn(authUser)
           )
           setClaireConversationStarted(verified.claireConversationStarted)
-          setPortalReady(verified.claireConversationStarted)
-          if (verified.claireConversationStarted) {
+          setPortalReady(verified.portalReady)
+          if (verified.portalReady) {
             if (!isCandidateHost()) {
               redirectToCandidatePortal("/me")
               return
@@ -137,10 +136,7 @@ export default function Onboarding() {
   }
 
   if (!authUser) {
-    const loginNext = isLayoffHost() ? "/onboarding?source=layoff" : "/onboarding"
-    if (!isCandidateHost()) {
-      return <LayoffPortalRedirect next={loginNext} />
-    }
+    const loginNext = onboardingDestination(source)
     return <Navigate to={`/login?next=${encodeURIComponent(loginNext)}`} replace />
   }
 
@@ -301,22 +297,6 @@ export default function Onboarding() {
         </div>
       </section>
       <MinimalFooter />
-    </main>
-  )
-}
-
-function LayoffPortalRedirect({ next }: { next: string }) {
-  useEffect(() => {
-    redirectToCandidatePortal(next)
-  }, [next])
-  return (
-    <main>
-      <MinimalNav />
-      <section style={{ paddingTop: 96, paddingBottom: 96 }}>
-        <div className="container-prose" style={{ maxWidth: 760, marginInline: "auto", paddingInline: 24, textAlign: "center" }}>
-          <p style={{ color: "var(--ink-2)" }}>Redirecting to sign in…</p>
-        </div>
-      </section>
     </main>
   )
 }

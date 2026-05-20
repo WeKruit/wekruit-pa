@@ -102,15 +102,15 @@ export function isCandidatePortalPath(pathname: string): boolean {
 }
 
 /**
- * Post-login routing (Adam 2026-05-20): only honor `/me*` when Claire inbound
- * conversation has started; otherwise send to onboarding.
+ * Post-login routing (Adam 2026-05-20): only honor `/me*` when portal-ready
+ * (inbound Claire iMessage + resume on file); otherwise send to onboarding.
  */
 export function resolvePostLoginDestination(
   nextDest: LoginNextDestination,
-  claireConversationStarted: boolean,
+  portalReady: boolean,
   source: SignupSource = peekSource(),
 ): string {
-  if (claireConversationStarted) {
+  if (portalReady) {
     if (nextDest.isOnboarding) return "/me"
     return nextDest.to
   }
@@ -193,7 +193,10 @@ export function onboardingDestination(source: SignupSource = peekSource()): stri
   return source === "WeKruit_Laid_Off" ? "/onboarding?source=layoff" : "/onboarding"
 }
 
-export function candidateProfileDestination(): string {
+/** Login-first entry for layoff candidate signup (auth on candidate origin). */
+export function layoffSignupLoginPath(): string {
+  return `/login?next=${encodeURIComponent(onboardingDestination("WeKruit_Laid_Off"))}`
+}
   if (isCandidateHost()) return candidateLoginPath(candidateProfilePath())
   return candidatePortalLoginUrl(candidateProfilePath())
 }

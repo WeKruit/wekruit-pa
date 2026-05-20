@@ -216,7 +216,7 @@ export async function runCandidateMagicLinkVerify(
         intakeComplete,
         claireConversationStarted: claireStarted,
         hasResumeOnFile: resumeOnFile,
-        portalReady: claireStarted,
+        portalReady: claireStarted && resumeOnFile,
         linkedinUrl: storedLinkedin,
         linkedinLinkedViaOauth: storedOauthLinked,
       },

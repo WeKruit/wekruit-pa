@@ -17,6 +17,7 @@
  */
 import { useEffect, useState } from "react"
 import { Link } from "react-router-dom"
+import { layoffSignupLoginPath } from "../lib/browser-identity.js"
 import "../styles/wekruit-tokens.css"
 
 type TalentRow = {
@@ -161,7 +162,7 @@ function Hero({ preview }: { preview: PreviewState }) {
           <strong style={{ color: "var(--ink)", fontWeight: 500 }}>We make the intros by hand.</strong>
         </p>
         <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 28, flexWrap: "wrap" }}>
-          <Link to="/onboarding" className="btn btn--primary btn--lg" style={{ textDecoration: "none" }}>
+          <Link to={layoffSignupLoginPath()} className="btn btn--primary btn--lg" style={{ textDecoration: "none" }}>
             Add your name — 60 sec
           </Link>
         </div>
@@ -670,7 +671,7 @@ function Nav({ current }: { current?: string }) {
           ))}
         </nav>
         <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-          <Link to="/onboarding" className="btn btn--primary btn--sm" style={{ textDecoration: "none" }}>
+          <Link to={layoffSignupLoginPath()} className="btn btn--primary btn--sm" style={{ textDecoration: "none" }}>
             Add your name
           </Link>
         </div>

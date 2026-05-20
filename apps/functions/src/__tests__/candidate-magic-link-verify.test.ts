@@ -404,6 +404,6 @@ test("runCandidateMagicLinkVerify reports claireConversationStarted from Claire 
     assert.equal(result.intakeComplete, true)
     assert.equal(result.claireConversationStarted, true)
     assert.equal(result.hasResumeOnFile, false)
-    assert.equal(result.portalReady, true)
+    assert.equal(result.portalReady, false)
   }
 })

@@ -446,7 +446,7 @@ export default function CandidateLogin() {
       )
       const destination = resolvePostLoginDestination(
         nextDest,
-        verified.claireConversationStarted,
+        verified.portalReady,
         verifySource,
       )
       if (!isCandidateHost()) {

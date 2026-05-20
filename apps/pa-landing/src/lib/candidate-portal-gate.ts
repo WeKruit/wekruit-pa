@@ -33,7 +33,7 @@ async function verifySessionWithRetry() {
 }
 
 /**
- * Gate /me*, requiring magic-link auth plus inbound Claire iMessage.
+ * Gate /me*, requiring magic-link auth plus portal-ready (Claire inbound + resume).
  * Redirects unsigned users to /login?next=… and signed-in users who are not portal-ready
  * to onboarding (layoff vs candidate source aware). Verify failures while authed show
  * an inline error instead of bouncing back to login.
@@ -64,7 +64,7 @@ export function useCandidatePortalGate(): CandidatePortalGateState {
         try {
           const verified = await verifySessionWithRetry()
           if (cancelled) return
-          if (!verified.claireConversationStarted) {
+          if (!verified.portalReady) {
             const onboardingPath = onboardingDestination()
             setState({ status: "redirecting_onboarding" })
             if (!isCandidateHost()) {

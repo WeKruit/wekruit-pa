@@ -6,6 +6,7 @@ import {
   candidatePortalLoginUrl,
   cookieDomainForHost,
   isLayoffHost,
+  layoffSignupLoginPath,
   onboardingDestination,
   parseLoginNextPath,
   readCookieValue,
@@ -66,7 +67,7 @@ test("parseLoginNextPath defaults bare login to onboarding", () => {
   assert.equal(next.isOnboarding, true)
 })
 
-test("resolvePostLoginDestination blocks /me until Claire inbound started", () => {
+test("resolvePostLoginDestination blocks /me until portal ready", () => {
   const meNext = parseLoginNextPath("/me")
   const onboardingNext = parseLoginNextPath("/onboarding?source=layoff")
   assert.equal(
@@ -87,4 +88,11 @@ test("resolvePostLoginDestination blocks /me until Claire inbound started", () =
 test("onboardingDestination routes layoff source to layoff query", () => {
   assert.equal(onboardingDestination("WeKruit_Laid_Off"), "/onboarding?source=layoff")
   assert.equal(onboardingDestination("candidate"), "/onboarding")
+})
+
+test("layoffSignupLoginPath login-first before layoff onboarding", () => {
+  assert.equal(
+    layoffSignupLoginPath(),
+    "/login?next=%2Fonboarding%3Fsource%3Dlayoff",
+  )
 })

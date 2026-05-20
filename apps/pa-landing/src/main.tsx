@@ -14,6 +14,7 @@ import PublicJobCv from "./pages/PublicJobCv.js"
 import OpenJobs from "./pages/OpenJobs.js"
 import Onboarding from "./pages/Onboarding.js"
 import EmployerSignup from "./pages/EmployerSignup.js"
+import LayoffAuthRedirect from "./pages/LayoffAuthRedirect.js"
 
 const root = document.getElementById("root")
 if (!root) throw new Error("Missing #root element")
@@ -43,14 +44,14 @@ const queryClient = new QueryClient({
   },
 })
 
-// Layoff host is a standalone two-page product for launch: / (LayoffLanding)
-// and /onboarding (candidate intake). Any other path collapses to /. Other
-// hosts (candidate.wekruit.com, pa.wekruit.com, default .web.app) keep the
-// full SPA route set.
+// Layoff host: landing, login-first (→ candidate origin for Firebase Auth),
+// onboarding intake, employer signup. No /me — portal lives on candidate host.
 const layoffRoutes = (
   <Routes>
     <Route path="/" element={<HomeLanding />} />
+    <Route path="/login" element={<LayoffAuthRedirect />} />
     <Route path="/onboarding" element={<Onboarding />} />
+    <Route path="/employer" element={<EmployerSignup />} />
     <Route path="*" element={<Navigate to="/" replace />} />
   </Routes>
 )
