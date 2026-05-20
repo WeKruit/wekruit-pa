@@ -353,6 +353,11 @@ export const paPublicOpenJobs = onRequest(
     memory: "512MiB",
     timeoutSeconds: 30,
     concurrency: 40,
+    // Keep one instance warm at all times. /market and /open are c-end
+    // landing surfaces and the 2.5-3s cold-start was the dominant tail
+    // latency the user reported. Single 512MiB instance idle ≈ $5/mo on
+    // GCF v2, which is a fair trade for sub-200ms p50 first paint.
+    minInstances: 1,
   },
   async (req, res) => {
     setCors(res)

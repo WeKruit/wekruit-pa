@@ -11,7 +11,9 @@
 import { useEffect, useState } from "react"
 import { Link } from "react-router-dom"
 import { collection, getDocs, limit, query, where } from "firebase/firestore"
+import { useQueryClient } from "@tanstack/react-query"
 import { db } from "../lib/firebase.js"
+import { listPublicJobOpenings } from "../lib/public-jobs.js"
 import {
   CandidateShell,
   PulseDot,
@@ -97,6 +99,7 @@ function normalizeJob(id: string, data: PublicJobListDoc): PublicJobListItem {
 
 export default function Landing() {
   const [state, setState] = useState<JobsState>({ status: "loading" })
+  const queryClient = useQueryClient()
 
   useEffect(() => {
     let cancelled = false
@@ -117,6 +120,51 @@ export default function Landing() {
     })()
     return () => { cancelled = true }
   }, [])
+
+  // Idle-prefetch /market and /open data while the user is reading the
+  // landing hero. Both surfaces share the QueryClient configured in main.tsx
+  // (staleTime=5min), so clicking "Open market" or "Open interviews" repaints
+  // instantly from cache instead of waiting on a cold CF + Firestore read.
+  // Wrapped in requestIdleCallback so it never competes with the hero paint.
+  useEffect(() => {
+    const win = window as Window & {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number
+    }
+    const run = () => {
+      // Open jobs (Hunting list) — paPublicOpenJobs CF, identical filters
+      // to useOpenJobs default so the cache key matches.
+      void queryClient.prefetchQuery({
+        queryKey: ["open-jobs", {
+          limit: 80, freshDays: 45,
+          function: [], level: [], location: [],
+          remoteOnly: false, search: "",
+        }],
+        queryFn: async () => {
+          const url =
+            (import.meta.env.VITE_OPEN_JOBS_URL ??
+              "https://us-central1-wekruit-5f89b.cloudfunctions.net/paPublicOpenJobs") +
+            "?limit=80&freshDays=45"
+          const r = await fetch(url)
+          if (!r.ok) throw new Error(`open-jobs ${r.status}`)
+          const body = (await r.json()) as { ok: boolean; rows: unknown[]; reason?: string }
+          if (!body.ok) throw new Error(body.reason ?? "open-jobs failed")
+          return body.rows
+        },
+        staleTime: 5 * 60 * 1000,
+      })
+      // Direct line — pa-jobs publicVisible. Same query OpenJobs.tsx uses.
+      void queryClient.prefetchQuery({
+        queryKey: ["pa-jobs-public-openings", 24],
+        queryFn: () => listPublicJobOpenings(24),
+        staleTime: 5 * 60 * 1000,
+      })
+    }
+    if (typeof win.requestIdleCallback === "function") {
+      win.requestIdleCallback(run, { timeout: 1500 })
+    } else {
+      window.setTimeout(run, 600)
+    }
+  }, [queryClient])
 
   const jobs = state.status === "ready" ? state.jobs : []
   const liveCount = jobs.filter((j) => j.hiringManager.online).length
