@@ -117,6 +117,9 @@ export type BatchUpdate = {
   atsResolvedAt?: string
   atsResolvedBy?: string
   urlResolutionAttemptedAt?: string
+  // Track F (matching-quality launch blocker, 2026-05-20):
+  urlResolutionMissCount?: number
+  unresolvableAts?: boolean
 }
 
 export type BackfillBatchStore = {
@@ -149,6 +152,13 @@ export type BatchCounters = {
   expiredCleanups: number
   serperCalls: number
   errors: number
+  /**
+   * Track F (matching-quality launch blocker, 2026-05-20): docs whose retry
+   * count crossed UNRESOLVABLE_ATS_MISS_THRESHOLD this run and were stamped
+   * `unresolvableAts: true`. job-pool-hygiene's `unresolvable_ats` predicate
+   * flips these to inactive on the next sweep.
+   */
+  unresolvableMarkedCount: number
 }
 
 export function emptyCounters(): BatchCounters {
@@ -163,8 +173,17 @@ export function emptyCounters(): BatchCounters {
     expiredCleanups: 0,
     serperCalls: 0,
     errors: 0,
+    unresolvableMarkedCount: 0,
   }
 }
+
+/**
+ * Number of failed batch resolve passes before a doc is marked unresolvable.
+ * Lifted from backfill-ats-urls.ts so both surfaces share the threshold.
+ * 3 matches the typical "try, retry, give up" budget elsewhere in this
+ * codebase and bounds the Serper quota burn on hopeless docs.
+ */
+export const UNRESOLVABLE_ATS_MISS_THRESHOLD = 3
 
 export type LinkedinExtractor = (primaryUrl: string) => Promise<string | null>
 
@@ -524,11 +543,22 @@ export async function runBackfillBatch(
       }
 
       if (outcome.kind === "miss") {
-        // Stamp attempt timestamp so future runs know we tried recently.
+        // Track F (2026-05-20): mark unresolvable after N misses. The retry
+        // queue's `attempts` counter is the source of truth (priorityEntries
+        // was fetched at run start). Bumping here mirrors the upsert payload
+        // below so the matching-jobs doc + the retry-queue entry agree.
+        const existing = priorityEntries.find((e) => e.jobId === job.id) ?? null
+        const attemptsAfter = (existing?.attempts ?? 0) + 1
+        const stampUpdate: BatchUpdate = {
+          urlResolutionAttemptedAt: nowIso,
+          urlResolutionMissCount: attemptsAfter,
+        }
+        if (attemptsAfter >= UNRESOLVABLE_ATS_MISS_THRESHOLD) {
+          stampUpdate.unresolvableAts = true
+          counters.unresolvableMarkedCount++
+        }
         try {
-          await deps.store.updateJob(job.id, {
-            urlResolutionAttemptedAt: nowIso,
-          })
+          await deps.store.updateJob(job.id, stampUpdate)
         } catch (err) {
           counters.errors++
           errorLog("stamp_attempt_failed", {
@@ -538,12 +568,11 @@ export async function runBackfillBatch(
           })
         }
         // Retry-queue write — find existing entry to bump attempts.
-        const existing = priorityEntries.find((e) => e.jobId === job.id) ?? null
         const payload: RetryQueueEntry = {
           jobId: job.id,
           firstFailedAt: existing?.firstFailedAt ?? nowIso,
           lastAttemptAt: nowIso,
-          attempts: (existing?.attempts ?? 0) + 1,
+          attempts: attemptsAfter,
           lastReason: outcome.reason,
         }
         try {

@@ -85,6 +85,11 @@ export type HygieneReason =
   | "no_title"
   | "stale_firstseenat"
   | "missing_or_placeholder_ats"
+  // Matching-quality launch blocker (Tracks A + D + F, 2026-05-20):
+  | "yc_synthetic_title"
+  | "jd_zombie"
+  | "bare_workatastartup_url"
+  | "unresolvable_ats"
 
 export type HygieneCounters = {
   dryRun: boolean
@@ -93,6 +98,11 @@ export type HygieneCounters = {
   flipped_no_title: number
   flipped_stale: number
   flipped_missing_ats: number
+  // Matching-quality launch blocker counters (Tracks A + D + F, 2026-05-20):
+  flipped_yc_synthetic: number
+  flipped_jd_zombie: number
+  flipped_bare_workatastartup_url: number
+  flipped_unresolvable_ats: number
   flipped_total: number
   /** Sanity counter — should be 0 because the streaming query is
    *  `where status == "active"`. If non-zero a query bug snuck in. */
@@ -110,6 +120,10 @@ export function emptyCounters(): HygieneCounters {
     flipped_no_title: 0,
     flipped_stale: 0,
     flipped_missing_ats: 0,
+    flipped_yc_synthetic: 0,
+    flipped_jd_zombie: 0,
+    flipped_bare_workatastartup_url: 0,
+    flipped_unresolvable_ats: 0,
     flipped_total: 0,
     skipped_already_inactive: 0,
     batches: 0,
@@ -133,6 +147,15 @@ export type HygieneJobDoc = {
   /** ISO string OR Firestore Timestamp-like. */
   firstSeenAt?: string | { toMillis: () => number } | null
   atsApplyUrl?: string | null
+  // Matching-quality launch blocker fields (Tracks A + D + F, 2026-05-20):
+  /** Canonical job listing URL (employer ATS, or workatastartup.com/companies/X/jobs/Y). */
+  primaryUrl?: string | null
+  /** Full JD body. Null/empty when JD enrichment never produced text. */
+  jobDescription?: string | null
+  /** LLM-extracted skills. Empty array when enrichment never extracted any. */
+  requiredSkills?: string[] | null
+  /** Set true by paBackfillAtsUrls after N failed Serper retries (Track F). */
+  unresolvableAts?: boolean | null
 }
 
 /** Result of evaluating the predicate against one doc. */
@@ -202,13 +225,36 @@ export function toMillis(
   return null
 }
 
+/** YC scraper synthetic placeholder. Matches "Open Engineering Roles", "Open Sales Roles", etc. */
+const YC_SYNTHETIC_TITLE_RE = /^Open\s+\w+\s+Roles?$/i
+
+/**
+ * Bare workatastartup.com company landing pages with no `/jobs/{slug}` suffix.
+ * The macmini scraper writes these when it cannot find specific job listings
+ * for a YC company — they are NOT real job pages. See goal doc Track A.
+ */
+const BARE_WORKATASTARTUP_RE = /^https?:\/\/(?:www\.)?workatastartup\.com\/companies\/[^/]+\/?$/i
+
+const ZOMBIE_MIN_JD_LENGTH = 200
+
 /**
  * Pure predicate. First-match wins so we attribute each flip to a single
- * reason for the audit counters. Order is:
- *   1. dead_flag                (cheapest + most damning)
- *   2. no_title                 (placeholder doc)
- *   3. stale_firstseenat        (past V16 hard-filter window)
- *   4. missing_or_placeholder_ats
+ * reason for the audit counters. Order (cheapest checks first; matching-quality
+ * launch blocker categories listed after the original four):
+ *   1. dead_flag                       (cheapest + most damning)
+ *   2. no_title                        (placeholder doc)
+ *   3. yc_synthetic_title              (macmini YC scraper placeholder)
+ *   4. bare_workatastartup_url         (company landing, not a job page)
+ *   5. unresolvable_ats                (backfill quit after N Serper misses)
+ *   6. jd_zombie                       (NULL JD AND empty skills)
+ *   7. stale_firstseenat               (past V16 hard-filter window)
+ *   8. missing_or_placeholder_ats      (no ATS URL or jobright placeholder)
+ *
+ * The four launch-blocker predicates (3–6) gate by data the original four
+ * never touched (roleTitle text, primaryUrl shape, jobDescription, skills).
+ * They are pinned BEFORE the freshness window so a fresh-but-broken doc is
+ * still flipped on the first sweep instead of waiting 20 days for staleness
+ * to catch it.
  *
  * Returns `{ flip: false }` for healthy docs (and for docs whose firstSeenAt
  * is unparseable — conservative: never flip a doc whose age we can't read).
@@ -231,6 +277,48 @@ export function evaluateHygiene(
   if (titleA.trim().length === 0 && titleB.trim().length === 0) {
     return { flip: true, reason: "no_title" }
   }
+
+  // ---- Matching-quality launch blocker predicates -----------------------
+  //
+  // Track A — YC synthetic placeholder. macmini's workatastartup scraper
+  // writes a literal "Open Engineering Roles" doc per company when it can't
+  // find individual job pages. There are 558 of these active at sweep eve.
+  // They are not real jobs and cannot be ranked meaningfully by V16.
+  const titleForSynthetic = titleB.trim().length > 0 ? titleB : titleA
+  if (YC_SYNTHETIC_TITLE_RE.test(titleForSynthetic.trim())) {
+    return { flip: true, reason: "yc_synthetic_title" }
+  }
+
+  // Track A — bare workatastartup company landing page (no /jobs/{slug}).
+  // Even if the title looks specific, a primaryUrl that points to the
+  // company directory page is not a job listing the user can apply to.
+  const primary = typeof doc.primaryUrl === "string" ? doc.primaryUrl : ""
+  if (primary.length > 0 && BARE_WORKATASTARTUP_RE.test(primary)) {
+    return { flip: true, reason: "bare_workatastartup_url" }
+  }
+
+  // Track F — backfill-ats-urls has retried Serper N times and missed.
+  // The doc has no resolvable employer career page; it would render with
+  // a jobright redirect or no apply link at all. Trust the backfill marker.
+  if (doc.unresolvableAts === true) {
+    return { flip: true, reason: "unresolvable_ats" }
+  }
+
+  // Track D — zombie: enrichment never produced usable signal. NULL JD
+  // AND empty skills means the LLM enricher had nothing to work with,
+  // which means V16 has only title+company to match on. These rank as
+  // noise in the matching pool. We require BOTH conditions so a fresh
+  // doc that's still mid-enrichment (JD just landed, skills pending)
+  // doesn't get prematurely flipped.
+  const jd = typeof doc.jobDescription === "string" ? doc.jobDescription : ""
+  const skills = Array.isArray(doc.requiredSkills) ? doc.requiredSkills : []
+  const jdEmpty = jd.trim().length < ZOMBIE_MIN_JD_LENGTH
+  const skillsEmpty = skills.length === 0
+  if (jdEmpty && skillsEmpty) {
+    return { flip: true, reason: "jd_zombie" }
+  }
+  // ---- /Matching-quality launch blocker predicates ----------------------
+
   const firstSeenMs = toMillis(doc.firstSeenAt)
   // Only flag stale when we have a parseable timestamp AND it's past the
   // cutoff. A doc with no firstSeenAt is suspicious but not unambiguously
@@ -292,6 +380,18 @@ function bumpReasonCounter(counters: HygieneCounters, reason: HygieneReason): vo
       break
     case "missing_or_placeholder_ats":
       counters.flipped_missing_ats++
+      break
+    case "yc_synthetic_title":
+      counters.flipped_yc_synthetic++
+      break
+    case "jd_zombie":
+      counters.flipped_jd_zombie++
+      break
+    case "bare_workatastartup_url":
+      counters.flipped_bare_workatastartup_url++
+      break
+    case "unresolvable_ats":
+      counters.flipped_unresolvable_ats++
       break
   }
   counters.flipped_total++
@@ -415,6 +515,15 @@ function pickTs(v: unknown): string | { toMillis: () => number } | null {
 
 function projectDoc(snap: QueryDocumentSnapshot<DocumentData>): HygieneJobDoc {
   const data = snap.data()
+  // Matching-quality launch blocker (2026-05-20): jobDescription /
+  // requiredSkills / primaryUrl / unresolvableAts surface here so the
+  // extended predicate (Tracks A + D + F) can read them without a second
+  // Firestore round-trip. Type-checked individually — Firestore's
+  // DocumentData is `Record<string, unknown>`.
+  const skillsRaw = data.requiredSkills
+  const skills = Array.isArray(skillsRaw)
+    ? skillsRaw.filter((s): s is string => typeof s === "string")
+    : null
   return {
     id: snap.id,
     status: typeof data.status === "string" ? data.status : null,
@@ -425,6 +534,12 @@ function projectDoc(snap: QueryDocumentSnapshot<DocumentData>): HygieneJobDoc {
     roleTitle: typeof data.roleTitle === "string" ? data.roleTitle : null,
     firstSeenAt: pickTs(data.firstSeenAt),
     atsApplyUrl: typeof data.atsApplyUrl === "string" ? data.atsApplyUrl : null,
+    primaryUrl: typeof data.primaryUrl === "string" ? data.primaryUrl : null,
+    jobDescription:
+      typeof data.jobDescription === "string" ? data.jobDescription : null,
+    requiredSkills: skills,
+    unresolvableAts:
+      typeof data.unresolvableAts === "boolean" ? data.unresolvableAts : null,
   }
 }
 

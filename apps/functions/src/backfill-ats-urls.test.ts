@@ -656,6 +656,102 @@ describe("runBackfill", () => {
     // j2 must NOT have been written-through despite the throw
     assert.equal(j2u.length, 0, "j2 should have no updates after resolve threw")
   })
+
+  // -------------------------------------------------------------------------
+  // Track F (matching-quality launch blocker, 2026-05-20).
+  // -------------------------------------------------------------------------
+
+  it("Track F: miss with prior 2 attempts crosses threshold → unresolvableAts=true", async () => {
+    const store = makeStore([
+      {
+        id: "j-stuck",
+        status: "active",
+        primaryUrl: "https://jobright.ai/jobs/1",
+        companyName: "X",
+        jobTitle: "Engineer",
+        urlResolutionMissCount: 2, // one more miss = threshold (3)
+      },
+    ])
+    const result = await runBackfill(
+      { mode: "all", limit: 10 },
+      {
+        store,
+        serper: async () => null, // forces miss
+        liveness: async () => ({ dead: false }),
+        now: () => "T",
+      },
+    )
+    assert.equal(result.missCount, 1)
+    assert.equal(result.unresolvableMarkedCount, 1)
+    const u = store.getUpdates("j-stuck")
+    assert.equal(u.length, 1)
+    assert.equal(u[0]!.urlResolutionMissCount, 3)
+    assert.equal(u[0]!.unresolvableAts, true)
+  })
+
+  it("Track F: fresh miss (0 → 1) does not yet mark unresolvableAts", async () => {
+    const store = makeStore([
+      {
+        id: "j-fresh",
+        status: "active",
+        primaryUrl: "https://jobright.ai/jobs/1",
+        companyName: "X",
+        jobTitle: "Engineer",
+        // no urlResolutionMissCount = 0 prior
+      },
+    ])
+    const result = await runBackfill(
+      { mode: "all", limit: 10 },
+      {
+        store,
+        serper: async () => null,
+        liveness: async () => ({ dead: false }),
+        now: () => "T",
+      },
+    )
+    assert.equal(result.missCount, 1)
+    assert.equal(result.unresolvableMarkedCount, 0)
+    const u = store.getUpdates("j-fresh")
+    assert.equal(u.length, 1)
+    assert.equal(u[0]!.urlResolutionMissCount, 1)
+    assert.equal(u[0]!.unresolvableAts, undefined)
+  })
+
+  it("Track F: already-unresolvable doc does NOT double-bump the counter", async () => {
+    // If a doc was already stamped unresolvableAts:true earlier and somehow
+    // re-enters the backfill (e.g. hygiene hasn't flipped it inactive yet),
+    // we should NOT bump `unresolvableMarkedCount` again — that counter
+    // measures "how many docs crossed the threshold THIS run".
+    const store = makeStore([
+      {
+        id: "j-stale",
+        status: "active",
+        primaryUrl: "https://jobright.ai/jobs/1",
+        companyName: "X",
+        jobTitle: "Engineer",
+        urlResolutionMissCount: 5,
+        unresolvableAts: true,
+      },
+    ])
+    const result = await runBackfill(
+      { mode: "all", limit: 10 },
+      {
+        store,
+        serper: async () => null,
+        liveness: async () => ({ dead: false }),
+        now: () => "T",
+      },
+    )
+    assert.equal(result.missCount, 1)
+    assert.equal(result.unresolvableMarkedCount, 0, "already marked")
+    const u = store.getUpdates("j-stale")
+    assert.equal(u[0]!.urlResolutionMissCount, 6)
+    assert.equal(
+      u[0]!.unresolvableAts,
+      undefined,
+      "we only stamp the flag on the transition, not on every retry",
+    )
+  })
 })
 
 // -----------------------------------------------------------------------------
