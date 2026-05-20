@@ -56,7 +56,7 @@ const sha = "a".repeat(64)
 // ---------------------------------------------------------------------------
 
 test("ExternalSourceSchema accepts every valid value and rejects unknowns", () => {
-  for (const v of ["juicebox", "lessie", "coresignal", "manual_csv"]) {
+  for (const v of ["juicebox", "lessie", "coresignal", "coresignal_collect_v2", "manual_csv"]) {
     assert.equal(ExternalSourceSchema.parse(v), v)
   }
   assert.equal(ExternalSourceSchema.safeParse("indeed").success, false)
