@@ -283,6 +283,13 @@ export type MatchingJobDoc = {
   atsApplyUrl?: string
   status?: string
   dead?: boolean
+  // Track F (matching-quality launch blocker, 2026-05-20). The backfill
+  // counts how many Serper passes have failed for this doc; once we hit
+  // UNRESOLVABLE_ATS_MISS_THRESHOLD it stamps `unresolvableAts: true` and
+  // job-pool-hygiene flips the doc to inactive. Without this, the same 5k
+  // unresolved docs cycle through Serper quota every hour forever.
+  urlResolutionMissCount?: number
+  unresolvableAts?: boolean
 }
 
 export type BackfillUpdates = {
@@ -290,10 +297,19 @@ export type BackfillUpdates = {
   atsResolvedAt?: string
   atsResolvedBy?: string
   urlResolutionAttemptedAt?: string
+  urlResolutionMissCount?: number
+  unresolvableAts?: boolean
   dead?: boolean
   deadCheckedAt?: string
   deadReason?: string
 }
+
+/**
+ * Number of failed resolve passes before a doc is marked unresolvable.
+ * 3 = matches the typical "try, retry, give up" retry budget elsewhere in
+ * this codebase and keeps the Serper quota burn bounded.
+ */
+export const UNRESOLVABLE_ATS_MISS_THRESHOLD = 3
 
 export type BackfillStore = {
   /**
@@ -317,6 +333,13 @@ export type BackfillResult = {
   pass1Count: number
   pass3Count: number
   missCount: number
+  /**
+   * Track F (2026-05-20): docs whose miss-count crossed
+   * UNRESOLVABLE_ATS_MISS_THRESHOLD this run and were stamped
+   * `unresolvableAts: true`. job-pool-hygiene will flip these to inactive
+   * on the next sweep.
+   */
+  unresolvableMarkedCount: number
   livenessChecked: number
   livenessFailCount: number
   errors: number
@@ -355,6 +378,7 @@ export async function runBackfill(
     pass1Count: 0,
     pass3Count: 0,
     missCount: 0,
+    unresolvableMarkedCount: 0,
     livenessChecked: 0,
     livenessFailCount: 0,
     errors: 0,
@@ -401,11 +425,27 @@ export async function runBackfill(
           })
         } else {
           result.missCount++
-          // Stamp the attempt timestamp so future backfill runs can skip
-          // hard-miss docs (D.5 already drops them at query time anyway).
-          await deps.store.updateJob(job.id, {
+          // Track F (2026-05-20): increment the miss counter so we can mark
+          // the doc unresolvable once we've burned the retry budget. Without
+          // this, the same ~5k unresolved docs cycle through the hourly
+          // Serper batch forever (each pass blows quota on the same misses).
+          const priorMissCount =
+            typeof job.urlResolutionMissCount === "number"
+              ? job.urlResolutionMissCount
+              : 0
+          const nextMissCount = priorMissCount + 1
+          const updates: BackfillUpdates = {
             urlResolutionAttemptedAt: deps.now(),
-          })
+            urlResolutionMissCount: nextMissCount,
+          }
+          if (
+            nextMissCount >= UNRESOLVABLE_ATS_MISS_THRESHOLD &&
+            job.unresolvableAts !== true
+          ) {
+            updates.unresolvableAts = true
+            result.unresolvableMarkedCount++
+          }
+          await deps.store.updateJob(job.id, updates)
         }
       } catch (err) {
         result.errors++
@@ -494,6 +534,14 @@ function makeFirestoreStore(): BackfillStore {
           atsApplyUrl: typeof data.atsApplyUrl === "string" ? data.atsApplyUrl : undefined,
           status: typeof data.status === "string" ? data.status : undefined,
           dead: typeof data.dead === "boolean" ? data.dead : undefined,
+          urlResolutionMissCount:
+            typeof data.urlResolutionMissCount === "number"
+              ? data.urlResolutionMissCount
+              : undefined,
+          unresolvableAts:
+            typeof data.unresolvableAts === "boolean"
+              ? data.unresolvableAts
+              : undefined,
         }
       })
     },

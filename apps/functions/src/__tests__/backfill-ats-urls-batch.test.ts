@@ -559,4 +559,102 @@ describe("runBackfillBatch", () => {
     assert.ok(audit.doc.runId)
     assert.ok(audit.doc.counters)
   })
+
+  // -------------------------------------------------------------------------
+  // Track F (matching-quality launch blocker, 2026-05-20):
+  // After UNRESOLVABLE_ATS_MISS_THRESHOLD failed Serper passes, the doc is
+  // stamped `unresolvableAts: true` so the next job-pool-hygiene sweep can
+  // flip it inactive. Without this, the 5k unresolved docs cycle through
+  // Serper quota every hour with no exit.
+  // -------------------------------------------------------------------------
+
+  it("Track F: third consecutive miss marks unresolvableAts=true", async () => {
+    const fresh: BatchJobDoc[] = [
+      {
+        id: "stuck-1",
+        primaryUrl: "https://jobright.ai/jobs/1",
+        companyName: "X",
+        jobTitle: "Engineer",
+        status: "active",
+      },
+    ]
+    const jobs = new Map([["stuck-1", fresh[0]!]])
+    const sx = inMemoryStore({ jobs, candidates: fresh })
+
+    // Pass 1: attempts 0 → 1. Below threshold (3) → no marking.
+    const r1 = await runBackfillBatch(
+      baseDeps({ store: sx.store, serper: async () => null }),
+    )
+    assert.equal(r1.counters.missCount, 1)
+    assert.equal(
+      r1.counters.unresolvableMarkedCount,
+      0,
+      "1st miss: still under threshold",
+    )
+    const u1 = sx.updates.at(-1)!
+    assert.equal(u1.updates.urlResolutionMissCount, 1)
+    assert.equal(u1.updates.unresolvableAts, undefined)
+
+    // Pass 2: attempts 1 → 2. Still below threshold.
+    sx.candidates.length = 0
+    const r2 = await runBackfillBatch(
+      baseDeps({
+        store: sx.store,
+        serper: async () => null,
+        now: NOW + 60_000,
+      }),
+    )
+    assert.equal(r2.counters.unresolvableMarkedCount, 0)
+    const u2 = sx.updates.at(-1)!
+    assert.equal(u2.updates.urlResolutionMissCount, 2)
+    assert.equal(u2.updates.unresolvableAts, undefined)
+
+    // Pass 3: attempts 2 → 3. Crosses threshold → unresolvableAts=true,
+    // unresolvableMarkedCount bumps.
+    const r3 = await runBackfillBatch(
+      baseDeps({
+        store: sx.store,
+        serper: async () => null,
+        now: NOW + 120_000,
+      }),
+    )
+    assert.equal(r3.counters.missCount, 1)
+    assert.equal(
+      r3.counters.unresolvableMarkedCount,
+      1,
+      "3rd miss must mark unresolvable",
+    )
+    const u3 = sx.updates.at(-1)!
+    assert.equal(u3.updates.urlResolutionMissCount, 3)
+    assert.equal(
+      u3.updates.unresolvableAts,
+      true,
+      "matching-jobs doc must carry the marker so hygiene can read it",
+    )
+  })
+
+  it("Track F: first-time miss never marks unresolvableAts", async () => {
+    // Regression: fresh docs whose first Serper pass misses should NOT be
+    // immediately stamped unresolvable — they still have retry budget.
+    const fresh: BatchJobDoc[] = [
+      {
+        id: "fresh-1",
+        primaryUrl: "https://jobright.ai/jobs/1",
+        companyName: "X",
+        jobTitle: "Engineer",
+        status: "active",
+      },
+    ]
+    const jobs = new Map([["fresh-1", fresh[0]!]])
+    const sx = inMemoryStore({ jobs, candidates: fresh })
+
+    const r = await runBackfillBatch(
+      baseDeps({ store: sx.store, serper: async () => null }),
+    )
+    assert.equal(r.counters.missCount, 1)
+    assert.equal(r.counters.unresolvableMarkedCount, 0)
+    const u = sx.updates.at(-1)!
+    assert.equal(u.updates.urlResolutionMissCount, 1)
+    assert.equal(u.updates.unresolvableAts, undefined)
+  })
 })

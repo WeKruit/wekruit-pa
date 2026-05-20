@@ -45,6 +45,18 @@ const staleCutoffMs = NOW - STALE_FIRSTSEENAT_DAYS_DEFAULT * MS_PER_DAY
 // ---------------------------------------------------------------------------
 
 describe("evaluateHygiene — predicate", () => {
+  // ≥200-char JD body satisfies the matching-quality launch blocker zombie
+  // predicate (Track D). Used by every healthy-base derivation so the new
+  // jd_zombie reason doesn't fire on docs that have always been considered
+  // "healthy" by the original four predicates. ZOMBIE_MIN_JD_LENGTH=200 in
+  // the predicate; keep this comfortably above that.
+  const HEALTHY_JD =
+    "Build matching engines, partner with product, ship internships. " +
+    "We are looking for someone who has shipped production systems end-to-end, " +
+    "is comfortable owning ambiguous problems, writes tests as part of every " +
+    "commit, and enjoys collaborating across teams to ship quickly."
+  const HEALTHY_SKILLS = ["python", "postgres"]
+
   const healthyBase = (): HygieneJobDoc => ({
     id: "j",
     status: "active",
@@ -52,6 +64,10 @@ describe("evaluateHygiene — predicate", () => {
     jobTitle: "Senior Software Engineer",
     firstSeenAt: dayAgoIso(5),
     atsApplyUrl: "https://boards.greenhouse.io/acme/jobs/12345",
+    primaryUrl: "https://boards.greenhouse.io/acme/jobs/12345",
+    jobDescription: HEALTHY_JD,
+    requiredSkills: HEALTHY_SKILLS,
+    unresolvableAts: false,
   })
 
   it("healthy doc: no flip", () => {
@@ -195,6 +211,197 @@ describe("evaluateHygiene — predicate", () => {
     const ev = evaluateHygiene(doc, NOW, staleCutoffMs)
     assert.deepEqual(ev, { flip: false })
   })
+
+  // -------------------------------------------------------------------------
+  // Matching-quality launch blocker predicates (Tracks A + D + F, 2026-05-20)
+  // -------------------------------------------------------------------------
+
+  describe("yc_synthetic_title predicate", () => {
+    it("'Open Engineering Roles' literal: flip with reason yc_synthetic_title", () => {
+      const doc = { ...healthyBase(), jobTitle: null, roleTitle: "Open Engineering Roles" }
+      const ev = evaluateHygiene(doc, NOW, staleCutoffMs)
+      assert.deepEqual(ev, { flip: true, reason: "yc_synthetic_title" })
+    })
+
+    it("'Open Sales Roles' (other function): flip with reason yc_synthetic_title", () => {
+      const doc = { ...healthyBase(), jobTitle: null, roleTitle: "Open Sales Roles" }
+      const ev = evaluateHygiene(doc, NOW, staleCutoffMs)
+      assert.deepEqual(ev, { flip: true, reason: "yc_synthetic_title" })
+    })
+
+    it("'Open Engineering Role' (singular): also flipped (Roles? matches)", () => {
+      const doc = { ...healthyBase(), jobTitle: null, roleTitle: "Open Engineering Role" }
+      const ev = evaluateHygiene(doc, NOW, staleCutoffMs)
+      assert.deepEqual(ev, { flip: true, reason: "yc_synthetic_title" })
+    })
+
+    it("case-insensitive: 'open engineering roles' lowercase still flips", () => {
+      const doc = { ...healthyBase(), jobTitle: null, roleTitle: "open engineering roles" }
+      const ev = evaluateHygiene(doc, NOW, staleCutoffMs)
+      assert.deepEqual(ev, { flip: true, reason: "yc_synthetic_title" })
+    })
+
+    it("real role title 'Engineering Manager': KEEP (no match)", () => {
+      const doc = { ...healthyBase(), jobTitle: null, roleTitle: "Engineering Manager" }
+      const ev = evaluateHygiene(doc, NOW, staleCutoffMs)
+      assert.deepEqual(ev, { flip: false })
+    })
+
+    it("'Senior Software Engineer': KEEP — common real title", () => {
+      const doc = { ...healthyBase(), roleTitle: "Senior Software Engineer" }
+      const ev = evaluateHygiene(doc, NOW, staleCutoffMs)
+      assert.deepEqual(ev, { flip: false })
+    })
+
+    it("jobTitle synthetic + roleTitle empty: still flips (titleA fallback)", () => {
+      const doc = { ...healthyBase(), jobTitle: "Open Marketing Roles", roleTitle: null }
+      const ev = evaluateHygiene(doc, NOW, staleCutoffMs)
+      assert.deepEqual(ev, { flip: true, reason: "yc_synthetic_title" })
+    })
+  })
+
+  describe("bare_workatastartup_url predicate", () => {
+    it("bare /companies/{slug} URL: flip with reason bare_workatastartup_url", () => {
+      const doc = { ...healthyBase(), primaryUrl: "https://www.workatastartup.com/companies/veritus" }
+      const ev = evaluateHygiene(doc, NOW, staleCutoffMs)
+      assert.deepEqual(ev, { flip: true, reason: "bare_workatastartup_url" })
+    })
+
+    it("bare /companies/{slug}/ trailing-slash variant: also flipped", () => {
+      const doc = { ...healthyBase(), primaryUrl: "https://www.workatastartup.com/companies/veritus/" }
+      const ev = evaluateHygiene(doc, NOW, staleCutoffMs)
+      assert.deepEqual(ev, { flip: true, reason: "bare_workatastartup_url" })
+    })
+
+    it("real job page /companies/{slug}/jobs/{id}: KEEP", () => {
+      const doc = {
+        ...healthyBase(),
+        primaryUrl: "https://www.workatastartup.com/companies/veritus/jobs/12345-backend-eng",
+      }
+      const ev = evaluateHygiene(doc, NOW, staleCutoffMs)
+      assert.deepEqual(ev, { flip: false })
+    })
+
+    it("non-workatastartup URL with /companies/ path: KEEP", () => {
+      const doc = { ...healthyBase(), primaryUrl: "https://example.com/companies/abc" }
+      const ev = evaluateHygiene(doc, NOW, staleCutoffMs)
+      assert.deepEqual(ev, { flip: false })
+    })
+  })
+
+  describe("unresolvable_ats predicate", () => {
+    it("unresolvableAts === true: flip with reason unresolvable_ats", () => {
+      const doc = { ...healthyBase(), unresolvableAts: true }
+      const ev = evaluateHygiene(doc, NOW, staleCutoffMs)
+      assert.deepEqual(ev, { flip: true, reason: "unresolvable_ats" })
+    })
+
+    it("unresolvableAts === false: KEEP", () => {
+      const doc = { ...healthyBase(), unresolvableAts: false }
+      const ev = evaluateHygiene(doc, NOW, staleCutoffMs)
+      assert.deepEqual(ev, { flip: false })
+    })
+
+    it("unresolvableAts === null: KEEP (conservative — not a positive signal)", () => {
+      const doc = { ...healthyBase(), unresolvableAts: null }
+      const ev = evaluateHygiene(doc, NOW, staleCutoffMs)
+      assert.deepEqual(ev, { flip: false })
+    })
+  })
+
+  describe("jd_zombie predicate", () => {
+    it("NULL JD + empty skills: flip with reason jd_zombie", () => {
+      const doc = { ...healthyBase(), jobDescription: null, requiredSkills: [] }
+      const ev = evaluateHygiene(doc, NOW, staleCutoffMs)
+      assert.deepEqual(ev, { flip: true, reason: "jd_zombie" })
+    })
+
+    it("empty JD string + empty skills: flip", () => {
+      const doc = { ...healthyBase(), jobDescription: "", requiredSkills: [] }
+      const ev = evaluateHygiene(doc, NOW, staleCutoffMs)
+      assert.deepEqual(ev, { flip: true, reason: "jd_zombie" })
+    })
+
+    it("JD heading-only (<200 chars) + empty skills: flip", () => {
+      const doc = {
+        ...healthyBase(),
+        jobDescription: "About the role",
+        requiredSkills: [],
+      }
+      const ev = evaluateHygiene(doc, NOW, staleCutoffMs)
+      assert.deepEqual(ev, { flip: true, reason: "jd_zombie" })
+    })
+
+    it("NULL JD but non-empty skills (mid-enrichment race): KEEP", () => {
+      // Defensive: a doc whose JD just landed but skills are still being
+      // extracted should NOT get prematurely flipped. Both conditions
+      // required.
+      const doc = { ...healthyBase(), jobDescription: null, requiredSkills: ["python"] }
+      const ev = evaluateHygiene(doc, NOW, staleCutoffMs)
+      assert.deepEqual(ev, { flip: false })
+    })
+
+    it("Valid JD but empty skills (LLM extracted nothing): KEEP", () => {
+      // Same logic — both conditions required. A real JD with no skills
+      // extracted is a quality concern but not a zombie.
+      const doc = { ...healthyBase(), requiredSkills: [] }
+      const ev = evaluateHygiene(doc, NOW, staleCutoffMs)
+      assert.deepEqual(ev, { flip: false })
+    })
+  })
+
+  describe("predicate priority (matching-quality blocker order)", () => {
+    it("dead beats yc_synthetic", () => {
+      const doc = { ...healthyBase(), dead: true, roleTitle: "Open Engineering Roles" }
+      const ev = evaluateHygiene(doc, NOW, staleCutoffMs)
+      assert.deepEqual(ev, { flip: true, reason: "dead_flag" })
+    })
+
+    it("yc_synthetic beats bare_workatastartup_url", () => {
+      const doc = {
+        ...healthyBase(),
+        roleTitle: "Open Engineering Roles",
+        primaryUrl: "https://www.workatastartup.com/companies/x",
+      }
+      const ev = evaluateHygiene(doc, NOW, staleCutoffMs)
+      assert.deepEqual(ev, { flip: true, reason: "yc_synthetic_title" })
+    })
+
+    it("bare_workatastartup_url beats unresolvable_ats", () => {
+      const doc = {
+        ...healthyBase(),
+        primaryUrl: "https://www.workatastartup.com/companies/x",
+        unresolvableAts: true,
+      }
+      const ev = evaluateHygiene(doc, NOW, staleCutoffMs)
+      assert.deepEqual(ev, { flip: true, reason: "bare_workatastartup_url" })
+    })
+
+    it("unresolvable_ats beats jd_zombie", () => {
+      const doc = {
+        ...healthyBase(),
+        unresolvableAts: true,
+        jobDescription: null,
+        requiredSkills: [],
+      }
+      const ev = evaluateHygiene(doc, NOW, staleCutoffMs)
+      assert.deepEqual(ev, { flip: true, reason: "unresolvable_ats" })
+    })
+
+    it("jd_zombie beats stale_firstseenat (fresh zombie still flips)", () => {
+      // A 5-day-old NULL-JD doc would otherwise have to wait 20 days for
+      // the stale predicate to catch it. Track D pins the zombie predicate
+      // before staleness so it fires on the first sweep.
+      const doc = {
+        ...healthyBase(),
+        jobDescription: null,
+        requiredSkills: [],
+        firstSeenAt: dayAgoIso(5),
+      }
+      const ev = evaluateHygiene(doc, NOW, staleCutoffMs)
+      assert.deepEqual(ev, { flip: true, reason: "jd_zombie" })
+    })
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -310,22 +517,32 @@ const baseDeps = (store: HygieneStore, overrides: Partial<HygieneDeps> = {}): Hy
 describe("runJobPoolHygiene — end-to-end", () => {
   // 10-doc fixture: 3 dead, 2 no-title, 2 stale, 1 missing-ats, 2 healthy.
   // (Per spec brief — 8 flips total.)
+  //
+  // Launch-blocker fields (jobDescription / requiredSkills / primaryUrl /
+  // unresolvableAts) are populated for every doc so the new predicates
+  // (yc_synthetic, jd_zombie, bare_workatastartup_url, unresolvable_ats)
+  // never fire on this baseline. The new predicates are pinned with their
+  // own focused test cases below.
+  const E2E_JD =
+    "Build matching pipelines. Partner with product on the matching " +
+    "engine roadmap. You have shipped systems end-to-end and write tests."
+  const E2E_SKILLS = ["python", "postgres"]
   const buildSeed = (): HygieneJobDoc[] => [
     // 3 dead
-    { id: "dead_a", status: "active", dead: true, jobTitle: "Engineer", firstSeenAt: dayAgoIso(5), atsApplyUrl: "https://x.com" },
-    { id: "dead_b", status: "active", dead: true, jobTitle: "Engineer", firstSeenAt: dayAgoIso(5), atsApplyUrl: "https://x.com" },
-    { id: "dead_c", status: "active", dead: true, jobTitle: "Engineer", firstSeenAt: dayAgoIso(5), atsApplyUrl: "https://x.com" },
+    { id: "dead_a", status: "active", dead: true, jobTitle: "Engineer", firstSeenAt: dayAgoIso(5), atsApplyUrl: "https://x.com", primaryUrl: "https://x.com", jobDescription: E2E_JD, requiredSkills: E2E_SKILLS, unresolvableAts: false },
+    { id: "dead_b", status: "active", dead: true, jobTitle: "Engineer", firstSeenAt: dayAgoIso(5), atsApplyUrl: "https://x.com", primaryUrl: "https://x.com", jobDescription: E2E_JD, requiredSkills: E2E_SKILLS, unresolvableAts: false },
+    { id: "dead_c", status: "active", dead: true, jobTitle: "Engineer", firstSeenAt: dayAgoIso(5), atsApplyUrl: "https://x.com", primaryUrl: "https://x.com", jobDescription: E2E_JD, requiredSkills: E2E_SKILLS, unresolvableAts: false },
     // 2 no-title
-    { id: "no_title_a", status: "active", dead: false, jobTitle: "", firstSeenAt: dayAgoIso(5), atsApplyUrl: "https://x.com" },
-    { id: "no_title_b", status: "active", dead: false, jobTitle: "   ", firstSeenAt: dayAgoIso(5), atsApplyUrl: "https://x.com" },
+    { id: "no_title_a", status: "active", dead: false, jobTitle: "", firstSeenAt: dayAgoIso(5), atsApplyUrl: "https://x.com", primaryUrl: "https://x.com", jobDescription: E2E_JD, requiredSkills: E2E_SKILLS, unresolvableAts: false },
+    { id: "no_title_b", status: "active", dead: false, jobTitle: "   ", firstSeenAt: dayAgoIso(5), atsApplyUrl: "https://x.com", primaryUrl: "https://x.com", jobDescription: E2E_JD, requiredSkills: E2E_SKILLS, unresolvableAts: false },
     // 2 stale (firstSeenAt > 20d, otherwise healthy)
-    { id: "stale_a", status: "active", dead: false, jobTitle: "Engineer", firstSeenAt: dayAgoIso(30), atsApplyUrl: "https://x.com" },
-    { id: "stale_b", status: "active", dead: false, jobTitle: "Engineer", firstSeenAt: dayAgoIso(40), atsApplyUrl: "https://x.com" },
+    { id: "stale_a", status: "active", dead: false, jobTitle: "Engineer", firstSeenAt: dayAgoIso(30), atsApplyUrl: "https://x.com", primaryUrl: "https://x.com", jobDescription: E2E_JD, requiredSkills: E2E_SKILLS, unresolvableAts: false },
+    { id: "stale_b", status: "active", dead: false, jobTitle: "Engineer", firstSeenAt: dayAgoIso(40), atsApplyUrl: "https://x.com", primaryUrl: "https://x.com", jobDescription: E2E_JD, requiredSkills: E2E_SKILLS, unresolvableAts: false },
     // 1 missing-ats (otherwise healthy)
-    { id: "no_ats_a", status: "active", dead: false, jobTitle: "Engineer", firstSeenAt: dayAgoIso(5), atsApplyUrl: null },
+    { id: "no_ats_a", status: "active", dead: false, jobTitle: "Engineer", firstSeenAt: dayAgoIso(5), atsApplyUrl: null, primaryUrl: "https://x.com", jobDescription: E2E_JD, requiredSkills: E2E_SKILLS, unresolvableAts: false },
     // 2 healthy
-    { id: "healthy_a", status: "active", dead: false, jobTitle: "Engineer", firstSeenAt: dayAgoIso(5), atsApplyUrl: "https://boards.greenhouse.io/acme/jobs/1" },
-    { id: "healthy_b", status: "active", dead: false, jobTitle: "Senior PM", firstSeenAt: dayAgoIso(2), atsApplyUrl: "https://jobs.lever.co/acme/2" },
+    { id: "healthy_a", status: "active", dead: false, jobTitle: "Engineer", firstSeenAt: dayAgoIso(5), atsApplyUrl: "https://boards.greenhouse.io/acme/jobs/1", primaryUrl: "https://boards.greenhouse.io/acme/jobs/1", jobDescription: E2E_JD, requiredSkills: E2E_SKILLS, unresolvableAts: false },
+    { id: "healthy_b", status: "active", dead: false, jobTitle: "Senior PM", firstSeenAt: dayAgoIso(2), atsApplyUrl: "https://jobs.lever.co/acme/2", primaryUrl: "https://jobs.lever.co/acme/2", jobDescription: E2E_JD, requiredSkills: E2E_SKILLS, unresolvableAts: false },
   ]
 
   it("dry-run: counters correct, no Firestore writes", async () => {
@@ -385,6 +602,14 @@ describe("runJobPoolHygiene — end-to-end", () => {
   // docs must produce ZERO no_title flips so we don't nuke the active pool.
 
   it("regression: 1000 docs with only roleTitle produce ZERO no_title flips", async () => {
+    // Matching-quality launch blocker (2026-05-20): docs also need JD +
+    // skills populated to pass the new `jd_zombie` predicate. The intent
+    // of THIS regression test is that the no_title predicate alone doesn't
+    // false-positive on macmini-shaped docs — pin the no_title counter at
+    // zero. Other predicates are exercised by focused tests below.
+    const SEED_JD =
+      "Build matching engines. Partner with product. Ship internships. " +
+      "We are looking for someone who writes production code and tests."
     const active: HygieneJobDoc[] = []
     for (let i = 0; i < 1000; i++) {
       active.push({
@@ -395,6 +620,10 @@ describe("runJobPoolHygiene — end-to-end", () => {
         roleTitle: "Software Engineer",
         firstSeenAt: dayAgoIso(5),
         atsApplyUrl: "https://boards.greenhouse.io/acme/jobs/1",
+        primaryUrl: "https://boards.greenhouse.io/acme/jobs/1",
+        jobDescription: SEED_JD,
+        requiredSkills: ["python"],
+        unresolvableAts: false,
       })
     }
     const fixture = inMemoryStore({ active })
