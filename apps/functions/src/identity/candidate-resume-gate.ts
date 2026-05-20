@@ -186,11 +186,6 @@ function isUsableArtifact(artifact: ResumeArtifactGateView): boolean {
   return artifact.status !== "failed" && artifact.status !== "archived"
 }
 
-function isInternalOperatorEmail(email: string): boolean {
-  const normalized = email.toLowerCase()
-  return normalized.endsWith("@wekruit.com") && normalized !== "adam.ylol@wekruit.com"
-}
-
 export async function runCandidateResumeGateStatus(
   data: unknown,
   auth: CallableAuth | undefined,
@@ -207,12 +202,6 @@ export async function runCandidateResumeGateStatus(
   }
   if (auth?.token?.email_verified === false) {
     throw new HttpsError("failed-precondition", "Signed-in email is not verified.")
-  }
-  if (isInternalOperatorEmail(email)) {
-    throw new HttpsError(
-      "failed-precondition",
-      "Use a candidate email for the candidate app. WeKruit operator accounts belong in the admin console."
-    )
   }
 
   const existingAuth = await (deps.loadCandidateAuthMapping ?? defaultLoadCandidateAuthMapping)(

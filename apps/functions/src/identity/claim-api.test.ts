@@ -20,19 +20,47 @@ test("runCandidateClaimProfile requires authenticated verified email", async () 
   )
 })
 
-test("runCandidateClaimProfile rejects internal operator emails", async () => {
-  await assert.rejects(
-    () =>
-      runCandidateClaimProfile(
-        {},
-        { uid: "firebase-1", token: { email: "admin@wekruit.com", email_verified: true } },
-        { db: {} as Firestore }
-      ),
-    (err) => err instanceof HttpsError && err.code === "failed-precondition"
+test("runCandidateClaimProfile allows wekruit.com emails at public launch", async () => {
+  const result = await runCandidateClaimProfile(
+    {},
+    { uid: "firebase-1", token: { email: "admin@wekruit.com", email_verified: true } },
+    {
+      db: {} as Firestore,
+      claimCandidateProfile: async () => ({
+        candidateId: "cand-admin",
+        authMapping: {
+          firebaseUid: "firebase-1",
+          candidateId: "cand-admin",
+          createdAt: "2026-05-17T00:00:00.000Z",
+        },
+        emailHandle: {
+          handleId: "email__hash",
+          candidateId: "cand-admin",
+          kind: "email",
+          handleHash: "hashhashhashhash",
+          source: "candidate",
+          createdAt: "2026-05-17T00:00:00.000Z",
+        },
+        claimedEventId: "ident_claimed",
+        idempotent: false,
+        selfProfile: {
+          candidateId: "cand-admin",
+          lifecycleState: "claimed",
+          displayName: "Admin Test",
+          emailMasked: "a***@wekruit.com",
+          handles: [{ kind: "email", verifiedAt: "2026-05-17T00:00:00.000Z", source: "candidate" }],
+          createdAt: "2026-05-17T00:00:00.000Z",
+          updatedAt: "2026-05-17T00:00:00.000Z",
+        },
+      }),
+    }
   )
+
+  assert.equal(result.ok, true)
+  assert.equal(result.candidateId, "cand-admin")
 })
 
-test("runCandidateClaimProfile allows adam.ylol@wekruit.com as the explicit beta candidate user", async () => {
+test("runCandidateClaimProfile allows adam.ylol@wekruit.com as a candidate user", async () => {
   const result = await runCandidateClaimProfile(
     { browserUid: "browser-1", displayName: "Adam Test" },
     { uid: "firebase-adam-ylol", token: { email: "adam.ylol@wekruit.com", email_verified: true } },

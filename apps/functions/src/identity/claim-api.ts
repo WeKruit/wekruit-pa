@@ -32,11 +32,6 @@ function cleanString(value: unknown, max: number): string | undefined {
   return trimmed
 }
 
-function isInternalOperatorEmail(email: string): boolean {
-  const normalized = email.toLowerCase()
-  return normalized.endsWith("@wekruit.com") && normalized !== "adam.ylol@wekruit.com"
-}
-
 export async function runCandidateClaimProfile(
   data: unknown,
   auth: CallableAuth | undefined,
@@ -53,12 +48,6 @@ export async function runCandidateClaimProfile(
   }
   if (auth?.token?.email_verified === false) {
     throw new HttpsError("failed-precondition", "Signed-in email is not verified.")
-  }
-  if (isInternalOperatorEmail(email)) {
-    throw new HttpsError(
-      "failed-precondition",
-      "Use a candidate email for the candidate app. WeKruit operator accounts belong in the admin console."
-    )
   }
 
   const input = data && typeof data === "object" ? (data as Record<string, unknown>) : {}
