@@ -430,28 +430,32 @@ export default function PublicJob() {
   }
 
   function renderLoginControls(location: "panel" | "modal") {
+    const busy =
+      loginStatus === "google" || loginStatus === "linkedin" || loginStatus === "email"
     return (
       <div className={`wk-pj-login wk-pj-login--${location}`}>
-        <button
-          type="button"
-          className="wk-btn wk-btn--ink wk-btn--block"
-          onClick={() => void startProviderSignIn("google")}
-          disabled={loginStatus === "google" || loginStatus === "linkedin" || loginStatus === "email"}
-        >
-          {loginStatus === "google" ? "Opening Google…" : "Continue with Google"}
-        </button>
-        <button
-          type="button"
-          className="wk-btn wk-btn--linkedin wk-btn--block"
-          onClick={() => void startProviderSignIn("linkedin")}
-          disabled={loginStatus === "google" || loginStatus === "linkedin" || loginStatus === "email"}
-        >
-          {loginStatus === "linkedin" ? "Opening LinkedIn…" : "Continue with LinkedIn"}
-        </button>
+        <div className="wk-pj-login__providers">
+          <button
+            type="button"
+            className="wk-btn wk-btn--ink wk-btn--block"
+            onClick={() => void startProviderSignIn("google")}
+            disabled={busy}
+          >
+            {loginStatus === "google" ? "Opening Google…" : "Continue with Google"}
+          </button>
+          <button
+            type="button"
+            className="wk-btn wk-btn--linkedin wk-btn--block"
+            onClick={() => void startProviderSignIn("linkedin")}
+            disabled={busy}
+          >
+            {loginStatus === "linkedin" ? "Opening LinkedIn…" : "Continue with LinkedIn"}
+          </button>
+        </div>
         <div className="wk-pj-login__divider"><span>or magic link</span></div>
         <form className="wk-pj-login__email" onSubmit={(e) => void sendEmailLink(e)}>
           <label htmlFor={`job-login-email-${location}`}>Email</label>
-          <div>
+          <div className="wk-pj-login__email-row">
             <input
               id={`job-login-email-${location}`}
               type="email"
@@ -461,7 +465,7 @@ export default function PublicJob() {
               placeholder="you@example.com"
               disabled={loginStatus === "email"}
             />
-            <button type="submit" className="wk-btn wk-btn--primary" disabled={loginStatus === "email"}>
+            <button type="submit" className="wk-btn wk-btn--primary wk-btn--sm" disabled={busy}>
               {loginStatus === "email" ? "Sending…" : "Send"}
             </button>
           </div>
@@ -556,51 +560,56 @@ export default function PublicJob() {
     </>
   )
 
-  return (
-    <>
-      <PublicJobLayout job={view} startSlot={startSlot} cvSlot={cvSlot} smsHint={smsHint} />
-      {loginPromptOpen && !user ? (
-        <div className="wk-pj-modal-wrap" role="presentation">
-          <style>{PUBLIC_JOB_STYLES}</style>
+  const loginOverlay =
+    loginPromptOpen && !user ? (
+      <div className="wk-pj-modal-wrap" role="presentation">
+        <button
+          className="wk-pj-modal-scrim"
+          type="button"
+          aria-label="Close sign-in prompt"
+          onClick={() => {
+            setLoginPromptDismissed(true)
+            setLoginPromptOpen(false)
+          }}
+        />
+        <aside
+          className="wk-pj-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="public-job-login-modal-title"
+        >
           <button
-            className="wk-pj-modal-scrim"
+            className="wk-pj-modal__close"
             type="button"
-            aria-label="Close sign-in prompt"
+            aria-label="Close"
             onClick={() => {
               setLoginPromptDismissed(true)
               setLoginPromptOpen(false)
             }}
-          />
-          <aside
-            className="wk-pj-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="public-job-login-modal-title"
           >
-            <button
-              className="wk-pj-modal__close"
-              type="button"
-              aria-label="Close"
-              onClick={() => {
-                setLoginPromptDismissed(true)
-                setLoginPromptOpen(false)
-              }}
-            >
-              ×
-            </button>
-            <p className="wk-eyebrow">WeKruit candidate profile</p>
-            <h2 id="public-job-login-modal-title" className="wk-pj-modal__h">
-              Sign in to start this role with <em className="wk-accent">Claire.</em>
-            </h2>
-            <p className="wk-pj-modal__sub">
-              We attach this interview to your candidate profile first, then unlock iMessage for
-              this job.
-            </p>
-            {renderLoginControls("modal")}
-          </aside>
-        </div>
-      ) : null}
-    </>
+            ×
+          </button>
+          <p className="wk-eyebrow">WeKruit candidate profile</p>
+          <h2 id="public-job-login-modal-title" className="wk-pj-modal__h">
+            Sign in to start this role with <em className="wk-accent">Claire.</em>
+          </h2>
+          <p className="wk-pj-modal__sub">
+            We attach this interview to your candidate profile first, then unlock iMessage for
+            this job.
+          </p>
+          {renderLoginControls("modal")}
+        </aside>
+      </div>
+    ) : null
+
+  return (
+    <PublicJobLayout
+      job={view}
+      startSlot={startSlot}
+      cvSlot={cvSlot}
+      smsHint={smsHint}
+      overlay={loginOverlay}
+    />
   )
 }
 
@@ -933,9 +942,10 @@ interface PublicJobLayoutProps {
   startSlot: ReactNode
   cvSlot: ReactNode
   smsHint?: ReactNode
+  overlay?: ReactNode
 }
 
-export function PublicJobLayout({ job, startSlot, cvSlot, smsHint }: PublicJobLayoutProps) {
+export function PublicJobLayout({ job, startSlot, cvSlot, smsHint, overlay }: PublicJobLayoutProps) {
   const hm = job.hiringManager
   const hmFirst = hm?.name?.split(" ")[0]
   const seats = job.interviewSeats ?? 3
@@ -1080,6 +1090,7 @@ export function PublicJobLayout({ job, startSlot, cvSlot, smsHint }: PublicJobLa
           </section>
         ) : null}
       </div>
+      {overlay}
     </CandidateShell>
   )
 }
@@ -1247,25 +1258,31 @@ export const PUBLIC_JOB_STYLES = `
 .wk-pj-side-meta__row svg { color: var(--wk-ink-3); }
 
 /* Inline login controls inside the start card ------------------------- */
-.wk-pj-login { display: grid; gap: 10px; }
+.wk-pj-login {
+  display: grid; gap: 12px;
+  min-width: 0;
+}
+.wk-pj-login__providers { display: grid; gap: 10px; }
+.wk-pj-login .wk-btn--block { display: flex; width: 100%; max-width: 100%; }
 .wk-pj-login__divider {
   display: flex; align-items: center; gap: 10px;
-  color: var(--wk-ink-3); font-size: 11.5px; margin: 2px 0;
+  color: var(--wk-ink-3); font-size: 11.5px; margin: 0;
   text-transform: uppercase; letter-spacing: 0.08em;
 }
 .wk-pj-login__divider::before,
 .wk-pj-login__divider::after {
   content: ""; flex: 1; height: 1px; background: var(--wk-border);
 }
-.wk-pj-login__email { display: grid; gap: 6px; }
+.wk-pj-login__email { display: grid; gap: 6px; min-width: 0; }
 .wk-pj-login__email label {
   color: var(--wk-ink-2); font-size: 12.5px; font-weight: 500;
 }
-.wk-pj-login__email > div {
+.wk-pj-login__email-row {
   display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px;
+  align-items: stretch; min-width: 0;
 }
 .wk-pj-login__email input {
-  min-width: 0;
+  min-width: 0; width: 100%;
   font-family: inherit; font-size: 14.5px;
   color: var(--wk-ink); background: var(--wk-cream);
   border: 1px solid var(--wk-border);
@@ -1277,6 +1294,8 @@ export const PUBLIC_JOB_STYLES = `
   outline: none; border-color: var(--wk-ink);
   box-shadow: 0 0 0 3px rgba(45,26,10,.08);
 }
+.wk-pj-login__email-row .wk-btn { flex: none; align-self: stretch; }
+.wk-pj-login--modal { margin-top: 2px; }
 
 /* CV upload card ------------------------------------------------------- */
 .wk-pj-cv { display: grid; gap: 10px; }
@@ -1369,9 +1388,10 @@ export const PUBLIC_JOB_STYLES = `
   position: fixed; inset: 0; z-index: 40;
   display: grid; place-items: center;
   padding: 20px;
+  overflow: auto;
 }
 .wk-pj-modal-scrim {
-  position: absolute; inset: 0; z-index: 0;
+  position: fixed; inset: 0; z-index: 0;
   border: 0; cursor: pointer;
   background: rgba(45,26,10,.42);
   backdrop-filter: blur(4px);
@@ -1380,22 +1400,26 @@ export const PUBLIC_JOB_STYLES = `
 .wk-pj-modal {
   position: relative; z-index: 1;
   box-sizing: border-box;
-  width: min(460px, calc(100vw - 24px));
-  display: grid; gap: 14px;
+  width: min(420px, calc(100vw - 32px));
+  max-width: 100%;
+  display: grid; gap: 12px;
   background: var(--wk-cream-3);
   border: 1px solid var(--wk-border);
   border-radius: var(--wk-r-lg);
-  padding: 28px;
+  padding: 28px 24px 24px;
   box-shadow: 0 24px 80px rgba(45,26,10,.28);
+  overflow: hidden;
 }
+.wk-pj-modal .wk-eyebrow { margin-top: 4px; }
 .wk-pj-modal__h {
   font-family: 'Newsreader', serif; font-weight: 400;
   font-size: clamp(24px, 3vw, 30px);
-  line-height: 1.1; letter-spacing: -0.022em;
-  color: var(--wk-ink); margin: 4px 0 0;
+  line-height: 1.12; letter-spacing: -0.022em;
+  color: var(--wk-ink); margin: 0;
+  text-wrap: balance;
 }
 .wk-pj-modal__sub {
-  color: var(--wk-ink-2); font-size: 14.5px; line-height: 1.5; margin: 0;
+  color: var(--wk-ink-2); font-size: 14.5px; line-height: 1.5; margin: 0 0 4px;
 }
 .wk-pj-modal__close {
   position: absolute; top: 12px; right: 12px;
@@ -1407,6 +1431,13 @@ export const PUBLIC_JOB_STYLES = `
   transition: background 200ms var(--wk-ease), color 200ms var(--wk-ease);
 }
 .wk-pj-modal__close:hover { background: var(--wk-ink); color: var(--wk-cream); }
+
+@media (max-width: 480px) {
+  .wk-pj-login__email-row {
+    grid-template-columns: 1fr;
+  }
+  .wk-pj-login__email-row .wk-btn { width: 100%; }
+}
 
 /* Mobile --------------------------------------------------------------- */
 @media (max-width: 980px) {
