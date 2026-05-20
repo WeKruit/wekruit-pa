@@ -161,6 +161,19 @@ test("runCandidateMagicLinkVerify links LinkedIn OAuth identity for li_* uid", a
       }),
       linkLinkedin: async (_db, input) => {
         linkCalls.push({ ...input })
+        return {
+          handle: {
+            handleId: `linkedin__${input.value}`,
+            handleHash: "test-hash",
+            kind: "linkedin" as const,
+            valueLast4: input.value.slice(-4),
+            source: input.source ?? "candidate",
+            verified: input.verified ?? false,
+            createdAt: "2026-05-20T00:00:00.000Z",
+            updatedAt: "2026-05-20T00:00:00.000Z",
+          } as never,
+          created: true,
+        }
       },
     }
   )
