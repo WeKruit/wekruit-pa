@@ -300,6 +300,7 @@ export {
   paAdminFlywheelEvalSnapshot,
   paFlywheelCorrectionEvalArtifact,
 } from "./flywheel-eval.js"
+export { paReviewEvaluationAttempt } from "./evaluation-attempts.js"
 export { paCandidateProfileCorrection } from "./flywheel-candidate-correction.js"
 // v2.0 S9 — production hardening and launch readiness controls.
 export {

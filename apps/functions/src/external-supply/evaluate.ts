@@ -51,6 +51,8 @@ import {
   type CompanyContext,
   type JobContext,
 } from "@pa/external-supply"
+import { externalSupplyEvalToEvaluationAttempt } from "@pa/pa-orchestrator"
+import { saveEvaluationAttempt } from "@pa/pa-persistence"
 import { requireExternalSupplyAdmin } from "./resolve-identity.js"
 import { parseExternalCandidateRecordDoc } from "./record-doc.js"
 
@@ -201,6 +203,8 @@ export async function runEvaluation(
       .collection(PA_COLLECTIONS.candidateCompanyJobEvaluations)
       .doc(evaluationId)
       .set(evalDoc, { merge: false })
+    const evalAttempt = externalSupplyEvalToEvaluationAttempt({ evaluation: evalDoc, nowIso: now() })
+    await saveEvaluationAttempt(db, evalAttempt)
 
     breakdown[draft.proposedTier] += 1
     completed += 1
