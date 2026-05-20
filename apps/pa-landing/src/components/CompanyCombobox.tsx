@@ -78,9 +78,19 @@ export function CompanyCombobox({
 
   return (
     <div ref={rootRef} style={{ gridColumn: "1 / -1", display: "flex", flexDirection: "column", gap: 6 }}>
-      <span style={{ fontFamily: "var(--font-sans)", fontSize: 13, fontWeight: 500, color: "var(--ink-2)" }}>
+      <span
+        style={{
+          fontFamily: "var(--font-sans)",
+          fontSize: 13,
+          fontWeight: 500,
+          color: "var(--ink-2)",
+          letterSpacing: "-0.005em",
+          display: "flex",
+          justifyContent: "space-between",
+        }}
+      >
         <span>{label}</span>
-        {err && <span style={{ color: "var(--danger)", marginLeft: 8 }}>{err}</span>}
+        {err ? <span style={{ color: "var(--danger)" }}>{err}</span> : null}
       </span>
       <div style={{ position: "relative" }}>
         <input

@@ -361,6 +361,32 @@ test("runRegisterLayoffCandidate accepts candidate signup without phone when pro
   assert.equal((user.candidateContext as DocData).linkedin, "https://linkedin.com/in/ada")
 })
 
+test("runRegisterLayoffCandidate accepts layoff signup without phone or optional title/location when resume present", async () => {
+  const fake = new FakeFirestore()
+  const result = await runRegisterLayoffCandidate(
+    registration({
+      phone: undefined,
+      jobTitle: undefined,
+      location: undefined,
+      linkedin: undefined,
+      resumeFileName: "ada.pdf",
+    }),
+    deps(fake),
+  )
+
+  assert.equal(result.candidateId, "auto_1")
+  assert.equal(result.listPosition, 413)
+  const user = fake.read(`${PA_COLLECTIONS.users}/auto_1`)!
+  assert.equal(user.source, LAYOFF_SOURCE_TAG)
+  assert.equal(user.phoneE164, undefined)
+  assert.equal(user.isDemo, false)
+  assert.equal(user.getHired, false)
+  assert.equal(user.displayName, "Ada Lovelace")
+  assert.equal((user.layoffContext as DocData).lastCompany, "Rain")
+  assert.equal((user.layoffContext as DocData).jobTitle, null)
+  assert.equal((user.layoffContext as DocData).location, null)
+})
+
 test("runRegisterLayoffCandidate accepts candidate intake with LinkedIn OAuth only on existing profile", async () => {
   const fake = new FakeFirestore()
   const candidateId = "cand_oauth_only"

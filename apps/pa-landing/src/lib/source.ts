@@ -74,3 +74,18 @@ export function resolveSource(): SignupSource {
 export function peekSource(): SignupSource {
   return cookieSource() ?? "candidate"
 }
+
+/** When login `next` targets layoff onboarding, stick source before OAuth strips the URL. */
+export function stickSourceFromLoginNext(raw: string | null | undefined): void {
+  if (!raw) return
+  const q = raw.indexOf("?")
+  const pathname = q >= 0 ? raw.slice(0, q) : raw
+  if (pathname !== "/onboarding") return
+  const params = new URLSearchParams(q >= 0 ? raw.slice(q + 1) : "")
+  const fromQuery = params.get("source")
+  if (fromQuery === "layoff" || fromQuery === "WeKruit_Laid_Off") {
+    writeCookie("WeKruit_Laid_Off")
+  } else if (fromQuery === "candidate") {
+    writeCookie("candidate")
+  }
+}

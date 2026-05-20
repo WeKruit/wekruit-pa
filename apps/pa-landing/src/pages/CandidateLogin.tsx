@@ -12,31 +12,38 @@
  * a warm terracotta confidence accent for live / match / interview signals.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode, type CSSProperties } from "react"
-import { Link, useNavigate } from "react-router-dom"
+import { Link, useNavigate, useSearchParams } from "react-router-dom"
 import {
   GoogleAuthProvider,
-  getRedirectResult,
   isSignInWithEmailLink,
+  onAuthStateChanged,
   sendSignInLinkToEmail,
   signInWithCustomToken,
   signInWithEmailLink,
+  signInWithPopup,
   signInWithRedirect,
-  onAuthStateChanged,
+  type User,
 } from "firebase/auth"
 import { auth } from "../lib/firebase.js"
+import { redirectResultPromise } from "../lib/auth-redirect-bootstrap.js"
 import {
   CLAIM_EMAIL_KEY,
-  isCandidateHost,
+  clearRememberedLoginNext,
+  isLayoffHost,
+  onboardingDestination,
   parseLoginNextPath,
-  redirectToCandidatePortal,
+  readRememberedLoginNext,
   readStoredValue,
+  rememberLoginNext,
   rememberStoredValue,
   resolvePostLoginDestination,
 } from "../lib/browser-identity"
-import { peekSource, type SignupSource } from "../lib/source.js"
+import { peekSource, stickSourceFromLoginNext, type SignupSource } from "../lib/source.js"
 import { verifyCandidateMagicLinkSession } from "../lib/candidate-verify.js"
+import { LayoffLoginCard } from "../components/LayoffLoginCard.js"
 
 const EMAIL_STORAGE_KEY = CLAIM_EMAIL_KEY
+const OAUTH_PENDING_KEY = "pa_oauth_pending"
 const LINKEDIN_AUTH_START_URL =
   import.meta.env.VITE_LINKEDIN_AUTH_START_URL ??
   "https://us-central1-wekruit-5f89b.cloudfunctions.net/paLinkedinAuthStart"
@@ -49,6 +56,41 @@ function createGoogleProvider(): GoogleAuthProvider {
   const provider = new GoogleAuthProvider()
   provider.setCustomParameters({ prompt: "select_account" })
   return provider
+}
+
+function formatAuthError(err: unknown): string {
+  const code =
+    err && typeof err === "object" && "code" in err ? String((err as { code: string }).code) : ""
+  switch (code) {
+    case "auth/unauthorized-domain":
+      return "This site isn't authorized for Google sign-in yet. Confirm this domain is listed under Firebase → Authentication → Authorized domains, wait a few minutes, then try again."
+    case "auth/popup-closed-by-user":
+      return "Google sign-in was cancelled. Try again when you're ready."
+    case "auth/popup-blocked":
+      return "Your browser blocked the Google sign-in popup. Allow popups for layoff.wekruit.com and try again."
+    case "auth/cancelled-popup-request":
+      return "Sign-in was interrupted. Try again."
+    default:
+      if (err instanceof Error && err.message) return err.message
+      return code ? code.replace(/^auth\//, "").replace(/-/g, " ") : "Sign-in failed. Try again."
+  }
+}
+
+function waitForAuthUser(timeoutMs = 5000): Promise<User | null> {
+  if (auth().currentUser) return Promise.resolve(auth().currentUser)
+  return new Promise((resolve) => {
+    const timer = window.setTimeout(() => {
+      unsub()
+      resolve(auth().currentUser)
+    }, timeoutMs)
+    const unsub = onAuthStateChanged(auth(), (user) => {
+      if (user) {
+        window.clearTimeout(timer)
+        unsub()
+        resolve(user)
+      }
+    })
+  })
 }
 
 function takeLinkedinAuthPayload(): { ok: true; customToken: string } | { ok: false; error: string } | null {
@@ -422,15 +464,29 @@ function signupSourceForLoginNext(next: ReturnType<typeof parseLoginNextPath>): 
 
 export default function CandidateLogin() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const isCompletingLink = useMemo(() => isSignInWithEmailLink(auth(), window.location.href), [])
-  const nextDest = useMemo(
-    () => parseLoginNextPath(new URLSearchParams(window.location.search).get("next")),
-    [],
-  )
+  const nextDest = useMemo(() => {
+    const raw = searchParams.get("next")
+    if (raw) rememberLoginNext(raw)
+    stickSourceFromLoginNext(raw ?? readRememberedLoginNext())
+    const fallback = isLayoffHost()
+      ? onboardingDestination("WeKruit_Laid_Off")
+      : onboardingDestination(peekSource())
+    return parseLoginNextPath(raw, fallback)
+  }, [searchParams])
   const [email, setEmail] = useState(() => readStoredValue(EMAIL_STORAGE_KEY) ?? "")
   const [status, setStatus] = useState<
     "idle" | "google" | "linkedin" | "sending" | "sent" | "signing_in" | "error"
-  >(isCompletingLink ? "signing_in" : "idle")
+  >(() => {
+    if (isCompletingLink) return "signing_in"
+    try {
+      if (window.sessionStorage.getItem(OAUTH_PENDING_KEY) === "1") return "signing_in"
+    } catch {
+      // ignore private mode
+    }
+    return "idle"
+  })
   const [error, setError] = useState<string | null>(null)
   const finishInFlight = useRef(false)
 
@@ -449,15 +505,12 @@ export default function CandidateLogin() {
         verified.portalReady,
         verifySource,
       )
-      if (!isCandidateHost()) {
-        redirectToCandidatePortal(destination)
-        return
-      }
+      clearRememberedLoginNext()
       const dest = parseLoginNextPath(destination)
       navigate({ pathname: dest.pathname, search: dest.search }, { replace: true })
     } catch (err) {
       setStatus("error")
-      setError(err instanceof Error ? err.message : String(err))
+      setError(formatAuthError(err))
     } finally {
       finishInFlight.current = false
     }
@@ -466,30 +519,57 @@ export default function CandidateLogin() {
   useEffect(() => {
     if (isCompletingLink) return
     let cancelled = false
-    const unsubscribe = onAuthStateChanged(auth(), (user) => {
-      if (!cancelled && user) void finishSignedIn()
-    })
+
     void (async () => {
+      let oauthPending = false
       try {
+        oauthPending = window.sessionStorage.getItem(OAUTH_PENDING_KEY) === "1"
+        // Layoff Google uses popup (not redirect); drop stale redirect flags from older attempts.
+        if (isLayoffHost() && oauthPending) {
+          window.sessionStorage.removeItem(OAUTH_PENDING_KEY)
+          oauthPending = false
+        }
+
         const linkedinPayload = takeLinkedinAuthPayload()
         if (linkedinPayload?.ok) {
           await signInWithCustomToken(auth(), linkedinPayload.customToken)
-          if (!cancelled) await finishSignedIn()
+          if (!cancelled && auth().currentUser) await finishSignedIn()
           return
         }
         if (linkedinPayload && !linkedinPayload.ok) throw new Error(linkedinPayload.error)
-        const result = await getRedirectResult(auth())
-        if (!cancelled && result?.user) await finishSignedIn()
+
+        // Redirect result is consumed at app bootstrap (main.tsx import) before React mounts.
+        const result = await redirectResultPromise
+        if (cancelled) return
+
+        window.sessionStorage.removeItem(OAUTH_PENDING_KEY)
+        let user = result?.user ?? auth().currentUser
+        if (!user && oauthPending) {
+          user = await waitForAuthUser(5000)
+        }
+        if (user) {
+          await finishSignedIn()
+          return
+        }
+        if (oauthPending) {
+          setStatus("error")
+          setError(
+            "Google sign-in didn't finish after redirect. Click Try again — on layoff we open Google in a popup instead.",
+          )
+          return
+        }
+        setStatus("idle")
       } catch (err) {
+        window.sessionStorage.removeItem(OAUTH_PENDING_KEY)
         if (!cancelled) {
           setStatus("error")
-          setError(err instanceof Error ? err.message : String(err))
+          setError(formatAuthError(err))
         }
       }
     })()
+
     return () => {
       cancelled = true
-      unsubscribe()
     }
   }, [finishSignedIn, isCompletingLink])
 
@@ -514,7 +594,25 @@ export default function CandidateLogin() {
   }, [finishSignedIn, isCompletingLink])
 
   async function startProviderSignIn(kind: "google" | "linkedin") {
-    setStatus(kind); setError(null)
+    setStatus(kind)
+    setError(null)
+    rememberLoginNext(nextDest.to)
+    if (kind === "google" && isLayoffHost()) {
+      try {
+        await signInWithPopup(auth(), createGoogleProvider())
+        setStatus("signing_in")
+        await finishSignedIn()
+      } catch (err) {
+        setStatus("error")
+        setError(formatAuthError(err))
+      }
+      return
+    }
+    try {
+      window.sessionStorage.setItem(OAUTH_PENDING_KEY, "1")
+    } catch {
+      // ignore private mode
+    }
     if (kind === "linkedin") {
       const returnTo = `${window.location.origin}/login?next=${encodeURIComponent(nextDest.to)}`
       window.location.assign(`${LINKEDIN_AUTH_START_URL}?returnTo=${encodeURIComponent(returnTo)}`)
@@ -537,6 +635,7 @@ export default function CandidateLogin() {
         return
       }
       setStatus("sending")
+      rememberLoginNext(nextDest.to)
       await sendSignInLinkToEmail(auth(), nextEmail, {
         url: `${window.location.origin}/login?next=${encodeURIComponent(nextDest.to)}`,
         handleCodeInApp: true,
@@ -550,9 +649,35 @@ export default function CandidateLogin() {
   }
 
   const busy = status === "google" || status === "linkedin" || status === "sending" || status === "signing_in"
+  const onLayoff = isLayoffHost()
 
-  return (
-    <CandidateShell>
+  if (onLayoff) {
+    const layoffStatus =
+      status === "error"
+        ? "error"
+        : status === "signing_in"
+          ? "signing_in"
+          : status === "google"
+            ? "google"
+            : status === "linkedin"
+              ? "linkedin"
+              : "idle"
+    return (
+      <LayoffLoginCard
+        status={layoffStatus}
+        error={error}
+        busy={busy}
+        onGoogle={() => void startProviderSignIn("google")}
+        onLinkedIn={() => void startProviderSignIn("linkedin")}
+        onRetry={() => {
+          setError(null)
+          void startProviderSignIn("google")
+        }}
+      />
+    )
+  }
+
+  const loginBody = (
       <div className="wk-login">
         <div className="wk-container">
           <div className="wk-login__card">
@@ -567,8 +692,14 @@ export default function CandidateLogin() {
             <p className="wk-login__sub">
               {isCompletingLink
                 ? "One sec — confirming your email and pulling up your pipeline."
-                : "Sign in and we'll pull up your active pipeline. Magic-link, Google, or LinkedIn — your choice."}
+                : status === "signing_in"
+                  ? "One sec — confirming your sign-in and opening onboarding."
+                  : "Sign in and we'll pull up your active pipeline. Magic-link, Google, or LinkedIn — your choice."}
             </p>
+
+            {status === "signing_in" && !isCompletingLink ? (
+              <p className="wk-success">Signing you in…</p>
+            ) : null}
 
             {!isCompletingLink ? (
               <>
@@ -617,7 +748,19 @@ export default function CandidateLogin() {
             {status === "sent" ? (
               <p className="wk-success">Magic link sent to {cleanEmail(email)}.</p>
             ) : null}
-            {error ? <p className="wk-error">{error}</p> : null}
+            {error ? (
+              <p className="wk-error">
+                {error}{" "}
+                <button
+                  type="button"
+                  className="wk-link"
+                  style={{ background: "none", border: 0, padding: 0, cursor: "pointer" }}
+                  onClick={() => void finishSignedIn()}
+                >
+                  Try again
+                </button>
+              </p>
+            ) : null}
 
             <p className="wk-login__fine">
               First time? <Link to="/" className="wk-link">Start with Claire</Link> — same flow.
@@ -625,8 +768,9 @@ export default function CandidateLogin() {
           </div>
         </div>
       </div>
-    </CandidateShell>
   )
+
+  return <CandidateShell>{loginBody}</CandidateShell>
 }
 
 // ────────────────────────────────────────────────────────────────────────────
