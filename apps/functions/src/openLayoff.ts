@@ -180,28 +180,22 @@ export async function runRegisterLayoffCandidate(
     : WEKRUIT_LAYOFF_SOURCE
   const isLayoff = source === WEKRUIT_LAYOFF_SOURCE
 
-  if (isLayoff) {
-    if (!v.phone || !v.jobTitle || !v.location) {
-      throw new HttpsError("invalid-argument", "Missing required fields")
-    }
-  } else {
-    let oauthLinkedinSatisfied = false
-    const explicitIdEarly = cleanString(v.candidateId, 128)
-    if (explicitIdEarly) {
-      const earlySnap = await deps.db.collection(PA_COLLECTIONS.users).doc(explicitIdEarly).get()
-      const early = earlySnap.data() ?? {}
-      oauthLinkedinSatisfied =
-        early.linkedinOauthLinked === true ||
-        (typeof early.linkedinUrl === "string" && early.linkedinUrl.includes("/oauth-linked/"))
-    }
-    const hasProfilePath =
-      oauthLinkedinSatisfied ||
-      Boolean(cleanString(v.resumeFileName)) ||
-      Boolean(cleanString(v.linkedin, 500)) ||
-      Boolean(cleanString(v.personalWebsite, 500))
-    if (!hasProfilePath) {
-      throw new HttpsError("invalid-argument", "intake_profile_required")
-    }
+  let oauthLinkedinSatisfied = false
+  const explicitIdEarly = cleanString(v.candidateId, 128)
+  if (explicitIdEarly) {
+    const earlySnap = await deps.db.collection(PA_COLLECTIONS.users).doc(explicitIdEarly).get()
+    const early = earlySnap.data() ?? {}
+    oauthLinkedinSatisfied =
+      early.linkedinOauthLinked === true ||
+      (typeof early.linkedinUrl === "string" && early.linkedinUrl.includes("/oauth-linked/"))
+  }
+  const hasProfilePath =
+    oauthLinkedinSatisfied ||
+    Boolean(cleanString(v.resumeFileName)) ||
+    Boolean(cleanString(v.linkedin, 500)) ||
+    Boolean(cleanString(v.personalWebsite, 500))
+  if (!hasProfilePath) {
+    throw new HttpsError("invalid-argument", "intake_profile_required")
   }
 
   const now = serverTimestamp(deps)
@@ -324,8 +318,8 @@ export async function runRegisterLayoffCandidate(
     writePayload.displayName = `${v.firstName} ${v.lastName}`.trim() || v.firstName
     writePayload.layoffContext = {
       lastCompany: v.lastCompany,
-      jobTitle: v.jobTitle,
-      location: v.location,
+      jobTitle: cleanString(v.jobTitle, 200) ?? null,
+      location: cleanString(v.location, 200) ?? null,
       email: v.email,
       linkedin: v.linkedin ?? null,
       resumeFileName: v.resumeFileName ?? null,

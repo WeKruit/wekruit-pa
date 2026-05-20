@@ -10,10 +10,11 @@ import "../styles/wekruit-tokens.css"
 import { deriveFunction, registerCandidate } from "../lib/onboarding-api"
 import { uploadResume } from "../lib/onboarding-cv"
 import {
-  candidatePortalLoginUrl,
   getBrowserUid,
   isCandidateHost,
+  layoffSignupLoginPath,
   onboardingDestination,
+  redirectToCandidatePortal,
   rememberCandidateProfileSession,
 } from "../lib/browser-identity"
 import { resolveSource, SOURCE_RESOLVER_MARKER, type SignupSource } from "../lib/source"
@@ -63,6 +64,7 @@ export default function Onboarding() {
   const navigate = useNavigate()
   const source: SignupSource = useMemo(() => resolveSource(), [])
   const [authUser, setAuthUser] = useState<User | null | undefined>(undefined)
+  const [authReady, setAuthReady] = useState(false)
   const [verifyError, setVerifyError] = useState<string | null>(null)
   const [profile, setProfile] = useState<Profile>({})
   const [stage, setStage] = useState<Stage>("intake")
@@ -78,6 +80,7 @@ export default function Onboarding() {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth(), (nextUser) => {
       setAuthUser(nextUser)
+      setAuthReady(true)
     })
     return unsubscribe
   }, [])
@@ -96,11 +99,11 @@ export default function Onboarding() {
           setClaireConversationStarted(verified.claireConversationStarted)
           setPortalReady(verified.portalReady)
           if (verified.portalReady) {
-            if (!isCandidateHost()) {
-              redirectToCandidatePortal("/me")
-              return
+            if (isCandidateHost()) {
+              navigate("/me", { replace: true })
+            } else {
+              setStage("done")
             }
-            navigate("/me", { replace: true })
             return
           }
           if (verified.intakeComplete) {
@@ -122,7 +125,7 @@ export default function Onboarding() {
     }
   }, [authUser, navigate, source])
 
-  if (authUser === undefined || (authUser && !intakeChecked)) {
+  if (!authReady || authUser === undefined || (authUser && !intakeChecked)) {
     return (
       <main>
         <MinimalNav />
@@ -154,9 +157,8 @@ export default function Onboarding() {
         lastCompany: formData.lastCompany!,
         ...(isLayoff
           ? {
-              jobTitle: formData.jobTitle!,
-              location: formData.location!,
-              phone: formData.phone!,
+              jobTitle: formData.jobTitle?.trim() || undefined,
+              location: formData.location?.trim() || undefined,
             }
           : {}),
         consent: !!formData.consent,
@@ -392,12 +394,9 @@ function MinimalNav() {
             Sign in
           </Link>
         ) : (
-          <a
-            href={candidatePortalLoginUrl("/onboarding?source=layoff")}
-            style={{ fontSize: 14, color: "var(--ink-2)", textDecoration: "none" }}
-          >
+          <Link to={layoffSignupLoginPath()} style={{ fontSize: 14, color: "var(--ink-2)", textDecoration: "none" }}>
             Sign in
-          </a>
+          </Link>
         )}
       </div>
     </header>
@@ -599,7 +598,6 @@ function FormIntake({
     lastCompany: "",
     jobTitle: "",
     location: "",
-    phone: "",
     consent: false,
     resume: null,
   })
@@ -612,11 +610,6 @@ function FormIntake({
     ;(["firstName", "lastName", "email", "lastCompany"] as const).forEach((k) => {
       if (!v[k]) e[k] = "Required"
     })
-    if (isLayoff) {
-      ;(["jobTitle", "location", "phone"] as const).forEach((k) => {
-        if (!v[k]) e[k] = "Required"
-      })
-    }
     if (!v.consent) e.consent = "Required"
     const hasResume = Boolean(v.resume)
     const hasLinkedin = skipLinkedinField || Boolean(v.linkedin?.trim())
@@ -627,16 +620,13 @@ function FormIntake({
         : "Add a resume, LinkedIn, or personal site"
     }
     if (v.email && !v.email.includes("@")) e.email = "Looks off"
-    if (v.phone && v.phone.replace(/\D/g, "").length < 10) e.phone = "Need 10+ digits"
     setErr(e)
     if (Object.keys(e).length === 0) {
       await onDone({ ...v, function: deriveFunction(v.jobTitle || "") })
     }
   }
 
-  const requiredKeys = isLayoff
-    ? (["firstName", "lastName", "email", "lastCompany", "jobTitle", "location", "phone"] as const)
-    : (["firstName", "lastName", "email", "lastCompany"] as const)
+  const requiredKeys = ["firstName", "lastName", "email", "lastCompany"] as const
   const profilePathSatisfied =
     Boolean(v.resume) ||
     Boolean(v.personalWebsite?.trim()) ||
@@ -666,7 +656,7 @@ function FormIntake({
       </div>
       <p style={{ marginTop: 4, marginBottom: 18, fontSize: 14, color: "var(--ink-2)" }}>
         {isLayoff
-          ? "Required to register. The moment you submit, we'll text the number you give us."
+          ? "Tell us the basics. After you submit, you'll open iMessage to say hello to Claire — that's when we link your phone."
           : skipLinkedinField
             ? "Tell us who you are and share a resume or site (LinkedIn is already linked from sign-in). Next you'll open iMessage to talk to Claire."
             : "Tell us who you are and share a resume, LinkedIn, or site. Next you'll open iMessage to talk to Claire."}
@@ -686,20 +676,19 @@ function FormIntake({
         />
         {isLayoff && (
           <>
-            <Field label="Job title there" value={v.jobTitle!} onChange={(x) => set("jobTitle", x)} err={err.jobTitle} placeholder="Senior PM, Reality Labs" />
-            <Field label="Location" value={v.location!} onChange={(x) => set("location", x)} err={err.location} placeholder="San Francisco" />
-            <Field span={2} label="Mobile (for SMS chat)" value={v.phone!} onChange={(x) => set("phone", x)} err={err.phone} placeholder="+1 (415) 555-0182" type="tel" hint="We text you right after you submit." />
+            <Field label="Job title there" value={v.jobTitle!} onChange={(x) => set("jobTitle", x)} err={err.jobTitle} placeholder="Senior PM, Reality Labs" optional />
+            <Field label="Location" value={v.location!} onChange={(x) => set("location", x)} err={err.location} placeholder="San Francisco" optional />
           </>
         )}
         {!skipLinkedinField && (
-          <Field span={2} label="LinkedIn profile URL" value={v.linkedin!} onChange={(x) => set("linkedin", x)} placeholder="linkedin.com/in/maya-chen" />
+          <Field span={2} label="LinkedIn profile URL" value={v.linkedin!} onChange={(x) => set("linkedin", x)} placeholder="linkedin.com/in/maya-chen" optional />
         )}
         {skipLinkedinField && (
           <p style={{ gridColumn: "1 / -1", margin: 0, fontSize: 13, color: "var(--ink-3)" }}>
             LinkedIn is linked from your sign-in — no need to paste your profile URL again.
           </p>
         )}
-        <Field span={2} label="Personal website" value={v.personalWebsite!} onChange={(x) => set("personalWebsite", x)} placeholder="https://yoursite.com" />
+        <Field span={2} label="Personal website" value={v.personalWebsite!} onChange={(x) => set("personalWebsite", x)} placeholder="https://yoursite.com" optional />
         {err.profilePath && (
           <p style={{ gridColumn: "1 / -1", margin: 0, fontSize: 13, color: "var(--danger)" }}>{err.profilePath}</p>
         )}
@@ -841,6 +830,7 @@ function Field({
   type,
   span,
   autoFocus,
+  optional,
 }: {
   label: string
   value: string
@@ -851,6 +841,7 @@ function Field({
   type?: string
   span?: 1 | 2
   autoFocus?: boolean
+  optional?: boolean
 }) {
   return (
     <label style={{ gridColumn: span === 2 ? "1 / -1" : "auto", display: "flex", flexDirection: "column", gap: 6 }}>
@@ -866,7 +857,11 @@ function Field({
         }}
       >
         <span>{label}</span>
-        {err && <span style={{ color: "var(--danger)" }}>{err}</span>}
+        {err ? (
+          <span style={{ color: "var(--danger)" }}>{err}</span>
+        ) : optional ? (
+          <span style={{ color: "var(--ink-3)", fontWeight: 400 }}>it's optional</span>
+        ) : null}
       </span>
       <input
         type={type || "text"}

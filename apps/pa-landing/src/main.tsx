@@ -2,6 +2,7 @@ import React from "react"
 import ReactDOM from "react-dom/client"
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import "./lib/auth-redirect-bootstrap.js"
 import Landing from "./pages/Landing.js"
 import LayoffLanding from "./pages/LayoffLanding.js"
 import Legal from "./pages/Legal.js"
@@ -14,7 +15,6 @@ import PublicJobCv from "./pages/PublicJobCv.js"
 import OpenJobs from "./pages/OpenJobs.js"
 import Onboarding from "./pages/Onboarding.js"
 import EmployerSignup from "./pages/EmployerSignup.js"
-import LayoffAuthRedirect from "./pages/LayoffAuthRedirect.js"
 
 const root = document.getElementById("root")
 if (!root) throw new Error("Missing #root element")
@@ -44,12 +44,13 @@ const queryClient = new QueryClient({
   },
 })
 
-// Layoff host: landing, login-first (→ candidate origin for Firebase Auth),
-// onboarding intake, employer signup. No /me — portal lives on candidate host.
+// Layoff host: landing, login, onboarding intake, employer signup — full flow
+// stays on layoff.wekruit.com (Firebase Auth session is per-origin on this host).
+// Candidate portal (/me) lives on candidate.wekruit.com only.
 const layoffRoutes = (
   <Routes>
     <Route path="/" element={<HomeLanding />} />
-    <Route path="/login" element={<LayoffAuthRedirect />} />
+    <Route path="/login" element={<CandidateLogin />} />
     <Route path="/onboarding" element={<Onboarding />} />
     <Route path="/employer" element={<EmployerSignup />} />
     <Route path="*" element={<Navigate to="/" replace />} />

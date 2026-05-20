@@ -67,6 +67,14 @@ test("parseLoginNextPath defaults bare login to onboarding", () => {
   assert.equal(next.isOnboarding, true)
 })
 
+test("parseLoginNextPath splits layoff fallback pathname and search", () => {
+  const next = parseLoginNextPath(null, "/onboarding?source=layoff")
+  assert.equal(next.pathname, "/onboarding")
+  assert.equal(next.search, "?source=layoff")
+  assert.equal(next.to, "/onboarding?source=layoff")
+  assert.equal(next.isOnboarding, true)
+})
+
 test("resolvePostLoginDestination blocks /me until portal ready", () => {
   const meNext = parseLoginNextPath("/me")
   const onboardingNext = parseLoginNextPath("/onboarding?source=layoff")

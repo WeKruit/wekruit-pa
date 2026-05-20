@@ -3,6 +3,7 @@ import { peekSource, type SignupSource } from "./source.js"
 export const GLOBAL_UID_KEY = "wkr_uid"
 export const CLAIM_EMAIL_KEY = "wkr_claim_email"
 export const ONBOARDING_CANDIDATE_ID_KEY = "wkr_candidate_id"
+export const LOGIN_NEXT_SESSION_KEY = "wkr_login_next"
 
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 180
 export const CANDIDATE_ORIGIN = "https://candidate.wekruit.com"
@@ -101,6 +102,41 @@ export function isCandidatePortalPath(pathname: string): boolean {
   return pathname === "/me" || pathname.startsWith("/me/")
 }
 
+function splitAppPath(path: string): { pathname: string; search: string; to: string } {
+  const q = path.indexOf("?")
+  const pathname = (q >= 0 ? path.slice(0, q) : path) || "/onboarding"
+  const search = q >= 0 ? path.slice(q) : ""
+  return { pathname, search, to: `${pathname}${search}` }
+}
+
+/** Persist post-login destination across OAuth redirects that strip query params. */
+export function rememberLoginNext(next: string): void {
+  const clean = next.trim()
+  if (!clean.startsWith("/") || clean.startsWith("//")) return
+  try {
+    window.sessionStorage.setItem(LOGIN_NEXT_SESSION_KEY, clean)
+  } catch {
+    // ignore private mode
+  }
+}
+
+export function readRememberedLoginNext(): string | null {
+  try {
+    const value = window.sessionStorage.getItem(LOGIN_NEXT_SESSION_KEY)
+    return value?.trim() || null
+  } catch {
+    return null
+  }
+}
+
+export function clearRememberedLoginNext(): void {
+  try {
+    window.sessionStorage.removeItem(LOGIN_NEXT_SESSION_KEY)
+  } catch {
+    // ignore
+  }
+}
+
 /**
  * Post-login routing (Adam 2026-05-20): only honor `/me*` when portal-ready
  * (inbound Claire iMessage + resume on file); otherwise send to onboarding.
@@ -127,17 +163,19 @@ export function parseLoginNextPath(
   raw: string | null | undefined,
   fallback = onboardingDestination(peekSource()),
 ): LoginNextDestination {
-  if (!raw || !raw.startsWith("/") || raw.startsWith("//")) {
+  const remembered =
+    !raw || !raw.startsWith("/") || raw.startsWith("//") ? readRememberedLoginNext() : null
+  const candidate = raw && raw.startsWith("/") && !raw.startsWith("//") ? raw : remembered
+  if (!candidate) {
+    const split = splitAppPath(fallback)
     return {
-      pathname: fallback,
-      search: "",
-      to: fallback,
-      isOnboarding: fallback === "/onboarding",
+      ...split,
+      isOnboarding: split.pathname === "/onboarding",
     }
   }
   try {
-    const url = new URL(raw, CANDIDATE_ORIGIN)
-    const pathname = url.pathname || fallback
+    const url = new URL(candidate, CANDIDATE_ORIGIN)
+    const pathname = url.pathname || "/onboarding"
     const search = url.search
     return {
       pathname,
@@ -146,14 +184,10 @@ export function parseLoginNextPath(
       isOnboarding: pathname === "/onboarding",
     }
   } catch {
-    const q = raw.indexOf("?")
-    const pathname = (q >= 0 ? raw.slice(0, q) : raw) || fallback
-    const search = q >= 0 ? raw.slice(q) : ""
+    const split = splitAppPath(candidate)
     return {
-      pathname,
-      search,
-      to: `${pathname}${search}`,
-      isOnboarding: pathname === "/onboarding",
+      ...split,
+      isOnboarding: split.pathname === "/onboarding",
     }
   }
 }
@@ -180,9 +214,8 @@ export function candidatePortalLoginUrl(next = "/me"): string {
 }
 
 /**
- * Leave layoff (or any non-candidate host) for the candidate portal.
- * Always routes through /login on candidate.wekruit.com so auth cookies attach
- * to the correct Firebase origin before /me or /onboarding.
+ * Optional cross-host hop to candidate.wekruit.com (e.g. layoff done → /me pipeline).
+ * Layoff login/onboarding stay on layoff.wekruit.com — do not use for auth entry.
  */
 export function redirectToCandidatePortal(next = "/me"): void {
   window.location.replace(candidatePortalLoginUrl(next))
@@ -197,6 +230,8 @@ export function onboardingDestination(source: SignupSource = peekSource()): stri
 export function layoffSignupLoginPath(): string {
   return `/login?next=${encodeURIComponent(onboardingDestination("WeKruit_Laid_Off"))}`
 }
+
+export function candidateProfileDestination(): string {
   if (isCandidateHost()) return candidateLoginPath(candidateProfilePath())
   return candidatePortalLoginUrl(candidateProfilePath())
 }
