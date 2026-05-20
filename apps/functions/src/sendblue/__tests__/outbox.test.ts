@@ -129,8 +129,10 @@ function makeFakeDb(
 // Sendblue client mock
 function makeSendblueMock(opts: { throwError?: Error; uuid?: string } = {}) {
   let calls = 0
-  const sendImessage = async () => {
+  const sendCalls: Array<Record<string, unknown>> = []
+  const sendImessage = async (input: Record<string, unknown>) => {
     calls++
+    sendCalls.push(input)
     if (opts.throwError) throw opts.throwError
     return {
       type: "message" as const,
@@ -147,7 +149,7 @@ function makeSendblueMock(opts: { throwError?: Error; uuid?: string } = {}) {
   const sendTypingIndicator = async () => {
     calls++
   }
-  return { sendImessage, sendTypingIndicator, get calls() { return calls } }
+  return { sendImessage, sendTypingIndicator, get calls() { return calls }, get sendCalls() { return sendCalls } }
 }
 
 const ENV_KEYS = [
@@ -215,9 +217,38 @@ describe("paSendblueOutboxHandler", () => {
     })
 
     assert.equal(sb.calls, 1)
+    assert.equal(sb.sendCalls[0]!.userId, USER.id)
+    assert.ok(sb.sendCalls[0]!.db)
     const finalDoc = outbound.get("doc-1")!
     assert.equal(finalDoc.status, "sent")
     assert.equal(finalDoc.messageHandle, "uuid-mock-1")
+  })
+
+  it("Test 1a: user senderNumber is passed as explicit Sendblue fromNumber", async () => {
+    const baseRow: DocData = {
+      status: "pending",
+      userId: USER.id,
+      toE164: ALLOWED_PEER,
+      body: "hello",
+      idempotencyKey: "out-test-1a",
+      createdAt: new Date().toISOString(),
+    }
+    const stickyUser = { ...USER, senderNumber: "+13054507715" }
+    const { db, outbound } = makeFakeDb({ "doc-1a": baseRow }, { [USER.id]: stickyUser })
+    const sb = makeSendblueMock()
+
+    await paSendblueOutboxHandler(makeEvent("doc-1a", baseRow) as never, {
+      db: db as never,
+      sendblueClient: sb,
+      now: () => new Date("2026-04-27T20:00:00Z"),
+      log: () => {},
+      appendMessage: async () => {},
+      getUser: async () => stickyUser as never,
+      getOrCreateSession: async () => ({ id: "s-1", userId: USER.id, externalChatId: "x", channel: "imessage" } as never),
+    })
+
+    assert.equal(sb.sendCalls[0]!.fromNumber, "+13054507715")
+    assert.equal(outbound.get("doc-1a")!.status, "sent")
   })
 
   it("Test 1b: unapproved legacy pa-outbound row is blocked before Sendblue", async () => {

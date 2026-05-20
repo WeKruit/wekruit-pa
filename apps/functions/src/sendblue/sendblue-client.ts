@@ -94,13 +94,18 @@ export type SendImessageInput = {
   to: string
   content: string
   statusCallback?: string
+  /** Explicit DB-selected sender line. Used for sticky/admin-internal users. */
+  fromNumber?: string
+  /**
+   * Default true. Public user-facing outbox sends set this false so an empty
+   * public pool cannot silently fall back to an admin/internal env line.
+   */
+  allowEnvFromNumberFallback?: boolean
   /**
    * v1.9 G1 fix — optional userId for pool-aware outbound routing.
    * When provided AND `pa-config/sendblue-pool` doc has active numbers,
    * `from_number` is picked deterministically by `hash(userId) mod activeN`.
-   * Same userId → same from-number (thread continuity preserved). Falls
-   * back to `creds.fromNumber` (env SENDBLUE_FROM_NUMBER) when pool empty
-   * or userId not provided.
+   * Same userId → same public from-number (thread continuity preserved).
    */
   userId?: string
   /**
@@ -133,7 +138,8 @@ export async function sendImessage(
   }
 
   // v1.9 G1 fix — pool-aware outbound routing when userId provided.
-  let resolvedFromNumber = creds.fromNumber
+  const allowEnvFallback = input.allowEnvFromNumberFallback !== false
+  let resolvedFromNumber = input.fromNumber?.trim() || (allowEnvFallback ? creds.fromNumber : undefined)
   if (input.userId) {
     try {
       const { loadSendbluePool, pickFromNumber } = await import("./pool.js")
@@ -145,7 +151,7 @@ export async function sendImessage(
         resolvedFromNumber = picked
       }
     } catch (err) {
-      // Pool lookup failure → keep env fallback. Non-fatal.
+      // Pool lookup failure → keep explicit/allowed fallback. Non-fatal.
       // (Could log here but sendImessage doesn't have a logger seam.)
     }
   }

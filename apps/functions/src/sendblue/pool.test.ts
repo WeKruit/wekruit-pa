@@ -69,6 +69,48 @@ describe("pickFromNumber", () => {
     }
     assert.equal(pickFromNumber(pool, "anyuser"), "+2")
   })
+  it("excludes admin and internal numbers from user-facing routing by default", () => {
+    const pool = {
+      numbers: [
+        { number: "+13054507715", status: "active" as const, audience: "admin" as const, adminOnly: true },
+        { number: "+15550001111", status: "active" as const, audience: "internal" as const },
+        { number: "+17174919939", status: "active" as const, audience: "public" as const },
+      ],
+    }
+    for (let i = 0; i < 20; i++) {
+      assert.equal(pickFromNumber(pool, `user_${i}`), "+17174919939")
+    }
+  })
+  it("can include internal numbers only when explicitly requested", () => {
+    const pool = {
+      numbers: [
+        { number: "+13054507715", status: "active" as const, audience: "admin" as const, adminOnly: true },
+      ],
+    }
+    assert.equal(pickFromNumber(pool, "admin-user"), null)
+    assert.equal(pickFromNumber(pool, "admin-user", { includeInternal: true }), "+13054507715")
+  })
+  it("honors new-user caps when requested", () => {
+    const pool = {
+      numbers: [
+        {
+          number: "+17174919939",
+          status: "active" as const,
+          audience: "public" as const,
+          newUserCap: 200,
+          assignedNewUsers: 200,
+        },
+        {
+          number: "+15550002222",
+          status: "active" as const,
+          audience: "public" as const,
+          newUserCap: 200,
+          assignedNewUsers: 199,
+        },
+      ],
+    }
+    assert.equal(pickFromNumber(pool, "new-user", { requireNewUserCapacity: true }), "+15550002222")
+  })
   it("distributes across multiple users", () => {
     const pool = {
       numbers: [

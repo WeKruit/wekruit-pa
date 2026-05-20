@@ -237,7 +237,7 @@ export async function runRegisterLayoffCandidate(
 
   // Sticky from-number — deterministic hash by candidateId.
   const pool = await (deps.loadSendbluePool ?? loadSendbluePool)(deps.db)
-  const fromNumber = pickFromNumber(pool, candidateId) ?? process.env.SENDBLUE_FROM_NUMBER ?? ""
+  const fromNumber = pickFromNumber(pool, candidateId, { requireNewUserCapacity: !isReregistration }) ?? ""
   const groupId = fromNumber ? sendblueGroupId({ number: fromNumber, status: "active" }) : "unassigned"
 
   // Single source of truth — pa-users.

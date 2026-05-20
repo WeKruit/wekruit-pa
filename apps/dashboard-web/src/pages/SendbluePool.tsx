@@ -11,8 +11,13 @@ import { Badge, ErrorState, LoadingState, PageHeader, Panel } from "../component
 
 interface PoolNumber {
   number: string
-  status: "active" | "paused"
+  status: "active" | "warmup" | "paused" | "throttled" | "degraded" | string
+  audience?: "public" | "admin" | "internal" | "developer" | string
+  adminOnly?: boolean
   capacity?: number
+  dailySendCap?: number
+  newUserCap?: number
+  assignedNewUsers?: number
 }
 
 interface PoolConfig {
@@ -56,7 +61,7 @@ export default function SendbluePool() {
   function addNumber() {
     setPool((p) => ({
       ...p,
-      numbers: [...p.numbers, { number: "", status: "paused", capacity: 1000 }],
+      numbers: [...p.numbers, { number: "", status: "paused", audience: "public", capacity: 1000 }],
     }))
   }
   function removeNumber(i: number) {
@@ -90,7 +95,7 @@ export default function SendbluePool() {
     <div>
       <PageHeader
         title="Sendblue Pool"
-        description="Outbound iMessage number rotation. sendImessage routes per user via hash(userId) mod activeNumbers. Empty pool falls back to SENDBLUE_FROM_NUMBER env."
+        description="Outbound iMessage number rotation. Candidate-facing routes use active public numbers only; admin/internal lines stay hidden from public entry points."
       />
       <Panel title={`${pool.numbers.length} number(s) · ${active} active`}>
         <table style={{ width: "100%", fontSize: "0.9em" }}>
@@ -98,6 +103,10 @@ export default function SendbluePool() {
             <tr>
               <th style={{ textAlign: "left" }}>Number (E.164)</th>
               <th style={{ textAlign: "left" }}>Status</th>
+              <th style={{ textAlign: "left" }}>Audience</th>
+              <th style={{ textAlign: "left" }}>Admin only</th>
+              <th style={{ textAlign: "left" }}>New-user cap</th>
+              <th style={{ textAlign: "left" }}>Assigned</th>
               <th style={{ textAlign: "left" }}>Daily cap</th>
               <th></th>
             </tr>
@@ -117,12 +126,49 @@ export default function SendbluePool() {
                   <select
                     value={n.status}
                     onChange={(e) =>
-                      updateNumber(i, { status: e.target.value as "active" | "paused" })
+                      updateNumber(i, { status: e.target.value })
                     }
                   >
                     <option value="active">active</option>
+                    <option value="warmup">warmup</option>
                     <option value="paused">paused</option>
+                    <option value="throttled">throttled</option>
+                    <option value="degraded">degraded</option>
                   </select>
+                </td>
+                <td>
+                  <select
+                    value={n.audience ?? "public"}
+                    onChange={(e) => updateNumber(i, { audience: e.target.value })}
+                  >
+                    <option value="public">public</option>
+                    <option value="admin">admin</option>
+                    <option value="internal">internal</option>
+                    <option value="developer">developer</option>
+                  </select>
+                </td>
+                <td>
+                  <input
+                    type="checkbox"
+                    checked={n.adminOnly === true}
+                    onChange={(e) => updateNumber(i, { adminOnly: e.target.checked })}
+                  />
+                </td>
+                <td>
+                  <input
+                    type="number"
+                    value={n.newUserCap ?? ""}
+                    onChange={(e) => updateNumber(i, { newUserCap: e.target.value === "" ? undefined : parseInt(e.target.value, 10) || 0 })}
+                    style={{ width: "100px" }}
+                  />
+                </td>
+                <td>
+                  <input
+                    type="number"
+                    value={n.assignedNewUsers ?? ""}
+                    onChange={(e) => updateNumber(i, { assignedNewUsers: e.target.value === "" ? undefined : parseInt(e.target.value, 10) || 0 })}
+                    style={{ width: "100px" }}
+                  />
                 </td>
                 <td>
                   <input

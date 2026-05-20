@@ -113,4 +113,18 @@ describe("selectSendblueCapacityGroup", () => {
     assert.equal(result.reason, "missing_capacity")
     assert.equal(result.capacitySnapshot.dailyCap, 0)
   })
+
+  it("excludes admin and internal numbers from user-facing capacity selection", () => {
+    const result = select({
+      numbers: [
+        { groupId: "admin", number: "+13054507715", status: "active", capacity: 10, audience: "admin", adminOnly: true },
+        { groupId: "internal", number: "+15550001111", status: "active", capacity: 10, audience: "internal" },
+        { groupId: "public", number: "+17174919939", status: "active", capacity: 200, audience: "public" },
+      ],
+    })
+
+    assert.equal(result.ok, true)
+    assert.equal(result.groupId, "public")
+    assert.equal(result.fromNumber, "+17174919939")
+  })
 })

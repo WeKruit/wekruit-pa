@@ -49,12 +49,34 @@ function hashStringToUint(s: string): number {
 
 interface PoolNumber {
   number: string
-  status: "active" | "paused"
+  status: string
+  audience?: string
+  adminOnly?: boolean
+  newUserCap?: number
+  assignedNewUsers?: number
 }
 
-function pickPoolNumber(pool: PoolNumber[] | null, key: string): string | null {
+function isUserAccessiblePoolNumber(n: PoolNumber): boolean {
+  if (n.adminOnly === true) return false
+  const audience = typeof n.audience === "string" ? n.audience.trim().toLowerCase() : ""
+  return audience !== "admin" && audience !== "internal" && audience !== "developer"
+}
+
+function hasNewUserCapacity(n: PoolNumber): boolean {
+  if (!Number.isInteger(n.newUserCap) || n.newUserCap === undefined || n.newUserCap < 0) return true
+  const used = Number.isInteger(n.assignedNewUsers) ? Math.max(0, n.assignedNewUsers ?? 0) : 0
+  return used < n.newUserCap
+}
+
+function pickPoolNumber(pool: PoolNumber[] | null, key: string, options: { requireNewUserCapacity?: boolean } = {}): string | null {
   if (!pool || pool.length === 0) return null
-  const active = pool.filter((n) => n.status === "active" && n.number)
+  const active = pool.filter(
+    (n) =>
+      n.status === "active" &&
+      n.number &&
+      isUserAccessiblePoolNumber(n) &&
+      (!options.requireNewUserCapacity || hasNewUserCapacity(n))
+  )
   if (active.length === 0) return null
   return active[hashStringToUint(key) % active.length].number
 }
@@ -343,7 +365,7 @@ export default function PublicJob() {
   // v1.9 P88 — pool hash-by-requestedUserId; mirrors server-side selector
   // so candidate's outbound first message lands on the SAME pool number the
   // server will use for replies.
-  const sendNumber = pickPoolNumber(pool, requestedUserId)
+  const sendNumber = pickPoolNumber(pool, requestedUserId, { requireNewUserCapacity: true })
   const smsHref = sendNumber
     ? `sms:${sendNumber}?body=${encodeURIComponent(smsBody)}`
     : null

@@ -1,15 +1,15 @@
 /**
  * v1.9 Phase 88 — pool routing integration test.
  *
- * Verifies the production 2-number pool config:
- *   +13054507716 (active, cap 10)
- *   +14243201960 (active, cap 10)
+ * Verifies the DB-driven pool contract:
+ *   - admin/internal numbers stay configured but hidden from candidates
+ *   - public rollout numbers receive user-facing traffic
  *
  * Asserts:
- *   - hash-by-userId distributes both numbers receive traffic
+ *   - public users route only to candidate-accessible numbers
  *   - same userId → same number every call (sticky / thread continuity)
  *   - paused numbers never routed to
- *   - empty pool returns null (caller falls back to env SENDBLUE_FROM_NUMBER)
+ *   - empty pool returns null
  */
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
@@ -17,24 +17,19 @@ import { pickFromNumber, type SendbluePoolConfig } from "./pool.js"
 
 const PROD_POOL: SendbluePoolConfig = {
   numbers: [
-    { number: "+13054507716", status: "active", capacity: 10 },
-    { number: "+14243201960", status: "active", capacity: 10 },
+    { number: "+13054507715", status: "active", capacity: 10, audience: "admin", adminOnly: true },
+    { number: "+17174919939", status: "active", capacity: 200, audience: "public", newUserCap: 200, assignedNewUsers: 0 },
   ],
 }
 
 describe("production pool routing (P88 integration)", () => {
-  it("distributes 100 users across both numbers", () => {
+  it("routes user-facing traffic only to the public number", () => {
     const counts = new Map<string, number>()
     for (let i = 0; i < 100; i++) {
       const n = pickFromNumber(PROD_POOL, `userid_${i}`)
       counts.set(n!, (counts.get(n!) ?? 0) + 1)
     }
-    assert.equal(counts.size, 2, "both pool numbers must receive traffic")
-    for (const [num, count] of counts) {
-      // djb2 hash mod 2 is not perfectly 50/50; assert each gets at least 25
-      // out of 100 so we catch hash bias regressions.
-      assert.ok(count >= 25, `${num} received only ${count}/100 — distribution bias`)
-    }
+    assert.deepEqual([...counts.entries()], [["+17174919939", 100]])
   })
 
   it("same userId → same number across 1000 calls (sticky routing)", () => {
@@ -47,12 +42,12 @@ describe("production pool routing (P88 integration)", () => {
   it("paused number filtered out", () => {
     const paused: SendbluePoolConfig = {
       numbers: [
-        { number: "+13054507716", status: "active", capacity: 10 },
-        { number: "+14243201960", status: "paused", capacity: 10 },
+        { number: "+13054507715", status: "active", capacity: 10, audience: "admin", adminOnly: true },
+        { number: "+17174919939", status: "paused", capacity: 200, audience: "public" },
       ],
     }
     for (let i = 0; i < 50; i++) {
-      assert.equal(pickFromNumber(paused, `u${i}`), "+13054507716")
+      assert.equal(pickFromNumber(paused, `u${i}`), null)
     }
   })
 
@@ -64,26 +59,23 @@ describe("production pool routing (P88 integration)", () => {
   it("re-adding a paused number resumes routing to it", () => {
     const before: SendbluePoolConfig = {
       numbers: [
-        { number: "+13054507716", status: "active", capacity: 10 },
-        { number: "+14243201960", status: "paused", capacity: 10 },
+        { number: "+13054507715", status: "active", capacity: 10, audience: "admin", adminOnly: true },
+        { number: "+17174919939", status: "paused", capacity: 200, audience: "public" },
       ],
     }
     const after: SendbluePoolConfig = {
       numbers: [
-        { number: "+13054507716", status: "active", capacity: 10 },
-        { number: "+14243201960", status: "active", capacity: 10 },
+        { number: "+13054507715", status: "active", capacity: 10, audience: "admin", adminOnly: true },
+        { number: "+17174919939", status: "active", capacity: 200, audience: "public" },
       ],
     }
-    // pre-flip: everyone goes to 305
+    // pre-flip: no candidate-visible number
     for (let i = 0; i < 20; i++) {
-      assert.equal(pickFromNumber(before, `u${i}`), "+13054507716")
+      assert.equal(pickFromNumber(before, `u${i}`), null)
     }
-    // post-flip: ~half route to 424
-    const postCounts = new Map<string, number>()
+    // post-flip: users route to the public rollout number
     for (let i = 0; i < 20; i++) {
-      const n = pickFromNumber(after, `u${i}`)
-      postCounts.set(n!, (postCounts.get(n!) ?? 0) + 1)
+      assert.equal(pickFromNumber(after, `u${i}`), "+17174919939")
     }
-    assert.ok((postCounts.get("+14243201960") ?? 0) >= 5, "424 receives traffic after activation")
   })
 })

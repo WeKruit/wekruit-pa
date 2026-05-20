@@ -80,7 +80,11 @@ interface PaJobDoc {
 
 interface PoolNumber {
   number: string
-  status: "active" | "paused"
+  status: string
+  audience?: string
+  adminOnly?: boolean
+  newUserCap?: number
+  assignedNewUsers?: number
 }
 
 type LoginStatus = "idle" | "google" | "linkedin" | "email" | "sent" | "error"
@@ -113,9 +117,27 @@ function hashStringToUint(s: string): number {
   return h
 }
 
-function pickPoolNumber(pool: PoolNumber[] | null, key: string): string | null {
+function isUserAccessiblePoolNumber(n: PoolNumber): boolean {
+  if (n.adminOnly === true) return false
+  const audience = typeof n.audience === "string" ? n.audience.trim().toLowerCase() : ""
+  return audience !== "admin" && audience !== "internal" && audience !== "developer"
+}
+
+function hasNewUserCapacity(n: PoolNumber): boolean {
+  if (!Number.isInteger(n.newUserCap) || n.newUserCap === undefined || n.newUserCap < 0) return true
+  const used = Number.isInteger(n.assignedNewUsers) ? Math.max(0, n.assignedNewUsers ?? 0) : 0
+  return used < n.newUserCap
+}
+
+function pickPoolNumber(pool: PoolNumber[] | null, key: string, options: { requireNewUserCapacity?: boolean } = {}): string | null {
   if (!pool || pool.length === 0) return null
-  const active = pool.filter((n) => n.status === "active" && n.number)
+  const active = pool.filter(
+    (n) =>
+      n.status === "active" &&
+      n.number &&
+      isUserAccessiblePoolNumber(n) &&
+      (!options.requireNewUserCapacity || hasNewUserCapacity(n))
+  )
   if (active.length === 0) return null
   return active[hashStringToUint(key) % active.length].number
 }
@@ -496,7 +518,7 @@ export default function PublicJob() {
   const resumeGateValue = resumeGate.status === "ready" ? resumeGate.gate : null
   const uploadUserId = resumeGateValue?.candidateId
   const smsUserId = resumeGateValue?.candidateId ?? requestedUserId
-  const sendNumber = pickPoolNumber(pool, smsUserId)
+  const sendNumber = pickPoolNumber(pool, smsUserId, { requireNewUserCapacity: true })
   const smsBody = `WeKruit_${jobId}_${smsUserId}_Job`
   const smsHref = sendNumber ? `sms:${sendNumber}?body=${encodeURIComponent(smsBody)}` : null
 

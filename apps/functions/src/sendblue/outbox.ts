@@ -71,6 +71,11 @@ type SendblueClientLike = {
   sendTypingIndicator: typeof defaultSendTypingIndicator
 }
 
+type OutboxUser = {
+  id: string
+  senderNumber?: unknown
+}
+
 export type OutboxDeps = {
   db: Firestore
   sendblueClient: SendblueClientLike
@@ -79,7 +84,7 @@ export type OutboxDeps = {
   // Loose signatures so production injects from @pa/pa-persistence without
   // type-narrowing friction. Internal call sites cast at use.
   appendMessage?: (db: Firestore, input: never) => Promise<unknown>
-  getUser?: (db: Firestore, userId: string) => Promise<{ id: string } | null>
+  getUser?: (db: Firestore, userId: string) => Promise<OutboxUser | null>
   getOrCreateSession?: (
     db: Firestore,
     userId: string,
@@ -419,8 +424,9 @@ export async function paSendblueOutboxHandler(
   }
 
   // ---- 4. Resolve user, optionally append transcript --------------------
+  let user: OutboxUser | null = null
   if (deps.getUser) {
-    const user = await deps.getUser(deps.db, userId)
+    user = await deps.getUser(deps.db, userId)
     if (!user) {
       await ref.set(
         {
@@ -520,9 +526,22 @@ export async function paSendblueOutboxHandler(
 
   // ---- 6. POST Sendblue REST -------------------------------------------
   try {
+    const outboundFromNumber =
+      typeof data.fromNumber === "string" && data.fromNumber.trim()
+        ? data.fromNumber.trim()
+        : undefined
+    const userSenderNumber =
+      typeof user?.senderNumber === "string" && user.senderNumber.trim()
+        ? user.senderNumber.trim()
+        : undefined
+    const explicitFromNumber = outboundFromNumber ?? userSenderNumber
     const response: SendblueSendResponse = await deps.sendblueClient.sendImessage({
       to: toPeer,
       content: body,
+      userId,
+      db: deps.db,
+      ...(explicitFromNumber ? { fromNumber: explicitFromNumber } : {}),
+      allowEnvFromNumberFallback: Boolean(explicitFromNumber),
     })
     const messageHandle = response.message_handle ?? response.uuid ?? null
     await ref.set(

@@ -2,14 +2,15 @@
  * v1.9 Phase 88 — Sendblue multi-number pool selector.
  *
  * Pool config:
- *   pa-config/sendblue-pool { numbers: [{ number, status, capacity }] }
- *   pa-config/sendblue-pool { groups: [{ groupId, status, dailySendCap, numbers }] }
+ *   pa-config/sendblue-pool { numbers: [{ number, status, audience, adminOnly, capacity }] }
+ *   pa-config/sendblue-pool { groups: [{ groupId, status, audience, adminOnly, dailySendCap, numbers }] }
  *
  * Selector strategy:
  *   - Filter to status === "active"
+ *   - User-facing selectors exclude audience=admin/internal or adminOnly=true
  *   - hash(userId) mod activeNumbers.length → same user always routed to
  *     same number (thread continuity)
- *   - Fall back to env SENDBLUE_FROM_NUMBER when pool empty / unconfigured
+ *   - Callers decide whether pool empty / unconfigured should block or fall back
  *
  * Single-number pool produces identical behavior to pre-v1.9.
  */
@@ -23,10 +24,26 @@ export type SendbluePoolNumberStatus =
   | "throttled"
   | "degraded"
 
+export type SendbluePoolAudience =
+  | "public"
+  | "candidate"
+  | "candidate_public"
+  | "admin"
+  | "internal"
+  | "developer"
+
 export interface SendbluePoolNumber {
   number: string
   groupId?: string
   status: SendbluePoolNumberStatus
+  /** DB-owned routing audience. Candidate surfaces must only use public entries. */
+  audience?: SendbluePoolAudience | string
+  /** Strong override for admin/developer-only lines. */
+  adminOnly?: boolean
+  /** Rollout cap for first-touch/new-user entry points. */
+  newUserCap?: number
+  /** DB-maintained count for first-touch/new-user entry points. */
+  assignedNewUsers?: number
   /** S6 hard cap: accepted outbound sends per group per UTC day. */
   capacity?: number
   dailySendCap?: number
@@ -35,6 +52,10 @@ export interface SendbluePoolNumber {
 export interface SendbluePoolGroup {
   groupId: string
   status: SendbluePoolNumberStatus
+  audience?: SendbluePoolAudience | string
+  adminOnly?: boolean
+  newUserCap?: number
+  assignedNewUsers?: number
   capacity?: number
   dailySendCap?: number
   numbers: Array<string | SendbluePoolNumber>
@@ -104,16 +125,54 @@ export function hashStringToUint(s: string): number {
   return h
 }
 
+export type PickFromNumberOptions = {
+  /**
+   * Default false. Candidate-facing entry points must not expose admin,
+   * internal, or developer lines. Set true only for explicit internal tooling.
+   */
+  includeInternal?: boolean
+  /**
+   * Default false. Use true for first-touch/new-user entry points that should
+   * respect rollout caps such as "first 200 new users".
+   */
+  requireNewUserCapacity?: boolean
+}
+
+export function isUserAccessibleSendblueNumber(number: SendbluePoolNumber): boolean {
+  if (number.adminOnly === true) return false
+  const audience = typeof number.audience === "string" ? number.audience.trim().toLowerCase() : ""
+  if (audience === "admin" || audience === "internal" || audience === "developer") return false
+  return true
+}
+
+function hasNewUserCapacity(number: SendbluePoolNumber): boolean {
+  const cap = number.newUserCap
+  if (!Number.isInteger(cap) || cap === undefined || cap < 0) return true
+  const used = Number.isInteger(number.assignedNewUsers) ? Math.max(0, number.assignedNewUsers ?? 0) : 0
+  return used < cap
+}
+
+function isSelectablePoolNumber(
+  number: SendbluePoolNumber,
+  options: PickFromNumberOptions = {}
+): boolean {
+  if (!number.number || number.status !== "active") return false
+  if (!options.includeInternal && !isUserAccessibleSendblueNumber(number)) return false
+  if (options.requireNewUserCapacity && !hasNewUserCapacity(number)) return false
+  return true
+}
+
 /**
  * Pure selector — pick a from-number for a given userId from a pool config.
  * Returns null when pool has zero active numbers.
  */
 export function pickFromNumber(
   pool: SendbluePoolConfig | null,
-  userId: string
+  userId: string,
+  options: PickFromNumberOptions = {}
 ): string | null {
   if (!pool || !Array.isArray(pool.numbers)) return null
-  const active = pool.numbers.filter((n) => n.status === "active" && n.number)
+  const active = pool.numbers.filter((n) => isSelectablePoolNumber(n, options))
   if (active.length === 0) return null
   const idx = hashStringToUint(userId) % active.length
   return active[idx].number
@@ -137,6 +196,10 @@ function normalizedPoolNumbers(pool: SendbluePoolConfig | null): SendbluePoolNum
             number,
             groupId,
             status: group.status,
+            audience: group.audience,
+            adminOnly: group.adminOnly,
+            newUserCap: group.newUserCap,
+            assignedNewUsers: group.assignedNewUsers,
             capacity: group.capacity,
             dailySendCap: group.dailySendCap,
           }
@@ -148,6 +211,10 @@ function normalizedPoolNumbers(pool: SendbluePoolConfig | null): SendbluePoolNum
           number,
           groupId: entry.groupId?.trim() || groupId,
           status: entry.status ?? group.status,
+          audience: entry.audience ?? group.audience,
+          adminOnly: entry.adminOnly ?? group.adminOnly,
+          newUserCap: entry.newUserCap ?? group.newUserCap,
+          assignedNewUsers: entry.assignedNewUsers ?? group.assignedNewUsers,
           capacity: entry.capacity ?? group.capacity,
           dailySendCap: entry.dailySendCap ?? group.dailySendCap,
         }
@@ -274,7 +341,8 @@ export function selectSendblueCapacityGroup(
     }
   }
 
-  const byGroup = new Map(poolNumbers.map((number) => [sendblueGroupId(number), number] as const))
+  const candidateNumbers = poolNumbers.filter(isUserAccessibleSendblueNumber)
+  const byGroup = new Map(candidateNumbers.map((number) => [sendblueGroupId(number), number] as const))
   if (input.stickyAccountGroupId) {
     const sticky = byGroup.get(input.stickyAccountGroupId)
     if (!sticky || !isRoutableStatus(sticky, Boolean(input.allowWarmup))) {
@@ -324,10 +392,10 @@ export function selectSendblueCapacityGroup(
   }
 
   const hasWarmupOnly =
-    poolNumbers.some((number) => number.status === "warmup") &&
-    !poolNumbers.some((number) => number.status === "active")
+    candidateNumbers.some((number) => number.status === "warmup") &&
+    !candidateNumbers.some((number) => number.status === "active")
   if (hasWarmupOnly && !input.allowWarmup) {
-    const warmup = poolNumbers.find((number) => number.status === "warmup")!
+    const warmup = candidateNumbers.find((number) => number.status === "warmup")!
     return {
       ok: false,
       groupId: sendblueGroupId(warmup),
@@ -337,7 +405,7 @@ export function selectSendblueCapacityGroup(
     }
   }
 
-  const routable = poolNumbers.filter((number) => isRoutableStatus(number, Boolean(input.allowWarmup)))
+  const routable = candidateNumbers.filter((number) => isRoutableStatus(number, Boolean(input.allowWarmup)))
   if (routable.length === 0) {
     return {
       ok: false,
