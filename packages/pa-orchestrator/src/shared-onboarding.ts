@@ -117,11 +117,35 @@ function normalizeControlText(value: string): string {
     .trim()
 }
 
+/** Visible iMessage opener prefix (Adam 2026-05-19 + user_id bind 2026-05-20). */
+export const HELLO_WEKRUIT_OPENER_PREFIX = "Hello, WeKruit!"
+
+const HELLO_WEKRUIT_OPENER_RE =
+  /^hello,?\s*wekruit!?\s*([a-z0-9][a-z0-9_-]{7,127})?\s*$/i
+
+/** Build the sms: deep-link body candidates send to bind phone → pa-users/{candidateId}. */
+export function buildHelloWekruitOpenerBody(candidateId: string): string {
+  const id = candidateId.trim()
+  if (!id) return HELLO_WEKRUIT_OPENER_PREFIX
+  return `${HELLO_WEKRUIT_OPENER_PREFIX} ${id}`
+}
+
+/** Parse inbound opener; returns candidateId when the suffix is present. */
+export function parseHelloWekruitOpener(value: string): { candidateId: string } | null {
+  const trimmed = value.trim()
+  const match = trimmed.match(HELLO_WEKRUIT_OPENER_RE)
+  if (!match) return null
+  const candidateId = match[1]?.trim()
+  return candidateId ? { candidateId } : null
+}
+
 export function isSharedOnboardingGreetingOrKickoff(value: string): boolean {
+  if (parseHelloWekruitOpener(value)) return true
   const normalized = normalizeControlText(value)
   if (!normalized) return true
   if (normalized === "pa reset") return true
   if (/^wekruit\s+(?:candidate\s+hi|laid\s+off|rain\s+software\s+engineer)/i.test(normalized)) return true
+  if (/^hello wekruit(?: [a-z0-9_-]+)?$/.test(normalized)) return true
   return /^(?:hello|hi|hey|yo|sup|\u4f60\u597d|\u60a8\u597d|\u54c8\u55bd|\u5728\u5417)(?:\s+(?:wekruit|claire))?$/.test(normalized)
 }
 

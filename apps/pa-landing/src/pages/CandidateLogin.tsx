@@ -418,7 +418,11 @@ export default function CandidateLogin() {
     setStatus("signing_in")
     setError(null)
     try {
-      await verifyCandidateMagicLinkSession()
+      const verified = await verifyCandidateMagicLinkSession()
+      if (nextPath === "/onboarding" && verified.intakeComplete) {
+        navigate("/me", { replace: true })
+        return
+      }
       navigate(nextPath, { replace: true })
     } catch (err) {
       setStatus("error")

@@ -2,6 +2,8 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import {
+  buildHelloWekruitOpenerBody,
+  parseHelloWekruitOpener,
   SHARED_ONBOARDING_QUESTIONS,
   buildSharedOnboardingPrompt,
   buildSharedOnboardingPromptContext,
@@ -14,6 +16,12 @@ import {
   shouldSharedOnboardingAdvanceDespiteJudge,
 } from "../shared-onboarding.js"
 import { WEKRUIT_CANDIDATE_SOURCE, WEKRUIT_LAYOFF_SOURCE } from "../onboarding.js"
+
+test("Hello, WeKruit! opener includes candidate id for phone binding", () => {
+  assert.equal(buildHelloWekruitOpenerBody("abc_user_99"), "Hello, WeKruit! abc_user_99")
+  assert.deepEqual(parseHelloWekruitOpener("Hello, WeKruit! abc_user_99"), { candidateId: "abc_user_99" })
+  assert.equal(parseHelloWekruitOpener("Hello, WeKruit!"), null)
+})
 
 test("shared onboarding asks the five conversational questions in launch order", () => {
   assert.deepEqual(SHARED_ONBOARDING_QUESTIONS.map((q) => q.id), [

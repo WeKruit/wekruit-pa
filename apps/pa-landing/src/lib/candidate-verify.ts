@@ -1,5 +1,6 @@
 import { auth } from "./firebase.js"
 import { getBrowserUid, rememberStoredValue } from "./browser-identity.js"
+import { isLinkedInSignIn } from "./candidate-auth-provider.js"
 import { resolveSource } from "./source.js"
 
 const DEFAULT_VERIFY_URL =
@@ -41,10 +42,17 @@ export function candidateVerifyErrorMessage(reason: string): string {
 export async function verifyCandidateMagicLinkSession(options?: {
   source?: string
   linkedinUrl?: string | null
-}): Promise<{ candidateId: string; idempotent: boolean }> {
+}): Promise<{
+  candidateId: string
+  idempotent: boolean
+  intakeComplete: boolean
+  linkedinUrl?: string | null
+  linkedinLinkedViaOauth?: boolean
+}> {
   const user = auth().currentUser
   if (!user) throw new CandidateVerifyError("not_signed_in", 401)
   const idToken = await user.getIdToken(true)
+  const linkedinSignIn = isLinkedInSignIn(user)
   const res = await fetch(VERIFY_URL, {
     method: "POST",
     headers: {
@@ -56,6 +64,7 @@ export async function verifyCandidateMagicLinkSession(options?: {
       source: options?.source ?? resolveSource(),
       browserUid: getBrowserUid(),
       linkedinUrl: options?.linkedinUrl ?? null,
+      linkedinSignIn,
       displayName: user.displayName ?? null,
     }),
   })
@@ -63,6 +72,9 @@ export async function verifyCandidateMagicLinkSession(options?: {
     ok?: boolean
     candidateId?: string
     idempotent?: boolean
+    intakeComplete?: boolean
+    linkedinUrl?: string | null
+    linkedinLinkedViaOauth?: boolean
     reason?: string
   }
   if (!res.ok || !data.ok || !data.candidateId) {
@@ -70,5 +82,11 @@ export async function verifyCandidateMagicLinkSession(options?: {
     throw new CandidateVerifyError(reason, res.status, candidateVerifyErrorMessage(reason))
   }
   rememberStoredValue(CANDIDATE_ID_KEY, data.candidateId)
-  return { candidateId: data.candidateId, idempotent: Boolean(data.idempotent) }
+  return {
+    candidateId: data.candidateId,
+    idempotent: Boolean(data.idempotent),
+    intakeComplete: Boolean(data.intakeComplete),
+    linkedinUrl: data.linkedinUrl ?? null,
+    linkedinLinkedViaOauth: Boolean(data.linkedinLinkedViaOauth),
+  }
 }

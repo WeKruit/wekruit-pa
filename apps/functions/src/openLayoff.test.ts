@@ -341,6 +341,52 @@ test("runRegisterLayoffCandidate reuse mode restamps stale duplicate as layoff w
   assert.equal((user.layoffContext as DocData).lastCompany, "OldCo")
 })
 
+test("runRegisterLayoffCandidate accepts candidate signup without phone when profile path present", async () => {
+  const fake = new FakeFirestore()
+  const result = await runRegisterLayoffCandidate(
+    registration({
+      source: "candidate",
+      phone: undefined,
+      jobTitle: undefined,
+      location: undefined,
+      linkedin: "https://linkedin.com/in/ada",
+    }),
+    deps(fake),
+  )
+
+  assert.equal(result.candidateId, "auto_1")
+  const user = fake.read(`${PA_COLLECTIONS.users}/auto_1`)!
+  assert.equal(user.phoneE164, undefined)
+  assert.equal(user.intakeCompletedAt, fixedNow)
+  assert.equal((user.candidateContext as DocData).linkedin, "https://linkedin.com/in/ada")
+})
+
+test("runRegisterLayoffCandidate accepts candidate intake with LinkedIn OAuth only on existing profile", async () => {
+  const fake = new FakeFirestore()
+  const candidateId = "cand_oauth_only"
+  fake.seed(`${PA_COLLECTIONS.users}/${candidateId}`, {
+    id: candidateId,
+    linkedinOauthLinked: true,
+    linkedinUrl: "https://www.linkedin.com/oauth-linked/sub-1",
+  })
+  const result = await runRegisterLayoffCandidate(
+    registration({
+      source: "candidate",
+      candidateId,
+      phone: undefined,
+      jobTitle: undefined,
+      location: undefined,
+      linkedin: undefined,
+      resumeFileName: undefined,
+      personalWebsite: undefined,
+    }),
+    deps(fake),
+  )
+
+  assert.equal(result.candidateId, candidateId)
+  assert.equal(result.isReregistration, true)
+})
+
 test("runRegisterLayoffCandidate writes candidate source for candidate-host signups", async () => {
   const fake = new FakeFirestore()
   const result = await runRegisterLayoffCandidate(
