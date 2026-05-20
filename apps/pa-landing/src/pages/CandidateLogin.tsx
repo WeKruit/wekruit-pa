@@ -11,7 +11,7 @@
  * Visual system: WeKruit warm-editorial (cream + espresso + peach halo) with
  * a warm terracotta confidence accent for live / match / interview signals.
  */
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode, type CSSProperties } from "react"
+import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode, type CSSProperties } from "react"
 import { Link, useNavigate } from "react-router-dom"
 import {
   GoogleAuthProvider,
@@ -20,12 +20,12 @@ import {
   sendSignInLinkToEmail,
   signInWithCustomToken,
   signInWithEmailLink,
-  signInWithPopup,
   signInWithRedirect,
   onAuthStateChanged,
 } from "firebase/auth"
 import { auth } from "../lib/firebase.js"
 import { CLAIM_EMAIL_KEY, readStoredValue, rememberStoredValue } from "../lib/browser-identity"
+import { verifyCandidateMagicLinkSession } from "../lib/candidate-verify.js"
 
 const EMAIL_STORAGE_KEY = CLAIM_EMAIL_KEY
 const LINKEDIN_AUTH_START_URL =
@@ -300,7 +300,47 @@ export function Icon({ name, size = 18, stroke = 1.6 }: { name: IconName; size?:
 // CandidateShell — header + footer + page chrome
 // ────────────────────────────────────────────────────────────────────────────
 
-export function CandidateShell({ children, hero = false }: { children: ReactNode; hero?: boolean }) {
+export function CandidateShell({
+  children,
+  hero = false,
+  signedIn = false,
+  signedInUser,
+}: {
+  children: ReactNode
+  hero?: boolean
+  signedIn?: boolean
+  signedInUser?: { name?: string; src?: string }
+}) {
+  if (signedIn) {
+    return (
+      <div className="wk-shell wk-shell--app">
+        <style>{CANDIDATE_STYLES}</style>
+        <style>{APP_SHELL_STYLES}</style>
+        <header className="wk-appbar">
+          <div className="wk-appbar__inner">
+            <Link to="/me" className="wk-header__brand" aria-label="WeKruit home">
+              <WekruitLogo size={22} />
+            </Link>
+            <nav className="wk-appnav" aria-label="App navigation">
+              <AppNavLink to="/me">Pipeline</AppNavLink>
+              <AppNavLink to="/me/profile">Profile</AppNavLink>
+              <AppNavLink to="/market">Market</AppNavLink>
+            </nav>
+            <div className="wk-appbar__right">
+              <button type="button" className="wk-appbar__icon" aria-label="Notifications">
+                <Icon name="message" size={18} stroke={1.7} />
+                <span className="wk-appbar__dot" />
+              </button>
+              <button type="button" className="wk-appbar__user" aria-label="Account menu">
+                <Avatar name={signedInUser?.name ?? "You"} src={signedInUser?.src} size={32} tone="warm" />
+              </button>
+            </div>
+          </div>
+        </header>
+        <main className="wk-main">{children}</main>
+      </div>
+    )
+  }
   return (
     <div className={`wk-shell${hero ? " wk-shell--hero" : ""}`}>
       <style>{CANDIDATE_STYLES}</style>
@@ -342,6 +382,21 @@ export function CandidateShell({ children, hero = false }: { children: ReactNode
   )
 }
 
+// Sticky-aware nav link for the signed-in app bar. Pathname match so
+// /me/profile lights "Profile" without also lighting "Pipeline".
+function AppNavLink({ to, children }: { to: string; children: ReactNode }) {
+  const here = typeof window !== "undefined" ? window.location.pathname : "/"
+  const active =
+    here === to ||
+    (to === "/me" && here === "/me") ||
+    (to !== "/me" && to !== "/" && (here === to || here.startsWith(to + "/")))
+  return (
+    <Link to={to} className={`wk-nav__link${active ? " is-active" : ""}`}>
+      {children}
+    </Link>
+  )
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // /login page
 // ────────────────────────────────────────────────────────────────────────────
@@ -359,23 +414,40 @@ export default function CandidateLogin() {
   >(isCompletingLink ? "signing_in" : "idle")
   const [error, setError] = useState<string | null>(null)
 
+  const finishSignedIn = useCallback(async () => {
+    setStatus("signing_in")
+    setError(null)
+    try {
+      await verifyCandidateMagicLinkSession()
+      navigate(nextPath, { replace: true })
+    } catch (err) {
+      setStatus("error")
+      setError(err instanceof Error ? err.message : String(err))
+      try {
+        await auth().signOut()
+      } catch {
+        /* ignore */
+      }
+    }
+  }, [navigate, nextPath])
+
   useEffect(() => {
     if (isCompletingLink) return
     let cancelled = false
     const unsubscribe = onAuthStateChanged(auth(), (user) => {
-      if (!cancelled && user) navigate(nextPath, { replace: true })
+      if (!cancelled && user) void finishSignedIn()
     })
     void (async () => {
       try {
         const linkedinPayload = takeLinkedinAuthPayload()
         if (linkedinPayload?.ok) {
           await signInWithCustomToken(auth(), linkedinPayload.customToken)
-          if (!cancelled) navigate(nextPath, { replace: true })
+          if (!cancelled) await finishSignedIn()
           return
         }
         if (linkedinPayload && !linkedinPayload.ok) throw new Error(linkedinPayload.error)
         const result = await getRedirectResult(auth())
-        if (!cancelled && result?.user) navigate(nextPath, { replace: true })
+        if (!cancelled && result?.user) await finishSignedIn()
       } catch (err) {
         if (!cancelled) {
           setStatus("error")
@@ -387,7 +459,7 @@ export default function CandidateLogin() {
       cancelled = true
       unsubscribe()
     }
-  }, [isCompletingLink, navigate, nextPath])
+  }, [finishSignedIn, isCompletingLink])
 
   useEffect(() => {
     if (!isCompletingLink) return
@@ -398,7 +470,7 @@ export default function CandidateLogin() {
       try {
         await signInWithEmailLink(auth(), stored, window.location.href)
         window.localStorage.removeItem(EMAIL_STORAGE_KEY)
-        if (!cancelled) navigate(nextPath, { replace: true })
+        if (!cancelled) await finishSignedIn()
       } catch (err) {
         if (!cancelled) {
           setStatus("error")
@@ -407,32 +479,16 @@ export default function CandidateLogin() {
       }
     })()
     return () => { cancelled = true }
-  }, [isCompletingLink, navigate, nextPath])
+  }, [finishSignedIn, isCompletingLink])
 
   async function startProviderSignIn(kind: "google" | "linkedin") {
     setStatus(kind); setError(null)
     if (kind === "linkedin") {
-      const returnTo = `${window.location.origin}${nextPath}`
+      const returnTo = `${window.location.origin}/login?next=${encodeURIComponent(nextPath)}`
       window.location.assign(`${LINKEDIN_AUTH_START_URL}?returnTo=${encodeURIComponent(returnTo)}`)
       return
     }
-    const provider = createGoogleProvider()
-    let willRedirect = false
-    try {
-      await signInWithPopup(auth(), provider)
-      navigate(nextPath, { replace: true })
-    } catch (err) {
-      const code = err && typeof err === "object" && "code" in err ? String((err as { code?: string }).code) : ""
-      if (code === "auth/popup-blocked" || code === "auth/operation-not-supported-in-this-environment") {
-        willRedirect = true
-        await signInWithRedirect(auth(), createGoogleProvider())
-        return
-      }
-      setStatus("error")
-      setError(code === "auth/popup-closed-by-user" ? "Sign-in cancelled." : err instanceof Error ? err.message : String(err))
-    } finally {
-      if (!willRedirect && status === "google") setStatus("idle")
-    }
+    await signInWithRedirect(auth(), createGoogleProvider())
   }
 
   async function onSubmit(e: FormEvent) {
@@ -445,7 +501,7 @@ export default function CandidateLogin() {
         setStatus("signing_in")
         await signInWithEmailLink(auth(), nextEmail, window.location.href)
         window.localStorage.removeItem(EMAIL_STORAGE_KEY)
-        navigate(nextPath, { replace: true })
+        await finishSignedIn()
         return
       }
       setStatus("sending")
@@ -1145,5 +1201,90 @@ const LEGACY_CANDIDATE_STYLES = `
   .candidate-shell { padding: 16px; }
   .candidate-panel { padding: 18px; }
   .candidate-profile-list div { grid-template-columns: 1fr; gap: 4px; }
+}
+`
+
+// ────────────────────────────────────────────────────────────────────────────
+// Signed-in app shell — sticky app bar with Pipeline · Profile · Market.
+// Used by CandidateMe + CandidateProfile (the /me and /me/profile surfaces).
+// ────────────────────────────────────────────────────────────────────────────
+
+const APP_SHELL_STYLES = `
+.wk-shell--app { background: var(--wk-cream); }
+.wk-shell--app .wk-main { padding-top: 0; }
+.wk-appbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: rgba(245, 237, 227, 0.82);
+  -webkit-backdrop-filter: blur(14px) saturate(160%);
+  backdrop-filter: blur(14px) saturate(160%);
+  border-bottom: 1px solid var(--wk-border);
+}
+.wk-appbar__inner {
+  max-width: 1240px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 32px;
+  padding: 14px 28px;
+}
+.wk-appnav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 22px;
+}
+.wk-appnav .wk-nav__link {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--wk-ink-2);
+  height: 32px;
+  padding: 0 10px;
+  border-radius: var(--wk-r-sm);
+  transition: color 180ms var(--wk-ease), background 180ms var(--wk-ease);
+}
+.wk-appnav .wk-nav__link:hover { color: var(--wk-ink); background: var(--wk-cream-3); }
+.wk-appnav .wk-nav__link.is-active {
+  color: var(--wk-ink);
+  font-weight: 600;
+  background: var(--wk-cream-3);
+}
+.wk-appbar__right { display: inline-flex; align-items: center; gap: 10px; }
+.wk-appbar__icon {
+  appearance: none;
+  position: relative;
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--wk-ink-2);
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  transition: background 180ms var(--wk-ease), color 180ms var(--wk-ease);
+}
+.wk-appbar__icon:hover { background: var(--wk-cream-3); color: var(--wk-ink); }
+.wk-appbar__dot {
+  position: absolute;
+  top: 8px; right: 8px;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--wk-live-pulse);
+  border: 1.5px solid var(--wk-cream);
+}
+.wk-appbar__user {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  border-radius: 50%;
+  outline-offset: 2px;
+}
+.wk-appbar__user:hover { opacity: 0.86; }
+@media (max-width: 760px) {
+  .wk-appnav { display: none; }
+  .wk-appbar__inner { gap: 16px; padding: 12px 16px; }
 }
 `
