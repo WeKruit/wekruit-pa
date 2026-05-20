@@ -74,6 +74,8 @@ export const PA_COLLECTIONS = {
   correctionEvents: "pa-correction-events",
   /** v2.0 S8 — redacted eval/regression artifacts generated from flywheel events. */
   evalArtifacts: "pa-eval-artifacts",
+  /** Canonical screening-eval artifacts for prescreen/practice/external-supply HITL review. */
+  evaluationAttempts: "pa-evaluation-attempts",
   /** v2.0 S9 — candidate privacy/export/delete/stop request intake queue. */
   privacyRequests: "pa-privacy-requests",
   /** v2.0 S9 — redacted launch-readiness snapshots for production hardening. */

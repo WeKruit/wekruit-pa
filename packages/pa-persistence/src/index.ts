@@ -8,6 +8,15 @@ import {
   type User,
 } from "@pa/core-types"
 
+export {
+  getEvaluationAttempt,
+  listEvaluationAttempts,
+  saveEvaluationAttempt,
+  saveHumanReview,
+  type ListEvaluationAttemptsInput,
+  type SaveHumanReviewInput,
+} from "./evaluation-attempts.js"
+
 const USERS = PA_COLLECTIONS.users
 const SESSIONS = PA_COLLECTIONS.sessions
 const MESSAGES = PA_COLLECTIONS.messages

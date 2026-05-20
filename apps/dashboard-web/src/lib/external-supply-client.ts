@@ -25,6 +25,7 @@ import {
   CandidateCompanyJobEvaluationSchema,
   CandidateEvaluationRunSchema,
   CandidateSourceLinkSchema,
+  EvaluationAttemptSchema,
   ExternalCandidateRecordSchema,
   ExternalSourcingBatchSchema,
   InstantlySyncRecordSchema,
@@ -39,6 +40,8 @@ import {
   type CandidateCompanyJobEvaluation,
   type CandidateEvaluationRun,
   type CandidateSourceLink,
+  type EvaluationAttempt,
+  type EvaluationOutcome,
   type EvaluationTier,
   type ExternalCandidateRecord,
   type ExternalSource,
@@ -147,6 +150,24 @@ export interface RunEvaluationResult {
   completed: number
   skipped: number
   tierBreakdown: Record<EvaluationTier, number>
+}
+
+export interface ReviewEvaluationAttemptInput {
+  attemptId: string
+  status: "approved" | "overridden" | "rejected" | "needs_more_info"
+  finalOutcome?: EvaluationOutcome
+  note?: string
+  correctionReason?: string
+}
+
+export interface ReviewEvaluationAttemptResult {
+  ok: true
+  attemptId: string
+  status: ReviewEvaluationAttemptInput["status"]
+  finalOutcome?: EvaluationOutcome
+  correctionEventId?: string
+  prescreenTerminalActionFired?: boolean
+  externalEvaluationUpdated?: boolean
 }
 
 export interface GenerateAgentResearchPromptInput {
@@ -830,6 +851,11 @@ export async function getCandidateDetail(input: { recordId: string }): Promise<C
 export const runEvaluation = callable<RunEvaluationInput, RunEvaluationResult>(
   "paExternalSupplyRunEvaluation",
 )
+
+export const reviewEvaluationAttempt = callable<
+  ReviewEvaluationAttemptInput,
+  ReviewEvaluationAttemptResult
+>("paReviewEvaluationAttempt")
 
 export const generateAgentResearchPrompt = callable<
   GenerateAgentResearchPromptInput,
@@ -1551,6 +1577,25 @@ export async function findEvaluationByCandidateAndJob(
     "candidate-company-job-evaluations",
   )
   return parsed
+}
+
+export async function findEvaluationAttemptByExternalEvaluationId(
+  externalEvaluationId: string,
+): Promise<EvaluationAttempt | null> {
+  const q = query(
+    collection(db(), PA_COLLECTIONS.evaluationAttempts),
+    where("externalEvaluationId", "==", externalEvaluationId),
+    fsLimit(1),
+  )
+  const snap = await getDocs(q)
+  const first = snap.docs[0]
+  if (!first) return null
+  const parsed = EvaluationAttemptSchema.safeParse(first.data())
+  if (!parsed.success) {
+    console.warn(`[external-supply] failed to parse evaluation-attempt/${first.id}`, parsed.error)
+    return null
+  }
+  return parsed.data
 }
 
 // ---------------------------------------------------------------------------

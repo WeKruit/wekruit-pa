@@ -1084,6 +1084,101 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     assert.equal((turnEntries[0][1].data.action as { kind?: string }).kind, "clarify")
   })
 
+  it("writes a pending evaluation attempt for active terminal prescreen instead of firing terminal action", async () => {
+    const now = new Date().toISOString()
+    const { db, docs } = makeFakeDb({
+      "pa-prescreen-sessions/ps_active": {
+        sessionId: "ps_active",
+        userId: "u1",
+        jobId: "rain-software-engineer-fullstack-8849f6ef",
+        terminal: null,
+        currentQId: "role_fit",
+        createdAt: now,
+        updatedAt: now,
+        score: 0,
+        scoreMax: 1,
+        threshold: 0.65,
+        confidenceThreshold: 0.7,
+        maxClarifyRounds: 2,
+        qOrder: ["role_fit"],
+        questions: {
+          role_fit: {
+            qId: "role_fit",
+            type: "MUST_HAVE",
+            weight: 1,
+            clarifyRounds: 0,
+          },
+        },
+        workSession: { kind: "job_prescreen", status: "active", startedAt: now, boundary: "trigger" },
+        cfgSnapshot: {
+          questions: [
+            {
+              qId: "role_fit",
+              prompt: { en: "What recent work best matches this software engineering role?", zh: "What recent work best matches this software engineering role?" },
+              clarifyPrompt: { en: "Tell me more.", zh: "Tell me more." },
+              keywords: [{ keyword: "ownership", weight: 1 }],
+            },
+          ],
+        },
+      },
+    })
+
+    const caller: KeywordSetLlmCaller = {
+      async score() {
+        return {
+          perKeyword: [
+            {
+              keyword: "ownership",
+              match: 1,
+              confidence: 0.95,
+              evidence: "owned the fullstack dashboard",
+              reasoning: "strong ownership evidence",
+            },
+          ],
+          summary: "Strong match.",
+          answered: true,
+        }
+      },
+    }
+    const terminalCalls: Array<Record<string, unknown>> = []
+
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u1",
+      toE164: "+13054507715",
+      replyText: "I owned the fullstack dashboard end to end.",
+      keywordSetCaller: caller,
+      runTerminalAction: async (args) => {
+        terminalCalls.push(args as unknown as Record<string, unknown>)
+        return { alreadyFired: false, level1Sent: false, jobRecsFired: false }
+      },
+      sendSms: async (args) => ({
+        status: "queued",
+        from_number: null,
+        number: args.to,
+        content: args.content,
+        service: "iMessage",
+        is_outbound: true,
+      }),
+    })
+
+    assert.equal(result.handled, true)
+    assert.equal(result.terminal, "PASS")
+    assert.deepEqual(terminalCalls, [])
+    const session = docs.get("pa-prescreen-sessions/ps_active")?.data
+    assert.equal(session?.terminalActionPendingReview, true)
+    assert.equal(typeof session?.evaluationAttemptId, "string")
+    const attempts = [...docs.entries()].filter(([path]) => path.startsWith("pa-evaluation-attempts/"))
+    assert.equal(attempts.length, 1)
+    assert.equal(attempts[0][1].data.source, "prescreen")
+    const attemptDoc = attempts[0][1].data as {
+      humanReview?: { status?: string }
+      proposedOutcome?: { prescreenTerminal?: string }
+    }
+    assert.equal(attemptDoc.humanReview?.status, "pending")
+    assert.equal(attemptDoc.proposedOutcome?.prescreenTerminal, "PASS")
+  })
+
   it("yields an active prescreen when layoff onboarding owns the user turn", async () => {
     const now = new Date().toISOString()
     const { db } = makeFakeDb({

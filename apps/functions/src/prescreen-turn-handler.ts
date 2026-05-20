@@ -26,7 +26,9 @@ import {
   type PreScreenQuestion,
   type PreScreenState,
   type PreScreenStateProvider,
+  prescreenSessionToEvaluationAttempt,
 } from "@pa/pa-orchestrator"
+import { saveEvaluationAttempt } from "@pa/pa-persistence"
 import { SAFETY_CANNED_REPLIES, pickLangForSafety, runSafetyCheck } from "@pa/pa-safety"
 import { sendRuntimeApprovedIMessage } from "./runtime-approved-outbox.js"
 import { runPrescreenTerminalAction } from "./prescreen-terminal-action.js"
@@ -46,6 +48,50 @@ type RuntimeSmsSender = (args: {
 
 function stablePrescreenSendKey(...parts: string[]): string {
   return createHash("sha256").update(parts.join("|"), "utf8").digest("hex").slice(0, 32)
+}
+
+async function writePrescreenEvaluationAttempt(args: {
+  db: Firestore
+  state: PreScreenState
+  cfgSnapshot?: { questions?: unknown[]; threshold?: number; confidenceThreshold?: number }
+  terminal: "PASS" | "FAIL" | "HARD_STOP" | "PAUSE"
+  log: (event: string, payload: Record<string, unknown>) => void
+}): Promise<string | null> {
+  try {
+    const attempt = prescreenSessionToEvaluationAttempt({
+      state: args.state,
+      cfgSnapshot: args.cfgSnapshot as Parameters<typeof prescreenSessionToEvaluationAttempt>[0]["cfgSnapshot"],
+      terminal: args.terminal,
+      nowIso: new Date().toISOString(),
+      evaluator: { kind: "hybrid", promptVersion: "prescreen-keyword-set-v1" },
+    })
+    await saveEvaluationAttempt(args.db, attempt)
+    await args.db
+      .collection("pa-prescreen-sessions")
+      .doc(args.state.sessionId)
+      .set(
+        {
+          evaluationAttemptId: attempt.attemptId,
+          terminalActionPendingReview: true,
+          updatedAt: attempt.updatedAt,
+        },
+        { merge: true },
+      )
+    args.log("prescreen.evaluation_attempt.created", {
+      sessionId: args.state.sessionId,
+      attemptId: attempt.attemptId,
+      proposedOutcome: attempt.proposedOutcome.kind,
+      terminal: args.terminal,
+    })
+    return attempt.attemptId
+  } catch (err) {
+    args.log("prescreen.evaluation_attempt.create_failed", {
+      sessionId: args.state.sessionId,
+      terminal: args.terminal,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    return null
+  }
 }
 
 /** Firestore-backed PreScreenStateProvider. */
@@ -977,8 +1023,9 @@ export async function runPrescreenTurnIfActive(
     terminal: result.state.terminal,
   })
 
-  // v1.9 Phase 84 — post-terminal action (Level 1 reveal + auto job recs).
-  // Fail-open: never roll back the terminal text on action failure.
+  // Screening eval invariant: terminal scoring creates a review artifact only.
+  // Employment-impacting downstream actions (Level 1 reveal, PII/recs, employer
+  // visibility) are now behind operator commit via paReviewEvaluationAttempt.
   if (
     result.action.kind === "terminal" &&
     (result.action.terminal === "PASS" ||
@@ -986,23 +1033,13 @@ export async function runPrescreenTurnIfActive(
       result.action.terminal === "HARD_STOP" ||
       result.action.terminal === "PAUSE")
   ) {
-    try {
-      await terminalAction({
-        db: args.db,
-        sessionId,
-        terminal: result.action.terminal,
-        userId: args.userId,
-        jobId: result.state.jobId,
-        toE164: args.toE164,
-        lang: args.lang ?? "en",
-        log,
-      })
-    } catch (err) {
-      log("prescreen.terminal_action.threw", {
-        sessionId,
-        error: err instanceof Error ? err.message : String(err),
-      })
-    }
+    await writePrescreenEvaluationAttempt({
+      db: args.db,
+      state: result.state,
+      cfgSnapshot,
+      terminal: result.action.terminal,
+      log,
+    })
   }
 
   return {
