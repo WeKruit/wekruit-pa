@@ -420,7 +420,8 @@ export const paCandidateListMatches = onCall(
     region: "us-central1",
     memory: "256MiB",
     timeoutSeconds: 30,
-    maxInstances: 1,
+    maxInstances: 10,
+    concurrency: 20,
   },
   async (req): Promise<CandidateListMatchesResult> => {
     return runCandidateListMatches(req.data, req.auth, { db: getFirestore() })
