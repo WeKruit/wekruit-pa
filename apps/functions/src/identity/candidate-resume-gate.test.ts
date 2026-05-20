@@ -161,19 +161,19 @@ test("runCandidateResumeGateStatus requires auth", async () => {
   )
 })
 
-test("runCandidateResumeGateStatus rejects internal operator emails", async () => {
-  await assert.rejects(
-    () =>
-      runCandidateResumeGateStatus(
-        {},
-        { uid: "firebase-1", token: { email: "admin@wekruit.com", email_verified: true } },
-        baseDeps()
-      ),
-    (err) => err instanceof HttpsError && err.code === "failed-precondition"
+test("runCandidateResumeGateStatus allows wekruit.com emails at public launch", async () => {
+  const result = await runCandidateResumeGateStatus(
+    { browserUid: "browser-1" },
+    { uid: "firebase-1", token: { email: "admin@wekruit.com", email_verified: true } },
+    baseDeps()
   )
+
+  assert.equal(result.ok, true)
+  assert.equal(result.candidateId, "cand-1")
+  assert.equal(result.status, "needs_resume_upload")
 })
 
-test("runCandidateResumeGateStatus allows adam.ylol@wekruit.com as the explicit beta candidate user", async () => {
+test("runCandidateResumeGateStatus allows adam.ylol@wekruit.com", async () => {
   const result = await runCandidateResumeGateStatus(
     { browserUid: "browser-1" },
     { uid: "firebase-adam-ylol", token: { email: "adam.ylol@wekruit.com", email_verified: true } },

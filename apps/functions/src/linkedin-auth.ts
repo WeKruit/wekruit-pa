@@ -18,8 +18,11 @@ const STATE_MAX_AGE_MS = 10 * 60 * 1000
 const ALLOWED_RETURN_TO_ORIGINS = new Set([
   "https://candidate.wekruit.com",
   "https://pa.wekruit.com",
+  "https://layoff.wekruit.com",
   "https://wekruit-pa-landing.web.app",
   "https://wekruit-pa-landing.firebaseapp.com",
+  "https://layoff-wekruit.web.app",
+  "https://layoff-wekruit.firebaseapp.com",
 ])
 
 interface LinkedinAuthState {
