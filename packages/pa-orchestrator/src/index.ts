@@ -115,6 +115,7 @@ export {
   shouldIgnoreSharedOnboardingDuplicateKickoff,
   shouldSharedOnboardingAdvanceDespiteJudge,
   loadSharedOnboardingParsedResumeForPrompt,
+  parseHelloWekruitOpener,
   projectSharedOnboardingAnswer,
   resolveNextSharedOnboardingQuestionId,
   sharedOnboardingSignupSource,
