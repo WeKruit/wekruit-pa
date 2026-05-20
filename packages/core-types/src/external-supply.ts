@@ -50,7 +50,7 @@ export const ExternalSourceSchema = z.enum([
   "juicebox",
   "lessie",
   "coresignal",
-  "manual_csv",
+  "coresignal_collect_v2",  "manual_csv",
 ])
 export type ExternalSource = z.infer<typeof ExternalSourceSchema>
 

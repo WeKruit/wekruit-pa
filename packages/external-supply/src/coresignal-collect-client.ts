@@ -1,0 +1,250 @@
+/**
+ * CoreSignal cdapi v2 `*_multi_source/collect/{id}` thin client.
+ *
+ * Mirrors the proven `scripts/coresignal-fetch-employees.mjs` prototype but
+ * adds typed schemas + retry semantics suitable for Cloud Functions runtime.
+ *
+ * Endpoints:
+ *  - GET `${baseUrl}/employee_multi_source/collect/{id}` → employee record
+ *  - GET `${baseUrl}/company_multi_source/collect/{id}`  → company record
+ *
+ * Auth: header `apikey: <CORESIGNAL_API_KEY>`.
+ *
+ * Retry: 429 / 5xx → exponential backoff (1s, 2s, 3s) up to 3 attempts.
+ * 4xx (non-429) → throw immediately (likely bad ID or permission).
+ *
+ * Why thin: keep Cloud Function surface small and test-friendly. Only the
+ * fields V2.1 actually consumes are typed; the rest of the payload survives
+ * untyped as `Record<string, unknown>` and is preserved in
+ * `pa-external-candidate-records.rawPayload` for downstream evolution.
+ */
+
+import { z } from "zod"
+
+// ---------------------------------------------------------------------------
+// Config
+// ---------------------------------------------------------------------------
+
+export const CORESIGNAL_DEFAULT_BASE_URL = "https://api.coresignal.com/cdapi/v2"
+
+export interface CoresignalCollectClientConfig {
+  apiKey: string
+  baseUrl?: string
+  /**
+   * Optional fetch override. Defaults to `globalThis.fetch`. Tests inject a
+   * stub here to avoid network access.
+   */
+  fetchImpl?: typeof fetch
+  /** Override per-attempt sleep delay. Tests pass `() => Promise.resolve()` to skip waits. */
+  sleepImpl?: (ms: number) => Promise<void>
+}
+
+// ---------------------------------------------------------------------------
+// Response schemas (lenient — only fields we read downstream are typed)
+// ---------------------------------------------------------------------------
+
+const ExperienceEntrySchema = z.object({
+  company_name: z.string().nullable().optional(),
+  company_id: z.number().nullable().optional(),
+  position_title: z.string().nullable().optional(),
+  department: z.string().nullable().optional(),
+  management_level: z.string().nullable().optional(),
+  location: z.string().nullable().optional(),
+  description: z.string().nullable().optional(),
+  date_from: z.string().nullable().optional(),
+  date_to: z.string().nullable().optional(),
+  duration_months: z.number().nullable().optional(),
+  company_industry: z.string().nullable().optional(),
+  company_size_range: z.string().nullable().optional(),
+  company_website: z.string().nullable().optional(),
+  company_linkedin_url: z.string().nullable().optional(),
+  company_hq_country: z.string().nullable().optional(),
+  company_hq_city: z.string().nullable().optional(),
+  active_experience: z.boolean().nullable().optional(),
+}).passthrough()
+
+const EducationEntrySchema = z.object({
+  institution_name: z.string().nullable().optional(),
+  degree: z.string().nullable().optional(),
+  description: z.string().nullable().optional(),
+  date_from_year: z.number().nullable().optional(),
+  date_to_year: z.number().nullable().optional(),
+}).passthrough()
+
+const ProfessionalEmailSchema = z.object({
+  professional_email: z.string().nullable().optional(),
+  professional_email_status: z.string().nullable().optional(),
+  order_of_priority: z.number().nullable().optional(),
+}).passthrough()
+
+export const CoresignalEmployeeCollectV2Schema = z.object({
+  id: z.number(),
+  full_name: z.string().nullable().optional(),
+  first_name: z.string().nullable().optional(),
+  last_name: z.string().nullable().optional(),
+  headline: z.string().nullable().optional(),
+  summary: z.string().nullable().optional(),
+  linkedin_url: z.string().nullable().optional(),
+  github_url: z.string().nullable().optional(),
+  location_country: z.string().nullable().optional(),
+  location_state: z.string().nullable().optional(),
+  location_city: z.string().nullable().optional(),
+  location_full: z.string().nullable().optional(),
+  primary_professional_email: z.string().nullable().optional(),
+  primary_professional_email_status: z.string().nullable().optional(),
+  professional_emails_collection: z.array(ProfessionalEmailSchema).nullable().optional(),
+  is_working: z.boolean().nullable().optional(),
+  is_decision_maker: z.boolean().nullable().optional(),
+  active_experience_company_id: z.number().nullable().optional(),
+  active_experience_title: z.string().nullable().optional(),
+  active_experience_department: z.string().nullable().optional(),
+  active_experience_management_level: z.string().nullable().optional(),
+  total_experience_duration_months: z.number().nullable().optional(),
+  experience: z.array(ExperienceEntrySchema).nullable().optional(),
+  education: z.array(EducationEntrySchema).nullable().optional(),
+  inferred_skills: z.array(z.string()).nullable().optional(),
+  historical_skills: z.array(z.string()).nullable().optional(),
+  connections_count: z.number().nullable().optional(),
+  followers_count: z.number().nullable().optional(),
+  updated_at: z.string().nullable().optional(),
+  profile_score: z.number().nullable().optional(),
+}).passthrough()
+
+export type CoresignalEmployeeCollectV2 = z.infer<typeof CoresignalEmployeeCollectV2Schema>
+
+export const CoresignalCompanyCollectV2Schema = z.object({
+  id: z.number(),
+  company_name: z.string().nullable().optional(),
+  company_legal_name: z.string().nullable().optional(),
+  website: z.string().nullable().optional(),
+  website_domain: z.string().nullable().optional(),
+  linkedin_url: z.string().nullable().optional(),
+  canonical_linkedin_url: z.string().nullable().optional(),
+  industry: z.string().nullable().optional(),
+  founded_year: z.string().nullable().optional(),
+  size_range: z.string().nullable().optional(),
+  employees_count: z.number().nullable().optional(),
+  hq_country: z.string().nullable().optional(),
+  hq_state: z.string().nullable().optional(),
+  hq_city: z.string().nullable().optional(),
+  hq_full_address: z.string().nullable().optional(),
+  description: z.string().nullable().optional(),
+  categories_and_keywords: z.array(z.string()).nullable().optional(),
+}).passthrough()
+
+export type CoresignalCompanyCollectV2 = z.infer<typeof CoresignalCompanyCollectV2Schema>
+
+// ---------------------------------------------------------------------------
+// Error type
+// ---------------------------------------------------------------------------
+
+export class CoresignalCollectError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number | null,
+    public readonly attempts: number,
+    public readonly body?: string,
+  ) {
+    super(message)
+    this.name = "CoresignalCollectError"
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Client
+// ---------------------------------------------------------------------------
+
+const RETRY_DELAYS_MS = [1_000, 2_000, 3_000] as const
+const MAX_ATTEMPTS = RETRY_DELAYS_MS.length
+
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function collectRaw(
+  endpoint: string,
+  id: number,
+  config: CoresignalCollectClientConfig,
+): Promise<unknown> {
+  const baseUrl = config.baseUrl ?? CORESIGNAL_DEFAULT_BASE_URL
+  const url = `${baseUrl}/${endpoint}/collect/${id}`
+  const fetchImpl = config.fetchImpl ?? fetch
+  const sleep = config.sleepImpl ?? defaultSleep
+
+  if (!config.apiKey) {
+    throw new CoresignalCollectError("coresignal_api_key_missing", null, 0)
+  }
+
+  let lastErr: CoresignalCollectError | null = null
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    let res: Response
+    try {
+      res = await fetchImpl(url, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          apikey: config.apiKey,
+        },
+      })
+    } catch (err) {
+      lastErr = new CoresignalCollectError(
+        `network_error: ${(err as Error).message}`,
+        null,
+        attempt,
+      )
+      if (attempt < MAX_ATTEMPTS) {
+        await sleep(RETRY_DELAYS_MS[attempt - 1])
+        continue
+      }
+      throw lastErr
+    }
+
+    if (res.ok) {
+      return await res.json()
+    }
+
+    const body = await res.text().catch(() => "")
+
+    // 429 or 5xx → retry
+    if (res.status === 429 || res.status >= 500) {
+      lastErr = new CoresignalCollectError(
+        `transient_${res.status}`,
+        res.status,
+        attempt,
+        body.slice(0, 200),
+      )
+      if (attempt < MAX_ATTEMPTS) {
+        await sleep(RETRY_DELAYS_MS[attempt - 1])
+        continue
+      }
+      throw lastErr
+    }
+
+    // Other 4xx → fail fast
+    throw new CoresignalCollectError(
+      `http_${res.status}`,
+      res.status,
+      attempt,
+      body.slice(0, 200),
+    )
+  }
+
+  // Should not reach here, but TypeScript needs a terminator
+  throw lastErr ?? new CoresignalCollectError("unknown", null, MAX_ATTEMPTS)
+}
+
+export async function fetchEmployeeCollect(
+  id: number,
+  config: CoresignalCollectClientConfig,
+): Promise<CoresignalEmployeeCollectV2> {
+  const raw = await collectRaw("employee_multi_source", id, config)
+  return CoresignalEmployeeCollectV2Schema.parse(raw)
+}
+
+export async function fetchCompanyCollect(
+  id: number,
+  config: CoresignalCollectClientConfig,
+): Promise<CoresignalCompanyCollectV2> {
+  const raw = await collectRaw("company_multi_source", id, config)
+  return CoresignalCompanyCollectV2Schema.parse(raw)
+}
