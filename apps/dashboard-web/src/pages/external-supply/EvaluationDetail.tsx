@@ -2,10 +2,9 @@
  * v2.0 External Supply V1 — Wave D — `/admin/external-supply/evaluations/:runId`.
  *
  * Per-candidate Tier 1/2/3/retain-only/blocked table. Operator can override
- * the proposed tier on a row — the override writes:
- *   1. A merge of `reviewerDecision` into the evaluation doc.
- *   2. A `pa-correction-events` row (targetType="feedback_event" with
- *      payloadRedacted.evaluationId — per lead resolution §9.1.6).
+ * the proposed tier on a row through the canonical `pa-evaluation-attempts`
+ * review callable. The dashboard does not directly mutate downstream
+ * employment-impacting state.
  *
  * Also supports a bulk "Generate research prompt for missing-info rows"
  * action that routes to `/admin/external-supply/research`.
@@ -13,24 +12,18 @@
 import { useEffect, useMemo, useState } from "react"
 import { useNavigate, useParams, Link } from "react-router-dom"
 import {
-  collection,
-  doc,
-  serverTimestamp,
-  writeBatch,
-} from "firebase/firestore"
-import {
-  PA_COLLECTIONS,
   type CandidateCompanyJobEvaluation,
   type CandidateEvaluationRun,
   type EvaluationTier,
 } from "@pa/core-types"
 import { EmptyState, ErrorState, LoadingState, PageHeader, Panel } from "../../components/ui.js"
 import { EvaluationTierBadge } from "../../components/external-supply/EvaluationTierBadge.js"
-import { auth, db } from "../../lib/firebase.js"
 import {
+  findEvaluationAttemptByExternalEvaluationId,
   generateAgentResearchPrompt,
   getEvaluationRun,
   listEvaluations,
+  reviewEvaluationAttempt,
 } from "../../lib/external-supply-client.js"
 
 const TIER_OPTIONS: EvaluationTier[] = [
@@ -94,45 +87,22 @@ export function EvaluationDetail() {
     setBusyId(evaluation.evaluationId)
     setActionMsg(null)
     try {
-      const user = auth().currentUser
-      const reviewer = user?.email ?? user?.uid ?? "unknown"
-      const now = new Date().toISOString()
-      const batch = writeBatch(db())
-      const evalRef = doc(db(), PA_COLLECTIONS.candidateCompanyJobEvaluations, evaluation.evaluationId)
-      batch.set(
-        evalRef,
-        {
-          reviewerDecision: {
-            finalTier,
-            reviewer,
-            reviewedAt: now,
-          },
-          updatedAt: now,
-        },
-        { merge: true },
-      )
-      const correctionRef = doc(collection(db(), PA_COLLECTIONS.correctionEvents))
-      batch.set(correctionRef, {
-        eventId: correctionRef.id,
-        targetType: "feedback_event",
-        targetId: evaluation.evaluationId,
-        actor: "operator",
-        candidateId: evaluation.candidateId,
-        jobId: evaluation.jobId,
-        reason: "external_supply_evaluation_tier_override",
-        beforeRedacted: {
-          evaluationId: evaluation.evaluationId,
-          proposedTier: evaluation.proposedTier,
-        },
-        afterRedacted: {
-          evaluationId: evaluation.evaluationId,
-          finalTier,
-          reviewer,
-        },
-        evidence: [],
-        createdAt: serverTimestamp(),
+      const attempt = await findEvaluationAttemptByExternalEvaluationId(evaluation.evaluationId)
+      if (!attempt) {
+        throw new Error("No canonical evaluation attempt found for this row. Re-run evaluation before review.")
+      }
+      const isApproval = finalTier === evaluation.proposedTier
+      await reviewEvaluationAttempt({
+        attemptId: attempt.attemptId,
+        status: isApproval ? "approved" : "overridden",
+        finalOutcome: isApproval
+          ? undefined
+          : {
+              kind: externalTierOutcomeKind(finalTier),
+              supplyTier: finalTier,
+            },
+        correctionReason: isApproval ? undefined : "external_supply_evaluation_tier_override",
       })
-      await batch.commit()
       setActionMsg(`Tier override saved · ${evaluation.candidateId.slice(0, 8)}… → ${finalTier}`)
       setRefreshKey((n) => n + 1)
     } catch (err) {
@@ -359,6 +329,12 @@ function gateTone(g: "pass" | "soft_block" | "hard_block"): string {
   if (g === "pass") return "good"
   if (g === "hard_block") return "bad"
   return "warn"
+}
+
+function externalTierOutcomeKind(tier: EvaluationTier): "pass" | "hold" | "reject" {
+  if (tier === "blocked") return "reject"
+  if (tier === "retain_only") return "hold"
+  return "pass"
 }
 
 const tableStyle: React.CSSProperties = {

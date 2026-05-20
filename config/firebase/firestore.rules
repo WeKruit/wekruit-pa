@@ -154,6 +154,13 @@ service cloud.firestore {
     match /pa-practice-question-bank/{questionId} {
       allow read, write: if isPaOperator();
     }
+    // Canonical screening-eval artifacts. Operators can review; writes go
+    // through Admin SDK/callables so eval cannot mutate employment state from
+    // browser clients.
+    match /pa-evaluation-attempts/{attemptId} {
+      allow read: if isPaOperator();
+      allow write: if false;
+    }
     match /pa-playbooks/{key} {
       allow read, write: if isPaOperator();
       match /versions/{v} {
