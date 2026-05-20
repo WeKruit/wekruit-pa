@@ -92,12 +92,15 @@ export type RegisterInput = {
   lastName: string
   email: string
   linkedin?: string
+  personalWebsite?: string
   lastCompany: string
-  jobTitle: string
-  location: string
-  phone: string
+  jobTitle?: string
+  location?: string
+  phone?: string
   consent: boolean
   resumeFileName?: string
+  /** When set (post-auth onboarding), merge intake onto this pa-users doc. */
+  candidateId?: string
   /**
    * Dedup mode (default "auto"):
    *   - "auto"    → if phone exists, RETURN { duplicate: true, ... } and do not write
@@ -168,7 +171,7 @@ export async function runRegisterLayoffCandidate(
   v: RegisterInput,
   deps: OpenLayoffDeps
 ): Promise<Record<string, unknown>> {
-  if (!v.firstName || !v.email || !v.phone || !v.consent) {
+  if (!v.firstName || !v.lastName || !v.email || !v.lastCompany || !v.consent) {
     throw new HttpsError("invalid-argument", "Missing required fields")
   }
   const mode = v.mode ?? "auto"
@@ -177,23 +180,68 @@ export async function runRegisterLayoffCandidate(
     : WEKRUIT_LAYOFF_SOURCE
   const isLayoff = source === WEKRUIT_LAYOFF_SOURCE
 
-  const phoneCheck = normalizeAndValidatePhone(v.phone)
-  if (!phoneCheck.ok) throw new HttpsError("invalid-argument", `phone_invalid:${phoneCheck.reason}`)
-  const phoneE164 = phoneCheck.e164
-  const indexId = phoneIndexId(phoneE164)
+  if (isLayoff) {
+    if (!v.phone || !v.jobTitle || !v.location) {
+      throw new HttpsError("invalid-argument", "Missing required fields")
+    }
+  } else {
+    let oauthLinkedinSatisfied = false
+    const explicitIdEarly = cleanString(v.candidateId, 128)
+    if (explicitIdEarly) {
+      const earlySnap = await deps.db.collection(PA_COLLECTIONS.users).doc(explicitIdEarly).get()
+      const early = earlySnap.data() ?? {}
+      oauthLinkedinSatisfied =
+        early.linkedinOauthLinked === true ||
+        (typeof early.linkedinUrl === "string" && early.linkedinUrl.includes("/oauth-linked/"))
+    }
+    const hasProfilePath =
+      oauthLinkedinSatisfied ||
+      Boolean(cleanString(v.resumeFileName)) ||
+      Boolean(cleanString(v.linkedin, 500)) ||
+      Boolean(cleanString(v.personalWebsite, 500))
+    if (!hasProfilePath) {
+      throw new HttpsError("invalid-argument", "intake_profile_required")
+    }
+  }
+
   const now = serverTimestamp(deps)
   const isoNow = (deps.nowIso ?? nowIso)()
 
-  // Phone dedup index — controls reuse path.
-  const indexRef = deps.db.doc(`layoff_phone_index/${indexId}`)
-  const indexSnap = await indexRef.get()
-  const phoneHandleCandidateId = await candidateIdForHandle(deps.db, "phone", phoneE164)
+  let phoneE164: string | undefined
+  let indexId: string | undefined
+  let indexRef: ReturnType<Firestore["doc"]> | undefined
+  let indexSnap: Awaited<ReturnType<ReturnType<Firestore["doc"]>["get"]>> | undefined
+  let phoneHandleCandidateId: string | null = null
+
+  if (v.phone) {
+    const phoneCheck = normalizeAndValidatePhone(v.phone)
+    if (!phoneCheck.ok) throw new HttpsError("invalid-argument", `phone_invalid:${phoneCheck.reason}`)
+    phoneE164 = phoneCheck.e164
+    indexId = phoneIndexId(phoneE164)
+    indexRef = deps.db.doc(`layoff_phone_index/${indexId}`)
+    indexSnap = await indexRef.get()
+    phoneHandleCandidateId = await candidateIdForHandle(deps.db, "phone", phoneE164)
+  }
+
+  const explicitCandidateId = cleanString(v.candidateId, 128)
   let candidateId: string
   let isReregistration = false
-  if (indexSnap.exists) {
+
+  if (explicitCandidateId) {
+    const explicitRef = deps.db.collection(PA_COLLECTIONS.users).doc(explicitCandidateId)
+    const explicitSnap = await explicitRef.get()
+    if (!explicitSnap.exists) {
+      throw new HttpsError("not-found", "candidate_not_found")
+    }
+    candidateId = explicitCandidateId
+    isReregistration = true
+    if (phoneE164 && phoneHandleCandidateId && phoneHandleCandidateId !== candidateId) {
+      throw new HttpsError("failed-precondition", "identity_conflict:phone_belongs_to_another_candidate")
+    }
+  } else if (indexSnap?.exists) {
     candidateId = indexSnap.data()!.candidateId as string
     isReregistration = true
-    if (phoneHandleCandidateId && phoneHandleCandidateId !== candidateId) {
+    if (phoneE164 && phoneHandleCandidateId && phoneHandleCandidateId !== candidateId) {
       throw new HttpsError("failed-precondition", "identity_conflict:phone_belongs_to_another_candidate")
     }
   } else if (phoneHandleCandidateId) {
@@ -204,8 +252,8 @@ export async function runRegisterLayoffCandidate(
   }
 
   // Auto mode → return duplicate signal so the UI can show the
-  // "reuse / start fresh" prompt. No writes performed.
-  if (isReregistration && mode === "auto") {
+  // "reuse / start fresh" prompt. No writes performed (phone dedup only).
+  if (isReregistration && mode === "auto" && indexSnap?.exists && !explicitCandidateId) {
     const userRef = deps.db.collection(PA_COLLECTIONS.users).doc(candidateId)
     const userSnap = await userRef.get()
     const u = userSnap.data() ?? {}
@@ -247,13 +295,19 @@ export async function runRegisterLayoffCandidate(
   const userRef = deps.db.collection(PA_COLLECTIONS.users).doc(candidateId)
   const writeLayoffContext = !isReregistration || mode === "refresh"
 
+  const linkedin = cleanString(v.linkedin, 500) ?? null
+  const personalWebsite = cleanString(v.personalWebsite, 500) ?? null
+
   const writePayload: Record<string, unknown> = {
     id: candidateId,
-    phoneE164,
     source,
     senderNumber: fromNumber,
     senderGroupId: groupId,
+    intakeCompletedAt: isoNow,
+    updatedAt: isoNow,
   }
+  if (phoneE164) writePayload.phoneE164 = phoneE164
+  if (linkedin) writePayload.linkedinUrl = linkedin
   if (isLayoff) {
     writePayload.lastLaidOffAt = now
     // Default canonical flags for the layoff list (Adam directive 2026-05-18):
@@ -281,10 +335,11 @@ export async function runRegisterLayoffCandidate(
     writePayload.displayName = `${v.firstName} ${v.lastName}`.trim() || v.firstName
     writePayload.candidateContext = {
       lastCompany: v.lastCompany,
-      jobTitle: v.jobTitle,
-      location: v.location,
+      jobTitle: v.jobTitle ?? null,
+      location: v.location ?? null,
       email: v.email,
-      linkedin: v.linkedin ?? null,
+      linkedin,
+      personalWebsite,
       resumeFileName: v.resumeFileName ?? null,
       consent: v.consent,
     }
@@ -296,18 +351,22 @@ export async function runRegisterLayoffCandidate(
 
   const batch = deps.db.batch()
   batch.set(userRef, writePayload, { merge: true })
-  batch.set(
-    indexRef,
-    {
-      candidateId,
-      phoneHash: indexId,
-      ...(isLayoff ? { lastLaidOffAt: now } : {}),
-      lastSeenAt: now,
-      source,
-    },
-    { merge: true },
-  )
-  batch.delete(deps.db.collection("pa-ats-pending-trigger").doc(phoneE164))
+  if (indexRef && indexId) {
+    batch.set(
+      indexRef,
+      {
+        candidateId,
+        phoneHash: indexId,
+        ...(isLayoff ? { lastLaidOffAt: now } : {}),
+        lastSeenAt: now,
+        source,
+      },
+      { merge: true },
+    )
+  }
+  if (phoneE164) {
+    batch.delete(deps.db.collection("pa-ats-pending-trigger").doc(phoneE164))
+  }
 
   // List-position counter (for the success screen)
   const counterRef = deps.db.doc("layoff_meta/counters")
@@ -319,15 +378,17 @@ export async function runRegisterLayoffCandidate(
   if (isLayoff) {
     await supersedeActivePrescreensForLayoff(deps.db, { candidateId, nowIso: isoNow })
   }
-  await linkCandidateHandle(deps.db, {
-    candidateId,
-    kind: "phone",
-    value: phoneE164,
-    source: "candidate",
-    deliverable: true,
-    now: isoNow,
-    evidence: [{ source: "system", summary: "Layoff registration phone handle" }],
-  })
+  if (phoneE164) {
+    await linkCandidateHandle(deps.db, {
+      candidateId,
+      kind: "phone",
+      value: phoneE164,
+      source: "candidate",
+      deliverable: true,
+      now: isoNow,
+      evidence: [{ source: "system", summary: "Layoff registration phone handle" }],
+    })
+  }
   await linkCandidateHandle(deps.db, {
     candidateId,
     kind: "email",

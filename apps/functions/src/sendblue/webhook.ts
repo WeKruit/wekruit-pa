@@ -28,7 +28,7 @@
 import type { Firestore } from "firebase-admin/firestore"
 import { createInboundEvent } from "@pa/pa-broker"
 
-import { getFlag, checkAndIncrementRateLimit, hashCandidateHandle } from "@pa/pa-persistence"
+import { getFlag, checkAndIncrementRateLimit } from "@pa/pa-persistence"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import { verifySendblueSignature, extractSendblueSignatureHeader } from "./hmac.js"
 // Stream D — CV ingestion side-effect (fire-and-forget) on attachment receipt.
@@ -62,6 +62,7 @@ import { runCompactionForUser } from "../compaction-run.js"
 import { runPiiConfirmForUser as defaultRunPiiConfirmForUser } from "../pii-confirm-start.js"
 import type { SendblueInboundPayload } from "./types.js"
 import { inboundEventExpiresAtTs, outboundExpiresAtTs } from "./ttl.js"
+import { resolveInboundUserId } from "../candidate-inbound-resolve.js"
 
 function prescreenTriggerIdempotencyDocId(jobId: string, userId: string, messageHandle: string): string {
   return `${jobId}_${userId}_${encodeURIComponent(messageHandle || "missing_message_handle")}`
@@ -118,8 +119,8 @@ export type WebhookDeps = {
   recordAuditEvent?: typeof recordAuditEvent
   /** Stream D — CV ingest pipeline (fire-and-forget). Inject for tests. */
   ingestCv?: (input: IngestCvInput) => Promise<IngestCvResult>
-  /** Stream D — phone→userId resolver. Inject for tests. */
-  lookupUserByPhone?: (db: Firestore, phoneE164: string) => Promise<string | null>
+  /** Stream D — phone→userId resolver. Optional inboundText enables Hello, WeKruit! uid bind. */
+  lookupUserByPhone?: (db: Firestore, phoneE164: string, inboundText?: string) => Promise<string | null>
   /** WeKruit_LAID_OFF inbound trigger handler. Inject for tests. */
   runLayoffSmsStart?: typeof defaultRunLayoffSmsStart
   /** Job prescreen trigger handler. Inject for live-equivalent Sendblue entrypoint tests. */
@@ -306,24 +307,12 @@ function extractMediaUrl(payload: Record<string, unknown>): string | null {
 // where phoneE164 may not have been stamped on pa-users yet but the handle
 // link was. Email-side resolution is not reachable from an SMS payload (we
 // only have from_number), so it is intentionally not attempted here.
-async function defaultLookupUserByPhone(db: Firestore, phoneE164: string): Promise<string | null> {
-  if (!phoneE164) return null
-  try {
-    const snap = await db.collection("pa-users").where("phoneE164", "==", phoneE164).limit(1).get()
-    if (!snap.empty) return snap.docs[0]!.id
-  } catch {
-    // Fall through to handle fallback rather than returning null on transient
-    // pa-users read errors.
-  }
-  try {
-    const { handleId } = hashCandidateHandle("phone", phoneE164)
-    const snap = await db.collection(PA_COLLECTIONS.candidateHandles).doc(handleId).get()
-    if (!snap.exists) return null
-    const candidateId = snap.data()?.candidateId
-    return typeof candidateId === "string" && candidateId.trim() ? candidateId : null
-  } catch {
-    return null
-  }
+async function defaultLookupUserByPhone(
+  db: Firestore,
+  phoneE164: string,
+  inboundText?: string,
+): Promise<string | null> {
+  return resolveInboundUserId(db, phoneE164, inboundText)
 }
 
 async function hasActivePrescreenSession(db: Firestore, userId: string): Promise<boolean> {
@@ -746,13 +735,14 @@ export async function handleSendblueWebhook(
       .map((s) => s.trim())
       .filter(Boolean)
     const lookupFnRouter = deps.lookupUserByPhone ?? defaultLookupUserByPhone
+    const lookupForInbound = (phone: string) => lookupFnRouter(deps.db, phone, normalized.text)
     const runLayoffSmsStart = deps.runLayoffSmsStart ?? defaultRunLayoffSmsStart
     const runPreScreenForUser = deps.runPreScreenForUser ?? defaultRunPreScreenForUser
     const runPiiConfirmForUser = deps.runPiiConfirmForUser ?? defaultRunPiiConfirmForUser
     const router = new TriggerRouter({
       triggers: [
         new LayoffTrigger({
-          lookupUserByPhone: (phone) => lookupFnRouter(deps.db, phone),
+          lookupUserByPhone: lookupForInbound,
           getLastFiredMs: async (userId) => {
             try {
               const snap = await deps.db
@@ -791,7 +781,7 @@ export async function handleSendblueWebhook(
           },
         }),
         new PrescreenTrigger({
-          lookupUserByPhone: (phone) => lookupFnRouter(deps.db, phone),
+          lookupUserByPhone: lookupForInbound,
           isAdmin: async (uid) => adminUidsRouter.includes(uid),
           getLastFiredMs: async (jobId, userId, messageHandle) => {
             try {
@@ -855,7 +845,7 @@ export async function handleSendblueWebhook(
           },
         }),
         new ApplyTrigger({
-          lookupUserByPhone: (phone) => lookupFnRouter(deps.db, phone),
+          lookupUserByPhone: lookupForInbound,
           findRecentPass: async ({ jobId, userId, sinceMs }) => {
             try {
               const cutoffIso = new Date(Date.now() - sinceMs).toISOString()
@@ -921,7 +911,7 @@ export async function handleSendblueWebhook(
           },
         }),
         new CompactTrigger({
-          lookupUserByPhone: (phone) => lookupFnRouter(deps.db, phone),
+          lookupUserByPhone: lookupForInbound,
           isAdmin: async (uid) => adminUidsRouter.includes(uid),
           runCompaction: async ({ userId, reason }) => {
             // Phase 77.3 — real handler: runCompactionForUser pulls turns,
@@ -997,7 +987,7 @@ export async function handleSendblueWebhook(
     const lookupFn = deps.lookupUserByPhone ?? defaultLookupUserByPhone
     let triggerUserId: string | null = null
     try {
-      triggerUserId = await lookupFn(deps.db, normalized.fromNumber)
+      triggerUserId = await lookupFn(deps.db, normalized.fromNumber, normalized.text)
     } catch (err) {
       log("[sendblue][webhook] find_match phone lookup failed",
         err instanceof Error ? err.message : String(err))
@@ -1138,7 +1128,7 @@ export async function handleSendblueWebhook(
   if (!mediaUrl && deps.enqueueOrCoalesce && deps.coalescerDeps) {
     try {
       const lookupFn = deps.lookupUserByPhone ?? defaultLookupUserByPhone
-      resolvedUserIdForCoalesce = await lookupFn(deps.db, normalized.fromNumber)
+      resolvedUserIdForCoalesce = await lookupFn(deps.db, normalized.fromNumber, normalized.text)
       if (resolvedUserIdForCoalesce) {
         const coalesceFlag = await getFlag(
           deps.db,
@@ -1318,7 +1308,7 @@ export async function handleSendblueWebhook(
       const lookupFn = deps.lookupUserByPhone ?? defaultLookupUserByPhone
       void Promise.resolve()
         .then(async () => {
-          const userId = await lookupFn(deps.db, normalized.fromNumber)
+          const userId = await lookupFn(deps.db, normalized.fromNumber, normalized.text)
           if (!userId) {
             log("[sendblue][cv-ingest] skipped — no userId for phone", { phone: normalized.fromNumber })
             return { ok: false, reason: "no_user" } as IngestCvResult

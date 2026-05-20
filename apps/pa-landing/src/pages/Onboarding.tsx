@@ -9,19 +9,14 @@ import { onAuthStateChanged, type User } from "firebase/auth"
 import "../styles/wekruit-tokens.css"
 import { deriveFunction, registerCandidate } from "../lib/onboarding-api"
 import { uploadResume } from "../lib/onboarding-cv"
-import { candidateProfileDestination, getBrowserUid, rememberCandidateProfileSession } from "../lib/browser-identity"
+import { getBrowserUid, rememberCandidateProfileSession } from "../lib/browser-identity"
 import { resolveSource, SOURCE_RESOLVER_MARKER, type SignupSource } from "../lib/source"
 import { auth } from "../lib/firebase.js"
-import { CandidateVerifyError, verifyCandidateMagicLinkSession } from "../lib/candidate-verify.js"
-
-// 2026-05-19 (Adam directive: "这个 onboarding flow 应该发一个 Hello, WeKruit!
-// 这样的消息, 开始 onboard") — every candidate-side onboarding opener uses
-// this single visible phrase. The token carries no routing info; the
-// orchestrator resolves the candidate via pa-users.phoneE164 +
-// pa-candidate-handles fallback, then handleSharedOnboardingBootstrap fires
-// Q1. No source-token leak (legacy "WeKruit_LAID_OFF" / "WeKruit_CANDIDATE_HI"
-// are suppressed at apps/functions/src/sendblue/triggers/layoff.ts).
-const HELLO_WEKRUIT_BODY = "Hello, WeKruit!"
+import { isLinkedInSignIn } from "../lib/candidate-auth-provider.js"
+import { CandidateVerifyError, readStoredCandidateId, verifyCandidateMagicLinkSession } from "../lib/candidate-verify.js"
+import { buildHelloWekruitOpenerBody } from "../lib/hello-wekruit.js"
+import { canOpenImessageDeepLink } from "../lib/imessage-platform.js"
+import { filterCompanySuggestions } from "../lib/onboarding-companies.js"
 
 // Keep the marker referenced so tree-shaking can't drop it from the
 // bundle. The acceptance grep relies on this string being present.
@@ -43,6 +38,7 @@ type Profile = {
   lastName?: string
   email?: string
   linkedin?: string
+  personalWebsite?: string
   lastCompany?: string
   jobTitle?: string
   location?: string
@@ -68,6 +64,8 @@ export default function Onboarding() {
   const [dupExisting, setDupExisting] = useState<DupExisting | null>(null)
   const [busyText, setBusyText] = useState<string | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
+  const [intakeChecked, setIntakeChecked] = useState(false)
+  const [linkedinLinkedViaOauth, setLinkedinLinkedViaOauth] = useState(false)
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth(), (nextUser) => {
@@ -81,22 +79,33 @@ export default function Onboarding() {
     let cancelled = false
     void (async () => {
       try {
-        await verifyCandidateMagicLinkSession({ source })
-        if (!cancelled) setVerifyError(null)
+        const verified = await verifyCandidateMagicLinkSession({ source })
+        if (!cancelled) {
+          setVerifyError(null)
+          setLinkedinLinkedViaOauth(
+            Boolean(verified.linkedinLinkedViaOauth) || isLinkedInSignIn(authUser)
+          )
+          if (verified.intakeComplete) {
+            navigate("/me", { replace: true })
+            return
+          }
+          setIntakeChecked(true)
+        }
       } catch (err) {
         if (!cancelled) {
           setVerifyError(
             err instanceof CandidateVerifyError ? err.message : "Sign-in verification failed. Try again."
           )
+          setIntakeChecked(true)
         }
       }
     })()
     return () => {
       cancelled = true
     }
-  }, [authUser, source])
+  }, [authUser, navigate, source])
 
-  if (authUser === undefined) {
+  if (authUser === undefined || (authUser && !intakeChecked)) {
     return (
       <main>
         <MinimalNav />
@@ -117,17 +126,24 @@ export default function Onboarding() {
     setSubmitError(null)
     setBusyText("Creating your WeKruit profile…")
     try {
+      const isLayoff = source === "WeKruit_Laid_Off"
       const res = await registerCandidate({
         firstName: formData.firstName!,
         lastName: formData.lastName!,
         email: formData.email!,
-        linkedin: formData.linkedin,
+        linkedin: formData.linkedin?.trim() || undefined,
+        personalWebsite: formData.personalWebsite?.trim() || undefined,
         lastCompany: formData.lastCompany!,
-        jobTitle: formData.jobTitle!,
-        location: formData.location!,
-        phone: formData.phone!,
+        ...(isLayoff
+          ? {
+              jobTitle: formData.jobTitle!,
+              location: formData.location!,
+              phone: formData.phone!,
+            }
+          : {}),
         consent: !!formData.consent,
         resumeFileName: formData.resume?.name,
+        candidateId: readStoredCandidateId() ?? undefined,
         mode,
         source,
       })
@@ -150,7 +166,9 @@ export default function Onboarding() {
         email: formData.email,
         browserUid: getBrowserUid(),
       })
-      await uploadResumeForCandidate(res.candidateId, formData, sourceToUploadTag(source))
+      if (formData.resume?.file) {
+        await uploadResumeForCandidate(res.candidateId, formData, sourceToUploadTag(source))
+      }
       // 2026-05-19 — no server-side SMS push; the Done view shows an sms:
       // deep link button so the candidate sends "Hello, WeKruit!" themselves
       // (Adam directive: explicit user-initiated open message).
@@ -228,19 +246,27 @@ export default function Onboarding() {
           {busyText && <StepNotice tone="busy" text={busyText} />}
           {submitError && <StepNotice tone="error" text={submitError} />}
 
-          {stage === "intake" && <FormIntake onDone={onFormDone} isBusy={Boolean(busyText)} source={source} />}
+          {stage === "intake" && (
+            <FormIntake
+              onDone={onFormDone}
+              isBusy={Boolean(busyText)}
+              source={source}
+              authUser={authUser}
+              linkedinLinkedViaOauth={linkedinLinkedViaOauth}
+            />
+          )}
           {stage === "dup-prompt" && dupExisting && (
             <DuplicatePrompt existing={dupExisting} onReuse={onReuseExisting} onFresh={onStartFresh} />
           )}
-          {stage === "done" && <Done profile={profile} onGo={(r) => {
-            if (r === "dashboard") {
-              const destination = candidateProfileDestination()
-              if (/^https?:\/\//.test(destination)) window.location.assign(destination)
-              else navigate(destination)
-              return
-            }
-            navigate("/")
-          }} />}
+          {stage === "done" && (
+            <Done
+              profile={profile}
+              onGo={(r) => {
+                if (r === "dashboard") navigate("/me")
+                else navigate("/")
+              }}
+            />
+          )}
         </div>
       </section>
       <MinimalFooter />
@@ -505,20 +531,35 @@ function FlowProgress({ stage }: { stage: Stage }) {
   )
 }
 
+function splitDisplayName(displayName: string | null | undefined): { first: string; last: string } {
+  const parts = (displayName ?? "").trim().split(/\s+/).filter(Boolean)
+  if (parts.length === 0) return { first: "", last: "" }
+  if (parts.length === 1) return { first: parts[0]!, last: "" }
+  return { first: parts[0]!, last: parts.slice(1).join(" ") }
+}
+
 function FormIntake({
   onDone,
   isBusy,
   source,
+  authUser,
+  linkedinLinkedViaOauth,
 }: {
   onDone: (p: Profile) => void | Promise<void>
   isBusy: boolean
   source: SignupSource
+  authUser: User
+  linkedinLinkedViaOauth: boolean
 }) {
+  const isLayoff = source === "WeKruit_Laid_Off"
+  const skipLinkedinField = !isLayoff && linkedinLinkedViaOauth
+  const ssoNames = splitDisplayName(authUser.displayName)
   const [v, setV] = useState<Profile>({
-    firstName: "",
-    lastName: "",
-    email: "",
+    firstName: ssoNames.first,
+    lastName: ssoNames.last,
+    email: authUser.email ?? "",
     linkedin: "",
+    personalWebsite: "",
     lastCompany: "",
     jobTitle: "",
     location: "",
@@ -527,16 +568,29 @@ function FormIntake({
     resume: null,
   })
   const [err, setErr] = useState<Record<string, string>>({})
+  const [companySuggestions, setCompanySuggestions] = useState<string[]>([])
   const set = <K extends keyof Profile>(k: K, val: Profile[K]) => setV((s) => ({ ...s, [k]: val }))
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const submit = async () => {
     const e: Record<string, string> = {}
-    ;(["firstName", "lastName", "email", "lastCompany", "jobTitle", "location", "phone"] as const).forEach((k) => {
+    ;(["firstName", "lastName", "email", "lastCompany"] as const).forEach((k) => {
       if (!v[k]) e[k] = "Required"
     })
+    if (isLayoff) {
+      ;(["jobTitle", "location", "phone"] as const).forEach((k) => {
+        if (!v[k]) e[k] = "Required"
+      })
+    }
     if (!v.consent) e.consent = "Required"
-    if (!v.resume) e.resume = "Required"
+    const hasResume = Boolean(v.resume)
+    const hasLinkedin = skipLinkedinField || Boolean(v.linkedin?.trim())
+    const hasSite = Boolean(v.personalWebsite?.trim())
+    if (!hasResume && !hasLinkedin && !hasSite) {
+      e.profilePath = skipLinkedinField
+        ? "Add a resume or personal site"
+        : "Add a resume, LinkedIn, or personal site"
+    }
     if (v.email && !v.email.includes("@")) e.email = "Looks off"
     if (v.phone && v.phone.replace(/\D/g, "").length < 10) e.phone = "Need 10+ digits"
     setErr(e)
@@ -545,13 +599,28 @@ function FormIntake({
     }
   }
 
-  const requiredKeys = ["firstName", "lastName", "email", "lastCompany", "jobTitle", "location", "phone"] as const
-  const filled = requiredKeys.filter((k) => v[k]).length + (v.consent ? 1 : 0) + (v.resume ? 1 : 0)
+  const requiredKeys = isLayoff
+    ? (["firstName", "lastName", "email", "lastCompany", "jobTitle", "location", "phone"] as const)
+    : (["firstName", "lastName", "email", "lastCompany"] as const)
+  const profilePathSatisfied =
+    Boolean(v.resume) ||
+    Boolean(v.personalWebsite?.trim()) ||
+    (!skipLinkedinField && Boolean(v.linkedin?.trim())) ||
+    skipLinkedinField
+  const filled =
+    requiredKeys.filter((k) => v[k]).length +
+    (v.consent ? 1 : 0) +
+    (profilePathSatisfied ? 1 : 0)
   const total = requiredKeys.length + 2
 
   const onResumePick: React.ChangeEventHandler<HTMLInputElement> = (e) => {
     const file = e.target.files?.[0]
     if (file) set("resume", { name: file.name, size: file.size, file })
+  }
+
+  const onCompanyChange = (value: string) => {
+    set("lastCompany", value)
+    setCompanySuggestions(filterCompanySuggestions(value))
   }
 
   const consentText =
@@ -566,26 +635,68 @@ function FormIntake({
         <span className="caption" style={{ color: "var(--ink-3)", whiteSpace: "nowrap" }}>{filled} of {total} · ~60 sec</span>
       </div>
       <p style={{ marginTop: 4, marginBottom: 18, fontSize: 14, color: "var(--ink-2)" }}>
-        Required to register. The moment you submit, we'll text the number you give us.
+        {isLayoff
+          ? "Required to register. The moment you submit, we'll text the number you give us."
+          : skipLinkedinField
+            ? "Tell us who you are and share a resume or site (LinkedIn is already linked from sign-in). Next you'll open iMessage to talk to Claire."
+            : "Tell us who you are and share a resume, LinkedIn, or site. Next you'll open iMessage to talk to Claire."}
       </p>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
         <Field label="First name" value={v.firstName!} onChange={(x) => set("firstName", x)} err={err.firstName} placeholder="Maya" autoFocus />
         <Field label="Last name" value={v.lastName!} onChange={(x) => set("lastName", x)} err={err.lastName} placeholder="Chen" />
-        <Field span={2} label="Work email (verification)" value={v.email!} onChange={(x) => set("email", x)} err={err.email} placeholder="maya@meta.com" type="email" hint="We send a quick verification link." />
-        <Field span={2} label="LinkedIn URL" value={v.linkedin!} onChange={(x) => set("linkedin", x)} placeholder="linkedin.com/in/maya-chen-pm" />
-        <Field label={source === "WeKruit_Laid_Off" ? "Last company" : "Current / last company"} value={v.lastCompany!} onChange={(x) => set("lastCompany", x)} err={err.lastCompany} placeholder="Meta" />
-        <Field label="Job title there" value={v.jobTitle!} onChange={(x) => set("jobTitle", x)} err={err.jobTitle} placeholder="Senior PM, Reality Labs" />
-        <Field label="Location" value={v.location!} onChange={(x) => set("location", x)} err={err.location} placeholder="San Francisco" />
-        <Field label="Mobile (for SMS chat)" value={v.phone!} onChange={(x) => set("phone", x)} err={err.phone} placeholder="+1 (415) 555-0182" type="tel" hint="We text you right after you submit." />
+        <Field span={2} label="Email" value={v.email!} onChange={(x) => set("email", x)} err={err.email} placeholder="maya@meta.com" type="email" />
+        <label style={{ gridColumn: "1 / -1", display: "flex", flexDirection: "column", gap: 6 }}>
+          <span style={{ fontFamily: "var(--font-sans)", fontSize: 13, fontWeight: 500, color: "var(--ink-2)" }}>
+            <span>{isLayoff ? "Last company" : "Previous company"}</span>
+            {err.lastCompany && <span style={{ color: "var(--danger)", marginLeft: 8 }}>{err.lastCompany}</span>}
+          </span>
+          <input
+            className="input"
+            value={v.lastCompany ?? ""}
+            placeholder="Meta"
+            list="wk-company-suggestions"
+            onChange={(e) => onCompanyChange(e.target.value)}
+          />
+          <datalist id="wk-company-suggestions">
+            {companySuggestions.map((name) => (
+              <option key={name} value={name} />
+            ))}
+          </datalist>
+        </label>
+        {isLayoff && (
+          <>
+            <Field label="Job title there" value={v.jobTitle!} onChange={(x) => set("jobTitle", x)} err={err.jobTitle} placeholder="Senior PM, Reality Labs" />
+            <Field label="Location" value={v.location!} onChange={(x) => set("location", x)} err={err.location} placeholder="San Francisco" />
+            <Field span={2} label="Mobile (for SMS chat)" value={v.phone!} onChange={(x) => set("phone", x)} err={err.phone} placeholder="+1 (415) 555-0182" type="tel" hint="We text you right after you submit." />
+          </>
+        )}
+        {!skipLinkedinField && (
+          <Field span={2} label="LinkedIn profile URL" value={v.linkedin!} onChange={(x) => set("linkedin", x)} placeholder="linkedin.com/in/maya-chen" />
+        )}
+        {skipLinkedinField && (
+          <p style={{ gridColumn: "1 / -1", margin: 0, fontSize: 13, color: "var(--ink-3)" }}>
+            LinkedIn is linked from your sign-in — no need to paste your profile URL again.
+          </p>
+        )}
+        <Field span={2} label="Personal website" value={v.personalWebsite!} onChange={(x) => set("personalWebsite", x)} placeholder="https://yoursite.com" />
+        {err.profilePath && (
+          <p style={{ gridColumn: "1 / -1", margin: 0, fontSize: 13, color: "var(--danger)" }}>{err.profilePath}</p>
+        )}
       </div>
 
       <div style={{ marginTop: 20 }}>
         <span style={{ fontFamily: "var(--font-sans)", fontSize: 13, fontWeight: 500, color: "var(--ink-2)", display: "flex", justifyContent: "space-between" }}>
-          <span>Resume <span style={{ color: "var(--ink-3)", fontWeight: 400 }}>· PDF</span></span>
+          <span>Resume <span style={{ color: "var(--ink-3)", fontWeight: 400 }}>· PDF, DOC, DOCX</span></span>
           {err.resume && <span style={{ color: "var(--danger)" }}>Required</span>}
         </span>
-        <input ref={fileInputRef} type="file" accept=".pdf,application/pdf" onChange={onResumePick} style={{ display: "none" }} />
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+          onChange={onResumePick}
+          style={{ display: "none" }}
+        />
         {v.resume ? (
           <div
             style={{
@@ -691,9 +802,9 @@ function FormIntake({
       </label>
 
       <div style={{ marginTop: 24, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-        <span className="caption" style={{ color: "var(--ink-3)" }}>Next: Claire texts you right away.</span>
+        <span className="caption" style={{ color: "var(--ink-3)" }}>Next: Talk to Claire in iMessage.</span>
         <button className="btn btn--primary btn--lg" onClick={submit} disabled={isBusy}>
-          {isBusy ? "Working…" : "Start Claire iMessage →"}
+          {isBusy ? "Saving…" : "Save & continue →"}
         </button>
       </div>
     </div>
@@ -760,9 +871,12 @@ function UploadIcon() {
 
 function Done({ profile, onGo }: { profile: Profile; onGo: (r: "dashboard" | "landing") => void }) {
   const number = profile.listPosition ?? 412 + Math.floor(Math.random() * 8) + 1
-  const smsHref = profile.senderNumber
-    ? `sms:${profile.senderNumber}?&body=${encodeURIComponent(HELLO_WEKRUIT_BODY)}`
-    : null
+  const openerBody = profile.candidateId ? buildHelloWekruitOpenerBody(profile.candidateId) : buildHelloWekruitOpenerBody("")
+  const imessageAvailable = canOpenImessageDeepLink()
+  const smsHref =
+    imessageAvailable && profile.senderNumber
+      ? `sms:${profile.senderNumber}?&body=${encodeURIComponent(openerBody)}`
+      : null
   return (
     <div style={{ paddingTop: 8 }}>
       <div style={{ textAlign: "center", marginBottom: 32 }}>
@@ -795,19 +909,31 @@ function Done({ profile, onGo }: { profile: Profile; onGo: (r: "dashboard" | "la
             margin: 0,
           }}
         >
-          One last step — say <em style={{ fontStyle: "italic" }}>hi</em>.
+          Talk to <em style={{ fontStyle: "italic" }}>Claire</em>.
         </h1>
         <p className="lead" style={{ marginTop: 16, marginInline: "auto", maxWidth: 540, color: "var(--ink-2)", fontSize: 17 }}>
-          Tap the button below to open iMessage. Send the pre-filled <strong>"{HELLO_WEKRUIT_BODY}"</strong> and Claire will reply with your first question right away.
+          {imessageAvailable ? (
+            <>
+              Tap below to open iMessage with a pre-filled message. Send it as-is so we can link your phone to your profile — Claire replies right away.
+            </>
+          ) : (
+            <>
+              iMessage is only available on iPhone, iPad, and Mac. Open this page on an Apple device to start your chat with Claire.
+            </>
+          )}
         </p>
       </div>
 
       <div style={{ display: "flex", justifyContent: "center", gap: 12, flexWrap: "wrap" }}>
         {smsHref ? (
-          <a className="btn btn--primary btn--lg" href={smsHref}>Open iMessage →</a>
+          <a className="btn btn--primary btn--lg" href={smsHref}>Talk to Claire</a>
+        ) : !imessageAvailable ? (
+          <p className="caption" style={{ color: "var(--ink-3)", maxWidth: 420, textAlign: "center" }}>
+            Android and Windows can't open iMessage deep links. Use Safari on your iPhone or Mac, or email hello@wekruit.com for help.
+          </p>
         ) : (
           <span className="caption" style={{ color: "var(--ink-3)" }}>
-            We hit a hiccup assigning your Claire line. Text us at hello@wekruit.com and we'll get you started.
+            We hit a hiccup assigning your Claire line. Email hello@wekruit.com and we'll get you started.
           </span>
         )}
         <button className="btn btn--ghost" onClick={() => onGo("dashboard")}>Go to your profile</button>

@@ -8,6 +8,8 @@ export interface CandidateMagicLinkVerifyInput {
   firebaseIdToken?: string
   source?: string
   linkedinUrl?: string | null
+  /** True when the Firebase session is from LinkedIn OAuth (custom token / li_* uid). */
+  linkedinSignIn?: boolean
   browserUid?: string | null
   displayName?: string | null
 }
@@ -16,6 +18,10 @@ export interface CandidateMagicLinkVerifySuccess {
   ok: true
   candidateId: string
   idempotent: boolean
+  /** True when web onboarding intake was already saved (pa-users.intakeCompletedAt). */
+  intakeComplete: boolean
+  linkedinUrl?: string | null
+  linkedinLinkedViaOauth?: boolean
 }
 
 export interface CandidateMagicLinkVerifyFailure {
@@ -54,6 +60,7 @@ export interface CandidateMagicLinkVerifyDeps {
     email?: string
     email_verified?: boolean
     name?: string
+    linkedinSub?: string
   }>
   claimProfile?: typeof claimCandidateProfile
   linkLinkedin?: typeof linkCandidateHandle
@@ -73,11 +80,16 @@ export async function runCandidateMagicLinkVerify(
     deps.verifyIdToken ??
     (async (token: string) => {
       const decoded = await getAuth().verifyIdToken(token)
+      const linkedinSub =
+        typeof decoded.linkedinSub === "string" && decoded.linkedinSub.trim()
+          ? decoded.linkedinSub.trim()
+          : undefined
       return {
         uid: decoded.uid,
         email: decoded.email,
         email_verified: decoded.email_verified,
         name: decoded.name,
+        linkedinSub,
       }
     })
 
@@ -99,7 +111,8 @@ export async function runCandidateMagicLinkVerify(
   const browserUid = cleanString(input.browserUid, 128) ?? null
   const displayName =
     cleanString(input.displayName, 200) ?? cleanString(decoded.name, 200) ?? null
-  const linkedinUrl = cleanString(input.linkedinUrl, 500) ?? null
+  const linkedinUrlInput = cleanString(input.linkedinUrl, 500) ?? null
+  const linkedinSignIn = input.linkedinSignIn === true || decoded.uid.startsWith("li_")
   const sourceRaw = cleanString(input.source, 64)
   const source = sourceRaw && isPaUserSource(sourceRaw) ? sourceRaw : undefined
 
@@ -111,14 +124,34 @@ export async function runCandidateMagicLinkVerify(
       displayName,
     })
 
-    if (linkedinUrl) {
+    const userRef = deps.db.collection(PA_COLLECTIONS.users).doc(claim.candidateId)
+    let linkedinUrl: string | null = linkedinUrlInput
+    let linkedinLinkedViaOauth = false
+
+    if (linkedinSignIn && decoded.linkedinSub) {
+      linkedinLinkedViaOauth = true
+      const oauthMarker = `https://www.linkedin.com/oauth-linked/${decoded.linkedinSub}`
+      linkedinUrl = linkedinUrl ?? oauthMarker
+      await (deps.linkLinkedin ?? linkCandidateHandle)(deps.db, {
+        candidateId: claim.candidateId,
+        kind: "linkedin",
+        value: oauthMarker,
+        source: "candidate",
+        verified: true,
+        evidence: [{ source: "system", summary: "LinkedIn OAuth sign-in identity" }],
+      }).catch((err: unknown) => {
+        if (err instanceof Error && err.message.startsWith("identity_conflict:")) {
+          throw err
+        }
+      })
+    } else if (linkedinUrl) {
       await (deps.linkLinkedin ?? linkCandidateHandle)(deps.db, {
         candidateId: claim.candidateId,
         kind: "linkedin",
         value: linkedinUrl,
         source: "candidate",
         verified: true,
-        evidence: [{ source: "system", summary: "LinkedIn OAuth sign-in handle" }],
+        evidence: [{ source: "system", summary: "LinkedIn URL from candidate verify" }],
       }).catch((err: unknown) => {
         if (err instanceof Error && err.message.startsWith("identity_conflict:")) {
           throw err
@@ -126,18 +159,33 @@ export async function runCandidateMagicLinkVerify(
       })
     }
 
-    if (source) {
-      await deps.db.collection(PA_COLLECTIONS.users).doc(claim.candidateId).set(
-        { source, updatedAt: new Date().toISOString() },
-        { merge: true }
-      )
-    }
+    const mergeFields: Record<string, unknown> = { updatedAt: new Date().toISOString() }
+    if (source) mergeFields.source = source
+    if (linkedinUrl) mergeFields.linkedinUrl = linkedinUrl
+    if (linkedinLinkedViaOauth) mergeFields.linkedinOauthLinked = true
+    await userRef.set(mergeFields, { merge: true })
+
+    const userSnap = await userRef.get()
+    const userData = userSnap.data() ?? {}
+    const intakeCompletedAt = userData.intakeCompletedAt
+    const intakeComplete =
+      typeof intakeCompletedAt === "string"
+        ? intakeCompletedAt.length > 0
+        : intakeCompletedAt != null && typeof intakeCompletedAt === "object"
+    const storedLinkedin =
+      typeof userData.linkedinUrl === "string" && userData.linkedinUrl.trim()
+        ? userData.linkedinUrl.trim()
+        : linkedinUrl
+    const storedOauthLinked = userData.linkedinOauthLinked === true || linkedinLinkedViaOauth
 
     return {
       result: {
         ok: true,
         candidateId: claim.candidateId,
         idempotent: claim.idempotent,
+        intakeComplete,
+        linkedinUrl: storedLinkedin,
+        linkedinLinkedViaOauth: storedOauthLinked,
       },
       status: 200,
     }

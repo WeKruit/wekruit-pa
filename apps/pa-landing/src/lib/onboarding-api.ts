@@ -11,12 +11,15 @@ export type RegisterInput = {
   lastName: string
   email: string
   linkedin?: string
+  personalWebsite?: string
   lastCompany: string
-  jobTitle: string
-  location: string
-  phone: string
+  jobTitle?: string
+  location?: string
+  phone?: string
   consent: boolean
   resumeFileName?: string
+  /** Post-auth onboarding — merge onto this pa-users doc. */
+  candidateId?: string
   /** Dedup mode — "auto" returns { duplicate: true } when phone is on file. */
   mode?: "auto" | "reuse" | "refresh"
   /** Drives pa-users.source + SMS opener selection. */
