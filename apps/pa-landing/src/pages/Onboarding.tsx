@@ -16,7 +16,7 @@ import { isLinkedInSignIn } from "../lib/candidate-auth-provider.js"
 import { CandidateVerifyError, readStoredCandidateId, verifyCandidateMagicLinkSession } from "../lib/candidate-verify.js"
 import { buildHelloWekruitOpenerBody } from "../lib/hello-wekruit.js"
 import { canOpenImessageDeepLink } from "../lib/imessage-platform.js"
-import { filterCompanySuggestions } from "../lib/onboarding-companies.js"
+import { CompanyCombobox } from "../components/CompanyCombobox.js"
 
 // Keep the marker referenced so tree-shaking can't drop it from the
 // bundle. The acceptance grep relies on this string being present.
@@ -568,7 +568,6 @@ function FormIntake({
     resume: null,
   })
   const [err, setErr] = useState<Record<string, string>>({})
-  const [companySuggestions, setCompanySuggestions] = useState<string[]>([])
   const set = <K extends keyof Profile>(k: K, val: Profile[K]) => setV((s) => ({ ...s, [k]: val }))
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -618,11 +617,6 @@ function FormIntake({
     if (file) set("resume", { name: file.name, size: file.size, file })
   }
 
-  const onCompanyChange = (value: string) => {
-    set("lastCompany", value)
-    setCompanySuggestions(filterCompanySuggestions(value))
-  }
-
   const consentText =
     source === "WeKruit_Laid_Off"
       ? "I confirm I was laid off in the last 6 months and I'm okay with verified WeKruit employers seeing my name, last company, and pitch. I can hide my resume and remove my profile anytime."
@@ -646,24 +640,14 @@ function FormIntake({
         <Field label="First name" value={v.firstName!} onChange={(x) => set("firstName", x)} err={err.firstName} placeholder="Maya" autoFocus />
         <Field label="Last name" value={v.lastName!} onChange={(x) => set("lastName", x)} err={err.lastName} placeholder="Chen" />
         <Field span={2} label="Email" value={v.email!} onChange={(x) => set("email", x)} err={err.email} placeholder="maya@meta.com" type="email" />
-        <label style={{ gridColumn: "1 / -1", display: "flex", flexDirection: "column", gap: 6 }}>
-          <span style={{ fontFamily: "var(--font-sans)", fontSize: 13, fontWeight: 500, color: "var(--ink-2)" }}>
-            <span>{isLayoff ? "Last company" : "Previous company"}</span>
-            {err.lastCompany && <span style={{ color: "var(--danger)", marginLeft: 8 }}>{err.lastCompany}</span>}
-          </span>
-          <input
-            className="input"
-            value={v.lastCompany ?? ""}
-            placeholder="Meta"
-            list="wk-company-suggestions"
-            onChange={(e) => onCompanyChange(e.target.value)}
-          />
-          <datalist id="wk-company-suggestions">
-            {companySuggestions.map((name) => (
-              <option key={name} value={name} />
-            ))}
-          </datalist>
-        </label>
+        <CompanyCombobox
+          label={isLayoff ? "Last company" : "Previous company"}
+          value={v.lastCompany ?? ""}
+          onChange={(x) => set("lastCompany", x)}
+          err={err.lastCompany}
+          placeholder="Meta, Stripe, or your employer"
+          hint="Pick from suggestions or type any company name."
+        />
         {isLayoff && (
           <>
             <Field label="Job title there" value={v.jobTitle!} onChange={(x) => set("jobTitle", x)} err={err.jobTitle} placeholder="Senior PM, Reality Labs" />
@@ -870,7 +854,7 @@ function UploadIcon() {
 }
 
 function Done({ profile, onGo }: { profile: Profile; onGo: (r: "dashboard" | "landing") => void }) {
-  const number = profile.listPosition ?? 412 + Math.floor(Math.random() * 8) + 1
+  const number = profile.listPosition
   const openerBody = profile.candidateId ? buildHelloWekruitOpenerBody(profile.candidateId) : buildHelloWekruitOpenerBody("")
   const imessageAvailable = canOpenImessageDeepLink()
   const smsHref =
@@ -898,7 +882,9 @@ function Done({ profile, onGo }: { profile: Profile; onGo: (r: "dashboard" | "la
             <path d="M5 12l5 5L20 7" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         </div>
-        <div className="eyebrow" style={{ marginBottom: 12 }}>You're #{number} on the list</div>
+        {number != null && (
+          <div className="eyebrow" style={{ marginBottom: 12 }}>You&apos;re #{number} on the list</div>
+        )}
         <h1
           style={{
             fontFamily: "var(--font-serif)",

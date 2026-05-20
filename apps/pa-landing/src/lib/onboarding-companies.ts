@@ -1,8 +1,13 @@
-/** Lightweight typeahead — extend via API later (Adam open question). */
-export const COMMON_COMPANY_SUGGESTIONS = [
+/**
+ * Curated employer suggestions for onboarding company combobox.
+ * Free text is always allowed when the employer is not in this list.
+ */
+
+export const COMMON_COMPANY_SUGGESTIONS: readonly string[] = [
   "Amazon",
   "Apple",
   "Google",
+  "Alphabet",
   "Meta",
   "Microsoft",
   "Netflix",
@@ -25,6 +30,8 @@ export const COMMON_COMPANY_SUGGESTIONS = [
   "DoorDash",
   "Instacart",
   "Snap",
+  "Discord",
+  "Spotify",
   "Pinterest",
   "Twitter",
   "X",
@@ -32,16 +39,123 @@ export const COMMON_COMPANY_SUGGESTIONS = [
   "IBM",
   "Oracle",
   "SAP",
+  "Intel",
+  "AMD",
+  "Qualcomm",
+  "Cisco",
+  "VMware",
+  "ServiceNow",
+  "Workday",
+  "Atlassian",
+  "GitHub",
+  "Twilio",
+  "Square",
+  "Block",
+  "PayPal",
+  "Visa",
+  "Mastercard",
+  "Capital One",
+  "JPMorgan Chase",
+  "Goldman Sachs",
+  "Morgan Stanley",
+  "Citadel",
+  "Two Sigma",
+  "Jane Street",
   "Deloitte",
   "McKinsey",
   "BCG",
   "Bain",
-] as const
+  "Accenture",
+  "EY",
+  "PwC",
+  "KPMG",
+  "Bloomberg",
+  "Reuters",
+  "Disney",
+  "Warner Bros",
+  "Nike",
+  "Walmart",
+  "Target",
+  "Costco",
+  "Boeing",
+  "Lockheed Martin",
+  "SpaceX",
+  "Rivian",
+  "Ford",
+  "General Motors",
+  "ByteDance",
+  "TikTok",
+  "Samsung",
+  "Sony",
+  "Zoom",
+  "Slack",
+  "Notion",
+  "Figma",
+  "Canva",
+  "Reddit",
+  "Cloudflare",
+  "MongoDB",
+  "Elastic",
+  "Confluent",
+  "HashiCorp",
+  "Okta",
+  "CrowdStrike",
+  "Zillow",
+  "Redfin",
+  "Expedia",
+  "Booking.com",
+  "Waymo",
+  "Cruise",
+  "Anduril",
+  "Scale AI",
+  "Cohere",
+  "Hugging Face",
+  "Flexport",
+  "Gusto",
+  "Rippling",
+  "Brex",
+  "Chime",
+  "SoFi",
+  "Affirm",
+  "Klarna",
+  "Revolut",
+  "Plaid",
+  "Marqeta",
+  "Toast",
+  "HubSpot",
+  "Zendesk",
+  "Asana",
+  "Monday.com",
+  "Airtable",
+  "Dropbox",
+  "Box",
+  "Unity",
+  "Epic Games",
+  "Roblox",
+  "Electronic Arts",
+  "Activision Blizzard",
+]
+
+const NORMALIZED = COMMON_COMPANY_SUGGESTIONS.map((name) => name.toLowerCase())
 
 export function filterCompanySuggestions(query: string, limit = 8): string[] {
   const q = query.trim().toLowerCase()
-  if (!q) return []
-  const matches = COMMON_COMPANY_SUGGESTIONS.filter((name) => name.toLowerCase().includes(q))
-  if (matches.length > 0) return [...matches].slice(0, limit)
-  return query.trim() ? [query.trim()] : []
+  if (!q) return COMMON_COMPANY_SUGGESTIONS.slice(0, limit)
+  const matches: string[] = []
+  for (let i = 0; i < COMMON_COMPANY_SUGGESTIONS.length && matches.length < limit; i++) {
+    if (NORMALIZED[i]!.includes(q)) matches.push(COMMON_COMPANY_SUGGESTIONS[i]!)
+  }
+  return matches
+}
+
+/** Options for combobox: curated matches plus optional free-text row. */
+export function buildCompanyComboboxOptions(query: string, limit = 8): {
+  suggestions: string[]
+  customValue: string | null
+} {
+  const trimmed = query.trim()
+  const suggestions = filterCompanySuggestions(trimmed, limit)
+  if (!trimmed) return { suggestions, customValue: null }
+  const exact = suggestions.some((s) => s.toLowerCase() === trimmed.toLowerCase())
+  return { suggestions, customValue: exact ? null : trimmed }
 }
