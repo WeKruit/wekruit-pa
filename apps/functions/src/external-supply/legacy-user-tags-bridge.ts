@@ -72,10 +72,20 @@ export function externalRecordToUserTagsInput(
     company: e.company,
     description: undefined,
   }))
+  // P2 (V2.1): CoreSignal v2 collect adapter writes `inferred_skills` +
+  // `historical_skills` (deduped, lowercased) into `record.sourceTags`.
+  // Older sources (juicebox/lessie/v1 coresignal/manual_csv) usually leave
+  // `sourceTags` empty, so this is a safe extension — `mergeUserTags`
+  // happily upgrades plain strings into SkillEntry with neutral defaults
+  // (Phase 61 path).
+  const sourceSkills =
+    record.sourceTags && record.sourceTags.length > 0
+      ? record.sourceTags.slice(0, 64) // hard cap defensive against rogue lists
+      : undefined
   return {
     cv: {
       candidateProfile: {
-        skills: undefined,
+        skills: sourceSkills,
         name: record.name ?? null,
       },
       experiences,

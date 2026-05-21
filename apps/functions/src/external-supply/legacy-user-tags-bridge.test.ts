@@ -135,6 +135,71 @@ test("bridge preserves existing populated tag fields and reports skips", async (
   assert.ok(result.skippedKeys.includes("recentCompany"))
 })
 
+test("P2 (V2.1): coresignal_collect_v2 record with sourceTags fills pa-users.tags.skills", async () => {
+  const { db, store } = makeFakeFirestore()
+  store.set("pa-users", new Map([["cand-cs-1", { candidateId: "cand-cs-1" }]]))
+  const csRecord = makeRecord({
+    source: "coresignal_collect_v2",
+    sourceTags: [
+      "python",
+      "kubernetes",
+      "react",
+      "talent acquisition",
+      "machine learning",
+    ],
+  })
+  const result = await dualWriteLegacyUserTagsFromExternal(
+    db,
+    "cand-cs-1",
+    csRecord,
+    { nowIso: NOW }
+  )
+  assert.equal(result.wrote, true)
+  const written = (store.get("pa-users")!.get("cand-cs-1") as {
+    tags: Record<string, unknown>
+  }).tags
+  // skills field should be populated with non-empty array (mergeUserTags
+  // converts string list to SkillEntry shape with neutral defaults).
+  assert.ok(Array.isArray(written.skills), "skills must be an array")
+  assert.ok((written.skills as unknown[]).length > 0, "skills must be non-empty")
+  assert.ok(result.mergedKeys.includes("skills"))
+})
+
+test("P2 (V2.1): existing strong skills are NOT overwritten by sourceTags weak fill", async () => {
+  const { db, store } = makeFakeFirestore()
+  store.set(
+    "pa-users",
+    new Map([
+      [
+        "cand-cs-2",
+        {
+          candidateId: "cand-cs-2",
+          tags: {
+            skills: [
+              { name: "rust", bucket: "language", baseWeight: 1.2 },
+            ],
+            schemaVersion: 1,
+          },
+        },
+      ],
+    ])
+  )
+  const csRecord = makeRecord({
+    source: "coresignal_collect_v2",
+    sourceTags: ["python", "kubernetes"],
+  })
+  await dualWriteLegacyUserTagsFromExternal(db, "cand-cs-2", csRecord, {
+    nowIso: NOW,
+  })
+  const written = (store.get("pa-users")!.get("cand-cs-2") as {
+    tags: Record<string, unknown>
+  }).tags
+  // existing CV-derived skills preserved
+  const skills = written.skills as Array<{ name: string }>
+  assert.equal(skills.length, 1)
+  assert.equal(skills[0].name, "rust")
+})
+
 test("bridge on a record with no useful signal fills only the canonical 'other' industry sentinel", async () => {
   const { db, store } = makeFakeFirestore()
   store.set("pa-users", new Map([["cand-3", { candidateId: "cand-3" }]]))
