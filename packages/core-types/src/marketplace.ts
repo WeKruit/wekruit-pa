@@ -297,6 +297,13 @@ export const CandidateIdentityResolutionSchema = z.discriminatedUnion("outcome",
     outcome: z.literal("identity_conflict"),
     conflict: CandidateIdentityConflictSchema,
   }),
+  // Identity hardening 2026-05-21 — returned only when the resolver is
+  // called with `mode: "resolve_only"` and no existing handle matches.
+  // Used by the magic-link claim path so email-only sign-ins can never
+  // create a fresh pa-users row (L1 entry points are resume + OAuth).
+  z.object({
+    outcome: z.literal("not_found"),
+  }),
 ])
 export type CandidateIdentityResolution = z.infer<typeof CandidateIdentityResolutionSchema>
 

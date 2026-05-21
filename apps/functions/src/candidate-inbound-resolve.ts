@@ -32,10 +32,36 @@ async function bindPhoneToCandidate(
   phoneE164: string,
 ): Promise<void> {
   const isoNow = new Date().toISOString()
-  await db.collection(PA_COLLECTIONS.users).doc(candidateId).set(
-    { phoneE164, updatedAt: isoNow },
-    { merge: true },
-  )
+
+  // Identity hardening 2026-05-21 — guard order matters. The previous
+  // implementation wrote `pa-users.phoneE164` BEFORE running the handle
+  // conflict check, so a phone already owned by another candidate would
+  // throw `identity_conflict:` AFTER pa-users had already been polluted
+  // with the conflicting phone. Two reordered checks now run first:
+  //
+  //   (1) `pa-users/{candidateId}.phoneE164` exists and differs from the
+  //       opener phone → reject. Enforces the "one pa-users = one phone"
+  //       invariant Adam locked 2026-05-21.
+  //   (2) `linkCandidateHandle` throws `identity_conflict` when the phone
+  //       hash is already linked to a different candidate.
+  //
+  // Only after BOTH succeed do we stamp `pa-users.phoneE164`.
+  const userRef = db.collection(PA_COLLECTIONS.users).doc(candidateId)
+  const userSnap = await userRef.get()
+  const existingPhone =
+    userSnap.exists && typeof userSnap.data()?.phoneE164 === "string"
+      ? (userSnap.data()!.phoneE164 as string)
+      : null
+  if (existingPhone && existingPhone !== phoneE164) {
+    throw new Error(
+      `identity_conflict:pa_users_phone_mismatch:${candidateId}:existing_${existingPhone}_attempted_${phoneE164}`,
+    )
+  }
+
+  // linkCandidateHandle handles the cross-candidate handle reuse case —
+  // throws `identity_conflict:` when the phone hash already points at a
+  // different candidateId. Re-throw so the caller (resolveInboundUserId)
+  // surfaces it to the orchestrator and we DON'T touch pa-users.
   await linkCandidateHandle(db, {
     candidateId,
     kind: "phone",
@@ -44,11 +70,12 @@ async function bindPhoneToCandidate(
     deliverable: true,
     now: isoNow,
     evidence: [{ source: "system", summary: "Hello WeKruit opener phone bind" }],
-  }).catch((err: unknown) => {
-    if (err instanceof Error && err.message.startsWith("identity_conflict:")) {
-      throw err
-    }
   })
+
+  await userRef.set(
+    { phoneE164, updatedAt: isoNow },
+    { merge: true },
+  )
 }
 
 /**

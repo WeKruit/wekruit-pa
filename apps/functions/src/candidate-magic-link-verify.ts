@@ -71,6 +71,14 @@ export interface CandidateMagicLinkVerifyDeps {
     email_verified?: boolean
     name?: string
     linkedinSub?: string
+    /**
+     * Firebase `firebase.sign_in_provider` claim. Used to gate L1 entry:
+     * - `google.com` / LinkedIn (custom token via li_*) → allowed to create
+     *   pa-users on first sign-in (resume + OAuth are L1 entry points).
+     * - `password` (email magic-link) → claim-only; reject if email has
+     *   no existing handle. Email alone is NOT an L1 entry point.
+     */
+    signInProvider?: string
   }>
   claimProfile?: typeof claimCandidateProfile
   linkLinkedin?: typeof linkCandidateHandle
@@ -104,12 +112,24 @@ export async function runCandidateMagicLinkVerify(
         typeof decoded.linkedinSub === "string" && decoded.linkedinSub.trim()
           ? decoded.linkedinSub.trim()
           : undefined
+      // Identity hardening 2026-05-21 — surface the underlying Firebase
+      // sign-in provider so the claim path can enforce L1-entry policy:
+      // password (email-link) is NOT allowed to spawn a new pa-users row.
+      const firebaseClaim =
+        decoded.firebase && typeof decoded.firebase === "object"
+          ? (decoded.firebase as { sign_in_provider?: unknown })
+          : undefined
+      const signInProvider =
+        typeof firebaseClaim?.sign_in_provider === "string"
+          ? firebaseClaim.sign_in_provider
+          : undefined
       return {
         uid: decoded.uid,
         email: decoded.email,
         email_verified: decoded.email_verified,
         name: decoded.name,
         linkedinSub,
+        signInProvider,
       }
     })
 
@@ -136,12 +156,34 @@ export async function runCandidateMagicLinkVerify(
   const sourceRaw = cleanString(input.source, 64)
   const source = sourceRaw && isPaUserSource(sourceRaw) ? sourceRaw : undefined
 
+  // Identity hardening 2026-05-21 — L1 entry-point gate.
+  //
+  // Adam product lock (2026-05-21): only resume upload, Gmail OAuth, and
+  // LinkedIn OAuth may CREATE a pa-users row. Email magic-link is a
+  // claim-only path — it can sign in an existing user but cannot spawn
+  // a brand-new candidate from an unrecognized email. This prevents
+  // someone from accumulating phantom pa-users by typing arbitrary
+  // emails into the magic-link form.
+  //
+  // Decision derived from `signInProvider`:
+  //   - `google.com`     → allow create (Google OAuth = L1)
+  //   - LinkedIn         → allow create (`linkedinSignIn` flag from
+  //                        custom-token path or `li_*` uid prefix)
+  //   - `password`       → claim-only (email magic-link)
+  //   - anything else    → conservative default = claim-only
+  const isOAuthSignIn =
+    linkedinSignIn ||
+    decoded.signInProvider === "google.com" ||
+    decoded.signInProvider === "google.com,password"
+  const allowCreate = isOAuthSignIn
+
   try {
     const claim = await (deps.claimProfile ?? claimCandidateProfile)(deps.db, {
       firebaseUid: decoded.uid,
       email,
       browserUid,
       displayName,
+      allowCreate,
     })
 
     const userRef = deps.db.collection(PA_COLLECTIONS.users).doc(claim.candidateId)
@@ -225,6 +267,13 @@ export async function runCandidateMagicLinkVerify(
   } catch (err) {
     if (err instanceof Error && err.message.startsWith("identity_conflict:")) {
       return { result: { ok: false, reason: "identity_conflict" }, status: 409 }
+    }
+    // Identity hardening 2026-05-21 — magic-link email-link path on an
+    // unrecognized email. Surface to the client so the UI prompts the
+    // user to L1-sign-up first (upload resume, sign in with Google, or
+    // sign in with LinkedIn).
+    if (err instanceof Error && err.message.startsWith("requires_l1_signup:")) {
+      return { result: { ok: false, reason: "requires_l1_signup" }, status: 404 }
     }
     return { result: { ok: false, reason: "verify_failed" }, status: 500 }
   }
