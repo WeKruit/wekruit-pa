@@ -557,7 +557,7 @@ function humanSignalList(items: readonly string[] | undefined, maxItems = 3): st
 function workSummary(ctx: SharedOnboardingPromptContext): string | null {
   const titles = ctx.recentTitles ?? []
   const companies = ctx.recentCompanies ?? []
-  const skills = ctx.skills ?? []
+  const skills = humanSignalList(ctx.skills, 3)
   if (titles.length > 0 && companies.length > 0) return `${joinHuman(titles.slice(0, 2))} work at ${joinHuman(companies.slice(0, 2))}`
   if (companies.length > 0) return `work at ${joinHuman(companies.slice(0, 2))}`
   if (titles.length > 0) return `${joinHuman(titles.slice(0, 2))} work`
@@ -659,7 +659,7 @@ export function buildSharedOnboardingPrompt(
     return `${greeting}${resumeLead}For this next phase, what matters most in your next company: career growth, compensation, stability, mission, learning, or something else?`
   }
   if (id === "industry_interest" && (ctx.industryTags?.length ?? 0) > 0) {
-    return `Your resume points toward ${joinHuman(ctx.industryTags ?? [])}. Which industries or domains are you actually most interested in right now? Free-form is fine.`
+    return `Your resume points toward ${joinHuman(humanSignalList(ctx.industryTags))}. Which industries or domains are you actually most interested in right now? Free-form is fine.`
   }
   if (id === "location_relocation") {
     const location = locationSummary(ctx)

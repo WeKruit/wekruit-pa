@@ -1019,8 +1019,8 @@ test("integration: intent-ack flag cannot bypass website-start redirect", async 
     )
     assert.equal(captures.llmCalls, 0)
     // 2026-05-19 — shared_onboarding bootstrap owns cold-start Q1, no URL redirect.
-  assert.doesNotMatch(captures.outboundBodies[0] ?? "", /candidate\.wekruit\.com\/onboarding/i)
-  assert.match(captures.outboundBodies[0] ?? "", /career growth, compensation, stability, mission, learning/)
+    assert.doesNotMatch(captures.outboundBodies[0] ?? "", /candidate\.wekruit\.com\/onboarding/i)
+    assert.match(captures.outboundBodies[0] ?? "", /career growth, compensation, stability, mission, learning/)
     assert.doesNotMatch(captures.outboundBodies[0] ?? "", new RegExp(["what " + "email", "send " + "stuff", "6-digit"].join("|"), "i"))
   } finally {
     if (prev === undefined) delete process.env.PA_ONBOARDING_INTENT_ACK_DISABLED

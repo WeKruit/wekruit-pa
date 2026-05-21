@@ -10,6 +10,14 @@ import type { ResolvedVoiceProfile } from "./voice/voice-profiles/index.js"
 
 export type OnboardingSurfaceMode = "ask" | "reask"
 
+function onboardingSlotLabel(slot: SharedOnboardingQuestionId): string {
+  if (slot === "main_goal") return "main goal for the next company"
+  if (slot === "culture_stage") return "company culture and size or stage"
+  if (slot === "industry_interest") return "industry or domain"
+  if (slot === "location_relocation") return "location and work style"
+  return "extra context before matching"
+}
+
 function promptContextLabel(key: string): string {
   if (key === "firstName") return "first name"
   if (key === "currentLocation") return "current location"
@@ -39,12 +47,13 @@ export function buildOnboardingSurfaceIntent(input: {
   /** True only for the first SMS after `Hello, WeKruit! {userId}` / runtime kickoff. */
   opening?: boolean
 }): string {
+  const slotLabel = onboardingSlotLabel(input.slot)
   const base =
     input.opening
       ? "Compose the opening shared-onboarding SMS in Claire's personal job-hunting assistant tone."
       : input.mode === "reask"
-      ? `Re-ask the ${input.slot} onboarding question in friend tone. Prior answer was unclear.`
-      : `Ask the ${input.slot} onboarding question in friend Claire tone.`
+      ? `Re-ask the ${slotLabel} onboarding question in friend tone. Prior answer was unclear.`
+      : `Ask the ${slotLabel} onboarding question in friend Claire tone.`
 
   const lang: "en" | "zh" = input.lang === "zh" ? "zh" : "en"
 
@@ -64,6 +73,7 @@ export function buildOnboardingSurfaceIntent(input: {
     input.tangentDetected
       ? "User asked something off-topic. Briefly answer (≤1 short sentence) and then re-ask this onboarding slot — do not skip the slot question, do not offer job search, do not write tags."
       : "Ask the onboarding question for this slot — do not offer job search, do not riff on the greeting.",
+    "Preserve the canonical question's topic exactly; do not swap it for a different preference question.",
   ]
   if (input.tangentDetected) {
     invariants.push(buildTangentSurfaceDirective(lang))
@@ -112,7 +122,7 @@ export function buildOnboardingSurfaceIntent(input: {
     ? buildSharedOnboardingOpeningPrompt(input.promptContext)
     : buildSharedOnboardingPrompt(input.slot, input.promptContext)
   const canonicalLine = canonical
-    ? `Canonical question (preserve meaning, friend rephrase OK): ${canonical}`
+    ? `Canonical question (must preserve this topic exactly; friend rephrase OK): ${canonical}`
     : ""
 
   const renderContextValue = (value: unknown): string => {
@@ -126,9 +136,7 @@ export function buildOnboardingSurfaceIntent(input: {
   }
   const ctxBits = Object.entries(input.promptContext)
     .filter(([, v]) => v != null && String(v).trim().length > 0)
-    .map(([k, v]) => input.opening
-      ? `${promptContextLabel(k)}: ${renderContextValue(v)}`
-      : `${k}: ${String(v)}`)
+    .map(([k, v]) => `${promptContextLabel(k)}: ${renderContextValue(v)}`)
     .join("; ")
 
   return [

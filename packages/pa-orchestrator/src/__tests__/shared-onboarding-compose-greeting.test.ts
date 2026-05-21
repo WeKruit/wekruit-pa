@@ -87,7 +87,7 @@ test("composeSharedOnboardingReply passes synthetic onboarding instruction for g
   const db = makeFlagDb()
   const env = {
     paSharedOnboardingAgenticSurface: "true",
-    paBehaviorChoreographerEnabled: "false",
+    paBehaviorChoreographerEnabled: "true",
     paReactionTapbackEnabled: "false",
     paFindMatchToolEnabled: "false",
     paHumanizeRuntimeEnabled: "false",
@@ -115,7 +115,11 @@ test("composeSharedOnboardingReply passes synthetic onboarding instruction for g
             systemInputs?.some((s) => s.includes("https://candidate.wekruit.com/me/profile")),
             "opening welcome should mention the profile update link"
           )
-          return { text: "Hey! What kind of role are you aiming for right now?" }
+          assert.ok(
+            !systemInputs?.some((s) => s.includes("FRIEND SLANG PALETTE")),
+            "opening welcome should not receive slang-palette pressure"
+          )
+          return { text: "Hey! What matters most in your next company: career growth, compensation, stability, mission, learning, or something else?" }
         },
         createSession: () => ({
           async getSessionId() {
@@ -146,9 +150,10 @@ test("composeSharedOnboardingReply passes synthetic onboarding instruction for g
       agent,
     })
 
-    assert.match(composed.text, /role/i)
-    assert.ok(Array.isArray(composed.slangPicked))
-    assert.match(capturedUserMessage, /\[ONBOARDING\].*target role/)
+    assert.match(composed.text, /what matters most/i)
+    assert.deepEqual(composed.slangPicked, [])
+    assert.match(capturedUserMessage, /\[ONBOARDING\].*main goal for the next company/)
+    assert.doesNotMatch(capturedUserMessage, /target role/)
     assert.doesNotMatch(capturedUserMessage, /main_goal|job_title|tech_swe/)
     assert.doesNotMatch(capturedUserMessage, /Hello, WeKruit/i)
   } finally {
@@ -175,7 +180,7 @@ test("composeSharedOnboardingReply humanizes unknown future tag tokens from agen
         db,
         log: () => undefined,
         runAgentTurn: async () => ({
-          text: "Got it — I’ll focus on climate_tech_ops and ai_product_management roles. What salary_range should I keep in mind?",
+          text: "Got it — I’ll focus on climate_tech_ops and ai_product_management roles. Any special_context_notes I should keep in mind?",
         }),
         createSession: () => ({
           async getSessionId() {
@@ -214,8 +219,8 @@ test("composeSharedOnboardingReply humanizes unknown future tag tokens from agen
 
     assert.match(composed.text, /climate tech ops/)
     assert.match(composed.text, /AI product management/)
-    assert.match(composed.text, /salary range/)
-    assert.doesNotMatch(composed.text, /climate_tech_ops|ai_product_management|salary_range/)
+    assert.match(composed.text, /special context notes/)
+    assert.doesNotMatch(composed.text, /climate_tech_ops|ai_product_management|special_context_notes/)
   } finally {
     process.env = prevEnv
   }

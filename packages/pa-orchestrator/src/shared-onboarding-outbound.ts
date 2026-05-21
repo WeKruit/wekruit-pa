@@ -324,7 +324,7 @@ export function effectiveOnboardingComposeUserMessage(input: {
 }
 
 function buildSyntheticOnboardingUserInstruction(slot: SharedOnboardingQuestionId): string {
-  return `[ONBOARDING] Ask the candidate the ${slot} onboarding question in friend tone. Do not extract tags — only compose the SMS. Do not respond to greetings or kickoff phrases — deliver the slot question only.`
+  return `[ONBOARDING] Ask the candidate the ${sharedOnboardingSlotCopyLabel(slot)} onboarding question in friend tone. Do not extract tags; only compose the SMS. Do not respond to greetings or kickoff phrases; deliver the slot question only.`
 }
 
 function buildSyntheticOpeningUserInstruction(slot: SharedOnboardingQuestionId): string {
@@ -332,11 +332,11 @@ function buildSyntheticOpeningUserInstruction(slot: SharedOnboardingQuestionId):
 }
 
 function sharedOnboardingSlotCopyLabel(slot: SharedOnboardingQuestionId): string {
-  if (slot === "main_goal") return "target role"
-  if (slot === "culture_stage") return "company size or stage"
+  if (slot === "main_goal") return "main goal for the next company"
+  if (slot === "culture_stage") return "company culture and size or stage"
   if (slot === "industry_interest") return "industry or domain"
   if (slot === "location_relocation") return "location and work style"
-  return "salary range"
+  return "extra context before matching"
 }
 
 const PROTECTED_VISIBLE_TOKEN_SEGMENT_RE =
@@ -523,10 +523,12 @@ export async function composeSharedOnboardingReply(
           : "User may receive a separate 👍 bubble first — do NOT open your SMS with 👍 / thumbs-up. Lead with the question or a one-beat ack instead."
         : null
 
+    const slangDirective = opening ? null : choreography.slangDirective
+    const slangPicked = opening ? [] : choreography.slangPicked
     const systemInputs = [
       injectVoiceProfilePrefix("", profile, lang),
       surfaceIntent,
-      choreography.slangDirective,
+      slangDirective,
       emojiHintCandidate,
     ].filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
 
@@ -597,9 +599,9 @@ export async function composeSharedOnboardingReply(
       mode: input.mode,
       inboundKind: input.composeContext.inboundKind,
       routerResult: input.composeContext.routerResult,
-      slangPaletteSize: choreography.slangPicked.length,
+      slangPaletteSize: slangPicked.length,
     })
-    return { text: finalizeSharedOnboardingSmsText(safe), slangPicked: choreography.slangPicked }
+    return { text: finalizeSharedOnboardingSmsText(safe), slangPicked }
   } catch (err) {
     input.store.log("pa.shared_onboarding.agentic_surface.fallback", {
       userId: input.userId,

@@ -78,7 +78,8 @@ test("shared onboarding prompts ground Q1 and Q4 in resume/profile context when 
   assert.match(q1, /career growth, compensation, stability, mission, learning/i)
 
   const q3 = buildSharedOnboardingPrompt("industry_interest", promptContext)
-  assert.match(q3, /financial_technology/i)
+  assert.match(q3, /financial technology/i)
+  assert.doesNotMatch(q3, /financial_technology|developer_tools/i)
   assert.match(q3, /actually most interested/i)
 
   const q4 = buildSharedOnboardingPrompt("location_relocation", promptContext)

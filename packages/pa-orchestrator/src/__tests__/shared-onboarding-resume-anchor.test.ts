@@ -77,7 +77,7 @@ describe("buildOnboardingSurfaceIntent", () => {
       lang: "en",
     })
     assert.ok(/Resume anchor \(required if present\):/.test(intent), "expected anchor line")
-    assert.ok(/Canonical question \(preserve meaning, friend rephrase OK\):/.test(intent), "expected canonical line")
+    assert.ok(/Canonical question \(must preserve this topic exactly; friend rephrase OK\):/.test(intent), "expected canonical line")
     assert.ok(/Tesla/.test(intent), "expected company quoted in surface")
   })
 
@@ -125,7 +125,8 @@ describe("buildOnboardingSurfaceIntent", () => {
       voiceProfile: profile,
       lang: "en",
     })
-    assert.ok(/Re-ask the main_goal/.test(intent), "expected reask base line")
+    assert.ok(/Re-ask the main goal for the next company/.test(intent), "expected reask base line")
+    assert.doesNotMatch(intent, /main_goal/)
     assert.ok(/Resume anchor \(required if present\):/.test(intent), "expected anchor line in reask")
   })
 })
