@@ -114,6 +114,7 @@ export function detectYesNoIntent(body: string): "yes" | "no" | "ambiguous" {
   if (!t) return "ambiguous"
   if (
     /^(no|nope|nah|pass|skip|later|not now|don'?t|不用|不要|不了|先不|算了|否)\b/i.test(t) ||
+    /\b(no thanks|no thank you|not right now|not today|i'?m good|i am good|good for now|fine for now|i'?ll pass|i will pass|don'?t want|do not want|not interested)\b/i.test(t) ||
     /(不用了|先不用|暂时不|不想)/.test(t)
   ) {
     return "no"
