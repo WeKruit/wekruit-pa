@@ -6,6 +6,7 @@ import {
   buildSharedOnboardingComposeContext,
   composeSharedOnboardingReply,
   effectiveOnboardingComposeUserMessage,
+  humanizeVisibleInternalTokens,
 } from "../shared-onboarding-outbound.js"
 
 const agent = { id: "friend", systemPrompt: "You are Claire." } as AgentDef
@@ -67,6 +68,20 @@ test("effectiveOnboardingComposeUserMessage keeps substantive answers on ask", (
   )
 })
 
+test("humanizeVisibleInternalTokens cleans future enum tags without touching URLs or emails", () => {
+  const text =
+    "I’ll look for climate_tech_ops, ai_product_management, and backend-platform-systems roles. Update https://example.com/a_b?role=software_engineering or adam_test@example.com."
+
+  const out = humanizeVisibleInternalTokens(text)
+
+  assert.match(out, /climate tech ops/)
+  assert.match(out, /AI product management/)
+  assert.match(out, /backend platform systems/)
+  assert.match(out, /https:\/\/example\.com\/a_b\?role=software_engineering/)
+  assert.match(out, /adam_test@example\.com/)
+  assert.doesNotMatch(out.replace(/https?:\/\/\S+|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, ""), /[a-z0-9]+_[a-z0-9]+/i)
+})
+
 test("composeSharedOnboardingReply passes synthetic onboarding instruction for greeting kickoff", async () => {
   let capturedUserMessage = ""
   const db = makeFlagDb()
@@ -91,6 +106,14 @@ test("composeSharedOnboardingReply passes synthetic onboarding instruction for g
           assert.ok(
             systemInputs?.some((s) => s.includes("Write the SMS in English only")),
             "surface intent should lock English for greeting bootstrap"
+          )
+          assert.ok(
+            systemInputs?.some((s) => s.includes("first SMS after the candidate opened with Hello, WeKruit")),
+            "greeting bootstrap should carry opening welcome instructions"
+          )
+          assert.ok(
+            systemInputs?.some((s) => s.includes("https://candidate.wekruit.com/me/profile")),
+            "opening welcome should mention the profile update link"
           )
           return { text: "Hey! What kind of role are you aiming for right now?" }
         },
@@ -117,7 +140,7 @@ test("composeSharedOnboardingReply passes synthetic onboarding instruction for g
       turnId: "turn-greeting",
       slot: "main_goal",
       mode: "ask",
-      promptContext: { firstName: "Test" },
+      promptContext: { firstName: "Test", recentTitles: ["Designer"], recentCompanies: ["Figma"] },
       userMessage: "Hello, WeKruit!",
       composeContext: kickoffContext,
       agent,
@@ -125,8 +148,74 @@ test("composeSharedOnboardingReply passes synthetic onboarding instruction for g
 
     assert.match(composed.text, /role/i)
     assert.ok(Array.isArray(composed.slangPicked))
-    assert.match(capturedUserMessage, /\[ONBOARDING\].*main_goal/)
+    assert.match(capturedUserMessage, /\[ONBOARDING\].*target role/)
+    assert.doesNotMatch(capturedUserMessage, /main_goal|job_title|tech_swe/)
     assert.doesNotMatch(capturedUserMessage, /Hello, WeKruit/i)
+  } finally {
+    process.env = prevEnv
+  }
+})
+
+test("composeSharedOnboardingReply humanizes unknown future tag tokens from agentic output", async () => {
+  const db = makeFlagDb()
+  const prevEnv = process.env
+  process.env = {
+    ...prevEnv,
+    paSharedOnboardingAgenticSurface: "true",
+    paBehaviorChoreographerEnabled: "false",
+    paReactionTapbackEnabled: "false",
+    paFindMatchToolEnabled: "false",
+    paHumanizeRuntimeEnabled: "false",
+    PA_SHARED_ONBOARDING_TEMPLATE_FALLBACK: "false",
+  }
+
+  try {
+    const composed = await composeSharedOnboardingReply({
+      store: {
+        db,
+        log: () => undefined,
+        runAgentTurn: async () => ({
+          text: "Got it — I’ll focus on climate_tech_ops and ai_product_management roles. What salary_range should I keep in mind?",
+        }),
+        createSession: () => ({
+          async getSessionId() {
+            return "sess-1"
+          },
+          async getItems() {
+            return []
+          },
+          async addItems() {
+            /* no-op */
+          },
+          async popItem() {
+            return undefined
+          },
+          async clearSession() {
+            /* no-op */
+          },
+        }),
+      },
+      userId: "future-tag-user",
+      sessionId: "sess-1",
+      turnId: "turn-future-tag",
+      slot: "special_context",
+      mode: "ask",
+      promptContext: {},
+      userMessage: "NYC or remote",
+      composeContext: buildSharedOnboardingComposeContext({
+        inboundKind: "user_answer",
+        routerResult: "asked_question",
+        slot: "special_context",
+        mode: "ask",
+        userMessage: "NYC or remote",
+      }),
+      agent,
+    })
+
+    assert.match(composed.text, /climate tech ops/)
+    assert.match(composed.text, /AI product management/)
+    assert.match(composed.text, /salary range/)
+    assert.doesNotMatch(composed.text, /climate_tech_ops|ai_product_management|salary_range/)
   } finally {
     process.env = prevEnv
   }

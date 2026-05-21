@@ -11,6 +11,7 @@ import {
   runConnectorWithNarration,
 } from "./run-connector-with-narration.js"
 import {
+  buildSharedOnboardingOpeningPrompt,
   buildSharedOnboardingPrompt,
   buildSharedOnboardingReask,
   isSharedOnboardingGreetingOrKickoff,
@@ -323,7 +324,77 @@ export function effectiveOnboardingComposeUserMessage(input: {
 }
 
 function buildSyntheticOnboardingUserInstruction(slot: SharedOnboardingQuestionId): string {
-  return `[ONBOARDING] Ask the candidate the ${slot} onboarding question in friend tone. Do not extract tags — only compose the SMS. Do not respond to greetings or kickoff phrases — deliver the slot question only.`
+  return `[ONBOARDING] Ask the candidate the ${sharedOnboardingSlotCopyLabel(slot)} onboarding question in friend tone. Do not extract tags; only compose the SMS. Do not respond to greetings or kickoff phrases; deliver the slot question only.`
+}
+
+function buildSyntheticOpeningUserInstruction(slot: SharedOnboardingQuestionId): string {
+  return `[ONBOARDING] Compose the opening welcome and ${sharedOnboardingSlotCopyLabel(slot)} onboarding question in warm SMS tone. The candidate already sent the required opener with their user id. Do not extract tags; only compose the SMS.`
+}
+
+function sharedOnboardingSlotCopyLabel(slot: SharedOnboardingQuestionId): string {
+  if (slot === "main_goal") return "target role"
+  if (slot === "culture_stage") return "company size or stage"
+  if (slot === "industry_interest") return "industry or domain"
+  if (slot === "location_relocation") return "location and work style"
+  return "salary range"
+}
+
+const PROTECTED_VISIBLE_TOKEN_SEGMENT_RE =
+  /(https?:\/\/[^\s)]+|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})/gi
+
+const VISIBLE_SNAKE_TOKEN_RE = /\b(?=[a-z0-9_]*[a-z])[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/gi
+const VISIBLE_KEBAB_TOKEN_RE = /\b(?=[a-z0-9-]*[a-z])[a-z][a-z0-9]*(?:-[a-z0-9]+){2,}\b/gi
+
+const VISIBLE_TOKEN_ACRONYMS: Readonly<Record<string, string>> = {
+  ai: "AI",
+  api: "API",
+  cpt: "CPT",
+  h1b: "H1B",
+  h1: "H1",
+  ios: "iOS",
+  ml: "ML",
+  opt: "OPT",
+  qa: "QA",
+  swe: "SWE",
+  ui: "UI",
+  uk: "UK",
+  us: "US",
+  usa: "USA",
+  ux: "UX",
+}
+
+function humanizeInternalTokenPart(part: string): string {
+  const key = part.trim().toLowerCase()
+  return VISIBLE_TOKEN_ACRONYMS[key] ?? key
+}
+
+function humanizeVisibleInternalToken(token: string): string {
+  return token
+    .split(/[_-]+/g)
+    .map(humanizeInternalTokenPart)
+    .filter(Boolean)
+    .join(" ")
+}
+
+export function humanizeVisibleInternalTokens(text: string): string {
+  if (!text.trim()) return text
+  return text
+    .split(PROTECTED_VISIBLE_TOKEN_SEGMENT_RE)
+    .map((segment) => {
+      if (PROTECTED_VISIBLE_TOKEN_SEGMENT_RE.test(segment)) {
+        PROTECTED_VISIBLE_TOKEN_SEGMENT_RE.lastIndex = 0
+        return segment
+      }
+      PROTECTED_VISIBLE_TOKEN_SEGMENT_RE.lastIndex = 0
+      return segment
+        .replace(VISIBLE_SNAKE_TOKEN_RE, humanizeVisibleInternalToken)
+        .replace(VISIBLE_KEBAB_TOKEN_RE, humanizeVisibleInternalToken)
+    })
+    .join("")
+}
+
+function finalizeSharedOnboardingSmsText(text: string): string {
+  return humanizeVisibleInternalTokens(text)
 }
 
 export async function composeSharedOnboardingReply(
@@ -335,8 +406,14 @@ export async function composeSharedOnboardingReply(
     composeContext: input.composeContext,
   })
   const lang = input.composeContext.lang
+  const opening =
+    input.mode === "ask" &&
+    input.slot === "main_goal" &&
+    isKickoffComposeKind(input.composeContext.inboundKind)
   const template =
-    input.mode === "reask"
+    opening
+      ? buildSharedOnboardingOpeningPrompt(input.promptContext)
+      : input.mode === "reask"
       ? buildSharedOnboardingReask(input.slot, input.promptContext, {
           accept: false,
           reason:
@@ -357,7 +434,7 @@ export async function composeSharedOnboardingReply(
       turnId: input.turnId,
       db: input.store.db,
     })
-    return { text, slangPicked: [] }
+    return { text: finalizeSharedOnboardingSmsText(text), slangPicked: [] }
   }
 
   try {
@@ -426,6 +503,7 @@ export async function composeSharedOnboardingReply(
       ackHint: choreography.ackHint,
       lang,
       tangentDetected: tangent.isTangent,
+      opening,
     })
 
     // Adam 2026-05-19 voice polish §4 — when the outbound delivery planner
@@ -470,7 +548,10 @@ export async function composeSharedOnboardingReply(
 
     const systemPrompt = injectVoiceProfilePrefix(input.agent.systemPrompt, profile, lang)
     const syntheticUser =
-      composeUserMessage || buildSyntheticOnboardingUserInstruction(input.slot)
+      composeUserMessage ||
+      (opening
+        ? buildSyntheticOpeningUserInstruction(input.slot)
+        : buildSyntheticOnboardingUserInstruction(input.slot))
 
     const session =
       input.store.createSession?.({
@@ -518,7 +599,7 @@ export async function composeSharedOnboardingReply(
       routerResult: input.composeContext.routerResult,
       slangPaletteSize: choreography.slangPicked.length,
     })
-    return { text: safe, slangPicked: choreography.slangPicked }
+    return { text: finalizeSharedOnboardingSmsText(safe), slangPicked: choreography.slangPicked }
   } catch (err) {
     input.store.log("pa.shared_onboarding.agentic_surface.fallback", {
       userId: input.userId,
@@ -534,7 +615,7 @@ export async function composeSharedOnboardingReply(
       turnId: input.turnId,
       db: input.store.db,
     })
-    return { text, slangPicked: [] }
+    return { text: finalizeSharedOnboardingSmsText(text), slangPicked: [] }
   }
 }
 
@@ -582,7 +663,7 @@ export async function deliverSharedOnboardingJobRecs(input: {
         },
         outbound: {
           sendPreCallBubble: async (text) => {
-            await input.store.enqueueOutbound!(input.event.userId, input.event.from, text, {
+            await input.store.enqueueOutbound!(input.event.userId, input.event.from, finalizeSharedOnboardingSmsText(text), {
               sessionId: input.event.sessionId,
               role: "assistant",
               idempotencyKey: `outbound-pre-${input.event.id}`,
@@ -618,7 +699,7 @@ export async function deliverSharedOnboardingJobRecs(input: {
         lang,
         enqueueOutbound: input.store.enqueueOutbound,
       })
-      return { recCount: jobCount, reply: text }
+      return { recCount: jobCount, reply: finalizeSharedOnboardingSmsText(text) }
     } catch (err) {
       input.store.log("pa.shared_onboarding.find_match.fallback", {
         userId: input.event.userId,
@@ -650,5 +731,5 @@ export async function deliverSharedOnboardingJobRecs(input: {
     lang,
     enqueueOutbound: input.store.enqueueOutbound,
   })
-  return { recCount, reply: text }
+  return { recCount, reply: finalizeSharedOnboardingSmsText(text) }
 }

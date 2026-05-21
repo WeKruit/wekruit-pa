@@ -513,7 +513,7 @@ test("runtime-event: shared laid-off kickoff sends Q1 without legacy email onboa
   assert.deepEqual(captures.appliedSteps, [], "runtime event must not advance legacy onboarding")
   assert.match(captures.outboundBodies[0] ?? "", /Hey Ada/i)
   assert.match(captures.outboundBodies[0] ?? "", /Rain/i)
-  assert.match(captures.outboundBodies[0] ?? "", /career growth, compensation, stability, mission, learning/i)
+  assert.match(captures.outboundBodies[0] ?? "", /software engineering, product, design/i)
   assert.doesNotMatch(captures.outboundBodies[0] ?? "", /email|e-mail|language preference|mixed language/i)
 })
 
@@ -766,7 +766,7 @@ test("shared onboarding accepts a real Q1 answer and advances to culture_stage",
   }
 
   await processInboundEvent(
-    { ...baseEvent, id: "evt-shared-q1-real", body: "Career growth and learning matter most right now." },
+    { ...baseEvent, id: "evt-shared-q1-real", body: "Software engineering, ideally backend or platform." },
     store,
   )
 
@@ -775,8 +775,8 @@ test("shared onboarding accepts a real Q1 answer and advances to culture_stage",
   const answers = shared.answers as Record<string, unknown>
   assert.equal(shared.currentQuestionId, "culture_stage")
   assert.ok(answers.main_goal, "Q1 answer should be recorded")
-  assert.match(memoryFacts[0] ?? "", /main goal.*Career growth and learning/i)
-  assert.match(captures.outboundBodies[0] ?? "", /company culture and size or stage/i)
+  assert.match(memoryFacts[0] ?? "", /main goal.*Software engineering/i)
+  assert.match(captures.outboundBodies[0] ?? "", /company size or vibe/i)
 })
 
 test("shared onboarding bootstrap loads parsed resume context before sending Q1", async () => {
@@ -822,8 +822,10 @@ test("shared onboarding bootstrap loads parsed resume context before sending Q1"
   const promptContext = shared.promptContext as Record<string, unknown>
   assert.deepEqual(promptContext.recentCompanies, ["Rain"])
   assert.deepEqual(promptContext.recentTitles, ["Software Engineer - Fullstack"])
-  assert.match(captures.outboundBodies[0] ?? "", /I saw from your resume/i)
-  assert.match(captures.outboundBodies[0] ?? "", /Software Engineer - Fullstack work at Rain/i)
+  assert.match(captures.outboundBodies[0] ?? "", /Saw your resume come through/i)
+  assert.match(captures.outboundBodies[0] ?? "", /Software Engineer - Fullstack/i)
+  assert.match(captures.outboundBodies[0] ?? "", /Rain/i)
+  assert.match(captures.outboundBodies[0] ?? "", /https:\/\/candidate\.wekruit\.com\/me\/profile/i)
 })
 
 test("shared onboarding bootstrap falls back to resume artifact summary when parsed resume pointer is stale", async () => {
@@ -864,8 +866,10 @@ test("shared onboarding bootstrap falls back to resume artifact summary when par
   assert.deepEqual(promptContext.recentCompanies, ["Tesla Inc"])
   assert.deepEqual(promptContext.recentTitles, ["Software Engineer Intern"])
   assert.deepEqual(promptContext.skills, ["C++", "JavaScript", "Python"])
-  assert.match(captures.outboundBodies[0] ?? "", /I saw from your resume/i)
-  assert.match(captures.outboundBodies[0] ?? "", /Software Engineer Intern work at Tesla Inc/i)
+  assert.match(captures.outboundBodies[0] ?? "", /Saw your resume come through/i)
+  assert.match(captures.outboundBodies[0] ?? "", /Software Engineer Intern/i)
+  assert.match(captures.outboundBodies[0] ?? "", /Tesla Inc/i)
+  assert.match(captures.outboundBodies[0] ?? "", /https:\/\/candidate\.wekruit\.com\/me\/profile/i)
 })
 
 test("integration: manual zh job_search before website start is redirected to candidate onboarding", async () => {
@@ -884,7 +888,7 @@ test("integration: manual zh job_search before website start is redirected to ca
   assert.deepEqual(captures.systemInputs, [])
   // 2026-05-19 — shared_onboarding bootstrap owns cold-start Q1, no URL redirect.
   assert.doesNotMatch(captures.outboundBodies[0] ?? "", /candidate\.wekruit\.com\/onboarding/i)
-  assert.match(captures.outboundBodies[0] ?? "", /matters most in your next company/)
+  assert.match(captures.outboundBodies[0] ?? "", /software engineering, product, design/)
   assert.doesNotMatch(captures.outboundBodies[0] ?? "", new RegExp(["what " + "email", "send " + "stuff", "验证码", "6-digit"].join("|"), "i"))
   assert.deepEqual(captures.appliedSteps, [])
 })
@@ -904,7 +908,7 @@ test("integration: manual en job_search before website start is redirected to ca
   assert.equal(captures.llmCalls, 0)
   // 2026-05-19 — shared_onboarding bootstrap owns cold-start Q1, no URL redirect.
   assert.doesNotMatch(captures.outboundBodies[0] ?? "", /candidate\.wekruit\.com\/onboarding/i)
-  assert.match(captures.outboundBodies[0] ?? "", /matters most in your next company/)
+  assert.match(captures.outboundBodies[0] ?? "", /software engineering, product, design/)
   assert.doesNotMatch(captures.outboundBodies[0] ?? "", new RegExp(["what " + "email", "send " + "stuff", "6-digit"].join("|"), "i"))
   assert.deepEqual(captures.systemInputs, [])
   assert.deepEqual(captures.appliedSteps, [])
@@ -925,7 +929,7 @@ test("integration: manual casual greeting before website start is redirected to 
   assert.equal(captures.llmCalls, 0)
   // 2026-05-19 — shared_onboarding bootstrap owns cold-start Q1, no URL redirect.
   assert.doesNotMatch(captures.outboundBodies[0] ?? "", /candidate\.wekruit\.com\/onboarding/i)
-  assert.match(captures.outboundBodies[0] ?? "", /matters most in your next company/)
+  assert.match(captures.outboundBodies[0] ?? "", /software engineering, product, design/)
   assert.doesNotMatch(captures.outboundBodies[0] ?? "", new RegExp(["what " + "email", "send " + "stuff", "6-digit"].join("|"), "i"))
   assert.deepEqual(captures.systemInputs, [])
   assert.deepEqual(captures.appliedSteps, [])
@@ -1016,7 +1020,7 @@ test("integration: intent-ack flag cannot bypass website-start redirect", async 
     assert.equal(captures.llmCalls, 0)
     // 2026-05-19 — shared_onboarding bootstrap owns cold-start Q1, no URL redirect.
   assert.doesNotMatch(captures.outboundBodies[0] ?? "", /candidate\.wekruit\.com\/onboarding/i)
-  assert.match(captures.outboundBodies[0] ?? "", /matters most in your next company/)
+  assert.match(captures.outboundBodies[0] ?? "", /software engineering, product, design/)
     assert.doesNotMatch(captures.outboundBodies[0] ?? "", new RegExp(["what " + "email", "send " + "stuff", "6-digit"].join("|"), "i"))
   } finally {
     if (prev === undefined) delete process.env.PA_ONBOARDING_INTENT_ACK_DISABLED

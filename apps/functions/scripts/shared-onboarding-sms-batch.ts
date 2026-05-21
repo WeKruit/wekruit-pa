@@ -312,11 +312,25 @@ function textQaFailures(text: string): string[] {
   if (/\bWeKruit_(?:LAID_OFF|Laid_Off|CANDIDATE_HI|rain-software)/.test(text)) {
     failures.push("assistant leaked internal source token")
   }
-  if (/\bq_(?:role|yoe|visa|startup_pref|location)\b/i.test(text)) {
-    failures.push("assistant leaked legacy question id")
+  if (/\bq_(?:role|yoe|visa|startup_pref|location)\b|main_goal|culture_stage|industry_interest|location_relocation|special_context/i.test(text)) {
+    failures.push("assistant leaked internal question id")
   }
   if (/\b__PA_RESET__\b/.test(text)) failures.push("assistant leaked reset token")
   if (/^as an ai\b/i.test(text.trim())) failures.push("assistant used generic AI disclaimer voice")
+  if (/\b(I am Claire\. How may I assist|How may I assist you today|leverage|synergy)\b/i.test(text)) {
+    failures.push("assistant used robotic or corporate phrasing")
+  }
+  if (/\b(tech_swe|software_engineering|job_title)\b/i.test(text)) {
+    failures.push("assistant leaked internal enum/token language")
+  }
+  if (/\b(timeline|dealbreaker|deal-breaker)\b/i.test(text)) {
+    failures.push("assistant asked forbidden timeline/dealbreaker wording")
+  }
+  if (/^\s*(#{1,6}|[-*]\s+|\d+[.)]\s+)/m.test(text)) {
+    failures.push("assistant used markdown/list/header formatting")
+  }
+  const questionMarks = text.match(/\?/g)?.length ?? 0
+  if (questionMarks > 1) failures.push(`assistant asked more than one question (${questionMarks})`)
   if (text.length > 1400) failures.push("assistant reply is too long for conversational SMS")
   return failures
 }
@@ -419,11 +433,11 @@ function expectPromptContextGrounded(turn: TurnResult, failures: string[]): void
 
 function scenarioPlan(index: number, complete: boolean): ScenarioPlan {
   const q1 = [
-    "Career growth and stronger mentorship matter most, with compensation as a close second.",
-    "I care most about compensation and stability, but I still want learning.",
-    "Mission and product impact matter most, especially if I can grow into more ownership.",
-    "Learning, ownership, and career growth are the priorities.",
-    "Stability and work-life balance matter most right now.",
+    "Backend or full-stack software engineering roles would be ideal.",
+    "I am mostly looking for SWE roles, especially backend or infrastructure.",
+    "Product engineering roles sound best, but I am open to full-stack work.",
+    "Data engineering or backend software engineering would be strongest.",
+    "I want a software engineering role with room to own product work too.",
   ]
   const q2 = [
     "A scale-up with high ownership and a calm, collaborative team works best.",
@@ -447,11 +461,11 @@ function scenarioPlan(index: number, complete: boolean): ScenarioPlan {
     "Austin, NYC, or remote. I can relocate if timing works.",
   ]
   const q5 = [
-    "Nothing else major. I can start quickly and want full-stack or backend-heavy work.",
-    "I may need sponsorship later, and I prefer backend-heavy full-stack work.",
-    "I want to avoid heavy on-call and would like a team with good engineering standards.",
-    "Timing is flexible, but I care about mentorship and interview readiness.",
-    "No special constraints besides wanting a role where my Tesla internship experience is valued.",
+    "$150k to $180k base would be ideal, but I can flex for a strong role.",
+    "I am hoping for around $160k base or higher.",
+    "$140k to $170k base is the range I would keep in mind.",
+    "For total comp, I would like to be in the $170k to $220k range.",
+    "I am flexible, but $150k+ base would feel right.",
   ]
   const q2Junk = ["hi", "Hello, WeKruit!", "what?", "lol", "okay"][index % 5]
   const normalChat = [
@@ -487,7 +501,12 @@ async function runConversation(
   const bootstrap = await sendTurn(db, runId, plan.id, "bootstrap-hello", "Hello, WeKruit!")
   turns.push(bootstrap)
   expectState(bootstrap, "main_goal", failures, "bootstrap")
-  expectReplyIncludes(bootstrap, [/resume/i, /Software Engineer Intern/i, /Tesla Inc/i, /what matters most/i], failures, "bootstrap")
+  expectReplyIncludes(
+    bootstrap,
+    [/candidate\.wekruit\.com\/me\/profile/i, /tell me here/i, /Software Engineer Intern|Tesla Inc/i, /hiring manager/i, /role|SWE|software engineering/i],
+    failures,
+    "bootstrap",
+  )
   expectPromptContextGrounded(bootstrap, failures)
 
   const duplicate = await sendTurn(db, runId, plan.id, "duplicate-hello", "Hello, WeKruit!", {
@@ -502,7 +521,7 @@ async function runConversation(
   turns.push(q1)
   expectState(q1, "culture_stage", failures, "q1")
   expectAnswerKeys(q1, ["main_goal"], failures, "q1")
-  expectReplyIncludes(q1, [/company culture and size or stage/i], failures, "q1")
+  expectReplyIncludes(q1, [/company size|company.*vibe|early startup|scale-up|bigger company/i], failures, "q1")
 
   const q2Junk = await sendTurn(db, runId, plan.id, "junk-culture-stage", plan.q2Junk)
   turns.push(q2Junk)
@@ -530,12 +549,12 @@ async function runConversation(
   const q3 = await sendTurn(db, runId, plan.id, "answer-industry-interest", plan.q3)
   turns.push(q3)
   expectState(q3, "location_relocation", failures, "q3")
-  expectReplyIncludes(q3, [/where do you want to work|remote|onsite|relocating/i], failures, "q3")
+  expectReplyIncludes(q3, [/where do you want to work|remote|hybrid|in-office|cities/i], failures, "q3")
 
   const q4 = await sendTurn(db, runId, plan.id, "answer-location-relocation", plan.q4)
   turns.push(q4)
   expectState(q4, "special_context", failures, "q4")
-  expectReplyIncludes(q4, [/anything special/i], failures, "q4")
+  expectReplyIncludes(q4, [/salary|comp|range/i], failures, "q4")
 
   const q5 = await sendTurn(db, runId, plan.id, "answer-special-context", plan.q5)
   turns.push(q5)

@@ -1,4 +1,5 @@
 import {
+  buildSharedOnboardingOpeningPrompt,
   buildSharedOnboardingPrompt,
   buildSharedOnboardingResumeAnchor,
   type SharedOnboardingPromptContext,
@@ -8,6 +9,26 @@ import { buildTangentSurfaceDirective } from "./voice/tangent-detector.js"
 import type { ResolvedVoiceProfile } from "./voice/voice-profiles/index.js"
 
 export type OnboardingSurfaceMode = "ask" | "reask"
+
+function onboardingSlotLabel(slot: SharedOnboardingQuestionId): string {
+  if (slot === "main_goal") return "target role"
+  if (slot === "culture_stage") return "company size or stage"
+  if (slot === "industry_interest") return "industry or domain"
+  if (slot === "location_relocation") return "location and work style"
+  return "salary range"
+}
+
+function promptContextLabel(key: string): string {
+  if (key === "firstName") return "first name"
+  if (key === "currentLocation") return "current location"
+  if (key === "recentLocations") return "recent locations"
+  if (key === "recentTitles") return "recent roles"
+  if (key === "recentCompanies") return "recent companies"
+  if (key === "skills") return "skills"
+  if (key === "industryTags") return "industries"
+  if (key === "resumeSummary") return "resume summary"
+  return key.replace(/[_-]+/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase()
+}
 
 export function buildOnboardingSurfaceIntent(input: {
   slot: SharedOnboardingQuestionId
@@ -23,17 +44,30 @@ export function buildOnboardingSurfaceIntent(input: {
    * question instead of robotically re-asking.
    */
   tangentDetected?: boolean
+  /** True only for the first SMS after `Hello, WeKruit! {userId}` / runtime kickoff. */
+  opening?: boolean
 }): string {
+  const slotLabel = onboardingSlotLabel(input.slot)
   const base =
-    input.mode === "reask"
-      ? `Re-ask the ${input.slot} onboarding question in friend tone. Prior answer was unclear.`
-      : `Ask the ${input.slot} onboarding question in friend Claire tone.`
+    input.opening
+      ? "Compose the opening shared-onboarding SMS in Claire's personal job-hunting assistant tone."
+      : input.mode === "reask"
+      ? `Re-ask the ${slotLabel} onboarding question in friend tone. Prior answer was unclear.`
+      : `Ask the ${slotLabel} onboarding question in friend Claire tone.`
 
   const lang: "en" | "zh" = input.lang === "zh" ? "zh" : "en"
 
   const invariants: string[] = [
     "Compose ONE SMS only. Do not write tags to Firestore.",
-    "Friend roommate tone — not HR, not coach.",
+    "Write like you're texting a friend: warm, familiar, concise, and human.",
+    "Claire is a personal job-hunting assistant, not a recruiter, bot, corporate tool, or email writer.",
+    "One question at a time. Do not pile up questions.",
+    "No headers, bullets, markdown, or lists.",
+    "No corporate speak such as leverage, synergy, or optimize your candidacy.",
+    "No internal enum tokens, underscores, placeholders, or missing spaces; rewrite them into plain human words.",
+    "Brief natural reactions are okay, like got it, makes sense, or oh nice.",
+    "Light emoji is okay, max one per SMS and not every message.",
+    "Never mention being AI.",
     lang === "zh"
       ? "Write the SMS in Chinese only."
       : "Write the SMS in English only.",
@@ -48,6 +82,17 @@ export function buildOnboardingSurfaceIntent(input: {
   ]
   if (input.tangentDetected) {
     invariants.push(buildTangentSurfaceDirective(lang))
+  }
+  if (input.opening) {
+    invariants.push(
+      "This is the first SMS after the candidate opened with Hello, WeKruit! {userId}.",
+      "Open with a short welcome that uses their first name when available and one real resume or profile detail when available.",
+      "Mention that Claire connects them directly with the hiring manager when a strong fit appears.",
+      "Mention that Claire will ask a few quick questions to tune matches.",
+      "Mention https://candidate.wekruit.com/me/profile and that they can just tell Claire here instead.",
+      "Do not copy a fixed template; vary the wording while preserving those ingredients.",
+      "If profile context is missing, stay natural and do not invent details.",
+    )
   }
   if (input.voiceProfile.invariants.noInterviewPromise) {
     invariants.push("Never promise an interview or pass outcome.")
@@ -70,14 +115,25 @@ export function buildOnboardingSurfaceIntent(input: {
   // Canonical question text — let the LLM friend-rephrase but preserve meaning.
   // Pulling from the same builder the template path uses keeps the question
   // payload aligned across agentic + template fallbacks.
-  const canonical = buildSharedOnboardingPrompt(input.slot, input.promptContext)
+  const canonical = input.opening
+    ? buildSharedOnboardingOpeningPrompt(input.promptContext)
+    : buildSharedOnboardingPrompt(input.slot, input.promptContext)
   const canonicalLine = canonical
     ? `Canonical question (preserve meaning, friend rephrase OK): ${canonical}`
     : ""
 
+  const renderContextValue = (value: unknown): string => {
+    if (Array.isArray(value)) {
+      return value
+        .map((item) => String(item).replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim())
+        .filter(Boolean)
+        .join(", ")
+    }
+    return String(value).replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim()
+  }
   const ctxBits = Object.entries(input.promptContext)
     .filter(([, v]) => v != null && String(v).trim().length > 0)
-    .map(([k, v]) => `${k}: ${String(v)}`)
+    .map(([k, v]) => `${promptContextLabel(k)}: ${renderContextValue(v)}`)
     .join("; ")
 
   return [

@@ -99,3 +99,54 @@ describe("buildOnboardingSurfaceIntent — language lock", () => {
     assert.match(intent, /Write the SMS in English only\./)
   })
 })
+
+describe("buildOnboardingSurfaceIntent — SMS persona contract", () => {
+  it("injects the personal job-hunting assistant tone rules into every shared-onboarding SMS", () => {
+    const intent = buildOnboardingSurfaceIntent({
+      slot: "main_goal",
+      mode: "ask",
+      voiceProfile: profile(),
+      promptContext: {
+        firstName: "Sarah",
+        recentTitles: ["Product Designer"],
+        recentCompanies: ["Figma"],
+        currentLocation: "Brooklyn",
+      },
+      lang: "en",
+    })
+
+    assert.match(intent, /personal job-hunting assistant/i)
+    assert.match(intent, /texting a friend/i)
+    assert.match(intent, /One question at a time/i)
+    assert.match(intent, /No headers, bullets, markdown, or lists/i)
+    assert.match(intent, /No corporate speak/i)
+    assert.match(intent, /No internal enum/i)
+    assert.match(intent, /Never mention being AI/i)
+    assert.match(intent, /target role/i)
+    assert.match(intent, /recent roles: Product Designer/i)
+    assert.doesNotMatch(intent, /Friend roommate tone|tech_swe|job_title|main_goal|recentTitles/)
+  })
+
+  it("marks greeting kickoff as the opening welcome surface without requiring fixed wording", () => {
+    const intent = buildOnboardingSurfaceIntent({
+      slot: "main_goal",
+      mode: "ask",
+      voiceProfile: profile(),
+      promptContext: {
+        firstName: "Sarah",
+        recentTitles: ["Product Designer"],
+        recentCompanies: ["Figma"],
+        currentLocation: "Brooklyn",
+      },
+      lang: "en",
+      opening: true,
+    })
+
+    assert.match(intent, /first SMS after the candidate opened with Hello, WeKruit/i)
+    assert.match(intent, /first name/i)
+    assert.match(intent, /real resume or profile detail/i)
+    assert.match(intent, /hiring manager/i)
+    assert.match(intent, /https:\/\/candidate\.wekruit\.com\/me\/profile/i)
+    assert.match(intent, /do not copy a fixed template/i)
+  })
+})
