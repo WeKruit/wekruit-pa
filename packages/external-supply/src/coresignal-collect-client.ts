@@ -60,7 +60,8 @@ const ExperienceEntrySchema = z.object({
   company_linkedin_url: z.string().nullable().optional(),
   company_hq_country: z.string().nullable().optional(),
   company_hq_city: z.string().nullable().optional(),
-  active_experience: z.boolean().nullable().optional(),
+  // CoreSignal returns 0/1 (number) not true/false (boolean) — accept either.
+  active_experience: z.union([z.boolean(), z.number()]).nullable().optional(),
 }).passthrough()
 
 const EducationEntrySchema = z.object({
@@ -93,8 +94,9 @@ export const CoresignalEmployeeCollectV2Schema = z.object({
   primary_professional_email: z.string().nullable().optional(),
   primary_professional_email_status: z.string().nullable().optional(),
   professional_emails_collection: z.array(ProfessionalEmailSchema).nullable().optional(),
-  is_working: z.boolean().nullable().optional(),
-  is_decision_maker: z.boolean().nullable().optional(),
+  // CoreSignal returns 0/1 (number) not true/false (boolean) — accept either.
+  is_working: z.union([z.boolean(), z.number()]).nullable().optional(),
+  is_decision_maker: z.union([z.boolean(), z.number()]).nullable().optional(),
   active_experience_company_id: z.number().nullable().optional(),
   active_experience_title: z.string().nullable().optional(),
   active_experience_department: z.string().nullable().optional(),
