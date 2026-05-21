@@ -1165,6 +1165,36 @@ export const overrideAgentTier = callable<OverrideAgentTierInput, OverrideAgentT
 export type { AgentRankingAction, AgentRankingResult }
 
 // ===========================================================================
+// V2.1 — CoreSignal cdapi v2 collect batch fetch (operator paste-IDs flow)
+// ===========================================================================
+
+export interface CoresignalFetchBatchInput {
+  candidateIds: number[]
+  companyId?: string
+  jobId?: string
+  concurrency?: number
+}
+
+export interface CoresignalFetchBatchResult {
+  batchId: string
+  rowCount: number
+  validLinkedInCount: number
+  validEmailCount: number
+  duplicateCount: number
+  needsReviewCount: number
+  readyToProfileCount: number
+  status: "normalized" | "already_normalized"
+  fetchedCount: number
+  failedCount: number
+  failures: Array<{ id: number; error: string; status: number | null }>
+}
+
+export const coresignalFetchBatch = callable<
+  CoresignalFetchBatchInput,
+  CoresignalFetchBatchResult
+>("paCoresignalFetchBatch")
+
+// ===========================================================================
 // Firestore reads — defensive parsing
 // ===========================================================================
 
