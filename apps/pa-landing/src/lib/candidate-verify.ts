@@ -49,6 +49,8 @@ export async function verifyCandidateMagicLinkSession(options?: {
   claireConversationStarted: boolean
   hasResumeOnFile: boolean
   portalReady: boolean
+  senderNumber?: string | null
+  senderGroupId?: string | null
   linkedinUrl?: string | null
   linkedinLinkedViaOauth?: boolean
 }> {
@@ -79,6 +81,8 @@ export async function verifyCandidateMagicLinkSession(options?: {
     claireConversationStarted?: boolean
     hasResumeOnFile?: boolean
     portalReady?: boolean
+    senderNumber?: string | null
+    senderGroupId?: string | null
     linkedinUrl?: string | null
     linkedinLinkedViaOauth?: boolean
     reason?: string
@@ -101,6 +105,8 @@ export async function verifyCandidateMagicLinkSession(options?: {
     claireConversationStarted,
     hasResumeOnFile,
     portalReady,
+    senderNumber: typeof data.senderNumber === "string" ? data.senderNumber : null,
+    senderGroupId: typeof data.senderGroupId === "string" ? data.senderGroupId : null,
     linkedinUrl: data.linkedinUrl ?? null,
     linkedinLinkedViaOauth: Boolean(data.linkedinLinkedViaOauth),
   }

@@ -409,3 +409,161 @@ em.accent, .accent-italic {
    Divider
    ===================================================================== */
 .divider { height: 1px; background: var(--border); border: 0; }
+
+/* =====================================================================
+   Candidate onboarding handoff
+   ===================================================================== */
+.onboarding-section--done {
+  box-sizing: border-box;
+  min-height: calc(100svh - 72px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-top: clamp(24px, 4vh, 40px) !important;
+  padding-bottom: clamp(24px, 4vh, 40px) !important;
+}
+
+.onboarding-section--done .container-prose {
+  max-width: 1080px !important;
+  width: 100%;
+}
+
+.claire-handoff {
+  display: grid;
+  grid-template-columns: minmax(0, 520px) minmax(320px, 380px);
+  gap: clamp(40px, 5vw, 72px);
+  align-items: start;
+  justify-content: center;
+  width: 100%;
+}
+
+.claire-handoff__main {
+  max-width: 620px;
+}
+
+.claire-handoff__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 18px;
+  color: var(--success);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: var(--fw-medium);
+}
+
+.claire-handoff__check {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--r-pill);
+  background: var(--success);
+  color: var(--cream);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.claire-handoff__eyebrow {
+  margin-bottom: 12px;
+}
+
+.claire-handoff__copy {
+  margin-top: 18px;
+  max-width: 560px;
+  color: var(--ink-2);
+  font-size: 18px;
+}
+
+.claire-handoff__actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 28px;
+}
+
+.claire-handoff__fallback {
+  max-width: 420px;
+  color: var(--ink-3);
+}
+
+.claire-handoff__note {
+  margin-top: 12px;
+  max-width: 480px;
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.claire-handoff__checks {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: -4px;
+}
+
+.claire-handoff__checks span {
+  padding: 8px 12px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,.34);
+  color: var(--ink-3);
+  font-size: 12px;
+}
+
+.claire-handoff__demo {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+}
+
+.claire-imessage-shell {
+  min-height: 0;
+  display: block;
+  flex-direction: initial;
+  background: transparent;
+  color: initial;
+  font-size: initial;
+  line-height: initial;
+}
+
+.claire-imessage-shell .wk-imsg-phone {
+  max-width: 360px;
+}
+
+.claire-imessage-shell .wk-imsg-thread__body {
+  min-height: 300px;
+}
+
+.claire-imessage-shell .wk-imsg-bubble--user {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 780px) {
+  .onboarding-section--done {
+    align-items: flex-start;
+    padding-top: 32px !important;
+    padding-bottom: 48px !important;
+  }
+
+  .claire-handoff {
+    grid-template-columns: 1fr;
+    gap: 28px;
+    justify-content: stretch;
+  }
+
+  .claire-handoff__copy {
+    font-size: 16px;
+  }
+
+  .claire-handoff__actions .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .claire-imessage-shell .wk-imsg-thread__body {
+    min-height: 220px;
+  }
+}
