@@ -39,6 +39,7 @@ import {
 } from "./normalize.js"
 import { useDmAllowlist, getPeerAllowlist, isSamePeer } from "./allowlist.js"
 import { recordAuditEvent, type AuditEventInput } from "./audit.js"
+import { classifyInboundSender } from "./handle-format.js"
 import { parseInboundTapback } from "./tapback-parser.js"
 // v1.8 Phase 77.2 — TriggerRouter table-driven dispatch for the new
 // pre-screen + compact triggers. Strangler step 2: ADDITIVE — runs before
@@ -606,6 +607,28 @@ export async function handleSendblueWebhook(
       reply(res, 200, { ok: true, ignored: "empty_content" })
       return
     }
+  }
+
+  // ---- 3c1. E.164 sender gate (identity hardening 2026-05-20) -----------
+  // Sendblue accepts inbound from email-based Apple IDs (per FAQ) but the
+  // REST API has no outbound path for them, and our downstream identity
+  // layer assumes E.164. Reject non-E.164 senders before they pollute
+  // pa-users / pa-candidate-handles. Email Apple ID support: GH #142.
+  const senderFormat = classifyInboundSender(normalized.fromNumber)
+  if (senderFormat !== "e164_phone") {
+    await safeAudit(
+      deps,
+      {
+        type: "non_e164_sender_rejected",
+        channel: "imessage_sendblue",
+        fromNumber: normalized.fromNumber,
+        reason: senderFormat,
+        correlationId: normalized.messageHandle,
+      },
+      log
+    )
+    reply(res, 200, { ok: true, ignored: "non_e164_sender_rejected" })
+    return
   }
 
   // ---- 3c2. Rate-limit (Phase 26 T1, flag-gated) ------------------------

@@ -2,9 +2,13 @@ import type { Firestore } from "firebase-admin/firestore"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import { hashCandidateHandle, linkCandidateHandle } from "@pa/pa-persistence"
 import { parseHelloWekruitOpener } from "@pa/pa-orchestrator"
+import { isE164 } from "./sendblue/handle-format.js"
 
 async function lookupUserByPhoneE164(db: Firestore, phoneE164: string): Promise<string | null> {
-  if (!phoneE164) return null
+  // Identity hardening 2026-05-20 — defense in depth against email-based
+  // senders that slip past the webhook gate. Never query pa-users on a
+  // non-E.164 string; never write a non-E.164 handle to candidate-handles.
+  if (!isE164(phoneE164)) return null
   try {
     const snap = await db.collection(PA_COLLECTIONS.users).where("phoneE164", "==", phoneE164).limit(1).get()
     if (!snap.empty) return snap.docs[0]!.id
@@ -57,11 +61,16 @@ export async function resolveInboundUserId(
   phoneE164: string,
   inboundText?: string,
 ): Promise<string | null> {
+  // Identity hardening 2026-05-20 — same defense as lookupUserByPhoneE164.
+  // Non-E.164 senders are rejected at webhook entry; this guard ensures
+  // any direct caller of resolveInboundUserId stays safe too.
+  if (!isE164(phoneE164)) return null
+
   const byPhone = await lookupUserByPhoneE164(db, phoneE164)
   if (byPhone) return byPhone
 
   const trimmedText = typeof inboundText === "string" ? inboundText.trim() : ""
-  if (!trimmedText || !phoneE164) return null
+  if (!trimmedText) return null
 
   const parsed = parseHelloWekruitOpener(trimmedText)
   if (!parsed?.candidateId) return null

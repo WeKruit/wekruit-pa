@@ -21,7 +21,6 @@ import {
   signInWithCustomToken,
   signInWithEmailLink,
   signInWithPopup,
-  signInWithRedirect,
   type User,
 } from "firebase/auth"
 import { auth } from "../lib/firebase.js"
@@ -597,7 +596,10 @@ export default function CandidateLogin() {
     setStatus(kind)
     setError(null)
     rememberLoginNext(nextDest.to)
-    if (kind === "google" && isLayoffHost()) {
+    if (kind === "google") {
+      // Popup avoids the signInWithRedirect third-party-cookie trap when
+      // authDomain (wekruit-5f89b.firebaseapp.com) differs from the site
+      // origin (candidate.wekruit.com / layoff.wekruit.com).
       try {
         await signInWithPopup(auth(), createGoogleProvider())
         setStatus("signing_in")
@@ -613,12 +615,8 @@ export default function CandidateLogin() {
     } catch {
       // ignore private mode
     }
-    if (kind === "linkedin") {
-      const returnTo = `${window.location.origin}/login?next=${encodeURIComponent(nextDest.to)}`
-      window.location.assign(`${LINKEDIN_AUTH_START_URL}?returnTo=${encodeURIComponent(returnTo)}`)
-      return
-    }
-    await signInWithRedirect(auth(), createGoogleProvider())
+    const returnTo = `${window.location.origin}/login?next=${encodeURIComponent(nextDest.to)}`
+    window.location.assign(`${LINKEDIN_AUTH_START_URL}?returnTo=${encodeURIComponent(returnTo)}`)
   }
 
   async function onSubmit(e: FormEvent) {
