@@ -418,13 +418,13 @@ export function CandidateShell({
         <div className="wk-footer__inner">
           <div className="wk-footer__brand">
             <WekruitLogo size={20} />
-            <span className="wk-footer__tag">Candidate retention marketplace.</span>
+            <span className="wk-footer__tag">The agentic talent marketplace.</span>
           </div>
           <nav className="wk-footer__nav">
             <a href="https://wekruit.com">For employers</a>
             <Link to="/legal">Privacy</Link>
             <Link to="/legal">Terms</Link>
-            <a href="mailto:claire@wekruit.com">claire@wekruit.com</a>
+            <a href="mailto:noahliu@wekruit.com">noahliu@wekruit.com</a>
           </nav>
         </div>
       </footer>
