@@ -1170,9 +1170,9 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     assert.equal(typeof session?.evaluationAttemptId, "string")
     const attempts = [...docs.entries()].filter(([path]) => path.startsWith("pa-evaluation-attempts/"))
     assert.equal(attempts.length, 1)
-    assert.equal(attempts[0][1].data.source, "prescreen")
-    assert.equal(attempts[0][1].data.humanReview?.status, "pending")
-    assert.equal((attempts[0][1].data.proposedOutcome as { prescreenTerminal?: string }).prescreenTerminal, "PASS")
+    assert.equal((attempts[0][1].data as { source?: string }).source, "prescreen")
+    assert.equal((attempts[0][1].data as { humanReview?: { status?: string } }).humanReview?.status, "pending")
+    assert.equal((attempts[0][1].data as { proposedOutcome?: { prescreenTerminal?: string } }).proposedOutcome?.prescreenTerminal, "PASS")
   })
 
   it("yields an active prescreen when layoff onboarding owns the user turn", async () => {
