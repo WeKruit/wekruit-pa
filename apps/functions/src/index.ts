@@ -2203,6 +2203,9 @@ export {
 // list in dashboard; CF fans out to live API + routes through runCreateBatch.
 // See .planning/PRD-CORESIGNAL-INTAKE-OUTBOUND.md §6.
 export { paCoresignalFetchBatch } from "./external-supply/coresignal-batch-fetch.js"
+// V2.1 P3 — LLM pitch email generator. Compute-only callable; returns draft,
+// does not write pa-outreach-plans (P4 wires the approve-and-send flow).
+export { paGeneratePitchEmail } from "./external-supply/generate-pitch-email.js"
 export { paExternalSupplyResolveBatchIdentity } from "./external-supply/resolve-identity.js"
 export { paExternalSupplyRunLinkedInEnrich } from "./external-supply/run-linkedin-enrich.js"
 export { paExternalSupplyRunGitHubEnrich } from "./external-supply/run-github-enrich.js"
