@@ -29,6 +29,12 @@ export type AuditEventType =
   // match cascade. Audited so dashboards can surface "Adam ran __PA_FIND_MATCH__"
   // events alongside normal traffic.
   | "dev_trigger_find_match"
+  // Identity hardening 2026-05-20 — Sendblue `from_number` was non-E.164
+  // (email-based Apple ID or other non-phone handle). Sendblue REST API has
+  // no outbound path for these senders, so we reject at webhook entry to
+  // avoid creating polluted pa-users rows. Email Apple ID support deferred
+  // (GH #142).
+  | "non_e164_sender_rejected"
 
 export type AuditChannel =
   | "imessage_sendblue"
