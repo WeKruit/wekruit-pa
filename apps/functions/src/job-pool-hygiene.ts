@@ -693,6 +693,13 @@ export function makeFirestoreStore(
 // ---------------------------------------------------------------------------
 
 const PA_ADMIN_TOKEN = defineSecret("PA_ADMIN_TOKEN")
+// 2026-05-20 matching-quality launch blocker: bind macmini /jobs/hygiene-flip
+// endpoint credentials so propagateFlipsToPostgres can read them from
+// process.env at runtime. Without these secrets the propagator no-ops with
+// a logged warning, preserving local-dev environments that don't have a
+// macmini reachable.
+const MATCHING_API_URL = defineSecret("MATCHING_API_URL")
+const MATCHING_API_KEY = defineSecret("MATCHING_API_KEY")
 
 type CallableRequest = {
   dryRun?: boolean
@@ -707,7 +714,7 @@ export const paJobPoolHygiene = onCall<CallableRequest>(
     region: "us-central1",
     memory: "512MiB",
     timeoutSeconds: 540,
-    secrets: [PA_ADMIN_TOKEN],
+    secrets: [PA_ADMIN_TOKEN, MATCHING_API_URL, MATCHING_API_KEY],
   },
   async (req) => {
     // Authorize via PA_ADMIN_TOKEN secret.
@@ -733,7 +740,22 @@ export const paJobPoolHygiene = onCall<CallableRequest>(
         : MAX_DOCS_PER_RUN
 
     const counters = await runJobPoolHygiene({
-      store: makeFirestoreStore(),
+      store: makeFirestoreStore(undefined, {
+        onPostgresPropagation: (result) => {
+          if (result.ok) {
+            logger.info("[pa.matching_jobs.hygiene] postgres_propagation_ok", {
+              flipped: result.flipped,
+              received: result.received,
+            })
+          } else {
+            // Best-effort: failure does NOT roll back the Firestore flip.
+            // Log + rely on standalone backfill script as the safety net.
+            logger.error("[pa.matching_jobs.hygiene] postgres_propagation_failed", {
+              error: result.error,
+            })
+          }
+        },
+      }),
       now: () => Date.now(),
       dryRun,
       staleFirstSeenAtDays: staleDays,
