@@ -141,6 +141,8 @@ describe("buildOnboardingSurfaceIntent — SMS persona contract", () => {
     assert.match(intent, /first SMS after the candidate opened with Hello, WeKruit/i)
     assert.match(intent, /first name/i)
     assert.match(intent, /real resume or profile detail/i)
+    assert.match(intent, /exactly one resume\/profile detail/i)
+    assert.match(intent, /2-3 short sentences max/i)
     assert.match(intent, /hiring manager/i)
     assert.match(intent, /https:\/\/candidate\.wekruit\.com\/me\/profile/i)
     assert.match(intent, /do not copy a fixed template/i)
