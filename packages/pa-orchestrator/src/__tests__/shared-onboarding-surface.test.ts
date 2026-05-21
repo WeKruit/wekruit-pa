@@ -101,7 +101,7 @@ describe("buildOnboardingSurfaceIntent — language lock", () => {
 })
 
 describe("buildOnboardingSurfaceIntent — SMS persona contract", () => {
-  it("injects the personal job-hunting assistant tone rules into every shared-onboarding SMS", () => {
+  it("keeps non-opening onboarding turns on the existing canonical slot contract", () => {
     const intent = buildOnboardingSurfaceIntent({
       slot: "main_goal",
       mode: "ask",
@@ -115,17 +115,11 @@ describe("buildOnboardingSurfaceIntent — SMS persona contract", () => {
       lang: "en",
     })
 
-    assert.match(intent, /personal job-hunting assistant/i)
-    assert.match(intent, /texting a friend/i)
-    assert.match(intent, /One question at a time/i)
-    assert.match(intent, /No headers, bullets, markdown, or lists/i)
-    assert.match(intent, /No corporate speak/i)
-    assert.match(intent, /No internal enum/i)
-    assert.match(intent, /Never mention being AI/i)
     assert.match(intent, /main goal for the next company/i)
+    assert.match(intent, /Friend roommate tone — not HR, not coach\./)
     assert.match(intent, /career growth, compensation, stability, mission, learning/i)
     assert.match(intent, /recent roles: Product Designer/i)
-    assert.doesNotMatch(intent, /Friend roommate tone|tech_swe|job_title|main_goal|recentTitles/)
+    assert.doesNotMatch(intent, /personal job-hunting assistant|tech_swe|job_title|main_goal|recentTitles/)
     assert.doesNotMatch(intent, /Ask the target role onboarding question/i)
   })
 

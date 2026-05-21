@@ -129,9 +129,17 @@ export async function runCoresignalFetchBatch(
   await Promise.all(workers)
 
   if (fetched.length === 0) {
+    const firstFailure = failures[0]
+    const detail = firstFailure
+      ? ` first_failure: id=${firstFailure.id} status=${firstFailure.status ?? "null"} err=${firstFailure.error}`
+      : ""
+    deps.log?.("pa.external_supply.coresignal_fetch_batch.all_failed", {
+      requestedCount: uniqueIds.length,
+      failures,
+    })
     throw new HttpsError(
       "failed-precondition",
-      `coresignal_fetch_all_failed: ${failures.length}/${uniqueIds.length} ids failed`,
+      `coresignal_fetch_all_failed: ${failures.length}/${uniqueIds.length} ids failed.${detail}`,
     )
   }
 
