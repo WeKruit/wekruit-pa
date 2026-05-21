@@ -86,7 +86,7 @@
       ],
       "predeploy": [
         "node scripts/inject-pa-landing-vite-env.mjs",
-        "npm run build --workspace=@pa/landing"
+        "npm run build --workspace @pa/landing"
       ],
       "rewrites": [
         {
