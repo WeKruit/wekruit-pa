@@ -690,18 +690,19 @@ async function processBrokerImessageEvent(
     }
     throw new Error(`Invalid broker iMessage payload: ${reason}`)
   }
-  let user = await findUserByParticipant(db, payload.participant)
-  if (!user) {
-    const phoneE164 = normalizeImessageParticipant(payload.participant)
-    const resolvedId = phoneE164
-      ? await resolveInboundUserId(db, phoneE164, payload.text)
-      : null
-    if (resolvedId) {
-      const resolvedSnap = await db.collection(PA_COLLECTIONS.users).doc(resolvedId).get()
-      if (resolvedSnap.exists) {
-        user = { id: resolvedSnap.id, ...resolvedSnap.data() } as User
-      }
+  let user: User | null = null
+  const phoneE164 = normalizeImessageParticipant(payload.participant)
+  const resolvedId = phoneE164
+    ? await resolveInboundUserId(db, phoneE164, payload.text)
+    : null
+  if (resolvedId) {
+    const resolvedSnap = await db.collection(PA_COLLECTIONS.users).doc(resolvedId).get()
+    if (resolvedSnap.exists) {
+      user = { id: resolvedSnap.id, ...resolvedSnap.data() } as User
     }
+  }
+  if (!user) {
+    user = await findUserByParticipant(db, payload.participant)
   }
   if (!user) {
     if (!shouldCreateProvisionalUserForBrokerPayload(payload)) {

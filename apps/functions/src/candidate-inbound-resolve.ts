@@ -1,4 +1,4 @@
-import type { Firestore } from "firebase-admin/firestore"
+import { FieldValue, type Firestore } from "firebase-admin/firestore"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import { hashCandidateHandle, linkCandidateHandle } from "@pa/pa-persistence"
 import { parseHelloWekruitOpener } from "@pa/pa-orchestrator"
@@ -30,8 +30,26 @@ async function bindPhoneToCandidate(
   db: Firestore,
   candidateId: string,
   phoneE164: string,
+  opts: { releaseCompetingUsers?: boolean; reassignConflictingHandle?: boolean } = {},
 ): Promise<void> {
   const isoNow = new Date().toISOString()
+  if (opts.releaseCompetingUsers) {
+    const snap = await db.collection(PA_COLLECTIONS.users).where("phoneE164", "==", phoneE164).get()
+    await Promise.all(
+      snap.docs
+        .filter((doc) => doc.id !== candidateId)
+        .map((doc) =>
+          db.collection(PA_COLLECTIONS.users).doc(doc.id).set(
+            {
+              phoneE164: FieldValue.delete(),
+              phoneE164Source: FieldValue.delete(),
+              updatedAt: isoNow,
+            },
+            { merge: true },
+          ),
+        ),
+    )
+  }
   await db.collection(PA_COLLECTIONS.users).doc(candidateId).set(
     { phoneE164, updatedAt: isoNow },
     { merge: true },
@@ -46,6 +64,21 @@ async function bindPhoneToCandidate(
     evidence: [{ source: "system", summary: "Hello WeKruit opener phone bind" }],
   }).catch((err: unknown) => {
     if (err instanceof Error && err.message.startsWith("identity_conflict:")) {
+      if (opts.reassignConflictingHandle) {
+        const { handleId, handleHash, normalizedValue } = hashCandidateHandle("phone", phoneE164)
+        return db.collection(PA_COLLECTIONS.candidateHandles).doc(handleId).set({
+          handleId,
+          candidateId,
+          kind: "phone",
+          handleHash,
+          normalizedValue,
+          source: "candidate",
+          verifiedAt: null,
+          deliverable: true,
+          createdAt: isoNow,
+          updatedAt: isoNow,
+        })
+      }
       throw err
     }
   })
@@ -66,21 +99,24 @@ export async function resolveInboundUserId(
   // any direct caller of resolveInboundUserId stays safe too.
   if (!isE164(phoneE164)) return null
 
+  const trimmedText = typeof inboundText === "string" ? inboundText.trim() : ""
+  const parsed = trimmedText ? parseHelloWekruitOpener(trimmedText) : null
+  if (parsed?.candidateId) {
+    const userRef = db.collection(PA_COLLECTIONS.users).doc(parsed.candidateId)
+    const userSnap = await userRef.get()
+    if (!userSnap.exists) return null
+
+    await bindPhoneToCandidate(db, parsed.candidateId, phoneE164, {
+      releaseCompetingUsers: true,
+      reassignConflictingHandle: true,
+    })
+    return parsed.candidateId
+  }
+
   const byPhone = await lookupUserByPhoneE164(db, phoneE164)
   if (byPhone) return byPhone
 
-  const trimmedText = typeof inboundText === "string" ? inboundText.trim() : ""
-  if (!trimmedText) return null
-
-  const parsed = parseHelloWekruitOpener(trimmedText)
-  if (!parsed?.candidateId) return null
-
-  const userRef = db.collection(PA_COLLECTIONS.users).doc(parsed.candidateId)
-  const userSnap = await userRef.get()
-  if (!userSnap.exists) return null
-
-  await bindPhoneToCandidate(db, parsed.candidateId, phoneE164)
-  return parsed.candidateId
+  return null
 }
 
 /** Back-compat wrapper used where inbound text is unavailable. */

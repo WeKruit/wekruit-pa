@@ -23,7 +23,11 @@ class FakeDocRef {
   async set(data: DocData, opts?: { merge?: boolean }) {
     const coll = this.store.get(this.collectionPath) ?? new Map()
     const prev = coll.get(this.id) ?? {}
-    coll.set(this.id, opts?.merge ? { ...prev, ...data } : data)
+    const next = opts?.merge ? { ...prev, ...data } : { ...data }
+    for (const [key, value] of Object.entries(next)) {
+      if (value?.constructor?.name === "DeleteTransform") delete next[key]
+    }
+    coll.set(this.id, next)
     this.store.set(this.collectionPath, coll)
   }
 }
@@ -87,4 +91,33 @@ test("resolveInboundUserId binds phone from Hello, WeKruit! opener suffix", asyn
 
   const userSnap = await db.collection(PA_COLLECTIONS.users).doc(candidateId).get()
   assert.equal(userSnap.data()?.phoneE164, "+14155550182")
+})
+
+test("resolveInboundUserId lets Hello, WeKruit! opener replace stale phone ownership", async () => {
+  const fakeDb = new FakeFirestore()
+  const staleUserId = "stale_phone_owner_01"
+  const candidateId = "cand_opener_rebind_01"
+  const phoneE164 = "+14155550183"
+  fakeDb.seed(PA_COLLECTIONS.users, staleUserId, {
+    id: staleUserId,
+    source: "admin",
+    phoneE164,
+    phoneE164Source: "cv_parsed",
+  })
+  fakeDb.seed(PA_COLLECTIONS.users, candidateId, { id: candidateId, source: "WeKruit_Laid_Off" })
+  const db = fakeDb as unknown as Firestore
+
+  const opener = buildHelloWekruitOpenerBody(candidateId)
+  const resolved = await resolveInboundUserId(db, phoneE164, opener)
+  assert.equal(resolved, candidateId)
+
+  const staleSnap = await db.collection(PA_COLLECTIONS.users).doc(staleUserId).get()
+  assert.equal(staleSnap.data()?.phoneE164, undefined)
+  assert.equal(staleSnap.data()?.phoneE164Source, undefined)
+
+  const candidateSnap = await db.collection(PA_COLLECTIONS.users).doc(candidateId).get()
+  assert.equal(candidateSnap.data()?.phoneE164, phoneE164)
+
+  const followupResolved = await resolveInboundUserId(db, phoneE164, "remote or NYC")
+  assert.equal(followupResolved, candidateId)
 })
