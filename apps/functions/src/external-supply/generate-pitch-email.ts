@@ -24,7 +24,6 @@ import { defineSecret } from "firebase-functions/params"
 import { getFirestore } from "firebase-admin/firestore"
 import { logger } from "firebase-functions/v2"
 import { z } from "zod"
-import { runWithOpenAI as defaultRunWithOpenAI } from "@pa/agent-runtime"
 import { requireExternalSupplyAdmin } from "./resolve-identity.js"
 
 const OPENAI_API_KEY = defineSecret("OPENAI_API_KEY")
@@ -148,13 +147,20 @@ function readJobEvidence(jobDoc: Record<string, unknown> | undefined): JobEviden
   if (!jobDoc) return null
   const companyName = (jobDoc.company as string | undefined) ?? "the company"
   const title = (jobDoc.title as string | undefined) ?? "this role"
-  // Pull from a few common job-shape fields, dedup
+  // Pull from a few common job-shape fields, dedup. Accepts either raw
+  // strings (older shapes) or SkillEntry objects ({ name, bucket, ... })
+  // — matching-jobs schema uses the latter post-Phase 52.
   const requirements = new Set<string>()
   for (const field of ["requiredSkills", "niceToHaveSkills", "relevantTags"] as const) {
     const v = jobDoc[field]
     if (Array.isArray(v)) {
       for (const item of v) {
-        const t = typeof item === "string" ? item : null
+        const t =
+          typeof item === "string"
+            ? item
+            : typeof item === "object" && item !== null && typeof (item as { name?: unknown }).name === "string"
+              ? ((item as { name: string }).name)
+              : null
         if (t && t.trim().length > 0) requirements.add(t.trim())
       }
     }
@@ -339,34 +345,38 @@ async function defaultRunLLM(args: {
   model: string
   apiKey: string
 }): Promise<{ text: string }> {
-  // runWithOpenAI signature: (agent, { messages, signal? }, client?).
-  // Default client reads OPENAI_API_KEY from process.env — Firebase v2
-  // secret bindings inject it automatically when the function declares
-  // OPENAI_API_KEY in `secrets:`.
-  if (process.env.OPENAI_API_KEY !== args.apiKey) {
-    process.env.OPENAI_API_KEY = args.apiKey
-  }
-  const result = await defaultRunWithOpenAI(
-    {
-      id: "coresignal-pitch-email",
-      name: "CoreSignal pitch email writer",
-      provider: "openai",
+  // Raw HTTPS POST to OpenAI Chat Completions. Bypasses both
+  // @pa/agent-runtime's prefix-cache wrapper AND the openai SDK's
+  // default agent. Per 2026-05-21 debug: SDK-based calls were failing
+  // with opaque "Connection error" in Cloud Function v2 runtime; raw
+  // fetch is identical to what the Node runtime uses internally.
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${args.apiKey}`,
+    },
+    body: JSON.stringify({
       model: args.model,
-      temperature: 0.4,
-      maxTokens: 600,
-      systemPrompt: args.systemPrompt,
-      version: "2026-05-21-A",
-      memoryMode: "firestore_only",
-      toolPolicy: "none",
-    } as Parameters<typeof defaultRunWithOpenAI>[0],
-    {
+      // gpt-5.x models reject `max_tokens` (legacy param) and `temperature`
+      // (managed internally). Use `max_completion_tokens` instead.
+      max_completion_tokens: 600,
       messages: [
         { role: "system", content: args.systemPrompt },
         { role: "user", content: args.userMessage },
       ],
-    },
-  )
-  return { text: result.text ?? "" }
+      response_format: { type: "json_object" },
+    }),
+  })
+  if (!res.ok) {
+    const errBody = await res.text().catch(() => "")
+    throw new Error(`openai_http_${res.status}: ${errBody.slice(0, 200)}`)
+  }
+  const data = (await res.json()) as {
+    choices?: Array<{ message?: { content?: string } }>
+  }
+  const text = data.choices?.[0]?.message?.content?.trim() ?? ""
+  return { text }
 }
 
 // ---------------------------------------------------------------------------
