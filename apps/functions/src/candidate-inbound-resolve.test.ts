@@ -30,6 +30,17 @@ class FakeDocRef {
     coll.set(this.id, next)
     this.store.set(this.collectionPath, coll)
   }
+
+  async update(data: DocData) {
+    const coll = this.store.get(this.collectionPath) ?? new Map()
+    const next = { ...(coll.get(this.id) ?? {}) }
+    for (const [key, value] of Object.entries(data)) {
+      if (value?.constructor?.name === "DeleteTransform") delete next[key]
+      else next[key] = value
+    }
+    coll.set(this.id, next)
+    this.store.set(this.collectionPath, coll)
+  }
 }
 
 class FakeQuery {
@@ -112,8 +123,9 @@ test("resolveInboundUserId lets Hello, WeKruit! opener replace stale phone owner
   assert.equal(resolved, candidateId)
 
   const staleSnap = await db.collection(PA_COLLECTIONS.users).doc(staleUserId).get()
-  assert.equal(staleSnap.data()?.phoneE164, undefined)
-  assert.equal(staleSnap.data()?.phoneE164Source, undefined)
+  assert.equal(staleSnap.data()?.phoneE164, null)
+  assert.equal(staleSnap.data()?.phoneE164Source, null)
+  assert.equal(typeof staleSnap.data()?.phoneE164ReleasedAt, "string")
 
   const candidateSnap = await db.collection(PA_COLLECTIONS.users).doc(candidateId).get()
   assert.equal(candidateSnap.data()?.phoneE164, phoneE164)
