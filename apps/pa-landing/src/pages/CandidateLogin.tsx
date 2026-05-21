@@ -1172,6 +1172,13 @@ export const CANDIDATE_STYLES = `
   .wk-header__inner { gap: 8px; padding: 12px 16px; }
   .wk-nav { display: none; }
 }
+@media (max-width: 480px) {
+  .wk-header__inner { padding: 12px; }
+  .wk-header__brand-meta { display: none; }
+  .wk-header__cta { gap: 0; }
+  .wk-header__cta .wk-btn { display: none; }
+  .wk-header__signin { font-size: 13.5px; margin-right: 8px; }
+}
 @media (max-width: 760px) {
   .wk-container, .wk-container--narrow { padding: 0 18px; }
 }

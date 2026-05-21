@@ -17,7 +17,6 @@ import {
   getRedirectResult,
   onAuthStateChanged,
   sendSignInLinkToEmail,
-  signInWithCustomToken,
   signInWithPopup,
   signInWithRedirect,
   type User,
@@ -43,9 +42,6 @@ import {
 
 const CV_INGEST_URL = import.meta.env.VITE_CV_INGEST_URL ?? ""
 const EMAIL_STORAGE_KEY = CLAIM_EMAIL_KEY
-const LINKEDIN_AUTH_START_URL =
-  import.meta.env.VITE_LINKEDIN_AUTH_START_URL ??
-  "https://us-central1-wekruit-5f89b.cloudfunctions.net/paLinkedinAuthStart"
 
 interface PrescreenConfig {
   jobTitle?: string
@@ -87,7 +83,7 @@ interface PoolNumber {
   assignedNewUsers?: number
 }
 
-type LoginStatus = "idle" | "google" | "linkedin" | "email" | "sent" | "error"
+type LoginStatus = "idle" | "google" | "email" | "sent" | "error"
 type ResumeGateStatus = "needs_resume_upload" | "resume_processing" | "ready"
 type ResumeGateState =
   | { status: "idle" | "loading" }
@@ -168,25 +164,6 @@ function createGoogleProvider(): GoogleAuthProvider {
   return provider
 }
 
-function takeLinkedinAuthPayload(): { ok: true; customToken: string } | { ok: false; error: string } | null {
-  const prefix = "pa_linkedin_auth:"
-  if (!window.name.startsWith(prefix)) return null
-  const raw = window.name.slice(prefix.length)
-  window.name = ""
-  try {
-    const payload = JSON.parse(raw) as Record<string, unknown>
-    if (payload.ok === true && typeof payload.customToken === "string") {
-      return { ok: true, customToken: payload.customToken }
-    }
-    return {
-      ok: false,
-      error: typeof payload.error === "string" ? payload.error : "linkedin_auth_failed",
-    }
-  } catch {
-    return { ok: false, error: "linkedin_auth_payload_invalid" }
-  }
-}
-
 async function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const r = new FileReader()
@@ -211,6 +188,7 @@ export default function PublicJob() {
   const [user, setUser] = useState<User | null | undefined>(undefined)
   const [loginPromptOpen, setLoginPromptOpen] = useState(false)
   const [loginPromptDismissed, setLoginPromptDismissed] = useState(false)
+  const [loginPromptAutoOpened, setLoginPromptAutoOpened] = useState(false)
   const [loginEmail, setLoginEmail] = useState("")
   const [loginStatus, setLoginStatus] = useState<LoginStatus>("idle")
   const [loginError, setLoginError] = useState<string | null>(null)
@@ -223,20 +201,6 @@ export default function PublicJob() {
     let cancelled = false
     void (async () => {
       try {
-        const linkedinPayload = takeLinkedinAuthPayload()
-        if (linkedinPayload?.ok) {
-          const cred = await signInWithCustomToken(auth(), linkedinPayload.customToken)
-          if (!cancelled) {
-            setUser(cred.user)
-            setLoginStatus("idle")
-            setLoginPromptOpen(false)
-            setLoginPromptDismissed(true)
-          }
-          return
-        }
-        if (linkedinPayload && !linkedinPayload.ok) {
-          throw new Error(linkedinPayload.error)
-        }
         const result = await getRedirectResult(auth())
         if (!cancelled && result?.user) {
           setUser(result.user)
@@ -337,8 +301,10 @@ export default function PublicJob() {
       setLoginPromptOpen(false)
       return
     }
-    if (loading || !job || user !== null || loginPromptDismissed) return
-  }, [job, loading, loginPromptDismissed, user])
+    if (loading || !job || user !== null || loginPromptDismissed || loginPromptAutoOpened) return
+    setLoginPromptOpen(true)
+    setLoginPromptAutoOpened(true)
+  }, [job, loading, loginPromptAutoOpened, loginPromptDismissed, user])
 
   async function refreshResumeGate() {
     if (!user) {
@@ -424,14 +390,9 @@ export default function PublicJob() {
     }).catch(() => undefined)
   }, [jobId, requestedUserId, resumeGate])
 
-  async function startProviderSignIn(kind: "google" | "linkedin") {
-    setLoginStatus(kind)
+  async function startGoogleSignIn() {
+    setLoginStatus("google")
     setLoginError(null)
-    if (kind === "linkedin") {
-      const returnTo = `${window.location.origin}${nextPath}`
-      window.location.assign(`${LINKEDIN_AUTH_START_URL}?returnTo=${encodeURIComponent(returnTo)}`)
-      return
-    }
     const provider = createGoogleProvider()
     let willRedirect = false
     try {
@@ -482,14 +443,14 @@ export default function PublicJob() {
 
   function renderLoginControls(location: "panel" | "modal") {
     const busy =
-      loginStatus === "google" || loginStatus === "linkedin" || loginStatus === "email"
+      loginStatus === "google" || loginStatus === "email"
     return (
       <div className={`wk-pj-login wk-pj-login--${location}`}>
         <div className="wk-pj-login__providers">
           <button
             type="button"
             className="wk-btn wk-btn--ink wk-btn--block"
-            onClick={() => void startProviderSignIn("google")}
+            onClick={() => void startGoogleSignIn()}
             disabled={busy}
           >
             {loginStatus === "google" ? "Opening Google…" : "Continue with Google"}
@@ -624,10 +585,17 @@ export default function PublicJob() {
           >
             ×
           </button>
-          <p className="wk-eyebrow">Apply to this role</p>
+          <p className="wk-eyebrow">WeKruit candidate profile</p>
+          <div className="wk-pj-modal__job" aria-label="Selected role">
+            <span>{company}</span>
+            <strong>{jobTitle}</strong>
+          </div>
           <h2 id="public-job-login-modal-title" className="wk-pj-modal__h">
-            {jobTitle} @ {company}
+            Apply to this job with Claire.
           </h2>
+          <p className="wk-pj-modal__sub">
+            Create or confirm your WeKruit profile first. Then Claire runs the SMS prescreen for this role.
+          </p>
           <ProcessStrip compact />
           {renderLoginControls("modal")}
           <p className="wk-pj-modal__sub">
@@ -1096,33 +1064,31 @@ export function PublicJobLayout({ job, startSlot, cvSlot, smsHint, overlay, sign
 
       <div className="wk-pj">
         <section className="wk-pj-hero">
-          <div className="wk-container wk-pj-hero__single">
-            <p className="wk-eyebrow">
-              Interview · {job.company}
-              {job.collaborated ? <> · <span className="wk-pj-collab">WeKruit collaborated</span></> : null}
-            </p>
-            <h1 className="wk-pj-hero__role">{job.jobTitle}</h1>
-            <div className="wk-pj-meta-row">
-              {meta.map((item) => <span key={item}>{item}</span>)}
+          <div className="wk-container wk-pj-hero__grid">
+            <div className="wk-pj-hero__copy">
+              <p className="wk-eyebrow">
+                Interview · {job.company}
+                {job.collaborated ? <> · <span className="wk-pj-collab">WeKruit collaborated</span></> : null}
+              </p>
+              <h1 className="wk-pj-hero__role">{job.jobTitle}</h1>
+              <div className="wk-pj-meta-row">
+                {meta.map((item) => <span key={item}>{item}</span>)}
+              </div>
+              <div className="wk-pj-hero__process">
+                <p className="wk-eyebrow">How it works</p>
+                <ProcessStrip />
+              </div>
+              <div className="wk-pj-description-panel">
+                <p className="wk-eyebrow">Job description</p>
+                <div className="wk-pj-copy">{renderJobDescription(job.descriptionMd, job.company)}</div>
+              </div>
             </div>
-          </div>
-        </section>
-
-        <section className="wk-pj-process-band">
-          <div className="wk-container">
-            <ProcessStrip />
-          </div>
-        </section>
-
-        <section className="wk-pj-body">
-          <div className="wk-container wk-pj-body__grid">
-            <div className="wk-pj-body__main">
-              <p className="wk-eyebrow">About this role</p>
-              <h2 className="wk-pj-body__h2">Role details</h2>
-              <div className="wk-pj-copy">{renderJobDescription(job.descriptionMd, job.company)}</div>
-            </div>
-            <aside className="wk-pj-side">
+            <aside className="wk-pj-side wk-pj-side--hero">
               <div className="wk-pj-card">
+                <div className="wk-pj-card__head">
+                  <p className="wk-eyebrow">Apply to this role</p>
+                  <h2 className="wk-pj-card__title">Start the WeKruit process</h2>
+                </div>
                 <button type="button" className="wk-btn wk-btn--ink wk-btn--block" onClick={onApply}>
                   Apply to this job
                 </button>
@@ -1284,23 +1250,23 @@ export const PUBLIC_JOB_STYLES = `
     radial-gradient(ellipse 60% 50% at 0% 50%, rgba(246,214,190,.45) 0%, transparent 55%),
     radial-gradient(ellipse 60% 50% at 100% 50%, rgba(246,214,190,.45) 0%, transparent 55%),
     var(--wk-cream);
-  padding: 72px 0 28px;
+  padding: 48px 0 56px;
 }
 .wk-pj-hero__single {
   max-width: 860px;
 }
 .wk-pj-hero__grid {
   display: grid;
-  grid-template-columns: 1.05fr 0.95fr;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
   gap: 56px; align-items: start;
 }
-.wk-pj-hero__copy { display: flex; flex-direction: column; gap: 28px; }
+.wk-pj-hero__copy { display: flex; flex-direction: column; gap: 24px; min-width: 0; }
 .wk-pj-hero__company { display: flex; align-items: center; gap: 14px; }
 .wk-pj-hero__company-text { min-width: 0; flex: 1; }
 .wk-pj-hero__role {
   font-family: 'Newsreader', serif;
   font-weight: 400;
-  font-size: clamp(52px, 7vw, 92px);
+  font-size: clamp(46px, 5.8vw, 76px);
   line-height: 0.98;
   letter-spacing: -0.024em;
   color: var(--wk-ink);
@@ -1311,6 +1277,16 @@ export const PUBLIC_JOB_STYLES = `
   font-size: clamp(16.5px, 1.4vw, 18.5px);
   line-height: 1.5; color: var(--wk-ink-2);
   max-width: 580px; margin: 0;
+}
+.wk-pj-hero__process {
+  display: grid;
+  gap: 10px;
+}
+.wk-pj-description-panel {
+  display: grid;
+  gap: 14px;
+  padding-top: 22px;
+  border-top: 1px solid var(--wk-border);
 }
 
 .wk-pj-hm {
@@ -1357,6 +1333,7 @@ export const PUBLIC_JOB_STYLES = `
   position: sticky;
   top: 96px;
 }
+.wk-pj-side--hero { align-self: start; }
 .wk-pj-card {
   background: var(--wk-cream-3);
   border: 1px solid var(--wk-border);
@@ -1609,9 +1586,29 @@ export const PUBLIC_JOB_STYLES = `
   border-radius: var(--wk-r-lg);
   padding: 28px 24px 24px;
   box-shadow: 0 24px 80px rgba(45,26,10,.28);
-  overflow: hidden;
+  max-height: calc(100vh - 40px);
+  overflow: auto;
 }
 .wk-pj-modal .wk-eyebrow { margin-top: 4px; }
+.wk-pj-modal__job {
+  display: grid;
+  gap: 3px;
+  padding: 12px 14px;
+  background: var(--wk-cream-2);
+  border: 1px solid var(--wk-border);
+  border-radius: 12px;
+}
+.wk-pj-modal__job span {
+  color: var(--wk-ink-3);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.wk-pj-modal__job strong {
+  color: var(--wk-ink);
+  font-size: 16px;
+  line-height: 1.3;
+}
 .wk-pj-modal__h {
   font-family: 'Newsreader', serif; font-weight: 400;
   font-size: clamp(24px, 3vw, 30px);
@@ -1663,5 +1660,19 @@ export const PUBLIC_JOB_STYLES = `
     -webkit-backdrop-filter: blur(12px);
   }
   .wk-pj { padding-bottom: 108px; }
+}
+
+@media (min-width: 981px) and (max-width: 1180px) {
+  .wk-pj-hero__grid {
+    grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
+    gap: 32px;
+  }
+  .wk-pj-card { padding: 20px; }
+  .wk-pj-process-strip { gap: 8px; }
+  .wk-pj-process-strip__step {
+    gap: 9px;
+    padding: 10px;
+    font-size: 14px;
+  }
 }
 `
