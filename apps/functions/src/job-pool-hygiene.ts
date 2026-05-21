@@ -565,8 +565,86 @@ async function pageQuery(
   }
 }
 
-export function makeFirestoreStore(db?: Firestore): HygieneStore {
+/**
+ * Best-effort macmini-Postgres write-back after every Firestore flip batch.
+ *
+ * Closes the hygiene-sync race (2026-05-20 launch blocker): without this,
+ * Postgres `jobs.hygiene_flipped` stays FALSE on PA-flipped docs, and the
+ * next scrape's ON CONFLICT clause re-activates them within 24h. The
+ * macmini endpoint sets `hygiene_flipped=TRUE` + `status='inactive'` so
+ * the scraper preserves the flip.
+ *
+ * Failure handling: any error from the POST is logged but does NOT throw —
+ * the Firestore flip already succeeded, and the standalone
+ * `scripts/backfill-postgres-hygiene-from-firestore.mjs` script is the
+ * safety net for missed propagations. The "Postgres flip might fail but
+ * we kept Firestore consistent" trade-off is the right one because the
+ * standalone backfill is idempotent and runs separately.
+ *
+ * Configuration: requires MATCHING_API_URL + MATCHING_API_KEY env vars.
+ * When either is missing the propagator is a no-op (also logged) — useful
+ * for local dev / test environments without a macmini reachable.
+ */
+async function propagateFlipsToPostgres(
+  items: ReadonlyArray<{ id: string; reason: HygieneReason }>,
+): Promise<{ ok: boolean; error?: string; flipped?: number; received?: number }> {
+  if (items.length === 0) return { ok: true, flipped: 0, received: 0 }
+  const url = process.env.MATCHING_API_URL
+  const key = process.env.MATCHING_API_KEY
+  if (!url || !key) {
+    return {
+      ok: true,
+      error: "MATCHING_API_URL or MATCHING_API_KEY missing — Postgres write-back skipped",
+    }
+  }
+  // Group by reason so the endpoint's `reason` column reflects each
+  // predicate. Avoid huge payloads — the endpoint cap is 10k but the
+  // Postgres UPDATE's WHERE = ANY(...) is faster at smaller arrays.
+  const byReason = new Map<HygieneReason, string[]>()
+  for (const { id, reason } of items) {
+    const list = byReason.get(reason) ?? []
+    list.push(id)
+    byReason.set(reason, list)
+  }
+  let totalFlipped = 0
+  let totalReceived = 0
+  try {
+    for (const [reason, ids] of byReason.entries()) {
+      const resp = await fetch(`${url.replace(/\/$/, "")}/jobs/hygiene-flip`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-API-Key": key,
+        },
+        body: JSON.stringify({ job_ids: ids, reason }),
+      })
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => "")
+        return {
+          ok: false,
+          error: `POST /jobs/hygiene-flip ${resp.status}: ${text.slice(0, 300)}`,
+        }
+      }
+      const data = (await resp.json().catch(() => ({}))) as {
+        flipped?: number
+        received?: number
+      }
+      totalFlipped += data.flipped ?? 0
+      totalReceived += data.received ?? 0
+    }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+  return { ok: true, flipped: totalFlipped, received: totalReceived }
+}
+
+
+export function makeFirestoreStore(
+  db?: Firestore,
+  options?: { onPostgresPropagation?: (result: Awaited<ReturnType<typeof propagateFlipsToPostgres>>) => void },
+): HygieneStore {
   const getDb = () => db ?? getFirestore()
+  const onPropagation = options?.onPostgresPropagation
   return {
     streamActive: async (pageSize, onPage) => {
       // No orderBy → uses implicit __name__ ordering, no composite index
@@ -590,6 +668,12 @@ export function makeFirestoreStore(db?: Firestore): HygieneStore {
         )
       }
       await batch.commit()
+      // After Firestore commit, propagate to macmini Postgres so the
+      // scraper upsert respects the flip on next run. Best-effort: any
+      // failure is reported via onPostgresPropagation (logged by caller)
+      // and the standalone backfill script catches anything missed.
+      const result = await propagateFlipsToPostgres(items)
+      if (onPropagation) onPropagation(result)
     },
     writeAudit: async (counters, runAt) => {
       try {
