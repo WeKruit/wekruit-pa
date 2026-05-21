@@ -17,7 +17,7 @@
  * Auth: dashboard sign-in wall + CF-side operator check (mirrors
  * `/admin/canonical-tags`).
  */
-import { useEffect, useState, useMemo, useCallback } from "react"
+import { useEffect, useState, useMemo, useCallback, type FormEvent } from "react"
 import {
   collection,
   doc,
@@ -32,6 +32,7 @@ import {
   type QueryDocumentSnapshot,
 } from "firebase/firestore"
 import { httpsCallable } from "firebase/functions"
+import { Link, useNavigate, useSearchParams } from "react-router-dom"
 import {
   COMPANY_STAGE_VOCAB,
   COMPANY_TAG_VOCAB,
@@ -49,6 +50,8 @@ import {
   Panel,
 } from "../components/ui.js"
 import { auth, db, functions } from "../lib/firebase.js"
+import { createCompany } from "../lib/job-admin-api.js"
+import { suggestCompanyId } from "../lib/job-admin-ids.js"
 
 const PAGE_SIZE = 100
 const STALE_DAYS = 30
@@ -104,6 +107,8 @@ function matchesFilters(
 }
 
 export function Companies() {
+  const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const [rows, setRows] = useState<CompanyRow[]>([])
   const [cursor, setCursor] = useState<QueryDocumentSnapshot | null>(null)
   const [hasMore, setHasMore] = useState(false)
@@ -129,6 +134,18 @@ export function Companies() {
   // Per-row save state
   const [savingId, setSavingId] = useState<string | null>(null)
   const [rowErr, setRowErr] = useState<Record<string, string>>({})
+  const [showCreate, setShowCreate] = useState(searchParams.get("create") === "1")
+  const [createBusy, setCreateBusy] = useState(false)
+  const [createErr, setCreateErr] = useState<string | null>(null)
+  const [createForm, setCreateForm] = useState({
+    displayName: "",
+    companyId: "",
+    domain: "",
+    websiteUrl: "",
+    careersUrl: "",
+    description: "",
+  })
+  const [companyIdTouched, setCompanyIdTouched] = useState(false)
 
   const loadInitial = useCallback(async () => {
     setLoading(true)
@@ -160,6 +177,12 @@ export function Companies() {
   useEffect(() => {
     void loadInitial()
   }, [loadInitial, refreshKey])
+
+  useEffect(() => {
+    if (searchParams.get("create") === "1") {
+      setShowCreate(true)
+    }
+  }, [searchParams])
 
   async function loadMore() {
     if (!cursor || loadingMore) return
@@ -288,6 +311,23 @@ export function Companies() {
     }
   }
 
+  async function handleCreateCompany(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setCreateBusy(true)
+    setCreateErr(null)
+    try {
+      const { companyId } = await createCompany({
+        ...createForm,
+        operatorEmail: operatorEmail(),
+      })
+      navigate(`/admin/external-supply/jobs/${encodeURIComponent(companyId)}`)
+    } catch (e) {
+      setCreateErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setCreateBusy(false)
+    }
+  }
+
   return (
     <div className="page-stack">
       <PageHeader
@@ -295,11 +335,168 @@ export function Companies() {
         title="Companies"
         description={`Centralized company directory (pa-companies). Inline edit stage + tags. "Needs enrichment" surfaces docs with no source or stale beyond ${STALE_DAYS} days.`}
         actions={
-          <button type="button" onClick={() => setRefreshKey((n) => n + 1)} disabled={loading}>
-            Refresh
-          </button>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button type="button" onClick={() => setRefreshKey((n) => n + 1)} disabled={loading}>
+              Refresh
+            </button>
+            <button type="button" onClick={() => setShowCreate((prev) => !prev)}>
+              {showCreate ? "Hide create" : "Create company"}
+            </button>
+          </div>
         }
       />
+
+      {showCreate ? (
+        <Panel title="Create company" eyebrow="Create in pa-companies, then continue into job creation">
+          <form onSubmit={(event) => void handleCreateCompany(event)}>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                gap: 12,
+              }}
+            >
+              <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span style={{ fontSize: "0.78em", color: "#64748b" }}>Display name</span>
+                <input
+                  type="text"
+                  value={createForm.displayName}
+                  onChange={(e) => {
+                    const displayName = e.target.value
+                    setCreateForm((prev) => ({
+                      ...prev,
+                      displayName,
+                      companyId: companyIdTouched ? prev.companyId : suggestCompanyId(displayName),
+                    }))
+                  }}
+                  placeholder="Rain"
+                  style={{
+                    padding: "8px 10px",
+                    border: "1px solid #e2e8f0",
+                    borderRadius: 4,
+                    fontSize: "0.9em",
+                  }}
+                />
+              </label>
+              <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span style={{ fontSize: "0.78em", color: "#64748b" }}>Company ID</span>
+                <input
+                  type="text"
+                  value={createForm.companyId}
+                  onChange={(e) => {
+                    setCompanyIdTouched(true)
+                    setCreateForm((prev) => ({ ...prev, companyId: e.target.value }))
+                  }}
+                  placeholder="rain"
+                  style={{
+                    padding: "8px 10px",
+                    border: "1px solid #e2e8f0",
+                    borderRadius: 4,
+                    fontSize: "0.9em",
+                    fontFamily: "monospace",
+                  }}
+                />
+              </label>
+              <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span style={{ fontSize: "0.78em", color: "#64748b" }}>Domain</span>
+                <input
+                  type="text"
+                  value={createForm.domain}
+                  onChange={(e) => setCreateForm((prev) => ({ ...prev, domain: e.target.value }))}
+                  placeholder="rain.xyz"
+                  style={{
+                    padding: "8px 10px",
+                    border: "1px solid #e2e8f0",
+                    borderRadius: 4,
+                    fontSize: "0.9em",
+                  }}
+                />
+              </label>
+              <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span style={{ fontSize: "0.78em", color: "#64748b" }}>Website URL</span>
+                <input
+                  type="url"
+                  value={createForm.websiteUrl}
+                  onChange={(e) =>
+                    setCreateForm((prev) => ({ ...prev, websiteUrl: e.target.value }))
+                  }
+                  placeholder="https://rain.xyz"
+                  style={{
+                    padding: "8px 10px",
+                    border: "1px solid #e2e8f0",
+                    borderRadius: 4,
+                    fontSize: "0.9em",
+                  }}
+                />
+              </label>
+              <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span style={{ fontSize: "0.78em", color: "#64748b" }}>Careers URL</span>
+                <input
+                  type="url"
+                  value={createForm.careersUrl}
+                  onChange={(e) =>
+                    setCreateForm((prev) => ({ ...prev, careersUrl: e.target.value }))
+                  }
+                  placeholder="https://rain.xyz/careers"
+                  style={{
+                    padding: "8px 10px",
+                    border: "1px solid #e2e8f0",
+                    borderRadius: 4,
+                    fontSize: "0.9em",
+                  }}
+                />
+              </label>
+              <label
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 4,
+                  gridColumn: "1 / -1",
+                }}
+              >
+                <span style={{ fontSize: "0.78em", color: "#64748b" }}>Description</span>
+                <textarea
+                  value={createForm.description}
+                  onChange={(e) => setCreateForm((prev) => ({ ...prev, description: e.target.value }))}
+                  rows={4}
+                  placeholder="Short internal note or company summary"
+                  style={{
+                    padding: "8px 10px",
+                    border: "1px solid #e2e8f0",
+                    borderRadius: 4,
+                    fontSize: "0.9em",
+                    fontFamily: "inherit",
+                  }}
+                />
+              </label>
+            </div>
+            {createErr ? (
+              <div style={{ marginTop: 12 }}>
+                <ErrorState message={createErr} />
+              </div>
+            ) : null}
+            <div style={{ display: "flex", gap: 8, marginTop: 12, alignItems: "center" }}>
+              <button
+                type="submit"
+                disabled={createBusy}
+                style={{
+                  padding: "8px 14px",
+                  borderRadius: 4,
+                  border: "none",
+                  background: "#1a73e8",
+                  color: "white",
+                  cursor: createBusy ? "wait" : "pointer",
+                }}
+              >
+                {createBusy ? "Creating…" : "Create company and continue"}
+              </button>
+              <span style={{ fontSize: "0.8em", color: "#64748b" }}>
+                Success path: company directory → company jobs → create first job
+              </span>
+            </div>
+          </form>
+        </Panel>
+      ) : null}
 
       <Panel title="Filters" eyebrow={`${filtered.length} of ${rows.length} loaded`}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "flex-start" }}>
@@ -451,6 +648,11 @@ export function Companies() {
           <EmptyState
             title="No companies yet"
             body="pa-companies is empty. Phase A5 nightly enrichment will populate it from matching-jobs companyName."
+            action={
+              <button type="button" onClick={() => setShowCreate(true)}>
+                Create company
+              </button>
+            }
           />
         ) : filtered.length === 0 ? (
           <EmptyState
@@ -480,6 +682,7 @@ export function Companies() {
                   <th style={{ padding: "0.5rem 0" }}>Source</th>
                   <th style={{ padding: "0.5rem 0" }}>Enriched</th>
                   <th style={{ padding: "0.5rem 0" }}>Last reviewed</th>
+                  <th style={{ padding: "0.5rem 0", minWidth: 150 }}>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -629,6 +832,11 @@ export function Companies() {
                       </td>
                       <td style={{ padding: "0.4rem 0", fontSize: "0.78em" }}>
                         {row.lastReviewedBy ?? "—"}
+                      </td>
+                      <td style={{ padding: "0.4rem 0", fontSize: "0.8em", whiteSpace: "nowrap" }}>
+                        <Link to={`/admin/external-supply/jobs/${encodeURIComponent(row.id)}`}>Jobs</Link>
+                        {" · "}
+                        <Link to={`/admin/jobs/new?companyId=${encodeURIComponent(row.id)}`}>Create job</Link>
                       </td>
                     </tr>
                   )
