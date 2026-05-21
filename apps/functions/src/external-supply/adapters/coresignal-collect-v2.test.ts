@@ -46,9 +46,10 @@ test("normalize — happy path produces ok status + canonical url + emails + ski
   assert.equal(draft.source, "coresignal_collect_v2")
   assert.equal(draft.normalizationStatus, "ok")
   assert.equal(draft.identityResolutionStatus, "pending")
+  // canonicalizeLinkedInUrl strips "www." subdomain
   assert.equal(
     draft.canonicalLinkedInUrl,
-    "https://www.linkedin.com/in/yue-h-69a807130",
+    "https://linkedin.com/in/yue-h-69a807130",
   )
   assert.ok(draft.linkedinProfileHash)
   assert.equal(draft.emails.length, 1)

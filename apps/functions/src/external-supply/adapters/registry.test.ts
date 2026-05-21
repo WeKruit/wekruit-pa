@@ -126,17 +126,23 @@ test("registry.manual_csv.parse(buf) without identity columns throws", () => {
 // Registry shape + ordering
 // ---------------------------------------------------------------------------
 
-test("getRegistrySignatures has 4 entries in canonical order", () => {
+test("getRegistrySignatures has 5 entries in canonical order", () => {
   const sigs = getRegistrySignatures()
-  assert.equal(sigs.length, 4)
+  assert.equal(sigs.length, 5)
   assert.deepEqual(
     sigs.map((s) => s.source),
-    ["juicebox", "lessie", "coresignal", "manual_csv"],
+    ["juicebox", "lessie", "coresignal", "coresignal_collect_v2", "manual_csv"],
   )
 })
 
-test("ADAPTER_REGISTRY exposes all four sources with version + signature", () => {
-  for (const src of ["juicebox", "lessie", "coresignal", "manual_csv"] as const) {
+test("ADAPTER_REGISTRY exposes all five sources with version + signature", () => {
+  for (const src of [
+    "juicebox",
+    "lessie",
+    "coresignal",
+    "coresignal_collect_v2",
+    "manual_csv",
+  ] as const) {
     const d = ADAPTER_REGISTRY[src]
     assert.equal(d.source, src)
     assert.equal(typeof d.adapterVersion, "string")
