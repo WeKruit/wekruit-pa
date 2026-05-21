@@ -1,4 +1,4 @@
-import { FieldValue, type Firestore } from "firebase-admin/firestore"
+import type { Firestore } from "firebase-admin/firestore"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import { hashCandidateHandle, linkCandidateHandle } from "@pa/pa-persistence"
 import { parseHelloWekruitOpener } from "@pa/pa-orchestrator"
@@ -39,14 +39,12 @@ async function bindPhoneToCandidate(
       snap.docs
         .filter((doc) => doc.id !== candidateId)
         .map((doc) =>
-          db.collection(PA_COLLECTIONS.users).doc(doc.id).set(
-            {
-              phoneE164: FieldValue.delete(),
-              phoneE164Source: FieldValue.delete(),
-              updatedAt: isoNow,
-            },
-            { merge: true },
-          ),
+          db.collection(PA_COLLECTIONS.users).doc(doc.id).update({
+            phoneE164: null,
+            phoneE164Source: null,
+            phoneE164ReleasedAt: isoNow,
+            updatedAt: isoNow,
+          }),
         ),
     )
   }

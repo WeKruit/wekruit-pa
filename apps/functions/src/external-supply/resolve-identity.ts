@@ -43,6 +43,13 @@ import {
   upsertCandidateFromExternalRecord,
 } from "@pa/pa-persistence"
 import { dualWriteLegacyUserTagsFromExternal } from "./legacy-user-tags-bridge.js"
+// P2.5 — mirror CoreSignal experience[] into canonical parsedCandidateResumes
+// collection so Claire / paReverseMatch / job-rec-daily can see CoreSignal
+// candidates. Also records coresignalEmployeeId on pa-users for fast dedup.
+import {
+  makeFirestoreMirrorDeps,
+  runCoresignalExperiencesMirror,
+} from "./coresignal-experiences-mirror.js"
 import { parseExternalCandidateRecordDoc } from "./record-doc.js"
 
 const PAGE_SIZE = 200
@@ -222,6 +229,33 @@ export async function runResolveBatchIdentity(
         } catch (err) {
           // Bridge failure must NOT abort the upsert — log + continue.
           logger.error("external_supply.legacy_tags.dual_write_error", {
+            candidateId: upsertResult.candidateId,
+            recordId: record.recordId,
+            err: err instanceof Error ? err.message : String(err),
+          })
+        }
+
+        // P2.5 — mirror CoreSignal experiences into parsedCandidateResumes
+        // collection. No-op for other sources. Failure must not abort upsert.
+        try {
+          const mirror = await runCoresignalExperiencesMirror(
+            record,
+            upsertResult.candidateId,
+            {
+              ...makeFirestoreMirrorDeps(db),
+              now,
+              log: (event, fields) =>
+                logger.info(`external_supply.${event}`, fields),
+            },
+          )
+          if (mirror.status === "mirrored") {
+            logger.info("external_supply.coresignal_mirror.ok", {
+              candidateId: upsertResult.candidateId,
+              recordId: record.recordId,
+            })
+          }
+        } catch (err) {
+          logger.error("external_supply.coresignal_mirror.error", {
             candidateId: upsertResult.candidateId,
             recordId: record.recordId,
             err: err instanceof Error ? err.message : String(err),
