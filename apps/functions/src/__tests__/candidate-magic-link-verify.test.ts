@@ -115,17 +115,14 @@ test("runCandidateMagicLinkVerify claims profile for verified email", async () =
     assert.equal(result.portalReady, false)
     assert.equal(result.linkedinLinkedViaOauth, false)
   }
-  // Identity hardening 2026-05-21 — `allowCreate: false` because the test
-  // mocks verifyIdToken without signInProvider, which the runtime treats
-  // as the email-magic-link path (claim-only). The mock claimProfile
-  // returns success regardless, so the assertion below only documents
-  // the value the runtime now passes through.
+  // Adam directive 2026-05-21 — magic-link is a first-class L1 entry, so
+  // the runtime no longer overrides claimCandidateProfile's default
+  // `allowCreate=true`. We don't forward an `allowCreate` field.
   assert.deepEqual(calls[0], {
     firebaseUid: "firebase-1",
     email: "person@example.com",
     browserUid: "browser-1",
     displayName: "Candidate One",
-    allowCreate: false,
   })
 })
 
@@ -416,35 +413,39 @@ test("runCandidateMagicLinkVerify reports claireConversationStarted from Claire 
 
 // ---------- Identity hardening 2026-05-21 (L1-entry gate) -----------------
 
-test("runCandidateMagicLinkVerify allows create when signInProvider=google.com (Gmail OAuth = L1 entry)", async () => {
+test("runCandidateMagicLinkVerify creates account for unknown email (magic-link is a first-class L1 entry)", async () => {
+  // Adam directive 2026-05-21 — magic-link with an unknown email behaves
+  // exactly like first-time Gmail OAuth: claim/create a fresh pa-users.
+  // No L1-entry gate, no `allowCreate` forwarded from the CF — the
+  // default behavior of claimCandidateProfile is sufficient.
   const calls: Array<Record<string, unknown>> = []
   const db = fakeDb()
   const { result, status } = await runCandidateMagicLinkVerify(
     {
-      firebaseIdToken: "token-google",
-      browserUid: "browser-google",
+      firebaseIdToken: "token-newuser",
+      browserUid: "browser-newuser",
     },
     undefined,
     {
       db,
       verifyIdToken: async () => ({
-        uid: "firebase-google-1",
-        email: "newperson@gmail.com",
+        uid: "firebase-newuser-1",
+        email: "freshperson@example.com",
         email_verified: true,
-        signInProvider: "google.com",
+        signInProvider: "password",
       }),
       claimProfile: async (_db, input) => {
         calls.push({ ...input })
         return {
-          candidateId: "cand-google-1",
+          candidateId: "cand-newuser-1",
           authMapping: {
-            firebaseUid: "firebase-google-1",
-            candidateId: "cand-google-1",
+            firebaseUid: "firebase-newuser-1",
+            candidateId: "cand-newuser-1",
             createdAt: "2026-05-21T00:00:00.000Z",
           },
           emailHandle: {
             handleId: "email_hash",
-            candidateId: "cand-google-1",
+            candidateId: "cand-newuser-1",
             kind: "email" as const,
             handleHash: "hashhashhashhash",
             source: "candidate" as const,
@@ -453,7 +454,7 @@ test("runCandidateMagicLinkVerify allows create when signInProvider=google.com (
           claimedEventId: "ident_claimed",
           idempotent: false,
           selfProfile: {
-            candidateId: "cand-google-1",
+            candidateId: "cand-newuser-1",
             lifecycleState: "claimed" as const,
             handles: [{ kind: "email" as const, source: "candidate" as const }],
             createdAt: "2026-05-21T00:00:00.000Z",
@@ -466,35 +467,7 @@ test("runCandidateMagicLinkVerify allows create when signInProvider=google.com (
 
   assert.equal(status, 200)
   assert.equal(result.ok, true)
-  assert.equal(calls[0]?.allowCreate, true, "Google OAuth path must allow pa-users creation")
-})
-
-test("runCandidateMagicLinkVerify rejects email-link claim when email has no existing handle (requires_l1_signup)", async () => {
-  const db = fakeDb()
-  const { result, status } = await runCandidateMagicLinkVerify(
-    { firebaseIdToken: "token-unknown" },
-    undefined,
-    {
-      db,
-      verifyIdToken: async () => ({
-        uid: "firebase-unknown",
-        email: "stranger@example.com",
-        email_verified: true,
-        signInProvider: "password",
-      }),
-      claimProfile: async () => {
-        // Simulate what real claimCandidateProfile does when allowCreate=false
-        // and the email is not yet in pa-candidate-handles.
-        throw new Error("requires_l1_signup:no_existing_handle")
-      },
-    }
-  )
-
-  assert.equal(status, 404, "404 surfaces the L1-signup-required gate to the client")
-  assert.equal(result.ok, false)
-  if (!result.ok) {
-    assert.equal(result.reason, "requires_l1_signup")
-  }
+  assert.equal(calls[0]?.allowCreate, undefined, "CF does not override claimProfile default (allowCreate=true)")
 })
 
 test("runCandidateMagicLinkVerify still passes allowCreate=true when LinkedIn custom-token path is used", async () => {
@@ -556,5 +529,9 @@ test("runCandidateMagicLinkVerify still passes allowCreate=true when LinkedIn cu
     }
   )
 
-  assert.equal(calls[0]?.allowCreate, true, "LinkedIn OAuth path must allow pa-users creation")
+  assert.equal(
+    calls[0]?.allowCreate,
+    undefined,
+    "LinkedIn OAuth path passes through the default (allowCreate=true via the persistence layer)",
+  )
 })

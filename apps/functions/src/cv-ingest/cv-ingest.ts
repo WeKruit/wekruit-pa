@@ -1664,6 +1664,15 @@ export async function ingestCv(
           extractedEmail,
         }
       }
+      // Identity hardening 2026-05-21 — `not_found` is only emitted when
+      // the resolver is called with `mode: "resolve_only"`. cv-ingest
+      // never sets that flag (resume parsing IS an L1 entry, so we
+      // intend to create the candidate), so this branch is defensive
+      // only and exists to satisfy the discriminated-union narrowing.
+      if (resolution.outcome === "not_found") {
+        log("pa.cv_ingest.identity_unexpected_not_found", { userId: sourceUserId })
+        return { ok: false, reason: "identity_conflict", extractedEmail }
+      }
       userId = resolution.candidateId
       log("pa.cv_ingest.identity_resolved", {
         sourceUserId,
