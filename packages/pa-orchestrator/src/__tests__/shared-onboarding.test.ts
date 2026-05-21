@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import {
+  buildSharedOnboardingOpeningPrompt,
   buildHelloWekruitOpenerBody,
   parseHelloWekruitOpener,
   SHARED_ONBOARDING_QUESTIONS,
@@ -31,10 +32,12 @@ test("shared onboarding asks the five conversational questions in launch order",
     "location_relocation",
     "special_context",
   ])
-  assert.match(getSharedOnboardingQuestion("main_goal").prompt, /career growth, compensation, stability, mission, learning/i)
+  assert.match(getSharedOnboardingQuestion("main_goal").prompt, /software engineering, product, design/i)
+  assert.match(getSharedOnboardingQuestion("location_relocation").prompt, /remote, hybrid, in-office/i)
+  assert.match(getSharedOnboardingQuestion("special_context").prompt, /salary range/i)
   assert.doesNotMatch(
     SHARED_ONBOARDING_QUESTIONS.map((q) => q.prompt).join("\n"),
-    /email|e-mail|what email|why are you looking/i,
+    /email|e-mail|what email|why are you looking|timeline|dealbreaker/i,
   )
 })
 
@@ -72,15 +75,47 @@ test("shared onboarding prompts ground Q1 and Q4 in resume/profile context when 
   assert.match(q1, /resume/i)
   assert.match(q1, /Backend Engineer/i)
   assert.match(q1, /Rain/i)
-  assert.match(q1, /career growth, compensation, stability, mission, learning/i)
+  assert.match(q1, /software engineering, product, design/i)
 
   const q3 = buildSharedOnboardingPrompt("industry_interest", promptContext)
-  assert.match(q3, /financial_technology/i)
+  assert.match(q3, /financial technology/i)
+  assert.doesNotMatch(q3, /financial_technology|developer_tools/i)
   assert.match(q3, /actually most interested/i)
 
   const q4 = buildSharedOnboardingPrompt("location_relocation", promptContext)
   assert.match(q4, /New York, NY/i)
-  assert.match(q4, /remote, onsite, or relocating/i)
+  assert.match(q4, /remote, hybrid, in-office/i)
+})
+
+test("shared onboarding opening prompt carries Claire persona guidance without changing the opener token", () => {
+  const promptContext = buildSharedOnboardingPromptContext({
+    user: {
+      displayName: "Sarah Chen",
+      location: "Brooklyn, NY",
+      candidateContext: { location: "Brooklyn, NY" },
+    },
+    parsedResume: {
+      candidateProfile: { skills: ["Product Design", "Research"] },
+      experiences: [
+        { company: "Figma", title: "Product Designer", location: "Brooklyn" },
+      ],
+      industryTags: ["software_and_saas"],
+    },
+  })
+
+  const opener = buildSharedOnboardingOpeningPrompt(promptContext)
+
+  assert.deepEqual(parseHelloWekruitOpener("Hello, WeKruit! abc_user_99"), { candidateId: "abc_user_99" })
+  assert.match(opener, /Hey Sarah/i)
+  assert.match(opener, /Product Designer/i)
+  assert.match(opener, /Brooklyn/i)
+  assert.match(opener, /Figma/i)
+  assert.match(opener, /hiring manager/i)
+  assert.match(opener, /few quick questions/i)
+  assert.match(opener, /https:\/\/candidate\.wekruit\.com\/me\/profile/i)
+  assert.match(opener, /just tell me here/i)
+  assert.match(opener, /software engineering, product, design/i)
+  assert.doesNotMatch(opener, /I am Claire|How may I assist|software_and_saas|job_title|tech_swe|timeline|dealbreaker/i)
 })
 
 test("free-form answers produce memory evidence and confident tag patches", () => {

@@ -125,7 +125,8 @@ describe("buildOnboardingSurfaceIntent", () => {
       voiceProfile: profile,
       lang: "en",
     })
-    assert.ok(/Re-ask the main_goal/.test(intent), "expected reask base line")
+    assert.ok(/Re-ask the target role/.test(intent), "expected reask base line")
+    assert.doesNotMatch(intent, /main_goal/)
     assert.ok(/Resume anchor \(required if present\):/.test(intent), "expected anchor line in reask")
   })
 })
