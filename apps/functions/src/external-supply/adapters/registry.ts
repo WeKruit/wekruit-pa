@@ -31,6 +31,11 @@ import {
   CORESIGNAL_SIGNATURE,
 } from "./coresignal.js"
 import {
+  parseCoresignalCollectV2Export,
+  CORESIGNAL_COLLECT_V2_ADAPTER_VERSION,
+  CORESIGNAL_COLLECT_V2_SIGNATURE,
+} from "./coresignal-collect-v2.js"
+import {
   parseManualSheetBuffer,
   MANUAL_CSV_ADAPTER_VERSION,
   MANUAL_CSV_SIGNATURE,
@@ -70,6 +75,12 @@ export const ADAPTER_REGISTRY: Record<ExternalSource, AdapterDescriptor> = {
     adapterVersion: CORESIGNAL_ADAPTER_VERSION,
     signature: CORESIGNAL_SIGNATURE,
     parse: (raw) => parseCoresignalExport(raw.toString("utf8")),
+  },
+  coresignal_collect_v2: {
+    source: "coresignal_collect_v2",
+    adapterVersion: CORESIGNAL_COLLECT_V2_ADAPTER_VERSION,
+    signature: CORESIGNAL_COLLECT_V2_SIGNATURE,
+    parse: (raw) => parseCoresignalCollectV2Export(raw.toString("utf8")),
   },
   manual_csv: {
     source: "manual_csv",

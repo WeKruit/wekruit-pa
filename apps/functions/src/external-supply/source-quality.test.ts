@@ -290,6 +290,7 @@ test("writeMonthlyRollup — idempotent overwrite preserves V1 fields", async ()
     },
     lessie: null,
     coresignal: null,
+    coresignal_collect_v2: null,
     manual_csv: null,
   }
 

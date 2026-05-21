@@ -87,11 +87,18 @@ export function Landing() {
         title="External Supply"
         description="Bulk-import external sourcing exports (Juicebox / Lessie / Coresignal) and walk them through identity resolution, evaluation, outreach, and sync — all without leaving the admin console."
         actions={
-          <Link to="/admin/external-supply/batches/new">
-            <button type="button" style={primaryBtnStyle}>
-              New batch
-            </button>
-          </Link>
+          <>
+            <Link to="/admin/external-supply/batches/new">
+              <button type="button" style={primaryBtnStyle}>
+                New batch (upload)
+              </button>
+            </Link>{" "}
+            <Link to="/admin/external-supply/batches/new-coresignal">
+              <button type="button" style={primaryBtnStyle}>
+                New batch (paste CoreSignal IDs)
+              </button>
+            </Link>
+          </>
         }
       />
 

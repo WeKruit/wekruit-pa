@@ -2199,6 +2199,10 @@ export {
   paExternalSupplyCreateBatchUploadUrl,
   paExternalSupplyCreateBatch,
 } from "./external-supply/import.js"
+// V2.1 — CoreSignal cdapi v2 collect batch fetch. Operator pastes candidate ID
+// list in dashboard; CF fans out to live API + routes through runCreateBatch.
+// See .planning/PRD-CORESIGNAL-INTAKE-OUTBOUND.md §6.
+export { paCoresignalFetchBatch } from "./external-supply/coresignal-batch-fetch.js"
 export { paExternalSupplyResolveBatchIdentity } from "./external-supply/resolve-identity.js"
 export { paExternalSupplyRunLinkedInEnrich } from "./external-supply/run-linkedin-enrich.js"
 export { paExternalSupplyRunGitHubEnrich } from "./external-supply/run-github-enrich.js"
