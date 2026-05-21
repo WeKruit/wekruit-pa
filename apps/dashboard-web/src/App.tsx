@@ -74,6 +74,8 @@ import PrescreenFeedback from "./pages/PrescreenFeedback.js"
 // Sync, Audit). All routes live under /admin/external-supply/**.
 import { Landing as ExternalSupplyLanding } from "./pages/external-supply/Landing.js"
 import { BatchNew as ExternalSupplyBatchNew } from "./pages/external-supply/BatchNew.js"
+// v2.1 — CoreSignal paste-IDs operator surface (sibling to BatchNew).
+import { CoresignalBatchNew } from "./pages/external-supply/CoresignalBatchNew.js"
 import { BatchDetail as ExternalSupplyBatchDetail } from "./pages/external-supply/BatchDetail.js"
 import { BatchCandidates as ExternalSupplyBatchCandidates } from "./pages/external-supply/BatchCandidates.js"
 import { Review as ExternalSupplyReview } from "./pages/external-supply/Review.js"
@@ -218,6 +220,7 @@ export default function App() {
           <Route path="/admin/external-supply/jobs/:companyId" element={<ExternalSupplyJobs />} />
           <Route path="/admin/jobs/:jobId" element={<JobWorkspace />} />
           <Route path="/admin/external-supply/batches/new" element={<ExternalSupplyBatchNew />} />
+          <Route path="/admin/external-supply/batches/new-coresignal" element={<CoresignalBatchNew />} />
           <Route path="/admin/external-supply/batches/:batchId" element={<ExternalSupplyBatchDetail />} />
           <Route
             path="/admin/external-supply/batches/:batchId/candidates"
