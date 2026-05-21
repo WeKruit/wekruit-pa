@@ -56,6 +56,7 @@ type PrescreenConfig = {
 type JobDoc = {
   id: string
   title: string
+  companyId?: string
   company?: string
   hasPrescreenConfig: boolean
 }
@@ -385,6 +386,7 @@ export default function JobPrescreen() {
           return {
             id: d.id,
             title: typeof data.title === "string" ? data.title : d.id,
+            companyId: typeof data.companyId === "string" ? data.companyId : undefined,
             company: typeof data.company === "string" ? data.company : undefined,
             hasPrescreenConfig: data.prescreenConfig != null,
           }
@@ -444,6 +446,11 @@ export default function JobPrescreen() {
       goodToHave: cfg.questions.filter((q) => q.type === "GOOD_TO_HAVE").length,
     }
   }, [cfg, isValid])
+
+  const activeJob = useMemo(
+    () => jobs.find((job) => job.id === activeJobId) ?? null,
+    [activeJobId, jobs],
+  )
 
   // ── Q mutators ──────────────────────────────────────────────────────────
   const updateQuestion = (idx: number, patch: Partial<PrescreenQuestionConfig>) => {
@@ -525,10 +532,47 @@ export default function JobPrescreen() {
       <PageHeader
         title="Pre-Screen"
         description="Edit Claire's job-specific questions. Publish status and job fields live in the job workspace."
+        actions={
+          <Link
+            to={`/admin/jobs/new?next=prescreen${
+              activeJob?.companyId ? `&companyId=${encodeURIComponent(activeJob.companyId)}` : ""
+            }`}
+            style={{
+              display: "inline-block",
+              padding: "0.45rem 0.9rem",
+              border: "1px solid rgba(0,0,0,0.15)",
+              borderRadius: 4,
+              textDecoration: "none",
+              color: "inherit",
+              fontSize: "0.85em",
+            }}
+          >
+            Create new job
+          </Link>
+        }
       />
 
       <div style={{ display: "grid", gridTemplateColumns: "320px 1fr", gap: "1rem" }}>
         <Panel title="Jobs">
+          <Link
+            to={`/admin/jobs/new?next=prescreen${
+              activeJob?.companyId ? `&companyId=${encodeURIComponent(activeJob.companyId)}` : ""
+            }`}
+            style={{
+              display: "block",
+              width: "100%",
+              boxSizing: "border-box",
+              padding: "0.5rem",
+              marginBottom: "0.5rem",
+              textAlign: "center",
+              border: "1px solid rgba(0,0,0,0.15)",
+              borderRadius: 4,
+              textDecoration: "none",
+              color: "inherit",
+            }}
+          >
+            Create new job
+          </Link>
           {activeJobId && (
             <Link
               to={`/admin/jobs/${encodeURIComponent(activeJobId)}`}
@@ -573,7 +617,9 @@ export default function JobPrescreen() {
           {!activeJobId && (
             <Panel title="Select a job">
               <p style={{ opacity: 0.7, padding: "1rem 0" }}>
-                Pick a job on the left. Create and publish jobs from the job workspace.
+                Pick a job on the left, or{" "}
+                <Link to="/admin/jobs/new?next=prescreen">create a new job</Link>{" "}
+                and jump straight back into prescreen setup.
               </p>
             </Panel>
           )}
