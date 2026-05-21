@@ -113,7 +113,12 @@ test("same extracted email across browser ids resolves to one candidate", async 
     now,
   })
   assert.notEqual(first.outcome, "identity_conflict")
-  if (first.outcome === "identity_conflict") return
+  // Identity hardening 2026-05-21 added `not_found` to the union — narrow
+  // to the variants that carry `candidateId` so the subsequent assertion
+  // (which reads `first.candidateId`) typechecks. The first call uses
+  // the default mode so `not_found` is unreachable; the guard exists
+  // purely for the type system.
+  if (first.outcome !== "resolved_existing" && first.outcome !== "created") return
 
   const second = await resolveCandidateIdentity(db, {
     extractedEmail: " alice@example.com ",
@@ -272,4 +277,120 @@ test("writeCandidateSelfProfile redacts phone and preserves candidate-facing sta
   assert.equal(profile.emailMasked, "p***@example.com")
   assert.equal(profile.phoneMasked, "+14***00")
   assert.equal(profile.lifecycleState, "reachable")
+})
+
+// ---------- Identity hardening 2026-05-21 (L1-entry gate) -----------------
+
+test("resolveCandidateIdentity mode=resolve_only returns not_found when handle missing (no pa-users created)", async () => {
+  const { db, store } = makeFakeFirestore()
+  const result = await resolveCandidateIdentity(db, {
+    extractedEmail: "stranger@example.com",
+    source: "candidate",
+    now,
+    mode: "resolve_only",
+  })
+  assert.equal(result.outcome, "not_found")
+  assert.equal(
+    store.get(PA_COLLECTIONS.users)!.size,
+    0,
+    "resolve_only must NOT create a pa-users row when handle is unknown",
+  )
+  assert.equal(
+    store.get(PA_COLLECTIONS.candidateHandles)!.size,
+    0,
+    "resolve_only must NOT write a candidate handle when handle is unknown",
+  )
+})
+
+test("resolveCandidateIdentity mode=resolve_only resolves to existing candidate when handle exists", async () => {
+  const { db, store } = makeFakeFirestore()
+  // First call creates the candidate (default mode).
+  const first = await resolveCandidateIdentity(db, {
+    extractedEmail: "known@example.com",
+    source: "resume",
+    now,
+  })
+  assert.equal(first.outcome, "created")
+  if (first.outcome !== "created") return
+
+  // Second call with resolve_only on the same email → resolved_existing.
+  const second = await resolveCandidateIdentity(db, {
+    extractedEmail: "known@example.com",
+    source: "candidate",
+    now,
+    mode: "resolve_only",
+  })
+  assert.equal(second.outcome, "resolved_existing")
+  if (second.outcome === "resolved_existing") {
+    assert.equal(second.candidateId, first.candidateId)
+  }
+  assert.equal(store.get(PA_COLLECTIONS.users)!.size, 1, "no duplicate pa-users")
+})
+
+test("claimCandidateProfile allowCreate=false throws requires_l1_signup when email has no existing handle", async () => {
+  const { db, store } = makeFakeFirestore()
+  await assert.rejects(
+    () =>
+      claimCandidateProfile(db, {
+        firebaseUid: "firebase-stranger",
+        email: "stranger@example.com",
+        browserUid: "browser-stranger",
+        allowCreate: false,
+        now,
+      }),
+    /requires_l1_signup/,
+  )
+  assert.equal(
+    store.get(PA_COLLECTIONS.users)!.size,
+    0,
+    "no pa-users row created when L1 signup is required",
+  )
+  assert.equal(
+    store.get(PA_COLLECTIONS.candidateAuth)!.size,
+    0,
+    "no auth mapping created when L1 signup is required",
+  )
+})
+
+test("claimCandidateProfile allowCreate=false succeeds when email matches an existing handle (return path for existing user)", async () => {
+  const { db, store } = makeFakeFirestore()
+  // Simulate an OAuth-created user (resume / Google / LinkedIn path) that
+  // already has the email linked. Magic-link return visit should claim it.
+  await linkCandidateHandle(db, {
+    candidateId: "existing-cand",
+    kind: "email",
+    value: "returning@example.com",
+    source: "candidate",
+    deliverable: true,
+    now,
+  })
+  store.get(PA_COLLECTIONS.users)!.set("existing-cand", {
+    id: "existing-cand",
+    email: "returning@example.com",
+    createdAt: now,
+    updatedAt: now,
+  })
+
+  const claimed = await claimCandidateProfile(db, {
+    firebaseUid: "firebase-returning",
+    email: "returning@example.com",
+    browserUid: "browser-returning",
+    allowCreate: false,
+    now,
+  })
+  assert.equal(claimed.candidateId, "existing-cand", "claim hit the existing candidate")
+  assert.equal(store.get(PA_COLLECTIONS.users)!.size, 1, "no duplicate pa-users created")
+})
+
+test("claimCandidateProfile defaults allowCreate=true (preserves cv-ingest / OAuth back-compat)", async () => {
+  const { db, store } = makeFakeFirestore()
+  const claimed = await claimCandidateProfile(db, {
+    firebaseUid: "firebase-google",
+    email: "fresh@gmail.com",
+    browserUid: "browser-google",
+    now,
+    // Note: allowCreate intentionally omitted — must default to true.
+  })
+  assert.ok(claimed.candidateId, "default mode creates a fresh candidate")
+  assert.equal(store.get(PA_COLLECTIONS.users)!.size, 1)
 })

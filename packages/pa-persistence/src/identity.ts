@@ -258,6 +258,18 @@ export interface ResolveCandidateIdentityInput {
   useCandidateIdHint?: boolean
   now?: string
   evidence?: MarketplaceEvidence[]
+  /**
+   * Identity hardening 2026-05-21 — gate on creating new pa-users from
+   * unknown handles. Default `"create_or_resolve"` keeps every existing
+   * caller (cv-ingest, bulk-resume-intake, ATS inbound, etc.) creating
+   * pa-users for first-time handles, which is the v2.0 candidate-supply
+   * inflow contract. `"resolve_only"` is used by magic-link email-link
+   * sign-in: email alone is not an L1 entry, so claim must hit an
+   * existing handle (created previously via resume/Gmail OAuth/LinkedIn
+   * OAuth). On miss, the resolver returns `{outcome: "not_found"}` and
+   * the caller surfaces a `requires_l1_signup` error.
+   */
+  mode?: "create_or_resolve" | "resolve_only"
 }
 
 function firstHandleInput(input: ResolveCandidateIdentityInput): {
@@ -337,6 +349,13 @@ export async function resolveCandidateIdentity(
   if (handleSnap.exists) {
     const handle = CandidateHandleSchema.parse(handleSnap.data())
     return { outcome: "resolved_existing", candidateId: handle.candidateId, handle }
+  }
+
+  // Identity hardening 2026-05-21 — caller (magic-link email-link) asked
+  // to RESOLVE only; not creating a new candidate row. Surfaces upward so
+  // the CF can return `requires_l1_signup` to the client.
+  if (input.mode === "resolve_only") {
+    return { outcome: "not_found" }
   }
 
   const candidateId =
@@ -466,6 +485,17 @@ export interface ClaimCandidateProfileInput {
   browserUid?: string | null
   displayName?: string | null
   now?: string
+  /**
+   * Identity hardening 2026-05-21 — when `false`, an email that does
+   * not yet have a registered handle will NOT spin up a brand-new
+   * pa-users row. Used by the magic-link email-link path: email alone
+   * is not an L1 entry point (those are resume upload / Gmail OAuth /
+   * LinkedIn OAuth), so the claim must hit an existing handle or get
+   * rejected with `requires_l1_signup`. Defaults to `true` to preserve
+   * back-compat for OAuth-driven callers that legitimately create
+   * candidates on first sign-in.
+   */
+  allowCreate?: boolean
 }
 
 export async function claimCandidateProfile(
@@ -480,15 +510,20 @@ export async function claimCandidateProfile(
   idempotent: boolean
 }> {
   const ts = input.now ?? nowIso()
+  const allowCreate = input.allowCreate !== false
   const resolved = await resolveCandidateIdentity(db, {
     extractedEmail: input.email,
     browserUid: input.browserUid,
     source: "candidate",
     now: ts,
     evidence: [{ source: "system", summary: "Candidate email-link auth claim" }],
+    mode: allowCreate ? "create_or_resolve" : "resolve_only",
   })
   if (resolved.outcome === "identity_conflict") {
     throw new Error(`identity_conflict:${resolved.conflict.conflictId}`)
+  }
+  if (resolved.outcome === "not_found") {
+    throw new Error("requires_l1_signup:no_existing_handle")
   }
   const candidateId = resolved.candidateId
   const emailHandle = await linkCandidateHandle(db, {

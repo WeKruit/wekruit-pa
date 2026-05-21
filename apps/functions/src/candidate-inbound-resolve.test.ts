@@ -104,11 +104,14 @@ test("resolveInboundUserId binds phone from Hello, WeKruit! opener suffix", asyn
   assert.equal(userSnap.data()?.phoneE164, "+14155550182")
 })
 
-test("resolveInboundUserId lets Hello, WeKruit! opener replace stale phone ownership", async () => {
+test("DEV_BYPASS_PHONE (+14243201960): Hello, WeKruit! opener replaces stale phone ownership", async () => {
+  // Adam directive 2026-05-21 — the dev/test phone (+14243201960) is the
+  // ONLY phone for which the opener may release a prior owner and reassign
+  // ownership. Every other number is strict (1 email = 1 phone).
   const fakeDb = new FakeFirestore()
   const staleUserId = "stale_phone_owner_01"
   const candidateId = "cand_opener_rebind_01"
-  const phoneE164 = "+14155550183"
+  const phoneE164 = "+14243201960"
   fakeDb.seed(PA_COLLECTIONS.users, staleUserId, {
     id: staleUserId,
     source: "admin",
@@ -132,4 +135,38 @@ test("resolveInboundUserId lets Hello, WeKruit! opener replace stale phone owner
 
   const followupResolved = await resolveInboundUserId(db, phoneE164, "remote or NYC")
   assert.equal(followupResolved, candidateId)
+})
+
+test("non-dev phone: Hello, WeKruit! opener REJECTS when phone is already owned by another candidate", async () => {
+  // Adam invariant 2026-05-21 — every phone other than DEV_BYPASS_PHONE
+  // is strict 1:1. An opener pointing at a different candidate from a
+  // phone that already owns another pa-users must throw identity_conflict
+  // and leave both pa-users unchanged.
+  const fakeDb = new FakeFirestore()
+  const ownerUserId = "phone_owner_strict_01"
+  const candidateId = "cand_opener_reject_01"
+  const phoneE164 = "+14155550199"
+  fakeDb.seed(PA_COLLECTIONS.users, ownerUserId, {
+    id: ownerUserId,
+    source: "candidate",
+    phoneE164,
+    phoneE164Source: "candidate",
+  })
+  fakeDb.seed(PA_COLLECTIONS.users, candidateId, { id: candidateId, source: "candidate" })
+  const db = fakeDb as unknown as Firestore
+
+  const opener = buildHelloWekruitOpenerBody(candidateId)
+  await assert.rejects(
+    async () => {
+      await resolveInboundUserId(db, phoneE164, opener)
+    },
+    /identity_conflict:(pa_users_phone_mismatch|phone_handle_owner_mismatch|pa_users_phone_already_taken)/,
+  )
+
+  // Both pa-users rows unchanged — the strict pre-flight checks ran
+  // before any write.
+  const ownerSnap = await db.collection(PA_COLLECTIONS.users).doc(ownerUserId).get()
+  assert.equal(ownerSnap.data()?.phoneE164, phoneE164)
+  const candidateSnap = await db.collection(PA_COLLECTIONS.users).doc(candidateId).get()
+  assert.equal(candidateSnap.data()?.phoneE164, undefined)
 })

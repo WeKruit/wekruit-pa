@@ -115,11 +115,17 @@ test("runCandidateMagicLinkVerify claims profile for verified email", async () =
     assert.equal(result.portalReady, false)
     assert.equal(result.linkedinLinkedViaOauth, false)
   }
+  // Identity hardening 2026-05-21 — `allowCreate: false` because the test
+  // mocks verifyIdToken without signInProvider, which the runtime treats
+  // as the email-magic-link path (claim-only). The mock claimProfile
+  // returns success regardless, so the assertion below only documents
+  // the value the runtime now passes through.
   assert.deepEqual(calls[0], {
     firebaseUid: "firebase-1",
     email: "person@example.com",
     browserUid: "browser-1",
     displayName: "Candidate One",
+    allowCreate: false,
   })
 })
 
@@ -406,4 +412,149 @@ test("runCandidateMagicLinkVerify reports claireConversationStarted from Claire 
     assert.equal(result.hasResumeOnFile, false)
     assert.equal(result.portalReady, false)
   }
+})
+
+// ---------- Identity hardening 2026-05-21 (L1-entry gate) -----------------
+
+test("runCandidateMagicLinkVerify allows create when signInProvider=google.com (Gmail OAuth = L1 entry)", async () => {
+  const calls: Array<Record<string, unknown>> = []
+  const db = fakeDb()
+  const { result, status } = await runCandidateMagicLinkVerify(
+    {
+      firebaseIdToken: "token-google",
+      browserUid: "browser-google",
+    },
+    undefined,
+    {
+      db,
+      verifyIdToken: async () => ({
+        uid: "firebase-google-1",
+        email: "newperson@gmail.com",
+        email_verified: true,
+        signInProvider: "google.com",
+      }),
+      claimProfile: async (_db, input) => {
+        calls.push({ ...input })
+        return {
+          candidateId: "cand-google-1",
+          authMapping: {
+            firebaseUid: "firebase-google-1",
+            candidateId: "cand-google-1",
+            createdAt: "2026-05-21T00:00:00.000Z",
+          },
+          emailHandle: {
+            handleId: "email_hash",
+            candidateId: "cand-google-1",
+            kind: "email" as const,
+            handleHash: "hashhashhashhash",
+            source: "candidate" as const,
+            createdAt: "2026-05-21T00:00:00.000Z",
+          },
+          claimedEventId: "ident_claimed",
+          idempotent: false,
+          selfProfile: {
+            candidateId: "cand-google-1",
+            lifecycleState: "claimed" as const,
+            handles: [{ kind: "email" as const, source: "candidate" as const }],
+            createdAt: "2026-05-21T00:00:00.000Z",
+          },
+        }
+      },
+      hasResumeOnFile: async () => false,
+    }
+  )
+
+  assert.equal(status, 200)
+  assert.equal(result.ok, true)
+  assert.equal(calls[0]?.allowCreate, true, "Google OAuth path must allow pa-users creation")
+})
+
+test("runCandidateMagicLinkVerify rejects email-link claim when email has no existing handle (requires_l1_signup)", async () => {
+  const db = fakeDb()
+  const { result, status } = await runCandidateMagicLinkVerify(
+    { firebaseIdToken: "token-unknown" },
+    undefined,
+    {
+      db,
+      verifyIdToken: async () => ({
+        uid: "firebase-unknown",
+        email: "stranger@example.com",
+        email_verified: true,
+        signInProvider: "password",
+      }),
+      claimProfile: async () => {
+        // Simulate what real claimCandidateProfile does when allowCreate=false
+        // and the email is not yet in pa-candidate-handles.
+        throw new Error("requires_l1_signup:no_existing_handle")
+      },
+    }
+  )
+
+  assert.equal(status, 404, "404 surfaces the L1-signup-required gate to the client")
+  assert.equal(result.ok, false)
+  if (!result.ok) {
+    assert.equal(result.reason, "requires_l1_signup")
+  }
+})
+
+test("runCandidateMagicLinkVerify still passes allowCreate=true when LinkedIn custom-token path is used", async () => {
+  const calls: Array<Record<string, unknown>> = []
+  const db = fakeDb()
+  await runCandidateMagicLinkVerify(
+    {
+      firebaseIdToken: "token-li-2",
+      linkedinSignIn: true,
+    },
+    undefined,
+    {
+      db,
+      verifyIdToken: async () => ({
+        uid: "li_xyz789",
+        email: "person@linkedin.com",
+        email_verified: true,
+        linkedinSub: "sub-77",
+      }),
+      claimProfile: async (_db, input) => {
+        calls.push({ ...input })
+        return {
+          candidateId: "cand-li-2",
+          authMapping: {
+            firebaseUid: "li_xyz789",
+            candidateId: "cand-li-2",
+            createdAt: "2026-05-21T00:00:00.000Z",
+          },
+          emailHandle: {
+            handleId: "email_hash",
+            candidateId: "cand-li-2",
+            kind: "email" as const,
+            handleHash: "hashhashhashhash",
+            source: "candidate" as const,
+            createdAt: "2026-05-21T00:00:00.000Z",
+          },
+          claimedEventId: "ident_claimed",
+          idempotent: false,
+          selfProfile: {
+            candidateId: "cand-li-2",
+            lifecycleState: "claimed" as const,
+            handles: [{ kind: "email" as const, source: "candidate" as const }],
+            createdAt: "2026-05-21T00:00:00.000Z",
+          },
+        }
+      },
+      linkLinkedin: async () => ({
+        handle: {
+          handleId: "linkedin_hash",
+          handleHash: "hashhash",
+          kind: "linkedin" as const,
+          source: "candidate" as const,
+          createdAt: "2026-05-21T00:00:00.000Z",
+          updatedAt: "2026-05-21T00:00:00.000Z",
+        } as never,
+        created: true,
+      }),
+      hasResumeOnFile: async () => false,
+    }
+  )
+
+  assert.equal(calls[0]?.allowCreate, true, "LinkedIn OAuth path must allow pa-users creation")
 })
