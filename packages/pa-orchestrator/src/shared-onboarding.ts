@@ -620,6 +620,8 @@ export function buildSharedOnboardingResumeAnchor(
   const ctx = cleanSharedOnboardingPromptContext(promptContext)
   const work = workSummary(ctx)
   if (slot === "main_goal") {
+    const openingDetail = openingResumeDetail(ctx)
+    if (openingDetail) return `Saw your resume come through: ${openingDetail}.`
     if (work) return `Saw you've done ${work}.`
     if (ctx.resumeSummary) return `Quick summary I noted: ${ctx.resumeSummary}.`
     return null

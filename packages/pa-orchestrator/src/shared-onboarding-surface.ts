@@ -90,6 +90,8 @@ export function buildOnboardingSurfaceIntent(input: {
       "Never mention being AI.",
       "This is the first SMS after the candidate opened with Hello, WeKruit! {userId}.",
       "Open with a short welcome that uses their first name when available and one real resume or profile detail when available.",
+      "Use exactly one resume/profile detail in the welcome; do not list multiple jobs, companies, titles, or skills.",
+      "Keep the whole opening plus the main-goal question concise: 2-3 short sentences max.",
       "Mention that Claire connects them directly with the hiring manager when a strong fit appears.",
       "Mention that Claire will ask a few quick questions to tune matches.",
       "Mention https://candidate.wekruit.com/me/profile and that they can just tell Claire here instead.",

@@ -31,10 +31,22 @@ const profile: ResolvedVoiceProfile = {
 }
 
 describe("buildSharedOnboardingResumeAnchor", () => {
-  it("main_goal — quotes title + company when both present", () => {
+  it("main_goal — uses one concrete resume detail when title + company are present", () => {
     const anchor = buildSharedOnboardingResumeAnchor("main_goal", richCtx)
     assert.ok(anchor && /Tesla/.test(anchor), `expected Tesla in anchor, got ${anchor}`)
     assert.ok(anchor && /Software Engineer/.test(anchor), `expected title in anchor, got ${anchor}`)
+  })
+
+  it("main_goal — does not pile multiple titles or companies into the opening anchor", () => {
+    const anchor = buildSharedOnboardingResumeAnchor("main_goal", {
+      recentTitles: ["Software Engineer Intern", "Founder"],
+      recentCompanies: ["Tesla", "AI Study"],
+      currentLocation: "Austin",
+    })
+
+    assert.ok(anchor && /Software Engineer Intern/.test(anchor), `expected first title in anchor, got ${anchor}`)
+    assert.ok(anchor && /Tesla/.test(anchor), `expected first company in anchor, got ${anchor}`)
+    assert.doesNotMatch(anchor ?? "", /Founder|AI Study/)
   })
 
   it("main_goal — falls back to resumeSummary when no titles/companies/skills", () => {
