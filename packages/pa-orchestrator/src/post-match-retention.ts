@@ -249,6 +249,50 @@ async function persistDailySubscribeOptIn(
     )
 }
 
+async function sendImmediateSubscribeMatchBatch(input: {
+  store: PostMatchRetentionStore
+  event: InboundEvent
+  turnId: string
+  lang: "zh" | "en"
+}): Promise<number> {
+  const gen = input.store.generateJobRecs
+  if (!gen || !input.store.enqueueOutbound) return 0
+  try {
+    const recs = await gen(input.event.userId, input.lang, {
+      force: true,
+      requestedCount: 2,
+    })
+    const recCount = recs?.recCount ?? 0
+    if (!recs?.message || recCount <= 0) {
+      input.store.log("pa.post_match_retention.subscribe_match.empty", {
+        userId: input.event.userId,
+        turnId: input.turnId,
+      })
+      return 0
+    }
+    await input.store.enqueueOutbound(input.event.userId, input.event.from, recs.message, {
+      sessionId: input.event.sessionId,
+      role: "assistant",
+      idempotencyKey: `post-match-retention-subscribe-recs-${input.event.id}`,
+      directIntent: "post_match_retention",
+      runtimeSource: "post_match_retention_subscribe_match",
+    })
+    input.store.log("pa.post_match_retention.subscribe_match.sent", {
+      userId: input.event.userId,
+      turnId: input.turnId,
+      recCount,
+    })
+    return recCount
+  } catch (err) {
+    input.store.log("pa.post_match_retention.subscribe_match.failed", {
+      userId: input.event.userId,
+      turnId: input.turnId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    return 0
+  }
+}
+
 /** Start retention survey after job recs ship; optionally ping the first question. */
 export async function startPostMatchRetentionAfterJobRecs(input: {
   db: Firestore
@@ -389,6 +433,9 @@ export async function handlePostMatchRetentionReply(
       }
       next.subscribeOptIn = yn === "yes"
       await persistDailySubscribeOptIn(db, event.userId, yn === "yes", at)
+      if (yn === "yes") {
+        await sendImmediateSubscribeMatchBatch({ store, event, turnId, lang })
+      }
       await writeBatchFeedback({
         db,
         userId: event.userId,

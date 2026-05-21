@@ -74,3 +74,73 @@ test("writePostMatchRetention clears state when null", async () => {
   await writePostMatchRetention(db, "u1", null)
   assert.deepEqual(payload, { postMatchRetention: null })
 })
+
+test("handlePostMatchRetentionReply sends an immediate match batch after daily opt-in", async () => {
+  const docs = new Map<string, Record<string, unknown>>([
+    [
+      "pa-feature-flags/paPostMatchRetentionEnabled",
+      { key: "paPostMatchRetentionEnabled", value: true, type: "bool", scope: "global" },
+    ],
+    [
+      "pa-users/u_subscribe",
+      {
+        postMatchRetention: {
+          stage: "await_subscribe",
+          startedAt: "2026-05-21T16:00:00.000Z",
+          updatedAt: "2026-05-21T16:00:00.000Z",
+          recCount: 2,
+          jobIds: ["j1"],
+        },
+      },
+    ],
+  ])
+  const db = {
+    collection: (name: string) => ({
+      doc: (id: string) => ({
+        get: async () => {
+          const data = docs.get(`${name}/${id}`)
+          return { exists: data !== undefined, data: () => data }
+        },
+        set: async (data: Record<string, unknown>, opts?: { merge?: boolean }) => {
+          const key = `${name}/${id}`
+          docs.set(key, opts?.merge ? { ...(docs.get(key) ?? {}), ...data } : data)
+        },
+      }),
+    }),
+  } as never
+  const sent: Array<{ body: string; extra?: Record<string, unknown> }> = []
+  let generateOpts: unknown
+  const handled = await handlePostMatchRetentionReply(
+    {
+      id: "e1",
+      userId: "u_subscribe",
+      sessionId: "s1",
+      from: "+14243201960",
+      body: "yes",
+      channel: "imessage",
+    } as never,
+    {
+      db,
+      nowIso: () => "2026-05-21T16:01:00.000Z",
+      log: () => {},
+      getOnboardingUser: async () => ({ onboardingState: "complete" }),
+      generateJobRecs: async (_userId, _lang, opts) => {
+        generateOpts = opts
+        return { message: "two fresh software roles", recCount: 2 }
+      },
+      enqueueOutbound: async (_userId, _to, body, extra) => {
+        sent.push({ body, extra })
+      },
+      updateTurn: async () => {},
+      markEventSucceeded: async () => {},
+    },
+    "t1"
+  )
+
+  assert.equal(handled, true)
+  assert.deepEqual(generateOpts, { force: true, requestedCount: 2 })
+  assert.equal(sent[0]?.body, "two fresh software roles")
+  assert.equal(sent[0]?.extra?.runtimeSource, "post_match_retention_subscribe_match")
+  assert.match(sent[1]?.body ?? "", /partner|合作/)
+  assert.equal((docs.get("pa-job-profiles/u_subscribe") as { status?: string } | undefined)?.status, "active")
+})
