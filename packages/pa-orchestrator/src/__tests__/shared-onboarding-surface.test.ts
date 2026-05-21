@@ -122,9 +122,11 @@ describe("buildOnboardingSurfaceIntent — SMS persona contract", () => {
     assert.match(intent, /No corporate speak/i)
     assert.match(intent, /No internal enum/i)
     assert.match(intent, /Never mention being AI/i)
-    assert.match(intent, /target role/i)
+    assert.match(intent, /main goal for the next company/i)
+    assert.match(intent, /career growth, compensation, stability, mission, learning/i)
     assert.match(intent, /recent roles: Product Designer/i)
     assert.doesNotMatch(intent, /Friend roommate tone|tech_swe|job_title|main_goal|recentTitles/)
+    assert.doesNotMatch(intent, /Ask the target role onboarding question/i)
   })
 
   it("marks greeting kickoff as the opening welcome surface without requiring fixed wording", () => {
@@ -148,5 +150,7 @@ describe("buildOnboardingSurfaceIntent — SMS persona contract", () => {
     assert.match(intent, /hiring manager/i)
     assert.match(intent, /https:\/\/candidate\.wekruit\.com\/me\/profile/i)
     assert.match(intent, /do not copy a fixed template/i)
+    assert.match(intent, /what matters most in your next company/i)
+    assert.doesNotMatch(intent, /what kind of role/i)
   })
 })

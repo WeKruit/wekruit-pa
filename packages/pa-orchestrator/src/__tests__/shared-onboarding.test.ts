@@ -32,12 +32,12 @@ test("shared onboarding asks the five conversational questions in launch order",
     "location_relocation",
     "special_context",
   ])
-  assert.match(getSharedOnboardingQuestion("main_goal").prompt, /software engineering, product, design/i)
-  assert.match(getSharedOnboardingQuestion("location_relocation").prompt, /remote, hybrid, in-office/i)
-  assert.match(getSharedOnboardingQuestion("special_context").prompt, /salary range/i)
+  assert.match(getSharedOnboardingQuestion("main_goal").prompt, /career growth, compensation, stability, mission, learning/i)
+  assert.match(getSharedOnboardingQuestion("location_relocation").prompt, /remote, onsite, or relocating/i)
+  assert.match(getSharedOnboardingQuestion("special_context").prompt, /constraints, strengths, dealbreakers, timing/i)
   assert.doesNotMatch(
     SHARED_ONBOARDING_QUESTIONS.map((q) => q.prompt).join("\n"),
-    /email|e-mail|what email|why are you looking|timeline|dealbreaker/i,
+    /email|e-mail|what email|why are you looking/i,
   )
 })
 
@@ -75,7 +75,7 @@ test("shared onboarding prompts ground Q1 and Q4 in resume/profile context when 
   assert.match(q1, /resume/i)
   assert.match(q1, /Backend Engineer/i)
   assert.match(q1, /Rain/i)
-  assert.match(q1, /software engineering, product, design/i)
+  assert.match(q1, /career growth, compensation, stability, mission, learning/i)
 
   const q3 = buildSharedOnboardingPrompt("industry_interest", promptContext)
   assert.match(q3, /financial technology/i)
@@ -84,7 +84,7 @@ test("shared onboarding prompts ground Q1 and Q4 in resume/profile context when 
 
   const q4 = buildSharedOnboardingPrompt("location_relocation", promptContext)
   assert.match(q4, /New York, NY/i)
-  assert.match(q4, /remote, hybrid, in-office/i)
+  assert.match(q4, /remote, onsite, or relocating/i)
 })
 
 test("shared onboarding opening prompt carries Claire persona guidance without changing the opener token", () => {
@@ -114,7 +114,7 @@ test("shared onboarding opening prompt carries Claire persona guidance without c
   assert.match(opener, /few quick questions/i)
   assert.match(opener, /https:\/\/candidate\.wekruit\.com\/me\/profile/i)
   assert.match(opener, /just tell me here/i)
-  assert.match(opener, /software engineering, product, design/i)
+  assert.match(opener, /career growth, compensation, stability, mission, learning/i)
   assert.doesNotMatch(opener, /I am Claire|How may I assist|software_and_saas|job_title|tech_swe|timeline|dealbreaker/i)
 })
 

@@ -11,11 +11,11 @@ import type { ResolvedVoiceProfile } from "./voice/voice-profiles/index.js"
 export type OnboardingSurfaceMode = "ask" | "reask"
 
 function onboardingSlotLabel(slot: SharedOnboardingQuestionId): string {
-  if (slot === "main_goal") return "target role"
-  if (slot === "culture_stage") return "company size or stage"
+  if (slot === "main_goal") return "main goal for the next company"
+  if (slot === "culture_stage") return "company culture and size or stage"
   if (slot === "industry_interest") return "industry or domain"
   if (slot === "location_relocation") return "location and work style"
-  return "salary range"
+  return "extra context before matching"
 }
 
 function promptContextLabel(key: string): string {
@@ -79,6 +79,7 @@ export function buildOnboardingSurfaceIntent(input: {
     input.tangentDetected
       ? "User asked something off-topic. Briefly answer (≤1 short sentence) and then re-ask this onboarding slot — do not skip the slot question, do not offer job search, do not write tags."
       : "Ask the onboarding question for this slot — do not offer job search, do not riff on the greeting.",
+    "Preserve the canonical question's topic exactly; do not swap it for a different preference question.",
   ]
   if (input.tangentDetected) {
     invariants.push(buildTangentSurfaceDirective(lang))
@@ -119,7 +120,7 @@ export function buildOnboardingSurfaceIntent(input: {
     ? buildSharedOnboardingOpeningPrompt(input.promptContext)
     : buildSharedOnboardingPrompt(input.slot, input.promptContext)
   const canonicalLine = canonical
-    ? `Canonical question (preserve meaning, friend rephrase OK): ${canonical}`
+    ? `Canonical question (must preserve this topic exactly; friend rephrase OK): ${canonical}`
     : ""
 
   const renderContextValue = (value: unknown): string => {

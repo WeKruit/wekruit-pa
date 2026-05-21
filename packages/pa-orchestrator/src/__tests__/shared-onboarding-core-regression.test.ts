@@ -164,7 +164,7 @@ describe("shared onboarding core (router / state / judges) — flag-invariant", 
         // Sanity: ensure baseline itself contains meaningful canonical text.
         assert.match(
           baseline.canonicalPrompts.main_goal!,
-          /software engineering, product, design/i,
+          /career growth, compensation, stability, mission, learning/i,
         )
         assert.deepEqual(baseline.routerTransitions.special_context, {
           nextQuestionId: null,
