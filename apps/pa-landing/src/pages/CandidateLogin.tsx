@@ -306,7 +306,7 @@ export function IMessageThread({
       <div className="wk-imsg-phone__header">
         <Avatar name="Claire" size={36} tone="warm" />
         <div>
-          <div className="wk-imsg-phone__name">Claire</div>
+          <div className="wk-imsg-phone__name">{header}</div>
           <div className="wk-imsg-phone__sub">WeKruit recruiter</div>
         </div>
       </div>
@@ -775,7 +775,7 @@ export default function CandidateLogin() {
 // Styles — global candidate visual system + login screen
 // ────────────────────────────────────────────────────────────────────────────
 
-const CANDIDATE_STYLES = `
+export const CANDIDATE_STYLES = `
 /* Fonts ----------------------------------------------------------------- */
 @import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital,wght@0,400;1,400&family=Newsreader:ital,opsz,wght@0,6..72,300..700;1,6..72,300..700&family=Hanken+Grotesk:wght@300..800&display=swap');
 

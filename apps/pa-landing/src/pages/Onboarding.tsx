@@ -5,7 +5,7 @@
 
 import { useMemo, useRef, useState, useEffect } from "react"
 import { Link, Navigate, useNavigate } from "react-router-dom"
-import { onAuthStateChanged, type User } from "firebase/auth"
+import { onAuthStateChanged, signOut, type User } from "firebase/auth"
 import "../styles/wekruit-tokens.css"
 import { deriveFunction, registerCandidate } from "../lib/onboarding-api"
 import { uploadResume } from "../lib/onboarding-cv"
@@ -24,6 +24,7 @@ import { CandidateVerifyError, readStoredCandidateId, verifyCandidateMagicLinkSe
 import { buildHelloWekruitOpenerBody } from "../lib/hello-wekruit.js"
 import { canOpenImessageDeepLink } from "../lib/imessage-platform.js"
 import { CompanyCombobox } from "../components/CompanyCombobox.js"
+import { CANDIDATE_STYLES, IMessageThread } from "./CandidateLogin.js"
 
 // Keep the marker referenced so tree-shaking can't drop it from the
 // bundle. The acceptance grep relies on this string being present.
@@ -98,6 +99,11 @@ export default function Onboarding() {
           )
           setClaireConversationStarted(verified.claireConversationStarted)
           setPortalReady(verified.portalReady)
+          setProfile((p) => ({
+            ...p,
+            candidateId: verified.candidateId,
+            senderNumber: verified.senderNumber ?? p.senderNumber,
+          }))
           if (verified.portalReady) {
             if (isCandidateHost()) {
               navigate("/me", { replace: true })
@@ -116,7 +122,14 @@ export default function Onboarding() {
           setVerifyError(
             err instanceof CandidateVerifyError ? err.message : "Sign-in verification failed. Try again."
           )
-          setIntakeChecked(true)
+          setIntakeChecked(false)
+          try {
+            await signOut(auth())
+          } catch {
+            // Login owns the next auth attempt.
+          }
+          const loginNext = onboardingDestination(source)
+          navigate(`/login?next=${encodeURIComponent(loginNext)}`, { replace: true })
         }
       }
     })()
@@ -128,7 +141,7 @@ export default function Onboarding() {
   if (!authReady || authUser === undefined || (authUser && !intakeChecked)) {
     return (
       <main>
-        <MinimalNav />
+        <MinimalNav signedIn={Boolean(authUser)} />
         <section style={{ paddingTop: 96, paddingBottom: 96 }}>
           <div className="container-prose" style={{ maxWidth: 760, marginInline: "auto", paddingInline: 24, textAlign: "center" }}>
             <p style={{ color: "var(--ink-2)" }}>Checking your sign-in…</p>
@@ -216,8 +229,11 @@ export default function Onboarding() {
 
   return (
     <main>
-      <MinimalNav />
-      <section style={{ paddingTop: 48, paddingBottom: 96, position: "relative" }}>
+      <MinimalNav signedIn={Boolean(authUser)} />
+      <section
+        className={stage === "done" ? "onboarding-section onboarding-section--done" : "onboarding-section"}
+        style={{ paddingTop: 48, paddingBottom: 96, position: "relative" }}
+      >
         <div className="container-prose" style={{ maxWidth: 760, marginInline: "auto", paddingInline: 24 }}>
           {stage !== "done" && (
             <div style={{ textAlign: "center", marginBottom: 28 }}>
@@ -364,7 +380,7 @@ function CheckIcon() {
   )
 }
 
-function MinimalNav() {
+function MinimalNav({ signedIn = false }: { signedIn?: boolean }) {
   return (
     <header
       style={{
@@ -389,7 +405,11 @@ function MinimalNav() {
         <Link to="/" style={{ textDecoration: "none", display: "inline-flex", alignItems: "baseline", gap: 8, color: "var(--ink)" }}>
           <span style={{ fontFamily: "var(--font-serif)", fontSize: 22, letterSpacing: "-0.02em", fontWeight: 500 }}>WeKruit</span>
         </Link>
-        {isCandidateHost() ? (
+        {signedIn ? (
+          <span style={{ fontSize: 14, color: "var(--ink-3)" }}>
+            Signed in
+          </span>
+        ) : isCandidateHost() ? (
           <Link to="/login" style={{ fontSize: 14, color: "var(--ink-2)", textDecoration: "none" }}>
             Sign in
           </Link>
@@ -901,45 +921,37 @@ function Done({
       ? `sms:${profile.senderNumber}?&body=${encodeURIComponent(openerBody)}`
       : null
   return (
-    <div style={{ paddingTop: 8 }}>
-      <div style={{ textAlign: "center", marginBottom: 32 }}>
-        <div
-          style={{
-            margin: "0 auto 24px",
-            width: 64,
-            height: 64,
-            borderRadius: 999,
-            background: "var(--success)",
-            color: "var(--cream)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            boxShadow: "var(--shadow-md)",
-          }}
-        >
-          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-            <path d="M5 12l5 5L20 7" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
+    <div className="claire-handoff">
+      <style>{CANDIDATE_STYLES}</style>
+      <section className="claire-handoff__main" aria-labelledby="claire-handoff-title">
+        <div className="claire-handoff__status">
+          <span className="claire-handoff__check" aria-hidden>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4">
+              <path d="M5 12l5 5L20 7" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </span>
+          <span>Profile ready</span>
         </div>
         {number != null && (
-          <div className="eyebrow" style={{ marginBottom: 12 }}>You&apos;re #{number} on the list</div>
+          <div className="eyebrow claire-handoff__eyebrow">You&apos;re #{number} on the list</div>
         )}
         <h1
+          id="claire-handoff-title"
           style={{
             fontFamily: "var(--font-serif)",
             fontWeight: 400,
-            fontSize: "clamp(36px, 4.4vw, 56px)",
+            fontSize: "clamp(40px, 5vw, 64px)",
             lineHeight: 1.05,
-            letterSpacing: "-0.025em",
+            letterSpacing: "0",
             margin: 0,
           }}
         >
-          Talk to <em style={{ fontStyle: "italic" }}>Claire</em>.
+          Open Claire in iMessage.
         </h1>
-        <p className="lead" style={{ marginTop: 16, marginInline: "auto", maxWidth: 540, color: "var(--ink-2)", fontSize: 17 }}>
+        <p className="lead claire-handoff__copy">
           {imessageAvailable ? (
             <>
-              Tap below to open iMessage with a pre-filled message. Send it as-is so we can link your phone to your profile — Claire replies right away.
+              Your resume and profile are saved. Open iMessage and send the pre-filled message exactly as shown.
             </>
           ) : (
             <>
@@ -947,24 +959,49 @@ function Done({
             </>
           )}
         </p>
-      </div>
 
-      <div style={{ display: "flex", justifyContent: "center", gap: 12, flexWrap: "wrap" }}>
+        <div className="claire-handoff__actions">
+          {smsHref ? (
+            <a className="btn btn--primary btn--lg" href={smsHref}>Open iMessage</a>
+          ) : !imessageAvailable ? (
+            <p className="caption claire-handoff__fallback">
+              Android and Windows can't open iMessage deep links. Use Safari on your iPhone or Mac, or email hello@wekruit.com for help.
+            </p>
+          ) : (
+            <span className="caption claire-handoff__fallback">
+              We hit a hiccup assigning your Claire line. Email hello@wekruit.com and we&apos;ll get you started.
+            </span>
+          )}
+          {showProfileLink ? (
+            <button className="btn btn--secondary" onClick={() => onGo("dashboard")}>Profile</button>
+          ) : null}
+          <button className="btn btn--ghost" onClick={() => onGo("landing")}>Home</button>
+        </div>
         {smsHref ? (
-          <a className="btn btn--primary btn--lg" href={smsHref}>Talk to Claire</a>
-        ) : !imessageAvailable ? (
-          <p className="caption" style={{ color: "var(--ink-3)", maxWidth: 420, textAlign: "center" }}>
-            Android and Windows can't open iMessage deep links. Use Safari on your iPhone or Mac, or email hello@wekruit.com for help.
+          <p className="claire-handoff__note">
+            Don&apos;t edit the text or delete the code. Claire uses it to connect this chat to your WeKruit profile.
           </p>
-        ) : (
-          <span className="caption" style={{ color: "var(--ink-3)" }}>
-            We hit a hiccup assigning your Claire line. Email hello@wekruit.com and we'll get you started.
-          </span>
-        )}
-        {showProfileLink ? (
-          <button className="btn btn--ghost" onClick={() => onGo("dashboard")}>Go to your profile</button>
         ) : null}
-        <button className="btn btn--ghost" onClick={() => onGo("landing")}>Back home</button>
+      </section>
+
+      <aside className="claire-handoff__demo" aria-label="Claire iMessage preview">
+        <div className="wk-shell claire-imessage-shell">
+          <IMessageThread
+            phoneFrame
+            header="WeKruit Claire"
+            messages={[
+              { from: "user", text: openerBody },
+              { from: "claire", text: "Got it — I found your profile." },
+              { from: "claire", text: "First question: what matters most in your next company?" },
+            ]}
+          />
+        </div>
+      </aside>
+
+      <div className="claire-handoff__checks" aria-label="Setup status">
+        <span>Resume saved</span>
+        <span>Profile linked</span>
+        <span>Claire ready</span>
       </div>
     </div>
   )
