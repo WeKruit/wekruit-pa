@@ -76,31 +76,31 @@ export const SHARED_ONBOARDING_QUESTIONS: readonly SharedOnboardingQuestion[] = 
     id: "main_goal",
     label: "main goal for next company",
     prompt:
-      "What kind of role are you hoping to land next: software engineering, product, design, data, sales, or something else?",
+      "Before I match roles, what matters most in your next company: career growth, compensation, stability, mission, learning, or something else?",
   },
   {
     id: "culture_stage",
     label: "company culture and stage",
     prompt:
-      "What kind of company size or vibe tends to work best for you: early startup, scale-up, bigger company, high ownership, calmer team, or something else?",
+      "What kind of company culture and size or stage tends to work best for you: early startup, scale-up, larger company, high ownership, calm team, or something else?",
   },
   {
     id: "industry_interest",
     label: "industry interests",
     prompt:
-      "Which industries or domains are you most interested in right now? Free-form is totally fine.",
+      "Which industries or domains are you most interested in right now? Free-form is fine.",
   },
   {
     id: "location_relocation",
     label: "location and relocation",
     prompt:
-      "Where do you want to work next: remote, hybrid, in-office, or specific cities?",
+      "Where do you want to work, and are you open to remote, onsite, or relocating to another city?",
   },
   {
     id: "special_context",
     label: "special context",
     prompt:
-      "What salary range should I keep in mind when I match roles for you?",
+      "Anything special I should know before matching you: constraints, strengths, dealbreakers, timing, or context that is not obvious from your resume?",
   },
 ]
 
@@ -192,7 +192,7 @@ function parseSharedJudgeValue(raw: unknown): string | null {
 
 function sharedJudgeHints(questionId: SharedOnboardingQuestionId): string[] {
   if (questionId === "main_goal") {
-    return ["software engineering", "product management", "design", "data", "sales", "marketing", "operations", "open"]
+    return ["career_growth", "compensation", "stability", "mission", "learning", "ownership", "work_life_balance"]
   }
   if (questionId === "culture_stage") {
     return ["early_startup", "scale_up", "larger_company", "high_ownership", "calm_team", "collaborative", "open"]
@@ -203,14 +203,14 @@ function sharedJudgeHints(questionId: SharedOnboardingQuestionId): string[] {
   if (questionId === "location_relocation") {
     return ["remote", "onsite", "hybrid", "new_york", "san_francisco", "seattle", "relocation_open", "no_relocation"]
   }
-  return ["salary_range", "compensation", "target_pay", "open", "not_sure"]
+  return ["constraints", "strengths", "dealbreakers", "timing", "visa", "none"]
 }
 
 function sharedJudgeExamples(questionId: SharedOnboardingQuestionId): Array<{ reply: string; value: string; confidence: number }> {
   if (questionId === "main_goal") {
     return [
-      { reply: "software engineering, probably backend or platform", value: "software engineering, backend or platform", confidence: 0.95 },
-      { reply: "product design or research roles", value: "product design or research", confidence: 0.95 },
+      { reply: "career growth and learning matter most", value: "career growth and learning", confidence: 0.95 },
+      { reply: "compensation and stability, but mission matters too", value: "compensation, stability, and mission", confidence: 0.95 },
     ]
   }
   if (questionId === "culture_stage") {
@@ -232,15 +232,15 @@ function sharedJudgeExamples(questionId: SharedOnboardingQuestionId): Array<{ re
     ]
   }
   return [
-    { reply: "$150k to $180k would be ideal", value: "$150k to $180k", confidence: 0.95 },
-    { reply: "open for the right fit, but ideally 170k+", value: "open for the right fit, ideally 170k+", confidence: 0.9 },
+    { reply: "nothing else, I can start quickly", value: "nothing else, can start quickly", confidence: 0.9 },
+    { reply: "I need sponsorship and want backend-heavy work", value: "needs sponsorship, backend-heavy work", confidence: 0.95 },
   ]
 }
 
 function sharedJudgeBloom(questionId: SharedOnboardingQuestionId): Array<{ pattern: RegExp; value: string }> {
   if (questionId === "main_goal") {
     return [
-      { pattern: /\b(software\s+engineering|swe|engineer|backend|frontend|front[-\s]?end|full[-\s]?stack|platform|infra|infrastructure|product\s+manager|pm|product|design|designer|research|data|analytics?|sales|marketing|operations?|open|not\s+sure)\b/i, value: "clear main-goal answer" },
+      { pattern: /\b(career\s+growth|growth|learning|mentor|compensation|salary|pay|equity|stability|stable|mission|impact|ownership|work[-\s]?life)\b/i, value: "clear main-goal answer" },
     ]
   }
   if (questionId === "culture_stage") {
@@ -261,7 +261,7 @@ function sharedJudgeBloom(questionId: SharedOnboardingQuestionId): Array<{ patte
   return [
     {
       pattern:
-        /\b(\$?\d{2,3}\s?k|\d{5,6}|salary|comp|compensation|pay|base|equity|tc|total\s+comp|open|not\s+sure|flexible|visa|sponsor|h[-\s]?1b|opt|cpt|backend|frontend|full[-\s]?stack|systems?|real[-\s]?time|communication|webrtc|infrastructure|distributed|worthy|experience|built|handl\w*)\b/i,
+        /\b(none|nothing|nope|no\s+special|visa|sponsor|h[-\s]?1b|opt|cpt|urgent|asap|timing|dealbreaker|constraint|strength|backend|frontend|full[-\s]?stack|systems?|real[-\s]?time|communication|webrtc|infrastructure|distributed|worthy|experience|built|handl\w*)\b/i,
       value: "clear special-context answer",
     },
   ]
@@ -557,7 +557,7 @@ function humanSignalList(items: readonly string[] | undefined, maxItems = 3): st
 function workSummary(ctx: SharedOnboardingPromptContext): string | null {
   const titles = ctx.recentTitles ?? []
   const companies = ctx.recentCompanies ?? []
-  const skills = humanSignalList(ctx.skills, 3)
+  const skills = ctx.skills ?? []
   if (titles.length > 0 && companies.length > 0) return `${joinHuman(titles.slice(0, 2))} work at ${joinHuman(companies.slice(0, 2))}`
   if (companies.length > 0) return `work at ${joinHuman(companies.slice(0, 2))}`
   if (titles.length > 0) return `${joinHuman(titles.slice(0, 2))} work`
@@ -656,15 +656,15 @@ export function buildSharedOnboardingPrompt(
       : ctx.resumeSummary
         ? `I saw your resume summary: ${ctx.resumeSummary}. `
         : ""
-    return `${greeting}${resumeLead}${question.prompt}`
+    return `${greeting}${resumeLead}For this next phase, what matters most in your next company: career growth, compensation, stability, mission, learning, or something else?`
   }
   if (id === "industry_interest" && (ctx.industryTags?.length ?? 0) > 0) {
-    return `Your resume points toward ${joinHuman(humanSignalList(ctx.industryTags))}. Which industries or domains are you actually most interested in right now? Free-form is totally fine.`
+    return `Your resume points toward ${joinHuman(ctx.industryTags ?? [])}. Which industries or domains are you actually most interested in right now? Free-form is fine.`
   }
   if (id === "location_relocation") {
     const location = locationSummary(ctx)
     const lead = location ? `I see ${location}. ` : ""
-    return `${lead}${question.prompt}`
+    return `${lead}Where do you want to work next, and are you open to remote, onsite, or relocating to another city?`
   }
   return question.prompt
 }

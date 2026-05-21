@@ -96,6 +96,7 @@ export type RegisterInput = {
   lastCompany: string
   jobTitle?: string
   location?: string
+  function?: string
   phone?: string
   consent: boolean
   resumeFileName?: string
@@ -143,6 +144,23 @@ function cleanString(value: unknown, max = 320): string | undefined {
 function cleanEmail(value: unknown): string | undefined {
   const email = cleanString(value)?.toLowerCase()
   return email && email.includes("@") ? email : undefined
+}
+
+function cleanFunction(value: unknown): "Design" | "Engineering" | "Product" | "GTM" | "Other" | undefined {
+  if (value !== "Design" && value !== "Engineering" && value !== "Product" && value !== "GTM" && value !== "Other") {
+    return undefined
+  }
+  return value
+}
+
+function deriveFunctionFromTitle(title: unknown): "Design" | "Engineering" | "Product" | "GTM" | "Other" | undefined {
+  const t = cleanString(title, 240)?.toLowerCase()
+  if (!t) return undefined
+  if (t.includes("design") || t.includes("ux") || t.includes("brand")) return "Design"
+  if (t.includes("eng") || t.includes("sw") || t.includes("developer")) return "Engineering"
+  if (t.includes("pm") || t.includes("product")) return "Product"
+  if (t.includes("sales") || t.includes("marketing") || t.includes("ae") || t.includes("cs")) return "GTM"
+  return "Other"
 }
 
 async function requireVerifiedEmployer(
@@ -287,10 +305,11 @@ export async function runRegisterLayoffCandidate(
   //   refresh → also overwrite source-specific context with newly submitted fields
   //   (fresh new registration) → write everything
   const userRef = deps.db.collection(PA_COLLECTIONS.users).doc(candidateId)
-  const writeLayoffContext = !isReregistration || mode === "refresh"
+  const writeProfileContext = Boolean(explicitCandidateId) || !isReregistration || mode === "refresh"
 
   const linkedin = cleanString(v.linkedin, 500) ?? null
   const personalWebsite = cleanString(v.personalWebsite, 500) ?? null
+  const roleFunction = cleanFunction(v.function) ?? deriveFunctionFromTitle(v.jobTitle) ?? null
 
   const writePayload: Record<string, unknown> = {
     id: candidateId,
@@ -314,23 +333,25 @@ export async function runRegisterLayoffCandidate(
       writePayload.getHired = false
     }
   }
-  if (writeLayoffContext && isLayoff) {
+  if (writeProfileContext && isLayoff) {
     writePayload.displayName = `${v.firstName} ${v.lastName}`.trim() || v.firstName
     writePayload.layoffContext = {
       lastCompany: v.lastCompany,
       jobTitle: cleanString(v.jobTitle, 200) ?? null,
       location: cleanString(v.location, 200) ?? null,
+      function: roleFunction,
       email: v.email,
       linkedin: v.linkedin ?? null,
       resumeFileName: v.resumeFileName ?? null,
       consent: v.consent,
     }
-  } else if (writeLayoffContext) {
+  } else if (writeProfileContext) {
     writePayload.displayName = `${v.firstName} ${v.lastName}`.trim() || v.firstName
     writePayload.candidateContext = {
       lastCompany: v.lastCompany,
       jobTitle: v.jobTitle ?? null,
       location: v.location ?? null,
+      function: roleFunction,
       email: v.email,
       linkedin,
       personalWebsite,

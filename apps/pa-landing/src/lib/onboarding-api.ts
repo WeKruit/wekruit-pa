@@ -15,6 +15,7 @@ export type RegisterInput = {
   lastCompany: string
   jobTitle?: string
   location?: string
+  function?: "Design" | "Engineering" | "Product" | "GTM" | "Other"
   phone?: string
   consent: boolean
   resumeFileName?: string

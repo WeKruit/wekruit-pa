@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * seed-layoff-demo.mjs - write the 24-row layoff preview pool into pa-users as
+ * seed-layoff-demo.mjs - write the 107-row layoff preview pool into pa-users as
  * `isDemo: true` documents.
  *
  * Usage:
@@ -19,7 +19,7 @@
  *   - onboardingStatus: "complete"
  *   - lastLaidOffAt: Timestamp derived from minAgo
  *   - layoffContext: { lastCompany, jobTitle, location, function }
- *   - demoSourcePool: "TALENT_POOL_v1"
+ *   - demoSourcePool: "TALENT_POOL_v2"
  */
 import { applicationDefault, cert, getApps, initializeApp } from "firebase-admin/app"
 import { getFirestore, Timestamp } from "firebase-admin/firestore"
@@ -36,7 +36,7 @@ function init() {
   initializeApp({ credential: applicationDefault(), projectId: PROJECT })
 }
 
-const POOL = [
+const CURATED_POOL = [
   { idx: 1,  first: "Maya",   last: "C", company: "Meta",       fn: "Product",     title: "Senior PM, Reality Labs",   location: "San Francisco", minAgo: 32,    verified: true  },
   { idx: 2,  first: "Daniel", last: "O", company: "Google",     fn: "Engineering", title: "Staff SWE, Search Infra",   location: "New York",      minAgo: 95,    verified: true  },
   { idx: 3,  first: "Priya",  last: "R", company: "Tesla",      fn: "Design",      title: "Lead Product Designer",     location: "Austin",        minAgo: 180,   verified: true  },
@@ -63,6 +63,51 @@ const POOL = [
   { idx: 24, first: "Iris",   last: "Q", company: "Box",        fn: "GTM",         title: "Director of Sales, Mid-mkt", location: "Chicago",      minAgo: 6480,  verified: true  },
 ]
 
+const FIRST_NAMES = [
+  "Nora", "Ethan", "Amara", "Leo", "Zara", "Mateo", "Mina", "Caleb", "Ari",
+  "Leah", "Noel", "Tara", "Ivan", "Mika", "June", "Rene", "Nia", "Owen",
+  "Maya", "Theo", "Sana", "Miles", "Ivy", "Kai", "Luca", "Anya", "Eli",
+  "Sara", "Rhea", "Max", "Lena", "Drew", "Mila", "Jules", "Nico",
+]
+const LAST_INITIALS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("")
+const COMPANIES = [
+  "Meta", "Google", "Amazon", "Microsoft", "Stripe", "Salesforce", "Twilio",
+  "Cisco", "Dropbox", "Figma", "Notion", "Lyft", "Airbnb", "Roblox",
+  "Cloudflare", "GitHub", "Spotify", "Snap", "Atlassian", "Box",
+]
+const LOCATIONS = [
+  "San Francisco", "New York", "Seattle", "Austin", "Chicago", "Boston",
+  "Los Angeles", "Remote, US", "San Jose", "Toronto", "Denver", "Atlanta",
+]
+const TITLES_BY_FUNCTION = {
+  Product: ["Product Manager", "Senior Product Manager", "Group Product Manager", "Product Lead"],
+  Engineering: ["Software Engineer", "Senior Software Engineer", "Staff Software Engineer", "Engineering Manager"],
+  Design: ["Product Designer", "Senior Product Designer", "UX Designer", "Design Lead"],
+  GTM: ["Account Executive", "Customer Success Lead", "Solutions Consultant", "Sales Manager"],
+}
+
+function generatedRow(idx) {
+  const functions = Object.keys(TITLES_BY_FUNCTION)
+  const fn = functions[(idx * 7) % functions.length]
+  const titleOptions = TITLES_BY_FUNCTION[fn]
+  return {
+    idx,
+    first: FIRST_NAMES[(idx * 11) % FIRST_NAMES.length],
+    last: LAST_INITIALS[(idx * 5) % LAST_INITIALS.length],
+    company: COMPANIES[(idx * 13) % COMPANIES.length],
+    fn,
+    title: titleOptions[(idx * 3) % titleOptions.length],
+    location: LOCATIONS[(idx * 17) % LOCATIONS.length],
+    minAgo: 18 + ((idx * 137) % (60 * 24 * 14)),
+    verified: idx % 7 !== 0,
+  }
+}
+
+const POOL = [
+  ...CURATED_POOL,
+  ...Array.from({ length: 83 }, (_, i) => generatedRow(i + 25)),
+]
+
 function docId(idx) {
   return `demo_layoff_${String(idx).padStart(3, "0")}`
 }
@@ -75,7 +120,7 @@ function asFields(row) {
     source: "WeKruit_Laid_Off",
     isDemo: true,
     getHired: false,
-    demoSourcePool: "TALENT_POOL_v1",
+    demoSourcePool: "TALENT_POOL_v2",
     displayName: `${row.first} ${row.last}.`,
     phoneE164: phone,
     onboardingStatus: row.verified ? "complete" : "invited",

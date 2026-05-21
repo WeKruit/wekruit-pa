@@ -76,24 +76,91 @@ function asIsoFromTimestamp(value: unknown): string | null {
   return null
 }
 
+function objectValue(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {}
+  return value as Record<string, unknown>
+}
+
+function cleanText(value: unknown): string | null {
+  if (typeof value !== "string") return null
+  const text = value.trim()
+  return text ? text : null
+}
+
+function firstText(value: unknown): string | null {
+  if (!Array.isArray(value)) return null
+  for (const item of value) {
+    const text = cleanText(item)
+    if (text) return text
+  }
+  return null
+}
+
+function humanizeLocation(value: unknown): string | null {
+  const text = cleanText(value)
+  if (!text) return null
+  const lower = text.toLowerCase()
+  if (lower === "san_francisco_bay_area" || /\b(sf|san francisco|bay area)\b/i.test(text)) return "San Francisco Bay Area"
+  if (lower === "new_york_city" || /\b(nyc|new york)\b/i.test(text)) return "New York"
+  if (lower === "remote_us" || /\bremote\b/i.test(text)) return "Remote, US"
+  return text
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+}
+
+function deriveFunctionFromTitle(value: unknown): string | null {
+  const t = cleanText(value)?.toLowerCase()
+  if (!t) return null
+  if (t.includes("design") || t.includes("ux") || t.includes("brand")) return "Design"
+  if (t.includes("eng") || t.includes("sw") || t.includes("developer")) return "Engineering"
+  if (t.includes("pm") || t.includes("product")) return "Product"
+  if (t.includes("sales") || t.includes("marketing") || t.includes("ae") || t.includes("cs")) return "GTM"
+  return "Other"
+}
+
 function projectRow(docId: string, data: Record<string, unknown>): PreviewRow | null {
   const displayName = typeof data.displayName === "string" ? data.displayName.trim() : ""
   if (!displayName) return null
-  const ctx = (data.layoffContext ?? {}) as Record<string, unknown>
-  const lastCompany = typeof ctx.lastCompany === "string" ? ctx.lastCompany : ""
+  const ctx = objectValue(data.layoffContext)
+  const tags = objectValue(data.tags)
+  const stated = objectValue(data.statedPreferences)
+  const shared = objectValue(data.sharedOnboarding)
+  const prompt = objectValue(shared.promptContext)
+  const answers = objectValue(shared.answers)
+  const locationAnswer = objectValue(answers.location_relocation)
+  const lastCompany =
+    cleanText(ctx.lastCompany) ??
+    cleanText(data.lastCompany) ??
+    cleanText(tags.recentCompany) ??
+    firstText(prompt.recentCompanies) ??
+    ""
   if (!lastCompany) return null
   const [firstRaw, ...rest] = displayName.split(/\s+/)
   const firstName = firstRaw ?? "-"
   const lastInitial = rest.length > 0 ? (rest[rest.length - 1] ?? "").slice(0, 1).replace(/[^A-Za-z]/g, "") : ""
   const joinedAtIso = asIsoFromTimestamp(data.lastLaidOffAt) ?? asIsoFromTimestamp(data.createdAt) ?? new Date().toISOString()
+  const jobTitle =
+    cleanText(ctx.jobTitle) ??
+    cleanText(data.jobTitle) ??
+    cleanText(tags.recentRoleTitle) ??
+    firstText(prompt.recentTitles) ??
+    ""
+  const location =
+    humanizeLocation(ctx.location) ??
+    humanizeLocation(data.location) ??
+    humanizeLocation(firstText(stated.targetLocations)) ??
+    humanizeLocation(firstText(tags.targetLocations)) ??
+    humanizeLocation(locationAnswer.answer) ??
+    firstText(prompt.recentLocations) ??
+    ""
   return {
     id: docId,
     firstName,
     lastInitial,
     lastCompany,
-    function: typeof ctx.function === "string" ? ctx.function : null,
-    jobTitle: typeof ctx.jobTitle === "string" ? ctx.jobTitle : "",
-    location: typeof ctx.location === "string" ? ctx.location : "",
+    function: cleanText(ctx.function) ?? cleanText(data.function) ?? deriveFunctionFromTitle(jobTitle),
+    jobTitle,
+    location,
     joinedAtIso,
     verified: data.onboardingStatus === "complete" || data.onboardingStatus === "active",
   }
@@ -127,6 +194,8 @@ async function loadSnapshot(db: Firestore): Promise<{ rows: PreviewRow[]; total:
   for (const d of sortedDocs) {
     const data = d.data() ?? {}
     if (data.getHired === true) continue
+    const projected = projectRow(d.id, data)
+    if (!projected) continue
     totalAvailable += 1
     const laidOffMs = (() => {
       const iso = asIsoFromTimestamp(data.lastLaidOffAt)
@@ -134,8 +203,7 @@ async function loadSnapshot(db: Firestore): Promise<{ rows: PreviewRow[]; total:
     })()
     if (laidOffMs >= sevenDaysAgo) joinedThisWeek += 1
     if (rows.length < MAX_LIMIT) {
-      const projected = projectRow(d.id, data)
-      if (projected) rows.push(projected)
+      rows.push(projected)
     }
   }
   cached = { at: now, rows, total: totalAvailable, thisWeek: joinedThisWeek }

@@ -317,6 +317,41 @@ test("runRegisterLayoffCandidate refresh mode reuses the phone-index candidateId
   assert.equal(user.createdAt, "2026-05-01T00:00:00.000Z")
 })
 
+test("runRegisterLayoffCandidate explicit signed-in profile writes submitted layoff context in auto mode", async () => {
+  const fake = new FakeFirestore()
+  fake.seed(`${PA_COLLECTIONS.users}/cand_signed_in`, {
+    id: "cand_signed_in",
+    linkedinOauthLinked: true,
+    createdAt: "2026-05-01T00:00:00.000Z",
+  })
+
+  const result = await runRegisterLayoffCandidate(
+    registration({
+      candidateId: "cand_signed_in",
+      phone: undefined,
+      lastCompany: "Meta",
+      jobTitle: "Product Manager",
+      location: "San Francisco",
+      function: "Product",
+      linkedin: undefined,
+      resumeFileName: undefined,
+      personalWebsite: undefined,
+    }),
+    deps(fake),
+  )
+
+  assert.equal(result.candidateId, "cand_signed_in")
+  assert.equal(result.isReregistration, true)
+  const user = fake.read(`${PA_COLLECTIONS.users}/cand_signed_in`)!
+  assert.equal(user.source, LAYOFF_SOURCE_TAG)
+  assert.equal(user.displayName, "Ada Lovelace")
+  assert.equal((user.layoffContext as DocData).lastCompany, "Meta")
+  assert.equal((user.layoffContext as DocData).jobTitle, "Product Manager")
+  assert.equal((user.layoffContext as DocData).location, "San Francisco")
+  assert.equal((user.layoffContext as DocData).function, "Product")
+  assert.equal(user.createdAt, "2026-05-01T00:00:00.000Z")
+})
+
 test("runRegisterLayoffCandidate reuse mode restamps stale duplicate as layoff without overwriting context", async () => {
   const fake = new FakeFirestore()
   fake.seed(`layoff_phone_index/${phoneIndexId("+14243201960")}`, { candidateId: "cand_existing" })
