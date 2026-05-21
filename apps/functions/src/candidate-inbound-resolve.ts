@@ -110,14 +110,7 @@ async function bindPhoneToCandidate(
     await Promise.all(
       snap.docs
         .filter((doc) => doc.id !== candidateId)
-        .map((doc) =>
-          db.collection(PA_COLLECTIONS.users).doc(doc.id).update({
-            phoneE164: null,
-            phoneE164Source: null,
-            phoneE164ReleasedAt: isoNow,
-            updatedAt: isoNow,
-          }),
-        ),
+        .map((doc) => releaseDevBypassPhoneOwner(db, doc.id, doc.data(), isoNow)),
     )
   }
 
@@ -162,6 +155,52 @@ async function bindPhoneToCandidate(
     // swallow schema/parse/network failures.
     throw err
   })
+}
+
+async function releaseDevBypassPhoneOwner(
+  db: Firestore,
+  userId: string,
+  data: Record<string, unknown> | undefined,
+  isoNow: string,
+): Promise<void> {
+  const daily = data?.dailyJobRecSubscribe as { optedIn?: unknown } | undefined
+  const hadDailyOptIn = daily?.optedIn === true
+  const hadPendingState = Boolean(data?.postMatchRetention) || Boolean(data?.collabInvitePending)
+  const userPatch: Record<string, unknown> = {
+    phoneE164: null,
+    phoneE164Source: null,
+    phoneE164ReleasedAt: isoNow,
+    postMatchRetention: null,
+    collabInvitePending: null,
+    updatedAt: isoNow,
+  }
+  if (hadDailyOptIn) {
+    userPatch.dailyJobRecSubscribe = {
+      optedIn: false,
+      optedOutAt: isoNow,
+      source: "dev_phone_rebind_release",
+    }
+  }
+
+  const profileRef = db.collection("pa-job-profiles").doc(userId)
+  const profileSnap = await profileRef.get().catch(() => null)
+  const writes: Promise<unknown>[] = [
+    db.collection(PA_COLLECTIONS.users).doc(userId).update(userPatch),
+  ]
+  if (profileSnap?.exists || hadDailyOptIn || hadPendingState) {
+    writes.push(
+      profileRef.set(
+        {
+          userId,
+          status: "paused",
+          updatedAt: isoNow,
+          source: "dev_phone_rebind_release",
+        },
+        { merge: true },
+      ),
+    )
+  }
+  await Promise.all(writes)
 }
 
 /**

@@ -117,8 +117,12 @@ test("DEV_BYPASS_PHONE (+14243201960): Hello, WeKruit! opener replaces stale pho
     source: "admin",
     phoneE164,
     phoneE164Source: "cv_parsed",
+    dailyJobRecSubscribe: { optedIn: true, optedInAt: "2026-05-21T04:13:06.769Z" },
+    postMatchRetention: { stage: "await_prescreen" },
+    collabInvitePending: { jobId: "job_123" },
   })
   fakeDb.seed(PA_COLLECTIONS.users, candidateId, { id: candidateId, source: "WeKruit_Laid_Off" })
+  fakeDb.seed("pa-job-profiles", staleUserId, { userId: staleUserId, status: "active" })
   const db = fakeDb as unknown as Firestore
 
   const opener = buildHelloWekruitOpenerBody(candidateId)
@@ -129,6 +133,17 @@ test("DEV_BYPASS_PHONE (+14243201960): Hello, WeKruit! opener replaces stale pho
   assert.equal(staleSnap.data()?.phoneE164, null)
   assert.equal(staleSnap.data()?.phoneE164Source, null)
   assert.equal(typeof staleSnap.data()?.phoneE164ReleasedAt, "string")
+  assert.deepEqual(staleSnap.data()?.dailyJobRecSubscribe, {
+    optedIn: false,
+    optedOutAt: staleSnap.data()?.phoneE164ReleasedAt,
+    source: "dev_phone_rebind_release",
+  })
+  assert.equal(staleSnap.data()?.postMatchRetention, null)
+  assert.equal(staleSnap.data()?.collabInvitePending, null)
+
+  const staleProfileSnap = await db.collection("pa-job-profiles").doc(staleUserId).get()
+  assert.equal(staleProfileSnap.data()?.status, "paused")
+  assert.equal(staleProfileSnap.data()?.source, "dev_phone_rebind_release")
 
   const candidateSnap = await db.collection(PA_COLLECTIONS.users).doc(candidateId).get()
   assert.equal(candidateSnap.data()?.phoneE164, phoneE164)
