@@ -172,6 +172,7 @@ export default function Onboarding() {
           ? {
               jobTitle: formData.jobTitle?.trim() || undefined,
               location: formData.location?.trim() || undefined,
+              function: deriveFunction(formData.jobTitle || ""),
             }
           : {}),
         consent: !!formData.consent,
@@ -979,7 +980,7 @@ function Done({
             messages={[
               { from: "user", text: openerBody },
               { from: "claire", text: "Got it — I found your profile." },
-              { from: "claire", text: "First question: what matters most in your next company?" },
+              { from: "claire", text: "First question: what matters most in your next company: career growth, compensation, stability, mission, learning, or something else?" },
             ]}
           />
         </div>

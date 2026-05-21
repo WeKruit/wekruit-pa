@@ -324,7 +324,7 @@ export function effectiveOnboardingComposeUserMessage(input: {
 }
 
 function buildSyntheticOnboardingUserInstruction(slot: SharedOnboardingQuestionId): string {
-  return `[ONBOARDING] Ask the candidate the ${sharedOnboardingSlotCopyLabel(slot)} onboarding question in friend tone. Do not extract tags; only compose the SMS. Do not respond to greetings or kickoff phrases; deliver the slot question only.`
+  return `[ONBOARDING] Ask the candidate the ${slot} onboarding question in friend tone. Do not extract tags — only compose the SMS. Do not respond to greetings or kickoff phrases — deliver the slot question only.`
 }
 
 function buildSyntheticOpeningUserInstruction(slot: SharedOnboardingQuestionId): string {

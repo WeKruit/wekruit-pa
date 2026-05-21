@@ -396,7 +396,7 @@ describe("runLayoffSmsStart", () => {
     assert.notEqual(row.data.body, "WeKruit_LAID_OFF")
     assert.match(String(row.data.body), /^\[system-event:shared_onboarding:onboarding_started\]/)
     assert.match(String(row.data.body), /Beta candidate-visible iMessage output is English-only/)
-    assert.match(String(row.data.body), /software engineering, product, design/)
+    assert.match(String(row.data.body), /career growth, compensation, stability, mission, learning/)
     assert.equal(row.data.status, "pending")
     const rawMeta = row.data.rawMeta as Record<string, unknown>
     assert.equal(rawMeta.source, "runtime_event_handoff")
@@ -409,7 +409,7 @@ describe("runLayoffSmsStart", () => {
     assert.equal(context.workSessionKind, "shared_onboarding")
     assert.equal(context.questionId, "main_goal")
     assert.match(String(context.questionText), /Hey Ada/i)
-    assert.match(String(context.questionText), /software engineering, product, design/)
+    assert.match(String(context.questionText), /career growth, compensation, stability, mission, learning/)
     assert.match(String(context.startedAt), /^\d{4}-\d{2}-\d{2}T/)
   })
 })

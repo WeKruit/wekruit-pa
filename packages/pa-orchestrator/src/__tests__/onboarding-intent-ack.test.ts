@@ -513,7 +513,7 @@ test("runtime-event: shared laid-off kickoff sends Q1 without legacy email onboa
   assert.deepEqual(captures.appliedSteps, [], "runtime event must not advance legacy onboarding")
   assert.match(captures.outboundBodies[0] ?? "", /Hey Ada/i)
   assert.match(captures.outboundBodies[0] ?? "", /Rain/i)
-  assert.match(captures.outboundBodies[0] ?? "", /software engineering, product, design/i)
+  assert.match(captures.outboundBodies[0] ?? "", /career growth, compensation, stability, mission, learning/i)
   assert.doesNotMatch(captures.outboundBodies[0] ?? "", /email|e-mail|language preference|mixed language/i)
 })
 
@@ -776,7 +776,7 @@ test("shared onboarding accepts a real Q1 answer and advances to culture_stage",
   assert.equal(shared.currentQuestionId, "culture_stage")
   assert.ok(answers.main_goal, "Q1 answer should be recorded")
   assert.match(memoryFacts[0] ?? "", /main goal.*Software engineering/i)
-  assert.match(captures.outboundBodies[0] ?? "", /company size or vibe/i)
+  assert.match(captures.outboundBodies[0] ?? "", /company culture and size or stage/i)
 })
 
 test("shared onboarding bootstrap loads parsed resume context before sending Q1", async () => {
@@ -888,7 +888,7 @@ test("integration: manual zh job_search before website start is redirected to ca
   assert.deepEqual(captures.systemInputs, [])
   // 2026-05-19 — shared_onboarding bootstrap owns cold-start Q1, no URL redirect.
   assert.doesNotMatch(captures.outboundBodies[0] ?? "", /candidate\.wekruit\.com\/onboarding/i)
-  assert.match(captures.outboundBodies[0] ?? "", /software engineering, product, design/)
+  assert.match(captures.outboundBodies[0] ?? "", /career growth, compensation, stability, mission, learning/)
   assert.doesNotMatch(captures.outboundBodies[0] ?? "", new RegExp(["what " + "email", "send " + "stuff", "验证码", "6-digit"].join("|"), "i"))
   assert.deepEqual(captures.appliedSteps, [])
 })
@@ -908,7 +908,7 @@ test("integration: manual en job_search before website start is redirected to ca
   assert.equal(captures.llmCalls, 0)
   // 2026-05-19 — shared_onboarding bootstrap owns cold-start Q1, no URL redirect.
   assert.doesNotMatch(captures.outboundBodies[0] ?? "", /candidate\.wekruit\.com\/onboarding/i)
-  assert.match(captures.outboundBodies[0] ?? "", /software engineering, product, design/)
+  assert.match(captures.outboundBodies[0] ?? "", /career growth, compensation, stability, mission, learning/)
   assert.doesNotMatch(captures.outboundBodies[0] ?? "", new RegExp(["what " + "email", "send " + "stuff", "6-digit"].join("|"), "i"))
   assert.deepEqual(captures.systemInputs, [])
   assert.deepEqual(captures.appliedSteps, [])
@@ -929,7 +929,7 @@ test("integration: manual casual greeting before website start is redirected to 
   assert.equal(captures.llmCalls, 0)
   // 2026-05-19 — shared_onboarding bootstrap owns cold-start Q1, no URL redirect.
   assert.doesNotMatch(captures.outboundBodies[0] ?? "", /candidate\.wekruit\.com\/onboarding/i)
-  assert.match(captures.outboundBodies[0] ?? "", /software engineering, product, design/)
+  assert.match(captures.outboundBodies[0] ?? "", /career growth, compensation, stability, mission, learning/)
   assert.doesNotMatch(captures.outboundBodies[0] ?? "", new RegExp(["what " + "email", "send " + "stuff", "6-digit"].join("|"), "i"))
   assert.deepEqual(captures.systemInputs, [])
   assert.deepEqual(captures.appliedSteps, [])
@@ -1020,7 +1020,7 @@ test("integration: intent-ack flag cannot bypass website-start redirect", async 
     assert.equal(captures.llmCalls, 0)
     // 2026-05-19 — shared_onboarding bootstrap owns cold-start Q1, no URL redirect.
   assert.doesNotMatch(captures.outboundBodies[0] ?? "", /candidate\.wekruit\.com\/onboarding/i)
-  assert.match(captures.outboundBodies[0] ?? "", /software engineering, product, design/)
+  assert.match(captures.outboundBodies[0] ?? "", /career growth, compensation, stability, mission, learning/)
     assert.doesNotMatch(captures.outboundBodies[0] ?? "", new RegExp(["what " + "email", "send " + "stuff", "6-digit"].join("|"), "i"))
   } finally {
     if (prev === undefined) delete process.env.PA_ONBOARDING_INTENT_ACK_DISABLED

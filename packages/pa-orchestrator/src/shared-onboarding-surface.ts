@@ -10,14 +10,6 @@ import type { ResolvedVoiceProfile } from "./voice/voice-profiles/index.js"
 
 export type OnboardingSurfaceMode = "ask" | "reask"
 
-function onboardingSlotLabel(slot: SharedOnboardingQuestionId): string {
-  if (slot === "main_goal") return "target role"
-  if (slot === "culture_stage") return "company size or stage"
-  if (slot === "industry_interest") return "industry or domain"
-  if (slot === "location_relocation") return "location and work style"
-  return "salary range"
-}
-
 function promptContextLabel(key: string): string {
   if (key === "firstName") return "first name"
   if (key === "currentLocation") return "current location"
@@ -47,27 +39,20 @@ export function buildOnboardingSurfaceIntent(input: {
   /** True only for the first SMS after `Hello, WeKruit! {userId}` / runtime kickoff. */
   opening?: boolean
 }): string {
-  const slotLabel = onboardingSlotLabel(input.slot)
   const base =
     input.opening
       ? "Compose the opening shared-onboarding SMS in Claire's personal job-hunting assistant tone."
       : input.mode === "reask"
-      ? `Re-ask the ${slotLabel} onboarding question in friend tone. Prior answer was unclear.`
-      : `Ask the ${slotLabel} onboarding question in friend Claire tone.`
+      ? `Re-ask the ${input.slot} onboarding question in friend tone. Prior answer was unclear.`
+      : `Ask the ${input.slot} onboarding question in friend Claire tone.`
 
   const lang: "en" | "zh" = input.lang === "zh" ? "zh" : "en"
 
   const invariants: string[] = [
     "Compose ONE SMS only. Do not write tags to Firestore.",
-    "Write like you're texting a friend: warm, familiar, concise, and human.",
-    "Claire is a personal job-hunting assistant, not a recruiter, bot, corporate tool, or email writer.",
-    "One question at a time. Do not pile up questions.",
-    "No headers, bullets, markdown, or lists.",
-    "No corporate speak such as leverage, synergy, or optimize your candidacy.",
-    "No internal enum tokens, underscores, placeholders, or missing spaces; rewrite them into plain human words.",
-    "Brief natural reactions are okay, like got it, makes sense, or oh nice.",
-    "Light emoji is okay, max one per SMS and not every message.",
-    "Never mention being AI.",
+    input.opening
+      ? "Write like you're texting a friend: warm, familiar, concise, and human."
+      : "Friend roommate tone — not HR, not coach.",
     lang === "zh"
       ? "Write the SMS in Chinese only."
       : "Write the SMS in English only.",
@@ -85,6 +70,14 @@ export function buildOnboardingSurfaceIntent(input: {
   }
   if (input.opening) {
     invariants.push(
+      "Claire is a personal job-hunting assistant, not a recruiter, bot, corporate tool, or email writer.",
+      "One question at a time. Do not pile up questions.",
+      "No headers, bullets, markdown, or lists.",
+      "No corporate speak such as leverage, synergy, or optimize your candidacy.",
+      "No internal enum tokens, underscores, placeholders, or missing spaces; rewrite them into plain human words.",
+      "Brief natural reactions are okay, like got it, makes sense, or oh nice.",
+      "Light emoji is okay, max one per SMS and not every message.",
+      "Never mention being AI.",
       "This is the first SMS after the candidate opened with Hello, WeKruit! {userId}.",
       "Open with a short welcome that uses their first name when available and one real resume or profile detail when available.",
       "Mention that Claire connects them directly with the hiring manager when a strong fit appears.",
@@ -133,7 +126,9 @@ export function buildOnboardingSurfaceIntent(input: {
   }
   const ctxBits = Object.entries(input.promptContext)
     .filter(([, v]) => v != null && String(v).trim().length > 0)
-    .map(([k, v]) => `${promptContextLabel(k)}: ${renderContextValue(v)}`)
+    .map(([k, v]) => input.opening
+      ? `${promptContextLabel(k)}: ${renderContextValue(v)}`
+      : `${k}: ${String(v)}`)
     .join("; ")
 
   return [

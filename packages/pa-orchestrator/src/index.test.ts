@@ -873,7 +873,7 @@ test("processInboundEvent onboarding: incomplete SMS onboarding is gated before 
   // 2026-05-19 — bootstrap shared_onboarding inline instead of redirecting to web.
   assert.doesNotMatch(outbound, /candidate\.wekruit\.com\/onboarding/)
   assert.doesNotMatch(outbound, /email/i)
-  assert.match(outbound, /software engineering, product, design/)
+  assert.match(outbound, /career growth, compensation, stability, mission, learning/)
   assert.equal(applied.length, 0)
 })
 
@@ -920,7 +920,7 @@ test("processInboundEvent onboarding: process questions are gated to website sta
   // 2026-05-19 — bootstrap shared_onboarding Q1 inline instead of redirecting.
   assert.doesNotMatch(outbound, /candidate\.wekruit\.com\/onboarding/)
   assert.doesNotMatch(outbound, /email/i)
-  assert.match(outbound, /software engineering, product, design/)
+  assert.match(outbound, /career growth, compensation, stability, mission, learning/)
 })
 
 test("processInboundEvent layoff: source-only incomplete layoff users bootstrap shared_onboarding inline", async () => {
@@ -962,7 +962,7 @@ test("processInboundEvent layoff: source-only incomplete layoff users bootstrap 
   // 2026-05-19 — bootstrap shared_onboarding Q1 inline instead of redirecting.
   assert.doesNotMatch(outbound, /candidate\.wekruit\.com\/onboarding/)
   assert.doesNotMatch(outbound, /email/i)
-  assert.match(outbound, /software engineering, product, design/)
+  assert.match(outbound, /career growth, compensation, stability, mission, learning/)
   assert.equal(turnUpdates.some((patch) => "onboardingDeterministicAction" in patch), false)
   assert.equal(turnUpdates.some((patch) => patch.directIntent === "shared_onboarding"), true)
   assert.equal(
@@ -1027,7 +1027,7 @@ test("processInboundEvent layoff: inbound before shared_onboarding active bootst
   assert.equal(applyCalls, 0)
   assert.doesNotMatch(outbound, /candidate\.wekruit\.com\/onboarding/)
   assert.doesNotMatch(outbound, /email/i)
-  assert.match(outbound, /software engineering, product, design/)
+  assert.match(outbound, /career growth, compensation, stability, mission, learning/)
   assert.equal(turnUpdates.some((patch) => "onboardingDeterministicAction" in patch), false)
   assert.equal(turnUpdates.some((patch) => patch.directIntent === "job_search"), false)
   assert.equal(turnUpdates.some((patch) => patch.directIntent === "shared_onboarding"), true)
