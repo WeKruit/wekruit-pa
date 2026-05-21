@@ -33,6 +33,9 @@ test("detectRecBatchSentiment classifies dislike", () => {
 test("detectYesNoIntent", () => {
   assert.equal(detectYesNoIntent("yes please"), "yes")
   assert.equal(detectYesNoIntent("先不用"), "no")
+  assert.equal(detectYesNoIntent("I'm good for now."), "no")
+  assert.equal(detectYesNoIntent("no thanks, not right now"), "no")
+  assert.equal(detectYesNoIntent("Pass"), "no")
 })
 
 test("handlePostMatchRetentionReply returns false without db", async () => {

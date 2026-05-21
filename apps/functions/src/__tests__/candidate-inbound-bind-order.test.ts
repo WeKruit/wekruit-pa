@@ -133,14 +133,12 @@ describe("bindPhoneToCandidate ordering (identity hardening 2026-05-21)", () => 
     )
   })
 
-  it("phone already linked to another candidate: lookupUserByPhoneE164 short-circuits to the OWNING candidate — opener is ignored, no cross-candidate pollution", async () => {
-    // Phone is already linked to cand-aaaa01 via pa-candidate-handles
-    // (e.g. a prior bind happened). A new inbound from the same phone
-    // shows up with an opener token pointing at cand-bbbb02 (different
-    // candidate). The phone handle is authoritative: the resolver MUST
-    // return cand-aaaa01 (the existing owner) and not bind cand-bbbb02.
-    // This preserves the "one phone = one candidate" invariant without
-    // ever touching cand-bbbb02.
+  it("phone already linked to another candidate: opener for a different candidate REJECTS with identity_conflict (1:1 invariant)", async () => {
+    // Phone is already linked to cand-aaaa01 via pa-candidate-handles.
+    // A new inbound from the same phone shows up with an opener token
+    // pointing at cand-bbbb02 (different candidate). With Adam's strict
+    // invariant (2026-05-21) the bind must throw and BOTH pa-users rows
+    // stay clean — no silent reassignment, no pollution.
     const { hashCandidateHandle } = await import("@pa/pa-persistence")
     const { handleId } = hashCandidateHandle("phone", "+14155550100")
     const { db, store } = makeFakeDb({
@@ -153,22 +151,72 @@ describe("bindPhoneToCandidate ordering (identity hardening 2026-05-21)", () => 
           handleId,
           candidateId: "cand-aaaa01",
           kind: "phone",
-          handleHash: "fake-hash",
+          handleHash: "fake-hash-aaaaaaaaaaaaaaaa",
           normalizedValue: "+14155550100",
           source: "candidate",
+          verifiedAt: null,
+          deliverable: true,
           createdAt: "2026-05-20T00:00:00.000Z",
         },
       },
     })
 
-    const result = await resolveInboundUserId(db, "+14155550100", "Hello, WeKruit! cand-bbbb02")
-    assert.equal(result, "cand-aaaa01", "phone handle wins, opener token ignored")
+    await assert.rejects(
+      async () => {
+        await resolveInboundUserId(db, "+14155550100", "Hello, WeKruit! cand-bbbb02")
+      },
+      /identity_conflict:(phone_handle_owner_mismatch|pa_users_phone_already_taken)/,
+    )
 
     const userDocB = store.get("pa-users")!.get("cand-bbbb02")!
     assert.equal(
       userDocB.phoneE164,
       undefined,
-      "cand-bbbb02.phoneE164 untouched — handle index already owns this phone",
+      "cand-bbbb02.phoneE164 untouched — strict pre-flight rejected the bind",
     )
+  })
+
+  it("DEV_BYPASS_PHONE (+14243201960): opener for a new candidate releases prior owner + reassigns handle", async () => {
+    // Adam's dev/test phone is the ONLY phone for which the opener may
+    // override existing ownership. This relaxed path is unreachable for
+    // any other E.164 number.
+    const { hashCandidateHandle } = await import("@pa/pa-persistence")
+    const { handleId } = hashCandidateHandle("phone", "+14243201960")
+    const { db, store } = makeFakeDb({
+      users: {
+        "cand-bbbb02": { id: "cand-bbbb02", email: "b@example.com" },
+        "cand-aaaa01": {
+          id: "cand-aaaa01",
+          email: "a@example.com",
+          phoneE164: "+14243201960",
+        },
+      },
+      handles: {
+        [handleId]: {
+          handleId,
+          candidateId: "cand-aaaa01",
+          kind: "phone",
+          handleHash: "fake-hash-bbbbbbbbbbbbbbbb",
+          normalizedValue: "+14243201960",
+          source: "candidate",
+          verifiedAt: null,
+          deliverable: true,
+          createdAt: "2026-05-20T00:00:00.000Z",
+        },
+      },
+    })
+
+    const result = await resolveInboundUserId(db, "+14243201960", "Hello, WeKruit! cand-bbbb02")
+    assert.equal(result, "cand-bbbb02", "dev bypass: opener wins")
+
+    // Prior owner released (phone field nulled on the dev-bypass path).
+    const ownerDoc = store.get("pa-users")!.get("cand-aaaa01")!
+    assert.equal(ownerDoc.phoneE164, null, "prior owner phoneE164 cleared")
+    // New owner has the phone.
+    const newOwnerDoc = store.get("pa-users")!.get("cand-bbbb02")!
+    assert.equal(newOwnerDoc.phoneE164, "+14243201960", "new owner phoneE164 written")
+    // Handle reassigned.
+    const handleDoc = store.get("pa-candidate-handles")!.get(handleId)!
+    assert.equal(handleDoc.candidateId, "cand-bbbb02", "phone handle reassigned to new candidate")
   })
 })

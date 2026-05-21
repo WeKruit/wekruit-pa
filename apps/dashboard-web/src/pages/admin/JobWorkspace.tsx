@@ -13,18 +13,283 @@
  * never inferred from companyId / external-supply status / source.
  */
 import { useEffect, useMemo, useState } from "react"
-import { Link, useParams } from "react-router-dom"
-import { ErrorState, LoadingState, PageHeader, Panel } from "../../components/ui.js"
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
+import { EmptyState, ErrorState, LoadingState, PageHeader, Panel } from "../../components/ui.js"
 import {
+  getCompany,
   getJob,
+  listCompanies,
   updateJob,
+  type CompanyRow as CompanyOptionRow,
   type JobLifecycleUpdate,
   type JobRow,
 } from "../../lib/external-supply-client.js"
+import { createJob } from "../../lib/job-admin-api.js"
+import { suggestJobId } from "../../lib/job-admin-ids.js"
 
 const CANDIDATE_HOST = "https://candidate.wekruit.com"
 
-export function JobWorkspace() {
+export function JobWorkspace({ createMode = false }: { createMode?: boolean }) {
+  if (createMode) return <CreateJobWorkspace />
+  return <ExistingJobWorkspace />
+}
+
+function CreateJobWorkspace() {
+  const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const requestedCompanyId = searchParams.get("companyId") ?? ""
+  const preferredNext = searchParams.get("next") === "prescreen" ? "prescreen" : "workspace"
+
+  const [companies, setCompanies] = useState<CompanyOptionRow[]>([])
+  const [loadingCompanies, setLoadingCompanies] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [jobIdTouched, setJobIdTouched] = useState(false)
+  const [form, setForm] = useState({
+    companyId: requestedCompanyId,
+    title: "",
+    jobId: "",
+    department: "",
+    rawLocation: "",
+    atsApplyUrl: "",
+    descriptionMd: "",
+  })
+
+  useEffect(() => {
+    let cancelled = false
+    setLoadingCompanies(true)
+    setError(null)
+    void (async () => {
+      try {
+        const [rows, requestedCompany] = await Promise.all([
+          listCompanies(300),
+          requestedCompanyId ? getCompany(requestedCompanyId) : Promise.resolve(null),
+        ])
+        if (cancelled) return
+        const unique = new Map<string, CompanyOptionRow>()
+        if (requestedCompany) unique.set(requestedCompany.companyId, requestedCompany)
+        for (const row of rows) {
+          if (!unique.has(row.companyId)) unique.set(row.companyId, row)
+        }
+        const nextCompanies = Array.from(unique.values())
+        setCompanies(nextCompanies)
+        const initialCompanyId =
+          requestedCompanyId && nextCompanies.some((row) => row.companyId === requestedCompanyId)
+            ? requestedCompanyId
+            : nextCompanies[0]?.companyId ?? ""
+        setForm((prev) => ({
+          ...prev,
+          companyId: prev.companyId || initialCompanyId,
+          jobId:
+            prev.jobId ||
+            (initialCompanyId && prev.title ? suggestJobId(initialCompanyId, prev.title) : ""),
+        }))
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : String(err))
+      } finally {
+        if (!cancelled) setLoadingCompanies(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [requestedCompanyId])
+
+  const selectedCompany = useMemo(
+    () => companies.find((row) => row.companyId === form.companyId) ?? null,
+    [companies, form.companyId],
+  )
+
+  function updateCompanyId(companyId: string) {
+    setForm((prev) => ({
+      ...prev,
+      companyId,
+      jobId: jobIdTouched ? prev.jobId : companyId && prev.title ? suggestJobId(companyId, prev.title) : "",
+    }))
+  }
+
+  function updateTitle(title: string) {
+    setForm((prev) => ({
+      ...prev,
+      title,
+      jobId: jobIdTouched ? prev.jobId : prev.companyId && title ? suggestJobId(prev.companyId, title) : "",
+    }))
+  }
+
+  async function submit(target: "workspace" | "prescreen") {
+    setSaving(true)
+    setError(null)
+    try {
+      const created = await createJob({
+        ...form,
+        companyName: selectedCompany?.displayName ?? selectedCompany?.name ?? form.companyId,
+      })
+      navigate(
+        target === "prescreen"
+          ? `/admin/jobs/${encodeURIComponent(created.jobId)}/prescreen`
+          : `/admin/jobs/${encodeURIComponent(created.jobId)}`,
+      )
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (loadingCompanies) return <LoadingState label="Loading companies…" />
+
+  if (!loadingCompanies && companies.length === 0) {
+    return (
+      <div className="page-stack">
+        <PageHeader
+          eyebrow="Admin / Jobs"
+          title="Create job"
+          description="Create the company first, then add a job under it."
+        />
+        <Panel>
+          <EmptyState
+            title="No companies available"
+            body="Create a company in the directory first so the new job can stay linked to company management, sourcing, and prescreen."
+            action={<Link to="/admin/companies?create=1">Create company</Link>}
+          />
+        </Panel>
+      </div>
+    )
+  }
+
+  return (
+    <div className="page-stack">
+      <PageHeader
+        eyebrow="Admin / Jobs"
+        title="Create job"
+        description="Create a new pa-jobs doc tied to an existing company. New jobs start private + draft, then publish from the job workspace."
+        actions={
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            {form.companyId ? (
+              <Link
+                to={`/admin/external-supply/jobs/${encodeURIComponent(form.companyId)}`}
+                style={secondaryBtnStyle}
+              >
+                Back to company jobs
+              </Link>
+            ) : null}
+            <Link to="/admin/companies?create=1" style={secondaryBtnStyle}>
+              Create company
+            </Link>
+          </div>
+        }
+      />
+
+      <Panel title="Job identity" eyebrow="company-scoped create flow">
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: 760 }}>
+          <Field label="Company">
+            <select
+              value={form.companyId}
+              onChange={(e) => updateCompanyId(e.target.value)}
+              style={selectStyle}
+            >
+              <option value="">Select a company…</option>
+              {companies.map((row) => (
+                <option key={row.companyId} value={row.companyId}>
+                  {(row.displayName ?? row.name ?? row.companyId) + ` (${row.companyId})`}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Title">
+            <input
+              type="text"
+              value={form.title}
+              onChange={(e) => updateTitle(e.target.value)}
+              placeholder="Senior Frontend Engineer"
+              style={inputStyle}
+            />
+          </Field>
+          <Field label="Job ID">
+            <input
+              type="text"
+              value={form.jobId}
+              onChange={(e) => {
+                setJobIdTouched(true)
+                setForm((prev) => ({ ...prev, jobId: e.target.value }))
+              }}
+              placeholder="rain-senior-frontend-engineer-abc12345"
+              style={{ ...inputStyle, fontFamily: "monospace" }}
+            />
+          </Field>
+          {selectedCompany ? (
+            <div style={{ fontSize: "0.8em", color: "#475569" }}>
+              New job will be linked to <strong>{selectedCompany.displayName ?? selectedCompany.name ?? selectedCompany.companyId}</strong>.
+            </div>
+          ) : null}
+        </div>
+      </Panel>
+
+      <Panel title="Optional fields" eyebrow="seed the workspace and prescreen with useful defaults">
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: 760 }}>
+          <Field label="Department">
+            <input
+              type="text"
+              value={form.department}
+              onChange={(e) => setForm((prev) => ({ ...prev, department: e.target.value }))}
+              style={inputStyle}
+            />
+          </Field>
+          <Field label="Location (free text)">
+            <input
+              type="text"
+              value={form.rawLocation}
+              onChange={(e) => setForm((prev) => ({ ...prev, rawLocation: e.target.value }))}
+              placeholder="San Francisco, CA / Remote"
+              style={inputStyle}
+            />
+          </Field>
+          <Field label="ATS / JD URL">
+            <input
+              type="url"
+              value={form.atsApplyUrl}
+              onChange={(e) => setForm((prev) => ({ ...prev, atsApplyUrl: e.target.value }))}
+              style={inputStyle}
+            />
+          </Field>
+          <Field label="Description (markdown)">
+            <textarea
+              value={form.descriptionMd}
+              onChange={(e) => setForm((prev) => ({ ...prev, descriptionMd: e.target.value }))}
+              rows={10}
+              style={{ ...inputStyle, fontFamily: "monospace", fontSize: "0.85em" }}
+            />
+          </Field>
+          {error ? <ErrorState message={error} /> : null}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => void submit(preferredNext)}
+              style={primaryBtnStyle}
+            >
+              {saving
+                ? "Creating…"
+                : preferredNext === "prescreen"
+                  ? "Create job and open prescreen"
+                  : "Create job and open workspace"}
+            </button>
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => void submit(preferredNext === "prescreen" ? "workspace" : "prescreen")}
+              style={secondaryBtnStyle}
+            >
+              {preferredNext === "prescreen" ? "Create and open workspace" : "Create and open prescreen"}
+            </button>
+          </div>
+        </div>
+      </Panel>
+    </div>
+  )
+}
+
+function ExistingJobWorkspace() {
   const { jobId = "" } = useParams<{ jobId: string }>()
   const [job, setJob] = useState<JobRow | null>(null)
   const [loading, setLoading] = useState(true)

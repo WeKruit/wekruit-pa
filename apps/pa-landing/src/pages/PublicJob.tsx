@@ -38,10 +38,6 @@ import {
 } from "../lib/candidate-verify.js"
 import {
   CandidateShell,
-  PulseDot,
-  LiveStatusPill,
-  Avatar,
-  CompanyMark,
   Icon,
 } from "./CandidateLogin.js"
 
@@ -342,8 +338,6 @@ export default function PublicJob() {
       return
     }
     if (loading || !job || user !== null || loginPromptDismissed) return
-    const timer = window.setTimeout(() => setLoginPromptOpen(true), 650)
-    return () => window.clearTimeout(timer)
   }, [job, loading, loginPromptDismissed, user])
 
   async function refreshResumeGate() {
@@ -500,16 +494,8 @@ export default function PublicJob() {
           >
             {loginStatus === "google" ? "Opening Google…" : "Continue with Google"}
           </button>
-          <button
-            type="button"
-            className="wk-btn wk-btn--linkedin wk-btn--block"
-            onClick={() => void startProviderSignIn("linkedin")}
-            disabled={busy}
-          >
-            {loginStatus === "linkedin" ? "Opening LinkedIn…" : "Continue with LinkedIn"}
-          </button>
         </div>
-        <div className="wk-pj-login__divider"><span>or magic link</span></div>
+        <div className="wk-pj-login__divider"><span>OR MAGIC LINK</span></div>
         <form className="wk-pj-login__email" onSubmit={(e) => void sendEmailLink(e)}>
           <label htmlFor={`job-login-email-${location}`}>Email</label>
           <div className="wk-pj-login__email-row">
@@ -588,15 +574,7 @@ export default function PublicJob() {
       onSmsClick={() => setSmsClicked(true)}
       onRefresh={() => void refreshResumeGate()}
     />
-  ) : (
-    <>
-      <p className="wk-pj-card__copy">
-        Sign in first so this interview attaches to your WeKruit candidate profile. Then this page
-        unlocks iMessage for Claire.
-      </p>
-      {renderLoginControls("panel")}
-    </>
-  )
+  ) : null
 
   const cvSlot = (
     <InlineCvSection
@@ -646,15 +624,16 @@ export default function PublicJob() {
           >
             ×
           </button>
-          <p className="wk-eyebrow">WeKruit candidate profile</p>
+          <p className="wk-eyebrow">Apply to this role</p>
           <h2 id="public-job-login-modal-title" className="wk-pj-modal__h">
-            Sign in to start this role with <em className="wk-accent">Claire.</em>
+            {jobTitle} @ {company}
           </h2>
-          <p className="wk-pj-modal__sub">
-            We attach this interview to your candidate profile first, then unlock iMessage for
-            this job.
-          </p>
+          <ProcessStrip compact />
           {renderLoginControls("modal")}
+          <p className="wk-pj-modal__sub">
+            By starting, you agree to our privacy &amp; terms.
+            {sendNumber ? ` WeKruit will text you from ${sendNumber}.` : ""}
+          </p>
         </aside>
       </div>
     ) : null
@@ -666,6 +645,14 @@ export default function PublicJob() {
       cvSlot={cvSlot}
       smsHint={smsHint}
       overlay={loginOverlay}
+      signedIn={Boolean(user)}
+      onApply={() => {
+        if (!user) {
+          setLoginPromptOpen(true)
+          return
+        }
+        document.querySelector(".wk-pj-card")?.scrollIntoView({ behavior: "smooth", block: "start" })
+      }}
     />
   )
 }
@@ -985,6 +972,80 @@ function ProcessSteps({ activeStep }: { activeStep: number }) {
   )
 }
 
+function ProcessStrip({ compact = false }: { compact?: boolean }) {
+  const steps = ["Upload your resume", "Prescreen with Claire via SMS", "Interview with the hiring manager"]
+  return (
+    <div className={`wk-pj-process-strip${compact ? " wk-pj-process-strip--compact" : ""}`}>
+      {steps.map((step, index) => (
+        <div className="wk-pj-process-strip__step" key={step}>
+          <span>{index + 1}</span>
+          {step}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function renderJobDescription(descriptionMd?: string, company?: string): ReactNode {
+  const raw = descriptionMd?.trim()
+  if (!raw) {
+    return (
+      <section>
+        <h3>About {company || "this company"}</h3>
+        <p>More role details will be shared during the WeKruit prescreen.</p>
+      </section>
+    )
+  }
+  const blocks: ReactNode[] = []
+  const lines = raw.split(/\r?\n/)
+  let paragraph: string[] = []
+  let bullets: string[] = []
+
+  const flushParagraph = () => {
+    if (paragraph.length) {
+      blocks.push(<p key={`p-${blocks.length}`}>{paragraph.join(" ")}</p>)
+      paragraph = []
+    }
+  }
+  const flushBullets = () => {
+    if (bullets.length) {
+      blocks.push(
+        <ul key={`ul-${blocks.length}`}>
+          {bullets.map((item) => <li key={item}>{item}</li>)}
+        </ul>
+      )
+      bullets = []
+    }
+  }
+
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (!trimmed) {
+      flushParagraph()
+      flushBullets()
+      continue
+    }
+    const heading = trimmed.match(/^(?:#{2,3}\s+|\*\*)(.+?)(?:\*\*)?$/)
+    if (heading) {
+      flushParagraph()
+      flushBullets()
+      blocks.push(<h3 key={`h-${blocks.length}`}>{heading[1].trim()}</h3>)
+      continue
+    }
+    const bullet = trimmed.match(/^[-*]\s+(.+)$/)
+    if (bullet) {
+      flushParagraph()
+      bullets.push(bullet[1].replace(/\*\*/g, "").trim())
+      continue
+    }
+    flushBullets()
+    paragraph.push(trimmed.replace(/\*\*/g, ""))
+  }
+  flushParagraph()
+  flushBullets()
+  return blocks
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Visual layer — editorial hero + sticky side card.
 // Slots host the existing CV / prescreen / login UI so the auth + upload logic
@@ -1017,155 +1078,88 @@ interface PublicJobLayoutProps {
   cvSlot: ReactNode
   smsHint?: ReactNode
   overlay?: ReactNode
+  signedIn: boolean
+  onApply: () => void
 }
 
-export function PublicJobLayout({ job, startSlot, cvSlot, smsHint, overlay }: PublicJobLayoutProps) {
-  const hm = job.hiringManager
-  const hmFirst = hm?.name?.split(" ")[0]
+export function PublicJobLayout({ job, startSlot, cvSlot, smsHint, overlay, signedIn, onApply }: PublicJobLayoutProps) {
   const seats = job.interviewSeats ?? 3
+  const meta = [
+    job.location ? `${job.location}${job.jobType ? ` (${job.jobType})` : ""}` : job.jobType,
+    job.salary,
+    `${seats} interview ${seats === 1 ? "seat" : "seats"} this week`,
+  ].filter((item): item is string => Boolean(item))
 
   return (
     <CandidateShell>
       <style>{PUBLIC_JOB_STYLES}</style>
 
       <div className="wk-pj">
-        <div className="wk-container wk-pj__top">
-          <Link to="/" className="wk-pj__back">
-            <Icon name="arrow-left" size={14} stroke={2} /> Back to open interviews
-          </Link>
-        </div>
-
         <section className="wk-pj-hero">
-          <div className="wk-container wk-pj-hero__grid">
-            <div className="wk-pj-hero__copy">
-              <div className="wk-pj-hero__company">
-                <CompanyMark logo={job.logo} bg={job.logoBg} size={56} />
-                <div className="wk-pj-hero__company-text">
-                  <p className="wk-eyebrow">
-                    Interview · {job.company}
-                    {job.collaborated ? <> · <span className="wk-pj-collab">WeKruit collaborated</span></> : null}
-                  </p>
-                  <h1 className="wk-pj-hero__role">{job.jobTitle}</h1>
-                </div>
-              </div>
-              <p className="wk-pj-hero__lede">
-                You're not applying. You're interviewing — directly with the hiring manager once
-                Claire confirms you're a fit. Five minutes with Claire, then a calendar invite.
-                That's the whole loop.
-              </p>
-
-              {hm?.name ? (
-                <div className="wk-pj-hm">
-                  <Avatar name={hm.name} src={hm.photoUrl} size={64} tone={job.tone} />
-                  <div className="wk-pj-hm__body">
-                    <p className="wk-eyebrow">Your interviewer</p>
-                    <h2 className="wk-pj-hm__name">Interview with {hm.name}</h2>
-                    <p className="wk-pj-hm__title">
-                      {hm.title}{job.company ? ` · ${job.company}` : ""}
-                    </p>
-                  </div>
-                  {hm.online ? <LiveStatusPill>Online now</LiveStatusPill> : null}
-                </div>
-              ) : null}
-
-              <ul className="wk-pj-bullets">
-                <li>
-                  <span className="wk-pj-bullets__icon"><Icon name="clock" size={16} stroke={1.6} /></span>
-                  <div>
-                    <strong>15-minute video call</strong>
-                    <p>Real conversation about the role and your fit. No coding test.</p>
-                  </div>
-                </li>
-                <li>
-                  <span className="wk-pj-bullets__icon"><Icon name="video" size={16} stroke={1.6} /></span>
-                  <div>
-                    <strong>Direct{hmFirst ? ` with ${hmFirst}` : " with the hiring manager"}</strong>
-                    <p>No recruiter screen, no take-home, no panel. You and the decision-maker.</p>
-                  </div>
-                </li>
-                <li>
-                  <span className="wk-pj-bullets__icon"><Icon name="check" size={16} stroke={2} /></span>
-                  <div>
-                    <strong>Claire screens you first</strong>
-                    <p>
-                      Pass and you go straight to {hmFirst ? `${hmFirst}'s` : "the hiring manager's"} calendar
-                      — usually within 48 hours.
-                    </p>
-                  </div>
-                </li>
-              </ul>
+          <div className="wk-container wk-pj-hero__single">
+            <p className="wk-eyebrow">
+              Interview · {job.company}
+              {job.collaborated ? <> · <span className="wk-pj-collab">WeKruit collaborated</span></> : null}
+            </p>
+            <h1 className="wk-pj-hero__role">{job.jobTitle}</h1>
+            <div className="wk-pj-meta-row">
+              {meta.map((item) => <span key={item}>{item}</span>)}
             </div>
+          </div>
+        </section>
 
+        <section className="wk-pj-process-band">
+          <div className="wk-container">
+            <ProcessStrip />
+          </div>
+        </section>
+
+        <section className="wk-pj-body">
+          <div className="wk-container wk-pj-body__grid">
+            <div className="wk-pj-body__main">
+              <p className="wk-eyebrow">About this role</p>
+              <h2 className="wk-pj-body__h2">Role details</h2>
+              <div className="wk-pj-copy">{renderJobDescription(job.descriptionMd, job.company)}</div>
+            </div>
             <aside className="wk-pj-side">
               <div className="wk-pj-card">
-                <div className="wk-pj-card__head">
-                  <p className="wk-eyebrow">Start your interview</p>
-                  <h3 className="wk-pj-card__title">Five minutes with Claire</h3>
-                </div>
-                <div className="wk-pj-card__slot">{cvSlot}</div>
-                <div className="wk-pj-card__slot">{startSlot}</div>
-                {smsHint ? (
-                  <p className="wk-pj-fine">{smsHint}</p>
-                ) : (
-                  <p className="wk-pj-fine">
-                    <Icon name="lock" size={13} stroke={1.6} /> Your résumé stays private.
-                    Employers only see your profile after you pass Claire's screen.
-                  </p>
-                )}
+                <button type="button" className="wk-btn wk-btn--ink wk-btn--block" onClick={onApply}>
+                  Apply to this job
+                </button>
+                {signedIn ? (
+                  <>
+                    <div className="wk-pj-card__slot">{cvSlot}</div>
+                    <div className="wk-pj-card__slot">{startSlot}</div>
+                  </>
+                ) : null}
+                {smsHint ? <p className="wk-pj-fine">{smsHint}</p> : null}
               </div>
-
               <div className="wk-pj-side-meta">
-                {job.location ? (
-                  <span className="wk-pj-side-meta__row">
-                    <Icon name="pin" size={14} stroke={1.6} /> {job.location}
-                  </span>
-                ) : null}
-                {job.salary ? (
-                  <span className="wk-pj-side-meta__row">
-                    <Icon name="bolt" size={14} stroke={1.6} /> {job.salary}
-                  </span>
-                ) : null}
-                {job.jobType ? (
-                  <span className="wk-pj-side-meta__row">
-                    <Icon name="sparkle" size={14} stroke={1.6} /> {job.jobType}
-                  </span>
-                ) : null}
-                <span className="wk-pj-side-meta__row">
-                  <Icon name="calendar" size={14} stroke={1.6} />
-                  {seats} interview {seats === 1 ? "seat" : "seats"} this week
-                </span>
-                {job.collaborated ? (
-                  <span className="wk-pj-side-meta__row">
-                    <PulseDot size={6} /> WeKruit collaborated with this team
-                  </span>
-                ) : null}
+                {job.location ? <Fact label="Location" value={`${job.location}${job.jobType ? ` (${job.jobType})` : ""}`} /> : null}
+                {job.salary ? <Fact label="Salary" value={job.salary} /> : null}
+                <Fact label="Work authorization" value="Sponsorship reviewed case by case" />
               </div>
             </aside>
           </div>
         </section>
 
-        {job.descriptionMd ? (
-          <section className="wk-pj-body">
-            <div className="wk-container wk-pj-body__grid">
-              <div className="wk-pj-body__main">
-                <h2 className="wk-pj-body__h2">About this role.</h2>
-                <div className="wk-pj-copy">{job.descriptionMd}</div>
-              </div>
-              <aside className="wk-pj-body__aside">
-                <p className="wk-eyebrow">Process</p>
-                <ol className="wk-pj-process">
-                  <li><strong>Claire screen.</strong> 5 min, iMessage.</li>
-                  <li><strong>15 min{hmFirst ? ` with ${hmFirst}` : ""}.</strong> Video.</li>
-                  <li><strong>Working session.</strong> 90 min, paid.</li>
-                  <li><strong>Offer.</strong> Same week if it's a match.</li>
-                </ol>
-              </aside>
-            </div>
-          </section>
-        ) : null}
+        <div className="wk-pj-mobile-apply">
+          <button type="button" className="wk-btn wk-btn--ink wk-btn--block" onClick={onApply}>
+            Apply to this job
+          </button>
+        </div>
       </div>
       {overlay}
     </CandidateShell>
+  )
+}
+
+function Fact({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="wk-pj-fact">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
   )
 }
 
@@ -1202,6 +1196,7 @@ export function PublicJob404({ message }: { message?: string }) {
 
 export const PUBLIC_JOB_STYLES = `
 .wk-pj { background: var(--wk-cream); padding-bottom: 32px; }
+.wk-pj-mobile-apply { display: none; }
 .wk-pj__top { padding-top: 24px; }
 .wk-pj__back {
   display: inline-flex; align-items: center; gap: 6px;
@@ -1213,6 +1208,75 @@ export const PUBLIC_JOB_STYLES = `
 
 .wk-pj-collab { color: var(--wk-live); font-weight: 600; }
 
+.wk-pj-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 22px;
+}
+.wk-pj-meta-row span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 7px 12px;
+  border: 1px solid var(--wk-border);
+  border-radius: var(--wk-r-pill);
+  background: rgba(250,245,236,0.74);
+  color: var(--wk-ink-2);
+  font-size: 14px;
+  line-height: 1.25;
+}
+.wk-pj-process-band {
+  padding: 24px 0;
+  background: var(--wk-cream-3);
+  border-top: 1px solid var(--wk-border);
+  border-bottom: 1px solid var(--wk-border);
+}
+.wk-pj-process-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.wk-pj-process-strip__step {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 58px;
+  padding: 12px 14px;
+  background: var(--wk-cream);
+  border: 1px solid var(--wk-border);
+  border-radius: 10px;
+  color: var(--wk-ink);
+  font-weight: 600;
+  line-height: 1.25;
+}
+.wk-pj-process-strip__step span {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  background: var(--wk-ink);
+  color: var(--wk-cream);
+  font-size: 13px;
+}
+.wk-pj-process-strip--compact {
+  grid-template-columns: 1fr;
+  margin: 4px 0 8px;
+}
+.wk-pj-process-strip--compact .wk-pj-process-strip__step {
+  min-height: 38px;
+  padding: 8px 10px;
+  font-size: 14px;
+}
+.wk-pj-process-strip--compact .wk-pj-process-strip__step span {
+  width: 22px;
+  height: 22px;
+  font-size: 12px;
+}
+
 /* Hero ----------------------------------------------------------------- */
 .wk-pj-hero {
   background:
@@ -1220,7 +1284,10 @@ export const PUBLIC_JOB_STYLES = `
     radial-gradient(ellipse 60% 50% at 0% 50%, rgba(246,214,190,.45) 0%, transparent 55%),
     radial-gradient(ellipse 60% 50% at 100% 50%, rgba(246,214,190,.45) 0%, transparent 55%),
     var(--wk-cream);
-  padding: 32px 0 80px;
+  padding: 72px 0 28px;
+}
+.wk-pj-hero__single {
+  max-width: 860px;
 }
 .wk-pj-hero__grid {
   display: grid;
@@ -1233,8 +1300,8 @@ export const PUBLIC_JOB_STYLES = `
 .wk-pj-hero__role {
   font-family: 'Newsreader', serif;
   font-weight: 400;
-  font-size: clamp(34px, 4.8vw, 56px);
-  line-height: 1.05;
+  font-size: clamp(52px, 7vw, 92px);
+  line-height: 0.98;
   letter-spacing: -0.024em;
   color: var(--wk-ink);
   margin: 6px 0 0;
@@ -1283,7 +1350,13 @@ export const PUBLIC_JOB_STYLES = `
 .wk-pj-bullets li p { margin: 0; color: var(--wk-ink-2); font-size: 14.5px; line-height: 1.45; }
 
 /* Side ----------------------------------------------------------------- */
-.wk-pj-side { display: flex; flex-direction: column; gap: 14px; }
+.wk-pj-side {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  position: sticky;
+  top: 96px;
+}
 .wk-pj-card {
   background: var(--wk-cream-3);
   border: 1px solid var(--wk-border);
@@ -1319,11 +1392,31 @@ export const PUBLIC_JOB_STYLES = `
 }
 
 .wk-pj-side-meta {
-  display: flex; flex-direction: column; gap: 8px;
+  display: flex; flex-direction: column; gap: 0;
   padding: 16px 22px;
   background: var(--wk-cream-2);
   border-radius: var(--wk-r-md);
   border: 1px solid var(--wk-border);
+}
+.wk-pj-fact {
+  display: grid;
+  gap: 3px;
+  padding: 14px 0;
+  border-top: 1px solid var(--wk-border);
+}
+.wk-pj-fact:first-child { border-top: 0; padding-top: 0; }
+.wk-pj-fact:last-child { padding-bottom: 0; }
+.wk-pj-fact span {
+  color: var(--wk-ink-3);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.wk-pj-fact strong {
+  color: var(--wk-ink);
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.35;
 }
 .wk-pj-side-meta__row {
   display: inline-flex; align-items: center; gap: 8px;
@@ -1412,8 +1505,8 @@ export const PUBLIC_JOB_STYLES = `
 }
 
 /* Body ----------------------------------------------------------------- */
-.wk-pj-body { padding: 64px 0 0; }
-.wk-pj-body__grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 56px; }
+.wk-pj-body { padding: 56px 0 48px; }
+.wk-pj-body__grid { display: grid; grid-template-columns: minmax(0, 760px) minmax(280px, 340px); gap: 64px; align-items: start; }
 .wk-pj-body__h2 {
   font-family: 'Newsreader', serif; font-weight: 400;
   font-size: clamp(28px, 3.4vw, 40px);
@@ -1422,7 +1515,41 @@ export const PUBLIC_JOB_STYLES = `
 }
 .wk-pj-copy {
   color: var(--wk-ink-2); font-size: 16.5px; line-height: 1.6;
-  white-space: pre-wrap; max-width: 60ch;
+  max-width: 60ch;
+}
+.wk-pj-copy h3 {
+  color: var(--wk-ink);
+  font-family: inherit;
+  font-size: 21px;
+  line-height: 1.2;
+  letter-spacing: 0;
+  margin: 34px 0 14px;
+  padding-top: 34px;
+  border-top: 1px solid var(--wk-border);
+}
+.wk-pj-copy h3:first-child { margin-top: 0; }
+.wk-pj-copy p { margin: 0 0 16px; color: var(--wk-ink-2); }
+.wk-pj-copy ul {
+  list-style: none;
+  display: grid;
+  gap: 12px;
+  margin: 0 0 16px;
+  padding: 0;
+}
+.wk-pj-copy li {
+  position: relative;
+  padding-left: 22px;
+  color: var(--wk-ink-2);
+}
+.wk-pj-copy li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.72em;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--wk-peach-300);
 }
 .wk-pj-body__aside {
   background: var(--wk-cream-3);
@@ -1518,7 +1645,23 @@ export const PUBLIC_JOB_STYLES = `
   .wk-pj-hero__grid { grid-template-columns: 1fr; gap: 32px; }
   .wk-pj-body__grid { grid-template-columns: 1fr; gap: 32px; }
   .wk-pj-body__aside { position: static; }
+  .wk-pj-side { position: static; }
   .wk-pj-hm { grid-template-columns: auto 1fr; }
   .wk-pj-hm .wk-live-pill { grid-column: 1 / -1; justify-self: start; }
+  .wk-pj-process-strip { grid-template-columns: 1fr; }
+  .wk-pj-mobile-apply {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 35;
+    display: block;
+    padding: 12px 20px calc(12px + env(safe-area-inset-bottom));
+    background: rgba(245,237,227,0.92);
+    border-top: 1px solid var(--wk-border);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+  .wk-pj { padding-bottom: 108px; }
 }
 `
