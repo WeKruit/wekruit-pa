@@ -81,9 +81,6 @@ function AllCompanies() {
       <PageHeader
         title="Companies & open jobs"
         description="Pick a company to view its open jobs and source candidates per job."
-        actions={
-          <Link to="/admin/companies?create=1">Create company</Link>
-        }
       />
       <Panel>
         {loading ? (
@@ -94,7 +91,6 @@ function AllCompanies() {
           <EmptyState
             title="No companies yet"
             body="Seed a company doc to pa-companies (see apps/functions/scripts/seed-rain-xyz.ts as a template)."
-            action={<Link to="/admin/companies?create=1">Create company</Link>}
           />
         ) : (
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -143,8 +139,6 @@ function AllCompanies() {
                     </td>
                     <td style={{ padding: "8px 6px" }}>
                       <Link to={`/admin/external-supply/jobs/${c.companyId}`}>View jobs →</Link>
-                      {" · "}
-                      <Link to={`/admin/jobs/new?companyId=${encodeURIComponent(c.companyId)}`}>Create job</Link>
                     </td>
                   </tr>
                 )
@@ -214,9 +208,6 @@ function CompanyJobs({ companyId }: { companyId: string }) {
       <PageHeader
         title={company?.name ?? companyId}
         description={`${jobs.length} job${jobs.length === 1 ? "" : "s"} indexed on pa-jobs · companyId=${companyId}`}
-        actions={
-          <Link to={`/admin/jobs/new?companyId=${encodeURIComponent(companyId)}`}>Create job</Link>
-        }
       />
       <Panel>
         <div style={{ marginBottom: 12 }}>
@@ -232,11 +223,6 @@ function CompanyJobs({ companyId }: { companyId: string }) {
           <EmptyState
             title="No jobs yet"
             body="Seed jobs to pa-jobs with companyId pointing to this company."
-            action={
-              <Link to={`/admin/jobs/new?companyId=${encodeURIComponent(companyId)}`}>
-                Create the first job
-              </Link>
-            }
           />
         ) : (
           <table style={{ width: "100%", borderCollapse: "collapse" }}>

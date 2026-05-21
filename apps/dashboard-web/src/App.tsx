@@ -218,7 +218,6 @@ export default function App() {
           <Route path="/admin/external-supply" element={<ExternalSupplyLanding />} />
           <Route path="/admin/external-supply/jobs" element={<ExternalSupplyJobs />} />
           <Route path="/admin/external-supply/jobs/:companyId" element={<ExternalSupplyJobs />} />
-          <Route path="/admin/jobs/new" element={<JobWorkspace createMode />} />
           <Route path="/admin/jobs/:jobId" element={<JobWorkspace />} />
           <Route path="/admin/external-supply/batches/new" element={<ExternalSupplyBatchNew />} />
           <Route path="/admin/external-supply/batches/new-coresignal" element={<CoresignalBatchNew />} />

@@ -12,7 +12,8 @@ test("JobPrescreen stays scoped to prescreen config, not job lifecycle", () => {
   assert.match(source, /prescreenConfig: withMeta/)
   assert.match(source, /Open job workspace/)
   assert.match(source, /Publish in job workspace/)
-  assert.match(source, /Create new job/)
+
+  assert.doesNotMatch(source, /Create new job/)
   assert.doesNotMatch(source, /setShowCreate/)
   assert.doesNotMatch(source, /setNewJobId/)
   assert.doesNotMatch(source, /publicVisible/)
