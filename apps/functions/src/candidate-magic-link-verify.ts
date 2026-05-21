@@ -156,34 +156,21 @@ export async function runCandidateMagicLinkVerify(
   const sourceRaw = cleanString(input.source, 64)
   const source = sourceRaw && isPaUserSource(sourceRaw) ? sourceRaw : undefined
 
-  // Identity hardening 2026-05-21 — L1 entry-point gate.
-  //
-  // Adam product lock (2026-05-21): only resume upload, Gmail OAuth, and
-  // LinkedIn OAuth may CREATE a pa-users row. Email magic-link is a
-  // claim-only path — it can sign in an existing user but cannot spawn
-  // a brand-new candidate from an unrecognized email. This prevents
-  // someone from accumulating phantom pa-users by typing arbitrary
-  // emails into the magic-link form.
-  //
-  // Decision derived from `signInProvider`:
-  //   - `google.com`     → allow create (Google OAuth = L1)
-  //   - LinkedIn         → allow create (`linkedinSignIn` flag from
-  //                        custom-token path or `li_*` uid prefix)
-  //   - `password`       → claim-only (email magic-link)
-  //   - anything else    → conservative default = claim-only
-  const isOAuthSignIn =
-    linkedinSignIn ||
-    decoded.signInProvider === "google.com" ||
-    decoded.signInProvider === "google.com,password"
-  const allowCreate = isOAuthSignIn
-
+  // Adam directive 2026-05-21 — magic-link is a first-class L1 entry,
+  // equivalent to Gmail OAuth / LinkedIn OAuth. Any verified email (known
+  // OR unknown) is allowed to claim/create. Earlier "claim-only" gate
+  // (rejecting unknown emails) was removed: the canonical flow is
+  // "verified email -> pa-users" regardless of which sign-in provider
+  // Firebase used. The G1/G3 bind-ordering guards on the iMessage side
+  // remain the only identity-fork enforcement point.
   try {
     const claim = await (deps.claimProfile ?? claimCandidateProfile)(deps.db, {
       firebaseUid: decoded.uid,
       email,
       browserUid,
       displayName,
-      allowCreate,
+      // allowCreate defaults to true — every verified email may claim
+      // or create. Pass through nothing to preserve the back-compat path.
     })
 
     const userRef = deps.db.collection(PA_COLLECTIONS.users).doc(claim.candidateId)
