@@ -20,6 +20,8 @@ import {
   resolveBatchIdentity,
   runEvaluation,
 } from "../../lib/external-supply-client.js"
+// P2.5b — CSV export of batch records, client-side download.
+import { downloadBatchCsv, type ExternalCandidateRecordRowWithRaw } from "./batch-csv-export.js"
 
 export function BatchDetail() {
   const { batchId } = useParams<{ batchId: string }>()
@@ -144,6 +146,21 @@ export function BatchDetail() {
               style={primaryBtnStyle}
             >
               {showEvalDialog ? "Cancel" : "Run evaluation"}
+            </button>
+            <button
+              type="button"
+              disabled={records.length === 0}
+              onClick={() => {
+                const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")
+                downloadBatchCsv(
+                  records as unknown as ExternalCandidateRecordRowWithRaw[],
+                  `batch-${batchId}-${stamp}.csv`,
+                )
+              }}
+              style={secondaryBtnStyle}
+              title={records.length === 0 ? "No records to export" : `Download ${records.length} rows as CSV`}
+            >
+              {`Download CSV (${records.length})`}
             </button>
             <button
               type="button"
