@@ -141,7 +141,7 @@ export default function Onboarding() {
   if (!authReady || authUser === undefined || (authUser && !intakeChecked)) {
     return (
       <main>
-        <MinimalNav signedIn={Boolean(authUser)} />
+        <MinimalNav />
         <section style={{ paddingTop: 96, paddingBottom: 96 }}>
           <div className="container-prose" style={{ maxWidth: 760, marginInline: "auto", paddingInline: 24, textAlign: "center" }}>
             <p style={{ color: "var(--ink-2)" }}>Checking your sign-in…</p>
@@ -229,7 +229,7 @@ export default function Onboarding() {
 
   return (
     <main>
-      <MinimalNav signedIn={Boolean(authUser)} />
+      <MinimalNav />
       <section
         className={stage === "done" ? "onboarding-section onboarding-section--done" : "onboarding-section"}
         style={{ paddingTop: 48, paddingBottom: 96, position: "relative" }}
@@ -380,7 +380,7 @@ function CheckIcon() {
   )
 }
 
-function MinimalNav({ signedIn = false }: { signedIn?: boolean }) {
+function MinimalNav() {
   return (
     <header
       style={{
@@ -405,19 +405,6 @@ function MinimalNav({ signedIn = false }: { signedIn?: boolean }) {
         <Link to="/" style={{ textDecoration: "none", display: "inline-flex", alignItems: "baseline", gap: 8, color: "var(--ink)" }}>
           <span style={{ fontFamily: "var(--font-serif)", fontSize: 22, letterSpacing: "-0.02em", fontWeight: 500 }}>WeKruit</span>
         </Link>
-        {signedIn ? (
-          <span style={{ fontSize: 14, color: "var(--ink-3)" }}>
-            Signed in
-          </span>
-        ) : isCandidateHost() ? (
-          <Link to="/login" style={{ fontSize: 14, color: "var(--ink-2)", textDecoration: "none" }}>
-            Sign in
-          </Link>
-        ) : (
-          <Link to={layoffSignupLoginPath()} style={{ fontSize: 14, color: "var(--ink-2)", textDecoration: "none" }}>
-            Sign in
-          </Link>
-        )}
       </div>
     </header>
   )
