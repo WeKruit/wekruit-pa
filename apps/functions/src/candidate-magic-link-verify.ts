@@ -230,22 +230,25 @@ export async function runCandidateMagicLinkVerify(
   }
 }
 
-export const paCandidateMagicLinkVerify = onRequest(async (req, res) => {
-  setCors(res)
-  if (req.method === "OPTIONS") {
-    res.status(204).send("")
-    return
-  }
-  if (req.method !== "POST") {
-    res.status(405).json({ ok: false, reason: "method_not_allowed" })
-    return
-  }
+export const paCandidateMagicLinkVerify = onRequest(
+  { region: "us-central1", memory: "512MiB", timeoutSeconds: 60 },
+  async (req, res) => {
+    setCors(res)
+    if (req.method === "OPTIONS") {
+      res.status(204).send("")
+      return
+    }
+    if (req.method !== "POST") {
+      res.status(405).json({ ok: false, reason: "method_not_allowed" })
+      return
+    }
 
-  const body =
-    req.body && typeof req.body === "object" ? (req.body as CandidateMagicLinkVerifyInput) : {}
-  const authHeader = req.header("authorization") ?? req.header("Authorization")
-  const { result, status } = await runCandidateMagicLinkVerify(body, authHeader, {
-    db: getFirestore(),
-  })
-  res.status(status).json(result)
-})
+    const body =
+      req.body && typeof req.body === "object" ? (req.body as CandidateMagicLinkVerifyInput) : {}
+    const authHeader = req.header("authorization") ?? req.header("Authorization")
+    const { result, status } = await runCandidateMagicLinkVerify(body, authHeader, {
+      db: getFirestore(),
+    })
+    res.status(status).json(result)
+  }
+)
