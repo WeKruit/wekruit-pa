@@ -396,6 +396,28 @@ test("runRegisterLayoffCandidate accepts candidate signup without phone when pro
   assert.equal((user.candidateContext as DocData).linkedin, "https://linkedin.com/in/ada")
 })
 
+test("runRegisterLayoffCandidate accepts candidate signup with resume and no previous company", async () => {
+  const fake = new FakeFirestore()
+  const result = await runRegisterLayoffCandidate(
+    registration({
+      source: "candidate",
+      phone: undefined,
+      lastCompany: undefined,
+      jobTitle: undefined,
+      location: undefined,
+      linkedin: undefined,
+      resumeFileName: "ada.pdf",
+    }),
+    deps(fake),
+  )
+
+  assert.equal(result.candidateId, "auto_1")
+  const user = fake.read(`${PA_COLLECTIONS.users}/auto_1`)!
+  assert.equal(user.source, "candidate")
+  assert.equal((user.candidateContext as DocData).lastCompany, null)
+  assert.equal((user.candidateContext as DocData).resumeFileName, "ada.pdf")
+})
+
 test("runRegisterLayoffCandidate accepts layoff signup without phone or optional title/location when resume present", async () => {
   const fake = new FakeFirestore()
   const result = await runRegisterLayoffCandidate(

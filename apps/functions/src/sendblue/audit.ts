@@ -10,7 +10,6 @@ import { PA_COLLECTIONS } from "@pa/core-types"
 import type { Firestore } from "firebase-admin/firestore"
 
 export type AuditEventType =
-  | "allowlist_deny"
   | "group_chat_rejected"
   | "inbound_skipped"
   | "outbound_mirror"

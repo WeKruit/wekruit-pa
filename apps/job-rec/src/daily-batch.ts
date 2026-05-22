@@ -274,6 +274,66 @@ export function normalizeJobProfile(raw: unknown): NormalizedProfile | null {
   return null
 }
 
+function cleanStringList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    : []
+}
+
+function normalizeJobProfileFromUserTags(userDoc: unknown): NormalizedProfile | null {
+  if (!userDoc || typeof userDoc !== "object") return null
+  const user = userDoc as Record<string, unknown>
+  const tags = user.tags && typeof user.tags === "object"
+    ? user.tags as Record<string, unknown>
+    : null
+  if (!tags) return null
+
+  const industryTags = cleanStringList(tags.industrySector)
+  if (industryTags.length === 0) return null
+
+  const targetLocations = cleanStringList(tags.targetLocations)
+  const visaStatus = typeof tags.visaStatus === "string" ? tags.visaStatus : ""
+  return {
+    industry: ten10To6(industryTags[0]!),
+    industryTags,
+    sponsorship:
+      visaStatus === "sponsor_needed" || visaStatus === "sponsorship_needed"
+        ? "h1b"
+        : "either",
+    location: targetLocations[0] ?? "",
+    sizePreference: "either",
+  }
+}
+
+async function normalizeDailyProfile(input: {
+  db: Firestore
+  userId: string
+  rawProfile: unknown
+  log: (...args: unknown[]) => void
+}): Promise<NormalizedProfile | null> {
+  const explicit = normalizeJobProfile(input.rawProfile)
+  if (explicit) return explicit
+
+  try {
+    const userSnap = await input.db.collection("pa-users").doc(input.userId).get()
+    const fromTags = normalizeJobProfileFromUserTags(userSnap.exists ? userSnap.data() : null)
+    if (fromTags) {
+      input.log("[job-rec-daily] profile_derived_from_user_tags", {
+        userId: input.userId,
+        industryTags: fromTags.industryTags,
+      })
+      return fromTags
+    }
+  } catch (err) {
+    input.log("[job-rec-daily] user_tags_profile_read_failed", {
+      userId: input.userId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+
+  return null
+}
+
 /**
  * Compute cosine similarity between two embedding vectors. Returns 0 when
  * dimensions differ, either is empty, or magnitudes are zero. Pure / no
@@ -1020,7 +1080,12 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
       }
 
       // Stream F5 — normalize legacy + new-shape profiles to one filter set.
-      const normalized = normalizeJobProfile(profileDoc.profile)
+      const normalized = await normalizeDailyProfile({
+        db: deps.db,
+        userId,
+        rawProfile: profileDoc.profile,
+        log,
+      })
       if (!normalized) {
         log("[job-rec-daily] skipping_corrupt_profile", { userId })
         errors += 1

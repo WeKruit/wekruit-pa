@@ -5,7 +5,9 @@ import {
   candidateLoginPath,
   candidatePortalLoginUrl,
   cookieDomainForHost,
+  deriveOnboardingIntentFromPath,
   isLayoffHost,
+  isPublicJobPath,
   layoffSignupLoginPath,
   onboardingDestination,
   parseLoginNextPath,
@@ -91,6 +93,38 @@ test("resolvePostLoginDestination blocks /me until portal ready", () => {
     resolvePostLoginDestination(onboardingNext, true, "WeKruit_Laid_Off"),
     "/me",
   )
+})
+
+test("resolvePostLoginDestination preserves public job routes before portal ready", () => {
+  const jobNext = parseLoginNextPath("/j/wekruit-37429d02-photon-macos-devops")
+  const cvNext = parseLoginNextPath("/j/wekruit-37429d02-photon-macos-devops/cv")
+
+  assert.equal(isPublicJobPath(jobNext.pathname), true)
+  assert.equal(isPublicJobPath(cvNext.pathname), true)
+  assert.equal(resolvePostLoginDestination(jobNext, false, "candidate"), jobNext.to)
+  assert.equal(resolvePostLoginDestination(cvNext, false, "candidate"), cvNext.to)
+})
+
+test("parseLoginNextPath canonicalizes legacy source-leaking Photon job slugs", () => {
+  const jobNext = parseLoginNextPath("/j/standout-37429d02-photon-macos-devops")
+  const cvNext = parseLoginNextPath("/j/standout-973f2953-photon-objective-c-engineer/cv")
+
+  assert.equal(jobNext.to, "/j/wekruit-37429d02-photon-macos-devops")
+  assert.equal(cvNext.to, "/j/wekruit-973f2953-photon-objective-c-engineer/cv")
+})
+
+test("deriveOnboardingIntentFromPath distinguishes job prescreen from normal onboarding", () => {
+  assert.deepEqual(
+    deriveOnboardingIntentFromPath("/j/standout-37429d02-photon-macos-devops"),
+    {
+      intent: "job_prescreen",
+      returnPath: "/j/wekruit-37429d02-photon-macos-devops",
+    },
+  )
+  assert.deepEqual(deriveOnboardingIntentFromPath("/onboarding?source=candidate"), {
+    intent: "generic_onboarding",
+    returnPath: null,
+  })
 })
 
 test("onboardingDestination routes layoff source to layoff query", () => {

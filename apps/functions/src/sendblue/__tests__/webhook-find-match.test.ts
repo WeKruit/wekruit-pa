@@ -185,10 +185,6 @@ function basePayload(text: string) {
 }
 
 const ENV_KEYS = [
-  "IMESSAGE_DM_ALLOWLIST",
-  "IMESSAGE_PEERS",
-  "IMESSAGE_PEER",
-  "IMESSAGE_DEFAULT_PEER",
   "PA_ADMIN_USER_IDS",
 ] as const
 
@@ -198,8 +194,6 @@ describe("__PA_FIND_MATCH__ admin trigger (Phase 60 DEV-01)", () => {
   beforeEach(() => {
     savedEnv = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]))
     for (const k of ENV_KEYS) delete process.env[k]
-    process.env.IMESSAGE_DM_ALLOWLIST = "1"
-    process.env.IMESSAGE_PEERS = ADMIN_PHONE
     _clearFeatureFlagCache()
   })
   afterEach(() => {

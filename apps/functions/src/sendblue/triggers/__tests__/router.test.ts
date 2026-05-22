@@ -18,6 +18,7 @@ import assert from "node:assert/strict"
 
 import {
   CompactTrigger,
+  extractInitialPrescreenReply,
   PrescreenTrigger,
   PRESCREEN_IDEMPOTENCY_WINDOW_MS,
   TriggerRouter,
@@ -132,11 +133,11 @@ function makePrescreenDeps(opts: {
   lastFired?: Record<string, number>
   now?: number
 } = {}): PrescreenTriggerDeps & {
-  runs: Array<{ jobId: string; userId: string; toE164: string }>
+  runs: Array<{ jobId: string; userId: string; toE164: string; initialReplyText?: string }>
   audits: Record<string, unknown>[]
   setLastCalls: Array<{ jobId: string; userId: string; messageHandle: string; ms: number }>
 } {
-  const runs: Array<{ jobId: string; userId: string; toE164: string }> = []
+  const runs: Array<{ jobId: string; userId: string; toE164: string; initialReplyText?: string }> = []
   const audits: Record<string, unknown>[] = []
   const setLastCalls: Array<{ jobId: string; userId: string; messageHandle: string; ms: number }> = []
   const lastFired: Record<string, number> = { ...(opts.lastFired ?? {}) }
@@ -171,6 +172,7 @@ test("Phase 77: PrescreenTrigger.match matches valid pattern", () => {
   const trig = new PrescreenTrigger(makePrescreenDeps())
   assert.equal(trig.match("WeKruit_jobABC_user123_Job"), true)
   assert.equal(trig.match("hey WeKruit_j1_u1_Job please"), true)
+  assert.equal(trig.match("Wekruit_j1_u1_Job"), true)
   // Char-class limited to alnum + _ + -
   assert.equal(trig.match("WeKruit_j-1_u-1_Job"), true)
 })
@@ -218,6 +220,36 @@ test("Phase 77: PrescreenTrigger fires for self (sender matches target userId)",
   await new Promise((resolve) => setImmediate(resolve))
   assert.equal(deps.runs.length, 1)
   assert.deepEqual(deps.runs[0], { jobId: "j1", userId: "user123", toE164: "+15551234" })
+})
+
+test("Phase 77: PrescreenTrigger passes text after token as the initial prescreen reply", async () => {
+  const deps = makePrescreenDeps({ phoneToUser: { "+15551234": "user123" } })
+  const trig = new PrescreenTrigger(deps)
+  const r = await trig.handle(makeCtx(
+    "WeKruit_j1_user123_Job\n\nI have shipped production Swift automation for macOS fleet health checks.",
+    { fromNumber: "+15551234" },
+  ))
+  assert.equal(r.kind, "handled")
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(deps.runs.length, 1)
+  assert.equal(
+    deps.runs[0].initialReplyText,
+    "I have shipped production Swift automation for macOS fleet health checks.",
+  )
+  const fired = deps.audits.find((a) => a.type === "trigger_fired")
+  assert.equal(fired!.initialReplyCaptured, true)
+})
+
+test("Phase 77: extractInitialPrescreenReply ignores bare trigger bodies", () => {
+  assert.equal(extractInitialPrescreenReply("WeKruit_j1_u1_Job", "WeKruit_j1_u1_Job", 0), null)
+  assert.equal(
+    extractInitialPrescreenReply(
+      "WeKruit_j1_u1_Job: Built launchd-based monitors.",
+      "WeKruit_j1_u1_Job",
+      0,
+    ),
+    "Built launchd-based monitors.",
+  )
 })
 
 test("Phase 77: PrescreenTrigger fires for admin (sender != target but is admin)", async () => {

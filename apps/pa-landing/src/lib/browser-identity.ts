@@ -1,9 +1,12 @@
 import { peekSource, type SignupSource } from "./source.js"
+import { canonicalizePublicJobPath } from "./public-job-slugs.js"
 
 export const GLOBAL_UID_KEY = "wkr_uid"
 export const CLAIM_EMAIL_KEY = "wkr_claim_email"
 export const ONBOARDING_CANDIDATE_ID_KEY = "wkr_candidate_id"
 export const LOGIN_NEXT_SESSION_KEY = "wkr_login_next"
+export const ONBOARDING_INTENT_KEY = "wkr_onboarding_intent"
+export const RETURN_JOB_PATH_KEY = "wkr_return_job_path"
 
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 180
 export const CANDIDATE_ORIGIN = "https://candidate.wekruit.com"
@@ -39,6 +42,13 @@ export function setSharedCookie(name: string, value: string): void {
   document.cookie = `${encodeURIComponent(name)}=${encodeURIComponent(value)}; Max-Age=${COOKIE_MAX_AGE}; Path=/; SameSite=Lax${secure}${domainPart}`
 }
 
+export function clearSharedCookie(name: string): void {
+  const secure = window.location.protocol === "https:" ? "; Secure" : ""
+  const domain = cookieDomainForHost(window.location.hostname)
+  const domainPart = domain ? `; Domain=${domain}` : ""
+  document.cookie = `${encodeURIComponent(name)}=; Max-Age=0; Path=/; SameSite=Lax${secure}${domainPart}`
+}
+
 export function getSharedCookie(name: string): string | null {
   return readCookieValue(document.cookie, name)
 }
@@ -59,6 +69,11 @@ export function rememberStoredValue(key: string, value: string | null | undefine
   if (!clean) return
   storage()?.setItem(key, clean)
   setSharedCookie(key, clean)
+}
+
+export function forgetStoredValue(key: string): void {
+  storage()?.removeItem(key)
+  clearSharedCookie(key)
 }
 
 export function getBrowserUid(): string {
@@ -102,6 +117,18 @@ export function isCandidatePortalPath(pathname: string): boolean {
   return pathname === "/me" || pathname.startsWith("/me/")
 }
 
+/** Public job gates are pre-portal flows and must survive first login. */
+export function isPublicJobPath(pathname: string): boolean {
+  return /^\/j\/[^/]+(?:\/cv)?$/.test(pathname)
+}
+
+export type OnboardingIntent = "generic_onboarding" | "job_prescreen"
+
+export type OnboardingIntentState = {
+  intent: OnboardingIntent
+  returnPath: string | null
+}
+
 function splitAppPath(path: string): { pathname: string; search: string; to: string } {
   const q = path.indexOf("?")
   const pathname = (q >= 0 ? path.slice(0, q) : path) || "/onboarding"
@@ -139,7 +166,8 @@ export function clearRememberedLoginNext(): void {
 
 /**
  * Post-login routing (Adam 2026-05-20): only honor `/me*` when portal-ready
- * (inbound Claire iMessage + resume on file); otherwise send to onboarding.
+ * (inbound Claire iMessage + resume on file). Public job pages are pre-portal
+ * interview gates, so keep `/j/:jobId` and `/j/:jobId/cv` through first login.
  */
 export function resolvePostLoginDestination(
   nextDest: LoginNextDestination,
@@ -150,6 +178,7 @@ export function resolvePostLoginDestination(
     if (nextDest.isOnboarding) return "/me"
     return nextDest.to
   }
+  if (isPublicJobPath(nextDest.pathname)) return nextDest.to
   if (nextDest.isOnboarding) return nextDest.to
   if (isCandidatePortalPath(nextDest.pathname)) return onboardingDestination(source)
   return onboardingDestination(source)
@@ -175,7 +204,7 @@ export function parseLoginNextPath(
   }
   try {
     const url = new URL(candidate, CANDIDATE_ORIGIN)
-    const pathname = url.pathname || "/onboarding"
+    const pathname = canonicalizePublicJobPath(url.pathname || "/onboarding")
     const search = url.search
     return {
       pathname,
@@ -184,12 +213,51 @@ export function parseLoginNextPath(
       isOnboarding: pathname === "/onboarding",
     }
   } catch {
-    const split = splitAppPath(candidate)
+    const rawSplit = splitAppPath(candidate)
+    const split = {
+      ...rawSplit,
+      pathname: canonicalizePublicJobPath(rawSplit.pathname),
+      to: "",
+    }
+    split.to = `${split.pathname}${split.search}`
     return {
       ...split,
       isOnboarding: split.pathname === "/onboarding",
     }
   }
+}
+
+export function deriveOnboardingIntentFromPath(
+  path: string | null | undefined,
+): OnboardingIntentState {
+  const dest = parseLoginNextPath(path, onboardingDestination("candidate"))
+  if (isPublicJobPath(dest.pathname)) {
+    return {
+      intent: "job_prescreen",
+      returnPath: dest.to,
+    }
+  }
+  return {
+    intent: "generic_onboarding",
+    returnPath: null,
+  }
+}
+
+export function rememberOnboardingIntentForPath(path: string | null | undefined): void {
+  const state = deriveOnboardingIntentFromPath(path)
+  rememberStoredValue(ONBOARDING_INTENT_KEY, state.intent)
+  if (state.returnPath) {
+    rememberStoredValue(RETURN_JOB_PATH_KEY, state.returnPath)
+  } else {
+    forgetStoredValue(RETURN_JOB_PATH_KEY)
+  }
+}
+
+export function readRememberedReturnJobPath(): string | null {
+  const stored = readStoredValue(RETURN_JOB_PATH_KEY)
+  if (!stored) return null
+  const state = deriveOnboardingIntentFromPath(stored)
+  return state.returnPath
 }
 
 export function isCandidateHost(hostname = window.location.hostname): boolean {

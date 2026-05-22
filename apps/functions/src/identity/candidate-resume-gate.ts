@@ -2,6 +2,12 @@ import { onCall, HttpsError } from "firebase-functions/v2/https"
 import { getFirestore, type Firestore } from "firebase-admin/firestore"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import { claimCandidateProfile as defaultClaimCandidateProfile } from "@pa/pa-persistence"
+import {
+  loadSendbluePool,
+  pickFromNumber,
+  sendblueGroupId,
+  type SendbluePoolConfig,
+} from "../sendblue/pool.js"
 
 type CallableAuth = {
   uid?: string
@@ -36,6 +42,8 @@ export interface CandidateResumeGateResult {
   labelsReady: boolean
   resumeArtifactId?: string
   parsedResumeId?: string
+  senderNumber?: string
+  senderGroupId?: string
 }
 
 export interface CandidateResumeGateDeps {
@@ -51,6 +59,12 @@ export interface CandidateResumeGateDeps {
     selfProfile: Record<string, unknown> | null
   ) => Promise<ResumeArtifactGateView>
   loadLatestParsedResume?: (db: Firestore, candidateId: string) => Promise<ParsedResumeGateView>
+  assignSenderNumber?: (
+    db: Firestore,
+    candidateId: string,
+    user: Record<string, unknown> | null
+  ) => Promise<{ senderNumber?: string; senderGroupId?: string }>
+  loadSendbluePool?: (db: Firestore) => Promise<SendbluePoolConfig | null>
 }
 
 function cleanString(value: unknown, max: number): string | undefined {
@@ -186,6 +200,43 @@ function isUsableArtifact(artifact: ResumeArtifactGateView): boolean {
   return artifact.status !== "failed" && artifact.status !== "archived"
 }
 
+function groupIdForNumber(pool: SendbluePoolConfig | null, senderNumber: string): string {
+  const match = Array.isArray(pool?.numbers)
+    ? pool.numbers.find((n) => n.number === senderNumber)
+    : undefined
+  return sendblueGroupId(match ?? { number: senderNumber, status: "active" })
+}
+
+async function defaultAssignSenderNumber(
+  db: Firestore,
+  candidateId: string,
+  user: Record<string, unknown> | null,
+  poolLoader: (db: Firestore) => Promise<SendbluePoolConfig | null>
+): Promise<{ senderNumber?: string; senderGroupId?: string }> {
+  const existingNumber = cleanString(user?.senderNumber, 32)
+  const existingGroupId = cleanString(user?.senderGroupId, 160)
+  if (existingNumber) {
+    return {
+      senderNumber: existingNumber,
+      ...(existingGroupId ? { senderGroupId: existingGroupId } : {}),
+    }
+  }
+
+  const pool = await poolLoader(db)
+  const senderNumber = pickFromNumber(pool, candidateId, { requireNewUserCapacity: true })
+  if (!senderNumber) return {}
+  const senderGroupId = groupIdForNumber(pool, senderNumber)
+  const nowIso = new Date().toISOString()
+  await db.collection(PA_COLLECTIONS.users).doc(candidateId).set({
+    senderNumber,
+    senderGroupId,
+    senderAssignedAt: nowIso,
+    senderAssignedSource: "candidate_resume_gate",
+    updatedAt: nowIso,
+  }, { merge: true })
+  return { senderNumber, senderGroupId }
+}
+
 export async function runCandidateResumeGateStatus(
   data: unknown,
   auth: CallableAuth | undefined,
@@ -229,6 +280,14 @@ export async function runCandidateResumeGateStatus(
     ),
     (deps.loadLatestParsedResume ?? defaultLoadLatestParsedResume)(deps.db, candidateId),
   ])
+  const sender = await (deps.assignSenderNumber ?? (
+    (db, id, userData) => defaultAssignSenderNumber(
+      db,
+      id,
+      userData,
+      deps.loadSendbluePool ?? loadSendbluePool
+    )
+  ))(deps.db, candidateId, user)
 
   const hasResume = Boolean(parsed || isUsableArtifact(artifact))
   const labelsReady = hasParsedLabelSignals(parsed)
@@ -246,6 +305,8 @@ export async function runCandidateResumeGateStatus(
     labelsReady,
     ...(artifact?.resumeId ? { resumeArtifactId: artifact.resumeId } : {}),
     ...(parsed?.id ? { parsedResumeId: parsed.id } : {}),
+    ...(sender.senderNumber ? { senderNumber: sender.senderNumber } : {}),
+    ...(sender.senderGroupId ? { senderGroupId: sender.senderGroupId } : {}),
   }
 }
 

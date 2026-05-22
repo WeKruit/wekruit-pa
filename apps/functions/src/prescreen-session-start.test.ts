@@ -288,4 +288,49 @@ describe("runPreScreenForUser session boundaries", () => {
     assert.equal(userWorkSession.sessionId, result.sessionId)
     assert.equal(userWorkSession.jobId, "job-new")
   })
+
+  it("can start an active session without re-sending Q1 when the initial SMS already contains the first answer", async () => {
+    const { db, docs } = makeFakeDb({
+      "pa-jobs/job-new": { prescreenConfig },
+    })
+    let markStartedCalled = false
+    const sent: string[] = []
+
+    const result = await runPreScreenForUser({
+      db,
+      jobId: "job-new",
+      userId: "u1",
+      toE164: "+13054507715",
+      suppressFirstQuestion: true,
+      markStarted: async () => {
+        markStartedCalled = true
+      },
+      sendSms: async ({ content }) => {
+        sent.push(content)
+        return {
+          status: "queued",
+          from_number: null,
+          number: "+13054507715",
+          content,
+          service: "iMessage",
+          is_outbound: true,
+        }
+      },
+    })
+
+    assert.equal(result.ok, true)
+    assert.equal(result.reason, "started")
+    assert.equal(result.firstQuestionSent, false)
+    assert.equal(markStartedCalled, true)
+    assert.equal(sent.length, 0)
+    const started = docs.get(`pa-prescreen-sessions/${result.sessionId}`)?.data
+    assert.ok(started)
+    assert.equal(started.currentQId, "role_fit")
+    assert.equal(started.terminal, null)
+    assert.equal(started.firstQuestionSent, false)
+    assert.equal(started.firstQuestionSuppressedByInitialReply, true)
+    const userWorkSession = docs.get("pa-users/u1")?.data.workSession as Record<string, unknown>
+    assert.equal(userWorkSession.status, "active")
+    assert.equal(userWorkSession.sessionId, result.sessionId)
+  })
 })

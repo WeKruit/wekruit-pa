@@ -191,7 +191,7 @@ export default function Landing() {
             </p>
             <div className="wk-hero__cta">
               <Link to="/onboarding" className="wk-btn wk-btn--primary wk-btn--lg">
-                Start with Claire
+                Interview with Claire
                 <Icon name="arrow-right" size={16} stroke={2} />
               </Link>
               <a
@@ -327,7 +327,7 @@ export default function Landing() {
           <div className="wk-final-cta">
             <h3 className="wk-final-cta__h">Stop applying. Start interviewing.</h3>
             <Link to="/onboarding" className="wk-btn wk-btn--primary wk-btn--lg">
-              Start with Claire
+              Interview with Claire
               <Icon name="arrow-right" size={16} stroke={2} />
             </Link>
             <p className="wk-final-cta__fine">

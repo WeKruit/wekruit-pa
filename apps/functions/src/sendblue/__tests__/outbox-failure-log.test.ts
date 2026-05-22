@@ -100,28 +100,18 @@ describe("pa.outbound.failed structured log (Stream H4 D4)", () => {
       events.push({ event: String(args[0] ?? ""), payload: args[1] })
     }
 
-    // Disable allowlist so the test reaches user-not-found path.
-    // useDmAllowlist() default-enables unless DM_ALLOWLIST="0".
-    const prevAllowlist = process.env.IMESSAGE_DM_ALLOWLIST
-    process.env.IMESSAGE_DM_ALLOWLIST = "0"
-
-    try {
-      await paSendblueOutboxHandler(makeEvent("doc-fail-1", baseRow) as never, {
-        db: db as never,
-        sendblueClient: {
-          sendImessage: async () => { throw new Error("should not be called") },
-          sendTypingIndicator: async () => {},
-        },
-        now: () => new Date("2026-05-01T22:00:00.000Z"),
-        log,
-        getUser: async () => null, // user not found
-        getOrCreateSession: async () => ({ id: "s-1" } as never),
-        appendMessage: async () => {},
-      })
-    } finally {
-      if (prevAllowlist != null) process.env.IMESSAGE_DM_ALLOWLIST = prevAllowlist
-      else delete process.env.IMESSAGE_DM_ALLOWLIST
-    }
+    await paSendblueOutboxHandler(makeEvent("doc-fail-1", baseRow) as never, {
+      db: db as never,
+      sendblueClient: {
+        sendImessage: async () => { throw new Error("should not be called") },
+        sendTypingIndicator: async () => {},
+      },
+      now: () => new Date("2026-05-01T22:00:00.000Z"),
+      log,
+      getUser: async () => null, // user not found
+      getOrCreateSession: async () => ({ id: "s-1" } as never),
+      appendMessage: async () => {},
+    })
 
     const failureEvents = events.filter((e) => e.event === "pa.outbound.failed")
     assert.equal(failureEvents.length, 1, "exactly one pa.outbound.failed log emitted")

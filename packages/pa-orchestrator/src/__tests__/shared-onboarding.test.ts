@@ -24,6 +24,17 @@ test("Hello, WeKruit! opener includes candidate id for phone binding", () => {
   assert.equal(parseHelloWekruitOpener("Hello, WeKruit!"), null)
 })
 
+test("job interview opener binds the inbound phone to the candidate id", () => {
+  assert.deepEqual(
+    parseHelloWekruitOpener("WeKruit_photon-macos-devops_abc_user_99_Job"),
+    { candidateId: "abc_user_99" },
+  )
+  assert.deepEqual(
+    parseHelloWekruitOpener("Wekruit_photon-macos-devops_abc-user-99_Job"),
+    { candidateId: "abc-user-99" },
+  )
+})
+
 test("shared onboarding asks the five conversational questions in launch order", () => {
   assert.deepEqual(SHARED_ONBOARDING_QUESTIONS.map((q) => q.id), [
     "main_goal",

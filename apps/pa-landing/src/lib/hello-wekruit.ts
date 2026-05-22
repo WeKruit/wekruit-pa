@@ -6,3 +6,7 @@ export function buildHelloWekruitOpenerBody(candidateId: string): string {
   if (!id) return HELLO_WEKRUIT_OPENER_PREFIX
   return `${HELLO_WEKRUIT_OPENER_PREFIX} ${id}`
 }
+
+export function buildWekruitJobOpenerBody(jobId: string, candidateId: string): string {
+  return `WeKruit_${jobId.trim()}_${candidateId.trim()}_Job`
+}

@@ -126,9 +126,6 @@ function makeSendblueMock() {
 
 describe("paSendblueOutboxRetrySweepHandler (Stream H9 TD2)", () => {
   it("test 1: 3 orphans (>60s old) + 2 fresh (<60s) → 3 reprocessed", async () => {
-    process.env.IMESSAGE_DM_ALLOWLIST = "1"
-    process.env.IMESSAGE_PEERS = ALLOWED
-
     const NOW = new Date("2026-05-01T22:00:00.000Z")
     const oldTs = new Date(NOW.getTime() - 5 * 60 * 1000).toISOString() // 5min ago
     const freshTs = new Date(NOW.getTime() - 10 * 1000).toISOString()    // 10s ago
@@ -171,15 +168,9 @@ describe("paSendblueOutboxRetrySweepHandler (Stream H9 TD2)", () => {
     assert.equal(outbound.get("orph-3")!.status, "sent")
     assert.equal(outbound.get("fresh-1")!.status, "pending")
     assert.equal(outbound.get("fresh-2")!.status, "pending")
-
-    delete process.env.IMESSAGE_DM_ALLOWLIST
-    delete process.env.IMESSAGE_PEERS
   })
 
   it("test 2: concurrency cap = 2 → never more than 2 sendImessage in flight", async () => {
-    process.env.IMESSAGE_DM_ALLOWLIST = "1"
-    process.env.IMESSAGE_PEERS = ALLOWED
-
     const NOW = new Date("2026-05-01T22:00:00.000Z")
     const oldTs = new Date(NOW.getTime() - 5 * 60 * 1000).toISOString()
     const rows: Record<string, DocData> = {}
@@ -211,15 +202,9 @@ describe("paSendblueOutboxRetrySweepHandler (Stream H9 TD2)", () => {
 
     assert.equal(sb.calls, 8, "all 8 orphans processed")
     assert.ok(sb.maxInflight <= 2, `concurrency cap violated: maxInflight=${sb.maxInflight}`)
-
-    delete process.env.IMESSAGE_DM_ALLOWLIST
-    delete process.env.IMESSAGE_PEERS
   })
 
   it("test 3: second sweep on already-sent rows → idempotent (no re-send)", async () => {
-    process.env.IMESSAGE_DM_ALLOWLIST = "1"
-    process.env.IMESSAGE_PEERS = ALLOWED
-
     const NOW = new Date("2026-05-01T22:00:00.000Z")
     const oldTs = new Date(NOW.getTime() - 5 * 60 * 1000).toISOString()
     const { db } = makeFakeDb({
@@ -256,8 +241,5 @@ describe("paSendblueOutboxRetrySweepHandler (Stream H9 TD2)", () => {
     assert.equal(r2.scanned, 0, "no pending candidates after first sweep")
     assert.equal(r2.reprocessed, 0, "no reprocessing on idempotent re-run")
     assert.equal(sb.calls, 1, "Sendblue NOT called again")
-
-    delete process.env.IMESSAGE_DM_ALLOWLIST
-    delete process.env.IMESSAGE_PEERS
   })
 })

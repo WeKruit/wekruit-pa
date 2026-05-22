@@ -171,7 +171,7 @@ describe("Identity hardening — Sendblue webhook rejects non-E.164 sender", () 
 
     assert.equal(res.statusCode, 200, "200 OK accepted")
     // The gate does not reject a valid E.164 sender — downstream behavior
-    // (broker enqueue, allowlist, etc.) is covered by other test files;
+    // (broker enqueue, trigger routing, etc.) is covered by other test files;
     // here we only assert the new gate did not fire.
     const rejected = audit.filter((a) => a.type === "non_e164_sender_rejected")
     assert.equal(rejected.length, 0, "no rejection audit for E.164 sender")

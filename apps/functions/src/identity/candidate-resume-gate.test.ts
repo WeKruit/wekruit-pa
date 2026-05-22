@@ -36,6 +36,7 @@ function baseDeps(overrides: Partial<Parameters<typeof runCandidateResumeGateSta
     loadCandidateSelfProfile: async () => ({}),
     loadLatestResumeArtifact: async () => null,
     loadLatestParsedResume: async () => null,
+    assignSenderNumber: async () => ({}),
     ...overrides,
   }
 }
@@ -183,4 +184,24 @@ test("runCandidateResumeGateStatus allows adam.ylol@wekruit.com", async () => {
   assert.equal(result.ok, true)
   assert.equal(result.candidateId, "cand-1")
   assert.equal(result.status, "needs_resume_upload")
+})
+
+test("runCandidateResumeGateStatus assigns sender number after auth using canonical candidate id", async () => {
+  const calls: Array<{ candidateId: string; user: Record<string, unknown> | null }> = []
+  const result = await runCandidateResumeGateStatus(
+    { browserUid: "anonymous-browser-id" },
+    { uid: "firebase-1", token: { email: "person@example.com", email_verified: true } },
+    baseDeps({
+      assignSenderNumber: async (_db, candidateId, user) => {
+        calls.push({ candidateId, user })
+        return { senderNumber: "+17174919939", senderGroupId: "public" }
+      },
+    })
+  )
+
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0]?.candidateId, "cand-1")
+  assert.deepEqual(calls[0]?.user, {})
+  assert.equal(result.senderNumber, "+17174919939")
+  assert.equal(result.senderGroupId, "public")
 })

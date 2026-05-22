@@ -14,6 +14,7 @@ export {
 } from "./router.js"
 
 export {
+  extractInitialPrescreenReply,
   PrescreenTrigger,
   PRESCREEN_IDEMPOTENCY_WINDOW_MS,
   type PrescreenTriggerDeps,

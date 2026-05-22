@@ -31,7 +31,7 @@ import {
 import { saveEvaluationAttempt } from "@pa/pa-persistence"
 import { SAFETY_CANNED_REPLIES, pickLangForSafety, runSafetyCheck } from "@pa/pa-safety"
 import { sendRuntimeApprovedIMessage } from "./runtime-approved-outbox.js"
-import { runPrescreenTerminalAction } from "./prescreen-terminal-action.js"
+import { runPrescreenTerminalAction, writePrescreenMemoryUpdate } from "./prescreen-terminal-action.js"
 import { isLayoffIntakeActiveForUser } from "./layoff-sms-start.js"
 
 const ACTIVE_PRESCREEN_TIMEOUT_MS = 60 * 60 * 1000
@@ -627,6 +627,8 @@ function hasIncompleteOnboardingQuestion(user: Record<string, unknown> | undefin
 function isLikelyPrescreenContinuationReply(reply: string): boolean {
   const normalized = reply.trim().toLowerCase()
   if (!normalized) return false
+  if (/\b(?:what(?:'s|\s+is|\s+are)?|whats)\s+(?:the\s+)?next\s+steps?\b/.test(normalized)) return true
+  if (/\bwhat\s+happens\s+next\b/.test(normalized)) return true
   if (/\b(prescreen|pre-screen|role screen|job screen|screen|interview)\b/.test(normalized)) return true
   if (/\b(this|that|same)\s+(role|job|screen|interview)\b/.test(normalized)) return true
   if (/\b(reopen|continue|resume|restart|start over|try again)\b(?=.*\b(role|job|screen|interview|prescreen|pre-screen)\b)/.test(normalized)) {
@@ -671,9 +673,13 @@ function isJobRecommendationExplanationRequest(reply: string): boolean {
   )
 }
 
+function isExplicitNewIntentAfterTerminal(reply: string): boolean {
+  return isJobRecommendationExplanationRequest(reply) || isJobSearchRequest(reply)
+}
+
 function isShortTerminalAck(reply: string): boolean {
   const normalized = reply.trim().toLowerCase()
-  return /^(ok|okay|got it|thanks|thank you|sounds good|明白|收到|好的|谢谢|行|可以)[.!。！\s]*$/i.test(normalized)
+  return /^(ok|okay|yes|yeah|yep|sure|alright|all right|go ahead|proceed|got it|thanks|thank you|sounds good|明白|收到|好的|谢谢|行|可以)[.!。！\s]*$/i.test(normalized)
 }
 
 function isPostTerminalConstraintUpdate(reply: string): boolean {
@@ -689,8 +695,7 @@ function isPostTerminalConstraintUpdate(reply: string): boolean {
 }
 
 function isRecentTerminalFollowupReply(reply: string): boolean {
-  if (isJobRecommendationExplanationRequest(reply)) return false
-  if (isJobSearchRequest(reply)) return false
+  if (isExplicitNewIntentAfterTerminal(reply)) return false
   return (
     isLikelyPrescreenContinuationReply(reply) ||
     isShortTerminalAck(reply) ||
@@ -702,6 +707,7 @@ async function shouldHandleRecentTerminalSession(args: {
   db: Firestore
   userId: string
   replyText: string
+  terminal?: string | null
   log: (event: string, payload: Record<string, unknown>) => void
 }): Promise<boolean> {
   let user: Record<string, unknown> | undefined
@@ -714,6 +720,7 @@ async function shouldHandleRecentTerminalSession(args: {
       error: err instanceof Error ? err.message : String(err),
     })
   }
+  if (args.terminal === "PASS" && !isExplicitNewIntentAfterTerminal(args.replyText)) return true
   if (isRecentTerminalFollowupReply(args.replyText)) return true
   if (!hasIncompleteOnboardingQuestion(user)) {
     args.log("prescreen.turn.recent_terminal_guard_yielded_to_runtime", {
@@ -767,6 +774,7 @@ export async function runPrescreenTurnIfActive(
       db: args.db,
       userId: args.userId,
       replyText: args.replyText,
+      terminal: lookup.terminal,
       log,
     })
     if (!shouldGuard) return { handled: false }
@@ -789,7 +797,7 @@ export async function runPrescreenTurnIfActive(
 
     let text: string | undefined
     if (!alreadyAcked) {
-      text = recentTerminalSessionText(args.lang ?? "en")
+      text = recentTerminalSessionText(args.lang ?? "en", lookup.terminal)
       try {
         await sendSms({
           to: args.toE164,
@@ -1033,6 +1041,15 @@ export async function runPrescreenTurnIfActive(
       result.action.terminal === "HARD_STOP" ||
       result.action.terminal === "PAUSE")
   ) {
+    await writePrescreenMemoryUpdate({
+      db: args.db,
+      sessionId,
+      userId: args.userId,
+      jobId: result.state.jobId,
+      terminal: result.action.terminal,
+      occurredAt: result.state.updatedAt ?? new Date().toISOString(),
+      log,
+    })
     await writePrescreenEvaluationAttempt({
       db: args.db,
       state: result.state,
@@ -1062,7 +1079,12 @@ function userExitSessionText(lang: "zh" | "en"): string {
     : "Got it — I paused this role screen. If you want to continue later, reopen it from the job page; I will keep what you have already shared on your profile."
 }
 
-function recentTerminalSessionText(lang: "zh" | "en"): string {
+function recentTerminalSessionText(lang: "zh" | "en", terminal?: string | null): string {
+  if (terminal === "PASS") {
+    return lang === "zh"
+      ? "这次岗位 screen 已经完成。我们会把你的回答发给 hiring manager；如果他们想继续推进，我们会再联系你。"
+      : "You're done for this role screen. We'll send your answers to the hiring manager and reach out if they want to move forward."
+  }
   return lang === "zh"
     ? "收到。这个岗位 screen 已经暂停了；我不会把这条新消息混进旧 screen。"
     : "Got it. This role screen is already paused, so I will not mix this new message into the old screen."

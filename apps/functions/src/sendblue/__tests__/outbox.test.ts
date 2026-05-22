@@ -153,9 +153,6 @@ function makeSendblueMock(opts: { throwError?: Error; uuid?: string } = {}) {
 }
 
 const ENV_KEYS = [
-  "IMESSAGE_DM_ALLOWLIST",
-  "IMESSAGE_PEERS",
-  "IMESSAGE_PEER",
   "PA_TYPING_INDICATOR",
 ] as const
 
@@ -178,8 +175,6 @@ const USER = { id: "u-1", phoneE164: ALLOWED_PEER }
 beforeEach(() => {
   savedEnv = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]))
   for (const k of ENV_KEYS) delete process.env[k]
-  process.env.IMESSAGE_DM_ALLOWLIST = "1"
-  process.env.IMESSAGE_PEERS = ALLOWED_PEER
   // 2026-05-19 — production default flipped to typing-on. Tests in this
   // suite assert calls = 1 (single send), so explicitly disable typing here
   // and let Test 6 below re-enable it for the dedicated typing assertion.
@@ -193,7 +188,7 @@ afterEach(() => {
 })
 
 describe("paSendblueOutboxHandler", () => {
-  it("Test 1: pending row + allowlisted toE164 → fetch called once → status=sent", async () => {
+  it("Test 1: pending row → fetch called once → status=sent", async () => {
     const baseRow: DocData = {
       status: "pending",
       userId: USER.id,
@@ -281,11 +276,11 @@ describe("paSendblueOutboxHandler", () => {
     assert.match(String(finalDoc.error), /not approved by runtime/)
   })
 
-  it("Test 2: non-allowlisted toE164 → status=failed with allowlist error", async () => {
+  it("Test 2: arbitrary outbound toE164 sends normally", async () => {
     const baseRow: DocData = {
       status: "pending",
       userId: USER.id,
-      toE164: "+15559999999", // not allowlisted
+      toE164: "+15559999999",
       body: "hello",
       idempotencyKey: "out-test-2",
       createdAt: new Date().toISOString(),
@@ -301,13 +296,14 @@ describe("paSendblueOutboxHandler", () => {
       log: () => {},
       appendMessage: async () => {},
       getUser: async () => USER as never,
-      getOrCreateSession: async () => ({ id: "s-1" } as never),
+      getOrCreateSession: async () => ({ id: "s-1", userId: USER.id, externalChatId: "x", channel: "imessage" } as never),
     })
 
-    assert.equal(sb.calls, 0)
+    assert.equal(sb.calls, 1)
+    assert.equal(sb.sendCalls[0]!.to, "+15559999999")
     const finalDoc = outbound.get("doc-2")!
-    assert.equal(finalDoc.status, "failed")
-    assert.match(String(finalDoc.error), /IMESSAGE_DM_ALLOWLIST/)
+    assert.equal(finalDoc.status, "sent")
+    assert.equal(finalDoc.messageHandle, "uuid-mock-1")
   })
 
   it("Test 3: SendblueClientError (4xx) → status=failed with parsed Sendblue error", async () => {

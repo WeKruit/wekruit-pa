@@ -1572,6 +1572,95 @@ function isExplicitJobSearchRequest(text: string | undefined | null): boolean {
   return /\b(?:find|get|show|send|pull|recommend|match|search|look\s+for|help\s+me\s+find)\b[^.!?]{0,90}\b(?:jobs?|roles?|positions?|opportunities|openings|listings|matches|swe|software\s+engineering|software\s+engineer)\b/i.test(normalized)
 }
 
+function isMoreJobSearchFollowupRequest(text: string | undefined | null): boolean {
+  const body = (text ?? "").trim().toLowerCase()
+  if (!body) return false
+  if (/(?:还有|更多|再来|换一批|多发)(?:一些|几个|点)?\s*(?:公司|工作|岗位|机会|职位|内推)/.test(body)) return true
+  return (
+    /\bdo\s+(?:u|you)\s+have\s+more\b/i.test(body) ||
+    /\b(?:got|have|show|send|pull)\s+(?:me\s+)?more\b/i.test(body) ||
+    /\bmore\s+(?:companies|jobs?|roles?|positions?|opportunities|openings|listings|matches)\b/i.test(body) ||
+    /\banother\s+(?:batch|set|round)\b/i.test(body)
+  )
+}
+
+async function hasRecentJobRecommendationContext(store: OrchestratorStore, userId: string): Promise<boolean> {
+  if (!store.db) return false
+  try {
+    const snap = await store.db
+      .collection("pa-user-job-recommendations")
+      .doc(userId)
+      .collection("jobs")
+      .limit(20)
+      .get()
+    if (snap.empty) return false
+    const cutoffMs = Date.now() - 14 * 24 * 60 * 60 * 1000
+    return snap.docs.some((doc) => {
+      const data = doc.data() as Record<string, unknown>
+      const raw = data.lastRecommendedAt ?? data.updatedAt ?? data.createdAt
+      if (typeof raw !== "string") return true
+      const ms = Date.parse(raw)
+      return Number.isFinite(ms) && ms >= cutoffMs
+    })
+  } catch (err) {
+    store.log("pa.runtime.job_search.recent_context_lookup_failed", {
+      userId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    return false
+  }
+}
+
+async function persistJobSearchProfileUpdate(
+  event: InboundEvent,
+  store: OrchestratorStore,
+  turnId: string,
+  update: LifecycleProfileUpdate | null,
+): Promise<boolean> {
+  if (!update) return false
+  const now = store.nowIso()
+  if (typeof update.memoryFact === "string" && update.memoryFact.trim()) {
+    await store.createMemoryFact(event.userId, update.memoryFact).catch((err) => {
+      store.log("pa.runtime.job_search.profile_update_memory_failed", {
+        userId: event.userId,
+        turnId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    })
+  }
+  if (!store.db) return false
+  if (Object.keys(update.tags).length > 0) {
+    await applyPartialUserTags(store.db, event.userId, update.tags, {
+      source: "chat",
+      nowIso: now,
+      log: (name, payload) => store.log(name, payload ?? {}),
+    })
+  }
+  await store.db.collection(PA_COLLECTIONS.users).doc(event.userId).set(
+    {
+      ...(Object.keys(update.statedPreferences).length > 0
+        ? { statedPreferences: { ...update.statedPreferences, updatedAt: now } }
+        : {}),
+      conversationDerivedPreferences: {
+        jobSearchProfileUpdates: {
+          last: {
+            turnId,
+            inboundEventId: event.id,
+            source: "imessage_job_search_reply",
+            summary: update.summary,
+            evidence: update.evidence,
+            updatedAt: now,
+          },
+        },
+        updatedAt: now,
+      },
+      updatedAt: now,
+    },
+    { merge: true },
+  )
+  return true
+}
+
 function requestedJobRecCount(text: string | undefined | null): number | undefined {
   const body = (text ?? "").trim()
   if (!body) return undefined
@@ -2357,16 +2446,26 @@ async function handleCompletedUserJobSearchRequest(
   if (onboardingUser?.onboardingState !== "complete") return false
   if (!store.generateJobRecs) return false
   if (isJobRecommendationExplanationRequest(event.body)) return false
-  if (!isExplicitJobSearchRequest(event.body)) return false
+  const explicitJobSearch = isExplicitJobSearchRequest(event.body)
+  const moreFollowup = isMoreJobSearchFollowupRequest(event.body)
+  const profileUpdate = extractLifecycleProfileUpdate(event.body)
+  const recentRecommendationContext = !explicitJobSearch
+    ? await hasRecentJobRecommendationContext(store, event.userId)
+    : false
+  if (!explicitJobSearch && !(recentRecommendationContext && (moreFollowup || profileUpdate))) return false
 
   const lang: "en" | "zh" = detectLang([event.body]) === "zh" ? "zh" : "en"
   const requestedCount = requestedJobRecCount(event.body)
   const roleFocus = detectLifecycleRoleFocus(event.body)
+  const profileUpdated = await persistJobSearchProfileUpdate(event, store, turnId, profileUpdate)
   store.log("pa.runtime.job_search.direct_request", {
     userId: event.userId,
     turnId,
     lang,
     roleFocus,
+    explicitJobSearch,
+    moreFollowup,
+    profileUpdated,
   })
   await sendFindMatchPreCallBubble(store, event, turnId, lang)
   const recs = await store.generateJobRecs(event.userId, lang, {
@@ -2402,6 +2501,8 @@ async function handleCompletedUserJobSearchRequest(
     directIntent: "job_search",
     directIntentResult: recs && recs.recCount > 0 ? "sent_recs" : "no_recs",
     directIntentRecCount: recs?.recCount ?? 0,
+    directIntentProfileUpdated: profileUpdated,
+    directIntentFollowup: !explicitJobSearch,
   })
   await store.markEventSucceeded(event.id)
   return true

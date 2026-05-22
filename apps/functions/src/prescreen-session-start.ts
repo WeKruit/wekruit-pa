@@ -50,6 +50,13 @@ export interface RunPreScreenArgs {
    * consumed at the trigger level — do NOT re-consume here.
    */
   sourceRequestedUserId?: string
+  /**
+   * The candidate already supplied the first prescreen answer in the initial
+   * SMS trigger message. Start the session without re-sending Q1; the caller
+   * must route that answer through runPrescreenTurnIfActive immediately after
+   * this returns ok=true.
+   */
+  suppressFirstQuestion?: boolean
   markStarted?: (args: {
     db: Firestore
     sessionId: string
@@ -284,29 +291,40 @@ export async function runPreScreenForUser(args: RunPreScreenArgs): Promise<RunPr
     }
   }
 
-  try {
-    await sendSms({
-      to: args.toE164,
-      content: opener,
-      userId: args.userId,
-      db: args.db,
-      runtimeSource: "pa_prescreen_runtime",
-      idempotencyKey: `prescreen_start:${sessionId}:opener`,
-    })
-  } catch (err) {
-    const message = errorMessage(err)
-    await markSessionStartSendFailed({
-      db: args.db,
-      sessionId,
-      userId: args.userId,
-      occurredAt: nowIso,
-      error: message,
-    })
-    log("prescreen.send_failed", {
-      sessionId,
-      error: message,
-    })
-    return { ok: false, reason: "send_failed", sessionId }
+  if (args.suppressFirstQuestion) {
+    await sessRef.set(
+      {
+        firstQuestionSent: false,
+        firstQuestionSuppressedByInitialReply: true,
+        updatedAt: nowIso,
+      },
+      { merge: true },
+    )
+  } else {
+    try {
+      await sendSms({
+        to: args.toE164,
+        content: opener,
+        userId: args.userId,
+        db: args.db,
+        runtimeSource: "pa_prescreen_runtime",
+        idempotencyKey: `prescreen_start:${sessionId}:opener`,
+      })
+    } catch (err) {
+      const message = errorMessage(err)
+      await markSessionStartSendFailed({
+        db: args.db,
+        sessionId,
+        userId: args.userId,
+        occurredAt: nowIso,
+        error: message,
+      })
+      log("prescreen.send_failed", {
+        sessionId,
+        error: message,
+      })
+      return { ok: false, reason: "send_failed", sessionId }
+    }
   }
 
   try {
@@ -328,12 +346,13 @@ export async function runPreScreenForUser(args: RunPreScreenArgs): Promise<RunPr
     sessionId,
     jobId: args.jobId,
     userId: args.userId,
+    firstQuestionSent: !args.suppressFirstQuestion,
   })
   return {
     ok: true,
     reason: "started",
     sessionId,
-    firstQuestionSent: true,
+    firstQuestionSent: !args.suppressFirstQuestion,
   }
 }
 

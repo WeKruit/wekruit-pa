@@ -99,8 +99,6 @@ describe("Stream H9 TD1 — expiresAtTs Timestamp writes", () => {
   })
 
   it("outbox handler writes Timestamp-typed expiresAtTs on the SENT row", async () => {
-    process.env.IMESSAGE_DM_ALLOWLIST = "1"
-    process.env.IMESSAGE_PEERS = ALLOWED
     const baseRow: DocData = {
       status: "pending",
       userId: USER.id,
@@ -148,7 +146,5 @@ describe("Stream H9 TD1 — expiresAtTs Timestamp writes", () => {
     )
     // Existing updatedAt ISO must STILL be present (the brief: do NOT remove it).
     assert.equal(typeof finalDoc.updatedAt, "string", "updatedAt ISO string preserved for app-level queries")
-    delete process.env.IMESSAGE_DM_ALLOWLIST
-    delete process.env.IMESSAGE_PEERS
   })
 })

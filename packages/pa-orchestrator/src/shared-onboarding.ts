@@ -123,6 +123,8 @@ export const HELLO_WEKRUIT_OPENER_PREFIX = "Hello, WeKruit!"
 
 const HELLO_WEKRUIT_OPENER_RE =
   /^hello,?\s*wekruit!?\s*([a-z0-9][a-z0-9_-]{7,127})?\s*$/i
+const WEKRUIT_JOB_OPENER_RE =
+  /(?:^|\s)wekruit_([a-z0-9][a-z0-9-]{1,160})_([a-z0-9][a-z0-9_-]{7,127})_job(?:\s|$)/i
 
 /** Build the sms: deep-link body candidates send to bind phone → pa-users/{candidateId}. */
 export function buildHelloWekruitOpenerBody(candidateId: string): string {
@@ -134,6 +136,8 @@ export function buildHelloWekruitOpenerBody(candidateId: string): string {
 /** Parse inbound opener; returns candidateId when the suffix is present. */
 export function parseHelloWekruitOpener(value: string): { candidateId: string } | null {
   const trimmed = value.trim()
+  const jobMatch = trimmed.match(WEKRUIT_JOB_OPENER_RE)
+  if (jobMatch?.[2]) return { candidateId: jobMatch[2].trim() }
   const match = trimmed.match(HELLO_WEKRUIT_OPENER_RE)
   if (!match) return null
   const candidateId = match[1]?.trim()

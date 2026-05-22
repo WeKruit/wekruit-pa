@@ -295,7 +295,7 @@ async function defaultSendSms(args: {
   })
 }
 
-async function writePrescreenMemoryUpdate(args: {
+export async function writePrescreenMemoryUpdate(args: {
   db: Firestore
   sessionId: string
   userId: string

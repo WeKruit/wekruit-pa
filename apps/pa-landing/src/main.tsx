@@ -12,6 +12,7 @@ import { CandidateMe, CandidateProfile } from "./pages/CandidatePortal.js"
 import Market from "./pages/Market.js"
 import PublicJob from "./pages/PublicJob.js"
 import PublicJobCv from "./pages/PublicJobCv.js"
+import CompanyProfile from "./pages/CompanyProfile.js"
 import OpenJobs from "./pages/OpenJobs.js"
 import Onboarding from "./pages/Onboarding.js"
 import EmployerSignup from "./pages/EmployerSignup.js"
@@ -67,6 +68,7 @@ const fullRoutes = (
     <Route path="/me/profile" element={<CandidateProfile />} />
     <Route path="/market" element={<Market />} />
     <Route path="/jobs" element={<Market />} />
+    <Route path="/companies/:companyId" element={<CompanyProfile />} />
     <Route path="/j/:jobId" element={<PublicJob />} />
     <Route path="/j/:jobId/cv" element={<PublicJobCv />} />
     <Route path="/open" element={<OpenJobs />} />

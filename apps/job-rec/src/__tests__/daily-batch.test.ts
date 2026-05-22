@@ -226,6 +226,50 @@ test("runDailyJobRecBatch: delivers when flag ON + jobs available + writes lastJ
   assert.equal(jobRecRuntimeWrites(mfs).length, 1)
 })
 
+test("runDailyJobRecBatch: active subscribe row can use canonical pa-users tags", async () => {
+  const mfs = new MockFirestore()
+  await seedUser(mfs, "u_tags", "+15551113333", {
+    tags: {
+      industrySector: ["tech_software"],
+      targetLocations: ["remote_anywhere"],
+      targetRoleFunction: ["software_engineering"],
+    },
+  })
+  await mfs.collection("pa-job-profiles").doc("u_tags").set({
+    userId: "u_tags",
+    status: "active",
+    createdAt: "2026-04-30T00:00:00Z",
+    updatedAt: "2026-04-30T00:00:00Z",
+  })
+  await mfs.collection("matching-jobs").doc("j_tags").set({
+    status: "active",
+    industryKey: "tech",
+    companyName: "TagCo",
+    roleTitle: "Software Engineer",
+    salaryMax: 180000,
+    locationRaw: "Remote",
+    primaryUrl: "https://j/tags",
+    atsApplyUrl: "https://greenhouse.io/tagco/jobs/1",
+    industry: "tech",
+    sponsorship: false,
+    firstSeenAt: "2026-04-30",
+    lastSeenAt: "2026-04-30",
+    requiredSkills: ["TypeScript", "React"],
+  })
+
+  const out = await runDailyJobRecBatch({
+    db: asFirestore(mfs),
+    getFlag: async () => true,
+    todayYmd: () => "20260430",
+    jobsPerUser: 1,
+  })
+
+  assert.equal(out.delivered, 1)
+  assert.equal(out.errors, 0)
+  assert.equal(jobRecRuntimeWrites(mfs).length, 1)
+  assert.match(firstJobRecSourceNotes(mfs), /TagCo/)
+})
+
 test("runDailyJobRecBatch: skips candidate-visible send when jobs lack concrete requirements", async () => {
   const mfs = new MockFirestore()
   await seedUser(mfs, "u1", "+15551112222")

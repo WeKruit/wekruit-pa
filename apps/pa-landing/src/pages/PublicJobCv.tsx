@@ -4,11 +4,12 @@
  * Requires Firebase auth — redirects unsigned users to /login.
  */
 import { useEffect, useMemo, useState } from "react"
-import { Link, Navigate, useParams } from "react-router-dom"
+import { Link, Navigate, useNavigate, useParams } from "react-router-dom"
 import { onAuthStateChanged, type User } from "firebase/auth"
 import { GLOBAL_UID_KEY, getBrowserUid, readStoredValue, rememberStoredValue } from "../lib/browser-identity"
 import { auth } from "../lib/firebase.js"
 import { readStoredCandidateId } from "../lib/candidate-verify.js"
+import { canonicalPublicJobId } from "../lib/public-job-slugs.js"
 
 const CV_INGEST_URL = import.meta.env.VITE_CV_INGEST_URL ?? ""
 const HAS_CV_KEY = "wkr_has_cv"
@@ -44,8 +45,10 @@ async function fileToBase64(file: File): Promise<string> {
 
 export default function PublicJobCv() {
   const { jobId } = useParams<{ jobId: string }>()
-  const requestedUserId = useMemo(() => (jobId ? getOrCreateRequestedUserId(jobId) : ""), [jobId])
-  const nextPath = useMemo(() => (jobId ? `/j/${jobId}/cv` : "/"), [jobId])
+  const navigate = useNavigate()
+  const publicJobId = useMemo(() => (jobId ? canonicalPublicJobId(jobId) : ""), [jobId])
+  const requestedUserId = useMemo(() => (publicJobId ? getOrCreateRequestedUserId(publicJobId) : ""), [publicJobId])
+  const nextPath = useMemo(() => (publicJobId ? `/j/${publicJobId}/cv` : "/"), [publicJobId])
   const [user, setUser] = useState<User | null | undefined>(undefined)
   const [file, setFile] = useState<File | null>(null)
   const [status, setStatus] = useState<"idle" | "uploading" | "ok" | "err">("idle")
@@ -55,6 +58,12 @@ export default function PublicJobCv() {
     const unsubscribe = onAuthStateChanged(auth(), setUser)
     return unsubscribe
   }, [])
+
+  useEffect(() => {
+    if (jobId && publicJobId && jobId !== publicJobId) {
+      navigate(`/j/${publicJobId}/cv`, { replace: true })
+    }
+  }, [jobId, navigate, publicJobId])
 
   useEffect(() => {
     setStatus("idle")
@@ -75,7 +84,7 @@ export default function PublicJobCv() {
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!file || !jobId) return
+    if (!file || !publicJobId) return
     if (file.size > 5 * 1024 * 1024) {
       setStatus("err")
       setErrMsg("File must be under 5 MB.")
@@ -107,7 +116,7 @@ export default function PublicJobCv() {
           browserUid: requestedUserId,
           resumeBase64: b64,
           resumeName: file.name,
-          jobIdContext: jobId,
+          jobIdContext: publicJobId,
           source: "public_job_page",
         }),
       })
@@ -139,7 +148,7 @@ export default function PublicJobCv() {
       </p>
       <p style={{ color: "#5f665b", fontSize: 14 }}>
         Signed in as {user.email ?? "your account"}.{" "}
-        <Link to={`/j/${jobId}`}>Back to job</Link>
+        <Link to={`/j/${publicJobId}`}>Back to job</Link>
       </p>
       <form onSubmit={onSubmit} style={{ marginTop: "1.5rem" }}>
         <input

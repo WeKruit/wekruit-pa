@@ -10,20 +10,19 @@
  *   1. Claim transactionally (status pending → sending) — prevents
  *      double-send across CF retries
  *   2. Runtime approval gate (blocks direct pa-outbound producers)
- *   3. Allowlist gate keyed on toE164 E.164
- *   4. Append transcript (skip when idempotencyKey starts with
+ *   3. Append transcript (skip when idempotencyKey starts with
  *      `out-imessage-in-` OR `out-sendblue-` per D-02)
- *   5. Optional typing indicator (PA_TYPING_INDICATOR=1, D-06)
- *   6. POST Sendblue REST → on 4xx → status=failed; on 5xx → status=pending
+ *   4. Optional typing indicator (PA_TYPING_INDICATOR=1, D-06)
+ *   5. POST Sendblue REST → on 4xx → status=failed; on 5xx → status=pending
  *      with attemptCount bumped (CF re-fires via reclaim or next mutation)
- *   7. On 2xx → status=sent + record uuid/messageHandle for delivery audit
+ *   6. On 2xx → status=sent + record uuid/messageHandle for delivery audit
  */
 
 import { PA_COLLECTIONS } from "@pa/core-types"
 import { isApprovedRuntimeSource } from "@pa/pa-broker"
 import type { Firestore } from "firebase-admin/firestore"
 
-import { useDmAllowlist, getPeerAllowlist, isSamePeer, normalizePeer } from "./allowlist.js"
+import { normalizePeer } from "./peer.js"
 import { SendblueClientError, SendblueServerError, sendImessage as defaultSendImessage } from "./sendblue-client.js"
 import { sendTypingIndicator as defaultSendTypingIndicator, computeTypingDwellMs } from "./typing-indicator.js"
 import type { SendblueSendResponse } from "./types.js"
@@ -318,33 +317,6 @@ export async function paSendblueOutboxHandler(
       terminalStatus: "failed",
     })
     return
-  }
-
-  // ---- 3. Allowlist gate ------------------------------------------------
-  if (useDmAllowlist()) {
-    const peers = getPeerAllowlist()
-    if (peers.length === 0 || !peers.some((p) => isSamePeer(toPeer, p))) {
-      log("[sendblue][outbox] blocked by IMESSAGE_DM_ALLOWLIST", { docId, toPeer, peers: peers.length })
-      await ref.set(
-        {
-          status: "failed",
-          error: "blocked by IMESSAGE_DM_ALLOWLIST",
-          updatedAt: now().toISOString(),
-          expiresAtTs: outboundExpiresAtTs(now()),
-        },
-        { merge: true }
-      )
-      logOutboundFailure(log, {
-        docId,
-        userId,
-        idempotencyKey: typeof data.idempotencyKey === "string" ? String(data.idempotencyKey) : undefined,
-        lastError: "blocked by IMESSAGE_DM_ALLOWLIST",
-        attempts: Number((data as { attemptCount?: unknown }).attemptCount ?? 0),
-        body,
-        terminalStatus: "failed",
-      })
-      return
-    }
   }
 
   if (!userId || !toPeer || !body) {

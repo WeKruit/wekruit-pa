@@ -80,6 +80,10 @@ export function stickSourceFromLoginNext(raw: string | null | undefined): void {
   if (!raw) return
   const q = raw.indexOf("?")
   const pathname = q >= 0 ? raw.slice(0, q) : raw
+  if (/^\/j\/[^/]+(?:\/cv)?$/.test(pathname)) {
+    writeCookie("candidate")
+    return
+  }
   if (pathname !== "/onboarding") return
   const params = new URLSearchParams(q >= 0 ? raw.slice(q + 1) : "")
   const fromQuery = params.get("source")

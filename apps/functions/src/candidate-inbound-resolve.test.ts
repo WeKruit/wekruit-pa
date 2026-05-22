@@ -104,6 +104,23 @@ test("resolveInboundUserId binds phone from Hello, WeKruit! opener suffix", asyn
   assert.equal(userSnap.data()?.phoneE164, "+14155550182")
 })
 
+test("resolveInboundUserId binds phone from job interview opener token", async () => {
+  const fakeDb = new FakeFirestore()
+  const candidateId = "cand_job_bind_01"
+  fakeDb.seed(PA_COLLECTIONS.users, candidateId, { id: candidateId, source: "candidate" })
+  const db = fakeDb as unknown as Firestore
+
+  const resolved = await resolveInboundUserId(
+    db,
+    "+14155550183",
+    `WeKruit_photon-macos-devops_${candidateId}_Job`,
+  )
+  assert.equal(resolved, candidateId)
+
+  const userSnap = await db.collection(PA_COLLECTIONS.users).doc(candidateId).get()
+  assert.equal(userSnap.data()?.phoneE164, "+14155550183")
+})
+
 test("DEV_BYPASS_PHONE (+14243201960): Hello, WeKruit! opener replaces stale phone ownership", async () => {
   // Adam directive 2026-05-21 — the dev/test phone (+14243201960) is the
   // ONLY phone for which the opener may release a prior owner and reassign

@@ -12,7 +12,7 @@ export type RegisterInput = {
   email: string
   linkedin?: string
   personalWebsite?: string
-  lastCompany: string
+  lastCompany?: string
   jobTitle?: string
   location?: string
   function?: "Design" | "Engineering" | "Product" | "GTM" | "Other"

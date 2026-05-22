@@ -4,27 +4,32 @@
 // resolveSource() and frozen onto the pa-users doc at registration.
 
 import { useMemo, useRef, useState, useEffect } from "react"
-import { Link, Navigate, useNavigate } from "react-router-dom"
+import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom"
 import { onAuthStateChanged, signOut, type User } from "firebase/auth"
 import "../styles/wekruit-tokens.css"
-import { deriveFunction, registerCandidate } from "../lib/onboarding-api"
+import { deriveFunction, registerCandidate, type RegisterInput } from "../lib/onboarding-api"
 import { uploadResume } from "../lib/onboarding-cv"
 import {
   getBrowserUid,
   isCandidateHost,
+  isPublicJobPath,
   layoffSignupLoginPath,
   onboardingDestination,
+  parseLoginNextPath,
+  readRememberedReturnJobPath,
   redirectToCandidatePortal,
   rememberCandidateProfileSession,
+  rememberOnboardingIntentForPath,
 } from "../lib/browser-identity"
-import { resolveSource, SOURCE_RESOLVER_MARKER, type SignupSource } from "../lib/source"
+import { resolveSource, SOURCE_RESOLVER_MARKER, stickSourceFromLoginNext, type SignupSource } from "../lib/source"
 import { auth } from "../lib/firebase.js"
 import { isLinkedInSignIn } from "../lib/candidate-auth-provider.js"
 import { CandidateVerifyError, readStoredCandidateId, verifyCandidateMagicLinkSession } from "../lib/candidate-verify.js"
-import { buildHelloWekruitOpenerBody } from "../lib/hello-wekruit.js"
+import { buildHelloWekruitOpenerBody, buildWekruitJobOpenerBody } from "../lib/hello-wekruit.js"
 import { canOpenImessageDeepLink } from "../lib/imessage-platform.js"
 import { CompanyCombobox } from "../components/CompanyCombobox.js"
 import { CANDIDATE_STYLES, IMessageThread } from "./CandidateLogin.js"
+import { canonicalPublicJobId } from "../lib/public-job-slugs.js"
 
 // Keep the marker referenced so tree-shaking can't drop it from the
 // bundle. The acceptance grep relies on this string being present.
@@ -63,7 +68,39 @@ type Profile = {
 
 export default function Onboarding() {
   const navigate = useNavigate()
-  const source: SignupSource = useMemo(() => resolveSource(), [])
+  const [searchParams] = useSearchParams()
+  const returnPath = useMemo(() => {
+    const raw = searchParams.get("next") ?? readRememberedReturnJobPath()
+    if (!raw) return null
+    const dest = parseLoginNextPath(raw)
+    return isPublicJobPath(dest.pathname) ? dest.to : null
+  }, [searchParams])
+  const source: SignupSource = useMemo(() => {
+    if (returnPath) stickSourceFromLoginNext(returnPath)
+    return resolveSource()
+  }, [returnPath])
+  const loginNextPath = useMemo(() => {
+    const base = onboardingDestination(source)
+    if (!returnPath) return base
+    return `${base}${base.includes("?") ? "&" : "?"}next=${encodeURIComponent(returnPath)}`
+  }, [returnPath, source])
+  const returnJobId = useMemo(() => {
+    if (!returnPath) return null
+    const match = returnPath.match(/^\/j\/([^/?#]+)(?:\/cv)?$/)
+    return match?.[1] ? canonicalPublicJobId(match[1]) : null
+  }, [returnPath])
+
+  useEffect(() => {
+    const rawNext = searchParams.get("next")
+    if (!returnPath || rawNext === returnPath) return
+    const nextParams = new URLSearchParams(searchParams)
+    nextParams.set("next", returnPath)
+    navigate(`/onboarding?${nextParams.toString()}`, { replace: true })
+  }, [navigate, returnPath, searchParams])
+
+  useEffect(() => {
+    rememberOnboardingIntentForPath(returnPath ?? onboardingDestination(source))
+  }, [returnPath, source])
   const [authUser, setAuthUser] = useState<User | null | undefined>(undefined)
   const [authReady, setAuthReady] = useState(false)
   const [verifyError, setVerifyError] = useState<string | null>(null)
@@ -105,6 +142,10 @@ export default function Onboarding() {
             senderNumber: verified.senderNumber ?? p.senderNumber,
           }))
           if (verified.portalReady) {
+            if (returnPath) {
+              navigate(returnPath, { replace: true })
+              return
+            }
             if (isCandidateHost()) {
               navigate("/me", { replace: true })
             } else {
@@ -113,6 +154,10 @@ export default function Onboarding() {
             return
           }
           if (verified.intakeComplete) {
+            if (returnPath) {
+              navigate(returnPath, { replace: true })
+              return
+            }
             setStage("done")
           }
           setIntakeChecked(true)
@@ -128,15 +173,14 @@ export default function Onboarding() {
           } catch {
             // Login owns the next auth attempt.
           }
-          const loginNext = onboardingDestination(source)
-          navigate(`/login?next=${encodeURIComponent(loginNext)}`, { replace: true })
+          navigate(`/login?next=${encodeURIComponent(loginNextPath)}`, { replace: true })
         }
       }
     })()
     return () => {
       cancelled = true
     }
-  }, [authUser, navigate, source])
+  }, [authUser, loginNextPath, navigate, returnPath, source])
 
   if (!authReady || authUser === undefined || (authUser && !intakeChecked)) {
     return (
@@ -152,8 +196,7 @@ export default function Onboarding() {
   }
 
   if (!authUser) {
-    const loginNext = onboardingDestination(source)
-    return <Navigate to={`/login?next=${encodeURIComponent(loginNext)}`} replace />
+    return <Navigate to={`/login?next=${encodeURIComponent(loginNextPath)}`} replace />
   }
 
   async function submitRegistration(formData: Profile, mode: "auto" | "reuse" | "refresh") {
@@ -161,13 +204,13 @@ export default function Onboarding() {
     setBusyText("Creating your WeKruit profile…")
     try {
       const isLayoff = source === "WeKruit_Laid_Off"
-      const res = await registerCandidate({
+      const lastCompany = formData.lastCompany?.trim()
+      const input: RegisterInput = {
         firstName: formData.firstName!,
         lastName: formData.lastName!,
         email: formData.email!,
         linkedin: formData.linkedin?.trim() || undefined,
         personalWebsite: formData.personalWebsite?.trim() || undefined,
-        lastCompany: formData.lastCompany!,
         ...(isLayoff
           ? {
               jobTitle: formData.jobTitle?.trim() || undefined,
@@ -180,7 +223,9 @@ export default function Onboarding() {
         candidateId: readStoredCandidateId() ?? undefined,
         mode,
         source,
-      })
+      }
+      if (lastCompany) input.lastCompany = lastCompany
+      const res = await registerCandidate(input)
 
       if ("duplicate" in res && res.duplicate) {
         rememberCandidateProfileSession({
@@ -203,10 +248,13 @@ export default function Onboarding() {
       if (formData.resume?.file) {
         await uploadResumeForCandidate(res.candidateId, formData, sourceToUploadTag(source))
       }
-      // 2026-05-19 — no server-side SMS push; the Done view shows an sms:
-      // deep link button so the candidate sends "Hello, WeKruit!" themselves
-      // (Adam directive: explicit user-initiated open message).
+      // No server-side SMS push here: the candidate opens iMessage and sends
+      // the prefilled opener themselves, which also binds their phone.
       setProfile((p) => ({ ...p, ...withoutResumeFile(formData), ...res }))
+      if (returnPath) {
+        setStage("done")
+        return
+      }
       setStage("done")
     } catch (err) {
       setSubmitError(messageFromError(err))
@@ -290,6 +338,7 @@ export default function Onboarding() {
               source={source}
               authUser={authUser}
               linkedinLinkedViaOauth={linkedinLinkedViaOauth}
+              isJobInterview={Boolean(returnJobId)}
             />
           )}
           {stage === "dup-prompt" && dupExisting && (
@@ -299,6 +348,7 @@ export default function Onboarding() {
             <Done
               profile={profile}
               showProfileLink={portalReady}
+              returnJobId={returnJobId}
               onGo={(r) => {
                 if (r === "dashboard") {
                   if (!portalReady) return
@@ -359,17 +409,9 @@ function StepNotice({ tone, text }: { tone: "busy" | "error"; text: string }) {
         gap: 10,
       }}
     >
-      {!isError && <Dot />}
+      {!isError && <span className="wk-inline-spinner wk-inline-spinner--ink" aria-hidden />}
       <span>{text}</span>
     </div>
-  )
-}
-
-function Dot() {
-  return (
-    <span style={{ position: "relative", display: "inline-flex", width: 8, height: 8 }}>
-      <span style={{ width: 8, height: 8, borderRadius: 999, background: "var(--ink)", display: "inline-block" }} />
-    </span>
   )
 }
 
@@ -587,12 +629,14 @@ function FormIntake({
   source,
   authUser,
   linkedinLinkedViaOauth,
+  isJobInterview,
 }: {
   onDone: (p: Profile) => void | Promise<void>
   isBusy: boolean
   source: SignupSource
   authUser: User
   linkedinLinkedViaOauth: boolean
+  isJobInterview: boolean
 }) {
   const isLayoff = source === "WeKruit_Laid_Off"
   const skipLinkedinField = !isLayoff && linkedinLinkedViaOauth
@@ -610,14 +654,19 @@ function FormIntake({
     resume: null,
   })
   const [err, setErr] = useState<Record<string, string>>({})
+  const [formError, setFormError] = useState<string | null>(null)
+  const [localBusy, setLocalBusy] = useState(false)
   const set = <K extends keyof Profile>(k: K, val: Profile[K]) => setV((s) => ({ ...s, [k]: val }))
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const busy = isBusy || localBusy
 
   const submit = async () => {
+    if (busy) return
     const e: Record<string, string> = {}
-    ;(["firstName", "lastName", "email", "lastCompany"] as const).forEach((k) => {
+    ;(["firstName", "lastName", "email"] as const).forEach((k) => {
       if (!v[k]) e[k] = "Required"
     })
+    if (isLayoff && !v.lastCompany?.trim()) e.lastCompany = "Required"
     if (!v.consent) e.consent = "Required"
     const hasResume = Boolean(v.resume)
     const hasLinkedin = skipLinkedinField || Boolean(v.linkedin?.trim())
@@ -630,11 +679,23 @@ function FormIntake({
     if (v.email && !v.email.includes("@")) e.email = "Looks off"
     setErr(e)
     if (Object.keys(e).length === 0) {
-      await onDone({ ...v, function: deriveFunction(v.jobTitle || "") })
+      setFormError(null)
+      setLocalBusy(true)
+      try {
+        await onDone({
+          ...v,
+          lastCompany: v.lastCompany?.trim() || undefined,
+          function: deriveFunction(v.jobTitle || ""),
+        })
+      } finally {
+        setLocalBusy(false)
+      }
+    } else {
+      setFormError("Finish the highlighted fields before continuing.")
     }
   }
 
-  const requiredKeys = ["firstName", "lastName", "email", "lastCompany"] as const
+  const requiredKeys = ["firstName", "lastName", "email"] as const
   const profilePathSatisfied =
     Boolean(v.resume) ||
     Boolean(v.personalWebsite?.trim()) ||
@@ -642,9 +703,10 @@ function FormIntake({
     skipLinkedinField
   const filled =
     requiredKeys.filter((k) => v[k]).length +
+    (isLayoff && v.lastCompany?.trim() ? 1 : 0) +
     (v.consent ? 1 : 0) +
     (profilePathSatisfied ? 1 : 0)
-  const total = requiredKeys.length + 2
+  const total = requiredKeys.length + (isLayoff ? 1 : 0) + 2
 
   const onResumePick: React.ChangeEventHandler<HTMLInputElement> = (e) => {
     const file = e.target.files?.[0]
@@ -654,7 +716,7 @@ function FormIntake({
   const consentText =
     source === "WeKruit_Laid_Off"
       ? "I confirm I was laid off in the last 6 months and I'm okay with verified WeKruit employers seeing my name, last company, and pitch. I can hide my resume and remove my profile anytime."
-      : "I'm okay with verified WeKruit employers seeing my name, last company, and pitch. I can hide my resume and remove my profile anytime."
+      : "I'm okay with verified WeKruit employers seeing my name, profile details, and pitch. I can hide my resume and remove my profile anytime."
 
   return (
     <div className="card card--feature" style={{ background: "var(--cream-3)", borderRadius: "var(--r-lg)" }}>
@@ -665,9 +727,13 @@ function FormIntake({
       <p style={{ marginTop: 4, marginBottom: 18, fontSize: 14, color: "var(--ink-2)" }}>
         {isLayoff
           ? "Tell us the basics. After you submit, you'll open iMessage to say hello to Claire — that's when we link your phone."
-          : skipLinkedinField
-            ? "Tell us who you are and share a resume or site (LinkedIn is already linked from sign-in). Next you'll open iMessage to talk to Claire."
-            : "Tell us who you are and share a resume, LinkedIn, or site. Next you'll open iMessage to talk to Claire."}
+          : isJobInterview
+            ? skipLinkedinField
+              ? "Tell us who you are and share a resume or site (LinkedIn is already linked from sign-in). Next you'll open iMessage to interview with Claire for this role."
+              : "Tell us who you are and share a resume, LinkedIn, or site. Next you'll open iMessage to interview with Claire for this role."
+            : skipLinkedinField
+              ? "Tell us who you are and share a resume or site (LinkedIn is already linked from sign-in). Next you'll open iMessage to talk to Claire."
+              : "Tell us who you are and share a resume, LinkedIn, or site. Next you'll open iMessage to talk to Claire."}
       </p>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
@@ -680,7 +746,8 @@ function FormIntake({
           onChange={(x) => set("lastCompany", x)}
           err={err.lastCompany}
           placeholder="Meta, Stripe, or your employer"
-          hint="Pick from suggestions or type any company name."
+          hint={isLayoff ? "Pick from suggestions or type any company name." : "Optional if your resume already shows it."}
+          optional={!isLayoff}
         />
         {isLayoff && (
           <>
@@ -819,9 +886,23 @@ function FormIntake({
       </label>
 
       <div style={{ marginTop: 24, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-        <span className="caption" style={{ color: "var(--ink-3)" }}>Next: Talk to Claire in iMessage.</span>
-        <button className="btn btn--primary btn--lg" onClick={submit} disabled={isBusy}>
-          {isBusy ? "Saving…" : "Save & continue →"}
+        <span className="caption" style={{ color: "var(--ink-3)" }}>
+          Next: {isJobInterview ? "Interview with Claire in iMessage." : "Talk to Claire in iMessage."}
+        </span>
+        {formError && (
+          <span role="alert" style={{ width: "100%", color: "var(--danger)", fontSize: 13 }}>
+            {formError}
+          </span>
+        )}
+        <button className="btn btn--primary btn--lg" onClick={submit} disabled={busy}>
+          {busy ? (
+            <>
+              <span className="wk-inline-spinner" aria-hidden />
+              Creating profile…
+            </>
+          ) : (
+            "Save & continue →"
+          )}
         </button>
       </div>
     </div>
@@ -895,14 +976,21 @@ function UploadIcon() {
 function Done({
   profile,
   showProfileLink,
+  returnJobId,
   onGo,
 }: {
   profile: Profile
   showProfileLink: boolean
+  returnJobId: string | null
   onGo: (r: "dashboard" | "landing") => void
 }) {
   const number = profile.listPosition
-  const openerBody = profile.candidateId ? buildHelloWekruitOpenerBody(profile.candidateId) : buildHelloWekruitOpenerBody("")
+  const openerBody = profile.candidateId && returnJobId
+    ? buildWekruitJobOpenerBody(returnJobId, profile.candidateId)
+    : profile.candidateId
+      ? buildHelloWekruitOpenerBody(profile.candidateId)
+      : buildHelloWekruitOpenerBody("")
+  const isJobInterview = Boolean(returnJobId)
   const imessageAvailable = canOpenImessageDeepLink()
   const smsHref =
     imessageAvailable && profile.senderNumber
@@ -934,23 +1022,27 @@ function Done({
             margin: 0,
           }}
         >
-          Open Claire in iMessage.
+          {isJobInterview ? "Now interview with Claire." : "Open Claire in iMessage."}
         </h1>
         <p className="lead claire-handoff__copy">
           {imessageAvailable ? (
             <>
-              Your resume and profile are saved. Open iMessage and send the pre-filled message exactly as shown.
+              {isJobInterview
+                ? "Your profile is ready for this role. Open iMessage and send the pre-filled code exactly as shown; Claire will reply there with the first interview question."
+                : "Your resume and profile are saved. Open iMessage and send the pre-filled code exactly as shown."}
             </>
           ) : (
             <>
-              iMessage is only available on iPhone, iPad, and Mac. Open this page on an Apple device to start your chat with Claire.
+              iMessage deep links work on iPhone, iPad, and Mac. Open this page on an Apple device to start your chat with Claire.
             </>
           )}
         </p>
 
         <div className="claire-handoff__actions">
           {smsHref ? (
-            <a className="btn btn--primary btn--lg" href={smsHref}>Open iMessage</a>
+            <a className="btn btn--primary btn--lg" href={smsHref}>
+              {isJobInterview ? "Send code in iMessage" : "Open Claire in iMessage"}
+            </a>
           ) : !imessageAvailable ? (
             <p className="caption claire-handoff__fallback">
               Android and Windows can't open iMessage deep links. Use Safari on your iPhone or Mac, or email hello@wekruit.com for help.
@@ -960,14 +1052,17 @@ function Done({
               We hit a hiccup assigning your Claire line. Email hello@wekruit.com and we&apos;ll get you started.
             </span>
           )}
-          {showProfileLink ? (
+          {!isJobInterview && showProfileLink ? (
             <button className="btn btn--secondary" onClick={() => onGo("dashboard")}>Profile</button>
           ) : null}
-          <button className="btn btn--ghost" onClick={() => onGo("landing")}>Home</button>
+          {!isJobInterview ? (
+            <button className="btn btn--ghost" onClick={() => onGo("landing")}>Home</button>
+          ) : null}
         </div>
         {smsHref ? (
           <p className="claire-handoff__note">
-            Don&apos;t edit the text or delete the code. Claire uses it to connect this chat to your WeKruit profile.
+            Don&apos;t edit the text or delete the code. Claire uses it to connect this phone to your WeKruit profile
+            {isJobInterview ? " and this role." : "."}
           </p>
         ) : null}
       </section>
@@ -979,8 +1074,8 @@ function Done({
             header="WeKruit Claire"
             messages={[
               { from: "user", text: openerBody },
-              { from: "claire", text: "Got it — I found your profile." },
-              { from: "claire", text: "First question: what matters most in your next company: career growth, compensation, stability, mission, learning, or something else?" },
+              { from: "claire", text: isJobInterview ? "Got it — I found your profile and this role." : "Got it — I found your profile." },
+              { from: "claire", text: isJobInterview ? "I’ll continue the role interview from here." : "First question: what matters most in your next company: career growth, compensation, stability, mission, learning, or something else?" },
             ]}
           />
         </div>

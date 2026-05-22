@@ -10,14 +10,13 @@
  *      - empty content + media_url → attachment plumb-through (BUG #6 fix)
  *      - normalize → if null (empty + no media_url), 200 OK
  *      - group_id present → group_chat_rejected audit + 200 OK (Q-03 lock)
- *      - allowlist denied → audit allowlist_deny + 200 OK
  *      - tapback pattern → write pa-tapback-events row + still enqueue inbound
  *      - else → broker.createInboundEvent (idempotent on sendblue-${handle})
  *   4. 200 OK with { ok, eventId, created }
  *
  * Critical: ALL paths return 2xx EXCEPT 401 (bad sig) and 400 (malformed JSON).
  * Sendblue's retry policy (3× on 5xx) means anything but 2xx triggers
- * re-delivery — undesirable for permanent rejections like allowlist_deny.
+ * re-delivery — undesirable for permanent rejections.
  *
  * Memory partition keying: this handler does NOT touch mem0 directly. The
  * downstream `onPaInbound` orchestrator path (apps/functions/src/index.ts:322)
@@ -37,7 +36,6 @@ import {
   isInboundReceiveEvent,
   normalizeSendblueInbound,
 } from "./normalize.js"
-import { useDmAllowlist, getPeerAllowlist, isSamePeer } from "./allowlist.js"
 import { recordAuditEvent, type AuditEventInput } from "./audit.js"
 import { classifyInboundSender } from "./handle-format.js"
 import { parseInboundTapback } from "./tapback-parser.js"
@@ -54,6 +52,7 @@ import {
 } from "./triggers/index.js"
 // v1.8 Phase 77.3 — real prescreen session bootstrap (replaces log placeholder).
 import { runPreScreenForUser as defaultRunPreScreenForUser } from "../prescreen-session-start.js"
+import { runPrescreenTurnIfActive as defaultRunPrescreenTurnIfActive } from "../prescreen-turn-handler.js"
 import {
   isLayoffIntakeActiveForUser,
   runLayoffSmsStart as defaultRunLayoffSmsStart,
@@ -126,6 +125,8 @@ export type WebhookDeps = {
   runLayoffSmsStart?: typeof defaultRunLayoffSmsStart
   /** Job prescreen trigger handler. Inject for live-equivalent Sendblue entrypoint tests. */
   runPreScreenForUser?: typeof defaultRunPreScreenForUser
+  /** Routes an initial public-job-page prescreen answer after the trigger creates the session. */
+  runPrescreenTurnIfActive?: typeof defaultRunPrescreenTurnIfActive
   /** Apply trigger PII-confirm handler. Inject for live-equivalent Sendblue entrypoint tests. */
   runPiiConfirmForUser?: typeof defaultRunPiiConfirmForUser
   /**
@@ -228,10 +229,9 @@ function safeAudit(
 // Stream G4a — synthetic-webhook test marker. When `x-e2e-test: 1` is set on
 // the incoming request, every downstream artifact this handler writes
 // (pa-sendblue-webhook-raw, pa-inbound-events) is tagged with `e2eTest: true`
-// so production analytics + pipelines can filter test traffic. Also bypasses
-// the DM allowlist so synthetic from-numbers don't get rejected. Sendblue
-// HMAC verification is unchanged — the E2E driver still must sign requests
-// with the live signing secret.
+// so production analytics + pipelines can filter test traffic. Sendblue HMAC
+// verification is unchanged — the E2E driver still must sign requests with the
+// live signing secret.
 function extractE2eTestFlag(headers: Record<string, string | string[] | undefined>): boolean {
   const candidates = ["x-e2e-test", "X-E2E-Test", "X-E2E-TEST"]
   for (const k of candidates) {
@@ -337,7 +337,7 @@ export async function handleSendblueWebhook(
   // every downstream write can carry it consistently. Organic Sendblue traffic
   // never sets this header; it's only used by the apps/functions/test-e2e
   // driver to drive Adam's CV-onboarding pipeline against the LIVE webhook
-  // without polluting analytics or tripping the DM allowlist.
+  // without polluting analytics.
   const isE2eTest = extractE2eTestFlag(req.headers ?? {})
 
   // ---- 1. HMAC verify (401 on fail) -------------------------------------
@@ -569,8 +569,8 @@ export async function handleSendblueWebhook(
     return
   }
   // BUG #6 — empty content path. If media_url is present, synthesize a
-  // normalized inbound so the rest of the pipeline (rate-limit / allowlist /
-  // broker enqueue) treats this as a real message. Reuses the same
+  // normalized inbound so the rest of the pipeline (rate-limit / broker
+  // enqueue) treats this as a real message. Reuses the same
   // idempotency convention so dedupe still works.
   const mediaUrl = extractMediaUrl(payload)
   if (!normalized) {
@@ -652,30 +652,6 @@ export async function handleSendblueWebhook(
     )
     reply(res, 200, { ok: true, ignored: "group_chat_rejected" })
     return
-  }
-
-  // ---- 3e. Allowlist gate (fail-closed) ---------------------------------
-  // Stream G4a — when X-E2E-Test:1 is set, bypass the allowlist so the test
-  // driver can synthesize from-numbers that aren't on the production peer
-  // allowlist. Bypass is safe because requests still must pass HMAC verify.
-  if (useDmAllowlist() && !isE2eTest) {
-    const peers = getPeerAllowlist()
-    const matched = peers.length > 0 && peers.some((p) => isSamePeer(normalized.fromNumber, p))
-    if (!matched) {
-      await safeAudit(
-        deps,
-        {
-          type: "allowlist_deny",
-          channel: "imessage_sendblue",
-          fromNumber: normalized.fromNumber,
-          reason: peers.length === 0 ? "empty_allowlist" : "not_in_allowlist",
-          correlationId: normalized.messageHandle,
-        },
-        log
-      )
-      reply(res, 200, { ok: true, ignored: "allowlist_deny" })
-      return
-    }
   }
 
   await sendAcceptedInboundTypingHint(
@@ -761,6 +737,7 @@ export async function handleSendblueWebhook(
     const lookupForInbound = (phone: string) => lookupFnRouter(deps.db, phone, normalized.text)
     const runLayoffSmsStart = deps.runLayoffSmsStart ?? defaultRunLayoffSmsStart
     const runPreScreenForUser = deps.runPreScreenForUser ?? defaultRunPreScreenForUser
+    const runPrescreenTurnIfActive = deps.runPrescreenTurnIfActive ?? defaultRunPrescreenTurnIfActive
     const runPiiConfirmForUser = deps.runPiiConfirmForUser ?? defaultRunPiiConfirmForUser
     const router = new TriggerRouter({
       triggers: [
@@ -824,23 +801,44 @@ export async function handleSendblueWebhook(
               .doc(prescreenTriggerIdempotencyDocId(jobId, userId, messageHandle))
               .set({ lastFiredMs: ms, jobId, userId, messageHandle, updatedAt: new Date().toISOString() })
           },
-          runPreScreen: async ({ jobId, userId, toE164, sourceRequestedUserId }) => {
+          runPreScreen: async ({ jobId, userId, toE164, initialReplyText, sourceRequestedUserId }) => {
             // Phase 77.3 — real handler: load config, build state, send 1st Q.
             // v1.9 hotfix 2026-05-13 — sourceRequestedUserId passed through
             // for attribution when bound via public-page pending-invite.
+            const initialReply = initialReplyText?.trim()
             const result = await runPreScreenForUser({
               db: deps.db,
               jobId,
               userId,
               toE164,
               sourceRequestedUserId,
+              suppressFirstQuestion: Boolean(initialReply),
               log: (event, payload) => log(`pa.prescreen.${event}`, payload),
             })
             log("[sendblue][webhook] prescreen_run", {
               jobId, userId, sessionId: result.sessionId,
               reason: result.reason, ok: result.ok,
+              initialReplyCaptured: Boolean(initialReply),
               ...(sourceRequestedUserId ? { sourceRequestedUserId } : {}),
             })
+            if (result.ok && initialReply) {
+              const turn = await runPrescreenTurnIfActive({
+                db: deps.db,
+                userId,
+                toE164,
+                replyText: initialReply,
+                lang: "en",
+                log: (event, payload) => log(`pa.prescreen.${event}`, payload),
+              })
+              log("[sendblue][webhook] prescreen_initial_reply_routed", {
+                jobId,
+                userId,
+                sessionId: turn.sessionId ?? result.sessionId,
+                handled: turn.handled,
+                terminal: turn.terminal ?? null,
+                textSent: Boolean(turn.textSent),
+              })
+            }
           },
           audit: async (evt) => {
             await safeAudit(deps, evt as AuditEventInput, log)

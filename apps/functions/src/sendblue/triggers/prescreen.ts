@@ -6,7 +6,7 @@
  *   WeKruit_<jobId>_<userId>_Job
  *
  * Per PS7:
- *   - Regex: ^.*WeKruit_([A-Za-z0-9_-]+)_([A-Za-z0-9_-]+)_Job.*$
+ *   - Regex: ^.*WeKruit_([A-Za-z0-9-]+)_([A-Za-z0-9_-]+)_Job.*$
  *   - jobId / userId char-class is closed (alnum + _ + -). Defends against
  *     injection of `/` `\n` `?` etc.
  *   - Idempotency: (jobId, userId, messageHandle) one trigger per 60 minutes
@@ -25,7 +25,7 @@
 
 import type { Trigger, TriggerContext, TriggerOutcome } from "./router.js"
 
-const PRESCREEN_RE = /WeKruit_([A-Za-z0-9_-]+)_([A-Za-z0-9_-]+)_Job/
+const PRESCREEN_RE = /WeKruit_([A-Za-z0-9-]+)_([A-Za-z0-9_-]+)_Job/i
 
 /** Per-pair idempotency window. */
 export const PRESCREEN_IDEMPOTENCY_WINDOW_MS = 60 * 60 * 1000 // 60 minutes
@@ -45,6 +45,14 @@ export interface PrescreenTriggerDeps {
     jobId: string
     userId: string
     toE164: string
+    /**
+     * Public job page can prefill iMessage as:
+     *   WeKruit_<jobId>_<userId>_Job\n\n<first prescreen answer>
+     *
+     * The trigger token authenticates/starts the session; this text is routed
+     * as the candidate's first answer after the session is active.
+     */
+    initialReplyText?: string
     /**
      * v1.9 hotfix 2026-05-13 — when the trigger was authorized via a
      * public-job-page pending-invite (NOT self / NOT admin), this carries
@@ -84,6 +92,15 @@ export interface PrescreenTriggerDeps {
   pendingInviteTtlMs?: number
 }
 
+export function extractInitialPrescreenReply(text: string, triggerText: string, triggerIndex: number): string | null {
+  const after = text
+    .slice(triggerIndex + triggerText.length)
+    .replace(/^[\s:：,.;|/\\\-–—]+/, "")
+    .trim()
+  if (!after) return null
+  return after.slice(0, 4_000)
+}
+
 export class PrescreenTrigger implements Trigger {
   readonly name = "prescreen"
 
@@ -103,6 +120,7 @@ export class PrescreenTrigger implements Trigger {
     const m = ctx.text.match(PRESCREEN_RE)
     if (!m) return { kind: "unauthorized", reason: "regex_no_match" }
     const [, jobId, userId] = m
+    const initialReplyText = extractInitialPrescreenReply(ctx.text, m[0], m.index ?? 0)
 
     const now = (this.deps.now ?? Date.now)()
 
@@ -216,6 +234,7 @@ export class PrescreenTrigger implements Trigger {
           jobId,
           userId: sessionUserId,
           toE164: ctx.fromNumber,
+          ...(initialReplyText ? { initialReplyText } : {}),
           ...(pendingMatch ? { sourceRequestedUserId: userId } : {}),
         })
       )
@@ -247,6 +266,7 @@ export class PrescreenTrigger implements Trigger {
       userId: sessionUserId,
       senderUserId: resolvedUserId,
       role,
+      initialReplyCaptured: Boolean(initialReplyText),
       ...(pendingMatch ? { sourceRequestedUserId: userId } : {}),
       correlationId: ctx.messageHandle,
     })

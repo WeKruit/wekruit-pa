@@ -305,6 +305,24 @@ em.accent, .accent-italic {
 .btn--primary:hover  { background: #1c0f04; box-shadow: var(--shadow-md); }
 .btn--primary:active { transform: translateY(0); box-shadow: var(--shadow-sm); }
 
+.wk-inline-spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  border: 2px solid rgba(255, 248, 238, 0.42);
+  border-top-color: var(--cream);
+  animation: wk-spin 0.72s linear infinite;
+}
+
+.wk-inline-spinner--ink {
+  border-color: rgba(45, 26, 10, 0.18);
+  border-top-color: var(--ink);
+}
+
+@keyframes wk-spin {
+  to { transform: rotate(360deg); }
+}
+
 .btn--secondary {
   background: transparent;
   color: var(--ink);

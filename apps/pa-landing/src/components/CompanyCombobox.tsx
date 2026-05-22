@@ -8,6 +8,7 @@ type CompanyComboboxProps = {
   err?: string
   placeholder?: string
   hint?: string
+  optional?: boolean
 }
 
 export function CompanyCombobox({
@@ -17,6 +18,7 @@ export function CompanyCombobox({
   err,
   placeholder = "Start typing a company name",
   hint,
+  optional,
 }: CompanyComboboxProps) {
   const listId = useId()
   const rootRef = useRef<HTMLDivElement>(null)
@@ -90,7 +92,11 @@ export function CompanyCombobox({
         }}
       >
         <span>{label}</span>
-        {err ? <span style={{ color: "var(--danger)" }}>{err}</span> : null}
+        {err ? (
+          <span style={{ color: "var(--danger)" }}>{err}</span>
+        ) : optional ? (
+          <span style={{ color: "var(--ink-3)", fontWeight: 400 }}>it's optional</span>
+        ) : null}
       </span>
       <div style={{ position: "relative" }}>
         <input

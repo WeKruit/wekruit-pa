@@ -218,7 +218,6 @@ function makeRes() {
 }
 
 const ENV_KEYS = [
-  "IMESSAGE_DM_ALLOWLIST",
   "IMESSAGE_PEERS",
   "IMESSAGE_PEER",
   "IMESSAGE_DEFAULT_PEER",
@@ -226,11 +225,6 @@ const ENV_KEYS = [
 ] as const
 
 let savedEnv: Record<string, string | undefined>
-
-function setEnvAllowlist(peers: string[], enable = true) {
-  process.env.IMESSAGE_DM_ALLOWLIST = enable ? "1" : "0"
-  process.env.IMESSAGE_PEERS = peers.join(",")
-}
 
 function basePayload(overrides: Partial<SendblueInboundPayload> = {}): SendblueInboundPayload {
   return {
@@ -251,7 +245,6 @@ describe("handleSendblueWebhook", () => {
   beforeEach(() => {
     savedEnv = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]))
     for (const k of ENV_KEYS) delete process.env[k]
-    setEnvAllowlist(["+15551234567"])
     _clearFeatureFlagCache()
   })
   afterEach(() => {
@@ -274,8 +267,7 @@ describe("handleSendblueWebhook", () => {
     assert.equal(audit.length, 0)
   })
 
-  it("Test 2: valid HMAC + non-allowlisted from_number → 200, NO inbound, ONE audit allowlist_deny", async () => {
-    setEnvAllowlist(["+15559999999"]) // Adam allowed; sender NOT
+  it("Test 2: valid HMAC + arbitrary from_number → 200, ONE inbound", async () => {
     const { db, inbound, audit } = makeFakeDb()
     const body = JSON.stringify(basePayload())
     const req = makeReq({ body, signature: SECRET })
@@ -291,15 +283,12 @@ describe("handleSendblueWebhook", () => {
     })
 
     assert.equal(res.statusCode, 200)
-    assert.equal(inbound.size, 0)
-    assert.deepEqual(typingCalls, [], "rejected/blocked inbound must not show bot typing")
-    assert.equal(audit.length, 1)
-    assert.equal(audit[0]!.type, "allowlist_deny")
-    assert.equal(audit[0]!.channel, "imessage_sendblue")
-    assert.equal(audit[0]!.fromNumber, "+15551234567")
+    assert.equal(inbound.size, 1)
+    assert.deepEqual(typingCalls, ["+15551234567"], "accepted inbound should show bot typing")
+    assert.equal(audit.length, 0)
   })
 
-  it("Test 3: valid HMAC + allowlisted + receive → 200, ONE inbound row keyed sendblue-${message_handle}", async () => {
+  it("Test 3: valid HMAC + receive → 200, ONE inbound row keyed sendblue-${message_handle}", async () => {
     const { db, inbound } = makeFakeDb()
     const body = JSON.stringify(basePayload())
     const req = makeReq({ body, signature: SECRET })
@@ -652,9 +641,7 @@ describe("handleSendblueWebhook", () => {
   })
 
   // Stream G4a — synthetic-webhook marker tests.
-  it("Test 14 (Stream G4a): X-E2E-Test:1 → rawMeta.e2eTest=true on raw row + rawPayload.e2eTest=true on inbound + allowlist bypassed for non-allowlisted from_number", async () => {
-    // Sender NOT in allowlist — proves the test header bypasses the gate.
-    setEnvAllowlist(["+15559999999"])
+  it("Test 14 (Stream G4a): X-E2E-Test:1 → rawMeta.e2eTest=true on raw row + rawPayload.e2eTest=true on inbound", async () => {
     const captured: Array<Record<string, unknown>> = []
     const { db, inbound } = makeFakeDb()
     const origCollection = (db as { collection(name: string): unknown }).collection
@@ -675,8 +662,8 @@ describe("handleSendblueWebhook", () => {
 
     await handleSendblueWebhook(req, res, { db, secret: SECRET })
 
-    assert.equal(res.statusCode, 200, "X-E2E-Test:1 must NOT trigger allowlist_deny")
-    assert.equal(inbound.size, 1, "synthetic test must enqueue inbound (allowlist bypassed)")
+    assert.equal(res.statusCode, 200, "X-E2E-Test:1 must preserve the synthetic marker")
+    assert.equal(inbound.size, 1, "synthetic test must enqueue inbound")
 
     // Allow microtask for fire-and-forget raw log.
     await new Promise((r) => setTimeout(r, 20))
@@ -758,6 +745,46 @@ describe("handleSendblueWebhook", () => {
       row.type === "trigger_fired" &&
       (row.payload as { trigger?: string } | undefined)?.trigger === "prescreen"
     ))
+  })
+
+  it("Test 16b (entrypoints): job prescreen token with answer binds and routes initial reply after session start", async () => {
+    const { db, inbound } = makeFakeDb()
+    const prescreenCalls: Array<{ jobId: string; userId: string; toE164: string; suppressFirstQuestion?: boolean }> = []
+    const turnCalls: Array<{ userId: string; toE164: string; replyText: string }> = []
+    const body = JSON.stringify(basePayload({
+      content: "WeKruit_rain-software-engineer-fullstack-8849f6ef_uJob1_Job\n\nI shipped a Figma-to-Framer consumer onboarding redesign.",
+      message_handle: "msg-entry-job-answer-1",
+    }))
+    const req = makeReq({ body, signature: SECRET })
+    const res = makeRes()
+
+    await handleSendblueWebhook(req, res, {
+      db,
+      secret: SECRET,
+      lookupUserByPhone: async () => "uJob1",
+      runPreScreenForUser: async (args) => {
+        prescreenCalls.push(args)
+        return { ok: true, sessionId: "ps_job_answer_1" }
+      },
+      runPrescreenTurnIfActive: async (args) => {
+        turnCalls.push({ userId: args.userId, toE164: args.toE164, replyText: args.replyText })
+        return { handled: true, sessionId: "ps_job_answer_1", terminal: undefined, textSent: "next question" }
+      },
+    })
+    await new Promise((r) => setTimeout(r, 20))
+
+    assert.equal(res.statusCode, 200)
+    assert.deepEqual(res.bodyOut, { ok: true, action: "prescreen_triggered" })
+    assert.equal(inbound.size, 0, "trigger token + answer must not enter normal onboarding")
+    assert.equal(prescreenCalls.length, 1)
+    assert.equal(prescreenCalls[0]!.userId, "uJob1")
+    assert.equal(prescreenCalls[0]!.suppressFirstQuestion, true)
+    assert.equal(turnCalls.length, 1)
+    assert.deepEqual(turnCalls[0], {
+      userId: "uJob1",
+      toE164: "+15551234567",
+      replyText: "I shipped a Figma-to-Framer consumer onboarding redesign.",
+    })
   })
 
   it("Test 17 (entrypoints): public-page random uid token binds to phone-resolved pa-user through pending invite", async () => {

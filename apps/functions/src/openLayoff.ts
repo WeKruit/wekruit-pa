@@ -2,7 +2,7 @@
 //
 // Co-located with pa-orchestrator. Reuses existing PA modules:
 //   - sendblue/pool.ts        — pickFromNumber load-balancer
-//   - sendblue/allowlist.ts   — normalizePeer (E.164)
+//   - sendblue/peer.ts        — normalizePeer (E.164)
 //   - layoff-sms-start.ts     — shared runtime kickoff
 //
 // SINGLE candidate collection (alignment with user instruction 2026-05-15):
@@ -25,7 +25,7 @@ import { getFirestore, FieldValue, type Firestore, type Query } from "firebase-a
 import { getApps, initializeApp } from "firebase-admin/app"
 
 import { loadSendbluePool, pickFromNumber, sendblueGroupId, hashStringToUint } from "./sendblue/pool.js"
-import { normalizePeer } from "./sendblue/allowlist.js"
+import { normalizePeer } from "./sendblue/peer.js"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import { hashCandidateHandle, linkCandidateHandle } from "@pa/pa-persistence"
 import {
@@ -93,7 +93,7 @@ export type RegisterInput = {
   email: string
   linkedin?: string
   personalWebsite?: string
-  lastCompany: string
+  lastCompany?: string
   jobTitle?: string
   location?: string
   function?: string
@@ -189,14 +189,15 @@ export async function runRegisterLayoffCandidate(
   v: RegisterInput,
   deps: OpenLayoffDeps
 ): Promise<Record<string, unknown>> {
-  if (!v.firstName || !v.lastName || !v.email || !v.lastCompany || !v.consent) {
-    throw new HttpsError("invalid-argument", "Missing required fields")
-  }
   const mode = v.mode ?? "auto"
   const source: WekruitSignupSource = isWekruitSignupSource(v.source)
     ? v.source
     : WEKRUIT_LAYOFF_SOURCE
   const isLayoff = source === WEKRUIT_LAYOFF_SOURCE
+  const lastCompany = cleanString(v.lastCompany, 200)
+  if (!v.firstName || !v.lastName || !v.email || !v.consent || (isLayoff && !lastCompany)) {
+    throw new HttpsError("invalid-argument", "Missing required fields")
+  }
 
   let oauthLinkedinSatisfied = false
   const explicitIdEarly = cleanString(v.candidateId, 128)
@@ -336,7 +337,7 @@ export async function runRegisterLayoffCandidate(
   if (writeProfileContext && isLayoff) {
     writePayload.displayName = `${v.firstName} ${v.lastName}`.trim() || v.firstName
     writePayload.layoffContext = {
-      lastCompany: v.lastCompany,
+      lastCompany,
       jobTitle: cleanString(v.jobTitle, 200) ?? null,
       location: cleanString(v.location, 200) ?? null,
       function: roleFunction,
@@ -348,7 +349,7 @@ export async function runRegisterLayoffCandidate(
   } else if (writeProfileContext) {
     writePayload.displayName = `${v.firstName} ${v.lastName}`.trim() || v.firstName
     writePayload.candidateContext = {
-      lastCompany: v.lastCompany,
+      lastCompany: lastCompany ?? null,
       jobTitle: v.jobTitle ?? null,
       location: v.location ?? null,
       function: roleFunction,

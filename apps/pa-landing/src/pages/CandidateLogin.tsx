@@ -34,6 +34,7 @@ import {
   readRememberedLoginNext,
   readStoredValue,
   rememberLoginNext,
+  rememberOnboardingIntentForPath,
   rememberStoredValue,
   resolvePostLoginDestination,
 } from "../lib/browser-identity"
@@ -409,7 +410,7 @@ export function CandidateShell({
           </nav>
           <div className="wk-header__cta">
             <Link to="/login" className="wk-header__signin">Sign in</Link>
-            <Link to="/login" className="wk-btn wk-btn--ink wk-btn--sm">Start with Claire</Link>
+            <Link to="/login" className="wk-btn wk-btn--ink wk-btn--sm">Interview with Claire</Link>
           </div>
         </div>
       </header>
@@ -468,7 +469,10 @@ export default function CandidateLogin() {
   const nextDest = useMemo(() => {
     const raw = searchParams.get("next")
     if (raw) rememberLoginNext(raw)
-    stickSourceFromLoginNext(raw ?? readRememberedLoginNext())
+    const remembered = readRememberedLoginNext()
+    const intentPath = raw ?? remembered
+    if (intentPath) rememberOnboardingIntentForPath(intentPath)
+    stickSourceFromLoginNext(intentPath)
     const fallback = isLayoffHost()
       ? onboardingDestination("WeKruit_Laid_Off")
       : onboardingDestination(peekSource())
@@ -596,6 +600,7 @@ export default function CandidateLogin() {
     setStatus(kind)
     setError(null)
     rememberLoginNext(nextDest.to)
+    rememberOnboardingIntentForPath(nextDest.to)
     if (kind === "google") {
       // Popup avoids the signInWithRedirect third-party-cookie trap when
       // authDomain (wekruit-5f89b.firebaseapp.com) differs from the site
@@ -634,6 +639,7 @@ export default function CandidateLogin() {
       }
       setStatus("sending")
       rememberLoginNext(nextDest.to)
+      rememberOnboardingIntentForPath(nextDest.to)
       await sendSignInLinkToEmail(auth(), nextEmail, {
         url: `${window.location.origin}/login?next=${encodeURIComponent(nextDest.to)}`,
         handleCodeInApp: true,
@@ -761,7 +767,7 @@ export default function CandidateLogin() {
             ) : null}
 
             <p className="wk-login__fine">
-              First time? <Link to="/" className="wk-link">Start with Claire</Link> — same flow.
+              First time? <Link to="/" className="wk-link">Interview with Claire</Link> — same flow.
             </p>
           </div>
         </div>

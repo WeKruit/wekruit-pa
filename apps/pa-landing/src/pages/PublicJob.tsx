@@ -3,15 +3,16 @@
  *
  * Route: /j/:jobId
  *
- * Contract: a signed-out candidate can inspect the role, but starting Claire
- * must first attach the job flow to a durable WeKruit candidate profile.
+ * Contract: a signed-out candidate can inspect the role, but interviewing
+ * with Claire first attaches the job flow to a durable WeKruit candidate profile.
  *
  * Visual layer (PublicJobLayout / PublicJobLoading / PublicJob404 + styles)
  * lives at the bottom of this file. All Firebase/auth/CV-upload/prescreen
  * logic above is unchanged — only the rendering shell is new.
  */
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react"
-import { Link, useParams } from "react-router-dom"
+import { Link, useNavigate, useParams } from "react-router-dom"
+import { useQuery } from "@tanstack/react-query"
 import {
   GoogleAuthProvider,
   getRedirectResult,
@@ -29,6 +30,7 @@ import {
   GLOBAL_UID_KEY,
   getBrowserUid,
   readStoredValue,
+  rememberOnboardingIntentForPath,
   rememberStoredValue,
 } from "../lib/browser-identity"
 import {
@@ -39,6 +41,14 @@ import {
   CandidateShell,
   Icon,
 } from "./CandidateLogin.js"
+import {
+  listPublicJobOpeningsByCompany,
+  stripJobSourceSection,
+  type PublicJobOpening,
+} from "../lib/public-jobs.js"
+import { canonicalPublicJobId } from "../lib/public-job-slugs.js"
+import { buildWekruitJobOpenerBody } from "../lib/hello-wekruit.js"
+import { stickSourceFromLoginNext } from "../lib/source.js"
 
 const CV_INGEST_URL = import.meta.env.VITE_CV_INGEST_URL ?? ""
 const EMAIL_STORAGE_KEY = CLAIM_EMAIL_KEY
@@ -51,6 +61,13 @@ interface PrescreenConfig {
   level1Reveal?: {
     salaryRange?: string
   }
+  questions?: Array<{
+    qId?: string
+    prompt?: {
+      en?: string
+      zh?: string
+    }
+  }>
 }
 
 interface PaJobDoc {
@@ -63,6 +80,7 @@ interface PaJobDoc {
   /** Top-level title used by rain / externally seeded jobs without prescreenConfig. */
   title?: string
   companyId?: string
+  company?: string
   companyName?: string
   rawLocation?: string
   /** Optional recruiter-intake hiring-manager fields. */
@@ -72,15 +90,6 @@ interface PaJobDoc {
   hiringManagerPhotoUrl?: string
   /** Optional precomputed seat count; falls back to a small deterministic default. */
   interviewSeats?: number
-}
-
-interface PoolNumber {
-  number: string
-  status: string
-  audience?: string
-  adminOnly?: boolean
-  newUserCap?: number
-  assignedNewUsers?: number
 }
 
 type LoginStatus = "idle" | "google" | "email" | "sent" | "error"
@@ -97,11 +106,12 @@ type ResumeGateState =
         labelsReady: boolean
         resumeArtifactId?: string
         parsedResumeId?: string
+        senderNumber?: string
+        senderGroupId?: string
       }
     }
   | { status: "error"; message: string }
 type ResumeGateResult = Extract<ResumeGateState, { status: "ready" }>["gate"]
-
 const LOGO_BG_POOL = ["#2A1812", "#0F1B2D", "#5E6AD2", "#635BFF", "#0D0D0D", "#1A1A1A", "#374151", "#7C2D12"]
 const TONE_POOL: Array<"warm" | "moss" | "slate"> = ["warm", "slate", "moss"]
 
@@ -111,31 +121,6 @@ function hashStringToUint(s: string): number {
     h = (Math.imul(h, 33) + s.charCodeAt(i)) >>> 0
   }
   return h
-}
-
-function isUserAccessiblePoolNumber(n: PoolNumber): boolean {
-  if (n.adminOnly === true) return false
-  const audience = typeof n.audience === "string" ? n.audience.trim().toLowerCase() : ""
-  return audience !== "admin" && audience !== "internal" && audience !== "developer"
-}
-
-function hasNewUserCapacity(n: PoolNumber): boolean {
-  if (!Number.isInteger(n.newUserCap) || n.newUserCap === undefined || n.newUserCap < 0) return true
-  const used = Number.isInteger(n.assignedNewUsers) ? Math.max(0, n.assignedNewUsers ?? 0) : 0
-  return used < n.newUserCap
-}
-
-function pickPoolNumber(pool: PoolNumber[] | null, key: string, options: { requireNewUserCapacity?: boolean } = {}): string | null {
-  if (!pool || pool.length === 0) return null
-  const active = pool.filter(
-    (n) =>
-      n.status === "active" &&
-      n.number &&
-      isUserAccessiblePoolNumber(n) &&
-      (!options.requireNewUserCapacity || hasNewUserCapacity(n))
-  )
-  if (active.length === 0) return null
-  return active[hashStringToUint(key) % active.length].number
 }
 
 function getOrCreateRequestedUserId(_jobId: string): string {
@@ -179,11 +164,12 @@ async function fileToBase64(file: File): Promise<string> {
 
 export default function PublicJob() {
   const { jobId } = useParams<{ jobId: string }>()
+  const navigate = useNavigate()
+  const publicJobId = useMemo(() => (jobId ? canonicalPublicJobId(jobId) : ""), [jobId])
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
   const [job, setJob] = useState<PaJobDoc | null>(null)
   const [resolvedCompanyName, setResolvedCompanyName] = useState<string | null>(null)
-  const [pool, setPool] = useState<PoolNumber[] | null>(null)
   const [smsClicked, setSmsClicked] = useState(false)
   const [user, setUser] = useState<User | null | undefined>(undefined)
   const [loginPromptOpen, setLoginPromptOpen] = useState(false)
@@ -194,8 +180,20 @@ export default function PublicJob() {
   const [loginError, setLoginError] = useState<string | null>(null)
   const [resumeGate, setResumeGate] = useState<ResumeGateState>({ status: "idle" })
 
-  const requestedUserId = useMemo(() => (jobId ? getOrCreateRequestedUserId(jobId) : ""), [jobId])
-  const nextPath = useMemo(() => (jobId ? `/j/${jobId}` : "/"), [jobId])
+  const requestedUserId = useMemo(() => (publicJobId ? getOrCreateRequestedUserId(publicJobId) : ""), [publicJobId])
+  const nextPath = useMemo(() => (publicJobId ? `/j/${publicJobId}` : "/"), [publicJobId])
+
+  useEffect(() => {
+    if (!publicJobId) return
+    stickSourceFromLoginNext(nextPath)
+    rememberOnboardingIntentForPath(nextPath)
+  }, [nextPath, publicJobId])
+
+  useEffect(() => {
+    if (jobId && publicJobId && jobId !== publicJobId) {
+      navigate(`/j/${publicJobId}`, { replace: true })
+    }
+  }, [jobId, navigate, publicJobId])
 
   useEffect(() => {
     let cancelled = false
@@ -232,14 +230,14 @@ export default function PublicJob() {
   useEffect(() => {
     let cancelled = false
     void (async () => {
-      if (!jobId) {
+      if (!publicJobId) {
         setErr("Missing job id")
         setLoading(false)
         return
       }
       try {
         setLoading(true)
-        const snap = await getDoc(doc(db(), "pa-jobs", jobId))
+        const snap = await getDoc(doc(db(), "pa-jobs", publicJobId))
         if (cancelled) return
         if (!snap.exists()) {
           setErr("Job not found")
@@ -253,10 +251,11 @@ export default function PublicJob() {
           return
         }
         setJob(data)
-        // Resolve company display name from pa-companies/{companyId} when the
-        // job doc lacks prescreenConfig.company / companyName denormalization
-        // (true for rain / externally seeded seeded jobs).
-        if (!data.prescreenConfig?.company && !data.companyName && data.companyId) {
+        setResolvedCompanyName(null)
+        // Existing fallback for older public jobs that were seeded before
+        // companyName/company denormalization. Public rules may deny this read;
+        // the page still renders from job-level fields in that case.
+        if (!data.prescreenConfig?.company && !data.companyName && !data.company && data.companyId) {
           try {
             const companySnap = await getDoc(doc(db(), "pa-companies", data.companyId))
             if (companySnap.exists()) {
@@ -264,21 +263,12 @@ export default function PublicJob() {
               if (typeof cd.name === "string") setResolvedCompanyName(cd.name)
             }
           } catch {
-            // ignore — fallback to "Confidential employer" below
+            // Keep the job-level fallback.
           }
-        }
-        try {
-          const poolSnap = await getDoc(doc(db(), "pa-config", "sendblue-pool"))
-          if (poolSnap.exists()) {
-            const raw = poolSnap.data() as { numbers?: PoolNumber[] }
-            if (Array.isArray(raw.numbers)) setPool(raw.numbers)
-          }
-        } catch {
-          // Non-fatal: the page can still render the role and login gate.
         }
         try {
           await setDoc(doc(db(), "pa-prescreen-pending-invites", requestedUserId), {
-            jobId,
+            jobId: publicJobId,
             requestedUserId,
             createdAt: new Date().toISOString(),
           })
@@ -294,7 +284,14 @@ export default function PublicJob() {
     return () => {
       cancelled = true
     }
-  }, [jobId, requestedUserId])
+  }, [publicJobId, requestedUserId])
+
+  const companyJobsQuery = useQuery({
+    queryKey: ["public-company-jobs", job?.companyId],
+    queryFn: () => listPublicJobOpeningsByCompany(job!.companyId!, 8),
+    enabled: Boolean(job?.companyId),
+    staleTime: 5 * 60 * 1000,
+  })
 
   useEffect(() => {
     if (user) {
@@ -353,9 +350,13 @@ export default function PublicJob() {
     let cancelled = false
     void (async () => {
       try {
-        await verifyCandidateMagicLinkSession()
+        const verified = await verifyCandidateMagicLinkSession()
         if (cancelled) return
         setLoginError(null)
+        if (!verified.intakeComplete && !verified.portalReady) {
+          navigate(`/onboarding?next=${encodeURIComponent(nextPath)}`, { replace: true })
+          return
+        }
         const checkGate = httpsCallable<{ browserUid?: string | null }, ResumeGateResult>(
           functions(),
           "paCandidateResumeGateStatus"
@@ -377,22 +378,23 @@ export default function PublicJob() {
     return () => {
       cancelled = true
     }
-  }, [requestedUserId, user])
+  }, [navigate, nextPath, requestedUserId, user])
 
   useEffect(() => {
     const candidateId = resumeGate.status === "ready" ? resumeGate.gate.candidateId : null
-    if (!candidateId || !jobId) return
+    if (!candidateId || !publicJobId) return
     void setDoc(doc(db(), "pa-prescreen-pending-invites", candidateId), {
-      jobId,
+      jobId: publicJobId,
       requestedUserId: candidateId,
       browserUid: requestedUserId,
       createdAt: new Date().toISOString(),
     }).catch(() => undefined)
-  }, [jobId, requestedUserId, resumeGate])
+  }, [publicJobId, requestedUserId, resumeGate])
 
   async function startGoogleSignIn() {
     setLoginStatus("google")
     setLoginError(null)
+    rememberOnboardingIntentForPath(nextPath)
     const provider = createGoogleProvider()
     let willRedirect = false
     try {
@@ -428,6 +430,7 @@ export default function PublicJob() {
     }
     setLoginStatus("email")
     setLoginError(null)
+    rememberOnboardingIntentForPath(nextPath)
     try {
       await sendSignInLinkToEmail(auth(), email, {
         url: `${window.location.origin}/login?next=${encodeURIComponent(nextPath)}`,
@@ -494,25 +497,27 @@ export default function PublicJob() {
   // top-level fields only; prescreenConfig keeps the screening salary range.
   const cfg = job.prescreenConfig ?? {}
   const jobTitle = job.title ?? cfg.jobTitle ?? "Open role"
-  const company = job.companyName ?? resolvedCompanyName ?? "Confidential employer"
+  const company = job.companyName ?? job.company ?? cfg.company ?? resolvedCompanyName ?? "Confidential employer"
   const location = job.location ?? cfg.region
   const salary = cfg.level1Reveal?.salaryRange
   const resumeGateValue = resumeGate.status === "ready" ? resumeGate.gate : null
   const uploadUserId = resumeGateValue?.candidateId
   const smsUserId = resumeGateValue?.candidateId ?? requestedUserId
-  const sendNumber = pickPoolNumber(pool, smsUserId, { requireNewUserCapacity: true })
-  const smsBody = `WeKruit_${jobId}_${smsUserId}_Job`
+  const sendNumber = resumeGateValue?.senderNumber ?? null
+  const smsBody = buildWekruitJobOpenerBody(publicJobId, smsUserId)
   const smsHref = sendNumber ? `sms:${sendNumber}?body=${encodeURIComponent(smsBody)}` : null
 
-  const h = hashStringToUint(jobId || company)
+  const h = hashStringToUint(publicJobId || company)
   const view: PaJobView = {
     jobTitle,
     company,
+    companyId: job.companyId,
     location,
     salary,
     jobType: cfg.jobType,
     descriptionMd: job.descriptionMd,
     collaborated: job.wekruitCollaborationStatus === "collaborated",
+    otherJobs: (companyJobsQuery.data ?? []).filter((role) => role.id !== publicJobId),
     hiringManager: job.hiringManagerName
       ? {
           name: job.hiringManagerName,
@@ -530,6 +535,8 @@ export default function PublicJob() {
   const startSlot = user ? (
     <PrescreenStartGate
       gateState={resumeGate}
+      jobTitle={jobTitle}
+      company={company}
       smsHref={smsHref}
       smsClicked={smsClicked}
       onSmsClick={() => setSmsClicked(true)}
@@ -539,7 +546,7 @@ export default function PublicJob() {
 
   const cvSlot = (
     <InlineCvSection
-      jobId={jobId!}
+      jobId={publicJobId}
       requestedUserId={requestedUserId}
       uploadUserId={uploadUserId}
       userSignedIn={Boolean(user)}
@@ -551,8 +558,8 @@ export default function PublicJob() {
   const smsHint = (
     <>
       <Icon name="lock" size={13} stroke={1.6} />
-      By starting, you agree to our <Link className="wk-link" to="/legal">privacy &amp; terms</Link>.
-      {sendNumber ? ` WeKruit will text you from ${sendNumber}.` : ""}
+      By interviewing, you agree to our <Link className="wk-link" to="/legal">privacy &amp; terms</Link>.
+      {sendNumber ? ` You will send the role code to ${sendNumber}; Claire will reply there.` : ""}
     </>
   )
 
@@ -591,15 +598,15 @@ export default function PublicJob() {
             <strong>{jobTitle}</strong>
           </div>
           <h2 id="public-job-login-modal-title" className="wk-pj-modal__h">
-            Apply to this job with Claire.
+            Interview for this role with Claire.
           </h2>
           <p className="wk-pj-modal__sub">
-            Create or confirm your WeKruit profile first. Then Claire runs the SMS prescreen for this role.
+            Create or confirm your WeKruit profile so Claire carries your resume and this role context into the interview.
           </p>
           <ProcessStrip compact />
           {renderLoginControls("modal")}
           <p className="wk-pj-modal__sub">
-            By starting, you agree to our privacy &amp; terms.
+            By interviewing, you agree to our privacy &amp; terms.
             {sendNumber ? ` WeKruit will text you from ${sendNumber}.` : ""}
           </p>
         </aside>
@@ -636,12 +643,16 @@ interface InlineCvSectionProps {
 
 function PrescreenStartGate({
   gateState,
+  jobTitle,
+  company,
   smsHref,
   smsClicked,
   onSmsClick,
   onRefresh,
 }: {
   gateState: ResumeGateState
+  jobTitle: string
+  company: string
   smsHref: string | null
   smsClicked: boolean
   onSmsClick: () => void
@@ -675,8 +686,8 @@ function PrescreenStartGate({
     return (
       <>
         <p className="wk-pj-card__copy">
-          Add your resume first. We'll parse it, label your profile, then unlock Claire's
-          5-minute screen for this role.
+          Add your resume first. We'll parse it, label your profile, then unlock the
+          iMessage interview for this role.
         </p>
         <div className="wk-pj-disabled">Upload resume to continue</div>
       </>
@@ -686,7 +697,7 @@ function PrescreenStartGate({
     return (
       <>
         <p className="wk-pj-card__copy">
-          Your resume is being parsed and labeled. Claire's 5-minute screen unlocks after that
+          Your resume is being parsed and labeled. Claire's iMessage interview unlocks after that
           finishes.
         </p>
         <ProcessSteps activeStep={3} />
@@ -699,18 +710,21 @@ function PrescreenStartGate({
   return (
     <>
       <p className="wk-pj-card__copy">
-        Claire will ask a few quick role-fit questions over iMessage, attached to your
-        WeKruit candidate profile.
+        Your resume is ready. Open iMessage and send the pre-filled code for {jobTitle} at {company}.
+        That code links your phone to this role; wait for Claire to reply with the first interview question.
       </p>
       {smsHref ? (
         <a className="wk-btn wk-btn--primary wk-btn--block" href={smsHref} onClick={onSmsClick}>
-          Open in iMessage <Icon name="arrow-right" size={16} stroke={2} />
+          Send code in iMessage <Icon name="arrow-right" size={16} stroke={2} />
         </a>
       ) : (
-        <p className="wk-error">WeKruit messaging is temporarily unavailable.</p>
+        <div className="wk-pj-disabled">Assigning your Claire line…</div>
       )}
       {smsClicked ? (
-        <p className="wk-success">Continue in iMessage to answer Claire.</p>
+        <p className="wk-success">Send the pre-filled code, then wait for Claire's reply in this thread.</p>
+      ) : null}
+      {!smsHref ? (
+        <p className="wk-error">WeKruit messaging is temporarily unavailable. Try checking your profile again.</p>
       ) : null}
     </>
   )
@@ -739,7 +753,7 @@ function InlineCvSection({
     return (
       <div className="wk-pj-cv">
         <p className="wk-eyebrow">Resume</p>
-        <p className="wk-pj-card__copy">Resume uploaded. We are finishing parsing and labeling before the employer screen opens.</p>
+        <p className="wk-pj-card__copy">Resume uploaded. We are finishing parsing and labeling before the Claire interview opens.</p>
         <ProcessSteps activeStep={3} />
       </div>
     )
@@ -747,7 +761,7 @@ function InlineCvSection({
   return (
     <div className="wk-pj-cv">
       <p className="wk-eyebrow">Resume</p>
-      <p className="wk-pj-card__copy">PDF or DOCX, under 5 MB. We will use it to tailor the pre-screen.</p>
+      <p className="wk-pj-card__copy">PDF or DOCX, under 5 MB. We will use it to ground Claire's interview.</p>
       <InlineCvUpload
         jobId={jobId}
         requestedUserId={requestedUserId}
@@ -887,11 +901,11 @@ function uploadStatusText(
   }
   if (status === "ok") {
     return uploadResult?.resumeId
-      ? "Resume parsed. Checking whether Claire's screen is ready to unlock."
-      : "Upload received. Checking whether Claire's screen is ready to unlock."
+      ? "Resume parsed. Checking whether Claire's interview is ready to unlock."
+      : "Upload received. Checking whether Claire's interview is ready to unlock."
   }
   if (status === "err") return "Resume upload did not finish."
-  return file ? `${file.name} selected. Upload it to continue.` : "Choose a PDF or DOCX resume to start."
+  return file ? `${file.name} selected. Upload it to continue.` : "Choose a PDF or DOCX resume to continue."
 }
 
 function friendlyUploadError(reason: string, status: number): string {
@@ -923,7 +937,7 @@ function friendlyUploadError(reason: string, status: number): string {
 }
 
 function ProcessSteps({ activeStep }: { activeStep: number }) {
-  const steps = ["Select file", "Upload", "Parse resume", "Unlock screen"]
+  const steps = ["Select file", "Upload", "Parse resume", "Open interview"]
   return (
     <ol className="wk-pj-steps" aria-label="Resume upload progress">
       {steps.map((step, index) => {
@@ -941,7 +955,7 @@ function ProcessSteps({ activeStep }: { activeStep: number }) {
 }
 
 function ProcessStrip({ compact = false }: { compact?: boolean }) {
-  const steps = ["Upload your resume", "Prescreen with Claire via SMS", "Interview with the hiring manager"]
+  const steps = ["Upload your resume", "Interview with Claire", "Meet the hiring manager"]
   return (
     <div className={`wk-pj-process-strip${compact ? " wk-pj-process-strip--compact" : ""}`}>
       {steps.map((step, index) => (
@@ -954,13 +968,13 @@ function ProcessStrip({ compact = false }: { compact?: boolean }) {
   )
 }
 
-function renderJobDescription(descriptionMd?: string, company?: string): ReactNode {
-  const raw = descriptionMd?.trim()
+function renderJobDescription(descriptionMd?: string, company?: string, hideSource = false): ReactNode {
+  const raw = (hideSource ? stripJobSourceSection(descriptionMd) : descriptionMd)?.trim()
   if (!raw) {
     return (
       <section>
         <h3>About {company || "this company"}</h3>
-        <p>More role details will be shared during the WeKruit prescreen.</p>
+        <p>More role details will be shared during Claire's interview.</p>
       </section>
     )
   }
@@ -993,7 +1007,7 @@ function renderJobDescription(descriptionMd?: string, company?: string): ReactNo
       flushBullets()
       continue
     }
-    const heading = trimmed.match(/^(?:#{2,3}\s+|\*\*)(.+?)(?:\*\*)?$/)
+    const heading = trimmed.match(/^(?:#{1,3}\s+|\*\*)(.+?)(?:\*\*)?$/)
     if (heading) {
       flushParagraph()
       flushBullets()
@@ -1023,11 +1037,13 @@ function renderJobDescription(descriptionMd?: string, company?: string): ReactNo
 interface PaJobView {
   jobTitle: string
   company: string
+  companyId?: string
   location?: string
   salary?: string
   jobType?: string
   descriptionMd?: string
   collaborated: boolean
+  otherJobs: PublicJobOpening[]
   hiringManager?: {
     name?: string
     title?: string
@@ -1059,7 +1075,7 @@ export function PublicJobLayout({ job, startSlot, cvSlot, smsHint, overlay, sign
   ].filter((item): item is string => Boolean(item))
 
   return (
-    <CandidateShell>
+    <CandidateShell signedIn={signedIn}>
       <style>{PUBLIC_JOB_STYLES}</style>
 
       <div className="wk-pj">
@@ -1067,7 +1083,7 @@ export function PublicJobLayout({ job, startSlot, cvSlot, smsHint, overlay, sign
           <div className="wk-container wk-pj-hero__grid">
             <div className="wk-pj-hero__copy">
               <p className="wk-eyebrow">
-                Interview · {job.company}
+                Interview · {job.companyId ? <Link className="wk-pj-company-link" to={`/companies/${job.companyId}`}>{job.company}</Link> : job.company}
                 {job.collaborated ? <> · <span className="wk-pj-collab">WeKruit collaborated</span></> : null}
               </p>
               <h1 className="wk-pj-hero__role">{job.jobTitle}</h1>
@@ -1080,18 +1096,44 @@ export function PublicJobLayout({ job, startSlot, cvSlot, smsHint, overlay, sign
               </div>
               <div className="wk-pj-description-panel">
                 <p className="wk-eyebrow">Job description</p>
-                <div className="wk-pj-copy">{renderJobDescription(job.descriptionMd, job.company)}</div>
+                <div className="wk-pj-copy">{renderJobDescription(job.descriptionMd, job.company, job.collaborated)}</div>
               </div>
+              {job.otherJobs.length ? (
+                <section className="wk-pj-other" aria-labelledby="other-company-roles">
+                  <div className="wk-pj-other__head">
+                    <p className="wk-eyebrow">More at this company</p>
+                    <h2 id="other-company-roles">Other roles at {job.company}</h2>
+                  </div>
+                  <div className="wk-pj-other__list">
+                    {job.otherJobs.map((role) => (
+                      <Link className="wk-pj-role-card" to={`/j/${role.id}`} key={role.id}>
+                        <span>
+                          <strong>{role.title}</strong>
+                          <em>{[role.location, role.jobType?.replace(/_/g, " ")].filter(Boolean).join("  ")}</em>
+                        </span>
+                        <Icon name="arrow-right" size={22} stroke={1.7} />
+                      </Link>
+                    ))}
+                  </div>
+                  {job.companyId ? (
+                    <Link className="wk-pj-company-profile-link" to={`/companies/${job.companyId}`}>
+                      View company profile <Icon name="arrow-right" size={16} stroke={1.8} />
+                    </Link>
+                  ) : null}
+                </section>
+              ) : null}
             </div>
             <aside className="wk-pj-side wk-pj-side--hero">
               <div className="wk-pj-card">
                 <div className="wk-pj-card__head">
-                  <p className="wk-eyebrow">Apply to this role</p>
-                  <h2 className="wk-pj-card__title">Start the WeKruit process</h2>
+                  <p className="wk-eyebrow">Role interview</p>
+                  <h2 className="wk-pj-card__title">Interview with Claire</h2>
                 </div>
-                <button type="button" className="wk-btn wk-btn--ink wk-btn--block" onClick={onApply}>
-                  Apply to this job
-                </button>
+                {!signedIn ? (
+                  <button type="button" className="wk-btn wk-btn--ink wk-btn--block" onClick={onApply}>
+                    Interview for this job
+                  </button>
+                ) : null}
                 {signedIn ? (
                   <>
                     <div className="wk-pj-card__slot">{cvSlot}</div>
@@ -1109,11 +1151,13 @@ export function PublicJobLayout({ job, startSlot, cvSlot, smsHint, overlay, sign
           </div>
         </section>
 
-        <div className="wk-pj-mobile-apply">
-          <button type="button" className="wk-btn wk-btn--ink wk-btn--block" onClick={onApply}>
-            Apply to this job
-          </button>
-        </div>
+        {!signedIn ? (
+          <div className="wk-pj-mobile-apply">
+            <button type="button" className="wk-btn wk-btn--ink wk-btn--block" onClick={onApply}>
+              Interview for this job
+            </button>
+          </div>
+        ) : null}
       </div>
       {overlay}
     </CandidateShell>
@@ -1173,6 +1217,12 @@ export const PUBLIC_JOB_STYLES = `
 .wk-pj__back:hover { color: var(--wk-ink); }
 
 .wk-pj-collab { color: var(--wk-live); font-weight: 600; }
+.wk-pj-company-link {
+  color: inherit;
+  text-decoration: none;
+  border-bottom: 1px solid rgba(45, 26, 10, 0.18);
+}
+.wk-pj-company-link:hover { color: var(--wk-ink); border-bottom-color: var(--wk-ink); }
 
 .wk-pj-meta-row {
   display: flex;
@@ -1289,6 +1339,81 @@ export const PUBLIC_JOB_STYLES = `
   border-top: 1px solid var(--wk-border);
 }
 
+.wk-pj-other {
+  display: grid;
+  gap: 16px;
+  padding-top: 26px;
+  border-top: 1px solid var(--wk-border);
+}
+.wk-pj-other__head {
+  display: grid;
+  gap: 4px;
+}
+.wk-pj-other h2 {
+  margin: 0;
+  color: var(--wk-ink);
+  font-family: 'Newsreader', serif;
+  font-size: clamp(30px, 3.2vw, 44px);
+  font-weight: 400;
+  line-height: 1.06;
+}
+.wk-pj-other__list {
+  display: grid;
+  gap: 10px;
+}
+.wk-pj-role-card {
+  min-height: 84px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 18px;
+  padding: 18px 20px;
+  color: var(--wk-ink);
+  text-decoration: none;
+  background: rgba(255, 252, 247, 0.68);
+  border: 1px solid var(--wk-border);
+  border-radius: var(--wk-r-md);
+  transition:
+    transform 180ms var(--wk-ease),
+    border-color 180ms var(--wk-ease),
+    background 180ms var(--wk-ease);
+}
+.wk-pj-role-card:hover {
+  transform: translateY(-1px);
+  border-color: rgba(45, 26, 10, 0.24);
+  background: var(--wk-cream-3);
+}
+.wk-pj-role-card span {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.wk-pj-role-card strong {
+  overflow-wrap: anywhere;
+  font-family: 'Newsreader', serif;
+  font-size: clamp(22px, 2vw, 28px);
+  font-weight: 400;
+  line-height: 1.08;
+}
+.wk-pj-role-card em {
+  color: var(--wk-ink-3);
+  font-style: normal;
+  font-size: 14px;
+  line-height: 1.35;
+  text-transform: capitalize;
+}
+.wk-pj-company-profile-link {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--wk-ink-2);
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 600;
+}
+.wk-pj-company-profile-link:hover { color: var(--wk-ink); }
+
 .wk-pj-hm {
   display: grid;
   grid-template-columns: auto 1fr auto;
@@ -1367,7 +1492,6 @@ export const PUBLIC_JOB_STYLES = `
   border: 1px solid var(--wk-border);
   font-size: 14px; font-weight: 500;
 }
-
 .wk-pj-side-meta {
   display: flex; flex-direction: column; gap: 0;
   padding: 16px 22px;
